@@ -57,16 +57,46 @@
  * BOLO_RECAP_CLIP_GIF      — the clip export. The GIF encoder's implementation
  *   TU (third_party/msf_gif/msf_gif_impl.c) is not in the wasm target's
  *   sources, and the save path ends in a native file dialog the browser has
- *   no equivalent of. */
+ *   no equivalent of.
+ * BOLO_REEL_SPAWN_VIEWER   — the reel's "Spawn in log viewer" button, which
+ *   starts the separate Log Viewer program. A browser page cannot start a
+ *   program. (Tablet mode, which can start one but has no place for a second
+ *   window, hides the button at run time.) */
 #define BOLO_REEL_WBN_FETCH 1
 #ifdef __EMSCRIPTEN__
 #define BOLO_REEL_WBN_FETCH_CURL 0
 #define BOLO_RECAP_WBN_RATING    0
 #define BOLO_RECAP_CLIP_GIF      0
+#define BOLO_REEL_SPAWN_VIEWER   0
 #else
 #define BOLO_REEL_WBN_FETCH_CURL 1
 #define BOLO_RECAP_WBN_RATING    1
 #define BOLO_RECAP_CLIP_GIF      1
+#define BOLO_REEL_SPAWN_VIEWER   1
+#endif
+
+/* BOLO_LOBBY_REEL — the recap's replay reel and the embedded log viewer
+ *   (src/logviewer/lv_embed.c) it plays through. On for every build: the
+ *   desktop links the whole viewer, and iOS, Android and the web client link
+ *   the reel host.
+ * The clip export is in the iOS and Android builds: the GIF encoder's
+ *   implementation TU is in both source lists, and with no save dialog there
+ *   the clip is written under a name of its own (lobby_clip_gif.cpp), into
+ *   the app's Documents folder on iOS, where the Files app shows it, and into
+ *   the app's files directory on Android, from where the share sheet offers
+ *   it. */
+#define BOLO_LOBBY_REEL 1
+
+/* BOLO_CLIP_GIF_GALLERY — the recap's GIF gallery: every clip export is kept
+ *   in a "clips" folder under the per-user pref folder with a small metadata
+ *   file beside it, and a window lists them with copy and save. On wherever
+ *   the clip export is, except iOS, which keeps writing each clip into the
+ *   app's Documents folder for the Files app to show, and Android, where the
+ *   clip goes to the share sheet (see above). */
+#if BOLO_RECAP_CLIP_GIF && !defined(__IPHONEOS__) && !defined(__ANDROID__)
+#define BOLO_CLIP_GIF_GALLERY 1
+#else
+#define BOLO_CLIP_GIF_GALLERY 0
 #endif
 
 /* The types below and the signatures further down name types that come from
@@ -103,6 +133,15 @@ extern "C" {
 #include "../../../visibility_presets.h"
 #ifdef __cplusplus
 }
+#endif
+/* The reel's public calls and the embed calls a screen outside the lobby
+ * uses; the rest of the reel is declared below. */
+#include "lobby_reel.h"
+#if BOLO_RECAP_CLIP_GIF
+/* CLIP_GIF_LEN_DEFAULT_MS, the GIF length LobbyReelState starts at, and
+ * ClipGifMeta, named by the gallery's declarations below. Carries its own
+ * extern "C" guards. */
+#include "../clip_gif_core.h"
 #endif
 
 /* Sizes shared between the cluster that owns the widget and the ones that
@@ -175,6 +214,7 @@ typedef struct LobbyIconCache {
     SDL_Texture  *picture;
     SDL_Texture  *play;
     SDL_Texture  *pause;
+    SDL_Texture  *openWindow;
     bool          attempted;
     /* The renderer instance the icons above were created against. SDL_Texture
      * is tied to the renderer that created it, so if the renderer instance
@@ -297,7 +337,7 @@ typedef struct LobbyChooserState {
     ClientSim *cs               = NULL;
 } LobbyChooserState;
 
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
 /* Everything the reel holds belongs to one round's recap — what is playing,
  * how it is being scrubbed, the optional crop frame over it, where a round
  * still on its way from the server stands, the slack the body hands back and
@@ -354,6 +394,17 @@ typedef struct LobbyReelState {
      * exactly the pixels the outline was drawn over rather than re-deriving the
      * mapping and risking a different answer. */
     SDL_Rect lastSlice = { 0, 0, 0, 0 };
+
+    /* How long the transport's GIF button records, as the player last set it
+     * with the length field or the marker on the seek bar. What is used is
+     * this clamped to the time left after the playhead (clipGifLenClampMs).
+     * The field keeps a typed length as asked for, inside the export's own
+     * floor and cap, so seeking back from near the end gives the longer
+     * length back. The marker keeps the length as dragged: it cannot be
+     * dragged past the end of the round, so a drag near the end keeps the
+     * shorter length after a seek back. Goes back to the default with the
+     * rest of the reel, like the crop frame. */
+    uint32_t gifLenMs = CLIP_GIF_LEN_DEFAULT_MS;
 #endif
 
     /* Where a client that did not record the round stands in getting it from
@@ -362,6 +413,26 @@ typedef struct LobbyReelState {
      * keeps the request to one send per summary. Read by the recap so it can
      * say what is happening in place of a reel it has no bytes for yet. A
      * process replaying its own recording never asks, and leaves these idle. */
+#if BOLO_REEL_SPAWN_VIEWER
+    /* A copy of the bytes the reel was given, for "Spawn in log viewer": the
+     * viewer embed takes the reel's own buffer and frees it, so this is the
+     * only whole copy of the log this side still has. Always a complete log:
+     * the file this process recorded is read only after the recording is
+     * closed, and a download is handed over only once every byte is here.
+     * SDL_malloc'd, freed by lobbyReelEnd. NULL when the copy could not be
+     * made, which keeps the button disabled. */
+    uint8_t *spawnBytes = nullptr;
+    size_t   spawnLen   = 0;
+    /* What the last spawn came to, as a lang id (0 for none): that the viewer
+     * started, or what went wrong. And the SDL tick it stops being shown. */
+    int      spawnMsg       = 0;
+    Uint64   spawnMsgUntilMs = 0;
+    /* The SDL tick the button works again after a viewer was started, so
+     * that a press whose window takes a moment to appear is not pressed
+     * again and again, each press starting another viewer. */
+    Uint64   spawnAgainAtMs = 0;
+#endif
+
     bool    logAsked   = false;
     int     logState   = CLIENT_ROUND_LOG_IDLE;
     uint8_t logPercent = 0;
@@ -540,7 +611,7 @@ void lobbyChatDocsRenderModal(ClientSim *cs);
 void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
                                  BYTE myPlayerNum, bool hasTransport,
                                  float s, BYTE destPlayer);
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
 void lobbyChatInputAppendTime(uint32_t curMs);
 #endif
 
@@ -711,6 +782,9 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
 
 /* status */
 void lobbyRenderConnectivityBadge(SDL_Renderer *renderer, float s);
+/* The width the badge needs (icon, gap and short text), or 0 when it shows
+ * nothing, for a header that has to decide which row it goes on. */
+float lobbyConnectivityBadgeWidth(float s);
 void lobbyRenderRejectToast(ClientSim *cs, float s);
 
 /* recap */
@@ -722,19 +796,20 @@ void lobbyRenderMapSkipVote(ClientSim *cs, bool spectator, bool hasTransport,
                             float s, bool sameLine);
 
 /* reel */
-#if !BOLO_MOBILE
-void lobbyReelEnd(void);
+#if BOLO_LOBBY_REEL
+/* lobbyReelEnd and the reels outside the lobby are in lobby_reel.h. */
 void lobbyReelDropRoundLog(ClientSim *cs);
 void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                      float s);
 #endif
 
 /* clipgif */
-#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+#if BOLO_RECAP_CLIP_GIF
 void lobbyClipGifReset(void);
 bool lobbyClipGifActive(void);
-void lobbyClipGifStartClip(const HighlightWindow *h, const char *mapName);
-void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
+void lobbyClipGifStartClip(const HighlightWindow *h, ClientSim *cs);
+void lobbyClipGifStartFromPlayhead(uint32_t curMs, uint32_t lenMs,
+                                   ClientSim *cs);
 bool lobbyClipGifButton(const char *id, bool compact);
 float lobbyClipGifButtonWidth(void);
 void lobbyClipGifRender(float s);
@@ -746,8 +821,30 @@ void lobbyClipGifSavePoll(void);
 void lobbyClipGifSaveAbandon(void);
 #endif
 
+/* clipgif gallery (lobby_clip_gif_gallery.cpp) */
+#if BOLO_CLIP_GIF_GALLERY
+/* Keeps a finished export in the gallery folder, with its metadata, then
+ * opens the gallery on it. Writes the bytes to a file and keeps no
+ * pointer to them, so the caller still frees them. */
+void lobbyClipGifGalleryAdd(const void *data, size_t len,
+                            const ClipGifMeta *meta, const char *baseName);
+void lobbyClipGifGalleryOpen(void);
+/* The gallery window, drawn once per recap body render while it is open. */
+void lobbyClipGifGalleryRender(float s);
+/* A save picker from the gallery that has been answered; with
+ * lobbyClipGifSavePoll in the lobby's event loop. Also lets go of the
+ * preview, a decode still running and the list when the open window was not
+ * drawn on the last frame; the window stays open. */
+void lobbyClipGifGallerySavePoll(void);
+/* Leaving the lobby: frees the preview's frames and texture and drops a save
+ * picker still waiting. */
+void lobbyClipGifGalleryShutdown(void);
+/* The control that opens the gallery, for the transport row. */
+bool lobbyClipGifGalleryButton(const char *id);
+#endif
+
 /* rating */
-#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
+#if BOLO_RECAP_WBN_RATING
 void lobbyRatingReset(void);
 void lobbyRatingSyncKey(ClientSim *cs, const RoundStatsSummary *st);
 void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
@@ -812,7 +909,7 @@ LobbyMapPreviewState *lobbyMapPreview(void);
 /* s_chooser, owned by chooser. Read by core for the window's visibility and
  * focus edge, and by wbnmaps to flag a fired preview. */
 LobbyChooserState    *lobbyChooser(void);
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
 /* s_reel, owned by reel. Read by core for what is playing, by recap for the
  * slack it hands back, and by clipgif for the crop frame and last slice. */
 LobbyReelState       *lobbyReel(void);
@@ -855,11 +952,11 @@ extern "C" {
  * gamefront.c documents. Scalars and void * only, so no viewer type crosses
  * the seam. Must stay inside this extern "C" block or the calls compile and
  * then fail to link on a mangled symbol. */
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
 bool lvEmbedBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   uint8_t *zipData, size_t zipLen, int viewW, int viewH);
 void lvEmbedEnd(void);
-bool lvEmbedIsActive(void);
+/* lvEmbedIsActive is in lobby_reel.h. */
 void lvEmbedSetViewportSize(int viewW, int viewH);
 bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
                          int *outSrcX, int *outSrcY, int *outSrcW, int *outSrcH);
@@ -881,6 +978,7 @@ void lvEmbedSeekToTime(uint32_t roundRelMs);
 bool lvEmbedFocusPlayerByName(const char *name);
 void lvEmbedStepTicks(int ticks);
 void lvEmbedSetSelfName(const char *name);
+/* The live spectator feed's calls (lvEmbedSpec*) are in lobby_reel.h. */
 #endif
 #if !BOLO_REEL_WBN_FETCH_CURL
 /* Round-log download for the reel's WinBolo.net source

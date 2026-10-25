@@ -35,10 +35,15 @@
  * surviving datagram is due immediately regardless of wall-clock — the tight
  * pump loop never needs SDL_GetTicks() to advance for a packet to deliver.
  * A test that does want a delay= spec calls loopbackHarnessUseVirtualClock,
- * which puts the impairment layer and the client's round-trip measurement on
- * a counter the pump advances 20ms per tick — one serverInstanceTick, which
- * is one 20ms frame of two half-steps, so virtual time runs at the sim's
- * rate. The delay then costs a fixed number of pumps and no real time.
+ * which puts both ends' impairment layers and round-trip measurements on a
+ * counter the pump advances 20ms per tick — one serverInstanceTick, which is
+ * one 20ms frame of two half-steps, so virtual time runs at the sim's rate.
+ * The delay then costs a fixed number of pumps and no real time. The same
+ * call runs the pump in lockstep: no sleeps, and each side waits for exactly
+ * the datagrams the other has put on the wire (counted at both ends) before
+ * it ticks, so neither the recv thread's scheduling nor the loopback path can
+ * move a datagram to another pump. With one client, a seed and the same
+ * script, such a run is the same run on every machine, tick for tick.
  *
  * ── Lifecycle ───────────────────────────────────────────────────────────
  *   loopbackHarnessStart(&h, name, lobbyMode, impairSpec, seed)
@@ -97,6 +102,21 @@ bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
                           bool lobbyMode, const char *impairSpec,
                           uint64_t seed);
 
+/* Called once by loopbackHarnessStartPrepared, with the server sim built and
+ * h->sim set but no client connected yet. `user` is passed through. */
+typedef void (*LoopbackSimSetup)(LoopbackHarness *h, void *user);
+
+/* Same as loopbackHarnessStart, but runs `setup` on the fresh ServerSim
+ * between bringing the server up and connecting the client. A test that has
+ * to shape the world it plays in — carve terrain, move a pillbox — wants the
+ * shaping to be in the map the joiner downloads, not a pile of map events
+ * chasing it afterwards. setup runs under the tick mutex; a NULL setup makes
+ * this exactly loopbackHarnessStart. */
+bool loopbackHarnessStartPrepared(LoopbackHarness *h, const char *playerName,
+                                  bool lobbyMode, const char *impairSpec,
+                                  uint64_t seed, LoopbackSimSetup setup,
+                                  void *user);
+
 /* Join a second player client to a harness that is already up, so a test can
  * observe what one client's departure does to the other's server-side state
  * (a mask keyed by player, a roster entry) — the single-client harness can
@@ -138,11 +158,15 @@ void loopbackHarnessPump(LoopbackHarness *h);
  * a server-side hitch: the client keeps producing while the server stops. */
 void loopbackHarnessPumpClientOnly(LoopbackHarness *h, int n);
 
-/* Drive the client transport's impairment layer from a counter the harness
- * advances instead of the wall clock, so a delay= spec is deterministic and
- * costs no real time. Off by default: the loopback tests that already run
- * impaired keep the wall clock and their existing timing. Call after Start
- * and before the first pump. No effect unless WB_ENABLE_NETIMPAIR is on. */
+/* Drive both transports' impairment layers and ping measurements from a
+ * counter the harness advances 20ms per pump instead of the wall clock, so a
+ * delay= spec is deterministic and costs no real time, and the ping the
+ * server measures is the delay in frames. It also puts the pump in lockstep
+ * (see Determinism above); the server->client half of that needs a single
+ * client and is left off once loopbackHarnessAddClient has added a second.
+ * Off by default: the loopback tests that already run impaired keep the wall
+ * clock and their existing timing. Call after Start and before the first
+ * pump. No effect unless WB_ENABLE_NETIMPAIR is on. */
 void loopbackHarnessUseVirtualClock(LoopbackHarness *h, bool on);
 
 /* Drop the next `count` server->client datagrams of packetType that reach

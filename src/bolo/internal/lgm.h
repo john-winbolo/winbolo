@@ -86,8 +86,11 @@ struct GameSim;
 #define LGM_TANKBOAT_LEAVE 144
 #define LGM_TANKBOAT_RETURN 160
 
-/* How far down a column the pill-drop search walks before stepping across
-   to the next one. Was a bare 10 in lgmAddPillRequest. */
+/* The classic value of the lgm_pill_drop_search rule, which nothing reads.
+   It was how far down a column the builder's pill-drop search walked before
+   stepping across to the next one, before his pill went down in the spiral
+   a dead tank's pills use (pillsDropSpiralFind). The rule is kept so a
+   script that names it still runs. */
 #define LGM_PILL_DROP_SEARCH 10
 
 /* Speed the helicpter flys at */
@@ -97,11 +100,6 @@ struct GameSim;
 
 /* 20 ticks to builds something */
 #define LGM_BUILD_TIME 20
-
-/* On the square he is going to build on (the blessed square), 0 walks the
-   man up to its centre at the base speed, the WinBolo walk. 1 walks him at
-   that square's own terrain speed, the Mac Bolo walk. */
-#define LGM_BLESS_TILE_TERRAIN_SPEED 0
 
 /* Min and Max distance away from thing to achieve goal */
 #define LGM_MIN_GOAL -16
@@ -305,8 +303,9 @@ void lgmRecall(struct GameSim *sim, lgm *lgman);
 *NAME:          lgmDropCarriedPill
 *PURPOSE:
 *  Puts the pillbox the man is carrying down on the map and
-*  leaves him carrying nothing — on the first square at or
-*  below his feet that will hold one, dead and owned by him.
+*  leaves him carrying nothing — dead and owned by him, on
+*  the first square that will hold one in the spiral round
+*  his feet a dead tank's pills are put down with.
 *  Does nothing if he is carrying no pillbox. Dying does this
 *  (lgmKill calls it), and so must his player leaving while
 *  he is out: a pillbox in his hands is in no tank's carry
@@ -509,6 +508,65 @@ void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE own
 *  tnk    - Pointer to the tank
 *********************************************************/
 void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
+
+/*********************************************************
+*NAME:          lgmDeathCheckSeenOut
+*AUTHOR:        John Morrison
+*CREATION DATE: 13/10/26
+*LAST MODIFIED: 13/10/26
+*PURPOSE:
+*  Like lgmDeathCheckAtPosition, for a man the attacker's
+*  screen showed out of his tank at the supplied position.
+*  A man the explosion caught there dies even if he is back
+*  inside his tank now: he dies on the tank's present
+*  centre, through lgmKill. A man who is out now, or dead,
+*  goes through lgmDeathCheckAtPosition unchanged. A man
+*  inside a tank that is itself dead is left alone. The
+*  man's place and the explosion's place are both as the
+*  attacker's screen had them, whatever the shell hit.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game sim structure
+*  lgman  - Pointer to the lgm pointer
+*  lgmWorldX - Where the attacker's screen showed him, X
+*  lgmWorldY - Where the attacker's screen showed him, Y
+*  wx     - X World co ord of the explosion, as the
+*           attacker's screen had it
+*  wy     - Y World co ord of the explosion, likewise
+*  owner  - Who is credited with the kill
+*  attacker - Who the can_die question names
+*  cause  - The DMG_SRC_* the can_die question is handed
+*  pill   - The pill index whose shell it was, or
+*           DMG_NO_PILL
+*  tnk    - Pointer to the tank
+*********************************************************/
+void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
+
+/*********************************************************
+*NAME:          lgmKillInTank
+*AUTHOR:        John Morrison
+*CREATION DATE: 13/10/26
+*LAST MODIFIED: 13/10/26
+*PURPOSE:
+*  Kills a man who is inside his tank: he is put out of it
+*  on the tank's present centre and dies there through
+*  lgmKill, so the tank has no man until he has flown in and
+*  walked back. The one in-tank death path, shared by
+*  lgmDeathCheckSeenOut and the scenario kill that is told
+*  to force it. The can_die question is the caller's to ask.
+*
+*  Returns TRUE if he died. Returns FALSE, with nothing
+*  changed, for a man who is not in his tank or is dead, on
+*  a client, and for a tank that is itself dead or waiting
+*  to come back.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game sim structure
+*  lgman  - Pointer to the lgm pointer
+*  tnk    - Pointer to the tank
+*  owner  - Who is credited with the kill, or NEUTRAL
+*********************************************************/
+bool lgmKillInTank(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE owner);
 
 /*********************************************************
 *NAME:          lgmParchutingIn

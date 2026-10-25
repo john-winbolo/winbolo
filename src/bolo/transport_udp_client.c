@@ -27,6 +27,8 @@
  *    - Handles join handshake and ping measurement.
  *********************************************************/
 
+#include <stdio.h>                      /* fprintf: the lockstep wait note */
+
 #include "transport_udp_internal.h"
 #include "client_timing.h"
 #include "bases.h"
@@ -50,6 +52,7 @@
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
 #include "upload_policy.h"             /* UPLOAD_KIND_MAP / _SCRIPT */
+#include "scenario_identity.h"         /* the scenario-list trailer and details V3 */
 #include "../common/md5.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
@@ -466,6 +469,14 @@ typedef struct {
      * the client's datagram was lost on the wire. 0 = off. */
     uint8_t test_drop_out_type;
     int     test_drop_out_count;
+    /* Lockstep counts for a loopback test. test_wire_sent: datagrams this
+     * client has put on the wire to the server. test_rx_count: datagrams it
+     * has read off its socket. test_rx_expect: how many the server says it
+     * has sent; a read that finds the socket empty short of it waits for the
+     * rest (udpClientRecvFrom). 0 = never wait. */
+    uint32_t test_wire_sent;
+    uint32_t test_rx_count;
+    uint32_t test_rx_expect;
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -503,8 +514,11 @@ static int udpClientLoggedLocalPort = 0;
  * guarded at runtime (netImpairEnabled, and the ping's own cadence) rather
  * than by WB_ENABLE_NETIMPAIR, so they compile into every build and need a
  * definition in both arms; only the settable form exists where the tooling is
- * switched on. Nothing else in this file moves: join retries, the lobby-alone
- * timer, the command queue and the upload pump are real timing. */
+ * switched on. The command queue's resend timer reads it too: a resend is a
+ * datagram, every datagram the impairment layer takes draws from bolo_rand,
+ * and a resend timed off the wall clock would make that count depend on how
+ * fast the caller's machine is. Nothing else in this file moves: join
+ * retries, the lobby-alone timer and the upload pump are real timing. */
 #if WB_ENABLE_NETIMPAIR
 static uint64_t (*s_virtualClock)(void) = NULL;
 
@@ -545,6 +559,9 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
         return;
     }
     udpSendTo(c->sock, buf, len, &c->serverAddr);
+#if WB_ENABLE_NETIMPAIR
+    c->test_wire_sent++;
+#endif
     c->packetsSentThisSec++;
     c->bytesSentThisSec += len;
     if (!udpClientLoggedLocalPort) {
@@ -757,7 +774,7 @@ static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
     packHeader(buf, PACKET_COMMAND_TICK, c->outSequence++);
     size_t pos = PACKET_HEADER_SIZE + 1;  /* +1 for count placeholder */
     uint8_t count = 0;
-    uint32_t now = (uint32_t)SDL_GetTicks();
+    uint32_t now = (uint32_t)udpClientVirtualNow();
     for (uint32_t seq = c->outHeadSeq; seq != c->outTailSeq; seq++) {
         OutCmdEntry *e = &c->outCmdQueue[seq % OUT_CMD_QUEUE_CAP];
         uint8_t entry[COMMAND_MAX_WIRE_BYTES];
@@ -776,6 +793,25 @@ static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
     }
     buf[PACKET_HEADER_SIZE] = count;
     if (count > 0) udpClientSendTo(c, buf, (int)pos);
+}
+
+/* Per-tick send for the head of the outbound command queue: again if it was
+ * sent more than 80ms ago and is still unacked, or now if it has never been
+ * sent at all. A command submitted behind an unacked one waits unsent, and
+ * when the ACK that moves the head onto it lands outside CONNECTED (a lobby
+ * map change sends the re-join before its own ACK) the ACK handler's drain
+ * sends nothing. Without the never-sent case nothing else would ever send it,
+ * and every later command would queue behind it for good. */
+static void udpClientResendCommandHead(TransportUdpClientCtx *c) {
+    uint32_t now;
+    OutCmdEntry *head;
+
+    if (c->outHeadSeq == c->outTailSeq) return;
+    now = (uint32_t)udpClientVirtualNow();
+    head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
+    if (head->lastSentMs == 0 || (now - head->lastSentMs) > 80) {
+        udpClientDrainCommandQueue(c);
+    }
 }
 
 void transportUdpClientSubmitCommand(Transport *t, const ClientCommand *cmd) {
@@ -1021,6 +1057,8 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
     uint8_t finalFlag;
     uint8_t cnt;
     int     i;
+    int     firstIdx;
+    int     filled = 0;
 
     if (!cs) return;
     if (len < PACKET_HEADER_SIZE + 2) return;
@@ -1043,6 +1081,7 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
         cs->lobbyScenarioListCount   = 0;
         cs->lobbyScenarioListStarted = true;
     }
+    firstIdx = cs->lobbyScenarioListCount;
 
     for (i = 0; i < cnt; i++) {
         char file[LOBBY_SCENARIO_LIST_FILE_LEN];
@@ -1064,6 +1103,10 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
             continue;
         }
         idx = cs->lobbyScenarioListCount++;
+        filled++;
+        cs->lobbyScenarioListIdentityKnown[idx] = false;
+        cs->lobbyScenarioListAuthor[idx][0]     = '\0';
+        cs->lobbyScenarioListUpdated[idx][0]    = '\0';
         SDL_strlcpy(cs->lobbyScenarioListFiles[idx], file,
                     LOBBY_SCENARIO_LIST_FILE_LEN);
         SDL_strlcpy(cs->lobbyScenarioListNames[idx], name,
@@ -1079,6 +1122,33 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
             ((uint64_t)unpackU32(buf + pos) << 32) |
             (uint64_t)unpackU32(buf + pos + 4);
         pos += 8;
+    }
+
+    /* The identity trailer (scenario_identity.h), when the server sent one:
+       a tag after the last row and then a blob per row in row order. Read
+       only when every row was, since a blob is matched to its row by
+       position. A row past the cap above still has its blob walked. A blob
+       that does not parse ends the trailer and leaves the rows after it
+       unknown, which is what a server without the trailer gives too. */
+    if (i == cnt && cnt > 0 && pos < len && buf[pos] == SCN_LIST_IDENTITY_TAG) {
+        pos++;
+        for (i = 0; i < cnt; i++) {
+            char author[SCN_AUTHOR_LEN];
+            char updated[SCN_UPDATED_LEN];
+            int  took = scnIdentityBlobRead(buf + pos, (size_t)(len - pos),
+                                            author, sizeof(author), updated,
+                                            sizeof(updated));
+            int  idx  = firstIdx + i;
+
+            if (took < 0) break;
+            pos += took;
+            if (i >= filled) continue;
+            SDL_strlcpy(cs->lobbyScenarioListAuthor[idx], author,
+                        SCN_AUTHOR_LEN);
+            SDL_strlcpy(cs->lobbyScenarioListUpdated[idx], updated,
+                        SCN_UPDATED_LEN);
+            cs->lobbyScenarioListIdentityKnown[idx] = true;
+        }
     }
 
     if (finalFlag) {
@@ -1832,10 +1902,13 @@ static void udpClientSendScnDetailsReq(TransportUdpClientCtx *c, int slot) {
     packHeader(buf, PACKET_LOBBY_SCENARIO_DETAILS_REQ, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = (uint8_t)n;
     memcpy(buf + PACKET_HEADER_SIZE + 1, cs->lobbyScnDetails[slot].file, n);
-    /* The flags byte after the name asks for the settings block as well. An
-       older server reads the name by its length and never looks here, so it
-       answers as it always has. */
-    buf[PACKET_HEADER_SIZE + 1 + n] = BULK_SCN_DETAILS_WANT_SETTINGS;
+    /* The flags byte after the name asks for the settings block and the
+       file's identity as well. An older server reads the name by its length
+       and never looks here, so it answers as it always has; one that knows
+       settings and not identity ignores the bit it does not know. */
+    buf[PACKET_HEADER_SIZE + 1 + n] =
+        (uint8_t)(BULK_SCN_DETAILS_WANT_SETTINGS |
+                  BULK_SCN_DETAILS_WANT_IDENTITY);
     udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n + 1));
     cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_ASKED;
     cs->lobbyScnDetails[slot].tries++;
@@ -2403,10 +2476,13 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         }
         c->joinState = UDP_CLIENT_CONNECTED;
         /* A map list request made while the join was not complete was never
-         * sent, and a map change always re-joins, so the listing the chooser
-         * asked for then is still owed. Drop the cache and tick the counter
-         * the chooser watches so it asks again now that a request goes out. */
-        cs->lobbyMapListReady    = false;
+         * sent, and a map change always re-joins. Let the chooser retry a
+         * missing listing now that requests can go out, but keep a completed
+         * cache: changing the active map does not change the directory. An
+         * empty listing while re-fetching would reset the chooser's scroll.
+         * An upload invalidates the uploader's own cache when it completes;
+         * other clients keep theirs, and so miss the new file, until they
+         * navigate to another folder and back. */
         cs->lobbyMapListInFlight = false;
         cs->lobbyMapListSeq++;
         installCompressedMap(cs, c->mapDownloadBuf,
@@ -2569,6 +2645,47 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         if (slot < 0 || slot >= LOBBY_SCN_DETAILS_SLOTS) break;
         if (cs->lobbyScnDetails[slot].state != LOBBY_SCN_DETAILS_ASKED ||
             strcmp(cs->lobbyScnDetails[slot].file, h->path) != 0) {
+            break;
+        }
+        if (buf[0] == BULK_SCN_DETAILS_FOUND_V3) {
+            /* [status][detailsLen 2][details][settingsLen 2][settings]
+               [identity], bytes after the identity ignored. A length past
+               the blob makes the whole answer not-found; an identity that
+               does not parse leaves the details and settings standing and
+               the identity not known. */
+            size_t total = (size_t)h->totalSize;
+            size_t dLen;
+            size_t sLen;
+            size_t at;
+            char   author[SCN_AUTHOR_LEN];
+            char   updated[SCN_UPDATED_LEN];
+
+            if (total < 3) {
+                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
+                break;
+            }
+            dLen = ((size_t)buf[1] << 8) | buf[2];
+            if (3 + dLen + 2 > total) {
+                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
+                break;
+            }
+            at   = 3 + dLen;
+            sLen = ((size_t)buf[at] << 8) | buf[at + 1];
+            at  += 2;
+            if (at + sLen > total) {
+                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
+                break;
+            }
+            clientSimLobbyScenarioDetailsPut(cs, h->path, true, buf + 3,
+                                             dLen);
+            clientSimLobbyScenarioSettingsPut(cs, h->path, buf + at, sLen);
+            at += sLen;
+            if (scnIdentityBlobRead(buf + at, total - at, author,
+                                    sizeof(author), updated,
+                                    sizeof(updated)) >= 0) {
+                clientSimLobbyScenarioIdentityPut(cs, h->path, author,
+                                                  updated);
+            }
             break;
         }
         if (buf[0] == BULK_SCN_DETAILS_FOUND_V2) {
@@ -4180,6 +4297,40 @@ static void udpClientSendPunchRequest(TransportUdpClientCtx *c) {
            (const struct sockaddr *)&dest, sizeof(dest));
 }
 
+/* One datagram off the socket, or <= 0 when it is empty. In the test build a
+ * loopback harness that drives client and server in lockstep tells the client
+ * how many datagrams the server has sent it (test_rx_expect). A read that
+ * finds the socket empty short of that number waits for the rest, so the
+ * loopback path cannot split one server tick's datagrams across two client
+ * ticks. If they do not come the wait gives up, says so, and stops counting
+ * the missing ones, so one lost datagram costs one wait and not one per tick.
+ * The default expectation of 0 never waits. */
+#if WB_ENABLE_NETIMPAIR
+#define UDP_CLIENT_TEST_RX_WAIT_MS 1000
+#endif
+static int udpClientRecvFrom(TransportUdpClientCtx *c, uint8_t *buf, int cap,
+                             struct sockaddr_in *fromAddr) {
+    int len = udpRecvFrom(c->sock, buf, cap, fromAddr);
+#if WB_ENABLE_NETIMPAIR
+    if (len <= 0 && c->test_rx_count < c->test_rx_expect) {
+        uint64_t giveUpAt = SDL_GetTicks() + UDP_CLIENT_TEST_RX_WAIT_MS;
+        while (len <= 0 && SDL_GetTicks() < giveUpAt) {
+            SDL_Delay(1);
+            len = udpRecvFrom(c->sock, buf, cap, fromAddr);
+        }
+        if (len <= 0) {
+            fprintf(stderr, "  [udp client] lockstep: %u of %u server "
+                            "datagrams arrived in %dms; going on without "
+                            "the rest\n", (unsigned)c->test_rx_count,
+                    (unsigned)c->test_rx_expect, UDP_CLIENT_TEST_RX_WAIT_MS);
+            c->test_rx_count = c->test_rx_expect;
+        }
+    }
+    if (len > 0) c->test_rx_count++;
+#endif
+    return len;
+}
+
 /* Receive-and-apply seam: drain the socket and apply any snapshots (and all
  * other inbound packet processing — control, PONG, handshake, map) without
  * advancing any per-tick state.  Called both from udpClientTick (where the
@@ -4196,7 +4347,7 @@ static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
     int len;
 
     /* Receive all pending packets from the wire */
-    while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
+    while ((len = udpClientRecvFrom(c, buf, (int)sizeof(buf), &fromAddr)) > 0) {
         if (netImpairEnabled(&c->impairIn)) {
             netImpairOffer(&c->impairIn, buf, len, &fromAddr,
                            udpClientVirtualNow());
@@ -4304,6 +4455,9 @@ static bool udpClientTick(void *ctx) {
         while ((plen = netImpairPop(&c->impairOut, pbuf, sizeof(pbuf),
                                     &paddr, now)) > 0) {
             udpSendTo(c->sock, pbuf, plen, &paddr);
+#if WB_ENABLE_NETIMPAIR
+            c->test_wire_sent++;
+#endif
         }
     }
 
@@ -4582,27 +4736,14 @@ static bool udpClientTick(void *ctx) {
             }
         }
 
-        /* Retransmit head of the outbound command queue if the head
-         * entry was sent more than 80ms ago and is still unacked. */
-        if (c->outHeadSeq != c->outTailSeq) {
-            uint32_t now = (uint32_t)SDL_GetTicks();
-            OutCmdEntry *head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
-            if (head->lastSentMs != 0 && (now - head->lastSentMs) > 80) {
-                udpClientDrainCommandQueue(c);
-            }
-        }
+        udpClientResendCommandHead(c);
     }
 
     /* A spectator runs only the command-queue retransmit (its sole outbound
      * traffic is CMD_CHAT); the ping/timeout/upload pumps above are player-only.
      * Without this a spectator's chat would send once and never retry on loss. */
-    if (c->joinState == UDP_CLIENT_SPECTATING &&
-        c->outHeadSeq != c->outTailSeq) {
-        uint32_t now = (uint32_t)SDL_GetTicks();
-        OutCmdEntry *head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
-        if (head->lastSentMs != 0 && (now - head->lastSentMs) > 80) {
-            udpClientDrainCommandQueue(c);
-        }
+    if (c->joinState == UDP_CLIENT_SPECTATING) {
+        udpClientResendCommandHead(c);
     }
 
     return true;
@@ -6198,6 +6339,16 @@ void transportUdpClientTestDropNextOut(Transport *t, uint8_t packet_type,
 int transportUdpClientTestDropNextOutLeft(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     return c->test_drop_out_count;
+}
+
+uint32_t transportUdpClientTestWireSent(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    return c->test_wire_sent;
+}
+
+void transportUdpClientTestExpectRx(Transport *t, uint32_t serverSent) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    c->test_rx_expect = serverSent;
 }
 #endif
 

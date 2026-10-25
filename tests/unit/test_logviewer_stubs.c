@@ -37,7 +37,7 @@ void lv_startOfLog(void);
 void lv_updateItem(BYTE itemType, BYTE itemNumber, BYTE owner, BYTE x,
                    BYTE y, BYTE armour, BYTE shells, BYTE mines, bool inTank);
 void lv_windowRemoveEvents(void);
-void lv_windowRemoveEventsAfter(uint32_t timeMs);
+void lv_windowEventsRewound(void);
 void lv_drawResizeRenderTarget(void);
 void lv_messageCreate(void);
 void lv_messageDestroy(void);
@@ -76,7 +76,7 @@ void lv_updateItem(BYTE itemType, BYTE itemNumber, BYTE owner, BYTE x,
 
 void lv_windowRemoveEvents(void) {}
 
-void lv_windowRemoveEventsAfter(uint32_t timeMs) { (void)timeMs; }
+void lv_windowEventsRewound(void) {}
 
 /* Every newswire and status line lv_messageAdd posts arrives here. The count
  * lets a test tell how many lines a stretch of playback or a seek posted
@@ -85,8 +85,8 @@ int g_lvStubEventsAdded = 0;
 
 /* Declared in backend.h (already included). */
 void lv_finished(void) {}
-void lv_windowAddEvent(int eventType, char *msg) {
-  (void)eventType; (void)msg;
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg) {
+  (void)eventType; (void)kind; (void)mapX; (void)mapY; (void)msg;
   g_lvStubEventsAdded++;
 }
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {

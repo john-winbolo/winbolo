@@ -9,6 +9,12 @@
 -- (5). So the hop square is straight ahead, BUILT_ARMOUR squares along the way
 -- the tank faces when the order goes.
 --
+-- Seat 1 drives at a quarter of the classic speed all game, so after the
+-- shot-down seat 0 gets to his own prize first. The test checks that the
+-- holder does pick it up again, not who wins the race to it. The speed is
+-- set again every tick, because the script's panel refresh clears a
+-- non-holder's speed modifier five times a second.
+--
 -- PASS: the hop square is that square, the prize stands there, and then seat 0
 -- has it in his tank again (shot down and picked up).
 
@@ -28,6 +34,10 @@ function on_tick(tick)
       A.given = true
     end
     return
+  end
+  local hunter = game.tank(1)
+  if hunter ~= nil and hunter.mods.speed ~= 25 then
+    game.set_modifiers(1, { speed = 25 })
   end
   local me = game.tank(0)
   if A.plan == nil then

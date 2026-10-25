@@ -72,6 +72,9 @@ extern "C" {
 #include "../map_preview_view.h"
 #include "../map_preview_popup.h"
 #include "../../../bolo/public/client_mappreview.h"
+#if defined(__ANDROID__)
+#include "../../../android/android_device.h"  /* androidDeviceMulticastHold */
+#endif
 
 #ifdef __EMSCRIPTEN__
 /* The web's internet game list (src/wasm/finder_wasm.c). Start hands the
@@ -200,6 +203,14 @@ struct ServerEntry {
     int  scenarioMaxPlayers;      /* human cap, 0 = none */
     int  modCount;
     char modNames[DISCOVERY_SCRIPT_MODS_MAX][DISCOVERY_SCRIPT_NAME_LEN];
+    /* The host's own short name and description for the server. A tracker
+     * row fills them from WinBolo.net, with the description whole; a LAN
+     * row, or a tracker row WinBolo.net sent none for, fills them from the
+     * server's reply. Empty when the host set none or the server predates
+     * them; the row then shows the address as before. Already sanitised by
+     * the reader. */
+    char serverName[DISCOVERY_SERVER_NAME_LEN];
+    char serverDescription[DISCOVERY_SERVER_DESC_LEN];
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
 
@@ -209,6 +220,9 @@ static_assert(DISCOVERY_SCRIPT_NAME_LEN == WBN_SERVERLIST_NAME_LEN,
               "a tracker script name must fit ServerEntry's name buffers");
 static_assert(DISCOVERY_SCRIPT_MODS_MAX == WBN_SERVERLIST_MODS_MAX,
               "a tracker row's mods must fit ServerEntry's mod list");
+static_assert(DISCOVERY_SERVER_NAME_LEN == SERVER_NAME_LEN &&
+              DISCOVERY_SERVER_DESC_LEN == SERVER_DESC_LEN,
+              "a tracker row's server name and description must fit whole");
 
 /* Copy the scripts from a server's own reply into e, replacing whatever a
  * tracker row put there. The web build has no LAN search and no info ping,
@@ -224,6 +238,14 @@ static void serverEntrySetScripts(ServerEntry &e, const DiscoveryScripts &sc) {
     e.modCount = n;
     for (int m = 0; m < n; m++) {
         SDL_strlcpy(e.modNames[m], sc.modNames[m], sizeof(e.modNames[m]));
+    }
+    /* The reply cuts the description to the room left in the packet, and
+     * WinBolo.net has it whole, so a tracker row keeps what it was given.
+     * Both come from the host's one setting, so they do not disagree. */
+    if (e.serverName[0] == '\0' && e.serverDescription[0] == '\0') {
+        SDL_strlcpy(e.serverName, sc.serverName, sizeof(e.serverName));
+        SDL_strlcpy(e.serverDescription, sc.serverDescription,
+                    sizeof(e.serverDescription));
     }
     e.hasScriptReply = true;
 }
@@ -888,6 +910,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * writing after the dialog function returns (avoids blocking on exit). */
     static std::atomic<bool> searching(false);
     static std::atomic<bool> searchDone(false);
+    /* Set by the mDNS worker when its window ends. A search is complete only
+     * once both workers are done, so the frame loop never waits on a join:
+     * where the broadcast fails at once (iOS without the multicast
+     * entitlement) the mDNS worker still has its whole window to run. */
+    static std::atomic<bool> mdnsDone(true);
 #ifndef __EMSCRIPTEN__
     static std::thread searchThread;
     /* LAN mDNS browse runs on its own thread alongside the broadcast worker
@@ -910,6 +937,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         searchDone = false;
         searching = false;
         if (searchThread.joinable()) searchThread.join();
+        if (!mdnsDone) discoveryAbortMdnsSearch();
         if (mdnsThread.joinable()) mdnsThread.join();
     }
 
@@ -1012,15 +1040,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         }
 #endif
 
-        /* Check if background search completed */
-        if (searchDone) {
+        /* Check if background search completed: the main worker and, for a
+         * LAN search, the mDNS worker too, so neither join below can block
+         * the frame. */
+        if (searchDone && mdnsDone) {
             searchDone = false;
 #ifndef __EMSCRIPTEN__
             if (searchThread.joinable()) {
                 searchThread.join();
             }
-            /* The mDNS worker (LAN searches) shares the 5s window and is
-             * effectively done too; join it so it doesn't linger. */
             if (mdnsThread.joinable()) {
                 mdnsThread.join();
             }
@@ -1086,6 +1114,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         for (int m = 0; m < e.modCount; m++) {
                             SDL_strlcpy(e.modNames[m], w.modNames[m], sizeof(e.modNames[m]));
                         }
+                        SDL_strlcpy(e.serverName, w.serverName, sizeof(e.serverName));
+                        SDL_strlcpy(e.serverDescription, w.serverDescription,
+                                    sizeof(e.serverDescription));
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -1426,6 +1457,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (searchThread.joinable()) {
                     searchThread.join();
                 }
+                /* An mDNS window still running is cut short rather than
+                 * waited out. */
+                if (!mdnsDone) discoveryAbortMdnsSearch();
                 if (mdnsThread.joinable()) {
                     mdnsThread.join();
                 }
@@ -1467,11 +1501,22 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                  * owns the searchDone/searchResultOk signal; this thread just
                  * contributes additional servers. */
                 if (!sp.tracker) {
+                    mdnsDone = false;
                     mdnsThread = std::thread([]() {
                         static BroadcastCbData mcbd;
                         mcbd.servers = &servers;
                         mcbd.serversMtx = &serversMtx;
+#if defined(__ANDROID__)
+                        /* The Wi-Fi driver drops multicast unless the app
+                         * holds its multicast lock, and holding it costs
+                         * battery, so it is held for the browse alone. */
+                        androidDeviceMulticastHold(true);
+#endif
                         discoveryFindMdnsGamesAsync(broadcastServerCallback, &mcbd);
+#if defined(__ANDROID__)
+                        androidDeviceMulticastHold(false);
+#endif
+                        mdnsDone = true;
                     });
                 }
 #endif
@@ -1492,6 +1537,32 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::Spacing();
         }
 
+        /* The status line's text: the search state and the server count, with
+         * the pings still out while there are any. A lambda, so the iOS
+         * layout below can measure the line it will draw. */
+        auto statusLineText = [&]() -> const char * {
+            int total = (int)servers.size();
+            int pendingPings = 0;
+            /* The web never pings, so its rows stay unpinged rather than
+             * pending and the count stays at zero. */
+#ifndef __EMSCRIPTEN__
+            {
+                std::lock_guard<std::mutex> lock(serversMtx);
+                for (auto &sv : servers) {
+                    if (sv.pingMs == -1) pendingPings++;
+                }
+            }
+#endif
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1, statusText, sizeof(args.string1));
+            args.number = total;
+            if (pendingPings > 0) {
+                args.number2 = pendingPings;
+                return langGetTextFmt(STR_DLGBROWSER_STATUS_PINGING, &args);
+            }
+            return langGetTextFmt(STR_DLGBROWSER_STATUS, &args);
+        };
+
         /* ---- Server list + detail pane ---- */
         /* Reserve space for: filters row + separator + status + button row */
         float frameH = ImGui::GetFrameHeightWithSpacing();
@@ -1504,6 +1575,92 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                        + spacingY     /* Spacing */
                        + frameH       /* button row */
                        + spacingY;    /* bottom padding */
+#if BOLO_MOBILE
+        /* iOS is too narrow for the desktop's one row of fixed-width buttons,
+         * and the status legend can run off the right edge too. Each button
+         * is as wide as its label needs, and every button and legend entry
+         * that would pass the right edge starts a new row instead. The rows
+         * are worked out here, from the buttons this frame shows, so the
+         * list leaves room for them; the drawing below follows iosBreak. */
+        auto iosBtnW = [&](const char *label) {
+            float w = ImGui::CalcTextSize(label).x
+                    + ImGui::GetStyle().FramePadding.x * 2.0f;
+            return w > 90.0f * s ? w : 90.0f * s;
+        };
+        enum {
+            IOS_BTN_JOIN, IOS_BTN_SPECTATE, IOS_BTN_ENLARGE, IOS_BTN_REJOIN,
+            IOS_BTN_NEWGAME, IOS_BTN_NAME, IOS_BTN_MANUAL, IOS_BTN_CANCEL,
+            IOS_BTN_COUNT
+        };
+        const char *iosBtnLabel[IOS_BTN_COUNT] = {
+            langGetText(STR_DLGTCP_JOIN), langGetText(STR_DLGBROWSER_SPECTATE),
+            langGetText(STR_DLGBROWSER_ENLARGE_BTN), langGetText(STR_DLGTCP_REJOIN),
+            langGetText(STR_DLGBROWSER_NEWGAME),
+            langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN),
+            langGetText(STR_DLGBROWSER_MANUAL), langGetText(STR_CANCEL)
+        };
+        const bool iosBtnShown[IOS_BTN_COUNT] = {
+            true, true, uiShouldUseControllerMode(), true,
+            true, true, true, true
+        };
+        bool iosBreak[IOS_BTN_COUNT] = {};
+        const float iosGap = ImGui::GetStyle().ItemSpacing.x;
+        const float iosUsableW = panelW - ImGui::GetStyle().WindowPadding.x * 2.0f;
+        {
+            float x = 0.0f;
+            bool first = true;
+            for (int b = 0; b < IOS_BTN_CANCEL; b++) {
+                if (!iosBtnShown[b]) continue;
+                float w = iosBtnW(iosBtnLabel[b]);
+                if (!first && x + iosGap + w > iosUsableW) {
+                    iosBreak[b] = true;
+                    bottomH += frameH;
+                    x = w;
+                } else {
+                    x += (first ? 0.0f : iosGap) + w;
+                }
+                first = false;
+            }
+            /* Cancel sits at the right edge of the last row if it fits
+             * there, otherwise alone on a row of its own. */
+            if (x + iosGap + iosBtnW(iosBtnLabel[IOS_BTN_CANCEL]) > iosUsableW) {
+                iosBreak[IOS_BTN_CANCEL] = true;
+                bottomH += frameH;
+            }
+        }
+        /* The same for the legend after the status text: four entries, each
+         * a dot and its label. */
+        enum { IOS_LEG_LOBBY, IOS_LEG_INGAME, IOS_LEG_LOCKED, IOS_LEG_NORESP, IOS_LEG_COUNT };
+        const langid iosLegLabel[IOS_LEG_COUNT] = {
+            STR_DLGBROWSER_ST_LOBBY, STR_DLGBROWSER_ST_INGAME,
+            STR_DLGBROWSER_ST_LOCKED, STR_DLGBROWSER_ST_NORESP
+        };
+        bool iosLegBreak[IOS_LEG_COUNT] = {};
+        {
+            const float lh = ImGui::GetTextLineHeight();
+            const float legGap = 16.0f * s;
+            float x = ImGui::CalcTextSize(statusLineText()).x;
+            for (int l = 0; l < IOS_LEG_COUNT; l++) {
+                float w = lh * 0.60f + 4.0f + 4.0f +
+                          ImGui::CalcTextSize(langGetText(iosLegLabel[l])).x;
+                if (x + legGap + w > iosUsableW) {
+                    iosLegBreak[l] = true;
+                    bottomH += frameH;
+                    x = w;
+                } else {
+                    x += legGap + w;
+                }
+            }
+        }
+        /* Before every button but the first: beside the last one, or at the
+         * start of a new row. */
+        auto iosPlace = [&](int b) {
+            if (!iosBreak[b]) ImGui::SameLine();
+        };
+        auto iosLegPlace = [&](int l) {
+            if (!iosLegBreak[l]) ImGui::SameLine(0.0f, 16.0f * s);
+        };
+#endif
 
         /* Status-dot colours, shared by the legend and the list rows. */
         const ImVec4 dotGreen (0.40f, 0.80f, 0.40f, 1.0f);  /* in lobby */
@@ -1569,6 +1726,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
             auto nameKey = [&](int idx) -> const char * {
                 const ServerEntry &e = servers[idx];
+                if (e.serverName[0] != '\0') return e.serverName;
                 return e.hostName[0] != '\0' ? e.hostName : e.address;
             };
             std::stable_sort(visible.begin(), visible.end(),
@@ -1702,19 +1860,54 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 float pingLeft = textRight - ImGui::CalcTextSize(pingStr).x;
 #endif
 
-                /* Name line — host name if known, else address:port. Clamp its
+                /* Name line — the host's server name if it set one, else
+                 * the host name if known, else address:port. Clamp its
                  * width to (pingLeft − gap) so a long reverse-DNS can't overlap
                  * the ping; binary-search the longest prefix that fits + "...". */
-                char name[288];
+                char where[288];
                 if (e.hostName[0] != '\0') {
-                    SDL_snprintf(name, sizeof(name), "%s", e.hostName);
+                    SDL_snprintf(where, sizeof(where), "%s", e.hostName);
                 } else {
-                    SDL_snprintf(name, sizeof(name), "%s:%u", e.address, e.port);
+                    SDL_snprintf(where, sizeof(where), "%s:%u", e.address, e.port);
                 }
+                char name[288];
+                SDL_snprintf(name, sizeof(name), "%s",
+                             e.serverName[0] != '\0' ? e.serverName : where);
                 browserClampText(name, sizeof(name),
                                  pingLeft - (8.0f * s) - textX);
                 dl->AddText(ImVec2(textX, p0.y + pad),
                             ImGui::GetColorU32(ImGuiCol_Text), name);
+                /* A named server hides its address on the row, so pointing
+                 * at the name shows the address and the description. Asked
+                 * of the name's own rectangle for the same reason as the
+                 * visibility label below. */
+                if (e.serverName[0] != '\0' || e.serverDescription[0] != '\0') {
+                    ImVec2 nMin(textX, p0.y + pad);
+                    ImVec2 nMax(textX + ImGui::CalcTextSize(name).x,
+                                nMin.y + lineH);
+                    if (ImGui::IsWindowHovered() &&
+                        ImGui::IsMouseHoveringRect(nMin, nMax)) {
+                        /* The full address, as the detail pane gives it:
+                         * a resolved host name alone would hide it. */
+                        char addr[sizeof(e.hostName) + sizeof(e.address) + 16];
+                        if (e.hostName[0] != '\0') {
+                            SDL_snprintf(addr, sizeof(addr), "%s (%s:%u)",
+                                         e.hostName, e.address, e.port);
+                        } else {
+                            SDL_snprintf(addr, sizeof(addr), "%s:%u",
+                                         e.address, e.port);
+                        }
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted(addr);
+                        if (e.serverDescription[0] != '\0') {
+                            ImGui::PushTextWrapPos(
+                                ImGui::GetFontSize() * 28.0f);
+                            ImGui::TextUnformatted(e.serverDescription);
+                            ImGui::PopTextWrapPos();
+                        }
+                        ImGui::EndTooltip();
+                    }
+                }
 
                 /* Game-type abbreviation, right-aligned under the ping, and
                    the name of the visibility set just left of it. The set is
@@ -1967,6 +2160,36 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 auto label = [&](const char *t) { ImGui::TextColored(accent, "%s", t); };
 
                 if (ImGui::BeginTable("##gbdetail", 2, ImGuiTableFlags_SizingFixedFit)) {
+                    /* Server — the host's name and, under it, the
+                     * description, wrapped like the scenario's. Only when
+                     * the host set either; then the address follows on its
+                     * own row, since the list row shows the name instead. */
+                    if (sel.serverName[0] != '\0' || sel.serverDescription[0] != '\0') {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_SERVER));
+                        ImGui::TableSetColumnIndex(1);
+                        if (sel.serverName[0] != '\0') {
+                            ImGui::TextUnformatted(sel.serverName);
+                        }
+                        if (sel.serverDescription[0] != '\0') {
+                            ImGui::PushTextWrapPos(ImGui::GetWindowContentRegionMax().x);
+                            ImGui::TextUnformatted(sel.serverDescription);
+                            ImGui::PopTextWrapPos();
+                        }
+
+                        char addr[sizeof(sel.hostName) + sizeof(sel.address) + 16];
+                        if (sel.hostName[0] != '\0') {
+                            SDL_snprintf(addr, sizeof(addr), "%s (%s:%u)",
+                                         sel.hostName, sel.address, sel.port);
+                        } else {
+                            SDL_snprintf(addr, sizeof(addr), "%s:%u",
+                                         sel.address, sel.port);
+                        }
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_ADDRESS));
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(addr);
+                    }
+
                     /* Type */
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_TYPE));
@@ -2249,27 +2472,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         /* ---- Status bar ---- */
         {
-            int total = (int)servers.size();
-            int pendingPings = 0;
-            /* The web never pings, so its rows stay unpinged rather than
-             * pending and the count stays at zero. */
-#ifndef __EMSCRIPTEN__
-            {
-                std::lock_guard<std::mutex> lock(serversMtx);
-                for (auto &s : servers) {
-                    if (s.pingMs == -1) pendingPings++;
-                }
-            }
-#endif
-            MessageArgs args = {};
-            SDL_strlcpy(args.string1, statusText, sizeof(args.string1));
-            args.number = total;
-            if (pendingPings > 0) {
-                args.number2 = pendingPings;
-                ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_STATUS_PINGING, &args));
-            } else {
-                ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_STATUS, &args));
-            }
+            ImGui::TextUnformatted(statusLineText());
 
             /* Status-dot legend, trailing the status text on the same line. */
             auto legendDot = [&](const ImVec4 &col, bool filled, const char *txt) {
@@ -2284,16 +2487,32 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 ImGui::SameLine(0.0f, 4.0f);
                 ImGui::TextDisabled("%s", txt);
             };
+#if BOLO_MOBILE
+            iosLegPlace(IOS_LEG_LOBBY);
+#else
             ImGui::SameLine(0.0f, 16.0f * s);
+#endif
             legendDot(dotGreen,  true,  langGetText(STR_DLGBROWSER_ST_LOBBY));
+#if BOLO_MOBILE
+            iosLegPlace(IOS_LEG_INGAME);
+#else
             ImGui::SameLine(0.0f, 16.0f * s);
+#endif
             legendDot(dotOrange, true,  langGetText(STR_DLGBROWSER_ST_INGAME));
+#if BOLO_MOBILE
+            iosLegPlace(IOS_LEG_LOCKED);
+#else
             ImGui::SameLine(0.0f, 16.0f * s);
+#endif
             legendDot(dotRed,    true,  langGetText(STR_DLGBROWSER_ST_LOCKED));
             /* A grey dot is a server that did not answer the ping, which the
              * web never sends. */
 #ifndef __EMSCRIPTEN__
+#if BOLO_MOBILE
+            iosLegPlace(IOS_LEG_NORESP);
+#else
             ImGui::SameLine(0.0f, 16.0f * s);
+#endif
             legendDot(dotGrey,   false, langGetText(STR_DLGBROWSER_ST_NORESP));
 #endif
         }
@@ -2362,7 +2581,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 #else
             if (!hasSelection) ImGui::BeginDisabled();
 
+#if BOLO_MOBILE
+            if (ImGui::Button(langGetText(STR_DLGTCP_JOIN),
+                              ImVec2(iosBtnW(langGetText(STR_DLGTCP_JOIN)), btnH))) {
+#else
             if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
+#endif
                 const ServerEntry &e = servers[selectedItem];
                 /* No version-equality gate — the pre-flight info-request
                  * inside gameFrontSetDlgState(openUdpJoin) surfaces a
@@ -2385,17 +2609,25 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (!hasSelection) ImGui::EndDisabled();
 #endif
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__)
             /* Spectate — beside Join. Enabled only when the selected server
              * advertises spectator support. Unlike Join it needs no player
              * name: a spectator is tankless and read-only, so the name guard
-             * is deliberately skipped. The spectator host (logviewer-side) is
-             * desktop-only, so this is gated to match the openSpectate case. */
+             * is deliberately skipped. The spectator host is logviewer-side:
+             * the modal viewer on the desktop, the reel on iOS and Android
+             * (mobile_spectator.cpp). The web client has neither, which
+             * matches the openSpectate case. */
+#if BOLO_MOBILE
+            iosPlace(IOS_BTN_SPECTATE);
+            const float spectateW = iosBtnW(langGetText(STR_DLGBROWSER_SPECTATE));
+#else
             ImGui::SameLine();
+            const float spectateW = btnW;
+#endif
             const bool canSpectate =
                 hasSelection && servers[selectedItem].allowSpectators;
             if (!canSpectate) ImGui::BeginDisabled();
-            if (ImGui::Button(langGetText(STR_DLGBROWSER_SPECTATE), ImVec2(btnW, btnH))) {
+            if (ImGui::Button(langGetText(STR_DLGBROWSER_SPECTATE), ImVec2(spectateW, btnH))) {
                 const ServerEntry &e = servers[selectedItem];
                 char playerName[PLAYER_NAME_LEN];
                 gameFrontGetPlayerName(playerName);
@@ -2415,9 +2647,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
              * first-class footer action. Disabled until the selected server has
              * a loaded preview. */
             if (uiShouldUseControllerMode()) {
+#if BOLO_MOBILE
+                iosPlace(IOS_BTN_ENLARGE);
+                const float enlargeW = iosBtnW(langGetText(STR_DLGBROWSER_ENLARGE_BTN));
+#else
                 ImGui::SameLine();
+                const float enlargeW = btnW;
+#endif
                 if (!previewEnlargeReady) ImGui::BeginDisabled();
-                if (ImGui::Button(langGetText(STR_DLGBROWSER_ENLARGE_BTN), ImVec2(btnW, btnH))
+                if (ImGui::Button(langGetText(STR_DLGBROWSER_ENLARGE_BTN), ImVec2(enlargeW, btnH))
                     && !loadedPreviewComp.empty()) {
                     mapPreviewPopupOpenCompressed(loadedPreviewComp.data(),
                                                   (int)loadedPreviewComp.size(),
@@ -2433,9 +2671,18 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
              * rejoin nor the name set here would reach it. */
 #ifndef __EMSCRIPTEN__
             /* Rejoin */
+#if BOLO_MOBILE
+            iosPlace(IOS_BTN_REJOIN);
+#else
             ImGui::SameLine();
+#endif
             if (!hasSelection) ImGui::BeginDisabled();
+#if BOLO_MOBILE
+            if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN),
+                              ImVec2(iosBtnW(langGetText(STR_DLGTCP_REJOIN)), btnH))) {
+#else
             if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN), ImVec2(btnW, btnH))) {
+#endif
                 const ServerEntry &e = servers[selectedItem];
                 char playerName[PLAYER_NAME_LEN];
                 gameFrontGetPlayerName(playerName);
@@ -2454,9 +2701,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
-            /* New Game */
+            /* New Game, on both tabs. */
+#if BOLO_MOBILE
+            const float newGameW = iosBtnW(langGetText(STR_DLGBROWSER_NEWGAME));
+            iosPlace(IOS_BTN_NEWGAME);
+#else
+            const float newGameW = btnW;
             ImGui::SameLine();
-            if (ImGui::Button(langGetText(STR_DLGBROWSER_NEWGAME), ImVec2(btnW, btnH))) {
+#endif
+            if (ImGui::Button(langGetText(STR_DLGBROWSER_NEWGAME), ImVec2(newGameW, btnH))) {
                 char playerName[PLAYER_NAME_LEN];
                 gameFrontGetPlayerName(playerName);
                 gameFrontSetUdpOptions(playerName, (char *)"",
@@ -2470,16 +2723,31 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (useTracker) imguiHelpTooltip(langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
 
             /* Player Name */
+#if BOLO_MOBILE
+            iosPlace(IOS_BTN_NAME);
+            if (ImGui::Button(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN),
+                              ImVec2(iosBtnW(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN)), btnH))) {
+#else
             ImGui::SameLine(0.0f, 20.0f);
             if (ImGui::Button(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN), ImVec2(btnW + 30.0f * s, btnH))) {
+#endif
                 gameFrontGetPlayerName(nameEditBuf);
                 ImGui::OpenPopup(setNamePopupId);
             }
             imguiHandOnHover();
 
             /* Manual Connect */
+#if BOLO_MOBILE
+            iosPlace(IOS_BTN_MANUAL);
+#else
             ImGui::SameLine();
+#endif
+#if BOLO_MOBILE
+            if (ImGui::Button(langGetText(STR_DLGBROWSER_MANUAL),
+                              ImVec2(iosBtnW(langGetText(STR_DLGBROWSER_MANUAL)), btnH))) {
+#else
             if (ImGui::Button(langGetText(STR_DLGBROWSER_MANUAL), ImVec2(btnW, btnH))) {
+#endif
                 /* Open the existing UDP setup dialog */
                 gameFrontSetDlgState(useTracker ? openInternetManual : openLanManual);
                 result = useTracker ? (int)openInternetManual : (int)openLanManual;
@@ -2494,10 +2762,27 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
              * exact position and the glyph fits beside it. */
             float cancelX = panelW - btnW - 16.0f * s;
             if (padLegend) cancelX -= glyphH + 4.0f;
+#if BOLO_MOBILE
+            /* Right-aligned at its own width, on a row of its own when the
+             * last row is full (see iosBreak above). */
+            const float iosCancelW = iosBtnW(langGetText(STR_CANCEL));
+            cancelX = panelW - iosCancelW - 16.0f * s;
+            if (padLegend) cancelX -= glyphH + 4.0f;
+            if (iosBreak[IOS_BTN_CANCEL]) {
+                ImGui::SetCursorPosX(cancelX);
+            } else {
+                ImGui::SameLine(cancelX);
+            }
+#else
             ImGui::SameLine(cancelX);
+#endif
             glyphInline(SI_ACTION_MENU_CANCEL);
             WBUI::PushCancelStyle();
+#if BOLO_MOBILE
+            bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(iosCancelW, btnH));
+#else
             bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH));
+#endif
             WBUI::PopCancelStyle();
             if (cancelClicked || WBUI::CancelKeyPressed()) {
                 gameFrontSetDlgState(openWelcome);
@@ -2518,7 +2803,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             {
                 char okBuf[64];
                 snprintf(okBuf, sizeof(okBuf), "%s##err", langGetText(STR_OK));
-                if (ImGui::Button(okBuf, ImVec2(80, 0))) {
+                if (ImGui::Button(okBuf, ImVec2(dialogFontW(80.0f), 0))) {
                     ImGui::CloseCurrentPopup();
                 }
                 imguiHandOnHover();

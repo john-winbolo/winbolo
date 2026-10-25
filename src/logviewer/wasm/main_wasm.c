@@ -24,12 +24,14 @@
 #include "lv_global.h"
 #include "clientmutex.h"
 #include "draw.h"
+#include "lv_team_colour.h"
 #include "sound.h"
 #include "dns.h"
 #include "positions.h"
 #include "tiles.h"
 #include "logviewer.h"
 #include "lv_host.h"
+#include "lv_stats.h"
 
 #include <SDL3/SDL.h>
 #include <emscripten.h>
@@ -58,9 +60,8 @@
  * and Team 2 red, the game's own ally / enemy reading.
  * -------------------------------------------------------------------------- */
 static void getDef(char *dest, int index) {
-    static const int defaults[] = { 2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0 };
-    int val = (index >= 0 && index < 16) ? defaults[index] : 0;
-    snprintf(dest, 12, "%d", val);
+    /* The one table of the defaults is in lv_team_colour.h. */
+    snprintf(dest, 12, "%d", (int)lvTeamColourDefault(index));
 }
 
 /* --------------------------------------------------------------------------
@@ -99,8 +100,8 @@ void lv_frontEndSetGameInformation(bool clear, BYTE versionMajor, BYTE versionMi
 /* --------------------------------------------------------------------------
  * Events
  * -------------------------------------------------------------------------- */
-void lv_windowAddEvent(int eventType, char *msg) {
-    lv_imgui_events_add(eventType, msg);
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg) {
+    lv_imgui_events_add(eventType, kind, mapX, mapY, msg);
 }
 
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
@@ -111,12 +112,31 @@ void lv_windowAddSummary(char *msg) {
     lv_imgui_events_add_summary(msg);
 }
 
-void lv_windowRemoveEventsAfter(uint32_t timeMs) {
-    lv_imgui_events_remove_after(timeMs);
+void lv_windowEventsRewound(void) {
+    lv_imgui_events_rewound();
 }
 
 void lv_windowRemoveEvents(void) {
     lv_imgui_events_clear();
+}
+
+/* The events panel holds every event of the file just loaded: the load's
+ * play stage posted each line once. Called once per file load, after the
+ * load-time summary lines are in (lv_windowOpenFile, lv_windowOpenMemory).
+ * The panel is told the list is complete, so it lists the whole log from
+ * the first frame and playback only moves a "now" line through it. */
+void lv_windowCollectAllEvents(void) {
+    lv_imgui_events_set_complete();
+}
+
+/* imgui_hud.cpp asks the game's status-panel code (sdl3draw_status.c) where
+ * a slot sits. That file needs the game's name-label and voice code, which
+ * this target does not build, and this page never draws the HUD panel
+ * (main_loop_iteration below), so the question is never asked here. */
+void sdl3StatusItemPos(int n, int type, int *outX, int *outY) {
+    (void)n; (void)type;
+    if (outX != NULL) *outX = 0;
+    if (outY != NULL) *outY = 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -136,18 +156,47 @@ void lv_controlsEnable(int state) {
 /* Jump the scrubber to a highlight moment and centre the view on its cell.
  * Playback stops across the seek, as it does on the desktop. */
 void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
+    lv_windowSeekToEvent(ms, 1, mapX, mapY, -1);
+}
+
+/* The same jump for any events panel line; only a line about a place on the
+ * map (hasCell) moves the view. */
+void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+    (void)team; /* the ring round the place is the desktop viewer's */
     bool wasPlaying = g_lv->playIsPlaying;
     if (wasPlaying) {
         lv_windowPause();
     }
     lv_drawDirtyScreen();
     lv_screenSeekToTimeMs(ms);
-    lv_screenCentreOnCell(mapX, mapY);
+    if (hasCell) {
+        lv_screenCentreOnCell(mapX, mapY);
+    }
     lv_drawDirtyScreen();
     lv_windowNeedRedraw();
     if (wasPlaying) {
         lv_windowPlay();
     }
+}
+
+/* A plain click on a line of the Events panel: the jump with no view move.
+ * The browser build has no ring to show the place. */
+void lv_windowSeekToEventKeepView(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+    (void)hasCell;
+    (void)mapX;
+    (void)mapY;
+    (void)team;
+    lv_windowSeekToEvent(ms, 0, 0, 0, -1);
+}
+
+/* A double click on the same line. The browser build centres on the square
+ * with every click; here "Tank Centred" is turned off first, so the view
+ * stays on the place. */
+void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+    if (hasCell) {
+        lv_imgui_set_tank_centred(0);
+    }
+    lv_windowSeekToEvent(ms, hasCell, mapX, mapY, team);
 }
 
 /* File > Quit. A browser tab has no application to end. */
@@ -207,9 +256,22 @@ void lv_windowOpenFile(char *cmdLine) {
             g_lv->isLoaded = FALSE;
         } else {
             g_lv->isLoaded = TRUE;
-            lv_imgui_events_clear();
+            lvStatsEmitRoundSummary();
+            lv_windowCollectAllEvents();
             lv_windowNeedRedraw();
         }
+    }
+}
+
+/* A log held in memory, from the WinBolo.net browser. The browser build opens
+ * it in one call, as it does a file. Takes ownership of zipData. */
+void lv_windowOpenMemory(uint8_t *zipData, size_t zipLen) {
+    lv_windowStop(FALSE);
+    if (lv_screenLoadMapFromMemory(zipData, zipLen)) {
+        g_lv->isLoaded = TRUE;
+        lvStatsEmitRoundSummary();
+        lv_windowCollectAllEvents();
+        lv_windowNeedRedraw();
     }
 }
 
@@ -217,6 +279,18 @@ void lv_windowSaveMap(void) {
     /* Save not yet implemented in WASM build */
     lv_platform_dialog_message("WinBolo Log Viewer", "Save Map is not yet available in the web version.");
 }
+
+/* The two desktop items of the File menu. The web version has no file to
+ * save a copy of and no game to start, so both stay disabled. */
+bool lv_windowCanSaveLog(void) { return FALSE; }
+/* Full screen in a browser is the browser's own; the Windows menu item is
+ * left out here. */
+bool lv_windowCanFullScreen(void) { return FALSE; }
+bool lv_windowIsFullScreen(void) { return FALSE; }
+void lv_windowToggleFullScreen(void) {}
+void lv_windowSaveLog(void) {}
+bool lv_windowCanOpenSinglePlayer(void) { return FALSE; }
+void lv_windowOpenSinglePlayer(void) {}
 
 /* --------------------------------------------------------------------------
  * Called from JavaScript when user uploads a .wbv file
@@ -255,19 +329,17 @@ static void mainLoadPreferences(void) {
         snprintf(line, sizeof(line), "Team Colour %d", count + 1);
         getDef(def, count);
         lv_platform_config_get_string("LOGVIEWER", line, def, val, sizeof(val));
-        g_lv->tc[count] = (BYTE)atoi(val);
-        if (g_lv->tc[count] > 16) g_lv->tc[count] = count;
+        g_lv->tc[count] = lvTeamColourPref(count, atoi(val));
         count++;
     }
     lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", "10", val, sizeof(val));
-    g_lv->tc[16] = (BYTE)atoi(val);
-    if (g_lv->tc[16] > 16) g_lv->tc[16] = 16;
+    g_lv->tc[16] = lvTeamColourPref(LV_TEAM_COLOUR_NEUTRAL, atoi(val));
 
     /* Playback Speed */
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
     {
         BYTE spd = (BYTE)atoi(val);
-        if (spd < 1 || spd > 9) spd = 1;
+        if (spd < 1 || spd > LV_SPEED_MAX) spd = 1;
         lv_updateSpeed(spd, 0);
     }
 }

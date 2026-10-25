@@ -136,6 +136,15 @@ typedef struct {
 void mapPreviewViewHandleInput(MapPreviewView *v, bool hovered,
                                const MapPreviewInputOpts *opts);
 
+/* A two-finger pinch SDL reported as its own event (SDL_EVENT_PINCH_BEGIN /
+ * SDL_EVENT_PINCH_UPDATE), banked by the dialog loops that show a view on a
+ * touch screen, in the unit macOSPinchZoomConsume reports (each update's
+ * scale less one). mapPreviewViewHandleInput spends it with the trackpad's
+ * when opts->pinchZoom is set; mapPreviewViewTouchPinchConsume takes and
+ * clears it for a caller that wants to drop a backlog instead. */
+void  mapPreviewViewTouchPinchEvent(const SDL_Event *ev);
+float mapPreviewViewTouchPinchConsume(void);
+
 /* True iff source map data has fully parsed and the widget can show
  * tiles. Useful for "loading..." placeholders. */
 bool mapPreviewViewIsReady(const MapPreviewView *v);

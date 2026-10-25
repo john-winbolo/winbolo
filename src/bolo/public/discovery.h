@@ -41,6 +41,11 @@
 #define DISCOVERY_SCRIPT_NAME_LEN 64
 #define DISCOVERY_SCRIPT_DESC_LEN 201   /* WBN_SCENARIO_DESC_MAX + 1 */
 #define DISCOVERY_SCRIPT_MODS_MAX 9
+/* The server's own name and description: netpacks.h's INFO_SERVER_NAME_MAX
+ * and INFO_SERVER_DESC_MAX plus a NUL, the same as server_text.h's
+ * SERVER_NAME_LEN / SERVER_DESC_LEN. */
+#define DISCOVERY_SERVER_NAME_LEN 33
+#define DISCOVERY_SERVER_DESC_LEN 201
 typedef struct {
   bool hasScriptInfo;      /* the reply carried the script bytes, whole and well-formed */
   char scenarioName[DISCOVERY_SCRIPT_NAME_LEN];   /* "" when no scenario */
@@ -48,14 +53,24 @@ typedef struct {
   BYTE scenarioMaxPlayers;                        /* 0 = no cap */
   BYTE modCount;
   char modNames[DISCOVERY_SCRIPT_MODS_MAX][DISCOVERY_SCRIPT_NAME_LEN];
+  /* The name and description the host gave the server, from the optional
+   * bytes after the last mod. "" when the server sent none - it predates
+   * them or its host gave none - and the game finder then shows the
+   * server's address instead. Sanitised on read, so a hostile server cannot
+   * put control characters into the finder. */
+  char serverName[DISCOVERY_SERVER_NAME_LEN];
+  char serverDescription[DISCOVERY_SERVER_DESC_LEN];
 } DiscoveryScripts;
 
 /* Read the script bytes that follow the INFO_PACKET in an info reply. tail
  * points at the first byte after the INFO_PACKET and len is how many bytes
  * follow it. Always zeroes *out first. Returns false, leaving *out zeroed,
  * when a length is over its cap or a field runs past len; on success sets
- * hasScriptInfo and NUL-terminates every string. Bytes after the last mod are
- * ignored, so a later field can be appended. */
+ * hasScriptInfo and NUL-terminates every string. After the last mod it reads
+ * the server's name and description when they are there; when those bytes
+ * are malformed it leaves both "" and still returns true, because the
+ * scripts before them were whole. Bytes after the description are ignored,
+ * so a later field can be appended. */
 bool discoveryReadScriptTail(const uint8_t *tail, size_t len, DiscoveryScripts *out);
 
 /* Result of a single discoveryPingServer() call. rttMs is the round-trip
@@ -223,6 +238,31 @@ bool discoveryFindMdnsGamesAsync(DiscoveryServerCallback callback, void *userDat
  * poll window early. Mirrors discoveryAbortBroadcastSearch: safe from any
  * thread, auto-cleared at the start of the next mDNS search. */
 void discoveryAbortMdnsSearch(void);
+
+/* A platform's own mDNS browser, for a system that keeps multicast to itself
+ * (iOS, where an app needs Apple's multicast entitlement for raw mDNS
+ * sockets but may browse through the system's Bonjour API). Once one is set,
+ * discoveryFindMdnsGamesAsync runs it in place of the raw-socket browser,
+ * under the same contract: block for the search window, call callback once
+ * per server found, return whether the search ran, and stop early once
+ * discoveryMdnsAbortRequested() is true. NULL restores the raw-socket
+ * browser. Set it once at startup, before any search. */
+typedef bool (*DiscoveryMdnsBrowser)(DiscoveryServerCallback callback, void *userData);
+void discoverySetMdnsBrowser(DiscoveryMdnsBrowser browser);
+
+/* True once discoveryAbortMdnsSearch has been called for the search in
+ * progress. For a platform browser's wait loop. */
+bool discoveryMdnsAbortRequested(void);
+
+/* Fill *out from what a platform browser resolved for one server: its IPv4
+ * address as text, its game port and its TXT record as count key/value
+ * pairs, read with the same key schema as the raw-socket browser so both
+ * paths fill the same fields. With no pairs (the record never arrived)
+ * hasRichInfo is false. Returns false, out untouched, when address does not
+ * parse. */
+bool discoveryServerFromMdns(const char *address, unsigned short port,
+                             const char *const *keys, const char *const *values,
+                             size_t count, DiscoveryServer *out);
 
 /* Send an info request to a single server and wait up to 5 seconds for
  * a response. On success fills *out (rttMs >= 0) and returns true; on

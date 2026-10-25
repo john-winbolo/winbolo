@@ -129,6 +129,10 @@ typedef struct BgGame {
      * renderer is only compared, never used. */
     SDL_Renderer *ssFailRenderer;
     int           ssFailW, ssFailH;
+    /* Where the map name goes, from bgGameSetMapNameAnchor; used by the next
+     * bgGameRender and then cleared. */
+    bool          nameAnchored;
+    float         nameX, nameCentreY;
 } BgGame;
 
 bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer);
@@ -140,6 +144,13 @@ void bgGameDestroy(BgGame *bg);
 void bgGameReleaseScene(BgGame *bg);
 
 void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH);
+
+/* Places the map name for the next bgGameRender only: its left edge at x and
+ * its middle at centreY, in the screen units bgGameRender is given. The
+ * welcome screen passes the right of its play/pause button, which moves with
+ * the UI scale and the safe insets. Without it the name sits to the right of
+ * where the desktop's button is at scale 1. */
+void bgGameSetMapNameAnchor(BgGame *bg, float x, float centreY);
 
 /* Convenience: tick at fixed 50 Hz rate using a running timestamp */
 void bgGameTickFixed(BgGame *bg, Uint64 *lastTickTime);

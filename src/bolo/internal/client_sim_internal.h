@@ -47,6 +47,7 @@
 #include "input_packet.h"  /* PING_SPAM_MAX_30S — client render backstop ring */
 #include "control_event.h" /* LOBBY_SCENARIO_*_LEN — the scenario mirror below */
 #include "scenario_details.h" /* SCN_DETAILS_MAX — the details cache below */
+#include "scenario_identity.h" /* SCN_AUTHOR_LEN — the scenario mirror below */
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -754,6 +755,14 @@ struct ClientSim {
        Workshop item it came from, 0 for none. */
     uint8_t  lobbyScenarioListSource[LOBBY_SCENARIO_LIST_MAX];
     uint64_t lobbyScenarioListWorkshopId[LOBBY_SCENARIO_LIST_MAX];
+    /* Who wrote each row and when it last changed (scenario_identity.h), ""
+       for not stated, from the trailer of the chunk the row came in.
+       IdentityKnown is false for a row from a server that sends no
+       trailer. */
+    bool     lobbyScenarioListIdentityKnown[LOBBY_SCENARIO_LIST_MAX];
+    char     lobbyScenarioListAuthor[LOBBY_SCENARIO_LIST_MAX][SCN_AUTHOR_LEN];
+    char     lobbyScenarioListUpdated[LOBBY_SCENARIO_LIST_MAX]
+                                     [SCN_UPDATED_LEN];
     bool     lobbyScenarioListReady;    /* true once a response arrives */
     bool     lobbyScenarioListInFlight; /* true after send, false on response */
     /* False until the first chunk of the response in flight lands, which is
@@ -864,14 +873,22 @@ struct ClientSim {
         bool     settingsKnown;
         uint16_t settingsLen;
         uint8_t  settings[SCN_SETTINGS_BLOB_MAX];
+        /* Who wrote the file and when it last changed
+           (scenario_identity.h), which only a server that knows them
+           sends. identityKnown false is a server that did not say. */
+        bool     identityKnown;
+        char     author[SCN_AUTHOR_LEN];
+        char     updated[SCN_UPDATED_LEN];
     } lobbyScnDetails[LOBBY_SCN_DETAILS_SLOTS];
     /* The bulk receiver's landing buffer for one answer: the status byte,
-     * then the details, or for BULK_SCN_DETAILS_FOUND_V2 a details length,
-     * the details and the settings block. rxSlot is one more than the slot
-     * it is filling, and 0 for none, so a zeroed ClientSim starts with
+     * then the details; for BULK_SCN_DETAILS_FOUND_V2 a details length, the
+     * details and the settings block; for _V3 a settings length and an
+     * identity blob as well (bulk_transfer.h). rxSlot is one more than the
+     * slot it is filling, and 0 for none, so a zeroed ClientSim starts with
      * none. */
-    uint8_t  lobbyScnDetailsRx[1 + 2 + SCN_DETAILS_MAX +
-                               SCN_SETTINGS_BLOB_MAX];
+    uint8_t  lobbyScnDetailsRx[1 + 2 + SCN_DETAILS_MAX + 2 +
+                               SCN_SETTINGS_BLOB_MAX +
+                               SCN_IDENTITY_BLOB_MAX];
     int      lobbyScnDetailsRxSlot;
 
     /* Upload progress — driven by the Upload tab and the
@@ -982,6 +999,7 @@ struct ClientSim {
     char     lobbyScriptNames[LOBBY_SCRIPT_LIST_MAX][LOBBY_SCENARIO_NAME_LEN];
     bool     lobbyScriptKeepsWin[LOBBY_SCRIPT_LIST_MAX];
     bool     lobbyScriptBound[LOBBY_SCRIPT_LIST_MAX];
+    bool     lobbyScriptRequired[LOBBY_SCRIPT_LIST_MAX];
     uint8_t  lobbyScriptSource[LOBBY_SCRIPT_LIST_MAX];
     uint64_t lobbyScriptWorkshopId[LOBBY_SCRIPT_LIST_MAX];
     int      lobbyScriptPendingCount;
@@ -990,13 +1008,15 @@ struct ClientSim {
      * CTRL_LOBBY_SCRIPT_SETTING, keyed like the server's store. Supported
      * is set by the first such event, which only a server that takes
      * CMD_SET_SCRIPT_SETTING sends; the dialog lets the host change a
-     * value only once it is set. */
+     * value only once it is set. locked is set by a LOCK: the server's
+     * operator holds the value and the dialog shows it read-only. */
     bool     lobbyScriptSettingsSupported;
     int      lobbyScriptSettingCount;
     struct {
         char    file[LOBBY_SCENARIO_FILE_LEN];
         char    id[SCN_SETTING_ID_LEN];
         int32_t value;
+        bool    locked;
     }        lobbyScriptSettings[LOBBY_SCRIPT_SETTING_VALUES_MAX];
     /* Set when a run of chunks is thrown away for overrunning the cap, and
      * held until that run's last chunk. Zeroing the pending count is not
@@ -1135,6 +1155,12 @@ struct ClientSim {
      * of every round, which resets them) always reports. */
     uint8_t lastSentViewKind;
     uint8_t lastSentViewTarget;
+    /* Display ticks since the last report. The server drops a view it finds
+     * no longer qualifies back to the tank without telling the client, and
+     * the client can be left watching the same item once it qualifies again;
+     * so an item view is reported again every CLIENT_VIEW_STATE_RESEND_TICKS
+     * even when nothing has changed. */
+    uint16_t viewStateResendTicks;
 
     /* Pending alliance request from another player. 0xFF when none.
      * Set by the CTRL_ALLIANCE_REQUEST arm when toPlayer == myPlayerNum;
@@ -1223,6 +1249,9 @@ PlayerBitMap            clientSimAllyViewMask(const ClientSim *cs);
  * out as the same stretch of real time. */
 #define CLIENT_VIEW_DECAY_TICKS_SEC GAME_NUMGAMETICKS_SEC
 
+/* How often an unchanged item view is reported again — once a second. */
+#define CLIENT_VIEW_STATE_RESEND_TICKS GAME_NUMGAMETICKS_SEC
+
 /* Advances the clock and re-stamps every item the local tank is within
  * VIEW_DECAY_NEAR_TILES of, for the categories on viewPolicyDecay. Proximity
  * and nothing else: alliance, armour and the rest are the region build's
@@ -1286,6 +1315,14 @@ bool                    clientSimAllyViewAwaitingFirstData(const ClientSim *cs);
  * into the viewport itself. */
 void                    clientSimApplyAllyViewTarget(ClientSim *cs, BYTE target,
                                                      BYTE mapX, BYTE mapY);
+
+/* In an ally view, centre the camera on the ally where it is drawn this
+ * frame — the fine position in the Smooth animation mode, the game pixel
+ * otherwise — so the view glides with the tank instead of jumping a square
+ * at a time. Called once a frame after the render interpolation. Does
+ * nothing in any other view, or while the ally is a hidden stub; the
+ * per-tick upkeep's whole-square centring stands then. */
+void                    clientSimFollowAllyView(ClientSim *cs);
 
 /* Fills the view rules, clocks and camera state the overview's region build
  * takes. Declared here rather than reached through overview_map.h so this

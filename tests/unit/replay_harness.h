@@ -71,11 +71,9 @@
  *   them. baseTime is also an int32 that the snapshot blob truncates to 16
  *   bits, so even a snapshot does not round-trip it.
  *
- *   pillbox inTank — the recording does carry it (log_PillSetInTank), but
- *   the viewer's lv_pillsGetPill does not copy it out and there is no
- *   getter that does. Adding one is a production change; comparing a field
- *   the getter leaves untouched would read whatever was in the caller's
- *   struct.
+ *   pillbox inTank — the recording does carry it (log_PillSetInTank) and
+ *   the viewer's lv_pillsGetPill copies it out (test_lv_pill_carried.c),
+ *   but this fixture's seam struct has no field for it yet.
  *
  * ── Rounds this fixture does not prove ──────────────────────────────────
  * Some pill ownership paths still change compared fields without writing
@@ -223,7 +221,7 @@ bool replayHarnessDecode(ReplayHarness *h);
 /* What the decoder reports about a .wbv besides its world. */
 #define REPLAY_MAP_NAME_LEN 128
 typedef struct {
-    char     mapName[REPLAY_MAP_NAME_LEN];  /* from the log header */
+    char     mapName[REPLAY_MAP_NAME_LEN];  /* log_MapName, else the log header */
     int      ticks;         /* playback ticks to end-of-log */
     uint32_t totalTimeMs;   /* what the load's byte walk made of the file */
     int      gameType;      /* the log header's game type byte */

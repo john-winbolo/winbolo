@@ -18,12 +18,18 @@
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
+#include <SDL3/SDL.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 extern "C" {
     #include "logviewer.h"
+    #include "../lv_team_colour.h"
+    #include "../../gui/sdl3/map_colours.h"  /* mapColourTeam */
+
+    void lv_drawDirtyScreen(void);
 }
 
 static LogViewerState *s_lv = nullptr;
@@ -55,6 +61,14 @@ static const langid colour_name_ids[] = {
 };
 
 #define NUM_COLOURS 17
+
+/* The name of a team colour, for the panels that say which team a thing
+ * belongs to. The teams have no names of their own in a log; the colour a
+ * team is drawn in is what the user knows it by. */
+const char *lv_imgui_team_colour_name(int colour) {
+    if (colour < 0 || colour >= NUM_COLOURS) return "";
+    return langGetText(colour_name_ids[colour]);
+}
 
 /* Dialog state */
 static bool s_show_team_colours = false;
@@ -88,23 +102,21 @@ void lv_imgui_dialogs_init(struct LogViewerState *lv) {
         char key[64];
         snprintf(key, sizeof(key), "Team Colour %d", i + 1);
         
-        /* Default colours - matches original getDef() function */
-        int def_colours[] = {11, 12, 2, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0};
+        /* The defaults are the viewer's one table (lv_team_colour.h). */
         char def_val[16];
-        snprintf(def_val, sizeof(def_val), "%d", def_colours[i]);
-        
+        snprintf(def_val, sizeof(def_val), "%d", (int)lvTeamColourDefault(i));
+
         lv_platform_config_get_string("LOGVIEWER", key, def_val, val, sizeof(val));
-        s_team_colours[i] = atoi(val);
-        if (s_team_colours[i] < 0 || s_team_colours[i] >= NUM_COLOURS) {
-            s_team_colours[i] = def_colours[i];
-        }
+        s_team_colours[i] = lvTeamColourPref(i, atoi(val));
     }
-    
+
     /* Neutral colour */
-    lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", "10", val, sizeof(val));
-    s_team_colours[16] = atoi(val);
-    if (s_team_colours[16] < 0 || s_team_colours[16] >= NUM_COLOURS) {
-        s_team_colours[16] = 16;
+    {
+        char def_val[16];
+        snprintf(def_val, sizeof(def_val), "%d",
+                 (int)lvTeamColourDefault(LV_TEAM_COLOUR_NEUTRAL));
+        lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", def_val, val, sizeof(val));
+        s_team_colours[16] = lvTeamColourPref(LV_TEAM_COLOUR_NEUTRAL, atoi(val));
     }
     
     s_team_colours_loaded = true;
@@ -225,6 +237,24 @@ static void save_team_colours_to_tc(void) {
     }
 }
 
+/* A square in a palette colour, as the map draws that colour, in front of
+ * the colour's name. In a row with a combo box it is moved down to the
+ * middle of the box. */
+static void team_colour_swatch(int entry, bool besideCombo) {
+    const ImGuiStyle &style = ImGui::GetStyle();
+    SDL_FColor c = mapColourTeam(entry);
+    float side = ImGui::GetTextLineHeight();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+
+    if (besideCombo) p.y += style.FramePadding.y;
+    dl->AddRectFilled(p, ImVec2(p.x + side, p.y + side),
+                      ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, 1.0f)));
+    dl->AddRect(p, ImVec2(p.x + side, p.y + side), ImGui::GetColorU32(ImGuiCol_Border));
+    ImGui::Dummy(ImVec2(side, besideCombo ? ImGui::GetFrameHeight() : side));
+    ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+}
+
 static void render_team_colours_dialog(void) {
     /* Center the modal */
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -250,9 +280,11 @@ static void render_team_colours_dialog(void) {
             /* Current selection */
             const char* current_colour = langGetText(colour_name_ids[s_team_colours[i]]);
 
+            team_colour_swatch(s_team_colours[i], true);
             if (ImGui::BeginCombo(combo_id, current_colour)) {
                 for (int j = 0; j < NUM_COLOURS; j++) {
                     bool is_selected = (s_team_colours[i] == j);
+                    team_colour_swatch(j, false);
                     if (ImGui::Selectable(langGetText(colour_name_ids[j]), is_selected)) {
                         s_team_colours[i] = j;
                     }
@@ -271,9 +303,11 @@ static void render_team_colours_dialog(void) {
         ImGui::SameLine(100);
 
         const char* neutral_colour = langGetText(colour_name_ids[s_team_colours[16]]);
+        team_colour_swatch(s_team_colours[16], true);
         if (ImGui::BeginCombo("##neutral", neutral_colour)) {
             for (int j = 0; j < NUM_COLOURS; j++) {
                 bool is_selected = (s_team_colours[16] == j);
+                team_colour_swatch(j, false);
                 if (ImGui::Selectable(langGetText(colour_name_ids[j]), is_selected)) {
                     s_team_colours[16] = j;
                 }
@@ -288,8 +322,11 @@ static void render_team_colours_dialog(void) {
 
         /* Buttons */
         if (ImGui::Button(langGetText(STR_OK), ImVec2(80, 0))) {
-            /* Apply changes */
+            /* Apply changes. The pillboxes and bases of the map are kept
+             * from frame to frame, so the map is told to draw them again:
+             * the new colours then show on the next frame. */
             save_team_colours_to_tc();
+            lv_drawDirtyScreen();
             
             /* Save to preferences */
             for (int i = 0; i < MAX_PLAYERS; i++) {

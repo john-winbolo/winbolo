@@ -25,6 +25,7 @@
 #include "scripts_record.h"   /* SCRIPTS_RECORD_MEMBER, SCN_RECORD_TEXT_MAX */
 #include "unzip.h"
 #include "ioapi.h"
+#include "lv_utf8_path.h"
 
 /* Initial decompression buffer capacity (256 KB) */
 #define LOG_INITIAL_CAPACITY (256 * 1024)
@@ -49,6 +50,9 @@
 static size_t logMaxSize = LOG_MAX_SIZE;
 
 static uint8_t *ownedZipData = NULL;  /* Zip buffer owned by us (from memory load) */
+static size_t   ownedZipLen  = 0;     /* Its length */
+/* The file the open log was read from; empty when it did not come from one. */
+static char     sourcePath[FILENAME_MAX] = "";
 
 static uint8_t *logData     = NULL;  /* Decompressed log data */
 static size_t   logSize     = 0;     /* Bytes decompressed so far */
@@ -58,6 +62,7 @@ static bool     logEOF      = FALSE; /* No more data to decompress */
 static BYTE     blockKey    = 0;     /* XOR decryption key */
 
 static unzFile  logFile = NULL;
+static size_t   logExpected = 0;  /* log.dat's size as the zip states it */
 
 /* The scripts.json member's bytes, NUL-terminated, or NULL. */
 static char    *scriptsJson    = NULL;
@@ -201,8 +206,29 @@ const char *lv_blocksGetScriptsJson(size_t *len) {
   return scriptsJson;
 }
 
+/* The open of a log's file for minizip: its own open (ioapi.c), with
+ * lvFopenUtf8 in the place of fopen. The log is only read. */
+static voidpf ZCALLBACK lv_blocksOpenUtf8(voidpf opaque, const void *filename, int mode) {
+  (void)opaque;
+  if (filename == NULL ||
+      (mode & ZLIB_FILEFUNC_MODE_READWRITEFILTER) != ZLIB_FILEFUNC_MODE_READ) {
+    return NULL;
+  }
+  return lvFopenUtf8((const char *)filename, "rb");
+}
+
+/* Note log.dat's uncompressed size, for the load's progress. */
+static void lv_blocksNoteExpectedSize(void) {
+  unz_file_info info;
+  logExpected = 0;
+  if (unzGetCurrentFileInfo(logFile, &info, NULL, 0, NULL, 0, NULL, 0) == UNZ_OK) {
+    logExpected = (size_t)info.uncompressed_size;
+  }
+}
+
 /* Size parameter is ignored -- we buffer the whole file. */
 bool lv_blocksCreate(char *fileName, int size) {
+  zlib_filefunc64_def pathFuncs;
   (void)size;
   logMaxSize  = LOG_MAX_SIZE;   /* the user chose this file */
   blockKey    = 0;
@@ -214,9 +240,15 @@ bool lv_blocksCreate(char *fileName, int size) {
   logFile     = NULL;
   free(ownedZipData);
   ownedZipData = NULL;
+  ownedZipLen  = 0;
+  sourcePath[0] = 0;
   lv_blocksDropScriptsJson();
 
-  logFile = unzOpen(fileName);
+  /* As unzOpen, but for the open of the file itself: the path is UTF-8 when
+   * it comes from the Open File dialog, on Windows too. */
+  fill_fopen64_filefunc(&pathFuncs);
+  pathFuncs.zopen64_file = lv_blocksOpenUtf8;
+  logFile = unzOpen2_64(fileName, &pathFuncs);
   if (logFile == NULL) return FALSE;
 
   if (unzLocateFile(logFile, "log.dat", 0) != UNZ_OK) {
@@ -243,8 +275,28 @@ bool lv_blocksCreate(char *fileName, int size) {
     logFile = NULL;
     return FALSE;
   }
+  lv_blocksNoteExpectedSize();
 
+  snprintf(sourcePath, sizeof(sourcePath), "%s", fileName);
   return TRUE;
+}
+
+/* Where the open log's whole file is: its path on disk, or the zip bytes a
+ * memory load handed over. A live stream has neither. */
+int lv_blocksGetSource(const char **path, const uint8_t **data, size_t *len) {
+  if (path != NULL) *path = NULL;
+  if (data != NULL) *data = NULL;
+  if (len != NULL)  *len  = 0;
+  if (sourcePath[0] != 0) {
+    if (path != NULL) *path = sourcePath;
+    return LV_LOG_SOURCE_FILE;
+  }
+  if (ownedZipData != NULL && ownedZipLen > 0) {
+    if (data != NULL) *data = ownedZipData;
+    if (len != NULL)  *len  = ownedZipLen;
+    return LV_LOG_SOURCE_MEMORY;
+  }
+  return LV_LOG_SOURCE_NONE;
 }
 
 /* ---- In-memory zip I/O callbacks for minizip ---- */
@@ -327,6 +379,8 @@ bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen) {
 
   /* Take ownership of the buffer */
   ownedZipData = zipData;
+  ownedZipLen  = zipLen;
+  sourcePath[0] = 0;
 
   /* Set up memory I/O for minizip */
   s_memReader.data = zipData;
@@ -370,6 +424,7 @@ bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen) {
     logFile = NULL;
     return FALSE;
   }
+  lv_blocksNoteExpectedSize();
 
   return TRUE;
 }
@@ -396,12 +451,15 @@ void lv_blocksBeginStream(void) {
   logData     = NULL;
   free(ownedZipData);
   ownedZipData = NULL;
+  ownedZipLen  = 0;
+  sourcePath[0] = 0;
   logSize     = 0;
   logCapacity = 0;
   logPosition = 0;
   logEOF      = FALSE;
   blockKey    = 0;
   logFile     = NULL;
+  logExpected = 0;
   /* A stream has no zip, so it has no scripts.json. */
   lv_blocksDropScriptsJson();
 }
@@ -437,8 +495,11 @@ void lv_blocksDestroy() {
   logCapacity = 0;
   logPosition = 0;
   logEOF      = FALSE;
+  logExpected = 0;
   free(ownedZipData);
   ownedZipData = NULL;
+  ownedZipLen  = 0;
+  sourcePath[0] = 0;
   lv_blocksDropScriptsJson();
 }
 
@@ -451,6 +512,20 @@ bool lv_blocksIsEOF() {
 
 int lv_blocksReadBytes(BYTE *buff, int len) {
   if (len <= 0) return -1;
+
+  /* Most reads are a byte or two of a log already decompressed, and v2 and
+     later logs are plaintext: copy them straight out. A snapshot's map is
+     read this way, a byte at a time, and the load reads one every few
+     seconds of log. */
+  if (blockKey == 0 && logPosition <= logSize && (size_t)len <= logSize - logPosition) {
+    if (len == 1) {
+      *buff = logData[logPosition];
+    } else {
+      memcpy(buff, logData + logPosition, (size_t)len);
+    }
+    logPosition += (size_t)len;
+    return len;
+  }
 
   decompressUpTo(logPosition + (size_t)len);
 
@@ -469,10 +544,35 @@ int lv_blocksReadBytes(BYTE *buff, int len) {
 }
 
 void lv_logDecompressAll(void) {
-  if (logFile == NULL) return;
-  while (!logEOF && logSize < logMaxSize) {
-    decompressUpTo(logSize + LOG_DECOMPRESS_CHUNK);
+  while (!lv_logDecompressSome(LOG_DECOMPRESS_CHUNK)) {
   }
+}
+
+/* Decompress about bytes more of the log. Returns TRUE once there is no more
+   to come: the end of log.dat, the size limit, or a read that gave nothing. */
+bool lv_logDecompressSome(size_t bytes) {
+  size_t before = logSize;
+  if (logFile == NULL || logEOF || logSize >= logMaxSize) return TRUE;
+  decompressUpTo(logSize + bytes);
+  return logEOF || logSize >= logMaxSize || logSize == before;
+}
+
+/* What the log will decompress to, as far as it is known: log.dat's size from
+   the zip, held to the size limit. 0 when there is no zip. */
+size_t lv_logExpectedSize(void) {
+  return (logExpected < logMaxSize) ? logExpected : logMaxSize;
+}
+
+/* The bytes from the read position to the end of what has been decompressed,
+   without reading them, or NULL for an XOR'd (v0 or v1) log, whose bytes are
+   not the plaintext. Valid until the next read, position change or grow. */
+const BYTE *lv_blocksPeek(size_t *avail) {
+  if (blockKey != 0 || logData == NULL || logPosition > logSize) {
+    *avail = 0;
+    return NULL;
+  }
+  *avail = logSize - logPosition;
+  return logData + logPosition;
 }
 
 size_t lv_logGetTotalSize(void) {

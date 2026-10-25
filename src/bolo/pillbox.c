@@ -431,6 +431,139 @@ bool pillsExistPos(pillboxes *value, BYTE xValue, BYTE yValue) {
 }
 
 /*********************************************************
+*NAME:          pillsDropCanLand
+*PURPOSE:
+*  Whether a dropped pillbox may land on a square: inside
+*  the minable area, not on a pill, a base, a building, a
+*  half-building or a boat.
+*
+*ARGUMENTS:
+*  sim - The game
+*  mx  - X map square, possibly off the map
+*  my  - Y map square, possibly off the map
+*********************************************************/
+bool pillsDropCanLand(GameSim *sim, int mx, int my) {
+  BYTE pos;
+
+  if (mx <= MAP_MINE_EDGE_LEFT || mx >= MAP_MINE_EDGE_RIGHT ||
+      my <= MAP_MINE_EDGE_TOP || my >= MAP_MINE_EDGE_BOTTOM) {
+    return FALSE;
+  }
+  pos = mapGetPos(&sim->mp, (BYTE) mx, (BYTE) my);
+  if (pillsExistPos(&sim->pb, (BYTE) mx, (BYTE) my) == TRUE ||
+      basesExistPos(&sim->bs, (BYTE) mx, (BYTE) my) == TRUE ||
+      pos == BUILDING || pos == HALFBUILDING || pos == BOAT) {
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          pillsDropSpiralStart
+*PURPOSE:
+*  Starts a drop search with its cursor on the centre.
+*
+*ARGUMENTS:
+*  s  - The search
+*  cx - X map square to search round
+*  cy - Y map square to search round
+*********************************************************/
+void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy) {
+  s->cx = cx;
+  s->cy = cy;
+  s->x = cx;
+  s->y = cy;
+  /* The farthest the minable area reaches from the centre along
+     either axis. Every ring beyond it is off the area entirely. */
+  s->maxRing = s->cx - (MAP_MINE_EDGE_LEFT + 1);
+  if ((MAP_MINE_EDGE_RIGHT - 1) - s->cx > s->maxRing) {
+    s->maxRing = (MAP_MINE_EDGE_RIGHT - 1) - s->cx;
+  }
+  if (s->cy - (MAP_MINE_EDGE_TOP + 1) > s->maxRing) {
+    s->maxRing = s->cy - (MAP_MINE_EDGE_TOP + 1);
+  }
+  if ((MAP_MINE_EDGE_BOTTOM - 1) - s->cy > s->maxRing) {
+    s->maxRing = (MAP_MINE_EDGE_BOTTOM - 1) - s->cy;
+  }
+}
+
+/*********************************************************
+*NAME:          pillsDropSpiralRing
+*PURPOSE:
+*  Which ring of its spiral the cursor is on.
+*
+*ARGUMENTS:
+*  s - The search
+*********************************************************/
+static int pillsDropSpiralRing(const pillsDropSpiral *s) {
+  int dx = abs(s->x - s->cx);
+  int dy = abs(s->y - s->cy);
+  return dx > dy ? dx : dy;
+}
+
+/*********************************************************
+*NAME:          pillsDropSpiralStep
+*PURPOSE:
+*  Moves the cursor to the next square of the spiral. Mac
+*  Bolo's gen_scatter in int: from the centre to due north
+*  of it, along a ring clockwise, and from the square just
+*  west of due north round to due north of the next ring.
+*
+*ARGUMENTS:
+*  s - The search
+*********************************************************/
+static void pillsDropSpiralStep(pillsDropSpiral *s) {
+  int dx = s->x - s->cx;
+  int dy = s->y - s->cy;
+  int ring = pillsDropSpiralRing(s);
+
+  if (ring == 0) {
+    s->y--;
+  } else if (dy == -ring && dx < 0) {
+    /* East along the top, short of due north: the last stretch of a ring.
+       Reaching due north steps out to the start of the next one. */
+    s->x++;
+    if (s->x == s->cx) {
+      s->y--;
+    }
+  } else if (dx == -ring) {
+    s->y--;       /* North up the west side */
+  } else if (dy == ring) {
+    s->x--;       /* West along the bottom */
+  } else if (dx == ring) {
+    s->y++;       /* South down the east side */
+  } else {
+    s->x++;       /* East along the top, from due north */
+  }
+}
+
+/*********************************************************
+*NAME:          pillsDropSpiralFind
+*PURPOSE:
+*  Moves the cursor on to the first square from where it
+*  is, that one included, that a pillbox may land on, and
+*  answers it. Answers FALSE once the spiral has walked
+*  past the minable area without finding one.
+*
+*ARGUMENTS:
+*  sim - The game
+*  s   - The search
+*  mx  - Receives the X map square
+*  my  - Receives the Y map square
+*********************************************************/
+bool pillsDropSpiralFind(GameSim *sim, pillsDropSpiral *s, BYTE *mx, BYTE *my) {
+  while (pillsDropSpiralRing(s) <= s->maxRing) {
+    if (pillsDropCanLand(sim, s->x, s->y)) {
+      *mx = (BYTE) s->x;
+      *my = (BYTE) s->y;
+      return TRUE;
+    }
+    pillsDropSpiralStep(s);
+  }
+  return FALSE;
+}
+
+/*********************************************************
 *NAME:          pillsViewExistPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 5/9/26
@@ -1739,11 +1872,11 @@ bool pillsMoveView(GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYTE *
   returnValue = FALSE;
   found = 0;
   count = 0;
-  oldPill = pillsGetViewPillNum(value, *mx, *my, FALSE, FALSE);
-  oldPill--;
   myPlayerNum = sim->viewPlayer;
+  oldPill = pillsGetWatchPillNum(sim, value, *mx, *my, myPlayerNum);
+  oldPill--;
   while (count < (*value)->numPills) {
-    if (count != oldPill && (*value)->active[count] != FALSE && (eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, myPlayerNum, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+    if (count != oldPill && (eligible & ((PlayerBitMap)1 << count)) != 0 && pillsCanView(sim, value, count, myPlayerNum) == TRUE) {
       if (((yMove == 0 && (xMove < 0 && (*value)->item[count].x < *mx)) || (xMove > 0 && (*value)->item[count].x > *mx)) || ((xMove == 0 && (yMove < 0 && (*value)->item[count].y < *my)) || (yMove > 0 && (*value)->item[count].y > *my))) {
         if (utilIsItemInRange(*mx, *my, (*value)->item[count].x, (*value)->item[count].y, (WORLD) nearest, &dist) == TRUE) {
           nearest = dist;
@@ -1797,23 +1930,18 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYT
 
   /* Find out the previous amount */
   if (prev == TRUE) {
-    count = pillsGetViewPillNum(value, *mx, *my, FALSE, FALSE);
+    count = pillsGetWatchPillNum(sim, value, *mx, *my, playNumber);
     if (count == PILL_NOT_FOUND) {
       count = 0;
     } else {
-      count--;
-      if ((*value)->item[count].armour > 0 && ((*value)->item[count].inTank) == FALSE) {
-        okLoop = TRUE;
-        count++;
-      } else {
-        count = 0;
-      }
+      /* Resume after the pill being watched, wrapping round to it. */
+      okLoop = TRUE;
     }
   }
 
   /* Find the next item */
   while (done == FALSE && count < ((*value)->numPills)) {
-    if ((*value)->active[count] != FALSE && (eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+    if ((eligible & ((PlayerBitMap)1 << count)) != 0 && pillsCanView(sim, value, count, playNumber) == TRUE) {
       done = TRUE;
       *mx = (*value)->item[count].x;
       *my = (*value)->item[count].y;
@@ -1825,7 +1953,7 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYT
   if (done == FALSE && okLoop == TRUE) {
     count = 0;
     while (done == FALSE && count < ((*value)->numPills)) {
-      if ((*value)->active[count] != FALSE && (eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+      if ((eligible & ((PlayerBitMap)1 << count)) != 0 && pillsCanView(sim, value, count, playNumber) == TRUE) {
         done = TRUE;
         *mx = (*value)->item[count].x;
         *my = (*value)->item[count].y;
@@ -1848,12 +1976,26 @@ bool pillsCanView(GameSim *sim, pillboxes *value, BYTE pillIdx, BYTE viewPlayer)
 
   returnValue = FALSE;
   if (pillIdx < (*value)->numPills) {
-    if ((*value)->active[pillIdx] != FALSE && (playersIsAllie(&sim->plyrs, viewPlayer, (*value)->item[pillIdx].owner) == TRUE) && ((*value)->item[pillIdx].armour) != 0 && ((*value)->item[pillIdx].inTank) == FALSE) {
+    if ((*value)->active[pillIdx] != FALSE && (playersIsAllie(&sim->plyrs, viewPlayer, (*value)->item[pillIdx].owner) == TRUE) && ((*value)->item[pillIdx].armour) != 0 && ((*value)->item[pillIdx].inTank) == FALSE
+        && (*value)->posStale[pillIdx] != PILL_SQUARE_MOVED) {
       returnValue = TRUE;
     }
   }
 
   return returnValue;
+}
+
+/* The pill a camera on (mx,my) is watching — see internal/pillbox.h. */
+BYTE pillsGetWatchPillNum(GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE viewPlayer) {
+  BYTE count; /* Looping variable */
+
+  for (count = 0; count < (*value)->numPills; count++) {
+    if ((*value)->item[count].x == mx && (*value)->item[count].y == my
+        && pillsCanView(sim, value, count, viewPlayer) == TRUE) {
+      return (BYTE) (count + 1);
+    }
+  }
+  return PILL_NOT_FOUND;
 }
 
 /*********************************************************
@@ -1874,13 +2016,10 @@ bool pillsCanView(GameSim *sim, pillboxes *value, BYTE pillIdx, BYTE viewPlayer)
 bool pillsCheckView(GameSim *sim, pillboxes *value, BYTE mx, BYTE my) {
   BYTE pillNum; /* The pillbox number */
 
-  pillNum = pillsGetViewPillNum(value, mx, my, FALSE, FALSE);
-  if (pillNum == PILL_NOT_FOUND || pillNum == (PILL_NOT_FOUND-1)) {
-    return FALSE;
-  }
-  pillNum--;
-
-  return pillsCanView(sim, value, pillNum, sim->viewPlayer);
+  /* A carried pill, or one that has left this square, leaves a record behind
+   * on it; the lookup passes over those to any pill that can be watched. */
+  pillNum = pillsGetWatchPillNum(sim, value, mx, my, sim->viewPlayer);
+  return (bool) (pillNum != PILL_NOT_FOUND);
 }
 
 /*********************************************************

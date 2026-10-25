@@ -105,4 +105,17 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
                                  mdns_record_t *records, size_t capacity,
                                  char *txtScratch, size_t txtScratchSize);
 
+/* The same answer as plain strings, for a platform advertiser that
+ * registers the service itself (see mdnsAdvertiseSetPlatform): the instance
+ * label alone, without the service suffix ("WinBolo-<a>-<b>-<c>-<d>-<port>"),
+ * written to instanceOut, and the TXT pairs as NUL-terminated keys and
+ * values. Taken from mdnsAdvertiseBuildRecords' own records, so both
+ * advertisers send one key schema. The values point into scratch, which
+ * must outlive their use. Returns the number of pairs, 0 on failure. */
+size_t mdnsAdvertiseTxtPairs(const MdnsServerInfo *info,
+                             char *instanceOut, size_t instanceCap,
+                             const char **keys, const char **values,
+                             size_t capacity,
+                             char *scratch, size_t scratchSize);
+
 #endif /* MDNS_RECORDS_H */

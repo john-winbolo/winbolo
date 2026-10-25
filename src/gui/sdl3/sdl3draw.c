@@ -52,6 +52,7 @@
 #include "cursor.h"
 #include "mapview.h"
 #include "mapview_overlay.h"
+#include "newswire_slide.h"
 #include "overview_hud_layout.h"
 #include "overview_view.h"
 #include "../clientmutex.h"
@@ -79,6 +80,10 @@
 #include "screenlgm.h"
 #include "client_render.h"
 #include "macos_pinch.h"
+#include "safe_insets.h"     /* the black strips beside the touch layout */
+#if defined(__ANDROID__)
+#include "../../android/android_device.h"  /* androidDeviceAppPath: font files */
+#endif
 #include "../lang.h"
 #if defined(WINBOLO_VOICE)
 #include "../voice.h"        /* own mute state and level for the mic indicator */
@@ -91,13 +96,7 @@
 #ifndef ZOOM_FACTOR_CUSTOM
 #define ZOOM_FACTOR_CUSTOM 0
 #endif
-#ifndef MENU_BAR_HEIGHT
-  #ifdef __APPLE__
-    #define MENU_BAR_HEIGHT 0
-  #else
-    #define MENU_BAR_HEIGHT 22
-  #endif
-#endif
+/* MENU_BAR_HEIGHT comes from winbolo.h, through gamefront.h. */
 
 static SDL_Window   *gWindow        = NULL;
 static SDL_Renderer *gRenderer      = NULL;
@@ -209,6 +208,10 @@ static bool               gOverviewPrepPending  = FALSE;
 static int                gOverviewPrepW        = 0;
 static int                gOverviewPrepH        = 0;
 static float              gOverviewPrepMenuBar  = 0.0f;
+/* The map rect's left edge. 0 everywhere but the iOS tablet layout, where the
+   map takes the place of the 15x15 game view and is drawn inside it. */
+static float              gOverviewPrepX        = 0.0f;
+static bool               gOverviewPrepInTablet = FALSE;
 static OverviewHudLayout  gOverviewPrepHud;
 static bool               gOverviewPrepDrawHud  = FALSE;
 /* The item view's caption, read from the sim by the first half so the second
@@ -222,6 +225,16 @@ static bool               gOverviewPrepVoiceMuted        = FALSE;
 static bool               gOverviewPrepVoiceTransmitting = FALSE;
 static float              gOverviewPrepVoiceLevel        = 0.0f;
 static bool               gOverviewPrepVoiceEveryone     = FALSE;
+/* The touch layout's status grids over its full screen map: the first half
+   draws them into gTabletGridsTex, stacked, and the second copies each one
+   (gOverviewPrepGridSrc) to its place in the left gutter
+   (gOverviewPrepGridDst) at the status panel's transparency. */
+static SDL_Texture       *gTabletGridsTex  = NULL;
+static int                gTabletGridsTexW = 0;
+static int                gTabletGridsTexH = 0;
+static bool               gOverviewPrepGrids = FALSE;
+static SDL_FRect          gOverviewPrepGridSrc[3];
+static SDL_FRect          gOverviewPrepGridDst[3];
 
 #if defined(WINBOLO_VOICE)
 /* The microphone indicator's two icons, textured on this window's renderer at
@@ -360,14 +373,11 @@ static ItemLabelCache     gItemLabelCache;
 static OverviewHudLayout gOverviewHud;
 static bool              gOverviewHudValid = FALSE;
 
-/* The full screen map's newswire starts off the bottom edge, rides up while
-   its text is changing and drops back off once it has been quiet for the
-   hold time. 0 is fully on screen, 1 fully off; the classic frame never
-   touches any of this. */
-static float  gOverviewNewsSlide     = 1.0f;
-static Uint64 gOverviewNewsSlideTick = 0;
-#define OVERVIEW_NEWS_HOLD_MS  30000
-#define OVERVIEW_NEWS_SLIDE_MS 300
+/* The newswire's slide off and on the bottom edge (newswire_slide.h), one
+   for the process: the full screen map's newswire and the touch layout's both
+   read it through sdl3DrawNewswireSlideStep. The classic frame's newswire
+   never hides. */
+static NewswireSlide gNewswireSlide = NEWSWIRE_SLIDE_INIT;
 
 /* How see-through each of the three HUD panels is drawn, as a percentage the
    player sets in Settings > Display & Sound > Full Screen. 0 is solid and the
@@ -523,6 +533,55 @@ static int          gTabletVpX = 0, gTabletVpY = 0;
 static int          gTabletVpW = 0, gTabletVpH = 0;
 static int          gTabletVpZoom = 0;
 
+/* True when the in-window map is drawn inside the tablet layout's game view
+   rather than over the whole window. iOS is the one platform where the tablet
+   layout turns the map on: the desktop and the web only turn it on outside
+   the tablet layout, and Android never does, so this is false for all three
+   and their frames are drawn exactly as before. On iOS the tablet controls,
+   status grids and newswire stay where they are and the map replaces only the
+   15x15 view, so the map's own HUD is not drawn there. */
+static bool overviewInTabletView(void) {
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  return uiModeIsTablet();
+#else
+  return false;
+#endif
+}
+
+bool sdl3DrawIsTabletMapFullScreen(void) {
+  return gOverviewInWindow && overviewInTabletView() && gameFrontFullScreen;
+}
+
+/* Lay out the tablet layout's game view: the largest whole zoom at which the
+   15x15 view fits the screen both ways, centred. Stored for
+   sdl3DrawGetTabletViewport. The classic frame calls this to draw the view;
+   the touch layout's full screen calls it with no view to draw, because the
+   controls and the touch input are still placed from the square. */
+static void tabletViewportUpdate(void) {
+  int ww, wh;
+  /* Use logical presentation size if set, otherwise render output size */
+  {
+    SDL_RendererLogicalPresentation logMode;
+    SDL_GetRenderLogicalPresentation(gRenderer, &ww, &wh, &logMode);
+    if (ww <= 0 || wh <= 0) {
+      SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
+    }
+  }
+  /* Integer zoom that fits 15 tiles in both dimensions */
+  int zoomX = ww / (MAIN_SCREEN_SIZE_X * TILE_SIZE_X);
+  int zoomY = wh / (MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y);
+  int zoom = (zoomX < zoomY) ? zoomX : zoomY;
+  if (zoom < 1) zoom = 1;
+  /* Centre the game area */
+  int gamePixW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * zoom;
+  int gamePixH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * zoom;
+  gTabletVpX = (ww - gamePixW) / 2;
+  gTabletVpY = (wh - gamePixH) / 2;
+  gTabletVpW = gamePixW;
+  gTabletVpH = gamePixH;
+  gTabletVpZoom = zoom;
+}
+
 /* Drag scroll pixel offset — applied on top of engine edgeX/edgeY
    for smooth sub-tile scrolling from touch dragging. */
 static int          gDragOffsetX = 0;
@@ -571,15 +630,40 @@ static float        gStatusBasesOrgX = -1, gStatusBasesOrgY = -1;
    to sdl3draw_status.c. */
 
 /* Query safe area insets in renderer coordinates.
-   Returns left/top/right/bottom insets (pixels). */
+   Returns left/top/right/bottom insets (pixels). On Android the insets are
+   the shared reading in safe_insets.h (the cutout and the navigation bar,
+   the one-side rule), the same figures the lobby and the touch controls
+   use; elsewhere SDL's window safe area as it is. */
 static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
                                    float *outRight, float *outBottom) {
   float l = 0, t = 0, r = 0, b = 0;
   if (gWindow) {
-    SDL_Rect safeRect;
+    float winL = 0, winT = 0, winR = 0, winB = 0;   /* window points */
+    bool haveInsets = false;
     int winW = 0, winH = 0;
     SDL_GetWindowSize(gWindow, &winW, &winH);
-    if (SDL_GetWindowSafeArea(gWindow, &safeRect) && winW > 0 && winH > 0) {
+#if defined(__ANDROID__)
+    {
+      const SafeInsets safe = safeInsetsGet(gWindow);
+      winL = safe.left;
+      winT = safe.top;
+      winR = safe.right;
+      winB = safe.bottom;
+      haveInsets = true;
+    }
+#else
+    {
+      SDL_Rect safeRect;
+      if (SDL_GetWindowSafeArea(gWindow, &safeRect)) {
+        winL = (float)safeRect.x;
+        winT = (float)safeRect.y;
+        winR = (float)(winW - safeRect.x - safeRect.w);
+        winB = (float)(winH - safeRect.y - safeRect.h);
+        haveInsets = true;
+      }
+    }
+#endif
+    if (haveInsets && winW > 0 && winH > 0) {
       int renW = 0, renH = 0;
       SDL_RendererLogicalPresentation logMode;
       SDL_GetRenderLogicalPresentation(gRenderer, &renW, &renH, &logMode);
@@ -587,10 +671,10 @@ static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
         SDL_GetCurrentRenderOutputSize(gRenderer, &renW, &renH);
       }
       if (renW > 0 && renH > 0) {
-        l = (float)safeRect.x * (float)renW / (float)winW;
-        t = (float)safeRect.y * (float)renH / (float)winH;
-        r = (float)(winW - safeRect.x - safeRect.w) * (float)renW / (float)winW;
-        b = (float)(winH - safeRect.y - safeRect.h) * (float)renH / (float)winH;
+        l = winL * (float)renW / (float)winW;
+        t = winT * (float)renH / (float)winH;
+        r = winR * (float)renW / (float)winW;
+        b = winB * (float)renH / (float)winH;
       }
     }
   }
@@ -599,6 +683,35 @@ static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
   if (outRight) *outRight = r;
   if (outBottom) *outBottom = b;
 }
+
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+/* The iPad's and the Android tablet's classic screen: fit the game view's
+   blit rect, aspect kept, into the part of the screen inside the safe area,
+   so the home indicator, a cutout and any rounded corner do not sit on the
+   game. Centred across and placed at the top, so the height it leaves is one
+   band below it, where the touch controls go in portrait
+   (tabletLayoutConfigureClassic).
+   The desktop does not call this; a macOS window's safe area can exclude the
+   camera housing, and its layout is left as it was. */
+static void sdl3DrawFitSafeArea(float menuBarHeight, float aspect,
+                                float *x, float *y, float *w, float *h) {
+  float l = 0, t = 0, r = 0, b = 0;
+  int outW = 0, outH = 0;
+  sdl3GetSafeAreaInsets(&l, &t, &r, &b);
+  SDL_GetCurrentRenderOutputSize(gRenderer, &outW, &outH);
+  float ax = l;
+  float ay = menuBarHeight + t;
+  float aw = (float)outW - l - r;
+  float ah = (float)outH - menuBarHeight - t - b;
+  if (aw <= 0.0f || ah <= 0.0f || aspect <= 0.0f) return;
+  float fw = aw, fh = aw / aspect;
+  if (fh > ah) { fh = ah; fw = ah * aspect; }
+  *x = ax + (aw - fw) * 0.5f;
+  *y = ay;
+  *w = fw;
+  *h = fh;
+}
+#endif
 
 /* Source-rect lookup tables for tiles now live in mapview.c (mapViewPosX/Y). */
 
@@ -1079,6 +1192,12 @@ bool sdl3DrawGetNewswireAutoHide(void) {
   return gOverviewNewsAutoHide;
 }
 
+float sdl3DrawNewswireSlideStep(void) {
+  return newswireSlideStep(&gNewswireSlide, SDL_GetTicks(),
+                           sdl3DrawGetMessageActivityTick(),
+                           gOverviewNewsAutoHide);
+}
+
 int sdl3DrawGetSheetScale(void) {
   return gSheetScale;
 }
@@ -1116,15 +1235,6 @@ void sdl3DrawRestoreLogicalPresentation(void) {
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
     return;
   }
-#ifdef __ANDROID__
-  if (!uiModeIsTablet()) {
-    SDL_SetRenderLogicalPresentation(gRenderer,
-                                     gZoomFactor * SDL3_SCREEN_W,
-                                     gZoomFactor * SDL3_SCREEN_H,
-                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    return;
-  }
-#endif
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (uiModeIsTablet()) {
     /* Re-apply the mobile tablet logical presentation (same logic as setup).
@@ -1306,6 +1416,63 @@ bool sdl3DrawGetMainViewGameRect(float *outX, float *outY,
   return true;
 }
 
+/* The pointer at window (winX, winY) over the classic screen: the shared
+   build cursor follows it into the game view and the square under it is what a
+   click builds at. handMoved is false for an event that only reports where the
+   pointer is (a focus change with no movement): it then moves nothing. A warp
+   echo (cursorFollowView carrying the pointer with the map) is not the player
+   moving it either. */
+static void classicPointerAt(ClientSim *cs, float winX, float winY, bool handMoved) {
+  /* Transform window coords to game coords */
+  float gameX, gameY;
+  if (!windowToGameCoords(winX, winY, &gameX, &gameY)) {
+    /* Off the game area (letterbox) is out of the view as far as the
+       cursor is concerned, or the scroll follow would pull the pointer
+       back in from there. */
+    cursorLeaveWindow();
+    clientSimSetCursorPos(cs, 0, 0);
+    return;
+  }
+  /* The pointer following the map (cursorFollowView) is not the player
+     moving it, and must not re-pick the square it was keeping on. */
+  bool moved = handMoved && !cursorIsWarpEcho(winX, winY);
+  cursorMove((int)gameX, (int)gameY);
+  BYTE cx = 0, cy = 0;
+  if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
+    /* The mouse is just another way to drive the ONE shared build cursor:
+       moving the pointer in the view repositions it whether or not cursor
+       mode is active, so toggling build mode picks up exactly where the
+       pointer is (no jump between a separate mouse reticle and the gamepad
+       cursor).  Only on real movement (skip zero-delta focus events) and
+       only while the pointer is in the view (handled by cursorPos) — so
+       the pointer leaving the window leaves the gamepad in control.
+       cx/cy are 1-based screen tiles; absolute map tile = offset + tile.
+
+       This latch is the selection: it is what the reticle draws and what a
+       click builds at, and hand movement is the only thing that moves it.
+       The view scrolling under a resting hand must not change it, so the
+       pointer is pinned to the same world point and carried along with
+       the map, keeping it over the selection. */
+    if (moved) {
+      buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
+                         (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
+      cursorAnchorToView(clientSimGetXOffset(cs), clientSimGetYOffset(cs),
+                         clientSimGetSubPosX(cs), clientSimGetSubPosY(cs));
+    }
+    if (cx > 16 || cy > 16) cx = 100;
+    clientSimSetCursorPos(cs, cx, cy);
+  } else {
+    /* The hand has put the pointer somewhere with no square under it —
+       off the view, or the partly drawn column/row past the 15th — so it
+       is no longer on the point it was anchored to, and the next scroll
+       must not carry it back there. */
+    if (moved) {
+      cursorDropAnchor();
+    }
+    clientSimSetCursorPos(cs, 0, 0);
+  }
+}
+
 /* The smart-ping pie is not offered events here. It gets them at the top of
    sdl3ImguiProcessEvents, ahead of ImGui itself, because the map overview's
    pan item would otherwise take the chord press first and the capture-flag
@@ -1314,48 +1481,26 @@ bool sdl3DrawGetMainViewGameRect(float *outX, float *outY,
 void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   if (!ev) return;
   switch (ev->type) {
-    case SDL_EVENT_MOUSE_MOTION: {
+    case SDL_EVENT_MOUSE_MOTION:
       /* The classic 15x15 mapping means nothing while the overview owns the
          window, and the overview drives the shared build cursor itself. */
       if (gOverviewInWindow) break;
-      /* Transform window coords to game coords */
-      float gameX, gameY;
-      if (!windowToGameCoords(ev->motion.x, ev->motion.y, &gameX, &gameY)) {
-        clientSimSetCursorPos(cs, 0, 0);
-        break;
-      }
-      cursorMove((int)gameX, (int)gameY);
-      BYTE cx = 0, cy = 0;
-      if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
-        /* The mouse is just another way to drive the ONE shared build cursor:
-           moving the pointer in the view repositions it whether or not cursor
-           mode is active, so toggling build mode picks up exactly where the
-           pointer is (no jump between a separate mouse reticle and the gamepad
-           cursor).  Only on real movement (skip zero-delta focus events) and
-           only while the pointer is in the view (handled by cursorPos) — so
-           the pointer leaving the window leaves the gamepad in control.
-           cx/cy are 1-based screen tiles; absolute map tile = offset + tile.
-
-           This latch is the selection: it is what the reticle draws and what a
-           click builds at, and hand movement is the only thing that moves it.
-           The view scrolling under a resting hand must not change it. */
-        if (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f) {
-          buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
-                             (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
-        }
-        if (cx > 16 || cy > 16) cx = 100;
-        clientSimSetCursorPos(cs, cx, cy);
-      } else {
-        clientSimSetCursorPos(cs, 0, 0);
-      }
+      classicPointerAt(cs, ev->motion.x, ev->motion.y,
+                       ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f);
       break;
-    }
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
       /* A click that arrives before ImGui's capture flag catches up would
          build twice — once at the overview's square, once at the classic
          cursor — and the build-select hit-test would fire at chrome
          positions that are not on screen in this mode. */
       if (gOverviewInWindow) break;
+      /* A finger has no resting position for the view to scroll under, so a
+         press it makes (SDL's mouse press from a touch) points at its square
+         and builds there at once: the press is also the hand moving to it.
+         A real mouse keeps the square it last moved to, below. */
+      if (ev->button.which == SDL_TOUCH_MOUSEID) {
+        classicPointerAt(cs, ev->button.x, ev->button.y, true);
+      }
       if (ev->button.button == SDL_BUTTON_LEFT) {
         BYTE xVal = 0, yVal = 0;
         if (cursorPos(NULL, &xVal, &yVal, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
@@ -1588,7 +1733,10 @@ static const char *sarasaMonoFontPath(const char *langCode) {
  * the same font primary + fallback set. Sets all eight globals; assumes
  * the existing handles have already been closed by the caller (or are
  * NULL). */
-static void openInGameFonts(void) {
+/* Where the in-game Sarasa Mono faces are on this platform: the primary for
+ * the player's language and the SlabK hangul fallback. The strings live in
+ * static buffers, good until the next call. */
+static void inGameFontPaths(const char **outPrimary, const char **outFallbackK) {
   char langCode[32];
   langCode[0] = '\0';
   gameFrontGetLanguageCode(langCode, (int)sizeof(langCode));
@@ -1598,11 +1746,21 @@ static void openInGameFonts(void) {
 #if defined(__EMSCRIPTEN__)
   static char sarasaBuf[1024];
   SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "/%s", sarasaRel);
-  const char *sarasaPath  = sarasaBuf;
-  const char *sarasaKPath = "/data/fonts/SarasaMonoSlabK-Regular.ttf";
+  *outPrimary   = sarasaBuf;
+  *outFallbackK = "/data/fonts/SarasaMonoSlabK-Regular.ttf";
 #elif defined(__ANDROID__)
-  const char *sarasaPath  = sarasaRel;
-  const char *sarasaKPath = sarasaKRel;
+  /* Absolute, so SDL opens the extracted file and not the APK's deflated
+     asset, which FreeType's seeking makes very slow (androidDeviceAppPath). */
+  static char sarasaBuf[1024];
+  static char sarasaKBuf[1024];
+  if (!androidDeviceAppPath(sarasaRel, sarasaBuf, sizeof(sarasaBuf))) {
+    SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "%s", sarasaRel);
+  }
+  if (!androidDeviceAppPath(sarasaKRel, sarasaKBuf, sizeof(sarasaKBuf))) {
+    SDL_snprintf(sarasaKBuf, sizeof(sarasaKBuf), "%s", sarasaKRel);
+  }
+  *outPrimary   = sarasaBuf;
+  *outFallbackK = sarasaKBuf;
 #else
   const char *base = SDL_GetBasePath();
   static char sarasaBuf[1024];
@@ -1614,9 +1772,16 @@ static void openInGameFonts(void) {
     SDL_snprintf(sarasaBuf,  sizeof(sarasaBuf),  "%s", sarasaRel);
     SDL_snprintf(sarasaKBuf, sizeof(sarasaKBuf), "%s", sarasaKRel);
   }
-  const char *sarasaPath  = sarasaBuf;
-  const char *sarasaKPath = sarasaKBuf;
+  *outPrimary   = sarasaBuf;
+  *outFallbackK = sarasaKBuf;
 #endif
+}
+
+static void openInGameFonts(void) {
+  const char *sarasaPath  = NULL;
+  const char *sarasaKPath = NULL;
+  inGameFontPaths(&sarasaPath, &sarasaKPath);
+  Uint64 started = SDL_GetTicks();
 
   gFontMsg   = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
   gFontKD    = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
@@ -1643,12 +1808,96 @@ static void openInGameFonts(void) {
     }
   }
 
+  WB_LOG_INFO(WB_LOG_CAT_ASSET, "openInGameFonts: opened in %llums",
+              (unsigned long long)(SDL_GetTicks() - started));
+
   /* Push the new font handles into sdl3draw_status's private copies
      (covers both the initial sdl3DrawSetup path and the
      sdl3DrawAdaptRenderTarget reload path). */
   sdl3DrawStatusSetFonts(gFontTiny, gFontMsg, gFontKD, gFontLabel,
                          gFallbackFontTiny, gFallbackFontMsg,
                          gFallbackFontKD, gFallbackFontLabel);
+}
+
+/* The touch layout's newswire: the face it is drawn in, opened at the size
+   the overlay asks for (with the hangul fallback, as the in-game faces have),
+   and where the overlay last laid the strip out. The overlay runs after this
+   frame's draw, so the strip is drawn where the previous frame put it. */
+static TTF_Font *gFontNewswireTouch         = NULL;
+static TTF_Font *gFallbackFontNewswireTouch = NULL;
+static int       gFontNewswireTouchPx       = 0;
+static int       gFontNewswireTouchFailedPx = 0;  /* size the open last failed at */
+static bool      gTabletNewswireSet   = FALSE;
+static float     gTabletNewswireX     = 0.0f;
+static float     gTabletNewswireY     = 0.0f;
+static float     gTabletNewswireW     = 0.0f;
+static float     gTabletNewswireEdge  = 0.0f;
+static int       gTabletNewswirePx    = 0;
+static Uint8     gTabletNewswireText  = 255;
+static Uint8     gTabletNewswireBack  = 128;
+
+static void closeTabletNewswireFont(void) {
+  if (gFontNewswireTouch) { TTF_CloseFont(gFontNewswireTouch); gFontNewswireTouch = NULL; }
+  if (gFallbackFontNewswireTouch) {
+    TTF_CloseFont(gFallbackFontNewswireTouch);
+    gFallbackFontNewswireTouch = NULL;
+  }
+  gFontNewswireTouchPx = 0;
+  gFontNewswireTouchFailedPx = 0;
+}
+
+static TTF_Font *tabletNewswireFont(int px) {
+  if (px < 1) return NULL;
+  if (gFontNewswireTouch && gFontNewswireTouchPx == px) return gFontNewswireTouch;
+  /* The open failed at this size already: it is called every frame, the
+     strip hidden or not, so it is tried again only when the size changes. */
+  if (gFontNewswireTouchFailedPx == px) return NULL;
+  closeTabletNewswireFont();
+  Uint64 started = SDL_GetTicks();
+  const char *sarasaPath  = NULL;
+  const char *sarasaKPath = NULL;
+  inGameFontPaths(&sarasaPath, &sarasaKPath);
+  gFontNewswireTouch = TTF_OpenFont(sarasaPath, (float)px);
+  if (!gFontNewswireTouch) {
+    gFontNewswireTouchFailedPx = px;
+    return NULL;
+  }
+  gFontNewswireTouchPx = px;
+  if (SDL_strcmp(sarasaPath, sarasaKPath) != 0) {
+    gFallbackFontNewswireTouch = TTF_OpenFont(sarasaKPath, (float)px);
+    if (gFallbackFontNewswireTouch) {
+      TTF_AddFallbackFont(gFontNewswireTouch, gFallbackFontNewswireTouch);
+    }
+  }
+  WB_LOG_INFO(WB_LOG_CAT_ASSET, "touch newswire font opened at %dpx in %llums",
+              px, (unsigned long long)(SDL_GetTicks() - started));
+  return gFontNewswireTouch;
+}
+
+void sdl3DrawSetTabletNewswire(float x, float y, float w, float edge,
+                               int fontPx, float textAlpha, float backAlpha) {
+  gTabletNewswireSet  = TRUE;
+  gTabletNewswireX    = x;
+  gTabletNewswireY    = y;
+  gTabletNewswireW    = w;
+  gTabletNewswireEdge = edge;
+  gTabletNewswirePx   = fontPx;
+  gTabletNewswireText = (Uint8)(SDL_clamp(textAlpha, 0.0f, 1.0f) * 255.0f);
+  gTabletNewswireBack = (Uint8)(SDL_clamp(backAlpha, 0.0f, 1.0f) * 255.0f);
+}
+
+/* The touch layout's newswire, on the slide every hiding newswire shares. */
+static void tabletNewswireDraw(void) {
+  if (!gTabletNewswireSet) return;
+  /* Open the face before the slide check, so the two font files are read
+     on the game's first frame and not when the first message slides the
+     strip up: with auto-hide on, the strip is off screen until then. */
+  TTF_Font *font = tabletNewswireFont(gTabletNewswirePx);
+  float slide = sdl3DrawNewswireSlideStep();
+  if (slide >= 1.0f) return;
+  sdl3DrawNewswireStrip(font, gTabletNewswireX, gTabletNewswireY,
+                        gTabletNewswireW, gTabletNewswireEdge, slide,
+                        gTabletNewswireText, gTabletNewswireBack);
 }
 
 bool sdl3DrawSetup(int zoomFactor) {
@@ -1684,11 +1933,18 @@ bool sdl3DrawSetup(int zoomFactor) {
     gWindow = SDL_CreateWindow("WinBolo", 0, 0,
                                SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   } else {
-#if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
+#if defined(__EMSCRIPTEN__)
     gWindow = SDL_CreateWindow("WinBolo",
                                zoomFactor * SDL3_SCREEN_W,
                                zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT,
                                0);
+#elif defined(__IPHONEOS__) || defined(__ANDROID__)
+    /* The iPad's and the Android tablet's desktop layout. A mobile window
+       always fills the screen. No high pixel density: the render output is
+       then in points, as a desktop window's is, so the menu bar, the game
+       blit below it and the pointer all share one coordinate space and the
+       game is scaled up to fit. */
+    gWindow = SDL_CreateWindow("WinBolo", 0, 0, SDL_WINDOW_FULLSCREEN);
 #else
     /* Big Picture / Gamepad UI: launch maximised so the game fills the
        couch-mode surface.  Window size/position prefs are not persisted in
@@ -1756,17 +2012,6 @@ bool sdl3DrawSetup(int zoomFactor) {
      and start trackpad pinch-to-zoom monitoring. */
   macOSDisablePressAndHold();
   macOSPinchZoomInit();
-
-#ifdef __ANDROID__
-  if (!uiModeIsTablet()) {
-    /* On Android with desktop mode: set a logical presentation so SDL3
-       scales our fixed-size layout to fit the screen. */
-    SDL_SetRenderLogicalPresentation(gRenderer,
-                                     zoomFactor * SDL3_SCREEN_W,
-                                     zoomFactor * SDL3_SCREEN_H,
-                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
-  }
-#endif
 
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (uiModeIsTablet()) {
@@ -1860,8 +2105,8 @@ bool sdl3DrawSetup(int zoomFactor) {
                      gFallbackFontKD, gFallbackFontLabel,
                      gTankBarsTex, gBaseBarsTex);
 
-#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
-  /* Desktop + wasm: create a render target for the game content.
+  /* Desktop, wasm and the mobile tablets' desktop layout: create a render
+     target for the game content.
      The game is rendered at its logical size, then blitted scaled to the
      window below the menu bar. This allows the menu to stay at 1x size
      while the game scales, and gives windowToGameCoords a defined
@@ -1881,7 +2126,6 @@ bool sdl3DrawSetup(int zoomFactor) {
       WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawSetup: created game render target %dx%d", gGameRTWidth, gGameRTHeight);
     }
   }
-#endif
 
   return TRUE;
 }
@@ -1914,6 +2158,7 @@ void sdl3DrawCleanup(void) {
      and shut down TTF. */
   sdl3DrawStatusShutdown();
   if (gFontMsg)  { TTF_CloseFont(gFontMsg);  gFontMsg  = NULL; }
+  closeTabletNewswireFont();
   if (gFontKD)   { TTF_CloseFont(gFontKD);   gFontKD   = NULL; }
   if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
   if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
@@ -1934,6 +2179,8 @@ void sdl3DrawCleanup(void) {
   if (gStaticTex)        { SDL_DestroyTexture(gStaticTex);        gStaticTex        = NULL; }
   if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
   if (gHudSrcTex)        { SDL_DestroyTexture(gHudSrcTex);        gHudSrcTex        = NULL; }
+  if (gTabletGridsTex)   { SDL_DestroyTexture(gTabletGridsTex);   gTabletGridsTex   = NULL; }
+  gOverviewPrepGrids = FALSE;
 #if defined(WINBOLO_VOICE)
   if (gMicIconTex)      { SDL_DestroyTexture(gMicIconTex);      gMicIconTex      = NULL; }
   if (gMicMutedIconTex) { SDL_DestroyTexture(gMicMutedIconTex); gMicMutedIconTex = NULL; }
@@ -1984,7 +2231,6 @@ void sdl3DrawCleanup(void) {
  * ------------------------------------------------------- */
 void sdl3DrawReconfigureZoom(int explicitZoom) {
   (void)explicitZoom;
-#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
   if (!gRenderer || !gWindow) return;
   if (uiModeIsTablet()) return;
   /* Deck is fullscreen 1280x800 with logical presentation already set in
@@ -2034,6 +2280,7 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
      the fonts they were rendered against. */
   sdl3DrawStatusShutdown();
   if (gFontMsg)   { TTF_CloseFont(gFontMsg);   gFontMsg   = NULL; }
+  closeTabletNewswireFont();
   if (gFontKD)    { TTF_CloseFont(gFontKD);    gFontKD    = NULL; }
   if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
   if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
@@ -2076,7 +2323,6 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
     SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_LINEAR);
     WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawAdaptRenderTarget: created render target %dx%d", gGameRTWidth, gGameRTHeight);
   }
-#endif
 }
 
 /* Per-frame entry: only rebuilds in Custom zoom mode, deriving the
@@ -2174,6 +2420,79 @@ static Uint8 hudPanelAlpha(int transparency) {
 
 static Uint8 hudBackingAlpha(int transparency) {
   return (Uint8)((OVERVIEW_HUD_BACK_ALPHA * (100 - transparency)) / 100);
+}
+
+void sdl3DrawHudPanelAlphas(int transparency, float *pieceAlpha,
+                            float *backingAlpha) {
+  transparency = hudClampTransparency(transparency);
+  if (pieceAlpha) *pieceAlpha = (float)hudPanelAlpha(transparency) / 255.0f;
+  if (backingAlpha) *backingAlpha = (float)hudBackingAlpha(transparency) / 255.0f;
+}
+
+/* The touch layout's tanks, pills and bases grids for its full screen map,
+   drawn by the same calls as the classic frame's left gutter but into a
+   texture of their own, stacked with the classic frame's gap between them, so
+   the second half can lay each over the map at the status panel's
+   transparency. They read the sim, so this is the first half's, inside the
+   frame lock, like the HUD's source frame. Sets where each grid comes from in
+   the texture and where it goes on screen; false, with nothing to draw, when
+   the left gutter is too narrow for them, by the classic frame's own test. */
+static bool tabletGridsRender(ClientSim *cs) {
+  if (gTabletVpX < 100 || gTabletVpZoom <= 0) return false;
+
+  int zf    = gTabletVpZoom;
+  int gridW = zf * STATUS_TANKS_WIDTH;
+  int gridH = zf * STATUS_TANKS_HEIGHT;
+  int gap   = 4;
+  int texW  = gridW;
+  int texH  = 3 * gridH + 2 * gap;
+
+  SDL_Texture *savedTarget = SDL_GetRenderTarget(gRenderer);
+
+  if (gTabletGridsTex != NULL &&
+      (gTabletGridsTexW != texW || gTabletGridsTexH != texH)) {
+    SDL_DestroyTexture(gTabletGridsTex);
+    gTabletGridsTex = NULL;
+  }
+  if (gTabletGridsTex == NULL) {
+    gTabletGridsTex = sdl3CreateRenderTarget(texW, texH);
+    if (gTabletGridsTex == NULL) return false;
+    gTabletGridsTexW = texW;
+    gTabletGridsTexH = texH;
+  }
+
+  SDL_SetRenderTarget(gRenderer, gTabletGridsTex);
+  SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 0);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+
+  /* The grids are drawn at the view's zoom, as the classic frame draws them. */
+  int savedZoomFactor = gZoomFactor;
+  gZoomFactor = zf;
+  sdl3DrawStatusSetZoom(zf);
+  sdl3DrawSetStatusPanelOrigins(0.0f, 0.0f,
+                                0.0f, (float)(gridH + gap),
+                                0.0f, (float)(2 * (gridH + gap)));
+  sdl3DrawTabletStatusGrids(cs);
+  sdl3DrawSetStatusPanelOrigins(-1, -1, -1, -1, -1, -1);
+  gZoomFactor = savedZoomFactor;
+  sdl3DrawStatusSetZoom(gZoomFactor);
+
+  SDL_SetRenderTarget(gRenderer, savedTarget);
+
+  /* Where the classic frame puts them: 4 units in from the safe area, tanks
+     at the top, then pills, then bases. */
+  float safeL = 0, safeT = 0;
+  sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
+  for (int i = 0; i < 3; i++) {
+    SDL_FRect src = { 0.0f, (float)(i * (gridH + gap)),
+                      (float)gridW, (float)gridH };
+    SDL_FRect dst = { safeL + 4.0f, safeT + 4.0f + (float)(i * (gridH + gap)),
+                      (float)gridW, (float)gridH };
+    gOverviewPrepGridSrc[i] = src;
+    gOverviewPrepGridDst[i] = dst;
+  }
+  return true;
 }
 
 /* Move every panel's fade one frame on, towards solid under the pointer and
@@ -2340,6 +2659,39 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : (float)MENU_BAR_HEIGHT;
   int w = ww;
   int h = (int)((float)wh - menuBarHeight);
+  float mapX = 0.0f;
+  /* The iOS tablet layout: the map takes the game view's rect, which the
+     classic frame drawn just before this one has set. menuBarHeight carries
+     the rect's top from here on, as it carries the menu bar's height on the
+     desktop. */
+  bool inTablet = overviewInTabletView();
+  bool tabletMapFull = inTablet && sdl3DrawIsTabletMapFullScreen();
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  if (!inTablet) {
+    /* The mobile tablets' desktop layout: the map stays inside the safe
+       area. */
+    float l = 0, t = 0, r = 0, b = 0;
+    sdl3GetSafeAreaInsets(&l, &t, &r, &b);
+    mapX           = l;
+    menuBarHeight += t;
+    w              = (int)((float)ww - l - r);
+    h              = (int)((float)wh - menuBarHeight - b);
+  }
+#endif
+  /* In the touch layout's full screen the map takes the whole screen, edge to
+     edge: under the safe area insets too, since only the controls drawn over
+     it need keeping clear of them. */
+  if (tabletMapFull) {
+    mapX          = 0.0f;
+    menuBarHeight = 0.0f;
+    w             = ww;
+    h             = wh;
+  } else if (inTablet) {
+    mapX          = (float)gTabletVpX;
+    menuBarHeight = (float)gTabletVpY;
+    w             = gTabletVpW;
+    h             = gTabletVpH;
+  }
   if (w < 1 || h < 1) return;
 
   /* The classic draw loads the atlas lazily on its way past; this branch
@@ -2378,13 +2730,20 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
      it comes back up on the next message, and a tank parked in the strip it
      covers would be behind it as soon as anyone said anything. */
   OverviewHudLayout hud;
-  bool haveHud = overviewHudLayout(w, h, voiceWanted, &hud);
+  /* The tablet layout has its own controls, status grids and newswire round
+     the game view, so the map there carries no HUD of its own. */
+  bool haveHud = !inTablet && overviewHudLayout(w, h, voiceWanted, &hud);
   if (haveHud) {
     overviewViewSetHudInsets(gOverviewView,
                              hud.buildX + hud.buildW,
                              0.0f,
                              (float)w - hud.columnX,
                              (float)h - hud.newswireY);
+  } else if (tabletMapFull) {
+    /* The gutters either side of the square hold the controls, so a tank
+       brought into the picture is brought into the square between them. */
+    overviewViewSetHudInsets(gOverviewView, (float)gTabletVpX, 0.0f,
+                             (float)(w - gTabletVpX - gTabletVpW), 0.0f);
   } else {
     overviewViewSetHudInsets(gOverviewView, 0.0f, 0.0f, 0.0f, 0.0f);
   }
@@ -2398,6 +2757,10 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
      back, so it is still ahead of anything drawn to the window. */
   bool drawHud = haveHud &&
                  hudSourceRender(cs, showPillLabels, showBaseLabels);
+
+  /* The touch layout's status grids, which its full screen map covers the
+     classic frame's copy of. Same reason to be on this side of the lock. */
+  gOverviewPrepGrids = tabletMapFull && tabletGridsRender(cs);
 
   /* The item view's caption, for the same reason: it is the one read of the
      sim the drawing half would otherwise make. */
@@ -2414,6 +2777,8 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   gOverviewPrepW       = w;
   gOverviewPrepH       = h;
   gOverviewPrepMenuBar = menuBarHeight;
+  gOverviewPrepX       = mapX;
+  gOverviewPrepInTablet = inTablet;
   if (haveHud) gOverviewPrepHud = hud;
   gOverviewPrepDrawHud = drawHud;
   gOverviewPrepPending = TRUE;
@@ -2432,6 +2797,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
   int   w             = gOverviewPrepW;
   int   h             = gOverviewPrepH;
   float menuBarHeight = gOverviewPrepMenuBar;
+  float mapX          = gOverviewPrepX;
   bool  drawHud       = gOverviewPrepDrawHud;
   bool  voiceWanted   = gOverviewPrepVoiceWanted;
   OverviewHudLayout hud = gOverviewPrepHud;
@@ -2448,23 +2814,11 @@ void sdl3DrawFlushOverviewInWindow(void) {
        the hold time, off the bottom edge otherwise. The offset moves the
        backing, the chrome frame, the slice and the click rect together, so
        everything below reads the adjusted rects. */
-    Uint64 lastMsg = sdl3DrawGetMessageActivityTick();
-    /* Auto-hide off wants it up whatever the newswire has been doing, so it
-       rides up on the next frame and stays there. */
-    bool newsWanted = !gOverviewNewsAutoHide ||
-                      (lastMsg != 0 && (now - lastMsg) < OVERVIEW_NEWS_HOLD_MS);
-    float step = (gOverviewNewsSlideTick == 0)
-                     ? 1.0f
-                     : (float)(now - gOverviewNewsSlideTick) /
-                           (float)OVERVIEW_NEWS_SLIDE_MS;
-    gOverviewNewsSlideTick = now;
-    gOverviewNewsSlide += newsWanted ? -step : step;
-    if (gOverviewNewsSlide < 0.0f) gOverviewNewsSlide = 0.0f;
-    if (gOverviewNewsSlide > 1.0f) gOverviewNewsSlide = 1.0f;
-    if (gOverviewNewsSlide > 0.0f) {
+    float newsSlide = sdl3DrawNewswireSlideStep();
+    if (newsSlide > 0.0f) {
       /* Far enough down that the chrome frame's outer line leaves too. */
       float travel = hud.newswireH + SDL_ceilf(2.0f * hud.scale) + 3.0f;
-      float off    = gOverviewNewsSlide * travel;
+      float off    = newsSlide * travel;
       hud.newswireY += off;
       hud.el[OVERVIEW_HUD_NEWSWIRE].dstY += off;
     }
@@ -2472,12 +2826,17 @@ void sdl3DrawFlushOverviewInWindow(void) {
     gOverviewHudValid = TRUE;
   }
 
-  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+  /* In the tablet layout the classic frame has already drawn the chrome and
+     the controls' backing round the game view, and the map covers the view,
+     so there is nothing to clear. */
+  if (!gOverviewPrepInTablet) {
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+    SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+  }
 
   SDL_Texture *tex = overviewViewGetTexture(gOverviewView);
   if (tex) {
-    SDL_FRect dest = { 0.0f, menuBarHeight, (float)w, (float)h };
+    SDL_FRect dest = { mapX, menuBarHeight, (float)w, (float)h };
     /* BLENDMODE_NONE for the same reason the classic blit uses it: alpha
        below 255 left in a render target would composite semi-transparent. */
     SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
@@ -2487,9 +2846,32 @@ void sdl3DrawFlushOverviewInWindow(void) {
     gOverviewRect = dest;
   }
 
+  /* The touch layout's status grids over its full screen map, at the status
+     panel's transparency: a straight copy when it is solid, as the HUD's
+     pieces get, and blended at its alpha otherwise. The tablet frames round
+     them are the ImGui overlay's (sdl3imgui_tablet.cpp). */
+  if (gOverviewPrepGrids && gTabletGridsTex) {
+    Uint8 alpha = hudPanelAlpha(gOverviewStatusTransparency);
+    if (alpha == 255) {
+      SDL_SetTextureBlendMode(gTabletGridsTex, SDL_BLENDMODE_NONE);
+    } else {
+      SDL_SetTextureBlendMode(gTabletGridsTex, SDL_BLENDMODE_BLEND);
+      SDL_SetTextureAlphaMod(gTabletGridsTex, alpha);
+    }
+    for (int i = 0; i < 3; i++) {
+      SDL_RenderTexture(gRenderer, gTabletGridsTex, &gOverviewPrepGridSrc[i],
+                        &gOverviewPrepGridDst[i]);
+    }
+    SDL_SetTextureAlphaMod(gTabletGridsTex, 255);
+    SDL_SetTextureBlendMode(gTabletGridsTex, SDL_BLENDMODE_NONE);
+  }
+
+  /* The touch layout's newswire over its map, in the square or full screen. */
+  if (gOverviewPrepInTablet) tabletNewswireDraw();
+
   if (drawHud) {
     /* The layout works in map-rect pixels; the rect starts below the menu bar. */
-    float originX = 0.0f;
+    float originX = mapX;
     float originY = menuBarHeight;
 
     /* Each panel's share of every colour it is drawn in: its setting, less
@@ -2694,7 +3076,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
         bottom = menuBarHeight + hud.newswireY;
       }
       float ty = bottom - OVERVIEW_ITEM_LABEL_GAP - (float)textH;
-      float tx = ((float)w - (float)textW) * 0.5f;  /* the map rect starts at 0 */
+      float tx = mapX + ((float)w - (float)textW) * 0.5f;
 
       /* The text sits over terrain of any colour, so it gets the same
          translucent backing as the HUD panels and the zoom readout. */
@@ -2738,7 +3120,11 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   gLastPillLabels = showPillLabels;
   gLastBaseLabels = showBaseLabels;
 
-  if (gOverviewInWindow) {
+  /* The touch layout's full screen draws no game view either, but still lays
+     the square out for the controls and the touch input placed from it. */
+  bool tabletMapFull = sdl3DrawIsTabletMapFullScreen();
+  if (tabletMapFull) tabletViewportUpdate();
+  if (gOverviewInWindow && (!overviewInTabletView() || tabletMapFull)) {
     sdl3DrawOverviewInWindowFrame(cs, showPillLabels, showBaseLabels);
     return;
   }
@@ -2762,31 +3148,10 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   int tabletOriginX = 0, tabletOriginY = 0;
 
   if (tabletMode) {
-    int ww, wh;
-    /* Use logical presentation size if set, otherwise render output size */
-    {
-      SDL_RendererLogicalPresentation logMode;
-      SDL_GetRenderLogicalPresentation(gRenderer, &ww, &wh, &logMode);
-      if (ww <= 0 || wh <= 0) {
-        SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
-      }
-    }
-    /* Integer zoom that fits 15 tiles in both dimensions */
-    int zoomX = ww / (MAIN_SCREEN_SIZE_X * TILE_SIZE_X);
-    int zoomY = wh / (MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y);
-    effectiveZoom = (zoomX < zoomY) ? zoomX : zoomY;
-    if (effectiveZoom < 1) effectiveZoom = 1;
-    /* Centre the game area */
-    int gamePixW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * effectiveZoom;
-    int gamePixH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * effectiveZoom;
-    tabletOriginX = (ww - gamePixW) / 2;
-    tabletOriginY = (wh - gamePixH) / 2;
-    /* Store for sdl3DrawGetTabletViewport() */
-    gTabletVpX = tabletOriginX;
-    gTabletVpY = tabletOriginY;
-    gTabletVpW = gamePixW;
-    gTabletVpH = gamePixH;
-    gTabletVpZoom = effectiveZoom;
+    tabletViewportUpdate();
+    effectiveZoom = gTabletVpZoom;
+    tabletOriginX = gTabletVpX;
+    tabletOriginY = gTabletVpY;
   } else if (!tabletMode) {
     gTabletVpX = gTabletVpY = gTabletVpW = gTabletVpH = gTabletVpZoom = 0;
   }
@@ -2817,6 +3182,28 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
     SDL_FRect fullScr = { 0, 0, (float)scrW, (float)scrH };
     SDL_RenderFillRect(gRenderer, &fullScr);
+
+    /* Black beyond the left and right safe insets, the cutout's side and
+       the margin on the other, as the lobby draws them. The insets are in
+       window points; this is drawn in the logical units. */
+    if (gWindow) {
+      int winW = 0, winH = 0;
+      SDL_GetWindowSize(gWindow, &winW, &winH);
+      if (winW > 0) {
+        const SafeInsets safe = safeInsetsGet(gWindow);
+        const float toLog = (float)scrW / (float)winW;
+        SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+        if (safe.left > 0.0f) {
+          SDL_FRect l = { 0, 0, safe.left * toLog, (float)scrH };
+          SDL_RenderFillRect(gRenderer, &l);
+        }
+        if (safe.right > 0.0f) {
+          SDL_FRect r = { (float)scrW - safe.right * toLog, 0,
+                          safe.right * toLog, (float)scrH };
+          SDL_RenderFillRect(gRenderer, &r);
+        }
+      }
+    }
 
     /* Inset bevel around the game viewport */
     float gamePixW = (float)(MAIN_SCREEN_SIZE_X * TILE_SIZE_X * effectiveZoom);
@@ -2862,12 +3249,14 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
    * into edgeX/Y as a fractional drag offset. See the comment block at
    * the top of this file. */
   if (cs != NULL) {
-    /* An item view is camera-locked on what it is watching and must stay
+    /* A pill or base view is camera-locked on a square and must stay
      * exactly centred — no sub-tile drift. scrollCenterObject already zeroes
      * subPos on entry / cycling / return-to-tank, but ignore it here too so
-     * the pill, base or allied tank can never render a fraction of a tile
-     * off centre regardless of what subPos last held. */
-    bool inItemView = clientSimIsInItemView(cs);
+     * the pill or base can never render a fraction of a tile off centre
+     * regardless of what subPos last held. An ally view keeps it: that is
+     * how the camera follows the tank smoothly (clientSimFollowAllyView). */
+    bool inItemView = clientSimIsInItemView(cs) &&
+                      clientSimGetViewKind(cs) != VIEW_KIND_ALLY;
     int subX    = inItemView ? 0 : clientSimGetSubPosX(cs);  /* 0..255, 1/256-tile units */
     int subY    = inItemView ? 0 : clientSimGetSubPosY(cs);
     int tileWpx = TILE_SIZE_X * gZoomFactor;
@@ -2957,7 +3346,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                 (clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_MINES   && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_MINES))) {
       /* Tank died and is waiting to respawn — draw Bolo-style pixel static noise */
       /* On iOS use half-res texture so static dots appear larger */
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
       int staticW = gameW / 2;
       int staticH = gameH / 2;
 #else
@@ -3240,6 +3629,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       sdl3DrawTabletStatusGrids(cs);
       sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1); /* reset */
     }
+    /* Over the game view, under the map when the map is up: the map's
+       frame half puts it back over the map (sdl3DrawFlushOverviewInWindow). */
+    if (!gOverviewInWindow) tabletNewswireDraw();
   } else {
     sdl3DrawSetBasesStatusClear();
     {
@@ -3342,6 +3734,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     }
 
     /* Store for coordinate transformation */
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
+#endif
     gGameDestRect.x = destX;
     gGameDestRect.y = destY;
     gGameDestRect.w = destW;
@@ -3357,6 +3752,14 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     sdl3LetterboxFill();
     SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
+  }
+
+  /* The iOS tablet layout keeps the frame above, chrome and status grids
+     included, and puts the map over the game view it has just drawn. This is
+     the first half; sdl3DrawFlushOverviewInWindow draws it once the lock is
+     released, as it does for the whole-window map. */
+  if (gOverviewInWindow && overviewInTabletView()) {
+    sdl3DrawOverviewInWindowFrame(cs, showPillLabels, showBaseLabels);
   }
 }
 
@@ -3476,6 +3879,9 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
       destY = menuBarHeight;
     }
 
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
+#endif
     gGameDestRect.x = destX;
     gGameDestRect.y = destY;
     gGameDestRect.w = destW;
@@ -3527,6 +3933,9 @@ static void sdl3BlitGameRTToWindow(void) {
     destY = menuBarHeight;
   }
 
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
+#endif
   gGameDestRect.x = destX;
   gGameDestRect.y = destY;
   gGameDestRect.w = destW;
@@ -3693,8 +4102,12 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
      playfield, which is a different screen entirely — taking it while the
      overview owns the window swapped the whole picture out from under the
      player for the last moments of a round, in a window that is still full
-     screen. The map is what they have been looking at, so it stays. */
-  if (gOverviewInWindow) {
+     screen. The map is what they have been looking at, so it stays. The iOS
+     tablet layout takes the classic path below: its map sits inside the game
+     view, which that path draws round. Its full screen is the exception, where
+     the map is the whole screen as it is here. */
+  if (gOverviewInWindow &&
+      (!overviewInTabletView() || sdl3DrawIsTabletMapFullScreen())) {
     const char *caption = langGetText(STR_RETURNING_TO_LOBBY);
     int textW = 0;
     int textH = 0;

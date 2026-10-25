@@ -344,11 +344,17 @@ bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *usernam
 * Returns TRUE if the token is still valid.
 *********************************************************/
 bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
+  return winbolonetAuthValidateEx(token, playerNameOut, rankOut, rankTotalOut,
+                                  statsOut, errorMsg, NULL);
+}
+
+bool winbolonetAuthValidateEx(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg, bool *tokenRejectedOut) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
   bool ok = FALSE;
 
+  if (tokenRejectedOut) *tokenRejectedOut = FALSE;
   if (rankOut) *rankOut = -1;
   if (rankTotalOut) *rankTotalOut = 0;
   if (statsOut) statsOut->valid = FALSE;
@@ -385,8 +391,12 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut
       } else {
         strcpy(errorMsg, "Token is no longer valid");
       }
+      if (tokenRejectedOut) *tokenRejectedOut = TRUE;
     }
   } else if (resp) {
+    if (tokenRejectedOut && (status == 401 || status == 403)) {
+      *tokenRejectedOut = TRUE;
+    }
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
       snprintf(errorMsg, 512, "%s", errObj->valuestring);

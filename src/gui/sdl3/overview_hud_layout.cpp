@@ -309,8 +309,14 @@ bool overviewHudLayout(int viewW, int viewH, bool wantVoice,
        also stop short of the column's left edge. Take fewer source pixels
        rather than squashing the text: the newswire is left-aligned, so the
        right end is the part that can go. */
+    /* A map rect taller than wide (an iPad in portrait) leaves the centred
+       strip only the narrow gap between the build strip's corner and the
+       column, which cut the newswire down to a few words. There the column is
+       lifted to stand on top of the strip instead, which the scale above
+       already leaves room for, and the strip takes the full width. */
+    const bool stacked = viewH > viewW;
     float newsMaxW = (float)viewW - 2.0f * (float)HUD_MARGIN;
-    {
+    if (!stacked) {
         float clearW = 2.0f * (lay.columnX - (float)HUD_MARGIN) - (float)viewW
                        - 2.0f * (float)HUD_STRIP_PAD;
         if (clearW > 0.0f && clearW < newsMaxW) newsMaxW = clearW;
@@ -326,6 +332,20 @@ bool overviewHudLayout(int viewW, int viewH, bool wantVoice,
     lay.newswireY = (float)viewH - lay.newswireH;
     news->dstX = lay.newswireX + (float)HUD_STRIP_PAD;
     news->dstY = lay.newswireY + (float)HUD_STRIP_PAD;
+
+    if (stacked) {
+        float lift = (lay.columnY + lay.columnH) -
+                     (lay.newswireY - (float)HUD_MARGIN);
+        if (lift > 0.0f) {
+            lay.columnY -= lift;
+            lay.dividerY -= lift;
+            for (int i = 0; i < OVERVIEW_HUD_COUNT; i++) {
+                if (i == OVERVIEW_HUD_NEWSWIRE || i == OVERVIEW_HUD_BUILDSELECT) continue;
+                if (lay.el[i].dstW <= 0.0f) continue;  /* the unwanted voice row */
+                lay.el[i].dstY -= lift;
+            }
+        }
+    }
 
     *out = lay;
     return true;

@@ -42,11 +42,14 @@
 void transportUdpServerStartMdnsAdvertiser(unsigned short gamePort) { (void)gamePort; }
 void transportUdpServerPollMdnsAdvertiser(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerStopMdnsAdvertiser(void) {}
+void mdnsAdvertiseSetPlatform(const MdnsPlatformAdvertiser *advertiser) { (void)advertiser; }
+void mdnsAdvertiseSetMulticastHold(void (*hold)(bool on)) { (void)hold; }
 
 #else /* !__EMSCRIPTEN__ */
 
 #include <stdio.h>
 #include <string.h>
+#include <SDL3/SDL.h>
 
 #include "platform_net.h"   /* cross-platform sockets + inet_ntoa */
 #ifndef _WIN32
@@ -74,6 +77,31 @@ static struct {
   struct in_addr localAddr;  /* server LAN address sent in the A record */
 } s_mdns = { -1, 0, { 0 } };
 
+/* The platform's own advertiser, when it has one (see mdns_advertise.h).
+ * platformPending: started, waiting for the first poll to register.
+ * platformRunning: registered; updates and stop go to the platform. */
+static const MdnsPlatformAdvertiser *s_platform = NULL;
+static struct {
+  bool     pending;
+  bool     running;
+  char     ifName[32];        /* interface of localAddr, "" when unknown */
+  Uint64   lastCheckMs;       /* last time the TXT pairs were compared */
+  char     lastTxt[512];      /* the pairs last sent, key=value joined */
+  size_t   lastTxtLen;
+} s_plat;
+
+void mdnsAdvertiseSetPlatform(const MdnsPlatformAdvertiser *advertiser) {
+  s_platform = advertiser;
+}
+
+/* The platform's hold on incoming multicast while the socket is open (see
+ * mdns_advertise.h); NULL calls nothing. */
+static void (*s_multicastHold)(bool on) = NULL;
+
+void mdnsAdvertiseSetMulticastHold(void (*hold)(bool on)) {
+  s_multicastHold = hold;
+}
+
 /* Context threaded through mdns_socket_listen to the query callback: the
  * socket to answer on plus a snapshot of current server state. */
 typedef struct {
@@ -83,11 +111,22 @@ typedef struct {
 
 /*---------------------------------------------------------
  * Local LAN address discovery (single interface, v1).
- * Mirrors discovery.c's broadcast-interface selection.
- * Multi-interface advertising (one socket per usable iface)
- * is a follow-up.
+ * Picks one IPv4 interface that is up and not loopback.
+ * Unlike discovery.c, which broadcasts on every up,
+ * broadcast-capable interface, it also passes over
+ * point-to-point interfaces (utun, ppp, tun, wg, pdp_ip)
+ * and takes one of those only when no other interface is
+ * up. The Windows branch takes the first up, non-loopback
+ * interface. Multi-interface advertising (one socket per
+ * usable iface) is a follow-up. ifNameOut gets the
+ * interface's name where the system reports one, ""
+ * otherwise.
  *---------------------------------------------------------*/
-static bool mdnsFindLocalAddr(struct in_addr *out) {
+static bool mdnsFindLocalAddr(struct in_addr *out, char *ifNameOut,
+                              size_t ifNameCap) {
+  if (ifNameCap > 0) {
+    ifNameOut[0] = '\0';
+  }
 #ifdef _WIN32
   SOCKET s;
   INTERFACE_INFO list[20];
@@ -116,11 +155,16 @@ static bool mdnsFindLocalAddr(struct in_addr *out) {
   return found;
 #else
   struct ifaddrs *ifap, *ifa;
-  bool found = FALSE;
+  struct ifaddrs *pick = NULL;
 
   if (getifaddrs(&ifap) != 0) {
     return FALSE;
   }
+  /* A point-to-point link is a phone's mobile data (pdp_ip) or a VPN
+   * tunnel (utun), neither of which LAN players can reach the host
+   * through, and a phone can list its mobile data link ahead of Wi-Fi.
+   * Take the first other interface, and a point-to-point one only when
+   * there is nothing else. */
   for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
     if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET) {
       continue;
@@ -128,12 +172,22 @@ static bool mdnsFindLocalAddr(struct in_addr *out) {
     if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK)) {
       continue;
     }
-    *out = ((struct sockaddr_in *)ifa->ifa_addr)->sin_addr;
-    found = TRUE;
-    break;
+    if (!(ifa->ifa_flags & IFF_POINTOPOINT)) {
+      pick = ifa;
+      break;
+    }
+    if (pick == NULL) {
+      pick = ifa;
+    }
+  }
+  if (pick != NULL) {
+    *out = ((struct sockaddr_in *)pick->ifa_addr)->sin_addr;
+    if (ifNameCap > 0 && pick->ifa_name != NULL) {
+      snprintf(ifNameOut, ifNameCap, "%s", pick->ifa_name);
+    }
   }
   freeifaddrs(ifap);
-  return found;
+  return pick != NULL;
 #endif
 }
 
@@ -278,6 +332,51 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
   return n;
 }
 
+size_t mdnsAdvertiseTxtPairs(const MdnsServerInfo *info,
+                             char *instanceOut, size_t instanceCap,
+                             const char **keys, const char **values,
+                             size_t capacity,
+                             char *scratch, size_t scratchSize) {
+  mdns_record_t records[MDNS_WINBOLO_RECORD_COUNT];
+  size_t count, i, pairs = 0;
+  size_t suffix = sizeof(MDNS_WINBOLO_SERVICE) - 1;
+  size_t labelLen;
+
+  if (instanceOut == NULL || instanceCap == 0 || keys == NULL ||
+      values == NULL || capacity < MDNS_WINBOLO_TXT_COUNT) {
+    return 0;
+  }
+  count = mdnsAdvertiseBuildRecords(info, records, MDNS_WINBOLO_RECORD_COUNT,
+                                    scratch, scratchSize);
+  if (count == 0) {
+    return 0;
+  }
+
+  /* records[0] is the PTR, whose target is "<label>._winbolo._udp.local.";
+   * the label is that name less the dot and the service. */
+  if (records[0].data.ptr.name.length < suffix + 1) {
+    return 0;
+  }
+  labelLen = records[0].data.ptr.name.length - suffix - 1;
+  if (labelLen + 1 > instanceCap) {
+    return 0;
+  }
+  memcpy(instanceOut, records[0].data.ptr.name.str, labelLen);
+  instanceOut[labelLen] = '\0';
+
+  /* The builder leaves a NUL after every value it formats into scratch, so
+   * each value is already a C string; the keys are string literals. */
+  for (i = 0; i < count; i++) {
+    if (records[i].type != MDNS_RECORDTYPE_TXT) {
+      continue;
+    }
+    keys[pairs]   = records[i].data.txt.key.str;
+    values[pairs] = records[i].data.txt.value.str;
+    pairs++;
+  }
+  return pairs;
+}
+
 /*---------------------------------------------------------
  * Live server state -> info POD. Reads the same getters
  * serverHandleInfoRequest uses, plus the lobby/locked
@@ -410,17 +509,85 @@ static int mdnsQueryCallback(int sock, const struct sockaddr *from, size_t addrl
 /*---------------------------------------------------------
  * Lifecycle hooks.
  *---------------------------------------------------------*/
+/* Hands the platform advertiser the current pairs: start on the first
+ * poll, update when they changed since the last check, at most once a
+ * second. */
+#define MDNS_PLATFORM_CHECK_MS 1000
+
+static void mdnsPlatformPoll(ServerSim *sim) {
+  MdnsServerInfo info;
+  char instance[96];
+  const char *keys[MDNS_WINBOLO_TXT_COUNT];
+  const char *values[MDNS_WINBOLO_TXT_COUNT];
+  char scratch[512];
+  char joined[512];
+  size_t count, i, len = 0;
+  Uint64 now = SDL_GetTicks();
+
+  if (s_plat.running && now - s_plat.lastCheckMs < MDNS_PLATFORM_CHECK_MS) {
+    return;
+  }
+  s_plat.lastCheckMs = now;
+
+  mdnsFillServerInfo(sim, &info);
+  count = mdnsAdvertiseTxtPairs(&info, instance, sizeof(instance),
+                                keys, values, MDNS_WINBOLO_TXT_COUNT,
+                                scratch, sizeof(scratch));
+  if (count == 0) {
+    return;
+  }
+  for (i = 0; i < count; i++) {
+    int w = snprintf(joined + len, sizeof(joined) - len, "%s=%s;",
+                     keys[i], values[i]);
+    if (w < 0 || (size_t)w >= sizeof(joined) - len) {
+      break;
+    }
+    len += (size_t)w;
+  }
+
+  if (s_plat.pending) {
+    s_plat.pending = false;
+    if (!s_platform->start(instance, s_mdns.gamePort, s_plat.ifName,
+                           keys, values, count)) {
+      WB_LOG_WARN(WB_LOG_CAT_NET,
+                  "mdns: the platform advertiser did not start");
+      return;
+    }
+    s_plat.running = true;
+  } else if (len != s_plat.lastTxtLen ||
+             memcmp(joined, s_plat.lastTxt, len) != 0) {
+    s_platform->update(keys, values, count);
+  } else {
+    return;
+  }
+  memcpy(s_plat.lastTxt, joined, len);
+  s_plat.lastTxtLen = len;
+}
+
 void transportUdpServerStartMdnsAdvertiser(unsigned short gamePort) {
   struct sockaddr_in saddr;
 
-  if (s_mdns.sock >= 0) {
+  if (s_mdns.sock >= 0 || s_plat.pending || s_plat.running) {
     return; /* already running */
   }
 
   s_mdns.gamePort = gamePort;
-  if (!mdnsFindLocalAddr(&s_mdns.localAddr)) {
+  if (!mdnsFindLocalAddr(&s_mdns.localAddr, s_plat.ifName,
+                         sizeof(s_plat.ifName))) {
     WB_LOG_WARN(WB_LOG_CAT_NET,
                 "mdns: no usable LAN interface; advertiser not started");
+    return;
+  }
+
+  if (s_platform != NULL) {
+    /* Registered on the first poll, which has the server state the TXT
+     * record needs. */
+    s_plat.pending = true;
+    s_plat.lastTxtLen = 0;
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+                "mdns: advertising %s on %s:%u through the platform",
+                MDNS_WINBOLO_SERVICE, inet_ntoa(s_mdns.localAddr),
+                (unsigned)gamePort);
     return;
   }
 
@@ -438,6 +605,9 @@ void transportUdpServerStartMdnsAdvertiser(unsigned short gamePort) {
                 "mdns: failed to open multicast socket; advertiser not started");
     return;
   }
+  if (s_multicastHold != NULL) {
+    s_multicastHold(true);
+  }
 
   WB_LOG_INFO(WB_LOG_CAT_NET,
               "mdns: advertising %s on %s:%u",
@@ -450,6 +620,10 @@ void transportUdpServerPollMdnsAdvertiser(struct ServerSim *sim) {
   MdnsServerInfo info;
   MdnsAnswerCtx ctx;
 
+  if (s_plat.pending || s_plat.running) {
+    mdnsPlatformPoll(sim);
+    return;
+  }
   if (s_mdns.sock < 0) {
     return; /* never started — cheap no-op */
   }
@@ -461,8 +635,20 @@ void transportUdpServerPollMdnsAdvertiser(struct ServerSim *sim) {
 }
 
 void transportUdpServerStopMdnsAdvertiser(void) {
+  if (s_plat.pending || s_plat.running) {
+    if (s_plat.running) {
+      s_platform->stop();
+    }
+    memset(&s_plat, 0, sizeof(s_plat));
+    s_mdns.gamePort = 0;
+    memset(&s_mdns.localAddr, 0, sizeof(s_mdns.localAddr));
+    return;
+  }
   if (s_mdns.sock < 0) {
     return; /* never started / already stopped */
+  }
+  if (s_multicastHold != NULL) {
+    s_multicastHold(false);
   }
   mdns_socket_close(s_mdns.sock);
   s_mdns.sock = -1;

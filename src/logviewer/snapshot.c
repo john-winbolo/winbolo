@@ -30,14 +30,45 @@
 #include "lv_global.h"
 #include "snapshot.h"
 
-/*
-typedef struct snapshotObj *snapshot;
-struct snapshotObj {
-  snapshot next;
-  unsigned long filePos;
-  unsigned long time;
-}; */
+/* Index of the first entry whose time is greater than time, or count if
+   there is none. Entries before it are at or before time. */
+static int lv_snapshotUpperBound(snapshot s, uint32_t time) {
+  int lo = 0;
+  int hi = s->count;
 
+  while (lo < hi) {
+    int mid = lo + (hi - lo) / 2;
+    if (s->items[mid].time <= time) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+/* Index of the first entry whose time is at or after time, or count. */
+static int lv_snapshotLowerBound(snapshot s, uint32_t time) {
+  int lo = 0;
+  int hi = s->count;
+
+  while (lo < hi) {
+    int mid = lo + (hi - lo) / 2;
+    if (s->items[mid].time < time) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+static void lv_snapshotGet(snapshot s, int i, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
+  *filePos = s->items[i].filePos;
+  *time = s->items[i].time;
+  *key = s->items[i].key;
+  *pTeams = s->items[i].pTeams;
+}
 
 /*********************************************************
 *NAME:          lv_snapshotCreate
@@ -66,15 +97,7 @@ snapshot lv_snapshotCreate() {
 *
 *********************************************************/
 int lv_snapshotCount(snapshot *value) {
-  int returnValue = 0;
-  snapshot q = *value;
-
-  while (q != NULL) {
-    q = q->next;
-    returnValue++;
-  }
-
-  return returnValue;
+  return (*value == NULL) ? 0 : (*value)->count;
 }
 
 /*********************************************************
@@ -89,12 +112,10 @@ int lv_snapshotCount(snapshot *value) {
 * value - Snapshot to destroy
 *********************************************************/
 void lv_snapshotDestroy(snapshot *value) {
-  snapshot q;
-
-  while ((*value) != NULL) {
-    q = *value;
-    *value = q->next;
-    Dispose(q);
+  if (*value != NULL) {
+    free((*value)->items);
+    free(*value);
+    *value = NULL;
   }
 }
 
@@ -112,18 +133,14 @@ void lv_snapshotDestroy(snapshot *value) {
 * time    - Time in game ticks
 *********************************************************/
 bool lv_snapshotExist(snapshot *value, size_t filePos, uint32_t time) {
-  bool returnValue = FALSE;
-  snapshot q;
+  int i;
 
-  q = (*value);
-  while (returnValue == FALSE && q != NULL) {
-    if (q->time == time) {
-      return TRUE;
-    }
-    q = q->next;
+  (void)filePos;
+  if (*value == NULL) {
+    return FALSE;
   }
-
-  return FALSE;
+  i = lv_snapshotLowerBound(*value, time);
+  return (i < (*value)->count && (*value)->items[i].time == time) ? TRUE : FALSE;
 }
 
 /*********************************************************
@@ -132,7 +149,8 @@ bool lv_snapshotExist(snapshot *value, size_t filePos, uint32_t time) {
 *CREATION DATE: 1/11/99
 *LAST MODIFIED:  4/7/00
 *PURPOSE:
-* Adds a new snapshot to the snapshot list
+* Adds a new snapshot to the snapshot list, in time order.
+* A snapshot at a time already held is not added again.
 *
 *ARGUMENTS:
 * value - Snapshot list to add to
@@ -140,81 +158,56 @@ bool lv_snapshotExist(snapshot *value, size_t filePos, uint32_t time) {
 * time - Time in ticks this snapshot is at
 * key - Key at this snapshot
 * pteams - Player Teams to copy
+* kills  - Kill tallies to copy
+* deaths - Death tallies to copy
 *********************************************************/
-void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BYTE *pTeams) {
-  snapshot q;
-  snapshot add;
-  snapshot prev = NULL;
-  bool found = FALSE;
-  BYTE count = 0;
+void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BYTE *pTeams,
+                    const uint16_t *kills, const uint16_t *deaths) {
+  snapshot s = *value;
+  snapshotEntry *e;
+  int i;
 
-  // Make sure we aren't there
-  if (lv_snapshotExist(value, filePos, time) == TRUE) {
-    return;
+  if (s == NULL) {
+    s = (snapshot) calloc(1, sizeof(*s));
+    if (s == NULL) {
+      return;
+    }
+    *value = s;
   }
 
-  if ((*value) == NULL) {
-    New(q);
-    q->filePos = filePos;
-    q->time = time;
-    q->key = key;
-    q->next = NULL;
-    while (count < MAX_TANKS) {
-      q->pTeams[count] = pTeams[count];
-      count++;
-    }
-    (*value) = q;
+  /* Playback reaches snapshots in time order, so the new one almost always
+     goes on the end. */
+  if (s->count == 0 || s->items[s->count - 1].time < time) {
+    i = s->count;
   } else {
-    // Add it based on time
-    q = *value;
-    while (q != NULL && found == FALSE) {
-      prev = q;
-
-      if (q->time > time && prev == NULL) {
-        // Must be the first element
-        New(add);
-        add->filePos = filePos;
-        add->time = time;
-        add->key = key;
-        add->next = (*value);
-        while (count < MAX_TANKS) {
-          add->pTeams[count] = pTeams[count];
-          count++;
-        }
-
-        (*value) = add;
-        found = TRUE;
-      } else if (q->time > time && prev->time < time) {
-        New(add);
-        add->filePos = filePos;
-        add->time = time;
-        add->key = key;
-        add->next = q;
-        prev->next = add;
-        while (count < MAX_TANKS) {
-          add->pTeams[count] = pTeams[count];
-          count++;
-        }
-
-        found = TRUE;
-      }
-      q = q->next;
-    }
-
-    // Add at the end, new highest position
-    if (found == FALSE) {
-      New(q);
-      q->filePos = filePos;
-      q->time = time;
-      q->key = key;
-      while (count < MAX_TANKS) {
-        q->pTeams[count] = pTeams[count];
-        count++;
-      }
-      prev->next = q;
-      q->next = NULL;
+    i = lv_snapshotLowerBound(s, time);
+    if (i < s->count && s->items[i].time == time) {
+      return;
     }
   }
+
+  if (s->count == s->capacity) {
+    int newCap = (s->capacity == 0) ? 64 : s->capacity * 2;
+    snapshotEntry *grown = (snapshotEntry *) realloc(s->items, (size_t)newCap * sizeof(*grown));
+    if (grown == NULL) {
+      return;
+    }
+    s->items = grown;
+    s->capacity = newCap;
+  }
+
+  if (i < s->count) {
+    memmove(&s->items[i + 1], &s->items[i], (size_t)(s->count - i) * sizeof(*s->items));
+  }
+  e = &s->items[i];
+  e->filePos = filePos;
+  e->time = time;
+  e->key = key;
+  memcpy(e->pTeams, pTeams, MAX_TANKS);
+  memcpy(e->kills, kills, sizeof(e->kills));
+  memcpy(e->deaths, deaths, sizeof(e->deaths));
+  memset(e->deathTimeMs, 0, sizeof(e->deathTimeMs));
+  s->count++;
 }
 
 /*********************************************************
@@ -234,22 +227,17 @@ void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BY
 * pteams - Player Teams to copy to set to
 *********************************************************/
 bool lv_snapshotForward(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
-  bool returnValue = FALSE;
-  snapshot q;
+  int i;
 
-  q = *value;
-  while (returnValue == FALSE && q != NULL) {
-    if (q->time > *time) {
-      returnValue = TRUE;
-      *time = q->time;
-      *filePos = q->filePos;
-      *key = q->key;
-      *pTeams = q->pTeams;
-    }
-    q = q->next;
+  if (*value == NULL) {
+    return FALSE;
   }
-
-  return returnValue;
+  i = lv_snapshotUpperBound(*value, *time);
+  if (i >= (*value)->count) {
+    return FALSE;
+  }
+  lv_snapshotGet(*value, i, filePos, time, key, pTeams);
+  return TRUE;
 }
 
 /*********************************************************
@@ -269,85 +257,99 @@ bool lv_snapshotForward(snapshot *value, size_t *filePos, uint32_t *time, BYTE *
 * pteams - Player Teams to copy to set to
 *********************************************************/
 bool lv_snapshotFindByPosition(snapshot *value, size_t targetPos, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
-  snapshot prev = NULL;
-  snapshot q = *value;
+  snapshot s = *value;
+  int i = 0;
 
-  while (q != NULL && q->filePos <= targetPos) {
-    prev = q;
-    q = q->next;
+  if (s == NULL || s->count == 0) {
+    return FALSE;
+  }
+  while (i < s->count && s->items[i].filePos <= targetPos) {
+    i++;
   }
 
   /* If targetPos is before the first snapshot, use the first snapshot */
-  if (prev == NULL && *value != NULL) {
-    prev = *value;
-  }
-
-  if (prev != NULL) {
-    *filePos = prev->filePos;
-    *time = prev->time;
-    *key = prev->key;
-    *pTeams = prev->pTeams;
-    return TRUE;
-  }
-  return FALSE;
+  lv_snapshotGet(s, (i > 0) ? i - 1 : 0, filePos, time, key, pTeams);
+  return TRUE;
 }
 
 bool lv_snapshotFindByTime(snapshot *value, uint32_t targetTime, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
-  snapshot prev = NULL;
-  snapshot q = *value;
+  snapshot s = *value;
+  int i;
 
-  while (q != NULL && q->time <= targetTime) {
-    prev = q;
-    q = q->next;
+  if (s == NULL || s->count == 0) {
+    return FALSE;
   }
+  i = lv_snapshotUpperBound(s, targetTime);
 
   /* If targetTime is before the first snapshot, use the first snapshot */
-  if (prev == NULL && *value != NULL) {
-    prev = *value;
-  }
-
-  if (prev != NULL) {
-    *filePos = prev->filePos;
-    *time = prev->time;
-    *key = prev->key;
-    *pTeams = prev->pTeams;
-    return TRUE;
-  }
-  return FALSE;
+  lv_snapshotGet(s, (i > 0) ? i - 1 : 0, filePos, time, key, pTeams);
+  return TRUE;
 }
 
 bool lv_snapshotBackwards(snapshot *value, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams) {
-  bool returnValue = FALSE;
-  snapshot prev;
-  snapshot q;
+  snapshot s = *value;
+  int i;
 
-  if (*value == NULL || *time == 0) {
+  if (s == NULL || s->count == 0 || *time == 0) {
     return FALSE;
-  } else if ((*value)->time > *time) {
+  } else if (s->items[0].time > *time) {
     return FALSE;
-  } else {
-    prev = *value;
-    q = prev->next;
-    while (returnValue == FALSE && q != NULL) {
-      if (prev->time < *time && q->time >= *time) {
-        returnValue = TRUE;
-        *time = prev->time;
-        *filePos = prev->filePos;
-        *key = prev->key;
-        *pTeams = prev->pTeams;
-      }
-      prev = q;
-      q = q->next;
-    }
-
-    if (returnValue == FALSE) {
-      returnValue = TRUE;
-      *time = prev->time;
-      *filePos = prev->filePos;
-      *key = prev->key;
-      *pTeams = prev->pTeams;
-    }
   }
-  return returnValue;
 
+  /* The newest snapshot strictly before the given time, or the first one
+     when the time is the first snapshot's own. */
+  i = lv_snapshotLowerBound(s, *time);
+  lv_snapshotGet(s, (i > 0) ? i - 1 : 0, filePos, time, key, pTeams);
+  return TRUE;
+}
+
+bool lv_snapshotGetTallies(snapshot *value, uint32_t time, uint16_t *kills, uint16_t *deaths) {
+  snapshot s = *value;
+  int i;
+
+  if (s == NULL) {
+    return FALSE;
+  }
+  i = lv_snapshotLowerBound(s, time);
+  if (i >= s->count || s->items[i].time != time) {
+    return FALSE;
+  }
+  memcpy(kills, s->items[i].kills, sizeof(s->items[i].kills));
+  memcpy(deaths, s->items[i].deaths, sizeof(s->items[i].deaths));
+  return TRUE;
+}
+
+/* The entry at exactly this time, or NULL. */
+static snapshotEntry *lv_snapshotAtTime(snapshot *value, uint32_t time) {
+  snapshot s = *value;
+  int i;
+
+  if (s == NULL) {
+    return NULL;
+  }
+  i = lv_snapshotLowerBound(s, time);
+  if (i >= s->count || s->items[i].time != time) {
+    return NULL;
+  }
+  return &s->items[i];
+}
+
+bool lv_snapshotSetDeathTimes(snapshot *value, uint32_t time, const uint32_t *deathTimeMs) {
+  snapshotEntry *e = lv_snapshotAtTime(value, time);
+
+  if (e == NULL) {
+    return FALSE;
+  }
+  memcpy(e->deathTimeMs, deathTimeMs, sizeof(e->deathTimeMs));
+  return TRUE;
+}
+
+bool lv_snapshotGetDeathTimes(snapshot *value, uint32_t time, uint32_t *deathTimeMs) {
+  snapshotEntry *e = lv_snapshotAtTime(value, time);
+
+  if (e == NULL) {
+    return FALSE;
+  }
+  memcpy(deathTimeMs, e->deathTimeMs, sizeof(e->deathTimeMs));
+  return TRUE;
 }

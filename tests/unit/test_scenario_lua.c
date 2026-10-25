@@ -483,6 +483,8 @@ static const char *const kSlEveryRowCalls =
     "  tank        = function() return game.tank(0) end,\n"
     "  builder     = function() return game.builder(0) end,\n"
     "  lobby_slot  = function() return game.lobby_slot(0) end,\n"
+    "  lobby_start = function() return game.lobby_start(0) end,\n"
+    "  lobby_side  = function() return game.lobby_side(0) end,\n"
     "  allied      = function() return game.allied(0, 0) end,\n"
     "  rule        = function() return game.rule(\"tank_reload_ticks\") end,\n"
     "  voice_everyone = function() return game.voice_everyone() end,\n"
@@ -1929,6 +1931,105 @@ int run_scenario_lua_detail_carries_the_number(void) {
     lua_close(L);
     serverSimDestroy(sim);
     return 0;
+}
+
+/* ── kill_lgm's third argument reaches the payload ────────────────── */
+
+/* A builder inside his tank, asked to die every way a script can write the
+ * call. Left out, nil and false all leave him there and answer the refusal
+ * the row has always answered. A number is not a true or false and raises.
+ * true kills him, and the builder read row says so. */
+int run_scenario_lua_kill_lgm_force(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             err[512];
+    char             text[64];
+    const char      *already = scenarioLuaResultName((int)SCN_OP_ALREADY);
+    int              rc = 0;
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_CHECK(L != NULL);
+
+    UT_CHECK_MSG(slRun(L,
+                       "before = game.builder(0).state\n"
+                       "plain_res, plain_code = game.kill_lgm(0)\n"
+                       "named_res, named_code = game.kill_lgm(0, game.NEUTRAL)\n"
+                       "nil_res, nil_code = game.kill_lgm(0, nil, nil)\n"
+                       "false_res, false_code = game.kill_lgm(0, nil, false)\n"
+                       "still = game.builder(0).state\n"
+                       "number_ran = pcall(game.kill_lgm, 0, nil, 1)\n"
+                       "after_number = game.builder(0).state\n"
+                       "forced = game.kill_lgm(0, nil, true)\n"
+                       "after = game.builder(0).state\n"
+                       "again_res, again_code = game.kill_lgm(0, nil, true)\n",
+                       err, sizeof(err)),
+                 "the chunk would not run: %s", err);
+
+    slGlobalStr(L, "before", text, sizeof(text));
+    UT_CHECK_MSG(strcmp(text, "in_tank") == 0,
+                 "the builder starts '%s', and this needs him in his tank",
+                 text);
+
+    /* Every way of not asking for it is today's refusal. */
+    UT_CHECK_MSG(slGlobalIsNil(L, "plain_res"),
+                 "kill_lgm(p) killed a builder in his tank");
+    slGlobalStr(L, "plain_code", text, sizeof(text));
+    UT_CHECK_MSG(strcmp(text, already) == 0, "kill_lgm(p) answered '%s'",
+                 text);
+    UT_CHECK_MSG(slGlobalIsNil(L, "named_res"),
+                 "kill_lgm(p, killer) killed a builder in his tank");
+    slGlobalStr(L, "named_code", text, sizeof(text));
+    UT_CHECK_MSG(strcmp(text, already) == 0,
+                 "kill_lgm(p, killer) answered '%s'", text);
+    UT_CHECK_MSG(slGlobalIsNil(L, "nil_res"),
+                 "kill_lgm(p, nil, nil) killed a builder in his tank");
+    slGlobalStr(L, "nil_code", text, sizeof(text));
+    UT_CHECK_MSG(strcmp(text, already) == 0,
+                 "kill_lgm(p, nil, nil) answered '%s'", text);
+    UT_CHECK_MSG(slGlobalIsNil(L, "false_res"),
+                 "kill_lgm(p, nil, false) killed a builder in his tank");
+    slGlobalStr(L, "false_code", text, sizeof(text));
+    UT_CHECK_MSG(strcmp(text, already) == 0,
+                 "kill_lgm(p, nil, false) answered '%s'", text);
+    slGlobalStr(L, "still", text, sizeof(text));
+    UT_CHECK_MSG(strcmp(text, "in_tank") == 0,
+                 "after four refusals the builder is '%s'", text);
+
+    /* 1 is not true: a number raises and kills nobody. */
+    UT_CHECK_MSG(!slGlobalIsNil(L, "number_ran") &&
+                     !slGlobalBool(L, "number_ran"),
+                 "kill_lgm(p, nil, 1) did not raise");
+    slGlobalStr(L, "after_number", text, sizeof(text));
+    UT_CHECK_MSG(strcmp(text, "in_tank") == 0,
+                 "the call that raised left the builder '%s'", text);
+
+    /* true is the one that reaches him. */
+    UT_CHECK_MSG(slGlobalBool(L, "forced"),
+                 "kill_lgm(p, nil, true) did not answer true");
+    slGlobalStr(L, "after", text, sizeof(text));
+    UT_CHECK_MSG(strcmp(text, "in_tank") != 0,
+                 "kill_lgm(p, nil, true) left the builder in his tank");
+    UT_CHECK_MSG(strcmp(text, "dead") == 0 ||
+                     strcmp(text, "parachuting") == 0,
+                 "the forced kill left the builder '%s'", text);
+
+    /* And not twice. */
+    UT_CHECK_MSG(slGlobalIsNil(L, "again_res"),
+                 "a second forced kill answered as if it had killed him");
+    slGlobalStr(L, "again_code", text, sizeof(text));
+    UT_CHECK_MSG(strcmp(text, already) == 0,
+                 "a second forced kill answered '%s'", text);
+
+done:
+    if (L != NULL) {
+        lua_close(L);
+    }
+    serverSimDestroy(sim);
+    return rc;
 }
 
 /* ── The state is asked before the row's own checks ───────────────── */

@@ -35,6 +35,7 @@
 #include "spectator_replay.h"
 #include "log.h"          /* LOG_* markers, LOG_HEADER, LOG_VERSION, LOG_SIZE_LONG_DIFF */
 #include "platform_net.h" /* htons / htonl */
+#include "byte_order.h"   /* byteOrderPutLe16 */
 
 /* Read a big-endian u32 from p[0..3]. */
 static uint32_t specReplayReadU32BE(const BYTE *p) {
@@ -155,7 +156,6 @@ int specReplayTranslateEvents(const BYTE *payload, int payloadLen,
                               BYTE *out, int cap) {
   int pos;
   int count;
-  unsigned short us;
 
   if (out == NULL || cap < 0 || payloadLen < 0) {
     return -1;
@@ -188,8 +188,9 @@ int specReplayTranslateEvents(const BYTE *payload, int payloadLen,
     count++;
   }
 
-  /* [LOG_EVENT][count] for a small count, else [LOG_EVENT_LONG][htons count] —
-     mirroring logWriteEvents — then the payload verbatim. */
+  /* [LOG_EVENT][count] for a small count, else [LOG_EVENT_LONG][count as a
+     little-endian u16] — mirroring logWriteEvents — then the payload
+     verbatim. */
   if (count < LOG_SIZE_LONG_DIFF) {
     if (cap < 2 + payloadLen) return -1;
     out[0] = LOG_EVENT;
@@ -198,10 +199,8 @@ int specReplayTranslateEvents(const BYTE *payload, int payloadLen,
     return 2 + payloadLen;
   }
   if (cap < 3 + payloadLen) return -1;
-  us = htons((unsigned short) count);
   out[0] = LOG_EVENT_LONG;
-  out[1] = (BYTE) (us >> 8);
-  out[2] = (BYTE) (us & 0xFF);
+  byteOrderPutLe16(out + 1, (uint16_t) count);
   memcpy(out + 3, payload, (size_t) payloadLen);
   return 3 + payloadLen;
 }

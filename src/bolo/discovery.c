@@ -42,6 +42,7 @@
 #include "udppackets.h"
 #include "util.h"
 #include "discovery.h"
+#include "server_text.h"   /* serverTextSanitize, SERVER_NAME_MAX / SERVER_DESC_MAX */
 #include "../common/wb_log.h"
 
 /* Used to stop socket blocking */
@@ -73,6 +74,12 @@ BOLO_STATIC_ASSERT(DISCOVERY_SCRIPT_DESC_LEN == WBN_SCENARIO_DESC_MAX + 1,
                    discovery_script_desc_len_matches_wbn_scenario_desc_max);
 BOLO_STATIC_ASSERT(DISCOVERY_SCRIPT_MODS_MAX == 9,
                    discovery_script_mods_max_matches_the_wire_mod_cap);
+BOLO_STATIC_ASSERT(DISCOVERY_SERVER_NAME_LEN == INFO_SERVER_NAME_MAX + 1 &&
+                   DISCOVERY_SERVER_NAME_LEN == SERVER_NAME_LEN,
+                   discovery_server_name_len_matches_the_wire_cap);
+BOLO_STATIC_ASSERT(DISCOVERY_SERVER_DESC_LEN == INFO_SERVER_DESC_MAX + 1 &&
+                   DISCOVERY_SERVER_DESC_LEN == SERVER_DESC_LEN,
+                   discovery_server_desc_len_matches_the_wire_cap);
 
 /* One length-prefixed string of the script tail into a NUL-terminated
  * buffer. False when the length is over maxLen or the bytes run past len. */
@@ -130,7 +137,26 @@ bool discoveryReadScriptTail(const uint8_t *tail, size_t len, DiscoveryScripts *
       return false;
     }
   }
-  /* Bytes past the last mod are left for a later field. */
+  /* The server's name and description, when the server sent them. They are
+   * optional: a server from before them, and one whose host gave neither,
+   * stops at the last mod. A malformed name drops both; a well-formed name
+   * followed by a malformed description keeps the name. Neither drops the
+   * scripts before them. */
+  if (pos < len) {
+    char name[DISCOVERY_SERVER_NAME_LEN];
+    char desc[DISCOVERY_SERVER_DESC_LEN];
+    if (discoveryReadTailString(tail, len, &pos, DISCOVERY_SERVER_NAME_LEN - 1,
+                                name)) {
+      serverTextSanitize(name, scripts.serverName, sizeof(scripts.serverName),
+                         SERVER_NAME_MAX);
+      if (discoveryReadTailString(tail, len, &pos,
+                                  DISCOVERY_SERVER_DESC_LEN - 1, desc)) {
+        serverTextSanitize(desc, scripts.serverDescription,
+                           sizeof(scripts.serverDescription), SERVER_DESC_MAX);
+      }
+    }
+  }
+  /* Bytes past the description are left for a later field. */
   scripts.hasScriptInfo = true;
   *out = scripts;
   return true;
@@ -166,16 +192,16 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
     struct in_addr serverAddr = info->gameid.serveraddress;
     SDL_strlcpy(out->address, inet_ntoa(serverAddr), sizeof(out->address));
   }
-  out->port = info->gameid.serverport;
+  out->port = INFO_PACKET_GET16(info, gameid.serverport);
   out->versionMajor = info->h.versionMajor;
   out->versionMinor = info->h.versionMinor;
   out->versionRevision = info->h.versionRevision;
-  out->numPlayers = (BYTE)info->num_players;
-  out->numBases = (BYTE)info->free_bases;
-  out->numPills = (BYTE)info->free_pills;
+  out->numPlayers = (BYTE)INFO_PACKET_GET16(info, num_players);
+  out->numBases = (BYTE)INFO_PACKET_GET16(info, free_bases);
+  out->numPills = (BYTE)INFO_PACKET_GET16(info, free_pills);
   out->game = (gameType)info->gametype;
   out->ai = (aiType)info->allow_AI;
-  out->timeLimit       = info->time_limit;
+  out->timeLimit       = (int32_t)INFO_PACKET_GET32(info, time_limit);
 
   /* The flags/count/md5 fields live past the legacy 76-byte prefix; read them
    * only when the full packet arrived, otherwise they hold garbage from a
@@ -540,13 +566,13 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
      * them only once the rich block has arrived. */
     bool rich = (len >= (int)INFO_PACKET_PRE_VIEWS_SIZE);
     out->rttMs = (int)(recvTime - sendTime);
-    out->freePills = info->free_pills;
-    out->freeBases = info->free_bases;
-    out->numPlayers = info->num_players;
+    out->freePills = INFO_PACKET_GET16(info, free_pills);
+    out->freeBases = INFO_PACKET_GET16(info, free_bases);
+    out->numPlayers = INFO_PACKET_GET16(info, num_players);
     out->versionMajor = info->h.versionMajor;
     out->versionMinor = info->h.versionMinor;
     out->versionRevision = info->h.versionRevision;
-    out->timeLimit       = info->time_limit;
+    out->timeLimit       = (int32_t)INFO_PACKET_GET32(info, time_limit);
     /* has_password sits inside the legacy 76-byte prefix, so it is read
      * unconditionally, the same as discoveryFillServerFromInfoPacket. */
     out->password        = (info->has_password != 0);

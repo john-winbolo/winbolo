@@ -108,6 +108,12 @@ void sdl3DrawSetPillsStatusClear(void);
 void sdl3DrawStatusPillbox(BYTE pillNum, pillAlliance pa, bool labels);
 void sdl3DrawCopyPillsStatus(int x, int y);
 
+/* Where slot n (1..16) sits inside a status panel, in panel pixels at zoom 1.
+ * All three panels share the grid, so type (0 base, 1 pill, 2 tank) does not
+ * change the answer. Public so the log viewer's HUD panel, which draws the
+ * same grids through ImGui, puts its icons where these renderers do. */
+void sdl3StatusItemPos(int n, int type, int *outX, int *outY);
+
 void sdl3DrawSetTanksStatusClear(void);
 void sdl3DrawStatusTank(BYTE tankNum, tankAlliance ta);
 void sdl3DrawCopyTanksStatus(int x, int y);
@@ -165,6 +171,16 @@ TTF_Font *sdl3DrawGetTinyFont(void);
    the last reset. The full screen map uses it to slide its newswire strip
    on and off; the classic frame ignores it. */
 Uint64 sdl3DrawGetMessageActivityTick(void);
+/* The touch layout's newswire: the two cached lines on a black backing
+   strip, at rest with its top at y across width w, moved down by slide (0 up,
+   1 gone) towards edge, the line it slides off by, and clipped there. The
+   lines are drawn as the classic newswire draws its own, in the fixed-width
+   font given and showing the rightmost characters that fit, so the scroll
+   moves at one speed and the two lines stay in step. Nothing is drawn while
+   both lines are blank. */
+void sdl3DrawNewswireStrip(TTF_Font *font, float x, float y, float w,
+                           float edge, float slide, Uint8 textAlpha,
+                           Uint8 backAlpha);
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths);
 void sdl3DrawTankLabel(char *str, BYTE playerNum,
                        BYTE mx, BYTE my, BYTE px, BYTE py);

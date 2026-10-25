@@ -48,8 +48,84 @@ static BYTE myPlayerNum = 0; /* Your own player number */
 
 static char testP[256];
 
+/* The perspective: whether the viewer is showing the game as the "self"
+ * player saw it (the HUD panel's game icons, the map's friendly and hostile
+ * sprites) and not every team at once. The player is myPlayerNum, the same
+ * "self" Select Team mode sets; this only says whether it is shown. The name
+ * is the one the player had when chosen, so a slot that a different player
+ * later sits in is not taken for the one that was picked. */
+static bool perspectiveOn = FALSE;
+static char perspectiveName[PLAYER_NAME_LEN];
+
+/* The selected tank: the one the Tank panel shows and the map marks. It is
+ * a slot of its own, apart from "self": a click on a tank on the map selects
+ * it and changes nothing about whose view the map shows. -1 is no tank. A
+ * selected slot with no player in it (the playhead is where the player had
+ * not joined yet) stays selected and shows as no tank until the player is
+ * there again. */
+static int selectedTank = -1;
+
+void lv_playersSetSelected(int slot) {
+  selectedTank = (slot >= 0 && slot < MAX_TANKS) ? slot : -1;
+}
+
+int lv_playersGetSelected(void) {
+  return selectedTank;
+}
+
 void lv_playersSetSelf(BYTE pn) {
   myPlayerNum = pn;
+}
+
+/* Show the game as playerNum saw it. A slot with no player in it changes
+ * nothing. */
+void lv_playersSetPerspective(BYTE playerNum) {
+  if (playerNum >= MAX_TANKS || plrs.item[playerNum].inUse == FALSE) {
+    return;
+  }
+  myPlayerNum = playerNum;
+  selectedTank = playerNum; /* the player whose view it is, is the one selected */
+  perspectiveOn = TRUE;
+  snprintf(perspectiveName, sizeof(perspectiveName), "%s", plrs.item[playerNum].playerName);
+}
+
+/* Back to every team at once. "Self" stays where it is. */
+void lv_playersClearPerspective(void) {
+  perspectiveOn = FALSE;
+  perspectiveName[0] = '\0';
+}
+
+bool lv_playersHasPerspective(void) {
+  return perspectiveOn;
+}
+
+/* "Self" was moved by something other than lv_playersSetPerspective (a Select
+ * Team click on the map). A perspective that is on goes with it. */
+void lv_playersPerspectiveFollowSelf(void) {
+  if (perspectiveOn == TRUE) {
+    if (myPlayerNum < MAX_TANKS && plrs.item[myPlayerNum].inUse == TRUE) {
+      snprintf(perspectiveName, sizeof(perspectiveName), "%s", plrs.item[myPlayerNum].playerName);
+    } else {
+      lv_playersClearPerspective();
+    }
+  }
+}
+
+/* Drop the perspective when its player is no longer the one in the slot: the
+ * player left, the playhead is where the player had not joined yet, or the
+ * slot now holds somebody of another name. Returns TRUE when it was dropped.
+ * Called between decoder steps, not from inside them: a seek empties and
+ * refills slots on its way and that must not count. */
+bool lv_playersCheckPerspective(void) {
+  if (perspectiveOn == FALSE) {
+    return FALSE;
+  }
+  if (myPlayerNum < MAX_TANKS && plrs.item[myPlayerNum].inUse == TRUE &&
+      strcmp(plrs.item[myPlayerNum].playerName, perspectiveName) == 0) {
+    return FALSE;
+  }
+  lv_playersClearPerspective();
+  return TRUE;
 }
 
 /*********************************************************
@@ -67,6 +143,8 @@ void lv_playersCreate() {
   BYTE count; /* Looping variable */
 
   myPlayerNum = NEUTRAL; /* Not set yet */
+  selectedTank = -1;
+  lv_playersClearPerspective(); /* a new log has new players */
   for (count = 0;count<MAX_TANKS;count++) {
     plrs.item[count].inUse = FALSE;
     plrs.item[count].needUpdate = FALSE;
@@ -76,6 +154,8 @@ void lv_playersCreate() {
     plrs.item[count].accountFlags = 0;
     plrs.item[count].lgmIsOut = FALSE;
     plrs.item[count].lgmIsDead = FALSE;
+    plrs.item[count].lgmLastMapX = 0;
+    plrs.item[count].lgmLastMapY = 0;
   }
   testP[0] = '\0';
 }
@@ -149,7 +229,7 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
     lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
     snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, label);
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, playerName);
-    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CHANGENAME, &args);
+    lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CHANGENAME, &args);
   }
 
   /* Update the name */
@@ -239,6 +319,8 @@ void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE 
     plrs.item[playerNum].accountFlags = accountFlags;
     plrs.item[playerNum].lgmIsOut = FALSE;
     plrs.item[playerNum].lgmIsDead = FALSE;
+    plrs.item[playerNum].lgmLastMapX = 0;
+    plrs.item[playerNum].lgmLastMapY = 0;
 
     plrs.item[playerNum].allie = lv_allienceCreate();
     count = 0;
@@ -261,7 +343,7 @@ void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE 
       snprintf(args.string1, sizeof(args.string1), "%.31s@%.31s",
                plrs.item[playerNum].playerName, plrs.item[playerNum].location);
     }
-    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_HAS_JOINED, &args);
+    lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_HAS_JOINED, &args);
   }
 
 //  frontEndSetPlayer((playerNumbers) playerNum, str);
@@ -314,6 +396,12 @@ void lv_playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYT
      * respawn animation; the helicopter frame is the durable "dead"
      * signal. log_LostMan only fires once at the moment of death. */
     plrs.item[playerNum].lgmIsDead = (lgmFrame == LGM_HELICOPTER_FRAME) ? TRUE : FALSE;
+    /* The helicopter is not where he can die: it keeps the square he was
+       last on, on foot. */
+    if (lgmFrame != LGM_HELICOPTER_FRAME && (lgmMX != 0 || lgmMY != 0)) {
+      plrs.item[playerNum].lgmLastMapX = lgmMX;
+      plrs.item[playerNum].lgmLastMapY = lgmMY;
+    }
   }
 }
 
@@ -325,6 +413,12 @@ void lv_playersLgmZero() {
  //     plrs.item[count].mapY = 0;
       plrs.item[count].lgmMapX = 0;
       plrs.item[count].lgmMapY = 0;
+      /* A builder the tick before did not name was in his tank: his last
+         place is from an older trip and is no place for a death now. */
+      if (plrs.item[count].lgmIsOut == FALSE) {
+        plrs.item[count].lgmLastMapX = 0;
+        plrs.item[count].lgmLastMapY = 0;
+      }
       plrs.item[count].lgmIsOut = FALSE;
     }
   }
@@ -333,6 +427,16 @@ void lv_playersLgmZero() {
 void lv_playersSetLgmDead(BYTE playerNum) {
   if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
     plrs.item[playerNum].lgmIsDead = TRUE;
+  }
+}
+
+void lv_playersGetLgmLastPlace(BYTE playerNum, BYTE *mx, BYTE *my) {
+  if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
+    *mx = plrs.item[playerNum].lgmLastMapX;
+    *my = plrs.item[playerNum].lgmLastMapY;
+  } else {
+    *mx = 0;
+    *my = 0;
   }
 }
 
@@ -609,7 +713,8 @@ void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, 
            values scaled back up to world units and to 0-255. */
         lv_screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, plrs.item[count].team, plrs.item[count].frame, plrs.item[count].onBoat, playerName,
                               (BYTE) (px << TANK_SHIFT_RIGHT2), (BYTE) (py << TANK_SHIFT_RIGHT2),
-                              (BYTE) (plrs.item[count].frame << 4)); 
+                              (BYTE) (plrs.item[count].frame << 4));
+        lv_screenTanksSetLastSlot(value, count);
       } else if (count == 0) {
 /*        sprintf(playerName, "NIF: mx=%d, my=%d, l=%d, r=%d, t=%d, b=%d", mx, my, leftPos, rightPos, top, bottom);
             if (strcmp(playerName, testP) != 0) {
@@ -723,7 +828,7 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce) {
       lv_playersMakeMessageName(playerNum, name);
       MessageArgs args = {0};
       snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
-      lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
+      lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
     }
   }
 }

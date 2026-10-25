@@ -951,7 +951,7 @@ STR_MAPGEN_TYPE_NATURAL=Natural
 STR_MAPGEN_TYPE_MAZE=Labirinto
 STR_MAPGEN_TYPE_FRACTAL=Fractal
 STR_MAPGEN_SEED=Semente
-STR_MAPGEN_RANDOMIZE=Aleatorizar
+STR_MAPGEN_RANDOMIZE=Aleatorizar valores
 STR_MAPGEN_SYMMETRY=Simetria
 STR_MAPGEN_SYM_4CORNER=Espelho de 4 cantos
 STR_MAPGEN_SYM_MIRROR_H=Espelho horizontal
@@ -991,6 +991,87 @@ STR_MAPGEN_COAST_JAG=Irregularidade da costa
 STR_MAPGEN_TERRAIN_LAYERS=Camadas de terreno
 STR_MAPGEN_RIVERS=Rios
 STR_MAPGEN_LAKES=Lagos
+STR_MAPGEN_TYPE_MAKER=Estilo de criador de mapas famoso
+STR_MAPGEN_SIZE=Tamanho
+STR_MAPGEN_SIZE_FULL=Total
+STR_MAPGEN_SIZE_TIP=Lado do quadrado jogável em casas. Total usa toda a área.
+STR_MAPGEN_PRESET=Predefinição
+STR_MAPGEN_PRESET_TIP=Mapas no estilo de um criador clássico de mapas de Bolo. Uma predefinição ajusta os controles abaixo; depois você pode mudar qualquer um deles.
+STR_MAPGEN_OUTLINE=Contorno
+STR_MAPGEN_OUTLINE_BOX=Retângulo
+STR_MAPGEN_OUTLINE_OCTAGON=Octógono
+STR_MAPGEN_OUTLINE_ROUND=Redondo
+STR_MAPGEN_OUTLINE_DIAMOND=Losango
+STR_MAPGEN_OUTLINE_CROSS=Cruz
+STR_MAPGEN_OUTLINE_CLOVER=Trevo
+STR_MAPGEN_OUTLINE_ISLAND=Ilha
+STR_MAPGEN_OUTLINE_VARIED=Variado
+STR_MAPGEN_MSYM_NONE=Nenhuma
+STR_MAPGEN_MSYM_MIRROR=Espelho
+STR_MAPGEN_MSYM_ROT2=Meia volta
+STR_MAPGEN_MSYM_MIRROR4=Espelho nos dois sentidos
+STR_MAPGEN_MSYM_ROT4=Quartos de volta
+STR_MAPGEN_WATER_PCT=Água %
+STR_MAPGEN_ROAD_PCT=Estrada %
+STR_MAPGEN_ISLANDS=Ilhas
+STR_MAPGEN_DETAIL=Detalhe
+STR_MAPGEN_PRESET_BERSERKIR=Berserkir
+STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT=Sluggo Tournament
+STR_MAPGEN_PRESET_SLUGDEATH=Sluggo Slugdeath
+STR_MAPGEN_PRESET_SLUGFEST=Sluggo Slugfest
+STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS=Sluggo Adventurous
+STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC=Sluggo Symmetric
+STR_MAPGEN_PRESET_STOOGEFEST=Sluggo Stoogefest
+STR_MAPGEN_PRESET_BLACK_LIGHTNING=Black Lightning
+STR_MAPGEN_PRESET_BL_ISLANDS=Black Lightning Islands
+STR_MAPGEN_PRESET_DEATHHAND=Deathhand
+STR_MAPGEN_PRESET_MEGAWATT_TC=Megawatt TC
+STR_MAPGEN_PRESET_MEGAWATT_ISLANDS=Megawatt Islands
+STR_MAPGEN_PRESET_MOSH_PIT=Nature Mosh Pit
+STR_MAPGEN_PRESET_PALPATINE=Palpatine
+STR_MAPGEN_PRESET_CHEW_TOY=Chew Toy
+
+# Map Maker style panel
+STR_MAPGEN_LOCK_ALL=Bloquear tudo
+STR_MAPGEN_UNLOCK_ALL=Desbloquear tudo
+STR_MAPGEN_PANEL_TITLE=Valores do mapa
+STR_MAPGEN_STYLE_TITLE=Estilo {string1}
+STR_MAPGEN_STYLE_RANDOMIZE=Aleatorizar estilo
+STR_MAPGEN_STYLE_NONE=A semente não faz outras escolhas para este criador de mapas.
+STR_MAPGEN_STYLE_FROM_SEED=Da semente
+STR_MAPGEN_STYLE_ROADS=Traçado das estradas
+STR_MAPGEN_ROADS_AXES=Cruz
+STR_MAPGEN_ROADS_DIAG=Diagonais
+STR_MAPGEN_ROADS_AXES_DIAG=Cruz e diagonais
+STR_MAPGEN_ROADS_AXES_RING=Cruz e anel
+STR_MAPGEN_ROADS_DIAG_RING=Diagonais e anel
+STR_MAPGEN_ROADS_RING=Anel
+STR_MAPGEN_STYLE_SHAPE=Formato
+STR_MAPGEN_STYLE_CUT=Corte do canto
+STR_MAPGEN_STYLE_CORE=Centro do anel
+STR_MAPGEN_STYLE_RIM=Costa
+STR_MAPGEN_RIM_FOREST=Borda de floresta
+STR_MAPGEN_RIM_GRASS=Grama até a costa
+STR_MAPGEN_STYLE_YARD=Pátio do labirinto
+STR_MAPGEN_YARD_NONE=Nenhum
+STR_MAPGEN_YARD_BUILDING=Muros de prédios
+STR_MAPGEN_YARD_FOREST=Muros de floresta
+STR_MAPGEN_STYLE_ROADS_TIP=As linhas de estrada que cruzam a terra. Da semente: a semente escolhe um dos traçados desta lista.
+STR_MAPGEN_STYLE_SHAPE_TIP=A largura da terra em relação à sua altura, x 100. 100 é quadrado; mais é mais largo. Da semente: a semente escolhe um valor dentro desse intervalo.
+STR_MAPGEN_STYLE_CUT_TIP=Quanto de cada canto o octógono corta. Um valor maior corta um canto menor. Da semente: a semente escolhe um valor dentro desse intervalo.
+STR_MAPGEN_STYLE_CORE_TIP=O terreno no meio de cada anel. Da semente: a semente escolhe um.
+STR_MAPGEN_STYLE_RIM_TIP=Uma faixa de floresta ao redor da costa, ou grama até a água. Da semente: a semente escolhe um.
+STR_MAPGEN_STYLE_YARD_TIP=Um pátio de muros de labirinto em uma ilha, se houver lugar para ele. Da semente: a semente escolhe um.
+STR_MAPGEN_STYLE_WALLS=Muros da borda
+STR_MAPGEN_WALLS_NONE=Sem muros
+STR_MAPGEN_WALLS_BUILDING=Muro de prédio em cada eixo
+STR_MAPGEN_STYLE_MIDDLE=Meio
+STR_MAPGEN_MIDDLE_OPEN=Aberto
+STR_MAPGEN_MIDDLE_PIECES=Peças diagonais
+STR_MAPGEN_MIDDLE_CLUMP=Aglomerado no meio
+STR_MAPGEN_MIDDLE_BOTH=Peças diagonais e aglomerado no meio
+STR_MAPGEN_STYLE_WALLS_TIP=Um muro de prédios atravessa a borda de floresta em cada eixo, dividindo a borda em quatro partes. Da semente: a semente escolhe um.
+STR_MAPGEN_STYLE_MIDDLE_TIP=Prédios perto do meio do terreno: peças curtas a 45 graus, um aglomerado no centro, ou ambos. Da semente: a semente escolhe um.
 
 # Log viewer sim-replay messages
 STR_LV_PLAYER_JOINED={player} entrou na partida.
@@ -1115,6 +1196,10 @@ STR_LV_AUTO_SCROLL=Rolagem automática
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=Fim do arquivo de log alcançado
+STR_LV_LOAD_TITLE=Abrindo log
+STR_LV_LOAD_UNZIP=Descompactando
+STR_LV_LOAD_SCAN=Lendo
+STR_LV_LOAD_PLAY=Indexando
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=Zoom
@@ -2084,6 +2169,12 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=Ativado
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Desativado
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Proximidade
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Desativado descarta a voz em vez de transmiti-la a alguém. Proximidade ainda não está implementada e se comporta como Ativado.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Nome do servidor
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=O localizador de jogos mostra esse nome em vez do seu endereço. Até 32 caracteres (menos com acentos ou outros alfabetos). Deixe em branco para mostrar o endereço.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Descrição
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=O localizador de jogos mostra isso quando um jogador aponta para o seu jogo ou o seleciona. Até 200 caracteres (menos com acentos ou outros alfabetos).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Atraso dos espectadores (segundos)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=Quantos segundos de atraso os espectadores veem o jogo, para que não consigam dizer aos jogadores onde todos estão. 0 mostra o jogo ao vivo. Até 600.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Voz
@@ -2536,7 +2627,7 @@ STR_RULE_DESC_lgm_gather_trees=Árvores que o construtor traz de volta de uma c�
 STR_RULE_DESC_lgm_helicopter_speed=Quanto o construtor avança a cada tick enquanto desce de paraquedas.
 STR_RULE_DESC_lgm_arrive_tolerance=A que distância do seu destino o construtor precisa estar para contar como chegado.
 STR_RULE_DESC_lgm_return_tolerance=A que distância do tanque o construtor precisa estar para contar como de volta.
-STR_RULE_DESC_lgm_pill_drop_search=Células que uma coluna da busca de queda do bunker percorre.
+STR_RULE_DESC_lgm_pill_drop_search=Removida, não faz nada.
 STR_RULE_DESC_lgm_boat_leave_offset=A que distância o construtor se afasta para embarcar num barco.
 STR_RULE_DESC_lgm_boat_return_offset=A que distância o construtor se afasta ao desembarcar de um barco.
 STR_RULE_DESC_pill_max_armour=O máximo de blindagem que um bunker tem, e com o que um recém-construído começa.
@@ -2553,7 +2644,6 @@ STR_RULE_DESC_pill_base_defend_shape=Como pill_base_defend_range é medido. 0 é
 STR_RULE_DESC_tank_slide_armour_bonus=Passo de empurrão extra com blindagem zero, somado a tank_slide_step na proporção da blindagem que faltava antes do impacto. Só é lido enquanto tank_slide_mac está ligado.
 STR_RULE_DESC_tank_slide_mac=Se um impacto de projétil empurra um tanque como no Mac Bolo. Ligado, o empurrão cresce conforme a blindagem cai, em tank_slide_armour_bonus, e tank_slide_step e tank_bump_decay_shift são lidos a cada 40 ms, num deslizamento que anda a cada tick. Desligado é o empurrão do WinBolo, igual com qualquer blindagem.
 STR_RULE_DESC_tank_deep_sea_safe=Se um tanque sem barco pode dirigir em mar profundo sem afundar. Desligado é o jogo clássico: o mar profundo afunda um tanque sem barco. Um tanque que está no mar profundo sem barco quando isso volta a ser desligado afunda no tick seguinte.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Se o construtor atravessa a casa em que vai construir na velocidade do terreno dela, como no Mac Bolo. Desligado é a caminhada do WinBolo: ele anda até o centro dessa casa na velocidade da base, seja qual for o terreno. Uma casa sem velocidade de caminhada, como um rio, um muro ou um bunker, mantém a velocidade da base. A volta ao tanque não muda.
 STR_RULE_DESC_pill_aim_iterations=Quanto esforço um bunker faz para prever um alvo em movimento.
 STR_RULE_DESC_pill_massage_range=A que distância um tanque precisa estar para que um bunker aponte com a previsão linear original em vez do solucionador, que erra um tanque que gira em torno dele. Zero, a tabela clássica, é um bunker que sempre prevê corretamente seu alvo; 384 é uma célula e meia, a distância usada pela antiga chave definida na compilação.
 STR_RULE_DESC_pill_massage_cosine=Com que exatidão um tanque precisa estar dirigindo em direção a um bunker próximo para ainda assim ser bem visado, expresso como o cosseno do ângulo entre sua direção e a linha até o bunker. Um visa de forma imprecisa qualquer tanque dentro de pill_massage_range, zero não visa nenhum deles. Não faz nada enquanto essa regra for zero.
@@ -2734,7 +2824,122 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Oficina
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mods
 STR_DLGBROWSER_MODS_MORE=+{number} mods
+STR_DLGBROWSER_ADDRESS=Endereço
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=O chat de voz agora vai para todos na partida
 STR_VOICE_EVERYONE_OFF=O chat de voz agora vai só para seus aliados
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=Memória
+STR_DLGSYSINFO_MEM_RESIDENT=Residente
+STR_DLGSYSINFO_MEM_PEAK=Pico
+STR_DLGSYSINFO_MEM_PRIVATE=Privada
+STR_DLGSYSINFO_MEM_VIRTUAL=Virtual
+STR_DLGSYSINFO_MEM_LUA=Heap do Lua
+STR_DLGSYSINFO_MEM_BOTS=Bots
+STR_DLGSYSINFO_MEM_BOT=Bot
+STR_DLGSYSINFO_MEM_SERVER_LISTS=Listas do servidor
+STR_DLGSYSINFO_MEM_BOT_LISTS=Listas dos bots
+STR_DLGSYSINFO_MEM_EXPLOSIONS=Explosões
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=Explosões de tanques
+STR_DLGSYSINFO_MEM_SHELLS=Projéteis
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=Explosões de minas
+STR_DLGSYSINFO_MEM_FLOOD_FILL=Preenchimento por água
+STR_DLGSYSINFO_MEM_BUILDING=Construção
+STR_DLGSYSINFO_MEM_RUBBLE=Escombros
+STR_DLGSYSINFO_MEM_SWAMP=Pântano
+STR_DLGSYSINFO_MEM_GRASS=Grama
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Apertar para falar: mantenha pressionado o botão do microfone na tela do jogo
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Seus arquivos
+STR_MAPEDIT_IOS_BUILTIN=Mapas que vêm com o WinBolo
+STR_MAPEDIT_IOS_NOFILES=Nada aqui ainda. Os arquivos que você salvar, e os que colocar na pasta do WinBolo no app Arquivos, aparecem aqui.
+STR_MAPEDIT_IOS_NAME=Nome
+STR_MAPEDIT_IOS_REPLACES=Já existe um arquivo com este nome. Salvar vai substituí-lo.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Gravações
+STR_IOSREC_EMPTY=Nenhuma gravação ainda. As partidas de um jogador são gravadas aqui, e os arquivos .wbv colocados na pasta do WinBolo no app Arquivos também aparecem aqui.
+STR_IOSREC_COPY=Copiar para Arquivos
+STR_IOSREC_COPIED=Copiado para a pasta do WinBolo no app Arquivos.
+STR_IOSREC_OPEN_FAILED=Não foi possível abrir esta gravação.
+STR_IOSREC_LAST_ROUND=Última partida de um jogador
+STR_IOSREC_COPY_FAILED=Não foi possível copiar a gravação para o app Arquivos.
+STR_DLGCONNECTING_TITLE=Conectando a {string1}...
+STR_DLGCONNECTING_PING=Perguntando ao servidor sobre a partida...
+STR_DLGCONNECTING_JOINING=Entrando na partida...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Não foi possível ler essa gravação.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Configuração
+STR_DLGLOBBY_DETAILS_COL_VALUE=Valor
+STR_DLGLOBBY_DETAILS_RULES=Regras:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=O servidor define este valor. Ele não pode ser alterado.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=por {string1} · atualizado {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=desconhecido
+STR_MENU_INFO_OVERLAY=Sobreposição de informações
+STR_SCNPANEL_POP_OUT=Destacar
+STR_SCNPANEL_POP_IN=Encaixar
+STR_SCNPANEL_CLOSE_TITLE=Fechar {string1}?
+STR_SCNPANEL_CLOSE_BODY=Ative de novo em {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=O servidor sempre executa este script. Ele não pode ser removido.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=O servidor sempre executa o cenário desta rodada
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=O servidor define esta lista. Ela não pode ser alterada.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Se os bunkers miram como no Mac Bolo. Tanques em movimento e desobstruídos a cerca de uma casa fazem o bunker mirar bem à frente na direção deles. Tanques parados ou bloqueados não recebem antecipação. Substitui pill_massage_range, pill_massage_cosine e pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Se os tanques usam as caixas de sprite dependentes da direção e os ajustes de pixel do Mac Bolo contra muros, bunkers ativos e bases inimigas. Permite passar mais perto de um bunker para o "pill massage".
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=A quem a morte de um tanque é atribuída, perguntado a cada morte; um afogamento aponta a vítima, a menos que um script aponte o tanque que o afundou.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} está na pasta do WinBolo no app Arquivos.
+STR_CLIPGIF_SAVE_FAILED_IOS=Não foi possível salvar {string1}.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=O mapa preenche a tela e os controles são desenhados por cima dele.\nDesativado mantém a visão do jogo quadrada, com os controles ao lado.\nLembrado para a próxima vez.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Quanto do mapa aparece através das ferramentas de\nconstrução em tela cheia. 0% é sólido, e o controle deslizante\npara em 90% para que não possam ficar invisíveis.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Quanto do mapa aparece através das grades de tanques, bunkers\ne bases e das barras de estoque em tela cheia. 0% é sólido,\ne o controle deslizante para em 90% para que não possam ficar invisíveis.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=O mapa preenche a tela, com os painéis de status, construção e notícias\npor cima, e os controles de toque quando você joga pelo toque.\nDesligado mostra a tela clássica. Lembrado para a próxima vez.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Este aparelho está usando dados móveis. Uma partida pela Internet\nhospedada com dados móveis provavelmente não vai funcionar: as redes\nmóveis raramente deixam outros jogadores alcançarem o aparelho. No Wi-Fi\na chance é muito maior.\n\nHospedar mesmo assim?
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Compartilhar
+STR_ANDROIDREC_EMPTY=Nenhuma gravação ainda. As partidas de um jogador são gravadas aqui, e as gravações .wbv abertas de outro app também aparecem aqui.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} foi salvo. Em seguida, escolha um app para compartilhá-lo.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Nada aqui ainda. Os mapas que você salvar, aqui ou em uma partida, aparecem aqui.
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Seus GIFs
+STR_CLIPGIF_GALLERY_EMPTY=Nenhum GIF ainda. Crie um com o botão GIF abaixo do replay ou com o botão GIF de um clipe.
+STR_CLIPGIF_COPY=Copiar para a área de transferência
+STR_CLIPGIF_SAVE=Salvar no disco
+STR_CLIPGIF_COPIED=Copiado.
+STR_CLIPGIF_COPY_FAILED=Não foi possível copiar o GIF.
+STR_CLIPGIF_OPEN_FAILED=Não foi possível abrir este GIF.
+STR_CLIPGIF_MAP_FMT=Mapa: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Jogadores: {string1}
+STR_CLIPGIF_NO_DETAILS=Nenhum detalhe foi salvo com este GIF.
+STR_CLIPGIF_LENGTH_TIP=Duração do GIF em segundos, a partir do cursor de reprodução.\nArraste o marcador no fim da parte clara da linha do tempo para mudá-la também.
+STR_CLIPGIF_LOADING=Abrindo o GIF...
+STR_CLIPGIF_TOO_LARGE=Este GIF é grande demais para ser mostrado aqui. Você ainda pode copiá-lo ou salvá-lo.
+STR_CLIPGIF_FILTER_NAME=Imagens GIF

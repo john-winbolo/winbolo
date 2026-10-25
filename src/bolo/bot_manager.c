@@ -48,6 +48,8 @@
 #include "util.h"
 #include "allience.h"
 #include "mines.h"
+#include "explosions.h"     /* botDropDisplayExplosions */
+#include "tankexp.h"
 #include "client_sim.h"
 #include "client_net.h"
 #include "client_sim_internal.h"
@@ -555,7 +557,7 @@ bool botManagerInit(int threads) {
         threads = MAX_TANKS;
     }
 
-#if defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS
+#if (defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS) || defined(__ANDROID__)
     /* Leave headroom for the GPU/rendering thread on small devices:
      * cap at 4 total runners (3 workers + producer). */
     if (threads > 4) {
@@ -794,7 +796,12 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
         luaBrainInstanceDestroy(&bot->brain);
     }
 
-    SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
+    /* The round-start reload passes the bot's own buffer; strlcpy with the
+     * same source and destination trips the overlap check in a Debug build
+     * of SDL, so copy only when the path comes from elsewhere. */
+    if (brainPath != bot->brainPath) {
+        SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
+    }
 
     /* Hand the fresh brain the game clock so its own tick counter continues
      * the session instead of restarting at 0 (see BRAIN_START_ENGINE_TICK). */
@@ -1121,6 +1128,9 @@ static void botResetContextForBuild(ServerSim *sim, BotContext *bot,
     if (init != NULL) {
         bot->initTable = *init;
     }
+    /* And a second copy that game.bot_init never writes, which is what a
+     * round start puts initTable back to. */
+    bot->addedInit = bot->initTable;
 }
 
 /* Build the three things a runner is — the ClientSim with its transport and
@@ -1407,6 +1417,21 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     return true;
 }
 
+/* The snapshot's EXPLOSION and TK_EXPLOSION events add an explosion or a
+ * fireball to the ClientSim, for drawing. A player's ClientSim ages them
+ * away in clientUiOnTick, but nothing runs a display tick for a bot's
+ * ClientSim, so the two lists only grew: about 460 explosions a minute with
+ * 8 bots, each one a malloc that stayed until the round ended. Nothing reads
+ * the lists for a bot (the brain's world comes from the snapshot and the
+ * brain map; BrainTest draws its own GameSim), so drop them after each sync
+ * rather than animate them. tkExplosionUpdate is not the way: it also
+ * changes the ClientSim's map (trees, craters) as a fireball moves. */
+static void botDropDisplayExplosions(ClientSim *cs) {
+    GameSim *bgs = clientSimGetGameSim(cs);
+    explosionsDestroy(&bgs->expl);
+    tkExplosionDestroy(&bgs->tankExplosions);
+}
+
 /* Per-bot snapshot pull + ClientSim sync + brain-map refresh, run on
  * the worker thread. Reads the ServerSim (immutable during the brain
  * phase — serverSimTick already ran and inputs aren't applied until
@@ -1436,6 +1461,7 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
                               j->pills, j->hdr.pillCount,
                               j->events, j->hdr.reliableEventCount,
                               bot->playerNum);
+    botDropDisplayExplosions(bot->cs);
 
     if (bot->ai == aiFull && bot->brain.isFirst) {
         /* Full map on first tick */
@@ -2561,6 +2587,46 @@ bool botManagerSetBotInitTable(ServerSim *sim, BYTE playerNum,
                 "brain %d: init table replaced, the brain has no on_init",
                 (int)playerNum);
     return true;
+}
+
+/* Undo every game.bot_init at a round start.
+ *
+ * A table handed with game.bot_init is the scenario's, and it is for the
+ * round that scenario is playing. Nothing else ever took it back, so it
+ * outlived the scenario: the round-start reload builds each brain from
+ * initTable, and a bot handed the horde's orders in a Virus round played the
+ * next plain round on the same server still under them — it never went for
+ * a base and played the round with no shells.
+ *
+ * Put back to the table the bot was added with rather than emptied, because
+ * that one is not the scenario's: a -bot-init table given on the command
+ * line has to survive every round, scenario or not.
+ *
+ * Every round start, the same scenario's included. A scenario boots a fresh
+ * Lua state each round and keeps nothing of the last one, so a script that
+ * wants a bot on a table hands it again in the new round; the Virus script
+ * does this for every bot. A table kept from the last round would be one the
+ * new round's script never asked for.
+ *
+ * Only a bot on the field. Its brain is rebuilt at the reload that follows,
+ * from the table written here. A parked runner is released at the round end,
+ * and its VM, which has been told whatever it was told, is not touched here,
+ * so its record is not either. */
+void botManagerResetInitTablesToAdded(ServerSim *sim) {
+    BYTE i;
+
+    if (sim == NULL) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        BotContext *bot = &sim->botMgr.bots[i];
+        if (!bot->active) continue;
+        bot->initTable = bot->addedInit;
+    }
+}
+
+void botManagerForgetAddedInit(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (!sim->botMgr.bots[playerNum].active) return;
+    scnTableClear(&sim->botMgr.bots[playerNum].addedInit);
 }
 
 const ScnTable *botManagerGetBotInitTable(ServerSim *sim, BYTE playerNum) {

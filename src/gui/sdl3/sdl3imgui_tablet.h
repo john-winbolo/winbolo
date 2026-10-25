@@ -41,6 +41,10 @@ typedef struct {
   float joyOuterRadius;
   float joyInnerRadius;
   float joyZoneRight;
+  /* The rect a finger takes the stick in. Zero size in the touch layout,
+     which keeps the touch input's own rule (the left 40% outside the game
+     view); the classic screen sets one. */
+  float joyZoneX, joyZoneY, joyZoneW, joyZoneH;
 
   /* Action buttons — lower right */
   float fireRadius;
@@ -62,6 +66,10 @@ typedef struct {
   /* Gunsight +/- buttons (circles) */
   float gsIncCenterX, gsIncCenterY, gsIncRadius;
   float gsDecCenterX, gsDecCenterY, gsDecRadius;
+
+  /* Voice talk button (circle) — right of the gunsight pair, above fire.
+     Laid out every frame; drawn only while voice can reach anyone. */
+  float talkCenterX, talkCenterY, talkRadius;
 
   /* Build bar — vertical right column */
   float buildIconSize;
@@ -95,10 +103,6 @@ typedef struct {
   float msgOverlayY;
   float msgOverlayW;
 
-  /* Message fade timing */
-  float msgFadeSeconds;
-  float msgFadeDuration;
-
   /* Top button idle opacity */
   float topBtnOpacity;
 
@@ -110,6 +114,11 @@ typedef struct {
   float scrollJoyOuterRadius;
   float scrollJoyInnerRadius;
 
+  /* The map button. Zero radius in the touch layout, which places it at the
+     game view's top left itself; the classic screen sets it beside the
+     messages button. */
+  float mapBtnX, mapBtnY, mapBtnR;
+
   /* Scenario panel — fixed square in the game view's top-right corner.
      scnSlotSide is 0 when the view has no room for one. */
   float scnSlotX, scnSlotY, scnSlotSide;
@@ -118,6 +127,31 @@ typedef struct {
 void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
                            int viewportX, int viewportY, int viewportW, int viewportH,
                            int effectiveZoom);
+
+/*********************************************************
+*NAME:          tabletLayoutConfigureClassic
+*PURPOSE:
+*  Lays the touch controls out for the classic screen (the
+*  desktop layout), which is drawn in the window at
+*  gameX/Y/W/H. With a band below it tall enough, the
+*  controls go in the band; otherwise over the screen: the
+*  stick below the build column and the buttons at the
+*  bottom right. The messages, players, Settings and map
+*  buttons sit at the top right of the band or the screen.
+*  mapUp: the full screen map is up instead, in gameX/Y/
+*  W/H. hud, when not NULL, is the
+*  layout its HUD panels were drawn with (relative to that
+*  rect), and the stick keeps clear of the build tools,
+*  below them; the buttons keep the screen's bottom right
+*  corner, over the status column and the newswire.
+*  Sets the fields the
+*  classic overlay reads; the touch layout's build bar,
+*  bars and grids are left unset.
+*********************************************************/
+struct OverviewHudLayout;
+void tabletLayoutConfigureClassic(TabletLayoutConfig *cfg, int screenW, int screenH,
+                                  float gameX, float gameY, float gameW, float gameH,
+                                  bool mapUp, const struct OverviewHudLayout *hud);
 
 /*********************************************************
 *NAME:          sdl3ImguiTabletOverlay

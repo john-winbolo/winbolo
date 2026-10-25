@@ -1164,6 +1164,11 @@ const char *clientSimGetLobbyScriptFile(const ClientSim *cs, int i);
 const char *clientSimGetLobbyScriptName(const ClientSim *cs, int i);
 bool        clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i);
 bool        clientSimGetLobbyScriptBound(const ClientSim *cs, int i);
+/* Whether the dedicated server's operator fixed row i on the list
+ * (-mod-required, or a -mod-locked list): the server refuses a list that
+ * leaves it off, so a chooser offers no way to. False from a server that
+ * predates the flag, which has no such rows. */
+bool        clientSimGetLobbyScriptRequired(const ClientSim *cs, int i);
 /* Where the server got the file, one of SERVER_SCENARIO_SOURCE_*
  * (server_sim.h), and the Workshop item it came from, 0 for none. The map's
  * own script reads SERVER. SERVER and 0 out of range. */
@@ -1389,6 +1394,15 @@ bool        clientSimGetLobbyScenarioListKeepsWinCondition(const ClientSim *cs,
 uint8_t     clientSimGetLobbyScenarioListSource(const ClientSim *cs, int idx);
 uint64_t    clientSimGetLobbyScenarioListWorkshopId(const ClientSim *cs,
                                                     int idx);
+/* Who wrote the row and when it last changed (scenario_identity.h): the
+ * author already cleaned and the time as "YYYY-MM-DDTHH:MMZ", each "" for
+ * not stated. IdentityKnown is false for a row from a server that sends
+ * neither, and for idx out of range, where the two strings are "". */
+bool        clientSimGetLobbyScenarioListIdentityKnown(const ClientSim *cs,
+                                                       int idx);
+const char *clientSimGetLobbyScenarioListAuthor(const ClientSim *cs, int idx);
+const char *clientSimGetLobbyScenarioListUpdated(const ClientSim *cs,
+                                                 int idx);
 bool        clientSimGetLobbyScenarioListReady(const ClientSim *cs);
 bool        clientSimGetLobbyScenarioListInFlight(const ClientSim *cs);
 /* Ticked on each completed response, so a caller holding its own last-seen
@@ -1482,6 +1496,21 @@ void clientSimLobbyScenarioSettingsPut(ClientSim *cs, const char *file,
 bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
                                        const uint8_t **bytes, size_t *len);
 
+/* Who wrote one file and when it last changed (scenario_identity.h), beside
+ * its details. Put stores the pair on the slot the details were put on, so
+ * it goes after clientSimLobbyScenarioDetailsPut with found true; the author
+ * is cleaned and an updated not in the one form is stored as "". Get answers
+ * false while the pair is not known for file (no answer yet, or a server
+ * that does not send it), and true otherwise with *author and *updated,
+ * each "" for not stated. The strings stay good until the next Want, Put or
+ * Forget. */
+void clientSimLobbyScenarioIdentityPut(ClientSim *cs, const char *file,
+                                       const char *author,
+                                       const char *updated);
+bool clientSimGetLobbyScenarioIdentity(const ClientSim *cs, const char *file,
+                                       const char **author,
+                                       const char **updated);
+
 /* The values the host chose for scripts' settings, from
  * CTRL_LOBBY_SCRIPT_SETTING. Get answers false when none is held for
  * file's setting id, which means the declared default. Supported is true
@@ -1490,6 +1519,12 @@ bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
 #define LOBBY_SCRIPT_SETTING_VALUES_MAX 48
 bool     clientSimGetLobbyScriptSetting(const ClientSim *cs, const char *file,
                                         const char *id, int32_t *out);
+/* Whether the server's operator holds file's setting id (a
+ * CTRL_LOBBY_SCRIPT_SETTING LOCK): the server refuses a change to it, and
+ * the dialog shows it read-only. False from a server too old to send one. */
+bool     clientSimGetLobbyScriptSettingLocked(const ClientSim *cs,
+                                              const char *file,
+                                              const char *id);
 bool     clientSimLobbyScriptSettingsSupported(const ClientSim *cs);
 
 /* Spectator feed drain — the session uses these to pull the captured seed and
@@ -1592,7 +1627,9 @@ void         clientSimBaseView(ClientSim *cs, int horz, int vert);
 void         clientSimAllyView(ClientSim *cs, int horz, int vert);
 void         clientSimStepView(ClientSim *cs, int horz, int vert);
 /* Report the current view to the server (CMD_VIEW_STATE) when it has changed
- * since the last report. Called once per display tick.
+ * since the last report, and an unchanged item view again once a second, so
+ * a view the server has dropped is taken up again. Called once per display
+ * tick.
  * clientSimResetViewStateReport forgets what was last reported, so the next
  * tick sends again — used where the client resets its view for a new round or
  * a freshly installed map. */

@@ -30,6 +30,7 @@
 #include "scenario_table.h" /* ScnTable — the init and hint payloads below */
 #include "sim_rules_names.h" /* SIM_RULE_LIST — the rule list SCN_RULE_LIST is */
 #include "scenario_panel.h" /* SCN_PANEL_MAX — the panel op's byte capacity */
+#include "scenario_identity.h" /* SCN_AUTHOR_LEN / SCN_UPDATED_LEN */
 
 /* Text capacity for every op that carries a line. The server-text
  * control event holds char text[PACKET_MAX_CHAT_MESSAGE + 1]
@@ -168,6 +169,11 @@ typedef struct {
     uint8_t  source;
     uint64_t workshopId;
     uint64_t workshopAuthor;
+    /* Who wrote it and when it last changed, as the manifest states them
+       (scenario_identity.h), "" for not stated. Sent: the scenario-list
+       packet carries them in a trailer an older client does not read. */
+    char     author[SCN_AUTHOR_LEN];
+    char     updated[SCN_UPDATED_LEN];
 } ScnDirEntry;
 
 /* ScnDirEntry.source. One byte on the wire, in the scenario-list packet and
@@ -392,6 +398,7 @@ typedef struct {
 typedef struct {
     BYTE slot;
     BYTE killer;    /* 0xFF = environmental */
+    bool force;     /* kill him even inside his tank; false leaves him there */
 } ScnOpLgmKill;
 
 typedef struct {
@@ -944,6 +951,18 @@ typedef struct ScenarioPolicy {
                         * accepts it. NULL = always. false refuses the
                         * request or the accept; alliances a script makes
                         * through set_team or seating are not asked */
+    bool (*killCredit)(void *ctx, BYTE victim, BYTE killer, BYTE cause,
+                       BYTE hitBy, uint32_t hitAt, BYTE *credit);
+                       /* who a tank's death is credited to. killer is
+                        * the engine's own credit (the victim itself for
+                        * a drowning), cause a LAST_DEATH_BY_* value,
+                        * hitBy the last tank not allied with the victim
+                        * that hit it this life (NEUTRAL for none) and
+                        * hitAt the tick of that hit. true with a seat in
+                        * *credit puts that seat in the killer's place
+                        * wherever the death is told: the kill event, the
+                        * scoreboards, the stats. NULL = the engine's
+                        * killer */
     void *ctx;
 } ScenarioPolicy;
 

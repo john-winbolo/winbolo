@@ -795,11 +795,19 @@ BYTE pillsGetArmourPos(pillboxes *value, BYTE mx, BYTE my);
 bool pillsGetNextView(struct GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, bool prev);
 
 /* Whether viewPlayer may look through pillbox pillIdx: the pill is allied to
- * them (own pills are allied to themselves), it still has armour, and it is
- * not being carried. FALSE for an index past the end of the array. This is
- * the one pill-view predicate — pillsCheckView below answers it for
+ * them (own pills are allied to themselves), it still has armour, it is not
+ * being carried, and this client has not watched it leave the square it holds
+ * for it (PILL_SQUARE_MOVED). FALSE for an index past the end of the array.
+ * This is the one pill-view predicate — pillsCheckView below answers it for
  * sim->viewPlayer, callers wanting another player ask directly. */
 bool pillsCanView(struct GameSim *sim, pillboxes *value, BYTE pillIdx, BYTE viewPlayer);
+
+/* The pill a camera parked on (mx,my) is watching: the first pill on that
+ * square that viewPlayer can view (pillsCanView), 1 based, or PILL_NOT_FOUND.
+ * Unlike pillsGetViewPillNum it passes over a carried pill or a moved one
+ * whose old record still sits on the square, so the view never resolves to
+ * a pill it cannot show. */
+BYTE pillsGetWatchPillNum(struct GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE viewPlayer);
 
 /*********************************************************
 *NAME:          pillsCheckView
@@ -1102,6 +1110,66 @@ void pillsClampToRules(struct GameSim *sim, pillboxes *value);
    round, for a scenario that raises the cap and asks for the map to start at
    it. Called by serverSimScenarioFillWorldToRules, which writes the records. */
 void pillsFillToRules(struct GameSim *sim, pillboxes *value);
+
+/* The search for somewhere to put down a pillbox that was being carried:
+   Mac Bolo's gen_scatter spiral. The cursor starts on the centre square,
+   then walks square rings of growing radius, each starting on the square
+   straight north of the centre and going clockwise. Squares are kept as int
+   so a ring running off the edge of the map never wraps round to the far
+   side, and the walk ends after the last ring that touches the minable
+   area. */
+typedef struct {
+  int cx;       /* The centre square */
+  int cy;
+  int x;        /* The cursor */
+  int y;
+  int maxRing;  /* Last ring holding any minable square */
+} pillsDropSpiral;
+
+/*********************************************************
+*NAME:          pillsDropCanLand
+*PURPOSE:
+*  Whether a dropped pillbox may land on a square: inside
+*  the minable area, not on a pill, a base, a building, a
+*  half-building or a boat.
+*
+*ARGUMENTS:
+*  sim - The game
+*  mx  - X map square, possibly off the map
+*  my  - Y map square, possibly off the map
+*********************************************************/
+bool pillsDropCanLand(struct GameSim *sim, int mx, int my);
+
+/*********************************************************
+*NAME:          pillsDropSpiralStart
+*PURPOSE:
+*  Starts a drop search with its cursor on the centre.
+*
+*ARGUMENTS:
+*  s  - The search
+*  cx - X map square to search round
+*  cy - Y map square to search round
+*********************************************************/
+void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy);
+
+/*********************************************************
+*NAME:          pillsDropSpiralFind
+*PURPOSE:
+*  Moves the cursor on to the first square from where it
+*  is, that one included, that a pillbox may land on, and
+*  answers it. Put the pill down there before asking for
+*  the next square: the cursor stays put, so one search
+*  serves several pills the way Mac Bolo's single cursor
+*  does. Answers FALSE once the spiral has walked past
+*  the minable area without finding one.
+*
+*ARGUMENTS:
+*  sim - The game
+*  s   - The search
+*  mx  - Receives the X map square
+*  my  - Receives the Y map square
+*********************************************************/
+bool pillsDropSpiralFind(struct GameSim *sim, pillsDropSpiral *s, BYTE *mx, BYTE *my);
 
 
 #endif /* PILLBOX_H */

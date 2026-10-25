@@ -195,6 +195,8 @@ M.IDS = {
                         long  = "attack_pill approach 'lined-up fast-path': when heading error is small the tank cruises at full speed and brakes off cpf.predict_stop instead of the slow proportional creep. Only drawn while aligned. Line+box = predicted brake-now stop point; small blue box = the approach point we're landing on. GREEN when the predicted stop lands on it, ORANGE while still closing." },
   fast_approach     = { short = "Fast approach branch",
                         long  = "Names the throttle branch actually driving the tank during the attack_pill 'approach' substate, drawn above the tank EVERY tick the dispatcher runs (i.e. before the stage-2 creep handoff). GREEN = the predict_stop fast-path (ap_linedup_fast) owns throttle as intended; RED = some OTHER branch pre-empted it (lgm_pace_brake / cliff_brake / facing_away / ap_brake_zone) — that's why a slow crawl reappears. Shows FAST_APPROACH flag, branch, spd, corr, sdist." },
+  attack_pill_approach = { short = "Pill approach spot",
+                        long  = "Cyan ring on the point the attack_pill 'approach' substate drives to (the approach_wu that APPROACH_TICK logs), labelled PILL APPROACH (x,y), with a line to the standoff and on to the pill. Drawn every tick of substate approach. Not the magenta APPROACH ring: that one is kill_lgm_engage, a kill_lgm option." },
   detree_progress   = { short = "Detree progress",
                         long  = "DETREE N/M (left=K) overlay above tank" },
 

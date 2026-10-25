@@ -111,6 +111,16 @@ function on_tick(tick)
     invuln_to = tick + 1000
   end
   hop_after = tick + 100000
+  -- Nobody but the holder has shells. Invulnerability does not keep a tank
+  -- afloat: a seat that respawns at sea in a boat and is handed the prize
+  -- is knocked off the boat by any hit and drowns. That is not the deep sea
+  -- clock, so the arena allows no hits at all.
+  for s = 0, 1 do
+    local ts = game.tank(s)
+    if s ~= holder and ts ~= nil and not ts.dead and ts.shells > 0 then
+      game.set_stocks(s, { shells = 0 })
+    end
+  end
   local row = A.plan[A.step]
   if row == nil then
     verdict(true, table.concat(A.reads, ", "))

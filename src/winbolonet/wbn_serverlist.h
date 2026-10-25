@@ -16,6 +16,7 @@
 #define __WBN_SERVERLIST_H
 
 #include "global.h"   /* MAX_TANKS, PLAYER_NAME_LEN */
+#include "server_text.h"   /* SERVER_NAME_LEN / SERVER_DESC_LEN */
 
 #define WBN_MOTD_LINES     8     /* max MOTD lines kept; extras dropped */
 #define WBN_MOTD_LINE_LEN  128   /* per-line width incl NUL; longer lines truncated */
@@ -77,6 +78,8 @@ typedef struct {
   int  scenarioMaxPlayers;                      /* "scenario_max_players" 0..255; absent = 0 */
   int  modCount;                                /* length of "mods" as kept */
   char modNames[WBN_SERVERLIST_MODS_MAX][WBN_SERVERLIST_NAME_LEN]; /* "mods", in order */
+  char serverName[SERVER_NAME_LEN];          /* "server_name", cleaned; "" when absent */
+  char serverDescription[SERVER_DESC_LEN];   /* "server_description", cleaned; "" when absent */
 } WbnServerListEntry;
 
 typedef struct {

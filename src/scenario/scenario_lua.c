@@ -72,6 +72,7 @@
 #include "scenario_panel.h"       /* the display list's primitives, and the
                                    * one writer that turns them into bytes */
 #include "sim_rules_names.h"      /* simRulesRuleIndex — a rule by name */
+#include "start_sides.h"          /* START_SIDE_* — lobby_side's words */
 #include "server_sim_scenario.h"  /* serverSimApplyScenarioOp */
 
 #include "scenario_host.h"
@@ -774,6 +775,48 @@ static int scnLuaLobbySlot(lua_State *L) {
     if (slot.team_pool[0] != '\0') {
         scnSetStr(L, "team_pool", slot.team_pool);
     }
+    return 1;
+}
+
+/* The reservation on_choose_start is handed as its second argument, read
+ * the same way, so a hook that wants to know where the lobby put a seat
+ * asks here and gets the number the policy would. The read accessor counts
+ * from one, as the script does, so the number passes straight through. */
+static int scnLuaLobbyStart(lua_State *L) {
+    const ScnLuaCtx *c     = scnCtx(L);
+    BYTE             p;
+    BYTE             start = 0;
+
+    if (!scnSlotOf(L, 1, "p", &p) ||
+        !serverSimGetLobbyStart(c->sim, p, &start)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, (lua_Integer)start);
+    return 1;
+}
+
+/* A word rather than the wire's number, as the builder's state is: the
+ * numbers are the lobby packet's encoding and a script has no use for
+ * them. */
+static int scnLuaLobbySide(lua_State *L) {
+    static const char *const kSideWords[START_SIDE_COUNT] = {
+        NULL, "north", "east", "south", "west",
+    };
+    const ScnLuaCtx *c = scnCtx(L);
+    BYTE             p;
+    BYTE             side;
+
+    if (!scnSlotOf(L, 1, "p", &p)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    side = serverSimGetLobbySide(c->sim, p);
+    if (side >= START_SIDE_COUNT || kSideWords[side] == NULL) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, kSideWords[side]);
     return 1;
 }
 
@@ -2478,6 +2521,7 @@ static int scnLuaKillLgm(lua_State *L) {
     ScenarioOp  op;
     lua_Integer p      = scnArgInt(L, 1, "p");
     lua_Integer killer = scnOptInt(L, 2, "killer", SCN_NONE);
+    bool        force  = scnOptBool(L, 3, "force", false);
 
     if (!scnFitsByte(p)) {
         return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
@@ -2491,7 +2535,9 @@ static int scnLuaKillLgm(lua_State *L) {
     op.type             = SCN_OP_LGM_KILL;
     op.u.lgmKill.slot   = (BYTE)p;
     op.u.lgmKill.killer = (BYTE)killer;
-    return scnDone(L, &op, "player %d, killer %d", (int)p, (int)killer);
+    op.u.lgmKill.force  = force;
+    return scnDone(L, &op, "player %d, killer %d%s", (int)p, (int)killer,
+                   force ? ", forced" : "");
 }
 
 static int scnLuaBuilderParachute(lua_State *L) {
@@ -5120,6 +5166,12 @@ static const ScnLuaOpParam kScnOpArgs_builder[] = {
 static const ScnLuaOpParam kScnOpArgs_lobby_slot[] = {
     { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
 };
+static const ScnLuaOpParam kScnOpArgs_lobby_start[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_lobby_side[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
 static const ScnLuaOpParam kScnOpArgs_allied[] = {
     { "a", SCN_PARAM_SLOT, false }, { "b", SCN_PARAM_SLOT, false },
     SCN_OP_ARG_END
@@ -5213,7 +5265,7 @@ static const ScnLuaOpParam kScnOpArgs_builder_recall[] = {
 };
 static const ScnLuaOpParam kScnOpArgs_kill_lgm[] = {
     { "p", SCN_PARAM_SLOT, false }, { "killer", SCN_PARAM_OWNER, true },
-    SCN_OP_ARG_END
+    { "force", SCN_PARAM_BOOL, true }, SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_builder_parachute[] = {
     { "p", SCN_PARAM_SLOT, false }, { "x", SCN_PARAM_SQUARE_X, true },
@@ -5482,6 +5534,18 @@ static const ScnLuaRow kScnLuaRows[] = {
       "lobby_slot(p) — seat p as { connected, bot, team, name, ready, "
       "fielded, alive }, or nil for an empty seat.",
       SCN_OP_PARAMS(lobby_slot), SCN_OP_READS },
+    { "lobby_start", scnLuaLobbyStart,
+      "lobby_start(p) — the start the round's opening placement reserved "
+      "for seat p, counted from 1 as start counts: its lobby pick, else one "
+      "on its team's side, else the engine's spread; nil once the seat's "
+      "first tank of the round has used it, and for a seat that has none. "
+      "The same number on_choose_start is handed.",
+      SCN_OP_PARAMS(lobby_start), SCN_OP_READS },
+    { "lobby_side", scnLuaLobbySide,
+      "lobby_side(p) — the side seat p's lobby team starts on, as \"north\", "
+      "\"east\", \"south\" or \"west\", or nil for an empty seat, a seat on "
+      "no team and a team with no side.",
+      SCN_OP_PARAMS(lobby_side), SCN_OP_READS },
     { "allied", scnLuaAllied,
       "allied(a, b) — whether seats a and b are on the same side in the "
       "game, including alliances players made in play, which can differ "
@@ -5590,7 +5654,8 @@ static const ScnLuaRow kScnLuaRows[] = {
       "builder_recall(p) — call player p's builder back to the tank.",
       SCN_OP_PARAMS(builder_recall), SCN_OP_ACTS },
     { "kill_lgm", scnLuaKillLgm,
-      "kill_lgm(p[, killer]) — kill player p's builder; killer is a seat.",
+      "kill_lgm(p[, killer[, force]]) — kill player p's builder; killer is "
+      "a seat; force kills him even inside his tank.",
       SCN_OP_PARAMS(kill_lgm), SCN_OP_ACTS },
     { "builder_parachute", scnLuaBuilderParachute,
       "builder_parachute(p[, x, y]) — drop a dead builder back in, on a "

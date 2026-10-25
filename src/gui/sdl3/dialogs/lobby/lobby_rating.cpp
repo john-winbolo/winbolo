@@ -51,8 +51,6 @@ extern "C" {
 #include "../../../../winbolonet/wbn_comments.h"  /* WbnComment / WbnCommentsFetch / WbnCommentPost, wbn_comments_* */
 }
 
-#if !BOLO_MOBILE
-
 #if BOLO_RECAP_WBN_RATING
 /* ── WinBolo.net rating & comments ────────────────────────────────
  * The finished round's own page on WinBolo.net: the aggregate stars it
@@ -397,4 +395,3 @@ void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
     }
 }
 #endif /* BOLO_RECAP_WBN_RATING */
-#endif /* !BOLO_MOBILE */

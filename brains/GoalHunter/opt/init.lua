@@ -349,17 +349,28 @@ local function _apply_cfg_tokens(a, source, runtime)
   end
   for _, kv in ipairs(cfgs) do
     local name, raw = kv[1], kv[2]
+    local v
+    if raw == "true" then v = true
+    elseif raw == "false" then v = false
+    elseif tonumber(raw) then v = tonumber(raw)
+    else v = raw end
+    -- A round-scoped knob (C.CFG_RUNTIME_ONLY) is taken from game.bot_init
+    -- on a running brain only, never from the table a new brain starts
+    -- with: that table is the last one of the PREVIOUS round, and a fresh
+    -- round must start the knob at its default (Pillbox Tag's x10).
+    -- (Quiet when the value is the one already there: a script's "put it
+    -- back to 1" is the usual last table, and there is nothing to refuse.)
     if runtime and name == "MODE" then
       -- Refused for the same reason as mode= above: C.MODE picks a whole
       -- level bundle, and Turtle2 reads it live, so a runtime write would
       -- change play without the bundle that goes with it.
       _cfg_warn_add("[cfg] 'cfg=MODE=%s' is unsupported at runtime -- a mode names a whole level bundle and a second bundle cannot unset the first; IGNORED.", tostring(raw))
+    elseif not runtime and C.CFG_RUNTIME_ONLY and C.CFG_RUNTIME_ONLY[name] then
+      if v ~= C[name] then
+        _cfg_warn_add("[cfg] '%s'=%s (%s) is round-scoped: only a running brain takes it (game.bot_init), a new brain starts it at its default; IGNORED.",
+                      tostring(name), tostring(raw), source)
+      end
     else
-      local v
-      if raw == "true" then v = true
-      elseif raw == "false" then v = false
-      elseif tonumber(raw) then v = tonumber(raw)
-      else v = raw end
       _cfg_set(name, v, source)
     end
   end
@@ -1342,13 +1353,15 @@ function Brain.apply_init_tokens(state, a)
         state.test_never_refuel = false
       elseif tok == "horde" then
         -- Virus's infected side. No base refuels the horde, so it never
-        -- picks one. Its C settings (C.SIDE_SETTINGS.horde) were written by
-        -- _apply_cfg_tokens.
+        -- picks one. Its C settings (C.SIDE_SETTINGS.horde: the attack knobs
+        -- that make the whole horde go for the survivors' pills and bases)
+        -- were written by _apply_cfg_tokens.
         state.side = "horde"
         state.test_never_refuel = true
       elseif tok == "survivor" then
         -- Virus's survivor side: refuels as normal. Its C settings
-        -- (C.SIDE_SETTINGS.survivor) were written by _apply_cfg_tokens.
+        -- (C.SIDE_SETTINGS.survivor, which also puts the horde's attack knobs
+        -- back to their defaults) were written by _apply_cfg_tokens.
         state.side = "survivor"
         state.test_never_refuel = false
       elseif tok == "suicider" then
@@ -1416,6 +1429,11 @@ function Brain.apply_init_tokens(state, a)
             PP.set_targets(b / sum, f / sum, ag / sum, u / sum, "init_arg")
           end
         end
+      elseif tok == "blitz=default" then
+        -- The party size this bot's level gives it, after a scenario handed
+        -- it another one (Virus: a seat back on the survivors after a round
+        -- on the horde).
+        squad.reset_blitz_size("init_arg_default")
       elseif tok:sub(1, 6) == "blitz=" then
         -- Party size in tanks INCLUDING the commander: MIN or MIN/MAX.
         -- Complaints latch into state._cfg_warn for the same reason as above.
@@ -1746,7 +1764,11 @@ function Brain.think(info)
   --                          writes its C.SIDE_SETTINGS list at chunk load and
   --                          on a runtime bot_init (_apply_cfg_tokens), after
   --                          preset= and before cfg=. No word = state.side nil
-  --                          and every constant as it was.
+  --                          and every constant as it was. The horde list
+  --                          also turns on the five attack knobs
+  --                          (ATTACK_CLAIM_SHARE, SIDE_SHELLS_LOW_CAP,
+  --                          SOLO_SHELL_ABORT off, PPT_NEVER, CROSSFIRE_MULT);
+  --                          the survivor list writes them back.
   --   "deprive=N"         -> this bot's ammo-deprivation delay = N ticks, so the
   --                          ammoless-helper/decoy kicks in sooner (100 ~= 2 s)
   --   "suicider"          -> FORCE the pill_suicider role on for this bot,
@@ -6210,8 +6232,12 @@ function Brain.think(info)
   -- gone (PING_ATTACK_CHARGE_NOW).  human_shooting_charge starts the same
   -- charge for a human seen shooting the pill (HUMAN_SHOOTING_CHARGE_NOW),
   -- after human_near_suicide so the suicide run wins.
+  -- human_decoy_check (HUMAN_DECOY_AWARE) reads a human drawing the goal
+  -- pill's fire into a blocker; while it stands the two rules after it do not
+  -- start a run or a charge, and a running human-near run or charge ends.
   ORD.decoy_lock(state, world, info, now)
   ORD.note_human_shooting(state, world, info, now)
+  ORD.human_decoy_check(state, world, info, now)
   if not state._suicide then ORD.human_near_suicide(state, world, info, now) end
   if state._suicide then ORD.suicide_lock(state, world, info, now) end
   ORD.human_shooting_charge(state, world, info, now)
@@ -6779,7 +6805,10 @@ function Brain.think(info)
           _ev.gunrange     = cur_sl
           _ev.gunrange_off = target_sl and math.abs(cur_sl - target_sl) or 99
           _ev.land_off_wu  = impact_off
-          local KILL_WU = 64  -- ½-tile-diameter circle around predicted LGM center
+          -- Fire when the burst lands within C.KILL_LGM_FIRE_WU of the
+          -- predicted man: the engine's full kill radius (128 wu).  KEEL
+          -- used 64, half of it, and held fire on shots that would kill.
+          local KILL_WU = C.KILL_LGM_FIRE_WU
           if los_blocked then
             _ev.status = "los_blocked"
           elseif impact_off > KILL_WU then

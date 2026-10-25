@@ -11,14 +11,20 @@
  * and the command word is matched against the lower-cased copy.
  */
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifndef _WIN32
-  #include <stdio.h>
   #include <unistd.h>
 #endif
 
+#include <lua.h>
+#include <lauxlib.h>
+
 #include "server_console.h"
+#include "server_memreport.h"
+#include "bot_mem_report.h"
 #include "test_harness.h"
 
 typedef struct {
@@ -41,6 +47,8 @@ typedef struct {
     bool hostResult;
     int  reloadCalls;
     bool reloadResult;
+    int  memCalls;
+    bool lastMemDeep;
 } ConsoleRec;
 
 static ConsoleRec g_rec;
@@ -90,11 +98,16 @@ static bool recReloadScenario(char *msg, size_t msgLen) {
     return g_rec.reloadResult;
 }
 
+static void recMemReport(bool deep) {
+    g_rec.memCalls++;
+    g_rec.lastMemDeep = deep;
+}
+
 /* Positional, like the server's own list, so a new entry goes last. */
 static const ServerConsoleOps kRecOps = {
     recSetLock, recInfo, recSaveMap, recSay,
     recLogSay,  recStatus, recKick,  recSetHost,
-    recReloadScenario
+    recReloadScenario, recMemReport
 };
 
 /* Fresh recorder; both "did it work" ops answer yes unless a test says
@@ -370,6 +383,207 @@ int run_console_read_reports_eof(void) {
     fclose(f);
     remove(path);
 #endif
+    return 0;
+}
+
+/* mem asks for the plain report and memdeep for the deep one; neither is
+ * mistaken for the other, and a server without the op answers instead of
+ * crashing. */
+int run_console_mem_report(void) {
+    recReset();
+    runLine("mem\n");
+    UT_ASSERT_MSG(g_rec.memCalls == 1 && !g_rec.lastMemDeep,
+                  "mem should ask for a plain report (calls=%d deep=%d)",
+                  g_rec.memCalls, (int)g_rec.lastMemDeep);
+
+    recReset();
+    runLine("MemDeep\n");
+    UT_ASSERT_MSG(g_rec.memCalls == 1 && g_rec.lastMemDeep,
+                  "memdeep should ask for a deep report (calls=%d deep=%d)",
+                  g_rec.memCalls, (int)g_rec.lastMemDeep);
+
+    {
+        ServerConsoleOps noMem = kRecOps;
+        char keyBuff[SERVER_CONSOLE_LINE] = "mem\n";
+        char saveBuff[SERVER_CONSOLE_LINE] = "mem\n";
+        recReset();
+        noMem.memReport = NULL;
+        serverConsoleDispatch(&noMem, keyBuff, saveBuff);
+        UT_ASSERT_MSG(g_rec.memCalls == 0,
+                  "a NULL memReport must not be called (calls=%d)",
+                  g_rec.memCalls);
+    }
+    return 0;
+}
+
+/* The timed memory report is off unless a flag turns it on. A bare
+ * -memreport means the default period, a number sets it, 0 keeps it off,
+ * and -memreportdeep alone turns it on at the default period. */
+int run_memreport_flags(void) {
+    char warn[256];
+    double m;
+    const double def = (double)SERVER_MEMREPORT_DEFAULT_MINUTES;
+
+    m = serverMemReportPeriodFromArgs(false, NULL, false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == 0.0 && warn[0] == '\0',
+                  "no flag should leave the report off (got %g '%s')", m, warn);
+
+    m = serverMemReportPeriodFromArgs(true, NULL, false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == def && warn[0] == '\0',
+                  "a bare last -memreport should use the default (got %g)", m);
+
+    m = serverMemReportPeriodFromArgs(true, "-quiet", false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == def && warn[0] == '\0',
+                  "-memreport before another flag should use the default "
+                  "(got %g '%s')", m, warn);
+
+    m = serverMemReportPeriodFromArgs(true, "2.5", false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == 2.5 && warn[0] == '\0',
+                  "-memreport 2.5 should give 2.5 minutes (got %g)", m);
+
+    m = serverMemReportPeriodFromArgs(true, "0", false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == 0.0 && warn[0] == '\0',
+                  "-memreport 0 should keep the report off (got %g)", m);
+
+    m = serverMemReportPeriodFromArgs(true, "abc", false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == def && strstr(warn, "not a number") != NULL,
+                  "-memreport abc should warn and use the default "
+                  "(got %g '%s')", m, warn);
+
+    /* Numbers that are not usable periods warn and use the default; a
+     * following flag ("-quiet" above) is still a bare -memreport. */
+    {
+        static const char *const bad[] = { "nan", "inf", "1e999", "-5" };
+        for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+            m = serverMemReportPeriodFromArgs(true, bad[i], false,
+                                              warn, sizeof(warn));
+            UT_ASSERT_MSG(m == def && strstr(warn, "not a usable number") != NULL,
+                          "-memreport %s should warn and use the default "
+                          "(got %g '%s')", bad[i], m, warn);
+        }
+    }
+
+    m = serverMemReportPeriodFromArgs(false, NULL, true, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == def && warn[0] == '\0',
+                  "-memreportdeep alone should turn the report on at the "
+                  "default (got %g)", m);
+
+    m = serverMemReportPeriodFromArgs(true, "3", true, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == 3.0 && warn[0] == '\0',
+                  "-memreport 3 -memreportdeep should give 3 minutes "
+                  "(got %g)", m);
+
+    m = serverMemReportPeriodFromArgs(true, "0", true, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == 0.0 && strstr(warn, "no effect") != NULL,
+                  "-memreport 0 -memreportdeep should stay off and warn "
+                  "(got %g '%s')", m, warn);
+    return 0;
+}
+
+/* A process figure that could not be read prints as "n/a", not as a
+ * zero that looks real; a figure that was read prints in MB. */
+int run_memreport_process_na(void) {
+    ServerMemProcess pm;
+    char buf[256];
+
+    memset(&pm, 0, sizeof(pm));
+    serverMemFormatProcess(&pm, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "process rss n/a (peak n/a), private n/a, "
+                              "virtual n/a") == 0,
+                  "nothing read should print n/a for every figure, got '%s'",
+                  buf);
+
+    pm.rss = 3u * 1024u * 1024u;
+    pm.haveRss = true;
+    pm.virt = 0;
+    pm.haveVirt = true;
+    serverMemFormatProcess(&pm, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "process rss 3.0 MB (peak n/a), private n/a, "
+                              "virtual 0.0 MB") == 0,
+                  "read figures should print in MB and the rest n/a, got '%s'",
+                  buf);
+    return 0;
+}
+
+/* Collects the deep walk's lines: the first (the summary) and whether
+ * any line names the big table. */
+typedef struct {
+    int  lines;
+    char summary[512];
+    bool sawBig;
+} MemDeepRec;
+
+static void memDeepRecEmit(void *ctx, const char *line) {
+    MemDeepRec *r = (MemDeepRec *)ctx;
+    if (r->lines == 0) {
+        snprintf(r->summary, sizeof(r->summary), "%s", line);
+    } else if (strstr(line, "200 entries") != NULL &&
+               strstr(line, ".big") != NULL) {
+        r->sawBig = true;
+    }
+    r->lines++;
+}
+
+/* The deep walk finds the biggest table, leaves the Lua stack as it was,
+ * and, when it reaches its object cap or its path budget, says on the
+ * summary line that it stopped early rather than printing short counts
+ * as if whole. Once stopped it queues nothing more, even as paths free
+ * up: each big[i] holds a table t that a walk which kept going would
+ * queue as big[i] is expanded. */
+int run_memreport_deep_walk_cap(void) {
+    lua_State *L = luaL_newstate();
+    MemDeepRec r;
+    int top;
+
+    UT_ASSERT_MSG(L != NULL, "could not create a Lua state");
+    lua_newtable(L);
+    for (int i = 1; i <= 200; i++) {
+        lua_newtable(L);
+        lua_pushinteger(L, i);
+        lua_setfield(L, -2, "n");
+        lua_newtable(L);
+        lua_setfield(L, -2, "t");
+        lua_rawseti(L, -2, i);
+    }
+    lua_setglobal(L, "big");
+    top = lua_gettop(L);
+
+    memset(&r, 0, sizeof(r));
+    botMemLuaDeepWalkState(L, 3, 5, 0, 0, memDeepRecEmit, &r);
+    UT_ASSERT_MSG(lua_gettop(L) == top, "the walk should leave the stack "
+                  "as it was (%d, was %d)", lua_gettop(L), top);
+    UT_ASSERT_MSG(strncmp(r.summary, "[memdeep] bot p3: heap", 22) == 0,
+                  "the summary line should come first, got '%s'", r.summary);
+    UT_ASSERT_MSG(strstr(r.summary, "stopped early") == NULL &&
+                  strstr(r.summary, "incomplete") == NULL,
+                  "a small heap should be walked whole, got '%s'", r.summary);
+    UT_ASSERT_MSG(r.sawBig, "the 200-entry table should be listed");
+
+    memset(&r, 0, sizeof(r));
+    botMemLuaDeepWalkState(L, 3, 5, 50, 0, memDeepRecEmit, &r);
+    UT_ASSERT_MSG(lua_gettop(L) == top, "a capped walk should leave the "
+                  "stack as it was (%d, was %d)", lua_gettop(L), top);
+    UT_ASSERT_MSG(strstr(r.summary, "stopped early at 50 objects") != NULL,
+                  "a walk that hits its cap should say so, got '%s'",
+                  r.summary);
+
+    /* A 256-byte budget holds at most 25 paths of 10 bytes or more
+     * ("_G.big[1]" and longer) plus the three roots. */
+    memset(&r, 0, sizeof(r));
+    botMemLuaDeepWalkState(L, 3, 5, 0, 256, memDeepRecEmit, &r);
+    UT_ASSERT_MSG(lua_gettop(L) == top, "a budget-stopped walk should leave "
+                  "the stack as it was (%d, was %d)", lua_gettop(L), top);
+    {
+        const char *at = strstr(r.summary, "stopped early at ");
+        int n = -1;
+        UT_ASSERT_MSG(at != NULL, "a walk that hits its path budget should "
+                      "say so, got '%s'", r.summary);
+        n = atoi(at + strlen("stopped early at "));
+        UT_ASSERT_MSG(n > 3 && n <= 28, "a walk stopped by its budget should "
+                      "queue nothing more (stopped at %d objects)", n);
+    }
+
+    lua_close(L);
     return 0;
 }
 

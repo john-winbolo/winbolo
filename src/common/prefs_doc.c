@@ -19,6 +19,10 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#define PREFS_DOC_PID() ((unsigned long)getpid())
+#else
+#include <process.h>
+#define PREFS_DOC_PID() ((unsigned long)_getpid())
 #endif
 
 #include "cJSON.h"
@@ -128,6 +132,18 @@ PrefsDoc *prefsDocLoad(const char *path) {
     return prefsDocNew();
 }
 
+PrefsDoc *prefsDocLoadFile(const char *path, int *existed) {
+    int there = 0;
+    char *content = path ? prefsDocReadFile(path, &there) : NULL;
+    PrefsDoc *doc = NULL;
+    if (existed) *existed = there;
+    if (content) {
+        doc = prefsDocParseJson(content);
+        free(content);
+    }
+    return doc;
+}
+
 char *prefsDocSerialize(const PrefsDoc *doc) {
     if (!doc) return NULL;
     return cJSON_PrintUnformatted(doc->root);
@@ -150,13 +166,30 @@ char *prefsDocSerializeExcluding(const PrefsDoc *doc,
     return json;
 }
 
+/* The temp file a write of `path` goes through: "<path>.<process id>.tmp".
+ * More than one program keeps the same preferences file (the game, the log
+ * viewer). With one shared temp name two of them writing at the same moment
+ * wrote into the same temp file, and one could then put a mix of the two in
+ * place. With the process id in the name each writes its own.
+ *
+ * Left-over files: a write that fails removes its temp file. A program
+ * that is killed between the open and the rename leaves one behind. Its
+ * own next run with the same process id writes over it (the open below
+ * truncates). A left-over of another process id stays until someone
+ * removes it by hand: it is one small file for each such crash, nothing
+ * reads it, and no program here can tell a dead writer's file from one
+ * that a live program is writing at this moment, so none is removed. */
+static int prefsDocTempPath(char *out, size_t outSize, const char *path) {
+    int n = snprintf(out, outSize, "%s.%lu.tmp", path, PREFS_DOC_PID());
+    return n > 0 && n < (int)outSize;
+}
+
 #ifndef _WIN32
 /* Atomic, mode-0600, fsync'd write — secure temp-file + rename pattern
  * with a JSON payload. */
 static int prefsDocWriteAtomic(const char *path, const char *data) {
     char tmpPath[FILENAME_MAX];
-    int n = snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", path);
-    if (n < 0 || n >= (int)sizeof(tmpPath)) return 0;
+    if (!prefsDocTempPath(tmpPath, sizeof(tmpPath), path)) return 0;
 
     int fd = open(tmpPath, O_CREAT | O_WRONLY | O_TRUNC, 0600);
     if (fd < 0) return 0;
@@ -184,8 +217,7 @@ static int prefsDocWriteAtomic(const char *path, const char *data) {
  * are added when the Profile API is backed by this module. */
 static int prefsDocWriteAtomic(const char *path, const char *data) {
     char tmpPath[FILENAME_MAX];
-    int n = snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", path);
-    if (n < 0 || n >= (int)sizeof(tmpPath)) return 0;
+    if (!prefsDocTempPath(tmpPath, sizeof(tmpPath), path)) return 0;
 
     FILE *fp = fopen(tmpPath, "wb");
     if (!fp) return 0;
@@ -243,6 +275,19 @@ int prefsDocSetString(PrefsDoc *doc, const char *section,
     if (!prefsDocPutMember(sec, key, value ? value : "")) return 0;
     doc->dirty = true;
     return 1;
+}
+
+int prefsDocCopyKey(PrefsDoc *dst, const PrefsDoc *src,
+                    const char *section, const char *key) {
+    if (!dst || !src || !section || !key) return 0;
+    cJSON *sec = cJSON_GetObjectItemCaseSensitive(src->root, section);
+    if (!cJSON_IsObject(sec)) return 0;
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(sec, key);
+    if (!cJSON_IsString(item) || item->valuestring == NULL) return 0;
+    /* dst already holds that string: nothing to put, and dst is not marked
+     * dirty, so a caller can tell a copy that changed nothing. */
+    if (prefsDocStringEquals(dst, section, key, item->valuestring)) return 1;
+    return prefsDocSetString(dst, section, key, item->valuestring);
 }
 
 bool prefsDocStringEquals(const PrefsDoc *doc, const char *section,

@@ -241,6 +241,13 @@ typedef struct UdpServerState {
     UdpServerClient clients[MAX_TANKS];
     SpectatorConn   spectators[MAX_SPECTATORS];
     uint32_t tickCount;
+    /* Datagrams put on the wire from the server socket since create. A
+     * loopback test that runs client and server in lockstep compares it with
+     * what its client has read, so it knows when everything sent has arrived.
+     * Read through transportUdpServerWireSentCount. Counted only in the test
+     * build of the library (WB_ENABLE_NETIMPAIR); the field stays in every
+     * build so the struct has one layout whatever includes this header. */
+    uint32_t wireSent;
     /* recordSeq of the most recent running-game ring record. Captured every
      * running tick (below), it freezes at the game's last record X when the
      * game ends, since game-over ticks are not recorded — so it is the bar a
@@ -477,6 +484,12 @@ void serverProcessPacket(struct ServerSim *sim, uint8_t *buf, int len,
  * reads. */
 void srvSendTo(const uint8_t *buf, int len, const struct sockaddr_in *addr);
 
+/* The server transport's clock: SDL_GetTicks, or in the test build of the
+ * library the clock a caller set with transportUdpServerSetClock. The ping
+ * measurement and the impairment layer read it. Owned by
+ * src/server/transport_udp_server.c. */
+uint64_t srvNow(void);
+
 /* The outbound per-tick path to a connected player: an inbound input packet
  * applied to the sim, a ping answered with a pong, one client's filtered
  * snapshot built and sent, and the send loop over all clients. Owned by
@@ -501,9 +514,17 @@ void serverHandlePing(const uint8_t *buf, int len,
 const char *resyncTerrainName(BYTE t);
 void buildInfoPacket(struct ServerSim *sim, INFO_PACKET *pkt);
 /* The script bytes the info-request reply carries after the INFO_PACKET, laid
- * out as netpacks.h describes above INFO_SCRIPT_TAIL_MAX. Returns the bytes
- * written, or 0 with nothing written when cap < INFO_SCRIPT_TAIL_MAX. */
+ * out as netpacks.h describes above INFO_SCRIPT_TAIL_MAX, then the server's
+ * name and description when it has either, as netpacks.h describes above
+ * INFO_SERVER_NAME_MAX, cut to fit what is left of cap. Returns the bytes
+ * written, or 0 with nothing written when cap < INFO_SCRIPT_TAIL_MAX. The
+ * reply passes INFO_REPLY_TAIL_CAP. */
 size_t buildInfoScriptTail(struct ServerSim *sim, uint8_t *out, size_t cap);
+/* How many bytes of the server's description that reply has room for
+ * beside the scripts the sim runs now and its server name, at most
+ * INFO_SERVER_DESC_MAX. The dedicated server prints a note when the
+ * description is longer than this. */
+size_t infoReplyServerDescRoom(struct ServerSim *sim);
 void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
                              struct ServerSim *sim);
 bool isOldProtocolInfoRequest(const uint8_t *buf, int len);

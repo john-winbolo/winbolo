@@ -52,6 +52,7 @@ extern "C" {
 #include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy — upload combos */
 #include "view_policy.h"  /* ViewPolicy — hosting visibility rows */
 #include "server_voice_mode.h"  /* ServerVoiceMode — hosting voice combo */
+#include "spec_delay.h"  /* HOSTING_SPEC_DELAY_MAX_SECS — hosting spectator delay */
 #include "playername_validate.h"
 #include "../bg_game.h"
 #include "../skin_source.h"
@@ -246,7 +247,7 @@ extern "C" void imguiSettingsRenderGeneralTab(SettingsRenderCtx *ctx) {
     }
     ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(dialogFontW(200.0f));
     if (wbnActive) ImGui::BeginDisabled();
     if (ImGui::InputText("##playerName", s_playerNameBuf, PLAYER_NAME_LEN,
                          ImGuiInputTextFlags_EnterReturnsTrue)) {
@@ -363,7 +364,7 @@ extern "C" void imguiSettingsRenderLanguagePicker(LangFileEntry *entries,
     ImGui::Spacing();
     ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_LANGUAGE_LBL));
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(220);
+    ImGui::SetNextItemWidth(dialogFontW(220.0f));
     const char *curLangLabel =
         (curLangIdx >= 0 && curLangIdx < count &&
          entries[curLangIdx].meta.name[0] != '\0')
@@ -494,14 +495,13 @@ extern "C" void imguiSettingsRenderLanguagePicker(LangFileEntry *entries,
  * gamepad scroll) are drawn inline by that shell.
  * ------------------------------------------------------- */
 extern "C" void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx) {
-#if !BOLO_MOBILE
+    /* On mobile only the tablets' desktop layout, by the test below. */
     if (!uiModeIsTablet()) {
-        if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
+        if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(dialogFontW(120.0f), 0))) {
             ctx->wantKeySetup = true;
         }
         imguiHandOnHover();
     }
-#endif
 }
 
 /* Source tag shown beside a skin's name in the picker. */
@@ -695,6 +695,14 @@ extern "C" void imguiSettingsVoiceModeCombo(float comboWidth) {
 }
 
 extern "C" bool imguiSettingsVoiceDeviceCombo(bool recording, float comboWidth) {
+#if defined(__IPHONEOS__)
+    /* iOS picks the route itself - speaker, wired or Bluetooth headset - and
+       SDL's CoreAudio driver there reports only the one default device each
+       way, so there is nothing to choose between.  Left out as on the web. */
+    (void)recording;
+    (void)comboWidth;
+    return false;
+#endif
     voiceRefreshDeviceLists();
     int count = recording ? s_voiceMicCount : s_voiceOutCount;
     /* Left out entirely where there is nothing to choose between — the web
@@ -809,6 +817,60 @@ extern "C" void imguiSettingsVoiceMicTest(float barWidth) {
  * tile sheet and sound set rebuilt, which the shell does after the
  * frame off ctx->wantSkinReload.
  * ------------------------------------------------------- */
+/* The full screen map's panel settings: how see-through the newswire, the
+ * builder tools and the status panel are drawn, and the newswire's auto-hide.
+ * The desktop's full screen map and the touch layout's full screen read
+ * the same four settings; touchLayout picks the transparency tooltips, since
+ * the builder tools and the status panel sit in different places there.
+ * Each slider is applied as it moves so the panel changes under it, and
+ * written to the preferences once it is let go. The web shows none of
+ * them. */
+#if !defined(__EMSCRIPTEN__)
+static void renderFullScreenPanelSettings(bool touchLayout) {
+    int trans = sdl3DrawGetNewswireTransparency();
+    ImGui::SetNextItemWidth(dialogFontW(200.0f));
+    if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY),
+                         &trans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
+                         "%d%%")) {
+        sdl3DrawSetNewswireTransparency(trans);
+    }
+    imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP));
+    if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
+
+    bool autoHide = sdl3DrawGetNewswireAutoHide();
+    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE),
+                        &autoHide)) {
+        sdl3DrawSetNewswireAutoHide(autoHide);
+        gameFrontSaveCurrentPrefs();
+    }
+    imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP));
+
+    int buildTrans = sdl3DrawGetBuildPanelTransparency();
+    ImGui::SetNextItemWidth(dialogFontW(200.0f));
+    if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_BUILD_TRANSPARENCY),
+                         &buildTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
+                         "%d%%")) {
+        sdl3DrawSetBuildPanelTransparency(buildTrans);
+    }
+    imguiHelpTooltip(langGetText(touchLayout
+                                     ? STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP
+                                     : STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP));
+    if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
+
+    int statusTrans = sdl3DrawGetStatusPanelTransparency();
+    ImGui::SetNextItemWidth(dialogFontW(200.0f));
+    if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_STATUS_TRANSPARENCY),
+                         &statusTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
+                         "%d%%")) {
+        sdl3DrawSetStatusPanelTransparency(statusTrans);
+    }
+    imguiHelpTooltip(langGetText(touchLayout
+                                     ? STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP
+                                     : STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP));
+    if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
+}
+#endif
+
 extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
     /* ---- Frame rate ---- */
     if (!uiModeIsTablet()) {
@@ -821,7 +883,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         }
         ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_FRAMERATE));
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
+        ImGui::SetNextItemWidth(dialogFontW(80.0f));
         if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
             for (int i = 0; i < 7; i++) {
                 bool selected = (curFrIdx == i);
@@ -833,7 +895,6 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         }
     }
 
-#ifndef __ANDROID__
     /* The web canvas follows the page, so it has no window size to pick. */
 #ifndef __EMSCRIPTEN__
     /* ---- Window size — desktop, in-game only ---- */
@@ -846,15 +907,23 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             langGetText(STR_MENU_CUSTOM_RESIZABLE),
         };
         BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_TRIPLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
+#if BOLO_MOBILE
+        /* A mobile window cannot be resized, so Custom (resizable) is left
+           off the tablets' desktop layout; it would only pick the zoom that
+           fits. */
+        const int zoomCount = 4;
+#else
+        const int zoomCount = 5;
+#endif
         int curZoomIdx = 0;
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < zoomCount; i++) {
             if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
         }
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_WINDOWSIZE));
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(dialogFontW(100.0f));
         if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
-            for (int i = 0; i < 5; i++) {
+            for (int i = 0; i < zoomCount; i++) {
                 bool selected = (curZoomIdx == i);
                 if (ImGui::Selectable(zoomLabels[i], selected)) {
                     ctx->pendingZoom = (unsigned char)zoomValues[i];
@@ -889,11 +958,26 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             ImGui::EndCombo();
         }
     }
-#endif
 
-#if !BOLO_MOBILE
+    /* On mobile only the tablets' desktop layout has the classic screen
+       these settings shape; the touch layout leaves them out, as before. */
+    if (!BOLO_MOBILE || !uiModeIsTablet()) {
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_FULLSCREEN));
-#if !defined(__EMSCRIPTEN__)
+#if BOLO_MOBILE
+    /* ---- Full screen, the tablets' ---- A mobile window always fills the
+       screen, so the choice is the full screen map or the classic screen, as
+       the desktop's is in a game. The tick reads the preference and is applied
+       after the frame, like the desktop's: in a game it brings the map up or
+       takes it down, outside one it is the choice the next game opens with. */
+    {
+        bool fs = (bool)gameFrontFullScreen;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_FULLSCREEN), &fs)) {
+            ctx->pendingFullScreen = fs ? 1 : 0;
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP));
+    }
+#endif
+#if !defined(__EMSCRIPTEN__) && !BOLO_MOBILE  /* a mobile window is always full screen */
     /* ---- Full screen ---- */
     if (!uiModeIsTablet() && !uiModeIsSteamDeck() && !uiShouldUseControllerMode()) {
         /* Read the window itself rather than the preference, so the tick still
@@ -922,48 +1006,9 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
 
 #if !defined(__EMSCRIPTEN__)
     /* ---- The full screen map's HUD panels ---- These follow the map view
-       they belong to, which is desktop and Deck only.  Each slider is applied
-       as it moves so the panel changes under it, and written to the
-       preferences once it is let go. */
-    if (!uiModeIsTablet()) {
-        int trans = sdl3DrawGetNewswireTransparency();
-        ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY),
-                             &trans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
-                             "%d%%")) {
-            sdl3DrawSetNewswireTransparency(trans);
-        }
-        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP));
-        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
-
-        bool autoHide = sdl3DrawGetNewswireAutoHide();
-        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE),
-                            &autoHide)) {
-            sdl3DrawSetNewswireAutoHide(autoHide);
-            gameFrontSaveCurrentPrefs();
-        }
-        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP));
-
-        int buildTrans = sdl3DrawGetBuildPanelTransparency();
-        ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_BUILD_TRANSPARENCY),
-                             &buildTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
-                             "%d%%")) {
-            sdl3DrawSetBuildPanelTransparency(buildTrans);
-        }
-        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP));
-        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
-
-        int statusTrans = sdl3DrawGetStatusPanelTransparency();
-        ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_STATUS_TRANSPARENCY),
-                             &statusTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
-                             "%d%%")) {
-            sdl3DrawSetStatusPanelTransparency(statusTrans);
-        }
-        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP));
-        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
-    }
+       they belong to: desktop and Deck here, and the iOS touch layout's own
+       full screen below. */
+    if (!uiModeIsTablet()) renderFullScreenPanelSettings(false);
 #endif
 
     /* ---- The simplified view ---- Both surfaces it covers are desktop and
@@ -994,6 +1039,23 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         imguiHelpTooltip(langGetText(STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP));
         ImGui::EndDisabled();
         ImGui::Unindent();
+    }
+    }
+
+#if BOLO_MOBILE
+    /* ---- Full screen, the touch layout's ---- The map fills the screen with
+       the controls over it (sdl3DrawIsTabletMapFullScreen). The tick reads
+       the preference, since an iOS window is full screen whatever it says,
+       and is applied after the frame like the desktop's, where it becomes the
+       flag and, in a game, brings the map up. */
+    if (uiModeIsTablet()) {
+        ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_FULLSCREEN));
+        bool fs = (bool)gameFrontFullScreen;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_FULLSCREEN), &fs)) {
+            ctx->pendingFullScreen = fs ? 1 : 0;
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP));
+        renderFullScreenPanelSettings(true);
     }
 #endif
 
@@ -1207,6 +1269,10 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
         }
 
+#if !BOLO_MOBILE
+        /* A phone has no file manager to open the folder in: skins reach it
+           by other means, so the button is left off, as the folder pickers
+           are. */
         if (ImGui::Button(langGetText(STR_DLGSKIN_OPENFOLDER))) {
             /* SDL_GetPrefPath already ends in a separator. */
             const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
@@ -1227,6 +1293,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
         }
         imguiHandOnHover();
+#endif
 
         /* Runtime check, not an #ifdef: the stub build answers false, so the
            button simply isn't there when Steam isn't running. Browsing the
@@ -1533,7 +1600,9 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         bool se = (bool)soundEffects;
         if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &se)) windowSoundEffects_toggle();
     }
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* The web client does not define positionalSound; the desktop, iOS and
+       Android do. */
+#if !defined(__EMSCRIPTEN__)
     {
         bool ps = (bool)positionalSound;
         if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_CB), &ps)) windowPositionalSound_toggle();
@@ -1568,7 +1637,7 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         int vol = windowMasterVolume;
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_MASTER_VOLUME));
         ImGui::SameLine(volSliderX);
-        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SetNextItemWidth(dialogFontW(200.0f));
         /* Empty format, and a ## id, so the slider draws neither the value
            inside itself nor a label after it; both go beside it instead. */
         if (ImGui::SliderInt("##mastervolume", &vol, 0, 100, "")) windowSetMasterVolume(vol);
@@ -1579,7 +1648,7 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         int vol = soundVolume;
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_EFFECTS_VOLUME));
         ImGui::SameLine(volSliderX);
-        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SetNextItemWidth(dialogFontW(200.0f));
         if (ImGui::SliderInt("##effectsvolume", &vol, 0, 100, "")) windowSetSoundVolume(vol);
         ImGui::SameLine();
         ImGui::Text("%d%%", vol);
@@ -1596,7 +1665,7 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         if (!voiceOnForVolume) ImGui::BeginDisabled();
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_VOLUME));
         ImGui::SameLine(volSliderX);
-        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SetNextItemWidth(dialogFontW(200.0f));
         if (ImGui::SliderFloat("##voicevolume", &vol, 0.0f, 2.0f, "")) {
             windowSetVoiceVolume(vol);
         }
@@ -1628,9 +1697,15 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_VOICE_SERVER_OFF));
     }
     if (!voiceOn) ImGui::BeginDisabled();
-    imguiSettingsVoiceModeCombo(140.0f);
+    imguiSettingsVoiceModeCombo(dialogFontW(140.0f));
     /* The binding itself is set in Key Setup; showing it here is so the
        player can see which key push to talk is on without leaving. */
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    /* On a touch screen the talk button on the game screen is the key. */
+    if (voiceGetMode() == VOICE_MODE_PTT && uiModeIsTablet()) {
+        ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_VOICE_PTT_TOUCH));
+    } else
+#endif
     if (voiceGetMode() == VOICE_MODE_PTT) {
         keyItems pttKeys;
         windowGetKeys(&pttKeys);
@@ -1643,11 +1718,11 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         ImGui::SameLine();
         ImGui::TextUnformatted(pttName);
     }
-    imguiSettingsVoiceDeviceCombo(true, 240.0f);
-    imguiSettingsVoiceDeviceCombo(false, 240.0f);
-    imguiSettingsVoiceMicGainSlider(200.0f);
-    imguiSettingsVoiceLevelMeter(200.0f);
-    imguiSettingsVoiceMicTest(200.0f);
+    imguiSettingsVoiceDeviceCombo(true, dialogFontW(240.0f));
+    imguiSettingsVoiceDeviceCombo(false, dialogFontW(240.0f));
+    imguiSettingsVoiceMicGainSlider(dialogFontW(200.0f));
+    imguiSettingsVoiceLevelMeter(dialogFontW(200.0f));
+    imguiSettingsVoiceMicTest(dialogFontW(200.0f));
 #if defined(WINBOLO_VOICE_AEC)
     {
         /* Three states, and the checkbox shows the saved preference in all
@@ -1698,15 +1773,14 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
         }
     }
 
-#if !BOLO_MOBILE
-    /* ---- Smooth scrolling ---- */
-    {
+    /* ---- Smooth scrolling ---- the arrow keys of a keyboard; on mobile only
+       the tablets' desktop layout has one. */
+    if (!BOLO_MOBILE || !uiModeIsTablet()) {
         bool ss = (bool)smoothScrollingEnabled;
         if (ImGui::Checkbox(langGetText(STR_MENU_SMOOTH_SCROLLING), &ss)) {
             windowSmoothScrolling_toggle();
         }
     }
-#endif
 
     /* ---- Show gunsight ---- */
     {
@@ -1768,7 +1842,9 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
  * SDL folder dialog is async — its callback (may fire on another thread)
  * stashes the chosen path and a flag, and the next render frame applies it
  * via the write-through setter.  The editable InputText remains the primary
- * input and the fallback on platforms without a native folder dialog. */
+ * input and the fallback on platforms without a native folder dialog.
+ * iOS shows none of the folder fields, so it has none of this glue. */
+#if !BOLO_MOBILE
 static char s_hostingPickedDir[FILENAME_MAX];
 static bool s_hostingDirPicked = false;
 
@@ -1831,6 +1907,7 @@ static void SDLCALL hostingLogDirDialogCallback(void *userdata,
         s_hostingLogDirPicked = true;
     }
 }
+#endif
 
 /* One visibility row: the category label, a 4-way policy combo, and — only
  * while that combo reads Decay — the decay-seconds box.  The combo index is
@@ -1897,6 +1974,52 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         }
     }
 
+    /* ---- Server name and description ----
+     * What the game finder shows for a game hosted from here: the name in
+     * place of this host's address, the description when a player points
+     * at or selects the game. Same shape as the directory fields below: the
+     * buffer follows the setting until the field is being edited, and the
+     * edit is committed on Enter or when the field loses focus. The setters
+     * sanitise, so what the field shows afterwards is what goes out. The
+     * buffers hold the wire caps (32 / 200 bytes) plus the NUL, so ImGui
+     * stops typing at the cap. */
+    {
+        static char nameBuf[sizeof(gameFrontHostingServerName)];
+        static char descBuf[sizeof(gameFrontHostingServerDesc)];
+        static bool nameEditing = false;
+        static bool descEditing = false;
+        if (!nameEditing) {
+            SDL_strlcpy(nameBuf, gameFrontHostingServerName, sizeof(nameBuf));
+        }
+        if (!descEditing) {
+            SDL_strlcpy(descBuf, gameFrontHostingServerDesc, sizeof(descBuf));
+        }
+        hostingLabel(STR_DLGSETTINGS_HOSTING_SERVERNAME);
+        bool nameCommit = ImGui::InputText("##hostingservername", nameBuf,
+                                           sizeof(nameBuf),
+                                           ImGuiInputTextFlags_EnterReturnsTrue);
+        nameEditing = ImGui::IsItemActive();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s",
+                              langGetText(STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP));
+        }
+        if (nameCommit || ImGui::IsItemDeactivatedAfterEdit()) {
+            gameFrontSetHostingServerName(nameBuf);
+        }
+        hostingLabel(STR_DLGSETTINGS_HOSTING_SERVERDESC);
+        bool descCommit = ImGui::InputText("##hostingserverdesc", descBuf,
+                                           sizeof(descBuf),
+                                           ImGuiInputTextFlags_EnterReturnsTrue);
+        descEditing = ImGui::IsItemActive();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s",
+                              langGetText(STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP));
+        }
+        if (descCommit || ImGui::IsItemDeactivatedAfterEdit()) {
+            gameFrontSetHostingServerDesc(descBuf);
+        }
+    }
+
     /* ---- Spectators ---- */
     {
         bool allow = gameFrontHostingAllowSpec;
@@ -1912,6 +2035,20 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             if (maxSpec < 1)  maxSpec = 1;
             if (maxSpec > 32) maxSpec = 32;
             gameFrontSetHostingMaxSpec(maxSpec);
+        }
+        /* Seconds behind the game that spectators watch; 0 is live. */
+        int specDelay = gameFrontHostingSpecDelay;
+        hostingLabel(STR_DLGSETTINGS_HOSTING_SPECDELAY);
+        if (ImGui::InputInt("##hostingspecdelay", &specDelay, 5, 30)) {
+            if (specDelay < 0) specDelay = 0;
+            if (specDelay > HOSTING_SPEC_DELAY_MAX_SECS) {
+                specDelay = HOSTING_SPEC_DELAY_MAX_SECS;
+            }
+            gameFrontSetHostingSpecDelay(specDelay);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s",
+                              langGetText(STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP));
         }
         ImGui::EndDisabled();
     }
@@ -1960,6 +2097,10 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             /* Directory and caps only bite on Persist (Off/Allow never keep
              * a script past the session). */
             if (gameFrontHostingScriptUploadPolicy == SCRIPT_UPLOAD_PERSIST) {
+                /* Not on iOS: it has no folder picker, and its folders are
+                   always the defaults in the app's own storage
+                   (gamefront.c). */
+#if !BOLO_MOBILE
                 static char scriptDirBuf[FILENAME_MAX];
                 static bool scriptDirEditing = false;
                 if (s_hostingScriptDirPicked) {
@@ -1991,6 +2132,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                                              NULL, win, loc, false);
                 }
                 ImGui::PopID();
+#endif
 
                 int scriptMaxFiles = gameFrontHostingScriptUploadMaxFiles;
                 hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES);
@@ -2030,7 +2172,10 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
          * map — what the lobby's mod chooser lists. Same shape as the Upload
          * Directory field below: an editable field that is the primary input
          * and the fallback where there is no native folder dialog, with
-         * Browse filling it in. */
+         * Browse filling it in. Not on iOS: it has no folder picker, and its
+         * folders are always the defaults in the app's own storage
+         * (gamefront.c). */
+#if !BOLO_MOBILE
         static char scnDirBuf[FILENAME_MAX];
         static bool scnDirEditing = false;
         if (s_hostingScnDirPicked) {
@@ -2061,6 +2206,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                                      win, loc, false);
         }
         ImGui::PopID();
+#endif
     }
 
     /* ---- Map uploads ---- */
@@ -2088,7 +2234,10 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         if (gameFrontHostingUploadPolicy == UPLOAD_POLICY_PERSIST) {
             /* Upload directory — editable text field is the primary input and
              * the fallback where no native folder dialog exists; Browse fills
-             * it via SDL_ShowOpenFolderDialog. */
+             * it via SDL_ShowOpenFolderDialog. Not on iOS: it has no folder
+             * picker, and its folders are always the defaults in the app's
+             * own storage (gamefront.c). */
+#if !BOLO_MOBILE
             static char dirBuf[FILENAME_MAX];
             static bool dirEditing = false;
             /* Apply a folder chosen on a previous frame. */
@@ -2117,6 +2266,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                 SDL_ShowOpenFolderDialog(hostingUploadDirDialogCallback, NULL,
                                          win, loc, false);
             }
+#endif
 
             int maxFiles = gameFrontHostingUploadMaxFiles;
             hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES);
@@ -2145,7 +2295,10 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         if (gameFrontHostingLogging) {
             /* Log directory — editable text field is the primary input and
              * the fallback where no native folder dialog exists; Browse fills
-             * it via SDL_ShowOpenFolderDialog. */
+             * it via SDL_ShowOpenFolderDialog. Not on iOS: it has no folder
+             * picker, and its folders are always the defaults in the app's
+             * own storage (gamefront.c). */
+#if !BOLO_MOBILE
             static char logDirBuf[FILENAME_MAX];
             static bool logDirEditing = false;
             /* Apply a folder chosen on a previous frame. */
@@ -2178,6 +2331,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                                          win, loc, false);
             }
             ImGui::PopID();
+#endif
 
             /* Hand the finished round's log to players who ask for it, so
              * their post-game recap plays. Nested under logging because
@@ -2419,7 +2573,7 @@ static void settingsShowLoop(bool inEditor) {
     /* A quit taken while the editor's settings window was up (see the event
        loop); pushed again for the editor after the window closes. */
     bool quitForEditor = false;
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* iOS: key setup from the iPad's desktop layout */
     bool showKeySetup = false;
     /* Full screen pick from the Display tab, applied after Present alongside
        key setup: -1 = nothing pending, 0 = leave full screen, 1 = enter it. */
@@ -2561,13 +2715,14 @@ static void settingsShowLoop(bool inEditor) {
 #else
         present[STAB_HOSTING] = true;
 #endif
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* iOS: the iPad's desktop layout only, by the tablet test */
         present[STAB_CONTROLS] = !uiModeIsTablet() && !inEditor;
 #else
         present[STAB_CONTROLS] = false;
 #endif
-        /* UPnP, NAT traversal and the news popup mean nothing in a browser. */
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        /* UPnP, NAT traversal and the news popup mean nothing in a browser.
+           iOS and Android show the tab for the news popup alone. */
+#if !defined(__EMSCRIPTEN__)
         present[STAB_LAST]     = true;
 #else
         present[STAB_LAST]     = false;
@@ -2600,7 +2755,7 @@ static void settingsShowLoop(bool inEditor) {
                 /* ---- Tutorial ---- */
                 if (!inEditor) {
                     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_TUTORIAL));
-                    if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(140, 0))) {
+                    if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(dialogFontW(140.0f), 0))) {
                         gameFrontRequestPlayTutorial();
                         running = false;  /* Close settings; openSettings handler routes to openTutorial. */
                     }
@@ -2644,7 +2799,7 @@ static void settingsShowLoop(bool inEditor) {
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)
             if (present[STAB_CONTROLS]) {
                 if (ImGui::BeginTabItem(langGetText(STR_LV_WIN_CONTROLS), nullptr,
                         s_pgForceTab == STAB_CONTROLS ? ImGuiTabItemFlags_SetSelected : 0)) {
@@ -2685,11 +2840,13 @@ static void settingsShowLoop(bool inEditor) {
                 ImGui::EndTabItem();
             }
 #endif
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__)  /* see present[STAB_LAST] */
             if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_NETWORK), nullptr,
                     s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_LAST;
                 ImGui::BeginChild("##networkPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+#if !BOLO_MOBILE
+                /* Port mapping and NAT traversal are not built for iOS. */
                 ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_NET_HELP));
                 ImGui::Spacing();
                 {
@@ -2704,6 +2861,7 @@ static void settingsShowLoop(bool inEditor) {
                         gameFrontUseNatTraversal = b;
                     }
                 }
+#endif
                 {
                     const char *cur = newsPrefGetAutoShow();
                     /* "unset" and "show" both default the checkbox to
@@ -2728,7 +2886,7 @@ static void settingsShowLoop(bool inEditor) {
         if (ctx.wantAtlasRebuild) pendingFontRebuild = true;
         /* Same deal for a skin change: the reload happens after Present. */
         if (ctx.wantSkinReload) pendingSkinReload = true;
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)
         /* The shared Controls tab requests key setup via the flag; honour it
            through the existing showKeySetup teardown below. */
         if (ctx.wantKeySetup) showKeySetup = true;
@@ -2804,7 +2962,7 @@ static void settingsShowLoop(bool inEditor) {
             gameFrontReloadSkins();
         }
 
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)
         /* Two things need the dialog's ImGui context torn down and rebuilt
            between Present and the next NewFrame: running key setup, which owns
            the context while it is up, and a full screen change, which lands the

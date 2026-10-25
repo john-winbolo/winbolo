@@ -85,6 +85,7 @@ extern "C" {
 #endif
 #include "scenario_details.h"           /* the rules and callbacks blob the dialog reads */
 #include "scenario_settings.h"          /* ScnSetting and the settings blob the dialog reads */
+#include "scenario_identity.h"          /* scnIdentityUpdatedText — a script's author and updated time */
 #include "sim_rules_names.h"            /* simRulesRuleName / simRulesClassicValue */
 #include "../../../sim_rules_phrase.h"  /* simRulesPhrase — the one wording */
 #include "../../../ui_mode.h"           /* uiShouldUseControllerMode — a controller has no hover */
@@ -167,7 +168,9 @@ static uint32_t            s_syncGen    = 0;
  * state says where the file is. source is the server's SERVER_SCENARIO_SOURCE_*
  * for a row the server holds, and file is the local file's name for a row it
  * does not. workshopId is the Workshop item of the entry the row was filled
- * from, the server's for a row the server holds, and 0 for none. */
+ * from, the server's for a row the server holds, and 0 for none. author and
+ * updated are the entry's (scenario_identity.h), and identityKnown false for
+ * a row from a server too old to send them. */
 struct LobbyScenarioRow {
     const char         *file;
     const char         *name;
@@ -179,7 +182,50 @@ struct LobbyScenarioRow {
     LobbyScriptRowState state;
     uint8_t             source;
     uint64_t            workshopId;
+    bool                identityKnown;
+    const char         *author;
+    const char         *updated;
 };
+
+/* "by <author> · updated <time>" into out, with "unknown" for either one the
+ * manifest does not state. Empty when the identity is not known at all,
+ * which is a server too old to send it and is drawn as nothing rather than
+ * as two unknowns. The author goes in as a message argument and is never
+ * the format. */
+static void lobbyScenarioIdentityLine(bool known, const char *author,
+                                      const char *updated, char *out,
+                                      size_t outLen) {
+    MessageArgs args = {};
+    char        when[32];
+
+    out[0] = '\0';
+    if (!known) return;
+    scnIdentityUpdatedText(updated, when, sizeof(when));
+    SDL_strlcpy(args.string1,
+                (author != NULL && author[0] != '\0')
+                    ? author
+                    : langGetText(STR_DLGLOBBY_SCENARIO_UNKNOWN),
+                sizeof(args.string1));
+    SDL_strlcpy(args.string2,
+                when[0] != '\0' ? when
+                                : langGetText(STR_DLGLOBBY_SCENARIO_UNKNOWN),
+                sizeof(args.string2));
+    SDL_strlcpy(out, langGetTextFmt(STR_DLGLOBBY_SCENARIO_BY_UPDATED, &args),
+                outLen);
+}
+
+/* The identity line as the tooltip of the item just drawn, a row's name. */
+static void lobbyScenarioIdentityTip(const struct LobbyScenarioRow *row) {
+    char line[160];
+
+    if (!row->identityKnown ||
+        !ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        return;
+    }
+    lobbyScenarioIdentityLine(row->identityKnown, row->author, row->updated,
+                              line, sizeof(line));
+    if (line[0] != '\0') ImGui::SetTooltip("%s", line);
+}
 
 /* The one script this dialog has sent, and what became of it. s_sending is
  * set when the send is handed to the transport and cleared when the shared
@@ -315,6 +361,9 @@ struct LobbyRoundRow {
     bool mod;    /* keeps the round's win condition */
     bool bound;  /* written for one map, so it is the map's and not the
                     host's — it is drawn locked and never sent */
+    bool required;  /* fixed on the list by the server's operator (-mod-
+                       required, or a -mod-locked list): sent like any other
+                       row, but the host is offered no way to drop it */
     uint64_t workshopId;  /* the Workshop item, 0 for none */
 };
 
@@ -342,7 +391,7 @@ static bool          s_roundTaken = false;
 
 static void lobbyRoundSetRow(LobbyRoundRow *r, const char *file,
                              const char *name, bool mod, bool bound,
-                             uint64_t workshopId) {
+                             bool required, uint64_t workshopId) {
     SDL_snprintf(r->file, sizeof(r->file), "%s", file);
     /* A manifest that named nothing still came from a file, and a row with a
        gap where its name goes reads as a fault. */
@@ -350,6 +399,7 @@ static void lobbyRoundSetRow(LobbyRoundRow *r, const char *file,
                  name[0] != '\0' ? name : file);
     r->mod        = mod;
     r->bound      = bound;
+    r->required   = required;
     r->workshopId = workshopId;
 }
 
@@ -398,7 +448,7 @@ static int lobbyRoundLive(ClientSim *cs, LobbyRoundRow *out, int max) {
             lobbyRoundSetRow(&out[n++], attached,
                              clientSimGetLobbyScenarioName(cs),
                              clientSimGetLobbyScenarioKeepsWinCondition(cs),
-                             clientSimGetLobbyScenarioBound(cs), 0);
+                             clientSimGetLobbyScenarioBound(cs), false, 0);
         }
     }
 
@@ -407,6 +457,7 @@ static int lobbyRoundLive(ClientSim *cs, LobbyRoundRow *out, int max) {
                          clientSimGetLobbyScriptName(cs, i),
                          clientSimGetLobbyScriptKeepsWinCondition(cs, i),
                          clientSimGetLobbyScriptBound(cs, i),
+                         clientSimGetLobbyScriptRequired(cs, i),
                          clientSimGetLobbyScriptWorkshopId(cs, i));
     }
     return n;
@@ -504,7 +555,11 @@ static bool lobbyRoundBoundShadowed(int idx) {
  * arrives when the host has one pick fewer and nothing is hidden, and the
  * lobby is not told which of the two it is, so both are treated as the one
  * that loses a pick. Checking the box back on takes the map's row off the
- * list and shows every pick, and the host can edit freely there. */
+ * list and shows every pick, and the host can edit freely there.
+ *
+ * A server with this build composes nothing with the box off, the map's own
+ * script included, and so publishes no map row then; the case is left for an
+ * older server that still does. */
 static bool lobbyRoundLiveMayBeCut(void) {
     int i;
 
@@ -563,6 +618,12 @@ static int lobbyRoundWhyNotAdd(const LobbyScenarioRow *row) {
                out. Changing the map is what changes it, and that is what the
                row's own note says as well. */
             if (s_round[at].bound) return STR_DLGLOBBY_SCENARIO_MAP_LOCK;
+            /* Nor is a scenario the server's operator fixed on the list: the
+               server refuses a list without it, so the swap would only come
+               back refused. */
+            if (s_round[at].required) {
+                return STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP;
+            }
             /* One goes out as one comes in, so the list does not grow and the
                cap below cannot be what stops it. */
             return 0;
@@ -606,15 +667,17 @@ static void lobbyRoundAdd(const LobbyScenarioRow *row) {
        column offers. Copied rather than hard-coded false so a row that
        reached here another way is still drawn for what it is. */
     lobbyRoundSetRow(r, row->file, row->name, lobbyScenarioRowIsMod(row),
-                     row->bound, row->workshopId);
+                     row->bound, false, row->workshopId);
 }
 
 /* Whether the row at idx may be taken out of the draft. Not the map's own,
- * which the map decides, and nothing while a pick may be hidden: see
- * lobbyRoundLiveMayBeCut. */
+ * which the map decides, not one the server's operator fixed on the list,
+ * which the server would refuse the list without, and nothing while a pick
+ * may be hidden: see lobbyRoundLiveMayBeCut. */
 static bool lobbyRoundMayDrop(int idx) {
     if (idx < 0 || idx >= s_roundCount) return false;
     if (s_round[idx].bound) return false;
+    if (s_round[idx].required) return false;
     return !lobbyRoundLiveMayBeCut();
 }
 
@@ -732,6 +795,13 @@ static bool s_detailsAttached   = false;
 static int  s_detailsKind       = -1;   /* -1 unknown, 0 scenario, 1 mod */
 /* The Workshop item, 0 for none or where the source did not carry one. */
 static uint64_t s_detailsWorkshopId = 0;
+/* Who wrote it and when it last changed, from the row the dialog was opened
+   from. The answer to the details request is preferred where it carries
+   them, and the catalogue by file name after that; these are for a row
+   neither holds, a file only this computer has. */
+static bool s_detailsIdentityKnown = false;
+static char s_detailsAuthor[SCN_AUTHOR_LEN];
+static char s_detailsUpdated[SCN_UPDATED_LEN];
 
 void lobbyScenarioDetailsReset(void) {
     s_detailsOpen     = false;
@@ -739,6 +809,7 @@ void lobbyScenarioDetailsReset(void) {
     s_detailsAttached = false;
     s_detailsKind     = -1;
     s_detailsWorkshopId = 0;
+    s_detailsIdentityKnown = false;
     s_detailsFile[0]  = '\0';
     s_detailsName[0]  = '\0';
     s_detailsDesc[0]  = '\0';
@@ -952,6 +1023,11 @@ static void lobbyScenarioDetailsOpenRow(const LobbyScenarioRow *row) {
     s_detailsAttached   = false;
     s_detailsKind       = lobbyScenarioRowIsMod(row) ? 1 : 0;
     s_detailsWorkshopId = row->workshopId;
+    s_detailsIdentityKnown = row->identityKnown;
+    SDL_strlcpy(s_detailsAuthor, row->author != NULL ? row->author : "",
+                sizeof(s_detailsAuthor));
+    SDL_strlcpy(s_detailsUpdated, row->updated != NULL ? row->updated : "",
+                sizeof(s_detailsUpdated));
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -990,6 +1066,8 @@ void lobbyScenarioDetailsOpenAttached(ClientSim *cs) {
     s_detailsKind       = clientSimGetLobbyScenarioKeepsWinCondition(cs) ? 1 : 0;
     /* CTRL_LOBBY_SETTINGS carries no Workshop id for the attached script. */
     s_detailsWorkshopId = 0;
+    /* Nor its identity, which the details answer or the catalogue gives. */
+    s_detailsIdentityKnown = false;
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -1061,6 +1139,34 @@ static const char *lobbyScenarioDescOfFile(ClientSim *cs, const char *file) {
     return "";
 }
 
+/* Who the directory says wrote a file, and when it last changed, by file
+ * name, the way lobbyScenarioDescOfFile finds a description. False where the
+ * listing does not hold the file or a remote server sent no identity. */
+static bool lobbyScenarioIdentityOfFile(ClientSim *cs, const char *file,
+                                        const char **author,
+                                        const char **updated) {
+    int i, n;
+
+    if (file == NULL || file[0] == '\0') return false;
+    for (i = 0; i < s_hostCount; i++) {
+        if (SDL_strcmp(s_hostRows[i].file, file) == 0) {
+            *author  = s_hostRows[i].author;
+            *updated = s_hostRows[i].updated;
+            return s_hostRows[i].identityKnown;
+        }
+    }
+    if (cs == NULL) return false;
+    n = clientSimGetLobbyScenarioListCount(cs);
+    for (i = 0; i < n; i++) {
+        if (SDL_strcmp(clientSimGetLobbyScenarioListFile(cs, i), file) == 0) {
+            *author  = clientSimGetLobbyScenarioListAuthor(cs, i);
+            *updated = clientSimGetLobbyScenarioListUpdated(cs, i);
+            return clientSimGetLobbyScenarioListIdentityKnown(cs, i);
+        }
+    }
+    return false;
+}
+
 void lobbyScenarioDetailsOpenScript(ClientSim *cs, int idx) {
     const char *file;
     const char *name;
@@ -1103,6 +1209,8 @@ void lobbyScenarioDetailsOpenScript(ClientSim *cs, int idx) {
     s_detailsKind       = clientSimGetLobbyScriptKeepsWinCondition(cs, idx)
                               ? 1 : 0;
     s_detailsWorkshopId = clientSimGetLobbyScriptWorkshopId(cs, idx);
+    /* The script list carries no identity; see s_detailsIdentityKnown. */
+    s_detailsIdentityKnown = false;
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -1161,12 +1269,18 @@ static ClientScnDetailsState lobbyScenarioDetailsOfFile(ClientSim *cs,
 
         uint8_t settings[SCN_SETTINGS_BLOB_MAX];
         int     sGot = -1;
+        char    author[SCN_AUTHOR_LEN];
+        char    updated[SCN_UPDATED_LEN];
+        bool    idFound = false;
 
         threadsWaitForMutex();
         got = serverSimScenarioDetails(sim, file, blob, sizeof(blob));
         if (got >= 0) {
             sGot = serverSimScenarioSettingsDecl(sim, file, settings,
                                                  sizeof(settings));
+            idFound = serverSimScenarioIdentity(sim, file, author,
+                                                sizeof(author), updated,
+                                                sizeof(updated));
         }
         threadsReleaseMutex();
         clientSimLobbyScenarioDetailsPut(cs, file, got >= 0, blob,
@@ -1176,6 +1290,10 @@ static ClientScnDetailsState lobbyScenarioDetailsOfFile(ClientSim *cs,
         if (got >= 0) {
             clientSimLobbyScenarioSettingsPut(cs, file, settings,
                                               sGot > 0 ? (size_t)sGot : 0);
+            /* And the identity, which a remote server sends beside them. */
+            if (idFound) {
+                clientSimLobbyScenarioIdentityPut(cs, file, author, updated);
+            }
         }
     } else {
         clientSimLobbyScenarioDetailsWant(cs, file);
@@ -1333,9 +1451,9 @@ static void lobbyScenarioDetailsRuleRow(int rule, double value,
  * picked scenario alike, so it neither wins a rule over another script nor
  * has its own rules play, and a note under its table says so rather than the
  * table going missing. A pick that sets no rule has no table and still gets
- * the note, because it does not load either way. The map's own script is not
- * a pick: it loads with the box off, and gets neither the skip nor the
- * note. */
+ * the note, because it does not load either way. The map's own script does
+ * not load with the box off either, so it gets the skip and the note with the
+ * rest. */
 static void lobbyScenarioDetailsRules(ClientSim *cs) {
     LobbyRoundRow  order[LOBBY_ROUND_MAX];
     const uint8_t *blobs[LOBBY_ROUND_MAX];
@@ -1361,7 +1479,7 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
     for (i = 0; i < n; i++) {
         blobs[i] = NULL;
         lens[i]  = 0;
-        if (!order[i].bound && !modsOn) continue;
+        if (!modsOn) continue;
         if (lobbyScenarioDetailsOfFile(cs, order[i].file, &blobs[i],
                                        &lens[i]) ==
                 CLIENT_SCN_DETAILS_WAITING &&
@@ -1397,7 +1515,7 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
     /* Shown whether or not the table is: a pick on a server with
        Mods/Scenario off loads nothing, rules or not, and that does not wait
        on any answer. */
-    if (!modsOn && !s_detailsBound) {
+    if (!modsOn) {
         lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_MODS_OFF));
     }
 }
@@ -1555,6 +1673,11 @@ static void lobbyScenarioSettingText(const ScnSetting *st, int32_t v,
  * server corrected shows as corrected. Everyone else sees the values as
  * text. A value the server has not reported is the declared default.
  *
+ * A value the server's operator holds (-setting on a -mod-required or
+ * -mod-locked mod) is drawn with the lock beside it and a tooltip saying
+ * the server sets it; the host's dropdown for it is disabled, and the
+ * server refuses a change to it in any case.
+ *
  * Nothing is drawn for a file that declares no setting, or while the
  * server's answer has not come. A server too old to send the declarations
  * sends none, so its scripts show no section. A server that sends them but
@@ -1606,11 +1729,15 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
         const ScnSetting *st = &rows[i];
         int32_t           chosen;
         bool              held;
+        bool              locked;
+        bool              hovered;
         int32_t           value;
         char              shown[64];
 
-        held  = clientSimGetLobbyScriptSetting(cs, s_detailsFile, st->id,
-                                               &chosen);
+        held   = clientSimGetLobbyScriptSetting(cs, s_detailsFile, st->id,
+                                                &chosen);
+        locked = clientSimGetLobbyScriptSettingLocked(cs, s_detailsFile,
+                                                      st->id);
         value = scnSettingResolve(st, held, held ? (int64_t)chosen : 0);
 
         ImGui::TableNextRow();
@@ -1621,9 +1748,37 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
         lobbyScenarioSettingText(st, value, shown, sizeof(shown));
         if (!(host && live)) {
             ImGui::TextUnformatted(shown);
+            hovered = ImGui::IsItemHovered();
+            if (locked) {
+                lobbyRenderLockBadge();
+                hovered = hovered || ImGui::IsItemHovered();
+                if (hovered) {
+                    ImGui::SetTooltip("%s", langGetText(
+                        STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP));
+                }
+            }
             continue;
         }
         ImGui::PushID(i);
+        if (locked) {
+            /* Room on the right for the lock, so the badge sits in the
+               cell rather than past its edge. */
+            ImGui::SetNextItemWidth(
+                -(ImGui::GetTextLineHeight() +
+                  ImGui::GetStyle().ItemSpacing.x));
+            ImGui::BeginDisabled();
+            if (ImGui::BeginCombo("##setting", shown)) ImGui::EndCombo();
+            ImGui::EndDisabled();
+            hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+            lobbyRenderLockBadge();
+            hovered = hovered || ImGui::IsItemHovered();
+            if (hovered) {
+                ImGui::SetTooltip("%s", langGetText(
+                    STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP));
+            }
+            ImGui::PopID();
+            continue;
+        }
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::BeginCombo("##setting", shown)) {
             int     choices = (int)scnSettingChoices(st);
@@ -1752,6 +1907,31 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
            on disk when they want to read it. */
         ImGui::TextDisabled("%s %s", langGetText(STR_MAPEDIT_IMG_FILE),
                             s_detailsFile);
+        /* Who wrote it and when it last changed, as quiet as the file. The
+           details answer first, which is the server's word on this file;
+           then the row the dialog was opened from; then the catalogue. A
+           server too old to send them leaves the line out. */
+        {
+            const char *author  = "";
+            const char *updated = "";
+            bool        known;
+            char        line[160];
+
+            known = clientSimGetLobbyScenarioIdentity(cs, s_detailsFile,
+                                                      &author, &updated);
+            if (!known && s_detailsIdentityKnown) {
+                author  = s_detailsAuthor;
+                updated = s_detailsUpdated;
+                known   = true;
+            }
+            if (!known) {
+                known = lobbyScenarioIdentityOfFile(cs, s_detailsFile,
+                                                    &author, &updated);
+            }
+            lobbyScenarioIdentityLine(known, author, updated, line,
+                                      sizeof(line));
+            if (line[0] != '\0') ImGui::TextDisabled("%s", line);
+        }
         ImGui::Separator();
 
         /* Asked again on every frame it has nothing. A remote server's
@@ -1902,6 +2082,12 @@ static void lobbyScenarioRemoteTake(ClientSim *cs) {
             clientSimGetLobbyScenarioListKeepsWinCondition(cs, i);
         e->source     = clientSimGetLobbyScenarioListSource(cs, i);
         e->workshopId = clientSimGetLobbyScenarioListWorkshopId(cs, i);
+        e->identityKnown =
+            clientSimGetLobbyScenarioListIdentityKnown(cs, i);
+        SDL_strlcpy(e->author, clientSimGetLobbyScenarioListAuthor(cs, i),
+                    sizeof(e->author));
+        SDL_strlcpy(e->updated, clientSimGetLobbyScenarioListUpdated(cs, i),
+                    sizeof(e->updated));
     }
     s_remoteCount = n;
     s_remoteSeq   = seq;
@@ -2255,6 +2441,7 @@ static void lobbyScenarioLocalRow(ClientSim *cs, const LobbyScenarioRow *row,
     if (nameW < minW) nameW = 0.0f;
     lobbyTruncateName(row->name, nameW, nameBuf, sizeof(nameBuf));
     ImGui::TextUnformatted(nameBuf);
+    lobbyScenarioIdentityTip(row);
     lobbyScenarioKindTag(lobbyScenarioRowIsMod(row), s);
     lobbyScenarioWorkshopTag(row->workshopId, s);
     /* Beside the send arrow, as the server's rows carry it beside theirs. */
@@ -2473,6 +2660,7 @@ static void lobbyScenarioChooserCatalogue(ClientSim *cs,
             lobbyScenarioDetailsOpenRow(&rows[i]);
         }
         imguiHandOnHover();
+        lobbyScenarioIdentityTip(&rows[i]);
         /* Read off the name before the tag draws, because both of these ask
            about the last item and the tag would become it. */
         if (!focused) {
@@ -2596,7 +2784,12 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
        it belongs on the heading's side of the line. It takes the slot the
        left column gives its filter box, which is what keeps the first row of
        the two lists level. */
-    lobbyScenarioHeadNote(langGetText(STR_DLGLOBBY_SCENARIO_ORDER_NOTE));
+    /* A list the server's operator locked has no order for the host to
+       set, so the note says why nothing on this side moves instead. */
+    lobbyScenarioHeadNote(langGetText(
+        (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_SCRIPT_LIST) != 0
+            ? STR_DLGLOBBY_SCENARIO_LIST_LOCKED
+            : STR_DLGLOBBY_SCENARIO_ORDER_NOTE));
     ImGui::Separator();
 
     ImGui::BeginChild("##roundRows", ImVec2(0.0f, 0.0f),
@@ -2642,10 +2835,15 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
                not say how the row goes away, and the answer is not on this
                dialog. Any other row's arrow has none, for the reason the add
                arrow has none. */
+            /* A row the server's operator fixed gets one too, for the same
+               reason: the greyed arrow alone does not say the server is
+               the one keeping it there. */
             if (lobbyScenarioArrow("##drop", ImGuiDir_Left,
                                    lobbyRoundMayDrop(i),
                                    r->bound ? langGetText(
                                        STR_DLGLOBBY_SCENARIO_MAP_UNLOAD)
+                                   : r->required ? langGetText(
+                                       STR_DLGLOBBY_SCENARIO_REQUIRED)
                                             : NULL)) {
                 drop = i;
             }
@@ -2671,6 +2869,16 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
                                         ImGuiPopupFlags_MouseButtonRight);
         }
         lobbyScenarioKindTag(r->mod, s);
+        /* The lock the lobby draws on a setting the operator fixed, on a row
+           the operator fixed, for every viewer and not only the host: the
+           arrow that carries the sentence is drawn for the host alone. */
+        if (r->required) {
+            lobbyRenderLockBadge();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s",
+                                  langGetText(STR_DLGLOBBY_SCENARIO_REQUIRED));
+            }
+        }
         /* After the kind chip, so the width test below, which reads the last
            item's right edge, counts it. */
         lobbyScenarioWorkshopTag(r->workshopId, s);
@@ -2854,7 +3062,13 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
         bool inFlight = false;
         LobbyRoundRow live[LOBBY_ROUND_MAX];
         int  liveCount;
-        bool mayEdit  = lobbyScenarioMayChoose(cs);
+        /* And not while the server's operator has locked the list
+           (WinBoloDS -mod-locked): the server refuses every list then, so
+           this side is drawn the way it is for a player who is not the
+           host, with Close and no arrows. */
+        bool mayEdit  = lobbyScenarioMayChoose(cs) &&
+                        (clientSimGetLobbyServerLocks(cs) &
+                         LOBBY_LOCK_SCRIPT_LIST) == 0;
 
         if (sim != NULL) {
             server      = s_hostRows;
@@ -2887,6 +3101,9 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
             rows[i].state             = merged[i].state;
             rows[i].source            = e->source;
             rows[i].workshopId        = e->workshopId;
+            rows[i].identityKnown     = e->identityKnown;
+            rows[i].author            = e->author;
+            rows[i].updated           = e->updated;
         }
         /* A manifest that named nothing still came from a file. Done here
            rather than where a name is drawn, so the filter, the details

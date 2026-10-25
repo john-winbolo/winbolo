@@ -40,6 +40,14 @@ void serverSimScenarioClearSeats(ServerSim *sim);
 void serverSimScenarioReconcileLobby(ServerSim *sim);
 void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath);
 
+/* A map commit: OnMapChanged, told that in a lobby the map is the host's
+ * newest choice (serverSimScenarioMapIsNewer). Where the new map's own
+ * script is a scenario and it loads, it plays in place of any scenario
+ * picked before it, and those picks come off the list; mods stay. A
+ * cancelled preview goes through OnMapChanged instead, because putting the
+ * old map back is not a new choice. */
+void serverSimScenarioOnMapCommitted(ServerSim *sim, const char *mapPath);
+
 /* Whether the map at mapPath has a script beside it, asked through whatever
  * the process registered with serverSimSetScenarioMapScripted. False with
  * nothing registered, which is what a build carrying no scenario library
@@ -201,6 +209,34 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
                            uint8_t color, uint8_t namingPool,
                            uint8_t startSide,
                            const uint8_t *name, uint8_t nameLen);
+
+/* Give a team a bot naming pool that no other in-use team holds, and
+ * return the pool the team then has. choice selects one of the free
+ * pools (choice modulo the number of free pools), so a caller passes a
+ * random number to get a random free pool. The write goes through
+ * serverSimSetTeamMeta with the team's own colour, side and name, so
+ * clients get the pool in CTRL_LOBBY_TEAM_META; a team not in use yet is
+ * marked in use with the default colour and "Team N" name. An in-use
+ * team that already has the selected pool is not written. Caller: the dedicated
+ * server's -bots start-up, which names each team's bots from the
+ * returned pool. Returns 0 for team 0 or an out-of-range team. */
+uint8_t serverSimPickTeamNamingPool(ServerSim *sim, BYTE teamId, uint32_t choice);
+
+/* The team each of the dedicated server's -bots start bots goes on,
+ * written to botTeam[0..numBots-1] (numBots is clamped to MAX_TANKS).
+ * The inputs are the parsed command-line values. allyTeam is the
+ * -allybots team (0 = none). teamSizes[0..numTeamSizes-1] are the
+ * -teams a,b,c block sizes. numTeams is the -teams N count. Rules:
+ * every bot starts on allyTeam; with block sizes, the first
+ * teamSizes[0] bots go on team 1, the next teamSizes[1] on team 2, and
+ * the bots past the listed total keep allyTeam; else with numTeams >= 2
+ * bot i goes on team (i % numTeams) + 1. A team number of MAX_TANKS or
+ * more becomes team 1, as serverSimSetTeamBatch does. The start-up
+ * code uses this one table both to name the bots and to place them on
+ * their teams. Uses no ServerSim and draws no random numbers. */
+void serverSimStartBotTeams(int numBots, int allyTeam,
+                            const int *teamSizes, int numTeamSizes,
+                            int numTeams, int *botTeam);
 
 /* Clear a team's metadata back to zero (in_use=0, color=0, pool=0,
  * empty name), publish CTRL_LOBBY_TEAM_META, and clear humans' ready

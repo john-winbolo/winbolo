@@ -39,6 +39,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_touch.h"   /* imguiTouchSetPasswordInput */
 #include "imgui_nav_outline.h"
 #include "imgui_keycap.h"
 #include "dialog_footer.h"
@@ -641,6 +642,8 @@ extern "C" int imguiPasswordPrompt(const char *title, const char *message,
 
     SDL_Texture *bgTex = captureBackbuffer(renderer);
 
+    /* The keyboard this prompt opens is a password keyboard on iOS. */
+    imguiTouchSetPasswordInput(true);
     ImGuiContext *msgCtx = ImGui::CreateContext();
     ImGui::SetCurrentContext(msgCtx);
     imguiRegisterPlatformOpenUrl();
@@ -803,6 +806,11 @@ extern "C" int imguiPasswordPrompt(const char *title, const char *message,
 
     if (iconTex) SDL_DestroyTexture(iconTex);
 
+    /* Put the on-screen keyboard away, as the other text dialogs do: the next
+     * dialog's backend never started it, so it would not stop it. A no-op
+     * off iOS. */
+    imguiTouchSetPasswordInput(false);
+    dialogDismissKeyboard(window);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext(msgCtx);

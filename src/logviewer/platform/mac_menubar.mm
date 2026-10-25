@@ -12,14 +12,22 @@ extern "C" {
 #include "../draw.h"
 #include "../dns.h"
 #include "../imgui/imgui_main_menu.h"
+#include "../imgui/imgui_dock.h"
 #include "../imgui/imgui_dialogs.h"
+#include "../lv_dock_fit.h"
 void lv_windowOpenFile(char *cmdLine);
 void lv_windowSaveMap(void);
+bool lv_windowCanSaveLog(void);
+void lv_windowSaveLog(void);
+bool lv_windowCanOpenSinglePlayer(void);
+void lv_windowOpenSinglePlayer(void);
 void lv_windowPlay(void);
 void lv_windowPause(void);
 void lv_windowStop(int corruptLog);
 void lv_windowRewind(void);
 void lv_windowFastForward(void);
+void lv_windowNeedRedraw(void);
+bool lv_screenSpecIsLiveMode(void);
 }
 
 #define LANG_STR(id) ([NSString stringWithUTF8String:langGetText(id)])
@@ -36,8 +44,14 @@ static NSMenu             *s_lv_hostAppSubmenu  = nil;
 
 /* Cached references walked by lv_mac_menubar_refresh(). Submenus cache
  * the NSMenu so refresh can iterate items by tag. */
+static NSMenuItem *s_lv_openWbnItem    = nil;
+static NSMenuItem *s_lv_openItem       = nil;
 static NSMenuItem *s_lv_saveMapItem    = nil;
+static NSMenuItem *s_lv_saveLogItem    = nil;
+static NSMenuItem *s_lv_openSpItem     = nil;
 static NSMenuItem *s_lv_returnItem     = nil;   /* embedded only: File > Return to Main Menu */
+static NSMenuItem *s_lv_fileSepItem    = nil;   /* embedded only: the line above Return */
+static NSMenuItem *s_lv_leaveItem      = nil;   /* a live feed only: File > Leave spectating */
 static NSMenuItem *s_lv_playItem       = nil;
 static NSMenuItem *s_lv_pauseItem      = nil;
 static NSMenuItem *s_lv_stopItem       = nil;
@@ -52,6 +66,10 @@ static NSMenuItem *s_lv_useTeamColoursItem = nil;
 static NSMenuItem *s_lv_tankCentredItem    = nil;
 static NSMenuItem *s_lv_hideLobbyItem      = nil;
 static NSMenuItem *s_lv_regionsItem        = nil;
+static NSMenuItem *s_lv_tankBarsItem       = nil;
+static NSMenuItem *s_lv_builderStatusItem  = nil;
+static NSMenuItem *s_lv_pillNumbersItem    = nil;
+static NSMenuItem *s_lv_jumpAnimItem       = nil;
 static NSMenuItem *s_lv_soundEffectsItem   = nil;
 static NSMenu     *s_lv_volumeMenu         = nil;
 static NSMenuItem *s_lv_dnsLookupsItem     = nil;
@@ -60,7 +78,17 @@ static NSMenuItem *s_lv_winEventsItem      = nil;
 static NSMenuItem *s_lv_winGameInfoItem    = nil;
 static NSMenuItem *s_lv_winItemInfoItem    = nil;
 static NSMenuItem *s_lv_winCommentsItem    = nil;
+static NSMenuItem *s_lv_winHudItem         = nil;
+static NSMenuItem *s_lv_winOverviewItem    = nil;
+static NSMenuItem *s_lv_winTankItem        = nil;
 static NSMenuItem *s_lv_winScnPanelItem    = nil;
+static NSMenuItem *s_lv_dockEnabledItem    = nil;
+static NSMenuItem *s_lv_dockLeftItem       = nil;
+static NSMenuItem *s_lv_dockTopItem        = nil;
+static NSMenuItem *s_lv_dockBottomItem     = nil;
+static NSMenu     *s_lv_dockClearMenu      = nil;
+static NSMenuItem *s_lv_resetIntoDockItem  = nil;
+static NSMenuItem *s_lv_fullScreenItem     = nil;
 
 static int s_lv_zoomStepsBuilt = -1;   /* Zoom submenu's per-step items rebuilt on count change. */
 
@@ -77,7 +105,10 @@ static void lv_push_sdl_quit(void) {
 - (void)onOpenWbn:(id)sender;
 - (void)onOpenFile:(id)sender;
 - (void)onSaveMap:(id)sender;
+- (void)onSaveLog:(id)sender;
+- (void)onOpenSinglePlayer:(id)sender;
 - (void)onReturn:(id)sender;
+- (void)onLeaveSpectating:(id)sender;
 - (void)onPlay:(id)sender;
 - (void)onPause:(id)sender;
 - (void)onStop:(id)sender;
@@ -92,6 +123,10 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleTankCentred:(id)sender;
 - (void)onToggleHideLobby:(id)sender;
 - (void)onToggleRegions:(id)sender;
+- (void)onToggleTankBars:(id)sender;
+- (void)onToggleBuilderStatus:(id)sender;
+- (void)onTogglePillNumbers:(id)sender;
+- (void)onToggleJumpAnim:(id)sender;
 - (void)onToggleSoundEffects:(id)sender;
 - (void)onSetSoundVolume:(id)sender;
 - (void)onToggleDnsLookups:(id)sender;
@@ -101,8 +136,18 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleGameInfo:(id)sender;
 - (void)onToggleItemInfo:(id)sender;
 - (void)onToggleComments:(id)sender;
+- (void)onToggleHud:(id)sender;
+- (void)onToggleOverview:(id)sender;
+- (void)onToggleTank:(id)sender;
 - (void)onToggleScenarioPanel:(id)sender;
+- (void)onToggleDockEnabled:(id)sender;
+- (void)onToggleDockLeft:(id)sender;
+- (void)onToggleDockTop:(id)sender;
+- (void)onToggleDockBottom:(id)sender;
+- (void)onToggleDockClear:(id)sender;
 - (void)onResetWindows:(id)sender;
+- (void)onToggleFullScreen:(id)sender;
+- (void)onResetWindowsIntoDock:(id)sender;
 - (void)onHelp:(id)sender;
 @end
 
@@ -115,7 +160,28 @@ static void lv_push_sdl_quit(void) {
     (void)sender;
     if (s_lv_state && s_lv_state->isLoaded) lv_windowSaveMap();
 }
-- (void)onReturn:(id)sender { (void)sender; lv_push_sdl_quit(); }
+- (void)onSaveLog:(id)sender {
+    (void)sender;
+    if (lv_windowCanSaveLog()) lv_windowSaveLog();
+}
+- (void)onOpenSinglePlayer:(id)sender {
+    (void)sender;
+    if (lv_windowCanOpenSinglePlayer()) lv_windowOpenSinglePlayer();
+}
+/* A live feed is left only after the user says yes, as Esc does. Return is
+ * hidden there; this is in case its key still reaches it. */
+- (void)onReturn:(id)sender {
+    (void)sender;
+    if (lv_screenSpecIsLiveMode()) {
+        lv_imgui_spectator_leave_request();
+    } else {
+        lv_push_sdl_quit();
+    }
+}
+- (void)onLeaveSpectating:(id)sender {
+    (void)sender;
+    if (lv_screenSpecIsLiveMode()) lv_imgui_spectator_leave_request();
+}
 - (void)onPlay:(id)sender {
     (void)sender;
     if (s_lv_state && s_lv_state->isLoaded && !s_lv_state->playIsPlaying) lv_windowPlay();
@@ -126,6 +192,8 @@ static void lv_push_sdl_quit(void) {
 }
 - (void)onStop:(id)sender {
     (void)sender;
+    /* A live feed has no Stop (the item is hidden there). */
+    if (lv_screenSpecIsLiveMode()) return;
     if (s_lv_state && s_lv_state->isLoaded) lv_windowStop(0);
 }
 - (void)onFastForward:(id)sender {
@@ -157,11 +225,33 @@ static void lv_push_sdl_quit(void) {
     }
 }
 - (void)onToggleTankCentred:(id)sender { (void)sender; lv_imgui_toggle_tank_centred(); }
-- (void)onToggleHideLobby:(id)sender { (void)sender; lv_imgui_toggle_hide_lobby(); }
+- (void)onToggleHideLobby:(id)sender {
+    (void)sender;
+    /* A live feed has no lobby to hide (the item is hidden there). */
+    if (!lv_screenSpecIsLiveMode()) lv_imgui_toggle_hide_lobby();
+}
 - (void)onToggleRegions:(id)sender {
     (void)sender;
     if (lv_imgui_has_regions()) lv_imgui_toggle_regions();
 }
+- (void)onToggleTankBars:(id)sender {
+    (void)sender;
+    /* As the in-window menu does: the bars are drawn over the map each time
+     * it is put on the screen, so the frame is asked for now. */
+    lv_drawSetTankBars(lv_drawGetTankBars() ? 0 : 1);
+    lv_windowNeedRedraw();
+}
+- (void)onToggleBuilderStatus:(id)sender {
+    (void)sender;
+    lv_drawSetBuilderStatus(lv_drawGetBuilderStatus() ? 0 : 1);
+    lv_windowNeedRedraw();
+}
+- (void)onTogglePillNumbers:(id)sender {
+    (void)sender;
+    lv_drawSetPillNumbers(lv_drawGetPillNumbers() ? 0 : 1);
+    lv_windowNeedRedraw();
+}
+- (void)onToggleJumpAnim:(id)sender { (void)sender; lv_imgui_toggle_jump_anim(); }
 - (void)onToggleSoundEffects:(id)sender {
     (void)sender;
     if (s_lv_state) s_lv_state->isSoundsPlaying = s_lv_state->isSoundsPlaying ? false : true;
@@ -180,9 +270,28 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleEvents:(id)sender { (void)sender; lv_g_show_events_window = !lv_g_show_events_window; }
 - (void)onToggleGameInfo:(id)sender { (void)sender; lv_g_show_game_info_window = !lv_g_show_game_info_window; }
 - (void)onToggleItemInfo:(id)sender { (void)sender; lv_g_show_item_info_window = !lv_g_show_item_info_window; }
-- (void)onToggleComments:(id)sender { (void)sender; lv_g_show_comments_window = !lv_g_show_comments_window; }
+- (void)onToggleComments:(id)sender {
+    (void)sender;
+    /* A live feed has no Comments panel (the item is hidden there). */
+    if (!lv_screenSpecIsLiveMode()) lv_g_show_comments_window = !lv_g_show_comments_window;
+}
+- (void)onToggleHud:(id)sender { (void)sender; lv_g_show_hud_window = !lv_g_show_hud_window; }
+- (void)onToggleOverview:(id)sender { (void)sender; lv_g_show_overview_window = !lv_g_show_overview_window; }
+- (void)onToggleTank:(id)sender { (void)sender; lv_g_show_tank_window = !lv_g_show_tank_window; }
 - (void)onToggleScenarioPanel:(id)sender { (void)sender; lv_g_show_scenario_panel_window = !lv_g_show_scenario_panel_window; }
+- (void)onToggleDockEnabled:(id)sender { (void)sender; lv_imgui_dock_set_enabled(!lv_imgui_dock_get_enabled()); }
+- (void)onToggleDockLeft:(id)sender { (void)sender; lv_imgui_dock_set_side_enabled(LV_DOCK_LEFT, !lv_imgui_dock_get_side_enabled(LV_DOCK_LEFT)); }
+- (void)onToggleDockTop:(id)sender { (void)sender; lv_imgui_dock_set_side_enabled(LV_DOCK_TOP, !lv_imgui_dock_get_side_enabled(LV_DOCK_TOP)); }
+- (void)onToggleDockBottom:(id)sender { (void)sender; lv_imgui_dock_set_side_enabled(LV_DOCK_BOTTOM, !lv_imgui_dock_get_side_enabled(LV_DOCK_BOTTOM)); }
+/* Window > Make Unused Sidebar Portions Transparent > <side>: the item's tag
+ * is the side. */
+- (void)onToggleDockClear:(id)sender {
+    int side = (int)[(NSMenuItem *)sender tag];
+    lv_imgui_dock_set_side_clear(side, !lv_imgui_dock_get_side_clear(side));
+}
 - (void)onResetWindows:(id)sender { (void)sender; lv_g_reset_window_positions = true; }
+- (void)onToggleFullScreen:(id)sender { (void)sender; lv_windowToggleFullScreen(); }
+- (void)onResetWindowsIntoDock:(id)sender { (void)sender; lv_imgui_dock_request_layout(); }
 - (void)onHelp:(id)sender { (void)sender; /* Phase 3 — Help is a placeholder */ }
 @end
 
@@ -298,6 +407,7 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
         keyEquivalent:@""];
     [openWbnItem setTarget:s_lv_bridge];
     [fileMenu addItem:openWbnItem];
+    s_lv_openWbnItem = openWbnItem;
 
     NSMenuItem *openItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_MENU_OPEN)
@@ -305,6 +415,7 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
         keyEquivalent:@"o"];
     [openItem setTarget:s_lv_bridge];
     [fileMenu addItem:openItem];
+    s_lv_openItem = openItem;
 
     NSMenuItem *saveMapItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SAVE_MAP)
@@ -314,10 +425,31 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [fileMenu addItem:saveMapItem];
     s_lv_saveMapItem = saveMapItem;
 
+    /* The two items the in-window File menu has below Save Map. Each
+     * handler checks for itself whether it may run. */
+    NSMenuItem *saveLogItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_MENU_SAVE_LOG)
+        action:@selector(onSaveLog:)
+        keyEquivalent:@""];
+    [saveLogItem setTarget:s_lv_bridge];
+    [fileMenu addItem:saveLogItem];
+    s_lv_saveLogItem = saveLogItem;
+
+    NSMenuItem *openSpItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_MENU_OPEN_SP)
+        action:@selector(onOpenSinglePlayer:)
+        keyEquivalent:@""];
+    [openSpItem setTarget:s_lv_bridge];
+    [openSpItem setToolTip:LANG_STR(STR_LV_MENU_OPEN_SP_TIP)];
+    [fileMenu addItem:openSpItem];
+    s_lv_openSpItem = openSpItem;
+
     /* Embedded gets a "Return to Main Menu" entry in the File menu;
      * standalone gets no File-menu quit (Quit lives in the app menu). */
     if (embedded) {
-        [fileMenu addItem:[NSMenuItem separatorItem]];
+        NSMenuItem *fileSep = [NSMenuItem separatorItem];
+        [fileMenu addItem:fileSep];
+        s_lv_fileSepItem = fileSep;
         NSMenuItem *returnItem = [[NSMenuItem alloc]
             initWithTitle:LANG_STR(STR_MAPEDIT_MENU_RETURN)
             action:@selector(onReturn:)
@@ -327,7 +459,20 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
         s_lv_returnItem = returnItem;
     } else {
         s_lv_returnItem = nil;
+        s_lv_fileSepItem = nil;
     }
+
+    /* A live game watched from the game (spectatorRun) has one File item,
+     * which asks to leave. It is hidden, and the other File items shown,
+     * whenever the feed is not live (lv_mac_menubar_refresh). */
+    NSMenuItem *leaveItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_MENU_LEAVE_SPECTATING)
+        action:@selector(onLeaveSpectating:)
+        keyEquivalent:@""];
+    [leaveItem setTarget:s_lv_bridge];
+    [leaveItem setHidden:YES];
+    [fileMenu addItem:leaveItem];
+    s_lv_leaveItem = leaveItem;
 
     /* Action menu */
     NSMenuItem *actionItem = [mainMenu addItemWithTitle:LANG_STR(STR_LV_MENU_ACTION) action:nil keyEquivalent:@""];
@@ -466,6 +611,42 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:regions];
     s_lv_regionsItem = regions;
 
+    NSMenuItem *tankBars = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_TANK_BARS)
+        action:@selector(onToggleTankBars:)
+        keyEquivalent:@""];
+    [tankBars setTarget:s_lv_bridge];
+    [tankBars setToolTip:LANG_STR(STR_LV_TANK_BARS_TIP)];
+    [optionsMenu addItem:tankBars];
+    s_lv_tankBarsItem = tankBars;
+
+    NSMenuItem *builderStatus = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_BUILDER_STATUS)
+        action:@selector(onToggleBuilderStatus:)
+        keyEquivalent:@""];
+    [builderStatus setTarget:s_lv_bridge];
+    [builderStatus setToolTip:LANG_STR(STR_LV_BUILDER_STATUS_TIP)];
+    [optionsMenu addItem:builderStatus];
+    s_lv_builderStatusItem = builderStatus;
+
+    NSMenuItem *pillNumbers = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_PILL_NUMBERS)
+        action:@selector(onTogglePillNumbers:)
+        keyEquivalent:@""];
+    [pillNumbers setTarget:s_lv_bridge];
+    [pillNumbers setToolTip:LANG_STR(STR_LV_PILL_NUMBERS_TIP)];
+    [optionsMenu addItem:pillNumbers];
+    s_lv_pillNumbersItem = pillNumbers;
+
+    /* Animate Rewind and Fast Forward, in the in-window menu's place. */
+    NSMenuItem *jumpAnim = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_JUMP_ANIM)
+        action:@selector(onToggleJumpAnim:)
+        keyEquivalent:@""];
+    [jumpAnim setTarget:s_lv_bridge];
+    [optionsMenu addItem:jumpAnim];
+    s_lv_jumpAnimItem = jumpAnim;
+
     NSMenuItem *soundEffects = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SOUND_EFFECTS)
         action:@selector(onToggleSoundEffects:)
@@ -561,6 +742,30 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [winMenu addItem:winComments];
     s_lv_winCommentsItem = winComments;
 
+    NSMenuItem *winHud = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_WIN_HUD)
+        action:@selector(onToggleHud:)
+        keyEquivalent:@"6"];
+    [winHud setTarget:s_lv_bridge];
+    [winMenu addItem:winHud];
+    s_lv_winHudItem = winHud;
+
+    NSMenuItem *winOverview = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_WIN_OVERVIEW)
+        action:@selector(onToggleOverview:)
+        keyEquivalent:@"7"];
+    [winOverview setTarget:s_lv_bridge];
+    [winMenu addItem:winOverview];
+    s_lv_winOverviewItem = winOverview;
+
+    NSMenuItem *winTank = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_WIN_TANK)
+        action:@selector(onToggleTank:)
+        keyEquivalent:@"8"];
+    [winTank setTarget:s_lv_bridge];
+    [winMenu addItem:winTank];
+    s_lv_winTankItem = winTank;
+
     NSMenuItem *winScnPanel = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_SCNPANEL_SETTINGS_TITLE)
         action:@selector(onToggleScenarioPanel:)
@@ -571,12 +776,98 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
 
     [winMenu addItem:[NSMenuItem separatorItem]];
 
+    /* The right-side dock, as in the in-window menu: the option, the reset
+     * that floats every panel, and the reset that stacks them in the dock. */
+    NSMenuItem *dockEnabled = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_DOCK_ENABLED)
+        action:@selector(onToggleDockEnabled:)
+        keyEquivalent:@""];
+    [dockEnabled setTarget:s_lv_bridge];
+    [winMenu addItem:dockEnabled];
+    s_lv_dockEnabledItem = dockEnabled;
+
+    /* The other three sidebars, in the in-window menu's order. */
+    NSMenuItem *dockLeft = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_DOCK_LEFT)
+        action:@selector(onToggleDockLeft:)
+        keyEquivalent:@""];
+    [dockLeft setTarget:s_lv_bridge];
+    [winMenu addItem:dockLeft];
+    s_lv_dockLeftItem = dockLeft;
+
+    NSMenuItem *dockTop = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_DOCK_TOP)
+        action:@selector(onToggleDockTop:)
+        keyEquivalent:@""];
+    [dockTop setTarget:s_lv_bridge];
+    [winMenu addItem:dockTop];
+    s_lv_dockTopItem = dockTop;
+
+    NSMenuItem *dockBottom = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_DOCK_BOTTOM)
+        action:@selector(onToggleDockBottom:)
+        keyEquivalent:@""];
+    [dockBottom setTarget:s_lv_bridge];
+    [winMenu addItem:dockBottom];
+    s_lv_dockBottomItem = dockBottom;
+
+    /* The option of each sidebar, as the in-window menu has it: the part of
+     * the sidebar past its panels is clear and shows the map. */
+    {
+        static const struct { int side; int label; } kClearSides[] = {
+            { LV_DOCK_RIGHT,  STR_LV_DOCK_ENABLED },
+            { LV_DOCK_LEFT,   STR_LV_DOCK_LEFT },
+            { LV_DOCK_TOP,    STR_LV_DOCK_TOP },
+            { LV_DOCK_BOTTOM, STR_LV_DOCK_BOTTOM },
+        };
+        NSMenuItem *clearRoot = [winMenu addItemWithTitle:LANG_STR(STR_LV_DOCK_TRANSPARENT)
+                                                   action:nil
+                                            keyEquivalent:@""];
+        NSMenu *clearMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_LV_DOCK_TRANSPARENT)];
+        [clearRoot setSubmenu:clearMenu];
+        for (size_t i = 0; i < sizeof(kClearSides) / sizeof(kClearSides[0]); i++) {
+            NSMenuItem *item = [[NSMenuItem alloc]
+                initWithTitle:LANG_STR(kClearSides[i].label)
+                action:@selector(onToggleDockClear:)
+                keyEquivalent:@""];
+            [item setTag:kClearSides[i].side];
+            [item setTarget:s_lv_bridge];
+            [clearMenu addItem:item];
+        }
+        s_lv_dockClearMenu = clearMenu;
+    }
+
+    [winMenu addItem:[NSMenuItem separatorItem]];
+
     NSMenuItem *resetWindows = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_RESET_WINDOWS)
         action:@selector(onResetWindows:)
         keyEquivalent:@""];
     [resetWindows setTarget:s_lv_bridge];
     [winMenu addItem:resetWindows];
+
+    NSMenuItem *resetIntoDock = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_RESET_WINDOWS_DOCK)
+        action:@selector(onResetWindowsIntoDock:)
+        keyEquivalent:@""];
+    [resetIntoDock setTarget:s_lv_bridge];
+    [winMenu addItem:resetIntoDock];
+    s_lv_resetIntoDockItem = resetIntoDock;
+
+    [winMenu addItem:[NSMenuItem separatorItem]];
+
+    /* Full screen, as the game's Window menu has it: the viewer's own
+     * command (the one Alt+Enter gives) and not AppKit's toggleFullScreen:,
+     * with the game's title and the game's shortcut, Control-Command-F. The
+     * state shows as a checkmark. */
+    NSMenuItem *fullScreenItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_ENTER_FULL_SCREEN)
+        action:@selector(onToggleFullScreen:)
+        keyEquivalent:@"f"];
+    [fullScreenItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagControl];
+    [fullScreenItem setTarget:s_lv_bridge];
+    [winMenu addItem:fullScreenItem];
+    s_lv_fullScreenItem = fullScreenItem;
 
     /* Help menu — kept symmetric with the in-window ImGui menu so the
      * Win/Linux/Web rendering of this menu doesn't diverge. About is
@@ -631,7 +922,13 @@ void lv_mac_menubar_uninstall(void) {
     }
     s_lv_savedMainMenu = nil;
     s_lv_state = NULL;
+    s_lv_openWbnItem = nil;
+    s_lv_openItem = nil;
+    s_lv_fileSepItem = nil;
+    s_lv_leaveItem = nil;
     s_lv_saveMapItem = nil;
+    s_lv_saveLogItem = nil;
+    s_lv_openSpItem  = nil;
     s_lv_returnItem = nil;
     s_lv_playItem = nil;
     s_lv_pauseItem = nil;
@@ -647,6 +944,10 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_tankCentredItem = nil;
     s_lv_hideLobbyItem = nil;
     s_lv_regionsItem = nil;
+    s_lv_tankBarsItem = nil;
+    s_lv_builderStatusItem = nil;
+    s_lv_pillNumbersItem = nil;
+    s_lv_jumpAnimItem = nil;
     s_lv_soundEffectsItem = nil;
     s_lv_volumeMenu = nil;
     s_lv_dnsLookupsItem = nil;
@@ -655,18 +956,64 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_winGameInfoItem = nil;
     s_lv_winItemInfoItem = nil;
     s_lv_winCommentsItem = nil;
+    s_lv_winHudItem = nil;
+    s_lv_winOverviewItem = nil;
+    s_lv_winTankItem = nil;
     s_lv_winScnPanelItem = nil;
+    s_lv_dockEnabledItem = nil;
+    s_lv_dockLeftItem = nil;
+    s_lv_dockTopItem = nil;
+    s_lv_dockBottomItem = nil;
+    s_lv_dockClearMenu = nil;
+    s_lv_resetIntoDockItem = nil;
+    s_lv_fullScreenItem = nil;
     s_lv_zoomStepsBuilt = -1;
 }
 
 void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (!s) return;
 
-    if (s_lv_saveMapItem) [s_lv_saveMapItem setEnabled:(s->isLoaded ? YES : NO)];
+    /* A live game watched from the game (s->live): the same menus as the
+     * in-window menu bar has there. The File menu has only Leave spectating,
+     * and Stop, Hide Lobby and the Comments panel are not there. A hidden
+     * item is also turned off, so its key does nothing. */
+    const BOOL live = s->live ? YES : NO;
+    if (s_lv_openWbnItem) {
+        [s_lv_openWbnItem setHidden:live];
+        [s_lv_openWbnItem setEnabled:!live];
+    }
+    if (s_lv_openItem) {
+        [s_lv_openItem setHidden:live];
+        [s_lv_openItem setEnabled:!live];
+    }
+    if (s_lv_saveMapItem) {
+        [s_lv_saveMapItem setHidden:live];
+        [s_lv_saveMapItem setEnabled:((s->isLoaded && !live) ? YES : NO)];
+    }
+    if (s_lv_saveLogItem) {
+        [s_lv_saveLogItem setHidden:live];
+        [s_lv_saveLogItem setEnabled:(lv_windowCanSaveLog() ? YES : NO)];
+    }
+    if (s_lv_openSpItem) {
+        [s_lv_openSpItem setHidden:live];
+        [s_lv_openSpItem setEnabled:(lv_windowCanOpenSinglePlayer() ? YES : NO)];
+    }
+    if (s_lv_fileSepItem) [s_lv_fileSepItem setHidden:live];
+    if (s_lv_returnItem) {
+        [s_lv_returnItem setHidden:live];
+        [s_lv_returnItem setEnabled:!live];
+    }
+    if (s_lv_leaveItem) {
+        [s_lv_leaveItem setHidden:!live];
+        [s_lv_leaveItem setEnabled:live];
+    }
 
     if (s_lv_playItem)        [s_lv_playItem        setEnabled:((s->isLoaded && !s->playIsPlaying) ? YES : NO)];
     if (s_lv_pauseItem)       [s_lv_pauseItem       setEnabled:((s->isLoaded &&  s->playIsPlaying) ? YES : NO)];
-    if (s_lv_stopItem)        [s_lv_stopItem        setEnabled:(s->isLoaded ? YES : NO)];
+    if (s_lv_stopItem) {
+        [s_lv_stopItem setHidden:live];
+        [s_lv_stopItem setEnabled:((s->isLoaded && !live) ? YES : NO)];
+    }
     if (s_lv_fastForwardItem) [s_lv_fastForwardItem setEnabled:(s->isLoaded ? YES : NO)];
     if (s_lv_rewindItem)      [s_lv_rewindItem      setEnabled:(s->isLoaded ? YES : NO)];
 
@@ -680,11 +1027,19 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
         [s_lv_useTeamColoursItem setEnabled:(s->gameViewActive ? NO : YES)];
     }
     if (s_lv_tankCentredItem)  [s_lv_tankCentredItem  setState:(s->tankCentred  ? NSControlStateValueOn : NSControlStateValueOff)];
-    if (s_lv_hideLobbyItem)    [s_lv_hideLobbyItem    setState:(s->hideLobby    ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_hideLobbyItem) {
+        [s_lv_hideLobbyItem setState:(s->hideLobby ? NSControlStateValueOn : NSControlStateValueOff)];
+        [s_lv_hideLobbyItem setHidden:live];
+        [s_lv_hideLobbyItem setEnabled:!live];
+    }
     if (s_lv_regionsItem) {
         [s_lv_regionsItem setState:(s->showRegions ? NSControlStateValueOn : NSControlStateValueOff)];
         [s_lv_regionsItem setEnabled:(s->hasRegions ? YES : NO)];
     }
+    if (s_lv_tankBarsItem) [s_lv_tankBarsItem setState:(s->tankBars ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_builderStatusItem) [s_lv_builderStatusItem setState:(s->builderStatus ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_pillNumbersItem) [s_lv_pillNumbersItem setState:(s->pillNumbers ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_jumpAnimItem) [s_lv_jumpAnimItem setState:(lv_imgui_get_jump_anim() ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_soundEffectsItem) [s_lv_soundEffectsItem setState:(s->soundEffects ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_volumeMenu) {
         for (NSMenuItem *item in [s_lv_volumeMenu itemArray]) {
@@ -697,8 +1052,30 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_winEventsItem)   [s_lv_winEventsItem   setState:(s->showEvents   ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winGameInfoItem) [s_lv_winGameInfoItem setState:(s->showGameInfo ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winItemInfoItem) [s_lv_winItemInfoItem setState:(s->showItemInfo ? NSControlStateValueOn : NSControlStateValueOff)];
-    if (s_lv_winCommentsItem) [s_lv_winCommentsItem setState:(s->showComments ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_winCommentsItem) {
+        [s_lv_winCommentsItem setState:(s->showComments ? NSControlStateValueOn : NSControlStateValueOff)];
+        [s_lv_winCommentsItem setHidden:live];
+        [s_lv_winCommentsItem setEnabled:!live];
+    }
+    if (s_lv_winHudItem) [s_lv_winHudItem setState:(s->showHud ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_winOverviewItem) [s_lv_winOverviewItem setState:(s->showOverview ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_winTankItem) [s_lv_winTankItem setState:(s->showTank ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winScnPanelItem) [s_lv_winScnPanelItem setState:(s->showScenarioPanel ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_dockEnabledItem) [s_lv_dockEnabledItem setState:(s->dockEnabled ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_dockLeftItem) [s_lv_dockLeftItem setState:(s->dockLeft ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_dockTopItem) [s_lv_dockTopItem setState:(s->dockTop ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_dockBottomItem) [s_lv_dockBottomItem setState:(s->dockBottom ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_dockClearMenu) {
+        for (NSMenuItem *item in [s_lv_dockClearMenu itemArray]) {
+            const int side = (int)[item tag];
+            [item setState:(lv_imgui_dock_get_side_clear(side) ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
+    }
+    if (s_lv_resetIntoDockItem) [s_lv_resetIntoDockItem setEnabled:(s->dockEnabled ? YES : NO)];
+    if (s_lv_fullScreenItem) {
+        [s_lv_fullScreenItem setState:(s->fullScreen ? NSControlStateValueOn : NSControlStateValueOff)];
+        [s_lv_fullScreenItem setEnabled:(s->canFullScreen ? YES : NO)];
+    }
 
     /* Zoom submenu — rebuild per-step items when the step count changes,
      * then mirror checkmarks every frame so wheel-zoom updates land. */

@@ -256,6 +256,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->roundLogStartTick = ROUND_LOG_START_UNSET;
     /* No shells in flight toward a three-shot order yet. */
     memset(sim->shotOrder, 0, sizeof(sim->shotOrder));
+    /* Nor any hit for kill_credit to be handed. */
+    memset(sim->lastEnemyHit, 0, sizeof(sim->lastEnemyHit));
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
     sim->countdownTicks = 0;
@@ -422,7 +424,6 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.posHistoryPtr = sim->posHistory;
     sim->sim.lgmPosHistoryPtr = sim->lgmPosHistory;
     sim->sim.lagCompTicks = 0;
-    memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
 
     botManagerInitInSim(&sim->botMgr, sim, 0);
 

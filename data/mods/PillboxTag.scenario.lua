@@ -44,7 +44,8 @@
 -- a tank needs a boost only past some 144 squares and has it the whole way
 -- past some 161. Then it fades as a base's does. It goes to its fade early
 -- the moment the tank is within 50 squares, and it ends when the tank dies.
--- A base or a take during it replaces it. The holder never respawns holding.
+-- A base or a take during it replaces it. The holder never respawns holding,
+-- and one whose built prize still stands gets no boost back to it.
 -- All of those numbers are the host's to change in the lobby (see "Tweak
 -- these" below and boost_use).
 --
@@ -59,11 +60,16 @@
 -- The others shoot it down to nothing and drive over it, which makes the one
 -- who picks it up the new holder.
 --
--- If the holder dies while the prize is out of his tank, it is a dead
--- pillbox, free for anyone to take, and nobody holds it. Built, it goes to
--- nothing where it stands; shot down by him and not yet picked up, it is dead
--- already; in his man's hands, the man goes on and puts it down dead. In his
--- tank it drops with the tank, dead, as it always has.
+-- If the holder dies while his prize stands built, he keeps it: he is still
+-- the holder, it keeps its armour, and it scores nothing while it stands,
+-- so the others have to shoot it down to take it. He comes back as its
+-- holder, slow legs and all, and goes back for it (see
+-- walled.DEAD_HOLDER_KEEPS_BUILT; off, it goes to nothing where it stands
+-- and is anybody's). If he dies while the prize is otherwise out of his
+-- tank, it is a dead pillbox, free for anyone to take, and nobody holds it:
+-- shot down by him and not yet picked up, it is dead already; in his man's
+-- hands, the man goes on and puts it down dead. In his tank it drops with
+-- the tank, dead, as it always has.
 --
 -- A tank only picks up a dead pillbox, so the holder cannot take
 -- his own back up while it stands; it has to be shot down first (his own
@@ -213,6 +219,38 @@ local FORT_SECONDS        = 10  -- the longest a fort stands before the guard
                                 -- takes it back
 local FORT_REPAIR_BELOW   = 3   -- the guard holds one tree, for a repair, only
                                 -- while the fort has less armour than this
+local walled      = {}          -- the walled-in prize: watch, the watch on a
+                                -- standing prize or nil, and its helpers (see
+                                -- walled.update). Declared here so the knob
+                                -- below can sit with the FORT_ ones.
+-- A field, not a local: the file is at Lua's limit of top-level locals, and
+-- a gate arena joined to it must still fit (see wet_time).
+walled.DEAD_HOLDER_KEEPS_BUILT = true  -- keel false (old rule: the prize
+                                -- dies with the holder). true: a holder who
+                                -- dies while his prize stands built (armour
+                                -- over 0) stays the holder, and the prize
+                                -- keeps its armour; the hunters must shoot it
+                                -- down (see on_tank_killed)
+walled.PILL_DANGER_MULT = 0.01 -- keel 1.0. What every bot, in every part,
+                                -- counts a pillbox's danger at: the brain's
+                                -- PILL_DANGER_MULT (see SHARED). 0.01: pills
+                                -- count almost nothing, so a bot drives and
+                                -- picks its goals as if they were nearly
+                                -- harmless. 1.0: the brain's ordinary value.
+walled.FINISH_RUN = true       -- keel false. What every bot, in every part,
+                                -- has as the brain's FINISH_RUN (see SHARED).
+                                -- true: a hunter on its forced attack on the
+                                -- built prize (armour 4 or less, and the
+                                -- prize is held at BUILT_ARMOUR) drives the
+                                -- path to it, shooting the walls on the way,
+                                -- and fires the moment the line is clear,
+                                -- instead of picking a firing spot first.
+                                -- false: the brain's KEEL way. true is also
+                                -- the brain's own value (DEFAULTS), so the
+                                -- script never sends it: like every knob
+                                -- here, it assumes the brain runs its own
+                                -- values, not preset=keel. On a preset=keel
+                                -- server the brain keeps FINISH_RUN false.
 local LAST_SHOT_ARMOUR    = 1   -- a fort shot down to this armour is taken
                                 -- back by its guard before a hunter kills it
 local RUN_FROM_WITHIN     = 11  -- hunters this close are what a bot holder
@@ -394,7 +432,9 @@ end
 
 local plan        = nil         -- what a bot holder is doing with the prize:
                                 -- nil, or { kind = "hop" | "fort" | "take",
-                                -- x, y, at, built, dead_at, near }
+                                -- x, y, at, built, dead_at, near, died };
+                                -- died: his tank died while it stood built
+                                -- (see walled.DEAD_HOLDER_KEEPS_BUILT)
 local hop_after   = 0           -- the game.tick() a bot holder may next hop
 local man_was_out = false       -- whether the holder's man had the prize out
                                 -- last frame
@@ -405,9 +445,6 @@ local forfeit     = nil         -- { p, x, y }: the seat whose man still has
                                 -- dead
 local run_at      = nil         -- elapsed second of the holder's last run order
 local mine_at     = nil         -- elapsed second of the last mine laid behind
-local walled      = {}          -- the walled-in prize: watch, the watch on a
-                                -- standing prize or nil, and its helpers (see
-                                -- walled.update)
 
 local function whole(n)
   return math.floor(n + 0.5)
@@ -1097,6 +1134,9 @@ local DEFAULTS = {
   CAPTURE_BASE_EXTRA_COST              = 0,
   CAPTURE_BASE_EXTRA_FREE_DIST         = 0,
   ATTACK_PILL_WALL_FALLBACK            = false,
+  FIGHT_COST_MULT                      = 1,
+  PILL_DANGER_MULT                     = 1,
+  FINISH_RUN                           = true,
 }
 
 -- The flag words a brain keeps until it is told the opposite. GoalHunter puts
@@ -1135,6 +1175,8 @@ local SHARED = {
   REPOSITION_VOTE_FAIL_COOLDOWN        = 0,
   REPOSITION_DISABLE_WITH_HUMAN_ALLIES = false,
   CAPTURE_PILL_BASE_COST               = 0,
+  PILL_DANGER_MULT                     = walled.PILL_DANGER_MULT,
+  FINISH_RUN                           = walled.FINISH_RUN,
 }
 
 -- What a hunter (and a manhunt and a mate) adds to the cost of driving onto
@@ -1180,6 +1222,10 @@ local BASE_EXTRA = 3000
 -- at the prize: the brain's habit of turning to shoot at a man near a pillbox
 -- it is going to pick up is off, because a hunter's man near the prize had
 -- the tank turning to him and back to the prize, over and over, at range.
+-- It fights tanks the ordinary way (the brain's default), because its gun is
+-- filled while the prize stands. The move costs 1 and a tank fight 5 or
+-- more, so a fight wins only when the move is not on offer, such as when he
+-- has fewer than PILL_REPOSITION_MIN_SHELLS shells.
 --
 -- guard: the holder once a fort has put the prize down. It has shells again,
 -- so it fights, and it goes to the fort's defence as soon as the fort is
@@ -1234,7 +1280,6 @@ local ROLES = {
   hop = {
     flags = { "noblitz", "nosuicider", "ammoless" },
     cfg = {
-      TANK_COMBAT_ENABLED       = false,
       PILL_REPOSITION_ENABLED   = true,
       REPOSITION_SCORE_INTERVAL = 10,
       ORDER_GOTO_HOLD_TICKS     = RUN_PARK_TICKS,
@@ -1341,6 +1386,12 @@ local function init_table(role_name, p)
   if walled.watch ~= nil and walled.watch.fallback and
      (role_name == "hunter" or role_name == "manhunt") then
     want.ATTACK_PILL_WALL_FALLBACK = true
+  end
+  -- While the prize stands as a fort, a hunter's fight with a tank or a man,
+  -- and its run for cover, cost walled.FIGHT_MULT times as much: the fort is
+  -- the target. It goes back to 1 when the prize is picked up or goes down.
+  if role_name == "hunter" and walled.fort_stands() then
+    want.FIGHT_COST_MULT = walled.FIGHT_MULT
   end
 
   local t, pairs_n = {}, 1
@@ -1454,6 +1505,38 @@ local function tune_everybody()
   end
 end
 
+-- At the end of the round, every bot this script made a fighter-shy hunter
+-- (FIGHT_COST_MULT above 1) is put back to 1. The next round starts each bot
+-- on a fresh brain built from the last table it was handed, and a new
+-- script there would think the knob is at its default. (The brain also
+-- refuses this knob from a start-up table, so a round ended where this
+-- cannot run, by the host or the server, still starts the next one at 1.)
+-- Called after `over` is set, so walled.fort_stands() says no and tune()
+-- hands the bot 1. Anything tune() could not send goes in a table of its
+-- own. A table is a roster write, which the engine refuses once the round
+-- has stopped, so finish() calls this before game.end_round; on_end calls
+-- it too, for whatever it can still reach. (A field of walled, not a local:
+-- the script is at the gate's cap on top-level locals.)
+function walled.clear_fight_mult()
+  for p = 0, game.max_tanks() - 1 do
+    local h = have[p]
+    if h ~= nil and h.FIGHT_COST_MULT ~= nil and h.FIGHT_COST_MULT ~= 1 then
+      tune(p)
+      if (have[p].FIGHT_COST_MULT or 1) ~= 1 and
+         game.bot_init(p, { cfg = "FIGHT_COST_MULT=1" }) then
+        have[p].FIGHT_COST_MULT = 1
+      end
+      if (have[p].FIGHT_COST_MULT or 1) == 1 then
+        game.log(string.format("Pillbox Tag: seat %d FIGHT_COST_MULT back to 1", p))
+      else
+        game.log(string.format("Pillbox Tag: seat %d FIGHT_COST_MULT left at %s"
+                               .. " (no table taken; its next brain starts at 1)",
+                               p, tostring(have[p].FIGHT_COST_MULT)))
+      end
+    end
+  end
+end
+
 -- Every bot but the holder is told where the prize is with a hint, which the
 -- brain takes the way it takes an order a teammate types: it says it back,
 -- holds it for a minute, and drops it for anything newer.
@@ -1485,9 +1568,115 @@ local function sign(n)
   return 0
 end
 
-local function in_forest(x, y)
+-- Forest and what a bot can see of other tanks (see below), in one table to
+-- keep the script's top-level locals under the gate's count.
+local sight = {}
+
+function sight.in_forest(x, y)
   local t = game.map_tile(x, y)
   return t == game.TERRAIN.forest or t == game.TERRAIN.mine_forest
+end
+
+-- What a bot's brain is told about other tanks, and nothing more. A script
+-- that steers a bot by where an enemy is must not know more than the bot
+-- itself could see.
+--
+-- The brain's tank list is the 29-square window round its own tank
+-- (brainDataMakeInfo): the window starts 14 squares left of and above the
+-- tank, is shifted to stay on the map, and the edge test is inclusive at
+-- start + 29, so it reaches 15 squares right and below. A team pill's view
+-- can add more; that is not counted here, so the script can know less than
+-- the bot, never more.
+sight.BACK = 14       -- squares the window reaches left and up
+sight.SPAN = 29       -- start + this is the far edge, inclusive
+sight.LAST = 227      -- the largest start the engine allows
+-- The server keeps a tank in trees off a player's screen, bots included,
+-- when it is MIN_TREEHIDE_DIST (768 world units, 3 squares) or more away
+-- on either axis (tankHiddenInTrees). The server uses the constant, not
+-- the tree_hide_distance rule. A tank that has just fired is shown in
+-- trees; the script cannot read that, so it counts the tank as hidden.
+sight.TREE_HIDE = 768
+
+function sight.window_start(m)
+  local s = (m > sight.BACK) and (m - sight.BACK) or 0
+  return (s > sight.LAST) and sight.LAST or s
+end
+
+-- A live pill on the ground or a live base on square (x, y): neither hides
+-- a tank (utilIsTankInTrees).
+function sight.pill_or_base_at(x, y)
+  for n = 1, game.num_pills() do
+    local pb = game.pill(n)
+    if pb ~= nil and not pb.in_tank and pb.x == x and pb.y == y then
+      return true
+    end
+  end
+  for n = 1, game.num_bases() do
+    local b = game.base(n)
+    if b ~= nil and b.x == x and b.y == y then
+      return true
+    end
+  end
+  return false
+end
+
+-- utilIsTankInTrees, line for line: the tank's square is forest with no pill
+-- or base on it, and so are the squares on the side of it the tank is
+-- leaning to. The engine checks pills and bases on some of those squares
+-- only, and so does this.
+function sight.tank_in_trees(wx, wy)
+  local bmx, bmy = math.floor(wx / 256), math.floor(wy / 256)
+  local sx, sy = wx % 256, wy % 256
+  local function f(x, y)
+    return sight.in_forest(x % 256, y % 256)
+  end
+  local function blocked(x, y)
+    return sight.pill_or_base_at(x % 256, y % 256)
+  end
+  if not f(bmx, bmy) or blocked(bmx, bmy) then
+    return false
+  end
+  if sx >= 128 then
+    if not f(bmx + 1, bmy) or blocked(bmx + 1, bmy) then
+      return false
+    end
+    local t, t2
+    if sy >= 128 then
+      t, t2 = f(bmx + 1, bmy + 1), f(bmx, bmy + 1)
+      if blocked(bmx + 1, bmy + 1) or blocked(bmx, bmy + 1) then
+        return false
+      end
+    else
+      t, t2 = f(bmx + 1, bmy - 1), f(bmx, bmy - 1)
+    end
+    return t and t2
+  end
+  if not f(bmx - 1, bmy) then
+    return false
+  end
+  if sy >= 128 then
+    return f(bmx - 1, bmy + 1) and f(bmx, bmy + 1)
+  end
+  return f(bmx - 1, bmy - 1) and f(bmx, bmy - 1)
+end
+
+-- Whether player p's bot could see tank s (a game.tank table) now: inside
+-- its brain's window and not hidden in trees. A dead viewer sees nothing.
+function sight.can_see(p, s)
+  local me = game.tank(p)
+  if me == nil or me.dead or s == nil or s.dead then
+    return false
+  end
+  local vx, vy = sight.window_start(me.mx), sight.window_start(me.my)
+  if s.mx < vx or s.mx > vx + sight.SPAN or
+     s.my < vy or s.my > vy + sight.SPAN then
+    return false
+  end
+  if math.abs(s.wx - me.wx) < sight.TREE_HIDE and
+     math.abs(s.wy - me.wy) < sight.TREE_HIDE then
+    return true
+  end
+  return not sight.tank_in_trees(s.wx, s.wy)
 end
 
 -- Somewhere a tank can be sent: on the map, not the sea, not a building.
@@ -1564,7 +1753,7 @@ local function order_for_tank(p, q, from)
     return nil
   end
   local d = chebyshev(from.x, from.y, s.mx, s.my)
-  local hidden = in_forest(s.mx, s.my) and d > hide_at
+  local hidden = sight.in_forest(s.mx, s.my) and d > hide_at
   local key = "attack " .. q
   local attack = { key = key, target = "tank " .. q,
                    hint = { verb = "attack", player = q } }
@@ -1681,6 +1870,44 @@ end
 -- from each other inside the box, and whether that ground runs out to the
 -- edge of the box. A hunter outside the box can reach the ground that runs to
 -- the edge.
+walled.LINE_GOTO = true         -- false: no hunter is sent to a line square;
+                                -- each gets the attack order on the prize
+                                -- at once (an arena switches it)
+walled.LINE_THEN_ATTACK = false -- true: a hunter sent to a line square is
+                                -- told to attack the prize when it is within
+                                -- one square of it, or LINE_ATTACK_AFTER
+                                -- seconds after the goto. false: no order
+                                -- after the goto; the brain's own choice
+                                -- takes over when the goto's hold ends. On,
+                                -- hunters broke through closed walls before
+                                -- the 30 s net (pilltag_wall_timer 0/8)
+walled.LINE_ATTACK_AFTER = 15   -- seconds
+walled.FIGHT_MULT = 10          -- while the prize stands as a fort, what a
+                                -- hunter's fight with a tank or a man, or
+                                -- its run for cover (attack_tank, kill_lgm,
+                                -- take_cover), costs, times the ordinary
+                                -- price: the brain's FIGHT_COST_MULT. The
+                                -- fort is the target; an enemy tank or a safe
+                                -- tile is rarely worth the detour. 1: as
+                                -- before. The brain drops it when its armour
+                                -- is critical.
+walled.FORCE_PRIZE_ATTACK = true -- keel false. true: a hunter's attack order
+                                -- on the built prize is forced (the hint's
+                                -- `force` key, GoalHunter's ORDER_HINT_FORCE):
+                                -- an enemy builder beside the prize, or low
+                                -- armour, does not make it drop the order and
+                                -- pick it again every few ticks; it goes on to
+                                -- its firing spot and shoots
+
+-- Whether the prize stands built with a holder, so the hunters are to shoot
+-- it. Only what every player sees on the map counts: a bot holder's hop and
+-- a prize built to stay look the same, so the hunters treat them the same.
+function walled.fort_stands()
+  if over or pill == nil or holder == nil then
+    return false
+  end
+  return standing(game.pill(pill))
+end
 walled.STANDOFF  = 7.4          -- the brain's ATTACK_PILL_STANDOFF
 walled.AIM_INSET = 16 / 256     -- the brain's AIM_INSET_FIRE: how far inside
                                 -- the pillbox's square a corner aim is
@@ -1827,7 +2054,7 @@ end
 -- Once a second.
 function walled.update()
   local pb = (pill ~= nil) and game.pill(pill) or nil
-  if not standing(pb) or holder == nil or (plan ~= nil and plan.kind == "hop") then
+  if not standing(pb) or holder == nil then
     if walled.watch ~= nil then
       walled.watch = nil
       tune_everybody()
@@ -1916,45 +2143,66 @@ local function aim_one(p)
   if pb == nil then
     return
   end
-  -- A built prize gets no order. The only order a script can give a bot
-  -- about a pillbox is defend, and a goto is a hold that shuts off every
-  -- other goal, the brain's pillbox fight with them. Left alone, the brain
-  -- sees a hostile pillbox and goes after it itself.
+  -- A built prize is the hunters' to shoot. When it goes up, each hunter is
+  -- told to attack it: { verb = "attack", pill = <prize> }, the order a
+  -- person gives with "attack pill". It takes the place of the order the bot
+  -- held from the chase, which would otherwise hold for up to a minute and
+  -- keep the bot on the holder and off the prize (a person who builds by his
+  -- fort had every hunter sitting on him, unable to shoot through the walls,
+  -- while the fort shot them). Under the attack order every other plan of
+  -- the bot's own loses, but the brain's reactive goals still bid: a fight
+  -- with a tank (the guard or the holder too), a man to shoot, cover, a
+  -- refuel. So the bot still turns on a tank that comes at it, and it can
+  -- still pick a tank over the fort, though while the fort stands a fight
+  -- with a tank or a man, or a run for cover, costs it walled.FIGHT_MULT
+  -- times as much (see init_table), so it rarely does. tell() sends the order again every
+  -- AIM_REFRESH seconds, which keeps it held while the prize stands.
+  -- A brain that does not know the `pill` key ignores the hint.
   --
-  -- The order the bot was given before the prize went up is called off, once:
-  -- it still holds it for up to a minute, and an attack on the holder or a
-  -- goto after him keeps it on him and off the prize (a person who builds by
-  -- his fort had every hunter sitting on him, unable to shoot through the
-  -- walls, while the fort shot them). The brain has no word that only ends
-  -- an order, so the bot is told to hold where it is: it is there already, so
-  -- the hold is the hunter's short park, and then its own choice takes over.
-  -- A bot holder's hop is left as it was: the prize stands for a few seconds
-  -- only, and he shoots it down and takes it back himself.
+  -- walled.update gives each hunter that can drive to one a ring square with
+  -- a line to the prize (a prize among walls has few), and the hunter is
+  -- sent there once with a goto first. The goto replaces the attack order,
+  -- and after the goto's short hold the brain's own choice plays on. With
+  -- walled.LINE_THEN_ATTACK on, the hunter is told to attack again when it
+  -- is within one square of the line square, or LINE_ATTACK_AFTER seconds
+  -- after the goto. When the walls are to be shot through, every hunter is
+  -- told to attack. With walled.LINE_GOTO off a hunter gets the attack at
+  -- once, and the 30 s net (WALL_FALLBACK_SECONDS) is timed from then.
+  --
+  -- Every built prize gets these orders, a bot holder's hop too: a hop
+  -- looks the same as any other built prize, and a hunter only acts on what
+  -- it can see.
   if standing(pb) then
-    -- A hunter with a square that has a line to a walled-in prize is sent
-    -- there once (see walled.update); after that its own choice plays on.
-    if walled.watch ~= nil and walled.watch.sent[p] then
+    local prize_attack = { key = "attack pill " .. pill, target = "pill " .. pill,
+                           hint = { verb = "attack", pill = pill,
+                                    force = walled.FORCE_PRIZE_ATTACK or nil } }
+    local w = walled.watch
+    -- A hunter sent to a line square is told to attack when the walls are to
+    -- be shot through, and with walled.LINE_THEN_ATTACK once it is there.
+    if w ~= nil and w.sent[p] then
+      local g = goto_at[p]
+      local there = g ~= nil and chebyshev(from.x, from.y, g.x, g.y) <= 1
+      local late = told_at[p] ~= nil and elapsed - told_at[p] >= walled.LINE_ATTACK_AFTER
+      if w.fallback or (walled.LINE_THEN_ATTACK and
+                        (told[p] == prize_attack.key or there or late)) then
+        tell(p, prize_attack)
+      end
       return
     end
-    local sq = (walled.watch ~= nil and not walled.watch.fallback) and walled.watch.assign[p] or nil
-    if sq ~= nil then
+    local sq = (w ~= nil and not w.fallback) and w.assign[p] or nil
+    if sq ~= nil and not walled.LINE_GOTO and w.sent_at == nil then
+      w.sent_at = elapsed
+    end
+    if sq ~= nil and walled.LINE_GOTO then
       local order = goto_hint(sq.x, sq.y, string.format("line %d,%d", pb.x, pb.y))
       tell(p, order, true)
       if told[p] == order.key then
-        walled.watch.sent[p] = true
-        walled.watch.sent_at = walled.watch.sent_at or elapsed
+        w.sent[p] = true
+        w.sent_at = w.sent_at or elapsed
       end
       return
     end
-    if told[p] ~= nil and told[p] ~= "release" and
-       (plan == nil or plan.kind ~= "hop") then
-      local man = game.builder(p)
-      if (man == nil or man.state == "in_tank") and
-         game.hint(p, { verb = "hold" }) then
-        told[p], told_for[p], told_at[p] = "release", "release", elapsed
-        goto_at[p] = nil
-      end
-    end
+    tell(p, prize_attack)
     return
   end
   if not pb.in_tank then
@@ -1989,10 +2237,14 @@ end
 -- tank it took the prize from, and a brain in a tank fight with a pillbox in
 -- the hold puts the pillbox down as a guard. Tuning the holder to not fight
 -- does not stop a fight it was ordered into, so that order is replaced with
--- a run: RUN_SQUARES off, straight away from the nearest other tank. A bot
--- driving to a square it was sent to does nothing else on the way.
+-- a run: RUN_SQUARES off, straight away from the nearest other tank it can
+-- see (sight.can_see), or where it stands when it sees none. A bot
+-- driving to a square it was sent to does nothing else on the way. An order
+-- to attack the prize itself is no tank fight, and is left alone: a hunter
+-- that shot the standing prize down and took it is not sent on a run.
 local function stop_the_fight(p)
-  if told[p] == nil or told[p]:sub(1, 6) ~= "attack" or told_at[p] == nil or
+  if told[p] == nil or told[p]:sub(1, 6) ~= "attack" or
+     told[p]:sub(1, 11) == "attack pill" or told_at[p] == nil or
      elapsed - told_at[p] >= ORDER_SECONDS then
     return
   end
@@ -2003,7 +2255,7 @@ local function stop_the_fight(p)
   local near, near_d = nil, nil
   for q = 0, game.max_tanks() - 1 do
     local s = game.tank(q)
-    if q ~= p and s ~= nil and not s.dead then
+    if q ~= p and sight.can_see(p, s) then
       local d = chebyshev(me.mx, me.my, s.mx, s.my)
       if near_d == nil or d < near_d then
         near, near_d = s, d
@@ -2122,7 +2374,8 @@ end
 -- Every live tank in the round that hunts seat p, within `within` squares of
 -- it, nearest first: everybody but p in a Free For All, everybody off p's team
 -- in a team round. Measured from p's tank, or from square `at` ({ mx, my })
--- when one is given, and then whether p's tank is alive or not.
+-- when one is given. Only tanks p's bot can see now count (sight.can_see),
+-- so a dead p has none, even with `at` given.
 local function hunters_near(p, within, at)
   local list = {}
   local me = game.tank(p)
@@ -2134,7 +2387,7 @@ local function hunters_near(p, within, at)
   for q = 0, game.max_tanks() - 1 do
     if q ~= p and in_round(q) and (side == nil or scoring_team(q) ~= side) then
       local s = game.tank(q)
-      if s ~= nil and not s.dead then
+      if sight.can_see(p, s) then
         local d = chebyshev(from.mx, from.my, s.mx, s.my)
         if d <= within then
           list[#list + 1] = { q = q, s = s, d = d }
@@ -2395,12 +2648,21 @@ local function bot_holder_second()
   --   * when fewer hunters are near it than when it was ordered (counted
   --     round the same square then; see start_plan);
   --   * at LAST_SHOT_ARMOUR (in on_tick).
-  -- A guard who dies loses the prize (see on_tank_killed), so there is no
-  -- dead guard to ask for.
-  if plan ~= nil and plan.built and plan.kind == "fort" and standing(pb) then
+  -- With walled.DEAD_HOLDER_KEEPS_BUILT a guard who dies keeps his fort (see
+  -- on_tank_killed). While he is dead the fort's clock (built_at) and its
+  -- first count (plan.near) stay as they were, so the time keeps counting,
+  -- but nothing is taken back: there is no tank to do it. The first second
+  -- he is alive again the fort is taken back (he respawns away from it, so
+  -- he is no guard of it any more), and the take sends him back to shoot it
+  -- down and pick it up. With the knob off a guard who dies loses the prize,
+  -- so there is no dead guard.
+  if plan ~= nil and plan.built and plan.kind == "fort" and standing(pb) and
+     not me.dead then
     local near = hunters_near(holder, FORT_FREE_WITHIN,
                               { mx = pb.x, my = pb.y })
-    if #near == 0 then
+    if plan.died then
+      take_back("guard respawned")
+    elseif #near == 0 then
       take_back("no hunter near")
     elseif now - plan.built_at >= FORT_SECONDS * 100 and not holder_leads() then
       take_back("time")
@@ -2411,6 +2673,9 @@ local function bot_holder_second()
 
   -- A holder who dies with the prize out of his tank is no holder after
   -- on_tank_killed, and one who dies carrying it is none after the drop.
+  -- With walled.DEAD_HOLDER_KEEPS_BUILT one whose prize stands is still the
+  -- holder, and waits here until he is alive again: his plan (a fort, or a
+  -- hop turned take) goes on from there.
   if me.dead then
     return
   end
@@ -2635,6 +2900,7 @@ finish = function()
   end
   game.message(line)
   restore_teams()
+  walled.clear_fight_mult()
   if winner ~= nil then
     game.end_round(line, winner)
   else
@@ -3061,8 +3327,11 @@ end
 
 -- A respawn far from the prize: boost_use.base[p] at this tick and the full
 -- part spawn_hold works out. The holder never spawns holding, but he is
--- skipped all the same. A boost running from before is replaced, not added
--- to; a base or a take later replaces this one the same way.
+-- skipped all the same: one whose built prize stands (see
+-- walled.DEAD_HOLDER_KEEPS_BUILT) respawns as its holder, with the holder's
+-- slow legs and no hunter's boost back to it. A boost running from before is
+-- replaced, not added to; a base or a take later replaces this one the same
+-- way.
 function boost_use.spawned(p, mx, my)
   if over or not running or not boost_use.spawn_on or p == holder then
     return
@@ -3278,13 +3547,21 @@ function on_pill_killed(n, by, scripted)
   aim_everybody()
 end
 
--- A holder who dies while the prize is out of his tank loses it, person or
--- bot: a prize standing on the map goes to nothing where it is, the way a
--- leaving holder's does, one he has shot down is dead already, and one in
--- his man's hands is put down dead when the man gets there (see forfeit in
--- on_pill_placed). Nobody holds it after, so nobody scores, and every hunter
--- is sent at it; the dead player comes back as a hunter. A prize in his tank
--- is left to the drop the death makes, which on_pill_placed already handles.
+-- A holder who dies while the prize is out of his tank, person or bot:
+--   * built and standing (armour over 0): with
+--     walled.DEAD_HOLDER_KEEPS_BUILT he stays the holder and it keeps its
+--     armour. Nobody scores while it stands (only carrying scores, see
+--     carrying), dead or alive. The
+--     hunters are sent at it to shoot it down, which makes it anybody's
+--     (on_pill_killed). He comes back as its holder. With the knob off, it
+--     goes to nothing where it is, the way a leaving holder's does, and he
+--     loses it as below;
+--   * shot down by him (armour 0): it is dead already, and he loses it;
+--   * in his man's hands: it is put down dead when the man gets there (see
+--     forfeit in on_pill_placed), and he loses it.
+-- A holder who loses it is no holder: nobody scores, every hunter is sent at
+-- it, and the dead player comes back as a hunter. A prize in his tank is
+-- left to the drop the death makes, which on_pill_placed already handles.
 --
 -- Any bot's orders go with its tank, holder or not: a brain forgets its
 -- order when its tank dies, so what this script last told that seat is
@@ -3321,6 +3598,29 @@ function on_tank_killed(victim, killer, cause, scripted)
   end
   local walking = man_out(victim)
   if pb.in_tank and not walking then
+    return
+  end
+  if walled.DEAD_HOLDER_KEEPS_BUILT and not walking and standing(pb) then
+    -- He stays the holder and the prize keeps its armour. His take's boost
+    -- and cover end with the tank. A bot's hop turns into a take back, so
+    -- he is sent back for it once he respawns. A fort stays a fort while he is dead;
+    -- bot_holder_second takes it back once he is alive again (plan.died).
+    boost_from = nil
+    if invuln_seat == victim then
+      invuln_seat = nil
+    end
+    if plan ~= nil and plan.built then
+      plan.died = true
+      if plan.kind == "hop" then
+        plan.kind = "take"
+        plan.taken_at = game.tick()
+      end
+    end
+    game.log(string.format("Pillbox Tag: player %d died with the prize "
+                           .. "built at %d,%d; it is still his", victim,
+                           pb.x, pb.y))
+    tune_everybody()
+    aim_everybody()
     return
   end
   if walking then
@@ -3578,13 +3878,15 @@ function on_tick(tick)
   if over or holder == nil then
     return
   end
-  if plan ~= nil and plan.built and plan.kind == "fort" then
+  local t = game.tank(holder)
+  -- A dead guard cannot fire the last shot (see bot_holder_second).
+  if plan ~= nil and plan.built and plan.kind == "fort" and
+     t ~= nil and not t.dead then
     local pb = game.pill(pill)
     if standing(pb) and pb.armour <= LAST_SHOT_ARMOUR then
       take_back("last shot")
     end
   end
-  local t = game.tank(holder)
   if t == nil or t.dead then
     carry_start()
   else
@@ -3618,6 +3920,10 @@ end
 
 function on_end()
   over = true
+  -- A round the host or the server ended never went through finish(). The
+  -- engine may refuse the tables now; the brain's own start-up rule covers
+  -- that (see walled.clear_fight_mult).
+  pcall(walled.clear_fight_mult)
   game.log(string.format("Pillbox Tag ended after %d seconds", elapsed))
 end
 
@@ -3629,9 +3935,13 @@ scenario = {
                 "Carrying it scores a point a second, slows you, empties " ..
                 "your gun; a new holder gets a head start. Built or on " ..
                 "foot it scores nothing, your gun refills, three shells " ..
-                "kill it. Die while it is out and it is anyone's.",
+                "kill it. " .. (walled.DEAD_HOLDER_KEEPS_BUILT and
+                "Die and a built one stays yours." or
+                "Die while it is out and it is anyone's."),
                 math.floor(ROUND_SECONDS / 60)),
   api         = 1,
+  author      = "WinBolo",
+  updated     = "2026-10-02T10:09Z",
   kind        = "scenario",
   game        = "open",
 
@@ -3709,9 +4019,13 @@ scenario = {
     on_pill_picked_up = "Holder: 1 point/s (and team), slow, unarmed; " ..
                         "boost less on each take until death.",
     on_pill_killed = "A shot-down prize is anybody's (a bot's own hop aside).",
-    on_tank_killed = "Holder dies with the prize out of his tank: it is " ..
-                     "dead, free for anyone to take. A death resets " ..
-                     "the boost and deep water decay.",
+    on_tank_killed = walled.DEAD_HOLDER_KEEPS_BUILT and
+                     ("Holder dies: a built prize stays his, to shoot " ..
+                      "down; on foot it is dead, anyone's. A death resets " ..
+                      "the boost and deep water decay.") or
+                     ("Holder dies with the prize out of his tank: it is " ..
+                      "dead, free for anyone to take. A death resets " ..
+                      "the boost and deep water decay."),
     on_tank_spawned = "A far respawn gets a speed boost back.",
     on_pill_captured = "Only the holder may own a built prize.",
     on_built = "A repair stops at 3 armour.",

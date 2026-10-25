@@ -42,22 +42,47 @@ struct ImGuiContext* lv_imgui_context_get(void);
  * dx/dy are set to the pixel change in width/height. */
 int lv_imgui_context_get_resize_delta(float* dx, float* dy);
 
+/* Call between ImGui::Begin and ImGui::End of a panel. A floating panel
+ * keeps its place by the right or bottom edge when the window is resized,
+ * and is kept wholly in the window. A docked panel is left alone: the dock
+ * places it, and a move here would pull it out of the dock. */
+void lv_imgui_keep_window_on_screen(void);
+
 /* Returns 1 if ImGui currently wants to capture mouse input
  * (cursor over an ImGui window/widget), 0 otherwise. Reflects the
  * state set during the last NewFrame, so it's safe to call at any
  * point during the SDL event poll. */
 int lv_imgui_want_capture_mouse(void);
 
+/* Returns 1 while a text box has the keyboard, so a key that is also a
+ * shortcut is typed into the box and does nothing else. */
+int lv_imgui_want_text_input(void);
+
 /* Draw a borderless, non-interactive text label centred on the window. Call
  * between newframe and render. Used by the spectator host's pre-seed overlay
  * ("spectating begins in N" / "connecting" / "connection lost"). */
 void lv_imgui_center_message(const char* text);
+
+/* The same label, centred on a part of the window: x, y, w, h in window
+ * pixels. The spectator's overview passes the part the map shows in, so the
+ * label is not under a sidebar. */
+void lv_imgui_center_message_at(const char* text, float x, float y, float w, float h);
+
+/* A centred window while a log opens: title, the stage it is at (step of
+ * steps) and a bar showing how far through that stage it is. */
+void lv_imgui_load_progress(const char* stageText, int step, int steps, float fraction);
 
 /* Draw a small, borderless, non-interactive phase badge ("Lobby" / "Live" /
  * "Game Over") in the top-right corner. Call between newframe and render in both
  * spectator modes (overview + game view). phase is a SPEC_PHASE_* value from
  * spectator_drain.h; SPEC_PHASE_UNKNOWN draws nothing. */
 void lv_imgui_spectator_badge(int phase);
+
+/* The same badge, in the top-right corner of a part of the window: right is
+ * that part's right edge and top its top edge, in window pixels. The
+ * spectator's overview passes the part the map shows in, so the badge is not
+ * under a sidebar or the menu bar. */
+void lv_imgui_spectator_badge_at(int phase, float right, float top);
 
 /* Enable (non-zero) or disable (0) ImGui's gamepad UI-focus navigation. The
  * spectator overview disables it so the stick/d-pad drive map pan rather than

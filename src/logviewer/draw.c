@@ -42,6 +42,18 @@
 #include "lv_region_rect.h"
 #include "game_view.h"
 #include "imgui/imgui_main_menu.h"
+#include "imgui/imgui_dock.h"
+#include "lv_dock_fit.h"
+#include "lv_hud.h"
+#include "lv_team_sprite.h"
+#include "lv_team_colour.h"
+#include "lv_tank_bars.h"
+#include "lv_tank_pick.h"
+#include "lv_event_flash.h"
+#include "lv_builder_status.h"
+#include "lv_pill_numbers.h"
+#include "lv_zoom_text.h"
+#include "clientmutex.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
@@ -67,6 +79,12 @@ static bool ownsWindow = TRUE;  /* TRUE in standalone, FALSE when embedded */
 
 /* Sprite Textures (loaded once at startup) */
 static SDL_Texture *textureTiles = NULL;
+/* The grey status shapes the HUD panel colours by team; see buildHudShapes. */
+static SDL_Texture *textureHudShapes = NULL;
+/* The game's background picture (data/background.bmp), for the Tank panel's
+ * gauges. Loaded the first time it is asked for; tried once. */
+static SDL_Texture *textureStatusBackground = NULL;
+static bool statusBackgroundTried = false;
 static SDL_Texture *textureTanks = NULL;
 static SDL_Texture *textureBoats = NULL;
 static SDL_Texture *textureItems = NULL;
@@ -110,16 +128,42 @@ static TTF_Font      *s_tankLabelFont = NULL;
 static int            s_tankLabelFontPx = 0;
 static bool           s_tankLabelsInTarget = FALSE;
 
+/* The bars over the tanks (lv_tank_bars.h). Like the names they are drawn
+ * over the blit, at the screen's own resolution, from where lv_drawTanks put
+ * each tank's picture in the target. */
+typedef struct {
+    int  x, y;                     /* the picture's top-left, in render-target pixels */
+    BYTE slot;                     /* the player's slot */
+} LvTankBarPos;
+static LvTankBarPos s_tankBarPos[MAX_TANKS];
+static int          s_tankBarCount = 0;
+static bool         s_tankBars = FALSE;
+/* The builder markers over the tanks (lv_builder_status.h), at the same
+   places. */
+static bool         s_builderStatus = FALSE;
+/* The number of each pillbox on the map (lv_pill_numbers.h). On until set. */
+static bool         s_pillNumbers = TRUE;
+/* The last blit of the map into the window: the slice of the target it took
+ * and where it went, in framebuffer pixels. A click on the map is matched
+ * against the tanks with these (lv_drawTankAtPoint). */
+static SDL_FRect    s_blitSrc, s_blitDst;
+static bool         s_blitKnown = FALSE;
+
 /* Used for storing time */
 static uint32_t g_dwFrameTotal = 0;
 
-/* Stepped zoom table — same values as the map editor (mapeditor.c).
+/* Stepped zoom table. Up to 1.0 the values are the map editor's
+ * (mapeditor.c); above it the viewer has its own, with 1.5 between 1.0
+ * and 2.0, and stops at 4.0.
  * Below 1.0 the texture target grows so we can show more tiles, then
  * the blit scales it down; at and above 1.0 the texture target stays
- * sized to the visible tile count and the blit scales it up. */
+ * sized to the visible tile count and the blit scales it up.
+ * At 1.5 a map square is 24 points, so the pixels of the art are 1 and 2
+ * pixels of the display in turn: sharp, but not all the same width.
+ * ZOOM_STEP_1X is the place of 1.0 in the table. */
 static const float g_zoomSteps[] = {
     0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
-    1.0f, 2.0f, 3.0f, 4.0f
+    1.0f, 1.5f, 2.0f, 3.0f, 4.0f
 };
 #define ZOOM_STEP_COUNT ((int)(sizeof(g_zoomSteps) / sizeof(g_zoomSteps[0])))
 #define ZOOM_STEP_1X    5
@@ -425,7 +469,34 @@ static float lvDrawPixelScale(void) {
     return (d > 0.0f) ? d : 1.0f;
 }
 
+/* The zoom of the map as a percentage, 100 for the game's own size: one map
+ * square on 16 points of the window (lv_zoom_text.h). It is worked out from
+ * the size a square is really drawn at, in pixels of the display, so it is
+ * right on a dense display too, and in the game view, whose whole number of
+ * times is cut to what a full screen window has room for. */
+float lv_drawZoomPercent(void) {
+    LogViewerState *lv = lv_screenGetState();
+    if (lv != NULL && lv->gameView) {
+        float d = (sdlWindow != NULL) ? SDL_GetWindowPixelDensity(sdlWindow) : 1.0f;
+        int px = lv_drawGameViewPixelZoom();
+        if (px > 0) {
+            return lvZoomPercent((float)(TILE_SIZE_X * px), (d > 0.0f) ? d : 1.0f);
+        }
+    }
+    {
+        float pxScale = lvDrawPixelScale();
+        float squarePx = (float)(lv_windowGetZoomFactor() * TILE_SIZE_X) * g_zoomLevel * pxScale;
+        return lvZoomPercent(squarePx, pxScale);
+    }
+}
+
 static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
  *
@@ -468,6 +539,18 @@ static void lvDrawBlitTargetToWindow(void) {
      * (1x) tile resolution. */
     dstRect.x = 0.0f;
     dstRect.y = SDL_floorf(lvDrawMenuBarOffset() * pxScale);
+    if (!g_embedded) {
+        /* The standalone viewer's left and top sidebars push the map in from
+         * the window's corner; the right and bottom ones only bound it. Each
+         * offset is floored on its own so the map's corner is the pixel the
+         * sidebar's edge is drawn at. */
+        int dockL = 0, dockT = 0;
+        /* A sidebar whose unused part is clear takes nothing: the map goes
+         * under it. */
+        lv_imgui_dock_map_margins(&dockL, &dockT, NULL, NULL);
+        dstRect.x += SDL_floorf((float)dockL * pxScale);
+        dstRect.y += SDL_floorf((float)dockT * pxScale);
+    }
     dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * blitZoom;
     dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * blitZoom;
 
@@ -475,8 +558,23 @@ static void lvDrawBlitTargetToWindow(void) {
                             (blitZoom >= 1.0f) ? SDL_SCALEMODE_NEAREST
                                                : SDL_SCALEMODE_LINEAR);
     SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
+    s_blitKnown = !lv->gameView;
     if (!lv->gameView) {
+        s_blitSrc = srcRect;
+        s_blitDst = dstRect;
+        /* The pillbox numbers before everything else: they belong to the
+           map, and all that moves over it goes over them. */
+        lvDrawPillNumbersOverBlit(&srcRect, &dstRect);
+        /* The map pings first: the tank names, the bars and the ring of an
+           event go over them. */
+        lvDrawPingsOverBlit(&srcRect, &dstRect);
+        lvDrawTankMarkOverBlit(&srcRect, &dstRect);
+        /* The bars first, so a name is never under one. */
+        lvDrawTankBarsOverBlit(&srcRect, &dstRect);
+        lvDrawBuilderStatusOverBlit(&srcRect, &dstRect);
         lvDrawTankLabelsOverBlit(&srcRect, &dstRect);
+        /* Last, so nothing on the map hides it. */
+        lvDrawEventFlashOverBlit(&srcRect, &dstRect);
     }
 }
 
@@ -500,6 +598,9 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     float maxGx, maxGy;
     int   curTexW, curTexH;
     int   gameW;
+    int   mapW = 0;
+    int   dockL = 0, dockT = 0, dockR = 0, dockB = 0;
+    LvDockMargins dock = { 0, 0, 0, 0 };
 
     if (newStepIndex < 0) newStepIndex = 0;
     if (newStepIndex >= ZOOM_STEP_COUNT) newStepIndex = ZOOM_STEP_COUNT - 1;
@@ -519,8 +620,15 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     if (windowW < 1) windowW = TILE_SIZE_X;
     if (windowH < 1) windowH = TILE_SIZE_Y;
     menuH = (int)lvDrawMenuBarOffset();
-    gameH = windowH - menuH;
-    if (gameH < 1) gameH = 1;
+    /* The standalone viewer's sidebars take the edges of the window; the map
+     * is what they leave, as it is when a sidebar comes in or is resized
+     * (lvHostDockSync). The embedded reel has none. */
+    if (!g_embedded) lv_imgui_dock_map_margins(&dockL, &dockT, &dockR, &dockB);
+    dock.left = dockL;
+    dock.top = dockT;
+    dock.right = dockR;
+    dock.bottom = dockB;
+    lvDockMapRect(&dock, windowW, windowH, menuH, NULL, NULL, &mapW, &gameH);
 
     /* Compute map tile under cursor at the OLD zoom. The blit width is
      * curTilesX * TILE_SIZE_X * oldZoom, and the cursor screen X covers
@@ -537,8 +645,8 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     oldEffective = (float)(zf * TILE_SIZE_X) * oldZoom;
     if (oldEffective <= 0.0f) oldEffective = (float)TILE_SIZE_X;
 
-    gx = (float)mouseScreenX;
-    gy = (float)mouseScreenY - (float)menuH;
+    gx = (float)(mouseScreenX - dockL);
+    gy = (float)(mouseScreenY - dockT) - (float)menuH;
     if (gx < 0.0f) gx = 0.0f;
     if (gy < 0.0f) gy = 0.0f;
 
@@ -564,7 +672,14 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     newEffective = (float)(zf * TILE_SIZE_X) * newZoom;
     if (newEffective <= 0.0f) newEffective = (float)TILE_SIZE_X;
     newTilesX = (int)(((float)gameW + newEffective * 0.5f) / newEffective);
+    /* Beside a sidebar the map runs up to the sidebar's edge: the last
+     * square may go a little way under it rather than stop short. */
+    if (dockL + dockR > 0) {
+        gameW = mapW;
+        newTilesX = lvFitTilesCover(gameW, newEffective);
+    }
     newTilesY = (int)(((float)gameH + newEffective * 0.5f) / newEffective);
+    if (dockT + dockB > 0) newTilesY = lvFitTilesCover(gameH, newEffective);
     if (newTilesX < 1) newTilesX = 1;
     if (newTilesY < 1) newTilesY = 1;
     if (newTilesX > 255) newTilesX = 255;
@@ -590,6 +705,8 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
      * request a full redraw so the texture target gets repopulated. */
     g_zoomStepIndex = newStepIndex;
     g_zoomLevel = newZoom;
+    /* A zoom places the view: the first view of the log is over. */
+    lv_screenFirstViewCancel();
 
     if (newTilesX != curTilesX) lv_screenSetSizeX((BYTE)newTilesX);
     if (newTilesY != curTilesY) lv_screenSetSizeY((BYTE)newTilesY);
@@ -642,6 +759,110 @@ void lv_drawSetZoomStepIndexRaw(int index) {
     g_zoomLevel = g_zoomSteps[index];
 }
 
+/* Build the strip of grey shapes the HUD panel colours by team (lv_hud.h).
+ *
+ * The status icons in the sheet are pure green or pure red on black, so a
+ * team colour cannot be multiplied into them: blue times green is black.
+ * Each shape is copied out as grey levels instead, white where the icon is
+ * brightest, and the panel multiplies the team colour into that. The cells
+ * keep the icons' black background, as the game's panels are black too.
+ *
+ * Read with SDL_ReadSurfacePixel so the sheet's pixel format does not
+ * matter. The sheet is built at scale 1 (see buildTileAtlas). */
+static void buildHudShapes(SDL_Renderer *renderer, SDL_Surface *sheet) {
+    /* Where each shape is in the sheet, in the order of LV_HUD_SHAPE_*. The
+       "hostile" icons are the solid ones; the "own" icons are hollow rings. */
+    static const int src[LV_HUD_SHAPE_COUNT][2] = {
+        { STATUS_BASE_ALLIEGOOD_X,   STATUS_BASE_ALLIEGOOD_Y   },
+        { STATUS_PILLBOX_EVIL_X,     STATUS_PILLBOX_EVIL_Y     },
+        { STATUS_PILLBOX_TANKEVIL_X, STATUS_PILLBOX_TANKEVIL_Y },
+    };
+    const int cellW = STATUS_ITEM_SIZE_X + 2 * LV_HUD_SHAPE_PAD;
+    const int cellH = STATUS_ITEM_SIZE_Y + 2 * LV_HUD_SHAPE_PAD;
+
+    if (textureHudShapes) {
+        SDL_DestroyTexture(textureHudShapes);
+        textureHudShapes = NULL;
+    }
+    SDL_Surface *strip = SDL_CreateSurface(cellW * LV_HUD_SHAPE_COUNT, cellH,
+                                           SDL_PIXELFORMAT_RGBA32);
+    if (!strip) return;
+    SDL_FillSurfaceRect(strip, NULL, SDL_MapSurfaceRGBA(strip, 0, 0, 0, 255));
+
+    for (int n = 0; n < LV_HUD_SHAPE_COUNT; n++) {
+        Uint8 r, g, b, a;
+        int cellMax = 0;
+        /* First the brightest pixel of the icon, then the icon against it. */
+        for (int pass = 0; pass < 2; pass++) {
+            for (int y = 0; y < STATUS_ITEM_SIZE_Y; y++) {
+                for (int x = 0; x < STATUS_ITEM_SIZE_X; x++) {
+                    if (!SDL_ReadSurfacePixel(sheet, src[n][0] + x, src[n][1] + y,
+                                              &r, &g, &b, &a)) {
+                        continue;
+                    }
+                    if (pass == 0) {
+                        int v = r > g ? r : g;
+                        if (b > v) v = b;
+                        if (v > cellMax) cellMax = v;
+                    } else {
+                        Uint8 v = lvHudGreyValue(r, g, b, cellMax);
+                        SDL_WriteSurfacePixel(strip,
+                                              n * cellW + LV_HUD_SHAPE_PAD + x,
+                                              LV_HUD_SHAPE_PAD + y, v, v, v, 255);
+                    }
+                }
+            }
+        }
+    }
+
+    textureHudShapes = SDL_CreateTextureFromSurface(renderer, strip);
+    SDL_DestroySurface(strip);
+    if (textureHudShapes) {
+        SDL_SetTextureBlendMode(textureHudShapes, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(textureHudShapes, SDL_SCALEMODE_NEAREST);
+    }
+}
+
+/* Load tanks.bmp, boats.bmp and items.bmp out of the data directory: the
+   sheets with a row for each entry of the team palette. */
+static void lvLoadTeamSheets(SDL_Renderer *renderer) {
+    const char *basePath = SDL_GetBasePath();
+    char bmpPath[1024];
+
+    if (!basePath) basePath = "./";
+    SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
+    textureTanks = sdlLoadBmpSheetAsTexture(renderer, bmpPath, TILE_SIZE_X, TILE_SIZE_Y);
+    SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
+    textureBoats = sdlLoadBmpSheetAsTexture(renderer, bmpPath, TILE_SIZE_X, TILE_SIZE_Y);
+    SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
+    textureItems = sdlLoadBmpSheetAsTexture(renderer, bmpPath, TILE_SIZE_X, TILE_SIZE_Y);
+}
+
+/* The row of a team sheet a team is drawn from: the row of the colour the
+   Team Colours dialog has for the team (lv_screenTeamColour). */
+static int lvDrawTeamRow(int team) {
+    return lvTeamSheetRow(lv_screenTeamColour(team));
+}
+
+/* The flat colour of a team, for the shapes of the simplified view: the
+   colour its sprites are in. */
+static SDL_FColor lvDrawTeamColour(int team) {
+    return mapColourTeam(lv_screenTeamColour(team));
+}
+
+/* The colour a panel draws a team in. palette is the team's entry
+   (lv_screenTeamColour, or the colour field of a panel's snapshot). It is the
+   colour of the map, made lighter where it would be too dark to see on a
+   dark panel (lvHudReadableColour); the hue stays. The HUD, Overview and
+   Tank panels, the event markers and the ring of an event all use it. */
+void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b) {
+    SDL_FColor c = mapColourTeam(palette);
+    lvHudReadableColour(&c.r, &c.g, &c.b);
+    *r = c.r;
+    *g = c.g;
+    *b = c.b;
+}
+
 /* Build the unified tile atlas (SVG/PNG/BMP combined sheet) at scale 1.
  * Returns NULL on failure. The log viewer always uses scale 1 — the
  * blit-time scaling is in the texture target, not the source atlas. */
@@ -649,6 +870,10 @@ static SDL_Texture *buildTileAtlas(SDL_Renderer *renderer) {
     SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X);
     if (!sheet) return NULL;
     SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, sheet);
+    /* While the sheet's pixels are still in hand. Without the strip the HUD
+       panel draws its grids with no owned icons, so a failure here is not a
+       failure of the setup. */
+    buildHudShapes(renderer, sheet);
     SDL_DestroySurface(sheet);
     if (!tex) return NULL;
     SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
@@ -686,26 +911,10 @@ BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
     /* Tile background uses the unified atlas (SVG/PNG with skin.bmp
      * fallback) shared with the game and map editor. Tank, boat, and
      * pill/base sprites stay on their own BMPs because they use the
-     * 16-row team-colour palette indexed via lv->tc[], which the
-     * unified atlas does not provide. */
+     * 17-row team-colour palette (lv_team_colour.h), which the unified
+     * atlas does not provide. */
     textureTiles = buildTileAtlas(sdlRenderer);
-    {
-        const char *basePath = SDL_GetBasePath();
-        if (!basePath) basePath = "./";
-        char bmpPath[1024];
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
-        textureTanks = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
-        textureBoats = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
-        textureItems = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-    }
+    lvLoadTeamSheets(sdlRenderer);
 
     if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
         return FALSE;
@@ -815,23 +1024,7 @@ BYTE lv_drawSetup(void) {
     }
     /* See lv_drawSetupWithHandles for the tile-vs-tank/items split. */
     textureTiles = buildTileAtlas(sdlRenderer);
-    {
-        const char *basePath = SDL_GetBasePath();
-        if (!basePath) basePath = "./";
-        char bmpPath[1024];
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
-        textureTanks = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
-        textureBoats = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
-        textureItems = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-    }
+    lvLoadTeamSheets(sdlRenderer);
 
     if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
 
@@ -853,17 +1046,22 @@ BYTE lv_drawSetup(void) {
 
 static void lvFlushRegionNames(void);
 static void lvFlushTankLabels(void);
+static void lvFlushPingNames(void);
 
 void lv_drawCleanup(void) {
     /* First, while the renderer the names were made on and the font they
        were made from are both still there. */
     lvFlushRegionNames();
     lvFlushTankLabels();
+    lvFlushPingNames();
     s_tankLabelCount = 0;
     /* A GIF export that was still running when the session ended must not
        leave the next session drawing its names into the target. */
     s_tankLabelsInTarget = FALSE;
     if (textureTiles) { SDL_DestroyTexture(textureTiles); textureTiles = NULL; }
+    if (textureHudShapes) { SDL_DestroyTexture(textureHudShapes); textureHudShapes = NULL; }
+    if (textureStatusBackground) { SDL_DestroyTexture(textureStatusBackground); textureStatusBackground = NULL; }
+    statusBackgroundTried = false;
     if (textureTanks) { SDL_DestroyTexture(textureTanks); textureTanks = NULL; }
     if (textureBoats) { SDL_DestroyTexture(textureBoats); textureBoats = NULL; }
     if (textureItems) { SDL_DestroyTexture(textureItems); textureItems = NULL; }
@@ -924,76 +1122,6 @@ void lv_drawResizeRenderTarget(void) {
 
 int lv_drawGetTargetWidth(void) { return targetWidth; }
 int lv_drawGetTargetHeight(void) { return targetHeight; }
-
-/* Static splash texture - loaded once and cached */
-static SDL_Texture *textureSplash = NULL;
-static int splashWidth = 800;
-static int splashHeight = 600;
-
-/*********************************************************
-*NAME:          lv_drawSplashForImGui
-*PURPOSE:
-*  Draws the splash screen for the ImGui rendering loop.
-*  This function clears the screen and draws the splash,
-*  but does NOT present. ImGui will present after drawing UI.
-*
-*  Called from the main loop BEFORE ImGui renders.
-*********************************************************/
-void lv_drawSplashForImGui(void) {
-    int x = 0, y = 0;
-    SDL_FRect dstRect;
-    int windowWidth, windowHeight;
-    
-    /* Ensure we're rendering to the screen, not to a texture target */
-    SDL_SetRenderTarget(sdlRenderer, NULL);
-
-    /* Centre in framebuffer pixels, and scale the image by the same density so
-     * it keeps its physical size rather than shrinking to a quarter of the
-     * window on a Retina display. */
-    float pxScale = lvDrawPixelScale();
-    SDL_GetRenderOutputSize(sdlRenderer, &windowWidth, &windowHeight);
-    int splashW = (int)(splashWidth * pxScale);
-    int splashH = (int)(splashHeight * pxScale);
-
-    /* Clear the screen first */
-    SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 255);
-    SDL_RenderClear(sdlRenderer);
-    
-    /* Load splash texture if not already loaded */
-    if (textureSplash == NULL) {
-        const char *basePath = SDL_GetBasePath();
-        if (!basePath) basePath = "./";
-        char splashPath[1024];
-        SDL_snprintf(splashPath, sizeof(splashPath), "%sdata/splash.bmp", basePath);
-        textureSplash = sdlLoadBmpAsTexture(sdlRenderer, splashPath);
-    }
-    
-    if (textureSplash) {
-        /* Center the splash image */
-        if (windowWidth > splashW) x = (windowWidth - splashW) / 2;
-        if (windowHeight > splashH) y = (windowHeight - splashH) / 2;
-
-        dstRect.x = (float)x;
-        dstRect.y = (float)y;
-        dstRect.w = (float)splashW;
-        dstRect.h = (float)splashH;
-        SDL_RenderTexture(sdlRenderer, textureSplash, NULL, &dstRect);
-    }
-    
-    /* NOTE: Do NOT call SDL_RenderPresent here - ImGui will present after drawing UI */
-}
-
-/*********************************************************
-*NAME:          lv_drawCleanupSplash
-*PURPOSE:
-*  Cleans up the cached splash texture
-*********************************************************/
-void lv_drawCleanupSplash(void) {
-    if (textureSplash) {
-        SDL_DestroyTexture(textureSplash);
-        textureSplash = NULL;
-    }
-}
 
 static void drawRenderTexture(SDL_Texture *texture, int srcX, int srcY, int srcW, int srcH, int dstX, int dstY) {
     SDL_FRect srcRect = { (float)srcX, (float)srcY, (float)srcW, (float)srcH };
@@ -1148,6 +1276,84 @@ static void lvDrawRegions(BYTE zoomFactor) {
     }
 }
 
+/* lv_team_sprite.h names the game's tiles by number, so it needs no other
+   header. This fails to compile if a number there stops being the tile. */
+typedef char lvTeamSpriteTileCheck[(LV_TILE_PILL_EVIL_15 == PILL_EVIL_15 &&
+                                    LV_TILE_PILL_EVIL_14 == PILL_EVIL_14 &&
+                                    LV_TILE_PILL_EVIL_0 == PILL_EVIL_0 &&
+                                    PILL_EVIL_0 - PILL_EVIL_14 == 14 &&
+                                    LV_TILE_BASE_NEUTRAL == BASE_NEUTRAL) ? 1 : -1];
+
+/* Draw a pillbox or a base in map square x,y from the sheet lv_team_sprite.h
+   picked: one of the game's own tiles, or a team's cell of items.bmp. */
+static void lvDrawMapItem(LvMapItemSprite s, int x, int y, BYTE zoomFactor) {
+    if (s.fromAtlas) {
+        drawRenderTexture(textureTiles, mapViewPosX[s.tile], mapViewPosY[s.tile],
+            zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
+            zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+    } else {
+        drawRenderTexture(textureItems, s.col * zoomFactor * TILE_SIZE_X, s.row * zoomFactor * TILE_SIZE_Y,
+            zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
+            zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+    }
+}
+
+typedef char lvItemPictureSizeCheck[(LV_ITEM_PICTURE_PX == TILE_SIZE_X &&
+                                     LV_ITEM_PICTURE_PX == TILE_SIZE_Y) ? 1 : -1];
+
+/* The map's picture of a pillbox or a base, for a panel: the sheet it is in
+   and where in it, in pixels of the sheet. It is the sheet and the cell
+   lvDrawMapItem draws on the map (lvPanelItemSprite has the rule). team is
+   a team's number; under 0 or NEUTRAL_TEAM is no team. FALSE when the sheet
+   is not there. */
+bool lv_drawItemPicture(int isBase, int team, SDL_Texture **tex, float *sx, float *sy,
+                        float *sw, float *sh) {
+    LogViewerState *lv = lv_screenGetState();
+    bool hasTeam = (lv != NULL && team >= 0 && team < NEUTRAL_TEAM);
+    LvMapItemSprite s = lvPanelItemSprite(isBase != 0, hasTeam, hasTeam ? lv_screenTeamColour(team) : 0);
+
+    *sw = (float)TILE_SIZE_X;
+    *sh = (float)TILE_SIZE_Y;
+    if (s.fromAtlas) {
+        *tex = textureTiles;
+        *sx = (float)mapViewPosX[s.tile];
+        *sy = (float)mapViewPosY[s.tile];
+    } else {
+        *tex = textureItems;
+        *sx = (float)(s.col * TILE_SIZE_X);
+        *sy = (float)(s.row * TILE_SIZE_Y);
+    }
+    return *tex != NULL;
+}
+
+/* The map's picture of a builder, for a panel: the cell of the tile atlas
+   lv_drawLGMs draws him from. The standing frame (LGM0), 3 by 4, or, for
+   parachute, the 16 by 16 tile of the builder who flies in (the frame of a
+   dead builder's replacement). FALSE when the atlas is not there. */
+bool lv_drawBuilderPicture(int parachute, SDL_Texture **tex, float *sx, float *sy,
+                           float *sw, float *sh) {
+    *tex = textureTiles;
+    if (parachute) {
+        *sx = (float)LGM_HELICOPTER_X;
+        *sy = (float)LGM_HELICOPTER_Y;
+        *sw = (float)TILE_SIZE_X;
+        *sh = (float)TILE_SIZE_Y;
+    } else {
+        *sx = (float)LGM0_X;
+        *sy = (float)LGM0_Y;
+        *sw = (float)LGM_WIDTH;
+        *sh = (float)LGM_HEIGHT;
+    }
+    return *tex != NULL;
+}
+
+/* Whether tanks, pillboxes and bases are drawn in their team's colour. With
+   a perspective on they are not, whatever the setting says: the map then
+   shows them as that player's game does, own and allied against hostile. */
+static bool lvDrawTeamColours(const LogViewerState *lv) {
+    return lv->useTeamColours && lv_playersHasPerspective() == FALSE;
+}
+
 void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms, BYTE showPillLabels, BYTE showBaseLabels, int32_t srtDelay, BYTE isPillView, int edgeX, int edgeY, BYTE useCursor, BYTE cursorLeft, BYTE cursorTop) {
     bool done, isPill, isBase, shouldDraw;
     /* x/y must be wider than BYTE: the loop runs to lv_screenGetSizeX()/Y(),
@@ -1174,6 +1380,7 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     }
 
     zoomFactor = lv_windowGetZoomFactor();
+    bool teamColours = lvDrawTeamColours(lv);
 
     /* The simplified view. Tiles are drawn at their native 16 px into the
        target and the blit downscales the lot, so below 1x a square lands on
@@ -1250,11 +1457,20 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     itemHits[itemHitCount].isBase = (isBase != FALSE);
                     /* Team colours name the owner, which is what a recording
                        is watched for; without them the tile itself says which
-                       side holds it, the way the game's markers do. */
-                    if (lv->useTeamColours) {
+                       side holds it, the way the game's markers do. A thing
+                       nobody owns has no team: it takes the game's marker, a
+                       neutral base's for a base and a hostile pillbox's for a
+                       pillbox, as its sprite is the game's too. */
+                    itc = NEUTRAL_TEAM;
+                    if (teamColours) {
                         itc = isBase ? lv_screenGetBaseTeam(x, y)
                                      : lv_screenGetPillTeam(x, y, &pillHealth);
-                        itemHits[itemHitCount].colour = mapColourTeam(lv->tc[itc]);
+                    }
+                    if (teamColours && itc != NEUTRAL_TEAM) {
+                        itemHits[itemHitCount].colour = lvDrawTeamColour(itc);
+                    } else if (teamColours) {
+                        itemHits[itemHitCount].colour = isBase ? mapColourMarkerNeutral()
+                                                               : mapColourMarkerEvil();
                     } else {
                         MapColourItem kind = mapColourItemKind(pos);
                         if (kind == MAP_COLOUR_ITEM_PILL_GOOD ||
@@ -1268,14 +1484,16 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     }
                     itemHitCount++;
                 }
-            } else if (isPill && lv->useTeamColours) {
+            } else if (isPill && teamColours) {
+                /* In its team's colour; a neutral one as the game draws it
+                   (lv_team_sprite.h). */
                 itc = lv_screenGetPillTeam(x, y, &pillHealth);
-                drawRenderTexture(textureItems, pillHealth * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
-                    zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
-            } else if (isBase && lv->useTeamColours) {
+                lvDrawMapItem(lvMapPillSprite(itc == NEUTRAL_TEAM, pillHealth, lv_screenTeamColour(itc)),
+                              x, y, zoomFactor);
+            } else if (isBase && teamColours) {
                 itc = lv_screenGetBaseTeam(x, y);
-                drawRenderTexture(textureItems, 16 * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
-                    zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+                lvDrawMapItem(lvMapBaseSprite(itc == NEUTRAL_TEAM, lv_screenTeamColour(itc)),
+                              x, y, zoomFactor);
             } else {
                 outputX = mapViewPosX[pos];
                 outputY = mapViewPosY[pos];
@@ -1407,7 +1625,9 @@ void lv_drawShells(screenBullets *sBullets) {
 /* Rows of tanks.bmp / boats.bmp the ally colouring draws from. The sheets carry
    17 rows of team colours; row 2 is the same green and row 11 the same red the
    game's own good and evil tank sprites use, and row 0 is the uncoloured tank
-   an unloaded tc[] already lands every team on. */
+   an unloaded tc[] already lands every team on. With team colours a team is
+   drawn from the row of its own colour (lvDrawTeamRow), row 11 for a team
+   the Team Colours dialog has red for. */
 #define TANK_ROW_SELF 0
 #define TANK_ROW_GOOD 2
 #define TANK_ROW_EVIL 11
@@ -1438,6 +1658,7 @@ void lv_drawTanks(screenTanks *tks) {
     total = lv_screenTanksGetNumEntries(tks);
     zoomFactor = lv_windowGetZoomFactor();
     s_tankLabelCount = 0;
+    s_tankBarCount = 0;
 
     /* The same answer the ground pass used this frame, so the tanks and the
        squares under them cannot end up in different styles. */
@@ -1451,13 +1672,20 @@ void lv_drawTanks(screenTanks *tks) {
        switched off both want the game's own self / ally / enemy sides; only
        the team palette says which player is which, which is the one thing
        that reading cannot. */
-    allyRead = lv->allyColours || !lv->useTeamColours;
+    allyRead = lv->allyColours || !lvDrawTeamColours(lv);
 
     for (count = 1; count <= total; count++) {
         lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, playerName);
         px += 2; py += 2;
         x = mx * (zoomFactor * TILE_SIZE_X) + (zoomFactor * px);
         y = my * (zoomFactor * TILE_SIZE_Y) + (zoomFactor * py);
+        if (s_tankBarCount < MAX_TANKS) {
+            /* Where the picture goes, for the bars over it. */
+            s_tankBarPos[s_tankBarCount].x = x;
+            s_tankBarPos[s_tankBarCount].y = y;
+            s_tankBarPos[s_tankBarCount].slot = lv_screenTanksGetSlot(tks, count);
+            s_tankBarCount++;
+        }
 
         if (simple) {
             /* A triangle pointing the way it faces, in whichever reading the
@@ -1470,7 +1698,7 @@ void lv_drawTanks(screenTanks *tks) {
                        : (row == TANK_ROW_GOOD) ? mapColourMarkerGood()
                                                 : mapColourMarkerEvil();
             } else {
-                colour = mapColourTeam(lv->tc[team]);
+                colour = lvDrawTeamColour(team);
             }
             {
                 float side = (float)(zoomFactor * TILE_SIZE_X);
@@ -1484,7 +1712,7 @@ void lv_drawTanks(screenTanks *tks) {
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
         } else {
             srcX = zoomFactor * TILE_SIZE_X * dir;
-            srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
+            srcY = zoomFactor * TILE_SIZE_Y * lvDrawTeamRow(team);
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
         }
         if (s_tankLabelsInTarget) {
@@ -1723,6 +1951,868 @@ static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst)
     SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
 }
 
+void lv_drawSetTankBars(BYTE on) {
+    s_tankBars = on ? TRUE : FALSE;
+}
+
+BYTE lv_drawGetTankBars(void) {
+    return s_tankBars ? TRUE : FALSE;
+}
+
+/* One bar: the filled part in its colour, the rest in the track's. */
+static void lvDrawOneTankBar(const LvTankBarRect *bar, int value, int full,
+                             Uint8 r, Uint8 g, Uint8 b) {
+    const Uint8 alpha = (Uint8)(LV_TANK_BARS_ALPHA * 255.0f + 0.5f);
+    float fillW = lvTankBarFillWidth(bar->w, value, full);
+    SDL_FRect part;
+
+    part.y = bar->y;
+    part.h = bar->h;
+    if (fillW > 0.0f) {
+        part.x = bar->x;
+        part.w = fillW;
+        SDL_SetRenderDrawColor(sdlRenderer, r, g, b, alpha);
+        SDL_RenderFillRect(sdlRenderer, &part);
+    }
+    if (fillW < bar->w) {
+        part.x = bar->x + fillW;
+        part.w = bar->w - fillW;
+        SDL_SetRenderDrawColor(sdlRenderer, LV_TANK_BARS_TRACK_R, LV_TANK_BARS_TRACK_G,
+                               LV_TANK_BARS_TRACK_B, alpha);
+        SDL_RenderFillRect(sdlRenderer, &part);
+    }
+}
+
+/* The armour and shells bars over each live tank the blit just drew: src is
+   the slice of the target it took, dst where it went. The places are worked
+   out as the blit works out the tanks' own, so the bars stay on their tanks
+   through a scroll, a zoom and a sidebar. What a tank holds is read now, not
+   when the target was painted, so a bar moves when its tank is hit without
+   the map having to be repainted. */
+static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LogViewerState *lv = lv_screenGetState();
+    float scale, tilePx, pxScale;
+    int i;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+    struct { bool alive; int armour, shells; } held[MAX_TANKS];
+    int fullArmour, fullShells;
+    bool hasStock;
+
+    if (!s_tankBars || s_tankBarCount == 0 || lv == NULL) return;
+    /* What the tanks hold is written by playback on the timer thread, under
+       the client mutex. Copy it out under the same mutex and draw from the
+       copy, so a bar never shows half of one tick and half of the next. The
+       mutex is recursive (SDL_Mutex), so this is safe on both ways in: the
+       repaint, which already holds it, and the plain blit of an unchanged
+       frame, which does not. The places in s_tankBarPos are this thread's
+       own. */
+    lv_clientMutexWaitFor();
+    hasStock = lv_screenHasTankStock() != 0;
+    fullArmour = lv->rules.tankFullArmour;
+    fullShells = lv->rules.tankFullShells;
+    for (i = 0; i < MAX_TANKS; i++) {
+        held[i].alive = lv->gameViewHud[i].alive;
+        held[i].armour = lv->tankInv[i].armour;
+        held[i].shells = lv->tankInv[i].shells;
+    }
+    lv_clientMutexRelease();
+    /* A recording written before tank stocks were recorded reads zero for
+       every tank. Two empty bars over each one would say "no armour, no
+       shells", which is not known: draw none, as the Tank panel shows no
+       gauges for such a recording. */
+    if (!hasStock) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    scale = dst->w / src->w;
+    tilePx = (float)TILE_SIZE_X * scale;
+    /* scale is in framebuffer pixels (the blit folds the pixel density in),
+       and the bars' sizes are in points: hand the density to the sums. */
+    pxScale = lvDrawPixelScale();
+    if (!lvTankBarsVisible(tilePx, pxScale)) return;
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+
+    for (i = 0; i < s_tankBarCount; i++) {
+        BYTE slot = s_tankBarPos[i].slot;
+        LvTankBarsLayout bars;
+        Uint8 r, g, b;
+        int armour, shells;
+
+        /* No bars for a tank that is dead: the picture left in the target
+           until the next repaint is not a tank that holds anything. */
+        if (slot >= MAX_TANKS || !held[slot].alive) continue;
+        bars = lvTankBarsLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
+                                dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
+                                tilePx, pxScale);
+        if (!bars.visible) continue;
+
+        armour = held[slot].armour;
+        shells = held[slot].shells;
+        lvTankBarArmourColour(lvTankBarFraction(armour, fullArmour), &r, &g, &b);
+        lvDrawOneTankBar(&bars.armour, armour, fullArmour, r, g, b);
+        lvDrawOneTankBar(&bars.shells, shells, fullShells,
+                         LV_TANK_BARS_SHELLS_R, LV_TANK_BARS_SHELLS_G, LV_TANK_BARS_SHELLS_B);
+    }
+
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+void lv_drawSetBuilderStatus(BYTE on) {
+    s_builderStatus = on ? TRUE : FALSE;
+}
+
+BYTE lv_drawGetBuilderStatus(void) {
+    return s_builderStatus ? TRUE : FALSE;
+}
+
+/* The cells of one small picture, with its top left at x, y: each cell a
+   square of `cell` pixels, grown by `grow` pixels on every side (the dark
+   pass under the coloured one uses that for the edge). The colour is the
+   renderer's. */
+static void lvDrawBuilderGlyph(const LvBuilderGlyph *g, float x, float y,
+                               float cell, float grow) {
+    int row, col;
+
+    if (g == NULL) return;
+    for (row = 0; row < g->height; row++) {
+        for (col = 0; col < g->width; col++) {
+            SDL_FRect r;
+            if (!lvBuilderGlyphCell(g, col, row)) continue;
+            r.x = x + (float)col * cell - grow;
+            r.y = y + (float)row * cell - grow;
+            r.w = cell + grow * 2.0f;
+            r.h = cell + grow * 2.0f;
+            SDL_RenderFillRect(sdlRenderer, &r);
+        }
+    }
+}
+
+/* The countdown's characters from x, with their tops at y. */
+static void lvDrawBuilderText(const char *text, float x, float y, float cell,
+                              float grow) {
+    for (; *text != '\0'; text++) {
+        const LvBuilderGlyph *g = lvBuilderChar(*text);
+        if (g == NULL) continue;
+        lvDrawBuilderGlyph(g, x, y, cell, grow);
+        x += (float)(g->width + 1) * cell;
+    }
+}
+
+/* The arrow: a dart with its middle at cx, cy and its point `radius` pixels
+   out along the direction. */
+static void lvDrawBuilderArrow(float cx, float cy, float radius, int direction,
+                               SDL_FColor colour) {
+    SDL_Vertex v[4];
+    static const int k_index[6] = { 0, 1, 3, 0, 3, 2 };
+    float fx = 0.0f, fy = -1.0f;
+    float sx, sy;
+    int i;
+
+    lvBuilderDirectionStep(direction, &fx, &fy);
+    sx = -fy;   /* a quarter turn from the direction: the dart's width */
+    sy = fx;
+    /* The point, the two back corners, and the notch between them. */
+    v[0].position.x = cx + fx * radius;
+    v[0].position.y = cy + fy * radius;
+    v[1].position.x = cx - fx * radius + sx * radius * 0.8f;
+    v[1].position.y = cy - fy * radius + sy * radius * 0.8f;
+    v[2].position.x = cx - fx * radius - sx * radius * 0.8f;
+    v[2].position.y = cy - fy * radius - sy * radius * 0.8f;
+    v[3].position.x = cx - fx * radius * 0.35f;
+    v[3].position.y = cy - fy * radius * 0.35f;
+    for (i = 0; i < 4; i++) {
+        v[i].color = colour;
+        v[i].tex_coord.x = 0.0f;
+        v[i].tex_coord.y = 0.0f;
+    }
+    SDL_RenderGeometry(sdlRenderer, NULL, v, 4, k_index, 6);
+}
+
+/* The builder marker over each live tank the blit just drew, where the bars
+   are drawn and by the bars' rules: none for a dead tank, none for a tank
+   the view does not draw, none when the squares are too small. The state is
+   the one at the playback time, copied out under the client mutex as the
+   bars' is. */
+static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LogViewerState *lv = lv_screenGetState();
+    float scale, tilePx, pxScale, edge;
+    int i;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    bool barsOn;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+    struct {
+        bool alive;
+        LvBuilderState state;
+        int direction;      /* -1: at the tank's own place */
+        bool sameSquare;
+        bool hasTime;
+        bool approx;
+        long remainMs;
+        unsigned char colour;
+        bool hasTeam;
+    } b[MAX_TANKS];
+
+    if (!s_builderStatus || s_tankBarCount == 0 || lv == NULL) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    scale = dst->w / src->w;
+    tilePx = (float)TILE_SIZE_X * scale;
+    pxScale = lvDrawPixelScale();
+    if (!lvTankBarsVisible(tilePx, pxScale)) return;
+
+    lv_clientMutexWaitFor();
+    /* The bars are drawn only for a recording that holds tank stocks; the
+       marker stands on the tank when they are not. */
+    barsOn = s_tankBars && lv_screenHasTankStock() != 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        bool isOut = FALSE, isDead = FALSE;
+        BYTE team;
+
+        b[i].alive = lv->gameViewHud[i].alive;
+        lv_playersGetLgmStatus((BYTE)i, &isOut, &isDead);
+        b[i].state = lvBuilderState(isOut != FALSE, isDead != FALSE);
+        b[i].direction = -1;
+        b[i].sameSquare = TRUE;
+        b[i].hasTime = FALSE;
+        b[i].approx = FALSE;
+        b[i].remainMs = 0;
+        if (!b[i].alive || b[i].state == LV_BUILDER_IN) continue;
+        if (b[i].state == LV_BUILDER_OUT) {
+            BYTE lx = 0, ly = 0, lpx = 0, lpy = 0, lframe = 0;
+            BYTE tx = 0, ty = 0, tpx = 0, tpy = 0, tframe = 0;
+            bool onBoat = FALSE;
+            lv_playersGetLgmDetails((BYTE)i, &lx, &ly, &lpx, &lpy, &lframe);
+            lv_playersGetTankDetails((BYTE)i, &tx, &ty, &tpx, &tpy, &tframe, &onBoat);
+            b[i].sameSquare = (lx == tx && ly == ty);
+            b[i].direction = lvBuilderDirection(
+                (float)(lvBuilderWorld(lx, lpx) - lvBuilderWorld(tx, tpx)),
+                (float)(lvBuilderWorld(ly, lpy) - lvBuilderWorld(ty, tpy)));
+        }
+        {
+            long remain = 0;
+            int approx = 0;
+            if (lv_screenBuilderReturn(i, &remain, &approx)) {
+                b[i].hasTime = TRUE;
+                b[i].approx = approx != 0;
+                b[i].remainMs = remain;
+            }
+        }
+        team = lv_playersGetTeamForOwner((BYTE)i);
+        b[i].hasTeam = (team != NEUTRAL_TEAM);
+        b[i].colour = lv_screenTeamColour(team);
+    }
+    lv_clientMutexRelease();
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+    /* The dark edge round every part: one point. */
+    edge = lvTankBarPointsToPixels(LV_BUILDER_EDGE_POINTS, pxScale);
+
+    for (i = 0; i < s_tankBarCount; i++) {
+        BYTE slot = s_tankBarPos[i].slot;
+        LvBuilderMarkLayout m;
+        SDL_FColor mark, dark;
+        char text[LV_BUILDER_TEXT_MAX];
+        float x, y, rowW, textY;
+        int pass;
+
+        if (slot >= MAX_TANKS || !b[slot].alive || b[slot].state == LV_BUILDER_IN) continue;
+        m = lvBuilderMarkLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
+                                dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
+                                tilePx, pxScale, barsOn);
+        if (!m.visible) continue;
+
+        lvBuilderDeadText(b[slot].hasTime, b[slot].remainMs, b[slot].approx, text,
+                          sizeof(text));
+        rowW = (float)lvBuilderRowCells(text) * m.cell;
+        x = SDL_floorf(m.centreX - rowW * 0.5f);
+        y = m.top;
+        /* The digits are 5 cells high in a row of 7: one cell down. */
+        textY = y + m.cell;
+
+        /* White for every team, with a black edge (lvBuilderMarkColour). */
+        {
+            LvBuilderColour w = lvBuilderMarkColour(b[slot].hasTeam, b[slot].colour);
+            LvBuilderColour e = lvBuilderEdgeColour();
+            mark.r = w.r; mark.g = w.g; mark.b = w.b; mark.a = w.a;
+            dark.r = e.r; dark.g = e.g; dark.b = e.b; dark.a = e.a;
+        }
+
+        /* The dark edge first, then the white over it. */
+        for (pass = 0; pass < 2; pass++) {
+            float grow = (pass == 0) ? edge : 0.0f;
+            SDL_FColor c = (pass == 0) ? dark : mark;
+
+            SDL_SetRenderDrawColorFloat(sdlRenderer, c.r, c.g, c.b, c.a);
+            if (b[slot].state == LV_BUILDER_FLYING) {
+                lvDrawBuilderGlyph(lvBuilderParachute(), x, y, m.cell, grow);
+            } else if (b[slot].direction < 0 || b[slot].sameSquare) {
+                /* On the tank's own square: a dot in the middle of the box. */
+                lvDrawBuilderGlyph(lvBuilderDot(), x + m.cell * 2.0f, y + m.cell * 2.0f,
+                                   m.cell, grow);
+            } else {
+                float half = m.height * 0.5f;
+                lvDrawBuilderArrow(x + half, y + half, half + grow * 1.5f,
+                                   b[slot].direction, c);
+            }
+            if (text[0] != '\0') {
+                lvDrawBuilderText(text, x + (float)(LV_BUILDER_CELLS + 1) * m.cell, textY,
+                                  m.cell, grow);
+            }
+        }
+    }
+
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+void lv_drawSetPillNumbers(BYTE on) {
+    s_pillNumbers = on ? TRUE : FALSE;
+}
+
+BYTE lv_drawGetPillNumbers(void) {
+    return s_pillNumbers ? TRUE : FALSE;
+}
+
+/* The number of each pillbox that stands on the map, at the bottom right
+   corner of its square (lvPillLabelLayout): white digits with a black edge,
+   the builder marker's, drawn over the blit at the screen's own pixels so
+   they are sharp and of a size to read at every zoom. A pillbox a tank
+   carries has none. The list is the one at the playback time, copied out
+   under the client mutex. */
+static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LvPillSpot spots[MAX_PILLS];
+    float scale, tilePx, pxScale, edge;
+    int n, i, pass;
+    BYTE zf;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+
+    if (!s_pillNumbers) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    lv_clientMutexWaitFor();
+    n = lv_screenPillSpots(spots, MAX_PILLS);
+    lv_clientMutexRelease();
+    if (n <= 0) return;
+
+    zf = lv_windowGetZoomFactor();
+    scale = dst->w / src->w;
+    tilePx = (float)(zf * TILE_SIZE_X) * scale;
+    pxScale = lvDrawPixelScale();
+    edge = lvTankBarPointsToPixels(LV_BUILDER_EDGE_POINTS, pxScale);
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+
+    /* Every edge first, then every white over them, so the edge of one
+       number never covers the digits of a number beside it. */
+    for (pass = 0; pass < 2; pass++) {
+        LvBuilderColour c = (pass == 0) ? lvBuilderEdgeColour()
+                                        : lvBuilderMarkColour(false, 0);
+        SDL_SetRenderDrawColorFloat(sdlRenderer, c.r, c.g, c.b, c.a);
+        for (i = 0; i < n; i++) {
+            char text[LV_PILL_NUMBER_TEXT_MAX];
+            LvPillLabelLayout l;
+            float left = dst->x + ((float)(spots[i].viewX * zf * TILE_SIZE_X) - src->x) * scale;
+            float top = dst->y + ((float)(spots[i].viewY * zf * TILE_SIZE_Y) - src->y) * scale;
+
+            if (lvPillNumberText(spots[i].number, text, sizeof(text)) == 0) continue;
+            l = lvPillLabelLayout(left, top, tilePx, pxScale, lvBuilderTextCells(text));
+            if (!l.visible) continue;
+            lvDrawBuilderText(text, l.x, l.y, l.cell, (pass == 0) ? edge : 0.0f);
+        }
+    }
+
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* The mark round the selected tank: four corners just outside its picture,
+   white, 75% solid. It is drawn over the blit like the bars, with the same
+   sums for the place, so it stays on its tank. It follows the rules of the
+   bars: none for a dead tank, none for a tank the view does not draw, none
+   when the squares are too small, and only in the viewer's own window. */
+static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LogViewerState *lv = lv_screenGetState();
+    float scale, tilePx, pxScale;
+    int i, selected;
+    bool alive;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+
+    if (s_tankBarCount == 0 || lv == NULL) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    lv_clientMutexWaitFor();
+    selected = lv_screenSelectedTank();
+    alive = (selected >= 0) ? lv->gameViewHud[selected].alive : FALSE;
+    lv_clientMutexRelease();
+    if (selected < 0 || !alive) return;
+    scale = dst->w / src->w;
+    tilePx = (float)TILE_SIZE_X * scale;
+    pxScale = lvDrawPixelScale();
+    if (!lvTankBarsVisible(tilePx, pxScale)) return;
+
+    for (i = 0; i < s_tankBarCount; i++) {
+        LvTankMark m;
+        SDL_FRect r[8];
+        if (s_tankBarPos[i].slot != (BYTE)selected) continue;
+        m = lvTankMarkLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
+                             dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
+                             tilePx, pxScale);
+        /* Each corner: an arm along the top or bottom, and one down or up
+           the side. */
+        r[0].x = m.x;                  r[0].y = m.y;                    r[0].w = m.arm;   r[0].h = m.thick;
+        r[1].x = m.x;                  r[1].y = m.y;                    r[1].w = m.thick; r[1].h = m.arm;
+        r[2].x = m.x + m.side - m.arm; r[2].y = m.y;                    r[2].w = m.arm;   r[2].h = m.thick;
+        r[3].x = m.x + m.side - m.thick; r[3].y = m.y;                  r[3].w = m.thick; r[3].h = m.arm;
+        r[4].x = m.x;                  r[4].y = m.y + m.side - m.thick; r[4].w = m.arm;   r[4].h = m.thick;
+        r[5].x = m.x;                  r[5].y = m.y + m.side - m.arm;   r[5].w = m.thick; r[5].h = m.arm;
+        r[6].x = m.x + m.side - m.arm; r[6].y = m.y + m.side - m.thick; r[6].w = m.arm;   r[6].h = m.thick;
+        r[7].x = m.x + m.side - m.thick; r[7].y = m.y + m.side - m.arm; r[7].w = m.thick; r[7].h = m.arm;
+
+        hadClip = SDL_RenderClipEnabled(sdlRenderer);
+        SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+        clip.x = (int)dst->x;
+        clip.y = (int)dst->y;
+        clip.w = (int)dst->w;
+        clip.h = (int)dst->h;
+        SDL_SetRenderClipRect(sdlRenderer, &clip);
+        SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+        SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+        SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(sdlRenderer, 255, 255, 255,
+                               (Uint8)(LV_TANK_MARK_ALPHA * 255.0f + 0.5f));
+        SDL_RenderFillRects(sdlRenderer, r, 8);
+        SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+        SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+        SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+        break;
+    }
+}
+
+/* --- The ring round the place of an event the user went to ----------------
+   A click on a line of the Events panel, or on a marker over the seek bar,
+   takes playback to the event. The ring shows where on the map it happened:
+   it closes in on the event's square twice over and fades, in LV_FLASH_MS
+   of real time (lv_event_flash.h), so it runs with playback stopped too. The viewer's loop draws a frame every time round, and each
+   frame comes through the blit, so the ring needs no redraw of its own.
+
+   One ring at a time: a new click starts it again from the new place. It
+   ends early when playback is moved by anything else (the seek count has
+   moved on). It is in the viewer's own window, in the overview and in the
+   game view: not embedded, not in a saved picture. A place the view does
+   not show gets an arrow at the view's edge (lv_drawEventFlashAt). */
+static struct {
+    bool     on;
+    int      mapX, mapY;
+    int      team;       /* -1: no team, a white ring */
+    Uint64   startMs;    /* SDL_GetTicks at the click */
+    uint32_t seekSerial; /* lv_screenSeekSerial just after the jump */
+} s_eventFlash;
+
+void lv_drawEventFlashStart(int mapX, int mapY, int team) {
+    s_eventFlash.on = true;
+    s_eventFlash.mapX = mapX;
+    s_eventFlash.mapY = mapY;
+    s_eventFlash.team = team;
+    s_eventFlash.startMs = SDL_GetTicks();
+    s_eventFlash.seekSerial = lv_screenSeekSerial();
+}
+
+void lv_drawEventFlashCancel(void) {
+    s_eventFlash.on = false;
+}
+
+int lv_drawEventFlashActive(void) {
+    return s_eventFlash.on ? 1 : 0;
+}
+
+/* One band of the ring: the part between two radii, as a strip of
+   triangles. */
+#define LV_FLASH_SEGMENTS 48
+static void lvDrawRingBand(float cx, float cy, float rIn, float rOut, SDL_FColor col) {
+    SDL_Vertex v[(LV_FLASH_SEGMENTS + 1) * 2];
+    int idx[LV_FLASH_SEGMENTS * 6];
+    int i;
+
+    if (rIn < 0.0f) rIn = 0.0f;
+    if (rOut <= rIn) return;
+    for (i = 0; i <= LV_FLASH_SEGMENTS; i++) {
+        float a = (float)i * (2.0f * SDL_PI_F / (float)LV_FLASH_SEGMENTS);
+        float c = SDL_cosf(a), s = SDL_sinf(a);
+        v[i * 2].position.x = cx + c * rIn;
+        v[i * 2].position.y = cy + s * rIn;
+        v[i * 2].color = col;
+        v[i * 2].tex_coord.x = 0.0f;
+        v[i * 2].tex_coord.y = 0.0f;
+        v[i * 2 + 1].position.x = cx + c * rOut;
+        v[i * 2 + 1].position.y = cy + s * rOut;
+        v[i * 2 + 1].color = col;
+        v[i * 2 + 1].tex_coord.x = 0.0f;
+        v[i * 2 + 1].tex_coord.y = 0.0f;
+    }
+    for (i = 0; i < LV_FLASH_SEGMENTS; i++) {
+        idx[i * 6 + 0] = i * 2;
+        idx[i * 6 + 1] = i * 2 + 1;
+        idx[i * 6 + 2] = i * 2 + 2;
+        idx[i * 6 + 3] = i * 2 + 1;
+        idx[i * 6 + 4] = i * 2 + 3;
+        idx[i * 6 + 5] = i * 2 + 2;
+    }
+    SDL_RenderGeometry(sdlRenderer, NULL, v, (LV_FLASH_SEGMENTS + 1) * 2, idx,
+                       LV_FLASH_SEGMENTS * 6);
+}
+
+/* A filled triangle in one colour. */
+static void lvDrawFlashTriangle(float ax, float ay, float bx, float by, float cx,
+                                float cy, SDL_FColor col) {
+    SDL_Vertex v[3];
+    int i;
+    v[0].position.x = ax; v[0].position.y = ay;
+    v[1].position.x = bx; v[1].position.y = by;
+    v[2].position.x = cx; v[2].position.y = cy;
+    for (i = 0; i < 3; i++) {
+        v[i].color = col;
+        v[i].tex_coord.x = 0.0f;
+        v[i].tex_coord.y = 0.0f;
+    }
+    SDL_RenderGeometry(sdlRenderer, NULL, v, 3, NULL, 0);
+}
+
+/* Draw the ring for a view of the map: (cx, cy) is where the middle of the
+   event's square is on the screen, in pixels, tilePx the side of a map
+   square there, and view the part of the screen the map is in. When the
+   middle is outside the view (the view follows a tank and could not move to
+   the event) an arrow at the view's edge points to the place instead, and
+   pulses as the ring does. Both hosts of a view call this: the overview's
+   blit below and the game view (game_view.c). */
+void lv_drawEventFlashAt(float cx, float cy, float tilePx, const SDL_Rect *view) {
+    LogViewerState *lv = lv_screenGetState();
+    Uint64 now;
+    uint32_t elapsed;
+    float pxScale, radius, alpha, half, darkW;
+    float ex = 0.0f, ey = 0.0f, dx = 0.0f, dy = 0.0f;
+    SDL_Rect oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    SDL_FColor white, dark, team;
+    bool hasTeam;
+
+    if (!s_eventFlash.on || view == NULL) return;
+    now = SDL_GetTicks();
+    elapsed = (now > s_eventFlash.startMs) ? (uint32_t)(now - s_eventFlash.startMs) : 0u;
+    if (lv == NULL || !lv->isLoaded || !lvFlashActive(elapsed) ||
+        s_eventFlash.seekSerial != lv_screenSeekSerial()) {
+        s_eventFlash.on = false;
+        return;
+    }
+    if (view->w <= 0 || view->h <= 0 || tilePx <= 0.0f) return;
+
+    pxScale = lvDrawPixelScale();
+    radius = lvFlashRadiusTiles(elapsed) * tilePx;
+    alpha = lvFlashAlpha(elapsed);
+    darkW = LV_FLASH_DARK_PT * pxScale;
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    SDL_SetRenderClipRect(sdlRenderer, view);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+
+    white.r = 1.0f; white.g = 1.0f; white.b = 1.0f; white.a = alpha;
+    /* A dark line each side, so the ring shows on pale ground too. */
+    dark.r = 0.0f; dark.g = 0.0f; dark.b = 0.0f; dark.a = alpha * LV_FLASH_DARK_ALPHA;
+    hasTeam = s_eventFlash.team >= 0;
+    team = white;
+    if (hasTeam) {
+        /* The colour is the one the panels give the team. */
+        lv_drawTeamPanelColour(lv_screenTeamColour(s_eventFlash.team),
+                               &team.r, &team.g, &team.b);
+        team.a = alpha;
+    }
+
+    if (lvFlashEdgeArrow(cx, cy, (float)view->x, (float)view->y,
+                         (float)(view->x + view->w), (float)(view->y + view->h),
+                         LV_FLASH_ARROW_INSET_PT * pxScale, &ex, &ey, &dx, &dy)) {
+        /* The place is outside the view: an arrow with its point at the
+           edge. It moves in and out a little with the pulse. A dark arrow a
+           little larger is under the white one, and the team's colour, when
+           there is one, is a smaller arrow inside it. */
+        float len = LV_FLASH_ARROW_LEN_PT * pxScale;
+        float wid = LV_FLASH_ARROW_WIDTH_PT * pxScale * 0.5f;
+        float back = (lvFlashRadiusTiles(elapsed) - LV_FLASH_END_TILES) /
+                     (LV_FLASH_RADIUS_TILES - LV_FLASH_END_TILES) * len * 0.5f;
+        float tx = ex - dx * back, ty = ey - dy * back;
+        float bx = tx - dx * len, by = ty - dy * len;
+        float nx = -dy, ny = dx;
+        float grow = darkW * 2.0f;
+        lvDrawFlashTriangle(tx + dx * grow, ty + dy * grow,
+                            bx - dx * darkW + nx * (wid + grow), by - dy * darkW + ny * (wid + grow),
+                            bx - dx * darkW - nx * (wid + grow), by - dy * darkW - ny * (wid + grow),
+                            dark);
+        lvDrawFlashTriangle(tx, ty, bx + nx * wid, by + ny * wid,
+                            bx - nx * wid, by - ny * wid, white);
+        if (hasTeam) {
+            float in = LV_FLASH_WHITE_PT * pxScale;
+            float tLen = len - in * 3.0f, tWid = wid - in * 1.5f;
+            if (tLen > 0.0f && tWid > 0.0f) {
+                float sx = tx - dx * in * 2.0f, sy = ty - dy * in * 2.0f;
+                float cbx = sx - dx * tLen, cby = sy - dy * tLen;
+                lvDrawFlashTriangle(sx, sy, cbx + nx * tWid, cby + ny * tWid,
+                                    cbx - nx * tWid, cby - ny * tWid, team);
+            }
+        }
+    } else if (hasTeam) {
+        /* A white band outside, the team's colour inside it. */
+        float whiteW = LV_FLASH_WHITE_PT * pxScale;
+        float teamW = LV_FLASH_TEAM_PT * pxScale;
+        half = (whiteW + teamW) * 0.5f;
+        lvDrawRingBand(cx, cy, radius - half - darkW, radius + half + darkW, dark);
+        lvDrawRingBand(cx, cy, radius + half - whiteW, radius + half, white);
+        lvDrawRingBand(cx, cy, radius - half, radius - half + teamW, team);
+    } else {
+        half = LV_FLASH_RING_PT * pxScale * 0.5f;
+        lvDrawRingBand(cx, cy, radius - half - darkW, radius + half + darkW, dark);
+        lvDrawRingBand(cx, cy, radius - half, radius + half, white);
+    }
+
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* ---- Map pings on the overview map ---------------------------------------
+   The game view draws the pings of the log with the game's own marker
+   (gv_drawPings). The overview map does the same, over the blit: the marker
+   is drawn at the size the map square has on the window, so it is sharp at
+   every zoom. lv_screenGetPings gives the pings that are on the map at the
+   playback's time now and the age of each, and the marker's animation is
+   worked out from the age alone, so it is the game's at any playback speed,
+   stands still when playback is paused, and is part way through after a
+   jump into the middle of it. */
+
+/* The font of the sender's name under a marker: the tank names' face, at the
+   game's size for the display. Its own, since the tank names' font changes
+   size with the zoom and is not there at all while the names are drawn into
+   the target. */
+static TTF_Font *s_pingNameFont = NULL;
+static int       s_pingNameFontPx = 0;
+
+static void lvFlushPingNames(void) {
+    /* The textures first: they were made from the font. */
+    lv_drawOverviewPingsFlush();
+    if (s_pingNameFont != NULL) TTF_CloseFont(s_pingNameFont);
+    s_pingNameFont = NULL;
+    s_pingNameFontPx = 0;
+}
+
+static TTF_Font *lvPingNameFont(void) {
+    int px = (int)SDL_lroundf((float)LV_TANK_LABEL_PX * lvDrawPixelScale());
+    if (px < LV_TANK_LABEL_MIN_PX) px = LV_TANK_LABEL_MIN_PX;
+    if (px != s_pingNameFontPx) {
+        const char *base = SDL_GetBasePath();
+        char path[1024];
+        lvFlushPingNames();
+        SDL_snprintf(path, sizeof(path), "%sdata/fonts/SarasaMonoSlabJ-Regular.ttf",
+                     base ? base : "./");
+        s_pingNameFont = TTF_OpenFont(path, (float)px);
+        s_pingNameFontPx = px;
+    }
+    return s_pingNameFont;
+}
+
+/* Draw the pings over the blit: src is the slice of the target the blit
+   took, dst where it went. The place is worked out as the ring of an event
+   works out its own (lvDrawEventFlashOverBlit). */
+static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    float scale, tilePx;
+    BYTE offX = 0, offY = 0;
+    BYTE zoomFactor;
+    SDL_Rect clip, oldClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    bool hadClip = FALSE;
+    bool begun = FALSE;
+    LvPingShown pings[LV_PING_SHOWN_MAX];
+    char names[LV_PING_SHOWN_MAX][PLAYER_NAME_LEN];
+    int count, i;
+
+    if (sdlRenderer == NULL) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    scale = dst->w / src->w;
+    zoomFactor = lv_windowGetZoomFactor();
+    tilePx = (float)(zoomFactor * TILE_SIZE_X) * scale;
+    /* Playback writes the ping store and the player names on the timer
+       thread, under the client mutex. Copy them out under the same mutex
+       (recursive, as the tank bars above say) and draw from the copy. */
+    lv_clientMutexWaitFor();
+    lv_screenGetOffsets(&offX, &offY);
+    count = lv_screenGetPings(pings, LV_PING_SHOWN_MAX);
+    for (i = 0; i < count; i++) {
+        names[i][0] = '\0';
+        lv_playersGetPlayerName(pings[i].sender, names[i], sizeof(names[i]));
+    }
+    lv_clientMutexRelease();
+
+    for (i = 0; i < count; i++) {
+        BYTE sender = pings[i].sender, kind = pings[i].kind;
+        uint16_t wx = pings[i].worldX, wy = pings[i].worldY;
+        uint32_t ageMs = pings[i].ageMs;
+        float cx, cy;
+
+        if (!begun) {
+            /* Only when there is a ping to draw: most frames have none. The
+               marker stays on the map, and off the sidebars beside it. */
+            begun = TRUE;
+            hadClip = SDL_RenderClipEnabled(sdlRenderer);
+            SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+            SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+            clip.x = (int)dst->x;
+            clip.y = (int)dst->y;
+            clip.w = (int)dst->w;
+            clip.h = (int)dst->h;
+            SDL_SetRenderClipRect(sdlRenderer, &clip);
+        }
+        /* World units are 256 to a map square; the marker names the square
+           the ping is in, so it goes on the middle of that square. */
+        cx = ((float)((int)(wx >> 8) - (int)offX) + 0.5f) * (float)(zoomFactor * TILE_SIZE_X);
+        cy = ((float)((int)(wy >> 8) - (int)offY) + 0.5f) * (float)(zoomFactor * TILE_SIZE_Y);
+        cx = dst->x + (cx - src->x) * scale;
+        cy = dst->y + (cy - src->y) * scale;
+        lv_drawOverviewPing(cx, cy, tilePx, kind, sender, names[i], ageMs,
+                            lvPingNameFont());
+    }
+    if (begun) {
+        SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+        SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+    }
+}
+
+/* The place of the ring, as a map square; 0 when no ring is on. For a host
+   that works out where the square is on its own screen (the game view). */
+int lv_drawEventFlashCell(int *mapX, int *mapY) {
+    if (!s_eventFlash.on) return 0;
+    if (mapX != NULL) *mapX = s_eventFlash.mapX;
+    if (mapY != NULL) *mapY = s_eventFlash.mapY;
+    return 1;
+}
+
+/* Draw the ring over the blit: src is the slice of the target the blit took,
+   dst where it went. The place is worked out as the blit works out a tank's:
+   a map square is (square - view offset) squares into the target. */
+static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    float scale, cx, cy;
+    BYTE offX = 0, offY = 0;
+    BYTE zoomFactor;
+    SDL_Rect view;
+
+    if (!s_eventFlash.on) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+
+    scale = dst->w / src->w;
+    zoomFactor = lv_windowGetZoomFactor();
+    lv_screenGetOffsets(&offX, &offY);
+    /* The middle of the event's square, in the target and then on screen. */
+    cx = ((float)(s_eventFlash.mapX - (int)offX) + 0.5f) * (float)(zoomFactor * TILE_SIZE_X);
+    cy = ((float)(s_eventFlash.mapY - (int)offY) + 0.5f) * (float)(zoomFactor * TILE_SIZE_Y);
+    cx = dst->x + (cx - src->x) * scale;
+    cy = dst->y + (cy - src->y) * scale;
+    view.x = (int)dst->x;
+    view.y = (int)dst->y;
+    view.w = (int)dst->w;
+    view.h = (int)dst->h;
+    if (!g_embedded) {
+        /* The arrow for a place off the view goes at the edge of the map
+           that shows, not under a sidebar whose unused part is clear. */
+        int fullL = 0, fullT = 0, fullR = 0, fullB = 0;
+        int mapL = 0, mapT = 0, mapR = 0, mapB = 0;
+        float pxScale = lvDrawPixelScale();
+        int inL, inT, inR, inB;
+        lv_imgui_dock_margins(&fullL, &fullT, &fullR, &fullB);
+        lv_imgui_dock_map_margins(&mapL, &mapT, &mapR, &mapB);
+        inL = (int)((float)(fullL - mapL) * pxScale);
+        inT = (int)((float)(fullT - mapT) * pxScale);
+        inR = (int)((float)(fullR - mapR) * pxScale);
+        inB = (int)((float)(fullB - mapB) * pxScale);
+        if (inL + inR < view.w && inT + inB < view.h) {
+            view.x += inL;
+            view.y += inT;
+            view.w -= inL + inR;
+            view.h -= inT + inB;
+        }
+    }
+    lv_drawEventFlashAt(cx, cy, (float)(zoomFactor * TILE_SIZE_X) * scale, &view);
+}
+
+/* The slot of the tank drawn at a point of the window, or -1 for none. The
+   point is in points, as the mouse is. The test is against where the last
+   blit put each tank's picture (lv_tank_pick.h): a tank the view does not
+   draw is not in that list, and a dead one is passed over. */
+int lv_drawTankAtPoint(float xPoints, float yPoints) {
+    LogViewerState *lv = lv_screenGetState();
+    LvTankPickBox boxes[MAX_TANKS];
+    float scale, tilePx, pxScale, px, py;
+    int i, found;
+
+    if (!s_blitKnown || lv == NULL || s_tankBarCount == 0) return -1;
+    if (s_blitSrc.w <= 0.0f || s_blitDst.w <= 0.0f) return -1;
+    pxScale = lvDrawPixelScale();
+    px = xPoints * pxScale;
+    py = yPoints * pxScale;
+    if (px < s_blitDst.x || py < s_blitDst.y ||
+        px >= s_blitDst.x + s_blitDst.w || py >= s_blitDst.y + s_blitDst.h) {
+        return -1;
+    }
+    scale = s_blitDst.w / s_blitSrc.w;
+    tilePx = (float)TILE_SIZE_X * scale;
+    lv_clientMutexWaitFor();
+    for (i = 0; i < s_tankBarCount; i++) {
+        BYTE slot = s_tankBarPos[i].slot;
+        boxes[i].x = s_blitDst.x + ((float)s_tankBarPos[i].x - s_blitSrc.x) * scale;
+        boxes[i].y = s_blitDst.y + ((float)s_tankBarPos[i].y - s_blitSrc.y) * scale;
+        boxes[i].slot = slot;
+        boxes[i].pickable = (slot < MAX_TANKS) && lv->gameViewHud[slot].alive &&
+                            lv_playersIsInUse(slot) == TRUE;
+    }
+    lv_clientMutexRelease();
+    found = lvTankPick(boxes, s_tankBarCount, px, py, tilePx, pxScale);
+    return (found >= 0) ? boxes[found].slot : -1;
+}
+
 /*********************************************************
 *NAME:          lv_drawBlitGameTexture
 *PURPOSE:
@@ -1770,6 +2860,35 @@ SDL_Texture* lv_drawGetGameTexture(void) {
  * mapview.c's MapViewCtx. */
 SDL_Texture* lv_drawGetTilesTexture(void) {
     return textureTiles;
+}
+
+/* The strip of grey status shapes built beside the atlas (buildHudShapes).
+ * NULL until the setup has run and when the strip could not be made. */
+SDL_Texture* lv_drawGetHudShapesTexture(void) {
+    return textureHudShapes;
+}
+
+/* The game's background picture, the one the game client draws its status
+ * column from. Loaded from data/background.bmp beside the program the first
+ * time it is asked for. NULL before the renderer exists and when the file
+ * is not there; the load is tried once. */
+SDL_Texture* lv_drawGetStatusBackgroundTexture(void) {
+    if (textureStatusBackground == NULL && !statusBackgroundTried && sdlRenderer != NULL) {
+        const char *basePath = SDL_GetBasePath();
+        char path[1024];
+        statusBackgroundTried = true;
+        if (basePath != NULL) {
+            SDL_snprintf(path, sizeof(path), "%sdata/background.bmp", basePath);
+            textureStatusBackground = sdlLoadBmpAsTexture(sdlRenderer, path);
+        }
+        if (textureStatusBackground == NULL) {
+            textureStatusBackground = sdlLoadBmpAsTexture(sdlRenderer, "data/background.bmp");
+        }
+        if (textureStatusBackground != NULL) {
+            SDL_SetTextureScaleMode(textureStatusBackground, SDL_SCALEMODE_NEAREST);
+        }
+    }
+    return textureStatusBackground;
 }
 
 /* Atlas is always built at scale 1 (see buildTileAtlas()) — the blit-time

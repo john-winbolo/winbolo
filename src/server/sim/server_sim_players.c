@@ -91,6 +91,16 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     /* Nobody arrives mid-order: a seat starts with no shells counted toward
      * a three-shot order. */
     serverSimShotOrderClear(sim, playerNum);
+    serverSimKillCreditForget(sim, playerNum);
+    /* The seat's lag-compensation records still hold where the last
+     * occupant's tank and builder were: nothing writes to them while the
+     * seat is empty. A player's shell tests a tank where it was on the
+     * shooter's screen, so left in place those frames would be tested as
+     * this player's tank until the tick had written over them. Erased, the
+     * records say "nothing that old" and the shell test uses where the tank
+     * and the builder are now. */
+    posHistoryInit(&sim->posHistory[playerNum]);
+    posHistoryInit(&sim->lgmPosHistory[playerNum]);
 
     sim->playerConnected[playerNum] = TRUE;
     sim->hadPlayersEver = TRUE;
@@ -481,6 +491,9 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     /* The shells this slot had in flight toward a three-shot order go with
      * it, so whoever sits here next starts its count from nothing. */
     serverSimShotOrderClear(sim, playerNum);
+    /* And the hits it dealt and took, so whoever sits here next is not
+     * credited with a drowning they had no part in. */
+    serverSimKillCreditForget(sim, playerNum);
 
     /* Post-game stats: a mid-round leaver is dropped from the round summary as
      * if never present. Zero this slot's accumulator row, clear every other

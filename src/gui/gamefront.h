@@ -34,6 +34,7 @@
 #include "global.h"
 #include "client_enums.h"  /* aiType, gameType */
 #include "server_sim.h"
+#include "server_text.h"   /* SERVER_NAME_LEN / SERVER_DESC_LEN */
 #include "input.h"
 #include "winbolo.h"
 #include "visibility_presets.h"  /* VisibilitySettings / VisibilityPreset */
@@ -41,10 +42,10 @@
 
 
 /* Default keys — SDL_Scancode values (USB HID page 07) */
-#define DEFAULT_FORWARD      8    /* SDL_SCANCODE_E */
-#define DEFAULT_BACKWARD     7    /* SDL_SCANCODE_D */
-#define DEFAULT_LEFT         22   /* SDL_SCANCODE_S */
-#define DEFAULT_RIGHT        9    /* SDL_SCANCODE_F */
+#define DEFAULT_FORWARD      26   /* SDL_SCANCODE_W */
+#define DEFAULT_BACKWARD     22   /* SDL_SCANCODE_S */
+#define DEFAULT_LEFT         4    /* SDL_SCANCODE_A */
+#define DEFAULT_RIGHT        7    /* SDL_SCANCODE_D */
 #define DEFAULT_SHOOT        44   /* SDL_SCANCODE_SPACE */
 #define DEFAULT_LAY_MINE     225  /* SDL_SCANCODE_LSHIFT */
 
@@ -95,7 +96,7 @@
 #define DEFAULT_SCROLL_PILLVIEW     10   /* SDL_SCANCODE_G */
 
 /* Voice — both bound to nothing else, and both under the left hand. Q sits
-   beside the movement keys (E/D/S/F) because push to talk is held while
+   beside the movement keys (W/A/S/D) because push to talk is held while
    driving; Z is a corner away because the mute toggle is pressed once and
    wants to be hard to hit by accident. */
 #define DEFAULT_PUSHTOTALK   20   /* SDL_SCANCODE_Q */
@@ -1138,6 +1139,10 @@ extern char           gameFrontHostingScriptUploadDir[FILENAME_MAX];
 extern int            gameFrontHostingScriptUploadMaxFiles;   /* 1-255, default 32 */
 extern int            gameFrontHostingScriptUploadMaxStorage; /* MB, 1-4095, default 64 */
 extern int            gameFrontHostingMaxSpec;         /* 1-32,  default 16 */
+extern int            gameFrontHostingSpecDelay;       /* seconds, 0-600, default 30 */
+                              /* How far behind the game spectators watch;
+                               * 0 = live. Reaches the server as
+                               * ServerInstanceConfig.specDelaySeconds. */
 extern int            gameFrontHostingUploadPolicy;    /* default ALLOW (0) */
 extern int            gameFrontHostingUploadMaxFiles;  /* 1-255, default 64 */
 extern int            gameFrontHostingUploadMaxStorage;/* MB, 1-4095, default 8 */
@@ -1160,11 +1165,26 @@ extern int            gameFrontHostingVoiceMode;       /* default ON (0) */
                                * clients send it. Holds a ServerVoiceMode.
                                * serverVoiceProximity is not implemented and
                                * forwards the same as serverVoiceOn. */
+extern char           gameFrontHostingServerName[SERVER_NAME_LEN];
+                              /* What the game finder shows for a game hosted
+                               * from here, in place of the host's address;
+                               * "" = the address. Sanitised, at most 32
+                               * bytes (SERVER_NAME_MAX). */
+extern char           gameFrontHostingServerDesc[SERVER_DESC_LEN];
+                              /* The longer description shown beside it;
+                               * "" = none. At most 200 bytes
+                               * (SERVER_DESC_MAX). */
+extern char           gameFrontLobbyServerName[SERVER_NAME_LEN];
+                              /* The name of the server the lobby is for: the
+                               * host's own name when hosting, else the name
+                               * the server's reply to the join's pre-flight
+                               * info request carried. "" when it has none. */
 
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
 void gameFrontSetHostingScripts(bool allow);
 void gameFrontSetHostingMaxSpec(int maxSpec);
+void gameFrontSetHostingSpecDelay(int seconds);
 void gameFrontSetHostingUploadPolicy(int policy);
 void gameFrontSetHostingUploadMaxFiles(int maxFiles);
 void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
@@ -1179,6 +1199,10 @@ void gameFrontSetHostingLogDir(const char *dir);
 void gameFrontSetHostingScenarioDir(const char *dir);
 void gameFrontSetHostingServeReplays(bool serve);
 void gameFrontSetHostingVoiceMode(int mode);
+/* Sanitise (serverTextSanitize), store and persist the hosting server name /
+ * description to [HOSTING] Server Name / Server Description. */
+void gameFrontSetHostingServerName(const char *name);
+void gameFrontSetHostingServerDesc(const char *desc);
 
 /* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
  * Read by gameFrontGetPrefs and pushed onto the sim with
@@ -1262,5 +1286,26 @@ void gameFrontRememberVisibility(const VisibilitySettings *v, bool saveCustom);
 void gameFrontRememberGameType(gameType gt);
 void gameFrontRememberAiPolicy(aiType ai);
 void gameFrontRememberHiddenMines(bool hm);
+
+/* The kind of network this device's traffic goes out on. Hosting an
+ * Internet game on mobile data (GAMEFRONT_NET_PATH_CELLULAR) asks the host
+ * first, since other players can rarely reach a device there; the server
+ * starts only if the host says yes. A platform that can tell installs a
+ * query once at startup with gameFrontSetNetPathQuery (iOS reads
+ * NWPathMonitor; Android can read ConnectivityManager). With no query
+ * installed, as on the desktop, the answer is GAMEFRONT_NET_PATH_UNKNOWN,
+ * which asks nothing. The query is called on the main thread and must
+ * return at once, so a platform answers from a value it keeps up to date. */
+typedef enum {
+  GAMEFRONT_NET_PATH_UNKNOWN = 0,
+  GAMEFRONT_NET_PATH_WIFI,
+  GAMEFRONT_NET_PATH_WIRED,
+  GAMEFRONT_NET_PATH_CELLULAR
+} GameFrontNetPath;
+
+typedef GameFrontNetPath (*GameFrontNetPathQuery)(void);
+
+void gameFrontSetNetPathQuery(GameFrontNetPathQuery query);
+GameFrontNetPath gameFrontNetPath(void);
 
 #endif

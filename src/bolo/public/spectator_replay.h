@@ -63,7 +63,7 @@ int specReplayTranslateKeyframe(const BYTE *payload, int payloadLen,
 
 /* Translate a ring event-tick payload (concatenated [type][u16 BE len][body]
    events, or empty) into LOG_* bytes: empty -> [LOG_NOEVENTS][1]; else
-   [LOG_EVENT][count] (count < LOG_SIZE_LONG_DIFF) or [LOG_EVENT_LONG][htons count]
+   [LOG_EVENT][count] (count < LOG_SIZE_LONG_DIFF) or [LOG_EVENT_LONG][LE16 count]
    followed by the payload verbatim. Returns bytes written, or -1 on malformed
    framing / overflow. */
 int specReplayTranslateEvents(const BYTE *payload, int payloadLen,

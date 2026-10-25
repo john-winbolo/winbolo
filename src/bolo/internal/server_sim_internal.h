@@ -39,6 +39,7 @@
 #include "scenario_defs.h"  /* ScenarioPolicy — the vtable pointer below */
 #include "scenario_details.h" /* SCN_DETAILS_MAX — the map script's details */
 #include "scenario_settings.h" /* SCN_SETTINGS_BLOB_MAX — its settings */
+#include "server_text.h"    /* SERVER_NAME_LEN / SERVER_DESC_LEN — the finder text below */
 
 /* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
  * shared accumulator/timeline types, defined in round_stats.h (included above)
@@ -147,6 +148,16 @@ typedef struct {
     BYTE     armMx, armMy;
     uint32_t armFireTick;
 } ShotOrderRing;
+
+/* The last hit a tank took this life from a tank it is not allied with,
+ * which the kill_credit question is handed. Observation only: nothing in
+ * the sim reads it, and a death credits nobody new unless a script answers.
+ * Zeroed with the three-shot log above, and for the victim at each death. */
+typedef struct {
+    bool     set;                     /* false: no such hit this life */
+    BYTE     by;                      /* the seat whose shell or mine it was */
+    uint32_t at;                      /* sim->tick of the hit */
+} KillCreditHit;
 
 /* One roster change waiting its turn. A spawn carries the whole payload
  * because the seat, the brain and the init table are all read when it
@@ -335,6 +346,10 @@ struct ServerSim {
      * sat in it before. */
     ShotOrderRing   shotOrder[MAX_TANKS];
 
+    /* Each seat's last hit from a tank not allied with it, for the
+     * kill_credit question. Cleared where shotOrder is and at each death. */
+    KillCreditHit   lastEnemyHit[MAX_TANKS];
+
     /* Per-bot brain selection as an index into brainList. 0xFF means
      * "use the global botBrainPath" (the CLI-configured default). The
      * lobby AiConfig dropdown writes here via
@@ -470,8 +485,8 @@ struct ServerSim {
                                     * this one did. */
     bool     modsOff;              /* the round composes none of the scripts
                                     * on the pick list, mods and picked
-                                    * scenarios alike; the map's own script
-                                    * still plays. Stored in the negative
+                                    * scenarios alike, and not the map's own
+                                    * script either. Stored in the negative
                                     * sense for the same reason as
                                     * smartPingsOff above. The pick list is
                                     * left alone, so this is what a host turns
@@ -583,6 +598,20 @@ struct ServerSim {
      * that is what a map with no scenario template leaves. */
     bool         previousSeatsValid;
     BYTE         previousSeats[MAX_TANKS];
+
+    /* The host's script list as it stood when the preview started, and the
+     * place it was holding for the map's own row (scenarioMapScriptHeld
+     * below). A preview of a map with a scenario of its own takes the picked
+     * scenarios off the live list, because that is what Set Map would do and
+     * the preview shows what Set Map would give. Every preview decides from
+     * this list rather than from the one the last preview left, so browsing
+     * past a scripted map to a plain one gives the picks back, and Cancel
+     * puts this list back before the old map is decided again. Written with
+     * the map above and forgotten with it. */
+    ScnDirEntry  previousScripts[LOBBY_SCRIPT_LIST_MAX];
+    int          previousScriptCount;
+    bool         previousMapScriptHeld;
+    int          previousMapScriptHeldAt;
 
     /* The file the live map was read from, kept because a scenario is
      * discovered beside its .map and the display name is not enough to find
@@ -718,6 +747,13 @@ struct ServerSim {
     BYTE clientKnownPillY[MAX_TANKS][MAX_PILLS];
     bool clientKnownPillValid[MAX_TANKS];
 
+    /* Set when a pill moves while the slot cannot see it, so the square the
+     * slot holds for it is out of date. The tick that brings the pill back
+     * into one of the slot's view areas clears it and asks for a full sync,
+     * so the client is handed the new square at once rather than at the next
+     * FULL_SYNC_INTERVAL. Cleared by every seed. */
+    bool clientPillRevealDue[MAX_TANKS][MAX_PILLS];
+
     /* The pill squares as they stood when the current map was installed — the
      * counterpart of roundStartMapObj, and what a player joining a running
      * game is handed with the round-start terrain. */
@@ -841,6 +877,11 @@ struct ServerSim {
     bool         hasPassword;             /* Server has a password set */
     char         password[MAP_STR_SIZE];  /* Runtime join-handshake password text */
 
+    /* What the game finder shows for this server: the host's short name and
+     * longer description, already sanitised. "" when not given. */
+    char         serverName[SERVER_NAME_LEN];
+    char         serverDescription[SERVER_DESC_LEN];
+
     /* WBN team balance proposal */
     BalanceProposal balanceProposal;
 
@@ -963,6 +1004,19 @@ struct ServerSim {
        that knows whether the file was there and whether it loaded. An empty
        file name means the committed map brought nothing. */
     ScnDirEntry  scenarioMapScript;
+    /* Where the host's list had the map's own row when Mods/Scenario off
+       took it off, so the row goes back to that place when the box is on
+       again. The row is not on the list while the box is off, because the
+       script is not playing and the lobby draws no row for it; but the map
+       still brings it, and the place is the host's. Set by
+       serverSimHoldMapScript, used and forgotten by the next
+       serverSimSetMapScript. */
+    bool         scenarioMapScriptHeld;
+    int          scenarioMapScriptHeldAt;
+    /* True only while a lobby map commit is being decided, so the decision
+       knows the map is the host's newest choice. Set and cleared by
+       serverSimScenarioOnMapCommitted. */
+    bool         scenarioMapIsNewer;
     /* That script's details (scenario_details.h), which the lobby's details
        dialog asks for by the row's file name. Kept beside the row rather than
        in it: every other ScnDirEntry is a directory row, and the directory's
@@ -976,6 +1030,39 @@ struct ServerSim {
        forgotten by serverSimSetMapScript. */
     uint8_t      scenarioMapScriptSettings[SCN_SETTINGS_BLOB_MAX];
     uint16_t     scenarioMapScriptSettingsLen;
+
+    /* The scripts the operator named on the dedicated server's command line
+       (-mod, -mod-required, -mod-locked), in the order they were named, each
+       with the strength of the strongest flag that named it
+       (ServerModStrength). Rows out of the scenarios directory, resolved
+       once at startup, so putting them back on the list never reads the
+       directory again.
+
+       Not the list. scenarioScripts above is what the round plays; these
+       are what serverSimRecordOperatorMods puts back on it at every new
+       lobby, and what the CMD_SET_SCRIPT_LIST arm will not let a host take
+       off. Written only by serverSimAddOperatorMod.
+
+       operatorModsLocked is set by any -mod-locked, whether or not its name
+       resolved: the operator asked for a list nobody edits, and a typo in
+       one name is not a reason to open the list to every host. */
+    ScnDirEntry  operatorMods[LOBBY_SCRIPT_LIST_MAX];
+    uint8_t      operatorModStrength[LOBBY_SCRIPT_LIST_MAX];
+    int          operatorModCount;
+    bool         operatorModsLocked;
+    /* The values the operator's -setting gave the settings of those rows,
+       keyed like scriptSettingValues below and checked against the
+       declaration when recorded. Put back into scriptSettingValues with
+       the rows at every new lobby (serverSimRecordOperatorMods). Held
+       against the host only for a fixed row (serverSimOperatorModFixed):
+       a -mod row's value is a default the host may move for one game.
+       Written only by serverSimRecordOperatorSetting. */
+    struct {
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int32_t value;
+    }            operatorSettings[SERVER_OPERATOR_SETTINGS_MAX];
+    int          operatorSettingCount;
     /* The values the host chose for scripts' settings this session, keyed by
        the script's file name and the setting's id. A value equal to the
        declared default is not kept: a missing value is the default. Kept
@@ -1426,7 +1513,11 @@ bool serverSimWarmOneHeldSeat(ServerSim *sim);
 /* Forget every queued roster change. The seats a queue names belong to the
  * round it was filled in, so a round that ends takes its queue with it
  * rather than spawning into the next one. Called at the game starts in
- * server_sim_round.c, beside the fill reset. */
+ * server_sim_round.c, beside the fill reset, and from serverSimResetGameWorld
+ * at the return to the lobby (server_sim_round.c) and the empty reset
+ * (server_lifecycle.c). Every bot's init table goes
+ * back to the one it was added with here too, so a game.bot_init from the
+ * round that is ending does not reach the next. */
 void serverSimScenarioResetRoster(ServerSim *sim);
 
 /* Forget what the scenario's ticks have cost so far. Called at the game starts

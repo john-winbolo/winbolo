@@ -19,6 +19,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include <stdio.h>
+#include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
 static ImGuiContext* g_context = nullptr;
 static SDL_Window* g_window = nullptr;
@@ -116,6 +117,17 @@ void lv_imgui_context_newframe(void) {
     ImGui::SetCurrentContext(g_context);
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+
+    /* As the game's dialogs do (imgui_dialog_utils.h): on a window with
+       SDL_WINDOW_HIGH_PIXEL_DENSITY the renderer draws in pixels, and ImGui
+       lays out in points, so lv_imgui_context_render puts a point-space
+       logical presentation on while it draws, and the scale ImGui would
+       apply on top of that is set back to 1 here. Without the two, on a
+       Retina display every sidebar and panel was drawn one point per pixel,
+       at half size, into the window's top-left quarter. */
+    if (g_renderer != nullptr) {
+        dialogOverrideFramebufferScale(g_renderer);
+    }
     ImGui::NewFrame();
 
     /* Track display size changes for resize-relative window positioning */
@@ -136,7 +148,13 @@ void lv_imgui_context_render(void) {
     ImGui::SetCurrentContext(g_context);
     dialogDrawNavOutline();
     ImGui::Render();
+    /* Draw in points: see lv_imgui_context_newframe. The world blit before
+       this draws in pixels, so the presentation is put back afterwards. */
+    int                            savedW = 0, savedH = 0;
+    SDL_RendererLogicalPresentation savedMode = SDL_LOGICAL_PRESENTATION_DISABLED;
+    dialogSaveLogicalPresentation(g_renderer, &savedW, &savedH, &savedMode);
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), g_renderer);
+    dialogRestoreLogicalPresentation(g_renderer, savedW, savedH, savedMode);
 }
 
 int lv_imgui_context_handle_event(SDL_Event* event) {
@@ -156,10 +174,49 @@ int lv_imgui_context_get_resize_delta(float* dx, float* dy) {
     return (s_resize_delta.x != 0.0f || s_resize_delta.y != 0.0f) ? 1 : 0;
 }
 
+void lv_imgui_keep_window_on_screen(void) {
+    if (ImGui::IsWindowDocked()) {
+        return;
+    }
+    /* A panel in the right or bottom half of the window moves with that
+     * edge when the window is resized. */
+    float dx, dy;
+    if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
+        ImVec2 pos      = ImGui::GetWindowPos();
+        ImVec2 vp       = ImGui::GetMainViewport()->Size;
+        float  old_vp_x = vp.x - dx;
+        float  old_vp_y = vp.y - dy;
+        ImVec2 size     = ImGui::GetWindowSize();
+        if (pos.x + size.x * 0.5f > old_vp_x * 0.5f) {
+            ImGui::SetWindowPos(ImVec2(pos.x + dx, pos.y + dy));
+        } else if (pos.y + size.y * 0.5f > old_vp_y * 0.5f) {
+            ImGui::SetWindowPos(ImVec2(pos.x, pos.y + dy));
+        }
+    }
+    /* All of the panel in the window. */
+    {
+        ImVec2 pos     = ImGui::GetWindowPos();
+        ImVec2 size    = ImGui::GetWindowSize();
+        ImVec2 vp      = ImGui::GetMainViewport()->Size;
+        ImVec2 new_pos = pos;
+        if (new_pos.x + size.x > vp.x) new_pos.x = vp.x - size.x;
+        if (new_pos.y + size.y > vp.y) new_pos.y = vp.y - size.y;
+        if (new_pos.x < 0) new_pos.x = 0;
+        if (new_pos.y < 0) new_pos.y = 0;
+        if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
+    }
+}
+
 int lv_imgui_want_capture_mouse(void) {
     if (!g_context) return 0;
     ImGui::SetCurrentContext(g_context);
     return ImGui::GetIO().WantCaptureMouse ? 1 : 0;
+}
+
+int lv_imgui_want_text_input(void) {
+    if (!g_context) return 0;
+    ImGui::SetCurrentContext(g_context);
+    return ImGui::GetIO().WantTextInput ? 1 : 0;
 }
 
 void lv_imgui_set_gamepad_nav(int enabled) {
@@ -184,7 +241,14 @@ void lv_imgui_center_message(const char* text) {
     if (!g_context || text == nullptr) return;
     ImGui::SetCurrentContext(g_context);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImVec2 centre(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f);
+    lv_imgui_center_message_at(text, 0.0f, 0.0f, vp->Size.x, vp->Size.y);
+}
+
+void lv_imgui_center_message_at(const char* text, float x, float y, float w, float h) {
+    if (!g_context || text == nullptr) return;
+    ImGui::SetCurrentContext(g_context);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImVec2 centre(vp->Pos.x + x + w * 0.5f, vp->Pos.y + y + h * 0.5f);
     ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::Begin("##spec_overlay", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
@@ -195,7 +259,33 @@ void lv_imgui_center_message(const char* text) {
     ImGui::End();
 }
 
+void lv_imgui_load_progress(const char* stageText, int step, int steps, float fraction) {
+    if (!g_context || stageText == nullptr) return;
+    ImGui::SetCurrentContext(g_context);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImVec2 centre(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f);
+    ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::Begin("##load_progress", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::TextUnformatted(langGetText(STR_LV_LOAD_TITLE));
+    ImGui::Text("%s (%d/%d)", stageText, step, steps);
+    ImGui::ProgressBar(fraction, ImVec2(ImGui::GetFontSize() * 18.0f, 0.0f));
+    ImGui::End();
+}
+
 void lv_imgui_spectator_badge(int phase) {
+    if (!g_context) return;
+    ImGui::SetCurrentContext(g_context);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    /* Top-right corner, nudged below any menu bar so the game-view menu doesn't
+     * cover it. */
+    lv_imgui_spectator_badge_at(phase, vp->Size.x, 22.0f);
+}
+
+void lv_imgui_spectator_badge_at(int phase, float right, float top) {
     if (!g_context) return;
     const char* label;
     ImU32 col;
@@ -208,9 +298,8 @@ void lv_imgui_spectator_badge(int phase) {
     }
     ImGui::SetCurrentContext(g_context);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    /* Top-right corner, nudged below any menu bar so the game-view menu doesn't
-     * cover it. Pivot on the badge's top-right edge. */
-    ImVec2 pos(vp->Pos.x + vp->Size.x - 8.0f, vp->Pos.y + 30.0f);
+    /* 8 pixels in from the corner. Pivot on the badge's top-right edge. */
+    ImVec2 pos(vp->Pos.x + right - 8.0f, vp->Pos.y + top + 8.0f);
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
     ImGui::SetNextWindowBgAlpha(0.55f);
     ImGui::Begin("##spec_badge", nullptr,

@@ -52,18 +52,18 @@ request then adds the script bytes below; the tracker update does not.
 | 7 | 1 | u8 | type | `14` = INFO_RESPONSE |
 | 8 | 36 | char[36] | mapname | Pascal string (byte 0 = length, then chars) |
 | 44 | 4 | in_addr | gameid.serveraddress | network order; `0` ⇒ use UDP source address. Filled with the configured public IP (`inet_addr`) when a public address is set, else `0` |
-| 48 | 2 | u16 | gameid.serverport | host order (written raw, no `htons`) |
+| 48 | 2 | u16 | gameid.serverport | little-endian |
 | 50 | 2 | u16 | gameid._padding | explicit padding, `0` |
 | 52 | 4 | u32 | gameid.start_time | big-endian (`htonl`) — the one byte-swapped field |
 | 56 | 1 | u8 | gametype | 1/2/3 = open / tournament / strict |
 | 57 | 1 | u8 | allow_mines | bit `0x80` = mines on (`0x80` hidden, `0xC0` all visible) |
 | 58 | 1 | u8 | allow_AI | legacy; currently always `0` |
 | 59 | 1 | u8 | flags | bitfield, see below (was `spare1`) |
-| 60 | 4 | i32 | start_delay | host order; 50ths-of-a-second until game start |
-| 64 | 4 | i32 | time_limit | host order; game length in 50ths-of-a-second ticks |
-| 68 | 2 | u16 | num_players | host order; total connected (humans + bots) |
-| 70 | 2 | u16 | free_pills | host order; neutral pillboxes |
-| 72 | 2 | u16 | free_bases | host order; neutral bases |
+| 60 | 4 | i32 | start_delay | little-endian; 50ths-of-a-second until game start |
+| 64 | 4 | i32 | time_limit | little-endian; game length in 50ths-of-a-second ticks |
+| 68 | 2 | u16 | num_players | little-endian; total connected (humans + bots) |
+| 70 | 2 | u16 | free_pills | little-endian; neutral pillboxes |
+| 72 | 2 | u16 | free_bases | little-endian; neutral bases |
 | 74 | 1 | u8 | has_password | non-zero = password set |
 | 75 | 1 | u8 | spectator_count | `0` for now — spectators are future work (was `spare2`) |
 | 76 | 1 | u8 | num_humans | human players among `num_players` |
@@ -202,11 +202,56 @@ A reader drops the bytes whole if any length is over its cap or any field runs
 past the end of the packet, and reports no scripts, the same as a 113-byte
 reply. Bytes after the last mod are ignored, so a later field can go on the end.
 
+### Server name and description
+
+A server whose host set a name or a description (DS `-name` / `-desc`, or
+`[HOSTING] Server Name` / `Server Description` in `WinBolo.json`) writes them
+straight after the last mod:
+
+| Field | Size | Notes |
+|-------|-----:|-------|
+| `serverNameLen` | 1 | 0..32 (`INFO_SERVER_NAME_MAX`) |
+| `serverName` | `serverNameLen` | UTF-8, no NUL |
+| `serverDescLen` | 1 | 0..200 (`INFO_SERVER_DESC_MAX`) |
+| `serverDesc` | `serverDescLen` | UTF-8, no NUL |
+
+A server with neither writes nothing here, so its reply is byte for byte the
+reply of a server that predates the field. Both strings pass through
+`serverTextSanitize()` (`src/bolo/server_text.c`) on the way in and again when
+read: no control characters, no bidi or zero-width marks, one line, trimmed.
+
+The receive buffers on both sides are `MAX_UDPPACKET_SIZE` (1024) bytes, and
+Windows drops a larger datagram, so the whole reply never passes 1024 bytes.
+The script bytes can take 843, which leaves `INFO_REPLY_TAIL_CAP` − 843 = 68
+bytes for this section, length bytes included. The name always fits whole (a
+static assert in `netpacks.h` checks it). The description is cut to what is
+left: with a 32-byte name that is 68 − 1 − 32 − 1 = 34 bytes in the worst
+case. The cut never splits a character or a letter from its combining marks.
+With fewer than 3 bytes of room the section is left out. The dedicated server
+prints a note at startup when the description will not go whole beside the
+scripts the round starts with.
+
+Game finders from #449 on read the script bytes and ignore anything after the
+last mod, so they read a server with this section the same as one without it.
+Game finders from before #449 accept only a reply exactly the INFO_PACKET's
+size, so they already cannot read a current server, with or without this
+section.
+
+A current reader treats the section as optional. If it is missing, or the
+name's length is over its cap or runs past the end, the name and description
+stay empty. If only the description is bad, the name is kept. Either way the
+scripts are kept, and a row with no name shows the address, as it always did.
+Bytes after the description are ignored for a later field.
+
 ## Endianness
 
-The packet is predominantly host byte order (little-endian in practice on the
-servers that produce it) for the multi-byte numerics: `serverport`, `start_delay`,
-`time_limit`, `num_players`, `free_pills`, `free_bases`. The exceptions are
+The multi-byte numerics `serverport`, `start_delay`, `time_limit`,
+`num_players`, `free_pills` and `free_bases` are little-endian: they were once
+written in host byte order, and every server that produced the packet was
+little-endian, so that is what the tracker and every client expect. A sender
+writes them with `infoPacketEncode` and a reader takes them with
+`INFO_PACKET_GET16` / `INFO_PACKET_GET32` (`src/bolo/internal/netpacks.h`), so a
+big-endian host sends and reads the same bytes. The exceptions are
 `start_time` (big-endian, `htonl`) and `serveraddress` (network order, from
 `inet_addr`). Every field at offset 59 and beyond that this format adds is either a
 single byte or a char array, so none of the new fields need byte-swapping.

@@ -26,6 +26,7 @@
 
 #ifdef _WIN32
   #include <WinSock2.h>
+  #include <shellapi.h>   /* CommandLineToArgvW - -name / -desc as UTF-8 */
   #include <process.h>
   #define getpid _getpid
 #else
@@ -54,6 +55,7 @@
 #include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"
+#include "transport_udp_server_internal.h"  /* infoReplyServerDescRoom */
 #include "net_impair.h"   /* WB_ENABLE_NETIMPAIR master switch */
 #include "bot_manager.h"
 #include "brain_list.h"  /* BrainModes, brainListLoadModesForPath — -mode */
@@ -68,12 +70,13 @@
 #include "../common/prefs.h"
 #include "../headless/cmd_stdin.h"
 #include "server_console.h"
+#include "server_memreport.h"
+#include "server_args.h"        /* the -mod flags and -setting */
 #include "wire_limits.h"
 #include "../scenario/scenario_host.h"
 #include "../scenario/scenario_pack.h"
 #include "../scenario_io/scenario_package.h"
 #include "../scenario/scenario_validate.h"
-#include "scenario_settings.h"
 #include "cJSON.h"
 
 /* Constants previously from backend.h */
@@ -297,6 +300,12 @@ static bool consoleOpReloadScenario(char *msg, size_t msgLen) {
   return true;
 }
 
+/* mem / memdeep: the report reads the bots' lua_States, which only the tick
+   thread may touch, so the console only asks and the next tick answers. */
+static void consoleOpMemReport(bool deep) {
+  serverMemReportRequest(deep);
+}
+
 /* Positional, and the struct's own comment says why the newest entry goes
    last rather than beside a relative. */
 static const ServerConsoleOps serverConsoleOps = {
@@ -308,7 +317,8 @@ static const ServerConsoleOps serverConsoleOps = {
   consoleOpStatus,
   consoleOpKick,
   consoleOpSetHost,
-  consoleOpReloadScenario
+  consoleOpReloadScenario,
+  consoleOpMemReport
 };
 
 
@@ -535,6 +545,7 @@ static bool serverTickStep(void *ctx) {
     return false;
   }
   serverInstanceTick(serverSim);
+  serverMemReportPoll(serverSim);
   return true;
 }
 
@@ -596,6 +607,7 @@ static int SDLCALL serverAsapLoop(void *unused) {
       break;
     }
     serverInstanceTick(serverSim);
+    serverMemReportPoll(serverSim);
     ticks++;
     SDL_UnlockMutex(g_serverTickLock);
     /* The command loops (processKeys / processCmdStdin) and the shutdown
@@ -653,36 +665,74 @@ void printArgs() {
   fprintf(stderr, "                Can be used with -map (initial map) or alone (random first map).\n");
   fprintf(stderr, "                Requires lobby mode. Invalid maps are skipped at startup.\n");
   fprintf(stderr, "-randommap    - Generate a random procedural map instead of loading a file.\n");
-  fprintf(stderr, "                -randommap alone generates a fully random map each round.\n");
+  fprintf(stderr, "                -randommap alone picks one of the four older types (not Map\n");
+  fprintf(stderr, "                Maker) when the server starts and keeps it for every round,\n");
+  fprintf(stderr, "                with a new seed each round.\n");
   fprintf(stderr, "                -randommap tournament|natural|maze|fractal — specific generator type.\n");
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
+  fprintf(stderr, "                -randommap maker — a map in the style of a classic map\n");
+  fprintf(stderr, "                maker; the server picks one of the presets when it starts\n");
+  fprintf(stderr, "                and keeps it for every round, with a new seed each round.\n");
+  fprintf(stderr, "                -randommap <preset> — one Map Maker preset: berserkir,\n");
+  fprintf(stderr, "                sluggo-tournament, slugdeath, slugfest, sluggo-adventurous,\n");
+  fprintf(stderr, "                sluggo-symmetric, stoogefest, black-lightning, bl-islands,\n");
+  fprintf(stderr, "                deathhand, megawatt-tc, megawatt-islands, mosh-pit,\n");
+  fprintf(stderr, "                palpatine or chew-toy.\n");
   fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
+  fprintf(stderr, "-randommapsize <N> - Side in tiles of the square of land a random map\n");
+  fprintf(stderr, "                uses, from 24 to 215, or 0 for the whole map (the default).\n");
+  fprintf(stderr, "                Only with -randommap.\n");
   fprintf(stderr, "-moddir <Dir> - Directory of mods and scenarios this server offers on their\n");
   fprintf(stderr, "                own, independently of any map: .scenario packages and loose\n");
   fprintf(stderr, "                .lua scripts. Read on top of the mods that ship with the\n");
   fprintf(stderr, "                build, which are always offered. A directory that is not\n");
   fprintf(stderr, "                there means the server offers none of its own, which is not\n");
   fprintf(stderr, "                an error. -scenariodir is the old name for this argument.\n");
+  fprintf(stderr, "-mod <Names>  - Comma-separated mods or scenarios from -moddir (or the\n");
+  fprintf(stderr, "                shipped mods) to put on every game's script list. The\n");
+  fprintf(stderr, "                file name, with or without .scenario.lua. On by default:\n");
+  fprintf(stderr, "                the host may take one off for that game; the next lobby\n");
+  fprintf(stderr, "                has it again. May be given more than once.\n");
+  fprintf(stderr, "-mod-required <Names> - The same, but always on: the host cannot take\n");
+  fprintf(stderr, "                these off, and may add or take off any other mod. Also\n");
+  fprintf(stderr, "                locks the Mods/Scenario checkbox on.\n");
+  fprintf(stderr, "-mod-locked <Names> - The script list is exactly these, read-only, as\n");
+  fprintf(stderr, "                -lock mods plus the list. Cannot be given with -mod or\n");
+  fprintf(stderr, "                -mod-required: the server will not start. A name given\n");
+  fprintf(stderr, "                to both -mod and -mod-required keeps -mod-required. A\n");
+  fprintf(stderr, "                -mod scenario gives way to a map's own scenario; a required\n");
+  fprintf(stderr, "                or locked one replaces it. At most 10 scripts and one\n");
+  fprintf(stderr, "                scenario; -noscenarios ignores all three. A mod from any\n");
+  fprintf(stderr, "                of the three keeps the server out of ranked, which allows\n");
+  fprintf(stderr, "                no scripts. -setting gives these mods' settings values.\n");
   fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
   fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
   fprintf(stderr, "                has a script says which one was not loaded.\n");
   fprintf(stderr, "-setting [<File>:]<id>=<value> - Choose a value for one of a scenario\n");
   fprintf(stderr, "                script's own settings, as the lobby host would. File is the\n");
-  fprintf(stderr, "                script's file name and defaults to the map's own script.\n");
-  fprintf(stderr, "                Value is a number, true or false for a bool setting, or one\n");
-  fprintf(stderr, "                of the words of a choice setting (quote words with spaces).\n");
-  fprintf(stderr, "                May be given more than once.\n");
+  fprintf(stderr, "                script's name, with or without .scenario.lua, as -mod takes\n");
+  fprintf(stderr, "                it, and defaults to the map's own script. Value is a\n");
+  fprintf(stderr, "                number, true or false for a bool setting, or one of the\n");
+  fprintf(stderr, "                words of a choice setting (quote words with spaces). May be\n");
+  fprintf(stderr, "                given more than once. On a mod named by -mod the value is\n");
+  fprintf(stderr, "                every new lobby's default, and the host may change it for\n");
+  fprintf(stderr, "                that game. On a -mod-required or -mod-locked mod the value\n");
+  fprintf(stderr, "                is locked: the host cannot change it. Settings not given\n");
+  fprintf(stderr, "                stay the host's. Example:\n");
+  fprintf(stderr, "                -mod-required MacBoloRules -setting MacBoloRules:pushback=false\n");
   fprintf(stderr, "-allow-unsafe-scripts - Run scenario scripts with the full Lua standard\n");
   fprintf(stderr, "                library, no memory cap, no time limits and precompiled chunks\n");
   fprintf(stderr, "                accepted. Reaches uploaded maps' scripts and -validate too;\n");
   fprintf(stderr, "                -scriptuploads off still refuses uploads. A script a player\n");
   fprintf(stderr, "                sends runs its top level the moment it lands, before any host\n");
   fprintf(stderr, "                picks it. Only for trusted content.\n");
-  fprintf(stderr, "-validate <File> - Check the scenario script beside a map and exit without\n");
-  fprintf(stderr, "                starting a server. Each problem is printed as\n");
-  fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
-  fprintf(stderr, "                playable, 1 when it is not.\n");
+  fprintf(stderr, "-validate <File> - Check the scenario script beside a map, or a .lua\n");
+  fprintf(stderr, "                script named directly, and exit without starting a\n");
+  fprintf(stderr, "                server. Each problem is printed as file:line: key:\n");
+  fprintf(stderr, "                message, and each warning (a missing author or updated\n");
+  fprintf(stderr, "                time, say) as file: warning: key: message. Exits 0 when\n");
+  fprintf(stderr, "                the script is playable, warnings or not, 1 when not.\n");
   fprintf(stderr, "-pack <File>  - Write the scenario script beside a map into the map file\n");
   fprintf(stderr, "                itself and exit without starting a server. The manifest\n");
   fprintf(stderr, "                comes from the script's own scenario table, and a\n");
@@ -702,6 +752,20 @@ void printArgs() {
   fprintf(stderr, "-limit <L>    - Specifies the game time limit (in minutes)\n");
   fprintf(stderr, "                \"-1\" for no time limit (none if not specified)\n");
   fprintf(stderr, "-password <P> - Game Password (none if not specified)\n");
+  fprintf(stderr, "-name <N>     - Short server name the game finder shows instead of this\n");
+  fprintf(stderr, "                server's address: up to 32 bytes of UTF-8, which is 32\n");
+  fprintf(stderr, "                plain letters and fewer accented ones. Quote it if it has\n");
+  fprintf(stderr, "                spaces. Without -name, [HOSTING] \"Server Name\" in the\n");
+  fprintf(stderr, "                WinBolo.json in the working directory; -name \"\" sets no\n");
+  fprintf(stderr, "                name and skips that file.\n");
+  fprintf(stderr, "-desc <D>     - Longer server description the game finder shows beside the\n");
+  fprintf(stderr, "                name: up to 200 bytes of UTF-8, less when a long scenario\n");
+  fprintf(stderr, "                and many mods fill the reply. With -nolobby a note at\n");
+  fprintf(stderr, "                startup says so; scripts picked later in a lobby are not\n");
+  fprintf(stderr, "                checked. Without -desc, [HOSTING] \"Server Description\" in\n");
+  fprintf(stderr, "                the same file; -desc \"\" sets none and skips it. Control\n");
+  fprintf(stderr, "                characters are removed from both. On Windows both are read\n");
+  fprintf(stderr, "                from the Unicode command line, so any letters work.\n");
 
   fprintf(stderr, "\nLobby & host:\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
@@ -898,6 +962,19 @@ void printArgs() {
   fprintf(stderr, "                for it, so their post-game recap plays. Omitted, the server\n");
   fprintf(stderr, "                serves unless it is registered with winbolo.net. Needs -log.\n");
   fprintf(stderr, "-statusFile   - Save list of unlocked players to a file.\n");
+  fprintf(stderr, "-memreport [M] - Turn on the timed memory report: one line every M minutes\n");
+  fprintf(stderr, "                (default %d; decimals allowed; 0 keeps it off). Off when\n", SERVER_MEMREPORT_DEFAULT_MINUTES);
+  fprintf(stderr, "                not given. The line gives the process's RSS / private /\n");
+  fprintf(stderr, "                virtual memory, uptime, game tick, rounds, each bot's Lua\n");
+  fprintf(stderr, "                heap and its growth since the last report, and the world's\n");
+  fprintf(stderr, "                object list sizes. The console commands mem and memdeep\n");
+  fprintf(stderr, "                write one at once, with or without this flag.\n");
+  fprintf(stderr, "-memreportdeep - Every timed memory report also walks each bot's Lua\n");
+  fprintf(stderr, "                tables and lists the biggest ones. Turns the timed report\n");
+  fprintf(stderr, "                on (every %d minutes unless -memreport gives M). Slow (it\n", SERVER_MEMREPORT_DEFAULT_MINUTES);
+  fprintf(stderr, "                pauses the game while it walks); for chasing a leak. The\n");
+  fprintf(stderr, "                walk allocates inside each bot's Lua state, so do not use\n");
+  fprintf(stderr, "                it in seeded repro runs.\n");
   fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
   fprintf(stderr, "                Seeds the C sim stream only; see -brain-lua-seed for Lua.\n");
   fprintf(stderr, "-brain-tier <1..10> - Pin every brain's capacity tier instead of deriving it\n");
@@ -951,113 +1028,19 @@ void processTrackerArg(char *argItem, char *trackerAddr, unsigned short *tracker
 
 #define ARG_NOT_FOUND -1
 
-/* One -setting argument, "[file:]id=value", chosen on sim as the lobby
- * host's CMD_SET_SCRIPT_SETTING would choose it. defaultFile is the map's own
- * script, used when the argument names no file. The value is read against
- * the setting's declaration: a number for any type, true or false (or on or
- * off) for a bool, one of the words for a choice. Says on the console what
- * it did, or why it did nothing. */
+/* Where serverArgsApplySetting sends what it did: the console, as the
+   rest of startup says what it loaded. */
+static void serverSettingArgSay(void *ctx, const char *line) {
+  serverMessageConsoleMessage((ServerSim *)ctx, (char *)line);
+}
+
+/* One -setting argument, "[file:]id=value" (serverArgsApplySetting).
+ * defaultFile is the map's own script, used when the argument names no
+ * file. Says on the console what it did, or why it did nothing. */
 static void serverApplySettingArg(ServerSim *sim, const char *arg,
                                   const char *defaultFile) {
-  char              file[LOBBY_SCENARIO_FILE_LEN];
-  char              id[SCN_SETTING_ID_LEN];
-  char              line[512];
-  const char       *eq;
-  const char       *colon;
-  const char       *word;
-  uint8_t           blob[SCN_SETTINGS_BLOB_MAX];
-  ScnSetting        rows[SCN_SETTINGS_MAX];
-  const ScnSetting *decl = NULL;
-  int               len;
-  int               n = 0;
-  int32_t           value = 0;
-  int32_t           got = 0;
-  char             *end = NULL;
-  long              num;
-  size_t            idLen;
-
-  eq = strchr(arg, '=');
-  if (eq == NULL) {
-    snprintf(line, sizeof(line), "-setting %s: wanted [file:]id=value", arg);
-    serverMessageConsoleMessage(sim, line);
-    return;
-  }
-  colon = memchr(arg, ':', (size_t)(eq - arg));
-  if (colon != NULL) {
-    size_t fl = (size_t)(colon - arg);
-    if (fl == 0 || fl >= sizeof(file)) {
-      snprintf(line, sizeof(line), "-setting %s: bad file name", arg);
-      serverMessageConsoleMessage(sim, line);
-      return;
-    }
-    memcpy(file, arg, fl);
-    file[fl] = '\0';
-    arg = colon + 1;
-  } else {
-    if (defaultFile == NULL || defaultFile[0] == '\0') {
-      snprintf(line, sizeof(line),
-               "-setting %s: the map has no script, so name the file", arg);
-      serverMessageConsoleMessage(sim, line);
-      return;
-    }
-    snprintf(file, sizeof(file), "%s", defaultFile);
-  }
-  idLen = (size_t)(eq - arg);
-  if (idLen == 0 || idLen >= sizeof(id)) {
-    snprintf(line, sizeof(line), "-setting %s: bad setting id", arg);
-    serverMessageConsoleMessage(sim, line);
-    return;
-  }
-  memcpy(id, arg, idLen);
-  id[idLen] = '\0';
-  word = eq + 1;
-
-  len = serverSimScenarioSettingsDecl(sim, file, blob, sizeof(blob));
-  if (len > 0) {
-    n = scnSettingsBlobRead(blob, (size_t)len, rows, SCN_SETTINGS_MAX);
-  }
-  if (n > 0) {
-    decl = scnSettingFind(rows, n, id);
-  }
-  if (decl == NULL) {
-    snprintf(line, sizeof(line), "-setting: %s declares no setting '%s'",
-             file, id);
-    serverMessageConsoleMessage(sim, line);
-    return;
-  }
-  /* A choice's own words come first, so a choice whose words are numerals
-     is set by word, not read as an index. */
-  num = strtol(word, &end, 10);
-  if (decl->type == SCN_SETTING_TYPE_CHOICE &&
-      scnSettingChoiceIndex(decl, word) >= 0) {
-    value = scnSettingChoiceIndex(decl, word);
-  } else if (word[0] != '\0' && end != NULL && *end == '\0') {
-    value = (int32_t)num;
-  } else if (decl->type == SCN_SETTING_TYPE_BOOL &&
-             (strcmp(word, "true") == 0 || strcmp(word, "on") == 0)) {
-    value = 1;
-  } else if (decl->type == SCN_SETTING_TYPE_BOOL &&
-             (strcmp(word, "false") == 0 || strcmp(word, "off") == 0)) {
-    value = 0;
-  } else {
-    snprintf(line, sizeof(line), "-setting: '%s' is not a value of %s:%s",
-             word, file, id);
-    serverMessageConsoleMessage(sim, line);
-    return;
-  }
-  if (!serverSimSetScriptSetting(sim, file, id, value, &got)) {
-    snprintf(line, sizeof(line), "-setting: %s:%s refused %d", file, id,
-             (int)value);
-    serverMessageConsoleMessage(sim, line);
-    return;
-  }
-  if (decl->type == SCN_SETTING_TYPE_CHOICE) {
-    snprintf(line, sizeof(line), "Setting %s:%s = %s", file, id,
-             scnSettingChoiceText(decl, got));
-  } else {
-    snprintf(line, sizeof(line), "Setting %s:%s = %d", file, id, (int)got);
-  }
-  serverMessageConsoleMessage(sim, line);
+  (void)serverArgsApplySetting(sim, arg, defaultFile, serverSettingArgSay,
+                               sim);
 }
 
 /* Whether arg is the flag "-<name>", with argExist's rule: case does not
@@ -1077,17 +1060,49 @@ static bool argIsFlag(const char *arg, const char *name) {
   return (*arg == '\0' && *name == '\0') ? TRUE : FALSE;
 }
 
+/* Where serverArgsApplyMods sends its warnings and notes: stderr,
+   the way an unknown -lock name is warned about. */
+static void serverModArgsSay(void *ctx, const char *line) {
+  (void)ctx;
+  fprintf(stderr, "%s\n", line);
+}
+
+/* The rows -mod, -mod-required and -mod-locked recorded, one console line
+ * each, so an operator reading the log sees the list every game will open
+ * with. */
+static void serverSayOperatorMods(ServerSim *sim) {
+  char line[SERVER_SCENARIO_FILE_LEN + 64];
+  int  n = serverSimGetOperatorModCount(sim);
+  int  i;
+
+  for (i = 0; i < n; i++) {
+    const char *kind;
+
+    if (serverSimGetOperatorModsLocked(sim)) {
+      kind = "locked";
+    } else if (serverSimGetOperatorModStrength(sim, i) ==
+               SERVER_MOD_REQUIRED) {
+      kind = "required";
+    } else {
+      kind = "on by default";
+    }
+    snprintf(line, sizeof(line), "Mod %s: %s", kind,
+             serverSimGetOperatorModFile(sim, i));
+    serverMessageConsoleMessage(sim, line);
+  }
+}
+
+/* The index of the value after the flag "-<argname>", or ARG_NOT_FOUND.
+   Case does not matter, as in argExist, so a flag argExist finds also has
+   its value found here. */
 int findArg(int numArgs, char **argv, const char *argname) {
   int returnValue; /* Value to return */
-  char temp[255];
   int count;
 
-  snprintf(temp, sizeof(temp), "-%s", argname);
-  strlower(temp);
   returnValue = ARG_NOT_FOUND;
   count = 0;
   while (returnValue == -1 && count < numArgs) {
-    if (strcmp((char *) argv[count], temp) == 0) {
+    if (argIsFlag((char *) argv[count], argname)) {
       returnValue = count+1;
     }
     count++;
@@ -1101,6 +1116,39 @@ int findArg(int numArgs, char **argv, const char *argname) {
   return returnValue;
 }
 
+
+#ifdef _WIN32
+/* argv on Windows is in the ANSI code page, so most letters outside it are
+ * lost (an accented letter arrives as one byte the sanitiser drops). -name
+ * and -desc read their value again from the Unicode command line as UTF-8.
+ * argNum is an argv index; the wide parse must give the same count, else
+ * the indices may not line up. The value is cut to outSize - 1 bytes,
+ * which the sanitiser later trims to a whole character. False when the
+ * wide value can't be had, and the caller keeps argv's. */
+static bool serverArgUtf8(int argc, int argNum, char *out, size_t outSize) {
+  int     wargc = 0;
+  LPWSTR *wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+  bool    ok = false;
+
+  if (wargv == NULL) {
+    return false;
+  }
+  if (wargc == argc && argNum >= 0 && argNum < wargc && outSize > 0) {
+    int need = WideCharToMultiByte(CP_UTF8, 0, wargv[argNum], -1, NULL, 0,
+                                   NULL, NULL);
+    char *utf8 = need > 0 ? (char *)malloc((size_t)need) : NULL;
+    if (utf8 != NULL &&
+        WideCharToMultiByte(CP_UTF8, 0, wargv[argNum], -1, utf8, need,
+                            NULL, NULL) == need) {
+      snprintf(out, outSize, "%s", utf8);
+      ok = true;
+    }
+    free(utf8);
+  }
+  LocalFree(wargv);
+  return ok;
+}
+#endif
 
 bool argExist(int numArgs, char **argv, char *argname) {
   bool returnValue; /* Value to return */
@@ -1153,7 +1201,9 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
       strncpy(lower, arg1, sizeof(lower) - 1);
       lower[sizeof(lower) - 1] = '\0';
       strlower(lower);
-      if (strcmp(lower, "tournament") == 0 || strcmp(lower, "natural") == 0 || strcmp(lower, "maze") == 0) {
+      if (strcmp(lower, "tournament") == 0 || strcmp(lower, "natural") == 0 ||
+          strcmp(lower, "maze") == 0 || strcmp(lower, "fractal") == 0 ||
+          strcmp(lower, "maker") == 0 || mapGenPresetFromKey(lower) >= 0) {
         /* Type specified — check for seed after it */
         snprintf(mapName, 2048, "-randommap %s", lower);
         if (argNum + 1 < numArgs && argv[argNum + 1][0] != '-') {
@@ -1523,10 +1573,12 @@ static const char *overviewWindowArgWord(OverviewWindow window) {
    not. Nothing else in the server is running by the time this is called, and
    nothing it does starts anything. */
 static int validateMapAndReport(char *mapPath) {
-  ServerSim *sim;
+  ServerSim *sim = NULL;
   ScnValidateResult *result;
   char script[SCN_SCRIPT_PATH_MAX];
   bool ok;
+  bool direct;
+  size_t pathLen;
   uint16_t i;
 
 #ifdef USING_SDL
@@ -1540,16 +1592,26 @@ static int validateMapAndReport(char *mapPath) {
      it. */
   setWriteToDebugFileStream(-1);
 
+  /* A .lua is a script named directly, a mod out of a scripts directory
+     say, and is checked as that directory checks it: with no map, so the
+     one check that reads a map is left out. Anything else is a map. */
+  pathLen = strlen(mapPath);
+  direct = pathLen > 4 && SDL_strcasecmp(mapPath + pathLen - 4, ".lua") == 0;
+
   /* What the issues are printed against. A path with no room for a script
      name is reported against the map's own name. */
-  if (scnScriptPath(mapPath, script, sizeof(script)) == FALSE) {
+  if (direct) {
+    snprintf(script, sizeof(script), "%s", mapPath);
+  } else if (scnScriptPath(mapPath, script, sizeof(script)) == FALSE) {
     snprintf(script, sizeof(script), "%s", mapPath);
   }
 
-  sim = serverSimCreate(mapPath, gameOpen, FALSE, 0, -1);
-  if (sim == NULL) {
-    fprintf(stderr, "%s: the map could not be loaded\n", mapPath);
-    return 1;
+  if (!direct) {
+    sim = serverSimCreate(mapPath, gameOpen, FALSE, 0, -1);
+    if (sim == NULL) {
+      fprintf(stderr, "%s: the map could not be loaded\n", mapPath);
+      return 1;
+    }
   }
 
   /* On the heap rather than the stack: a result carries the whole manifest and
@@ -1557,11 +1619,12 @@ static int validateMapAndReport(char *mapPath) {
   result = (ScnValidateResult *)malloc(sizeof(*result));
   if (result == NULL) {
     fprintf(stderr, "%s: out of memory reading the script\n", mapPath);
-    serverSimDestroy(sim);
+    if (sim != NULL) serverSimDestroy(sim);
     return 1;
   }
 
-  ok = scenarioValidateMap(sim, mapPath, result);
+  ok = direct ? scenarioValidateScript(NULL, mapPath, result)
+              : scenarioValidateMap(sim, mapPath, result);
 
   for (i = 0; i < result->count; i++) {
     const ScnValidateIssue *issue = &result->issues[i];
@@ -1573,8 +1636,16 @@ static int validateMapAndReport(char *mapPath) {
     }
   }
 
+  /* After the problems and apart from them: a warning stops nothing, so it
+     moves neither the summary below nor the exit code. */
+  for (i = 0; i < result->warnCount; i++) {
+    fprintf(stderr, "%s: warning: %s: %s\n", script, result->warnings[i].key,
+            result->warnings[i].message);
+  }
+
   if (result->haveManifest == FALSE && result->count == 0) {
-    fprintf(stderr, "%s: no scenario script beside it\n", mapPath);
+    fprintf(stderr, direct ? "%s: no such script\n"
+                           : "%s: no scenario script beside it\n", mapPath);
   } else if (ok == TRUE) {
     fprintf(stderr, "%s: no problems\n", script);
   } else if (result->dropped > 0) {
@@ -1585,8 +1656,15 @@ static int validateMapAndReport(char *mapPath) {
             (result->count == 1) ? "" : "s");
   }
 
+  /* A script named directly and nothing read from it is a path that names
+     no script, a typo say, and a check of a mod by its path must not pass
+     on one. A map with no script beside it is still a plain map, and 0. */
+  if (direct && result->haveManifest == FALSE && result->count == 0) {
+    ok = false;
+  }
+
   free(result);
-  serverSimDestroy(sim);
+  if (sim != NULL) serverSimDestroy(sim);
   return (ok == TRUE) ? 0 : 1;
 }
 
@@ -1769,6 +1847,26 @@ int main(int argc, char **argv) {
     exit(0);
   }
 
+  /* -mod-locked asks for a list nobody edits; -mod and -mod-required ask for
+     one a host edits around fixed rows. Both at once is a mistake in the
+     command line, not something to guess at, so the server does not start.
+     Checked here, before the sim, the sockets and the tracker are set up,
+     so there is nothing to close. Not under -noscenarios, which ignores all
+     three flags and says so further down. */
+  if (argExist(argc, argv, "noscenarios") != TRUE &&
+      serverArgsModConflict(argc, (const char *const *)argv)) {
+    fprintf(stderr, "%s\n", SERVER_MOD_ARGS_CONFLICT_TEXT);
+    exit(1);
+  }
+
+  /* -randommapsize sizes only a random map. With -map, -inbuilt or no
+     map at all it would be ignored, so say so and stop. */
+  if (argExist(argc, argv, "randommapsize") == TRUE &&
+      strncmp(mapName, "-randommap", 10) != 0) {
+    fprintf(stderr, "Error: -randommapsize works only with -randommap\n");
+    exit(1);
+  }
+
   /* Copy tracker settings to file-scope globals for the timer */
   sTrackerUse = trackerUse;
   if (trackerUse) {
@@ -1872,22 +1970,40 @@ int main(int argc, char **argv) {
     if (strcmp(typeStr, "seed") == 0) {
       /* "-randommap seed <seed>" — seed is in seedStr */
       cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
-      if (mapGenSeedToConfig(seedStr, &cfg)) {
-        hasFixedSeed = true;
+      if (!mapGenSeedToConfig(seedStr, &cfg)) {
+        fprintf(stderr, "Error: -randommap seed '%s' is not a valid map seed\n", seedStr);
+#ifdef USING_SDL
+        SDL_Quit();
+#endif
+        return 1;
       }
+      hasFixedSeed = true;
     } else if (typeStr[0] != '\0') {
       /* Type specified */
       int genType = MAPGEN_TOURNAMENT;
       if (strcmp(typeStr, "natural") == 0) genType = MAPGEN_NATURAL;
       else if (strcmp(typeStr, "maze") == 0) genType = MAPGEN_MAZE;
       else if (strcmp(typeStr, "fractal") == 0) genType = MAPGEN_FRACTAL;
+      else if (strcmp(typeStr, "maker") == 0) genType = MAPGEN_MAKER;
       cfg = mapGenDefaultConfig(genType);
+      if (genType == MAPGEN_MAKER) {
+        /* "maker" alone: the server picks one of the presets */
+        mapGenApplyPreset((int)bolo_rand_below((uint32_t)mapGenPresetCount()), &cfg);
+      } else if (mapGenPresetFromKey(typeStr) >= 0) {
+        mapGenApplyPreset(mapGenPresetFromKey(typeStr), &cfg);
+      }
 
       if (seedStr[0] != '\0') {
         /* Type + seed */
-        if (mapGenSeedToConfig(seedStr, &cfg)) {
-          hasFixedSeed = true;
+        if (!mapGenSeedToConfig(seedStr, &cfg)) {
+          fprintf(stderr, "Error: -randommap %s: '%s' is not a valid map seed\n",
+                  typeStr, seedStr);
+#ifdef USING_SDL
+          SDL_Quit();
+#endif
+          return 1;
         }
+        hasFixedSeed = true;
       }
     } else {
       /* Plain "-randommap" — fully random */
@@ -1900,6 +2016,33 @@ int main(int argc, char **argv) {
       cfg.bases = 16;
       cfg.pills = 16;
       cfg.starts = 16;
+    }
+
+    /* -randommapsize overrides the size from the preset or the seed */
+    int randomMapSize = -1;
+    {
+      /* argExist, not findArg, so that -randommapsize with no value
+         after it is an error too. */
+      if (argExist(argc, argv, "randommapsize") == TRUE) {
+        int sizeArg = findArg(argc, argv, "randommapsize");
+        const char *text = sizeArg != ARG_NOT_FOUND ? argv[sizeArg] : "";
+        char *end = NULL;
+        long v = strtol(text, &end, 10);
+        if (end == text || *end != '\0' ||
+            (v != MAPGEN_SIZE_FULL && (v < MAPGEN_SIZE_MIN || v > MAPGEN_SIZE_MAX))) {
+          fprintf(stderr, "Error: -randommapsize must be %d (the whole map) or from %d to %d, not '%s'\n",
+                  MAPGEN_SIZE_FULL, MAPGEN_SIZE_MIN, MAPGEN_SIZE_MAX, text);
+#ifdef USING_SDL
+          SDL_Quit();
+#endif
+          return 1;
+        }
+        randomMapSize = (int)v;
+      }
+    }
+    if (randomMapSize >= 0) {
+      cfg.size = randomMapSize;
+      mapGenClampConfig(&cfg);
     }
 
     /* Generate a random seed if none was provided */
@@ -2062,11 +2205,48 @@ int main(int argc, char **argv) {
   }
   scenarioHostRegisterScenarioLister(serverSim);
 
+  /* -mod, -mod-required, -mod-locked: the operator's mods, on the list every
+     game opens with. Read after the lister above is registered, because a
+     name is resolved against the directory it lists. -mod-locked beside
+     either of the others has already stopped the server at the top of main.
+
+     The rows go on the list once here and the decision is made without
+     seating anyone: the lobby is seated further down, after the startup, as
+     it is for a map's own script, and a server that skipped the lobby has
+     its round built inside the startup from whatever this attaches. That
+     decision reads the map's own script too, so it takes the place of the
+     plain attach below, which would only be detached again (and would say
+     "loaded" for it a second time). From then on the list stays put — no
+     lobby means no command can change it — so -nolobby plays these every
+     round, and so does -maprotate, whose every map commit composes the same
+     list again. A server with a lobby puts them back at each return to it
+     (serverSimReturnToLobby).
+
+     Not under -noscenarios, which turns every script off: a mod named
+     beside it would only fail to load at every game, so it is said once
+     here instead. */
+  bool operatorModsDecided = FALSE;
+  if (serverArgsModGiven(argc, (const char *const *)argv)) {
+    if (argExist(argc, argv, "noscenarios") == TRUE) {
+      fprintf(stderr,
+              "Warning: -noscenarios turns scripts off; -mod, -mod-required "
+              "and -mod-locked are ignored\n");
+    } else {
+      (void)serverArgsApplyMods(serverSim, argc, (const char *const *)argv,
+                                serverModArgsSay, NULL);
+      serverSayOperatorMods(serverSim);
+      if (serverSimRecordOperatorMods(serverSim)) {
+        scenarioHostDecide(serverSim, &scenarioHost, scenarioMapPath);
+        operatorModsDecided = TRUE;
+      }
+    }
+  }
+
   /* A scenario script beside the map, when the map came from a file and one
      is there. No script is the ordinary case and says nothing; a script
      that cannot be used says why, as does one -noscenarios turned down, and
      the server runs the map plainly. */
-  if (scenarioMapPath[0] != '\0') {
+  if (!operatorModsDecided && scenarioMapPath[0] != '\0') {
     char scenarioErr[512];
     scenarioHost = scenarioHostAttach(serverSim, scenarioMapPath,
                                       scenarioErr, sizeof(scenarioErr));
@@ -2081,8 +2261,12 @@ int main(int argc, char **argv) {
     }
   }
   /* -setting: the values a lobby host would choose for scripts' own
-     settings, for a server with no lobby to choose them in. Applied before
-     any round starts, so on_setup already reads them. */
+     settings, for a server with no lobby to choose them in, or for the
+     operator's own mods. Applied before any round starts, so on_setup
+     already reads them. A value on a -mod row is also kept by the sim and
+     put back at every new lobby with the row (serverSimRecordOperatorMods),
+     and on a fixed row the host cannot change it. After the rows are
+     recorded above, so a short name finds the operator's row first. */
   {
     const char *mapScript = "";
     int         i;
@@ -2093,7 +2277,11 @@ int main(int argc, char **argv) {
       scenarioHostPublishMapScript(serverSim, scenarioHost);
     }
     if (scenarioHost != NULL) {
-      const char *path = scenarioHostScriptPath(scenarioHost);
+      /* The map's own entry, not the scenario that decides the round: with
+         -mod rows attached the host may be composed with no map script at
+         all, and a bare id=value must then get "the map has no script"
+         rather than land on an operator's mod. */
+      const char *path = scenarioHostMapScriptPath(scenarioHost);
       const char *p;
       mapScript = path;
       for (p = path; *p != '\0'; p++) {
@@ -2184,6 +2372,29 @@ int main(int argc, char **argv) {
               "no snapshots will be written\n");
       optSnapJson[0] = '\0';
     }
+  }
+
+  /* Memory report: the timed report is off unless -memreport or
+   * -memreportdeep turns it on. Matched without case, like argExist. */
+  {
+    bool given = false;
+    bool deep = (argExist(argc, argv, "memreportdeep") == TRUE);
+    const char *value = NULL;
+    char warn[256];
+    double memMins;
+    for (int i = 1; i < argc; i++) {
+      if (SDL_strcasecmp((char *)argv[i], "-memreport") == 0) {
+        given = true;
+        value = (i + 1 < argc) ? (const char *)argv[i + 1] : NULL;
+        break;
+      }
+    }
+    memMins = serverMemReportPeriodFromArgs(given, value, deep,
+                                            warn, sizeof(warn));
+    if (warn[0] != '\0') {
+      fprintf(stderr, "%s\n", warn);
+    }
+    serverMemReportConfigure(memMins, deep);
   }
 
   /* Empty reset configuration — on by default */
@@ -2283,6 +2494,21 @@ int main(int argc, char **argv) {
         serverLocks = implied;
       }
     }
+  }
+  /* And the locks the -mod flags above call for: LOBBY_LOCK_MODS for any
+   * -mod-required or -mod-locked row, so the Mods/Scenario checkbox cannot
+   * switch them off, and LOBBY_LOCK_SCRIPT_LIST for -mod-locked, which is
+   * -lock mods plus a list nobody edits. Not a name -lock takes: the list
+   * lock without the rows the operator fixed on it would only be an empty
+   * list. A plain -mod locks nothing, being the host's to take off. */
+  serverLocks |= serverSimOperatorModLocks(serverSim);
+  /* Ranked allows no scripts, and the lobby rules take a lobby with any
+     attached out of ranked, so -ranked beside operator mods does not hold.
+     Said once here rather than left for the operator to find in the lobby. */
+  if (ranked && serverSimGetOperatorModCount(serverSim) > 0) {
+    fprintf(stderr,
+            "Warning: -ranked: the -mod, -mod-required and -mod-locked "
+            "scripts keep the server out of ranked\n");
   }
 
   /* -pillview / -baseview / -allyview and their decay values. Applied
@@ -2776,6 +3002,41 @@ int main(int argc, char **argv) {
         instCfg.voiceMode = serverVoiceOff;
       }
     }
+    /* -name / -desc: what the game finder shows for this server in place of
+     * its address. Without the flag, the same [HOSTING] keys a client host
+     * keeps in its WinBolo.json, so an operator can set them once in the
+     * file instead. The sim's setters sanitise and cut both; static because
+     * instCfg only points at them. */
+    {
+      static char serverNameBuf[256];
+      static char serverDescBuf[1024];
+      int nameNum = findArg(argc, argv, "name");
+      int descNum = findArg(argc, argv, "desc");
+      if (nameNum != ARG_NOT_FOUND) {
+#ifdef _WIN32
+        if (!serverArgUtf8(argc, nameNum, serverNameBuf,
+                           sizeof(serverNameBuf)))
+#endif
+        snprintf(serverNameBuf, sizeof(serverNameBuf), "%s",
+                 (char *)argv[nameNum]);
+      } else {
+        prefsGetString("HOSTING", "Server Name", "", serverNameBuf,
+                       sizeof(serverNameBuf));
+      }
+      if (descNum != ARG_NOT_FOUND) {
+#ifdef _WIN32
+        if (!serverArgUtf8(argc, descNum, serverDescBuf,
+                           sizeof(serverDescBuf)))
+#endif
+        snprintf(serverDescBuf, sizeof(serverDescBuf), "%s",
+                 (char *)argv[descNum]);
+      } else {
+        prefsGetString("HOSTING", "Server Description", "", serverDescBuf,
+                       sizeof(serverDescBuf));
+      }
+      instCfg.serverName        = serverNameBuf;
+      instCfg.serverDescription = serverDescBuf;
+    }
     /* A server that skips the lobby starts its round inside the startup
        below, so the scenario's own settings have to be in force before it:
        the round is built and the first tanks placed in there, and a game
@@ -2793,6 +3054,27 @@ int main(int argc, char **argv) {
       SDL_Quit();
 #endif
       return 0;
+    }
+    /* Say what the finder will show, after the sanitising, so an operator
+     * sees a name that came out shorter or cleaner than typed. */
+    if (serverSimGetServerName(serverSim)[0] != '\0') {
+      fprintf(stderr, "Server name: %s\n", serverSimGetServerName(serverSim));
+    }
+    if (serverSimGetServerDescription(serverSim)[0] != '\0') {
+      size_t descLen = strlen(serverSimGetServerDescription(serverSim));
+      size_t descRoom = infoReplyServerDescRoom(serverSim);
+      fprintf(stderr, "Server description: %s\n",
+              serverSimGetServerDescription(serverSim));
+      /* The reply is capped at one 1024-byte packet, and a long scenario
+       * and mod list leave less room for the description. Checked against
+       * the scripts this round starts with; a later pick can change it. */
+      if (descLen > descRoom) {
+        fprintf(stderr,
+                "Note: the game finder gets at most the first %u of the "
+                "description's %u bytes; the scenario and mod names fill "
+                "the rest of the reply.\n",
+                (unsigned)descRoom, (unsigned)descLen);
+      }
     }
 
 #if WB_ENABLE_NETIMPAIR
@@ -3176,25 +3458,54 @@ int main(int argc, char **argv) {
           fprintf(stderr, "Warning: -bot-init given with no value; ignoring\n");
         }
       }
-      /* Draw themed names from one randomly-chosen pool so a -bots
-       * server gets varied names instead of "Bot 1..N". The name draws are
-       * wrapped in a bolo_rand save/restore so this cosmetic randomness leaves
-       * the deterministic game stream (tank placement, etc.) untouched for a
-       * given -seed — only the game sim should advance the shared PRNG. Names
-       * are picked up front, then the bots are added with them. usedStore
-       * backs the uniqueness list handed to lobbyBotPoolPick. (numBots is
-       * clamped to MAX_TANKS above, so botNames is always in bounds.) */
+      /* Draw themed names so a -bots server gets varied names instead of
+       * "Bot 1..N". Each team that gets bots draws a random pool of its
+       * own, one no other team holds where a free pool is left (the
+       * lobby's rule), and the pool is
+       * stored on the team so the lobby's "Bot naming" label and Add Bot
+       * use the same pool as these names. Bots on no team share one random
+       * pool. The draws are wrapped in a bolo_rand save/restore so this
+       * cosmetic randomness leaves the deterministic game stream (tank
+       * placement, etc.) untouched for a given -seed — only the game sim
+       * should advance the shared PRNG. Names are picked up front, then the
+       * bots are added with them. usedStore backs the uniqueness list
+       * handed to lobbyBotPoolPick. (numBots is clamped to MAX_TANKS above,
+       * so botNames is always in bounds.) */
       char botNames[MAX_TANKS][64];
+      /* The team each bot goes on: the -allybots team, or the -teams
+       * block or round-robin team, which replaces it. This one table
+       * tells the naming which pool to use and tells the placement below
+       * which team to put each bot on. */
+      int botTeam[MAX_TANKS];
+      serverSimStartBotTeams(numBots, allyTeam, teamSizes, numTeamSizes,
+                             numTeams, botTeam);
       {
         static char usedStore[MAX_TANKS][64];
         const char *usedNames[MAX_TANKS];
         int usedCount = 0;
         BoloRandState rngBeforeNaming;
-        int botPool;
+        int teamPool[MAX_TANKS];
+        int noTeamPool = -1;
+        for (i = 0; i < MAX_TANKS; i++) {
+          teamPool[i] = -1;
+        }
         bolo_rand_save(&rngBeforeNaming);
-        botPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
         for (i = 0; i < numBots; i++) {
           char picked[64];
+          int team = botTeam[i];
+          int botPool;
+          if (team == 0) {
+            if (noTeamPool < 0) {
+              noTeamPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+            }
+            botPool = noTeamPool;
+          } else {
+            if (teamPool[team] < 0) {
+              teamPool[team] = (int)serverSimPickTeamNamingPool(
+                  serverSim, (BYTE)team, bolo_rand_below(0x10000u));
+            }
+            botPool = teamPool[team];
+          }
           lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
           if (picked[0] != '\0') {
             snprintf(botNames[i], sizeof(botNames[i]), "%s", picked);
@@ -3236,7 +3547,7 @@ int main(int argc, char **argv) {
            * pass converts matching teamNumber into alliances, and the lobby
            * protocol already broadcasts teamNumber to clients so the lobby
            * UI shows the bots on this team. */
-          serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)allyTeam);
+          serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)botTeam[i]);
         }
       }
       if (numBots <= 0) {
@@ -3245,12 +3556,10 @@ int main(int argc, char **argv) {
       } else if (numTeamSizes > 0) {
         /* Explicit per-team sizes: contiguous blocks. First teamSizes[0] bots
          * -> team 1, next teamSizes[1] -> team 2, etc. Bots past the listed
-         * total stay on team 0 (FFA). */
-        int bot = 0;
-        for (int t = 0; t < numTeamSizes; t++) {
-          for (int k = 0; k < teamSizes[t] && bot < numBots; k++) {
-            serverSimSetTeamBatch(serverSim, (BYTE)bot, (BYTE)(t + 1));
-            bot++;
+         * total stay on team 0 (FFA); botTeam[] holds 0 for them. */
+        for (i = 0; i < numBots; i++) {
+          if (botTeam[i] > 0) {
+            serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)botTeam[i]);
           }
         }
         serverSimReapplyTeamAlliances(serverSim);
@@ -3261,7 +3570,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, ")\n");
       } else if (numTeams >= 2) {
         for (i = 0; i < numBots; i++) {
-          serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)((i % numTeams) + 1));
+          serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)botTeam[i]);
         }
         serverSimReapplyTeamAlliances(serverSim);
         fprintf(stderr, "Added %d bot(s) with brain '%s' (%d teams, round-robin)\n",

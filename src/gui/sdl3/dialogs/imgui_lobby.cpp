@@ -246,12 +246,12 @@ extern "C" void imguiLobbyFrameReset(void) {
      * recap, not on whatever the last session was left looking at. */
     lobbyRecapReset();
 
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
     /* The reel holds the viewer's decoder singleton — never leave it running
      * past the lobby session. */
     lobbyReelEnd();
 #endif
-#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+#if BOLO_RECAP_CLIP_GIF
     /* A clip export waiting on its save picker holds the whole encoded GIF,
      * and nothing polls it once the lobby is gone. Deliberately not folded
      * into lobbyReelEnd above: that also runs mid-session when the countdown
@@ -259,7 +259,7 @@ extern "C" void imguiLobbyFrameReset(void) {
      * still naming. */
     lobbyClipGifSaveAbandon();
 #endif
-#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
+#if BOLO_RECAP_WBN_RATING
     /* Release the rating fetch and everything it filled in. The star textures
      * stay: they belong to the WBN browser as much as to the recap, and the
      * loader rebuilds them on demand. */
@@ -425,7 +425,7 @@ static void lobbyBotAnnouncePoll(ClientSim *cs) {
 extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     if (!s_lf.active) { lobbyFrameInitState(cs); s_lf.active = true; }
 
-#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
+#if BOLO_RECAP_WBN_RATING
     /* Before anything draws, so a round that has ended takes its rating and
      * comments with it whether or not the recap is the view on screen. */
     lobbyRatingSyncKey(cs, cs ? clientSimGetLastRoundStats(cs) : NULL);
@@ -723,19 +723,38 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         /* Query window size */
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
+        /* Read each frame: turning a phone from one landscape side to the
+           other moves the cutout without changing the window's size. */
+        safeInsets = dialogGetSafeInsets(window);
 
         /* Render popup tiles to offscreen texture before ImGui frame */
         mapPreviewPopupRenderOffscreen(renderer, winW, winH);
 
 
-        /* Full-screen host window with safe area padding */
-        ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(ImVec2((float)winW, (float)winH));
-        float padL = ImGui::GetStyle().WindowPadding.x + safeInsets.left;
-        float padR = safeInsets.right;
+        /* Full-height host window between the left and right safe insets.
+           The window padding pads both sides by the same amount, so the
+           insets, which differ in landscape on a phone (the cutout's side
+           and the margin on the other, see dialogGetSafeInsets), set the
+           window's x and width instead. The strips beside it are drawn
+           black, as the cutout is. Vertically the padding still
+           carries the top inset, so padT keeps the bottom edge the top
+           inset's distance in, and padB is only what the bottom inset needs
+           beyond that. */
+        const float hostX = safeInsets.left;
+        const float hostW = (float)winW - safeInsets.left - safeInsets.right;
+        if (hostX > 0.0f || hostW < (float)winW) {
+            ImDrawList *bgList = ImGui::GetBackgroundDrawList();
+            const ImU32 bgCol = IM_COL32(0, 0, 0, 255);
+            bgList->AddRectFilled(ImVec2(0.0f, 0.0f), ImVec2(hostX, (float)winH), bgCol);
+            bgList->AddRectFilled(ImVec2(hostX + hostW, 0.0f),
+                                  ImVec2((float)winW, (float)winH), bgCol);
+        }
+        ImGui::SetNextWindowPos(ImVec2(hostX, 0));
+        ImGui::SetNextWindowSize(ImVec2(hostW, (float)winH));
         float padT = ImGui::GetStyle().WindowPadding.y + safeInsets.top;
-        float padB = safeInsets.bottom;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padL, padT));
+        float padB = SDL_max(0.0f, safeInsets.bottom - safeInsets.top);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                            ImVec2(ImGui::GetStyle().WindowPadding.x, padT));
         ImGui::Begin("##LobbyBg", nullptr,
                      ImGuiWindowFlags_NoTitleBar |
                      ImGuiWindowFlags_NoResize |
@@ -743,6 +762,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
+        /* Begin has taken the padding; popped here and not after End so the
+           bordered children inside (each team's cell in the Players tab)
+           keep the style's own padding. Left pushed, a phone's safe inset
+           became a 70-point pad on both sides of every cell. */
+        ImGui::PopStyleVar(); /* WindowPadding */
 
         bool wantLeaveConfirm = false;
 
@@ -791,27 +815,83 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             lobbyFormatTimeLimit(clientSimGetLobbyTimeLimit(cs), timeStr, sizeof(timeStr));
 
 #if BOLO_MOBILE
-            /* Stack labels vertically on mobile so the line wraps cleanly. */
-            ImGui::TextUnformatted(langGetText(STR_DLGNETINFO_SERVER));
-            ImGui::SameLine();
-            renderServerValue();
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), lobbyGameTypeStr(clientSimGetLobbyGameType(cs)));
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
-                        clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
-            /* Own line like the labels around it — the smart-ping rule is
-             * host-only in the settings panel, so this is where a joiner or
-             * spectator reads it. */
-            lobbyRenderSmartPingSummary(cs, s);
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
-            /* Own line again, and in the same place in the run as on the
-             * desktop: whether the round runs mods is a host-only setting
-             * everywhere else, so this is where a joiner or spectator is
-             * told, and the hover is where the names are. */
-            lobbyRenderModsSummary(cs, s);
-            /* Own line, like the labels above it — the view policies are
-             * the one part of the settings a joiner or spectator can see. */
-            lobbyRenderVisibilitySummary(cs, s);
+            /* The desktop's one line, wrapped: an item that would pass the
+               right edge starts a new row. The line is wider than a phone,
+               one item a row pushed the tabs into the lower third of its
+               screen, and fixed rows ran off the edge when the server's
+               address resolves to a long host name. The smart-ping rule, the
+               mods and the view policies are host-only in the settings
+               panel, so this header is where a joiner or spectator reads
+               them, as on the desktop.
+
+               The text items are measured before they are drawn. The three
+               summaries draw themselves, so each is measured as it is drawn
+               and placed by that width the next frame; until then it is
+               taken as 0. The connectivity badge goes last, on the last row
+               if it fits there, and right-aligns itself on its row. */
+            static float s_hdrSummaryW[3];
+            const float hdrGap   = 16.0f;
+            const float hdrRight = ImGui::GetCursorScreenPos().x +
+                                   ImGui::GetContentRegionAvail().x;
+            bool hdrFirst = true;
+            auto hdrPlace = [&](float w) {
+                if (hdrFirst) {
+                    hdrFirst = false;
+                    return;
+                }
+                ImGui::SameLine(0, hdrGap);
+                if (ImGui::GetCursorScreenPos().x + w > hdrRight) {
+                    ImGui::NewLine();
+                }
+            };
+            auto hdrText = [&](const char *text) {
+                hdrPlace(ImGui::CalcTextSize(text).x);
+                ImGui::TextUnformatted(text);
+            };
+            auto hdrSummary = [&](int i, void (*draw)(ClientSim *, float)) {
+                hdrPlace(s_hdrSummaryW[i]);
+                ImGui::BeginGroup();
+                draw(cs, s);
+                ImGui::EndGroup();
+                s_hdrSummaryW[i] = ImGui::GetItemRectSize().x;
+            };
+            char hdrBuf[320];
+
+            /* Server: and its value stay together. */
+            {
+                char token[320];
+                guiServerAddressToken(cs, dispIp, dispPort, token, sizeof(token));
+                const char *value = showServerLink
+                    ? token
+                    : langGetText(clientSimIsSinglePlayer(cs)
+                                      ? STR_DLGLOBBY_SERVERDISP_SP
+                                      : STR_DLGLOBBY_SERVERDISP_INTERNET);
+                hdrPlace(ImGui::CalcTextSize(langGetText(STR_DLGNETINFO_SERVER)).x +
+                         ImGui::GetStyle().ItemSpacing.x +
+                         ImGui::CalcTextSize(value).x);
+                ImGui::TextUnformatted(langGetText(STR_DLGNETINFO_SERVER));
+                ImGui::SameLine();
+                renderServerValue();
+            }
+            SDL_snprintf(hdrBuf, sizeof(hdrBuf), "%s %s", langGetText(STR_DLGLOBBY_GAME_LBL),
+                         lobbyGameTypeStr(clientSimGetLobbyGameType(cs)));
+            hdrText(hdrBuf);
+            SDL_snprintf(hdrBuf, sizeof(hdrBuf), "%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
+                         clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN)
+                                                         : langGetText(STR_DLGLOBBY_VISIBLE));
+            hdrText(hdrBuf);
+            SDL_snprintf(hdrBuf, sizeof(hdrBuf), "%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            hdrText(hdrBuf);
+            hdrSummary(0, lobbyRenderSmartPingSummary);
+            SDL_snprintf(hdrBuf, sizeof(hdrBuf), "%s %s", langGetText(STR_DLGLOBBY_AI_LBL),
+                         lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
+            hdrText(hdrBuf);
+            hdrSummary(1, lobbyRenderModsSummary);
+            hdrSummary(2, lobbyRenderVisibilitySummary);
+            if (serverInstanceIsNatPunchActive()) {
+                hdrPlace(lobbyConnectivityBadgeWidth(s));
+                lobbyRenderConnectivityBadge(renderer, s);
+            }
 #else
             /* Leave button sits at the top-left, before the Server: line.
              * Escape key also opens the leave confirmation popup. Rendered as
@@ -881,13 +961,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * badge, which right-aligns into whatever space is left. */
             ImGui::SameLine(0, 16);
             lobbyRenderVisibilitySummary(cs, s);
-#endif
 
             /* Layout A — connectivity badge in the top-right corner.
              * Only meaningful when this client is also hosting AND
              * the host instance is actively NAT-punching (i.e. not
              * passed -no-natpunch / LAN-only). Skipping it covers SP,
-             * LAN-only hosts, and non-hosting clients in one check. */
+             * LAN-only hosts, and non-hosting clients in one check.
+             * The mobile header above places its own. */
             if (serverInstanceIsNatPunchActive()) {
                 /* lobbyRenderConnectivityBadge right-aligns itself within the
                  * remaining horizontal space, so we just SameLine onto
@@ -895,6 +975,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::SameLine();
                 lobbyRenderConnectivityBadge(renderer, s);
             }
+#endif
         }
 
         ImGui::Spacing();
@@ -920,6 +1001,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * the shared settings panel below renders only on the mouse path —
          * the tabbed layout shows settings in its own Settings tab instead. */
 #if BOLO_MOBILE
+        /* Android and iOS, the iPad included: the two-column layout left the
+           iPad's map preview small, and has no Leave button for a finger
+           (its back arrow is the desktop header's). */
         const bool useTabbedLobby = true;
 #else
         const bool useTabbedLobby = uiShouldUseControllerMode();
@@ -956,8 +1040,20 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         /* --- Main content (tabbed in controller mode, two-column for mouse;
          * useTabbedLobby computed above the shared settings panel) --- */
         if (useTabbedLobby) {
-            float availW = ImGui::GetContentRegionAvail().x - padR;
+            float availW = ImGui::GetContentRegionAvail().x;
+#if BOLO_MOBILE
+            /* The height each tab's panel leaves for the bottom button row:
+               the spacing after the panel, a Spacing, the Separator and its
+               spacing, a Spacing, then one row of buttons. Two pixels more
+               than that sum, so that a pixel of rounding in any of those
+               heights does not push the button row below the window's
+               bottom edge. */
+            float btnAreaH = ImGui::GetFrameHeight()
+                           + 4.0f * ImGui::GetStyle().ItemSpacing.y + 1.0f
+                           + 2.0f * s;
+#else
             float btnAreaH = ImGui::GetTextLineHeightWithSpacing() * 2 + 16.0f * s;
+#endif
 
             /* Detect new chat messages for unread indicator */
             int chatLen = (int)SDL_strlen(clientSimGetLobbyChatHistory(cs));
@@ -1187,6 +1283,22 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     static float tabMapBelowH = 0.0f;
                     float tabMapBelowTopY = -1.0f;
 
+                    /* On a phone the tab is short and wide, and the preview
+                       stacked over its text came out 60 points across. The
+                       mobile layout puts the preview in a square on the left
+                       at the tab's full height, and the Choose Map button,
+                       the name, the scenario lines and the skip vote in a
+                       column on the right. */
+#if BOLO_MOBILE
+                    const bool mapTwoCol = true;
+#else
+                    const bool mapTwoCol = false;
+#endif
+                    if (mapTwoCol) {
+                        ImGui::BeginChild("##MapTabPreview", ImVec2(tabH, tabH),
+                                          ImGuiChildFlags_NavFlattened);
+                    }
+
                     /* "Choose Map" — opens the separate chooser window.
                      * Host / admin / openHost-allowed only; non-privileged
                      * clients never see the button. Server enforces the
@@ -1200,8 +1312,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                          & PLAYER_FLAG_ADMIN));
                     bool effHostMap = !spectator && (isHostLocal || isAdminLocal ||
                                       clientSimGetLobbyOpenHost(cs));
-                    if (effHostMap &&
-                        !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
+                    const bool showChooseMap = effHostMap &&
+                        !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP);
+                    if (showChooseMap && !mapTwoCol) {
                         if (ImGui::Button(langGetText(STR_DLGLOBBY_CHOOSE_MAP_BTN))) {
                             lobbyChooseMapOpen(cs, renderer);
                         }
@@ -1255,7 +1368,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         float infoH = tabMapBelowH > 0.0f
                                     ? tabMapBelowH
                                     : ImGui::GetTextLineHeightWithSpacing() * 2;
-                        float previewMaxH = tabH - infoH;
+                        /* In two columns the text is beside the preview, not
+                           under it, so the square takes the whole height. */
+                        float previewMaxH = mapTwoCol ? tabH : tabH - infoH;
                         float previewMaxW = ImGui::GetContentRegionAvail().x;
                         float previewSize = previewMaxW < previewMaxH ? previewMaxW : previewMaxH;
                         if (previewSize < 10.0f) previewSize = 10.0f;
@@ -1322,6 +1437,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                                    mapBounds.minX, mapBounds.minY,
                                                    mapBounds.maxX, mapBounds.maxY);
                         }
+                        /* The reserve above only moved the cursor; ImGui wants
+                           an item after such a move when it is the last thing
+                           in a window, which it is in the two-column child,
+                           and asserts otherwise. After the click check, which
+                           reads the last item and must still see the image. */
+                        ImGui::Dummy(ImVec2(0.0f, 0.0f));
                     } else if (!clientSimIsMapDownloadComplete(cs) || awaitingMapChangePacket) {
                         float progress = 0.0f;
                         ImGui::TextUnformatted(lobbyMapTransferLine(cs, &progress));
@@ -1329,6 +1450,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
                     } else {
                         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
+                    }
+                    if (mapTwoCol) {
+                        ImGui::EndChild(); /* ##MapTabPreview */
+                        ImGui::SameLine();
+                        ImGui::BeginChild("##MapTabInfo", ImVec2(0, tabH),
+                                          ImGuiChildFlags_NavFlattened);
+                        if (showChooseMap) {
+                            if (ImGui::Button(langGetText(STR_DLGLOBBY_CHOOSE_MAP_BTN))) {
+                                lobbyChooseMapOpen(cs, renderer);
+                            }
+                        }
                     }
                     ImGui::Spacing();
                     ImGui::Text("%s - %dP %dB %dS", clientSimGetMapName(cs), lobbyLivePillCount(cs), lobbyLiveBaseCount(cs), lobbyLiveStartCount(cs));
@@ -1345,8 +1477,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 
                     lobbyRenderMapSkipVote(cs, spectator, hasTransport, s, false);
 
-                    if (tabMapBelowTopY >= 0.0f) {
+                    /* Only the stacked layout needs the height of what sits
+                       under the preview; in two columns the two cursors are
+                       in different child windows. */
+                    if (tabMapBelowTopY >= 0.0f && !mapTwoCol) {
                         tabMapBelowH = ImGui::GetCursorPosY() - tabMapBelowTopY;
+                    }
+                    if (mapTwoCol) {
+                        ImGui::EndChild(); /* ##MapTabInfo */
                     }
 
                     ImGui::EndTabItem();
@@ -1552,6 +1690,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                     wantLeaveConfirm = true;
                 }
+#if BOLO_MOBILE
+                /* Ready stays disabled until the map has arrived, and the
+                 * progress is otherwise only on the Map tab, while the lobby
+                 * opens on Players. A phone has no hover to ask why. */
+                if (!spectator && !clientSimIsMapDownloadComplete(cs)) {
+                    float dlProgress = 0.0f;
+                    ImGui::SameLine(0, 12);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("%s", lobbyMapTransferLine(cs, &dlProgress));
+                }
+#endif
 
                 /* LT/RT switch tabs — the two trigger glyphs at the right of
                  * the same button row, no text label (no string fits). */
@@ -1569,7 +1718,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         }
         else {
             /* --- Desktop: Players (left) + Map Preview (right) --- */
-            float availW = ImGui::GetContentRegionAvail().x - padR;
+            float availW = ImGui::GetContentRegionAvail().x;
             /* Total vertical content area before any rendering — used to
              * fill the lobby so the chat block's bottom sits flush with
              * the lobby's bottom edge (minus the bottom safe inset). */
@@ -2405,7 +2554,6 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         }
 
         ImGui::End(); /* ##LobbyBg */
-        ImGui::PopStyleVar(); /* WindowPadding */
 
         /* Scrim behind the map chooser: darkens + absorbs input over
          * the whole lobby, EXCEPT a hole over the chat block so the
@@ -2508,7 +2656,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * or folded the settings header away. */
         lobbyScenarioChooserRenderWindow(cs, s, winW, winH);
 
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
     /* The reel outlives any single body render. Once the summary is gone (the
      * countdown clears it) drop the reel and the per-summary load latch —
      * unconditionally, since a round whose load failed leaves the latch set
@@ -2686,7 +2834,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         if (lobbyH < DIALOG_MIN_H) lobbyH = DIALOG_MIN_H;
         dialogSetWindowSize(window, lobbyW, lobbyH);
     }
-    dialogSetWindowTitle(window, langGetText(STR_DLGLOBBY_WINTITLE));
+    /* The server's own name after the usual title, when it has one, so a
+     * player in several lobbies across windows can tell them apart. */
+    if (gameFrontLobbyServerName[0] != '\0') {
+        char lobbyTitle[160];
+        SDL_snprintf(lobbyTitle, sizeof(lobbyTitle), "%s - %s",
+                     langGetText(STR_DLGLOBBY_WINTITLE), gameFrontLobbyServerName);
+        dialogSetWindowTitle(window, lobbyTitle);
+    } else {
+        dialogSetWindowTitle(window, langGetText(STR_DLGLOBBY_WINTITLE));
+    }
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
@@ -2829,6 +2986,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
             }
             ImGui_ImplSDL3_ProcessEvent(&ev);
+#if BOLO_MOBILE
+#if BOLO_LOBBY_REEL
+            lobbyReelPinchEvent(&ev);  /* two-finger zoom on the Last round reel */
+#endif
+            /* The same gesture on the Map tab's zoom popup and the chooser's
+               preview, which take their input through map_preview_view. */
+            mapPreviewViewTouchPinchEvent(&ev);
+#endif
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             /* Position goes to gameFrontDialogX/Y (shared with every other
@@ -2861,7 +3026,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         voiceTick(cs);
 #endif
 
-#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+#if BOLO_RECAP_CLIP_GIF
         /* Write out a clip export whose save picker has been answered. Here
          * rather than in the recap that started it: the picker is asynchronous
          * so this loop keeps ticking the transport underneath it, and a player

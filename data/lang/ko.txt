@@ -951,7 +951,7 @@ STR_MAPGEN_TYPE_NATURAL=자연
 STR_MAPGEN_TYPE_MAZE=미로
 STR_MAPGEN_TYPE_FRACTAL=프랙탈
 STR_MAPGEN_SEED=시드
-STR_MAPGEN_RANDOMIZE=랜덤화
+STR_MAPGEN_RANDOMIZE=값 랜덤화
 STR_MAPGEN_SYMMETRY=대칭
 STR_MAPGEN_SYM_4CORNER=4코너 대칭
 STR_MAPGEN_SYM_MIRROR_H=수평 대칭
@@ -991,6 +991,87 @@ STR_MAPGEN_COAST_JAG=해안 울퉁불퉁함
 STR_MAPGEN_TERRAIN_LAYERS=지형 레이어
 STR_MAPGEN_RIVERS=강
 STR_MAPGEN_LAKES=호수
+STR_MAPGEN_TYPE_MAKER=유명 맵 메이커 스타일
+STR_MAPGEN_SIZE=크기
+STR_MAPGEN_SIZE_FULL=전체
+STR_MAPGEN_SIZE_TIP=플레이 가능한 정사각형의 한 변(타일 수). 전체는 영역 전부를 사용합니다.
+STR_MAPGEN_PRESET=프리셋
+STR_MAPGEN_PRESET_TIP=고전 Bolo 맵 제작자의 스타일로 만든 맵. 프리셋은 아래 컨트롤을 설정하며, 이후 어느 것이든 바꿀 수 있습니다.
+STR_MAPGEN_OUTLINE=외곽
+STR_MAPGEN_OUTLINE_BOX=사각형
+STR_MAPGEN_OUTLINE_OCTAGON=팔각형
+STR_MAPGEN_OUTLINE_ROUND=원형
+STR_MAPGEN_OUTLINE_DIAMOND=마름모
+STR_MAPGEN_OUTLINE_CROSS=십자
+STR_MAPGEN_OUTLINE_CLOVER=클로버
+STR_MAPGEN_OUTLINE_ISLAND=섬
+STR_MAPGEN_OUTLINE_VARIED=다양
+STR_MAPGEN_MSYM_NONE=없음
+STR_MAPGEN_MSYM_MIRROR=좌우 대칭
+STR_MAPGEN_MSYM_ROT2=반 바퀴
+STR_MAPGEN_MSYM_MIRROR4=상하좌우 대칭
+STR_MAPGEN_MSYM_ROT4=4분의 1 회전
+STR_MAPGEN_WATER_PCT=물 %
+STR_MAPGEN_ROAD_PCT=도로 %
+STR_MAPGEN_ISLANDS=섬 수
+STR_MAPGEN_DETAIL=세부
+STR_MAPGEN_PRESET_BERSERKIR=Berserkir
+STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT=Sluggo Tournament
+STR_MAPGEN_PRESET_SLUGDEATH=Sluggo Slugdeath
+STR_MAPGEN_PRESET_SLUGFEST=Sluggo Slugfest
+STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS=Sluggo Adventurous
+STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC=Sluggo Symmetric
+STR_MAPGEN_PRESET_STOOGEFEST=Sluggo Stoogefest
+STR_MAPGEN_PRESET_BLACK_LIGHTNING=Black Lightning
+STR_MAPGEN_PRESET_BL_ISLANDS=Black Lightning Islands
+STR_MAPGEN_PRESET_DEATHHAND=Deathhand
+STR_MAPGEN_PRESET_MEGAWATT_TC=Megawatt TC
+STR_MAPGEN_PRESET_MEGAWATT_ISLANDS=Megawatt Islands
+STR_MAPGEN_PRESET_MOSH_PIT=Nature Mosh Pit
+STR_MAPGEN_PRESET_PALPATINE=Palpatine
+STR_MAPGEN_PRESET_CHEW_TOY=Chew Toy
+
+# Map Maker style panel
+STR_MAPGEN_LOCK_ALL=전체 잠금
+STR_MAPGEN_UNLOCK_ALL=전체 잠금 해제
+STR_MAPGEN_PANEL_TITLE=맵 값
+STR_MAPGEN_STYLE_TITLE={string1} 스타일
+STR_MAPGEN_STYLE_RANDOMIZE=스타일 랜덤화
+STR_MAPGEN_STYLE_NONE=이 맵 메이커에는 시드가 정하는 다른 선택 항목이 없습니다.
+STR_MAPGEN_STYLE_FROM_SEED=시드에서
+STR_MAPGEN_STYLE_ROADS=도로 배치
+STR_MAPGEN_ROADS_AXES=십자
+STR_MAPGEN_ROADS_DIAG=대각선
+STR_MAPGEN_ROADS_AXES_DIAG=십자와 대각선
+STR_MAPGEN_ROADS_AXES_RING=십자와 고리
+STR_MAPGEN_ROADS_DIAG_RING=대각선과 고리
+STR_MAPGEN_ROADS_RING=고리
+STR_MAPGEN_STYLE_SHAPE=모양
+STR_MAPGEN_STYLE_CUT=모서리 자르기
+STR_MAPGEN_STYLE_CORE=고리 중심
+STR_MAPGEN_STYLE_RIM=해안
+STR_MAPGEN_RIM_FOREST=숲 가장자리
+STR_MAPGEN_RIM_GRASS=해안까지 풀
+STR_MAPGEN_STYLE_YARD=미로 마당
+STR_MAPGEN_YARD_NONE=없음
+STR_MAPGEN_YARD_BUILDING=건물 벽
+STR_MAPGEN_YARD_FOREST=숲 벽
+STR_MAPGEN_STYLE_ROADS_TIP=육지를 가로지르는 도로의 선입니다. 시드에서: 시드가 이 목록의 배치 중 하나를 고릅니다.
+STR_MAPGEN_STYLE_SHAPE_TIP=육지의 너비를 높이에 대한 비율로 나타내고 100을 곱한 값입니다. 100이면 정사각형이고, 클수록 더 넓어집니다. 시드에서: 시드가 이 범위에서 값을 고릅니다.
+STR_MAPGEN_STYLE_CUT_TIP=팔각형이 각 모서리를 얼마나 잘라내는지입니다. 값이 클수록 모서리가 더 작게 남습니다. 시드에서: 시드가 이 범위에서 값을 고릅니다.
+STR_MAPGEN_STYLE_CORE_TIP=각 고리 중앙에 있는 지형입니다. 시드에서: 시드가 하나를 고릅니다.
+STR_MAPGEN_STYLE_RIM_TIP=해안을 두르는 숲의 띠, 또는 물가까지의 풀입니다. 시드에서: 시드가 하나를 고릅니다.
+STR_MAPGEN_STYLE_YARD_TIP=자리를 찾을 수 있으면, 한 섬에 미로 벽으로 된 마당을 만듭니다. 시드에서: 시드가 하나를 고릅니다.
+STR_MAPGEN_STYLE_WALLS=가장자리 벽
+STR_MAPGEN_WALLS_NONE=벽 없음
+STR_MAPGEN_WALLS_BUILDING=각 축에 건물 벽
+STR_MAPGEN_STYLE_MIDDLE=중앙
+STR_MAPGEN_MIDDLE_OPEN=개방
+STR_MAPGEN_MIDDLE_PIECES=대각선 조각
+STR_MAPGEN_MIDDLE_CLUMP=중앙 덩어리
+STR_MAPGEN_MIDDLE_BOTH=대각선 조각과 중앙 덩어리
+STR_MAPGEN_STYLE_WALLS_TIP=각 축에서 숲 가장자리를 가로지르는 건물 벽이 있어, 가장자리를 네 조각으로 나눕니다. 시드에서: 시드가 하나를 고릅니다.
+STR_MAPGEN_STYLE_MIDDLE_TIP=육지 중앙 부근의 건물: 45도로 놓인 짧은 조각, 중앙의 덩어리, 또는 둘 다입니다. 시드에서: 시드가 하나를 고릅니다.
 
 # Log viewer sim-replay messages
 STR_LV_PLAYER_JOINED={player}님이 게임에 참여했어요.
@@ -1115,6 +1196,10 @@ STR_LV_AUTO_SCROLL=자동 스크롤
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=로그 파일의 끝에 도달했어요
+STR_LV_LOAD_TITLE=로그 여는 중
+STR_LV_LOAD_UNZIP=압축 해제 중
+STR_LV_LOAD_SCAN=읽는 중
+STR_LV_LOAD_PLAY=색인 생성 중
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=확대
@@ -2084,6 +2169,12 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=켜기
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=끄기
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=근접
 STR_DLGSETTINGS_HOSTING_VOICE_TIP="끄기"를 선택하면 음성이 아무에게도 전달되지 않고 폐기돼요. "근접"은 아직 구현되지 않아 "켜기"와 동일하게 동작해요.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=서버 이름
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=게임 찾기에서 주소 대신 이 이름을 보여줘요. 32바이트까지 쓸 수 있어요 (한글로 약 10자, 다른 문자는 더 적어요). 비워 두면 주소가 표시돼요.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=설명
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=게임 찾기에서 플레이어가 게임을 가리키거나 선택하면 이 내용을 보여줘요. 200바이트까지 쓸 수 있어요 (한글로 약 66자, 다른 문자는 더 적어요).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=관전자 지연 (초)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=관전자가 보는 게임은 설정한 초만큼 늦게 보여서, 모두가 어디 있는지 플레이어에게 알려줄 수 없어요. 0이면 게임을 실시간으로 보여줘요. 600까지 설정할 수 있어요.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=음성
@@ -2534,7 +2625,7 @@ STR_RULE_DESC_lgm_gather_trees=건설자가 숲 한 칸에서 가져오는 목�
 STR_RULE_DESC_lgm_helicopter_speed=낙하산으로 내려오는 동안 건설자가 한 틱에 이동하는 거리예요.
 STR_RULE_DESC_lgm_arrive_tolerance=건설자가 "도착"으로 인정되려면 목표에 얼마나 가까워야 하는지예요.
 STR_RULE_DESC_lgm_return_tolerance=건설자가 "복귀"로 인정되려면 탱크에 얼마나 가까워야 하는지예요.
-STR_RULE_DESC_lgm_pill_drop_search=토치카 투하 지점을 찾을 때 한 열에서 살피는 칸 수예요.
+STR_RULE_DESC_lgm_pill_drop_search=폐지되어 아무 효과가 없어요.
 STR_RULE_DESC_lgm_boat_leave_offset=건설자가 보트에 오르기 위해 강기슭에서 나가는 거리예요.
 STR_RULE_DESC_lgm_boat_return_offset=건설자가 보트에서 돌아올 때 이동하는 거리예요.
 STR_RULE_DESC_pill_max_armour=토치카가 가질 수 있는 최대 장갑이자, 새로 지은 토치카의 시작 장갑이에요.
@@ -2551,7 +2642,6 @@ STR_RULE_DESC_pill_base_defend_shape=pill_base_defend_range를 재는 방식이�
 STR_RULE_DESC_tank_slide_armour_bonus=장갑이 0일 때 추가되는 밀림 거리예요. 맞기 전에 잃은 장갑 비율만큼 tank_slide_step에 더해져요. tank_slide_mac이 켜져 있을 때만 읽어요.
 STR_RULE_DESC_tank_slide_mac=포탄에 맞은 탱크를 Mac Bolo 방식으로 밀어낼지 정해요. 켜면 장갑이 줄수록 tank_slide_armour_bonus만큼 더 세게 밀리고, tank_slide_step과 tank_bump_decay_shift는 40ms 단위로 읽으며 매 틱 움직이는 미끄러짐이 돼요. 끄면 WinBolo 방식으로, 장갑과 상관없이 똑같이 밀려요.
 STR_RULE_DESC_tank_deep_sea_safe=보트가 없는 탱크가 가라앉지 않고 심해를 건널 수 있는지 정해요. 끄면 기존 게임 방식으로, 심해는 보트가 없는 탱크를 가라앉혀요. 이 설정이 다시 꺼지면 보트 없이 심해에 나가 있는 탱크는 다음 틱에 가라앉아요.
-STR_RULE_DESC_man_bless_tile_terrain_speed=건설자가 건설할 칸을 그 칸의 지형 속도로 지나갈지 정해요. Mac Bolo와 같아요. 끄면 WinBolo 방식으로, 지형과 상관없이 기지 속도로 그 칸의 중앙까지 걸어요. 강, 벽, 토치카처럼 걷는 속도가 없는 칸은 기지 속도를 그대로 써요. 탱크로 돌아오는 길은 바뀌지 않아요.
 STR_RULE_DESC_pill_aim_iterations=토치카가 움직이는 목표를 예측하기 위해 얼마나 많은 계산을 반복하는지예요.
 STR_RULE_DESC_pill_massage_range=토치카가 솔버 대신 기존의 전방 예측으로 조준하려면 탱크가 얼마나 가까워야 하는지예요. 솔버는 주위를 도는 탱크를 잘 맞히지 못해요. 0(클래식 값)은 항상 목표를 제대로 예측하는 토치카를 뜻하고, 384는 1.5칸으로, 예전의 빌드 시점 스위치가 쓰던 거리예요.
 STR_RULE_DESC_pill_massage_cosine=가까운 토치카가 그래도 제대로 조준하려면 탱크가 얼마나 직진하고 있어야 하는지를, 진행 방향과 토치카를 향한 직선 사이 각도의 코사인 값으로 나타내요. 1이면 pill_massage_range 안의 모든 탱크를 대충 조준하고, 0이면 어느 탱크도 대충 조준하지 않아요. pill_massage_range가 0이면 이 값은 아무 효과가 없어요.
@@ -2732,7 +2822,122 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=창작마당
 # The game finder's scripts
 STR_DLGBROWSER_MODS=모드
 STR_DLGBROWSER_MODS_MORE=+모드 {number}개
+STR_DLGBROWSER_ADDRESS=주소
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=이제 음성 채팅이 게임의 모든 플레이어에게 전달됩니다
 STR_VOICE_EVERYONE_OFF=이제 음성 채팅이 동맹에게만 전달됩니다
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=메모리
+STR_DLGSYSINFO_MEM_RESIDENT=상주
+STR_DLGSYSINFO_MEM_PEAK=최대
+STR_DLGSYSINFO_MEM_PRIVATE=전용
+STR_DLGSYSINFO_MEM_VIRTUAL=가상
+STR_DLGSYSINFO_MEM_LUA=Lua 힙
+STR_DLGSYSINFO_MEM_BOTS=봇
+STR_DLGSYSINFO_MEM_BOT=봇
+STR_DLGSYSINFO_MEM_SERVER_LISTS=서버 리스트
+STR_DLGSYSINFO_MEM_BOT_LISTS=봇 리스트
+STR_DLGSYSINFO_MEM_EXPLOSIONS=폭발
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=탱크 폭발
+STR_DLGSYSINFO_MEM_SHELLS=포탄
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=지뢰 폭발
+STR_DLGSYSINFO_MEM_FLOOD_FILL=침수
+STR_DLGSYSINFO_MEM_BUILDING=건설
+STR_DLGSYSINFO_MEM_RUBBLE=잔해
+STR_DLGSYSINFO_MEM_SWAMP=늪
+STR_DLGSYSINFO_MEM_GRASS=풀
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=눌러서 말하기: 게임 화면의 마이크 버튼을 길게 누르세요
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=내 파일
+STR_MAPEDIT_IOS_BUILTIN=WinBolo에 포함된 맵
+STR_MAPEDIT_IOS_NOFILES=아직 아무것도 없습니다. 저장한 파일과 파일 앱의 WinBolo 폴더에 넣은 파일이 여기에 표시됩니다.
+STR_MAPEDIT_IOS_NAME=이름
+STR_MAPEDIT_IOS_REPLACES=이 이름의 파일이 이미 있습니다. 저장하면 대체됩니다.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=녹화
+STR_IOSREC_EMPTY=아직 녹화가 없습니다. 싱글 플레이 라운드가 여기에 녹화되며, 파일 앱의 WinBolo 폴더에 넣은 .wbv 파일도 여기에 표시됩니다.
+STR_IOSREC_COPY=파일 앱으로 복사
+STR_IOSREC_COPIED=파일 앱의 WinBolo 폴더로 복사했습니다.
+STR_IOSREC_OPEN_FAILED=이 녹화를 열 수 없습니다.
+STR_IOSREC_LAST_ROUND=마지막 싱글 플레이 라운드
+STR_IOSREC_COPY_FAILED=녹화를 파일 앱으로 복사할 수 없습니다.
+STR_DLGCONNECTING_TITLE={string1}에 연결하는 중...
+STR_DLGCONNECTING_PING=서버에 게임 정보를 묻는 중...
+STR_DLGCONNECTING_JOINING=게임에 참가하는 중...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=그 녹화를 읽을 수 없습니다.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=설정
+STR_DLGLOBBY_DETAILS_COL_VALUE=값
+STR_DLGLOBBY_DETAILS_RULES=규칙:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=이 값은 서버가 정합니다. 바꿀 수 없어요.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=작성자 {string1} · 업데이트 {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=알 수 없음
+STR_MENU_INFO_OVERLAY=정보 오버레이
+STR_SCNPANEL_POP_OUT=분리
+STR_SCNPANEL_POP_IN=도킹
+STR_SCNPANEL_CLOSE_TITLE={string1}을(를) 닫을까요?
+STR_SCNPANEL_CLOSE_BODY={string1} > {string2}에서 다시 켤 수 있어요.
+STR_DLGLOBBY_SCENARIO_REQUIRED=서버는 항상 이 스크립트를 실행합니다. 제거할 수 없어요.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=서버는 항상 이번 라운드의 시나리오를 실행합니다
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=이 목록은 서버가 정합니다. 바꿀 수 없어요.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=토치카가 Mac Bolo 방식으로 조준하는지 여부. 약 한 칸 안에서 움직이며 막히지 않은 탱크는 토치카가 진행 방향으로 멀리 앞을 겨누게 합니다. 멈췄거나 막힌 탱크에는 앞조준을 하지 않아요. pill_massage_range, pill_massage_cosine, pill_aim_iterations를 무시합니다.
+STR_RULE_DESC_tank_collision_mac=탱크가 벽, 작동 중인 토치카, 적 기지에 대해 Mac Bolo의 방향별 스프라이트 상자와 픽셀 밀어내기를 쓰는지 여부. '필 마사지'를 위해 토치카 옆을 더 가깝게 지나갈 수 있어요.
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=탱크 파괴를 누구의 공으로 할지, 파괴될 때마다 묻습니다. 익사는 스크립트가 가라앉힌 탱크를 지정하지 않으면 희생자 자신이 됩니다.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1}은(는) 파일 앱의 WinBolo 폴더에 있어요.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1}을(를) 저장할 수 없습니다.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=맵이 화면을 채우고 조작 버튼은 그 위에 그려집니다.\n꺼두면 게임 화면은 정사각형으로 유지되고 조작 버튼은 그 옆에 놓입니다.\n다음에도 이 설정이 기억됩니다.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=전체 화면에서 건설 도구 사이로 맵이 얼마나 비쳐\n보이는지를 정합니다. 0%면 불투명하며, 슬라이더는\n90%까지만 움직여 완전히 투명해지지는 않습니다.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=전체 화면에서 탱크·토치카·기지 격자와 재고 바 사이로 맵이\n얼마나 비쳐 보이는지를 정합니다. 0%면 불투명하며, 슬라이더는\n90%까지만 움직여 완전히 투명해지지는 않습니다.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=지도가 화면을 채우고, 상태·건설·뉴스 패널이 그 위에 표시되며\n터치로 플레이할 때는 터치 컨트롤도 함께 표시됩니다.\n끄면 클래식 화면이 표시됩니다. 다음에도 기억됩니다.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=이 기기는 모바일 데이터를 사용 중입니다. 모바일 데이터로 호스트한\n인터넷 게임은 아마 작동하지 않을 것입니다. 모바일 네트워크에서는 다른\n플레이어가 이 기기에 접속할 수 있는 경우가 드뭅니다. Wi-Fi에서는\n작동할 가능성이 훨씬 높습니다.\n\n그래도 호스트하시겠습니까?
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=공유
+STR_ANDROIDREC_EMPTY=아직 녹화가 없습니다. 싱글 플레이 라운드가 여기에 녹화되며, 다른 앱에서 연 .wbv 녹화도 여기에 표시됩니다.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1}을(를) 저장했어요. 다음으로 공유할 앱을 선택하세요.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=아직 아무것도 없습니다. 여기서 또는 게임에서 저장한 맵이 여기에 표시됩니다.
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=내 GIF
+STR_CLIPGIF_GALLERY_EMPTY=아직 GIF가 없습니다. 리플레이 아래의 GIF 버튼이나 클립의 GIF 버튼으로 만드세요.
+STR_CLIPGIF_COPY=클립보드에 복사
+STR_CLIPGIF_SAVE=디스크에 저장
+STR_CLIPGIF_COPIED=복사했습니다.
+STR_CLIPGIF_COPY_FAILED=GIF를 복사할 수 없습니다.
+STR_CLIPGIF_OPEN_FAILED=이 GIF를 열 수 없습니다.
+STR_CLIPGIF_MAP_FMT=맵: {string1}
+STR_CLIPGIF_PLAYERS_FMT=플레이어: {string1}
+STR_CLIPGIF_NO_DETAILS=이 GIF에는 저장된 세부 정보가 없습니다.
+STR_CLIPGIF_LENGTH_TIP=재생 위치부터의 GIF 길이(초).\n타임라인 밝은 부분 끝의 표시를 끌어서 바꿀 수도 있습니다.
+STR_CLIPGIF_LOADING=GIF를 여는 중...
+STR_CLIPGIF_TOO_LARGE=이 GIF는 너무 커서 여기에 표시할 수 없습니다. 복사하거나 저장할 수는 있습니다.
+STR_CLIPGIF_FILTER_NAME=GIF 이미지

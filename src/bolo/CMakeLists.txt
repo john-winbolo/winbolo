@@ -20,6 +20,7 @@ add_library(bolo_static STATIC
     bolo_map.c
     bolo_rand.c
     bot_manager.c
+    bot_mem_report.c
     bot_worker_pool.c
     brain_data.c
     brain_list.c
@@ -58,6 +59,8 @@ add_library(bolo_static STATIC
     lobby_script_rows.c
     log.c
     mapgen.c
+    mapgen_fragments.c
+    mapgen_maker.c
     mapgen_maze.c
     message_inbox.c
     messages.c
@@ -85,6 +88,7 @@ add_library(bolo_static STATIC
     screentank.c
     scroll.c
     scroll_item_list.c
+    server_text.c
     shells.c
     sight.c
     sim_rules.c
@@ -125,6 +129,15 @@ if(NOT EMSCRIPTEN)
 endif()
 
 set_target_properties(bolo_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# Map Maker must make the same map from the same seed on every compiler
+# and CPU. Stop GCC and Clang from fusing a multiply and an add into one
+# step there. MSVC from Visual Studio 2022 (MSVC 19.30, _MSC_VER 1930)
+# on does not fuse them under its default /fp:precise; older MSVC could
+# on ARM64 and with /arch:AVX2, so build with Visual Studio 2022 or later.
+if(NOT MSVC)
+    set_source_files_properties(mapgen_maker.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 
 target_compile_definitions(bolo_static PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"

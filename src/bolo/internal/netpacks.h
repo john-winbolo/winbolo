@@ -37,6 +37,8 @@
 #include "view_policy.h"   /* ViewPolicy — INFO_PACKET.view_policies helpers */
 #include "server_voice_mode.h"  /* ServerVoiceMode — INFO_PACKET.flags voice bits */
 #include "playername_validate.h"  /* playerNameValidate / playerNameCompare */
+#include "byte_order.h"    /* INFO_PACKET's little-endian numbers */
+#include <stddef.h>        /* offsetof */
 
 #define MAX_UDPPACKET_SIZE 1024
 #define MAX_TCPPACKET_SIZE 1024
@@ -109,6 +111,27 @@ typedef struct BOLO_PACK_ATTR {
 #pragma pack(pop)
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 113, INFO_PACKET_must_be_113_bytes);
 
+/* INFO_PACKET's multi-byte numbers - serverport, start_delay, time_limit,
+ * num_players, free_pills and free_bases - are little-endian on the wire, as
+ * every server and the tracker have always had them; start_time and
+ * serveraddress are in network order in the struct already. A sender puts a
+ * packet on the wire with infoPacketEncode, and a reader takes those six
+ * fields from the received bytes with INFO_PACKET_GET16 / INFO_PACKET_GET32
+ * rather than from the struct. */
+static inline void infoPacketEncode(BYTE *out, const INFO_PACKET *pkt) {
+  memcpy(out, pkt, sizeof(*pkt));   /* the byte fields, and the two in network order */
+  byteOrderPutLe16(out + offsetof(INFO_PACKET, gameid.serverport), pkt->gameid.serverport);
+  byteOrderPutLe32(out + offsetof(INFO_PACKET, start_delay), (uint32_t) pkt->start_delay);
+  byteOrderPutLe32(out + offsetof(INFO_PACKET, time_limit), (uint32_t) pkt->time_limit);
+  byteOrderPutLe16(out + offsetof(INFO_PACKET, num_players), pkt->num_players);
+  byteOrderPutLe16(out + offsetof(INFO_PACKET, free_pills), pkt->free_pills);
+  byteOrderPutLe16(out + offsetof(INFO_PACKET, free_bases), pkt->free_bases);
+}
+#define INFO_PACKET_GET16(bytes, field) \
+  byteOrderGetLe16((const BYTE *) (bytes) + offsetof(INFO_PACKET, field))
+#define INFO_PACKET_GET32(bytes, field) \
+  byteOrderGetLe32((const BYTE *) (bytes) + offsetof(INFO_PACKET, field))
+
 /* The scripts a round runs, appended to the reply to an info request (and to
  * that reply only: the tracker update stays sizeof(INFO_PACKET)). The bytes
  * start at 113, straight after the INFO_PACKET:
@@ -126,6 +149,33 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 113, INFO_PACKET_must_be_113_bytes);
 #define INFO_SCRIPT_TAIL_MAX (1 + 63 + 1 + WBN_SCENARIO_DESC_MAX + 1 + 1 + 9 * (1 + 63))
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) + INFO_SCRIPT_TAIL_MAX <= MAX_UDPPACKET_SIZE,
                    INFO_PACKET_and_script_tail_fit_one_udp_packet);
+
+/* The name and description the host gave the server, after the last mod of
+ * the script bytes, and only when the host gave at least one of them:
+ *
+ *   [serverNameLen 1][serverName][serverDescLen 1][serverDesc]
+ *
+ * UTF-8, no NULs, each cut on a character boundary: the name to at most
+ * INFO_SERVER_NAME_MAX bytes and the description to at most
+ * INFO_SERVER_DESC_MAX. A server with neither writes nothing here, so its
+ * reply is byte for byte what a server from before this field sent. A game
+ * finder from #449 on, which reads the script bytes, ignores these as "after
+ * the last mod". One from before #449 already refuses any reply longer than
+ * the INFO_PACKET, so it cannot read a current server whether or not these
+ * bytes are there; the field changes nothing for it.
+ *
+ * The whole reply has to stay inside MAX_UDPPACKET_SIZE, because that is the
+ * receive buffer of every game finder, and a Windows recvfrom drops a
+ * datagram longer than its buffer outright. INFO_REPLY_TAIL_CAP is the room
+ * after the INFO_PACKET. The name always fits whole beside the largest
+ * script bytes; the description takes what is left, which is all of it
+ * unless the round runs many mods with long names. In the worst case (843
+ * script bytes and a 32-byte name) 34 bytes of description fit. */
+#define INFO_SERVER_NAME_MAX 32
+#define INFO_SERVER_DESC_MAX 200
+#define INFO_REPLY_TAIL_CAP (MAX_UDPPACKET_SIZE - sizeof(INFO_PACKET))
+BOLO_STATIC_ASSERT(INFO_SCRIPT_TAIL_MAX + 1 + INFO_SERVER_NAME_MAX + 1 <= INFO_REPLY_TAIL_CAP,
+                   INFO_server_name_always_fits_after_the_script_tail);
 
 /* Historical INFO_PACKET wire size, before the flags/count/md5 fields were
  * appended. Servers older than those additions send this; discovery accepts

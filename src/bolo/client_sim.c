@@ -1276,6 +1276,40 @@ static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURN
 }
 
 /*********************************************************
+ *NAME:          clientSimDrawnTankWorld
+ *PURPOSE:
+ *  Where tank p is drawn this frame, in world units. The
+ *  full position is used only when the front end draws it
+ *  (fineTankPositions, the Smooth mode); otherwise the tank
+ *  is drawn at its game pixel. Returns false, leaving wx/wy
+ *  alone, when the players list holds no position for p (a
+ *  hidden stub zeroes the entry).
+ *********************************************************/
+static bool clientSimDrawnTankWorld(const ClientSim *cs, BYTE p, WORLD *wx,
+                                    WORLD *wy) {
+  const player *row; /* Tank p's entry in the players list */
+
+  if (cs->sim.plyrs == NULL || p >= MAX_TANKS) {
+    return false;
+  }
+  row = &(*cs->sim.plyrs).item[p];
+  /* A hidden stub zeroes the entry: there is no drawn tank. */
+  if (row->mapX == 0 && row->mapY == 0) {
+    return false;
+  }
+  if (cs->fineTankPositions && row->fineSet) {
+    *wx = row->fineX;
+    *wy = row->fineY;
+  } else {
+    *wx = (WORLD)(((WORLD)row->mapX << TANK_SHIFT_MAPSIZE) +
+                  ((WORLD)row->pixelX << TANK_SHIFT_RIGHT2));
+    *wy = (WORLD)(((WORLD)row->mapY << TANK_SHIFT_MAPSIZE) +
+                  ((WORLD)row->pixelY << TANK_SHIFT_RIGHT2));
+  }
+  return true;
+}
+
+/*********************************************************
  *NAME:          clientShellVisualBlocked
  *PURPOSE:
  *  Shared visual collision short-circuit for client shells.
@@ -1325,7 +1359,16 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
     bool tkOnBoat;
     if (p == cs->interpCtx.localPlayer) continue;
     if (!interpIsAlive(&cs->interpCtx, p)) continue;
+    /* A shell leaves from inside the tank that fired it; it cannot hit it. */
+    if (p == owner) continue;
     if (interpGetPosition(&cs->interpCtx, p, 1.0f, &tkX, &tkY, &tkAngle, &tkOnBoat)) {
+      /* A player sees the tank where it is drawn, which is behind the newest
+       * sample by the display delay. Culling against the newest sample takes
+       * a shell off the screen short of the hull it is flying at. A bot draws
+       * nothing and keeps the newest sample. */
+      if (!cs->isBot) {
+        (void)clientSimDrawnTankWorld(cs, p, &tkX, &tkY);
+      }
       /* Match the authoritative shell hit-zone (circle by default; square
        * under BOLO_LEGACY_SQUARE_COLLISION). See tank_hit_radius. */
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
@@ -1465,6 +1508,14 @@ void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
  * follows the rule because the travel it is measuring does. */
 #define PROJECTION_MATCH_TICKS 4
 
+/* How much of the gap between a matched shell's carried position and its fresh
+ * projection is closed per snapshot: 1/PROJECTION_PULL_DIVISOR. Keeping the
+ * carried position outright let a shell's age error build up until it hit
+ * something early or late; jumping to the projection twitches it with every
+ * ping change. A quarter closes the gap in a few snapshots without a visible
+ * jump. */
+#define PROJECTION_PULL_DIVISOR 4.0f
+
 /*********************************************************
  *NAME:          clientSimRebuildProjectedShells
  *PURPOSE:
@@ -1472,9 +1523,11 @@ void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
  *  serverShellSnaps (already own-filtered for humans),
  *  anchoring each to snap + velocity*age. Incoming shells
  *  that match one carried from the previous snapshot (same
- *  owner, nearest position within the match distance)
- *  keep that shell's float accumulator so frame-to-frame
- *  age-estimate jitter doesn't twitch the rendered position;
+ *  owner and angle, nearest position within the match
+ *  distance) keep that shell's float accumulator, pulled a
+ *  part of the way toward the fresh projection, so frame-to-
+ *  frame age-estimate jitter doesn't twitch the rendered
+ *  position and the error cannot build up;
  *  unmatched incoming shells anchor fresh; carried shells
  *  with no match are dropped. Human clients only.
  *********************************************************/
@@ -1507,7 +1560,10 @@ void clientSimRebuildProjectedShells(ClientSim *cs, uint16_t pingMs) {
     for (j = 0; j < cs->projectedShellCount; j++) {
       const ProjectedShell *prev = &cs->projectedShells[j];
       float dx, dy, distSq;
-      if (usedPrev[j] || prev->owner != s->owner) {
+      /* A shell flies straight, so the same shell keeps its angle. Owner alone
+       * cannot tell apart shells from different pills of one owner, or from
+       * one tank firing twice in different directions. */
+      if (usedPrev[j] || prev->owner != s->owner || prev->angle != s->angle) {
         continue;
       }
       dx = prev->fx - fx;
@@ -1521,8 +1577,10 @@ void clientSimRebuildProjectedShells(ClientSim *cs, uint16_t pingMs) {
 
     if (best >= 0) {
       usedPrev[best] = true;
-      ns->fx = cs->projectedShells[best].fx;
-      ns->fy = cs->projectedShells[best].fy;
+      ns->fx = cs->projectedShells[best].fx +
+               (fx - cs->projectedShells[best].fx) / PROJECTION_PULL_DIVISOR;
+      ns->fy = cs->projectedShells[best].fy +
+               (fy - cs->projectedShells[best].fy) / PROJECTION_PULL_DIVISOR;
     } else {
       ns->fx = fx;
       ns->fy = fy;
@@ -3096,6 +3154,20 @@ uint64_t clientSimGetLobbyScenarioListWorkshopId(const ClientSim *cs,
   if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
   return cs->lobbyScenarioListWorkshopId[idx];
 }
+bool clientSimGetLobbyScenarioListIdentityKnown(const ClientSim *cs,
+                                                int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
+  return cs->lobbyScenarioListIdentityKnown[idx];
+}
+const char *clientSimGetLobbyScenarioListAuthor(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListAuthor[idx];
+}
+const char *clientSimGetLobbyScenarioListUpdated(const ClientSim *cs,
+                                                 int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListUpdated[idx];
+}
 /* The lobby's ordered script list: what the host has picked, in the order
  * the round will load it. Entry 0 is the script the round is decided by and
  * is the same file the attached-scenario accessors describe; the entries
@@ -3120,6 +3192,10 @@ bool clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i) {
 bool clientSimGetLobbyScriptBound(const ClientSim *cs, int i) {
   if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
   return cs->lobbyScriptBound[i];
+}
+bool clientSimGetLobbyScriptRequired(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
+  return cs->lobbyScriptRequired[i];
 }
 uint8_t clientSimGetLobbyScriptSource(const ClientSim *cs, int i) {
   if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) {
@@ -3287,6 +3363,10 @@ void clientSimLobbyScenarioDetailsPut(ClientSim *cs, const char *file,
      one reads as a server that did not say. */
   cs->lobbyScnDetails[i].settingsKnown = false;
   cs->lobbyScnDetails[i].settingsLen   = 0;
+  /* And the identity likewise. */
+  cs->lobbyScnDetails[i].identityKnown = false;
+  cs->lobbyScnDetails[i].author[0]     = 0;
+  cs->lobbyScnDetails[i].updated[0]    = 0;
 }
 
 void clientSimLobbyScenarioDetailsForget(ClientSim *cs) {
@@ -3334,6 +3414,45 @@ bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
   return true;
 }
 
+void clientSimLobbyScenarioIdentityPut(ClientSim *cs, const char *file,
+                                       const char *author,
+                                       const char *updated) {
+  int i;
+  if (cs == NULL || !clientSimScnDetailsNameOk(file)) return;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0 || cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_FOUND) {
+    return;
+  }
+  /* Cleaned and checked here as well as on the wire, so a caller in this
+     process that read a manifest some other way is held to the same. */
+  (void)scnIdentityCleanAuthor(cs->lobbyScnDetails[i].author,
+                               sizeof(cs->lobbyScnDetails[i].author), author,
+                               author != NULL ? strlen(author) : 0);
+  cs->lobbyScnDetails[i].updated[0] = 0;
+  if (scnIdentityUpdatedValid(updated)) {
+    SDL_strlcpy(cs->lobbyScnDetails[i].updated, updated,
+                sizeof(cs->lobbyScnDetails[i].updated));
+  }
+  cs->lobbyScnDetails[i].identityKnown = true;
+}
+
+bool clientSimGetLobbyScenarioIdentity(const ClientSim *cs, const char *file,
+                                       const char **author,
+                                       const char **updated) {
+  int i;
+  if (author != NULL) *author = "";
+  if (updated != NULL) *updated = "";
+  if (cs == NULL || file == NULL || file[0] == '\0') return false;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0 || cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_FOUND ||
+      !cs->lobbyScnDetails[i].identityKnown) {
+    return false;
+  }
+  if (author != NULL) *author = cs->lobbyScnDetails[i].author;
+  if (updated != NULL) *updated = cs->lobbyScnDetails[i].updated;
+  return true;
+}
+
 bool clientSimGetLobbyScriptSetting(const ClientSim *cs, const char *file,
                                     const char *id, int32_t *out) {
   int i;
@@ -3343,6 +3462,19 @@ bool clientSimGetLobbyScriptSetting(const ClientSim *cs, const char *file,
         strcmp(cs->lobbyScriptSettings[i].id, id) == 0) {
       if (out != NULL) *out = cs->lobbyScriptSettings[i].value;
       return true;
+    }
+  }
+  return false;
+}
+
+bool clientSimGetLobbyScriptSettingLocked(const ClientSim *cs,
+                                          const char *file, const char *id) {
+  int i;
+  if (cs == NULL || file == NULL || id == NULL) return false;
+  for (i = 0; i < cs->lobbyScriptSettingCount; i++) {
+    if (strcmp(cs->lobbyScriptSettings[i].file, file) == 0 &&
+        strcmp(cs->lobbyScriptSettings[i].id, id) == 0) {
+      return cs->lobbyScriptSettings[i].locked;
     }
   }
   return false;
@@ -4480,6 +4612,31 @@ void clientSimApplyAllyViewTarget(ClientSim *cs, BYTE target, BYTE mapX,
                         target, mapX, mapY);
 }
 
+void clientSimFollowAllyView(ClientSim *cs) {
+  ViewPort *vp;  /* The camera */
+  BYTE target;   /* The ally being watched */
+  WORLD wx;      /* Where it is drawn */
+  WORLD wy;
+
+  if (cs == NULL) {
+    return;
+  }
+  vp = &cs->viewport;
+  target = vp->viewTarget;
+  if (vp->viewKind != VIEW_KIND_ALLY || target >= MAX_TANKS ||
+      cs->sim.plyrs == NULL) {
+    return;
+  }
+  /* A hidden stub zeroes the entry; the upkeep parks on the last square. */
+  if (!clientSimDrawnTankWorld(cs, target, &wx, &wy)) {
+    return;
+  }
+  if (scrollCenterWorld(&cs->scroll, &vp->xOffset, &vp->yOffset, wx, wy) ==
+      TRUE) {
+    viewportRecalc(vp);
+  }
+}
+
 void clientSimSyncViewState(ClientSim *cs) {
   uint8_t kind;
   uint8_t target;
@@ -4494,12 +4651,18 @@ void clientSimSyncViewState(ClientSim *cs) {
   if (kind == VIEW_KIND_TANK) {
     target = 0;
   }
-  if (kind == cs->lastSentViewKind && target == cs->lastSentViewTarget) {
+  if (cs->viewStateResendTicks < CLIENT_VIEW_STATE_RESEND_TICKS) {
+    cs->viewStateResendTicks++;
+  }
+  if (kind == cs->lastSentViewKind && target == cs->lastSentViewTarget &&
+      (kind == VIEW_KIND_TANK ||
+       cs->viewStateResendTicks < CLIENT_VIEW_STATE_RESEND_TICKS)) {
     return;
   }
   clientSimNetSendViewState(cs, kind, target);
   cs->lastSentViewKind = kind;
   cs->lastSentViewTarget = target;
+  cs->viewStateResendTicks = 0;
 }
 
 void clientSimResetViewStateReport(ClientSim *cs) {
