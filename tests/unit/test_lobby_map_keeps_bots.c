@@ -635,6 +635,81 @@ int run_lobby_map_keeps_bots_map_own_row(void) {
     return 0;
 }
 
+/* ── A random map does not take the old map's own script ──────────── */
+
+/* The host plays a map with its own script, picks a scenario and a mod,
+ * then previews a random map in the lobby. The random map is generated, not
+ * read from a file, so no script lies beside it. The old map's script must
+ * not follow it, and the scenario and mod the host picked must stay. Cancel
+ * puts the old map and the host's list back as they were. */
+int run_lobby_random_map_drops_map_own_script(void) {
+    static const char *const kPicks[] = { "waves.lua", "fastreload.lua" };
+    ServerSim    *sim;
+    ClientCommand cmd;
+    char          ownLeaf[64];
+    int           round;
+    bool          ownBefore;
+
+    UT_ASSERT(mkSetUp());
+    UT_ASSERT(mkPut(mkScripts, "waves.lua", kMkWaves));
+    UT_ASSERT(mkPut(mkScripts, "fastreload.lua", kMkMod));
+    snprintf(ownLeaf, sizeof(ownLeaf), "big%s", SCN_SCRIPT_SUFFIX);
+    UT_ASSERT(mkPut(mkMaps, ownLeaf, kMkMapOwn));
+    ut_brain_stub_arm(true);
+    sim = mkSim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(mkSetMap(sim, MK_BIG_MAP) == CMD_OK);
+    UT_ASSERT_MSG(serverSimGetMapScript(sim) != NULL,
+                  "the big map's own script was not found beside it");
+    /* Set Map is itself a preview. Keep it, as a host who played on the big
+       map has, so the Cancel below goes back to the big map. */
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type   = CMD_LOBBY_PREVIEW_COMMIT;
+    cmd.cmdSeq = 1;
+    UT_ASSERT(mkApply(sim, &cmd) == CMD_OK);
+
+    UT_ASSERT(mkPick(sim, kPicks, 2) == CMD_OK);
+    if (mkScriptListIs(sim, kPicks, 2, "after the pick") != 0) return 1;
+    ownBefore = serverSimGetMapScript(sim) != NULL;
+
+    /* Two previews: the second starts from a generated map, as a host who
+       tries a few seeds does. */
+    for (round = 0; round < 2; round++) {
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type   = CMD_LOBBY_PREVIEW_RANDOM;
+        cmd.cmdSeq = 1;
+        cmd.u.lobbyPreviewRandom.seedLen = 5;
+        memcpy(cmd.u.lobbyPreviewRandom.seed, round == 0 ? "12345" : "54321",
+               5);
+        UT_ASSERT_MSG(mkApply(sim, &cmd) == CMD_OK,
+                      "random preview %d was refused", round + 1);
+        UT_ASSERT_MSG(sim->mapFilePath[0] == '\0',
+                      "random preview %d kept the old map path \"%s\"",
+                      round + 1, sim->mapFilePath);
+        UT_ASSERT_MSG(serverSimGetMapScript(sim) == NULL,
+                      "random preview %d took the big map's own script",
+                      round + 1);
+        if (mkScriptListIs(sim, kPicks, 2, "after a random preview") != 0) {
+            return 1;
+        }
+    }
+
+    /* Cancel: the big map comes back with the list the host had on it. */
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type   = CMD_LOBBY_PREVIEW_CANCEL;
+    cmd.cmdSeq = 1;
+    UT_ASSERT(mkApply(sim, &cmd) == CMD_OK);
+    UT_ASSERT_MSG(strstr(sim->mapFilePath, MK_BIG_MAP) != NULL,
+                  "cancel did not put the big map's path back: \"%s\"",
+                  sim->mapFilePath);
+    if (mkScriptListIs(sim, kPicks, 2, "after the cancel") != 0) return 1;
+    UT_ASSERT_MSG((serverSimGetMapScript(sim) != NULL) == ownBefore,
+                  "cancel changed whether the big map's own script is on");
+
+    mkDestroy(sim);
+    return 0;
+}
+
 /* ── A rotation opens on the template's own lobby ─────────────────── */
 
 /* A server that skips the lobby and rotates maps, as -skiplobby -mapdir

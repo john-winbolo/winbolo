@@ -1126,8 +1126,8 @@ int run_lobby_template_cancel_restores_path_inmem(void) {
     return 0;
 }
 
-/* A generated map is the other one with no file of its own. It never clears
- * the path while it stands, so here the cancel is what loses it. */
+/* A generated map is the other one with no file of its own. The preview
+ * clears the path, so the cancel has to bring the file back. */
 int run_lobby_template_cancel_restores_path_random(void) {
     ServerSim       *sim;
     ScnLobbyTemplate t;

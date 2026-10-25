@@ -1598,6 +1598,12 @@ bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
 
     if (!serverSimApplyRandomMapConfig(sim, cfg)) return FALSE;
 
+    /* Generated, not read — nothing to look beside. Without this the old
+       map's path stays, and the map's own script from beside that old file
+       is attached to the generated map. The stash above keeps the old path,
+       so Cancel still puts it back. */
+    sim->mapFilePath[0] = '\0';
+
     {
         char seedStr[64];
         char msg[128];
