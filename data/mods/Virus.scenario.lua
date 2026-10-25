@@ -23,12 +23,16 @@
 -- who wins a fight has bought a few seconds, not a kill.
 --
 -- The map belongs to the survivors. Only they capture a base or a pillbox,
--- only they build, and only they carry mines. The infected have the ground and
--- nothing on it, and a trickle of shells so that an empty gun is not the end of
--- them. What a survivor owns does not change sides with them when they turn:
--- their pillboxes, standing or carried, and their bases go to the nearest
--- survivor still alive, so a fort stays with the survivors rather than being
--- turned around on them.
+-- and only they carry mines. The infected have the ground and nothing on it,
+-- and a trickle of shells so that an empty gun is not the end of them. They
+-- come back with no trees, but they build like anyone else: their builder
+-- farms trees and builds walls, roads and boats. The horde needs that to
+-- storm the survivors' base and to get past a carpet of mines.
+--
+-- What a survivor owns does not change sides with them when they turn: their
+-- pillboxes, standing or carried, and their bases go to the nearest survivor
+-- still alive, so a fort stays with the survivors rather than being turned
+-- around on them.
 --
 -- Nobody can hurt their own side. Friendly fire would otherwise be the quickest
 -- way to end the round, and a survivor shot by a survivor would join the horde
@@ -1440,9 +1444,10 @@ function can_ally(p, q)
 end
 
 -- A survivor comes back with everything; an infected one with a full tank
--- of shells, nothing to build with, and a full tank of armour. Asked on every
--- respawn, and by then the seat has changed sides, so a survivor's last death
--- is what fuels their first life on the other side.
+-- of shells, no trees or mines, and a full tank of armour. The horde's builder
+-- farms the trees it builds with. Asked on every respawn, and by then the
+-- seat has changed sides, so a survivor's last death is what fuels their
+-- first life on the other side.
 function spawn_loadout(p)
   if side[p] == INFECTED then
     return { shells = infected_shells(), mines = 0,
@@ -1454,16 +1459,7 @@ function spawn_loadout(p)
            trees  = game.rule("tank_full_trees") }
 end
 
--- The horde builds nothing: no walls, no roads, no boats, no mines, and no
--- farming for the trees any of them would cost.
-function can_build(p, action, x, y, n)
-  if side[p] == INFECTED then
-    return false
-  end
-  return nil
-end
-
--- And takes nothing: the map's supplies are the survivors' to hold rather
+-- The horde takes nothing: the map's supplies are the survivors' to hold rather
 -- than a prize for killing them. What the horde would have taken it destroys
 -- instead. A base it could capture and a dead pillbox it drives over come
 -- off the map for the rest of the round, so the survivors cannot have them
@@ -1580,7 +1576,6 @@ scenario = {
     allow_extra_teams = "Only the two sides.",
     can_ally = "Players cannot ally.",
     allow_base_win = "Holding every base does not win.",
-    can_build = "The infected cannot build.",
     can_capture = "The infected cannot take bases or pillboxes.",
     on_tick = "Removes bases and dead pillboxes the infected drive over.",
     spawn_loadout = "Infected respawn with full shells and full armour.",
