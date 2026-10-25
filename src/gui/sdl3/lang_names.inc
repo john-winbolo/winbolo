@@ -1561,6 +1561,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_LV_LAG_GRAPH_TIP", STR_LV_LAG_GRAPH_TIP },
     { "STR_LV_LAG_HUD_TIP", STR_LV_LAG_HUD_TIP },
     { "STR_LV_LAG_LINE", STR_LV_LAG_LINE },
+    { "STR_LV_LAG_LINE_BOT", STR_LV_LAG_LINE_BOT },
     { "STR_LV_LAG_MENU", STR_LV_LAG_MENU },
     { "STR_LV_LAG_MENU_TIP", STR_LV_LAG_MENU_TIP },
     { "STR_LV_LAG_NONE", STR_LV_LAG_NONE },
@@ -2697,4 +2698,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2684
+#define K_LANG_NAME_TABLE_SIZE  2685

@@ -39,6 +39,7 @@
 
 #include "lv_global.h"
 #include "backend.h"
+#include "lv_players.h"      /* lv_playersGetDrawnTankDetails */
 #include "logviewer.h"
 #include "lv_log.h"
 #include "blocks.h"
@@ -1614,6 +1615,284 @@ int run_lv_lag_feature_default_off(void) {
   UT_ASSERT(lv_screenLagViewSlot() == -1);
 
   lv_decoderDestroy(lv);
+  remove(path);
+  return 0;
+}
+
+/* ---- the lag view's drawing ---------------------------------------------- */
+
+/* A tank's place in sixteenths of a map square: column (place / 16), pixel
+ * nibble (place % 16), on row 60 with pixel row 0. Slot 0 starts at column
+ * 60 and slot 1 at column 70, and each moves one sixteenth every entry, so
+ * entry k has slot 0 at 960 + k and slot 1 at 1120 + k. */
+#define LAG_DRAW_ROW 60
+static unsigned lagDrawPlace(int slot, int k) {
+  return (unsigned)((slot == 0 ? 60 : 70) * 16 + k);
+}
+
+/* The time playback is at once it has played entry k. The load leaves the
+ * opening snapshot (entry 0) drawn at 0 ms, and each entry after it is one
+ * more 20 ms tick. lagDrawPlayTo checks this against slot 1's place. */
+static uint32_t lagDrawMs(int k) { return (uint32_t)k * 20u; }
+
+/* One running-round snapshot with slots 0 ("A") and 1 ("B") on the map at
+ * their entry-k places, in the block layout of putSnapshotSlot1. */
+static void putLagDrawSnapshot(LogBuf *b, int k) {
+  static const uint8_t mapRun[5] = {5, 0, 0, 2, (8 << 4) | GRASS};
+  static const uint8_t mapTerminator[4] = {4, 255, 255, 255};
+  int i;
+
+  putU8(b, LOG_SNAPSHOT);
+  putZeros(b, 8);
+  putU8(b, 1); putU8(b, 0);          /* pills */
+  putU8(b, 1); putU8(b, 0);          /* bases */
+  putU8(b, 1); putU8(b, 0);          /* starts */
+  put(b, mapRun, sizeof(mapRun));
+  put(b, mapTerminator, 4);
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (i == 0 || i == 1) {
+      uint8_t player[19] = {0};
+      unsigned place = lagDrawPlace(i, k);
+      player[2] = (uint8_t)(place / 16);          /* mx */
+      player[3] = LAG_DRAW_ROW;                   /* my */
+      player[4] = (uint8_t)((place % 16) << 4);   /* px, py */
+      player[11] = 1;                             /* name length */
+      player[12] = (uint8_t)(i == 0 ? 'A' : 'B');
+      player[15] = 40;                            /* shells */
+      player[17] = 40;                            /* armour */
+      putU8(b, (uint8_t)sizeof(player));
+      put(b, player, sizeof(player));
+    } else {
+      putU8(b, 2); putU8(b, 0); putU8(b, 0);
+    }
+  }
+}
+
+/* One log_PlayerLocation event, in a LOG_EVENT frame opened by the caller:
+ * the slot, mx, my, then the pixel nibbles and the frame/boat nibbles. */
+static void putLagDrawLocation(LogBuf *b, int slot, int k) {
+  unsigned place = lagDrawPlace(slot, k);
+  putU8(b, log_PlayerLocation);
+  putU8(b, 0); putU8(b, 5);
+  putU8(b, (uint8_t)slot);
+  putU8(b, (uint8_t)(place / 16));
+  putU8(b, LAG_DRAW_ROW);
+  putU8(b, (uint8_t)((place % 16) << 4));
+  putU8(b, 0);
+}
+
+/* What the stub's draw hook saw on its last call. */
+typedef struct {
+  bool     called;
+  bool     drawn[2];      /* lv_playersGetDrawnTankDetails gave a place */
+  unsigned place[2];      /* that place, in sixteenths */
+  int      items;         /* tanks in the draw list */
+  int      itemMx[2];     /* each slot's column in the draw list, -1 for none */
+  int      itemPx[2];
+} LagDrawSeen;
+static LagDrawSeen s_lagDrawSeen;
+
+extern void (*g_testLvDrawMainScreenHook)(screenTanks *tks, screenBullets *sBullet,
+                                          screenLgm *lgms);
+
+static void lagDrawHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgms) {
+  BYTE n, i;
+  int s;
+  (void)sBullet; (void)lgms;
+
+  memset(&s_lagDrawSeen, 0, sizeof(s_lagDrawSeen));
+  s_lagDrawSeen.called = true;
+  for (s = 0; s < 2; s++) {
+    BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
+    bool onBoat = FALSE;
+    s_lagDrawSeen.drawn[s] = lv_playersGetDrawnTankDetails((BYTE)s, &mx, &my, &px, &py,
+                                                           &frame, &onBoat) != FALSE;
+    s_lagDrawSeen.place[s] = (unsigned)mx * 16u + px;
+    s_lagDrawSeen.itemMx[s] = -1;
+    s_lagDrawSeen.itemPx[s] = -1;
+  }
+  n = lv_screenTanksGetNumEntries(tks);
+  s_lagDrawSeen.items = n;
+  for (i = 1; i <= n; i++) {
+    BYTE mx, my, px, py, frame, team, dir;
+    bool onBoat;
+    char name[256];
+    BYTE slot = lv_screenTanksGetSlot(tks, i);
+    lv_screenTanksGetItem(tks, i, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, name);
+    if (slot < 2) {
+      s_lagDrawSeen.itemMx[slot] = mx;
+      s_lagDrawSeen.itemPx[slot] = px;
+    }
+  }
+}
+
+/* The column and pixel nibble lv_playersMakeScreenTanks gives a tank at
+ * place, for a view whose left column is left: the place in 1/256 squares,
+ * less half a square (128) so the sprite's centre sits on it. */
+static int lagDrawItemMx(unsigned place, int left) {
+  int conv = (int)((place / 16) << 8) + (int)((place % 16) << 4) - 128;
+  return (conv >> 8) - left;
+}
+static int lagDrawItemPx(unsigned place) {
+  int conv = (int)((place / 16) << 8) + (int)((place % 16) << 4) - 128;
+  return (conv & 0xF0) >> 4;
+}
+
+/* Play on to entry k and check the decode is where the timeline says. */
+static int lagDrawPlayTo(LogViewerState *lv, int k) {
+  BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
+  bool onBoat = FALSE;
+  while (lv->timeRunning < lagDrawMs(k) && lv->isPlaying == TRUE) {
+    lv_screenLogTick();
+  }
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(k), "at %u ms, want %u",
+                (unsigned)lv->timeRunning, (unsigned)lagDrawMs(k));
+  lv_playersGetTankDetails(1, &mx, &my, &px, &py, &frame, &onBoat);
+  UT_ASSERT_MSG((unsigned)mx * 16u + px == lagDrawPlace(1, k),
+                "slot 1 at %u at entry %d, want %u", (unsigned)mx * 16u + px, k,
+                lagDrawPlace(1, k));
+  return 0;
+}
+
+/* Draw the map once with the hook on, the view's left column at 55. */
+static void lagDrawOnce(void) {
+  memset(&s_lagDrawSeen, 0, sizeof(s_lagDrawSeen));
+  lv_screenSetOffset(55, 50);
+  g_testLvDrawMainScreenHook = lagDrawHook;
+  lv_screenUpdate(redraw);
+  g_testLvDrawMainScreenHook = NULL;
+}
+
+/*
+ * The lag view draws the other tanks from the frame that is the chosen
+ * player's rewind older than the playhead, and the chosen tank at the
+ * present. A seek back starts its decode early, so the view has its frames
+ * as soon as the seek ends.
+ *
+ *   entry  0  (0 ms)      opening snapshot, A and B on the map
+ *   entry  1..99          A and B each move 1/16 square
+ *   entry 39  (780 ms)    a snapshot in place of the moves
+ *   entry 40  (800 ms)    A's lag record: 150 ms round trip, rewind 5
+ *                         (5 x 20 = 100 ms)
+ *
+ * At entry 80, with the view on for A: B is drawn at its entry-75 place,
+ * A at its entry-80 place. A seek back to entry 42 (840 ms) without the
+ * early start would restore the entry-39 snapshot, which leaves frames only
+ * for entries 40 to 42 and none for entry 37. The early start decodes from
+ * the opening snapshot instead, so B is drawn at its entry-37 place.
+ */
+int run_lv_lag_view_draw(void) {
+  const char *path = "lv_lag_view_draw.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  char name[32];
+  int behind = -1;
+  bool drawn = false;
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 99; k++) {
+    if (k == 39) {
+      putLagDrawSnapshot(&b, k);
+      continue;
+    }
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)(k == 40 ? 3 : 2));
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic lag view log failed to build/load");
+  UT_ASSERT_MSG(lv_screenLagRecorded(), "the load did not see the record");
+
+  /* Forward to entry 80 and turn the view on for A. */
+  if (lagDrawPlayTo(lv, 80) != 0) return 1;
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+  UT_ASSERT(lv_screenLagViewStatus(name, sizeof(name), &behind, &drawn));
+  UT_ASSERT_MSG(strcmp(name, "A") == 0, "the banner names \"%s\", want A", name);
+  UT_ASSERT_MSG(behind == 100, "behind %d ms, want 100", behind);
+  UT_ASSERT_MSG(drawn, "no frame drawn at entry 80");
+
+  lagDrawOnce();
+  UT_ASSERT_MSG(s_lagDrawSeen.called, "lv_screenUpdate did not draw");
+  UT_ASSERT_MSG(s_lagDrawSeen.drawn[0] && s_lagDrawSeen.drawn[1], "a tank was not drawn");
+  /* A at the present: 960 + 80 = 1040, column 65 pixel 0. */
+  UT_ASSERT_MSG(s_lagDrawSeen.place[0] == lagDrawPlace(0, 80),
+                "A drawn at %u, want %u (the present)", s_lagDrawSeen.place[0],
+                lagDrawPlace(0, 80));
+  /* B five entries back: 1120 + 75 = 1195, column 74 pixel 11. */
+  UT_ASSERT_MSG(s_lagDrawSeen.place[1] == lagDrawPlace(1, 75),
+                "B drawn at %u, want %u (entry 75)", s_lagDrawSeen.place[1],
+                lagDrawPlace(1, 75));
+  /* The draw list has the same places, less half a square and the view's
+     left column 55: A at column 64 pixel 8 (9/8 on screen), B at column 74
+     pixel 3 (19/3 on screen). */
+  UT_ASSERT_MSG(s_lagDrawSeen.items == 2, "%d tanks in the draw list, want 2",
+                s_lagDrawSeen.items);
+  UT_ASSERT_MSG(s_lagDrawSeen.itemMx[0] == lagDrawItemMx(lagDrawPlace(0, 80), 55) &&
+                    s_lagDrawSeen.itemPx[0] == lagDrawItemPx(lagDrawPlace(0, 80)),
+                "A's draw list place %d/%d", s_lagDrawSeen.itemMx[0], s_lagDrawSeen.itemPx[0]);
+  UT_ASSERT_MSG(s_lagDrawSeen.itemMx[0] == 9 && s_lagDrawSeen.itemPx[0] == 8,
+                "A's draw list place %d/%d, want 9/8", s_lagDrawSeen.itemMx[0],
+                s_lagDrawSeen.itemPx[0]);
+  UT_ASSERT_MSG(s_lagDrawSeen.itemMx[1] == lagDrawItemMx(lagDrawPlace(1, 75), 55) &&
+                    s_lagDrawSeen.itemPx[1] == lagDrawItemPx(lagDrawPlace(1, 75)),
+                "B's draw list place %d/%d", s_lagDrawSeen.itemMx[1], s_lagDrawSeen.itemPx[1]);
+  UT_ASSERT_MSG(s_lagDrawSeen.itemMx[1] == 19 && s_lagDrawSeen.itemPx[1] == 3,
+                "B's draw list place %d/%d, want 19/3", s_lagDrawSeen.itemMx[1],
+                s_lagDrawSeen.itemPx[1]);
+
+  /* Seek back to entry 42: the frames are there at once. */
+  lv_screenSeekToTimeMs(lagDrawMs(42));
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(42), "the seek stopped at %u ms",
+                (unsigned)lv->timeRunning);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the seek turned the view off");
+  behind = -1;
+  drawn = false;
+  UT_ASSERT(lv_screenLagViewStatus(name, sizeof(name), &behind, &drawn));
+  UT_ASSERT_MSG(behind == 100, "behind %d ms after the seek, want 100", behind);
+  UT_ASSERT_MSG(drawn, "no frame drawn just after the seek: the early start did not fill the ring");
+  lagDrawOnce();
+  UT_ASSERT_MSG(s_lagDrawSeen.place[0] == lagDrawPlace(0, 42),
+                "A drawn at %u after the seek, want %u", s_lagDrawSeen.place[0],
+                lagDrawPlace(0, 42));
+  UT_ASSERT_MSG(s_lagDrawSeen.place[1] == lagDrawPlace(1, 37),
+                "B drawn at %u after the seek, want %u (entry 37)", s_lagDrawSeen.place[1],
+                lagDrawPlace(1, 37));
+
+  /* Back before A's record: the view stays on, with no rewind to draw. */
+  lv_screenSeekToTimeMs(lagDrawMs(30));
+  behind = -1;
+  drawn = true;
+  UT_ASSERT(lv_screenLagViewStatus(name, sizeof(name), &behind, &drawn));
+  UT_ASSERT_MSG(behind == 0 && !drawn, "before the record: behind %d drawn %d", behind,
+                (int)drawn);
+
+  /* With the view off a label takes the tank's present place. */
+  lv_screenLagViewSet(-1);
+  if (lagDrawPlayTo(lv, 50) != 0) return 1;
+  lagDrawOnce();
+  UT_ASSERT_MSG(s_lagDrawSeen.place[1] == lagDrawPlace(1, 50),
+                "B drawn at %u with the view off, want %u", s_lagDrawSeen.place[1],
+                lagDrawPlace(1, 50));
+
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
   remove(path);
   return 0;
 }

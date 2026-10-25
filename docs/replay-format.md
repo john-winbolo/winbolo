@@ -628,11 +628,12 @@ One player's network lag. Four bytes, no Pascal string:
 |---|---|---|
 | 0 | Player | Player slot |
 | 1–2 | RTT | Big-endian `u16`, in ms. The server's measure of the round trip to that player's client (`pingMs`, `src/server/udp/udp_server_send.c`) |
-| 3 | Rewind | `u8`, in 20 ms entries. The rewind the server used for that player's last tank-shell input (`serverSimComputeLagCompTicks`, `src/server/sim/server_sim_tick.c`), at most `LAG_COMP_MAX_TICKS` (14, 280 ms) |
+| 3 | Rewind | `u8`, in 20 ms entries. The rewind computed from that player's last input, which a shell fired then would use (`serverSimComputeLagCompTicks`, `src/server/sim/server_sim_tick.c`), at most `LAG_COMP_MAX_TICKS` (14, 280 ms) |
 
-The rewind is the age of the world that player's screen showed when they
-fired, as the server measures it. The server rewinds the other tanks by that
-many entries when it tests that player's tank shells. A viewer that draws the
+The rewind is the age of the world that player's screen showed at their last
+input, as the server measures it. The server computes it for every input, shot
+or not, and rewinds the other tanks by that many entries when it tests a tank
+shell fired with that input. A viewer that draws the
 other tanks, builders and shells that many entries back from the present
 shows the round about as that player saw it on their own screen.
 

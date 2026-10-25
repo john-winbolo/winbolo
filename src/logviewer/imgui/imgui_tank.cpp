@@ -219,10 +219,15 @@ static float tank_lag_graph_h(void) {
     return ceilf(ImGui::GetTextLineHeight() * 2.0f);
 }
 
-static float tank_lag_h(void) {
+/* withGraph is FALSE for a bot, which has no round trip to plot. */
+static float tank_lag_h(bool withGraph) {
     const ImGuiStyle &style = ImGui::GetStyle();
-    return style.ItemSpacing.y + ImGui::GetTextLineHeight() + style.ItemSpacing.y +
-           tank_lag_graph_h() + style.ItemSpacing.y + ImGui::GetFrameHeight();
+    float h = style.ItemSpacing.y + ImGui::GetTextLineHeight() + style.ItemSpacing.y +
+              ImGui::GetFrameHeight();
+    if (withGraph) {
+        h += tank_lag_graph_h() + style.ItemSpacing.y;
+    }
+    return h;
 }
 
 float lv_imgui_tank_dock_height(float dockWidth) {
@@ -233,7 +238,8 @@ float lv_imgui_tank_dock_height(float dockWidth) {
         h += style.ItemSpacing.y + tank_text_h();
     }
     if (lv_screenLagShown()) {
-        h += tank_lag_h();
+        /* The dock is sized for the largest section, the one with a graph. */
+        h += tank_lag_h(true);
     }
     /* One more: the heights are whole pixels and the text's may not be. */
     return ceilf(h) + 1.0f + style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
@@ -812,7 +818,11 @@ static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlo
     const float w = ImGui::GetContentRegionAvail().x;
     MessageArgs args = {};
 
-    if (lag.has) {
+    if (lag.has && lag.bot) {
+        /* A bot has no round trip, so only the rewind is shown. */
+        args.number = lag.behindMs;
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_LAG_LINE_BOT, &args));
+    } else if (lag.has) {
         args.number = lag.rttMs;
         args.number2 = lag.behindMs;
         ImGui::TextUnformatted(langGetTextFmt(STR_LV_LAG_LINE, &args));
@@ -820,7 +830,8 @@ static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlo
         ImGui::TextDisabled("%s", langGetText(STR_LV_LAG_NONE));
     }
 
-    if (lag.has && w > 0.0f) {
+    /* The graph is of the round-trip time, which a bot does not have. */
+    if (lag.has && !lag.bot && w > 0.0f) {
         ImVec2 g0 = ImGui::GetCursorScreenPos();
         ImGui::PlotLines("##lag_graph", lag.graph, LV_LAG_GRAPH_SAMPLES, 0, nullptr, 0.0f,
                          lag.graphMax, ImVec2(w, graphH));
@@ -836,18 +847,24 @@ static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlo
                                             ImVec2(floorf(x) + 0.5f,
                                                    g0.y + graphH - style.FramePadding.y),
                                             IM_COL32(255, 255, 255, 200));
-    } else {
+    } else if (!(lag.has && lag.bot)) {
+        /* No record yet: keep the graph's room so the panel does not move. */
         ImGui::Dummy(ImVec2(w > 0.0f ? w : 1.0f, graphH));
     }
 
     bool on = (viewSlot >= 0 && viewSlot == (int)st.slot);
+    /* With no record for this player yet the view has no rewind to draw, so
+       the box cannot be ticked. A view already on can still be turned off. */
+    const bool noRecord = !lag.has && !on;
+    ImGui::BeginDisabled(noRecord);
     if (ImGui::Checkbox(langGetText(STR_LV_LAG_VIEW), &on)) {
         lv_clientMutexWaitFor();
         lv_screenLagViewSet(on ? (int)st.slot : -1);
         lv_clientMutexRelease();
         lv_drawDirtyScreen();
     }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip("%s", langGetText(STR_LV_LAG_VIEW_TIP));
     }
 }
@@ -973,7 +990,7 @@ void lv_imgui_tank_window(void) {
             /* The lag section keeps its room under the rest. */
             ImVec2 avail = ImGui::GetContentRegionAvail();
             if (lag.recorded) {
-                avail.y -= tank_lag_h();
+                avail.y -= tank_lag_h(!(lag.has && lag.bot));
             }
             const LvTankRoom room = tank_room(st, avail);
             const LvTankLayout lay = lvTankLayoutPick(&room);

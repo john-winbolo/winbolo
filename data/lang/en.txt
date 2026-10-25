@@ -1292,6 +1292,7 @@ STR_LV_LAG_OFF=Turn off
 STR_LV_LAG_HUD_TIP={string1}, {number} ms round trip
 STR_LV_LAG_MENU=See What the Selected Player Saw
 STR_LV_LAG_MENU_TIP=Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records
+STR_LV_LAG_LINE_BOT=Lag: a bot, screen {number} ms behind
 STR_LV_TIP_BACK_SECS=Back {string1} seconds
 STR_LV_TIP_FWD_SECS=Forward {string1} seconds
 STR_LV_TIP_KEY_FMT={string1} ({string2})
