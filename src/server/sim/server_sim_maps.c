@@ -1283,6 +1283,7 @@ static void stashCommittedMap(ServerSim *sim) {
     memcpy(sim->previousMapMd5, sim->mapMd5, sizeof(sim->previousMapMd5));
     memcpy(sim->previousMapMd5Hex, sim->mapMd5Hex,
            sizeof(sim->previousMapMd5Hex));
+    sim->previousRandomMapEnabled = sim->randomMapEnabled;
     sim->previousSeatsValid =
         serverSimScenarioSeatCounts(sim, sim->previousSeats);
     memcpy(sim->previousScripts, sim->scenarioScripts,
@@ -1304,6 +1305,22 @@ static void restorePreviewScripts(ServerSim *sim) {
     sim->scenarioScriptCount     = sim->previousScriptCount;
     sim->scenarioMapScriptHeld   = sim->previousMapScriptHeld;
     sim->scenarioMapScriptHeldAt = sim->previousMapScriptHeldAt;
+}
+
+/* The stash let go, after Cancel has put it back or Commit has kept the
+   preview. One list for both, so the two cannot clear different fields.
+   The seat counts are left: Cancel still needs them after this, and each
+   caller clears them itself once done. */
+static void dropStash(ServerSim *sim) {
+    free(sim->previousMapData);
+    sim->previousMapData = NULL;
+    sim->previousMapDataLen = 0;
+    sim->previousMapName[0] = '\0';
+    sim->previousMapPath[0] = '\0';
+    sim->previousMapMd5Valid = FALSE;
+    memset(sim->previousMapMd5, 0, sizeof(sim->previousMapMd5));
+    sim->previousMapMd5Hex[0] = '\0';
+    sim->previousRandomMapEnabled = false;
 }
 
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
@@ -1675,7 +1692,7 @@ bool serverSimRevertPreview(ServerSim *sim) {
 
     /* Reverted to the previous map from its compressed bytes. Its md5 was
      * stashed with it, so the old map reports as itself again; a map that
-     * had none (generated, or read from bytes) gets none back. */
+     * had none (generated, or legacy compressed bytes) gets none back. */
     sim->mapMd5Valid = sim->previousMapMd5Valid;
     memcpy(sim->mapMd5, sim->previousMapMd5, sizeof(sim->mapMd5));
     memcpy(sim->mapMd5Hex, sim->previousMapMd5Hex, sizeof(sim->mapMd5Hex));
@@ -1698,14 +1715,12 @@ bool serverSimRevertPreview(ServerSim *sim) {
                 sizeof(sim->mapFilePath));
     /* And the list the host had with it. */
     restorePreviewScripts(sim);
+    /* A random server's generated map is back, so the round-end regenerate
+       runs again and WinBolo.net is told the map is random. A file preview
+       turned this off; left off, the same generated map plays every round. */
+    sim->randomMapEnabled = sim->previousRandomMapEnabled;
 
-    free(sim->previousMapData);
-    sim->previousMapData = NULL;
-    sim->previousMapDataLen = 0;
-    sim->previousMapName[0] = '\0';
-    sim->previousMapPath[0] = '\0';
-    sim->previousMapMd5Valid = FALSE;
-    sim->previousMapMd5Hex[0] = '\0';
+    dropStash(sim);
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
@@ -1730,13 +1745,9 @@ bool serverSimRevertPreview(ServerSim *sim) {
 
 void serverSimCommitPreview(ServerSim *sim) {
     if (!sim || !sim->previousMapData) return;
-    free(sim->previousMapData);
-    sim->previousMapData = NULL;
-    sim->previousMapDataLen = 0;
-    sim->previousMapName[0] = '\0';
-    sim->previousMapPath[0] = '\0';
-    sim->previousMapMd5Valid = FALSE;
-    sim->previousMapMd5Hex[0] = '\0';
+    /* The previewed map stays, and randomMapEnabled with it: a kept file
+       map is not random, and a kept random preview never turned it on. */
+    dropStash(sim);
     /* The host keeps the previewed map, so the lobby the old one had is gone
        for good and there is nothing left to put back. */
     sim->previousSeatsValid = false;
