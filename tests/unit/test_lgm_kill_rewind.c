@@ -769,7 +769,10 @@ static const char *lkr_bring_up(LkrRun *r, LkrArena *arena, const char *impair,
                                  NULL) < 0) {
         return "client 2 never connected";
     }
-    loopbackHarnessSetPumpInterval(&r->h, LKR_PUMP_MS);
+    /* loopbackHarnessSetPumpInterval left the harness in #549 (main), which
+     * moved the paced tests to a virtual clock. The pumps here run unpaced
+     * until this test moves to that clock. */
+    (void)LKR_PUMP_MS;
 
     r->gs = &r->h.sim->sim;
     r->s1 = clientSimGetMyPlayerNum(r->h.cs);
