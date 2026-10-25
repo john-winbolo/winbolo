@@ -2197,10 +2197,14 @@ it asked for.
 drawn in one window of their own, the Scenario Text window, and not on the
 game view. A script cannot put text anywhere else on the screen. The window
 is built the same way as the scenario panel's window: it has no title bar, a
-see-through backing, a bar along its top to move it, a gear that opens two
-opacity settings, an X that closes it, and a grip in its bottom-right corner
-to resize it. Unlike the panel, it is a rectangle and it can take any shape.
-It shows only while there is a line to draw.
+see-through backing, a bar along its top to move it, a gear that opens its
+settings (Pop out, then two opacity sliders), an X that closes it, and a grip
+in its bottom-right corner to resize it. Unlike the panel, it is a rectangle
+and it can take any shape. In a round with a scenario or a mod the window
+stays up for the whole round, also when there is no line to draw: with no
+line it draws nothing, and its bar, buttons, grip and edge show while the
+pointer is on it, so the player can move and resize it at any time. Outside
+such a round it shows only while there is a line to draw.
 
 By default the window sits at the top middle of the game view, sized so the
 text is as large as announcements were before: 240 units times the game's
