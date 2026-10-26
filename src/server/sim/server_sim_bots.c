@@ -147,6 +147,20 @@ bool serverSimAddUnfieldedSeat(ServerSim *sim, BYTE playerNum,
         sim->sim.lgmen[playerNum] = NULL;
     }
     basesRemoveTimer(&sim->sim, (int)playerNum);
+    /* During a round the seat's team is its side, so the alliance bitmap
+       takes it too (#424): one quiet accept with the first teammate, which
+       merges the seat into that teammate's group and moves no team. Outside
+       a round the start's rebuild from the teams does it. */
+    if (sim->state == serverStateRunning && teamNumber > 0 &&
+        teamNumber < MAX_TANKS) {
+        BYTE i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (i == playerNum || !sim->playerConnected[i]) continue;
+            if (sim->lobbyPlayers[i].teamNumber != teamNumber) continue;
+            serverSimAcceptAllianceQuiet(sim, i, playerNum);
+            break;
+        }
+    }
     serverSimPublishLobbySlot(sim, playerNum);
     /* And the seat's mode and difficulty, which the slot event does not
        carry. Without this nothing ever publishes a held seat's config, and
