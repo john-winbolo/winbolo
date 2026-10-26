@@ -81,6 +81,18 @@ bool windowGameOverEndsGame(struct ClientSim *cs);
 void windowGameOverStopTicks(void);
 void windowGameOverLeave(void);
 
+/* Holding back the game-over message. A driver that runs a game tick from
+ * inside an OS modal loop (the desktop during a window move or resize) must
+ * not open a dialog there: the dialog runs a loop of its own and would pump
+ * events from inside the OS loop. While the hold is on, frontEndGameOver only
+ * notes the game over. The driver turns the hold off after the OS loop and
+ * calls clientFrontRunHeldGameOver, which shows the message in the normal
+ * place. clientFrontGameOverHeld is true from the note until that call; the
+ * driver runs no more ticks while it is true. Main thread only. */
+void clientFrontHoldGameOver(bool hold);
+bool clientFrontGameOverHeld(void);
+void clientFrontRunHeldGameOver(void);
+
 #ifdef __cplusplus
 }
 #endif
