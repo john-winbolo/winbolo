@@ -172,12 +172,14 @@ static void fillMeta(ClipGifMeta *m) {
     m->durationMs = 4800;
     m->width = 480;
     m->height = 270;
+    strcpy(m->game, "0123456789abcdef");
 }
 
 static int sameMeta(const ClipGifMeta *a, const ClipGifMeta *b) {
     if (a->createdUnix != b->createdUnix || strcmp(a->map, b->map) != 0 ||
         a->playerCount != b->playerCount || a->durationMs != b->durationMs ||
-        a->width != b->width || a->height != b->height) {
+        a->width != b->width || a->height != b->height ||
+        strcmp(a->game, b->game) != 0) {
         return 0;
     }
     for (int i = 0; i < a->playerCount; i++) {
@@ -769,6 +771,185 @@ int run_clip_gif_preview_cap(void) {
     if (px != NULL) {
         stbi_image_free(px);
     }
+
+    return fails ? 1 : 0;
+}
+
+int run_clip_gif_current_game(void) {
+    int fails = 0;
+    char a[CLIP_GIF_META_GAME_LEN];
+    char b[CLIP_GIF_META_GAME_LEN];
+
+    /* The id: 16 hex digits, the same for the same bytes, different for
+     * different bytes, and empty for no bytes. */
+    const char bytes1[] = "PK\x03\x04 round one";
+    const char bytes2[] = "PK\x03\x04 round two";
+    clipGifGameIdFromBytes(bytes1, sizeof(bytes1), a, sizeof(a));
+    EXPECT_TRUE("id length", strlen(a) == 16);
+    {
+        int hex = 1;
+        for (size_t i = 0; a[i] != '\0'; i++) {
+            if (!((a[i] >= '0' && a[i] <= '9') || (a[i] >= 'a' && a[i] <= 'f'))) {
+                hex = 0;
+            }
+        }
+        EXPECT_TRUE("id hex", hex);
+    }
+    clipGifGameIdFromBytes(bytes1, sizeof(bytes1), b, sizeof(b));
+    EXPECT_STR("same bytes same id", b, a);
+    clipGifGameIdFromBytes(bytes2, sizeof(bytes2), b, sizeof(b));
+    EXPECT_TRUE("other bytes other id", strcmp(a, b) != 0);
+    /* FNV-1a 64 of "a", the published test value. */
+    clipGifGameIdFromBytes("a", 1, b, sizeof(b));
+    EXPECT_STR("fnv-1a of a", b, "af63dc4c8601ec8c");
+    clipGifGameIdFromBytes(NULL, 10, b, sizeof(b));
+    EXPECT_STR("null bytes", b, "");
+    clipGifGameIdFromBytes(bytes1, 0, b, sizeof(b));
+    EXPECT_STR("no bytes", b, "");
+    {
+        /* A short buffer is cut and stays ended. */
+        char small[5];
+        clipGifGameIdFromBytes(bytes1, sizeof(bytes1), small, sizeof(small));
+        EXPECT_TRUE("short buffer", strlen(small) == 4 &&
+                                        strncmp(small, a, 4) == 0);
+    }
+
+    /* Which GIFs are from the current game. */
+    ClipGifMeta m;
+    memset(&m, 0, sizeof(m));
+    strcpy(m.game, a);
+    EXPECT_TRUE("same game", clipGifMetaIsCurrentGame(&m, a));
+    EXPECT_TRUE("other game", !clipGifMetaIsCurrentGame(&m, b));
+    EXPECT_TRUE("no current game", !clipGifMetaIsCurrentGame(&m, ""));
+    EXPECT_TRUE("null current game", !clipGifMetaIsCurrentGame(&m, NULL));
+    m.game[0] = '\0';
+    EXPECT_TRUE("old file, no id", !clipGifMetaIsCurrentGame(&m, a));
+    EXPECT_TRUE("both empty", !clipGifMetaIsCurrentGame(&m, ""));
+
+    /* The current game first, each group still newest first. */
+    {
+        ClipGifMeta items[6];
+        memset(items, 0, sizeof(items));
+        const char *files[6] = { "1.gif", "2.gif", "3.gif",
+                                 "4.gif", "5.gif", "6.gif" };
+        const char *games[6] = { "old", "", "cur", "old", "cur", "cur" };
+        for (int i = 0; i < 6; i++) {
+            strcpy(items[i].gifFile, files[i]);
+            strcpy(items[i].game, games[i]);
+        }
+        int n = clipGifMetaCurrentGameFirst(items, 6, "cur");
+        EXPECT_TRUE("current count", n == 3);
+        EXPECT_STR("order 0", items[0].gifFile, "3.gif");
+        EXPECT_STR("order 1", items[1].gifFile, "5.gif");
+        EXPECT_STR("order 2", items[2].gifFile, "6.gif");
+        EXPECT_STR("order 3", items[3].gifFile, "1.gif");
+        EXPECT_STR("order 4", items[4].gifFile, "2.gif");
+        EXPECT_STR("order 5", items[5].gifFile, "4.gif");
+        EXPECT_STR("whole item moves", items[0].game, "cur");
+
+        /* No current game leaves the list as it was. */
+        n = clipGifMetaCurrentGameFirst(items, 6, "");
+        EXPECT_TRUE("no current count", n == 0);
+        EXPECT_STR("unchanged 0", items[0].gifFile, "3.gif");
+        EXPECT_STR("unchanged 5", items[5].gifFile, "4.gif");
+        EXPECT_TRUE("null list", clipGifMetaCurrentGameFirst(NULL, 6, "cur") == 0);
+        EXPECT_TRUE("all current",
+                    clipGifMetaCurrentGameFirst(items, 1, "cur") == 1);
+    }
+
+    /* The id is kept in the metadata file, and a file from before the field
+     * reads with no id. */
+    {
+        ClipGifMeta in, out;
+        memset(&in, 0, sizeof(in));
+        in.createdUnix = 100;
+        strcpy(in.game, a);
+        char *json = clipGifMetaToJson(&in);
+        EXPECT_TRUE("game to json", json != NULL);
+        if (json != NULL) {
+            EXPECT_TRUE("game in text", strstr(json, "\"game\"") != NULL);
+            EXPECT_TRUE("game from json",
+                        clipGifMetaFromJson(json, strlen(json), &out));
+            EXPECT_STR("game kept", out.game, a);
+            clipGifMetaFreeJson(json);
+        }
+        in.game[0] = '\0';
+        json = clipGifMetaToJson(&in);
+        EXPECT_TRUE("no game to json", json != NULL);
+        if (json != NULL) {
+            EXPECT_TRUE("no game key", strstr(json, "\"game\"") == NULL);
+            clipGifMetaFreeJson(json);
+        }
+        EXPECT_TRUE("old file", readsAs("{\"created\":100,\"map\":\"x\"}", &out));
+        EXPECT_STR("old file no game", out.game, "");
+        EXPECT_TRUE("game wrong type",
+                    readsAs("{\"created\":100,\"game\":7}", &out));
+        EXPECT_STR("game wrong type empty", out.game, "");
+        char text[256];
+        snprintf(text, sizeof(text),
+                 "{\"created\":100,\"game\":\"%s%s\"}", a, a);
+        EXPECT_TRUE("game long", readsAs(text, &out));
+        EXPECT_TRUE("game cut", strlen(out.game) == CLIP_GIF_META_GAME_LEN - 1);
+    }
+
+    return fails ? 1 : 0;
+}
+
+static int pathExists(const char *path) {
+    SDL_PathInfo info;
+    return SDL_GetPathInfo(path, &info) ? 1 : 0;
+}
+
+int run_clip_gif_delete(void) {
+    int fails = 0;
+
+    /* The row selected after a removal. */
+    EXPECT_TRUE("only row", clipGifSelectAfterRemove(1, 0) == -1);
+    EXPECT_TRUE("empty list", clipGifSelectAfterRemove(0, 0) == -1);
+    EXPECT_TRUE("first of 3", clipGifSelectAfterRemove(3, 0) == 0);
+    EXPECT_TRUE("middle of 3", clipGifSelectAfterRemove(3, 1) == 1);
+    EXPECT_TRUE("last of 3", clipGifSelectAfterRemove(3, 2) == 1);
+    EXPECT_TRUE("last of 2", clipGifSelectAfterRemove(2, 1) == 0);
+    EXPECT_TRUE("out of range", clipGifSelectAfterRemove(3, 7) == 0);
+    EXPECT_TRUE("negative", clipGifSelectAfterRemove(3, -1) == 0);
+
+    char dir[1024];
+    EXPECT_TRUE("scratch dir", utScratchPath(dir, sizeof(dir), "delclips"));
+    SDL_CreateDirectory(dir);
+    char gif[1024], json[1024];
+
+    /* A GIF with its metadata: both go. */
+    snprintf(gif, sizeof(gif), "%s/a.gif", dir);
+    snprintf(json, sizeof(json), "%s/a.json", dir);
+    EXPECT_TRUE("a.gif", writeBytes(dir, "a.gif", "GIF89a"));
+    EXPECT_TRUE("a.json", writeBytes(dir, "a.json", "{\"created\":5}"));
+    EXPECT_TRUE("delete a", clipGifDeleteFiles(gif));
+    EXPECT_TRUE("a.gif gone", !pathExists(gif));
+    EXPECT_TRUE("a.json gone", !pathExists(json));
+
+    /* A GIF with no metadata. */
+    snprintf(gif, sizeof(gif), "%s/b.GIF", dir);
+    EXPECT_TRUE("b.GIF", writeBytes(dir, "b.GIF", "GIF89a"));
+    EXPECT_TRUE("delete b", clipGifDeleteFiles(gif));
+    EXPECT_TRUE("b.GIF gone", !pathExists(gif));
+
+    /* Already gone counts as done; the metadata left beside it goes too. */
+    snprintf(gif, sizeof(gif), "%s/c.gif", dir);
+    snprintf(json, sizeof(json), "%s/c.json", dir);
+    EXPECT_TRUE("c.json", writeBytes(dir, "c.json", "{\"created\":5}"));
+    EXPECT_TRUE("delete missing", clipGifDeleteFiles(gif));
+    EXPECT_TRUE("c.json gone", !pathExists(json));
+
+    /* Other files in the folder are not touched. */
+    snprintf(gif, sizeof(gif), "%s/d.gif", dir);
+    EXPECT_TRUE("d.gif", writeBytes(dir, "d.gif", "GIF89a"));
+    EXPECT_TRUE("e.gif", writeBytes(dir, "e.gif", "GIF89a"));
+    EXPECT_TRUE("delete d", clipGifDeleteFiles(gif));
+    snprintf(gif, sizeof(gif), "%s/e.gif", dir);
+    EXPECT_TRUE("e.gif kept", pathExists(gif));
+
+    EXPECT_TRUE("null path", !clipGifDeleteFiles(NULL));
+    EXPECT_TRUE("empty path", !clipGifDeleteFiles(""));
 
     return fails ? 1 : 0;
 }

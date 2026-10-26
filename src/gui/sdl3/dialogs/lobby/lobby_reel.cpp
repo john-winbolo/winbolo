@@ -298,6 +298,18 @@ static void lobbyReelWbnPoll(void) {
 void lobbyClipGifReset(void);
 #endif
 
+/* Keeps the id of the replay bytes the reel is about to open, so the GIFs
+ * made from it can name their game. Before lvEmbedBegin, which owns the
+ * bytes from the call on and can free them. */
+static void lobbyReelNoteGame(const void *buf, size_t len) {
+#if BOLO_RECAP_CLIP_GIF
+    clipGifGameIdFromBytes(buf, len, s_reel.gameId, sizeof(s_reel.gameId));
+#else
+    (void)buf;
+    (void)len;
+#endif
+}
+
 void lobbyReelEnd(void) {
 #if BOLO_RECAP_CLIP_GIF
     /* An export in flight is holding encoder allocations and a playback
@@ -1424,6 +1436,7 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
 #if BOLO_REEL_SPAWN_VIEWER
                         lobbyReelKeepSpawnCopy(buf, (size_t)len);
 #endif
+                        lobbyReelNoteGame(buf, (size_t)len);
                         s_reel.active = lvEmbedBegin(sdl3DrawGetWindow(),
                                                     sdl3DrawGetRenderer(),
                                                     buf, (size_t)len,
@@ -1458,6 +1471,7 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
 #if BOLO_REEL_SPAWN_VIEWER
                 lobbyReelKeepSpawnCopy(buf, len);
 #endif
+                lobbyReelNoteGame(buf, len);
                 s_reel.active = lvEmbedBegin(sdl3DrawGetWindow(),
                                             sdl3DrawGetRenderer(),
                                             buf, len,
@@ -1507,6 +1521,7 @@ bool lobbyReelOpenStandalone(uint8_t *zipData, size_t zipLen, ImVec2 rect) {
     s_reel.tried = true;
     s_reel.viewW = rect.x;
     s_reel.viewH = rect.y;
+    lobbyReelNoteGame(zipData, zipLen);
     s_reel.active = lvEmbedBegin(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
                                  zipData, zipLen, (int)rect.x, (int)rect.y);
     s_reel.loadFailed = !s_reel.active;

@@ -55,6 +55,16 @@ extern "C" {
 #endif
 #include "imgui_keyboard.h" /* keyboardUpdate */
 
+/* The Clips button opens the recap's GIF gallery, which is built only where
+ * BOLO_CLIP_GIF_GALLERY (lobby_internal.h) is on: not on iOS, Android or the
+ * web. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#define WELCOME_CLIPS 1
+#include "lobby/lobby_reel.h"  /* lobbyClipGifGalleryOpen / Render / Shutdown */
+#else
+#define WELCOME_CLIPS 0
+#endif
+
 /* From winbolo.c */
 extern "C" {
   void windowFullScreenChoose(bool on);
@@ -515,6 +525,12 @@ extern "C" int imguiWelcomeShow(void) {
 #if !defined(__EMSCRIPTEN__)
                 { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    showDesktopTools, nullptr },
 #endif
+#if WELCOME_CLIPS
+                /* The GIF gallery, the same window the recap's gallery button
+                   opens. It works with a controller, so it is not hidden with
+                   the tools above. */
+                { STR_DLGWELCOME_CLIPS,     0,                   true,             "Clips" },
+#endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true,             nullptr },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                 { fullScreenLabel,          0,                   showFullScreenToggle,
@@ -605,6 +621,12 @@ extern "C" int imguiWelcomeShow(void) {
                         windowFullScreenChoose(!isFullScreen);
                         result = RESULT_WELCOME;
                         running = false;
+                    } else
+#endif
+#if WELCOME_CLIPS
+                    if (miniModes[i].rawLabel &&
+                        SDL_strcmp(miniModes[i].rawLabel, "Clips") == 0) {
+                        lobbyClipGifGalleryOpen();
                     } else
 #endif
                     if (miniModes[i].rawLabel && SDL_strcmp(miniModes[i].rawLabel, "News") == 0) {
@@ -835,6 +857,11 @@ extern "C" int imguiWelcomeShow(void) {
          * popup over the welcome screen. */
         aboutPopupRender();
 
+#if WELCOME_CLIPS
+        /* The GIF gallery, while the Clips button has it open. */
+        lobbyClipGifGalleryRender(s);
+#endif
+
         dialogDrawNavOutline();
         keyboardUpdate();   /* controller text entry for the WinBolo.net login popup */
         ImGui::Render();
@@ -857,6 +884,12 @@ extern "C" int imguiWelcomeShow(void) {
 
     /* Clean up textures */
     if (logoTex) SDL_DestroyTexture(logoTex);
+
+#if WELCOME_CLIPS
+    /* The gallery's preview texture and frames go with this screen; the
+     * gallery opens closed on the next screen that shows it. */
+    lobbyClipGifGalleryShutdown();
+#endif
 
     /* Tear down ImGui */
     ImGui_ImplSDLRenderer3_Shutdown();

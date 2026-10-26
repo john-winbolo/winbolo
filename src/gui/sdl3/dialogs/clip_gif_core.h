@@ -89,15 +89,16 @@ uint32_t clipGifLenFromTimelineX(float x, uint32_t curMs, uint32_t totalMs,
 
 /* ── Metadata ────────────────────────────────────────────────────────
  * One small JSON file next to each GIF, with the same base name and the
- * extension .json. It says when the GIF was made, on which map and with which
- * players. A GIF with no metadata file, or with one that cannot be read, is
- * still listed: its time then comes from the file itself and the map and
- * players are left empty. */
+ * extension .json. It says when the GIF was made, on which map, with which
+ * players and from which game. A GIF with no metadata file, or with one that
+ * cannot be read, is still listed: its time then comes from the file itself
+ * and the map and players are left empty. */
 #define CLIP_GIF_META_VERSION     1
 #define CLIP_GIF_META_MAX_PLAYERS 16
 #define CLIP_GIF_META_NAME_LEN    64
 #define CLIP_GIF_META_MAP_LEN     64
 #define CLIP_GIF_META_FILE_LEN    160
+#define CLIP_GIF_META_GAME_LEN    24
 
 typedef struct {
     int64_t  createdUnix;    /* seconds since 1970-01-01 UTC */
@@ -107,6 +108,10 @@ typedef struct {
     uint32_t durationMs;     /* 0 when not known */
     int      width;          /* 0 when not known */
     int      height;         /* 0 when not known */
+    /* The game the GIF was made from: clipGifGameIdFromBytes of the replay
+     * that was open. Empty for a GIF written before the field was added,
+     * which the gallery lists with the earlier games. */
+    char     game[CLIP_GIF_META_GAME_LEN];
     /* The GIF's file name, with no folder. Filled by the scan from the file
      * it found, never trusted from the metadata text. */
     char     gifFile[CLIP_GIF_META_FILE_LEN];
@@ -145,6 +150,39 @@ int clipGifGalleryScan(const char *dir, ClipGifMeta **out);
  * extension (any case) changed to .json, or .json added when it has none.
  * False when it does not fit in outLen. */
 bool clipGifMetaPathFor(const char *gifPath, char *out, size_t outLen);
+
+/* Removes a gallery GIF (a UTF-8 path) and the metadata file beside it.
+ * True when the GIF is gone afterwards, also when it was already gone. A
+ * metadata file that cannot be removed does not make it false. */
+bool clipGifDeleteFiles(const char *gifPath);
+
+/* The row to select after row removed of a list of count rows is taken out:
+ * the row that moves up into its place, or the row above when it was the
+ * last. -1 when no row is left. */
+int clipGifSelectAfterRemove(int count, int removed);
+
+/* ── Games ───────────────────────────────────────────────────────────
+ * The gallery puts the GIFs from the game whose replay is open above the
+ * GIFs from earlier games. A game is named by its replay's bytes: the same
+ * round's replay gives the same id each time it is opened, and two rounds
+ * do not give the same id. */
+
+/* The id of the replay bytes data (len bytes), as 16 lower-case hex digits
+ * (a 64-bit FNV-1a hash), into out (outLen bytes, always ended with a NUL).
+ * No bytes give "". */
+void clipGifGameIdFromBytes(const void *data, size_t len, char *out,
+                            size_t outLen);
+
+/* True when m was made from the game currentGame names. False when either id
+ * is empty, so a GIF without the field, or a gallery with no replay open,
+ * never counts as the current game. */
+bool clipGifMetaIsCurrentGame(const ClipGifMeta *m, const char *currentGame);
+
+/* Moves the items from the current game to the front and keeps the order
+ * inside each group, so a list sorted newest first stays newest first in
+ * both groups. Returns how many items are from the current game. */
+int clipGifMetaCurrentGameFirst(ClipGifMeta *items, int count,
+                                const char *currentGame);
 
 /* createdUnix as local "YYYY-MM-DD HH:MM", for the gallery's list. */
 void clipGifFormatTime(int64_t createdUnix, char *out, size_t outLen);

@@ -135,6 +135,11 @@ char *clipGifMetaToJson(const ClipGifMeta *m) {
     cJSON_AddNumberToObject(root, "durationMs", (double)m->durationMs);
     cJSON_AddNumberToObject(root, "width", (double)m->width);
     cJSON_AddNumberToObject(root, "height", (double)m->height);
+    /* Left out when no replay was open, so the file reads the same as one
+     * written before the field was added. */
+    if (m->game[0] != '\0') {
+        cJSON_AddStringToObject(root, "game", m->game);
+    }
     char *text = cJSON_Print(root);
     cJSON_Delete(root);
     return text;
@@ -215,6 +220,9 @@ bool clipGifMetaFromJson(const char *text, size_t len, ClipGifMeta *out) {
                                            4294967295.0, 0.0);
     out->width  = (int)metaNumber(root, "width", 0.0, 65535.0, 0.0);
     out->height = (int)metaNumber(root, "height", 0.0, 65535.0, 0.0);
+    /* Missing in a file written before the field was added: the GIF is then
+     * listed with the earlier games. */
+    metaString(root, "game", out->game, sizeof(out->game));
     out->hasMeta = true;
     cJSON_Delete(root);
     return true;
@@ -359,6 +367,90 @@ int clipGifGalleryScan(const char *dir, ClipGifMeta **out) {
     clipGifMetaSortNewestFirst(items, count);
     *out = items;
     return count;
+}
+
+bool clipGifDeleteFiles(const char *gifPath) {
+    if (gifPath == NULL || gifPath[0] == '\0') {
+        return false;
+    }
+    /* The GIF first: when it cannot be removed, its metadata stays with it,
+     * so the row the player still sees keeps its details. */
+    if (!SDL_RemovePath(gifPath)) {
+        SDL_PathInfo info;
+        if (SDL_GetPathInfo(gifPath, &info)) {
+            return false;  /* still there */
+        }
+    }
+    char metaPath[1024];
+    if (clipGifMetaPathFor(gifPath, metaPath, sizeof(metaPath))) {
+        /* A GIF with no metadata file is normal, so a failure here is not
+         * one the player needs to hear about. */
+        SDL_RemovePath(metaPath);
+    }
+    return true;
+}
+
+int clipGifSelectAfterRemove(int count, int removed) {
+    if (count <= 1 || removed < 0 || removed >= count) {
+        return (count > 1) ? 0 : -1;
+    }
+    /* The row below moves up into the removed row's place; the last row has
+     * none below it, so the row above is selected. */
+    return (removed < count - 1) ? removed : removed - 1;
+}
+
+/* ── Games ─────────────────────────────────────────────────────────── */
+
+void clipGifGameIdFromBytes(const void *data, size_t len, char *out,
+                            size_t outLen) {
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (data == NULL || len == 0) {
+        return;
+    }
+    /* 64-bit FNV-1a. */
+    const unsigned char *p = (const unsigned char *)data;
+    uint64_t h = 14695981039346656037ull;
+    for (size_t i = 0; i < len; i++) {
+        h ^= (uint64_t)p[i];
+        h *= 1099511628211ull;
+    }
+    SDL_snprintf(out, outLen, "%016llx", (unsigned long long)h);
+}
+
+bool clipGifMetaIsCurrentGame(const ClipGifMeta *m, const char *currentGame) {
+    if (m == NULL || currentGame == NULL || currentGame[0] == '\0' ||
+        m->game[0] == '\0') {
+        return false;
+    }
+    return SDL_strcmp(m->game, currentGame) == 0;
+}
+
+int clipGifMetaCurrentGameFirst(ClipGifMeta *items, int count,
+                                const char *currentGame) {
+    if (items == NULL || count <= 0) {
+        return 0;
+    }
+    /* Each item from the current game moves up to just after the ones
+     * already moved, and the items it passes move down one place, so both
+     * groups keep their order. The lists are short, so moving the items
+     * one by one is fast enough and needs no second array. */
+    int front = 0;
+    for (int i = 0; i < count; i++) {
+        if (!clipGifMetaIsCurrentGame(&items[i], currentGame)) {
+            continue;
+        }
+        if (i != front) {
+            ClipGifMeta keep = items[i];
+            SDL_memmove(&items[front + 1], &items[front],
+                        (size_t)(i - front) * sizeof(items[0]));
+            items[front] = keep;
+        }
+        front++;
+    }
+    return front;
 }
 
 static bool localDateTime(int64_t createdUnix, SDL_DateTime *dt) {
