@@ -1181,6 +1181,7 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
                           udpServer.clients[slot].countryCode,
                           udpServer.clients[slot].wantRejoin);
         setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, flags);
+        serverSimPlaceJoiner(sim, (BYTE)slot);
         fillAndPublishPlayerJoin(sim, (BYTE)slot);
         /* Before the subscriber registers below, so the replay this client
          * gets already names the slot holding the host role. */

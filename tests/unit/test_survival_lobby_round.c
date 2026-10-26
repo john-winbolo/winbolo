@@ -24,6 +24,11 @@
  *      — one human and FIVE defender bots: a full keep, one position each.
  *        Started in place, with no countdown, which is the path a host
  *        playing on their own machine takes. This is the owner's own game.
+ * run_survival_lobby_round_late_joiner
+ *   A person who joins while the round runs is given a team of their own by
+ *   the server, and the script's on_player_join puts them on the defenders
+ *   (#424). Both records of sides agree afterwards.
+ *
  * run_survival_lobby_round_ds_order
  *      — a DEDICATED server's order, which is neither of the above: the
  *        template is seated into an empty roster so the horde holds 0..9,
@@ -70,6 +75,7 @@
 #include "server_sim_lifecycle.h"  /* StartGame / the ready check / bot config */
 #include "server_sim_scenario.h"   /* serverSimScenarioSeatLobby */
 #include "server_sim_join.h"       /* serverSimFindFreeSlot */
+#include "server/sim/server_sim_shared.h"  /* serverSimSidesAgree */
 #include "tank.h"                 /* tankKillNow: an attacker dies mid-wave */
 #include "control_event.h"
 #include "scenario_host.h"
@@ -1015,6 +1021,65 @@ int run_survival_lobby_round_ds_order(void) {
 
     slrSeen = NULL;
     slrSim  = NULL;
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_survival_lobby_round_late_joiner(void) {
+    char          mapPath[512];
+    char          err[512];
+    ServerSim    *sim;
+    ScenarioHost *host;
+    int           i;
+    int           late;
+
+    snprintf(mapPath, sizeof(mapPath), "%s/Survival.map", WB_DATA_MAPS_DIR);
+    sim = serverSimCreate(mapPath, gameOpen, false, 0, -1);
+    if (sim == NULL) UT_FAIL("the map is missing or will not load: %s", mapPath);
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimSetBotAiType(sim, aiFull);
+    serverSimSetBotBrainPath(sim, "brains/GoalHunter/init.lua");
+
+    err[0] = '\0';
+    host = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+    if (host == NULL) {
+        serverSimDestroy(sim);
+        UT_FAIL("the script beside %s was refused: %s", mapPath, err);
+    }
+    ut_brain_stub_arm(true);
+    serverSimScenarioSeatLobby(sim);
+    {
+        int slot = serverSimFindFreeSlot(sim, false);
+        if (slot < 0) UT_FAIL("no free slot for the first defender");
+        serverSimAddPlayer(sim, (BYTE)slot, "Def", false);
+        sim->lobbyPlayers[slot].ready      = true;
+        sim->lobbyPlayers[slot].teamNumber = SLR_DEF_TEAM;
+    }
+
+    sim->worldPreLoaded = FALSE;
+    serverSimLobbyCheckAllReady(sim);
+    while (sim->state == serverStateCountdown) serverSimTick(sim);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "the round did not start: state %d", (int)sim->state);
+    for (i = 0; i < 10; i++) serverSimTick(sim);
+
+    late = serverSimFindFreeSlot(sim, false);
+    UT_ASSERT_MSG(late >= 0, "no free slot for the late joiner");
+    serverSimAddPlayer(sim, (BYTE)late, "Late", false);
+    UT_ASSERT_MSG(slrTeam(sim, late) != SLR_DEF_TEAM &&
+                  slrTeam(sim, late) != SLR_WAVE_TEAM,
+                  "the server put the late joiner on team %d, not a team of "
+                  "its own", (int)slrTeam(sim, late));
+    for (i = 0; i < 10; i++) serverSimTick(sim);
+
+    UT_ASSERT_MSG(scenarioHostLastError(host)[0] == '\0',
+                  "the script complained: %s", scenarioHostLastError(host));
+    UT_ASSERT_MSG(slrTeam(sim, late) == SLR_DEF_TEAM,
+                  "the late joiner is on team %d, not the defenders'",
+                  (int)slrTeam(sim, late));
+    UT_ASSERT_MSG(serverSimSidesAgree(sim),
+                  "the alliances and the teams differ after the late join");
+
     serverSimDestroy(sim);
     return 0;
 }

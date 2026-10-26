@@ -110,7 +110,9 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
      *   slot 1 (second joiner)    → team 2
      *   slot 2+ (subsequent)      → smallest existing team (load balance)
      * Bots take whichever team the bot-add path picks (existing logic).
-     * Players can self-reassign via the team picker after joining. */
+     * Players can self-reassign via the team picker after joining. A person
+     * who joins a running round is moved off this team onto a side of their
+     * own by serverSimPlaceJoiner, which the human join paths call next. */
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
     sim->lobbyPlayers[playerNum].startIdx = 0xFF;
@@ -240,8 +242,20 @@ void setClientTypeFlagsInternal(ServerSim *sim, BYTE playerNum,
     playersSetClientFlags(&sim->sim.plyrs, playerNum, clientFlags);
 }
 
+void serverSimPlaceJoiner(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (!sim->playerConnected[playerNum]) return;
+    if (sim->state != serverStateRunning) return;
+    /* The seat is connected already, so serverSimFreeTeam counts the team
+       addPlayerInternal gave it as held. Take that team off first. */
+    sim->lobbyPlayers[playerNum].teamNumber = 0;
+    sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
+    serverSimPublishLobbySlot(sim, playerNum);
+}
+
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
     addPlayerInternal(sim, playerNum, playerName, NULL, wantRejoin);
+    serverSimPlaceJoiner(sim, playerNum);
     fillAndPublishPlayerJoin(sim, playerNum);
 }
 
@@ -354,6 +368,7 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
 
     addPlayerInternal(sim, (BYTE)slot, validatedName, country, false);
     setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, clientFlags);
+    serverSimPlaceJoiner(sim, (BYTE)slot);
     fillAndPublishPlayerJoin(sim, (BYTE)slot);
     serverSimPromoteHostOnJoin(sim, (BYTE)slot);
 

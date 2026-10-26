@@ -150,6 +150,7 @@ scenario = {
     on_tank_killed = "Counts each defender's deaths on a boat in the centre puddle; \"Start camp deaths\" of them within \"Start camp window\" send the next start outside.",
     on_tank_spawned = "Tells a defender who was sent outside why they start there.",
     on_player_leave = "Forgets a leaving defender's deaths in the puddle, so whoever takes the seat next starts there as usual.",
+    on_player_join = "Puts a player who joins during the round on the defenders.",
     on_setup = "Gives the defenders the centre bases and pillboxes, builds the island's shallow rim and tree ring, and digs in defender bots.",
     on_start = "Posts the opening \"dig in\" message and notes which seats the horde will use.",
     on_tick = "Sends N waves of 10 attackers, M minutes each with 30 s breaks, N and M set in the lobby; lose all 6 centre bases and you lose, outlast the last wave to win.",
@@ -2104,6 +2105,19 @@ function on_tank_spawned(p, mx, my, respawn)
   game.log(string.format(
     "Survival: [camp] seat %d pushed out to start %d at (%d,%d) tick %d",
     p, n, mx, my, game.tick()))
+end
+
+-- A player who joins during the round is put on the defenders. The server
+-- gives a joiner a team of its own, and the horde's seats are the script's,
+-- so a person who sits down is always a defender. A seat the script fills
+-- itself is already on the team it chose.
+function on_player_join(p, scripted)
+  if scripted then return end
+  local ls = game.lobby_slot(p)
+  if ls == nil or ls.bot then return end
+  if ls.team ~= DEF_TEAM then
+    game.set_team(p, DEF_TEAM)
+  end
 end
 
 -- The start-camp state is kept by seat, so a seat that empties takes it

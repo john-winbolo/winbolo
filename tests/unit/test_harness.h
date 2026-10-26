@@ -1296,6 +1296,10 @@ int run_team_sides_free_team_rules(void);
 int run_team_sides_team_chat_follows_sides(void);
 int run_team_sides_panels_follow_team(void);
 int run_team_sides_infection_puts_leaver_back(void);
+int run_team_sides_rejoin_is_a_joiner(void);
+int run_team_sides_joiner_slot_before_join(void);
+int run_team_sides_lobby_joiner_keeps_rule(void);
+int run_team_sides_held_seat_allied_in_round(void);
 
 /* Pillbox and base owners from the map file survive a round start
  * (test_round_start_owners.c, issue #422). */
@@ -3355,6 +3359,7 @@ int run_lobby_template_map_commit_seats(void);
 int run_survival_lobby_round(void);
 int run_survival_lobby_round_full(void);
 int run_survival_lobby_round_ds_order(void);
+int run_survival_lobby_round_late_joiner(void);
 int run_loopback_unfield_tank(void);
 int run_loopback_fine_tank_position(void);
 int run_loopback_shell_drawn_cull(void);

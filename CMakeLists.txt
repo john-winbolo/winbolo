@@ -6012,6 +6012,10 @@ set(_unit_test_names
     team_sides_team_chat_follows_sides
     team_sides_panels_follow_team
     team_sides_infection_puts_leaver_back
+    team_sides_rejoin_is_a_joiner
+    team_sides_joiner_slot_before_join
+    team_sides_lobby_joiner_keeps_rule
+    team_sides_held_seat_allied_in_round
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
@@ -6951,6 +6955,7 @@ set(_unit_test_names
     survival_lobby_round
     survival_lobby_round_full
     survival_lobby_round_ds_order
+    survival_lobby_round_late_joiner
     loopback_unfield_tank
     loopback_fine_tank_position
     loopback_shell_drawn_cull

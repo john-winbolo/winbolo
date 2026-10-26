@@ -60,6 +60,12 @@
  *   team_chat_follows_sides   — team chat goes with the side
  *   panels_follow_team        — scenario panels go with the side
  *   infection_puts_leaver_back — Infection keeps a seat on its side
+ *   rejoin_is_a_joiner        — a rejoin gets a free team and its neutral
+ *                               pills
+ *   joiner_slot_before_join   — a joiner's team goes out before its join
+ *   lobby_joiner_keeps_rule   — the lobby keeps the smallest-team pick
+ *   held_seat_allied_in_round — a held seat added in a round is allied
+ *                               with its team
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -81,6 +87,7 @@
 #include "server/sim/server_sim_shared.h"
 #include "start_sides.h"
 #include "scenario_host.h"
+#include "server_sim_scenario.h"
 #include "scenario_panel.h"
 #include "threads.h"
 #include "players.h"
@@ -497,9 +504,11 @@ int run_team_sides_midgame_joiner_team(void) {
     UT_ASSERT(serverSimIsPlayerConnected(sim, 2));
     UT_ASSERT_MSG(!tsAllied(sim, 2, 0) && !tsAllied(sim, 2, 1),
                   "the joiner is allied with somebody");
-    /* Today: the smallest team, which it is not allied with. */
-    UT_ASSERT_MSG(tsTeam(sim, 2) == 1, "the joiner is on team %u",
+    /* A side of its own: the lowest team nobody is on (D3). */
+    UT_ASSERT_MSG(tsTeam(sim, 2) == 3, "the joiner is on team %u",
                   (unsigned)tsTeam(sim, 2));
+    UT_ASSERT(sim->teams[3].in_use);
+    UT_ASSERT(serverSimSidesAgree(sim));
     serverSimDestroy(sim);
     return 0;
 }
@@ -967,5 +976,107 @@ int run_team_sides_infection_puts_leaver_back(void) {
     scenarioHostDetach(host);
     serverSimDestroy(sim);
     remove(kScript);
+    return 0;
+}
+
+/* Seat 0 on team 1 and seat 1 alone on team 3, owning pills 1 and 2. Seat 1
+   drops, which leaves both pills neutral, and seat 0 takes pill 2. Seat 1
+   rejoins: it is a joiner (D11), so it gets the lowest free team, not team 3,
+   and only the pill that is still neutral comes back. */
+int run_team_sides_rejoin_is_a_joiner(void) {
+    const BYTE teams[2] = { 1, 3 };
+    ServerSim *sim = tsRunningSim(teams, 2);
+    GameSim *gs;
+
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    UT_ASSERT(pillsGetNumPills(&gs->pb) >= 2);
+    gs->pb->item[0].owner = 1;
+    gs->pb->item[1].owner = 1;
+
+    serverSimRemovePlayer(sim, 1);
+    UT_ASSERT_MSG(gs->pb->item[0].owner == NEUTRAL &&
+                  gs->pb->item[1].owner == NEUTRAL,
+                  "after the drop the pills are owned by %u and %u",
+                  (unsigned)gs->pb->item[0].owner,
+                  (unsigned)gs->pb->item[1].owner);
+    gs->pb->item[1].owner = 0;
+
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT(serverSimIsPlayerConnected(sim, 1));
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 2, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(!tsAllied(sim, 0, 1));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    UT_ASSERT_MSG(gs->pb->item[0].owner == 1,
+                  "the neutral pill went to %u",
+                  (unsigned)gs->pb->item[0].owner);
+    UT_ASSERT_MSG(gs->pb->item[1].owner == 0,
+                  "the pill seat 0 took went to %u",
+                  (unsigned)gs->pb->item[1].owner);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A joiner's lobby slot goes out before its join, so a script placing it in
+   on_player_join already sees the team the server gave it. */
+int run_team_sides_joiner_slot_before_join(void) {
+    const BYTE teams[2] = { 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 2);
+    TsEvents *cap = (TsEvents *)calloc(1, sizeof(TsEvents));
+    SubscriberHandle h;
+    int slot, join;
+
+    UT_ASSERT(sim != NULL && cap != NULL);
+    h = serverSimRegisterSubscriber(sim, tsCaptureAll, cap);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    memset(cap, 0, sizeof(*cap));
+
+    serverSimAddPlayer(sim, 2, "Late", false);
+    slot = tsFindSlot(cap, 0, 2);
+    join = tsFind(cap, 0, CTRL_PLAYER_JOIN);
+    UT_ASSERT_MSG(slot >= 0 && join > slot,
+                  "the slot and the join went out at %d and %d", slot, join);
+    UT_ASSERT(cap->evts[slot].u.lobbySlot.slot.teamNumber == 3);
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    free(cap);
+    return 0;
+}
+
+/* A seat a script holds for a bot, added to team 1 while the round runs, is
+   allied with team 1 as it is added, so the two records agree. */
+int run_team_sides_held_seat_allied_in_round(void) {
+    const BYTE teams[2] = { 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 2);
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(serverSimAddUnfieldedSeat(sim, 2, "Held", 1));
+    UT_ASSERT(tsTeam(sim, 2) == 1);
+    UT_ASSERT_MSG(tsAllied(sim, 0, 2) && tsAllied(sim, 2, 0),
+                  "the held seat is not allied with its team");
+    UT_ASSERT(!tsAllied(sim, 1, 2));
+    UT_ASSERT(tsTeam(sim, 0) == 1);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* In the lobby a joiner keeps the smallest-team pick. */
+int run_team_sides_lobby_joiner_keeps_rule(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+                                               gameOpen, false, 0, -1);
+
+    UT_ASSERT(sim != NULL);
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimAddPlayer(sim, 0, "P0", false);
+    serverSimAddPlayer(sim, 1, "P1", false);
+    serverSimAddPlayer(sim, 2, "P2", false);
+    UT_ASSERT(tsTeam(sim, 0) == 1 && tsTeam(sim, 1) == 2);
+    UT_ASSERT_MSG(tsTeam(sim, 2) == 1, "the lobby joiner is on team %u",
+                  (unsigned)tsTeam(sim, 2));
+    serverSimDestroy(sim);
     return 0;
 }
