@@ -17,6 +17,9 @@
  * run_scenario_lua_lang                — lang(p) reads the code the
  *                                        frontend gave the seat, and "en"
  *                                        for anything it refuses or lacks
+ * run_scenario_lua_tutorial_done       — tutorial_done(p) marks the seat
+ *                                        for the frontend to take, once,
+ *                                        and refuses an empty seat
  * run_scenario_lua_op_arguments_match_the_doc
  *                                      — every row says what arguments it
  *                                        takes, and says the same as the
@@ -575,6 +578,7 @@ static const char *const kSlEveryRowCalls =
     "  set_game_time = function() return game.set_game_time(1000) end,\n"
     "  add_game_time = function() return game.add_game_time(10) end,\n"
     "  set_rule    = function() return game.set_rule(\"tank_reload_ticks\", 12) end,\n"
+    "  tutorial_done = function() return game.tutorial_done(0) end,\n"
     /* The one setting slDeclareSetting puts in the manifest. */
     "  setting     = function() return game.setting(\"laps\") end,\n"
     /* The test hook. Seat 9 is empty, so the row is exercised and refused
@@ -835,6 +839,67 @@ int run_scenario_lua_lang(void) {
     slLangRead(L, got, other, outOfRange, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "en") == 0,
                   "the seat kept '%s' after its player left", got);
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 1d. A finished tutorial through the binding ──────────────────── */
+
+/* game.tutorial_done marks the seat; the frontend's take answers true once
+   and then false; an empty seat and a seat out of range are refused and mark
+   nothing; and the mark goes when the seat's player leaves. */
+static const char *const kSlTutorialDone =
+    "ok = game.tutorial_done(0)\n"
+    "empty_ok, empty_code = game.tutorial_done(5)\n"
+    "range_ok, range_code = game.tutorial_done(300)\n";
+
+int run_scenario_lua_tutorial_done(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             err[512];
+    char             code[64];
+    const char      *noSeat = scenarioLuaResultName((int)SCN_OP_NO_SUCH_PLAYER);
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    UT_ASSERT_MSG(!serverSimTakeTutorialDone(sim, 0),
+                  "seat 0 was marked before any call");
+    UT_ASSERT_MSG(slRun(L, kSlTutorialDone, err, sizeof(err)),
+                  "the chunk would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"),
+                  "tutorial_done(0) did not answer true");
+    UT_ASSERT_MSG(slGlobalIsNil(L, "empty_ok"),
+                  "tutorial_done(5) was taken for an empty seat");
+    slGlobalStr(L, "empty_code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, noSeat) == 0,
+                  "the empty seat's refusal was named '%s'", code);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "range_ok"),
+                  "tutorial_done(300) was taken");
+    slGlobalStr(L, "range_code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, noSeat) == 0,
+                  "the out-of-range refusal was named '%s'", code);
+
+    UT_ASSERT_MSG(!serverSimTakeTutorialDone(sim, 5),
+                  "the refused call marked seat 5");
+    UT_ASSERT_MSG(serverSimTakeTutorialDone(sim, 0),
+                  "the take did not see seat 0's mark");
+    UT_ASSERT_MSG(!serverSimTakeTutorialDone(sim, 0),
+                  "the mark was still there after the take");
+    UT_ASSERT(!serverSimTakeTutorialDone(sim, MAX_TANKS));
+    UT_ASSERT(!serverSimTakeTutorialDone(NULL, 0));
+
+    UT_ASSERT_MSG(slRun(L, "ok = game.tutorial_done(0)\n", err, sizeof(err)),
+                  "the chunk would not run: %s", err);
+    serverSimRemovePlayer(sim, 0);
+    UT_ASSERT_MSG(!serverSimTakeTutorialDone(sim, 0),
+                  "the mark stayed after the seat's player left");
 
     lua_close(L);
     serverSimDestroy(sim);

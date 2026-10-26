@@ -2948,6 +2948,8 @@ int run_mapchooser_scenario_filter(void);
 /* The background game's map name test: no tutorial is ever picked
  * (test_bg_map_pick.c). */
 int run_bg_map_pick_skips_tutorials(void);
+/* The folder test behind game.tutorial_done (test_bg_map_pick.c). */
+int run_tutorial_maps_shipped_path(void);
 
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
@@ -3788,6 +3790,7 @@ int run_scenario_validate_needs_bots_declared(void);
 int run_scenario_lua_every_row_answers(void);
 int run_scenario_lua_voice_everyone(void);
 int run_scenario_lua_lang(void);
+int run_scenario_lua_tutorial_done(void);
 int run_scenario_lua_op_arguments_match_the_doc(void);
 int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);

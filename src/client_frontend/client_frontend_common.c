@@ -21,6 +21,7 @@
 #include "client_frontend_tutorial.h"
 #include "build_cursor.h"
 #include "sdl3imgui.h"      /* sdl3ImguiClearPlayer */
+#include "tutorial_maps.h"  /* tutorialMapsIsShippedTutorial */
 #include "clientmutex.h"
 #include "lang.h"           /* STR_TUTORIAL_RESPAWN1 */
 #include "server_sim.h"
@@ -486,3 +487,28 @@ void clientFrontResumeEnd(ClientSim *cs) {
 }
 #endif
 
+/* The server marks the seat when the script calls game.tutorial_done. The
+   mark is taken under the mutex whatever map is running, so a mark from a
+   map outside the tutorials folder is dropped rather than kept for later.
+   A hosted game is not single player, so its host's button stays. */
+void clientFrontPollTutorialDone(void) {
+  ClientSim *cs = s_activeUiCs;
+  ServerSim *srv;
+  bool done = false;
+  bool shipped = false;
+
+  if (cs == NULL) return;
+  srv = gameFrontGetServerSim();
+  if (!srv) return;
+  clientMutexWaitFor();
+  if (clientSimIsSinglePlayer(cs)) {
+    done = serverSimTakeTutorialDone(srv, clientSimGetMyPlayerNum(cs));
+    if (done) {
+      shipped = tutorialMapsIsShippedTutorial(gameFrontScenarioMapScriptPath());
+    }
+  }
+  clientMutexRelease();
+  if (done && shipped && gameFrontGetShowTutorialButton()) {
+    gameFrontSetShowTutorialButton(false);
+  }
+}

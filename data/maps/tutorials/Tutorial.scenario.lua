@@ -153,7 +153,7 @@ scenario = {
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-22T17:57Z",
+  updated = "2026-10-26T21:42Z",
   game = "open",
   -- The demo bots and the final-round bot are held seats this file fields
   -- with game.spawn_bot, so the lobby has to allow bots.
@@ -2029,6 +2029,8 @@ local function check_win()
   S.won = true
   mark(7, "all")
   redraw(false)
+  -- In a single-player game this hides the main menu's Tutorial button.
+  game.tutorial_done(S.player)
 end
 
 function on_base_captured(n, old, new, scripted)

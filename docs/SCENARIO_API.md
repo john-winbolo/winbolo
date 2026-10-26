@@ -37,6 +37,7 @@ bug worth reporting.
 - [Bots and seats](#bots-and-seats)
   - [Hints: telling one bot what to do](#hints-telling-one-bot-what-to-do)
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
+  - [Finishing a tutorial](#finishing-a-tutorial)
   - [Text in the player's language](#text-in-the-players-language)
 - [Showing things on a client](#showing-things-on-a-client)
   - [Popups](#popups)
@@ -2100,6 +2101,7 @@ to escort a person stays where it is.
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
+| `game.tutorial_done(p)` | Says that seat `p`'s player has finished a tutorial. In a single-player game of a map in `data/maps/tutorials`, the main menu stops showing its Tutorial button. Anywhere else it changes nothing. See [Finishing a tutorial](#finishing-a-tutorial). |
 
 `message` and `say` are two different voices, and the difference decides
 whether a bot hears the line at all.
@@ -2163,6 +2165,24 @@ has voice to allies only. Call it from `on_setup` or later; a call in the lobby
 is cleared when the round starts. A server with voice off forwards no voice at
 all, so `set_voice_everyone(true)` is refused there (`SCN_OP_WRONG_STATE`);
 `set_voice_everyone(false)` is always taken.
+
+### Finishing a tutorial
+
+A shipped tutorial calls `game.tutorial_done(p)` when its player has done its
+last step. The main menu then stops showing its Tutorial button, and the
+choice is saved, so it stays hidden the next time the game starts. The
+Tutorial entry in Settings turns it back on.
+
+The server only marks the seat. Nothing is sent to any client and nothing
+goes in the replay. The one reader is a single-player client, whose server
+runs in the same process: once a frame it takes the mark for its own seat.
+It acts on the mark only when the running map's own script is in
+`data/maps/tutorials`. So the call does nothing on a hosted or dedicated
+server, nothing for any other seat, and nothing for a script outside that
+folder.
+
+The call is refused with `SCN_OP_NO_SUCH_PLAYER` when `p` is not a seat or
+nobody is in it.
 
 ### Text in the player's language
 

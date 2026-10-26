@@ -420,6 +420,16 @@ bool serverSimTakeTutorialRespawn1(ServerSim *sim) {
     return v;
 }
 
+bool serverSimTakeTutorialDone(ServerSim *sim, BYTE seat) {
+    uint16_t bit;
+
+    if (sim == NULL || seat >= MAX_TANKS) return false;
+    bit = (uint16_t)(1u << seat);
+    if ((sim->tutorialDoneSeats & bit) == 0) return false;
+    sim->tutorialDoneSeats &= (uint16_t)~bit;
+    return true;
+}
+
 void serverSimSetPaused(ServerSim *sim, bool paused) {
     sim->sim.paused = paused;
 }

@@ -87,6 +87,7 @@ static const ScenarioOpType kAllOpTypes[] = {
     SCN_OP_POPUP,
     SCN_OP_END_ROUND,
     SCN_OP_SET_GAME_TIME,
+    SCN_OP_TUTORIAL_DONE,
     SCN_OP_SET_RULE,
     SCN_OP_SHELL_EXPIRED
 };
@@ -177,6 +178,7 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_POPUP ||              /* test_scenario_lua.c */
            t == SCN_OP_END_ROUND ||          /* test_scenario_flow_arms.c */
            t == SCN_OP_SET_GAME_TIME ||
+           t == SCN_OP_TUTORIAL_DONE ||      /* test_scenario_lua.c */
            t == SCN_OP_SET_RULE ||           /* test_scenario_rule_arms.c */
            t == SCN_OP_SHELL_EXPIRED;        /* test_three_shot_order.c */
 }

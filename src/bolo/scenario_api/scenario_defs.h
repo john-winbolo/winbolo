@@ -319,6 +319,7 @@ typedef enum {
     /* Flow */
     SCN_OP_END_ROUND,
     SCN_OP_SET_GAME_TIME,
+    SCN_OP_TUTORIAL_DONE,
 
     /* Rules */
     SCN_OP_SET_RULE,
@@ -696,6 +697,15 @@ typedef struct {
     bool    relative;
 } ScnOpSetGameTime;
 
+/* A shipped tutorial is finished for the player in slot. The server keeps
+ * a mark for the seat and does nothing else. Only a single-player client
+ * in the same process reads the mark, and it hides the main menu's
+ * Tutorial button. A hosted or dedicated server has no such client, so
+ * there the op changes nothing a player sees. */
+typedef struct {
+    BYTE slot;
+} ScnOpTutorialDone;
+
 /* ── Rules ─────────────────────────────────────────────────────── */
 
 /* Every SimRules field, in the order the struct declares them, with the
@@ -820,6 +830,7 @@ typedef struct {
         ScnOpPopup             popup;
         ScnOpEndRound          endRound;
         ScnOpSetGameTime       setGameTime;
+        ScnOpTutorialDone      tutorialDone;
         ScnOpSetRule           setRule;
         ScnOpShellExpired      shellExpired;
     } u;

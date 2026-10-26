@@ -5976,6 +5976,10 @@ ServerSim *gameFrontGetSinglePlayerServerSim(void) {
   return spServerSim;
 }
 
+const char *gameFrontScenarioMapScriptPath(void) {
+  return scenarioHostMapScriptPath(spScenarioHost);
+}
+
 BYTE gameFrontGetPlayerNum(void) {
   /* Read the slot live from the transport, never a copy taken at join.
    * clientFrontAwaitJoin returns once the lobby replay lands, which can be

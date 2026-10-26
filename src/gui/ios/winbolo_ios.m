@@ -682,6 +682,7 @@ ios_game_start:
            nothing outside the tutorial. */
         frontEndTutorialNotePresentedFrame();
         clientFrontTutorialPollRespawn();
+        clientFrontPollTutorialDone();   /* a shipped tutorial finished */
 
         /* Cap to 60 FPS */
         {
