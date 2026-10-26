@@ -1274,6 +1274,20 @@ int run_alliance_request_refused_in_lobby(void);
 int run_alliance_request_cleared_at_round_start(void);
 int run_alliance_request_client_drops_departed_requester(void);
 
+/* Sides during a round (test_team_sides.c, #424). */
+int run_team_sides_accept_merges_groups(void);
+int run_team_sides_clear_moves_no_owner(void);
+int run_team_sides_pill_fires_at_ex_ally(void);
+int run_team_sides_base_refuels_ally_only(void);
+int run_team_sides_allies_share_base_win(void);
+int run_team_sides_client_takes_slot_in_game(void);
+int run_team_sides_fold_at_return_to_lobby(void);
+int run_team_sides_surrender_after_defection(void);
+int run_team_sides_ping_after_leave(void);
+int run_team_sides_track_identity_after_defection(void);
+int run_team_sides_midgame_joiner_team(void);
+int run_team_sides_set_team_keeps_player_alliance(void);
+
 /* Pillbox and base owners from the map file survive a round start
  * (test_round_start_owners.c, issue #422). */
 int run_round_start_owners_kept_with_lobby_team(void);

@@ -4041,6 +4041,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_alliance_reset.c
     tests/unit/test_alliance_leave.c
     tests/unit/test_alliance_request.c
+    tests/unit/test_team_sides.c
     tests/unit/test_round_start_owners.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_lobby_bot_config_memory.c
@@ -5990,6 +5991,18 @@ set(_unit_test_names
     alliance_request_refused_in_lobby
     alliance_request_cleared_at_round_start
     alliance_request_client_drops_departed_requester
+    team_sides_accept_merges_groups
+    team_sides_clear_moves_no_owner
+    team_sides_pill_fires_at_ex_ally
+    team_sides_base_refuels_ally_only
+    team_sides_allies_share_base_win
+    team_sides_client_takes_slot_in_game
+    team_sides_fold_at_return_to_lobby
+    team_sides_surrender_after_defection
+    team_sides_ping_after_leave
+    team_sides_track_identity_after_defection
+    team_sides_midgame_joiner_team
+    team_sides_set_team_keeps_player_alliance
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
