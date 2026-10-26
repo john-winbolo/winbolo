@@ -884,21 +884,6 @@ BYTE pillsGetNumActive(pillboxes *value);
 BYTE pillsGetPillNetData(pillboxes *value, BYTE *buff);
 
 /*********************************************************
-*NAME:          pillsDropSetNeutralOwner
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/11/99
-*LAST MODIFIED: 1/11/99
-*PURPOSE:
-*  Changes all pills of owner owner back to neutral. Also
-*  if they are inside a tank it drops them.
-*
-*ARGUMENTS:
-*  value - Pointer to the pillbox structure
-*  owner - Owner to set back to neutral
-*********************************************************/
-void pillsDropSetNeutralOwner(struct GameSim *sim, BYTE owner);
-
-/*********************************************************
 *NAME:          basesMigrate
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
@@ -929,21 +914,6 @@ void pillsMigrate(struct GameSim *sim, BYTE oldOwner, BYTE newOwner);
 *  newOwner - Owner to replace with
 *********************************************************/
 void pillsMigratePlanted(struct GameSim *sim, BYTE oldOwner, BYTE newOwner);
-
-/*********************************************************
-*NAME:          pillsExplicitDrop
-*AUTHOR:        John Morrison
-*CREATION DATE: 10/11/99
-*LAST MODIFIED: 10/11/99
-*PURPOSE:
-*  Drops all pills of owner owner
-*
-*
-*ARGUMENTS:
-*  value - Pointer to the pillbox structure
-*  owner - Owner to set back to neutral
-*********************************************************/
-void pillsExplicitDrop(struct GameSim *sim, BYTE owner);
 
 /*********************************************************
 *NAME:          pillsGetBrainPillsInRect
