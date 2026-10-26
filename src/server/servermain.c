@@ -3046,6 +3046,10 @@ int main(int argc, char **argv) {
     if (scenarioHost != NULL && skipLobby) {
       serverSimScenarioApplyLobbyRules(serverSim);
     }
+    /* The overrun lines on the console at 1:00 of a round and every five
+       minutes after. Only the dedicated server prints them; a game hosted
+       from a client links the same tick and writes only the log record. */
+    serverLifecycleSetOverrunConsolePrint(true);
     if (serverInstanceStartup(serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
       scenarioHostDetach(scenarioHost);

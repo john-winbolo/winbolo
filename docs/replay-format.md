@@ -723,6 +723,13 @@ shorter than a minute still has one. That record is the last entry before
 `LOG_QUIT`. A log that closes without a round having run since the last
 round-end record gets none.
 
+Only a host that records through the round log
+(`serverDedicatedLogInstall`) sets the stop hook: WinBoloDS, and a game
+hosted from the desktop, iOS or Android client. Two hosts write the timed
+records but no round-end record. WinBoloHeadless opens and closes its log
+itself (`src/headless/headless_main.c`). The browser build's
+`serverLifecycleSetRoundLogHooks` is a stub (`src/wasm/server_stubs_wasm.c`).
+
 A reader takes the fields it knows and skips the rest by the framed length. A
 record shorter than 44 bytes, or with version 0, is consumed and ignored. A
 viewer made before this record skips it by its framed length, the same as any

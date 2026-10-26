@@ -599,6 +599,9 @@ char wbnStubServerKey[WINBOLONET_KEY_LEN] = "";
 
 void winboloNetGetServerKey(char *keyBuff) {
   if (keyBuff) {
+    /* Fill the whole field. logStart writes all 32 bytes of it into the
+     * header, so bytes left unset would differ from round to round. */
+    SDL_memset(keyBuff, 0, WINBOLONET_KEY_LEN);
     SDL_strlcpy(keyBuff, wbnStubServerKey, WINBOLONET_KEY_LEN);
   }
 }

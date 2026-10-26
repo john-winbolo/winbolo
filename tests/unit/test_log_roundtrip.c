@@ -1198,7 +1198,15 @@ static bool recordOverrunRound(const char *tag, bool hook, uint8_t **buf, size_t
     *blen = 0;
     *reports = 0;
     *reportFrame = 0;
-    if (!replayHarnessStartRecording(&h, tag, "Tester")) {
+    if (!replayHarnessPrepare(&h, tag, "Tester")) {
+        replayHarnessStop(&h);
+        return false;
+    }
+    /* The header holds the round's start time and the first log key is its
+     * low byte. Two rounds made a second apart would differ in nearly every
+     * byte, so both rounds use the same start time. */
+    h.sim->timeCreated = 1700000000u;
+    if (!replayHarnessBeginRecording(&h)) {
         replayHarnessStop(&h);
         return false;
     }

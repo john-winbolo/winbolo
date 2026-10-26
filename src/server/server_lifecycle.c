@@ -336,6 +336,10 @@ static uint32_t     s_roundRunFrames  = 0;
  * record (serverLifecycleLogRoundEndOverrunStats), so a log that closes later
  * without a new round, a lobby log say, does not get a second one. */
 static bool         s_overrunEndDue   = FALSE;
+/* TRUE when serverLifecycleReportOverrunStats also prints the overrun lines
+ * to stdout. Off until WinBoloDS turns it on, so the desktop, iOS and
+ * Android hosts, which run the same tick, print nothing. */
+static bool         s_overrunConsolePrint = FALSE;
 
 /* Wall-clock cost (ms) of the two serverSimTick calls combined for the
  * most recent tick, plus its EWMA. Same seeding rule as above. */
@@ -382,8 +386,14 @@ bool serverLifecycleCountRoundFrame(void) {
   return serverOverrunStatsDue(s_roundRunFrames);
 }
 
+void serverLifecycleSetOverrunConsolePrint(bool on) {
+  s_overrunConsolePrint = on;
+}
+
 void serverLifecycleReportOverrunStats(ServerSim *sim) {
-  serverSimPrintOverrunStats(sim, s_roundRunFrames / (1000u / SERVER_TICK_LENGTH));
+  if (s_overrunConsolePrint) {
+    serverSimPrintOverrunStats(sim, s_roundRunFrames / (1000u / SERVER_TICK_LENGTH));
+  }
   serverSimLogOverrunStats(sim, s_roundRunFrames, FALSE);
 }
 

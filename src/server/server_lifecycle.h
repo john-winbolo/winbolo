@@ -329,10 +329,16 @@ static inline bool serverOverrunStatsDue(uint32_t roundFrames) {
  * the frame is one that reports the overrun stats (serverOverrunStatsDue). */
 bool serverLifecycleCountRoundFrame(void);
 
-/* Print the overrun lines to the console and add the overrun record to the
- * round log, for the frames serverLifecycleCountRoundFrame names. The caller
- * holds the threads mutex. */
+/* Print the overrun lines to the console, when
+ * serverLifecycleSetOverrunConsolePrint turned that on, and add the overrun
+ * record to the round log, for the frames serverLifecycleCountRoundFrame
+ * names. The caller holds the threads mutex. */
 void serverLifecycleReportOverrunStats(ServerSim *sim);
+
+/* Turn the overrun lines on stdout on or off. Off by default. WinBoloDS
+ * (servermain.c) turns them on; the client hosts, which run the same tick,
+ * leave them off and write only the round log's record. */
+void serverLifecycleSetOverrunConsolePrint(bool on);
 
 /* The round log's stop hook (logSetStopHook): adds the round-end overrun
  * record, so a round shorter than a minute still has one. Writes one for each

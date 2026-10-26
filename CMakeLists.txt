@@ -5895,6 +5895,7 @@ set(_unit_test_names
     lv_lag_track
     lv_lag_ring
     lv_lag_feature_default_off
+    lv_lag_view_draw
     lv_overrun_read
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks

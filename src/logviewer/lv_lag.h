@@ -37,9 +37,12 @@
 /* The time one rewind entry is: one log entry, one viewer tick. */
 #define LV_LAG_ENTRY_MS 20
 
-/* The most records one track keeps. A record a second for a whole day
-   is far less than this; a file that holds more keeps the first ones. */
-#define LV_LAG_TRACK_MAX (1 << 20)
+/* The most records one track keeps: 131072, which is about 36 hours at
+   one record a second, and 1 MB a track (16 MB for all 16 tracks). A real
+   round writes less than one record a second for each player. A file that
+   holds more keeps the first ones, so a crafted file cannot make the
+   viewer keep more than this. */
+#define LV_LAG_TRACK_MAX (1 << 17)
 
 /* The frames the history keeps. The server rewinds at most 14 entries
    (LAG_COMP_MAX_TICKS); the ring keeps more so a value just over that,
