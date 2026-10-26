@@ -402,24 +402,6 @@ void serverSimSetViewPlayer(ServerSim *sim, BYTE playerNum) {
     sim->sim.viewPlayer = playerNum;
 }
 
-bool serverSimIsTutorial(const ServerSim *sim) {
-    return sim->sim.isTutorial;
-}
-
-void serverSimSetTutorial(ServerSim *sim, bool v) {
-    sim->sim.isTutorial = v;
-}
-
-void serverSimSetTutorialStartIdx(ServerSim *sim, BYTE idx) {
-    sim->sim.tutorialStartIdx = idx;
-}
-
-bool serverSimTakeTutorialRespawn1(ServerSim *sim) {
-    bool v = sim->sim.tutorialRespawn1Pending;
-    sim->sim.tutorialRespawn1Pending = FALSE;
-    return v;
-}
-
 void serverSimSetPaused(ServerSim *sim, bool paused) {
     sim->sim.paused = paused;
 }

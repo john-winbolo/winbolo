@@ -1018,7 +1018,6 @@ set(IOS_DATA_ROOT
 # Maps that go into the root (Everard Island for single-player)
 set(IOS_DATA_ROOT_MAPS
     "${CMAKE_SOURCE_DIR}/data/maps/Everard Island.map"
-    "${CMAKE_SOURCE_DIR}/data/maps/Inbuilt Tutorial.map"
 )
 file(GLOB IOS_DATA_FONT
     "${CMAKE_SOURCE_DIR}/data/fonts/*.ttf"
@@ -6361,6 +6360,8 @@ set(_unit_test_names
     scenario_status_tokens_expand
     tutorial_tokens_long_key_names
     tutorial_tokens_phrases
+    tutorial_lang_ref
+    lang_name_table_classic_tutorial
     scenario_announce_waits_for_popup
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
@@ -7059,6 +7060,7 @@ set(_unit_test_names
     scenario_tank_kill
     scenario_tank_teleport
     scenario_tank_set_boat
+    scenario_tank_stop
     scenario_tank_give_pill
     scenario_tank_drop_pill
     scenario_tank_arm_records

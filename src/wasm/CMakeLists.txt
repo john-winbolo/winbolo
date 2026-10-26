@@ -520,8 +520,6 @@ set(PRELOAD_DIR "${CMAKE_CURRENT_BINARY_DIR}/preload")
 file(MAKE_DIRECTORY "${PRELOAD_DIR}")
 file(COPY "${REPO_ROOT}/data/maps/Everard Island.map" DESTINATION "${PRELOAD_DIR}")
 file(RENAME "${PRELOAD_DIR}/Everard Island.map" "${PRELOAD_DIR}/EverardIsland.map")
-file(COPY "${REPO_ROOT}/data/maps/Inbuilt Tutorial.map" DESTINATION "${PRELOAD_DIR}")
-file(RENAME "${PRELOAD_DIR}/Inbuilt Tutorial.map" "${PRELOAD_DIR}/InbuiltTutorial.map")
 
 # ---------------------------------------------------------------------------
 # CJK font subsetting. The bundled Noto Sans CJK + Sarasa Mono Slab fonts are
@@ -602,7 +600,6 @@ endif()
 target_link_options(winbolo PRIVATE
     ${WASM_DATA_PRELOAD}
     "SHELL:--preload-file ${PRELOAD_DIR}/EverardIsland.map@/data/EverardIsland.map"
-    "SHELL:--preload-file ${PRELOAD_DIR}/InbuiltTutorial.map@/data/InbuiltTutorial.map"
     "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter@/Brains/GoalHunter"
     # The licence and its additional permissions, which every copy of the
     # program has to carry, and the About-box docs beside them in /data.

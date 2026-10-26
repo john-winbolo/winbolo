@@ -155,7 +155,7 @@ The game's graphics and sounds are not covered by the GPL. They are Stuart
 Cheshire's designs from Bolo, copyright 1987-1995 Stuart Cheshire, and are used
 with his permission. The files are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md#bolo-graphics-and-sounds).
-The Everard Island and Inbuilt Tutorial maps are also Stuart Cheshire's, on the
+The Everard Island and Classic Tutorial maps are also Stuart Cheshire's, on the
 same terms, and are listed in the same section. The other maps in `data/maps/` are Bolo community maps, each its
 author's own work, and are not covered by the GPL either; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md#bolo-community-maps).

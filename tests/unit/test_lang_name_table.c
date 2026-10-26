@@ -112,3 +112,33 @@ int run_lang_name_table(void) {
 
     return 0;
 }
+
+/* The names the Classic Tutorial scenario sends as "{LANG:NAME}" popups
+ * (data/maps/tutorials/Classic Tutorial.scenario.lua). The client looks
+ * each one up in this table, and a name that is not here is shown to the
+ * player as the raw reference. So a string the scenario uses must not be
+ * renamed or removed without the script being changed too. */
+static const char *const kClassicTutorialNames[] = {
+    "STR_TUTORIAL_START01", "STR_TUTORIAL_START02", "STR_TUTORIAL_START04",
+    "STR_TUTORIAL01", "STR_TUTORIAL02", "STR_TUTORIAL03", "STR_TUTORIAL04",
+    "STR_TUTORIAL05", "STR_TUTORIAL06", "STR_TUTORIAL07", "STR_TUTORIAL08",
+    "STR_TUTORIAL09", "STR_TUTORIAL10", "STR_TUTORIAL11", "STR_TUTORIAL12",
+    "STR_TUTORIAL13", "STR_TUTORIAL14", "STR_TUTORIAL15", "STR_TUTORIAL16",
+    "STR_TUTORIAL17", "STR_TUTORIAL18", "STR_TUTORIAL19", "STR_TUTORIAL20",
+    "STR_TUTORIAL21", "STR_TUTORIAL22", "STR_TUTORIAL23", "STR_TUTORIAL24",
+    "STR_TUTORIAL25", "STR_TUTORIAL_RESPAWN1",
+};
+
+int run_lang_name_table_classic_tutorial(void) {
+    const size_t actual = sizeof(kLangNameTable) / sizeof(kLangNameTable[0]);
+    size_t i;
+
+    for (i = 0; i < sizeof(kClassicTutorialNames) / sizeof(kClassicTutorialNames[0]); i++) {
+        const LangNameEntry *hit = (const LangNameEntry *)bsearch(
+            kClassicTutorialNames[i], kLangNameTable, actual,
+            sizeof(kLangNameTable[0]), nameCmp);
+        UT_ASSERT_MSG(hit != NULL, "the Classic Tutorial's '%s' is not in the table",
+                      kClassicTutorialNames[i]);
+    }
+    return 0;
+}

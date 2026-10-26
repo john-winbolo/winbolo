@@ -189,3 +189,26 @@ float tutorialKeycapWidth(float capH, float labelW) {
   float w = labelW + capH * 0.66f;
   return (w > capH) ? w : capH;
 }
+
+bool tutorialLangRefParse(const char *s, char *name, size_t cap) {
+  static const char kOpen[] = "{LANG:";
+  const size_t openLen = sizeof(kOpen) - 1;
+  size_t len;
+  size_t i;
+
+  if (!s || !name || cap == 0) return false;
+  if (strncmp(s, kOpen, openLen) != 0) return false;
+  s += openLen;
+  for (len = 0; s[len] && s[len] != '}'; len++) {
+    char c = s[len];
+    if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_')) {
+      return false;
+    }
+  }
+  /* A name, then the closing brace, then the end of the text. */
+  if (len == 0 || s[len] != '}' || s[len + 1] != '\0') return false;
+  if (len >= cap) return false;
+  for (i = 0; i < len; i++) name[i] = s[i];
+  name[len] = '\0';
+  return true;
+}

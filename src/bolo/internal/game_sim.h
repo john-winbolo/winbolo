@@ -367,13 +367,6 @@ struct GameSim {
      * reads a message. */
     bool        paused;
 
-    /* True when this sim is driving the built-in tutorial. The server
-     * uses it to halt the player's tank at each tutorial trigger row;
-     * the client uses it to gate the frontEndTutorial dialog sequence.
-     * Set by the frontend after sim creation; zero-initialised by
-     * memset in clientSimCreate / serverSimCreate. */
-    bool        isTutorial;
-
     /* Pointer to the owning ClientSim's brainMap (NULL on server).
      * Used by shared code (bolo_map.c) to update the fog-of-war brain map. */
     BYTE (*brainMap)[MAP_ARRAY_SIZE];
@@ -429,21 +422,6 @@ struct GameSim {
        and writes it from the scenario tail of the lobby settings instead, so
        both resolve a scripted round the same way. */
     gameType    scenarioBaseGame;
-    /* Tutorial respawn start index. While sim->isTutorial, startsGetStart
-       returns this fixed start (not the open-game algorithm). The GUI raises
-       it from 0 (sea) to 1 (far bank) once the player passes the boat step.
-       Zero-initialised by memset at sim creation. */
-    BYTE        tutorialStartIdx;
-    /* Deepest (lowest) map row the tank has reached this tutorial run. The
-       server only halts the tank at a stop row the player hasn't passed yet
-       (newbmy < tutorialMinRow), so a respawn driving back through already-seen
-       rows isn't stopped again. Initialised to 0xFF (no progress) in
-       serverSimInit — memset alone would leave it 0 and disable every stop. */
-    BYTE        tutorialMinRow;
-    /* Set by tankDeath's server respawn branch when a tutorial respawn lands at
-       start 1 (the far bank). The GUI takes-and-clears it to show the one-shot
-       respawn message. Zero-initialised by memset at sim creation. */
-    bool        tutorialRespawn1Pending;
 };
 
 /*********************************************************

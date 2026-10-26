@@ -49,7 +49,7 @@ typedef enum {
     CLIENT_FRONT_PAUSE_COUNT
 } ClientFrontPause;
 
-/* A solo session: the tutorial, or single player. */
+/* A solo session: a single-player game. */
 bool clientFrontIsSoloSession(struct ClientSim *cs);
 
 /* One solo freeze's open (active) or close edge. Opening does nothing outside

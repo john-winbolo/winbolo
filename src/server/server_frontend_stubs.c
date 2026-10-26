@@ -97,8 +97,6 @@ void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled) { (void)enabled; }
 void frontEndShowGunsight(ClientSim *cs, bool isShown) { (void)cs; (void)isShown; }
 void frontEndRedrawAll(ClientSim *cs) { (void)cs; }
-bool frontEndTutorial(BYTE pos) { (void)pos; return FALSE; }
-void frontEndTutorialReset(void) { }
 
 /* No screen stubs. screenTanksAddItem and screenLgmAddItem used to be
  * stubbed here: players.c calls them, so the symbols had to resolve, and

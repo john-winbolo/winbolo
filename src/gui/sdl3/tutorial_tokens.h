@@ -117,6 +117,16 @@ const char *tutorialShortKeyName(const char *name, char *buf, size_t cap);
  * high (a one-letter cap stays square). */
 float tutorialKeycapWidth(float capH, float labelW);
 
+/* A text that names one string of the language file, written as
+ * "{LANG:STR_TUTORIAL01}". The whole text must be the reference, with
+ * nothing before or after it, and the name is capital letters, digits and
+ * '_' only. A scenario sends such a text so that each client shows the
+ * string in its own language and in the wording for its own input.
+ * On a match the name (without "{LANG:" and "}") is written into name
+ * (cap bytes, ended with a NUL) and the answer is true. A text that does
+ * not match, or a name too long for cap, answers false. */
+bool tutorialLangRefParse(const char *s, char *name, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif

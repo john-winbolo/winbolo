@@ -47,7 +47,6 @@
 #include "game_sim.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
-#include "tutorial.h"
 #include "../steam/steam_wrapper.h"
 
 #ifndef CLIENTSIM_TYPEDEF
@@ -1819,9 +1818,6 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->slideRetention = 0;
     (*value)->residualSpeed = 0;
     (*value)->waterCount = 0;
-    if (sim->isTutorial && sim->tutorialStartIdx == 1) {
-      sim->tutorialRespawn1Pending = TRUE;
-    }
     /* The square is the start just chosen, not the one the tank died on. */
     if (sim->callbacks.tankSpawned) {
       sim->callbacks.tankSpawned(sim->callbacks.ctx,
@@ -2070,45 +2066,9 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   }
 #endif
 
-  /* Step 6 — Terrain constraints */
-  {
-    WORLD newmx = (*value)->x;
-    WORLD newmy = (*value)->y;
-    newmx >>= TANK_SHIFT_MAPSIZE;
-    newmy >>= TANK_SHIFT_MAPSIZE;
-    newbmx = (BYTE) newmx;
-    newbmy = (BYTE) newmy;
-
-    if (sim->isTutorial) {
-      if (!isServer) {
-        /* Client dialog sequencer: `<=` so the first step also fires
-         * when the tank spawns on a trigger row without ever "entering"
-         * it from above. Client-side speed=0 is cosmetic for prediction. */
-        if (newbmy <= bmy) {
-          if (frontEndTutorial(newbmy) == TRUE) {
-            (*value)->speed = 0;
-          }
-        }
-      } else {
-        /* Server-authoritative stop: halt only at a stop row the player
-         * hasn't passed yet (newbmy < tutorialMinRow), and only on row entry
-         * so the tank isn't pinned once the dialog closes. After a death the
-         * tank respawns higher and drives back down through already-seen rows;
-         * those must not stop it again — only rows deeper than any reached so
-         * far (i.e. messages not yet shown) do. */
-        if (newbmy < bmy && newbmy < sim->tutorialMinRow &&
-            tutorialIsStopPos(newbmy)) {
-          (*value)->speed = 0;
-        }
-        /* Record the deepest row reached so passed stops stay passed. */
-        if (newbmy < sim->tutorialMinRow) {
-          sim->tutorialMinRow = newbmy;
-        }
-      }
-    }
-    if (isServer) {
-      tankCheckPillCapture(sim, value);
-    }
+  /* Step 6 — Pillbox capture */
+  if (isServer) {
+    tankCheckPillCapture(sim, value);
   }
 
   /* Step 7 — Mine sweeping (3-direction forward sweep) */

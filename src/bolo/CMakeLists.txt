@@ -104,7 +104,6 @@ add_library(bolo_static STATIC
     transport_local.c
     transport_udp_common.c
     treegrow.c
-    tutorial.c
     udppackets.c
     util.c
     viewport.c

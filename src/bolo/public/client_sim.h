@@ -517,10 +517,6 @@ bool clientSimIsMyTankDeathBlackout(ClientSim *cs);
 bool clientSimGetAllowHiddenMines(ClientSim *cs);
 BYTE clientSimGetNumPlayers(ClientSim *cs);
 
-/* Tutorial-mode flag mirrored on the embedded GameSim. */
-bool clientSimIsTutorial(const ClientSim *cs);
-void clientSimSetTutorial(ClientSim *cs, bool v);
-
 /* Game type (open/tournament/strict) for the running sim — distinct from
  * clientSimGetLobbyGameType, which reflects the pre-load lobby selection. */
 gameType clientSimGetGameType(const ClientSim *cs);

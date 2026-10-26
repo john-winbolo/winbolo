@@ -216,10 +216,6 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
        otherwise. */
     sim->sim.scenarioBaseGame = (gameType)0;
 
-    /* "No tutorial progress yet" — memset would leave 0, which (being below
-     * every stop row) would disable all tutorial stops. */
-    sim->sim.tutorialMinRow = 0xFF;
-
     /* Sentinel "use the CLI-configured default brain" for every slot.
      * 0 is a valid brain-catalogue index, so memset doesn't suffice. */
     memset(sim->botBrainIdx, 0xFF, sizeof(sim->botBrainIdx));

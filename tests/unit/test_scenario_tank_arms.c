@@ -18,6 +18,7 @@
  * run_scenario_tank_teleport    — square and start modes, the terrain that
  *                                 will not take a tank
  * run_scenario_tank_set_boat    — afloat only over water
+ * run_scenario_tank_stop        — speed to 0, and nothing else moves
  * run_scenario_tank_give_pill   — a pill handed over, including one a drive-by
  *                                 could not take
  * run_scenario_tank_drop_pill   — a carried pill put down
@@ -520,6 +521,59 @@ int run_scenario_tank_set_boat(void) {
     op.u.tankSetBoat.slot = 1;
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_NO_SUCH_PLAYER);
     op.u.tankSetBoat.slot = MAX_TANKS;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_NO_SUCH_PLAYER);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── Stop ────────────────────────────────────────────────────────── */
+
+/* game.stop_tank sets the speed to 0 and changes nothing else: the tank keeps
+   its place inside the square, its heading and its boat, as the classic
+   tutorial's stop did. */
+int run_scenario_tank_stop(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    ScenarioOp op;
+    tank *t;
+    WORLD x, y;
+    TURNTYPE angle;
+    bool onBoat;
+
+    UT_ASSERT(sim != NULL);
+    t = taTank(sim, TA_SLOT);
+    UT_ASSERT(*t != NULL);
+
+    (*t)->speed = 12;
+    (*t)->x = (WORLD)((*t)->x + 37);
+    x = (*t)->x;
+    y = (*t)->y;
+    angle = (*t)->angle;
+    onBoat = tankIsOnBoat(t) ? true : false;
+
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_TANK_STOP;
+    op.u.tankStop.slot = TA_SLOT;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    UT_ASSERT_MSG((*t)->speed == 0, "the tank still has speed");
+    UT_ASSERT_MSG((*t)->x == x && (*t)->y == y, "the tank was moved");
+    UT_ASSERT_MSG((*t)->angle == angle, "the tank was turned");
+    UT_ASSERT_MSG((tankIsOnBoat(t) ? true : false) == onBoat,
+                  "the boat changed");
+
+    /* A tank already at rest stays at rest. */
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    UT_ASSERT((*t)->speed == 0);
+
+    /* A destroyed tank, an empty seat and an index past the roster. */
+    (*t)->speed = 5;
+    tankSetDestroyed(t, true);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_TANK_DEAD);
+    UT_ASSERT_MSG((*t)->speed == 5, "a refused stop still changed the speed");
+    tankSetDestroyed(t, false);
+    op.u.tankStop.slot = 1;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_NO_SUCH_PLAYER);
+    op.u.tankStop.slot = MAX_TANKS;
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_NO_SUCH_PLAYER);
 
     serverSimDestroy(sim);
