@@ -468,6 +468,10 @@ void brainCoreUninstallAllocCounter(lua_State *L) {
  *               T so it survives while info.base is toggled to nil.
  *   T.message — pooled table for info.message (singular; nil-or-table),
  *               likewise anchored in T.
+ *   T.rules_last — a userdata holding a copy of the BrainRules last written
+ *               into info.rules (BrcRulesCache). The rules change only when a
+ *               scenario changes them, so info.rules is written again only
+ *               when the new rules differ from this copy.
  * The first call per State builds everything; later calls fetch T and overwrite
  * in place — lua_setfield on an existing key allocates nothing, so the only
  * per-call allocations are viewdata and any genuinely new (non-interned)
@@ -484,6 +488,13 @@ void brainCoreUninstallAllocCounter(lua_State *L) {
  * mutates it. Reading fields and copying scalars/strings out remains safe.
  */
 static const char brc_info_pool_key;
+
+/* T.rules_last: the rules last written into info.rules. valid is 0 until the
+ * first write, so the first push of a new State always writes the table. */
+typedef struct {
+  int        valid;
+  BrainRules rules;
+} BrcRulesCache;
 
 void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   int i;
@@ -505,6 +516,11 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
     lua_setfield(L, -2, "info");                      /* T.info = info */
     lua_newtable(L); lua_setfield(L, -2, "base");     /* T.base */
     lua_newtable(L); lua_setfield(L, -2, "message");  /* T.message */
+    {
+      BrcRulesCache *rc = (BrcRulesCache *)lua_newuserdata(L, sizeof(*rc));
+      memset(rc, 0, sizeof(*rc));
+      lua_setfield(L, -2, "rules_last");              /* T.rules_last */
+    }
     lua_pushvalue(L, -1);
     lua_rawsetp(L, LUA_REGISTRYINDEX, (void *)&brc_info_pool_key);
   }
@@ -770,88 +786,102 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
 
   /* The rules this sim runs on (info.rules) and this tank's own modifiers
    * (info.mods, percent, 100 = classic) — persistent tables, overwritten in
-   * place. A brain reads these rather than assuming the classic numbers. */
+   * place. A brain reads these rather than assuming the classic numbers.
+   * info.rules is written only when the rules differ from the copy in
+   * T.rules_last: they change only when a scenario changes them. info.mods
+   * and info.reload_ticks are written every think, since a scenario such as
+   * Rule Roulette can change them on any tick. */
   {
     const BrainRules *r = &info->rules;
-    lua_getfield(L, -1, "rules");
+    BrcRulesCache *rc;
+    lua_getfield(L, t_idx, "rules_last");
+    rc = (BrcRulesCache *)lua_touserdata(L, -1);
+    lua_pop(L, 1);  /* still anchored in T */
+    if (rc == NULL || !rc->valid || memcmp(&rc->rules, r, sizeof(*r)) != 0) {
+      lua_getfield(L, -1, "rules");
 #define BRC_RULE_I(f) lua_pushinteger(L, r->f); lua_setfield(L, -2, #f)
 #define BRC_RULE_F(f) lua_pushnumber(L, r->f);  lua_setfield(L, -2, #f)
-    BRC_RULE_I(tank_reload_ticks);
-    BRC_RULE_I(tank_full_shells);
-    BRC_RULE_I(tank_full_mines);
-    BRC_RULE_I(tank_full_trees);
-    BRC_RULE_I(tank_full_armour);
-    BRC_RULE_I(tank_death_ticks);
-    BRC_RULE_I(tank_water_ticks);
-    BRC_RULE_I(mine_damage);
-    BRC_RULE_I(just_fired_ticks);
-    BRC_RULE_I(tank_min_move);
-    BRC_RULE_F(tank_accel_rate);
-    BRC_RULE_F(tank_decel_rate);
-    BRC_RULE_F(tank_brake_rate);
-    BRC_RULE_F(tank_autoslow_rate);
-    BRC_RULE_I(speed_road);
-    BRC_RULE_I(speed_grass);
-    BRC_RULE_I(speed_forest);
-    BRC_RULE_I(speed_river);
-    BRC_RULE_I(speed_swamp);
-    BRC_RULE_I(speed_crater);
-    BRC_RULE_I(speed_rubble);
-    BRC_RULE_I(speed_boat);
-    BRC_RULE_I(speed_deep_sea);
-    BRC_RULE_I(speed_refuel_base);
-    BRC_RULE_F(turn_road);
-    BRC_RULE_F(turn_grass);
-    BRC_RULE_F(turn_forest);
-    BRC_RULE_F(turn_river);
-    BRC_RULE_F(turn_swamp);
-    BRC_RULE_F(turn_crater);
-    BRC_RULE_F(turn_rubble);
-    BRC_RULE_F(turn_boat);
-    BRC_RULE_F(turn_deep_sea);
-    BRC_RULE_F(turn_refuel_base);
-    BRC_RULE_I(pill_max_armour);
-    BRC_RULE_I(pill_attack_ticks);
-    BRC_RULE_I(pill_attack_min_ticks);
-    BRC_RULE_I(base_full_armour);
-    BRC_RULE_I(base_full_shells);
-    BRC_RULE_I(base_full_mines);
-    BRC_RULE_I(shell_damage);
-    BRC_RULE_I(shell_life);
-    BRC_RULE_I(shell_speed);
-    BRC_RULE_I(gunsight_max);
-    BRC_RULE_I(tree_hide_distance);
-    BRC_RULE_I(pill_cooldown_ticks);
-    BRC_RULE_I(pill_repair_amount);
-    BRC_RULE_I(pill_range);
-    BRC_RULE_I(pill_shell_damage);
-    BRC_RULE_I(pill_angry_divisor);
-    BRC_RULE_I(base_capture_armour);
-    BRC_RULE_I(base_hit_armour);
-    BRC_RULE_I(base_regen_ticks);
-    BRC_RULE_I(lgm_build_ticks);
-    BRC_RULE_I(lgm_cost_road);
-    BRC_RULE_I(lgm_cost_building);
-    BRC_RULE_I(lgm_cost_pill_repair);
-    BRC_RULE_I(lgm_cost_boat);
-    BRC_RULE_I(lgm_cost_pill_new);
-    BRC_RULE_I(lgm_cost_mine);
-    BRC_RULE_I(lgm_gather_trees);
-    BRC_RULE_I(lgm_helicopter_speed);
-    BRC_RULE_I(man_speed_road);
-    BRC_RULE_I(man_speed_grass);
-    BRC_RULE_I(man_speed_forest);
-    BRC_RULE_I(man_speed_river);
-    BRC_RULE_I(man_speed_swamp);
-    BRC_RULE_I(man_speed_crater);
-    BRC_RULE_I(man_speed_rubble);
-    BRC_RULE_I(man_speed_boat);
-    BRC_RULE_I(man_speed_deep_sea);
-    BRC_RULE_I(man_speed_refuel_base);
-    BRC_RULE_I(building_life);
+      BRC_RULE_I(tank_reload_ticks);
+      BRC_RULE_I(tank_full_shells);
+      BRC_RULE_I(tank_full_mines);
+      BRC_RULE_I(tank_full_trees);
+      BRC_RULE_I(tank_full_armour);
+      BRC_RULE_I(tank_death_ticks);
+      BRC_RULE_I(tank_water_ticks);
+      BRC_RULE_I(mine_damage);
+      BRC_RULE_I(just_fired_ticks);
+      BRC_RULE_I(tank_min_move);
+      BRC_RULE_F(tank_accel_rate);
+      BRC_RULE_F(tank_decel_rate);
+      BRC_RULE_F(tank_brake_rate);
+      BRC_RULE_F(tank_autoslow_rate);
+      BRC_RULE_I(speed_road);
+      BRC_RULE_I(speed_grass);
+      BRC_RULE_I(speed_forest);
+      BRC_RULE_I(speed_river);
+      BRC_RULE_I(speed_swamp);
+      BRC_RULE_I(speed_crater);
+      BRC_RULE_I(speed_rubble);
+      BRC_RULE_I(speed_boat);
+      BRC_RULE_I(speed_deep_sea);
+      BRC_RULE_I(speed_refuel_base);
+      BRC_RULE_F(turn_road);
+      BRC_RULE_F(turn_grass);
+      BRC_RULE_F(turn_forest);
+      BRC_RULE_F(turn_river);
+      BRC_RULE_F(turn_swamp);
+      BRC_RULE_F(turn_crater);
+      BRC_RULE_F(turn_rubble);
+      BRC_RULE_F(turn_boat);
+      BRC_RULE_F(turn_deep_sea);
+      BRC_RULE_F(turn_refuel_base);
+      BRC_RULE_I(pill_max_armour);
+      BRC_RULE_I(pill_attack_ticks);
+      BRC_RULE_I(pill_attack_min_ticks);
+      BRC_RULE_I(base_full_armour);
+      BRC_RULE_I(base_full_shells);
+      BRC_RULE_I(base_full_mines);
+      BRC_RULE_I(shell_damage);
+      BRC_RULE_I(shell_life);
+      BRC_RULE_I(shell_speed);
+      BRC_RULE_I(gunsight_max);
+      BRC_RULE_I(tree_hide_distance);
+      BRC_RULE_I(pill_cooldown_ticks);
+      BRC_RULE_I(pill_repair_amount);
+      BRC_RULE_I(pill_range);
+      BRC_RULE_I(pill_shell_damage);
+      BRC_RULE_I(pill_angry_divisor);
+      BRC_RULE_I(base_capture_armour);
+      BRC_RULE_I(base_hit_armour);
+      BRC_RULE_I(base_regen_ticks);
+      BRC_RULE_I(lgm_build_ticks);
+      BRC_RULE_I(lgm_cost_road);
+      BRC_RULE_I(lgm_cost_building);
+      BRC_RULE_I(lgm_cost_pill_repair);
+      BRC_RULE_I(lgm_cost_boat);
+      BRC_RULE_I(lgm_cost_pill_new);
+      BRC_RULE_I(lgm_cost_mine);
+      BRC_RULE_I(lgm_gather_trees);
+      BRC_RULE_I(lgm_helicopter_speed);
+      BRC_RULE_I(man_speed_road);
+      BRC_RULE_I(man_speed_grass);
+      BRC_RULE_I(man_speed_forest);
+      BRC_RULE_I(man_speed_river);
+      BRC_RULE_I(man_speed_swamp);
+      BRC_RULE_I(man_speed_crater);
+      BRC_RULE_I(man_speed_rubble);
+      BRC_RULE_I(man_speed_boat);
+      BRC_RULE_I(man_speed_deep_sea);
+      BRC_RULE_I(man_speed_refuel_base);
+      BRC_RULE_I(building_life);
 #undef BRC_RULE_I
 #undef BRC_RULE_F
-    lua_pop(L, 1);
+      lua_pop(L, 1);
+      if (rc != NULL) {
+        rc->rules = *r;
+        rc->valid = 1;
+      }
+    }
 
     lua_getfield(L, -1, "mods");
     lua_pushinteger(L, info->mods.speed);  lua_setfield(L, -2, "speed");
