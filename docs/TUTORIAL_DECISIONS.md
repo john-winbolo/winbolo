@@ -1228,3 +1228,141 @@ name: the ten `scenario_details_fetch_*` tests, `scenario_can_target`,
 `scenario_fndesc_table` and `unit_test_names_match_cmake` pass, and
 `tools/dump_lang_en.py --check` reads 2421 = 2421 = 2421. The gate ran the
 21 `tutorial_*` arenas: all pass.
+
+## Oct 26 localisation
+
+The tutorial's text is in all 17 languages the game ships
+(`data/lang/*.txt`). John's `game.lang(p)` (7e520fc1c) tells the script which
+one the player reads.
+
+### Where the text lives
+
+All words the player sees are in one table, `TEXT`, near the top of
+`Tutorial.scenario.lua`. `TEXT.en` holds the English, in sections: `pop`
+(popups), `title` (panel headings), `list` (checklist labels), `step` (status
+line for each goal), `line` (other status lines), `info` and `hint` (panel
+lines), `terrain` (terrain words) and `say` (white announcements). Each other
+language is a `TEXT["<code>"]` table at the end of the file, with the same
+keys. The code is the lang file's name in lower case (`"pt-br"`, `"zh-tw"`).
+
+`tr(section, key, ...)` reads `TEXT[game.lang(S.player)]`. An unknown code
+uses `TEXT.en`, and a key that a language leaves out uses the English key.
+Numbers fill the `%d` patterns with `string.format`, so a translation keeps
+the same `%d` and `%s` in the same order. English keeps two plural functions
+(`step.c_shoot`, `info.wall_left`); the other languages use a form with no
+plural ("Shots left: 3").
+
+The logic still reads English: `POP` is `TEXT.en.pop`, `LIST` holds the
+English labels, and the terrain test compares English words. The gate arenas
+read these, so they did not change.
+
+A popup longer than 511 bytes is written as a table of two strings. `show`
+sends them as two popups, one after the other. Russian, Ukrainian, Japanese,
+Korean, German, Dutch, Swedish, French and Turkish use this for some of
+s2d, s4b, s5b, s6, s7 and welcome. The client holds four popups. The most
+the tutorial sends together is at the start: the two-part welcome and s1,
+which is three.
+
+### When the text is chosen
+
+No text is kept. A popup is worded when it is sent. A white line that waits
+for a popup keeps its key and number, and it is worded when it goes out
+(`release_says`). The status line, the panel and the markers are worded at
+each poll. The panel's change key holds every word drawn, so a language
+change redraws it. So when the player picks another language in Settings,
+the next line, popup or panel is in the new language. A popup already sent
+stays as it was.
+
+### Single player and multiplayer
+
+All tutorial text goes to the tutorial's player only (`S.player`). Nothing is
+sent to all players, so there is no "text for everyone" case.
+
+In single player the server runs in the player's client, so `game.lang` gives
+the player's language. On a hosted or dedicated server `game.lang` answers
+`"en"`. The script then sends English, but the client fills in the tokens
+(control words and phrase sentences) from its own lang file. A remote
+player who reads another language sees English with some sentences in their
+own language. The tutorial is for one player (`max_players` is 1), so this
+case is rare. A full fix needs the client to send its language to the
+server; that is a protocol change and is not done here.
+
+### Keyboard and mouse, touch and controller
+
+The key tokens show as a key cap on a keyboard and as words on touch and
+controller. Those words were English strings in C. They are now lang
+strings (`STR_TUTTOK_PAD_*`, `STR_TUTTOK_TOUCH_*`), so they are translated.
+Each is written in the form that follows "press" in its language (German
+"den Feuerknopf", Russian accusative, Turkish dative, Korean with its object
+particle). The translations put a token only where the object of "press"
+goes, so a bare key name and a noun phrase both read correctly.
+
+Some lines differ by more than a key name. A touch screen has no keys and no
+build cursor; a controller has a cursor and no mouse. Before, the English
+named the mouse and keys, so touch and controller players got wrong
+instructions. These are now phrase tokens: `{DRIVE_HOW}`, `{BUILD_HOW}`,
+`{HARVEST_TIP}`, `{PILL_HOW}`, `{STEP_TREE}`, `{STEP_ROAD}`, `{STEP_WALL}`,
+`{STEP_MINE}`, `{STEP_PILL}` and `{STEP_PILL_GREEN}`. Each is a whole sentence
+in the lang file with a `_KEYS`, `_TOUCH` and `_PAD` wording
+(`STR_TUTPHRASE_*`, ids 3430-3458). `DRIVE_HOW` has no `_PAD`, because its
+key tokens already read as controller words. The client fills in the phrase
+first (`tutorialPhrasesExpand`), then the key tokens in it. This follows the
+old tutorial's `_TOUCH` and `_CTRL` strings. The keyboard wording is the old
+English text, byte for byte.
+
+One English change was made for this: s6 said "{GUN_DOWN} brings the
+crosshair in". With touch words that reads "the - button brings the
+crosshair in", which is correct, but in other languages the token must be the
+object of "press". It is now "Press {GUN_DOWN} to bring the crosshair in and
+{GUN_UP} to move it out."
+
+A filled-in status line or announcement can be wider than the English. The
+client now breaks a row that is too wide for the view at its last space that
+fits, or, with no space, before the first character that does not fit
+(`scnWrapRows` in `sdl3imgui.cpp`). The buffers for a filled line are 768
+bytes. This only acts when a row is too wide; the English rows are not
+changed. Popups still wrap only at spaces, so the Chinese and Japanese popup
+texts carry a `\n` every 20 to 30 characters.
+
+### The 1 MB limit
+
+`SCN_SCRIPT_MAX_BYTES` is 1 MiB (`scenario_host.h`). It is checked when the
+script is read (`scnReadFile`), when a package is read, and in the map
+editor. The sandbox has no `require`, so the text cannot be in another file.
+
+The script was 87,048 bytes. With 17 languages it is 251,152 bytes, 24% of
+the limit. One file is kept and the limit is not changed. The callbacks
+blob does not change, because no hook was added.
+
+Per-text limits, after the numbers are filled in: popup 511 bytes, status
+line 128, announcement 125 (with "top"), panel text 48 (no `\n`). The
+`tutorial_lang` arena checks every language against these. The longest popup after its phrase tokens
+are filled is 882 bytes (Ukrainian s3); the client's buffer for it is 2,048.
+
+### Tests
+
+- Unit test `tutorial_tokens_phrases`: the phrase tokens are found, answer
+  true to `tutorialTokenIsPhrase`, and `tutorialPhrasesExpand` fills only
+  them, leaving key tokens for the second pass.
+- Arena `tutorial_lang`: first every language's text is checked against
+  the limits above, with the widest numbers filled in. Then `game.lang` is
+  replaced with one that answers what
+  the arena sets. German from the start (welcome popup, Station 1 title);
+  then `"xx"`, which has no table, gives English (s2a popup, Station 2 title,
+  status line); then German again with nothing else changed gives the German
+  status line and title at the next send; then Station 2's s2c (with its
+  shot count), s2d and "Station 2 done" line are the German.
+- `tests/unit/test_scenario_lua.c` from 7e520fc1c named a variable `far`,
+  which is a macro in the Windows headers, so the unit tests did not build
+  with MSVC. It is renamed `outOfRange`.
+
+### Hand play-test still needed
+
+- Each input type in a few languages: the phrase sentences in popups and
+  the status line, and the control words.
+- Chinese and Japanese popups: the line breaks look right.
+- A language change in Settings mid-station.
+- `tutorial_park5b` fails: the tank dies in the TAKE phase. It fails the
+  same way with the script as it was before this work, so it is not
+  caused by the text change. It needs a separate look.
+- The wrapped rows: a long controller status line in Russian.

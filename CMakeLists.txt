@@ -6348,6 +6348,7 @@ set(_unit_test_names
     tutorial_tokens_quick_build
     scenario_status_tokens_expand
     tutorial_tokens_long_key_names
+    tutorial_tokens_phrases
     scenario_announce_waits_for_popup
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
@@ -7451,6 +7452,7 @@ set(_unit_test_names
     scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
     scenario_lua_voice_everyone
+    scenario_lua_lang
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one

@@ -1649,6 +1649,9 @@ int run_scenario_popup_round_over(void);
 int run_tutorial_tokens_quick_build(void);
 int run_scenario_status_tokens_expand(void);
 int run_tutorial_tokens_long_key_names(void);
+/* The phrase tokens ({DRIVE_HOW}, {STEP_TREE} ...): found, named phrases,
+ * and filled by tutorialPhrasesExpand alone, key tokens left as written. */
+int run_tutorial_tokens_phrases(void);
 int run_scenario_announce_waits_for_popup(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
@@ -3844,6 +3847,7 @@ int run_scenario_validate_needs_bots_declared(void);
  * the rules, tags and regions a script declares read back. */
 int run_scenario_lua_every_row_answers(void);
 int run_scenario_lua_voice_everyone(void);
+int run_scenario_lua_lang(void);
 int run_scenario_lua_op_arguments_match_the_doc(void);
 int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);

@@ -6007,6 +6007,69 @@ static int scnTextAddRows(ScnTextRow *rows, int count, const char *text,
     }
 }
 
+/* The most bytes a status line or an announcement is drawn from once its
+   tokens are written out: a phrase token is a sentence or two, in a
+   language that may take three bytes a letter. */
+#define SCN_LINE_EXPANDED_MAX 768
+
+/* Breaks each row of text wider than maxW into rows that fit, in place. A
+   row breaks at its last space that fits, the space becoming "\n"; a row
+   with no such space (Chinese, Japanese and Korean are written without
+   them) breaks before the first character that does not fit, a "\n" put
+   in there while text has room for it. A script still splits its own
+   lines with "\n" where it wants them; this only keeps a line it did not
+   split, or a line in a longer language, inside the Scenario Text
+   window's source width. */
+static void scnWrapRows(ImFont *font, float height, float maxW, char *text,
+                        size_t cap) {
+    if (font == nullptr || text == nullptr || cap == 0 || maxW <= 0.0f) {
+        return;
+    }
+    size_t len = strlen(text);
+    char  *row = text;
+    while (*row != '\0') {
+        float  w         = 0.0f;
+        char  *lastSpace = nullptr;
+        char  *p         = row;
+        char  *breakAt   = nullptr;
+        while (*p != '\0' && *p != '\n') {
+            /* One character: its UTF-8 lead byte gives its length. */
+            const unsigned char c = (unsigned char)*p;
+            size_t n = 1;
+            if (c >= 0xF0) n = 4;
+            else if (c >= 0xE0) n = 3;
+            else if (c >= 0xC0) n = 2;
+            for (size_t k = 1; k < n; k++) {
+                if (p[k] == '\0') { n = k; break; }
+            }
+            const float cw =
+                font->CalcTextSizeA(height, FLT_MAX, 0.0f, p, p + n).x;
+            if (w + cw > maxW && p > row) {
+                breakAt = p;
+                break;
+            }
+            if (*p == ' ') lastSpace = p;
+            w += cw;
+            p += n;
+        }
+        if (breakAt == nullptr) {
+            /* The row fits: on to the next. */
+            row = (*p == '\n') ? p + 1 : p;
+            continue;
+        }
+        if (lastSpace != nullptr && lastSpace > row) {
+            *lastSpace = '\n';
+            row = lastSpace + 1;
+            continue;
+        }
+        if (len + 1 >= cap) return;   /* no room for one more break */
+        memmove(breakAt + 1, breakAt, len - (size_t)(breakAt - text) + 1);
+        *breakAt = '\n';
+        len++;
+        row = breakAt + 1;
+    }
+}
+
 /* Draws one row in its place in the source rectangle, which fit has placed
    on the screen. A row made smaller to fit across is centred down its
    place. */
@@ -6128,16 +6191,17 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     /* The status line, with its countdown worked out on this client's own
        clock. */
     /* Both lines may carry the popup's key tokens ({ACCEL}, {QUICK_ROAD}
-       and the rest), written out here as the key or control in words. A
-       name is longer than its token, so the buffers have room past the
-       128 bytes a line may be. */
+       and the rest), written out here as the key or control in words, and
+       the phrase tokens ({STEP_TREE} and the rest), written out as a whole
+       sentence from the language file. Both are longer than their token,
+       so the buffers have room well past the 128 bytes a line may be. */
     uint32_t    statusEndsAt = SCN_STATUS_NO_COUNTDOWN;
     const char *statusWire   = clientSimGetScnStatus(cs, &statusEndsAt);
-    char        statusRaw[256];
+    char        statusRaw[SCN_LINE_EXPANDED_MAX];
     if (statusWire != nullptr) {
         tutorialExpandTextPlain(statusWire, statusRaw, sizeof(statusRaw));
     }
-    char        status[SCN_STATUS_LINE_MAX + 128];
+    char        status[SCN_STATUS_LINE_MAX + SCN_LINE_EXPANDED_MAX];
     const bool  haveStatus =
         scnStatusLineText(statusWire != nullptr ? statusRaw : nullptr,
                           statusEndsAt, now, status, sizeof(status));
@@ -6148,9 +6212,17 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
        and its own countdown. Each keeps the share across its position named,
        and fades out over its last stretch. A line split with "\n" takes a
        row for each part. */
+    /* Before the rows are cut, a line wider than the window's source width
+       is broken into rows that fit (scnWrapRows), measured at the source
+       line size, so a long line (a phrase token written out, or a longer
+       language) takes more rows rather than shrinking across
+       (scnTextLineAcross) to a size too small to read. */
+    ImFont     *font     = ImGui::GetFont();
+    const float wrapW    = SCN_TEXT_SRC_W_UNITS - 2.0f * SCN_TEXT_OUTLINE_UNITS;
     ScnTextRow rows[SCN_TEXT_DRAW_ROWS_MAX];
     int        rowCount = 0;
     if (haveStatus) {
+        scnWrapRows(font, SCN_TEXT_LINE_UNITS, wrapW, status, sizeof(status));
         rowCount = scnTextAddRows(rows, rowCount, status, 0, 0.5f, 1.0f);
     }
     const int statusRows = rowCount;
@@ -6158,7 +6230,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     const int statusSlots =
         s_scnText.usedStatus ? ((statusRows > 1) ? statusRows : 1) : 0;
 
-    char       announceText[SCN_ANNOUNCE_STACK_MAX][256];
+    char       announceText[SCN_ANNOUNCE_STACK_MAX][SCN_LINE_EXPANDED_MAX];
     bool       haveAnnounce = false;
     const int  heldCount    = clientSimGetScnAnnounceCount(cs);
     int        nextSlot     = statusSlots;
@@ -6173,6 +6245,8 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
                                   &left)) {
             continue;
         }
+        scnWrapRows(font, SCN_TEXT_LINE_UNITS, wrapW, text,
+                    sizeof(announceText[kept]));
         kept++;
         haveAnnounce = true;
         const float share =
@@ -6192,7 +6266,6 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     s_scnText.menuListed = scnTextRoundHasScript(cs) ||
                            s_scnText.usedStatus || s_scnText.usedAnnounce;
 
-    ImFont *font = ImGui::GetFont();
     if (font == nullptr) return;
 
     if (!s_scnText.alphaLoaded) {
@@ -9984,7 +10057,21 @@ static void drainInGameNameReject(ClientSim *cs) {
    each way. Called from both the desktop and the tablet branch of the frame,
    so the one edge state serves both. */
 static void renderTutorialOverlay(ClientSim *cs) {
+    /* A scenario's popup (game.popup) waits in the client sim's queue
+       until the overlay is free, then takes the overlay like a tutorial
+       message does, so one popup shows at a time and pauses a solo game
+       the same way. None is taken once the round is over: the close at
+       the top of sdl3ImguiPumpAndRender would only shut it again. */
+    if (cs != NULL && !tutorialOverlayIsOpen() &&
+        !clientSimIsRoundOver(cs)) {
+        static char s_popupText[SCN_POPUP_TEXT_MAX + 1];
+        if (clientSimTakeScnPopup(cs, s_popupText, sizeof(s_popupText))) {
+            tutorialOverlayShowText(s_popupText);
+        }
+    }
     tutorialOverlayRender(cs);
+    /* s_lastTutorialPause is the file static above: the round-end close
+       in sdl3ImguiPumpAndRender lifts the pause through the same flag. */
     bool nowTutorialPause = tutorialOverlayIsOpen();
     if (nowTutorialPause != s_lastTutorialPause) {
         windowTutorialPause(cs, nowTutorialPause);
@@ -10483,18 +10570,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             if (nowDeckPause != s_lastDeckPause) {
                 windowDeckPause(cs, nowDeckPause);
                 s_lastDeckPause = nowDeckPause;
-            }
-        }
-        /* A scenario's popup (game.popup) waits in the client sim's queue
-           until the overlay is free, then takes the overlay like a tutorial
-           message does, so one popup shows at a time and pauses a solo
-           game the same way. None is taken once the round is over: the
-           close above would only shut it again. */
-        if (cs != NULL && !tutorialOverlayIsOpen() &&
-            !clientSimIsRoundOver(cs)) {
-            static char s_popupText[SCN_POPUP_TEXT_MAX + 1];
-            if (clientSimTakeScnPopup(cs, s_popupText, sizeof(s_popupText))) {
-                tutorialOverlayShowText(s_popupText);
             }
         }
         renderTutorialOverlay(cs);

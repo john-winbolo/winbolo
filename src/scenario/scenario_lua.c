@@ -889,6 +889,20 @@ static int scnLuaVoiceEveryone(lua_State *L) {
     return 1;
 }
 
+/* The language seat p's player reads. A seat out of range, an empty seat and
+   one nobody told the server about all answer "en", so a script indexes its
+   own text with the answer and needs no nil check. */
+static int scnLuaLang(lua_State *L) {
+    BYTE p;
+
+    if (!scnSlotOf(L, 1, "p", &p)) {
+        lua_pushstring(L, "en");
+        return 1;
+    }
+    lua_pushstring(L, serverSimGetPlayerLang(scnCtx(L)->sim, p));
+    return 1;
+}
+
 /* ── Settings ─────────────────────────────────────────────────────── */
 
 /* One line about a settings block, through the caller's reporter. */
@@ -5238,6 +5252,9 @@ static const ScnLuaOpParam kScnOpArgs_rule[] = {
     { "name", SCN_PARAM_WORD, false }, SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_voice_everyone[] = { SCN_OP_ARG_END };
+static const ScnLuaOpParam kScnOpArgs_lang[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
 /* An id is matched against the calling script's own settings block and an
    id that names none raises, so it is a word out of a fixed set. */
 static const ScnLuaOpParam kScnOpArgs_setting[] = {
@@ -5627,6 +5644,12 @@ static const ScnLuaRow kScnLuaRows[] = {
       "voice_everyone() — whether voice in the round goes to every player "
       "rather than to allies alone; false on a server with voice off.",
       SCN_OP_PARAMS(voice_everyone), SCN_OP_READS },
+    { "lang", scnLuaLang,
+      "lang(p) — the language seat p's player reads, as their lang file's "
+      "name in lower case: \"en\", \"de\", \"pt-br\". Only a single-player "
+      "game knows it; a seat in a hosted game, an empty seat and a bot "
+      "answer \"en\".",
+      SCN_OP_PARAMS(lang), SCN_OP_READS },
     { "setting", scnLuaSetting,
       "setting(id) — the value the host chose in the lobby for one of "
       "this script's own settings, or its declared default: a number, "

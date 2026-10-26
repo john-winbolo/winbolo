@@ -656,9 +656,14 @@ static int scDeclaredCallbacks(const char *path) {
             continue;
         }
         if (*p == '}') break;
+        /* A row is `name = <text>`. The text is usually a string literal
+           but may be an expression (PillboxTag's on_tank_killed picks one
+           of two strings by a walled flag), so only the `name = ` is
+           counted; a continuation line starts with a quote, a paren or an
+           operator, never with an identifier followed by ` = `. */
         if (isalpha((unsigned char)*p) || *p == '_') {
             while (isalnum((unsigned char)*p) || *p == '_') p++;
-            if (strncmp(p, " = \"", 4) == 0) rows++;
+            if (strncmp(p, " = ", 3) == 0) rows++;
         }
     }
     fclose(f);
