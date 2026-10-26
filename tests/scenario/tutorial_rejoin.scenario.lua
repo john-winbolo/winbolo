@@ -1,4 +1,4 @@
--- GATE: ticks=4000 bots=0 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=4000 bots=0 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial: the player leaves and another joins on a different seat.
 --

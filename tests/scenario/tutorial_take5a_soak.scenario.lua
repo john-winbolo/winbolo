@@ -1,4 +1,4 @@
--- GATE: ticks=62000 bots=1 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=62000 bots=1 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial, the Station 5A demo take, again and again.
 --

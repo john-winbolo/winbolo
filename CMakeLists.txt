@@ -1029,6 +1029,12 @@ file(GLOB IOS_DATA_MAPS
     "${CMAKE_SOURCE_DIR}/data/maps/*.map"
     "${CMAKE_SOURCE_DIR}/data/maps/*.lua"
 )
+# The tutorials have a folder of their own, which the flat glob above does
+# not reach: each tutorial map and the script beside it.
+file(GLOB IOS_DATA_MAPS_TUTORIALS
+    "${CMAKE_SOURCE_DIR}/data/maps/tutorials/*.map"
+    "${CMAKE_SOURCE_DIR}/data/maps/tutorials/*.lua"
+)
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
 file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
@@ -1206,6 +1212,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_DATA_ROOT}
     ${IOS_DATA_ROOT_MAPS}
     ${IOS_DATA_MAPS}
+    ${IOS_DATA_MAPS_TUTORIALS}
     ${IOS_DATA_MODS}
     ${IOS_DATA_FLAGS}
     ${IOS_DATA_FONT}
@@ -1233,6 +1240,9 @@ set_source_files_properties(${IOS_DATA_FONT} PROPERTIES
 )
 set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
+)
+set_source_files_properties(${IOS_DATA_MAPS_TUTORIALS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data/maps/tutorials"
 )
 set_source_files_properties(${IOS_DATA_MODS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/mods"
@@ -1272,7 +1282,7 @@ set_source_files_properties(${IOS_ASSET_CATALOG} PROPERTIES
 )
 
 # Organize in Xcode sidebar
-source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_MODS} ${IOS_DATA_FLAGS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
+source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_MAPS_TUTORIALS} ${IOS_DATA_MODS} ${IOS_DATA_FLAGS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
 source_group("Brains" FILES ${IOS_BRAIN_SCRIPTS})
 source_group("Bolo Engine" FILES ${IOS_BOLO_SOURCES})
 source_group("Server" FILES ${IOS_SERVER_SOURCES})

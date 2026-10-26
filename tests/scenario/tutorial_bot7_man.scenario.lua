@@ -1,4 +1,4 @@
--- GATE: ticks=62000 bots=1 limit=40 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=62000 bots=1 limit=40 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial, the Station 7 bot shoots at the player's man and mostly misses.
 --

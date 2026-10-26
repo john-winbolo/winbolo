@@ -95,7 +95,8 @@ and crashed at startup for every non-English user.
 ## tools/stamp_mod_updated.py
 
 Keeps the `updated` field of every shipped scenario script current. The
-shipped scripts are `data/mods/*.lua` and `data/maps/*.scenario.lua`;
+shipped scripts are `data/mods/*.lua`, `data/maps/*.scenario.lua` and
+`data/maps/tutorials/*.scenario.lua`;
 `tests/scenario` fixtures are never touched. The field and its form
 (`"YYYY-MM-DDTHH:MMZ"`, UTC) are described in
 [SCENARIO_API.md](SCENARIO_API.md#author-and-updated).

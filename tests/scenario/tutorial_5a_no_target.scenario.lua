@@ -1,4 +1,4 @@
--- GATE: ticks=30000 bots=1 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=30000 bots=1 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial, Station 5A: the demo's pillboxes never target the player.
 --
