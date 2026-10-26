@@ -68,6 +68,7 @@
  *                               round opened and emptied
  *   held_seat_allied_in_round — a held seat added in a round is allied
  *                               with its team
+ *   soccer_puts_leaver_back   — Soccer keeps a seat on its side
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -98,6 +99,10 @@
 #include "tank.h"
 #include "everard_map.h"
 #include "test_harness.h"
+
+#ifndef WB_DATA_MAPS_DIR
+#define WB_DATA_MAPS_DIR "data/maps"
+#endif
 
 /* ── Fixtures ───────────────────────────────────────────────────────── */
 
@@ -1107,6 +1112,82 @@ int run_team_sides_lobby_joiner_keeps_rule(void) {
     UT_ASSERT(tsTeam(sim, 0) == 1 && tsTeam(sim, 1) == 2);
     UT_ASSERT_MSG(tsTeam(sim, 2) == 1, "the lobby joiner is on team %u",
                   (unsigned)tsTeam(sim, 2));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Soccer keeps a seat on its side. Four players join a running round on the
+   Soccer map, and the script puts two on red and two on blue. Seat 1 leaves
+   the alliance, which puts it on a team of its own; the script's
+   on_team_changed puts it back on its side. A new player in an empty seat is
+   given a side again, not the old player's. */
+int run_team_sides_soccer_puts_leaver_back(void) {
+    char mapPath[512];
+    char err[512];
+    ServerSim *sim;
+    ScenarioHost *host;
+    int t;
+    BYTE i;
+    BYTE was;
+    int red = 0, blue = 0;
+
+    snprintf(mapPath, sizeof(mapPath), "%s/Soccer.map", WB_DATA_MAPS_DIR);
+    sim = serverSimCreate(mapPath, gameOpen, false, 0, -1);
+    UT_ASSERT_MSG(sim != NULL, "the map is missing or will not load: %s",
+                  mapPath);
+    serverSimSetLobbyEnabled(sim, false);
+    err[0] = '\0';
+    host = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+    UT_ASSERT_MSG(host != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    for (i = 0; i < 4; i++) {
+        char name[16];
+        snprintf(name, sizeof(name), "Seat%u", (unsigned)i);
+        serverSimAddPlayer(sim, i, name, false);
+    }
+    for (t = 0; t < 5; t++) {
+        serverSimTick(sim);
+    }
+    for (i = 0; i < 4; i++) {
+        if (tsTeam(sim, i) == 1) red++;
+        if (tsTeam(sim, i) == 2) blue++;
+    }
+    UT_ASSERT_MSG(red == 2 && blue == 2, "the sides are %d red and %d blue",
+                  red, blue);
+    UT_ASSERT(serverSimSidesAgree(sim));
+
+    was = tsTeam(sim, 1);
+    threadsWaitForMutex();
+    serverSimLeaveAlliance(sim, 1);
+    threadsReleaseMutex();
+    UT_ASSERT(tsTeam(sim, 1) != was);
+    for (t = 0; t < 10; t++) {
+        serverSimTick(sim);
+        UT_ASSERT_MSG(serverSimSidesAgree(sim),
+                      "the records differ after tick %d", t);
+    }
+    UT_ASSERT_MSG(scenarioHostLastError(host)[0] == '\0',
+                  "the script complained: %s", scenarioHostLastError(host));
+    UT_ASSERT_MSG(tsTeam(sim, 1) == was,
+                  "the script left seat 1 on team %u, not team %u",
+                  (unsigned)tsTeam(sim, 1), (unsigned)was);
+
+    /* Seat 1 goes and somebody new takes it. That player is given the side
+       with one player short, which is the side seat 1 was on. */
+    serverSimRemovePlayer(sim, 1);
+    for (t = 0; t < 3; t++) {
+        serverSimTick(sim);
+    }
+    serverSimAddPlayer(sim, 1, "New", false);
+    for (t = 0; t < 5; t++) {
+        serverSimTick(sim);
+    }
+    UT_ASSERT_MSG(tsTeam(sim, 1) == was,
+                  "the new player is on team %u, not team %u",
+                  (unsigned)tsTeam(sim, 1), (unsigned)was);
+    UT_ASSERT(serverSimSidesAgree(sim));
+
+    scenarioHostDetach(host);
     serverSimDestroy(sim);
     return 0;
 }

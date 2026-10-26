@@ -36,7 +36,7 @@
  *                                         name the lobby names it by, and
  *                                         arrives with every row of its
  *                                         callbacks block (Survival 13,
- *                                         Soccer 10); same for Soccer
+ *                                         Soccer 13); same for Soccer
  * run_scenario_details_fetch_not_found  — a file the server does not know is
  *                                         answered, on the first request,
  *                                         with a not-found the client stops
@@ -704,7 +704,7 @@ int run_scenario_details_fetch_survival(void) {
 }
 
 int run_scenario_details_fetch_soccer(void) {
-    return scFetchMapScript("fetch_soccer", "Soccer", 11, "can_capture/Q=");
+    return scFetchMapScript("fetch_soccer", "Soccer", 13, "can_capture/Q=");
 }
 
 int run_scenario_details_fetch_not_found(void) {

@@ -818,6 +818,8 @@ static const UnitTestEntry s_tests[] = {
                                                  run_team_sides_lobby_joiner_keeps_rule },
     { "team_sides_lobby_drops_empty_teams",
                                                  run_team_sides_lobby_drops_empty_teams },
+    { "team_sides_soccer_puts_leaver_back",
+                                                 run_team_sides_soccer_puts_leaver_back },
     { "team_sides_held_seat_allied_in_round",
                                                  run_team_sides_held_seat_allied_in_round },
     { "round_start_owners_kept_with_lobby_team", run_round_start_owners_kept_with_lobby_team },
