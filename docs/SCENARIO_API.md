@@ -993,10 +993,6 @@ A package's `manifest.json` carries the same two keys, `"author"` and
 table need not repeat them; when it does, they must match the manifest's, as
 `workshop_id` must.
 
-A server from before these keys sends no identity, and a newer lobby then
-shows nothing rather than "unknown". An older lobby ignores what a newer
-server sends.
-
 The shipped scripts (`data/mods/*.lua` and `data/maps/*.scenario.lua`) say
 `author = "WinBolo"`. `tools/stamp_mod_updated.py` keeps their `updated`
 current: run it before committing a change to one, and it stamps every

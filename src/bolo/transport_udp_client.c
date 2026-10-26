@@ -52,7 +52,7 @@
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
 #include "upload_policy.h"             /* UPLOAD_KIND_MAP / _SCRIPT */
-#include "scenario_identity.h"         /* the scenario-list trailer and details V3 */
+#include "scenario_identity.h"         /* list rows and the details reply */
 #include "../common/md5.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
@@ -1057,8 +1057,6 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
     uint8_t finalFlag;
     uint8_t cnt;
     int     i;
-    int     firstIdx;
-    int     filled = 0;
 
     if (!cs) return;
     if (len < PACKET_HEADER_SIZE + 2) return;
@@ -1081,12 +1079,14 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
         cs->lobbyScenarioListCount   = 0;
         cs->lobbyScenarioListStarted = true;
     }
-    firstIdx = cs->lobbyScenarioListCount;
 
     for (i = 0; i < cnt; i++) {
         char file[LOBBY_SCENARIO_LIST_FILE_LEN];
         char name[LOBBY_SCENARIO_NAME_LEN];
         char desc[LOBBY_SCENARIO_DESC_LEN];
+        char author[SCN_AUTHOR_LEN];
+        char updated[SCN_UPDATED_LEN];
+        int  took;
         int  idx;
 
         if (!udpClientReadLenStr(buf, len, &pos, file, sizeof(file)) ||
@@ -1095,18 +1095,22 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
             break;
         }
         if (pos + 4 + 9 > len) break;
+        /* The identity blob (scenario_identity.h) follows the fixed fields. */
+        took = scnIdentityBlobRead(buf + pos + 4 + 9,
+                                   (size_t)(len - pos - 4 - 9), author,
+                                   sizeof(author), updated, sizeof(updated));
+        if (took < 0) break;
         /* Read into locals first, so a chunk that arrives past the cap is
            still walked to its end rather than leaving the position stranded
            mid-entry. */
         if (cs->lobbyScenarioListCount >= LOBBY_SCENARIO_LIST_MAX) {
-            pos += 4 + 9;
+            pos += 4 + 9 + took;
             continue;
         }
         idx = cs->lobbyScenarioListCount++;
-        filled++;
-        cs->lobbyScenarioListIdentityKnown[idx] = false;
-        cs->lobbyScenarioListAuthor[idx][0]     = '\0';
-        cs->lobbyScenarioListUpdated[idx][0]    = '\0';
+        SDL_strlcpy(cs->lobbyScenarioListAuthor[idx], author, SCN_AUTHOR_LEN);
+        SDL_strlcpy(cs->lobbyScenarioListUpdated[idx], updated,
+                    SCN_UPDATED_LEN);
         SDL_strlcpy(cs->lobbyScenarioListFiles[idx], file,
                     LOBBY_SCENARIO_LIST_FILE_LEN);
         SDL_strlcpy(cs->lobbyScenarioListNames[idx], name,
@@ -1121,34 +1125,7 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
         cs->lobbyScenarioListWorkshopId[idx] =
             ((uint64_t)unpackU32(buf + pos) << 32) |
             (uint64_t)unpackU32(buf + pos + 4);
-        pos += 8;
-    }
-
-    /* The identity trailer (scenario_identity.h), when the server sent one:
-       a tag after the last row and then a blob per row in row order. Read
-       only when every row was, since a blob is matched to its row by
-       position. A row past the cap above still has its blob walked. A blob
-       that does not parse ends the trailer and leaves the rows after it
-       unknown, which is what a server without the trailer gives too. */
-    if (i == cnt && cnt > 0 && pos < len && buf[pos] == SCN_LIST_IDENTITY_TAG) {
-        pos++;
-        for (i = 0; i < cnt; i++) {
-            char author[SCN_AUTHOR_LEN];
-            char updated[SCN_UPDATED_LEN];
-            int  took = scnIdentityBlobRead(buf + pos, (size_t)(len - pos),
-                                            author, sizeof(author), updated,
-                                            sizeof(updated));
-            int  idx  = firstIdx + i;
-
-            if (took < 0) break;
-            pos += took;
-            if (i >= filled) continue;
-            SDL_strlcpy(cs->lobbyScenarioListAuthor[idx], author,
-                        SCN_AUTHOR_LEN);
-            SDL_strlcpy(cs->lobbyScenarioListUpdated[idx], updated,
-                        SCN_UPDATED_LEN);
-            cs->lobbyScenarioListIdentityKnown[idx] = true;
-        }
+        pos += 8 + took;
     }
 
     if (finalFlag) {
@@ -1893,7 +1870,7 @@ static void udpClientRoundLogTick(TransportUdpClientCtx *c) {
 /* Put one details request on the wire and stamp the slot ASKED. */
 static void udpClientSendScnDetailsReq(TransportUdpClientCtx *c, int slot) {
     ClientSim *cs = c->clientSim;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 255 + 1];
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 255];
     size_t n = strlen(cs->lobbyScnDetails[slot].file);
     if (n == 0 || n > 255) {
         cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_NONE;
@@ -1902,14 +1879,7 @@ static void udpClientSendScnDetailsReq(TransportUdpClientCtx *c, int slot) {
     packHeader(buf, PACKET_LOBBY_SCENARIO_DETAILS_REQ, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = (uint8_t)n;
     memcpy(buf + PACKET_HEADER_SIZE + 1, cs->lobbyScnDetails[slot].file, n);
-    /* The flags byte after the name asks for the settings block and the
-       file's identity as well. An older server reads the name by its length
-       and never looks here, so it answers as it always has; one that knows
-       settings and not identity ignores the bit it does not know. */
-    buf[PACKET_HEADER_SIZE + 1 + n] =
-        (uint8_t)(BULK_SCN_DETAILS_WANT_SETTINGS |
-                  BULK_SCN_DETAILS_WANT_IDENTITY);
-    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n + 1));
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n));
     cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_ASKED;
     cs->lobbyScnDetails[slot].tries++;
     cs->lobbyScnDetails[slot].sentTick = c->localTick;
@@ -2647,66 +2617,40 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
             strcmp(cs->lobbyScnDetails[slot].file, h->path) != 0) {
             break;
         }
-        if (buf[0] == BULK_SCN_DETAILS_FOUND_V3) {
-            /* [status][detailsLen 2][details][settingsLen 2][settings]
-               [identity], bytes after the identity ignored. A length past
-               the blob makes the whole answer not-found; an identity that
-               does not parse leaves the details and settings standing and
-               the identity not known. */
-            size_t total = (size_t)h->totalSize;
-            size_t dLen;
-            size_t sLen;
-            size_t at;
-            char   author[SCN_AUTHOR_LEN];
-            char   updated[SCN_UPDATED_LEN];
+        /* [status][detailsLen 2][details][settingsLen 2][settings]
+           [identity] (bulk_transfer.h). A status other than found, a
+           length past the blob or an identity that does not parse makes
+           the whole answer not-found. */
+        size_t total = (size_t)h->totalSize;
+        size_t dLen;
+        size_t sLen;
+        size_t at;
+        char   author[SCN_AUTHOR_LEN];
+        char   updated[SCN_UPDATED_LEN];
 
-            if (total < 3) {
-                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
-                break;
-            }
-            dLen = ((size_t)buf[1] << 8) | buf[2];
-            if (3 + dLen + 2 > total) {
-                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
-                break;
-            }
-            at   = 3 + dLen;
-            sLen = ((size_t)buf[at] << 8) | buf[at + 1];
-            at  += 2;
-            if (at + sLen > total) {
-                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
-                break;
-            }
-            clientSimLobbyScenarioDetailsPut(cs, h->path, true, buf + 3,
-                                             dLen);
-            clientSimLobbyScenarioSettingsPut(cs, h->path, buf + at, sLen);
-            at += sLen;
-            if (scnIdentityBlobRead(buf + at, total - at, author,
-                                    sizeof(author), updated,
-                                    sizeof(updated)) >= 0) {
-                clientSimLobbyScenarioIdentityPut(cs, h->path, author,
-                                                  updated);
-            }
+        if (buf[0] != BULK_SCN_DETAILS_FOUND || total < 3) {
+            clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
             break;
         }
-        if (buf[0] == BULK_SCN_DETAILS_FOUND_V2) {
-            /* [status][detailsLen 2][details][settings]. A length past the
-               blob makes the whole answer not-found. */
-            size_t total = (size_t)h->totalSize;
-            size_t dLen  = (total >= 3) ? (((size_t)buf[1] << 8) | buf[2])
-                                        : (size_t)-1;
-            if (total < 3 || 3 + dLen > total) {
-                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
-                break;
-            }
-            clientSimLobbyScenarioDetailsPut(cs, h->path, true, buf + 3,
-                                             dLen);
-            clientSimLobbyScenarioSettingsPut(cs, h->path, buf + 3 + dLen,
-                                              total - 3 - dLen);
+        dLen = ((size_t)buf[1] << 8) | buf[2];
+        if (3 + dLen + 2 > total) {
+            clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
             break;
         }
-        clientSimLobbyScenarioDetailsPut(
-            cs, h->path, buf[0] == BULK_SCN_DETAILS_FOUND, buf + 1,
-            (size_t)h->totalSize - 1);
+        at   = 3 + dLen;
+        sLen = ((size_t)buf[at] << 8) | buf[at + 1];
+        at  += 2;
+        if (at + sLen > total ||
+            scnIdentityBlobRead(buf + at + sLen, total - at - sLen,
+                                author, sizeof(author), updated,
+                                sizeof(updated)) < 0) {
+            clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
+            break;
+        }
+        clientSimLobbyScenarioDetailsPut(cs, h->path, true, buf + 3,
+                                         dLen);
+        clientSimLobbyScenarioSettingsPut(cs, h->path, buf + at, sLen);
+        clientSimLobbyScenarioIdentityPut(cs, h->path, author, updated);
         break;
     }
 

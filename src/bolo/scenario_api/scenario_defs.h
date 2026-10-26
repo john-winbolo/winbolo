@@ -170,8 +170,8 @@ typedef struct {
     uint64_t workshopId;
     uint64_t workshopAuthor;
     /* Who wrote it and when it last changed, as the manifest states them
-       (scenario_identity.h), "" for not stated. Sent: the scenario-list
-       packet carries them in a trailer an older client does not read. */
+       (scenario_identity.h), "" for not stated. Sent: each row of the
+       scenario-list packet carries them. */
     char     author[SCN_AUTHOR_LEN];
     char     updated[SCN_UPDATED_LEN];
 } ScnDirEntry;

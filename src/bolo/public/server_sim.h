@@ -2587,10 +2587,7 @@ typedef struct {
                                  Filled by this computer's own listings and
                                  never by what a server sends. */
     /* Who wrote it and when it last changed (scenario_identity.h), "" for
-       not stated. identityKnown is false for a row from a server too old to
-       send them, which a chooser shows as nothing rather than as unknown;
-       a listing this computer reads itself always knows. */
-    bool     identityKnown;
+       not stated. */
     char     author[SCN_AUTHOR_LEN];
     char     updated[SCN_UPDATED_LEN];
 } ServerScenarioEntry;

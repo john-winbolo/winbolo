@@ -3154,11 +3154,6 @@ uint64_t clientSimGetLobbyScenarioListWorkshopId(const ClientSim *cs,
   if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
   return cs->lobbyScenarioListWorkshopId[idx];
 }
-bool clientSimGetLobbyScenarioListIdentityKnown(const ClientSim *cs,
-                                                int idx) {
-  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
-  return cs->lobbyScenarioListIdentityKnown[idx];
-}
 const char *clientSimGetLobbyScenarioListAuthor(const ClientSim *cs, int idx) {
   if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
   return cs->lobbyScenarioListAuthor[idx];
@@ -3359,11 +3354,10 @@ void clientSimLobbyScenarioDetailsPut(ClientSim *cs, const char *file,
       found ? LOBBY_SCN_DETAILS_FOUND : LOBBY_SCN_DETAILS_NONE;
   cs->lobbyScnDetails[i].len = found ? (uint16_t)len : 0;
   if (found && len > 0) memcpy(cs->lobbyScnDetails[i].bytes, bytes, len);
-  /* The settings block, if any, is put after this, so an answer without
-     one reads as a server that did not say. */
+  /* The settings block and the identity are put after this, and read as
+     not known until they are. */
   cs->lobbyScnDetails[i].settingsKnown = false;
   cs->lobbyScnDetails[i].settingsLen   = 0;
-  /* And the identity likewise. */
   cs->lobbyScnDetails[i].identityKnown = false;
   cs->lobbyScnDetails[i].author[0]     = 0;
   cs->lobbyScnDetails[i].updated[0]    = 0;
