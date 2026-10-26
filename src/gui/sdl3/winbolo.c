@@ -224,10 +224,19 @@ static bool showAllianceReq = TRUE;
 static SDL_AtomicInt needsRedraw = { 0 };
 static SDL_AtomicInt needsGameTick = { 0 };
 
+/* Game ticks during a window move or resize. See windowLiveTickWatch and
+ * docs/THREADING.md. Both are main thread only.
+ *   liveTickCs  - the game's ClientSim, set only while the game loop is in
+ *                 sdl3ImguiProcessEvents; NULL at every other time.
+ *   inGameTick  - a windowRunGameTick call is on the stack. */
+static ClientSim *liveTickCs = NULL;
+static bool inGameTick = FALSE;
+
 /* Forward declarations */
 static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
 static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
-static void windowRunGameTick(ClientSim *cs);
+static void windowRunGameTick(ClientSim *cs, bool inOsLoop);
+static bool SDLCALL windowLiveTickWatch(void *userdata, SDL_Event *event);
 static void windowSteamOverlayActivated(ClientSim *cs, bool active);
 static void windowSaveDialogPause(ClientSim *cs, bool active);
 static void windowSaveMapPoll(ClientSim *cs);
@@ -608,6 +617,12 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  /* Game ticks during a window move or resize. The watch does nothing
+   * outside the game loop's event poll; it is removed before teardown. */
+  if (!SDL_AddEventWatch(windowLiveTickWatch, NULL)) {
+    fprintf(stderr, "Live tick watch not added: %s\n", SDL_GetError());
+  }
+
   winboloQuit = FALSE;
   while (winboloQuit == FALSE) {
     /* Show lobby dialog if the server uses lobby mode */
@@ -802,7 +817,14 @@ int main(int argc, char *argv[]) {
       sdl3ImguiNewGame(cs);
 
       while (done == FALSE) {
+        /* liveTickCs lets windowLiveTickWatch run game ticks if a window
+           move or resize starts inside this call. A game over that one of
+           those ticks found is held until the call returns, and its message
+           opens here, out of the OS loop. */
+        liveTickCs = cs;
         sdl3ImguiProcessEvents(cs);
+        liveTickCs = NULL;
+        clientFrontRunHeldGameOver();
         steam_run_callbacks();
         workshopSyncPoll();
         /* Steam overlay open/close (updated by steam_run_callbacks above):
@@ -839,7 +861,9 @@ int main(int argc, char *argv[]) {
         /* Run game tick on main thread when timer signals */
         if (SDL_GetAtomicInt(&needsGameTick)) {
           SDL_SetAtomicInt(&needsGameTick, 0);
-          windowRunGameTick(cs);
+          inGameTick = TRUE;
+          windowRunGameTick(cs, FALSE);
+          inGameTick = FALSE;
         }
 
         /* Voice encode/decode runs here, on the main thread, beside the
@@ -951,6 +975,10 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  /* No more live ticks: the game loop is over and the teardown below frees
+   * what a tick would touch. */
+  SDL_RemoveEventWatch(windowLiveTickWatch, NULL);
+
   /* Stop the hosted-server tick timer BEFORE we tear down the
    * mutex it grabs — otherwise SDL_Quit waits for the timer thread,
    * the timer fires hostedServerTimerCb one last time, and
@@ -1017,9 +1045,69 @@ static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint3
 }
 
 /* -------------------------------------------------------
- * windowRunGameTick — game logic, called from main thread only
+ * windowLiveTickWatch — game ticks during a window move or resize
+ *
+ * On Windows a press on the title bar or a window edge starts an OS modal
+ * loop inside SDL_PollEvent, and the game loop does not get control back
+ * until the mouse button is released. With no ticks the client sends
+ * nothing, and after CLIENT_TIMEOUT_TICKS (20 s) the server drops the
+ * player. macOS does the same during a live resize.
+ *
+ * SDL keeps a timer running in that OS loop (about every 10 to 16 ms) and
+ * sends SDL_EVENT_WINDOW_EXPOSED with data1 == 1 from it, on the main
+ * thread. SDL documents that event watches may act on it there. This watch
+ * runs the same tick the game loop runs, so the client keeps sending input
+ * and pings, reading packets and stepping its sim at the normal rate.
+ *
+ * No new thread: this runs on the main thread, at a point where the game
+ * loop is waiting in sdl3ImguiProcessEvents, so nothing else in the game is
+ * part way through. It does not draw: the window keeps its last frame until
+ * the button is released.
+ *
+ * It acts only when all of these hold:
+ *   - the event is a live-resize expose and this is the main thread;
+ *   - the game loop is in sdl3ImguiProcessEvents (liveTickCs), and that
+ *     function is inside SDL_PollEvent itself, not in a dialog loop that
+ *     an event handler opened (sdl3ImguiInEventPoll);
+ *   - no game tick is already on the stack (inGameTick);
+ *   - no game over is waiting to be shown, and the game loop is not ending.
+ *
+ * SDL holds its event-watch lock while it calls this, and the tick takes
+ * the client mutex. So no thread may push an SDL event while it holds the
+ * client mutex. docs/THREADING.md lists the checks.
  * ------------------------------------------------------- */
-static void windowRunGameTick(ClientSim *cs) {
+static bool SDLCALL windowLiveTickWatch(void *userdata, SDL_Event *event) {
+  ClientSim *cs = liveTickCs;
+  (void)userdata;
+
+  if (event->type != SDL_EVENT_WINDOW_EXPOSED || event->window.data1 != 1) {
+    return true;
+  }
+  if (!SDL_IsMainThread()) return true;
+  if (cs == NULL || inGameTick || !sdl3ImguiInEventPoll()) return true;
+  if (finishedLoop || clientFrontGameOverHeld()) return true;
+
+  /* The same test the game loop makes: the game timer asks for a tick only
+     while the game has a transport. */
+  if (SDL_GetAtomicInt(&needsGameTick)) {
+    SDL_SetAtomicInt(&needsGameTick, 0);
+    inGameTick = TRUE;
+    clientFrontHoldGameOver(TRUE);
+    windowRunGameTick(cs, TRUE);
+    clientFrontHoldGameOver(FALSE);
+    inGameTick = FALSE;
+  }
+  return true;
+}
+
+/* -------------------------------------------------------
+ * windowRunGameTick — game logic, called from main thread only
+ *
+ * inOsLoop is TRUE when windowLiveTickWatch calls it from inside an OS
+ * modal loop. Then it must not open a dialog, so it leaves a lost
+ * connection for the game loop to report.
+ * ------------------------------------------------------- */
+static void windowRunGameTick(ClientSim *cs, bool inOsLoop) {
   static bool inBrain = FALSE;
   static BYTE t2 = 0;
   bool used = FALSE;
@@ -1041,6 +1129,8 @@ static void windowRunGameTick(ClientSim *cs) {
    * Only check for UDP transports (serverSim == NULL means not local). */
   if (clientSimHasTransport(cs) && gameFrontGetServerSim() == NULL &&
       clientSimGetConnectState(cs) == CLIENT_CONNECT_SERVER_SHUTDOWN) {
+    /* The message box below runs its own loop; never from the OS loop. */
+    if (inOsLoop) return;
     /* A localized reason is set when the client itself gave up (e.g. an
      * unrecoverable map desync); a plain server shutdown leaves it NULL and
      * falls back to the generic lost-connection message. */
