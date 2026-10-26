@@ -18,6 +18,8 @@
 --    rate of the terrain under the tank; classic terrain rates change nothing.
 -- 10. ENEMY_SPEED_OWN_MODS: enemy_speed_scale() is our speed % / 100, and
 --    nil at speed 100, with the knob off, or with LIVE_PHYSICS off.
+-- 12. A scaled per-terrain table is the same object on every think with the
+--    same rules, and is refilled in place when the rules change.
 -- =========================================================================
 
 package.path = "./?.lua;" .. package.path
@@ -677,6 +679,54 @@ do
                        "LIVE_PHYSICS_SHELL_LIFE", "LIVE_PHYSICS_PILL_RANGE_WU" }) do
     check("PRESETS.keel." .. k .. " == false", C.PRESETS.keel[k] == false, tostring(C.PRESETS.keel[k]))
     check("default " .. k .. " == true", C[k] == true, tostring(C[k]))
+  end
+end
+
+-- ---------------------------------------------------------------------------
+print("12. scaled per-terrain tables keep their identity across thinks")
+do
+  local C, LP = fresh()
+  local r = classic_rules()
+  r.speed_forest = 12       -- a speed rule: TERRAIN_SPEED, MAP_SPEED, TERRAIN_COST_LAND
+  r.man_speed_grass = 8     -- a man-speed rule: MAN_SPEED
+  r.lgm_cost_road = 3       -- the road cost: ROAD_BUILD_TERRAIN
+  local m = classic_mods()
+  m.speed = 120             -- our own speed modifier: TERRAIN_SPEED
+  local info = { rules = r, mods = m, reload_ticks = 13 }
+  local keys = { "TERRAIN_SPEED", "MAP_SPEED", "TERRAIN_COST_LAND",
+                 "MAN_SPEED", "ROAD_BUILD_TERRAIN" }
+  local before = snapshot(C, LP)
+  LP.apply(info)
+  local first = snapshot(C, LP)
+  for _, k in ipairs(keys) do
+    check(k .. " scaled into a new table", not rawequal(first[k], before[k]), k)
+  end
+  LP.apply(info)
+  for _, k in ipairs(keys) do
+    check(k .. " is the same table object on the second apply",
+          rawequal(C[k], first[k]), k)
+  end
+  check("TERRAIN_SPEED forest 12 x 1.2 = 14.4",
+        math.abs(C.TERRAIN_SPEED[C.T_FOREST] - 14.4) < 1e-9, C.TERRAIN_SPEED[C.T_FOREST])
+  check("MAP_SPEED forest 12", C.MAP_SPEED[C.T_FOREST] == 12, C.MAP_SPEED[C.T_FOREST])
+  check("TERRAIN_COST_LAND forest 3 -> 1.5", C.TERRAIN_COST_LAND[C.T_FOREST] == 1.5,
+        C.TERRAIN_COST_LAND[C.T_FOREST])
+  check("MAN_SPEED grass 8", C.MAN_SPEED[C.T_GRASS] == 8, C.MAN_SPEED[C.T_GRASS])
+  for tt, v in pairs(C.ROAD_BUILD_TERRAIN) do
+    check("ROAD_BUILD_TERRAIN[" .. tt .. "] = 3", v == 3, v)
+  end
+  -- A rule change refills the same table with the new numbers.
+  r.speed_forest = 6
+  r.speed_grass = 6
+  LP.apply(info)
+  check("rule change: TERRAIN_SPEED same table", rawequal(C.TERRAIN_SPEED, first.TERRAIN_SPEED))
+  check("rule change: TERRAIN_SPEED forest 6 x 1.2 = 7.2",
+        math.abs(C.TERRAIN_SPEED[C.T_FOREST] - 7.2) < 1e-9, C.TERRAIN_SPEED[C.T_FOREST])
+  check("rule change: MAP_SPEED grass 6", C.MAP_SPEED[C.T_GRASS] == 6, C.MAP_SPEED[C.T_GRASS])
+  -- Back to classic: the original tables come back.
+  LP.apply({ rules = classic_rules(), mods = classic_mods(), reload_ticks = 13 })
+  for _, k in ipairs(keys) do
+    check("classic again: " .. k .. " is the original table", rawequal(C[k], before[k]), k)
   end
 end
 
