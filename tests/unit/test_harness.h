@@ -1615,6 +1615,9 @@ int run_scenario_popup_round_over(void);
 int run_tutorial_tokens_quick_build(void);
 int run_scenario_status_tokens_expand(void);
 int run_tutorial_tokens_long_key_names(void);
+/* The phrase tokens ({DRIVE_HOW}, {STEP_TREE} ...): found, named phrases,
+ * and filled by tutorialPhrasesExpand alone, key tokens left as written. */
+int run_tutorial_tokens_phrases(void);
 int run_scenario_announce_waits_for_popup(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule

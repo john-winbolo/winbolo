@@ -219,7 +219,7 @@ local S = {
   passed   = { {}, {}, {}, {}, {}, {}, {} },
   popped   = {},      -- popup id -> true once shown
   queue    = {},      -- popups waiting for their delay: { id, due }
-  says     = {},      -- announcements waiting for a popup: { text, secs }
+  says     = {},      -- announcements waiting for a popup: { key, secs, args }
   carrier  = {},      -- pill n -> seat carrying it
   -- The bots' seats, picked as the round starts; nil where none was free.
   bot5a = nil, bot6 = nil, bot7 = nil,
@@ -270,135 +270,286 @@ end
 
 -- ---------------------------------------------------------------------
 -- Texts.
-local POP = {
-  welcome = "Welcome to WinBolo! Bolo is a multiplayer tank game Stuart Cheshire first "
-    .. "wrote in 1987, and WinBolo carries it on today. You drive a tank "
-    .. "round an island of pillboxes, gun towers that shoot at enemy tanks, "
-    .. "and bases, which refill your shells, mines and armour. A small man "
-    .. "rides in your tank and gets out to cut trees and build for you. You "
-    .. "play in teams, and the team that holds the pillboxes and bases "
-    .. "holds the island.",
-  s1 = "{ACCEL} forward, {BRAKE} slow down, {LEFT} and {RIGHT} turn.\n\n"
-    .. "The patches beside the road are forest, swamp, rubble, craters and "
-    .. "a shallow river. Each slows you down by a different amount. Try "
-    .. "driving on a few of them.\n\n"
-    .. "Deep water sinks tanks. If you die anywhere here, you come back "
-    .. "at your last checkpoint.",
-  s2a = "Bases refill your shells, mines and armour, and your tank is low.\n\n"
-    .. "Drive onto your base at the green marker. Then STOP on the base and "
-    .. "wait while it refills.",
-  s2stay = "This is your base. Stay on it and do not move: your shells, "
-    .. "mines and armour flow in a little at a time.",
-  s2b = "Neutral bases don't have red or green and can be claimed by "
-    .. "driving over them.",
-  s2c = function()
-    return string.format("Enemy bases must be shot empty first. A full one "
-      .. "takes %d shots: aim at it and fire with {FIRE}. Then drive over "
-      .. "it to make it yours.",
-      base_shots(rule("base_full_armour")))
-  end,
-  s2d = "What your tank spawns with depends on game type.\n\n"
-    .. "Open: tanks always respawn fully loaded.\n\n"
-    .. "Tournament: the more bases are taken, the fewer shells a tank "
-    .. "respawns with; once all bases are taken, tanks respawn without "
-    .. "shells.\n\n"
-    .. "Strict tournament: tanks never respawn with shells.\n\n"
-    .. "Tournament modes have a clear win condition: Once one team owns all "
-    .. "the bases, they win, because the enemy team can't get any ammo.",
-  s3 = "Your man harvests trees, then uses them to build roads, walls, "
-    .. "mines and pillboxes. Click a build button, or press its key: "
-    .. "{QUICK_TREE} trees, {QUICK_ROAD} road, {QUICK_WALL} wall, "
-    .. "{QUICK_MINE} mine. Then click on the map to send your man there.\n\n"
-    .. "Tip: with the road, wall or pillbox tool picked, click a tree and "
-    .. "your man harvests it. You do not have to switch to the tree tool "
-    .. "each time.",
-  s4a = "Games start with neutral pillboxes, and a full one takes 15 shots "
-    .. "to kill.\n\n"
-    .. "First, drive over the dead pillbox to put it in your tank. Then "
-    .. "press the pillbox build button or its shortcut key {QUICK_PILL}. "
-    .. "Then click on the map to send your man out to build a pillbox loyal "
-    .. "to you at that location.",
-  s4b = "East of the road, a damaged pillbox sits in a ring of forest. It "
-    .. "still fires, and a pillbox you hit gets angry and fires faster. The "
-    .. "red markers show its range.\n\n"
-    .. "Forests hide tanks from both other tanks and pillboxes. Drive into "
-    .. "the forest inside the markers and sit still. Firing reveals your "
-    .. "position.",
-  s4c = "This pillbox is already badly damaged: two more shots kill it.\n\n"
-    .. "Your tank is full. Kill it, then drive over it to pick it up.",
-  s5a = "Stop on the green square ahead. Watch the friendly bot on the "
-    .. "walled island take a pillbox. It builds its own pillbox right next "
-    .. "to the enemy one and "
-    .. "parks behind it, so the enemy's shots hit its pillbox, not its tank. "
-    .. "Then it shoots the enemy pillbox dead and drives over it.",
-  s5b = "Your turn: you carry a pillbox. Build your pillbox at the marked "
-    .. "green square, right next to theirs. Then stop at the road tile "
-    .. "highlighted and aim at the enemy pillbox: fire until it dies. Your "
-    .. "pillbox takes its shots, and is rebuilt if it dies. Drive into the "
-    .. "RESET pen to start over.\n\n"
-    .. "Start with full armour. Note that it's normal to take some tank "
-    .. "damage after the enemy pillbox has shot through the blocker "
-    .. "pillbox.",
-  s6 = "Kill an enemy man and his tank cannot build until a new man "
-    .. "arrives. You cannot run a man over: only shells, mines and "
-    .. "explosions kill him.\n\n"
-    .. "A shell explodes at your crosshair and kills a man within half a "
-    .. "square. {GUN_DOWN} brings the crosshair in, {GUN_UP} moves it out. "
-    .. "For this tutorial, a bot has been programmed to send the man out "
-    .. "across the craters. Put your crosshair there and keep firing as he "
-    .. "crosses.",
-  s6gun = "Got him! Now press {GUN_UP} until your crosshair is back at its "
-    .. "longest range, ready for the next station.",
-  s7 = "The final round, against an Easy bot. You hold three corners of "
-    .. "the island and the bot holds the north-east. Take its land with "
-    .. "your pillboxes, then steal its bases as you did in Station 2. You "
-    .. "win when you own every base. Drive into the RESET pen to start "
-    .. "over.\n\n"
-    .. "First, drive over the two dead pillboxes on the road in to put them "
-    .. "in your tank. Build your pillboxes near the border between your "
-    .. "land and theirs to take control.",
-  win = "Well done: you own every base, and the tutorial is complete.\n\n"
-    .. "Drive about as long as you like. Leave from the menu when you are "
-    .. "ready, then try a game against Easy bots.",
+--
+-- Every word the player reads, in TEXT[code], one table for each language
+-- the game ships (data/lang/<code>.txt). game.lang(p) names the player's
+-- language; a language with no table, or a key a table leaves out, uses
+-- the English. The other languages' tables are at the end of the file.
+--
+-- A text is picked when it is sent, never kept: a popup when it is shown,
+-- an announcement when it goes out (say), the status line and the panel
+-- at each poll. So a player who changes language mid-game reads the next
+-- line in the new one. See docs/TUTORIAL_DECISIONS.md, "Oct 26
+-- localisation".
+--
+-- An entry with a number in it is a string.format pattern ("%d"), or for
+-- English, which writes "1 shot" and "2 shots", a function given the same
+-- numbers. The other languages write the number after a colon, so no
+-- plural is needed.
+--
+-- A popup may be a table of two strings when it is longer than the 511
+-- bytes a popup may be: the two go out one after the other.
+--
+-- The words for keys and buttons are tokens the client fills in for the
+-- player's own input: {FIRE}, {GUN_UP} and the rest name one key or
+-- button, and {DRIVE_HOW}, {BUILD_HOW}, {HARVEST_TIP}, {PILL_HOW} and the
+-- {STEP_*} tokens are whole sentences the client takes from its own
+-- language file, worded for a keyboard and mouse, a touch screen or a
+-- controller. docs/SCENARIO_API.md lists them.
+local TEXT = {}
+
+TEXT.en = {
+  pop = {
+    welcome = "Welcome to WinBolo! Bolo is a multiplayer tank game Stuart "
+      .. "Cheshire first wrote in 1987, and WinBolo carries it on today. You "
+      .. "drive a tank round an island of pillboxes, gun towers that shoot at "
+      .. "enemy tanks, and bases, which refill your shells, mines and armour. "
+      .. "A small man rides in your tank and gets out to cut trees and build "
+      .. "for you. You play in teams, and the team that holds the pillboxes "
+      .. "and bases holds the island.",
+    s1 = "{DRIVE_HOW}\n\n"
+      .. "The patches beside the road are forest, swamp, rubble, craters and "
+      .. "a shallow river. Each slows you down by a different amount. Try "
+      .. "driving on a few of them.\n\n"
+      .. "Deep water sinks tanks. If you die anywhere here, you come back "
+      .. "at your last checkpoint.",
+    s2a = "Bases refill your shells, mines and armour, and your tank is low.\n\n"
+      .. "Drive onto your base at the green marker. Then STOP on the base and "
+      .. "wait while it refills.",
+    s2stay = "This is your base. Stay on it and do not move: your shells, "
+      .. "mines and armour flow in a little at a time.",
+    s2b = "Neutral bases don't have red or green and can be claimed by "
+      .. "driving over them.",
+    -- %d: the shells a full base takes.
+    s2c = "Enemy bases must be shot empty first. A full one takes %d shots: "
+      .. "aim at it and fire with {FIRE}. Then drive over it to make it "
+      .. "yours.",
+    s2d = "What your tank spawns with depends on game type.\n\n"
+      .. "Open: tanks always respawn fully loaded.\n\n"
+      .. "Tournament: the more bases are taken, the fewer shells a tank "
+      .. "respawns with; once all bases are taken, tanks respawn without "
+      .. "shells.\n\n"
+      .. "Strict tournament: tanks never respawn with shells.\n\n"
+      .. "Tournament modes have a clear win condition: Once one team owns all "
+      .. "the bases, they win, because the enemy team can't get any ammo.",
+    s3 = "Your man harvests trees, then uses them to build roads, walls, "
+      .. "mines and pillboxes. {BUILD_HOW}\n\n{HARVEST_TIP}",
+    s4a = "Games start with neutral pillboxes, and a full one takes 15 shots "
+      .. "to kill.\n\n"
+      .. "First, drive over the dead pillbox to put it in your tank. "
+      .. "{PILL_HOW}",
+    s4b = "East of the road, a damaged pillbox sits in a ring of forest. It "
+      .. "still fires, and a pillbox you hit gets angry and fires faster. The "
+      .. "red markers show its range.\n\n"
+      .. "Forests hide tanks from both other tanks and pillboxes. Drive into "
+      .. "the forest inside the markers and sit still. Firing reveals your "
+      .. "position.",
+    s4c = "This pillbox is already badly damaged: two more shots kill it.\n\n"
+      .. "Your tank is full. Kill it, then drive over it to pick it up.",
+    s5a = "Stop on the green square ahead. Watch the friendly bot on the "
+      .. "walled island take a pillbox. It builds its own pillbox right next "
+      .. "to the enemy one and "
+      .. "parks behind it, so the enemy's shots hit its pillbox, not its tank. "
+      .. "Then it shoots the enemy pillbox dead and drives over it.",
+    s5b = "Your turn: you carry a pillbox. Build your pillbox at the marked "
+      .. "green square, right next to theirs. Then stop at the road tile "
+      .. "highlighted and aim at the enemy pillbox: fire until it dies. Your "
+      .. "pillbox takes its shots, and is rebuilt if it dies. Drive into the "
+      .. "RESET pen to start over.\n\n"
+      .. "Start with full armour. Note that it's normal to take some tank "
+      .. "damage after the enemy pillbox has shot through the blocker "
+      .. "pillbox.",
+    s6 = "Kill an enemy man and his tank cannot build until a new man "
+      .. "arrives. You cannot run a man over: only shells, mines and "
+      .. "explosions kill him.\n\n"
+      .. "A shell explodes at your crosshair and kills a man within half a "
+      .. "square. Press {GUN_DOWN} to bring the crosshair in and {GUN_UP} to "
+      .. "move it out. "
+      .. "For this tutorial, a bot has been programmed to send the man out "
+      .. "across the craters. Put your crosshair there and keep firing as he "
+      .. "crosses.",
+    s6gun = "Got him! Now press {GUN_UP} until your crosshair is back at its "
+      .. "longest range, ready for the next station.",
+    s7 = "The final round, against an Easy bot. You hold three corners of "
+      .. "the island and the bot holds the north-east. Take its land with "
+      .. "your pillboxes, then steal its bases as you did in Station 2. You "
+      .. "win when you own every base. Drive into the RESET pen to start "
+      .. "over.\n\n"
+      .. "First, drive over the two dead pillboxes on the road in to put them "
+      .. "in your tank. Build your pillboxes near the border between your "
+      .. "land and theirs to take control.",
+    win = "Well done: you own every base, and the tutorial is complete.\n\n"
+      .. "Drive about as long as you like. Leave from the menu when you are "
+      .. "ready, then try a game against Easy bots.",
+  },
+
+  -- The panel's heading for each station.
+  title = { "Station 1: Driving", "Station 2: Bases", "Station 3: Building",
+            "Station 4: Pillboxes", "Station 5: Taking a pill",
+            "Station 6: The man", "Station 7: Final round" },
+
+  -- The checklist labels, by goal key. A label is short enough for one
+  -- panel line in the small font.
+  list = {
+    forest = "Forest", swamp = "Swamp", rubble = "Rubble",
+    crater = "Craters", river = "Shallow river",
+    a_refill = "Refill at your base", b_take = "Take the neutral base",
+    c_shoot = "Shoot enemy base empty", c_take = "Drive over it",
+    harvest = "Harvest a tree", road = "Build a road", wall = "Build a wall",
+    mine = "Lay a mine", shoot = "Shoot down the wall",
+    a_pick = "Pick up the dead pill", a_build = "Build it",
+    b_in = "Enter its range in forest", b_hide = "Sit hidden in range",
+    c_kill = "Kill the pillbox", c_pick = "Pick the pillbox up",
+    a_watch = "Watch the bot take one", b_build = "Build on the green square",
+    b_park = "Park on the road square", b_kill = "Kill the enemy pill",
+    b_pick = "Pick it up",
+    kill = "Shoot the man",
+    dead = "Pick up both dead pills", build = "Pill in enemy land",
+    base = "Steal an enemy base", all = "Take every enemy base",
+  },
+
+  -- The status line for each goal: what to do next. A line too wide for
+  -- the game view at a 1280-wide window (about 390 of the client's layout
+  -- units, with the longest controller button words in) is split in two
+  -- with "\n"; the client draws each row centred. See
+  -- docs/TUTORIAL_DECISIONS.md, "Status line width".
+  step = {
+    a_refill = "Drive onto the green-marked base, then STOP\non it and wait "
+      .. "while it refills.",
+    b_take = "Drive onto the neutral base to make it yours.",
+    -- The shots the enemy base still needs.
+    c_shoot = function(left)
+      return string.format("Shoot the red-marked base with {FIRE}:\n%d "
+        .. "shot%s left.", left, left == 1 and "" or "s")
+    end,
+    c_take = "The base is empty. Drive onto it to make it yours.",
+    harvest = "{STEP_TREE}",
+    road = "{STEP_ROAD}",
+    wall = "{STEP_WALL}",
+    mine = "{STEP_MINE}",
+    shoot = "Shoot the marked wall with {FIRE}\nuntil it falls.",
+    a_pick = "Drive over the dead pillbox to put it in your tank.",
+    a_build = "{STEP_PILL}",
+    b_in = "Drive into the forest inside the red markers.",
+    -- %d: whole seconds hidden so far.
+    b_hide = "Sit still deep in the forest, in range.\nHidden: %d of 5 "
+      .. "seconds.",
+    c_kill = "Shoot the pillbox twice with {FIRE}.",
+    c_pick = "Drive over the dead pillbox to pick it up.",
+    a_watch = "Stop on the green square ahead\nand watch the bot "
+      .. "take the pillbox.",
+    b_build = "Build your pillbox at the marked green square.\n"
+      .. "{STEP_PILL_GREEN}",
+    b_park = "Stop at the road tile highlighted\nand aim at the enemy "
+      .. "pillbox.",
+    b_kill = "Shoot the enemy pillbox with {FIRE}\nuntil it dies.",
+    b_pick = "Drive over the dead pillbox to pick it up.",
+    kill = "Put your crosshair on the craters, then\nfire as the man "
+      .. "crosses them.",
+    dead = "Drive over both dead pillboxes on the road in.",
+    build = "Build your pillboxes near the border, in the\nbot's land "
+      .. "(north-east), to take control.",
+    base = "Shoot an enemy base empty with {FIRE},\nthen drive onto it.",
+    -- %d: the Station 7 bases the player owns.
+    all = "Take every enemy base: %d of 8 are yours.",
+  },
+
+  -- Status lines that belong to no one goal.
+  line = {
+    gun = "Press {GUN_UP} until your crosshair\nis at its longest range.",
+    shells = "Low on shells? Stop on the base\nby the road to refill.",
+    done = "Station done. Follow the road north.",
+    win = "Tutorial complete. Leave from the\nmenu when you are ready.",
+  },
+
+  -- The panel's yellow line under the checklist.
+  info = {
+    on = "On %s: speed %d",            -- terrain word, its speed rule
+    on_plain = "On %s",                -- terrain word with no speed rule
+    enemy_base = "Enemy base: %d shots left",
+    wall_down = "Target wall: down",
+    wall_left = function(left)
+      return string.format("Target wall: %d shot%s left", left,
+                           left == 1 and "" or "s")
+    end,
+    pill_armour = "Pillbox armour: %d/%d",
+    men = "Men killed: %d",
+    bases = "Bases yours: %d/8",
+    needed = "%d of %d needed",        -- Station 1's terrains
+  },
+
+  -- The panel's bottom line.
+  hint = {
+    stop = "STOP on the base: wait",
+    full = "Full",
+    refill = "Refilling: wait here",
+    low = "Low on shells: refill",
+    reset = "RESET pen: start over",
+  },
+
+  -- What the panel calls the square the tank is on, by the script's own
+  -- terrain words (game.TERRAIN's names, "_" written as a space; the half
+  -- building is "wall"). Only for showing: the script's logic compares the
+  -- English words.
+  terrain = {
+    ["deep sea"] = "deep sea", building = "building", river = "river",
+    swamp = "swamp", crater = "crater", road = "road", forest = "forest",
+    rubble = "rubble", grass = "grass", wall = "wall", boat = "boat",
+  },
+
+  -- The white lines at the top of the view.
+  say = {
+    done = "Station %d done. Follow the road north.",
+    done4 = "Station %d done. Follow the road north.\nShoot trees to "
+      .. "clear the trees quickly.",
+    reset = "Station %d reset",
+    back = "The enemy pillbox is back.\nTake it again, or go north.",
+    moved = "Moved to the green square.",
+  },
 }
 
-local TITLE = { "1: Driving", "2: Bases", "3: Building", "4: Pillboxes",
-                "5: Taking a pill", "6: The man", "7: Final round" }
+-- The text tables in the language player p reads, or the English.
+local function lang_text(p)
+  if p == nil then return TEXT.en end
+  return TEXT[game.lang(p)] or TEXT.en
+end
 
--- The checklist of each station: { key, label }. A label is short enough
--- for one panel line in the small font.
-local LIST = {
-  { { "forest", "Forest" },
-    { "swamp", "Swamp" },
-    { "rubble", "Rubble" },
-    { "crater", "Craters" },
-    { "river", "Shallow river" } },
-  { { "a_refill", "Refill at your base" },
-    { "b_take", "Take the neutral base" },
-    { "c_shoot", "Shoot enemy base empty" },
-    { "c_take", "Drive over it" } },
-  { { "harvest", "Harvest a tree" },
-    { "road", "Build a road" },
-    { "wall", "Build a wall" },
-    { "mine", "Lay a mine" },
-    { "shoot", "Shoot down the wall" } },
-  { { "a_pick", "Pick up the dead pill" },
-    { "a_build", "Build it" },
-    { "b_in", "Enter its range in forest" },
-    { "b_hide", "Sit hidden in range" },
-    { "c_kill", "Kill the pillbox" },
-    { "c_pick", "Pick the pillbox up" } },
-  { { "a_watch", "Watch the bot take one" },
-    { "b_build", "Build on the green square" },
-    { "b_park", "Park on the road square" },
-    { "b_kill", "Kill the enemy pill" },
-    { "b_pick", "Pick it up" } },
-  { { "kill", "Shoot the man" } },
-  { { "dead", "Pick up both dead pills" },
-    { "build", "Pill in enemy land" },
-    { "base", "Steal an enemy base" },
-    { "all", "Take every enemy base" } },
+-- One entry of TEXT for the tutorial's player: section, then key. Numbers
+-- after the key fill its pattern. A key the player's language leaves out
+-- is the English.
+local function tr(section, key, ...)
+  local mine = lang_text(S.player)[section]
+  local v = mine and mine[key]
+  if v == nil then v = TEXT.en[section][key] end
+  if type(v) == "function" then return v(...) end
+  if select("#", ...) == 0 then return v end
+  -- A popup written as two parts: each part takes the numbers it uses.
+  if type(v) == "table" then
+    local parts = {}
+    for i, part in ipairs(v) do parts[i] = string.format(part, ...) end
+    return parts
+  end
+  return string.format(v, ...)
+end
+
+-- The English names the arenas and the logic read: the popups by id, and
+-- each station's checklist as { key, label } in its order.
+local POP = TEXT.en.pop
+
+local LIST_KEYS = {
+  { "forest", "swamp", "rubble", "crater", "river" },
+  { "a_refill", "b_take", "c_shoot", "c_take" },
+  { "harvest", "road", "wall", "mine", "shoot" },
+  { "a_pick", "a_build", "b_in", "b_hide", "c_kill", "c_pick" },
+  { "a_watch", "b_build", "b_park", "b_kill", "b_pick" },
+  { "kill" },
+  { "dead", "build", "base", "all" },
 }
+local LIST = {}
+for n, keys in ipairs(LIST_KEYS) do
+  LIST[n] = {}
+  for i, k in ipairs(keys) do LIST[n][i] = { k, TEXT.en.list[k] } end
+end
 
 -- Station 1 is done after this many of its five terrains.
 local TERRAINS_NEEDED = 3
@@ -409,88 +560,28 @@ local TERRAINS_NEEDED = 3
 local WATCH_NEAR = 5
 local WATCH_NEAR_FRAMES = 500
 
--- The status line for each goal: what to do next. A function is called for
--- a line with a live number in it. A line too wide for the game view at a
--- 1280-wide window (about 390 of the client's layout units, with the longest
--- controller button words in) is split in two with "\n"; the client draws
--- each row centred. See docs/TUTORIAL_DECISIONS.md, "Status line width".
-local PILL_BUILD = "Press the pillbox button or {QUICK_PILL},\nthen "
-local STEP = {
-  [2] = {
-    a_refill = "Drive onto the green-marked base, then STOP\non it and wait "
-      .. "while it refills.",
-    b_take = "Drive onto the neutral base to make it yours.",
-    c_shoot = function()
-      local b = game.base(B.b2c.n)
-      local left = b and base_shots(b.armour) or 0
-      return string.format("Shoot the red-marked base with {FIRE}:\n%d "
-        .. "shot%s left.", left, left == 1 and "" or "s")
-    end,
-    c_take = "The base is empty. Drive onto it to make it yours.",
-  },
-  [3] = {
-    harvest = "Click the tree button or press {QUICK_TREE},\nthen click a "
-      .. "forest square in the marked grove.",
-    road = "Click the road button or press {QUICK_ROAD},\nthen click a grass "
-      .. "square.",
-    wall = "Build a wall: Click on the wall button\nor press {QUICK_WALL}, "
-      .. "then click a grass square.",
-    mine = "Click the mine button or press {QUICK_MINE},\nthen click a "
-      .. "square to lay a mine.",
-    shoot = "Shoot the marked wall with {FIRE}\nuntil it falls.",
-  },
-  [4] = {
-    a_pick = "Drive over the dead pillbox to put it in your tank.",
-    a_build = PILL_BUILD .. "click on the map to build it.",
-    b_in = "Drive into the forest inside the red markers.",
-    b_hide = function()
-      return string.format("Sit still deep in the forest, in range.\nHidden: "
-        .. "%d of 5 seconds.", math.floor(S.hide))
-    end,
-    c_kill = "Shoot the pillbox twice with {FIRE}.",
-    c_pick = "Drive over the dead pillbox to pick it up.",
-  },
-  [5] = {
-    a_watch = "Stop on the green square ahead\nand watch the bot "
-      .. "take the pillbox.",
-    b_build = "Build your pillbox at the marked green square.\n"
-      .. "Press the pillbox button or {QUICK_PILL},\nthen click the green "
-      .. "square.",
-    b_park = "Stop at the road tile highlighted\nand aim at the enemy "
-      .. "pillbox.",
-    b_kill = "Shoot the enemy pillbox with {FIRE}\nuntil it dies.",
-    b_pick = "Drive over the dead pillbox to pick it up.",
-  },
-  [6] = {
-    kill = "Put your crosshair on the craters, then\nfire as the man "
-      .. "crosses them.",
-  },
-  [7] = {
-    dead = "Drive over both dead pillboxes on the road in.",
-    build = "Build your pillboxes near the border, in the\nbot's land "
-      .. "(north-east), to take control.",
-    base = "Shoot an enemy base empty with {FIRE},\nthen drive onto it.",
-    all = function()
-      local mine = 0
-      for _, k in ipairs({ "b7_ne1", "b7_ne2", "b7_nw1", "b7_nw2", "b7_se1",
-                           "b7_se2", "b7_sw1", "b7_sw2" }) do
-        local b = game.base(B[k].n)
-        if b ~= nil and b.owner == S.player then mine = mine + 1 end
-      end
-      return string.format("Take every enemy base: %d of 8 are yours.", mine)
-    end,
-  },
-}
-local STEP_GUN = "Press {GUN_UP} until your crosshair\nis at its longest range."
-local STEP_SHELLS = "Low on shells? Stop on the base\nby the road to refill."
-local STEP_DONE = "Station done. Follow the road north."
-local STEP_WIN = "Tutorial complete. Leave from the\nmenu when you are ready."
-
 local PILLS7 = { "p7_nw1", "p7_nw2", "p7_se1", "p7_se2", "p7_sw1", "p7_sw2" }
 local BASES7 = { "b7_ne1", "b7_ne2", "b7_nw1", "b7_nw2", "b7_se1", "b7_se2",
                  "b7_sw1", "b7_sw2" }
 -- The friendly bases by the road where the player shoots a lot.
 local SUPPLY = { "b2a", "b3", "b4c", "b5", "b6" }
+
+-- The numbers a status line's pattern takes, by goal key.
+local STEP_ARGS = {
+  c_shoot = function()
+    local b = game.base(B.b2c.n)
+    return b and base_shots(b.armour) or 0
+  end,
+  b_hide = function() return math.floor(S.hide) end,
+  all = function()
+    local mine = 0
+    for _, k in ipairs(BASES7) do
+      local b = game.base(B[k].n)
+      if b ~= nil and b.owner == S.player then mine = mine + 1 end
+    end
+    return mine
+  end,
+}
 
 -- The station a pill belongs to: one the player carries out of it, or puts
 -- down outside it, is sent back.
@@ -717,12 +808,23 @@ end
 
 local POPUP_DELAY = 150   -- on_tick runs 50 times a second
 
+-- The numbers a popup's pattern takes, by id.
+local POP_ARGS = {
+  s2c = function() return base_shots(rule("base_full_armour")) end,
+}
+
 local function show(id)
   if S.popped[id] or S.player == nil then return end
   S.popped[id] = true
-  local text = POP[id]
-  if type(text) == "function" then text = text() end
-  game.popup(text, S.player)
+  local args = POP_ARGS[id]
+  local text
+  if args ~= nil then text = tr("pop", id, args()) else text = tr("pop", id) end
+  -- A popup too long for one is written as two, sent one after the other.
+  if type(text) == "table" then
+    for _, part in ipairs(text) do game.popup(part, S.player) end
+  else
+    game.popup(text, S.player)
+  end
   if id == "s4c" then
     local t = player_tank()
     if t ~= nil then game.set_stocks(S.player, full_stock()) end
@@ -742,20 +844,29 @@ local function release_says()
   -- "top": every white line sits at the top edge of the view, under the
   -- status line (Andrew, Oct 11).
   for _, a in ipairs(says) do
-    S.say_until = math.max(S.say_until or 0, S.frames + a[2] * 50)
-    game.announce(a[1], a[2], S.player, "top")
+    S.say_until = math.max(S.say_until or 0, S.frames + a.secs * 50)
+    local text
+    if a.num ~= nil then text = tr("say", a.key, a.num)
+    else text = tr("say", a.key) end
+    game.announce(text, a.secs, S.player, "top")
   end
 end
 
-local function say(text, secs)
+-- A white line: TEXT's "say" entry key, up for secs seconds, with the
+-- number its pattern takes (num, or nil). One that has to wait for a popup
+-- keeps its key and number, not its text, so it is worded in the language the
+-- player reads when it goes out.
+local function say(key, secs, num)
   if S.player == nil then return end
   if #S.queue > 0 then
-    S.says[#S.says + 1] = { text, secs }
+    S.says[#S.says + 1] = { key = key, secs = secs, num = num }
     return
   end
   -- S.say_until: the frame the last white line comes down. The status
   -- line's "Station done" waits for it, so the two never say it together.
   S.say_until = math.max(S.say_until or 0, S.frames + secs * 50)
+  local text
+  if num ~= nil then text = tr("say", key, num) else text = tr("say", key) end
   game.announce(text, secs, S.player, "top")
 end
 
@@ -828,37 +939,36 @@ local function station_info(n, t)
                      swamp = "speed_swamp", crater = "speed_crater",
                      rubble = "speed_rubble", boat = "speed_boat" }
     local r = speeds[word]
-    if r == nil then return "On " .. word end
-    return string.format("On %s: speed %d", word, rule(r))
+    local shown = tr("terrain", word) or word
+    if r == nil then return tr("info", "on_plain", shown) end
+    return tr("info", "on", shown, rule(r))
   elseif n == 2 then
     local b = game.base(B.b2c.n)
     -- Only once the neutral base is taken: until then the enemy base is
     -- not the goal yet.
     if b ~= nil and b.owner ~= S.player and S.done[2].b_take and
        not S.done[2].c_shoot then
-      return string.format("Enemy base: %d shots left", base_shots(b.armour))
+      return tr("info", "enemy_base", base_shots(b.armour))
     end
   elseif n == 3 then
     local w = PT.wall3
     local left = game.wall_shots(w[1], w[2])
-    if left == nil or left <= 0 then return "Target wall: down" end
-    return string.format("Target wall: %d shot%s left", left,
-                         left == 1 and "" or "s")
+    if left == nil or left <= 0 then return tr("info", "wall_down") end
+    return tr("info", "wall_left", left)
   elseif n == 4 then
     local pb = game.pill(P.p4.n)
     if pb ~= nil and not pb.in_tank then
-      return string.format("Pillbox armour: %d/%d", pb.armour,
-                           rule("pill_max_armour"))
+      return tr("info", "pill_armour", pb.armour, rule("pill_max_armour"))
     end
   elseif n == 6 then
-    return string.format("Men killed: %d", S.men)
+    return tr("info", "men", S.men)
   elseif n == 7 then
     local mine = 0
     for _, k in ipairs(BASES7) do
       local b = game.base(B[k].n)
       if b ~= nil and b.owner == S.player then mine = mine + 1 end
     end
-    return string.format("Bases yours: %d/8", mine)
+    return tr("info", "bases", mine)
   end
   return nil
 end
@@ -873,15 +983,15 @@ local function panel_hint(n, t)
   if t ~= nil then
     local b = on_friendly_base(t)
     if b ~= nil then
-      if S.moving then return "STOP on the base: wait", "yellow" end
-      if tank_full(t) then return "Full", "green" end
-      return "Refilling: wait here", "yellow"
+      if S.moving then return tr("hint", "stop"), "yellow" end
+      if tank_full(t) then return tr("hint", "full"), "green" end
+      return tr("hint", "refill"), "yellow"
     end
     if t.shells < 5 and n >= 2 and n <= 6 then
-      return "Low on shells: refill", "yellow"
+      return tr("hint", "low"), "yellow"
     end
   end
-  if n == 5 or n == 7 then return "RESET pen: start over", "grey" end
+  if n == 5 or n == 7 then return tr("hint", "reset"), "grey" end
   return nil
 end
 
@@ -892,13 +1002,14 @@ local function draw_panel(force)
   local sdone = station_done(n)
   local list = {
     { "rect", 0, 0, 128, 14, sdone and "green" or "grey_dark", true },
-    { "text", 64, 2, "white", "normal", "centre", "Station " .. TITLE[n] },
+    { "text", 64, 2, "white", "normal", "centre", tr("title", n) },
   }
-  local key = { n, sdone and "D" or "-" }
+  -- The key holds every word drawn, so a change of language redraws it.
+  local key = { n, sdone and "D" or "-", tr("title", n) }
   local y = 18
   for _, item in ipairs(LIST[n]) do
     local done = S.done[n][item[1]] == true
-    local label = item[2]
+    local label = tr("list", item[1])
     local colour = done and "green" or (sdone and "grey" or "white")
     list[#list + 1] = { "rect", 4, y + 1, 6, 6, done and "green" or "grey", done }
     list[#list + 1] = { "text", 13, y, colour, "small", "left", label }
@@ -910,8 +1021,8 @@ local function draw_panel(force)
     for _, item in ipairs(LIST[1]) do
       if S.done[1][item[1]] then c = c + 1 end
     end
-    local line = string.format("%d of %d needed", math.min(c, TERRAINS_NEEDED),
-                               TERRAINS_NEEDED)
+    local line = tr("info", "needed", math.min(c, TERRAINS_NEEDED),
+                    TERRAINS_NEEDED)
     list[#list + 1] = { "text", 64, y, sdone and "green" or "white", "small",
                         "centre", line }
     key[#key + 1] = line
@@ -1017,28 +1128,29 @@ local function draw_markers()
 end
 
 local function status_text(t)
-  if S.won then return STEP_WIN end
-  if S.gun_remind then return STEP_GUN end
+  if S.won then return tr("line", "win") end
+  if S.gun_remind then return tr("line", "gun") end
   local n = S.at
   if t ~= nil and t.shells < 5 and n >= 2 and n <= 6 and
      on_friendly_base(t) == nil and not (n == 2 and not S.done[2].a_refill)
      then
-    return STEP_SHELLS
+    return tr("line", "shells")
   end
   -- "Station done" only once the white "Station N done" line is down.
-  local done_line = (S.frames < (S.say_until or 0)) and "" or STEP_DONE
+  local done_line = (S.frames < (S.say_until or 0)) and "" or
+                    tr("line", "done")
   if n == 1 then
     if station_done(1) then return done_line end
     return ""
   end
   local g = current_goal(n)
   if g == nil then
-    if n == 7 then return STEP_WIN end
+    if n == 7 then return tr("line", "win") end
     return done_line
   end
-  local s = STEP[n] and STEP[n][g]
-  if type(s) == "function" then s = s() end
-  return s or ""
+  local args = STEP_ARGS[g]
+  if args ~= nil then return tr("step", g, args()) or "" end
+  return tr("step", g) or ""
 end
 
 local STATUS_GAP_FRAMES = 50   -- 1 s at 50 frames a second
@@ -1090,9 +1202,7 @@ local function mark(n, key)
     if id ~= nil then popup_later(id) end
   end
   if not was_done and station_done(n) and n < 7 then
-    local text = string.format("Station %d done. Follow the road north.", n)
-    if n == 4 then text = text .. "\nShoot trees to clear the trees quickly." end
-    say(text, 4)
+    say(n == 4 and "done4" or "done", 4, n)
   end
   redraw(false)
 end
@@ -1520,7 +1630,7 @@ local function reset_station(n)
   if player_tank() ~= nil then
     game.set_stocks(S.player, station_loadout(n))
   end
-  say(string.format("Station %d reset", n), 2)
+  say("reset", 2, n)
   redraw(true)
 end
 
@@ -1851,7 +1961,7 @@ function on_pill_picked_up(n, p, scripted)
       game.timer(5, function()
         S.t5b_restore = false
         if reset_pill("t5b_target") then
-          say("The enemy pillbox is back.\nTake it again, or go north.", 4)
+          say("back", 4)
         end
       end)
     end
@@ -1884,7 +1994,7 @@ function on_pill_placed(n, p, armour, scripted)
       if pb.x ~= L.x or pb.y ~= L.y then
         game.move_pill(n, L.x, L.y)
         if p == S.player then
-          say("Moved to the green square.", 3)
+          say("moved", 3)
         end
       end
       if armour == 0 then game.set_pill_armour(n, rule("pill_max_armour")) end

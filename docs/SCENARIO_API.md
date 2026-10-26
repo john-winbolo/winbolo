@@ -2193,6 +2193,25 @@ seat there, as it does for an empty seat and a seat out of range. Text a script
 sent before the player changed language stays as it was sent; the next line it
 picks is in the new one.
 
+The client fills in tokens from its own language file. The word for a control
+on a controller or a touch screen ("the fire button") is a string in
+`data/lang/<code>.txt` (`STR_TUTTOK_*`), so it is in the language the client
+reads, whatever the script sent. The phrase tokens (see
+[Popups](#popups)) are whole sentences from the same file. On a hosted server,
+where `lang` answers `"en"`, a player who reads another language sees the
+script's English with the tokens in their own language.
+
+Write the text so a key token reads correctly both as a key name ("Space")
+and as a noun phrase ("the fire button"). Put the token where the object of
+"press" goes: "Press {FIRE} to shoot", not "Shoot with {FIRE}". The token
+words in each language file are written in the form that follows that
+language's word for "press".
+
+A popup wraps only at spaces. Chinese and Japanese text has no spaces, so put a
+single `\n` (read as a space) every 25 to 30 characters. A status line or
+announcement row too wide for the view is broken at its last space that fits,
+or before the first character that does not fit when the row has no space.
+
 ---
 
 ## Showing things on a client
@@ -2312,7 +2331,10 @@ tokens: `{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`,
 `{QUICK_WALL}`, `{QUICK_PILL}`, `{QUICK_MINE}`, `{GUN_UP}` and `{GUN_DOWN}`. The
 client writes each one out as the name of the bound key on a keyboard, a word
 for the control on a controller, or the touch wording on a touch screen. The
+phrase tokens of [Popups](#popups) work here too. The
 128-byte cap (125 with a position) applies to the text as sent, tokens and all.
+A row that is too wide for the view once its tokens are filled in is broken
+into two at its last space that fits.
 
 ```lua
 game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)
@@ -2378,6 +2400,27 @@ keys `{QUICK_TREE}`, `{QUICK_ROAD}`, `{QUICK_WALL}`, `{QUICK_PILL}` and
 game.popup("{ACCEL} forward, {BRAKE} slow down.\n\n"
   .. "Build a road with {QUICK_ROAD}.", p)
 ```
+
+Some differences between the inputs are more than a key name: a touch screen
+has no keys and no build cursor, and a controller has a build cursor and no
+mouse. For these the client has phrase tokens. Each is one or two whole
+sentences from the language file, in one wording for keyboard and mouse, one
+for a touch screen and one for a controller (`STR_TUTPHRASE_<NAME>_KEYS`,
+`_TOUCH`, `_PAD`; a phrase with no `_PAD` wording uses the keyboard one). The
+client fills in the phrase first, then the key tokens in it:
+
+| Token | What it says |
+|---|---|
+| `{DRIVE_HOW}` | How to drive and turn. |
+| `{BUILD_HOW}` | How to pick a build tool and send the builder. |
+| `{HARVEST_TIP}` | Any build tool harvests a tree it is aimed at. |
+| `{PILL_HOW}` | How to build a carried pillbox. |
+| `{STEP_TREE}`, `{STEP_ROAD}`, `{STEP_WALL}`, `{STEP_MINE}` | Two status-line rows: build that one thing. |
+| `{STEP_PILL}`, `{STEP_PILL_GREEN}` | Two status-line rows: build the carried pillbox, anywhere or on the green square. |
+
+They were written for the Tutorial, and a script may use them in a popup, a
+status line or an announcement. The byte limits count the token as sent, not
+the sentence it becomes.
 
 ### The panel
 

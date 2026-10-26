@@ -5752,6 +5752,68 @@ static void scnDrawOutlinedLine(ImDrawList *dl, ImFont *font, float height,
     }
 }
 
+/* The most bytes a status line or an announcement is drawn from once its
+   tokens are written out: a phrase token is a sentence or two, in a
+   language that may take three bytes a letter. */
+#define SCN_LINE_EXPANDED_MAX 768
+
+/* Breaks each row of text wider than maxW into rows that fit, in place. A
+   row breaks at its last space that fits, the space becoming "\n"; a row
+   with no such space (Chinese, Japanese and Korean are written without
+   them) breaks before the first character that does not fit, a "\n" put
+   in there while text has room for it. A script still splits its own
+   lines with "\n" where it wants them; this only keeps a line it did not
+   split, or a line in a longer language, inside the view. */
+static void scnWrapRows(ImFont *font, float height, float maxW, char *text,
+                        size_t cap) {
+    if (font == nullptr || text == nullptr || cap == 0 || maxW <= 0.0f) {
+        return;
+    }
+    size_t len = strlen(text);
+    char  *row = text;
+    while (*row != '\0') {
+        float  w         = 0.0f;
+        char  *lastSpace = nullptr;
+        char  *p         = row;
+        char  *breakAt   = nullptr;
+        while (*p != '\0' && *p != '\n') {
+            /* One character: its UTF-8 lead byte gives its length. */
+            const unsigned char c = (unsigned char)*p;
+            size_t n = 1;
+            if (c >= 0xF0) n = 4;
+            else if (c >= 0xE0) n = 3;
+            else if (c >= 0xC0) n = 2;
+            for (size_t k = 1; k < n; k++) {
+                if (p[k] == '\0') { n = k; break; }
+            }
+            const float cw =
+                font->CalcTextSizeA(height, FLT_MAX, 0.0f, p, p + n).x;
+            if (w + cw > maxW && p > row) {
+                breakAt = p;
+                break;
+            }
+            if (*p == ' ') lastSpace = p;
+            w += cw;
+            p += n;
+        }
+        if (breakAt == nullptr) {
+            /* The row fits: on to the next. */
+            row = (*p == '\n') ? p + 1 : p;
+            continue;
+        }
+        if (lastSpace != nullptr && lastSpace > row) {
+            *lastSpace = '\n';
+            row = lastSpace + 1;
+            continue;
+        }
+        if (len + 1 >= cap) return;   /* no room for one more break */
+        memmove(breakAt + 1, breakAt, len - (size_t)(breakAt - text) + 1);
+        *breakAt = '\n';
+        len++;
+        row = breakAt + 1;
+    }
+}
+
 /* The status line and the announcement share a view, a scale, a font and the
    things at the top of the view they both keep clear of, and are drawn
    together so the announcement can keep clear of the status line too. */
@@ -5773,16 +5835,17 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     /* The status line, with its countdown worked out on this client's own
        clock. */
     /* Both lines may carry the popup's key tokens ({ACCEL}, {QUICK_ROAD}
-       and the rest), written out here as the key or control in words. A
-       name is longer than its token, so the buffers have room past the
-       128 bytes a line may be. */
+       and the rest), written out here as the key or control in words, and
+       the phrase tokens ({STEP_TREE} and the rest), written out as a whole
+       sentence from the language file. Both are longer than their token,
+       so the buffers have room well past the 128 bytes a line may be. */
     uint32_t    statusEndsAt = SCN_STATUS_NO_COUNTDOWN;
     const char *statusWire   = clientSimGetScnStatus(cs, &statusEndsAt);
-    char        statusRaw[256];
+    char        statusRaw[SCN_LINE_EXPANDED_MAX];
     if (statusWire != nullptr) {
         tutorialExpandTextPlain(statusWire, statusRaw, sizeof(statusRaw));
     }
-    char        status[SCN_STATUS_LINE_MAX + 128];
+    char        status[SCN_STATUS_LINE_MAX + SCN_LINE_EXPANDED_MAX];
     const bool  haveStatus =
         scnStatusLineText(statusWire != nullptr ? statusRaw : nullptr,
                           statusEndsAt, now, status, sizeof(status));
@@ -5903,7 +5966,12 @@ static void renderScenarioAnnounce(ClientSim *cs) {
        the top drops below it rather than sharing its row. */
     ScnAnnounceRect statusBand = { 0.0f, 0.0f, 0.0f, 0.0f };
     bool            haveBand   = false;
+    /* The widest a row may be: the view, less the inset and the outline
+       each side. */
+    const float rowMaxW = (view.x1 - view.x0) -
+                          2.0f * SCN_STATUS_INSET_UNITS * scale - 2.0f * o;
     if (haveStatus) {
+        scnWrapRows(font, height, rowMaxW, status, sizeof(status));
         const ImVec2 measured =
             font->CalcTextSizeA(height, FLT_MAX, 0.0f, status);
         const float boxW = measured.x + 2.0f * o;
@@ -5931,12 +5999,13 @@ static void renderScenarioAnnounce(ClientSim *cs) {
         const ClientScnAnnounce *a = clientSimGetScnAnnounceAt(cs, i);
         if (a == nullptr) continue;
         uint32_t left = 0;
-        char     text[256];
+        char     text[SCN_LINE_EXPANDED_MAX];
         tutorialExpandTextPlain(a->text, text, sizeof(text));
         if (!scnAnnounceRemaining(text, a->arrivedTick, a->ticks, now,
                                   &left)) {
             continue;
         }
+        scnWrapRows(font, height, rowMaxW, text, sizeof(text));
 
         const ImVec2 measured =
             font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);

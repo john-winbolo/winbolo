@@ -258,6 +258,67 @@
 #define STR_TUTORIAL_RESPAWN1               1843
 #define STR_TUTORIAL_QUICK_BUILD_TOUCH      2811
 
+/* A key token ({FIRE}, {GUN_UP} and the rest) in words, where a status
+ * line or an announcement has no room for a glyph (controller) or the
+ * screen has no key for it (touch). Each is written as what the player
+ * presses: lower case, and in the form that follows the word for "press"
+ * in the language. tutorial_text.c reads them. */
+#define STR_TUTTOK_PAD_ACCEL                3400
+#define STR_TUTTOK_PAD_BRAKE                3401
+#define STR_TUTTOK_PAD_LEFT                 3402
+#define STR_TUTTOK_PAD_RIGHT                3403
+#define STR_TUTTOK_PAD_FIRE                 3404
+#define STR_TUTTOK_PAD_MINE                 3405
+#define STR_TUTTOK_PAD_SCROLL_UP            3406
+#define STR_TUTTOK_PAD_SCROLL_DOWN          3407
+#define STR_TUTTOK_PAD_SCROLL_LEFT          3408
+#define STR_TUTTOK_PAD_SCROLL_RIGHT         3409
+#define STR_TUTTOK_PAD_DISMISS              3410
+#define STR_TUTTOK_PAD_BUILD_MODE           3411
+#define STR_TUTTOK_PAD_BUILD_PLACE          3412
+#define STR_TUTTOK_PAD_BUILD_TOOL           3413
+#define STR_TUTTOK_PAD_GUN_UP               3414
+#define STR_TUTTOK_PAD_GUN_DOWN             3415
+#define STR_TUTTOK_TOUCH_FIRE               3416
+#define STR_TUTTOK_TOUCH_GUN_UP             3417
+#define STR_TUTTOK_TOUCH_GUN_DOWN           3418
+
+/* The phrase tokens: a whole sentence or two the client puts in place of
+ * the token, worded for the player's input. _KEYS is for a keyboard and
+ * mouse, _TOUCH for a touch screen, _PAD for a controller. Where the words
+ * are the same as the keyboard's (a controller draws {ACCEL} as its own
+ * glyph) there is no _PAD string. A phrase may carry key tokens, which are
+ * filled in after it. */
+#define STR_TUTPHRASE_DRIVE_HOW_KEYS        3430
+#define STR_TUTPHRASE_DRIVE_HOW_TOUCH       3431
+#define STR_TUTPHRASE_BUILD_HOW_KEYS        3432
+#define STR_TUTPHRASE_BUILD_HOW_TOUCH       3433
+#define STR_TUTPHRASE_BUILD_HOW_PAD         3434
+#define STR_TUTPHRASE_HARVEST_TIP_KEYS      3435
+#define STR_TUTPHRASE_HARVEST_TIP_TOUCH     3436
+#define STR_TUTPHRASE_HARVEST_TIP_PAD       3437
+#define STR_TUTPHRASE_PILL_HOW_KEYS         3438
+#define STR_TUTPHRASE_PILL_HOW_TOUCH        3439
+#define STR_TUTPHRASE_PILL_HOW_PAD          3440
+#define STR_TUTPHRASE_STEP_TREE_KEYS        3441
+#define STR_TUTPHRASE_STEP_TREE_TOUCH       3442
+#define STR_TUTPHRASE_STEP_TREE_PAD         3443
+#define STR_TUTPHRASE_STEP_ROAD_KEYS        3444
+#define STR_TUTPHRASE_STEP_ROAD_TOUCH       3445
+#define STR_TUTPHRASE_STEP_ROAD_PAD         3446
+#define STR_TUTPHRASE_STEP_WALL_KEYS        3447
+#define STR_TUTPHRASE_STEP_WALL_TOUCH       3448
+#define STR_TUTPHRASE_STEP_WALL_PAD         3449
+#define STR_TUTPHRASE_STEP_MINE_KEYS        3450
+#define STR_TUTPHRASE_STEP_MINE_TOUCH       3451
+#define STR_TUTPHRASE_STEP_MINE_PAD         3452
+#define STR_TUTPHRASE_STEP_PILL_KEYS        3453
+#define STR_TUTPHRASE_STEP_PILL_TOUCH       3454
+#define STR_TUTPHRASE_STEP_PILL_PAD         3455
+#define STR_TUTPHRASE_STEP_PILL_GREEN_KEYS  3456
+#define STR_TUTPHRASE_STEP_PILL_GREEN_TOUCH 3457
+#define STR_TUTPHRASE_STEP_PILL_GREEN_PAD   3458
+
 /* LGM (little green man) messages */
 #define LGM_MAN_DEAD                        414
 #define LGM_NO_BUILD                        415

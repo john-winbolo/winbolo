@@ -39,6 +39,16 @@ static const char *const kTokenText[TT_COUNT] = {
   "{QUICK_MINE}",
   "{GUN_UP}",
   "{GUN_DOWN}",
+  "{DRIVE_HOW}",
+  "{BUILD_HOW}",
+  "{HARVEST_TIP}",
+  "{PILL_HOW}",
+  "{STEP_TREE}",
+  "{STEP_ROAD}",
+  "{STEP_WALL}",
+  "{STEP_MINE}",
+  "{STEP_PILL}",
+  "{STEP_PILL_GREEN}",
 };
 
 const char *tutorialTokenText(TutorialTokenId id) {
@@ -83,6 +93,16 @@ int tutorialTokenScancode(TutorialTokenId id, const keyItems *k) {
     case TT_BUILD_MODE:
     case TT_BUILD_PLACE:
     case TT_BUILD_TOOL:
+    case TT_DRIVE_HOW:
+    case TT_BUILD_HOW:
+    case TT_HARVEST_TIP:
+    case TT_PILL_HOW:
+    case TT_STEP_TREE:
+    case TT_STEP_ROAD:
+    case TT_STEP_WALL:
+    case TT_STEP_MINE:
+    case TT_STEP_PILL:
+    case TT_STEP_PILL_GREEN:
     case TT_COUNT:
       break;
   }
@@ -93,6 +113,31 @@ bool tutorialTokenIsQuickBuild(TutorialTokenId id) {
   return id == TT_QUICK_TREE || id == TT_QUICK_ROAD ||
          id == TT_QUICK_WALL || id == TT_QUICK_PILL ||
          id == TT_QUICK_MINE;
+}
+
+bool tutorialTokenIsPhrase(TutorialTokenId id) {
+  return id >= TT_DRIVE_HOW && id < TT_COUNT;
+}
+
+/* The phrase pass's name function: the phrase's text for a phrase token,
+ * and NULL, which leaves the token as it is written, for any other. */
+typedef struct {
+  TutorialTokenNameFn phrase;
+  void               *ctx;
+} PhraseOnly;
+
+static const char *phraseOnlyName(TutorialTokenId id, void *ctx) {
+  const PhraseOnly *p = (const PhraseOnly *)ctx;
+  if (!tutorialTokenIsPhrase(id) || p->phrase == NULL) return NULL;
+  return p->phrase(id, p->ctx);
+}
+
+size_t tutorialPhrasesExpand(const char *src, char *out, size_t cap,
+                             TutorialTokenNameFn phrase, void *ctx) {
+  PhraseOnly p;
+  p.phrase = phrase;
+  p.ctx    = ctx;
+  return tutorialTokensExpand(src, out, cap, phraseOnlyName, &p);
 }
 
 size_t tutorialTokensExpand(const char *src, char *out, size_t cap,

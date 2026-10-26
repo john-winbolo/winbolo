@@ -26,6 +26,9 @@
  *   long names   — a keypad key is written "Num ." not "Keypad .", other
  *                  names stay as SDL gives them, and a key cap grows to
  *                  fit its label.
+ *   phrases      — the phrase tokens are found, answer true to
+ *                  tutorialTokenIsPhrase, and tutorialPhrasesExpand fills
+ *                  only them, leaving key tokens for the second pass.
  *   announce hold — a line sent in the same tick as a popup, or while it is
  *                  open, gets its whole time after the popup closes; a line
  *                  up before keeps what it had left; a line already out
@@ -463,6 +466,78 @@ int run_tutorial_tokens_long_key_names(void) {
     UT_ASSERT(tutorialKeycapWidth(32.0f, 40.0f) > 40.0f);
     UT_ASSERT(tutorialKeycapWidth(32.0f, 8.0f) == 32.0f);
     UT_ASSERT(tutorialKeycapWidth(32.0f, 0.0f) == 32.0f);
+    return 0;
+}
+
+/* ── phrase tokens ─────────────────────────────────────────────────── */
+
+/* A phrase's words for the test: German, as a player with de.txt would
+   see them, so the phrase pass is shown to carry any language. Key tokens
+   inside a phrase are left for the second pass. */
+static const char *phraseName(TutorialTokenId id, void *ctx) {
+    int *calls = (int *)ctx;
+    if (calls != NULL) (*calls)++;
+    switch (id) {
+        case TT_DRIVE_HOW: return "{ACCEL} vorwärts, {BRAKE} bremsen.";
+        case TT_STEP_TREE: return "Drücken Sie {QUICK_TREE},\nklicken Sie den Hain.";
+        default:           return NULL;
+    }
+}
+
+int run_tutorial_tokens_phrases(void) {
+    char   out[128];
+    char   both[128];
+    size_t n;
+    int    calls = 0;
+    int    i;
+
+    /* Only the phrase tokens answer true. */
+    UT_ASSERT(!tutorialTokenIsPhrase(TT_ACCEL));
+    UT_ASSERT(!tutorialTokenIsPhrase(TT_GUN_DOWN));
+    UT_ASSERT(!tutorialTokenIsPhrase(TT_COUNT));
+    for (i = TT_DRIVE_HOW; i < TT_COUNT; i++) {
+        UT_ASSERT_MSG(tutorialTokenIsPhrase((TutorialTokenId)i),
+                      "token %d is not a phrase", i);
+    }
+
+    /* Every phrase token is found in a text by its name. */
+    {
+        size_t len = 0;
+        UT_ASSERT(tutorialTokenMatch("{STEP_PILL_GREEN}.", &len) ==
+                  TT_STEP_PILL_GREEN && len == 17);
+        UT_ASSERT(tutorialTokenMatch("{STEP_PILL}.", &len) == TT_STEP_PILL &&
+                  len == 11);
+        UT_ASSERT(tutorialTokenMatch("{DRIVE_HOW}", &len) == TT_DRIVE_HOW);
+    }
+
+    /* The phrase pass fills the phrase and copies the key tokens, its own
+       and the text's, as written, for the second pass. */
+    n = tutorialPhrasesExpand("{DRIVE_HOW} Dann {FIRE}.", out, sizeof(out),
+                              phraseName, &calls);
+    UT_ASSERT_MSG(strcmp(out, "{ACCEL} vorwärts, {BRAKE} bremsen. Dann {FIRE}.")
+                  == 0, "got '%s'", out);
+    UT_ASSERT(n == strlen(out));
+    UT_ASSERT_MSG(calls == 1, "the phrase callback was called %d times "
+                  "(key tokens must not reach it)", calls);
+
+    /* Then the key pass names the keys. */
+    tutorialTokensExpand(out, both, sizeof(both), expandName, NULL);
+    UT_ASSERT_MSG(strcmp(both, "W vorwärts, {BRAKE} bremsen. Dann Space.")
+                  == 0, "got '%s'", both);
+
+    /* A phrase with no words stays as written; the row split survives. */
+    tutorialPhrasesExpand("{PILL_HOW}|{STEP_TREE}", out, sizeof(out),
+                          phraseName, NULL);
+    UT_ASSERT_MSG(strcmp(out, "{PILL_HOW}|Drücken Sie {QUICK_TREE},\n"
+                              "klicken Sie den Hain.") == 0, "got '%s'", out);
+
+    /* No callback: the text is copied as it is. */
+    tutorialPhrasesExpand("{STEP_TREE} {FIRE}", out, sizeof(out), NULL, NULL);
+    UT_ASSERT(strcmp(out, "{STEP_TREE} {FIRE}") == 0);
+
+    /* Too long for the buffer: the phrase is left out whole. */
+    n = tutorialPhrasesExpand("ab{DRIVE_HOW}", out, 8, phraseName, NULL);
+    UT_ASSERT_MSG(n == 2 && strcmp(out, "ab") == 0, "got '%s'", out);
     return 0;
 }
 
