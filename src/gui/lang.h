@@ -3786,6 +3786,14 @@
 #define STR_FRAMELIMIT_UNLIMITED                 3167
 #define STR_FRAMELIMIT_TIP                       3168
 
+/* The Log Viewer's GIFs and its Clips window */
+#define STR_LV_MAKE_GIF                          3159
+#define STR_LV_MAKE_GIF_TIP                      3160
+#define STR_LV_GIF_LENGTH                        3161
+#define STR_LV_GIF_START                         3162
+#define STR_LV_WIN_CLIPS                         3163
+#define STR_LV_CLIPS_EMPTY                       3164
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

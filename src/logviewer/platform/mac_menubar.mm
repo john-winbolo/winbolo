@@ -15,6 +15,7 @@ extern "C" {
 #include "../imgui/imgui_dock.h"
 #include "../imgui/imgui_dialogs.h"
 #include "../lv_dock_fit.h"
+#include "../imgui/imgui_clip_gif.h"
 void lv_windowOpenFile(char *cmdLine);
 void lv_windowSaveMap(void);
 bool lv_windowCanSaveLog(void);
@@ -57,6 +58,8 @@ static NSMenuItem *s_lv_pauseItem      = nil;
 static NSMenuItem *s_lv_stopItem       = nil;
 static NSMenuItem *s_lv_fastForwardItem = nil;
 static NSMenuItem *s_lv_rewindItem     = nil;
+static NSMenuItem *s_lv_gifSepItem     = nil;   /* the line over Make GIF... */
+static NSMenuItem *s_lv_makeGifItem    = nil;
 static NSMenu     *s_lv_zoomMenu       = nil;
 static NSMenuItem *s_lv_zoomInItem     = nil;
 static NSMenuItem *s_lv_zoomOutItem    = nil;
@@ -82,6 +85,7 @@ static NSMenuItem *s_lv_winHudItem         = nil;
 static NSMenuItem *s_lv_winOverviewItem    = nil;
 static NSMenuItem *s_lv_winTankItem        = nil;
 static NSMenuItem *s_lv_winChatItem        = nil;
+static NSMenuItem *s_lv_winClipsItem       = nil;
 static NSMenuItem *s_lv_winScnPanelItem    = nil;
 static NSMenuItem *s_lv_dockEnabledItem    = nil;
 static NSMenuItem *s_lv_dockLeftItem       = nil;
@@ -115,6 +119,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onStop:(id)sender;
 - (void)onFastForward:(id)sender;
 - (void)onRewind:(id)sender;
+- (void)onMakeGif:(id)sender;
 - (void)onZoomStep:(id)sender;
 - (void)onZoomIn:(id)sender;
 - (void)onZoomOut:(id)sender;
@@ -141,6 +146,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleOverview:(id)sender;
 - (void)onToggleTank:(id)sender;
 - (void)onToggleChat:(id)sender;
+- (void)onToggleClips:(id)sender;
 - (void)onToggleScenarioPanel:(id)sender;
 - (void)onToggleDockEnabled:(id)sender;
 - (void)onToggleDockLeft:(id)sender;
@@ -205,6 +211,10 @@ static void lv_push_sdl_quit(void) {
 - (void)onRewind:(id)sender {
     (void)sender;
     if (s_lv_state && s_lv_state->isLoaded) lv_windowRewind();
+}
+- (void)onMakeGif:(id)sender {
+    (void)sender;
+    lv_clip_gif_request();
 }
 - (void)onZoomStep:(id)sender {
     NSMenuItem *item = (NSMenuItem *)sender;
@@ -281,6 +291,11 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleOverview:(id)sender { (void)sender; lv_g_show_overview_window = !lv_g_show_overview_window; }
 - (void)onToggleTank:(id)sender { (void)sender; lv_g_show_tank_window = !lv_g_show_tank_window; }
 - (void)onToggleChat:(id)sender { (void)sender; lv_g_show_chat_window = !lv_g_show_chat_window; }
+- (void)onToggleClips:(id)sender {
+    (void)sender;
+    /* Not while a GIF is made: its progress window is over everything. */
+    if (!lv_clip_gif_active()) lv_clip_gif_toggle_gallery();
+}
 - (void)onToggleScenarioPanel:(id)sender { (void)sender; lv_g_show_scenario_panel_window = !lv_g_show_scenario_panel_window; }
 - (void)onToggleDockEnabled:(id)sender { (void)sender; lv_imgui_dock_set_enabled(!lv_imgui_dock_get_enabled()); }
 - (void)onToggleDockLeft:(id)sender { (void)sender; lv_imgui_dock_set_side_enabled(LV_DOCK_LEFT, !lv_imgui_dock_get_side_enabled(LV_DOCK_LEFT)); }
@@ -527,6 +542,19 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [rwItem setTarget:s_lv_bridge];
     [actionMenu addItem:rwItem];
     s_lv_rewindItem = rwItem;
+
+    /* A GIF of the map from the current time (imgui_clip_gif.h). */
+    NSMenuItem *gifSep = [NSMenuItem separatorItem];
+    [actionMenu addItem:gifSep];
+    s_lv_gifSepItem = gifSep;
+
+    NSMenuItem *gifItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_MAKE_GIF)
+        action:@selector(onMakeGif:)
+        keyEquivalent:@"g"];
+    [gifItem setTarget:s_lv_bridge];
+    [actionMenu addItem:gifItem];
+    s_lv_makeGifItem = gifItem;
 
     /* Options menu */
     NSMenuItem *optionsItem = [mainMenu addItemWithTitle:LANG_STR(STR_MAPEDIT_MENU_OPTIONS) action:nil keyEquivalent:@""];
@@ -784,6 +812,13 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [winChat setTarget:s_lv_bridge];
     [winMenu addItem:winChat];
     s_lv_winChatItem = winChat;
+    NSMenuItem *winClips = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_WIN_CLIPS)
+        action:@selector(onToggleClips:)
+        keyEquivalent:@"0"];
+    [winClips setTarget:s_lv_bridge];
+    [winMenu addItem:winClips];
+    s_lv_winClipsItem = winClips;
 
     NSMenuItem *winScnPanel = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_SCNPANEL_SETTINGS_TITLE)
@@ -954,6 +989,8 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_stopItem = nil;
     s_lv_fastForwardItem = nil;
     s_lv_rewindItem = nil;
+    s_lv_gifSepItem = nil;
+    s_lv_makeGifItem = nil;
     s_lv_zoomMenu = nil;
     s_lv_zoomInItem = nil;
     s_lv_zoomOutItem = nil;
@@ -979,6 +1016,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_winOverviewItem = nil;
     s_lv_winTankItem = nil;
     s_lv_winChatItem = nil;
+    s_lv_winClipsItem = nil;
     s_lv_winScnPanelItem = nil;
     s_lv_dockEnabledItem = nil;
     s_lv_dockLeftItem = nil;
@@ -1036,6 +1074,15 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     }
     if (s_lv_fastForwardItem) [s_lv_fastForwardItem setEnabled:(s->isLoaded ? YES : NO)];
     if (s_lv_rewindItem)      [s_lv_rewindItem      setEnabled:(s->isLoaded ? YES : NO)];
+    /* A live game has no GIFs; nor has a build without the Clips window. */
+    {
+        const BOOL noGif = (live || !s->gifAvailable) ? YES : NO;
+        if (s_lv_gifSepItem) [s_lv_gifSepItem setHidden:noGif];
+        if (s_lv_makeGifItem) {
+            [s_lv_makeGifItem setHidden:noGif];
+            [s_lv_makeGifItem setEnabled:(s->canMakeGif ? YES : NO)];
+        }
+    }
 
     /* Mode submenu checkmarks. */
     if (s_lv_modeInfoItem)   [s_lv_modeInfoItem   setState:(s->modeInformation ? NSControlStateValueOn : NSControlStateValueOff)];
@@ -1081,6 +1128,10 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_winOverviewItem) [s_lv_winOverviewItem setState:(s->showOverview ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winTankItem) [s_lv_winTankItem setState:(s->showTank ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winChatItem) [s_lv_winChatItem setState:(s->showChat ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_winClipsItem) {
+        [s_lv_winClipsItem setHidden:(s->gifAvailable ? NO : YES)];
+        [s_lv_winClipsItem setState:(s->showClips ? NSControlStateValueOn : NSControlStateValueOff)];
+    }
     if (s_lv_winScnPanelItem) [s_lv_winScnPanelItem setState:(s->showScenarioPanel ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_dockEnabledItem) [s_lv_dockEnabledItem setState:(s->dockEnabled ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_dockLeftItem) [s_lv_dockLeftItem setState:(s->dockLeft ? NSControlStateValueOn : NSControlStateValueOff)];

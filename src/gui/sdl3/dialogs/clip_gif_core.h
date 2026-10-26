@@ -60,6 +60,59 @@ uint32_t clipGifLenFromSeconds(float secs, uint32_t curMs, uint32_t totalMs);
 /* A length in ms, as the seconds the length field shows. */
 float clipGifLenToSeconds(uint32_t lenMs);
 
+/* ── Capture ─────────────────────────────────────────────────────────
+ * The rules the game's replay and the Log Viewer share when they make a GIF:
+ * one frame every CLIP_GIF_FRAME_MS (10 fps), at least CLIP_GIF_MIN_FRAMES
+ * and at most CLIP_GIF_MAX_FRAMES frames, and a view wider than
+ * CLIP_GIF_MAX_WIDTH pixels cut down to its middle part. */
+#define CLIP_GIF_FRAME_MS   100u
+#define CLIP_GIF_MIN_FRAMES 10u
+#define CLIP_GIF_MAX_FRAMES 150u
+#define CLIP_GIF_MAX_WIDTH  480
+
+/* How many frames a GIF of durationMs has: durationMs / CLIP_GIF_FRAME_MS,
+ * held inside [CLIP_GIF_MIN_FRAMES, CLIP_GIF_MAX_FRAMES]. From the length in
+ * ms, not in ticks: the viewer steps a log clock and a highlight is measured
+ * in sim ticks, and the two do not have the same rate. */
+uint32_t clipGifFrameCount(uint32_t durationMs);
+
+/* A rectangle in the pixels of the viewer's render target. */
+typedef struct {
+    int x;
+    int y;
+    int w;
+    int h;
+} ClipGifRect;
+
+/* The part of the visible slice (srcX, srcY, srcW, srcH) a GIF takes when
+ * the player has not drawn a frame: all of it when it is maxW pixels wide or
+ * less, else the middle maxW pixels, with the height cut by the same ratio
+ * so the GIF keeps the shape of the view. False, with *out cleared, when the
+ * slice is empty. */
+bool clipGifCentreCrop(int srcX, int srcY, int srcW, int srcH, int maxW,
+                       ClipGifRect *out);
+
+/* ── File names ──────────────────────────────────────────────────────
+ * A GIF is called <map>_<mmss>_<YYYYMMDD-HHMMSS>.gif in the gallery folder:
+ * the map, the time in the replay it starts at, and when it was made. */
+
+/* The highest number clipGifFileName puts on the end of a name, for the rare
+ * case that two GIFs of the same map and time are made in the same second. */
+#define CLIP_GIF_FILE_NAME_MAX_N 99
+
+/* <map>_<mmss> into out: the map's name without a ".map" on the end, with
+ * every character other than 0-9, A-Z, a-z, '-' and '_' changed to '_', as a
+ * map name is free text. "clip" when there is no map name. */
+void clipGifBaseName(char *out, size_t outLen, const char *mapName,
+                     unsigned mins, unsigned secs);
+
+/* The gallery's file name for a GIF: <baseName>_<stamp>.gif for n 1, and
+ * <baseName>_<stamp>_<n>.gif for n 2 to CLIP_GIF_FILE_NAME_MAX_N. "clip" for
+ * an empty or NULL baseName. False when n is out of that range or the name
+ * does not fit in outLen. */
+bool clipGifFileName(char *out, size_t outLen, const char *baseName,
+                     const char *stamp, int n);
+
 /* ── Recording mode ──────────────────────────────────────────────────
  * The reel's GIF controls (the GIF button, the length field and marker, the
  * gallery button, the crop button and frame, and the GIF button on each
@@ -160,6 +213,11 @@ bool clipGifDeleteFiles(const char *gifPath);
  * the row that moves up into its place, or the row above when it was the
  * last. -1 when no row is left. */
 int clipGifSelectAfterRemove(int count, int removed);
+
+/* Sets the metadata's map from a map name: the name without a ".map" on the
+ * end (any case), cut on a whole UTF-8 character to fit. "" for a NULL or
+ * empty name. */
+void clipGifMetaSetMap(ClipGifMeta *m, const char *mapName);
 
 /* ── Games ───────────────────────────────────────────────────────────
  * The gallery puts the GIFs from the game whose replay is open above the

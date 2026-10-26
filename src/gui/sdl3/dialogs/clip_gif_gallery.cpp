@@ -16,17 +16,20 @@
  */
 
 /*********************************************************
- * Name:          lobby_clip_gif_gallery.cpp
- * Purpose:       The recap's GIF gallery: every clip export
- *                is kept in a "clips" folder under the pref
- *                folder with a metadata file beside it
- *                (clip_gif_core.h), and a window lists them
- *                newest first with when each was made, the
- *                map and the players, the GIFs from the game
- *                that is open above the earlier ones. The
- *                selected GIF plays in the window, can be
- *                copied to the clipboard or deleted, and its
- *                path opens its folder.
+ * Name:          clip_gif_gallery.cpp
+ * Purpose:       The GIF gallery: every clip export, from the
+ *                game's replay or from the Log Viewer, is kept
+ *                in a "clips" folder under the pref folder with
+ *                a metadata file beside it (clip_gif_core.h),
+ *                and a window lists them newest first with when
+ *                each was made, the map and the players, the
+ *                GIFs from the game that is open above the
+ *                earlier ones. The selected GIF plays in the
+ *                window, can be copied to the clipboard or
+ *                deleted, and its path opens its folder.
+ *                The screen that shows it gives it the
+ *                renderer, the window and the open game
+ *                (clip_gif_gallery.h).
  *********************************************************/
 
 #include <cfloat>   /* FLT_MAX */
@@ -37,18 +40,16 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"         /* ImTextCalcWordWrapNextLineStart — the path link's lines */
-/* BOLO_CLIP_GIF_GALLERY; ClipGifMeta and the gallery calls this file
- * defines; lobbyIcons; and through imgui_dialog_utils.h imguiHelpTooltip. */
-#include "lobby_internal.h"
-#include "../clip_gif_clipboard.h"  /* clipGifCopyFileToClipboard / clipGifShowFileInFolder */
+/* CLIP_GIF_GALLERY_BUILT, ClipGifGalleryHost and the calls this file
+ * defines; ClipGifMeta through clip_gif_core.h. */
+#include "clip_gif_gallery.h"
+#include "imgui_dialog_utils.h"     /* imguiHelpTooltip / imguiHandOnHover */
+#include "clip_gif_clipboard.h"     /* clipGifCopyFileToClipboard / clipGifShowFileInFolder */
 #include "stb_image.h"              /* stbi_image_free */
 #include "stb_image_gif_capped.h"   /* stbiLoadGifCapped — the preview's frames, with a memory limit */
-extern "C" {
-#include "../../sdl3draw.h"      /* sdl3DrawGetRenderer / sdl3DrawGetWindow — the preview's texture, the clipboard's owner */
-#include "../../../lang.h"       /* langGetText / STR_CLIPGIF_* */
-}
+#include "../../lang.h"             /* langGetText / STR_CLIPGIF_* */
 
-#if BOLO_CLIP_GIF_GALLERY
+#if CLIP_GIF_GALLERY_BUILT
 
 /* The format's name, as the export's own modal and message boxes use it. */
 static const char *const GALLERY_GIF_TITLE = "GIF";
@@ -147,6 +148,11 @@ typedef struct ClipGifGalleryState {
     /* The GIF the delete question is about, set when the question opens, so
      * a selection that moves under it does not change which file goes. */
     char         deleteFile[CLIP_GIF_META_FILE_LEN] = "";
+    /* The screen that draws the window this frame (clipGifGalleryRender):
+     * the preview's texture is made on its renderer, and Copy gives its
+     * window the clipboard. */
+    SDL_Renderer *renderer = nullptr;
+    SDL_Window   *window   = nullptr;
 } ClipGifGalleryState;
 
 /* The list's width, in unscaled pixels, as the splitter beside it last left
@@ -355,7 +361,7 @@ static void galleryPreviewTake(ClipGifDecodeJob *job) {
         p.failed = true;
         return;
     }
-    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    SDL_Renderer *renderer = s_gal.renderer;
     SDL_Texture *tex =
         (renderer != NULL)
             ? SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
@@ -433,7 +439,7 @@ static void galleryDropJob(void) {
 /* Read the folder again, put the GIFs from the open game first, and keep (or
  * move to) the selection by file name, since the scan's order is newest first
  * and a new GIF shifts every index. */
-static void galleryRescan(void) {
+static void galleryRescan(const char *gameId) {
     char keep[CLIP_GIF_META_FILE_LEN] = "";
     if (s_gal.selectFile[0] != '\0') {
         SDL_strlcpy(keep, s_gal.selectFile, sizeof(keep));
@@ -446,7 +452,7 @@ static void galleryRescan(void) {
     if (galleryFindDir()) {
         s_gal.count = clipGifGalleryScan(s_gal.dir, &s_gal.items);
     }
-    SDL_strlcpy(s_gal.game, lobbyReel()->gameId, sizeof(s_gal.game));
+    SDL_strlcpy(s_gal.game, gameId, sizeof(s_gal.game));
     s_gal.currentCount =
         clipGifMetaCurrentGameFirst(s_gal.items, s_gal.count, s_gal.game);
     s_gal.selected = (s_gal.count > 0) ? 0 : -1;
@@ -466,7 +472,7 @@ static void galleryShowMessage(langid id, bool error, const char *file) {
     SDL_utf8strlcpy(s_gal.msgFile, file ? file : "", sizeof(s_gal.msgFile));
 }
 
-void lobbyClipGifGalleryOpen(void) {
+void clipGifGalleryOpen(void) {
     galleryFindDir();
     s_gal.open     = true;
     s_gal.focus    = true;
@@ -476,8 +482,12 @@ void lobbyClipGifGalleryOpen(void) {
     s_gal.renderedThisFrame = true;
 }
 
-void lobbyClipGifGalleryAdd(const void *data, size_t len,
-                            const ClipGifMeta *meta, const char *baseName) {
+bool clipGifGalleryIsOpen(void) {
+    return s_gal.open;
+}
+
+void clipGifGalleryAdd(const void *data, size_t len, const ClipGifMeta *meta,
+                       const char *baseName) {
     if (data == NULL || len == 0 || meta == NULL) {
         return;
     }
@@ -486,7 +496,7 @@ void lobbyClipGifGalleryAdd(const void *data, size_t len,
     s_gal.open     = true;
     s_gal.focus    = true;
     s_gal.needScan = true;
-    s_gal.renderedThisFrame = true;  /* as in lobbyClipGifGalleryOpen */
+    s_gal.renderedThisFrame = true;  /* as in clipGifGalleryOpen */
     if (!galleryFindDir()) {
         /* The same words iOS uses when its copy in Documents fails. */
         galleryShowMessage(STR_CLIPGIF_SAVE_FAILED_IOS, true,
@@ -503,15 +513,9 @@ void lobbyClipGifGalleryAdd(const void *data, size_t len,
     char file[CLIP_GIF_META_FILE_LEN];
     char path[FILENAME_MAX];
     bool named = false;
-    for (int n = 1; n < 100 && !named; n++) {
-        if (n == 1) {
-            snprintf(file, sizeof(file), "%s_%s.gif",
-                     (baseName && baseName[0]) ? baseName : "clip", stamp);
-        } else {
-            snprintf(file, sizeof(file), "%s_%s_%d.gif",
-                     (baseName && baseName[0]) ? baseName : "clip", stamp, n);
-        }
-        if (!galleryPath(path, sizeof(path), file)) {
+    for (int n = 1; n <= CLIP_GIF_FILE_NAME_MAX_N && !named; n++) {
+        if (!clipGifFileName(file, sizeof(file), baseName, stamp, n) ||
+            !galleryPath(path, sizeof(path), file)) {
             break;
         }
         SDL_PathInfo info;
@@ -537,12 +541,12 @@ void lobbyClipGifGalleryAdd(const void *data, size_t len,
     SDL_strlcpy(s_gal.selectFile, file, sizeof(s_gal.selectFile));
 }
 
-/* Runs once per lobby frame on every view, before that frame is drawn. Lets
- * go of the decoded frames, the texture, a decode still running and the
- * list when the open window was not drawn on the last frame, because the
- * player is on another lobby view. The window stays open and reads the list
- * again when it is next drawn. */
-void lobbyClipGifGalleryPoll(void) {
+/* Runs once per frame of the screen that shows the gallery, before that
+ * frame is drawn. Lets go of the decoded frames, the texture, a decode still
+ * running and the list when the open window was not drawn on the last frame,
+ * because the player is on another lobby view. The window stays open and
+ * reads the list again when it is next drawn. */
+void clipGifGalleryPoll(void) {
     if (s_gal.open && !s_gal.renderedThisFrame) {
         /* Selects the same GIF after the next scan. */
         if (s_gal.selectFile[0] == '\0' && s_gal.selected >= 0 &&
@@ -558,11 +562,17 @@ void lobbyClipGifGalleryPoll(void) {
     s_gal.renderedThisFrame = false;
 }
 
-void lobbyClipGifGalleryShutdown(void) {
+void clipGifGalleryShutdown(void) {
     galleryPreviewFree();
     galleryFreeItems();
     galleryDropJob();
     s_gal = ClipGifGalleryState{};
+}
+
+void clipGifGalleryClose(void) {
+    /* The same as a shutdown: the window closes, and the list is read again
+     * the next time it opens. */
+    clipGifGalleryShutdown();
 }
 
 /* ── The window ─────────────────────────────────────────────────── */
@@ -579,7 +589,7 @@ static void galleryJoinPlayers(const ClipGifMeta *m, char *out, size_t outLen) {
 /* Open-gallery control for the transport row: a drawn glyph of two stacked
  * frames, so it needs no new art and follows the text colour and UI scale
  * the way the crop button beside it does. The tooltip names it. */
-bool lobbyClipGifGalleryButton(const char *id) {
+bool clipGifGalleryButton(const char *id) {
     const ImGuiStyle &sty = ImGui::GetStyle();
     const float lineH = ImGui::GetTextLineHeight();
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -816,7 +826,7 @@ static void galleryRenderDetail(float s) {
 
     ImGui::BeginDisabled(!havePath);
     if (ImGui::Button(langGetText(STR_CLIPGIF_COPY))) {
-        bool ok = clipGifCopyFileToClipboard(path, sdl3DrawGetWindow());
+        bool ok = clipGifCopyFileToClipboard(path, s_gal.window);
         galleryShowMessage(ok ? STR_CLIPGIF_COPIED : STR_CLIPGIF_COPY_FAILED,
                            !ok, NULL);
     }
@@ -925,17 +935,21 @@ static void galleryRenderSplitter(float s, float height, float minW,
                                         (hovered || active) ? 2.0f : 1.0f);
 }
 
-void lobbyClipGifGalleryRender(float s) {
+void clipGifGalleryRender(float s, const ClipGifGalleryHost *host) {
     if (!s_gal.open) {
         return;
     }
     s_gal.renderedThisFrame = true;
-    /* A new replay in the reel moves its GIFs into the first group. */
-    if (SDL_strcmp(s_gal.game, lobbyReel()->gameId) != 0) {
+    s_gal.renderer = (host != NULL) ? host->renderer : NULL;
+    s_gal.window   = (host != NULL) ? host->window : NULL;
+    const char *gameId =
+        (host != NULL && host->gameId != NULL) ? host->gameId : "";
+    /* A new replay moves its GIFs into the first group. */
+    if (SDL_strcmp(s_gal.game, gameId) != 0) {
         s_gal.needScan = true;
     }
     if (s_gal.needScan) {
-        galleryRescan();
+        galleryRescan(gameId);
     }
 
     char title[128];
@@ -966,7 +980,10 @@ void lobbyClipGifGalleryRender(float s) {
         }
 
         if (s_gal.count == 0) {
-            ImGui::TextWrapped("%s", langGetText(STR_CLIPGIF_GALLERY_EMPTY));
+            const langid empty = (host != NULL && host->emptyText != 0)
+                                     ? (langid)host->emptyText
+                                     : (langid)STR_CLIPGIF_GALLERY_EMPTY;
+            ImGui::TextWrapped("%s", langGetText(empty));
         } else {
             /* The list's width as last dragged, kept between a floor and the
              * room that leaves the detail a usable width. */
@@ -1004,4 +1021,4 @@ void lobbyClipGifGalleryRender(float s) {
     }
 }
 
-#endif /* BOLO_CLIP_GIF_GALLERY */
+#endif /* CLIP_GIF_GALLERY_BUILT */

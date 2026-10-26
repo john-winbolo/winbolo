@@ -1765,7 +1765,7 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
 #if BOLO_CLIP_GIF_GALLERY
         /* The GIFs made so far, with copy and save. */
         ImGui::SameLine();
-        if (lobbyClipGifGalleryButton("##reelgifgallery")) {
+        if (clipGifGalleryButton("##reelgifgallery")) {
             lobbyClipGifGalleryOpen();
         }
 #endif

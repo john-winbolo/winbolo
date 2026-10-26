@@ -15,6 +15,7 @@
 #include "imgui_logviewer_menu.h"
 #include "imgui_main_menu.h"
 #include "imgui_dialogs.h"
+#include "imgui_clip_gif.h"
 #include "../../gui/lang.h"
 #include <SDL3/SDL.h>
 
@@ -116,6 +117,27 @@ void lvMenuRender(struct LogViewerState *lv) {
             }
             if (!live && ImGui::Button("View Comments", btnSize)) {
                 s_activePanel = LV_PANEL_COMMENTS;
+                ImGui::CloseCurrentPopup();
+                s_open = false;
+            }
+            ImGui::Separator();
+        }
+
+        /* A GIF of the map from the current time, and the GIFs made here and
+         * in the game (imgui_clip_gif.h). The Make GIF window opens on the
+         * next frame, after this menu has closed. */
+        if (lv_clip_gif_available()) {
+            if (!live) {
+                ImGui::BeginDisabled(!lv_clip_gif_can_make());
+                if (ImGui::Button(langGetText(STR_LV_MAKE_GIF), btnSize)) {
+                    lv_clip_gif_request();
+                    ImGui::CloseCurrentPopup();
+                    s_open = false;
+                }
+                ImGui::EndDisabled();
+            }
+            if (ImGui::Button(langGetText(STR_LV_WIN_CLIPS), btnSize)) {
+                lv_clip_gif_toggle_gallery();
                 ImGui::CloseCurrentPopup();
                 s_open = false;
             }

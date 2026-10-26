@@ -22,7 +22,7 @@
  *                back off the render target at a fixed rate,
  *                and the GIF encoder those frames are handed
  *                to. The finished bytes go to the GIF gallery
- *                (lobby_clip_gif_gallery.cpp), which keeps
+ *                (clip_gif_gallery.cpp), which keeps
  *                them and offers copy and save; on iOS they
  *                are written into Documents. Also the export
  *                button a clip row and the transport place,
@@ -48,10 +48,12 @@ extern "C" {
 }
 
 #if BOLO_RECAP_CLIP_GIF
-/* Single-header GIF encoder behind the recap's clip export; the one
- * implementation TU is src/third_party/msf_gif/msf_gif_impl.c. Carries its own
- * extern "C" guards, so it goes outside the block above. */
-#include "../../../../third_party/msf_gif/msf_gif.h"
+/* clipGifEncodeFrame, the readback the Log Viewer's GIFs share, and through
+ * it the single-header GIF encoder (msf_gif.h). */
+#include "../clip_gif_frame.h"
+#endif
+#if BOLO_CLIP_GIF_GALLERY
+#include "../clip_gif_gallery.h"  /* clipGifGalleryAdd / Poll / Render / Shutdown */
 #endif
 #if defined(__ANDROID__)
 #include "../../../../android/android_share.h"  /* androidShareFile — the written clip offered to another app */
@@ -72,25 +74,16 @@ static const char *const CLIP_GIF_TITLE = "GIF";
 static const char *const CLIP_GIF_POPUP = "GIF##clipgif";
 
 /* Log ticks per captured frame. The viewer's log clock is 20 ms an entry, so
- * five of them is 100 ms — 10 fps, which is 10 centiseconds a frame. This is
- * the reel's clock only; a clip's own duration is in sim ticks and is never
- * divided by this. */
+ * five of them is 100 ms — 10 fps, which is 10 centiseconds a frame
+ * (CLIP_GIF_FRAME_MS and CLIP_GIF_CS_PER_FRAME). This is the reel's clock
+ * only; a clip's own duration is in sim ticks and is never divided by this.
+ * The frame count's floor and cap (clipGifFrameCount) and the width cap of an
+ * uncropped view (clipGifCentreCrop, CLIP_GIF_MAX_WIDTH) are in
+ * clip_gif_core.h, which the Log Viewer's GIFs share. */
 static const int CLIP_GIF_TICKS_PER_FRAME = 5;
-static const int CLIP_GIF_CS_PER_FRAME    = 10;
-/* Wall-clock length of one captured frame, the same 10 fps said in ms. */
-static const uint32_t CLIP_GIF_FRAME_MS   = 100u;
-static const int CLIP_GIF_QUALITY         = 16;  /* the encoder's own default */
-/* 15 s of clip, and a floor so a clip that arrives with no duration still
- * exports something rather than an empty file. */
-static const int CLIP_GIF_MAX_FRAMES      = 150;
-static const int CLIP_GIF_MIN_FRAMES      = 10;
 /* Frames per lobby frame. Four keeps the longest clip under a second of
  * wall time while leaving the readback stalls small enough to hide. */
 static const int CLIP_GIF_FRAMES_PER_PASS = 4;
-/* Every frame in a GIF is the same size, so the crop is fixed once at the
- * start; this caps how wide it may be, and the height follows the same ratio
- * so the clip keeps the shape the reel showed. */
-static const int CLIP_GIF_MAX_WIDTH       = 480;
 
 /* One export, from the moment it is armed to the moment its bytes are handed
  * over: the encoder itself, how far through the clip it has got, the rectangle
@@ -114,29 +107,6 @@ typedef struct ClipGifCapture {
 } ClipGifCapture;
 
 static ClipGifCapture s_clipGif = {};
-
-/* <map>_<mmss>, reduced to characters every filesystem here will take — a map
- * name is free text and reaches this straight off the wire. */
-static void lobbyClipGifBaseName(char *out, size_t outLen, const char *mapName,
-                                 unsigned mins, unsigned secs) {
-    char base[64];
-    if (mapName && mapName[0]) {
-        snprintf(base, sizeof(base), "%s", mapName);
-        size_t blen = SDL_strlen(base);
-        if (blen > 4 && SDL_strcmp(base + blen - 4, ".map") == 0) {
-            base[blen - 4] = '\0';
-        }
-    } else {
-        snprintf(base, sizeof(base), "clip");
-    }
-    for (char *p = base; *p != '\0'; p++) {
-        char c = *p;
-        bool keep = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
-                    (c >= 'a' && c <= 'z') || c == '-' || c == '_';
-        if (!keep) *p = '_';
-    }
-    snprintf(out, outLen, "%s_%02u%02u", base, mins, secs);
-}
 
 /* Put the reel back where the player had it, transport included: an export is
  * a detour, not a seek they asked for. */
@@ -203,13 +173,7 @@ static void lobbyClipGifFillMeta(ClipGifMeta *m, ClientSim *cs,
         m->createdUnix = (int64_t)(now / SDL_NS_PER_SECOND);
     }
     SDL_strlcpy(m->game, lobbyReel()->gameId, sizeof(m->game));
-    if (mapName && mapName[0]) {
-        SDL_utf8strlcpy(m->map, mapName, sizeof(m->map));
-        size_t n = SDL_strlen(m->map);
-        if (n > 4 && SDL_strcasecmp(m->map + n - 4, ".map") == 0) {
-            m->map[n - 4] = '\0';
-        }
-    }
+    clipGifMetaSetMap(m, mapName);
     if (cs == NULL) {
         return;
     }
@@ -314,26 +278,19 @@ static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
          * something worth posting, and a frame is the player saying what to
          * take instead. */
     } else {
-        cropW = srcW;
-        cropH = srcH;
-        if (cropW > CLIP_GIF_MAX_WIDTH) {
-            cropW = CLIP_GIF_MAX_WIDTH;
-            cropH = (int)((float)srcH * (float)cropW / (float)srcW);
-        }
-        if (cropW < 1) cropW = 1;
-        if (cropH < 1) cropH = 1;
-        if (cropH > srcH) cropH = srcH;
-        s_clipGif.crop.x = srcX + (srcW - cropW) / 2;
-        s_clipGif.crop.y = srcY + (srcH - cropH) / 2;
-        s_clipGif.crop.w = cropW;
-        s_clipGif.crop.h = cropH;
+        ClipGifRect c;
+        clipGifCentreCrop(srcX, srcY, srcW, srcH, CLIP_GIF_MAX_WIDTH, &c);
+        cropW = c.w;
+        cropH = c.h;
+        s_clipGif.crop.x = c.x;
+        s_clipGif.crop.y = c.y;
+        s_clipGif.crop.w = c.w;
+        s_clipGif.crop.h = c.h;
     }
 
     /* From the length in ms, not in ticks: the reel steps a log clock and a
      * clip is measured in sim ticks, and the two do not share a rate. */
-    uint32_t frames = durationMs / CLIP_GIF_FRAME_MS;
-    if (frames > (uint32_t)CLIP_GIF_MAX_FRAMES) frames = CLIP_GIF_MAX_FRAMES;
-    if (frames < (uint32_t)CLIP_GIF_MIN_FRAMES) frames = CLIP_GIF_MIN_FRAMES;
+    uint32_t frames = clipGifFrameCount(durationMs);
 
     if (!msf_gif_begin(&s_clipGif.enc, cropW, cropH)) {
         lobbyClipGifRestoreReel();
@@ -341,8 +298,8 @@ static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
     }
 
     unsigned secs = (unsigned)(startMs / 1000u);
-    lobbyClipGifBaseName(s_clipGif.name, sizeof(s_clipGif.name), mapName,
-                         secs / 60u, secs % 60u);
+    clipGifBaseName(s_clipGif.name, sizeof(s_clipGif.name), mapName,
+                    secs / 60u, secs % 60u);
     lobbyClipGifFillMeta(&s_clipGif.meta, cs, mapName);
     s_clipGif.meta.durationMs = frames * CLIP_GIF_FRAME_MS;
     s_clipGif.meta.width      = cropW;
@@ -418,34 +375,8 @@ static bool lobbyClipGifCaptureFrame(void) {
         tex == NULL) {
         return false;
     }
-    SDL_Renderer *renderer = sdl3DrawGetRenderer();
-    if (renderer == NULL) {
-        return false;
-    }
-
-    SDL_Texture *saved = SDL_GetRenderTarget(renderer);
-    if (!SDL_SetRenderTarget(renderer, (SDL_Texture *)tex)) {
-        return false;
-    }
-    SDL_Surface *raw = SDL_RenderReadPixels(renderer, &s_clipGif.crop);
-    SDL_SetRenderTarget(renderer, saved);
-    if (raw == NULL) {
-        return false;
-    }
-
-    /* Convert rather than assume: the readback's layout follows the render
-     * target, and the encoder reads RGBA8 rows. Its own pitch goes with it —
-     * a converted surface is not promised to be tightly packed. */
-    SDL_Surface *rgba = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_RGBA32);
-    SDL_DestroySurface(raw);
-    if (rgba == NULL) {
-        return false;
-    }
-    bool ok = msf_gif_frame(&s_clipGif.enc, (uint8_t *)rgba->pixels,
-                            CLIP_GIF_CS_PER_FRAME, CLIP_GIF_QUALITY,
-                            rgba->pitch) != 0;
-    SDL_DestroySurface(rgba);
-    return ok;
+    return clipGifEncodeFrame(sdl3DrawGetRenderer(), (SDL_Texture *)tex,
+                              &s_clipGif.crop, &s_clipGif.enc);
 }
 
 #if defined(__IPHONEOS__)
@@ -526,9 +457,29 @@ static void lobbyClipGifSave(MsfGifResult res) {
 }
 #else
 static void lobbyClipGifSave(MsfGifResult res) {
-    lobbyClipGifGalleryAdd(res.data, res.dataSize, &s_clipGif.meta,
-                           s_clipGif.name);
+    clipGifGalleryAdd(res.data, res.dataSize, &s_clipGif.meta,
+                      s_clipGif.name);
     msf_gif_free(res);
+}
+#endif
+
+/* The gallery as the game shows it (lobby_reel.h): drawn with the game's
+ * renderer and window, with the GIFs from the reel's game listed first. */
+#if BOLO_CLIP_GIF_GALLERY
+void lobbyClipGifGalleryOpen(void) {
+    clipGifGalleryOpen();
+}
+
+void lobbyClipGifGalleryRender(float s) {
+    ClipGifGalleryHost host = {};
+    host.renderer = sdl3DrawGetRenderer();
+    host.window   = sdl3DrawGetWindow();
+    host.gameId   = lobbyReel()->gameId;
+    clipGifGalleryRender(s, &host);
+}
+
+void lobbyClipGifGalleryShutdown(void) {
+    clipGifGalleryShutdown();
 }
 #endif
 
@@ -537,7 +488,7 @@ static void lobbyClipGifSave(MsfGifResult res) {
  * navigated away from the recap. */
 void lobbyClipGifPoll(void) {
 #if BOLO_CLIP_GIF_GALLERY
-    lobbyClipGifGalleryPoll();
+    clipGifGalleryPoll();
 #endif
 }
 
@@ -545,7 +496,7 @@ void lobbyClipGifPoll(void) {
  * running. */
 void lobbyClipGifShutdown(void) {
 #if BOLO_CLIP_GIF_GALLERY
-    lobbyClipGifGalleryShutdown();
+    clipGifGalleryShutdown();
 #endif
 }
 
