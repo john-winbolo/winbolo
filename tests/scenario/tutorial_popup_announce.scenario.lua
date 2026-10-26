@@ -1,4 +1,4 @@
--- GATE: ticks=2000 bots=1 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=2000 bots=1 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial: a goal that finishes a station while a popup is waiting sends
 -- the popup and the "Station N done" announcement in the same tick. That

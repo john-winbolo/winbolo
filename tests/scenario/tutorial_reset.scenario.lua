@@ -1,4 +1,4 @@
--- GATE: ticks=16000 bots=1 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=16000 bots=1 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial, re-arming and the RESET pens.
 --

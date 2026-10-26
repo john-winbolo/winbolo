@@ -1,4 +1,4 @@
--- GATE: ticks=12000 bots=1 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=12000 bots=1 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial, Station 5 on entry, on leaving and on a respawn.
 --

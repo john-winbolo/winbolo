@@ -1,4 +1,4 @@
--- GATE: ticks=6000 bots=1 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=6000 bots=1 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial, Station 5A: the watch spot is told, not forced, and a 5A demo
 -- reset puts the island's wall rings and moat back.

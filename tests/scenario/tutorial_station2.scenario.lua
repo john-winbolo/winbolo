@@ -1,4 +1,4 @@
--- GATE: ticks=4000 bots=1 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=4000 bots=1 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial, Station 2: the 2A refill is told, not enforced, and the enemy
 -- base's shot count waits for the neutral base.

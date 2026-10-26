@@ -1,4 +1,4 @@
--- GATE: ticks=8000 bots=1 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=8000 bots=1 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial: the text is in the player's language (game.lang), an unknown
 -- language is English, and a change of language mid-game shows on the next

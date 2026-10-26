@@ -18,8 +18,8 @@
 # "author and updated").
 #
 # The shipped scripts are every *.lua under data/mods/ and every
-# *.scenario.lua under data/maps/ that git tracks, plus any new one there
-# that git does not track yet. tests/scenario fixtures are not shipped and
+# *.scenario.lua under data/maps/ and data/maps/tutorials/ that git tracks,
+# plus any new one there that git does not track yet. tests/scenario fixtures are not shipped and
 # are never touched.
 #
 # Usage (from anywhere; the paths are the repo's):
@@ -103,7 +103,8 @@ def in_git_checkout():
 def shipped_files():
     """Every shipped script, as repo-relative POSIX paths, sorted."""
     found = set()
-    for pattern in ("data/mods/*.lua", "data/maps/*.scenario.lua"):
+    for pattern in ("data/mods/*.lua", "data/maps/*.scenario.lua",
+                    "data/maps/tutorials/*.scenario.lua"):
         for p in REPO_ROOT.glob(pattern):
             found.add(p.relative_to(REPO_ROOT).as_posix())
     return sorted(found)

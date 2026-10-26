@@ -1,4 +1,4 @@
--- GATE: ticks=20000 bots=0 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=20000 bots=0 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial, Station 5B: the parking square works, and the blocker takes
 -- real damage and gets armour back only from the announced rebuild.

@@ -1,4 +1,4 @@
--- GATE: ticks=40000 bots=1 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=40000 bots=1 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial, the Station 7 bot's STAY_AREA keeps it on its island without
 -- the script's leash.

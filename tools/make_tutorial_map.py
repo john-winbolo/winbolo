@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Build data/maps/Tutorial.map, the map the Tutorial scenario plays on, and
-rewrite the layout block in data/maps/Tutorial.scenario.lua so the script
-and the map always name the same squares.
+Build data/maps/tutorials/Tutorial.map, the map the Tutorial scenario plays
+on, and rewrite the layout block in data/maps/tutorials/Tutorial.scenario.lua
+so the script and the map always name the same squares.
 
     C:\\Python310\\python.exe tools/make_tutorial_map.py
 
@@ -39,8 +39,8 @@ import struct
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MAP_OUT = os.path.join(ROOT, "data", "maps", "Tutorial.map")
-SCRIPT = os.path.join(ROOT, "data", "maps", "Tutorial.scenario.lua")
+MAP_OUT = os.path.join(ROOT, "data", "maps", "tutorials", "Tutorial.map")
+SCRIPT = os.path.join(ROOT, "data", "maps", "tutorials", "Tutorial.scenario.lua")
 
 # Terrain nibbles (src/bolo/public/global.h). Deep sea is None here: it is
 # every square no run covers.

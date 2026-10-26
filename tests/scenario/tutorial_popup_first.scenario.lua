@@ -1,4 +1,4 @@
--- GATE: ticks=8000 bots=1 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=8000 bots=1 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial: the popup comes first, its white text after (item 37).
 --

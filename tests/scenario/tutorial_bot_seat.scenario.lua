@@ -1,4 +1,4 @@
--- GATE: ticks=6000 bots=0 script=data/maps/Tutorial.scenario.lua
+-- GATE: ticks=6000 bots=0 script=data/maps/tutorials/Tutorial.scenario.lua
 --
 -- Tutorial: a person joins on the seat put by for the Station 7 bot.
 --

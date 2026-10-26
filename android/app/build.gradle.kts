@@ -207,6 +207,9 @@ tasks.register<Copy>("copyGameAssets") {
         include("sounds/*.wav")
         include("maps/*.map")
         include("maps/*.lua")
+        // The tutorials folder: each tutorial map and its script.
+        include("maps/tutorials/*.map")
+        include("maps/tutorials/*.lua")
         include("mods/*.lua")
         include("flags/*.svg")
         include("svg/*.png")

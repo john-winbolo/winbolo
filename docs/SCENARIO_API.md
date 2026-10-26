@@ -999,8 +999,9 @@ A server from before these keys sends no identity, and a newer lobby then
 shows nothing rather than "unknown". An older lobby ignores what a newer
 server sends.
 
-The shipped scripts (`data/mods/*.lua` and `data/maps/*.scenario.lua`) say
-`author = "WinBolo"`. `tools/stamp_mod_updated.py` keeps their `updated`
+The shipped scripts (`data/mods/*.lua`, `data/maps/*.scenario.lua` and
+`data/maps/tutorials/*.scenario.lua`) say `author = "WinBolo"`.
+`tools/stamp_mod_updated.py` keeps their `updated`
 current: run it before committing a change to one, and it stamps every
 shipped file that differs from git HEAD with the current UTC time.
 `--check` fails a shipped file whose last change did not also change its
