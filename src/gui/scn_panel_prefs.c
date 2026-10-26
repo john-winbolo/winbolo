@@ -57,6 +57,16 @@ void scnPanelPopoutFormat(const ScnPanelPopout *in, char *buf, size_t bufSz) {
              in->w, in->h);
 }
 
+void scnTextPopoutLoad(const char *row, ScnPanelPopout *out) {
+    if (out == NULL) return;
+    if (scnPanelPopoutParse(row, out)) return;
+    out->open = false;
+    out->x    = -1;
+    out->y    = -1;
+    out->w    = SCN_TEXT_POPOUT_DEFAULT_W;
+    out->h    = SCN_TEXT_POPOUT_DEFAULT_H;
+}
+
 bool scnPanelYesNoParse(const char *word, bool fallback) {
     if (word == NULL) return fallback;
     switch (word[0]) {
@@ -142,4 +152,107 @@ bool scnPanelRescueRect(const ScnPanelRect *win, const ScnPanelRect *displays,
     r.y = primaryUsable->y + (primaryUsable->h - r.h) / 2;
     *out = r;
     return true;
+}
+
+int scnOpacityClamp(int pct) {
+    if (pct == -1) return -1;
+    if (pct < 0) return 0;
+    if (pct > 100) return 100;
+    return pct;
+}
+
+void scnOpacityMigrate(int oldPct, int *bgPct, int *textPct) {
+    int v = scnOpacityClamp(oldPct);
+    if (v == -1) {
+        if (bgPct != NULL) *bgPct = -1;
+        if (textPct != NULL) *textPct = -1;
+        return;
+    }
+    if (bgPct != NULL) *bgPct = (v * SCN_BG_OPACITY_DEFAULT + 50) / 100;
+    if (textPct != NULL) *textPct = v;
+}
+
+/* One saved percent from its string: "" or a string that does not start
+   with a whole number is -1, never set. */
+static int scnOpacityRead(const char *s) {
+    int v;
+    if (s == NULL || s[0] == '\0') return -1;
+    if (sscanf(s, "%d", &v) != 1) return -1;
+    return scnOpacityClamp(v);
+}
+
+void scnOpacityFromPrefs(const char *bgStr, const char *textStr,
+                         const char *oldStr, int *bgPct, int *textPct) {
+    const bool haveBg   = (bgStr != NULL && bgStr[0] != '\0');
+    const bool haveText = (textStr != NULL && textStr[0] != '\0');
+    if (!haveBg && !haveText) {
+        scnOpacityMigrate(scnOpacityRead(oldStr), bgPct, textPct);
+        return;
+    }
+    if (bgPct != NULL) *bgPct = scnOpacityRead(bgStr);
+    if (textPct != NULL) *textPct = scnOpacityRead(textStr);
+}
+
+int scnBackingAlpha(int bgPct) {
+    int v = scnOpacityClamp(bgPct);
+    if (v == -1) v = SCN_BG_OPACITY_DEFAULT;
+    return (v * 255 + 50) / 100;
+}
+
+/* One whole number and nothing after it. */
+static bool scnReadWhole(const char *s, int *out) {
+    int  v;
+    char tail;
+    if (s == NULL || s[0] == '\0') return false;
+    if (sscanf(s, "%d%c", &v, &tail) != 1) return false;
+    *out = v;
+    return true;
+}
+
+bool scnPanelLayoutParse(const char *row, const char *bgRow, int *x, int *y,
+                         int *scale, int *bgPct, int *textPct) {
+    int  rx, ry, rscale, a, b, bgv;
+    char tail;
+    int  n;
+    if (row == NULL || x == NULL || y == NULL || scale == NULL ||
+        bgPct == NULL || textPct == NULL) {
+        return false;
+    }
+    /* The trailing %c catches a row with more after the last number, which
+       is not a row this code or the code before it wrote. */
+    n = sscanf(row, "%d,%d,%d,%d,%d%c", &rx, &ry, &rscale, &a, &b, &tail);
+    if (n == 5) {
+        /* An earlier build of this change: both opacities on the row. */
+        *bgPct   = scnOpacityClamp(a);
+        *textPct = scnOpacityClamp(b);
+    } else if (n == 4 &&
+               sscanf(row, "%d,%d,%d,%d%c", &rx, &ry, &rscale, &a, &tail) ==
+                   4) {
+        if (scnReadWhole(bgRow, &bgv)) {
+            /* This code's row: the text opacity, and the background kept
+               in its own section. */
+            *bgPct   = scnOpacityClamp(bgv);
+            *textPct = scnOpacityClamp(a);
+        } else {
+            /* The row main and 2.1 write: one opacity for both. */
+            scnOpacityMigrate(a, bgPct, textPct);
+        }
+    } else {
+        return false;
+    }
+    *x     = rx;
+    *y     = ry;
+    *scale = rscale;
+    return true;
+}
+
+void scnPanelLayoutFormat(int x, int y, int scale, int textPct, char *buf,
+                          size_t bufSz) {
+    if (buf == NULL || bufSz == 0) return;
+    snprintf(buf, bufSz, "%d,%d,%d,%d", x, y, scale, textPct);
+}
+
+void scnPanelLayoutBgFormat(int bgPct, char *buf, size_t bufSz) {
+    if (buf == NULL || bufSz == 0) return;
+    snprintf(buf, bufSz, "%d", bgPct);
 }

@@ -588,6 +588,17 @@ struct ServerSim {
      * so cancelling a preview can look for a scenario beside it again.
      * Empty when that map came from bytes rather than a file. */
     char         previousMapPath[FILENAME_MAX];
+    /* The previous committed map's md5, beside its path, so cancelling a
+     * preview reports the old map to WinBolo.net again. Invalid and empty
+     * when that map had none, as a generated map has none. */
+    bool         previousMapMd5Valid;
+    uint8_t      previousMapMd5[16];
+    char         previousMapMd5Hex[33];
+    /* Whether the previous committed map was a random server's generated
+     * map, so cancelling a file preview turns the round-end regenerate back
+     * on. A file preview turns randomMapEnabled off; the config and the
+     * fixed-seed flag are not touched by a preview, so they need no copy. */
+    bool         previousRandomMapEnabled;
 
     /* How many template seats each team held when the preview started,
      * indexed by team id. Cancelling re-seats the template from scratch, so

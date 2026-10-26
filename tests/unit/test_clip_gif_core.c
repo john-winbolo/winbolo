@@ -64,6 +64,17 @@ static int nearF(float a, float b) {
     return fabsf(a - b) < 0.01f;
 }
 
+/* Recording mode: the GIF controls show only with it on, and stay while a
+ * capture runs even with it off, so a GIF being made keeps its controls. */
+int run_clip_gif_record_mode(void) {
+    int fails = 0;
+    EXPECT_TRUE("off, no capture: hidden", !clipGifToolsShown(false, false));
+    EXPECT_TRUE("on, no capture: shown", clipGifToolsShown(true, false));
+    EXPECT_TRUE("on, capture: shown", clipGifToolsShown(true, true));
+    EXPECT_TRUE("off, capture: shown", clipGifToolsShown(false, true));
+    return fails ? 1 : 0;
+}
+
 int run_clip_gif_len_sync(void) {
     int fails = 0;
 

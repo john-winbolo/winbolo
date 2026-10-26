@@ -430,6 +430,9 @@ int run_scn_panel_popout_row(void);
 int run_scn_panel_yes_no(void);
 int run_scn_panel_rescue(void);
 int run_scn_panel_prefs_sections(void);
+int run_scn_panel_layout_row(void);
+int run_scn_opacity_migration(void);
+int run_scn_text_popout_row(void);
 int run_client_scn_panel_owners(void);
 int run_scn_arm_panel_owners(void);
 int run_info_packet_view_policy_layout(void);
@@ -1461,9 +1464,10 @@ int run_wbn_browser_sort(void);
 /* Recap clip GIF rules (test_clip_gif_core.c): the length field and the seek
  * bar marker agree and are clamped, the gallery metadata file reads back and
  * rejects bad text, the gallery scan lists newest first, long lines are cut
- * on a whole UTF-8 character, and the preview decode keeps to its memory
- * limit. */
+ * on a whole UTF-8 character, the preview decode keeps to its memory limit,
+ * and the GIF controls show only in recording mode or while a capture runs. */
 int run_clip_gif_len_sync(void);
+int run_clip_gif_record_mode(void);
 int run_clip_gif_meta_roundtrip(void);
 int run_clip_gif_meta_bad(void);
 int run_clip_gif_gallery_scan(void);
@@ -2883,15 +2887,14 @@ int run_ping_kick_clears_strikes_on_disconnect(void);
  * (test_tkexp_lgm_pairing.c). */
 int run_tkexp_lgm_pairing(void);
 
-/* A shell that hits a tank blows up at the hit tank's present position plus
- * the shell's offset from the rewound hit point, not at the shell, which a
- * lag-compensated test leaves behind the tank (test_tank_blast_at_tank.c). */
-int run_tank_blast_rewound_hit_at_present_tank(void);
-int run_tank_blast_kill_starts_at_present_tank(void);
+/* A shell that hits a tank explodes at its own place on its path, as the
+ * server has it on the hit tick, rewound or not (test_tank_blast_at_tank.c). */
+int run_tank_blast_at_shell_place(void);
+int run_tank_blast_kill_at_shell_place(void);
 int run_tank_blast_zero_rewind_unchanged(void);
 int run_tank_blast_hit_decision_unchanged(void);
 /* Whether that blast kills a builder is decided on the shooter's screen, not
- * by where it is drawn (the same file). */
+ * by where he stands now (the same file). */
 int run_tank_blast_builder_on_shooter_screen(void);
 int run_tank_blast_absent_builder_lives(void);
 int run_tank_blast_builder_back_in_tank(void);
@@ -3379,6 +3382,9 @@ int run_lobby_template_add_bot_takes_template(void);
 int run_lobby_map_keeps_bots_plain(void);
 int run_lobby_map_keeps_bots_scenario(void);
 int run_lobby_map_keeps_bots_map_own_row(void);
+int run_lobby_random_map_drops_map_own_script(void);
+int run_lobby_random_map_clears_map_md5(void);
+int run_lobby_cancel_file_preview_keeps_random_map(void);
 int run_lobby_map_rotate_holds_seats_again(void);
 /* A map rotation decides the scenario again: a plain map leaves none
  * attached, and the scripted map brings its own back. */
@@ -4237,6 +4243,18 @@ int run_scenario_panel_timer_text(void);
 int run_scenario_announce_remaining(void);
 int run_scenario_announce_position(void);
 int run_scenario_status_line(void);
+/* The Scenario Text window's fit: the source rectangle scaled into the
+ * window with one factor for both axes and centred. */
+int run_scenario_text_fit(void);
+/* Tablet mode's scenario text band: centred at the top of the view, and
+ * kept left of the scenario panel's square when that is shown. */
+int run_scenario_text_tablet_band(void);
+/* The Scenario Text window's bar and grip, the only places it takes the
+ * mouse: a point on the text body is on neither. */
+int run_scenario_text_pointer_on_handle(void);
+int run_scenario_text_window_shown(void);
+int run_scenario_text_edge_shown(void);
+int run_scenario_text_save_place(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */
