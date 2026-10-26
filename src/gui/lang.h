@@ -3654,10 +3654,10 @@
 #define STR_REEL_RECORD_MODE_TIP                 3150
 
 /* The Frame Rate choice in Settings > Display and the Edit menu (#312) */
-#define STR_FRAMELIMIT_VSYNC                     3160
-#define STR_FRAMELIMIT_CAP                       3161
-#define STR_FRAMELIMIT_UNLIMITED                 3162
-#define STR_FRAMELIMIT_TIP                       3163
+#define STR_FRAMELIMIT_VSYNC                     3165
+#define STR_FRAMELIMIT_CAP                       3166
+#define STR_FRAMELIMIT_UNLIMITED                 3167
+#define STR_FRAMELIMIT_TIP                       3168
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
