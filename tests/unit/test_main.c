@@ -1541,6 +1541,8 @@ static const UnitTestEntry s_tests[] = {
     { "tank_drop_pills_no_room",                 run_tank_drop_pills_no_room                 },
     { "lgm_drop_pill_spiral",                    run_lgm_drop_pill_spiral                    },
     { "lgm_drop_pill_no_room",                   run_lgm_drop_pill_no_room                   },
+    { "util_spiral_north",                       run_util_spiral_north                       },
+    { "util_spiral_north_west",                  run_util_spiral_north_west                  },
     { "scenario_lgm_dispatch",                   run_scenario_lgm_dispatch                   },
     { "scenario_lgm_recall",                     run_scenario_lgm_recall                     },
     { "scenario_lgm_kill",                       run_scenario_lgm_kill                       },

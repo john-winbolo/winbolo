@@ -294,22 +294,62 @@ void utilStripName(char *name);
 *********************************************************/
 int roundDouble(double number);
 
+/* Where each ring of a utilSpiralCursor begins. Both orders go clockwise and
+   grow one ring at a time; they differ only in the first square of a ring. */
+typedef enum {
+  /* The square due north of the centre: Mac Bolo's gen_scatter order, used
+     to put down a carried pillbox. */
+  UTIL_SPIRAL_NORTH,
+  /* The ring's north-west corner, then east along the top: the order the
+     start scatter search uses. */
+  UTIL_SPIRAL_NORTH_WEST
+} utilSpiralStartAt;
+
+/* A walk over the squares round a centre in a clockwise square spiral: the
+   centre, then rings of growing radius. Squares are kept as int so a ring
+   running off the edge of the map never wraps round to the far side. Each
+   step is O(1). */
+typedef struct {
+  int cx;       /* The centre square */
+  int cy;
+  int x;        /* The cursor */
+  int y;
+  utilSpiralStartAt startAt;
+} utilSpiralCursor;
+
 /*********************************************************
-*NAME:          utilSpiralOffset
-*AUTHOR:        John Morrison
-*CREATION DATE: 24/4/26
-*LAST MODIFIED: 24/4/26
+*NAME:          utilSpiralStart
 *PURPOSE:
-*  Returns the x,y offset for a given step in a clockwise
-*  spiral pattern expanding outward from the origin.
-*  Step 0 = (0,0), then expands one ring at a time.
+*  Starts a spiral walk with its cursor on the centre.
 *
 *ARGUMENTS:
-*  step - The spiral step index (0-based)
-*  dx   - Pointer to receive x offset
-*  dy   - Pointer to receive y offset
+*  s       - The walk
+*  cx      - X square to walk round
+*  cy      - Y square to walk round
+*  startAt - Where each ring begins
 *********************************************************/
-void utilSpiralOffset(int step, int *dx, int *dy);
+void utilSpiralStart(utilSpiralCursor *s, int cx, int cy, utilSpiralStartAt startAt);
+
+/*********************************************************
+*NAME:          utilSpiralRing
+*PURPOSE:
+*  Which ring of its spiral the cursor is on: 0 for the
+*  centre.
+*
+*ARGUMENTS:
+*  s - The walk
+*********************************************************/
+int utilSpiralRing(const utilSpiralCursor *s);
+
+/*********************************************************
+*NAME:          utilSpiralStep
+*PURPOSE:
+*  Moves the cursor to the next square of the spiral.
+*
+*ARGUMENTS:
+*  s - The walk
+*********************************************************/
+void utilSpiralStep(utilSpiralCursor *s);
 
 /* Returns the CLIENT_TYPE_* enum value for the platform we're running on. */
 uint8_t bolo_detect_client_type(void);

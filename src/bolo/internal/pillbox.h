@@ -40,6 +40,7 @@
 #include "types.h"
 #include "tank.h"
 #include "shells.h"
+#include "util.h"
 
 /* Forward declaration for players pointer type (defined in players.h) */
 struct playersObj;
@@ -1112,17 +1113,11 @@ void pillsClampToRules(struct GameSim *sim, pillboxes *value);
 void pillsFillToRules(struct GameSim *sim, pillboxes *value);
 
 /* The search for somewhere to put down a pillbox that was being carried:
-   Mac Bolo's gen_scatter spiral. The cursor starts on the centre square,
-   then walks square rings of growing radius, each starting on the square
-   straight north of the centre and going clockwise. Squares are kept as int
-   so a ring running off the edge of the map never wraps round to the far
-   side, and the walk ends after the last ring that touches the minable
-   area. */
+   Mac Bolo's gen_scatter spiral, a utilSpiralCursor that starts each ring
+   on the square straight north of the centre (UTIL_SPIRAL_NORTH). The walk
+   ends after the last ring that touches the minable area. */
 typedef struct {
-  int cx;       /* The centre square */
-  int cy;
-  int x;        /* The cursor */
-  int y;
+  utilSpiralCursor cursor;
   int maxRing;  /* Last ring holding any minable square */
 } pillsDropSpiral;
 

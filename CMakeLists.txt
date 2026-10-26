@@ -4218,6 +4218,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Where a dead tank's pills land: Mac Bolo's spiral round the tank, the
     # squares it passes over, the map edge, and a map built to have no room.
     tests/unit/test_tank_drop_pills.c
+    tests/unit/test_util_spiral.c
     # The builder ops: the five arms, the refusals each one answers with, the
     # wood a dispatched order costs, and the loss a scripted death records.
     tests/unit/test_scenario_builder_arms.c
@@ -6857,6 +6858,8 @@ set(_unit_test_names
     tank_drop_pills_no_room
     lgm_drop_pill_spiral
     lgm_drop_pill_no_room
+    util_spiral_north
+    util_spiral_north_west
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill

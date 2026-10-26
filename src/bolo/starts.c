@@ -457,20 +457,19 @@ static bool startsIsClearOfTanks(GameSim *sim, BYTE mx, BYTE my, BYTE playerNum)
 *              if there is no tank to skip
 *********************************************************/
 static void startsScatterFind(GameSim *sim, BYTE centreX, BYTE centreY, BYTE *outX, BYTE *outY, BYTE playerNum) {
+  utilSpiralCursor spiral;
   int pass;
   int step;
-  int dx;
-  int dy;
   int sx;
   int sy;
   bool keepClear;
 
   for (pass = 0; pass < 2; pass++) {
     keepClear = (pass == 0);
-    for (step = 0; step < sim->rules.start_scatter_max; step++) {
-      utilSpiralOffset(step, &dx, &dy);
-      sx = (int)centreX + dx;
-      sy = (int)centreY + dy;
+    utilSpiralStart(&spiral, centreX, centreY, UTIL_SPIRAL_NORTH_WEST);
+    for (step = 0; step < sim->rules.start_scatter_max; step++, utilSpiralStep(&spiral)) {
+      sx = spiral.x;
+      sy = spiral.y;
       if (sx > 0 && sx < MAP_ARRAY_SIZE && sy > 0 && sy < MAP_ARRAY_SIZE) {
         if (startsIsValidSquare(sim, (BYTE)sx, (BYTE)sy) &&
             (keepClear == FALSE || startsIsClearOfTanks(sim, (BYTE)sx, (BYTE)sy, playerNum))) {

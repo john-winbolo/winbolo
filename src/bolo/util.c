@@ -30,6 +30,7 @@
 
 /* Inludes */
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include "global.h"
 #include "tank.h"
@@ -605,67 +606,99 @@ int roundDouble(double number)
 }
 
 /*********************************************************
-*NAME:          utilSpiralOffset
-*AUTHOR:        John Morrison
-*CREATION DATE: 24/4/26
-*LAST MODIFIED: 24/4/26
+*NAME:          utilSpiralStart
 *PURPOSE:
-*  Returns the x,y offset for a given step in a clockwise
-*  spiral pattern expanding outward from the origin.
-*  Step 0 = (0,0), then expands one ring at a time.
+*  Starts a spiral walk with its cursor on the centre.
 *
 *ARGUMENTS:
-*  step - The spiral step index (0-based)
-*  dx   - Pointer to receive x offset
-*  dy   - Pointer to receive y offset
+*  s       - The walk
+*  cx      - X square to walk round
+*  cy      - Y square to walk round
+*  startAt - Where each ring begins
 *********************************************************/
-void utilSpiralOffset(int step, int *dx, int *dy) {
-  int ring;
-  int sideLen;
-  int perim;
-  int startStep;
-  int pos;
-  int side;
-  int offset;
+void utilSpiralStart(utilSpiralCursor *s, int cx, int cy, utilSpiralStartAt startAt) {
+  s->cx = cx;
+  s->cy = cy;
+  s->x = cx;
+  s->y = cy;
+  s->startAt = startAt;
+}
 
-  if (step == 0) {
-    *dx = 0;
-    *dy = 0;
+/*********************************************************
+*NAME:          utilSpiralRing
+*PURPOSE:
+*  Which ring of its spiral the cursor is on: 0 for the
+*  centre.
+*
+*ARGUMENTS:
+*  s - The walk
+*********************************************************/
+int utilSpiralRing(const utilSpiralCursor *s) {
+  int dx = abs(s->x - s->cx);
+  int dy = abs(s->y - s->cy);
+  return dx > dy ? dx : dy;
+}
+
+/*********************************************************
+*NAME:          utilSpiralStep
+*PURPOSE:
+*  Moves the cursor to the next square of the spiral.
+*
+*  UTIL_SPIRAL_NORTH is Mac Bolo's gen_scatter in int:
+*  from the centre to due north of it, along a ring
+*  clockwise, and from the square just west of due north
+*  round to due north of the next ring.
+*
+*  UTIL_SPIRAL_NORTH_WEST starts each ring on its north-
+*  west corner and goes east along the top, then south,
+*  west and north. The last square of a ring is the one
+*  just south of that corner, and from it the cursor steps
+*  out to the north-west corner of the next ring.
+*
+*ARGUMENTS:
+*  s - The walk
+*********************************************************/
+void utilSpiralStep(utilSpiralCursor *s) {
+  int dx = s->x - s->cx;
+  int dy = s->y - s->cy;
+  int ring = utilSpiralRing(s);
+
+  if (s->startAt == UTIL_SPIRAL_NORTH_WEST) {
+    if (ring == 0) {
+      s->x--;
+      s->y--;
+    } else if (dx == -ring && dy == -ring + 1) {
+      s->x--;       /* The last square: out to the next ring's corner */
+      s->y -= 2;
+    } else if (dy == -ring && dx < ring) {
+      s->x++;       /* East along the top */
+    } else if (dx == ring && dy < ring) {
+      s->y++;       /* South down the east side */
+    } else if (dy == ring && dx > -ring) {
+      s->x--;       /* West along the bottom */
+    } else {
+      s->y--;       /* North up the west side */
+    }
     return;
   }
 
-  /* Determine which ring this step falls in.
-   * Ring r starts at step 1 + 0 + 8 + 16 + ... = 1 + 8*(r-1)*r/2
-   * Each ring r has 8*r steps. */
-  ring = 1;
-  startStep = 1;
-  while (startStep + 8 * ring <= step) {
-    startStep += 8 * ring;
-    ring++;
-  }
-
-  sideLen = 2 * ring;
-  pos = step - startStep;
-  side = pos / sideLen;
-  offset = pos % sideLen;
-
-  switch (side) {
-  case 0: /* Top edge: left to right */
-    *dx = -ring + offset;
-    *dy = -ring;
-    break;
-  case 1: /* Right edge: top to bottom */
-    *dx = ring;
-    *dy = -ring + offset;
-    break;
-  case 2: /* Bottom edge: right to left */
-    *dx = ring - offset;
-    *dy = ring;
-    break;
-  default: /* Left edge: bottom to top */
-    *dx = -ring;
-    *dy = ring - offset;
-    break;
+  if (ring == 0) {
+    s->y--;
+  } else if (dy == -ring && dx < 0) {
+    /* East along the top, short of due north: the last stretch of a ring.
+       Reaching due north steps out to the start of the next one. */
+    s->x++;
+    if (s->x == s->cx) {
+      s->y--;
+    }
+  } else if (dx == -ring) {
+    s->y--;       /* North up the west side */
+  } else if (dy == ring) {
+    s->x--;       /* West along the bottom */
+  } else if (dx == ring) {
+    s->y++;       /* South down the east side */
+  } else {
+    s->x++;       /* East along the top, from due north */
   }
 }
 
