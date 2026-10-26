@@ -25,6 +25,19 @@
 
 #include "../../lang.h"  /* LangFileEntry for the shared language picker */
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+/* The Frame Rate choice (#312) is shown on desktop builds only. The web
+ * page is drawn when the browser asks for a frame, and Android and iOS
+ * pace their own screens, so there it would do nothing. */
+#if defined(__EMSCRIPTEN__) || defined(__ANDROID__) ||     (defined(__APPLE__) && TARGET_OS_IOS)
+#define IMGUI_FRAME_LIMIT_UI 0
+#else
+#define IMGUI_FRAME_LIMIT_UI 1
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -62,6 +75,12 @@ typedef struct SettingsRenderCtx {
  * ctx->pendingFullScreen — the window must not be moved mid-frame — and a skin
  * pick via ctx->wantSkinReload. */
 void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx);
+
+/* The name shown for a Frame Rate choice (a FrameLimit), in the player's
+ * language. The Settings dialog, the Edit menu and the macOS menu bar all
+ * use it, so the three lists say the same thing. The text stays valid
+ * until the next call with the same limit. */
+const char *imguiFrameLimitLabel(int limit);
 
 /* Render the shared Sound tab (sound toggles, volume, and the voice section).
  * Every control applies through its own setter as it is changed, so the shell

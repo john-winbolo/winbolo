@@ -5215,9 +5215,15 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontTrackerEnabled = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Menu Items */
-  intToStr(FRAME_RATE_30, def, sizeof(def));
-  prefsGetString("MENU", "Frame Rate", def, buff, FILENAME_MAX);
-  frameRate = atoi(buff);
+  /* The Frame Rate choice (#312). Older builds saved "Frame Rate" as an
+   * old FRAME_RATE_* number; it is read only when there is no new value,
+   * and moved to the nearest new choice. */
+  {
+    char oldBuff[32];
+    prefsGetString(FRAME_LIMIT_PREF_SECTION, FRAME_LIMIT_PREF_KEY, "", buff, FILENAME_MAX);
+    prefsGetString(FRAME_LIMIT_PREF_SECTION, FRAME_LIMIT_OLD_PREF_KEY, "", oldBuff, sizeof(oldBuff));
+    frameRate = frameLimitLoad(buff, oldBuff);
+  }
   /* Default ON for first-time players (no prefs file yet). Existing users
    * keep whatever "Show Gunsight" they already saved in their INI. */
   prefsGetString("MENU", "Show Gunsight", gunsightDefault, buff, FILENAME_MAX);
@@ -5789,8 +5795,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("TRACKER", "Enabled", TRUEFALSE_TO_STR(gameFrontTrackerEnabled));
 
   /* Menu Items */
-  intToStr(frameRate, buff, sizeof(buff));
-  prefsSetString("MENU", "Frame Rate", buff);
+  /* Only the new key is written. An old "Frame Rate" line is left as it
+   * is, so an older build still reads the value it wrote. */
+  prefsSetString(FRAME_LIMIT_PREF_SECTION, FRAME_LIMIT_PREF_KEY, frameLimitPrefString(frameRate));
   prefsSetString("MENU", "Show Gunsight", TRUEFALSE_TO_STR(showGunsight));
   prefsSetString("MENU", "Sound Effects", TRUEFALSE_TO_STR(soundEffects));
 #if !defined(__EMSCRIPTEN__)

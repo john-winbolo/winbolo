@@ -375,7 +375,6 @@ STR_LONG=Dlouhé
 STR_MENU_NO_OWN_LABEL=Neoznačovat vlastní tank
 STR_MENU_PILLBOX_LABELS=Popisky bunkrů
 STR_MENU_BASE_LABELS=Popisky zásobovacích základen
-STR_MENU_HIDE_MAIN=Skrýt hlavní pohled
 STR_MENU_DEVICE=Zařízení:
 STR_MENU_DESKTOP=Plocha
 STR_MENU_WINBOLO=WinBolo

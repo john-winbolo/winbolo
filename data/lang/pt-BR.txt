@@ -375,7 +375,6 @@ STR_LONG=Longo
 STR_MENU_NO_OWN_LABEL=Não rotular o próprio tanque
 STR_MENU_PILLBOX_LABELS=Etiquetas de bunker
 STR_MENU_BASE_LABELS=Etiquetas de base de reabastecimento
-STR_MENU_HIDE_MAIN=Ocultar visão principal
 STR_MENU_DEVICE=Dispositivo:
 STR_MENU_DESKTOP=Área de trabalho
 STR_MENU_WINBOLO=WinBolo

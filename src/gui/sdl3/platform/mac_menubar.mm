@@ -6,6 +6,7 @@
 
 #include "mac_menubar.h"
 #include "../../lang.h"
+#include "../../frame_limit.h"  /* FRAME_LIMIT_COUNT */
 
 /* PingBand only. Unlike ptype (matched numerically below to keep engine
  * headers out of this TU), the band names are the point: the whole reason
@@ -49,6 +50,7 @@ extern "C" void windowShowPillLabels_toggle(struct ClientSim *cs);
 extern "C" void windowShowBaseLabels_toggle(struct ClientSim *cs);
 
 extern "C" void sdl3ImguiSetFrameRate(int rate);
+extern "C" const char *imguiFrameLimitLabel(int limit);
 extern "C" void sdl3ImguiSetZoom(int zoom);
 extern "C" void sdl3ImguiSetMessageLabelLen(struct ClientSim *cs, int len);
 extern "C" void sdl3ImguiSetTankLabelLen(struct ClientSim *cs, int len);
@@ -959,39 +961,19 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     NSMenu *editMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_EDIT)];
     [editItem setSubmenu:editMenu];
 
-    /* Frame Rate submenu — tag values are the FRAME_RATE_* macro values
-     * from src/gui/winbolo.h (timer-tick periods, not literal Hz). */
+    /* Frame Rate submenu — the tag is the FrameLimit value (#312, see
+     * src/gui/frame_limit.h); the titles are the same as the Settings
+     * dialog's. */
     NSMenuItem *frameRateRoot = [editMenu addItemWithTitle:LANG_STR(STR_MENU_FRAME_RATE) action:nil keyEquivalent:@""];
     NSMenu *frameRateMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_FRAME_RATE)];
     [frameRateRoot setSubmenu:frameRateMenu];
 
-    NSMenuItem *fr60 = [[NSMenuItem alloc] initWithTitle:@"60" action:@selector(onSetFrameRate:) keyEquivalent:@""];
-    [fr60 setTarget:g_bridge]; [fr60 setTag:111]; /* FRAME_RATE_60 */
-    [frameRateMenu addItem:fr60];
-
-    NSMenuItem *fr50 = [[NSMenuItem alloc] initWithTitle:@"50" action:@selector(onSetFrameRate:) keyEquivalent:@""];
-    [fr50 setTarget:g_bridge]; [fr50 setTag:82]; /* FRAME_RATE_50 */
-    [frameRateMenu addItem:fr50];
-
-    NSMenuItem *fr30 = [[NSMenuItem alloc] initWithTitle:@"30" action:@selector(onSetFrameRate:) keyEquivalent:@""];
-    [fr30 setTarget:g_bridge]; [fr30 setTag:55]; /* FRAME_RATE_30 */
-    [frameRateMenu addItem:fr30];
-
-    NSMenuItem *fr20 = [[NSMenuItem alloc] initWithTitle:@"20" action:@selector(onSetFrameRate:) keyEquivalent:@""];
-    [fr20 setTarget:g_bridge]; [fr20 setTag:37]; /* FRAME_RATE_20 */
-    [frameRateMenu addItem:fr20];
-
-    NSMenuItem *fr15 = [[NSMenuItem alloc] initWithTitle:@"15" action:@selector(onSetFrameRate:) keyEquivalent:@""];
-    [fr15 setTarget:g_bridge]; [fr15 setTag:28]; /* FRAME_RATE_15 */
-    [frameRateMenu addItem:fr15];
-
-    NSMenuItem *fr12 = [[NSMenuItem alloc] initWithTitle:@"12" action:@selector(onSetFrameRate:) keyEquivalent:@""];
-    [fr12 setTarget:g_bridge]; [fr12 setTag:23]; /* FRAME_RATE_12 */
-    [frameRateMenu addItem:fr12];
-
-    NSMenuItem *fr10 = [[NSMenuItem alloc] initWithTitle:@"10" action:@selector(onSetFrameRate:) keyEquivalent:@""];
-    [fr10 setTarget:g_bridge]; [fr10 setTag:19]; /* FRAME_RATE_10 */
-    [frameRateMenu addItem:fr10];
+    for (int limit = 0; limit < FRAME_LIMIT_COUNT; limit++) {
+        NSString *title = [NSString stringWithUTF8String:imguiFrameLimitLabel(limit)];
+        NSMenuItem *fr = [[NSMenuItem alloc] initWithTitle:title action:@selector(onSetFrameRate:) keyEquivalent:@""];
+        [fr setTarget:g_bridge]; [fr setTag:limit];
+        [frameRateMenu addItem:fr];
+    }
 
     s_frameRateMenu = frameRateMenu;
 

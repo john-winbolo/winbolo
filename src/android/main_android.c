@@ -69,7 +69,9 @@ extern ClientSim *humanSim;
 
 bool isTutorial = FALSE;
 
-int frameRate = FRAME_RATE_30;
+/* The Frame Rate choice (a FrameLimit). Android paces its own screen, so
+   it is kept only for the shared code that reads it. */
+int frameRate = FRAME_LIMIT_DEFAULT;
 
 bool showGunsight = FALSE;
 bool soundEffects = TRUE;

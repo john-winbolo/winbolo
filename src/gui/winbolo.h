@@ -44,15 +44,9 @@ struct ClientSim;
 
 #define BOLO_SOUNDS_DLL "BoloSounds.bsd"
 
-/* Frame Rates */
-/* Numbers slightly off because of timer innacuracies */
-#define FRAME_RATE_10 19
-#define FRAME_RATE_12 23
-#define FRAME_RATE_15 28
-#define FRAME_RATE_20 37
-#define FRAME_RATE_30 55
-#define FRAME_RATE_50 82
-#define FRAME_RATE_60 111
+/* Frame rate: the FrameLimit choices, which replaced the old
+   FRAME_RATE_* values (#312). frameRate holds a FrameLimit. */
+#include "frame_limit.h"
 
 /* Zoom Factors */
 #define ZOOM_FACTOR_NORMAL 1

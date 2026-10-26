@@ -375,7 +375,6 @@ STR_LONG=Довгі
 STR_MENU_NO_OWN_LABEL=Не мітити власний танк
 STR_MENU_PILLBOX_LABELS=Мітки бункерів
 STR_MENU_BASE_LABELS=Мітки баз поповнення
-STR_MENU_HIDE_MAIN=Приховати головний вид
 STR_MENU_DEVICE=Пристрій:
 STR_MENU_DESKTOP=Робочий стіл
 STR_MENU_WINBOLO=WinBolo

@@ -413,7 +413,6 @@
 #define STR_MENU_NO_OWN_LABEL               560
 #define STR_MENU_PILLBOX_LABELS             561
 #define STR_MENU_BASE_LABELS                562
-#define STR_MENU_HIDE_MAIN                  563
 #define STR_MENU_DEVICE                     564
 #define STR_MENU_DESKTOP                    565
 #define STR_MENU_WINBOLO                    566
@@ -3653,6 +3652,12 @@
 
 /* The replay's recording mode button, which shows the GIF controls */
 #define STR_REEL_RECORD_MODE_TIP                 3150
+
+/* The Frame Rate choice in Settings > Display and the Edit menu (#312) */
+#define STR_FRAMELIMIT_VSYNC                     3160
+#define STR_FRAMELIMIT_CAP                       3161
+#define STR_FRAMELIMIT_UNLIMITED                 3162
+#define STR_FRAMELIMIT_TIP                       3163
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

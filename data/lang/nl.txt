@@ -375,7 +375,6 @@ STR_LONG=Lang
 STR_MENU_NO_OWN_LABEL=Eigen tank niet labelen
 STR_MENU_PILLBOX_LABELS=Bunkerlabels
 STR_MENU_BASE_LABELS=Labels bevoorradingsbases
-STR_MENU_HIDE_MAIN=Hoofdweergave verbergen
 STR_MENU_DEVICE=Apparaat:
 STR_MENU_DESKTOP=Bureaublad
 STR_MENU_WINBOLO=WinBolo

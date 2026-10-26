@@ -167,19 +167,12 @@ extern "C" void inputTouchSetAbsoluteSteering(bool enabled);
 extern "C" bool inputTouchGetAbsoluteSteering(void);
 
 /* -------------------------------------------------------
- * Frame-rate / zoom constants (mirrors winbolo.h values).
+ * Zoom constants (mirrors winbolo.h values).
  * Re-defined here to avoid pulling in the full Win32
- * winbolo.h header.
+ * winbolo.h header. The Frame Rate choices (#312) come
+ * from frame_limit.h, which has no such dependencies.
  * ------------------------------------------------------- */
-#ifndef FRAME_RATE_10
-#define FRAME_RATE_10  19
-#define FRAME_RATE_12  23
-#define FRAME_RATE_15  28
-#define FRAME_RATE_20  37
-#define FRAME_RATE_30  55
-#define FRAME_RATE_50  82
-#define FRAME_RATE_60  111
-#endif
+#include "../frame_limit.h"
 #ifndef ZOOM_FACTOR_NORMAL
 #define ZOOM_FACTOR_NORMAL 1
 #define ZOOM_FACTOR_DOUBLE 2
@@ -7609,16 +7602,18 @@ static void renderMenuBar(ClientSim *cs) {
 
     /* ---- Edit ---------------------------------------- */
     if (ImGui::BeginMenu(langGetText(STR_MENU_EDIT))) {
+#if IMGUI_FRAME_LIMIT_UI
+        /* The same choices as Settings > Display (#312). Kept here as
+           well because the original game had Frame Rate in this menu. */
         if (ImGui::BeginMenu(langGetText(STR_MENU_FRAME_RATE))) {
-            if (ImGui::MenuItem("60", nullptr, frameRate == FRAME_RATE_60)) windowSetFrameRate(FRAME_RATE_60, true);
-            if (ImGui::MenuItem("50", nullptr, frameRate == FRAME_RATE_50)) windowSetFrameRate(FRAME_RATE_50, true);
-            if (ImGui::MenuItem("30", nullptr, frameRate == FRAME_RATE_30)) windowSetFrameRate(FRAME_RATE_30, true);
-            if (ImGui::MenuItem("20", nullptr, frameRate == FRAME_RATE_20)) windowSetFrameRate(FRAME_RATE_20, true);
-            if (ImGui::MenuItem("15", nullptr, frameRate == FRAME_RATE_15)) windowSetFrameRate(FRAME_RATE_15, true);
-            if (ImGui::MenuItem("12", nullptr, frameRate == FRAME_RATE_12)) windowSetFrameRate(FRAME_RATE_12, true);
-            if (ImGui::MenuItem("10", nullptr, frameRate == FRAME_RATE_10)) windowSetFrameRate(FRAME_RATE_10, true);
+            for (int i = 0; i < FRAME_LIMIT_COUNT; i++) {
+                if (ImGui::MenuItem(imguiFrameLimitLabel(i), nullptr, frameRate == i)) {
+                    windowSetFrameRate(i, true);
+                }
+            }
             ImGui::EndMenu();
         }
+#endif
 
 #ifndef __EMSCRIPTEN__
         /* The web canvas follows the page, so it has no window size to pick. */

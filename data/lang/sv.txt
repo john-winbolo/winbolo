@@ -375,7 +375,6 @@ STR_LONG=Lång
 STR_MENU_NO_OWN_LABEL=Märk inte egen tank
 STR_MENU_PILLBOX_LABELS=Bunkeretiketter
 STR_MENU_BASE_LABELS=Försörjningsbasetiketter
-STR_MENU_HIDE_MAIN=Dölj huvudvy
 STR_MENU_DEVICE=Enhet:
 STR_MENU_DESKTOP=Skrivbord
 STR_MENU_WINBOLO=WinBolo

@@ -66,7 +66,7 @@ void mac_menubar_set_clientsim(void *clientSim);
  * sync NSMenuItem .state / .enabled / .title with the in-window menu. */
 struct MacMenuState {
     /* Edit menu */
-    int  frameRate;        /* current FRAME_RATE_* value; matched against item tag */
+    int  frameRate;        /* current FrameLimit value; matched against item tag */
     int  zoomFactor;       /* current ZOOM_FACTOR_* value; matched against item tag */
     bool fit1x;            /* whether 1x window size fits on the current display */
     bool fit2x;            /* 2x */
