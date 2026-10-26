@@ -3319,6 +3319,7 @@ int run_lobby_scenario_refuses_game_type(void);
 int run_lobby_scenario_boot_sets_type(void);
 int run_lobby_scenario_identity_strips_controls(void);
 int run_lobby_scenario_nolobby_boot_seats_template(void);
+int run_lobby_scenario_fixes_lobby_settings(void);
 
 /* What the sim tells WinBolo.net about the scripts a round runs
  * (test_wbn_lobby_info_scenario.c): the scenario, its cap and the mods, none

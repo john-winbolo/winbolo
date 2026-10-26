@@ -1016,7 +1016,16 @@ The lobby the map opens with.
 |---|---|---|
 | `max_players` | number | The cap on human players, 1 to 16. 0 (the default) leaves the server's own cap. |
 | `extra_teams` | boolean | Read, and sent to every client on the lobby settings event, but nothing acts on it yet. Whether a host may put a seat on a team nobody is on is decided by the `allow_extra_teams()` policy below, and a scenario that declares neither allows it. |
+| `hidden_mines` | boolean | Fixes the lobby's hidden mines setting for as long as the scenario is attached. Left out, the host's own setting applies. |
+| `time_limit` | number | Fixes the lobby's time limit, in minutes: 0 is no time limit, and a limit runs 1 to 4320. Left out, the host's own setting applies. A value out of range is reported by `-validate` and fixes nothing. |
+| `start_delay` | number | Fixes the start delay, in seconds, 0 to 600. Left out, the server's own delay applies. A value out of range is reported by `-validate` and fixes nothing. |
 | `teams` | array | One entry per team, in order. |
+
+While the scenario is attached, the host cannot change a setting that
+`hidden_mines`, `time_limit` or `start_delay` fixes: the lobby refuses the
+write with the scenario reason. When the scenario goes, the lobby gets back
+the values it had before. A fixed time limit holds for every round; a fixed
+start delay is the hold before each round starts.
 
 Each team:
 

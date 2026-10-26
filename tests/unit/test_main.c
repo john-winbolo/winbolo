@@ -1649,6 +1649,8 @@ static const UnitTestEntry s_tests[] = {
       run_lobby_scenario_identity_strips_controls                                            },
     { "lobby_scenario_nolobby_boot_seats_template",
       run_lobby_scenario_nolobby_boot_seats_template                                         },
+    { "lobby_scenario_fixes_lobby_settings",
+      run_lobby_scenario_fixes_lobby_settings                                                },
     { "wbn_lobby_info_scenario",                 run_wbn_lobby_info_scenario                 },
     { "info_script_tail_golden",                 run_info_script_tail_golden                 },
     { "info_script_tail_read",                   run_info_script_tail_read                   },

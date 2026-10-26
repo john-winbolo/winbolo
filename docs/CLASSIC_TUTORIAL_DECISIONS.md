@@ -127,18 +127,32 @@ The script copies the old tutorial step for step:
   **Why:** it is a tank op. Op types are never written to the wire or to a
   file, so the numbers of the later ops can move.
 
-## What the scenario cannot copy
+## The lobby settings the old launch path set
 
-These were set by the old launch path. A scenario cannot set them, so the
-host's lobby settings apply:
+- **What:** the scenario's lobby block says `hidden_mines = false`,
+  `time_limit = 0` and `start_delay = 0`. These are three new lobby keys.
+  While the scenario is attached, the server holds each setting at that
+  value, and the host cannot change it (the lobby refuses the write with
+  the scenario reason). When the scenario goes, the lobby gets back the
+  values it had.
+  **Why:** the old launch path turned hidden mines off and set no time
+  limit and no start delay. The settings are held on the server
+  (`serverSimScenarioApplyLobbyFixes`), so the desktop, mobile and web
+  games and a dedicated server all play the tutorial the same way. A check
+  in the menu would miss the Classic Tutorial, because a player picks it
+  from the lobby's map list, after the game is set up.
+  **Undo:** remove the three keys from the lobby block. The host's own
+  settings then apply.
+- **What:** the lobby does not grey out a fixed setting. The host sees the
+  control, and a change is refused with the scenario reason.
 
-- hidden mines (the old tutorial turned them off);
-- the time limit (the old tutorial had none);
-- the start delay (the old tutorial had none).
+## The main menu's Tutorial button
 
-The old tutorial also hid the main menu's tutorial button once it was done.
-The main menu now starts the new Tutorial, so the Classic Tutorial does not
-change that button.
+- **What:** the last step calls `game.tutorial_done(p)`. In a single-player
+  game this hides the main menu's Tutorial button, as the old tutorial did
+  when it was done.
+  **Why:** a player who finished the Classic Tutorial has learned the game,
+  so the button has done its job. The call comes from PR #521.
 
 ## What was removed
 

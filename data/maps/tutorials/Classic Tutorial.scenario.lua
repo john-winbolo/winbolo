@@ -30,6 +30,10 @@
 --     out at sea. After it, the tank respawns at start 2, on the far bank,
 --     and the first such respawn shows one more message.
 --
+-- THE LOBBY. As the old tutorial did, the game has no hidden mines, no
+-- start delay and no time limit. The lobby block fixes all three, and the
+-- host cannot change them while this scenario is attached.
+--
 -- The scenario changes no game rule and fields no bots. A bot the host added
 -- is taken off the field as the round starts, as the Tutorial does.
 -- =========================================================================
@@ -41,11 +45,14 @@ scenario = {
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-26T22:02Z",
+  updated = "2026-10-26T22:13Z",
   game = "strict",
 
   lobby = {
     max_players = 1,
+    hidden_mines = false,
+    time_limit = 0,
+    start_delay = 0,
   },
 
   callbacks = {

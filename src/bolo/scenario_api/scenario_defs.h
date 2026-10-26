@@ -108,13 +108,28 @@ typedef struct {
  * spawn op's loadout takes. It is the host's one-way hand-over of that
  * value: the sim keeps it where the spawn and start paths can read it when
  * the round is gameScripted. 0 means none declared, which plays strict
- * tournament. */
+ * tournament.
+ *
+ * The three fix flags each hold one lobby setting at the value beside it for
+ * as long as the scenario is attached: hidden mines, the time limit (in
+ * minutes, 0 for none) and the start delay (in seconds). The host cannot
+ * change a fixed setting, and the lobby gets back what it had when the
+ * scenario goes (serverSimScenarioApplyLobbyRules). */
 typedef struct {
     uint8_t      maxPlayers;
     uint8_t      numTeams;
     uint8_t      baseGameType;   /* a gameType value, 0 for none */
+    bool         fixHiddenMines;
+    bool         hiddenMines;
+    bool         fixTimeLimit;
+    uint16_t     timeLimitMinutes;  /* 0 = no time limit */
+    bool         fixStartDelay;
+    uint16_t     startDelaySeconds;
     ScnLobbyTeam teams[MAX_TANKS];
 } ScnLobbyTemplate;
+
+/* The longest start delay a scenario's lobby block may fix, in seconds. */
+#define SCN_LOBBY_START_DELAY_MAX 600
 
 /* What a scenario is called and what it asks for, as the sim reads it.
  *

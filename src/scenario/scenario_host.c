@@ -1355,6 +1355,28 @@ static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
     lob->maxPlayers = (uint8_t)scnReadInt(L, lt, "max_players", 0);
     lob->extraTeams = scnReadBool(L, lt, "extra_teams", false);
 
+    /* The three settings the block may fix. A key of the wrong type is left
+       alone, as the other keys here are; a number out of range is read and
+       the validator names it. */
+    scnRawField(L, lt, "hidden_mines");
+    if (lua_isboolean(L, -1)) {
+        lob->fixHiddenMines = true;
+        lob->hiddenMines    = lua_toboolean(L, -1) ? true : false;
+    }
+    lua_pop(L, 1);
+    scnRawField(L, lt, "time_limit");
+    if (lua_type(L, -1) == LUA_TNUMBER) {
+        lob->fixTimeLimit = true;
+        lob->timeLimit    = (int32_t)lua_tointeger(L, -1);
+    }
+    lua_pop(L, 1);
+    scnRawField(L, lt, "start_delay");
+    if (lua_type(L, -1) == LUA_TNUMBER) {
+        lob->fixStartDelay = true;
+        lob->startDelay    = (int32_t)lua_tointeger(L, -1);
+    }
+    lua_pop(L, 1);
+
     scnRawField(L, lt, "teams");
     if (lua_istable(L, -1)) {
         int teams = lua_gettop(L);
@@ -2334,6 +2356,18 @@ static void scnPushLobby(lua_State *L, const ScnManifestLobby *lob) {
     lua_setfield(L, t, "max_players");
     lua_pushboolean(L, lob->extraTeams ? 1 : 0);
     lua_setfield(L, t, "extra_teams");
+    if (lob->fixHiddenMines) {
+        lua_pushboolean(L, lob->hiddenMines ? 1 : 0);
+        lua_setfield(L, t, "hidden_mines");
+    }
+    if (lob->fixTimeLimit) {
+        lua_pushinteger(L, (lua_Integer)lob->timeLimit);
+        lua_setfield(L, t, "time_limit");
+    }
+    if (lob->fixStartDelay) {
+        lua_pushinteger(L, (lua_Integer)lob->startDelay);
+        lua_setfield(L, t, "start_delay");
+    }
     scnPushTeams(L, lob);
     lua_setfield(L, t, "teams");
 }
@@ -4059,7 +4093,8 @@ static bool scnComposeInto(ScenarioManifest *into,
                 return false;
             }
             if (m->lobby.numTeams > 0 || m->lobby.maxPlayers != 0 ||
-                m->lobby.extraTeams) {
+                m->lobby.extraTeams || m->lobby.fixHiddenMines ||
+                m->lobby.fixTimeLimit || m->lobby.fixStartDelay) {
                 scnComposeRefusal(err, errLen, e->script,
                                   "declares a lobby block, which belongs to "
                                   "%s: two scripts seating the lobby would "
@@ -5119,6 +5154,13 @@ static void scnTeamBrainPath(const ScnManifestTeam *team, char *out,
            (unsigned)team->id, team->brain);
 }
 
+/* Whether time_limit is a value the lobby can hold: 0 for no time limit, or
+ * a length in minutes the lobby's own setting takes. */
+static bool scnLobbyTimeLimitOk(int32_t minutes) {
+    return minutes == 0 || (minutes >= LOBBY_TIME_MINUTES_MIN &&
+                            minutes <= LOBBY_TIME_MINUTES_MAX);
+}
+
 /* The lobby out of the manifest and into the shape the sim reads. A straight
  * copy of the four numbers and the init table, with the brain resolved above,
  * dropping the teams the sim has no seat for: the manifest holds what the file
@@ -5138,6 +5180,21 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
     memset(out, 0, sizeof(*out));
     if (lob == NULL) return;
     out->maxPlayers = lob->maxPlayers;
+    /* A fix out of range is not a fix: the validator has named it, and the
+       lobby keeps the host's own setting. */
+    if (lob->fixHiddenMines) {
+        out->fixHiddenMines = true;
+        out->hiddenMines    = lob->hiddenMines;
+    }
+    if (lob->fixTimeLimit && scnLobbyTimeLimitOk(lob->timeLimit)) {
+        out->fixTimeLimit     = true;
+        out->timeLimitMinutes = (uint16_t)lob->timeLimit;
+    }
+    if (lob->fixStartDelay && lob->startDelay >= 0 &&
+        lob->startDelay <= SCN_LOBBY_START_DELAY_MAX) {
+        out->fixStartDelay     = true;
+        out->startDelaySeconds = (uint16_t)lob->startDelay;
+    }
     for (i = 0; i < lob->numTeams && out->numTeams < MAX_TANKS; i++) {
         const ScnManifestTeam *src = &lob->teams[i];
         ScnLobbyTeam          *dst;
