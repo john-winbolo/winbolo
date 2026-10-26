@@ -1755,6 +1755,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 | `game.give_pill(p, n)` | Puts a pillbox into a tank, however armoured and whoever held it. |
 | `game.drop_pill(p, n[, x, y])` | Puts a carried pillbox back on the map, on a square or under the tank. |
 | `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. `speed` goes from 0 to 2000 and the others from 0 to 255; past that the call is refused with `SCN_OP_RANGE`. **0 is read as the classic 100**, not as nothing, so 0 does not stop a tank; 1 is the smallest a modifier goes, and a `speed` of 1 holds a tank nearly still. `speed` scales the ground's speed cap, so 534 puts a river's 3 at a road's 16. However high it is set, the engine holds the tank's scaled cap to 160 world units a frame, the most the byte-sized modifier could give on the fastest speed rule. |
+| `game.stop_tank(p)` | Sets a tank's speed to 0 where it is. Nothing else changes: the tank keeps its square, its place inside the square, its heading and its boat. The player can drive on at the next tick. A dead tank is refused with `SCN_OP_TANK_DEAD`. The Classic Tutorial uses it to stop the tank on each of its rows, as the old built-in tutorial did. Unlike `game.teleport`, it does not move the tank to the centre of the square, and it works on deep sea. |
 
 ### The builder
 
@@ -2422,6 +2423,29 @@ client fills in the phrase first, then the key tokens in it:
 They were written for the Tutorial, and a script may use them in a popup, a
 status line or an announcement. The byte limits count the token as sent, not
 the sentence it becomes.
+
+A text can also name one whole string of the game's language file. When the
+whole text of a popup, a status line or an announcement is `{LANG:NAME}`,
+with nothing before or after it, the client shows the string called `NAME`
+in the player's language. `NAME` is the string's name as the language files
+write it, such as `STR_TUTORIAL01`: capital letters, digits and `_` only.
+Where the game has a touch or a controller wording of that string (the
+`_TOUCH` and `_CTRL` strings of the old built-in tutorial), the client picks
+the one for the player's input, and then fills in the key tokens in it. A
+name the language file does not have is shown as it is written. So is a
+text with anything else in it: one reference is one whole message, and
+`"Hi {LANG:STR_TUTORIAL01}"` is not filled in. A client from before this
+was added shows the reference as it is written.
+
+```lua
+game.popup("{LANG:STR_TUTORIAL01}", p)
+```
+
+The server does not read the reference, so the byte limits count it as
+sent. The strings are the game's, not the script's: use this only for a
+string the game ships, such as the Classic Tutorial's messages. A script's
+own text belongs in a table of its own, as [Text in the player's
+language](#text-in-the-players-language) shows.
 
 ### The panel
 

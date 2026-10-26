@@ -6184,6 +6184,8 @@ set(_unit_test_names
     scenario_status_tokens_expand
     tutorial_tokens_long_key_names
     tutorial_tokens_phrases
+    tutorial_lang_ref
+    lang_name_table_classic_tutorial
     scenario_announce_waits_for_popup
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
@@ -6870,6 +6872,7 @@ set(_unit_test_names
     scenario_tank_kill
     scenario_tank_teleport
     scenario_tank_set_boat
+    scenario_tank_stop
     scenario_tank_give_pill
     scenario_tank_drop_pill
     scenario_tank_arm_records

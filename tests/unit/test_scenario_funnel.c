@@ -43,6 +43,7 @@ static const ScenarioOpType kAllOpTypes[] = {
     SCN_OP_TANK_GIVE_PILL,
     SCN_OP_TANK_DROP_PILL,
     SCN_OP_TANK_SET_MODIFIERS,
+    SCN_OP_TANK_STOP,
     SCN_OP_LGM_DISPATCH,
     SCN_OP_LGM_RECALL,
     SCN_OP_LGM_KILL,
@@ -133,6 +134,7 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_TANK_SET_BOAT ||
            t == SCN_OP_TANK_GIVE_PILL ||
            t == SCN_OP_TANK_DROP_PILL ||
+           t == SCN_OP_TANK_STOP ||
            t == SCN_OP_LGM_DISPATCH ||        /* test_scenario_builder_arms.c */
            t == SCN_OP_LGM_RECALL ||
            t == SCN_OP_LGM_KILL ||

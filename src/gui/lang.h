@@ -3753,6 +3753,11 @@ const LangFileMeta *langGetLoadedMeta(void);
 void langGetFileName(char *fileName);
 char *langGetText(langid id);
 
+/* The id of the string whose symbolic name is `name` ("STR_TUTORIAL01"),
+ * the same name a language file uses for its keys. 0 when no string has
+ * that name. */
+langid langIdFromName(const char *name);
+
 /* Like langGetText, but expands the named placeholders {player},
  * {other}, {number} from `args`. If `args` is NULL it behaves like
  * langGetText. The result points into a small thread-local ring of

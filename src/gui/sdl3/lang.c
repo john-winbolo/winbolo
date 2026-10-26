@@ -3579,6 +3579,13 @@ void langAutoDetect(char *outCode, int outSize) {
     langPickerFreeEntries(entries, count);
 }
 
+langid langIdFromName(const char *name) {
+    if (!name || !*name) {
+        return 0;
+    }
+    return resolveName(name);
+}
+
 char *langGetText(langid id) {
     if (overrideTable && id < overrideTableSize && overrideTable[id]) {
         return overrideTable[id];

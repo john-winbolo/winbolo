@@ -1618,6 +1618,8 @@ int run_tutorial_tokens_long_key_names(void);
 /* The phrase tokens ({DRIVE_HOW}, {STEP_TREE} ...): found, named phrases,
  * and filled by tutorialPhrasesExpand alone, key tokens left as written. */
 int run_tutorial_tokens_phrases(void);
+int run_tutorial_lang_ref(void);
+int run_lang_name_table_classic_tutorial(void);
 int run_scenario_announce_waits_for_popup(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
@@ -3164,6 +3166,7 @@ int run_scenario_tank_set_stocks(void);
 int run_scenario_tank_kill(void);
 int run_scenario_tank_teleport(void);
 int run_scenario_tank_set_boat(void);
+int run_scenario_tank_stop(void);
 int run_scenario_tank_give_pill(void);
 int run_scenario_tank_drop_pill(void);
 int run_scenario_tank_arm_records(void);

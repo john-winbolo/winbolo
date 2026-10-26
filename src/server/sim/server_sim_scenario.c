@@ -369,6 +369,24 @@ static ScnOpResult scenarioOpTankSetBoat(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* Stop a tank where it is. Only the speed changes: the tank keeps its square,
+ * the place inside the square, its heading and its boat. This is what the
+ * classic tutorial did when a tank drove onto one of its rows. The player
+ * can accelerate again on the next tick. */
+static ScnOpResult scenarioOpTankStop(ServerSim *sim, const ScnOpTankStop *p) {
+    tank *t = NULL;
+    ScnOpResult r = scenarioTankFor(sim, p->slot, &t);
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (tankIsDestroyed(t)) {
+        return SCN_OP_TANK_DEAD;
+    }
+    tankSetSpeed(t, 0);
+    return SCN_OP_OK;
+}
+
 /* Hand a pill to a tank. Unlike driving over one this does not ask whether
  * the pill is capturable: a script may take an armoured pill with a man
  * standing on it, which is the point of being able to hand one over. */
@@ -4722,6 +4740,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpTankDropPill(sim, &op->u.tankDropPill);
         case SCN_OP_TANK_SET_MODIFIERS:
             return scenarioOpTankSetModifiers(sim, &op->u.tankSetModifiers);
+        case SCN_OP_TANK_STOP:
+            return scenarioOpTankStop(sim, &op->u.tankStop);
         case SCN_OP_LGM_DISPATCH:
             return scenarioOpLgmDispatch(sim, &op->u.lgmDispatch);
         case SCN_OP_LGM_RECALL:

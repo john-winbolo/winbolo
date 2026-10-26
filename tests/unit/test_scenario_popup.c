@@ -622,3 +622,39 @@ int run_scenario_announce_waits_for_popup(void) {
     clientSimDestroy(cs);
     return 0;
 }
+
+/* A popup whose whole text is "{LANG:NAME}" names one string of the
+   language file, which the client then shows in its own language. Only an
+   exact, whole reference matches: anything around it, an empty name, a
+   lower-case letter or a name too long for the buffer is not a reference,
+   and the text is shown as it is written. */
+int run_tutorial_lang_ref(void) {
+    char name[32];
+
+    UT_ASSERT(tutorialLangRefParse("{LANG:STR_TUTORIAL01}", name, sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "STR_TUTORIAL01") == 0, "name was '%s'", name);
+    UT_ASSERT(tutorialLangRefParse("{LANG:A}", name, sizeof(name)));
+    UT_ASSERT(strcmp(name, "A") == 0);
+
+    UT_ASSERT(!tutorialLangRefParse("{LANG:}", name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse("{LANG:STR_TUTORIAL01", name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse("{LANG:STR_TUTORIAL01} ", name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse(" {LANG:STR_TUTORIAL01}", name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse("Hi {LANG:STR_TUTORIAL01}", name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse("{LANG:str_tutorial01}", name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse("{LANG:STR TUTORIAL}", name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse("{LANG:A}{LANG:B}", name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse("{lang:STR_TUTORIAL01}", name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse("{ACCEL}", name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse("", name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse(NULL, name, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse("{LANG:A}", NULL, sizeof(name)));
+    UT_ASSERT(!tutorialLangRefParse("{LANG:A}", name, 0));
+
+    /* The name and its NUL must fit: 14 letters need 15 bytes. */
+    UT_ASSERT(!tutorialLangRefParse("{LANG:STR_TUTORIAL01}", name, 14));
+    UT_ASSERT(tutorialLangRefParse("{LANG:STR_TUTORIAL01}", name, 15));
+    UT_ASSERT(strcmp(name, "STR_TUTORIAL01") == 0);
+    return 0;
+}
+
