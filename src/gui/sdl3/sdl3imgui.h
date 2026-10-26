@@ -63,6 +63,19 @@ float sdl3ImguiGetUiScale(void);
 *  callback thread.
 *********************************************************/
 void sdl3ImguiProcessEvents(struct ClientSim *cs);
+
+/*********************************************************
+*NAME:          sdl3ImguiInEventPoll
+*PURPOSE:
+*  True only while sdl3ImguiProcessEvents is inside its own
+*  SDL_PollEvent call. It is false while that function
+*  handles an event, so a dialog loop that an event handler
+*  opens is never inside this poll. The desktop driver reads
+*  it from an SDL event watch to know that the game loop,
+*  and nothing nested in it, is the code waiting on the OS.
+*  Main thread only. See docs/THREADING.md.
+*********************************************************/
+bool sdl3ImguiInEventPoll(void);
 void sdl3ImguiResetFrameState(void);
 
 void sdl3ImguiPumpAndRender(struct ClientSim *cs);
