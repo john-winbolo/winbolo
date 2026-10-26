@@ -4169,6 +4169,7 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_LOBBY_BOT_POOL_INFO:    return "CTRL_LOBBY_BOT_POOL_INFO";
     case CTRL_SCN_STATUS:             return "CTRL_SCN_STATUS";
     case CTRL_VOICE_EVERYONE:         return "CTRL_VOICE_EVERYONE";
+    case CTRL_SCN_POPUP:              return "CTRL_SCN_POPUP";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }
