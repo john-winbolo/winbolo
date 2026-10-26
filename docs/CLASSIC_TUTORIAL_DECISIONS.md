@@ -67,7 +67,22 @@ The script copies the old tutorial step for step:
   smallest change: the other paragraphs stay word for word, and no new
   string is needed.
   **Undo:** put the paragraph back in `lang.c` and the 17 lang files.
-- **What:** no other message changes.
+- **What:** the English text of the messages is corrected. The other
+  languages stay as they are.
+  - `STR_TUTORIAL_START04` (and its touch and controller wordings) now
+    teaches turning with `{LEFT}` and `{RIGHT}`, together with `{ACCEL}`
+    and `{BRAKE}`.
+  - Every message says the same true thing about speed: the tank keeps the
+    speed it has when no key is pressed, until `{BRAKE}` or slower ground,
+    and each new message stops the tank.
+  - The links message (`STR_TUTORIAL_START02`) is shown after the last
+    message (`STR_TUTORIAL25`), not in the intro.
+  - Paragraphs are split by one blank line. No message has two.
+  **Why:** the old text did not teach turning, and it said different
+  things about holding speed in different places. The links are of use
+  when the tutorial is done, not before the first step.
+  **Undo:** put the old text back in `lang.c` and `data/lang/en.txt`, and
+  `STR_TUTORIAL_START02` back in the intro in the script.
 
 ## Languages and input types
 
