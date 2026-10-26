@@ -3454,6 +3454,7 @@ int run_tank_drop_pills_blocked(void);
 int run_tank_drop_pills_map_edge(void);
 int run_tank_drop_pills_hostile_map(void);
 int run_tank_drop_pills_no_room(void);
+int run_tank_drop_pills_quit_no_room(void);
 int run_lgm_drop_pill_spiral(void);
 int run_lgm_drop_pill_no_room(void);
 int run_util_spiral_north(void);

@@ -26,12 +26,15 @@
  * run_tank_drop_pills_hostile_map  — a map of buildings with one free square
  *                                    as far from the tank as it can be
  * run_tank_drop_pills_no_room      — a map of boats with no free square at
- *                                    all: the search ends, and the pills stay
- *                                    in the tank
+ *                                    all: the second pass turns the boats
+ *                                    under the pills to river
+ * run_tank_drop_pills_quit_no_room — the same map, with the player quitting:
+ *                                    the pills are on the map afterwards
  * run_lgm_drop_pill_spiral         — the builder's pill goes down on the same
  *                                    spiral round his square
- * run_lgm_drop_pill_no_room        — and on a map with no room at all, the
- *                                    search ends and the pill stays carried
+ * run_lgm_drop_pill_no_room        — and on a map of buildings, the second
+ *                                    pass turns the building under the pill
+ *                                    to rubble
  *
  * Every case lays the map out itself: all grass, the map's bases taken off it,
  * and exactly the pills the case carries.
@@ -283,36 +286,68 @@ int run_tank_drop_pills_hostile_map(void) {
     return 0;
 }
 
-/* A map with no square anywhere that will hold a pill. The search used to go
- * round forever looking for one and hang the server; now it gives up after
- * the last ring, and the pills stay in the tank. */
+/* Fills the whole map with one terrain. */
+static void tdp_fill(ServerSim *sim, BYTE terrain) {
+    int x, y;
+
+    for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+        for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+            tdp_set_terrain(sim, x, y, terrain);
+        }
+    }
+}
+
+/* A map with no square anywhere that will hold a pill. The first pass of the
+ * search finds nothing, so the second pass starts again from the tank's
+ * square and turns the boat under each pill to river. */
 int run_tank_drop_pills_no_room(void) {
     ServerSim *sim = ut_make_running_sim("Tester");
     tank *t;
-    pillbox p;
-    BYTE n;
-    int x, y;
 
     UT_ASSERT(sim != NULL);
     t = &sim->sim.tanks[TDP_SLOT];
     UT_ASSERT(tdp_setup(sim, 128, 128, 2) == 0);
-    for (x = 0; x < MAP_ARRAY_SIZE; x++) {
-        for (y = 0; y < MAP_ARRAY_SIZE; y++) {
-            tdp_set_terrain(sim, x, y, BOAT);
-        }
-    }
+    tdp_fill(sim, BOAT);
 
     tankDropPills(&sim->sim, t);
 
-    UT_ASSERT_MSG(tankGetNumCarriedPills(t) == 2,
-                  "%u pills still carried, wanted both",
+    UT_ASSERT_MSG(tankGetNumCarriedPills(t) == 0,
+                  "%u pills still carried, wanted none",
                   (unsigned) tankGetNumCarriedPills(t));
+    UT_ASSERT(tdp_assert_at(sim, 2, 128, 128) == 0);
+    UT_ASSERT(tdp_assert_at(sim, 1, 128, 127) == 0);
+    UT_ASSERT(mapGetPos(&sim->sim.mp, 128, 128) == RIVER);
+    UT_ASSERT(mapGetPos(&sim->sim.mp, 128, 127) == RIVER);
+    /* The next square of the spiral is not touched. */
+    UT_ASSERT(mapGetPos(&sim->sim.mp, 129, 127) == BOAT);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The player quits on the map of boats. tankDestroy frees the carry list
+ * after the drop, so a pill left in it would be lost for the round. Both
+ * pills must be on the map afterwards. */
+int run_tank_drop_pills_quit_no_room(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    pillbox p;
+    BYTE n;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(tdp_setup(sim, 128, 128, 2) == 0);
+    tdp_fill(sim, BOAT);
+
+    serverSimRemovePlayer(sim, TDP_SLOT);
+
     for (n = 1; n <= 2; n++) {
-        UT_ASSERT(tankIsCarryingPill(t, n));
         memset(&p, 0, sizeof(p));
         pillsGetPill(&sim->sim.pb, &p, n);
-        UT_ASSERT_MSG(p.inTank == TRUE, "pill %u is off the tank but has "
-                      "nowhere to be", (unsigned) n);
+        UT_ASSERT_MSG(p.inTank == FALSE, "pill %u is still marked carried",
+                      (unsigned) n);
+        UT_ASSERT_MSG(mapGetPos(&sim->sim.mp, p.x, p.y) == RIVER,
+                      "pill %u is at (%u,%u) on terrain %u, wanted river",
+                      (unsigned) n, (unsigned) p.x, (unsigned) p.y,
+                      (unsigned) mapGetPos(&sim->sim.mp, p.x, p.y));
     }
 
     serverSimDestroy(sim);
@@ -366,25 +401,18 @@ int run_lgm_drop_pill_spiral(void) {
 int run_lgm_drop_pill_no_room(void) {
     ServerSim *sim = ut_make_running_sim("Tester");
     lgm *man;
-    pillbox p;
-    int x, y;
 
     UT_ASSERT(sim != NULL);
     man = &sim->sim.lgmen[TDP_SLOT];
     UT_ASSERT(tdp_man_holding_pill(sim, 128, 128) == 0);
-    for (x = 0; x < MAP_ARRAY_SIZE; x++) {
-        for (y = 0; y < MAP_ARRAY_SIZE; y++) {
-            tdp_set_terrain(sim, x, y, BUILDING);
-        }
-    }
+    tdp_fill(sim, BUILDING);
 
     lgmDropCarriedPill(&sim->sim, man);
 
     UT_ASSERT((*man)->numPills == LGM_NO_PILL);
-    memset(&p, 0, sizeof(p));
-    pillsGetPill(&sim->sim.pb, &p, 1);
-    UT_ASSERT_MSG(p.inTank == TRUE, "the pill is off the man but has nowhere "
-                  "to be");
+    UT_ASSERT(tdp_assert_at(sim, 1, 128, 128) == 0);
+    UT_ASSERT(mapGetPos(&sim->sim.mp, 128, 128) == RUBBLE);
+    UT_ASSERT(mapGetPos(&sim->sim.mp, 128, 127) == BUILDING);
 
     serverSimDestroy(sim);
     return 0;
