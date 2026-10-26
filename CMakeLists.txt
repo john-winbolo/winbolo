@@ -1018,7 +1018,6 @@ set(IOS_DATA_ROOT
 # Maps that go into the root (Everard Island for single-player)
 set(IOS_DATA_ROOT_MAPS
     "${CMAKE_SOURCE_DIR}/data/maps/Everard Island.map"
-    "${CMAKE_SOURCE_DIR}/data/maps/Inbuilt Tutorial.map"
 )
 file(GLOB IOS_DATA_FONT
     "${CMAKE_SOURCE_DIR}/data/fonts/*.ttf"

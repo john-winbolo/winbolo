@@ -3145,12 +3145,6 @@ BYTE serverSimGetViewPlayer(const ServerSim *sim);
  * the bg_game rendering camera-perspective override (under a
  * per-file T2 grant). */
 
-/* Tutorial-mode flag mirrored on the embedded GameSim. */
-bool serverSimIsTutorial(const ServerSim *sim);
-void serverSimSetTutorial(ServerSim *sim, bool v);
-void serverSimSetTutorialStartIdx(ServerSim *sim, BYTE idx);
-bool serverSimTakeTutorialRespawn1(ServerSim *sim);
-
 /* Pause flag on the embedded GameSim. Unlocked: caller must hold
  * threadsMutex. */
 void serverSimSetPaused(ServerSim *sim, bool paused);

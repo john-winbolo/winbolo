@@ -31,7 +31,7 @@ extern keyItems keys;
 /* Per-call render buffer.  TEXT and keycap-label runs are copied
  * here so the segment producer can return stable pointers without
  * allocating.  The dialog consumes the result synchronously inside
- * frontEndTutorial; subsequent calls overwrite the buffer. */
+ * the overlay draw; subsequent calls overwrite the buffer. */
 static char tutorialBuf[2048];
 
 /* What a token draws as on a controller, one row per TutorialTokenId and

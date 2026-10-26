@@ -125,12 +125,68 @@ The old tutorial also hid the main menu's tutorial button once it was done.
 The main menu now starts the new Tutorial, so the Classic Tutorial does not
 change that button.
 
+## What was removed
+
+The main menu starts the new Tutorial (PR #521). Nothing started the old
+C tutorial any more, so its code is taken out:
+
+- `src/bolo/tutorial.c` and `src/bolo/public/tutorial.h` (the step table
+  and `tutorialIsStopPos`).
+- The client sequencer in `client_frontend_common.c` (`frontEndTutorial`,
+  `frontEndTutorialReset`, the presented-frame count, the respawn poll and
+  the step-showing flag) and its header `client_frontend_tutorial.h`.
+- `frontEndTutorial` and `frontEndTutorialReset` in `frontend.h`, and their
+  stubs in the server, headless, brain test and unit test builds.
+- The tank code's row stop and respawn flag (`tank.c`), and the fixed
+  tutorial start (`starts.c`).
+- The `GameSim` fields `isTutorial`, `tutorialStartIdx`, `tutorialMinRow`
+  and `tutorialRespawn1Pending`, and their accessors on the server sim and
+  the client sim.
+- The `isTutorial` global and its dead branches in the desktop, web,
+  Android and iOS drivers and in `gamefront.c` and `gamefront_wasm.c`.
+- `data/maps/Inbuilt Tutorial.map` (now
+  `data/maps/tutorials/Classic Tutorial.map`), its iOS bundle entry and its
+  web preload. The web preloads all of `data`, so the tutorials folder is in
+  it.
+
+## What was kept, and why
+
+- The tutorial overlay (`imgui_tutorial_overlay.cpp`) and
+  `windowTutorialPause`: scenario popups use them on every platform. Its
+  limit of four messages a call, which was `TUTORIAL_MAX_MSGS` in
+  `tutorial.h`, is now a define in the overlay file.
+- `tutorial_text.c`, `tutorial_tokens.c`, `kStringVariants` and
+  `pickStringId`: they show the key tokens and the touch and controller
+  wordings for both tutorials.
+- The pause of a solo game while a tutorial message is up
+  (`CLIENT_FRONT_PAUSE_TUTORIAL`): Android and iOS stop their tick loop
+  through `clientFrontAnyPause`, which covers it. Only the extra test of the
+  removed step-showing flag is gone.
+- Every `STR_TUTORIAL*` string: the Classic Tutorial or the new Tutorial
+  shows each one.
+- The Settings "Play Tutorial" button, the welcome menu entry and the
+  show-tutorial-button setting: they start the new Tutorial now.
+- The name `Inbuilt Tutorial.map` in the background-game map filter
+  (`tutorial_maps.h`): a player can still have the old file in a maps
+  folder from an earlier install.
+- The `STR_TUTORIAL*` text in `src/server/resource.h`: it is the old
+  Windows string table, which nothing in the tutorial path reads.
+
+## Folders
+
+The tutorials folder, its packaging (desktop, Android, iOS and web) and the
+main menu's start of the new Tutorial come from the commits under this
+change on the PR #521 branch. This change only adds its two files to the
+folder.
+
 ## Tests
 
 - Unit: `scenario_tank_stop` (the op), `tutorial_lang_ref` (the parser),
   `lang_name_table_classic_tutorial` (every name the script uses is in the
   language table), and the op lists in `scenario_lua_every_row_answers` and
   the funnel tests.
+- The unit tests of the old tutorial: there were none for the sequencer
+  or the server accessors. Their stubs in `test_stubs.c` are removed.
 - Arenas (`tests/scenario`, `GATE script=`):
   - `classic_tutorial_steps`: every step's popups, in order, on the right
     row, and a stop on each step's row;

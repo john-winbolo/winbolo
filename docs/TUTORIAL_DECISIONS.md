@@ -1420,7 +1420,8 @@ are filled is 882 bytes (Ukrainian s3); the client's buffer for it is 2,048.
 - The web (`?tutorial=` and the menu entry) does the same in
   `gamefront_wasm.c`.
 - The old built-in tutorial (`tutorial.c`, `isTutorial`) is not started
-  from the menu any more. Its code stays until it is taken out.
+  from the menu any more. Its C code is taken out by the Classic Tutorial
+  change; see `docs/CLASSIC_TUTORIAL_DECISIONS.md`.
 
 ### Hand play-test still needed
 

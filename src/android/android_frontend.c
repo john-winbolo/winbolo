@@ -491,10 +491,6 @@ void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
   sdl3ImguiShowAllianceRequest(playerName, playerNum);
 }
 
-/* frontEndTutorial and frontEndTutorialReset come from
-   client_frontend_common.c, the tutorial step sequencer every platform
-   calls. */
-
 /* -------------------------------------------------------
  * Misc required symbols
  * ------------------------------------------------------- */

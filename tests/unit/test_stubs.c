@@ -424,12 +424,6 @@ void frontEndRedrawAll(ClientSim *cs) {
   (void)cs;
 }
 
-bool frontEndTutorial(BYTE pos) {
-  (void)pos;
-  return FALSE;
-}
-
-void frontEndTutorialReset(void) { }
 
 void windowRedrawAll(ClientSim *cs) {
   (void)cs;

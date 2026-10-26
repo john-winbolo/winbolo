@@ -280,8 +280,6 @@ static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
 
 ClientSim *humanSim = NULL;
 
-extern bool isTutorial;
-
 /* Used to set the preferences — defined in main_wasm.c */
 extern int frameRate;
 extern bool showGunsight;
@@ -596,7 +594,6 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
   (void)keys;
 
   /* Per-game state, reset for each game. */
-  isTutorial = FALSE;
   password[0] = '\0';
   wantRejoin = FALSE;
   gameFrontUdpAddress[0] = '\0';
@@ -617,10 +614,6 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
   } else {
     fileName[0] = '\0';
   }
-
-  /* Start the tutorial step sequencer from the first step, whatever the
-   * mode, so a game never inherits the last one's step or frame count. */
-  frontEndTutorialReset();
 
   /* ---- Determine net mode from the launch ----
    * Production web play is selected by ?game_key= (the shareable
@@ -834,9 +827,7 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
        * Tutorial scenario in data/maps/tutorials, on the game the desktop
        * openTutorial path plays it on (gamefront.c): an Open game, Full
        * Advantage AI so the bots the script seats are allowed, hidden mines
-       * on, no start delay and no time limit. The old built-in tutorial
-       * (isTutorial, its step driver and overlay) is not started any more;
-       * its code stays until it is taken out. */
+       * on, no start delay and no time limit. */
       strncpy(fileName, TUTORIAL_MENU_MAP, FILENAME_MAX - 1);
       fileName[FILENAME_MAX - 1] = '\0';
       gametype = gameOpen;

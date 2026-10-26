@@ -56,11 +56,9 @@
 #include "client_render.h"
 #include "client_frontend_tick.h"
 #include "client_frontend_render.h"
-#include "client_frontend_tutorial.h"
 #include "client_frontend_common.h"
 #include "client_sim.h"
 #include "frontend.h"
-#include "tutorial.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../steam/steam_input_actions.h"
 #include "client_net.h"
@@ -114,8 +112,6 @@ static void windowEnsureOnScreen(SDL_Window *win);
 /* -------------------------------------------------------
  * Globals declared by winbolo.h (extern in sdl3imgui.cpp)
  * ------------------------------------------------------- */
-
-bool isTutorial = FALSE;
 
 /* The frame rate */
 int frameRate = FRAME_RATE_30;
@@ -894,8 +890,6 @@ int main(int argc, char *argv[]) {
           SDL_Renderer *ren = sdl3DrawGetRenderer();
           if (ren) SDL_RenderPresent(ren);
         }
-        frontEndTutorialNotePresentedFrame();
-        clientFrontTutorialPollRespawn();
         /* Pick up a native save-map dialog the player has answered. The
            dialog is asynchronous precisely so this loop — which is what
            pumps the client transport — keeps running while it is open. */
@@ -951,7 +945,6 @@ int main(int argc, char *argv[]) {
 
     sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
-    frontEndTutorialReset();
 
     if (winboloQuit == FALSE) {
       if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
@@ -1071,14 +1064,6 @@ static void windowRunGameTick(ClientSim *cs) {
   /* Update the game objects if required */
   if ((ttick - oldTick) > GAME_TICK_LENGTH) {
     while ((ttick - oldTick) > GAME_TICK_LENGTH) {
-      /* A tutorial message overlay just opened (frontEndTutorial enqueued it
-         from clientSimGameTick this iteration): stop catching up.  The render
-         path opens the overlay and engages the solo freeze, after which
-         windowRunGameTick early-outs at the top until the message closes —
-         which rebases oldTick so the paused interval isn't fast-forwarded.
-         Without this break the loop spins forever: the step stays showing
-         across frames, and oldTick only advances in the branch below. */
-      if (clientFrontTutorialStepShowing()) break;
       /* One keys/game/lobby half-step lives in the shared client-frontend tick
        * core (both desktop and web call it); the brain and per-second stat
        * rollover below stay here in the driver. Bot brains tick on the server
@@ -2309,10 +2294,6 @@ void frontEndShowGunsight(ClientSim *cs, bool isShown) {
   showGunsight = !isShown;
   clientSimSetGunsight(cs, showGunsight);
 }
-
-/* frontEndTutorial, frontEndTutorialReset and the rest of the tutorial step
-   sequencer come from client_frontend_common.c, the one body the desktop, web
-   and iOS drivers call; see "Platform variants" in docs/ARCHITECTURE.md. */
 
 /* -------------------------------------------------------
  * winboloCC — coin check (Win32-only anti-cheat).

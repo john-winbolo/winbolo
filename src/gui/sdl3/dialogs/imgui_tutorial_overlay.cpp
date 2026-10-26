@@ -24,9 +24,8 @@
 #include "../tutorial_text.h"
 #include "../../winbolo.h"   /* DIALOG_BOX_TITLE */
 
-extern "C" {
-#include "tutorial.h"        /* TUTORIAL_MAX_MSGS */
-}
+/* The most string ids one tutorialOverlayShow call shows in a row. */
+#define TUTORIAL_MAX_MSGS 4
 
 /* All state is touched only from the main thread: tutorialOverlayShow runs
    inside the game tick, render/advance inside the render pass — the two

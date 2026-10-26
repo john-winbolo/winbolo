@@ -1984,14 +1984,6 @@ BYTE clientSimGetNumPlayers(ClientSim *cs) {
   return playersGetNumPlayers(&clientSimGetGameSim(cs)->plyrs);
 }
 
-bool clientSimIsTutorial(const ClientSim *cs) {
-  return clientSimGetGameSim((ClientSim *)cs)->isTutorial;
-}
-
-void clientSimSetTutorial(ClientSim *cs, bool v) {
-  clientSimGetGameSim(cs)->isTutorial = v;
-}
-
 gameType clientSimGetGameType(const ClientSim *cs) {
   return clientSimGetGameSim((ClientSim *)cs)->game;
 }
