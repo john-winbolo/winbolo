@@ -23,7 +23,6 @@
 #include "transport_udp_internal.h"        /* packHeader, packU16,
                                             * UDP_MAX_PAYLOAD */
 #include "transport_udp_server_internal.h" /* udpServer, UdpServerClient, srvSendTo,
-                                            * mpDiagCtrlName,
                                             * transportUdpServerFlushChannel,
                                             * udpClientDeliverControl */
 #include "global.h"          /* BYTE, MAX_TANKS, PlayerBitMap */
@@ -103,58 +102,6 @@
 BOLO_STATIC_ASSERT(JOIN_REPLAY_BACKLOG_MAX <= CHANNEL_CONTROL_BACKLOG,
                    join_replay_too_big_for_control_move_data_to_bulk);
 
-/* Short name for a ControlEventType — diagnostic logging only. */
-const char *mpDiagCtrlName(int type) {
-    switch (type) {
-    case CTRL_ALLIANCE_REQUEST: return "ALLIANCE_REQUEST";
-    case CTRL_ALLIANCE_ACCEPT:  return "ALLIANCE_ACCEPT";
-    case CTRL_ALLIANCE_LEAVE:   return "ALLIANCE_LEAVE";
-    case CTRL_ALLIANCE_RESET:   return "ALLIANCE_RESET";
-    case CTRL_PLAYER_JOIN:      return "PLAYER_JOIN";
-    case CTRL_PLAYER_NAME:      return "PLAYER_NAME";
-    case CTRL_LOBBY_SLOT:       return "LOBBY_SLOT";
-    case CTRL_LOBBY_SETTINGS:   return "LOBBY_SETTINGS";
-    case CTRL_LOBBY_MAP_CHANGE: return "LOBBY_MAP_CHANGE";
-    case CTRL_MAP_DOWNLOAD_COMPLETE: return "MAP_DOWNLOAD_COMPLETE";
-    case CTRL_BALANCE_PROPOSAL: return "BALANCE_PROPOSAL";
-    case CTRL_MAP_SKIP_STATE:   return "MAP_SKIP_STATE";
-    case CTRL_GAME_PHASE_LOBBY: return "GAME_PHASE_LOBBY";
-    case CTRL_GAME_PHASE_COUNTDOWN: return "GAME_PHASE_COUNTDOWN";
-    case CTRL_GAME_PHASE_RUNNING:   return "GAME_PHASE_RUNNING";
-    case CTRL_GAME_PHASE_GAME_OVER: return "GAME_PHASE_GAME_OVER";
-    case CTRL_GAME_OVER:        return "GAME_OVER";
-    case CTRL_SERVER_SHUTDOWN:  return "SERVER_SHUTDOWN";
-    case CTRL_CHAT:             return "CHAT";
-    case CTRL_PLAYER_LEAVE:     return "PLAYER_LEAVE";
-    case CTRL_LOBBY_TEAM_META:  return "LOBBY_TEAM_META";
-    case CTRL_LOBBY_BOT_CONFIG: return "LOBBY_BOT_CONFIG";
-    case CTRL_LOBBY_BOT_BRAIN:  return "LOBBY_BOT_BRAIN";
-    case CTRL_LOBBY_BRAIN_LIST: return "LOBBY_BRAIN_LIST";
-    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: return "LOBBY_BRAIN_DOCS_CHUNK";
-    case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
-    case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
-    case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
-    case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
-    case CTRL_VIEW_TARGET:      return "VIEW_TARGET";
-    case CTRL_VOICE_TALKING:    return "VOICE_TALKING";
-    case CTRL_ENTITY_CHANGE:    return "ENTITY_CHANGE";
-    case CTRL_ENTITY_SYNC:      return "ENTITY_SYNC";
-    case CTRL_SIM_RULES:        return "SIM_RULES";
-    case CTRL_SCN_PANEL:        return "SCN_PANEL";
-    case CTRL_SCN_SCORE:        return "SCN_SCORE";
-    case CTRL_SCN_ANNOUNCE:     return "SCN_ANNOUNCE";
-    case CTRL_SCN_MARKER:       return "SCN_MARKER";
-    case CTRL_SCN_STATUS:       return "SCN_STATUS";
-    case CTRL_VOICE_EVERYONE:   return "VOICE_EVERYONE";
-    case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
-    case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
-    case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
-    case CTRL_LOBBY_BRAIN_ANNOUNCE: return "LOBBY_BRAIN_ANNOUNCE";
-    case CTRL_LOBBY_BOT_POOL_INFO:  return "LOBBY_BOT_POOL_INFO";
-    default:                    return "<unknown>";
-    }
-}
-
 /* Flush one client's channel onto the wire immediately as a standalone
  * PACKET_CHANNEL.  Used to carry a just-published control event when no later
  * carrier tick is guaranteed to follow — the server teardown publishes
@@ -192,7 +139,7 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
     idx = (int)(client - udpServer.clients);
     if (!client->connected) {
         mpDiagLog("[srv] deliver SKIP slot=%d type=%s reason=not-connected",
-                  idx, mpDiagCtrlName((int)evt->type));
+                  idx, controlEventDiagName(evt->type));
         return;
     }
 
@@ -306,7 +253,7 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
             if (!lp || lp->teamNumber != destTeam) {
                 mpDiagLog("[srv] deliver FILTER slot=%d type=%s "
                           "reason=not-on-team destTeam=%d clientPlayerNum=%d",
-                          idx, mpDiagCtrlName((int)evt->type),
+                          idx, controlEventDiagName(evt->type),
                           (int)destTeam, (int)client->playerNum);
                 return;
             }
@@ -314,7 +261,7 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
         if (destPlayer != 0xFF && client->playerNum != destPlayer) {
             mpDiagLog("[srv] deliver FILTER slot=%d type=%s "
                       "reason=not-addressed destPlayer=%d clientPlayerNum=%d",
-                      idx, mpDiagCtrlName((int)evt->type),
+                      idx, controlEventDiagName(evt->type),
                       (int)destPlayer, (int)client->playerNum);
             return;
         }
@@ -400,12 +347,12 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
         size_t bodyLen = 0;
         if (enc == NULL) {
             mpDiagLog("[srv] deliver SKIP slot=%d type=%s reason=no-encoder",
-                      idx, mpDiagCtrlName((int)evt->type));
+                      idx, controlEventDiagName(evt->type));
             return;
         }
         if (enc(evt, client, msg + 3, sizeof(msg) - 3, &bodyLen) != ENCODE_OK) {
             mpDiagLog("[srv] deliver SKIP slot=%d type=%s reason=encode",
-                      idx, mpDiagCtrlName((int)evt->type));
+                      idx, controlEventDiagName(evt->type));
             return;
         }
         msg[0] = (uint8_t)evt->type;
@@ -417,13 +364,13 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
                              "control channel overflow for slot %d, deferring disconnect",
                              idx);
                 mpDiagLog("[srv] OVERFLOW slot=%d type=%s -> deferring disconnect",
-                          idx, mpDiagCtrlName((int)evt->type));
+                          idx, controlEventDiagName(evt->type));
                 udpServer.pendingSimRemove[idx] = true;
             }
             return;
         }
         mpDiagLog("[srv] CTRL->ch2 slot=%d type=%s bodyLen=%u",
-                  idx, mpDiagCtrlName((int)evt->type), (unsigned)bodyLen);
+                  idx, controlEventDiagName(evt->type), (unsigned)bodyLen);
     }
 
     /* Carry it now when outside running: the per-tick standalone PACKET_CHANNEL

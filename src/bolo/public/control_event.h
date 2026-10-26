@@ -1379,4 +1379,12 @@ typedef struct ControlEvent {
     } u;
 } ControlEvent;
 
+/* The enumerator's own name for a ControlEventType, for example
+ * "CTRL_CHAT". Answers NULL for a value outside the enum, which a decoded
+ * wire byte can be. Defined in transport_control_codec.c. */
+const char *controlEventTypeName(ControlEventType type);
+
+/* The same name for log lines: "<unknown>" in place of NULL. */
+const char *controlEventDiagName(ControlEventType type);
+
 #endif /* CONTROL_EVENT_H */

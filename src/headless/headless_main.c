@@ -324,57 +324,19 @@ static void logEventsJsonStr(FILE *f, const char *s, size_t maxLen) {
   fputc('"', f);
 }
 
-static const char *logEventsTypeName(int type) {
+/* The --log-events "type" string. The four game-phase events share the
+ * one name "CTRL_GAME_PHASE", which the committed baselines carry; every
+ * other event uses its enumerator's name from the shared table. NULL for
+ * a value outside the enum. */
+static const char *logEventsTypeName(ControlEventType type) {
   switch (type) {
-    case CTRL_ALLIANCE_REQUEST:      return "CTRL_ALLIANCE_REQUEST";
-    case CTRL_ALLIANCE_ACCEPT:       return "CTRL_ALLIANCE_ACCEPT";
-    case CTRL_ALLIANCE_LEAVE:        return "CTRL_ALLIANCE_LEAVE";
-    case CTRL_ALLIANCE_RESET:        return "CTRL_ALLIANCE_RESET";
-    case CTRL_PLAYER_JOIN:           return "CTRL_PLAYER_JOIN";
-    case CTRL_PLAYER_LEAVE:          return "CTRL_PLAYER_LEAVE";
-    case CTRL_PLAYER_NAME:           return "CTRL_PLAYER_NAME";
-    case CTRL_LOBBY_SLOT:            return "CTRL_LOBBY_SLOT";
-    case CTRL_LOBBY_SETTINGS:        return "CTRL_LOBBY_SETTINGS";
-    case CTRL_LOBBY_MAP_CHANGE:      return "CTRL_LOBBY_MAP_CHANGE";
-    case CTRL_MAP_DOWNLOAD_COMPLETE: return "CTRL_MAP_DOWNLOAD_COMPLETE";
-    case CTRL_BALANCE_PROPOSAL:      return "CTRL_BALANCE_PROPOSAL";
-    case CTRL_MAP_SKIP_STATE:        return "CTRL_MAP_SKIP_STATE";
     case CTRL_GAME_PHASE_LOBBY:
     case CTRL_GAME_PHASE_COUNTDOWN:
     case CTRL_GAME_PHASE_RUNNING:
-    case CTRL_GAME_PHASE_GAME_OVER:  return "CTRL_GAME_PHASE";
-    case CTRL_GAME_OVER:             return "CTRL_GAME_OVER";
-    case CTRL_SERVER_SHUTDOWN:       return "CTRL_SERVER_SHUTDOWN";
-    case CTRL_LOBBY_SYNC_COMPLETE:   return "CTRL_LOBBY_SYNC_COMPLETE";
-    case CTRL_CHAT:                  return "CTRL_CHAT";
-    case CTRL_LOBBY_TEAM_META:       return "CTRL_LOBBY_TEAM_META";
-    case CTRL_LOBBY_BOT_CONFIG:      return "CTRL_LOBBY_BOT_CONFIG";
-    case CTRL_LOBBY_BOT_BRAIN:       return "CTRL_LOBBY_BOT_BRAIN";
-    case CTRL_LOBBY_BRAIN_LIST:      return "CTRL_LOBBY_BRAIN_LIST";
-    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: return "CTRL_LOBBY_BRAIN_DOCS_CHUNK";
-    case CTRL_GAME_VOTE_STATE:       return "CTRL_GAME_VOTE_STATE";
-    case CTRL_SERVER_TEXT:           return "CTRL_SERVER_TEXT";
-    case CTRL_COMMAND_REJECTED:      return "CTRL_COMMAND_REJECTED";
-    case CTRL_BALANCE_FAILED:        return "CTRL_BALANCE_FAILED";
-    case CTRL_ROUND_STATS:           return "CTRL_ROUND_STATS";
-    case CTRL_ROUND_RATING_POSTED:   return "CTRL_ROUND_RATING_POSTED";
-    case CTRL_STATS_SEED:            return "CTRL_STATS_SEED";
-    case CTRL_VOICE_TALKING:         return "CTRL_VOICE_TALKING";
-    case CTRL_ENTITY_CHANGE:         return "CTRL_ENTITY_CHANGE";
-    case CTRL_ENTITY_SYNC:           return "CTRL_ENTITY_SYNC";
-    case CTRL_SIM_RULES:             return "CTRL_SIM_RULES";
-    case CTRL_SCN_PANEL:             return "CTRL_SCN_PANEL";
-    case CTRL_SCN_SCORE:             return "CTRL_SCN_SCORE";
-    case CTRL_SCN_ANNOUNCE:          return "CTRL_SCN_ANNOUNCE";
-    case CTRL_SCN_MARKER:            return "CTRL_SCN_MARKER";
-    case CTRL_SCN_STATUS:            return "CTRL_SCN_STATUS";
-    case CTRL_VOICE_EVERYONE:        return "CTRL_VOICE_EVERYONE";
-    case CTRL_SCENARIO_RULES:        return "CTRL_SCENARIO_RULES";
-    case CTRL_LOBBY_SCRIPT_LIST:     return "CTRL_LOBBY_SCRIPT_LIST";
-    case CTRL_LOBBY_SCRIPT_SETTING:  return "CTRL_LOBBY_SCRIPT_SETTING";
-    case CTRL_LOBBY_BRAIN_ANNOUNCE:  return "CTRL_LOBBY_BRAIN_ANNOUNCE";
-    case CTRL_LOBBY_BOT_POOL_INFO:   return "CTRL_LOBBY_BOT_POOL_INFO";
-    default:                         return NULL;
+    case CTRL_GAME_PHASE_GAME_OVER:
+      return "CTRL_GAME_PHASE";
+    default:
+      return controlEventTypeName(type);
   }
 }
 
@@ -406,7 +368,7 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
    * which both modes agree on (set by snapshot ingestion in --fast
    * and --server alike). Pre-snapshot events log tick 0. */
   tick = humanSim != NULL ? clientSimGetLastServerTick(humanSim) : 0;
-  typeName = logEventsTypeName((int)evt->type);
+  typeName = logEventsTypeName(evt->type);
 
   fputc('{', f);
   if (typeName != NULL) {

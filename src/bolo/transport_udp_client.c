@@ -1315,59 +1315,6 @@ void udpClientHandleLobbyMapSearchRsp(ClientSim *cs,
     }
 }
 
-/* Short name for a ControlEventType — diagnostic logging only. */
-static const char *mpDiagCtrlName(int type) {
-    switch (type) {
-    case CTRL_ALLIANCE_REQUEST: return "ALLIANCE_REQUEST";
-    case CTRL_ALLIANCE_ACCEPT:  return "ALLIANCE_ACCEPT";
-    case CTRL_ALLIANCE_LEAVE:   return "ALLIANCE_LEAVE";
-    case CTRL_ALLIANCE_RESET:   return "ALLIANCE_RESET";
-    case CTRL_PLAYER_JOIN:      return "PLAYER_JOIN";
-    case CTRL_PLAYER_NAME:      return "PLAYER_NAME";
-    case CTRL_LOBBY_SLOT:       return "LOBBY_SLOT";
-    case CTRL_LOBBY_SETTINGS:   return "LOBBY_SETTINGS";
-    case CTRL_LOBBY_MAP_CHANGE: return "LOBBY_MAP_CHANGE";
-    case CTRL_MAP_DOWNLOAD_COMPLETE: return "MAP_DOWNLOAD_COMPLETE";
-    case CTRL_BALANCE_PROPOSAL: return "BALANCE_PROPOSAL";
-    case CTRL_MAP_SKIP_STATE:   return "MAP_SKIP_STATE";
-    case CTRL_GAME_PHASE_LOBBY: return "GAME_PHASE_LOBBY";
-    case CTRL_GAME_PHASE_COUNTDOWN: return "GAME_PHASE_COUNTDOWN";
-    case CTRL_GAME_PHASE_RUNNING:   return "GAME_PHASE_RUNNING";
-    case CTRL_GAME_PHASE_GAME_OVER: return "GAME_PHASE_GAME_OVER";
-    case CTRL_GAME_OVER:        return "GAME_OVER";
-    case CTRL_SERVER_SHUTDOWN:  return "SERVER_SHUTDOWN";
-    case CTRL_CHAT:             return "CHAT";
-    case CTRL_PLAYER_LEAVE:     return "PLAYER_LEAVE";
-    case CTRL_LOBBY_TEAM_META:  return "LOBBY_TEAM_META";
-    case CTRL_LOBBY_BOT_CONFIG: return "LOBBY_BOT_CONFIG";
-    case CTRL_LOBBY_BOT_BRAIN:  return "LOBBY_BOT_BRAIN";
-    case CTRL_LOBBY_BRAIN_LIST: return "LOBBY_BRAIN_LIST";
-    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: return "LOBBY_BRAIN_DOCS_CHUNK";
-    case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
-    case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
-    case CTRL_COMMAND_REJECTED: return "COMMAND_REJECTED";
-    case CTRL_BALANCE_FAILED:   return "BALANCE_FAILED";
-    case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
-    case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
-    case CTRL_VOICE_TALKING:    return "VOICE_TALKING";
-    case CTRL_ENTITY_CHANGE:    return "ENTITY_CHANGE";
-    case CTRL_ENTITY_SYNC:      return "ENTITY_SYNC";
-    case CTRL_SIM_RULES:        return "SIM_RULES";
-    case CTRL_SCN_PANEL:        return "SCN_PANEL";
-    case CTRL_SCN_SCORE:        return "SCN_SCORE";
-    case CTRL_SCN_ANNOUNCE:     return "SCN_ANNOUNCE";
-    case CTRL_SCN_MARKER:       return "SCN_MARKER";
-    case CTRL_SCN_STATUS:       return "SCN_STATUS";
-    case CTRL_VOICE_EVERYONE:   return "VOICE_EVERYONE";
-    case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
-    case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
-    case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
-    case CTRL_LOBBY_BRAIN_ANNOUNCE: return "LOBBY_BRAIN_ANNOUNCE";
-    case CTRL_LOBBY_BOT_POOL_INFO:  return "LOBBY_BOT_POOL_INFO";
-    default:                    return "<unknown>";
-    }
-}
-
 /* Apply a CTRL_CHANNEL_RESET: lift the game (channel 0) and map (channel 1)
  * receive baselines to the server's new game-start floors, so a previous-game
  * straggler (seq below the baseline) dedup-drops instead of replaying in the
@@ -1606,7 +1553,7 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
                      (unsigned)evt->u.lobbySettings.lobbyServerLocks);
         }
         mpDiagLog("[cli] APPLY evSeq=%u type=%s%s inLobby=%d mapInstalled=%d",
-                  (unsigned)evSeq, mpDiagCtrlName((int)evt->type), extra,
+                  (unsigned)evSeq, controlEventDiagName(evt->type), extra,
                   (int)c->clientSim->inLobby, (int)c->mapInstalled);
     }
     if (evt->type == CTRL_GAME_PHASE_RUNNING) {
@@ -3346,7 +3293,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 dec = transportControlCodecBodyDecoder((ControlEventType)type);
                 if (dec == NULL || !dec(ctlBuf + 3, bodyLen, &evt)) {
                     mpDiagLog("[cli] ch2 control decode SKIP type=%s reason=%s",
-                              mpDiagCtrlName((int)type),
+                              controlEventDiagName((ControlEventType)type),
                               dec == NULL ? "no decoder" : "decode failed");
                     continue;
                 }
@@ -3582,7 +3529,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     dec = transportControlCodecBodyDecoder((ControlEventType)type);
                     if (dec == NULL || !dec(chanBuf + 3, bodyLen, &evt)) {
                         mpDiagLog("[cli] ch2 control decode SKIP type=%s reason=%s",
-                                  mpDiagCtrlName((int)type),
+                                  controlEventDiagName((ControlEventType)type),
                                   dec == NULL ? "no decoder" : "decode failed");
                         continue;
                     }

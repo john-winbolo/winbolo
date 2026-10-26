@@ -619,9 +619,8 @@ void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
  * src/server/udp/udp_server_join.c hands udpClientDeliverControl to
  * serverSimRegisterSubscriber and flushes the replay burst that follows;
  * src/server/udp/udp_server_spectator.c calls udpClientDeliverControl to
- * deliver a player-addressed event, and its own deliver callback logs through
- * mpDiagCtrlName. */
-const char *mpDiagCtrlName(int type);
+ * deliver a player-addressed event. Both log event names through
+ * controlEventDiagName (control_event.h). */
 void transportUdpServerFlushChannel(int clientIdx);
 void udpClientDeliverControl(void *ctx, const ControlEvent *evt);
 
