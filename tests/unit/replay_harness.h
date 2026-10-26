@@ -80,7 +80,7 @@
  * the event that would carry the change, so a round that drives one will
  * differ for a reason that is not the reader's fault:
  *
- *   pillsDropSetNeutralOwner and pillsMigrate write log_PillSetOwner only
+ *   pillsMigrate writes log_PillSetOwner only
  *   for a pill that is in a tank, and pillsMigratePlanted writes nothing, so
  *   a planted pill changes hands unrecorded. These need a player to quit or
  *   an alliance to break.
