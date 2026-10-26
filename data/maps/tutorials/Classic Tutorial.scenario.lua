@@ -41,7 +41,7 @@ scenario = {
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-26T15:30Z",
+  updated = "2026-10-26T21:44Z",
   game = "strict",
 
   lobby = {
@@ -125,6 +125,9 @@ local function fire_step()
   local s = STEPS[S.step]
   for _, name in ipairs(s.msgs) do show(name) end
   if s.row == BOAT_ROW then S.far_bank = true end
+  -- The last step finishes the tutorial. In a single-player game this
+  -- hides the main menu's Tutorial button.
+  if S.step == #STEPS then game.tutorial_done(S.player) end
   S.step = S.step + 1
 end
 

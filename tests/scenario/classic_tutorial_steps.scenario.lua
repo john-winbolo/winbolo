@@ -14,10 +14,13 @@
 --   - each later step's popups are sent on the tick the tank is on its row,
 --     in the order of the old step table, and nothing else is sent;
 --   - every popup is a whole "{LANG:NAME}" reference and the server takes it;
---   - game.stop_tank is called once on each step's row, and on no other row.
+--   - game.stop_tank is called once on each step's row, and on no other row;
+--   - game.tutorial_done is called once, for seat 0, on the last step's row
+--     after its popup, and the server takes it.
 
 CLASSIC_TUTORIAL_PLAYER = 0
-ARENA = { my = 214, pops = {}, stops = {}, bad = {}, done = false }
+ARENA = { my = 214, pops = {}, stops = {}, bad = {}, dones = {},
+          done = false }
 
 -- The old tutorial's steps (src/bolo/tutorial.c), row then message names.
 ARENA.want = {
@@ -62,6 +65,14 @@ game.stop_tank = function(p)
   return real_stop(p)
 end
 
+ARENA.real_done = game.tutorial_done
+game.tutorial_done = function(p)
+  local ok, code = ARENA.real_done(p)
+  ARENA.dones[#ARENA.dones + 1] = { p = p, ok = ok, code = code,
+                                    my = ARENA.my, after = #ARENA.pops }
+  return ok, code
+end
+
 local function check()
   local A = ARENA
   local i = 0
@@ -97,8 +108,16 @@ local function check()
     end
   end
   if #A.bad > 0 then return false, A.bad[1] end
-  return true, string.format("%d popups and %d stops on the right rows",
-                             #A.pops, #A.stops)
+  local d = A.dones[1]
+  if #A.dones ~= 1 or d.p ~= 0 or d.ok ~= true or d.my ~= 21 or
+     d.after ~= #A.pops then
+    return false, string.format("tutorial_done calls=%d p=%s ok=%s code=%s "
+      .. "row=%s after %s of %d popups", #A.dones, tostring(d and d.p),
+      tostring(d and d.ok), tostring(d and d.code), tostring(d and d.my),
+      tostring(d and d.after), #A.pops)
+  end
+  return true, string.format("%d popups and %d stops on the right rows; "
+                             .. "tutorial_done on row 21", #A.pops, #A.stops)
 end
 
 local arena_real_tick = on_tick
