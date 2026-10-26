@@ -3780,6 +3780,7 @@ int run_scenario_validate_needs_bots_declared(void);
  * the rules, tags and regions a script declares read back. */
 int run_scenario_lua_every_row_answers(void);
 int run_scenario_lua_voice_everyone(void);
+int run_scenario_lua_lang(void);
 int run_scenario_lua_op_arguments_match_the_doc(void);
 int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);

@@ -2699,6 +2699,11 @@ bool gameFrontSetDlgState(openingStates newState) {
             threadsWaitForMutex();
             clientSimNetSetLocalFrameQueue(humanSim, true);
             spFrameQueueSim = humanSim;
+            /* The server is in this process, so it can be told the language
+             * the player reads; a scenario picks its text by it. */
+            serverSimSetPlayerLang(spServerSim,
+                                   clientSimGetMyPlayerNum(humanSim),
+                                   gameFrontLanguageCode);
             threadsReleaseMutex();
             /* Phase 2 leaves the legacy spHumanSubHandle field unset —
              * the auto-subscriber registered by connect lives inside
@@ -3406,6 +3411,14 @@ void gameFrontSetLanguageCode(const char *code) {
    * even if the user never reaches gameFrontPutPrefs. */
   prefsSetString("SETTINGS", "Language",
                             gameFrontLanguageCode);
+  /* A single-player game already running reads the new language from the
+   * scenario's next line on. */
+  if (gameFrontGetServerSim() != NULL && humanSim != NULL) {
+    threadsWaitForMutex();
+    serverSimSetPlayerLang(spServerSim, clientSimGetMyPlayerNum(humanSim),
+                           gameFrontLanguageCode);
+    threadsReleaseMutex();
+  }
 }
 
 void gameFrontRequestPlayTutorial(void) {

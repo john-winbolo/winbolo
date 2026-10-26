@@ -2038,6 +2038,7 @@ static const UnitTestEntry s_tests[] = {
       run_scenario_validate_rule_pair_key                                                          },
     { "scenario_lua_every_row_answers",             run_scenario_lua_every_row_answers             },
     { "scenario_lua_voice_everyone",                run_scenario_lua_voice_everyone                },
+    { "scenario_lua_lang",                          run_scenario_lua_lang                          },
     { "scenario_lua_op_arguments_match_the_doc",
       run_scenario_lua_op_arguments_match_the_doc                                                  },
     { "scenario_lua_read_index_passes_through",     run_scenario_lua_read_index_passes_through     },

@@ -14,6 +14,9 @@
  * run_scenario_lua_voice_everyone      — set_voice_everyone and
  *                                        voice_everyone from a script, and
  *                                        the refusal with server voice off
+ * run_scenario_lua_lang                — lang(p) reads the code the
+ *                                        frontend gave the seat, and "en"
+ *                                        for anything it refuses or lacks
  * run_scenario_lua_op_arguments_match_the_doc
  *                                      — every row says what arguments it
  *                                        takes, and says the same as the
@@ -491,6 +494,7 @@ static const char *const kSlEveryRowCalls =
     "  allied      = function() return game.allied(0, 0) end,\n"
     "  rule        = function() return game.rule(\"tank_reload_ticks\") end,\n"
     "  voice_everyone = function() return game.voice_everyone() end,\n"
+    "  lang        = function() return game.lang(0) end,\n"
     "  tags        = function() return game.tags(\"pill\", 1) end,\n"
     "  tagged      = function() return game.tagged(\"keep\") end,\n"
     "  region      = function() return game.region(\"keep\") end,\n"
@@ -756,6 +760,81 @@ int run_scenario_lua_voice_everyone(void) {
                   "the refusal was named '%s'", code);
     UT_ASSERT_MSG(!slGlobalIsNil(L, "still") && !slGlobalBool(L, "still"),
                   "voice_everyone() did not answer false with voice off");
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 1c. The player's language through the binding ───────────────────── */
+
+/* game.lang reads what the frontend told the sim, lowercased; a seat never
+   told, a code the setter refuses, an empty seat and a seat out of range all
+   answer "en", and the code goes when the seat's player leaves. */
+static const char *const kSlLang =
+    "got = game.lang(0)\n"
+    "other = game.lang(5)\n"
+    "far = game.lang(99)\n";
+
+static void slLangRead(lua_State *L, char *got, char *other, char *far,
+                       size_t cap) {
+    char err[512];
+    if (!slRun(L, kSlLang, err, sizeof(err))) {
+        snprintf(got, cap, "chunk failed: %s", err);
+        other[0] = far[0] = '\0';
+        return;
+    }
+    slGlobalStr(L, "got", got, cap);
+    slGlobalStr(L, "other", other, cap);
+    slGlobalStr(L, "far", far, cap);
+}
+
+int run_scenario_lua_lang(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             got[64];
+    char             other[64];
+    char             far[64];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    slLangRead(L, got, other, far, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "en") == 0,
+                  "a seat never told read '%s', not 'en'", got);
+
+    serverSimSetPlayerLang(sim, 0, "pt-BR");
+    slLangRead(L, got, other, far, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "pt-br") == 0,
+                  "pt-BR read back as '%s', not 'pt-br'", got);
+    UT_ASSERT_MSG(strcmp(other, "en") == 0 && strcmp(far, "en") == 0,
+                  "an empty seat read '%s' and seat 99 '%s'", other, far);
+
+    serverSimSetPlayerLang(sim, 0, "de;rm");
+    slLangRead(L, got, other, far, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "en") == 0,
+                  "a code with a ';' in it was kept as '%s'", got);
+
+    serverSimSetPlayerLang(sim, 0, "abcdefghijklmnop");
+    slLangRead(L, got, other, far, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "en") == 0,
+                  "a 16-letter code was kept as '%s'", got);
+
+    serverSimSetPlayerLang(sim, 0, "de");
+    serverSimSetPlayerLang(sim, 0, "");
+    slLangRead(L, got, other, far, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "en") == 0,
+                  "an empty code did not clear the seat: '%s'", got);
+
+    serverSimSetPlayerLang(sim, 0, "ja");
+    serverSimRemovePlayer(sim, 0);
+    slLangRead(L, got, other, far, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "en") == 0,
+                  "the seat kept '%s' after its player left", got);
 
     lua_close(L);
     serverSimDestroy(sim);

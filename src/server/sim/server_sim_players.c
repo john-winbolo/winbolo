@@ -379,6 +379,8 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return;
     /* The next occupant of this seat has not had its mode picked by anyone. */
     sim->botModeSetByHand &= (uint16_t)~(1u << playerNum);
+    /* Nor told the server what language they read. */
+    sim->playerLang[playerNum][0] = '\0';
     /* Captured before any teardown so the last-human-left reset below can
      * tell a human departure from a bot one. Bot removals run through this
      * same path (botManagerRemoveBot), and the reset itself removes bots —

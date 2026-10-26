@@ -1045,6 +1045,34 @@ const char *serverSimGetServerDescription(const ServerSim *sim) {
     return sim ? sim->serverDescription : "";
 }
 
+void serverSimSetPlayerLang(ServerSim *sim, BYTE seat, const char *code) {
+    char   lower[SERVER_PLAYER_LANG_LEN];
+    size_t i;
+
+    if (sim == NULL || seat >= MAX_TANKS) return;
+    sim->playerLang[seat][0] = '\0';
+    if (code == NULL) return;
+    for (i = 0; code[i] != '\0'; i++) {
+        char ch = code[i];
+        if (i + 1 >= sizeof(lower)) return;   /* too long: left cleared */
+        if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
+              ch == '-')) {
+            return;
+        }
+        lower[i] = ch;
+    }
+    lower[i] = '\0';
+    memcpy(sim->playerLang[seat], lower, i + 1);
+}
+
+const char *serverSimGetPlayerLang(const ServerSim *sim, BYTE seat) {
+    if (sim == NULL || seat >= MAX_TANKS || sim->playerLang[seat][0] == '\0') {
+        return "en";
+    }
+    return sim->playerLang[seat];
+}
+
 bool serverSimGetScenarioVoiceEveryone(const ServerSim *sim) {
     if (sim == NULL || sim->voiceMode == serverVoiceOff) return false;
     return sim->scenarioVoiceEveryone;

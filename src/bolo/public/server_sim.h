@@ -2834,6 +2834,22 @@ bool        serverSimGetModsOff(const ServerSim *sim);
 void            serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode);
 ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
 
+/* The language a seat's player reads, as the name of their lang file
+ * lowercased: "en", "de", "pt-br". game.lang(p) answers it, so a scenario
+ * can pick its own text for the player. Only a client in the same process
+ * as the server can tell it — the single-player frontend does, at join and
+ * whenever the player changes language — so every remote seat, and every
+ * seat on a dedicated server, reads "en".
+ *
+ * The setter lowercases the code and keeps it only when it is 1 to
+ * SERVER_PLAYER_LANG_LEN - 1 letters, digits and '-'; anything else,
+ * NULL and "" clear the seat back to "en". The seat is cleared when its
+ * player leaves. The getter answers "en" for a NULL sim, a seat out of
+ * range and a seat that was never told; never NULL. */
+#define SERVER_PLAYER_LANG_LEN 16
+void        serverSimSetPlayerLang(ServerSim *sim, BYTE seat, const char *code);
+const char *serverSimGetPlayerLang(const ServerSim *sim, BYTE seat);
+
 /* Voice to everyone — the flag a scenario sets with
  * game.set_voice_everyone. The getter answers false for a NULL sim and when
  * the server's voice mode is serverVoiceOff, because then nobody hears

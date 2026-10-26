@@ -504,7 +504,15 @@ struct ServerSim {
                                     * serverSimStartGameInPlace and a
                                     * scenario detach, so it never reaches a
                                     * later round. */
-    BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
+    char     playerLang[MAX_TANKS][SERVER_PLAYER_LANG_LEN];
+                                   /* the language each seat's player reads,
+                                    * lowercased ("de", "pt-br"); "" when the
+                                    * server was not told. Only a client in
+                                    * the same process tells it (the single-
+                                    * player frontend), so a remote seat
+                                    * stays "". Cleared when the seat's
+                                    * player leaves. Read by game.lang. */
+    BYTE     maxPlayers;          /* cap on join slots; 0 falls back to MAX_TANKS */
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */
     uint32_t specDelayTicks;       /* spectator view delay in ticks (50 ticks/s) */

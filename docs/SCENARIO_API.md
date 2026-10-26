@@ -37,6 +37,7 @@ bug worth reporting.
 - [Bots and seats](#bots-and-seats)
   - [Hints: telling one bot what to do](#hints-telling-one-bot-what-to-do)
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
+  - [Text in the player's language](#text-in-the-players-language)
 - [Showing things on a client](#showing-things-on-a-client)
   - [Popups](#popups)
   - [The panel](#the-panel)
@@ -2094,6 +2095,7 @@ to escort a person stays where it is.
 | `game.log(text)` | Writes a line to the server's console. No player sees it. |
 | `game.set_voice_everyone(on)` | With `true`, voice in the running round goes to every player rather than to the talker's allies alone. `false` puts it back. |
 | `game.voice_everyone()` | Whether voice is going to everyone: what `set_voice_everyone` last set this round, and `false` on a server with voice off. |
+| `game.lang(p)` | The language seat `p`'s player reads, as their lang file's name in lower case: `"en"`, `"de"`, `"pt-br"`. `"en"` whenever the server does not know. See [Text in the player's language](#text-in-the-players-language). |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
@@ -2160,6 +2162,36 @@ has voice to allies only. Call it from `on_setup` or later; a call in the lobby
 is cleared when the round starts. A server with voice off forwards no voice at
 all, so `set_voice_everyone(true)` is refused there (`SCN_OP_WRONG_STATE`);
 `set_voice_everyone(false)` is always taken.
+
+### Text in the player's language
+
+Everything a script writes — a message, an announcement, a popup, the status
+line, a panel's text — reaches the client as the script wrote it. The client
+translates nothing but the key tokens a popup, announcement or status line
+carries (`{ACCEL}` and the rest), so a scenario that wants to speak more than one
+language holds its own text for each and picks it with `game.lang(p)`:
+
+```lua
+local TEXT = {
+  en = { hello = "Drive to the green square." },
+  de = { hello = "Fahre zum grünen Feld." },
+}
+
+local function tr(p, key)
+  local mine = TEXT[game.lang(p)] or TEXT.en
+  return mine[key] or TEXT.en[key]
+end
+
+game.popup(tr(p, "hello"), p)
+```
+
+Only a single-player game knows the player's language: there the server runs
+in the player's own client, which tells it at the join and again whenever the
+player picks another language in Settings. A hosted or dedicated server is
+never told, and neither is a bot's seat, so `lang` answers `"en"` for every
+seat there, as it does for an empty seat and a seat out of range. Text a script
+sent before the player changed language stays as it was sent; the next line it
+picks is in the new one.
 
 ---
 

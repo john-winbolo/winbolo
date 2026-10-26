@@ -7256,6 +7256,7 @@ set(_unit_test_names
     scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
     scenario_lua_voice_everyone
+    scenario_lua_lang
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
