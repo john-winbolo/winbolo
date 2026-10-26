@@ -27,7 +27,9 @@
 -- PASS: the blocker was in the tank as 5B became the goal; it was built on
 -- its square; in the watch it lost armour, died at least once and every
 -- rise in its armour came with a rebuild announcement; in the take the
--- target died within 60 seconds and the tank lived.
+-- tank's shells took at least half the target's armour within 60 seconds.
+-- The tank may die in the take: a player can lose the tank on a take and
+-- still have done it right, so only the shooting is checked.
 
 TUTORIAL_PLAYER = -1          -- no seat yet; the arena spawns the shooter
 ARENA = { phase = 0, hits = { 0, 0, 0, 0 }, lost = { 0, 0, 0, 0 },
@@ -165,26 +167,37 @@ function on_tick(tick)
     watch_blocker(tick)
     local tg = game.pill(P.t5b_target.n)
     local dead = tg ~= nil and not tg.in_tank and tg.armour == 0
+    -- Armour the target loses in the take: each drop is a shell of ours.
+    if tg ~= nil and not tg.in_tank then
+      if A.target_last ~= nil and tg.armour < A.target_last then
+        A.target_lost = (A.target_lost or 0) + (A.target_last - tg.armour)
+      end
+      A.target_last = tg.armour
+    end
     local me = game.tank(S.player)
     if dead or tick >= A.t + 6000 or (me ~= nil and me.dead) then
       A.over = true
       local alive = me ~= nil and not me.dead
       local ok = A.handed and S.done[5].b_build and A.wore and
-                 A.deaths[3] >= 1 and A.silent == 0 and dead and alive
+                 A.deaths[3] >= 1 and A.silent == 0 and
+                 (A.target_lost or 0) * 2 >= rule("pill_max_armour")
       game.log(string.format("ARENA WATCH 60s: deaths %d rebuilds %d silent %d",
         A.deaths[3], A.rebuilds[3], A.silent))
       game.log(string.format("ARENA WATCH 60s: tank hits %d armour %d",
         A.hits[3], A.lost[3]))
-      game.log(string.format("ARENA TAKE: dead %s after %.1fs, deaths %d",
-        tostring(dead), (tick - A.t) / 100, A.deaths[4]))
+      game.log(string.format("ARENA TAKE: dead %s after %.1fs, deaths %d, "
+        .. "target armour lost %d", tostring(dead), (tick - A.t) / 100,
+        A.deaths[4], A.target_lost or 0))
       game.log(string.format("ARENA TAKE: rebuilds %d hits %d lost %d alive %s",
         A.rebuilds[4], A.hits[4], A.lost[4], tostring(alive)))
       verdict(ok, string.format("handed %s; WATCH 60s: blocker deaths %d, "
         .. "announced rebuilds %d, silent repairs %d, tank hits %d (armour "
-        .. "%d); TAKE: target dead %s after %.1fs, blocker deaths %d, "
+        .. "%d); TAKE: target dead %s after %.1fs, target armour lost %d, "
+        .. "blocker deaths %d, "
         .. "rebuilds %d, tank hits %d (armour lost %d), tank alive %s",
         tostring(A.handed), A.deaths[3], A.rebuilds[3], A.silent, A.hits[3],
-        A.lost[3], tostring(dead), (tick - A.t) / 100, A.deaths[4],
+        A.lost[3], tostring(dead), (tick - A.t) / 100, A.target_lost or 0,
+        A.deaths[4],
         A.rebuilds[4], A.hits[4], A.lost[4], tostring(alive)))
     end
   end
