@@ -797,7 +797,7 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     NSMenuItem *winClips = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_WIN_CLIPS)
         action:@selector(onToggleClips:)
-        keyEquivalent:@"9"];
+        keyEquivalent:@"0"];
     [winClips setTarget:s_lv_bridge];
     [winMenu addItem:winClips];
     s_lv_winClipsItem = winClips;

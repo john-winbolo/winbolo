@@ -474,7 +474,7 @@ static void handle_keyboard_shortcuts(int *clicked) {
         lv_g_show_tank_window = !lv_g_show_tank_window;
         *clicked = 1;
     }
-    if (lv_clip_gif_available() && ImGui::IsKeyPressed(ImGuiKey_9, false)) {
+    if (lv_clip_gif_available() && ImGui::IsKeyPressed(ImGuiKey_0, false)) {
         lv_clip_gif_toggle_gallery();
         *clicked = 1;
     }
@@ -784,7 +784,7 @@ int lv_imgui_main_menu_bar(void) {
             }
             /* The GIFs made here and in the game (imgui_clip_gif.h). */
             if (lv_clip_gif_available() &&
-                ImGui::MenuItem(langGetText(STR_LV_WIN_CLIPS), "Ctrl+9",
+                ImGui::MenuItem(langGetText(STR_LV_WIN_CLIPS), "Ctrl+0",
                                 lv_clip_gif_gallery_is_open())) {
                 lv_clip_gif_toggle_gallery();
                 clicked = 1;
