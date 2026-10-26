@@ -356,18 +356,16 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  *     dead): he does not die, even if he has left the tank since.
  * A pillbox's shell is not rewound: it tests the builder where he is now.
  *
- * TWO POINTS are handed in, because the test needs blast and builder from the
- * same moment:
- *   (nowX, nowY)   where the explosion is drawn and heard: the present
- *                  point. It is what shellsUpdate gives the explosion, the
- *                  shell-death event and the mine check.
- *   (seenX, seenY) the blast as the shooter's screen had it.
- * They are the same point for every blast but one. A shell that hit a tank
- * was tested against where the tank was on the shooter's screen, and its
- * blast is then carried to where the tank is now so that it is drawn on the
- * tank (shellsCalcCollision). (nowX, nowY) is that carried point; (seenX,
- * seenY) is the shell's own point, where it reached the hull at the tank's
- * old place.
+ * The blast point is handed in twice:
+ *   (nowX, nowY)   where the explosion is drawn and heard. It is what
+ *                  shellsUpdate gives the explosion, the shell-death event
+ *                  and the mine check.
+ *   (seenX, seenY) the blast as the shooter's screen had it. It is kept as
+ *                  its own argument because the shooter's-screen rule
+ *                  names it.
+ * Today (seenX, seenY) is always equal to (nowX, nowY), a tank hit included:
+ * a shell that hit a tank explodes at its own place on its path, rewound or
+ * not (shellsCalcCollision).
  *
  * What the shooter's screen showed of the builder is in the builder position
  * history, at the shell's rewind (SHELL_LGM_REWIND_LESS above):
@@ -539,7 +537,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			/* Check for colision */
 			uint8_t shellOutcome = SHELL_OUTCOME_IMPACT;
 			/* The blast as the shooter's screen had it, for the builder test
-			 * only. Differs from newX, newY only after a rewound tank hit. */
+			 * only. The same point as newX, newY. */
 			WORLD seenX = newX;
 			WORLD seenY = newY;
 			if ((shellsCalcCollision(sim, tk, &newX, &newY, position, numTanks, &shellOutcome, &seenX, &seenY)) == TRUE)
@@ -568,12 +566,11 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				spy = (BYTE) conv;
 				/* newX, newY are where the shell ended: the middle of the
 				 * square for a pillbox, base or terrain hit, and for a tank
-				 * hit the point on the hull the shell reached, carried to
-				 * where the tank is now (the shell's own point when the hit
-				 * was not rewound; see shellsCalcCollision). Everything
-				 * below is at that one place, but for one thing: the builder
-				 * test is also handed seenX, seenY, the blast as the
-				 * shooter's screen had it (shellsBlastTestBuilder). */
+				 * hit the shell's own place on its path, rewound or not
+				 * (see shellsCalcCollision). Everything below is at that one
+				 * place. The builder test is also handed seenX, seenY, the
+				 * blast as the shooter's screen had it, which is the same
+				 * point (shellsBlastTestBuilder). */
 				explosionsAddItem(&sim->expl, sx,sy,spx,spy,EXPLOSION_START);
 				/* Debug: record the exact world-pixel hit for BrainTest viz */
 				shellsDebugHitLogAdd((int)newX, (int)newY, 0, position->owner);
@@ -800,16 +797,11 @@ static bool shellsMayHit(GameSim *sim, shells shell, BYTE kind, BYTE index) {
 *  numTanks - Number of tanks in the array
 *  outSeenX - On a collision, the X of the blast as the
 *             shooter's screen had it, for the builder test
-*             (shellsBlastTestBuilder). The same as xValue
-*             except for a rewound tank hit, where it is the
-*             shell's own point, before it is carried to
-*             where the tank is now. May be NULL
+*             (shellsBlastTestBuilder). The same as xValue.
+*             May be NULL
 *  outSeenY - Y, as outSeenX
 *********************************************************/
 bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY) {
-	WORLD seenHitX = 0;   /* A rewound tank hit: the shell's point, on the */
-	WORLD seenHitY = 0;   /* shooter's screen, before it is carried */
-	bool seenHitSet = FALSE;
 	map *mp = &sim->mp;
 	pillboxes *pb = &sim->pb;
 	bases *bs = &sim->bs;
@@ -922,71 +914,22 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					                   owner, shell->pill);
 				}
 
-				/* A shell that hit a tank blows up ON THE TANK, where the tank
-				 * is now. The hit is decided on the shooter's screen, but the
-				 * blast belongs to the tank: one client's lag must not move an
-				 * explosion away from where the tank is for everybody.
-				 * The test above may have been made against where the
-				 * tank was on the shooter's screen (useRewound), and the shell
-				 * is at that old place, which the tank has since left: 64 to 80
-				 * world units behind a tank at top speed for a 120 ms ping, up
-				 * to 224 at the 14-entry cap. The damage, the knockback and the
-				 * kill record are all at the tank's present position already
-				 * (tankIsTankHitAtPosition), so the effects that follow go there
-				 * too.
-				 *
-				 * WHERE on the tank matters, so it is kept: the blast is the
-				 * point on the hull the shell reached, carried to where the
-				 * tank is now. That is the tank's present position plus the
-				 * offset of the shell from the position the hit was tested
-				 * against. A tank hit on one side still catches a builder on
-				 * that side and spares one leaving on the other.
-				 *
-				 * A hit that was NOT rewound is left exactly where the shell
-				 * is, as it always was: the offset is from the present tank,
-				 * so the sum is the shell's own point and nothing is written.
+				/* A shell that hit a tank explodes at its own place, on its
+				 * path, as in the 2.1 release: xValue and yValue are left as
+				 * they are. That holds for a rewound hit too. The hit may have
+				 * been decided against where the tank was on the shooter's
+				 * screen (useRewound); the blast point is still where the
+				 * shell is on the server on this tick. It is not moved to
+				 * where the tank is now, so the explosion does not follow the
+				 * tank. Whether the shell hit is decided above and is not
+				 * touched here.
 				 *
 				 * The hit sound here, the start of a killed tank's explosion
 				 * here, and, through xValue and yValue, everything shellsUpdate
-				 * draws or sounds at the place the shell ended (the hit
-				 * explosion, the shell-death event, the debug hit log) and
-				 * its mine check all use this one point. Whether the shell
-				 * hit is decided above and is not touched by this.
-				 *
-				 * One thing does not use it: whether the blast kills a
-				 * builder. That is decided on the shooter's screen, as the
-				 * hit was, so it needs the blast as the shooter's screen had
-				 * it: the shell's own point, where it reached the hull of the
-				 * tank at its old place. That point is kept here, before the
-				 * carry, and handed out through outSeenX and outSeenY. */
-				if (th != TH_MISSED && useRewound) {
-					WORLD tankNowX = 0, tankNowY = 0;
-					int blastX, blastY;
-
-					seenHitX = *xValue;
-					seenHitY = *yValue;
-					seenHitSet = TRUE;
-					/* No NULL check on tk[count]: tankIsTankHitAtPosition
-					 * returns TH_MISSED for a NULL tank, so a hit means the
-					 * tank is there. */
-					tankGetWorld(&tk[count], &tankNowX, &tankNowY);
-					/* Signed, and held on the map: WORLD is 16 bits unsigned
-					 * and a sum past either edge would wrap to the far side. */
-					blastX = (int) tankNowX + ((int) *xValue - (int) hitCheckX);
-					blastY = (int) tankNowY + ((int) *yValue - (int) hitCheckY);
-					if (blastX < 0) blastX = 0;
-					if (blastX > 0xFFFF) blastX = 0xFFFF;
-					if (blastY < 0) blastY = 0;
-					if (blastY > 0xFFFF) blastY = 0xFFFF;
-					*xValue = (WORLD) blastX;
-					*yValue = (WORLD) blastY;
-					conv = *xValue;
-					conv >>= TANK_SHIFT_MAPSIZE;
-					mapX = (BYTE) conv;
-					conv = *yValue;
-					conv >>= TANK_SHIFT_MAPSIZE;
-					mapY = (BYTE) conv;
-				}
+				 * draws or sounds at the place the shell ended (the explosion
+				 * graphic, the shell-death event, the debug hit log) and its
+				 * mine check all use this one point. The builder test uses it
+				 * too, as the blast the shooter's screen had (outSeenX). */
 
 				switch (th) {
 					case TH_HIT:
@@ -1153,11 +1096,11 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 		clientSimRecalc((ClientSim *)sim);
 	}
 
-	/* The blast as the shooter's screen had it. Only a rewound tank hit has
-	 * it anywhere but where the effects go. */
+	/* The blast as the shooter's screen had it: the same point as where
+	 * the effects go, for every blast. */
 	if (returnValue == TRUE && outSeenX != NULL && outSeenY != NULL) {
-		*outSeenX = (seenHitSet == TRUE) ? seenHitX : *xValue;
-		*outSeenY = (seenHitSet == TRUE) ? seenHitY : *yValue;
+		*outSeenX = *xValue;
+		*outSeenY = *yValue;
 	}
 
 	return returnValue;

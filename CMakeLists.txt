@@ -6381,8 +6381,8 @@ set(_unit_test_names
     ping_kick_defers_teardown
     ping_kick_clears_strikes_on_disconnect
     tkexp_lgm_pairing
-    tank_blast_rewound_hit_at_present_tank
-    tank_blast_kill_starts_at_present_tank
+    tank_blast_at_shell_place
+    tank_blast_kill_at_shell_place
     tank_blast_zero_rewind_unchanged
     tank_blast_hit_decision_unchanged
     tank_blast_builder_on_shooter_screen

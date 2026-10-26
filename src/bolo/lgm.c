@@ -1912,9 +1912,8 @@ static bool lgmInTankCanBeKilled(GameSim *sim, lgm *lgman, tank *tnk);
 *
 *  The man's place and the explosion's place must be from
 *  the same moment: both as the attacker's screen had them.
-*  A shell that hit a tank is drawn where the tank is now,
-*  but that is not the point to hand in here; the point the
-*  shell reached on the attacker's screen is (shells.c,
+*  A shell that hit a tank explodes at its own place on its
+*  path, and that is the point handed in here (shells.c,
 *  shellsBlastTestBuilder).
 *
 *ARGUMENTS:
