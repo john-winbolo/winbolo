@@ -19,7 +19,7 @@
 -- docs/SCENARIO_API.md). So this file holds no text of its own to translate.
 --
 -- WHAT IT DOES, STEP BY STEP (the same as the old tutorial):
---   - The intro (three messages) opens as soon as the player's tank is on
+--   - The intro (two messages) opens as soon as the player's tank is on
 --     the map.
 --   - Each later step fires when the tank is on that step's row. The steps
 --     fire in order, each once.
@@ -29,6 +29,10 @@
 --   - Until the boat step (row 66) has fired, the tank respawns at start 1,
 --     out at sea. After it, the tank respawns at start 2, on the far bank,
 --     and the first such respawn shows one more message.
+--
+-- THE LOBBY. As the old tutorial did, the game has no hidden mines, no
+-- start delay and no time limit. The lobby block fixes all three, and the
+-- host cannot change them while this scenario is attached.
 --
 -- The scenario changes no game rule and fields no bots. A bot the host added
 -- is taken off the field as the round starts, as the Tutorial does.
@@ -41,11 +45,14 @@ scenario = {
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-26T15:30Z",
+  updated = "2026-10-26T22:13Z",
   game = "strict",
 
   lobby = {
     max_players = 1,
+    hidden_mines = false,
+    time_limit = 0,
+    start_delay = 0,
   },
 
   callbacks = {
@@ -61,10 +68,12 @@ scenario = {
 -- ---------------------------------------------------------------------
 -- The steps, in order: the row (map square y) that fires the step, and
 -- the names of its messages in the language files. The first step fires
--- on any row. These are the old tutorial's rows and messages.
+-- on any row. These are the old tutorial's rows and messages, with one
+-- change: the links message (STR_TUTORIAL_START02) is the last popup, not
+-- the second, so the first control the player reads comes right after the
+-- welcome.
 local STEPS = {
-  { row = nil, msgs = { "STR_TUTORIAL_START01", "STR_TUTORIAL_START02",
-                        "STR_TUTORIAL_START04" } },
+  { row = nil, msgs = { "STR_TUTORIAL_START01", "STR_TUTORIAL_START04" } },
   { row = 210, msgs = { "STR_TUTORIAL01" } },
   { row = 199, msgs = { "STR_TUTORIAL02" } },
   { row = 192, msgs = { "STR_TUTORIAL03" } },
@@ -83,7 +92,7 @@ local STEPS = {
   { row =  66, msgs = { "STR_TUTORIAL20", "STR_TUTORIAL21" } },
   { row =  47, msgs = { "STR_TUTORIAL22", "STR_TUTORIAL23",
                         "STR_TUTORIAL24" } },
-  { row =  21, msgs = { "STR_TUTORIAL25" } },
+  { row =  21, msgs = { "STR_TUTORIAL25", "STR_TUTORIAL_START02" } },
 }
 
 -- After the step on this row, respawns move to the far bank.
@@ -125,6 +134,9 @@ local function fire_step()
   local s = STEPS[S.step]
   for _, name in ipairs(s.msgs) do show(name) end
   if s.row == BOAT_ROW then S.far_bank = true end
+  -- The last step finishes the tutorial. In a single-player game this
+  -- hides the main menu's Tutorial button.
+  if S.step == #STEPS then game.tutorial_done(S.player) end
   S.step = S.step + 1
 end
 

@@ -10,7 +10,7 @@
 -- north onto row 210 from one tick to the next.
 --
 -- PASS:
---   - the intro's three popups come first;
+--   - the intro's two popups come first;
 --   - STR_TUTORIAL01 is sent while the real tank is on row 210;
 --   - game.stop_tank is called on row 210 and the server takes it.
 
@@ -48,7 +48,7 @@ function on_tick(tick)
   if t == nil or t.dead then return end
   if A.wait > 0 then A.wait = A.wait - 1; return end
 
-  if A.phase == 0 and #A.pops >= 3 then
+  if A.phase == 0 and #A.pops >= 2 then
     -- The tank is still south of row 210, at sea near start 1.
     if t.my <= 210 then
       A.done = true
@@ -68,15 +68,14 @@ function on_tick(tick)
   elseif A.phase == 2 then
     A.done = true
     local p = A.pops
-    if #p < 4 then return verdict(false, #p .. " popups") end
+    if #p < 3 then return verdict(false, #p .. " popups") end
     if p[1].text ~= "{LANG:STR_TUTORIAL_START01}" or
-       p[2].text ~= "{LANG:STR_TUTORIAL_START02}" or
-       p[3].text ~= "{LANG:STR_TUTORIAL_START04}" then
+       p[2].text ~= "{LANG:STR_TUTORIAL_START04}" then
       return verdict(false, "the intro is not first")
     end
-    if p[4].text ~= "{LANG:STR_TUTORIAL01}" or p[4].my ~= 210 then
-      return verdict(false, string.format("popup 4 is %s on row %s",
-                                          p[4].text, tostring(p[4].my)))
+    if p[3].text ~= "{LANG:STR_TUTORIAL01}" or p[3].my ~= 210 then
+      return verdict(false, string.format("popup 3 is %s on row %s",
+                                          p[3].text, tostring(p[3].my)))
     end
     if A.stop_row ~= 210 or not A.stop_ok then
       return verdict(false, string.format("stop on row %s, answered %s",

@@ -4784,6 +4784,23 @@ static int scnLuaAddGameTime(lua_State *L) {
     return scnGameTime(L, true);
 }
 
+/* A shipped tutorial is finished for player p. The server only marks the
+   seat; a single-player client in the same process reads the mark and hides
+   the main menu's Tutorial button. */
+static int scnLuaTutorialDone(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                = SCN_OP_TUTORIAL_DONE;
+    op.u.tutorialDone.slot = (BYTE)p;
+    return scnDone(L, &op, "player %d", (int)p);
+}
+
 static int scnLuaSetRule(lua_State *L) {
     ScenarioOp  op;
     const char *name = scnArgStr(L, 1, "name");
@@ -5547,6 +5564,9 @@ static const ScnLuaOpParam kScnOpArgs_set_game_time[] = {
 static const ScnLuaOpParam kScnOpArgs_add_game_time[] = {
     { "ticks", SCN_PARAM_NUMBER, false }, SCN_OP_ARG_END
 };
+static const ScnLuaOpParam kScnOpArgs_tutorial_done[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
 static const ScnLuaOpParam kScnOpArgs_set_rule[] = {
     { "name", SCN_PARAM_WORD, false }, { "value", SCN_PARAM_NUMBER, false },
     SCN_OP_ARG_END
@@ -5955,6 +5975,11 @@ static const ScnLuaRow kScnLuaRows[] = {
       "add_game_time(ticks) — add to what the round has left, or take away "
       "with a negative.",
       SCN_OP_PARAMS(add_game_time), SCN_OP_ACTS },
+    { "tutorial_done", scnLuaTutorialDone,
+      "tutorial_done(p) — player p has finished a shipped tutorial; in a "
+      "single-player game of a map in data/maps/tutorials the main menu "
+      "stops showing its Tutorial button. Elsewhere it changes nothing.",
+      SCN_OP_PARAMS(tutorial_done), SCN_OP_ACTS },
     { "set_rule", scnLuaSetRule,
       "set_rule(name, value) — write one of the gameplay rules; a name that "
       "spells no rule raises, and a value the table will not take is "

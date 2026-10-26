@@ -108,13 +108,28 @@ typedef struct {
  * spawn op's loadout takes. It is the host's one-way hand-over of that
  * value: the sim keeps it where the spawn and start paths can read it when
  * the round is gameScripted. 0 means none declared, which plays strict
- * tournament. */
+ * tournament.
+ *
+ * The three fix flags each hold one lobby setting at the value beside it for
+ * as long as the scenario is attached: hidden mines, the time limit (in
+ * minutes, 0 for none) and the start delay (in seconds). The host cannot
+ * change a fixed setting, and the lobby gets back what it had when the
+ * scenario goes (serverSimScenarioApplyLobbyRules). */
 typedef struct {
     uint8_t      maxPlayers;
     uint8_t      numTeams;
     uint8_t      baseGameType;   /* a gameType value, 0 for none */
+    bool         fixHiddenMines;
+    bool         hiddenMines;
+    bool         fixTimeLimit;
+    uint16_t     timeLimitMinutes;  /* 0 = no time limit */
+    bool         fixStartDelay;
+    uint16_t     startDelaySeconds;
     ScnLobbyTeam teams[MAX_TANKS];
 } ScnLobbyTemplate;
+
+/* The longest start delay a scenario's lobby block may fix, in seconds. */
+#define SCN_LOBBY_START_DELAY_MAX 600
 
 /* What a scenario is called and what it asks for, as the sim reads it.
  *
@@ -320,6 +335,7 @@ typedef enum {
     /* Flow */
     SCN_OP_END_ROUND,
     SCN_OP_SET_GAME_TIME,
+    SCN_OP_TUTORIAL_DONE,
 
     /* Rules */
     SCN_OP_SET_RULE,
@@ -703,6 +719,15 @@ typedef struct {
     bool    relative;
 } ScnOpSetGameTime;
 
+/* A shipped tutorial is finished for the player in slot. The server keeps
+ * a mark for the seat and does nothing else. Only a single-player client
+ * in the same process reads the mark, and it hides the main menu's
+ * Tutorial button. A hosted or dedicated server has no such client, so
+ * there the op changes nothing a player sees. */
+typedef struct {
+    BYTE slot;
+} ScnOpTutorialDone;
+
 /* ── Rules ─────────────────────────────────────────────────────── */
 
 /* Every SimRules field, in the order the struct declares them, with the
@@ -828,6 +853,7 @@ typedef struct {
         ScnOpPopup             popup;
         ScnOpEndRound          endRound;
         ScnOpSetGameTime       setGameTime;
+        ScnOpTutorialDone      tutorialDone;
         ScnOpSetRule           setRule;
         ScnOpShellExpired      shellExpired;
     } u;

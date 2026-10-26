@@ -139,9 +139,20 @@ typedef struct {
     char     initBadKey[SCN_TABLE_KEY_LEN];
 } ScnManifestTeam;
 
+/* The lobby block. hidden_mines, time_limit and start_delay each fix one
+ * lobby setting for as long as the scenario is attached; the fix flag says
+ * whether the file wrote the key at all. The two numbers are kept as the
+ * file wrote them, so the validator can name one out of range; the lobby
+ * template takes only a value in range. */
 typedef struct {
     uint8_t         maxPlayers;     /* 0 = the server's own cap */
     bool            extraTeams;     /* may a host add teams beyond these */
+    bool            fixHiddenMines; /* hidden_mines was written */
+    bool            hiddenMines;
+    bool            fixTimeLimit;   /* time_limit was written */
+    int32_t         timeLimit;      /* minutes; 0 = no time limit */
+    bool            fixStartDelay;  /* start_delay was written */
+    int32_t         startDelay;     /* seconds */
     uint8_t         numTeams;
     ScnManifestTeam teams[MAX_TANKS];
 } ScnManifestLobby;

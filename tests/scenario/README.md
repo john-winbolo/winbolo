@@ -1,20 +1,21 @@
 # The scenario arenas
 
-A hundred and eighty-five small maps, each with a scenario script beside it.
+A hundred and eighty-six small maps, each with a scenario script beside it.
 Most are built to make one bot decision happen on purpose and then say whether
 the bot made it. Forty-four check a shipped script instead: the twenty-eight
 `pilltag_*` arenas, the seven `rule_roulette_*` arenas, the four `virus_*`
 arenas, the four `survival_pushout*` arenas, which play Survival's own map
 and script, and `bases_only_no_pills`. `deep_sea_safe_rule` checks one gameplay rule.
-The twenty-two `tutorial_*` arenas check the shipped Tutorial map's script:
+The twenty-three `tutorial_*` arenas check the shipped Tutorial map's script:
 the checkpoint respawn, re-arming and the RESET pens, the Station 2 goals, the
 popups and the white lines that follow them, the Station 5A demo take, its
 watch spot and its pillboxes never aiming at the player, the Station 5B
 blocker, the bots fielded late, the Station 6 bot and its man, the Station 7
 bot keeping to its island, the Station 7 bot never killing the player's man, a
 new man coming in close by, a player who joins after the first one left,
-one who joins on the seat put by for a bot, and the text in the player's
-language.
+one who joins on the seat put by for a bot, the text in the player's
+language, and the finish, which tells the main menu to hide its Tutorial
+button.
 
 They came from the branch `survival-scenario-bot-improvements-merged`, where
 they ran on a server-side scenario host that no longer exists. They run here

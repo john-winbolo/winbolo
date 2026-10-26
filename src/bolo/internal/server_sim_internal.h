@@ -509,6 +509,12 @@ struct ServerSim {
                                     * scenario detach, so it never reaches a
                                     * later round. */
     char     playerLang[MAX_TANKS][SERVER_PLAYER_LANG_LEN];
+    uint16_t tutorialDoneSeats;    /* a bit for each seat a script's
+                                    * game.tutorial_done named. Taken and
+                                    * cleared by serverSimTakeTutorialDone,
+                                    * which only the single-player frontend
+                                    * in the same process calls. Cleared
+                                    * when the seat's player leaves. */
                                    /* the language each seat's player reads,
                                     * lowercased ("de", "pt-br"); "" when the
                                     * server was not told. Only a client in
@@ -1379,6 +1385,18 @@ struct ServerSim {
      * list stops saying needs_bots (serverSimScenarioApplyLobbyRules). A
      * list that never touched the AI policy leaves it the host's. */
     bool                   preScenarioAiRaised;
+    /* The settings a scenario's lobby block fixes (hidden_mines, time_limit,
+     * start_delay), as the lobby had them when the fix first took hold. Each
+     * Held flag says whether that setting is held now; the values beside it
+     * come back when the fix goes (serverSimScenarioApplyLobbyFixes). */
+    bool                   preScenarioMinesHeld;
+    bool                   preScenarioHiddenMines;
+    bool                   preScenarioTimeHeld;
+    bool                   preScenarioTimeLimit;
+    uint16_t               preScenarioTimeMinutes;
+    int32_t                preScenarioGameLength;
+    bool                   preScenarioDelayHeld;
+    int32_t                preScenarioStartDelay;
     /* The brain a seat was seeded with, so a seat held without a bot in it
      * still knows what to run when something fields it. Empty means the
      * server's own. */

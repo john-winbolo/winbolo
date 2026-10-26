@@ -56,3 +56,35 @@ int run_bg_map_pick_skips_tutorials(void) {
     UT_ASSERT(!bgMapNameAllowed("tutorials"));
     return 0;
 }
+
+/* The test the single-player frontend puts the running script through
+ * before game.tutorial_done may hide the main menu's Tutorial button: the
+ * file has to be in a folder named tutorials inside a folder named maps. */
+int run_tutorial_maps_shipped_path(void) {
+    UT_ASSERT(tutorialMapsIsShippedTutorial(
+        "data/maps/tutorials/Tutorial.scenario.lua"));
+    UT_ASSERT(tutorialMapsIsShippedTutorial(
+        "data/maps/tutorials/Classic Tutorial.scenario.lua"));
+    UT_ASSERT(tutorialMapsIsShippedTutorial(TUTORIAL_MENU_MAP));
+    UT_ASSERT(tutorialMapsIsShippedTutorial(
+        "C:\\Games\\WinBolo\\data\\maps\\tutorials\\Tutorial.scenario.lua"));
+    UT_ASSERT(tutorialMapsIsShippedTutorial(
+        "/var/app/data/Maps/Tutorials/Tutorial.scenario.lua"));
+    UT_ASSERT(tutorialMapsIsShippedTutorial("maps/tutorials/x.lua"));
+
+    /* Not in that folder. */
+    UT_ASSERT(!tutorialMapsIsShippedTutorial(NULL));
+    UT_ASSERT(!tutorialMapsIsShippedTutorial(""));
+    UT_ASSERT(!tutorialMapsIsShippedTutorial(
+        "data/maps/Survival.scenario.lua"));
+    UT_ASSERT(!tutorialMapsIsShippedTutorial("tutorials/Tutorial.scenario.lua"));
+    UT_ASSERT(!tutorialMapsIsShippedTutorial(
+        "data/mods/tutorials/Tutorial.scenario.lua"));
+    UT_ASSERT(!tutorialMapsIsShippedTutorial(
+        "data/maps/tutorials2/Tutorial.scenario.lua"));
+    UT_ASSERT(!tutorialMapsIsShippedTutorial(
+        "data/maps/tutorials/sub/Tutorial.scenario.lua"));
+    UT_ASSERT(!tutorialMapsIsShippedTutorial("data/maps/tutorials/"));
+    UT_ASSERT(!tutorialMapsIsShippedTutorial("data/mymaps/tutorials/a.lua"));
+    return 0;
+}

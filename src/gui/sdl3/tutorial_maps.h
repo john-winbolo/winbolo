@@ -90,4 +90,45 @@ static inline bool bgMapNameAllowed(const char *relPath) {
     return true;
 }
 
+/* Whether path names a file in the shipped tutorials folder: its folder is
+ * TUTORIAL_MAPS_DIR_NAME and that folder's own folder is "maps". Either
+ * slash, any case, and anything in front, so a relative path, an absolute
+ * one and an app bundle's path all pass. The single-player frontend asks it
+ * of the running map's own script before a script's game.tutorial_done may
+ * hide the main menu's Tutorial button. */
+static inline bool tutorialMapsIsShippedTutorial(const char *path) {
+    const char *seg[3];   /* starts of the file, its folder, that folder's */
+    size_t      len[3];
+    const char *end;
+    const char *p;
+    int         i;
+
+    if (path == NULL || path[0] == '\0') return false;
+    end = path + strlen(path);
+    for (i = 0; i < 3; i++) {
+        p = end;
+        while (p > path && p[-1] != '/' && p[-1] != '\\') p--;
+        seg[i] = p;
+        len[i] = (size_t)(end - p);
+        if (len[i] == 0) return false;
+        if (i < 2) {
+            if (p == path) return false;   /* no folder in front of it */
+            end = p - 1;
+        }
+    }
+    {
+        const char *names[2] = { TUTORIAL_MAPS_DIR_NAME, "maps" };
+        for (i = 0; i < 2; i++) {
+            size_t k;
+            if (len[i + 1] != strlen(names[i])) return false;
+            for (k = 0; k < len[i + 1]; k++) {
+                if (tutorialMapsFold(seg[i + 1][k]) != names[i][k]) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 #endif /* TUTORIAL_MAPS_H */

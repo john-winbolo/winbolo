@@ -71,6 +71,12 @@ void clientFrontResumeEnd(struct ClientSim *cs);
 /* Whether any freeze or the suspend is on: the driver runs no game ticks. */
 bool clientFrontAnyPause(void);
 
+/* Hide the main menu's Tutorial button, and save that, once a shipped
+ * tutorial's script says the player has finished it (game.tutorial_done).
+ * Only in a single-player game, and only when the running map's own script
+ * is in data/maps/tutorials. Call once a frame with the client mutex free. */
+void clientFrontPollTutorialDone(void);
+
 /* The time-limit game over (frontEndGameOver), one body for every driver that
  * compiles this file. The driver supplies what differs:
  *   windowGameOverEndsGame - whether this game over leaves the game at all

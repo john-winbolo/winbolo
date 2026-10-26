@@ -10,18 +10,21 @@
 -- what the script sends and on which row; the real calls still go out.
 --
 -- PASS:
---   - the intro's three popups are sent first, on the first tick;
+--   - the intro's two popups are sent first, on the first tick;
 --   - each later step's popups are sent on the tick the tank is on its row,
 --     in the order of the old step table, and nothing else is sent;
 --   - every popup is a whole "{LANG:NAME}" reference and the server takes it;
---   - game.stop_tank is called once on each step's row, and on no other row.
+--   - game.stop_tank is called once on each step's row, and on no other row;
+--   - game.tutorial_done is called once, for seat 0, on the last step's row
+--     after its popup, and the server takes it.
 
 CLASSIC_TUTORIAL_PLAYER = 0
-ARENA = { my = 214, pops = {}, stops = {}, bad = {}, done = false }
+ARENA = { my = 214, pops = {}, stops = {}, bad = {}, dones = {},
+          done = false }
 
 -- The old tutorial's steps (src/bolo/tutorial.c), row then message names.
 ARENA.want = {
-  { nil, "STR_TUTORIAL_START01", "STR_TUTORIAL_START02", "STR_TUTORIAL_START04" },
+  { nil, "STR_TUTORIAL_START01", "STR_TUTORIAL_START04" },
   { 210, "STR_TUTORIAL01" }, { 199, "STR_TUTORIAL02" }, { 192, "STR_TUTORIAL03" },
   { 186, "STR_TUTORIAL04" }, { 181, "STR_TUTORIAL05" }, { 175, "STR_TUTORIAL06" },
   { 166, "STR_TUTORIAL07" }, { 159, "STR_TUTORIAL08", "STR_TUTORIAL09" },
@@ -29,7 +32,7 @@ ARENA.want = {
   { 120, "STR_TUTORIAL13", "STR_TUTORIAL14" }, { 110, "STR_TUTORIAL15" },
   { 103, "STR_TUTORIAL16" }, { 98, "STR_TUTORIAL17" },
   { 84, "STR_TUTORIAL18", "STR_TUTORIAL19" }, { 66, "STR_TUTORIAL20", "STR_TUTORIAL21" },
-  { 47, "STR_TUTORIAL22", "STR_TUTORIAL23", "STR_TUTORIAL24" }, { 21, "STR_TUTORIAL25" },
+  { 47, "STR_TUTORIAL22", "STR_TUTORIAL23", "STR_TUTORIAL24" }, { 21, "STR_TUTORIAL25", "STR_TUTORIAL_START02" },
 }
 
 local real_tank = game.tank
@@ -60,6 +63,14 @@ local real_stop = game.stop_tank
 game.stop_tank = function(p)
   ARENA.stops[#ARENA.stops + 1] = ARENA.my
   return real_stop(p)
+end
+
+ARENA.real_done = game.tutorial_done
+game.tutorial_done = function(p)
+  local ok, code = ARENA.real_done(p)
+  ARENA.dones[#ARENA.dones + 1] = { p = p, ok = ok, code = code,
+                                    my = ARENA.my, after = #ARENA.pops }
+  return ok, code
 end
 
 local function check()
@@ -97,8 +108,16 @@ local function check()
     end
   end
   if #A.bad > 0 then return false, A.bad[1] end
-  return true, string.format("%d popups and %d stops on the right rows",
-                             #A.pops, #A.stops)
+  local d = A.dones[1]
+  if #A.dones ~= 1 or d.p ~= 0 or d.ok ~= true or d.my ~= 21 or
+     d.after ~= #A.pops then
+    return false, string.format("tutorial_done calls=%d p=%s ok=%s code=%s "
+      .. "row=%s after %s of %d popups", #A.dones, tostring(d and d.p),
+      tostring(d and d.ok), tostring(d and d.code), tostring(d and d.my),
+      tostring(d and d.after), #A.pops)
+  end
+  return true, string.format("%d popups and %d stops on the right rows; "
+                             .. "tutorial_done on row 21", #A.pops, #A.stops)
 end
 
 local arena_real_tick = on_tick
