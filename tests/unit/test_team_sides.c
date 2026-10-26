@@ -64,6 +64,8 @@
  *                               pills
  *   joiner_slot_before_join   — a joiner's team goes out before its join
  *   lobby_joiner_keeps_rule   — the lobby keeps the smallest-team pick
+ *   lobby_drops_empty_teams   — the next lobby does not list a team the
+ *                               round opened and emptied
  *   held_seat_allied_in_round — a held seat added in a round is allied
  *                               with its team
  *
@@ -421,7 +423,7 @@ int run_team_sides_fold_at_return_to_lobby(void) {
     }
     /* The accept moved seats 0 and 1 onto seat 2's team, and the leave put
        seat 1 on the lowest free team. The lobby opens with the teams the
-       round ended with. */
+       round ended with: nothing folds them. */
     UT_ASSERT_MSG(got[0] == 2 && got[1] == 1 && got[2] == 2 && got[3] == 2,
                   "the lobby opened with teams %u %u %u %u",
                   got[0], got[1], got[2], got[3]);
@@ -1059,6 +1061,34 @@ int run_team_sides_held_seat_allied_in_round(void) {
     UT_ASSERT(!tsAllied(sim, 1, 2));
     UT_ASSERT(tsTeam(sim, 0) == 1);
     UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Teams 1, 1 and 2, and a fourth seat that joins the round and so opens
+   team 3. Seat 1 leaves for team 4, then seat 2 accepts it onto team 2, so
+   team 4 is empty at the end. The next lobby lists teams 1, 2 and 3 and not
+   team 4 (D6). */
+int run_team_sides_lobby_drops_empty_teams(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+
+    UT_ASSERT(sim != NULL);
+    serverSimAddPlayer(sim, 3, "Late", false);
+    UT_ASSERT(tsTeam(sim, 3) == 3);
+    serverSimLeaveAlliance(sim, 1);
+    UT_ASSERT(tsTeam(sim, 1) == 4 && sim->teams[4].in_use);
+    serverSimAcceptAlliance(sim, 2, 1);
+    UT_ASSERT(tsTeam(sim, 1) == 2);
+    UT_ASSERT(serverSimSidesAgree(sim));
+
+    serverSimEnterGameOver(sim);
+    serverSimReturnToLobby(sim);
+    UT_ASSERT(sim->teams[1].in_use && sim->teams[2].in_use);
+    UT_ASSERT_MSG(sim->teams[3].in_use, "team 3, which has a seat, went");
+    UT_ASSERT_MSG(!sim->teams[4].in_use, "the empty team 4 is still listed");
+    UT_ASSERT(tsTeam(sim, 0) == 1 && tsTeam(sim, 1) == 2 &&
+              tsTeam(sim, 2) == 2 && tsTeam(sim, 3) == 3);
     serverSimDestroy(sim);
     return 0;
 }

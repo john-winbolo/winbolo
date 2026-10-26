@@ -6015,6 +6015,7 @@ set(_unit_test_names
     team_sides_rejoin_is_a_joiner
     team_sides_joiner_slot_before_join
     team_sides_lobby_joiner_keeps_rule
+    team_sides_lobby_drops_empty_teams
     team_sides_held_seat_allied_in_round
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance

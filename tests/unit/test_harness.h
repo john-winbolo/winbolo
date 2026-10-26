@@ -1299,6 +1299,7 @@ int run_team_sides_infection_puts_leaver_back(void);
 int run_team_sides_rejoin_is_a_joiner(void);
 int run_team_sides_joiner_slot_before_join(void);
 int run_team_sides_lobby_joiner_keeps_rule(void);
+int run_team_sides_lobby_drops_empty_teams(void);
 int run_team_sides_held_seat_allied_in_round(void);
 
 /* Pillbox and base owners from the map file survive a round start
