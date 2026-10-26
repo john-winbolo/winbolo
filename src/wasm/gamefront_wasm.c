@@ -1272,6 +1272,10 @@ bool gameFrontHasLocalServer(void)            { return wasmServerSim != NULL; }
  * the browser. The SP server sim is the same handle gameFrontGetServerSim
  * returns (NULL for a netUdp lobby — the player is not the host). */
 ServerSim *gameFrontGetSinglePlayerServerSim(void) { return wasmServerSim; }
+
+const char *gameFrontScenarioMapScriptPath(void) {
+  return scenarioHostMapScriptPath(wasmScenarioHost);
+}
 void gameFrontTickSteamPresenceLobby(ClientSim *cs)  { (void)cs; }
 /* No prefs file in the browser, so the player never has a stored bot
  * difficulty: the getter always reports "not chosen" and the lobby /

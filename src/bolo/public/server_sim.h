@@ -3145,6 +3145,12 @@ BYTE serverSimGetViewPlayer(const ServerSim *sim);
  * the bg_game rendering camera-perspective override (under a
  * per-file T2 grant). */
 
+/* Whether a script called game.tutorial_done for seat since the last take,
+ * and clears the mark. The single-player frontend calls it each frame, with
+ * the mutex held, to hide the main menu's Tutorial button. False for a NULL
+ * sim and a seat out of range. */
+bool serverSimTakeTutorialDone(ServerSim *sim, BYTE seat);
+
 /* Pause flag on the embedded GameSim. Unlocked: caller must hold
  * threadsMutex. */
 void serverSimSetPaused(ServerSim *sim, bool paused);

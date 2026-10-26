@@ -505,6 +505,12 @@ struct ServerSim {
                                     * scenario detach, so it never reaches a
                                     * later round. */
     char     playerLang[MAX_TANKS][SERVER_PLAYER_LANG_LEN];
+    uint16_t tutorialDoneSeats;    /* a bit for each seat a script's
+                                    * game.tutorial_done named. Taken and
+                                    * cleared by serverSimTakeTutorialDone,
+                                    * which only the single-player frontend
+                                    * in the same process calls. Cleared
+                                    * when the seat's player leaves. */
                                    /* the language each seat's player reads,
                                     * lowercased ("de", "pt-br"); "" when the
                                     * server was not told. Only a client in

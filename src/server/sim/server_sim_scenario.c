@@ -4097,6 +4097,21 @@ static ScnOpResult scenarioOpSetGameTime(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* A shipped tutorial is finished for one seat. The arm only marks the seat.
+ * Nothing goes on the wire and nothing goes in the replay: the one reader is
+ * a single-player frontend in the same process, which takes the mark through
+ * serverSimTakeTutorialDone and hides the main menu's Tutorial button. On a
+ * hosted or dedicated server nobody takes it, so it changes nothing a player
+ * sees. No state guard: a script may finish its tutorial in the lobby too. */
+static ScnOpResult scenarioOpTutorialDone(ServerSim *sim,
+                                          const ScnOpTutorialDone *p) {
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    sim->tutorialDoneSeats |= (uint16_t)(1u << p->slot);
+    return SCN_OP_OK;
+}
+
 /* ── Rules ──────────────────────────────────────────────────────────────
  *
  * One arm over the table of gameplay numbers the simulation runs on. */
@@ -4830,6 +4845,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpEndRound(sim, &op->u.endRound);
         case SCN_OP_SET_GAME_TIME:
             return scenarioOpSetGameTime(sim, &op->u.setGameTime);
+        case SCN_OP_TUTORIAL_DONE:
+            return scenarioOpTutorialDone(sim, &op->u.tutorialDone);
         case SCN_OP_SET_RULE:
             return scenarioOpSetRule(sim, &op->u.setRule);
         case SCN_OP_SHELL_EXPIRED:

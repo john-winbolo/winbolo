@@ -675,6 +675,8 @@ ios_game_start:
             SDL_Renderer *ren = sdl3DrawGetRenderer();
             if (ren) SDL_RenderPresent(ren);
         }
+        clientFrontPollTutorialDone();   /* hide the menu Tutorial button once a shipped tutorial is finished */
+
         /* Cap to 60 FPS */
         {
             Uint64 frameElapsed = SDL_GetTicks() - frameCapStart;
