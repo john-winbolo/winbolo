@@ -2309,8 +2309,9 @@ end
 -- The team seat p belongs on for the round: its lobby team in a team round,
 -- and a team of its own in a Free For All, whoever holds the prize. The
 -- lobby team is kept first, to score for and to be put back at the end. A
--- seat is only moved when it is not already there, because each move sends
--- every client the whole alliance table again.
+-- seat is only moved when it is not already there, because each set_team
+-- sends every client the whole alliance table again. An alliance a player
+-- makes or leaves moves teams too, but sends only that one change.
 local function sort_team(p)
   local slot = game.lobby_slot(p)
   if over or slot == nil then
