@@ -2940,7 +2940,6 @@ STR_GAMEFRONTERR_HOST_MOBILE_DATA=This device is on mobile data. An Internet gam
 STR_CLIPGIF_GALLERY_TITLE=Your GIFs
 STR_CLIPGIF_GALLERY_EMPTY=No GIFs yet. Make one with the GIF button under the replay, or the GIF button on a clip.
 STR_CLIPGIF_COPY=Copy to clipboard
-STR_CLIPGIF_SAVE=Save to disk
 STR_CLIPGIF_COPIED=Copied.
 STR_CLIPGIF_COPY_FAILED=The GIF could not be copied.
 STR_CLIPGIF_OPEN_FAILED=This GIF could not be opened.
@@ -2949,8 +2948,7 @@ STR_CLIPGIF_PLAYERS_FMT=Players: {string1}
 STR_CLIPGIF_NO_DETAILS=No details were saved with this GIF.
 STR_CLIPGIF_LENGTH_TIP=GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too.
 STR_CLIPGIF_LOADING=Opening the GIF...
-STR_CLIPGIF_TOO_LARGE=This GIF is too large to show here. You can still copy it or save it.
-STR_CLIPGIF_FILTER_NAME=GIF Images
+STR_CLIPGIF_TOO_LARGE=This GIF is too large to show here. You can still copy it.
 STR_MAPGEN_TYPE_MAKER=Famous map maker style
 STR_MAPGEN_SIZE=Size
 STR_MAPGEN_SIZE_FULL=Full
@@ -3039,4 +3037,14 @@ STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game
 
 # The replay's recording mode button, which shows the GIF controls
 STR_REEL_RECORD_MODE_TIP=Recording mode: shows the GIF controls
+
+# The GIF gallery's game groups, path link and delete, and its welcome button
+STR_CLIPGIF_THIS_GAME=This game
+STR_CLIPGIF_EARLIER_GAMES=Earlier games
+STR_CLIPGIF_SHOW_IN_FOLDER_TIP=Show this file in its folder
+STR_CLIPGIF_SHOW_FAILED=The folder could not be opened.
+STR_CLIPGIF_DELETE=Delete
+STR_CLIPGIF_DELETE_CONFIRM=Delete this GIF? It cannot be undone.
+STR_CLIPGIF_DELETE_FAILED=The GIF could not be deleted.
+STR_DLGWELCOME_CLIPS=Clips
 

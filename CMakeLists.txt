@@ -5942,6 +5942,8 @@ set(_unit_test_names
     clip_gif_gallery_scan
     clip_gif_text_fill
     clip_gif_preview_cap
+    clip_gif_current_game
+    clip_gif_delete
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures

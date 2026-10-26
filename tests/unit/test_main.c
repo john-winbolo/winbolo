@@ -701,6 +701,8 @@ static const UnitTestEntry s_tests[] = {
     { "clip_gif_gallery_scan",                   run_clip_gif_gallery_scan                   },
     { "clip_gif_text_fill",                      run_clip_gif_text_fill                      },
     { "clip_gif_preview_cap",                    run_clip_gif_preview_cap                    },
+    { "clip_gif_current_game",                   run_clip_gif_current_game                   },
+    { "clip_gif_delete",                         run_clip_gif_delete                         },
     { "lv_snapshot_index_lookup",                run_lv_snapshot_index_lookup                },
     { "lv_snapshot_index_ten_days",              run_lv_snapshot_index_ten_days              },
     { "lv_load_walk_fixtures",                   run_lv_load_walk_fixtures                   },

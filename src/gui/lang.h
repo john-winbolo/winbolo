@@ -3547,7 +3547,6 @@
 #define STR_CLIPGIF_GALLERY_TITLE                2943
 #define STR_CLIPGIF_GALLERY_EMPTY                2944
 #define STR_CLIPGIF_COPY                         2945
-#define STR_CLIPGIF_SAVE                         2946
 #define STR_CLIPGIF_COPIED                       2947
 #define STR_CLIPGIF_COPY_FAILED                  2948
 #define STR_CLIPGIF_OPEN_FAILED                  2949
@@ -3557,7 +3556,6 @@
 #define STR_CLIPGIF_LENGTH_TIP                   2953
 #define STR_CLIPGIF_LOADING                      2954
 #define STR_CLIPGIF_TOO_LARGE                    2955
-#define STR_CLIPGIF_FILTER_NAME                  2956
 
 /* Map Maker random maps: the generator type, the Size control, the
  * presets named after classic Bolo map makers, and their controls */
@@ -3653,6 +3651,16 @@
 
 /* The replay's recording mode button, which shows the GIF controls */
 #define STR_REEL_RECORD_MODE_TIP                 3150
+
+/* The GIF gallery's game groups, path link and delete, and its welcome button */
+#define STR_CLIPGIF_THIS_GAME                    3151
+#define STR_CLIPGIF_EARLIER_GAMES                3152
+#define STR_CLIPGIF_SHOW_IN_FOLDER_TIP           3153
+#define STR_CLIPGIF_SHOW_FAILED                  3154
+#define STR_CLIPGIF_DELETE                       3155
+#define STR_CLIPGIF_DELETE_CONFIRM               3156
+#define STR_CLIPGIF_DELETE_FAILED                3157
+#define STR_DLGWELCOME_CLIPS                     3158
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

@@ -193,8 +193,8 @@ bool lobbyClipGifActive(void) {
  * row names a place as well as a moment, the transport names only a moment and
  * leaves the framing the player set up alone. */
 /* The gallery's metadata for a capture: the time now, the map's name without
- * its .map, and the names of the round's players (the lobby's named slots
- * when there is no round summary). */
+ * its .map, the id of the replay the reel has open, and the names of the
+ * round's players (the lobby's named slots when there is no round summary). */
 static void lobbyClipGifFillMeta(ClipGifMeta *m, ClientSim *cs,
                                  const char *mapName) {
     *m = ClipGifMeta{};
@@ -202,6 +202,7 @@ static void lobbyClipGifFillMeta(ClipGifMeta *m, ClientSim *cs,
     if (SDL_GetCurrentTime(&now)) {
         m->createdUnix = (int64_t)(now / SDL_NS_PER_SECOND);
     }
+    SDL_strlcpy(m->game, lobbyReel()->gameId, sizeof(m->game));
     if (mapName && mapName[0]) {
         SDL_utf8strlcpy(m->map, mapName, sizeof(m->map));
         size_t n = SDL_strlen(m->map);
@@ -532,17 +533,17 @@ static void lobbyClipGifSave(MsfGifResult res) {
 #endif
 
 /* Called once per frame from the lobby's event loop, above whichever view is
- * on screen, so a save picker opened from the gallery still writes its file
- * when the player has navigated away from the recap. */
-void lobbyClipGifSavePoll(void) {
+ * on screen, so the gallery lets go of its preview when the player has
+ * navigated away from the recap. */
+void lobbyClipGifPoll(void) {
 #if BOLO_CLIP_GIF_GALLERY
-    lobbyClipGifGallerySavePoll();
+    lobbyClipGifGalleryPoll();
 #endif
 }
 
-/* Leaving the lobby lets go of the gallery's preview and of a save picker
- * still waiting: there is no loop left to poll it. */
-void lobbyClipGifSaveAbandon(void) {
+/* Leaving the lobby lets go of the gallery's preview and of a decode still
+ * running. */
+void lobbyClipGifShutdown(void) {
 #if BOLO_CLIP_GIF_GALLERY
     lobbyClipGifGalleryShutdown();
 #endif

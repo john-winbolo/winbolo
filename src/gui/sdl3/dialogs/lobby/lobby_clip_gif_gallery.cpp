@@ -22,28 +22,29 @@
  *                folder with a metadata file beside it
  *                (clip_gif_core.h), and a window lists them
  *                newest first with when each was made, the
- *                map and the players. The selected GIF plays
- *                in the window and can be copied to the
- *                clipboard or saved to a place the player
- *                picks.
+ *                map and the players, the GIFs from the game
+ *                that is open above the earlier ones. The
+ *                selected GIF plays in the window, can be
+ *                copied to the clipboard or deleted, and its
+ *                path opens its folder.
  *********************************************************/
 
+#include <cfloat>   /* FLT_MAX */
 #include <climits>  /* INT_MAX */
 #include <cstdio>   /* snprintf / FILENAME_MAX */
 
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "imgui_internal.h"         /* ImTextCalcWordWrapNextLineStart — the path link's lines */
 /* BOLO_CLIP_GIF_GALLERY; ClipGifMeta and the gallery calls this file
  * defines; lobbyIcons; and through imgui_dialog_utils.h imguiHelpTooltip. */
 #include "lobby_internal.h"
-#include "../clip_gif_clipboard.h"  /* clipGifCopyFileToClipboard */
+#include "../clip_gif_clipboard.h"  /* clipGifCopyFileToClipboard / clipGifShowFileInFolder */
 #include "stb_image.h"              /* stbi_image_free */
 #include "stb_image_gif_capped.h"   /* stbiLoadGifCapped — the preview's frames, with a memory limit */
 extern "C" {
-#include "imgui_messagebox.h"    /* imguiMessageBoxEx — a save that did not write */
-#include "../../sdl3draw.h"      /* sdl3DrawGetRenderer / sdl3DrawGetWindow — the preview's texture, the dialog's parent */
-#include "../../../ui_mode.h"    /* uiShouldUseControllerMode — no usable native dialog under a controller */
+#include "../../sdl3draw.h"      /* sdl3DrawGetRenderer / sdl3DrawGetWindow — the preview's texture, the clipboard's owner */
 #include "../../../lang.h"       /* langGetText / STR_CLIPGIF_* */
 }
 
@@ -84,9 +85,9 @@ typedef struct ClipGifPreview {
 
 /* One GIF being decoded on a worker thread, so the lobby loop (which ticks
  * the client's transport) does not stop while a long or large GIF decodes.
- * Heap-allocated and counted, as ClipGifSaveRequest is: two holders, the
- * gallery and the worker. The worker writes the results and then drops its
- * count, so the count falling to 1 tells the gallery the results are there.
+ * Heap-allocated and counted: two holders, the gallery and the worker. The
+ * worker writes the results and then drops its count, so the count falling
+ * to 1 tells the gallery the results are there.
  * When the gallery lets go first (the window closed, or the lobby shut
  * down), it sets stop, so the worker ends before the next frame, and the
  * worker is the last holder and frees the job and its frames. */
@@ -104,30 +105,22 @@ typedef struct ClipGifDecodeJob {
     bool          tooLarge;
 } ClipGifDecodeJob;
 
-/* One request's slot for the native save dialog's answer, as the export used
- * before the gallery. Heap-allocated and counted, because SDL cannot cancel a
- * dialog that is already up, so the slot has to be able to outlive the lobby
- * that asked for it. Two holders: the lobby and the dialog callback. The
- * callback drops its count last, after writing path and ok, so the count
- * falling to 1 is what tells the poll the answer is there. SDL runs the
- * callback on a worker thread on Windows and on the Linux zenity backend. */
-typedef struct ClipGifSaveRequest {
-    SDL_AtomicInt refs;
-    char          path[FILENAME_MAX];
-    int           ok;
-} ClipGifSaveRequest;
-
 typedef struct ClipGifGalleryState {
     bool         open      = false;
     bool         focus     = false;  /* bring the window to the front once */
     bool         needScan  = true;
-    /* Set when the open window is drawn, or opened, and cleared by the save
+    /* Set when the open window is drawn, or opened, and cleared by the
      * poll each lobby frame. Still clear at the poll means the last frame
      * did not draw the window (another lobby view was showing). */
     bool         renderedThisFrame = false;
     ClipGifMeta *items     = nullptr;  /* SDL_malloc'd by the scan */
     int          count     = 0;
     int          selected  = -1;
+    /* The id of the game whose replay the reel had open at the last scan
+     * (empty for none), and how many items at the front of the list are
+     * from it. A new id reads the list again. */
+    char         game[CLIP_GIF_META_GAME_LEN] = "";
+    int          currentCount = 0;
     /* The file to select after the next scan: the GIF just added. */
     char         selectFile[CLIP_GIF_META_FILE_LEN] = "";
     ClipGifPreview preview;
@@ -144,17 +137,21 @@ typedef struct ClipGifGalleryState {
      * rather than asking SDL for the pref folder every frame. Empty while it
      * is not known. */
     char         dir[FILENAME_MAX] = "";
-    /* The last copy or add result, as a lang id (0 for none), and until when
-     * it shows. msgFile is the {string1} of that line: the file an add could
-     * not write. */
+    /* The last copy, delete, folder or add result, as a lang id (0 for
+     * none), and until when it shows. msgFile is the {string1} of that
+     * line: the file an add could not write. */
     langid       msg       = 0;
     bool         msgError  = false;
     Uint64       msgUntilMs = 0;
     char         msgFile[CLIP_GIF_META_FILE_LEN] = "";
-    /* A Save to disk waiting on its picker, and the gallery file it copies. */
-    ClipGifSaveRequest *saveReq = nullptr;
-    char         saveSrc[FILENAME_MAX] = "";
+    /* The GIF the delete question is about, set when the question opens, so
+     * a selection that moves under it does not change which file goes. */
+    char         deleteFile[CLIP_GIF_META_FILE_LEN] = "";
 } ClipGifGalleryState;
+
+/* The list's width, in unscaled pixels, as the splitter beside it last left
+ * it. Outside s_gal so the shutdown's reset keeps it for the session. */
+static float s_galListW = 260.0f;
 
 static ClipGifGalleryState s_gal;
 
@@ -179,11 +176,17 @@ static bool galleryFindDir(void) {
     return true;
 }
 
+/* The folder and the file, with the platform's own separator, as the path
+ * is also shown to the player. */
 static bool galleryPath(char *out, size_t outLen, const char *file) {
     if (s_gal.dir[0] == '\0') {
         return false;
     }
+#ifdef _WIN32
+    int n = snprintf(out, outLen, "%s\\%s", s_gal.dir, file);
+#else
     int n = snprintf(out, outLen, "%s/%s", s_gal.dir, file);
+#endif
     return n > 0 && (size_t)n < outLen;
 }
 
@@ -427,8 +430,9 @@ static void galleryDropJob(void) {
 
 /* ── The list ───────────────────────────────────────────────────── */
 
-/* Read the folder again, and keep (or move to) the selection by file name,
- * since the scan's order is newest first and a new GIF shifts every index. */
+/* Read the folder again, put the GIFs from the open game first, and keep (or
+ * move to) the selection by file name, since the scan's order is newest first
+ * and a new GIF shifts every index. */
 static void galleryRescan(void) {
     char keep[CLIP_GIF_META_FILE_LEN] = "";
     if (s_gal.selectFile[0] != '\0') {
@@ -442,6 +446,9 @@ static void galleryRescan(void) {
     if (galleryFindDir()) {
         s_gal.count = clipGifGalleryScan(s_gal.dir, &s_gal.items);
     }
+    SDL_strlcpy(s_gal.game, lobbyReel()->gameId, sizeof(s_gal.game));
+    s_gal.currentCount =
+        clipGifMetaCurrentGameFirst(s_gal.items, s_gal.count, s_gal.game);
     s_gal.selected = (s_gal.count > 0) ? 0 : -1;
     for (int i = 0; keep[0] != '\0' && i < s_gal.count; i++) {
         if (SDL_strcmp(s_gal.items[i].gifFile, keep) == 0) {
@@ -530,65 +537,12 @@ void lobbyClipGifGalleryAdd(const void *data, size_t len,
     SDL_strlcpy(s_gal.selectFile, file, sizeof(s_gal.selectFile));
 }
 
-/* ── Save to disk ───────────────────────────────────────────────── */
-
-static void SDLCALL gallerySaveCallback(void *userdata,
-                                        const char *const *filelist,
-                                        int filter) {
-    ClipGifSaveRequest *st = (ClipGifSaveRequest *)userdata;
-    (void)filter;
-    if (filelist && filelist[0]) {
-        SDL_strlcpy(st->path, filelist[0], sizeof(st->path));
-        /* Not every platform's dialog adds the filter's extension to a name
-         * typed without one, so a bare name gets it here: the file has to
-         * open as a GIF wherever the player shares it. */
-        size_t len = SDL_strlen(st->path);
-        if (len > 0 &&
-            (len < 4 || SDL_strcasecmp(st->path + len - 4, ".gif") != 0)) {
-            SDL_strlcat(st->path, ".gif", sizeof(st->path));
-        }
-        st->ok = 1;
-    }
-    /* Dropped last: this is what tells the poll path and ok are written, and
-     * the slot must not be touched again after it. */
-    if (SDL_AtomicDecRef(&st->refs)) {
-        SDL_free(st);
-    }
-}
-
-/* Ask where to put the selected GIF. The picker returns at once; the answer
- * is picked up by lobbyClipGifGallerySavePoll on a later frame, so the lobby
- * keeps ticking the transport while the player chooses. */
-static void galleryStartSave(const char *srcPath) {
-    if (s_gal.saveReq != nullptr) {
-        return;
-    }
-    ClipGifSaveRequest *req =
-        (ClipGifSaveRequest *)SDL_calloc(1, sizeof(*req));
-    if (req == NULL) {
-        return;
-    }
-    SDL_SetAtomicInt(&req->refs, 2);  /* the lobby's and the callback's */
-    s_gal.saveReq = req;
-    SDL_strlcpy(s_gal.saveSrc, srcPath, sizeof(s_gal.saveSrc));
-
-    /* The name is what the operating system's dialog shows as the file type.
-     * SDL needs the filter array to stay valid until the callback runs, so it
-     * is static, and the name is filled from the lang table on each call. */
-    static SDL_DialogFileFilter filters[1];
-    filters[0].name    = langGetText(STR_CLIPGIF_FILTER_NAME);
-    filters[0].pattern = "gif";
-    SDL_ShowSaveFileDialog(gallerySaveCallback, req, sdl3DrawGetWindow(),
-                           filters, 1, NULL);
-}
-
 /* Runs once per lobby frame on every view, before that frame is drawn. Lets
  * go of the decoded frames, the texture, a decode still running and the
  * list when the open window was not drawn on the last frame, because the
  * player is on another lobby view. The window stays open and reads the list
- * again when it is next drawn. Then writes out a save from the gallery
- * whose picker has been answered. */
-void lobbyClipGifGallerySavePoll(void) {
+ * again when it is next drawn. */
+void lobbyClipGifGalleryPoll(void) {
     if (s_gal.open && !s_gal.renderedThisFrame) {
         /* Selects the same GIF after the next scan. */
         if (s_gal.selectFile[0] == '\0' && s_gal.selected >= 0 &&
@@ -602,49 +556,13 @@ void lobbyClipGifGallerySavePoll(void) {
         s_gal.needScan = true;
     }
     s_gal.renderedThisFrame = false;
-
-    ClipGifSaveRequest *req = s_gal.saveReq;
-    if (req == NULL || SDL_GetAtomicInt(&req->refs) != 1) {
-        return;
-    }
-    /* Sole owner now, so the slot reads without further synchronisation. */
-    bool ok = (req->ok != 0);
-    char dest[FILENAME_MAX];
-    SDL_strlcpy(dest, req->path, sizeof(dest));
-    char src[FILENAME_MAX];
-    SDL_strlcpy(src, s_gal.saveSrc, sizeof(src));
-    s_gal.saveReq    = nullptr;
-    s_gal.saveSrc[0] = '\0';
-    SDL_free(req);
-    if (!ok) {
-        return;  /* the player cancelled */
-    }
-
-    bool wrote = false;
-    size_t len = 0;
-    void *data = SDL_LoadFile(src, &len);
-    if (data != NULL) {
-        wrote = galleryWriteBytes(dest, data, len);
-        SDL_free(data);
-    }
-    if (!wrote) {
-        /* The player picked the place, so silence would be the only cue that
-         * nothing landed there. Outside the ImGui frame, as the box runs a
-         * loop of its own. */
-        imguiMessageBoxEx(GALLERY_GIF_TITLE, dest, IMGUI_MSG_ERROR,
-                          IMGUI_MSG_OK);
-    }
 }
 
 void lobbyClipGifGalleryShutdown(void) {
     galleryPreviewFree();
     galleryFreeItems();
     galleryDropJob();
-    ClipGifSaveRequest *req = s_gal.saveReq;
     s_gal = ClipGifGalleryState{};
-    if (req != NULL && SDL_AtomicDecRef(&req->refs)) {
-        SDL_free(req);
-    }
 }
 
 /* ── The window ─────────────────────────────────────────────────── */
@@ -685,6 +603,148 @@ bool lobbyClipGifGalleryButton(const char *id) {
     return clicked;
 }
 
+/* Removes the gallery GIF file (a name in the folder) and its metadata file.
+ * A preview or a decode of that GIF is let go of first, so the frames, the
+ * texture and the worker's open file do not keep it. The selection moves to
+ * the row that takes its place in the list. */
+static void galleryDelete(const char *file) {
+    int index = -1;
+    for (int i = 0; i < s_gal.count; i++) {
+        if (SDL_strcmp(s_gal.items[i].gifFile, file) == 0) {
+            index = i;
+            break;
+        }
+    }
+    char path[FILENAME_MAX];
+    if (index < 0 || !galleryPath(path, sizeof(path), file)) {
+        return;
+    }
+    if (SDL_strcmp(s_gal.preview.file, file) == 0) {
+        galleryPreviewFree();
+    }
+    if (s_gal.job != nullptr && SDL_strcmp(s_gal.job->file, file) == 0) {
+        galleryDropJob();
+    }
+    if (!clipGifDeleteFiles(path)) {
+        galleryShowMessage(STR_CLIPGIF_DELETE_FAILED, true, NULL);
+        return;
+    }
+    /* The row to select is named by its file, as the scan finds it again. Its
+     * index in the new list is one less than in this list when it was below
+     * the removed row. */
+    int next = clipGifSelectAfterRemove(s_gal.count, index);
+    if (next >= 0) {
+        int old = (next < index) ? next : next + 1;
+        SDL_strlcpy(s_gal.selectFile, s_gal.items[old].gifFile,
+                    sizeof(s_gal.selectFile));
+    } else {
+        s_gal.selectFile[0] = '\0';
+    }
+    s_gal.selected = -1;
+    s_gal.needScan = true;
+}
+
+/* The path as a link: the link colour, underlined, wrapped to the width
+ * there is, with the hand cursor over it. Mouse, keys and controller can
+ * all press it. Returns true when it is pressed. */
+static bool galleryPathLink(const char *id, const char *text) {
+    ImFont *font = ImGui::GetFont();
+    const float size  = ImGui::GetFontSize();
+    const float lineH = ImGui::GetTextLineHeight();
+    float wrapW = ImGui::GetContentRegionAvail().x;
+    if (wrapW < size) wrapW = size;
+
+    /* The lines, as ImGui's own wrapped text breaks them. A path with no
+     * space in it breaks inside a word when the word is wider than the room;
+     * at least one character goes on each line, so the loop always ends. */
+    enum { MAX_LINES = 16 };
+    const char *lineStart[MAX_LINES];
+    const char *lineEnd[MAX_LINES];
+    int lines = 0;
+    float maxW = 0.0f;
+    const char *end = text + SDL_strlen(text);
+    const char *t = text;
+    while (t < end && lines < MAX_LINES) {
+        const char *e = font->CalcWordWrapPosition(size, t, end, wrapW);
+        if (e <= t) {
+            e = t + 1;
+            while (e < end && ((unsigned char)*e & 0xC0) == 0x80) {
+                e++;
+            }
+        }
+        lineStart[lines] = t;
+        lineEnd[lines]   = e;
+        float w = font->CalcTextSizeA(size, FLT_MAX, 0.0f, t, e).x;
+        if (w > maxW) maxW = w;
+        lines++;
+        t = ImTextCalcWordWrapNextLineStart(e, end);
+    }
+    if (lines == 0) {
+        return false;
+    }
+
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    bool pressed = ImGui::InvisibleButton(
+        id, ImVec2(SDL_max(maxW, 1.0f), lineH * (float)lines),
+        ImGuiButtonFlags_EnableNav);
+    const bool hovered = ImGui::IsItemHovered();
+    if (hovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImU32 col = ImGui::GetColorU32(hovered ? ImGuiCol_ButtonHovered
+                                                 : ImGuiCol_TextLink);
+    for (int i = 0; i < lines; i++) {
+        const float y = pos.y + lineH * (float)i;
+        dl->AddText(font, size, ImVec2(pos.x, y), col, lineStart[i],
+                    lineEnd[i]);
+        const float w =
+            font->CalcTextSizeA(size, FLT_MAX, 0.0f, lineStart[i], lineEnd[i])
+                .x;
+        const float uy = IM_TRUNC(y + size) - 0.5f;
+        dl->AddLine(ImVec2(pos.x, uy), ImVec2(pos.x + w, uy), col, 1.0f);
+    }
+    return pressed;
+}
+
+#define GALLERY_DELETE_POPUP "###clipgifdelete"
+
+/* The question before a delete, a plain Yes / No. No has the focus, so a
+ * stray press of the confirm button does not delete. */
+static void galleryRenderDeleteConfirm(float s) {
+    char title[128];
+    snprintf(title, sizeof(title), "%s" GALLERY_DELETE_POPUP,
+             langGetText(STR_CLIPGIF_DELETE));
+    if (!ImGui::BeginPopupModal(title, NULL,
+                                ImGuiWindowFlags_AlwaysAutoResize |
+                                    ImGuiWindowFlags_NoSavedSettings)) {
+        return;
+    }
+    ImGui::TextUnformatted(langGetText(STR_CLIPGIF_DELETE_CONFIRM));
+    ImGui::TextDisabled("%s", s_gal.deleteFile);
+    ImGui::Spacing();
+    const float btnW = 90.0f * s;
+    if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0.0f))) {
+        char file[CLIP_GIF_META_FILE_LEN];
+        SDL_strlcpy(file, s_gal.deleteFile, sizeof(file));
+        s_gal.deleteFile[0] = '\0';
+        ImGui::CloseCurrentPopup();
+        galleryDelete(file);
+    }
+    imguiHandOnHover();
+    ImGui::SameLine();
+    if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0.0f)) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        s_gal.deleteFile[0] = '\0';
+        ImGui::CloseCurrentPopup();
+    }
+    imguiHandOnHover();
+    if (ImGui::IsWindowAppearing()) {
+        ImGui::SetKeyboardFocusHere(-1);
+    }
+    ImGui::EndPopup();
+}
+
 static void galleryRenderDetail(float s) {
     if (s_gal.selected < 0 || s_gal.selected >= s_gal.count) {
         return;
@@ -692,9 +752,12 @@ static void galleryRenderDetail(float s) {
     const ClipGifMeta *item = &s_gal.items[s_gal.selected];
     galleryPreviewUpdate(item);
 
-    /* Room under the picture for the details and the buttons. */
+    char path[FILENAME_MAX];
+    const bool havePath = galleryPath(path, sizeof(path), item->gifFile);
+
+    /* Room under the picture for the details, the path and the buttons. */
     const float lineH = ImGui::GetFrameHeightWithSpacing();
-    const float detailH = lineH * 5.0f;
+    const float detailH = lineH * 7.0f;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     float maxW = avail.x;
     float maxH = avail.y - detailH;
@@ -742,28 +805,124 @@ static void galleryRenderDetail(float s) {
         ImGui::TextDisabled("%s", langGetText(STR_CLIPGIF_NO_DETAILS));
     }
 
-    char path[FILENAME_MAX];
-    const bool havePath = galleryPath(path, sizeof(path), item->gifFile);
+    /* The full path, which opens the file's folder. */
+    if (havePath) {
+        if (galleryPathLink("##clipgifpath", path) &&
+            !clipGifShowFileInFolder(path)) {
+            galleryShowMessage(STR_CLIPGIF_SHOW_FAILED, true, NULL);
+        }
+        imguiHelpTooltip(langGetText(STR_CLIPGIF_SHOW_IN_FOLDER_TIP));
+    }
+
     ImGui::BeginDisabled(!havePath);
     if (ImGui::Button(langGetText(STR_CLIPGIF_COPY))) {
         bool ok = clipGifCopyFileToClipboard(path, sdl3DrawGetWindow());
         galleryShowMessage(ok ? STR_CLIPGIF_COPIED : STR_CLIPGIF_COPY_FAILED,
                            !ok, NULL);
     }
-    /* No usable native dialog under a controller, so there the file stays
-     * where the gallery keeps it, and its path is shown instead. */
-    if (!uiShouldUseControllerMode()) {
-        ImGui::SameLine();
-        ImGui::BeginDisabled(s_gal.saveReq != nullptr);
-        if (ImGui::Button(langGetText(STR_CLIPGIF_SAVE))) {
-            galleryStartSave(path);
-        }
-        ImGui::EndDisabled();
+    imguiHandOnHover();
+    ImGui::SameLine();
+    if (ImGui::Button(langGetText(STR_CLIPGIF_DELETE))) {
+        SDL_strlcpy(s_gal.deleteFile, item->gifFile, sizeof(s_gal.deleteFile));
+        ImGui::OpenPopup(GALLERY_DELETE_POPUP);
     }
+    imguiHandOnHover();
     ImGui::EndDisabled();
-    if (uiShouldUseControllerMode() && havePath) {
-        ImGui::TextDisabled("%s", path);
+
+    /* After everything that reads item: a delete marks the list to be read
+     * again, and item is not used past this point. */
+    galleryRenderDeleteConfirm(s);
+}
+
+/* One row of the list: when it was made and the map, and the players under
+ * it. The row is the list's width, so a long one is cut at the edge instead
+ * of widening the list, and its tooltip then gives the whole of it. */
+static void galleryRenderRow(int i) {
+    const ClipGifMeta *m = &s_gal.items[i];
+    char when[32];
+    clipGifFormatTime(m->createdUnix, when, sizeof(when));
+    char text[CLIP_GIF_META_MAP_LEN + 48];
+    snprintf(text, sizeof(text), "%s  %s", when, m->map);
+    char label[sizeof(text) + 16];
+    snprintf(label, sizeof(label), "%s##gif%d", text, i);
+    char players[GALLERY_PLAYERS_LEN];
+    galleryJoinPlayers(m, players, sizeof(players));
+
+    const float rowW = ImGui::GetContentRegionAvail().x;
+    if (ImGui::Selectable(label, i == s_gal.selected, 0, ImVec2(rowW, 0.0f))) {
+        s_gal.selected = i;
     }
+    const float indent = ImGui::GetStyle().IndentSpacing;
+    const bool cut =
+        ImGui::CalcTextSize(text).x > rowW ||
+        (players[0] != '\0' &&
+         ImGui::CalcTextSize(players).x > rowW - indent);
+    if (cut && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        if (players[0] != '\0') {
+            ImGui::SetTooltip("%s\n%s", text, players);
+        } else {
+            ImGui::SetTooltip("%s", text);
+        }
+    }
+    if (players[0] != '\0') {
+        ImGui::Indent();
+        ImGui::TextDisabled("%s", players);
+        ImGui::Unindent();
+    }
+}
+
+/* A light label over a group of rows. */
+static void galleryRenderGroupLabel(langid id) {
+    ImGui::PushStyleColor(ImGuiCol_Text,
+                          ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::SeparatorText(langGetText(id));
+    ImGui::PopStyleColor();
+}
+
+/* The list, with the GIFs from the open game under one label and the rest
+ * under another. Without a GIF from the open game there is one group, and
+ * no label. */
+static void galleryRenderList(void) {
+    const bool grouped = (s_gal.currentCount > 0);
+    for (int i = 0; i < s_gal.count; i++) {
+        if (grouped && i == 0) {
+            galleryRenderGroupLabel(STR_CLIPGIF_THIS_GAME);
+        } else if (grouped && i == s_gal.currentCount) {
+            ImGui::Spacing();
+            galleryRenderGroupLabel(STR_CLIPGIF_EARLIER_GAMES);
+        }
+        ImGui::PushID(i);
+        galleryRenderRow(i);
+        ImGui::PopID();
+    }
+}
+
+/* The bar between the list and the detail, which drags the list's width.
+ * Mouse only: it is not a stop for the keys or a controller. */
+static void galleryRenderSplitter(float s, float height, float minW,
+                                  float maxW, float listW) {
+    const float barW = 8.0f * s;
+    ImGui::InvisibleButton("##clipgifsplit", ImVec2(barW, height));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active  = ImGui::IsItemActive();
+    if (hovered || active) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    }
+    if (active) {
+        float w = listW + ImGui::GetIO().MouseDelta.x;
+        if (w < minW) w = minW;
+        if (w > maxW) w = maxW;
+        s_galListW = w / s;
+    }
+    const ImVec2 a = ImGui::GetItemRectMin();
+    const ImVec2 b = ImGui::GetItemRectMax();
+    const float x = IM_TRUNC((a.x + b.x) * 0.5f);
+    const ImGuiCol col = active    ? ImGuiCol_SeparatorActive
+                         : hovered ? ImGuiCol_SeparatorHovered
+                                   : ImGuiCol_Separator;
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(x, a.y), ImVec2(x, b.y),
+                                        ImGui::GetColorU32(col),
+                                        (hovered || active) ? 2.0f : 1.0f);
 }
 
 void lobbyClipGifGalleryRender(float s) {
@@ -771,6 +930,10 @@ void lobbyClipGifGalleryRender(float s) {
         return;
     }
     s_gal.renderedThisFrame = true;
+    /* A new replay in the reel moves its GIFs into the first group. */
+    if (SDL_strcmp(s_gal.game, lobbyReel()->gameId) != 0) {
+        s_gal.needScan = true;
+    }
     if (s_gal.needScan) {
         galleryRescan();
     }
@@ -786,8 +949,8 @@ void lobbyClipGifGalleryRender(float s) {
     }
     bool open = true;
     if (ImGui::Begin(title, &open, ImGuiWindowFlags_NoCollapse)) {
-        /* The last copy or add result, for a few seconds. Filled here rather
-         * than through langGetTextFmt, so a long file name is not cut. */
+        /* The last result, for a few seconds. Filled here rather than
+         * through langGetTextFmt, so a long file name is not cut. */
         if (s_gal.msg != 0 && SDL_GetTicks() < s_gal.msgUntilMs) {
             char text[CLIP_GIF_META_FILE_LEN + 256];
             clipGifFillString1(langGetText(s_gal.msg), s_gal.msgFile, text,
@@ -805,30 +968,24 @@ void lobbyClipGifGalleryRender(float s) {
         if (s_gal.count == 0) {
             ImGui::TextWrapped("%s", langGetText(STR_CLIPGIF_GALLERY_EMPTY));
         } else {
-            ImGui::BeginChild("##clipgiflist", ImVec2(260.0f * s, 0.0f),
+            /* The list's width as last dragged, kept between a floor and the
+             * room that leaves the detail a usable width. */
+            const float availW = ImGui::GetContentRegionAvail().x;
+            const float minW = 140.0f * s;
+            float maxW = SDL_min(600.0f * s, availW - 200.0f * s);
+            if (maxW < minW) maxW = minW;
+            float listW = s_galListW * s;
+            if (listW < minW) listW = minW;
+            if (listW > maxW) listW = maxW;
+
+            ImGui::BeginChild("##clipgiflist", ImVec2(listW, 0.0f),
                               ImGuiChildFlags_Borders);
-            for (int i = 0; i < s_gal.count; i++) {
-                const ClipGifMeta *m = &s_gal.items[i];
-                char when[32];
-                clipGifFormatTime(m->createdUnix, when, sizeof(when));
-                char label[CLIP_GIF_META_MAP_LEN + 48];
-                snprintf(label, sizeof(label), "%s  %s##gif%d", when,
-                         m->map, i);
-                ImGui::PushID(i);
-                if (ImGui::Selectable(label, i == s_gal.selected)) {
-                    s_gal.selected = i;
-                }
-                if (m->playerCount > 0) {
-                    char players[GALLERY_PLAYERS_LEN];
-                    galleryJoinPlayers(m, players, sizeof(players));
-                    ImGui::Indent();
-                    ImGui::TextDisabled("%s", players);
-                    ImGui::Unindent();
-                }
-                ImGui::PopID();
-            }
+            galleryRenderList();
             ImGui::EndChild();
-            ImGui::SameLine();
+            const float listH = ImGui::GetItemRectSize().y;
+            ImGui::SameLine(0.0f, 0.0f);
+            galleryRenderSplitter(s, listH, minW, maxW, listW);
+            ImGui::SameLine(0.0f, 0.0f);
             ImGui::BeginChild("##clipgifdetail", ImVec2(0.0f, 0.0f));
             galleryRenderDetail(s);
             ImGui::EndChild();
@@ -839,8 +996,7 @@ void lobbyClipGifGalleryRender(float s) {
     if (!open) {
         /* Closing lets go of the decoded frames, the texture and a decode
          * still running (its worker stops before its next frame and frees
-         * the job); the list is read
-         * again the next time the window opens. */
+         * the job); the list is read again the next time the window opens. */
         s_gal.open = false;
         galleryPreviewFree();
         galleryDropJob();

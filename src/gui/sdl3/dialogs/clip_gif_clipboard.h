@@ -16,7 +16,8 @@
  */
 
 /*
- * Puts a GIF file on the system clipboard for the recap's GIF gallery.
+ * Puts a GIF file on the system clipboard for the recap's GIF gallery, and
+ * shows one in the system's file manager.
  *
  * Windows: the file goes on as a file (CF_HDROP), which is what Explorer and
  * Discord paste, together with the GIF's bytes under the registered "GIF"
@@ -41,6 +42,12 @@ extern "C" {
  * SDL_Window that owns the clipboard on Windows and may be NULL. Returns
  * false when the file could not be read or the clipboard refused it. */
 bool clipGifCopyFileToClipboard(const char *gifPath, void *window);
+
+/* Shows the GIF at gifPath (UTF-8) in the system's file manager. On Windows
+ * Explorer opens on the GIF's folder with the GIF selected; when that cannot
+ * start, the folder is opened. On other platforms the folder is opened
+ * through its file:// address. False when nothing could be opened. */
+bool clipGifShowFileInFolder(const char *gifPath);
 
 #ifdef __cplusplus
 }  /* extern "C" */

@@ -1456,6 +1456,11 @@ int run_clip_gif_meta_bad(void);
 int run_clip_gif_gallery_scan(void);
 int run_clip_gif_text_fill(void);
 int run_clip_gif_preview_cap(void);
+/* The gallery's game groups (the replay's id, the current game first) and its
+ * delete (both files go, and the row that takes the removed one's place is
+ * selected). */
+int run_clip_gif_current_game(void);
+int run_clip_gif_delete(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */

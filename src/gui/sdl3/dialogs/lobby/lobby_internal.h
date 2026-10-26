@@ -89,7 +89,7 @@
 
 /* BOLO_CLIP_GIF_GALLERY — the recap's GIF gallery: every clip export is kept
  *   in a "clips" folder under the per-user pref folder with a small metadata
- *   file beside it, and a window lists them with copy and save. On wherever
+ *   file beside it, and a window lists them with copy and delete. On wherever
  *   the clip export is, except iOS, which keeps writing each clip into the
  *   app's Documents folder for the Files app to show, and Android, where the
  *   clip goes to the share sheet (see above). */
@@ -405,6 +405,11 @@ typedef struct LobbyReelState {
      * shorter length after a seek back. Goes back to the default with the
      * rest of the reel, like the crop frame. */
     uint32_t gifLenMs = CLIP_GIF_LEN_DEFAULT_MS;
+
+    /* The id of the replay the reel opened (clipGifGameIdFromBytes), which
+     * each GIF made from it keeps in its metadata. The gallery lists the GIFs
+     * with this id as the current game. Empty while no replay is open. */
+    char gameId[CLIP_GIF_META_GAME_LEN] = "";
 
     /* Recording mode, which the movie camera button on the transport row
      * turns on and off. With it off the GIF controls are not drawn: the GIF
@@ -821,12 +826,11 @@ void lobbyClipGifStartFromPlayhead(uint32_t curMs, uint32_t lenMs,
 bool lobbyClipGifButton(const char *id, bool compact);
 float lobbyClipGifButtonWidth(void);
 void lobbyClipGifRender(float s);
-/* The clip export's save picker is asynchronous. The poll writes out a clip
- * whose picker has been answered and belongs in the lobby's event loop, above
- * the view switch, so an export survives navigating away from the recap; the
- * abandon releases one still waiting when the lobby session ends. */
-void lobbyClipGifSavePoll(void);
-void lobbyClipGifSaveAbandon(void);
+/* The poll belongs in the lobby's event loop, above the view switch, so the
+ * gallery lets go of its preview when the recap is no longer drawn; the
+ * shutdown frees the gallery when the lobby session ends. */
+void lobbyClipGifPoll(void);
+void lobbyClipGifShutdown(void);
 #endif
 
 /* clipgif gallery (lobby_clip_gif_gallery.cpp) */
@@ -836,17 +840,13 @@ void lobbyClipGifSaveAbandon(void);
  * pointer to them, so the caller still frees them. */
 void lobbyClipGifGalleryAdd(const void *data, size_t len,
                             const ClipGifMeta *meta, const char *baseName);
-void lobbyClipGifGalleryOpen(void);
-/* The gallery window, drawn once per recap body render while it is open. */
-void lobbyClipGifGalleryRender(float s);
-/* A save picker from the gallery that has been answered; with
- * lobbyClipGifSavePoll in the lobby's event loop. Also lets go of the
- * preview, a decode still running and the list when the open window was not
- * drawn on the last frame; the window stays open. */
-void lobbyClipGifGallerySavePoll(void);
-/* Leaving the lobby: frees the preview's frames and texture and drops a save
- * picker still waiting. */
-void lobbyClipGifGalleryShutdown(void);
+/* lobbyClipGifGalleryOpen, lobbyClipGifGalleryRender (drawn once per recap
+ * body render in the lobby) and lobbyClipGifGalleryShutdown are in
+ * lobby_reel.h, for the welcome screen. */
+/* With lobbyClipGifPoll in the lobby's event loop. Lets go of the preview, a
+ * decode still running and the list when the open window was not drawn on
+ * the last frame; the window stays open. */
+void lobbyClipGifGalleryPoll(void);
 /* The control that opens the gallery, for the transport row. */
 bool lobbyClipGifGalleryButton(const char *id);
 #endif

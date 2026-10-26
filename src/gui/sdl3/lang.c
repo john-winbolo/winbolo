@@ -1318,7 +1318,6 @@ static const LangEntry langTable[] = {
     {2943, "Your GIFs"},
     {2944, "No GIFs yet. Make one with the GIF button under the replay, or the GIF button on a clip."},
     {2945, "Copy to clipboard"},
-    {2946, "Save to disk"},
     {2947, "Copied."},
     {2948, "The GIF could not be copied."},
     {2949, "This GIF could not be opened."},
@@ -1327,8 +1326,7 @@ static const LangEntry langTable[] = {
     {2952, "No details were saved with this GIF."},
     {2953, "GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too."},
     {2954, "Opening the GIF..."},
-    {2955, "This GIF is too large to show here. You can still copy it or save it."},
-    {2956, "GIF Images"},
+    {2955, "This GIF is too large to show here. You can still copy it."},
 
     {2957, "Famous map maker style"},
     {2958, "Size"},
@@ -1416,6 +1414,15 @@ static const LangEntry langTable[] = {
     {3041, "Nothing here yet. Maps you save, here or from a game, show up here."},
 
     {3150, "Recording mode: shows the GIF controls"},
+
+    {3151, "This game"},
+    {3152, "Earlier games"},
+    {3153, "Show this file in its folder"},
+    {3154, "The folder could not be opened."},
+    {3155, "Delete"},
+    {3156, "Delete this GIF? It cannot be undone."},
+    {3157, "The GIF could not be deleted."},
+    {3158, "Clips"},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},
