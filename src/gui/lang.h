@@ -3542,8 +3542,8 @@
 #define STR_DLGSYSINFO_MEM_GRASS                 2797
 
 /* The Scenario Text window: the status line and the announcement a
- * scenario or mod shows, in a window the player moves and resizes.
- * 2798 to 2904 are used by open pull requests, so these start at 2905. */
+ * scenario or mod shows, in a window the player moves and resizes. 2905 to
+ * 2908 were the free ids between the ranges other changes had taken. */
 #define STR_SCNTEXT_TITLE                        2905
 
 /* The two sliders in the gear of a scenario panel and of the Scenario Text

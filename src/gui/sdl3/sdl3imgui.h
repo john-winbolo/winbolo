@@ -244,11 +244,12 @@ void sdl3ImguiShowBrainSettings(void);
 /*********************************************************
 *NAME:          sdl3ImguiToggleScnPanelShown
 *PURPOSE:
-*  Show or hide one script's scenario panel, the toggle the
-*  Brains > Info Overlay checkbox makes. owner is the script's
-*  position on the round's list. No-op for an owner with no
-*  panel this round. Called from the macOS native menu's
-*  Info Overlay rows.
+*  Show or hide one script's scenario panel, or the Scenario
+*  Text window, the toggle the Brains > Info Overlay checkbox
+*  makes. owner is the script's position on the round's list,
+*  or one past the last script's for the Scenario Text
+*  window. No-op for an owner with no panel this round.
+*  Called from the macOS native menu's Info Overlay rows.
 *********************************************************/
 void sdl3ImguiToggleScnPanelShown(int owner);
 

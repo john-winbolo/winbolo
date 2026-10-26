@@ -1318,7 +1318,6 @@ static const LangEntry langTable[] = {
     {2905, "Scenario Text"},
     {2907, "Background opacity"},
     {2908, "Text opacity"},
-
     {2919, "Push to talk: hold the microphone button on the game screen"},
     {2920, "Your files"},
     {2921, "Maps that come with WinBolo"},

@@ -5944,8 +5944,8 @@ static bool scnTextRoundHasScript(ClientSim *cs) {
 }
 
 /* Draws one outlined line at (px, py): the line in near-black one stroke out
-   in each of the eight directions, so the letters keep an edge whichever way
-   the terrain under them happens to run, then the line in white. */
+   in each of the eight directions, so the letters keep an edge whatever is
+   under them, then the line in white. */
 static void scnDrawOutlinedRow(ImDrawList *dl, ImFont *font, float height,
                                float px, float py, float o, int alpha,
                                const char *text, const char *textEnd) {
