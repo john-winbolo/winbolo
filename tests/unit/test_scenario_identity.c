@@ -2,8 +2,8 @@
  * Who wrote a scenario script and when it last changed (scenario_identity.h):
  * the author and updated fields of the manifest, read from a script's own
  * scenario table and from a package's manifest.json, carried to a lobby in
- * the scenario-list trailer and the V3 details reply, and stated by every
- * shipped script.
+ * each scenario-list row and the details reply, and stated by every shipped
+ * script.
  *
  * run_scenario_identity_clean        — the author cleaner drops control
  *                                      characters, invisible format
@@ -28,24 +28,17 @@
  *                                      unstated one out, and a table that
  *                                      states a different pair disagrees
  * run_scenario_identity_blob         — the blob's writer and reader, and
- *                                      the bytes a reader refuses, no bytes
- *                                      at all among them (a V3 reply whose
- *                                      server could not look the file up)
- * run_scenario_identity_list_wire    — a scenario-list chunk with the
- *                                      trailer, decoded back; the rows in
- *                                      front of the tag are the old wire,
- *                                      byte for byte; a chunk with no
- *                                      trailer (an older server) and one
- *                                      with a broken trailer read the rows
- *                                      with identity not known
+ *                                      the bytes a reader refuses
+ * run_scenario_identity_list_wire    — a scenario-list chunk with an
+ *                                      identity in each row, decoded back,
+ *                                      and a row whose identity is cut
+ *                                      short is not taken
  * run_scenario_identity_details_fetch — a mod in the scenarios directory,
  *                                      asked for over the real loopback
  *                                      transport under loss, arrives with
  *                                      its author and updated time beside
  *                                      its details, and the listen host's
- *                                      own lookup answers the same; a V2
- *                                      answer after it (an older server)
- *                                      leaves the identity not known
+ *                                      own lookup answers the same
  * run_scenario_identity_shipped      — every shipped script, data/mods and
  *                                      the data/maps scenario scripts, says
  *                                      author "WinBolo" and a valid updated
@@ -544,13 +537,6 @@ int run_scenario_identity_blob(void) {
                                sizeof(updated));
     UT_ASSERT(took == 2 && author[0] == '\0' && updated[0] == '\0');
 
-    /* No blob at all, a V3 reply whose server could not look the file up:
-       refused, which the client reads as identity not known. */
-    UT_ASSERT(scnIdentityBlobRead(blob, 0, author, sizeof(author), updated,
-                                  sizeof(updated)) < 0);
-    UT_ASSERT(scnIdentityBlobRead(blob, 1, author, sizeof(author), updated,
-                                  sizeof(updated)) < 0);
-
     /* The writer writes what a reader would keep: a bad time as none, and a
        dirty author cleaned. */
     len = scnIdentityBlobWrite(blob, sizeof(blob), " A\nB ", "soon");
@@ -590,7 +576,7 @@ int run_scenario_identity_blob(void) {
     return 0;
 }
 
-/* ── 5. The scenario-list trailer ─────────────────────────────────── */
+/* ── 5. The scenario-list rows ────────────────────────────────────── */
 
 static void siFill(ScnDirEntry *e, const char *file, const char *name,
                    const char *author, const char *updated) {
@@ -615,35 +601,12 @@ static ClientSim *siFreshClientSim(void) {
     return cs;
 }
 
-/* Where the rows of a one-chunk answer end and the trailer starts: walked
- * the way a client from before the trailer walks them. */
-static int siRowsEnd(const uint8_t *buf, int len) {
-    int pos = PACKET_HEADER_SIZE + 2;
-    int cnt = buf[PACKET_HEADER_SIZE + 1];
-    int i;
-    int s;
-
-    for (i = 0; i < cnt; i++) {
-        for (s = 0; s < 3; s++) {
-            if (pos >= len) return -1;
-            pos += 1 + buf[pos];
-        }
-        pos += 4 + 9;
-    }
-    return pos <= len ? pos : -1;
-}
-
 int run_scenario_identity_list_wire(void) {
     ScnDirEntry entries[3];
-    ScnDirEntry bare[3];
     uint8_t     buf[UDP_MAX_PAYLOAD];
-    uint8_t     old[UDP_MAX_PAYLOAD];
     ClientSim  *cs;
     int         len;
-    int         oldLen;
-    int         rowsEnd;
     int         next = 0;
-    int         i;
 
     siFill(&entries[0], "a.lua", "Alpha", SI_AUTHOR, SI_UPDATED);
     siFill(&entries[1], "b.lua", "Beta", "", "");            /* unknown */
@@ -653,77 +616,35 @@ int run_scenario_identity_list_wire(void) {
                                          &next);
     UT_ASSERT(len > 0 && next == 3);
 
-    /* The rows in front of the tag are exactly what this server wrote
-       before the trailer existed: the same entries without identity pack
-       to those bytes, then the trailer. So a client from before it reads
-       its rows and stops, as it always did. */
-    for (i = 0; i < 3; i++) {
-        bare[i] = entries[i];
-        bare[i].author[0]  = '\0';
-        bare[i].updated[0] = '\0';
-    }
-    next   = 0;
-    oldLen = udpServerPackScenarioListChunk(old, (int)sizeof(old), bare, 3, 0,
-                                            &next);
-    rowsEnd = siRowsEnd(buf, len);
-    UT_ASSERT_MSG(rowsEnd > 0 && buf[rowsEnd] == SCN_LIST_IDENTITY_TAG,
-                  "no identity tag after the rows (at %d)", rowsEnd);
-    UT_ASSERT(siRowsEnd(old, oldLen) == rowsEnd);
-    UT_ASSERT_MSG(memcmp(buf, old, (size_t)rowsEnd) == 0,
-                  "the identity changed the rows in front of the trailer");
-    /* Unstated pairs cost two bytes a row and the tag one. */
-    UT_ASSERT_MSG(oldLen == rowsEnd + 1 + 3 * 2,
-                  "the bare trailer is %d bytes", oldLen - rowsEnd);
-
     /* Read back. */
     cs = siFreshClientSim();
     UT_ASSERT(cs != NULL);
     udpClientHandleLobbyScenarioListRsp(cs, buf, len);
     UT_ASSERT(clientSimGetLobbyScenarioListCount(cs) == 3);
-    UT_ASSERT(clientSimGetLobbyScenarioListIdentityKnown(cs, 0));
     UT_ASSERT(strcmp(clientSimGetLobbyScenarioListAuthor(cs, 0), SI_AUTHOR) ==
               0);
     UT_ASSERT(strcmp(clientSimGetLobbyScenarioListUpdated(cs, 0),
                      SI_UPDATED) == 0);
-    /* Known, and not stated: the lobby shows unknown. */
-    UT_ASSERT(clientSimGetLobbyScenarioListIdentityKnown(cs, 1));
+    /* Not stated: the lobby shows unknown. */
     UT_ASSERT(clientSimGetLobbyScenarioListAuthor(cs, 1)[0] == '\0');
     UT_ASSERT(clientSimGetLobbyScenarioListUpdated(cs, 1)[0] == '\0');
+    UT_ASSERT(strcmp(clientSimGetLobbyScenarioListFile(cs, 2), "c.lua") == 0);
     UT_ASSERT(strcmp(clientSimGetLobbyScenarioListAuthor(cs, 2), "WinBolo") ==
               0);
     UT_ASSERT(strcmp(clientSimGetLobbyScenarioListUpdated(cs, 2),
                      "2026-01-31T09:05Z") == 0);
-    /* Out of range answers not known. */
-    UT_ASSERT(!clientSimGetLobbyScenarioListIdentityKnown(cs, 3));
+    /* Out of range answers "". */
+    UT_ASSERT(clientSimGetLobbyScenarioListAuthor(cs, 3)[0] == '\0');
     UT_ASSERT(clientSimGetLobbyScenarioListAuthor(cs, -1)[0] == '\0');
     clientSimDestroy(cs);
 
-    /* An older server: the same rows and no trailer. Every row reads, and
-       none has an identity, which the lobby shows as nothing at all. */
+    /* The last row's identity cut short: the rows in front of it stand and
+       that row is not taken. */
     cs = siFreshClientSim();
     UT_ASSERT(cs != NULL);
-    udpClientHandleLobbyScenarioListRsp(cs, buf, rowsEnd);
-    UT_ASSERT(clientSimGetLobbyScenarioListCount(cs) == 3);
-    UT_ASSERT(strcmp(clientSimGetLobbyScenarioListFile(cs, 2), "c.lua") == 0);
-    for (i = 0; i < 3; i++) {
-        UT_ASSERT_MSG(!clientSimGetLobbyScenarioListIdentityKnown(cs, i),
-                      "row %d of a trailerless chunk has an identity", i);
-    }
-    clientSimDestroy(cs);
-
-    /* A broken trailer: the second blob claims more bytes than there are.
-       The first row keeps its pair, the rest are not known, and the rows
-       themselves all stand. */
-    memcpy(old, buf, (size_t)len);
-    i = rowsEnd + 1 + 2 + (int)strlen(SI_AUTHOR) + SCN_UPDATED_CHARS;
-    old[i] = 40;
-    cs = siFreshClientSim();
-    UT_ASSERT(cs != NULL);
-    udpClientHandleLobbyScenarioListRsp(cs, old, i + 3);
-    UT_ASSERT(clientSimGetLobbyScenarioListCount(cs) == 3);
-    UT_ASSERT(clientSimGetLobbyScenarioListIdentityKnown(cs, 0));
-    UT_ASSERT(!clientSimGetLobbyScenarioListIdentityKnown(cs, 1));
-    UT_ASSERT(!clientSimGetLobbyScenarioListIdentityKnown(cs, 2));
+    udpClientHandleLobbyScenarioListRsp(cs, buf, len - 1);
+    UT_ASSERT(clientSimGetLobbyScenarioListCount(cs) == 2);
+    UT_ASSERT(strcmp(clientSimGetLobbyScenarioListFile(cs, 1), "b.lua") == 0);
     clientSimDestroy(cs);
     return 0;
 }
@@ -800,7 +721,6 @@ int run_scenario_identity_details_fetch(void) {
     char            dUpdated[SCN_UPDATED_LEN];
     bool            found;
     int             at;
-    uint8_t         v2[1] = { 0 };
 
     snprintf(siDir, sizeof(siDir), "%s", "wbtest_scenario_identity_fetch");
     siRemoveTree(siDir);
@@ -856,20 +776,6 @@ int run_scenario_identity_details_fetch(void) {
     UT_ASSERT(found);
     UT_ASSERT(strcmp(dAuthor, SI_AUTHOR) == 0);
     UT_ASSERT(strcmp(dUpdated, SI_UPDATED) == 0);
-
-    /* An older server ignores the identity bit and answers V2. The client's
-       V2 branch puts the details and then the settings, and nothing else;
-       those two calls, made here as it makes them, leave the identity not
-       known, even for a file whose identity an earlier V3 answer gave. */
-    clientSimLobbyScenarioDetailsPut(h.cs, "Identified.lua", true, v2, 0);
-    clientSimLobbyScenarioSettingsPut(h.cs, "Identified.lua", v2, 0);
-    UT_ASSERT(clientSimGetLobbyScenarioDetails(h.cs, "Identified.lua", NULL,
-                                               NULL) ==
-              CLIENT_SCN_DETAILS_FOUND);
-    UT_ASSERT_MSG(!clientSimGetLobbyScenarioIdentity(h.cs, "Identified.lua",
-                                                     &author, &updated),
-                  "a V2 answer left the identity known");
-    UT_ASSERT(author[0] == '\0' && updated[0] == '\0');
 
     UT_ASSERT(clientSimGetConnectState(h.cs) == CLIENT_CONNECT_CONNECTED);
     threadsWaitForMutex();
