@@ -6003,6 +6003,15 @@ set(_unit_test_names
     team_sides_track_identity_after_defection
     team_sides_midgame_joiner_team
     team_sides_set_team_keeps_player_alliance
+    team_sides_accept_moves_whole_team
+    team_sides_accept_from_no_team
+    team_sides_accept_same_side_says_nothing
+    team_sides_leave_takes_free_team
+    team_sides_leave_with_no_free_team
+    team_sides_free_team_rules
+    team_sides_team_chat_follows_sides
+    team_sides_panels_follow_team
+    team_sides_infection_puts_leaver_back
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea

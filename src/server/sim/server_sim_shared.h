@@ -329,6 +329,32 @@ typedef struct {
 const BrainModes *serverSimBrainModesCached(BrainModesCache *cache,
                                             const char *brainPath);
 
+/* Defined in server_sim_players.c. Sides during a round (#424).
+ *
+ * On the server, a seat's lobby team is the only record of its side. The
+ * alliance bitmap in players is a copy written from it, and every pair of
+ * connected seats i != j must hold
+ *
+ *     playersIsAllie(i, j) == (team[i] != 0 && team[i] == team[j])
+ *
+ * Accept, leave, a join and set_team all write the team first and then the
+ * bitmap. */
+
+/* True if the rule above holds for every pair of connected seats. On a
+ * break it logs the first pair that breaks it and returns false. */
+bool serverSimSidesAgree(const ServerSim *sim);
+
+/* The lowest team id in 1..MAX_TANKS-1 that no connected seat is on, or 0
+ * when every id has somebody. A team not in use is set up first: named
+ * "Team N", on no start side, with the colour the fewest teams in use have
+ * (the lowest on a tie), and published. */
+BYTE serverSimFreeTeam(ServerSim *sim);
+
+/* Tell everyone that seat slot's team changed from oldTeam: publish its
+ * lobby slot and, during a round, send the seat the scenario panels its new
+ * team gives it. Call it after the alliance bitmap has its new value. */
+void serverSimSeatTeamChanged(ServerSim *sim, BYTE slot, BYTE oldTeam);
+
 /* Defined in server_sim.c — the entries owned by the parent rather than by a
  * source in this directory. */
 

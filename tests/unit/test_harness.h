@@ -1287,6 +1287,15 @@ int run_team_sides_ping_after_leave(void);
 int run_team_sides_track_identity_after_defection(void);
 int run_team_sides_midgame_joiner_team(void);
 int run_team_sides_set_team_keeps_player_alliance(void);
+int run_team_sides_accept_moves_whole_team(void);
+int run_team_sides_accept_from_no_team(void);
+int run_team_sides_accept_same_side_says_nothing(void);
+int run_team_sides_leave_takes_free_team(void);
+int run_team_sides_leave_with_no_free_team(void);
+int run_team_sides_free_team_rules(void);
+int run_team_sides_team_chat_follows_sides(void);
+int run_team_sides_panels_follow_team(void);
+int run_team_sides_infection_puts_leaver_back(void);
 
 /* Pillbox and base owners from the map file survive a round start
  * (test_round_start_owners.c, issue #422). */

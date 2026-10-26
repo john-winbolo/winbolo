@@ -1575,6 +1575,16 @@ void serverSimScenarioReplayPanels(
     void *ctx,
     bool withTargeted);
 
+/* Seat slot has moved from oldTeam to the team it is on now during a round.
+ * For each panel and script where the old or the new team has a list, send
+ * the seat the list a joiner on its new team would keep: the seat's own
+ * list, else the new team's, else the everyone list, else an empty list.
+ * Each goes as one CTRL_SCN_PANEL addressed to the seat alone. The store is
+ * not written and nothing is recorded: the seat's view changes, the lists do
+ * not. */
+void serverSimScenarioResendPanelsForSeat(ServerSim *sim, BYTE slot,
+                                          BYTE oldTeam);
+
 /* Hand the markers up and the score rows set to a joining subscriber's
  * callback, as the events that published them: one CTRL_SCN_MARKER per
  * marker, then one CTRL_SCN_SCORE per player row and per team row. A

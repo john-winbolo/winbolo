@@ -929,7 +929,11 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
     if (prevSide != startSide) {
         serverSimRepickAllLobbyStarts(sim);
     }
-    lobbyAutoUnreadyOnChange(sim);
+    /* A team set up during a round is a side a player has just taken
+       (serverSimFreeTeam), not a lobby edit, so nobody's ready mark moves. */
+    if (serverSimGetState(sim) != serverStateRunning) {
+        lobbyAutoUnreadyOnChange(sim);
+    }
 }
 
 uint8_t serverSimPickTeamNamingPool(ServerSim *sim, BYTE teamId, uint32_t choice) {
