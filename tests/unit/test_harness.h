@@ -2945,6 +2945,10 @@ int run_addrparse_empty(void);
  * (test_map_chooser_scenario_filter.c). */
 int run_mapchooser_scenario_filter(void);
 
+/* The background game's map name test: no tutorial is ever picked
+ * (test_bg_map_pick.c). */
+int run_bg_map_pick_skips_tutorials(void);
+
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
  * constrained-VBR guarantee), decodes a full 20 ms frame every time, keeps

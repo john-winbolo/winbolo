@@ -4921,6 +4921,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_server_address_parse.c
     # The map chooser's "Scenarios only" row test, header-only.
     tests/unit/test_map_chooser_scenario_filter.c
+    # The background game's map name test (tutorials never picked), header-only.
+    tests/unit/test_bg_map_pick.c
     # Skin asset reads: a directory, a flat zip and a zip wrapped in one
     # top-level folder must resolve the same relative names to the same
     # bytes.
@@ -6670,6 +6672,7 @@ set(_unit_test_names
     addrparse_bad_port
     addrparse_empty
     mapchooser_scenario_filter
+    bg_map_pick_skips_tutorials
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop

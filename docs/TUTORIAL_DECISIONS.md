@@ -1367,3 +1367,63 @@ are filled is 882 bytes (Ukrainian s3); the client's buffer for it is 2,048.
   same way with the script as it was before this work, so it is not
   caused by the text change. It needs a separate look.
 - The wrapped rows: a long controller status line in Russian.
+
+## Oct 26 tutorials folder and menu
+
+### The folder
+
+- The Tutorial map and its script are now in `data/maps/tutorials/`
+  (`Tutorial.map` and `Tutorial.scenario.lua`). The folder holds every
+  shipped tutorial, so more tutorials can go beside it. Each one is a map
+  with its script beside it, as any scripted map is.
+- `src/gui/sdl3/tutorial_maps.h` names the folder (`TUTORIAL_MAPS_DIR`)
+  and the map the menu starts (`TUTORIAL_MENU_MAP`). The desktop, mobile
+  and web menus share it.
+- The map chooser, its "Scenarios only" filter, the lobby's map list and
+  the map-script cache already handle folders under `data/maps`. They
+  need no change.
+- Packaging: desktop and web copy all of `data/`, folders included. iOS
+  has its own glob for the folder (`IOS_DATA_MAPS_TUTORIALS`, placed at
+  `data/maps/tutorials`). Android's `copyGameAssets` includes
+  `maps/tutorials/*.map` and `*.lua`.
+- The 22 tutorial arenas, the unit tests, `tools/make_tutorial_map.py`
+  and `tools/stamp_mod_updated.py` use the new paths.
+
+### The background game
+
+- The menu's background game picks only from `data/maps` itself. The pick
+  puts each name through `bgMapNameAllowed` (`tutorial_maps.h`). A name
+  with a `/` or `\` in it is never picked, so no map in a folder (and no
+  tutorial) is picked, even if the listing starts to walk folders. The old
+  names (Inbuilt Tutorial, Better Best Map Ever) stay left out, and any
+  map that is a scenario stays left out.
+- The desktop and mobile pick (`gamefront.c bgMapAllowed`) and the web
+  pick (`gamefront_wasm.c wasmPickBackgroundMap`) both use it.
+- Unit test `bg_map_pick_skips_tutorials`.
+
+### The menu's Tutorial entry
+
+- The Tutorial entry now starts the Tutorial scenario as a single-player
+  game. It goes through the usual openSetup to openFinished path, so the
+  server, the client and the transport are made as for any other game.
+- The game it plays on matches the tutorial arenas: an Open game, Full
+  Advantage AI (the script seats bots), hidden mines on, no start delay,
+  no time limit and no lobby (`skipLobby`). The startup seats the
+  script's lobby, and the script's lobby rules apply before the round
+  starts. The player's saved game settings are not used or changed.
+- Scripts are on for this game, whatever the scripts preference says.
+  If the script is not beside the map, the start fails and the menu shows
+  the error.
+- No recording, and no visibility preferences (the plain view the arenas
+  use). The game is marked single-player, so the scenario's popups pause
+  it.
+- The web (`?tutorial=` and the menu entry) does the same in
+  `gamefront_wasm.c`.
+- The old built-in tutorial (`tutorial.c`, `isTutorial`) is not started
+  from the menu any more. Its code stays until it is taken out.
+
+### Hand play-test still needed
+
+- The menu Tutorial entry on desktop, Android, iOS and web.
+- The end of the round in this single-player game with no lobby.
+- The popups pause the game.
