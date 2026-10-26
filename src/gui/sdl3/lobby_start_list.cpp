@@ -105,8 +105,16 @@ int lobbyStartListRender(ClientSim *cs, int myPlayerNum, int startCount,
          * starts on, so does activating a row others hold — that joins them,
          * the same as clicking one on the map. A row the viewer already
          * holds, and an off-side row, do nothing, mirroring the mouse
-         * marker picker. */
-        bool activated  = ImGui::Selectable(label);
+         * marker picker.
+         *
+         * The row is exactly as wide as the list. Left at its default width
+         * a Selectable takes the width of its label when that is wider, so
+         * a row with several holders reached past the list and over the map
+         * beside it. The text is cut at the list edge instead, and hovering
+         * a cut row shows the whole of it. */
+        const float rowW = ImGui::GetContentRegionAvail().x;
+        const bool  cut  = ImGui::CalcTextSize(label, NULL, true).x > rowW;
+        bool activated  = ImGui::Selectable(label, false, 0, ImVec2(rowW, 0.0f));
         bool actionable = (free || (lobbySharedStartsEnabled() && !iHold)) &&
                           myPlayerNum >= 0 && !offSide;
         ImGui::PopStyleColor();
@@ -114,10 +122,21 @@ int lobbyStartListRender(ClientSim *cs, int myPlayerNum, int startCount,
         if (ImGui::IsItemFocused()) focused = i;
         /* Say why a focused off-side row does nothing — the pad has no hover,
          * so focus stands in for it. */
-        if (offSide && (ImGui::IsItemFocused() || ImGui::IsItemHovered())) {
-            MessageArgs args = {};
-            args.number = i;
-            ImGui::SetTooltip("%s", langGetTextFmt(STR_STARTPICK_TIP_OFFSIDE, &args));
+        const bool hovered   = ImGui::IsItemHovered();
+        const bool tipOffSide = offSide && (ImGui::IsItemFocused() || hovered);
+        const bool tipCut     = cut && hovered;
+        if (tipOffSide || tipCut) {
+            ImGui::BeginTooltip();
+            if (tipCut) {
+                const char *idMark = SDL_strstr(label, "##");
+                ImGui::TextUnformatted(label, idMark);
+            }
+            if (tipOffSide) {
+                MessageArgs args = {};
+                args.number = i;
+                ImGui::TextUnformatted(langGetTextFmt(STR_STARTPICK_TIP_OFFSIDE, &args));
+            }
+            ImGui::EndTooltip();
         }
         if (activated && actionable) {
             clientSimNetSendLobbyClaimStart(cs, (BYTE)myPlayerNum, (BYTE)i);
