@@ -55,6 +55,9 @@ struct LvMenuState {
     bool fullScreen;           /* Windows > Enter Full Screen checkmark */
     bool canFullScreen;        /* the window can go into and out of full screen */
     bool live;                 /* a live game watched from the game: File has only Leave spectating */
+    bool gifAvailable;         /* this build has GIFs and the Clips window */
+    bool canMakeGif;           /* Action > Make GIF... enable (lv_clip_gif_can_make) */
+    bool showClips;            /* Windows > Clips checkmark */
 };
 
 /* Build and install the native macOS NSMenu on NSApp.mainMenu. The

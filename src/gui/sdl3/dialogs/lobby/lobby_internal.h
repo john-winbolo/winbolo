@@ -833,22 +833,13 @@ void lobbyClipGifPoll(void);
 void lobbyClipGifShutdown(void);
 #endif
 
-/* clipgif gallery (lobby_clip_gif_gallery.cpp) */
+/* clipgif gallery: the window is clip_gif_gallery.cpp, which the Log Viewer
+ * also opens. lobbyClipGifGalleryOpen, lobbyClipGifGalleryRender (drawn once
+ * per recap body render in the lobby) and lobbyClipGifGalleryShutdown are in
+ * lobby_reel.h, for the welcome screen; they give the gallery the game's
+ * renderer, window and the reel's game. */
 #if BOLO_CLIP_GIF_GALLERY
-/* Keeps a finished export in the gallery folder, with its metadata, then
- * opens the gallery on it. Writes the bytes to a file and keeps no
- * pointer to them, so the caller still frees them. */
-void lobbyClipGifGalleryAdd(const void *data, size_t len,
-                            const ClipGifMeta *meta, const char *baseName);
-/* lobbyClipGifGalleryOpen, lobbyClipGifGalleryRender (drawn once per recap
- * body render in the lobby) and lobbyClipGifGalleryShutdown are in
- * lobby_reel.h, for the welcome screen. */
-/* With lobbyClipGifPoll in the lobby's event loop. Lets go of the preview, a
- * decode still running and the list when the open window was not drawn on
- * the last frame; the window stays open. */
-void lobbyClipGifGalleryPoll(void);
-/* The control that opens the gallery, for the transport row. */
-bool lobbyClipGifGalleryButton(const char *id);
+#include "../clip_gif_gallery.h"  /* clipGifGalleryAdd / Poll / Button */
 #endif
 
 /* rating */

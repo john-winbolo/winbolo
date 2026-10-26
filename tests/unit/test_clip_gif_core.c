@@ -953,3 +953,146 @@ int run_clip_gif_delete(void) {
 
     return fails ? 1 : 0;
 }
+
+/* The frame count of a GIF: one frame every 100 ms, at least 10 and at most
+ * 150 frames, as the game's replay and the Log Viewer both make them. */
+int run_clip_gif_frame_count(void) {
+    int fails = 0;
+    EXPECT_U32("0 ms", clipGifFrameCount(0), CLIP_GIF_MIN_FRAMES);
+    EXPECT_U32("999 ms", clipGifFrameCount(999), CLIP_GIF_MIN_FRAMES);
+    EXPECT_U32("1 s", clipGifFrameCount(1000), 10);
+    EXPECT_U32("1.5 s", clipGifFrameCount(1500), 15);
+    EXPECT_U32("1.599 s rounds down", clipGifFrameCount(1599), 15);
+    EXPECT_U32("5 s", clipGifFrameCount(5000), 50);
+    EXPECT_U32("15 s", clipGifFrameCount(15000), CLIP_GIF_MAX_FRAMES);
+    EXPECT_U32("20 s", clipGifFrameCount(20000), CLIP_GIF_MAX_FRAMES);
+    EXPECT_U32("most ms", clipGifFrameCount(0xFFFFFFFFu), CLIP_GIF_MAX_FRAMES);
+    /* The longest length the length field takes is the cap, and the
+     * shortest is the floor. */
+    EXPECT_U32("longest length", clipGifFrameCount(CLIP_GIF_LEN_MAX_MS),
+               CLIP_GIF_MAX_FRAMES);
+    EXPECT_U32("shortest length", clipGifFrameCount(CLIP_GIF_LEN_MIN_MS),
+               CLIP_GIF_MIN_FRAMES);
+    return fails ? 1 : 0;
+}
+
+#define EXPECT_RECT(what, r, ex, ey, ew, eh)                                 \
+    do {                                                                     \
+        if ((r).x != (ex) || (r).y != (ey) || (r).w != (ew) ||               \
+            (r).h != (eh)) {                                                 \
+            fprintf(stderr, "%s: %s: got %d,%d %dx%d, want %d,%d %dx%d\n",   \
+                    utCurrentTestName(), (what), (r).x, (r).y, (r).w, (r).h, \
+                    (ex), (ey), (ew), (eh));                                 \
+            fails++;                                                         \
+        }                                                                    \
+    } while (0)
+
+/* The part of the view a GIF takes when no frame was drawn: all of a narrow
+ * view, the middle of a wide one with the same shape. */
+int run_clip_gif_centre_crop(void) {
+    int fails = 0;
+    ClipGifRect r;
+
+    EXPECT_TRUE("narrow view", clipGifCentreCrop(16, 8, 320, 240, 480, &r));
+    EXPECT_RECT("narrow view", r, 16, 8, 320, 240);
+
+    EXPECT_TRUE("max width view", clipGifCentreCrop(3, 4, 480, 200, 480, &r));
+    EXPECT_RECT("max width view", r, 3, 4, 480, 200);
+
+    /* 960x640 at the 480 cap: half of each side, in the middle. */
+    EXPECT_TRUE("wide view", clipGifCentreCrop(5, 7, 960, 640, 480, &r));
+    EXPECT_RECT("wide view", r, 5 + 240, 7 + 160, 480, 320);
+
+    /* A very flat view keeps at least one row. */
+    EXPECT_TRUE("flat view", clipGifCentreCrop(0, 0, 1000, 3, 480, &r));
+    EXPECT_RECT("flat view", r, 260, 1, 480, 1);
+
+    /* No cap: all of it. */
+    EXPECT_TRUE("no cap", clipGifCentreCrop(0, 0, 1000, 500, 0, &r));
+    EXPECT_RECT("no cap", r, 0, 0, 1000, 500);
+
+    /* An empty view gives nothing, and the rectangle is cleared. */
+    r.x = r.y = r.w = r.h = 9;
+    EXPECT_TRUE("no width", !clipGifCentreCrop(0, 0, 0, 100, 480, &r));
+    EXPECT_RECT("no width", r, 0, 0, 0, 0);
+    r.x = r.y = r.w = r.h = 9;
+    EXPECT_TRUE("no height", !clipGifCentreCrop(0, 0, 100, -1, 480, &r));
+    EXPECT_RECT("no height", r, 0, 0, 0, 0);
+    EXPECT_TRUE("no out", !clipGifCentreCrop(0, 0, 100, 100, 480, NULL));
+    return fails ? 1 : 0;
+}
+
+/* The names a GIF gets: the base name from the map and the time, the file
+ * name in the gallery folder, and the map in its metadata. */
+int run_clip_gif_names(void) {
+    int fails = 0;
+    char buf[160];
+
+    clipGifBaseName(buf, sizeof(buf), "Everard Island.map", 1, 5);
+    EXPECT_STR("base name", buf, "Everard_Island_0105");
+    clipGifBaseName(buf, sizeof(buf), "Rock-n_Roll", 12, 34);
+    EXPECT_STR("kept characters", buf, "Rock-n_Roll_1234");
+    clipGifBaseName(buf, sizeof(buf), NULL, 0, 0);
+    EXPECT_STR("no map", buf, "clip_0000");
+    clipGifBaseName(buf, sizeof(buf), "", 2, 3);
+    EXPECT_STR("empty map", buf, "clip_0203");
+    /* Only a ".map" in small letters comes off, as before. */
+    clipGifBaseName(buf, sizeof(buf), "a.MAP", 2, 3);
+    EXPECT_STR("upper case .MAP", buf, "a_MAP_0203");
+    clipGifBaseName(buf, sizeof(buf), "x/y:z.map", 0, 9);
+    EXPECT_STR("path characters", buf, "x_y_z_0009");
+
+    EXPECT_TRUE("first name",
+                clipGifFileName(buf, sizeof(buf), "map_0105", "20261026-101500", 1));
+    EXPECT_STR("first name", buf, "map_0105_20261026-101500.gif");
+    EXPECT_TRUE("second name",
+                clipGifFileName(buf, sizeof(buf), "map_0105", "20261026-101500", 2));
+    EXPECT_STR("second name", buf, "map_0105_20261026-101500_2.gif");
+    EXPECT_TRUE("last name",
+                clipGifFileName(buf, sizeof(buf), "m", "s", CLIP_GIF_FILE_NAME_MAX_N));
+    EXPECT_STR("last name", buf, "m_s_99.gif");
+    EXPECT_TRUE("no base", clipGifFileName(buf, sizeof(buf), NULL, "s", 1));
+    EXPECT_STR("no base", buf, "clip_s.gif");
+    EXPECT_TRUE("empty base", clipGifFileName(buf, sizeof(buf), "", "s", 3));
+    EXPECT_STR("empty base", buf, "clip_s_3.gif");
+    EXPECT_TRUE("n 0", !clipGifFileName(buf, sizeof(buf), "m", "s", 0));
+    EXPECT_STR("n 0 empty", buf, "");
+    EXPECT_TRUE("n past the last",
+                !clipGifFileName(buf, sizeof(buf), "m", "s",
+                                 CLIP_GIF_FILE_NAME_MAX_N + 1));
+    {
+        char small[8];
+        EXPECT_TRUE("does not fit",
+                    !clipGifFileName(small, sizeof(small), "map_0105", "s", 1));
+        EXPECT_STR("does not fit empty", small, "");
+        EXPECT_TRUE("just fits", clipGifFileName(small, sizeof(small), "m", "s", 1));
+        EXPECT_STR("just fits", small, "m_s.gif");
+    }
+
+    ClipGifMeta m;
+    memset(&m, 0, sizeof(m));
+    clipGifMetaSetMap(&m, "Everard Island.MAP");
+    EXPECT_STR("meta map any case", m.map, "Everard Island");
+    clipGifMetaSetMap(&m, "Bridge.map");
+    EXPECT_STR("meta map", m.map, "Bridge");
+    clipGifMetaSetMap(&m, ".map");
+    EXPECT_STR("only .map", m.map, ".map");
+    clipGifMetaSetMap(&m, NULL);
+    EXPECT_STR("meta no map", m.map, "");
+    {
+        /* A long name is cut on a whole UTF-8 character. */
+        char longName[200];
+        size_t n = 0;
+        for (int i = 0; i < 60; i++) {
+            longName[n++] = (char)0xC3;
+            longName[n++] = (char)0xA9; /* e with an acute accent */
+        }
+        longName[n] = '\0';
+        clipGifMetaSetMap(&m, longName);
+        size_t len = strlen(m.map);
+        EXPECT_TRUE("long name fits", len < sizeof(m.map));
+        EXPECT_TRUE("long name whole characters", len % 2 == 0 && len > 0);
+    }
+    clipGifMetaSetMap(NULL, "x"); /* does nothing */
+    return fails ? 1 : 0;
+}

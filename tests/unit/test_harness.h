@@ -1461,6 +1461,11 @@ int run_clip_gif_preview_cap(void);
  * selected). */
 int run_clip_gif_current_game(void);
 int run_clip_gif_delete(void);
+/* The rules the game's replay and the Log Viewer share to make a GIF: the
+ * frame count, the middle of the view and the names. */
+int run_clip_gif_frame_count(void);
+int run_clip_gif_centre_crop(void);
+int run_clip_gif_names(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */

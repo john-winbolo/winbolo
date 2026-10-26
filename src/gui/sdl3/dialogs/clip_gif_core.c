@@ -568,3 +568,111 @@ void clipGifFillString1(const char *fmt, const char *value, char *out,
         out[used] = '\0';
     }
 }
+
+/* ── Capture ─────────────────────────────────────────────────────── */
+
+uint32_t clipGifFrameCount(uint32_t durationMs) {
+    uint32_t frames = durationMs / CLIP_GIF_FRAME_MS;
+    if (frames > CLIP_GIF_MAX_FRAMES) {
+        frames = CLIP_GIF_MAX_FRAMES;
+    }
+    if (frames < CLIP_GIF_MIN_FRAMES) {
+        frames = CLIP_GIF_MIN_FRAMES;
+    }
+    return frames;
+}
+
+bool clipGifCentreCrop(int srcX, int srcY, int srcW, int srcH, int maxW,
+                       ClipGifRect *out) {
+    if (out == NULL) {
+        return false;
+    }
+    SDL_zerop(out);
+    if (srcW <= 0 || srcH <= 0) {
+        return false;
+    }
+    int cropW = srcW;
+    int cropH = srcH;
+    if (maxW > 0 && cropW > maxW) {
+        cropW = maxW;
+        cropH = (int)((float)srcH * (float)cropW / (float)srcW);
+    }
+    if (cropW < 1) cropW = 1;
+    if (cropH < 1) cropH = 1;
+    if (cropH > srcH) cropH = srcH;
+    out->x = srcX + (srcW - cropW) / 2;
+    out->y = srcY + (srcH - cropH) / 2;
+    out->w = cropW;
+    out->h = cropH;
+    return true;
+}
+
+/* ── File names ──────────────────────────────────────────────────── */
+
+void clipGifBaseName(char *out, size_t outLen, const char *mapName,
+                     unsigned mins, unsigned secs) {
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    char base[64];
+    if (mapName != NULL && mapName[0] != '\0') {
+        snprintf(base, sizeof(base), "%s", mapName);
+        size_t blen = SDL_strlen(base);
+        if (blen > 4 && SDL_strcmp(base + blen - 4, ".map") == 0) {
+            base[blen - 4] = '\0';
+        }
+    } else {
+        snprintf(base, sizeof(base), "clip");
+    }
+    for (char *p = base; *p != '\0'; p++) {
+        char c = *p;
+        bool keep = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+                    (c >= 'a' && c <= 'z') || c == '-' || c == '_';
+        if (!keep) {
+            *p = '_';
+        }
+    }
+    snprintf(out, outLen, "%s_%02u%02u", base, mins, secs);
+}
+
+bool clipGifFileName(char *out, size_t outLen, const char *baseName,
+                     const char *stamp, int n) {
+    if (out == NULL || outLen == 0) {
+        return false;
+    }
+    out[0] = '\0';
+    if (n < 1 || n > CLIP_GIF_FILE_NAME_MAX_N) {
+        return false;
+    }
+    const char *base =
+        (baseName != NULL && baseName[0] != '\0') ? baseName : "clip";
+    if (stamp == NULL) {
+        stamp = "";
+    }
+    int len;
+    if (n == 1) {
+        len = snprintf(out, outLen, "%s_%s.gif", base, stamp);
+    } else {
+        len = snprintf(out, outLen, "%s_%s_%d.gif", base, stamp, n);
+    }
+    if (len <= 0 || (size_t)len >= outLen) {
+        out[0] = '\0';
+        return false;
+    }
+    return true;
+}
+
+void clipGifMetaSetMap(ClipGifMeta *m, const char *mapName) {
+    if (m == NULL) {
+        return;
+    }
+    m->map[0] = '\0';
+    if (mapName == NULL || mapName[0] == '\0') {
+        return;
+    }
+    SDL_utf8strlcpy(m->map, mapName, sizeof(m->map));
+    size_t n = SDL_strlen(m->map);
+    if (n > 4 && SDL_strcasecmp(m->map + n - 4, ".map") == 0) {
+        m->map[n - 4] = '\0';
+    }
+}
