@@ -3651,6 +3651,9 @@
 /* The map editor's file picker on Android, whose Maps folder is the app's own */
 #define STR_MAPEDIT_ANDROID_NOFILES              3041
 
+/* The replay's recording mode button, which shows the GIF controls */
+#define STR_REEL_RECORD_MODE_TIP                 3150
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

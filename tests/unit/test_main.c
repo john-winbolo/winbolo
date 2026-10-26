@@ -695,6 +695,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_event_list_pinned",                    run_lv_event_list_pinned                    },
     { "wbn_browser_sort",                        run_wbn_browser_sort                        },
     { "clip_gif_len_sync",                       run_clip_gif_len_sync                       },
+    { "clip_gif_record_mode",                    run_clip_gif_record_mode                    },
     { "clip_gif_meta_roundtrip",                 run_clip_gif_meta_roundtrip                 },
     { "clip_gif_meta_bad",                       run_clip_gif_meta_bad                       },
     { "clip_gif_gallery_scan",                   run_clip_gif_gallery_scan                   },

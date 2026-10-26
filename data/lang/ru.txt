@@ -2940,3 +2940,4 @@ STR_CLIPGIF_LENGTH_TIP=Длина GIF в секундах от точки вос
 STR_CLIPGIF_LOADING=Открытие GIF...
 STR_CLIPGIF_TOO_LARGE=Этот GIF слишком большой, чтобы показать его здесь. Его всё равно можно скопировать или сохранить.
 STR_CLIPGIF_FILTER_NAME=Изображения GIF
+STR_REEL_RECORD_MODE_TIP=Режим записи: показывает элементы управления GIF

@@ -2939,3 +2939,4 @@ STR_CLIPGIF_LENGTH_TIP=Durée du GIF en secondes, depuis la tête de lecture.\nF
 STR_CLIPGIF_LOADING=Ouverture du GIF...
 STR_CLIPGIF_TOO_LARGE=Ce GIF est trop grand pour être affiché ici. Vous pouvez quand même le copier ou l'enregistrer.
 STR_CLIPGIF_FILTER_NAME=Images GIF
+STR_REEL_RECORD_MODE_TIP=Mode enregistrement : affiche les commandes GIF

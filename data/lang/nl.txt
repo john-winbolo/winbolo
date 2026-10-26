@@ -2939,3 +2939,4 @@ STR_CLIPGIF_LENGTH_TIP=GIF-lengte in seconden, vanaf de afspeelkop.\nSleep de ma
 STR_CLIPGIF_LOADING=GIF wordt geopend...
 STR_CLIPGIF_TOO_LARGE=Deze GIF is te groot om hier te tonen. Je kunt hem nog steeds kopiëren of opslaan.
 STR_CLIPGIF_FILTER_NAME=GIF-afbeeldingen
+STR_REEL_RECORD_MODE_TIP=Opnamemodus: toont de GIF-knoppen
