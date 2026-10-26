@@ -1897,6 +1897,103 @@ int run_lv_lag_view_draw(void) {
   return 0;
 }
 
+/*
+ * The lag view is keyed on the chosen player's join, not the name. A rename
+ * keeps the view on; a new player in the slot turns it off, even when the
+ * quit and the join are in the same entry, and also after a seek.
+ *
+ *   entry  0  (0 ms)      opening snapshot, A in slot 0 and B in slot 1
+ *   entry  2  (40 ms)     A's lag record
+ *   entry 10  (200 ms)    A is renamed Z
+ *   entry 20  (400 ms)    B quits and C joins slot 1, in one entry
+ */
+int run_lv_lag_view_rename(void) {
+  const char *path = "lv_lag_view_rename.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  char name[32];
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 30; k++) {
+    int events = 1 + (k == 2) + (k == 10) + (k == 20 ? 2 : 0);
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)events);
+    putLagDrawLocation(&b, 0, k);
+    if (k == 2) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+    if (k == 10) {
+      putU8(&b, log_ChangeName);
+      putU8(&b, 0); putU8(&b, 3);
+      putU8(&b, 0);                     /* slot */
+      putU8(&b, 1); putU8(&b, 'Z');     /* the new name */
+    }
+    if (k == 20) {
+      putU8(&b, log_PlayerQuit);
+      putU8(&b, 0); putU8(&b, 1);
+      putU8(&b, 1);
+      putU8(&b, log_PlayerJoined);
+      putU8(&b, 0); putU8(&b, 7);
+      putU8(&b, 1);                     /* slot */
+      putU8(&b, 'N'); putU8(&b, 'Z');   /* country */
+      putU8(&b, 0); putU8(&b, 0);       /* account flags, reserved */
+      putU8(&b, 1); putU8(&b, 'C');     /* name */
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic rename log failed to build/load");
+
+  /* On for A at entry 5. */
+  while (lv->timeRunning < lagDrawMs(5) && lv->isPlaying == TRUE) lv_screenLogTick();
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+
+  /* Past the rename: still on, and the banner has the new name. */
+  while (lv->timeRunning < lagDrawMs(15) && lv->isPlaying == TRUE) lv_screenLogTick();
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the rename turned the view off");
+  name[0] = '\0';
+  UT_ASSERT(lv_screenLagViewStatus(name, sizeof(name), NULL, NULL));
+  UT_ASSERT_MSG(strcmp(name, "Z") == 0, "the banner names \"%s\", want Z", name);
+
+  /* On for B; C takes the slot at entry 20, so the view goes off. */
+  lv_screenLagViewSet(1);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 1, "the view did not turn on for B");
+  while (lv->timeRunning < lagDrawMs(25) && lv->isPlaying == TRUE) lv_screenLogTick();
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == -1, "the view stayed on for a new player");
+
+  /* On for C, then a seek back to before C joined: B is in the slot again,
+     so the view goes off. */
+  lv_screenLagViewSet(1);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 1, "the view did not turn on for C");
+  lv_screenSeekToTimeMs(lagDrawMs(15));
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == -1, "the view stayed on for B after the seek");
+
+  /* On for Z (renamed A) before entry 20, a seek on past the rename and the
+     join in slot 1: still on. */
+  lv_screenSeekToTimeMs(lagDrawMs(5));
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A at entry 5");
+  lv_screenSeekToTimeMs(lagDrawMs(25));
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "a seek past the rename turned the view off");
+
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
 /* A log_OverrunStats record for the viewer test: frames, flags, one tick
  * time and two bots, encoded as the server writes it. */
 static int overrunTestPayload(uint8_t *out, int cap, uint32_t frames, uint8_t flags,

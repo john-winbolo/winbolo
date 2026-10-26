@@ -641,13 +641,18 @@ shows the round about as that player saw it on their own screen.
 Written by the server's per-tick log pass (`serverSimLogTick`,
 `src/server/sim/server_sim_tick.c`) in a running round, after the snapshot and
 the `log_ServerTick` record, so it lands in that tick's own `LOG_EVENT` block.
-Each connected player gets a record (`serverSimLagLogDue`):
+Each connected player gets a record (`serverSimLagLogStep`, which uses
+`serverSimLagLogDue`):
 
 - at the first entry after the player connects,
 - at the round's first entry and at every entry where a snapshot was written,
 - when `LAG_LOG_INTERVAL_TICKS` (100 ticks, 1 s) passed since the last record,
 - when the RTT moved by `LAG_LOG_RTT_STEP_MS` (20 ms) or more, or the rewind
-  by `LAG_LOG_REWIND_STEP` (2 entries) or more, since the last record.
+  by `LAG_LOG_REWIND_STEP` (2 entries) or more, since the last record. Such a
+  change waits until `LAG_LOG_MIN_GAP_TICKS` (10 ticks, 5 entries) have
+  passed since the last record, so a client that flaps its view tick gets at
+  most one change record every 5 entries. A change inside that gap is not
+  lost: at the gap's end the player's values then are written.
 
 Bots are written the same way. Their RTT is 0, and their rewind is what the
 server used for them, which is 0 or close to it.

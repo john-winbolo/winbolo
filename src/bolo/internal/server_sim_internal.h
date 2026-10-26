@@ -709,6 +709,8 @@ struct ServerSim {
     uint32_t lagLogTick[MAX_TANKS];             /* sim->tick of the last record */
     uint16_t lagLogRttMs[MAX_TANKS];            /* RTT the last record carried */
     uint8_t  lagLogRewind[MAX_TANKS];           /* rewind the last record carried */
+    bool     lagLogPending[MAX_TANKS];          /* a change came in the gap after the
+                                                 * last record (serverSimLagLogStep) */
 
 #ifdef WB_NETDEBUG
     /* Net-debug rig: sim-executed turn half-steps and mine lays per
@@ -1936,6 +1938,23 @@ uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
 bool serverSimLagLogDue(bool written, uint32_t lastTick, uint16_t lastRttMs,
                         uint8_t lastRewind, uint32_t tick, uint16_t rttMs,
                         uint8_t rewind, bool anchor);
+
+/* The fewest server ticks between two change-driven log_PlayerLag records
+ * for one slot: 10 server ticks, which is 5 log entries. A client that
+ * flaps its view tick would otherwise get a record in every entry. */
+#define LAG_LOG_MIN_GAP_TICKS  10
+
+/* What serverSimLogTick calls for each slot. TRUE when a record is to be
+ * written now. The first record, an anchor, the once-a-second record and a
+ * tick that went back are written at once, as serverSimLagLogDue says. A
+ * change (an RTT or rewind step) is written at once only when
+ * LAG_LOG_MIN_GAP_TICKS have passed since the last record. A change inside
+ * the gap sets *pending, and the slot's values at the end of the gap are
+ * then written, so the log always gets the latest state. The caller clears
+ * *pending when it writes a record. */
+bool serverSimLagLogStep(bool written, uint32_t lastTick, uint16_t lastRttMs,
+                         uint8_t lastRewind, bool *pending, uint32_t tick,
+                         uint16_t rttMs, uint8_t rewind, bool anchor);
 
 /* Test/inspection accessor: pointer to slot's round stats, or NULL if
  * slot >= MAX_TANKS. */

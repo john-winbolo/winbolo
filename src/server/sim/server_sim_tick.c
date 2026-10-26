@@ -215,19 +215,22 @@ static void serverSimLogTick(ServerSim *sim) {
             uint8_t rewind;
             if (!sim->playerConnected[count] || sim->sim.tanks[count] == NULL) {
                 sim->lagLogWritten[count] = false;
+                sim->lagLogPending[count] = false;
                 continue;
             }
             rtt = sim->playerPing[count];
             rewind = sim->statLastRewindTicks[count];
-            if (!serverSimLagLogDue(sim->lagLogWritten[count],
-                                    sim->lagLogTick[count],
-                                    sim->lagLogRttMs[count],
-                                    sim->lagLogRewind[count],
-                                    sim->tick, rtt, rewind, anchor)) {
+            if (!serverSimLagLogStep(sim->lagLogWritten[count],
+                                     sim->lagLogTick[count],
+                                     sim->lagLogRttMs[count],
+                                     sim->lagLogRewind[count],
+                                     &sim->lagLogPending[count],
+                                     sim->tick, rtt, rewind, anchor)) {
                 continue;
             }
             logAddEvent(log_PlayerLag, count, rewind, 0, 0, rtt, NULL);
             sim->lagLogWritten[count] = true;
+            sim->lagLogPending[count] = false;
             sim->lagLogTick[count] = sim->tick;
             sim->lagLogRttMs[count] = rtt;
             sim->lagLogRewind[count] = rewind;
@@ -255,6 +258,30 @@ bool serverSimLagLogDue(bool written, uint32_t lastTick, uint16_t lastRttMs,
         return true;
     }
     return false;
+}
+
+bool serverSimLagLogStep(bool written, uint32_t lastTick, uint16_t lastRttMs,
+                         uint8_t lastRewind, bool *pending, uint32_t tick,
+                         uint16_t rttMs, uint8_t rewind, bool anchor) {
+    bool gapOver;
+    if (!written || anchor || tick < lastTick ||
+        tick - lastTick >= LAG_LOG_INTERVAL_TICKS) {
+        return true;
+    }
+    gapOver = (tick - lastTick >= LAG_LOG_MIN_GAP_TICKS);
+    if (serverSimLagLogDue(written, lastTick, lastRttMs, lastRewind, tick,
+                           rttMs, rewind, anchor)) {
+        if (gapOver) {
+            return true;
+        }
+        if (pending != NULL) {
+            *pending = true;
+        }
+        return false;
+    }
+    /* No step from the last record now, but a change came in the gap:
+     * write the values the slot has at the gap's end. */
+    return gapOver && pending != NULL && *pending;
 }
 
 uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,

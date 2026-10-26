@@ -113,9 +113,16 @@ static LvLagTrack s_lagTracks[LV_LAG_SLOTS];
 static bool       s_lagAny      = FALSE;  /* some record was read */
 static LvLagRing  s_lagRing;
 static int        s_lagViewSlot = -1;     /* the chosen player, -1 for off */
-/* The name the chosen player had when chosen, so a slot that a different
-   player later sits in is not taken for the one that was picked. */
-static char       s_lagViewName[PLAYER_NAME_LEN];
+/* Each slot's joins (log_PlayerJoined), by the time they were read: the
+   load walk notes them, and playback notes them again with the duplicate
+   check, as it does the lag records. Only the time is used. */
+static LvLagTrack s_lagJoins[LV_LAG_SLOTS];
+/* The join the chosen player was in when chosen: the index in that slot's
+   s_lagJoins of the last join at or before the playhead, or -1 for a player
+   who came with a snapshot and had no join yet. A slot that a different
+   player later sits in has a later join, so it is not taken for the one
+   that was picked. A rename keeps the join, so the view stays on. */
+static int        s_lagViewJoin = -1;
 /* The "Player Lag View" preference (LV_LAG_PREF_KEY in lv_lag.h). Off until
    each host's setup (lvHostSetupCore) reads it from the preferences file, or
    the menu's preferences change it; a load does not change it. While it is
@@ -185,7 +192,10 @@ static void lv_lagReset(void) {
   s_lagAny = FALSE;
   lv_lagRingClear(&s_lagRing);
   s_lagViewSlot = -1;
-  s_lagViewName[0] = '\0';
+  s_lagViewJoin = -1;
+  for (i = 0; i < LV_LAG_SLOTS; i++) {
+    lv_lagTrackClear(&s_lagJoins[i]);
+  }
   lv_overrunTrackClear(&s_overrunTrack);
 }
 
@@ -220,16 +230,28 @@ static void lv_lagCaptureTick(void) {
 }
 
 /* TRUE while the chosen player is still the one in the slot. */
-static bool lv_lagViewPlayerHere(void) {
-  char name[PLAYER_NAME_LEN];
+/* Note a join into slot at ms, from the load walk or from playback. */
+static void lv_lagJoinRead(uint32_t ms, BYTE slot) {
+  if (slot < LV_LAG_SLOTS && slot < MAX_TANKS) {
+    (void) lv_lagTrackAdd(&s_lagJoins[slot], ms, 0, 0, TRUE);
+  }
+}
 
+/* The join slot's player is in at the playhead: the index of the last join
+   at or before it, or -1 when the slot has had none yet. */
+static int lv_lagJoinAt(int slot) {
+  if (g_lv == NULL || slot < 0 || slot >= LV_LAG_SLOTS) {
+    return -1;
+  }
+  return lv_lagTrackIndexAt(&s_lagJoins[slot], g_lv->timeRunning);
+}
+
+static bool lv_lagViewPlayerHere(void) {
   if (s_lagViewSlot < 0 || s_lagViewSlot >= MAX_TANKS ||
       lv_playersIsInUse((BYTE) s_lagViewSlot) == FALSE) {
     return FALSE;
   }
-  name[0] = '\0';
-  lv_playersGetPlayerName((BYTE) s_lagViewSlot, name, sizeof(name));
-  return strcmp(name, s_lagViewName) == 0;
+  return lv_lagJoinAt(s_lagViewSlot) == s_lagViewJoin;
 }
 
 /* The frame the lag view draws at the playhead, or NULL to draw the present:
@@ -272,7 +294,7 @@ void lv_screenSetLagFeature(int enabled) {
   if (!s_lagFeature) {
     /* No view stays on, and no old frame is drawn if it is turned on again. */
     s_lagViewSlot = -1;
-    s_lagViewName[0] = '\0';
+    s_lagViewJoin = -1;
     lv_lagRingClear(&s_lagRing);
   }
 }
@@ -347,11 +369,11 @@ void lv_screenLagViewSet(int slot) {
   if (g_lv == NULL || !s_lagFeature || slot < 0 || slot >= MAX_TANKS || slot >= LV_LAG_SLOTS ||
       lv_playersIsInUse((BYTE) slot) == FALSE) {
     s_lagViewSlot = -1;
-    s_lagViewName[0] = '\0';
+    s_lagViewJoin = -1;
     return;
   }
   s_lagViewSlot = slot;
-  lv_playersGetPlayerName((BYTE) slot, s_lagViewName, sizeof(s_lagViewName));
+  s_lagViewJoin = lv_lagJoinAt(slot);
 }
 
 int lv_screenLagViewSlot(void) {
@@ -360,7 +382,7 @@ int lv_screenLagViewSlot(void) {
      slots on its way, and that must not count. */
   if (s_lagViewSlot >= 0 && !lv_lagViewPlayerHere()) {
     s_lagViewSlot = -1;
-    s_lagViewName[0] = '\0';
+    s_lagViewJoin = -1;
   }
   return s_lagViewSlot;
 }
@@ -374,7 +396,9 @@ bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *dr
   }
   f = lv_lagViewFrame(&behind);
   if (name != NULL && nameSize > 0) {
-    snprintf(name, nameSize, "%s", s_lagViewName);
+    /* The name the player has now, so a rename shows at once. */
+    name[0] = '\0';
+    lv_playersGetPlayerName((BYTE) s_lagViewSlot, name, nameSize);
   }
   if (behindMs != NULL) *behindMs = (int) behind;
   if (drawn != NULL) *drawn = (f != NULL);
@@ -2666,6 +2690,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
         }
         lv_playersSetPlayer(opt1, name, mem, 0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE, FALSE, accountFlags);
       }
+      lv_lagJoinRead(g_lv->timeRunning, opt1);
       if (s_scanGathers) {
         /* The join record's own flag, the one the panels' chip is from. */
         lvRosterJoin(&s_roster, opt1, name);
@@ -4699,6 +4724,16 @@ static bool walkScanEvents(LvLoadWalk *w, unsigned short numEvents, uint32_t ms)
       }
       if (w->rules && code == log_RuleSet && !walkReadRuleSet(ms)) {
         w->rules = FALSE;
+      }
+      if (w->lag && code == log_PlayerJoined && evLen >= 1) {
+        /* The names collector may have read this payload already. */
+        BYTE slot;
+        lv_logSetPosition(payloadPos);
+        if (logReadBytes(&slot, 1) != 1) {
+          w->lag = FALSE;
+        } else {
+          lv_lagJoinRead(ms, slot);
+        }
       }
       if (w->lag && code == log_PlayerLag && evLen >= 4) {
         BYTE b[4];

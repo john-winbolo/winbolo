@@ -5890,12 +5890,14 @@ set(_unit_test_names
     log_roundtrip_overrun_stats_recorded
     log_roundtrip_overrun_stats_bots
     server_lag_log_due
+    server_lag_log_min_gap
     server_overrun_stats_due
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
     lv_lag_feature_default_off
     lv_lag_view_draw
+    lv_lag_view_rename
     lv_overrun_read
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks

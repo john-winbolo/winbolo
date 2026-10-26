@@ -1429,6 +1429,87 @@ int run_server_lag_log_due(void) {
     return 0;
 }
 
+/* A client that flaps its view tick: the rewind computed from it moves by 2
+ * entries every log tick (every 2 server ticks). The change-driven records
+ * keep at least LAG_LOG_MIN_GAP_TICKS server ticks (5 log ticks) apart, and
+ * when the flapping stops the last value still reaches the log. */
+int run_server_lag_log_min_gap(void) {
+    bool written = false;
+    bool pending = false;
+    uint32_t lastTick = 0;
+    uint16_t lastRtt = 0;
+    uint8_t lastRewind = 0;
+    uint32_t tick;
+    uint32_t prevWrite = 0;
+    int writes = 0;
+    int closeWrites = 0;
+
+    UT_ASSERT(LAG_LOG_MIN_GAP_TICKS == 10);
+    /* The first record is written at once; an anchor too. */
+    UT_ASSERT(serverSimLagLogStep(false, 0, 0, 0, &pending, 100, 80, 4, false));
+    UT_ASSERT(serverSimLagLogStep(true, 100, 80, 4, &pending, 102, 80, 4, true));
+    UT_ASSERT(!pending);
+
+    /* Flap for 60 server ticks: the view tick is 8 or 12 server ticks old,
+     * so the rewind is 4 or 6 entries, a full step every log tick. */
+    for (tick = 1000; tick < 1060; tick += 2) {
+        uint32_t viewAge = ((tick / 2) % 2 == 0) ? 8u : 12u;
+        uint8_t rewind = serverSimComputeLagCompTicks(tick, tick - viewAge, 0);
+        if (serverSimLagLogStep(written, lastTick, lastRtt, lastRewind,
+                                &pending, tick, 0, rewind, false)) {
+            if (writes > 0 && tick - prevWrite < LAG_LOG_MIN_GAP_TICKS) {
+                closeWrites++;
+            }
+            writes++;
+            prevWrite = tick;
+            written = true;
+            pending = false;
+            lastTick = tick;
+            lastRewind = rewind;
+        }
+    }
+    UT_ASSERT_MSG(closeWrites == 0, "%d records closer than the gap", closeWrites);
+    /* 60 server ticks with one record at most every 10: at most 6, not 30. */
+    UT_ASSERT_MSG(writes >= 2 && writes <= 6, "%d records while flapping (want 2 to 6)",
+                  writes);
+
+    /* The flapping stops at a third value, 7 entries (14 server ticks old),
+     * which the log does not have yet. It arrives once the gap is over. */
+    {
+        bool got = false;
+        uint8_t finalRewind = serverSimComputeLagCompTicks(1060, 1060 - 14, 0);
+        UT_ASSERT(finalRewind == 7);
+        for (tick = 1060; tick < 1060 + LAG_LOG_MIN_GAP_TICKS + 2; tick += 2) {
+            if (serverSimLagLogStep(written, lastTick, lastRtt, lastRewind,
+                                    &pending, tick, 0, finalRewind, false)) {
+                UT_ASSERT(tick - lastTick >= LAG_LOG_MIN_GAP_TICKS);
+                got = true;
+                pending = false;
+                lastTick = tick;
+                lastRewind = finalRewind;
+            }
+        }
+        UT_ASSERT_MSG(got && lastRewind == 7, "the last value did not reach the log");
+    }
+
+    /* A change inside the gap that ends under the step is still written at
+     * the gap's end: record at 2000 with rewind 4, a step to 6 at 2002, then
+     * 5 (1 from the record) until the gap is over. */
+    pending = false;
+    UT_ASSERT(!serverSimLagLogStep(true, 2000, 0, 4, &pending, 2002, 0, 6, false));
+    UT_ASSERT(pending);
+    UT_ASSERT(!serverSimLagLogStep(true, 2000, 0, 4, &pending, 2004, 0, 5, false));
+    UT_ASSERT(!serverSimLagLogStep(true, 2000, 0, 4, &pending, 2008, 0, 5, false));
+    UT_ASSERT(serverSimLagLogStep(true, 2000, 0, 4, &pending, 2010, 0, 5, false));
+    /* With nothing pending, a value under the step is not written. */
+    pending = false;
+    UT_ASSERT(!serverSimLagLogStep(true, 2000, 0, 4, &pending, 2010, 0, 5, false));
+    /* The once-a-second record does not wait for the gap. */
+    UT_ASSERT(serverSimLagLogStep(true, 2000, 0, 4, &pending,
+                                  2000 + LAG_LOG_INTERVAL_TICKS, 0, 4, false));
+    return 0;
+}
+
 /* When the server prints its overrun lines during a round: at one minute of
  * game time, then at five, ten, fifteen minutes and so on, and at no other
  * frame. A frame is 20 ms, 50 a second. */
