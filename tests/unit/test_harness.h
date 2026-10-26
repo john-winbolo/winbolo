@@ -331,6 +331,7 @@ int run_round_stats_track_cap(void);
 int run_round_stats_derive_equivalence(void);
 int run_highlights_cluster_wipe(void);
 int run_highlights_wipe_team_bonus(void);
+int run_highlights_wipe_team_at_death(void);
 int run_highlights_objective_steal(void);
 int run_highlights_award_anchor(void);
 int run_highlights_selection(void);
@@ -339,6 +340,8 @@ int run_highlights_empty(void);
 int run_territory_shift_basic(void);
 int run_highlights_turning_point(void);
 int run_territory_shift_bounded(void);
+int run_round_stats_team_at(void);
+int run_territory_shift_follows_team(void);
 int run_territory_recent_damage(void);
 int run_highlights_front_collapse(void);
 int run_highlights_award_anchor_density(void);
@@ -1301,6 +1304,7 @@ int run_team_sides_joiner_slot_before_join(void);
 int run_team_sides_lobby_joiner_keeps_rule(void);
 int run_team_sides_lobby_drops_empty_teams(void);
 int run_team_sides_soccer_puts_leaver_back(void);
+int run_team_sides_round_log_teams(void);
 int run_team_sides_held_seat_allied_in_round(void);
 
 /* Pillbox and base owners from the map file survive a round start

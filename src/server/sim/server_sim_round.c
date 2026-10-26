@@ -1258,6 +1258,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
     sim->trackRecordCount = 0;
     sim->trackTruncated = false;
     memset(sim->trackIdentity, 0, sizeof(sim->trackIdentity));
+    memset(sim->trackTeam, 0xFF, sizeof(sim->trackTeam));
 
     /* 7. Reset tick */
     sim->tick = 0;
@@ -1674,6 +1675,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
+    serverSimTrackStartTeams(sim);
 
     serverSimApplyAutoLockOnGameStart(sim);
 
@@ -1848,6 +1850,7 @@ void serverSimStartGame(ServerSim *sim) {
     serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
+    serverSimTrackStartTeams(sim);
     serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
 

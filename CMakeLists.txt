@@ -5610,6 +5610,7 @@ set(_unit_test_names
     round_stats_derive_equivalence
     highlights_cluster_wipe
     highlights_wipe_team_bonus
+    highlights_wipe_team_at_death
     highlights_objective_steal
     highlights_award_anchor
     highlights_selection
@@ -5617,6 +5618,8 @@ set(_unit_test_names
     highlights_empty
     territory_shift_basic
     territory_shift_bounded
+    round_stats_team_at
+    territory_shift_follows_team
     highlights_turning_point
     territory_recent_damage
     highlights_front_collapse
@@ -6017,6 +6020,7 @@ set(_unit_test_names
     team_sides_lobby_joiner_keeps_rule
     team_sides_lobby_drops_empty_teams
     team_sides_soccer_puts_leaver_back
+    team_sides_round_log_teams
     team_sides_held_seat_allied_in_round
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance

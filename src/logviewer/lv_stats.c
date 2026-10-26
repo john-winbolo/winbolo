@@ -122,6 +122,8 @@ void lvStatsEmitRoundSummary(void) {
   int hlCount;
   TerritoryShift shifts[TERRITORY_SHIFTS_MAX];
   int shiftCount;
+  TeamChange teamChanges[TEAM_CHANGES_MAX];
+  int teamChangeCount;
   uint32_t gameStartMs;
   uint32_t windowStartMs;
   double calA, calB;
@@ -193,6 +195,11 @@ void lvStatsEmitRoundSummary(void) {
     lv_windowAddSummary(line);
   }
 
+  /* Each seat's changes of team (v3+), so a highlight judges a seat by the
+   * team it was on at the time. A v2 log has none and reads the header. */
+  teamChangeCount = roundStatsCollectTeamChanges(records, len, teamChanges,
+                                                 TEAM_CHANGES_MAX);
+
   /* Score the timeline into a ranked, non-overlapping set of clips and emit one
    * line per selection; the panel prefixes each with its own clip time. Only
    * HL_AWARD, HL_CLUSTER_WIPE, HL_OBJECTIVE_STEAL, HL_MULTI_LGM, HL_FUMBLE,
@@ -200,8 +207,9 @@ void lvStatsEmitRoundSummary(void) {
    * HL_TURNING_POINT are produced today; other types get a safe generic label
    * until their signals come online. */
   hlCount = 0;
-  computeHighlights(timeline, timelineCount, stats, team, awards, awardCount,
-                    shifts, shiftCount, hl, &hlCount, LV_HIGHLIGHTS_SHOWN);
+  computeHighlights(timeline, timelineCount, stats, team, teamChanges,
+                    teamChangeCount, awards, awardCount, shifts, shiftCount, hl,
+                    &hlCount, LV_HIGHLIGHTS_SHOWN);
 
   gameStartMs = lv_screenGameStartMs();
   calA = 10.0;

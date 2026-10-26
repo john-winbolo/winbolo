@@ -1114,6 +1114,8 @@ struct ServerSim {
     uint32_t         trackRecordCount; /* records appended this round */
     bool             trackTruncated;   /* set once ATTRIBUTION_TRACK_CAP_BYTES is hit */
     AttrSlotIdentity trackIdentity[MAX_TANKS]; /* snapshot at game-over freeze */
+    uint8_t          trackTeam[MAX_TANKS];     /* each seat's last ATTR_REC_TEAM
+                                                  team; 0xFF before the first */
 
     /* In-process control event subscribers (bot ClientSims, SP humanSim,
      * and live-lobby spectators). */

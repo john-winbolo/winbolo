@@ -636,6 +636,9 @@ void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name) {
 void serverSimPublishLobbySlot(ServerSim *sim, BYTE slot) {
     ControlEvent evt;
     if (!sim) return;
+    /* A slot publish during a round is how a change of team goes out, so the
+       round log records the change here (#424). */
+    serverSimTrackTeamIfChanged(sim, slot);
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySlotEvent(sim, slot, &evt);
     serverSimPublishControl(sim, &evt);

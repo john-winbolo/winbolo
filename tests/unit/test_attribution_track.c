@@ -27,11 +27,13 @@ int run_attribution_track_schema(void) {
     UT_ASSERT(sizeof(AttrLgmRecord) == 9);
     UT_ASSERT(sizeof(AttrActionRecord) == 9);
     UT_ASSERT(sizeof(AttrPickupRecord) == 9);
+    UT_ASSERT(sizeof(AttrTeamRecord) == 7);
+    UT_ASSERT(attrTrackRecordSize(ATTR_REC_TEAM) == 7);
     UT_ASSERT(sizeof(AttrSlotIdentity) == (size_t)(2 + PACKET_MAX_PLAYER_NAME));
     UT_ASSERT(sizeof(AttrTrackHeader) ==
               (size_t)(12 + MAX_TANKS * sizeof(AttrSlotIdentity)));
 
-    UT_ASSERT(ATTRIBUTION_TRACK_VERSION == 2);
+    UT_ASSERT(ATTRIBUTION_TRACK_VERSION == 3);
     UT_ASSERT(strcmp(ATTRIBUTION_TRACK_MEMBER, "attribution.trk") == 0);
     UT_ASSERT(memcmp(ATTRIBUTION_TRACK_MAGIC, "WBAT", 4) == 0);
 
@@ -41,6 +43,7 @@ int run_attribution_track_schema(void) {
     UT_ASSERT(ATTR_REC_LGM == 4);
     UT_ASSERT(ATTR_REC_ACTION == 5);
     UT_ASSERT(ATTR_REC_PICKUP == 6);
+    UT_ASSERT(ATTR_REC_TEAM == 7);
 
     return 0;
 }

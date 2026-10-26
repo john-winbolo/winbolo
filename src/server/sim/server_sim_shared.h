@@ -126,6 +126,12 @@ bool serverSimAnnounce(ServerSim *sim, BYTE kind, BYTE subject, BYTE actor);
  * the per-round buffer; the record callbacks above and serverSimAddEvent in
  * server_sim_control.c both feed it. */
 void serverSimTrackAppend(ServerSim *sim, const void *rec, size_t n);
+/* ATTR_REC_TEAM records (#424): one of slot's current team; one for every
+ * connected seat at the round start; and one of slot's team when it is not
+ * the team last written for it. Each does nothing unless a round is running. */
+void serverSimTrackTeam(ServerSim *sim, BYTE slot);
+void serverSimTrackStartTeams(ServerSim *sim);
+void serverSimTrackTeamIfChanged(ServerSim *sim, BYTE slot);
 
 /* Defined in server_sim_snapshot.c — the base and pill collectors. They fill
  * the snapshot's periodic full sync, and the tick core in server_sim_tick.c reads

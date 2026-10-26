@@ -69,6 +69,7 @@
  *   held_seat_allied_in_round — a held seat added in a round is allied
  *                               with its team
  *   soccer_puts_leaver_back   — Soccer keeps a seat on its side
+ *   round_log_teams           — the round log records each change of team
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -98,6 +99,7 @@
 #include "bases.h"
 #include "tank.h"
 #include "everard_map.h"
+#include "attribution_track.h"
 #include "test_harness.h"
 
 #ifndef WB_DATA_MAPS_DIR
@@ -1188,6 +1190,59 @@ int run_team_sides_soccer_puts_leaver_back(void) {
     UT_ASSERT(serverSimSidesAgree(sim));
 
     scenarioHostDetach(host);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The round log records every change of team (#424). Seats 0 and 1 on team
+   1 and seat 2 on team 2. The round start writes each seat's team. Seat 2
+   accepts seat 0, which moves seats 0 and 1 onto team 2. Seat 1 leaves for a
+   team of its own, and a fourth player joins. Each change is one team record
+   in that order, and nothing else writes one. */
+int run_team_sides_round_log_teams(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    struct { uint8_t slot, team; } want[8];
+    int nWant = 0;
+    int nGot = 0;
+    size_t off = 0;
+
+    UT_ASSERT(sim != NULL);
+    want[nWant].slot = 0; want[nWant++].team = 1;
+    want[nWant].slot = 1; want[nWant++].team = 1;
+    want[nWant].slot = 2; want[nWant++].team = 2;
+
+    serverSimAcceptAlliance(sim, 2, 0);
+    UT_ASSERT(tsTeam(sim, 0) == 2 && tsTeam(sim, 1) == 2);
+    want[nWant].slot = 0; want[nWant++].team = 2;
+    want[nWant].slot = 1; want[nWant++].team = 2;
+
+    serverSimLeaveAlliance(sim, 1);
+    UT_ASSERT(tsTeam(sim, 1) != 2);
+    want[nWant].slot = 1; want[nWant++].team = tsTeam(sim, 1);
+
+    serverSimAddPlayer(sim, 3, "Late", false);
+    want[nWant].slot = 3; want[nWant++].team = tsTeam(sim, 3);
+
+    serverSimTick(sim);
+
+    while (off < sim->trackLen) {
+        size_t sz = attrTrackRecordSize(sim->trackBuf[off]);
+        UT_ASSERT_MSG(sz != 0, "an unknown record at byte %u", (unsigned)off);
+        if (sim->trackBuf[off] == ATTR_REC_TEAM) {
+            AttrTeamRecord r;
+            memcpy(&r, sim->trackBuf + off, sizeof r);
+            UT_ASSERT_MSG(nGot < nWant, "an extra team record: seat %u team %u",
+                          (unsigned)r.slot, (unsigned)r.team);
+            UT_ASSERT_MSG(r.slot == want[nGot].slot && r.team == want[nGot].team,
+                          "team record %d is seat %u team %u, not seat %u team %u",
+                          nGot, (unsigned)r.slot, (unsigned)r.team,
+                          (unsigned)want[nGot].slot, (unsigned)want[nGot].team);
+            nGot++;
+        }
+        off += sz;
+    }
+    UT_ASSERT_MSG(nGot == nWant, "%d team records, not %d", nGot, nWant);
     serverSimDestroy(sim);
     return 0;
 }
