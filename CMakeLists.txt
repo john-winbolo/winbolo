@@ -6730,6 +6730,7 @@ set(_unit_test_names
     tick_core_passive_local_pumps_keys_half
     tick_core_lobby_preserves_parity
     transport_ticks_server_lifecycle
+    local_join_slot_after_seated_bots
     await_join_connected_immediate
     await_join_lobby_latch
     await_join_timeout_and_error

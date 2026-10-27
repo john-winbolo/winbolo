@@ -953,8 +953,9 @@ ServerSim *gameFrontGetServerSim(void);
 /*********************************************************
 *NAME:          gameFrontGetPlayerNum
 *PURPOSE:
-*  Returns the local player's slot number.
-*  0 for single-player, assigned by server for multiplayer.
+*  Returns the local player's slot number, as the server
+*  assigned it. A single-player game is not always slot 0:
+*  a scenario can seat its bots ahead of the player.
 *********************************************************/
 BYTE gameFrontGetPlayerNum(void);
 

@@ -394,6 +394,7 @@ static const UnitTestEntry s_tests[] = {
     { "tick_core_passive_local_pumps_keys_half", run_tick_core_passive_local_pumps_keys_half },
     { "tick_core_lobby_preserves_parity",        run_tick_core_lobby_preserves_parity        },
     { "transport_ticks_server_lifecycle",        run_transport_ticks_server_lifecycle        },
+    { "local_join_slot_after_seated_bots",       run_local_join_slot_after_seated_bots       },
     { "await_join_connected_immediate",          run_await_join_connected_immediate          },
     { "await_join_lobby_latch",                  run_await_join_lobby_latch                  },
     { "await_join_timeout_and_error",            run_await_join_timeout_and_error            },

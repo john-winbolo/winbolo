@@ -6074,8 +6074,9 @@ BYTE gameFrontGetPlayerNum(void) {
   /* Read the slot live from the transport, never a copy taken at join.
    * clientFrontAwaitJoin returns once the lobby replay lands, which can be
    * before JOIN_ACCEPT: if the first accept is lost the slot is still 0
-   * then, and the real one arrives with the server's resent accept. */
-  if (udpTransportActive) return clientSimGetServerPlayerNum(humanSim);
-  return 0;
+   * then, and the real one arrives with the server's resent accept. A
+   * single-player game answers the slot its join gave, which is not 0 when
+   * a scenario seats its bots first. */
+  return clientSimGetServerPlayerNum(humanSim);
 }
 

@@ -1569,7 +1569,7 @@ BYTE gameFrontGetPlayerNum(void) {
   /* Same race as the desktop gamefront.c: the join can land on the lobby
    * replay before JOIN_ACCEPT, so the copy taken at join may still be 0.
    * The resent accept updates the transport, so read it live. It answers 0
-   * with no sim and for the local (non-UDP) transport. */
+   * with no sim, and the slot the join gave for the local transport. */
   return clientSimGetServerPlayerNum(humanSim);
 }
 
