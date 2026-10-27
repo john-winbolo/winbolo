@@ -152,7 +152,7 @@ scenario = {
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-27T07:52Z",
+  updated = "2026-10-27T09:21Z",
   game = "open",
   -- The demo bots and the final-round bot are held seats this file fields
   -- with game.spawn_bot, so the lobby has to allow bots.
@@ -192,6 +192,7 @@ scenario = {
     can_hit = "Tank shells pass between you and the demo bots; yours pass your 5B pillbox; the 5A pillboxes' pass you.",
     can_target = "The two Station 5A pillboxes never aim or fire at you; they shoot only at the demo bot.",
     can_die = "The parked Station 6 tank cannot be destroyed.",
+    announce = "No newswire line when a base or a pillbox changes hands.",
     on_choose_start = "You respawn at the furthest station you have reached.",
     spawn_loadout = "You respawn with the tank that station starts you with.",
     allow_base_win = "Owning every base does not end the round; Station 7 has its own win.",
@@ -2162,6 +2163,16 @@ function can_capture(kind, n, p)
   end
   if p ~= S.bot5a then return nil end
   return kind == "pill" and (n == P.t5a_target.n or n == P.t5a_blocker.n)
+end
+
+-- No newswire line for a base or a pillbox changing hands. The script hands
+-- the player a dozen bases and pillboxes as the round starts, and gives a
+-- station's bases and pillboxes back whenever it puts a station right, and
+-- each of those would read as a capture. The player can see what they take
+-- and on_base_captured still ticks the goals off.
+function announce(kind, subject, actor)
+  if kind == "base_captured" or kind == "pill_captured" then return false end
+  return nil
 end
 
 -- Tank shells pass between the player and the two demo bots (shells hit
