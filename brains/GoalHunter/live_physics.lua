@@ -824,7 +824,10 @@ function M.apply(info)
     if cur ~= nil then
       local w = written[key]
       -- Someone else wrote this constant since our last write: that is the
-      -- new base.
+      -- new base. With written empty, cur is taken as the base, so it must
+      -- never be one of the OUT_* tables. That holds because each
+      -- Brain.open runs in a fresh Lua state (luabrainshandler.c), so
+      -- M.reset never runs while C still holds a scaled table.
       if w == nil or cur ~= w then base[key] = cur end
       local b = base[key]
       local v = b
