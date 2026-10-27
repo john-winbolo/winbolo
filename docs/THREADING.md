@@ -139,6 +139,10 @@ resize expose, it runs the normal game tick: the same
 The tick runs on the main thread, so no new thread and no new lock is
 needed. Tick length and tick order do not change.
 
+When the OS loop starts (`WM_ENTERSIZEMOVE`), SDL calls
+`SDL_ResetKeyboard()`. So all held keys count as released, and the tank
+does not obey held keys during the move.
+
 The watch runs the tick only when all of these are true:
 
 - The event is `SDL_EVENT_WINDOW_EXPOSED` with `data1 == 1`.
@@ -173,6 +177,10 @@ Things the tick must not do inside the OS loop:
   can still drop the player. The same watch idea can cover it later.
 - Other modal loops that do not send live resize exposes (for example a
   native file dialog) are not covered.
+- In-game dialogs that run their own event loop (Settings, the message
+  boxes) are not covered. While one is open, a window move still stops
+  the client, and a hold of 20 s or more can still drop the player. This
+  is the same as before this change.
 
 ## The web client
 
