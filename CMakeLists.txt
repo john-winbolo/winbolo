@@ -1018,7 +1018,6 @@ set(IOS_DATA_ROOT
 # Maps that go into the root (Everard Island for single-player)
 set(IOS_DATA_ROOT_MAPS
     "${CMAKE_SOURCE_DIR}/data/maps/Everard Island.map"
-    "${CMAKE_SOURCE_DIR}/data/maps/Inbuilt Tutorial.map"
 )
 file(GLOB IOS_DATA_FONT
     "${CMAKE_SOURCE_DIR}/data/fonts/*.ttf"
@@ -6910,6 +6909,7 @@ set(_unit_test_names
     scenario_tank_kill
     scenario_tank_teleport
     scenario_tank_set_boat
+    scenario_tank_set_speed
     scenario_tank_give_pill
     scenario_tank_drop_pill
     scenario_tank_arm_records
@@ -7051,6 +7051,7 @@ set(_unit_test_names
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
+    lobby_scenario_fixes_lobby_settings
     wbn_lobby_info_scenario
     info_script_tail_golden
     info_script_tail_read

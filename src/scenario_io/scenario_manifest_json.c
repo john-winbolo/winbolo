@@ -392,6 +392,7 @@ static void mjDecodeLobby(const cJSON *root, ScnManifestLobby *lob,
                           ScnParseReport *rep) {
     const cJSON *lobby = cJSON_GetObjectItemCaseSensitive(root, "lobby");
     const cJSON *teams;
+    const cJSON *it;
     const cJSON *t;
 
     if (!cJSON_IsObject(lobby)) {
@@ -400,6 +401,27 @@ static void mjDecodeLobby(const cJSON *root, ScnManifestLobby *lob,
     lob->maxPlayers = (uint8_t)mjNumberIn(lobby, "max_players", 0, 0, 255,
                                           "lobby.max_players", rep);
     lob->extraTeams = mjBool(lobby, "extra_teams", false);
+    /* The three settings the block may fix, kept as written so the
+       validator names a number out of range, as the Lua reader does. */
+    it = cJSON_GetObjectItemCaseSensitive(lobby, "hidden_mines");
+    if (cJSON_IsBool(it)) {
+        lob->fixHiddenMines = true;
+        lob->hiddenMines    = cJSON_IsTrue(it) ? true : false;
+    }
+    if (cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(lobby,
+                                                        "time_limit"))) {
+        lob->fixTimeLimit = true;
+        lob->timeLimit    = (int32_t)mjNumberIn(lobby, "time_limit", 0,
+                                                -1000000, 1000000,
+                                                "lobby.time_limit", rep);
+    }
+    if (cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(lobby,
+                                                        "start_delay"))) {
+        lob->fixStartDelay = true;
+        lob->startDelay    = (int32_t)mjNumberIn(lobby, "start_delay", 0,
+                                                 -1000000, 1000000,
+                                                 "lobby.start_delay", rep);
+    }
 
     teams = cJSON_GetObjectItemCaseSensitive(lobby, "teams");
     if (!cJSON_IsArray(teams)) {
@@ -1818,6 +1840,21 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
     if (lobby != NULL) {
         mjPutNumber(lobby, "max_players", m->lobby.maxPlayers);
         mjPutBool(lobby, "extra_teams", m->lobby.extraTeams);
+        if (m->lobby.fixHiddenMines) {
+            mjPutBool(lobby, "hidden_mines", m->lobby.hiddenMines);
+        } else {
+            cJSON_DeleteItemFromObjectCaseSensitive(lobby, "hidden_mines");
+        }
+        if (m->lobby.fixTimeLimit) {
+            mjPutNumber(lobby, "time_limit", m->lobby.timeLimit);
+        } else {
+            cJSON_DeleteItemFromObjectCaseSensitive(lobby, "time_limit");
+        }
+        if (m->lobby.fixStartDelay) {
+            mjPutNumber(lobby, "start_delay", m->lobby.startDelay);
+        } else {
+            cJSON_DeleteItemFromObjectCaseSensitive(lobby, "start_delay");
+        }
         mjEmitTeams(lobby, &m->lobby);
     }
 
@@ -2252,6 +2289,27 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
         return mjDiffer(key, keyLen, err, errLen, "lobby.extra_teams",
                         "scenario: the manifest and the script's table "
                         "disagree about extra teams");
+    }
+    if (fromJson->lobby.fixHiddenMines != fromLua->lobby.fixHiddenMines ||
+        (fromJson->lobby.fixHiddenMines &&
+         fromJson->lobby.hiddenMines != fromLua->lobby.hiddenMines)) {
+        return mjDiffer(key, keyLen, err, errLen, "lobby.hidden_mines",
+                        "scenario: the manifest and the script's table "
+                        "disagree about hidden mines");
+    }
+    if (fromJson->lobby.fixTimeLimit != fromLua->lobby.fixTimeLimit ||
+        (fromJson->lobby.fixTimeLimit &&
+         fromJson->lobby.timeLimit != fromLua->lobby.timeLimit)) {
+        return mjDiffer(key, keyLen, err, errLen, "lobby.time_limit",
+                        "scenario: the manifest and the script's table "
+                        "disagree about the time limit");
+    }
+    if (fromJson->lobby.fixStartDelay != fromLua->lobby.fixStartDelay ||
+        (fromJson->lobby.fixStartDelay &&
+         fromJson->lobby.startDelay != fromLua->lobby.startDelay)) {
+        return mjDiffer(key, keyLen, err, errLen, "lobby.start_delay",
+                        "scenario: the manifest and the script's table "
+                        "disagree about the start delay");
     }
     if (fromJson->lobby.numTeams != fromLua->lobby.numTeams) {
         return mjDiffer(key, keyLen, err, errLen, "lobby.teams",

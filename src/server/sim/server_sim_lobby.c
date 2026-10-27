@@ -1050,9 +1050,15 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
  * declared, the ranked flag a scripted round cannot be measured under, and
  * — for a list that said needs_bots — the AI policy that would take every
  * bot it fields off the roster. The
- * three arms below refuse through this, and the reject code the dispatcher
- * sends back reads the same answer — so the reason a host is shown cannot
- * drift from the test that produced the refusal.
+ * arms below refuse through this, and the reject code the dispatcher sends
+ * back reads the same answer — so the reason a host is shown is always the
+ * test that produced the refusal.
+ *
+ * The scenario's lobby block may also fix hidden mines, the time limit and
+ * the start delay (serverSimScenarioApplyLobbyFixes). A write of hidden mines
+ * that differs from the fix is refused, and so is any write of the time
+ * limit or its minutes while the time limit is fixed. The start delay has no
+ * lobby setting to refuse.
  *
  * Each arm's own payload check is mirrored here, so a malformed write is
  * still refused as malformed rather than blamed on the scenario. */
@@ -1060,8 +1066,20 @@ static bool lobbySettingScenarioFixes(const ServerSim *sim, uint8_t lst,
                                       const uint8_t *value, size_t len) {
     if (sim == NULL || value == NULL) return false;
     if (sim->scenarioIdentity.source == lobbyScenarioNone) return false;
+    if (lst == LST_TIME_MINUTES) {
+        if (len != 2) return false;
+        if (!lobbyTimeMinutesIsValid(
+                (uint16_t)((value[0] << 8) | value[1]))) return false;
+        return sim->scenarioLobbyValid && sim->scenarioLobby.fixTimeLimit;
+    }
     if (len != 1) return false;
     switch (lst) {
+        case LST_HIDDEN_MINES:
+            return sim->scenarioLobbyValid &&
+                   sim->scenarioLobby.fixHiddenMines &&
+                   (value[0] != 0) != sim->scenarioLobby.hiddenMines;
+        case LST_TIME_LIMIT:
+            return sim->scenarioLobbyValid && sim->scenarioLobby.fixTimeLimit;
         /* Every value the handler admits would take the lobby off
            gameScripted, so with a scenario attached none of them is the
            host's to send. A mod is not a scenario: it keeps the round's win
@@ -1113,6 +1131,8 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             return true;
         case LST_HIDDEN_MINES:
             if (len != 1) return false;
+            /* The scenario's lobby block may fix hidden mines. */
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetHiddenMines(sim, value[0] != 0);
             return true;
         case LST_AI_POLICY:
@@ -1135,6 +1155,8 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             return true;
         case LST_TIME_LIMIT: {
             if (len != 1) return false;
+            /* The scenario's lobby block may fix the time limit. */
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             bool tl = value[0] != 0;
             serverSimSetTimeLimit(sim, tl);
             if (tl) {
@@ -1151,6 +1173,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (len != 2) return false;
             uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
             if (!lobbyTimeMinutesIsValid(mins)) return false;
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetTimeMinutes(sim, mins);
             if (serverSimGetTimeLimit(sim)) {
                 serverSimSetGameLength(sim,

@@ -1070,6 +1070,8 @@ void serverSimReturnToLobby(ServerSim *sim) {
     }
     sim->hadPlayersEver = TRUE;
     sim->gameLength = sim->originalGameLength;
+    /* A time limit the scenario's lobby block fixes holds over the reset. */
+    serverSimScenarioApplyLobbyFixes(sim, false);
     sim->emptyResetTicks = -1;
 
     /* Identity (name, country, clientType, clientFlags, brain name) survives
@@ -1789,6 +1791,10 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     }
     serverSimStaggerBaseTimers(sim);
 
+    /* The settings the scenario's lobby block fixes, in force for the round
+       about to run. */
+    serverSimScenarioApplyLobbyFixes(sim, true);
+
     sim->state = serverStateRunning;
 
     serverSimApplyAutoLockOnGameStart(sim);
@@ -1917,6 +1923,9 @@ void serverSimStartGame(ServerSim *sim) {
      * needed. */
 
     sim->gameLength = sim->originalGameLength;
+    /* The settings the scenario's lobby block fixes, in force for the round
+       about to run; the line above put the server's own round length back. */
+    serverSimScenarioApplyLobbyFixes(sim, true);
 
     /* Last round's alliances are gone here: serverSimResetGameWorld emptied
      * every seat's through playersResetRoundState. The CTRL_ALLIANCE_RESET
@@ -2053,6 +2062,7 @@ void serverSimMapRotateRound(ServerSim *sim) {
     serverSimStartGame(sim);
 
     sim->gameLength = sim->originalGameLength;
+    serverSimScenarioApplyLobbyFixes(sim, false);
     sim->emptyResetTicks = -1;
 
     /* serverSimStartGame latches hadPlayersEver = TRUE, which would make the

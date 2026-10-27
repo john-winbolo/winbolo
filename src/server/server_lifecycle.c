@@ -1138,6 +1138,7 @@ void serverInstanceTick(ServerSim *sim) {
     serverSimResetGameWorld(sim);
     sim->state = serverStateLobby;
     sim->gameLength = sim->originalGameLength;
+    serverSimScenarioApplyLobbyFixes(sim, false);
     sim->hadPlayersEver = FALSE;
     sim->emptyResetTicks = -1;
     /* Pick next map from rotation if mapdir is configured. The seats the

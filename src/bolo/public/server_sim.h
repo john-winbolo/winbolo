@@ -2241,6 +2241,27 @@ bool serverSimScenarioHasLobbyTemplate(const ServerSim *sim);
  *********************************************************/
 void serverSimScenarioApplyLobbyRules(ServerSim *sim);
 
+/*********************************************************
+ *NAME:          serverSimScenarioApplyLobbyFixes
+ *PURPOSE:
+ *  Holds each lobby setting the attached scenario's lobby
+ *  block fixes (hidden mines, the time limit, the start
+ *  delay) at the fixed value, and gives a setting back to
+ *  what the lobby had when its fix goes away.
+ *  serverSimScenarioApplyLobbyRules calls this. The round
+ *  paths call it too, after they put the round length back
+ *  to the server's own, so a fixed time limit stays in force
+ *  for every round.
+ *
+ *ARGUMENTS:
+ *  sim        - The sim whose lobby settings are held
+ *  roundStart - true when a round starts now. The start
+ *               delay counts down once, in the first round,
+ *               so a held delay is used up by that round and
+ *               0 is what comes back.
+ *********************************************************/
+void serverSimScenarioApplyLobbyFixes(ServerSim *sim, bool roundStart);
+
 /* Layout A — per-team / per-bot / brain-list events. The matching
  * client-side handlers live in clientSimApplyControl. */
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, struct ControlEvent *evt);
@@ -3196,12 +3217,6 @@ BYTE serverSimGetViewPlayer(const ServerSim *sim);
  * — applied by serverInstanceStartup from cfg.viewPlayer and by
  * the bg_game rendering camera-perspective override (under a
  * per-file T2 grant). */
-
-/* Tutorial-mode flag mirrored on the embedded GameSim. */
-bool serverSimIsTutorial(const ServerSim *sim);
-void serverSimSetTutorial(ServerSim *sim, bool v);
-void serverSimSetTutorialStartIdx(ServerSim *sim, BYTE idx);
-bool serverSimTakeTutorialRespawn1(ServerSim *sim);
 
 /* Whether a script called game.tutorial_done for seat since the last take,
  * and clears the mark. The single-player frontend calls it each frame, with

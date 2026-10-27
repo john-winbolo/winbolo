@@ -108,13 +108,28 @@ typedef struct {
  * spawn op's loadout takes. It is the host's one-way hand-over of that
  * value: the sim keeps it where the spawn and start paths can read it when
  * the round is gameScripted. 0 means none declared, which plays strict
- * tournament. */
+ * tournament.
+ *
+ * The three fix flags each hold one lobby setting at the value beside it for
+ * as long as the scenario is attached: hidden mines, the time limit (in
+ * minutes, 0 for none) and the start delay (in seconds). The host cannot
+ * change a fixed setting, and the lobby gets back what it had when the
+ * scenario goes (serverSimScenarioApplyLobbyRules). */
 typedef struct {
     uint8_t      maxPlayers;
     uint8_t      numTeams;
     uint8_t      baseGameType;   /* a gameType value, 0 for none */
+    bool         fixHiddenMines;
+    bool         hiddenMines;
+    bool         fixTimeLimit;
+    uint16_t     timeLimitMinutes;  /* 0 = no time limit */
+    bool         fixStartDelay;
+    uint16_t     startDelaySeconds;
     ScnLobbyTeam teams[MAX_TANKS];
 } ScnLobbyTemplate;
+
+/* The longest start delay a scenario's lobby block may fix, in seconds. */
+#define SCN_LOBBY_START_DELAY_MAX 600
 
 /* What a scenario is called and what it asks for, as the sim reads it.
  *
@@ -253,6 +268,7 @@ typedef enum {
     SCN_OP_TANK_GIVE_PILL,
     SCN_OP_TANK_DROP_PILL,
     SCN_OP_TANK_SET_MODIFIERS,
+    SCN_OP_TANK_SET_SPEED,
 
     /* Builder */
     SCN_OP_LGM_DISPATCH,
@@ -384,6 +400,13 @@ typedef struct {
     BYTE          slot;
     TankModifiers mods;
 } ScnOpTankSetModifiers;
+
+/* Set how fast a tank is going, in the units of the speed_* rules: 0 stops
+   it where it is. Nothing else changes. */
+typedef struct {
+    BYTE slot;
+    BYTE speed;
+} ScnOpTankSetSpeed;
 
 /* ── Builder ───────────────────────────────────────────────────── */
 
@@ -786,6 +809,7 @@ typedef struct {
         ScnOpTankGivePill      tankGivePill;
         ScnOpTankDropPill      tankDropPill;
         ScnOpTankSetModifiers  tankSetModifiers;
+        ScnOpTankSetSpeed      tankSetSpeed;
         ScnOpLgmDispatch       lgmDispatch;
         ScnOpLgmRecall         lgmRecall;
         ScnOpLgmKill           lgmKill;

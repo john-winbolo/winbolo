@@ -1,12 +1,17 @@
 /*
- * The shipped tutorial's text, checked before it ships: every entry of
- * every language's TEXT table in data/maps/tutorials/Tutorial.scenario.lua,
- * for each input it is worded for, with the widest numbers filled in.
+ * The shipped tutorials' text, checked before it ships: every entry of
+ * every language's TEXT table in data/maps/tutorials/Tutorial.scenario.lua
+ * and Classic Tutorial.scenario.lua, for each input it is worded for, with
+ * the widest numbers filled in.
  *
  *   tutorial_text_fits — each text is inside the limit the server takes
  *       for the call that sends it (popup 511 bytes a part, status line
  *       128, announcement 125, panel text 48 and one row), so no line is
  *       refused in play. A popup longer than one part is a table of parts.
+ *       For a script with a STEPS table (the Classic Tutorial, which sends
+ *       each step's messages at once), no step sends more popups, counting
+ *       parts, than a client queues (SCN_POPUP_QUEUE_MAX), in any language
+ *       or wording, so none is dropped.
  *   tutorial_text_well_formed — each text is valid UTF-8, every "{" starts
  *       a key token the client knows ({FIRE}, {GUN_UP} ...) and every "}"
  *       ends one, so a typo such as "{FIRE" or "{GUN_DWN}" fails here and
@@ -30,13 +35,24 @@
 #include <lualib.h>
 
 #include "../../src/gui/sdl3/tutorial_tokens.h"
+#include "scenario_panel.h"   /* SCN_POPUP_QUEUE_MAX */
 #include "test_harness.h"
 
 #ifndef WB_REPO_ROOT_DIR
 #define WB_REPO_ROOT_DIR "."
 #endif
 
-#define TTC_SCRIPT WB_REPO_ROOT_DIR "/data/maps/tutorials/Tutorial.scenario.lua"
+/* The scripts checked, with the chunk name each error names. */
+static const struct {
+    const char *path;
+    const char *chunk;
+} kTtcScripts[] = {
+    { WB_REPO_ROOT_DIR "/data/maps/tutorials/Tutorial.scenario.lua",
+      "=Tutorial.scenario.lua" },
+    { WB_REPO_ROOT_DIR "/data/maps/tutorials/Classic Tutorial.scenario.lua",
+      "=Classic Tutorial.scenario.lua" },
+};
+#define TTC_SCRIPT_COUNT ((int)(sizeof(kTtcScripts) / sizeof(kTtcScripts[0])))
 
 /* The checker, run after the script in the same chunk. It answers two
    lists of faults: over a limit, and badly formed. */
@@ -119,6 +135,26 @@ static const char *const kChecker =
     "            bad[#bad + 1] = where .. ' is worded by input with no keyboard'\n"
     "          else\n"
     "            parts(where, lim, v, T, section, key)\n"
+    "          end\n"
+    "        end\n"
+    "      end\n"
+    "    end\n"
+    "  end\n"
+    "  if STEPS ~= nil then\n"
+    "    local function count(T, key, input)\n"
+    "      local v = (T.pop and T.pop[key]) or TEXT.en.pop[key]\n"
+    "      if by_input(v) then v = v[input] or v.keyboard end\n"
+    "      if type(v) == 'table' then return #v end\n"
+    "      return 1\n"
+    "    end\n"
+    "    for code, T in pairs(TEXT) do\n"
+    "      for _, input in ipairs({ 'keyboard', 'touch', 'controller' }) do\n"
+    "        for i, s in ipairs(STEPS) do\n"
+    "          local n = 0\n"
+    "          for _, key in ipairs(s.msgs) do n = n + count(T, key, input) end\n"
+    "          if n > ttc_popup_queue then\n"
+    "            over[#over + 1] = code .. ' step ' .. i .. ' (' .. input ..\n"
+    "              ') sends ' .. n .. ' popups, a client queues ' .. ttc_popup_queue\n"
     "          end\n"
     "        end\n"
     "      end\n"
@@ -213,24 +249,26 @@ static char *ttcReadFile(const char *path, size_t *outLen) {
     return buf;
 }
 
-/* Runs the script and the checker. Leaves over, bad and the language count
-   on the stack and answers true, or writes why it could not and answers
-   false. */
-static bool ttcRun(lua_State *L, char *err, size_t errCap) {
+/* Runs script `which` and the checker. Leaves over, bad and the language
+   count on the stack and answers true, or writes why it could not and
+   answers false. */
+static bool ttcRun(lua_State *L, int which, char *err, size_t errCap) {
     size_t len = 0;
-    char  *src = ttcReadFile(TTC_SCRIPT, &len);
+    char  *src = ttcReadFile(kTtcScripts[which].path, &len);
     if (src == NULL) {
-        snprintf(err, errCap, "could not read %s", TTC_SCRIPT);
+        snprintf(err, errCap, "could not read %s", kTtcScripts[which].path);
         return false;
     }
     luaL_openlibs(L);
     lua_register(L, "ttc_text_fault", ttcTextFault);
+    lua_pushinteger(L, SCN_POPUP_QUEUE_MAX);
+    lua_setglobal(L, "ttc_popup_queue");
     if (luaL_dostring(L, kGameStub) != 0) {
         snprintf(err, errCap, "the game stub: %s", lua_tostring(L, -1));
         free(src);
         return false;
     }
-    if (luaL_loadbuffer(L, src, len, "=Tutorial.scenario.lua") != 0 ||
+    if (luaL_loadbuffer(L, src, len, kTtcScripts[which].chunk) != 0 ||
         lua_pcall(L, 0, 3, 0) != 0) {
         snprintf(err, errCap, "%s", lua_tostring(L, -1));
         free(src);
@@ -256,33 +294,42 @@ static int ttcFaults(lua_State *L, int idx, char *out, size_t cap) {
 }
 
 int run_tutorial_text_fits(void) {
-    lua_State *L = luaL_newstate();
-    char       err[1024];
-    int        n;
-    UT_ASSERT(L != NULL);
-    if (!ttcRun(L, err, sizeof(err))) {
+    int which;
+    for (which = 0; which < TTC_SCRIPT_COUNT; which++) {
+        const char *name = kTtcScripts[which].chunk + 1;
+        lua_State  *L = luaL_newstate();
+        char        err[1024];
+        int         n, langs;
+        UT_ASSERT(L != NULL);
+        if (!ttcRun(L, which, err, sizeof(err))) {
+            lua_close(L);
+            UT_FAIL("%s: %s", name, err);
+        }
+        langs = (int)lua_tointeger(L, -1);
+        n = ttcFaults(L, -3, err, sizeof(err));
         lua_close(L);
-        UT_FAIL("%s", err);
+        UT_ASSERT_MSG(langs == 17, "%s has %d languages, not the 17 the game "
+                      "ships", name, langs);
+        UT_ASSERT_MSG(n == 0, "%s: %d texts over a limit: %s", name, n, err);
     }
-    UT_ASSERT_MSG(lua_tointeger(L, -1) == 17, "the script has %d languages, "
-                  "not the 17 the game ships", (int)lua_tointeger(L, -1));
-    n = ttcFaults(L, -3, err, sizeof(err));
-    lua_close(L);
-    UT_ASSERT_MSG(n == 0, "%d texts over a limit: %s", n, err);
     return 0;
 }
 
 int run_tutorial_text_well_formed(void) {
-    lua_State *L = luaL_newstate();
-    char       err[1024];
-    int        n;
-    UT_ASSERT(L != NULL);
-    if (!ttcRun(L, err, sizeof(err))) {
+    int which;
+    for (which = 0; which < TTC_SCRIPT_COUNT; which++) {
+        const char *name = kTtcScripts[which].chunk + 1;
+        lua_State  *L = luaL_newstate();
+        char        err[1024];
+        int         n;
+        UT_ASSERT(L != NULL);
+        if (!ttcRun(L, which, err, sizeof(err))) {
+            lua_close(L);
+            UT_FAIL("%s: %s", name, err);
+        }
+        n = ttcFaults(L, -2, err, sizeof(err));
         lua_close(L);
-        UT_FAIL("%s", err);
+        UT_ASSERT_MSG(n == 0, "%s: %d texts badly formed: %s", name, n, err);
     }
-    n = ttcFaults(L, -2, err, sizeof(err));
-    lua_close(L);
-    UT_ASSERT_MSG(n == 0, "%d texts badly formed: %s", n, err);
     return 0;
 }

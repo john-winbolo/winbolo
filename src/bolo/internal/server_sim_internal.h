@@ -1384,6 +1384,18 @@ struct ServerSim {
      * list stops saying needs_bots (serverSimScenarioApplyLobbyRules). A
      * list that never touched the AI policy leaves it the host's. */
     bool                   preScenarioAiRaised;
+    /* The settings a scenario's lobby block fixes (hidden_mines, time_limit,
+     * start_delay), as the lobby had them when the fix first took hold. Each
+     * Held flag says whether that setting is held now; the values beside it
+     * come back when the fix goes (serverSimScenarioApplyLobbyFixes). */
+    bool                   preScenarioMinesHeld;
+    bool                   preScenarioHiddenMines;
+    bool                   preScenarioTimeHeld;
+    bool                   preScenarioTimeLimit;
+    uint16_t               preScenarioTimeMinutes;
+    int32_t                preScenarioGameLength;
+    bool                   preScenarioDelayHeld;
+    int32_t                preScenarioStartDelay;
     /* The brain a seat was seeded with, so a seat held without a bot in it
      * still knows what to run when something fields it. Empty means the
      * server's own. */

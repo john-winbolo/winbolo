@@ -1248,3 +1248,144 @@ int run_lobby_scenario_nolobby_boot_seats_template(void) {
     remove(kBrain);
     return 0;
 }
+
+/* ── The settings a scenario's lobby block fixes ──────────────────── */
+
+/* hidden_mines, time_limit and start_delay, as the Classic Tutorial fixes
+ * them: no hidden mines, no time limit and no start delay. The lobby takes
+ * the fixed values while the scenario is attached, refuses a host's change
+ * with the scenario reason, and gets its own values back when the scenario
+ * goes. */
+int run_lobby_scenario_fixes_lobby_settings(void) {
+    ServerSim       *sim = lsLobbySim();
+    ScnLobbyTemplate t;
+    uint8_t          v;
+    uint8_t          mins[2];
+
+    UT_ASSERT(sim != NULL);
+
+    /* The host's own settings: hidden mines, a 20-minute limit, and a
+       start delay of 5 seconds. */
+    v = 1;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_HIDDEN_MINES, &v, 1));
+    v = 1;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_TIME_LIMIT, &v, 1));
+    mins[0] = 0;
+    mins[1] = 20;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_TIME_MINUTES, mins, 2));
+    sim->startDelay = 5 * GAME_NUMGAMETICKS_SEC;
+    UT_ASSERT(sim->sim.hiddenMines);
+    UT_ASSERT(serverSimGetTimeLimit(sim));
+    UT_ASSERT(serverSimGetGameLength(sim) == 20 * 60 * GAME_NUMGAMETICKS_SEC);
+
+    memset(&t, 0, sizeof(t));
+    t.maxPlayers       = 1;
+    t.fixHiddenMines   = true;
+    t.hiddenMines      = false;
+    t.fixTimeLimit     = true;
+    t.timeLimitMinutes = 0;
+    t.fixStartDelay    = true;
+    t.startDelaySeconds = 0;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+
+    UT_ASSERT_MSG(!sim->sim.hiddenMines,
+                  "hidden mines stayed on under a scenario that fixes them off");
+    UT_ASSERT_MSG(!serverSimGetTimeLimit(sim),
+                  "the time limit stayed on under a scenario that fixes none");
+    UT_ASSERT_MSG(serverSimGetGameLength(sim) == UNLIMITED_GAME_TIME,
+                  "game length is %d, wanted UNLIMITED_GAME_TIME",
+                  (int)serverSimGetGameLength(sim));
+    UT_ASSERT_MSG(serverSimGetStartDelay(sim) == 0,
+                  "start delay is %d, wanted 0",
+                  (int)serverSimGetStartDelay(sim));
+
+    /* The host cannot change a fixed setting. The refusal names the
+       scenario. */
+    v = 1;
+    UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_HIDDEN_MINES,
+                                                   &v, 1) ==
+                      CMD_REJECT_SCENARIO,
+                  "hidden mines on was not refused with the scenario reason");
+    UT_ASSERT(!sim->sim.hiddenMines);
+    /* Writing the fixed value is no change, so it is not refused. */
+    v = 0;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_HIDDEN_MINES, &v, 1),
+                  "hidden mines off was refused although it is the fix");
+    v = 1;
+    UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_TIME_LIMIT,
+                                                   &v, 1) ==
+                      CMD_REJECT_SCENARIO,
+                  "a time limit was not refused with the scenario reason");
+    mins[0] = 0;
+    mins[1] = 45;
+    UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_TIME_MINUTES,
+                                                   mins, 2) ==
+                      CMD_REJECT_SCENARIO,
+                  "time minutes were not refused with the scenario reason");
+    UT_ASSERT(!serverSimGetTimeLimit(sim));
+    UT_ASSERT(serverSimGetGameLength(sim) == UNLIMITED_GAME_TIME);
+    /* A malformed payload is still malformed, not the scenario's doing. */
+    UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_TIME_MINUTES,
+                                                   mins, 1) ==
+                      CMD_REJECT_INVALID,
+                  "a one-byte minutes payload was blamed on the scenario");
+    UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_HIDDEN_MINES,
+                                                   &v, 2) ==
+                      CMD_REJECT_INVALID,
+                  "a two-byte hidden mines payload was blamed on the scenario");
+
+    /* A round path puts the server's own round length back, then calls the
+       fixes: the fix holds for that round too. */
+    sim->gameLength = sim->originalGameLength;
+    serverSimScenarioApplyLobbyFixes(sim, true);
+    UT_ASSERT(serverSimGetGameLength(sim) == UNLIMITED_GAME_TIME);
+
+    /* The scenario goes. Hidden mines and the time limit come back as the
+       host had them. A round ran under the held delay, which used up the
+       server's own delay, so 0 comes back. */
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(sim->sim.hiddenMines, "hidden mines did not come back");
+    UT_ASSERT_MSG(serverSimGetTimeLimit(sim), "the time limit did not come back");
+    UT_ASSERT(serverSimGetTimeMinutes(sim) == 20);
+    UT_ASSERT_MSG(serverSimGetGameLength(sim) ==
+                      20 * 60 * GAME_NUMGAMETICKS_SEC,
+                  "game length came back as %d",
+                  (int)serverSimGetGameLength(sim));
+    UT_ASSERT(serverSimGetStartDelay(sim) == 0);
+    v = 0;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_HIDDEN_MINES, &v, 1),
+                  "hidden mines stayed refused after the scenario went");
+
+    /* With no round run under the hold, the server's own delay comes
+       back. */
+    sim->startDelay = 5 * GAME_NUMGAMETICKS_SEC;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT(serverSimGetStartDelay(sim) == 0);
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetStartDelay(sim) == 5 * GAME_NUMGAMETICKS_SEC,
+                  "start delay came back as %d",
+                  (int)serverSimGetStartDelay(sim));
+
+    /* A scenario with no fixes leaves every setting the host's. */
+    memset(&t, 0, sizeof(t));
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    v = 1;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_HIDDEN_MINES, &v, 1),
+                  "hidden mines was refused under a scenario with no fix");
+    v = 0;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_TIME_LIMIT, &v, 1),
+                  "the time limit was refused under a scenario with no fix");
+
+    serverSimDestroy(sim);
+    return 0;
+}

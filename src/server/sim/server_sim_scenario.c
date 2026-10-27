@@ -369,6 +369,31 @@ static ScnOpResult scenarioOpTankSetBoat(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* Set how fast a tank is going. Only the speed changes: the tank keeps its
+ * square, the place inside the square, its heading and its boat. 0 is what
+ * the classic tutorial did when a tank drove onto one of its rows. From the
+ * next tick the tank drives under its usual limits: a speed past what the
+ * ground allows comes down as it does on slower ground, and the player can
+ * accelerate or brake at once. */
+static ScnOpResult scenarioOpTankSetSpeed(ServerSim *sim,
+                                          const ScnOpTankSetSpeed *p) {
+    tank *t = NULL;
+    ScnOpResult r;
+
+    if (p->speed > TANK_MOD_SPEED_CAP_MAX) {
+        return SCN_OP_RANGE;
+    }
+    r = scenarioTankFor(sim, p->slot, &t);
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (tankIsDestroyed(t)) {
+        return SCN_OP_TANK_DEAD;
+    }
+    tankSetSpeed(t, (SPEEDTYPE)p->speed);
+    return SCN_OP_OK;
+}
+
 /* Hand a pill to a tank. Unlike driving over one this does not ask whether
  * the pill is capturable: a script may take an armoured pill with a man
  * standing on it, which is the point of being able to hand one over. */
@@ -2449,6 +2474,85 @@ static void scenarioGiveBackAi(ServerSim *sim) {
     sim->preScenarioAiRaised = false;
 }
 
+/* The settings a scenario's lobby block fixes. Each one is held while the
+   attached scenario's template fixes it, and given back when the fix goes:
+   a plain map committed, a scenario that does not fix it, or no scenario at
+   all. The value given back is what the lobby had when the hold began, the
+   way the game type above is remembered once and given back once.
+
+   The time limit is three fields that go together: the flag the lobby shows,
+   the minutes it shows, and the round length the tick counts down. A fixed
+   limit of 0 is no time limit, and the minutes the lobby showed stay, so the
+   host sees them again when the fix goes. The round paths put the round
+   length back to the server's own at each round and then call this, so the
+   fix holds for every round.
+
+   The start delay counts down once, in the first round the sim runs. A round
+   that starts under a held delay has used up the delay the lobby had, so 0
+   is what comes back after it. */
+void serverSimScenarioApplyLobbyFixes(ServerSim *sim, bool roundStart) {
+    const ScnLobbyTemplate *t = NULL;
+
+    if (sim == NULL) return;
+    if (sim->scenarioIdentity.source != lobbyScenarioNone &&
+        sim->scenarioLobbyValid) {
+        t = &sim->scenarioLobby;
+    }
+
+    if (t != NULL && t->fixHiddenMines) {
+        if (!sim->preScenarioMinesHeld) {
+            sim->preScenarioMinesHeld   = true;
+            sim->preScenarioHiddenMines = sim->sim.hiddenMines;
+        }
+        serverSimSetHiddenMines(sim, t->hiddenMines);
+    } else if (sim->preScenarioMinesHeld) {
+        serverSimSetHiddenMines(sim, sim->preScenarioHiddenMines);
+        sim->preScenarioMinesHeld   = false;
+        sim->preScenarioHiddenMines = false;
+    }
+
+    if (t != NULL && t->fixTimeLimit) {
+        if (!sim->preScenarioTimeHeld) {
+            sim->preScenarioTimeHeld    = true;
+            sim->preScenarioTimeLimit   = sim->timeLimit;
+            sim->preScenarioTimeMinutes = sim->timeMinutes;
+            sim->preScenarioGameLength  = sim->gameLength;
+        }
+        if (t->timeLimitMinutes == 0) {
+            serverSimSetTimeLimit(sim, false);
+            serverSimSetGameLength(sim, UNLIMITED_GAME_TIME);
+        } else {
+            serverSimSetTimeLimit(sim, true);
+            serverSimSetTimeMinutes(sim, t->timeLimitMinutes);
+            serverSimSetGameLength(sim, (int32_t)t->timeLimitMinutes * 60 *
+                                            GAME_NUMGAMETICKS_SEC);
+        }
+    } else if (sim->preScenarioTimeHeld) {
+        serverSimSetTimeLimit(sim, sim->preScenarioTimeLimit);
+        serverSimSetTimeMinutes(sim, sim->preScenarioTimeMinutes);
+        serverSimSetGameLength(sim, sim->preScenarioGameLength);
+        sim->preScenarioTimeHeld    = false;
+        sim->preScenarioTimeLimit   = false;
+        sim->preScenarioTimeMinutes = 0;
+        sim->preScenarioGameLength  = 0;
+    }
+
+    if (t != NULL && t->fixStartDelay) {
+        if (!sim->preScenarioDelayHeld) {
+            sim->preScenarioDelayHeld  = true;
+            sim->preScenarioStartDelay = sim->startDelay;
+        }
+        sim->startDelay = (int32_t)t->startDelaySeconds * GAME_NUMGAMETICKS_SEC;
+        if (roundStart) {
+            sim->preScenarioStartDelay = 0;
+        }
+    } else if (sim->preScenarioDelayHeld) {
+        sim->startDelay            = sim->preScenarioStartDelay;
+        sim->preScenarioDelayHeld  = false;
+        sim->preScenarioStartDelay = 0;
+    }
+}
+
 /* The lobby's own settings, brought into line with whatever scenario is
    attached now. Both points a lobby first learns its scenario need this: a
    map commit, which calls it straight after the map change above, and a
@@ -2575,6 +2679,7 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
            default a lobby with no other answer has. */
         serverSimSetGameType(sim, gameStrictTournament);
     }
+    serverSimScenarioApplyLobbyFixes(sim, false);
     serverSimFollowGameTypeBotModes(sim, typeBefore);
 }
 
@@ -4737,6 +4842,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpTankDropPill(sim, &op->u.tankDropPill);
         case SCN_OP_TANK_SET_MODIFIERS:
             return scenarioOpTankSetModifiers(sim, &op->u.tankSetModifiers);
+        case SCN_OP_TANK_SET_SPEED:
+            return scenarioOpTankSetSpeed(sim, &op->u.tankSetSpeed);
         case SCN_OP_LGM_DISPATCH:
             return scenarioOpLgmDispatch(sim, &op->u.lgmDispatch);
         case SCN_OP_LGM_RECALL:

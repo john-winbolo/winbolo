@@ -1017,7 +1017,16 @@ The lobby the map opens with.
 |---|---|---|
 | `max_players` | number | The cap on human players, 1 to 16. 0 (the default) leaves the server's own cap. |
 | `extra_teams` | boolean | Read, and sent to every client on the lobby settings event, but nothing acts on it yet. Whether a host may put a seat on a team nobody is on is decided by the `allow_extra_teams()` policy below, and a scenario that declares neither allows it. |
+| `hidden_mines` | boolean | Fixes the lobby's hidden mines setting for as long as the scenario is attached. Left out, the host's own setting applies. |
+| `time_limit` | number | Fixes the lobby's time limit, in minutes: 0 is no time limit, and a limit runs 1 to 4320. Left out, the host's own setting applies. A value out of range is reported by `-validate` and fixes nothing. |
+| `start_delay` | number | Fixes the start delay, in seconds, 0 to 600. Left out, the server's own delay applies. A value out of range is reported by `-validate` and fixes nothing. |
 | `teams` | array | One entry per team, in order. |
+
+While the scenario is attached, the host cannot change a setting that
+`hidden_mines`, `time_limit` or `start_delay` fixes: the lobby refuses the
+write with the scenario reason. When the scenario goes, the lobby gets back
+the values it had before. A fixed time limit holds for every round; a fixed
+start delay is the hold before each round starts.
 
 Each team:
 
@@ -1757,6 +1766,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 | `game.give_pill(p, n)` | Puts a pillbox into a tank, however armoured and whoever held it. |
 | `game.drop_pill(p, n[, x, y])` | Puts a carried pillbox back on the map, on a square or under the tank. |
 | `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. `speed` goes from 0 to 2000 and the others from 0 to 255; past that the call is refused with `SCN_OP_RANGE`. **0 is read as the classic 100**, not as nothing, so 0 does not stop a tank; 1 is the smallest a modifier goes, and a `speed` of 1 holds a tank nearly still. `speed` scales the ground's speed cap, so 534 puts a river's 3 at a road's 16. However high it is set, the engine holds the tank's scaled cap to 160 world units a frame, the most the byte-sized modifier could give on the fastest speed rule. |
+| `game.set_speed(p, s)` | Sets how fast a tank is going, in the units of the `speed_*` rules (`speed_road` is 16): 0 to 160, and 0 stops it where it is. Nothing else changes: the tank keeps its square, its place inside the square, its heading and its boat. From the next tick the tank drives under its usual limits, so a speed past what the ground allows comes down as it does on slower ground, and the player can accelerate or brake at once. A speed past 160 is refused with `SCN_OP_RANGE` and a dead tank with `SCN_OP_TANK_DEAD`. The Classic Tutorial uses `set_speed(p, 0)` to stop the tank on each of its rows, as the old built-in tutorial did. Unlike `game.teleport`, it does not move the tank to the centre of the square, and it works on deep sea. `game.set_modifiers` changes the tank's limit, not how fast it is going. |
 
 ### The builder
 

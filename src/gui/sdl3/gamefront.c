@@ -755,13 +755,10 @@ void gameFrontTickSteamPresenceGame(ClientSim *cs) {
   if (gameFrontSteamPresenceDue()) gameFrontUpdateSteamPresence(cs);
 }
 
-extern bool isTutorial;
-
 /* The main menu's Tutorial entry: a single-player round on the Tutorial
  * scenario (TUTORIAL_MENU_MAP and the script beside it). Set by the
  * openTutorial case and read where the single-player path builds the
- * server. It is not isTutorial, which runs the old built-in tutorial
- * (tutorial.c); the menu no longer starts that one. */
+ * server. */
 static bool isScenarioTutorial = FALSE;
 
 /* Used to set the preferences — defined in winbolo.c */
@@ -837,7 +834,6 @@ static bool SDLCALL gameFrontPrefsLifecycleWatch(void *userdata, SDL_Event *ev) 
 bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSim **out_cs) {
   bool OKStart;
 
-  isTutorial = FALSE;
   isScenarioTutorial = FALSE;
   password[0] = '\0';
   gameFrontName[0] = '\0';
@@ -1051,15 +1047,12 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   /* The Tutorial scenario plays with computer tanks allowed, as the server
    * it runs on was made (see the single-player setup). */
-  clientSimSetAiType(humanSim, isTutorial ? aiNone
-                               : (isScenarioTutorial ? aiFull : compTanks));
+  clientSimSetAiType(humanSim, isScenarioTutorial ? aiFull : compTanks);
 
-  if (isTutorial == FALSE) {
-    clientMutexWaitFor();
-    clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
-    clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
-    clientMutexRelease();
-  }
+  clientMutexWaitFor();
+  clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
+  clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
+  clientMutexRelease();
 
   if (out_cs) {
     *out_cs = humanSim;
@@ -1484,10 +1477,7 @@ static bool gameFrontDialogs(void) {
        * where the single-player path builds the server, off
        * isScenarioTutorial. It is not written into the globals here: those
        * are saved on exit as what the next hosted game opens on, and the
-       * tutorial would replace the player's picks with its own.
-       *
-       * The old built-in tutorial (tutorial.c, isTutorial) is not started
-       * from here any more; its code stays until it is taken out. */
+       * tutorial would replace the player's picks with its own. */
       strncpy(fileName, TUTORIAL_MENU_MAP, FILENAME_MAX - 1);
       fileName[FILENAME_MAX - 1] = '\0';
       /* No bots from the player's own setup: the script seats its own. */
@@ -2439,21 +2429,19 @@ bool gameFrontSetDlgState(openingStates newState) {
         /* Single-player opens the lobby on the game type, computer tanks and
          * hidden mines the player last picked in a lobby they hosted, the
          * same saved values Internet New and LAN New open on. A player who
-         * has never picked gets an Open game with Full Advantage AI. The
-         * old built-in tutorial forces a solo strict-tournament game with no
-         * AI and no time limit, ignoring every saved value.
+         * has never picked gets an Open game with Full Advantage AI.
          *
-         * The Tutorial scenario ignores them too. It plays the game its
+         * The Tutorial scenario ignores them. It plays the game its
          * tutorial arenas (tests/scenario/tutorial_*) are run on: an Open
          * game, Full Advantage AI so the bots the script seats are allowed
          * (the script says needs_bots), hidden mines on, no start delay and
          * no time limit. The script's own lobby rules then set the game type
          * it declares, before the round starts. */
-        gameType spGameType    = isTutorial ? gameStrictTournament : gametype;
-        aiType   spAiPolicy    = isTutorial ? aiNone : compTanks;
-        bool     spHiddenMines = isTutorial ? FALSE : hiddenMines;
-        int32_t  spStartDelay  = isTutorial ? 0 : startDelay;
-        int32_t  spTimeLen     = isTutorial ? UNLIMITED_GAME_TIME : timeLen;
+        gameType spGameType    = gametype;
+        aiType   spAiPolicy    = compTanks;
+        bool     spHiddenMines = hiddenMines;
+        int32_t  spStartDelay  = startDelay;
+        int32_t  spTimeLen     = timeLen;
         if (isScenarioTutorial) {
           spGameType    = gameOpen;
           spAiPolicy    = aiFull;
@@ -2465,8 +2453,7 @@ bool gameFrontSetDlgState(openingStates newState) {
          * on team 1, the bot on team 2 so they oppose each other. A setup
          * the user already configured (count > 0) is left untouched. With
          * the saved AI policy on none, the bot loop below makes nothing. */
-        if (!isTutorial && !isScenarioTutorial &&
-            gameFrontBotSetupData.count == 0) {
+        if (!isScenarioTutorial && gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
@@ -2560,23 +2547,13 @@ bool gameFrontSetDlgState(openingStates newState) {
              Before gameFrontStartServerSim, so the lobby snapshot behind
              serverSimResetLobbyToDefaults is taken from these values.
 
-             Not for either tutorial. Each runs with skipLobby, so it never
+             Not for the Tutorial. It runs with skipLobby, so it never
              shows the dropdown and nobody can change what it plays on;
              it keeps the plain view, the one its tests run with, the same
              way it ignores every other setting left over from an earlier
              game. */
-          if (!isTutorial && !isScenarioTutorial) {
+          if (!isScenarioTutorial) {
             gameFrontApplyVisibilityPrefs(spServerSim);
-          }
-          /* Tutorial: mark the freshly-created sim authoritative-tutorial and
-             reset the respawn start to 0 (sea) BEFORE the host player is added
-             in gameFrontStartServerSim below.  startsGetStart only takes the
-             deterministic tutorial start when sim->isTutorial is already set;
-             the old serverSimSetTutorial at openTutorial ran after the spawn,
-             so the host was placed by the open-game algorithm instead. */
-          if (isTutorial) {
-            serverSimSetTutorial(spServerSim, true);
-            serverSimSetTutorialStartIdx(spServerSim, 0);
           }
           bgGameSetHiddenByForeground(bgGameGetShared(), true);
           /* Single-player runs through the same serverInstanceStartup +
@@ -2611,7 +2588,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           cfg.useNatPortmap       = false;
           /* The Tutorial scenario starts its round at once, as its arenas do
              (-nolobby): the startup seats the script's lobby on the way in. */
-          if (isTutorial || isScenarioTutorial) {
+          if (isScenarioTutorial) {
             cfg.skipLobby         = true;
           } else {
             cfg.lobbyEnabled      = true;
@@ -2771,12 +2748,12 @@ bool gameFrontSetDlgState(openingStates newState) {
              * StartGameInPlace synchronously. netSetup just overwrote
              * netStat to netRunning, so we re-set the four lobby
              * flags here (after netSetup, the right moment). */
-            if (!isTutorial && !isScenarioTutorial) {
+            if (!isScenarioTutorial) {
               clientSimSetIsSinglePlayer(humanSim, true);
               clientSimSetInLobby(humanSim, true);
               clientSimSetNetStatus(humanSim, netLobby);
               clientSimSetMapDownloadComplete(humanSim, true);
-            } else if (isScenarioTutorial) {
+            } else {
               /* No lobby, but a single-player game all the same: the
                * scenario's popups pause it, as a solo session's do. */
               clientSimSetIsSinglePlayer(humanSim, true);

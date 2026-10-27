@@ -3208,6 +3208,7 @@ int run_scenario_tank_set_stocks(void);
 int run_scenario_tank_kill(void);
 int run_scenario_tank_teleport(void);
 int run_scenario_tank_set_boat(void);
+int run_scenario_tank_set_speed(void);
 int run_scenario_tank_give_pill(void);
 int run_scenario_tank_drop_pill(void);
 int run_scenario_tank_arm_records(void);
@@ -3358,6 +3359,7 @@ int run_lobby_scenario_refuses_game_type(void);
 int run_lobby_scenario_boot_sets_type(void);
 int run_lobby_scenario_identity_strips_controls(void);
 int run_lobby_scenario_nolobby_boot_seats_template(void);
+int run_lobby_scenario_fixes_lobby_settings(void);
 
 /* What the sim tells WinBolo.net about the scripts a round runs
  * (test_wbn_lobby_info_scenario.c): the scenario, its cap and the mods, none

@@ -31,7 +31,7 @@ extern keyItems keys;
 /* Per-call render buffer.  TEXT and keycap-label runs are copied
  * here so the segment producer can return stable pointers without
  * allocating.  The dialog consumes the result synchronously inside
- * frontEndTutorial; subsequent calls overwrite the buffer. */
+ * the overlay draw; subsequent calls overwrite the buffer. */
 static char tutorialBuf[2048];
 
 /* Set when a run did not fit in tutorialBuf, so tutorialResolveText can
@@ -72,10 +72,9 @@ static const TokenEntry kTokens[TT_COUNT] = {
   [TT_GUN_DOWN]     = { NULL,                  SI_ACTION_GUNSIGHT_DEC,        GP_ACT_GUNSIGHT_DEC },
 };
 
-/* The same order pickStringId has always followed: on a phone or tablet
-   the touch layout first, as its controls are on the screen whatever SDL
-   counts as a gamepad (an Android keyboard with a d-pad is one); then a
-   controller; then the touch layout on a desktop. */
+/* On a phone or tablet the touch layout first, as its controls are on the
+   screen whatever SDL counts as a gamepad (an Android keyboard with a d-pad
+   is one); then a controller; then the touch layout on a desktop. */
 TutorialInput tutorialInputNow(void) {
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (uiModeIsTablet()) return TUTORIAL_INPUT_TOUCH;
@@ -99,55 +98,6 @@ static const char *touchTokenWords(TutorialTokenId id) {
   if (id == TT_GUN_UP)   return langGetText(STR_TUTTOK_TOUCH_GUN_UP);
   if (id == TT_GUN_DOWN) return langGetText(STR_TUTTOK_TOUCH_GUN_DOWN);
   return NULL;
-}
-
-/* Desktop -> input-variant lookup. Strings whose desktop wording
- * references hardware controls (keys, mouse, keypad) get touch and/or
- * controller siblings; the rest fall through unchanged. A 0 in a slot
- * means "no variant — reuse the desktop string". */
-typedef struct {
-  uint16_t desktop;
-  uint16_t touch;       /* 0 = no touch variant, reuse desktop */
-  uint16_t controller;  /* 0 = no controller variant, reuse desktop */
-} StringVariants;
-
-static const StringVariants kStringVariants[] = {
-  { STR_TUTORIAL01,       STR_TUTORIAL01_TOUCH,       STR_TUTORIAL01_CTRL       },
-  { STR_TUTORIAL02,       STR_TUTORIAL02_TOUCH,       STR_TUTORIAL02_CTRL       },
-  { STR_TUTORIAL03,       STR_TUTORIAL03_TOUCH,       STR_TUTORIAL03_CTRL       },
-  { STR_TUTORIAL04,       STR_TUTORIAL04_TOUCH,       STR_TUTORIAL04_CTRL       },
-  { STR_TUTORIAL05,       STR_TUTORIAL05_TOUCH,       STR_TUTORIAL05_CTRL       },
-  { STR_TUTORIAL06,       STR_TUTORIAL06_TOUCH,       STR_TUTORIAL06_CTRL       },
-  { STR_TUTORIAL10,       STR_TUTORIAL10_TOUCH,       STR_TUTORIAL10_CTRL       },
-  { STR_TUTORIAL14,       STR_TUTORIAL14_TOUCH,       STR_TUTORIAL14_CTRL       },
-  { STR_TUTORIAL16,       STR_TUTORIAL16_TOUCH,       STR_TUTORIAL16_CTRL       },
-  { STR_TUTORIAL18,       STR_TUTORIAL18_TOUCH,       STR_TUTORIAL18_CTRL       },
-  { STR_TUTORIAL19,       STR_TUTORIAL19_TOUCH,       STR_TUTORIAL19_CTRL       },
-  { STR_TUTORIAL21,       STR_TUTORIAL21_TOUCH,       STR_TUTORIAL21_CTRL       },
-  { STR_TUTORIAL_START01, STR_TUTORIAL_START01_TOUCH, 0                         },
-  { STR_TUTORIAL_START04, STR_TUTORIAL_START04_TOUCH, STR_TUTORIAL_START04_CTRL },
-};
-static const int kStringVariantCount =
-    (int)(sizeof(kStringVariants) / sizeof(kStringVariants[0]));
-
-static uint16_t pickStringId(uint16_t mid) {
-  int i;
-  for (i = 0; i < kStringVariantCount; i++) {
-    if (kStringVariants[i].desktop != mid) continue;
-    /* tutorialInputNow puts the touch layout first on a phone or tablet:
-       the token in the controller wording drew a keycap that read "{" on
-       an Android keyboard with a d-pad, which SDL counts as a gamepad. */
-    switch (tutorialInputNow()) {
-      case TUTORIAL_INPUT_TOUCH:
-        return kStringVariants[i].touch ? kStringVariants[i].touch : mid;
-      case TUTORIAL_INPUT_CONTROLLER:
-        return kStringVariants[i].controller ? kStringVariants[i].controller : mid;
-      case TUTORIAL_INPUT_KEYBOARD:
-      default:
-        return mid;
-    }
-  }
-  return mid;
 }
 
 /* A key's name as the tutorial writes it, in a key cap or in a plain
@@ -352,7 +302,3 @@ void tutorialExpandTextPlain(const char *src, char *out, size_t cap) {
   tutorialTokensExpand(src, out, cap, plainTokenName, NULL);
 }
 
-int tutorialResolveSegments(uint16_t mid, TutorialSeg *out, int max) {
-  if (!out || max <= 0) return 0;
-  return tutorialResolveText(langGetText(pickStringId(mid)), out, max);
-}
