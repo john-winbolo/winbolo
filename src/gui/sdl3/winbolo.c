@@ -1077,13 +1077,15 @@ static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint3
  * client mutex. docs/THREADING.md lists the checks.
  * ------------------------------------------------------- */
 static bool SDLCALL windowLiveTickWatch(void *userdata, SDL_Event *event) {
-  ClientSim *cs = liveTickCs;
+  ClientSim *cs;
   (void)userdata;
 
   if (event->type != SDL_EVENT_WINDOW_EXPOSED || event->window.data1 != 1) {
     return true;
   }
   if (!SDL_IsMainThread()) return true;
+  /* liveTickCs is main-thread-only, so read it after the thread check. */
+  cs = liveTickCs;
   if (cs == NULL || inGameTick || !sdl3ImguiInEventPoll()) return true;
   if (finishedLoop || clientFrontGameOverHeld()) return true;
 
