@@ -767,8 +767,22 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
            * has passed every other test, so heldByCap means a target the
            * pill could otherwise shoot: one that leaves range, hides or
            * dies clears justSeen below the same as it always has. */
-          if (shellCapOn && t < MAX_TANKS &&
-              shellsAtTank[t] >= sim->rules.pill_max_shells_at_tank) {
+          const bool capHeld = shellCapOn && t < MAX_TANKS &&
+              shellsAtTank[t] >= sim->rules.pill_max_shells_at_tank;
+
+          /* can_target: the scenario may have this pill pass over this tank
+           * as if it were not there. Asked last, of a tank that has passed
+           * every other test, and only where the answer changes something:
+           * the tank is nearer than the best so far, or the shell cap would
+           * hold the pill for it. A refused tank sets neither the target nor
+           * heldByCap, so a pill with nobody else in range clears justSeen
+           * the same as it does for an empty field. No scenario, no
+           * question: the helper answers TRUE without a call. */
+          if ((capHeld || amount < bestDist) &&
+              gameSimCanTarget(sim, count, t) == FALSE) {
+            continue;
+          }
+          if (capHeld) {
             heldByCap = TRUE;
             continue;
           }

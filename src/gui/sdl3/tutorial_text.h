@@ -10,16 +10,17 @@
  *  Resolves a STR_TUTORIAL* id into a sequence of
  *  renderable segments (TEXT runs, PNG glyphs, or
  *  procedural keycaps).  Two transformations:
- *    1. Three-way variant selection on the string id. When
- *       uiShouldUseControllerMode() is true and the id has a
- *       registered _CTRL sibling, use it (controller takes
- *       precedence — a touchscreen with a pad attached gets
- *       pad wording); else when uiModeIsTablet() is true and
- *       a _TOUCH sibling exists, use that; otherwise the
- *       desktop string.
+ *    1. Three-way variant selection on the string id, by
+ *       tutorialInputNow(): its _CTRL sibling for a
+ *       controller, its _TOUCH sibling for a touch screen,
+ *       otherwise (or with no such sibling) the desktop
+ *       string.
  *    2. Expand {ACCEL}/{BRAKE}/{LEFT}/{RIGHT}/{FIRE}/{MINE}/
- *       {SCROLL_*}/{DISMISS}/{BUILD_*} tokens into one glyph
- *       segment each.  In controller mode, discrete buttons
+ *       {SCROLL_*}/{DISMISS}/{BUILD_*}/{QUICK_*} tokens into
+ *       one glyph segment each (tutorial_tokens.h lists them).
+ *       The quick-build tokens show the build tool's button on
+ *       a controller and the words "the build buttons" on a
+ *       touch screen, which has neither.  In controller mode, discrete buttons
  *       resolve through the binding-aware resolver (Steam
  *       Input origin first, then the live SDL binding) so the
  *       glyph follows the current remap; analog/stick tokens
@@ -62,12 +63,38 @@ typedef struct {
 
 #define TUTORIAL_SEG_MAX 64
 
+/* What the player plays with, as the tutorial words it. */
+typedef enum {
+  TUTORIAL_INPUT_KEYBOARD = 0,   /* keyboard and mouse */
+  TUTORIAL_INPUT_TOUCH,          /* the on-screen touch layout */
+  TUTORIAL_INPUT_CONTROLLER      /* a gamepad */
+} TutorialInput;
+
+/* The input the player uses now. On a phone or tablet the touch layout
+ * comes first, as its controls are on the screen whatever SDL counts as a
+ * gamepad; elsewhere a controller comes first, then a touch screen. The
+ * old tutorial's wording, the key tokens and what a single-player server
+ * is told for game.input all follow it. Main thread only. */
+TutorialInput tutorialInputNow(void);
+
 /* Fills `out` with up to `max` segments and returns the segment
  * count.  The renderer must consume the segments synchronously
  * before the next tutorialResolveSegments() call (the per-call
  * buffer holding TEXT/keycap strings is static).  Main thread only.
  */
 int tutorialResolveSegments(uint16_t mid, TutorialSeg *out, int max);
+
+/* The same token expansion over a text the caller holds, such as a
+ * scenario's popup: no variant selection, since the text has no string id.
+ * A TEXT segment may point into src itself, so src must outlive the
+ * segments.  Same buffer rules as tutorialResolveSegments(). */
+int tutorialResolveText(const char *src, TutorialSeg *out, int max);
+
+/* The same tokens written as words, for a line drawn as plain text (a
+ * scenario's status line and announcement): the bound key's name on a
+ * keyboard, the touch wording for a quick-build or gunsight key on a touch
+ * screen, and a word for the control on a controller. out always ends with a NUL. */
+void tutorialExpandTextPlain(const char *src, char *out, size_t cap);
 
 #ifdef __cplusplus
 }

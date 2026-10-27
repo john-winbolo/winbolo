@@ -405,6 +405,14 @@ typedef struct LobbyReelState {
      * shorter length after a seek back. Goes back to the default with the
      * rest of the reel, like the crop frame. */
     uint32_t gifLenMs = CLIP_GIF_LEN_DEFAULT_MS;
+
+    /* Recording mode, which the movie camera button on the transport row
+     * turns on and off. With it off the GIF controls are not drawn: the GIF
+     * button, the length field and the length marker on the seek bar, the
+     * gallery button, the crop button and frame, and the GIF button on each
+     * highlight row (clipGifToolsShown says when they show). Off each time a
+     * reel opens, the same as the crop frame. */
+    bool recordMode = false;
 #endif
 
     /* Where a client that did not record the round stands in getting it from

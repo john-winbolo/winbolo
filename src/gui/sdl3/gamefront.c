@@ -82,6 +82,8 @@
 #include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
+#include "tutorial_maps.h"
+#include "client_frontend_common.h"  /* clientFrontTellScenarioPlayer */
 #include "skin_source.h"
 #include "gfx_settings.h"
 
@@ -409,8 +411,21 @@ int   gameFrontOverviewY = -1;
 int   gameFrontScnPanelX = -1;
 int   gameFrontScnPanelY = -1;
 int   gameFrontScnPanelScale = -1;
-int   gameFrontScnPanelAlpha = -1;
+int   gameFrontScnPanelBgAlpha = -1;
+int   gameFrontScnPanelTextAlpha = -1;
 bool  gameFrontScnPanelCloseAsk = TRUE;
+int   gameFrontScnTextX = -1;
+int   gameFrontScnTextY = -1;
+int   gameFrontScnTextW = -1;
+int   gameFrontScnTextH = -1;
+int   gameFrontScnTextBgAlpha = -1;
+int   gameFrontScnTextTextAlpha = -1;
+bool  gameFrontScnTextShown = TRUE;
+bool  gameFrontScnTextPopped = FALSE;
+int   gameFrontScnTextPopX = -1;
+int   gameFrontScnTextPopY = -1;
+int   gameFrontScnTextPopW = SCN_TEXT_POPOUT_DEFAULT_W;
+int   gameFrontScnTextPopH = SCN_TEXT_POPOUT_DEFAULT_H;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -742,6 +757,13 @@ void gameFrontTickSteamPresenceGame(ClientSim *cs) {
 
 extern bool isTutorial;
 
+/* The main menu's Tutorial entry: a single-player round on the Tutorial
+ * scenario (TUTORIAL_MENU_MAP and the script beside it). Set by the
+ * openTutorial case and read where the single-player path builds the
+ * server. It is not isTutorial, which runs the old built-in tutorial
+ * (tutorial.c); the menu no longer starts that one. */
+static bool isScenarioTutorial = FALSE;
+
 /* Used to set the preferences — defined in winbolo.c */
 extern int frameRate;
 extern bool showGunsight;
@@ -816,6 +838,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   bool OKStart;
 
   isTutorial = FALSE;
+  isScenarioTutorial = FALSE;
   password[0] = '\0';
   gameFrontName[0] = '\0';
   gameFrontUdpAddress[0] = '\0';
@@ -1026,7 +1049,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     return FALSE;
   }
 
-  clientSimSetAiType(humanSim, isTutorial ? aiNone : compTanks);
+  /* The Tutorial scenario plays with computer tanks allowed, as the server
+   * it runs on was made (see the single-player setup). */
+  clientSimSetAiType(humanSim, isTutorial ? aiNone
+                               : (isScenarioTutorial ? aiFull : compTanks));
 
   if (isTutorial == FALSE) {
     clientMutexWaitFor();
@@ -1218,24 +1244,26 @@ static void gameFrontApplyVisibilityPrefs(ServerSim *sim) {
 /* -------------------------------------------------------
  * gameFrontDialogs — setup dialog state machine
  * ------------------------------------------------------- */
-/* Whether a map in the background game's directory is one it may show. The
- * tutorial map and Better Best Map Ever are left out by name, and so is any
- * map that is a scenario: one with a script beside it or packed into it,
- * whether or not this process runs scripts. A scenario's rules only hold
- * while its script runs, and the background game runs none, so what it
- * would show is the scenario's map played as something it is not. */
+/* Whether a map in the background game's directory is one it may show.
+ * bgMapNameAllowed (tutorial_maps.h) leaves out every map in a folder, the
+ * tutorials in data/maps/tutorials among them, and the old tutorial map and
+ * Better Best Map Ever by name. Any map that is a scenario goes too: one
+ * with a script beside it or packed into it, whether or not this process
+ * runs scripts. A scenario's rules only hold while its script runs, and the
+ * background game runs none, so what it would show is the scenario's map
+ * played as something it is not. */
 static bool bgMapAllowed(const char *dir, const char *name) {
     char path[512];
 
-    if (SDL_strcasecmp(name, "Inbuilt Tutorial.map") == 0 ||
-        SDL_strcasecmp(name, "Better Best Map Ever.map") == 0) {
+    if (!bgMapNameAllowed(name)) {
         return false;
     }
     SDL_snprintf(path, sizeof(path), "%s/%s", dir, name);
     return !scenarioHostMapCarriesScript(path);
 }
 
-/* Pick a random .map file from data/maps/ for the background game */
+/* Pick a random .map file from data/maps/ itself (not its folders) for the
+ * background game */
 static bool pickRandomMap(char *out, size_t outLen) {
     const char *dir = "data/maps";
     int count = 0;
@@ -1448,44 +1476,37 @@ static bool gameFrontDialogs(void) {
       break;
     }
     case openTutorial:
-      /* Reuse the single-player setup path: preload the tutorial map,
-       * disable bots, then drive the state machine through openSetup ->
-       * openFinished so ServerSim / ClientSim / transport are created
-       * the same way as a normal single-player game. */
-      strncpy(fileName, "data/maps/Inbuilt Tutorial.map", FILENAME_MAX - 1);
+      /* The Tutorial scenario: TUTORIAL_MENU_MAP in data/maps/tutorials and
+       * the script beside it, started as a single-player game through the
+       * same openSetup -> openFinished path as any other, so ServerSim,
+       * ClientSim and the transport are made the usual way. The game it
+       * plays on (type, computer tanks, mines, timing, no lobby) is chosen
+       * where the single-player path builds the server, off
+       * isScenarioTutorial. It is not written into the globals here: those
+       * are saved on exit as what the next hosted game opens on, and the
+       * tutorial would replace the player's picks with its own.
+       *
+       * The old built-in tutorial (tutorial.c, isTutorial) is not started
+       * from here any more; its code stays until it is taken out. */
+      strncpy(fileName, TUTORIAL_MENU_MAP, FILENAME_MAX - 1);
       fileName[FILENAME_MAX - 1] = '\0';
-      /* The tutorial's own type, mines, timing and AI are chosen where the
-       * single-player path builds the server, off isTutorial. They are not
-       * written into the globals here: those are saved on exit as what the
-       * next hosted game opens on, and a tutorial would replace the
-       * player's picks with its own. */
+      /* No bots from the player's own setup: the script seats its own. */
       gameFrontBotSetupData.count = 0;
-      /* Raise the client UI flag before setup runs so the very first
-       * tick (which may already place the tank on a trigger row) is
-       * handled by frontEndTutorial. Reset the step sequencer so a
-       * previously-completed tutorial in this session starts fresh. */
-      frontEndTutorialReset();
-      isTutorial = TRUE;
+      isScenarioTutorial = TRUE;
       dlgState = openSetup;
       /* Same failed-finisher handling as the openSetup case above, plus the
-       * tutorial launch state this case set up: gameFrontStart clears
-       * isTutorial and fileName only on entry, so a return to the menu from
-       * inside the dialog loop has to clear them here or the next
+       * launch state this case set up: gameFrontStart clears
+       * isScenarioTutorial and fileName only on entry, so a return to the
+       * menu from inside the dialog loop has to clear them here or the next
        * single-player start inherits the tutorial map and mode. */
       if (gameFrontSetDlgState(openFinished) == FALSE) {
         imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_GAMEFRONTERR_STARTSERVER),
                           IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        isTutorial = FALSE;
+        isScenarioTutorial = FALSE;
         fileName[0] = '\0';
         bgGameSetHiddenByForeground(bgGameGetShared(), false);
         dlgState = openStart;
-        break;
       }
-      /* Mark both sims so tank.c's tutorial stop logic fires
-       * authoritatively on the server and keeps client prediction
-       * consistent. */
-      if (spServerSim != NULL) serverSimSetTutorial(spServerSim, true);
-      if (humanSim != NULL)    clientSimSetTutorial(humanSim, true);
       break;
     case openSettings: {
       const DialogBackend *db = dialogBackendGet();
@@ -2419,25 +2440,48 @@ bool gameFrontSetDlgState(openingStates newState) {
          * hidden mines the player last picked in a lobby they hosted, the
          * same saved values Internet New and LAN New open on. A player who
          * has never picked gets an Open game with Full Advantage AI. The
-         * tutorial forces a solo strict-tournament game with no AI and no
-         * time limit, ignoring every saved value. */
+         * old built-in tutorial forces a solo strict-tournament game with no
+         * AI and no time limit, ignoring every saved value.
+         *
+         * The Tutorial scenario ignores them too. It plays the game its
+         * tutorial arenas (tests/scenario/tutorial_*) are run on: an Open
+         * game, Full Advantage AI so the bots the script seats are allowed
+         * (the script says needs_bots), hidden mines on, no start delay and
+         * no time limit. The script's own lobby rules then set the game type
+         * it declares, before the round starts. */
         gameType spGameType    = isTutorial ? gameStrictTournament : gametype;
         aiType   spAiPolicy    = isTutorial ? aiNone : compTanks;
         bool     spHiddenMines = isTutorial ? FALSE : hiddenMines;
         int32_t  spStartDelay  = isTutorial ? 0 : startDelay;
         int32_t  spTimeLen     = isTutorial ? UNLIMITED_GAME_TIME : timeLen;
+        if (isScenarioTutorial) {
+          spGameType    = gameOpen;
+          spAiPolicy    = aiFull;
+          spHiddenMines = TRUE;
+          spStartDelay  = 0;
+          spTimeLen     = UNLIMITED_GAME_TIME;
+        }
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
          * the user already configured (count > 0) is left untouched. With
          * the saved AI policy on none, the bot loop below makes nothing. */
-        if (!isTutorial && gameFrontBotSetupData.count == 0) {
+        if (!isTutorial && !isScenarioTutorial &&
+            gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
           gameFrontBotSetupData.bots[0].teamNumber = 2;
           /* brainPath left empty -> the bot loop falls back to spBrainPath. */
         }
-        if (strncmp(fileName, "randommap:", 10) == 0) {
+        if (isScenarioTutorial && !scenarioHostMapCarriesScript(fileName)) {
+          /* The Tutorial is its script: without one beside the map the round
+           * would be a plain game on the tutorial map. Fail the start, which
+           * the menu reports. */
+          WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                       "[SP-FAIL] the Tutorial needs '%s' and the scenario "
+                       "script beside it", fileName);
+          spServerSim = NULL;
+        } else if (strncmp(fileName, "randommap:", 10) == 0) {
           /* Random map — parse seed from "randommap:<seed>" */
           MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
           const char *seedStr = fileName + 10;
@@ -2466,7 +2510,9 @@ bool gameFrontSetDlgState(openingStates newState) {
              so the map commits that follow answer to it as well. Set both
              ways, because unlike a command-line switch this can be turned
              back on without restarting. */
-          scenarioHostSetEnabled(gameFrontHostingScripts);
+          /* The Tutorial runs its script whatever the preference says: it
+             is a shipped file and the round is nothing without it. */
+          scenarioHostSetEnabled(gameFrontHostingScripts || isScenarioTutorial);
           /* And the narrower one beside it, applied at the same point: a map
              this host took as an upload plays plainly with it off. */
           scenarioHostSetUploadScriptsEnabled(
@@ -2514,11 +2560,12 @@ bool gameFrontSetDlgState(openingStates newState) {
              Before gameFrontStartServerSim, so the lobby snapshot behind
              serverSimResetLobbyToDefaults is taken from these values.
 
-             Not for the tutorial. That runs with skipLobby, so it never
+             Not for either tutorial. Each runs with skipLobby, so it never
              shows the dropdown and nobody can change what it plays on;
-             it keeps the plain view it has always had, the same way it
-             ignores every other setting left over from an earlier game. */
-          if (!isTutorial) {
+             it keeps the plain view, the one its tests run with, the same
+             way it ignores every other setting left over from an earlier
+             game. */
+          if (!isTutorial && !isScenarioTutorial) {
             gameFrontApplyVisibilityPrefs(spServerSim);
           }
           /* Tutorial: mark the freshly-created sim authoritative-tutorial and
@@ -2562,7 +2609,9 @@ bool gameFrontSetDlgState(openingStates newState) {
           cfg.trackerPort         = gameFrontTrackerPort;
           cfg.useNatKeepalive     = false;
           cfg.useNatPortmap       = false;
-          if (isTutorial) {
+          /* The Tutorial scenario starts its round at once, as its arenas do
+             (-nolobby): the startup seats the script's lobby on the way in. */
+          if (isTutorial || isScenarioTutorial) {
             cfg.skipLobby         = true;
           } else {
             cfg.lobbyEnabled      = true;
@@ -2634,12 +2683,13 @@ bool gameFrontSetDlgState(openingStates newState) {
              * so the path composer uses them verbatim instead of auto-naming
              * a fresh timestamped file per round. dontSendLog is
              * unconditionally true; a single-player round is never uploaded
-             * to WinBolo.net. Tutorials are skipped — they set cfg.skipLobby,
-             * so they never reach the lobby that would offer the playback.
+             * to WinBolo.net. Both tutorials are skipped — they set
+             * cfg.skipLobby, so they never reach the lobby that would offer
+             * the playback.
              * Installed before the client-type resolution because the
              * subscriber's sync replay opens the log immediately, and the
              * completed path is set after the install, which clears it. */
-            if (!isTutorial) {
+            if (!cfg.skipLobby) {
               char spLogPath[FILENAME_MAX];
               char spRoundPath[FILENAME_MAX];
               const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
@@ -2699,6 +2749,11 @@ bool gameFrontSetDlgState(openingStates newState) {
             threadsWaitForMutex();
             clientSimNetSetLocalFrameQueue(humanSim, true);
             spFrameQueueSim = humanSim;
+            /* The server is in this process, so it can be told the language
+             * the player reads and the input they use; a scenario picks its
+             * text by them. The frame poll tells it again on a change. */
+            clientFrontTellScenarioPlayer(spServerSim,
+                                          clientSimGetMyPlayerNum(humanSim));
             threadsReleaseMutex();
             /* Phase 2 leaves the legacy spHumanSubHandle field unset —
              * the auto-subscriber registered by connect lives inside
@@ -2716,11 +2771,15 @@ bool gameFrontSetDlgState(openingStates newState) {
              * StartGameInPlace synchronously. netSetup just overwrote
              * netStat to netRunning, so we re-set the four lobby
              * flags here (after netSetup, the right moment). */
-            if (!isTutorial) {
+            if (!isTutorial && !isScenarioTutorial) {
               clientSimSetIsSinglePlayer(humanSim, true);
               clientSimSetInLobby(humanSim, true);
               clientSimSetNetStatus(humanSim, netLobby);
               clientSimSetMapDownloadComplete(humanSim, true);
+            } else if (isScenarioTutorial) {
+              /* No lobby, but a single-player game all the same: the
+               * scenario's popups pause it, as a solo session's do. */
+              clientSimSetIsSinglePlayer(humanSim, true);
             }
             /* Tutorial (no-lobby) and lobby paths both rely on the
              * first-snapshot apply inside the local transport to fire
@@ -2796,7 +2855,7 @@ bool gameFrontSetDlgState(openingStates newState) {
              * AI level the seating reads are in the sim from the startup's
              * config, and the bot pool has been up since the client booted.
              *
-             * Not on a tutorial, which is the one path here that skips the
+             * Not on a tutorial, the one kind of game here that skips the
              * lobby: its round started inside the startup above, and the
              * startup seated the template itself on the way in so the round
              * could build a tank for every fielded seat. Seating again now
@@ -2807,7 +2866,7 @@ bool gameFrontSetDlgState(openingStates newState) {
              * a game that skipped the lobby has already had the settings
              * applied above and the second call changes nothing. */
             if (spScenarioHost != NULL) {
-              if (!isTutorial) {
+              if (!cfg.skipLobby) {
                 serverSimScenarioSeatLobby(spServerSim);
               }
               serverSimScenarioApplyLobbyRules(spServerSim);
@@ -3406,6 +3465,9 @@ void gameFrontSetLanguageCode(const char *code) {
    * even if the user never reaches gameFrontPutPrefs. */
   prefsSetString("SETTINGS", "Language",
                             gameFrontLanguageCode);
+  /* A single-player game already running is told the new language by the
+   * next frame's clientFrontPollScenarioPlayer, and reads it from the
+   * scenario's next line on. */
 }
 
 void gameFrontRequestPlayTutorial(void) {
@@ -3996,32 +4058,41 @@ void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
 }
 
 /* Per-scenario scenario-panel layout, kept under "SCENARIO PANEL" / the
- * scenario as one "x,y,scale,alpha" row. One row rather than four keys keeps
- * a scenario's numbers together and keeps the file short enough to read, and
- * the scenario is the whole key so a player scanning the section sees the
- * scenarios they have played by name.
+ * scenario as one "x,y,scale,text" row, with the background opacity under
+ * SCN_PANEL_PREFS_BG_SECTION / the same key (scnPanelLayoutParse). One row
+ * rather than four keys keeps a scenario's numbers together and keeps the
+ * file short enough to read, and the scenario is the whole key so a player
+ * scanning the section sees the scenarios they have played by name. The
+ * background is in a section of its own and not a fifth number on the row
+ * so that an older client, which reads the first four numbers, gets the
+ * text opacity as its one opacity (scn_panel_prefs.h says more).
  *
  * The key rule (scnPanelPrefsKey) turns a control character into an
  * underscore, and the read and the write share it. */
 bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
-                                int *scale, int *alpha) {
-  char key[SCN_PANEL_SCENARIO_LEN], buff[64];
-  int rx, ry, rscale, ralpha;
-  if (!scenario || !scenario[0] || !x || !y || !scale || !alpha) return false;
+                                int *scale, int *bgAlpha, int *textAlpha) {
+  char key[SCN_PANEL_SCENARIO_LEN], buff[64], bgBuff[32];
+  int rx, ry, rscale, rbg, rtext;
+  if (!scenario || !scenario[0] || !x || !y || !scale || !bgAlpha ||
+      !textAlpha) {
+    return false;
+  }
   scnPanelPrefsKey(scenario, key, sizeof(key));
   prefsGetString("SCENARIO PANEL", key, "", buff, sizeof(buff));
-  /* All four or none: a half-written row says nothing about where the panel
+  prefsGetString(SCN_PANEL_PREFS_BG_SECTION, key, "", bgBuff, sizeof(bgBuff));
+  /* All or none: a half-written row says nothing about where the panel
      belongs, and the caller's fallback is a whole layout of its own rather
-     than something to fill the gaps in this one with. */
-  if (SDL_sscanf(buff, "%d,%d,%d,%d", &rx, &ry, &rscale, &ralpha) != 4) {
+     than something to fill the gaps in this one with. The parse clamps the
+     opacities and reads the older rows too. */
+  if (!scnPanelLayoutParse(buff, bgBuff, &rx, &ry, &rscale, &rbg, &rtext)) {
     return false;
   }
   /* Clamped the way the [WINDOW] load clamps, and for the same reason: a
      scale out of range would open the panel bigger than the screen or too
-     small to get a pointer onto a corner of. -1 is not a size or an opacity,
-     it is "never touched", so it passes through. The coordinates pass
-     through too — the panel clamps a position against the window it is
-     restored into, which is the only place the screen size is known. */
+     small to get a pointer onto a corner of. -1 is not a size, it is "never
+     touched", so it passes through. The coordinates pass through too — the
+     panel clamps a position against the window it is restored into, which
+     is the only place the screen size is known. */
   if (rscale != -1) {
     if (rscale < SCN_PANEL_SCALE_MIN) {
       rscale = SCN_PANEL_SCALE_MIN;
@@ -4029,33 +4100,32 @@ bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
       rscale = SCN_PANEL_SCALE_MAX;
     }
   }
-  if (ralpha != -1) {
-    if (ralpha < 0) {
-      ralpha = 0;
-    } else if (ralpha > 100) {
-      ralpha = 100;
-    }
-  }
   *x = rx;
   *y = ry;
   *scale = rscale;
-  *alpha = ralpha;
+  *bgAlpha = rbg;
+  *textAlpha = rtext;
   return true;
 }
 
 void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
-                                int scale, int alpha) {
+                                int scale, int bgAlpha, int textAlpha) {
   char key[SCN_PANEL_SCENARIO_LEN], val[64];
   if (!scenario || !scenario[0]) return;
   scnPanelPrefsKey(scenario, key, sizeof(key));
-  SDL_snprintf(val, sizeof(val), "%d,%d,%d,%d", x, y, scale, alpha);
+  /* The background first, so the four-number row is never in the file
+     without it and read as an old row. */
+  scnPanelLayoutBgFormat(bgAlpha, val, sizeof(val));
+  prefsSetString(SCN_PANEL_PREFS_BG_SECTION, key, val);
+  scnPanelLayoutFormat(x, y, scale, textAlpha, val, sizeof(val));
   prefsSetString("SCENARIO PANEL", key, val);
 }
 
 /* The script's shown flag and pop-out row live in sections of their own
- * rather than as more numbers on the layout row: an old client reading a
- * five- or six-number layout row would drop the whole row. Same key rule
- * as the layout row, so the three rows of one script line up by eye. */
+ * rather than as more numbers on the layout row: the pop-out row is this
+ * machine's desktop place and is never uploaded, and the shown flag is a
+ * yes or no rather than a number. Same key rule as the layout row, so the
+ * three rows of one script line up by eye. */
 bool gameFrontGetScnPanelShown(const char *script) {
   char key[SCN_PANEL_SCENARIO_LEN], buff[16];
   if (!script || !script[0]) return TRUE;
@@ -5345,13 +5415,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontOverviewFollow = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* The scenario panel's place inside the main window, the size the player
-     has dragged it to and how opaque its backing is. -1 for either
-     coordinate means it has never been moved, so it opens at the top-right
-     of the game view; -1 for the scale or the alpha means that one has never
-     been touched, so the panel opens at the size the game's zoom alone gives
-     it and at the backing it has always had.
+     has dragged it to, and how opaque its backing and its drawing are. -1
+     for either coordinate means it has never been moved, so it opens at the
+     top-right of the game view; -1 for the scale or an opacity means that
+     one has never been touched, so the panel opens at the size the game's
+     zoom alone gives it, at the backing it has always had and with its
+     drawing at full strength.
 
-     The scale and the alpha are clamped here and not only on the drag that
+     The scale and the opacities are clamped here and not only on the drag that
      writes them. The preferences file is a text file a player can edit, and a
      scale out of range would open the panel bigger than the screen or too
      small to get a pointer onto a corner of, neither of which leaves anything
@@ -5369,14 +5440,59 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
       gameFrontScnPanelScale = SCN_PANEL_SCALE_MAX;
     }
   }
-  prefsGetString("WINDOW", "Scenario Panel Alpha", "-1", buff, FILENAME_MAX);
-  gameFrontScnPanelAlpha = atoi(buff);
-  if (gameFrontScnPanelAlpha != -1) {
-    if (gameFrontScnPanelAlpha < 0) {
-      gameFrontScnPanelAlpha = 0;
-    } else if (gameFrontScnPanelAlpha > 100) {
-      gameFrontScnPanelAlpha = 100;
-    }
+  /* The two opacities, or the old single one for a file written before
+     there were two (scnOpacityFromPrefs), clamped there. */
+  {
+    char bgBuff[32], textBuff[32], oldBuff[32];
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_BG_KEY, "", bgBuff,
+                   sizeof(bgBuff));
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_TEXT_KEY, "", textBuff,
+                   sizeof(textBuff));
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_OLD_KEY, "", oldBuff,
+                   sizeof(oldBuff));
+    scnOpacityFromPrefs(bgBuff, textBuff, oldBuff, &gameFrontScnPanelBgAlpha,
+                        &gameFrontScnPanelTextAlpha);
+  }
+
+  /* The Scenario Text window's place, size, two opacities and shown flag.
+     The size is checked again against the display when the window is
+     drawn; here a value below -1 is read as never set, and the opacities
+     are clamped, for the reason given above. */
+  prefsGetString("WINDOW", "Scenario Text X", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextX = atoi(buff);
+  prefsGetString("WINDOW", "Scenario Text Y", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextY = atoi(buff);
+  prefsGetString("WINDOW", "Scenario Text Width", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextW = atoi(buff);
+  if (gameFrontScnTextW < -1) gameFrontScnTextW = -1;
+  prefsGetString("WINDOW", "Scenario Text Height", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextH = atoi(buff);
+  if (gameFrontScnTextH < -1) gameFrontScnTextH = -1;
+  /* The old single key here is from an earlier build of this change, not
+     from main (scn_panel_prefs.h). */
+  {
+    char bgBuff[32], textBuff[32], oldBuff[32];
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_BG_KEY, "", bgBuff,
+                   sizeof(bgBuff));
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_TEXT_KEY, "", textBuff,
+                   sizeof(textBuff));
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_OLD_KEY, "", oldBuff,
+                   sizeof(oldBuff));
+    scnOpacityFromPrefs(bgBuff, textBuff, oldBuff, &gameFrontScnTextBgAlpha,
+                        &gameFrontScnTextTextAlpha);
+  }
+  prefsGetString("WINDOW", "Scenario Text Shown", "Yes", buff, FILENAME_MAX);
+  gameFrontScnTextShown = scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
+  {
+    ScnPanelPopout pop;
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_POPOUT_KEY, "", buff,
+                   FILENAME_MAX);
+    scnTextPopoutLoad(buff, &pop);
+    gameFrontScnTextPopped = pop.open ? TRUE : FALSE;
+    gameFrontScnTextPopX   = pop.x;
+    gameFrontScnTextPopY   = pop.y;
+    gameFrontScnTextPopW   = pop.w;
+    gameFrontScnTextPopH   = pop.h;
   }
 
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
@@ -5881,8 +5997,35 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Scenario Panel Y", buff);
   intToStr(gameFrontScnPanelScale, buff, sizeof(buff));
   prefsSetString("WINDOW", "Scenario Panel Scale", buff);
-  intToStr(gameFrontScnPanelAlpha, buff, sizeof(buff));
-  prefsSetString("WINDOW", "Scenario Panel Alpha", buff);
+  intToStr(gameFrontScnPanelBgAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_PANEL_PREFS_BG_KEY, buff);
+  intToStr(gameFrontScnPanelTextAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_PANEL_PREFS_TEXT_KEY, buff);
+
+  intToStr(gameFrontScnTextX, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text X", buff);
+  intToStr(gameFrontScnTextY, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text Y", buff);
+  intToStr(gameFrontScnTextW, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text Width", buff);
+  intToStr(gameFrontScnTextH, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text Height", buff);
+  intToStr(gameFrontScnTextBgAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_TEXT_PREFS_BG_KEY, buff);
+  intToStr(gameFrontScnTextTextAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_TEXT_PREFS_TEXT_KEY, buff);
+  prefsSetString("WINDOW", "Scenario Text Shown",
+                 scnPanelYesNoWord(gameFrontScnTextShown));
+  {
+    ScnPanelPopout pop;
+    pop.open = gameFrontScnTextPopped ? true : false;
+    pop.x    = gameFrontScnTextPopX;
+    pop.y    = gameFrontScnTextPopY;
+    pop.w    = gameFrontScnTextPopW;
+    pop.h    = gameFrontScnTextPopH;
+    scnPanelPopoutFormat(&pop, buff, sizeof(buff));
+    prefsSetString("WINDOW", SCN_TEXT_PREFS_POPOUT_KEY, buff);
+  }
 
   s_windowSettingsDirty = false;
 }
@@ -5921,6 +6064,10 @@ ServerSim *gameFrontGetServerSim(void) {
 
 ServerSim *gameFrontGetSinglePlayerServerSim(void) {
   return spServerSim;
+}
+
+const char *gameFrontScenarioMapScriptPath(void) {
+  return scenarioHostMapScriptPath(spScenarioHost);
 }
 
 BYTE gameFrontGetPlayerNum(void) {

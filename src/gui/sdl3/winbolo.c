@@ -230,6 +230,7 @@ static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, 
 static void windowRunGameTick(ClientSim *cs);
 static void windowSteamOverlayActivated(ClientSim *cs, bool active);
 static void windowSaveDialogPause(ClientSim *cs, bool active);
+void windowTutorialPause(ClientSim *cs, bool active);
 static void windowSaveMapPoll(ClientSim *cs);
 int winboloCC(void);
 
@@ -850,6 +851,14 @@ int main(int argc, char *argv[]) {
         if (clientFrontInLobbyPhase(cs)) {
           returnToLobby = TRUE;
           done = TRUE;
+          /* The render below is skipped, so a tutorial message or scenario
+           * popup still up here would never be closed by the render path's
+           * round-end check: close it and lift its solo pause now, or it
+           * waits frozen under the lobby with the game paused. */
+          if (tutorialOverlayIsOpen()) {
+            tutorialOverlayClose();
+            windowTutorialPause(cs, false);
+          }
           /* Skip this iteration's render: inLobby is already true, so
            * sdl3ImguiPumpAndRender's in-game-lobby seam (there for the
            * WASM client) would flash one lobby frame in the in-game
@@ -887,6 +896,7 @@ int main(int argc, char *argv[]) {
         }
         frontEndTutorialNotePresentedFrame();
         clientFrontTutorialPollRespawn();
+        clientFrontPollScenarioPlayer();  /* tutorial finished; language, input */
         /* Pick up a native save-map dialog the player has answered. The
            dialog is asynchronous precisely so this loop — which is what
            pumps the client transport — keeps running while it is open. */

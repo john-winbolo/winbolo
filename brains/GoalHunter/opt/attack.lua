@@ -1580,7 +1580,9 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
       local cx = U.mclamp(math.floor(pill.mx + math.sin(angle) * R + 0.5))
       local cy = U.mclamp(math.floor(pill.my - math.cos(angle) * R + 0.5))
       local ck = U.mkey(cx, cy)
-      if not seen[ck] and not (state and state._blitz_reject and state._blitz_reject[ck]) then
+      -- STAY_AREA (C.STAY_AREA): no standoff outside the area (off = always in).
+      if not seen[ck] and not (state and state._blitz_reject and state._blitz_reject[ck])
+         and U.stay_in(cx, cy) then
         seen[ck] = true
         -- Always track closest as fallback
         local d = U.mdist(tmx, tmy, cx, cy)
@@ -5721,8 +5723,9 @@ local function update_attack_substate_body(goal, state, world, info)
                                          bit.rshift(info.tanky or 0, 8), human_tiles)
         end
         goal._human_near = human_near
-        -- PPT_NEVER (Virus horde: no trees, cannot farm) does the same: the
-        -- take goes straight in, with no shield scan and no tree gathering.
+        -- PPT_NEVER (Virus horde: it can build and farm; this knob alone stops
+        -- its protected take) does the same: the take goes straight in, with no
+        -- shield scan and no tree gathering.
         if (state.is_pill_suicider or human_near or C.PPT_NEVER) and goal._is_ppt then
           goal._is_ppt = false
         end

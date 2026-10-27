@@ -55,10 +55,11 @@ void mac_menubar_install_dock_menu(void);
  * acceptable (trampolines that need it will no-op). */
 void mac_menubar_set_clientsim(void *clientSim);
 
-/* Must cover SCN_PANEL_OWNERS in bolo/public/scenario_panel.h — the
- * literal is repeated rather than included so this header keeps its only
- * dependency on <stdbool.h>. sdl3imgui.cpp asserts the two fit. */
-#define MAC_MENU_SCN_PANELS 10
+/* Must cover SCN_PANEL_OWNERS in bolo/public/scenario_panel.h, plus one
+ * row for the Scenario Text window — the literal is repeated rather than
+ * included so this header keeps its only dependency on <stdbool.h>.
+ * sdl3imgui.cpp asserts the two fit. */
+#define MAC_MENU_SCN_PANELS 11
 
 /* Snapshot of UI state that the native menu mirrors. Populated by
  * sdl3imgui.cpp once per frame and passed to mac_menubar_refresh() to

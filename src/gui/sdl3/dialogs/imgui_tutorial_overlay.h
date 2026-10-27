@@ -36,6 +36,13 @@ struct ClientSim;
 void tutorialOverlayShow(const uint16_t *ids, int count,
                          void (*onComplete)(void));
 
+/* Show one message from a text rather than a string id: a scenario's
+ * popup (game.popup). Tokens such as {ACCEL} or {QUICK_TREE} are expanded
+ * as in a tutorial string. Ignored if the overlay is already showing, so
+ * the caller holds the text back until tutorialOverlayIsOpen() is false.
+ * Copies `text`. */
+void tutorialOverlayShowText(const char *text);
+
 /* True while the overlay is open or pending-open this frame.  Fed into
  * the input gate and the solo-pause edge-detect. */
 bool tutorialOverlayIsOpen(void);
@@ -47,6 +54,16 @@ void tutorialOverlayRender(struct ClientSim *cs);
 /* Drop any message left showing or queued, and its completion callback, so
  * the next tutorial starts with the overlay closed. */
 void tutorialOverlayReset(void);
+
+/* Close whatever the overlay is showing, without running its completion
+ * callback, because the round it belongs to has ended. tutorialOverlayIsOpen()
+ * is false from this call on; the ImGui popup itself is closed by the next
+ * tutorialOverlayRender, before it would draw. The round-end screen and the
+ * lobby take the window over and never draw this popup, so one left open
+ * would sit frozen under them, unreadable and impossible to dismiss, and keep
+ * a solo game paused. Closing it is the choice made here rather than keeping
+ * it on top: what it said belongs to the round that has ended. */
+void tutorialOverlayClose(void);
 
 #ifdef __cplusplus
 }
