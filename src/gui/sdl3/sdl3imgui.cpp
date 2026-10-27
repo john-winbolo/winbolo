@@ -11328,6 +11328,10 @@ void sdl3ImguiNewGame(ClientSim *cs) {
     /* The build target is the square a click or Build Now sends the man to,
        and cursor mode may have been left on. */
     buildCursorReset();
+    /* The overview panel's copy of the map memory belongs to the last game:
+       see sdl3DrawNewGame. */
+    overviewSnapshotDestroy(s_overviewSnapshot);
+    s_overviewSnapshot = nullptr;
     sdl3ImguiTabletNewGame();
     sdl3DrawNewGame(clientSimGetCurrentBuildSelect(cs));
 }
