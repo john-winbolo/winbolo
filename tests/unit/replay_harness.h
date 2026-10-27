@@ -80,10 +80,9 @@
  * the event that would carry the change, so a round that drives one will
  * differ for a reason that is not the reader's fault:
  *
- *   pillsMigrate writes log_PillSetOwner only
- *   for a pill that is in a tank, and pillsMigratePlanted writes nothing, so
- *   a planted pill changes hands unrecorded. These need a player to quit or
- *   an alliance to break.
+ *   pillsMigrate writes log_PillSetOwner only for a pill that is in a
+ *   tank, and pillsMigratePlanted writes nothing, so a planted pill changes
+ *   hands unrecorded. These need a player to quit or an alliance to break.
  *
  * Terrain is read on the sim side through mapGetPos, the same accessor the
  * recorder serialises through — it reports the map border as deep sea
