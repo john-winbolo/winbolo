@@ -1551,6 +1551,22 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                         "[MAPPICK] action-bar UseThisMap sp=%d previewPending=%d",
                         cs ? (int)clientSimIsSinglePlayer(cs) : -1,
                         (int)s_chooser.previewPending);
+            /* Opening a folder shows its first map without sending it
+               (selectionUnsent): send it now, so the map committed is the
+               one on show. Not for a multiplayer upload, which arrives
+               later than the commit would. */
+            {
+                bool sp = cs && clientSimIsSinglePlayer(cs);
+                MapChooserState *shown =
+                    (s_chooserTabs.activeTab == 0) ? &s_chooserTabs.server
+                    : (s_chooserTabs.activeTab == 1 && sp) ? &s_chooserTabs.upload
+                    : nullptr;
+                if (cs && shown && shown->selectionUnsent &&
+                    shown->provider.onSelect) {
+                    shown->selectionUnsent = false;
+                    shown->provider.onSelect(shown, shown->provider.ctx);
+                }
+            }
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
