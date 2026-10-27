@@ -680,7 +680,7 @@ A 44-byte fixed part:
 |---|---|---|
 | 0 | Version | `u8`, 1. A later version adds its fields after the ones below |
 | 1 | Flags | Bit 0: round end, written as the round's log closed. Bit 1: the round had bots, so bytes 21–42 hold values |
-| 2–5 | Round frames | `u32`, running 20 ms server frames of the round so far. 3000 is 1:00 |
+| 2–5 | Round frames | `u32`, running 20 ms server frames of the round so far. 1500 is 0:30, 3000 is 1:00 |
 | 6–7 | Tick last | `u16` tenths of a ms. The server loop's last frame |
 | 8–9 | Tick EWMA | `u16` tenths of a ms |
 | 10–11 | Tick peak | `u16` tenths of a ms. The worst frame this round |
@@ -714,19 +714,26 @@ A bot that has no brain has zeros in its part. So a record is 44 bytes with no
 bots and 252 bytes with 16.
 
 The counts and the peaks start again at each round start; the EWMA and last
-values are the server's running ones. Writing a record resets nothing.
+values are the server's running ones. Writing a record resets nothing, so the
+counts and peaks in each record cover the round from its start, not the 30
+seconds since the record before. The change over that time is the difference
+of the counts of two records next to each other.
 
 Written by the server (`serverLifecycleReportOverrunStats`,
-`src/server/server_lifecycle.c`) at the same frames the console's overrun
-lines print: at 1:00 of the round (frame 3000), then at every 5 minutes (frame
-15000, 30000 and so on, `serverOverrunStatsDue`). It is written after the
-frame's own time is recorded, so it includes that frame, and it lands in the
-next entry of the log. The round log's stop hook
-(`serverLifecycleLogRoundEndOverrunStats`, set with `logSetStopHook`) writes
-one more, with the round-end flag, when the round's log closes, so a round
-shorter than a minute still has one. That record is the last entry before
-`LOG_QUIT`. A log that closes without a round having run since the last
-round-end record gets none.
+`src/server/server_lifecycle.c`) every 30 seconds of the round: at frame
+1500 (0:30), 3000 (1:00), 4500 (1:30) and so on (`serverOverrunRecordDue`).
+The console's overrun lines print less often, at 1:00 and then at every 5
+minutes (`serverOverrunStatsDue`), and each of those frames also has a
+record. A record is written after the frame's own time is recorded, so it
+includes that frame, and it lands in the next entry of the log. The round
+log's stop hook (`serverLifecycleLogRoundEndOverrunStats`, set with
+`logSetStopHook`) writes one more, with the round-end flag, when the round's
+log closes, so a round shorter than 30 seconds still has one. That record
+is the last entry before `LOG_QUIT`. A log that closes without a round
+having run since the last round-end record gets none. When the log closes
+on a frame that is a multiple of 1500, the log holds two records with the
+same frame count: the timed one, and the round-end one with the round-end
+flag. A reader keeps both.
 
 Only the hosts that tick through `serverInstanceTick` in
 `src/server/server_lifecycle.c` write this record: WinBoloDS, and a game

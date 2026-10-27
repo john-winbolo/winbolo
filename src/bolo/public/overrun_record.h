@@ -10,8 +10,8 @@
  *  The payload of the log_OverrunStats record in a round log
  *  (.wbv): the server's timing and the bots' overruns, the
  *  same numbers the server's overrun lines print to the
- *  console. The server writes one 1 minute into a round, then
- *  every 5 minutes, and one when the round's log closes.
+ *  console. The server writes one every 30 seconds of a round,
+ *  and one when the round's log closes.
  *
  *  The layout is in docs/replay-format.md. Every multi-byte
  *  field is big-endian. A time is in tenths of a millisecond

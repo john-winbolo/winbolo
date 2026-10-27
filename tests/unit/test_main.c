@@ -648,6 +648,7 @@ static const UnitTestEntry s_tests[] = {
     { "log_roundtrip_overrun_stats", run_log_roundtrip_overrun_stats },
     { "log_roundtrip_overrun_stats_recorded", run_log_roundtrip_overrun_stats_recorded },
     { "log_roundtrip_overrun_stats_bots", run_log_roundtrip_overrun_stats_bots },
+    { "log_roundtrip_overrun_stats_every_30s", run_log_roundtrip_overrun_stats_every_30s },
     { "server_lag_log_due", run_server_lag_log_due },
     { "server_lag_log_min_gap", run_server_lag_log_min_gap },
     { "server_overrun_stats_due", run_server_overrun_stats_due },

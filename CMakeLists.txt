@@ -5916,6 +5916,7 @@ set(_unit_test_names
     log_roundtrip_overrun_stats
     log_roundtrip_overrun_stats_recorded
     log_roundtrip_overrun_stats_bots
+    log_roundtrip_overrun_stats_every_30s
     server_lag_log_due
     server_lag_log_min_gap
     server_overrun_stats_due
