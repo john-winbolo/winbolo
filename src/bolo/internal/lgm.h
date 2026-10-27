@@ -300,6 +300,21 @@ BYTE lgmRequestRefusal(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BY
 void lgmRecall(struct GameSim *sim, lgm *lgman);
 
 /*********************************************************
+*NAME:          lgmIsGoingToBuildAt
+*PURPOSE:
+*  Is the man out on his way to put a road, building or
+*  pillbox on this square? Tree growth asks, so that a tree
+*  doesn't come up under an order the player has already
+*  sent him on.
+*
+*ARGUMENTS:
+*  lgman  - Pointer to the lgm structure
+*  mapX   - X Map Co-ordinate
+*  mapY   - Y Map Co-ordinate
+*********************************************************/
+bool lgmIsGoingToBuildAt(lgm *lgman, BYTE mapX, BYTE mapY);
+
+/*********************************************************
 *NAME:          lgmDropCarriedPill
 *PURPOSE:
 *  Puts the pillbox the man is carrying down on the map and
