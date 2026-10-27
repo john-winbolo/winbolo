@@ -9,7 +9,11 @@
 --    (and table identity), and nothing is pushed to C.
 -- 2. A scaled scenario (full armour 20, taken 180%, speed 145%, full
 --    shells 8) gives the hand-computed numbers.
--- 3. A missing info.rules, and LIVE_PHYSICS = false, change nothing.
+-- 3. More scaled rules (pill armour, builder costs and times, base regen,
+--    reload, forest speed) give the hand-computed numbers.
+-- 4. A missing info.rules or info.mods changes nothing.
+-- 5. LIVE_PHYSICS = false (the keel preset) changes nothing.
+-- 6. One group switched off keeps its classic values; the others scale.
 -- 7. Ice Rink (speed 140, accel 35, turn 55) and Juggernaut (speed 65,
 --    accel 60) scale the turn-radius caps and brake distances.
 -- 8. STEER_TURN_SPEEDUP: a turn faster than the top speed raises the
@@ -18,6 +22,8 @@
 --    rate of the terrain under the tank; classic terrain rates change nothing.
 -- 10. ENEMY_SPEED_OWN_MODS: enemy_speed_scale() is our speed % / 100, and
 --    nil at speed 100, with the knob off, or with LIVE_PHYSICS off.
+-- 11. Builder walk, world-sim build dwell, shell life and pill range in WU
+--    follow the rules, go back to classic, and each knob turns its part off.
 -- 12. A scaled per-terrain table is the same object on every think with the
 --    same rules, and is refilled in place when the rules change.
 -- =========================================================================
