@@ -24,6 +24,10 @@
 #include "../tutorial_text.h"
 #include "../../winbolo.h"   /* DIALOG_BOX_TITLE */
 
+extern "C" {
+#include "../input.h"        /* inputSwallowKeyUntilRelease */
+}
+
 /* All state is touched only from the main thread, by the render pass. */
 static bool     s_open        = false;
 static bool     s_pendingOpen = false;
@@ -124,6 +128,21 @@ void tutorialOverlayRender(struct ClientSim *cs) {
                                nullptr, flags)) {
         bool dismissed = imguiRichSegmentsBody(segs, nSegs, &s_focusFirst);
         if (dismissed) {
+            /* The OK button is pressed by Enter or Space going down, and the
+               game reads its keys by polling the keyboard, so the key that
+               closed the message was still down on the next game tick: Space
+               fired and Enter shortened the gunsight. The game reads these
+               as up until the player lets go. */
+            const bool *held = SDL_GetKeyboardState(NULL);
+            if (held) {
+                static const SDL_Scancode kCloseKeys[] = {
+                    SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER,
+                    SDL_SCANCODE_SPACE,
+                };
+                for (SDL_Scancode sc : kCloseKeys) {
+                    if (held[sc]) inputSwallowKeyUntilRelease((int)sc);
+                }
+            }
             ImGui::CloseCurrentPopup();
             s_open = false;
         }

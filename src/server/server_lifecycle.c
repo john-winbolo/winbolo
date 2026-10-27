@@ -329,8 +329,8 @@ static double       s_peakTickMs      = 0.0;
 static unsigned int s_ticksOverBudget = 0;
 
 /* The running frames of the round so far, for the periodic overrun lines
- * and records (serverOverrunStatsDue). The reset of the peak above starts it
- * again, at each round start. */
+ * and records (serverOverrunStatsDue, serverOverrunRecordDue). The reset of
+ * the peak above starts it again, at each round start. */
 static uint32_t     s_roundRunFrames  = 0;
 /* TRUE from a round start until the round's log has its round-end overrun
  * record (serverLifecycleLogRoundEndOverrunStats), so a log that closes later
@@ -383,7 +383,8 @@ void serverLifecycleResetTickPeak(void) {
 
 bool serverLifecycleCountRoundFrame(void) {
   s_roundRunFrames++;
-  return serverOverrunStatsDue(s_roundRunFrames);
+  return serverOverrunStatsDue(s_roundRunFrames) ||
+         serverOverrunRecordDue(s_roundRunFrames);
 }
 
 void serverLifecycleSetOverrunConsolePrint(bool on) {
@@ -391,10 +392,12 @@ void serverLifecycleSetOverrunConsolePrint(bool on) {
 }
 
 void serverLifecycleReportOverrunStats(ServerSim *sim) {
-  if (s_overrunConsolePrint) {
+  if (s_overrunConsolePrint && serverOverrunStatsDue(s_roundRunFrames)) {
     serverSimPrintOverrunStats(sim, s_roundRunFrames / (1000u / SERVER_TICK_LENGTH));
   }
-  serverSimLogOverrunStats(sim, s_roundRunFrames, FALSE);
+  if (serverOverrunRecordDue(s_roundRunFrames)) {
+    serverSimLogOverrunStats(sim, s_roundRunFrames, FALSE);
+  }
 }
 
 void serverLifecycleLogRoundEndOverrunStats(ServerSim *sim) {
@@ -1261,11 +1264,11 @@ void serverInstanceTick(ServerSim *sim) {
   double tickMs = (double)(tickEnd - tickStart) * 1000.0 / freq;
   serverLifecycleRecordTickMs(tickMs);
 
-  /* The overrun lines on the console and the overrun record in the round
-   * log, once a minute into the round and then every five minutes. After the
-   * tick's own time is recorded, so they include this frame and the work is
-   * not part of the time they report. Only a frame that ran the round
-   * counts. */
+  /* The overrun lines on the console, once a minute into the round and then
+   * every five minutes, and the overrun record in the round log, every 30
+   * seconds of the round. After the tick's own time is recorded, so they
+   * include this frame and the work is not part of the time they report.
+   * Only a frame that ran the round counts. */
   if (preTickState == serverStateRunning && sim->state == serverStateRunning) {
     if (serverLifecycleCountRoundFrame()) {
       threadsWaitForMutex();

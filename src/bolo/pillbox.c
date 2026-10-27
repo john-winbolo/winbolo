@@ -1631,8 +1631,9 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
        line is written here, so every client — the hosting one included —
        draws its line from the event, which carries the announce policy's
        answer. A pill going neutral is reported the same way, and the client
-       draws no line for one. */
-    if (migrate == FALSE && sim->isServer) {
+       draws no line for one. A pill handed to the player who already holds it
+       has not changed hands, so nothing is reported. */
+    if (migrate == FALSE && sim->isServer && returnValue != owner) {
       if (sim->callbacks.pillOwnerChanged) {
         BYTE captureClass;
         captureClass = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL

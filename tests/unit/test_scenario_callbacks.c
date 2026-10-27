@@ -38,7 +38,7 @@
  *                                         callbacks block (Survival 12,
  *                                         Soccer 10); same for Soccer
  * run_scenario_details_fetch_tutorial   — and for the Tutorial (in
- *                                         data/maps/tutorials), whose 22
+ *                                         data/maps/tutorials), whose 23
  *                                         rows are the most a shipped
  *                                         script carries
  * run_scenario_details_fetch_not_found  — a file the server does not know is
@@ -793,7 +793,7 @@ int run_scenario_details_fetch_soccer(void) {
 }
 
 int run_scenario_details_fetch_tutorial(void) {
-    return scFetchMapScript("fetch_tutorial", "tutorials/Tutorial", 22,
+    return scFetchMapScript("fetch_tutorial", "tutorials/Tutorial", 23,
                             "on_choose_start/");
 }
 

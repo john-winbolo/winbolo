@@ -489,6 +489,7 @@ int run_tick_core_active_local_no_double_step(void);
 int run_tick_core_passive_local_pumps_keys_half(void);
 int run_tick_core_lobby_preserves_parity(void);
 int run_transport_ticks_server_lifecycle(void);
+int run_local_join_slot_after_seated_bots(void);
 int run_await_join_connected_immediate(void);
 int run_await_join_lobby_latch(void);
 int run_await_join_timeout_and_error(void);
@@ -1291,11 +1292,13 @@ int run_log_roundtrip_map_name_at_round_start(void);
 int run_log_roundtrip_player_lag(void);
 int run_log_roundtrip_player_lag_recorded(void);
 /* log_OverrunStats: the record through the writer and back, and a recorded
- * round's record at 1:00 and at the round end. */
+ * round's records at 0:30, 1:00 and the round end. */
 int run_log_roundtrip_overrun_stats(void);
 int run_log_roundtrip_overrun_stats_recorded(void);
-/* The same with two thinking bots: both records have each bot's thinks. */
+/* The same with two thinking bots: each record has each bot's thinks. */
 int run_log_roundtrip_overrun_stats_bots(void);
+/* A longer round has a record every 30 seconds, then the round-end one. */
+int run_log_roundtrip_overrun_stats_every_30s(void);
 int run_server_lag_log_due(void);
 int run_server_lag_log_min_gap(void);
 int run_server_overrun_stats_due(void);
@@ -3688,6 +3691,7 @@ int run_game_event_channel_capture_wire_bytes(void);
 int run_game_event_channel_neutralised_no_client_line(void);
 int run_game_event_channel_capture_attribution(void);
 int run_game_event_channel_subscriber_count(void);
+int run_game_event_channel_same_owner_silent(void);
 
 /* The eight facts that had no event at all (test_game_events_new.c): a tank
  * spawning and respawning, a builder landing, a pill placed, picked up and
