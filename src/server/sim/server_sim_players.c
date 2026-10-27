@@ -903,17 +903,43 @@ BYTE serverSimFreeTeam(ServerSim *sim) {
         if (team > 0 && team < MAX_TANKS) held[team] = true;
     }
     for (t = 1; t < MAX_TANKS; t++) {
+        char name[LOBBY_TEAM_NAME_LEN];
+        int  len;
+        TeamMetadata was;
         if (held[t]) continue;
-        if (!sim->teams[t].in_use) {
-            char name[LOBBY_TEAM_NAME_LEN];
-            int  len = snprintf(name, sizeof(name), "Team %u", (unsigned)t);
-            if (len < 0) len = 0;
-            if (len >= (int)sizeof(name)) len = (int)sizeof(name) - 1;
+        len = snprintf(name, sizeof(name), "Team %u", (unsigned)t);
+        if (len < 0) len = 0;
+        if (len >= (int)sizeof(name)) len = (int)sizeof(name) - 1;
+        /* The seat gets a new team, so an id that no connected seat holds
+           but that is still in use (a scenario team that emptied, or a team
+           whose last player left) does not keep its old name, colour and
+           start side. Zeroing it first keeps its old colour out of the
+           colour count below. */
+        was = sim->teams[t];
+        memset(&sim->teams[t], 0, sizeof(sim->teams[t]));
+        if (!was.in_use) {
             /* Pool 0 is a request: serverSimSetTeamMeta moves the team to
                the lowest pool no other team holds. It publishes the team. */
             serverSimSetTeamMeta(sim, t, sidesLeastUsedColour(sim), 0,
                                  START_SIDE_ANY, (const uint8_t *)name,
                                  (uint8_t)len);
+        } else {
+            /* The team keeps its bot naming pool. serverSimSetTeamMeta is
+               not used here because it would move the pool when another
+               team holds the same one, and teams 1 and 2 both open on
+               pool 0. The team is published only when it changed, so a
+               team that already has the new team's settings (team 1 or 2
+               as the lobby set it up) sends nothing new. */
+            TeamMetadata *tm = &sim->teams[t];
+            tm->color      = sidesLeastUsedColour(sim);
+            tm->in_use     = 1;
+            tm->namingPool = was.namingPool;
+            tm->startSide  = START_SIDE_ANY;
+            memcpy(tm->name, name, (size_t)len);
+            if (tm->color != was.color || tm->startSide != was.startSide ||
+                memcmp(tm->name, was.name, sizeof(tm->name)) != 0) {
+                serverSimPublishLobbyTeamMeta(sim, t);
+            }
         }
         return t;
     }

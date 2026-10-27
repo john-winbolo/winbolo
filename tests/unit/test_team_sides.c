@@ -57,6 +57,7 @@
  *   leave_takes_free_team     — a leaver takes the lowest free team
  *   leave_with_no_free_team   — with every id held, the leaver has none
  *   free_team_rules           — the id, colour and name a free team gets
+ *   free_team_resets_emptied  — an emptied team is handed out as a new one
  *   team_chat_follows_sides   — team chat goes with the side
  *   panels_follow_team        — scenario panels go with the side
  *   infection_puts_leaver_back — Infection keeps a seat on its side
@@ -790,6 +791,57 @@ int run_team_sides_free_team_rules(void) {
     /* Seat 3 leaves the server; team 4 has nobody now. */
     serverSimRemovePlayer(sim, 3);
     UT_ASSERT(serverSimFreeTeam(sim) == 4);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A team that is still in use but has nobody on it is handed out as a new
+   team. Teams 1, 1 and 2 in a running round, and team 3 set up with a name,
+   a colour and a start side as a scenario would, but with no seat on it.
+   Seat 1 leaves the alliance and takes team 3, which then has the name,
+   colour and side of a team never used: "Team 3", the colour the fewest
+   other teams have, and no side. It keeps its bot naming pool. */
+int run_team_sides_free_team_resets_emptied(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    uint8_t want;
+    uint8_t pool;
+
+    UT_ASSERT(sim != NULL);
+    serverSimSetTeamMeta(sim, 3, 5, 0, START_SIDE_N,
+                         (const uint8_t *)"Raiders", 7);
+    pool = sim->teams[3].namingPool;
+    UT_ASSERT(sim->teams[3].in_use);
+    UT_ASSERT(sim->teams[3].startSide == START_SIDE_N);
+    /* The colour a new team 3 takes: the least used of teams 1 and 2, the
+       lowest on a tie. */
+    {
+        int uses[8] = {0};
+        uint8_t c;
+        uses[sim->teams[1].color & 7]++;
+        uses[sim->teams[2].color & 7]++;
+        want = 0;
+        for (c = 1; c < 8; c++) {
+            if (uses[c] < uses[want]) want = c;
+        }
+    }
+
+    serverSimLeaveAlliance(sim, 1);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the leaver is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT_MSG(strcmp(sim->teams[3].name, "Team 3") == 0,
+                  "the leaver's team is named \"%s\"", sim->teams[3].name);
+    UT_ASSERT_MSG(sim->teams[3].startSide == START_SIDE_ANY,
+                  "the leaver's team has start side %u",
+                  (unsigned)sim->teams[3].startSide);
+    UT_ASSERT_MSG(sim->teams[3].color == want,
+                  "the leaver's team has colour %u, not %u",
+                  (unsigned)sim->teams[3].color, (unsigned)want);
+    UT_ASSERT(sim->teams[3].sideAutoFilled == 0);
+    UT_ASSERT_MSG(sim->teams[3].namingPool == pool,
+                  "the leaver's team has bot pool %u, not its own %u",
+                  (unsigned)sim->teams[3].namingPool, (unsigned)pool);
+    UT_ASSERT(serverSimSidesAgree(sim));
     serverSimDestroy(sim);
     return 0;
 }

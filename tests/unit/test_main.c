@@ -827,6 +827,8 @@ static const UnitTestEntry s_tests[] = {
                                                  run_team_sides_round_log_teams },
     { "team_sides_held_seat_allied_in_round",
                                                  run_team_sides_held_seat_allied_in_round },
+    { "team_sides_free_team_resets_emptied",
+                                                 run_team_sides_free_team_resets_emptied },
     { "round_start_owners_kept_with_lobby_team", run_round_start_owners_kept_with_lobby_team },
     { "round_start_owners_kept_after_manual_alliance",
                                                  run_round_start_owners_kept_after_manual_alliance },
