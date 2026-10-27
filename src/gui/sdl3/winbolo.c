@@ -1646,22 +1646,50 @@ void windowSetFrameRate(int newFrameRate, bool inGame) {
 
 /* Turn the renderer's vsync on or off. It reads the renderer's own state
  * each time, so a new renderer (a window rebuild makes one, with vsync on)
- * gets the choice on the next pass. A failure is logged once per change. */
+ * gets the choice on the next pass. A failure is logged once per change and
+ * not tried again on that renderer. A new renderer is tried again: it is
+ * known by its properties ID, which SDL never gives to a second renderer
+ * (its address can be the same as the old one's). */
 static void windowFrameLimitApplyVsync(bool on) {
   static int failedFor = -1;
+  static SDL_PropertiesID failedOn = 0;
   SDL_Renderer *ren = sdl3DrawGetRenderer();
+  SDL_PropertiesID props;
   int want = on ? 1 : 0;
   int cur = -2;
   if (ren == NULL) return;
+  props = SDL_GetRendererProperties(ren);
+  if (props != failedOn) failedFor = -1;
   if (SDL_GetRenderVSync(ren, &cur) && cur == want) return;
   if (failedFor == want) return;
   if (!SDL_SetRenderVSync(ren, want)) {
     WB_LOG_WARN(WB_LOG_CAT_GUI, "Frame rate: could not turn vsync %s: %s",
                 on ? "on" : "off", SDL_GetError());
     failedFor = want;
+    failedOn = props;
     return;
   }
   failedFor = -1;
+}
+
+/* A dialog that runs its own draw loop calls this with TRUE when it opens
+ * and FALSE when it closes. A message box can open from inside the game
+ * loop, where Unlimited has turned vsync off, and its loop has no wait of
+ * its own. While one is open, vsync is on. When the last one closes, the
+ * game's choice comes back (vsync on outside a game). The count lets one
+ * dialog open on top of another. */
+void windowFrameLimitDialog(bool open) {
+  static int openCount = 0;
+  if (open) {
+    openCount++;
+    windowFrameLimitApplyVsync(TRUE);
+    return;
+  }
+  if (openCount > 0) openCount--;
+  if (openCount == 0) {
+    int limit = frameLimitInGame ? frameRate : FRAME_LIMIT_DEFAULT;
+    windowFrameLimitApplyVsync(frameLimitUsesVsync(limit));
+  }
 }
 
 /* One display refresh in ns. An unknown or very low rate counts as 60 Hz. */

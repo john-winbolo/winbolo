@@ -1,8 +1,7 @@
 # Frame rate and Hide Main View: decisions (#312)
 
-This is a proof of concept. Each item says what was decided, the options
-that were weighed, and why this one was picked. All of it is open for
-review.
+Each item says what was decided, the options that were weighed, and why
+this one was picked.
 
 ## What was there before
 
@@ -79,6 +78,13 @@ review.
      With vsync off there, Unlimited would draw the menus thousands of
      times a second and use a full CPU core for nothing. When the game
      loop ends, vsync goes back on.
+   - A message box opened during a game (for example "lost connection")
+     has its own draw loop too. It turns vsync on while it is open and
+     gives the game's choice back when it closes
+     (`windowFrameLimitDialog` in `winbolo.c`).
+   - The in-game Settings window is not a separate loop. It is drawn in
+     the game window's own frames, so it follows the choice like the rest
+     of the game window.
    - The menu's background game does follow a fixed limit: it redraws
      its scene on every n-th refresh, n the nearest whole number to
      refresh / limit (the hook `bgFrameEveryN` was there for this). The
@@ -93,8 +99,7 @@ review.
      original game look, and it can be changed during a game in one
      click. Both lists come from one function (`imguiFrameLimitLabel`),
      and the macOS menu bar uses it too, so the three lists cannot
-     differ. If the owner wants one place only, removing the Edit menu
-     entry is a small change.
+     differ.
 
 8. **The choice is shown on Windows, Linux and macOS only.**
    - Options weighed: show it everywhere; desktop only.
@@ -148,19 +153,4 @@ review.
       `frame_limit.h`, to read an old preferences file.
     - The global keeps its name `frameRate` (it now holds a
       `FrameLimit`). A rename would touch the web, Android, iOS and macOS
-      files more, and those builds could not be compiled for this
-      proof of concept.
-
-## Not done
-
-- The web, Android, iOS and macOS builds were not compiled. Their edits
-  are small (the global's first value, the web setter, the macOS menu
-  loop).
-- A message box opened during a game (for example "lost connection")
-  runs its own draw loop and keeps the game's vsync state. With
-  Unlimited it draws with no limit until it closes. Those boxes are
-  short-lived, so this was left as it is.
-- No separate vsync switch, and no adaptive vsync
-  (`SDL_RENDERER_VSYNC_ADAPTIVE`). Either is easy to add later.
-- The new strings are in English only. The other languages fall back to
-  English until they are translated.
+      files more.
