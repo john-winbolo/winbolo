@@ -1065,6 +1065,20 @@ const char *serverSimGetPlayerLang(const ServerSim *sim, BYTE seat) {
     return sim->playerLang[seat];
 }
 
+void serverSimSetPlayerInput(ServerSim *sim, BYTE seat, BYTE input) {
+    if (sim == NULL || seat >= MAX_TANKS) return;
+    if (input != SERVER_PLAYER_INPUT_TOUCH &&
+        input != SERVER_PLAYER_INPUT_CONTROLLER) {
+        input = SERVER_PLAYER_INPUT_KEYBOARD;
+    }
+    sim->playerInput[seat] = input;
+}
+
+BYTE serverSimGetPlayerInput(const ServerSim *sim, BYTE seat) {
+    if (sim == NULL || seat >= MAX_TANKS) return SERVER_PLAYER_INPUT_KEYBOARD;
+    return sim->playerInput[seat];
+}
+
 bool serverSimGetScenarioVoiceEveryone(const ServerSim *sim) {
     if (sim == NULL || sim->voiceMode == serverVoiceOff) return false;
     return sim->scenarioVoiceEveryone;

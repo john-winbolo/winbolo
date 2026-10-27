@@ -444,7 +444,7 @@ static void main_loop_iteration(void) {
     if (ren) SDL_RenderPresent(ren);
   }
 
-  clientFrontPollTutorialDone();   /* hide the menu Tutorial button once a shipped tutorial is finished */
+  clientFrontPollScenarioPlayer();  /* tutorial finished; language, input */
 
   /* Cloud prefs upload runs from gameFrontPumpDirty, which
    * sdl3ImguiPumpAndRender calls at the top of this frame. */

@@ -39,16 +39,6 @@ static const char *const kTokenText[TT_COUNT] = {
   "{QUICK_MINE}",
   "{GUN_UP}",
   "{GUN_DOWN}",
-  "{DRIVE_HOW}",
-  "{BUILD_HOW}",
-  "{HARVEST_TIP}",
-  "{PILL_HOW}",
-  "{STEP_TREE}",
-  "{STEP_ROAD}",
-  "{STEP_WALL}",
-  "{STEP_MINE}",
-  "{STEP_PILL}",
-  "{STEP_PILL_GREEN}",
 };
 
 const char *tutorialTokenText(TutorialTokenId id) {
@@ -93,16 +83,6 @@ int tutorialTokenScancode(TutorialTokenId id, const keyItems *k) {
     case TT_BUILD_MODE:
     case TT_BUILD_PLACE:
     case TT_BUILD_TOOL:
-    case TT_DRIVE_HOW:
-    case TT_BUILD_HOW:
-    case TT_HARVEST_TIP:
-    case TT_PILL_HOW:
-    case TT_STEP_TREE:
-    case TT_STEP_ROAD:
-    case TT_STEP_WALL:
-    case TT_STEP_MINE:
-    case TT_STEP_PILL:
-    case TT_STEP_PILL_GREEN:
     case TT_COUNT:
       break;
   }
@@ -115,34 +95,10 @@ bool tutorialTokenIsQuickBuild(TutorialTokenId id) {
          id == TT_QUICK_MINE;
 }
 
-bool tutorialTokenIsPhrase(TutorialTokenId id) {
-  return id >= TT_DRIVE_HOW && id < TT_COUNT;
-}
-
-/* The phrase pass's name function: the phrase's text for a phrase token,
- * and NULL, which leaves the token as it is written, for any other. */
-typedef struct {
-  TutorialTokenNameFn phrase;
-  void               *ctx;
-} PhraseOnly;
-
-static const char *phraseOnlyName(TutorialTokenId id, void *ctx) {
-  const PhraseOnly *p = (const PhraseOnly *)ctx;
-  if (!tutorialTokenIsPhrase(id) || p->phrase == NULL) return NULL;
-  return p->phrase(id, p->ctx);
-}
-
-size_t tutorialPhrasesExpand(const char *src, char *out, size_t cap,
-                             TutorialTokenNameFn phrase, void *ctx) {
-  PhraseOnly p;
-  p.phrase = phrase;
-  p.ctx    = ctx;
-  return tutorialTokensExpand(src, out, cap, phraseOnlyName, &p);
-}
-
 size_t tutorialTokensExpand(const char *src, char *out, size_t cap,
                             TutorialTokenNameFn name, void *ctx) {
-  size_t n = 0;
+  size_t n    = 0;
+  size_t keep = 0;   /* the end of the last name written: a cut stays past it */
   if (out == NULL || cap == 0) return 0;
   out[0] = '\0';
   if (src == NULL) return 0;
@@ -164,9 +120,57 @@ size_t tutorialTokensExpand(const char *src, char *out, size_t cap,
     memcpy(out + n, put, plen);
     n += plen;
     src += tlen;
+    if (id != TT_COUNT) keep = n;
+  }
+  /* A cut inside a character (the byte left out continues a UTF-8
+     sequence) takes off the part of it already written, lead byte and
+     all, so the text never ends in half a character. A name is never
+     touched, whatever broken bytes follow it. */
+  if (((unsigned char)*src & 0xC0) == 0x80) {
+    while (n > keep && ((unsigned char)out[n - 1] & 0xC0) == 0x80) n--;
+    if (n > keep && (unsigned char)out[n - 1] >= 0xC0) n--;
   }
   out[n] = '\0';
   return n;
+}
+
+int tutorialTokensSplit(const char *src, TutorialPiece *out, int max,
+                        const char **rest) {
+  int         count = 0;
+  const char *run;
+  if (rest != NULL) *rest = src;
+  if (src == NULL || out == NULL || max <= 0) return 0;
+  run = src;
+  for (;;) {
+    size_t          tlen = 0;
+    TutorialTokenId id   = TT_COUNT;
+    if (*src != '\0') {
+      id = tutorialTokenMatch(src, &tlen);
+      if (id == TT_COUNT) {
+        src++;
+        continue;
+      }
+    }
+    /* At a token or at the end: first the plain run before it. */
+    if (src > run) {
+      if (count == max) break;   /* the run is left out */
+      out[count].start = run;
+      out[count].len   = (size_t)(src - run);
+      out[count].id    = TT_COUNT;
+      count++;
+      run = src;
+    }
+    if (*src == '\0') break;
+    if (count == max) break;     /* the token is left out */
+    out[count].start = src;
+    out[count].len   = tlen;
+    out[count].id    = id;
+    count++;
+    src += tlen;
+    run = src;
+  }
+  if (rest != NULL) *rest = run;
+  return count;
 }
 
 const char *tutorialShortKeyName(const char *name, char *buf, size_t cap) {

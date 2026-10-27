@@ -17,6 +17,9 @@
  * run_scenario_lua_lang                — lang(p) reads the code the
  *                                        frontend gave the seat, and "en"
  *                                        for anything it refuses or lacks
+ * run_scenario_lua_input               — input(p) names what the frontend
+ *                                        told the seat, and "keyboard" for
+ *                                        anything it refuses or lacks
  * run_scenario_lua_tutorial_done       — tutorial_done(p) marks the seat
  *                                        for the frontend to take, once,
  *                                        and refuses an empty seat
@@ -498,6 +501,7 @@ static const char *const kSlEveryRowCalls =
     "  rule        = function() return game.rule(\"tank_reload_ticks\") end,\n"
     "  voice_everyone = function() return game.voice_everyone() end,\n"
     "  lang        = function() return game.lang(0) end,\n"
+    "  input       = function() return game.input(0) end,\n"
     "  tags        = function() return game.tags(\"pill\", 1) end,\n"
     "  tagged      = function() return game.tagged(\"keep\") end,\n"
     "  region      = function() return game.region(\"keep\") end,\n"
@@ -839,6 +843,86 @@ int run_scenario_lua_lang(void) {
     serverSimRemovePlayer(sim, 0);
     slLangRead(L, got, other, outOfRange, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "en") == 0,
+                  "the seat kept '%s' after its player left", got);
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 1c2. The player's input through the binding ───────────────────── */
+
+/* game.input names what the frontend told the sim; a seat never told, a
+   value the setter refuses, an empty seat and a seat out of range all
+   answer "keyboard", and the input goes when the seat's player leaves. */
+static const char *const kSlInput =
+    "got = game.input(0)\n"
+    "other = game.input(5)\n"
+    "far = game.input(99)\n";
+
+static void slInputRead(lua_State *L, char *got, char *other,
+                        char *outOfRange, size_t cap) {
+    char err[512];
+    if (!slRun(L, kSlInput, err, sizeof(err))) {
+        snprintf(got, cap, "chunk failed: %s", err);
+        other[0] = outOfRange[0] = '\0';
+        return;
+    }
+    slGlobalStr(L, "got", got, cap);
+    slGlobalStr(L, "other", other, cap);
+    slGlobalStr(L, "far", outOfRange, cap);
+}
+
+int run_scenario_lua_input(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             got[64];
+    char             other[64];
+    char             outOfRange[64];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    slInputRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "keyboard") == 0,
+                  "a seat never told read '%s', not 'keyboard'", got);
+
+    serverSimSetPlayerInput(sim, 0, SERVER_PLAYER_INPUT_TOUCH);
+    slInputRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "touch") == 0, "touch read back as '%s'", got);
+    UT_ASSERT_MSG(strcmp(other, "keyboard") == 0 &&
+                  strcmp(outOfRange, "keyboard") == 0,
+                  "an empty seat read '%s' and seat 99 '%s'", other,
+                  outOfRange);
+
+    serverSimSetPlayerInput(sim, 0, SERVER_PLAYER_INPUT_CONTROLLER);
+    slInputRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "controller") == 0,
+                  "controller read back as '%s'", got);
+
+    /* A value past the three is the keyboard, not left as it was. */
+    serverSimSetPlayerInput(sim, 0, 3);
+    slInputRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "keyboard") == 0, "input 3 read '%s'", got);
+    serverSimSetPlayerInput(sim, 0, SERVER_PLAYER_INPUT_TOUCH);
+    serverSimSetPlayerInput(sim, 0, 255);
+    UT_ASSERT(serverSimGetPlayerInput(sim, 0) == SERVER_PLAYER_INPUT_KEYBOARD);
+
+    /* Out of range on the C side too: ignored, and read as the keyboard. */
+    serverSimSetPlayerInput(sim, MAX_TANKS, SERVER_PLAYER_INPUT_TOUCH);
+    UT_ASSERT(serverSimGetPlayerInput(sim, MAX_TANKS) ==
+              SERVER_PLAYER_INPUT_KEYBOARD);
+    UT_ASSERT(serverSimGetPlayerInput(NULL, 0) == SERVER_PLAYER_INPUT_KEYBOARD);
+    serverSimSetPlayerInput(NULL, 0, SERVER_PLAYER_INPUT_TOUCH);
+
+    serverSimSetPlayerInput(sim, 0, SERVER_PLAYER_INPUT_CONTROLLER);
+    serverSimRemovePlayer(sim, 0);
+    slInputRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "keyboard") == 0,
                   "the seat kept '%s' after its player left", got);
 
     lua_close(L);

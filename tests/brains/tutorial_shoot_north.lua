@@ -2,8 +2,8 @@
 -- square (tests/scenario/tutorial_park5b).
 --
 -- A player who does what the 5B status line says: stops on the parking
--- square and aims at the enemy pillbox, 4 squares west and 6 north of it
--- (the name is from when it was due north). The brain never accelerates. It
+-- square and aims at the enemy pillbox, 4 squares west and 6 north of it.
+-- The brain never accelerates. It
 -- turns to face the target, AIM below, and raises the gun sight to its
 -- longest range wherever it is, but it fires only while the tank is on the
 -- parking square, PARK below. The arena keeps the tank off that square

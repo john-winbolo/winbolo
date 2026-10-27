@@ -5279,6 +5279,24 @@ static const ScnLuaOpParam kScnOpArgs_allied[] = {
     { "a", SCN_PARAM_SLOT, false }, { "b", SCN_PARAM_SLOT, false },
     SCN_OP_ARG_END
 };
+/* The input seat p's player uses: "keyboard", "touch" or "controller". A
+   seat out of range, an empty seat and one nobody told the server about
+   all answer "keyboard", which every text has. */
+static int scnLuaInput(lua_State *L) {
+    BYTE p;
+
+    if (!scnSlotOf(L, 1, "p", &p)) {
+        lua_pushstring(L, "keyboard");
+        return 1;
+    }
+    switch (serverSimGetPlayerInput(scnCtx(L)->sim, p)) {
+        case SERVER_PLAYER_INPUT_TOUCH:      lua_pushstring(L, "touch");      break;
+        case SERVER_PLAYER_INPUT_CONTROLLER: lua_pushstring(L, "controller"); break;
+        default:                             lua_pushstring(L, "keyboard");   break;
+    }
+    return 1;
+}
+
 /* A rule name is matched against the rules table and a name that spells none
    raises, so it is a word out of a fixed set rather than free text. */
 static const ScnLuaOpParam kScnOpArgs_rule[] = {
@@ -5286,6 +5304,9 @@ static const ScnLuaOpParam kScnOpArgs_rule[] = {
 };
 static const ScnLuaOpParam kScnOpArgs_voice_everyone[] = { SCN_OP_ARG_END };
 static const ScnLuaOpParam kScnOpArgs_lang[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_input[] = {
     { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
 };
 /* An id is matched against the calling script's own settings block and an
@@ -5690,6 +5711,12 @@ static const ScnLuaRow kScnLuaRows[] = {
       "game knows it; a seat in a hosted game, an empty seat and a bot "
       "answer \"en\".",
       SCN_OP_PARAMS(lang), SCN_OP_READS },
+    { "input", scnLuaInput,
+      "input(p) — what seat p's player plays with: \"keyboard\", "
+      "\"touch\" or \"controller\", so a line can be worded for it. Only a "
+      "single-player game knows it; a seat in a hosted game, an empty seat "
+      "and a bot answer \"keyboard\".",
+      SCN_OP_PARAMS(input), SCN_OP_READS },
     { "setting", scnLuaSetting,
       "setting(id) — the value the host chose in the lobby for one of "
       "this script's own settings, or its declared default: a number, "

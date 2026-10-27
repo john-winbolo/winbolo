@@ -1104,7 +1104,7 @@ android_game_start:
       SDL_Renderer *ren = sdl3DrawGetRenderer();
       if (ren) SDL_RenderPresent(ren);
     }
-    clientFrontPollTutorialDone();   /* hide the menu Tutorial button once a shipped tutorial is finished */
+    clientFrontPollScenarioPlayer();  /* tutorial finished; language, input */
 
     /* Cap to 60 FPS */
     {

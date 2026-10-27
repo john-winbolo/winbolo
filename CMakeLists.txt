@@ -4562,6 +4562,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tokens the popup text may carry.
     tests/unit/test_scenario_popup.c
     src/gui/sdl3/tutorial_tokens.c
+    # The token parser against untrusted text: malformed braces, the split,
+    # a cut inside a UTF-8 character, and a fixed seed of random input.
+    tests/unit/test_tutorial_tokens_parse.c
+    # The shipped tutorial's text: every language and input inside the
+    # server's limits, valid UTF-8, and no brace that is not a key token.
+    tests/unit/test_tutorial_text_check.c
     tests/unit/test_voice_talking_set.c
     # The rules event's body codec: every carried rule round-trips field by
     # field, rates a fixed-point scale could not carry survive, and the
@@ -5706,6 +5712,9 @@ set(_unit_test_names
     scn_panel_yes_no
     scn_panel_rescue
     scn_panel_prefs_sections
+    scn_panel_layout_row
+    scn_opacity_migration
+    scn_text_popout_row
     client_scn_panel_owners
     scn_arm_panel_owners
     info_packet_preset_round_trip
@@ -5898,6 +5907,21 @@ set(_unit_test_names
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
     log_roundtrip_map_name_at_round_start
+    log_roundtrip_player_lag
+    log_roundtrip_player_lag_recorded
+    log_roundtrip_overrun_stats
+    log_roundtrip_overrun_stats_recorded
+    log_roundtrip_overrun_stats_bots
+    server_lag_log_due
+    server_lag_log_min_gap
+    server_overrun_stats_due
+    lv_player_lag_read
+    lv_lag_track
+    lv_lag_ring
+    lv_lag_feature_default_off
+    lv_lag_view_draw
+    lv_lag_view_rename
+    lv_overrun_read
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record
@@ -5950,6 +5974,7 @@ set(_unit_test_names
     lv_event_list_pinned
     wbn_browser_sort
     clip_gif_len_sync
+    clip_gif_record_mode
     clip_gif_meta_roundtrip
     clip_gif_meta_bad
     clip_gif_gallery_scan
@@ -6182,7 +6207,12 @@ set(_unit_test_names
     tutorial_tokens_quick_build
     scenario_status_tokens_expand
     tutorial_tokens_long_key_names
-    tutorial_tokens_phrases
+    tutorial_tokens_malformed
+    tutorial_tokens_split
+    tutorial_tokens_utf8_cut
+    tutorial_tokens_random_input
+    tutorial_text_fits
+    tutorial_text_well_formed
     tutorial_lang_ref
     lang_name_table_classic_tutorial
     scenario_announce_waits_for_popup
@@ -6405,8 +6435,8 @@ set(_unit_test_names
     ping_kick_defers_teardown
     ping_kick_clears_strikes_on_disconnect
     tkexp_lgm_pairing
-    tank_blast_rewound_hit_at_present_tank
-    tank_blast_kill_starts_at_present_tank
+    tank_blast_at_shell_place
+    tank_blast_kill_at_shell_place
     tank_blast_zero_rewind_unchanged
     tank_blast_hit_decision_unchanged
     tank_blast_builder_on_shooter_screen
@@ -6674,6 +6704,7 @@ set(_unit_test_names
     addrparse_empty
     mapchooser_scenario_filter
     bg_map_pick_skips_tutorials
+    tutorial_maps_shipped_path
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop
@@ -6984,6 +7015,9 @@ set(_unit_test_names
     lobby_map_keeps_bots_plain
     lobby_map_keeps_bots_scenario
     lobby_map_keeps_bots_map_own_row
+    lobby_random_map_drops_map_own_script
+    lobby_random_map_clears_map_md5
+    lobby_cancel_file_preview_keeps_random_map
     lobby_map_rotate_holds_seats_again
     scenario_map_rotation_redecides
     lobby_script_keeps_bots_mod
@@ -7273,6 +7307,8 @@ set(_unit_test_names
     scenario_lua_every_row_answers
     scenario_lua_voice_everyone
     scenario_lua_lang
+    scenario_lua_input
+    scenario_lua_tutorial_done
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
@@ -7587,8 +7623,13 @@ set(_unit_test_names
     scenario_panel_timer_text
     scenario_announce_remaining
     scenario_announce_position
+    scenario_text_fit
+    scenario_text_tablet_band
+    scenario_text_pointer_on_handle
+    scenario_text_window_shown
+    scenario_text_edge_shown
+    scenario_text_save_place
     scenario_status_line
-    scenario_announce_stack
     scn_status_codec_and_client
     scn_announce_position_codec
     scn_announce_stack_client
@@ -8180,6 +8221,21 @@ if(WB_FUZZ)
              COMMAND $<TARGET_FILE:fuzz_voice_segment> -runs=0
                      ${WB_FUZZ_CORPUS_DIR}/voice_segment ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.voice_segment PROPERTIES TIMEOUT 120)
+
+    # Tier 1 — the key tokens in a scenario's popup, status line and
+    # announcement (tutorialTokensSplit / tutorialTokensExpand): text from
+    # whatever server the player joined, split and filled in on every
+    # client. The parser alone, with no SDL and no renderer.
+    add_executable(fuzz_tutorial_tokens
+        tests/fuzz/fuzz_tutorial_tokens.c
+        src/gui/sdl3/tutorial_tokens.c)
+    bolo_apply_include_rules(fuzz_tutorial_tokens unittests)
+    target_link_options(fuzz_tutorial_tokens PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_tutorial_tokens "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.tutorial_tokens
+             COMMAND $<TARGET_FILE:fuzz_tutorial_tokens> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/tutorial_tokens ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.tutorial_tokens PROPERTIES TIMEOUT 120)
 
     # Tier 1 — the bulk-transfer receive state machine (bulkParseStreamHeader +
     # bulkReceiverFeed), reassembling map download / resync / upload / preview

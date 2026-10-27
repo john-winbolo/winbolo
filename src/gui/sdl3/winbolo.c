@@ -890,7 +890,7 @@ int main(int argc, char *argv[]) {
           SDL_Renderer *ren = sdl3DrawGetRenderer();
           if (ren) SDL_RenderPresent(ren);
         }
-        clientFrontPollTutorialDone();   /* hide the menu Tutorial button once a shipped tutorial is finished */
+        clientFrontPollScenarioPlayer();  /* tutorial finished; language, input */
         /* Pick up a native save-map dialog the player has answered. The
            dialog is asynchronous precisely so this loop — which is what
            pumps the client transport — keeps running while it is open. */

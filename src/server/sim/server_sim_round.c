@@ -44,6 +44,8 @@
 #include "../../winbolonet/winbolonet_server.h"   /* WbnLobbyInfo, winbolonetSetLobbyInfo, winbolonetSendLobbyUpdate */
 #include "../../common/md5.h"       /* the BMAPBOLO map hash WinBolo.net matches against */
 #include "../../common/wb_log.h"    /* WB_LOG_INFO — the lobby-reset trace */
+#include "log.h"                    /* logAddEvent, logIsRecording — the overrun record */
+#include "overrun_record.h"         /* OverrunRecord — that record's payload */
 
 /* The picks whose file is in the session directory, taken off the list with
  * the rest closing up behind them in order, and then the directory emptied.
@@ -247,111 +249,36 @@ bool serverSimIsTerminalGameOver(const ServerSim *sim) {
            !serverSimIsMapRotateEnabled(sim);
 }
 
-void serverSimInformation(ServerSim *sim, bool locked) {
-    BYTE count;
-    BYTE numPlayers;
-    BYTE maxPlayers;
-    char name[256];
-    time_t startTime = (time_t)sim->timeCreated;
-
-    numPlayers = serverSimGetNumPlayers(sim);
-    maxPlayers = MAX_TANKS;
-
-    fprintf(stdout, "\n");
-    fprintf(stdout, "WinBolo Server (new sim)\n");
-    fprintf(stdout, "Game start time: %sMap Name: %s - Locked: %s\n",
-            asctime(gmtime(&startTime)),
-            sim->mapName,
-            locked ? "Yes" : "No");
-    fprintf(stdout, "Players: (%d/%d) Neutral Pillboxes: (%d/%d), Neutral Bases: (%d/%d)\n\n",
-            numPlayers, maxPlayers,
-            pillsGetNumNeutral(&sim->sim.pb), pillsGetNumPills(&sim->sim.pb),
-            basesGetNumNeutral(&sim->sim.bs), basesGetNumBases(&sim->sim.bs));
-
-    if (numPlayers > 0) {
-        fprintf(stdout, "Players:\n");
-        for (count = 0; count < MAX_TANKS; count++) {
-            if (!sim->playerConnected[count]) continue;
-            playersGetPlayerName(&sim->sim.plyrs, count, name, sizeof(name), TRUE);
-
-            /* Ping and the input-buffer depth are in-process artifacts for
-             * bot slots (0ms ping, a buffer that exists but never gates an
-             * in-process input), so they'd only invite a misread. Show them
-             * only for real connections. The field formerly printed as
-             * "Jitter" is the adaptive input jitter-buffer target depth in
-             * ticks, not a measured network statistic — labelled "Buf" so
-             * nobody reads network variance into it. */
-            BotInfo bi;
-            bool isBotSlot = botManagerGetBotInfo(sim, count, &bi);
-            /* A seat the roster is holding for a bot that is not on the field
-               — a held seat between waves. It owns nothing and has no tank,
-               and the marker is what tells it from a slot whose bot is out
-               there playing. Printed in the shape a bot slot gets rather than
-               the one below it: the ping, the buffer depth and the address the
-               other branch prints are for a real connection, and a held seat
-               has none, so they would read as a human sitting at 0ms. The
-               marker also says whether the seat has a runner parked behind it,
-               because the two cost very different things: a seat with one
-               fields its bot by resuming, a seat without one has to build a
-               ClientSim and a brain VM at the moment a wave asks for it. */
-            bool heldSeat = !isBotSlot && !sim->lobbyPlayers[count].fielded;
-            if (isBotSlot || heldSeat) {
-                const char *seatMark = "";
-                if (heldSeat) {
-                    seatMark = botManagerHasRunner(sim, count)
-                                   ? " [off the field, runner ready]"
-                                   : " [off the field]";
-                }
-                fprintf(stdout, "%s - (P:%d B:%d)%s\n",
-                        name,
-                        pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
-                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
-                        seatMark);
-            } else {
-                /* Remote players carry their source ip:port; the in-process
-                 * host has no UDP client, so the getter reports false and we
-                 * print "local" instead. */
-                char addr[48];  /* "255.255.255.255:65535" + slack */
-                const char *addrStr =
-                    transportUdpServerGetClientAddrStr(count, addr, sizeof(addr))
-                        ? addr : "local";
-                fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Buf:%d Addr:%s)\n",
-                        name,
-                        pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
-                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
-                        sim->playerPing[count],
-                        sim->jitterTarget[count],
-                        addrStr);
-            }
-
-            /* For bot slots, append a 4-space-indented [BOT] line with the
-             * brain's timing. peak= is the high-water think this game (reset
-             * each round start; the magnitude behind overruns, which last=
-             * and the EWMA hide); overruns carries its rate against thinkCount
-             * so a cumulative count can't masquerade as "spiking right now". */
-            if (isBotSlot) {
-                if (bi.hasBrain) {
-                    if (bi.overrunCount == 0) {
-                        fprintf(stdout,
-                                "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms\n",
-                                bi.brainName, bi.lastThinkMs, bi.maxThinkMs,
-                                bi.targetMs);
-                    } else {
-                        double rate = bi.thinkCount > 0
-                            ? (double)bi.overrunCount * 100.0 / (double)bi.thinkCount
-                            : 0.0;
-                        fprintf(stdout,
-                                "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms overruns=%u/%u (%.2f%%)\n",
-                                bi.brainName, bi.lastThinkMs, bi.maxThinkMs,
-                                bi.targetMs, bi.overrunCount, bi.thinkCount, rate);
-                    }
-                } else {
-                    fprintf(stdout, "    [BOT]\n");
-                }
-            }
+/* A bot slot's 4-space-indented [BOT] line with the brain's timing. peak= is
+ * the high-water think this game (reset each round start; the magnitude
+ * behind overruns, which last= and the EWMA hide); overruns carries its rate
+ * against thinkCount so a cumulative count can't masquerade as "spiking right
+ * now". Shared by the info command and the periodic overrun lines. */
+static void serverSimPrintBotTiming(const BotInfo *bi) {
+    if (bi->hasBrain) {
+        if (bi->overrunCount == 0) {
+            fprintf(stdout,
+                    "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms\n",
+                    bi->brainName, bi->lastThinkMs, bi->maxThinkMs,
+                    bi->targetMs);
+        } else {
+            double rate = bi->thinkCount > 0
+                ? (double)bi->overrunCount * 100.0 / (double)bi->thinkCount
+                : 0.0;
+            fprintf(stdout,
+                    "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms overruns=%u/%u (%.2f%%)\n",
+                    bi->brainName, bi->lastThinkMs, bi->maxThinkMs,
+                    bi->targetMs, bi->overrunCount, bi->thinkCount, rate);
         }
+    } else {
+        fprintf(stdout, "    [BOT]\n");
     }
+}
 
+/* The server loop's timing lines and, with bots in the game, the bot pool's
+ * lines with the pool's total overruns. Shared by the info command and the
+ * periodic overrun lines. Reads the counters and resets none of them. */
+static void serverSimPrintTiming(ServerSim *sim) {
     /* Server-loop timing (Tick / Simulation) is recorded every server tick
      * regardless of bots, so show it whenever there's data — operators of
      * a bot-free server still want to see the loop stays inside budget.
@@ -449,8 +376,192 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                     ps.totalOverruns, ps.totalThinks, poolRate);
         }
     }
+}
+
+void serverSimInformation(ServerSim *sim, bool locked) {
+    BYTE count;
+    BYTE numPlayers;
+    BYTE maxPlayers;
+    char name[256];
+    time_t startTime = (time_t)sim->timeCreated;
+
+    numPlayers = serverSimGetNumPlayers(sim);
+    maxPlayers = MAX_TANKS;
 
     fprintf(stdout, "\n");
+    fprintf(stdout, "WinBolo Server (new sim)\n");
+    fprintf(stdout, "Game start time: %sMap Name: %s - Locked: %s\n",
+            asctime(gmtime(&startTime)),
+            sim->mapName,
+            locked ? "Yes" : "No");
+    fprintf(stdout, "Players: (%d/%d) Neutral Pillboxes: (%d/%d), Neutral Bases: (%d/%d)\n\n",
+            numPlayers, maxPlayers,
+            pillsGetNumNeutral(&sim->sim.pb), pillsGetNumPills(&sim->sim.pb),
+            basesGetNumNeutral(&sim->sim.bs), basesGetNumBases(&sim->sim.bs));
+
+    if (numPlayers > 0) {
+        fprintf(stdout, "Players:\n");
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (!sim->playerConnected[count]) continue;
+            playersGetPlayerName(&sim->sim.plyrs, count, name, sizeof(name), TRUE);
+
+            /* Ping and the input-buffer depth are in-process artifacts for
+             * bot slots (0ms ping, a buffer that exists but never gates an
+             * in-process input), so they'd only invite a misread. Show them
+             * only for real connections. The field formerly printed as
+             * "Jitter" is the adaptive input jitter-buffer target depth in
+             * ticks, not a measured network statistic — labelled "Buf" so
+             * nobody reads network variance into it. */
+            BotInfo bi;
+            bool isBotSlot = botManagerGetBotInfo(sim, count, &bi);
+            /* A seat the roster is holding for a bot that is not on the field
+               — a held seat between waves. It owns nothing and has no tank,
+               and the marker is what tells it from a slot whose bot is out
+               there playing. Printed in the shape a bot slot gets rather than
+               the one below it: the ping, the buffer depth and the address the
+               other branch prints are for a real connection, and a held seat
+               has none, so they would read as a human sitting at 0ms. The
+               marker also says whether the seat has a runner parked behind it,
+               because the two cost very different things: a seat with one
+               fields its bot by resuming, a seat without one has to build a
+               ClientSim and a brain VM at the moment a wave asks for it. */
+            bool heldSeat = !isBotSlot && !sim->lobbyPlayers[count].fielded;
+            if (isBotSlot || heldSeat) {
+                const char *seatMark = "";
+                if (heldSeat) {
+                    seatMark = botManagerHasRunner(sim, count)
+                                   ? " [off the field, runner ready]"
+                                   : " [off the field]";
+                }
+                fprintf(stdout, "%s - (P:%d B:%d)%s\n",
+                        name,
+                        pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
+                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
+                        seatMark);
+            } else {
+                /* Remote players carry their source ip:port; the in-process
+                 * host has no UDP client, so the getter reports false and we
+                 * print "local" instead. */
+                char addr[48];  /* "255.255.255.255:65535" + slack */
+                const char *addrStr =
+                    transportUdpServerGetClientAddrStr(count, addr, sizeof(addr))
+                        ? addr : "local";
+                fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Buf:%d Addr:%s)\n",
+                        name,
+                        pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
+                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
+                        sim->playerPing[count],
+                        sim->jitterTarget[count],
+                        addrStr);
+            }
+
+            /* For bot slots, append a 4-space-indented [BOT] line with the
+             * brain's timing (serverSimPrintBotTiming). */
+            if (isBotSlot) {
+                serverSimPrintBotTiming(&bi);
+            }
+        }
+    }
+
+    serverSimPrintTiming(sim);
+
+    fprintf(stdout, "\n");
+}
+
+void serverSimPrintOverrunStats(ServerSim *sim, uint32_t roundSeconds) {
+    BYTE count;
+    char name[256];
+    bool anyBot = false;
+
+    fprintf(stdout, "Overrun stats at %u:%02u of the round:\n",
+            (unsigned)(roundSeconds / 60u), (unsigned)(roundSeconds % 60u));
+    serverSimPrintTiming(sim);
+    for (count = 0; count < MAX_TANKS; count++) {
+        BotInfo bi;
+        if (!sim->playerConnected[count] || !botManagerGetBotInfo(sim, count, &bi)) {
+            continue;
+        }
+        if (!anyBot) {
+            fprintf(stdout, "Bots:\n");
+            anyBot = true;
+        }
+        playersGetPlayerName(&sim->sim.plyrs, count, name, sizeof(name), TRUE);
+        fprintf(stdout, "  %s\n", name);
+        serverSimPrintBotTiming(&bi);
+    }
+    /* The console is read while the round runs, so the lines go out now
+       rather than when the buffer next fills. */
+    fflush(stdout);
+}
+
+void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEnd) {
+    OverrunRecord rec;
+    BYTE payload[OVERRUN_RECORD_MAX_BYTES];
+    int len;
+    BYTE count;
+    double tickLast = 0.0, tickEwma = 0.0;
+    double simLast = 0.0, simEwma = 0.0;
+    double tickPeak = 0.0;
+    unsigned int tickOverBudget = 0;
+
+    if (sim == NULL || !logIsRecording()) {
+        return;
+    }
+    memset(&rec, 0, sizeof(rec));
+    rec.version = OVERRUN_RECORD_VERSION;
+    rec.flags = roundEnd ? OVERRUN_RECORD_FLAG_ROUND_END : 0;
+    rec.roundFrames = roundFrames;
+
+    /* The same reads serverSimPrintTiming makes. */
+    serverLifecycleGetTickStats(&tickLast, &tickEwma);
+    serverLifecycleGetSimStats(&simLast, &simEwma);
+    serverLifecycleGetTickPeak(&tickPeak, &tickOverBudget);
+    rec.tickLast = overrunRecordTenths(tickLast);
+    rec.tickEwma = overrunRecordTenths(tickEwma);
+    rec.tickPeak = overrunRecordTenths(tickPeak);
+    rec.ticksOverBudget = (uint32_t) tickOverBudget;
+    rec.budgetMs = (uint8_t) SERVER_TICK_LENGTH;
+    rec.simLast = overrunRecordTenths(simLast);
+    rec.simEwma = overrunRecordTenths(simEwma);
+
+    if (botManagerHasAnyBot(sim)) {
+        BotPoolStats ps;
+        botManagerGetPoolStats(sim, &ps);
+        rec.flags |= OVERRUN_RECORD_FLAG_BOTS;
+        rec.workers = (uint8_t) (ps.workerCount < 0 ? 0 : ps.workerCount > 255 ? 255 : ps.workerCount);
+        rec.activeBots = (uint8_t) (ps.activeBots < 0 ? 0 : ps.activeBots > 255 ? 255 : ps.activeBots);
+        rec.targetPerBot = overrunRecordTenths(ps.currentTargetMs);
+        rec.brainLast = overrunRecordTenths(ps.lastBrainPhaseMs);
+        rec.brainEwma = overrunRecordTenths(ps.ewmaBrainPhaseMs);
+        rec.brainPeak = overrunRecordTenths(ps.maxThinkMs);
+        rec.prepLast = overrunRecordTenths(ps.lastSerialMs);
+        rec.prepEwma = overrunRecordTenths(ps.ewmaSerialMs);
+        rec.totalOverruns = ps.totalOverruns;
+        rec.totalThinks = ps.totalThinks;
+    }
+
+    /* Each bot, as serverSimPrintOverrunStats lists them. A bot with no brain
+       has no thinks, and its part says so with zeros. */
+    for (count = 0; count < MAX_TANKS && rec.botCount < OVERRUN_RECORD_MAX_BOTS; count++) {
+        BotInfo bi;
+        OverrunRecordBot *b;
+        if (!sim->playerConnected[count] || !botManagerGetBotInfo(sim, count, &bi)) {
+            continue;
+        }
+        b = &rec.bots[rec.botCount++];
+        b->player = count;
+        if (bi.hasBrain) {
+            b->last = overrunRecordTenths(bi.lastThinkMs);
+            b->peak = overrunRecordTenths(bi.maxThinkMs);
+            b->overruns = bi.overrunCount;
+            b->thinks = bi.thinkCount;
+        }
+    }
+
+    len = overrunRecordEncode(&rec, payload, (int) sizeof(payload));
+    if (len > 0) {
+        logAddEvent(log_OverrunStats, 0, 0, 0, 0, (unsigned short) len, (char *) payload);
+    }
 }
 
 bool serverSimSaveMap(ServerSim *sim, char *fileName) {
@@ -1307,6 +1418,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
         sim->statDroppedStaleInputs[i] = 0;
         sim->statCatchupTicks[i] = 0;
         sim->statLastRewindTicks[i] = 0;
+        sim->lagLogWritten[i] = false;
     }
 
     /* 9. Reset full sync tracking */

@@ -4,7 +4,7 @@ Build data/maps/tutorials/Tutorial.map, the map the Tutorial scenario plays
 on, and rewrite the layout block in data/maps/tutorials/Tutorial.scenario.lua
 so the script and the map always name the same squares.
 
-    C:\\Python310\\python.exe tools/make_tutorial_map.py
+    python3 tools/make_tutorial_map.py
 
 The map is seven stations stacked up a column, Station 1 at the south
 (bottom) and Station 7 at the north (top), joined by one road up the
@@ -115,7 +115,7 @@ def pool(name, px, py):
     """A checkpoint start: a 3x3 pool of deep water centred on (px, py), the
     start square. Walls close it on the west, east and south, one square out.
     On the north the pool's middle column opens onto one road square at
-    (px, py - 2), with no wall beside it (Andrew, Oct 10). The start faces
+    (px, py - 2), with no wall beside it. The start faces
     north, out along that road.
 
     No drowning: the tank respawns on a boat. It leaves the boat on the pool
@@ -350,8 +350,7 @@ def take_layout(prefix, tx, ty, park=None, blocker=(0, 1)):
 # The demo bot carries its blocker and builds it itself each time round, on
 # a square orthogonally next to the target (GoalHunter's
 # BLOCKER_ORTHOGONAL_ONLY, turned on for this bot only); the map puts the
-# pill on the square south of T, dead, for the script to hand it. See
-# docs/TUTORIAL_DECISIONS.md, "The blocker take".
+# pill on the square south of T, dead, for the script to hand it.
 #
 # A start must be on deep water, so the bot's start is a one-square pocket
 # in the island's south-east corner, walled on the south, east and west and
@@ -386,17 +385,16 @@ for y in range(101, 121):
 
 # 5B: the target nine squares from the road, so a tank driving up the road
 # is out of its range. The player is handed its blocker pill in the tank and
-# builds it on the square directly south of the target, (117,102) (Andrew,
-# item 38: "keep it one tile directly south of the pillbox"). The parking
-# square (121,107) is 4 east and 6 south of the target (Andrew's play-test:
-# "4 tiles right ... and one tile more north" of the old 117,108). From the
+# builds it on the square directly south of the target, (117,102). The parking
+# square (121,107) is 4 east and 6 south of the target, moved there from
+# (117,108) after play-testing. From the
 # tank's centre the target's centre is 7.21 squares away and its near corner
 # 6.52; a tank shell flies 7.125, so a shot aimed at the target's centre
 # ends inside its square. A road spur along row 107 joins the parking square
 # to the main road. The line between the two centres clips the blocker's
 # square's north-east corner for about 0.3 of a square. The script lets the
-# tank's shells pass the player's own blocker (can_hit), which a real game
-# would not. See docs/TUTORIAL_DECISIONS.md, "5B parking square".
+# tank's shells pass the player's own blocker (can_hit in the script), which
+# a real game would not.
 take_layout("t5b", 117, 101, park=(4, 6))
 fill(122, 107, GAP[0] - 1, 107, ROAD)
 # The arrow sits two squares further west than walled_reset's default, at
@@ -404,8 +402,8 @@ fill(122, 107, GAP[0] - 1, 107, ROAD)
 walls5b = walled_reset("reset5b", 106, 112, GAP[0], arrow_dx=3)
 # A friendly base on the road's centre column, just north of the RESET
 # letters: row 110, with row 111 (the letters' road strip) clear between it
-# and the letters' top row 112 (Andrew: by the RESET T, not at the north
-# end). The park spur (row 107) and the checkpoint pool are clear of it.
+# and the letters' top row 112, by the RESET T rather than at the north
+# end. The park spur (row 107) and the checkpoint pool are clear of it.
 B5 = ((GAP[0] + GAP[1]) // 2, 110)
 assert B5[1] <= 112 - 2, "b5 must leave a clear road square above RESET"
 base("b5", B5[0], B5[1])  # given to the player at the start

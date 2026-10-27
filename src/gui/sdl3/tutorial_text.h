@@ -10,13 +10,11 @@
  *  Resolves a STR_TUTORIAL* id into a sequence of
  *  renderable segments (TEXT runs, PNG glyphs, or
  *  procedural keycaps).  Two transformations:
- *    1. Three-way variant selection on the string id. When
- *       uiShouldUseControllerMode() is true and the id has a
- *       registered _CTRL sibling, use it (controller takes
- *       precedence — a touchscreen with a pad attached gets
- *       pad wording); else when uiModeIsTablet() is true and
- *       a _TOUCH sibling exists, use that; otherwise the
- *       desktop string.
+ *    1. Three-way variant selection on the string id, by
+ *       tutorialInputNow(): its _CTRL sibling for a
+ *       controller, its _TOUCH sibling for a touch screen,
+ *       otherwise (or with no such sibling) the desktop
+ *       string.
  *    2. Expand {ACCEL}/{BRAKE}/{LEFT}/{RIGHT}/{FIRE}/{MINE}/
  *       {SCROLL_*}/{DISMISS}/{BUILD_*}/{QUICK_*} tokens into
  *       one glyph segment each (tutorial_tokens.h lists them).
@@ -64,6 +62,20 @@ typedef struct {
 } TutorialSeg;
 
 #define TUTORIAL_SEG_MAX 64
+
+/* What the player plays with, as the tutorial words it. */
+typedef enum {
+  TUTORIAL_INPUT_KEYBOARD = 0,   /* keyboard and mouse */
+  TUTORIAL_INPUT_TOUCH,          /* the on-screen touch layout */
+  TUTORIAL_INPUT_CONTROLLER      /* a gamepad */
+} TutorialInput;
+
+/* The input the player uses now. On a phone or tablet the touch layout
+ * comes first, as its controls are on the screen whatever SDL counts as a
+ * gamepad; elsewhere a controller comes first, then a touch screen. The
+ * old tutorial's wording, the key tokens and what a single-player server
+ * is told for game.input all follow it. Main thread only. */
+TutorialInput tutorialInputNow(void);
 
 /* Fills `out` with up to `max` segments and returns the segment
  * count.  The renderer must consume the segments synchronously

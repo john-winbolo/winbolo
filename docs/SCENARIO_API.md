@@ -39,6 +39,7 @@ bug worth reporting.
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
   - [Finishing a tutorial](#finishing-a-tutorial)
   - [Text in the player's language](#text-in-the-players-language)
+  - [Text for the player's input](#text-for-the-players-input)
 - [Showing things on a client](#showing-things-on-a-client)
   - [Popups](#popups)
   - [The panel](#the-panel)
@@ -2108,6 +2109,7 @@ to escort a person stays where it is.
 | `game.set_voice_everyone(on)` | With `true`, voice in the running round goes to every player rather than to the talker's allies alone. `false` puts it back. |
 | `game.voice_everyone()` | Whether voice is going to everyone: what `set_voice_everyone` last set this round, and `false` on a server with voice off. |
 | `game.lang(p)` | The language seat `p`'s player reads, as their lang file's name in lower case: `"en"`, `"de"`, `"pt-br"`. `"en"` whenever the server does not know. See [Text in the player's language](#text-in-the-players-language). |
+| `game.input(p)` | What seat `p`'s player plays with: `"keyboard"`, `"touch"` or `"controller"`. `"keyboard"` whenever the server does not know. See [Text for the player's input](#text-for-the-players-input). |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
@@ -2227,10 +2229,9 @@ picks is in the new one.
 The client fills in tokens from its own language file. The word for a control
 on a controller or a touch screen ("the fire button") is a string in
 `data/lang/<code>.txt` (`STR_TUTTOK_*`), so it is in the language the client
-reads, whatever the script sent. The phrase tokens (see
-[Popups](#popups)) are whole sentences from the same file. On a hosted server,
-where `lang` answers `"en"`, a player who reads another language sees the
-script's English with the tokens in their own language.
+reads, whatever the script sent. On a hosted server, where `lang` answers
+`"en"`, a player who reads another language sees the script's English with the
+tokens in their own language.
 
 Write the text so a key token reads correctly both as a key name ("Space")
 and as a noun phrase ("the fire button"). Put the token where the object of
@@ -2240,8 +2241,44 @@ language's word for "press".
 
 A popup wraps only at spaces. Chinese and Japanese text has no spaces, so put a
 single `\n` (read as a space) every 25 to 30 characters. A status line or
-announcement row too wide for the view is broken at its last space that fits,
+announcement row too wide for the Scenario Text window is broken at its last space that fits,
 or before the first character that does not fit when the row has no space.
+
+The limits count bytes, and most languages take more bytes than English for
+the same line: Cyrillic and Greek take two a letter, Chinese, Japanese and
+Korean three. A popup too long for its 511 bytes can be sent as two or more
+popups, which the player closes one after the other.
+
+### Text for the player's input
+
+A key token covers a line that differs only in the key's name. Some lines
+differ by more: a touch screen has no keys and no build cursor, and a
+controller has a build cursor and no mouse. `game.input(p)` says which the
+player uses, `"keyboard"`, `"touch"` or `"controller"`, and the script holds a
+wording for each:
+
+```lua
+local ROAD = {
+  keyboard   = "Click the road button or press {QUICK_ROAD}, then click grass.",
+  touch      = "Tap the road button, then tap a grass square.",
+  controller = "Pick the road tool with {BUILD_TOOL} and press {BUILD_PLACE}.",
+}
+
+game.status(ROAD[game.input(p)] or ROAD.keyboard, nil, p)
+```
+
+Only a single-player game knows the input, the same way it knows the
+language: the client tells the server at the join and again whenever the input
+changes (a controller plugged in or put down). On a phone or tablet the touch
+layout counts first, whatever else is attached. A hosted or dedicated server
+is never told, so `input` answers `"keyboard"` for every seat there, as it
+does for a bot, an empty seat and a seat out of range. The key tokens still
+show the player's own keys and buttons there; only the sentences around them
+are the keyboard's.
+
+A line is worded when it is sent. A status line the script sends again each
+poll follows a change of input at once; a popup already on screen keeps the
+wording it was sent with.
 
 ---
 
@@ -2256,9 +2293,9 @@ exist.
 |---|---|
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
-| `game.announce(text[, seconds[, target[, position]]])` | A big line across the game view for that many seconds. Left out, `position` puts the line where it has always gone, centred in the upper third of the view. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line somewhere else. Empty text takes the line away. |
+| `game.announce(text[, seconds[, target[, position]]])` | A big line in the Scenario Text window for that many seconds. Left out, `position` centres the line across the window. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line further left or right; only the share across is used. Empty text takes the line away. |
 | `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. While it is up a local game is paused, as the tutorial pauses it. See [Popups](#popups). |
-| `game.status(text[, countdown_to[, target]])` | The status line: one line at the very top of the game view, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
+| `game.status(text[, countdown_to[, target]])` | The status line: one line in the top row of the Scenario Text window, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
 | `game.clear_marker(id[, target])` | Takes mark `id` off the map. |
@@ -2279,38 +2316,62 @@ neither. In the lobby the clock moves at half that
 rate, so a line put up before the round starts stays up about twice as long as
 it asked for.
 
-**Where an announcement goes.** With no `position` the line is centred across
-the game view, with the top of its letters 0.28 of the way down, in the upper
-third and clear of the player's own tank in the middle. No panel, window or
-status line moves it. On the main view that is where every announcement has
-always gone. On the full screen map the same rule is applied to the map, so
-the line sits 0.28 of the way down the map and not at its old spot, which was
-worked out from the main view's rectangle. In tablet mode the rule is
-applied to tablet mode's own game view; before, tablet mode drew no
-announcement at all.
+**The Scenario Text window.** The status line and the announcement are both
+drawn in one window of their own, the Scenario Text window, and not on the
+game view. A script cannot put text anywhere else on the screen. The window
+is built the same way as the scenario panel's window: it has no title bar, a
+see-through backing, a bar along its top to move it, a gear that opens its
+settings (Pop out, then two opacity sliders), an X that closes it, and a grip
+in its bottom-right corner to resize it. Unlike the panel, it is a rectangle
+and it can take any shape. In a round with a scenario or a mod the window
+stays up for the whole round, also when there is no line to draw: with no
+line it draws nothing, and its bar, buttons, grip and edge show while the
+pointer is on it, so the player can move and resize it at any time. Outside
+such a round it shows only while there is a line to draw.
 
-`position` puts the centre of the line at a point on the game view. Give a
-table `{ x = across, y = down }`, each from 0 to 1: `{ x = 0, y = 0 }` is the
-top-left corner, `{ x = 1, y = 1 }` the bottom-right one and
-`{ x = 0.5, y = 0.5 }` the middle. Two words are short names for the points
-scripts use most:
+By default the window sits at the top middle of the game view, sized so the
+text is as large as announcements were before: 240 units times the game's
+zoom. Once the player moves or resizes it, it stays where they put it,
+and its place, size, opacities and whether it is shown are kept in the
+preferences file. A player who closes it opens it again from **Brains > Info
+Overlay > Scenario Text**. In tablet mode there is no window: the same
+layout is drawn in a fixed band at the top middle of tablet mode's game view.
 
-| Word | Same as | Use it for |
-|---|---|---|
-| `"top"` | `{ x = 0.5, y = 0 }` | Lines that come often, such as kill lines: up out of the way |
-| `"center"` (or `"centre"`) | `{ x = 0.5, y = 0.5 }` | Important lines in a quiet moment, such as the round start or the winner |
+**How the text is scaled.** The window draws a fixed source rectangle, 240
+units wide, scaled to fit. Each line is 20 units of text with a 1 unit
+outline, so a row is 22 units, and a 2 unit gap goes around and between the
+rows. With one row the rectangle is 26 units high; with two it is 50. The
+rows are counted for the round: the status line takes the top row from the
+first time one is shown, and the announcement takes the row under it, or
+the top row when the round has shown no status line. So the text changes
+size at most when a new kind of line first appears in a round, and not each
+time a line comes or goes.
 
-The line is moved the least it takes to keep all of it inside the view, so
-`y = 0` puts it as high as it goes and no edge is ever cut off. A line wider
-than the view is centred across it. When a status line is up, its row counts
-as a band the full width of the view, from the top to the bottom of the status
-line's box. A line that would come within one gap of that band drops to one
-gap below it, wherever it sits across the view, even where the status line is
-short and nowhere near it. The gap is the scenario panel's own inset from the
-corner of the view. A line with a position does not move
-for the scenario panel or other windows, and `"center"` sits on the player's
-own tank: the script chose the spot, so use it when there is little else to
-watch.
+The source rectangle is scaled by one factor for both directions, the
+largest that fits the window, and centred in the window. The letters keep
+their shape at every window size. A window wider than the text's shape has
+empty space left and right; a taller one has empty space above and below.
+A line too wide for the 236 units between the gaps is made smaller by itself
+until it fits. The gear has two sliders. **Background opacity** is the alpha
+of the black backing: 100% is opaque black and 0% is no backing. It starts
+at 43%, the see-through backing the window has always had. **Text opacity**
+fades the text and its outline, and starts at 100%. A scenario panel's gear
+has the same two sliders, and there the text opacity fades everything the
+script draws in the panel.
+
+`position` keeps only its share across. Give a table `{ x = across, y =
+down }`, each from 0 to 1, or one of two words:
+
+| Word | Same as |
+|---|---|
+| `"top"` | `{ x = 0.5, y = 0 }` |
+| `"center"` (or `"centre"`) | `{ x = 0.5, y = 0.5 }` |
+
+The centre of the line goes at `x` of the way across the source rectangle,
+and the line is then moved the least it takes to stay inside the gaps, so no
+edge is ever cut off. `y` is checked and sent as before, but the window does
+not use it. Before the Scenario Text window, `position` placed the line
+anywhere on the game view; that is no longer possible.
 
 The position is sent as two bytes, so it lands on one of 255 steps across and
 down. A share that is not a number, a table without both `x` and `y`, or a
@@ -2320,15 +2381,13 @@ refused with `SCN_OP_RANGE`.
 A line with no position is up to 128 bytes. A line with a position is up to
 125 bytes, and a longer one is refused with `SCN_OP_TOO_BIG`. A client older
 than the position draws every line in the usual place, and it would drop a
-positioned line longer than 125 bytes and show nothing. Both lines are drawn
-on the desktop view, on the full screen map and in tablet mode, each over its
-own game view.
+positioned line longer than 125 bytes and show nothing.
 
 On a server older than the position, `game.announce` reads only its first
 three arguments, so a script that passes a position there still shows the
-line, in the usual place.
+line, centred.
 
-**The status line.** `game.status` holds one line at the top of the view for
+**The status line.** `game.status` holds one line in the top row of the Scenario Text window for
 as long as the round wants it, such as "Wave 3/10". With `countdown_to`, the
 client adds the time left to that tick, in minutes and seconds, four spaces
 after the text ("Wave 3/10    2:44"), and counts it down on its own clock, so
@@ -2347,9 +2406,13 @@ past 4294967294, or a seat or team outside the game, is refused with
 **Two lines at once.** An announcement does not take the place of one that
 is still up. Each line keeps its own countdown, and a client holds up to four:
 a fifth pushes the oldest out. A new line with the same text as one still up
-replaces that one and starts its time again. An empty line takes them all
-away. Lines are drawn in the order they arrived, and a line that would overlap
-one already drawn drops to just below it, so the newest is lowest.
+replaces that one and starts its time again. So does a line that differs from
+one still up only in its numbers (a countdown, a score), so a line sent every
+frame is one line counted down rather than a stack; two lines that differ only
+in a number inside a name ("Bot 1", "Bot 2") count as one line too. An empty
+line takes them all away. The lines are drawn in the Scenario Text window in
+the order they arrived, each in a row of its own under the status line, so
+the newest is lowest.
 
 **Line breaks.** A status line or an announcement may hold `"\n"`. Each part
 is drawn on its own row, centred in one box, and the countdown of a status
@@ -2362,9 +2425,8 @@ tokens: `{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`,
 `{QUICK_WALL}`, `{QUICK_PILL}`, `{QUICK_MINE}`, `{GUN_UP}` and `{GUN_DOWN}`. The
 client writes each one out as the name of the bound key on a keyboard, a word
 for the control on a controller, or the touch wording on a touch screen. The
-phrase tokens of [Popups](#popups) work here too. The
 128-byte cap (125 with a position) applies to the text as sent, tokens and all.
-A row that is too wide for the view once its tokens are filled in is broken
+A row that is too wide for the Scenario Text window once its tokens are filled in is broken
 into two at its last space that fits.
 
 ```lua
@@ -2372,7 +2434,7 @@ game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)
 game.announce("Wave 3 - they come from the north", 5, nil, "center")
 game.announce(name .. " got a kill", 2, nil, "top")
 game.announce("Red has the flag", 3, { team = 2 }, { x = 0.5, y = 0.8 })
-game.announce("Go!", 2)      -- no position: where announcements always go
+game.announce("Go!", 2)      -- no position: centred across the window
 game.status("")              -- take the status line away
 ```
 
@@ -2432,26 +2494,12 @@ game.popup("{ACCEL} forward, {BRAKE} slow down.\n\n"
   .. "Build a road with {QUICK_ROAD}.", p)
 ```
 
-Some differences between the inputs are more than a key name: a touch screen
-has no keys and no build cursor, and a controller has a build cursor and no
-mouse. For these the client has phrase tokens. Each is one or two whole
-sentences from the language file, in one wording for keyboard and mouse, one
-for a touch screen and one for a controller (`STR_TUTPHRASE_<NAME>_KEYS`,
-`_TOUCH`, `_PAD`; a phrase with no `_PAD` wording uses the keyboard one). The
-client fills in the phrase first, then the key tokens in it:
+A line that differs between the inputs by more than a key name is worded by
+the script for each input; see
+[Text for the player's input](#text-for-the-players-input).
 
-| Token | What it says |
-|---|---|
-| `{DRIVE_HOW}` | How to drive and turn. |
-| `{BUILD_HOW}` | How to pick a build tool and send the builder. |
-| `{HARVEST_TIP}` | Any build tool harvests a tree it is aimed at. |
-| `{PILL_HOW}` | How to build a carried pillbox. |
-| `{STEP_TREE}`, `{STEP_ROAD}`, `{STEP_WALL}`, `{STEP_MINE}` | Two status-line rows: build that one thing. |
-| `{STEP_PILL}`, `{STEP_PILL_GREEN}` | Two status-line rows: build the carried pillbox, anywhere or on the green square. |
-
-They were written for the Tutorial, and a script may use them in a popup, a
-status line or an announcement. The byte limits count the token as sent, not
-the sentence it becomes.
+A brace that starts no key token (`{`, `{FOO}`, `{accel}`) is shown as it is
+written.
 
 A text can also name one whole string of the game's language file. When the
 whole text of a popup, a status line or an announcement is `{LANG:NAME}`,

@@ -49,20 +49,6 @@ typedef enum {
   TT_QUICK_MINE,
   TT_GUN_UP,      /* the gunsight longer */
   TT_GUN_DOWN,    /* the gunsight shorter */
-  /* The phrase tokens. Each is a whole sentence or two, taken from the
-     language file in the wording for the player's input (keyboard and
-     mouse, touch, controller), and filled in before the key tokens it
-     carries. tutorialTokenIsPhrase answers true for these. */
-  TT_DRIVE_HOW,         /* how to drive and turn */
-  TT_BUILD_HOW,         /* how to pick a build tool and send the man */
-  TT_HARVEST_TIP,       /* any build tool harvests a tree */
-  TT_PILL_HOW,          /* how to build a carried pillbox */
-  TT_STEP_TREE,         /* status line: harvest in the grove */
-  TT_STEP_ROAD,         /* status line: build a road */
-  TT_STEP_WALL,         /* status line: build a wall */
-  TT_STEP_MINE,         /* status line: lay a mine */
-  TT_STEP_PILL,         /* status line: build the carried pillbox */
-  TT_STEP_PILL_GREEN,   /* status line: build it on the green square */
   TT_COUNT       /* how many there are, and no token */
 } TutorialTokenId;
 
@@ -81,11 +67,6 @@ int tutorialTokenScancode(TutorialTokenId id, const keyItems *k);
  * so the resolver writes them as words there. */
 bool tutorialTokenIsQuickBuild(TutorialTokenId id);
 
-/* True for the phrase tokens ({DRIVE_HOW}, {STEP_TREE} and the rest): a
- * token whose words come from the language file as a whole sentence,
- * picked for the player's input. */
-bool tutorialTokenIsPhrase(TutorialTokenId id);
-
 /* What a token is written as in plain text, for a line drawn as text alone
  * (a scenario's status line or announcement). NULL leaves the token as it
  * is written. */
@@ -93,16 +74,29 @@ typedef const char *(*TutorialTokenNameFn)(TutorialTokenId id, void *ctx);
 
 /* src into out with every token replaced by name(id, ctx). out is always
  * ended with a NUL; a text too long for it is cut, never a name half
- * written. Answers the length written. */
+ * written and never a UTF-8 character half written. Answers the length
+ * written. */
 size_t tutorialTokensExpand(const char *src, char *out, size_t cap,
                             TutorialTokenNameFn name, void *ctx);
 
-/* src into out with only the phrase tokens replaced, by phrase(id, ctx);
- * every other token is copied as it is written, for a second pass to fill
- * in. A phrase's own text is not searched again for phrases. Cut and
- * ended as tutorialTokensExpand. Answers the length written. */
-size_t tutorialPhrasesExpand(const char *src, char *out, size_t cap,
-                             TutorialTokenNameFn phrase, void *ctx);
+/* One piece of a text: a run of plain text (id TT_COUNT) or one token.
+ * start points into the text that was split, and the piece is len bytes
+ * of it, with no NUL of its own. */
+typedef struct {
+  const char     *start;
+  size_t          len;
+  TutorialTokenId id;
+} TutorialPiece;
+
+/* src cut into pieces, in order, at most max of them: runs of plain text
+ * and the tokens between them. A brace that starts no token ("{", "{FOO}",
+ * "{accel}") is plain text. Answers the count. *rest, when rest is not
+ * NULL, is set to the first byte no piece covers: src's NUL when all of
+ * it fits, else the start of the first piece left out, so a caller can
+ * tell the text was cut. A NULL src, a NULL out or a max below 1 answers
+ * 0 with *rest at src. */
+int tutorialTokensSplit(const char *src, TutorialPiece *out, int max,
+                        const char **rest);
 
 /* A key's name as the tutorial writes it, from the name SDL gives it
  * (SDL_GetScancodeName). A keypad key's "Keypad " becomes "Num ", so
