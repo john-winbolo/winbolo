@@ -43,12 +43,11 @@
 
 scenario = {
   name = "Classic Tutorial",
-  description = "The original WinBolo tutorial: drive north up the map "
-    .. "and read each message as you reach it.",
+  description = "The original Bolo/WinBolo tutorial from 1993/1998.",
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-27T11:42Z",
+  updated = "2026-10-27T13:06Z",
   game = "strict",
 
   lobby = {
