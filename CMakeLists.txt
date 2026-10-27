@@ -6962,6 +6962,7 @@ set(_unit_test_names
     survival_lobby_round_full
     survival_lobby_round_ds_order
     survival_lobby_round_late_joiner
+    survival_lobby_round_leaver_back
     loopback_unfield_tank
     loopback_fine_tank_position
     loopback_shell_drawn_cull

@@ -149,8 +149,9 @@ scenario = {
     on_choose_start = "Defenders start in the centre puddle, attackers at sea on their own spokes; a defender the horde camps in the puddle starts once at sea, clear of the horde.",
     on_tank_killed = "Counts each defender's deaths on a boat in the centre puddle; \"Start camp deaths\" of them within \"Start camp window\" send the next start outside.",
     on_tank_spawned = "Tells a defender who was sent outside why they start there.",
-    on_player_leave = "Forgets a leaving defender's deaths in the puddle, so whoever takes the seat next starts there as usual.",
+    on_player_leave = "Forgets a leaving defender's side and deaths in the puddle, so whoever takes the seat next starts there as usual.",
     on_player_join = "Puts a player who joins during the round on the defenders.",
+    on_team_changed = "Puts a defender who leaves an alliance back on the defenders.",
     on_setup = "Gives the defenders the centre bases and pillboxes, builds the island's shallow rim and tree ring, and digs in defender bots.",
     on_start = "Posts the opening \"dig in\" message and notes which seats the horde will use.",
     on_tick = "Sends N waves of 10 attackers, M minutes each with 30 s breaks, N and M set in the lobby; lose all 6 centre bases and you lose, outlast the last wave to win.",
@@ -171,6 +172,13 @@ local function secs(s) return math.floor(s * TICKS_PER_SECOND) end
 local WAVES     = game.setting("rounds")
 local WAVE_TEAM = 2        -- the horde is team 2
 local DEF_TEAM  = 1        -- the defenders are team 1
+
+-- The seats that are defenders, by seat. A defender who leaves an alliance
+-- is moved onto a team of its own by the server, which is not the
+-- defenders; on_team_changed puts it back. Kept by seat and forgotten when
+-- the seat empties, so the next player there is not put back on a side they
+-- never had.
+local defender_seat = {}
 
 local GRACE_S      = 10    -- prep before wave 1
 local BREATHER_S   = 30    -- prep between waves
@@ -2075,6 +2083,9 @@ function on_start()
     if ls and ls.bot and ls.team == WAVE_TEAM and not ls.fielded then
       seats[#seats + 1] = p
     end
+    if ls and ls.connected and ls.team == DEF_TEAM then
+      defender_seat[p] = true
+    end
   end
   -- The one line the round opens with. It carries no wave count and no
   -- seconds: the panel is up from the round's first tick with "GET READY!",
@@ -2112,10 +2123,32 @@ end
 -- so a person who sits down is always a defender. A seat the script fills
 -- itself is already on the team it chose.
 function on_player_join(p, scripted)
-  if scripted then return end
   local ls = game.lobby_slot(p)
-  if ls == nil or ls.bot then return end
-  if ls.team ~= DEF_TEAM then
+  if ls == nil then return end
+  if not scripted and not ls.bot and ls.team ~= DEF_TEAM then
+    game.set_team(p, DEF_TEAM)
+    ls = game.lobby_slot(p)
+  end
+  if ls ~= nil and ls.team == DEF_TEAM then
+    defender_seat[p] = true
+  end
+end
+
+-- A defender who leaves an alliance is moved by the server onto a team of
+-- its own, and that is not the defenders. Every move this script does not
+-- make is put back, so a defender stays a defender for the whole round. A
+-- move the script makes is the seat's new side.
+function on_team_changed(p, team, scripted)
+  if scripted then
+    if team == DEF_TEAM then
+      defender_seat[p] = true
+    else
+      defender_seat[p] = nil
+    end
+    return
+  end
+  if ended then return end
+  if defender_seat[p] and team ~= DEF_TEAM then
     game.set_team(p, DEF_TEAM)
   end
 end
@@ -2124,6 +2157,7 @@ end
 -- with it: whoever sits down there next is not pushed out, or told why,
 -- for deaths that were someone else's.
 function on_player_leave(p)
+  defender_seat[p] = nil
   CAMP.last[p]    = nil
   CAMP.dead_at[p] = nil
   CAMP.pending[p] = nil

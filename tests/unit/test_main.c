@@ -1717,6 +1717,8 @@ static const UnitTestEntry s_tests[] = {
     { "survival_lobby_round_ds_order",           run_survival_lobby_round_ds_order           },
     { "survival_lobby_round_late_joiner",
                                                  run_survival_lobby_round_late_joiner },
+    { "survival_lobby_round_leaver_back",
+                                                 run_survival_lobby_round_leaver_back },
     { "loopback_unfield_tank",                   run_loopback_unfield_tank                   },
     { "loopback_fine_tank_position",             run_loopback_fine_tank_position             },
     { "loopback_shell_drawn_cull",               run_loopback_shell_drawn_cull               },

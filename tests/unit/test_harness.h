@@ -3366,6 +3366,7 @@ int run_survival_lobby_round(void);
 int run_survival_lobby_round_full(void);
 int run_survival_lobby_round_ds_order(void);
 int run_survival_lobby_round_late_joiner(void);
+int run_survival_lobby_round_leaver_back(void);
 int run_loopback_unfield_tank(void);
 int run_loopback_fine_tank_position(void);
 int run_loopback_shell_drawn_cull(void);
