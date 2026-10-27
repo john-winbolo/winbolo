@@ -58,8 +58,8 @@ static NSMenuItem *s_lv_pauseItem      = nil;
 static NSMenuItem *s_lv_stopItem       = nil;
 static NSMenuItem *s_lv_fastForwardItem = nil;
 static NSMenuItem *s_lv_rewindItem     = nil;
-static NSMenuItem *s_lv_gifSepItem     = nil;   /* the line over Make GIF... */
-static NSMenuItem *s_lv_makeGifItem    = nil;
+static NSMenuItem *s_lv_gifSepItem     = nil;   /* the line over Recording Mode */
+static NSMenuItem *s_lv_recordModeItem = nil;
 static NSMenu     *s_lv_zoomMenu       = nil;
 static NSMenuItem *s_lv_zoomInItem     = nil;
 static NSMenuItem *s_lv_zoomOutItem    = nil;
@@ -118,7 +118,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onStop:(id)sender;
 - (void)onFastForward:(id)sender;
 - (void)onRewind:(id)sender;
-- (void)onMakeGif:(id)sender;
+- (void)onRecordMode:(id)sender;
 - (void)onZoomStep:(id)sender;
 - (void)onZoomIn:(id)sender;
 - (void)onZoomOut:(id)sender;
@@ -210,9 +210,9 @@ static void lv_push_sdl_quit(void) {
     (void)sender;
     if (s_lv_state && s_lv_state->isLoaded) lv_windowRewind();
 }
-- (void)onMakeGif:(id)sender {
+- (void)onRecordMode:(id)sender {
     (void)sender;
-    lv_clip_gif_request();
+    lv_clip_gif_toggle_mode();
 }
 - (void)onZoomStep:(id)sender {
     NSMenuItem *item = (NSMenuItem *)sender;
@@ -540,18 +540,19 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [actionMenu addItem:rwItem];
     s_lv_rewindItem = rwItem;
 
-    /* A GIF of the map from the current time (imgui_clip_gif.h). */
+    /* Recording mode: the GIF controls (imgui_clip_gif.h). */
     NSMenuItem *gifSep = [NSMenuItem separatorItem];
     [actionMenu addItem:gifSep];
     s_lv_gifSepItem = gifSep;
 
     NSMenuItem *gifItem = [[NSMenuItem alloc]
-        initWithTitle:LANG_STR(STR_LV_MAKE_GIF)
-        action:@selector(onMakeGif:)
+        initWithTitle:LANG_STR(STR_LV_RECORD_MODE)
+        action:@selector(onRecordMode:)
         keyEquivalent:@"g"];
     [gifItem setTarget:s_lv_bridge];
+    [gifItem setToolTip:LANG_STR(STR_LV_RECORD_MODE_TIP)];
     [actionMenu addItem:gifItem];
-    s_lv_makeGifItem = gifItem;
+    s_lv_recordModeItem = gifItem;
 
     /* Options menu */
     NSMenuItem *optionsItem = [mainMenu addItemWithTitle:LANG_STR(STR_MAPEDIT_MENU_OPTIONS) action:nil keyEquivalent:@""];
@@ -972,7 +973,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_fastForwardItem = nil;
     s_lv_rewindItem = nil;
     s_lv_gifSepItem = nil;
-    s_lv_makeGifItem = nil;
+    s_lv_recordModeItem = nil;
     s_lv_zoomMenu = nil;
     s_lv_zoomInItem = nil;
     s_lv_zoomOutItem = nil;
@@ -1055,13 +1056,16 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     }
     if (s_lv_fastForwardItem) [s_lv_fastForwardItem setEnabled:(s->isLoaded ? YES : NO)];
     if (s_lv_rewindItem)      [s_lv_rewindItem      setEnabled:(s->isLoaded ? YES : NO)];
-    /* A live game has no GIFs; nor has a build without the Clips window. */
+    /* A live game has no recording mode; nor has a build without the Clips
+     * window. */
     {
         const BOOL noGif = (live || !s->gifAvailable) ? YES : NO;
         if (s_lv_gifSepItem) [s_lv_gifSepItem setHidden:noGif];
-        if (s_lv_makeGifItem) {
-            [s_lv_makeGifItem setHidden:noGif];
-            [s_lv_makeGifItem setEnabled:(s->canMakeGif ? YES : NO)];
+        if (s_lv_recordModeItem) {
+            [s_lv_recordModeItem setHidden:noGif];
+            [s_lv_recordModeItem setEnabled:(s->canToggleRecordMode ? YES : NO)];
+            [s_lv_recordModeItem setState:(s->recordMode ? NSControlStateValueOn
+                                                         : NSControlStateValueOff)];
         }
     }
 

@@ -14,12 +14,14 @@
 #include "imgui_context.h"
 #include "imgui_lv_icons.h"
 #include "imgui_event_overlay.h"
+#include "imgui_clip_gif.h"
 #include "imgui.h"
 #include "imgui_internal.h"  /* SetKeyOwner: the wheel over the seek bar */
 #include "platform_config.h"
 #include "../../gui/lang.h"
 #include "../../gui/ui_mode.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
+#include "../../gui/sdl3/dialogs/clip_gif_controls.h"  /* clipGifToggleButton: the movie camera */
 
 #include <cstdio>
 #include <cstdlib>
@@ -453,7 +455,10 @@ void lv_imgui_controls_window(void) {
 
         LvControlsTopIn topIn;
         topIn.contentW = ImGui::GetContentRegionAvail().x;
-        topIn.buttons = live ? 5 : 4;
+        /* The fifth button: back to the live head on a live feed, else the
+         * movie camera of recording mode where this build makes GIFs. */
+        const bool recordButton = !live && lv_clip_gif_available();
+        topIn.buttons = (live || recordButton) ? 5 : 4;
         topIn.btnSide = btn;
         topIn.btnGap = style.ItemInnerSpacing.x;
         topIn.labelW = ImGui::CalcTextSize(speedLbl).x + style.ItemSpacing.x;
@@ -528,6 +533,25 @@ void lv_imgui_controls_window(void) {
             controls_tooltip(langGetText(STR_LV_TIP_LIVE), true);
         }
 
+        /* Recording mode, as the game's replay has it: the movie camera
+         * turns on the GIF controls (the row under this one, the GIF's
+         * length on the timeline and the crop frame on the map). Pressed
+         * while it is on, and held still while a GIF is made. */
+        if (recordButton) {
+            controls_place(topX, &topLine, top.btnLine[4], top.btnX[4]);
+            const bool canToggle = lv_clip_gif_can_toggle_mode();
+            ImGui::BeginDisabled(!canToggle);
+            if (clipGifToggleButton("##recmode", lv_clip_gif_mode_on(),
+                                    CLIP_GIF_GLYPH_CAMERA, NULL,
+                                    ImVec2(top.btnW, btn))) {
+                lv_clip_gif_toggle_mode();
+            }
+            ImGui::EndDisabled();
+            controls_key_tip(langGetText(STR_REEL_RECORD_MODE_TIP), "Ctrl+G", tip,
+                             sizeof(tip));
+            controls_tooltip(tip, canToggle);
+        }
+
         /* The speed: its label and a slider. In a panel too narrow for both
          * the label goes and is the slider's tooltip. */
         {
@@ -555,6 +579,15 @@ void lv_imgui_controls_window(void) {
          * only its arrow, which says its name in a tooltip. */
         controls_place(topX, &topLine, top.comboLine, top.comboX);
         lv_event_overlay_combo(top.comboFull);
+
+        /* The GIF controls of recording mode, on a line of their own. */
+        float gifRowH = 0.0f;
+        const bool gifTools = lv_clip_gif_tools_shown();
+        if (gifTools) {
+            const float rowTop = ImGui::GetCursorPosY();
+            lv_clip_gif_tools_row();
+            gifRowH = ImGui::GetCursorPosY() - rowTop;
+        }
 
         /* Seek slider row */
         if (s_lv->isLoaded) {
@@ -621,8 +654,15 @@ void lv_imgui_controls_window(void) {
             if (seek_rel_drag_update(ImGui::GetID("##seek"))) {
                 seek_flags |= ImGuiSliderFlags_ReadOnly;
             }
+            /* The GIF's end marker goes over the slider and wins the mouse
+             * where the two meet. */
+            if (gifTools) {
+                ImGui::SetNextItemAllowOverlap();
+            }
             bool seek_changed = ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, seek_fmt,
                                                    seek_flags);
+            const ImVec2 seek_min = ImGui::GetItemRectMin();
+            const ImVec2 seek_max = ImGui::GetItemRectMax();
             {
                 /* As ImGui's own slider has it: two pixels at each end, and
                  * the handle is all on the bar. */
@@ -700,6 +740,19 @@ void lv_imgui_controls_window(void) {
                 s_rel_drag = false;
             }
             seek_wheel_step(seek_top, ImGui::GetItemRectMax());
+
+            /* Where the GIF starts and ends, after the slider's own state is
+             * read above: from here the last item is the marker. The band
+             * starts at the handle while it is dragged, and at the current
+             * time otherwise, as in the game's replay. */
+            if (gifTools) {
+                uint32_t gifStartMs = currentTime;
+                if (s_is_seeking) {
+                    gifStartMs = (uint32_t)(s_seek_ratio * (float)totalTime);
+                }
+                lv_clip_gif_seek_marker(seek_min.x, seek_min.y, seek_max.x, seek_max.y,
+                                        gifStartMs, totalTime);
+            }
 
             ImGui::PopItemWidth();
 
@@ -784,6 +837,25 @@ void lv_imgui_controls_window(void) {
             }
         } else {
             ImGui::TextWrapped("%s", langGetText(STR_LV_NO_LOG_LOADED));
+        }
+
+        /* A panel that floats grows by the GIF controls' line while they
+         * show, so the timeline and the time stay in view, and gives the
+         * room back when they go. A docked panel keeps the size its
+         * sidebar gives it. */
+        {
+            static float s_gifGrow = 0.0f;
+            if (ImGui::IsWindowDocked()) {
+                s_gifGrow = 0.0f;
+            } else if (gifTools && s_gifGrow == 0.0f && gifRowH > 0.0f) {
+                const ImVec2 size = ImGui::GetWindowSize();
+                ImGui::SetWindowSize(ImVec2(size.x, size.y + gifRowH));
+                s_gifGrow = gifRowH;
+            } else if (!gifTools && s_gifGrow > 0.0f) {
+                const ImVec2 size = ImGui::GetWindowSize();
+                ImGui::SetWindowSize(ImVec2(size.x, size.y - s_gifGrow));
+                s_gifGrow = 0.0f;
+            }
         }
     }
     ImGui::End();

@@ -56,7 +56,8 @@ struct LvMenuState {
     bool canFullScreen;        /* the window can go into and out of full screen */
     bool live;                 /* a live game watched from the game: File has only Leave spectating */
     bool gifAvailable;         /* this build has GIFs and the Clips window */
-    bool canMakeGif;           /* Action > Make GIF... enable (lv_clip_gif_can_make) */
+    bool recordMode;           /* Action > Recording Mode checkmark (lv_clip_gif_mode_on) */
+    bool canToggleRecordMode;  /* Action > Recording Mode enable (lv_clip_gif_can_toggle_mode) */
     bool showClips;            /* Windows > Clips checkmark */
 };
 

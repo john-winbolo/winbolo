@@ -123,18 +123,27 @@ void lvMenuRender(struct LogViewerState *lv) {
             ImGui::Separator();
         }
 
-        /* A GIF of the map from the current time, and the GIFs made here and
-         * in the game (imgui_clip_gif.h). The Make GIF window opens on the
-         * next frame, after this menu has closed. */
+        /* Recording mode, and the GIFs made here and in the game
+         * (imgui_clip_gif.h). The recording mode button stays pressed while
+         * the mode is on, as the movie camera on the Controls panel does. */
         if (lv_clip_gif_available()) {
             if (!live) {
-                ImGui::BeginDisabled(!lv_clip_gif_can_make());
-                if (ImGui::Button(langGetText(STR_LV_MAKE_GIF), btnSize)) {
-                    lv_clip_gif_request();
+                const bool on = lv_clip_gif_mode_on();
+                ImGui::BeginDisabled(!lv_clip_gif_can_toggle_mode());
+                if (on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,
+                                          ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                }
+                const bool pressed = ImGui::Button(langGetText(STR_LV_RECORD_MODE), btnSize);
+                if (on) {
+                    ImGui::PopStyleColor();
+                }
+                ImGui::EndDisabled();
+                if (pressed) {
+                    lv_clip_gif_toggle_mode();
                     ImGui::CloseCurrentPopup();
                     s_open = false;
                 }
-                ImGui::EndDisabled();
             }
             if (ImGui::Button(langGetText(STR_LV_WIN_CLIPS), btnSize)) {
                 lv_clip_gif_toggle_gallery();

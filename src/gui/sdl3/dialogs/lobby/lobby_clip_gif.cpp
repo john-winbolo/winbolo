@@ -243,40 +243,35 @@ static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
         return;
     }
     int cropW, cropH;
-    if (lobbyReel()->cropOn && lobbyReel()->lastSlice.w > 0 && lobbyReel()->lastSlice.h > 0) {
-        /* The frame the player drew is what this takes. It is normalized
-         * against the slice the reel blitted, so mapping it back is that same
-         * slice's extent times the fractions — the identical arithmetic the
-         * Image's uv0/uv1 used, which is what makes the GIF exactly the
-         * rectangle the outline showed.
+    if (lobbyReel()->clip.cropOn && lobbyReel()->lastSlice.w > 0 &&
+        lobbyReel()->lastSlice.h > 0) {
+        /* The frame the player drew is what this takes. It is held as
+         * fractions of the slice the reel blitted, so mapping it back is that
+         * same slice's extent times the fractions (clipGifCropFromFrame), the
+         * same sums the Image's uv0/uv1 used: the GIF is the rectangle the
+         * outline showed.
          *
          * The extent comes from the last draw (an on-screen size a seek cannot
          * change) while the origin is the fresh one read above, because the
          * seek this export just did may have moved the camera and the frame
-         * names a place on the view, not on the map. */
+         * names a place on the view, not on the map.
+         *
+         * No CLIP_GIF_MAX_WIDTH here: that cap trims an uncropped view down to
+         * something worth posting, and a frame is the player saying what to
+         * take instead. */
         int visW = lobbyReel()->lastSlice.w;
         int visH = lobbyReel()->lastSlice.h;
         if (visW > srcW) visW = srcW;
         if (visH > srcH) visH = srcH;
-        int fx0 = (int)(lobbyReel()->cropX0 * (float)visW + 0.5f);
-        int fy0 = (int)(lobbyReel()->cropY0 * (float)visH + 0.5f);
-        int fx1 = (int)(lobbyReel()->cropX1 * (float)visW + 0.5f);
-        int fy1 = (int)(lobbyReel()->cropY1 * (float)visH + 0.5f);
-        if (fx0 < 0) fx0 = 0;
-        if (fy0 < 0) fy0 = 0;
-        if (fx1 > visW) fx1 = visW;
-        if (fy1 > visH) fy1 = visH;
-        cropW = fx1 - fx0;
-        cropH = fy1 - fy0;
-        if (cropW < 1) cropW = 1;
-        if (cropH < 1) cropH = 1;
-        s_clipGif.crop.x = srcX + fx0;
-        s_clipGif.crop.y = srcY + fy0;
-        s_clipGif.crop.w = cropW;
-        s_clipGif.crop.h = cropH;
-        /* No CLIP_GIF_MAX_WIDTH here: that cap trims an uncropped view down to
-         * something worth posting, and a frame is the player saying what to
-         * take instead. */
+        ClipGifRect c;
+        clipGifCropFromFrame(&lobbyReel()->clip.frame, srcX, srcY, visW, visH,
+                             &c);
+        cropW = c.w;
+        cropH = c.h;
+        s_clipGif.crop.x = c.x;
+        s_clipGif.crop.y = c.y;
+        s_clipGif.crop.w = c.w;
+        s_clipGif.crop.h = c.h;
     } else {
         ClipGifRect c;
         clipGifCentreCrop(srcX, srcY, srcW, srcH, CLIP_GIF_MAX_WIDTH, &c);

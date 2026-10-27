@@ -2225,7 +2225,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
-    # Action > Make GIF... and Windows > Clips. The GIF code and the gallery
+    # Action > Recording Mode and Windows > Clips. The GIF code and the gallery
     # it uses are in CLIENT_SOURCES already.
     src/logviewer/imgui/imgui_clip_gif.cpp
     src/logviewer/platform/platform_config.c
@@ -2903,7 +2903,7 @@ set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
 
-# Action > Make GIF... and Windows > Clips (imgui_clip_gif.cpp): the GIF
+# Action > Recording Mode and Windows > Clips (imgui_clip_gif.cpp): the GIF
 # encoder, the GIF rules and metadata files, the clipboard copy and the
 # gallery window the game's replay uses too. The WinBolo client has its own
 # copies in CLIENT_SOURCES.
@@ -5963,6 +5963,11 @@ set(_unit_test_names
     clip_gif_frame_count
     clip_gif_centre_crop
     clip_gif_names
+    clip_gif_frame_box
+    clip_gif_frame_drag
+    clip_gif_crop_from_frame
+    clip_gif_blit_view
+    clip_gif_mode_state
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures

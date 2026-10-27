@@ -373,20 +373,21 @@ typedef struct LobbyReelState {
     bool   seekWasPlaying = false;
 
 #if BOLO_RECAP_CLIP_GIF
-    /* Crop frame: an optional rectangle over the reel that an export takes
-     * instead of the whole visible view, so a clip can be posted without the
-     * map around it. Off by default, and off is the untouched full-view path.
+    /* Recording mode (clip_gif_core.h): on or off, the crop frame and its
+     * place, and the length the transport's GIF button records. The movie
+     * camera button on the transport row turns the mode on and off. With it
+     * off the GIF controls are not drawn: the GIF button, the length field
+     * and the length marker on the seek bar, the gallery button, the crop
+     * button and frame, and the GIF button on each highlight row
+     * (clipGifToolsShown says when they show).
      *
-     * Held normalized to the displayed image rather than in pixels, so resizing
-     * the lobby or zooming the reel keeps the same framing rather than leaving
-     * the box pointing at a different part of the map. Session-only, by design
-     * — a crop is chosen for the clip being taken, not kept as a preference,
-     * which is what the reset below makes true. */
-    bool  cropOn = false;
-    float cropX0 = 0.25f;
-    float cropY0 = 0.25f;
-    float cropX1 = 0.75f;
-    float cropY1 = 0.75f;
+     * The crop frame is held as fractions of the displayed image, so a new
+     * lobby size or a zoom keeps the same framing. The length is kept as the
+     * player last set it and clamped to the time left where it is used
+     * (clipGifLenClampMs). All of it goes back to CLIP_GIF_MODE_INIT each
+     * time a reel opens, with the rest of the reel: a crop and a length are
+     * chosen for the clip being taken, not kept as preferences. */
+    ClipGifMode clip = CLIP_GIF_MODE_INIT;
 
     /* The slice the reel last blitted, in render-target pixels: origin plus the
      * whole-pixel visible extent the draw computed. The crop frame is
@@ -395,29 +396,10 @@ typedef struct LobbyReelState {
      * mapping and risking a different answer. */
     SDL_Rect lastSlice = { 0, 0, 0, 0 };
 
-    /* How long the transport's GIF button records, as the player last set it
-     * with the length field or the marker on the seek bar. What is used is
-     * this clamped to the time left after the playhead (clipGifLenClampMs).
-     * The field keeps a typed length as asked for, inside the export's own
-     * floor and cap, so seeking back from near the end gives the longer
-     * length back. The marker keeps the length as dragged: it cannot be
-     * dragged past the end of the round, so a drag near the end keeps the
-     * shorter length after a seek back. Goes back to the default with the
-     * rest of the reel, like the crop frame. */
-    uint32_t gifLenMs = CLIP_GIF_LEN_DEFAULT_MS;
-
     /* The id of the replay the reel opened (clipGifGameIdFromBytes), which
      * each GIF made from it keeps in its metadata. The gallery lists the GIFs
      * with this id as the current game. Empty while no replay is open. */
     char gameId[CLIP_GIF_META_GAME_LEN] = "";
-
-    /* Recording mode, which the movie camera button on the transport row
-     * turns on and off. With it off the GIF controls are not drawn: the GIF
-     * button, the length field and the length marker on the seek bar, the
-     * gallery button, the crop button and frame, and the GIF button on each
-     * highlight row (clipGifToolsShown says when they show). Off each time a
-     * reel opens, the same as the crop frame. */
-    bool recordMode = false;
 #endif
 
     /* Where a client that did not record the round stands in getting it from

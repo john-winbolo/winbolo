@@ -1096,3 +1096,244 @@ int run_clip_gif_names(void) {
     clipGifMetaSetMap(NULL, "x"); /* does nothing */
     return fails ? 1 : 0;
 }
+
+#define EXPECT_BOX(what, b, ex0, ey0, ex1, ey1)                              \
+    do {                                                                     \
+        if (!nearF((b).x0, (ex0)) || !nearF((b).y0, (ey0)) ||                \
+            !nearF((b).x1, (ex1)) || !nearF((b).y1, (ey1))) {                \
+            fprintf(stderr, "%s: %s: got %g,%g - %g,%g, want %g,%g - %g,%g\n", \
+                    utCurrentTestName(), (what), (double)(b).x0,             \
+                    (double)(b).y0, (double)(b).x1, (double)(b).y1,          \
+                    (double)(ex0), (double)(ey0), (double)(ex1),             \
+                    (double)(ey1));                                          \
+            fails++;                                                         \
+        }                                                                    \
+    } while (0)
+
+/* The crop frame on the screen: its fractions to a box on the view and back,
+ * and the part of it that a press at a point takes hold of. */
+int run_clip_gif_frame_box(void) {
+    int fails = 0;
+    const ClipGifBox image = { 100.0f, 50.0f, 300.0f, 250.0f };
+    const ClipGifFrame init = CLIP_GIF_FRAME_INIT;
+
+    ClipGifBox b = clipGifFrameToBox(&init, &image);
+    EXPECT_BOX("start frame", b, 150.0f, 100.0f, 250.0f, 200.0f);
+
+    ClipGifFrame f = { 0.0f, 0.0f, 0.0f, 0.0f };
+    const ClipGifBox moved = { 120.0f, 70.0f, 300.0f, 150.0f };
+    clipGifFrameFromBox(&f, &moved, &image);
+    EXPECT_BOX("from box", f, 0.1f, 0.1f, 1.0f, 0.5f);
+
+    /* A view with no width keeps the frame as it was. */
+    const ClipGifBox flat = { 10.0f, 10.0f, 10.0f, 90.0f };
+    clipGifFrameFromBox(&f, &moved, &flat);
+    EXPECT_BOX("empty view keeps frame", f, 0.1f, 0.1f, 1.0f, 0.5f);
+
+    /* The hit test with the game's 6 px grab, on 150,100 - 250,200. */
+    const float g = 6.0f;
+    EXPECT_U32("left edge", (uint32_t)clipGifFrameHit(&b, 150.0f, 150.0f, g),
+               (uint32_t)CLIP_GIF_GRAB_LEFT);
+    EXPECT_U32("left edge, outside in grab",
+               (uint32_t)clipGifFrameHit(&b, 145.0f, 150.0f, g),
+               (uint32_t)CLIP_GIF_GRAB_LEFT);
+    EXPECT_U32("past the grab",
+               (uint32_t)clipGifFrameHit(&b, 140.0f, 150.0f, g), 0u);
+    EXPECT_U32("top right corner",
+               (uint32_t)clipGifFrameHit(&b, 250.0f, 100.0f, g),
+               (uint32_t)(CLIP_GIF_GRAB_RIGHT | CLIP_GIF_GRAB_TOP));
+    EXPECT_U32("bottom edge", (uint32_t)clipGifFrameHit(&b, 200.0f, 204.0f, g),
+               (uint32_t)CLIP_GIF_GRAB_BOTTOM);
+    EXPECT_U32("inside", (uint32_t)clipGifFrameHit(&b, 200.0f, 150.0f, g),
+               (uint32_t)CLIP_GIF_GRAB_MOVE);
+    EXPECT_U32("inside, near an edge",
+               (uint32_t)clipGifFrameHit(&b, 156.5f, 150.0f, g),
+               (uint32_t)CLIP_GIF_GRAB_MOVE);
+    EXPECT_U32("no box", (uint32_t)clipGifFrameHit(NULL, 0.0f, 0.0f, g), 0u);
+    return fails ? 1 : 0;
+}
+
+/* A drag of the crop frame. A move keeps the frame's size and stops at the
+ * view's edge. An edge stops at the view's edge, and stays the minimum size
+ * away from the edge across from it. */
+int run_clip_gif_frame_drag(void) {
+    int fails = 0;
+    const ClipGifBox image = { 0.0f, 0.0f, 100.0f, 100.0f };
+    const ClipGifBox start = { 20.0f, 20.0f, 60.0f, 60.0f };
+    const float minSize = 16.0f;
+    ClipGifBox b;
+
+    b = start;
+    clipGifFrameDrag(&b, CLIP_GIF_GRAB_MOVE, 10.0f, 5.0f, &image, minSize);
+    EXPECT_BOX("move", b, 30.0f, 25.0f, 70.0f, 65.0f);
+
+    b = start;
+    clipGifFrameDrag(&b, CLIP_GIF_GRAB_MOVE, -50.0f, 10.0f, &image, minSize);
+    EXPECT_BOX("move stops at the left", b, 0.0f, 30.0f, 40.0f, 70.0f);
+
+    b = start;
+    clipGifFrameDrag(&b, CLIP_GIF_GRAB_MOVE, 100.0f, 100.0f, &image, minSize);
+    EXPECT_BOX("move stops at the bottom right", b, 60.0f, 60.0f, 100.0f,
+               100.0f);
+
+    b = start;
+    clipGifFrameDrag(&b, CLIP_GIF_GRAB_RIGHT, 100.0f, 0.0f, &image, minSize);
+    EXPECT_BOX("right edge stops at the view", b, 20.0f, 20.0f, 100.0f, 60.0f);
+
+    b = start;
+    clipGifFrameDrag(&b, CLIP_GIF_GRAB_LEFT, 100.0f, 0.0f, &image, minSize);
+    EXPECT_BOX("left edge stops short of the right", b, 44.0f, 20.0f, 60.0f,
+               60.0f);
+
+    b = start;
+    clipGifFrameDrag(&b, CLIP_GIF_GRAB_RIGHT | CLIP_GIF_GRAB_BOTTOM, -100.0f,
+                     -100.0f, &image, minSize);
+    EXPECT_BOX("corner stops at the minimum", b, 20.0f, 20.0f, 36.0f, 36.0f);
+
+    b = start;
+    clipGifFrameDrag(&b, CLIP_GIF_GRAB_LEFT | CLIP_GIF_GRAB_TOP, -5.0f, -30.0f,
+                     &image, minSize);
+    EXPECT_BOX("corner out", b, 15.0f, 0.0f, 60.0f, 60.0f);
+
+    b = start;
+    clipGifFrameDrag(&b, 0, 10.0f, 10.0f, &image, minSize);
+    EXPECT_BOX("nothing held", b, 20.0f, 20.0f, 60.0f, 60.0f);
+    return fails ? 1 : 0;
+}
+
+/* The render-target pixels that the crop frame takes on the visible view:
+ * the fractions times the view's size, to the nearest pixel, inside the
+ * view and at least one pixel. */
+int run_clip_gif_crop_from_frame(void) {
+    int fails = 0;
+    ClipGifRect r;
+    const ClipGifFrame init = CLIP_GIF_FRAME_INIT;
+    EXPECT_TRUE("start frame",
+                clipGifCropFromFrame(&init, 10, 20, 200, 100, &r));
+    EXPECT_RECT("start frame", r, 60, 45, 100, 50);
+
+    const ClipGifFrame all = { 0.0f, 0.0f, 1.0f, 1.0f };
+    EXPECT_TRUE("all", clipGifCropFromFrame(&all, 0, 0, 7, 3, &r));
+    EXPECT_RECT("all", r, 0, 0, 7, 3);
+
+    const ClipGifFrame past = { -0.2f, -0.1f, 1.3f, 1.2f };
+    EXPECT_TRUE("past the edges",
+                clipGifCropFromFrame(&past, 4, 4, 10, 10, &r));
+    EXPECT_RECT("past the edges", r, 4, 4, 10, 10);
+
+    const ClipGifFrame dot = { 0.5f, 0.5f, 0.5f, 0.5f };
+    EXPECT_TRUE("no size", clipGifCropFromFrame(&dot, 0, 0, 10, 10, &r));
+    EXPECT_RECT("no size", r, 5, 5, 1, 1);
+
+    const ClipGifFrame corner = { 1.0f, 1.0f, 1.0f, 1.0f };
+    EXPECT_TRUE("at the corner",
+                clipGifCropFromFrame(&corner, 0, 0, 10, 10, &r));
+    EXPECT_RECT("at the corner", r, 9, 9, 1, 1);
+
+    r.x = r.y = r.w = r.h = 9;
+    EXPECT_TRUE("empty view", !clipGifCropFromFrame(&init, 0, 0, 0, 10, &r));
+    EXPECT_RECT("empty view", r, 0, 0, 0, 0);
+    EXPECT_TRUE("no frame", !clipGifCropFromFrame(NULL, 0, 0, 10, 10, &r));
+    EXPECT_TRUE("no out", !clipGifCropFromFrame(&init, 0, 0, 10, 10, NULL));
+    return fails ? 1 : 0;
+}
+
+/* The Log Viewer's map. From its blit and the part of the window that is
+ * map: the whole render-target pixels that show, and the box in window
+ * points that they are drawn in. */
+int run_clip_gif_blit_view(void) {
+    int fails = 0;
+    ClipGifRect slice;
+    ClipGifBox view;
+
+    /* All of the blit shows, at 1x on a 1x display. */
+    {
+        const ClipGifBox src  = { 0.0f, 0.0f, 100.0f, 50.0f };
+        const ClipGifBox dst  = { 0.0f, 0.0f, 100.0f, 50.0f };
+        const ClipGifBox area = { 0.0f, 0.0f, 200.0f, 200.0f };
+        EXPECT_TRUE("all shows", clipGifBlitView(&src, &dst, &area, 1.0f,
+                                                 &slice, &view));
+        EXPECT_RECT("all shows", slice, 0, 0, 100, 50);
+        EXPECT_BOX("all shows", view, 0.0f, 0.0f, 100.0f, 50.0f);
+        /* A scale of 0 is taken as 1. */
+        EXPECT_TRUE("no scale", clipGifBlitView(&src, &dst, &area, 0.0f,
+                                                &slice, &view));
+        EXPECT_RECT("no scale", slice, 0, 0, 100, 50);
+    }
+    /* At 2x, cut by the area on the left and the right. Only whole pixels:
+     * from the first that starts in the area to the last that ends in it. */
+    {
+        const ClipGifBox src  = { 8.0f, 0.0f, 108.0f, 50.0f };
+        const ClipGifBox dst  = { 10.0f, 0.0f, 210.0f, 100.0f };
+        const ClipGifBox area = { 15.0f, 0.0f, 101.0f, 1000.0f };
+        EXPECT_TRUE("cut at 2x", clipGifBlitView(&src, &dst, &area, 1.0f,
+                                                 &slice, &view));
+        EXPECT_RECT("cut at 2x", slice, 11, 0, 42, 50);
+        EXPECT_BOX("cut at 2x", view, 16.0f, 0.0f, 100.0f, 100.0f);
+    }
+    /* A display with 2 frame buffer pixels to each point. The area is in
+     * points, the blit in pixels, and the view comes back in points. */
+    {
+        const ClipGifBox src  = { 0.0f, 0.0f, 100.0f, 60.0f };
+        const ClipGifBox dst  = { 0.0f, 40.0f, 200.0f, 160.0f };
+        const ClipGifBox area = { 0.0f, 10.0f, 50.0f, 1000.0f };
+        EXPECT_TRUE("dense display", clipGifBlitView(&src, &dst, &area, 2.0f,
+                                                     &slice, &view));
+        EXPECT_RECT("dense display", slice, 0, 0, 50, 60);
+        EXPECT_BOX("dense display", view, 0.0f, 20.0f, 50.0f, 80.0f);
+    }
+    /* No part of the blit in the area: false, and both are cleared. */
+    {
+        const ClipGifBox src  = { 0.0f, 0.0f, 100.0f, 50.0f };
+        const ClipGifBox dst  = { 0.0f, 0.0f, 100.0f, 50.0f };
+        const ClipGifBox area = { 300.0f, 0.0f, 400.0f, 50.0f };
+        EXPECT_TRUE("no map shows", !clipGifBlitView(&src, &dst, &area, 1.0f,
+                                                     &slice, &view));
+        EXPECT_RECT("no map shows", slice, 0, 0, 0, 0);
+        EXPECT_BOX("no map shows", view, 0.0f, 0.0f, 0.0f, 0.0f);
+        EXPECT_TRUE("no out", !clipGifBlitView(&src, &dst, &area, 1.0f,
+                                               NULL, &view));
+    }
+    return fails ? 1 : 0;
+}
+
+/* Recording mode's state. It starts off, with the crop frame off, in the
+ * middle half of the view and at the default length. The toggles change
+ * nothing while a GIF is made. A reset puts the start values back. */
+int run_clip_gif_mode_state(void) {
+    int fails = 0;
+    ClipGifMode m = CLIP_GIF_MODE_INIT;
+    EXPECT_TRUE("starts off", !m.on && !m.cropOn);
+    EXPECT_BOX("starts in the middle", m.frame, 0.25f, 0.25f, 0.75f, 0.75f);
+    EXPECT_U32("starts at the default length", m.lenMs,
+               CLIP_GIF_LEN_DEFAULT_MS);
+
+    EXPECT_TRUE("toggle on", clipGifModeToggle(&m, false) && m.on);
+    EXPECT_TRUE("held while a GIF is made",
+                clipGifModeToggle(&m, true) && m.on);
+    EXPECT_TRUE("crop on", clipGifModeToggleCrop(&m, false) && m.cropOn);
+    EXPECT_TRUE("crop held while a GIF is made",
+                clipGifModeToggleCrop(&m, true) && m.cropOn);
+    EXPECT_TRUE("crop off", !clipGifModeToggleCrop(&m, false) && !m.cropOn);
+    EXPECT_TRUE("toggle off", !clipGifModeToggle(&m, false) && !m.on);
+    EXPECT_TRUE("off is held too", !clipGifModeToggle(&m, true) && !m.on);
+
+    m.on = true;
+    m.cropOn = true;
+    m.frame.x0 = 0.1f;
+    m.lenMs = 12000u;
+    clipGifModeReset(&m);
+    EXPECT_TRUE("reset: off", !m.on && !m.cropOn);
+    EXPECT_BOX("reset: frame", m.frame, 0.25f, 0.25f, 0.75f, 0.75f);
+    EXPECT_U32("reset: length", m.lenMs, CLIP_GIF_LEN_DEFAULT_MS);
+
+    /* The tools show with the mode on, or while a GIF is made. */
+    EXPECT_TRUE("tools off", !clipGifToolsShown(m.on, false));
+    clipGifModeToggle(&m, false);
+    EXPECT_TRUE("tools on", clipGifToolsShown(m.on, false));
+
+    EXPECT_TRUE("no mode", !clipGifModeToggle(NULL, false));
+    EXPECT_TRUE("no mode crop", !clipGifModeToggleCrop(NULL, false));
+    clipGifModeReset(NULL); /* does nothing */
+    return fails ? 1 : 0;
+}

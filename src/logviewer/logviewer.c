@@ -329,6 +329,10 @@ static void lvHostMapArea(float *x, float *y, float *w, float *h) {
     if (*h < 1.0f) *h = 1.0f;
 }
 
+void lvHostGetMapArea(float *x, float *y, float *w, float *h) {
+    lvHostMapArea(x, y, w, h);
+}
+
 /* What a jump does to the view when the event has a place. */
 typedef enum {
     LV_JUMP_VIEW_KEEP = 0, /* the view stays; the ring (or its edge arrow) shows the place */
@@ -2293,7 +2297,7 @@ static void lvHostRenderFrame(const char *overlay) {
         }
     }
 
-    /* This frame's share of a GIF being made (Action > Make GIF...): the log
+    /* This frame's share of a GIF being made (the GIF button of recording mode): the log
      * moves on and the map is drawn into its render target for each frame of
      * the GIF. After the map above and before the ImGui frame. */
     lv_clip_gif_capture_step();
@@ -2342,7 +2346,8 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.canFullScreen    = lv_windowCanFullScreen() ? true : false;
         lvms.live             = lv_screenSpecIsLiveMode() ? true : false;
         lvms.gifAvailable     = lv_clip_gif_available() ? true : false;
-        lvms.canMakeGif       = lv_clip_gif_can_make() ? true : false;
+        lvms.recordMode       = lv_clip_gif_mode_on() ? true : false;
+        lvms.canToggleRecordMode = lv_clip_gif_can_toggle_mode() ? true : false;
         lvms.showClips        = lv_clip_gif_gallery_is_open() ? true : false;
         lv_mac_menubar_refresh(&lvms);
     }
@@ -2470,7 +2475,8 @@ static void lvHostRenderFrame(const char *overlay) {
         lv_imgui_zoom_label();
         lv_imgui_game_viewport_hover();
         lvHostDrawLoadProgress();
-        /* Make GIF, its progress and the Clips window. */
+        /* Recording mode's crop frame, a GIF's progress and the Clips
+         * window. */
         lv_clip_gif_render();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();

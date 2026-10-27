@@ -3663,12 +3663,13 @@
 #define STR_DLGWELCOME_CLIPS                     3158
 
 /* The Log Viewer's GIFs and its Clips window */
-#define STR_LV_MAKE_GIF                          3159
-#define STR_LV_MAKE_GIF_TIP                      3160
-#define STR_LV_GIF_LENGTH                        3161
-#define STR_LV_GIF_START                         3162
 #define STR_LV_WIN_CLIPS                         3163
 #define STR_LV_CLIPS_EMPTY                       3164
+
+/* Recording mode, in the game's replay and the Log Viewer */
+#define STR_CLIPGIF_CROP                         3360
+#define STR_LV_RECORD_MODE                       3361
+#define STR_LV_RECORD_MODE_TIP                   3362
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

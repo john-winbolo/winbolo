@@ -378,7 +378,7 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
                  * recording mode, like the GIF controls on its transport
                  * row. */
                 if (lvEmbedIsActive() &&
-                    clipGifToolsShown(lobbyReel()->recordMode,
+                    clipGifToolsShown(lobbyReel()->clip.on,
                                       lobbyClipGifActive())) {
                     ImGui::SameLine();
                     ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x -

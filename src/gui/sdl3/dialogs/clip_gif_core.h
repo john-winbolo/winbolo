@@ -16,13 +16,16 @@
  */
 
 /*
- * The rules behind the recap's clip GIFs that do not need ImGui: the length
- * the transport's GIF button records and where that length sits on the seek
- * bar, and the small metadata file written next to each GIF in the gallery
- * folder, with the scan that lists them newest first.
+ * The rules behind the clip GIFs that do not need ImGui, for the game's
+ * replay and the Log Viewer both: the length the GIF button records and
+ * where that length sits on the seek bar, recording mode's state, the crop
+ * frame and the pixels it takes, the Log Viewer's visible map, and the small
+ * metadata file written next to each GIF in the gallery folder, with the
+ * scan that lists them newest first.
  *
  * Plain C over SDL and cJSON, split out of lobby_clip_gif.cpp and
  * lobby_reel.cpp so test_clip_gif_core.c drives the same code the UI runs.
+ * The ImGui controls that use these rules are in clip_gif_controls.h.
  */
 
 #ifndef CLIP_GIF_CORE_H
@@ -35,6 +38,14 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* A rectangle in the pixels of the viewer's render target. */
+typedef struct {
+    int x;
+    int y;
+    int w;
+    int h;
+} ClipGifRect;
 
 /* ── Length ──────────────────────────────────────────────────────────
  * The export records one frame every 100 ms (10 fps), so a length is held in
@@ -76,13 +87,6 @@ float clipGifLenToSeconds(uint32_t lenMs);
  * in sim ticks, and the two do not have the same rate. */
 uint32_t clipGifFrameCount(uint32_t durationMs);
 
-/* A rectangle in the pixels of the viewer's render target. */
-typedef struct {
-    int x;
-    int y;
-    int w;
-    int h;
-} ClipGifRect;
 
 /* The part of the visible slice (srcX, srcY, srcW, srcH) a GIF takes when
  * the player has not drawn a frame: all of it when it is maxW pixels wide or
@@ -114,10 +118,11 @@ bool clipGifFileName(char *out, size_t outLen, const char *baseName,
                      const char *stamp, int n);
 
 /* ── Recording mode ──────────────────────────────────────────────────
- * The reel's GIF controls (the GIF button, the length field and marker, the
- * gallery button, the crop button and frame, and the GIF button on each
- * highlight row) show only in recording mode, which the movie camera button
- * on the transport row turns on and off.
+ * The GIF controls (the GIF button, the length field and marker, the
+ * gallery button, the crop button and frame, and in the game's replay the
+ * GIF button on each highlight row) show only in recording mode. The movie
+ * camera button turns it on and off: on the replay's transport row, and on
+ * the Log Viewer's Controls panel (also Action > Recording Mode, Ctrl+G).
  *
  * True when the GIF controls show: in recording mode, and also while a
  * capture is running, so the controls of a GIF that is being made do not go
@@ -139,6 +144,108 @@ float clipGifTimelineX(uint32_t timeMs, uint32_t totalMs, float x0, float x1);
  * the time left. */
 uint32_t clipGifLenFromTimelineX(float x, uint32_t curMs, uint32_t totalMs,
                                  float x0, float x1);
+
+/* ── Crop frame ──────────────────────────────────────────────────────
+ * The frame the player can put over the view in recording mode. With it on,
+ * a GIF takes the part of the view inside the frame, in place of the middle
+ * of the view. It is held as fractions of the visible view (0 is the left or
+ * top edge, 1 the right or bottom edge), so a zoom or a new window size keeps
+ * the same framing. */
+typedef struct {
+    float x0;
+    float y0;
+    float x1;
+    float y1;
+} ClipGifFrame;
+
+/* The frame a recording mode starts with: the middle half of the view. */
+#define CLIP_GIF_FRAME_INIT { 0.25f, 0.25f, 0.75f, 0.75f }
+
+/* A box on the screen, in the units the view is drawn in: x0,y0 is the top
+ * left corner and x1,y1 the bottom right corner. */
+typedef struct {
+    float x0;
+    float y0;
+    float x1;
+    float y1;
+} ClipGifBox;
+
+/* The parts of the frame a press can take hold of: an edge, two edges at a
+ * corner, or the inside, which moves the whole frame. */
+#define CLIP_GIF_GRAB_LEFT   1
+#define CLIP_GIF_GRAB_RIGHT  2
+#define CLIP_GIF_GRAB_TOP    4
+#define CLIP_GIF_GRAB_BOTTOM 8
+#define CLIP_GIF_GRAB_MOVE   16
+
+/* The frame f on a view drawn in the box image. */
+ClipGifBox clipGifFrameToBox(const ClipGifFrame *f, const ClipGifBox *image);
+
+/* The frame that box is on a view drawn in the box image. An image with no
+ * width or no height leaves *f as it was. */
+void clipGifFrameFromBox(ClipGifFrame *f, const ClipGifBox *box,
+                         const ClipGifBox *image);
+
+/* The part of the frame box that the point (mx, my) is on: the edges within
+ * grab of the point (CLIP_GIF_GRAB_LEFT and the others, two at a corner),
+ * CLIP_GIF_GRAB_MOVE inside the frame away from the edges, and 0 off it. */
+int clipGifFrameHit(const ClipGifBox *box, float mx, float my, float grab);
+
+/* Moves the part grab of the frame box by (dx, dy). The frame stays inside
+ * image. A move stops at the edge of image and keeps the frame's size; an
+ * edge stops minSize short of the edge across from it, so the frame never
+ * turns inside out. */
+void clipGifFrameDrag(ClipGifBox *box, int grab, float dx, float dy,
+                      const ClipGifBox *image, float minSize);
+
+/* The pixels of the render target that frame f takes, on a visible view
+ * that starts at (viewX, viewY) and is viewW x viewH pixels: each fraction
+ * times the view's size, to the nearest pixel, inside the view, and at
+ * least 1 x 1. No width cap: the frame says what to take. False, with *out
+ * cleared, when the view is empty. */
+bool clipGifCropFromFrame(const ClipGifFrame *f, int viewX, int viewY,
+                          int viewW, int viewH, ClipGifRect *out);
+
+/* ── The Log Viewer's map ────────────────────────────────────────────
+ * The Log Viewer draws its map with one blit of its render target: src (in
+ * render-target pixels) goes to dst (in pixels of the window's frame
+ * buffer). area is the part of the window, in window points, that is map:
+ * what the menu bar and the solid sidebars leave. pxScale is the frame
+ * buffer pixels to each window point.
+ *
+ * Gives the whole render-target pixels that show inside area (*slice), and
+ * the box in window points that those pixels are drawn in (*view). This is
+ * the view the crop frame is drawn on and is a fraction of. False, with
+ * both cleared, when no whole pixel shows. */
+bool clipGifBlitView(const ClipGifBox *src, const ClipGifBox *dst,
+                     const ClipGifBox *area, float pxScale,
+                     ClipGifRect *slice, ClipGifBox *view);
+
+/* ── Recording mode state ────────────────────────────────────────────
+ * What a recording mode holds: on or off, the crop frame on or off, where
+ * the frame is, and the length the GIF button records. The game's replay
+ * holds one for each replay it opens, and the Log Viewer one for each log
+ * it opens; both start from CLIP_GIF_MODE_INIT. */
+typedef struct {
+    bool         on;
+    bool         cropOn;
+    ClipGifFrame frame;
+    uint32_t     lenMs;
+} ClipGifMode;
+
+#define CLIP_GIF_MODE_INIT \
+    { false, false, CLIP_GIF_FRAME_INIT, CLIP_GIF_LEN_DEFAULT_MS }
+
+/* Back to CLIP_GIF_MODE_INIT. */
+void clipGifModeReset(ClipGifMode *m);
+
+/* Turns recording mode on or off, and returns what it is now. While a
+ * capture runs nothing changes: the controls of a GIF being made stay. */
+bool clipGifModeToggle(ClipGifMode *m, bool captureActive);
+
+/* Turns the crop frame on or off, and returns what it is now. While a
+ * capture runs nothing changes: the GIF is being read from the frame. */
+bool clipGifModeToggleCrop(ClipGifMode *m, bool captureActive);
 
 /* ── Metadata ────────────────────────────────────────────────────────
  * One small JSON file next to each GIF, with the same base name and the

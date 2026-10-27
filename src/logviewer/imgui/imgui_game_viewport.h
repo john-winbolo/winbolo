@@ -36,6 +36,11 @@ int lv_imgui_game_viewport_process_input(void);
  * frame is drawn. */
 void lv_imgui_game_viewport_hover(void);
 
+/* True while a press that began on the map is held: the map has the mouse
+ * for a pan or a click. The crop frame of recording mode does not take that
+ * mouse over (imgui_clip_gif.h). */
+bool lv_imgui_game_viewport_mouse_held(void);
+
 #ifdef __cplusplus
 }
 #endif

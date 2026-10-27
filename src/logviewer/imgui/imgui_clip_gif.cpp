@@ -7,11 +7,12 @@
  * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
- * See imgui_clip_gif.h. The GIF is made with the code the game's replay uses:
- * the frame count, the crop and the file name come from clip_gif_core.h, each
- * frame is read back and encoded by clip_gif_frame.h, and the finished bytes
- * go to the gallery (clip_gif_gallery.h), which writes them into the clips
- * folder with their metadata file.
+ * See imgui_clip_gif.h. Recording mode is the game's (lobby_reel.cpp), made
+ * with the same code: its state, the length, the crop and the file name come
+ * from clip_gif_core.h, its controls from clip_gif_controls.h, each frame is
+ * read back and encoded by clip_gif_frame.h, and the finished bytes go to the
+ * gallery (clip_gif_gallery.h), which writes them into the clips folder with
+ * their metadata file.
  */
 
 #include "imgui_clip_gif.h"
@@ -23,10 +24,14 @@
 #include "imgui.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/clip_gif_core.h"
+#include "../../gui/sdl3/dialogs/clip_gif_controls.h"
+#include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"  /* imguiLoadSvgIconWhite */
 #include "../../gui/sdl3/dialogs/clip_gif_frame.h"
 #include "../../gui/sdl3/dialogs/dialog_footer.h"
+#include "imgui_game_viewport.h"  /* lv_imgui_game_viewport_mouse_held */
 #include <SDL3/SDL.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -48,14 +53,20 @@ static const int LV_GIF_TICKS_PER_FRAME = 5;
  * longest GIF takes under a second or two, and the window still updates. */
 static const int LV_GIF_FRAMES_PER_PASS = 4;
 
-static const char *const LV_GIF_MAKE_POPUP     = "###lvgifmake";
 static const char *const LV_GIF_PROGRESS_POPUP = "GIF##lvgifprogress";
+/* The size the GIF button's picture is made at. */
+static const int LV_GIF_PICTURE_PX = 32;
 
 typedef struct LvGifState {
-    /* Make GIF... was chosen: the length window opens on the next frame. */
-    bool        wantMakeWindow = false;
-    /* The length the window shows, kept for the next GIF of this session. */
-    uint32_t    lenMs          = CLIP_GIF_LEN_DEFAULT_MS;
+    /* Recording mode: on or off, the crop frame and the length. Back to
+     * CLIP_GIF_MODE_INIT with each log that opens. */
+    ClipGifMode     mode       = CLIP_GIF_MODE_INIT;
+    /* Which part of the crop frame the mouse holds. */
+    ClipGifCropDrag drag       = { 0, false };
+    /* The GIF button's picture (data/ui/picture.svg, as the game's), and
+     * the renderer it was made for. Made the first time it is drawn. */
+    SDL_Renderer   *pictureFor = nullptr;
+    SDL_Texture    *picture    = nullptr;
 
     /* One capture, from the start to the bytes given to the gallery. */
     bool        active         = false;
@@ -149,6 +160,31 @@ static void lvGifForgetGameId(void) {
 
 /* ── The capture ──────────────────────────────────────────────────── */
 
+/* The map as the last blit drew it into the window: the render-target pixels
+ * that show in the map area (*slice, see clipGifBlitView), and the box in
+ * window points they are drawn in (*view), which the crop frame is drawn on
+ * and is a fraction of. *blitX, *blitY are where the blit's own slice of the
+ * render target started. False in the game view, and when no map shows. */
+static bool lvGifMapView(ClipGifRect *slice, ClipGifBox *view, int *blitX,
+                         int *blitY) {
+    float src[4], dst[4], pxScale = 1.0f;
+    if (g_lv == NULL || !g_lv->isLoaded || g_lv->gameView ||
+        !lv_drawGetMapBlit(src, dst, &pxScale)) {
+        return false;
+    }
+    float ax = 0.0f, ay = 0.0f, aw = 0.0f, ah = 0.0f;
+    lvHostGetMapArea(&ax, &ay, &aw, &ah);
+    const ClipGifBox s = { src[0], src[1], src[0] + src[2], src[1] + src[3] };
+    const ClipGifBox d = { dst[0], dst[1], dst[0] + dst[2], dst[1] + dst[3] };
+    const ClipGifBox a = { ax, ay, ax + aw, ay + ah };
+    if (!clipGifBlitView(&s, &d, &a, pxScale, slice, view)) {
+        return false;
+    }
+    if (blitX != NULL) *blitX = (int)floorf(src[0] + 0.5f);
+    if (blitY != NULL) *blitY = (int)floorf(src[1] + 0.5f);
+    return true;
+}
+
 /* The log time now and the length of the log, both from the start of the
  * part of the log the viewer shows (as the Controls panel shows them). */
 static void lvGifProgress(uint32_t *curMs, uint32_t *totalMs) {
@@ -225,9 +261,12 @@ static void lvGifFillMeta(ClipGifMeta *m, const char *mapName) {
     }
 }
 
-/* Starts a capture of lenMs from the current time. The frames are the middle
- * of the map as it is shown now: the same zoom, the same place, the same
- * camera, the same colours. */
+/* Starts a capture of lenMs from the current time. The frames are the map
+ * as it is shown now: the same zoom, the same place, the same camera, the
+ * same colours. With the crop frame on they are the part of the map in the
+ * frame, with no width cap; with it off they are the middle of the part of
+ * the map that shows, at most CLIP_GIF_MAX_WIDTH wide. Both as the game's
+ * replay has it (lobbyClipGifStart). */
 static bool lvGifStart(uint32_t lenMs) {
     if (!lv_clip_gif_can_make()) {
         return false;
@@ -235,6 +274,13 @@ static bool lvGifStart(uint32_t lenMs) {
     uint32_t curMs = 0, totalMs = 0;
     lvGifProgress(&curMs, &totalMs);
     lenMs = clipGifLenClampMs(lenMs, curMs, totalMs);
+
+    /* The part of the map that shows, from the last blit, before anything
+     * here draws the map again. */
+    ClipGifRect shown = { 0, 0, 0, 0 };
+    ClipGifBox  view  = { 0.0f, 0.0f, 0.0f, 0.0f };
+    int blitX = 0, blitY = 0;
+    const bool haveView = lvGifMapView(&shown, &view, &blitX, &blitY);
 
     s_gif.restoreMs      = lv_screenWindowStartMs() + curMs;
     s_gif.restorePlaying = g_lv->playIsPlaying ? true : false;
@@ -256,11 +302,30 @@ static bool lvGifStart(uint32_t lenMs) {
     lv_drawGetGameTargetSize(&texW, &texH);
     lv_clientMutexRelease();
 
+    if (haveView) {
+        /* Only the part that shows, from where the camera is now: the
+         * drawing above can have moved it, and the crop frame names a place
+         * on the view, not on the map. */
+        srcX += shown.x - blitX;
+        srcY += shown.y - blitY;
+        srcW = shown.w;
+        srcH = shown.h;
+    }
+    if (srcX < 0) srcX = 0;
+    if (srcY < 0) srcY = 0;
     if (srcX + srcW > texW) srcW = texW - srcX;
     if (srcY + srcH > texH) srcH = texH - srcY;
     ClipGifRect c;
-    if (lv_drawGetGameTexture() == NULL ||
-        !clipGifCentreCrop(srcX, srcY, srcW, srcH, CLIP_GIF_MAX_WIDTH, &c) ||
+    bool haveCrop;
+    if (s_gif.mode.cropOn && haveView) {
+        /* No CLIP_GIF_MAX_WIDTH here: the frame says what to take. */
+        haveCrop = clipGifCropFromFrame(&s_gif.mode.frame, srcX, srcY, srcW,
+                                        srcH, &c);
+    } else {
+        haveCrop = clipGifCentreCrop(srcX, srcY, srcW, srcH,
+                                     CLIP_GIF_MAX_WIDTH, &c);
+    }
+    if (lv_drawGetGameTexture() == NULL || !haveCrop ||
         !msf_gif_begin(&s_gif.enc, c.w, c.h)) {
         lvGifRestore(true);
         return false;
@@ -325,15 +390,28 @@ bool lv_clip_gif_available(void) {
     return true;
 }
 
-bool lv_clip_gif_can_make(void) {
-    return g_lv != NULL && g_lv->isLoaded && !g_lv->gameView &&
-           !lv_screenSpecIsLiveMode() && !s_gif.active;
+bool lv_clip_gif_can_toggle_mode(void) {
+    return g_lv != NULL && g_lv->isLoaded && !lv_screenSpecIsLiveMode() &&
+           !s_gif.active;
 }
 
-void lv_clip_gif_request(void) {
-    if (lv_clip_gif_can_make()) {
-        s_gif.wantMakeWindow = true;
+bool lv_clip_gif_mode_on(void) {
+    return s_gif.mode.on;
+}
+
+void lv_clip_gif_toggle_mode(void) {
+    if (lv_clip_gif_can_toggle_mode()) {
+        clipGifModeToggle(&s_gif.mode, s_gif.active);
     }
+}
+
+bool lv_clip_gif_tools_shown(void) {
+    return g_lv != NULL && g_lv->isLoaded && !lv_screenSpecIsLiveMode() &&
+           clipGifToolsShown(s_gif.mode.on, s_gif.active);
+}
+
+bool lv_clip_gif_can_make(void) {
+    return lv_clip_gif_can_toggle_mode() && !g_lv->gameView;
 }
 
 bool lv_clip_gif_active(void) {
@@ -370,54 +448,142 @@ void lv_clip_gif_capture_step(void) {
     }
 }
 
-/* The Make GIF window: the length, and Make GIF or Cancel. */
-static void lvGifRenderMakeWindow(float s) {
-    if (s_gif.wantMakeWindow) {
-        s_gif.wantMakeWindow = false;
-        if (lv_clip_gif_can_make()) {
-            ImGui::OpenPopup(LV_GIF_MAKE_POPUP);
+/* ── The crop frame on the map ────────────────────────────────────── */
+
+/* True when the crop frame shows on the map now, with *view the box of the
+ * map it is drawn on. */
+static bool lvGifFrameView(ClipGifBox *view) {
+    if (!lv_clip_gif_tools_shown() || !s_gif.mode.cropOn) {
+        return false;
+    }
+    ClipGifRect slice;
+    return lvGifMapView(&slice, view, NULL, NULL);
+}
+
+bool lv_clip_gif_frame_has_mouse(void) {
+    if (s_gif.drag.dragging) {
+        return true;
+    }
+    ClipGifBox view;
+    if (s_gif.active || !lvGifFrameView(&view)) {
+        return false;
+    }
+    const ImGuiIO &io = ImGui::GetIO();
+    if (io.WantCaptureMouse || !ImGui::IsMousePosValid()) {
+        return false;
+    }
+    const ClipGifBox box = clipGifFrameToBox(&s_gif.mode.frame, &view);
+    return clipGifFrameHit(&box, io.MousePos.x, io.MousePos.y,
+                           CLIP_GIF_CROP_GRAB_PX) != 0;
+}
+
+/* The crop frame over the map. The map is not an ImGui item (draw.c blits
+ * it straight into the window), so the frame goes on the background draw
+ * list, under every panel, and takes a press only where no panel is. */
+static void lvGifRenderFrame(void) {
+    ClipGifBox view;
+    if (!lvGifFrameView(&view)) {
+        s_gif.drag.grab = 0;
+        s_gif.drag.dragging = false;
+        return;
+    }
+    clipGifCropFrame("##lvgifcrop", ImGui::GetBackgroundDrawList(),
+                     ImVec2(view.x0, view.y0),
+                     ImVec2(view.x1 - view.x0, view.y1 - view.y0),
+                     &s_gif.mode.frame, &s_gif.drag, s_gif.active,
+                     lv_imgui_game_viewport_mouse_held(), false);
+}
+
+/* ── The GIF controls in the Controls panel ───────────────────────── */
+
+/* The GIF button's picture, made the first time it is drawn on a renderer.
+ * 0 when the file is not there: the button then shows "GIF". */
+static ImTextureID lvGifPicture(void) {
+    if (g_lv == NULL || g_lv->renderer == NULL) {
+        return (ImTextureID)0;
+    }
+    if (s_gif.pictureFor != g_lv->renderer) {
+        /* The picture of another renderer went with that renderer. */
+        s_gif.pictureFor = g_lv->renderer;
+        s_gif.picture = imguiLoadSvgIconWhite(g_lv->renderer,
+                                              "data/ui/picture.svg",
+                                              LV_GIF_PICTURE_PX);
+        if (s_gif.picture == NULL) {
+            /* An installed build finds data/ from where the program is, not
+             * from the working directory. */
+            const char *base = SDL_GetBasePath();
+            if (base != NULL) {
+                char path[1024];
+                SDL_snprintf(path, sizeof(path), "%sdata/ui/picture.svg", base);
+                s_gif.picture = imguiLoadSvgIconWhite(g_lv->renderer, path,
+                                                      LV_GIF_PICTURE_PX);
+            }
+        }
+        if (s_gif.picture != NULL) {
+            SDL_SetTextureScaleMode(s_gif.picture, SDL_SCALEMODE_LINEAR);
         }
     }
-    /* The id is the part after "###", so the title can be in any language
-     * and still be the popup OpenPopup opened. */
-    char title[128];
-    std::snprintf(title, sizeof(title), "%s%s", langGetText(STR_LV_GIF_START),
-                  LV_GIF_MAKE_POPUP);
-    if (!ImGui::BeginPopupModal(title, NULL,
-                                ImGuiWindowFlags_AlwaysAutoResize |
-                                ImGuiWindowFlags_NoCollapse |
-                                ImGuiWindowFlags_NoSavedSettings)) {
+    return (ImTextureID)(intptr_t)s_gif.picture;
+}
+
+void lv_clip_gif_tools_row(void) {
+    if (!lv_clip_gif_tools_shown()) {
         return;
     }
     uint32_t curMs = 0, totalMs = 0;
     lvGifProgress(&curMs, &totalMs);
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    const ImTextureID picture = lvGifPicture();
 
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 280.0f * s);
-    ImGui::TextUnformatted(langGetText(STR_LV_MAKE_GIF_TIP));
-    ImGui::PopTextWrapPos();
-    ImGui::Spacing();
-    ImGui::TextUnformatted(langGetText(STR_LV_GIF_LENGTH));
-    float secs = clipGifLenToSeconds(
-        clipGifLenClampMs(s_gif.lenMs, curMs, totalMs));
-    ImGui::SetNextItemWidth(280.0f * s);
-    if (ImGui::SliderFloat("##lvgiflen", &secs,
-                           (float)CLIP_GIF_LEN_MIN_MS / 1000.0f,
-                           (float)CLIP_GIF_LEN_MAX_MS / 1000.0f, "%.1f")) {
-        s_gif.lenMs = clipGifLenFromSeconds(secs, 0, 0);
+    /* The row in the middle of the panel, as the panel's other rows are. */
+    const float square = ImGui::GetTextLineHeight() + sty.FramePadding.x * 2.0f;
+    const float lenW = ImGui::CalcTextSize("00.0").x + sty.FramePadding.x * 2.0f;
+    const float rowW = clipGifButtonWidth(picture != (ImTextureID)0) + lenW +
+                       square * 2.0f + sty.ItemSpacing.x * 3.0f;
+    const float avail = ImGui::GetContentRegionAvail().x;
+    if (avail > rowW) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + floorf((avail - rowW) * 0.5f));
     }
-    ImGui::Spacing();
 
-    int r = WBUI::DialogFooter(langGetText(STR_CANCEL),
-                               langGetText(STR_LV_GIF_START), false, true,
-                               !lv_clip_gif_can_make());
-    if (r == WBUI::FOOTER_CONFIRM) {
-        ImGui::CloseCurrentPopup();
-        lvGifStart(s_gif.lenMs);
-    } else if (r == WBUI::FOOTER_CANCEL) {
-        ImGui::CloseCurrentPopup();
+    /* The GIF from the current time on, of the map as it is shown. */
+    ImGui::BeginDisabled(!lv_clip_gif_can_make());
+    if (clipGifButton("##lvgif", picture, false)) {
+        lvGifStart(clipGifLenClampMs(s_gif.mode.lenMs, curMs, totalMs));
     }
-    ImGui::EndPopup();
+    ImGui::EndDisabled();
+
+    /* How long it runs, in seconds; the marker on the timeline sets the same
+     * length. */
+    ImGui::SameLine();
+    clipGifLenField("##lvgiflen", curMs, totalMs, &s_gif.mode.lenMs,
+                    s_gif.active);
+
+    /* The GIFs made so far. */
+    ImGui::SameLine();
+    if (clipGifGalleryButton("##lvgifgallery")) {
+        clipGifGalleryOpen();
+    }
+
+    /* The crop frame on the map: with it on, the GIF takes the part of the
+     * map in the frame. */
+    ImGui::SameLine();
+    if (clipGifToggleButton("##lvgifcrop", s_gif.mode.cropOn,
+                            CLIP_GIF_GLYPH_CROP,
+                            langGetText(STR_CLIPGIF_CROP))) {
+        clipGifModeToggleCrop(&s_gif.mode, s_gif.active);
+    }
 }
+
+void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,
+                             uint32_t startMs, uint32_t totalMs) {
+    if (!lv_clip_gif_tools_shown()) {
+        return;
+    }
+    clipGifLenMarker("##lvgiflenmark", ImVec2(minX, minY), ImVec2(maxX, maxY),
+                     startMs, totalMs, &s_gif.mode.lenMs, s_gif.active);
+}
+
+/* ── Windows ──────────────────────────────────────────────────────── */
 
 /* The window shown while a GIF is made: how far it has got, and Cancel. */
 static void lvGifRenderProgress(float s) {
@@ -474,7 +640,7 @@ void lv_clip_gif_render(void) {
     }
     const float s = ImGui::GetFontSize() / 18.0f;
     clipGifGalleryPoll();
-    lvGifRenderMakeWindow(s);
+    lvGifRenderFrame();
     lvGifRenderProgress(s);
 
     ClipGifGalleryHost host;
@@ -498,26 +664,48 @@ bool lv_clip_gif_gallery_is_open(void) {
 }
 
 void lv_clip_gif_cancel(void) {
-    s_gif.wantMakeWindow = false;
     if (s_gif.active) {
         lvGifFinish(NULL, false);
     }
+    /* A new log starts with recording mode off, as a new replay does in the
+     * game. */
+    clipGifModeReset(&s_gif.mode);
+    s_gif.drag.grab = 0;
+    s_gif.drag.dragging = false;
     lvGifForgetGameId();
 }
 
 void lv_clip_gif_session_end(void) {
     lv_clip_gif_cancel();
+    /* Only on the renderer it was made on, while that renderer is still
+     * there; the picture of a renderer that is gone went with it. */
+    if (s_gif.picture != NULL && g_lv != NULL &&
+        g_lv->renderer == s_gif.pictureFor) {
+        SDL_DestroyTexture(s_gif.picture);
+    }
+    s_gif.picture = nullptr;
+    s_gif.pictureFor = nullptr;
     clipGifGalleryShutdown();
 }
 
 #else /* !CLIP_GIF_GALLERY_BUILT */
 
 bool lv_clip_gif_available(void) { return false; }
+bool lv_clip_gif_can_toggle_mode(void) { return false; }
+bool lv_clip_gif_mode_on(void) { return false; }
+void lv_clip_gif_toggle_mode(void) {}
+bool lv_clip_gif_tools_shown(void) { return false; }
 bool lv_clip_gif_can_make(void) { return false; }
-void lv_clip_gif_request(void) {}
 bool lv_clip_gif_active(void) { return false; }
 void lv_clip_gif_capture_step(void) {}
 void lv_clip_gif_render(void) {}
+bool lv_clip_gif_frame_has_mouse(void) { return false; }
+void lv_clip_gif_tools_row(void) {}
+void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,
+                             uint32_t startMs, uint32_t totalMs) {
+    (void)minX; (void)minY; (void)maxX; (void)maxY;
+    (void)startMs; (void)totalMs;
+}
 void lv_clip_gif_toggle_gallery(void) {}
 bool lv_clip_gif_gallery_is_open(void) { return false; }
 void lv_clip_gif_cancel(void) {}

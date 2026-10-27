@@ -431,7 +431,7 @@ static void handle_keyboard_shortcuts(int *clicked) {
         if (s_lv->isLoaded) { lv_windowRewind(); *clicked = 1; }
     }
     if (!live && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
-        if (lv_clip_gif_can_make()) { lv_clip_gif_request(); *clicked = 1; }
+        if (lv_clip_gif_can_toggle_mode()) { lv_clip_gif_toggle_mode(); *clicked = 1; }
     }
 
     /* Options */
@@ -575,19 +575,21 @@ int lv_imgui_main_menu_bar(void) {
                 lv_windowRewind();
                 clicked = 1;
             }
-            /* A GIF of the map from the current time (imgui_clip_gif.h). Not
-             * from the game view, which has no render target to read. */
+            /* Recording mode (imgui_clip_gif.h): the GIF controls in the
+             * Controls panel, the GIF on the timeline and the crop frame on
+             * the map. The same as the movie camera on the Controls panel. */
             if (!live && lv_clip_gif_available()) {
                 ImGui::Separator();
-                if (ImGui::MenuItem(langGetText(STR_LV_MAKE_GIF), "Ctrl+G", false,
-                                    lv_clip_gif_can_make())) {
-                    lv_clip_gif_request();
+                if (ImGui::MenuItem(langGetText(STR_LV_RECORD_MODE), "Ctrl+G",
+                                    lv_clip_gif_mode_on(),
+                                    lv_clip_gif_can_toggle_mode())) {
+                    lv_clip_gif_toggle_mode();
                     clicked = 1;
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::BeginTooltip();
                     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
-                    ImGui::TextUnformatted(langGetText(STR_LV_MAKE_GIF_TIP));
+                    ImGui::TextUnformatted(langGetText(STR_LV_RECORD_MODE_TIP));
                     ImGui::PopTextWrapPos();
                     ImGui::EndTooltip();
                 }
