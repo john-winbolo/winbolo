@@ -32,7 +32,8 @@
 /* The Frame Rate choice (#312) is shown on desktop builds only. The web
  * page is drawn when the browser asks for a frame, and Android and iOS
  * pace their own screens, so there it would do nothing. */
-#if defined(__EMSCRIPTEN__) || defined(__ANDROID__) ||     (defined(__APPLE__) && TARGET_OS_IOS)
+#if defined(__EMSCRIPTEN__) || defined(__ANDROID__) || \
+    (defined(__APPLE__) && TARGET_OS_IOS)
 #define IMGUI_FRAME_LIMIT_UI 0
 #else
 #define IMGUI_FRAME_LIMIT_UI 1
