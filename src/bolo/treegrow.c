@@ -48,9 +48,6 @@
 
 /*********************************************************
 *NAME:          treeGrowManIsBuildingAt
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/10/26
-*LAST MODIFIED: 27/10/26
 *PURPOSE:
 * Is any man on his way to build on this square? A tree
 * that grew there would sit under a road, building or

@@ -1028,9 +1028,6 @@ void lgmRecall(GameSim *sim, lgm *lgman) {
 
 /*********************************************************
 *NAME:          lgmIsGoingToBuildAt
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/10/26
-*LAST MODIFIED: 27/10/26
 *PURPOSE:
 *  Is the man out on his way to put a road, building or
 *  pillbox on this square? Tree growth asks, so that a tree
