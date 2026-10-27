@@ -5263,8 +5263,6 @@ static const ScnLuaOpParam kScnOpArgs_allied[] = {
     { "a", SCN_PARAM_SLOT, false }, { "b", SCN_PARAM_SLOT, false },
     SCN_OP_ARG_END
 };
-/* A rule name is matched against the rules table and a name that spells none
-   raises, so it is a word out of a fixed set rather than free text. */
 /* The input seat p's player uses: "keyboard", "touch" or "controller". A
    seat out of range, an empty seat and one nobody told the server about
    all answer "keyboard", which every text has. */
@@ -5283,6 +5281,8 @@ static int scnLuaInput(lua_State *L) {
     return 1;
 }
 
+/* A rule name is matched against the rules table and a name that spells none
+   raises, so it is a word out of a fixed set rather than free text. */
 static const ScnLuaOpParam kScnOpArgs_rule[] = {
     { "name", SCN_PARAM_WORD, false }, SCN_OP_ARG_END
 };

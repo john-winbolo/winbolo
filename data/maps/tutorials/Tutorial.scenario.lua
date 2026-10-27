@@ -152,7 +152,7 @@ scenario = {
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-26T21:42Z",
+  updated = "2026-10-27T07:52Z",
   game = "open",
   -- The demo bots and the final-round bot are held seats this file fields
   -- with game.spawn_bot, so the lobby has to allow bots.
@@ -913,8 +913,8 @@ local function show(id)
   end
 end
 
--- White text after its popup (item 37, Andrew: "popup needs to come
--- first"). While a popup is waiting in S.queue, an announcement waits in
+-- White text after its popup, so the popup is read first. While a popup
+-- is waiting in S.queue, an announcement waits in
 -- S.says and the status line is blank (draw_status); both go out once the
 -- queue is empty, so they follow the popup. In the same tick as the popup
 -- is fine: the client draws no white text while a popup is open
@@ -924,7 +924,7 @@ local function release_says()
   local says = S.says
   S.says = {}
   -- "top": every white line sits at the top edge of the view, under the
-  -- status line (Andrew, Oct 11).
+  -- status line.
   for _, a in ipairs(says) do
     S.say_until = math.max(S.say_until or 0, S.frames + a.secs * 50)
     local text
@@ -1244,8 +1244,8 @@ local function draw_status()
   if #S.queue > 0 then text = "" end
   if text == S.status then return end
   -- One line straight to another: blank for STATUS_GAP_FRAMES first, so
-  -- the player sees the line change (Andrew: "I didn't notice it had
-  -- changed").
+  -- the player sees the line change: one line straight into another was
+  -- missed in play-testing.
   if S.status_gap_until ~= nil and S.frames < S.status_gap_until then return end
   -- Not when only a number in the line changed ("5 shots left" to "4 shots
   -- left"): that is the same line counting, and it stays up.
@@ -1519,7 +1519,7 @@ end
 
 -- Start the 5A demo take again: the target back, the blocker back in the
 -- bot's tank, the island's walls and moat back, and a bot with a fresh goal.
--- The bot is taken off and fielded again (item 39): its brain keeps its
+-- The bot is taken off and fielded again: its brain keeps its
 -- attack goal across a teleport, so a bot sent home in the middle of a take
 -- went on from the step it had reached, past building its blocker, and shot
 -- the target with the blocker still in its tank. A bot taken off drops its
@@ -1640,8 +1640,8 @@ local function rearm(n)
     end
     local pb = game.pill(P.p4.n)
     if not d.c_kill and pb ~= nil then
-      -- Never repaired: every hit stays, hidden first or not (Andrew,
-      -- Oct 11). Only a pillbox that left its square is put back.
+      -- Never repaired: every hit stays, hidden first or not. Only a
+      -- pillbox that left its square is put back.
       if pb.in_tank or pb.x ~= P.p4.x or pb.y ~= P.p4.y then
         reset_pill("p4")
       end
@@ -1948,7 +1948,7 @@ function on_tank_spawned(p, mx, my, respawn, scripted)
     end
     if station_of(mx, my) == 5 then
       -- Every spawn in Station 5 has the blocker in the tank, built before
-      -- or not (Andrew, Oct 12), unless it stands alive on its own square.
+      -- or not, unless it stands alive on its own square.
       local L = P.t5b_blocker
       local bl = game.pill(L.n)
       if bl ~= nil and (bl.in_tank or bl.armour == 0 or bl.x ~= L.x or
@@ -2329,8 +2329,8 @@ local function poll()
     local pb = game.pill(P.p4.n)
     if pb ~= nil and not pb.in_tank and pb.armour <= 0 then
       -- Dead. Killed before the hide too: the hide goals are passed over,
-      -- not ticked, and the station goes on to the pick-up (Andrew, Oct 12:
-      -- "keep it as not checked off so they can still complete it").
+      -- not ticked, and the station goes on to the pick-up: the player can
+      -- still come back and do them.
       if not S.done[4].b_in then S.passed[4].b_in = true end
       if not S.done[4].b_hide then S.passed[4].b_hide = true end
       mark(4, "c_kill")

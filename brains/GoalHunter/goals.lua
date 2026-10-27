@@ -14899,9 +14899,6 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
   if BRAIN_DEBUG_MODE then record_reject_history(state) end
 end
 
--- Re-derive pool_partial best_cost/id/obj after sync_ally_claimed_rejects
--- so finalize_pools doesn't pick a candidate that just got REJECT-flagged
--- by the sync sweep.  Cheap: O(candidates per pool).
 -- STAY_AREA (C.STAY_AREA): tag every cached pool row whose square is outside
 -- the area. Runs after the sync/blitz passes (which can clear _reject) and
 -- before rederive_pool_partial_best, so a pool's best is always an inside
@@ -14920,6 +14917,9 @@ function M.stay_area_rejects(state)
   end
 end
 
+-- Re-derive pool_partial best_cost/id/obj after sync_ally_claimed_rejects
+-- so finalize_pools doesn't pick a candidate that just got REJECT-flagged
+-- by the sync sweep.  Cheap: O(candidates per pool).
 local function rederive_pool_partial_best(state)
   local partial = state.pool_partial
   local cache = state.cost_cache
@@ -19213,14 +19213,12 @@ function M.charge_now_holds(state)
   return (r and g and g.kind == "attack_pill" and g.target_id == r.tid) and true or false
 end
 
-
-
 -- Main goal picker entry point. STAY_AREA guard (C.STAY_AREA): the pool
 -- already rejects rows outside the area, but the goals picked ahead of the
 -- pool (commands, sea harvest, special modes, the explore fallback) do not go
 -- through it. A goal whose target square is outside is replaced here by an
--- explore goal to the nearest inside square (the tank's own square when the
--- tank is inside). Off = the inner picker's goal, unchanged.
+-- explore goal to the inside square nearest the goal's own. Off = the inner
+-- picker's goal, unchanged.
 function M.pick_goal(state, world, info, quiet)
   local g = M._pick_goal_inner(state, world, info, quiet)
   if g and g.mx and g.my and g.kind ~= "none" and U.stay_on()
