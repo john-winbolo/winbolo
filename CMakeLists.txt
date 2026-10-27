@@ -5884,6 +5884,21 @@ set(_unit_test_names
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
     log_roundtrip_map_name_at_round_start
+    log_roundtrip_player_lag
+    log_roundtrip_player_lag_recorded
+    log_roundtrip_overrun_stats
+    log_roundtrip_overrun_stats_recorded
+    log_roundtrip_overrun_stats_bots
+    server_lag_log_due
+    server_lag_log_min_gap
+    server_overrun_stats_due
+    lv_player_lag_read
+    lv_lag_track
+    lv_lag_ring
+    lv_lag_feature_default_off
+    lv_lag_view_draw
+    lv_lag_view_rename
+    lv_overrun_read
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record

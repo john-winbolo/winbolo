@@ -701,6 +701,17 @@ struct ServerSim {
                                                  * post-dequeue depth > jitterTarget + 1 */
     uint8_t  statLastRewindTicks[MAX_TANKS];    /* gauge: most recent lag-comp rewind */
 
+    /* The last log_PlayerLag record written for each slot, so the log gets a
+     * new one only when it is due (serverSimLagLogDue). lagLogWritten is
+     * false until the first record after the slot connects. Reads only;
+     * never gate sim behaviour on these. */
+    bool     lagLogWritten[MAX_TANKS];
+    uint32_t lagLogTick[MAX_TANKS];             /* sim->tick of the last record */
+    uint16_t lagLogRttMs[MAX_TANKS];            /* RTT the last record carried */
+    uint8_t  lagLogRewind[MAX_TANKS];           /* rewind the last record carried */
+    bool     lagLogPending[MAX_TANKS];          /* a change came in the gap after the
+                                                 * last record (serverSimLagLogStep) */
+
 #ifdef WB_NETDEBUG
     /* Net-debug rig: sim-executed turn half-steps and mine lays per
      * player. Test-only — never compiled into production builds. */
@@ -1913,6 +1924,37 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
  * test can include and drive it directly. */
 uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
                                      uint16_t pingMs);
+
+/* log_PlayerLag write policy. A slot gets a record about once a second
+ * (LAG_LOG_INTERVAL_TICKS server ticks), when its RTT moves by
+ * LAG_LOG_RTT_STEP_MS or more, when its rewind moves by LAG_LOG_REWIND_STEP
+ * entries or more, and at every anchor (the round's first entry and each
+ * entry that carries a snapshot). written is false when the slot has no
+ * record since it connected, which makes a record due. T2 so the unit test
+ * can drive it directly. */
+#define LAG_LOG_INTERVAL_TICKS 100  /* 1 s of 10 ms server ticks */
+#define LAG_LOG_RTT_STEP_MS    20
+#define LAG_LOG_REWIND_STEP    2
+bool serverSimLagLogDue(bool written, uint32_t lastTick, uint16_t lastRttMs,
+                        uint8_t lastRewind, uint32_t tick, uint16_t rttMs,
+                        uint8_t rewind, bool anchor);
+
+/* The fewest server ticks between two change-driven log_PlayerLag records
+ * for one slot: 10 server ticks, which is 5 log entries. A client that
+ * flaps its view tick would otherwise get a record in every entry. */
+#define LAG_LOG_MIN_GAP_TICKS  10
+
+/* What serverSimLogTick calls for each slot. TRUE when a record is to be
+ * written now. The first record, an anchor, the once-a-second record and a
+ * tick that went back are written at once, as serverSimLagLogDue says. A
+ * change (an RTT or rewind step) is written at once only when
+ * LAG_LOG_MIN_GAP_TICKS have passed since the last record. A change inside
+ * the gap sets *pending, and the slot's values at the end of the gap are
+ * then written, so the log always gets the latest state. The caller clears
+ * *pending when it writes a record. */
+bool serverSimLagLogStep(bool written, uint32_t lastTick, uint16_t lastRttMs,
+                         uint8_t lastRewind, bool *pending, uint32_t tick,
+                         uint16_t rttMs, uint8_t rewind, bool anchor);
 
 /* Test/inspection accessor: pointer to slot's round stats, or NULL if
  * slot >= MAX_TANKS. */

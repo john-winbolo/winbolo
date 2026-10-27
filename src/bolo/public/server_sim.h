@@ -435,7 +435,7 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
  * bot's registered display name copied via SDL_strlcpy. */
 typedef struct {
     bool     isBot;
-    bool     hasBrain;          /* aiFull with a live brain */
+    bool     hasBrain;          /* the bot has a live brain */
     char     brainName[64];     /* brain identity: basename of the brain
                                  * script path, with .lua stripped and
                                  * "init" replaced by the parent directory
@@ -1391,6 +1391,43 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
  *  locked - Whether the game is currently locked
  *********************************************************/
 void serverSimInformation(ServerSim *sim, bool locked);
+
+/*********************************************************
+ *NAME:          serverSimPrintOverrunStats
+ *PURPOSE:
+ *  Prints the overrun lines of the "info" command to stdout
+ *  while a round runs: the server loop's timing with its
+ *  over-budget count, the bot pool's lines with its total
+ *  overruns, and each bot's [BOT] line with its own
+ *  overruns, under one header line. The text is made by the
+ *  same code "info" uses. Resets no counter, so the values
+ *  "info" prints later in the round are as they were.
+ *
+ *ARGUMENTS:
+ *  sim          - Pointer to the ServerSim
+ *  roundSeconds - Game time of the round so far, in seconds,
+ *                 for the header line
+ *********************************************************/
+void serverSimPrintOverrunStats(ServerSim *sim, uint32_t roundSeconds);
+
+/*********************************************************
+ *NAME:          serverSimLogOverrunStats
+ *PURPOSE:
+ *  Adds a log_OverrunStats record to the round log (.wbv)
+ *  with the numbers serverSimPrintOverrunStats prints: the
+ *  server loop's timing with its over-budget count, the bot
+ *  pool's timing with its total overruns, and each bot's
+ *  timing and overruns (layout in overrun_record.h and
+ *  docs/replay-format.md). Resets no counter. Does nothing
+ *  when no log is open.
+ *
+ *ARGUMENTS:
+ *  sim         - Pointer to the ServerSim
+ *  roundFrames - Running 20 ms server frames of the round so far
+ *  roundEnd    - TRUE for the record written as the round's log
+ *                closes, FALSE for a timed one
+ *********************************************************/
+void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEnd);
 
 /*********************************************************
  *NAME:          serverSimSaveMap

@@ -1365,6 +1365,51 @@
    tooltip. */
 #define STR_LV_TANK_BARS                    2831
 #define STR_LV_TANK_BARS_TIP                2832
+/* The viewer's player lag (log_PlayerLag): the Tank panel's line (number the
+   round-trip time in ms, number2 how far behind the present the player's
+   screen was), its line for a player with no record yet, the tooltip of its
+   graph (number the highest time), the "see what this player saw" check box
+   and its tooltip, the banner over the map while that view is on (string1 the
+   player), the banner while the view has no history for the time yet, the
+   banner's button, the HUD panel's tank tooltip with the time after it
+   (string1 the tooltip), and the View menu's item and tooltip. LINE_BOT is
+   the Tank panel's line for a bot, which has no round trip (number how far
+   behind the present its screen was). */
+#define STR_LV_LAG_LINE                     3110
+#define STR_LV_LAG_NONE                     3111
+#define STR_LV_LAG_GRAPH_TIP                3112
+#define STR_LV_LAG_VIEW                     3113
+#define STR_LV_LAG_VIEW_TIP                 3114
+#define STR_LV_LAG_BANNER                   3115
+#define STR_LV_LAG_BANNER_WAIT              3116
+#define STR_LV_LAG_OFF                      3117
+#define STR_LV_LAG_HUD_TIP                  3118
+#define STR_LV_LAG_MENU                     3119
+#define STR_LV_LAG_MENU_TIP                 3120
+#define STR_LV_LAG_LINE_BOT                 3121
+/* The viewer's server timing (log_OverrunStats) in the Game Info panel: the
+   section's name, the line that says when the record shown was written
+   (string1 the round time, m:ss), the record's lines (string1..3 times in ms
+   with one decimal; number and number2 counts), the bot table's column names,
+   the line for a time before the round's first record, and a bot's name when
+   the slot has none (number the player). */
+#define STR_LV_TIMING_HEADER                3130
+#define STR_LV_TIMING_AT                    3131
+#define STR_LV_TIMING_AT_END                3132
+#define STR_LV_TIMING_TICK                  3133
+#define STR_LV_TIMING_OVER_BUDGET           3134
+#define STR_LV_TIMING_SIM                   3135
+#define STR_LV_TIMING_POOL                  3136
+#define STR_LV_TIMING_POOL_SINGLE           3137
+#define STR_LV_TIMING_BRAIN                 3138
+#define STR_LV_TIMING_PREP                  3139
+#define STR_LV_TIMING_OVERRUNS              3140
+#define STR_LV_TIMING_COL_BOT               3141
+#define STR_LV_TIMING_COL_LAST              3142
+#define STR_LV_TIMING_COL_PEAK              3143
+#define STR_LV_TIMING_COL_OVERRUNS          3144
+#define STR_LV_TIMING_NONE_YET              3145
+#define STR_LV_TIMING_PLAYER                3146
 /* Log viewer Controls panel: what each button does, for its tooltip. {string1} of the two jumps is a number of seconds ("2.5", "12"); KEY_FMT puts a button's shortcut key after its name. */
 #define STR_LV_TIP_BACK_SECS                2833
 #define STR_LV_TIP_FWD_SECS                 2834
