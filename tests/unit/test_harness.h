@@ -1655,8 +1655,6 @@ int run_tutorial_tokens_random_input(void);
  * UTF-8, every brace a known key token, and input wordings well formed. */
 int run_tutorial_text_fits(void);
 int run_tutorial_text_well_formed(void);
-int run_tutorial_lang_ref(void);
-int run_lang_name_table_classic_tutorial(void);
 int run_scenario_announce_waits_for_popup(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule

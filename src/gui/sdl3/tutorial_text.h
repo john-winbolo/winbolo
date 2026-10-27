@@ -9,21 +9,19 @@
  *Purpose:
  *  Resolves a scenario's popup text into a sequence of
  *  renderable segments (TEXT runs, PNG glyphs, or
- *  procedural keycaps).  Two transformations:
- *    1. A text that is a whole "{LANG:NAME}" reference
- *       becomes that string of the language file.
- *    2. Expand {ACCEL}/{BRAKE}/{LEFT}/{RIGHT}/{FIRE}/{MINE}/
- *       {SCROLL_*}/{DISMISS}/{BUILD_*}/{QUICK_*} tokens into
- *       one glyph segment each (tutorial_tokens.h lists them).
- *       The quick-build tokens show the build tool's button on
- *       a controller and the words "the build buttons" on a
- *       touch screen, which has neither.  In controller mode, discrete buttons
- *       resolve through the binding-aware resolver (Steam
- *       Input origin first, then the live SDL binding) so the
- *       glyph follows the current remap; analog/stick tokens
- *       use the Path-B glyph_* art.  In keyboard mode each
- *       token becomes its scancode PNG (procedural keycap
- *       fallback).
+ *  procedural keycaps).  It expands the {ACCEL}/{BRAKE}/
+ *  {LEFT}/{RIGHT}/{FIRE}/{MINE}/{SCROLL_*}/{DISMISS}/
+ *  {BUILD_*}/{QUICK_*} tokens into one glyph segment each
+ *  (tutorial_tokens.h lists them).
+ *  The quick-build tokens show the build tool's button on
+ *  a controller and the words "the build buttons" on a
+ *  touch screen, which has neither.  In controller mode, discrete buttons
+ *  resolve through the binding-aware resolver (Steam
+ *  Input origin first, then the live SDL binding) so the
+ *  glyph follows the current remap; analog/stick tokens
+ *  use the Path-B glyph_* art.  In keyboard mode each
+ *  token becomes its scancode PNG (procedural keycap
+ *  fallback).
  *********************************************************/
 
 #ifndef TUTORIAL_TEXT_H

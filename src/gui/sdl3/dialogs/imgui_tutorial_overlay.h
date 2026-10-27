@@ -30,10 +30,9 @@ struct ClientSim;
 
 /* Show one message: a scenario's popup (game.popup), drawn as a modal
  * popup through the main ImGui context. Tokens such as {ACCEL} or
- * {QUICK_TREE} are expanded and a whole "{LANG:NAME}" text is looked up
- * (tutorial_text.h). Ignored if the overlay is already showing, so the
- * caller holds the text back until tutorialOverlayIsOpen() is false.
- * Copies `text`. */
+ * {QUICK_TREE} are expanded (tutorial_text.h). Ignored if the overlay is
+ * already showing, so the caller holds the text back until
+ * tutorialOverlayIsOpen() is false. Copies `text`. */
 void tutorialOverlayShowText(const char *text);
 
 /* True while the overlay is open or pending-open this frame.  Fed into

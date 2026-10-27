@@ -11,17 +11,35 @@
 --
 -- PASS:
 --   - the intro's three popups come first;
---   - STR_TUTORIAL01 is sent while the real tank is on row 210;
+--   - t01 is sent while the real tank is on row 210;
 --   - game.stop_tank is called on row 210 and the server takes it.
 
 CLASSIC_TUTORIAL_PLAYER = 0
 ARENA = { phase = 0, x = nil, pops = {}, stop_ok = nil, stop_row = nil,
           wait = 0, done = false }
 
+-- The message a popup is, read from the script's English table: its key,
+-- the input it is worded for, and which of its parts it is.
+ARENA_TEXT = {}
+for key, v in pairs(TEXT.en.pop) do
+  local wordings = v
+  if type(v) ~= "table" or v.keyboard == nil then wordings = { keyboard = v } end
+  for input, w in pairs(wordings) do
+    local parts = w
+    if type(w) == "string" then parts = { w } end
+    for i, part in ipairs(parts) do
+      ARENA_TEXT[part] = { key = key, input = input, part = i, parts = #parts }
+    end
+  end
+end
+
 local real_popup = game.popup
 game.popup = function(text, p, ...)
   local t = game.tank(0)
-  ARENA.pops[#ARENA.pops + 1] = { text = text, my = t and t.my }
+  local m = ARENA_TEXT[text]
+  if m == nil or m.part == 1 then
+    ARENA.pops[#ARENA.pops + 1] = { text = m and m.key or text, my = t and t.my }
+  end
   return real_popup(text, p, ...)
 end
 
@@ -69,12 +87,12 @@ function on_tick(tick)
     A.done = true
     local p = A.pops
     if #p < 4 then return verdict(false, #p .. " popups") end
-    if p[1].text ~= "{LANG:STR_TUTORIAL_START01}" or
-       p[2].text ~= "{LANG:STR_TUTORIAL_START02}" or
-       p[3].text ~= "{LANG:STR_TUTORIAL_START04}" then
+    if p[1].text ~= "start01" or
+       p[2].text ~= "start02" or
+       p[3].text ~= "start04" then
       return verdict(false, "the intro is not first")
     end
-    if p[4].text ~= "{LANG:STR_TUTORIAL01}" or p[4].my ~= 210 then
+    if p[4].text ~= "t01" or p[4].my ~= 210 then
       return verdict(false, string.format("popup 4 is %s on row %s",
                                           p[4].text, tostring(p[4].my)))
     end

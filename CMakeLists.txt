@@ -6218,8 +6218,6 @@ set(_unit_test_names
     tutorial_tokens_random_input
     tutorial_text_fits
     tutorial_text_well_formed
-    tutorial_lang_ref
-    lang_name_table_classic_tutorial
     scenario_announce_waits_for_popup
     sim_rules_codec_roundtrip
     sim_rules_codec_golden

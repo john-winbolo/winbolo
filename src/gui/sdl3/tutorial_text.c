@@ -211,23 +211,8 @@ static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
   return idx + 1;
 }
 
-/* A text that is a whole "{LANG:NAME}" reference is replaced by that string
-   of the language file. A string with a wording for each input is named by
-   the script for the input it wants (game.input). Any other text, and a name
-   the language file does not have, is answered as it is. */
-static const char *langRefText(const char *src) {
-  char name[96];
-  langid id;
-  if (!src || src[0] != '{') return src;
-  if (!tutorialLangRefParse(src, name, sizeof(name))) return src;
-  id = langIdFromName(name);
-  if (id == 0) return src;
-  return langGetText(id);
-}
-
 int tutorialResolveText(const char *src, TutorialSeg *out, int max) {
   if (!out || max <= 0 || !src) return 0;
-  src = langRefText(src);
 
   /* Plain prose — no tokens to expand.  Emit one TEXT segment that points
      at the caller's own string. */
@@ -314,7 +299,6 @@ static const char *plainTokenName(TutorialTokenId id, void *ctx) {
 }
 
 void tutorialExpandTextPlain(const char *src, char *out, size_t cap) {
-  src = langRefText(src);
   tutorialTokensExpand(src, out, cap, plainTokenName, NULL);
 }
 

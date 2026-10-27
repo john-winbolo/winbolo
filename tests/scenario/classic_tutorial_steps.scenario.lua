@@ -13,7 +13,8 @@
 --   - the intro's three popups are sent first, on the first tick;
 --   - each later step's popups are sent on the tick the tank is on its row,
 --     in the order of the old step table, and nothing else is sent;
---   - every popup is a whole "{LANG:NAME}" reference and the server takes it;
+--   - every popup is one of the script's English messages, or a part of one
+--     right after the part before it, and the server takes it;
 --   - game.stop_tank is called once on each step's row, and on no other row;
 --   - game.tutorial_done is called once, for seat 0, on the last step's row
 --     after its popup, and the server takes it.
@@ -22,17 +23,17 @@ CLASSIC_TUTORIAL_PLAYER = 0
 ARENA = { my = 214, pops = {}, stops = {}, bad = {}, dones = {},
           done = false }
 
--- The old tutorial's steps (src/bolo/tutorial.c), row then message names.
+-- The old tutorial's steps (src/bolo/tutorial.c), row then message keys.
 ARENA.want = {
-  { nil, "STR_TUTORIAL_START01", "STR_TUTORIAL_START02", "STR_TUTORIAL_START04" },
-  { 210, "STR_TUTORIAL01" }, { 199, "STR_TUTORIAL02" }, { 192, "STR_TUTORIAL03" },
-  { 186, "STR_TUTORIAL04" }, { 181, "STR_TUTORIAL05" }, { 175, "STR_TUTORIAL06" },
-  { 166, "STR_TUTORIAL07" }, { 159, "STR_TUTORIAL08", "STR_TUTORIAL09" },
-  { 142, "STR_TUTORIAL10", "STR_TUTORIAL11" }, { 122, "STR_TUTORIAL12" },
-  { 120, "STR_TUTORIAL13", "STR_TUTORIAL14" }, { 110, "STR_TUTORIAL15" },
-  { 103, "STR_TUTORIAL16" }, { 98, "STR_TUTORIAL17" },
-  { 84, "STR_TUTORIAL18", "STR_TUTORIAL19" }, { 66, "STR_TUTORIAL20", "STR_TUTORIAL21" },
-  { 47, "STR_TUTORIAL22", "STR_TUTORIAL23", "STR_TUTORIAL24" }, { 21, "STR_TUTORIAL25" },
+  { nil, "start01", "start02", "start04" },
+  { 210, "t01" }, { 199, "t02" }, { 192, "t03" },
+  { 186, "t04" }, { 181, "t05" }, { 175, "t06" },
+  { 166, "t07" }, { 159, "t08", "t09" },
+  { 142, "t10", "t11" }, { 122, "t12" },
+  { 120, "t13", "t14" }, { 110, "t15" },
+  { 103, "t16" }, { 98, "t17" },
+  { 84, "t18", "t19" }, { 66, "t20", "t21" },
+  { 47, "t22", "t23", "t24" }, { 21, "t25" },
 }
 
 local real_tank = game.tank
@@ -45,17 +46,40 @@ game.tank = function(p)
   return t
 end
 
+-- The message a popup is, read from the script's English table: its key,
+-- the input it is worded for, and which of its parts it is.
+ARENA_TEXT = {}
+for key, v in pairs(TEXT.en.pop) do
+  local wordings = v
+  if type(v) ~= "table" or v.keyboard == nil then wordings = { keyboard = v } end
+  for input, w in pairs(wordings) do
+    local parts = w
+    if type(w) == "string" then parts = { w } end
+    for i, part in ipairs(parts) do
+      ARENA_TEXT[part] = { key = key, input = input, part = i, parts = #parts }
+    end
+  end
+end
+
 local real_popup = game.popup
 game.popup = function(text, p, ...)
   local ok = real_popup(text, p, ...)
-  local name = string.match(text, "^{LANG:([A-Z0-9_]+)}$")
-  if name == nil then
-    ARENA.bad[#ARENA.bad + 1] = "popup is not a reference: " .. text
+  local m = ARENA_TEXT[text]
+  if m == nil then
+    ARENA.bad[#ARENA.bad + 1] = "popup is not a message: " .. string.sub(text, 1, 40)
   elseif not ok then
-    ARENA.bad[#ARENA.bad + 1] = "popup refused: " .. name
+    ARENA.bad[#ARENA.bad + 1] = "popup refused: " .. m.key
   end
   if p ~= 0 then ARENA.bad[#ARENA.bad + 1] = "popup sent to " .. tostring(p) end
-  ARENA.pops[#ARENA.pops + 1] = { name = name or text, my = ARENA.my }
+  local last = ARENA.pops[#ARENA.pops]
+  if m ~= nil and m.part > 1 then
+    if last == nil or last.name ~= m.key then
+      ARENA.bad[#ARENA.bad + 1] = "part " .. m.part .. " of " .. m.key
+        .. " without the part before it"
+    end
+  else
+    ARENA.pops[#ARENA.pops + 1] = { name = m and m.key or text, my = ARENA.my }
+  end
   return ok
 end
 

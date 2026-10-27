@@ -39,11 +39,11 @@ ARENA.my = 214
 
 ARENA.want_stops = { 210, 199, 192, 186, 181, 175, 166, 159, 142, 122, 120 }
 ARENA.want_pops = {
-  "STR_TUTORIAL_START01", "STR_TUTORIAL_START02", "STR_TUTORIAL_START04",
-  "STR_TUTORIAL01", "STR_TUTORIAL02", "STR_TUTORIAL03", "STR_TUTORIAL04",
-  "STR_TUTORIAL05", "STR_TUTORIAL06", "STR_TUTORIAL07", "STR_TUTORIAL08",
-  "STR_TUTORIAL09", "STR_TUTORIAL10", "STR_TUTORIAL11", "STR_TUTORIAL12",
-  "STR_TUTORIAL13", "STR_TUTORIAL14",
+  "start01", "start02", "start04",
+  "t01", "t02", "t03", "t04",
+  "t05", "t06", "t07", "t08",
+  "t09", "t10", "t11", "t12",
+  "t13", "t14",
 }
 
 local real_tank = game.tank
@@ -56,10 +56,27 @@ game.tank = function(p)
   return t
 end
 
+-- The message a popup is, read from the script's English table: its key,
+-- the input it is worded for, and which of its parts it is.
+ARENA_TEXT = {}
+for key, v in pairs(TEXT.en.pop) do
+  local wordings = v
+  if type(v) ~= "table" or v.keyboard == nil then wordings = { keyboard = v } end
+  for input, w in pairs(wordings) do
+    local parts = w
+    if type(w) == "string" then parts = { w } end
+    for i, part in ipairs(parts) do
+      ARENA_TEXT[part] = { key = key, input = input, part = i, parts = #parts }
+    end
+  end
+end
+
 local real_popup = game.popup
 game.popup = function(text, p, ...)
-  ARENA.pops[#ARENA.pops + 1] =
-    string.match(text, "^{LANG:([A-Z0-9_]+)}$") or text
+  local m = ARENA_TEXT[text]
+  if m == nil or m.part == 1 then
+    ARENA.pops[#ARENA.pops + 1] = m and m.key or text
+  end
   return real_popup(text, p, ...)
 end
 

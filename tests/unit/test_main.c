@@ -988,8 +988,6 @@ static const UnitTestEntry s_tests[] = {
     { "tutorial_tokens_random_input",            run_tutorial_tokens_random_input            },
     { "tutorial_text_fits",                      run_tutorial_text_fits                      },
     { "tutorial_text_well_formed",               run_tutorial_text_well_formed               },
-    { "tutorial_lang_ref",                       run_tutorial_lang_ref                       },
-    { "lang_name_table_classic_tutorial",        run_lang_name_table_classic_tutorial        },
     { "scenario_announce_waits_for_popup",       run_scenario_announce_waits_for_popup       },
     { "sim_rules_codec_roundtrip",               run_sim_rules_codec_roundtrip               },
     { "sim_rules_codec_golden",                  run_sim_rules_codec_golden                  },

@@ -4,7 +4,7 @@
 --
 -- As in the old tutorial, the tank respawns at start 1 (out at sea) until
 -- the boat step (row 66) has fired, and at start 2 (the far bank) after it.
--- The first respawn at start 2 shows STR_TUTORIAL_RESPAWN1, once.
+-- The first respawn at start 2 shows respawn1, once.
 --
 -- Player 0 plays the tutorial's player, held still. The arena kills the
 -- real tank with game.kill_tank and reads where on_tank_spawned puts the
@@ -14,7 +14,7 @@
 --   1. Kill the tank before the boat step: it respawns near start 1, and no
 --      far-bank message is sent.
 --   2. Drive the stand-in past row 66.
---   3. Kill the tank: it respawns near start 2, and STR_TUTORIAL_RESPAWN1 is
+--   3. Kill the tank: it respawns near start 2, and respawn1 is
 --      sent.
 --   4. Kill it again: it respawns near start 2, and no second message.
 --
@@ -34,9 +34,27 @@ game.tank = function(p)
   return t
 end
 
+-- The message a popup is, read from the script's English table: its key,
+-- the input it is worded for, and which of its parts it is.
+ARENA_TEXT = {}
+for key, v in pairs(TEXT.en.pop) do
+  local wordings = v
+  if type(v) ~= "table" or v.keyboard == nil then wordings = { keyboard = v } end
+  for input, w in pairs(wordings) do
+    local parts = w
+    if type(w) == "string" then parts = { w } end
+    for i, part in ipairs(parts) do
+      ARENA_TEXT[part] = { key = key, input = input, part = i, parts = #parts }
+    end
+  end
+end
+
 local real_popup = game.popup
 game.popup = function(text, p, ...)
-  if text == "{LANG:STR_TUTORIAL_RESPAWN1}" then ARENA.msg = ARENA.msg + 1 end
+  local m = ARENA_TEXT[text]
+  if m ~= nil and m.key == "respawn1" and m.part == 1 then
+    ARENA.msg = ARENA.msg + 1
+  end
   return real_popup(text, p, ...)
 end
 

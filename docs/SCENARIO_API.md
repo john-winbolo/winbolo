@@ -2501,31 +2501,6 @@ the script for each input; see
 A brace that starts no key token (`{`, `{FOO}`, `{accel}`) is shown as it is
 written.
 
-A text can also name one whole string of the game's language file. When the
-whole text of a popup, a status line or an announcement is `{LANG:NAME}`,
-with nothing before or after it, the client shows the string called `NAME`
-in the player's language. `NAME` is the string's name as the language files
-write it, such as `STR_TUTORIAL01`: capital letters, digits and `_` only.
-The client then fills in the key tokens in it. Where the game has a touch
-or a controller wording of that string (the `_TOUCH` and `_CTRL` strings of
-the old built-in tutorial), the script names the one it wants, picked by
-`game.input(p)` as in [Text for the player's
-input](#text-for-the-players-input). A name the language file does not
-have is shown as it is written. So is a
-text with anything else in it: one reference is one whole message, and
-`"Hi {LANG:STR_TUTORIAL01}"` is not filled in. A client from before this
-was added shows the reference as it is written.
-
-```lua
-game.popup("{LANG:STR_TUTORIAL01}", p)
-```
-
-The server does not read the reference, so the byte limits count it as
-sent. The strings are the game's, not the script's: use this only for a
-string the game ships, such as the Classic Tutorial's messages. A script's
-own text belongs in a table of its own, as [Text in the player's
-language](#text-in-the-players-language) shows.
-
 ### The panel
 
 A panel is a square of 128 logical units on a side, origin top-left, with `x`

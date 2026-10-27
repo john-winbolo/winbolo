@@ -1,22 +1,21 @@
 -- GATE: ticks=3000 bots=1 script=data/maps/tutorials/Classic Tutorial.scenario.lua
 --
 -- Classic Tutorial: a message with a touch or a controller wording is sent
--- under that wording's name for a player on that input.
+-- in that wording to a player on that input.
 --
 -- The arena drives the tank north as classic_tutorial_steps does, and puts
 -- a stand-in over game.input for the tutorial's player: "touch" from the
 -- start row down to row 160, "controller" north of it. game.popup is
--- wrapped to note the name of each popup the script sends.
+-- wrapped to note which message, and which wording of it, each popup is.
 --
 -- PASS:
---   - each popup is sent under the name for the input of the moment: the
---     _TOUCH or _CTRL name where the message has one, and the keyboard
---     name where it has none (STR_TUTORIAL_START01 has no controller
+--   - each message is sent in the wording for the input of the moment: the
+--     touch or controller wording where the message has one, and the
+--     keyboard wording where it has none (start01 has no controller
 --     wording, and most messages have neither);
 --   - the server takes every popup;
---   - the touch half covers STR_TUTORIAL_START01, STR_TUTORIAL_START04 and
---     STR_TUTORIAL01 to 06, and the controller half STR_TUTORIAL10, 14, 16,
---     18, 19 and 21.
+--   - the touch half covers start01, start04 and t01 to t06, and the
+--     controller half t10, t14, t16, t18, t19 and t21.
 
 CLASSIC_TUTORIAL_PLAYER = 0
 ARENA = { my = 214, pops = {}, bad = {}, done = false }
@@ -24,30 +23,30 @@ ARENA = { my = 214, pops = {}, bad = {}, done = false }
 -- The messages the arena expects with an input wording, written out here
 -- rather than read from the script.
 ARENA.touch = {
-  STR_TUTORIAL_START01 = true, STR_TUTORIAL_START04 = true,
-  STR_TUTORIAL01 = true, STR_TUTORIAL02 = true, STR_TUTORIAL03 = true,
-  STR_TUTORIAL04 = true, STR_TUTORIAL05 = true, STR_TUTORIAL06 = true,
-  STR_TUTORIAL10 = true, STR_TUTORIAL14 = true, STR_TUTORIAL16 = true,
-  STR_TUTORIAL18 = true, STR_TUTORIAL19 = true, STR_TUTORIAL21 = true,
+  start01 = true, start04 = true,
+  t01 = true, t02 = true, t03 = true,
+  t04 = true, t05 = true, t06 = true,
+  t10 = true, t14 = true, t16 = true,
+  t18 = true, t19 = true, t21 = true,
 }
 ARENA.ctrl = {
-  STR_TUTORIAL_START04 = true,
-  STR_TUTORIAL01 = true, STR_TUTORIAL02 = true, STR_TUTORIAL03 = true,
-  STR_TUTORIAL04 = true, STR_TUTORIAL05 = true, STR_TUTORIAL06 = true,
-  STR_TUTORIAL10 = true, STR_TUTORIAL14 = true, STR_TUTORIAL16 = true,
-  STR_TUTORIAL18 = true, STR_TUTORIAL19 = true, STR_TUTORIAL21 = true,
+  start04 = true,
+  t01 = true, t02 = true, t03 = true,
+  t04 = true, t05 = true, t06 = true,
+  t10 = true, t14 = true, t16 = true,
+  t18 = true, t19 = true, t21 = true,
 }
 
 -- Every message the tutorial sends, in order (as in classic_tutorial_steps).
 ARENA.want = {
-  "STR_TUTORIAL_START01", "STR_TUTORIAL_START02", "STR_TUTORIAL_START04",
-  "STR_TUTORIAL01", "STR_TUTORIAL02", "STR_TUTORIAL03", "STR_TUTORIAL04",
-  "STR_TUTORIAL05", "STR_TUTORIAL06", "STR_TUTORIAL07", "STR_TUTORIAL08",
-  "STR_TUTORIAL09", "STR_TUTORIAL10", "STR_TUTORIAL11", "STR_TUTORIAL12",
-  "STR_TUTORIAL13", "STR_TUTORIAL14", "STR_TUTORIAL15", "STR_TUTORIAL16",
-  "STR_TUTORIAL17", "STR_TUTORIAL18", "STR_TUTORIAL19", "STR_TUTORIAL20",
-  "STR_TUTORIAL21", "STR_TUTORIAL22", "STR_TUTORIAL23", "STR_TUTORIAL24",
-  "STR_TUTORIAL25",
+  "start01", "start02", "start04",
+  "t01", "t02", "t03", "t04",
+  "t05", "t06", "t07", "t08",
+  "t09", "t10", "t11", "t12",
+  "t13", "t14", "t15", "t16",
+  "t17", "t18", "t19", "t20",
+  "t21", "t22", "t23", "t24",
+  "t25",
 }
 
 local function input_now()
@@ -71,16 +70,35 @@ game.input = function(p)
   return real_input(p)
 end
 
+-- The message a popup is, read from the script's English table: its key,
+-- the input it is worded for, and which of its parts it is.
+ARENA_TEXT = {}
+for key, v in pairs(TEXT.en.pop) do
+  local wordings = v
+  if type(v) ~= "table" or v.keyboard == nil then wordings = { keyboard = v } end
+  for input, w in pairs(wordings) do
+    local parts = w
+    if type(w) == "string" then parts = { w } end
+    for i, part in ipairs(parts) do
+      ARENA_TEXT[part] = { key = key, input = input, part = i, parts = #parts }
+    end
+  end
+end
+
 local real_popup = game.popup
 game.popup = function(text, p, ...)
   local ok = real_popup(text, p, ...)
-  local name = string.match(text, "^{LANG:([A-Z0-9_]+)}$")
-  if name == nil then
-    ARENA.bad[#ARENA.bad + 1] = "popup is not a reference: " .. text
+  local m = ARENA_TEXT[text]
+  if m == nil then
+    ARENA.bad[#ARENA.bad + 1] = "popup is not a message: " .. string.sub(text, 1, 40)
   elseif not ok then
-    ARENA.bad[#ARENA.bad + 1] = "popup refused: " .. name
+    ARENA.bad[#ARENA.bad + 1] = "popup refused: " .. m.key
   end
-  ARENA.pops[#ARENA.pops + 1] = { name = name or text, input = input_now() }
+  if m == nil or m.part == 1 then
+    ARENA.pops[#ARENA.pops + 1] = { name = m and m.key or text,
+                                    wording = m and m.input,
+                                    input = input_now() }
+  end
   return ok
 end
 
@@ -91,19 +109,20 @@ local function check()
   if #A.pops ~= #A.want then
     return false, string.format("%d popups, want %d", #A.pops, #A.want)
   end
-  for i, base in ipairs(A.want) do
+  for i, key in ipairs(A.want) do
     local got = A.pops[i]
-    local want = base
-    if got.input == "touch" and A.touch[base] then
-      want = base .. "_TOUCH"
+    local want = "keyboard"
+    if got.input == "touch" and A.touch[key] then
+      want = "touch"
       touched = touched + 1
-    elseif got.input == "controller" and A.ctrl[base] then
-      want = base .. "_CTRL"
+    elseif got.input == "controller" and A.ctrl[key] then
+      want = "controller"
       ctrled = ctrled + 1
     end
-    if got.name ~= want then
-      return false, string.format("popup %d on %s is %s, want %s", i,
-                                  got.input, got.name, want)
+    if got.name ~= key or got.wording ~= want then
+      return false, string.format("popup %d on %s is %s in the %s wording, "
+        .. "want %s in the %s wording", i, got.input, tostring(got.name),
+        tostring(got.wording), key, want)
     end
   end
   if touched ~= 8 or ctrled ~= 6 then
