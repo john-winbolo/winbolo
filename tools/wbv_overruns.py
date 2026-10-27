@@ -20,6 +20,16 @@ from before the record and are reported as such.
 import struct
 import sys
 import zipfile
+import zlib
+
+# The most bytes of log.dat the viewer reads (LOG_MAX_SIZE in
+# src/logviewer/blocks.c). A member over this is refused before it is
+# unpacked, so a small zip cannot make the tool unpack gigabytes.
+LOG_MAX_SIZE = 512 * 1024 * 1024
+
+# The newest log version this tool reads. A later version may change the
+# layout, so it is refused rather than read as V3.
+LOG_VERSION_MAX = 3
 
 LOG_QUIT = 0
 LOG_NOEVENTS = 1
@@ -204,6 +214,10 @@ def read_events(r, count, names, found, out):
 
 def read_file(path, out):
     with zipfile.ZipFile(path) as z:
+        size = z.getinfo("log.dat").file_size
+        if size > LOG_MAX_SIZE:
+            raise LogError("log.dat is %d bytes, over the %d byte limit the viewer reads"
+                           % (size, LOG_MAX_SIZE))
         data = z.read("log.dat")
     r = Reader(data)
     version, map_name = read_header(r)
@@ -213,13 +227,18 @@ def read_file(path, out):
         out.write("No overrun records: a V%d file is from before the record existed.\n"
                   % version)
         return 0
+    if version > LOG_VERSION_MAX:
+        raise LogError("log version %d is newer than this tool reads (V%d)"
+                       % (version, LOG_VERSION_MAX))
     names = {}
     found = []
     entries = 0
+    ended = False
     while not r.done():
         op = r.u8()
         entries += 1
         if op == LOG_QUIT:
+            ended = True
             break
         if op == LOG_NOEVENTS:
             r.u8()
@@ -233,7 +252,12 @@ def read_file(path, out):
             read_snapshot(r, names)
         else:
             raise LogError("unknown record opcode %d at byte %d" % (op, r.pos - 1))
-    out.write("Read %d log entries to the end of the stream.\n" % entries)
+    if ended:
+        out.write("Read %d log entries to the end of the stream.\n" % entries)
+    else:
+        out.write("Read %d log entries. The stream has no end marker (LOG_QUIT), so"
+                  " the file was cut short; the records above are the ones before"
+                  " the cut.\n" % entries)
     if not found:
         out.write("No overrun records. A server made before the record existed"
                   " recorded this file.\n")
@@ -252,7 +276,12 @@ def main(argv):
             sys.stdout.write("\n")
         try:
             read_file(path, sys.stdout)
-        except (OSError, KeyError, zipfile.BadZipFile, LogError) as e:
+        except (OSError, KeyError, zipfile.BadZipFile, zlib.error, EOFError,
+                RuntimeError, NotImplementedError, MemoryError, LogError) as e:
+            # zlib.error and EOFError: a corrupt or cut deflate stream.
+            # RuntimeError: an encrypted member. NotImplementedError: a
+            # compression method zipfile does not have. MemoryError: a member
+            # that passed the size check but still could not be held.
             sys.stderr.write("%s: %s\n" % (path, e))
             rc = 1
     return rc
