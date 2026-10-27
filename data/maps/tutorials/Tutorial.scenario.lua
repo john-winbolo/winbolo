@@ -47,7 +47,6 @@
 -- The map, and the LAYOUT block below, are written by
 -- tools/make_tutorial_map.py. Change the map there, not here.
 --
--- The decisions behind this file are in docs/TUTORIAL_DECISIONS.md.
 -- The API it is written against: docs/SCENARIO_API.md.
 -- =========================================================================
 
@@ -279,8 +278,7 @@ end
 -- A text is picked when it is sent, never kept: a popup when it is shown,
 -- an announcement when it goes out (say), the status line and the panel
 -- at each poll. So a player who changes language mid-game reads the next
--- line in the new one. See docs/TUTORIAL_DECISIONS.md, "Oct 26
--- localisation".
+-- line in the new one.
 --
 -- An entry with a number in it is a string.format pattern ("%d"), or for
 -- English, which writes "1 shot" and "2 shots", a function given the same
@@ -451,8 +449,8 @@ TEXT.en = {
   -- The status line for each goal: what to do next. A line too wide for
   -- the game view at a 1280-wide window (about 390 of the client's layout
   -- units, with the longest controller button words in) is split in two
-  -- with "\n"; the client draws each row centred. See
-  -- docs/TUTORIAL_DECISIONS.md, "Status line width".
+  -- with "\n"; the client draws each row centred (docs/SCENARIO_API.md,
+  -- "Line breaks").
   step = {
     a_refill = "Drive onto the green-marked base, then STOP\non it and wait "
       .. "while it refills.",
@@ -2174,14 +2172,20 @@ end
 -- pillbox. The target's shells take their full armour off the player's 5B
 -- blocker: there is no damage rule, so the blocker wears down and dies as
 -- in a real game, and the announced rebuild is the only thing that puts
--- armour back (docs/TUTORIAL_DECISIONS.md, "5B blocker takes full damage").
+-- armour back. (A rule that let one target shell in five count made the
+-- blocker look as if it repaired itself without a word, and was taken out.)
 
 function can_hit(attacker, kind, n, pill)
   if S.player == nil then return nil end
   if kind == "pill" then
     -- 5B: the player's shells pass the player's own blocker, so a tank
     -- parked straight behind it can hit the target. A real game has no such
-    -- rule. See docs/TUTORIAL_DECISIONS.md, "5B parking square".
+    -- rule. From the parking square (121,107) the target's centre is 7.21
+    -- squares off and a shell flies 7.125, so a shot at the centre ends in
+    -- the target's square; but the line clips the blocker's square
+    -- (117,102) by about 0.3 of a square, and without this the blocker
+    -- would take the player's shots. The firing client still draws the
+    -- shell stopping at the blocker; the server lets it through.
     if pill == nil and attacker == S.player and n == P.t5b_blocker.n then
       return false
     end
@@ -2299,8 +2303,9 @@ local function poll()
     -- Arriving on the base says to stay there. 2A is told, not enforced:
     -- it ticks when the tank is full on the base, when the tank drives off
     -- the base, or when any later Station 2 goal ticks, so it never holds
-    -- anything up. See docs/TUTORIAL_DECISIONS.md, "2A refill is not
-    -- enforced".
+    -- anything up. It still has to tick: the status line and the marker
+    -- name the first goal not ticked, so a goal that never ticked would
+    -- keep "STOP and wait" up while the player took 2B.
     if not S.done[2].a_refill then
       local d = S.done[2]
       if t.mx == B.b2a.x and t.my == B.b2a.y then

@@ -350,8 +350,7 @@ def take_layout(prefix, tx, ty, park=None, blocker=(0, 1)):
 # The demo bot carries its blocker and builds it itself each time round, on
 # a square orthogonally next to the target (GoalHunter's
 # BLOCKER_ORTHOGONAL_ONLY, turned on for this bot only); the map puts the
-# pill on the square south of T, dead, for the script to hand it. See
-# docs/TUTORIAL_DECISIONS.md, "The blocker take".
+# pill on the square south of T, dead, for the script to hand it.
 #
 # A start must be on deep water, so the bot's start is a one-square pocket
 # in the island's south-east corner, walled on the south, east and west and
@@ -395,8 +394,8 @@ for y in range(101, 121):
 # ends inside its square. A road spur along row 107 joins the parking square
 # to the main road. The line between the two centres clips the blocker's
 # square's north-east corner for about 0.3 of a square. The script lets the
-# tank's shells pass the player's own blocker (can_hit), which a real game
-# would not. See docs/TUTORIAL_DECISIONS.md, "5B parking square".
+# tank's shells pass the player's own blocker (can_hit in the script), which
+# a real game would not.
 take_layout("t5b", 117, 101, park=(4, 6))
 fill(122, 107, GAP[0] - 1, 107, ROAD)
 # The arrow sits two squares further west than walled_reset's default, at
