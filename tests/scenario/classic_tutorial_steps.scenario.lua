@@ -10,7 +10,7 @@
 -- what the script sends and on which row; the real calls still go out.
 --
 -- PASS:
---   - the intro's two popups are sent first, on the first tick;
+--   - the intro's three popups are sent first, on the first tick;
 --   - each later step's popups are sent on the tick the tank is on its row,
 --     in the order of the old step table, and nothing else is sent;
 --   - every popup is a whole "{LANG:NAME}" reference and the server takes it;
@@ -24,7 +24,7 @@ ARENA = { my = 214, pops = {}, stops = {}, bad = {}, dones = {},
 
 -- The old tutorial's steps (src/bolo/tutorial.c), row then message names.
 ARENA.want = {
-  { nil, "STR_TUTORIAL_START01", "STR_TUTORIAL_START04" },
+  { nil, "STR_TUTORIAL_START01", "STR_TUTORIAL_START02", "STR_TUTORIAL_START04" },
   { 210, "STR_TUTORIAL01" }, { 199, "STR_TUTORIAL02" }, { 192, "STR_TUTORIAL03" },
   { 186, "STR_TUTORIAL04" }, { 181, "STR_TUTORIAL05" }, { 175, "STR_TUTORIAL06" },
   { 166, "STR_TUTORIAL07" }, { 159, "STR_TUTORIAL08", "STR_TUTORIAL09" },
@@ -32,7 +32,7 @@ ARENA.want = {
   { 120, "STR_TUTORIAL13", "STR_TUTORIAL14" }, { 110, "STR_TUTORIAL15" },
   { 103, "STR_TUTORIAL16" }, { 98, "STR_TUTORIAL17" },
   { 84, "STR_TUTORIAL18", "STR_TUTORIAL19" }, { 66, "STR_TUTORIAL20", "STR_TUTORIAL21" },
-  { 47, "STR_TUTORIAL22", "STR_TUTORIAL23", "STR_TUTORIAL24" }, { 21, "STR_TUTORIAL25", "STR_TUTORIAL_START02" },
+  { 47, "STR_TUTORIAL22", "STR_TUTORIAL23", "STR_TUTORIAL24" }, { 21, "STR_TUTORIAL25" },
 }
 
 local real_tank = game.tank

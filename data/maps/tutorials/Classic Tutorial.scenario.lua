@@ -22,7 +22,7 @@
 -- there reads the keyboard wording.
 --
 -- WHAT IT DOES, STEP BY STEP (the same as the old tutorial):
---   - The intro (two messages) opens as soon as the player's tank is on
+--   - The intro (three messages) opens as soon as the player's tank is on
 --     the map.
 --   - Each later step fires when the tank is on that step's row. The steps
 --     fire in order, each once.
@@ -48,7 +48,7 @@ scenario = {
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-27T08:49Z",
+  updated = "2026-10-27T11:42Z",
   game = "strict",
 
   lobby = {
@@ -71,12 +71,10 @@ scenario = {
 -- ---------------------------------------------------------------------
 -- The steps, in order: the row (map square y) that fires the step, and
 -- the names of its messages in the language files. The first step fires
--- on any row. These are the old tutorial's rows and messages, with one
--- change: the links message (STR_TUTORIAL_START02) is the last popup, not
--- the second, so the first control the player reads comes right after the
--- welcome.
+-- on any row. These are the old tutorial's rows and messages, in its order.
 local STEPS = {
-  { row = nil, msgs = { "STR_TUTORIAL_START01", "STR_TUTORIAL_START04" } },
+  { row = nil, msgs = { "STR_TUTORIAL_START01", "STR_TUTORIAL_START02",
+                        "STR_TUTORIAL_START04" } },
   { row = 210, msgs = { "STR_TUTORIAL01" } },
   { row = 199, msgs = { "STR_TUTORIAL02" } },
   { row = 192, msgs = { "STR_TUTORIAL03" } },
@@ -95,7 +93,7 @@ local STEPS = {
   { row =  66, msgs = { "STR_TUTORIAL20", "STR_TUTORIAL21" } },
   { row =  47, msgs = { "STR_TUTORIAL22", "STR_TUTORIAL23",
                         "STR_TUTORIAL24" } },
-  { row =  21, msgs = { "STR_TUTORIAL25", "STR_TUTORIAL_START02" } },
+  { row =  21, msgs = { "STR_TUTORIAL25" } },
 }
 
 -- The messages whose keyboard wording names keys or the mouse, with the

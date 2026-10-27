@@ -75,14 +75,16 @@ The script copies the old tutorial step for step:
   - Every message says the same true thing about speed: the tank keeps the
     speed it has when no key is pressed, until `{BRAKE}` or slower ground,
     and each new message stops the tank.
-  - The links message (`STR_TUTORIAL_START02`) is shown after the last
-    message (`STR_TUTORIAL25`), not in the intro.
   - Paragraphs are split by one blank line. No message has two.
   **Why:** the old text did not teach turning, and it said different
-  things about holding speed in different places. The links are of use
-  when the tutorial is done, not before the first step.
-  **Undo:** put the old text back in `lang.c` and `data/lang/en.txt`, and
-  `STR_TUTORIAL_START02` back in the intro in the script.
+  things about holding speed in different places.
+  **Undo:** put the old text back in `lang.c` and `data/lang/en.txt`.
+- **What:** the intro is the old tutorial's three messages, in its order:
+  the welcome (`STR_TUTORIAL_START01`), the links (`STR_TUTORIAL_START02`)
+  and the controls (`STR_TUTORIAL_START04`).
+  **Why:** an earlier version showed the links after the last message
+  instead, but the old order was asked for (2026-10-27).
+  **Undo:** move `STR_TUTORIAL_START02` in the script's `STEPS`.
 
 ## Languages and input types
 
