@@ -1444,6 +1444,7 @@ static const LangEntry langTable[] = {
     {3039, "No recordings yet. Single-player rounds are recorded here, and .wbv recordings opened from another app are listed here too."},
     {3040, "{string1} has been saved. Choose an app to share it with next."},
     {3041, "Nothing here yet. Maps you save, here or from a game, show up here."},
+    {3042, "Whether a shell that hits a tank sets off a mine on the square it bursts on. Off is the default: the hit leaves the mines on that square alone. On, as in WinBolo 2.1, the hit sets off a mine there, so a shot at a tank can set off the mines it has just laid under or behind it. A shell that hits a pillbox, a base or the ground, or that runs out, sets off a mine either way."},
 
     {3150, "Recording mode: shows the GIF controls"},
     {1467, "Controller"},
