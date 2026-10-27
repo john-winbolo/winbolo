@@ -209,7 +209,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame);
 extern "C" void imguiWinbolonetReset(void);
 extern "C" void windowSetMessageLabelLen(struct ClientSim *cs, labelLen newLen);
 extern "C" void windowSetTankLabelLen(struct ClientSim *cs, labelLen newLen);
-extern "C" void windowSetFrameRate(int newFrameRate, bool setTimer);
+extern "C" void windowSetFrameRate(int newFrameRate, bool inGame);
 extern "C" void windowZoomChange(BYTE amount, bool fromDragResize = false);
 extern "C" void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
                                                 int *outW, int *outH, int *outX, int *outY);

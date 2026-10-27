@@ -108,7 +108,7 @@ extern "C" {
   extern bool showNetworkStatusMessages;
   extern bool showNetworkDebugMessages;
 
-  void windowSetFrameRate(int newFrameRate, bool setTimer);
+  void windowSetFrameRate(int newFrameRate, bool inGame);
   void windowAutomaticScrolling_toggle(struct ClientSim *cs);
   void windowSmoothScrolling_toggle(void);
   void windowShowGunsight_toggle(struct ClientSim *cs);

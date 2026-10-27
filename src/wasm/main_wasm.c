@@ -1429,8 +1429,8 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
   (void)fromDragResize;
 }
 
-void windowSetFrameRate(int newFrameRate, bool setTimer) {
-  (void)setTimer;
+void windowSetFrameRate(int newFrameRate, bool inGame) {
+  (void)inGame;
   frameRate = frameLimitValid(newFrameRate) ? newFrameRate : FRAME_LIMIT_DEFAULT;
 }
 
