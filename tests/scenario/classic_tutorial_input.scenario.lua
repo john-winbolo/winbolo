@@ -71,7 +71,8 @@ game.input = function(p)
 end
 
 -- The message a popup is, read from the script's English table: its key,
--- the input it is worded for, and which of its parts it is.
+-- which of its parts it is, and every input whose wording it is (two inputs
+-- may share one text, as t14's keyboard and controller wordings do).
 ARENA_TEXT = {}
 for key, v in pairs(TEXT.en.pop) do
   local wordings = v
@@ -80,7 +81,12 @@ for key, v in pairs(TEXT.en.pop) do
     local parts = w
     if type(w) == "string" then parts = { w } end
     for i, part in ipairs(parts) do
-      ARENA_TEXT[part] = { key = key, input = input, part = i, parts = #parts }
+      local m = ARENA_TEXT[part]
+      if m == nil then
+        m = { key = key, part = i, parts = #parts, inputs = {} }
+        ARENA_TEXT[part] = m
+      end
+      m.inputs[input] = true
     end
   end
 end
@@ -96,7 +102,7 @@ game.popup = function(text, p, ...)
   end
   if m == nil or m.part == 1 then
     ARENA.pops[#ARENA.pops + 1] = { name = m and m.key or text,
-                                    wording = m and m.input,
+                                    wordings = m and m.inputs or {},
                                     input = input_now() }
   end
   return ok
@@ -119,10 +125,13 @@ local function check()
       want = "controller"
       ctrled = ctrled + 1
     end
-    if got.name ~= key or got.wording ~= want then
+    if got.name ~= key or not got.wordings[want] then
+      local had = {}
+      for w in pairs(got.wordings) do had[#had + 1] = w end
+      table.sort(had)
       return false, string.format("popup %d on %s is %s in the %s wording, "
         .. "want %s in the %s wording", i, got.input, tostring(got.name),
-        tostring(got.wording), key, want)
+        table.concat(had, "/"), key, want)
     end
   end
   if touched ~= 8 or ctrled ~= 6 then

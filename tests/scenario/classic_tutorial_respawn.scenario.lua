@@ -35,7 +35,8 @@ game.tank = function(p)
 end
 
 -- The message a popup is, read from the script's English table: its key,
--- the input it is worded for, and which of its parts it is.
+-- which of its parts it is, and every input whose wording it is (two inputs
+-- may share one text, as t14's keyboard and controller wordings do).
 ARENA_TEXT = {}
 for key, v in pairs(TEXT.en.pop) do
   local wordings = v
@@ -44,7 +45,12 @@ for key, v in pairs(TEXT.en.pop) do
     local parts = w
     if type(w) == "string" then parts = { w } end
     for i, part in ipairs(parts) do
-      ARENA_TEXT[part] = { key = key, input = input, part = i, parts = #parts }
+      local m = ARENA_TEXT[part]
+      if m == nil then
+        m = { key = key, part = i, parts = #parts, inputs = {} }
+        ARENA_TEXT[part] = m
+      end
+      m.inputs[input] = true
     end
   end
 end
