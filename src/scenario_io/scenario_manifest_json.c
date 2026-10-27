@@ -388,6 +388,16 @@ static void mjDecodeInit(const cJSON *t, ScnManifestTeam *team) {
     }
 }
 
+/* One boolean key of the lobby block that fixes a setting. */
+static void mjLobbyBool(const cJSON *lobby, const char *key, bool *fix,
+                        bool *value) {
+    const cJSON *it = cJSON_GetObjectItemCaseSensitive(lobby, key);
+    if (cJSON_IsBool(it)) {
+        *fix   = true;
+        *value = cJSON_IsTrue(it) ? true : false;
+    }
+}
+
 static void mjDecodeLobby(const cJSON *root, ScnManifestLobby *lob,
                           ScnParseReport *rep) {
     const cJSON *lobby = cJSON_GetObjectItemCaseSensitive(root, "lobby");
@@ -421,6 +431,40 @@ static void mjDecodeLobby(const cJSON *root, ScnManifestLobby *lob,
         lob->startDelay    = (int32_t)mjNumberIn(lobby, "start_delay", 0,
                                                  -1000000, 1000000,
                                                  "lobby.start_delay", rep);
+    }
+    /* The flags, and the visibility and sound settings, on the same terms
+       as the Lua reader: a key of the wrong type fixes nothing, and a word
+       that names no choice is kept as SCN_LOBBY_WORD_BAD for the validator
+       to name. */
+    lob->noBots = mjBool(lobby, "no_bots", false);
+    lob->noMods = mjBool(lobby, "no_mods", false);
+    mjLobbyBool(lobby, "classic_mode", &lob->fixClassicMode,
+                &lob->classicMode);
+    mjLobbyBool(lobby, "allies_in_trees", &lob->fixAlliesInTrees,
+                &lob->alliesInTrees);
+    mjLobbyBool(lobby, "line_of_sight", &lob->fixLineOfSight,
+                &lob->lineOfSight);
+    mjLobbyBool(lobby, "positional_sound", &lob->fixPositionalSound,
+                &lob->positionalSound);
+    mjLobbyBool(lobby, "smart_pings", &lob->fixSmartPings, &lob->smartPings);
+    {
+        static const char *const viewKeys[3] = { "pill_view", "base_view",
+                                                 "ally_view" };
+        int v;
+        for (v = 0; v < 3; v++) {
+            it = cJSON_GetObjectItemCaseSensitive(lobby, viewKeys[v]);
+            if (cJSON_IsString(it)) {
+                lob->fixView[v] = true;
+                lob->view[v]    = (int8_t)scnLobbyViewFromWord(
+                    it->valuestring);
+            }
+        }
+    }
+    it = cJSON_GetObjectItemCaseSensitive(lobby, "overview_window");
+    if (cJSON_IsString(it)) {
+        lob->fixOverviewWindow = true;
+        lob->overviewWindow    = (int8_t)scnLobbyOverviewFromWord(
+            it->valuestring);
     }
 
     teams = cJSON_GetObjectItemCaseSensitive(lobby, "teams");
@@ -1564,6 +1608,18 @@ static void mjPutBool(cJSON *obj, const char *key, bool v) {
     mjPut(obj, key, cJSON_CreateBool(v ? 1 : 0));
 }
 
+/* One key of the lobby block that fixes a setting: written when the file
+ * fixed it, and taken out otherwise, so a manifest written over an older one
+ * does not keep a key the table no longer has. */
+static void mjEmitLobbyBool(cJSON *lobby, const char *key, bool fix,
+                            bool value) {
+    if (fix) {
+        mjPutBool(lobby, key, value);
+    } else {
+        cJSON_DeleteItemFromObjectCaseSensitive(lobby, key);
+    }
+}
+
 /* true, or no key at all for false. For a key added after manifests were
  * already written: a manifest that does not ask for it is the text it was
  * before the key existed, and turning it off takes the key away. */
@@ -1854,6 +1910,40 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
             mjPutNumber(lobby, "start_delay", m->lobby.startDelay);
         } else {
             cJSON_DeleteItemFromObjectCaseSensitive(lobby, "start_delay");
+        }
+        mjPutTrue(lobby, "no_bots", m->lobby.noBots);
+        mjPutTrue(lobby, "no_mods", m->lobby.noMods);
+        mjEmitLobbyBool(lobby, "classic_mode", m->lobby.fixClassicMode,
+                        m->lobby.classicMode);
+        mjEmitLobbyBool(lobby, "allies_in_trees", m->lobby.fixAlliesInTrees,
+                        m->lobby.alliesInTrees);
+        mjEmitLobbyBool(lobby, "line_of_sight", m->lobby.fixLineOfSight,
+                        m->lobby.lineOfSight);
+        mjEmitLobbyBool(lobby, "positional_sound",
+                        m->lobby.fixPositionalSound,
+                        m->lobby.positionalSound);
+        mjEmitLobbyBool(lobby, "smart_pings", m->lobby.fixSmartPings,
+                        m->lobby.smartPings);
+        {
+            static const char *const viewKeys[3] = { "pill_view",
+                                                     "base_view",
+                                                     "ally_view" };
+            int v;
+            for (v = 0; v < 3; v++) {
+                const char *w = scnLobbyViewWord(m->lobby.view[v]);
+                if (m->lobby.fixView[v]) {
+                    mjPutString(lobby, viewKeys[v], w != NULL ? w : "");
+                } else {
+                    cJSON_DeleteItemFromObjectCaseSensitive(lobby,
+                                                            viewKeys[v]);
+                }
+            }
+        }
+        if (m->lobby.fixOverviewWindow) {
+            const char *w = scnLobbyOverviewWord(m->lobby.overviewWindow);
+            mjPutString(lobby, "overview_window", w != NULL ? w : "");
+        } else {
+            cJSON_DeleteItemFromObjectCaseSensitive(lobby, "overview_window");
         }
         mjEmitTeams(lobby, &m->lobby);
     }
@@ -2310,6 +2400,66 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
         return mjDiffer(key, keyLen, err, errLen, "lobby.start_delay",
                         "scenario: the manifest and the script's table "
                         "disagree about the start delay");
+    }
+    if (fromJson->lobby.noBots != fromLua->lobby.noBots) {
+        return mjDiffer(key, keyLen, err, errLen, "lobby.no_bots",
+                        "scenario: the manifest and the script's table "
+                        "disagree about no_bots");
+    }
+    if (fromJson->lobby.noMods != fromLua->lobby.noMods) {
+        return mjDiffer(key, keyLen, err, errLen, "lobby.no_mods",
+                        "scenario: the manifest and the script's table "
+                        "disagree about no_mods");
+    }
+    {
+        /* The fixed settings that are one value each, compared the same
+           way: whether the key was written, and what it holds. */
+        const struct {
+            const char *key;
+            bool        fixA, fixB;
+            int         a, b;
+        } fixes[] = {
+            { "lobby.classic_mode", fromJson->lobby.fixClassicMode,
+              fromLua->lobby.fixClassicMode, fromJson->lobby.classicMode,
+              fromLua->lobby.classicMode },
+            { "lobby.pill_view", fromJson->lobby.fixView[0],
+              fromLua->lobby.fixView[0], fromJson->lobby.view[0],
+              fromLua->lobby.view[0] },
+            { "lobby.base_view", fromJson->lobby.fixView[1],
+              fromLua->lobby.fixView[1], fromJson->lobby.view[1],
+              fromLua->lobby.view[1] },
+            { "lobby.ally_view", fromJson->lobby.fixView[2],
+              fromLua->lobby.fixView[2], fromJson->lobby.view[2],
+              fromLua->lobby.view[2] },
+            { "lobby.allies_in_trees", fromJson->lobby.fixAlliesInTrees,
+              fromLua->lobby.fixAlliesInTrees, fromJson->lobby.alliesInTrees,
+              fromLua->lobby.alliesInTrees },
+            { "lobby.overview_window", fromJson->lobby.fixOverviewWindow,
+              fromLua->lobby.fixOverviewWindow,
+              fromJson->lobby.overviewWindow,
+              fromLua->lobby.overviewWindow },
+            { "lobby.line_of_sight", fromJson->lobby.fixLineOfSight,
+              fromLua->lobby.fixLineOfSight, fromJson->lobby.lineOfSight,
+              fromLua->lobby.lineOfSight },
+            { "lobby.positional_sound", fromJson->lobby.fixPositionalSound,
+              fromLua->lobby.fixPositionalSound,
+              fromJson->lobby.positionalSound,
+              fromLua->lobby.positionalSound },
+            { "lobby.smart_pings", fromJson->lobby.fixSmartPings,
+              fromLua->lobby.fixSmartPings, fromJson->lobby.smartPings,
+              fromLua->lobby.smartPings },
+        };
+        size_t f;
+
+        for (f = 0; f < sizeof(fixes) / sizeof(fixes[0]); f++) {
+            if (fixes[f].fixA != fixes[f].fixB ||
+                (fixes[f].fixA && fixes[f].a != fixes[f].b)) {
+                return mjDiffer(key, keyLen, err, errLen, fixes[f].key,
+                                "scenario: the manifest and the script's "
+                                "table disagree about %s",
+                                fixes[f].key + strlen("lobby."));
+            }
+        }
     }
     if (fromJson->lobby.numTeams != fromLua->lobby.numTeams) {
         return mjDiffer(key, keyLen, err, errLen, "lobby.teams",

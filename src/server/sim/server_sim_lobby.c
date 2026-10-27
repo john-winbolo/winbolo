@@ -1054,10 +1054,12 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
  * back reads the same answer — so the reason a host is shown is always the
  * test that produced the refusal.
  *
- * The scenario's lobby block may also fix hidden mines, the time limit and
- * the start delay (serverSimScenarioApplyLobbyFixes). A write of hidden mines
- * that differs from the fix is refused, and so is any write of the time
- * limit or its minutes while the time limit is fixed. The start delay has no
+ * The scenario's lobby block may also fix hidden mines, the time limit, the
+ * start delay and the settings after them (serverSimScenarioApplyLobbyFixes).
+ * A write that differs from a fix is refused, and so is any write of the
+ * time limit or its minutes while the time limit is fixed. A view policy
+ * write is refused when its policy differs; the decay seconds stay the
+ * host's. no_bots refuses every AI policy but none. The start delay has no
  * lobby setting to refuse.
  *
  * Each arm's own payload check is mirrored here, so a malformed write is
@@ -1072,8 +1074,44 @@ static bool lobbySettingScenarioFixes(const ServerSim *sim, uint8_t lst,
                 (uint16_t)((value[0] << 8) | value[1]))) return false;
         return sim->scenarioLobbyValid && sim->scenarioLobby.fixTimeLimit;
     }
+    if (lst == LST_PILL_VIEW || lst == LST_BASE_VIEW ||
+        lst == LST_ALLY_VIEW) {
+        int cat = (lst == LST_PILL_VIEW) ? viewCategoryPill
+                : (lst == LST_BASE_VIEW) ? viewCategoryBase
+                                         : viewCategoryAlly;
+        if (len != 3 || value[0] > (uint8_t)viewPolicyOff) return false;
+        return sim->scenarioLobbyValid && sim->scenarioLobby.fixView[cat] &&
+               value[0] != sim->scenarioLobby.viewPolicy[cat];
+    }
     if (len != 1) return false;
     switch (lst) {
+        case LST_CLASSIC_MODE:
+            return sim->scenarioLobbyValid &&
+                   sim->scenarioLobby.fixClassicMode &&
+                   (value[0] != 0) != sim->scenarioLobby.classicMode;
+        case LST_ALLIES_IN_TREES:
+            return sim->scenarioLobbyValid &&
+                   sim->scenarioLobby.fixAlliesInTrees &&
+                   (value[0] != 0) != sim->scenarioLobby.alliesInTrees;
+        case LST_POSITIONAL_SOUND:
+            return sim->scenarioLobbyValid &&
+                   sim->scenarioLobby.fixPositionalSound &&
+                   (value[0] != 0) != sim->scenarioLobby.positionalSound;
+        case LST_OVERVIEW_WINDOW:
+            if (value[0] >= (uint8_t)OVERVIEW_WINDOW_COUNT) return false;
+            return sim->scenarioLobbyValid &&
+                   sim->scenarioLobby.fixOverviewWindow &&
+                   value[0] != sim->scenarioLobby.overviewWindow;
+        case LST_LINE_OF_SIGHT:
+            if (value[0] >= (uint8_t)LINE_OF_SIGHT_COUNT) return false;
+            return sim->scenarioLobbyValid &&
+                   sim->scenarioLobby.fixLineOfSight &&
+                   value[0] != sim->scenarioLobby.lineOfSight;
+        /* Carried in the negative sense: a non-zero byte refuses pings. */
+        case LST_SMART_PINGS_OFF:
+            return sim->scenarioLobbyValid &&
+                   sim->scenarioLobby.fixSmartPings &&
+                   (value[0] == 0) != sim->scenarioLobby.smartPings;
         case LST_HIDDEN_MINES:
             return sim->scenarioLobbyValid &&
                    sim->scenarioLobby.fixHiddenMines &&
@@ -1092,8 +1130,13 @@ static bool lobbySettingScenarioFixes(const ServerSim *sim, uint8_t lst,
         case LST_RANKED:    return value[0] != 0;
         /* Only a list that fields its own bots needs them allowed. Any
            other script leaves the policy the host's, aiNone included. */
-        case LST_AI_POLICY: return sim->scenarioIdentity.needsBots &&
-                                   (aiType)value[0] == aiNone;
+        case LST_AI_POLICY:
+            if (value[0] > 3) return false;
+            if (serverSimScenarioHoldsNoBots(sim)) {
+                return (aiType)value[0] != aiNone;
+            }
+            return sim->scenarioIdentity.needsBots &&
+                   (aiType)value[0] == aiNone;
         default:            return false;
     }
 }
@@ -1216,7 +1259,12 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
         }
         case LST_CLASSIC_MODE: {
             if (len != 1) return false;
+            /* The scenario's lobby block may fix classic mode. */
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetClassicMode(sim, value[0] != 0);
+            /* Classic mode writes the settings it owns, and a setting the
+               scenario fixes wins over it, so the fixes go back on. */
+            serverSimScenarioApplyLobbyFixes(sim, false);
             return true;
         }
         case LST_ALLIES_IN_TREES: {
@@ -1224,6 +1272,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             /* Classic mode hides allies in trees and owns this value while it
              * is set, the same way it owns the three view policies. */
             if (sim->classicMode) return false;
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetAlliesInTrees(sim, value[0] != 0);
             return true;
         }
@@ -1233,6 +1282,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
              * while it is set, the same as LST_ALLIES_IN_TREES. A plain
              * bool, so any non-zero byte means on. */
             if (sim->classicMode) return false;
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetPositionalSound(sim, value[0] != 0);
             return true;
         }
@@ -1248,6 +1298,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
              * takes any non-zero byte because it is a bool; these two are
              * selectors. */
             if (value[0] >= (uint8_t)OVERVIEW_WINDOW_COUNT) return false;
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetOverviewWindow(sim, value[0]);
             return true;
         }
@@ -1255,6 +1306,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (len != 1) return false;
             if (sim->classicMode) return false;
             if (value[0] >= (uint8_t)LINE_OF_SIGHT_COUNT) return false;
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetLineOfSight(sim, value[0]);
             return true;
         }
@@ -1262,7 +1314,9 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (len != 1) return false;
             /* A plain bool like LST_ALLIES_IN_TREES, so any non-zero byte
              * counts. Classic mode does not own it: what a player may
-             * point at is not one of the visibility rules. */
+             * point at is not one of the visibility rules. The scenario's
+             * lobby block may fix it. */
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetSmartPingsOff(sim, value[0] != 0);
             return true;
         }
@@ -1295,6 +1349,8 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
              * same way LST_AI_POLICY rejects an out-of-range aiType;
              * the decay seconds are clamped by the setter. */
             if (len != 3 || value[0] > (uint8_t)viewPolicyOff) return false;
+            /* The scenario's lobby block may fix the policy. */
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             ViewCategory cat = (lst == LST_PILL_VIEW) ? viewCategoryPill
                              : (lst == LST_BASE_VIEW) ? viewCategoryBase
                                                       : viewCategoryAlly;

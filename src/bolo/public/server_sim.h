@@ -2246,8 +2246,11 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim);
  *PURPOSE:
  *  Holds each lobby setting the attached scenario's lobby
  *  block fixes (hidden mines, the time limit, the start
- *  delay) at the fixed value, and gives a setting back to
- *  what the lobby had when its fix goes away.
+ *  delay, no_bots, classic mode, the view policies, allies
+ *  in trees, the overview window, line of sight, positional
+ *  sound and smart pings) at the fixed value, and gives a
+ *  setting back to what the lobby had when its fix goes
+ *  away.
  *  serverSimScenarioApplyLobbyRules calls this. The round
  *  paths call it too, after they put the round length back
  *  to the server's own, so a fixed time limit stays in force
@@ -2261,6 +2264,11 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim);
  *               0 is what comes back.
  *********************************************************/
 void serverSimScenarioApplyLobbyFixes(ServerSim *sim, bool roundStart);
+
+/* Whether the attached scenario's no_bots holds the lobby at no bots: the
+ * block says no_bots and the list fields no bots of its own (needs_bots, or
+ * a team with bots), which would win over it. */
+bool serverSimScenarioHoldsNoBots(const ServerSim *sim);
 
 /* Layout A — per-team / per-bot / brain-list events. The matching
  * client-side handlers live in clientSimApplyControl. */

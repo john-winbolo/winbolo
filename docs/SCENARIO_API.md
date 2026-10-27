@@ -1020,13 +1020,36 @@ The lobby the map opens with.
 | `hidden_mines` | boolean | Fixes the lobby's hidden mines setting for as long as the scenario is attached. Left out, the host's own setting applies. |
 | `time_limit` | number | Fixes the lobby's time limit, in minutes: 0 is no time limit, and a limit runs 1 to 4320. Left out, the host's own setting applies. A value out of range is reported by `-validate` and fixes nothing. |
 | `start_delay` | number | Fixes the start delay, in seconds, 0 to 600. Left out, the server's own delay applies. A value out of range is reported by `-validate` and fixes nothing. |
+| `no_bots` | boolean | `true` holds the lobby's computer tanks at none: every bot on the lobby is taken off, and the host can neither add one nor set the AI policy to anything but none. `false` is the same as leaving it out. A scenario that fields bots of its own (`needs_bots`, or a team with `bots`) keeps them allowed, and `-validate` reports the clash. |
+| `no_mods` | boolean | `true` plays the round without the mods the host picked: they are left out of the compose and stay on the host's list, so they play again once this scenario is not the one attached. The operator's own `-mod` scripts still play. `false` is the same as leaving it out. |
+| `classic_mode` | boolean | Fixes classic mode. Turning it on sets the seven settings below to their classic values, except any of them this block fixes too. |
+| `pill_view` | string | Fixes the pillbox view: `"always"`, `"key"`, `"decay"` or `"off"`. The decay time stays the host's. Any other word is reported by `-validate` and fixes nothing. |
+| `base_view` | string | Fixes the base view, with the same words as `pill_view`. |
+| `ally_view` | string | Fixes the ally view, with the same words as `pill_view`. |
+| `allies_in_trees` | boolean | Fixes whether an allied tank in trees is shown to its allies. |
+| `overview_window` | string | Fixes the overview window: `"expanded"`, `"classic"` or `"none"`. Any other word is reported by `-validate` and fixes nothing. |
+| `line_of_sight` | boolean | Fixes line of sight: `true` is buildings and trees block sight, `false` is nothing does. |
+| `positional_sound` | boolean | Fixes positional sound. |
+| `smart_pings` | boolean | Fixes smart pings: `true` allows them, `false` refuses them. |
 | `teams` | array | One entry per team, in order. |
 
-While the scenario is attached, the host cannot change a setting that
-`hidden_mines`, `time_limit` or `start_delay` fixes: the lobby refuses the
-write with the scenario reason. When the scenario goes, the lobby gets back
-the values it had before. A fixed time limit holds for every round; a fixed
-start delay is the hold before each round starts.
+While the scenario is attached, the host cannot change a setting that the
+block fixes: the lobby refuses the write with the scenario reason. A write
+of the value the scenario fixed is no change and is accepted. When the
+scenario goes, the lobby gets back the values it had before; the bots
+`no_bots` took off do not come back. A key the block leaves out stays the
+host's. A fixed time limit holds for every round; a fixed start delay is the
+hold before each round starts.
+
+Classic mode owns seven settings: the three views, allies in trees, the
+overview window, line of sight and positional sound. A setting the scenario
+fixes wins over classic mode, whether the host turns classic mode on or the
+scenario fixes `classic_mode` itself. The others follow classic mode as they
+always do.
+
+Only the script that decides the round may fix lobby settings. A mod that
+writes any of these keys is refused when it loads, whether it plays alone or
+beside a scenario.
 
 Each team:
 

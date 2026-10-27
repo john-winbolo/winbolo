@@ -1396,6 +1396,27 @@ struct ServerSim {
     int32_t                preScenarioGameLength;
     bool                   preScenarioDelayHeld;
     int32_t                preScenarioStartDelay;
+    /* The same for the rest of the block: no_bots (the AI policy and the bot
+     * AI type, held at none), classic mode, the three view policies, allies
+     * in trees, the overview window, line of sight, positional sound and
+     * smart pings. */
+    bool                   preScenarioNoBotsHeld;
+    uint8_t                preNoBotsAiPolicy;
+    aiType                 preNoBotsBotAiType;
+    bool                   preScenarioClassicHeld;
+    bool                   preScenarioClassicMode;
+    bool                   preScenarioViewHeld[VIEW_CATEGORY_COUNT];
+    ViewPolicy             preScenarioViewPolicy[VIEW_CATEGORY_COUNT];
+    bool                   preScenarioTreesHeld;
+    bool                   preScenarioAlliesInTrees;
+    bool                   preScenarioOverviewHeld;
+    uint8_t                preScenarioOverviewWindow;
+    bool                   preScenarioSightHeld;
+    uint8_t                preScenarioLineOfSight;
+    bool                   preScenarioSoundHeld;
+    bool                   preScenarioPositionalSound;
+    bool                   preScenarioPingsHeld;
+    bool                   preScenarioSmartPingsOff;
     /* The brain a seat was seeded with, so a seat held without a bot in it
      * still knows what to run when something fields it. Empty means the
      * server's own. */

@@ -39,6 +39,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>         /* strcmp, for the lobby block's word tables */
 
 /* The four counts the arrays below are sized by, taken from the headers that
  * define them rather than through server_sim.h. That header declares a bot
@@ -139,11 +140,51 @@ typedef struct {
     char     initBadKey[SCN_TABLE_KEY_LEN];
 } ScnManifestTeam;
 
-/* The lobby block. hidden_mines, time_limit and start_delay each fix one
- * lobby setting for as long as the scenario is attached; the fix flag says
- * whether the file wrote the key at all. The two numbers are kept as the
- * file wrote them, so the validator can name one out of range; the lobby
- * template takes only a value in range. */
+/* What a word key of the lobby block holds when the file wrote a word that
+ * names none of its choices. The fix flag is still set, so the validator can
+ * name the key; the lobby template leaves the setting the host's. */
+#define SCN_LOBBY_WORD_BAD (-1)
+
+/* The words pill_view, base_view and ally_view take, in ViewPolicy order. */
+static inline int scnLobbyViewFromWord(const char *w) {
+    static const char *const words[] = { "always", "key", "decay", "off" };
+    int i;
+    for (i = 0; w != NULL && i < (int)(sizeof(words) / sizeof(words[0])); i++) {
+        if (strcmp(w, words[i]) == 0) return i;
+    }
+    return SCN_LOBBY_WORD_BAD;
+}
+
+static inline const char *scnLobbyViewWord(int v) {
+    static const char *const words[] = { "always", "key", "decay", "off" };
+    return (v >= 0 && v < (int)(sizeof(words) / sizeof(words[0]))) ? words[v]
+                                                                    : NULL;
+}
+
+/* The words overview_window takes, in OverviewWindow order. */
+static inline int scnLobbyOverviewFromWord(const char *w) {
+    static const char *const words[] = { "expanded", "classic", "none" };
+    int i;
+    for (i = 0; w != NULL && i < (int)(sizeof(words) / sizeof(words[0])); i++) {
+        if (strcmp(w, words[i]) == 0) return i;
+    }
+    return SCN_LOBBY_WORD_BAD;
+}
+
+static inline const char *scnLobbyOverviewWord(int v) {
+    static const char *const words[] = { "expanded", "classic", "none" };
+    return (v >= 0 && v < (int)(sizeof(words) / sizeof(words[0]))) ? words[v]
+                                                                    : NULL;
+}
+
+/* The lobby block. hidden_mines, time_limit, start_delay and the keys after
+ * them each fix one lobby setting for as long as the scenario is attached;
+ * the fix flag says whether the file wrote the key at all. The numbers and
+ * words are kept as the file wrote them, so the validator can name one out of
+ * range; the lobby template takes only a value it can hold.
+ *
+ * no_bots and no_mods are plain flags: true asks for it, and false is the
+ * same as leaving the key out. */
 typedef struct {
     uint8_t         maxPlayers;     /* 0 = the server's own cap */
     bool            extraTeams;     /* may a host add teams beyond these */
@@ -153,9 +194,37 @@ typedef struct {
     int32_t         timeLimit;      /* minutes; 0 = no time limit */
     bool            fixStartDelay;  /* start_delay was written */
     int32_t         startDelay;     /* seconds */
+    bool            noBots;         /* no_bots: no computer tanks */
+    bool            noMods;         /* no_mods: none of the host's mods */
+    bool            fixClassicMode; /* classic_mode was written */
+    bool            classicMode;
+    bool            fixView[3];     /* pill_view, base_view, ally_view */
+    int8_t          view[3];        /* a ViewPolicy, or SCN_LOBBY_WORD_BAD */
+    bool            fixAlliesInTrees;
+    bool            alliesInTrees;
+    bool            fixOverviewWindow;
+    int8_t          overviewWindow; /* an OverviewWindow, or SCN_LOBBY_WORD_BAD */
+    bool            fixLineOfSight;
+    bool            lineOfSight;    /* true = buildings and trees block sight */
+    bool            fixPositionalSound;
+    bool            positionalSound;
+    bool            fixSmartPings;
+    bool            smartPings;     /* true = pings allowed */
     uint8_t         numTeams;
     ScnManifestTeam teams[MAX_TANKS];
 } ScnManifestLobby;
+
+/* Whether the lobby block says anything beyond its teams and cap: one of the
+ * keys a mod may not write, because they belong to the script that decides
+ * the round. */
+static inline bool scnLobbyFixesAny(const ScnManifestLobby *lob) {
+    return lob->fixHiddenMines || lob->fixTimeLimit || lob->fixStartDelay ||
+           lob->noBots || lob->noMods || lob->fixClassicMode ||
+           lob->fixView[0] || lob->fixView[1] || lob->fixView[2] ||
+           lob->fixAlliesInTrees || lob->fixOverviewWindow ||
+           lob->fixLineOfSight || lob->fixPositionalSound ||
+           lob->fixSmartPings;
+}
 
 /* The tags on one entity: up to SCN_TAGS_PER_ENTITY of them, each a short
  * name. Held per kind and per 1-based entity index, which is how Lua

@@ -7052,6 +7052,10 @@ set(_unit_test_names
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
     lobby_scenario_fixes_lobby_settings
+    lobby_scenario_fixes_visibility
+    lobby_scenario_fixes_classic_mode
+    lobby_scenario_fix_wins_over_host_classic
+    lobby_scenario_no_bots
     wbn_lobby_info_scenario
     info_script_tail_golden
     info_script_tail_read
@@ -7453,6 +7457,7 @@ set(_unit_test_names
     scenario_manifest_agrees
     scenario_manifest_from_values
     scenario_manifest_json_team_init
+    scenario_manifest_json_lobby_fixes
     scenario_manifest_json_number_range
     scenario_manifest_json_triggers
     scenario_manifest_json_trigger_operator
@@ -7601,6 +7606,10 @@ set(_unit_test_names
     scenario_compose_pairs_game_complete
     scenario_compose_unsafe_keeps_sharing
     scenario_compose_off_map_script_too
+    scenario_compose_no_mods
+    scenario_compose_lobby_fixes_read
+    scenario_compose_mod_fixes_refused
+    scenario_compose_lobby_fixes_validate
     scenario_compose_off_map_alone_plain
     scenario_compose_off_plain_map_none
     scenario_compose_on_picks_replace_map
