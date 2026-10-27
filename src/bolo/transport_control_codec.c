@@ -4064,10 +4064,17 @@ ControlDecodeBodyFn transportControlCodecBodyDecoder(ControlEventType type) {
  * ================================================================ */
 
 /* The one table of ControlEventType names. The switch is over the enum
- * type and has no default label, so a compiler that warns on a missing
- * case (-Wswitch) names any enumerator this table does not. A decoded
- * wire byte can hold any value, so the fallback return sits after the
- * switch and answers NULL for a value outside the enum. */
+ * type and has no default label, so -Wswitch (GCC, Clang) warns on a
+ * missing case. MSVC has the same warning (C4062) but it is off by
+ * default, so the pragma below makes it an error here. The
+ * control_event_names unit test is what catches a missing name on every
+ * compiler. A decoded wire byte can hold any value, so the fallback
+ * return sits after the switch and answers NULL for a value outside the
+ * enum. */
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(error: 4062)
+#endif
 const char *controlEventTypeName(ControlEventType type) {
     switch (type) {
     case CTRL_ALLIANCE_REQUEST:       return "CTRL_ALLIANCE_REQUEST";
@@ -4129,6 +4136,9 @@ const char *controlEventTypeName(ControlEventType type) {
     }
     return NULL;
 }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 const char *controlEventDiagName(ControlEventType type) {
     const char *name = controlEventTypeName(type);
