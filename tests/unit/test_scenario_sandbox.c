@@ -812,7 +812,9 @@ int run_scenario_sandbox_state_survives_the_budget(void) {
  * while the hook that issued the op is still on the stack. The VM lock lets
  * it through for exactly that reason.
  *
- * So the hook hands a base to nobody, and then spins. What it is watching
+ * So the hook hands the neutral base 1 to seat 0, and then spins. (A
+ * hand-over has to change the owner: a base handed to the side that already
+ * holds it raises no callback.) What it is watching
  * for is the inner call putting the outer one's count back rather than
  * leaving the state unarmed: an arm and disarm that only set and cleared
  * would leave the rest of this hook uncounted and the loop would run to its
@@ -835,7 +837,7 @@ int run_scenario_sandbox_budget_survives_a_nested_call(void) {
         "  if spun then return end\n"
         "  spun = true\n"
         "  print(\"nested begun\")\n"
-        "  game.set_base_owner(1, game.NEUTRAL)\n"
+        "  game.set_base_owner(1, 0)\n"
         "  local x = 0\n"
         "  for i = 1, 20000000 do x = x + 1 end\n"
         "  print(\"nested finished\")\n"

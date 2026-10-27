@@ -1459,12 +1459,14 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
 }
 
 /* Select the first map row the "Scenarios only" tick lets through and
- * preview it, for a folder click. With no such row and the tick off,
- * falls back to the empty path, the inbuilt Everard marker. With the
- * tick on, Everard is hidden too, so only the row highlight goes: the
- * path and preview stay on the map already picked, the same as when the
- * tick hides the selected row. The provider's onSelect is not called: a
- * folder click only moves the chooser's own selection. */
+ * preview it, for a folder click. With no such row only the row highlight
+ * goes: the path and preview stay on the map already picked, the same as
+ * when the tick hides the selected row, so the preview still shows the map
+ * Use This Map will take. (It used to fall back to the inbuilt Everard
+ * marker when the tick was off, so an empty folder showed Everard Island
+ * as if it had been picked.) The provider's onSelect is not called: a
+ * folder click only moves the chooser's own selection, and selectionUnsent
+ * says so. */
 static void selectFirstShownMap(MapChooserState *state,
                                 SDL_Renderer *renderer,
                                 bool scenariosOnly) {
@@ -1478,6 +1480,7 @@ static void selectFirstShownMap(MapChooserState *state,
     }
     if (firstFile >= 0) {
         state->selectedIdx = firstFile;
+        state->selectionUnsent = true;
         SDL_strlcpy(state->selectedPath, state->maps[firstFile].path,
                     sizeof(state->selectedPath));
         SDL_strlcpy(state->selectedName, state->maps[firstFile].name,
@@ -1485,14 +1488,7 @@ static void selectFirstShownMap(MapChooserState *state,
         updatePreview(state, renderer);
         return;
     }
-    if (scenariosOnly) {
-        state->selectedIdx = -1;
-        return;
-    }
-    state->selectedIdx = 0;
-    state->selectedPath[0] = '\0';
-    state->selectedName[0] = '\0';
-    updatePreview(state, renderer);
+    state->selectedIdx = -1;
 }
 
 /* Reentry guard for generateRandomPreview. Generation is currently
@@ -1757,6 +1753,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * the provider loads it (single player) or queues the
              * upload (multiplayer). selectedPath holds the absolute
              * on-disk path the dialog returned. */
+            state->selectionUnsent = false;
             if (state->provider.onSelect) {
                 state->provider.onSelect(state, state->provider.ctx);
             }
@@ -2291,7 +2288,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                         selectFirstShownMap(state, renderer,
                                             scenariosOnly);
                         changed = true;
-                    } else if (state->selectedIdx != i) {
+                    } else if (state->selectedIdx != i ||
+                               state->selectionUnsent) {
                         state->selectedIdx = i;
                         SDL_strlcpy(state->selectedPath, ent.path,
                                     FILENAME_MAX);
@@ -2299,6 +2297,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                     sizeof(state->selectedName));
                         updatePreview(state, renderer);
                         changed = true;
+                        state->selectionUnsent = false;
                         if (state->provider.onSelect) {
                             state->provider.onSelect(state,
                                 state->provider.ctx);
@@ -2498,19 +2497,21 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                         for (int j = 0; j < s->numMaps; j++) {
                             if (!s->maps[j].isFolder) { firstFile = j; break; }
                         }
-                        s->selectedIdx = (firstFile >= 0) ? firstFile : 0;
+                        /* As selectFirstShownMap: an empty folder keeps
+                           the map already picked and its preview. */
                         if (firstFile >= 0) {
+                            s->selectedIdx = firstFile;
+                            s->selectionUnsent = true;
                             SDL_strlcpy(s->selectedPath,
                                 s->maps[firstFile].path,
                                 sizeof(s->selectedPath));
                             SDL_strlcpy(s->selectedName,
                                 s->maps[firstFile].name,
                                 sizeof(s->selectedName));
+                            updatePreview(s, ctx->renderer);
                         } else {
-                            s->selectedPath[0] = '\0';
-                            s->selectedName[0] = '\0';
+                            s->selectedIdx = -1;
                         }
-                        updatePreview(s, ctx->renderer);
                         *(ctx->outChanged) = true;
                     } else {
                         /* File: use a negative-index sentinel so the
@@ -2524,6 +2525,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                     sizeof(s->selectedName));
                         updatePreview(s, ctx->renderer);
                         *(ctx->outChanged) = true;
+                        s->selectionUnsent = false;
                         if (s->provider.onSelect) {
                             s->provider.onSelect(s, s->provider.ctx);
                         }
@@ -2796,7 +2798,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                         selectFirstShownMap(state, renderer,
                                             scenariosOnly);
                         changed = true;
-                    } else if (state->selectedIdx != i) {
+                    } else if (state->selectedIdx != i ||
+                               state->selectionUnsent) {
                         state->selectedIdx = i;
                         SDL_strlcpy(state->selectedPath, ent.path,
                                     FILENAME_MAX);
@@ -2808,6 +2811,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                          * follow-up (push to server, queue upload,
                          * kick a WBN download, …). selectedPath /
                          * selectedName are already populated. */
+                        state->selectionUnsent = false;
                         if (state->provider.onSelect) {
                             state->provider.onSelect(state,
                                 state->provider.ctx);

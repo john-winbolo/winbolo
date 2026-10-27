@@ -989,7 +989,6 @@ end
 -- Call once per tick from init.lua after set_mode().
 -- -------------------------------------------------------------------------
 
-
 -- STAY_AREA guard (C.STAY_AREA): the man gets no order on a square outside
 -- the area (build, road, farm, mine, pillbox, repair). The bail reason
 -- "outside STAY_AREA" lands in state._builder_no_dispatch like every other

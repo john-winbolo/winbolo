@@ -10,24 +10,48 @@
 -- north onto row 210 from one tick to the next.
 --
 -- PASS:
---   - the intro's two popups come first;
---   - STR_TUTORIAL01 is sent while the real tank is on row 210;
---   - game.stop_tank is called on row 210 and the server takes it.
+--   - the intro's three popups come first;
+--   - t01 is sent while the real tank is on row 210;
+--   - game.set_speed(p, 0) is called on row 210 and the server takes it.
 
 CLASSIC_TUTORIAL_PLAYER = 0
 ARENA = { phase = 0, x = nil, pops = {}, stop_ok = nil, stop_row = nil,
           wait = 0, done = false }
 
+-- The message a popup is, read from the script's English table: its key,
+-- which of its parts it is, and every input whose wording it is (two inputs
+-- may share one text, as t14's keyboard and controller wordings do).
+ARENA_TEXT = {}
+for key, v in pairs(TEXT.en.pop) do
+  local wordings = v
+  if type(v) ~= "table" or v.keyboard == nil then wordings = { keyboard = v } end
+  for input, w in pairs(wordings) do
+    local parts = w
+    if type(w) == "string" then parts = { w } end
+    for i, part in ipairs(parts) do
+      local m = ARENA_TEXT[part]
+      if m == nil then
+        m = { key = key, part = i, parts = #parts, inputs = {} }
+        ARENA_TEXT[part] = m
+      end
+      m.inputs[input] = true
+    end
+  end
+end
+
 local real_popup = game.popup
 game.popup = function(text, p, ...)
   local t = game.tank(0)
-  ARENA.pops[#ARENA.pops + 1] = { text = text, my = t and t.my }
+  local m = ARENA_TEXT[text]
+  if m == nil or m.part == 1 then
+    ARENA.pops[#ARENA.pops + 1] = { text = m and m.key or text, my = t and t.my }
+  end
   return real_popup(text, p, ...)
 end
 
-local real_stop = game.stop_tank
-game.stop_tank = function(p)
-  local ok, code = real_stop(p)
+local real_set_speed = game.set_speed
+game.set_speed = function(p, s)
+  local ok, code = real_set_speed(p, s)
   local t = game.tank(0)
   ARENA.stop_ok, ARENA.stop_row = ok, t and t.my
   return ok, code
@@ -68,14 +92,15 @@ function on_tick(tick)
   elseif A.phase == 2 then
     A.done = true
     local p = A.pops
-    if #p < 3 then return verdict(false, #p .. " popups") end
-    if p[1].text ~= "{LANG:STR_TUTORIAL_START01}" or
-       p[2].text ~= "{LANG:STR_TUTORIAL_START04}" then
+    if #p < 4 then return verdict(false, #p .. " popups") end
+    if p[1].text ~= "start01" or
+       p[2].text ~= "start02" or
+       p[3].text ~= "start04" then
       return verdict(false, "the intro is not first")
     end
-    if p[3].text ~= "{LANG:STR_TUTORIAL01}" or p[3].my ~= 210 then
-      return verdict(false, string.format("popup 3 is %s on row %s",
-                                          p[3].text, tostring(p[3].my)))
+    if p[4].text ~= "t01" or p[4].my ~= 210 then
+      return verdict(false, string.format("popup 4 is %s on row %s",
+                                          p[4].text, tostring(p[4].my)))
     end
     if A.stop_row ~= 210 or not A.stop_ok then
       return verdict(false, string.format("stop on row %s, answered %s",

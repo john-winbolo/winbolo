@@ -21,6 +21,7 @@
 #include <emscripten/html5.h>
 
 #include "bolo_rand.h"
+#include "client_frontend_common.h"  /* clientFrontTellScenarioPlayer */
 #include "client_frontend_connect.h"
 #include "client_frontend_sp.h"
 #include "client_sim.h"
@@ -578,6 +579,18 @@ bool gameFrontWasmSetup(keyItems *keys) {
   gameFrontSetDefaultKeys(keys);
 
   langSetup();
+  /* The browser's language, as a fresh desktop install picks it
+   * (gameFrontStart): langAutoDetect loads the first lang file that
+   * matches one of the browser's preferred languages. Before the fonts are
+   * built, so a Chinese, Japanese or Korean pick gets its glyphs. */
+  {
+    char detected[32];
+    detected[0] = '\0';
+    langAutoDetect(detected, (int)sizeof(detected));
+    if (detected[0] != '\0') {
+      gameFrontSetLanguageCode(detected);
+    }
+  }
 
   /* Initialise subsystems */
   {
@@ -1021,6 +1034,13 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       return FALSE;
     }
     wasmTransportActive = TRUE;
+    /* The server is in this process: tell it the player's language and
+     * input before the first frame, so the scenario's first line is
+     * worded for them. */
+    clientMutexWaitFor();
+    clientFrontTellScenarioPlayer(wasmServerSim,
+                                  clientSimGetMyPlayerNum(humanSim));
+    clientMutexRelease();
     /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
      * The shared tick core's keys-half pump skip keys off
      * clientSimTransportTicksServer, which the connect set above — not off
@@ -1540,7 +1560,7 @@ BYTE gameFrontGetPlayerNum(void) {
   /* Same race as the desktop gamefront.c: the join can land on the lobby
    * replay before JOIN_ACCEPT, so the copy taken at join may still be 0.
    * The resent accept updates the transport, so read it live. It answers 0
-   * with no sim and for the local (non-UDP) transport. */
+   * with no sim, and the slot the join gave for the local transport. */
   return clientSimGetServerPlayerNum(humanSim);
 }
 
@@ -1745,13 +1765,26 @@ void gameFrontUpdateSteamPresence(ClientSim *cs) {
   (void)cs;
 }
 
+/* The language the player reads, as its lang file's name ("de", "pt-BR");
+ * "" until one is picked or detected, which is English. Settings' picker
+ * reads it to show the choice, the font atlas reads it for the CJK fonts,
+ * and the frame poll tells a scenario's server (game.lang). The browser
+ * keeps no file between visits, so it is detected again on each page
+ * load; nothing saves it. */
+static char wasmLanguageCode[32] = "";
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
+  size_t n;
   if (!out || outSize <= 0) return;
-  out[0] = '\0';
+  n = strlen(wasmLanguageCode);
+  if (n >= (size_t)outSize) n = (size_t)outSize - 1;
+  memcpy(out, wasmLanguageCode, n);
+  out[n] = '\0';
 }
 
 void gameFrontSetLanguageCode(const char *code) {
-  (void)code;
+  if (!code) code = "";
+  snprintf(wasmLanguageCode, sizeof(wasmLanguageCode), "%s", code);
 }
 
 /* Settings' Play Tutorial button. Settings closes after the click and main's

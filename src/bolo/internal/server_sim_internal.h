@@ -509,12 +509,6 @@ struct ServerSim {
                                     * scenario detach, so it never reaches a
                                     * later round. */
     char     playerLang[MAX_TANKS][SERVER_PLAYER_LANG_LEN];
-    uint16_t tutorialDoneSeats;    /* a bit for each seat a script's
-                                    * game.tutorial_done named. Taken and
-                                    * cleared by serverSimTakeTutorialDone,
-                                    * which only the single-player frontend
-                                    * in the same process calls. Cleared
-                                    * when the seat's player leaves. */
                                    /* the language each seat's player reads,
                                     * lowercased ("de", "pt-br"); "" when the
                                     * server was not told. Only a client in
@@ -522,7 +516,16 @@ struct ServerSim {
                                     * player frontend), so a remote seat
                                     * stays "". Cleared when the seat's
                                     * player leaves. Read by game.lang. */
-    BYTE     maxPlayers;          /* cap on join slots; 0 falls back to MAX_TANKS */
+    BYTE     playerInput[MAX_TANKS]; /* SERVER_PLAYER_INPUT_*; 0 is the
+                                      * keyboard, so a seat never told
+                                      * reads as one */
+    uint16_t tutorialDoneSeats;    /* a bit for each seat a script's
+                                    * game.tutorial_done named. Taken and
+                                    * cleared by serverSimTakeTutorialDone,
+                                    * which only the single-player frontend
+                                    * in the same process calls. Cleared
+                                    * when the seat's player leaves. */
+    BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */
     uint32_t specDelayTicks;       /* spectator view delay in ticks (50 ticks/s) */

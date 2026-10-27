@@ -794,58 +794,6 @@ int run_scenario_announce_position(void) {
     return 0;
 }
 
-/* Two or more announcements up at once.
- *
- * The drawer places each line where it would go alone, oldest first, and
- * scnAnnounceStackBelow drops it one gap below any line already placed that
- * it would touch. So the newest line sits lowest, no two lines share a row,
- * and a line clear of the others is not moved. The lines are 100 x 20 and
- * the gap is 4. */
-int run_scenario_announce_stack(void) {
-    ScnAnnounceRect placed[3];
-    float y;
-
-    /* Nothing placed yet: the line stays where it would go alone. */
-    UT_ASSERT(scnAnnounceStackBelow(150.0f, 85.0f, 100.0f, 20.0f, NULL, 0,
-                                    4.0f) == 85.0f);
-    UT_ASSERT(scnAnnounceStackBelow(150.0f, 85.0f, 100.0f, 20.0f, placed, 0,
-                                    4.0f) == 85.0f);
-
-    /* A second line at the same place drops one gap below the first. */
-    placed[0].x0 = 150.0f; placed[0].y0 = 85.0f;
-    placed[0].x1 = 250.0f; placed[0].y1 = 105.0f;
-    y = scnAnnounceStackBelow(150.0f, 85.0f, 100.0f, 20.0f, placed, 1, 4.0f);
-    UT_ASSERT_MSG(y == 109.0f, "the second line is at y %.2f", y);
-
-    /* A third drops below both, whatever order they were placed in. */
-    placed[1].x0 = 150.0f; placed[1].y0 = 109.0f;
-    placed[1].x1 = 250.0f; placed[1].y1 = 129.0f;
-    y = scnAnnounceStackBelow(150.0f, 85.0f, 100.0f, 20.0f, placed, 2, 4.0f);
-    UT_ASSERT_MSG(y == 133.0f, "the third line is at y %.2f", y);
-    placed[2] = placed[0];
-    placed[0] = placed[1];
-    placed[1] = placed[2];
-    y = scnAnnounceStackBelow(150.0f, 85.0f, 100.0f, 20.0f, placed, 2, 4.0f);
-    UT_ASSERT_MSG(y == 133.0f, "the third line, the other order, is at "
-                  "y %.2f", y);
-
-    /* A line that only grazes the gap below another still drops. */
-    y = scnAnnounceStackBelow(150.0f, 107.0f, 100.0f, 20.0f, placed, 1, 4.0f);
-    UT_ASSERT(y == 133.0f);
-
-    /* A line clear of the others, across or down, is not moved: a line
-       is never moved up. */
-    y = scnAnnounceStackBelow(300.0f, 85.0f, 100.0f, 20.0f, placed, 2, 4.0f);
-    UT_ASSERT(y == 85.0f);
-    y = scnAnnounceStackBelow(150.0f, 200.0f, 100.0f, 20.0f, placed, 2,
-                              4.0f);
-    UT_ASSERT(y == 200.0f);
-    y = scnAnnounceStackBelow(150.0f, 10.0f, 100.0f, 20.0f, placed, 2, 4.0f);
-    UT_ASSERT(y == 10.0f);
-
-    return 0;
-}
-
 /* The Scenario Text window's fit: the source rectangle scaled into the
  * window by one factor for both axes, as large as it goes, and centred.
  *
@@ -859,11 +807,14 @@ int run_scenario_text_fit(void) {
     UT_ASSERT(SCN_TEXT_ROW_UNITS == 22.0f);
     UT_ASSERT(scnTextSourceHeight(1) == 26.0f);
     UT_ASSERT(scnTextSourceHeight(2) == 50.0f);
-    /* Fewer than one row is one, and more than two is two, so a round with
-       no line yet and a wrong count both give a usable rectangle. */
+    /* Fewer than one row is one, and more than SCN_TEXT_MAX_ROWS is that
+       many, so a round with no line yet and a wrong count both give a usable
+       rectangle. Three rows: the status line and two announcements. */
     UT_ASSERT(scnTextSourceHeight(0) == 26.0f);
     UT_ASSERT(scnTextSourceHeight(-4) == 26.0f);
-    UT_ASSERT(scnTextSourceHeight(9) == 50.0f);
+    UT_ASSERT(scnTextSourceHeight(3) == 74.0f);
+    UT_ASSERT(scnTextSourceHeight(SCN_TEXT_MAX_ROWS + 7) ==
+              scnTextSourceHeight(SCN_TEXT_MAX_ROWS));
     UT_ASSERT(scnTextRowTop(0) == 2.0f);
     UT_ASSERT(scnTextRowTop(1) == 26.0f);
     UT_ASSERT(scnTextRowTop(-1) == 2.0f);

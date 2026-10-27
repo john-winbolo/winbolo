@@ -735,12 +735,16 @@ on a frame that is a multiple of 1500, the log holds two records with the
 same frame count: the timed one, and the round-end one with the round-end
 flag. A reader keeps both.
 
-Only a host that records through the round log
-(`serverDedicatedLogInstall`) sets the stop hook: WinBoloDS, and a game
-hosted from the desktop, iOS or Android client. Two hosts write the timed
-records but no round-end record. WinBoloHeadless opens and closes its log
+Only the hosts that tick through `serverInstanceTick` in
+`src/server/server_lifecycle.c` write this record: WinBoloDS, and a game
+hosted from the desktop, iOS or Android client. They also record through the
+round log (`serverDedicatedLogInstall`), which sets the stop hook for the
+round-end record. Two hosts write no overrun record at all. WinBoloHeadless
+ticks its server through the local transport and opens and closes its log
 itself (`src/headless/headless_main.c`). The browser build's
-`serverLifecycleSetRoundLogHooks` is a stub (`src/wasm/server_stubs_wasm.c`).
+`serverInstanceTick` is a stub that runs `serverSimLocalTick` alone
+(`src/wasm/server_stubs_wasm.c`), and its `serverLifecycleSetRoundLogHooks`
+is a stub too.
 
 A reader takes the fields it knows and skips the rest by the framed length. A
 record shorter than 44 bytes, or with version 0, is consumed and ignored. A

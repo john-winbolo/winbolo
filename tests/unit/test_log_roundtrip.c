@@ -968,12 +968,21 @@ int run_log_roundtrip_player_lag(void) {
  * the server holds for that player. */
 int run_log_roundtrip_player_lag_recorded(void) {
     ReplayHarness h;
+    /* Values the sim cannot have on its own here: the harness has no client
+       input, so playerPing and the rewind would both be 0, and a writer that
+       always wrote zeros would pass. They are set before the recording has a
+       first byte, and the first record is written at the round's first entry,
+       before any input could change them. */
+    const uint16_t wantRtt    = 137;
+    const uint8_t  wantRewind = 6;
     memset(&h, 0, sizeof(h));
-    UT_ASSERT_MSG(replayHarnessStartRecording(&h, "playerLagRecorded", "Tester"),
-                  "replayHarnessStartRecording failed");
+    UT_ASSERT_MSG(replayHarnessPrepare(&h, "playerLagRecorded", "Tester"),
+                  "replayHarnessPrepare failed");
+    h.sim->playerPing[0]          = wantRtt;
+    h.sim->statLastRewindTicks[0] = wantRewind;
+    UT_ASSERT_MSG(replayHarnessBeginRecording(&h),
+                  "replayHarnessBeginRecording failed");
     replayHarnessTick(&h, 20);
-    uint16_t wantRtt    = h.sim->playerPing[0];
-    uint8_t  wantRewind = h.sim->statLastRewindTicks[0];
     UT_ASSERT_MSG(replayHarnessStopRecording(&h),
                   "replayHarnessStopRecording failed");
 

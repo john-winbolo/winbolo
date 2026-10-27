@@ -204,13 +204,14 @@ static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
  * The source rectangle is the width of the classic game
  * view at zoom 1 (15 squares of 16 units), so the share
  * across the view that an announcement's position names is
- * a share across this width. It has one row for each kind
- * of line the round has used so far: the status line on
- * top, the announcement below it. The rows are counted
- * over the whole round and not frame by frame, so the text
- * does not change size when a line comes and goes. A line
- * wider than the source rectangle is made smaller, by
- * itself, until it fits across it.
+ * a share across this width. It has a row for each row of
+ * text the round has used so far: the status line's on top,
+ * then the announcements', oldest first, as many as have
+ * been up at once. The rows are counted over the whole round
+ * and not frame by frame, so the text does not change size
+ * when a line comes and goes. A line too wide for the source
+ * rectangle is broken into rows at its spaces; a row still
+ * too wide is made smaller, by itself, until it fits across.
  * ------------------------------------------------------- */
 
 /* The source rectangle's width, in panel units. */
@@ -230,8 +231,10 @@ static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
 /* The height of one row: the letters and the outline above and below them. */
 #define SCN_TEXT_ROW_UNITS (SCN_TEXT_LINE_UNITS + 2.0f * SCN_TEXT_OUTLINE_UNITS)
 
-/* The most rows there are: the status line and the announcement. */
-#define SCN_TEXT_MAX_ROWS 2
+/* The most rows there are: the status line and up to four announcements at
+ * once (SCN_ANNOUNCE_STACK_MAX in client_sim.h), each of a row or two once
+ * its text is broken to fit across. A row past this many is not drawn. */
+#define SCN_TEXT_MAX_ROWS 10
 
 /* The source rectangle's height for a number of rows. Fewer than one row
  * counts as one, and more than SCN_TEXT_MAX_ROWS as that many. */
@@ -503,54 +506,6 @@ static inline void scnTextLineAcross(float srcW, float lineW, float share,
     if (outShrink != NULL) *outShrink = shrink;
 }
 
-/* A rectangle in screen pixels, x0/y0 the top-left corner and x1/y1 the
- * bottom-right one. */
-typedef struct ScnAnnounceRect {
-    float x0, y0, x1, y1;
-} ScnAnnounceRect;
-
-/*********************************************************
- *NAME:          scnAnnounceStackBelow
- *PURPOSE:
- *  Where the next of several announcements goes down the
- *  view when more than one is up at once. The caller
- *  places each line where it would go alone, oldest first,
- *  then asks this for its top edge: a box that comes within
- *  one gap of a line already placed drops to one gap below
- *  that line, and the search runs again until the box is
- *  clear of all of them. So the newest line sits lowest and
- *  no two lines share a row. It does not move a box up.
- *
- *ARGUMENTS:
- *  x/y     - the box's top-left corner where it goes alone
- *  w/h     - the box's size, outline included
- *  placed  - the lines already drawn; may be NULL
- *  count   - how many there are
- *  gap     - the space kept between two lines
- *********************************************************/
-static inline float scnAnnounceStackBelow(float x, float y, float w, float h,
-                                          const ScnAnnounceRect *placed,
-                                          int count, float gap) {
-    int pass;
-
-    if (placed == NULL) return y;
-    /* Each pass drops below one more line or finishes, so one pass more
-     * than there are lines always finishes. */
-    for (pass = 0; pass <= count; pass++) {
-        bool moved = false;
-        int  i;
-        for (i = 0; i < count; i++) {
-            const ScnAnnounceRect *p = &placed[i];
-            if (x < p->x1 + gap && x + w > p->x0 - gap &&
-                y < p->y1 + gap && y + h > p->y0 - gap) {
-                y     = p->y1 + gap;
-                moved = true;
-            }
-        }
-        if (!moved) break;
-    }
-    return y;
-}
 
 /*********************************************************
  *NAME:          scnPanelColourRGBA

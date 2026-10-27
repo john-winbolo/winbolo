@@ -44,6 +44,9 @@
  *      capture, against a control that shows the same fixture drawing one.
  *  10. The stats funnel reads the class, the index and the square from their
  *      new offsets.
+ *  11. An objective handed to the player who already holds it raises no
+ *      event: it has not changed hands. A scenario that refills its own base
+ *      by handing it over again drew a capture line each time.
  */
 
 #include <stdint.h>
@@ -1039,6 +1042,61 @@ int run_game_event_channel_capture_attribution(void) {
                   "cell %u,%u want %u,%u", (unsigned)r.mapX, (unsigned)r.mapY,
                   (unsigned)bx, (unsigned)by);
 
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 11. A hand-over to the current owner is not a capture.
+ * ================================================================ */
+int run_game_event_channel_same_owner_silent(void) {
+    ServerSim *sim = ut_make_running_sim("Holder");
+    GameSim *gs;
+    GecSink sink;
+    SubscriberHandle h;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT(basesGetNumBases(&gs->bs) >= 1 && basesIsActive(&gs->bs, 1));
+    UT_ASSERT(pillsGetNumPills(&gs->pb) >= 1 && pillsIsActive(&gs->pb, 1));
+
+    h = gecSubscribe(sim, &sink, /*wantEvents*/ true);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+
+    /* The control: a real change is still reported. */
+    (*gs->bs).item[0].owner = NEUTRAL;
+    gecDrain(sim, &sink);
+    UT_ASSERT(basesSetBaseOwner(gs, 1, GEC_HOLDER, FALSE, FALSE) == NEUTRAL);
+    UT_ASSERT(gecCount(&sink, EVENT_BASE_CAPTURED) == 1);
+
+    /* The same owner again, with or without keeping the stock. */
+    gecDrain(sim, &sink);
+    UT_ASSERT(basesSetBaseOwner(gs, 1, GEC_HOLDER, FALSE, FALSE) == GEC_HOLDER);
+    UT_ASSERT(basesSetBaseOwner(gs, 1, GEC_HOLDER, FALSE, TRUE) == GEC_HOLDER);
+    UT_ASSERT_MSG(gecCount(&sink, EVENT_BASE_CAPTURED) == 0,
+                  "%d capture events for a base handed to its owner",
+                  gecCount(&sink, EVENT_BASE_CAPTURED));
+    UT_ASSERT(gecBuffered(sim, EVENT_BASE_CAPTURED) == NULL);
+
+    /* A neutral base made neutral again. */
+    (*gs->bs).item[0].owner = NEUTRAL;
+    gecDrain(sim, &sink);
+    UT_ASSERT(basesSetBaseOwner(gs, 1, NEUTRAL, FALSE, FALSE) == NEUTRAL);
+    UT_ASSERT(gecCount(&sink, EVENT_BASE_CAPTURED) == 0);
+
+    /* The same for a pillbox. */
+    (*gs->pb).item[0].owner = NEUTRAL;
+    gecDrain(sim, &sink);
+    UT_ASSERT(pillsSetPillOwner(gs, &gs->pb, 1, GEC_HOLDER, FALSE) == NEUTRAL);
+    UT_ASSERT(gecCount(&sink, EVENT_PILL_CAPTURED) == 1);
+    gecDrain(sim, &sink);
+    UT_ASSERT(pillsSetPillOwner(gs, &gs->pb, 1, GEC_HOLDER, FALSE) == GEC_HOLDER);
+    UT_ASSERT_MSG(gecCount(&sink, EVENT_PILL_CAPTURED) == 0,
+                  "%d capture events for a pillbox handed to its owner",
+                  gecCount(&sink, EVENT_PILL_CAPTURED));
+
+    serverSimUnregisterSubscriber(sim, h);
     serverSimDestroy(sim);
     return 0;
 }

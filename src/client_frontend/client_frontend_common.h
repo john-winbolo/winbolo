@@ -3,6 +3,7 @@
 #define CLIENT_FRONTEND_COMMON_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -71,11 +72,20 @@ void clientFrontResumeEnd(struct ClientSim *cs);
 /* Whether any freeze or the suspend is on: the driver runs no game ticks. */
 bool clientFrontAnyPause(void);
 
-/* Hide the main menu's Tutorial button, and save that, once a shipped
- * tutorial's script says the player has finished it (game.tutorial_done).
- * Only in a single-player game, and only when the running map's own script
- * is in data/maps/tutorials. Call once a frame with the client mutex free. */
-void clientFrontPollTutorialDone(void);
+/* Once a frame in a single-player game, with the client mutex free:
+ *   - hide the main menu's Tutorial button, and save that, once a shipped
+ *     tutorial's script says the player has finished it
+ *     (game.tutorial_done), when the running map's own script is in
+ *     data/maps/tutorials;
+ *   - tell the server the player's language and input (game.lang,
+ *     game.input) when either changed since it was last told. */
+void clientFrontPollScenarioPlayer(void);
+
+/* Tell a server in this process the language and input of the player in
+ * seat, at join, before the first frame's poll, so a scenario's first line
+ * is already worded for them. The caller holds the client mutex. */
+struct ServerSim;
+void clientFrontTellScenarioPlayer(struct ServerSim *srv, uint8_t seat);
 
 /* The time-limit game over (frontEndGameOver), one body for every driver that
  * compiles this file. The driver supplies what differs:

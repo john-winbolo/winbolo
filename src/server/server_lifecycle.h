@@ -340,9 +340,9 @@ bool serverLifecycleCountRoundFrame(void);
 
 /* For the frames serverLifecycleCountRoundFrame names: print the overrun
  * lines to the console when serverOverrunStatsDue says so and
- * serverLifecycleSetOverrunConsolePrint turned that on, and add the overrun
- * record to the round log when serverOverrunRecordDue says so. The caller
- * holds the threads mutex. */
+ * serverLifecycleSetOverrunConsolePrint turned the print on, and add the
+ * overrun record to the round log when serverOverrunRecordDue says so. The
+ * caller holds the threads mutex. */
 void serverLifecycleReportOverrunStats(ServerSim *sim);
 
 /* Turn the overrun lines on stdout on or off. Off by default. WinBoloDS

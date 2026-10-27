@@ -2389,20 +2389,26 @@ static int scnLuaSetBoat(lua_State *L) {
     return scnDone(L, &op, "player %d", (int)p);
 }
 
-/* game.stop_tank(p): the tank's speed goes to 0 where it stands. It moves
- * on again as soon as the player drives it. */
-static int scnLuaStopTank(lua_State *L) {
+/* game.set_speed(p, s): how fast the tank is going, in the units of the
+ * speed_* rules; 0 stops it where it stands. From the next tick the tank
+ * drives under its usual limits. */
+static int scnLuaSetSpeed(lua_State *L) {
     ScenarioOp  op;
     lua_Integer p = scnArgInt(L, 1, "p");
+    lua_Integer s = scnArgInt(L, 2, "s");
 
     if (!scnFitsByte(p)) {
         return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
                           (int)p);
     }
+    if (!scnFitsByte(s)) {
+        return scnRefused(L, SCN_OP_RANGE, "speed is %d", (int)s);
+    }
     memset(&op, 0, sizeof(op));
-    op.type              = SCN_OP_TANK_STOP;
-    op.u.tankStop.slot   = (BYTE)p;
-    return scnDone(L, &op, "player %d", (int)p);
+    op.type                  = SCN_OP_TANK_SET_SPEED;
+    op.u.tankSetSpeed.slot   = (BYTE)p;
+    op.u.tankSetSpeed.speed  = (BYTE)s;
+    return scnDone(L, &op, "player %d, speed %d", (int)p, (int)s);
 }
 
 static int scnLuaGivePill(lua_State *L) {
@@ -5279,6 +5285,24 @@ static const ScnLuaOpParam kScnOpArgs_allied[] = {
     { "a", SCN_PARAM_SLOT, false }, { "b", SCN_PARAM_SLOT, false },
     SCN_OP_ARG_END
 };
+/* The input seat p's player uses: "keyboard", "touch" or "controller". A
+   seat out of range, an empty seat and one nobody told the server about
+   all answer "keyboard", which every text has. */
+static int scnLuaInput(lua_State *L) {
+    BYTE p;
+
+    if (!scnSlotOf(L, 1, "p", &p)) {
+        lua_pushstring(L, "keyboard");
+        return 1;
+    }
+    switch (serverSimGetPlayerInput(scnCtx(L)->sim, p)) {
+        case SERVER_PLAYER_INPUT_TOUCH:      lua_pushstring(L, "touch");      break;
+        case SERVER_PLAYER_INPUT_CONTROLLER: lua_pushstring(L, "controller"); break;
+        default:                             lua_pushstring(L, "keyboard");   break;
+    }
+    return 1;
+}
+
 /* A rule name is matched against the rules table and a name that spells none
    raises, so it is a word out of a fixed set rather than free text. */
 static const ScnLuaOpParam kScnOpArgs_rule[] = {
@@ -5286,6 +5310,9 @@ static const ScnLuaOpParam kScnOpArgs_rule[] = {
 };
 static const ScnLuaOpParam kScnOpArgs_voice_everyone[] = { SCN_OP_ARG_END };
 static const ScnLuaOpParam kScnOpArgs_lang[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_input[] = {
     { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
 };
 /* An id is matched against the calling script's own settings block and an
@@ -5361,8 +5388,8 @@ static const ScnLuaOpParam kScnOpArgs_set_modifiers[] = {
     { "p", SCN_PARAM_SLOT, false }, { "t", SCN_PARAM_TABLE, false },
     SCN_OP_ARG_END
 };
-static const ScnLuaOpParam kScnOpArgs_stop_tank[] = {
-    { "p", SCN_PARAM_SLOT, false },
+static const ScnLuaOpParam kScnOpArgs_set_speed[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "s", SCN_PARAM_NUMBER, false },
     SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_builder_order[] = {
@@ -5690,6 +5717,12 @@ static const ScnLuaRow kScnLuaRows[] = {
       "game knows it; a seat in a hosted game, an empty seat and a bot "
       "answer \"en\".",
       SCN_OP_PARAMS(lang), SCN_OP_READS },
+    { "input", scnLuaInput,
+      "input(p) — what seat p's player plays with: \"keyboard\", "
+      "\"touch\" or \"controller\", so a line can be worded for it. Only a "
+      "single-player game knows it; a seat in a hosted game, an empty seat "
+      "and a bot answer \"keyboard\".",
+      SCN_OP_PARAMS(input), SCN_OP_READS },
     { "setting", scnLuaSetting,
       "setting(id) — the value the host chose in the lobby for one of "
       "this script's own settings, or its declared default: a number, "
@@ -5774,10 +5807,10 @@ static const ScnLuaRow kScnLuaRows[] = {
       "dealt and taken percentages; a field the table leaves out goes back "
       "to the classic tank.",
       SCN_OP_PARAMS(set_modifiers), SCN_OP_ACTS },
-    { "stop_tank", scnLuaStopTank,
-      "stop_tank(p) — set player p's tank speed to 0 where it is; the "
-      "player can drive on at once.",
-      SCN_OP_PARAMS(stop_tank), SCN_OP_ACTS },
+    { "set_speed", scnLuaSetSpeed,
+      "set_speed(p, s) — set how fast player p's tank is going, 0 to 160 in "
+      "the units of the speed_* rules; 0 stops it where it is.",
+      SCN_OP_PARAMS(set_speed), SCN_OP_ACTS },
     { "builder_order", scnLuaBuilderOrder,
       "builder_order(p, action, x, y) — send player p's builder out to do "
       "one of \"trees\", \"road\", \"building\", \"pill\", \"mine\" or "

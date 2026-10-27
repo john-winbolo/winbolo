@@ -181,8 +181,10 @@ typedef enum {
 
 /* How many popups a client keeps waiting behind the one on screen. A popup
  * that arrives with the queue full is dropped, so a script that sends a
- * burst shows the first few rather than a backlog. */
-#define SCN_POPUP_QUEUE_MAX 4
+ * burst shows the first few rather than a backlog. 8, not 4: a message too
+ * long for one popup goes out in parts, and the Classic Tutorial's intro in
+ * Russian or Ukrainian is five popups sent together. */
+#define SCN_POPUP_QUEUE_MAX 8
 
 /* A map marker's shape. SQUARE marks a map square, FOLLOW rides a
  * player slot, and CLEAR removes the id the event names. These sit

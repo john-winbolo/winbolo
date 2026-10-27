@@ -22,7 +22,9 @@
 --
 -- Before that, every language's text is checked against the limits the
 -- client takes (popup 511 bytes a part, status line 128, announcement 125,
--- panel text 48 with no "\n"), with the widest numbers filled in.
+-- panel text 48 with no "\n"), with the widest numbers filled in, in each
+-- input's wording. The unit tests tutorial_text_fits and
+-- tutorial_text_well_formed check the same and more without a server.
 --
 -- PASS: every text above is the one expected, and no text is over a limit.
 
@@ -113,6 +115,16 @@ local function check_limits()
       for key, v in pairs(T[section] or {}) do
         local parts = type(v) == "table" and v or { v }
         if type(v) == "function" then parts = { v(99) } end
+        -- A text worded for each input: every wording, each of which may
+        -- be a popup's parts.
+        if type(v) == "table" and v.keyboard ~= nil then
+          parts = {}
+          for _, w in pairs(v) do
+            for _, part in ipairs(type(w) == "table" and w or { w }) do
+              parts[#parts + 1] = part
+            end
+          end
+        end
         for _, s in ipairs(parts) do
           local ok, out = pcall(string.format, s, NUMS[1], NUMS[2])
           if not ok then out = s end

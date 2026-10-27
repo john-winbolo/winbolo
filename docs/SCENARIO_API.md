@@ -39,6 +39,7 @@ bug worth reporting.
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
   - [Finishing a tutorial](#finishing-a-tutorial)
   - [Text in the player's language](#text-in-the-players-language)
+  - [Text for the player's input](#text-for-the-players-input)
 - [Showing things on a client](#showing-things-on-a-client)
   - [Popups](#popups)
   - [The panel](#the-panel)
@@ -1763,7 +1764,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 | `game.give_pill(p, n)` | Puts a pillbox into a tank, however armoured and whoever held it. |
 | `game.drop_pill(p, n[, x, y])` | Puts a carried pillbox back on the map, on a square or under the tank. |
 | `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. `speed` goes from 0 to 2000 and the others from 0 to 255; past that the call is refused with `SCN_OP_RANGE`. **0 is read as the classic 100**, not as nothing, so 0 does not stop a tank; 1 is the smallest a modifier goes, and a `speed` of 1 holds a tank nearly still. `speed` scales the ground's speed cap, so 534 puts a river's 3 at a road's 16. However high it is set, the engine holds the tank's scaled cap to 160 world units a frame, the most the byte-sized modifier could give on the fastest speed rule. |
-| `game.stop_tank(p)` | Sets a tank's speed to 0 where it is. Nothing else changes: the tank keeps its square, its place inside the square, its heading and its boat. The player can drive on at the next tick. A dead tank is refused with `SCN_OP_TANK_DEAD`. The Classic Tutorial uses it to stop the tank on each of its rows, as the old built-in tutorial did. Unlike `game.teleport`, it does not move the tank to the centre of the square, and it works on deep sea. |
+| `game.set_speed(p, s)` | Sets how fast a tank is going, in the units of the `speed_*` rules (`speed_road` is 16): 0 to 160, and 0 stops it where it is. Nothing else changes: the tank keeps its square, its place inside the square, its heading and its boat. From the next tick the tank drives under its usual limits, so a speed past what the ground allows comes down as it does on slower ground, and the player can accelerate or brake at once. A speed past 160 is refused with `SCN_OP_RANGE` and a dead tank with `SCN_OP_TANK_DEAD`. The Classic Tutorial uses `set_speed(p, 0)` to stop the tank on each of its rows, as the old built-in tutorial did. Unlike `game.teleport`, it does not move the tank to the centre of the square, and it works on deep sea. `game.set_modifiers` changes the tank's limit, not how fast it is going. |
 
 ### The builder
 
@@ -2106,6 +2107,7 @@ to escort a person stays where it is.
 | `game.set_voice_everyone(on)` | With `true`, voice in the running round goes to every player rather than to the talker's allies alone. `false` puts it back. |
 | `game.voice_everyone()` | Whether voice is going to everyone: what `set_voice_everyone` last set this round, and `false` on a server with voice off. |
 | `game.lang(p)` | The language seat `p`'s player reads, as their lang file's name in lower case: `"en"`, `"de"`, `"pt-br"`. `"en"` whenever the server does not know. See [Text in the player's language](#text-in-the-players-language). |
+| `game.input(p)` | What seat `p`'s player plays with: `"keyboard"`, `"touch"` or `"controller"`. `"keyboard"` whenever the server does not know. See [Text for the player's input](#text-for-the-players-input). |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. The clock runs in frames of two ticks, so an odd number rounds up by one tick. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
@@ -2225,10 +2227,9 @@ picks is in the new one.
 The client fills in tokens from its own language file. The word for a control
 on a controller or a touch screen ("the fire button") is a string in
 `data/lang/<code>.txt` (`STR_TUTTOK_*`), so it is in the language the client
-reads, whatever the script sent. The phrase tokens (see
-[Popups](#popups)) are whole sentences from the same file. On a hosted server,
-where `lang` answers `"en"`, a player who reads another language sees the
-script's English with the tokens in their own language.
+reads, whatever the script sent. On a hosted server, where `lang` answers
+`"en"`, a player who reads another language sees the script's English with the
+tokens in their own language.
 
 Write the text so a key token reads correctly both as a key name ("Space")
 and as a noun phrase ("the fire button"). Put the token where the object of
@@ -2238,8 +2239,44 @@ language's word for "press".
 
 A popup wraps only at spaces. Chinese and Japanese text has no spaces, so put a
 single `\n` (read as a space) every 25 to 30 characters. A status line or
-announcement row too wide for the view is broken at its last space that fits,
+announcement row too wide for the Scenario Text window is broken at its last space that fits,
 or before the first character that does not fit when the row has no space.
+
+The limits count bytes, and most languages take more bytes than English for
+the same line: Cyrillic and Greek take two a letter, Chinese, Japanese and
+Korean three. A popup too long for its 511 bytes can be sent as two or more
+popups, which the player closes one after the other.
+
+### Text for the player's input
+
+A key token covers a line that differs only in the key's name. Some lines
+differ by more: a touch screen has no keys and no build cursor, and a
+controller has a build cursor and no mouse. `game.input(p)` says which the
+player uses, `"keyboard"`, `"touch"` or `"controller"`, and the script holds a
+wording for each:
+
+```lua
+local ROAD = {
+  keyboard   = "Click the road button or press {QUICK_ROAD}, then click grass.",
+  touch      = "Tap the road button, then tap a grass square.",
+  controller = "Pick the road tool with {BUILD_TOOL} and press {BUILD_PLACE}.",
+}
+
+game.status(ROAD[game.input(p)] or ROAD.keyboard, nil, p)
+```
+
+Only a single-player game knows the input, the same way it knows the
+language: the client tells the server at the join and again whenever the input
+changes (a controller plugged in or put down). On a phone or tablet the touch
+layout counts first, whatever else is attached. A hosted or dedicated server
+is never told, so `input` answers `"keyboard"` for every seat there, as it
+does for a bot, an empty seat and a seat out of range. The key tokens still
+show the player's own keys and buttons there; only the sentences around them
+are the keyboard's.
+
+A line is worded when it is sent. A status line the script sends again each
+poll follows a change of input at once; a popup already on screen keeps the
+wording it was sent with.
 
 ---
 
@@ -2367,9 +2404,13 @@ past 4294967294, or a seat or team outside the game, is refused with
 **Two lines at once.** An announcement does not take the place of one that
 is still up. Each line keeps its own countdown, and a client holds up to four:
 a fifth pushes the oldest out. A new line with the same text as one still up
-replaces that one and starts its time again. An empty line takes them all
-away. Lines are drawn in the order they arrived, and a line that would overlap
-one already drawn drops to just below it, so the newest is lowest.
+replaces that one and starts its time again. So does a line that differs from
+one still up only in its numbers (a countdown, a score), so a line sent every
+frame is one line counted down rather than a stack; two lines that differ only
+in a number inside a name ("Bot 1", "Bot 2") count as one line too. An empty
+line takes them all away. The lines are drawn in the Scenario Text window in
+the order they arrived, each in a row of its own under the status line, so
+the newest is lowest.
 
 **Line breaks.** A status line or an announcement may hold `"\n"`. Each part
 is drawn on its own row, centred in one box, and the countdown of a status
@@ -2382,9 +2423,8 @@ tokens: `{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`,
 `{QUICK_WALL}`, `{QUICK_PILL}`, `{QUICK_MINE}`, `{GUN_UP}` and `{GUN_DOWN}`. The
 client writes each one out as the name of the bound key on a keyboard, a word
 for the control on a controller, or the touch wording on a touch screen. The
-phrase tokens of [Popups](#popups) work here too. The
 128-byte cap (125 with a position) applies to the text as sent, tokens and all.
-A row that is too wide for the view once its tokens are filled in is broken
+A row that is too wide for the Scenario Text window once its tokens are filled in is broken
 into two at its last space that fits.
 
 ```lua
@@ -2454,49 +2494,12 @@ game.popup("{ACCEL} forward, {BRAKE} slow down.\n\n"
   .. "Build a road with {QUICK_ROAD}.", p)
 ```
 
-Some differences between the inputs are more than a key name: a touch screen
-has no keys and no build cursor, and a controller has a build cursor and no
-mouse. For these the client has phrase tokens. Each is one or two whole
-sentences from the language file, in one wording for keyboard and mouse, one
-for a touch screen and one for a controller (`STR_TUTPHRASE_<NAME>_KEYS`,
-`_TOUCH`, `_PAD`; a phrase with no `_PAD` wording uses the keyboard one). The
-client fills in the phrase first, then the key tokens in it:
+A line that differs between the inputs by more than a key name is worded by
+the script for each input; see
+[Text for the player's input](#text-for-the-players-input).
 
-| Token | What it says |
-|---|---|
-| `{DRIVE_HOW}` | How to drive and turn. |
-| `{BUILD_HOW}` | How to pick a build tool and send the builder. |
-| `{HARVEST_TIP}` | Any build tool harvests a tree it is aimed at. |
-| `{PILL_HOW}` | How to build a carried pillbox. |
-| `{STEP_TREE}`, `{STEP_ROAD}`, `{STEP_WALL}`, `{STEP_MINE}` | Two status-line rows: build that one thing. |
-| `{STEP_PILL}`, `{STEP_PILL_GREEN}` | Two status-line rows: build the carried pillbox, anywhere or on the green square. |
-
-They were written for the Tutorial, and a script may use them in a popup, a
-status line or an announcement. The byte limits count the token as sent, not
-the sentence it becomes.
-
-A text can also name one whole string of the game's language file. When the
-whole text of a popup, a status line or an announcement is `{LANG:NAME}`,
-with nothing before or after it, the client shows the string called `NAME`
-in the player's language. `NAME` is the string's name as the language files
-write it, such as `STR_TUTORIAL01`: capital letters, digits and `_` only.
-Where the game has a touch or a controller wording of that string (the
-`_TOUCH` and `_CTRL` strings of the old built-in tutorial), the client picks
-the one for the player's input, and then fills in the key tokens in it. A
-name the language file does not have is shown as it is written. So is a
-text with anything else in it: one reference is one whole message, and
-`"Hi {LANG:STR_TUTORIAL01}"` is not filled in. A client from before this
-was added shows the reference as it is written.
-
-```lua
-game.popup("{LANG:STR_TUTORIAL01}", p)
-```
-
-The server does not read the reference, so the byte limits count it as
-sent. The strings are the game's, not the script's: use this only for a
-string the game ships, such as the Classic Tutorial's messages. A script's
-own text belongs in a table of its own, as [Text in the player's
-language](#text-in-the-players-language) shows.
+A brace that starts no key token (`{`, `{FOO}`, `{accel}`) is shown as it is
+written.
 
 ### The panel
 

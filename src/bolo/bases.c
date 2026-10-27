@@ -855,8 +855,10 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate, BYT
 
     /* Report the change, which is what networked clients get the message from.
        A base going neutral is reported the same way, with owner as the new
-       owner; the client draws no newswire line for that one. */
-    if (migrate == FALSE && sim->isServer) {
+       owner; the client draws no newswire line for that one. A base handed to
+       the player who already holds it has not changed hands (a scenario
+       refilling its own base does this), so nothing is reported. */
+    if (migrate == FALSE && sim->isServer && returnValue != owner) {
       if (sim->callbacks.baseOwnerChanged) {
         BYTE captureClass;
         captureClass = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
@@ -870,7 +872,7 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate, BYT
     }
 
     /* WinBolo.net Stuff */
-    if (migrate == FALSE && owner != NEUTRAL) {
+    if (migrate == FALSE && owner != NEUTRAL && returnValue != owner) {
       winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_CAPTURE, isServer, owner, WINBOLO_NET_NO_PLAYER,
                          playersIsBot(&sim->plyrs, owner), FALSE);
     }

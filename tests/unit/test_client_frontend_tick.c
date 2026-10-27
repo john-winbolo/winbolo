@@ -235,3 +235,34 @@ int run_transport_ticks_server_lifecycle(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* A single-player game is not always slot 0: the Tutorial seats its bots
+ * before the player. The tick core stamps every input with
+ * gameFrontGetPlayerNum, which reads clientSimGetServerPlayerNum, and the
+ * server moves the tank in the slot an input names. With 0 there, the
+ * player's keys drove the bot in slot 0 and the player's own tank stood
+ * still, so the client's prediction was pulled back each snapshot. */
+int run_local_join_slot_after_seated_bots(void) {
+    ServerSim *sim = ut_make_running_sim("Bot 1");
+    UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed returned NULL");
+    serverSimAddPlayer(sim, 1, "Bot 2", false);
+    serverSimAddPlayer(sim, 2, "Bot 3", false);
+
+    ClientSim *cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    UT_ASSERT(clientSimConnectLocal(cs, sim, "Player", "", 0, 0));
+    UT_ASSERT_MSG(clientSimGetMyPlayerNum(cs) == 3,
+                  "the join gave slot %u, expected 3",
+                  (unsigned)clientSimGetMyPlayerNum(cs));
+    UT_ASSERT_MSG(clientSimGetServerPlayerNum(cs) == 3,
+                  "clientSimGetServerPlayerNum answered %u for the local "
+                  "transport, expected the joined slot 3",
+                  (unsigned)clientSimGetServerPlayerNum(cs));
+
+    clientSimDisconnect(cs);
+    clientSimDestroy(cs);
+    UT_ASSERT(clientSimGetServerPlayerNum(NULL) == 0);
+    serverSimDestroy(sim);
+    return 0;
+}

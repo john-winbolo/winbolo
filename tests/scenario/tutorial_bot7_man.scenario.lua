@@ -28,7 +28,7 @@
 -- mostly misses); and the tutorial's can_die never refused a death of the
 -- player's man. With STAY_AREA (2026-10-10), ten minutes, seeds 42 and
 -- 1-7: 8.5, 7.0, 3.5, 5.6, 8.6, 4.0, 10.2, 10.8 percent of 50 to 137
--- shots (docs/TUTORIAL_DECISIONS.md). The old 5 percent floor failed seeds
+-- shots. The old 5 percent floor failed seeds
 -- 2 and 5 (2 hits of 57 and 50): at about 9 percent, 50 shots give 1 or 2
 -- hits often enough by chance alone.
 

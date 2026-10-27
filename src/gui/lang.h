@@ -187,76 +187,7 @@
 #define STR_WBERR_SAVEMAP                   384
 
 /* Tutorial strings */
-#define STR_TUTORIAL01                      385
-#define STR_TUTORIAL02                      386
-#define STR_TUTORIAL03                      387
-#define STR_TUTORIAL04                      388
-#define STR_TUTORIAL05                      389
-#define STR_TUTORIAL06                      390
-#define STR_TUTORIAL07                      391
-#define STR_TUTORIAL08                      392
-#define STR_TUTORIAL09                      393
-#define STR_TUTORIAL10                      394
-#define STR_TUTORIAL11                      395
-#define STR_TUTORIAL12                      396
-#define STR_TUTORIAL13                      397
-#define STR_TUTORIAL14                      398
-#define STR_TUTORIAL15                      399
-#define STR_TUTORIAL16                      400
-#define STR_TUTORIAL17                      401
-#define STR_TUTORIAL18                      402
-#define STR_TUTORIAL19                      403
-#define STR_TUTORIAL20                      404
-#define STR_TUTORIAL21                      405
-#define STR_TUTORIAL22                      406
-#define STR_TUTORIAL23                      407
-#define STR_TUTORIAL24                      408
-#define STR_TUTORIAL25                      409
-#define STR_TUTORIAL_START01                410
-#define STR_TUTORIAL_START02                411
-#define STR_TUTORIAL_START04                413
-
-/* Touch-mode (tablet/mobile) siblings of the tutorial strings whose
- * desktop wording references hardware keys or mouse clicks. The
- * sequencer picks these via tutorialResolveSegments() when
- * uiModeIsTablet() is true. Only the affected strings have siblings —
- * the rest fall through to the desktop entry unchanged. */
-#define STR_TUTORIAL01_TOUCH                468
-#define STR_TUTORIAL02_TOUCH                469
-#define STR_TUTORIAL03_TOUCH                470
-#define STR_TUTORIAL04_TOUCH                471
-#define STR_TUTORIAL05_TOUCH                472
-#define STR_TUTORIAL06_TOUCH                473
-#define STR_TUTORIAL10_TOUCH                474
-#define STR_TUTORIAL14_TOUCH                475
-#define STR_TUTORIAL16_TOUCH                476
-#define STR_TUTORIAL18_TOUCH                477
-#define STR_TUTORIAL19_TOUCH                478
-#define STR_TUTORIAL21_TOUCH                479
-#define STR_TUTORIAL_START01_TOUCH          480
-#define STR_TUTORIAL_START04_TOUCH          481
-
-/* Controller-mode siblings of the tutorial strings whose desktop
- * wording references keyboard keys or the mouse. The sequencer picks
- * these when the active input is a gamepad, mirroring the _TOUCH
- * mechanism above. STR_TUTORIAL_RESPAWN1 is the message shown when
- * the player respawns at the second tutorial start (near the shore)
- * instead of out at sea. */
-#define STR_TUTORIAL01_CTRL                 1830
-#define STR_TUTORIAL02_CTRL                 1831
-#define STR_TUTORIAL03_CTRL                 1832
-#define STR_TUTORIAL04_CTRL                 1833
-#define STR_TUTORIAL05_CTRL                 1834
-#define STR_TUTORIAL06_CTRL                 1835
-#define STR_TUTORIAL10_CTRL                 1836
-#define STR_TUTORIAL14_CTRL                 1837
-#define STR_TUTORIAL16_CTRL                 1838
-#define STR_TUTORIAL18_CTRL                 1839
-#define STR_TUTORIAL19_CTRL                 1840
-#define STR_TUTORIAL21_CTRL                 1841
-#define STR_TUTORIAL_START04_CTRL           1842
-#define STR_TUTORIAL_RESPAWN1               1843
-#define STR_TUTORIAL_QUICK_BUILD_TOUCH      2811
+#define STR_TUTORIAL_QUICK_BUILD_TOUCH      2811  /* a quick-build key token on a touch screen */
 
 /* A key token ({FIRE}, {GUN_UP} and the rest) in words, where a status
  * line or an announcement has no room for a glyph (controller) or the
@@ -282,42 +213,6 @@
 #define STR_TUTTOK_TOUCH_FIRE               3416
 #define STR_TUTTOK_TOUCH_GUN_UP             3417
 #define STR_TUTTOK_TOUCH_GUN_DOWN           3418
-
-/* The phrase tokens: a whole sentence or two the client puts in place of
- * the token, worded for the player's input. _KEYS is for a keyboard and
- * mouse, _TOUCH for a touch screen, _PAD for a controller. Where the words
- * are the same as the keyboard's (a controller draws {ACCEL} as its own
- * glyph) there is no _PAD string. A phrase may carry key tokens, which are
- * filled in after it. */
-#define STR_TUTPHRASE_DRIVE_HOW_KEYS        3430
-#define STR_TUTPHRASE_DRIVE_HOW_TOUCH       3431
-#define STR_TUTPHRASE_BUILD_HOW_KEYS        3432
-#define STR_TUTPHRASE_BUILD_HOW_TOUCH       3433
-#define STR_TUTPHRASE_BUILD_HOW_PAD         3434
-#define STR_TUTPHRASE_HARVEST_TIP_KEYS      3435
-#define STR_TUTPHRASE_HARVEST_TIP_TOUCH     3436
-#define STR_TUTPHRASE_HARVEST_TIP_PAD       3437
-#define STR_TUTPHRASE_PILL_HOW_KEYS         3438
-#define STR_TUTPHRASE_PILL_HOW_TOUCH        3439
-#define STR_TUTPHRASE_PILL_HOW_PAD          3440
-#define STR_TUTPHRASE_STEP_TREE_KEYS        3441
-#define STR_TUTPHRASE_STEP_TREE_TOUCH       3442
-#define STR_TUTPHRASE_STEP_TREE_PAD         3443
-#define STR_TUTPHRASE_STEP_ROAD_KEYS        3444
-#define STR_TUTPHRASE_STEP_ROAD_TOUCH       3445
-#define STR_TUTPHRASE_STEP_ROAD_PAD         3446
-#define STR_TUTPHRASE_STEP_WALL_KEYS        3447
-#define STR_TUTPHRASE_STEP_WALL_TOUCH       3448
-#define STR_TUTPHRASE_STEP_WALL_PAD         3449
-#define STR_TUTPHRASE_STEP_MINE_KEYS        3450
-#define STR_TUTPHRASE_STEP_MINE_TOUCH       3451
-#define STR_TUTPHRASE_STEP_MINE_PAD         3452
-#define STR_TUTPHRASE_STEP_PILL_KEYS        3453
-#define STR_TUTPHRASE_STEP_PILL_TOUCH       3454
-#define STR_TUTPHRASE_STEP_PILL_PAD         3455
-#define STR_TUTPHRASE_STEP_PILL_GREEN_KEYS  3456
-#define STR_TUTPHRASE_STEP_PILL_GREEN_TOUCH 3457
-#define STR_TUTPHRASE_STEP_PILL_GREEN_PAD   3458
 
 /* LGM (little green man) messages */
 #define LGM_MAN_DEAD                        414
@@ -3835,11 +3730,6 @@ const LangFileMeta *langGetLoadedMeta(void);
 
 void langGetFileName(char *fileName);
 char *langGetText(langid id);
-
-/* The id of the string whose symbolic name is `name` ("STR_TUTORIAL01"),
- * the same name a language file uses for its keys. 0 when no string has
- * that name. */
-langid langIdFromName(const char *name);
 
 /* Like langGetText, but expands the named placeholders {player},
  * {other}, {number} from `args`. If `args` is NULL it behaves like

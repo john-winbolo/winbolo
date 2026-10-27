@@ -4722,6 +4722,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tokens the popup text may carry.
     tests/unit/test_scenario_popup.c
     src/gui/sdl3/tutorial_tokens.c
+    # The token parser against untrusted text: malformed braces, the split,
+    # a cut inside a UTF-8 character, and a fixed seed of random input.
+    tests/unit/test_tutorial_tokens_parse.c
+    # The shipped tutorial's text: every language and input inside the
+    # server's limits, valid UTF-8, and no brace that is not a key token.
+    tests/unit/test_tutorial_text_check.c
     tests/unit/test_voice_talking_set.c
     # The rules event's body codec: every carried rule round-trips field by
     # field, rates a fixed-point scale could not carry survive, and the
@@ -6429,9 +6435,12 @@ set(_unit_test_names
     tutorial_tokens_quick_build
     scenario_status_tokens_expand
     tutorial_tokens_long_key_names
-    tutorial_tokens_phrases
-    tutorial_lang_ref
-    lang_name_table_classic_tutorial
+    tutorial_tokens_malformed
+    tutorial_tokens_split
+    tutorial_tokens_utf8_cut
+    tutorial_tokens_random_input
+    tutorial_text_fits
+    tutorial_text_well_formed
     scenario_announce_waits_for_popup
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
@@ -6934,6 +6943,7 @@ set(_unit_test_names
     addrparse_empty
     mapchooser_scenario_filter
     bg_map_pick_skips_tutorials
+    tutorial_maps_shipped_path
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop
@@ -6952,6 +6962,7 @@ set(_unit_test_names
     tick_core_passive_local_pumps_keys_half
     tick_core_lobby_preserves_parity
     transport_ticks_server_lifecycle
+    local_join_slot_after_seated_bots
     await_join_connected_immediate
     await_join_lobby_latch
     await_join_timeout_and_error
@@ -7131,7 +7142,7 @@ set(_unit_test_names
     scenario_tank_kill
     scenario_tank_teleport
     scenario_tank_set_boat
-    scenario_tank_stop
+    scenario_tank_set_speed
     scenario_tank_give_pill
     scenario_tank_drop_pill
     scenario_tank_arm_records
@@ -7277,6 +7288,7 @@ set(_unit_test_names
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
+    lobby_scenario_fixes_lobby_settings
     wbn_lobby_info_scenario
     info_script_tail_golden
     info_script_tail_read
@@ -7435,6 +7447,7 @@ set(_unit_test_names
     game_event_channel_neutralised_no_client_line
     game_event_channel_capture_attribution
     game_event_channel_subscriber_count
+    game_event_channel_same_owner_silent
     game_events_tank_spawned
     game_events_lgm_landed
     game_events_pill_placed
@@ -7543,6 +7556,8 @@ set(_unit_test_names
     scenario_lua_every_row_answers
     scenario_lua_voice_everyone
     scenario_lua_lang
+    scenario_lua_input
+    scenario_lua_tutorial_done
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
@@ -7865,7 +7880,6 @@ set(_unit_test_names
     scenario_text_edge_shown
     scenario_text_save_place
     scenario_status_line
-    scenario_announce_stack
     scn_status_codec_and_client
     scn_announce_position_codec
     scn_announce_stack_client
@@ -8457,6 +8471,21 @@ if(WB_FUZZ)
              COMMAND $<TARGET_FILE:fuzz_voice_segment> -runs=0
                      ${WB_FUZZ_CORPUS_DIR}/voice_segment ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.voice_segment PROPERTIES TIMEOUT 120)
+
+    # Tier 1 — the key tokens in a scenario's popup, status line and
+    # announcement (tutorialTokensSplit / tutorialTokensExpand): text from
+    # whatever server the player joined, split and filled in on every
+    # client. The parser alone, with no SDL and no renderer.
+    add_executable(fuzz_tutorial_tokens
+        tests/fuzz/fuzz_tutorial_tokens.c
+        src/gui/sdl3/tutorial_tokens.c)
+    bolo_apply_include_rules(fuzz_tutorial_tokens unittests)
+    target_link_options(fuzz_tutorial_tokens PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_tutorial_tokens "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.tutorial_tokens
+             COMMAND $<TARGET_FILE:fuzz_tutorial_tokens> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/tutorial_tokens ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.tutorial_tokens PROPERTIES TIMEOUT 120)
 
     # Tier 1 — the bulk-transfer receive state machine (bulkParseStreamHeader +
     # bulkReceiverFeed), reassembling map download / resync / upload / preview

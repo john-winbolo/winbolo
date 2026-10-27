@@ -28,19 +28,11 @@ extern "C" {
 
 struct ClientSim;
 
-/* Queue a sequence of tutorial message string-ids (STR_TUTORIAL*) for
- * display.  Drawn as a modal popup through the main ImGui context.
- * Ignored if the overlay is already showing.  `onComplete` (may be NULL)
- * runs once, on the main thread, when the player dismisses the last
- * message in the sequence.  Copies `ids`; `count` is clamped. */
-void tutorialOverlayShow(const uint16_t *ids, int count,
-                         void (*onComplete)(void));
-
-/* Show one message from a text rather than a string id: a scenario's
- * popup (game.popup). Tokens such as {ACCEL} or {QUICK_TREE} are expanded
- * as in a tutorial string. Ignored if the overlay is already showing, so
- * the caller holds the text back until tutorialOverlayIsOpen() is false.
- * Copies `text`. */
+/* Show one message: a scenario's popup (game.popup), drawn as a modal
+ * popup through the main ImGui context. Tokens such as {ACCEL} or
+ * {QUICK_TREE} are expanded (tutorial_text.h). Ignored if the overlay is
+ * already showing, so the caller holds the text back until
+ * tutorialOverlayIsOpen() is false. Copies `text`. */
 void tutorialOverlayShowText(const char *text);
 
 /* True while the overlay is open or pending-open this frame.  Fed into
@@ -51,12 +43,12 @@ bool tutorialOverlayIsOpen(void);
  * frame from the main render path, on the main thread. */
 void tutorialOverlayRender(struct ClientSim *cs);
 
-/* Drop any message left showing or queued, and its completion callback, so
- * the next tutorial starts with the overlay closed. */
+/* Drop any message left showing or queued, so the next game starts with the
+ * overlay closed. */
 void tutorialOverlayReset(void);
 
-/* Close whatever the overlay is showing, without running its completion
- * callback, because the round it belongs to has ended. tutorialOverlayIsOpen()
+/* Close whatever the overlay is showing, because the round it belongs to
+ * has ended. tutorialOverlayIsOpen()
  * is false from this call on; the ImGui popup itself is closed by the next
  * tutorialOverlayRender, before it would draw. The round-end screen and the
  * lobby take the window over and never draw this popup, so one left open

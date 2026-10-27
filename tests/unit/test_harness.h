@@ -496,6 +496,7 @@ int run_tick_core_active_local_no_double_step(void);
 int run_tick_core_passive_local_pumps_keys_half(void);
 int run_tick_core_lobby_preserves_parity(void);
 int run_transport_ticks_server_lifecycle(void);
+int run_local_join_slot_after_seated_bots(void);
 int run_await_join_connected_immediate(void);
 int run_await_join_lobby_latch(void);
 int run_await_join_timeout_and_error(void);
@@ -1703,11 +1704,19 @@ int run_scenario_popup_round_over(void);
 int run_tutorial_tokens_quick_build(void);
 int run_scenario_status_tokens_expand(void);
 int run_tutorial_tokens_long_key_names(void);
-/* The phrase tokens ({DRIVE_HOW}, {STEP_TREE} ...): found, named phrases,
- * and filled by tutorialPhrasesExpand alone, key tokens left as written. */
-int run_tutorial_tokens_phrases(void);
-int run_tutorial_lang_ref(void);
-int run_lang_name_table_classic_tutorial(void);
+/* The token parser against untrusted text (test_tutorial_tokens_parse.c):
+ * a brace that starts no token is plain text; the split covers the text in
+ * order and says where it stopped; a cut never ends in half a UTF-8
+ * character; and random text never takes the expand past its buffer. */
+int run_tutorial_tokens_malformed(void);
+int run_tutorial_tokens_split(void);
+int run_tutorial_tokens_utf8_cut(void);
+int run_tutorial_tokens_random_input(void);
+/* The shipped tutorial's TEXT tables (test_tutorial_text_check.c): every
+ * language and input inside the limit of the call that sends it, valid
+ * UTF-8, every brace a known key token, and input wordings well formed. */
+int run_tutorial_text_fits(void);
+int run_tutorial_text_well_formed(void);
 int run_scenario_announce_waits_for_popup(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
@@ -3281,7 +3290,7 @@ int run_scenario_tank_set_stocks(void);
 int run_scenario_tank_kill(void);
 int run_scenario_tank_teleport(void);
 int run_scenario_tank_set_boat(void);
-int run_scenario_tank_stop(void);
+int run_scenario_tank_set_speed(void);
 int run_scenario_tank_give_pill(void);
 int run_scenario_tank_drop_pill(void);
 int run_scenario_tank_arm_records(void);
@@ -3773,6 +3782,7 @@ int run_game_event_channel_capture_wire_bytes(void);
 int run_game_event_channel_neutralised_no_client_line(void);
 int run_game_event_channel_capture_attribution(void);
 int run_game_event_channel_subscriber_count(void);
+int run_game_event_channel_same_owner_silent(void);
 
 /* The eight facts that had no event at all (test_game_events_new.c): a tank
  * spawning and respawning, a builder landing, a pill placed, picked up and
@@ -3921,6 +3931,9 @@ int run_scenario_validate_needs_bots_declared(void);
 int run_scenario_lua_every_row_answers(void);
 int run_scenario_lua_voice_everyone(void);
 int run_scenario_lua_lang(void);
+/* game.input(p): "keyboard", "touch" or "controller" as the frontend told
+ * the seat, the keyboard for any other value, and cleared on leave. */
+int run_scenario_lua_input(void);
 int run_scenario_lua_tutorial_done(void);
 int run_scenario_lua_op_arguments_match_the_doc(void);
 int run_scenario_lua_read_index_passes_through(void);
@@ -4391,7 +4404,6 @@ int run_scenario_panel_timer_text(void);
 int run_scenario_announce_remaining(void);
 int run_scenario_announce_position(void);
 int run_scenario_status_line(void);
-int run_scenario_announce_stack(void);
 /* The Scenario Text window's fit: the source rectangle scaled into the
  * window with one factor for both axes and centred. */
 int run_scenario_text_fit(void);
