@@ -12,14 +12,15 @@
 -- PASS:
 --   - the intro's three popups come first;
 --   - t01 is sent while the real tank is on row 210;
---   - game.stop_tank is called on row 210 and the server takes it.
+--   - game.set_speed(p, 0) is called on row 210 and the server takes it.
 
 CLASSIC_TUTORIAL_PLAYER = 0
 ARENA = { phase = 0, x = nil, pops = {}, stop_ok = nil, stop_row = nil,
           wait = 0, done = false }
 
 -- The message a popup is, read from the script's English table: its key,
--- the input it is worded for, and which of its parts it is.
+-- which of its parts it is, and every input whose wording it is (two inputs
+-- may share one text, as t14's keyboard and controller wordings do).
 ARENA_TEXT = {}
 for key, v in pairs(TEXT.en.pop) do
   local wordings = v
@@ -28,7 +29,12 @@ for key, v in pairs(TEXT.en.pop) do
     local parts = w
     if type(w) == "string" then parts = { w } end
     for i, part in ipairs(parts) do
-      ARENA_TEXT[part] = { key = key, input = input, part = i, parts = #parts }
+      local m = ARENA_TEXT[part]
+      if m == nil then
+        m = { key = key, part = i, parts = #parts, inputs = {} }
+        ARENA_TEXT[part] = m
+      end
+      m.inputs[input] = true
     end
   end
 end
@@ -43,9 +49,9 @@ game.popup = function(text, p, ...)
   return real_popup(text, p, ...)
 end
 
-local real_stop = game.stop_tank
-game.stop_tank = function(p)
-  local ok, code = real_stop(p)
+local real_set_speed = game.set_speed
+game.set_speed = function(p, s)
+  local ok, code = real_set_speed(p, s)
   local t = game.tank(0)
   ARENA.stop_ok, ARENA.stop_row = ok, t and t.my
   return ok, code

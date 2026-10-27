@@ -6909,7 +6909,7 @@ set(_unit_test_names
     scenario_tank_kill
     scenario_tank_teleport
     scenario_tank_set_boat
-    scenario_tank_stop
+    scenario_tank_set_speed
     scenario_tank_give_pill
     scenario_tank_drop_pill
     scenario_tank_arm_records

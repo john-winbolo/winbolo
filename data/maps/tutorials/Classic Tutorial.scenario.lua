@@ -48,7 +48,7 @@ scenario = {
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-27T13:37Z",
+  updated = "2026-10-27T13:47Z",
   game = "strict",
 
   lobby = {
@@ -226,7 +226,7 @@ function on_tick(tick)
   -- than any row it reached before.
   if S.prev_my ~= nil and my < S.prev_my and my < S.min_row and
      STOP_ROW[my] then
-    game.stop_tank(S.player)
+    game.set_speed(S.player, 0)
   end
   if my < S.min_row then S.min_row = my end
   S.prev_my = my

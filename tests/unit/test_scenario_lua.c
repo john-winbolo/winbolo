@@ -530,7 +530,7 @@ static const char *const kSlEveryRowCalls =
     "  give_pill   = function() return game.give_pill(9, 1) end,\n"
     "  drop_pill   = function() return game.drop_pill(9, 1) end,\n"
     "  set_modifiers = function() return game.set_modifiers(9, {speed=120}) end,\n"
-    "  stop_tank   = function() return game.stop_tank(9) end,\n"
+    "  set_speed   = function() return game.set_speed(9, 0) end,\n"
     "  builder_order = function() return game.builder_order(9, \"road\", 100, 100) end,\n"
     "  builder_recall = function() return game.builder_recall(9) end,\n"
     "  kill_lgm    = function() return game.kill_lgm(9) end,\n"

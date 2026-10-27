@@ -268,7 +268,7 @@ typedef enum {
     SCN_OP_TANK_GIVE_PILL,
     SCN_OP_TANK_DROP_PILL,
     SCN_OP_TANK_SET_MODIFIERS,
-    SCN_OP_TANK_STOP,
+    SCN_OP_TANK_SET_SPEED,
 
     /* Builder */
     SCN_OP_LGM_DISPATCH,
@@ -401,10 +401,12 @@ typedef struct {
     TankModifiers mods;
 } ScnOpTankSetModifiers;
 
-/* Stop a tank where it is: its speed goes to 0 and nothing else changes. */
+/* Set how fast a tank is going, in the units of the speed_* rules: 0 stops
+   it where it is. Nothing else changes. */
 typedef struct {
     BYTE slot;
-} ScnOpTankStop;
+    BYTE speed;
+} ScnOpTankSetSpeed;
 
 /* ── Builder ───────────────────────────────────────────────────── */
 
@@ -807,7 +809,7 @@ typedef struct {
         ScnOpTankGivePill      tankGivePill;
         ScnOpTankDropPill      tankDropPill;
         ScnOpTankSetModifiers  tankSetModifiers;
-        ScnOpTankStop          tankStop;
+        ScnOpTankSetSpeed      tankSetSpeed;
         ScnOpLgmDispatch       lgmDispatch;
         ScnOpLgmRecall         lgmRecall;
         ScnOpLgmKill           lgmKill;

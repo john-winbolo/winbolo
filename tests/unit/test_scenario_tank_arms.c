@@ -527,12 +527,12 @@ int run_scenario_tank_set_boat(void) {
     return 0;
 }
 
-/* ── Stop ────────────────────────────────────────────────────────── */
+/* ── Set speed ───────────────────────────────────────────────────── */
 
-/* game.stop_tank sets the speed to 0 and changes nothing else: the tank keeps
-   its place inside the square, its heading and its boat, as the classic
-   tutorial's stop did. */
-int run_scenario_tank_stop(void) {
+/* game.set_speed sets the speed and changes nothing else: the tank keeps its
+   place inside the square, its heading and its boat. 0 is the classic
+   tutorial's stop. */
+int run_scenario_tank_set_speed(void) {
     ServerSim *sim = ut_make_running_sim("Tester");
     ScenarioOp op;
     tank *t;
@@ -552,8 +552,9 @@ int run_scenario_tank_stop(void) {
     onBoat = tankIsOnBoat(t) ? true : false;
 
     memset(&op, 0, sizeof(op));
-    op.type = SCN_OP_TANK_STOP;
-    op.u.tankStop.slot = TA_SLOT;
+    op.type = SCN_OP_TANK_SET_SPEED;
+    op.u.tankSetSpeed.slot = TA_SLOT;
+    op.u.tankSetSpeed.speed = 0;
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
     UT_ASSERT_MSG((*t)->speed == 0, "the tank still has speed");
     UT_ASSERT_MSG((*t)->x == x && (*t)->y == y, "the tank was moved");
@@ -561,19 +562,29 @@ int run_scenario_tank_stop(void) {
     UT_ASSERT_MSG((tankIsOnBoat(t) ? true : false) == onBoat,
                   "the boat changed");
 
-    /* A tank already at rest stays at rest. */
+    /* Any speed up to the engine's cap is taken as it is. */
+    op.u.tankSetSpeed.speed = 9;
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
-    UT_ASSERT((*t)->speed == 0);
+    UT_ASSERT_MSG((*t)->speed == 9, "speed %.1f, set 9", (double)(*t)->speed);
+    op.u.tankSetSpeed.speed = TANK_MOD_SPEED_CAP_MAX;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    UT_ASSERT((*t)->speed == TANK_MOD_SPEED_CAP_MAX);
+
+    /* Past the cap is refused and the speed stays. */
+    (*t)->speed = 5;
+    op.u.tankSetSpeed.speed = TANK_MOD_SPEED_CAP_MAX + 1;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE);
+    UT_ASSERT_MSG((*t)->speed == 5, "a refused speed still changed it");
 
     /* A destroyed tank, an empty seat and an index past the roster. */
-    (*t)->speed = 5;
+    op.u.tankSetSpeed.speed = 0;
     tankSetDestroyed(t, true);
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_TANK_DEAD);
-    UT_ASSERT_MSG((*t)->speed == 5, "a refused stop still changed the speed");
+    UT_ASSERT_MSG((*t)->speed == 5, "a refused speed still changed it");
     tankSetDestroyed(t, false);
-    op.u.tankStop.slot = 1;
+    op.u.tankSetSpeed.slot = 1;
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_NO_SUCH_PLAYER);
-    op.u.tankStop.slot = MAX_TANKS;
+    op.u.tankSetSpeed.slot = MAX_TANKS;
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_NO_SUCH_PLAYER);
 
     serverSimDestroy(sim);

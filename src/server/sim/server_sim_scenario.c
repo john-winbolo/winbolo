@@ -369,21 +369,28 @@ static ScnOpResult scenarioOpTankSetBoat(ServerSim *sim,
     return SCN_OP_OK;
 }
 
-/* Stop a tank where it is. Only the speed changes: the tank keeps its square,
- * the place inside the square, its heading and its boat. This is what the
- * classic tutorial did when a tank drove onto one of its rows. The player
- * can accelerate again on the next tick. */
-static ScnOpResult scenarioOpTankStop(ServerSim *sim, const ScnOpTankStop *p) {
+/* Set how fast a tank is going. Only the speed changes: the tank keeps its
+ * square, the place inside the square, its heading and its boat. 0 is what
+ * the classic tutorial did when a tank drove onto one of its rows. From the
+ * next tick the tank drives under its usual limits: a speed past what the
+ * ground allows comes down as it does on slower ground, and the player can
+ * accelerate or brake at once. */
+static ScnOpResult scenarioOpTankSetSpeed(ServerSim *sim,
+                                          const ScnOpTankSetSpeed *p) {
     tank *t = NULL;
-    ScnOpResult r = scenarioTankFor(sim, p->slot, &t);
+    ScnOpResult r;
 
+    if (p->speed > TANK_MOD_SPEED_CAP_MAX) {
+        return SCN_OP_RANGE;
+    }
+    r = scenarioTankFor(sim, p->slot, &t);
     if (r != SCN_OP_OK) {
         return r;
     }
     if (tankIsDestroyed(t)) {
         return SCN_OP_TANK_DEAD;
     }
-    tankSetSpeed(t, 0);
+    tankSetSpeed(t, (SPEEDTYPE)p->speed);
     return SCN_OP_OK;
 }
 
@@ -4835,8 +4842,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpTankDropPill(sim, &op->u.tankDropPill);
         case SCN_OP_TANK_SET_MODIFIERS:
             return scenarioOpTankSetModifiers(sim, &op->u.tankSetModifiers);
-        case SCN_OP_TANK_STOP:
-            return scenarioOpTankStop(sim, &op->u.tankStop);
+        case SCN_OP_TANK_SET_SPEED:
+            return scenarioOpTankSetSpeed(sim, &op->u.tankSetSpeed);
         case SCN_OP_LGM_DISPATCH:
             return scenarioOpLgmDispatch(sim, &op->u.lgmDispatch);
         case SCN_OP_LGM_RECALL:

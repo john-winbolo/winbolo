@@ -2389,20 +2389,26 @@ static int scnLuaSetBoat(lua_State *L) {
     return scnDone(L, &op, "player %d", (int)p);
 }
 
-/* game.stop_tank(p): the tank's speed goes to 0 where it stands. It moves
- * on again as soon as the player drives it. */
-static int scnLuaStopTank(lua_State *L) {
+/* game.set_speed(p, s): how fast the tank is going, in the units of the
+ * speed_* rules; 0 stops it where it stands. From the next tick the tank
+ * drives under its usual limits. */
+static int scnLuaSetSpeed(lua_State *L) {
     ScenarioOp  op;
     lua_Integer p = scnArgInt(L, 1, "p");
+    lua_Integer s = scnArgInt(L, 2, "s");
 
     if (!scnFitsByte(p)) {
         return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
                           (int)p);
     }
+    if (!scnFitsByte(s)) {
+        return scnRefused(L, SCN_OP_RANGE, "speed is %d", (int)s);
+    }
     memset(&op, 0, sizeof(op));
-    op.type              = SCN_OP_TANK_STOP;
-    op.u.tankStop.slot   = (BYTE)p;
-    return scnDone(L, &op, "player %d", (int)p);
+    op.type                  = SCN_OP_TANK_SET_SPEED;
+    op.u.tankSetSpeed.slot   = (BYTE)p;
+    op.u.tankSetSpeed.speed  = (BYTE)s;
+    return scnDone(L, &op, "player %d, speed %d", (int)p, (int)s);
 }
 
 static int scnLuaGivePill(lua_State *L) {
@@ -5382,8 +5388,8 @@ static const ScnLuaOpParam kScnOpArgs_set_modifiers[] = {
     { "p", SCN_PARAM_SLOT, false }, { "t", SCN_PARAM_TABLE, false },
     SCN_OP_ARG_END
 };
-static const ScnLuaOpParam kScnOpArgs_stop_tank[] = {
-    { "p", SCN_PARAM_SLOT, false },
+static const ScnLuaOpParam kScnOpArgs_set_speed[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "s", SCN_PARAM_NUMBER, false },
     SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_builder_order[] = {
@@ -5801,10 +5807,10 @@ static const ScnLuaRow kScnLuaRows[] = {
       "dealt and taken percentages; a field the table leaves out goes back "
       "to the classic tank.",
       SCN_OP_PARAMS(set_modifiers), SCN_OP_ACTS },
-    { "stop_tank", scnLuaStopTank,
-      "stop_tank(p) — set player p's tank speed to 0 where it is; the "
-      "player can drive on at once.",
-      SCN_OP_PARAMS(stop_tank), SCN_OP_ACTS },
+    { "set_speed", scnLuaSetSpeed,
+      "set_speed(p, s) — set how fast player p's tank is going, 0 to 160 in "
+      "the units of the speed_* rules; 0 stops it where it is.",
+      SCN_OP_PARAMS(set_speed), SCN_OP_ACTS },
     { "builder_order", scnLuaBuilderOrder,
       "builder_order(p, action, x, y) — send player p's builder out to do "
       "one of \"trees\", \"road\", \"building\", \"pill\", \"mine\" or "

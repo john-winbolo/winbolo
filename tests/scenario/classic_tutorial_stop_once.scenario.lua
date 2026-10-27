@@ -16,7 +16,7 @@
 --   5. south onto row 120.
 --
 -- PASS:
---   - stop_tank is called on rows 210, 199, 192, 186, 181, 175, 166, 159,
+--   - set_speed(p, 0) is called on rows 210, 199, 192, 186, 181, 175, 166, 159,
 --     142, 122 and 120, in that order, and on no other row;
 --   - every step's popups are sent once: the intro, then the messages of the
 --     steps on rows 210 to 120, and no far-bank message (the boat step has
@@ -57,7 +57,8 @@ game.tank = function(p)
 end
 
 -- The message a popup is, read from the script's English table: its key,
--- the input it is worded for, and which of its parts it is.
+-- which of its parts it is, and every input whose wording it is (two inputs
+-- may share one text, as t14's keyboard and controller wordings do).
 ARENA_TEXT = {}
 for key, v in pairs(TEXT.en.pop) do
   local wordings = v
@@ -66,7 +67,12 @@ for key, v in pairs(TEXT.en.pop) do
     local parts = w
     if type(w) == "string" then parts = { w } end
     for i, part in ipairs(parts) do
-      ARENA_TEXT[part] = { key = key, input = input, part = i, parts = #parts }
+      local m = ARENA_TEXT[part]
+      if m == nil then
+        m = { key = key, part = i, parts = #parts, inputs = {} }
+        ARENA_TEXT[part] = m
+      end
+      m.inputs[input] = true
     end
   end
 end
@@ -80,10 +86,10 @@ game.popup = function(text, p, ...)
   return real_popup(text, p, ...)
 end
 
-local real_stop = game.stop_tank
-game.stop_tank = function(p)
-  ARENA.stops[#ARENA.stops + 1] = ARENA.my
-  return real_stop(p)
+local real_set_speed = game.set_speed
+game.set_speed = function(p, s)
+  if s == 0 then ARENA.stops[#ARENA.stops + 1] = ARENA.my end
+  return real_set_speed(p, s)
 end
 
 local function same(got, want, what)

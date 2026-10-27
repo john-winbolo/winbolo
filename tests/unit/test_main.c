@@ -1568,7 +1568,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_tank_kill",                      run_scenario_tank_kill                      },
     { "scenario_tank_teleport",                  run_scenario_tank_teleport                  },
     { "scenario_tank_set_boat",                  run_scenario_tank_set_boat                  },
-    { "scenario_tank_stop",                      run_scenario_tank_stop                      },
+    { "scenario_tank_set_speed",                 run_scenario_tank_set_speed                 },
     { "scenario_tank_give_pill",                 run_scenario_tank_give_pill                 },
     { "scenario_tank_drop_pill",                 run_scenario_tank_drop_pill                 },
     { "scenario_tank_arm_records",               run_scenario_tank_arm_records               },
