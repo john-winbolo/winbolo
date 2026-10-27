@@ -1909,10 +1909,10 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
     if (!wasHeld && team > 0 && team < MAX_TANKS) {
         /* One accept, with the first member found. An accept merges the two
            sides' groups, so the new seat joins everyone that member is allied
-           with, and a team seated this way is one group by construction: each
-           bot was merged into it as it spawned. A team someone has since
-           split — a leave, a set_team — gives the seat one of its pieces,
-           which is still better than the nothing it used to get.
+           with. A team is always one alliance group (a leave moves the
+           leaver to a team of its own, and set_team writes the alliances
+           from the teams), so this one accept puts the seat on the whole
+           team.
 
            Quiet: putting a bot on its team is seating, not something a
            player did. The lobby does the same job with a rebake, which
