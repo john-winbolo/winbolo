@@ -7051,6 +7051,7 @@ set(_unit_test_names
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
+    lobby_scenario_fixes_lobby_settings
     wbn_lobby_info_scenario
     info_script_tail_golden
     info_script_tail_read
