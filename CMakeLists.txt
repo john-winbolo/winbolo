@@ -7206,6 +7206,7 @@ set(_unit_test_names
     game_event_channel_neutralised_no_client_line
     game_event_channel_capture_attribution
     game_event_channel_subscriber_count
+    game_event_channel_same_owner_silent
     game_events_tank_spawned
     game_events_lgm_landed
     game_events_pill_placed

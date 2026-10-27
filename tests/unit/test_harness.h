@@ -3687,6 +3687,7 @@ int run_game_event_channel_capture_wire_bytes(void);
 int run_game_event_channel_neutralised_no_client_line(void);
 int run_game_event_channel_capture_attribution(void);
 int run_game_event_channel_subscriber_count(void);
+int run_game_event_channel_same_owner_silent(void);
 
 /* The eight facts that had no event at all (test_game_events_new.c): a tank
  * spawning and respawning, a builder landing, a pill placed, picked up and

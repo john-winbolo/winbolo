@@ -1934,6 +1934,7 @@ static const UnitTestEntry s_tests[] = {
       run_game_event_channel_neutralised_no_client_line                                      },
     { "game_event_channel_capture_attribution",  run_game_event_channel_capture_attribution  },
     { "game_event_channel_subscriber_count",     run_game_event_channel_subscriber_count     },
+    { "game_event_channel_same_owner_silent",    run_game_event_channel_same_owner_silent    },
     { "game_events_tank_spawned",                run_game_events_tank_spawned                },
     { "game_events_lgm_landed",                  run_game_events_lgm_landed                  },
     { "game_events_pill_placed",                 run_game_events_pill_placed                 },
