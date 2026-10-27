@@ -2474,6 +2474,177 @@ static void scenarioGiveBackAi(ServerSim *sim) {
     sim->preScenarioAiRaised = false;
 }
 
+/* no_bots: the AI policy and the bot AI type held at none, which is also what
+   refuses a host adding a bot, and every bot on the lobby taken off. Given
+   back as the policy the lobby had; the bots that were removed stay gone, the
+   same as when a host sets the policy to none by hand. */
+static void scenarioApplyNoBots(ServerSim *sim, bool hold) {
+    BYTE i;
+
+    if (hold) {
+        if (!sim->preScenarioNoBotsHeld) {
+            sim->preScenarioNoBotsHeld = true;
+            sim->preNoBotsAiPolicy   = sim->aiPolicy;
+            sim->preNoBotsBotAiType  = serverSimGetBotAiType(sim);
+        }
+        serverSimSetAiPolicy(sim, (uint8_t)aiNone);
+        serverSimSetBotAiType(sim, aiNone);
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (serverSimIsBot(sim, i)) {
+                serverSimRemoveBot(sim, i);
+            }
+        }
+    } else if (sim->preScenarioNoBotsHeld) {
+        if (sim->preScenarioAiRaised) {
+            /* A needs_bots list took this one's place and raised the policy
+               off the held none before the hold let go, so what it remembered
+               as the lobby's own is the none no_bots wrote. The lobby's own
+               is what was taken here; it goes into the raise's memory, so
+               the raise stays in force for that list and its give-back puts
+               the host's policy back once the list goes. */
+            sim->preScenarioAiPolicy = sim->preNoBotsAiPolicy;
+            sim->preScenarioAiType   = sim->preNoBotsBotAiType;
+        } else {
+            serverSimSetAiPolicy(sim, sim->preNoBotsAiPolicy);
+            serverSimSetBotAiType(sim, sim->preNoBotsBotAiType);
+        }
+        sim->preScenarioNoBotsHeld = false;
+        sim->preNoBotsAiPolicy   = 0;
+        sim->preNoBotsBotAiType  = aiNone;
+    }
+}
+
+/* Classic mode and the seven settings it owns: the three view policies,
+   allies in trees, the overview window, line of sight and positional sound.
+
+   Turning classic mode on writes classic values into all seven, so the order
+   matters. The lobby's own values are taken first, before classic mode can
+   change them, so a setting given back gets the value the host had rather
+   than one classic mode wrote. Classic mode is applied next. A setting whose
+   fix went is given back after that, and while classic mode is on it comes
+   back as the classic value, since classic mode owns it. A setting that is
+   fixed is applied last, so a fixed setting wins over classic mode: a
+   scenario that fixes a view policy keeps it whether the host turns classic
+   mode on or the scenario fixes classic mode itself. A view policy fix holds
+   the policy only; the decay seconds stay the host's. */
+static void scenarioApplyVisibilityFixes(ServerSim *sim,
+                                         const ScnLobbyTemplate *t) {
+    int c;
+
+    /* The lobby's values, for every fix that is taking hold now. */
+    for (c = 0; c < VIEW_CATEGORY_COUNT; c++) {
+        if (t != NULL && t->fixView[c] && !sim->preScenarioViewHeld[c]) {
+            sim->preScenarioViewHeld[c]   = true;
+            sim->preScenarioViewPolicy[c] = sim->viewPolicy[c];
+        }
+    }
+    if (t != NULL && t->fixAlliesInTrees && !sim->preScenarioTreesHeld) {
+        sim->preScenarioTreesHeld     = true;
+        sim->preScenarioAlliesInTrees = sim->alliesInTrees;
+    }
+    if (t != NULL && t->fixOverviewWindow && !sim->preScenarioOverviewHeld) {
+        sim->preScenarioOverviewHeld   = true;
+        sim->preScenarioOverviewWindow = sim->overviewWindow;
+    }
+    if (t != NULL && t->fixLineOfSight && !sim->preScenarioSightHeld) {
+        sim->preScenarioSightHeld   = true;
+        sim->preScenarioLineOfSight = sim->lineOfSight;
+    }
+    if (t != NULL && t->fixPositionalSound && !sim->preScenarioSoundHeld) {
+        sim->preScenarioSoundHeld       = true;
+        sim->preScenarioPositionalSound = sim->positionalSound;
+    }
+
+    /* Classic mode. */
+    if (t != NULL && t->fixClassicMode) {
+        if (!sim->preScenarioClassicHeld) {
+            sim->preScenarioClassicHeld = true;
+            sim->preScenarioClassicMode = sim->classicMode;
+        }
+        if (sim->classicMode != t->classicMode) {
+            serverSimSetClassicMode(sim, t->classicMode);
+        }
+    } else if (sim->preScenarioClassicHeld) {
+        if (sim->classicMode != sim->preScenarioClassicMode) {
+            serverSimSetClassicMode(sim, sim->preScenarioClassicMode);
+        }
+        sim->preScenarioClassicHeld = false;
+        sim->preScenarioClassicMode = false;
+    }
+
+    /* The settings whose fix went. With classic mode on, classic mode's
+       value: serverSimSetClassicMode writes all seven, and the ones still
+       fixed are written again below. */
+    {
+        bool gaveBack = false;
+
+        for (c = 0; c < VIEW_CATEGORY_COUNT; c++) {
+            if (!(t != NULL && t->fixView[c]) &&
+                sim->preScenarioViewHeld[c]) {
+                serverSimSetViewPolicy(sim, (ViewCategory)c,
+                                       sim->preScenarioViewPolicy[c],
+                                       sim->viewDecaySecs[c]);
+                sim->preScenarioViewHeld[c]   = false;
+                sim->preScenarioViewPolicy[c] = viewPolicyAlways;
+                gaveBack = true;
+            }
+        }
+        if (!(t != NULL && t->fixAlliesInTrees) &&
+            sim->preScenarioTreesHeld) {
+            serverSimSetAlliesInTrees(sim, sim->preScenarioAlliesInTrees);
+            sim->preScenarioTreesHeld     = false;
+            sim->preScenarioAlliesInTrees = false;
+            gaveBack = true;
+        }
+        if (!(t != NULL && t->fixOverviewWindow) &&
+            sim->preScenarioOverviewHeld) {
+            serverSimSetOverviewWindow(sim, sim->preScenarioOverviewWindow);
+            sim->preScenarioOverviewHeld   = false;
+            sim->preScenarioOverviewWindow = 0;
+            gaveBack = true;
+        }
+        if (!(t != NULL && t->fixLineOfSight) && sim->preScenarioSightHeld) {
+            serverSimSetLineOfSight(sim, sim->preScenarioLineOfSight);
+            sim->preScenarioSightHeld   = false;
+            sim->preScenarioLineOfSight = 0;
+            gaveBack = true;
+        }
+        if (!(t != NULL && t->fixPositionalSound) &&
+            sim->preScenarioSoundHeld) {
+            serverSimSetPositionalSound(sim,
+                                        sim->preScenarioPositionalSound);
+            sim->preScenarioSoundHeld       = false;
+            sim->preScenarioPositionalSound = false;
+            gaveBack = true;
+        }
+        if (gaveBack && sim->classicMode) {
+            serverSimSetClassicMode(sim, true);
+        }
+    }
+
+    /* The settings still fixed, last, so they win over classic mode. */
+    if (t == NULL) return;
+    for (c = 0; c < VIEW_CATEGORY_COUNT; c++) {
+        if (t->fixView[c]) {
+            serverSimSetViewPolicy(sim, (ViewCategory)c,
+                                   (ViewPolicy)t->viewPolicy[c],
+                                   sim->viewDecaySecs[c]);
+        }
+    }
+    if (t->fixAlliesInTrees) {
+        serverSimSetAlliesInTrees(sim, t->alliesInTrees);
+    }
+    if (t->fixOverviewWindow) {
+        serverSimSetOverviewWindow(sim, t->overviewWindow);
+    }
+    if (t->fixLineOfSight) {
+        serverSimSetLineOfSight(sim, t->lineOfSight);
+    }
+    if (t->fixPositionalSound) {
+        serverSimSetPositionalSound(sim, t->positionalSound);
+    }
+}
+
 /* The settings a scenario's lobby block fixes. Each one is held while the
    attached scenario's template fixes it, and given back when the fix goes:
    a plain map committed, a scenario that does not fix it, or no scenario at
@@ -2551,6 +2722,41 @@ void serverSimScenarioApplyLobbyFixes(ServerSim *sim, bool roundStart) {
         sim->preScenarioDelayHeld  = false;
         sim->preScenarioStartDelay = 0;
     }
+
+    scenarioApplyNoBots(sim, serverSimScenarioHoldsNoBots(sim));
+    scenarioApplyVisibilityFixes(sim, t);
+
+    if (t != NULL && t->fixSmartPings) {
+        if (!sim->preScenarioPingsHeld) {
+            sim->preScenarioPingsHeld     = true;
+            sim->preScenarioSmartPingsOff = sim->smartPingsOff;
+        }
+        serverSimSetSmartPingsOff(sim, !t->smartPings);
+    } else if (sim->preScenarioPingsHeld) {
+        serverSimSetSmartPingsOff(sim, sim->preScenarioSmartPingsOff);
+        sim->preScenarioPingsHeld     = false;
+        sim->preScenarioSmartPingsOff = false;
+    }
+}
+
+bool serverSimScenarioHoldsNoBots(const ServerSim *sim) {
+    const ScnLobbyTemplate *t;
+    uint8_t                 i;
+
+    if (sim == NULL || sim->scenarioIdentity.source == lobbyScenarioNone ||
+        !sim->scenarioLobbyValid) {
+        return false;
+    }
+    t = &sim->scenarioLobby;
+    if (!t->noBots) return false;
+    /* A list that fields bots of its own needs them allowed, so needs_bots
+       and a team's own bots win over no_bots. The validator names a file
+       that says both. */
+    if (sim->scenarioIdentity.needsBots) return false;
+    for (i = 0; i < t->numTeams; i++) {
+        if (t->teams[i].bots > 0) return false;
+    }
+    return true;
 }
 
 /* The lobby's own settings, brought into line with whatever scenario is
