@@ -4218,6 +4218,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Where a dead tank's pills land: Mac Bolo's spiral round the tank, the
     # squares it passes over, the map edge, and a map built to have no room.
     tests/unit/test_tank_drop_pills.c
+    # The spiral cursor in util.c: the ring order from a north start (pill
+    # drops) and from a north-west corner (start scatter).
     tests/unit/test_util_spiral.c
     # The builder ops: the five arms, the refusals each one answers with, the
     # wood a dispatched order costs, and the loss a scripted death records.
