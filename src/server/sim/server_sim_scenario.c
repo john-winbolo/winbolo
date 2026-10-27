@@ -2495,8 +2495,19 @@ static void scenarioApplyNoBots(ServerSim *sim, bool hold) {
             }
         }
     } else if (sim->preScenarioNoBotsHeld) {
-        serverSimSetAiPolicy(sim, sim->preNoBotsAiPolicy);
-        serverSimSetBotAiType(sim, sim->preNoBotsBotAiType);
+        if (sim->preScenarioAiRaised) {
+            /* A needs_bots list took this one's place and raised the policy
+               off the held none before the hold let go, so what it remembered
+               as the lobby's own is the none no_bots wrote. The lobby's own
+               is what was taken here; it goes into the raise's memory, so
+               the raise stays in force for that list and its give-back puts
+               the host's policy back once the list goes. */
+            sim->preScenarioAiPolicy = sim->preNoBotsAiPolicy;
+            sim->preScenarioAiType   = sim->preNoBotsBotAiType;
+        } else {
+            serverSimSetAiPolicy(sim, sim->preNoBotsAiPolicy);
+            serverSimSetBotAiType(sim, sim->preNoBotsBotAiType);
+        }
         sim->preScenarioNoBotsHeld = false;
         sim->preNoBotsAiPolicy   = 0;
         sim->preNoBotsBotAiType  = aiNone;

@@ -1687,6 +1687,8 @@ static const UnitTestEntry s_tests[] = {
       run_lobby_scenario_fix_wins_over_host_classic },
     { "lobby_scenario_no_bots",
       run_lobby_scenario_no_bots },
+    { "lobby_scenario_no_bots_then_needs_bots",
+      run_lobby_scenario_no_bots_then_needs_bots },
     { "wbn_lobby_info_scenario",                 run_wbn_lobby_info_scenario                 },
     { "info_script_tail_golden",                 run_info_script_tail_golden                 },
     { "info_script_tail_read",                   run_info_script_tail_read                   },

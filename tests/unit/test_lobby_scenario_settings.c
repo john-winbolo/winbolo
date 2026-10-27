@@ -1725,3 +1725,53 @@ int run_lobby_scenario_no_bots(void) {
     remove(lsBrainPath);
     return 0;
 }
+
+/* A no_bots scenario, then a needs_bots scenario in its place, the way the
+ * Tutorial follows the Classic Tutorial in one lobby. The map change detaches
+ * the first and attaches the second with no rules call between, so the
+ * needs_bots raise sees the held none. The lobby must keep bots allowed for
+ * the needs_bots scenario, and the host's own policy must come back when it
+ * goes. Run twice: for a host who had bots on, and one who had them off. */
+static int lsNoBotsThenNeedsBots(aiType hostPolicy) {
+    ServerSim       *sim = lsLobbySim();
+    ScnLobbyTemplate t;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(lsSetByte(sim, LST_AI_POLICY, (uint8_t)hostPolicy) == CMD_OK);
+
+    /* The no_bots scenario. */
+    memset(&t, 0, sizeof(t));
+    t.noBots = true;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachPlainIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiNone);
+
+    /* The needs_bots scenario takes its place: detach, then attach. */
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    memset(&t, 0, sizeof(t));
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) != aiNone,
+                  "host policy %d: a needs_bots scenario after a no_bots one "
+                  "was left with bots refused", (int)hostPolicy);
+
+    /* The scenario goes, and the host's own policy comes back. */
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == hostPolicy,
+                  "host policy %d came back as %d after a no_bots scenario "
+                  "and then a needs_bots one", (int)hostPolicy,
+                  (int)serverSimGetBotAiType(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_lobby_scenario_no_bots_then_needs_bots(void) {
+    if (lsNoBotsThenNeedsBots(aiFull) != 0) return 1;
+    return lsNoBotsThenNeedsBots(aiNone);
+}

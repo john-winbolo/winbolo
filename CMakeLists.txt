@@ -7056,6 +7056,7 @@ set(_unit_test_names
     lobby_scenario_fixes_classic_mode
     lobby_scenario_fix_wins_over_host_classic
     lobby_scenario_no_bots
+    lobby_scenario_no_bots_then_needs_bots
     wbn_lobby_info_scenario
     info_script_tail_golden
     info_script_tail_read

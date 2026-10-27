@@ -3364,6 +3364,7 @@ int run_lobby_scenario_fixes_visibility(void);
 int run_lobby_scenario_fixes_classic_mode(void);
 int run_lobby_scenario_fix_wins_over_host_classic(void);
 int run_lobby_scenario_no_bots(void);
+int run_lobby_scenario_no_bots_then_needs_bots(void);
 
 /* What the sim tells WinBolo.net about the scripts a round runs
  * (test_wbn_lobby_info_scenario.c): the scenario, its cap and the mods, none
