@@ -5827,11 +5827,7 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * rule). The status line is centred across. The
  * announcement keeps the share across the view that its
  * position named, and the share down is not used: it is
- * always on its own row, under the status line. With more
- * than one announcement up at once, each has a row of its
- * own, the newest lowest, and a line split with "\n" takes
- * a row for each part; the text is then made smaller to fit
- * the window.
+ * always on its own row, under the status line.
  *
  * In a round that lists the window in the menu (the round
  * has a scenario or a mod, or has shown a line), the window
@@ -6297,8 +6293,6 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
         s_scnText.alphaLoaded = true;
     }
     if (!s_scnText.popLoaded) scnTextPopLoad();
-
-    const int   layoutRows = statusSlots + announceSlots;
 
     /* In the pop-out's own frame: the lines fitted into the whole OS window
        the way the game window fits them (scnTextFitRect), on a black
