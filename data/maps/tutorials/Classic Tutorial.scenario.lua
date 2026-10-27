@@ -13,10 +13,13 @@
 -- it, under a name that tells the two apart.
 --
 -- HOW THE TEXT GETS TO THE PLAYER. Each popup is sent as "{LANG:STR_...}",
--- the name of the message in the game's language files. The player's client
--- shows that string in its own language and picks the touch or controller
--- wording itself (see "Text in the player's language" in
--- docs/SCENARIO_API.md). So this file holds no text of its own to translate.
+-- the name of the message in the game's language files, and the player's
+-- client shows that string in its own language (see "Text in the player's
+-- language" in docs/SCENARIO_API.md). So this file holds no text of its own
+-- to translate. Where a message has a touch or a controller wording, this
+-- file picks it by game.input, as the Tutorial does (see "Text for the
+-- player's input"). A hosted server is never told the input, so a player
+-- there reads the keyboard wording.
 --
 -- WHAT IT DOES, STEP BY STEP (the same as the old tutorial):
 --   - The intro (two messages) opens as soon as the player's tank is on
@@ -45,7 +48,7 @@ scenario = {
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-26T22:13Z",
+  updated = "2026-10-27T08:49Z",
   game = "strict",
 
   lobby = {
@@ -95,6 +98,28 @@ local STEPS = {
   { row =  21, msgs = { "STR_TUTORIAL25", "STR_TUTORIAL_START02" } },
 }
 
+-- The messages whose keyboard wording names keys or the mouse, with the
+-- names of their wordings for a touch screen and for a controller. A
+-- message not listed, or an input with no wording of its own, is sent as
+-- the keyboard wording.
+local INPUT_WORDING = {
+  STR_TUTORIAL01 = { touch = "STR_TUTORIAL01_TOUCH", controller = "STR_TUTORIAL01_CTRL" },
+  STR_TUTORIAL02 = { touch = "STR_TUTORIAL02_TOUCH", controller = "STR_TUTORIAL02_CTRL" },
+  STR_TUTORIAL03 = { touch = "STR_TUTORIAL03_TOUCH", controller = "STR_TUTORIAL03_CTRL" },
+  STR_TUTORIAL04 = { touch = "STR_TUTORIAL04_TOUCH", controller = "STR_TUTORIAL04_CTRL" },
+  STR_TUTORIAL05 = { touch = "STR_TUTORIAL05_TOUCH", controller = "STR_TUTORIAL05_CTRL" },
+  STR_TUTORIAL06 = { touch = "STR_TUTORIAL06_TOUCH", controller = "STR_TUTORIAL06_CTRL" },
+  STR_TUTORIAL10 = { touch = "STR_TUTORIAL10_TOUCH", controller = "STR_TUTORIAL10_CTRL" },
+  STR_TUTORIAL14 = { touch = "STR_TUTORIAL14_TOUCH", controller = "STR_TUTORIAL14_CTRL" },
+  STR_TUTORIAL16 = { touch = "STR_TUTORIAL16_TOUCH", controller = "STR_TUTORIAL16_CTRL" },
+  STR_TUTORIAL18 = { touch = "STR_TUTORIAL18_TOUCH", controller = "STR_TUTORIAL18_CTRL" },
+  STR_TUTORIAL19 = { touch = "STR_TUTORIAL19_TOUCH", controller = "STR_TUTORIAL19_CTRL" },
+  STR_TUTORIAL21 = { touch = "STR_TUTORIAL21_TOUCH", controller = "STR_TUTORIAL21_CTRL" },
+  STR_TUTORIAL_START01 = { touch = "STR_TUTORIAL_START01_TOUCH" },
+  STR_TUTORIAL_START04 = { touch = "STR_TUTORIAL_START04_TOUCH",
+                           controller = "STR_TUTORIAL_START04_CTRL" },
+}
+
 -- After the step on this row, respawns move to the far bank.
 local BOAT_ROW = 66
 local START_SEA  = 1   -- out at sea, south of the first row
@@ -127,6 +152,10 @@ local function is_player_seat(p)
 end
 
 local function show(name)
+  local wording = INPUT_WORDING[name]
+  if wording ~= nil then
+    name = wording[game.input(S.player)] or name
+  end
   game.popup("{LANG:" .. name .. "}", S.player)
 end
 

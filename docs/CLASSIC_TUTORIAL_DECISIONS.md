@@ -88,19 +88,27 @@ The script copies the old tutorial step for step:
 
 - **What:** each popup is sent as `{LANG:STR_NAME}`, the name of the old
   message in the language files. The client shows that string in the
-  player's own language, and picks the `_TOUCH` or `_CTRL` wording for the
-  player's input with the same rule the old overlay used (`pickStringId`).
-  Then it fills in the key tokens (`{ACCEL}` and the others) as for any
-  popup.
-  **Why:** this keeps all 17 translations and all three input wordings with
-  no copy of the text in the script. The other choice was per-language
-  tables in the script, read with `game.lang(p)`, as the new Tutorial does.
-  That choice cannot pick the touch or controller wording: the server does
-  not know the client's input, and the input can change during the game. It
-  also needs about 30 messages times 17 languages times up to 3 wordings in
-  the script, which is about 250 KB, against about 8 KB now.
+  player's own language, then fills in the key tokens (`{ACCEL}` and the
+  others) as for any popup.
+  **Why:** this keeps all 17 translations with no copy of the text in the
+  script. The other choice was per-language tables in the script, read with
+  `game.lang(p)`, as the new Tutorial does. That needs about 30 messages
+  times 17 languages times up to 3 wordings in the script, which is about
+  250 KB, against about 10 KB now.
   **Undo:** remove `langRefText` from `tutorial_text.c`; the script must
   then carry its own tables.
+- **What:** the script picks the `_TOUCH` or `_CTRL` wording of a message
+  by `game.input(p)` (its `INPUT_WORDING` table) and sends that name. The
+  client no longer picks a wording: `kStringVariants` and `pickStringId`
+  are gone from `tutorial_text.c`.
+  **Why:** the new Tutorial picks its wordings in its script the same way,
+  so both tutorials use one mechanism, and a wording can be added without
+  a C change. On a hosted server, which is never told the input, the player
+  reads the keyboard wording, as in the Tutorial. A popup already on
+  screen keeps the wording it was sent with.
+  **Undo:** put `kStringVariants` and `pickStringId` back and call
+  `pickStringId` from `langRefText`; the script then sends the keyboard
+  name only.
 - **What:** a reference is a whole text only. `"Hi {LANG:STR_X}"` is shown
   as written.
   **Why:** one old message is one popup, so nothing needs more. A whole-text
@@ -181,12 +189,12 @@ C tutorial any more, so its code is taken out:
 ## What was kept, and why
 
 - The tutorial overlay (`imgui_tutorial_overlay.cpp`) and
-  `windowTutorialPause`: scenario popups use them on every platform. Its
-  limit of four messages a call, which was `TUTORIAL_MAX_MSGS` in
-  `tutorial.h`, is now a define in the overlay file.
-- `tutorial_text.c`, `tutorial_tokens.c`, `kStringVariants` and
-  `pickStringId`: they show the key tokens and the touch and controller
-  wordings for both tutorials.
+  `windowTutorialPause`: scenario popups use them on every platform. Only
+  its text path is kept; the list of string ids it showed one after the
+  other, with a callback after the last, was for the old step sequencer
+  and is gone, with `tutorialResolveSegments`.
+- `tutorial_text.c` and `tutorial_tokens.c`: they show the key tokens for
+  both tutorials.
 - The pause of a solo game while a tutorial message is up
   (`CLIENT_FRONT_PAUSE_TUTORIAL`): Android and iOS stop their tick loop
   through `clientFrontAnyPause`, which covers it. Only the extra test of the

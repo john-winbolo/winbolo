@@ -1534,8 +1534,8 @@ static const LangEntry langTable[] = {
     {1992, "Switch to Full Screen"},
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
-     * desktop wording assumes a keyboard or mouse. Picked at display
-     * time by tutorialResolveSegments() when uiModeIsTablet() is true. */
+     * desktop wording assumes a keyboard or mouse. The Classic Tutorial's
+     * script sends these by name for a player on a touch screen. */
     {468,  "Ahead of you is a short river leading inland. Push\nthe thumbstick forward to drive your boat to the end\nof the river.\n\nWhen you get there, keep going. The tank will\ndisembark from the boat and the boat will be left\nmoored at the end of the river."},
     {469,  "You are now on the grass. The tank moves quite\nquickly on grass.\n\nPush the thumbstick forward to drive ahead\nto the forest."},
     {470,  "You are now in the forest. The tank moves more\nslowly in the forest than it does on grass.\n\nPush the thumbstick forward to drive ahead\nto the swamp."},

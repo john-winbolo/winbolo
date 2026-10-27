@@ -217,10 +217,10 @@
 #define STR_TUTORIAL_START04                413
 
 /* Touch-mode (tablet/mobile) siblings of the tutorial strings whose
- * desktop wording references hardware keys or mouse clicks. The
- * sequencer picks these via tutorialResolveSegments() when
- * uiModeIsTablet() is true. Only the affected strings have siblings —
- * the rest fall through to the desktop entry unchanged. */
+ * desktop wording references hardware keys or mouse clicks. The Classic
+ * Tutorial's script sends these by name for a player on a touch screen
+ * (game.input). Only the affected strings have siblings — the rest are
+ * sent as the desktop entry. */
 #define STR_TUTORIAL01_TOUCH                468
 #define STR_TUTORIAL02_TOUCH                469
 #define STR_TUTORIAL03_TOUCH                470
@@ -237,9 +237,9 @@
 #define STR_TUTORIAL_START04_TOUCH          481
 
 /* Controller-mode siblings of the tutorial strings whose desktop
- * wording references keyboard keys or the mouse. The sequencer picks
- * these when the active input is a gamepad, mirroring the _TOUCH
- * mechanism above. STR_TUTORIAL_RESPAWN1 is the message shown when
+ * wording references keyboard keys or the mouse. The Classic Tutorial's
+ * script sends these by name for a player on a controller, as it does
+ * the _TOUCH strings above. STR_TUTORIAL_RESPAWN1 is the message shown when
  * the player respawns at the second tutorial start (near the shore)
  * instead of out at sea. */
 #define STR_TUTORIAL01_CTRL                 1830

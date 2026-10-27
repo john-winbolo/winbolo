@@ -2506,10 +2506,12 @@ whole text of a popup, a status line or an announcement is `{LANG:NAME}`,
 with nothing before or after it, the client shows the string called `NAME`
 in the player's language. `NAME` is the string's name as the language files
 write it, such as `STR_TUTORIAL01`: capital letters, digits and `_` only.
-Where the game has a touch or a controller wording of that string (the
-`_TOUCH` and `_CTRL` strings of the old built-in tutorial), the client picks
-the one for the player's input, and then fills in the key tokens in it. A
-name the language file does not have is shown as it is written. So is a
+The client then fills in the key tokens in it. Where the game has a touch
+or a controller wording of that string (the `_TOUCH` and `_CTRL` strings of
+the old built-in tutorial), the script names the one it wants, picked by
+`game.input(p)` as in [Text for the player's
+input](#text-for-the-players-input). A name the language file does not
+have is shown as it is written. So is a
 text with anything else in it: one reference is one whole message, and
 `"Hi {LANG:STR_TUTORIAL01}"` is not filled in. A client from before this
 was added shows the reference as it is written.
