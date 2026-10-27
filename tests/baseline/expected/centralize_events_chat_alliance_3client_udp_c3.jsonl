@@ -5,9 +5,11 @@
 {"tick":0,"type":"CTRL_SIM_RULES"}
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":25,"countryCode":"XX","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":false,"isBot":false,"pingMs":21,"countryCode":"XX","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":2,"slot":{"connected":true,"playerName":"HeadlessBot3","teamNumber":3,"ready":false,"isBot":false,"pingMs":0,"countryCode":"XX","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":2,"slot":{"connected":true,"playerName":"HeadlessBot3","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"XX","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_LOBBY_TEAM_META","teamId":1,"in_use":1,"color":0,"namingPool":0,"name":"Team 1"}
 {"tick":0,"type":"CTRL_LOBBY_TEAM_META","teamId":2,"in_use":1,"color":1,"namingPool":0,"name":"Team 2"}
+{"tick":0,"type":"CTRL_LOBBY_TEAM_META","teamId":3,"in_use":1,"color":2,"namingPool":1,"name":"Team 3"}
 {"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":1,"active":0,"triggerSrc":0,"teamId":0,"threshold":3,"yesCount":0,"noCount":0,"eligibleCount":3,"secondsRemaining":0,"votes":0}
 {"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":2,"active":0,"triggerSrc":0,"teamId":0,"threshold":0,"yesCount":0,"noCount":0,"eligibleCount":0,"secondsRemaining":0,"votes":0}
 {"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"HeadlessBot1","country":"XX","clientType":2,"clientFlags":0,"allies":[0]}

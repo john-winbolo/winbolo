@@ -16,4 +16,6 @@
 {"tick":0,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot2 has joined."}
 {"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
 {"tick":200,"type":"CTRL_ALLIANCE_ACCEPT","acceptedBy":0,"newMember":1}
+{"tick":200,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":1,"ready":false,"isBot":false,"pingMs":20,"countryCode":"XX","clientFlags":0,"clientType":2}}
 {"tick":220,"type":"CTRL_ALLIANCE_LEAVE","playerNum":0}
+{"tick":220,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":2,"ready":false,"isBot":false,"pingMs":20,"countryCode":"XX","clientFlags":0,"clientType":2}}
