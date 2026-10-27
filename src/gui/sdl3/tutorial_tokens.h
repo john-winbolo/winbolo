@@ -93,9 +93,29 @@ typedef const char *(*TutorialTokenNameFn)(TutorialTokenId id, void *ctx);
 
 /* src into out with every token replaced by name(id, ctx). out is always
  * ended with a NUL; a text too long for it is cut, never a name half
- * written. Answers the length written. */
+ * written and never a UTF-8 character half written. Answers the length
+ * written. */
 size_t tutorialTokensExpand(const char *src, char *out, size_t cap,
                             TutorialTokenNameFn name, void *ctx);
+
+/* One piece of a text: a run of plain text (id TT_COUNT) or one token.
+ * start points into the text that was split, and the piece is len bytes
+ * of it, with no NUL of its own. */
+typedef struct {
+  const char     *start;
+  size_t          len;
+  TutorialTokenId id;
+} TutorialPiece;
+
+/* src cut into pieces, in order, at most max of them: runs of plain text
+ * and the tokens between them. A brace that starts no token ("{", "{FOO}",
+ * "{accel}") is plain text. Answers the count. *rest, when rest is not
+ * NULL, is set to the first byte no piece covers: src's NUL when all of
+ * it fits, else the start of the first piece left out, so a caller can
+ * tell the text was cut. A NULL src, a NULL out or a max below 1 answers
+ * 0 with *rest at src. */
+int tutorialTokensSplit(const char *src, TutorialPiece *out, int max,
+                        const char **rest);
 
 /* src into out with only the phrase tokens replaced, by phrase(id, ctx);
  * every other token is copied as it is written, for a second pass to fill

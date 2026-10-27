@@ -34,6 +34,10 @@ extern keyItems keys;
  * frontEndTutorial; subsequent calls overwrite the buffer. */
 static char tutorialBuf[2048];
 
+/* Set when a run did not fit in tutorialBuf, so tutorialResolveText can
+   say the text was cut. */
+static bool tutorialBufFull = false;
+
 /* What a token draws as on a controller, one row per TutorialTokenId and
  * in its order. The token's text and its keyboard key come from
  * tutorial_tokens.c. The quick-build keys have no button of their own on a
@@ -244,7 +248,10 @@ static const char *scancodeName(int scancode) {
 static const char *bufAppend(int *pos, const char *s) {
   int avail = (int)sizeof(tutorialBuf) - *pos - 1;
   int len   = (int)strlen(s);
-  if (len > avail) return NULL;
+  if (len > avail) {
+    tutorialBufFull = true;
+    return NULL;
+  }
   char *dst = tutorialBuf + *pos;
   memcpy(dst, s, (size_t)len);
   dst[len] = '\0';
@@ -256,7 +263,10 @@ static int emitText(TutorialSeg *out, int idx, int max,
                     int *bufPos, const char *start, int len) {
   if (idx >= max || len <= 0) return idx;
   int avail = (int)sizeof(tutorialBuf) - *bufPos - 1;
-  if (len > avail) return idx;
+  if (len > avail) {
+    tutorialBufFull = true;
+    return idx;
+  }
   char *dst = tutorialBuf + *bufPos;
   memcpy(dst, start, (size_t)len);
   dst[len] = '\0';
@@ -350,26 +360,32 @@ int tutorialResolveText(const char *src, TutorialSeg *out, int max) {
     return 1;
   }
 
-  int idx    = 0;
-  int bufPos = 0;
-  const char *runStart = src;
-  while (*src && idx < max) {
-    size_t tlen = 0;
-    TutorialTokenId id = (*src == '{') ? tutorialTokenMatch(src, &tlen) : TT_COUNT;
-    if (id == TT_COUNT) {
-      src++;
-      continue;
+  TutorialPiece pieces[TUTORIAL_SEG_MAX];
+  const char   *rest = NULL;
+  int           count;
+  int           idx    = 0;
+  int           bufPos = 0;
+  int           i;
+  if (max > TUTORIAL_SEG_MAX) max = TUTORIAL_SEG_MAX;
+  tutorialBufFull = false;
+  count = tutorialTokensSplit(src, pieces, max, &rest);
+  for (i = 0; i < count; i++) {
+    if (pieces[i].id == TT_COUNT) {
+      idx = emitText(out, idx, max, &bufPos, pieces[i].start,
+                     (int)pieces[i].len);
+    } else {
+      idx = emitGlyphForToken(out, idx, max, &bufPos, pieces[i].id);
     }
-    if (src > runStart) {
-      idx = emitText(out, idx, max, &bufPos, runStart, (int)(src - runStart));
-      if (idx >= max) break;
-    }
-    idx = emitGlyphForToken(out, idx, max, &bufPos, id);
-    src += tlen;
-    runStart = src;
   }
-  if (idx < max && src > runStart) {
-    idx = emitText(out, idx, max, &bufPos, runStart, (int)(src - runStart));
+  if (tutorialBufFull || (rest != NULL && *rest != '\0')) {
+    /* More pieces than segments, or more text than the buffer holds: the
+       rest is not drawn. Said once, as the text comes again every frame. */
+    static bool warned = false;
+    if (!warned) {
+      WB_LOG_WARN(WB_LOG_CAT_GUI, "tutorial: a text is too long to draw "
+                  "whole; drew %d of its pieces", idx);
+      warned = true;
+    }
   }
   return idx;
 }

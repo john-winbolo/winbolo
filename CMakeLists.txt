@@ -4563,6 +4563,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tokens the popup text may carry.
     tests/unit/test_scenario_popup.c
     src/gui/sdl3/tutorial_tokens.c
+    # The token parser against untrusted text: malformed braces, the split,
+    # a cut inside a UTF-8 character, and a fixed seed of random input.
+    tests/unit/test_tutorial_tokens_parse.c
     tests/unit/test_voice_talking_set.c
     # The rules event's body codec: every carried rule round-trips field by
     # field, rates a fixed-point scale could not carry survive, and the
@@ -6184,6 +6187,10 @@ set(_unit_test_names
     scenario_status_tokens_expand
     tutorial_tokens_long_key_names
     tutorial_tokens_phrases
+    tutorial_tokens_malformed
+    tutorial_tokens_split
+    tutorial_tokens_utf8_cut
+    tutorial_tokens_random_input
     scenario_announce_waits_for_popup
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
@@ -8178,6 +8185,21 @@ if(WB_FUZZ)
              COMMAND $<TARGET_FILE:fuzz_voice_segment> -runs=0
                      ${WB_FUZZ_CORPUS_DIR}/voice_segment ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.voice_segment PROPERTIES TIMEOUT 120)
+
+    # Tier 1 — the key tokens in a scenario's popup, status line and
+    # announcement (tutorialTokensSplit / tutorialTokensExpand): text from
+    # whatever server the player joined, split and filled in on every
+    # client. The parser alone, with no SDL and no renderer.
+    add_executable(fuzz_tutorial_tokens
+        tests/fuzz/fuzz_tutorial_tokens.c
+        src/gui/sdl3/tutorial_tokens.c)
+    bolo_apply_include_rules(fuzz_tutorial_tokens unittests)
+    target_link_options(fuzz_tutorial_tokens PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_tutorial_tokens "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.tutorial_tokens
+             COMMAND $<TARGET_FILE:fuzz_tutorial_tokens> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/tutorial_tokens ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.tutorial_tokens PROPERTIES TIMEOUT 120)
 
     # Tier 1 — the bulk-transfer receive state machine (bulkParseStreamHeader +
     # bulkReceiverFeed), reassembling map download / resync / upload / preview

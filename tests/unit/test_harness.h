@@ -1618,6 +1618,14 @@ int run_tutorial_tokens_long_key_names(void);
 /* The phrase tokens ({DRIVE_HOW}, {STEP_TREE} ...): found, named phrases,
  * and filled by tutorialPhrasesExpand alone, key tokens left as written. */
 int run_tutorial_tokens_phrases(void);
+/* The token parser against untrusted text (test_tutorial_tokens_parse.c):
+ * a brace that starts no token is plain text; the split covers the text in
+ * order and says where it stopped; a cut never ends in half a UTF-8
+ * character; and random text never takes the expand past its buffer. */
+int run_tutorial_tokens_malformed(void);
+int run_tutorial_tokens_split(void);
+int run_tutorial_tokens_utf8_cut(void);
+int run_tutorial_tokens_random_input(void);
 int run_scenario_announce_waits_for_popup(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
