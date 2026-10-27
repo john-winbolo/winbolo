@@ -906,6 +906,10 @@ int run_scenario_identity_details_extra(void) {
     reply[len++] = 0x5A;
     at = siStageDetails(&h, player, "Identified.lua", reply, len);
     UT_ASSERT_MSG(at >= 0, "the long reply was not staged or not answered");
+    /* Settled before the first re-ask, so the reply made the slot NONE and
+       the client did not give up on it. */
+    UT_ASSERT_MSG(at < LOBBY_SCN_DETAILS_TIMEOUT_TICKS,
+                  "the long reply settled after %d pumps", at);
     UT_ASSERT_MSG(clientSimGetLobbyScenarioDetails(h.cs, "Identified.lua",
                                                    NULL, NULL) ==
                       CLIENT_SCN_DETAILS_NONE,

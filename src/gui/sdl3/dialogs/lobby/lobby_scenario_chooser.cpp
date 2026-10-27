@@ -1114,8 +1114,9 @@ static const char *lobbyScenarioDescOfFile(ClientSim *cs, const char *file) {
 }
 
 /* Who the directory says wrote a file, and when it last changed, by file
- * name, the way lobbyScenarioDescOfFile finds a description. False where the
- * listing does not hold the file. */
+ * name, the way lobbyScenarioDescOfFile finds a description: the host's own
+ * rows, then the server's list, then the rows only this computer has. False
+ * where none of them holds the file. */
 static bool lobbyScenarioIdentityOfFile(ClientSim *cs, const char *file,
                                         const char **author,
                                         const char **updated) {
@@ -1129,12 +1130,18 @@ static bool lobbyScenarioIdentityOfFile(ClientSim *cs, const char *file,
             return true;
         }
     }
-    if (cs == NULL) return false;
-    n = clientSimGetLobbyScenarioListCount(cs);
+    n = cs != NULL ? clientSimGetLobbyScenarioListCount(cs) : 0;
     for (i = 0; i < n; i++) {
         if (SDL_strcmp(clientSimGetLobbyScenarioListFile(cs, i), file) == 0) {
             *author  = clientSimGetLobbyScenarioListAuthor(cs, i);
             *updated = clientSimGetLobbyScenarioListUpdated(cs, i);
+            return true;
+        }
+    }
+    for (i = 0; i < s_localCount; i++) {
+        if (SDL_strcmp(s_localRows[i].file, file) == 0) {
+            *author  = s_localRows[i].author;
+            *updated = s_localRows[i].updated;
             return true;
         }
     }
