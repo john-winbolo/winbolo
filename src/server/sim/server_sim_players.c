@@ -88,6 +88,7 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->statDroppedStaleInputs[playerNum] = 0;
     sim->statCatchupTicks[playerNum] = 0;
     sim->statLastRewindTicks[playerNum] = 0;
+    sim->lagLogWritten[playerNum] = false;
     /* Nobody arrives mid-order: a seat starts with no shells counted toward
      * a three-shot order. */
     serverSimShotOrderClear(sim, playerNum);
@@ -493,6 +494,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->statDroppedStaleInputs[playerNum] = 0;
     sim->statCatchupTicks[playerNum] = 0;
     sim->statLastRewindTicks[playerNum] = 0;
+    sim->lagLogWritten[playerNum] = false;
     /* The shells this slot had in flight toward a three-shot order go with
      * it, so whoever sits here next starts its count from nothing. */
     serverSimShotOrderClear(sim, playerNum);

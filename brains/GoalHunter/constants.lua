@@ -640,9 +640,10 @@ M.PPT_ANGER_THRESHOLD  = 0.34  -- ...OR force PPT when pill anger > this (~>1 hi
 -- 2026-10-11 (Andrew; Virus horde): true = never a protected take. The plan
 -- turns PPT off the way it does for a pill_suicider (attack.lua, the PPT_SKIP
 -- block): no shield scan, no gather_trees, no wall building, straight to the
--- plain standoff/charge take. For a bot that cannot get trees (the horde has
--- none and cannot farm), which otherwise stalls ~250 ticks in gather_trees
--- before it charges. false = today.
+-- plain standoff/charge take. The horde can build and farm trees, but it
+-- respawns with none; this is the only knob that stops its protected take,
+-- which would otherwise stall ~250 ticks in gather_trees before it charges.
+-- false = today.
 M.PPT_NEVER = false
 M.SWERVE_SKIP_ARMOUR_PER_HP = 5  -- skip the kill/curve swerve while pill.health*this <= armour (we can tank finishing it, so buck in)
 M.TANK_FINISH_MAX_HP    = 3    -- tank the finish only when remaining pill HP <= this
@@ -6336,7 +6337,8 @@ M.PRESETS = {
 -- took almost no pills: each pill and base went to one bot (or one blitz),
 -- the shell watermarks were set for a 40-shell tank, every other pill near
 -- the target added crossfire cost, and a full-HP pill sent the bot to gather
--- trees it cannot have. The five attack knobs below (ATTACK_CLAIM_SHARE ..
+-- trees for a wall shield it had no time for. The horde can build and farm;
+-- only PPT_NEVER stops its protected pillbox take. The five attack knobs below (ATTACK_CLAIM_SHARE ..
 -- CROSSFIRE_MULT) turn those off for the horde.
 M.SIDE_SETTINGS = {
   survivor = {

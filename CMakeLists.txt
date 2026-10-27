@@ -5713,6 +5713,9 @@ set(_unit_test_names
     scn_panel_yes_no
     scn_panel_rescue
     scn_panel_prefs_sections
+    scn_panel_layout_row
+    scn_opacity_migration
+    scn_text_popout_row
     client_scn_panel_owners
     scn_arm_panel_owners
     info_packet_preset_round_trip
@@ -5905,6 +5908,21 @@ set(_unit_test_names
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
     log_roundtrip_map_name_at_round_start
+    log_roundtrip_player_lag
+    log_roundtrip_player_lag_recorded
+    log_roundtrip_overrun_stats
+    log_roundtrip_overrun_stats_recorded
+    log_roundtrip_overrun_stats_bots
+    server_lag_log_due
+    server_lag_log_min_gap
+    server_overrun_stats_due
+    lv_player_lag_read
+    lv_lag_track
+    lv_lag_ring
+    lv_lag_feature_default_off
+    lv_lag_view_draw
+    lv_lag_view_rename
+    lv_overrun_read
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record
@@ -5957,6 +5975,7 @@ set(_unit_test_names
     lv_event_list_pinned
     wbn_browser_sort
     clip_gif_len_sync
+    clip_gif_record_mode
     clip_gif_meta_roundtrip
     clip_gif_meta_bad
     clip_gif_gallery_scan
@@ -6415,8 +6434,8 @@ set(_unit_test_names
     ping_kick_defers_teardown
     ping_kick_clears_strikes_on_disconnect
     tkexp_lgm_pairing
-    tank_blast_rewound_hit_at_present_tank
-    tank_blast_kill_starts_at_present_tank
+    tank_blast_at_shell_place
+    tank_blast_kill_at_shell_place
     tank_blast_zero_rewind_unchanged
     tank_blast_hit_decision_unchanged
     tank_blast_builder_on_shooter_screen
@@ -6994,6 +7013,9 @@ set(_unit_test_names
     lobby_map_keeps_bots_plain
     lobby_map_keeps_bots_scenario
     lobby_map_keeps_bots_map_own_row
+    lobby_random_map_drops_map_own_script
+    lobby_random_map_clears_map_md5
+    lobby_cancel_file_preview_keeps_random_map
     lobby_map_rotate_holds_seats_again
     scenario_map_rotation_redecides
     lobby_script_keeps_bots_mod
@@ -7599,8 +7621,13 @@ set(_unit_test_names
     scenario_panel_timer_text
     scenario_announce_remaining
     scenario_announce_position
+    scenario_text_fit
+    scenario_text_tablet_band
+    scenario_text_pointer_on_handle
+    scenario_text_window_shown
+    scenario_text_edge_shown
+    scenario_text_save_place
     scenario_status_line
-    scenario_announce_stack
     scn_status_codec_and_client
     scn_announce_position_codec
     scn_announce_stack_client

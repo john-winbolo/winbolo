@@ -2231,7 +2231,7 @@ language's word for "press".
 
 A popup wraps only at spaces. Chinese and Japanese text has no spaces, so put a
 single `\n` (read as a space) every 25 to 30 characters. A status line or
-announcement row too wide for the view is broken at its last space that fits,
+announcement row too wide for the Scenario Text window is broken at its last space that fits,
 or before the first character that does not fit when the row has no space.
 
 The limits count bytes, and most languages take more bytes than English for
@@ -2283,9 +2283,9 @@ exist.
 |---|---|
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
-| `game.announce(text[, seconds[, target[, position]]])` | A big line across the game view for that many seconds. Left out, `position` puts the line where it has always gone, centred in the upper third of the view. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line somewhere else. Empty text takes the line away. |
+| `game.announce(text[, seconds[, target[, position]]])` | A big line in the Scenario Text window for that many seconds. Left out, `position` centres the line across the window. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line further left or right; only the share across is used. Empty text takes the line away. |
 | `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. While it is up a local game is paused, as the tutorial pauses it. See [Popups](#popups). |
-| `game.status(text[, countdown_to[, target]])` | The status line: one line at the very top of the game view, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
+| `game.status(text[, countdown_to[, target]])` | The status line: one line in the top row of the Scenario Text window, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
 | `game.clear_marker(id[, target])` | Takes mark `id` off the map. |
@@ -2306,38 +2306,62 @@ neither. In the lobby the clock moves at half that
 rate, so a line put up before the round starts stays up about twice as long as
 it asked for.
 
-**Where an announcement goes.** With no `position` the line is centred across
-the game view, with the top of its letters 0.28 of the way down, in the upper
-third and clear of the player's own tank in the middle. No panel, window or
-status line moves it. On the main view that is where every announcement has
-always gone. On the full screen map the same rule is applied to the map, so
-the line sits 0.28 of the way down the map and not at its old spot, which was
-worked out from the main view's rectangle. In tablet mode the rule is
-applied to tablet mode's own game view; before, tablet mode drew no
-announcement at all.
+**The Scenario Text window.** The status line and the announcement are both
+drawn in one window of their own, the Scenario Text window, and not on the
+game view. A script cannot put text anywhere else on the screen. The window
+is built the same way as the scenario panel's window: it has no title bar, a
+see-through backing, a bar along its top to move it, a gear that opens its
+settings (Pop out, then two opacity sliders), an X that closes it, and a grip
+in its bottom-right corner to resize it. Unlike the panel, it is a rectangle
+and it can take any shape. In a round with a scenario or a mod the window
+stays up for the whole round, also when there is no line to draw: with no
+line it draws nothing, and its bar, buttons, grip and edge show while the
+pointer is on it, so the player can move and resize it at any time. Outside
+such a round it shows only while there is a line to draw.
 
-`position` puts the centre of the line at a point on the game view. Give a
-table `{ x = across, y = down }`, each from 0 to 1: `{ x = 0, y = 0 }` is the
-top-left corner, `{ x = 1, y = 1 }` the bottom-right one and
-`{ x = 0.5, y = 0.5 }` the middle. Two words are short names for the points
-scripts use most:
+By default the window sits at the top middle of the game view, sized so the
+text is as large as announcements were before: 240 units times the game's
+zoom. Once the player moves or resizes it, it stays where they put it,
+and its place, size, opacities and whether it is shown are kept in the
+preferences file. A player who closes it opens it again from **Brains > Info
+Overlay > Scenario Text**. In tablet mode there is no window: the same
+layout is drawn in a fixed band at the top middle of tablet mode's game view.
 
-| Word | Same as | Use it for |
-|---|---|---|
-| `"top"` | `{ x = 0.5, y = 0 }` | Lines that come often, such as kill lines: up out of the way |
-| `"center"` (or `"centre"`) | `{ x = 0.5, y = 0.5 }` | Important lines in a quiet moment, such as the round start or the winner |
+**How the text is scaled.** The window draws a fixed source rectangle, 240
+units wide, scaled to fit. Each line is 20 units of text with a 1 unit
+outline, so a row is 22 units, and a 2 unit gap goes around and between the
+rows. With one row the rectangle is 26 units high; with two it is 50. The
+rows are counted for the round: the status line takes the top row from the
+first time one is shown, and the announcement takes the row under it, or
+the top row when the round has shown no status line. So the text changes
+size at most when a new kind of line first appears in a round, and not each
+time a line comes or goes.
 
-The line is moved the least it takes to keep all of it inside the view, so
-`y = 0` puts it as high as it goes and no edge is ever cut off. A line wider
-than the view is centred across it. When a status line is up, its row counts
-as a band the full width of the view, from the top to the bottom of the status
-line's box. A line that would come within one gap of that band drops to one
-gap below it, wherever it sits across the view, even where the status line is
-short and nowhere near it. The gap is the scenario panel's own inset from the
-corner of the view. A line with a position does not move
-for the scenario panel or other windows, and `"center"` sits on the player's
-own tank: the script chose the spot, so use it when there is little else to
-watch.
+The source rectangle is scaled by one factor for both directions, the
+largest that fits the window, and centred in the window. The letters keep
+their shape at every window size. A window wider than the text's shape has
+empty space left and right; a taller one has empty space above and below.
+A line too wide for the 236 units between the gaps is made smaller by itself
+until it fits. The gear has two sliders. **Background opacity** is the alpha
+of the black backing: 100% is opaque black and 0% is no backing. It starts
+at 43%, the see-through backing the window has always had. **Text opacity**
+fades the text and its outline, and starts at 100%. A scenario panel's gear
+has the same two sliders, and there the text opacity fades everything the
+script draws in the panel.
+
+`position` keeps only its share across. Give a table `{ x = across, y =
+down }`, each from 0 to 1, or one of two words:
+
+| Word | Same as |
+|---|---|
+| `"top"` | `{ x = 0.5, y = 0 }` |
+| `"center"` (or `"centre"`) | `{ x = 0.5, y = 0.5 }` |
+
+The centre of the line goes at `x` of the way across the source rectangle,
+and the line is then moved the least it takes to stay inside the gaps, so no
+edge is ever cut off. `y` is checked and sent as before, but the window does
+not use it. Before the Scenario Text window, `position` placed the line
+anywhere on the game view; that is no longer possible.
 
 The position is sent as two bytes, so it lands on one of 255 steps across and
 down. A share that is not a number, a table without both `x` and `y`, or a
@@ -2347,15 +2371,13 @@ refused with `SCN_OP_RANGE`.
 A line with no position is up to 128 bytes. A line with a position is up to
 125 bytes, and a longer one is refused with `SCN_OP_TOO_BIG`. A client older
 than the position draws every line in the usual place, and it would drop a
-positioned line longer than 125 bytes and show nothing. Both lines are drawn
-on the desktop view, on the full screen map and in tablet mode, each over its
-own game view.
+positioned line longer than 125 bytes and show nothing.
 
 On a server older than the position, `game.announce` reads only its first
 three arguments, so a script that passes a position there still shows the
-line, in the usual place.
+line, centred.
 
-**The status line.** `game.status` holds one line at the top of the view for
+**The status line.** `game.status` holds one line in the top row of the Scenario Text window for
 as long as the round wants it, such as "Wave 3/10". With `countdown_to`, the
 client adds the time left to that tick, in minutes and seconds, four spaces
 after the text ("Wave 3/10    2:44"), and counts it down on its own clock, so
@@ -2374,9 +2396,13 @@ past 4294967294, or a seat or team outside the game, is refused with
 **Two lines at once.** An announcement does not take the place of one that
 is still up. Each line keeps its own countdown, and a client holds up to four:
 a fifth pushes the oldest out. A new line with the same text as one still up
-replaces that one and starts its time again. An empty line takes them all
-away. Lines are drawn in the order they arrived, and a line that would overlap
-one already drawn drops to just below it, so the newest is lowest.
+replaces that one and starts its time again. So does a line that differs from
+one still up only in its numbers (a countdown, a score), so a line sent every
+frame is one line counted down rather than a stack; two lines that differ only
+in a number inside a name ("Bot 1", "Bot 2") count as one line too. An empty
+line takes them all away. The lines are drawn in the Scenario Text window in
+the order they arrived, each in a row of its own under the status line, so
+the newest is lowest.
 
 **Line breaks.** A status line or an announcement may hold `"\n"`. Each part
 is drawn on its own row, centred in one box, and the countdown of a status
@@ -2390,7 +2416,7 @@ tokens: `{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`,
 client writes each one out as the name of the bound key on a keyboard, a word
 for the control on a controller, or the touch wording on a touch screen. The
 128-byte cap (125 with a position) applies to the text as sent, tokens and all.
-A row that is too wide for the view once its tokens are filled in is broken
+A row that is too wide for the Scenario Text window once its tokens are filled in is broken
 into two at its last space that fits.
 
 ```lua
@@ -2398,7 +2424,7 @@ game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)
 game.announce("Wave 3 - they come from the north", 5, nil, "center")
 game.announce(name .. " got a kill", 2, nil, "top")
 game.announce("Red has the flag", 3, { team = 2 }, { x = 0.5, y = 0.8 })
-game.announce("Go!", 2)      -- no position: where announcements always go
+game.announce("Go!", 2)      -- no position: centred across the window
 game.status("")              -- take the status line away
 ```
 

@@ -1300,6 +1300,35 @@ STR_LV_TANK_PILLS=Pillboxes carried: {number}
 STR_LV_TANK_NO_STOCK=This recording does not hold tank resources
 STR_LV_TANK_BARS=Tank Armour and Shells Bars
 STR_LV_TANK_BARS_TIP=Two small bars over each tank: armour on top, shells under it
+STR_LV_LAG_LINE=Lag: {number} ms round trip, screen {number2} ms behind
+STR_LV_LAG_NONE=Lag: none recorded for this player yet
+STR_LV_LAG_GRAPH_TIP=Round-trip time across the recording, in ms. The highest is {number} ms. The white line is the playhead
+STR_LV_LAG_VIEW=See what this player saw
+STR_LV_LAG_VIEW_TIP=Draw the other tanks, the builders and the shells where this player's screen showed them: as far back as the server's rewind for this player. This player's own tank stays at its present place
+STR_LV_LAG_BANNER={string1}'s screen, {number} ms behind
+STR_LV_LAG_BANNER_WAIT={string1}'s screen: no history for this time yet, the present is shown
+STR_LV_LAG_OFF=Turn off
+STR_LV_LAG_HUD_TIP={string1}, {number} ms round trip
+STR_LV_LAG_MENU=See What the Selected Player Saw
+STR_LV_LAG_MENU_TIP=Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records
+STR_LV_LAG_LINE_BOT=Lag: a bot, screen {number} ms behind
+STR_LV_TIMING_HEADER=Server timing
+STR_LV_TIMING_AT=Recorded at {string1} of the round
+STR_LV_TIMING_AT_END=Recorded at the round end, {string1} of the round
+STR_LV_TIMING_TICK=Tick: last {string1} ms, EWMA {string2} ms, peak {string3} ms
+STR_LV_TIMING_OVER_BUDGET=Over budget: {number} ticks (budget {number2} ms)
+STR_LV_TIMING_SIM=Simulation: last {string1} ms, EWMA {string2} ms
+STR_LV_TIMING_POOL=Bot pool: {number} workers, {number2} active bots, target {string1} ms a bot
+STR_LV_TIMING_POOL_SINGLE=Bot pool: single thread, {number} active bots, target {string1} ms a bot
+STR_LV_TIMING_BRAIN=Brain: last {string1} ms, EWMA {string2} ms, peak {string3} ms
+STR_LV_TIMING_PREP=Bot prep: last {string1} ms, EWMA {string2} ms
+STR_LV_TIMING_OVERRUNS=Overruns: {number} of {number2} thinks ({string1}%)
+STR_LV_TIMING_COL_BOT=Bot
+STR_LV_TIMING_COL_LAST=Last ms
+STR_LV_TIMING_COL_PEAK=Peak ms
+STR_LV_TIMING_COL_OVERRUNS=Overruns
+STR_LV_TIMING_NONE_YET=No record yet. The server writes the first one at 1:00 of the round
+STR_LV_TIMING_PLAYER=Player {number}
 STR_LV_TIP_BACK_SECS=Back {string1} seconds
 STR_LV_TIP_FWD_SECS=Forward {string1} seconds
 STR_LV_TIP_KEY_FMT={string1} ({string2})
@@ -2389,9 +2418,6 @@ STR_DLGLOBBY_MODS_TIP_OFF=Mods/Scenario is switched off. These are picked for th
 STR_DLGLOBBY_MODS_TIP_NONE=No mods are loaded for this round.
 STR_DLGLOBBY_MODS_OFF_NOTE=(switched off, will not run)
 STR_SCNPANEL_SETTINGS_TITLE=Scenario Panel
-STR_SCNPANEL_OPACITY_LBL=Opacity
-STR_SCNPANEL_OPACITY_LINE1=Fades what the panel draws.
-STR_SCNPANEL_OPACITY_LINE2=Empty parts of it stay clear.
 STR_MENU_INFO_OVERLAY=Info Overlay
 STR_SCNPANEL_POP_OUT=Pop out
 STR_SCNPANEL_POP_IN=Pop in
@@ -2916,6 +2942,9 @@ STR_DLGSYSINFO_MEM_BUILDING=Building
 STR_DLGSYSINFO_MEM_RUBBLE=Rubble
 STR_DLGSYSINFO_MEM_SWAMP=Swamp
 STR_DLGSYSINFO_MEM_GRASS=Grass
+STR_SCNTEXT_TITLE=Scenario Text
+STR_SCN_BG_OPACITY_LBL=Background opacity
+STR_SCN_TEXT_OPACITY_LBL=Text opacity
 
 # Voice settings on a touch screen, where the talk button is the key
 STR_DLGSETTINGS_VOICE_PTT_TOUCH=Push to talk: hold the microphone button on the game screen
@@ -3057,4 +3086,7 @@ STR_CLIPGIF_SAVED_ANDROID={string1} has been saved. Choose an app to share it wi
 
 # The map editor's file picker on Android, whose Maps folder is the app's own
 STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game, show up here.
+
+# The replay's recording mode button, which shows the GIF controls
+STR_REEL_RECORD_MODE_TIP=Recording mode: shows the GIF controls
 

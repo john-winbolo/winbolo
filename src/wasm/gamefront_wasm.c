@@ -43,6 +43,7 @@
 #include "../gui/gamefront.h"
 #include "../gui/input.h"
 #include "../gui/lang.h"
+#include "../gui/scn_panel_prefs.h"
 #include "../gui/sound.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
@@ -203,15 +204,33 @@ bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
 bool  gameFrontFullScreen = FALSE;
 
-/* Scenario panel position, size and opacity (-1 = never moved/resized/set;
+/* Scenario panel position, size and two opacities (-1 = never moved/resized/set;
  * [WINDOW] section on desktop). The wasm build never persists window
  * settings, but the shared scenario panel in sdl3imgui.cpp reads and writes
  * the symbols. */
 int gameFrontScnPanelX = -1;
 int gameFrontScnPanelY = -1;
 int gameFrontScnPanelScale = -1;
-int gameFrontScnPanelAlpha = -1;
+int gameFrontScnPanelBgAlpha = -1;
+int gameFrontScnPanelTextAlpha = -1;
 bool gameFrontScnPanelCloseAsk = TRUE;
+
+/* The Scenario Text window's place, size, opacities and shown flag, for the
+ * same reason as the scenario panel's above. */
+int gameFrontScnTextX = -1;
+int gameFrontScnTextY = -1;
+int gameFrontScnTextW = -1;
+int gameFrontScnTextH = -1;
+int gameFrontScnTextBgAlpha = -1;
+int gameFrontScnTextTextAlpha = -1;
+bool gameFrontScnTextShown = TRUE;
+/* The web has no pop-outs, so this is never set, but the shared code reads
+ * it. */
+bool gameFrontScnTextPopped = FALSE;
+int gameFrontScnTextPopX = -1;
+int gameFrontScnTextPopY = -1;
+int gameFrontScnTextPopW = SCN_TEXT_POPOUT_DEFAULT_W;
+int gameFrontScnTextPopH = SCN_TEXT_POPOUT_DEFAULT_H;
 
 bool isServer = FALSE;
 bool useAutoslow;
@@ -1333,13 +1352,15 @@ void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) { (void)botName;
  * cloud-synced prefs, so no row is ever remembered and the panel keeps
  * whatever the gameFrontScnPanel* globals hold. */
 bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
-                                int *scale, int *alpha) {
-  (void)scenario; (void)x; (void)y; (void)scale; (void)alpha;
+                                int *scale, int *bgAlpha, int *textAlpha) {
+  (void)scenario; (void)x; (void)y; (void)scale; (void)bgAlpha;
+  (void)textAlpha;
   return false;
 }
 void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
-                                int scale, int alpha) {
-  (void)scenario; (void)x; (void)y; (void)scale; (void)alpha;
+                                int scale, int bgAlpha, int textAlpha) {
+  (void)scenario; (void)x; (void)y; (void)scale; (void)bgAlpha;
+  (void)textAlpha;
 }
 /* Nor a per-script shown flag or pop-out: the browser has one window. */
 bool gameFrontGetScnPanelShown(const char *script) { (void)script; return true; }

@@ -5723,8 +5723,9 @@ local function update_attack_substate_body(goal, state, world, info)
                                          bit.rshift(info.tanky or 0, 8), human_tiles)
         end
         goal._human_near = human_near
-        -- PPT_NEVER (Virus horde: no trees, cannot farm) does the same: the
-        -- take goes straight in, with no shield scan and no tree gathering.
+        -- PPT_NEVER (Virus horde: it can build and farm; this knob alone stops
+        -- its protected take) does the same: the take goes straight in, with no
+        -- shield scan and no tree gathering.
         if (state.is_pill_suicider or human_near or C.PPT_NEVER) and goal._is_ppt then
           goal._is_ppt = false
         end

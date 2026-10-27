@@ -538,6 +538,12 @@ void lobbyClipGifStartFromPlayhead(uint32_t curMs, uint32_t lenMs,
  * following. */
 bool lobbyClipGifActive(void);
 
+/* Whether the GIF controls are drawn this frame: in recording mode, and while
+ * a capture runs, so the controls of a GIF being made stay until it ends. */
+static bool lobbyReelGifToolsShown(void) {
+    return clipGifToolsShown(s_reel.recordMode, lobbyClipGifActive());
+}
+
 /* The GIF length on the seek bar: a bright band from the playhead to where
  * the transport's GIF would end, and a marker at its end that can be dragged
  * to change the length. barMin/barMax are the seek slider's frame. Called
@@ -682,6 +688,53 @@ static bool lobbyReelCropButton(const char *id) {
     dl->AddLine(ImVec2(b.x, b.y), ImVec2(b.x, b.y - tick), col, 2.0f);
 
     imguiHelpTooltip(REEL_CROP_TITLE);
+    return clicked;
+}
+
+/* Recording mode toggle: a drawn movie camera, two film reels on top of the
+ * body and the lens on its right side. Drawn with the draw list like the crop
+ * glyph, so it needs no new art asset and follows the text colour and UI
+ * scale. Stays pressed while recording mode is on, the same as the crop
+ * button. */
+static bool lobbyReelRecordModeButton(const char *id) {
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    const float lineH = ImGui::GetTextLineHeight();
+    const bool  on    = s_reel.recordMode;
+
+    if (on) {
+        ImGui::PushStyleColor(ImGuiCol_Button,
+                              ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    }
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    bool clicked = ImGui::Button(id, ImVec2(lineH + sty.FramePadding.x * 2.0f,
+                                            lineH + sty.FramePadding.y * 2.0f));
+    if (on) {
+        ImGui::PopStyleColor();
+    }
+
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    const float w = lineH - 2.0f;
+    ImVec2 a(p.x + sty.FramePadding.x + 1.0f, p.y + sty.FramePadding.y + 1.0f);
+    /* The two film reels, side by side over the body. */
+    const float reelR = w * 0.16f;
+    const float reelY = a.y + reelR + w * 0.04f;
+    dl->AddCircleFilled(ImVec2(a.x + w * 0.18f, reelY), reelR, col);
+    dl->AddCircleFilled(ImVec2(a.x + w * 0.52f, reelY), reelR, col);
+    /* The body. */
+    const float bodyTop = a.y + w * 0.40f;
+    const float bodyBot = a.y + w * 0.92f;
+    const float bodyR   = a.x + w * 0.68f;
+    dl->AddRectFilled(ImVec2(a.x, bodyTop), ImVec2(bodyR, bodyBot), col,
+                      w * 0.06f);
+    /* The lens: a short cone that opens out to the right of the body. */
+    const float midY = (bodyTop + bodyBot) * 0.5f;
+    dl->AddQuadFilled(ImVec2(bodyR, midY - w * 0.08f),
+                      ImVec2(a.x + w, midY - w * 0.24f),
+                      ImVec2(a.x + w, midY + w * 0.24f),
+                      ImVec2(bodyR, midY + w * 0.08f), col);
+
+    imguiHelpTooltip(langGetText(STR_REEL_RECORD_MODE_TIP));
     return clicked;
 }
 
@@ -1593,7 +1646,10 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
      * below sits out the frames it did. */
     bool cropTookMouse = false;
 #if BOLO_RECAP_CLIP_GIF
-    cropTookMouse = lobbyReelCropOverlay(imgMin, imgSize, reelPanActive);
+    /* The crop frame is a GIF control, so it is drawn only when they are. */
+    if (lobbyReelGifToolsShown()) {
+        cropTookMouse = lobbyReelCropOverlay(imgMin, imgSize, reelPanActive);
+    }
 #endif
 
     if (!cropTookMouse) {
@@ -1662,35 +1718,49 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
     }
 
 #if BOLO_RECAP_CLIP_GIF
-    /* Export the next few seconds from wherever the reel is sitting. The view
-     * is left as the player framed it — they have already chosen what they are
-     * looking at, which is the whole point of exporting from here rather than
-     * off a row. Full height, so it sits level with the two buttons before
-     * it rather than shrinking the transport row. */
+    /* Recording mode: the GIF controls after it, the length marker on the
+     * seek bar, the crop frame and the GIF button on each highlight row are
+     * drawn only while it is on. Held still while a capture runs: the
+     * capture's own window has the cancel control, and the controls stay up
+     * until the capture ends whatever this says. */
     ImGui::SameLine();
-    if (lobbyClipGifButton("##reelgif", false) && cs != NULL) {
-        lobbyClipGifStartFromPlayhead(
-            curMs, clipGifLenClampMs(s_reel.gifLenMs, curMs, totalMs), cs);
+    ImGui::BeginDisabled(lobbyClipGifActive());
+    if (lobbyReelRecordModeButton("##reelrecmode")) {
+        s_reel.recordMode = !s_reel.recordMode;
     }
+    ImGui::EndDisabled();
 
-    /* How long that export runs, in seconds; the marker on the seek bar
-     * below sets the same value. */
-    ImGui::SameLine();
-    lobbyReelGifLenField(curMs, totalMs);
+    if (lobbyReelGifToolsShown()) {
+        /* Export the next few seconds from wherever the reel is sitting. The
+         * view is left as the player framed it — they have already chosen
+         * what they are looking at, which is the whole point of exporting
+         * from here rather than off a row. Full height, so it sits level with
+         * the buttons before it rather than shrinking the transport row. */
+        ImGui::SameLine();
+        if (lobbyClipGifButton("##reelgif", false) && cs != NULL) {
+            lobbyClipGifStartFromPlayhead(
+                curMs, clipGifLenClampMs(s_reel.gifLenMs, curMs, totalMs), cs);
+        }
+
+        /* How long that export runs, in seconds; the marker on the seek bar
+         * below sets the same value. */
+        ImGui::SameLine();
+        lobbyReelGifLenField(curMs, totalMs);
 
 #if BOLO_CLIP_GIF_GALLERY
-    /* The GIFs made so far, with copy and save. */
-    ImGui::SameLine();
-    if (lobbyClipGifGalleryButton("##reelgifgallery")) {
-        lobbyClipGifGalleryOpen();
-    }
+        /* The GIFs made so far, with copy and save. */
+        ImGui::SameLine();
+        if (lobbyClipGifGalleryButton("##reelgifgallery")) {
+            lobbyClipGifGalleryOpen();
+        }
 #endif
 
-    /* Crop frame, next to the export it crops: with it up, that export takes
-     * the framed rectangle instead of the whole visible view. */
-    ImGui::SameLine();
-    if (lobbyReelCropButton("##reelcrop")) {
-        s_reel.cropOn = !s_reel.cropOn;
+        /* Crop frame, next to the export it crops: with it up, that export
+         * takes the framed rectangle instead of the whole visible view. */
+        ImGui::SameLine();
+        if (lobbyReelCropButton("##reelcrop")) {
+            s_reel.cropOn = !s_reel.cropOn;
+        }
     }
 #endif
 
@@ -1797,7 +1867,9 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
 #if BOLO_RECAP_CLIP_GIF
     /* After the slider's own state is read above: from here the last item is
      * the marker, not the slider. */
-    lobbyReelGifLenMarker(seekMin, seekMax, curMs, totalMs);
+    if (lobbyReelGifToolsShown()) {
+        lobbyReelGifLenMarker(seekMin, seekMax, curMs, totalMs);
+    }
 #endif
     ImGui::PopItemWidth();
 

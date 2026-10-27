@@ -38,6 +38,7 @@
 #include "tiles.h"
 #include "logviewer.h"
 #include "lv_host.h"
+#include "lv_lag.h"        /* LV_LAG_PREF_KEY, lv_lagPrefIsOn */
 #include "lv_spec_feed.h"   /* the embedded spectator's seed and records */
 
 #include <SDL3/SDL.h>
@@ -293,6 +294,13 @@ bool lvHostSetupCore(SDL_Window *window, SDL_Renderer *renderer,
     /* Platform abstraction init */
     lv_platform_config_init("WinBolo");
     lv_platform_dialogs_init();
+
+    /* The lag display (lv_lag.h): off until set to Yes in the file. Read here,
+       not with the menu's preferences, so the standalone viewer, the
+       spectator, the browser build and the in-game reel all take it. */
+    lv_platform_config_get_string("LOGVIEWER", LV_LAG_PREF_KEY, LV_LAG_PREF_DEFAULT, line,
+                                  sizeof(line));
+    lv_screenSetLagFeature(lv_lagPrefIsOn(line) ? 1 : 0);
 
     if (lv_clientMutexCreate() == FALSE) {
         lv_platform_dialog_error("WinBolo Log Viewer", "Could not create mutex");

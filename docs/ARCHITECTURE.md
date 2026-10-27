@@ -1704,6 +1704,11 @@ set of intentional differences:
   makes, which in a game is the full screen map that File > Overview
   in Window drives in both bars, and outside one is the app full
   screen flag.
+- In the Log Viewer, the View menu's player lag view item has no native
+  twin. It is there only while the "Player Lag View" setting is on. The
+  Tank panel's check box turns the same view on and off on every
+  platform. The comment next to the pill numbers item in
+  `src/logviewer/platform/mac_menubar.mm` names this exception.
 
 Add new exceptions sparingly and only with a justification — every
 diverged item is a future asymmetric-UI bug.
