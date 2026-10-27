@@ -6247,6 +6247,8 @@ set(_unit_test_names
     team_sides_soccer_puts_leaver_back
     team_sides_round_log_teams
     team_sides_held_seat_allied_in_round
+    team_sides_free_team_keeps_setup
+    team_sides_free_team_keeps_lobby_side
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
@@ -7216,6 +7218,7 @@ set(_unit_test_names
     survival_lobby_round_full
     survival_lobby_round_ds_order
     survival_lobby_round_late_joiner
+    survival_lobby_round_leaver_back
     loopback_unfield_tank
     loopback_fine_tank_position
     loopback_shell_drawn_cull

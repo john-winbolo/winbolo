@@ -910,6 +910,10 @@ BYTE serverSimFreeTeam(ServerSim *sim) {
     }
     for (t = 1; t < MAX_TANKS; t++) {
         if (held[t]) continue;
+        /* A team still in use keeps the name, colour and start side the
+           lobby (or the scenario) gave it: those belong to the team id,
+           not to the players who were on it. The seat takes over the team
+           as it was set up. Only an id not in use is set up here. */
         if (!sim->teams[t].in_use) {
             char name[LOBBY_TEAM_NAME_LEN];
             int  len = snprintf(name, sizeof(name), "Team %u", (unsigned)t);

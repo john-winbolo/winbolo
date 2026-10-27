@@ -1314,6 +1314,8 @@ int run_team_sides_lobby_drops_empty_teams(void);
 int run_team_sides_soccer_puts_leaver_back(void);
 int run_team_sides_round_log_teams(void);
 int run_team_sides_held_seat_allied_in_round(void);
+int run_team_sides_free_team_keeps_setup(void);
+int run_team_sides_free_team_keeps_lobby_side(void);
 
 /* Pillbox and base owners from the map file survive a round start
  * (test_round_start_owners.c, issue #422). */
@@ -3476,6 +3478,7 @@ int run_survival_lobby_round(void);
 int run_survival_lobby_round_full(void);
 int run_survival_lobby_round_ds_order(void);
 int run_survival_lobby_round_late_joiner(void);
+int run_survival_lobby_round_leaver_back(void);
 int run_loopback_unfield_tank(void);
 int run_loopback_fine_tank_position(void);
 int run_loopback_shell_drawn_cull(void);

@@ -82,6 +82,7 @@
 #include "game_sim.h"
 #include "players.h"
 #include "bot_manager.h"
+#include "threads.h"                /* the leave runs under the sim mutex */
 #include "test_harness.h"
 
 /* Where the shipped maps and their scripts live. */
@@ -1079,6 +1080,87 @@ int run_survival_lobby_round_late_joiner(void) {
                   (int)slrTeam(sim, late));
     UT_ASSERT_MSG(serverSimSidesAgree(sim),
                   "the alliances and the teams differ after the late join");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A defender who leaves an alliance is put back on the defenders (#424).
+   Two defenders sit down in the lobby and a third joins during the round.
+   Each one in turn leaves the alliance, which the server answers with a
+   team of its own; the script's on_team_changed puts it back on the
+   defenders, and the two records agree on every tick. */
+int run_survival_lobby_round_leaver_back(void) {
+    char          mapPath[512];
+    char          err[512];
+    ServerSim    *sim;
+    ScenarioHost *host;
+    int           seat[3];
+    int           i, k;
+
+    snprintf(mapPath, sizeof(mapPath), "%s/Survival.map", WB_DATA_MAPS_DIR);
+    sim = serverSimCreate(mapPath, gameOpen, false, 0, -1);
+    if (sim == NULL) UT_FAIL("the map is missing or will not load: %s", mapPath);
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimSetBotAiType(sim, aiFull);
+    serverSimSetBotBrainPath(sim, "brains/GoalHunter/init.lua");
+
+    err[0] = '\0';
+    host = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+    if (host == NULL) {
+        serverSimDestroy(sim);
+        UT_FAIL("the script beside %s was refused: %s", mapPath, err);
+    }
+    ut_brain_stub_arm(true);
+    serverSimScenarioSeatLobby(sim);
+    for (k = 0; k < 2; k++) {
+        char name[16];
+        seat[k] = serverSimFindFreeSlot(sim, false);
+        if (seat[k] < 0) UT_FAIL("no free slot for defender %d", k);
+        snprintf(name, sizeof(name), "Def%d", k);
+        serverSimAddPlayer(sim, (BYTE)seat[k], name, false);
+        sim->lobbyPlayers[seat[k]].ready      = true;
+        sim->lobbyPlayers[seat[k]].teamNumber = SLR_DEF_TEAM;
+    }
+
+    sim->worldPreLoaded = FALSE;
+    serverSimLobbyCheckAllReady(sim);
+    while (sim->state == serverStateCountdown) serverSimTick(sim);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "the round did not start: state %d", (int)sim->state);
+    for (i = 0; i < 10; i++) serverSimTick(sim);
+
+    seat[2] = serverSimFindFreeSlot(sim, false);
+    UT_ASSERT_MSG(seat[2] >= 0, "no free slot for the late joiner");
+    serverSimAddPlayer(sim, (BYTE)seat[2], "Late", false);
+    for (i = 0; i < 10; i++) serverSimTick(sim);
+    for (k = 0; k < 3; k++) {
+        UT_ASSERT_MSG(slrTeam(sim, seat[k]) == SLR_DEF_TEAM,
+                      "defender %d is on team %d before the leave", k,
+                      (int)slrTeam(sim, seat[k]));
+    }
+    UT_ASSERT(serverSimSidesAgree(sim));
+
+    for (k = 0; k < 3; k++) {
+        threadsWaitForMutex();
+        serverSimLeaveAlliance(sim, (BYTE)seat[k]);
+        threadsReleaseMutex();
+        UT_ASSERT_MSG(slrTeam(sim, seat[k]) != SLR_DEF_TEAM,
+                      "the leave kept defender %d on the defenders", k);
+        UT_ASSERT_MSG(serverSimSidesAgree(sim),
+                      "the records differ after defender %d left", k);
+        for (i = 0; i < 10; i++) {
+            serverSimTick(sim);
+            UT_ASSERT_MSG(serverSimSidesAgree(sim),
+                          "the records differ after tick %d", i);
+        }
+        UT_ASSERT_MSG(scenarioHostLastError(host)[0] == '\0',
+                      "the script complained: %s",
+                      scenarioHostLastError(host));
+        UT_ASSERT_MSG(slrTeam(sim, seat[k]) == SLR_DEF_TEAM,
+                      "the script left defender %d on team %d, not the "
+                      "defenders'", k, (int)slrTeam(sim, seat[k]));
+    }
 
     serverSimDestroy(sim);
     return 0;
