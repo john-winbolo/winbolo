@@ -469,6 +469,29 @@ static float lvDrawPixelScale(void) {
     return (d > 0.0f) ? d : 1.0f;
 }
 
+bool lv_drawGetMapBlit(float src[4], float dst[4], float *pxScale) {
+    LogViewerState *lv = lv_screenGetState();
+    if (g_embedded || !s_blitKnown || lv == NULL || lv->gameView) {
+        return FALSE;
+    }
+    if (src != NULL) {
+        src[0] = s_blitSrc.x;
+        src[1] = s_blitSrc.y;
+        src[2] = s_blitSrc.w;
+        src[3] = s_blitSrc.h;
+    }
+    if (dst != NULL) {
+        dst[0] = s_blitDst.x;
+        dst[1] = s_blitDst.y;
+        dst[2] = s_blitDst.w;
+        dst[3] = s_blitDst.h;
+    }
+    if (pxScale != NULL) {
+        *pxScale = lvDrawPixelScale();
+    }
+    return TRUE;
+}
+
 /* The zoom of the map as a percentage, 100 for the game's own size: one map
  * square on 16 points of the window (lv_zoom_text.h). It is worked out from
  * the size a square is really drawn at, in pixels of the display, so it is

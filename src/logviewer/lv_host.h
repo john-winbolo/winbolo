@@ -57,5 +57,8 @@ void lv_windowSetHostRunsTicks(bool on);
 /* true: the playback timer plays nothing until this is false again. The
  * caller holds the client mutex. lv_windowStop ends it. */
 void lv_windowSetTickHold(bool on);
+/* The part of the viewer's window that is map, in window points: what the
+ * menu bar and the solid sidebars leave. At least 1 x 1. */
+void lvHostGetMapArea(float *x, float *y, float *w, float *h);
 
 #endif /* LV_HOST_H */

@@ -7,26 +7,39 @@
  * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
- * Action > Make GIF... opens a small window that asks for a length. Make GIF
- * there plays the log on from the current time and reads each frame back off
- * the map's render target, as the game's replay does (clip_gif_frame.h). The
- * GIF goes into the same clips folder as the game's GIFs, through the same
- * gallery (clip_gif_gallery.h), and the Clips window opens on it. When the
- * GIF is made, the log goes back to the time it was at, and plays again if it
- * was playing.
+ * Recording mode, as the game's replay has it (lobby_reel.cpp): the movie
+ * camera button on the Controls panel, Action > Recording Mode and Ctrl+G
+ * turn it on and off. In recording mode the Controls panel shows the GIF
+ * controls under its top row: the GIF button, the length in seconds, the
+ * Clips button and the crop button. The timeline shows where the GIF starts
+ * and ends, with a marker at the end that can be dragged to change the
+ * length. With the crop button on, a frame over the map shows the part of
+ * the map the GIF takes; its edges, corners and inside can be dragged. The
+ * controls come from clip_gif_controls.h, the same ones the game draws.
+ *
+ * The GIF button plays the log on from the current time and reads each
+ * frame back off the map's render target, as the game's replay does
+ * (clip_gif_frame.h). The GIF goes into the same clips folder as the game's
+ * GIFs, through the same gallery (clip_gif_gallery.h), and the Clips window
+ * opens on it. When the GIF is made, the log goes back to the time it was
+ * at, and plays again if it was playing. Esc or Cancel stops it.
+ *
+ * Recording mode, the crop frame and the length go back to their start
+ * values with each log that opens, as the game's do with each replay.
  *
  * Windows > Clips opens and closes that gallery window. In the standalone
  * viewer and in the viewer the game opens it is the same window.
  *
  * A GIF is made only from the map (the overview), not from the game view: the
  * game view draws straight to the window and has no render target to read.
- * A live game has no GIFs either.
+ * A live game has no recording mode either.
  */
 
 #ifndef IMGUI_CLIP_GIF_H
 #define IMGUI_CLIP_GIF_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,12 +49,25 @@ extern "C" {
  * iOS or Android). False makes every call below do nothing. */
 bool lv_clip_gif_available(void);
 
-/* True when Make GIF... can be used now: a log is open, the map (not the
- * game view) is shown, the log is not a live game and no GIF is being made. */
-bool lv_clip_gif_can_make(void);
+/* True when recording mode can be turned on or off now: a log is open, the
+ * log is not a live game and no GIF is being made. */
+bool lv_clip_gif_can_toggle_mode(void);
 
-/* Opens the Make GIF window, when lv_clip_gif_can_make is true. */
-void lv_clip_gif_request(void);
+/* True while recording mode is on. */
+bool lv_clip_gif_mode_on(void);
+
+/* Turns recording mode on or off, when lv_clip_gif_can_toggle_mode is
+ * true. */
+void lv_clip_gif_toggle_mode(void);
+
+/* True when the GIF controls show this frame: a log that is not live is
+ * open, and recording mode is on or a GIF is being made (clipGifToolsShown).
+ * The controls of a GIF being made stay until it ends. */
+bool lv_clip_gif_tools_shown(void);
+
+/* True when the GIF button can be used now: the same as
+ * lv_clip_gif_can_toggle_mode, and the map (not the game view) is shown. */
+bool lv_clip_gif_can_make(void);
 
 /* True while a GIF is being made. The viewer takes no keys and no zoom then:
  * the frames are read from a fixed part of the map. */
@@ -51,16 +77,36 @@ bool lv_clip_gif_active(void);
  * the map is drawn and before the ImGui frame begins. */
 void lv_clip_gif_capture_step(void);
 
-/* Draws the Make GIF window, the progress window and the Clips window. The
- * host calls it once a frame inside the ImGui frame, in both views. */
+/* Draws the crop frame over the map, the progress window and the Clips
+ * window. The host calls it once a frame inside the ImGui frame, in both
+ * views. */
 void lv_clip_gif_render(void);
+
+/* True when the crop frame has the mouse now: the mouse is on the frame
+ * and no ImGui window is under it, or the frame is being dragged. The map
+ * then does not pan, pick a tank or show a tooltip for that mouse. */
+bool lv_clip_gif_frame_has_mouse(void);
+
+/* The GIF controls in the Controls panel, on a line of their own in the
+ * middle of the panel: the GIF button, the length in seconds, the Clips
+ * button and the crop button. The panel calls it when
+ * lv_clip_gif_tools_shown is true. */
+void lv_clip_gif_tools_row(void);
+
+/* The GIF on the timeline: the band from startMs to the GIF's end and the
+ * marker at its end (clipGifLenMarker). minX..maxY is the frame of the seek
+ * slider, which maps 0..totalMs; the panel calls it after the slider, which
+ * it marks allow-overlap while lv_clip_gif_tools_shown is true. */
+void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,
+                             uint32_t startMs, uint32_t totalMs);
 
 /* Windows > Clips: opens or closes the Clips window. */
 void lv_clip_gif_toggle_gallery(void);
 bool lv_clip_gif_gallery_is_open(void);
 
-/* Stops a GIF that is being made and drops it. The log is not moved back:
- * the host calls it when another log starts to open. */
+/* Stops a GIF that is being made and drops it, and puts recording mode back
+ * to its start values. The log is not moved back: the host calls it when
+ * another log starts to open. */
 void lv_clip_gif_cancel(void);
 
 /* The viewer starts or ends: stops a GIF that is being made and closes the

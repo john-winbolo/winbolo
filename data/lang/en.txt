@@ -3139,10 +3139,11 @@ STR_FRAMELIMIT_UNLIMITED=Unlimited (vsync off)
 STR_FRAMELIMIT_TIP=How often the game window is drawn. Match display draws once for each refresh of the screen. A number draws no more than that many frames each second, which can save power. Unlimited turns vsync off and draws as fast as the computer can, and the picture can tear. The game itself runs at the same speed with every choice.
 
 # The Log Viewer's GIFs and its Clips window
-STR_LV_MAKE_GIF=Make GIF...
-STR_LV_MAKE_GIF_TIP=Make an animated GIF of the map, as it is shown now, from the current time on. The GIF goes into the Clips window.
-STR_LV_GIF_LENGTH=Length in seconds
-STR_LV_GIF_START=Make GIF
 STR_LV_WIN_CLIPS=Clips
-STR_LV_CLIPS_EMPTY=No GIFs yet. Use Make GIF... in the Action menu to make one from the map.
+STR_LV_CLIPS_EMPTY=No GIFs yet. Turn on Recording Mode in the Action menu, then use the GIF button to make one from the map.
+
+# Recording mode, in the game's replay and the Log Viewer
+STR_CLIPGIF_CROP=Crop
+STR_LV_RECORD_MODE=Recording Mode
+STR_LV_RECORD_MODE_TIP=Shows the GIF controls: the GIF button and its length, where the GIF starts and ends on the timeline, and a crop frame for the part of the map to take.
 

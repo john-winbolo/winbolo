@@ -306,6 +306,20 @@ void lv_drawSetEmbedViewport(int w, int h);
 void lv_drawGetGameTargetSize(int *outW, int *outH);
 
 /*********************************************************
+*NAME:          lv_drawGetMapBlit
+*PURPOSE:
+*  The last blit of the map into the viewer's own window:
+*  the slice of the render target it took (src, x y w h in
+*  render-target pixels), where that slice went (dst, x y w
+*  h in framebuffer pixels), and the framebuffer pixels to
+*  each window point. The recording mode's crop frame is
+*  drawn on that view and a GIF is read from it. False in
+*  the game view, embedded, and before the first blit.
+*  Out-params are optional.
+*********************************************************/
+bool lv_drawGetMapBlit(float src[4], float dst[4], float *pxScale);
+
+/*********************************************************
 *NAME:          lv_drawGetTilesTexture / lv_drawGetSheetScale
 *PURPOSE:
 *  Expose the unified SVG/PNG/BMP tile atlas (and its build
