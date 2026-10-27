@@ -21,6 +21,7 @@
 #include <emscripten/html5.h>
 
 #include "bolo_rand.h"
+#include "client_frontend_common.h"  /* clientFrontTellScenarioPlayer */
 #include "client_frontend_connect.h"
 #include "client_frontend_sp.h"
 #include "client_sim.h"
@@ -1011,6 +1012,13 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       return FALSE;
     }
     wasmTransportActive = TRUE;
+    /* The server is in this process: tell it the player's language and
+     * input before the first frame, so the scenario's first line is
+     * worded for them. */
+    clientMutexWaitFor();
+    clientFrontTellScenarioPlayer(wasmServerSim,
+                                  clientSimGetMyPlayerNum(humanSim));
+    clientMutexRelease();
     /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
      * The shared tick core's keys-half pump skip keys off
      * clientSimTransportTicksServer, which the connect set above — not off

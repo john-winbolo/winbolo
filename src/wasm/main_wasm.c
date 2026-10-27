@@ -452,7 +452,7 @@ static void main_loop_iteration(void) {
    * server's once-per-run respawn message. No-ops outside tutorial mode. */
   frontEndTutorialNotePresentedFrame();
   clientFrontTutorialPollRespawn();
-  clientFrontPollTutorialDone();   /* a shipped tutorial finished */
+  clientFrontPollScenarioPlayer();  /* tutorial finished; language, input */
 
   /* Cloud prefs upload runs from gameFrontPumpDirty, which
    * sdl3ImguiPumpAndRender calls at the top of this frame. */

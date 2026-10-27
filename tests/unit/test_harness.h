@@ -1615,9 +1615,6 @@ int run_scenario_popup_round_over(void);
 int run_tutorial_tokens_quick_build(void);
 int run_scenario_status_tokens_expand(void);
 int run_tutorial_tokens_long_key_names(void);
-/* The phrase tokens ({DRIVE_HOW}, {STEP_TREE} ...): found, named phrases,
- * and filled by tutorialPhrasesExpand alone, key tokens left as written. */
-int run_tutorial_tokens_phrases(void);
 /* The token parser against untrusted text (test_tutorial_tokens_parse.c):
  * a brace that starts no token is plain text; the split covers the text in
  * order and says where it stopped; a cut never ends in half a UTF-8
@@ -1626,6 +1623,11 @@ int run_tutorial_tokens_malformed(void);
 int run_tutorial_tokens_split(void);
 int run_tutorial_tokens_utf8_cut(void);
 int run_tutorial_tokens_random_input(void);
+/* The shipped tutorial's TEXT tables (test_tutorial_text_check.c): every
+ * language and input inside the limit of the call that sends it, valid
+ * UTF-8, every brace a known key token, and input wordings well formed. */
+int run_tutorial_text_fits(void);
+int run_tutorial_text_well_formed(void);
 int run_scenario_announce_waits_for_popup(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
@@ -3798,6 +3800,9 @@ int run_scenario_validate_needs_bots_declared(void);
 int run_scenario_lua_every_row_answers(void);
 int run_scenario_lua_voice_everyone(void);
 int run_scenario_lua_lang(void);
+/* game.input(p): "keyboard", "touch" or "controller" as the frontend told
+ * the seat, the keyboard for any other value, and cleared on leave. */
+int run_scenario_lua_input(void);
 int run_scenario_lua_tutorial_done(void);
 int run_scenario_lua_op_arguments_match_the_doc(void);
 int run_scenario_lua_read_index_passes_through(void);

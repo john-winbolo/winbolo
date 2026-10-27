@@ -505,6 +505,9 @@ struct ServerSim {
                                     * scenario detach, so it never reaches a
                                     * later round. */
     char     playerLang[MAX_TANKS][SERVER_PLAYER_LANG_LEN];
+    BYTE     playerInput[MAX_TANKS]; /* SERVER_PLAYER_INPUT_*; 0 is the
+                                      * keyboard, so a seat never told
+                                      * reads as one */
     uint16_t tutorialDoneSeats;    /* a bit for each seat a script's
                                     * game.tutorial_done named. Taken and
                                     * cleared by serverSimTakeTutorialDone,

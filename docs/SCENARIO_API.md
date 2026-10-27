@@ -39,6 +39,7 @@ bug worth reporting.
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
   - [Finishing a tutorial](#finishing-a-tutorial)
   - [Text in the player's language](#text-in-the-players-language)
+  - [Text for the player's input](#text-for-the-players-input)
 - [Showing things on a client](#showing-things-on-a-client)
   - [Popups](#popups)
   - [The panel](#the-panel)
@@ -2098,6 +2099,7 @@ to escort a person stays where it is.
 | `game.set_voice_everyone(on)` | With `true`, voice in the running round goes to every player rather than to the talker's allies alone. `false` puts it back. |
 | `game.voice_everyone()` | Whether voice is going to everyone: what `set_voice_everyone` last set this round, and `false` on a server with voice off. |
 | `game.lang(p)` | The language seat `p`'s player reads, as their lang file's name in lower case: `"en"`, `"de"`, `"pt-br"`. `"en"` whenever the server does not know. See [Text in the player's language](#text-in-the-players-language). |
+| `game.input(p)` | What seat `p`'s player plays with: `"keyboard"`, `"touch"` or `"controller"`. `"keyboard"` whenever the server does not know. See [Text for the player's input](#text-for-the-players-input). |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
@@ -2217,10 +2219,9 @@ picks is in the new one.
 The client fills in tokens from its own language file. The word for a control
 on a controller or a touch screen ("the fire button") is a string in
 `data/lang/<code>.txt` (`STR_TUTTOK_*`), so it is in the language the client
-reads, whatever the script sent. The phrase tokens (see
-[Popups](#popups)) are whole sentences from the same file. On a hosted server,
-where `lang` answers `"en"`, a player who reads another language sees the
-script's English with the tokens in their own language.
+reads, whatever the script sent. On a hosted server, where `lang` answers
+`"en"`, a player who reads another language sees the script's English with the
+tokens in their own language.
 
 Write the text so a key token reads correctly both as a key name ("Space")
 and as a noun phrase ("the fire button"). Put the token where the object of
@@ -2232,6 +2233,42 @@ A popup wraps only at spaces. Chinese and Japanese text has no spaces, so put a
 single `\n` (read as a space) every 25 to 30 characters. A status line or
 announcement row too wide for the view is broken at its last space that fits,
 or before the first character that does not fit when the row has no space.
+
+The limits count bytes, and most languages take more bytes than English for
+the same line: Cyrillic and Greek take two a letter, Chinese, Japanese and
+Korean three. A popup too long for its 511 bytes can be sent as two or more
+popups, which the player closes one after the other.
+
+### Text for the player's input
+
+A key token covers a line that differs only in the key's name. Some lines
+differ by more: a touch screen has no keys and no build cursor, and a
+controller has a build cursor and no mouse. `game.input(p)` says which the
+player uses, `"keyboard"`, `"touch"` or `"controller"`, and the script holds a
+wording for each:
+
+```lua
+local ROAD = {
+  keyboard   = "Click the road button or press {QUICK_ROAD}, then click grass.",
+  touch      = "Tap the road button, then tap a grass square.",
+  controller = "Pick the road tool with {BUILD_TOOL} and press {BUILD_PLACE}.",
+}
+
+game.status(ROAD[game.input(p)] or ROAD.keyboard, nil, p)
+```
+
+Only a single-player game knows the input, the same way it knows the
+language: the client tells the server at the join and again whenever the input
+changes (a controller plugged in or put down). On a phone or tablet the touch
+layout counts first, whatever else is attached. A hosted or dedicated server
+is never told, so `input` answers `"keyboard"` for every seat there, as it
+does for a bot, an empty seat and a seat out of range. The key tokens still
+show the player's own keys and buttons there; only the sentences around them
+are the keyboard's.
+
+A line is worded when it is sent. A status line the script sends again each
+poll follows a change of input at once; a popup already on screen keeps the
+wording it was sent with.
 
 ---
 
@@ -2352,7 +2389,6 @@ tokens: `{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`,
 `{QUICK_WALL}`, `{QUICK_PILL}`, `{QUICK_MINE}`, `{GUN_UP}` and `{GUN_DOWN}`. The
 client writes each one out as the name of the bound key on a keyboard, a word
 for the control on a controller, or the touch wording on a touch screen. The
-phrase tokens of [Popups](#popups) work here too. The
 128-byte cap (125 with a position) applies to the text as sent, tokens and all.
 A row that is too wide for the view once its tokens are filled in is broken
 into two at its last space that fits.
@@ -2422,26 +2458,12 @@ game.popup("{ACCEL} forward, {BRAKE} slow down.\n\n"
   .. "Build a road with {QUICK_ROAD}.", p)
 ```
 
-Some differences between the inputs are more than a key name: a touch screen
-has no keys and no build cursor, and a controller has a build cursor and no
-mouse. For these the client has phrase tokens. Each is one or two whole
-sentences from the language file, in one wording for keyboard and mouse, one
-for a touch screen and one for a controller (`STR_TUTPHRASE_<NAME>_KEYS`,
-`_TOUCH`, `_PAD`; a phrase with no `_PAD` wording uses the keyboard one). The
-client fills in the phrase first, then the key tokens in it:
+A line that differs between the inputs by more than a key name is worded by
+the script for each input; see
+[Text for the player's input](#text-for-the-players-input).
 
-| Token | What it says |
-|---|---|
-| `{DRIVE_HOW}` | How to drive and turn. |
-| `{BUILD_HOW}` | How to pick a build tool and send the builder. |
-| `{HARVEST_TIP}` | Any build tool harvests a tree it is aimed at. |
-| `{PILL_HOW}` | How to build a carried pillbox. |
-| `{STEP_TREE}`, `{STEP_ROAD}`, `{STEP_WALL}`, `{STEP_MINE}` | Two status-line rows: build that one thing. |
-| `{STEP_PILL}`, `{STEP_PILL_GREEN}` | Two status-line rows: build the carried pillbox, anywhere or on the green square. |
-
-They were written for the Tutorial, and a script may use them in a popup, a
-status line or an announcement. The byte limits count the token as sent, not
-the sentence it becomes.
+A brace that starts no key token (`{`, `{FOO}`, `{accel}`) is shown as it is
+written.
 
 ### The panel
 

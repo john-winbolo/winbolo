@@ -83,6 +83,7 @@
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
 #include "tutorial_maps.h"
+#include "client_frontend_common.h"  /* clientFrontTellScenarioPlayer */
 #include "skin_source.h"
 #include "gfx_settings.h"
 
@@ -2736,10 +2737,10 @@ bool gameFrontSetDlgState(openingStates newState) {
             clientSimNetSetLocalFrameQueue(humanSim, true);
             spFrameQueueSim = humanSim;
             /* The server is in this process, so it can be told the language
-             * the player reads; a scenario picks its text by it. */
-            serverSimSetPlayerLang(spServerSim,
-                                   clientSimGetMyPlayerNum(humanSim),
-                                   gameFrontLanguageCode);
+             * the player reads and the input they use; a scenario picks its
+             * text by them. The frame poll tells it again on a change. */
+            clientFrontTellScenarioPlayer(spServerSim,
+                                          clientSimGetMyPlayerNum(humanSim));
             threadsReleaseMutex();
             /* Phase 2 leaves the legacy spHumanSubHandle field unset —
              * the auto-subscriber registered by connect lives inside
@@ -3451,14 +3452,9 @@ void gameFrontSetLanguageCode(const char *code) {
    * even if the user never reaches gameFrontPutPrefs. */
   prefsSetString("SETTINGS", "Language",
                             gameFrontLanguageCode);
-  /* A single-player game already running reads the new language from the
+  /* A single-player game already running is told the new language by the
+   * next frame's clientFrontPollScenarioPlayer, and reads it from the
    * scenario's next line on. */
-  if (gameFrontGetServerSim() != NULL && humanSim != NULL) {
-    threadsWaitForMutex();
-    serverSimSetPlayerLang(spServerSim, clientSimGetMyPlayerNum(humanSim),
-                           gameFrontLanguageCode);
-    threadsReleaseMutex();
-  }
 }
 
 void gameFrontRequestPlayTutorial(void) {

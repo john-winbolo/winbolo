@@ -381,6 +381,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->botModeSetByHand &= (uint16_t)~(1u << playerNum);
     /* Nor told the server what language they read. */
     sim->playerLang[playerNum][0] = '\0';
+    sim->playerInput[playerNum] = SERVER_PLAYER_INPUT_KEYBOARD;
     /* Nor finished a tutorial. */
     sim->tutorialDoneSeats &= (uint16_t)~(1u << playerNum);
     /* Captured before any teardown so the last-human-left reset below can

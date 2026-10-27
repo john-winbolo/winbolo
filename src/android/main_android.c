@@ -1112,7 +1112,7 @@ android_game_start:
        nothing outside the tutorial. */
     frontEndTutorialNotePresentedFrame();
     clientFrontTutorialPollRespawn();
-    clientFrontPollTutorialDone();   /* a shipped tutorial finished */
+    clientFrontPollScenarioPlayer();  /* tutorial finished; language, input */
 
     /* Cap to 60 FPS */
     {

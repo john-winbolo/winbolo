@@ -70,99 +70,20 @@ static const TokenEntry kTokens[TT_COUNT] = {
   [TT_QUICK_MINE]   = { NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
   [TT_GUN_UP]       = { NULL,                  SI_ACTION_GUNSIGHT_INC,        GP_ACT_GUNSIGHT_INC },
   [TT_GUN_DOWN]     = { NULL,                  SI_ACTION_GUNSIGHT_DEC,        GP_ACT_GUNSIGHT_DEC },
-  /* The phrase tokens are filled in with words before any glyph is
-     looked for, so none of them is ever drawn as a glyph. */
-  [TT_DRIVE_HOW]       = { NULL, NULL, GP_ACT_COUNT },
-  [TT_BUILD_HOW]       = { NULL, NULL, GP_ACT_COUNT },
-  [TT_HARVEST_TIP]     = { NULL, NULL, GP_ACT_COUNT },
-  [TT_PILL_HOW]        = { NULL, NULL, GP_ACT_COUNT },
-  [TT_STEP_TREE]       = { NULL, NULL, GP_ACT_COUNT },
-  [TT_STEP_ROAD]       = { NULL, NULL, GP_ACT_COUNT },
-  [TT_STEP_WALL]       = { NULL, NULL, GP_ACT_COUNT },
-  [TT_STEP_MINE]       = { NULL, NULL, GP_ACT_COUNT },
-  [TT_STEP_PILL]       = { NULL, NULL, GP_ACT_COUNT },
-  [TT_STEP_PILL_GREEN] = { NULL, NULL, GP_ACT_COUNT },
 };
 
-/* The player's input, as the tutorial words it. */
-typedef enum {
-  TUT_INPUT_KEYS = 0,   /* keyboard and mouse */
-  TUT_INPUT_TOUCH,      /* the touch layout */
-  TUT_INPUT_PAD         /* a controller */
-} TutInput;
-
-/* The same order pickStringId follows: on a phone or tablet the touch
-   layout first, as its controls are on the screen whatever SDL counts as
-   a gamepad; then a controller; then the touch layout on a desktop. */
-static TutInput currentInput(void) {
+/* The same order pickStringId has always followed: on a phone or tablet
+   the touch layout first, as its controls are on the screen whatever SDL
+   counts as a gamepad (an Android keyboard with a d-pad is one); then a
+   controller; then the touch layout on a desktop. */
+TutorialInput tutorialInputNow(void) {
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
-  if (uiModeIsTablet()) return TUT_INPUT_TOUCH;
+  if (uiModeIsTablet()) return TUTORIAL_INPUT_TOUCH;
 #endif
-  if (uiShouldUseControllerMode()) return TUT_INPUT_PAD;
-  if (uiModeIsTablet()) return TUT_INPUT_TOUCH;
-  return TUT_INPUT_KEYS;
+  if (uiShouldUseControllerMode()) return TUTORIAL_INPUT_CONTROLLER;
+  if (uiModeIsTablet()) return TUTORIAL_INPUT_TOUCH;
+  return TUTORIAL_INPUT_KEYBOARD;
 }
-
-/* The language file's strings for each phrase token, one for each input.
-   A 0 for the controller uses the keyboard's words: a controller draws a
-   key token as its own glyph, so the keyboard's sentence fits it. */
-typedef struct {
-  TutorialTokenId id;
-  uint16_t        keys;
-  uint16_t        touch;
-  uint16_t        pad;
-} PhraseRow;
-
-static const PhraseRow kPhrases[] = {
-  { TT_DRIVE_HOW,       STR_TUTPHRASE_DRIVE_HOW_KEYS,
-    STR_TUTPHRASE_DRIVE_HOW_TOUCH,       0 },
-  { TT_BUILD_HOW,       STR_TUTPHRASE_BUILD_HOW_KEYS,
-    STR_TUTPHRASE_BUILD_HOW_TOUCH,       STR_TUTPHRASE_BUILD_HOW_PAD },
-  { TT_HARVEST_TIP,     STR_TUTPHRASE_HARVEST_TIP_KEYS,
-    STR_TUTPHRASE_HARVEST_TIP_TOUCH,     STR_TUTPHRASE_HARVEST_TIP_PAD },
-  { TT_PILL_HOW,        STR_TUTPHRASE_PILL_HOW_KEYS,
-    STR_TUTPHRASE_PILL_HOW_TOUCH,        STR_TUTPHRASE_PILL_HOW_PAD },
-  { TT_STEP_TREE,       STR_TUTPHRASE_STEP_TREE_KEYS,
-    STR_TUTPHRASE_STEP_TREE_TOUCH,       STR_TUTPHRASE_STEP_TREE_PAD },
-  { TT_STEP_ROAD,       STR_TUTPHRASE_STEP_ROAD_KEYS,
-    STR_TUTPHRASE_STEP_ROAD_TOUCH,       STR_TUTPHRASE_STEP_ROAD_PAD },
-  { TT_STEP_WALL,       STR_TUTPHRASE_STEP_WALL_KEYS,
-    STR_TUTPHRASE_STEP_WALL_TOUCH,       STR_TUTPHRASE_STEP_WALL_PAD },
-  { TT_STEP_MINE,       STR_TUTPHRASE_STEP_MINE_KEYS,
-    STR_TUTPHRASE_STEP_MINE_TOUCH,       STR_TUTPHRASE_STEP_MINE_PAD },
-  { TT_STEP_PILL,       STR_TUTPHRASE_STEP_PILL_KEYS,
-    STR_TUTPHRASE_STEP_PILL_TOUCH,       STR_TUTPHRASE_STEP_PILL_PAD },
-  { TT_STEP_PILL_GREEN, STR_TUTPHRASE_STEP_PILL_GREEN_KEYS,
-    STR_TUTPHRASE_STEP_PILL_GREEN_TOUCH, STR_TUTPHRASE_STEP_PILL_GREEN_PAD },
-};
-
-/* A phrase token's words for the player's input, from the language file
-   (its English where the language leaves the string out); NULL for any
-   other token, which is left for the key pass. */
-static const char *phraseText(TutorialTokenId id, void *ctx) {
-  size_t i;
-  (void)ctx;
-  for (i = 0; i < sizeof(kPhrases) / sizeof(kPhrases[0]); i++) {
-    uint16_t    sid;
-    const char *words;
-    if (kPhrases[i].id != id) continue;
-    switch (currentInput()) {
-      case TUT_INPUT_TOUCH: sid = kPhrases[i].touch; break;
-      case TUT_INPUT_PAD:   sid = kPhrases[i].pad;   break;
-      case TUT_INPUT_KEYS:
-      default:              sid = kPhrases[i].keys;  break;
-    }
-    if (sid == 0) sid = kPhrases[i].keys;
-    words = langGetText(sid);
-    return words ? words : "";
-  }
-  return NULL;
-}
-
-/* A popup's text with its phrase tokens filled in; the key tokens they
-   carry are left for the segment pass. Good until the next call, like
-   tutorialBuf. */
-static char phraseBuf[2048];
 
 /* What a token is on a touch screen, in words; NULL when the touch screen
    has nothing of its own for it and the keyboard key is named. A quick-build
@@ -213,19 +134,18 @@ static uint16_t pickStringId(uint16_t mid) {
   int i;
   for (i = 0; i < kStringVariantCount; i++) {
     if (kStringVariants[i].desktop != mid) continue;
-#if defined(__IPHONEOS__) || defined(__ANDROID__)
-    /* The touch layout's wording first: its controls are on the screen,
-       whatever SDL counts as a gamepad (an Android keyboard with a d-pad is
-       one, and the token in the controller wording then drew a keycap that
-       read "{"). */
-    if (uiModeIsTablet())
-      return kStringVariants[i].touch ? kStringVariants[i].touch : mid;
-#endif
-    if (uiShouldUseControllerMode())
-      return kStringVariants[i].controller ? kStringVariants[i].controller : mid;
-    if (uiModeIsTablet())
-      return kStringVariants[i].touch ? kStringVariants[i].touch : mid;
-    return mid;
+    /* tutorialInputNow puts the touch layout first on a phone or tablet:
+       the token in the controller wording drew a keycap that read "{" on
+       an Android keyboard with a d-pad, which SDL counts as a gamepad. */
+    switch (tutorialInputNow()) {
+      case TUTORIAL_INPUT_TOUCH:
+        return kStringVariants[i].touch ? kStringVariants[i].touch : mid;
+      case TUTORIAL_INPUT_CONTROLLER:
+        return kStringVariants[i].controller ? kStringVariants[i].controller : mid;
+      case TUTORIAL_INPUT_KEYBOARD:
+      default:
+        return mid;
+    }
   }
   return mid;
 }
@@ -280,17 +200,18 @@ static int emitText(TutorialSeg *out, int idx, int max,
 
 static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
                              int *bufPos, TutorialTokenId id) {
-  const TokenEntry *t = &kTokens[id];
+  const TokenEntry   *t     = &kTokens[id];
+  const TutorialInput input = tutorialInputNow();
   if (idx >= max) return idx;
   /* A touch screen has no key for a quick-build tool or the gunsight
      range: say in words what the player taps there. */
-  if (!uiShouldUseControllerMode() && uiModeIsTablet()) {
+  if (input == TUTORIAL_INPUT_TOUCH) {
     const char *words = touchTokenWords(id);
     if (words) {
       return emitText(out, idx, max, bufPos, words, (int)strlen(words));
     }
   }
-  if (uiShouldUseControllerMode()) {
+  if (input == TUTORIAL_INPUT_CONTROLLER) {
     SDL_Texture *g = NULL;
     if (t->siAction || t->sdlAction < GP_ACT_COUNT) {
       g = glyphForControllerAction(t->siAction, t->sdlAction);   /* discrete: backend-correct */
@@ -343,13 +264,6 @@ static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
 int tutorialResolveText(const char *src, TutorialSeg *out, int max) {
   if (!out || max <= 0 || !src) return 0;
 
-  /* The phrase tokens first: their words carry key tokens of their own,
-     which the loop below then draws like any other. */
-  if (strchr(src, '{')) {
-    tutorialPhrasesExpand(src, phraseBuf, sizeof(phraseBuf), phraseText, NULL);
-    src = phraseBuf;
-  }
-
   /* Plain prose — no tokens to expand.  Emit one TEXT segment that points
      at the caller's own string. */
   if (!strchr(src, '{')) {
@@ -395,7 +309,7 @@ int tutorialResolveText(const char *src, TutorialSeg *out, int max) {
    the player's language. The quick-build keys are picked with the build
    tool's button. The gunsight buttons are named by what they do: a player
    may rebind them, and the Steam and SDL defaults put them on opposite
-   shoulders. 0 for the phrase tokens, which are words already. */
+   shoulders. */
 static const uint16_t kTokenWordsPad[TT_COUNT] = {
   [TT_ACCEL]        = STR_TUTTOK_PAD_ACCEL,
   [TT_BRAKE]        = STR_TUTTOK_PAD_BRAKE,
@@ -421,13 +335,13 @@ static const uint16_t kTokenWordsPad[TT_COUNT] = {
 };
 
 static const char *plainTokenName(TutorialTokenId id, void *ctx) {
+  const TutorialInput input = tutorialInputNow();
   (void)ctx;
-  if (tutorialTokenIsPhrase(id)) return NULL;   /* filled in already */
-  if (uiShouldUseControllerMode()) {
+  if (input == TUTORIAL_INPUT_CONTROLLER) {
     const char *words = langGetText(kTokenWordsPad[id]);
     return words ? words : "";
   }
-  if (uiModeIsTablet()) {
+  if (input == TUTORIAL_INPUT_TOUCH) {
     const char *words = touchTokenWords(id);
     if (words) return words;
   }
@@ -435,10 +349,7 @@ static const char *plainTokenName(TutorialTokenId id, void *ctx) {
 }
 
 void tutorialExpandTextPlain(const char *src, char *out, size_t cap) {
-  /* The phrase tokens first, then the key tokens their words carry. */
-  char phrased[1024];
-  tutorialPhrasesExpand(src, phrased, sizeof(phrased), phraseText, NULL);
-  tutorialTokensExpand(phrased, out, cap, plainTokenName, NULL);
+  tutorialTokensExpand(src, out, cap, plainTokenName, NULL);
 }
 
 int tutorialResolveSegments(uint16_t mid, TutorialSeg *out, int max) {

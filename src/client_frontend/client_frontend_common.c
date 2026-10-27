@@ -22,6 +22,7 @@
 #include "build_cursor.h"
 #include "sdl3imgui.h"      /* sdl3ImguiClearPlayer */
 #include "tutorial_maps.h"  /* tutorialMapsIsShippedTutorial */
+#include "tutorial_text.h"  /* tutorialInputNow */
 #include "clientmutex.h"
 #include "lang.h"           /* STR_TUTORIAL_RESPAWN1 */
 #include "server_sim.h"
@@ -487,22 +488,67 @@ void clientFrontResumeEnd(ClientSim *cs) {
 }
 #endif
 
+/* What the single-player server was last told about its player, so the
+   frame poll tells it again only when something changed. */
+static ServerSim *s_toldSim   = NULL;
+static BYTE       s_toldSeat  = 0;
+static BYTE       s_toldInput = SERVER_PLAYER_INPUT_KEYBOARD;
+static char       s_toldLang[SERVER_PLAYER_LANG_LEN];
+
+/* The player's language and input now, as the server takes them. */
+static void scenarioPlayerNow(char *lang, size_t langCap, BYTE *input) {
+  gameFrontGetLanguageCode(lang, (int)langCap);
+  switch (tutorialInputNow()) {
+    case TUTORIAL_INPUT_TOUCH:      *input = SERVER_PLAYER_INPUT_TOUCH;      break;
+    case TUTORIAL_INPUT_CONTROLLER: *input = SERVER_PLAYER_INPUT_CONTROLLER; break;
+    default:                        *input = SERVER_PLAYER_INPUT_KEYBOARD;   break;
+  }
+}
+
+static void tellScenarioPlayer(ServerSim *srv, BYTE seat, const char *lang,
+                               BYTE input) {
+  serverSimSetPlayerLang(srv, seat, lang);
+  serverSimSetPlayerInput(srv, seat, input);
+  s_toldSim   = srv;
+  s_toldSeat  = seat;
+  s_toldInput = input;
+  snprintf(s_toldLang, sizeof(s_toldLang), "%s", lang);
+}
+
+void clientFrontTellScenarioPlayer(ServerSim *srv, uint8_t seat) {
+  char lang[SERVER_PLAYER_LANG_LEN];
+  BYTE input;
+  if (srv == NULL) return;
+  scenarioPlayerNow(lang, sizeof(lang), &input);
+  tellScenarioPlayer(srv, seat, lang, input);
+}
+
 /* The server marks the seat when the script calls game.tutorial_done. The
    mark is taken under the mutex whatever map is running, so a mark from a
    map outside the tutorials folder is dropped rather than kept for later.
-   A hosted game is not single player, so its host's button stays. */
-void clientFrontPollTutorialDone(void) {
+   A hosted game is not single player, so its host's button stays. The same
+   pass tells the server the player's language and input when either has
+   changed since it was last told. */
+void clientFrontPollScenarioPlayer(void) {
   ClientSim *cs = s_activeUiCs;
   ServerSim *srv;
   bool done = false;
   bool shipped = false;
+  char lang[SERVER_PLAYER_LANG_LEN];
+  BYTE input;
 
   if (cs == NULL) return;
   srv = gameFrontGetServerSim();
   if (!srv) return;
+  scenarioPlayerNow(lang, sizeof(lang), &input);
   clientMutexWaitFor();
   if (clientSimIsSinglePlayer(cs)) {
-    done = serverSimTakeTutorialDone(srv, clientSimGetMyPlayerNum(cs));
+    BYTE seat = clientSimGetMyPlayerNum(cs);
+    if (srv != s_toldSim || seat != s_toldSeat || input != s_toldInput ||
+        strcmp(lang, s_toldLang) != 0) {
+      tellScenarioPlayer(srv, seat, lang, input);
+    }
+    done = serverSimTakeTutorialDone(srv, seat);
     if (done) {
       shipped = tutorialMapsIsShippedTutorial(gameFrontScenarioMapScriptPath());
     }

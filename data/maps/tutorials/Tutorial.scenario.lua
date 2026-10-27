@@ -287,15 +287,17 @@ end
 -- numbers. The other languages write the number after a colon, so no
 -- plural is needed.
 --
--- A popup may be a table of two strings when it is longer than the 511
--- bytes a popup may be: the two go out one after the other.
+-- A popup may be a table of strings when it is longer than the 511 bytes
+-- a popup may be: they go out one after the other.
 --
--- The words for keys and buttons are tokens the client fills in for the
--- player's own input: {FIRE}, {GUN_UP} and the rest name one key or
--- button, and {DRIVE_HOW}, {BUILD_HOW}, {HARVEST_TIP}, {PILL_HOW} and the
--- {STEP_*} tokens are whole sentences the client takes from its own
--- language file, worded for a keyboard and mouse, a touch screen or a
--- controller. docs/SCENARIO_API.md lists them.
+-- A text worded differently for each input is a table of { keyboard = ,
+-- touch = , controller = }, picked by game.input(p); one it leaves out is
+-- the keyboard's. Each of the three may itself be a popup's parts. A
+-- status line is 128 bytes at most, so it holds only the one wording.
+--
+-- The words for single keys and buttons are tokens the client fills in
+-- for the player's own input: {FIRE}, {GUN_UP} and the rest.
+-- docs/SCENARIO_API.md lists them.
 local TEXT = {}
 
 TEXT.en = {
@@ -307,12 +309,19 @@ TEXT.en = {
       .. "A small man rides in your tank and gets out to cut trees and build "
       .. "for you. You play in teams, and the team that holds the pillboxes "
       .. "and bases holds the island.",
-    s1 = "{DRIVE_HOW}\n\n"
-      .. "The patches beside the road are forest, swamp, rubble, craters and "
-      .. "a shallow river. Each slows you down by a different amount. Try "
-      .. "driving on a few of them.\n\n"
-      .. "Deep water sinks tanks. If you die anywhere here, you come back "
-      .. "at your last checkpoint.",
+    s1 = {
+      keyboard = "{ACCEL} forward, {BRAKE} slow down, {LEFT} and {RIGHT} turn.\n\nThe "
+        .. "patches beside the road are forest, swamp, rubble, craters and a "
+        .. "shallow river. Each slows you down by a different amount. Try "
+        .. "driving on a few of them.\n\nDeep water sinks tanks. If you die "
+        .. "anywhere here, you come back at your last checkpoint.",
+      touch = "Drive with the thumbstick on the left of the screen: push it the "
+        .. "way you want to go. The further you push it, the faster you "
+        .. "go.\n\nThe patches beside the road are forest, swamp, rubble, "
+        .. "craters and a shallow river. Each slows you down by a different "
+        .. "amount. Try driving on a few of them.\n\nDeep water sinks tanks. If "
+        .. "you die anywhere here, you come back at your last checkpoint.",
+    },
     s2a = "Bases refill your shells, mines and armour, and your tank is low.\n\n"
       .. "Drive onto your base at the green marker. Then STOP on the base and "
       .. "wait while it refills.",
@@ -332,12 +341,43 @@ TEXT.en = {
       .. "Strict tournament: tanks never respawn with shells.\n\n"
       .. "Tournament modes have a clear win condition: Once one team owns all "
       .. "the bases, they win, because the enemy team can't get any ammo.",
-    s3 = "Your man harvests trees, then uses them to build roads, walls, "
-      .. "mines and pillboxes. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Games start with neutral pillboxes, and a full one takes 15 shots "
-      .. "to kill.\n\n"
-      .. "First, drive over the dead pillbox to put it in your tank. "
-      .. "{PILL_HOW}",
+    s3 = {
+      keyboard = "Your man harvests trees, then uses them to build roads, walls, "
+        .. "mines and pillboxes. Click a build button, or press its key: "
+        .. "{QUICK_TREE} trees, {QUICK_ROAD} road, {QUICK_WALL} wall, "
+        .. "{QUICK_MINE} mine. Then click on the map to send your man "
+        .. "there.\n\nTip: with the road, wall or pillbox tool picked, click a "
+        .. "tree and your man harvests it. You do not have to switch to the "
+        .. "tree tool each time.",
+      touch = "Your man harvests trees, then uses them to build roads, walls, "
+        .. "mines and pillboxes. Tap a build button: trees, road, wall or mine. "
+        .. "Then tap the map to send your man there.\n\nTip: with the road, "
+        .. "wall or pillbox tool picked, tap a tree and your man harvests it. "
+        .. "You do not have to switch to the tree tool each time.",
+      controller = "Your man harvests trees, then uses them to build roads, walls, "
+        .. "mines and pillboxes. Pull {BUILD_MODE} for the build cursor and aim "
+        .. "it with the right stick. Press {BUILD_TOOL} to pick a tool: trees, "
+        .. "road, wall or mine. Then press {BUILD_PLACE} to send your man to "
+        .. "the cursor.\n\nTip: with the road, wall or pillbox tool picked, put "
+        .. "the build cursor on a tree and press {BUILD_PLACE}, and your man "
+        .. "harvests it. You do not have to switch to the tree tool each time.",
+    },
+    s4a = {
+      keyboard = "Games start with neutral pillboxes, and a full one takes 15 shots "
+        .. "to kill.\n\nFirst, drive over the dead pillbox to put it in your "
+        .. "tank. Then press the pillbox build button or its shortcut key "
+        .. "{QUICK_PILL}. Then click on the map to send your man out to build a "
+        .. "pillbox loyal to you at that location.",
+      touch = "Games start with neutral pillboxes, and a full one takes 15 shots "
+        .. "to kill.\n\nFirst, drive over the dead pillbox to put it in your "
+        .. "tank. Then tap the pillbox build button, and tap the map to send "
+        .. "your man out to build a pillbox loyal to you at that location.",
+      controller = "Games start with neutral pillboxes, and a full one takes 15 shots "
+        .. "to kill.\n\nFirst, drive over the dead pillbox to put it in your "
+        .. "tank. Then press {BUILD_TOOL} until the pillbox tool is picked, put "
+        .. "the build cursor where you want it and press {BUILD_PLACE}. Your "
+        .. "man goes out and builds a pillbox loyal to you there.",
+    },
     s4b = "East of the road, a damaged pillbox sits in a ring of forest. It "
       .. "still fires, and a pillbox you hit gets angry and fires faster. The "
       .. "red markers show its range.\n\n"
@@ -423,13 +463,43 @@ TEXT.en = {
         .. "shot%s left.", left, left == 1 and "" or "s")
     end,
     c_take = "The base is empty. Drive onto it to make it yours.",
-    harvest = "{STEP_TREE}",
-    road = "{STEP_ROAD}",
-    wall = "{STEP_WALL}",
-    mine = "{STEP_MINE}",
+    harvest = {
+      keyboard = "Click the tree button or press {QUICK_TREE},\nthen click a forest "
+        .. "square in the marked grove.",
+      touch = "Tap the tree button, then tap a forest\nsquare in the marked grove.",
+      controller = "Pick the tree tool with {BUILD_TOOL}, put the build\ncursor on the "
+        .. "marked grove and press {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Click the road button or press {QUICK_ROAD},\nthen click a grass "
+        .. "square.",
+      touch = "Tap the road button, then tap a grass square.",
+      controller = "Pick the road tool with {BUILD_TOOL}, put the build\ncursor on "
+        .. "grass and press {BUILD_PLACE}.",
+    },
+    wall = {
+      keyboard = "Build a wall: Click on the wall button\nor press {QUICK_WALL}, then "
+        .. "click a grass square.",
+      touch = "Build a wall: tap the wall button,\nthen tap a grass square.",
+      controller = "Build a wall: pick the wall tool with {BUILD_TOOL},\nput the build "
+        .. "cursor on grass and press {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Click the mine button or press {QUICK_MINE},\nthen click a square "
+        .. "to lay a mine.",
+      touch = "Tap the mine button, then tap\na square to lay a mine.",
+      controller = "Pick the mine tool with {BUILD_TOOL}, put the build\ncursor on a "
+        .. "square and press {BUILD_PLACE}.",
+    },
     shoot = "Shoot the marked wall with {FIRE}\nuntil it falls.",
     a_pick = "Drive over the dead pillbox to put it in your tank.",
-    a_build = "{STEP_PILL}",
+    a_build = {
+      keyboard = "Press the pillbox button or {QUICK_PILL},\nthen click on the map to "
+        .. "build it.",
+      touch = "Tap the pillbox button,\nthen tap the map to build it.",
+      controller = "Pick the pillbox tool with {BUILD_TOOL}, put the\nbuild cursor down "
+        .. "and press {BUILD_PLACE} to build it.",
+    },
     b_in = "Drive into the forest inside the red markers.",
     -- %d: whole seconds hidden so far.
     b_hide = "Sit still deep in the forest, in range.\nHidden: %d of 5 "
@@ -438,8 +508,13 @@ TEXT.en = {
     c_pick = "Drive over the dead pillbox to pick it up.",
     a_watch = "Stop on the green square ahead\nand watch the bot "
       .. "take the pillbox.",
-    b_build = "Build your pillbox at the marked green square.\n"
-      .. "{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Press the pillbox button or {QUICK_PILL},\nthen click the green "
+        .. "square.",
+      touch = "Tap the pillbox button,\nthen tap the green square.",
+      controller = "Pick the pillbox tool with {BUILD_TOOL}, put the build\ncursor on "
+        .. "the green square and press {BUILD_PLACE}.",
+    },
     b_park = "Stop at the road tile highlighted\nand aim at the enemy "
       .. "pillbox.",
     b_kill = "Shoot the enemy pillbox with {FIRE}\nuntil it dies.",
@@ -514,6 +589,14 @@ local function lang_text(p)
   return TEXT[game.lang(p)] or TEXT.en
 end
 
+-- An entry's wording for the input player p uses, for an entry worded for
+-- each input; any other entry as it is.
+local function for_input(v, p)
+  if type(v) ~= "table" or v.keyboard == nil then return v end
+  if p == nil then return v.keyboard end
+  return v[game.input(p)] or v.keyboard
+end
+
 -- One entry of TEXT for the tutorial's player: section, then key. Numbers
 -- after the key fill its pattern. A key the player's language leaves out
 -- is the English.
@@ -521,9 +604,10 @@ local function tr(section, key, ...)
   local mine = lang_text(S.player)[section]
   local v = mine and mine[key]
   if v == nil then v = TEXT.en[section][key] end
+  v = for_input(v, S.player)
   if type(v) == "function" then return v(...) end
   if select("#", ...) == 0 then return v end
-  -- A popup written as two parts: each part takes the numbers it uses.
+  -- A popup written in parts: each part takes the numbers it uses.
   if type(v) == "table" then
     local parts = {}
     for i, part in ipairs(v) do parts[i] = string.format(part, ...) end
@@ -2343,14 +2427,25 @@ end
 -- Czech
 TEXT["cs"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nPolíčka vedle silnice jsou les, bažina, trosky, krátery a mělká řeka. Každé tě zpomalí jinak. Zkus po několika z nich projet.\n\nHluboká voda tanky potopí. Když tu kdekoli zemřeš, vrátíš se na poslední kontrolní bod.",
+    s1 = {
+      keyboard = "Stiskni {ACCEL} pro jízdu vpřed, {BRAKE} pro zpomalení, {LEFT} a {RIGHT} pro zatáčení.\n\nPolíčka vedle silnice jsou les, bažina, trosky, krátery a mělká řeka. Každé tě zpomalí jinak. Zkus po několika z nich projet.\n\nHluboká voda tanky potopí. Když tu kdekoli zemřeš, vrátíš se na poslední kontrolní bod.",
+      touch = "Řiď páčkou na levé straně obrazovky: posuň ji směrem, kterým chceš jet. Čím dál ji posuneš, tím rychleji jedeš.\n\nPolíčka vedle silnice jsou les, bažina, trosky, krátery a mělká řeka. Každé tě zpomalí jinak. Zkus po několika z nich projet.\n\nHluboká voda tanky potopí. Když tu kdekoli zemřeš, vrátíš se na poslední kontrolní bod.",
+    },
     s2a = "Základny doplňují granáty, miny a pancíř, a tvůj tank má zásob málo.\n\nNajeď na svou základnu u zelené značky. Pak na základně ZASTAV a počkej, než se doplní.",
     s2b = "Neutrální základny nemají červenou ani zelenou barvu. Získáš je tím, že přes ně přejedeš.",
     s2c = "Nepřátelské základny musíš nejdřív střelbou vyprázdnit. Plná vydrží %d výstřelů: zamiř na ni a stiskni {FIRE} pro střelbu. Pak přes ni přejeď a bude tvoje.",
     s2d = "To, s čím se tvůj tank objeví, závisí na typu hry.\n\nOtevřená: tanky se vždy objeví plně vybavené.\n\nTurnaj: čím více základen je obsazeno, tím méně granátů tank dostane. Když jsou obsazeny všechny základny, tanky se objevují bez granátů.\n\nStriktní turnaj: tanky se nikdy neobjevují s granáty.\n\nTurnajové režimy mají jasnou podmínku vítězství: jakmile jeden tým vlastní všechny základny, vyhrává, protože nepřátelský tým nemůže získat žádnou munici.",
     s2stay = "Toto je tvoje základna. Zůstaň na ní a nehýbej se: granáty, miny a pancíř se doplňují postupně.",
-    s3 = "Tvůj muž kácí stromy a pak z nich staví silnice, zdi, miny a bunkry. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Hry začínají s neutrálními bunkry a plný bunkr zničí až 15 výstřelů.\n\nNejdřív přejeď přes zničený bunkr, abys ho naložil do tanku. {PILL_HOW}",
+    s3 = {
+      keyboard = "Tvůj muž kácí stromy a pak z nich staví silnice, zdi, miny a bunkry. Klikni na tlačítko stavby, nebo stiskni jeho klávesu: {QUICK_TREE} stromy, {QUICK_ROAD} silnice, {QUICK_WALL} zeď, {QUICK_MINE} mina. Pak klikni na mapu a pošli tam svého muže.\n\nTip: když máš vybraný nástroj silnice, zdi nebo bunkru, klikni na strom a tvůj muž ho pokácí. Nemusíš pokaždé přepínat na nástroj stromů.",
+      touch = "Tvůj muž kácí stromy a pak z nich staví silnice, zdi, miny a bunkry. Klepni na tlačítko stavby: stromy, silnice, zeď nebo mina. Pak klepni na mapu a pošli tam svého muže.\n\nTip: když máš vybraný nástroj silnice, zdi nebo bunkru, klepni na strom a tvůj muž ho pokácí. Nemusíš pokaždé přepínat na nástroj stromů.",
+      controller = "Tvůj muž kácí stromy a pak z nich staví silnice, zdi, miny a bunkry. Stiskni {BUILD_MODE} pro kurzor stavby a namiř ho pravou páčkou. Stiskni {BUILD_TOOL} pro výběr nástroje: stromy, silnice, zeď nebo mina. Pak stiskni {BUILD_PLACE} a pošli muže ke kurzoru.\n\nTip: když máš vybraný nástroj silnice, zdi nebo bunkru, dej kurzor stavby na strom a stiskni {BUILD_PLACE}. Tvůj muž ho pokácí. Nemusíš pokaždé přepínat na nástroj stromů.",
+    },
+    s4a = {
+      keyboard = "Hry začínají s neutrálními bunkry a plný bunkr zničí až 15 výstřelů.\n\nNejdřív přejeď přes zničený bunkr, abys ho naložil do tanku. Pak stiskni tlačítko stavby bunkru nebo jeho klávesu {QUICK_PILL}. Pak klikni na mapu a pošli muže, aby na tom místě postavil bunkr věrný tobě.",
+      touch = "Hry začínají s neutrálními bunkry a plný bunkr zničí až 15 výstřelů.\n\nNejdřív přejeď přes zničený bunkr, abys ho naložil do tanku. Pak klepni na tlačítko stavby bunkru a klepni na mapu. Tvůj muž vyrazí a postaví na tom místě bunkr věrný tobě.",
+      controller = "Hry začínají s neutrálními bunkry a plný bunkr zničí až 15 výstřelů.\n\nNejdřív přejeď přes zničený bunkr, abys ho naložil do tanku. Pak tiskni {BUILD_TOOL}, dokud nevybereš nástroj bunkru, dej kurzor stavby, kam chceš, a stiskni {BUILD_PLACE}. Tvůj muž vyrazí a postaví tam bunkr věrný tobě.",
+    },
     s4b = "Východně od silnice stojí v kruhu lesa poškozený bunkr. Pořád střílí, a bunkr, který zasáhneš, se rozzlobí a střílí rychleji. Červené značky ukazují jeho dosah.\n\nLesy skrývají tanky před ostatními tanky i před bunkry. Vjeď do lesa uvnitř značek a stůj klidně. Střelba prozradí tvou polohu.",
     s4c = "Tento bunkr je už těžce poškozený: zničí ho dva další výstřely.\n\nTvůj tank je plný. Znič ho a pak přes něj přejeď, abys ho sebral.",
     s5a = "Zastav na zeleném čtverci před sebou. Sleduj, jak přátelský bot na ostrově obehnaném zdí obsadí bunkr. Postaví vlastní bunkr hned vedle nepřátelského a zaparkuje za ním, takže nepřátelské střely zasahují jeho bunkr, ne jeho tank. Pak nepřátelský bunkr zničí a přejede přes něj.",
@@ -2403,11 +2498,40 @@ TEXT["cs"] = {
     wall = "Postav zeď",
   },
   step = {
+    wall = {
+      keyboard = "Postav zeď: klikni na tlačítko zdi\nnebo stiskni {QUICK_WALL}, pak klikni na trávu.",
+      touch = "Postav zeď: klepni na tlačítko zdi,\npak klepni na políčko trávy.",
+      controller = "Postav zeď: stiskni {BUILD_TOOL} pro nástroj zdi,\ndej kurzor na trávu a stiskni {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Klikni na tlačítko silnice nebo stiskni\n{QUICK_ROAD}, pak klikni na políčko trávy.",
+      touch = "Klepni na tlačítko silnice, pak klepni na políčko trávy.",
+      controller = "Stiskni {BUILD_TOOL} pro nástroj silnice, dej kurzor\nna trávu a stiskni {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Klikni na tlačítko miny nebo stiskni {QUICK_MINE},\npak klikni na políčko a polož minu.",
+      touch = "Klepni na tlačítko miny, pak klepni\nna políčko a polož minu.",
+      controller = "Stiskni {BUILD_TOOL} pro nástroj miny, dej kurzor\nna políčko a stiskni {BUILD_PLACE}.",
+    },
+    harvest = {
+      keyboard = "Klikni na tlačítko stromů nebo stiskni {QUICK_TREE},\npak klikni na lesní políčko v označeném háji.",
+      touch = "Klepni na tlačítko stromů, pak klepni\nna lesní políčko v označeném háji.",
+      controller = "Stiskni {BUILD_TOOL} pro nástroj stromů, dej kurzor\nna označený háj a stiskni {BUILD_PLACE}.",
+    },
+    a_build = {
+      keyboard = "Stiskni tlačítko bunkru nebo {QUICK_PILL},\npak klikni na mapu a postav ho.",
+      touch = "Klepni na tlačítko bunkru,\npak klepni na mapu a postav ho.",
+      controller = "Stiskni {BUILD_TOOL} pro nástroj bunkru, umísti\nkurzor a stiskni {BUILD_PLACE} pro stavbu.",
+    },
     a_pick = "Přejeď přes zničený bunkr a nalož ho do tanku.",
     a_refill = "Najeď na základnu se zelenou značkou, pak na ní\nZASTAV a počkej, než se doplní.",
     a_watch = "Zastav na zeleném čtverci před sebou\na sleduj, jak bot obsadí bunkr.",
     all = "Obsaď všechny cizí základny: tvých je %d z 8.",
-    b_build = "Postav svůj bunkr na označeném zeleném čtverci.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Stiskni tlačítko bunkru nebo {QUICK_PILL},\npak klikni na zelený čtverec.",
+      touch = "Klepni na tlačítko bunkru,\npak klepni na zelený čtverec.",
+      controller = "Stiskni {BUILD_TOOL} pro nástroj bunkru, dej kurzor\nna zelený čtverec a stiskni {BUILD_PLACE}.",
+    },
     b_hide = "Stůj klidně hluboko v lese, v dosahu.\nSkrytý: %d z 5 sekund.",
     b_in = "Vjeď do lesa uvnitř červených značek.",
     b_kill = "Tiskni {FIRE} a střílej do nepřátelského\nbunkru, dokud nepadne.",
@@ -2473,14 +2597,25 @@ TEXT["cs"] = {
 -- German
 TEXT["de"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nDie Flächen neben der Straße sind Wald, Sumpf, Trümmer, Krater und ein seichter Fluss. Jede bremst Sie unterschiedlich stark. Fahren Sie über einige davon.\n\nTiefes Wasser versenkt Panzer. Wenn Sie hier sterben, kehren Sie zu Ihrem letzten Kontrollpunkt zurück.",
+    s1 = {
+      keyboard = "Drücken Sie {ACCEL}, um vorwärts zu fahren, {BRAKE}, um zu bremsen, und {LEFT} oder {RIGHT}, um zu lenken.\n\nDie Flächen neben der Straße sind Wald, Sumpf, Trümmer, Krater und ein seichter Fluss. Jede bremst Sie unterschiedlich stark. Fahren Sie über einige davon.\n\nTiefes Wasser versenkt Panzer. Wenn Sie hier sterben, kehren Sie zu Ihrem letzten Kontrollpunkt zurück.",
+      touch = "Fahren Sie mit dem Joystick links auf dem Bildschirm: Schieben Sie ihn in die gewünschte Richtung. Je weiter Sie ihn schieben, desto schneller fahren Sie.\n\nDie Flächen neben der Straße sind Wald, Sumpf, Trümmer, Krater und ein seichter Fluss. Jede bremst Sie unterschiedlich stark. Fahren Sie über einige davon.\n\nTiefes Wasser versenkt Panzer. Wenn Sie hier sterben, kehren Sie zu Ihrem letzten Kontrollpunkt zurück.",
+    },
     s2a = "Basen füllen Ihre Granaten, Minen und Panzerung auf, und Ihr Panzer hat nur noch wenig davon.\n\nFahren Sie an der grünen Markierung auf Ihre Basis. Dann STOPP: Bleiben Sie auf der Basis stehen und warten Sie, bis alles aufgefüllt ist.",
     s2b = "Neutrale Basen sind weder rot noch grün. Sie gehören Ihnen, wenn Sie über sie fahren.",
     s2c = "Feindliche Basen müssen Sie erst leer schießen. Eine volle Basis braucht %d Schüsse: Zielen Sie darauf und drücken Sie {FIRE}, um zu schießen. Fahren Sie dann darüber, um sie zu übernehmen.",
     s2d = "Womit Ihr Panzer startet, hängt vom Spieltyp ab.\n\nOffen: Panzer starten immer voll beladen.\n\nTurnier: Je mehr Basen erobert sind, desto weniger Granaten hat ein neuer Panzer. Sind alle Basen erobert, starten Panzer ohne Granaten.\n\nStriktes Turnier: Panzer starten nie mit Granaten.\n\nTurniermodi haben ein klares Siegziel: Sobald ein Team alle Basen besitzt, gewinnt es, denn das gegnerische Team bekommt keine Munition mehr.",
     s2stay = "Das ist Ihre Basis. Bleiben Sie darauf stehen und fahren Sie nicht weiter: Granaten, Minen und Panzerung kommen nach und nach hinzu.",
-    s3 = "Ihr Mann fällt Bäume und baut damit Straßen, Mauern, Minen und Bunker. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Spiele beginnen mit neutralen Bunkern. Ein voller Bunker braucht 15 Treffer, bis er zerstört ist.\n\nFahren Sie zuerst über den zerstörten Bunker, um ihn in Ihren Panzer zu laden. {PILL_HOW}",
+    s3 = {
+      keyboard = "Ihr Mann fällt Bäume und baut damit Straßen, Mauern, Minen und Bunker. Klicken Sie auf einen Bauknopf oder drücken Sie seine Taste: {QUICK_TREE} Bäume, {QUICK_ROAD} Straße, {QUICK_WALL} Mauer, {QUICK_MINE} Mine. Klicken Sie dann auf die Karte, um Ihren Mann dorthin zu schicken.\n\nTipp: Ist das Straßen-, Mauer- oder Bunkerwerkzeug gewählt, klicken Sie auf einen Baum: Ihr Mann fällt ihn. Ein Wechsel zum Baumwerkzeug ist nicht nötig.",
+      touch = "Ihr Mann fällt Bäume und baut damit Straßen, Mauern, Minen und Bunker. Tippen Sie auf einen Bauknopf: Bäume, Straße, Mauer oder Mine. Tippen Sie dann auf die Karte, um Ihren Mann dorthin zu schicken.\n\nTipp: Ist das Straßen-, Mauer- oder Bunkerwerkzeug gewählt, tippen Sie auf einen Baum: Ihr Mann fällt ihn. Ein Wechsel zum Baumwerkzeug ist nicht nötig.",
+      controller = "Ihr Mann fällt Bäume und baut damit Straßen, Mauern, Minen und Bunker. Ziehen Sie {BUILD_MODE} für den Baucursor und zielen Sie mit dem rechten Stick. Drücken Sie {BUILD_TOOL} für ein Werkzeug: Bäume, Straße, Mauer oder Mine. Drücken Sie dann {BUILD_PLACE}, um Ihren Mann zum Cursor zu schicken.\n\nTipp: Ist das Straßen-, Mauer- oder Bunkerwerkzeug gewählt, zielen Sie auf einen Baum und drücken Sie {BUILD_PLACE}: Ihr Mann fällt ihn. Ein Wechsel zum Baumwerkzeug ist nicht nötig.",
+    },
+    s4a = {
+      keyboard = "Spiele beginnen mit neutralen Bunkern. Ein voller Bunker braucht 15 Treffer, bis er zerstört ist.\n\nFahren Sie zuerst über den zerstörten Bunker, um ihn in Ihren Panzer zu laden. Drücken Sie dann den Bunker-Bauknopf oder seine Taste {QUICK_PILL}. Klicken Sie dann auf die Karte. Ihr Mann geht los und baut dort einen Bunker, der Ihnen treu ist.",
+      touch = "Spiele beginnen mit neutralen Bunkern. Ein voller Bunker braucht 15 Treffer, bis er zerstört ist.\n\nFahren Sie zuerst über den zerstörten Bunker, um ihn in Ihren Panzer zu laden. Tippen Sie dann auf den Bunker-Bauknopf und tippen Sie auf die Karte. Ihr Mann geht los und baut dort einen Bunker, der Ihnen treu ist.",
+      controller = "Spiele beginnen mit neutralen Bunkern. Ein voller Bunker braucht 15 Treffer, bis er zerstört ist.\n\nFahren Sie zuerst über den zerstörten Bunker, um ihn in Ihren Panzer zu laden. Drücken Sie dann {BUILD_TOOL}, bis das Bunkerwerkzeug gewählt ist, setzen Sie den Baucursor an die gewünschte Stelle und drücken Sie {BUILD_PLACE}. Ihr Mann geht los und baut dort einen Bunker, der Ihnen treu ist.",
+    },
     s4b = "Östlich der Straße steht ein beschädigter Bunker in einem Ring aus Wald. Er schießt noch, und ein getroffener Bunker wird wütend und schießt schneller. Die roten Markierungen zeigen seine Reichweite.\n\nWald verbirgt Panzer vor anderen Panzern und vor Bunkern. Fahren Sie in den Wald innerhalb der Markierungen und bleiben Sie still stehen. Schießen verrät Ihre Position.",
     s4c = "Dieser Bunker ist schon schwer beschädigt: Zwei weitere Treffer zerstören ihn.\n\nIhr Panzer ist voll. Zerstören Sie den Bunker und fahren Sie dann darüber, um ihn aufzunehmen.",
     s5a = "Halten Sie auf dem grünen Feld vor Ihnen an. Sehen Sie zu, wie der befreundete Bot auf der ummauerten Insel einen Bunker erobert. Er baut seinen eigenen Bunker direkt neben den feindlichen und parkt dahinter. So treffen die feindlichen Schüsse seinen Bunker, nicht seinen Panzer. Dann zerstört er den feindlichen Bunker und fährt darüber.",
@@ -2545,11 +2680,40 @@ TEXT["de"] = {
     wall = "Eine Mauer bauen",
   },
   step = {
+    wall = {
+      keyboard = "Mauer bauen: Drücken Sie {QUICK_WALL} oder den\nMauerknopf, dann klicken Sie auf ein Grasfeld.",
+      touch = "Mauer bauen: Tippen Sie auf den Mauerknopf,\ndann auf ein Grasfeld.",
+      controller = "Mauer bauen: Drücken Sie {BUILD_TOOL} bis zur Mauer,\nzielen Sie auf Gras, drücken Sie {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Drücken Sie {QUICK_ROAD} oder den Straßenknopf,\ndann klicken Sie auf ein Grasfeld.",
+      touch = "Tippen Sie auf den Straßenknopf,\ndann auf ein Grasfeld.",
+      controller = "Drücken Sie {BUILD_TOOL} bis zum Straßenwerkzeug,\nzielen Sie auf Gras, drücken Sie {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Drücken Sie {QUICK_MINE} oder den Minenknopf, dann\nklicken Sie auf ein Feld, um eine Mine zu legen.",
+      touch = "Tippen Sie auf den Minenknopf, dann auf\nein Feld, um eine Mine zu legen.",
+      controller = "Drücken Sie {BUILD_TOOL} bis zum Minenwerkzeug,\nzielen Sie auf ein Feld, drücken Sie {BUILD_PLACE}.",
+    },
+    harvest = {
+      keyboard = "Drücken Sie {QUICK_TREE} oder den Baumknopf, dann\nklicken Sie auf ein Waldfeld im markierten Hain.",
+      touch = "Tippen Sie auf den Baumknopf, dann auf\nein Waldfeld im markierten Hain.",
+      controller = "Drücken Sie {BUILD_TOOL} bis zum Baumwerkzeug,\nzielen Sie auf den Hain, drücken Sie {BUILD_PLACE}.",
+    },
+    a_build = {
+      keyboard = "Drücken Sie den Bunkerknopf oder {QUICK_PILL},\ndann klicken Sie auf die Karte, um ihn zu bauen.",
+      touch = "Tippen Sie auf den Bunkerknopf, dann\nauf die Karte, um ihn zu bauen.",
+      controller = "Drücken Sie {BUILD_TOOL} bis zum Bunkerwerkzeug,\nsetzen Sie den Cursor, drücken Sie {BUILD_PLACE}.",
+    },
     a_pick = "Fahren Sie über den zerstörten Bunker,\num ihn in Ihren Panzer zu laden.",
     a_refill = "Fahren Sie auf die grün markierte Basis. Dann STOPP:\nWarten Sie dort, bis alles aufgefüllt ist.",
     a_watch = "Halten Sie auf dem grünen Feld vor Ihnen an und\nsehen Sie zu, wie der Bot den Bunker erobert.",
     all = "Erobern Sie alle feindlichen Basen:\n%d von 8 gehören Ihnen.",
-    b_build = "Bauen Sie Ihren Bunker auf dem markierten grünen Feld.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Drücken Sie den Bunkerknopf oder {QUICK_PILL},\ndann klicken Sie auf das grüne Feld.",
+      touch = "Tippen Sie auf den Bunkerknopf,\ndann auf das grüne Feld.",
+      controller = "Drücken Sie {BUILD_TOOL} bis zum Bunkerwerkzeug,\nzielen Sie aufs grüne Feld, drücken Sie {BUILD_PLACE}.",
+    },
     b_hide = "Bleiben Sie tief im Wald in Reichweite stehen.\nVersteckt: %d von 5 Sekunden.",
     b_in = "Fahren Sie in den Wald innerhalb\nder roten Markierungen.",
     b_kill = "Beschießen Sie den feindlichen Bunker: Drücken\nSie {FIRE}, bis er zerstört ist.",
@@ -2615,14 +2779,28 @@ TEXT["de"] = {
 -- Spanish
 TEXT["es"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nLas zonas junto a la carretera son bosque, pantano, escombros, cráteres y un río poco profundo. Cada una te frena de forma distinta. Prueba a conducir por algunas.\n\nEl agua profunda hunde los tanques. Si mueres en cualquier sitio de aquí, vuelves a tu último punto de control.",
+    s1 = {
+      keyboard = "Pulsa {ACCEL} para avanzar, {BRAKE} para frenar, y {LEFT} y {RIGHT} para girar.\n\nLas zonas junto a la carretera son bosque, pantano, escombros, cráteres y un río poco profundo. Cada una te frena de forma distinta. Prueba a conducir por algunas.\n\nEl agua profunda hunde los tanques. Si mueres en cualquier sitio de aquí, vuelves a tu último punto de control.",
+      touch = "Conduce con el stick del lado izquierdo de la pantalla: empújalo hacia donde quieras ir. Cuanto más lo empujes, más rápido irás.\n\nLas zonas junto a la carretera son bosque, pantano, escombros, cráteres y un río poco profundo. Cada una te frena de forma distinta. Prueba a conducir por algunas.\n\nEl agua profunda hunde los tanques. Si mueres en cualquier sitio de aquí, vuelves a tu último punto de control.",
+    },
     s2a = "Las bases rellenan tus obuses, minas y blindaje, y a tu tanque le queda poco.\n\nConduce hasta tu base, en el marcador verde. Luego PARA sobre la base y espera mientras se rellena.",
     s2b = "Las bases neutrales no tienen rojo ni verde, y se capturan pasando por encima con el tanque.",
     s2c = "Primero hay que vaciar a disparos las bases enemigas. Una llena necesita %d disparos: apunta a ella y pulsa {FIRE} para disparar. Luego pasa por encima para hacerla tuya.",
     s2d = "Con qué reaparece tu tanque depende del tipo de partida.\n\nAbierta: los tanques siempre reaparecen con todo lleno.\n\nTorneo: cuantas más bases están tomadas, menos obuses tiene un tanque al reaparecer; cuando todas las bases están tomadas, los tanques reaparecen sin obuses.\n\nTorneo estricto: los tanques nunca reaparecen con obuses.\n\nLos modos torneo tienen una condición de victoria clara: cuando un equipo posee todas las bases, gana, porque el equipo enemigo no puede conseguir munición.",
     s2stay = "Esta es tu base. Quédate en ella y no te muevas: tus obuses, minas y blindaje se rellenan poco a poco.",
-    s3 = "Tu constructor tala árboles y luego los usa para construir carreteras, muros, minas y búnkeres. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Las partidas empiezan con búnkeres neutrales, y uno lleno necesita 15 disparos para destruirlo.\n\nPrimero, pasa sobre el búnker muerto para meterlo en tu tanque. {PILL_HOW}",
+    s3 = {
+      keyboard = "Tu constructor tala árboles y luego los usa para construir carreteras, muros, minas y búnkeres. Haz clic en un botón de construcción o pulsa su tecla: {QUICK_TREE} árboles, {QUICK_ROAD} carretera, {QUICK_WALL} muro, {QUICK_MINE} mina. Luego haz clic en el mapa para enviar allí a tu constructor.\n\nConsejo: con la herramienta de carretera, muro o búnker elegida, haz clic en un árbol y tu constructor lo tala. No tienes que cambiar a la herramienta de árboles cada vez.",
+      touch = "Tu constructor tala árboles y luego los usa para construir carreteras, muros, minas y búnkeres. Toca un botón de construcción: árboles, carretera, muro o mina. Luego toca el mapa para enviar allí a tu constructor.\n\nConsejo: con la herramienta de carretera, muro o búnker elegida, toca un árbol y tu constructor lo tala. No tienes que cambiar a la herramienta de árboles cada vez.",
+      controller = {
+        "Tu constructor tala árboles y luego los usa para construir carreteras, muros, minas y búnkeres. Pulsa {BUILD_MODE} para el cursor de construcción y apúntalo con el stick derecho. Pulsa {BUILD_TOOL} para elegir una herramienta: árboles, carretera, muro o mina. Luego pulsa {BUILD_PLACE} para enviar a tu constructor al cursor.",
+        "Consejo: con la herramienta de carretera, muro o búnker elegida, pon el cursor de construcción sobre un árbol y pulsa {BUILD_PLACE}: tu constructor lo tala. No tienes que cambiar a la herramienta de árboles cada vez.",
+      },
+    },
+    s4a = {
+      keyboard = "Las partidas empiezan con búnkeres neutrales, y uno lleno necesita 15 disparos para destruirlo.\n\nPrimero, pasa sobre el búnker muerto para meterlo en tu tanque. Luego pulsa el botón de construir búnker o su tecla rápida {QUICK_PILL}. Después haz clic en el mapa para enviar a tu constructor a construir allí un búnker leal a ti.",
+      touch = "Las partidas empiezan con búnkeres neutrales, y uno lleno necesita 15 disparos para destruirlo.\n\nPrimero, pasa sobre el búnker muerto para meterlo en tu tanque. Luego toca el botón de construir búnker y toca el mapa para enviar a tu constructor a construir allí un búnker leal a ti.",
+      controller = "Las partidas empiezan con búnkeres neutrales, y uno lleno necesita 15 disparos para destruirlo.\n\nPrimero, pasa sobre el búnker muerto para meterlo en tu tanque. Luego pulsa {BUILD_TOOL} hasta elegir la herramienta de búnker, pon el cursor de construcción donde lo quieras y pulsa {BUILD_PLACE}. Tu constructor sale y construye allí un búnker leal a ti.",
+    },
     s4b = "Al este de la carretera, un búnker dañado está dentro de un anillo de bosque. Todavía dispara, y un búnker al que golpeas se enfada y dispara más rápido. Los marcadores rojos muestran su alcance.\n\nLos bosques ocultan los tanques tanto de otros tanques como de los búnkeres. Entra en el bosque dentro de los marcadores y quédate quieto. Disparar revela tu posición.",
     s4c = "Este búnker ya está muy dañado: dos disparos más lo destruyen.\n\nTu tanque está lleno. Destrúyelo y luego pasa por encima para recogerlo.",
     s5a = "Para en la casilla verde de delante. Mira cómo el bot amigo de la isla amurallada toma un búnker. Construye su propio búnker justo al lado del enemigo y se coloca detrás, para que los disparos del enemigo den en su búnker y no en su tanque. Luego destruye el búnker enemigo a disparos y pasa por encima.",
@@ -2675,11 +2853,40 @@ TEXT["es"] = {
     wall = "Construye un muro",
   },
   step = {
+    wall = {
+      keyboard = "Construye un muro: haz clic en el botón de muro\no pulsa {QUICK_WALL} y haz clic en la hierba.",
+      touch = "Construye un muro: toca el botón de muro\ny luego toca una casilla de hierba.",
+      controller = "Para un muro, pulsa {BUILD_TOOL} y elige muro.\nPon el cursor en hierba y pulsa {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Haz clic en el botón de carretera o pulsa\n{QUICK_ROAD} y haz clic en la hierba.",
+      touch = "Toca el botón de carretera y luego\ntoca una casilla de hierba.",
+      controller = "Elige carretera: pulsa {BUILD_TOOL}. Pon el\ncursor en hierba y pulsa {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Haz clic en el botón de mina o pulsa\n{QUICK_MINE} y haz clic donde quieras la mina.",
+      touch = "Toca el botón de mina y luego\ntoca una casilla para colocar una mina.",
+      controller = "Elige mina: pulsa {BUILD_TOOL}. Pon el\ncursor en una casilla y pulsa {BUILD_PLACE}.",
+    },
+    harvest = {
+      keyboard = "Haz clic en el botón de árbol o pulsa\n{QUICK_TREE} y haz clic en la arboleda marcada.",
+      touch = "Toca el botón de árbol y luego toca una\ncasilla de bosque de la arboleda marcada.",
+      controller = "Elige árbol: pulsa {BUILD_TOOL}. Pon el cursor\nen la arboleda marcada y pulsa {BUILD_PLACE}.",
+    },
+    a_build = {
+      keyboard = "Pulsa el botón de búnker o {QUICK_PILL}\ny haz clic en el mapa para construirlo.",
+      touch = "Toca el botón de búnker\ny luego toca el mapa para construirlo.",
+      controller = "Elige búnker: pulsa {BUILD_TOOL}. Coloca el\ncursor y pulsa {BUILD_PLACE} para construirlo.",
+    },
     a_pick = "Pasa sobre el búnker muerto para meterlo en tu tanque.",
     a_refill = "Conduce hasta la base con marca verde, luego PARA\nsobre ella y espera mientras se rellena.",
     a_watch = "Para en la casilla verde de delante\ny mira cómo el bot toma el búnker.",
     all = "Toma todas las bases enemigas: %d de 8 son tuyas.",
-    b_build = "Construye tu búnker en la casilla verde marcada.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Pulsa el botón de búnker o {QUICK_PILL}\ny haz clic en la casilla verde.",
+      touch = "Toca el botón de búnker\ny luego toca la casilla verde.",
+      controller = "Elige búnker: pulsa {BUILD_TOOL}. Pon el cursor\nen la casilla verde y pulsa {BUILD_PLACE}.",
+    },
     b_hide = "Quédate quieto en lo hondo del bosque, a su alcance.\nOculto: %d de 5 segundos.",
     b_in = "Entra en el bosque dentro de los marcadores rojos.",
     b_kill = "Dispara al búnker enemigo: pulsa {FIRE}\nhasta destruirlo.",
@@ -2745,14 +2952,25 @@ TEXT["es"] = {
 -- French
 TEXT["fr"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nLes zones au bord de la route sont de la forêt, du marais, des décombres, des cratères et une rivière peu profonde. Chacune vous ralentit plus ou moins. Essayez d'en traverser quelques-unes.\n\nL'eau profonde coule les tanks. Si vous mourez ici, vous revenez à votre dernier point de contrôle.",
+    s1 = {
+      keyboard = "Appuyez sur {ACCEL} pour avancer, sur {BRAKE} pour ralentir, et sur {LEFT} ou {RIGHT} pour tourner.\n\nLes zones au bord de la route sont de la forêt, du marais, des décombres, des cratères et une rivière peu profonde. Chacune vous ralentit plus ou moins. Essayez d'en traverser quelques-unes.\n\nL'eau profonde coule les tanks. Si vous mourez ici, vous revenez à votre dernier point de contrôle.",
+      touch = "Conduisez avec le joystick à gauche de l'écran : poussez-le dans la direction voulue. Plus vous le poussez, plus vous allez vite.\n\nLes zones au bord de la route sont de la forêt, du marais, des décombres, des cratères et une rivière peu profonde. Chacune vous ralentit plus ou moins. Essayez d'en traverser quelques-unes.\n\nL'eau profonde coule les tanks. Si vous mourez ici, vous revenez à votre dernier point de contrôle.",
+    },
     s2a = "Les bases rechargent vos obus, vos mines et votre blindage, et votre tank est presque vide.\n\nRoulez sur votre base au marqueur vert. Puis ARRÊTEZ-VOUS sur la base et attendez pendant qu'elle vous recharge.",
     s2b = "Les bases neutres ne sont ni rouges ni vertes. Vous les prenez en roulant dessus.",
     s2c = "Les bases ennemies doivent d'abord être vidées. Une base pleine demande %d tirs : visez-la et appuyez sur {FIRE} pour tirer. Roulez ensuite dessus pour la prendre.",
     s2d = "Ce que votre tank reçoit à la réapparition dépend du type de partie.\n\nOuvert : les tanks réapparaissent toujours avec le plein.\n\nTournoi : plus il y a de bases prises, moins un tank réapparaît avec d'obus. Quand toutes les bases sont prises, les tanks réapparaissent sans obus.\n\nTournoi strict : les tanks ne réapparaissent jamais avec des obus.\n\nLes modes tournoi ont un but clair : dès qu'une équipe possède toutes les bases, elle gagne, car l'équipe ennemie n'a plus de munitions.",
     s2stay = "Voici votre base. Restez dessus et ne bougez pas : vos obus, vos mines et votre blindage arrivent petit à petit.",
-    s3 = "Votre constructeur récolte des arbres pour construire des routes, des murs, des mines et des pillboxes. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Les parties commencent avec des pillboxes neutres, et un pillbox plein demande 15 tirs pour être détruit.\n\nD'abord, roulez sur le pillbox détruit pour le charger dans votre tank. {PILL_HOW}",
+    s3 = {
+      keyboard = "Votre constructeur récolte des arbres pour construire des routes, des murs, des mines et des pillboxes. Cliquez sur un bouton de construction, ou appuyez sur sa touche : {QUICK_TREE} arbres, {QUICK_ROAD} route, {QUICK_WALL} mur, {QUICK_MINE} mine. Cliquez ensuite sur la carte pour y envoyer votre constructeur.\n\nAstuce : avec l'outil route, mur ou pillbox, cliquez sur un arbre : votre constructeur le récolte, sans passer à l'outil arbre.",
+      touch = "Votre constructeur récolte des arbres pour construire des routes, des murs, des mines et des pillboxes. Tapez sur un bouton de construction : arbres, route, mur ou mine. Tapez ensuite sur la carte pour y envoyer votre constructeur.\n\nAstuce : avec l'outil route, mur ou pillbox, tapez sur un arbre : votre constructeur le récolte, sans passer à l'outil arbre.",
+      controller = "Votre constructeur récolte des arbres pour construire des routes, des murs, des mines et des pillboxes. Appuyez sur {BUILD_MODE} et visez avec le stick droit. Appuyez sur {BUILD_TOOL} pour choisir : arbres, route, mur ou mine. Puis appuyez sur {BUILD_PLACE} pour y envoyer votre constructeur.\n\nAstuce : avec l'outil route, mur ou pillbox, visez un arbre et appuyez sur {BUILD_PLACE} : votre constructeur le récolte, sans passer à l'outil arbre.",
+    },
+    s4a = {
+      keyboard = "Les parties commencent avec des pillboxes neutres, et un pillbox plein demande 15 tirs pour être détruit.\n\nD'abord, roulez sur le pillbox détruit pour le charger dans votre tank. Appuyez ensuite sur le bouton de construction de pillbox ou sur sa touche {QUICK_PILL}. Cliquez ensuite sur la carte pour envoyer votre constructeur y bâtir un pillbox qui vous est fidèle.",
+      touch = "Les parties commencent avec des pillboxes neutres, et un pillbox plein demande 15 tirs pour être détruit.\n\nD'abord, roulez sur le pillbox détruit pour le charger dans votre tank. Tapez ensuite sur le bouton de construction de pillbox, puis tapez sur la carte pour envoyer votre constructeur y bâtir un pillbox qui vous est fidèle.",
+      controller = "Les parties commencent avec des pillboxes neutres, et un pillbox plein demande 15 tirs pour être détruit.\n\nD'abord, roulez sur le pillbox détruit pour le charger dans votre tank. Appuyez ensuite sur {BUILD_TOOL} jusqu'à choisir l'outil pillbox, placez le curseur de construction où vous voulez et appuyez sur {BUILD_PLACE}. Votre constructeur sort et y bâtit un pillbox qui vous est fidèle.",
+    },
     s4b = "À l'est de la route, un pillbox endommagé se trouve dans un anneau de forêt. Il tire encore, et un pillbox que vous touchez se met en colère et tire plus vite. Les marqueurs rouges montrent sa portée.\n\nLa forêt cache les tanks des autres tanks et des pillboxes. Entrez dans la forêt à l'intérieur des marqueurs et restez immobile. Tirer révèle votre position.",
     s4c = "Ce pillbox est déjà très endommagé : deux tirs de plus le détruisent.\n\nVotre tank est plein. Détruisez le pillbox, puis roulez dessus pour le ramasser.",
     s5a = "Arrêtez-vous sur la case verte devant vous. Regardez le bot allié sur l'île entourée de murs prendre un pillbox. Il construit son propre pillbox juste à côté de celui de l'ennemi et se gare derrière. Ainsi, les tirs ennemis touchent son pillbox, pas son tank. Puis il détruit le pillbox ennemi et roule dessus.",
@@ -2817,11 +3035,40 @@ TEXT["fr"] = {
     wall = "Construisez un mur",
   },
   step = {
+    wall = {
+      keyboard = "Construire un mur : appuyez sur {QUICK_WALL}\nou sur le bouton mur, puis cliquez sur l'herbe.",
+      touch = "Construire un mur : tapez sur le bouton\nmur, puis sur une case d'herbe.",
+      controller = "Mur : appuyez sur {BUILD_TOOL} pour l'outil mur,\nvisez l'herbe et appuyez sur {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Appuyez sur {QUICK_ROAD} ou sur le bouton route,\npuis cliquez sur une case d'herbe.",
+      touch = "Tapez sur le bouton route, puis\nsur une case d'herbe.",
+      controller = "Appuyez sur {BUILD_TOOL} pour l'outil route,\nvisez l'herbe et appuyez sur {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Appuyez sur {QUICK_MINE} ou sur le bouton mine,\npuis cliquez sur une case pour poser une mine.",
+      touch = "Tapez sur le bouton mine, puis sur\nune case pour poser une mine.",
+      controller = "Appuyez sur {BUILD_TOOL} pour l'outil mine,\nvisez une case et appuyez sur {BUILD_PLACE}.",
+    },
+    harvest = {
+      keyboard = "Appuyez sur {QUICK_TREE} ou sur le bouton arbre,\npuis cliquez sur une case du bosquet marqué.",
+      touch = "Tapez sur le bouton arbre, puis sur une\ncase de forêt du bosquet marqué.",
+      controller = "Appuyez sur {BUILD_TOOL} pour l'outil arbre,\nvisez le bosquet et appuyez sur {BUILD_PLACE}.",
+    },
+    a_build = {
+      keyboard = "Appuyez sur le bouton pillbox ou sur {QUICK_PILL},\npuis cliquez sur la carte pour le construire.",
+      touch = "Tapez sur le bouton pillbox, puis\nsur la carte pour le construire.",
+      controller = "Appuyez sur {BUILD_TOOL} pour l'outil pillbox,\nvisez et appuyez sur {BUILD_PLACE} pour le construire.",
+    },
     a_pick = "Roulez sur le pillbox détruit pour\nle charger dans votre tank.",
     a_refill = "Roulez sur la base marquée en vert, puis ARRÊTEZ-VOUS\ndessus et attendez qu'elle vous recharge.",
     a_watch = "Arrêtez-vous sur la case verte devant vous\net regardez le bot prendre le pillbox.",
     all = "Prenez toutes les bases ennemies :\n%d sur 8 sont à vous.",
-    b_build = "Construisez votre pillbox sur la case verte marquée.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Appuyez sur le bouton pillbox ou sur {QUICK_PILL},\npuis cliquez sur la case verte.",
+      touch = "Tapez sur le bouton pillbox,\npuis sur la case verte.",
+      controller = "Appuyez sur {BUILD_TOOL} pour l'outil pillbox,\nvisez la case verte et appuyez sur {BUILD_PLACE}.",
+    },
     b_hide = "Restez immobile au fond de la forêt, à portée.\nCaché : %d secondes sur 5.",
     b_in = "Entrez dans la forêt à l'intérieur\ndes marqueurs rouges.",
     b_kill = "Appuyez sur {FIRE} pour tirer sur le\npillbox ennemi jusqu'à ce qu'il soit détruit.",
@@ -2887,14 +3134,25 @@ TEXT["fr"] = {
 -- Italian
 TEXT["it"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nLe zone accanto alla strada sono foresta, palude, macerie, crateri e un fiume poco profondo. Ognuna ti rallenta in modo diverso. Prova a guidare su alcune di esse.\n\nL'acqua profonda affonda i tank. Se muori in qualsiasi punto qui, ricompari all'ultimo checkpoint.",
+    s1 = {
+      keyboard = "Premi {ACCEL} per avanzare, {BRAKE} per rallentare, {LEFT} e {RIGHT} per girare.\n\nLe zone accanto alla strada sono foresta, palude, macerie, crateri e un fiume poco profondo. Ognuna ti rallenta in modo diverso. Prova a guidare su alcune di esse.\n\nL'acqua profonda affonda i tank. Se muori in qualsiasi punto qui, ricompari all'ultimo checkpoint.",
+      touch = "Guida con il thumbstick sul lato sinistro dello schermo: spingilo nella direzione in cui vuoi andare. Più lo spingi, più vai veloce.\n\nLe zone accanto alla strada sono foresta, palude, macerie, crateri e un fiume poco profondo. Ognuna ti rallenta in modo diverso. Prova a guidare su alcune di esse.\n\nL'acqua profonda affonda i tank. Se muori in qualsiasi punto qui, ricompari all'ultimo checkpoint.",
+    },
     s2a = "Le basi ricaricano proiettili, mine e corazza, e il tuo tank ne ha pochi.\n\nGuida sulla tua base, al segnale verde. Poi FERMATI sulla base e aspetta che ti ricarichi.",
     s2b = "Le basi neutrali non hanno rosso né verde, e si conquistano passandoci sopra.",
     s2c = "Le basi nemiche vanno prima svuotate a colpi. Una piena richiede %d colpi: mira e premi {FIRE} per sparare. Poi passaci sopra per farla tua.",
     s2d = "Con cosa ricompare il tuo tank dipende dal tipo di partita.\n\nAperta: i tank ricompaiono sempre a pieno carico.\n\nTorneo: più basi sono conquistate, meno proiettili ha un tank quando ricompare; quando tutte le basi sono conquistate, i tank ricompaiono senza proiettili.\n\nTorneo rigoroso: i tank non ricompaiono mai con proiettili.\n\nNei tornei la vittoria è chiara: quando una squadra possiede tutte le basi, vince, perché la squadra nemica non può avere munizioni.",
     s2stay = "Questa è la tua base. Resta qui e non muoverti: proiettili, mine e corazza arrivano un po' alla volta.",
-    s3 = "Il tuo uomo raccoglie alberi, poi li usa per costruire strade, muri, mine e bunker. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Le partite iniziano con bunker neutrali, e uno pieno richiede 15 colpi per essere distrutto.\n\nPer prima cosa, passa sopra il bunker distrutto per caricarlo nel tank. {PILL_HOW}",
+    s3 = {
+      keyboard = "Il tuo uomo raccoglie alberi, poi li usa per costruire strade, muri, mine e bunker. Clicca un pulsante di costruzione, o premi il suo tasto: {QUICK_TREE} alberi, {QUICK_ROAD} strada, {QUICK_WALL} muro, {QUICK_MINE} mina. Poi clicca sulla mappa per mandarci il tuo uomo.\n\nConsiglio: con lo strumento strada, muro o bunker scelto, clicca un albero e il tuo uomo lo raccoglie. Non devi passare ogni volta allo strumento alberi.",
+      touch = "Il tuo uomo raccoglie alberi, poi li usa per costruire strade, muri, mine e bunker. Tocca un pulsante di costruzione: alberi, strada, muro o mina. Poi tocca la mappa per mandarci il tuo uomo.\n\nConsiglio: con lo strumento strada, muro o bunker scelto, tocca un albero e il tuo uomo lo raccoglie. Non devi passare ogni volta allo strumento alberi.",
+      controller = "Il tuo uomo raccoglie alberi, poi li usa per costruire strade, muri, mine e bunker. Premi {BUILD_MODE} per il cursore di costruzione e puntalo con lo stick destro. Premi {BUILD_TOOL} per scegliere uno strumento: alberi, strada, muro o mina. Poi premi {BUILD_PLACE} per mandare il tuo uomo al cursore.\n\nConsiglio: con lo strumento strada, muro o bunker scelto, metti il cursore di costruzione su un albero e premi {BUILD_PLACE}: il tuo uomo lo raccoglie. Non devi passare ogni volta allo strumento alberi.",
+    },
+    s4a = {
+      keyboard = "Le partite iniziano con bunker neutrali, e uno pieno richiede 15 colpi per essere distrutto.\n\nPer prima cosa, passa sopra il bunker distrutto per caricarlo nel tank. Poi premi il pulsante di costruzione bunker o il suo tasto rapido {QUICK_PILL}. Poi clicca sulla mappa per mandare il tuo uomo a costruire lì un bunker fedele a te.",
+      touch = "Le partite iniziano con bunker neutrali, e uno pieno richiede 15 colpi per essere distrutto.\n\nPer prima cosa, passa sopra il bunker distrutto per caricarlo nel tank. Poi tocca il pulsante di costruzione bunker e tocca la mappa per mandare il tuo uomo a costruire lì un bunker fedele a te.",
+      controller = "Le partite iniziano con bunker neutrali, e uno pieno richiede 15 colpi per essere distrutto.\n\nPer prima cosa, passa sopra il bunker distrutto per caricarlo nel tank. Poi premi {BUILD_TOOL} finché non è scelto lo strumento bunker, metti il cursore di costruzione dove vuoi e premi {BUILD_PLACE}. Il tuo uomo esce e costruisce lì un bunker fedele a te.",
+    },
     s4b = "A est della strada, un bunker danneggiato si trova in un anello di foresta. Spara ancora, e un bunker che colpisci si arrabbia e spara più veloce. I segnali rossi mostrano la sua portata.\n\nLe foreste nascondono i tank sia agli altri tank sia ai bunker. Entra nella foresta dentro i segnali e resta fermo. Sparare rivela la tua posizione.",
     s4c = "Questo bunker è già molto danneggiato: bastano altri due colpi per distruggerlo.\n\nIl tuo tank è pieno. Distruggilo, poi passaci sopra per raccoglierlo.",
     s5a = "Fermati sul quadrato verde più avanti. Guarda il bot amico sull'isola cinta da muri prendere un bunker. Costruisce un suo bunker proprio accanto a quello nemico e si mette dietro, così i colpi nemici colpiscono il suo bunker e non il suo tank. Poi distrugge il bunker nemico e ci passa sopra.",
@@ -2947,11 +3205,40 @@ TEXT["it"] = {
     wall = "Costruisci un muro",
   },
   step = {
+    wall = {
+      keyboard = "Costruisci un muro: clicca il pulsante muro\no premi {QUICK_WALL}, poi clicca sull'erba.",
+      touch = "Costruisci un muro: tocca il pulsante muro,\npoi tocca un quadrato d'erba.",
+      controller = "Fai un muro: premi {BUILD_TOOL} per il muro.\nMetti il cursore sull'erba, premi {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Clicca il pulsante strada o premi {QUICK_ROAD},\npoi clicca un quadrato d'erba.",
+      touch = "Tocca il pulsante strada, poi tocca un quadrato d'erba.",
+      controller = "Scegli strada: premi {BUILD_TOOL}. Metti il\ncursore sull'erba e premi {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Clicca il pulsante mina o premi {QUICK_MINE},\npoi clicca un quadrato per posare una mina.",
+      touch = "Tocca il pulsante mina, poi tocca\nun quadrato per posare una mina.",
+      controller = "Scegli mina: premi {BUILD_TOOL}. Metti il\ncursore su un quadrato e premi {BUILD_PLACE}.",
+    },
+    harvest = {
+      keyboard = "Clicca il pulsante albero o premi {QUICK_TREE},\npoi clicca un quadrato del bosco segnato.",
+      touch = "Tocca il pulsante albero, poi tocca un\nquadrato di foresta nel bosco segnato.",
+      controller = "Scegli alberi: premi {BUILD_TOOL}. Metti il\ncursore sul bosco segnato e premi {BUILD_PLACE}.",
+    },
+    a_build = {
+      keyboard = "Premi il pulsante bunker o {QUICK_PILL},\npoi clicca sulla mappa per costruirlo.",
+      touch = "Tocca il pulsante bunker,\npoi tocca la mappa per costruirlo.",
+      controller = "Scegli bunker: premi {BUILD_TOOL}. Metti giù il\ncursore e premi {BUILD_PLACE} per costruirlo.",
+    },
     a_pick = "Passa sopra il bunker distrutto per caricarlo nel tank.",
     a_refill = "Guida sulla base col segnale verde, poi FERMATI\nsopra e aspetta che ti ricarichi.",
     a_watch = "Fermati sul quadrato verde più avanti\ne guarda il bot prendere il bunker.",
     all = "Prendi ogni base nemica: %d su 8 sono tue.",
-    b_build = "Costruisci il tuo bunker sul quadrato verde segnato.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Premi il pulsante bunker o {QUICK_PILL},\npoi clicca il quadrato verde.",
+      touch = "Tocca il pulsante bunker,\npoi tocca il quadrato verde.",
+      controller = "Scegli bunker: premi {BUILD_TOOL}. Metti il\ncursore sul quadrato verde e premi {BUILD_PLACE}.",
+    },
     b_hide = "Resta fermo nel folto della foresta, a portata.\nNascosto: %d su 5 secondi.",
     b_in = "Entra nella foresta dentro i segnali rossi.",
     b_kill = "Spara al bunker nemico: premi {FIRE}\nfinché non è distrutto.",
@@ -3017,7 +3304,10 @@ TEXT["it"] = {
 -- Japanese
 TEXT["ja"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\n道路の脇のマスは、森、沼地、瓦礫、\nクレーター、浅い川です。それぞれ速度の\n落ち方が違います。いくつか走ってみてください。\n\n深い水に入るとタンクは沈みます。ここで撃破されても、\n最後のチェックポイントから再開します。",
+    s1 = {
+      keyboard = "{ACCEL} を押すと前進、{BRAKE} を押すと減速、\n{LEFT} と {RIGHT} を押すと旋回します。\n\n道路の脇のマスは、森、沼地、瓦礫、\nクレーター、浅い川です。それぞれ速度の\n落ち方が違います。いくつか走ってみてください。\n\n深い水に入るとタンクは沈みます。ここで撃破されても、\n最後のチェックポイントから再開します。",
+      touch = "画面左のスティックで操縦します。\n進みたい方向にスティックを押してください。\n遠くまで押すほど、速く進みます。\n\n道路の脇のマスは、森、沼地、瓦礫、\nクレーター、浅い川です。それぞれ速度の\n落ち方が違います。いくつか走ってみてください。\n\n深い水に入るとタンクは沈みます。ここで撃破されても、\n最後のチェックポイントから再開します。",
+    },
     s2a = "基地では砲弾、地雷、装甲を補給できます。\nいまタンクの残りが少なくなっています。\n\n緑の印のある自分の基地に乗ってください。\nそして基地の上で必ず停止し、\n補給が終わるまで待ってください。",
     s2b = "中立の基地は赤でも緑でもありません。\n上を走るだけで自分のものにできます。",
     s2c = "敵の基地は、先に撃って空にする必要があります。\n満タンの基地は %d 発で空になります。\n基地に狙いを付けて、{FIRE} を押して撃ってください。\nそれから上を走ると、自分の基地になります。",
@@ -3026,8 +3316,22 @@ TEXT["ja"] = {
       "厳格トーナメント：タンクは砲弾を持たずに\n再出撃します。\n\nトーナメントモードには明確な勝利条件があります：\n一方のチームがすべての基地を手に入れると、\n敵チームは弾薬を得られないので、\nそのチームの勝ちです。",
     },
     s2stay = "ここがあなたの基地です。動かずに乗っていてください。\n砲弾、地雷、装甲が少しずつ補給されます。",
-    s3 = "ビルダーは木を収穫し、それを使って道路、壁、\n地雷、トーチカを建設します。\n{BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "ゲーム開始時のトーチカは中立です。満タンの\nトーチカを倒すには 15 発必要です。\n\nまず、破壊されたトーチカの上を走って、\nタンクに積み込んでください。\n{PILL_HOW}",
+    s3 = {
+      keyboard = {
+        "ビルダーは木を収穫し、それを使って道路、壁、\n地雷、トーチカを建設します。\n建設ボタンをクリックするか、そのキーを押します。\n{QUICK_TREE} を押すと木、{QUICK_ROAD} を押すと道路、\n{QUICK_WALL} を押すと壁、{QUICK_MINE} を押すと地雷です。\n次にマップをクリックすると、ビルダーがそこへ向かいます。",
+        "ヒント：道路、壁、トーチカのツールを選んだまま\n木をクリックしても、ビルダーが木を収穫します。\n毎回木のツールに切り替える必要はありません。",
+      },
+      touch = "ビルダーは木を収穫し、それを使って道路、壁、\n地雷、トーチカを建設します。\n建設ボタン（木、道路、壁、地雷）をタップします。\n次にマップをタップすると、\nビルダーがそこへ向かいます。\n\nヒント：道路、壁、トーチカのツールを選んだまま\n木をタップしても、ビルダーが木を収穫します。\n毎回木のツールに切り替える必要はありません。",
+      controller = {
+        "ビルダーは木を収穫し、それを使って道路、壁、\n地雷、トーチカを建設します。\n{BUILD_MODE} を引くと建設カーソルが出ます。\n右スティックでカーソルを動かします。\n{BUILD_TOOL} を押してツール（木、道路、壁、地雷）を選び、\n{BUILD_PLACE} を押すと、ビルダーがカーソルの場所へ向かいます。",
+        "ヒント：道路、壁、トーチカのツールを選んだまま\n建設カーソルを木に合わせて {BUILD_PLACE} を押しても、\nビルダーが木を収穫します。\n毎回木のツールに切り替える必要はありません。",
+      },
+    },
+    s4a = {
+      keyboard = "ゲーム開始時のトーチカは中立です。満タンの\nトーチカを倒すには 15 発必要です。\n\nまず、破壊されたトーチカの上を走って、\nタンクに積み込んでください。\n次に、トーチカの建設ボタンを押すか、\nショートカットキー {QUICK_PILL} を押します。\nそしてマップをクリックすると、ビルダーがその場所に\n味方のトーチカを建設します。",
+      touch = "ゲーム開始時のトーチカは中立です。満タンの\nトーチカを倒すには 15 発必要です。\n\nまず、破壊されたトーチカの上を走って、\nタンクに積み込んでください。\n次に、トーチカの建設ボタンをタップし、\nマップをタップすると、ビルダーがその場所に\n味方のトーチカを建設します。",
+      controller = "ゲーム開始時のトーチカは中立です。満タンの\nトーチカを倒すには 15 発必要です。\n\nまず、破壊されたトーチカの上を走って、\nタンクに積み込んでください。\n次に、トーチカのツールが選ばれるまで {BUILD_TOOL} を押し、\n建設カーソルを建てたい場所に合わせて\n{BUILD_PLACE} を押してください。ビルダーが出ていき、\nそこに味方のトーチカを建設します。",
+    },
     s4b = "道路の東に、森に囲まれた損傷したトーチカがあります。\nまだ射撃してきます。撃たれたトーチカは怒って、\nより速く撃つようになります。赤い印がその射程です。\n\n森はタンクを、他のタンクからもトーチカからも隠します。\n印の内側の森に入り、じっとしていてください。\n射撃すると位置がばれます。",
     s4c = "このトーチカはすでに大きく損傷しています。\nあと 2 発で倒せます。\n\nタンクは満タンです。トーチカを倒してから、\n上を走って回収してください。",
     s5a = "前方の緑のマスで止まってください。壁に囲まれた島で、\n味方のボットがトーチカを奪う様子を見てください。\nボットは敵のトーチカのすぐ隣に自分のトーチカを建て、\nその後ろに停車します。こうすると敵の弾は\nボットのタンクではなく、ボットのトーチカに当たります。\nそれから敵のトーチカを撃って倒し、その上を走ります。",
@@ -3092,11 +3396,40 @@ TEXT["ja"] = {
     wall = "壁を建設",
   },
   step = {
+    wall = {
+      keyboard = "壁を建設：{QUICK_WALL} を押すか壁ボタンを\nクリックし、草のマスをクリック。",
+      touch = "壁を建設：壁ボタンをタップし、\n草のマスをタップ。",
+      controller = "壁を建設：{BUILD_TOOL} を押して壁ツールを選び、\nカーソルを草に合わせ {BUILD_PLACE} を押す。",
+    },
+    road = {
+      keyboard = "{QUICK_ROAD} を押すか道路ボタンをクリックし、\n草のマスをクリック。",
+      touch = "道路ボタンをタップし、\n草のマスをタップ。",
+      controller = "{BUILD_TOOL} を押して道路のツールを選び、\nカーソルを草に合わせ {BUILD_PLACE} を押す。",
+    },
+    mine = {
+      keyboard = "{QUICK_MINE} を押すか地雷ボタンをクリックし、\nマスをクリックして地雷を敷設。",
+      touch = "地雷ボタンをタップし、\nマスをタップして地雷を敷設。",
+      controller = "{BUILD_TOOL} を押して地雷のツールを選び、\nカーソルをマスに合わせ {BUILD_PLACE} を押す。",
+    },
+    harvest = {
+      keyboard = "{QUICK_TREE} を押すか木ボタンをクリックし、\n印の付いた林の森マスをクリック。",
+      touch = "木ボタンをタップし、\n印の付いた林の森マスをタップ。",
+      controller = "{BUILD_TOOL} を押して木のツールを選び、\nカーソルを印の林に合わせ {BUILD_PLACE} を押す。",
+    },
+    a_build = {
+      keyboard = "トーチカボタンか {QUICK_PILL} を押し、\nマップをクリックして建設。",
+      touch = "トーチカボタンをタップし、\nマップをタップして建設。",
+      controller = "{BUILD_TOOL} を押してトーチカツールを選び、\nカーソルを置いて {BUILD_PLACE} を押して建設。",
+    },
     a_pick = "破壊されたトーチカの上を走って、\nタンクに積み込んでください。",
     a_refill = "緑の印の基地に乗り、その上で停止して\n補給が終わるまで待ってください。",
     a_watch = "前方の緑のマスで止まり、ボットが\nトーチカを奪うのを見てください。",
     all = "敵の基地をすべて奪う：%d / 8 を所有。",
-    b_build = "印の付いた緑のマスにトーチカを建設。\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "トーチカボタンか {QUICK_PILL} を押し、\n緑のマスをクリック。",
+      touch = "トーチカボタンをタップし、\n緑のマスをタップ。",
+      controller = "{BUILD_TOOL} を押してトーチカツールを選び、\nカーソルを緑のマスに合わせ {BUILD_PLACE} を押す。",
+    },
     b_hide = "射程内の森の奥でじっとしてください。\n隠れた時間：%d / 5 秒",
     b_in = "赤い印の内側の森に入ってください。",
     b_kill = "敵のトーチカが倒れるまで\n{FIRE} を押して撃ってください。",
@@ -3162,7 +3495,10 @@ TEXT["ja"] = {
 -- Korean
 TEXT["ko"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\n도로 옆의 지형은 숲, 늪, 잔해, 분화구, 얕은 강이에요. 지형마다 속도가 느려지는 정도가 달라요. 몇 군데를 직접 달려 보세요.\n\n깊은 물에서는 탱크가 가라앉아요. 여기서 죽더라도 마지막 체크포인트에서 다시 시작해요.",
+    s1 = {
+      keyboard = "{ACCEL} 누르면 전진, {BRAKE} 누르면 감속, {LEFT} 또는 {RIGHT} 누르면 회전해요.\n\n도로 옆의 지형은 숲, 늪, 잔해, 분화구, 얕은 강이에요. 지형마다 속도가 느려지는 정도가 달라요. 몇 군데를 직접 달려 보세요.\n\n깊은 물에서는 탱크가 가라앉아요. 여기서 죽더라도 마지막 체크포인트에서 다시 시작해요.",
+      touch = "화면 왼쪽의 썸스틱으로 운전하세요. 가고 싶은 방향으로 미세요. 더 멀리 밀수록 더 빨리 가요.\n\n도로 옆의 지형은 숲, 늪, 잔해, 분화구, 얕은 강이에요. 지형마다 속도가 느려지는 정도가 달라요. 몇 군데를 직접 달려 보세요.\n\n깊은 물에서는 탱크가 가라앉아요. 여기서 죽더라도 마지막 체크포인트에서 다시 시작해요.",
+    },
     s2a = "기지는 포탄, 지뢰, 장갑을 보충해 줘요. 지금 탱크의 보급품이 부족해요.\n\n초록색 표시가 있는 내 기지로 가세요. 그리고 기지 위에서 꼭 멈춰서 보충이 끝날 때까지 기다리세요.",
     s2b = "중립 기지는 빨간색도 초록색도 없어요. 위로 지나가기만 하면 차지할 수 있어요.",
     s2c = "적 기지는 먼저 쏴서 비워야 해요. 가득 찬 기지는 %d발을 맞아야 비워져요. 기지를 조준하고 {FIRE} 눌러 발사하세요. 그런 다음 위로 지나가면 내 기지가 돼요.",
@@ -3171,8 +3507,22 @@ TEXT["ko"] = {
       "엄격한 토너먼트: 탱크는 절대 포탄을 가진 채 부활하지 않아요.\n\n토너먼트 모드에는 분명한 승리 조건이 있어요. 한 팀이 모든 기지를 차지하면 적 팀은 탄약을 얻을 수 없으므로 그 팀이 이겨요.",
     },
     s2stay = "여기가 내 기지예요. 움직이지 말고 그대로 있으세요. 포탄, 지뢰, 장갑이 조금씩 채워져요.",
-    s3 = "건설자는 나무를 수확하고, 그 나무로 도로, 벽, 지뢰, 토치카를 건설해요. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "게임은 중립 토치카로 시작하고, 가득 찬 토치카를 파괴하려면 15발이 필요해요.\n\n먼저 파괴된 토치카 위로 지나가서 탱크에 실으세요. {PILL_HOW}",
+    s3 = {
+      keyboard = {
+        "건설자는 나무를 수확하고, 그 나무로 도로, 벽, 지뢰, 토치카를 건설해요. 건설 버튼을 클릭하거나 단축키를 누르세요. {QUICK_TREE} 누르면 나무, {QUICK_ROAD} 누르면 도로, {QUICK_WALL} 누르면 벽, {QUICK_MINE} 누르면 지뢰예요. 그런 다음 지도를 클릭하면 건설자가 그곳으로 가요.",
+        "팁: 도로, 벽, 토치카 도구를 고른 상태에서 나무를 클릭해도 건설자가 나무를 수확해요. 매번 나무 도구로 바꿀 필요가 없어요.",
+      },
+      touch = "건설자는 나무를 수확하고, 그 나무로 도로, 벽, 지뢰, 토치카를 건설해요. 건설 버튼(나무, 도로, 벽, 지뢰)을 탭하세요. 그런 다음 지도를 탭하면 건설자가 그곳으로 가요.\n\n팁: 도로, 벽, 토치카 도구를 고른 상태에서 나무를 탭해도 건설자가 나무를 수확해요. 매번 나무 도구로 바꿀 필요가 없어요.",
+      controller = {
+        "건설자는 나무를 수확하고, 그 나무로 도로, 벽, 지뢰, 토치카를 건설해요. {BUILD_MODE} 당기면 건설 커서가 나오고, 오른쪽 스틱으로 커서를 움직여요. {BUILD_TOOL} 눌러 도구(나무, 도로, 벽, 지뢰)를 고르세요. 그런 다음 {BUILD_PLACE} 누르면 건설자가 커서 위치로 가요.",
+        "팁: 도로, 벽, 토치카 도구를 고른 상태에서 건설 커서를 나무에 두고 {BUILD_PLACE} 눌러도 건설자가 나무를 수확해요. 매번 나무 도구로 바꿀 필요가 없어요.",
+      },
+    },
+    s4a = {
+      keyboard = "게임은 중립 토치카로 시작하고, 가득 찬 토치카를 파괴하려면 15발이 필요해요.\n\n먼저 파괴된 토치카 위로 지나가서 탱크에 실으세요. 그런 다음 토치카 건설 버튼이나 단축키 {QUICK_PILL} 누르세요. 그리고 지도를 클릭하면 건설자가 나가서 그 위치에 내 편 토치카를 지어요.",
+      touch = "게임은 중립 토치카로 시작하고, 가득 찬 토치카를 파괴하려면 15발이 필요해요.\n\n먼저 파괴된 토치카 위로 지나가서 탱크에 실으세요. 그런 다음 토치카 건설 버튼을 탭하고, 지도를 탭하면 건설자가 나가서 그 위치에 내 편 토치카를 지어요.",
+      controller = "게임은 중립 토치카로 시작하고, 가득 찬 토치카를 파괴하려면 15발이 필요해요.\n\n먼저 파괴된 토치카 위로 지나가서 탱크에 실으세요. 그런 다음 토치카 도구가 골라질 때까지 {BUILD_TOOL} 누르고, 건설 커서를 원하는 곳에 두고 {BUILD_PLACE} 누르세요. 건설자가 나가서 그곳에 내 편 토치카를 지어요.",
+    },
     s4b = "도로 동쪽에 손상된 토치카가 숲에 둘러싸여 있어요. 아직 발사하고, 공격받은 토치카는 화가 나서 더 빠르게 발사해요. 빨간 표시는 그 사거리예요.\n\n숲은 다른 탱크와 토치카 모두에게서 탱크를 숨겨 줘요. 표시 안쪽의 숲으로 들어가 가만히 있으세요. 발사하면 위치가 드러나요.",
     s4c = "이 토치카는 이미 크게 손상됐어요. 두 발만 더 맞히면 파괴돼요.\n\n탱크는 가득 찼어요. 토치카를 파괴한 다음 위로 지나가서 주우세요.",
     s5a = "앞의 초록색 칸에서 멈추세요. 벽으로 둘러싸인 섬에서 아군 봇이 토치카를 빼앗는 모습을 보세요. 봇은 적 토치카 바로 옆에 자기 토치카를 짓고 그 뒤에 멈춰요. 그래서 적의 포탄은 봇의 탱크가 아니라 봇의 토치카에 맞아요. 그런 다음 적 토치카를 쏴서 파괴하고 그 위로 지나가요.",
@@ -3237,11 +3587,40 @@ TEXT["ko"] = {
     wall = "벽 건설",
   },
   step = {
+    wall = {
+      keyboard = "벽 건설: 벽 버튼을 클릭하거나\n{QUICK_WALL} 누르고, 풀 칸을 클릭하세요.",
+      touch = "벽 건설: 벽 버튼을 탭하고,\n풀 칸을 탭하세요.",
+      controller = "벽 건설: {BUILD_TOOL} 눌러 벽 도구를 고르고,\n건설 커서를 풀에 두고 {BUILD_PLACE} 누르세요.",
+    },
+    road = {
+      keyboard = "도로 버튼을 클릭하거나 {QUICK_ROAD} 누르고,\n풀 칸을 클릭하세요.",
+      touch = "도로 버튼을 탭하고, 풀 칸을 탭하세요.",
+      controller = "{BUILD_TOOL} 눌러 도로 도구를 고르고, 건설\n커서를 풀에 두고 {BUILD_PLACE} 누르세요.",
+    },
+    mine = {
+      keyboard = "지뢰 버튼을 클릭하거나 {QUICK_MINE} 누르고,\n칸을 클릭해 지뢰를 설치하세요.",
+      touch = "지뢰 버튼을 탭하고,\n칸을 탭해 지뢰를 설치하세요.",
+      controller = "{BUILD_TOOL} 눌러 지뢰 도구를 고르고, 건설\n커서를 칸에 두고 {BUILD_PLACE} 누르세요.",
+    },
+    harvest = {
+      keyboard = "나무 버튼을 클릭하거나 {QUICK_TREE} 누르고,\n표시된 숲에서 숲 칸을 클릭하세요.",
+      touch = "나무 버튼을 탭하고,\n표시된 숲에서 숲 칸을 탭하세요.",
+      controller = "{BUILD_TOOL} 눌러 나무 도구를 고르고, 건설\n커서를 표시된 숲에 두고 {BUILD_PLACE} 누르세요.",
+    },
+    a_build = {
+      keyboard = "토치카 버튼이나 {QUICK_PILL} 누르고,\n지도를 클릭해 건설하세요.",
+      touch = "토치카 버튼을 탭하고,\n지도를 탭해 건설하세요.",
+      controller = "{BUILD_TOOL} 눌러 토치카 도구를 고르고, 건설\n커서를 두고 {BUILD_PLACE} 눌러 건설하세요.",
+    },
     a_pick = "파괴된 토치카 위로 지나가서\n탱크에 실으세요.",
     a_refill = "초록색 표시 기지에 올라가 꼭 멈추고\n보충이 끝날 때까지 기다리세요.",
     a_watch = "앞의 초록색 칸에 멈춰서\n봇이 토치카를 빼앗는 것을 보세요.",
     all = "적 기지를 모두 차지하세요: %d/8 차지함.",
-    b_build = "표시된 초록색 칸에 토치카를 지으세요.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "토치카 버튼이나 {QUICK_PILL} 누르고,\n초록색 칸을 클릭하세요.",
+      touch = "토치카 버튼을 탭하고,\n초록색 칸을 탭하세요.",
+      controller = "{BUILD_TOOL} 눌러 토치카 도구를 고르고, 건설\n커서를 초록색 칸에 두고 {BUILD_PLACE} 누르세요.",
+    },
     b_hide = "사거리 안 숲 깊은 곳에 가만히 있으세요.\n숨은 시간: %d/5초",
     b_in = "빨간 표시 안쪽의 숲으로 들어가세요.",
     b_kill = "{FIRE} 눌러 적 토치카가\n파괴될 때까지 쏘세요.",
@@ -3307,14 +3686,25 @@ TEXT["ko"] = {
 -- Dutch
 TEXT["nl"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nDe stukken naast de weg zijn bos, moeras, puin, kraters en een ondiepe rivier. Elk stuk remt je anders af. Rij over een paar ervan.\n\nDiep water laat tanks zinken. Als je hier ergens doodgaat, kom je terug bij je laatste controlepunt.",
+    s1 = {
+      keyboard = "Druk op {ACCEL} om vooruit te rijden, op {BRAKE} om af te remmen, en op {LEFT} of {RIGHT} om te draaien.\n\nDe stukken naast de weg zijn bos, moeras, puin, kraters en een ondiepe rivier. Elk stuk remt je anders af. Rij over een paar ervan.\n\nDiep water laat tanks zinken. Als je hier ergens doodgaat, kom je terug bij je laatste controlepunt.",
+      touch = "Rij met de joystick links op het scherm: duw hem de kant op die je wilt. Hoe verder je hem duwt, hoe sneller je gaat.\n\nDe stukken naast de weg zijn bos, moeras, puin, kraters en een ondiepe rivier. Elk stuk remt je anders af. Rij over een paar ervan.\n\nDiep water laat tanks zinken. Als je hier ergens doodgaat, kom je terug bij je laatste controlepunt.",
+    },
     s2a = "Bases vullen je granaten, mijnen en pantser aan, en je tank heeft er nog maar weinig.\n\nRij bij de groene markering op je basis. STOP dan op de basis en wacht tot alles is aangevuld.",
     s2b = "Neutrale bases zijn niet rood of groen. Je neemt ze in door eroverheen te rijden.",
     s2c = "Vijandelijke bases moet je eerst leegschieten. Een volle basis kost %d schoten: richt erop en druk op {FIRE} om te vuren. Rij er daarna overheen om hem van jou te maken.",
     s2d = "Waarmee je tank start, hangt af van het speltype.\n\nOpen: tanks starten altijd volledig geladen.\n\nToernooi: hoe meer bases zijn ingenomen, hoe minder granaten een nieuwe tank krijgt. Zijn alle bases ingenomen, dan starten tanks zonder granaten.\n\nStrikt toernooi: tanks starten nooit met granaten.\n\nToernooimodi hebben een duidelijk winstdoel: zodra één team alle bases bezit, wint het, want het vijandelijke team kan geen munitie meer krijgen.",
     s2stay = "Dit is je basis. Blijf erop staan en beweeg niet: je granaten, mijnen en pantser komen er beetje bij beetje bij.",
-    s3 = "Je man oogst bomen en bouwt er wegen, muren, mijnen en bunkers mee. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Spellen beginnen met neutrale bunkers. Een volle bunker heeft 15 treffers nodig voordat hij kapot is.\n\nRij eerst over de kapotte bunker om hem in je tank te laden. {PILL_HOW}",
+    s3 = {
+      keyboard = "Je man oogst bomen en bouwt er wegen, muren, mijnen en bunkers mee. Klik op een bouwknop of druk op de toets ervan: {QUICK_TREE} bomen, {QUICK_ROAD} weg, {QUICK_WALL} muur, {QUICK_MINE} mijn. Klik dan op de kaart om je man daarheen te sturen.\n\nTip: met het weg-, muur- of bunkergereedschap gekozen klik je op een boom, en je man oogst hem. Je hoeft niet elke keer naar het boomgereedschap te wisselen.",
+      touch = "Je man oogst bomen en bouwt er wegen, muren, mijnen en bunkers mee. Tik op een bouwknop: bomen, weg, muur of mijn. Tik dan op de kaart om je man daarheen te sturen.\n\nTip: met het weg-, muur- of bunkergereedschap gekozen tik je op een boom, en je man oogst hem. Je hoeft niet elke keer naar het boomgereedschap te wisselen.",
+      controller = "Je man oogst bomen en bouwt er wegen, muren, mijnen en bunkers mee. Trek aan {BUILD_MODE} voor de bouwcursor en richt hem met de rechter stick. Druk op {BUILD_TOOL} om een gereedschap te kiezen: bomen, weg, muur of mijn. Druk dan op {BUILD_PLACE} om je man naar de cursor te sturen.\n\nTip: met het weg-, muur- of bunkergereedschap gekozen zet je de bouwcursor op een boom en druk je op {BUILD_PLACE}, en je man oogst hem. Je hoeft niet elke keer naar het boomgereedschap te wisselen.",
+    },
+    s4a = {
+      keyboard = "Spellen beginnen met neutrale bunkers. Een volle bunker heeft 15 treffers nodig voordat hij kapot is.\n\nRij eerst over de kapotte bunker om hem in je tank te laden. Druk dan op de bunkerbouwknop of op de sneltoets {QUICK_PILL}. Klik daarna op de kaart om je man erop uit te sturen. Hij bouwt daar een bunker die trouw is aan jou.",
+      touch = "Spellen beginnen met neutrale bunkers. Een volle bunker heeft 15 treffers nodig voordat hij kapot is.\n\nRij eerst over de kapotte bunker om hem in je tank te laden. Tik dan op de bunkerbouwknop en tik op de kaart om je man erop uit te sturen. Hij bouwt daar een bunker die trouw is aan jou.",
+      controller = "Spellen beginnen met neutrale bunkers. Een volle bunker heeft 15 treffers nodig voordat hij kapot is.\n\nRij eerst over de kapotte bunker om hem in je tank te laden. Druk dan op {BUILD_TOOL} tot het bunkergereedschap gekozen is, zet de bouwcursor waar je hem wilt en druk op {BUILD_PLACE}. Je man gaat erop uit en bouwt daar een bunker die trouw is aan jou.",
+    },
     s4b = "Ten oosten van de weg staat een beschadigde bunker in een ring van bos. Hij vuurt nog, en een bunker die je raakt wordt boos en vuurt sneller. De rode markeringen tonen zijn bereik.\n\nBos verbergt tanks voor andere tanks en voor bunkers. Rij het bos in binnen de markeringen en sta stil. Vuren verraadt je positie.",
     s4c = "Deze bunker is al zwaar beschadigd: nog twee treffers en hij is kapot.\n\nJe tank is vol. Schiet de bunker kapot en rij er dan overheen om hem op te pakken.",
     s5a = "Stop op het groene vak voor je. Kijk hoe de bevriende bot op het ommuurde eiland een bunker inneemt. Hij bouwt zijn eigen bunker vlak naast die van de vijand en parkeert erachter. Zo raken de vijandelijke schoten zijn bunker, niet zijn tank. Dan schiet hij de vijandelijke bunker kapot en rijdt eroverheen.",
@@ -3379,11 +3769,40 @@ TEXT["nl"] = {
     wall = "Bouw een muur",
   },
   step = {
+    wall = {
+      keyboard = "Bouw een muur: klik op de muurknop of\ndruk op {QUICK_WALL}, klik dan op een grasvak.",
+      touch = "Bouw een muur: tik op de muurknop\nen tik dan op een grasvak.",
+      controller = "Bouw een muur: druk op {BUILD_TOOL} voor de muur,\nzet de cursor op gras en druk op {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Klik op de wegknop of druk op {QUICK_ROAD},\nklik dan op een grasvak.",
+      touch = "Tik op de wegknop en tik dan op een grasvak.",
+      controller = "Druk op {BUILD_TOOL} voor het weggereedschap, zet de\ncursor op gras en druk op {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Klik op de mijnknop of druk op {QUICK_MINE},\nklik dan op een vak om een mijn te leggen.",
+      touch = "Tik op de mijnknop en tik dan\nop een vak om een mijn te leggen.",
+      controller = "Druk op {BUILD_TOOL} voor het mijngereedschap, zet de\ncursor op een vak en druk op {BUILD_PLACE}.",
+    },
+    harvest = {
+      keyboard = "Klik op de boomknop of druk op {QUICK_TREE},\nklik dan op een bosvak in het gemarkeerde bosje.",
+      touch = "Tik op de boomknop en tik dan op een\nbosvak in het gemarkeerde bosje.",
+      controller = "Druk op {BUILD_TOOL} voor het boomgereedschap, zet de\ncursor op het bosje en druk op {BUILD_PLACE}.",
+    },
+    a_build = {
+      keyboard = "Druk op de bunkerknop of op {QUICK_PILL},\nklik dan op de kaart om hem te bouwen.",
+      touch = "Tik op de bunkerknop,\ntik dan op de kaart om hem te bouwen.",
+      controller = "Druk op {BUILD_TOOL} voor het bunkergereedschap,\nzet de cursor neer en druk op {BUILD_PLACE}.",
+    },
     a_pick = "Rij over de kapotte bunker om\nhem in je tank te laden.",
     a_refill = "Rij op de groen gemarkeerde basis, STOP dan\nop de basis en wacht tot alles is aangevuld.",
     a_watch = "Stop op het groene vak voor je en kijk\nhoe de bot de bunker inneemt.",
     all = "Neem elke vijandelijke basis in:\n%d van 8 zijn van jou.",
-    b_build = "Bouw je bunker op het gemarkeerde groene vak.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Druk op de bunkerknop of op {QUICK_PILL},\nklik dan op het groene vak.",
+      touch = "Tik op de bunkerknop,\ntik dan op het groene vak.",
+      controller = "Druk op {BUILD_TOOL} voor het bunkergereedschap,\nzet de cursor op het groene vak, druk op {BUILD_PLACE}.",
+    },
     b_hide = "Sta stil diep in het bos, binnen bereik.\nVerborgen: %d van 5 seconden.",
     b_in = "Rij het bos in binnen\nde rode markeringen.",
     b_kill = "Druk op {FIRE} en schiet op de\nvijandelijke bunker tot hij kapot is.",
@@ -3449,14 +3868,28 @@ TEXT["nl"] = {
 -- Polish
 TEXT["pl"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nPola obok drogi to las, bagno, gruzy, kratery i płytka rzeka. Każde spowalnia cię w innym stopniu. Spróbuj przejechać po kilku z nich.\n\nGłęboka woda topi czołgi. Jeśli zginiesz gdziekolwiek tutaj, wrócisz na ostatni punkt kontrolny.",
+    s1 = {
+      keyboard = "Naciśnij {ACCEL}, aby jechać naprzód, {BRAKE}, aby zwolnić, {LEFT} i {RIGHT}, aby skręcać.\n\nPola obok drogi to las, bagno, gruzy, kratery i płytka rzeka. Każde spowalnia cię w innym stopniu. Spróbuj przejechać po kilku z nich.\n\nGłęboka woda topi czołgi. Jeśli zginiesz gdziekolwiek tutaj, wrócisz na ostatni punkt kontrolny.",
+      touch = "Steruj drążkiem po lewej stronie ekranu: przesuń go w stronę, w którą chcesz jechać. Im dalej go przesuniesz, tym szybciej jedziesz.\n\nPola obok drogi to las, bagno, gruzy, kratery i płytka rzeka. Każde spowalnia cię w innym stopniu. Spróbuj przejechać po kilku z nich.\n\nGłęboka woda topi czołgi. Jeśli zginiesz gdziekolwiek tutaj, wrócisz na ostatni punkt kontrolny.",
+    },
     s2a = "Bazy uzupełniają pociski, miny i pancerz, a twój czołg ma ich mało.\n\nWjedź na swoją bazę przy zielonym znaczniku. Potem STAŃ na bazie i poczekaj, aż cię uzupełni.",
     s2b = "Neutralne bazy nie mają koloru czerwonego ani zielonego. Zajmiesz je, przejeżdżając po nich.",
     s2c = "Wrogie bazy trzeba najpierw opróżnić strzałami. Pełna wytrzymuje %d strzałów: wyceluj w nią i naciśnij {FIRE}, aby strzelać. Potem przejedź po niej, aby była twoja.",
     s2d = "To, z czym czołg się odradza, zależy od typu gry.\n\nOtwarta: czołgi zawsze odradzają się w pełni wyposażone.\n\nTurniej: im więcej baz jest zajętych, tym mniej pocisków dostaje odradzający się czołg. Gdy wszystkie bazy są zajęte, czołgi odradzają się bez pocisków.\n\nŚcisły turniej: czołgi nigdy nie odradzają się z pociskami.\n\nTryby turniejowe mają jasny warunek zwycięstwa: gdy jedna drużyna ma wszystkie bazy, wygrywa, bo wroga drużyna nie może zdobyć amunicji.",
     s2stay = "To twoja baza. Zostań na niej i się nie ruszaj: pociski, miny i pancerz napływają po trochu.",
-    s3 = "Twój człowiek ścina drzewa, a potem buduje z nich drogi, ściany, miny i bunkry. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Gra zaczyna się z neutralnymi bunkrami, a pełny bunkier niszczy dopiero 15 strzałów.\n\nNajpierw przejedź po zniszczonym bunkrze, aby załadować go do czołgu. {PILL_HOW}",
+    s3 = {
+      keyboard = "Twój człowiek ścina drzewa, a potem buduje z nich drogi, ściany, miny i bunkry. Kliknij przycisk budowania albo naciśnij jego klawisz: {QUICK_TREE} drzewa, {QUICK_ROAD} droga, {QUICK_WALL} ściana, {QUICK_MINE} mina. Potem kliknij na mapie, aby wysłać tam swojego człowieka.\n\nWskazówka: gdy wybrane jest narzędzie drogi, ściany lub bunkra, kliknij drzewo, a twój człowiek je zetnie. Nie musisz za każdym razem przełączać na narzędzie drzew.",
+      touch = "Twój człowiek ścina drzewa, a potem buduje z nich drogi, ściany, miny i bunkry. Stuknij przycisk budowania: drzewa, droga, ściana lub mina. Potem stuknij mapę, aby wysłać tam swojego człowieka.\n\nWskazówka: gdy wybrane jest narzędzie drogi, ściany lub bunkra, stuknij drzewo, a twój człowiek je zetnie. Nie musisz za każdym razem przełączać na narzędzie drzew.",
+      controller = {
+        "Twój człowiek ścina drzewa, a potem buduje z nich drogi, ściany, miny i bunkry. Naciśnij {BUILD_MODE}, aby włączyć kursor budowania, i celuj nim prawym drążkiem. Naciśnij {BUILD_TOOL}, aby wybrać narzędzie: drzewa, droga, ściana lub mina. Potem naciśnij {BUILD_PLACE}, aby wysłać człowieka do kursora.",
+        "Wskazówka: gdy wybrane jest narzędzie drogi, ściany lub bunkra, ustaw kursor budowania na drzewie i naciśnij {BUILD_PLACE}, a twój człowiek je zetnie. Nie musisz za każdym razem przełączać na narzędzie drzew.",
+      },
+    },
+    s4a = {
+      keyboard = "Gra zaczyna się z neutralnymi bunkrami, a pełny bunkier niszczy dopiero 15 strzałów.\n\nNajpierw przejedź po zniszczonym bunkrze, aby załadować go do czołgu. Potem naciśnij przycisk budowy bunkra albo jego klawisz {QUICK_PILL}. Potem kliknij na mapie, aby wysłać człowieka, który zbuduje tam bunkier wierny tobie.",
+      touch = "Gra zaczyna się z neutralnymi bunkrami, a pełny bunkier niszczy dopiero 15 strzałów.\n\nNajpierw przejedź po zniszczonym bunkrze, aby załadować go do czołgu. Potem stuknij przycisk budowy bunkra i stuknij mapę, aby wysłać człowieka, który zbuduje tam bunkier wierny tobie.",
+      controller = "Gra zaczyna się z neutralnymi bunkrami, a pełny bunkier niszczy dopiero 15 strzałów.\n\nNajpierw przejedź po zniszczonym bunkrze, aby załadować go do czołgu. Potem naciskaj {BUILD_TOOL}, aż wybierzesz narzędzie bunkra, ustaw kursor budowania w wybranym miejscu i naciśnij {BUILD_PLACE}. Twój człowiek wyjdzie i zbuduje tam bunkier wierny tobie.",
+    },
     s4b = "Na wschód od drogi, w pierścieniu lasu, stoi uszkodzony bunkier. Nadal strzela, a trafiony bunkier się złości i strzela szybciej. Czerwone znaczniki pokazują jego zasięg.\n\nLas ukrywa czołgi przed innymi czołgami i przed bunkrami. Wjedź do lasu w obrębie znaczników i stój w miejscu. Strzał zdradza twoją pozycję.",
     s4c = "Ten bunkier jest już mocno uszkodzony: dwa kolejne strzały go zniszczą.\n\nTwój czołg jest pełny. Zniszcz go, a potem przejedź po nim, aby go zabrać.",
     s5a = "Stań na zielonym polu przed tobą. Patrz, jak sojuszniczy bot na otoczonej murem wyspie zdobywa bunkier. Buduje własny bunkier tuż obok wrogiego i parkuje za nim, więc wrogie strzały trafiają jego bunkier, a nie czołg. Potem niszczy wrogi bunkier i przejeżdża po nim.",
@@ -3509,11 +3942,40 @@ TEXT["pl"] = {
     wall = "Zbuduj ścianę",
   },
   step = {
+    wall = {
+      keyboard = "Zbuduj ścianę: kliknij przycisk ściany\nalbo naciśnij {QUICK_WALL}, potem kliknij trawę.",
+      touch = "Zbuduj ścianę: stuknij przycisk ściany,\npotem stuknij pole trawy.",
+      controller = "Ściana: naciśnij {BUILD_TOOL} (ściana),\nustaw kursor na trawie i naciśnij {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Kliknij przycisk drogi albo naciśnij {QUICK_ROAD},\npotem kliknij pole trawy.",
+      touch = "Stuknij przycisk drogi, potem stuknij pole trawy.",
+      controller = "Naciśnij {BUILD_TOOL} (droga), ustaw\nkursor na trawie i naciśnij {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Kliknij przycisk miny albo naciśnij {QUICK_MINE},\npotem kliknij pole, aby położyć minę.",
+      touch = "Stuknij przycisk miny, potem stuknij\npole, aby położyć minę.",
+      controller = "Naciśnij {BUILD_TOOL} (mina), ustaw\nkursor na polu i naciśnij {BUILD_PLACE}.",
+    },
+    harvest = {
+      keyboard = "Kliknij przycisk drzew albo naciśnij {QUICK_TREE},\npotem kliknij pole lasu w zaznaczonym zagajniku.",
+      touch = "Stuknij przycisk drzew, potem stuknij\npole lasu w zaznaczonym zagajniku.",
+      controller = "Naciśnij {BUILD_TOOL} (drzewa),\nustaw kursor na zagajniku i naciśnij {BUILD_PLACE}.",
+    },
+    a_build = {
+      keyboard = "Naciśnij przycisk bunkra albo {QUICK_PILL},\npotem kliknij na mapie, aby go zbudować.",
+      touch = "Stuknij przycisk bunkra,\npotem stuknij mapę, aby go zbudować.",
+      controller = "Naciśnij {BUILD_TOOL}, aby wybrać bunkier, ustaw\nkursor i naciśnij {BUILD_PLACE}, aby go zbudować.",
+    },
     a_pick = "Przejedź po zniszczonym bunkrze, aby go załadować.",
     a_refill = "Wjedź na bazę z zielonym znacznikiem, potem\nSTAŃ na niej i poczekaj na uzupełnienie.",
     a_watch = "Stań na zielonym polu przed tobą\ni patrz, jak bot zdobywa bunkier.",
     all = "Zajmij wszystkie wrogie bazy: twoich jest %d z 8.",
-    b_build = "Zbuduj bunkier na zaznaczonym zielonym polu.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Naciśnij przycisk bunkra albo {QUICK_PILL},\npotem kliknij zielone pole.",
+      touch = "Stuknij przycisk bunkra,\npotem stuknij zielone pole.",
+      controller = "Naciśnij {BUILD_TOOL} (bunkier), ustaw\nkursor na zielonym polu i naciśnij {BUILD_PLACE}.",
+    },
     b_hide = "Stój w miejscu głęboko w lesie, w zasięgu.\nUkryty: %d z 5 sekund.",
     b_in = "Wjedź do lasu w obrębie czerwonych znaczników.",
     b_kill = "Naciskaj {FIRE} i strzelaj we wrogi\nbunkier, aż padnie.",
@@ -3579,14 +4041,28 @@ TEXT["pl"] = {
 -- Portuguese (Brazil)
 TEXT["pt-br"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nAs áreas ao lado da estrada são floresta, pântano, escombros, crateras e um rio raso. Cada uma deixa você mais lento de um jeito diferente. Tente dirigir por algumas delas.\n\nÁgua profunda afunda tanques. Se você morrer em qualquer lugar aqui, volta no seu último ponto de controle.",
+    s1 = {
+      keyboard = "Pressione {ACCEL} para avançar, {BRAKE} para desacelerar, {LEFT} e {RIGHT} para virar.\n\nAs áreas ao lado da estrada são floresta, pântano, escombros, crateras e um rio raso. Cada uma deixa você mais lento de um jeito diferente. Tente dirigir por algumas delas.\n\nÁgua profunda afunda tanques. Se você morrer em qualquer lugar aqui, volta no seu último ponto de controle.",
+      touch = "Dirija com o thumbstick do lado esquerdo da tela: empurre-o na direção em que quer ir. Quanto mais você empurrar, mais rápido vai.\n\nAs áreas ao lado da estrada são floresta, pântano, escombros, crateras e um rio raso. Cada uma deixa você mais lento de um jeito diferente. Tente dirigir por algumas delas.\n\nÁgua profunda afunda tanques. Se você morrer em qualquer lugar aqui, volta no seu último ponto de controle.",
+    },
     s2a = "Bases reabastecem seus projéteis, minas e blindagem, e seu tanque está com pouco.\n\nDirija até a sua base, no marcador verde. Depois PARE na base e espere enquanto ela reabastece.",
     s2b = "Bases neutras não têm vermelho nem verde, e você as captura passando por cima delas.",
     s2c = "Bases inimigas precisam primeiro ser esvaziadas a tiros. Uma cheia leva %d tiros: mire nela e pressione {FIRE} para atirar. Depois passe por cima dela para torná-la sua.",
     s2d = "Com o que seu tanque renasce depende do tipo de jogo.\n\nAberto: os tanques sempre renascem carregados.\n\nTorneio: quanto mais bases são tomadas, menos projéteis um tanque tem ao renascer; quando todas as bases são tomadas, os tanques renascem sem projéteis.\n\nTorneio estrito: os tanques nunca renascem com projéteis.\n\nOs modos torneio têm uma condição de vitória clara: quando um time possui todas as bases, ele vence, porque o time inimigo não consegue munição.",
     s2stay = "Esta é a sua base. Fique nela e não se mova: seus projéteis, minas e blindagem entram aos poucos.",
-    s3 = "Seu construtor colhe árvores e depois as usa para construir estradas, muros, minas e bunkers. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Os jogos começam com bunkers neutros, e um cheio leva 15 tiros para ser destruído.\n\nPrimeiro, passe por cima do bunker destruído para colocá-lo no seu tanque. {PILL_HOW}",
+    s3 = {
+      keyboard = "Seu construtor colhe árvores e depois as usa para construir estradas, muros, minas e bunkers. Clique em um botão de construção ou pressione a tecla dele: {QUICK_TREE} árvores, {QUICK_ROAD} estrada, {QUICK_WALL} muro, {QUICK_MINE} mina. Depois clique no mapa para mandar seu construtor até lá.\n\nDica: com a ferramenta de estrada, muro ou bunker escolhida, clique em uma árvore e seu construtor a colhe. Você não precisa trocar para a ferramenta de árvores toda vez.",
+      touch = "Seu construtor colhe árvores e depois as usa para construir estradas, muros, minas e bunkers. Toque em um botão de construção: árvores, estrada, muro ou mina. Depois toque no mapa para mandar seu construtor até lá.\n\nDica: com a ferramenta de estrada, muro ou bunker escolhida, toque em uma árvore e seu construtor a colhe. Você não precisa trocar para a ferramenta de árvores toda vez.",
+      controller = {
+        "Seu construtor colhe árvores e depois as usa para construir estradas, muros, minas e bunkers. Pressione {BUILD_MODE} para o cursor de construção e mire-o com o analógico direito. Pressione {BUILD_TOOL} para escolher uma ferramenta: árvores, estrada, muro ou mina. Depois pressione {BUILD_PLACE} para mandar seu construtor até o cursor.",
+        "Dica: com a ferramenta de estrada, muro ou bunker escolhida, ponha o cursor de construção em uma árvore e pressione {BUILD_PLACE}: seu construtor a colhe. Você não precisa trocar para a ferramenta de árvores toda vez.",
+      },
+    },
+    s4a = {
+      keyboard = "Os jogos começam com bunkers neutros, e um cheio leva 15 tiros para ser destruído.\n\nPrimeiro, passe por cima do bunker destruído para colocá-lo no seu tanque. Depois pressione o botão de construir bunker ou a tecla de atalho {QUICK_PILL}. Então clique no mapa para mandar seu construtor erguer ali um bunker leal a você.",
+      touch = "Os jogos começam com bunkers neutros, e um cheio leva 15 tiros para ser destruído.\n\nPrimeiro, passe por cima do bunker destruído para colocá-lo no seu tanque. Depois toque no botão de construir bunker e toque no mapa para mandar seu construtor erguer ali um bunker leal a você.",
+      controller = "Os jogos começam com bunkers neutros, e um cheio leva 15 tiros para ser destruído.\n\nPrimeiro, passe por cima do bunker destruído para colocá-lo no seu tanque. Depois pressione {BUILD_TOOL} até escolher a ferramenta de bunker, ponha o cursor de construção onde quiser e pressione {BUILD_PLACE}. Seu construtor sai e ergue ali um bunker leal a você.",
+    },
     s4b = "A leste da estrada, um bunker danificado fica num anel de floresta. Ele ainda atira, e um bunker que você acerta fica bravo e atira mais rápido. Os marcadores vermelhos mostram o alcance dele.\n\nFlorestas escondem os tanques tanto de outros tanques quanto dos bunkers. Entre na floresta dentro dos marcadores e fique parado. Atirar revela a sua posição.",
     s4c = "Este bunker já está muito danificado: mais dois tiros o destroem.\n\nSeu tanque está cheio. Destrua-o e depois passe por cima dele para pegá-lo.",
     s5a = "Pare no quadrado verde à frente. Veja o bot aliado na ilha murada tomar um bunker. Ele constrói o próprio bunker bem ao lado do inimigo e para atrás dele, para que os tiros do inimigo acertem o bunker dele, não o tanque. Depois ele destrói o bunker inimigo a tiros e passa por cima dele.",
@@ -3639,11 +4115,40 @@ TEXT["pt-br"] = {
     wall = "Construa um muro",
   },
   step = {
+    wall = {
+      keyboard = "Construa um muro: clique no botão de muro\nou pressione {QUICK_WALL} e clique na grama.",
+      touch = "Construa um muro: toque no botão de muro,\ndepois toque num quadrado de grama.",
+      controller = "Muro: pressione {BUILD_TOOL} e escolha o muro.\nPonha o cursor na grama, pressione {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Clique no botão de estrada ou pressione\n{QUICK_ROAD} e clique num quadrado de grama.",
+      touch = "Toque no botão de estrada e depois\ntoque num quadrado de grama.",
+      controller = "Escolha estrada: pressione {BUILD_TOOL}. Ponha o\ncursor na grama e pressione {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Clique no botão de mina ou pressione\n{QUICK_MINE} e clique onde quer pôr a mina.",
+      touch = "Toque no botão de mina e depois\ntoque num quadrado para pôr uma mina.",
+      controller = "Escolha mina: pressione {BUILD_TOOL}. Ponha o\ncursor num quadrado e pressione {BUILD_PLACE}.",
+    },
+    harvest = {
+      keyboard = "Clique no botão de árvore ou pressione\n{QUICK_TREE}, depois clique no bosque marcado.",
+      touch = "Toque no botão de árvore e depois toque num\nquadrado de floresta do bosque marcado.",
+      controller = "Escolha árvore: pressione {BUILD_TOOL}. Ponha o\ncursor no bosque e pressione {BUILD_PLACE}.",
+    },
+    a_build = {
+      keyboard = "Pressione o botão de bunker ou {QUICK_PILL},\ndepois clique no mapa para construí-lo.",
+      touch = "Toque no botão de bunker,\ndepois toque no mapa para construí-lo.",
+      controller = "Escolha bunker: pressione {BUILD_TOOL}. Ponha o\ncursor e pressione {BUILD_PLACE} para construir.",
+    },
     a_pick = "Passe por cima do bunker destruído para pô-lo no tanque.",
     a_refill = "Dirija até a base com marca verde, depois PARE\nnela e espere enquanto ela reabastece.",
     a_watch = "Pare no quadrado verde à frente\ne veja o bot tomar o bunker.",
     all = "Tome todas as bases inimigas: %d de 8 são suas.",
-    b_build = "Construa seu bunker no quadrado verde marcado.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Pressione o botão de bunker ou {QUICK_PILL},\ndepois clique no quadrado verde.",
+      touch = "Toque no botão de bunker,\ndepois toque no quadrado verde.",
+      controller = "Escolha bunker: pressione {BUILD_TOOL}. Ponha o\ncursor no verde e pressione {BUILD_PLACE}.",
+    },
     b_hide = "Fique parado no fundo da floresta, no alcance.\nEscondido: %d de 5 segundos.",
     b_in = "Entre na floresta dentro dos marcadores vermelhos.",
     b_kill = "Atire no bunker inimigo: pressione {FIRE}\naté destruí-lo.",
@@ -3709,7 +4214,16 @@ TEXT["pt-br"] = {
 -- Russian
 TEXT["ru"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nУчастки у дороги: лес, болото, развалины, кратеры и мелкая река. Каждый замедляет по-своему. Попробуйте проехать по нескольким.\n\nГлубокая вода топит танки. Если вы погибнете здесь, то вернётесь на последнюю контрольную точку.",
+    s1 = {
+      keyboard = {
+        "Нажмите {ACCEL}, чтобы ехать вперёд, {BRAKE}, чтобы замедлиться, {LEFT} и {RIGHT}, чтобы поворачивать.\n\nУчастки у дороги: лес, болото, развалины, кратеры и мелкая река. Каждый замедляет по-своему. Попробуйте проехать по нескольким.",
+        "Глубокая вода топит танки. Если вы погибнете здесь, то вернётесь на последнюю контрольную точку.",
+      },
+      touch = {
+        "Управляйте стиком в левой части экрана: толкните его туда, куда хотите ехать. Чем дальше толкнёте, тем быстрее поедете.\n\nУчастки у дороги: лес, болото, развалины, кратеры и мелкая река. Каждый замедляет по-своему. Попробуйте проехать по нескольким.",
+        "Глубокая вода топит танки. Если вы погибнете здесь, то вернётесь на последнюю контрольную точку.",
+      },
+    },
     s2a = "Базы пополняют снаряды, мины и броню, а у вашего танка их мало.\n\nВъезжайте на свою базу у зелёного маркера. Затем ОСТАНОВИТЕСЬ на базе и ждите пополнения.",
     s2b = "Нейтральные базы не красные и не зелёные. Чтобы захватить такую базу, просто проезжайте по ней.",
     s2c = "Вражескую базу сначала надо опустошить. Полная выдерживает %d выстрелов: наведитесь на неё и нажмите {FIRE}, чтобы стрелять. Затем проезжайте по ней, и она ваша.",
@@ -3718,8 +4232,31 @@ TEXT["ru"] = {
       "Строгий турнир: танки никогда не возрождаются со снарядами.\n\nВ турнирных режимах ясное условие победы: команда, захватившая все базы, побеждает, ведь врагу негде взять боеприпасы.",
     },
     s2stay = "Это ваша база. Стойте на ней и не двигайтесь: снаряды, мины и броня поступают понемногу.",
-    s3 = "Ваш строитель рубит деревья и строит из них дороги, стены, мины и бункеры. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Игра начинается с нейтральными бункерами; полный бункер выдерживает 15 выстрелов.\n\nСначала проезжайте по разрушенному бункеру, чтобы погрузить его в танк. {PILL_HOW}",
+    s3 = {
+      keyboard = {
+        "Ваш строитель рубит деревья и строит из них дороги, стены, мины и бункеры. Щёлкните кнопку постройки или нажмите её клавишу: {QUICK_TREE} деревья, {QUICK_ROAD} дорога, {QUICK_WALL} стена, {QUICK_MINE} мина. Затем щёлкните по карте, чтобы отправить туда строителя.",
+        "Совет: когда выбран инструмент дороги, стены или бункера, щёлкните по дереву, и строитель его срубит. Не нужно каждый раз переключаться на инструмент деревьев.",
+      },
+      touch = {
+        "Ваш строитель рубит деревья и строит из них дороги, стены, мины и бункеры. Коснитесь кнопки постройки: деревья, дорога, стена или мина. Затем коснитесь карты, чтобы отправить туда строителя.",
+        "Совет: когда выбран инструмент дороги, стены или бункера, коснитесь дерева, и строитель его срубит. Не нужно каждый раз переключаться на инструмент деревьев.",
+      },
+      controller = {
+        "Ваш строитель рубит деревья и строит из них дороги, стены, мины и бункеры. Нажмите {BUILD_MODE}, чтобы включить курсор постройки, и наводите его правым стиком. Нажмите {BUILD_TOOL}, чтобы выбрать инструмент: деревья, дорога, стена или мина.",
+        "Затем нажмите {BUILD_PLACE}, чтобы отправить строителя к курсору.\n\nСовет: когда выбран инструмент дороги, стены или бункера, наведите курсор постройки на дерево и нажмите {BUILD_PLACE}, и строитель его срубит. Не нужно каждый раз переключаться на инструмент деревьев.",
+      },
+    },
+    s4a = {
+      keyboard = {
+        "Игра начинается с нейтральными бункерами; полный бункер выдерживает 15 выстрелов.",
+        "Сначала проезжайте по разрушенному бункеру, чтобы погрузить его в танк. Затем нажмите кнопку постройки бункера или её клавишу {QUICK_PILL}. Затем щёлкните по карте, и строитель построит там бункер, верный вам.",
+      },
+      touch = "Игра начинается с нейтральными бункерами; полный бункер выдерживает 15 выстрелов.\n\nСначала проезжайте по разрушенному бункеру, чтобы погрузить его в танк. Затем коснитесь кнопки постройки бункера и коснитесь карты, и строитель построит там бункер, верный вам.",
+      controller = {
+        "Игра начинается с нейтральными бункерами; полный бункер выдерживает 15 выстрелов.",
+        "Сначала проезжайте по разрушенному бункеру, чтобы погрузить его в танк. Затем нажимайте {BUILD_TOOL}, пока не выберете инструмент бункера, наведите курсор постройки на нужное место и нажмите {BUILD_PLACE}. Строитель выйдет и построит там бункер, верный вам.",
+      },
+    },
     s4b = {
       "К востоку от дороги, в кольце леса, стоит повреждённый бункер. Он всё ещё стреляет, а бункер, по которому вы попали, злится и стреляет чаще. Красные маркеры показывают его дальность.",
       "Лес скрывает танки от других танков и от бункеров. Въезжайте в лес внутри маркеров и стойте неподвижно. Стрельба выдаёт вашу позицию.",
@@ -3787,11 +4324,40 @@ TEXT["ru"] = {
     wall = "Постройте стену",
   },
   step = {
+    wall = {
+      keyboard = "Стена: щёлкните кнопку стены\nили нажмите {QUICK_WALL}, затем траву.",
+      touch = "Постройте стену: коснитесь\nкнопки стены, затем травы.",
+      controller = "Стена: нажмите {BUILD_TOOL} (стена),\nнаведите на траву и нажмите {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Щёлкните кнопку дороги или нажмите\n{QUICK_ROAD}, затем щёлкните по траве.",
+      touch = "Коснитесь кнопки дороги, затем травы.",
+      controller = "Нажмите {BUILD_TOOL} (дорога), наведите\nкурсор на траву и нажмите {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Щёлкните кнопку мины или нажмите\n{QUICK_MINE}, затем щёлкните клетку.",
+      touch = "Коснитесь кнопки мины,\nзатем клетки, чтобы поставить мину.",
+      controller = "Нажмите {BUILD_TOOL} (мина), наведите\nкурсор на клетку и нажмите {BUILD_PLACE}.",
+    },
+    harvest = {
+      keyboard = "Нажмите кнопку деревьев или {QUICK_TREE},\nзатем щёлкните отмеченную рощу.",
+      touch = "Коснитесь кнопки деревьев,\nзатем леса в отмеченной роще.",
+      controller = "Нажмите {BUILD_TOOL} (деревья), наведите\nкурсор на рощу и нажмите {BUILD_PLACE}.",
+    },
+    a_build = {
+      keyboard = "Нажмите кнопку бункера или {QUICK_PILL},\nзатем щёлкните по карте.",
+      touch = "Коснитесь кнопки бункера,\nзатем карты, чтобы построить его.",
+      controller = "Нажмите {BUILD_TOOL} (бункер), наведите\nкурсор и нажмите {BUILD_PLACE}.",
+    },
     a_pick = "Проезжайте по разрушенному\nбункеру, чтобы погрузить его.",
     a_refill = "Въезжайте на базу с зелёным маркером,\nСТОЙТЕ на ней и ждите.",
     a_watch = "Встаньте на зелёной клетке\nи смотрите, как бот берёт бункер.",
     all = "Захватите все базы врага:\nваших %d из 8.",
-    b_build = "Постройте бункер на зелёной клетке.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Нажмите кнопку бункера или {QUICK_PILL},\nзатем щёлкните зелёную клетку.",
+      touch = "Коснитесь кнопки бункера,\nзатем зелёной клетки.",
+      controller = "Нажмите {BUILD_TOOL} (бункер), наведите\nна зелёную клетку и нажмите {BUILD_PLACE}.",
+    },
     b_hide = "Стойте в глубине леса, в зоне огня.\nСкрыты: %d из 5 сек.",
     b_in = "Въезжайте в лес внутри\nкрасных маркеров.",
     b_kill = "Нажимайте {FIRE} и стреляйте\nпо бункеру, пока он не падёт.",
@@ -3857,14 +4423,25 @@ TEXT["ru"] = {
 -- Swedish
 TEXT["sv"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nFälten bredvid vägen är skog, träsk, bråte, kratrar och en grund flod. Varje sorts mark bromsar dig olika mycket. Prova att köra på några av dem.\n\nDjupt vatten sänker tankar. Om du dör någonstans här kommer du tillbaka vid din senaste kontrollpunkt.",
+    s1 = {
+      keyboard = "Tryck på {ACCEL} för att köra framåt, {BRAKE} för att sakta ned och {LEFT} eller {RIGHT} för att svänga.\n\nFälten bredvid vägen är skog, träsk, bråte, kratrar och en grund flod. Varje sorts mark bromsar dig olika mycket. Prova att köra på några av dem.\n\nDjupt vatten sänker tankar. Om du dör någonstans här kommer du tillbaka vid din senaste kontrollpunkt.",
+      touch = "Kör med tumspaken till vänster på skärmen: skjut den åt det håll du vill åka. Ju längre du skjuter den, desto snabbare åker du.\n\nFälten bredvid vägen är skog, träsk, bråte, kratrar och en grund flod. Varje sorts mark bromsar dig olika mycket. Prova att köra på några av dem.\n\nDjupt vatten sänker tankar. Om du dör någonstans här kommer du tillbaka vid din senaste kontrollpunkt.",
+    },
     s2a = "Baser fyller på dina granater, minor och ditt pansar, och din tank har lite kvar.\n\nKör upp på din bas vid den gröna markeringen. STANNA sedan på basen och vänta medan den fyller på.",
     s2b = "Neutrala baser är varken röda eller gröna. Du tar dem genom att köra över dem.",
     s2c = "Fiendebaser måste först skjutas tomma. En full bas kräver %d skott: sikta på den och tryck på {FIRE} för att skjuta. Kör sedan över den för att göra den till din.",
     s2d = "Vad din tank startar med beror på speltypen.\n\nÖppet: tankar startar alltid fullt lastade.\n\nTurnering: ju fler baser som är tagna, desto färre granater får en ny tank. När alla baser är tagna startar tankar utan granater.\n\nStrikt turnering: tankar startar aldrig med granater.\n\nTurneringslägen har ett tydligt mål: när ett lag äger alla baser vinner det, eftersom fiendelaget inte kan få någon ammunition.",
     s2stay = "Det här är din bas. Stanna på den och rör dig inte: dina granater, minor och ditt pansar fylls på lite i taget.",
-    s3 = "Din man hugger träd och bygger sedan vägar, murar, minor och bunkrar av dem. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Spel börjar med neutrala bunkrar, och en full bunker kräver 15 skott för att förstöras.\n\nKör först över den förstörda bunkern för att lasta den i din tank. {PILL_HOW}",
+    s3 = {
+      keyboard = "Din man hugger träd och bygger sedan vägar, murar, minor och bunkrar av dem. Klicka på en byggknapp eller tryck på dess tangent: {QUICK_TREE} träd, {QUICK_ROAD} väg, {QUICK_WALL} mur, {QUICK_MINE} mina. Klicka sedan på kartan för att skicka dit din man.\n\nTips: när väg-, mur- eller bunkerverktyget är valt kan du klicka på ett träd, så hugger din man det. Du behöver inte byta till trädverktyget varje gång.",
+      touch = "Din man hugger träd och bygger sedan vägar, murar, minor och bunkrar av dem. Tryck på en byggknapp: träd, väg, mur eller mina. Tryck sedan på kartan för att skicka dit din man.\n\nTips: när väg-, mur- eller bunkerverktyget är valt kan du trycka på ett träd, så hugger din man det. Du behöver inte byta till trädverktyget varje gång.",
+      controller = "Din man hugger träd och bygger sedan vägar, murar, minor och bunkrar av dem. Dra i {BUILD_MODE} för byggmarkören och rikta den med höger spak. Tryck på {BUILD_TOOL} för att välja verktyg: träd, väg, mur eller mina. Tryck sedan på {BUILD_PLACE} för att skicka din man till markören.\n\nTips: när väg-, mur- eller bunkerverktyget är valt kan du sätta byggmarkören på ett träd och trycka på {BUILD_PLACE}, så hugger din man det. Du behöver inte byta till trädverktyget varje gång.",
+    },
+    s4a = {
+      keyboard = "Spel börjar med neutrala bunkrar, och en full bunker kräver 15 skott för att förstöras.\n\nKör först över den förstörda bunkern för att lasta den i din tank. Tryck sedan på bunkerns byggknapp eller dess snabbtangent {QUICK_PILL}. Klicka sedan på kartan för att skicka ut din man, som bygger en bunker som är lojal mot dig på den platsen.",
+      touch = "Spel börjar med neutrala bunkrar, och en full bunker kräver 15 skott för att förstöras.\n\nKör först över den förstörda bunkern för att lasta den i din tank. Tryck sedan på bunkerns byggknapp och tryck på kartan för att skicka ut din man, som bygger en bunker som är lojal mot dig på den platsen.",
+      controller = "Spel börjar med neutrala bunkrar, och en full bunker kräver 15 skott för att förstöras.\n\nKör först över den förstörda bunkern för att lasta den i din tank. Tryck sedan på {BUILD_TOOL} tills bunkerverktyget är valt, sätt byggmarkören där du vill ha den och tryck på {BUILD_PLACE}. Din man går ut och bygger en bunker som är lojal mot dig där.",
+    },
     s4b = "Öster om vägen står en skadad bunker i en ring av skog. Den skjuter fortfarande, och en bunker som du träffar blir arg och skjuter snabbare. De röda markeringarna visar dess räckvidd.\n\nSkog döljer tankar för både andra tankar och bunkrar. Kör in i skogen innanför markeringarna och stå still. Att skjuta avslöjar var du är.",
     s4c = "Den här bunkern är redan svårt skadad: två skott till förstör den.\n\nDin tank är full. Förstör bunkern och kör sedan över den för att plocka upp den.",
     s5a = "Stanna på den gröna rutan framför dig. Se hur den vänliga boten på den inmurade ön tar en bunker. Den bygger en egen bunker precis bredvid fiendens och parkerar bakom den. Då träffar fiendens skott dess bunker, inte dess tank. Sedan skjuter den sönder fiendens bunker och kör över den.",
@@ -3929,11 +4506,40 @@ TEXT["sv"] = {
     wall = "Bygg en mur",
   },
   step = {
+    wall = {
+      keyboard = "Bygg en mur: klicka på murknappen eller\ntryck på {QUICK_WALL}, klicka sedan på en gräsruta.",
+      touch = "Bygg en mur: tryck på murknappen\noch sedan på en gräsruta.",
+      controller = "Bygg en mur: tryck på {BUILD_TOOL} för muren,\nsätt markören på gräs och tryck på {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Tryck på {QUICK_ROAD} eller klicka på vägknappen,\nklicka sedan på en gräsruta.",
+      touch = "Tryck på vägknappen och sedan på en gräsruta.",
+      controller = "Tryck på {BUILD_TOOL} för vägverktyget, sätt\nmarkören på gräs och tryck på {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Tryck på {QUICK_MINE} eller klicka på minknappen,\nklicka sedan på en ruta för att lägga ut en mina.",
+      touch = "Tryck på minknappen och sedan på\nen ruta för att lägga ut en mina.",
+      controller = "Tryck på {BUILD_TOOL} för minverktyget, sätt\nmarkören på en ruta och tryck på {BUILD_PLACE}.",
+    },
+    harvest = {
+      keyboard = "Tryck på {QUICK_TREE} eller klicka på trädknappen,\nklicka sedan på en skogsruta i den markerade dungen.",
+      touch = "Tryck på trädknappen och sedan på en\nskogsruta i den markerade dungen.",
+      controller = "Tryck på {BUILD_TOOL} för trädverktyget, sätt\nmarkören på dungen och tryck på {BUILD_PLACE}.",
+    },
+    a_build = {
+      keyboard = "Tryck på bunkerknappen eller {QUICK_PILL},\nklicka sedan på kartan för att bygga den.",
+      touch = "Tryck på bunkerknappen och sedan\npå kartan för att bygga den.",
+      controller = "Tryck på {BUILD_TOOL} för bunkerverktyget, sätt ut\nmarkören och tryck på {BUILD_PLACE}.",
+    },
     a_pick = "Kör över den förstörda bunkern för\natt lasta den i din tank.",
     a_refill = "Kör upp på den grönmarkerade basen, STANNA sedan\npå den och vänta medan den fyller på.",
     a_watch = "Stanna på den gröna rutan framför dig\noch se boten ta bunkern.",
     all = "Ta alla fiendebaser: %d av 8 är dina.",
-    b_build = "Bygg din bunker på den markerade gröna rutan.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Tryck på bunkerknappen eller {QUICK_PILL},\nklicka sedan på den gröna rutan.",
+      touch = "Tryck på bunkerknappen och\nsedan på den gröna rutan.",
+      controller = "Tryck på {BUILD_TOOL} för bunkerverktyget, sätt\nmarkören på den gröna rutan och tryck på {BUILD_PLACE}.",
+    },
     b_hide = "Stå still djupt inne i skogen, inom räckvidd.\nDold: %d av 5 sekunder.",
     b_in = "Kör in i skogen innanför\nde röda markeringarna.",
     b_kill = "Tryck på {FIRE} och skjut på fiendens\nbunker tills den är förstörd.",
@@ -3999,14 +4605,25 @@ TEXT["sv"] = {
 -- Turkish
 TEXT["tr"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nYolun yanındaki alanlar orman, bataklık, moloz, krater ve sığ bir nehirdir. Her biri sizi farklı ölçüde yavaşlatır. Birkaçının üzerinde sürmeyi deneyin.\n\nDerin su tankları batırır. Burada herhangi bir yerde ölürseniz son kontrol noktanızda yeniden başlarsınız.",
+    s1 = {
+      keyboard = "İleri gitmek için {ACCEL}, yavaşlamak için {BRAKE}, dönmek için {LEFT} ve {RIGHT} basın.\n\nYolun yanındaki alanlar orman, bataklık, moloz, krater ve sığ bir nehirdir. Her biri sizi farklı ölçüde yavaşlatır. Birkaçının üzerinde sürmeyi deneyin.\n\nDerin su tankları batırır. Burada herhangi bir yerde ölürseniz son kontrol noktanızda yeniden başlarsınız.",
+      touch = "Ekranın solundaki joystick ile sürün: gitmek istediğiniz yöne itin. Ne kadar çok iterseniz o kadar hızlı gidersiniz.\n\nYolun yanındaki alanlar orman, bataklık, moloz, krater ve sığ bir nehirdir. Her biri sizi farklı ölçüde yavaşlatır. Birkaçının üzerinde sürmeyi deneyin.\n\nDerin su tankları batırır. Burada herhangi bir yerde ölürseniz son kontrol noktanızda yeniden başlarsınız.",
+    },
     s2a = "Üsler mermilerinizi, mayınlarınızı ve zırhınızı doldurur; tankınızda bunlar azaldı.\n\nYeşil işaretteki üssünüze sürün. Sonra üssün üzerinde DURUN ve dolarken bekleyin.",
     s2b = "Tarafsız üslerde kırmızı ya da yeşil yoktur; üzerlerinden geçerek ele geçirilirler.",
     s2c = "Düşman üsleri önce ateş edilerek boşaltılmalıdır. Dolu bir üs %d atış ister: ona nişan alın ve ateş etmek için {FIRE} basın. Sonra sizin olması için üzerinden geçin.",
     s2d = "Tankınızın neyle yeniden doğduğu oyun türüne bağlıdır.\n\nAçık: tanklar her zaman tam dolu doğar.\n\nTurnuva: ne kadar çok üs alınmışsa tank o kadar az mermiyle doğar; tüm üsler alınınca tanklar mermisiz doğar.\n\nSıkı Turnuva: tanklar asla mermiyle doğmaz.\n\nTurnuva modlarında net bir kazanma koşulu vardır: bir takım tüm üslere sahip olunca kazanır, çünkü düşman takım hiç cephane alamaz.",
     s2stay = "Bu sizin üssünüz. Üzerinde kalın ve kıpırdamayın: mermileriniz, mayınlarınız ve zırhınız azar azar dolar.",
-    s3 = "İnşaatçınız ağaç toplar, sonra bunlarla yol, duvar, mayın ve bunker yapar. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Oyunlar tarafsız bunkerlerle başlar ve dolu bir bunkeri yok etmek 15 atış ister.\n\nÖnce ölü bunkerin üzerinden geçerek onu tankınıza alın. {PILL_HOW}",
+    s3 = {
+      keyboard = "İnşaatçınız ağaç toplar, sonra bunlarla yol, duvar, mayın ve bunker yapar. Bir inşa düğmesine tıklayın ya da tuşuna basın: ağaç için {QUICK_TREE}, yol için {QUICK_ROAD}, duvar için {QUICK_WALL}, mayın için {QUICK_MINE}. Sonra inşaatçınızı oraya göndermek için haritaya tıklayın.\n\nİpucu: yol, duvar ya da bunker aracı seçiliyken bir ağaca tıklarsanız inşaatçınız onu toplar. Her seferinde ağaç aracına geçmeniz gerekmez.",
+      touch = "İnşaatçınız ağaç toplar, sonra bunlarla yol, duvar, mayın ve bunker yapar. Bir inşa düğmesine dokunun: ağaç, yol, duvar ya da mayın. Sonra inşaatçınızı oraya göndermek için haritaya dokunun.\n\nİpucu: yol, duvar ya da bunker aracı seçiliyken bir ağaca dokunursanız inşaatçınız onu toplar. Her seferinde ağaç aracına geçmeniz gerekmez.",
+      controller = "İnşaatçınız ağaç toplar, sonra bunlarla yol, duvar, mayın ve bunker yapar. İnşa imleci için {BUILD_MODE} basın ve imleci sağ çubukla yöneltin. Araç seçmek için {BUILD_TOOL} basın: ağaç, yol, duvar ya da mayın. Sonra inşaatçınızı imlece göndermek için {BUILD_PLACE} basın.\n\nİpucu: yol, duvar ya da bunker aracı seçiliyken inşa imlecini bir ağaca koyup {BUILD_PLACE} basarsanız inşaatçınız onu toplar. Her seferinde ağaç aracına geçmeniz gerekmez.",
+    },
+    s4a = {
+      keyboard = "Oyunlar tarafsız bunkerlerle başlar ve dolu bir bunkeri yok etmek 15 atış ister.\n\nÖnce ölü bunkerin üzerinden geçerek onu tankınıza alın. Sonra bunker inşa düğmesine ya da kısayol olarak {QUICK_PILL} basın. Ardından haritaya tıklayın; inşaatçınız o noktaya gidip size bağlı bir bunker kurar.",
+      touch = "Oyunlar tarafsız bunkerlerle başlar ve dolu bir bunkeri yok etmek 15 atış ister.\n\nÖnce ölü bunkerin üzerinden geçerek onu tankınıza alın. Sonra bunker inşa düğmesine dokunun ve haritaya dokunun; inşaatçınız o noktaya gidip size bağlı bir bunker kurar.",
+      controller = "Oyunlar tarafsız bunkerlerle başlar ve dolu bir bunkeri yok etmek 15 atış ister.\n\nÖnce ölü bunkerin üzerinden geçerek onu tankınıza alın. Sonra bunker aracı seçilene kadar {BUILD_TOOL} basın, inşa imlecini istediğiniz yere koyun ve {BUILD_PLACE} basın. İnşaatçınız çıkar ve orada size bağlı bir bunker kurar.",
+    },
     s4b = "Yolun doğusunda, hasarlı bir bunker bir orman halkasının içinde duruyor. Hâlâ ateş ediyor ve vurduğunuz bir bunker öfkelenip daha hızlı ateş eder. Kırmızı işaretler menzilini gösterir.\n\nOrmanlar tankları hem diğer tanklardan hem de bunkerlerden gizler. İşaretlerin içindeki ormana girin ve kıpırdamadan durun. Ateş etmek yerinizi belli eder.",
     s4c = "Bu bunker zaten ağır hasarlı: iki atış daha onu yok eder.\n\nTankınız dolu. Onu yok edin, sonra almak için üzerinden geçin.",
     s5a = "İlerideki yeşil karede durun. Duvarlı adadaki dost botun bir bunkeri ele geçirmesini izleyin. Bot, kendi bunkerini düşmanınkinin hemen yanına kurar ve arkasına park eder; böylece düşmanın atışları tankına değil bunkerine isabet eder. Sonra düşman bunkerini vurarak yok eder ve üzerinden geçer.",
@@ -4065,11 +4682,40 @@ TEXT["tr"] = {
     wall = "Duvar yapın",
   },
   step = {
+    wall = {
+      keyboard = "Duvar yapın: duvar düğmesine tıklayın veya\n{QUICK_WALL} basın, sonra çimene tıklayın.",
+      touch = "Duvar yapın: duvar düğmesine dokunun,\nsonra bir çimen karesine dokunun.",
+      controller = "Duvar yapın: duvar aracı için {BUILD_TOOL}\nbasın, imleci çimene koyup {BUILD_PLACE} basın.",
+    },
+    road = {
+      keyboard = "Yol düğmesine tıklayın veya {QUICK_ROAD} basın,\nsonra bir çimen karesine tıklayın.",
+      touch = "Yol düğmesine dokunun, sonra bir çimen karesine dokunun.",
+      controller = "Yol aracı için {BUILD_TOOL} basın, imleci\nçimene koyup {BUILD_PLACE} basın.",
+    },
+    mine = {
+      keyboard = "Mayın düğmesine tıklayın ya da {QUICK_MINE}\nbasın, sonra mayın döşemek için bir kareye tıklayın.",
+      touch = "Mayın düğmesine dokunun, sonra mayın\ndöşemek için bir kareye dokunun.",
+      controller = "Mayın aracı için {BUILD_TOOL} basın, imleci\nbir kareye koyup {BUILD_PLACE} basın.",
+    },
+    harvest = {
+      keyboard = "Ağaç düğmesine tıklayın veya {QUICK_TREE} basın,\nsonra işaretli korudaki bir orman karesine tıklayın.",
+      touch = "Ağaç düğmesine dokunun, sonra işaretli\nkorudaki bir orman karesine dokunun.",
+      controller = "Ağaç aracı için {BUILD_TOOL} basın, imleci\nişaretli koruya koyup {BUILD_PLACE} basın.",
+    },
+    a_build = {
+      keyboard = "Bunker düğmesine ya da {QUICK_PILL} basın,\nsonra kurmak için haritaya tıklayın.",
+      touch = "Bunker düğmesine dokunun,\nsonra kurmak için haritaya dokunun.",
+      controller = "Bunker aracı için {BUILD_TOOL} basın, imleci\nyerleştirip kurmak için {BUILD_PLACE} basın.",
+    },
     a_pick = "Ölü bunkerin üzerinden geçerek onu tankınıza alın.",
     a_refill = "Yeşil işaretli üsse sürün, sonra üzerinde DURUN\nve dolarken bekleyin.",
     a_watch = "İlerideki yeşil karede durun ve\nbotun bunkeri almasını izleyin.",
     all = "Tüm düşman üslerini alın: 8 üsten %d tanesi sizin.",
-    b_build = "Bunkerinizi işaretli yeşil kareye kurun.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Bunker düğmesine ya da {QUICK_PILL} basın,\nsonra yeşil kareye tıklayın.",
+      touch = "Bunker düğmesine dokunun,\nsonra yeşil kareye dokunun.",
+      controller = "Bunker aracı için {BUILD_TOOL} basın, imleci\nyeşil kareye koyup {BUILD_PLACE} basın.",
+    },
     b_hide = "Ormanın derininde, menzil içinde kıpırdamayın.\nGizli: %d / 5 saniye.",
     b_in = "Kırmızı işaretlerin içindeki ormana girin.",
     b_kill = "Düşman bunkerini vurun: yok olana\nkadar {FIRE} basın.",
@@ -4135,7 +4781,16 @@ TEXT["tr"] = {
 -- Ukrainian
 TEXT["uk"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\nДілянки біля дороги: ліс, болото, руїни, кратери й мілка річка. Кожна сповільнює по-своєму. Спробуйте проїхати кількома з них.\n\nГлибока вода топить танки. Якщо ви тут загинете, то повернетеся на останню контрольну точку.",
+    s1 = {
+      keyboard = {
+        "Натисніть {ACCEL}, щоб їхати вперед, {BRAKE}, щоб сповільнитися, {LEFT} і {RIGHT}, щоб повертати.\n\nДілянки біля дороги: ліс, болото, руїни, кратери й мілка річка. Кожна сповільнює по-своєму. Спробуйте проїхати кількома з них.",
+        "Глибока вода топить танки. Якщо ви тут загинете, то повернетеся на останню контрольну точку.",
+      },
+      touch = {
+        "Керуйте джойстиком у лівій частині екрана: штовхніть його туди, куди хочете їхати. Що далі штовхнете, то швидше поїдете.\n\nДілянки біля дороги: ліс, болото, руїни, кратери й мілка річка. Кожна сповільнює по-своєму. Спробуйте проїхати кількома з них.",
+        "Глибока вода топить танки. Якщо ви тут загинете, то повернетеся на останню контрольну точку.",
+      },
+    },
     s2a = "Бази поповнюють снаряди, міни та броню, а у вашого танка їх мало.\n\nЗаїдьте на свою базу біля зеленого маркера. Потім ЗУПИНІТЬСЯ на базі й чекайте поповнення.",
     s2b = "Нейтральні бази не червоні й не зелені. Щоб захопити таку базу, просто проїдьте по ній.",
     s2c = "Ворожу базу спершу треба спустошити. Повна витримує %d пострілів: наведіться на неї й натисніть {FIRE}, щоб стріляти. Потім проїдьте по ній, і вона ваша.",
@@ -4144,8 +4799,31 @@ TEXT["uk"] = {
       "Суворий турнір: танки ніколи не відроджуються зі снарядами.\n\nУ турнірних режимах чітка умова перемоги: команда, що захопила всі бази, перемагає, бо ворогу ніде взяти боєприпаси.",
     },
     s2stay = "Це ваша база. Стійте на ній і не рухайтеся: снаряди, міни та броня надходять потроху.",
-    s3 = "Ваш чоловічок рубає дерева, а потім будує з них дороги, стіни, міни й бункери. {BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "Гра починається з нейтральними бункерами; повний бункер витримує 15 пострілів.\n\nСпершу проїдьте по зруйнованому бункеру, щоб завантажити його в танк. {PILL_HOW}",
+    s3 = {
+      keyboard = {
+        "Ваш чоловічок рубає дерева, а потім будує з них дороги, стіни, міни й бункери. Клацніть кнопку будівництва або натисніть її клавішу: {QUICK_TREE} дерева, {QUICK_ROAD} дорога, {QUICK_WALL} стіна, {QUICK_MINE} міна. Потім клацніть по карті, щоб послати туди чоловічка.",
+        "Порада: коли вибрано інструмент дороги, стіни чи бункера, клацніть по дереву, і чоловічок його зрубає. Не треба щоразу перемикатися на інструмент дерев.",
+      },
+      touch = {
+        "Ваш чоловічок рубає дерева, а потім будує з них дороги, стіни, міни й бункери. Торкніться кнопки будівництва: дерева, дорога, стіна або міна. Потім торкніться карти, щоб послати туди чоловічка.",
+        "Порада: коли вибрано інструмент дороги, стіни чи бункера, торкніться дерева, і чоловічок його зрубає. Не треба щоразу перемикатися на інструмент дерев.",
+      },
+      controller = {
+        "Ваш чоловічок рубає дерева, а потім будує з них дороги, стіни, міни й бункери. Натисніть {BUILD_MODE}, щоб увімкнути курсор будівництва, і наводьте його правим стіком. Натисніть {BUILD_TOOL}, щоб вибрати інструмент: дерева, дорога, стіна або міна.",
+        "Потім натисніть {BUILD_PLACE}, щоб послати чоловічка до курсора.\n\nПорада: коли вибрано інструмент дороги, стіни чи бункера, наведіть курсор будівництва на дерево й натисніть {BUILD_PLACE}, і чоловічок його зрубає. Не треба щоразу перемикатися на інструмент дерев.",
+      },
+    },
+    s4a = {
+      keyboard = {
+        "Гра починається з нейтральними бункерами; повний бункер витримує 15 пострілів.",
+        "Спершу проїдьте по зруйнованому бункеру, щоб завантажити його в танк. Потім натисніть кнопку будівництва бункера або її клавішу {QUICK_PILL}. Потім клацніть по карті, і чоловічок збудує там бункер, вірний вам.",
+      },
+      touch = "Гра починається з нейтральними бункерами; повний бункер витримує 15 пострілів.\n\nСпершу проїдьте по зруйнованому бункеру, щоб завантажити його в танк. Потім торкніться кнопки будівництва бункера й торкніться карти, і чоловічок збудує там бункер, вірний вам.",
+      controller = {
+        "Гра починається з нейтральними бункерами; повний бункер витримує 15 пострілів.",
+        "Спершу проїдьте по зруйнованому бункеру, щоб завантажити його в танк. Потім натискайте {BUILD_TOOL}, доки не виберете інструмент бункера, наведіть курсор будівництва на потрібне місце й натисніть {BUILD_PLACE}. Чоловічок вийде й збудує там бункер, вірний вам.",
+      },
+    },
     s4b = {
       "На схід від дороги, в кільці лісу, стоїть пошкоджений бункер. Він досі стріляє, а бункер, у який ви влучили, злиться й стріляє частіше. Червоні маркери показують його дальність.",
       "Ліс ховає танки від інших танків і від бункерів. Заїдьте в ліс усередині маркерів і стійте нерухомо. Стрільба видає вашу позицію.",
@@ -4213,11 +4891,40 @@ TEXT["uk"] = {
     wall = "Збудуйте стіну",
   },
   step = {
+    wall = {
+      keyboard = "Стіна: клацніть кнопку стіни\nабо натисніть {QUICK_WALL}, потім траву.",
+      touch = "Збудуйте стіну: торкніться\nкнопки стіни, потім трави.",
+      controller = "Стіна: натисніть {BUILD_TOOL} (стіна),\nнаведіть на траву й натисніть {BUILD_PLACE}.",
+    },
+    road = {
+      keyboard = "Клацніть кнопку дороги або натисніть\n{QUICK_ROAD}, потім клацніть траву.",
+      touch = "Торкніться кнопки дороги, потім трави.",
+      controller = "Натисніть {BUILD_TOOL} (дорога),\nнаведіть на траву й натисніть {BUILD_PLACE}.",
+    },
+    mine = {
+      keyboard = "Клацніть кнопку міни або натисніть\n{QUICK_MINE}, потім клацніть клітинку.",
+      touch = "Торкніться кнопки міни,\nпотім клітинки, щоб поставити міну.",
+      controller = "Натисніть {BUILD_TOOL} (міна),\nнаведіть на клітинку й натисніть {BUILD_PLACE}.",
+    },
+    harvest = {
+      keyboard = "Натисніть кнопку дерев або {QUICK_TREE},\nпотім клацніть позначений гай.",
+      touch = "Торкніться кнопки дерев,\nпотім лісу в позначеному гаю.",
+      controller = "Натисніть {BUILD_TOOL} (дерева), наведіть\nкурсор на гай і натисніть {BUILD_PLACE}.",
+    },
+    a_build = {
+      keyboard = "Натисніть кнопку бункера або {QUICK_PILL},\nпотім клацніть по карті.",
+      touch = "Торкніться кнопки бункера,\nпотім карти, щоб збудувати його.",
+      controller = "Натисніть {BUILD_TOOL} (бункер), наведіть\nкурсор і натисніть {BUILD_PLACE}.",
+    },
     a_pick = "Проїдьте по зруйнованому\nбункеру, щоб завантажити його.",
     a_refill = "Заїдьте на базу з зеленим маркером,\nСТІЙТЕ на ній і чекайте.",
     a_watch = "Станьте на зеленій клітинці\nй дивіться, як бот бере бункер.",
     all = "Захопіть усі бази ворога:\nваших %d з 8.",
-    b_build = "Збудуйте бункер на зеленій клітинці.\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "Натисніть кнопку бункера або {QUICK_PILL},\nпотім клацніть зелену клітинку.",
+      touch = "Торкніться кнопки бункера,\nпотім зеленої клітинки.",
+      controller = "Тисніть {BUILD_TOOL} (бункер), наведіть\nна зелену клітинку, тисніть {BUILD_PLACE}.",
+    },
     b_hide = "Стійте в глибині лісу, в зоні вогню.\nСховано: %d з 5 с.",
     b_in = "Заїдьте в ліс усередині\nчервоних маркерів.",
     b_kill = "Натискайте {FIRE} і стріляйте\nпо бункеру, доки він не впаде.",
@@ -4283,14 +4990,25 @@ TEXT["uk"] = {
 -- Chinese (Simplified)
 TEXT["zh-cn"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\n道路旁的地块有森林、沼泽、瓦砾、弹坑和浅河。\n每种地形让您减速的程度都不同。\n试着在其中几种上行驶。\n\n深水会让坦克沉没。如果您在这里阵亡，\n会在最后一个检查点重生。",
+    s1 = {
+      keyboard = "按 {ACCEL} 前进，按 {BRAKE} 减速，\n按 {LEFT} 和 {RIGHT} 转向。\n\n道路旁的地块有森林、沼泽、瓦砾、弹坑和浅河。\n每种地形让您减速的程度都不同。\n试着在其中几种上行驶。\n\n深水会让坦克沉没。如果您在这里阵亡，\n会在最后一个检查点重生。",
+      touch = "用屏幕左侧的摇杆驾驶：\n朝您想去的方向推动摇杆。\n推得越远，速度越快。\n\n道路旁的地块有森林、沼泽、瓦砾、弹坑和浅河。\n每种地形让您减速的程度都不同。\n试着在其中几种上行驶。\n\n深水会让坦克沉没。如果您在这里阵亡，\n会在最后一个检查点重生。",
+    },
     s2a = "基地可以补充您的炮弹、地雷和装甲，\n而您的坦克现在补给不足。\n\n开到绿色标记处您的基地上。\n然后务必在基地上停住，等待补给完成。",
     s2b = "中立基地没有红色或绿色标记，\n开过去就能占领。",
     s2c = "敌方基地必须先打空。满的基地需要 %d 发炮弹：\n瞄准它，按 {FIRE} 射击。\n然后开过去，它就归您了。",
     s2d = "坦克重生时带有什么，取决于游戏类型。\n\n开放：坦克总是满载重生。\n\n锦标赛：被占领的基地越多，\n坦克重生时的炮弹越少；所有基地都被占领后，\n坦克重生时没有炮弹。\n\n严格锦标赛：坦克重生时永远没有炮弹。\n\n锦标赛模式有明确的胜利条件：\n一支队伍占领所有基地后，敌方队伍\n无法获得弹药，于是这支队伍获胜。",
     s2stay = "这是您的基地。待在上面不要动：\n您的炮弹、地雷和装甲会一点点补充进来。",
-    s3 = "您的建造者会采伐树木，再用木材建造道路、\n墙壁、地雷和碉堡。\n{BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "游戏开始时碉堡是中立的，满的碉堡需要\n15 发炮弹才能摧毁。\n\n首先，开过被摧毁的碉堡，把它装进坦克。\n{PILL_HOW}",
+    s3 = {
+      keyboard = "您的建造者会采伐树木，再用木材建造道路、\n墙壁、地雷和碉堡。\n点击建造按钮，或按对应的键：\n按 {QUICK_TREE} 采树，按 {QUICK_ROAD} 建道路，\n按 {QUICK_WALL} 建墙壁，按 {QUICK_MINE} 布地雷。\n然后点击地图，派建造者前往该处。\n\n提示：选中道路、墙壁或碉堡工具时，\n点击树木，建造者也会采伐它。\n不必每次都切换到树木工具。",
+      touch = "您的建造者会采伐树木，再用木材建造道路、\n墙壁、地雷和碉堡。\n点击建造按钮：树木、道路、墙壁或地雷。\n然后点击地图，派建造者前往该处。\n\n提示：选中道路、墙壁或碉堡工具时，\n点击树木，建造者也会采伐它。\n不必每次都切换到树木工具。",
+      controller = "您的建造者会采伐树木，再用木材建造道路、\n墙壁、地雷和碉堡。\n拉住 {BUILD_MODE} 调出建造光标，\n用右摇杆瞄准。按 {BUILD_TOOL} 选择工具：\n树木、道路、墙壁或地雷。然后按\n{BUILD_PLACE}，派建造者前往光标处。\n\n提示：选中道路、墙壁或碉堡工具时，\n把建造光标放在树上并按 {BUILD_PLACE}，\n建造者也会采伐它。\n不必每次都切换到树木工具。",
+    },
+    s4a = {
+      keyboard = "游戏开始时碉堡是中立的，满的碉堡需要\n15 发炮弹才能摧毁。\n\n首先，开过被摧毁的碉堡，把它装进坦克。\n然后按碉堡建造按钮或其快捷键 {QUICK_PILL}。\n再点击地图，派建造者前往该处，\n建造一座忠于您的碉堡。",
+      touch = "游戏开始时碉堡是中立的，满的碉堡需要\n15 发炮弹才能摧毁。\n\n首先，开过被摧毁的碉堡，把它装进坦克。\n然后点击碉堡建造按钮，再点击地图，\n派建造者前往该处，建造一座忠于您的碉堡。",
+      controller = "游戏开始时碉堡是中立的，满的碉堡需要\n15 发炮弹才能摧毁。\n\n首先，开过被摧毁的碉堡，把它装进坦克。\n然后按 {BUILD_TOOL}，直到选中碉堡工具，\n把建造光标放到想要的位置，然后按 {BUILD_PLACE}。\n建造者会出去，在那里建造一座忠于您的碉堡。",
+    },
     s4b = "道路东侧，一座受损的碉堡被一圈森林围着。\n它仍会开火，而被击中的碉堡会被激怒，\n开火更快。红色标记表示它的射程。\n\n森林能让坦克躲开其他坦克和碉堡。\n开进标记范围内的森林并停住不动。\n开火会暴露您的位置。",
     s4c = "这座碉堡已严重受损：再打两发就能摧毁。\n\n您的坦克是满载的。摧毁它，\n然后开过去把它捡起来。",
     s5a = "在前方的绿色方块上停下。看看被墙围住的小岛上，\n友方机器人如何夺取碉堡。它在敌方碉堡旁边\n建造自己的碉堡，并停在它后面，\n这样敌方的炮弹打中的是它的碉堡，\n而不是它的坦克。然后它击毁敌方碉堡，\n再开过去。",
@@ -4343,11 +5061,40 @@ TEXT["zh-cn"] = {
     wall = "建造墙壁",
   },
   step = {
+    wall = {
+      keyboard = "建造墙壁：点击墙壁按钮\n或按 {QUICK_WALL}，然后点击一个草地方块。",
+      touch = "建造墙壁：点击墙壁按钮，\n然后点击一个草地方块。",
+      controller = "建造墙壁：按 {BUILD_TOOL} 选择墙壁工具，\n把建造光标放在草地上，然后按 {BUILD_PLACE}。",
+    },
+    road = {
+      keyboard = "点击道路按钮或按 {QUICK_ROAD}，\n然后点击一个草地方块。",
+      touch = "点击道路按钮，然后点击一个草地方块。",
+      controller = "按 {BUILD_TOOL} 选择道路工具，把建造光标\n放在草地上，然后按 {BUILD_PLACE}。",
+    },
+    mine = {
+      keyboard = "点击地雷按钮或按 {QUICK_MINE}，\n然后点击一个方块布设地雷。",
+      touch = "点击地雷按钮，然后点击\n一个方块布设地雷。",
+      controller = "按 {BUILD_TOOL} 选择地雷工具，把建造光标\n放在一个方块上，然后按 {BUILD_PLACE}。",
+    },
+    harvest = {
+      keyboard = "点击树木按钮或按 {QUICK_TREE}，\n然后点击标记树林中的森林方块。",
+      touch = "点击树木按钮，然后点击\n标记树林中的森林方块。",
+      controller = "按 {BUILD_TOOL} 选择树木工具，把建造光标\n放在标记的树林上，然后按 {BUILD_PLACE}。",
+    },
+    a_build = {
+      keyboard = "按碉堡按钮或 {QUICK_PILL}，\n然后点击地图进行建造。",
+      touch = "点击碉堡按钮，\n然后点击地图进行建造。",
+      controller = "按 {BUILD_TOOL} 选择碉堡工具，放下建造光标，\n然后按 {BUILD_PLACE} 进行建造。",
+    },
     a_pick = "开过被摧毁的碉堡，把它装进坦克。",
     a_refill = "开上绿色标记的基地，然后停在上面，\n等待补给完成。",
     a_watch = "在前方的绿色方块上停下，\n观看机器人夺取碉堡。",
     all = "夺取所有敌方基地：已占领 %d / 8。",
-    b_build = "在标记的绿色方块上建造您的碉堡。\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "按碉堡按钮或 {QUICK_PILL}，\n然后点击绿色方块。",
+      touch = "点击碉堡按钮，\n然后点击绿色方块。",
+      controller = "按 {BUILD_TOOL} 选择碉堡工具，把建造光标\n放在绿色方块上，然后按 {BUILD_PLACE}。",
+    },
     b_hide = "在射程内的森林深处停住不动。\n已隐蔽：%d / 5 秒。",
     b_in = "开进红色标记范围内的森林。",
     b_kill = "按 {FIRE} 射击敌方碉堡，\n直到它被摧毁。",
@@ -4413,14 +5160,25 @@ TEXT["zh-cn"] = {
 -- Chinese (Traditional)
 TEXT["zh-tw"] = {
   pop = {
-    s1 = "{DRIVE_HOW}\n\n道路旁的地塊有森林、沼澤、瓦礫、彈坑和淺河。\n每種地形讓您減速的程度都不同。\n試著在其中幾種上行駛。\n\n深水會讓坦克沉沒。如果您在這裡陣亡，\n會在最後一個檢查點重生。",
+    s1 = {
+      keyboard = "按 {ACCEL} 前進，按 {BRAKE} 減速，\n按 {LEFT} 和 {RIGHT} 轉向。\n\n道路旁的地塊有森林、沼澤、瓦礫、彈坑和淺河。\n每種地形讓您減速的程度都不同。\n試著在其中幾種上行駛。\n\n深水會讓坦克沉沒。如果您在這裡陣亡，\n會在最後一個檢查點重生。",
+      touch = "用畫面左側的搖桿駕駛：\n朝您想去的方向推動搖桿。\n推得越遠，速度越快。\n\n道路旁的地塊有森林、沼澤、瓦礫、彈坑和淺河。\n每種地形讓您減速的程度都不同。\n試著在其中幾種上行駛。\n\n深水會讓坦克沉沒。如果您在這裡陣亡，\n會在最後一個檢查點重生。",
+    },
     s2a = "基地可以補充您的砲彈、地雷和裝甲，\n而您的坦克現在補給不足。\n\n開到綠色標記處您的基地上。\n然後務必在基地上停住，等待補給完成。",
     s2b = "中立基地沒有紅色或綠色標記，\n開過去就能占領。",
     s2c = "敵方基地必須先打空。滿的基地需要 %d 發砲彈：\n瞄準它，按 {FIRE} 射擊。\n然後開過去，它就歸您了。",
     s2d = "坦克重生時帶有什麼，取決於遊戲類型。\n\n開放：坦克總是滿載重生。\n\n錦標賽：被占領的基地越多，\n坦克重生時的砲彈越少；所有基地都被占領後，\n坦克重生時沒有砲彈。\n\n嚴格錦標賽：坦克重生時永遠沒有砲彈。\n\n錦標賽模式有明確的勝利條件：\n一支隊伍占領所有基地後，敵方隊伍\n無法取得彈藥，於是這支隊伍獲勝。",
     s2stay = "這是您的基地。待在上面不要動：\n您的砲彈、地雷和裝甲會一點一點補充進來。",
-    s3 = "您的建造者會採伐樹木，再用木材建造道路、\n牆壁、地雷和碉堡。\n{BUILD_HOW}\n\n{HARVEST_TIP}",
-    s4a = "遊戲開始時碉堡是中立的，滿的碉堡需要\n15 發砲彈才能摧毀。\n\n首先，開過被摧毀的碉堡，把它裝進坦克。\n{PILL_HOW}",
+    s3 = {
+      keyboard = "您的建造者會採伐樹木，再用木材建造道路、\n牆壁、地雷和碉堡。\n點擊建造按鈕，或按對應的鍵：\n按 {QUICK_TREE} 採樹，按 {QUICK_ROAD} 建道路，\n按 {QUICK_WALL} 建牆壁，按 {QUICK_MINE} 佈地雷。\n然後點擊地圖，派建造者前往該處。\n\n提示：選取道路、牆壁或碉堡工具時，\n點擊樹木，建造者也會採伐它。\n不必每次都切換到樹木工具。",
+      touch = "您的建造者會採伐樹木，再用木材建造道路、\n牆壁、地雷和碉堡。\n點擊建造按鈕：樹木、道路、牆壁或地雷。\n然後點擊地圖，派建造者前往該處。\n\n提示：選取道路、牆壁或碉堡工具時，\n點擊樹木，建造者也會採伐它。\n不必每次都切換到樹木工具。",
+      controller = "您的建造者會採伐樹木，再用木材建造道路、\n牆壁、地雷和碉堡。\n拉住 {BUILD_MODE} 叫出建造游標，\n用右搖桿瞄準。按 {BUILD_TOOL} 選擇工具：\n樹木、道路、牆壁或地雷。然後按\n{BUILD_PLACE}，派建造者前往游標處。\n\n提示：選取道路、牆壁或碉堡工具時，\n把建造游標放在樹上並按 {BUILD_PLACE}，\n建造者也會採伐它。\n不必每次都切換到樹木工具。",
+    },
+    s4a = {
+      keyboard = "遊戲開始時碉堡是中立的，滿的碉堡需要\n15 發砲彈才能摧毀。\n\n首先，開過被摧毀的碉堡，把它裝進坦克。\n然後按碉堡建造按鈕或其快速鍵 {QUICK_PILL}。\n再點擊地圖，派建造者前往該處，\n建造一座忠於您的碉堡。",
+      touch = "遊戲開始時碉堡是中立的，滿的碉堡需要\n15 發砲彈才能摧毀。\n\n首先，開過被摧毀的碉堡，把它裝進坦克。\n然後點擊碉堡建造按鈕，再點擊地圖，\n派建造者前往該處，建造一座忠於您的碉堡。",
+      controller = "遊戲開始時碉堡是中立的，滿的碉堡需要\n15 發砲彈才能摧毀。\n\n首先，開過被摧毀的碉堡，把它裝進坦克。\n然後按 {BUILD_TOOL}，直到選取碉堡工具，\n把建造游標放到想要的位置，然後按 {BUILD_PLACE}。\n建造者會出去，在那裡建造一座忠於您的碉堡。",
+    },
     s4b = "道路東側，一座受損的碉堡被一圈森林圍著。\n它仍會開火，而被擊中的碉堡會被激怒，\n開火更快。紅色標記表示它的射程。\n\n森林能讓坦克躲開其他坦克和碉堡。\n開進標記範圍內的森林並停住不動。\n開火會暴露您的位置。",
     s4c = "這座碉堡已嚴重受損：再打兩發就能摧毀。\n\n您的坦克是滿載的。摧毀它，\n然後開過去把它撿起來。",
     s5a = "在前方的綠色方格上停下。看看被牆圍住的小島上，\n友方機器人如何奪取碉堡。它在敵方碉堡旁邊\n建造自己的碉堡，並停在它後面，\n這樣敵方的砲彈打中的是它的碉堡，\n而不是它的坦克。然後它擊毀敵方碉堡，\n再開過去。",
@@ -4473,11 +5231,40 @@ TEXT["zh-tw"] = {
     wall = "建造牆壁",
   },
   step = {
+    wall = {
+      keyboard = "建造牆壁：點擊牆壁按鈕\n或按 {QUICK_WALL}，然後點擊一個草地方格。",
+      touch = "建造牆壁：點擊牆壁按鈕，\n然後點擊一個草地方格。",
+      controller = "建造牆壁：按 {BUILD_TOOL} 選擇牆壁工具，\n把建造游標放在草地上，然後按 {BUILD_PLACE}。",
+    },
+    road = {
+      keyboard = "點擊道路按鈕或按 {QUICK_ROAD}，\n然後點擊一個草地方格。",
+      touch = "點擊道路按鈕，然後點擊一個草地方格。",
+      controller = "按 {BUILD_TOOL} 選擇道路工具，把建造游標\n放在草地上，然後按 {BUILD_PLACE}。",
+    },
+    mine = {
+      keyboard = "點擊地雷按鈕或按 {QUICK_MINE}，\n然後點擊一個方格佈設地雷。",
+      touch = "點擊地雷按鈕，然後點擊\n一個方格佈設地雷。",
+      controller = "按 {BUILD_TOOL} 選擇地雷工具，把建造游標\n放在一個方格上，然後按 {BUILD_PLACE}。",
+    },
+    harvest = {
+      keyboard = "點擊樹木按鈕或按 {QUICK_TREE}，\n然後點擊標記樹林中的森林方格。",
+      touch = "點擊樹木按鈕，然後點擊\n標記樹林中的森林方格。",
+      controller = "按 {BUILD_TOOL} 選擇樹木工具，把建造游標\n放在標記的樹林上，然後按 {BUILD_PLACE}。",
+    },
+    a_build = {
+      keyboard = "按碉堡按鈕或 {QUICK_PILL}，\n然後點擊地圖進行建造。",
+      touch = "點擊碉堡按鈕，\n然後點擊地圖進行建造。",
+      controller = "按 {BUILD_TOOL} 選擇碉堡工具，放下建造游標，\n然後按 {BUILD_PLACE} 進行建造。",
+    },
     a_pick = "開過被摧毀的碉堡，把它裝進坦克。",
     a_refill = "開上綠色標記的基地，然後停在上面，\n等待補給完成。",
     a_watch = "在前方的綠色方格上停下，\n觀看機器人奪取碉堡。",
     all = "奪取所有敵方基地：已占領 %d / 8。",
-    b_build = "在標記的綠色方格上建造您的碉堡。\n{STEP_PILL_GREEN}",
+    b_build = {
+      keyboard = "按碉堡按鈕或 {QUICK_PILL}，\n然後點擊綠色方格。",
+      touch = "點擊碉堡按鈕，\n然後點擊綠色方格。",
+      controller = "按 {BUILD_TOOL} 選擇碉堡工具，把建造游標\n放在綠色方格上，然後按 {BUILD_PLACE}。",
+    },
     b_hide = "在射程內的森林深處停住不動。\n已隱蔽：%d / 5 秒。",
     b_in = "開進紅色標記範圍內的森林。",
     b_kill = "按 {FIRE} 射擊敵方碉堡，\n直到它被摧毀。",

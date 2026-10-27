@@ -2850,6 +2850,21 @@ ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
 void        serverSimSetPlayerLang(ServerSim *sim, BYTE seat, const char *code);
 const char *serverSimGetPlayerLang(const ServerSim *sim, BYTE seat);
 
+/* The input a seat's player uses, so a scenario can word a line for it:
+ * game.input(p) answers "keyboard", "touch" or "controller". Told the same
+ * way as the language, by a client in the server's own process at join and
+ * whenever the input changes, so a remote seat reads the keyboard.
+ *
+ * The setter keeps only the three values below; anything else clears the
+ * seat back to the keyboard. The seat is cleared when its player leaves.
+ * The getter answers SERVER_PLAYER_INPUT_KEYBOARD for a NULL sim and a
+ * seat out of range. */
+#define SERVER_PLAYER_INPUT_KEYBOARD   0
+#define SERVER_PLAYER_INPUT_TOUCH      1
+#define SERVER_PLAYER_INPUT_CONTROLLER 2
+void serverSimSetPlayerInput(ServerSim *sim, BYTE seat, BYTE input);
+BYTE serverSimGetPlayerInput(const ServerSim *sim, BYTE seat);
+
 /* Voice to everyone — the flag a scenario sets with
  * game.set_voice_everyone. The getter answers false for a NULL sim and when
  * the server's voice mode is serverVoiceOff, because then nobody hears

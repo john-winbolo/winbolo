@@ -1298,6 +1298,9 @@ Each is written in the form that follows "press" in its language (German
 particle). The translations put a token only where the object of "press"
 goes, so a bare key name and a noun phrase both read correctly.
 
+(The phrase tokens below were replaced on Oct 27 by wordings in the script
+and `game.input`; see "Oct 27 input wordings in the script".)
+
 Some lines differ by more than a key name. A touch screen has no keys and no
 build cursor; a controller has a cursor and no mouse. Before, the English
 named the mouse and keys, so touch and controller players got wrong
@@ -1427,3 +1430,79 @@ are filled is 882 bytes (Ukrainian s3); the client's buffer for it is 2,048.
 - The menu Tutorial entry on desktop, Android, iOS and web.
 - The end of the round in this single-player game with no lobby.
 - The popups pause the game.
+
+## Oct 27 input wordings in the script
+
+### What changed
+
+- The ten phrase tokens (`{DRIVE_HOW}` ... `{STEP_PILL_GREEN}`) are gone
+  from the client: their enum values, the `kPhrases` table,
+  `tutorialPhrasesExpand` and the 29 `STR_TUTPHRASE_*` strings in each of
+  the 17 lang files. The test `tutorial_tokens_phrases` went with them.
+- Their wordings moved into the script. An entry worded for each input is
+  `{ keyboard = , touch = , controller = }`; one with no `controller` uses
+  the keyboard's. `tr` picks one with the new `game.input(S.player)`. The
+  entries are `pop.s1`, `pop.s3`, `pop.s4a` and `step.harvest`, `road`,
+  `wall`, `mine`, `a_build` and `b_build`, in every language. They were
+  made from each language's own phrase strings, so no text was translated
+  again.
+- `game.input(p)` answers `"keyboard"`, `"touch"` or `"controller"`. The
+  single-player client tells its server at the join (with the language,
+  `clientFrontTellScenarioPlayer`) and again from the frame poll whenever
+  the input or the language changes (`clientFrontPollScenarioPlayer`, which
+  also takes the tutorial-done mark). A hosted server answers `"keyboard"`.
+  The web build now tells its server too. Its `gameFrontGetLanguageCode`
+  answers "" (the web has no language setting), so it still reads English.
+- `tutorialInputNow()` (`tutorial_text.c`) decides the input, touch first on
+  a phone or tablet. The old tutorial's string pick, the popup key tokens,
+  the status-line key words and `game.input` all use it. Before, the key
+  tokens put a controller first on Android, so an Android keyboard with a
+  d-pad showed controller words under touch sentences.
+
+### Why
+
+- Every word of a tutorial is in its scenario, not in the game's lang
+  files, and a new input-specific line needs no C change and no build. Any
+  scenario can do the same, not only shipped ones.
+- Converting the old tutorial to a scenario is a copy of its
+  `STR_TUTORIAL*`, `_TOUCH` and `_CTRL` strings into the same shape.
+- The server's limits now count the text the player reads. With the
+  phrase tokens they counted the token, and the client filled in up to 882
+  bytes (Ukrainian s3) behind a 511-byte check.
+
+### Text changed to fit
+
+- `step.b_build` was "Build your pillbox at the marked green square." and
+  then the `{STEP_PILL_GREEN}` sentence. With the sentence counted it is
+  past the status line's 128 bytes in every language for at least one
+  input, so it is now the
+  sentence alone, which already says "the green square".
+- Popups over 511 bytes once worded are sent in parts, cut at a paragraph
+  break or, failing one, at the end of a sentence: s1 in Russian and
+  Ukrainian, s3 in Spanish, Japanese, Korean, Polish, Portuguese, Russian
+  and Ukrainian, and s4a in Russian and Ukrainian, for the inputs that need
+  it. Each is two parts.
+- In Russian and Ukrainian the start now sends four popups together: the
+  two-part welcome and the two-part s1. The client keeps four
+  (`SCN_POPUP_QUEUE_MAX`), so all four show, but a fifth sent with them
+  would be dropped.
+
+### Tests
+
+- `tutorial_text_fits` and `tutorial_text_well_formed` (unit tests, no
+  server): every entry of every language, in every input's wording and
+  every part, with the widest numbers filled in, is inside the limit of the
+  call that sends it, is valid UTF-8, has no brace that is not a key token
+  (checked with the client's own `tutorialTokenMatch`), and is worded by
+  input wherever English is.
+- `scenario_lua_input`: the op's answers, a value out of range read as the
+  keyboard, and the seat cleared when its player leaves.
+- The token parser's own tests and fuzz target (`3f45951d9`).
+
+### Hand play-test still needed
+
+- Touch on a phone and a controller on the desktop: the s1, s3 and s4a
+  popups and the Station 3 and 4 status lines in each wording.
+- Plug a controller in during Station 3: the status line changes wording
+  at the next poll.
+

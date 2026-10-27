@@ -4566,6 +4566,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The token parser against untrusted text: malformed braces, the split,
     # a cut inside a UTF-8 character, and a fixed seed of random input.
     tests/unit/test_tutorial_tokens_parse.c
+    # The shipped tutorial's text: every language and input inside the
+    # server's limits, valid UTF-8, and no brace that is not a key token.
+    tests/unit/test_tutorial_text_check.c
     tests/unit/test_voice_talking_set.c
     # The rules event's body codec: every carried rule round-trips field by
     # field, rates a fixed-point scale could not carry survive, and the
@@ -6186,11 +6189,12 @@ set(_unit_test_names
     tutorial_tokens_quick_build
     scenario_status_tokens_expand
     tutorial_tokens_long_key_names
-    tutorial_tokens_phrases
     tutorial_tokens_malformed
     tutorial_tokens_split
     tutorial_tokens_utf8_cut
     tutorial_tokens_random_input
+    tutorial_text_fits
+    tutorial_text_well_formed
     scenario_announce_waits_for_popup
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
@@ -6680,6 +6684,7 @@ set(_unit_test_names
     addrparse_empty
     mapchooser_scenario_filter
     bg_map_pick_skips_tutorials
+    tutorial_maps_shipped_path
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop
@@ -7278,6 +7283,8 @@ set(_unit_test_names
     scenario_lua_every_row_answers
     scenario_lua_voice_everyone
     scenario_lua_lang
+    scenario_lua_input
+    scenario_lua_tutorial_done
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one

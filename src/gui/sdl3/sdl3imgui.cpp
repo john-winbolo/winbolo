@@ -5835,10 +5835,9 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     /* The status line, with its countdown worked out on this client's own
        clock. */
     /* Both lines may carry the popup's key tokens ({ACCEL}, {QUICK_ROAD}
-       and the rest), written out here as the key or control in words, and
-       the phrase tokens ({STEP_TREE} and the rest), written out as a whole
-       sentence from the language file. Both are longer than their token,
-       so the buffers have room well past the 128 bytes a line may be. */
+       and the rest), written out here as the key or control in words. A
+       name is longer than its token, so the buffers have room well past
+       the 128 bytes a line may be. */
     uint32_t    statusEndsAt = SCN_STATUS_NO_COUNTDOWN;
     const char *statusWire   = clientSimGetScnStatus(cs, &statusEndsAt);
     char        statusRaw[SCN_LINE_EXPANDED_MAX];

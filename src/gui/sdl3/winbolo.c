@@ -896,7 +896,7 @@ int main(int argc, char *argv[]) {
         }
         frontEndTutorialNotePresentedFrame();
         clientFrontTutorialPollRespawn();
-        clientFrontPollTutorialDone();   /* a shipped tutorial finished */
+        clientFrontPollScenarioPlayer();  /* tutorial finished; language, input */
         /* Pick up a native save-map dialog the player has answered. The
            dialog is asynchronous precisely so this loop — which is what
            pumps the client transport — keeps running while it is open. */
