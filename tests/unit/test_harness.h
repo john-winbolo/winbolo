@@ -489,6 +489,7 @@ int run_tick_core_active_local_no_double_step(void);
 int run_tick_core_passive_local_pumps_keys_half(void);
 int run_tick_core_lobby_preserves_parity(void);
 int run_transport_ticks_server_lifecycle(void);
+int run_local_join_slot_after_seated_bots(void);
 int run_await_join_connected_immediate(void);
 int run_await_join_lobby_latch(void);
 int run_await_join_timeout_and_error(void);
@@ -3686,6 +3687,7 @@ int run_game_event_channel_capture_wire_bytes(void);
 int run_game_event_channel_neutralised_no_client_line(void);
 int run_game_event_channel_capture_attribution(void);
 int run_game_event_channel_subscriber_count(void);
+int run_game_event_channel_same_owner_silent(void);
 
 /* The eight facts that had no event at all (test_game_events_new.c): a tank
  * spawning and respawning, a builder landing, a pill placed, picked up and

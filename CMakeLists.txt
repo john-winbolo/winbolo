@@ -6730,6 +6730,7 @@ set(_unit_test_names
     tick_core_passive_local_pumps_keys_half
     tick_core_lobby_preserves_parity
     transport_ticks_server_lifecycle
+    local_join_slot_after_seated_bots
     await_join_connected_immediate
     await_join_lobby_latch
     await_join_timeout_and_error
@@ -7205,6 +7206,7 @@ set(_unit_test_names
     game_event_channel_neutralised_no_client_line
     game_event_channel_capture_attribution
     game_event_channel_subscriber_count
+    game_event_channel_same_owner_silent
     game_events_tank_spawned
     game_events_lgm_landed
     game_events_pill_placed

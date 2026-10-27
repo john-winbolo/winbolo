@@ -152,7 +152,7 @@ scenario = {
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-27T07:52Z",
+  updated = "2026-10-27T10:18Z",
   game = "open",
   -- The demo bots and the final-round bot are held seats this file fields
   -- with game.spawn_bot, so the lobby has to allow bots.
@@ -192,6 +192,7 @@ scenario = {
     can_hit = "Tank shells pass between you and the demo bots; yours pass your 5B pillbox; the 5A pillboxes' pass you.",
     can_target = "The two Station 5A pillboxes never aim or fire at you; they shoot only at the demo bot.",
     can_die = "The parked Station 6 tank cannot be destroyed.",
+    announce = "No newswire line when a base or a pillbox changes hands.",
     on_choose_start = "You respawn at the furthest station you have reached.",
     spawn_loadout = "You respawn with the tank that station starts you with.",
     allow_base_win = "Owning every base does not end the round; Station 7 has its own win.",
@@ -1344,9 +1345,16 @@ local function bot_init(role)
     -- (HUMAN_DECOY_AWARE off): with it on, a human standing near the target
     -- counts as the bot's cover and the bot builds no blocker of its own
     -- (HUMAN_DECOY_NO_BLOCKERS), which is the very thing the demo shows.
+    -- The first shield scan of the bot's first take runs while its brain is
+    -- still cold, and the tick budget stops it twice; with the brain's
+    -- default of two tries (SHIELD_SCAN_BLACKLIST_TRIES) the bot then gives
+    -- the scan up and charges with its blocker still in the tank, the one
+    -- take the player is sure to watch. By the third try the brain has
+    -- dropped to a smaller scan that fits, so four tries is enough.
     return { cfg = "BLOCKER_ORTHOGONAL_ONLY=true;cfg=BOT_PINGS_DEFAULT=false",
              cfg2 = "0;cfg=STRATEGIC_PLACE_ENABLED=false",
-             cfg3 = "0;cfg=HUMAN_DECOY_AWARE=false" }
+             cfg3 = "0;cfg=HUMAN_DECOY_AWARE=false",
+             cfg4 = "0;cfg=SHIELD_SCAN_BLACKLIST_TRIES=4" }
   elseif role == "bot6" then
     -- The Station 6 bot never fights: its man is the target.
     -- It spares every seat but its own and the Station 7 bot's, not only
@@ -2162,6 +2170,16 @@ function can_capture(kind, n, p)
   end
   if p ~= S.bot5a then return nil end
   return kind == "pill" and (n == P.t5a_target.n or n == P.t5a_blocker.n)
+end
+
+-- No newswire line for a base or a pillbox changing hands. The script hands
+-- the player a dozen bases and pillboxes as the round starts, and gives a
+-- station's bases and pillboxes back whenever it puts a station right, and
+-- each of those would read as a capture. The player can see what they take
+-- and on_base_captured still ticks the goals off.
+function announce(kind, subject, actor)
+  if kind == "base_captured" or kind == "pill_captured" then return false end
+  return nil
 end
 
 -- Tank shells pass between the player and the two demo bots (shells hit
