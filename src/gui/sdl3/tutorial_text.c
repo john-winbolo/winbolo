@@ -368,7 +368,3 @@ void tutorialExpandTextPlain(const char *src, char *out, size_t cap) {
   tutorialTokensExpand(src, out, cap, plainTokenName, NULL);
 }
 
-int tutorialResolveSegments(uint16_t mid, TutorialSeg *out, int max) {
-  if (!out || max <= 0) return 0;
-  return tutorialResolveText(langGetText(pickStringId(mid)), out, max);
-}

@@ -9,7 +9,7 @@
  * The window* set this driver keeps for itself and the frontEnd* callbacks
  * that draw into the SDL3 renderer, as src/gui/ios/winbolo_ios.m keeps its
  * own. Everything that carries sim-state logic (the active-sim test, the
- * tutorial step sequencer, the time-limit game over, the settings toggles
+ * time-limit game over, the settings toggles
  * that tell a running game) comes from client_frontend_common.c, the one
  * body every platform calls; see "Platform variants" in docs/ARCHITECTURE.md.
  */

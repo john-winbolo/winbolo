@@ -10,7 +10,7 @@
  *                context (like imgui_deck_pause), replacing the
  *                old blocking imguiMessageBoxRich sequence so
  *                the game's input gate and solo-pause path apply
- *                while a tutorial message is up.
+ *                while a scenario's popup is up.
  *********************************************************/
 
 #include <cfloat>
@@ -24,41 +24,17 @@
 #include "../tutorial_text.h"
 #include "../../winbolo.h"   /* DIALOG_BOX_TITLE */
 
-/* The most string ids one tutorialOverlayShow call shows in a row. */
-#define TUTORIAL_MAX_MSGS 4
-
-/* All state is touched only from the main thread: tutorialOverlayShow runs
-   inside the game tick, render/advance inside the render pass — the two
-   never overlap (both on the main loop). */
-static uint16_t s_ids[TUTORIAL_MAX_MSGS];
-static int      s_count       = 0;
-static int      s_idx         = 0;
+/* All state is touched only from the main thread, by the render pass. */
 static bool     s_open        = false;
 static bool     s_pendingOpen = false;
 static bool     s_focusFirst  = false;
-static void   (*s_onComplete)(void) = nullptr;
-/* A text message (tutorialOverlayShowText) in place of the id sequence:
-   s_isText says which one is up. Sized past SCN_POPUP_TEXT_MAX with room. */
+/* The message up. Sized past SCN_POPUP_TEXT_MAX with room. */
 static char     s_text[1024];
-static bool     s_isText      = false;
 /* Set by tutorialOverlayClose while the ImGui popup is open: the next render
    takes it off ImGui's popup stack before anything else. */
 static bool     s_closePopup  = false;
 
 #define TUTORIAL_POPUP_ID DIALOG_BOX_TITLE "###TutorialMsg"
-
-void tutorialOverlayShow(const uint16_t *ids, int count,
-                         void (*onComplete)(void)) {
-    if (s_open || s_pendingOpen) return;   /* already showing — ignore */
-    if (!ids || count <= 0) return;
-    if (count > TUTORIAL_MAX_MSGS) count = TUTORIAL_MAX_MSGS;
-    for (int i = 0; i < count; ++i) s_ids[i] = ids[i];
-    s_count       = count;
-    s_idx         = 0;
-    s_onComplete  = onComplete;
-    s_isText      = false;
-    s_pendingOpen = true;
-}
 
 void tutorialOverlayShowText(const char *text) {
     if (s_open || s_pendingOpen) return;   /* already showing — ignore */
@@ -67,10 +43,6 @@ void tutorialOverlayShowText(const char *text) {
     if (len >= sizeof(s_text)) len = sizeof(s_text) - 1;
     memcpy(s_text, text, len);
     s_text[len]   = '\0';
-    s_count       = 1;
-    s_idx         = 0;
-    s_onComplete  = nullptr;
-    s_isText      = true;
     s_pendingOpen = true;
 }
 
@@ -78,15 +50,11 @@ bool tutorialOverlayIsOpen(void) {
     return s_open || s_pendingOpen;
 }
 
-/* Clears the per-run state without running the callback. */
+/* Clears the per-run state. */
 void tutorialOverlayReset(void) {
-    s_count       = 0;
-    s_idx         = 0;
     s_open        = false;
     s_pendingOpen = false;
     s_focusFirst  = false;
-    s_onComplete  = nullptr;
-    s_isText      = false;
     s_text[0]     = '\0';
 }
 
@@ -122,16 +90,11 @@ void tutorialOverlayRender(struct ClientSim *cs) {
     }
     if (!s_open) return;
 
-    /* Resolve the current message's segments.  The producer parks TEXT runs
-       in a static buffer reused on the next call, so resolve-then-render in
-       one shot and never re-resolve before drawing. */
+    /* Resolve the message's segments.  The producer parks TEXT runs in a
+       static buffer reused on the next call, so resolve-then-render in one
+       shot and never re-resolve before drawing. */
     TutorialSeg segs[TUTORIAL_SEG_MAX];
-    int nSegs = 0;
-    if (s_idx < s_count) {
-        nSegs = s_isText
-                    ? tutorialResolveText(s_text, segs, TUTORIAL_SEG_MAX)
-                    : tutorialResolveSegments(s_ids[s_idx], segs, TUTORIAL_SEG_MAX);
-    }
+    int nSegs = tutorialResolveText(s_text, segs, TUTORIAL_SEG_MAX);
 
     /* The body reflows now (single '\n' is a space, blank lines are paragraph
        breaks), so width is a free readability choice rather than something we
@@ -161,23 +124,8 @@ void tutorialOverlayRender(struct ClientSim *cs) {
                                nullptr, flags)) {
         bool dismissed = imguiRichSegmentsBody(segs, nSegs, &s_focusFirst);
         if (dismissed) {
-            s_idx++;
-            if (s_idx >= s_count) {
-                /* Last message in the sequence dismissed — close, clear
-                   state, then notify.  Run the callback after EndPopup so
-                   it sees the overlay already closed. */
-                ImGui::CloseCurrentPopup();
-                s_open = false;
-                void (*cb)(void) = s_onComplete;
-                s_onComplete = nullptr;
-                s_count = 0;
-                s_idx   = 0;
-                ImGui::EndPopup();
-                if (cb) cb();
-                return;
-            }
-            /* Advance to the next message; refocus OK for it. */
-            s_focusFirst = true;
+            ImGui::CloseCurrentPopup();
+            s_open = false;
         }
         ImGui::EndPopup();
     } else {
