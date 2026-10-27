@@ -351,11 +351,10 @@ const BrainModes *serverSimBrainModesCached(BrainModesCache *cache,
 bool serverSimSidesAgree(const ServerSim *sim);
 
 /* The lowest team id in 1..MAX_TANKS-1 that no connected seat is on, or 0
- * when every id has somebody. The team is set up as a new team first, even
- * when it is still in use from before (a scenario team or a team that
- * emptied): named "Team N", on no start side, with the colour the fewest
- * other teams in use have (the lowest on a tie), and published. A team
- * still in use keeps its bot naming pool. */
+ * when every id has somebody. A team not in use is set up first: named
+ * "Team N", on no start side, with the colour the fewest teams in use have
+ * (the lowest on a tie), and published. A team still in use (a lobby or
+ * scenario team that emptied) keeps its name, colour and start side. */
 BYTE serverSimFreeTeam(ServerSim *sim);
 
 /* Tell everyone that seat slot's team changed from oldTeam: publish its

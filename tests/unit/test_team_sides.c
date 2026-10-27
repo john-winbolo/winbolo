@@ -57,7 +57,8 @@
  *   leave_takes_free_team     — a leaver takes the lowest free team
  *   leave_with_no_free_team   — with every id held, the leaver has none
  *   free_team_rules           — the id, colour and name a free team gets
- *   free_team_resets_emptied  — an emptied team is handed out as a new one
+ *   free_team_keeps_setup     — an emptied team keeps its name, colour, side
+ *   free_team_keeps_lobby_side — a lobby team that empties keeps its side
  *   team_chat_follows_sides   — team chat goes with the side
  *   panels_follow_team        — scenario panels go with the side
  *   infection_puts_leaver_back — Infection keeps a seat on its side
@@ -795,54 +796,97 @@ int run_team_sides_free_team_rules(void) {
     return 0;
 }
 
-/* A team that is still in use but has nobody on it is handed out as a new
-   team. Teams 1, 1 and 2 in a running round, and team 3 set up with a name,
-   a colour and a start side as a scenario would, but with no seat on it.
-   Seat 1 leaves the alliance and takes team 3, which then has the name,
-   colour and side of a team never used: "Team 3", the colour the fewest
-   other teams have, and no side. It keeps its bot naming pool. */
-int run_team_sides_free_team_resets_emptied(void) {
+/* A team that is still in use but has nobody on it keeps its setup when it
+   is handed out. Teams 1, 1 and 2 in a running round, and team 3 set up
+   with a name, a colour and a start side as a scenario would, but with no
+   seat on it. Seat 1 leaves the alliance and takes team 3 as it was set
+   up: "Raiders", colour 5, the north side and its bot naming pool. Nothing
+   about team 3 is published again. */
+int run_team_sides_free_team_keeps_setup(void) {
     const BYTE teams[3] = { 1, 1, 2 };
     ServerSim *sim = tsRunningSim(teams, 3);
-    uint8_t want;
+    TsEvents *cap = (TsEvents *)calloc(1, sizeof(TsEvents));
+    SubscriberHandle h;
     uint8_t pool;
 
-    UT_ASSERT(sim != NULL);
+    UT_ASSERT(sim != NULL && cap != NULL);
     serverSimSetTeamMeta(sim, 3, 5, 0, START_SIDE_N,
                          (const uint8_t *)"Raiders", 7);
     pool = sim->teams[3].namingPool;
     UT_ASSERT(sim->teams[3].in_use);
     UT_ASSERT(sim->teams[3].startSide == START_SIDE_N);
-    /* The colour a new team 3 takes: the least used of teams 1 and 2, the
-       lowest on a tie. */
-    {
-        int uses[8] = {0};
-        uint8_t c;
-        uses[sim->teams[1].color & 7]++;
-        uses[sim->teams[2].color & 7]++;
-        want = 0;
-        for (c = 1; c < 8; c++) {
-            if (uses[c] < uses[want]) want = c;
-        }
-    }
+    h = serverSimRegisterSubscriber(sim, tsCaptureAll, cap);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    memset(cap, 0, sizeof(*cap));
 
     serverSimLeaveAlliance(sim, 1);
     UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the leaver is on team %u",
                   (unsigned)tsTeam(sim, 1));
-    UT_ASSERT_MSG(strcmp(sim->teams[3].name, "Team 3") == 0,
+    UT_ASSERT_MSG(strcmp(sim->teams[3].name, "Raiders") == 0,
                   "the leaver's team is named \"%s\"", sim->teams[3].name);
-    UT_ASSERT_MSG(sim->teams[3].startSide == START_SIDE_ANY,
+    UT_ASSERT_MSG(sim->teams[3].startSide == START_SIDE_N,
                   "the leaver's team has start side %u",
                   (unsigned)sim->teams[3].startSide);
-    UT_ASSERT_MSG(sim->teams[3].color == want,
-                  "the leaver's team has colour %u, not %u",
-                  (unsigned)sim->teams[3].color, (unsigned)want);
-    UT_ASSERT(sim->teams[3].sideAutoFilled == 0);
+    UT_ASSERT_MSG(sim->teams[3].color == 5,
+                  "the leaver's team has colour %u, not 5",
+                  (unsigned)sim->teams[3].color);
     UT_ASSERT_MSG(sim->teams[3].namingPool == pool,
                   "the leaver's team has bot pool %u, not its own %u",
                   (unsigned)sim->teams[3].namingPool, (unsigned)pool);
+    UT_ASSERT_MSG(tsFind(cap, 0, CTRL_LOBBY_TEAM_META) < 0,
+                  "the leaver's team was published again");
     UT_ASSERT(serverSimSidesAgree(sim));
+
+    serverSimUnregisterSubscriber(sim, h);
     serverSimDestroy(sim);
+    free(cap);
+    return 0;
+}
+
+/* A lobby team that empties during a round keeps its start side for the
+   next lobby. Teams 1, 1 and 2 on the default side pair. Seat 0 accepts
+   seat 2, so seat 2 moves onto team 1 and team 2 has nobody. Seat 2 then
+   leaves the alliance and takes team 2 again, which still has its name,
+   colour, side and filled-in flag, and is not published again. */
+int run_team_sides_free_team_keeps_lobby_side(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    TsEvents *cap = (TsEvents *)calloc(1, sizeof(TsEvents));
+    SubscriberHandle h;
+    TeamMetadata was;
+
+    UT_ASSERT(sim != NULL && cap != NULL);
+    serverSimApplyDefaultTeamSides(sim);
+    UT_ASSERT(sim->teams[1].startSide != START_SIDE_ANY);
+    UT_ASSERT(sim->teams[2].startSide != START_SIDE_ANY);
+    UT_ASSERT(sim->teams[2].sideAutoFilled);
+    was = sim->teams[2];
+
+    serverSimAcceptAlliance(sim, 0, 2);
+    UT_ASSERT_MSG(tsTeam(sim, 2) == 1, "after the accept seat 2 is on team %u",
+                  (unsigned)tsTeam(sim, 2));
+    UT_ASSERT(serverSimSidesAgree(sim));
+
+    h = serverSimRegisterSubscriber(sim, tsCaptureAll, cap);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    memset(cap, 0, sizeof(*cap));
+    serverSimLeaveAlliance(sim, 2);
+    UT_ASSERT_MSG(tsTeam(sim, 2) == 2, "the leaver is on team %u",
+                  (unsigned)tsTeam(sim, 2));
+    UT_ASSERT_MSG(sim->teams[2].startSide == was.startSide,
+                  "team 2 has start side %u, not %u",
+                  (unsigned)sim->teams[2].startSide, (unsigned)was.startSide);
+    UT_ASSERT(sim->teams[2].sideAutoFilled == was.sideAutoFilled);
+    UT_ASSERT(sim->teams[2].color == was.color);
+    UT_ASSERT(sim->teams[2].namingPool == was.namingPool);
+    UT_ASSERT(strcmp(sim->teams[2].name, was.name) == 0);
+    UT_ASSERT_MSG(tsFind(cap, 0, CTRL_LOBBY_TEAM_META) < 0,
+                  "team 2 was published again");
+    UT_ASSERT(serverSimSidesAgree(sim));
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    free(cap);
     return 0;
 }
 
