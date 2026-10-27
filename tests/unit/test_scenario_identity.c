@@ -39,6 +39,10 @@
  *                                      its author and updated time beside
  *                                      its details, and the listen host's
  *                                      own lookup answers the same
+ * run_scenario_identity_details_extra — a found reply with one byte after
+ *                                      its identity is not taken: the file
+ *                                      reads as no details, while the same
+ *                                      reply without that byte is found
  * run_scenario_identity_shipped      — every shipped script, data/mods and
  *                                      the data/maps scenario scripts, says
  *                                      author "WinBolo" and a valid updated
@@ -62,7 +66,9 @@
 #include "server_sim.h"
 #include "transport_udp.h"              /* udpClientHandleLobbyScenarioListRsp */
 #include "transport_udp_internal.h"     /* PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD */
-#include "transport_udp_server_internal.h" /* udpServerPackScenarioListChunk */
+#include "transport_udp_server_internal.h" /* udpServerPackScenarioListChunk,
+                                              udpServer.bulkSend */
+#include "bulk_transfer.h"              /* BULK_KIND_SCENARIO_DETAILS */
 #include "scenario_defs.h"              /* ScnDirEntry */
 #include "scenario_dir.h"
 #include "scenario_host.h"
@@ -776,6 +782,136 @@ int run_scenario_identity_details_fetch(void) {
     UT_ASSERT(found);
     UT_ASSERT(strcmp(dAuthor, SI_AUTHOR) == 0);
     UT_ASSERT(strcmp(dUpdated, SI_UPDATED) == 0);
+
+    UT_ASSERT(clientSimGetConnectState(h.cs) == CLIENT_CONNECT_CONNECTED);
+    threadsWaitForMutex();
+    if (slot != NULL) scenarioHostDetach(slot);
+    threadsReleaseMutex();
+    loopbackHarnessStop(&h);
+    siRemoveTree(siDir);
+    return 0;
+}
+
+/* The author the staged replies carry, which no file on the server states,
+ * so a found answer with it can only be the staged one. */
+#define SI_STAGED_AUTHOR "Staged Reply"
+
+/* The client asks for file and the server's bulk stream to it is then held
+ * by a hand-built details reply of len bytes, so the server drops the real
+ * request and the staged reply is the answer. The pump count to settle, or
+ * -1 when the reply was not staged or no answer came. */
+static int siStageDetails(LoopbackHarness *h, int slot, const char *file,
+                          const uint8_t *reply, size_t len) {
+    BulkStreamHeader sh;
+    bool             staged;
+
+    clientSimLobbyScenarioDetailsWant(h->cs, file);
+    loopbackHarnessPumpClientOnly(h, 1);   /* the request goes out: ASKED */
+    memset(&sh, 0, sizeof(sh));
+    sh.kind      = BULK_KIND_SCENARIO_DETAILS;
+    sh.gen       = 1;
+    sh.totalSize = (uint32_t)len;
+    sh.pathLen   = (uint8_t)strlen(file);
+    memcpy(sh.path, file, (size_t)sh.pathLen + 1);
+    threadsWaitForMutex();
+    staged = bulkSenderBegin(&udpServer.bulkSend[slot], &sh, reply,
+                             (uint32_t)len);
+    threadsReleaseMutex();
+    if (!staged) return -1;
+    return loopbackHarnessPumpUntil(h, SI_FETCH_MAX, siPredSettled,
+                                    (void *)file);
+}
+
+static bool siPredSenderIdle(LoopbackHarness *h, void *user) {
+    bool idle;
+
+    (void)h;
+    threadsWaitForMutex();
+    idle = !bulkSenderBusy(&udpServer.bulkSend[*(const int *)user]);
+    threadsReleaseMutex();
+    return idle;
+}
+
+int run_scenario_identity_details_extra(void) {
+    LoopbackHarness h;
+    ScenarioHost   *slot = NULL;
+    uint8_t         details[SCN_DETAILS_MAX];
+    uint8_t         reply[BULK_SCN_DETAILS_BLOB_MAX];
+    const char     *author  = NULL;
+    const char     *updated = NULL;
+    size_t          len = 0;
+    int             dLen;
+    int             idLen;
+    int             player;
+    int             at;
+
+    snprintf(siDir, sizeof(siDir), "%s", "wbtest_scenario_identity_extra");
+    siRemoveTree(siDir);
+    UT_ASSERT(SDL_CreateDirectory(siDir));
+    UT_ASSERT(siWriteText("Identified.lua", kSiMod));
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "Asker", /*lobbyMode*/ true, NULL,
+                                       0xE47A0001u),
+                  "the harness did not come up");
+    if (loopbackHarnessPumpUntil(&h, SI_CONNECT_MAX, siPredConnected, NULL) <
+        0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never connected");
+    }
+    player = clientSimGetMyPlayerNum(h.cs);
+    threadsWaitForMutex();
+    serverSimSetScenarioDir(h.sim, siDir);
+    scenarioHostRegisterScenarioLister(h.sim);
+    scenarioHostFollowMap(h.sim, &slot);
+    dLen = serverSimScenarioDetails(h.sim, "Identified.lua", details,
+                                    sizeof(details));
+    threadsReleaseMutex();
+    UT_ASSERT(dLen > 0);
+
+    /* [FOUND][detailsLen][details][settingsLen 0][identity], laid out the
+       way the server lays it out, with an author the file does not state. */
+    reply[len++] = BULK_SCN_DETAILS_FOUND;
+    reply[len++] = (uint8_t)(dLen >> 8);
+    reply[len++] = (uint8_t)dLen;
+    memcpy(reply + len, details, (size_t)dLen);
+    len += (size_t)dLen;
+    reply[len++] = 0;
+    reply[len++] = 0;
+    idLen = (int)scnIdentityBlobWrite(reply + len, sizeof(reply) - len - 1,
+                                      SI_STAGED_AUTHOR, SI_UPDATED);
+    UT_ASSERT(idLen > 0);
+    len += (size_t)idLen;
+
+    /* The exact reply is taken, with the staged author. */
+    at = siStageDetails(&h, player, "Identified.lua", reply, len);
+    UT_ASSERT_MSG(at >= 0, "the exact reply was not staged or not answered");
+    UT_ASSERT(clientSimGetLobbyScenarioDetails(h.cs, "Identified.lua", NULL,
+                                               NULL) ==
+              CLIENT_SCN_DETAILS_FOUND);
+    UT_ASSERT(clientSimGetLobbyScenarioIdentity(h.cs, "Identified.lua",
+                                                &author, &updated));
+    UT_ASSERT_MSG(strcmp(author, SI_STAGED_AUTHOR) == 0,
+                  "the answer taken was not the staged one (author '%s')",
+                  author);
+
+    /* One byte more after the identity: a broken reply, so no details. The
+       server first answers the requests it held back, which the forgotten
+       slot does not take. */
+    UT_ASSERT(loopbackHarnessPumpUntil(&h, SI_FETCH_MAX, siPredSenderIdle,
+                                       &player) >= 0);
+    loopbackHarnessPumpUntil(&h, 50, NULL, NULL);
+    UT_ASSERT(loopbackHarnessPumpUntil(&h, SI_FETCH_MAX, siPredSenderIdle,
+                                       &player) >= 0);
+    clientSimLobbyScenarioDetailsForget(h.cs);
+    reply[len++] = 0x5A;
+    at = siStageDetails(&h, player, "Identified.lua", reply, len);
+    UT_ASSERT_MSG(at >= 0, "the long reply was not staged or not answered");
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioDetails(h.cs, "Identified.lua",
+                                                   NULL, NULL) ==
+                      CLIENT_SCN_DETAILS_NONE,
+                  "a reply with a byte after its identity was taken");
+    UT_ASSERT(!clientSimGetLobbyScenarioIdentity(h.cs, "Identified.lua",
+                                                 &author, &updated));
 
     UT_ASSERT(clientSimGetConnectState(h.cs) == CLIENT_CONNECT_CONNECTED);
     threadsWaitForMutex();

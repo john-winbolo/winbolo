@@ -132,7 +132,9 @@ enum {
  * with the details as scenario_details.h lays them out and the settings
  * block as scenario_settings.h does; either may be no bytes. The identity
  * blob is two zero lengths when the server's identity lookup does not find
- * the file, which reads as both unknown. */
+ * the file, which reads as both unknown. Nothing follows the identity blob:
+ * a client refuses a found answer with more bytes, the same as any other
+ * broken one. */
 #define BULK_SCN_DETAILS_FOUND     0
 #define BULK_SCN_DETAILS_NOT_FOUND 1
 

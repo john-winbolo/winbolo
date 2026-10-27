@@ -2297,6 +2297,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_identity_blob",                          run_scenario_identity_blob                          },
     { "scenario_identity_list_wire",                     run_scenario_identity_list_wire                     },
     { "scenario_identity_details_fetch",                 run_scenario_identity_details_fetch                 },
+    { "scenario_identity_details_extra",                 run_scenario_identity_details_extra                 },
     { "scenario_identity_shipped",                       run_scenario_identity_shipped                       },
     { "script_fetch_req_golden",                         run_script_fetch_req_golden                         },
     { "script_fetch_found_lua",                          run_script_fetch_found_lua                          },

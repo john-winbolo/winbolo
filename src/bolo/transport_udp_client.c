@@ -2619,12 +2619,13 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         }
         /* [status][detailsLen 2][details][settingsLen 2][settings]
            [identity] (bulk_transfer.h). A status other than found, a
-           length past the blob or an identity that does not parse makes
-           the whole answer not-found. */
+           length past the blob, an identity that does not parse or bytes
+           after the identity make the whole answer not-found. */
         size_t total = (size_t)h->totalSize;
         size_t dLen;
         size_t sLen;
         size_t at;
+        int    took;
         char   author[SCN_AUTHOR_LEN];
         char   updated[SCN_UPDATED_LEN];
 
@@ -2640,10 +2641,14 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         at   = 3 + dLen;
         sLen = ((size_t)buf[at] << 8) | buf[at + 1];
         at  += 2;
-        if (at + sLen > total ||
-            scnIdentityBlobRead(buf + at + sLen, total - at - sLen,
-                                author, sizeof(author), updated,
-                                sizeof(updated)) < 0) {
+        if (at + sLen > total) {
+            clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
+            break;
+        }
+        took = scnIdentityBlobRead(buf + at + sLen, total - at - sLen,
+                                   author, sizeof(author), updated,
+                                   sizeof(updated));
+        if (took < 0 || at + sLen + (size_t)took != total) {
             clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
             break;
         }
