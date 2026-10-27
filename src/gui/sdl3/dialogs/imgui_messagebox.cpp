@@ -154,12 +154,35 @@ typedef struct RichElem {
     RichElemKind kind;
     const char  *text;        /* RICH_WORD: pointer into segment text. */
     int          textLen;     /* RICH_WORD: byte length (no NUL). */
+    int          linkLen;     /* RICH_WORD: bytes at its start that are a
+                                 web address, 0 for a plain word. */
     SDL_Texture *glyph;       /* RICH_GLYPH_PNG. */
     const char  *keycapLabel; /* RICH_GLYPH_KEYCAP. */
     float        w, h;
 } RichElem;
 
 #define RICH_ELEM_MAX 512
+
+/* How many bytes at the start of a word are a web address: the word starts
+ * with http:// or https://, and the address ends where the word does, less
+ * any closing punctuation, so "https://www.winbolo.com." links without its
+ * full stop. 0 for any other word. The same rule as imguiTextWrappedWithLinks
+ * uses for the plain message boxes. */
+static int richLinkLen(const char *w, int len) {
+    bool isHttp  = (len > 7 && memcmp(w, "http://",  7) == 0);
+    bool isHttps = (len > 8 && memcmp(w, "https://", 8) == 0);
+    if (!isHttp && !isHttps) return 0;
+    while (len > 0) {
+        char c = w[len - 1];
+        if (c == '.' || c == ',' || c == ';' || c == ':' || c == '!' ||
+            c == '?' || c == ')' || c == ']' || c == '\'' || c == '"') {
+            len--;
+        } else {
+            break;
+        }
+    }
+    return len > (isHttps ? 8 : 7) ? len : 0;
+}
 
 /* Flatten segments into elements.  TEXT segments split on whitespace;
  * '\n' becomes a HARD_BREAK; glyphs become single elements sized to
@@ -198,6 +221,7 @@ static int flattenSegments(const TutorialSeg *segments, int segCount,
                 out[n].kind = RICH_WORD;
                 out[n].text = p;
                 out[n].textLen = len;
+                out[n].linkLen = richLinkLen(p, len);
                 out[n].w = ts.x;
                 out[n].h = ImGui::GetTextLineHeight();
                 n++;
@@ -294,7 +318,38 @@ static int renderRichMessageBoxContent(const TutorialSeg *segments, int segCount
             ImVec2 p = ImVec2(drawX, penY + yOffset);
             switch (e->kind) {
                 case RICH_WORD:
-                    dl->AddText(p, textCol, e->text, e->text + e->textLen);
+                    if (e->linkLen > 0) {
+                        /* A web address: drawn in the link colour,
+                           underlined under the mouse, and opened in the
+                           browser on a click. Any closing punctuation after
+                           it is plain text. */
+                        const char *linkEnd = e->text + e->linkLen;
+                        ImVec2 linkSize = ImGui::CalcTextSize(e->text, linkEnd);
+                        ImVec2 linkMax(p.x + linkSize.x, p.y + e->h);
+                        ImU32 linkCol = ImGui::GetColorU32(ImGuiCol_TextLink);
+                        dl->AddText(p, linkCol, e->text, linkEnd);
+                        if (linkEnd < e->text + e->textLen) {
+                            dl->AddText(ImVec2(linkMax.x, p.y), textCol,
+                                        linkEnd, e->text + e->textLen);
+                        }
+                        if (ImGui::IsWindowHovered() &&
+                            ImGui::IsMouseHoveringRect(p, linkMax)) {
+                            dl->AddLine(ImVec2(p.x, linkMax.y - 1.0f),
+                                        ImVec2(linkMax.x, linkMax.y - 1.0f),
+                                        linkCol);
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                char url[512];
+                                int n = e->linkLen < (int)sizeof(url) - 1
+                                            ? e->linkLen : (int)sizeof(url) - 1;
+                                memcpy(url, e->text, (size_t)n);
+                                url[n] = '\0';
+                                imguiOpenUrl(url);
+                            }
+                        }
+                    } else {
+                        dl->AddText(p, textCol, e->text, e->text + e->textLen);
+                    }
                     break;
                 case RICH_GLYPH_PNG:
                     dl->AddImage((ImTextureID)e->glyph, p,
