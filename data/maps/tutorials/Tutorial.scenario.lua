@@ -152,7 +152,7 @@ scenario = {
   api  = 1,
   kind = "scenario",
   author  = "WinBolo",
-  updated = "2026-10-27T09:21Z",
+  updated = "2026-10-27T10:18Z",
   game = "open",
   -- The demo bots and the final-round bot are held seats this file fields
   -- with game.spawn_bot, so the lobby has to allow bots.
@@ -1345,9 +1345,16 @@ local function bot_init(role)
     -- (HUMAN_DECOY_AWARE off): with it on, a human standing near the target
     -- counts as the bot's cover and the bot builds no blocker of its own
     -- (HUMAN_DECOY_NO_BLOCKERS), which is the very thing the demo shows.
+    -- The first shield scan of the bot's first take runs while its brain is
+    -- still cold, and the tick budget stops it twice; with the brain's
+    -- default of two tries (SHIELD_SCAN_BLACKLIST_TRIES) the bot then gives
+    -- the scan up and charges with its blocker still in the tank, the one
+    -- take the player is sure to watch. By the third try the brain has
+    -- dropped to a smaller scan that fits, so four tries is enough.
     return { cfg = "BLOCKER_ORTHOGONAL_ONLY=true;cfg=BOT_PINGS_DEFAULT=false",
              cfg2 = "0;cfg=STRATEGIC_PLACE_ENABLED=false",
-             cfg3 = "0;cfg=HUMAN_DECOY_AWARE=false" }
+             cfg3 = "0;cfg=HUMAN_DECOY_AWARE=false",
+             cfg4 = "0;cfg=SHIELD_SCAN_BLACKLIST_TRIES=4" }
   elseif role == "bot6" then
     -- The Station 6 bot never fights: its man is the target.
     -- It spares every seat but its own and the Station 7 bot's, not only
