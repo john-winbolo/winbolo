@@ -8,6 +8,10 @@
  *       for the call that sends it (popup 511 bytes a part, status line
  *       128, announcement 125, panel text 48 and one row), so no line is
  *       refused in play. A popup longer than one part is a table of parts.
+ *       For a script with a STEPS table (the Classic Tutorial, which sends
+ *       each step's messages at once), no step sends more popups, counting
+ *       parts, than a client queues (SCN_POPUP_QUEUE_MAX), in any language
+ *       or wording, so none is dropped.
  *   tutorial_text_well_formed — each text is valid UTF-8, every "{" starts
  *       a key token the client knows ({FIRE}, {GUN_UP} ...) and every "}"
  *       ends one, so a typo such as "{FIRE" or "{GUN_DWN}" fails here and
@@ -31,6 +35,7 @@
 #include <lualib.h>
 
 #include "../../src/gui/sdl3/tutorial_tokens.h"
+#include "scenario_panel.h"   /* SCN_POPUP_QUEUE_MAX */
 #include "test_harness.h"
 
 #ifndef WB_REPO_ROOT_DIR
@@ -130,6 +135,26 @@ static const char *const kChecker =
     "            bad[#bad + 1] = where .. ' is worded by input with no keyboard'\n"
     "          else\n"
     "            parts(where, lim, v, T, section, key)\n"
+    "          end\n"
+    "        end\n"
+    "      end\n"
+    "    end\n"
+    "  end\n"
+    "  if STEPS ~= nil then\n"
+    "    local function count(T, key, input)\n"
+    "      local v = (T.pop and T.pop[key]) or TEXT.en.pop[key]\n"
+    "      if by_input(v) then v = v[input] or v.keyboard end\n"
+    "      if type(v) == 'table' then return #v end\n"
+    "      return 1\n"
+    "    end\n"
+    "    for code, T in pairs(TEXT) do\n"
+    "      for _, input in ipairs({ 'keyboard', 'touch', 'controller' }) do\n"
+    "        for i, s in ipairs(STEPS) do\n"
+    "          local n = 0\n"
+    "          for _, key in ipairs(s.msgs) do n = n + count(T, key, input) end\n"
+    "          if n > ttc_popup_queue then\n"
+    "            over[#over + 1] = code .. ' step ' .. i .. ' (' .. input ..\n"
+    "              ') sends ' .. n .. ' popups, a client queues ' .. ttc_popup_queue\n"
     "          end\n"
     "        end\n"
     "      end\n"
@@ -236,6 +261,8 @@ static bool ttcRun(lua_State *L, int which, char *err, size_t errCap) {
     }
     luaL_openlibs(L);
     lua_register(L, "ttc_text_fault", ttcTextFault);
+    lua_pushinteger(L, SCN_POPUP_QUEUE_MAX);
+    lua_setglobal(L, "ttc_popup_queue");
     if (luaL_dostring(L, kGameStub) != 0) {
         snprintf(err, errCap, "the game stub: %s", lua_tostring(L, -1));
         free(src);
