@@ -82,6 +82,8 @@
 #include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
+#include "tutorial_maps.h"
+#include "client_frontend_common.h"  /* clientFrontTellScenarioPlayer */
 #include "skin_source.h"
 #include "gfx_settings.h"
 
@@ -755,6 +757,13 @@ void gameFrontTickSteamPresenceGame(ClientSim *cs) {
 
 extern bool isTutorial;
 
+/* The main menu's Tutorial entry: a single-player round on the Tutorial
+ * scenario (TUTORIAL_MENU_MAP and the script beside it). Set by the
+ * openTutorial case and read where the single-player path builds the
+ * server. It is not isTutorial, which runs the old built-in tutorial
+ * (tutorial.c); the menu no longer starts that one. */
+static bool isScenarioTutorial = FALSE;
+
 /* Used to set the preferences — defined in winbolo.c */
 extern int frameRate;
 extern bool showGunsight;
@@ -829,6 +838,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   bool OKStart;
 
   isTutorial = FALSE;
+  isScenarioTutorial = FALSE;
   password[0] = '\0';
   gameFrontName[0] = '\0';
   gameFrontUdpAddress[0] = '\0';
@@ -1039,7 +1049,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     return FALSE;
   }
 
-  clientSimSetAiType(humanSim, isTutorial ? aiNone : compTanks);
+  /* The Tutorial scenario plays with computer tanks allowed, as the server
+   * it runs on was made (see the single-player setup). */
+  clientSimSetAiType(humanSim, isTutorial ? aiNone
+                               : (isScenarioTutorial ? aiFull : compTanks));
 
   if (isTutorial == FALSE) {
     clientMutexWaitFor();
@@ -1231,24 +1244,26 @@ static void gameFrontApplyVisibilityPrefs(ServerSim *sim) {
 /* -------------------------------------------------------
  * gameFrontDialogs — setup dialog state machine
  * ------------------------------------------------------- */
-/* Whether a map in the background game's directory is one it may show. The
- * tutorial map and Better Best Map Ever are left out by name, and so is any
- * map that is a scenario: one with a script beside it or packed into it,
- * whether or not this process runs scripts. A scenario's rules only hold
- * while its script runs, and the background game runs none, so what it
- * would show is the scenario's map played as something it is not. */
+/* Whether a map in the background game's directory is one it may show.
+ * bgMapNameAllowed (tutorial_maps.h) leaves out every map in a folder, the
+ * tutorials in data/maps/tutorials among them, and the old tutorial map and
+ * Better Best Map Ever by name. Any map that is a scenario goes too: one
+ * with a script beside it or packed into it, whether or not this process
+ * runs scripts. A scenario's rules only hold while its script runs, and the
+ * background game runs none, so what it would show is the scenario's map
+ * played as something it is not. */
 static bool bgMapAllowed(const char *dir, const char *name) {
     char path[512];
 
-    if (SDL_strcasecmp(name, "Inbuilt Tutorial.map") == 0 ||
-        SDL_strcasecmp(name, "Better Best Map Ever.map") == 0) {
+    if (!bgMapNameAllowed(name)) {
         return false;
     }
     SDL_snprintf(path, sizeof(path), "%s/%s", dir, name);
     return !scenarioHostMapCarriesScript(path);
 }
 
-/* Pick a random .map file from data/maps/ for the background game */
+/* Pick a random .map file from data/maps/ itself (not its folders) for the
+ * background game */
 static bool pickRandomMap(char *out, size_t outLen) {
     const char *dir = "data/maps";
     int count = 0;
@@ -1461,44 +1476,37 @@ static bool gameFrontDialogs(void) {
       break;
     }
     case openTutorial:
-      /* Reuse the single-player setup path: preload the tutorial map,
-       * disable bots, then drive the state machine through openSetup ->
-       * openFinished so ServerSim / ClientSim / transport are created
-       * the same way as a normal single-player game. */
-      strncpy(fileName, "data/maps/Inbuilt Tutorial.map", FILENAME_MAX - 1);
+      /* The Tutorial scenario: TUTORIAL_MENU_MAP in data/maps/tutorials and
+       * the script beside it, started as a single-player game through the
+       * same openSetup -> openFinished path as any other, so ServerSim,
+       * ClientSim and the transport are made the usual way. The game it
+       * plays on (type, computer tanks, mines, timing, no lobby) is chosen
+       * where the single-player path builds the server, off
+       * isScenarioTutorial. It is not written into the globals here: those
+       * are saved on exit as what the next hosted game opens on, and the
+       * tutorial would replace the player's picks with its own.
+       *
+       * The old built-in tutorial (tutorial.c, isTutorial) is not started
+       * from here any more; its code stays until it is taken out. */
+      strncpy(fileName, TUTORIAL_MENU_MAP, FILENAME_MAX - 1);
       fileName[FILENAME_MAX - 1] = '\0';
-      /* The tutorial's own type, mines, timing and AI are chosen where the
-       * single-player path builds the server, off isTutorial. They are not
-       * written into the globals here: those are saved on exit as what the
-       * next hosted game opens on, and a tutorial would replace the
-       * player's picks with its own. */
+      /* No bots from the player's own setup: the script seats its own. */
       gameFrontBotSetupData.count = 0;
-      /* Raise the client UI flag before setup runs so the very first
-       * tick (which may already place the tank on a trigger row) is
-       * handled by frontEndTutorial. Reset the step sequencer so a
-       * previously-completed tutorial in this session starts fresh. */
-      frontEndTutorialReset();
-      isTutorial = TRUE;
+      isScenarioTutorial = TRUE;
       dlgState = openSetup;
       /* Same failed-finisher handling as the openSetup case above, plus the
-       * tutorial launch state this case set up: gameFrontStart clears
-       * isTutorial and fileName only on entry, so a return to the menu from
-       * inside the dialog loop has to clear them here or the next
+       * launch state this case set up: gameFrontStart clears
+       * isScenarioTutorial and fileName only on entry, so a return to the
+       * menu from inside the dialog loop has to clear them here or the next
        * single-player start inherits the tutorial map and mode. */
       if (gameFrontSetDlgState(openFinished) == FALSE) {
         imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_GAMEFRONTERR_STARTSERVER),
                           IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        isTutorial = FALSE;
+        isScenarioTutorial = FALSE;
         fileName[0] = '\0';
         bgGameSetHiddenByForeground(bgGameGetShared(), false);
         dlgState = openStart;
-        break;
       }
-      /* Mark both sims so tank.c's tutorial stop logic fires
-       * authoritatively on the server and keeps client prediction
-       * consistent. */
-      if (spServerSim != NULL) serverSimSetTutorial(spServerSim, true);
-      if (humanSim != NULL)    clientSimSetTutorial(humanSim, true);
       break;
     case openSettings: {
       const DialogBackend *db = dialogBackendGet();
@@ -2432,25 +2440,48 @@ bool gameFrontSetDlgState(openingStates newState) {
          * hidden mines the player last picked in a lobby they hosted, the
          * same saved values Internet New and LAN New open on. A player who
          * has never picked gets an Open game with Full Advantage AI. The
-         * tutorial forces a solo strict-tournament game with no AI and no
-         * time limit, ignoring every saved value. */
+         * old built-in tutorial forces a solo strict-tournament game with no
+         * AI and no time limit, ignoring every saved value.
+         *
+         * The Tutorial scenario ignores them too. It plays the game its
+         * tutorial arenas (tests/scenario/tutorial_*) are run on: an Open
+         * game, Full Advantage AI so the bots the script seats are allowed
+         * (the script says needs_bots), hidden mines on, no start delay and
+         * no time limit. The script's own lobby rules then set the game type
+         * it declares, before the round starts. */
         gameType spGameType    = isTutorial ? gameStrictTournament : gametype;
         aiType   spAiPolicy    = isTutorial ? aiNone : compTanks;
         bool     spHiddenMines = isTutorial ? FALSE : hiddenMines;
         int32_t  spStartDelay  = isTutorial ? 0 : startDelay;
         int32_t  spTimeLen     = isTutorial ? UNLIMITED_GAME_TIME : timeLen;
+        if (isScenarioTutorial) {
+          spGameType    = gameOpen;
+          spAiPolicy    = aiFull;
+          spHiddenMines = TRUE;
+          spStartDelay  = 0;
+          spTimeLen     = UNLIMITED_GAME_TIME;
+        }
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
          * the user already configured (count > 0) is left untouched. With
          * the saved AI policy on none, the bot loop below makes nothing. */
-        if (!isTutorial && gameFrontBotSetupData.count == 0) {
+        if (!isTutorial && !isScenarioTutorial &&
+            gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
           gameFrontBotSetupData.bots[0].teamNumber = 2;
           /* brainPath left empty -> the bot loop falls back to spBrainPath. */
         }
-        if (strncmp(fileName, "randommap:", 10) == 0) {
+        if (isScenarioTutorial && !scenarioHostMapCarriesScript(fileName)) {
+          /* The Tutorial is its script: without one beside the map the round
+           * would be a plain game on the tutorial map. Fail the start, which
+           * the menu reports. */
+          WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                       "[SP-FAIL] the Tutorial needs '%s' and the scenario "
+                       "script beside it", fileName);
+          spServerSim = NULL;
+        } else if (strncmp(fileName, "randommap:", 10) == 0) {
           /* Random map — parse seed from "randommap:<seed>" */
           MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
           const char *seedStr = fileName + 10;
@@ -2479,7 +2510,9 @@ bool gameFrontSetDlgState(openingStates newState) {
              so the map commits that follow answer to it as well. Set both
              ways, because unlike a command-line switch this can be turned
              back on without restarting. */
-          scenarioHostSetEnabled(gameFrontHostingScripts);
+          /* The Tutorial runs its script whatever the preference says: it
+             is a shipped file and the round is nothing without it. */
+          scenarioHostSetEnabled(gameFrontHostingScripts || isScenarioTutorial);
           /* And the narrower one beside it, applied at the same point: a map
              this host took as an upload plays plainly with it off. */
           scenarioHostSetUploadScriptsEnabled(
@@ -2527,11 +2560,12 @@ bool gameFrontSetDlgState(openingStates newState) {
              Before gameFrontStartServerSim, so the lobby snapshot behind
              serverSimResetLobbyToDefaults is taken from these values.
 
-             Not for the tutorial. That runs with skipLobby, so it never
+             Not for either tutorial. Each runs with skipLobby, so it never
              shows the dropdown and nobody can change what it plays on;
-             it keeps the plain view it has always had, the same way it
-             ignores every other setting left over from an earlier game. */
-          if (!isTutorial) {
+             it keeps the plain view, the one its tests run with, the same
+             way it ignores every other setting left over from an earlier
+             game. */
+          if (!isTutorial && !isScenarioTutorial) {
             gameFrontApplyVisibilityPrefs(spServerSim);
           }
           /* Tutorial: mark the freshly-created sim authoritative-tutorial and
@@ -2575,7 +2609,9 @@ bool gameFrontSetDlgState(openingStates newState) {
           cfg.trackerPort         = gameFrontTrackerPort;
           cfg.useNatKeepalive     = false;
           cfg.useNatPortmap       = false;
-          if (isTutorial) {
+          /* The Tutorial scenario starts its round at once, as its arenas do
+             (-nolobby): the startup seats the script's lobby on the way in. */
+          if (isTutorial || isScenarioTutorial) {
             cfg.skipLobby         = true;
           } else {
             cfg.lobbyEnabled      = true;
@@ -2647,12 +2683,13 @@ bool gameFrontSetDlgState(openingStates newState) {
              * so the path composer uses them verbatim instead of auto-naming
              * a fresh timestamped file per round. dontSendLog is
              * unconditionally true; a single-player round is never uploaded
-             * to WinBolo.net. Tutorials are skipped — they set cfg.skipLobby,
-             * so they never reach the lobby that would offer the playback.
+             * to WinBolo.net. Both tutorials are skipped — they set
+             * cfg.skipLobby, so they never reach the lobby that would offer
+             * the playback.
              * Installed before the client-type resolution because the
              * subscriber's sync replay opens the log immediately, and the
              * completed path is set after the install, which clears it. */
-            if (!isTutorial) {
+            if (!cfg.skipLobby) {
               char spLogPath[FILENAME_MAX];
               char spRoundPath[FILENAME_MAX];
               const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
@@ -2712,6 +2749,11 @@ bool gameFrontSetDlgState(openingStates newState) {
             threadsWaitForMutex();
             clientSimNetSetLocalFrameQueue(humanSim, true);
             spFrameQueueSim = humanSim;
+            /* The server is in this process, so it can be told the language
+             * the player reads and the input they use; a scenario picks its
+             * text by them. The frame poll tells it again on a change. */
+            clientFrontTellScenarioPlayer(spServerSim,
+                                          clientSimGetMyPlayerNum(humanSim));
             threadsReleaseMutex();
             /* Phase 2 leaves the legacy spHumanSubHandle field unset —
              * the auto-subscriber registered by connect lives inside
@@ -2729,11 +2771,15 @@ bool gameFrontSetDlgState(openingStates newState) {
              * StartGameInPlace synchronously. netSetup just overwrote
              * netStat to netRunning, so we re-set the four lobby
              * flags here (after netSetup, the right moment). */
-            if (!isTutorial) {
+            if (!isTutorial && !isScenarioTutorial) {
               clientSimSetIsSinglePlayer(humanSim, true);
               clientSimSetInLobby(humanSim, true);
               clientSimSetNetStatus(humanSim, netLobby);
               clientSimSetMapDownloadComplete(humanSim, true);
+            } else if (isScenarioTutorial) {
+              /* No lobby, but a single-player game all the same: the
+               * scenario's popups pause it, as a solo session's do. */
+              clientSimSetIsSinglePlayer(humanSim, true);
             }
             /* Tutorial (no-lobby) and lobby paths both rely on the
              * first-snapshot apply inside the local transport to fire
@@ -2809,7 +2855,7 @@ bool gameFrontSetDlgState(openingStates newState) {
              * AI level the seating reads are in the sim from the startup's
              * config, and the bot pool has been up since the client booted.
              *
-             * Not on a tutorial, which is the one path here that skips the
+             * Not on a tutorial, the one kind of game here that skips the
              * lobby: its round started inside the startup above, and the
              * startup seated the template itself on the way in so the round
              * could build a tank for every fielded seat. Seating again now
@@ -2820,7 +2866,7 @@ bool gameFrontSetDlgState(openingStates newState) {
              * a game that skipped the lobby has already had the settings
              * applied above and the second call changes nothing. */
             if (spScenarioHost != NULL) {
-              if (!isTutorial) {
+              if (!cfg.skipLobby) {
                 serverSimScenarioSeatLobby(spServerSim);
               }
               serverSimScenarioApplyLobbyRules(spServerSim);
@@ -3419,6 +3465,9 @@ void gameFrontSetLanguageCode(const char *code) {
    * even if the user never reaches gameFrontPutPrefs. */
   prefsSetString("SETTINGS", "Language",
                             gameFrontLanguageCode);
+  /* A single-player game already running is told the new language by the
+   * next frame's clientFrontPollScenarioPlayer, and reads it from the
+   * scenario's next line on. */
 }
 
 void gameFrontRequestPlayTutorial(void) {
@@ -6015,6 +6064,10 @@ ServerSim *gameFrontGetServerSim(void) {
 
 ServerSim *gameFrontGetSinglePlayerServerSim(void) {
   return spServerSim;
+}
+
+const char *gameFrontScenarioMapScriptPath(void) {
+  return scenarioHostMapScriptPath(spScenarioHost);
 }
 
 BYTE gameFrontGetPlayerNum(void) {

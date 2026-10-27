@@ -314,10 +314,12 @@ typedef enum {
     SCN_OP_ANNOUNCE,
     SCN_OP_MARKER,
     SCN_OP_STATUS,
+    SCN_OP_POPUP,
 
     /* Flow */
     SCN_OP_END_ROUND,
     SCN_OP_SET_GAME_TIME,
+    SCN_OP_TUTORIAL_DONE,
 
     /* Rules */
     SCN_OP_SET_RULE,
@@ -404,7 +406,13 @@ typedef struct {
 typedef struct {
     BYTE slot;
     BYTE x, y;      /* 0xFF, 0xFF = to the tank */
+    BYTE from;      /* 0 = from the nearest map edge (the classic arm);
+                       1..SCN_PARACHUTE_FROM_MAX = start this many squares
+                       short of the landing square, on the line to that
+                       edge */
 } ScnOpLgmParachute;
+
+#define SCN_PARACHUTE_FROM_MAX 32
 
 typedef struct {
     BYTE slot;
@@ -658,6 +666,16 @@ typedef struct {
     char     text[SCN_TEXT_MAX];
 } ScnOpStatus;
 
+/* A popup: a message box the player has to close, drawn through the
+ * client's tutorial overlay, which pauses a local game while it is up.
+ * The text may carry the tutorial's key tokens ({ACCEL}, {QUICK_TREE} and
+ * so on), which each client turns into its own keys. A popup is shown
+ * once and is not replayed to a client that joins later. */
+typedef struct {
+    BYTE target;
+    char text[SCN_POPUP_TEXT_MAX + 1];
+} ScnOpPopup;
+
 typedef struct {
     BYTE target;
     BYTE id;
@@ -678,6 +696,15 @@ typedef struct {
     int32_t ticks;
     bool    relative;
 } ScnOpSetGameTime;
+
+/* A shipped tutorial is finished for the player in slot. The server keeps
+ * a mark for the seat and does nothing else. Only a single-player client
+ * in the same process reads the mark, and it hides the main menu's
+ * Tutorial button. A hosted or dedicated server has no such client, so
+ * there the op changes nothing a player sees. */
+typedef struct {
+    BYTE slot;
+} ScnOpTutorialDone;
 
 /* ── Rules ─────────────────────────────────────────────────────── */
 
@@ -800,8 +827,10 @@ typedef struct {
         ScnOpAnnounce          announce;
         ScnOpMarker            marker;
         ScnOpStatus            status;
+        ScnOpPopup             popup;
         ScnOpEndRound          endRound;
         ScnOpSetGameTime       setGameTime;
+        ScnOpTutorialDone      tutorialDone;
         ScnOpSetRule           setRule;
         ScnOpShellExpired      shellExpired;
     } u;
@@ -915,6 +944,11 @@ typedef struct ScenarioPolicy {
                         * reached? kind is a HIT_KIND_*. NULL = always.
                         * false lets the shell fly on as if the target
                         * were not there */
+    bool (*canTarget)(void *ctx, BYTE pill, BYTE player);
+                       /* may pillbox pill pick this seat's tank as its
+                        * target? pill is the pill index. NULL = always.
+                        * false has the pillbox pass over the tank as if
+                        * it were not there, and take the next nearest */
     int  (*pillDamageScale)(void *ctx, BYTE attacker, BYTE index, BYTE cause,
                             BYTE pill);
                        /* percent of the armour a blow takes off pill

@@ -2871,6 +2871,37 @@ bool        serverSimGetModsOff(const ServerSim *sim);
 void            serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode);
 ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
 
+/* The language a seat's player reads, as the name of their lang file
+ * lowercased: "en", "de", "pt-br". game.lang(p) answers it, so a scenario
+ * can pick its own text for the player. Only a client in the same process
+ * as the server can tell it — the single-player frontend does, at join and
+ * whenever the player changes language — so every remote seat, and every
+ * seat on a dedicated server, reads "en".
+ *
+ * The setter lowercases the code and keeps it only when it is 1 to
+ * SERVER_PLAYER_LANG_LEN - 1 letters, digits and '-'; anything else,
+ * NULL and "" clear the seat back to "en". The seat is cleared when its
+ * player leaves. The getter answers "en" for a NULL sim, a seat out of
+ * range and a seat that was never told; never NULL. */
+#define SERVER_PLAYER_LANG_LEN 16
+void        serverSimSetPlayerLang(ServerSim *sim, BYTE seat, const char *code);
+const char *serverSimGetPlayerLang(const ServerSim *sim, BYTE seat);
+
+/* The input a seat's player uses, so a scenario can word a line for it:
+ * game.input(p) answers "keyboard", "touch" or "controller". Told the same
+ * way as the language, by a client in the server's own process at join and
+ * whenever the input changes, so a remote seat reads the keyboard.
+ *
+ * The setter keeps only the three values below; anything else clears the
+ * seat back to the keyboard. The seat is cleared when its player leaves.
+ * The getter answers SERVER_PLAYER_INPUT_KEYBOARD for a NULL sim and a
+ * seat out of range. */
+#define SERVER_PLAYER_INPUT_KEYBOARD   0
+#define SERVER_PLAYER_INPUT_TOUCH      1
+#define SERVER_PLAYER_INPUT_CONTROLLER 2
+void serverSimSetPlayerInput(ServerSim *sim, BYTE seat, BYTE input);
+BYTE serverSimGetPlayerInput(const ServerSim *sim, BYTE seat);
+
 /* Voice to everyone — the flag a scenario sets with
  * game.set_voice_everyone. The getter answers false for a NULL sim and when
  * the server's voice mode is serverVoiceOff, because then nobody hears
@@ -3172,6 +3203,12 @@ void serverSimSetTutorial(ServerSim *sim, bool v);
 void serverSimSetTutorialStartIdx(ServerSim *sim, BYTE idx);
 bool serverSimTakeTutorialRespawn1(ServerSim *sim);
 
+/* Whether a script called game.tutorial_done for seat since the last take,
+ * and clears the mark. The single-player frontend calls it each frame, with
+ * the mutex held, to hide the main menu's Tutorial button. False for a NULL
+ * sim and a seat out of range. */
+bool serverSimTakeTutorialDone(ServerSim *sim, BYTE seat);
+
 /* Pause flag on the embedded GameSim. Unlocked: caller must hold
  * threadsMutex. */
 void serverSimSetPaused(ServerSim *sim, bool paused);
@@ -3184,6 +3221,8 @@ void serverSimSetPaused(ServerSim *sim, bool paused);
 
 BYTE         serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y);
 bool         serverSimMapIsMine(const ServerSim *sim, BYTE x, BYTE y);
+/* Shots a wall square still takes before it is rubble; 0 for a non-wall. */
+int          serverSimWallShotsLeft(const ServerSim *sim, BYTE x, BYTE y);
 bool         serverSimPillExistsAt(const ServerSim *sim, BYTE x, BYTE y);
 BYTE         serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer);
 bool         serverSimBaseExistsAt(const ServerSim *sim, BYTE x, BYTE y);
@@ -3325,6 +3364,10 @@ typedef struct TankInfo {
     BYTE  armour;
     BYTE  trees;
     BYTE  pills;     /* How many pills the tank is carrying */
+    BYTE  sight;     /* Gun sight range in half squares, from the rules
+                        gunsight_min to gunsight_max. The server's copy:
+                        it follows the owner's crosshair once their
+                        input reaches the server. */
     bool  is_bot;
     TankModifiers mods; /* Per-tank percentages; a zeroed set is classic */
 } TankInfo;

@@ -1029,6 +1029,12 @@ file(GLOB IOS_DATA_MAPS
     "${CMAKE_SOURCE_DIR}/data/maps/*.map"
     "${CMAKE_SOURCE_DIR}/data/maps/*.lua"
 )
+# The tutorials have a folder of their own, which the flat glob above does
+# not reach: each tutorial map and the script beside it.
+file(GLOB IOS_DATA_MAPS_TUTORIALS
+    "${CMAKE_SOURCE_DIR}/data/maps/tutorials/*.map"
+    "${CMAKE_SOURCE_DIR}/data/maps/tutorials/*.lua"
+)
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
 file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
@@ -1117,6 +1123,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/build_cursor.c
     src/gui/sdl3/input_source.c
     src/gui/sdl3/tutorial_text.c
+    src/gui/sdl3/tutorial_tokens.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/scn_panel_prefs.c
@@ -1205,6 +1212,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_DATA_ROOT}
     ${IOS_DATA_ROOT_MAPS}
     ${IOS_DATA_MAPS}
+    ${IOS_DATA_MAPS_TUTORIALS}
     ${IOS_DATA_MODS}
     ${IOS_DATA_FLAGS}
     ${IOS_DATA_FONT}
@@ -1232,6 +1240,9 @@ set_source_files_properties(${IOS_DATA_FONT} PROPERTIES
 )
 set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
+)
+set_source_files_properties(${IOS_DATA_MAPS_TUTORIALS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data/maps/tutorials"
 )
 set_source_files_properties(${IOS_DATA_MODS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/mods"
@@ -1271,7 +1282,7 @@ set_source_files_properties(${IOS_ASSET_CATALOG} PROPERTIES
 )
 
 # Organize in Xcode sidebar
-source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_MODS} ${IOS_DATA_FLAGS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
+source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_MAPS_TUTORIALS} ${IOS_DATA_MODS} ${IOS_DATA_FLAGS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
 source_group("Brains" FILES ${IOS_BRAIN_SCRIPTS})
 source_group("Bolo Engine" FILES ${IOS_BOLO_SOURCES})
 source_group("Server" FILES ${IOS_SERVER_SOURCES})
@@ -2117,6 +2128,7 @@ set(CLIENT_SOURCES
     # spectator_input_stub.c instead.
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
+    src/gui/sdl3/tutorial_tokens.c
     src/gui/sdl3/lang.c src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
     src/gui/sdl3/sound_mix.c
@@ -4547,6 +4559,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_everyone_codec.c
+    # game.popup: the body codec, the client's queue and the {QUICK_*}
+    # tokens the popup text may carry.
+    tests/unit/test_scenario_popup.c
+    src/gui/sdl3/tutorial_tokens.c
+    # The token parser against untrusted text: malformed braces, the split,
+    # a cut inside a UTF-8 character, and a fixed seed of random input.
+    tests/unit/test_tutorial_tokens_parse.c
+    # The shipped tutorial's text: every language and input inside the
+    # server's limits, valid UTF-8, and no brace that is not a key token.
+    tests/unit/test_tutorial_text_check.c
     tests/unit/test_voice_talking_set.c
     # The rules event's body codec: every carried rule round-trips field by
     # field, rates a fixed-point scale could not carry survive, and the
@@ -4905,6 +4927,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_server_address_parse.c
     # The map chooser's "Scenarios only" row test, header-only.
     tests/unit/test_map_chooser_scenario_filter.c
+    # The background game's map name test (tutorials never picked), header-only.
+    tests/unit/test_bg_map_pick.c
     # Skin asset reads: a directory, a flat zip and a zip wrapped in one
     # top-level folder must resolve the same relative names to the same
     # bytes.
@@ -6178,6 +6202,19 @@ set(_unit_test_names
     voice_flags_snapshot_masking
     voice_talking_codec
     voice_everyone_codec
+    scenario_popup_codec
+    scenario_popup_client_queue
+    scenario_popup_round_over
+    tutorial_tokens_quick_build
+    scenario_status_tokens_expand
+    tutorial_tokens_long_key_names
+    tutorial_tokens_malformed
+    tutorial_tokens_split
+    tutorial_tokens_utf8_cut
+    tutorial_tokens_random_input
+    tutorial_text_fits
+    tutorial_text_well_formed
+    scenario_announce_waits_for_popup
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
     voice_talking_stops_in_countdown
@@ -6665,6 +6702,8 @@ set(_unit_test_names
     addrparse_bad_port
     addrparse_empty
     mapchooser_scenario_filter
+    bg_map_pick_skips_tutorials
+    tutorial_maps_shipped_path
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop
@@ -6849,6 +6888,7 @@ set(_unit_test_names
     scenario_funnel_host_ops_uncounted
     scenario_funnel_prelude_refusal_uncounted
     scenario_funnel_set_tile_spends_tile_budget
+    scenario_funnel_set_tile_resets_wall_damage
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
@@ -7138,6 +7178,7 @@ set(_unit_test_names
     scenario_allied_read
     scenario_can_hit_tank
     scenario_can_hit_pill
+    scenario_can_target
     scenario_pill_shell_names_pill
     scenario_pill_damage_scale
     scenario_blast_names_tank
@@ -7263,6 +7304,9 @@ set(_unit_test_names
     scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
     scenario_lua_voice_everyone
+    scenario_lua_lang
+    scenario_lua_input
+    scenario_lua_tutorial_done
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
@@ -7291,6 +7335,8 @@ set(_unit_test_names
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
     scenario_lua_announce_position
+    scenario_lua_popup
+    scenario_lua_wall_shots
     scenario_lua_acting_rows_refuse_a_check
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
@@ -7453,6 +7499,10 @@ set(_unit_test_names
     scenario_details_fetch_dir_mod
     scenario_details_fetch_survival
     scenario_details_fetch_soccer
+    scenario_details_fetch_tutorial
+    scenario_details_fetch_joust
+    scenario_details_fetch_respawn_loadout
+    scenario_details_fetch_mods
     scenario_details_fetch_not_found
     scenario_details_fetch_retry
     scenario_details_fetch_give_up
@@ -7580,6 +7630,7 @@ set(_unit_test_names
     scenario_status_line
     scn_status_codec_and_client
     scn_announce_position_codec
+    scn_announce_stack_client
     scn_arm_status_and_position
     scn_arm_status_overlap
     scenario_panel_slot_rect
@@ -8168,6 +8219,21 @@ if(WB_FUZZ)
              COMMAND $<TARGET_FILE:fuzz_voice_segment> -runs=0
                      ${WB_FUZZ_CORPUS_DIR}/voice_segment ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.voice_segment PROPERTIES TIMEOUT 120)
+
+    # Tier 1 — the key tokens in a scenario's popup, status line and
+    # announcement (tutorialTokensSplit / tutorialTokensExpand): text from
+    # whatever server the player joined, split and filled in on every
+    # client. The parser alone, with no SDL and no renderer.
+    add_executable(fuzz_tutorial_tokens
+        tests/fuzz/fuzz_tutorial_tokens.c
+        src/gui/sdl3/tutorial_tokens.c)
+    bolo_apply_include_rules(fuzz_tutorial_tokens unittests)
+    target_link_options(fuzz_tutorial_tokens PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_tutorial_tokens "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.tutorial_tokens
+             COMMAND $<TARGET_FILE:fuzz_tutorial_tokens> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/tutorial_tokens ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.tutorial_tokens PROPERTIES TIMEOUT 120)
 
     # Tier 1 — the bulk-transfer receive state machine (bulkParseStreamHeader +
     # bulkReceiverFeed), reassembling map download / resync / upload / preview

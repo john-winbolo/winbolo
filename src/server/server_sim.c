@@ -410,6 +410,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.canCapture = serverSimCbCanCapture;
     sim->sim.callbacks.canDie = serverSimCbCanDie;
     sim->sim.callbacks.canHit = serverSimCbCanHit;
+    sim->sim.callbacks.canTarget = serverSimCbCanTarget;
     sim->sim.callbacks.pillDamageScale = serverSimCbPillDamageScale;
     sim->sim.callbacks.ctx = sim;
 

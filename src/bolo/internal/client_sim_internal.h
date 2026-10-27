@@ -1189,27 +1189,34 @@ struct ClientSim {
      * instead of silently showing nothing. */
     uint32_t     scnPanelRejects;
 
-    /* The announcement on screen; text[0] == '\0' is none.
-     * scnAnnounceArrivedTick is lastServerTick as it stood when the
-     * line landed, so a drawer works out what is left of
-     * scnAnnounceTicks against the same clock the scenario counted in
-     * rather than against wall time. */
-    char         scnAnnounceText[PACKET_MAX_CHAT_MESSAGE + 1];
-    uint16_t     scnAnnounceTicks;
-    uint32_t     scnAnnounceArrivedTick;
-    /* Where the script put it: scnAnnounceHasPos 0 is the usual place,
-     * else the centre of the line as position bytes across and down the
-     * view (SCN_ANNOUNCE_POS_MAX is the far edge). */
-    uint8_t      scnAnnounceHasPos;
-    uint8_t      scnAnnouncePosX;
-    uint8_t      scnAnnouncePosY;
+    /* The announcements on screen, oldest first: scnAnnounceCount of them
+     * in scnAnnounces[0 .. count-1]. A scenario may put a second line up
+     * while the first is still showing; both stay, each with its own
+     * countdown, and the drawer stacks them. A line past
+     * SCN_ANNOUNCE_STACK_MAX pushes the oldest out, and an empty line
+     * takes them all away (see clientSimScnAnnouncePush). */
+    ClientScnAnnounce scnAnnounces[SCN_ANNOUNCE_STACK_MAX];
+    uint8_t      scnAnnounceCount;
+    /* True while a popup is open (clientSimScnAnnounceHold): the lines and
+     * the status line are not drawn and the lines' clocks stand still.
+     * scnAnnounceHoldStart is the server tick the hold began at. */
+    bool         scnAnnounceHeld;
+    uint32_t     scnAnnounceHoldStart;
 
     /* The status line on screen; text[0] == '\0' is none. It stays until
      * the scenario replaces or clears it. scnStatusEndsAt is the server
      * tick its countdown runs to, SCN_STATUS_NO_COUNTDOWN for none, on the
-     * same clock as scnAnnounceArrivedTick. */
+     * same clock as an announcement's arrivedTick. */
     char         scnStatusText[PACKET_MAX_CHAT_MESSAGE + 1];
     uint32_t     scnStatusEndsAt;
+
+    /* Popups waiting to be shown, oldest first: scnPopupCount of them from
+     * scnPopupHead round the ring. The frontend takes one off the front
+     * when its overlay is free (clientSimTakeScnPopup). A popup that
+     * arrives with the ring full is dropped. */
+    char         scnPopups[SCN_POPUP_QUEUE_MAX][SCN_POPUP_TEXT_MAX + 1];
+    uint8_t      scnPopupHead;
+    uint8_t      scnPopupCount;
 
     /* Markers by id. SCN_MARKER_KIND_CLEAR turns one off rather than
      * storing a third kind, so a stored marker is always drawable. */

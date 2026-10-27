@@ -2336,14 +2336,14 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Seventeen `src/gui/sdl3` files
+same target, and it is not a T2 grant. Eighteen `src/gui/sdl3` files
 are compiled *into* `WinBoloUnitTests`, the only files from a
 renderer directory that are: `skin_source.c`, `tileloader.c`,
 `sdl_bmp.c`, `sound_variants.c`, `sound_mix.c`, `overview_camera.cpp`,
 `overview_fog.cpp`, `overview_hud_layout.cpp`, `sprite_positions.c`,
 `ring_band.c`, `dialogs/dialog_quit.cpp`, `workshop_sync.c`,
 `input_source.c`, `news_image_budget.cpp`, `dialogs/clip_gif_core.c`,
-`newswire_slide.c` and `gfx_settings.c`.
+`newswire_slide.c`, `gfx_settings.c` and `tutorial_tokens.c`.
 Between them they hold skin lookup, the tile sheet
 builder, the BMP sheet reader, the sound variant naming, the
 effects mixer's step that scales one slot's samples by its left and
@@ -2372,6 +2372,13 @@ controller driving should add auto-slowdown; it reads SDL events it is
 handed and two gamepad queries, which `tests/unit/test_stubs.c`
 answers from test-controllable flags, and
 `tests/unit/test_input_source.c` drives it.
+`tutorial_tokens.c` is the key tokens a tutorial text or a scenario's
+popup, status line or announcement may carry (`{ACCEL}`, `{QUICK_TREE}`
+and the rest): finding them in a text, splitting a text round them and
+writing them out as names. It includes `input.h` for the key bindings
+and nothing from the renderer; `tests/unit/test_scenario_popup.c`,
+`test_tutorial_tokens_parse.c` and `test_tutorial_text_check.c` drive
+it, and the fuzz target `fuzz_tutorial_tokens` compiles it too.
 `news_image_budget.cpp` is the news image cache's eviction rule: how
 many bytes of decoded images it keeps and which of them it may drop,
 worked out from URLs, byte counts and frame numbers. The cache itself,
@@ -2403,7 +2410,7 @@ The alternative, for the geometry files, was moving the maths into
 onto the sim purely to buy testability. Keeping them in the renderer
 and linking the leaf files is the smaller distortion of the two.
 
-**Rests on** each of the seventeen still meeting that rule, so it is
+**Rests on** each of the eighteen still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
 include, or that opens a renderer or a device of its own, has left
 the category, and the answer is to split the leaf back out — the

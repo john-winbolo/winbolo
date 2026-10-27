@@ -1621,6 +1621,38 @@ int run_voice_talking_codec(void);
  * on and off survive, any other byte and an empty body are refused. */
 int run_voice_everyone_codec(void);
 
+/* game.popup's delivery (test_scenario_popup.c): CTRL_SCN_POPUP's body
+ * round-trips through the body tables, an empty or over-long body is
+ * refused and a NUL ends the text; the client queues popups addressed to
+ * it, in order, drops the fifth while four wait and clears them at the
+ * lobby; and the tutorial tokens find {QUICK_*} and name the quick-build
+ * keys from the key bindings; and tutorialTokensExpand writes the tokens
+ * of a status line or announcement as names, keeps one with no name, never
+ * writes half a name and always ends with a NUL. */
+int run_scenario_popup_codec(void);
+int run_scenario_popup_client_queue(void);
+/* clientSimIsRoundOver, which closes a popup left up as the round ends:
+ * false for a new client and while running, true from the game-over hold
+ * through the lobby and the countdown. */
+int run_scenario_popup_round_over(void);
+int run_tutorial_tokens_quick_build(void);
+int run_scenario_status_tokens_expand(void);
+int run_tutorial_tokens_long_key_names(void);
+/* The token parser against untrusted text (test_tutorial_tokens_parse.c):
+ * a brace that starts no token is plain text; the split covers the text in
+ * order and says where it stopped; a cut never ends in half a UTF-8
+ * character; and random text never takes the expand past its buffer. */
+int run_tutorial_tokens_malformed(void);
+int run_tutorial_tokens_split(void);
+int run_tutorial_tokens_utf8_cut(void);
+int run_tutorial_tokens_random_input(void);
+/* The shipped tutorial's TEXT tables (test_tutorial_text_check.c): every
+ * language and input inside the limit of the call that sends it, valid
+ * UTF-8, every brace a known key token, and input wordings well formed. */
+int run_tutorial_text_fits(void);
+int run_tutorial_text_well_formed(void);
+int run_scenario_announce_waits_for_popup(void);
+
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
  * round-trips through the body tables, compared field by field and
  * including rates a fixed-point scale could not carry; and the body's bytes
@@ -2945,6 +2977,12 @@ int run_addrparse_empty(void);
  * (test_map_chooser_scenario_filter.c). */
 int run_mapchooser_scenario_filter(void);
 
+/* The background game's map name test: no tutorial is ever picked
+ * (test_bg_map_pick.c). */
+int run_bg_map_pick_skips_tutorials(void);
+/* The folder test behind game.tutorial_done (test_bg_map_pick.c). */
+int run_tutorial_maps_shipped_path(void);
+
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
  * constrained-VBR guarantee), decodes a full 20 ms frame every time, keeps
@@ -3145,6 +3183,7 @@ int run_scenario_funnel_msgs_per_tick(void);
 int run_scenario_funnel_host_ops_uncounted(void);
 int run_scenario_funnel_prelude_refusal_uncounted(void);
 int run_scenario_funnel_set_tile_spends_tile_budget(void);
+int run_scenario_funnel_set_tile_resets_wall_damage(void);
 
 int run_scenario_read_roster_slot(void);
 int run_scenario_read_pill_info(void);
@@ -3608,6 +3647,7 @@ int run_scenario_allied_read(void);
  * can_die — and the on_tank_hit event (test_scenario_friendly_fire.c). */
 int run_scenario_can_hit_tank(void);
 int run_scenario_can_hit_pill(void);
+int run_scenario_can_target(void);
 int run_scenario_pill_shell_names_pill(void);
 int run_scenario_pill_damage_scale(void);
 int run_scenario_blast_names_tank(void);
@@ -3784,6 +3824,11 @@ int run_scenario_validate_needs_bots_declared(void);
  * the rules, tags and regions a script declares read back. */
 int run_scenario_lua_every_row_answers(void);
 int run_scenario_lua_voice_everyone(void);
+int run_scenario_lua_lang(void);
+/* game.input(p): "keyboard", "touch" or "controller" as the frontend told
+ * the seat, the keyboard for any other value, and cleared on leave. */
+int run_scenario_lua_input(void);
+int run_scenario_lua_tutorial_done(void);
 int run_scenario_lua_op_arguments_match_the_doc(void);
 int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);
@@ -3812,6 +3857,8 @@ int run_scenario_lua_panel_large_size(void);
 int run_scenario_lua_presentation_targets(void);
 int run_scenario_lua_score_and_announce(void);
 int run_scenario_lua_announce_position(void);
+int run_scenario_lua_popup(void);
+int run_scenario_lua_wall_shots(void);
 int run_scenario_lua_acting_rows_refuse_a_check(void);
 
 /* The state a scenario runs in (test_scenario_sandbox.c): the names the
@@ -4068,6 +4115,10 @@ int run_scenario_details_blob(void);
 int run_scenario_details_fetch_dir_mod(void);
 int run_scenario_details_fetch_survival(void);
 int run_scenario_details_fetch_soccer(void);
+int run_scenario_details_fetch_tutorial(void);
+int run_scenario_details_fetch_joust(void);
+int run_scenario_details_fetch_respawn_loadout(void);
+int run_scenario_details_fetch_mods(void);
 int run_scenario_details_fetch_not_found(void);
 int run_scenario_details_fetch_retry(void);
 int run_scenario_details_fetch_give_up(void);
@@ -4519,6 +4570,7 @@ int run_scn_presentation_decoder_sets_broadcast(void);
 int run_scn_presentation_client_filters(void);
 int run_scn_status_codec_and_client(void);
 int run_scn_announce_position_codec(void);
+int run_scn_announce_stack_client(void);
 
 /* The four presentation ops (test_scenario_presentation_arms.c): the panel
  * list published, recorded, replayed to a joiner and pared back to the

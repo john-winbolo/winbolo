@@ -21,6 +21,7 @@
 #include <emscripten/html5.h>
 
 #include "bolo_rand.h"
+#include "client_frontend_common.h"  /* clientFrontTellScenarioPlayer */
 #include "client_frontend_connect.h"
 #include "client_frontend_sp.h"
 #include "client_sim.h"
@@ -47,6 +48,7 @@
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/bg_game.h"
+#include "../gui/sdl3/tutorial_maps.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/dialogs/imgui_mapchooser.h"
@@ -431,9 +433,11 @@ static bool wasmAskJoinPassword(bool wrongBefore) {
   return TRUE;
 }
 
-/* Pick a random .map file from the preloaded data/maps for the menu's
- * background game, leaving out what the desktop's pick does (gamefront.c
- * bgMapAllowed): the tutorial map and Better Best Map Ever by name, and
+/* Pick a random .map file from the preloaded data/maps itself (not its
+ * folders) for the menu's background game, leaving out what the desktop's
+ * pick does (gamefront.c bgMapAllowed): every map in a folder, the
+ * tutorials in data/maps/tutorials among them, the old tutorial map and
+ * Better Best Map Ever by name (bgMapNameAllowed, tutorial_maps.h), and
  * every map that is a scenario, whether or not scripts are on, since the
  * background game runs no script and would show the scenario's map played
  * as something it is not. */
@@ -450,8 +454,7 @@ static bool wasmPickBackgroundMap(char *out, size_t outLen) {
     return FALSE;
   }
   for (i = 0; i < count; i++) {
-    if (SDL_strcasecmp(list[i], "Inbuilt Tutorial.map") == 0 ||
-        SDL_strcasecmp(list[i], "Better Best Map Ever.map") == 0) {
+    if (!bgMapNameAllowed(list[i])) {
       continue;
     }
     SDL_snprintf(path, sizeof(path), "%s/%s", dir, list[i]);
@@ -578,6 +581,18 @@ bool gameFrontWasmSetup(keyItems *keys) {
   gameFrontSetDefaultKeys(keys);
 
   langSetup();
+  /* The browser's language, as a fresh desktop install picks it
+   * (gameFrontStart): langAutoDetect loads the first lang file that
+   * matches one of the browser's preferred languages. Before the fonts are
+   * built, so a Chinese, Japanese or Korean pick gets its glyphs. */
+  {
+    char detected[32];
+    detected[0] = '\0';
+    langAutoDetect(detected, (int)sizeof(detected));
+    if (detected[0] != '\0') {
+      gameFrontSetLanguageCode(detected);
+    }
+  }
 
   /* Initialise subsystems */
   {
@@ -847,18 +862,21 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
     printf("[WASM] Setting up single-player ServerSim...\n");
 
     if (wantTutorial) {
-      /* Guided tutorial (?tutorial=): load the inbuilt tutorial map with
-       * tournament rules and no bots, mirroring the desktop openTutorial
-       * path. The step driver + overlay (main_wasm.c) take it from here. */
-      strncpy(fileName, "data/maps/Inbuilt Tutorial.map", FILENAME_MAX - 1);
+      /* The Tutorial (the menu's Tutorial entry, or ?tutorial=): the
+       * Tutorial scenario in data/maps/tutorials, on the game the desktop
+       * openTutorial path plays it on (gamefront.c): an Open game, Full
+       * Advantage AI so the bots the script seats are allowed, hidden mines
+       * on, no start delay and no time limit. The old built-in tutorial
+       * (isTutorial, its step driver and overlay) is not started any more;
+       * its code stays until it is taken out. */
+      strncpy(fileName, TUTORIAL_MENU_MAP, FILENAME_MAX - 1);
       fileName[FILENAME_MAX - 1] = '\0';
-      gametype = gameStrictTournament;
-      hiddenMines = FALSE;
+      gametype = gameOpen;
+      hiddenMines = TRUE;
       startDelay = 0;
       timeLen = UNLIMITED_GAME_TIME;
-      compTanks = aiNone;
-      isTutorial = TRUE;
-      printf("[WASM] starting guided tutorial\n");
+      compTanks = aiFull;
+      printf("[WASM] starting the Tutorial scenario\n");
     }
 
     /* Whether the sim was built from fileName, which is the only map a
@@ -886,7 +904,7 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       }
     }
 
-    if (!wantTutorial) {
+    {
       /* The scenario steps desktop single player takes after it creates its
        * sim (gamefront.c), in the same order: the scripts preferences set on
        * the library before the attach, so the map commits that follow answer
@@ -897,8 +915,8 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
        * lobby takes effect. The mods listed are the ones shipped in
        * /data/mods (the preloaded data directory). There is no Workshop, no
        * Mod Dir preference and no uploads directory here, so those are left
-       * unset. The tutorial takes none of this. */
-      scenarioHostSetEnabled(gameFrontHostingScripts);
+       * unset. The Tutorial runs its script whatever the preference says. */
+      scenarioHostSetEnabled(gameFrontHostingScripts || wantTutorial);
       scenarioHostSetUploadScriptsEnabled(
           gameFrontHostingScriptUploadPolicy != SCRIPT_UPLOAD_OFF);
       scenarioHostRegisterMapScripted(wasmServerSim);
@@ -918,47 +936,52 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       scenarioHostFollowMap(wasmServerSim, &wasmScenarioHost);
     }
 
-    if (wantTutorial) {
-      /* Enter tutorial mode BEFORE the tank spawns (serverInstanceStartup +
-       * clientSimConnectLocal below). startsGetStart reads sim->isTutorial and
-       * sim->tutorialStartIdx at spawn time, so the initial placement at start
-       * 0 (held until the boat-building step) depends on these being set
-       * first. Seed start idx 0 explicitly; the driver bumps it to 1 after the
-       * boat step. Mark both sims so tank.c's stop logic fires and the client
-       * predicts consistently. */
-      serverSimSetTutorial(wasmServerSim, true);
-      serverSimSetTutorialStartIdx(wasmServerSim, 0);
-      clientSimSetTutorial(humanSim, true);
+    if (wantTutorial && wasmScenarioHost == NULL) {
+      /* The Tutorial is its script: without it the round would be a plain
+       * game on the tutorial map. */
+      printf("[WASM] the Tutorial needs '%s' and the scenario script beside it\n",
+             fileName);
+      serverSimDestroy(wasmServerSim);
+      wasmServerSim = NULL;
+      frontEndSetActiveClientSim(NULL);
+      clientSimDestroy(humanSim);
+      humanSim = NULL;
+      return FALSE;
     }
 
-    /* The brain practice bots run. Resolved once for the config's bot brain
-     * and the starting bot below. */
+    /* The brain practice bots and the Tutorial's seated bots run. Resolved
+     * once for the config's bot brain and the starting bot below. */
     char spBrainPath[FILENAME_MAX] = "";
-    if (!wantTutorial) {
-      wasmFindBrainPath(spBrainPath, sizeof(spBrainPath));
-    }
+    wasmFindBrainPath(spBrainPath, sizeof(spBrainPath));
 
     /* acceptRemoteClients, WinBolo.net, the tracker and NAT stay zero-init
-     * off, so the network bring-up is skipped. The tutorial skips the lobby
+     * off, so the network bring-up is skipped. The Tutorial skips the lobby
      * and runs immediately (skipLobby drives the StartGameInPlace
-     * transition); practice opens the lobby as desktop single player does,
-     * with the desktop's no-prefs AI policy, Full Advantage. viewPlayer 0 is
-     * the SP convention. */
+     * transition, and the startup seats the script's lobby on the way in);
+     * practice opens the lobby as desktop single player does. Both use the
+     * desktop's no-prefs AI policy, Full Advantage. viewPlayer 0 is the SP
+     * convention. */
     {
       ServerInstanceConfig cfg;
       memset(&cfg, 0, sizeof(cfg));
+      compTanks             = aiFull;
+      cfg.maxPlayers        = MAX_TANKS;
+      cfg.compTanks         = (BYTE)compTanks;
+      cfg.botBrainPath      = (spBrainPath[0] != '\0') ? spBrainPath : NULL;
+      cfg.botAiType         = (BYTE)compTanks;
       if (wantTutorial) {
         cfg.skipLobby = true;
       } else {
-        compTanks             = aiFull;
         cfg.password          = password;
-        cfg.maxPlayers        = MAX_TANKS;
-        cfg.compTanks         = (BYTE)compTanks;
         cfg.lobbyEnabled      = true;
         cfg.emptyResetEnabled = true;
         cfg.hasPassword       = (password[0] != '\0');
-        cfg.botBrainPath      = (spBrainPath[0] != '\0') ? spBrainPath : NULL;
-        cfg.botAiType         = (BYTE)compTanks;
+      }
+      /* A game that skips the lobby starts its round inside the startup, so
+       * the scenario's own settings have to be in force before it, as on
+       * the desktop. */
+      if (wasmScenarioHost != NULL && cfg.skipLobby) {
+        serverSimScenarioApplyLobbyRules(wasmServerSim);
       }
       if (!serverInstanceStartup(wasmServerSim, &cfg)) {
         printf("[WASM] serverInstanceStartup failed\n");
@@ -999,15 +1022,11 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
      * chose the single-player name (a validated ?name= or "Me") before this
      * start ran. */
 
-    /* Run the 12-step join+install in one call. The tutorial's transport
-     * ticks the server itself; practice's is passive, as desktop single
-     * player's is, and main_wasm.c ticks the server through
-     * serverInstanceTick. */
-    bool connected = wantTutorial
-        ? clientSimConnectLocal(humanSim, wasmServerSim,
-                                gameFrontName, "", 0, 0)
-        : clientSimConnectLocalPassive(humanSim, wasmServerSim,
-                                       gameFrontName, "", 0, 0);
+    /* Run the 12-step join+install in one call. The transport is passive,
+     * as desktop single player's is, and main_wasm.c ticks the server
+     * through serverInstanceTick, which runs the bots as well. */
+    bool connected = clientSimConnectLocalPassive(humanSim, wasmServerSim,
+                                                  gameFrontName, "", 0, 0);
     if (!connected) {
       printf("[WASM] local connect failed: %s\n",
              clientSimGetConnectErrorReason(humanSim));
@@ -1024,6 +1043,13 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       return FALSE;
     }
     wasmTransportActive = TRUE;
+    /* The server is in this process: tell it the player's language and
+     * input before the first frame, so the scenario's first line is
+     * worded for them. */
+    clientMutexWaitFor();
+    clientFrontTellScenarioPlayer(wasmServerSim,
+                                  clientSimGetMyPlayerNum(humanSim));
+    clientMutexRelease();
     /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
      * The shared tick core's keys-half pump skip keys off
      * clientSimTransportTicksServer, which the connect set above — not off
@@ -1047,6 +1073,11 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
         serverSimScenarioSeatLobby(wasmServerSim);
         serverSimScenarioApplyLobbyRules(wasmServerSim);
       }
+    } else if (wasmScenarioHost != NULL) {
+      /* The Tutorial's round is already running, its lobby seated by the
+       * startup; the settings once more, as the desktop applies them after
+       * its join. They are in force already and this changes nothing. */
+      serverSimScenarioApplyLobbyRules(wasmServerSim);
     }
     /* Phase 2: connect registers the auto-subscriber. Clear the
      * legacy handle so the teardown path's unregister is a no-op. */
@@ -1289,6 +1320,10 @@ bool gameFrontHasLocalServer(void)            { return wasmServerSim != NULL; }
  * the browser. The SP server sim is the same handle gameFrontGetServerSim
  * returns (NULL for a netUdp lobby — the player is not the host). */
 ServerSim *gameFrontGetSinglePlayerServerSim(void) { return wasmServerSim; }
+
+const char *gameFrontScenarioMapScriptPath(void) {
+  return scenarioHostMapScriptPath(wasmScenarioHost);
+}
 void gameFrontTickSteamPresenceLobby(ClientSim *cs)  { (void)cs; }
 /* No prefs file in the browser, so the player never has a stored bot
  * difficulty: the getter always reports "not chosen" and the lobby /
@@ -1739,13 +1774,26 @@ void gameFrontUpdateSteamPresence(ClientSim *cs) {
   (void)cs;
 }
 
+/* The language the player reads, as its lang file's name ("de", "pt-BR");
+ * "" until one is picked or detected, which is English. Settings' picker
+ * reads it to show the choice, the font atlas reads it for the CJK fonts,
+ * and the frame poll tells a scenario's server (game.lang). The browser
+ * keeps no file between visits, so it is detected again on each page
+ * load; nothing saves it. */
+static char wasmLanguageCode[32] = "";
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
+  size_t n;
   if (!out || outSize <= 0) return;
-  out[0] = '\0';
+  n = strlen(wasmLanguageCode);
+  if (n >= (size_t)outSize) n = (size_t)outSize - 1;
+  memcpy(out, wasmLanguageCode, n);
+  out[n] = '\0';
 }
 
 void gameFrontSetLanguageCode(const char *code) {
-  (void)code;
+  if (!code) code = "";
+  snprintf(wasmLanguageCode, sizeof(wasmLanguageCode), "%s", code);
 }
 
 /* Settings' Play Tutorial button. Settings closes after the click and main's

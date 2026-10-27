@@ -256,6 +256,32 @@
 #define STR_TUTORIAL21_CTRL                 1841
 #define STR_TUTORIAL_START04_CTRL           1842
 #define STR_TUTORIAL_RESPAWN1               1843
+#define STR_TUTORIAL_QUICK_BUILD_TOUCH      2811
+
+/* A key token ({FIRE}, {GUN_UP} and the rest) in words, where a status
+ * line or an announcement has no room for a glyph (controller) or the
+ * screen has no key for it (touch). Each is written as what the player
+ * presses: lower case, and in the form that follows the word for "press"
+ * in the language. tutorial_text.c reads them. */
+#define STR_TUTTOK_PAD_ACCEL                3400
+#define STR_TUTTOK_PAD_BRAKE                3401
+#define STR_TUTTOK_PAD_LEFT                 3402
+#define STR_TUTTOK_PAD_RIGHT                3403
+#define STR_TUTTOK_PAD_FIRE                 3404
+#define STR_TUTTOK_PAD_MINE                 3405
+#define STR_TUTTOK_PAD_SCROLL_UP            3406
+#define STR_TUTTOK_PAD_SCROLL_DOWN          3407
+#define STR_TUTTOK_PAD_SCROLL_LEFT          3408
+#define STR_TUTTOK_PAD_SCROLL_RIGHT         3409
+#define STR_TUTTOK_PAD_DISMISS              3410
+#define STR_TUTTOK_PAD_BUILD_MODE           3411
+#define STR_TUTTOK_PAD_BUILD_PLACE          3412
+#define STR_TUTTOK_PAD_BUILD_TOOL           3413
+#define STR_TUTTOK_PAD_GUN_UP               3414
+#define STR_TUTTOK_PAD_GUN_DOWN             3415
+#define STR_TUTTOK_TOUCH_FIRE               3416
+#define STR_TUTTOK_TOUCH_GUN_UP             3417
+#define STR_TUTTOK_TOUCH_GUN_DOWN           3418
 
 /* LGM (little green man) messages */
 #define LGM_MAN_DEAD                        414
@@ -3311,10 +3337,11 @@
 /* Scenario function descriptions */
 
 /* One line per function a scenario author writes, for the list the editor
- * shows them in: the 26 hooks, then the 14 policies. The block runs in the
+ * shows them in: the 26 hooks, then the 15 policies. The block runs in the
  * order SCN_HOOK_LIST and SCN_POLICY_LIST hold them, except can_ally's,
- * on_tank_hit's, can_hit's, pill_damage_scale's and kill_credit's: the
- * numbers after the block are taken, so their ids sit outside it.
+ * on_tank_hit's, can_hit's, pill_damage_scale's, kill_credit's and
+ * can_target's: the numbers after the block are taken, so their ids sit
+ * outside it.
  *
  * The tail of each symbol is the catalogue's own id column rather than the
  * function's name, because that is the token the description table pastes
@@ -3363,6 +3390,7 @@
 #define STR_SCNFN_DESC_CAN_HIT               2705
 #define STR_SCNFN_DESC_PILL_DAMAGE_SCALE     2706
 #define STR_SCNFN_DESC_KILL_CREDIT           2774
+#define STR_SCNFN_DESC_CAN_TARGET            2810
 
 /* The scenario panel's kind control: what the file being edited is allowed
  * to decide. Not the same question as "Built for this map", which is which

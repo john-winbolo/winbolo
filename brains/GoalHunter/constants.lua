@@ -794,6 +794,22 @@ M.BLOCKED_AIM_RETRY_TICKS = 10     -- blocked-line ladder: minimum ticks between
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = WALL_HP_FULL 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / WALL_HP_FULL 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
+-- BLOCKER_ORTHOGONAL_ONLY: a shield blocker (a wall or a dropped pillbox) only
+-- on one of the four squares orthogonally next to the target pill, never a
+-- diagonal one or one further out. The shield scan then always runs in Lua
+-- (attack_shield.lua score_aim filters the squares). Per-bot: the Tutorial
+-- turns it on for its Station 5A demo bot, so the take it shows matches the
+-- one the player is taught. false = the old free choice (PRESETS.keel).
+M.BLOCKER_ORTHOGONAL_ONLY = false  -- keel false
+-- STAY_AREA: the bot stays inside a set of map-square rectangles. Every goal
+-- whose target square is outside is rejected ("outside STAY_AREA"), the man
+-- gets no build order outside, the shield planner skips outside squares, and
+-- the bot's own path planner fences the area (one-square ring at cost 32767;
+-- engine terrain never changes). Format "x1:y1:x2:y2", inclusive; several
+-- rectangles joined with '/'. ',' and ';' cannot be used: the cfg= token
+-- splitter eats them. Per-bot: the Tutorial sets it on its Station 7 bot.
+-- "" = off, the old behaviour (PRESETS.keel).
+M.STAY_AREA = ""  -- keel ""
 M.SHIELD_SCAN_BLACKLIST_TRIES = 2    -- a shield.scan that starts but never completes (per-tick budget kill unwinds the whole think) leaves its attempt marker behind; after this many incomplete attempts on the SAME scan key, skip the scan and attack with the no-shield plan instead of livelocking on a scan that can't fit the budget
 M.SHIELD_SCAN_BLACKLIST_TICKS = 250  -- blacklist expiry (~5 s): after this long the marker is dropped and the scan may be retried (the key changing ??? pill hp, our armour, standoff ??? also resets it immediately)
 M.WALL_SHIELD_LGM_STUCK_TICKS = 150  -- same-tile timeout for LGM simulation (~3 seconds)
@@ -3525,6 +3541,15 @@ M.REACTION_DELAY_TICKS = 0 -- >0 => queue the URGENT goal re-decision this many
                            -- fires (bot reacts slower). Never delays safety
                            -- (cliff/swerve/drain-disengage/flee). 0 = no delay.
                            -- Easy = 20, Medium = 8.
+M.LGM_MISS_WU = 0          -- >0 => shots at a MAN only (kill_lgm aim point):
+                           -- outside the LGM_HIT_PCT draw the aim point moves
+                           -- this many world units off him (behind a walking
+                           -- man, any of 16 directions for a still one), so
+                           -- the shell bursts near him and misses (a man dies
+                           -- inside 128 wu of a burst).
+                           -- See util.lgm_miss_point. 0 = no offset. KEEL 0.
+M.LGM_HIT_PCT = 100        -- with LGM_MISS_WU > 0: the percent of aim blocks
+                           -- that aim true at the man. KEEL 100.
 -- Outbound /info batching: several internal-channel messages are packed into the
 -- one BrainInfo.sendmessage buffer per tick (joined by comms.MSG_SEP), capped here
 -- so the packed string stays under PACKET_MAX_CHAT_MESSAGE (128; bot_manager.c
@@ -5639,6 +5664,9 @@ M.ORDER_HINT_ESCORT_TILES = 3
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-10-10: man-only aim handicap (the Tutorial's Station 7 bot);
+    -- 0 / 100 aim straight at the man as before.
+    LGM_MISS_WU = 0, LGM_HIT_PCT = 100,
     -- 2026-10-01: flat capture_base cost for game modes; 0 is no such term.
     CAPTURE_BASE_EXTRA_COST = 0,
     -- 2026-10-01: a base this many tiles away skips that cost; 0 is no waiver.
@@ -5997,6 +6025,9 @@ M.PRESETS = {
     BOT_CHAT_DEFAULT              = true,
     BOT_INIT_LINE_TO_HUMANS       = true,
     ORDER_HINT_BUSY_SILENT        = false,
+    --   2026-10-10: shield blockers on orthogonal squares only (Tutorial).
+    BLOCKER_ORTHOGONAL_ONLY       = false,
+    STAY_AREA                     = "",
     --   2026-10-14: the "release" scenario hint ends a held order. KEEL
     --   had no such verb: an unknown verb, ignored.
     ORDER_RELEASE_HINT            = false,
