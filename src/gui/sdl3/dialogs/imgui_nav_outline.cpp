@@ -29,7 +29,7 @@ extern "C" bool dialogNavWasInsideSubRegionAtFrameStart(void) {
     return s_navInsideSubRegionPrevFrame;
 }
 
-/* When the outline may show.  Every context sets
+/* When the outline may show.  Most contexts set
    ConfigNavCursorVisibleAlways, so ImGui keeps NavCursorVisible on from
    the first frame (a window that opens, a default-focus item, a mouse
    click on a button or a combo all give it a NavId).  That flag also
@@ -53,8 +53,11 @@ static void navOutlineTrackInput(ImGuiContext *g) {
     if (mouseUse) s_navOutlineByKey = false;
 
     /* Tab counts only while a window takes nav input, so a Tab bound to
-       a game key during play does not switch the outline on. */
-    if (g->NavWindow && ImGui::IsKeyPressed(ImGuiKey_Tab, false))
+       a game key during play does not switch the outline on.  Ctrl+Tab
+       and Alt+Tab do not count, as in ImGui's own tabbing: Alt+Tab to
+       another program reaches the game as a Tab press. */
+    if (g->NavWindow && !io.KeyCtrl && !io.KeyAlt &&
+        ImGui::IsKeyPressed(ImGuiKey_Tab, false))
         s_navOutlineByKey = true;
     for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadR3; k++)
         if (ImGui::IsKeyPressed((ImGuiKey)k, false)) s_navOutlineByKey = true;
