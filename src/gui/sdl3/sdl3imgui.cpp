@@ -120,6 +120,7 @@ extern "C" {
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/imgui_deck_pause.h"
 #include "dialogs/imgui_tutorial_overlay.h"
+#include "tutorial_text.h"   /* tutorialExpandTextPlain */
 #include "dialogs/imgui_keyboard.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
@@ -222,6 +223,10 @@ extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
 extern "C" void windowTutorialPause(struct ClientSim *cs, bool active);
+/* The tutorial overlay's open state as windowTutorialPause last heard it:
+   the render path's edge-detect, and the round-end close, which lifts the
+   pause itself. */
+static bool s_lastTutorialPause = false;
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -4488,6 +4493,10 @@ struct ScnTextView {
        change size each time a line comes or goes. */
     bool   usedStatus;
     bool   usedAnnounce;
+    /* The most rows each kind has taken at once this round: the status
+       line's rows, and the rows of every announcement up together. */
+    int    statusRows;
+    int    announceRows;
     /* The round has a scenario or a mod, or has shown a line: the
        Brains > Info Overlay > Scenario Text row is listed. */
     bool   menuListed;
@@ -4722,6 +4731,8 @@ static void scnPanelViewsRetireAll(void) {
     s_scnText.settingsOpen = false;
     s_scnText.usedStatus   = false;
     s_scnText.usedAnnounce = false;
+    s_scnText.statusRows   = 0;
+    s_scnText.announceRows = 0;
     s_scnText.menuListed   = false;
 }
 
@@ -5826,6 +5837,27 @@ static void renderScnPanelMenuItems(bool afterBrains) {
 #define SCN_TEXT_MIN_W_PX 64.0f
 #define SCN_TEXT_MIN_H_PX 32.0f
 
+/* The window's size before the player resizes it, in the classic 15 by 15
+   view, as a share of its size elsewhere. That view is 240 units high, where
+   a 20-unit line and its status line take a fifth of it between them; the
+   full screen map is far larger. The text is fitted into the window, so a
+   smaller window is smaller text. */
+#define SCN_TEXT_CLASSIC_SHARE (13.0f / 20.0f)
+
+/* The most bytes a status line or an announcement is drawn from once its
+   tokens are written out: a phrase token is a sentence or two, in a
+   language that may take three bytes a letter. */
+#define SCN_LINE_EXPANDED_MAX 768
+
+/* One announcement as this frame draws it: its text with the tokens written
+   out and its rows broken to fit, its centre across (0 to 1) and how far
+   through its fade it is (1 full, 0 gone). */
+typedef struct ScnTextLine {
+    char  text[SCN_LINE_EXPANDED_MAX];
+    float share;
+    float fade;
+} ScnTextLine;
+
 /* The last of an announcement's life spent fading, in ticks. Long enough to
    read as going rather than as cut off; ticks run at a hundred a second, so
    this is a third of one. */
@@ -5888,71 +5920,167 @@ static bool scnTextRoundHasScript(ClientSim *cs) {
     return file != nullptr && file[0] != '\0';
 }
 
-/* Draws one outlined line at (px, py): the line in near-black one stroke out
+/* Draws one row of text at (px, py): the row in near-black one stroke out
    in each of the eight directions, so the letters keep an edge whatever is
-   under them, then the line in white. */
-static void scnDrawOutlinedLine(ImDrawList *dl, ImFont *font, float height,
-                                float px, float py, float o, int alpha,
-                                const char *text) {
+   under them, then the row in white. */
+static void scnDrawOutlinedRow(ImDrawList *dl, ImFont *font, float height,
+                               float px, float py, float o, int alpha,
+                               const char *text, const char *textEnd) {
     const ImU32 edge = IM_COL32(0, 0, 0, alpha);
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
             dl->AddText(font, height,
                         ImVec2(px + (float)dx * o, py + (float)dy * o),
-                        edge, text);
+                        edge, text, textEnd);
         }
     }
     dl->AddText(font, height, ImVec2(px, py),
-                IM_COL32(255, 255, 255, alpha), text);
+                IM_COL32(255, 255, 255, alpha), text, textEnd);
 }
 
-/* Draws one line in its row of the source rectangle, which fit has placed
-   on the screen. share is the line's centre across, 0 to 1. A line made
-   smaller to fit across is centred down its row. */
-static void scnTextDrawLine(ImDrawList *dl, ImFont *font, const ScnTextFit &fit,
-                            float srcW, int row, float share, int alpha,
-                            const char *text) {
-    if (alpha <= 0 || fit.scale <= 0.0f || text == nullptr || text[0] == '\0') {
+/* How many rows a text takes: one more than its newlines. */
+static int scnTextRowCount(const char *text) {
+    int rows = 1;
+    for (; *text != '\0'; text++) {
+        if (*text == '\n') rows++;
+    }
+    return rows;
+}
+
+/* Breaks each row of text wider than maxW into rows that fit, in place. A
+   row breaks at its last space that fits, the space becoming "\n"; a row
+   with no such space (Chinese, Japanese and Korean are written without
+   them) breaks before the first character that does not fit, a "\n" put
+   in there while text has room for it. A script still splits its own
+   lines with "\n" where it wants them; this only keeps a line it did not
+   split, or a line in a longer language, inside the source rectangle, so
+   it is read at full size in rows rather than made smaller to fit across. */
+static void scnWrapRows(ImFont *font, float height, float maxW, char *text,
+                        size_t cap) {
+    if (font == nullptr || text == nullptr || cap == 0 || maxW <= 0.0f) {
         return;
     }
-    const float lineW =
-        font->CalcTextSizeA(SCN_TEXT_LINE_UNITS, FLT_MAX, 0.0f, text).x +
-        2.0f * SCN_TEXT_OUTLINE_UNITS;
+    size_t len = strlen(text);
+    char  *row = text;
+    while (*row != '\0') {
+        float  w         = 0.0f;
+        char  *lastSpace = nullptr;
+        char  *p         = row;
+        char  *breakAt   = nullptr;
+        while (*p != '\0' && *p != '\n') {
+            /* One character: its UTF-8 lead byte gives its length. */
+            const unsigned char c = (unsigned char)*p;
+            size_t n = 1;
+            if (c >= 0xF0) n = 4;
+            else if (c >= 0xE0) n = 3;
+            else if (c >= 0xC0) n = 2;
+            for (size_t k = 1; k < n; k++) {
+                if (p[k] == '\0') { n = k; break; }
+            }
+            const float cw =
+                font->CalcTextSizeA(height, FLT_MAX, 0.0f, p, p + n).x;
+            if (w + cw > maxW && p > row) {
+                breakAt = p;
+                break;
+            }
+            if (*p == ' ') lastSpace = p;
+            w += cw;
+            p += n;
+        }
+        if (breakAt == nullptr) {
+            /* The row fits: on to the next. */
+            row = (*p == '\n') ? p + 1 : p;
+            continue;
+        }
+        if (lastSpace != nullptr && lastSpace > row) {
+            *lastSpace = '\n';
+            row = lastSpace + 1;
+            continue;
+        }
+        if (len + 1 >= cap) return;   /* no room for one more break */
+        memmove(breakAt + 1, breakAt, len - (size_t)(breakAt - text) + 1);
+        *breakAt = '\n';
+        len++;
+        row = breakAt + 1;
+    }
+}
+
+/* Draws one line, of one or more rows, from source row `row` down. share is
+   the line's centre across, 0 to 1. The widest row sets the line's box and
+   its shrink, so every row of a line is drawn at one size, and each row is
+   centred in that box; a line made smaller to fit across is centred down
+   its rows. Answers how many rows the line takes, drawn or not. */
+static int scnTextDrawLine(ImDrawList *dl, ImFont *font, const ScnTextFit &fit,
+                           float srcW, int row, float share, int alpha,
+                           const char *text) {
+    if (text == nullptr || text[0] == '\0') return 0;
+    const int rows = scnTextRowCount(text);
+    if (alpha <= 0 || fit.scale <= 0.0f) return rows;
+
+    float widest = 0.0f;
+    for (const char *r = text;;) {
+        const char *end = strchr(r, '\n');
+        if (end == nullptr) end = r + strlen(r);
+        widest = ImMax(widest, font->CalcTextSizeA(SCN_TEXT_LINE_UNITS, FLT_MAX,
+                                                   0.0f, r, end).x);
+        if (*end == '\0') break;
+        r = end + 1;
+    }
+    const float lineW = widest + 2.0f * SCN_TEXT_OUTLINE_UNITS;
     float x = 0.0f, shrink = 1.0f;
     scnTextLineAcross(srcW, lineW, share, &x, &shrink);
-    const float top =
-        scnTextRowTop(row) + SCN_TEXT_ROW_UNITS * (1.0f - shrink) * 0.5f;
 
     const float px     = fit.scale * shrink;   /* pixels per unit, this line */
     const float height = SCN_TEXT_LINE_UNITS * px;
-    if (height < 1.0f) return;
+    if (height < 1.0f) return rows;
     const float o = ImMax(SCN_TEXT_OUTLINE_UNITS * px, 1.0f);
-    scnDrawOutlinedLine(dl, font, height, fit.originX + x * fit.scale + o,
-                        fit.originY + top * fit.scale + o, o, alpha, text);
+    const char *r = text;
+    for (int i = 0; i < rows && row + i < SCN_TEXT_MAX_ROWS; i++) {
+        const char *end = strchr(r, '\n');
+        if (end == nullptr) end = r + strlen(r);
+        const float rowW =
+            font->CalcTextSizeA(SCN_TEXT_LINE_UNITS, FLT_MAX, 0.0f, r, end).x;
+        const float top = scnTextRowTop(row + i) +
+                          SCN_TEXT_ROW_UNITS * (1.0f - shrink) * 0.5f;
+        scnDrawOutlinedRow(dl, font, height,
+                           fit.originX + x * fit.scale + o +
+                               (widest - rowW) * px * 0.5f,
+                           fit.originY + top * fit.scale + o, o, alpha, r, end);
+        if (*end == '\0') break;
+        r = end + 1;
+    }
+    return rows;
 }
 
-/* The two lines, scaled into the rectangle at (x, y) of size w by h. alpha
-   is the player's text opacity, 0 to 1, and fades the text and its
-   outline. */
+/* The rows the round has used so far: the status line's, then the
+   announcements'. scnTextSourceHeight counts none as one. */
+static int scnTextRowsUsed(void) {
+    return s_scnText.statusRows + s_scnText.announceRows;
+}
+
+/* The lines, scaled into the rectangle at (x, y) of size w by h: the status
+   line in its rows at the top, then each announcement in order, oldest
+   first, in the rows under it. alpha is the player's text opacity, 0 to 1,
+   and fades the text and its outline. */
 static void scnTextDrawLines(ImDrawList *dl, ImFont *font, float x, float y,
                              float w, float h, float alpha,
                              const char *status, bool haveStatus,
-                             const char *announce, bool haveAnnounce,
-                             float announceShare, float announceFade) {
-    const int rows = (s_scnText.usedStatus ? 1 : 0) +
-                     (s_scnText.usedAnnounce ? 1 : 0);
+                             const ScnTextLine *lines, int lineCount) {
     const float srcW = SCN_TEXT_SRC_W_UNITS;
-    const float srcH = scnTextSourceHeight(rows);
+    const float srcH = scnTextSourceHeight(scnTextRowsUsed());
     const ScnTextFit fit = scnTextFitRect(srcW, srcH, x, y, w, h);
     if (haveStatus) {
         scnTextDrawLine(dl, font, fit, srcW, 0, 0.5f,
                         (int)lroundf(255.0f * alpha), status);
     }
-    if (haveAnnounce) {
-        scnTextDrawLine(dl, font, fit, srcW, s_scnText.usedStatus ? 1 : 0,
-                        announceShare,
-                        (int)lroundf(255.0f * alpha * announceFade), announce);
+    /* Under the status line's rows whether or not it is up this frame, so an
+       announcement does not move up when the status line goes. */
+    int row = s_scnText.statusRows;
+    for (int i = 0; i < lineCount; i++) {
+        row += scnTextDrawLine(dl, font, fit, srcW, row, lines[i].share,
+                               (int)lroundf(255.0f * alpha * lines[i].fade),
+                               lines[i].text);
     }
 }
 
@@ -6020,41 +6148,101 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
 
     const uint32_t now = clientSimGetLastServerTick(cs);
 
-    /* The status line, with its countdown worked out on this client's own
-       clock. */
-    uint32_t    statusEndsAt = SCN_STATUS_NO_COUNTDOWN;
-    const char *statusRaw    = clientSimGetScnStatus(cs, &statusEndsAt);
-    char        status[SCN_STATUS_LINE_MAX];
-    const bool  haveStatus =
-        scnStatusLineText(statusRaw, statusEndsAt, now, status,
-                          sizeof(status));
+    /* Never white text and a popup at once. While the popup overlay is open
+       (a scenario's game.popup or a tutorial message) the status line and
+       the announcements are not drawn, and the announcements' clocks stand
+       still: a line sent in the same tick as a popup, or while it is open,
+       gets its whole time after the popup closes. Called after
+       tutorialOverlayRender, so a popup closed this frame lets the lines
+       back this frame. The window itself stays up as it does with no line.
 
-    uint16_t    ticks       = 0;
-    uint32_t    arrivedTick = 0;
-    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
-    uint32_t    left        = 0;
-    const bool  haveAnnounce =
-        scnAnnounceRemaining(text, arrivedTick, ticks, now, &left);
-
-    if (haveStatus) s_scnText.usedStatus = true;
-    if (haveAnnounce) s_scnText.usedAnnounce = true;
-    s_scnText.menuListed = scnTextRoundHasScript(cs) ||
-                           s_scnText.usedStatus || s_scnText.usedAnnounce;
-
-    /* The announcement's share across, and its fade: full strength until
-       the last stretch, then out. */
-    float   announceShare = 0.5f;
-    uint8_t posX = 0, posY = 0;
-    if (haveAnnounce && clientSimGetScnAnnouncePos(cs, &posX, &posY)) {
-        announceShare = scnAnnouncePosShare(posX);
+       The hold is written, and the lines read, under the client mutex: in a
+       single-player game the server's thread puts lines into this same
+       client sim as it publishes them. */
+    uint32_t    statusEndsAt   = SCN_STATUS_NO_COUNTDOWN;
+    char        statusWire[PACKET_MAX_CHAT_MESSAGE + 1];
+    bool        haveStatusWire = false;
+    ScnTextLine lines[SCN_ANNOUNCE_STACK_MAX];
+    int         lineCount = 0;
+    clientMutexWaitFor();
+    clientSimScnAnnounceHold(cs, tutorialOverlayIsOpen(), now);
+    if (!clientSimScnAnnounceIsHeld(cs)) {
+        const char *sw = clientSimGetScnStatus(cs, &statusEndsAt);
+        if (sw != nullptr) {
+            SDL_strlcpy(statusWire, sw, sizeof(statusWire));
+            haveStatusWire = true;
+        }
+        /* Every announcement still up, oldest first. A scenario may put a
+           second line up while the first is showing; both are drawn, each
+           with its own countdown, the newest lowest. Both kinds of line may
+           carry the popup's key tokens ({ACCEL}, {QUICK_ROAD} and the rest),
+           written out here as the key or control in words; a name is longer
+           than its token, so the buffers have room well past the 128 bytes a
+           line may be. */
+        const int heldCount = clientSimGetScnAnnounceCount(cs);
+        for (int i = 0; i < heldCount && lineCount < SCN_ANNOUNCE_STACK_MAX;
+             i++) {
+            const ClientScnAnnounce *a = clientSimGetScnAnnounceAt(cs, i);
+            uint32_t left = 0;
+            if (a == nullptr ||
+                !scnAnnounceRemaining(a->text, a->arrivedTick, a->ticks, now,
+                                      &left)) {
+                continue;
+            }
+            ScnTextLine *l = &lines[lineCount++];
+            tutorialExpandTextPlain(a->text, l->text, sizeof(l->text));
+            /* Where the script put it, as a share across. The share down is
+               not used: every line has rows of its own. */
+            l->share = (a->hasPos != 0) ? scnAnnouncePosShare(a->posX) : 0.5f;
+            /* Full strength until the last stretch, then out. */
+            l->fade  = (left < SCN_ANNOUNCE_FADE_TICKS)
+                           ? (float)left / (float)SCN_ANNOUNCE_FADE_TICKS
+                           : 1.0f;
+        }
     }
-    float announceFade = 1.0f;
-    if (left < SCN_ANNOUNCE_FADE_TICKS) {
-        announceFade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
-    }
+    clientMutexRelease();
 
     ImFont *font = ImGui::GetFont();
     if (font == nullptr) return;
+
+    /* The status line, with its countdown worked out on this client's own
+       clock, then every line broken into rows that fit across the source
+       rectangle (scnWrapRows), measured at the size a row's letters have
+       there. */
+    char statusRaw[SCN_LINE_EXPANDED_MAX];
+    char status[SCN_STATUS_LINE_MAX + SCN_LINE_EXPANDED_MAX];
+    if (haveStatusWire) {
+        tutorialExpandTextPlain(statusWire, statusRaw, sizeof(statusRaw));
+    }
+    const bool haveStatus =
+        scnStatusLineText(haveStatusWire ? statusRaw : nullptr, statusEndsAt,
+                          now, status, sizeof(status));
+    const float rowMaxW = SCN_TEXT_SRC_W_UNITS - 2.0f * SCN_TEXT_OUTLINE_UNITS;
+    if (haveStatus) {
+        scnWrapRows(font, SCN_TEXT_LINE_UNITS, rowMaxW, status, sizeof(status));
+    }
+    int announceRows = 0;
+    for (int i = 0; i < lineCount; i++) {
+        scnWrapRows(font, SCN_TEXT_LINE_UNITS, rowMaxW, lines[i].text,
+                    sizeof(lines[i].text));
+        announceRows += scnTextRowCount(lines[i].text);
+    }
+    const bool haveAnnounce = lineCount > 0;
+
+    /* The rows the round has used so far set the source rectangle. They are
+       counted over the round and not frame by frame, so the text does not
+       change size when a line comes and goes. */
+    if (haveStatus) {
+        s_scnText.usedStatus = true;
+        s_scnText.statusRows = ImMax(s_scnText.statusRows,
+                                     scnTextRowCount(status));
+    }
+    if (haveAnnounce) {
+        s_scnText.usedAnnounce = true;
+        s_scnText.announceRows = ImMax(s_scnText.announceRows, announceRows);
+    }
+    s_scnText.menuListed = scnTextRoundHasScript(cs) ||
+                           s_scnText.usedStatus || s_scnText.usedAnnounce;
 
     if (!s_scnText.alphaLoaded) {
         s_scnText.bgPct   = scnOpacityClamp(gameFrontScnTextBgAlpha);
@@ -6079,8 +6267,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
                            IM_COL32(0, 0, 0, scnBackingAlpha(s_scnText.bgPct)));
         scnTextDrawLines(pdl, font, 0.0f, 0.0f, ds.x, ds.y,
                          (float)s_scnText.textPct / 100.0f, status,
-                         haveStatus, text, haveAnnounce, announceShare,
-                         announceFade);
+                         haveStatus, lines, lineCount);
         return;
     }
 
@@ -6100,10 +6287,8 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
         return;
     }
 
-    const int   rows = (s_scnText.usedStatus ? 1 : 0) +
-                       (s_scnText.usedAnnounce ? 1 : 0);
     const float srcW = SCN_TEXT_SRC_W_UNITS;
-    const float srcH = scnTextSourceHeight(rows);
+    const float srcH = scnTextSourceHeight(scnTextRowsUsed());
 
     /* Tablet mode: no window, the same layout at the top middle of its own
        game view, at the size its zoom gives the text, and left of the
@@ -6141,8 +6326,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
                           IM_COL32(0, 0, 0,
                                    scnBackingAlpha(SCN_BG_OPACITY_DEFAULT)));
         scnTextDrawLines(dl, font, band.x, band.y, band.w, band.h, 1.0f,
-                         status, haveStatus, text, haveAnnounce,
-                         announceShare, announceFade);
+                         status, haveStatus, lines, lineCount);
         return;
     }
 
@@ -6181,8 +6365,20 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     const float maxW = ImMax(display.x, SCN_TEXT_MIN_W_PX);
     const float maxH = ImMax(display.y, SCN_TEXT_MIN_H_PX);
 
-    float w = (gameFrontScnTextW > 0) ? (float)gameFrontScnTextW : srcW * scale;
-    float h = (gameFrontScnTextH > 0) ? (float)gameFrontScnTextH : srcH * scale;
+    /* In the classic 15 by 15 view the window starts smaller
+       (SCN_TEXT_CLASSIC_SHARE). The full screen map owns the window while it
+       is up, and has room for the full size. */
+    float defScale = scale;
+    {
+        float mx, my, mw, mh;
+        if (!sdl3DrawGetOverviewInWindowRect(&mx, &my, &mw, &mh)) {
+            defScale = scale * SCN_TEXT_CLASSIC_SHARE;
+        }
+    }
+    float w = (gameFrontScnTextW > 0) ? (float)gameFrontScnTextW
+                                      : srcW * defScale;
+    float h = (gameFrontScnTextH > 0) ? (float)gameFrontScnTextH
+                                      : srcH * defScale;
     if (s_scnText.resizing) {
         w = s_scnText.rawW;
         h = s_scnText.rawH;
@@ -6429,8 +6625,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
            opacity. */
         scnTextDrawLines(dl, font, pos.x, pos.y, w, h,
                          (float)s_scnText.textPct / 100.0f, status,
-                         haveStatus, text, haveAnnounce, announceShare,
-                         announceFade);
+                         haveStatus, lines, lineCount);
 
         /* The faint edge (scnTextEdgeShown). With a line, only when there
            is a backing: at 0% background opacity the text stands on the map
@@ -9850,8 +10045,25 @@ static void drainInGameNameReject(ClientSim *cs) {
    each way. Called from both the desktop and the tablet branch of the frame,
    so the one edge state serves both. */
 static void renderTutorialOverlay(ClientSim *cs) {
-    static bool s_lastTutorialPause = false;
+    /* A scenario's popup (game.popup) waits in the client sim's queue
+       until the overlay is free, then takes the overlay like a tutorial
+       message does, so one popup shows at a time and pauses a solo game
+       the same way. None is taken once the round is over: the close at
+       the top of sdl3ImguiPumpAndRender would only shut it again. */
+    if (cs != NULL && !tutorialOverlayIsOpen() &&
+        !clientSimIsRoundOver(cs)) {
+        static char s_popupText[SCN_POPUP_TEXT_MAX + 1];
+        /* Under the client mutex: in a single-player game the server's
+           thread puts popups on this queue as it publishes them. */
+        clientMutexWaitFor();
+        const bool took =
+            clientSimTakeScnPopup(cs, s_popupText, sizeof(s_popupText));
+        clientMutexRelease();
+        if (took) tutorialOverlayShowText(s_popupText);
+    }
     tutorialOverlayRender(cs);
+    /* s_lastTutorialPause is the file static above: the round-end close
+       in sdl3ImguiPumpAndRender lifts the pause through the same flag. */
     bool nowTutorialPause = tutorialOverlayIsOpen();
     if (nowTutorialPause != s_lastTutorialPause) {
         windowTutorialPause(cs, nowTutorialPause);
@@ -10062,6 +10274,22 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        arrives as SDL events (inputSourceUpdate in the event pump); Steam
        Input controller input does not, so poll it here. */
     inputSourceTick();
+
+    /* The round has ended (the game-over hold, the lobby or the countdown):
+       close a tutorial message or scenario popup still showing. The
+       round-end screen and the lobby take the window over and never draw
+       it, so left open it would sit frozen under them where the player can
+       neither read nor dismiss it, and its solo pause would hold. Done
+       ahead of the lobby seam below, which returns before the overlay's
+       own render, and the pause is lifted here for the same reason. */
+    if (cs && clientSimIsRoundOver(cs) && tutorialOverlayIsOpen()) {
+        tutorialOverlayClose();
+        tutorialOverlayRender(cs);   /* takes the popup off ImGui's stack */
+        if (s_lastTutorialPause) {
+            windowTutorialPause(cs, false);
+            s_lastTutorialPause = false;
+        }
+    }
 
     /* In-game lobby (non-blocking host, e.g. the WASM client).
      *
@@ -11095,6 +11323,10 @@ void sdl3ImguiNewGame(ClientSim *cs) {
     /* The build target is the square a click or Build Now sends the man to,
        and cursor mode may have been left on. */
     buildCursorReset();
+    /* The overview panel's copy of the map memory belongs to the last game:
+       see sdl3DrawNewGame. */
+    overviewSnapshotDestroy(s_overviewSnapshot);
+    s_overviewSnapshot = nullptr;
     sdl3ImguiTabletNewGame();
     sdl3DrawNewGame(clientSimGetCurrentBuildSelect(cs));
 }

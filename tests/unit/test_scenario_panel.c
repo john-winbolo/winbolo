@@ -807,11 +807,14 @@ int run_scenario_text_fit(void) {
     UT_ASSERT(SCN_TEXT_ROW_UNITS == 22.0f);
     UT_ASSERT(scnTextSourceHeight(1) == 26.0f);
     UT_ASSERT(scnTextSourceHeight(2) == 50.0f);
-    /* Fewer than one row is one, and more than two is two, so a round with
-       no line yet and a wrong count both give a usable rectangle. */
+    /* Fewer than one row is one, and more than SCN_TEXT_MAX_ROWS is that
+       many, so a round with no line yet and a wrong count both give a usable
+       rectangle. Three rows: the status line and two announcements. */
     UT_ASSERT(scnTextSourceHeight(0) == 26.0f);
     UT_ASSERT(scnTextSourceHeight(-4) == 26.0f);
-    UT_ASSERT(scnTextSourceHeight(9) == 50.0f);
+    UT_ASSERT(scnTextSourceHeight(3) == 74.0f);
+    UT_ASSERT(scnTextSourceHeight(SCN_TEXT_MAX_ROWS + 7) ==
+              scnTextSourceHeight(SCN_TEXT_MAX_ROWS));
     UT_ASSERT(scnTextRowTop(0) == 2.0f);
     UT_ASSERT(scnTextRowTop(1) == 26.0f);
     UT_ASSERT(scnTextRowTop(-1) == 2.0f);

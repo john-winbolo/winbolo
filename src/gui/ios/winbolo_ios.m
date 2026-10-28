@@ -28,7 +28,6 @@
 #include "input_packet.h"
 #include "client_frontend_tick.h"
 #include "client_frontend_render.h"
-#include "client_frontend_tutorial.h"
 #include "client_frontend_common.h"
 #include "gui_message.h"
 #include "../../common/wb_log.h"
@@ -87,7 +86,6 @@ bool iosDeviceIsPad(void) {
  * Globals (matching winbolo.h externs)
  * ------------------------------------------------------- */
 
-bool isTutorial = FALSE;
 /* The Frame Rate choice (a FrameLimit). iOS paces its own screen, so it
    is kept only for the shared code that reads it. */
 int frameRate = FRAME_LIMIT_DEFAULT;
@@ -629,10 +627,10 @@ ios_game_start:
             gameTickAccum += elapsed;
 
             while (gameTickAccum >= GAME_TICK_LENGTH) {
-                /* A tutorial message is up, or the tick just run queued one:
-                   stop here and drop the owed time, so the interval the
-                   message is up is not fast-forwarded afterwards. */
-                if (clientFrontAnyPause() || clientFrontTutorialStepShowing()) {
+                /* A pause is up (a tutorial message, the pause menu and the
+                   others): stop here and drop the owed time, so the interval
+                   the pause is up is not fast-forwarded afterwards. */
+                if (clientFrontAnyPause()) {
                     gameTickAccum = 0.0;
                     break;
                 }
@@ -679,11 +677,7 @@ ios_game_start:
             SDL_Renderer *ren = sdl3DrawGetRenderer();
             if (ren) SDL_RenderPresent(ren);
         }
-        /* Tutorial: count the presented frame (the intro waits for a few)
-           and show the respawn message the server may have flagged. Both do
-           nothing outside the tutorial. */
-        frontEndTutorialNotePresentedFrame();
-        clientFrontTutorialPollRespawn();
+        clientFrontPollScenarioPlayer();  /* tutorial finished; language, input */
 
         /* Cap to 60 FPS */
         {
@@ -725,8 +719,7 @@ ios_game_start:
 
     sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
-    /* A step left showing, or its pause, would stop the next game's ticks. */
-    frontEndTutorialReset();
+    /* A pause left on would stop the next game's ticks. */
     windowTutorialPause(NULL, false);
     windowDeckPause(NULL, false);
     windowControllerLostPause(NULL, false);
@@ -1410,10 +1403,6 @@ void frontEndShowGunsight(ClientSim *cs, bool isShown) {
 void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
     sdl3ImguiShowAllianceRequest(playerName, playerNum);
 }
-
-/* frontEndTutorial and frontEndTutorialReset come from
-   client_frontend_common.c, the tutorial step sequencer every platform
-   calls. */
 
 /* -------------------------------------------------------
  * Misc required symbols

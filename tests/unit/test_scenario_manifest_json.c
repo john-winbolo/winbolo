@@ -65,6 +65,7 @@
 #include "sim_rules_names.h" /* simRulesRuleIndex */
 #include "scenario_manifest_json.h"
 #include "scenario_table.h" /* scnTableGet, scnTableSet */
+#include "view_policy.h"    /* the lobby block's view and window words */
 #include "test_harness.h"
 
 /* Every key of the schema, plus two this build has no use for: editor_notes
@@ -2328,5 +2329,69 @@ int run_scenario_manifest_json_needs_bots(void) {
     UT_ASSERT_MSG(scnManifestAgrees(&base, &other, key, sizeof(key), err,
                                     sizeof(err)),
                   "two equal forms were refused at %s: %s", key, err);
+    return 0;
+}
+
+/* The lobby block's fixes, read out of a manifest, written back out and read
+ * again unchanged. A word that names no choice is kept as such through the
+ * trip, and two tables that fix one view differently disagree on that key. */
+int run_scenario_manifest_json_lobby_fixes(void) {
+    static const char text[] =
+        "{ \"manifest\": 1, \"api\": 1, \"name\": \"T\",\n"
+        "  \"lobby\": { \"no_bots\": true, \"no_mods\": true,\n"
+        "    \"classic_mode\": true, \"pill_view\": \"decay\",\n"
+        "    \"ally_view\": \"sometimes\", \"allies_in_trees\": false,\n"
+        "    \"overview_window\": \"none\", \"line_of_sight\": true,\n"
+        "    \"positional_sound\": false, \"smart_pings\": true } }";
+    ScnManifestDoc         *d;
+    ScnManifestDoc         *made;
+    ScnManifestDoc         *back;
+    const ScenarioManifest *m;
+    ScenarioManifest        other;
+    char                   *out;
+    char                    err[256];
+    char                    key[SCN_VALIDATE_KEY_LEN];
+
+    d = parseText(text, NULL, err, sizeof(err));
+    UT_ASSERT_MSG(d != NULL, "the manifest was refused: %s", err);
+    m = scnManifestValues(d);
+    UT_ASSERT(m->lobby.noBots && m->lobby.noMods);
+    UT_ASSERT(m->lobby.fixClassicMode && m->lobby.classicMode);
+    UT_ASSERT(m->lobby.fixView[0] && m->lobby.view[0] == viewPolicyDecay);
+    UT_ASSERT_MSG(!m->lobby.fixView[1], "base_view was left out but fixed");
+    UT_ASSERT(m->lobby.fixView[2] && m->lobby.view[2] == SCN_LOBBY_WORD_BAD);
+    UT_ASSERT(m->lobby.fixAlliesInTrees && !m->lobby.alliesInTrees);
+    UT_ASSERT(m->lobby.fixOverviewWindow &&
+              m->lobby.overviewWindow == overviewWindowNone);
+    UT_ASSERT(m->lobby.fixLineOfSight && m->lobby.lineOfSight);
+    UT_ASSERT(m->lobby.fixPositionalSound && !m->lobby.positionalSound);
+    UT_ASSERT(m->lobby.fixSmartPings && m->lobby.smartPings);
+
+    made = scnManifestFromValues(m, err, sizeof(err));
+    UT_ASSERT_MSG(made != NULL, "a doc could not be built: %s", err);
+    out = scnManifestWrite(made, err, sizeof(err));
+    scnManifestFree(made);
+    UT_ASSERT_MSG(out != NULL, "the manifest could not be written: %s", err);
+    back = parseText(out, NULL, err, sizeof(err));
+    free(out);
+    UT_ASSERT_MSG(back != NULL, "what was written would not parse: %s", err);
+    UT_ASSERT_MSG(scnManifestAgrees(m, scnManifestValues(back), key,
+                                    sizeof(key), err, sizeof(err)),
+                  "the trip through text changed %s: %s", key, err);
+    scnManifestFree(back);
+
+    other = *m;
+    other.lobby.view[0] = (int8_t)viewPolicyKey;
+    UT_ASSERT(!scnManifestAgrees(m, &other, key, sizeof(key), err,
+                                 sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "lobby.pill_view") == 0,
+                  "the key was '%s'", key);
+    other = *m;
+    other.lobby.noMods = false;
+    UT_ASSERT(!scnManifestAgrees(m, &other, key, sizeof(key), err,
+                                 sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "lobby.no_mods") == 0, "the key was '%s'", key);
+
+    scnManifestFree(d);
     return 0;
 }

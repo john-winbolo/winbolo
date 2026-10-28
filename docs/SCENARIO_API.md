@@ -37,7 +37,11 @@ bug worth reporting.
 - [Bots and seats](#bots-and-seats)
   - [Hints: telling one bot what to do](#hints-telling-one-bot-what-to-do)
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
+  - [Finishing a tutorial](#finishing-a-tutorial)
+  - [Text in the player's language](#text-in-the-players-language)
+  - [Text for the player's input](#text-for-the-players-input)
 - [Showing things on a client](#showing-things-on-a-client)
+  - [Popups](#popups)
   - [The panel](#the-panel)
 - [Settings](#settings)
 - [Rules](#rules)
@@ -997,8 +1001,9 @@ A server from before these keys sends no identity, and a newer lobby then
 shows nothing rather than "unknown". An older lobby ignores what a newer
 server sends.
 
-The shipped scripts (`data/mods/*.lua` and `data/maps/*.scenario.lua`) say
-`author = "WinBolo"`. `tools/stamp_mod_updated.py` keeps their `updated`
+The shipped scripts (`data/mods/*.lua`, `data/maps/*.scenario.lua` and
+`data/maps/tutorials/*.scenario.lua`) say `author = "WinBolo"`.
+`tools/stamp_mod_updated.py` keeps their `updated`
 current: run it before committing a change to one, and it stamps every
 shipped file that differs from git HEAD with the current UTC time.
 `--check` fails a shipped file whose last change did not also change its
@@ -1012,7 +1017,39 @@ The lobby the map opens with.
 |---|---|---|
 | `max_players` | number | The cap on human players, 1 to 16. 0 (the default) leaves the server's own cap. |
 | `extra_teams` | boolean | Read, and sent to every client on the lobby settings event, but nothing acts on it yet. Whether a host may put a seat on a team nobody is on is decided by the `allow_extra_teams()` policy below, and a scenario that declares neither allows it. |
+| `hidden_mines` | boolean | Fixes the lobby's hidden mines setting for as long as the scenario is attached. Left out, the host's own setting applies. |
+| `time_limit` | number | Fixes the lobby's time limit, in minutes: 0 is no time limit, and a limit runs 1 to 4320. Left out, the host's own setting applies. A value out of range is reported by `-validate` and fixes nothing. |
+| `start_delay` | number | Fixes the start delay, in seconds, 0 to 600. Left out, the server's own delay applies. A value out of range is reported by `-validate` and fixes nothing. |
+| `no_bots` | boolean | `true` holds the lobby's computer tanks at none: every bot on the lobby is taken off, and the host can neither add one nor set the AI policy to anything but none. `false` is the same as leaving it out. A scenario that fields bots of its own (`needs_bots`, or a team with `bots`) keeps them allowed, and `-validate` reports the clash. |
+| `no_mods` | boolean | `true` plays the round without the mods the host picked: they are left out of the compose and stay on the host's list, so they play again once this scenario is not the one attached. The operator's own `-mod` scripts still play. `false` is the same as leaving it out. |
+| `classic_mode` | boolean | Fixes classic mode. Turning it on sets the seven settings below to their classic values, except any of them this block fixes too. |
+| `pill_view` | string | Fixes the pillbox view: `"always"`, `"key"`, `"decay"` or `"off"`. The decay time stays the host's. Any other word is reported by `-validate` and fixes nothing. |
+| `base_view` | string | Fixes the base view, with the same words as `pill_view`. |
+| `ally_view` | string | Fixes the ally view, with the same words as `pill_view`. |
+| `allies_in_trees` | boolean | Fixes whether an allied tank in trees is shown to its allies. |
+| `overview_window` | string | Fixes the overview window: `"expanded"`, `"classic"` or `"none"`. Any other word is reported by `-validate` and fixes nothing. |
+| `line_of_sight` | boolean | Fixes line of sight: `true` is buildings and trees block sight, `false` is nothing does. |
+| `positional_sound` | boolean | Fixes positional sound. |
+| `smart_pings` | boolean | Fixes smart pings: `true` allows them, `false` refuses them. |
 | `teams` | array | One entry per team, in order. |
+
+While the scenario is attached, the host cannot change a setting that the
+block fixes: the lobby refuses the write with the scenario reason. A write
+of the value the scenario fixed is no change and is accepted. When the
+scenario goes, the lobby gets back the values it had before; the bots
+`no_bots` took off do not come back. A key the block leaves out stays the
+host's. A fixed time limit holds for every round; a fixed start delay is the
+hold before each round starts.
+
+Classic mode owns seven settings: the three views, allies in trees, the
+overview window, line of sight and positional sound. A setting the scenario
+fixes wins over classic mode, whether the host turns classic mode on or the
+scenario fixes `classic_mode` itself. The others follow classic mode as they
+always do.
+
+Only the script that decides the round may fix lobby settings. A mod that
+writes any of these keys is refused when it loads, whether it plays alone or
+beside a scenario.
 
 Each team:
 
@@ -1392,6 +1429,7 @@ rather than left to misbehave quietly.
 | `can_build(p, action, x, y, n)` | Before a builder order goes ahead. `action` is the order as given — `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` — before the engine decides whether the square makes it a repair. `n` is the pillbox for a pill order and `nil` otherwise. | `false` refuses the order. Ordinary rule: yes. |
 | `can_capture(kind, n, p)` | When seat `p` would take `"pill"` or `"base"` number `n`. | `false` leaves it where it is and does not stop the tank. Ordinary rule: yes. |
 | `announce(kind, subject, actor)` | Before a newswire line is shown. `kind` is `"joined"`, `"left"`, `"base_captured"`, `"pill_captured"`, `"builder_lost"`, `"name_changed"`, `"alliance"` or `"vote"`. `subject` is the base or pillbox number for a capture and a seat otherwise; `actor` is the seat that did it. | `false` keeps the line off every client's newswire. The fact still happens. Ordinary rule: shown. |
+| `can_target(pill, p)` | When pillbox `pill` is loaded and seat `p`'s tank is one it would otherwise shoot at: not its owner's or an ally's, alive, in range and not hidden in trees. It is asked only of a tank that would become the target — the nearest so far in seat order — so a tank farther off than one already accepted is not asked about, and a pillbox that is reloading asks nothing. A loaded pillbox with only a refused tank in range asks about it every tick. Pillboxes aim at tanks only, never at a builder, so there is no question for a builder. | `false` has the pillbox pass over the tank as if it were not there and take the next nearest: it does not aim at it, fire at it or wait for it, and with nobody else in range it stands idle. Shells already in the air, and shells aimed at another tank, still hit it; `can_hit` is the question for those. A pillbox the refused tank shoots still turns angry and fires faster at whoever it may target. Ordinary rule: yes. |
 | `can_hit(attacker, kind, n, pill)` | When a shell reaches a `"tank"` or a `"pill"` it would hit. `n` is the seat for a tank and the pillbox number for a pill. `attacker` is the seat that fired it, or `game.NEUTRAL` for a pillbox's shell, and `pill` is the pillbox that fired it, `nil` for a tank's shell — so a pillbox's side is `game.pill(pill).owner`. Pillbox shells reaching pillboxes are asked too. A shell is asked once about each target: once let through, it passes that target for the rest of its flight without asking again. | `false` lets the shell fly on as if the target were not there: no damage, no knockback, no boat lost, no angry pillbox and no hit sound, and it can still hit whatever is behind. Ordinary rule: yes. |
 | `can_die(kind, n, killer, cause, pill)` | When a blow would destroy a `"tank"`, a `"builder"` or a `"pill"`. `n` is the seat for a tank or its builder and the pillbox number for a pill. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"` for a tank; `"shell"`, `"mine"` or `"explosion"` for a builder; `"shell"` or `"explosion"` for a pill; and `nil` when the engine could not name it. `"explosion"` is a dying tank's blast. `killer` is the seat that fired the shell (`game.NEUTRAL` for a pillbox's); for a builder caught by a mine it is the seat that laid it, and for a builder or a pill caught in a blast it is the seat whose tank blew up. Those two are named here and credited with nothing: `on_lgm_died` and `on_pill_killed` still name nobody for them. `pill` is the pillbox whose shell it was, and `nil` for anything else. | `false` leaves a tank at zero armour and alive, a builder untouched, a pillbox at one armour. Ordinary rule: yes. |
 | `can_ally(p, q)` | When seat `p` asks seat `q` for an alliance, and again when `q` accepts, so an answer that changed in between is the one that counts. `p` is always the seat that asked. Bots ask and accept the same way people do. A script's own `set_team`, a bot it spawns onto a team, and the seating in `scenario.lobby` are the script's decisions and are not asked. | `false` refuses the request, so `q` is never shown it, or refuses the accept. Ordinary rule: yes. |
@@ -1630,6 +1668,7 @@ starts comes due after about twice the seconds it asked for.
 | `game.map_name()` | What the map is called. |
 | `game.map_tile(x, y)` | The terrain code at a square, or `nil` for a square off the map. |
 | `game.is_mine(x, y)` | Whether a square holds a mine. |
+| `game.wall_shots(x, y)` | The shells a wall square still takes before it falls to rubble: one more than `building_life` for a wall no shell has touched (5 on the classic table), what is left for a damaged one, and 0 for a square that is not a wall or is off the map. |
 | `game.terrain()` | Every square as one 65,536-byte string, the square at `(x, y)` at byte `y * 256 + x + 1`. One call instead of 65,536 — and a fresh 64 KiB string each time, so read it where you need the whole map, not from `on_tick`. |
 
 ### Entities
@@ -1647,7 +1686,7 @@ starts comes due after about twice the seconds it asked for.
 
 | Call | Answers |
 |---|---|
-| `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
+| `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, sight, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `sight` is the gun sight, the range a shell flies before it bursts, in half squares from the rule `gunsight_min` to `gunsight_max` (2 to 14 classic); a bot's or a human's alike. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
 | `game.builder(p)` | `{ state, mx, my, wx, wy, job, trees, mines }`, or `nil` when the seat has none. `state` is `"in_tank"`, `"going"`, `"returning"`, `"parachuting"` or `"dead"`; `job` is an action word, or absent when he is on none. The square is tracked while he is out of the tank — in the tank he is wherever his tank is, which is why the state comes first. |
 | `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive, team_pool }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** `team_pool` is the label of the bot naming pool the seat's team draws bot names from, such as `"Famous Painters"`: the name the lobby shows in that team's pool dropdown. It is absent when the seat is on no team (0) or the team has no pool. A team has a pool once it is set up in the lobby; teams 1 and 2 start with the first pool, and a team the host never set up has none, so its seats read `nil` even when they hold bots. A dedicated server's `-bots` names its bots from one random pool without setting any team's pool, so there `team_pool` is the first pool's label, not the pool the bot names came from. The label comes from the server's own pools, so every client reads the same word. A script can label a team of bots only by it (see below). |
 | `game.lobby_start(p)` | The start the lobby reserved for seat `p` and has not yet used, counted from 1 as `game.start` counts, or `nil`. The same number `on_choose_start` is handed as `lobby`, so it is `nil` once the seat's first tank of the round is built (see **The lobby's start** under Policies). |
@@ -1749,7 +1788,8 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 | `game.set_boat(p, on)` | Puts a tank on a boat or takes it off one. The square under it has to be water. |
 | `game.give_pill(p, n)` | Puts a pillbox into a tank, however armoured and whoever held it. |
 | `game.drop_pill(p, n[, x, y])` | Puts a carried pillbox back on the map, on a square or under the tank. |
-| `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. `speed` goes from 0 to 2000 and the others from 0 to 255; past that the call is refused with `SCN_OP_RANGE`. `speed` scales the ground's speed cap, so 534 puts a river's 3 at a road's 16. However high it is set, the engine holds the tank's scaled cap to 160 world units a frame, the most the byte-sized modifier could give on the fastest speed rule. |
+| `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. `speed` goes from 0 to 2000 and the others from 0 to 255; past that the call is refused with `SCN_OP_RANGE`. **0 is read as the classic 100**, not as nothing, so 0 does not stop a tank; 1 is the smallest a modifier goes, and a `speed` of 1 holds a tank nearly still. `speed` scales the ground's speed cap, so 534 puts a river's 3 at a road's 16. However high it is set, the engine holds the tank's scaled cap to 160 world units a frame, the most the byte-sized modifier could give on the fastest speed rule. |
+| `game.set_speed(p, s)` | Sets how fast a tank is going, in the units of the `speed_*` rules (`speed_road` is 16): 0 to 160, and 0 stops it where it is. Nothing else changes: the tank keeps its square, its place inside the square, its heading and its boat. From the next tick the tank drives under its usual limits, so a speed past what the ground allows comes down as it does on slower ground, and the player can accelerate or brake at once. A speed past 160 is refused with `SCN_OP_RANGE` and a dead tank with `SCN_OP_TANK_DEAD`. The Classic Tutorial uses `set_speed(p, 0)` to stop the tank on each of its rows, as the old built-in tutorial did. Unlike `game.teleport`, it does not move the tank to the centre of the square, and it works on deep sea. `game.set_modifiers` changes the tank's limit, not how fast it is going. |
 
 ### The builder
 
@@ -1758,7 +1798,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 | `game.builder_order(p, action, x, y)` | Sends a builder out to do one of `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` on a square. The engine repairs rather than builds where the square already holds one. |
 | `game.builder_recall(p)` | Calls a builder back to the tank. |
 | `game.kill_lgm(p[, killer[, force]])` | Kills a builder. `killer` is a seat. A builder inside his tank is left there and the call is refused, unless `force` is `true`: then he dies on the tank and the tank waits for him to fly back in. A builder inside a dead tank is refused either way. |
-| `game.builder_parachute(p[, x, y])` | Drops a dead builder back in, on a square or at the tank. |
+| `game.builder_parachute(p[, x, y[, from]])` | Drops a dead builder back in, on a square or at the tank. A death starts his flight on a random start, which can be most of a minute away; this moves the start to the nearest map edge on the line in. `from` (0 to 32, default 0) starts him only that many squares short of the landing square on the same line instead, unless the edge is nearer; call it from `on_lgm_died` to land a new man beside his tank within a few seconds (at the classic `lgm_helicopter_speed` of 3, about 85 ticks a square). |
 | `game.set_builder_carried(p[, trees[, mines]])` | What a builder is carrying. A count left out is left alone. |
 
 ### Pillboxes and bases
@@ -1798,7 +1838,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 
 | Call | What it does |
 |---|---|
-| `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. `set_tile` and `fill_rect` share 256 changed squares a frame; a `set_tile` past that answers `nil, "SCN_OP_RATE"` and writes nothing. |
+| `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. `set_tile` and `fill_rect` share 256 changed squares a frame; a `set_tile` past that answers `nil, "SCN_OP_RATE"` and writes nothing. A square written this way loses any damage a wall stood on it had, so a wall a script puts back takes its full count of shells again (`game.wall_shots`). |
 | `game.fill_rect(x0, y0, x1, y1, t)` | Writes a rectangle of terrain. One too big for a frame's budget answers `true, "queued"` and finishes over the frames after it. Only one fill may be in progress: a second asked for while one is still landing is refused with `SCN_OP_RATE`, not queued behind it, so test the answer when you write several. |
 | `game.place_mine(x, y[, owner[, visible]])` | Lays a mine on a square. `visible` shows it to everyone rather than to its owner's side. |
 | `game.remove_mine(x, y)` | Takes a mine off a square without setting it off. |
@@ -2091,9 +2131,12 @@ to escort a person stays where it is.
 | `game.log(text)` | Writes a line to the server's console. No player sees it. |
 | `game.set_voice_everyone(on)` | With `true`, voice in the running round goes to every player rather than to the talker's allies alone. `false` puts it back. |
 | `game.voice_everyone()` | Whether voice is going to everyone: what `set_voice_everyone` last set this round, and `false` on a server with voice off. |
+| `game.lang(p)` | The language seat `p`'s player reads, as their lang file's name in lower case: `"en"`, `"de"`, `"pt-br"`. `"en"` whenever the server does not know. See [Text in the player's language](#text-in-the-players-language). |
+| `game.input(p)` | What seat `p`'s player plays with: `"keyboard"`, `"touch"` or `"controller"`. `"keyboard"` whenever the server does not know. See [Text for the player's input](#text-for-the-players-input). |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
+| `game.tutorial_done(p)` | Says that seat `p`'s player has finished a tutorial. In a single-player game of a map in `data/maps/tutorials`, the main menu stops showing its Tutorial button. Anywhere else it changes nothing. See [Finishing a tutorial](#finishing-a-tutorial). |
 
 `message` and `say` are two different voices, and the difference decides
 whether a bot hears the line at all.
@@ -2158,6 +2201,108 @@ is cleared when the round starts. A server with voice off forwards no voice at
 all, so `set_voice_everyone(true)` is refused there (`SCN_OP_WRONG_STATE`);
 `set_voice_everyone(false)` is always taken.
 
+### Finishing a tutorial
+
+A shipped tutorial calls `game.tutorial_done(p)` when its player has done its
+last step. The main menu then stops showing its Tutorial button, and the
+choice is saved, so it stays hidden the next time the game starts. The
+Tutorial entry in Settings turns it back on.
+
+The server only marks the seat. Nothing is sent to any client and nothing
+goes in the replay. The one reader is a single-player client, whose server
+runs in the same process: once a frame it takes the mark for its own seat.
+It acts on the mark only when the running map's own script is in
+`data/maps/tutorials`. So the call does nothing on a hosted or dedicated
+server, nothing for any other seat, and nothing for a script outside that
+folder.
+
+The call is refused with `SCN_OP_NO_SUCH_PLAYER` when `p` is not a seat or
+nobody is in it.
+
+### Text in the player's language
+
+Everything a script writes — a message, an announcement, a popup, the status
+line, a panel's text — reaches the client as the script wrote it. The client
+translates nothing but the key tokens a popup, announcement or status line
+carries (`{ACCEL}` and the rest), so a scenario that wants to speak more than one
+language holds its own text for each and picks it with `game.lang(p)`:
+
+```lua
+local TEXT = {
+  en = { hello = "Drive to the green square." },
+  de = { hello = "Fahre zum grünen Feld." },
+}
+
+local function tr(p, key)
+  local mine = TEXT[game.lang(p)] or TEXT.en
+  return mine[key] or TEXT.en[key]
+end
+
+game.popup(tr(p, "hello"), p)
+```
+
+Only a single-player game knows the player's language: there the server runs
+in the player's own client, which tells it at the join and again whenever the
+player picks another language in Settings. A hosted or dedicated server is
+never told, and neither is a bot's seat, so `lang` answers `"en"` for every
+seat there, as it does for an empty seat and a seat out of range. Text a script
+sent before the player changed language stays as it was sent; the next line it
+picks is in the new one.
+
+The client fills in tokens from its own language file. The word for a control
+on a controller or a touch screen ("the fire button") is a string in
+`data/lang/<code>.txt` (`STR_TUTTOK_*`), so it is in the language the client
+reads, whatever the script sent. On a hosted server, where `lang` answers
+`"en"`, a player who reads another language sees the script's English with the
+tokens in their own language.
+
+Write the text so a key token reads correctly both as a key name ("Space")
+and as a noun phrase ("the fire button"). Put the token where the object of
+"press" goes: "Press {FIRE} to shoot", not "Shoot with {FIRE}". The token
+words in each language file are written in the form that follows that
+language's word for "press".
+
+A popup wraps only at spaces. Chinese and Japanese text has no spaces, so put a
+single `\n` (read as a space) every 25 to 30 characters. A status line or
+announcement row too wide for the Scenario Text window is broken at its last space that fits,
+or before the first character that does not fit when the row has no space.
+
+The limits count bytes, and most languages take more bytes than English for
+the same line: Cyrillic and Greek take two a letter, Chinese, Japanese and
+Korean three. A popup too long for its 511 bytes can be sent as two or more
+popups, which the player closes one after the other.
+
+### Text for the player's input
+
+A key token covers a line that differs only in the key's name. Some lines
+differ by more: a touch screen has no keys and no build cursor, and a
+controller has a build cursor and no mouse. `game.input(p)` says which the
+player uses, `"keyboard"`, `"touch"` or `"controller"`, and the script holds a
+wording for each:
+
+```lua
+local ROAD = {
+  keyboard   = "Click the road button or press {QUICK_ROAD}, then click grass.",
+  touch      = "Tap the road button, then tap a grass square.",
+  controller = "Pick the road tool with {BUILD_TOOL} and press {BUILD_PLACE}.",
+}
+
+game.status(ROAD[game.input(p)] or ROAD.keyboard, nil, p)
+```
+
+Only a single-player game knows the input, the same way it knows the
+language: the client tells the server at the join and again whenever the input
+changes (a controller plugged in or put down). On a phone or tablet the touch
+layout counts first, whatever else is attached. A hosted or dedicated server
+is never told, so `input` answers `"keyboard"` for every seat there, as it
+does for a bot, an empty seat and a seat out of range. The key tokens still
+show the player's own keys and buttons there; only the sentences around them
+are the keyboard's.
+
+A line is worded when it is sent. A status line the script sends again each
+poll follows a change of input at once; a popup already on screen keeps the
+wording it was sent with.
+
 ---
 
 ## Showing things on a client
@@ -2172,6 +2317,7 @@ exist.
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
 | `game.announce(text[, seconds[, target[, position]]])` | A big line in the Scenario Text window for that many seconds. Left out, `position` centres the line across the window. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line further left or right; only the share across is used. Empty text takes the line away. |
+| `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. While it is up a local game is paused, as the tutorial pauses it. See [Popups](#popups). |
 | `game.status(text[, countdown_to[, target]])` | The status line: one line in the top row of the Scenario Text window, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
@@ -2280,6 +2426,32 @@ players around it see. A replay shows it too. A `countdown_to` below 0 or
 past 4294967294, or a seat or team outside the game, is refused with
 `SCN_OP_RANGE`.
 
+**Two lines at once.** An announcement does not take the place of one that
+is still up. Each line keeps its own countdown, and a client holds up to four:
+a fifth pushes the oldest out. A new line with the same text as one still up
+replaces that one and starts its time again. So does a line that differs from
+one still up only in its numbers (a countdown, a score), so a line sent every
+frame is one line counted down rather than a stack; two lines that differ only
+in a number inside a name ("Bot 1", "Bot 2") count as one line too. An empty
+line takes them all away. The lines are drawn in the Scenario Text window in
+the order they arrived, each in a row of its own under the status line, so
+the newest is lowest.
+
+**Line breaks.** A status line or an announcement may hold `"\n"`. Each part
+is drawn on its own row, centred in one box, and the countdown of a status
+line goes after the last row. The byte limits count the `"\n"` as one byte.
+
+**Key tokens.** A status line or an announcement may carry the popup key
+tokens: `{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`,
+`{SCROLL_UP}`, `{SCROLL_DOWN}`, `{SCROLL_LEFT}`, `{SCROLL_RIGHT}`, `{DISMISS}`,
+`{BUILD_MODE}`, `{BUILD_PLACE}`, `{BUILD_TOOL}`, `{QUICK_TREE}`, `{QUICK_ROAD}`,
+`{QUICK_WALL}`, `{QUICK_PILL}`, `{QUICK_MINE}`, `{GUN_UP}` and `{GUN_DOWN}`. The
+client writes each one out as the name of the bound key on a keyboard, a word
+for the control on a controller, or the touch wording on a touch screen. The
+128-byte cap (125 with a position) applies to the text as sent, tokens and all.
+A row that is too wide for the Scenario Text window once its tokens are filled in is broken
+into two at its last space that fits.
+
 ```lua
 game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)
 game.announce("Wave 3 - they come from the north", 5, nil, "center")
@@ -2305,6 +2477,52 @@ whole list, so a second update to the same panel for the same audience in the
 same tick is refused with `SCN_OP_RATE` rather than queued — the one it would
 have replaced was never going to be seen. Giving each of sixteen players their
 own copy of panel 0 in one tick is fine: the audience is part of the key.
+
+### Popups
+
+`game.popup` puts up a box of text that stays until the player closes it. It
+is for a sentence or two the player has to read before going on, where
+`announce` would be gone too soon. A client queues up to four, and shows the
+next when one is closed. A popup is not kept: a player who joins after it
+was sent does not see it.
+
+A popup belongs to its round. When the round ends (`game.end_round`, the time
+limit, or a return to the lobby) the client closes a popup that is still up
+and drops the ones waiting, so a script that wants its last popup read must
+not end the round until the player has had time to close it.
+
+Announcements and the status line wait behind a popup. While a popup is
+open the client draws no `game.announce` line and no status line, and the
+lines' clocks stand still: a line sent in the same tick as a popup, or while
+it is open, is shown for its whole time once the popup is closed, and a line
+that was already up keeps the time it had left. The player never has white
+text and a popup on screen at once. A script need not space them out.
+
+The text is laid out the way the tutorial's is: a single `\n` is read as a
+space, so a script can break long lines in its source, and a blank line
+(`\n\n`) starts a new paragraph. It may be up to 511 bytes.
+
+Key tokens in the text show as the keys the player has bound, or as the
+control a controller or touch screen uses:
+
+`{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`, `{SCROLL_UP}`,
+`{SCROLL_DOWN}`, `{SCROLL_LEFT}`, `{SCROLL_RIGHT}`, `{DISMISS}`,
+`{BUILD_MODE}`, `{BUILD_PLACE}`, `{BUILD_TOOL}`, and the five quick-build
+keys `{QUICK_TREE}`, `{QUICK_ROAD}`, `{QUICK_WALL}`, `{QUICK_PILL}` and
+`{QUICK_MINE}`, and the two gunsight range keys `{GUN_UP}` (longer) and
+`{GUN_DOWN}` (shorter).
+
+```lua
+game.popup("{ACCEL} forward, {BRAKE} slow down.\n\n"
+  .. "Build a road with {QUICK_ROAD}.", p)
+```
+
+A line that differs between the inputs by more than a key name is worded by
+the script for each input; see
+[Text for the player's input](#text-for-the-players-input).
+
+A brace that starts no key token (`{`, `{FOO}`, `{accel}`) is shown as it is
+written.
 
 ### The panel
 
@@ -2615,6 +2833,7 @@ tolerance at or above the step lands every one of them.
 | `grass_life` | 4 | 1 to 255 | Shell hits grass stands before it turns to swamp. |
 | `swamp_life` | 3 | 1 to 255 | Shell hits swamp stands before it turns to river. |
 | `mine_fuse_ticks` | 10 | 1 to 255 | Ticks between a mine being set off and it going up. |
+| `tank_hit_sets_off_mines` | 0 | 0 to 1 | Whether a shell that hits a tank sets off a mine on the square it bursts on. 0, the classic table, leaves the mines on that square alone. 1, the way WinBolo 2.1 played, sets one off there, the same as any other shell that ends on a mined square, so a shot at a tank can set off the mines it has just laid under or behind it. The Tank Hits Set Off Mines mod sets 1. A shell that hits a pillbox, a base or terrain, or that runs out, sets off a mine with either value, and a dying tank's explosion is not changed. Whether the shell hit, the damage, the sound and the explosion drawn do not change. |
 | `big_explosion_threshold` | 20 | 0 to 510 | Shells and mines a dying tank has to be carrying to go up in a big explosion. |
 | `tank_explosion_damage` | 5 | 0 and up, at most `pill_max_armour` | The splash a dying tank deals a pillbox it goes up next to. 0 is a wreck that scorches nothing. |
 | `tank_explosion_length` | 40 | 1 to 255 | How many steps the wreck travels before it stops. |
@@ -3067,6 +3286,7 @@ The `code` a refused write answers, as a string.
 | Regions | 64, declared and defined together; names 31 bytes |
 | Timers waiting at once | 64 |
 | A line of text | 128 bytes |
+| A popup's text | 511 bytes |
 | Primitives in one panel list | 128 |
 | Bytes in one panel list | 1017 |
 | A panel text primitive | 48 bytes |

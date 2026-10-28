@@ -66,6 +66,7 @@
 #include "mapgen.h"                /* MapGenConfig — the generated-map commit */
 #include "wire_limits.h"           /* LST_RANKED, LST_AI_POLICY, LST_GAME_TYPE */
 #include "everard_map.h"
+#include "threads.h"                /* the command bus runs under the mutex */
 #include "test_harness.h"
 
 /* What the body was before a scenario had anything to say, written out
@@ -1247,4 +1248,530 @@ int run_lobby_scenario_nolobby_boot_seats_template(void) {
     ut_brain_stub_arm(false);
     remove(kBrain);
     return 0;
+}
+
+/* ── The settings a scenario's lobby block fixes ──────────────────── */
+
+/* hidden_mines, time_limit and start_delay, as the Classic Tutorial fixes
+ * them: no hidden mines, no time limit and no start delay. The lobby takes
+ * the fixed values while the scenario is attached, refuses a host's change
+ * with the scenario reason, and gets its own values back when the scenario
+ * goes. */
+int run_lobby_scenario_fixes_lobby_settings(void) {
+    ServerSim       *sim = lsLobbySim();
+    ScnLobbyTemplate t;
+    uint8_t          v;
+    uint8_t          mins[2];
+
+    UT_ASSERT(sim != NULL);
+
+    /* The host's own settings: hidden mines, a 20-minute limit, and a
+       start delay of 5 seconds. */
+    v = 1;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_HIDDEN_MINES, &v, 1));
+    v = 1;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_TIME_LIMIT, &v, 1));
+    mins[0] = 0;
+    mins[1] = 20;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_TIME_MINUTES, mins, 2));
+    sim->startDelay = 5 * GAME_NUMGAMETICKS_SEC;
+    UT_ASSERT(sim->sim.hiddenMines);
+    UT_ASSERT(serverSimGetTimeLimit(sim));
+    UT_ASSERT(serverSimGetGameLength(sim) == 20 * 60 * GAME_NUMGAMETICKS_SEC);
+
+    memset(&t, 0, sizeof(t));
+    t.maxPlayers       = 1;
+    t.fixHiddenMines   = true;
+    t.hiddenMines      = false;
+    t.fixTimeLimit     = true;
+    t.timeLimitMinutes = 0;
+    t.fixStartDelay    = true;
+    t.startDelaySeconds = 0;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+
+    UT_ASSERT_MSG(!sim->sim.hiddenMines,
+                  "hidden mines stayed on under a scenario that fixes them off");
+    UT_ASSERT_MSG(!serverSimGetTimeLimit(sim),
+                  "the time limit stayed on under a scenario that fixes none");
+    UT_ASSERT_MSG(serverSimGetGameLength(sim) == UNLIMITED_GAME_TIME,
+                  "game length is %d, wanted UNLIMITED_GAME_TIME",
+                  (int)serverSimGetGameLength(sim));
+    UT_ASSERT_MSG(serverSimGetStartDelay(sim) == 0,
+                  "start delay is %d, wanted 0",
+                  (int)serverSimGetStartDelay(sim));
+
+    /* The host cannot change a fixed setting. The refusal names the
+       scenario. */
+    v = 1;
+    UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_HIDDEN_MINES,
+                                                   &v, 1) ==
+                      CMD_REJECT_SCENARIO,
+                  "hidden mines on was not refused with the scenario reason");
+    UT_ASSERT(!sim->sim.hiddenMines);
+    /* Writing the fixed value is no change, so it is not refused. */
+    v = 0;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_HIDDEN_MINES, &v, 1),
+                  "hidden mines off was refused although it is the fix");
+    v = 1;
+    UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_TIME_LIMIT,
+                                                   &v, 1) ==
+                      CMD_REJECT_SCENARIO,
+                  "a time limit was not refused with the scenario reason");
+    mins[0] = 0;
+    mins[1] = 45;
+    UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_TIME_MINUTES,
+                                                   mins, 2) ==
+                      CMD_REJECT_SCENARIO,
+                  "time minutes were not refused with the scenario reason");
+    UT_ASSERT(!serverSimGetTimeLimit(sim));
+    UT_ASSERT(serverSimGetGameLength(sim) == UNLIMITED_GAME_TIME);
+    /* A malformed payload is still malformed, not the scenario's doing. */
+    UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_TIME_MINUTES,
+                                                   mins, 1) ==
+                      CMD_REJECT_INVALID,
+                  "a one-byte minutes payload was blamed on the scenario");
+    UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_HIDDEN_MINES,
+                                                   &v, 2) ==
+                      CMD_REJECT_INVALID,
+                  "a two-byte hidden mines payload was blamed on the scenario");
+
+    /* A round path puts the server's own round length back, then calls the
+       fixes: the fix holds for that round too. */
+    sim->gameLength = sim->originalGameLength;
+    serverSimScenarioApplyLobbyFixes(sim, true);
+    UT_ASSERT(serverSimGetGameLength(sim) == UNLIMITED_GAME_TIME);
+
+    /* The scenario goes. Hidden mines and the time limit come back as the
+       host had them. A round ran under the held delay, which used up the
+       server's own delay, so 0 comes back. */
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(sim->sim.hiddenMines, "hidden mines did not come back");
+    UT_ASSERT_MSG(serverSimGetTimeLimit(sim), "the time limit did not come back");
+    UT_ASSERT(serverSimGetTimeMinutes(sim) == 20);
+    UT_ASSERT_MSG(serverSimGetGameLength(sim) ==
+                      20 * 60 * GAME_NUMGAMETICKS_SEC,
+                  "game length came back as %d",
+                  (int)serverSimGetGameLength(sim));
+    UT_ASSERT(serverSimGetStartDelay(sim) == 0);
+    v = 0;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_HIDDEN_MINES, &v, 1),
+                  "hidden mines stayed refused after the scenario went");
+
+    /* With no round run under the hold, the server's own delay comes
+       back. */
+    sim->startDelay = 5 * GAME_NUMGAMETICKS_SEC;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT(serverSimGetStartDelay(sim) == 0);
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetStartDelay(sim) == 5 * GAME_NUMGAMETICKS_SEC,
+                  "start delay came back as %d",
+                  (int)serverSimGetStartDelay(sim));
+
+    /* A scenario with no fixes leaves every setting the host's. */
+    memset(&t, 0, sizeof(t));
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    v = 1;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_HIDDEN_MINES, &v, 1),
+                  "hidden mines was refused under a scenario with no fix");
+    v = 0;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_TIME_LIMIT, &v, 1),
+                  "the time limit was refused under a scenario with no fix");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 9. The visibility and sound settings ─────────────────────────── */
+
+/* A scenario that fields no bots of its own, for the cases below where
+ * needs_bots would change the answer. */
+static void lsAttachPlainIdentity(ServerSim *sim) {
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMap, LS_SCN_NAME,
+                                 LS_SCN_FILE, LS_SCN_DESC, false,
+                                 false, false, false, false);
+}
+
+/* A view policy write: the policy and the decay seconds, as the lobby sends
+ * them. */
+static CmdResult lsSetView(ServerSim *sim, uint8_t lst, ViewPolicy p,
+                           uint16_t secs) {
+    uint8_t v[3];
+
+    v[0] = (uint8_t)p;
+    v[1] = (uint8_t)(secs >> 8);
+    v[2] = (uint8_t)(secs & 0xFF);
+    return serverSimApplyLobbySettingResult(sim, lst, v, 3);
+}
+
+static CmdResult lsSetByte(ServerSim *sim, uint8_t lst, uint8_t value) {
+    return serverSimApplyLobbySettingResult(sim, lst, &value, 1);
+}
+
+/* A scenario that fixes the pill view, allies in trees, the overview window,
+ * line of sight, positional sound and smart pings. Each is held, the host's
+ * change is refused with the scenario reason, a write of the fixed value is
+ * accepted, and the host's values come back when the scenario goes. The
+ * base and ally views are left out, so they stay the host's. */
+int run_lobby_scenario_fixes_visibility(void) {
+    ServerSim       *sim = lsLobbySim();
+    ScnLobbyTemplate t;
+
+    UT_ASSERT(sim != NULL);
+
+    /* The host's own settings. */
+    UT_ASSERT(lsSetView(sim, LST_PILL_VIEW, viewPolicyDecay, 45) == CMD_OK);
+    UT_ASSERT(lsSetView(sim, LST_BASE_VIEW, viewPolicyKey, 30) == CMD_OK);
+    UT_ASSERT(lsSetByte(sim, LST_ALLIES_IN_TREES, 1) == CMD_OK);
+    UT_ASSERT(lsSetByte(sim, LST_OVERVIEW_WINDOW,
+                        (uint8_t)overviewWindowExpanded) == CMD_OK);
+    UT_ASSERT(lsSetByte(sim, LST_LINE_OF_SIGHT,
+                        (uint8_t)lineOfSightBuildingsAndTrees) == CMD_OK);
+    UT_ASSERT(lsSetByte(sim, LST_POSITIONAL_SOUND, 1) == CMD_OK);
+    UT_ASSERT(lsSetByte(sim, LST_SMART_PINGS_OFF, 0) == CMD_OK);
+
+    memset(&t, 0, sizeof(t));
+    t.fixView[viewCategoryPill]    = true;
+    t.viewPolicy[viewCategoryPill] = (uint8_t)viewPolicyOff;
+    t.fixAlliesInTrees   = true;
+    t.alliesInTrees      = false;
+    t.fixOverviewWindow  = true;
+    t.overviewWindow     = (uint8_t)overviewWindowNone;
+    t.fixLineOfSight     = true;
+    t.lineOfSight        = (uint8_t)lineOfSightOff;
+    t.fixPositionalSound = true;
+    t.positionalSound    = false;
+    t.fixSmartPings      = true;
+    t.smartPings         = false;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachPlainIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryPill) ==
+                      viewPolicyOff,
+                  "pill view is %d under a scenario that fixes it off",
+                  (int)serverSimGetViewPolicy(sim, viewCategoryPill));
+    UT_ASSERT_MSG(sim->viewDecaySecs[viewCategoryPill] == 45,
+                  "the pill view's decay seconds moved to %d; a fix holds "
+                  "the policy only", (int)sim->viewDecaySecs[viewCategoryPill]);
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryBase) ==
+                      viewPolicyKey,
+                  "base view moved to %d although the scenario leaves it out",
+                  (int)serverSimGetViewPolicy(sim, viewCategoryBase));
+    UT_ASSERT(!serverSimGetAlliesInTrees(sim));
+    UT_ASSERT(serverSimGetOverviewWindow(sim) == (uint8_t)overviewWindowNone);
+    UT_ASSERT(serverSimGetLineOfSight(sim) == (uint8_t)lineOfSightOff);
+    UT_ASSERT(!serverSimGetPositionalSound(sim));
+    UT_ASSERT_MSG(serverSimGetSmartPingsOff(sim),
+                  "smart pings stayed allowed under a scenario that refuses "
+                  "them");
+
+    /* The host's changes are refused with the scenario reason. */
+    UT_ASSERT_MSG(lsSetView(sim, LST_PILL_VIEW, viewPolicyAlways, 45) ==
+                      CMD_REJECT_SCENARIO,
+                  "a pill view change was not refused with the scenario "
+                  "reason");
+    UT_ASSERT(lsSetByte(sim, LST_ALLIES_IN_TREES, 1) == CMD_REJECT_SCENARIO);
+    UT_ASSERT(lsSetByte(sim, LST_OVERVIEW_WINDOW,
+                        (uint8_t)overviewWindowClassic) ==
+              CMD_REJECT_SCENARIO);
+    UT_ASSERT(lsSetByte(sim, LST_LINE_OF_SIGHT,
+                        (uint8_t)lineOfSightBuildingsAndTrees) ==
+              CMD_REJECT_SCENARIO);
+    UT_ASSERT(lsSetByte(sim, LST_POSITIONAL_SOUND, 1) == CMD_REJECT_SCENARIO);
+    UT_ASSERT_MSG(lsSetByte(sim, LST_SMART_PINGS_OFF, 0) ==
+                      CMD_REJECT_SCENARIO,
+                  "allowing smart pings was not refused with the scenario "
+                  "reason");
+    UT_ASSERT(serverSimGetViewPolicy(sim, viewCategoryPill) == viewPolicyOff);
+    UT_ASSERT(serverSimGetSmartPingsOff(sim));
+
+    /* The fixed value is no change, and a new decay time keeps the fixed
+       policy, so neither is refused. */
+    UT_ASSERT_MSG(lsSetView(sim, LST_PILL_VIEW, viewPolicyOff, 60) == CMD_OK,
+                  "the fixed pill view with a new decay time was refused");
+    UT_ASSERT(sim->viewDecaySecs[viewCategoryPill] == 60);
+    UT_ASSERT(lsSetByte(sim, LST_SMART_PINGS_OFF, 1) == CMD_OK);
+    /* A setting the scenario leaves out is still the host's. */
+    UT_ASSERT_MSG(lsSetView(sim, LST_BASE_VIEW, viewPolicyAlways, 30) ==
+                      CMD_OK,
+                  "base view was refused although the scenario leaves it out");
+    /* A malformed payload is malformed, not the scenario's doing. */
+    UT_ASSERT(lsSetByte(sim, LST_OVERVIEW_WINDOW, 9) == CMD_REJECT_INVALID);
+
+    /* The scenario goes, and the host's values come back. */
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryPill) ==
+                      viewPolicyDecay,
+                  "pill view came back as %d, wanted the host's decay",
+                  (int)serverSimGetViewPolicy(sim, viewCategoryPill));
+    UT_ASSERT(sim->viewDecaySecs[viewCategoryPill] == 60);
+    UT_ASSERT(serverSimGetViewPolicy(sim, viewCategoryBase) ==
+              viewPolicyAlways);
+    UT_ASSERT(serverSimGetAlliesInTrees(sim));
+    UT_ASSERT(serverSimGetOverviewWindow(sim) ==
+              (uint8_t)overviewWindowExpanded);
+    UT_ASSERT(serverSimGetLineOfSight(sim) ==
+              (uint8_t)lineOfSightBuildingsAndTrees);
+    UT_ASSERT(serverSimGetPositionalSound(sim));
+    UT_ASSERT_MSG(!serverSimGetSmartPingsOff(sim),
+                  "smart pings did not come back allowed");
+    UT_ASSERT(lsSetByte(sim, LST_POSITIONAL_SOUND, 0) == CMD_OK);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 10. Classic mode, and a fixed setting winning over it ────────── */
+
+/* A scenario that fixes classic mode on and the pill view to always. Classic
+ * mode sets the settings it owns to the classic values, except the pill
+ * view, which the scenario fixes. The host cannot turn classic mode off.
+ * When the scenario goes, classic mode and the pill view come back as the
+ * host had them. */
+int run_lobby_scenario_fixes_classic_mode(void) {
+    ServerSim       *sim = lsLobbySim();
+    ScnLobbyTemplate t;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(lsSetByte(sim, LST_CLASSIC_MODE, 0) == CMD_OK);
+    UT_ASSERT(lsSetView(sim, LST_PILL_VIEW, viewPolicyDecay, 30) == CMD_OK);
+    UT_ASSERT(lsSetView(sim, LST_BASE_VIEW, viewPolicyAlways, 30) == CMD_OK);
+    UT_ASSERT(lsSetByte(sim, LST_POSITIONAL_SOUND, 1) == CMD_OK);
+
+    memset(&t, 0, sizeof(t));
+    t.fixClassicMode               = true;
+    t.classicMode                  = true;
+    t.fixView[viewCategoryPill]    = true;
+    t.viewPolicy[viewCategoryPill] = (uint8_t)viewPolicyAlways;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachPlainIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+
+    UT_ASSERT(serverSimGetClassicMode(sim));
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryPill) ==
+                      viewPolicyAlways,
+                  "pill view is %d; the scenario's fix should win over "
+                  "classic mode", (int)serverSimGetViewPolicy(
+                      sim, viewCategoryPill));
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryBase) ==
+                      viewPolicyOff,
+                  "base view is %d; classic mode sets it off",
+                  (int)serverSimGetViewPolicy(sim, viewCategoryBase));
+    UT_ASSERT(!serverSimGetPositionalSound(sim));
+
+    UT_ASSERT_MSG(lsSetByte(sim, LST_CLASSIC_MODE, 0) == CMD_REJECT_SCENARIO,
+                  "turning classic mode off was not refused with the "
+                  "scenario reason");
+    UT_ASSERT(lsSetByte(sim, LST_CLASSIC_MODE, 1) == CMD_OK);
+    UT_ASSERT(serverSimGetViewPolicy(sim, viewCategoryPill) ==
+              viewPolicyAlways);
+
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(!serverSimGetClassicMode(sim),
+                  "classic mode stayed on after the scenario went");
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryPill) ==
+                      viewPolicyDecay,
+                  "pill view came back as %d, wanted the host's decay",
+                  (int)serverSimGetViewPolicy(sim, viewCategoryPill));
+    UT_ASSERT(lsSetByte(sim, LST_CLASSIC_MODE, 1) == CMD_OK);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A scenario that fixes the pill view but not classic mode. The host may
+ * still turn classic mode on, which sets the other classic settings, and
+ * the fixed pill view stays. When the scenario goes with classic mode still
+ * on, the pill view comes back as classic mode's value, because classic
+ * mode owns it. */
+int run_lobby_scenario_fix_wins_over_host_classic(void) {
+    ServerSim       *sim = lsLobbySim();
+    ScnLobbyTemplate t;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(lsSetView(sim, LST_PILL_VIEW, viewPolicyDecay, 30) == CMD_OK);
+
+    memset(&t, 0, sizeof(t));
+    t.fixView[viewCategoryPill]    = true;
+    t.viewPolicy[viewCategoryPill] = (uint8_t)viewPolicyAlways;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachPlainIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+
+    UT_ASSERT_MSG(lsSetByte(sim, LST_CLASSIC_MODE, 1) == CMD_OK,
+                  "classic mode was refused although the scenario leaves it "
+                  "out");
+    UT_ASSERT(serverSimGetClassicMode(sim));
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryPill) ==
+                      viewPolicyAlways,
+                  "pill view is %d after the host turned classic mode on; "
+                  "the scenario's fix should stay",
+                  (int)serverSimGetViewPolicy(sim, viewCategoryPill));
+    UT_ASSERT(serverSimGetViewPolicy(sim, viewCategoryBase) == viewPolicyOff);
+
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT(serverSimGetClassicMode(sim));
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryPill) ==
+                      viewPolicyKey,
+                  "pill view came back as %d under classic mode, wanted "
+                  "classic mode's key",
+                  (int)serverSimGetViewPolicy(sim, viewCategoryPill));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 11. no_bots ──────────────────────────────────────────────────── */
+
+static char lsBrainPath[128];
+
+/* The host's bot: a fixture brain file, since adding a bot builds its
+ * client. */
+static bool lsAddBot(ServerSim *sim, BYTE seat) {
+    ServerSimBotConfig cfg;
+    FILE              *f;
+
+    snprintf(lsBrainPath, sizeof(lsBrainPath),
+                 "test_lobby_scenario_no_bots_brain.lua");
+    f = fopen(lsBrainPath, "wb");
+    if (f == NULL) return false;
+    fputs("-- fixture\n", f);
+    fclose(f);
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.brainPath  = lsBrainPath;
+    cfg.brainName  = "Bot 1";
+    cfg.ai         = aiFull;
+    cfg.gameType   = gameOpen;
+    cfg.teamNumber = 2;
+    return serverSimAddBot(sim, seat, &cfg);
+}
+
+/* no_bots takes the host's bot off, holds the AI policy at none and refuses
+ * any other policy with the scenario reason. When the scenario goes the
+ * host's policy comes back. A scenario that fields bots of its own keeps
+ * them allowed whatever no_bots says. */
+int run_lobby_scenario_no_bots(void) {
+    ServerSim       *sim = lsLobbySim();
+    ScnLobbyTemplate t;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(lsSetByte(sim, LST_AI_POLICY, (uint8_t)aiFull) == CMD_OK);
+    UT_ASSERT_MSG(lsAddBot(sim, 1), "the host's bot could not be added");
+    UT_ASSERT(serverSimIsBot(sim, 1));
+
+    memset(&t, 0, sizeof(t));
+    t.noBots = true;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachPlainIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+
+    UT_ASSERT_MSG(!serverSimIsBot(sim, 1),
+                  "the host's bot is still on the lobby under no_bots");
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiNone);
+    UT_ASSERT_MSG(lsSetByte(sim, LST_AI_POLICY, (uint8_t)aiYes) ==
+                      CMD_REJECT_SCENARIO,
+                  "allowing bots was not refused with the scenario reason");
+    UT_ASSERT(lsSetByte(sim, LST_AI_POLICY, (uint8_t)aiNone) == CMD_OK);
+    /* And the host cannot add one: the lobby's add-bot command is
+       refused, as it is under a policy of none set by hand. */
+    {
+        ClientCommand cmd;
+        CmdResult     r;
+
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type   = CMD_LOBBY_ADD_BOT;
+        cmd.cmdSeq = 1;
+        threadsWaitForMutex();
+        r = serverSimApplyCommand(sim, 0, &cmd);
+        threadsReleaseMutex();
+        UT_ASSERT_MSG(r != CMD_OK, "the host added a bot under no_bots");
+    }
+
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiFull,
+                  "the AI policy came back as %d, wanted the host's aiFull",
+                  (int)serverSimGetBotAiType(sim));
+    UT_ASSERT(lsSetByte(sim, LST_AI_POLICY, (uint8_t)aiYes) == CMD_OK);
+
+    /* A scenario that says needs_bots as well: its bots win, so the lobby
+       keeps bots allowed. */
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) != aiNone,
+                  "no_bots took the bots of a needs_bots scenario away");
+    UT_ASSERT(!serverSimScenarioHoldsNoBots(sim));
+
+    serverSimDestroy(sim);
+    remove(lsBrainPath);
+    return 0;
+}
+
+/* A no_bots scenario, then a needs_bots scenario in its place, the way the
+ * Tutorial follows the Classic Tutorial in one lobby. The map change detaches
+ * the first and attaches the second with no rules call between, so the
+ * needs_bots raise sees the held none. The lobby must keep bots allowed for
+ * the needs_bots scenario, and the host's own policy must come back when it
+ * goes. Run twice: for a host who had bots on, and one who had them off. */
+static int lsNoBotsThenNeedsBots(aiType hostPolicy) {
+    ServerSim       *sim = lsLobbySim();
+    ScnLobbyTemplate t;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(lsSetByte(sim, LST_AI_POLICY, (uint8_t)hostPolicy) == CMD_OK);
+
+    /* The no_bots scenario. */
+    memset(&t, 0, sizeof(t));
+    t.noBots = true;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachPlainIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiNone);
+
+    /* The needs_bots scenario takes its place: detach, then attach. */
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    memset(&t, 0, sizeof(t));
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    lsAttachIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) != aiNone,
+                  "host policy %d: a needs_bots scenario after a no_bots one "
+                  "was left with bots refused", (int)hostPolicy);
+
+    /* The scenario goes, and the host's own policy comes back. */
+    serverSimSetScenarioLobbyTemplate(sim, NULL);
+    lsSetNoScript(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == hostPolicy,
+                  "host policy %d came back as %d after a no_bots scenario "
+                  "and then a needs_bots one", (int)hostPolicy,
+                  (int)serverSimGetBotAiType(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_lobby_scenario_no_bots_then_needs_bots(void) {
+    if (lsNoBotsThenNeedsBots(aiFull) != 0) return 1;
+    return lsNoBotsThenNeedsBots(aiNone);
 }

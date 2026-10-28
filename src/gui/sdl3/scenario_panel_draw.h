@@ -204,13 +204,14 @@ static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
  * The source rectangle is the width of the classic game
  * view at zoom 1 (15 squares of 16 units), so the share
  * across the view that an announcement's position names is
- * a share across this width. It has one row for each kind
- * of line the round has used so far: the status line on
- * top, the announcement below it. The rows are counted
- * over the whole round and not frame by frame, so the text
- * does not change size when a line comes and goes. A line
- * wider than the source rectangle is made smaller, by
- * itself, until it fits across it.
+ * a share across this width. It has a row for each row of
+ * text the round has used so far: the status line's on top,
+ * then the announcements', oldest first, as many as have
+ * been up at once. The rows are counted over the whole round
+ * and not frame by frame, so the text does not change size
+ * when a line comes and goes. A line too wide for the source
+ * rectangle is broken into rows at its spaces; a row still
+ * too wide is made smaller, by itself, until it fits across.
  * ------------------------------------------------------- */
 
 /* The source rectangle's width, in panel units. */
@@ -230,8 +231,10 @@ static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
 /* The height of one row: the letters and the outline above and below them. */
 #define SCN_TEXT_ROW_UNITS (SCN_TEXT_LINE_UNITS + 2.0f * SCN_TEXT_OUTLINE_UNITS)
 
-/* The most rows there are: the status line and the announcement. */
-#define SCN_TEXT_MAX_ROWS 2
+/* The most rows there are: the status line and up to four announcements at
+ * once (SCN_ANNOUNCE_STACK_MAX in client_sim.h), each of a row or two once
+ * its text is broken to fit across. A row past this many is not drawn. */
+#define SCN_TEXT_MAX_ROWS 10
 
 /* The source rectangle's height for a number of rows. Fewer than one row
  * counts as one, and more than SCN_TEXT_MAX_ROWS as that many. */
@@ -502,6 +505,7 @@ static inline void scnTextLineAcross(float srcW, float lineW, float share,
     if (outX != NULL) *outX = x;
     if (outShrink != NULL) *outShrink = shrink;
 }
+
 
 /*********************************************************
  *NAME:          scnPanelColourRGBA
