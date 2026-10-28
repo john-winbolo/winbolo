@@ -55,6 +55,7 @@
 #include "pillbox.h"       /* the pill arms read and write through these */
 #include "bases.h"         /* the base arms mutate through these */
 #include "mines.h"         /* the mine list the map arms add to and clear */
+#include "building.h"      /* buildingRemovePos — a written square starts undamaged */
 #include "starts.h"        /* startsGetStart — the teleport arm's start mode */
 #include "gametype.h"      /* TANK_FULL_* — the stock caps */
 #include "sim_rules.h"     /* the table the rule arm writes, and its check */
@@ -368,6 +369,31 @@ static ScnOpResult scenarioOpTankSetBoat(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* Set how fast a tank is going. Only the speed changes: the tank keeps its
+ * square, the place inside the square, its heading and its boat. 0 is what
+ * the classic tutorial did when a tank drove onto one of its rows. From the
+ * next tick the tank drives under its usual limits: a speed past what the
+ * ground allows comes down as it does on slower ground, and the player can
+ * accelerate or brake at once. */
+static ScnOpResult scenarioOpTankSetSpeed(ServerSim *sim,
+                                          const ScnOpTankSetSpeed *p) {
+    tank *t = NULL;
+    ScnOpResult r;
+
+    if (p->speed > TANK_MOD_SPEED_CAP_MAX) {
+        return SCN_OP_RANGE;
+    }
+    r = scenarioTankFor(sim, p->slot, &t);
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (tankIsDestroyed(t)) {
+        return SCN_OP_TANK_DEAD;
+    }
+    tankSetSpeed(t, (SPEEDTYPE)p->speed);
+    return SCN_OP_OK;
+}
+
 /* Hand a pill to a tank. Unlike driving over one this does not ask whether
  * the pill is capturable: a script may take an armoured pill with a man
  * standing on it, which is the point of being able to hand one over. */
@@ -669,8 +695,23 @@ static ScnOpResult scenarioOpLgmParachute(ServerSim *sim,
         ey = (BYTE)MAP_MINE_EDGE_TOP;
     }
     if (toBottom < nearest) {
+        nearest = toBottom;
         ex = mx;
         ey = (BYTE)MAP_MINE_EDGE_BOTTOM;
+    }
+    /* A short drop: the same line in from the same edge, but only `from`
+       squares of it, so a scenario can land a man beside his tank in a
+       couple of seconds wherever the map's edges are. */
+    if (p->from > 0 && p->from < nearest) {
+        if (ex == (BYTE)MAP_MINE_EDGE_LEFT) {
+            ex = (BYTE)(mx - p->from);
+        } else if (ex == (BYTE)MAP_MINE_EDGE_RIGHT) {
+            ex = (BYTE)(mx + p->from);
+        } else if (ey == (BYTE)MAP_MINE_EDGE_TOP) {
+            ey = (BYTE)(my - p->from);
+        } else {
+            ey = (BYTE)(my + p->from);
+        }
     }
 
     (*l)->x = (WORLD)(((WORLD)ex << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
@@ -927,11 +968,15 @@ static bool scenarioTerrainIsLegal(BYTE terrain) {
 
 /* Write one square. Any mine under it goes first: the terrain byte being
  * written carries no mine, so a visible-mine record left behind would mark a
- * square nothing can clear and nothing would set off. mapSetPos does the rest —
- * its registered callback queues the map event and its own logAddEvent is the
- * record, so neither is repeated here. */
+ * square nothing can clear and nothing would set off. Any wall damage goes
+ * too: the building list keeps the shells a hit wall has left, and a wall the
+ * script writes is a new wall, not the old one with its old count — nor is a
+ * wall built later on a square the script wrote something else to. mapSetPos
+ * does the rest — its registered callback queues the map event and its own
+ * logAddEvent is the record, so neither is repeated here. */
 static void scenarioWriteTile(ServerSim *sim, BYTE x, BYTE y, BYTE terrain) {
     minesRemoveItem(&sim->sim.mns, x, y);
+    buildingRemovePos(&sim->sim.blds, x, y);
     mapSetPos(&sim->sim, &sim->sim.mp, x, y, terrain, TRUE, FALSE);
 }
 
@@ -2429,6 +2474,291 @@ static void scenarioGiveBackAi(ServerSim *sim) {
     sim->preScenarioAiRaised = false;
 }
 
+/* no_bots: the AI policy and the bot AI type held at none, which is also what
+   refuses a host adding a bot, and every bot on the lobby taken off. Given
+   back as the policy the lobby had; the bots that were removed stay gone, the
+   same as when a host sets the policy to none by hand. */
+static void scenarioApplyNoBots(ServerSim *sim, bool hold) {
+    BYTE i;
+
+    if (hold) {
+        if (!sim->preScenarioNoBotsHeld) {
+            sim->preScenarioNoBotsHeld = true;
+            sim->preNoBotsAiPolicy   = sim->aiPolicy;
+            sim->preNoBotsBotAiType  = serverSimGetBotAiType(sim);
+        }
+        serverSimSetAiPolicy(sim, (uint8_t)aiNone);
+        serverSimSetBotAiType(sim, aiNone);
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (serverSimIsBot(sim, i)) {
+                serverSimRemoveBot(sim, i);
+            }
+        }
+    } else if (sim->preScenarioNoBotsHeld) {
+        if (sim->preScenarioAiRaised) {
+            /* A needs_bots list took this one's place and raised the policy
+               off the held none before the hold let go, so what it remembered
+               as the lobby's own is the none no_bots wrote. The lobby's own
+               is what was taken here; it goes into the raise's memory, so
+               the raise stays in force for that list and its give-back puts
+               the host's policy back once the list goes. */
+            sim->preScenarioAiPolicy = sim->preNoBotsAiPolicy;
+            sim->preScenarioAiType   = sim->preNoBotsBotAiType;
+        } else {
+            serverSimSetAiPolicy(sim, sim->preNoBotsAiPolicy);
+            serverSimSetBotAiType(sim, sim->preNoBotsBotAiType);
+        }
+        sim->preScenarioNoBotsHeld = false;
+        sim->preNoBotsAiPolicy   = 0;
+        sim->preNoBotsBotAiType  = aiNone;
+    }
+}
+
+/* Classic mode and the seven settings it owns: the three view policies,
+   allies in trees, the overview window, line of sight and positional sound.
+
+   Turning classic mode on writes classic values into all seven, so the order
+   matters. The lobby's own values are taken first, before classic mode can
+   change them, so a setting given back gets the value the host had rather
+   than one classic mode wrote. Classic mode is applied next. A setting whose
+   fix went is given back after that, and while classic mode is on it comes
+   back as the classic value, since classic mode owns it. A setting that is
+   fixed is applied last, so a fixed setting wins over classic mode: a
+   scenario that fixes a view policy keeps it whether the host turns classic
+   mode on or the scenario fixes classic mode itself. A view policy fix holds
+   the policy only; the decay seconds stay the host's. */
+static void scenarioApplyVisibilityFixes(ServerSim *sim,
+                                         const ScnLobbyTemplate *t) {
+    int c;
+
+    /* The lobby's values, for every fix that is taking hold now. */
+    for (c = 0; c < VIEW_CATEGORY_COUNT; c++) {
+        if (t != NULL && t->fixView[c] && !sim->preScenarioViewHeld[c]) {
+            sim->preScenarioViewHeld[c]   = true;
+            sim->preScenarioViewPolicy[c] = sim->viewPolicy[c];
+        }
+    }
+    if (t != NULL && t->fixAlliesInTrees && !sim->preScenarioTreesHeld) {
+        sim->preScenarioTreesHeld     = true;
+        sim->preScenarioAlliesInTrees = sim->alliesInTrees;
+    }
+    if (t != NULL && t->fixOverviewWindow && !sim->preScenarioOverviewHeld) {
+        sim->preScenarioOverviewHeld   = true;
+        sim->preScenarioOverviewWindow = sim->overviewWindow;
+    }
+    if (t != NULL && t->fixLineOfSight && !sim->preScenarioSightHeld) {
+        sim->preScenarioSightHeld   = true;
+        sim->preScenarioLineOfSight = sim->lineOfSight;
+    }
+    if (t != NULL && t->fixPositionalSound && !sim->preScenarioSoundHeld) {
+        sim->preScenarioSoundHeld       = true;
+        sim->preScenarioPositionalSound = sim->positionalSound;
+    }
+
+    /* Classic mode. */
+    if (t != NULL && t->fixClassicMode) {
+        if (!sim->preScenarioClassicHeld) {
+            sim->preScenarioClassicHeld = true;
+            sim->preScenarioClassicMode = sim->classicMode;
+        }
+        if (sim->classicMode != t->classicMode) {
+            serverSimSetClassicMode(sim, t->classicMode);
+        }
+    } else if (sim->preScenarioClassicHeld) {
+        if (sim->classicMode != sim->preScenarioClassicMode) {
+            serverSimSetClassicMode(sim, sim->preScenarioClassicMode);
+        }
+        sim->preScenarioClassicHeld = false;
+        sim->preScenarioClassicMode = false;
+    }
+
+    /* The settings whose fix went. With classic mode on, classic mode's
+       value: serverSimSetClassicMode writes all seven, and the ones still
+       fixed are written again below. */
+    {
+        bool gaveBack = false;
+
+        for (c = 0; c < VIEW_CATEGORY_COUNT; c++) {
+            if (!(t != NULL && t->fixView[c]) &&
+                sim->preScenarioViewHeld[c]) {
+                serverSimSetViewPolicy(sim, (ViewCategory)c,
+                                       sim->preScenarioViewPolicy[c],
+                                       sim->viewDecaySecs[c]);
+                sim->preScenarioViewHeld[c]   = false;
+                sim->preScenarioViewPolicy[c] = viewPolicyAlways;
+                gaveBack = true;
+            }
+        }
+        if (!(t != NULL && t->fixAlliesInTrees) &&
+            sim->preScenarioTreesHeld) {
+            serverSimSetAlliesInTrees(sim, sim->preScenarioAlliesInTrees);
+            sim->preScenarioTreesHeld     = false;
+            sim->preScenarioAlliesInTrees = false;
+            gaveBack = true;
+        }
+        if (!(t != NULL && t->fixOverviewWindow) &&
+            sim->preScenarioOverviewHeld) {
+            serverSimSetOverviewWindow(sim, sim->preScenarioOverviewWindow);
+            sim->preScenarioOverviewHeld   = false;
+            sim->preScenarioOverviewWindow = 0;
+            gaveBack = true;
+        }
+        if (!(t != NULL && t->fixLineOfSight) && sim->preScenarioSightHeld) {
+            serverSimSetLineOfSight(sim, sim->preScenarioLineOfSight);
+            sim->preScenarioSightHeld   = false;
+            sim->preScenarioLineOfSight = 0;
+            gaveBack = true;
+        }
+        if (!(t != NULL && t->fixPositionalSound) &&
+            sim->preScenarioSoundHeld) {
+            serverSimSetPositionalSound(sim,
+                                        sim->preScenarioPositionalSound);
+            sim->preScenarioSoundHeld       = false;
+            sim->preScenarioPositionalSound = false;
+            gaveBack = true;
+        }
+        if (gaveBack && sim->classicMode) {
+            serverSimSetClassicMode(sim, true);
+        }
+    }
+
+    /* The settings still fixed, last, so they win over classic mode. */
+    if (t == NULL) return;
+    for (c = 0; c < VIEW_CATEGORY_COUNT; c++) {
+        if (t->fixView[c]) {
+            serverSimSetViewPolicy(sim, (ViewCategory)c,
+                                   (ViewPolicy)t->viewPolicy[c],
+                                   sim->viewDecaySecs[c]);
+        }
+    }
+    if (t->fixAlliesInTrees) {
+        serverSimSetAlliesInTrees(sim, t->alliesInTrees);
+    }
+    if (t->fixOverviewWindow) {
+        serverSimSetOverviewWindow(sim, t->overviewWindow);
+    }
+    if (t->fixLineOfSight) {
+        serverSimSetLineOfSight(sim, t->lineOfSight);
+    }
+    if (t->fixPositionalSound) {
+        serverSimSetPositionalSound(sim, t->positionalSound);
+    }
+}
+
+/* The settings a scenario's lobby block fixes. Each one is held while the
+   attached scenario's template fixes it, and given back when the fix goes:
+   a plain map committed, a scenario that does not fix it, or no scenario at
+   all. The value given back is what the lobby had when the hold began, the
+   way the game type above is remembered once and given back once.
+
+   The time limit is three fields that go together: the flag the lobby shows,
+   the minutes it shows, and the round length the tick counts down. A fixed
+   limit of 0 is no time limit, and the minutes the lobby showed stay, so the
+   host sees them again when the fix goes. The round paths put the round
+   length back to the server's own at each round and then call this, so the
+   fix holds for every round.
+
+   The start delay counts down once, in the first round the sim runs. A round
+   that starts under a held delay has used up the delay the lobby had, so 0
+   is what comes back after it. */
+void serverSimScenarioApplyLobbyFixes(ServerSim *sim, bool roundStart) {
+    const ScnLobbyTemplate *t = NULL;
+
+    if (sim == NULL) return;
+    if (sim->scenarioIdentity.source != lobbyScenarioNone &&
+        sim->scenarioLobbyValid) {
+        t = &sim->scenarioLobby;
+    }
+
+    if (t != NULL && t->fixHiddenMines) {
+        if (!sim->preScenarioMinesHeld) {
+            sim->preScenarioMinesHeld   = true;
+            sim->preScenarioHiddenMines = sim->sim.hiddenMines;
+        }
+        serverSimSetHiddenMines(sim, t->hiddenMines);
+    } else if (sim->preScenarioMinesHeld) {
+        serverSimSetHiddenMines(sim, sim->preScenarioHiddenMines);
+        sim->preScenarioMinesHeld   = false;
+        sim->preScenarioHiddenMines = false;
+    }
+
+    if (t != NULL && t->fixTimeLimit) {
+        if (!sim->preScenarioTimeHeld) {
+            sim->preScenarioTimeHeld    = true;
+            sim->preScenarioTimeLimit   = sim->timeLimit;
+            sim->preScenarioTimeMinutes = sim->timeMinutes;
+            sim->preScenarioGameLength  = sim->gameLength;
+        }
+        if (t->timeLimitMinutes == 0) {
+            serverSimSetTimeLimit(sim, false);
+            serverSimSetGameLength(sim, UNLIMITED_GAME_TIME);
+        } else {
+            serverSimSetTimeLimit(sim, true);
+            serverSimSetTimeMinutes(sim, t->timeLimitMinutes);
+            serverSimSetGameLength(sim, (int32_t)t->timeLimitMinutes * 60 *
+                                            GAME_NUMGAMETICKS_SEC);
+        }
+    } else if (sim->preScenarioTimeHeld) {
+        serverSimSetTimeLimit(sim, sim->preScenarioTimeLimit);
+        serverSimSetTimeMinutes(sim, sim->preScenarioTimeMinutes);
+        serverSimSetGameLength(sim, sim->preScenarioGameLength);
+        sim->preScenarioTimeHeld    = false;
+        sim->preScenarioTimeLimit   = false;
+        sim->preScenarioTimeMinutes = 0;
+        sim->preScenarioGameLength  = 0;
+    }
+
+    if (t != NULL && t->fixStartDelay) {
+        if (!sim->preScenarioDelayHeld) {
+            sim->preScenarioDelayHeld  = true;
+            sim->preScenarioStartDelay = sim->startDelay;
+        }
+        sim->startDelay = (int32_t)t->startDelaySeconds * GAME_NUMGAMETICKS_SEC;
+        if (roundStart) {
+            sim->preScenarioStartDelay = 0;
+        }
+    } else if (sim->preScenarioDelayHeld) {
+        sim->startDelay            = sim->preScenarioStartDelay;
+        sim->preScenarioDelayHeld  = false;
+        sim->preScenarioStartDelay = 0;
+    }
+
+    scenarioApplyNoBots(sim, serverSimScenarioHoldsNoBots(sim));
+    scenarioApplyVisibilityFixes(sim, t);
+
+    if (t != NULL && t->fixSmartPings) {
+        if (!sim->preScenarioPingsHeld) {
+            sim->preScenarioPingsHeld     = true;
+            sim->preScenarioSmartPingsOff = sim->smartPingsOff;
+        }
+        serverSimSetSmartPingsOff(sim, !t->smartPings);
+    } else if (sim->preScenarioPingsHeld) {
+        serverSimSetSmartPingsOff(sim, sim->preScenarioSmartPingsOff);
+        sim->preScenarioPingsHeld     = false;
+        sim->preScenarioSmartPingsOff = false;
+    }
+}
+
+bool serverSimScenarioHoldsNoBots(const ServerSim *sim) {
+    const ScnLobbyTemplate *t;
+    uint8_t                 i;
+
+    if (sim == NULL || sim->scenarioIdentity.source == lobbyScenarioNone ||
+        !sim->scenarioLobbyValid) {
+        return false;
+    }
+    t = &sim->scenarioLobby;
+    if (!t->noBots) return false;
+    /* A list that fields bots of its own needs them allowed, so needs_bots
+       and a team's own bots win over no_bots. The validator names a file
+       that says both. */
+    if (sim->scenarioIdentity.needsBots) return false;
+    for (i = 0; i < t->numTeams; i++) {
+        if (t->teams[i].bots > 0) return false;
+    }
+    return true;
+}
+
 /* The lobby's own settings, brought into line with whatever scenario is
    attached now. Both points a lobby first learns its scenario need this: a
    map commit, which calls it straight after the map change above, and a
@@ -2555,6 +2885,7 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
            default a lobby with no other answer has. */
         serverSimSetGameType(sim, gameStrictTournament);
     }
+    serverSimScenarioApplyLobbyFixes(sim, false);
     serverSimFollowGameTypeBotModes(sim, typeBefore);
 }
 
@@ -3692,6 +4023,41 @@ static ScnOpResult scenarioOpStatus(ServerSim *sim, const ScnOpStatus *p) {
     return SCN_OP_OK;
 }
 
+/* Put a message box in front of a player, which the player closes. The
+ * line is published once and kept nowhere: a client that joins later never
+ * sees it, the way a chat line it missed is not replayed. Nothing is
+ * written to the recording either, because a popup can be longer than
+ * the one length byte a recorded line carries. */
+static ScnOpResult scenarioOpPopup(ServerSim *sim, const ScnOpPopup *p) {
+    ControlEvent evt;
+    BYTE         destTeam, destPlayer;
+    size_t       len;
+    ScnOpResult  r;
+
+    r = scenarioTargetUnpack(p->target, &destTeam, &destPlayer);
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
+        return SCN_OP_TOO_BIG;
+    }
+    len = strlen(p->text);
+    if (len == 0) {
+        return SCN_OP_RANGE;
+    }
+    if (len >= sizeof(evt.u.scnPopup.text)) {
+        return SCN_OP_TOO_BIG;
+    }
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_POPUP;
+    SDL_strlcpy(evt.u.scnPopup.text, p->text, sizeof(evt.u.scnPopup.text));
+    evt.u.scnPopup.destTeam   = destTeam;
+    evt.u.scnPopup.destPlayer = destPlayer;
+    serverSimPublishControl(sim, &evt);
+    return SCN_OP_OK;
+}
+
 /* Fill the event one marker publishes as. Shared by the arm and the join
  * replay so a late joiner is given the same event the round saw. */
 static void scenarioFillMarkerEvent(ControlEvent *evt, BYTE id, BYTE kind,
@@ -4021,6 +4387,21 @@ static ScnOpResult scenarioOpSetGameTime(ServerSim *sim,
                 (BYTE)((asked >> 24) & 0xFF), (BYTE)((asked >> 16) & 0xFF),
                 (BYTE)((asked >> 8) & 0xFF), (BYTE)(asked & 0xFF), 0, NULL);
     serverSimPublishLobbySettings(sim);
+    return SCN_OP_OK;
+}
+
+/* A shipped tutorial is finished for one seat. The arm only marks the seat.
+ * Nothing goes on the wire and nothing goes in the replay: the one reader is
+ * a single-player frontend in the same process, which takes the mark through
+ * serverSimTakeTutorialDone and hides the main menu's Tutorial button. On a
+ * hosted or dedicated server nobody takes it, so it changes nothing a player
+ * sees. No state guard: a script may finish its tutorial in the lobby too. */
+static ScnOpResult scenarioOpTutorialDone(ServerSim *sim,
+                                          const ScnOpTutorialDone *p) {
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    sim->tutorialDoneSeats |= (uint16_t)(1u << p->slot);
     return SCN_OP_OK;
 }
 
@@ -4586,12 +4967,13 @@ static bool scenarioOpIsRoster(ScenarioOpType t) {
 }
 
 /* The ops SCN_MSGS_PER_TICK counts: the four that put a line in front of a
- * player and the one that plays them a sound. */
+ * player, the popup, and the one that plays them a sound. */
 static bool scenarioOpIsMessage(ScenarioOpType t) {
     return t == SCN_OP_MSG_ALL ||
            t == SCN_OP_MSG_TEAM ||
            t == SCN_OP_MSG_PLAYER ||
            t == SCN_OP_MSG_SAY ||
+           t == SCN_OP_POPUP ||
            t == SCN_OP_SOUND;
 }
 
@@ -4666,6 +5048,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpTankDropPill(sim, &op->u.tankDropPill);
         case SCN_OP_TANK_SET_MODIFIERS:
             return scenarioOpTankSetModifiers(sim, &op->u.tankSetModifiers);
+        case SCN_OP_TANK_SET_SPEED:
+            return scenarioOpTankSetSpeed(sim, &op->u.tankSetSpeed);
         case SCN_OP_LGM_DISPATCH:
             return scenarioOpLgmDispatch(sim, &op->u.lgmDispatch);
         case SCN_OP_LGM_RECALL:
@@ -4748,10 +5132,14 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpMarker(sim, &op->u.marker);
         case SCN_OP_STATUS:
             return scenarioOpStatus(sim, &op->u.status);
+        case SCN_OP_POPUP:
+            return scenarioOpPopup(sim, &op->u.popup);
         case SCN_OP_END_ROUND:
             return scenarioOpEndRound(sim, &op->u.endRound);
         case SCN_OP_SET_GAME_TIME:
             return scenarioOpSetGameTime(sim, &op->u.setGameTime);
+        case SCN_OP_TUTORIAL_DONE:
+            return scenarioOpTutorialDone(sim, &op->u.tutorialDone);
         case SCN_OP_SET_RULE:
             return scenarioOpSetRule(sim, &op->u.setRule);
         case SCN_OP_SHELL_EXPIRED:

@@ -27,6 +27,13 @@ void lv_imgui_tank_window(void);
  * dock's built layout; needs the ImGui context. */
 float lv_imgui_tank_dock_height(float dockWidth);
 
+/* The banner over the map while the lag view ("see what this player saw")
+ * is on: whose screen the map shows, how far behind the present it is, and
+ * the button that turns the view off. x, y and w are the map's left, top
+ * and width in the main viewport. Draws nothing while the view is off;
+ * needs the ImGui context. */
+void lv_imgui_lag_banner_at(float x, float y, float w);
+
 #ifdef __cplusplus
 }
 #endif

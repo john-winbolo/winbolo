@@ -151,7 +151,9 @@ log_ScnHint,         // an order a scenario gave one bot: opt1=slot, then the hi
 log_ServerTick,      // the server's game tick at this entry, as a big-endian u32 across opt1..opt4. Written at the round's first entry, at every entry that carries a snapshot and every FULL_SYNC_INTERVAL ticks (layout in docs/replay-format.md)
 log_ScnStatus,       // a scenario's status line at the top of the view: opt1=destTeam, opt2=destPlayer, then the countdown's end tick as a big-endian u32 (0xFFFFFFFF = no countdown) and the text as a pascal string. An empty text is the clear (layout in docs/replay-format.md)
 log_VoiceEveryone,   // whether a scenario sent the round's voice to every player rather than to allies alone: opt1=1 for everyone, 0 for allies only. Written when the value changes
-log_MapName          // the name of the map the round is played on, as a pascal string. Written when the round starts; the header's name is the map loaded when the log opened, which a lobby can change (layout in docs/replay-format.md)
+log_MapName,         // the name of the map the round is played on, as a pascal string. Written when the round starts; the header's name is the map loaded when the log opened, which a lobby can change (layout in docs/replay-format.md)
+log_PlayerLag,       // one player's network lag: opt1=player, short1=round-trip time in ms, opt2=the rewind computed from that player's last input, which a shell fired then would use, in 20 ms entries. Written about once a second, when a value changes by a clear amount, at the round's first entry and at each snapshot (layout in docs/replay-format.md)
+log_OverrunStats     // the server's timing and each bot's overruns, the numbers the console's overrun lines print: a payload of short1 bytes (overrun_record.h). Written every 30 seconds of the round, and when the round's log closes (layout in docs/replay-format.md)
 } logitem;
 
 typedef struct {
@@ -368,6 +370,24 @@ void logSetLobbyMode(bool enabled);
 *  fn - Function to run each tick, or NULL for none
 *********************************************************/
 void logSetPreTickHook(void (*fn)(void));
+
+/*********************************************************
+*NAME:          logSetStopHook
+*PURPOSE:
+* Registers a function that logStop runs, while the log is
+* still open, before it writes the end of the stream. It gets
+* the sim the log was started with. The events it adds with
+* logAddEvent are written at once, as one last LOG_EVENT
+* entry; logAddEvent takes them from logStop's thread for the
+* length of the call. Events queued before logStop and not
+* yet written by a logWriteTick are dropped, as they were
+* before the hook. Pass NULL to clear. Install-only: logCreate
+* does not reset it.
+*
+*ARGUMENTS:
+*  fn - Function to run at each logStop, or NULL for none
+*********************************************************/
+void logSetStopHook(void (*fn)(ServerSim *ssim));
 
 /*********************************************************
 *NAME:          logCheckTankSame
