@@ -5717,6 +5717,7 @@ set(_unit_test_names
     visibility_preset_round_trip
     visibility_preset_custom
     visibility_preset_ignores_decay
+    visibility_preset_ignores_classic_mode
     visibility_preset_pref_words
     scn_panel_popout_row
     scn_panel_yes_no
