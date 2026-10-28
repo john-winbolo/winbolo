@@ -34,8 +34,12 @@ extern "C" bool dialogNavWasInsideSubRegionAtFrameStart(void) {
    the first frame (a window that opens, a default-focus item, a mouse
    click on a button or a combo all give it a NavId).  That flag also
    lets Enter / Space press the focused item, so it stays on; only the
-   drawing waits.  A Tab press shows the outline; a mouse move or click
-   hides it again.  As in Discord, the Tab that shows the outline does not
+   drawing waits.  A Tab press shows the outline; a mouse button click
+   (any button, also on empty space) hides it again.  As in Discord, a
+   mouse move or the mouse wheel does not hide it.  ImGui itself does not
+   hide its nav cursor on a mouse move either: a move only clears
+   NavHighlightItemUnderNav, and with ConfigNavCursorVisibleAlways
+   NavUpdate keeps NavCursorVisible on.  Also as in Discord, the Tab that shows the outline does not
    move focus: the outline shows on the item that already has focus, and
    only the next Tab moves on (see navOutlineClaimTab).  A controller
    keeps it on: any pad button press here, or the game's own record that the controller is the device in use
@@ -83,10 +87,11 @@ static void navOutlineClaimTab(ImGuiContext *g) {
 
 static void navOutlineTrackInput(ImGuiContext *g) {
     const ImGuiIO &io = g->IO;
-    bool mouseUse = io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f;
-    for (int b = 0; b < IM_ARRAYSIZE(io.MouseClicked) && !mouseUse; b++)
-        if (io.MouseClicked[b]) mouseUse = true;
-    if (mouseUse) s_navOutlineByKey = false;
+    /* Only a mouse button click hides the outline.  A mouse move or the
+       mouse wheel does not.  Once hidden, navOutlineClaimTab claims Tab
+       again, so the next Tab again only shows the outline. */
+    for (int b = 0; b < IM_ARRAYSIZE(io.MouseClicked); b++)
+        if (io.MouseClicked[b]) s_navOutlineByKey = false;
 
     /* Tab counts only while a window takes nav input, so a Tab bound to
        a game key during play does not switch the outline on.  Ctrl+Tab
