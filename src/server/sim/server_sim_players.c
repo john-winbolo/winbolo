@@ -88,6 +88,7 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->statDroppedStaleInputs[playerNum] = 0;
     sim->statCatchupTicks[playerNum] = 0;
     sim->statLastRewindTicks[playerNum] = 0;
+    sim->lagLogWritten[playerNum] = false;
     /* Nobody arrives mid-order: a seat starts with no shells counted toward
      * a three-shot order. */
     serverSimShotOrderClear(sim, playerNum);
@@ -394,6 +395,11 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return;
     /* The next occupant of this seat has not had its mode picked by anyone. */
     sim->botModeSetByHand &= (uint16_t)~(1u << playerNum);
+    /* Nor told the server what language they read. */
+    sim->playerLang[playerNum][0] = '\0';
+    sim->playerInput[playerNum] = SERVER_PLAYER_INPUT_KEYBOARD;
+    /* Nor finished a tutorial. */
+    sim->tutorialDoneSeats &= (uint16_t)~(1u << playerNum);
     /* Captured before any teardown so the last-human-left reset below can
      * tell a human departure from a bot one. Bot removals run through this
      * same path (botManagerRemoveBot), and the reset itself removes bots —
@@ -503,6 +509,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->statDroppedStaleInputs[playerNum] = 0;
     sim->statCatchupTicks[playerNum] = 0;
     sim->statLastRewindTicks[playerNum] = 0;
+    sim->lagLogWritten[playerNum] = false;
     /* The shells this slot had in flight toward a three-shot order go with
      * it, so whoever sits here next starts its count from nothing. */
     serverSimShotOrderClear(sim, playerNum);

@@ -4379,6 +4379,14 @@ void sdl3DrawNewGame(buildSelect value) {
      made again on the first full screen frame. */
   overviewViewDestroy(gOverviewView);
   gOverviewView = NULL;
+  /* Its copy of the map memory goes with it. The copy is refreshed when the
+     memory's change count differs from the one it was taken at, and each
+     game's memory counts up from 0 again: an idle start reaches the same
+     count the last game stood at, and the map drew the last game's memory
+     until something changed. */
+  overviewSnapshotDestroy(gOverviewSnapshot);
+  gOverviewSnapshot    = NULL;
+  gOverviewPrepPending = FALSE;
 }
 
 void sdl3DrawSelectIndentsOff(buildSelect value, int x, int y) {

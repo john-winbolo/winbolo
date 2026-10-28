@@ -309,6 +309,52 @@ void serverLifecycleGetTickPeak(double *outPeakMs,
  * two authoritative round starts. */
 void serverLifecycleResetTickPeak(void);
 
+/* The overrun lines on the server's console (serverSimPrintOverrunStats)
+ * while a round runs: once at one minute of game time into the round, then
+ * every five minutes (at 5, 10, 15 minutes and so on). The overrun record in
+ * the round log (serverSimLogOverrunStats) is more frequent: every 30
+ * seconds (at 0:30, 1:00, 1:30 and so on), so it is also there at each frame
+ * that prints. Counted in running server frames of SERVER_TICK_LENGTH ms, 50
+ * a second, from the round start that serverLifecycleResetTickPeak marks. */
+#define SERVER_OVERRUN_STATS_FIRST_FRAMES    (60u * 1000u / SERVER_TICK_LENGTH)       /* 1 minute */
+#define SERVER_OVERRUN_STATS_INTERVAL_FRAMES (5u * 60u * 1000u / SERVER_TICK_LENGTH)  /* 5 minutes */
+#define SERVER_OVERRUN_RECORD_INTERVAL_FRAMES (30u * 1000u / SERVER_TICK_LENGTH)      /* 30 seconds */
+
+/* TRUE when the running frame with this number (1 for the round's first)
+ * prints the overrun lines. */
+static inline bool serverOverrunStatsDue(uint32_t roundFrames) {
+  return roundFrames == SERVER_OVERRUN_STATS_FIRST_FRAMES ||
+         (roundFrames > 0 && roundFrames % SERVER_OVERRUN_STATS_INTERVAL_FRAMES == 0);
+}
+
+/* TRUE when the running frame with this number (1 for the round's first)
+ * adds the overrun record to the round log. */
+static inline bool serverOverrunRecordDue(uint32_t roundFrames) {
+  return roundFrames > 0 && roundFrames % SERVER_OVERRUN_RECORD_INTERVAL_FRAMES == 0;
+}
+
+/* Count one running frame of the round, for serverInstanceTick. TRUE when
+ * the frame is one that prints the overrun lines (serverOverrunStatsDue) or
+ * adds the overrun record (serverOverrunRecordDue). */
+bool serverLifecycleCountRoundFrame(void);
+
+/* For the frames serverLifecycleCountRoundFrame names: print the overrun
+ * lines to the console when serverOverrunStatsDue says so and
+ * serverLifecycleSetOverrunConsolePrint turned the print on, and add the
+ * overrun record to the round log when serverOverrunRecordDue says so. The
+ * caller holds the threads mutex. */
+void serverLifecycleReportOverrunStats(ServerSim *sim);
+
+/* Turn the overrun lines on stdout on or off. Off by default. WinBoloDS
+ * (servermain.c) turns them on; the client hosts, which run the same tick,
+ * leave them off and write only the round log's record. */
+void serverLifecycleSetOverrunConsolePrint(bool on);
+
+/* The round log's stop hook (logSetStopHook): adds the round-end overrun
+ * record, so a round shorter than 30 seconds still has one. Writes one for each
+ * round start at most, and none before the round's first running frame. */
+void serverLifecycleLogRoundEndOverrunStats(ServerSim *sim);
+
 /* Feed the EWMA with the wall-clock cost of the tick that just
  * completed. Producer-thread only — called from inside
  * serverInstanceTick after the final mutex release. */

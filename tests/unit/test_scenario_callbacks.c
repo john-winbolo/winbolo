@@ -37,6 +37,10 @@
  *                                         arrives with every row of its
  *                                         callbacks block (Survival 14,
  *                                         Soccer 13); same for Soccer
+ * run_scenario_details_fetch_tutorial   — and for the Tutorial (in
+ *                                         data/maps/tutorials), whose 23
+ *                                         rows are the most a shipped
+ *                                         script carries
  * run_scenario_details_fetch_not_found  — a file the server does not know is
  *                                         answered, on the first request,
  *                                         with a not-found the client stops
@@ -63,6 +67,7 @@
  * permits it.
  */
 
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -628,14 +633,65 @@ int run_scenario_details_fetch_dir_mod(void) {
     return 0;
 }
 
+/* How many rows the callbacks block of a shipped script declares, read from
+ * the file's text: the lines `name = "..."` between `callbacks = {` and the
+ * line that closes it. -1 when the file cannot be opened, -2 when it has no
+ * callbacks block. The shipped scripts start one row to a line, which is all
+ * this reads. */
+static int scDeclaredCallbacks(const char *path) {
+    char  line[2048];
+    FILE *f;
+    int   rows  = -2;
+    bool  inside = false;
+
+    f = fopen(path, "r");
+    if (f == NULL) return -1;
+    while (fgets(line, sizeof(line), f) != NULL) {
+        const char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (!inside) {
+            if (strncmp(p, "callbacks = {", 13) == 0) {
+                inside = true;
+                rows   = 0;
+            }
+            continue;
+        }
+        if (*p == '}') break;
+        /* A row is `name = <text>`. The text is usually a string literal
+           but may be an expression (PillboxTag's on_tank_killed picks one
+           of two strings by a walled flag), so only the `name = ` is
+           counted; a continuation line starts with a quote, a paren or an
+           operator, never with an identifier followed by ` = `. */
+        if (isalpha((unsigned char)*p) || *p == '_') {
+            while (isalnum((unsigned char)*p) || *p == '_') p++;
+            if (strncmp(p, " = ", 3) == 0) rows++;
+        }
+    }
+    fclose(f);
+    return rows;
+}
+
+/* What a fetch case leaves behind, on every way out of it: UT_ASSERT returns
+ * from the body it is in, so the body cannot clean up after itself. The
+ * harness is stopped when the body brought it up, and the case's directory
+ * is removed when the body got as far as naming it. */
+static int scFetchEnd(int rc, LoopbackHarness *h, ScenarioHost **slot,
+                      bool up) {
+    if (up) scNetStop(h, slot);
+    if (scDir[0] != '\0') scRemoveTree(scDir);
+    return rc;
+}
+
 /* The committed map's own script, through the whole path the dialog takes:
  * the server resolves the map's script by the name the lobby gives it, the
- * answer crosses the wire, and the client's lookup by that name finds it. */
-static int scFetchMapScript(const char *tag, const char *map, int wantRows,
-                            const char *wantMethod) {
-    LoopbackHarness    h;
-    ScenarioHost      *slot;
+ * answer crosses the wire, and the client's lookup by that name finds it.
+ * *up is set once the harness is running; scFetchMapScript stops it and
+ * removes the directory. */
+static int scFetchMapScriptBody(LoopbackHarness *h, ScenarioHost **slot,
+                                bool *up, const char *tag, const char *map,
+                                int wantRows, const char *wantMethod) {
     char               mapPath[512];
+    char               luaPath[512];
     char               file[SCN_DIR_FILE_LEN];
     const ScnDirEntry *row;
     uint8_t            direct[SCN_DETAILS_MAX];
@@ -647,36 +703,47 @@ static int scFetchMapScript(const char *tag, const char *map, int wantRows,
     int                directLen;
     int                at;
     int                count;
+    int                declared;
     bool               committed;
 
+    /* What the file itself declares, before anything is started: a script
+       that is not there, or has no callbacks block, is said by name. */
+    snprintf(luaPath, sizeof(luaPath), "%s/%s.scenario.lua", WB_DATA_MAPS_DIR,
+             map);
+    declared = scDeclaredCallbacks(luaPath);
+    UT_ASSERT_MSG(declared != -1, "the shipped script %s could not be opened",
+                  luaPath);
+    UT_ASSERT_MSG(declared >= 0, "no callbacks block was found in %s", luaPath);
+
     UT_ASSERT(scMakeDir(tag));   /* an empty scenarios directory */
-    UT_ASSERT_MSG(scNetStart(&h, &slot, "loss=5,burst=2", 0x5C0CC3Au),
+    UT_ASSERT_MSG(scNetStart(h, slot, "loss=5,burst=2", 0x5C0CC3Au),
                   "the harness did not come up");
+    *up = true;
 
     /* The host commits the map, the way the lobby's map chooser does. */
     snprintf(mapPath, sizeof(mapPath), "%s/%s.map", WB_DATA_MAPS_DIR, map);
     file[0] = '\0';
     threadsWaitForMutex();
-    committed = serverSimReloadMap(h.sim, mapPath);
-    row = serverSimGetMapScript(h.sim);
+    committed = serverSimReloadMap(h->sim, mapPath);
+    row = serverSimGetMapScript(h->sim);
     if (row != NULL) SDL_strlcpy(file, row->file, sizeof(file));
     threadsReleaseMutex();
     UT_ASSERT_MSG(committed, "the lobby would not commit %s", mapPath);
     UT_ASSERT_MSG(file[0] != '\0', "%s brought no script of its own", map);
 
     /* The dialog opens on the file name the lobby names the script by. */
-    at = loopbackHarnessPumpUntil(&h, SC_FETCH_MAX, scPredLobbyNames,
+    at = loopbackHarnessPumpUntil(h, SC_FETCH_MAX, scPredLobbyNames,
                                   (void *)file);
     UT_ASSERT_MSG(at >= 0, "the lobby never named %s (it says \"%s\")", file,
-                  clientSimGetLobbyScenarioFileName(h.cs));
+                  clientSimGetLobbyScenarioFileName(h->cs));
 
-    clientSimLobbyScenarioDetailsForget(h.cs);   /* as the dialog opens */
-    at = scFetch(&h, clientSimGetLobbyScenarioFileName(h.cs), SC_FETCH_MAX);
+    clientSimLobbyScenarioDetailsForget(h->cs);   /* as the dialog opens */
+    at = scFetch(h, clientSimGetLobbyScenarioFileName(h->cs), SC_FETCH_MAX);
     fprintf(stderr, "  details fetch (%s, loss=5): settled@%d tries=%d\n", file,
-            at, scTries(h.cs, file));
+            at, scTries(h->cs, file));
     UT_ASSERT_MSG(at >= 0, "no answer for %s within %d pumps", file,
                   SC_FETCH_MAX);
-    UT_ASSERT_MSG(clientSimGetLobbyScenarioDetails(h.cs, file, &got, &gotLen) ==
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioDetails(h->cs, file, &got, &gotLen) ==
                       CLIENT_SCN_DETAILS_FOUND,
                   "the map's own script %s was answered as not found", file);
 
@@ -687,16 +754,34 @@ static int scFetchMapScript(const char *tag, const char *map, int wantRows,
                   count, wantRows, rows);
     UT_ASSERT_MSG(strstr(rows, wantMethod) != NULL,
                   "%s arrived without its %s row: %s", file, wantMethod, rows);
+    /* No row was dropped on the way: a block past SCN_CALLBACKS_BLOB_MAX
+       loses its last rows with only a console line, and the Tutorial's is
+       close to it. Every row the file declares has to arrive. */
+    UT_ASSERT_MSG(declared == count,
+                  "%s declares %d callback rows and %d arrived: rows were "
+                  "dropped (SCN_CALLBACKS_BLOB_MAX is %d bytes), or the "
+                  "block names a function the script does not define",
+                  file, declared, count, SCN_CALLBACKS_BLOB_MAX);
 
     /* The listen host reads the same bytes straight off the sim. */
-    directLen = scDirect(&h, file, direct, sizeof(direct));
+    directLen = scDirect(h, file, direct, sizeof(direct));
     UT_ASSERT(directLen == (int)gotLen);
     UT_ASSERT(memcmp(direct, got, gotLen) == 0);
 
-    UT_ASSERT(clientSimGetConnectState(h.cs) == CLIENT_CONNECT_CONNECTED);
-    scNetStop(&h, &slot);
-    scRemoveTree(scDir);
+    UT_ASSERT(clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED);
     return 0;
+}
+
+static int scFetchMapScript(const char *tag, const char *map, int wantRows,
+                            const char *wantMethod) {
+    LoopbackHarness h;
+    ScenarioHost   *slot = NULL;
+    bool            up   = false;
+    int             rc;
+
+    scDir[0] = '\0';
+    rc = scFetchMapScriptBody(&h, &slot, &up, tag, map, wantRows, wantMethod);
+    return scFetchEnd(rc, &h, &slot, up);
 }
 
 int run_scenario_details_fetch_survival(void) {
@@ -705,6 +790,109 @@ int run_scenario_details_fetch_survival(void) {
 
 int run_scenario_details_fetch_soccer(void) {
     return scFetchMapScript("fetch_soccer", "Soccer", 13, "can_capture/Q=");
+}
+
+int run_scenario_details_fetch_tutorial(void) {
+    return scFetchMapScript("fetch_tutorial", "tutorials/Tutorial", 23,
+                            "on_choose_start/");
+}
+
+int run_scenario_details_fetch_joust(void) {
+    return scFetchMapScript("fetch_joust", "Joust", 13, "kill_credit/");
+}
+
+int run_scenario_details_fetch_respawn_loadout(void) {
+    return scFetchMapScript("fetch_respawn_loadout", "RespawnLoadoutTest", 4,
+                            "allow_base_win/");
+}
+
+/* The shipped mods (data/mods), which no map brings: each is copied into the
+ * server's scenarios directory and asked for by its file name, as the dialog
+ * asks for a mod on the list. Every row its file declares has to arrive.
+ * *up is set once the harness is running; the case below stops it and
+ * removes the directory. */
+static int scFetchModsBody(LoopbackHarness *h, ScenarioHost **slot, bool *up) {
+    static const char *const kMods[] = {
+        "BaseRestockingRate", "FasterTreeGrowth", "MacBoloRules",
+        "PillboxTag",         "RuleRoulette",     "Virus",
+    };
+    enum { MODS = (int)(sizeof(kMods) / sizeof(kMods[0])) };
+    char            file[MODS][SCN_DIR_FILE_LEN];
+    int             declared[MODS];
+    int             i;
+
+    UT_ASSERT(scMakeDir("fetch_mods"));
+    for (i = 0; i < MODS; i++) {
+        char  path[512];
+        FILE *f;
+        char *text;
+        long  size;
+        bool  copied;
+
+        snprintf(file[i], sizeof(file[i]), "%s.scenario.lua", kMods[i]);
+        snprintf(path, sizeof(path), "%s/../mods/%s", WB_DATA_MAPS_DIR,
+                 file[i]);
+        declared[i] = scDeclaredCallbacks(path);
+        UT_ASSERT_MSG(declared[i] != -1,
+                      "the shipped mod %s could not be opened", path);
+        UT_ASSERT_MSG(declared[i] > 0, "no callbacks row was found in %s",
+                      path);
+
+        f = fopen(path, "rb");
+        UT_ASSERT_MSG(f != NULL, "the shipped mod %s could not be opened",
+                      path);   /* nothing is open or allocated yet */
+        fseek(f, 0, SEEK_END);
+        size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        text = (char *)malloc(size > 0 ? (size_t)size : 1);
+        copied = text != NULL && size > 0 &&
+                 fread(text, 1, (size_t)size, f) == (size_t)size &&
+                 scWrite(file[i], text, (size_t)size);
+        free(text);
+        fclose(f);
+        UT_ASSERT_MSG(copied, "%s could not be copied into %s", path, scDir);
+    }
+
+    UT_ASSERT_MSG(scNetStart(h, slot, "loss=5,burst=2", 0x30D5u),
+                  "the harness did not come up");
+    *up = true;
+    for (i = 0; i < MODS; i++) {
+        const uint8_t *got;
+        size_t         gotLen;
+        char           rows[4096];
+        int            at;
+        int            count;
+
+        at = scFetch(h, file[i], SC_FETCH_MAX);
+        fprintf(stderr, "  details fetch (%s, loss=5): settled@%d tries=%d\n",
+                file[i], at, scTries(h->cs, file[i]));
+        UT_ASSERT_MSG(at >= 0, "no answer for %s within %d pumps", file[i],
+                      SC_FETCH_MAX);
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioDetails(h->cs, file[i], &got,
+                                                       &gotLen) ==
+                          CLIENT_SCN_DETAILS_FOUND,
+                      "the shipped mod %s was answered as not found", file[i]);
+        count = scCallbacks(got, gotLen, rows, sizeof(rows));
+        UT_ASSERT_MSG(declared[i] == count,
+                      "%s declares %d callback rows and %d arrived: rows were "
+                      "dropped (SCN_CALLBACKS_BLOB_MAX is %d bytes), or the "
+                      "block names a function the script does not define",
+                      file[i], declared[i], count, SCN_CALLBACKS_BLOB_MAX);
+    }
+
+    UT_ASSERT(clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED);
+    return 0;
+}
+
+int run_scenario_details_fetch_mods(void) {
+    LoopbackHarness h;
+    ScenarioHost   *slot = NULL;
+    bool            up   = false;
+    int             rc;
+
+    scDir[0] = '\0';
+    rc = scFetchModsBody(&h, &slot, &up);
+    return scFetchEnd(rc, &h, &slot, up);
 }
 
 int run_scenario_details_fetch_not_found(void) {

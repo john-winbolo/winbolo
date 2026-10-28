@@ -39,6 +39,7 @@
 
 #include "lv_global.h"
 #include "backend.h"
+#include "lv_players.h"      /* lv_playersGetDrawnTankDetails */
 #include "logviewer.h"
 #include "lv_log.h"
 #include "blocks.h"
@@ -1416,5 +1417,731 @@ int run_lv_game_settings_absent(void) {
   lv_decoderDestroy(lv);
   remove(withPath);
   remove(withoutPath);
+  return 0;
+}
+
+/*
+ * The viewer reads log_PlayerLag records into each player's track, and the
+ * value at the playhead is the last record at or before it. A record longer
+ * than four bytes (from a later writer) is read for its first four.
+ */
+int run_lv_player_lag_read(void) {
+  const char *path = "lv_player_lag.wbv";
+  static const uint8_t first[4] = {2, 0x01, 0x2C, 5};          /* 300 ms, 5 */
+  static const uint8_t second[6] = {2, 0x00, 0x28, 1, 9, 9};   /* 40 ms, 1 */
+  LogBuf b;
+  LogViewerState *lv;
+  int rtt = -1;
+  int behind = -1;
+  int i;
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_PlayerLag, first, 4);
+  putNoEvents(&b, 100);
+  putEventFrame(&b, log_PlayerLag, second, 6);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic lag log failed to build/load");
+
+  UT_ASSERT_MSG(lv_screenLagRecorded(), "the load did not see the records");
+  UT_ASSERT_MSG(!lv_screenPlayerLagNow(2, &rtt, &behind),
+                "player 2 has a value before the first record");
+  UT_ASSERT_MSG(!lv_screenPlayerLagNow(1, &rtt, &behind),
+                "player 1 has a value with no record");
+
+  for (i = 0; i < 80; i++) {
+    lv_screenLogTick();
+  }
+  UT_ASSERT_MSG(lv_screenPlayerLagNow(2, &rtt, &behind),
+                "player 2 has no value after the first record");
+  UT_ASSERT_MSG(rtt == 300 && behind == 100,
+                "after the first record: rtt %d behind %d (want 300, 100)",
+                rtt, behind);
+
+  for (i = 0; i < 120; i++) {
+    lv_screenLogTick();
+  }
+  UT_ASSERT_MSG(lv_screenPlayerLagNow(2, &rtt, &behind),
+                "player 2 has no value after the second record");
+  UT_ASSERT_MSG(rtt == 40 && behind == 20,
+                "after the second record: rtt %d behind %d (want 40, 20)",
+                rtt, behind);
+
+  lv_decoderDestroy(lv);
+  remove(path);
+  return 0;
+}
+
+/* A track keeps its records in time order, finds the one in effect at a
+ * time, and takes a second read at one time as the same record. */
+int run_lv_lag_track(void) {
+  LvLagTrack t;
+  const LvLagRecord *r;
+
+  memset(&t, 0, sizeof(t));
+  UT_ASSERT(lv_lagTrackAt(&t, 100) == NULL);
+  UT_ASSERT(lv_lagTrackAdd(&t, 200, 50, 2, true));
+  UT_ASSERT(lv_lagTrackAdd(&t, 1000, 90, 4, true));
+  UT_ASSERT(lv_lagTrackAdd(&t, 600, 70, 3, true));   /* read out of order */
+  UT_ASSERT(t.count == 3);
+  UT_ASSERT(lv_lagTrackAt(&t, 199) == NULL);
+  r = lv_lagTrackAt(&t, 200);
+  UT_ASSERT(r != NULL && r->rttMs == 50);
+  r = lv_lagTrackAt(&t, 999);
+  UT_ASSERT(r != NULL && r->rttMs == 70 && r->rewind == 3);
+  r = lv_lagTrackAt(&t, 5000);
+  UT_ASSERT(r != NULL && r->rttMs == 90);
+
+  /* A seek back reads the record at 600 again: no second record. */
+  UT_ASSERT(lv_lagTrackAdd(&t, 600, 75, 3, true));
+  UT_ASSERT(t.count == 3);
+  r = lv_lagTrackAt(&t, 600);
+  UT_ASSERT(r != NULL && r->rttMs == 75);
+
+  /* Without unlessPresent a second record goes after the first. */
+  UT_ASSERT(lv_lagTrackAdd(&t, 600, 80, 3, false));
+  UT_ASSERT(t.count == 4);
+  r = lv_lagTrackAt(&t, 600);
+  UT_ASSERT(r != NULL && r->rttMs == 80);
+
+  lv_lagTrackClear(&t);
+  UT_ASSERT(t.count == 0 && t.recs == NULL);
+  return 0;
+}
+
+/* The history ring finds the newest frame at or before a time, keeps only
+ * LV_LAG_FRAMES frames, and starts again when playback goes back. */
+int run_lv_lag_ring(void) {
+  static LvLagRing r;
+  const LvLagFrame *f;
+  int i;
+
+  lv_lagRingClear(&r);
+  UT_ASSERT(lv_lagRingFind(&r, 100) == NULL);
+  for (i = 1; i <= LV_LAG_FRAMES + 8; i++) {
+    LvLagFrame *n = lv_lagRingPush(&r, (uint32_t)i * LV_LAG_ENTRY_MS);
+    n->shellCount = i;
+  }
+  UT_ASSERT(r.count == LV_LAG_FRAMES);
+
+  /* The newest. */
+  f = lv_lagRingFind(&r, (uint32_t)(LV_LAG_FRAMES + 8) * LV_LAG_ENTRY_MS);
+  UT_ASSERT(f != NULL && f->shellCount == LV_LAG_FRAMES + 8);
+  /* Five entries back, and a time between two entries. */
+  f = lv_lagRingFind(&r, (uint32_t)(LV_LAG_FRAMES + 3) * LV_LAG_ENTRY_MS);
+  UT_ASSERT(f != NULL && f->shellCount == LV_LAG_FRAMES + 3);
+  f = lv_lagRingFind(&r, (uint32_t)(LV_LAG_FRAMES + 3) * LV_LAG_ENTRY_MS + 7);
+  UT_ASSERT(f != NULL && f->shellCount == LV_LAG_FRAMES + 3);
+  /* The oldest held, and one before it, which the ring no longer has. */
+  f = lv_lagRingFind(&r, 9u * LV_LAG_ENTRY_MS);
+  UT_ASSERT(f != NULL && f->shellCount == 9);
+  UT_ASSERT(lv_lagRingFind(&r, 8u * LV_LAG_ENTRY_MS) == NULL);
+
+  /* A seek back: the frames held are of a later time. */
+  f = lv_lagRingPush(&r, 5u * LV_LAG_ENTRY_MS);
+  UT_ASSERT(r.count == 1 && f->shellCount == 0);
+  UT_ASSERT(lv_lagRingFind(&r, 4u * LV_LAG_ENTRY_MS) == NULL);
+  UT_ASSERT(lv_lagRingFind(&r, 6u * LV_LAG_ENTRY_MS) == f);
+  return 0;
+}
+
+/*
+ * The lag display is off until the "Player Lag View" preference turns it on.
+ * With it off the records are still read, but the panels are told there are
+ * none and the lag view does not turn on for any player. Turned on, the
+ * panels see the records; turned off again, the view goes off with it.
+ */
+int run_lv_lag_feature_default_off(void) {
+  const char *path = "lv_lag_feature.wbv";
+  static const uint8_t rec[4] = {2, 0x01, 0x2C, 5};   /* 300 ms, 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  LvPlayerLag lag;
+  int rtt = -1;
+  int i;
+
+  /* The preference's value: off by default and for anything but Yes. */
+  UT_ASSERT(!lv_lagPrefIsOn(LV_LAG_PREF_DEFAULT));
+  UT_ASSERT(!lv_lagPrefIsOn(""));
+  UT_ASSERT(!lv_lagPrefIsOn(NULL));
+  UT_ASSERT(!lv_lagPrefIsOn("No"));
+  UT_ASSERT(lv_lagPrefIsOn("Yes"));
+  UT_ASSERT(lv_lagPrefIsOn("yes"));
+
+  UT_ASSERT_MSG(lv_screenGetLagFeature() == 0, "the lag display is on before any preference");
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_PlayerLag, rec, 4);
+  putNoEvents(&b, 100);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic lag log failed to build/load");
+  for (i = 0; i < 80; i++) {
+    lv_screenLogTick();
+  }
+
+  /* Off: the records are read, and nothing shows. */
+  UT_ASSERT_MSG(lv_screenGetLagFeature() == 0, "a load turned the lag display on");
+  UT_ASSERT_MSG(lv_screenLagRecorded(), "the records were not read");
+  UT_ASSERT_MSG(lv_screenPlayerLagNow(2, &rtt, NULL) && rtt == 300,
+                "the record was not read: rtt %d", rtt);
+  UT_ASSERT_MSG(!lv_screenLagShown(), "the panels are told of the records while off");
+  lv_screenPlayerLagSnapshot(2, &lag);
+  UT_ASSERT_MSG(!lag.recorded && !lag.has, "the Tank panel has the lag while off");
+  lv_screenLagViewSet(2);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == -1, "the lag view turned on while off");
+  UT_ASSERT_MSG(!lv_screenLagViewStatus(NULL, 0, NULL, NULL), "the banner shows while off");
+
+  /* On: the panels see the records. */
+  lv_screenSetLagFeature(1);
+  UT_ASSERT(lv_screenGetLagFeature() == 1);
+  UT_ASSERT_MSG(lv_screenLagShown(), "the panels are not told of the records while on");
+  lv_screenPlayerLagSnapshot(2, &lag);
+  UT_ASSERT_MSG(lag.recorded && lag.has && lag.rttMs == 300,
+                "the Tank panel lacks the lag while on");
+
+  /* Off again: nothing shows, and no view is left on. */
+  lv_screenSetLagFeature(0);
+  UT_ASSERT(!lv_screenLagShown());
+  UT_ASSERT(lv_screenLagViewSlot() == -1);
+
+  lv_decoderDestroy(lv);
+  remove(path);
+  return 0;
+}
+
+/* ---- the lag view's drawing ---------------------------------------------- */
+
+/* A tank's place in sixteenths of a map square: column (place / 16), pixel
+ * nibble (place % 16), on row 60 with pixel row 0. Slot 0 starts at column
+ * 60 and slot 1 at column 70, and each moves one sixteenth every entry, so
+ * entry k has slot 0 at 960 + k and slot 1 at 1120 + k. */
+#define LAG_DRAW_ROW 60
+static unsigned lagDrawPlace(int slot, int k) {
+  return (unsigned)((slot == 0 ? 60 : 70) * 16 + k);
+}
+
+/* The time playback is at once it has played entry k. The load leaves the
+ * opening snapshot (entry 0) drawn at 0 ms, and each entry after it is one
+ * more 20 ms tick. lagDrawPlayTo checks this against slot 1's place. */
+static uint32_t lagDrawMs(int k) { return (uint32_t)k * 20u; }
+
+/* One running-round snapshot with slots 0 ("A") and 1 ("B") on the map at
+ * their entry-k places, in the block layout of putSnapshotSlot1. */
+static void putLagDrawSnapshot(LogBuf *b, int k) {
+  static const uint8_t mapRun[5] = {5, 0, 0, 2, (8 << 4) | GRASS};
+  static const uint8_t mapTerminator[4] = {4, 255, 255, 255};
+  int i;
+
+  putU8(b, LOG_SNAPSHOT);
+  putZeros(b, 8);
+  putU8(b, 1); putU8(b, 0);          /* pills */
+  putU8(b, 1); putU8(b, 0);          /* bases */
+  putU8(b, 1); putU8(b, 0);          /* starts */
+  put(b, mapRun, sizeof(mapRun));
+  put(b, mapTerminator, 4);
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (i == 0 || i == 1) {
+      uint8_t player[19] = {0};
+      unsigned place = lagDrawPlace(i, k);
+      player[2] = (uint8_t)(place / 16);          /* mx */
+      player[3] = LAG_DRAW_ROW;                   /* my */
+      player[4] = (uint8_t)((place % 16) << 4);   /* px, py */
+      player[11] = 1;                             /* name length */
+      player[12] = (uint8_t)(i == 0 ? 'A' : 'B');
+      player[15] = 40;                            /* shells */
+      player[17] = 40;                            /* armour */
+      putU8(b, (uint8_t)sizeof(player));
+      put(b, player, sizeof(player));
+    } else {
+      putU8(b, 2); putU8(b, 0); putU8(b, 0);
+    }
+  }
+}
+
+/* One log_PlayerLocation event, in a LOG_EVENT frame opened by the caller:
+ * the slot, mx, my, then the pixel nibbles and the frame/boat nibbles. */
+static void putLagDrawLocation(LogBuf *b, int slot, int k) {
+  unsigned place = lagDrawPlace(slot, k);
+  putU8(b, log_PlayerLocation);
+  putU8(b, 0); putU8(b, 5);
+  putU8(b, (uint8_t)slot);
+  putU8(b, (uint8_t)(place / 16));
+  putU8(b, LAG_DRAW_ROW);
+  putU8(b, (uint8_t)((place % 16) << 4));
+  putU8(b, 0);
+}
+
+/* What the stub's draw hook saw on its last call. */
+typedef struct {
+  bool     called;
+  bool     drawn[2];      /* lv_playersGetDrawnTankDetails gave a place */
+  unsigned place[2];      /* that place, in sixteenths */
+  int      items;         /* tanks in the draw list */
+  int      itemMx[2];     /* each slot's column in the draw list, -1 for none */
+  int      itemPx[2];
+} LagDrawSeen;
+static LagDrawSeen s_lagDrawSeen;
+
+extern void (*g_testLvDrawMainScreenHook)(screenTanks *tks, screenBullets *sBullet,
+                                          screenLgm *lgms);
+
+static void lagDrawHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgms) {
+  BYTE n, i;
+  int s;
+  (void)sBullet; (void)lgms;
+
+  memset(&s_lagDrawSeen, 0, sizeof(s_lagDrawSeen));
+  s_lagDrawSeen.called = true;
+  for (s = 0; s < 2; s++) {
+    BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
+    bool onBoat = FALSE;
+    s_lagDrawSeen.drawn[s] = lv_playersGetDrawnTankDetails((BYTE)s, &mx, &my, &px, &py,
+                                                           &frame, &onBoat) != FALSE;
+    s_lagDrawSeen.place[s] = (unsigned)mx * 16u + px;
+    s_lagDrawSeen.itemMx[s] = -1;
+    s_lagDrawSeen.itemPx[s] = -1;
+  }
+  n = lv_screenTanksGetNumEntries(tks);
+  s_lagDrawSeen.items = n;
+  for (i = 1; i <= n; i++) {
+    BYTE mx, my, px, py, frame, team, dir;
+    bool onBoat;
+    char name[256];
+    BYTE slot = lv_screenTanksGetSlot(tks, i);
+    lv_screenTanksGetItem(tks, i, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, name);
+    if (slot < 2) {
+      s_lagDrawSeen.itemMx[slot] = mx;
+      s_lagDrawSeen.itemPx[slot] = px;
+    }
+  }
+}
+
+/* The column and pixel nibble lv_playersMakeScreenTanks gives a tank at
+ * place, for a view whose left column is left: the place in 1/256 squares,
+ * less half a square (128) so the sprite's centre sits on it. */
+static int lagDrawItemMx(unsigned place, int left) {
+  int conv = (int)((place / 16) << 8) + (int)((place % 16) << 4) - 128;
+  return (conv >> 8) - left;
+}
+static int lagDrawItemPx(unsigned place) {
+  int conv = (int)((place / 16) << 8) + (int)((place % 16) << 4) - 128;
+  return (conv & 0xF0) >> 4;
+}
+
+/* Play on to entry k and check the decode is where the timeline says. */
+static int lagDrawPlayTo(LogViewerState *lv, int k) {
+  BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
+  bool onBoat = FALSE;
+  while (lv->timeRunning < lagDrawMs(k) && lv->isPlaying == TRUE) {
+    lv_screenLogTick();
+  }
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(k), "at %u ms, want %u",
+                (unsigned)lv->timeRunning, (unsigned)lagDrawMs(k));
+  lv_playersGetTankDetails(1, &mx, &my, &px, &py, &frame, &onBoat);
+  UT_ASSERT_MSG((unsigned)mx * 16u + px == lagDrawPlace(1, k),
+                "slot 1 at %u at entry %d, want %u", (unsigned)mx * 16u + px, k,
+                lagDrawPlace(1, k));
+  return 0;
+}
+
+/* Draw the map once with the hook on, the view's left column at 55. */
+static void lagDrawOnce(void) {
+  memset(&s_lagDrawSeen, 0, sizeof(s_lagDrawSeen));
+  lv_screenSetOffset(55, 50);
+  g_testLvDrawMainScreenHook = lagDrawHook;
+  lv_screenUpdate(redraw);
+  g_testLvDrawMainScreenHook = NULL;
+}
+
+/*
+ * The lag view draws the other tanks from the frame that is the chosen
+ * player's rewind older than the playhead, and the chosen tank at the
+ * present. A seek back starts its decode early, so the view has its frames
+ * as soon as the seek ends.
+ *
+ *   entry  0  (0 ms)      opening snapshot, A and B on the map
+ *   entry  1..99          A and B each move 1/16 square
+ *   entry 39  (780 ms)    a snapshot in place of the moves
+ *   entry 40  (800 ms)    A's lag record: 150 ms round trip, rewind 5
+ *                         (5 x 20 = 100 ms)
+ *
+ * At entry 80, with the view on for A: B is drawn at its entry-75 place,
+ * A at its entry-80 place. A seek back to entry 42 (840 ms) without the
+ * early start would restore the entry-39 snapshot, which leaves frames only
+ * for entries 40 to 42 and none for entry 37. The early start decodes from
+ * the opening snapshot instead, so B is drawn at its entry-37 place.
+ */
+int run_lv_lag_view_draw(void) {
+  const char *path = "lv_lag_view_draw.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  char name[32];
+  int behind = -1;
+  bool drawn = false;
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 99; k++) {
+    if (k == 39) {
+      putLagDrawSnapshot(&b, k);
+      continue;
+    }
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)(k == 40 ? 3 : 2));
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic lag view log failed to build/load");
+  UT_ASSERT_MSG(lv_screenLagRecorded(), "the load did not see the record");
+
+  /* Forward to entry 80 and turn the view on for A. */
+  if (lagDrawPlayTo(lv, 80) != 0) return 1;
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+  UT_ASSERT(lv_screenLagViewStatus(name, sizeof(name), &behind, &drawn));
+  UT_ASSERT_MSG(strcmp(name, "A") == 0, "the banner names \"%s\", want A", name);
+  UT_ASSERT_MSG(behind == 100, "behind %d ms, want 100", behind);
+  UT_ASSERT_MSG(drawn, "no frame drawn at entry 80");
+
+  lagDrawOnce();
+  UT_ASSERT_MSG(s_lagDrawSeen.called, "lv_screenUpdate did not draw");
+  UT_ASSERT_MSG(s_lagDrawSeen.drawn[0] && s_lagDrawSeen.drawn[1], "a tank was not drawn");
+  /* A at the present: 960 + 80 = 1040, column 65 pixel 0. */
+  UT_ASSERT_MSG(s_lagDrawSeen.place[0] == lagDrawPlace(0, 80),
+                "A drawn at %u, want %u (the present)", s_lagDrawSeen.place[0],
+                lagDrawPlace(0, 80));
+  /* B five entries back: 1120 + 75 = 1195, column 74 pixel 11. */
+  UT_ASSERT_MSG(s_lagDrawSeen.place[1] == lagDrawPlace(1, 75),
+                "B drawn at %u, want %u (entry 75)", s_lagDrawSeen.place[1],
+                lagDrawPlace(1, 75));
+  /* The draw list has the same places, less half a square and the view's
+     left column 55: A at column 64 pixel 8 (9/8 on screen), B at column 74
+     pixel 3 (19/3 on screen). */
+  UT_ASSERT_MSG(s_lagDrawSeen.items == 2, "%d tanks in the draw list, want 2",
+                s_lagDrawSeen.items);
+  UT_ASSERT_MSG(s_lagDrawSeen.itemMx[0] == lagDrawItemMx(lagDrawPlace(0, 80), 55) &&
+                    s_lagDrawSeen.itemPx[0] == lagDrawItemPx(lagDrawPlace(0, 80)),
+                "A's draw list place %d/%d", s_lagDrawSeen.itemMx[0], s_lagDrawSeen.itemPx[0]);
+  UT_ASSERT_MSG(s_lagDrawSeen.itemMx[0] == 9 && s_lagDrawSeen.itemPx[0] == 8,
+                "A's draw list place %d/%d, want 9/8", s_lagDrawSeen.itemMx[0],
+                s_lagDrawSeen.itemPx[0]);
+  UT_ASSERT_MSG(s_lagDrawSeen.itemMx[1] == lagDrawItemMx(lagDrawPlace(1, 75), 55) &&
+                    s_lagDrawSeen.itemPx[1] == lagDrawItemPx(lagDrawPlace(1, 75)),
+                "B's draw list place %d/%d", s_lagDrawSeen.itemMx[1], s_lagDrawSeen.itemPx[1]);
+  UT_ASSERT_MSG(s_lagDrawSeen.itemMx[1] == 19 && s_lagDrawSeen.itemPx[1] == 3,
+                "B's draw list place %d/%d, want 19/3", s_lagDrawSeen.itemMx[1],
+                s_lagDrawSeen.itemPx[1]);
+
+  /* Seek back to entry 42: the frames are there at once. */
+  lv_screenSeekToTimeMs(lagDrawMs(42));
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(42), "the seek stopped at %u ms",
+                (unsigned)lv->timeRunning);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the seek turned the view off");
+  behind = -1;
+  drawn = false;
+  UT_ASSERT(lv_screenLagViewStatus(name, sizeof(name), &behind, &drawn));
+  UT_ASSERT_MSG(behind == 100, "behind %d ms after the seek, want 100", behind);
+  UT_ASSERT_MSG(drawn, "no frame drawn just after the seek: the early start did not fill the ring");
+  lagDrawOnce();
+  UT_ASSERT_MSG(s_lagDrawSeen.place[0] == lagDrawPlace(0, 42),
+                "A drawn at %u after the seek, want %u", s_lagDrawSeen.place[0],
+                lagDrawPlace(0, 42));
+  UT_ASSERT_MSG(s_lagDrawSeen.place[1] == lagDrawPlace(1, 37),
+                "B drawn at %u after the seek, want %u (entry 37)", s_lagDrawSeen.place[1],
+                lagDrawPlace(1, 37));
+
+  /* Back before A's record: the view stays on, with no rewind to draw. */
+  lv_screenSeekToTimeMs(lagDrawMs(30));
+  behind = -1;
+  drawn = true;
+  UT_ASSERT(lv_screenLagViewStatus(name, sizeof(name), &behind, &drawn));
+  UT_ASSERT_MSG(behind == 0 && !drawn, "before the record: behind %d drawn %d", behind,
+                (int)drawn);
+
+  /* With the view off a label takes the tank's present place. */
+  lv_screenLagViewSet(-1);
+  if (lagDrawPlayTo(lv, 50) != 0) return 1;
+  lagDrawOnce();
+  UT_ASSERT_MSG(s_lagDrawSeen.place[1] == lagDrawPlace(1, 50),
+                "B drawn at %u with the view off, want %u", s_lagDrawSeen.place[1],
+                lagDrawPlace(1, 50));
+
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * The lag view is keyed on the chosen player's join, not the name. A rename
+ * keeps the view on; a new player in the slot turns it off, even when the
+ * quit and the join are in the same entry, and also after a seek.
+ *
+ *   entry  0  (0 ms)      opening snapshot, A in slot 0 and B in slot 1
+ *   entry  2  (40 ms)     A's lag record
+ *   entry 10  (200 ms)    A is renamed Z
+ *   entry 20  (400 ms)    B quits and C joins slot 1, in one entry
+ */
+int run_lv_lag_view_rename(void) {
+  const char *path = "lv_lag_view_rename.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  char name[32];
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 30; k++) {
+    int events = 1 + (k == 2) + (k == 10) + (k == 20 ? 2 : 0);
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)events);
+    putLagDrawLocation(&b, 0, k);
+    if (k == 2) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+    if (k == 10) {
+      putU8(&b, log_ChangeName);
+      putU8(&b, 0); putU8(&b, 3);
+      putU8(&b, 0);                     /* slot */
+      putU8(&b, 1); putU8(&b, 'Z');     /* the new name */
+    }
+    if (k == 20) {
+      putU8(&b, log_PlayerQuit);
+      putU8(&b, 0); putU8(&b, 1);
+      putU8(&b, 1);
+      putU8(&b, log_PlayerJoined);
+      putU8(&b, 0); putU8(&b, 7);
+      putU8(&b, 1);                     /* slot */
+      putU8(&b, 'N'); putU8(&b, 'Z');   /* country */
+      putU8(&b, 0); putU8(&b, 0);       /* account flags, reserved */
+      putU8(&b, 1); putU8(&b, 'C');     /* name */
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic rename log failed to build/load");
+
+  /* On for A at entry 5. */
+  while (lv->timeRunning < lagDrawMs(5) && lv->isPlaying == TRUE) lv_screenLogTick();
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+
+  /* Past the rename: still on, and the banner has the new name. */
+  while (lv->timeRunning < lagDrawMs(15) && lv->isPlaying == TRUE) lv_screenLogTick();
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the rename turned the view off");
+  name[0] = '\0';
+  UT_ASSERT(lv_screenLagViewStatus(name, sizeof(name), NULL, NULL));
+  UT_ASSERT_MSG(strcmp(name, "Z") == 0, "the banner names \"%s\", want Z", name);
+
+  /* On for B; C takes the slot at entry 20, so the view goes off. */
+  lv_screenLagViewSet(1);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 1, "the view did not turn on for B");
+  while (lv->timeRunning < lagDrawMs(25) && lv->isPlaying == TRUE) lv_screenLogTick();
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == -1, "the view stayed on for a new player");
+
+  /* On for C, then a seek back to before C joined: B is in the slot again,
+     so the view goes off. */
+  lv_screenLagViewSet(1);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 1, "the view did not turn on for C");
+  lv_screenSeekToTimeMs(lagDrawMs(15));
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == -1, "the view stayed on for B after the seek");
+
+  /* On for Z (renamed A) before entry 20, a seek on past the rename and the
+     join in slot 1: still on. */
+  lv_screenSeekToTimeMs(lagDrawMs(5));
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A at entry 5");
+  lv_screenSeekToTimeMs(lagDrawMs(25));
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "a seek past the rename turned the view off");
+
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/* A log_OverrunStats record for the viewer test: frames, flags, one tick
+ * time and two bots, encoded as the server writes it. */
+static int overrunTestPayload(uint8_t *out, int cap, uint32_t frames, uint8_t flags,
+                              uint16_t tickLast) {
+  OverrunRecord rec;
+  memset(&rec, 0, sizeof(rec));
+  rec.flags = flags;
+  rec.roundFrames = frames;
+  rec.tickLast = tickLast;
+  rec.tickEwma = 41;
+  rec.tickPeak = 187;
+  rec.ticksOverBudget = 2;
+  rec.budgetMs = 20;
+  rec.workers = 4;
+  rec.activeBots = 2;
+  rec.targetPerBot = 80;
+  rec.totalOverruns = 3;
+  rec.totalThinks = 1200;
+  rec.botCount = 2;
+  rec.bots[0].player = 1;
+  rec.bots[0].last = 12;
+  rec.bots[0].peak = 95;
+  rec.bots[0].overruns = 1;
+  rec.bots[0].thinks = 600;
+  rec.bots[1].player = 5;
+  rec.bots[1].last = 30;
+  rec.bots[1].peak = 160;
+  rec.bots[1].overruns = 2;
+  rec.bots[1].thinks = 600;
+  return overrunRecordEncode(&rec, out, cap);
+}
+
+/* The viewer reads log_OverrunStats records into a track and gives the last
+ * one at or before the playhead. A record shorter than the fixed part, or of
+ * version 0, is consumed and ignored, and bytes a later version adds after
+ * the bots are skipped. A seek back gives the record in effect at the new
+ * place. A file with no record says it has none. */
+int run_lv_overrun_read(void) {
+  const char *path = "lv_overrun_read.wbv";
+  uint8_t first[OVERRUN_RECORD_MAX_BYTES];
+  uint8_t last[OVERRUN_RECORD_MAX_BYTES + 4];
+  uint8_t zeroVersion[OVERRUN_RECORD_MAX_BYTES];
+  static const uint8_t shortRec[10] = {1, 0, 0, 0, 0x0B, 0xB8, 0, 0, 0, 0};
+  int firstLen;
+  int lastLen;
+  int zeroLen;
+  LogBuf b;
+  LogViewerState *lv;
+  LvOverrunNow now;
+  int i;
+
+  firstLen = overrunTestPayload(first, (int)sizeof(first), 3000u,
+                                OVERRUN_RECORD_FLAG_BOTS, 52);
+  zeroLen = overrunTestPayload(zeroVersion, (int)sizeof(zeroVersion), 3050u,
+                               OVERRUN_RECORD_FLAG_BOTS, 999);
+  zeroVersion[0] = 0;
+  lastLen = overrunTestPayload(last, (int)sizeof(last), 3100u,
+                               OVERRUN_RECORD_FLAG_BOTS | OVERRUN_RECORD_FLAG_ROUND_END, 77);
+  UT_ASSERT(firstLen == OVERRUN_RECORD_HEAD_BYTES + 2 * OVERRUN_RECORD_BOT_BYTES);
+  UT_ASSERT(zeroLen == firstLen && lastLen == firstLen);
+  /* A later version: its own version byte and four bytes after the bots. */
+  last[0] = 2;
+  memset(last + lastLen, 0xEE, 4);
+  lastLen += 4;
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_OverrunStats, first, (uint16_t)firstLen);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_OverrunStats, shortRec, (uint16_t)sizeof(shortRec));
+  putEventFrame(&b, log_OverrunStats, zeroVersion, (uint16_t)zeroLen);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_OverrunStats, last, (uint16_t)lastLen);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic overrun log failed to build/load");
+
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.recorded, "the load did not see the records");
+  UT_ASSERT_MSG(!now.has, "a record is in effect before the first one");
+
+  for (i = 0; i < 80; i++) {
+    lv_screenLogTick();
+  }
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.has, "no record after the first one");
+  UT_ASSERT_MSG(now.rec.roundFrames == 3000u && now.rec.tickLast == 52,
+                "after the first record: frames %u tick %u (want 3000, 52)",
+                (unsigned)now.rec.roundFrames, (unsigned)now.rec.tickLast);
+  UT_ASSERT(!(now.rec.flags & OVERRUN_RECORD_FLAG_ROUND_END));
+  UT_ASSERT(now.rec.botCount == 2);
+  UT_ASSERT(now.rec.bots[0].player == 1 && now.rec.bots[0].peak == 95);
+  UT_ASSERT(now.rec.bots[1].player == 5 && now.rec.bots[1].overruns == 2 &&
+            now.rec.bots[1].thinks == 600);
+
+  /* Past the short record and the version 0 one: still the first. */
+  for (i = 0; i < 60; i++) {
+    lv_screenLogTick();
+  }
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.has && now.rec.roundFrames == 3000u,
+                "an ignored record replaced the first: frames %u",
+                (unsigned)now.rec.roundFrames);
+
+  for (i = 0; i < 80; i++) {
+    lv_screenLogTick();
+  }
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.has && now.rec.roundFrames == 3100u && now.rec.tickLast == 77,
+                "after the last record: frames %u tick %u (want 3100, 77)",
+                (unsigned)now.rec.roundFrames, (unsigned)now.rec.tickLast);
+  UT_ASSERT(now.rec.version == 2);
+  UT_ASSERT(now.rec.flags & OVERRUN_RECORD_FLAG_ROUND_END);
+  UT_ASSERT(now.rec.botCount == 2 && now.rec.bots[1].peak == 160);
+
+  /* Seek back to 2 s, a frame between the first record (about 1 s) and the
+   * last (about 4 s): the first is in effect again. */
+  lv_screenSeekToTimeMs(2000);
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.has && now.rec.roundFrames == 3000u && now.rec.tickLast == 52,
+                "after a seek back to 2 s: has %d frames %u (want the first, 3000)",
+                (int)now.has, (unsigned)now.rec.roundFrames);
+  /* Seek back to 0.5 s, before the first record: none is in effect, and the
+   * file still has records. */
+  lv_screenSeekToTimeMs(500);
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.recorded && !now.has,
+                "after a seek to before the first record: recorded %d has %d "
+                "(want 1, 0)", (int)now.recorded, (int)now.has);
+
+  lv_decoderDestroy(lv);
+  remove(path);
+
+  /* A file with no record. */
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic plain log failed to build/load");
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(!now.recorded && !now.has, "a file with no record has one");
+  lv_decoderDestroy(lv);
+  remove(path);
   return 0;
 }

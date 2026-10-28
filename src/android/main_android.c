@@ -49,7 +49,6 @@
 #include "client_frontend_render.h"
 #include "client_frontend_common.h"
 #include "client_frontend_tick.h"
-#include "client_frontend_tutorial.h"
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../gui/sdl3/dialog_backend.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
@@ -66,8 +65,6 @@ extern ClientSim *humanSim;
 /* -------------------------------------------------------
  * Globals declared by winbolo.h / used by android_frontend.c
  * ------------------------------------------------------- */
-
-bool isTutorial = FALSE;
 
 int frameRate = FRAME_RATE_30;
 
@@ -1063,10 +1060,10 @@ android_game_start:
       gameTickAccum += elapsed;
 
       while (gameTickAccum >= GAME_TICK_LENGTH) {
-        /* A tutorial message is up, or the tick just run queued one:
-           stop here and drop the owed time, so the interval the
-           message is up is not fast-forwarded afterwards. */
-        if (clientFrontAnyPause() || clientFrontTutorialStepShowing()) {
+        /* A pause is up (a tutorial message, the pause menu and the
+           others): stop here and drop the owed time, so the interval the
+           pause is up is not fast-forwarded afterwards. */
+        if (clientFrontAnyPause()) {
           gameTickAccum = 0.0;
           break;
         }
@@ -1107,11 +1104,7 @@ android_game_start:
       SDL_Renderer *ren = sdl3DrawGetRenderer();
       if (ren) SDL_RenderPresent(ren);
     }
-    /* Tutorial: count the presented frame (the intro waits for a few)
-       and show the respawn message the server may have flagged. Both do
-       nothing outside the tutorial. */
-    frontEndTutorialNotePresentedFrame();
-    clientFrontTutorialPollRespawn();
+    clientFrontPollScenarioPlayer();  /* tutorial finished; language, input */
 
     /* Cap to 60 FPS */
     {
@@ -1169,8 +1162,7 @@ android_game_start:
     httpClearDeadline();
     s_quitInBackground = false;
   }
-  /* A step left showing, or its pause, would stop the next game's ticks. */
-  frontEndTutorialReset();
+  /* A pause left on would stop the next game's ticks. */
   windowTutorialPause(NULL, false);
   windowDeckPause(NULL, false);
   windowControllerLostPause(NULL, false);

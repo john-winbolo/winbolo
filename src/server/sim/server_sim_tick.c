@@ -202,7 +202,87 @@ static void serverSimLogTick(ServerSim *sim) {
                     (BYTE)(sim->tick & 0xFF), 0, NULL);
     }
 
+    /* Each player's network lag, so a viewer can show the round as that
+     * player saw it. The RTT is the server's measure; the rewind is the one
+     * computed from that player's last input, which a shell fired then would
+     * use, in 20 ms entries. Bots are written the same way: their RTT is 0 and their
+     * rewind is what the server used for them. Written in this entry, after
+     * the snapshot, so a viewer that starts at a snapshot has every value. */
+    if (sim->state == serverStateRunning) {
+        bool anchor = (sim->roundLogStartTick == sim->tick ||
+                       logSnapshotWrittenThisTick());
+        for (count = 0; count < MAX_TANKS; count++) {
+            uint16_t rtt;
+            uint8_t rewind;
+            if (!sim->playerConnected[count] || sim->sim.tanks[count] == NULL) {
+                sim->lagLogWritten[count] = false;
+                sim->lagLogPending[count] = false;
+                continue;
+            }
+            rtt = sim->playerPing[count];
+            rewind = sim->statLastRewindTicks[count];
+            if (!serverSimLagLogStep(sim->lagLogWritten[count],
+                                     sim->lagLogTick[count],
+                                     sim->lagLogRttMs[count],
+                                     sim->lagLogRewind[count],
+                                     &sim->lagLogPending[count],
+                                     sim->tick, rtt, rewind, anchor)) {
+                continue;
+            }
+            logAddEvent(log_PlayerLag, count, rewind, 0, 0, rtt, NULL);
+            sim->lagLogWritten[count] = true;
+            sim->lagLogPending[count] = false;
+            sim->lagLogTick[count] = sim->tick;
+            sim->lagLogRttMs[count] = rtt;
+            sim->lagLogRewind[count] = rewind;
+        }
+    }
+
     logWriteTick();
+}
+
+bool serverSimLagLogDue(bool written, uint32_t lastTick, uint16_t lastRttMs,
+                        uint8_t lastRewind, uint32_t tick, uint16_t rttMs,
+                        uint8_t rewind, bool anchor) {
+    if (!written || anchor) {
+        return true;
+    }
+    if (tick < lastTick || tick - lastTick >= LAG_LOG_INTERVAL_TICKS) {
+        return true;
+    }
+    if ((rttMs > lastRttMs ? rttMs - lastRttMs : lastRttMs - rttMs) >=
+        LAG_LOG_RTT_STEP_MS) {
+        return true;
+    }
+    if ((rewind > lastRewind ? rewind - lastRewind : lastRewind - rewind) >=
+        LAG_LOG_REWIND_STEP) {
+        return true;
+    }
+    return false;
+}
+
+bool serverSimLagLogStep(bool written, uint32_t lastTick, uint16_t lastRttMs,
+                         uint8_t lastRewind, bool *pending, uint32_t tick,
+                         uint16_t rttMs, uint8_t rewind, bool anchor) {
+    bool gapOver;
+    if (!written || anchor || tick < lastTick ||
+        tick - lastTick >= LAG_LOG_INTERVAL_TICKS) {
+        return true;
+    }
+    gapOver = (tick - lastTick >= LAG_LOG_MIN_GAP_TICKS);
+    if (serverSimLagLogDue(written, lastTick, lastRttMs, lastRewind, tick,
+                           rttMs, rewind, anchor)) {
+        if (gapOver) {
+            return true;
+        }
+        if (pending != NULL) {
+            *pending = true;
+        }
+        return false;
+    }
+    /* No step from the last record now, but a change came in the gap:
+     * write the values the slot has at the gap's end. */
+    return gapOver && pending != NULL && *pending;
 }
 
 uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
