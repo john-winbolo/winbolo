@@ -640,9 +640,10 @@ M.PPT_ANGER_THRESHOLD  = 0.34  -- ...OR force PPT when pill anger > this (~>1 hi
 -- 2026-10-11 (Andrew; Virus horde): true = never a protected take. The plan
 -- turns PPT off the way it does for a pill_suicider (attack.lua, the PPT_SKIP
 -- block): no shield scan, no gather_trees, no wall building, straight to the
--- plain standoff/charge take. For a bot that cannot get trees (the horde has
--- none and cannot farm), which otherwise stalls ~250 ticks in gather_trees
--- before it charges. false = today.
+-- plain standoff/charge take. The horde can build and farm trees, but it
+-- respawns with none; this is the only knob that stops its protected take,
+-- which would otherwise stall ~250 ticks in gather_trees before it charges.
+-- false = today.
 M.PPT_NEVER = false
 M.SWERVE_SKIP_ARMOUR_PER_HP = 5  -- skip the kill/curve swerve while pill.health*this <= armour (we can tank finishing it, so buck in)
 M.TANK_FINISH_MAX_HP    = 3    -- tank the finish only when remaining pill HP <= this
@@ -793,6 +794,22 @@ M.BLOCKED_AIM_RETRY_TICKS = 10     -- blocked-line ladder: minimum ticks between
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = WALL_HP_FULL 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / WALL_HP_FULL 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
+-- BLOCKER_ORTHOGONAL_ONLY: a shield blocker (a wall or a dropped pillbox) only
+-- on one of the four squares orthogonally next to the target pill, never a
+-- diagonal one or one further out. The shield scan then always runs in Lua
+-- (attack_shield.lua score_aim filters the squares). Per-bot: the Tutorial
+-- turns it on for its Station 5A demo bot, so the take it shows matches the
+-- one the player is taught. false = the old free choice (PRESETS.keel).
+M.BLOCKER_ORTHOGONAL_ONLY = false  -- keel false
+-- STAY_AREA: the bot stays inside a set of map-square rectangles. Every goal
+-- whose target square is outside is rejected ("outside STAY_AREA"), the man
+-- gets no build order outside, the shield planner skips outside squares, and
+-- the bot's own path planner fences the area (one-square ring at cost 32767;
+-- engine terrain never changes). Format "x1:y1:x2:y2", inclusive; several
+-- rectangles joined with '/'. ',' and ';' cannot be used: the cfg= token
+-- splitter eats them. Per-bot: the Tutorial sets it on its Station 7 bot.
+-- "" = off, the old behaviour (PRESETS.keel).
+M.STAY_AREA = ""  -- keel ""
 M.SHIELD_SCAN_BLACKLIST_TRIES = 2    -- a shield.scan that starts but never completes (per-tick budget kill unwinds the whole think) leaves its attempt marker behind; after this many incomplete attempts on the SAME scan key, skip the scan and attack with the no-shield plan instead of livelocking on a scan that can't fit the budget
 M.SHIELD_SCAN_BLACKLIST_TICKS = 250  -- blacklist expiry (~5 s): after this long the marker is dropped and the scan may be retried (the key changing ??? pill hp, our armour, standoff ??? also resets it immediately)
 M.WALL_SHIELD_LGM_STUCK_TICKS = 150  -- same-tile timeout for LGM simulation (~3 seconds)
@@ -3567,6 +3584,15 @@ M.REACTION_DELAY_TICKS = 0 -- >0 => queue the URGENT goal re-decision this many
                            -- fires (bot reacts slower). Never delays safety
                            -- (cliff/swerve/drain-disengage/flee). 0 = no delay.
                            -- Easy = 20, Medium = 8.
+M.LGM_MISS_WU = 0          -- >0 => shots at a MAN only (kill_lgm aim point):
+                           -- outside the LGM_HIT_PCT draw the aim point moves
+                           -- this many world units off him (behind a walking
+                           -- man, any of 16 directions for a still one), so
+                           -- the shell bursts near him and misses (a man dies
+                           -- inside 128 wu of a burst).
+                           -- See util.lgm_miss_point. 0 = no offset. KEEL 0.
+M.LGM_HIT_PCT = 100        -- with LGM_MISS_WU > 0: the percent of aim blocks
+                           -- that aim true at the man. KEEL 100.
 -- Outbound /info batching: several internal-channel messages are packed into the
 -- one BrainInfo.sendmessage buffer per tick (joined by comms.MSG_SEP), capped here
 -- so the packed string stays under PACKET_MAX_CHAT_MESSAGE (128; bot_manager.c
@@ -5681,6 +5707,9 @@ M.ORDER_HINT_ESCORT_TILES = 3
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-10-10: man-only aim handicap (the Tutorial's Station 7 bot);
+    -- 0 / 100 aim straight at the man as before.
+    LGM_MISS_WU = 0, LGM_HIT_PCT = 100,
     -- 2026-10-01: flat capture_base cost for game modes; 0 is no such term.
     CAPTURE_BASE_EXTRA_COST = 0,
     -- 2026-10-01: a base this many tiles away skips that cost; 0 is no waiver.
@@ -6047,6 +6076,9 @@ M.PRESETS = {
     BOT_CHAT_DEFAULT              = true,
     BOT_INIT_LINE_TO_HUMANS       = true,
     ORDER_HINT_BUSY_SILENT        = false,
+    --   2026-10-10: shield blockers on orthogonal squares only (Tutorial).
+    BLOCKER_ORTHOGONAL_ONLY       = false,
+    STAY_AREA                     = "",
     --   2026-10-14: the "release" scenario hint ends a held order. KEEL
     --   had no such verb: an unknown verb, ignored.
     ORDER_RELEASE_HINT            = false,
@@ -6356,7 +6388,8 @@ M.PRESETS = {
 -- took almost no pills: each pill and base went to one bot (or one blitz),
 -- the shell watermarks were set for a 40-shell tank, every other pill near
 -- the target added crossfire cost, and a full-HP pill sent the bot to gather
--- trees it cannot have. The five attack knobs below (ATTACK_CLAIM_SHARE ..
+-- trees for a wall shield it had no time for. The horde can build and farm;
+-- only PPT_NEVER stops its protected pillbox take. The five attack knobs below (ATTACK_CLAIM_SHARE ..
 -- CROSSFIRE_MULT) turn those off for the horde.
 M.SIDE_SETTINGS = {
   survivor = {
