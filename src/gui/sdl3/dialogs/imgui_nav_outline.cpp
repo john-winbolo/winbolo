@@ -65,17 +65,30 @@ static const ImGuiID kNavOutlineTabOwner = 0x4E61764Fu; /* "NavO" */
    its own keys from SDL events, so a Tab bound to a game key is not
    touched.
 
-   No claim while an item is active (a text field being edited): an
-   InputText with ImGuiInputTextFlags_AllowTabInput reads Tab with its own
-   id, and Tab out of a text field moves on as before.  No claim with no
-   live focused item: then the first Tab focuses the first item, as
-   before.  The claim stays while Tab is held, so a held first Tab does
-   not repeat into a move; it is given back once Tab is up. */
+   A text field being edited gets the claim too, so the first Tab only
+   shows the outline on it: the field stays active, with its caret, and
+   typing goes on.  Without the claim ImGui's tabbing moves focus out of
+   the field to the next item.  The claim is not made for a field that
+   reads Tab itself (ImGuiInputTextFlags_AllowTabInput or
+   _CallbackCompletion): such a field reads Tab through Shortcut() with
+   its own id, which fails while another id owns the key.  Nor is it made
+   while any other item is active.  No claim with no live focused item:
+   then the first Tab focuses the first item, as before.  The claim stays
+   while Tab is held, so a held first Tab does not repeat into a move; it
+   is given back once Tab is up. */
+static bool navOutlineActiveItemAllowsClaim(ImGuiContext *g) {
+    if (g->ActiveId == 0) return true;
+    const ImGuiInputTextState &st = g->InputTextState;
+    return st.ID == g->ActiveId &&
+           (st.Flags & (ImGuiInputTextFlags_AllowTabInput |
+                        ImGuiInputTextFlags_CallbackCompletion)) == 0;
+}
+
 static void navOutlineClaimTab(ImGuiContext *g) {
     ImGuiID owner = ImGui::GetKeyOwner(ImGuiKey_Tab);
     bool    want  = !s_navOutlineByKey && !s_navOutlineByPadUser &&
                     g->NavWindow && g->NavId != 0 && g->NavIdIsAlive &&
-                    g->ActiveId == 0;
+                    navOutlineActiveItemAllowsClaim(g);
     if (want) {
         if (owner == ImGuiKeyOwner_NoOwner || owner == kNavOutlineTabOwner)
             ImGui::SetKeyOwner(ImGuiKey_Tab, kNavOutlineTabOwner);
