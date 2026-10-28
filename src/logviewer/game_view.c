@@ -128,6 +128,10 @@ extern void  lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
                                       bool *onBoat);
 extern void  lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
                                      BYTE *px, BYTE *py, BYTE *frame);
+/* players.c: where the map draws a slot's tank, which the lag view moves. */
+extern bool  lv_playersGetDrawnTankDetails(BYTE slot, BYTE *mx, BYTE *my,
+                                           BYTE *px, BYTE *py, BYTE *frame,
+                                           bool *onBoat);
 extern void  lv_playersGetLgmStatus(BYTE playerNumber, bool *isOut, bool *isDead);
 extern void  lv_playersGetPlayerName(BYTE playerNum, char *dest, size_t destSize);
 extern bool         lv_playersIsBot(BYTE playerNumber);
@@ -1164,7 +1168,9 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
 
       BYTE rawMx = 0, rawMy = 0, rawPx = 0, rawPy = 0, frame = 0;
       bool onBoat = false;
-      lv_playersGetTankDetails(slot, &rawMx, &rawMy, &rawPx, &rawPy, &frame, &onBoat);
+      /* The place the map draws the tank at, so the label stays on it when
+       * the lag view draws the tank where a player's screen showed it. */
+      if (!lv_playersGetDrawnTankDetails(slot, &rawMx, &rawMy, &rawPx, &rawPy, &frame, &onBoat)) continue;
 
       /* Apply the same TANK_SUBTRACT (128) adjustment that
        * lv_playersMakeScreenTanks (players.c:506-514) bakes into

@@ -78,14 +78,13 @@ static void clientSimScnClearPresentation(ClientSim *cs) {
     memset(cs->scnPanels, 0, sizeof(cs->scnPanels));
     memset(cs->scnPanelValid, 0, sizeof(cs->scnPanelValid));
     cs->scnPanelRejects = 0;
-    cs->scnAnnounceText[0] = '\0';
-    cs->scnAnnounceTicks = 0;
-    cs->scnAnnounceArrivedTick = 0;
-    cs->scnAnnounceHasPos = 0;
-    cs->scnAnnouncePosX = 0;
-    cs->scnAnnouncePosY = 0;
+    memset(cs->scnAnnounces, 0, sizeof(cs->scnAnnounces));
+    cs->scnAnnounceCount = 0;
     cs->scnStatusText[0] = '\0';
     cs->scnStatusEndsAt = SCN_STATUS_NO_COUNTDOWN;
+    memset(cs->scnPopups, 0, sizeof(cs->scnPopups));
+    cs->scnPopupHead = 0;
+    cs->scnPopupCount = 0;
     memset(cs->scnMarkers, 0, sizeof(cs->scnMarkers));
     memset(cs->scnPlayerScores, 0, sizeof(cs->scnPlayerScores));
     memset(cs->scnTeamScores, 0, sizeof(cs->scnTeamScores));
@@ -1584,16 +1583,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                                        evt->u.scnAnnounce.destPlayer)) {
             break;
         }
-        SDL_strlcpy(cs->scnAnnounceText, evt->u.scnAnnounce.text,
-                    sizeof(cs->scnAnnounceText));
-        cs->scnAnnounceTicks = evt->u.scnAnnounce.ticks;
-        /* The tick this client was last told about, so the drawer counts
-           the line down against the clock the scenario set it by rather
-           than against wall time. */
-        cs->scnAnnounceArrivedTick = cs->lastServerTick;
-        cs->scnAnnounceHasPos = evt->u.scnAnnounce.hasPos ? 1u : 0u;
-        cs->scnAnnouncePosX = evt->u.scnAnnounce.posX;
-        cs->scnAnnouncePosY = evt->u.scnAnnounce.posY;
+        /* Stamped with the tick this client was last told about, so the
+           drawer counts the line down against the clock the scenario set
+           it by rather than against wall time. A line that lands while
+           another is up joins it rather than replacing it. */
+        clientSimScnAnnouncePush(cs, evt->u.scnAnnounce.text,
+                                 evt->u.scnAnnounce.ticks, cs->lastServerTick,
+                                 evt->u.scnAnnounce.hasPos != 0,
+                                 evt->u.scnAnnounce.posX,
+                                 evt->u.scnAnnounce.posY);
         break;
 
     case CTRL_SCN_STATUS:
@@ -1609,6 +1607,24 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                                   ? evt->u.scnStatus.endsAt
                                   : SCN_STATUS_NO_COUNTDOWN;
         break;
+
+    case CTRL_SCN_POPUP: {
+        /* Queued rather than shown: the frontend takes one at a time when
+           its overlay is free. A full queue drops the newcomer. */
+        uint8_t slot;
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnPopup.destTeam,
+                                       evt->u.scnPopup.destPlayer)) {
+            break;
+        }
+        if (evt->u.scnPopup.text[0] == '\0') break;
+        if (cs->scnPopupCount >= SCN_POPUP_QUEUE_MAX) break;
+        slot = (uint8_t)((cs->scnPopupHead + cs->scnPopupCount) %
+                         SCN_POPUP_QUEUE_MAX);
+        SDL_strlcpy(cs->scnPopups[slot], evt->u.scnPopup.text,
+                    sizeof(cs->scnPopups[slot]));
+        cs->scnPopupCount++;
+        break;
+    }
 
     case CTRL_SCN_MARKER: {
         ClientScnMarker *m;

@@ -34,7 +34,7 @@ document is the stable reference for the rules themselves.
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client — shares the `src/gui/sdl3/` ImGui UI and the shared sim-driving cores, forking only the driver: a blocking loop in `main` that waits on each browser animation frame through ASYNCIFY, in place of the SDL timer thread. The sim, the draw and the menus all run on the page's thread; bot brain thinks run on the bot worker pool's threads, as on desktop, which is why the build links with `-pthread` and the page must be cross-origin isolated. The menu and its dialogs run their own blocking loops on that same stack between games. Its practice game hosts a `ServerSim` in the page, ticked from that loop through `serverInstanceTick` in `server_stubs_wasm.c`, which runs the shared `serverSimLocalTick` sequence (see "Per-file T2 grants"), and records its rounds through `server_round_log_static`. See "Platform variants: share the logic, fork only the driver". |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. The Android client's driver, which shares the `src/gui/sdl3/` ImGui UI and the shared sim-driving cores and keeps only what is Android's own: `main_android.c` is a blocking loop with a wall-clock accumulator in place of the SDL timer thread, which at startup extracts the APK's data and brain trees into the app's files directory and makes it the working directory, so the shared code's relative `data/...` opens work as they do on the desktop; an SDL event watch on the lifecycle events keeps a hosted game's client ticking, without drawing, while the activity is in the background; and the JNI bridges to the Java side of the Android project: the WinBolo.net HTTP transport (`WinBoloHttp`, called from `src/winbolonet/http_jni.c`), the network kind for the mobile-data warning (`WinBoloNet`, `android_netpath.c`), the share sheet a recording or a clip GIF leaves the phone through (`android_share.c`), the phone-or-tablet class and the keyboard's height (`android_device.c`), the link or recording another app hands over (`android_drops.c`), and the microphone permission (`android_voice.c`). `android_frontend.c` keeps the `window*` set and the `frontEnd*` callbacks that draw. See "Platform variants" below. |
 | `src/gui/ios/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
-| `src/client_frontend/` | T1 + T3 + T4 | The shared sim-driving cores every client platform calls instead of keeping its own copy: `client_frontend_tick.c` (the alternating keys/game tick step), `client_frontend_connect.c` (the post-connect join/landing wait, as the blocking `clientFrontAwaitJoin` and the per-call `clientFrontAwaitJoinStep` it loops over), `client_frontend_common.c` (the sim-state-guarded `frontEnd*` bodies, the active-sim test `clientFrontIsActiveUiSim` that each driver's guarded callbacks make first, `clientFrontSaveMapAutoNamed` for a player with no file dialog, both declared in `client_frontend_common.h`, and the tutorial step sequencer behind `client_frontend_tutorial.h`), `client_frontend_sp.c` (the single-player lobby seeding). The voice runtime (`voice_*.c`) lives here too and is compiled by the targets that build voice. Not a library — the sources compile directly inside each frontend target (WinBolo, WinBoloIOS, android `main` and wasm `winbolo` take all four cores) under that target's `gui` profile, so they see only `public/`. See "Platform variants: share the logic, fork only the driver". |
+| `src/client_frontend/` | T1 + T3 + T4 | The shared sim-driving cores every client platform calls instead of keeping its own copy: `client_frontend_tick.c` (the alternating keys/game tick step), `client_frontend_connect.c` (the post-connect join/landing wait, as the blocking `clientFrontAwaitJoin` and the per-call `clientFrontAwaitJoinStep` it loops over), `client_frontend_common.c` (the sim-state-guarded `frontEnd*` bodies, the active-sim test `clientFrontIsActiveUiSim` that each driver's guarded callbacks make first, `clientFrontSaveMapAutoNamed` for a player with no file dialog, both declared in `client_frontend_common.h`), `client_frontend_sp.c` (the single-player lobby seeding). The voice runtime (`voice_*.c`) lives here too and is compiled by the targets that build voice. Not a library — the sources compile directly inside each frontend target (WinBolo, WinBoloIOS, android `main` and wasm `winbolo` take all four cores) under that target's `gui` profile, so they see only `public/`. See "Platform variants: share the logic, fork only the driver". |
 | `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. The standalone `LogViewer` and the wasm log viewer compile `src/bolo/sim_rules.c` from source under a per-file T2 grant, since neither links `bolo_static`; that is the sim's own file rather than anything in this directory (see "Per-file T2 grants"). The lobby's replay reel is the embedded host `lv_embed.c`, which the web client, WinBoloIOS and Android `main` compile with the decoder and renderer but without the modal viewer `logviewer.c`; `lv_embed_stubs.c` stubs what the left-out viewer would provide, for all three. The mobile clients drive the viewer's dialogs through a driver of their own in place of the desktop one that shells out, `src/logviewer/ios/platform_dialogs_ios.c` and `src/logviewer/android/platform_dialogs_android.c`, play a game the WinBolo.net log browser downloads, or a recording on the phone, in the reel through the shared mobile screens `src/gui/mobile/mobile_log_player.cpp` and `mobile_recordings.cpp`, and watch a server's live delayed feed in the reel through `src/gui/mobile/mobile_spectator.cpp`. The recordings screen's platform half, behind `mobile_recordings_platform.h`, is `src/gui/ios/ios_recordings.cpp` on iOS (Documents and its Inbox, Copy to Files) and `src/android/android_recordings.c` on Android (the preferences directory and its incoming subdirectory, the share sheet). What a spectator host does with that feed's seed and records — load the seed, re-seed on a new segment, refresh the roster and phase on a keyframe, move the live head — is `lv_spec_feed.c`, the one body the modal viewer's `spectatorRun` (`logviewer.c`) and the embedded spectator in `lv_embed.c` both call. Those mobile screens reach the reel through `src/gui/sdl3/dialogs/lobby/lobby_reel.h`, the reel's public header, and not through the lobby's own `lobby_internal.h`, which includes it. |
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host), WinBoloIOS (SP, LAN and Internet host), Android `main` (SP host, and host of games other players join). |
@@ -489,11 +489,6 @@ into each frontend target rather than as a separate library:
   make the same one; the settings toggles persist through
   `gameFrontSaveCurrentPrefs`. These guards belong in shared code so a
   platform cannot silently omit one.
-- **The tutorial step sequencer** — also in `client_frontend_common.c`,
-  with the calls a driver makes each frame (the presented-frame count,
-  the respawn poll, whether a step's messages are up) declared in
-  `client_frontend_tutorial.h`. The desktop, web, iOS and Android drivers call it (the Android
-  driver is `src/android/main_android.c`).
 - **The voice settings** — `src/gui/sdl3/voice_settings.c` holds the one
   body of the `windowSetVoice*` / `windowGetVoice*` functions the dialogs
   and `gamefront.c` call. Not in `src/client_frontend/` because it sits
@@ -1704,6 +1699,11 @@ set of intentional differences:
   makes, which in a game is the full screen map that File > Overview
   in Window drives in both bars, and outside one is the app full
   screen flag.
+- In the Log Viewer, the View menu's player lag view item has no native
+  twin. It is there only while the "Player Lag View" setting is on. The
+  Tank panel's check box turns the same view on and off on every
+  platform. The comment next to the pill numbers item in
+  `src/logviewer/platform/mac_menubar.mm` names this exception.
 
 Add new exceptions sparingly and only with a justification — every
 diverged item is a future asymmetric-UI bug.
@@ -2331,14 +2331,14 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Seventeen `src/gui/sdl3` files
+same target, and it is not a T2 grant. Eighteen `src/gui/sdl3` files
 are compiled *into* `WinBoloUnitTests`, the only files from a
 renderer directory that are: `skin_source.c`, `tileloader.c`,
 `sdl_bmp.c`, `sound_variants.c`, `sound_mix.c`, `overview_camera.cpp`,
 `overview_fog.cpp`, `overview_hud_layout.cpp`, `sprite_positions.c`,
 `ring_band.c`, `dialogs/dialog_quit.cpp`, `workshop_sync.c`,
 `input_source.c`, `news_image_budget.cpp`, `dialogs/clip_gif_core.c`,
-`newswire_slide.c` and `gfx_settings.c`.
+`newswire_slide.c`, `gfx_settings.c` and `tutorial_tokens.c`.
 Between them they hold skin lookup, the tile sheet
 builder, the BMP sheet reader, the sound variant naming, the
 effects mixer's step that scales one slot's samples by its left and
@@ -2367,6 +2367,13 @@ controller driving should add auto-slowdown; it reads SDL events it is
 handed and two gamepad queries, which `tests/unit/test_stubs.c`
 answers from test-controllable flags, and
 `tests/unit/test_input_source.c` drives it.
+`tutorial_tokens.c` is the key tokens a tutorial text or a scenario's
+popup, status line or announcement may carry (`{ACCEL}`, `{QUICK_TREE}`
+and the rest): finding them in a text, splitting a text round them and
+writing them out as names. It includes `input.h` for the key bindings
+and nothing from the renderer; `tests/unit/test_scenario_popup.c`,
+`test_tutorial_tokens_parse.c` and `test_tutorial_text_check.c` drive
+it, and the fuzz target `fuzz_tutorial_tokens` compiles it too.
 `news_image_budget.cpp` is the news image cache's eviction rule: how
 many bytes of decoded images it keeps and which of them it may drop,
 worked out from URLs, byte counts and frame numbers. The cache itself,
@@ -2398,7 +2405,7 @@ The alternative, for the geometry files, was moving the maths into
 onto the sim purely to buy testability. Keeping them in the renderer
 and linking the leaf files is the smaller distortion of the two.
 
-**Rests on** each of the seventeen still meeting that rule, so it is
+**Rests on** each of the eighteen still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
 include, or that opens a renderer or a device of its own, has left
 the category, and the answer is to split the leaf back out — the

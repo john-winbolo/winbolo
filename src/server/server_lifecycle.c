@@ -51,6 +51,7 @@
 #include "server_lifecycle.h"
 #include "spectator_ring.h"
 #include "log_internal.h"   /* logSetSpectatorRing */
+#include "log.h"            /* logSetStopHook — the round-end overrun record */
 
 /* Round-end log hooks installed by WinBoloDS via
  * serverLifecycleSetRoundLogHooks. NULL on every other binary that
@@ -63,6 +64,9 @@ void serverLifecycleSetRoundLogHooks(void (*stash)(void),
                                      void (*flush)(void)) {
   s_roundLogStash = stash;
   s_roundLogFlush = flush;
+  /* The round log that hands its hooks over here gets the round-end overrun
+     record from logStop. The hook guards itself, so it stays installed. */
+  logSetStopHook(serverLifecycleLogRoundEndOverrunStats);
 }
 
 static void roundLogStash(void) {
@@ -324,6 +328,19 @@ static const  double kTickAlpha = 0.1;
 static double       s_peakTickMs      = 0.0;
 static unsigned int s_ticksOverBudget = 0;
 
+/* The running frames of the round so far, for the periodic overrun lines
+ * and records (serverOverrunStatsDue, serverOverrunRecordDue). The reset of
+ * the peak above starts it again, at each round start. */
+static uint32_t     s_roundRunFrames  = 0;
+/* TRUE from a round start until the round's log has its round-end overrun
+ * record (serverLifecycleLogRoundEndOverrunStats), so a log that closes later
+ * without a new round, a lobby log say, does not get a second one. */
+static bool         s_overrunEndDue   = FALSE;
+/* TRUE when serverLifecycleReportOverrunStats also prints the overrun lines
+ * to stdout. Off until WinBoloDS turns it on, so the desktop, iOS and
+ * Android hosts, which run the same tick, print nothing. */
+static bool         s_overrunConsolePrint = FALSE;
+
 /* Wall-clock cost (ms) of the two serverSimTick calls combined for the
  * most recent tick, plus its EWMA. Same seeding rule as above. */
 static double s_lastSimMs = 0.0;
@@ -360,6 +377,35 @@ void serverLifecycleGetTickPeak(double *outPeakMs,
 void serverLifecycleResetTickPeak(void) {
   s_peakTickMs      = 0.0;
   s_ticksOverBudget = 0;
+  s_roundRunFrames  = 0;
+  s_overrunEndDue   = TRUE;
+}
+
+bool serverLifecycleCountRoundFrame(void) {
+  s_roundRunFrames++;
+  return serverOverrunStatsDue(s_roundRunFrames) ||
+         serverOverrunRecordDue(s_roundRunFrames);
+}
+
+void serverLifecycleSetOverrunConsolePrint(bool on) {
+  s_overrunConsolePrint = on;
+}
+
+void serverLifecycleReportOverrunStats(ServerSim *sim) {
+  if (s_overrunConsolePrint && serverOverrunStatsDue(s_roundRunFrames)) {
+    serverSimPrintOverrunStats(sim, s_roundRunFrames / (1000u / SERVER_TICK_LENGTH));
+  }
+  if (serverOverrunRecordDue(s_roundRunFrames)) {
+    serverSimLogOverrunStats(sim, s_roundRunFrames, FALSE);
+  }
+}
+
+void serverLifecycleLogRoundEndOverrunStats(ServerSim *sim) {
+  if (sim == NULL || !s_overrunEndDue || s_roundRunFrames == 0) {
+    return;
+  }
+  s_overrunEndDue = FALSE;
+  serverSimLogOverrunStats(sim, s_roundRunFrames, TRUE);
 }
 
 uint32_t serverTickCatchUp(uint32_t nowMs, uint32_t *oldTick, uint32_t *ticks,
@@ -1092,6 +1138,7 @@ void serverInstanceTick(ServerSim *sim) {
     serverSimResetGameWorld(sim);
     sim->state = serverStateLobby;
     sim->gameLength = sim->originalGameLength;
+    serverSimScenarioApplyLobbyFixes(sim, false);
     sim->hadPlayersEver = FALSE;
     sim->emptyResetTicks = -1;
     /* Pick next map from rotation if mapdir is configured. The seats the
@@ -1216,6 +1263,19 @@ void serverInstanceTick(ServerSim *sim) {
   double freq = (double)SDL_GetPerformanceFrequency();
   double tickMs = (double)(tickEnd - tickStart) * 1000.0 / freq;
   serverLifecycleRecordTickMs(tickMs);
+
+  /* The overrun lines on the console, once a minute into the round and then
+   * every five minutes, and the overrun record in the round log, every 30
+   * seconds of the round. After the tick's own time is recorded, so they
+   * include this frame and the work is not part of the time they report.
+   * Only a frame that ran the round counts. */
+  if (preTickState == serverStateRunning && sim->state == serverStateRunning) {
+    if (serverLifecycleCountRoundFrame()) {
+      threadsWaitForMutex();
+      serverLifecycleReportOverrunStats(sim);
+      threadsReleaseMutex();
+    }
+  }
 }
 
 void serverInstanceShutdown(ServerSim *sim) {

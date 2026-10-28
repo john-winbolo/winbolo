@@ -44,13 +44,23 @@ void lv_messageDestroy(void);
 void lv_messageAddItem(char *top, char *bottom);
 void lv_messageDrainQueue(void);
 
+/* A test that wants to see what lv_screenUpdate draws sets this; it is
+ * called with the lists the map would be drawn from, while the screen's
+ * draw state (the lag view's frame among it) is still in place. NULL, the
+ * default, draws nothing. */
+void (*g_testLvDrawMainScreenHook)(screenTanks *tks, screenBullets *sBullet,
+                                   screenLgm *lgms) = NULL;
+
 void lv_frontEndDrawMainScreen(screen *value, screenMines *mineView,
                                screenTanks *tks, screenGunsight *gs,
                                screenBullets *sBullet, screenLgm *lgms,
                                int32_t srtDelay, bool isPillView,
                                int edgeX, int edgeY) {
-  (void)value; (void)mineView; (void)tks; (void)gs; (void)sBullet;
-  (void)lgms; (void)srtDelay; (void)isPillView; (void)edgeX; (void)edgeY;
+  (void)value; (void)mineView; (void)gs;
+  (void)srtDelay; (void)isPillView; (void)edgeX; (void)edgeY;
+  if (g_testLvDrawMainScreenHook != NULL) {
+    g_testLvDrawMainScreenHook(tks, sBullet, lgms);
+  }
 }
 
 void lv_frontEndPlaySound(sndEffects value) { (void)value; }
