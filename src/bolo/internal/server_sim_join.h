@@ -35,6 +35,18 @@ void setClientTypeFlagsInternal(ServerSim *sim, BYTE slot,
                                 uint8_t clientType, uint8_t clientFlags);
 void fillAndPublishPlayerJoin(ServerSim *sim, BYTE slot);
 
+/* A person who joins a running round is put on a side of their own: the
+ * lowest team id nobody is on (serverSimFreeTeam), or no team when every id
+ * has somebody (#424, D3). A rejoin is a join and takes the same path; only
+ * the pills and bases that are neutral now come back. The seat's lobby slot
+ * goes out here, ahead of its CTRL_PLAYER_JOIN, so a script's on_player_join
+ * sees the team before it places the seat. In the lobby the smallest-team
+ * pick addPlayerInternal makes stays, and nothing is published. Call it from
+ * a human join path between addPlayerInternal and fillAndPublishPlayerJoin.
+ * Bots keep the team their own add path gives them. Defined in
+ * server_sim_players.c. */
+void serverSimPlaceJoiner(ServerSim *sim, BYTE slot);
+
 /* Gives the lobby host role to a person who has just joined, when
  * -firstjoinhost is on and the slot holding the role holds a bot or holds
  * nobody. Call it from a human join path once the slot's name, flags and

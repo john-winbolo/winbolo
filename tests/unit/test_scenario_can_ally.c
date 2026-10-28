@@ -441,8 +441,8 @@ static void caScriptEnd(ServerSim *sim, ScenarioHost *host,
  *
  * The host asks the script with the two seats as Lua sees them, which are
  * the same numbers: seats are not converted. The script refuses any
- * alliance that crosses teams and answers nil, the ordinary yes, for the
- * rest, and notes what it was asked.
+ * alliance with a seat on team 2 and answers nil, the ordinary yes, for
+ * the rest, and notes what it was asked.
  * ================================================================ */
 int run_scenario_can_ally_lua(void) {
     static const char *const kMap = "scn_can_ally_lua.map";
@@ -451,7 +451,9 @@ int run_scenario_can_ally_lua(void) {
         "function can_ally(p, q)\n"
         "  note(p .. \">\" .. q)\n"
         "  local a, b = game.lobby_slot(p), game.lobby_slot(q)\n"
-        "  if a and b and a.team ~= b.team then return false end\n"
+        "  if a and b and (a.team == 2 or b.team == 2) then\n"
+        "    return false\n"
+        "  end\n"
         "  return nil\n"
         "end\n";
     ServerSim    *sim;
@@ -473,8 +475,9 @@ int run_scenario_can_ally_lua(void) {
                   "an accept across teams must be refused by the script");
     UT_ASSERT(!caAllied(sim, 0, 2));
 
-    /* A leave splits seat 1 from seat 0; they share a team, so the script
-       answers nil and seat 0 may take seat 1 back. */
+    /* A leave splits seat 1 from seat 0 and puts seat 1 on a team of its
+       own. Neither is on team 2, so the script answers nil and seat 0 may
+       take seat 1 back. */
     threadsWaitForMutex();
     serverSimLeaveAlliance(sim, 1);
     threadsReleaseMutex();
@@ -499,8 +502,8 @@ int run_scenario_can_ally_lua(void) {
  * The sim's alliance table as the game rules read it. The script reads a
  * row of pairs each tick once every seat is on its team, and notes the row
  * when it differs from the last one. A leave takes seat 1 off seat 0's side
- * while their lobby team stays the same, which is where the read and
- * lobby_slot differ.
+ * and onto a team of its own, the lowest free one, so lobby_slot follows
+ * the read.
  *
  * The row is: 0 and 1 (the same side), 1 and 0, 0 and 2 (the other side),
  * 3 and itself, 0 and an empty seat, an empty seat and itself, a seat past
@@ -542,9 +545,9 @@ int run_scenario_allied_read(void) {
     threadsReleaseMutex();
     serverSimTick(sim);
     UT_ASSERT_MSG(strcmp(caNote,
-                         "false,false,false,true,nil,nil,nil,nil,1,1\n") == 0,
+                         "false,false,false,true,nil,nil,nil,nil,1,3\n") == 0,
                   "after seat 1 left the alliance game.allied read \"%s\"; "
-                  "expected 0 and 1 not allied on the same lobby team",
+                  "expected 0 and 1 not allied and seat 1 on team 3",
                   caNote);
 
     caScriptEnd(sim, h, kMap);

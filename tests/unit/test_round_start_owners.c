@@ -18,7 +18,8 @@
  * published.
  *
  *   1. 0 and 1 allied by the lobby teams.
- *   2. 0 and 1 allied by hand during an earlier round, on no team.
+ *   2. 0 and 1 allied by hand during an earlier round, which puts them
+ *      on one team.
  */
 
 #include <stdint.h>
@@ -209,7 +210,8 @@ int run_round_start_owners_kept_with_lobby_team(void) {
     return failed;
 }
 
-/* 2. 0 and 1 allied by hand during a round before this one, on no team. */
+/* 2. 0 and 1 allied by hand during a round before this one. They start on
+   no team, and the accept puts them on one. */
 int run_round_start_owners_kept_after_manual_alliance(void) {
     ServerSim *sim = rso_make_sim();
     GameSim *gs;
@@ -231,10 +233,11 @@ int run_round_start_owners_kept_after_manual_alliance(void) {
 
     failed = rso_start_and_check(sim);
     if (failed == 0) {
-        /* No team, so nobody is allied in the new round. */
+        /* The accept put 0 and 1 on one team (#424), so the new round
+           allies them again. */
         gs = serverSimGetGameSim(sim);
-        if (playersIsAllie(&gs->plyrs, 0, 1)) {
-            fprintf(stderr, "FAIL: after the start 0 and 1 are still "
+        if (!playersIsAllie(&gs->plyrs, 0, 1)) {
+            fprintf(stderr, "FAIL: after the start 0 and 1 are not "
                             "allied\n");
             failed = 1;
         }

@@ -957,7 +957,7 @@ void serverSimEnterGameOver(ServerSim *sim) {
 }
 
 void serverSimReturnToLobby(ServerSim *sim) {
-    BYTE i, j;
+    BYTE i;
     bool savedConnected[MAX_TANKS];
     LobbyPlayer savedLobby[MAX_TANKS];
 
@@ -976,41 +976,31 @@ void serverSimReturnToLobby(ServerSim *sim) {
      * are scoped to the round we're leaving. */
     serverSimGameVoteResetAll(sim);
 
-    /* Carry the in-game alliance topology forward into next-round
-     * team assignments. For each alliance group we pick the lowest
-     * existing teamNumber as the representative and reassign every
-     * group member to it; isolated players keep their current team.
+    /* The next lobby opens with the teams the round ended with. A seat's
+     * team is its side during a round (#424): an accept, a leave and a join
+     * each wrote it, so there is nothing to carry over from the alliances.
      *
-     * Two original teams that merged in-game collapse to the lower
-     * team id (the higher one becomes unused metadata, fine). A
-     * defector ends up on their new alliance's team. Players who
-     * dropped alliances mid-game without re-forming one keep their
-     * own team. */
+     * A team above 2 that nobody is on now was opened during the round for
+     * a leaver or a joiner, or emptied by an accept. It is marked unused so
+     * the lobby does not list it (D6). Teams 1 and 2 stay, as the lobby
+     * always keeps them, and so does a team the scenario's lobby names. */
     {
-        uint8_t newTeam[MAX_TANKS] = {0};
+        bool held[MAX_TANKS];
+        BYTE t;
+        memset(held, 0, sizeof(held));
         for (i = 0; i < MAX_TANKS; i++) {
+            uint8_t team;
             if (!sim->playerConnected[i]) continue;
-            if (newTeam[i] != 0) continue;
-            uint8_t repTeam = sim->lobbyPlayers[i].teamNumber;
-            bool inGroup[MAX_TANKS] = {0};
-            inGroup[i] = true;
-            for (j = 0; j < MAX_TANKS; j++) {
-                if (j == i || !sim->playerConnected[j]) continue;
-                if (playersIsAllie(&sim->sim.plyrs, i, j)) {
-                    inGroup[j] = true;
-                    uint8_t t = sim->lobbyPlayers[j].teamNumber;
-                    if (t > 0 && (repTeam == 0 || t < repTeam)) {
-                        repTeam = t;
-                    }
-                }
-            }
-            for (j = 0; j < MAX_TANKS; j++) {
-                if (inGroup[j]) newTeam[j] = repTeam;
-            }
+            team = sim->lobbyPlayers[i].teamNumber;
+            if (team > 0 && team < MAX_TANKS) held[team] = true;
         }
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (sim->playerConnected[i] && newTeam[i] != 0) {
-                sim->lobbyPlayers[i].teamNumber = newTeam[i];
+        for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+            uint8_t id = sim->scenarioLobby.teams[t].id;
+            if (id > 0 && id < MAX_TANKS) held[id] = true;
+        }
+        for (t = 3; t < MAX_TANKS; t++) {
+            if (!held[t] && sim->teams[t].in_use) {
+                serverSimClearTeamMeta(sim, t);
             }
         }
     }
@@ -1381,6 +1371,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
     sim->trackRecordCount = 0;
     sim->trackTruncated = false;
     memset(sim->trackIdentity, 0, sizeof(sim->trackIdentity));
+    memset(sim->trackTeam, 0xFF, sizeof(sim->trackTeam));
 
     /* 7. Reset tick */
     sim->tick = 0;
@@ -1465,7 +1456,13 @@ void serverSimResetGameWorld(ServerSim *sim) {
 }
 
 void serverSimReapplyTeamAlliances(ServerSim *sim) {
-    /* Apply alliances locally and build the full matrix; publish exactly
+    /* The full rebuild of the alliance bitmap from the lobby teams, for the
+     * round start, a batch of team changes and a scripted set_team. An
+     * accept, a leave and a join each change the teams and the bitmap
+     * together and do not come here (#424). Because the teams hold every
+     * alliance players made in play, the rebuild takes none of them away.
+     *
+     * Apply alliances locally and build the full matrix; publish exactly
      * one CTRL_ALLIANCE_RESET carrying it. The earlier shape — one
      * CTRL_ALLIANCE_ACCEPT per allied pair — fanned out up to
      * N×(N-1)/2 events on a single tick (120 for a 16-player team),
@@ -1796,6 +1793,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     serverSimScenarioApplyLobbyFixes(sim, true);
 
     sim->state = serverStateRunning;
+    serverSimTrackStartTeams(sim);
 
     serverSimApplyAutoLockOnGameStart(sim);
 
@@ -1973,6 +1971,7 @@ void serverSimStartGame(ServerSim *sim) {
     serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
+    serverSimTrackStartTeams(sim);
     serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
 

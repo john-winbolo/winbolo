@@ -1338,7 +1338,7 @@ names the reason, as `-validate` does.
 | `on_lobby(p, scripted)` | A lobby seat changed. `p` is the seat. |
 | `on_player_join(p, scripted)` | Fires for a bot seat as it does for a person, and a bot a script seats reaches it with `scripted` true. A seat on the roster is not yet a tank on the field: that is `on_tank_spawned`. |
 | `on_player_leave(p, scripted)` | By the time the handler runs the seat is empty — `game.tank(p)`, `game.builder(p)` and `game.lobby_slot(p)` all answer `nil`. Whatever a handler needs to know about the player has to have been kept from an earlier hook. |
-| `on_team_changed(p, team, scripted)` | `team` is the seat's new team. |
+| `on_team_changed(p, team, scripted)` | `team` is the seat's new team. It also fires when players ally or split on their own during a round, with `scripted` false: an accept moves the new member, and everyone on its team, onto the accepter's team, and a leave moves the leaver onto a team of its own. A person who joins during a round is put on a team of its own before `on_player_join` runs. |
 | `on_chat(p, text, scripted)` | A player said something. |
 | `on_ping(p, kind, mx, my, scripted)` | Seat `p` put a smart ping on the map. `kind` is 0 standard, 1 caution, 2 assist, 3 attack, 4 on my way, 5 bot command; `mx`, `my` are the map square it landed on. A seated bot brain places its own pings through the same path, so this fires for a bot as it does for a person. The hook only watches: nothing it returns changes the marker, and there is no call that places one. |
 
@@ -1590,7 +1590,7 @@ far as the server is concerned.
 | `game.max_tanks()` | How many seats a game has. |
 | `game.num_players()` | How many seats are playing the round, bots included. |
 | `game.num_humans()` | How many of those are people. |
-| `game.team_size(t)` | How many seats sit on team `t`, playing the round or not. |
+| `game.team_size(t)` | How many seats sit on team `t`, playing the round or not. It follows the alliances players make and leave in play, as `lobby_slot(p).team` does. |
 | `game.game_type()` | `"open"`, `"tournament"` or `"strict"` — the game the round is being played by. It answers `scenario.game` when the table sets one of those three, and the game the round resolves to otherwise, so a table that named no game or a word the server has no behaviour for reads `"strict"`. It never answers `"scripted"`: that is what the lobby calls the round, not a set of rules anything plays by. |
 
 ### Three clocks
@@ -1688,10 +1688,10 @@ starts comes due after about twice the seconds it asked for.
 |---|---|
 | `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, sight, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `sight` is the gun sight, the range a shell flies before it bursts, in half squares from the rule `gunsight_min` to `gunsight_max` (2 to 14 classic); a bot's or a human's alike. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
 | `game.builder(p)` | `{ state, mx, my, wx, wy, job, trees, mines }`, or `nil` when the seat has none. `state` is `"in_tank"`, `"going"`, `"returning"`, `"parachuting"` or `"dead"`; `job` is an action word, or absent when he is on none. The square is tracked while he is out of the tank — in the tank he is wherever his tank is, which is why the state comes first. |
-| `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive, team_pool }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** `team_pool` is the label of the bot naming pool the seat's team draws bot names from, such as `"Famous Painters"`: the name the lobby shows in that team's pool dropdown. It is absent when the seat is on no team (0) or the team has no pool. A team has a pool once it is set up in the lobby; teams 1 and 2 start with the first pool, and a team the host never set up has none, so its seats read `nil` even when they hold bots. A dedicated server's `-bots` names its bots from one random pool without setting any team's pool, so there `team_pool` is the first pool's label, not the pool the bot names came from. The label comes from the server's own pools, so every client reads the same word. A script can label a team of bots only by it (see below). |
+| `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive, team_pool }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** `team` is the seat's live side: during a round it includes the alliances players made and left in play, and two seats are allied exactly when they are on the same team that is not 0. `team_pool` is the label of the bot naming pool the seat's team draws bot names from, such as `"Famous Painters"`: the name the lobby shows in that team's pool dropdown. It is absent when the seat is on no team (0) or the team has no pool. A team has a pool once it is set up in the lobby; teams 1 and 2 start with the first pool, and a team the host never set up has none, so its seats read `nil` even when they hold bots. A dedicated server's `-bots` names its bots from one random pool without setting any team's pool, so there `team_pool` is the first pool's label, not the pool the bot names came from. The label comes from the server's own pools, so every client reads the same word. A script can label a team of bots only by it (see below). |
 | `game.lobby_start(p)` | The start the lobby reserved for seat `p` and has not yet used, counted from 1 as `game.start` counts, or `nil`. The same number `on_choose_start` is handed as `lobby`, so it is `nil` once the seat's first tank of the round is built (see **The lobby's start** under Policies). |
 | `game.lobby_side(p)` | The side seat `p`'s lobby team chose to start on, as `"north"`, `"east"`, `"south"` or `"west"`, or `nil` for an empty seat, a seat on no team (0) and a team with no side. A side the lobby filled in for a team, opposite the one other team's choice, reads the same as one a player chose. |
-| `game.allied(a, b)` | Whether seats `a` and `b` are on the same side in the game: `true` or `false`, `true` for a seat and itself, and `nil` when either seat is empty. This is the alliance table every game rule reads — who a pillbox fires at, which bases refuel whom — including alliances players made and left in play. **It can differ from `game.lobby_slot(p).team`:** two teammates where one has left the alliance share a team but are not allied, and players on different teams who allied share a side but not a team. |
+| `game.allied(a, b)` | Whether seats `a` and `b` are on the same side in the game: `true` or `false`, `true` for a seat and itself, and `nil` when either seat is empty. This is the alliance table every game rule reads — who a pillbox fires at, which bases refuel whom — including alliances players made and left in play. Two seats are allied exactly when they are on the same team that is not 0, so this answers the same as comparing their `game.lobby_slot(p).team`. |
 
 A seat the lobby is holding for a bot reads as connected, a bot, on its team,
 and `fielded = false`. That is how Wave Defense finds its held seats:
@@ -1851,7 +1851,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 |---|---|
 | `game.spawn_bot(t)` | Puts a bot into the running round. Answers the seat and `"queued"` when the call named a seat, and `true, "queued"` when the server is choosing one. |
 | `game.remove_bot(p)` | Takes a bot out of the running round. A human seat is refused with `SCN_OP_IS_HUMAN`. |
-| `game.set_team(p, t)` | Moves a seat to another team mid-round. |
+| `game.set_team(p, t)` | Moves a seat to another team mid-round. Only `p`'s alliances change: `p` is allied with the seats on team `t`, and the alliances other players made stay. No pills or bases change owner. `set_team(p, 0)` takes `p` out of every alliance. |
 | `game.bot_init(p, t)` | Hands a bot a new init table. A seat that has been fielded takes one whether it is on the field now or not: a seat taken off keeps its brain, and the table is waiting in it when the seat is fielded again. A human seat is refused with `SCN_OP_IS_HUMAN`, an empty one with `SCN_OP_NO_SUCH_PLAYER`, and a held seat that has never been fielded — which has no brain yet to hold the table — with `SCN_OP_NO_RUNNER`. |
 | `game.lobby_add_bot(t)` | Seats a bot in the lobby and answers which seat it took. |
 | `game.lobby_remove_bot(p)` | Takes a bot out of the lobby. A human seat is refused. |
@@ -2466,7 +2466,9 @@ calls is the same target every other call takes: left out, or `"all"`, for
 everyone; a number for one seat; `{ team = t }` for one team. A late joiner is
 given whatever the panels hold at the moment it arrives, so a panel put up in
 the first tick of a round is still there for somebody who connects in the
-tenth minute.
+tenth minute. A `{ team = t }` target follows the alliances players make and
+leave in play: a seat that changes team during a round is sent what its new
+team's panels hold, as a joiner would be.
 
 `score` is the exception. Its target says *whose* score it is, not who sees
 it, so a score is shown to everyone. There is no everyone's score: a call with

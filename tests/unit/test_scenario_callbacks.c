@@ -35,8 +35,8 @@
  *                                         directory, is found by the file
  *                                         name the lobby names it by, and
  *                                         arrives with every row of its
- *                                         callbacks block (Survival 12,
- *                                         Soccer 10); same for Soccer
+ *                                         callbacks block (Survival 14,
+ *                                         Soccer 13); same for Soccer
  * run_scenario_details_fetch_tutorial   — and for the Tutorial (in
  *                                         data/maps/tutorials), whose 23
  *                                         rows are the most a shipped
@@ -785,11 +785,11 @@ static int scFetchMapScript(const char *tag, const char *map, int wantRows,
 }
 
 int run_scenario_details_fetch_survival(void) {
-    return scFetchMapScript("fetch_survival", "Survival", 12, "on_tick/E=");
+    return scFetchMapScript("fetch_survival", "Survival", 14, "on_tick/E=");
 }
 
 int run_scenario_details_fetch_soccer(void) {
-    return scFetchMapScript("fetch_soccer", "Soccer", 11, "can_capture/Q=");
+    return scFetchMapScript("fetch_soccer", "Soccer", 13, "can_capture/Q=");
 }
 
 int run_scenario_details_fetch_tutorial(void) {

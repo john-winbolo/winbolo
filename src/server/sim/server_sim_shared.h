@@ -127,6 +127,12 @@ bool serverSimAnnounce(ServerSim *sim, BYTE kind, BYTE subject, BYTE actor);
  * the per-round buffer; the record callbacks above and serverSimAddEvent in
  * server_sim_control.c both feed it. */
 void serverSimTrackAppend(ServerSim *sim, const void *rec, size_t n);
+/* ATTR_REC_TEAM records (#424): one of slot's current team; one for every
+ * connected seat at the round start; and one of slot's team when it is not
+ * the team last written for it. Each does nothing unless a round is running. */
+void serverSimTrackTeam(ServerSim *sim, BYTE slot);
+void serverSimTrackStartTeams(ServerSim *sim);
+void serverSimTrackTeamIfChanged(ServerSim *sim, BYTE slot);
 
 /* Defined in server_sim_snapshot.c — the base and pill collectors. They fill
  * the snapshot's periodic full sync, and the tick core in server_sim_tick.c reads
@@ -329,6 +335,33 @@ typedef struct {
  * loops get when a load fails there. */
 const BrainModes *serverSimBrainModesCached(BrainModesCache *cache,
                                             const char *brainPath);
+
+/* Defined in server_sim_players.c. Sides during a round (#424).
+ *
+ * On the server, a seat's lobby team is the only record of its side. The
+ * alliance bitmap in players is a copy written from it, and every pair of
+ * connected seats i != j must hold
+ *
+ *     playersIsAllie(i, j) == (team[i] != 0 && team[i] == team[j])
+ *
+ * Accept, leave, a join and set_team all write the team first and then the
+ * bitmap. */
+
+/* True if the rule above holds for every pair of connected seats. On a
+ * break it logs the first pair that breaks it and returns false. */
+bool serverSimSidesAgree(const ServerSim *sim);
+
+/* The lowest team id in 1..MAX_TANKS-1 that no connected seat is on, or 0
+ * when every id has somebody. A team not in use is set up first: named
+ * "Team N", on no start side, with the colour the fewest teams in use have
+ * (the lowest on a tie), and published. A team still in use (a lobby or
+ * scenario team that emptied) keeps its name, colour and start side. */
+BYTE serverSimFreeTeam(ServerSim *sim);
+
+/* Tell everyone that seat slot's team changed from oldTeam: publish its
+ * lobby slot and, during a round, send the seat the scenario panels its new
+ * team gives it. Call it after the alliance bitmap has its new value. */
+void serverSimSeatTeamChanged(ServerSim *sim, BYTE slot, BYTE oldTeam);
 
 /* Defined in server_sim.c — the entries owned by the parent rather than by a
  * source in this directory. */

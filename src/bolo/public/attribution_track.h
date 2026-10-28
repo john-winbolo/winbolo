@@ -71,8 +71,11 @@
 #define ATTRIBUTION_TRACK_MAGIC    "WBAT"
 /* On-disk format version. Bump on any record-layout change.
  * v2: every event record carries map-cell mapX/mapY, and ATTR_REC_PICKUP
- *     records dead-pillbox scoops. */
-#define ATTRIBUTION_TRACK_VERSION  2
+ *     records dead-pillbox scoops.
+ * v3: ATTR_REC_TEAM records each seat's team at the round start and every
+ *     change of team during the round. The header still holds each seat's
+ *     last team. */
+#define ATTRIBUTION_TRACK_VERSION  3
 /* Per-round size cap the writer enforces; a round that would exceed this is
  * truncated and flagged in the header. */
 #define ATTRIBUTION_TRACK_CAP_BYTES (64u * 1024u * 1024u)
@@ -85,7 +88,8 @@ typedef enum {
     ATTR_REC_CAPTURE = 3,
     ATTR_REC_LGM     = 4,
     ATTR_REC_ACTION  = 5,
-    ATTR_REC_PICKUP  = 6
+    ATTR_REC_PICKUP  = 6,
+    ATTR_REC_TEAM    = 7
 } AttrRecordType;
 
 /* What inflicted a damage hit. The writer supplies this at the call site;
@@ -203,6 +207,17 @@ typedef struct BOLO_PACK_ATTR {
     uint8_t  mapY;
 } AttrPickupRecord;
 
+/* A seat's team: one for every seat at the round start, and one each time a
+ * seat changes team during the round (an accept, a leave, a join, a scripted
+ * set_team). A seat's team is its side, so a reader that wants who was on
+ * which side at a tick reads these. (v3+) */
+typedef struct BOLO_PACK_ATTR {
+    uint8_t  type;          /* ATTR_REC_TEAM */
+    uint32_t tick;
+    uint8_t  slot;
+    uint8_t  team;          /* the seat's team from this tick on */
+} AttrTeamRecord;
+
 /* Per-slot identity, captured once in the header so offline rebuild can name
  * and team-group each slot without a live roster. */
 typedef struct BOLO_PACK_ATTR {
@@ -230,6 +245,7 @@ BOLO_STATIC_ASSERT(sizeof(AttrCaptureRecord) == 12, attr_capture_size);
 BOLO_STATIC_ASSERT(sizeof(AttrLgmRecord)     ==  9, attr_lgm_size);
 BOLO_STATIC_ASSERT(sizeof(AttrActionRecord)  ==  9, attr_action_size);
 BOLO_STATIC_ASSERT(sizeof(AttrPickupRecord)  ==  9, attr_pickup_size);
+BOLO_STATIC_ASSERT(sizeof(AttrTeamRecord)    ==  7, attr_team_size);
 BOLO_STATIC_ASSERT(sizeof(AttrSlotIdentity)  == 2 + PACKET_MAX_PLAYER_NAME, attr_slot_size);
 BOLO_STATIC_ASSERT(sizeof(AttrTrackHeader)   == 12 + MAX_TANKS * sizeof(AttrSlotIdentity), attr_header_size);
 
@@ -243,6 +259,7 @@ static inline size_t attrTrackRecordSize(uint8_t type) {
     case ATTR_REC_LGM:     return sizeof(AttrLgmRecord);
     case ATTR_REC_ACTION:  return sizeof(AttrActionRecord);
     case ATTR_REC_PICKUP:  return sizeof(AttrPickupRecord);
+    case ATTR_REC_TEAM:    return sizeof(AttrTeamRecord);
     default:               return 0;
     }
 }

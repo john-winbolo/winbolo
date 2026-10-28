@@ -4056,6 +4056,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_alliance_reset.c
     tests/unit/test_alliance_leave.c
     tests/unit/test_alliance_request.c
+    tests/unit/test_team_sides.c
     tests/unit/test_round_start_owners.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_lobby_bot_config_memory.c
@@ -5642,6 +5643,7 @@ set(_unit_test_names
     round_stats_derive_equivalence
     highlights_cluster_wipe
     highlights_wipe_team_bonus
+    highlights_wipe_team_at_death
     highlights_objective_steal
     highlights_award_anchor
     highlights_selection
@@ -5649,6 +5651,8 @@ set(_unit_test_names
     highlights_empty
     territory_shift_basic
     territory_shift_bounded
+    round_stats_team_at
+    territory_shift_follows_team
     highlights_turning_point
     territory_recent_damage
     highlights_front_collapse
@@ -6041,6 +6045,36 @@ set(_unit_test_names
     alliance_request_refused_in_lobby
     alliance_request_cleared_at_round_start
     alliance_request_client_drops_departed_requester
+    team_sides_accept_merges_groups
+    team_sides_clear_moves_no_owner
+    team_sides_pill_fires_at_ex_ally
+    team_sides_base_refuels_ally_only
+    team_sides_allies_share_base_win
+    team_sides_client_takes_slot_in_game
+    team_sides_fold_at_return_to_lobby
+    team_sides_surrender_after_defection
+    team_sides_ping_after_leave
+    team_sides_track_identity_after_defection
+    team_sides_midgame_joiner_team
+    team_sides_set_team_keeps_player_alliance
+    team_sides_accept_moves_whole_team
+    team_sides_accept_from_no_team
+    team_sides_accept_same_side_says_nothing
+    team_sides_leave_takes_free_team
+    team_sides_leave_with_no_free_team
+    team_sides_free_team_rules
+    team_sides_team_chat_follows_sides
+    team_sides_panels_follow_team
+    team_sides_infection_puts_leaver_back
+    team_sides_rejoin_is_a_joiner
+    team_sides_joiner_slot_before_join
+    team_sides_lobby_joiner_keeps_rule
+    team_sides_lobby_drops_empty_teams
+    team_sides_soccer_puts_leaver_back
+    team_sides_round_log_teams
+    team_sides_held_seat_allied_in_round
+    team_sides_free_team_keeps_setup
+    team_sides_free_team_keeps_lobby_side
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
@@ -7002,6 +7036,8 @@ set(_unit_test_names
     survival_lobby_round
     survival_lobby_round_full
     survival_lobby_round_ds_order
+    survival_lobby_round_late_joiner
+    survival_lobby_round_leaver_back
     loopback_unfield_tank
     loopback_fine_tank_position
     loopback_shell_drawn_cull

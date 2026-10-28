@@ -1954,10 +1954,10 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
     if (!wasHeld && team > 0 && team < MAX_TANKS) {
         /* One accept, with the first member found. An accept merges the two
            sides' groups, so the new seat joins everyone that member is allied
-           with, and a team seated this way is one group by construction: each
-           bot was merged into it as it spawned. A team someone has since
-           split — a leave, a set_team — gives the seat one of its pieces,
-           which is still better than the nothing it used to get.
+           with. A team is always one alliance group (a leave moves the
+           leaver to a team of its own, and set_team writes the alliances
+           from the teams), so this one accept puts the seat on the whole
+           team.
 
            Quiet: putting a bot on its team is seating, not something a
            player did. The lobby does the same job with a rebake, which
@@ -3053,6 +3053,7 @@ static ScnOpResult scenarioOpRosterBotInit(ServerSim *sim,
  * while the lobby is still gathering. */
 static ScnOpResult scenarioOpRosterSetTeam(ServerSim *sim,
                                            const ScnOpRosterSetTeam *p) {
+    BYTE        oldTeam;
     ScnOpResult r = scenarioRequireRunning(sim);
     if (r != SCN_OP_OK) return r;
     if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
@@ -3062,9 +3063,11 @@ static ScnOpResult scenarioOpRosterSetTeam(ServerSim *sim,
         return SCN_OP_RANGE;
     }
 
+    oldTeam = sim->lobbyPlayers[p->slot].teamNumber;
     serverSimSetTeam(sim, p->slot, p->team);
     logAddEvent(log_TeamSet, p->slot, p->team, 0, 0, 0, NULL);
-    serverSimPublishLobbySlot(sim, p->slot);
+    /* The slot, and the panels the seat's new team gives it. */
+    serverSimSeatTeamChanged(sim, p->slot, oldTeam);
     return SCN_OP_OK;
 }
 
@@ -3765,6 +3768,67 @@ static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
                            destPlayer, p->bytes, p->len);
     serverSimPublishControl(sim, &evt);
     return SCN_OP_OK;
+}
+
+/* A row that holds a list a joiner is given. A row cleared to nothing is not
+   one: the join replay leaves it out. */
+static bool scenarioPanelRowHasList(const ScnPanelStore *row) {
+    return row != NULL && row->valid && row->len > 0;
+}
+
+void serverSimScenarioResendPanelsForSeat(ServerSim *sim, BYTE slot,
+                                          BYTE oldTeam) {
+    BYTE newTeam;
+    int  panel;
+    int  owner;
+
+    if (sim == NULL || slot >= MAX_TANKS) {
+        return;
+    }
+    newTeam = sim->lobbyPlayers[slot].teamNumber;
+    if (newTeam == oldTeam) {
+        return;
+    }
+    for (panel = 0; panel < SCN_PANEL_IDS; panel++) {
+        for (owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
+            const ScnPanelStore *oldRow  = NULL;
+            const ScnPanelStore *newRow  = NULL;
+            const ScnPanelStore *seatRow =
+                &sim->scenarioPanels[panel][MAX_TANKS + slot][owner];
+            const ScnPanelStore *allRow  = &sim->scenarioPanels[panel][0][owner];
+            const ScnPanelStore *pick;
+            ControlEvent         evt;
+
+            if (oldTeam > 0 && oldTeam < MAX_TANKS) {
+                oldRow = &sim->scenarioPanels[panel][oldTeam][owner];
+            }
+            if (newTeam > 0 && newTeam < MAX_TANKS) {
+                newRow = &sim->scenarioPanels[panel][newTeam][owner];
+            }
+            /* Only a panel one of the two teams has written can look
+               different to the seat now. A cleared row counts: the seat was
+               shown the clear. */
+            if (!(oldRow != NULL && oldRow->valid) &&
+                !(newRow != NULL && newRow->valid)) {
+                continue;
+            }
+            /* The order the join replay sends the rows in, the last one the
+               seat takes winning: everyone, then the team, then the seat. */
+            if (scenarioPanelRowHasList(seatRow)) {
+                pick = seatRow;
+            } else if (scenarioPanelRowHasList(newRow)) {
+                pick = newRow;
+            } else if (scenarioPanelRowHasList(allRow)) {
+                pick = allRow;
+            } else {
+                pick = NULL;
+            }
+            scenarioFillPanelEvent(&evt, SCN_PANEL_WIRE(panel, owner), 0, slot,
+                                   pick != NULL ? pick->bytes : NULL,
+                                   pick != NULL ? pick->len : 0);
+            serverSimPublishControl(sim, &evt);
+        }
+    }
 }
 
 /* Fill the event one score row publishes as. Shared by the arm and the join

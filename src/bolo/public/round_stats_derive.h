@@ -73,11 +73,41 @@ typedef struct {
 
 #define TERRITORY_SHIFTS_MAX 512
 
+/* One change of a seat's team, from an ATTR_REC_TEAM record. */
+typedef struct {
+    uint32_t tick;
+    uint8_t  slot;
+    uint8_t  team;
+} TeamChange;
+
+/* The most team changes a reader keeps from one round. */
+#define TEAM_CHANGES_MAX 1024
+
+/* Every ATTR_REC_TEAM record in the packed stream, in stream order, up to
+ * maxOut. Returns how many it wrote. A stream with no team records (v2)
+ * gives 0. Stops on an unknown tag or an overrun. Pure. */
+int roundStatsCollectTeamChanges(const uint8_t *records, size_t len,
+                                 TeamChange *out, int maxOut);
+
+/* Seat slot's team at tick: the team of the last change for that seat at or
+ * before tick. With none, the team of the seat's first change, which is
+ * where a seat that joined late is found before it joined. With no change
+ * for the seat at all, headerTeam. So a v2 log, which has no changes, reads
+ * the header teams as before. changes may be NULL when n is 0. Pure. */
+uint8_t roundStatsTeamAt(const TeamChange *changes, int n, uint8_t headerTeam,
+                         uint8_t slot, uint32_t tick);
+
 /* Pre-pass over the packed record stream that turns pill/base ownership changes
  * into per-team map control. Each owned object stamps a falloff disk of
  * influence into its team's grid; the controlling team of a cell is the team
  * with the most influence there. Every ownership change re-derives control near
  * the object and emits one TerritoryShift counting the cells that changed hands.
+ *
+ * An object counts for its owner's team at the moment of the record. A seat's
+ * team starts as the header's and follows the ATTR_REC_TEAM records (v3+):
+ * when a seat changes team, its pills and bases move to the new team's grid
+ * and control is re-derived around them, but no TerritoryShift is emitted,
+ * because no ground was fought for.
  * Writes up to maxOut entries in stream order, sets *outCount. Pure: heap and
  * locals only, no sim state. A stream with no ownership changes yields none.
  *
@@ -124,8 +154,11 @@ int roundStatsPickAwardSubsetExcluding(const RoundStatsSummary *summary,
                                        uint8_t *outIdx, int maxOut);
 
 /* Score a round's notable timeline into a ranked, non-overlapping top-N set of
- * highlight windows. Pure: no sim, no globals. `team[s]` is slot s's team (for
- * wipe weighting). `shifts` is the territory series from computeTerritoryShifts
+ * highlight windows. Pure: no sim, no globals. `team[s]` is slot s's team as
+ * the header holds it. `changes` are the round's team changes from
+ * roundStatsCollectTeamChanges (NULL/0 for none); with them, each seat's team
+ * is read at the tick of the event being judged (roundStatsTeamAt), for wipe
+ * weighting and for the seat that names a team's swing. `shifts` is the territory series from computeTerritoryShifts
  * and backs the turning-point window, which is always kept when the series is
  * non-empty; pass NULL/0 to score without it. Writes up to maxOut
  * (<= HIGHLIGHTS_MAX) windows to out[], sets *outCount. Deterministic for a
@@ -133,6 +166,7 @@ int roundStatsPickAwardSubsetExcluding(const RoundStatsSummary *summary,
 void computeHighlights(const NotableEvent *timeline, int timelineCount,
                        const PlayerRoundStats stats[MAX_TANKS],
                        const uint8_t team[MAX_TANKS],
+                       const TeamChange *changes, int changeCount,
                        const AwardResult *awards, int awardCount,
                        const TerritoryShift *shifts, int shiftCount,
                        HighlightWindow *out, int *outCount, int maxOut);

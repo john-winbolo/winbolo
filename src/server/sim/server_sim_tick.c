@@ -26,6 +26,7 @@
  *  calls into.
  *********************************************************/
 
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <SDL3/SDL.h>
@@ -1360,6 +1361,13 @@ void serverSimTick(ServerSim *sim) {
          * events (the change callback is only installed for a running tick),
          * so there is nothing to apply on that branch. */
         serverSimShadowTick(sim);
+#ifndef NDEBUG
+        /* The two records of sides agree at the end of every running tick
+           (#424): two connected seats are allied exactly when they are on
+           the same nonzero team. serverSimSidesAgree logs the first pair
+           that breaks it. Debug builds only. */
+        assert(serverSimSidesAgree(sim));
+#endif
     } else {
         /* No map event is recorded on this branch, but the fill drain below
            reads the count as a bound, so it starts each tick at zero here as
