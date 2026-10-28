@@ -83,10 +83,14 @@ static int      s_brainStubDestroys;
  * into, and this is the smallest one that will do: no libraries, nothing
  * loaded, so a tick is still the stub's no-op. */
 static bool     s_brainStubLua = false;
+/* Opt-in: a tick reports success, so a bot is not counted as crashing and
+ * kicked after 100 ticks. For a case that runs bots for many ticks. */
+static bool     s_brainStubTickOk = false;
 
 void ut_brain_stub_arm(bool succeed) {
   s_brainStubArmed = succeed;
   s_brainStubLua   = false;
+  s_brainStubTickOk = false;
   memset(s_brainStubInit, 0, sizeof(s_brainStubInit));
   memset(s_brainStubMade, 0, sizeof(s_brainStubMade));
   memset(s_brainStubTeam, 0, sizeof(s_brainStubTeam));
@@ -121,6 +125,10 @@ int ut_brain_stub_destroys(void) {
 
 void ut_brain_stub_lua(bool withState) {
   s_brainStubLua = withState;
+}
+
+void ut_brain_stub_tick_ok(bool ok) {
+  s_brainStubTickOk = ok;
 }
 
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
@@ -163,7 +171,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 
 bool luaBrainInstanceTick(LuaBrainInstance *inst) {
   (void)inst;
-  return false;
+  return s_brainStubTickOk;
 }
 
 /* Counted whether or not a brain was ever made for the instance.
@@ -424,12 +432,6 @@ void frontEndRedrawAll(ClientSim *cs) {
   (void)cs;
 }
 
-bool frontEndTutorial(BYTE pos) {
-  (void)pos;
-  return FALSE;
-}
-
-void frontEndTutorialReset(void) { }
 
 void windowRedrawAll(ClientSim *cs) {
   (void)cs;
@@ -591,6 +593,9 @@ char wbnStubServerKey[WINBOLONET_KEY_LEN] = "";
 
 void winboloNetGetServerKey(char *keyBuff) {
   if (keyBuff) {
+    /* Fill the whole field. logStart writes all 32 bytes of it into the
+     * header, so bytes left unset would differ from round to round. */
+    SDL_memset(keyBuff, 0, WINBOLONET_KEY_LEN);
     SDL_strlcpy(keyBuff, wbnStubServerKey, WINBOLONET_KEY_LEN);
   }
 }

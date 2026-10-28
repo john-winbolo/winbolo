@@ -34,7 +34,8 @@ that can be combined with it, except the Steamworks SDK, which is covered by
   - Everard Island, Bolo's original built-in map: `data/maps/Everard Island.map`
     and the copy compiled into the program from
     `src/bolo/public/everard_map.h`
-  - `data/maps/Inbuilt Tutorial.map`, the map the tutorial is played on
+  - `data/maps/tutorials/Classic Tutorial.map`, the map the old built-in
+    tutorial was played on and the Classic Tutorial scenario is played on
 - Apart from the built-in copy of Everard Island, they are separate data files
   that WinBolo loads at run time, not part of the program's code, so they can
   be distributed alongside the GPL program under their own terms.
@@ -43,7 +44,7 @@ that can be combined with it, except the Steamworks SDK, which is covered by
 
 ## Bolo community maps
 
-- Location: `data/maps/*.map`, except Everard Island and Inbuilt Tutorial
+- Location: `data/maps/*.map`, except Everard Island
   (above).
 - Made by members of the Bolo community and shared publicly on Bolo FTP map
   archives and Usenet newsgroups. Each map remains its author's work.
