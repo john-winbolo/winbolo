@@ -85,6 +85,80 @@ static void navOutlineClaimTab(ImGuiContext *g) {
     }
 }
 
+/* A forward Tab that ImGui cannot move.  ImGui's Tab walk counts from the
+   focused item, and it skips a disabled item, so with the focus on a
+   disabled item (the game finder's Reload button while a search runs, or
+   Join once a refresh clears the list) no item comes after it and Tab
+   does nothing.  With no focused item (a click on an empty part of a
+   window: the finder's border around its panel, or the empty part of a
+   list) Tab also does nothing: these contexts set
+   ConfigNavCursorVisibleAlways, so ImGui always tabs forward from the
+   focused item and never takes its "focus the first item" path.  Arrow
+   keys still work in the first case, as they move from the item's rect.
+
+   Fix: just after NewFrame, when ImGui has made a forward Tab request
+   from such a state, change it to ImGui's "focus the first item" request
+   (NavTabbingDir 0): the first tab stop of the window takes the focus.
+   When the focused window has no items (the finder's full-screen host
+   behind its panel), the top window that has items takes the focus
+   first.  A Shift+Tab already moves in these states (ImGui takes the last
+   item), so it is left alone.  It runs from a NewFramePost hook because
+   NavUpdate in NewFrame drops any nav request made before it, and the
+   Tab request is made inside NewFrame.
+
+   The state is read at the end of the previous frame (NavIdIsAlive is
+   cleared in NavUpdate), for that context only. */
+static const ImGuiContext *s_tabStuckCtx = nullptr;
+static bool                s_tabStuck    = false;
+
+static void navOutlineNoteTabState(ImGuiContext *g) {
+    s_tabStuckCtx = g;
+    s_tabStuck    = g->NavWindow && g->ActiveId == 0 &&
+                    (g->NavId == 0 || !g->NavIdIsAlive ||
+                     (g->NavIdItemFlags & ImGuiItemFlags_Disabled));
+}
+
+static bool navWindowHasItems(const ImGuiWindow *w) {
+    return (w->DC.NavLayersActiveMask & (1 << ImGuiNavLayer_Main)) != 0;
+}
+
+static void navOutlineFixStuckTab(ImGuiContext *ctx, ImGuiContextHook *) {
+    ImGuiContext &g = *ctx;
+    if (ctx != s_tabStuckCtx || !s_tabStuck) return;
+    if (!g.NavWindow || !g.NavMoveSubmitted) return;
+    if ((g.NavMoveFlags & ImGuiNavMoveFlags_IsTabbing) == 0 ||
+        (g.NavMoveFlags & ImGuiNavMoveFlags_FocusApi) != 0 ||
+        g.NavTabbingDir != +1)
+        return;
+    if (!navWindowHasItems(g.NavWindow)) {
+        ImGuiWindow *target = nullptr;
+        for (int i = g.WindowsFocusOrder.Size - 1; i >= 0 && !target; i--) {
+            ImGuiWindow *w = g.WindowsFocusOrder[i];
+            if (w != g.NavWindow && w->WasActive && !w->Hidden &&
+                !(w->Flags & (ImGuiWindowFlags_NoNavFocus |
+                              ImGuiWindowFlags_NoNavInputs)) &&
+                navWindowHasItems(w))
+                target = w;
+        }
+        if (!target) return;
+        ImGui::FocusWindow(target);
+    }
+    g.NavTabbingDir = 0;
+}
+
+/* Add the hook once per context. */
+static void navOutlineEnsureHook(ImGuiContext *g) {
+    for (const ImGuiContextHook &h : g->Hooks)
+        if (h.Owner == kNavOutlineTabOwner &&
+            h.Type == ImGuiContextHookType_NewFramePost)
+            return;
+    ImGuiContextHook hook;
+    hook.Type     = ImGuiContextHookType_NewFramePost;
+    hook.Owner    = kNavOutlineTabOwner;
+    hook.Callback = navOutlineFixStuckTab;
+    ImGui::AddContextHook(g, &hook);
+}
+
 static void navOutlineTrackInput(ImGuiContext *g) {
     const ImGuiIO &io = g->IO;
     /* Only a mouse button click hides the outline.  A mouse move or the
@@ -121,6 +195,8 @@ extern "C" void dialogDrawNavOutline(void) {
     s_navInsideSubRegionThisFrame = dialogNavIsInsideSubRegion();
 
     navOutlineTrackInput(g);
+    navOutlineEnsureHook(g);
+    navOutlineNoteTabState(g);
     if (!s_navOutlineByKey && !s_navOutlineByPadUser) return;
 
     if (g->NavId == 0) return;
