@@ -7,25 +7,21 @@
  *Name:          Tutorial Text
  *Filename:      tutorial_text.h
  *Purpose:
- *  Resolves a STR_TUTORIAL* id into a sequence of
+ *  Resolves a scenario's popup text into a sequence of
  *  renderable segments (TEXT runs, PNG glyphs, or
- *  procedural keycaps).  Two transformations:
- *    1. Three-way variant selection on the string id. When
- *       uiShouldUseControllerMode() is true and the id has a
- *       registered _CTRL sibling, use it (controller takes
- *       precedence — a touchscreen with a pad attached gets
- *       pad wording); else when uiModeIsTablet() is true and
- *       a _TOUCH sibling exists, use that; otherwise the
- *       desktop string.
- *    2. Expand {ACCEL}/{BRAKE}/{LEFT}/{RIGHT}/{FIRE}/{MINE}/
- *       {SCROLL_*}/{DISMISS}/{BUILD_*} tokens into one glyph
- *       segment each.  In controller mode, discrete buttons
- *       resolve through the binding-aware resolver (Steam
- *       Input origin first, then the live SDL binding) so the
- *       glyph follows the current remap; analog/stick tokens
- *       use the Path-B glyph_* art.  In keyboard mode each
- *       token becomes its scancode PNG (procedural keycap
- *       fallback).
+ *  procedural keycaps).  It expands the {ACCEL}/{BRAKE}/
+ *  {LEFT}/{RIGHT}/{FIRE}/{MINE}/{SCROLL_*}/{DISMISS}/
+ *  {BUILD_*}/{QUICK_*} tokens into one glyph segment each
+ *  (tutorial_tokens.h lists them).
+ *  The quick-build tokens show the build tool's button on
+ *  a controller and the words "the build buttons" on a
+ *  touch screen, which has neither.  In controller mode, discrete buttons
+ *  resolve through the binding-aware resolver (Steam
+ *  Input origin first, then the live SDL binding) so the
+ *  glyph follows the current remap; analog/stick tokens
+ *  use the Path-B glyph_* art.  In keyboard mode each
+ *  token becomes its scancode PNG (procedural keycap
+ *  fallback).
  *********************************************************/
 
 #ifndef TUTORIAL_TEXT_H
@@ -50,7 +46,7 @@ typedef struct {
      For KEYCAP: the scancode name (or token text on miss).
      For GLYPH_PNG: NULL.  Pointer is stable for the lifetime of
      the dialog — the producer parks runs in a static buffer
-     overwritten on the next tutorialResolveSegments() call. */
+     overwritten on the next tutorialResolveText() call. */
   const char  *text;
   /* For GLYPH_PNG: the loaded texture, owned by glyphs.c.
      For TEXT and KEYCAP: NULL. */
@@ -62,12 +58,32 @@ typedef struct {
 
 #define TUTORIAL_SEG_MAX 64
 
-/* Fills `out` with up to `max` segments and returns the segment
- * count.  The renderer must consume the segments synchronously
- * before the next tutorialResolveSegments() call (the per-call
- * buffer holding TEXT/keycap strings is static).  Main thread only.
- */
-int tutorialResolveSegments(uint16_t mid, TutorialSeg *out, int max);
+/* What the player plays with, as the tutorial words it. */
+typedef enum {
+  TUTORIAL_INPUT_KEYBOARD = 0,   /* keyboard and mouse */
+  TUTORIAL_INPUT_TOUCH,          /* the on-screen touch layout */
+  TUTORIAL_INPUT_CONTROLLER      /* a gamepad */
+} TutorialInput;
+
+/* The input the player uses now. On a phone or tablet the touch layout
+ * comes first, as its controls are on the screen whatever SDL counts as a
+ * gamepad; elsewhere a controller comes first, then a touch screen. The
+ * key tokens and what a single-player server is told for game.input both
+ * follow it. Main thread only. */
+TutorialInput tutorialInputNow(void);
+
+/* Fills `out` with up to `max` segments of a text the caller holds, such
+ * as a scenario's popup, and returns the segment count.  The renderer must
+ * consume the segments synchronously before the next call (the per-call
+ * buffer holding TEXT/keycap strings is static).  A TEXT segment may point
+ * into src itself, so src must outlive the segments.  Main thread only. */
+int tutorialResolveText(const char *src, TutorialSeg *out, int max);
+
+/* The same tokens written as words, for a line drawn as plain text (a
+ * scenario's status line and announcement): the bound key's name on a
+ * keyboard, the touch wording for a quick-build or gunsight key on a touch
+ * screen, and a word for the control on a controller. out always ends with a NUL. */
+void tutorialExpandTextPlain(const char *src, char *out, size_t cap);
 
 #ifdef __cplusplus
 }

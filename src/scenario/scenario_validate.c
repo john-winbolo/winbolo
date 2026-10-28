@@ -56,6 +56,8 @@
 #include "server_sim.h"          /* the entity counts, MAX_TANKS,
                                   * MAP_ARRAY_SIZE */
 #include "server_sim_scenario.h" /* serverSimCheckScenarioRules, SCN_PATH_MAX */
+#include "scenario_defs.h"       /* SCN_LOBBY_START_DELAY_MAX */
+#include "wire_limits.h"         /* LOBBY_TIME_MINUTES_MIN / _MAX */
 
 #include "scenario_host.h"
 #include "scenario_manifest.h"
@@ -345,6 +347,57 @@ static void scnCheckLobby(const ServerSim *sim, const ScenarioManifest *m,
                     "max_players is %u; 0 leaves the server's own cap and a "
                     "stated one runs 1 to %d",
                     (unsigned)lob->maxPlayers, MAX_TANKS);
+    }
+    if (lob->fixTimeLimit && lob->timeLimit != 0 &&
+        (lob->timeLimit < LOBBY_TIME_MINUTES_MIN ||
+         lob->timeLimit > LOBBY_TIME_MINUTES_MAX)) {
+        scnIssueAdd(out, "lobby.time_limit",
+                    "time_limit is %d; 0 is no time limit and a stated one "
+                    "runs 1 to %d minutes; the host's own setting stays",
+                    (int)lob->timeLimit, LOBBY_TIME_MINUTES_MAX);
+    }
+    if (lob->fixStartDelay &&
+        (lob->startDelay < 0 || lob->startDelay > SCN_LOBBY_START_DELAY_MAX)) {
+        scnIssueAdd(out, "lobby.start_delay",
+                    "start_delay is %d; it runs 0 to %d seconds; the host's "
+                    "own setting stays",
+                    (int)lob->startDelay, SCN_LOBBY_START_DELAY_MAX);
+    }
+    {
+        static const char *const viewKeys[3] = { "lobby.pill_view",
+                                                 "lobby.base_view",
+                                                 "lobby.ally_view" };
+        for (i = 0; i < 3; i++) {
+            if (lob->fixView[i] && lob->view[i] == SCN_LOBBY_WORD_BAD) {
+                scnIssueAdd(out, viewKeys[i],
+                            "%s is not one of \"always\", \"key\", \"decay\" "
+                            "or \"off\"; the host's own setting stays",
+                            viewKeys[i] + strlen("lobby."));
+            }
+        }
+    }
+    if (lob->fixOverviewWindow &&
+        lob->overviewWindow == SCN_LOBBY_WORD_BAD) {
+        scnIssueAdd(out, "lobby.overview_window",
+                    "overview_window is not one of \"expanded\", \"classic\" "
+                    "or \"none\"; the host's own setting stays");
+    }
+    /* no_bots takes every bot off the lobby, so a file that fields bots of
+       its own has said two things that cannot both happen. The bots win:
+       the lobby keeps them allowed. */
+    if (lob->noBots) {
+        bool fieldsBots = m->needsBots;
+        for (i = 0; i < lob->numTeams && !fieldsBots; i++) {
+            if (lob->teams[i].bots > 0) {
+                fieldsBots = true;
+            }
+        }
+        if (fieldsBots) {
+            scnIssueAdd(out, "lobby.no_bots",
+                        "no_bots is true, but the scenario fields bots of its "
+                        "own; its bots stay allowed and no_bots does "
+                        "nothing");
+        }
     }
 
     for (i = 0; i < lob->numTeams; i++) {
