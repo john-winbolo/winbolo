@@ -31,6 +31,7 @@
 #include "dns.h"
 #include "positions.h"
 #include "tiles.h"
+#include "gui/status_grid.h"   /* sdl3StatusItemPos: the game's grid sum */
 #include "logviewer.h"
 #include "lv_host.h"
 #include "lv_stats.h"
@@ -141,27 +142,11 @@ void lv_windowCollectAllEvents(void) {
 /* imgui_hud.cpp asks the game's status-panel code (sdl3draw_status.c) where
  * slot n (1 to 16) of a status grid sits, in the grid's own points. That
  * file needs the game's name-label and voice code, which this target does
- * not build, so the same sum is here: the three grids (type 0 bases, 1
- * pillboxes, 2 tanks) share one layout of three rows, six slots, two, two
- * and six, with the gap in the middle row for the centre icon. */
+ * not build, so this target gives the function itself, with the same sum
+ * (status_grid.h) the game's renderer uses. */
 void sdl3StatusItemPos(int n, int type, int *outX, int *outY) {
-    int col, row;
     (void)type;
-    if (n <= 6) {
-        col = n - 1;
-        row = 0;
-    } else if (n <= 8) {
-        col = n - 7;
-        row = 1;
-    } else if (n <= 10) {
-        col = (n - 9) + 4;
-        row = 1;
-    } else {
-        col = n - 11;
-        row = 2;
-    }
-    if (outX != NULL) *outX = STATUS_BASE_1_X + col * (STATUS_ITEM_GAP_X + STATUS_ITEM_SIZE_X);
-    if (outY != NULL) *outY = STATUS_BASE_1_Y + row * (STATUS_ITEM_GAP_Y + STATUS_ITEM_SIZE_Y);
+    statusGridItemPos(n, outX, outY);
 }
 
 /* --------------------------------------------------------------------------
@@ -610,13 +595,19 @@ static void main_loop_iteration(void) {
     /* Keep the saved layout no more than a moment behind the screen, as the
      * desktop viewer's lvHostAutosave does. The page has no window place of
      * its own to save: the browser window is the user's. */
-    if (lv_imgui_dock_autosave_due()) {
-        mainSavePreferences();
-    }
     /* What was set this frame by code that does not save for itself (the
      * Events filter, the panels) goes to localStorage here. Only values that
-     * changed are written, so a frame that changed nothing writes nothing. */
-    lv_platform_config_save();
+     * changed are written, so a frame that changed nothing writes nothing.
+     * After a write the browser refused, both wait two seconds; a change to
+     * the layout in that time is reported when the wait ends. The saves when
+     * the page is closed or hidden do not wait. */
+    if (!lv_platform_config_retry_waiting()) {
+        if (lv_imgui_dock_autosave_due()) {
+            mainSavePreferences();   /* ends with lv_platform_config_save */
+        } else {
+            lv_platform_config_save();
+        }
+    }
 }
 
 /* --------------------------------------------------------------------------
