@@ -112,7 +112,9 @@ int lobbyStartListRender(ClientSim *cs, int myPlayerNum, int startCount,
          * a row with several holders reached past the list and over the map
          * beside it. The text is cut at the list edge instead, and hovering
          * a cut row shows the whole of it. */
-        const float rowW = ImGui::GetContentRegionAvail().x;
+        /* A width of 0 means "label width" to Selectable, so keep at least 1. */
+        float rowW = ImGui::GetContentRegionAvail().x;
+        if (rowW < 1.0f) rowW = 1.0f;
         const bool  cut  = ImGui::CalcTextSize(label, NULL, true).x > rowW;
         bool activated  = ImGui::Selectable(label, false, 0, ImVec2(rowW, 0.0f));
         bool actionable = (free || (lobbySharedStartsEnabled() && !iHold)) &&
