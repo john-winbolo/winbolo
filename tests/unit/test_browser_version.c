@@ -155,11 +155,11 @@ int run_version_protocol_bytes(void) {
                   "WINBOLO_DISPLAY_VERSION \"%s\" does not start with \"%s\"",
                   WINBOLO_DISPLAY_VERSION, WINBOLO_VERSION);
 
-    /* This release: 2.1.0 sends 2, 1, 0, the same bytes 2.1 builds send, so
-     * the two connect. Update this when the version changes. */
-    UT_ASSERT_MSG(BOLO_VERSION_MAJOR == 2 && BOLO_VERSION_MINOR == 1 &&
+    /* This release: 2.2.0 sends 2, 2, 0. Update this when the version
+     * changes. */
+    UT_ASSERT_MSG(BOLO_VERSION_MAJOR == 2 && BOLO_VERSION_MINOR == 2 &&
                   BOLO_VERSION_REVISION == 0,
-                  "protocol bytes %u,%u,%u, want 2,1,0",
+                  "protocol bytes %u,%u,%u, want 2,2,0",
                   (unsigned)BOLO_VERSION_MAJOR, (unsigned)BOLO_VERSION_MINOR,
                   (unsigned)BOLO_VERSION_REVISION);
     return 0;
