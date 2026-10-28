@@ -101,6 +101,16 @@ static void open_wbn_browser_modal(void) {
     }
 }
 
+/* The web viewer has no Comments panel: it reaches WinBolo.net through
+   http.c, which the browser build does not have. Its Windows menu item and
+   its key are left out there, so nothing turns on a panel that never draws
+   and then has a slot kept for it in a sidebar. */
+#ifdef __EMSCRIPTEN__
+#define LV_MENU_HAS_COMMENTS 0
+#else
+#define LV_MENU_HAS_COMMENTS 1
+#endif
+
 /* Window visibility state */
 bool lv_g_show_controls_window = true;
 bool lv_g_show_game_info_window = true;
@@ -216,6 +226,9 @@ static bool pref_unset(const char *key) {
 
 void lv_imgui_main_menu_standalone_defaults(void) {
     if (pref_unset("Window.Comments.Visible")) lv_g_show_comments_window = true;
+#if !LV_MENU_HAS_COMMENTS
+    lv_g_show_comments_window = false;
+#endif
     if (pref_unset("Window.ItemInformation.Visible")) lv_g_show_item_info_window = false;
     if (pref_unset("Tank Bars")) lv_drawSetTankBars(1);
     if (pref_unset("Tank Builder Status")) lv_drawSetBuilderStatus(1);
@@ -457,7 +470,7 @@ static void handle_keyboard_shortcuts(int *clicked) {
         lv_g_show_item_info_window = !lv_g_show_item_info_window;
         *clicked = 1;
     }
-    if (!live && ImGui::IsKeyPressed(ImGuiKey_5, false)) {
+    if (!live && LV_MENU_HAS_COMMENTS && ImGui::IsKeyPressed(ImGuiKey_5, false)) {
         lv_g_show_comments_window = !lv_g_show_comments_window;
         *clicked = 1;
     }
@@ -774,7 +787,7 @@ int lv_imgui_main_menu_bar(void) {
                 lv_g_show_item_info_window = !lv_g_show_item_info_window;
                 clicked = 1;
             }
-            if (!live &&
+            if (!live && LV_MENU_HAS_COMMENTS &&
                 ImGui::MenuItem(langGetText(STR_LV_WIN_COMMENTS), "Ctrl+5", lv_g_show_comments_window)) {
                 lv_g_show_comments_window = !lv_g_show_comments_window;
                 clicked = 1;

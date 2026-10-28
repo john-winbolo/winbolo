@@ -2181,6 +2181,9 @@ endif()
 set(LOGVIEWER_LIB_SOURCES
     src/logviewer/logviewer.c
     src/logviewer/lv_embed.c
+    # The map beside the sidebars and the first view of a log, which
+    # logviewer.c shares with the web viewer (src/logviewer/wasm).
+    src/logviewer/lv_host_dock.c
     # Alt+Enter in the viewer while it has the game's window: asks the game
     # for full screen. Client only; the standalone's body is in main.c.
     src/logviewer/lv_fullscreen_game.c
