@@ -50,6 +50,8 @@ extern "C" {
     void lv_screenTankCentred(int enabled);
     int lv_dnsSetEnabled(int enabled);
     void lv_soundSetVolume(int pct);
+    void lv_clientMutexWaitFor(void);
+    void lv_clientMutexRelease(void);
 }
 
 static LogViewerState *s_lv = nullptr;
@@ -202,6 +204,8 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
+    /* The lag display (lv_lag.h) is read in lvHostSetupCore, which every
+       host runs before this. It has no menu item. */
 }
 
 /* True when the preference was never saved. */
@@ -247,6 +251,8 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Pillbox Numbers",
                                   lv_drawGetPillNumbers() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", LV_LAG_PREF_KEY,
+                                  lv_screenGetLagFeature() ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
@@ -702,6 +708,37 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_PILL_NUMBERS_TIP));
+            }
+            if (lv_screenGetLagFeature()) {
+                /* The lag view for the selected tank's player: ticked while
+                 * it is that player's. A click turns it on for the selected
+                 * player, or off when it is on for that player or no tank is
+                 * selected. Only a recording with lag records has it, and
+                 * the item is there only while the lag display is on. As
+                 * with the Tank panel's check box, it can be turned on only
+                 * when the selected player has a record at the playhead; a
+                 * view that is on can always be turned off. */
+                int sel, viewSlot;
+                bool recorded, hasRecord;
+                lv_clientMutexWaitFor();
+                sel = lv_screenSelectedTank();
+                viewSlot = lv_screenLagViewSlot();
+                recorded = lv_screenLagRecorded();
+                hasRecord = (sel >= 0) && lv_screenPlayerLagNow(sel, NULL, NULL);
+                lv_clientMutexRelease();
+                const bool on = (viewSlot >= 0 && viewSlot == sel);
+                if (ImGui::MenuItem(langGetText(STR_LV_LAG_MENU), NULL, on,
+                                    s_lv->isLoaded != 0 && recorded &&
+                                        (hasRecord || viewSlot >= 0))) {
+                    lv_clientMutexWaitFor();
+                    lv_screenLagViewSet(on ? -1 : sel);
+                    lv_clientMutexRelease();
+                    lv_windowNeedRedraw();
+                    clicked = 1;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("%s", langGetText(STR_LV_LAG_MENU_TIP));
+                }
             }
 #ifndef __EMSCRIPTEN__
             /* The browser build's Rewind and Fast Forward jump: it has no

@@ -402,22 +402,14 @@ void serverSimSetViewPlayer(ServerSim *sim, BYTE playerNum) {
     sim->sim.viewPlayer = playerNum;
 }
 
-bool serverSimIsTutorial(const ServerSim *sim) {
-    return sim->sim.isTutorial;
-}
+bool serverSimTakeTutorialDone(ServerSim *sim, BYTE seat) {
+    uint16_t bit;
 
-void serverSimSetTutorial(ServerSim *sim, bool v) {
-    sim->sim.isTutorial = v;
-}
-
-void serverSimSetTutorialStartIdx(ServerSim *sim, BYTE idx) {
-    sim->sim.tutorialStartIdx = idx;
-}
-
-bool serverSimTakeTutorialRespawn1(ServerSim *sim) {
-    bool v = sim->sim.tutorialRespawn1Pending;
-    sim->sim.tutorialRespawn1Pending = FALSE;
-    return v;
+    if (sim == NULL || seat >= MAX_TANKS) return false;
+    bit = (uint16_t)(1u << seat);
+    if ((sim->tutorialDoneSeats & bit) == 0) return false;
+    sim->tutorialDoneSeats &= (uint16_t)~bit;
+    return true;
 }
 
 void serverSimSetPaused(ServerSim *sim, bool paused) {
@@ -428,6 +420,28 @@ void serverSimSetPaused(ServerSim *sim, bool paused) {
 
 BYTE serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y) {
     return mapGetPos(&((ServerSim *)sim)->sim.mp, x, y);
+}
+
+/* Shots a wall square still takes before it is rubble, or 0 for a square
+ * that is not a wall. A wall the shells have not touched has no entry in
+ * the building list: its first hit makes the entry with building_life left,
+ * so it takes one shot more than that. A damaged wall's entry holds what is
+ * left, and so does an intact one a builder repaired after it was hit, which
+ * keeps its old entry (buildingAddItem in building.c). */
+int serverSimWallShotsLeft(const ServerSim *sim, BYTE x, BYTE y) {
+    const GameSim *gs = &sim->sim;
+    BYTE           terrain = mapGetPos(&((ServerSim *)sim)->sim.mp, x, y);
+    building       b;
+
+    if (terrain != BUILDING && terrain != HALFBUILDING) {
+        return 0;
+    }
+    for (b = gs->blds; b != NULL; b = b->next) {
+        if (b->x == x && b->y == y) {
+            return (int)b->life;
+        }
+    }
+    return (int)gs->rules.building_life + 1;
 }
 
 bool serverSimMapIsMine(const ServerSim *sim, BYTE x, BYTE y) {
@@ -653,6 +667,7 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
     out->alive   = (tankGetDeathWait(t) == 0);
     tankGetStats(t, &out->shells, &out->mines, &out->armour, &out->trees);
     out->pills   = tankGetNumCarriedPills(t);
+    out->sight   = tankGetGunsightLength(t);
     tankGetModifiers(*t, &out->mods);
     tankGetKillsDeaths(t, &out->kills, &out->deaths);
     return true;
@@ -1020,6 +1035,48 @@ void serverSimSetServerDescription(ServerSim *sim, const char *desc) {
 
 const char *serverSimGetServerDescription(const ServerSim *sim) {
     return sim ? sim->serverDescription : "";
+}
+
+void serverSimSetPlayerLang(ServerSim *sim, BYTE seat, const char *code) {
+    char   lower[SERVER_PLAYER_LANG_LEN];
+    size_t i;
+
+    if (sim == NULL || seat >= MAX_TANKS) return;
+    sim->playerLang[seat][0] = '\0';
+    if (code == NULL) return;
+    for (i = 0; code[i] != '\0'; i++) {
+        char ch = code[i];
+        if (i + 1 >= sizeof(lower)) return;   /* too long: left cleared */
+        if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
+              ch == '-')) {
+            return;
+        }
+        lower[i] = ch;
+    }
+    lower[i] = '\0';
+    memcpy(sim->playerLang[seat], lower, i + 1);
+}
+
+const char *serverSimGetPlayerLang(const ServerSim *sim, BYTE seat) {
+    if (sim == NULL || seat >= MAX_TANKS || sim->playerLang[seat][0] == '\0') {
+        return "en";
+    }
+    return sim->playerLang[seat];
+}
+
+void serverSimSetPlayerInput(ServerSim *sim, BYTE seat, BYTE input) {
+    if (sim == NULL || seat >= MAX_TANKS) return;
+    if (input != SERVER_PLAYER_INPUT_TOUCH &&
+        input != SERVER_PLAYER_INPUT_CONTROLLER) {
+        input = SERVER_PLAYER_INPUT_KEYBOARD;
+    }
+    sim->playerInput[seat] = input;
+}
+
+BYTE serverSimGetPlayerInput(const ServerSim *sim, BYTE seat) {
+    if (sim == NULL || seat >= MAX_TANKS) return SERVER_PLAYER_INPUT_KEYBOARD;
+    return sim->playerInput[seat];
 }
 
 bool serverSimGetScenarioVoiceEveryone(const ServerSim *sim) {

@@ -390,7 +390,11 @@ langid clientSimGetConnectErrorLangId(const ClientSim *cs) {
 }
 
 BYTE clientSimGetServerPlayerNum(const ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
+  if (cs == NULL || !cs->hasTransport) return 0;
+  /* The in-process transport learns its slot once, at the join
+     (clientSimConnectLocal), and it need not be 0: a scenario can seat its
+     bots ahead of the player. */
+  if (!cs->isUdpTransport) return cs->myPlayerNum;
   return transportUdpClientGetPlayerNum((Transport *)&cs->transport);
 }
 

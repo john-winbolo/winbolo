@@ -938,13 +938,19 @@ static int siCheckShipped(const char *dir, const char *pattern) {
 int run_scenario_identity_shipped(void) {
     int mods;
     int maps;
+    int tutorials;
 
     mods = siCheckShipped(WB_REPO_ROOT_DIR "/data/mods", "*.lua");
     UT_ASSERT(mods >= 0);
     maps = siCheckShipped(WB_REPO_ROOT_DIR "/data/maps", "*.scenario.lua");
     UT_ASSERT(maps >= 0);
-    fprintf(stderr, "  shipped scripts checked: %d mods, %d map scripts\n",
-            mods, maps);
-    UT_ASSERT_MSG(mods > 0 && maps > 0, "no shipped scripts were found");
+    /* The tutorials have a folder of their own under data/maps. */
+    tutorials = siCheckShipped(WB_REPO_ROOT_DIR "/data/maps/tutorials",
+                               "*.scenario.lua");
+    UT_ASSERT(tutorials >= 0);
+    fprintf(stderr, "  shipped scripts checked: %d mods, %d map scripts, "
+            "%d tutorial scripts\n", mods, maps, tutorials);
+    UT_ASSERT_MSG(mods > 0 && maps > 0 && tutorials > 0,
+                  "no shipped scripts were found");
     return 0;
 }
