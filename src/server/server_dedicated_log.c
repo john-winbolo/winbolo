@@ -761,6 +761,10 @@ void serverDedicatedLogUninstall(void) {
      * after an install would disarm a live writer — so here is the only place
      * it comes off. */
     logSetPreTickHook(NULL);
+    /* The stop hook comes off here for the same reason: install set it (through
+     * serverLifecycleSetRoundLogHooks), logCreate leaves it alone, and the
+     * round-end record it writes needs the sim this module is letting go of. */
+    logSetStopHook(NULL);
     s_logSim = NULL;
     s_completedPath[0] = '\0';
     s_lastRoundFile[0] = '\0';

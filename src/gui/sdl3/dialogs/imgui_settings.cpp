@@ -495,14 +495,13 @@ extern "C" void imguiSettingsRenderLanguagePicker(LangFileEntry *entries,
  * gamepad scroll) are drawn inline by that shell.
  * ------------------------------------------------------- */
 extern "C" void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx) {
-#if !defined(__ANDROID__)  /* iOS: the iPad's desktop layout, by the test below */
+    /* On mobile only the tablets' desktop layout, by the test below. */
     if (!uiModeIsTablet()) {
         if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(dialogFontW(120.0f), 0))) {
             ctx->wantKeySetup = true;
         }
         imguiHandOnHover();
     }
-#endif
 }
 
 /* Source tag shown beside a skin's name in the picker. */
@@ -820,13 +819,13 @@ extern "C" void imguiSettingsVoiceMicTest(float barWidth) {
  * ------------------------------------------------------- */
 /* The full screen map's panel settings: how see-through the newswire, the
  * builder tools and the status panel are drawn, and the newswire's auto-hide.
- * The desktop's full screen map and the iOS touch layout's full screen read
+ * The desktop's full screen map and the touch layout's full screen read
  * the same four settings; touchLayout picks the transparency tooltips, since
  * the builder tools and the status panel sit in different places there.
  * Each slider is applied as it moves so the panel changes under it, and
- * written to the preferences once it is let go. The web and Android show
- * none of them. */
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
+ * written to the preferences once it is let go. The web shows none of
+ * them. */
+#if !defined(__EMSCRIPTEN__)
 static void renderFullScreenPanelSettings(bool touchLayout) {
     int trans = sdl3DrawGetNewswireTransparency();
     ImGui::SetNextItemWidth(dialogFontW(200.0f));
@@ -896,7 +895,6 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         }
     }
 
-#ifndef __ANDROID__
     /* The web canvas follows the page, so it has no window size to pick. */
 #ifndef __EMSCRIPTEN__
     /* ---- Window size — desktop, in-game only ---- */
@@ -909,9 +907,10 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             langGetText(STR_MENU_CUSTOM_RESIZABLE),
         };
         BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_TRIPLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
-#if defined(__IPHONEOS__)
-        /* An iOS window cannot be resized, so Custom (resizable) is left off
-           the iPad's desktop layout; it would only pick the zoom that fits. */
+#if BOLO_MOBILE
+        /* A mobile window cannot be resized, so Custom (resizable) is left
+           off the tablets' desktop layout; it would only pick the zoom that
+           fits. */
         const int zoomCount = 4;
 #else
         const int zoomCount = 5;
@@ -959,15 +958,13 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             ImGui::EndCombo();
         }
     }
-#endif
 
-#if !defined(__ANDROID__)
-    /* On iOS only the iPad's desktop layout has the classic screen these
-       settings shape; the touch layout leaves them out, as before. */
+    /* On mobile only the tablets' desktop layout has the classic screen
+       these settings shape; the touch layout leaves them out, as before. */
     if (!BOLO_MOBILE || !uiModeIsTablet()) {
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_FULLSCREEN));
-#if defined(__IPHONEOS__)
-    /* ---- Full screen, the iPad's ---- An iOS window always fills the
+#if BOLO_MOBILE
+    /* ---- Full screen, the tablets' ---- A mobile window always fills the
        screen, so the choice is the full screen map or the classic screen, as
        the desktop's is in a game. The tick reads the preference and is applied
        after the frame, like the desktop's: in a game it brings the map up or
@@ -980,7 +977,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         imguiHelpTooltip(langGetText(STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP));
     }
 #endif
-#if !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)  /* an iOS window is always full screen */
+#if !defined(__EMSCRIPTEN__) && !BOLO_MOBILE  /* a mobile window is always full screen */
     /* ---- Full screen ---- */
     if (!uiModeIsTablet() && !uiModeIsSteamDeck() && !uiShouldUseControllerMode()) {
         /* Read the window itself rather than the preference, so the tick still
@@ -1044,9 +1041,8 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         ImGui::Unindent();
     }
     }
-#endif
 
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
     /* ---- Full screen, the touch layout's ---- The map fills the screen with
        the controls over it (sdl3DrawIsTabletMapFullScreen). The tick reads
        the preference, since an iOS window is full screen whatever it says,
@@ -1273,6 +1269,10 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
         }
 
+#if !BOLO_MOBILE
+        /* A phone has no file manager to open the folder in: skins reach it
+           by other means, so the button is left off, as the folder pickers
+           are. */
         if (ImGui::Button(langGetText(STR_DLGSKIN_OPENFOLDER))) {
             /* SDL_GetPrefPath already ends in a separator. */
             const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
@@ -1293,6 +1293,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
         }
         imguiHandOnHover();
+#endif
 
         /* Runtime check, not an #ifdef: the stub build answers false, so the
            button simply isn't there when Steam isn't running. Browsing the
@@ -1599,9 +1600,9 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         bool se = (bool)soundEffects;
         if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &se)) windowSoundEffects_toggle();
     }
-    /* Android and the web client do not define positionalSound; iOS and the
-       desktop do. */
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+    /* The web client does not define positionalSound; the desktop, iOS and
+       Android do. */
+#if !defined(__EMSCRIPTEN__)
     {
         bool ps = (bool)positionalSound;
         if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_CB), &ps)) windowPositionalSound_toggle();
@@ -1699,7 +1700,7 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
     imguiSettingsVoiceModeCombo(dialogFontW(140.0f));
     /* The binding itself is set in Key Setup; showing it here is so the
        player can see which key push to talk is on without leaving. */
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     /* On a touch screen the talk button on the game screen is the key. */
     if (voiceGetMode() == VOICE_MODE_PTT && uiModeIsTablet()) {
         ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_VOICE_PTT_TOUCH));
@@ -1772,16 +1773,14 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
         }
     }
 
-#if !defined(__ANDROID__)
-    /* ---- Smooth scrolling ---- the arrow keys of a keyboard; on iOS only
-       the iPad's desktop layout has one. */
+    /* ---- Smooth scrolling ---- the arrow keys of a keyboard; on mobile only
+       the tablets' desktop layout has one. */
     if (!BOLO_MOBILE || !uiModeIsTablet()) {
         bool ss = (bool)smoothScrollingEnabled;
         if (ImGui::Checkbox(langGetText(STR_MENU_SMOOTH_SCROLLING), &ss)) {
             windowSmoothScrolling_toggle();
         }
     }
-#endif
 
     /* ---- Show gunsight ---- */
     {
@@ -1845,7 +1844,7 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
  * via the write-through setter.  The editable InputText remains the primary
  * input and the fallback on platforms without a native folder dialog.
  * iOS shows none of the folder fields, so it has none of this glue. */
-#if !defined(__IPHONEOS__)
+#if !BOLO_MOBILE
 static char s_hostingPickedDir[FILENAME_MAX];
 static bool s_hostingDirPicked = false;
 
@@ -2101,7 +2100,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                 /* Not on iOS: it has no folder picker, and its folders are
                    always the defaults in the app's own storage
                    (gamefront.c). */
-#if !defined(__IPHONEOS__)
+#if !BOLO_MOBILE
                 static char scriptDirBuf[FILENAME_MAX];
                 static bool scriptDirEditing = false;
                 if (s_hostingScriptDirPicked) {
@@ -2176,7 +2175,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
          * Browse filling it in. Not on iOS: it has no folder picker, and its
          * folders are always the defaults in the app's own storage
          * (gamefront.c). */
-#if !defined(__IPHONEOS__)
+#if !BOLO_MOBILE
         static char scnDirBuf[FILENAME_MAX];
         static bool scnDirEditing = false;
         if (s_hostingScnDirPicked) {
@@ -2238,7 +2237,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
              * it via SDL_ShowOpenFolderDialog. Not on iOS: it has no folder
              * picker, and its folders are always the defaults in the app's
              * own storage (gamefront.c). */
-#if !defined(__IPHONEOS__)
+#if !BOLO_MOBILE
             static char dirBuf[FILENAME_MAX];
             static bool dirEditing = false;
             /* Apply a folder chosen on a previous frame. */
@@ -2299,7 +2298,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
              * it via SDL_ShowOpenFolderDialog. Not on iOS: it has no folder
              * picker, and its folders are always the defaults in the app's
              * own storage (gamefront.c). */
-#if !defined(__IPHONEOS__)
+#if !BOLO_MOBILE
             static char logDirBuf[FILENAME_MAX];
             static bool logDirEditing = false;
             /* Apply a folder chosen on a previous frame. */
@@ -2722,9 +2721,8 @@ static void settingsShowLoop(bool inEditor) {
         present[STAB_CONTROLS] = false;
 #endif
         /* UPnP, NAT traversal and the news popup mean nothing in a browser.
-           iOS shows the tab for the news popup alone; Android does not
-           compile imgui_news.cpp. */
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+           iOS and Android show the tab for the news popup alone. */
+#if !defined(__EMSCRIPTEN__)
         present[STAB_LAST]     = true;
 #else
         present[STAB_LAST]     = false;
@@ -2842,7 +2840,7 @@ static void settingsShowLoop(bool inEditor) {
                 ImGui::EndTabItem();
             }
 #endif
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)  /* see present[STAB_LAST] */
+#if !defined(__EMSCRIPTEN__)  /* see present[STAB_LAST] */
             if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_NETWORK), nullptr,
                     s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_LAST;

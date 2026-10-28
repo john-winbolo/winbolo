@@ -1098,6 +1098,22 @@ void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
                     sizeof(s_chooserTabs.server.selectedName));
         s_chooserTabs.server.randomMapSelected = false;
     }
+    /* The server list now shows the lobby's own map, which the server
+       already has. */
+    s_chooserTabs.server.selectionUnsent = false;
+
+    /* The other tabs keep what was picked the last time the chooser was
+       open, which can be in an earlier game whose lobby has gone: a new
+       lobby is back on its own map (Everard Island in single player) while
+       the Local Maps tab still shows the map picked then. That highlight
+       has not been sent to this lobby, so Use This Map sends it before it
+       commits (lobbyChooseMapSendUnsentSelection); it used to commit
+       nothing, and the round started on the lobby's own map. A highlight
+       that is the lobby's map already needs nothing sent. */
+    if (s_chooserTabs.upload.selectedName[0] != '\0') {
+        s_chooserTabs.upload.selectionUnsent =
+            !(cur && SDL_strcasecmp(s_chooserTabs.upload.selectedName, cur) == 0);
+    }
 
     s_chooser.open = true;
     s_chooser.previewPending   = false;
@@ -1207,6 +1223,23 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
     }
 
     ImGui::End();
+}
+
+/* Opening a folder shows its first map without sending it
+   (selectionUnsent): send it now, so the map Use This Map commits is the
+   one on show. Called by both Use This Map buttons, the action bar's and
+   the close prompt's. Not for a multiplayer upload, which arrives later
+   than the commit would. */
+static void lobbyChooseMapSendUnsentSelection(ClientSim *cs) {
+    bool sp = cs && clientSimIsSinglePlayer(cs);
+    MapChooserState *shown =
+        (s_chooserTabs.activeTab == 0) ? &s_chooserTabs.server
+        : (s_chooserTabs.activeTab == 1 && sp) ? &s_chooserTabs.upload
+        : nullptr;
+    if (cs && shown && shown->selectionUnsent && shown->provider.onSelect) {
+        shown->selectionUnsent = false;
+        shown->provider.onSelect(shown, shown->provider.ctx);
+    }
 }
 
 void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
@@ -1551,6 +1584,7 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                         "[MAPPICK] action-bar UseThisMap sp=%d previewPending=%d",
                         cs ? (int)clientSimIsSinglePlayer(cs) : -1,
                         (int)s_chooser.previewPending);
+            lobbyChooseMapSendUnsentSelection(cs);
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -1621,6 +1655,7 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                                     langGetText(STR_DLGLOBBY_REVERTCLOSE),
                                     langGetText(STR_DLGLOBBY_USETHISMAP));
         if (f == WBUI::FOOTER_CONFIRM) {
+            lobbyChooseMapSendUnsentSelection(cs);
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();

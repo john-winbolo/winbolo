@@ -505,11 +505,12 @@ int wbn_api_download_to_memory_cancellable(const char *path,
 *********************************************************/
 void httpSetAltIpAddress(char *iptoset);
 
-#if defined(WBN_HTTP_NSURL)
+#if defined(WBN_HTTP_NSURL) || defined(WBN_HTTP_JNI)
 /*********************************************************
 *NAME:          httpGetUrlToMemory
 *PURPOSE:
-* NSURLSession build (http_nsurl.m) only; WBN_HTTP_NSURL is
+* NSURLSession build (http_nsurl.m) and Android build
+* (http_jni.c) only; WBN_HTTP_NSURL / WBN_HTTP_JNI is
 * defined by that build's winbolonet_core for everything
 * that links it. A plain GET of a full URL: no /api/v1/
 * prefix, no signature and no bearer. Follows redirects.
@@ -521,9 +522,9 @@ void httpSetAltIpAddress(char *iptoset);
 * or a body larger than maxBytes.
 *
 *ARGUMENTS:
-* url        - Full https:// URL (the iOS module refuses any
-*              other scheme; the desktop's ATS-free libcurl
-*              path is never given one)
+* url        - Full https:// URL (the iOS and Android modules
+*              refuse any other scheme; the desktop's ATS-free
+*              libcurl path is never given one)
 * data_out   - Receives heap-allocated buffer (caller frees)
 * size_out   - Receives buffer size in bytes
 * maxBytes   - Largest response to accept, or 0 for no limit

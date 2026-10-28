@@ -42,6 +42,7 @@
 #include "../gui/tiles.h"
 #include "../gui/sdl3/minimap_render.h"
 #include "../gui/sdl3/dialogs/dialog_footer.h"
+#include "../gui/sdl3/dialogs/imgui_touch.h"
 
 static SDL_Renderer *s_meRenderer = nullptr;
 
@@ -2908,6 +2909,12 @@ void ImGui_OpenPopup(const char *name) {
 }
 
 void mapEditorImguiRender(void) {
+#if defined(__ANDROID__) || defined(__IPHONEOS__)
+    /* The editor's own context gets the touch handling every dialog has
+     * (imgui_touch.h): the on-screen keyboard without auto-capitalisation
+     * for the save name, and a finger dragged to scroll a list. */
+    imguiTouchFrame();
+#endif
     ImGui::Render();
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), s_meRenderer);
 }

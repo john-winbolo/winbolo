@@ -437,22 +437,4 @@ void frontEndShowGunsight(struct ClientSim *cs, bool isShown);
 *********************************************************/
 void frontEndRedrawAll(struct ClientSim *cs);
 
-/*********************************************************
-*NAME:          frontEndTutorial
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/5/00
-*LAST MODIFIED: 27/5/00
-*PURPOSE:
-* Set the front end that we have reached a new position
-* 
-*ARGUMENTS:
-*  pos - Y Position on the map
-*********************************************************/
-bool frontEndTutorial(BYTE pos);
-
-/* Reset the tutorial step sequencer. Call at the start of each new
- * tutorial run so a previously-completed run doesn't leave the
- * sequence past its end. */
-void frontEndTutorialReset(void);
-
 #endif /* _FRONT_END_H */

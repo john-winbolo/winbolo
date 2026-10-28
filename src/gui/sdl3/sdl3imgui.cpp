@@ -35,6 +35,8 @@
 #endif
 #if defined(__APPLE__) && TARGET_OS_IOS
 #include "ios_drops.h"  /* iosDropsForgetLink: a link the game has handled */
+#elif defined(__ANDROID__)
+#include "../../android/android_drops.h"  /* androidDropsForgetLink: the same */
 #endif
 
 /* SDL3 before bolo headers — see note above */
@@ -118,6 +120,7 @@ extern "C" {
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/imgui_deck_pause.h"
 #include "dialogs/imgui_tutorial_overlay.h"
+#include "tutorial_text.h"   /* tutorialExpandTextPlain */
 #include "dialogs/imgui_keyboard.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
@@ -227,6 +230,10 @@ extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
 extern "C" void windowTutorialPause(struct ClientSim *cs, bool active);
+/* The tutorial overlay's open state as windowTutorialPause last heard it:
+   the render path's edge-detect, and the round-end close, which lifts the
+   pause itself. */
+static bool s_lastTutorialPause = false;
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -926,10 +933,19 @@ static PopOutWindow s_popGameInfo    = {};
 static PopOutWindow s_popSendMsg     = {};
 static PopOutWindow s_popPlayers     = {};
 static PopOutWindow s_popMapOverview = {};
+/* The Scenario Text window (renderScenarioText) takes the owner number one
+   past the last script's, so its pop-out, the X's confirm and the native
+   menu's rows can name it the way they name a script's panel. */
+#define SCN_TEXT_OWNER SCN_PANEL_OWNERS
+/* How many scenario windows can be popped out: one per script's panel, and
+   the Scenario Text window. */
+#define SCN_POP_OWNERS (SCN_PANEL_OWNERS + 1)
+
 /* One per script of the round's list, for that script's scenario panel
-   (SCN_PANEL_OWNERS, scenario_panel.h). Indexed by the script's position on
-   the list, the same owner the panel byte carries. */
-static PopOutWindow s_popScnPanel[SCN_PANEL_OWNERS] = {};
+   (SCN_PANEL_OWNERS, scenario_panel.h), and one for the Scenario Text
+   window at SCN_TEXT_OWNER. A panel's is indexed by the script's position
+   on the list, the same owner the panel byte carries. */
+static PopOutWindow s_popScnPanel[SCN_POP_OWNERS] = {};
 
 /* Every site that treats the pop-outs as a set — event routing, the
  * focus/mute check, cleanup — walks this table, so adding a pop-out means
@@ -941,14 +957,15 @@ static PopOutWindow *const s_popOuts[] = {
     &s_popScnPanel[0], &s_popScnPanel[1], &s_popScnPanel[2],
     &s_popScnPanel[3], &s_popScnPanel[4], &s_popScnPanel[5],
     &s_popScnPanel[6], &s_popScnPanel[7], &s_popScnPanel[8],
-    &s_popScnPanel[9]
+    &s_popScnPanel[9], &s_popScnPanel[SCN_TEXT_OWNER]
 };
 static_assert(SCN_PANEL_OWNERS == 10,
               "s_popOuts lists one scenario panel pop-out per owner");
 
-/* Whether a pop-out is one of the scenario panels', and which owner's. */
+/* Whether a pop-out is one of the scenario windows', and which owner's:
+   a script's panel, or SCN_TEXT_OWNER for the Scenario Text window. */
 static int popOutScnPanelOwner(const PopOutWindow *pw) {
-    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+    for (int i = 0; i < SCN_POP_OWNERS; i++) {
         if (pw == &s_popScnPanel[i]) return i;
     }
     return -1;
@@ -1470,7 +1487,7 @@ static void mapOverviewClose(void) {
  * the window always fills the screen and the mode is only ever the player's
  * own request. */
 static bool overviewLeavesWindowAlone(SDL_Window *win) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     (void)win;
     return true;
 #else
@@ -1485,7 +1502,7 @@ static bool overviewLeavesWindowAlone(SDL_Window *win) {
  * map button still opens and closes the map either way and leaves the choice
  * alone. */
 static bool tabletFullScreenOffered(void) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     return uiModeIsTablet();
 #else
     return false;
@@ -1500,7 +1517,7 @@ static bool tabletFullScreenOffered(void) {
  * Settings' alone and the map button leaves it as it is
  * (tabletFullScreenOffered). */
 static bool fullScreenFlagIsMapChoice(SDL_Window *win) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     (void)win;
     return !uiModeIsTablet();
 #else
@@ -1555,7 +1572,7 @@ static void overviewInWindowChoose(bool on) {
        geometry when this run never opened it. Only in a game: outside one
        the pop-out is already down and gameFrontShowMapOverview is what the
        next game reads. */
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     const bool hasPopOut = false;  /* iOS has no pop-out to hand back */
 #else
     const bool hasPopOut = true;
@@ -1867,20 +1884,25 @@ static void renderSysInfoContent(void) {
             double poolRate = ps.totalThinks > 0
                 ? (double)ps.totalOverruns * 100.0 / (double)ps.totalThinks
                 : 0.0;
-            ImGui::Text("%s: %u (%.2f%%)",
+            ImGui::Text("%s: %u (%.2f%%), peak think=%.2fms",
                         langGetText(STR_DLGSYSINFO_BRAIN_OVERRUNS),
-                        ps.totalOverruns, poolRate);
-            if (ps.totalOverruns > 0) {
-                for (int i = 0; i < MAX_TANKS; i++) {
-                    if (botInfoValid[i] && botInfos[i].overrunCount > 0) {
-                        double rate = botInfos[i].thinkCount > 0
-                            ? (double)botInfos[i].overrunCount * 100.0
-                                  / (double)botInfos[i].thinkCount
-                            : 0.0;
-                        ImGui::Text("  bot[%d]: %u (%.2f%%)", i,
-                                    botInfos[i].overrunCount, rate);
-                    }
-                }
+                        ps.totalOverruns, poolRate, ps.maxThinkMs);
+            /* One row per thinking bot: the last think's wall-clock, the
+             * peak this game, and its overruns against its thinks. The
+             * budget hook stops a think at the target, so a bot that
+             * overruns every tick reads as "last" at the target rather
+             * than above it. */
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (!botInfoValid[i] || !botInfos[i].hasBrain) continue;
+                double rate = botInfos[i].thinkCount > 0
+                    ? (double)botInfos[i].overrunCount * 100.0
+                          / (double)botInfos[i].thinkCount
+                    : 0.0;
+                ImGui::Text("  bot[%d] %s: last=%.2fms peak=%.2fms, %u/%u (%.2f%%)",
+                            i, botInfos[i].brainName,
+                            botInfos[i].lastThinkMs, botInfos[i].maxThinkMs,
+                            botInfos[i].overrunCount, botInfos[i].thinkCount,
+                            rate);
             }
         }
 
@@ -1905,7 +1927,7 @@ static void renderSysInfoContent(void) {
  * fits a phone held in landscape and scrolls inside; elsewhere it opens at
  * the given size on first use and is left where the player puts it. */
 static void infoPanelSizeNext(float w, float h) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     if (uiModeIsTablet()) {
         ImGuiViewport *vp = ImGui::GetMainViewport();
         float maxW = vp->Size.x * 0.9f;
@@ -2806,7 +2828,7 @@ static void renderOverviewInWindow(ClientSim *cs) {
        has gone. */
     sdl3DrawSetHudPanelHover(false, false, false);
 
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     /* The iOS tablet layout draws the map inside its game view, and the tablet
        overlay drives it by touch and draws its camera readout
        (sdl3imgui_tablet.cpp). No pan item and no HUD hit-test here: every
@@ -4295,31 +4317,20 @@ static void renderPlayersPanel(ClientSim *cs) {
    down to SCN_PANEL_MIN_PX still has panel under its bar. */
 #define SCN_PANEL_BAR_PX 20.0f
 
-/* The panel's opacity for a player who has never opened the settings window,
-   as a percent. 43 percent of 255 is 110, which is the alpha the backing was
-   drawn with before the setting existed.
-
-   The percent is a multiplier over the panel's own look rather than a
-   replacement for it, which is what lets the default be a hundred and still
-   be the panel everybody already had. The backing has always been dim and
-   the writing on it has always been full strength; at a hundred both are
-   exactly that, and the slider takes the pair of them down together. */
-#define SCN_PANEL_ALPHA_DEFAULT 100
-
-/* The backing's own alpha at full opacity, out of 255. This is the value the
-   panel was drawn with before there was a slider: dim enough that the map
-   under it stays readable, solid enough that the writing on it has something
-   to sit on. The slider scales it; it does not replace it, so a panel left
-   alone looks the way it always did. */
-#define SCN_PANEL_BACKING_ALPHA 110
+/* The two opacities each window has, background and text, are percents
+   with the defaults and rules in scn_panel_prefs.h: SCN_BG_OPACITY_DEFAULT
+   is 43, which scnBackingAlpha turns into 110 of 255, the backing these
+   windows had before there was a setting, and SCN_TEXT_OPACITY_DEFAULT is
+   100, the drawing at full strength. The background percent is the
+   backing's real alpha, so 100 is opaque black. */
 
 /* How far off the gear the settings window first appears, in screen pixels.
    Clear of the panel rather than on top of it: the whole point of the window
-   is to watch the panel change while the opacity slider moves, and a window
+   is to watch the panel change while the opacity sliders move, and a window
    sitting over the square would hide the thing being adjusted. */
 #define SCN_PANEL_DIALOG_GAP 6.0f
 
-/* How wide the opacity slider is drawn, in screen pixels. Set rather than
+/* How wide each opacity slider is drawn, in screen pixels. Set rather than
    left to ImGui, which gives an auto-resizing window's item the whole
    remaining content width: with one short row that comes out as a stubby
    grab that is hard to place a percent with. */
@@ -4363,7 +4374,8 @@ void sdl3ImguiScnPanelDraw(struct ClientSim *cs, float originX, float originY,
         ImGui::GetWindowDrawList()->AddRectFilled(
             ImVec2(originX, originY), ImVec2(originX + side, originY + side),
             IM_COL32(0, 0, 0,
-                     (int)lroundf(alpha * (float)SCN_PANEL_BACKING_ALPHA)));
+                     (int)lroundf(alpha * (float)scnBackingAlpha(
+                                              SCN_BG_OPACITY_DEFAULT))));
     }
 
     ScnPanelDrawEnv env;
@@ -4427,11 +4439,12 @@ struct ScnPanelView {
     /* The Brains > Info Overlay toggle. */
     bool   shown;
 
-    /* The in-game layout, same meaning as gameFrontScnPanelX/Y/Scale/Alpha:
-       -1 is "never set". alphaPct is the live opacity the settings slider
-       edits; alpha is the stored one. */
-    int    x, y, scale, alpha;
-    int    alphaPct;
+    /* The in-game layout, same meaning as gameFrontScnPanelX/Y/Scale and
+       the two gameFrontScnPanel*Alpha opacities: -1 is "never set". bgPct
+       and textPct are the live opacities the settings sliders edit;
+       bgAlpha and textAlpha are the stored ones. */
+    int    x, y, scale, bgAlpha, textAlpha;
+    int    bgPct, textPct;
 
     /* ImGui is holding a position for the window. */
     bool   placed;
@@ -4450,12 +4463,63 @@ struct ScnPanelView {
     int    popX, popY, popW, popH;
     Uint64 popChromeUntil;
 };
-static ScnPanelView s_scnViews[SCN_PANEL_OWNERS];
+/* The entry at SCN_TEXT_OWNER is the Scenario Text window's, and only its
+   name and pop-out fields (popped, popX..popH, popChromeUntil) are used:
+   that window keeps the rest of its state in ScnTextView. Sharing the
+   entry lets the pop-out code and the event routing treat both windows'
+   pop-outs the same way. scnPanelSavePopout keeps its pop-out fields in
+   [WINDOW], and scnTextPopLoad reads them back. */
+static ScnPanelView s_scnViews[SCN_POP_OWNERS];
+
+/* The Scenario Text window's state for this run of the game. Its place,
+   size, two opacities (background and text), shown flag and pop-out are the
+   gameFrontScnText* preferences; this
+   holds what lasts only as long as the window is up or the round runs. */
+struct ScnTextView {
+    /* ImGui is holding a position for the window. */
+    bool   placed;
+    /* The bar or the resize grip was being dragged last frame, and the size
+       the resize drag has reached. */
+    bool   moving;
+    bool   resizing;
+    float  rawW, rawH;
+    /* The settings window the gear opens, and the live opacities its
+       sliders edit. alphaLoaded is false until bgPct and textPct are read
+       from the preferences. */
+    bool   settingsOpen;
+    bool   alphaLoaded;
+    int    bgPct, textPct;
+    /* The bar, the gear and the X stay up until this SDL tick. */
+    Uint64 chromeUntil;
+    /* Where the window's top-left corner is, on screen, as the last frame
+       left it: the hover test runs before the window is submitted, to
+       choose whether it takes input this frame. */
+    float  atX, atY;
+    /* The kinds of line the round has shown so far. Each one has a row in
+       the window from then until the round ends, so the text does not
+       change size each time a line comes or goes. */
+    bool   usedStatus;
+    bool   usedAnnounce;
+    /* The most rows each kind has taken at once this round: the status
+       line's rows, and the rows of every announcement up together. */
+    int    statusRows;
+    int    announceRows;
+    /* The round has a scenario or a mod, or has shown a line: the
+       Brains > Info Overlay > Scenario Text row is listed. */
+    bool   menuListed;
+    /* The pop-out fields of s_scnViews[SCN_TEXT_OWNER] have been read from
+       the preferences (scnTextPopLoad). */
+    bool   popLoaded;
+};
+static ScnTextView s_scnText;
+
+static void scnTextSetShown(bool shown);
 
 /* A texture only draws through the renderer that made it, and every pop-out
    has a renderer of its own. The shared ICON_SLOT_POPOUT slot and
    activeTilesTexture belong to one pop-out at a time, so a scenario panel
-   pop-out keeps its own copies here. Outside ScnPanelView because a view is
+   pop-out keeps its own copies here. The Scenario Text window's pop-out
+   uses only the gear. Outside ScnPanelView because a view is
    reset when its script changes, and these live as long as the renderer. */
 struct ScnPanelPopTex {
     SDL_Texture  *tiles;
@@ -4464,13 +4528,13 @@ struct ScnPanelPopTex {
     SDL_Texture  *gear;
     SDL_Renderer *gearRenderer;
 };
-static ScnPanelPopTex s_scnPopTex[SCN_PANEL_OWNERS];
+static ScnPanelPopTex s_scnPopTex[SCN_POP_OWNERS];
 
 /* "Pop in" and "hide" chosen inside a pop-out's own frame, done once that
    frame ends: hiding a window in the middle of its own frame would leave the
    frame half drawn to a window that is gone. */
-static bool s_scnPopInReq[SCN_PANEL_OWNERS];
-static bool s_scnHideReq[SCN_PANEL_OWNERS];
+static bool s_scnPopInReq[SCN_POP_OWNERS];
+static bool s_scnHideReq[SCN_POP_OWNERS];
 
 /* The X's confirm. One at a time: the owner it is for (-1 for none), whether
    it is up in that owner's pop-out or in the game window, a request to open
@@ -4540,15 +4604,30 @@ static void scnPanelPersistLayout(const ScnPanelView &v) {
     gameFrontScnPanelX     = v.x;
     gameFrontScnPanelY     = v.y;
     gameFrontScnPanelScale = v.scale;
-    gameFrontScnPanelAlpha = v.alpha;
+    gameFrontScnPanelBgAlpha   = v.bgAlpha;
+    gameFrontScnPanelTextAlpha = v.textAlpha;
     gameFrontSaveWindowSettings();
     if (v.key[0] != '\0') {
-        gameFrontSetScnPanelLayout(v.key, v.x, v.y, v.scale, v.alpha);
+        gameFrontSetScnPanelLayout(v.key, v.x, v.y, v.scale, v.bgAlpha,
+                                   v.textAlpha);
     }
 }
 
+/* Where a view's pop-out choice and its OS window's place reach the
+   preferences file: a script's panel under its own row, and the Scenario
+   Text window in [WINDOW] (gameFrontScnTextPop*), through the debounced
+   window-settings path. */
 static void scnPanelSavePopout(int owner) {
     const ScnPanelView &v = s_scnViews[owner];
+    if (owner == SCN_TEXT_OWNER) {
+        gameFrontScnTextPopped = v.popped;
+        gameFrontScnTextPopX   = v.popX;
+        gameFrontScnTextPopY   = v.popY;
+        gameFrontScnTextPopW   = v.popW;
+        gameFrontScnTextPopH   = v.popH;
+        gameFrontSaveWindowSettings();
+        return;
+    }
     if (v.key[0] == '\0') return;
     gameFrontSetScnPanelPopout(v.key, 0, v.popped, v.popX, v.popY, v.popW,
                                v.popH);
@@ -4575,24 +4654,28 @@ static void scnPanelViewLoad(int owner, const char *key, const char *name) {
     v.shown = (key[0] != '\0') ? gameFrontGetScnPanelShown(key) : true;
 
     /* A script with no layout row of its own takes the [WINDOW] size and
-       opacity, which is the layout the player last chose. The position too
+       opacities, which is the layout the player last chose. The position too
        for the round's first script, as before; the others open at the
        default corner, stacked, so two new panels do not land on each other. */
-    int sx, sy, ss, sa;
-    if (key[0] != '\0' && gameFrontGetScnPanelLayout(key, &sx, &sy, &ss, &sa)) {
+    int sx, sy, ss, sbg, stext;
+    if (key[0] != '\0' &&
+        gameFrontGetScnPanelLayout(key, &sx, &sy, &ss, &sbg, &stext)) {
         v.x = sx;
         v.y = sy;
         v.scale = ss;
-        v.alpha = sa;
+        v.bgAlpha = sbg;
+        v.textAlpha = stext;
     } else {
-        v.x     = (owner == 0) ? gameFrontScnPanelX : -1;
-        v.y     = (owner == 0) ? gameFrontScnPanelY : -1;
-        v.scale = gameFrontScnPanelScale;
-        v.alpha = gameFrontScnPanelAlpha;
+        v.x         = (owner == 0) ? gameFrontScnPanelX : -1;
+        v.y         = (owner == 0) ? gameFrontScnPanelY : -1;
+        v.scale     = gameFrontScnPanelScale;
+        v.bgAlpha   = gameFrontScnPanelBgAlpha;
+        v.textAlpha = gameFrontScnPanelTextAlpha;
     }
-    v.alphaPct = (v.alpha >= 0) ? v.alpha : SCN_PANEL_ALPHA_DEFAULT;
-    if (v.alphaPct < 0) v.alphaPct = 0;
-    if (v.alphaPct > 100) v.alphaPct = 100;
+    v.bgPct   = scnOpacityClamp(v.bgAlpha);
+    v.textPct = scnOpacityClamp(v.textAlpha);
+    if (v.bgPct < 0) v.bgPct = SCN_BG_OPACITY_DEFAULT;
+    if (v.textPct < 0) v.textPct = SCN_TEXT_OPACITY_DEFAULT;
 
     bool open;
     int px, py, pw, ph;
@@ -4640,6 +4723,24 @@ static void scnPanelViewsRetireAll(void) {
     for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
         if (s_scnViews[i].keyed || s_popScnPanel[i].open) scnPanelViewRetire(i);
     }
+    /* The Scenario Text window's rows and menu row belong to the round. Its
+       pop-out is put away with the round's panels, and its popped choice is
+       kept, so it comes back popped out in the next round. */
+    if (s_popScnPanel[SCN_TEXT_OWNER].open) {
+        popOutHideQuiet(&s_popScnPanel[SCN_TEXT_OWNER]);
+    }
+    s_scnPopInReq[SCN_TEXT_OWNER] = false;
+    s_scnHideReq[SCN_TEXT_OWNER]  = false;
+    if (s_scnCloseAskOwner == SCN_TEXT_OWNER) s_scnCloseAskCancel = true;
+    s_scnText.placed       = false;
+    s_scnText.moving       = false;
+    s_scnText.resizing     = false;
+    s_scnText.settingsOpen = false;
+    s_scnText.usedStatus   = false;
+    s_scnText.usedAnnounce = false;
+    s_scnText.statusRows   = 0;
+    s_scnText.announceRows = 0;
+    s_scnText.menuListed   = false;
 }
 
 static bool scnPanelAnyListed(void) {
@@ -4669,6 +4770,8 @@ static void scnPanelSetShown(int owner, bool shown) {
 static void scnPanelHideFrom(int owner, bool inPopout) {
     if (inPopout) {
         s_scnHideReq[owner] = true;
+    } else if (owner == SCN_TEXT_OWNER) {
+        scnTextSetShown(false);
     } else {
         scnPanelSetShown(owner, false);
     }
@@ -4692,7 +4795,20 @@ static void scnPanelPopOut(int owner) {
     v.popped       = true;
     v.settingsOpen = false;
     scnPanelSavePopout(owner);
-    /* The panel pass opens the window on the next frame. */
+    /* The panel pass, or for the Scenario Text window renderScenarioText,
+       opens the window on the next frame. */
+}
+
+/* The first item of both gear windows, the panel's and the Scenario Text
+   window's: the button that moves the window into an OS window of its own,
+   which can go to another display. Only where pop-outs are available. */
+static void scnPopOutButton(int owner) {
+    if (!scnPanelPopOutAvailable()) return;
+    if (ImGui::Button(langGetText(STR_SCNPANEL_POP_OUT))) {
+        scnPanelPopOut(owner);
+    }
+    imguiHandOnHover();
+    ImGui::Spacing();
 }
 
 static void scnPanelPopIn(int owner) {
@@ -4825,6 +4941,25 @@ static bool scnPanelPopOutShow(int owner) {
                 (unsigned long long)SDL_GetWindowFlags(pw->window));
     scnPanelSavePopout(owner);
     return true;
+}
+
+/* Opens or hides a view's pop-out so that it is up exactly when want is
+   true. An open that fails takes the view back into the game window, and
+   that is saved. Every hide the player asks for (menu, X, Pop in) has
+   closed the window before this runs, so a hide here is automatic: the
+   script's list went, the window's text is not to be up, tablet mode, or
+   the pop-out became unavailable. Returns whether the pop-out is up. */
+static bool scnPopOutSync(int owner, bool want) {
+    PopOutWindow *pw = &s_popScnPanel[owner];
+    if (want && !pw->open) {
+        if (!scnPanelPopOutShow(owner)) {
+            s_scnViews[owner].popped = false;
+            scnPanelSavePopout(owner);
+        }
+    } else if (!want && pw->open) {
+        popOutHideQuiet(pw);
+    }
+    return pw->open;
 }
 
 /* The pop-out's tile sheet, on its own renderer, rebuilt when the skin or
@@ -4975,7 +5110,10 @@ static void renderScnPanelCloseConfirm(bool inPopout, int ctxOwner) {
                       s_scnCloseAskPopout == inPopout &&
                       (!inPopout || s_scnCloseAskOwner == ctxOwner);
     const char *scriptName =
-        mine ? s_scnViews[s_scnCloseAskOwner].name : "";
+        !mine ? ""
+        : (s_scnCloseAskOwner == SCN_TEXT_OWNER)
+            ? langGetText(STR_SCNTEXT_TITLE)
+            : s_scnViews[s_scnCloseAskOwner].name;
 
     MessageArgs targs = {};
     SDL_snprintf(targs.string1, sizeof(targs.string1), "%s", scriptName);
@@ -4997,9 +5135,9 @@ static void renderScnPanelCloseConfirm(bool inPopout, int ctxOwner) {
 
     /* One fade per ImGui context: the game window's, and each pop-out's,
        so two confirms never share a counter. */
-    static float s_fadeScnClose[SCN_PANEL_OWNERS + 1] = {};
+    static float s_fadeScnClose[SCN_POP_OWNERS + 1] = {};
     const int fadeIdx = (inPopout && ctxOwner >= 0 &&
-                         ctxOwner < SCN_PANEL_OWNERS) ? ctxOwner + 1 : 0;
+                         ctxOwner < SCN_POP_OWNERS) ? ctxOwner + 1 : 0;
     bool keep = true;
     bool began = ImGui::BeginPopupModal(title, &keep,
                                         ImGuiWindowFlags_AlwaysAutoResize |
@@ -5059,14 +5197,35 @@ static void renderScnPanelCloseConfirm(bool inPopout, int ctxOwner) {
     }
 }
 
+/* One opacity slider of a settings window, 0 to 100 percent. live is the
+   value the window draws with every frame, so the slider is live; stored
+   is the saved value, -1 for never set. Returns true when a drag has just
+   finished on a value that is not the stored one, which the caller then
+   stores and saves: only the value a drag finishes on reaches the
+   preferences file. */
+static bool scnOpacitySlider(const char *label, const char *id, int *live,
+                             int stored) {
+    char sliderLbl[128];
+    SDL_snprintf(sliderLbl, sizeof(sliderLbl), "%s###%s", label, id);
+    ImGui::SetNextItemWidth(SCN_PANEL_DIALOG_SLIDER_W);
+    ImGui::SliderInt(sliderLbl, live, 0, 100, "%d%%");
+    if (!ImGui::IsItemDeactivatedAfterEdit()) return false;
+    if (*live < 0) *live = 0;
+    if (*live > 100) *live = 100;
+    return *live != stored;
+}
+
 /* One view's settings window, opened by its gear. A window rather than a
    popup, because a popup closes the moment the pointer goes anywhere else
    and the whole point of an opacity control is to watch the panel while it
    moves. Submitted after the panel's End, since one ImGui window cannot be
    opened inside another.
 
-   The view reads alphaPct every frame, so the slider is live, and only the
-   value a drag finishes on reaches the preferences file. */
+   Pop out (where pop-outs are available), then two sliders: the background
+   opacity is the backing's real alpha, and the text opacity fades
+   everything the script drew and nothing else. Empty parts stay clear, and
+   the border, the buttons and the grips keep their own alpha, so a panel
+   taken to zero on both sliders can still be found. */
 static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
     ScnPanelView &v = s_scnViews[owner];
     if (!v.settingsOpen) return;
@@ -5100,34 +5259,20 @@ static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
             ImGui::SetWindowPos(ImVec2(keepX, keepY));
         }
 
-        /* Into an OS window of its own, which can go to another display. */
-        if (scnPanelPopOutAvailable()) {
-            if (ImGui::Button(langGetText(STR_SCNPANEL_POP_OUT))) {
-                scnPanelPopOut(owner);
-            }
-            imguiHandOnHover();
-            ImGui::Spacing();
-        }
+        /* The same items in the same order as the Scenario Text window's
+           settings (renderScenarioTextSettings). */
+        scnPopOutButton(owner);
 
-        char sliderLbl[128];
-        SDL_snprintf(sliderLbl, sizeof(sliderLbl), "%s###scnAlpha",
-                     langGetText(STR_SCNPANEL_OPACITY_LBL));
-        ImGui::SetNextItemWidth(SCN_PANEL_DIALOG_SLIDER_W);
-        ImGui::SliderInt(sliderLbl, &v.alphaPct, 0, 100, "%d%%");
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
-            if (v.alphaPct < 0) v.alphaPct = 0;
-            if (v.alphaPct > 100) v.alphaPct = 100;
-            if (v.alphaPct != v.alpha) {
-                v.alpha = v.alphaPct;
-                scnPanelPersistLayout(v);
-            }
+        if (scnOpacitySlider(langGetText(STR_SCN_BG_OPACITY_LBL),
+                             "scnBgAlpha", &v.bgPct, v.bgAlpha)) {
+            v.bgAlpha = v.bgPct;
+            scnPanelPersistLayout(v);
         }
-        /* It is everything the panel draws, backing and drawing together,
-           and nothing else: empty parts stay clear, and the border, the
-           buttons and the grips keep their own alpha so a panel taken to
-           zero can still be found. */
-        ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE1));
-        ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE2));
+        if (scnOpacitySlider(langGetText(STR_SCN_TEXT_OPACITY_LBL),
+                             "scnTextAlpha", &v.textPct, v.textAlpha)) {
+            v.textAlpha = v.textPct;
+            scnPanelPersistLayout(v);
+        }
     }
     ImGui::End();
 }
@@ -5217,16 +5362,14 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     float gearY = 0.0f;
 
     /* No padding and no border, so the window's rect is the square the list
-       is drawn in; the backing is the player's opacity times the dim
-       SCN_PANEL_BACKING_ALPHA. NoMove and NoResize: the bar and the corner
+       is drawn in; the backing is black at the player's background
+       opacity. NoMove and NoResize: the bar and the corner
        grip are the only things that move or resize it. */
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleColor(
         ImGuiCol_WindowBg,
-        IM_COL32(0, 0, 0,
-                 (int)lroundf((float)v.alphaPct *
-                              (float)SCN_PANEL_BACKING_ALPHA / 100.0f)));
+        IM_COL32(0, 0, 0, scnBackingAlpha(v.bgPct)));
     char winId[32];
     SDL_snprintf(winId, sizeof(winId), "##scenariopanel%d", owner);
     const bool open = ImGui::Begin(winId, nullptr,
@@ -5334,7 +5477,7 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
         }
 
         /* The script's drawing, at the side the square is on screen and the
-           player's opacity. No backing from the drawer: the window
+           player's text opacity. No backing from the drawer: the window
            background above is this panel's backing. */
         const ScnPanelList *list = scnPanelListOf(cs, owner);
         if (list != nullptr && list->count > 0) {
@@ -5343,7 +5486,7 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
             env.ctx        = nullptr;
             env.tick       = clientSimGetLastServerTick(cs);
             env.scale      = side / (float)SCN_PANEL_UNITS;
-            env.alpha      = (float)v.alphaPct / 100.0f;
+            env.alpha      = (float)v.textPct / 100.0f;
             env.tiles      = (void *)sdl3DrawGetTilesTexture();
             scnPanelDraw(list, pos.x, pos.y, &env);
         }
@@ -5431,18 +5574,7 @@ static void renderScenarioPanels(ClientSim *cs) {
         /* A pop-out stays up while the script has a list at all, even an
            empty one, so a script that clears and redraws its panel does not
            make an OS window blink. */
-        const bool wantPop = shown && v.popped && scnPanelPopOutAvailable();
-        if (wantPop && !pw->open) {
-            if (!scnPanelPopOutShow(i)) {
-                v.popped = false;
-                scnPanelSavePopout(i);
-            }
-        } else if (!wantPop && pw->open) {
-            /* Every player hide (menu, X, Pop in) has already closed the
-               window by now, so what reaches here is automatic: the list
-               went, tablet mode, or the pop-out became unavailable. */
-            popOutHideQuiet(pw);
-        }
+        scnPopOutSync(i, shown && v.popped && scnPanelPopOutAvailable());
 
         /* In the game window, only while there is something to draw, which
            is how the single panel always behaved. */
@@ -5459,13 +5591,57 @@ static void renderScenarioPanels(ClientSim *cs) {
     renderScnPanelCloseConfirm(false, -1);
 }
 
+/* The gear and the X of a pop-out, the scenario panel's or the Scenario
+   Text window's, in the top-right corner of the rectangle at pos that is
+   width across. shortSide is that rectangle's shorter side, which sets the
+   buttons' size. They show while the pointer is on the window and a while
+   after, and while the gear's menu or the X's confirm is up. The gear
+   opens a menu with Pop in, which is the way back into the game window.
+   Also draws the X's confirm when it was asked from this pop-out. */
+static void scnPopOutButtons(int owner, ImVec2 pos, float width,
+                            float shortSide, SDL_Texture *gear) {
+    ScnPanelView &v = s_scnViews[owner];
+    ImDrawList *dl  = ImGui::GetWindowDrawList();
+
+    const float btn       = scnPanelButtonSide(shortSide);
+    const bool  withClose = scnPanelCanReopen();
+    const ScnPanelButtons b = scnPanelSubmitButtons(pos, width, btn, withClose);
+    if (b.gearClicked) ImGui::OpenPopup("##scnpopmenu");
+    if (b.closeClicked) scnPanelRequestClose(owner, true);
+
+    const Uint64 now = SDL_GetTicks();
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
+                               ImGuiHoveredFlags_AllowWhenBlockedByPopup)) {
+        v.popChromeUntil = now + SCN_PANEL_CHROME_LINGER_MS;
+    }
+    const bool menuUp = ImGui::IsPopupOpen("##scnpopmenu");
+    if (now < v.popChromeUntil || menuUp || s_scnCloseAskOwner == owner) {
+        /* A plate under the buttons, since there is no bar here for them to
+           sit on and the script may have drawn anything under them. */
+        const float btnsW = withClose ? btn * 2.0f : btn;
+        dl->AddRectFilled(ImVec2(pos.x + width - 1.0f - btnsW, pos.y),
+                          ImVec2(pos.x + width - 1.0f, pos.y + btn),
+                          IM_COL32(40, 40, 40, 200));
+        scnPanelDrawButtons(dl, pos, width, btn, withClose, gear, b, menuUp);
+    }
+
+    /* The gear's settings here are the way back in. */
+    if (ImGui::BeginPopup("##scnpopmenu")) {
+        if (ImGui::MenuItem(langGetText(STR_SCNPANEL_POP_IN))) {
+            s_scnPopInReq[owner] = true;
+        }
+        ImGui::EndPopup();
+    }
+
+    renderScnPanelCloseConfirm(true, owner);
+}
+
 /* One view's pop-out frame: the square as large as the window allows,
    centred with black bars on the long side, drawn the way the game window
    draws it but at full opacity, with the gear and the X in its top-right
    corner. */
 static void renderScenarioPanelPopOut(ClientSim *cs, int owner) {
     PopOutWindow *pw = &s_popScnPanel[owner];
-    ScnPanelView &v  = s_scnViews[owner];
     if (!pw->open || !pw->window) return;
 
     /* Ahead of the ImGui frame, like the overview's sheet: both are built on
@@ -5502,55 +5678,32 @@ static void renderScenarioPanelPopOut(ClientSim *cs, int owner) {
                     IM_COL32(255, 255, 255, 40));
     }
 
-    const float btn       = scnPanelButtonSide(side);
-    const bool  withClose = scnPanelCanReopen();
-    const ScnPanelButtons b = scnPanelSubmitButtons(pos, side, btn, withClose);
-    if (b.gearClicked) ImGui::OpenPopup("##scnpopmenu");
-    if (b.closeClicked) scnPanelRequestClose(owner, true);
-
-    const Uint64 now = SDL_GetTicks();
-    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
-                               ImGuiHoveredFlags_AllowWhenBlockedByPopup)) {
-        v.popChromeUntil = now + SCN_PANEL_CHROME_LINGER_MS;
-    }
-    const bool menuUp = ImGui::IsPopupOpen("##scnpopmenu");
-    if (now < v.popChromeUntil || menuUp || s_scnCloseAskOwner == owner) {
-        /* A plate under the buttons, since there is no bar here for them to
-           sit on and the script may have drawn anything under them. */
-        const float btnsW = withClose ? btn * 2.0f : btn;
-        dl->AddRectFilled(ImVec2(pos.x + side - 1.0f - btnsW, pos.y),
-                          ImVec2(pos.x + side - 1.0f, pos.y + btn),
-                          IM_COL32(40, 40, 40, 200));
-        scnPanelDrawButtons(dl, pos, side, btn, withClose, gear, b, menuUp);
-    }
-
-    /* The gear's settings here are the way back in. */
-    if (ImGui::BeginPopup("##scnpopmenu")) {
-        if (ImGui::MenuItem(langGetText(STR_SCNPANEL_POP_IN))) {
-            s_scnPopInReq[owner] = true;
-        }
-        ImGui::EndPopup();
-    }
-
-    renderScnPanelCloseConfirm(true, owner);
+    scnPopOutButtons(owner, pos, side, side, gear);
 
     popOutEndContent(pw);
     popOutEndFrame(pw);
 }
 
+static void renderScenarioTextPopOut(ClientSim *cs);
+
+/* Every scenario pop-out's frame, the panels' and the Scenario Text
+   window's, then the hides and Pop ins chosen inside them. */
 static void renderScenarioPanelPopOuts(ClientSim *cs) {
     for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
         renderScenarioPanelPopOut(cs, i);
     }
-    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+    renderScenarioTextPopOut(cs);
+    for (int i = 0; i < SCN_POP_OWNERS; i++) {
+        const bool live = (i == SCN_TEXT_OWNER) || s_scnViews[i].keyed;
         if (s_scnHideReq[i]) {
             s_scnHideReq[i]  = false;
             s_scnPopInReq[i] = false;
-            if (s_scnViews[i].keyed) scnPanelSetShown(i, false);
+            if (i == SCN_TEXT_OWNER) scnTextSetShown(false);
+            else if (live) scnPanelSetShown(i, false);
         }
         if (s_scnPopInReq[i]) {
             s_scnPopInReq[i] = false;
-            if (s_scnViews[i].keyed) scnPanelPopIn(i);
+            if (live) scnPanelPopIn(i);
         }
     }
 }
@@ -5558,7 +5711,7 @@ static void renderScenarioPanelPopOuts(ClientSim *cs) {
 /* The pop-outs' textures go before the renderers they were made on, and the
    views with the game. Called from sdl3ImguiCleanup ahead of popOutDestroy. */
 static void scnPanelViewsCleanup(void) {
-    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+    for (int i = 0; i < SCN_POP_OWNERS; i++) {
         ScnPanelPopTex &t = s_scnPopTex[i];
         if (t.tiles) SDL_DestroyTexture(t.tiles);
         if (t.gear) SDL_DestroyTexture(t.gear);
@@ -5567,15 +5720,20 @@ static void scnPanelViewsCleanup(void) {
         s_scnPopInReq[i] = false;
         s_scnHideReq[i]  = false;
     }
+    memset(&s_scnText, 0, sizeof(s_scnText));
     s_scnCloseAskOwner   = -1;
     s_scnCloseAskOpenNow = false;
     s_scnCloseAskCancel  = false;
 }
 
 /* Brains > Info Overlay: one checkbox per script that has a panel this
-   round, labelled with the script's name. */
+   round, labelled with the script's name, and one for the Scenario Text
+   window while the round has a scenario or a mod. */
 static void renderScnPanelMenuItems(bool afterBrains) {
-    if (!scnPanelAnyListed() || !scnPanelCanReopen()) return;
+    if ((!scnPanelAnyListed() && !s_scnText.menuListed) ||
+        !scnPanelCanReopen()) {
+        return;
+    }
     if (afterBrains) ImGui::Separator();
     if (ImGui::BeginMenu(langGetText(STR_MENU_INFO_OVERLAY))) {
         for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
@@ -5587,299 +5745,967 @@ static void renderScnPanelMenuItems(bool afterBrains) {
                 scnPanelSetShown(i, !v.shown);
             }
         }
+        if (s_scnText.menuListed) {
+            char lbl[128];
+            SDL_snprintf(lbl, sizeof(lbl), "%s##scntextshown",
+                         langGetText(STR_SCNTEXT_TITLE));
+            if (ImGui::MenuItem(lbl, nullptr, gameFrontScnTextShown)) {
+                scnTextSetShown(!gameFrontScnTextShown);
+            }
+        }
         ImGui::EndMenu();
     }
 }
 
 /* -------------------------------------------------------
- * The scenario announcement
+ * The Scenario Text window
  *
- * One line across the game view, for the few seconds a
- * scenario asked for. With no position it is centred
- * across, in the view's upper third rather than dead
- * centre, which is where the player's own tank is
- * (scnAnnounceDefaultPlace). On the main view that is where
- * it always went. The full screen map and tablet mode apply
- * the same rule to their own view; before, the full screen
- * map placed it by the main view's rectangle and tablet
- * mode drew none. With a position the
- * script names the line's centre as shares of the view,
- * and the line is kept inside the view and below the
- * status line, and nothing else (scnAnnounceAt). The view
- * is the main view, the full screen map when that owns the
- * window, or tablet mode's own game view.
+ * The two lines of text a scenario or mod shows: the status
+ * line (game.status), which stays up until it is changed,
+ * and the announcement (game.announce), which stays up for
+ * the seconds the script asked for. Both are drawn in one
+ * window, the Scenario Text window, and not at a place on
+ * the game view. The window is built the way a script's
+ * scenario panel window is: no title bar, a grey bar across
+ * the top while the pointer is on it to drag it by, a gear
+ * that opens two opacity sliders (background and text), an
+ * X that hides it (with the same confirm), and a grip in
+ * the bottom-right corner. Unlike the panel it is a
+ * rectangle, and the grip changes its width and its height
+ * separately.
  *
- * Tablet mode draws both lines too, over its own game view
- * (the fixed viewport sdl3draw centres on the screen). The
- * status line keeps clear of the scenario square that
- * tablet mode pins in that view's top-right corner. Its
- * buttons and bars sit in the gutters beside the view, so
- * nothing else is in the way at the top.
+ * The window takes mouse input only while the pointer is
+ * on the bar or the grip, while one of them is being
+ * dragged, or while the settings or the close confirm are
+ * up. The rest of the time it is NoInputs, so a click or
+ * the wheel on the text goes through to the game view
+ * under it, as the tablet's ##ScenarioSlot does, also
+ * while the handles show.
  *
- * Drawn on the foreground draw list and not in a window at
- * all. A window across the middle of the screen would take
- * the mouse with it and stop the player firing under it,
- * and a draw list has no hit test to turn off — there is
- * nothing there to click on.
+ * The X turns off Brains > Info Overlay > Scenario Text,
+ * and that menu item turns it back on. Its place, size,
+ * two opacities and shown flag are kept in [WINDOW] in the
+ * preferences file (gameFrontScnText*). With no place kept
+ * it opens at the top middle of the game view.
  *
- * Outlined rather than merely coloured: the line lands over
- * whatever terrain happens to be under it, and one colour
- * against grass is a line somebody cannot read.
+ * The lines are laid out in a source rectangle in panel
+ * units and scaled into the window with one factor for both
+ * axes, as large as the window allows, and centred in it
+ * (scnTextFitRect in scenario_panel_draw.h, which has the
+ * rule). The status line is centred across. The
+ * announcement keeps the share across the view that its
+ * position named, and the share down is not used: it is
+ * always on its own row, under the status line.
  *
- * The status line is drawn the same way: the one line a
- * scenario keeps up for as long as it likes, as high on the
- * view as it goes, with a countdown this client works out
- * from the tick the script named. It moves sideways or down
- * to keep clear of the scenario panel, the vote widgets and
- * alliance request, and the full screen map's HUD column
- * and build strip, but on the main view never down onto
- * the player's own tank (scnStatusPlace has the rule).
+ * In a round that lists the window in the menu (the round
+ * has a scenario or a mod, or has shown a line), the window
+ * stays up while the player has it shown, also when there
+ * is no line to show, so the player can move and resize it
+ * at any time (scnTextWindowShown in scenario_panel_draw.h).
+ * With no line it draws nothing: no lines, no backing and
+ * no edge, so the game view looks as it does with no
+ * window. While the pointer is on it, the bar, the gear,
+ * the X, the grip and the faint edge show, at any
+ * background opacity, so the player can see its size
+ * (scnTextEdgeShown). Its size with no line is the saved
+ * size, or with none saved, the size for the rows the round
+ * has used so far, or for one row when it has used none. A
+ * window with no line never saves its size or its place by
+ * itself (scnTextSavePlace). Outside such a round the
+ * window shows only while there is a line to show. In all
+ * rounds it stays up while it is being dragged or its
+ * settings are open.
  *
- * The bytes are the script's own and are not localised, so
- * nothing on this path goes near the language table.
+ * The gear's settings have Pop out first, as a panel's do,
+ * which moves the window into an OS window of its own. That
+ * window is built as a panel's pop-out is (s_popScnPanel at
+ * SCN_TEXT_OWNER, scnPanelPopOutShow, scnPopOutButtons): the
+ * lines fitted into the whole OS window the same way, at the
+ * player's background and text opacity, up by the same rule
+ * as the window here (scnTextWindowShown) and blank with no
+ * line, and a gear with Pop in and an X in its top-right
+ * corner. While it is up, the window here is not drawn.
+ * Closing the OS window is a Pop in. Round end, a disconnect,
+ * tablet mode and the web put it away and keep the choice,
+ * as they do for a panel. The choice and the OS window's
+ * place are kept in [WINDOW] "Scenario Text Popout".
+ *
+ * Tablet mode has no windows to drag: there the same
+ * layout is drawn in a fixed rectangle at the top middle of
+ * tablet mode's own game view, the size the zoom gives it.
+ *
+ * The bytes are the script's own and are not localised.
  * ------------------------------------------------------- */
 
-/* The line's height in panel units, so it scales with the game's zoom the
-   same way the panel's own text does. */
-#define SCN_ANNOUNCE_UNITS 20.0f
+/* The smallest the window is ever drawn, in screen pixels: room for the
+   bar's two buttons and the grip. 32 high is the scenario panel's own
+   smallest side, so the buttons (scnPanelButtonSide) are no smaller than
+   the panel's. */
+#define SCN_TEXT_MIN_W_PX 64.0f
+#define SCN_TEXT_MIN_H_PX 32.0f
 
-/* The space the status line keeps from anything it has to move clear of, and
-   the space an announcement with a position keeps below the status line, in
-   panel units. The panel's own inset from the view's corner, so the status
-   line and the panel line up when they sit side by side. */
-#define SCN_ANNOUNCE_INSET_UNITS SCN_PANEL_DEFAULT_INSET
+/* The window's size before the player resizes it, in the classic 15 by 15
+   view, as a share of its size elsewhere. That view is 240 units high, where
+   a 20-unit line and its status line take a fifth of it between them; the
+   full screen map is far larger. The text is fitted into the window, so a
+   smaller window is smaller text. */
+#define SCN_TEXT_CLASSIC_SHARE (13.0f / 20.0f)
 
-/* The most things the status line is kept clear of at once: one panel per
-   script of the round's list, two vote widgets, the alliance request, and
-   the full screen map's HUD column and build strip. */
-#define SCN_ANNOUNCE_MAX_OBSTACLES (SCN_PANEL_OWNERS + 5)
+/* The most bytes a status line or an announcement is drawn from once its
+   tokens are written out: a phrase token is a sentence or two, in a
+   language that may take three bytes a letter. */
+#define SCN_LINE_EXPANDED_MAX 768
 
-/* Adds a window's last known rect to the things the status line keeps clear
-   of.
-   Active is this frame, for a window already submitted (the panel); WasActive
-   is the last one, for a window submitted after the line (the vote widgets
-   and the alliance request), which sit still from frame to frame. */
-static void scnAnnounceAddWindow(const char *name, ScnAnnounceRect *obstacles,
-                                 int *count) {
-    if (*count >= SCN_ANNOUNCE_MAX_OBSTACLES) return;
-    ImGuiWindow *w = ImGui::FindWindowByName(name);
-    if (w == nullptr || !(w->Active || w->WasActive) || w->Hidden) return;
-    if (w->Size.x <= 0.0f || w->Size.y <= 0.0f) return;
-    obstacles[*count].x0 = w->Pos.x;
-    obstacles[*count].y0 = w->Pos.y;
-    obstacles[*count].x1 = w->Pos.x + w->Size.x;
-    obstacles[*count].y1 = w->Pos.y + w->Size.y;
-    (*count)++;
-}
-
-/* Adds one of the full screen map's HUD rects, which are kept relative to
-   the map rect at (mapX, mapY). */
-static void scnAnnounceAddHudRect(float mapX, float mapY, float x, float y,
-                                  float w, float h,
-                                  ScnAnnounceRect *obstacles, int *count) {
-    if (*count >= SCN_ANNOUNCE_MAX_OBSTACLES) return;
-    if (w <= 0.0f || h <= 0.0f) return;
-    obstacles[*count].x0 = mapX + x;
-    obstacles[*count].y0 = mapY + y;
-    obstacles[*count].x1 = mapX + x + w;
-    obstacles[*count].y1 = mapY + y + h;
-    (*count)++;
-}
+/* One announcement as this frame draws it: its text with the tokens written
+   out and its rows broken to fit, its centre across (0 to 1) and how far
+   through its fade it is (1 full, 0 gone). */
+typedef struct ScnTextLine {
+    char  text[SCN_LINE_EXPANDED_MAX];
+    float share;
+    float fade;
+} ScnTextLine;
 
 /* The last of an announcement's life spent fading, in ticks. Long enough to
    read as going rather than as cut off; ticks run at a hundred a second, so
    this is a third of one. */
 #define SCN_ANNOUNCE_FADE_TICKS 33u
 
-/* The space above the status line, in panel units. Smaller than the
-   announcement's inset: the status line is meant to sit as high on the view
-   as it can and still keep its outline inside it. */
-#define SCN_STATUS_INSET_UNITS 1.0f
+/* The menu toggle, and what the X's confirm does. Hiding takes the window
+   off screen in both forms, as a panel's hide does (scnPanelSetShown). The
+   popped choice is kept, so turning it back on brings it back the way it
+   was. */
+static void scnTextSetShown(bool shown) {
+    gameFrontScnTextShown = shown;
+    gameFrontSaveWindowSettings();
+    if (!shown) {
+        s_scnText.placed       = false;
+        s_scnText.moving       = false;
+        s_scnText.resizing     = false;
+        s_scnText.settingsOpen = false;
+        if (s_popScnPanel[SCN_TEXT_OWNER].open) {
+            popOutHide(&s_popScnPanel[SCN_TEXT_OWNER]);
+        }
+    }
+}
 
-/* Draws one outlined line at (px, py): the line in near-black one stroke out
-   in each of the eight directions, so the letters keep an edge whichever way
-   the terrain under them happens to run, then the line in white. */
-static void scnDrawOutlinedLine(ImDrawList *dl, ImFont *font, float height,
-                                float px, float py, float o, int alpha,
-                                const char *text) {
+/* The Scenario Text window's pop-out choice and its OS window's place, read
+   from [WINDOW] (gameFrontScnTextPop*) into s_scnViews[SCN_TEXT_OWNER] the
+   first time the window is drawn. gamefront.c has already turned a missing
+   or bad row into the defaults (scnTextPopoutLoad). */
+static void scnTextPopLoad(void) {
+    ScnPanelView &v = s_scnViews[SCN_TEXT_OWNER];
+    v.popped = gameFrontScnTextPopped;
+    v.popX   = gameFrontScnTextPopX;
+    v.popY   = gameFrontScnTextPopY;
+    v.popW   = gameFrontScnTextPopW;
+    v.popH   = gameFrontScnTextPopH;
+    s_scnText.popLoaded = true;
+}
+
+/* Whether the Scenario Text window's pop-out is to be up: the player chose
+   it and pop-outs are available, and the window would be up in the game
+   window by the same rule (scnTextWindowShown), so an empty OS window is
+   up in a scenario round as the empty in-game window is. busy is only the
+   X's confirm asked from the pop-out: a drag and the settings belong to
+   the in-game window. */
+static bool scnTextPopOutWanted(bool haveText) {
+    if (!s_scnViews[SCN_TEXT_OWNER].popped || !scnPanelPopOutAvailable()) {
+        return false;
+    }
+    const bool shown = gameFrontScnTextShown || !scnPanelCanReopen();
+    const bool busy  = s_scnCloseAskOwner == SCN_TEXT_OWNER &&
+                       s_scnCloseAskPopout;
+    return scnTextWindowShown(shown, s_scnText.menuListed, haveText, busy);
+}
+
+/* Whether the round has a scenario or a mod: a list of scripts, or, from an
+   older server that sends no list, the attached scenario's file name. */
+static bool scnTextRoundHasScript(ClientSim *cs) {
+    if (cs == nullptr) return false;
+    if (clientSimGetLobbyScriptCount(cs) > 0) return true;
+    const char *file = clientSimGetLobbyScenarioFileName(cs);
+    return file != nullptr && file[0] != '\0';
+}
+
+/* Draws one row of text at (px, py): the row in near-black one stroke out
+   in each of the eight directions, so the letters keep an edge whatever is
+   under them, then the row in white. */
+static void scnDrawOutlinedRow(ImDrawList *dl, ImFont *font, float height,
+                               float px, float py, float o, int alpha,
+                               const char *text, const char *textEnd) {
     const ImU32 edge = IM_COL32(0, 0, 0, alpha);
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
             dl->AddText(font, height,
                         ImVec2(px + (float)dx * o, py + (float)dy * o),
-                        edge, text);
+                        edge, text, textEnd);
         }
     }
     dl->AddText(font, height, ImVec2(px, py),
-                IM_COL32(255, 255, 255, alpha), text);
+                IM_COL32(255, 255, 255, alpha), text, textEnd);
 }
 
-/* The status line and the announcement share a view, a scale, a font and the
-   things at the top of the view they both keep clear of, and are drawn
-   together so the announcement can keep clear of the status line too. */
-static void renderScenarioAnnounce(ClientSim *cs) {
-    if (cs == nullptr) return;
+/* How many rows a text takes: one more than its newlines. */
+static int scnTextRowCount(const char *text) {
+    int rows = 1;
+    for (; *text != '\0'; text++) {
+        if (*text == '\n') rows++;
+    }
+    return rows;
+}
+
+/* Breaks each row of text wider than maxW into rows that fit, in place. A
+   row breaks at its last space that fits, the space becoming "\n"; a row
+   with no such space (Chinese, Japanese and Korean are written without
+   them) breaks before the first character that does not fit, a "\n" put
+   in there while text has room for it. A script still splits its own
+   lines with "\n" where it wants them; this only keeps a line it did not
+   split, or a line in a longer language, inside the source rectangle, so
+   it is read at full size in rows rather than made smaller to fit across. */
+static void scnWrapRows(ImFont *font, float height, float maxW, char *text,
+                        size_t cap) {
+    if (font == nullptr || text == nullptr || cap == 0 || maxW <= 0.0f) {
+        return;
+    }
+    size_t len = strlen(text);
+    char  *row = text;
+    while (*row != '\0') {
+        float  w         = 0.0f;
+        char  *lastSpace = nullptr;
+        char  *p         = row;
+        char  *breakAt   = nullptr;
+        while (*p != '\0' && *p != '\n') {
+            /* One character: its UTF-8 lead byte gives its length. */
+            const unsigned char c = (unsigned char)*p;
+            size_t n = 1;
+            if (c >= 0xF0) n = 4;
+            else if (c >= 0xE0) n = 3;
+            else if (c >= 0xC0) n = 2;
+            for (size_t k = 1; k < n; k++) {
+                if (p[k] == '\0') { n = k; break; }
+            }
+            const float cw =
+                font->CalcTextSizeA(height, FLT_MAX, 0.0f, p, p + n).x;
+            if (w + cw > maxW && p > row) {
+                breakAt = p;
+                break;
+            }
+            if (*p == ' ') lastSpace = p;
+            w += cw;
+            p += n;
+        }
+        if (breakAt == nullptr) {
+            /* The row fits: on to the next. */
+            row = (*p == '\n') ? p + 1 : p;
+            continue;
+        }
+        if (lastSpace != nullptr && lastSpace > row) {
+            *lastSpace = '\n';
+            row = lastSpace + 1;
+            continue;
+        }
+        if (len + 1 >= cap) return;   /* no room for one more break */
+        memmove(breakAt + 1, breakAt, len - (size_t)(breakAt - text) + 1);
+        *breakAt = '\n';
+        len++;
+        row = breakAt + 1;
+    }
+}
+
+/* Draws one line, of one or more rows, from source row `row` down. share is
+   the line's centre across, 0 to 1. The widest row sets the line's box and
+   its shrink, so every row of a line is drawn at one size, and each row is
+   centred in that box; a line made smaller to fit across is centred down
+   its rows. Answers how many rows the line takes, drawn or not. */
+static int scnTextDrawLine(ImDrawList *dl, ImFont *font, const ScnTextFit &fit,
+                           float srcW, int row, float share, int alpha,
+                           const char *text) {
+    if (text == nullptr || text[0] == '\0') return 0;
+    const int rows = scnTextRowCount(text);
+    if (alpha <= 0 || fit.scale <= 0.0f) return rows;
+
+    float widest = 0.0f;
+    for (const char *r = text;;) {
+        const char *end = strchr(r, '\n');
+        if (end == nullptr) end = r + strlen(r);
+        widest = ImMax(widest, font->CalcTextSizeA(SCN_TEXT_LINE_UNITS, FLT_MAX,
+                                                   0.0f, r, end).x);
+        if (*end == '\0') break;
+        r = end + 1;
+    }
+    const float lineW = widest + 2.0f * SCN_TEXT_OUTLINE_UNITS;
+    float x = 0.0f, shrink = 1.0f;
+    scnTextLineAcross(srcW, lineW, share, &x, &shrink);
+
+    const float px     = fit.scale * shrink;   /* pixels per unit, this line */
+    const float height = SCN_TEXT_LINE_UNITS * px;
+    if (height < 1.0f) return rows;
+    const float o = ImMax(SCN_TEXT_OUTLINE_UNITS * px, 1.0f);
+    const char *r = text;
+    for (int i = 0; i < rows && row + i < SCN_TEXT_MAX_ROWS; i++) {
+        const char *end = strchr(r, '\n');
+        if (end == nullptr) end = r + strlen(r);
+        const float rowW =
+            font->CalcTextSizeA(SCN_TEXT_LINE_UNITS, FLT_MAX, 0.0f, r, end).x;
+        const float top = scnTextRowTop(row + i) +
+                          SCN_TEXT_ROW_UNITS * (1.0f - shrink) * 0.5f;
+        scnDrawOutlinedRow(dl, font, height,
+                           fit.originX + x * fit.scale + o +
+                               (widest - rowW) * px * 0.5f,
+                           fit.originY + top * fit.scale + o, o, alpha, r, end);
+        if (*end == '\0') break;
+        r = end + 1;
+    }
+    return rows;
+}
+
+/* The rows the round has used so far: the status line's, then the
+   announcements'. scnTextSourceHeight counts none as one. */
+static int scnTextRowsUsed(void) {
+    return s_scnText.statusRows + s_scnText.announceRows;
+}
+
+/* The lines, scaled into the rectangle at (x, y) of size w by h: the status
+   line in its rows at the top, then each announcement in order, oldest
+   first, in the rows under it. alpha is the player's text opacity, 0 to 1,
+   and fades the text and its outline. */
+static void scnTextDrawLines(ImDrawList *dl, ImFont *font, float x, float y,
+                             float w, float h, float alpha,
+                             const char *status, bool haveStatus,
+                             const ScnTextLine *lines, int lineCount) {
+    const float srcW = SCN_TEXT_SRC_W_UNITS;
+    const float srcH = scnTextSourceHeight(scnTextRowsUsed());
+    const ScnTextFit fit = scnTextFitRect(srcW, srcH, x, y, w, h);
+    if (haveStatus) {
+        scnTextDrawLine(dl, font, fit, srcW, 0, 0.5f,
+                        (int)lroundf(255.0f * alpha), status);
+    }
+    /* Under the status line's rows whether or not it is up this frame, so an
+       announcement does not move up when the status line goes. */
+    int row = s_scnText.statusRows;
+    for (int i = 0; i < lineCount; i++) {
+        row += scnTextDrawLine(dl, font, fit, srcW, row, lines[i].share,
+                               (int)lroundf(255.0f * alpha * lines[i].fade),
+                               lines[i].text);
+    }
+}
+
+/* The Scenario Text window's settings, opened by its gear: the same items
+   in the same order as a script's panel's settings
+   (renderScenarioPanelSettings): Pop out (where pop-outs are available),
+   then the background and text opacity sliders. */
+static void renderScenarioTextSettings(float gearX, float gearY) {
+    if (!s_scnText.settingsOpen) return;
+
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(gearX + SCN_PANEL_DIALOG_GAP,
+                                   gearY + SCN_PANEL_DIALOG_GAP),
+                            ImGuiCond_Appearing);
+
+    char title[128];
+    SDL_snprintf(title, sizeof(title), "%s###scntextsettings",
+                 langGetText(STR_SCNTEXT_TITLE));
+
+    if (ImGui::Begin(title, &s_scnText.settingsOpen,
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoDocking |
+                     ImGuiWindowFlags_NoCollapse)) {
+        /* Held inside the main window, where its title bar can be grabbed. */
+        const ImVec2 winPos  = ImGui::GetWindowPos();
+        const ImVec2 winSize = ImGui::GetWindowSize();
+        float keepX = winPos.x, keepY = winPos.y;
+        if (keepX > display.x - winSize.x) keepX = display.x - winSize.x;
+        if (keepY > display.y - winSize.y) keepY = display.y - winSize.y;
+        if (keepX < 0.0f) keepX = 0.0f;
+        if (keepY < 0.0f) keepY = 0.0f;
+        if (keepX != winPos.x || keepY != winPos.y) {
+            ImGui::SetWindowPos(ImVec2(keepX, keepY));
+        }
+
+        scnPopOutButton(SCN_TEXT_OWNER);
+
+        if (scnOpacitySlider(langGetText(STR_SCN_BG_OPACITY_LBL),
+                             "scnTextBgAlpha", &s_scnText.bgPct,
+                             gameFrontScnTextBgAlpha)) {
+            gameFrontScnTextBgAlpha = s_scnText.bgPct;
+            gameFrontSaveWindowSettings();
+        }
+        if (scnOpacitySlider(langGetText(STR_SCN_TEXT_OPACITY_LBL),
+                             "scnTextTextAlpha", &s_scnText.textPct,
+                             gameFrontScnTextTextAlpha)) {
+            gameFrontScnTextTextAlpha = s_scnText.textPct;
+            gameFrontSaveWindowSettings();
+        }
+    }
+    ImGui::End();
+}
+
+/* The status line and the announcement, in the Scenario Text window.
+   inPopout is false for the game window's pass, which also opens and hides
+   the window's pop-out, and true inside the pop-out's own frame
+   (renderScenarioTextPopOut), which draws the lines into the OS window. */
+static void renderScenarioText(ClientSim *cs, bool inPopout) {
+    if (cs == nullptr) {
+        s_scnText.menuListed = false;
+        if (!inPopout) scnPopOutSync(SCN_TEXT_OWNER, false);
+        return;
+    }
 
     const uint32_t now = clientSimGetLastServerTick(cs);
 
-    /* The status line, with its countdown worked out on this client's own
-       clock. */
-    uint32_t    statusEndsAt = SCN_STATUS_NO_COUNTDOWN;
-    const char *statusRaw    = clientSimGetScnStatus(cs, &statusEndsAt);
-    char        status[SCN_STATUS_LINE_MAX];
-    const bool  haveStatus =
-        scnStatusLineText(statusRaw, statusEndsAt, now, status,
-                          sizeof(status));
+    /* Never white text and a popup at once. While the popup overlay is open
+       (a scenario's game.popup or a tutorial message) the status line and
+       the announcements are not drawn, and the announcements' clocks stand
+       still: a line sent in the same tick as a popup, or while it is open,
+       gets its whole time after the popup closes. Called after
+       tutorialOverlayRender, so a popup closed this frame lets the lines
+       back this frame. The window itself stays up as it does with no line.
 
-    uint16_t    ticks       = 0;
-    uint32_t    arrivedTick = 0;
-    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
-    uint32_t    left        = 0;
-    const bool  haveAnnounce =
-        scnAnnounceRemaining(text, arrivedTick, ticks, now, &left);
-    if (!haveStatus && !haveAnnounce) return;
-
-    /* The same zoom the panel window scales by, so the two agree about what
-       one unit is worth on this screen. Tablet mode draws the game view at
-       its own zoom, in the same coordinates ImGui uses. */
-    float scale = 1.0f;
-    int   tvX = 0, tvY = 0, tvW = 0, tvH = 0, tvZoom = 0;
-    const bool tablet = uiModeIsTablet();
-    if (tablet) {
-        sdl3DrawGetTabletViewport(&tvX, &tvY, &tvW, &tvH, &tvZoom);
-        if (tvW <= 0 || tvH <= 0) return;   /* no view drawn yet */
-        scale = (float)((tvZoom < 1) ? 1 : tvZoom);
-    } else {
-        int rawZoom = sdl3DrawGetZoomFactor();
-        if (rawZoom < 1) rawZoom = 1;
-        float gameScale = 1.0f;
-        sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
-        if (gameScale <= 0.0f) gameScale = 1.0f;
-        scale = (float)rawZoom * gameScale;
-    }
-
-    /* The game view in render coordinates, and the things at its top the
-       status line has to keep clear of. The full screen map is the view when
-       it owns the window, with its HUD column down the right and its build
-       strip on the left. tankView is false on the full screen map, where the
-       tank is wherever it is on the map and not in the middle square. */
-    ScnAnnounceRect view;
-    ScnAnnounceRect obstacles[SCN_ANNOUNCE_MAX_OBSTACLES];
-    int             count    = 0;
-    bool            tankView = true;
-    float mapX = 0.0f, mapY = 0.0f, mapW = 0.0f, mapH = 0.0f;
-    if (tablet) {
-        view.x0 = (float)tvX;
-        view.y0 = (float)tvY;
-        view.x1 = (float)(tvX + tvW);
-        view.y1 = (float)(tvY + tvH);
-        scnAnnounceAddWindow("##ScenarioSlot", obstacles, &count);
-    } else if (sdl3DrawGetOverviewInWindowRect(&mapX, &mapY, &mapW, &mapH)) {
-        tankView = false;
-        view.x0 = mapX;
-        view.y0 = mapY;
-        view.x1 = mapX + mapW;
-        view.y1 = mapY + mapH;
-        OverviewHudLayout hud;
-        if (sdl3DrawGetOverviewHudLayout(&hud)) {
-            scnAnnounceAddHudRect(mapX, mapY, hud.columnX, hud.columnY,
-                                  hud.columnW, hud.columnH, obstacles, &count);
-            scnAnnounceAddHudRect(mapX, mapY, hud.buildX, hud.buildY,
-                                  hud.buildW, hud.buildH, obstacles, &count);
+       The hold is written, and the lines read, under the client mutex: in a
+       single-player game the server's thread puts lines into this same
+       client sim as it publishes them. */
+    uint32_t    statusEndsAt   = SCN_STATUS_NO_COUNTDOWN;
+    char        statusWire[PACKET_MAX_CHAT_MESSAGE + 1];
+    bool        haveStatusWire = false;
+    ScnTextLine lines[SCN_ANNOUNCE_STACK_MAX];
+    int         lineCount = 0;
+    clientMutexWaitFor();
+    clientSimScnAnnounceHold(cs, tutorialOverlayIsOpen(), now);
+    if (!clientSimScnAnnounceIsHeld(cs)) {
+        const char *sw = clientSimGetScnStatus(cs, &statusEndsAt);
+        if (sw != nullptr) {
+            SDL_strlcpy(statusWire, sw, sizeof(statusWire));
+            haveStatusWire = true;
         }
-    } else {
-        float gx, gy, gw, gh, gtw, gth;
-        if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return;
-        if (!sdl3DrawGameToRenderCoords(gx, gy, &view.x0, &view.y0)) return;
-        if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &view.x1, &view.y1)) {
-            return;
+        /* Every announcement still up, oldest first. A scenario may put a
+           second line up while the first is showing; both are drawn, each
+           with its own countdown, the newest lowest. Both kinds of line may
+           carry the popup's key tokens ({ACCEL}, {QUICK_ROAD} and the rest),
+           written out here as the key or control in words; a name is longer
+           than its token, so the buffers have room well past the 128 bytes a
+           line may be. */
+        const int heldCount = clientSimGetScnAnnounceCount(cs);
+        for (int i = 0; i < heldCount && lineCount < SCN_ANNOUNCE_STACK_MAX;
+             i++) {
+            const ClientScnAnnounce *a = clientSimGetScnAnnounceAt(cs, i);
+            uint32_t left = 0;
+            if (a == nullptr ||
+                !scnAnnounceRemaining(a->text, a->arrivedTick, a->ticks, now,
+                                      &left)) {
+                continue;
+            }
+            ScnTextLine *l = &lines[lineCount++];
+            tutorialExpandTextPlain(a->text, l->text, sizeof(l->text));
+            /* Where the script put it, as a share across. The share down is
+               not used: every line has rows of its own. */
+            l->share = (a->hasPos != 0) ? scnAnnouncePosShare(a->posX) : 0.5f;
+            /* Full strength until the last stretch, then out. */
+            l->fade  = (left < SCN_ANNOUNCE_FADE_TICKS)
+                           ? (float)left / (float)SCN_ANNOUNCE_FADE_TICKS
+                           : 1.0f;
         }
     }
-    /* Each script of the round's list has a panel window of its own, named
-       by renderScenarioPanelView as the id plus the owner. A panel popped
-       out into its own window is in another ImGui context and is not found,
-       which is right: it is not over the game view. */
-    for (int owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
-        char winId[32];
-        SDL_snprintf(winId, sizeof(winId), "##scenariopanel%d", owner);
-        scnAnnounceAddWindow(winId, obstacles, &count);
-    }
-    scnAnnounceAddWindow("###gamevote_1", obstacles, &count);
-    scnAnnounceAddWindow("###gamevote_2", obstacles, &count);
-    scnAnnounceAddWindow("###alliancereq", obstacles, &count);
+    clientMutexRelease();
 
     ImFont *font = ImGui::GetFont();
     if (font == nullptr) return;
-    ImDrawList *dl = ImGui::GetForegroundDrawList();
-    if (dl == nullptr) return;
 
-    float height = SCN_ANNOUNCE_UNITS * scale;
-    if (height < 8.0f) height = 8.0f;
-
-    /* The outline reaches one stroke past the letters on every side, so the
-       box that has to stay clear is that much bigger than the letters. */
-    const float o = (scale > 1.0f) ? scale : 1.0f;
-    const float inset = SCN_ANNOUNCE_INSET_UNITS * scale;
-    /* On the main view the player's tank sits in the middle square, and the
-       status line is never moved down onto it: the floor is the top of that
-       square. The full screen map has no such square, so there the floor is
-       the bottom of the map. */
-    const float floorY =
-        tankView ? (view.y0 + view.y1) * 0.5f -
-                       (view.y1 - view.y0) / (float)MAIN_SCREEN_SIZE_Y * 0.5f
-                 : view.y1;
-
-    /* The status line first, as high on the view as it goes, moved sideways
-       or down by the things at the top of the view. Its row then becomes a
-       band the width of the view, so an announcement with a position near
-       the top drops below it rather than sharing its row. */
-    ScnAnnounceRect statusBand = { 0.0f, 0.0f, 0.0f, 0.0f };
-    bool            haveBand   = false;
+    /* The status line, with its countdown worked out on this client's own
+       clock, then every line broken into rows that fit across the source
+       rectangle (scnWrapRows), measured at the size a row's letters have
+       there. */
+    char statusRaw[SCN_LINE_EXPANDED_MAX];
+    char status[SCN_STATUS_LINE_MAX + SCN_LINE_EXPANDED_MAX];
+    if (haveStatusWire) {
+        tutorialExpandTextPlain(statusWire, statusRaw, sizeof(statusRaw));
+    }
+    const bool haveStatus =
+        scnStatusLineText(haveStatusWire ? statusRaw : nullptr, statusEndsAt,
+                          now, status, sizeof(status));
+    const float rowMaxW = SCN_TEXT_SRC_W_UNITS - 2.0f * SCN_TEXT_OUTLINE_UNITS;
     if (haveStatus) {
-        const ImVec2 measured =
-            font->CalcTextSizeA(height, FLT_MAX, 0.0f, status);
-        const float boxW = measured.x + 2.0f * o;
-        const float boxH = measured.y + 2.0f * o;
-        float boxX = 0.0f, boxY = 0.0f;
-        scnStatusPlace(view, boxW, boxH, SCN_STATUS_INSET_UNITS * scale,
-                       inset, floorY, obstacles, count, &boxX, &boxY);
-        scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, 255,
-                            status);
-        statusBand.x0 = view.x0;
-        statusBand.y0 = boxY;
-        statusBand.x1 = view.x1;
-        statusBand.y1 = boxY + boxH;
-        haveBand      = true;
+        scnWrapRows(font, SCN_TEXT_LINE_UNITS, rowMaxW, status, sizeof(status));
+    }
+    int announceRows = 0;
+    for (int i = 0; i < lineCount; i++) {
+        scnWrapRows(font, SCN_TEXT_LINE_UNITS, rowMaxW, lines[i].text,
+                    sizeof(lines[i].text));
+        announceRows += scnTextRowCount(lines[i].text);
+    }
+    const bool haveAnnounce = lineCount > 0;
+
+    /* The rows the round has used so far set the source rectangle. They are
+       counted over the round and not frame by frame, so the text does not
+       change size when a line comes and goes. */
+    if (haveStatus) {
+        s_scnText.usedStatus = true;
+        s_scnText.statusRows = ImMax(s_scnText.statusRows,
+                                     scnTextRowCount(status));
+    }
+    if (haveAnnounce) {
+        s_scnText.usedAnnounce = true;
+        s_scnText.announceRows = ImMax(s_scnText.announceRows, announceRows);
+    }
+    s_scnText.menuListed = scnTextRoundHasScript(cs) ||
+                           s_scnText.usedStatus || s_scnText.usedAnnounce;
+
+    if (!s_scnText.alphaLoaded) {
+        s_scnText.bgPct   = scnOpacityClamp(gameFrontScnTextBgAlpha);
+        s_scnText.textPct = scnOpacityClamp(gameFrontScnTextTextAlpha);
+        if (s_scnText.bgPct < 0) s_scnText.bgPct = SCN_BG_OPACITY_DEFAULT;
+        if (s_scnText.textPct < 0) {
+            s_scnText.textPct = SCN_TEXT_OPACITY_DEFAULT;
+        }
+        s_scnText.alphaLoaded = true;
+    }
+    if (!s_scnText.popLoaded) scnTextPopLoad();
+
+    /* In the pop-out's own frame: the lines fitted into the whole OS window
+       the way the game window fits them (scnTextFitRect), on a black
+       backing at the player's background opacity, at the player's text
+       opacity. With no line it draws nothing, as the game window does. */
+    if (inPopout) {
+        if (!haveStatus && !haveAnnounce) return;
+        const ImVec2 ds  = ImGui::GetIO().DisplaySize;
+        ImDrawList  *pdl = ImGui::GetWindowDrawList();
+        pdl->AddRectFilled(ImVec2(0.0f, 0.0f), ds,
+                           IM_COL32(0, 0, 0, scnBackingAlpha(s_scnText.bgPct)));
+        scnTextDrawLines(pdl, font, 0.0f, 0.0f, ds.x, ds.y,
+                         (float)s_scnText.textPct / 100.0f, status,
+                         haveStatus, lines, lineCount);
+        return;
     }
 
-    if (!haveAnnounce) return;
-
-    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
-    const float  boxW     = measured.x + 2.0f * o;
-    const float  boxH     = measured.y + 2.0f * o;
-    float   boxX = 0.0f, boxY = 0.0f;
-    uint8_t posX = 0, posY = 0;
-    if (clientSimGetScnAnnouncePos(cs, &posX, &posY)) {
-        /* Where the script said, kept inside the view by the status line's
-           inset and below the status line. */
-        scnAnnounceAt(view, boxW, boxH, posX, posY,
-                      SCN_STATUS_INSET_UNITS * scale,
-                      haveBand ? &statusBand : nullptr, inset, &boxX, &boxY);
-    } else {
-        /* Where announcements have always gone. */
-        scnAnnounceDefaultPlace(view, boxW, o, &boxX, &boxY);
+    /* Popped out: the OS window draws the lines in its own frame, and the
+       window here is not drawn, as a popped-out panel's is not
+       (renderScenarioPanels). The pop-out is hidden in tablet mode and
+       wherever pop-outs are not available, and the window comes back here. */
+    SDL_snprintf(s_scnViews[SCN_TEXT_OWNER].name,
+                 sizeof(s_scnViews[SCN_TEXT_OWNER].name), "%s",
+                 langGetText(STR_SCNTEXT_TITLE));
+    if (scnPopOutSync(SCN_TEXT_OWNER,
+                      scnTextPopOutWanted(haveStatus || haveAnnounce))) {
+        s_scnText.placed       = false;
+        s_scnText.moving       = false;
+        s_scnText.resizing     = false;
+        s_scnText.settingsOpen = false;
+        return;
     }
 
-    /* Full strength until the last stretch, then out. */
-    float fade = 1.0f;
-    if (left < SCN_ANNOUNCE_FADE_TICKS) {
-        fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
-    }
-    const int alpha = (int)(255.0f * fade);
-    if (alpha <= 0) return;
+    const float srcW = SCN_TEXT_SRC_W_UNITS;
+    const float srcH = scnTextSourceHeight(scnTextRowsUsed());
 
-    scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, alpha, text);
+    /* Tablet mode: no window, the same layout at the top middle of its own
+       game view, at the size its zoom gives the text, and left of the
+       scenario panel's square when that is shown (scnTextTabletBand). The
+       square's window, ##ScenarioSlot, is submitted earlier in the frame by
+       the tablet overlay, so Active is this frame's. */
+    if (uiModeIsTablet()) {
+        s_scnText.placed       = false;
+        s_scnText.moving       = false;
+        s_scnText.resizing     = false;
+        s_scnText.settingsOpen = false;
+        if (!haveStatus && !haveAnnounce) return;
+        int tvX = 0, tvY = 0, tvW = 0, tvH = 0, tvZoom = 0;
+        sdl3DrawGetTabletViewport(&tvX, &tvY, &tvW, &tvH, &tvZoom);
+        if (tvW <= 0 || tvH <= 0) return;   /* no view drawn yet */
+        const float scale = (float)((tvZoom < 1) ? 1 : tvZoom);
+        bool  haveSlot = false;
+        float slotX    = 0.0f;
+        {
+            ImGuiWindow *slot = ImGui::FindWindowByName("##ScenarioSlot");
+            if (slot != nullptr && slot->Active && !slot->Hidden &&
+                slot->Size.x > 0.0f) {
+                haveSlot = true;
+                slotX    = slot->Pos.x;
+            }
+        }
+        const ScnTextBand band = scnTextTabletBand(
+            (float)tvX, (float)tvY, (float)tvW, srcW, srcH, scale,
+            SCN_PANEL_DEFAULT_INSET * scale, haveSlot, slotX);
+        if (band.w <= 0.0f || band.h <= 0.0f) return;
+        ImDrawList *dl = ImGui::GetForegroundDrawList();
+        if (dl == nullptr) return;
+        dl->AddRectFilled(ImVec2(band.x, band.y),
+                          ImVec2(band.x + band.w, band.y + band.h),
+                          IM_COL32(0, 0, 0,
+                                   scnBackingAlpha(SCN_BG_OPACITY_DEFAULT)));
+        scnTextDrawLines(dl, font, band.x, band.y, band.w, band.h, 1.0f,
+                         status, haveStatus, lines, lineCount);
+        return;
+    }
+
+    /* Up while the round lists the window in the menu, with or without a
+       line, so the player can move and resize it when no line is on
+       screen; while there is a line to show; and while the player is busy
+       with it, so a drag or the opacity sliders are not cut off when a
+       line goes (scnTextWindowShown). */
+    const bool haveText = haveStatus || haveAnnounce;
+    const bool busy = s_scnText.moving || s_scnText.resizing ||
+                      s_scnText.settingsOpen ||
+                      s_scnCloseAskOwner == SCN_TEXT_OWNER;
+    const bool shown = gameFrontScnTextShown || !scnPanelCanReopen();
+    if (!scnTextWindowShown(shown, s_scnText.menuListed, haveText, busy)) {
+        s_scnText.placed       = false;
+        s_scnText.moving       = false;
+        s_scnText.resizing     = false;
+        s_scnText.settingsOpen = false;
+        return;
+    }
+
+    /* The game's own zoom, as the pixels it comes out at on screen, which
+       sets the size the window has before the player resizes it: the text
+       at the size the announcement was always drawn at. srcH is for the
+       rows the round has used so far, and for one row when it has used
+       none (scnTextSourceHeight), so a window with no line has the size it
+       will have when the first line comes. */
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float gameScale = 1.0f;
+    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    const float scale = (float)rawZoom * gameScale;
+
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float maxW = ImMax(display.x, SCN_TEXT_MIN_W_PX);
+    const float maxH = ImMax(display.y, SCN_TEXT_MIN_H_PX);
+
+    /* In the classic 15 by 15 view the window starts smaller
+       (SCN_TEXT_CLASSIC_SHARE). The full screen map owns the window while it
+       is up, and has room for the full size. */
+    float defScale = scale;
+    {
+        float mx, my, mw, mh;
+        if (!sdl3DrawGetOverviewInWindowRect(&mx, &my, &mw, &mh)) {
+            defScale = scale * SCN_TEXT_CLASSIC_SHARE;
+        }
+    }
+    float w = (gameFrontScnTextW > 0) ? (float)gameFrontScnTextW
+                                      : srcW * defScale;
+    float h = (gameFrontScnTextH > 0) ? (float)gameFrontScnTextH
+                                      : srcH * defScale;
+    if (s_scnText.resizing) {
+        w = s_scnText.rawW;
+        h = s_scnText.rawH;
+    }
+    w = ImClamp(w, SCN_TEXT_MIN_W_PX, maxW);
+    h = ImClamp(h, SCN_TEXT_MIN_H_PX, maxH);
+
+    /* Where it goes when nothing has been saved: the top middle of the game
+       view, inset from the top as the panel is from its corner. The full
+       screen map is the view when it owns the window. */
+    const float inset = SCN_PANEL_DEFAULT_INSET * scale;
+    float defX = (display.x - w) * 0.5f;
+    float defY = inset;
+    {
+        float mx, my, mw, mh;
+        float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
+        if (sdl3DrawGetOverviewInWindowRect(&mx, &my, &mw, &mh)) {
+            defX = mx + (mw - w) * 0.5f;
+            defY = my + inset;
+        } else if (sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth) &&
+                   sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0) &&
+                   sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) {
+            defX = (rx0 + rx1) * 0.5f - w * 0.5f;
+            defY = ry0 + inset;
+        }
+    }
+
+    /* A position saved on a larger display is brought inside this one. */
+    float wantX = (gameFrontScnTextX >= 0) ? (float)gameFrontScnTextX : defX;
+    float wantY = (gameFrontScnTextY >= 0) ? (float)gameFrontScnTextY : defY;
+    if (wantX > display.x - w) wantX = display.x - w;
+    if (wantY > display.y - h) wantY = display.y - h;
+    if (wantX < 0.0f) wantX = 0.0f;
+    if (wantY < 0.0f) wantY = 0.0f;
+
+    if (!s_scnText.placed) {
+        ImGui::SetNextWindowPos(ImVec2(wantX, wantY), ImGuiCond_Always);
+        s_scnText.placed = true;
+        s_scnText.atX    = wantX;
+        s_scnText.atY    = wantY;
+    }
+    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+
+    /* The bar's height and the grip's side. Both come from this frame's
+       w and h only, so they are known before Begin. */
+    const float shortSide = ImMin(w, h);
+    const float handle    = ImMin(SCN_PANEL_HANDLE_PX, shortSide * 0.25f);
+    const float btn       = scnPanelButtonSide(shortSide);
+
+    /* Some other ImGui window (a scenario panel, the settings, a menu) is
+       under the pointer and in front of this one. g.HoveredWindow is the
+       window ImGui chose in this frame's NewFrame, and it skips a NoInputs
+       window, so it can be a window behind this one: IsWindowAbove tells
+       the two cases apart. When this window is the hovered window, its
+       root is itself and nothing covers it. */
+    bool covered = false;
+    {
+        ImGuiContext &g     = *GImGui;
+        ImGuiWindow  *self  = ImGui::FindWindowByName("##scenariotext");
+        ImGuiWindow  *other = g.HoveredWindow ? g.HoveredWindow->RootWindow
+                                              : nullptr;
+        covered = self != nullptr && other != nullptr && other != self &&
+                  ImGui::IsWindowAbove(other, self);
+    }
+
+    /* The bar, the buttons and the grip show while the pointer is on the
+       window and no other window covers it there, for a while after it
+       leaves (a touch has no hover), while one of them is being dragged,
+       and while the settings or the close confirm are up.
+       The window takes input only while the pointer is on the bar (which
+       holds the gear and the X) or on the grip, while one of them is being
+       dragged, and while the settings or the close confirm are up. The
+       rest of the time it is NoInputs, so it is never the hovered window,
+       io.WantCaptureMouse stays false over it, and a click or the wheel on
+       the text goes through to the game view under it, as it did when the
+       lines were drawn on the view. This holds while the handles show: the
+       handles showing does not make the window take input.
+       The pointer is tested with plain rectangle tests on last frame's
+       place and this frame's size, for this reason: IsWindowHovered is
+       never true for a NoInputs window. scnTextPointerOnHandle in
+       scenario_panel_draw.h has the bar and grip rectangles.
+       ImGui works out the hovered window in NewFrame, from the flags of the
+       last Begin, so the window takes input from the frame after the
+       pointer first comes onto the bar or the grip. A press on the bar then
+       makes the bar the active item that frame, and the drag holds the
+       input until the button is let go. A touch that lands on the bar with
+       no hover before it goes through to the game; the touch after it,
+       with the pointer still there, is taken. */
+    const Uint64 nowMs  = SDL_GetTicks();
+    const ImVec2 mouse  = ImGui::GetIO().MousePos;
+    const bool   onRect = !covered &&
+        ImGui::IsMouseHoveringRect(
+            ImVec2(s_scnText.atX, s_scnText.atY),
+            ImVec2(s_scnText.atX + w, s_scnText.atY + h), false);
+    if (onRect) {
+        s_scnText.chromeUntil = nowMs + SCN_PANEL_CHROME_LINGER_MS;
+    }
+    const bool onHandle = onRect &&
+        scnTextPointerOnHandle(s_scnText.atX, s_scnText.atY, w, h, btn,
+                               handle, mouse.x, mouse.y);
+    const bool takesInput = onHandle ||
+                            s_scnText.moving || s_scnText.resizing ||
+                            s_scnText.settingsOpen ||
+                            s_scnCloseAskOwner == SCN_TEXT_OWNER;
+
+    float gearX = 0.0f;
+    float gearY = 0.0f;
+
+    /* As the panel's window: no padding and no border, so the window's rect
+       is the rectangle the lines are fitted into, and a backing that is
+       black at the player's background opacity while there is a line to
+       show. With no line there is no backing. The bar and
+       the grip are the only things that move or resize it. */
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(
+        ImGuiCol_WindowBg,
+        IM_COL32(0, 0, 0,
+                 haveText ? scnBackingAlpha(s_scnText.bgPct) : 0));
+    const bool open = ImGui::Begin("##scenariotext", nullptr,
+                                   ImGuiWindowFlags_NoTitleBar |
+                                   ImGuiWindowFlags_NoResize |
+                                   ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoScrollbar |
+                                   ImGuiWindowFlags_NoScrollWithMouse |
+                                   ImGuiWindowFlags_NoCollapse |
+                                   ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoFocusOnAppearing |
+                                   ImGuiWindowFlags_NoDocking |
+                                   ImGuiWindowFlags_NoNav |
+                                   (takesInput ? 0 : ImGuiWindowFlags_NoInputs));
+    if (open) {
+        const ImVec2 pos = ImGui::GetWindowPos();
+        ImDrawList *dl   = ImGui::GetWindowDrawList();
+
+        const bool  withClose = scnPanelCanReopen();
+        const float btnsW     = withClose ? btn * 2.0f : btn;
+
+        /* The bar and the grip are submitted every frame, drawn or not, so a
+           drag that wanders off the window stays alive. */
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::InvisibleButton("##scntextmove",
+                               ImVec2(ImMax(w - btnsW, 1.0f), btn));
+        const bool moveHot    = ImGui::IsItemHovered();
+        const bool moveActive = ImGui::IsItemActive();
+        if (moveHot || moveActive) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        }
+        if (moveActive) {
+            const ImVec2 drag = ImGui::GetIO().MouseDelta;
+            if (drag.x != 0.0f || drag.y != 0.0f) {
+                ImGui::SetWindowPos(ImVec2(pos.x + drag.x, pos.y + drag.y));
+            }
+        }
+        s_scnText.moving = moveActive;
+
+        const ScnPanelButtons b = scnPanelSubmitButtons(pos, w, btn, withClose);
+        gearX = b.gearX;
+        gearY = pos.y;
+        if (b.gearClicked) s_scnText.settingsOpen = !s_scnText.settingsOpen;
+        if (b.closeClicked) scnPanelRequestClose(SCN_TEXT_OWNER, false);
+
+        ImGui::SetCursorScreenPos(ImVec2(pos.x + w - handle, pos.y + h - handle));
+        ImGui::InvisibleButton("##scntextresize", ImVec2(handle, handle));
+        const bool resizeHot    = ImGui::IsItemHovered();
+        const bool resizeActive = ImGui::IsItemActive();
+        if (resizeHot || resizeActive) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+        }
+        if (ImGui::IsItemActivated()) {
+            s_scnText.rawW = w;
+            s_scnText.rawH = h;
+        }
+        if (resizeActive) {
+            /* Width and height each follow the pointer: the window is a
+               rectangle of any shape, and the text keeps its own shape
+               inside it. */
+            const ImVec2 drag = ImGui::GetIO().MouseDelta;
+            s_scnText.rawW = ImClamp(s_scnText.rawW + drag.x,
+                                     SCN_TEXT_MIN_W_PX, maxW);
+            s_scnText.rawH = ImClamp(s_scnText.rawH + drag.y,
+                                     SCN_TEXT_MIN_H_PX, maxH);
+        }
+        if (ImGui::IsItemDeactivated()) {
+            const int nw = (int)lroundf(w);
+            const int nh = (int)lroundf(h);
+            if (nw != gameFrontScnTextW || nh != gameFrontScnTextH) {
+                gameFrontScnTextW = nw;
+                gameFrontScnTextH = nh;
+                gameFrontSaveWindowSettings();
+            }
+        }
+        s_scnText.resizing = resizeActive;
+
+        /* The handles show while the pointer is on the window or has just
+           left it, while the window takes input (see above Begin), and
+           while a drag that began this frame is active. */
+        const bool handlesVisible = nowMs < s_scnText.chromeUntil ||
+                                    takesInput || moveActive || resizeActive;
+
+        /* Kept inside the main window. The place is saved, through the
+           debounced window-settings path, once the player has moved the
+           window: a window never moved keeps following the game view's top
+           middle. With no line to show, only a drag saves it
+           (scnTextSavePlace), so a window with no line never changes the
+           saved place by itself. */
+        const ImVec2 moved = ImGui::GetWindowPos();
+        float keepX = moved.x, keepY = moved.y;
+        if (keepX > display.x - w) keepX = display.x - w;
+        if (keepY > display.y - h) keepY = display.y - h;
+        if (keepX < 0.0f) keepX = 0.0f;
+        if (keepY < 0.0f) keepY = 0.0f;
+        if (keepX != moved.x || keepY != moved.y) {
+            ImGui::SetWindowPos(ImVec2(keepX, keepY));
+        }
+        s_scnText.atX = keepX;
+        s_scnText.atY = keepY;
+        /* A resize keeps the top-left corner where it is, so it fixes the
+           place as a move does. */
+        const bool everMoved = gameFrontScnTextX >= 0 || gameFrontScnTextY >= 0;
+        const bool dragging  = moveActive || resizeActive;
+        if (scnTextSavePlace(dragging, everMoved, haveText) &&
+            ((int)keepX != gameFrontScnTextX || (int)keepY != gameFrontScnTextY)) {
+            gameFrontScnTextX = (int)keepX;
+            gameFrontScnTextY = (int)keepY;
+            gameFrontSaveWindowSettings();
+        }
+        if (!dragging && !everMoved) {
+            /* Not moved yet: placed again next frame, so it follows the view
+               when the main window or the zoom changes. */
+            s_scnText.placed = false;
+        }
+
+        /* Everything below is drawn at pos, where Begin put the window this
+           frame, and not at keepX/keepY. SetWindowPos moves the window at
+           once, but the draw list keeps the clip rect Begin worked out at
+           pos, so a drag would put the content one drag step past the clip
+           rect and cut off its trailing edge. The move shows from the next
+           frame, as the scenario panel's does (renderScenarioPanelView).
+           keepX/keepY are only for the clamp, the save and the next frame's
+           hover test. */
+
+        /* The lines, fitted into the window at the player's text
+           opacity. */
+        scnTextDrawLines(dl, font, pos.x, pos.y, w, h,
+                         (float)s_scnText.textPct / 100.0f, status,
+                         haveStatus, lines, lineCount);
+
+        /* The faint edge (scnTextEdgeShown). With a line, only when there
+           is a backing: at 0% background opacity the text stands on the map
+           with no frame round it. With no line, only while the handles
+           show, at any background opacity, so the player can see the
+           window's size. */
+        if (scnTextEdgeShown(haveText, s_scnText.bgPct, handlesVisible)) {
+            dl->AddRect(pos, ImVec2(pos.x + w - 1.0f, pos.y + h - 1.0f),
+                        IM_COL32(255, 255, 255, 40));
+        }
+
+        if (handlesVisible) {
+            const ImVec2 at = pos;
+            const ImU32 barCol = (moveHot || moveActive)
+                                     ? IM_COL32(150, 150, 150, 235)
+                                     : IM_COL32(112, 112, 112, 205);
+            dl->AddRectFilled(at, ImVec2(at.x + w - 1.0f, at.y + btn), barCol);
+            dl->AddLine(ImVec2(at.x, at.y + btn),
+                        ImVec2(at.x + w - 1.0f, at.y + btn),
+                        IM_COL32(0, 0, 0, 90));
+
+            scnPanelDrawButtons(dl, at, w, btn, withClose,
+                                s_iconScnPanelGear[activeIconSlot()], b,
+                                s_scnText.settingsOpen);
+
+            /* The resize grip: three diagonals stepping out of the corner. */
+            const ImU32 resizeCol = (resizeHot || resizeActive)
+                                        ? IM_COL32(255, 255, 255, 200)
+                                        : IM_COL32(255, 255, 255, 110);
+            const float brX = at.x + w - 1.0f;
+            const float brY = at.y + h - 1.0f;
+            for (int i = 1; i <= 3; i++) {
+                const float off = handle * (float)i / 3.5f;
+                dl->AddLine(ImVec2(brX - off, brY), ImVec2(brX, brY - off),
+                            resizeCol);
+            }
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+
+    renderScenarioTextSettings(gearX, gearY);
+}
+
+/* The Scenario Text window's pop-out frame: the lines fitted into the whole
+   OS window (renderScenarioText with inPopout true), with the gear and the
+   X in its top-right corner, as a panel's pop-out has them
+   (scnPopOutButtons). The OS window's own clear colour is under the
+   backing. */
+static void renderScenarioTextPopOut(ClientSim *cs) {
+    PopOutWindow *pw = &s_popScnPanel[SCN_TEXT_OWNER];
+    if (!pw->open || !pw->window) return;
+
+    /* Ahead of the ImGui frame: built on this pop-out's renderer. */
+    SDL_Texture *gear = scnPopEnsureGear(SCN_TEXT_OWNER, pw->renderer);
+
+    if (!popOutBeginFrame(pw)) return;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
+    popOutBeginContent();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+
+    renderScenarioText(cs, true);
+
+    const ImVec2 ds = ImGui::GetIO().DisplaySize;
+    scnPopOutButtons(SCN_TEXT_OWNER, ImVec2(0.0f, 0.0f), floorf(ds.x),
+                    floorf(ImMin(ds.x, ds.y)), gear);
+
+    popOutEndContent(pw);
+    popOutEndFrame(pw);
 }
 
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so
@@ -6751,15 +7577,18 @@ static void renderSettingsPanel(ClientSim *cs) {
                 s_igForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_LAST;
             ImGui::BeginChild("##sessionPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
-            /* File actions — Save Map reachable on tablet and under a controller
-               (desktop has the menu bar); Leave Game stays tablet-only. */
-            if (uiModeIsTablet() || uiShouldUseControllerMode()) {
+            /* File actions. Save Map is reachable on the touch layout, on a
+               mobile tablet's classic screen and under a controller (the
+               desktop has the menu bar); Leave Game on the touch layout and
+               on mobile, where no menu bar offers it. */
+            const bool mobileRows = uiModeIsTablet() || BOLO_MOBILE;
+            if (mobileRows || uiShouldUseControllerMode()) {
                 if (ImGui::Button(langGetText(STR_MENU_SAVE_MAP), ImVec2(-1, 0))) {
                     windowSaveMap(cs);
                     s_showSettings = false;
                 }
                 imguiHandOnHover();
-                if (uiModeIsTablet()) {
+                if (mobileRows) {
                     if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
                         windowNewGame();
                     }
@@ -6785,7 +7614,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             if (ImGui::Selectable(langGetText(STR_DLGGAMEINFO_TITLE), s_showGameInfo)) { s_showGameInfo = !s_showGameInfo; infoOpened = s_showGameInfo; }
             if (ImGui::Selectable(langGetText(STR_DLGSYSINFO_TITLE),  s_showSysInfo))  { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; infoOpened = s_showSysInfo; }
             if (ImGui::Selectable(langGetText(STR_DLGNETINFO_TITLE),  s_showNetInfo))  { if (!s_showNetInfo) pingGraphReset();  s_showNetInfo = !s_showNetInfo; infoOpened = s_showNetInfo; }
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
             /* A phone has no room for Settings and a panel side by side, so
                opening a panel puts Settings away. */
             if (infoOpened && uiModeIsTablet()) s_showSettings = false;
@@ -7402,7 +8231,9 @@ static void renderMenuBar(ClientSim *cs) {
     scnPanelViewsSync(cs);
     const bool aiAllowed = clientSimGetAiType(cs) != aiNone;
     if (ImGui::BeginMenu(langGetText(STR_MENU_BRAINS),
-                         aiAllowed || (scnPanelAnyListed() && scnPanelCanReopen()))) {
+                         aiAllowed ||
+                             ((scnPanelAnyListed() || s_scnText.menuListed) &&
+                              scnPanelCanReopen()))) {
         if (aiAllowed) {
             bool running = luaBrainIsRunning() != 0;
             int  runIdx  = luaBrainGetRunningIndex();
@@ -7671,14 +8502,22 @@ static float desktopWindowFitScale(SDL_Window *window) {
     int w = 0, h = 0;
     SDL_GetWindowSize(window, &w, &h);
     if (w <= 0 || h <= 0) return 1.0f;
-    float fitW = (float)w / (float)SDL3_SCREEN_W;
-    float availH = (float)h - (float)MENU_BAR_HEIGHT;
+    float density = 1.0f;
+#if defined(__ANDROID__)
+    /* An Android window is in pixels, not points: the fit and its cap are
+       measured in points, as dialogComputeScale measures the preference, and
+       the pixels come back in at the end. */
+    density = SDL_GetWindowDisplayScale(window);
+    if (density < 1.0f) density = 1.0f;
+#endif
+    float fitW = (float)w / density / (float)SDL3_SCREEN_W;
+    float availH = (float)h / density - (float)MENU_BAR_HEIGHT;
     float fitH = (availH > 0.0f) ? availH / (float)SDL3_SCREEN_H : fitW;
     float fit = SDL_min(fitW, fitH);
     fit = (float)((int)(fit * 4.0f)) / 4.0f;   /* floor to 0.25 steps */
     if (fit < 1.0f) fit = 1.0f;
     if (fit > 2.0f) fit = 2.0f;   /* cap at the Large preset; never exceed it */
-    return fit;
+    return fit * density;
 }
 
 /* (Re)apply the main ImGui context's font atlas, style, and window minimum
@@ -7895,6 +8734,60 @@ static bool turnTapsAccepted(ClientSim *cs) {
     return ns != netLobby && ns != netLobbyCountdown;
 }
 
+/* The key the last in-game Key Setup capture took, while it is still down. */
+static SDL_Scancode s_keySetupHeldKey = SDL_SCANCODE_UNKNOWN;
+
+/* Key Setup's in-game key capture. Returns true when the event belongs to
+   the dialog and nothing else, ImGui included, is to see it.
+
+   It has to come ahead of ImGui. Behind it, ImGui saw the press as well,
+   and Space and Enter are ImGui's keys for pressing the item with keyboard
+   focus -- the row's Change button the player has just used -- so binding
+   either one re-armed the row at once, and every press after that bound it
+   and re-armed it again. The main menu's Key Setup runs its own loop and
+   already captured first, which is why only the in-game one looped.
+
+   The capture ends on the press, so the same key's auto-repeats and its
+   release are dropped too until it comes up: ImGui never saw it go down,
+   and the first repeat would reach it as a fresh press and re-arm the row
+   after the repeat delay. A non-repeat press of that key means its release
+   went by unseen, so it ends the hold and is treated as a new key.
+
+   Only a fresh press is taken as the binding. A repeat that arrives while a
+   row is armed is the key that armed it -- Space or Enter held on a Change
+   button reached through keyboard navigation -- and ImGui saw that key go
+   down, so its release has to reach ImGui: taking the repeat would hold the
+   release back and leave the key down in ImGui, and the next press would not
+   count as one. The repeat is dropped instead, so it does not move the nav
+   cursor either. */
+static bool keySetupTakesKeyEvent(const SDL_Event *ev) {
+    if (ev->type != SDL_EVENT_KEY_DOWN && ev->type != SDL_EVENT_KEY_UP) {
+        return false;
+    }
+    if (s_keySetupHeldKey != SDL_SCANCODE_UNKNOWN &&
+        ev->key.scancode == s_keySetupHeldKey) {
+        if (ev->type == SDL_EVENT_KEY_UP) {
+            s_keySetupHeldKey = SDL_SCANCODE_UNKNOWN;
+            return true;
+        }
+        if (ev->key.repeat) {
+            return true;
+        }
+        s_keySetupHeldKey = SDL_SCANCODE_UNKNOWN;
+    }
+    if (ev->type == SDL_EVENT_KEY_DOWN &&
+        imguiKeySetupIsCapturingInGameKey() &&
+        ev->key.windowID == SDL_GetWindowID(s_window)) {
+        if (ev->key.repeat) {
+            return true;
+        }
+        imguiKeySetupHandleInGameScancode((int)ev->key.scancode);
+        s_keySetupHeldKey = ev->key.scancode;
+        return true;
+    }
+    return false;
+}
+
 void sdl3ImguiProcessEvents(ClientSim *cs) {
     if (!s_window) return;
 #if defined(__APPLE__) && !TARGET_OS_IOS
@@ -7976,6 +8869,12 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
+        /* Key Setup learning a key: the press is the binding, and not the
+           game's or ImGui's. See keySetupTakesKeyEvent. */
+        if (keySetupTakesKeyEvent(&ev)) {
+            continue;
+        }
+
         ImGui_ImplSDL3_ProcessEvent(&ev);
 
         /* DEBUG: log touch/mouse events in tablet mode — remove after debugging */
@@ -8035,7 +8934,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             if (s_popMapOverview.open) {
                 popOutRescueWindow(s_popMapOverview.window);
             }
-            for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+            for (int i = 0; i < SCN_POP_OWNERS; i++) {
                 PopOutWindow *pw = &s_popScnPanel[i];
                 if (!pw->open || !pw->window) continue;
                 if (popOutRescueWindow(pw->window)) {
@@ -8429,7 +9328,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 break;
             case SDL_SCANCODE_O:
                 /* Same running-game condition as the File menu item. */
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
                 /* No pop-out on iOS: the overview there is the in-window one,
                    as the File menu offers it. */
                 if (cs != nullptr && clientSimIsRunning(cs))
@@ -8472,17 +9371,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         if (imguiKeySetupIsCapturingInGamePing() &&
             ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
             imguiKeySetupHandleInGamePingMouse((int)ev.button.button)) {
-            continue;
-        }
-
-        /* Key capture for the Key Setup modal — intercept before the
-         * game sees it. State + the actual binding write live in
-         * imgui_keysetup.cpp now; we just feed it the scancode. */
-        if (imguiKeySetupIsCapturingInGameKey() &&
-            ev.type == SDL_EVENT_KEY_DOWN &&
-            ev.key.windowID == SDL_GetWindowID(s_window)) {
-            imguiKeySetupHandleInGameScancode((int)ev.key.scancode);
-            /* Do NOT forward to the game — key was consumed by the dialog. */
             continue;
         }
 
@@ -8645,6 +9533,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                    handled, so the kept copy goes now; otherwise the welcome
                    screen would join it a second time. */
                 iosDropsForgetLink(url);
+#elif defined(__ANDROID__)
+                /* The same for Android's kept link (android_drops.c). */
+                androidDropsForgetLink(url);
 #endif
                 if (cs && clientSimGetNetStatus(cs) == netRunning) {
                     /* In-game: show confirmation popup instead of switching immediately */
@@ -8676,9 +9567,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
-#if defined(__APPLE__) && TARGET_OS_IOS
-        /* iOS ends the app with TERMINATING; quit the same way so main gets
-           to save the prefs, as the touch layout's own loop does. */
+#if (defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__)
+        /* iOS and Android end the app with TERMINATING; quit the same way so
+           main gets to save the prefs, as the touch layout's own loop does. */
         if (ev.type == SDL_EVENT_TERMINATING) {
             windowSetQuitting();
         }
@@ -8708,7 +9599,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            too, in either layout: its window is always full screen, and the
            flag there is the touch layout's Full Screen choice, which the
            iPad's desktop layout must not set from its window. */
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
         const bool windowOwnsFlag = false;
 #else
         const bool windowOwnsFlag = true;
@@ -9099,8 +9990,9 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
        round, the rows renderScnPanelMenuItems draws in the in-window bar.
        Synced here as the in-window bar syncs before it draws, so the native
        bar sees the round as it is on the frame a panel arrives. */
-    static_assert(SCN_PANEL_OWNERS <= MAC_MENU_SCN_PANELS,
-                  "MacMenuState holds a row for every scenario panel owner");
+    static_assert(SCN_PANEL_OWNERS + 1 <= MAC_MENU_SCN_PANELS,
+                  "MacMenuState holds a row for every scenario panel owner "
+                  "and one for the Scenario Text window");
     scnPanelViewsSync(cs);
     s->scnPanelCount = 0;
     if (scnPanelCanReopen()) {
@@ -9111,6 +10003,14 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
             s->scnPanelOwner[n] = i;
             s->scnPanelShown[n] = v.shown;
             strncpy(s->scnPanelNames[n], v.name, sizeof s->scnPanelNames[n] - 1);
+            s->scnPanelNames[n][sizeof s->scnPanelNames[n] - 1] = '\0';
+        }
+        if (s_scnText.menuListed) {
+            const int n = s->scnPanelCount++;
+            s->scnPanelOwner[n] = SCN_TEXT_OWNER;
+            s->scnPanelShown[n] = gameFrontScnTextShown;
+            strncpy(s->scnPanelNames[n], langGetText(STR_SCNTEXT_TITLE),
+                    sizeof s->scnPanelNames[n] - 1);
             s->scnPanelNames[n][sizeof s->scnPanelNames[n] - 1] = '\0';
         }
     }
@@ -9148,19 +10048,86 @@ static void drainInGameNameReject(ClientSim *cs) {
    input gate suspends play and the solo-pause path freezes the sim while a
    message is up. Edge-detect open/close to toggle the freeze exactly once
    each way. Called from both the desktop and the tablet branch of the frame,
-   so the one edge state serves both. Not on Android, which does not compile
-   imgui_tutorial_overlay.cpp or define windowTutorialPause. */
-#if !defined(__ANDROID__)
+   so the one edge state serves both. */
 static void renderTutorialOverlay(ClientSim *cs) {
-    static bool s_lastTutorialPause = false;
+    /* A scenario's popup (game.popup) waits in the client sim's queue
+       until the overlay is free, then takes the overlay like a tutorial
+       message does, so one popup shows at a time and pauses a solo game
+       the same way. None is taken once the round is over: the close at
+       the top of sdl3ImguiPumpAndRender would only shut it again. */
+    if (cs != NULL && !tutorialOverlayIsOpen() &&
+        !clientSimIsRoundOver(cs)) {
+        static char s_popupText[SCN_POPUP_TEXT_MAX + 1];
+        /* Under the client mutex: in a single-player game the server's
+           thread puts popups on this queue as it publishes them. */
+        clientMutexWaitFor();
+        const bool took =
+            clientSimTakeScnPopup(cs, s_popupText, sizeof(s_popupText));
+        clientMutexRelease();
+        if (took) tutorialOverlayShowText(s_popupText);
+    }
     tutorialOverlayRender(cs);
+    /* s_lastTutorialPause is the file static above: the round-end close
+       in sdl3ImguiPumpAndRender lifts the pause through the same flag. */
     bool nowTutorialPause = tutorialOverlayIsOpen();
     if (nowTutorialPause != s_lastTutorialPause) {
         windowTutorialPause(cs, nowTutorialPause);
         s_lastTutorialPause = nowTutorialPause;
     }
 }
+
+/* Turn SDL text input off on the window with keyboard focus when that
+   window's own ImGui context has no text field in use.
+
+   Every ImGui context we run -- the game's, each pop-out's, the lobby's and
+   the modal dialogs' -- has its own SDL3 backend, and the backend starts text
+   input on whichever window holds keyboard focus, not on the window its
+   context draws in. It stops it again only when that same context's field
+   lets go, and a context destroyed with a field still active (the lobby, when
+   the round starts with the caret in its chat line) never does. The game
+   window is then left in text input for the whole round. That costs nothing
+   on a plain layout, but under an input method it hands every key to the IME
+   first: under a Taiwanese Bopomofo IME each Shift tap flips Chinese/English
+   mode, Chinese mode swallows the letter keys, and Right Shift arrives with
+   the extended flag set (scan code 0xE036), which SDL maps to no key at all,
+   so a player who fires with Right Shift cannot fire.
+
+   Run at the top of the frame, before any context starts its next one, and
+   read each context's WantTextInputNextFrame: EndFrame sets it from the same
+   IME data it hands the backend, so it states the field the backend last
+   acted on. io.WantTextInput would not do -- it is only refreshed by NewFrame,
+   and read for a pop-out between the game's NewFrame and the pop-out's it is a
+   frame old, which cuts off a field the pop-out has just focused. Only the
+   focused window is checked: keys go nowhere else, and a window that takes
+   focus later is put right on that frame. Desktop only -- on the touch
+   layouts text input is the on-screen keyboard, which their own code opens
+   and closes. */
+static void dropStrayTextInput(void) {
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    SDL_Window *focus = SDL_GetKeyboardFocus();
+    if (focus == nullptr || !SDL_TextInputActive(focus)) return;
+
+    ImGuiContext *owner = nullptr;
+    if (focus == s_window) {
+        owner = s_mainImguiCtx;
+    } else {
+        for (int i = 0; i < POPOUT_COUNT; i++) {
+            if (s_popOuts[i]->open && s_popOuts[i]->window == focus) {
+                owner = s_popOuts[i]->imguiCtx;
+                break;
+            }
+        }
+    }
+    /* Not a window this frame draws: leave it to whoever owns it. */
+    if (owner == nullptr) return;
+
+    /* 1 while a field holds the caret; 0, or -1 before the context's first
+       frame ends, when none does. */
+    if (owner->WantTextInputNextFrame != 1) {
+        SDL_StopTextInput(focus);
+    }
 #endif
+}
 
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* The preferences' trailing write and the window-settings dirty flag,
@@ -9251,6 +10218,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     mapOverviewPanelRenderOffscreen(cs);
 #endif
 
+    /* Ahead of every context's NewFrame this frame; see its comment. */
+    dropStrayTextInput();
+
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
@@ -9309,6 +10279,22 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        arrives as SDL events (inputSourceUpdate in the event pump); Steam
        Input controller input does not, so poll it here. */
     inputSourceTick();
+
+    /* The round has ended (the game-over hold, the lobby or the countdown):
+       close a tutorial message or scenario popup still showing. The
+       round-end screen and the lobby take the window over and never draw
+       it, so left open it would sit frozen under them where the player can
+       neither read nor dismiss it, and its solo pause would hold. Done
+       ahead of the lobby seam below, which returns before the overlay's
+       own render, and the pause is lifted here for the same reason. */
+    if (cs && clientSimIsRoundOver(cs) && tutorialOverlayIsOpen()) {
+        tutorialOverlayClose();
+        tutorialOverlayRender(cs);   /* takes the popup off ImGui's stack */
+        if (s_lastTutorialPause) {
+            windowTutorialPause(cs, false);
+            s_lastTutorialPause = false;
+        }
+    }
 
     /* In-game lobby (non-blocking host, e.g. the WASM client).
      *
@@ -9377,7 +10363,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                    transportUdpClientDestroy still gets its graceful
                    PACKET_QUIT out over a live socket. */
                 windowLeaveGame();
-#elif defined(__IPHONEOS__)
+#elif BOLO_MOBILE
                 /* The iOS driver's game loop ends on this and goes back to
                    the menu, as it does when a game ends. */
                 windowNewGame();
@@ -9479,6 +10465,21 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             else if (s_allianceVisible)    { s_allianceVisible = false;  cancelClosedPanel = true; }
         }
 
+#if defined(__ANDROID__)
+        /* The system Back key arrives as Escape (main_android.c's event
+           filter). When it closed nothing above, it opens Settings, as the
+           gear does; Settings open, the ladder above has just closed it, so
+           Back closes what Back opened. This takes the place of the pause
+           overlay a pad's Escape opens on the desktop: the pad's own Start
+           button still opens that, and a keyboard's Escape on Android means
+           the same as Back. */
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
+            !anyPopup && !cancelClosedPanel && !ImGui::GetIO().WantTextInput &&
+            cs && !clientSimIsInLobby(cs) &&
+            !deckPauseIsOpen() && !sdl3ImguiIsDialogOpen()) {
+            sdl3ImguiShowSettings();
+        }
+#else
         /* Escape opens the pause overlay when a controller is connected and
            nothing else is in the way — mirrors the Start-button trigger so
            keyboard + pad users both have a way in (the menu bar is hidden in
@@ -9491,6 +10492,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             !deckPauseIsOpen() && !sdl3ImguiIsDialogOpen()) {
             deckPauseOpen();
         }
+#endif
     }
 
     /* Smart-ping menu and markers. Drawn before the tablet controls and the
@@ -9519,14 +10521,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
            web client that a small touch screen puts in this layout, where the
            tutorial used to stop on its first message because nothing drew it;
            drawing it there is intended. */
-#if !defined(__ANDROID__)
         renderTutorialOverlay(cs);
-#endif
     } else {
     /* The in-window menu bar: everywhere but macOS, whose menus are native,
-       and iOS, where no app draws a menu bar of its own: the iPad's classic
-       screen has the touch controls' buttons in its place (below). */
-#if !defined(__APPLE__)
+       and iOS and Android, where no app draws a menu bar of its own: the
+       tablets' classic screen has the touch controls' buttons in its place
+       (below). */
+#if !defined(__APPLE__) && !defined(__ANDROID__)
         /* Show the menu bar only when the player's last-used device is the
            keyboard/mouse.  A connected-but-idle controller doesn't hide it,
            and reaching for the mouse/keyboard brings it back; using the
@@ -9568,9 +10569,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 s_lastDeckPause = nowDeckPause;
             }
         }
-#if !defined(__ANDROID__)  /* see renderTutorialOverlay */
         renderTutorialOverlay(cs);
-#endif
         quickChatRender(cs);
         renderCtrlSendMsg(cs);
 
@@ -9604,7 +10603,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderSendMsgPanel(cs);
     renderPlayersPanel(cs);
     renderScenarioPanels(cs);
-    renderScenarioAnnounce(cs);
+    renderScenarioText(cs, false);
 
     /* Modal dialogs */
     aboutPopupRender();
@@ -10083,19 +11082,17 @@ bool sdl3ImguiIsMapOverviewOpen(void) {
     return false;
 }
 /* The in-window mode is a desktop-window mode, so tablet has nothing to show
- * and nothing to report active. iOS is the exception: it has no pop-out, so
+ * and nothing to report active. Mobile is the exception: it has no pop-out, so
  * the in-window map is its one overview, drawn inside the tablet layout's game
  * view (sdl3draw.c) and opened from the tablet overlay's map button. */
 void sdl3ImguiShowOverviewInWindow(bool active) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     overviewInWindowChoose(active);
 #else
-#if !defined(__ANDROID__)
     if (!uiModeIsTablet()) {
         overviewInWindowChoose(active);
         return;
     }
-#endif
     (void)active;
 #endif
 }
@@ -10114,12 +11111,10 @@ bool sdl3ImguiIsOverviewOffered(void) {
     return !overviewSuppressed();
 }
 bool sdl3ImguiIsOverviewInWindowOpen(void) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     return sdl3DrawIsOverviewInWindow();
 #else
-#if !defined(__ANDROID__)
     if (!uiModeIsTablet()) return sdl3DrawIsOverviewInWindow();
-#endif
     return false;
 #endif
 }
@@ -10189,8 +11184,13 @@ extern "C" void sdl3ImguiShowBrainSettings(void) {
 }
 /* The native Brains > Info Overlay rows: the same toggle the in-window
  * checkbox makes (renderScnPanelMenuItems). owner is the script's position
- * on the round's list, the row's tag. */
+ * on the round's list, the row's tag, or SCN_TEXT_OWNER for the Scenario
+ * Text window's row. */
 extern "C" void sdl3ImguiToggleScnPanelShown(int owner) {
+    if (owner == SCN_TEXT_OWNER) {
+        scnTextSetShown(!gameFrontScnTextShown);
+        return;
+    }
     if (owner < 0 || owner >= SCN_PANEL_OWNERS) return;
     if (!s_scnViews[owner].keyed) return;
     scnPanelSetShown(owner, !s_scnViews[owner].shown);
@@ -10328,6 +11328,10 @@ void sdl3ImguiNewGame(ClientSim *cs) {
     /* The build target is the square a click or Build Now sends the man to,
        and cursor mode may have been left on. */
     buildCursorReset();
+    /* The overview panel's copy of the map memory belongs to the last game:
+       see sdl3DrawNewGame. */
+    overviewSnapshotDestroy(s_overviewSnapshot);
+    s_overviewSnapshot = nullptr;
     sdl3ImguiTabletNewGame();
     sdl3DrawNewGame(clientSimGetCurrentBuildSelect(cs));
 }

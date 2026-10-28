@@ -223,9 +223,11 @@ FetchContent_MakeAvailable(sdl3)
 #   system (make / msvcbuild.bat) via ExternalProject at build time. The brains
 #   are written in the Lua 5.1 subset (bit ops via bitcompat), so they run
 #   unchanged on LuaJIT and PUC-Lua alike — no transpile step.
+#   iOS runs LuaJIT too, with the compiler left out (LUAJIT_DISABLE_JIT): the
+#   OS forbids writing code and running it, and the interpreter alone is
+#   allowed and still well ahead of PUC-Lua.
 #   Fallback: PUC-Lua 5.4 (static lib from FetchContent) where LuaJIT cannot run
-#   — Emscripten/WASM (no JIT backend) and iOS (OS forbids JIT) — and whenever
-#   -DWINBOLO_LUAJIT=OFF is passed.
+#   — Emscripten/WASM (no backend) — and whenever -DWINBOLO_LUAJIT=OFF is passed.
 # CAVEAT: LuaJIT's number model and table-iteration order differ from PUC-Lua
 # 5.4, so bot behaviour is NOT guaranteed bit-identical across the two VMs, and
 # cross-VM replay / winbolo.net determinism is not yet validated. Pass
@@ -234,21 +236,24 @@ FetchContent_MakeAvailable(sdl3)
 # links against; under LuaJIT they wrap the built LuaJIT static lib and force-
 # include the C-API compat shim (src/gui/sdl3/luajit_compat.h) into every
 # Lua-touching TU.
-set(WINBOLO_LUAJIT_LUAJIT_TAG   "faaf663340347a78b22ed94c63c24fe090bd9784"
-    CACHE STRING "Pinned LuaJIT (v2.1 branch) commit to build")
+# The pinned commit (WINBOLO_LUAJIT_LUAJIT_TAG) and the cross-build the
+# Android and iOS clients use live in cmake/bolo_luajit.cmake, so the
+# Android project, which has a CMake root of its own, reads the same pin.
+include(cmake/bolo_luajit.cmake)
 
 # Default ON everywhere LuaJIT can build; OFF where it cannot.
-if(EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+if(EMSCRIPTEN)
     set(_wbn_luajit_default OFF)
 else()
     set(_wbn_luajit_default ON)
 endif()
 option(WINBOLO_LUAJIT "Run bot brains on LuaJIT (Lua 5.1); OFF uses PUC-Lua 5.4" ${_wbn_luajit_default})
 
-# Hard guard: LuaJIT is unusable on WASM (no backend) and iOS (JIT banned), so
-# fall back to PUC-Lua there even if the option was explicitly forced on.
-if(WINBOLO_LUAJIT AND (EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "iOS"))
-    message(WARNING "WINBOLO_LUAJIT is not supported on this platform (WASM/iOS); using PUC-Lua 5.4 instead.")
+# Hard guard: LuaJIT has no WASM backend, so fall back to PUC-Lua there even
+# if the option was explicitly forced on. iOS is not in this guard: it
+# builds LuaJIT's interpreter without the compiler (the iOS branch below).
+if(WINBOLO_LUAJIT AND EMSCRIPTEN)
+    message(WARNING "WINBOLO_LUAJIT is not supported on WASM; using PUC-Lua 5.4 instead.")
     set(WINBOLO_LUAJIT OFF)
 endif()
 
@@ -301,6 +306,21 @@ if(WINBOLO_LUAJIT)
     endif()
 
     # 1. LuaJIT source (no CMakeLists of its own — MakeAvailable only populates).
+    # The two patches mend the macOS hardened-runtime (LUAJIT_ENABLE_OSX_HRT)
+    # path, which only the macOS build compiles. iOS has no JIT and never
+    # allocates mcode, so its checkout stays as upstream wrote it.
+    set(_lj_patch "")
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        set(_lj_patch
+            # Fixes a void-function `return 0;` that breaks macOS hardened-runtime
+            # (LUAJIT_ENABLE_OSX_HRT) builds — see the patch header for details.
+            PATCH_COMMAND  ${CMAKE_COMMAND} -P
+                           "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_return.cmake"
+            # Fixes a per-thread W^X leak in the same HRT path that SIGBUSes
+            # bot worker threads (2.02 Sentry 24dae975) — see the patch header.
+            COMMAND        ${CMAKE_COMMAND} -P
+                           "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_thread_leak.cmake")
+    endif()
     FetchContent_Declare(luajit_src
         GIT_REPOSITORY https://github.com/LuaJIT/LuaJIT.git
         GIT_TAG        ${WINBOLO_LUAJIT_LUAJIT_TAG}
@@ -313,14 +333,7 @@ if(WINBOLO_LUAJIT)
         # clean build with "unable to read tree", while incremental builds
         # keep working off the cached _deps checkout and hide it. A full
         # clone is ~11MB and always contains the pin.
-        # Fixes a void-function `return 0;` that breaks macOS hardened-runtime
-        # (LUAJIT_ENABLE_OSX_HRT) builds — see the patch header for details.
-        PATCH_COMMAND  ${CMAKE_COMMAND} -P
-                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_return.cmake"
-        # Fixes a per-thread W^X leak in the same HRT path that SIGBUSes
-        # bot worker threads (2.02 Sentry 24dae975) — see the patch header.
-        COMMAND        ${CMAKE_COMMAND} -P
-                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_thread_leak.cmake")
+        ${_lj_patch})
     FetchContent_MakeAvailable(luajit_src)
     set(_lj_src "${luajit_src_SOURCE_DIR}")
 
@@ -356,6 +369,84 @@ if(WINBOLO_LUAJIT)
                               cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        # iOS runs LuaJIT's interpreter alone: an App Store app may not write
+        # code and then run it, so LUAJIT_DISABLE_JIT leaves the trace
+        # compiler out and no mcode is ever allocated, which is why the
+        # hardened-runtime define the macOS build adds below has no part
+        # here. The library is cross-compiled by LuaJIT's own make through
+        # cmake/bolo_luajit.cmake: TARGET_SYS=iOS picks the Mach-O assembler
+        # syntax and the frame-pointer setting, and the SDK, the deployment
+        # floor and the architecture travel in TARGET_FLAGS, one slice per
+        # architecture, lipo'd as the macOS build does. Under the Xcode
+        # generator the destination picks the device SDK or the Simulator's
+        # when Xcode builds, not when CMake configures, so the build step
+        # reads Xcode's SDKROOT, PLATFORM_NAME, ARCHS and
+        # IPHONEOS_DEPLOYMENT_TARGET and runs on every build (returning at
+        # once when they are what it last built for); the values below are
+        # its fallbacks for a generator that exports none. The Makefile
+        # reads no deployment variable for iOS (only MACOSX_DEPLOYMENT_TARGET,
+        # for Darwin), so the floor is the -m*-version-min compiler flag.
+        # The host tools are compiled by the macOS SDK's clang, named with
+        # that SDK outright: the step runs inside Xcode's environment, where
+        # a bare cc would follow SDKROOT to the iOS SDK and produce tools
+        # this Mac cannot run.
+        set(_lj_xcflags "-DLUAJIT_DISABLE_JIT")
+        if(WINBOLO_LUAJIT_DETERMINISTIC)
+            string(APPEND _lj_xcflags " -DLUAJIT_SECURITY_PRNG=0")
+        endif()
+        execute_process(COMMAND xcrun --sdk macosx --find clang
+                        OUTPUT_VARIABLE _lj_clang
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        execute_process(COMMAND xcrun --sdk macosx --show-sdk-path
+                        OUTPUT_VARIABLE _lj_host_sdk
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        execute_process(COMMAND xcrun --find ar
+                        OUTPUT_VARIABLE _lj_ar
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        execute_process(COMMAND xcrun --find strip
+                        OUTPUT_VARIABLE _lj_strip
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(NOT _lj_clang OR NOT _lj_host_sdk OR NOT _lj_ar OR NOT _lj_strip)
+            message(FATAL_ERROR "LuaJIT for iOS: xcrun could not find clang, "
+                                "ar, strip or the macOS SDK")
+        endif()
+        # CMAKE_OSX_SYSROOT is an SDK name (iphoneos, iphonesimulator) under
+        # the Xcode generator and a path under the others.
+        set(_lj_sdk "${CMAKE_OSX_SYSROOT}")
+        if(NOT _lj_sdk)
+            set(_lj_sdk iphoneos)
+        endif()
+        if(NOT IS_ABSOLUTE "${_lj_sdk}")
+            execute_process(COMMAND xcrun --sdk "${_lj_sdk}" --show-sdk-path
+                            OUTPUT_VARIABLE _lj_sdk
+                            OUTPUT_STRIP_TRAILING_WHITESPACE)
+        endif()
+        if(_lj_sdk MATCHES "[Ss]imulator")
+            set(_lj_min_flag "-mios-simulator-version-min")
+        else()
+            set(_lj_min_flag "-miphoneos-version-min")
+        endif()
+        set(_lj_min "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+        if(NOT _lj_min)
+            set(_lj_min "15.0")
+        endif()
+        set(_lj_archs "${CMAKE_OSX_ARCHITECTURES}")
+        if(NOT _lj_archs)
+            set(_lj_archs arm64)
+        endif()
+        bolo_luajit_cross_build(luajit_ext
+            SOURCE_DIR   "${_lj_src}"
+            OUTPUT_DIR   "${CMAKE_BINARY_DIR}/luajit"
+            HOST_CC      "${_lj_clang}" -isysroot "${_lj_host_sdk}"
+            TARGET_CC    "${_lj_clang}"
+            TARGET_AR    "${_lj_ar}"
+            TARGET_STRIP "${_lj_strip}"
+            TARGET_SYS   iOS
+            TARGET_FLAGS -isysroot "${_lj_sdk}" "${_lj_min_flag}=${_lj_min}"
+            XCFLAGS      "${_lj_xcflags}"
+            ARCHES       ${_lj_archs}
+            LIB_VAR      _lj_lib)
     else()
         set(_lj_xcflags "-fPIC")
         if(WINBOLO_LUAJIT_DETERMINISTIC)
@@ -927,7 +1018,6 @@ set(IOS_DATA_ROOT
 # Maps that go into the root (Everard Island for single-player)
 set(IOS_DATA_ROOT_MAPS
     "${CMAKE_SOURCE_DIR}/data/maps/Everard Island.map"
-    "${CMAKE_SOURCE_DIR}/data/maps/Inbuilt Tutorial.map"
 )
 file(GLOB IOS_DATA_FONT
     "${CMAKE_SOURCE_DIR}/data/fonts/*.ttf"
@@ -937,6 +1027,12 @@ file(GLOB IOS_DATA_FONT
 file(GLOB IOS_DATA_MAPS
     "${CMAKE_SOURCE_DIR}/data/maps/*.map"
     "${CMAKE_SOURCE_DIR}/data/maps/*.lua"
+)
+# The tutorials have a folder of their own, which the flat glob above does
+# not reach: each tutorial map and the script beside it.
+file(GLOB IOS_DATA_MAPS_TUTORIALS
+    "${CMAKE_SOURCE_DIR}/data/maps/tutorials/*.map"
+    "${CMAKE_SOURCE_DIR}/data/maps/tutorials/*.lua"
 )
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
@@ -1026,6 +1122,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/build_cursor.c
     src/gui/sdl3/input_source.c
     src/gui/sdl3/tutorial_text.c
+    src/gui/sdl3/tutorial_tokens.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/scn_panel_prefs.c
@@ -1114,6 +1211,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_DATA_ROOT}
     ${IOS_DATA_ROOT_MAPS}
     ${IOS_DATA_MAPS}
+    ${IOS_DATA_MAPS_TUTORIALS}
     ${IOS_DATA_MODS}
     ${IOS_DATA_FLAGS}
     ${IOS_DATA_FONT}
@@ -1141,6 +1239,9 @@ set_source_files_properties(${IOS_DATA_FONT} PROPERTIES
 )
 set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
+)
+set_source_files_properties(${IOS_DATA_MAPS_TUTORIALS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data/maps/tutorials"
 )
 set_source_files_properties(${IOS_DATA_MODS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/mods"
@@ -1180,7 +1281,7 @@ set_source_files_properties(${IOS_ASSET_CATALOG} PROPERTIES
 )
 
 # Organize in Xcode sidebar
-source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_MODS} ${IOS_DATA_FLAGS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
+source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_MAPS_TUTORIALS} ${IOS_DATA_MODS} ${IOS_DATA_FLAGS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
 source_group("Brains" FILES ${IOS_BRAIN_SCRIPTS})
 source_group("Bolo Engine" FILES ${IOS_BOLO_SOURCES})
 source_group("Server" FILES ${IOS_SERVER_SOURCES})
@@ -1318,6 +1419,8 @@ target_include_directories(winbolonet_server PRIVATE
 )
 target_link_libraries(winbolonet_server PRIVATE SDL3::SDL3)
 target_compile_definitions(winbolonet_server PRIVATE
+    # The "version" field of the server/register post.
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1507,17 +1610,20 @@ target_include_directories(WinBoloIOS PRIVATE
 target_link_libraries(WinBoloIOS PRIVATE server_round_log_static)
 # The WinBolo.net log browser ("My Games" and the welcome screen's Log Viewer
 # entry) and the screen that plays a game it downloads in the reel
-# (ios_log_player.cpp, in place of the modal viewer). Its star rating widget
+# (src/gui/mobile/mobile_log_player.cpp, in place of the modal viewer; the
+# mobile screens are shared with the Android client). Its star rating widget
 # is already in the news and ratings block above.
 target_sources(WinBoloIOS PRIVATE
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     src/gui/sdl3/dialogs/wbn_browser_sort.c
-    src/gui/ios/ios_log_player.cpp
+    src/gui/mobile/mobile_log_player.cpp
     # The live spectator feed in the reel, in place of the modal viewer's
     # spectatorRun.
-    src/gui/ios/ios_spectator.cpp
+    src/gui/mobile/mobile_spectator.cpp
     # The recordings on the phone, listed and played in the reel, in place
-    # of the modal viewer's logViewerRun.
+    # of the modal viewer's logViewerRun; the directories it lists and the
+    # Copy to Files export are the iOS half, ios_recordings.cpp.
+    src/gui/mobile/mobile_recordings.cpp
     src/gui/ios/ios_recordings.cpp
     # Files and game links the system hands over, kept until the welcome
     # screen runs, and the access to a file opened in place from another
@@ -1545,7 +1651,10 @@ set(IOS_MAPEDITOR_SOURCES
     src/mapeditor/mapeditor_scenario_fndesc.c
     src/mapeditor/mapeditor_scenario_fnscan.c
     src/mapeditor/mapeditor_wbn_open.cpp
-    # SDL has no file dialogs on iOS; the editor's open and save go here.
+    # SDL has no file dialogs on iOS; the editor's open and save go through
+    # the picker Android shares, with the Documents folder and the bundle's
+    # maps as its iOS half.
+    src/mapeditor/mapeditor_mobile_files.cpp
     src/mapeditor/mapeditor_ios_files.cpp
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
@@ -1937,6 +2046,8 @@ target_include_directories(winbolonet_server PRIVATE
 )
 target_link_libraries(winbolonet_server PRIVATE SDL3::SDL3)
 target_compile_definitions(winbolonet_server PRIVATE
+    # The "version" field of the server/register post.
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -2020,6 +2131,7 @@ set(CLIENT_SOURCES
     # spectator_input_stub.c instead.
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
+    src/gui/sdl3/tutorial_tokens.c
     src/gui/sdl3/lang.c src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
     src/gui/sdl3/sound_mix.c
@@ -4581,6 +4693,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_everyone_codec.c
+    # game.popup: the body codec, the client's queue and the {QUICK_*}
+    # tokens the popup text may carry.
+    tests/unit/test_scenario_popup.c
+    src/gui/sdl3/tutorial_tokens.c
+    # The token parser against untrusted text: malformed braces, the split,
+    # a cut inside a UTF-8 character, and a fixed seed of random input.
+    tests/unit/test_tutorial_tokens_parse.c
+    # The shipped tutorial's text: every language and input inside the
+    # server's limits, valid UTF-8, and no brace that is not a key token.
+    tests/unit/test_tutorial_text_check.c
     tests/unit/test_voice_talking_set.c
     # The rules event's body codec: every carried rule round-trips field by
     # field, rates a fixed-point scale could not carry survive, and the
@@ -4930,6 +5052,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # plus the shell's offset from the rewound hit point, not at the shell,
     # which a lag-compensated test leaves behind the tank.
     tests/unit/test_tank_blast_at_tank.c
+    # tank_hit_sets_off_mines: whether a shell that hits a tank sets off the
+    # mines on its square.
+    tests/unit/test_tank_hit_mines.c
     tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
@@ -4939,6 +5064,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_server_address_parse.c
     # The map chooser's "Scenarios only" row test, header-only.
     tests/unit/test_map_chooser_scenario_filter.c
+    # The background game's map name test (tutorials never picked), header-only.
+    tests/unit/test_bg_map_pick.c
     # Skin asset reads: a directory, a flat zip and a zip wrapped in one
     # top-level folder must resolve the same relative names to the same
     # bytes.
@@ -5085,6 +5212,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lv_event_list.c
     # WinBolo.net log browser table sort rule (test_wbn_browser_sort.c).
     tests/unit/test_wbn_browser_sort.c
+    # The game browser's server version test (browser_version.h) and the
+    # protocol bytes from WINBOLO_VERSION (test_browser_version.c).
+    tests/unit/test_browser_version.c
     # Recap clip GIF length and timeline sync, and the GIF gallery's metadata
     # files and newest-first scan, the gallery text fill and the capped preview
     # decode (test_clip_gif_core.c).
@@ -5731,6 +5861,9 @@ set(_unit_test_names
     scn_panel_yes_no
     scn_panel_rescue
     scn_panel_prefs_sections
+    scn_panel_layout_row
+    scn_opacity_migration
+    scn_text_popout_row
     client_scn_panel_owners
     scn_arm_panel_owners
     info_packet_preset_round_trip
@@ -5923,6 +6056,22 @@ set(_unit_test_names
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
     log_roundtrip_map_name_at_round_start
+    log_roundtrip_player_lag
+    log_roundtrip_player_lag_recorded
+    log_roundtrip_overrun_stats
+    log_roundtrip_overrun_stats_recorded
+    log_roundtrip_overrun_stats_bots
+    log_roundtrip_overrun_stats_every_30s
+    server_lag_log_due
+    server_lag_log_min_gap
+    server_overrun_stats_due
+    lv_player_lag_read
+    lv_lag_track
+    lv_lag_ring
+    lv_lag_feature_default_off
+    lv_lag_view_draw
+    lv_lag_view_rename
+    lv_overrun_read
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record
@@ -5975,7 +6124,10 @@ set(_unit_test_names
     lv_event_list_replay
     lv_event_list_pinned
     wbn_browser_sort
+    browser_version_parse
+    version_protocol_bytes
     clip_gif_len_sync
+    clip_gif_record_mode
     clip_gif_meta_roundtrip
     clip_gif_meta_bad
     clip_gif_gallery_scan
@@ -6156,6 +6308,7 @@ set(_unit_test_names
     mac_bolo_settings_defaults_play_old_rules
     mac_bolo_settings_each_part_off
     mac_bolo_settings_numbers
+    mac_bolo_tank_hit_mines_part_with_mines_mod
     mac_bolo_first_start_lobby_off_uses_mac_pick
     mac_bolo_spawn_starts_off_engine_picks
     mac_bolo_setting_changed_after_attach
@@ -6202,6 +6355,19 @@ set(_unit_test_names
     voice_flags_snapshot_masking
     voice_talking_codec
     voice_everyone_codec
+    scenario_popup_codec
+    scenario_popup_client_queue
+    scenario_popup_round_over
+    tutorial_tokens_quick_build
+    scenario_status_tokens_expand
+    tutorial_tokens_long_key_names
+    tutorial_tokens_malformed
+    tutorial_tokens_split
+    tutorial_tokens_utf8_cut
+    tutorial_tokens_random_input
+    tutorial_text_fits
+    tutorial_text_well_formed
+    scenario_announce_waits_for_popup
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
     voice_talking_stops_in_countdown
@@ -6421,8 +6587,8 @@ set(_unit_test_names
     ping_kick_defers_teardown
     ping_kick_clears_strikes_on_disconnect
     tkexp_lgm_pairing
-    tank_blast_rewound_hit_at_present_tank
-    tank_blast_kill_starts_at_present_tank
+    tank_blast_at_shell_place
+    tank_blast_kill_at_shell_place
     tank_blast_zero_rewind_unchanged
     tank_blast_hit_decision_unchanged
     tank_blast_builder_on_shooter_screen
@@ -6431,6 +6597,9 @@ set(_unit_test_names
     tank_blast_pill_shell_builder_now
     tank_blast_no_record_builder_now
     shell_blast_pill_hit_on_shooter_screen
+    tank_hit_mines_rule_on_sets_off
+    tank_hit_mines_rule_off_spares
+    tank_hit_mines_rule_off_ground
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
@@ -6689,6 +6858,8 @@ set(_unit_test_names
     addrparse_bad_port
     addrparse_empty
     mapchooser_scenario_filter
+    bg_map_pick_skips_tutorials
+    tutorial_maps_shipped_path
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop
@@ -6707,6 +6878,7 @@ set(_unit_test_names
     tick_core_passive_local_pumps_keys_half
     tick_core_lobby_preserves_parity
     transport_ticks_server_lifecycle
+    local_join_slot_after_seated_bots
     await_join_connected_immediate
     await_join_lobby_latch
     await_join_timeout_and_error
@@ -6873,6 +7045,7 @@ set(_unit_test_names
     scenario_funnel_host_ops_uncounted
     scenario_funnel_prelude_refusal_uncounted
     scenario_funnel_set_tile_spends_tile_budget
+    scenario_funnel_set_tile_resets_wall_damage
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
@@ -6885,6 +7058,7 @@ set(_unit_test_names
     scenario_tank_kill
     scenario_tank_teleport
     scenario_tank_set_boat
+    scenario_tank_set_speed
     scenario_tank_give_pill
     scenario_tank_drop_pill
     scenario_tank_arm_records
@@ -6997,6 +7171,9 @@ set(_unit_test_names
     lobby_map_keeps_bots_plain
     lobby_map_keeps_bots_scenario
     lobby_map_keeps_bots_map_own_row
+    lobby_random_map_drops_map_own_script
+    lobby_random_map_clears_map_md5
+    lobby_cancel_file_preview_keeps_random_map
     lobby_map_rotate_holds_seats_again
     scenario_map_rotation_redecides
     lobby_script_keeps_bots_mod
@@ -7023,6 +7200,12 @@ set(_unit_test_names
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
+    lobby_scenario_fixes_lobby_settings
+    lobby_scenario_fixes_visibility
+    lobby_scenario_fixes_classic_mode
+    lobby_scenario_fix_wins_over_host_classic
+    lobby_scenario_no_bots
+    lobby_scenario_no_bots_then_needs_bots
     wbn_lobby_info_scenario
     info_script_tail_golden
     info_script_tail_read
@@ -7159,6 +7342,7 @@ set(_unit_test_names
     scenario_allied_read
     scenario_can_hit_tank
     scenario_can_hit_pill
+    scenario_can_target
     scenario_pill_shell_names_pill
     scenario_pill_damage_scale
     scenario_blast_names_tank
@@ -7177,6 +7361,7 @@ set(_unit_test_names
     game_event_channel_neutralised_no_client_line
     game_event_channel_capture_attribution
     game_event_channel_subscriber_count
+    game_event_channel_same_owner_silent
     game_events_tank_spawned
     game_events_lgm_landed
     game_events_pill_placed
@@ -7284,6 +7469,9 @@ set(_unit_test_names
     scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
     scenario_lua_voice_everyone
+    scenario_lua_lang
+    scenario_lua_input
+    scenario_lua_tutorial_done
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
@@ -7312,6 +7500,8 @@ set(_unit_test_names
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
     scenario_lua_announce_position
+    scenario_lua_popup
+    scenario_lua_wall_shots
     scenario_lua_acting_rows_refuse_a_check
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
@@ -7417,6 +7607,7 @@ set(_unit_test_names
     scenario_manifest_agrees
     scenario_manifest_from_values
     scenario_manifest_json_team_init
+    scenario_manifest_json_lobby_fixes
     scenario_manifest_json_number_range
     scenario_manifest_json_triggers
     scenario_manifest_json_trigger_operator
@@ -7474,6 +7665,10 @@ set(_unit_test_names
     scenario_details_fetch_dir_mod
     scenario_details_fetch_survival
     scenario_details_fetch_soccer
+    scenario_details_fetch_tutorial
+    scenario_details_fetch_joust
+    scenario_details_fetch_respawn_loadout
+    scenario_details_fetch_mods
     scenario_details_fetch_not_found
     scenario_details_fetch_retry
     scenario_details_fetch_give_up
@@ -7561,6 +7756,10 @@ set(_unit_test_names
     scenario_compose_pairs_game_complete
     scenario_compose_unsafe_keeps_sharing
     scenario_compose_off_map_script_too
+    scenario_compose_no_mods
+    scenario_compose_lobby_fixes_read
+    scenario_compose_mod_fixes_refused
+    scenario_compose_lobby_fixes_validate
     scenario_compose_off_map_alone_plain
     scenario_compose_off_plain_map_none
     scenario_compose_on_picks_replace_map
@@ -7592,9 +7791,16 @@ set(_unit_test_names
     scenario_panel_timer_text
     scenario_announce_remaining
     scenario_announce_position
+    scenario_text_fit
+    scenario_text_tablet_band
+    scenario_text_pointer_on_handle
+    scenario_text_window_shown
+    scenario_text_edge_shown
+    scenario_text_save_place
     scenario_status_line
     scn_status_codec_and_client
     scn_announce_position_codec
+    scn_announce_stack_client
     scn_arm_status_and_position
     scn_arm_status_overlap
     scenario_panel_slot_rect
@@ -8183,6 +8389,21 @@ if(WB_FUZZ)
              COMMAND $<TARGET_FILE:fuzz_voice_segment> -runs=0
                      ${WB_FUZZ_CORPUS_DIR}/voice_segment ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.voice_segment PROPERTIES TIMEOUT 120)
+
+    # Tier 1 — the key tokens in a scenario's popup, status line and
+    # announcement (tutorialTokensSplit / tutorialTokensExpand): text from
+    # whatever server the player joined, split and filled in on every
+    # client. The parser alone, with no SDL and no renderer.
+    add_executable(fuzz_tutorial_tokens
+        tests/fuzz/fuzz_tutorial_tokens.c
+        src/gui/sdl3/tutorial_tokens.c)
+    bolo_apply_include_rules(fuzz_tutorial_tokens unittests)
+    target_link_options(fuzz_tutorial_tokens PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_tutorial_tokens "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.tutorial_tokens
+             COMMAND $<TARGET_FILE:fuzz_tutorial_tokens> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/tutorial_tokens ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.tutorial_tokens PROPERTIES TIMEOUT 120)
 
     # Tier 1 — the bulk-transfer receive state machine (bulkParseStreamHeader +
     # bulkReceiverFeed), reassembling map download / resync / upload / preview

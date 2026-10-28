@@ -33,11 +33,8 @@
 #include "imgui_nav_outline.h"
 #include "imgui_controller_prompt.h"
 #include "../imgui_steam_nav.h"
-/* The news popup: on iOS too, not on Android, which does not compile
-   imgui_news.cpp. */
-#if !defined(__ANDROID__)
+/* The news popup, on every platform. */
 #include "imgui_news.h"
-#endif
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -53,6 +50,8 @@ extern "C" {
 #include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
 #if defined(__IPHONEOS__)
 #include "../../ios/ios_drops.h"  /* iosDropsWelcomeResult */
+#elif defined(__ANDROID__)
+#include "../../../android/android_drops.h"  /* androidDropsWelcomeResult */
 #endif
 #include "imgui_keyboard.h" /* keyboardUpdate */
 
@@ -254,11 +253,15 @@ extern "C" int imguiWelcomeShow(void) {
                 running = false;
             }
         }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
         /* A recording or game link the system handed over, in whichever loop
-         * was running then or at a cold launch (ios_drops.c). */
+         * was running then or at a cold launch (ios_drops.c, android_drops.c). */
         if (running) {
+#if defined(__IPHONEOS__)
             int dropped = iosDropsWelcomeResult();
+#else
+            int dropped = androidDropsWelcomeResult();
+#endif
             if (dropped >= 0) {
                 result = dropped;
                 running = false;
@@ -283,6 +286,21 @@ extern "C" int imguiWelcomeShow(void) {
             }
 #endif
             ImGui_ImplSDL3_ProcessEvent(&ev);
+#if defined(__ANDROID__)
+            /* The system Back key reaches this loop as Escape (main_android.c's
+               event filter). With none of this screen's popups up (the news
+               prompt, the news window, About, each of which closes itself on
+               Escape) there is nothing to cancel, so Back keeps Android's own
+               meaning here and leaves the app: the activity's back handling
+               ends it, and the end reaches this loop as SDL_EVENT_TERMINATING
+               through the quit test below. */
+            if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+                ev.key.scancode == SDL_SCANCODE_ESCAPE &&
+                !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup) &&
+                !ImGui::GetIO().WantTextInput) {
+                SDL_SendAndroidBackButton();
+            }
+#endif
             /* C cycles the background game's camera to the next tank.
              * Only this dialog takes it: the other pre-game dialogs that
              * draw the same background carry text fields and the key
@@ -391,7 +409,6 @@ extern "C" int imguiWelcomeShow(void) {
                      ImGuiWindowFlags_NoScrollWithMouse |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
         /* Single kick per program run — newsPopupKickFetch is idempotent
          * but the static guard avoids the call entirely once we've kicked. */
         static bool sNewsKicked = false;
@@ -399,7 +416,6 @@ extern "C" int imguiWelcomeShow(void) {
             newsPopupKickFetch();
             sNewsKicked = true;
         }
-#endif
 
         /* Top-right logo + ghost menu column. Logo is purely decorative. */
         {
@@ -491,13 +507,12 @@ extern "C" int imguiWelcomeShow(void) {
                 /* A browser tab cannot host or find a game on the LAN. */
                 { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true,             nullptr },
 #endif
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
-                /* iOS builds the editor, but its touch input is not usable
-                   yet, so the entry is hidden there until it is. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+                /* iOS and Android build the editor, but its touch input is
+                   not usable yet, so the entry is hidden there until it is. */
                 { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools, nullptr },
 #endif
-                /* Android does not compile the log browser or the reel. */
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__)
                 { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    showDesktopTools, nullptr },
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true,             nullptr },
@@ -505,9 +520,7 @@ extern "C" int imguiWelcomeShow(void) {
                 { fullScreenLabel,          0,                   showFullScreenToggle,
                                                                  "FullScreen" },
 #endif
-#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
                 { STR_DLGWELCOME_NEWS,      0,                   true,             "News" },
-#endif
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                 /* A page has nothing to quit to; the player closes the tab. */
                 { STR_DLGOPENING_BUTTON2,   RESULT_QUIT,         true,             nullptr },
@@ -520,7 +533,7 @@ extern "C" int imguiWelcomeShow(void) {
             const int lastPlayRow = RESULT_LAN;
 #endif
 
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             /* Fit the column above the social icons and the version label in
                the bottom-right corner. A tall column on a short screen (an
                iPad in landscape has eight rows at a larger scale) ran the last
@@ -583,7 +596,6 @@ extern "C" int imguiWelcomeShow(void) {
                     : miniModes[i].rawLabel;
                 SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", labelText);
                 if (ImGui::Button(miniLabel, ImVec2(miniBtnW, miniBtnH))) {
-#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                     if (miniModes[i].rawLabel &&
                         SDL_strcmp(miniModes[i].rawLabel, "FullScreen") == 0) {
@@ -605,7 +617,6 @@ extern "C" int imguiWelcomeShow(void) {
                         newsPopupOpenManual();
 #endif
                     } else
-#endif
                     {
                         result = miniModes[i].code;
                         running = false;
@@ -617,7 +628,6 @@ extern "C" int imguiWelcomeShow(void) {
                 if (miniModes[i].code == RESULT_SINGLEPLAYER) {
                     ImGui::SetItemDefaultFocus();
                 }
-#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
                 /* Unread dot on the News button when fresh items exist. */
                 if (miniModes[i].rawLabel &&
                     SDL_strcmp(miniModes[i].rawLabel, "News") == 0 &&
@@ -630,7 +640,6 @@ extern "C" int imguiWelcomeShow(void) {
                     ImGui::GetWindowDrawList()->AddCircleFilled(
                         dotCenter, dotR, IM_COL32(220, 60, 60, 230));
                 }
-#endif
                 if (hovered) {
                     ImGui::PopStyleColor();
                 }
@@ -656,12 +665,10 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::EndGroup();
         }
 
-#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
         /* Drive the news popup state machine. Renders the consent dialog
          * or the news modal when either is open, otherwise polls the
          * fetch handle and decides whether to auto-open. */
         newsPopupTick();
-#endif
 
         /* Play/Pause button — bottom-left */
         if (hasBg) {

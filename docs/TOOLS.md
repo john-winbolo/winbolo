@@ -149,7 +149,8 @@ and crashed at startup for every non-English user.
 ## tools/stamp_mod_updated.py
 
 Keeps the `updated` field of every shipped scenario script current. The
-shipped scripts are `data/mods/*.lua` and `data/maps/*.scenario.lua`;
+shipped scripts are `data/mods/*.lua`, `data/maps/*.scenario.lua` and
+`data/maps/tutorials/*.scenario.lua`;
 `tests/scenario` fixtures are never touched. The field and its form
 (`"YYYY-MM-DDTHH:MMZ"`, UTC) are described in
 [SCENARIO_API.md](SCENARIO_API.md#author-and-updated).
@@ -186,6 +187,26 @@ So a commit that edits a shipped script without restamping it fails from
 then on, until a later commit restamps it. Outside a git checkout the check
 passes, with nothing to compare against. It is not wired into CTest, as
 `dump_lang_en.py --check` is not.
+
+## tools/make_tutorial_map.py
+
+Writes `data/maps/tutorials/Tutorial.map`, the map the Tutorial scenario
+plays on, and rewrites the `LAYOUT` block of
+`data/maps/tutorials/Tutorial.scenario.lua` between its `BEGIN LAYOUT` and
+`END LAYOUT` lines, so the script and the map always name the same squares.
+The map is not edited by hand: a change to a station goes into the
+generator, which is then run again.
+
+```bash
+python3 tools/make_tutorial_map.py
+```
+
+Running it on an unchanged checkout writes the same bytes, so the two files
+can be checked against the generator at any time. After a run that changed
+the script, `tools/stamp_mod_updated.py` restamps it; the `tutorial_*`
+arenas under `tests/scenario` read the shipped script and map, so run
+`python3 tests/scenario/run_gate.py --build <dir> --only tutorial_` after a
+change.
 
 ## tools/validate_lang.py
 

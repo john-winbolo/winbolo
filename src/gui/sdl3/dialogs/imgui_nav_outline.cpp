@@ -14,7 +14,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_nav_outline.h"
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 #include "imgui_touch.h"
 #endif
 
@@ -33,7 +33,7 @@ extern "C" void dialogDrawNavOutline(void) {
     ImGuiContext *g = ImGui::GetCurrentContext();
     if (!g) return;
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     /* Every ImGui frame on iOS passes through here just before Render, so
      * the touch handling rides along (see imgui_touch.h). */
     imguiTouchFrame();

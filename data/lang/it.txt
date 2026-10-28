@@ -160,62 +160,26 @@ STR_WBTIMELIMIT_END=Il limite di tempo è scaduto. La partita è terminata.
 STR_WBERR_SAVEMAP=Errore salvataggio mappa (Disco pieno?)
 
 # Tutorial strings
-STR_TUTORIAL01=Davanti a te c'è un breve fiume che porta nell'entroterra. Tieni\npremuto il tasto {ACCEL} per guidare la barca fino alla fine\ndel fiume.\n\nQuando arrivi, continua a tenere premuto {ACCEL}. Il tank\nsbarcherà dalla barca, che resterà ormeggiata alla fine del fiume.
-STR_TUTORIAL02=Sei ora sull'erba. Il tank si muove abbastanza\nvelocemente sull'erba.\n\n\nContinua a premere {ACCEL} per avanzare verso la foresta.
-STR_TUTORIAL03=Sei ora nella foresta. Il tank si muove più\nlentamente nella foresta rispetto all'erba.\n\n\nContinua a premere {ACCEL} per avanzare verso la palude.
-STR_TUTORIAL04=Sei ora nella palude. Il tank si muove molto\nlentamente nella palude. Per fortuna c'è una strada davanti.\n\n\nContinua a premere {ACCEL} per avanzare verso la strada.
-STR_TUTORIAL05=Sei ora sulla strada. Il tank può muoversi molto\nvelocemente su strada e premendo {ACCEL} il tank\naccelerà.\n\n\nSe vai troppo veloce puoi premere {BRAKE}
-STR_TUTORIAL06=Ci sono alcuni edifici davanti. Gli edifici sono ostacoli\nsolidi attraverso cui non puoi guidare, quindi dovrai\nfaeti strada nel labirinto fino all'altro lato.\n\nPer far girare il tank a sinistra premi {LEFT}\nPer far girare il tank a destra premi {RIGHT}
-STR_TUTORIAL07=Questi oggetti rotondi con i cannoni rossi che sporgono sono\nbunker automatici. Sparano a qualsiasi tank\nche entra nel loro raggio d'azione.\n\n\nPer fortuna gli edifici offrono protezione dai\ncolpi, quindi i bunker non riusciranno a colpirti\na meno che tu non aspetti così a lungo che riescano a\nspararsi completamente attraverso gli edifici.
-STR_TUTORIAL08=La foresta offre protezione dai bunker, ma in\nmodo diverso. Oltre a rallentare molto il tank,\nguidare nella foresta limita anche la visibilità.\n\n\nQuando sei nella foresta puoi ancora vedere chiaramente\ntutto ciò che è fuori dalla foresta, ma i bunker (e\ngli altri giocatori) non possono vedere il tuo tank a meno che\nnon ti avvicini molto a loro.
-STR_TUTORIAL09=Allinea il tank con il centro della striscia di\nforesta e guida verso nord. Se vai dritto\ne non ti avvicini troppo ai bordi della foresta,\ni bunker non ti vedranno e non spareranno.\n\n\nNon uscire dalla foresta o sarai fatto a pezzi.\n
-STR_TUTORIAL10=C'è un altro modo semplice per sfuggire ai bunker:\nla velocità.\n\n\nAssicurati di essere allineato correttamente con il centro\ndella strada e tieni premuto {ACCEL} per passare a tutta\nvelocità davanti ai bunker.
-STR_TUTORIAL11=Quando ti notano inizieranno a sparare, ma se\ncontinui dritto e non perdi la calma, sarai fuori\ndal loro raggio prima che i colpi possano colpirti.\n\n\nNon correre fuori strada nella palude o sarai un\nbersaglio facile per i bunker, e non riuscirai a\nmuoverti abbastanza velocemente per scappare.
-STR_TUTORIAL12=Davanti a te c'è una base di rifornimento. Le basi di rifornimento forniscono\nproiettili per sparare, mine per tendere trappole segrete\ne riparano la corazza del tuo tank fino alla resistenza piena\nse è stata danneggiata.\n\n\nFermati sulla base di rifornimento e carica il tuo tank\ncon proiettili.
-STR_TUTORIAL13=Sei sulla base di rifornimento. Il tuo tank ora\ncaricherà proiettili e mine, come indicato dai\ncontatori sulla destra. Davanti a te, oltre gli\nedifici, c'è un campo minato.
-STR_TUTORIAL14=Se guidi il tuo tank nel campo minato verrà\ndistrutto. Per fortuna puoi bonificare un campo minato\nsparando. Premi {FIRE} per sparare.\n\nSpara un varco attraverso l'edificio, poi fai cadere un\nproiettile al centro del campo minato per farlo\nesplodere. Quando fai saltare le mine si creerà un grande\ncratere nel terreno, attraverso cui puoi guidare,\nsebbene sia lento come guidare nella palude.
-STR_TUTORIAL15=Davanti c'è un altro campo minato. Fai lo stesso trucco:\nPortati sulla base di rifornimento, spara attraverso il\nmuro e fai cadere un proiettile al centro del campo minato per\nfarlo esplodere.\n\nQuesta volta però il campo minato è adiacente a un grande\nfiume e l'acqua inonderà i crateri. Puoi\nguidare il tank attraverso l'acqua come attraverso\ni crateri e la palude.
-STR_TUTORIAL16=WinBolo scorre automaticamente la finestra per mostrarti\nl'area intorno al tuo tank, ma puoi usare i tasti\n{SCROLL_UP}/{SCROLL_DOWN}/{SCROLL_LEFT}/{SCROLL_RIGHT}\nper modificare manualmente la vista scelta da WinBolo.\n\nPremi {SCROLL_UP} ora per avere una visuale migliore del\nfiume davanti a te.
-STR_TUTORIAL17=Oltre a essere molto lenta, guidare nell'acqua ha\nun altro svantaggio: depaupera anche le\nscorte di proiettili e mine del tuo tank.\n\n\nQuando arrivi dall'altra parte il tuo tank sarà ancora\nfunzionante, ma avrai perso tutta la capacità offensiva.
-STR_TUTORIAL18=Questa volta saremo più furbi nel\nattraversare il fiume. Invece di guadarlo direttamente,\nconstruiremo un ponte.\n\n\nSeleziona la modalità raccolta alberi facendo clic sull'icona\ndella foresta (in alto a sinistra della finestra) e fai clic sulla foresta.\nIl tuo costruttore uscirà dal tank e raccoglierà un\nalbero per i materiali da costruzione.
-STR_TUTORIAL19=Dopo aver raccolto qualche albero, seleziona lo strumento\nstrada/ponte (il secondo pulsante dall'alto) e fai clic col mouse\nsul fiume alla fine della strada.\n\n\nIl tuo costruttore uscirà dal tank e costruirà un\nsegmento di ponte. Fai clic di nuovo per completare il ponte\ne poi attraversa fino all'altro lato.
-STR_TUTORIAL20=Questo fiume è più largo dell'ultimo, e al centro è\ntroppo profondo per costruire un ponte. Se provi a\nguadarlo il tank affonderà sul fondo e verrà\ndistrutto.
-STR_TUTORIAL21=Per attraversare questo fiume dovrai costruire una barca. Le barche\nrichiedono cinque alberi, quindi fai clic sui cinque alberi per raccoglierli.\nPoi seleziona lo strumento muro/barca (il terzo pulsante dall'alto)\ne fai clic sull'acqua per costruire una barca.\n\nSe fai clic sulla terra costruirai un muro\ne dovrai raccogliere altri alberi per costruire la barca.\nSali sulla barca e attraversa il fiume fino all'altro lato.
-STR_TUTORIAL22=C'è un bunker davanti e alcune basi di rifornimento\nper fornirti munizioni. Raccogli proiettili dalla\nbase di rifornimento e attacca il bunker.\n\n\nSpareranno a loro volta, ma se il tuo tank viene colpito puoi facilmente\ntornare alla base di rifornimento per riparare la corazza\nfino alla piena resistenza.
-STR_TUTORIAL23=Con pazienza e cautela dovresti riuscire a distruggere questo\nbunker. Usa le abilità che hai imparato per renderlo più facile:\n\n\nNasconditi nella foresta in modo che il bunker non ti veda,\nraccogli alberi, costruisci strade per far muovere più\nvelocemente il tank e costruisci edifici per proteggerti dai\ncolpi del bunker.
-STR_TUTORIAL24=Dopo aver sconfitto questo bunker, la tua sfida finale\ndel tutorial è eliminare i due bunker che sorvegliano l'uscita,\ncostruire una barca e fuggire.\n\n\nFai molta attenzione al livello di corazza del tuo tank:\nse il tuo tank viene distrutto, ti verrà assegnato un\nnuovo tank nelle vicinanze così puoi riprovare.
-STR_TUTORIAL01_CTRL=Davanti a te c'è un breve fiume che porta nell'entroterra.\nSpingi lo stick sinistro in avanti per guidare la barca\nfino alla fine del fiume.\n\nQuando arrivi, continua a spingere lo stick in avanti.\nIl tank sbarcherà dalla barca e la barca resterà\normeggiata alla fine del fiume.
-STR_TUTORIAL02_CTRL=Sei ora sull'erba. Il tank si muove abbastanza\nvelocemente sull'erba.\n\n\nContinua a spingere lo stick sinistro in avanti\nper avanzare verso la foresta.
-STR_TUTORIAL03_CTRL=Sei ora nella foresta. Il tank si muove più\nlentamente nella foresta rispetto all'erba.\n\n\nContinua a spingere lo stick sinistro in avanti\nper avanzare verso la palude.
-STR_TUTORIAL04_CTRL=Sei ora nella palude. Il tank si muove molto\nlentamente nella palude. Per fortuna c'è una strada davanti.\n\n\nContinua a spingere lo stick sinistro in avanti\nper avanzare verso la strada.
-STR_TUTORIAL05_CTRL=Sei ora sulla strada. Il tank può muoversi molto\nvelocemente su strada e spingere lo stick sinistro\ntutto in avanti lo farà accelerare.\n\n\nSe vai troppo veloce, tira lo stick sinistro\nindietro per rallentare.
-STR_TUTORIAL06_CTRL=Ci sono alcuni edifici davanti. Gli edifici sono ostacoli\nsolidi attraverso cui non puoi guidare, quindi dovrai\nfarti strada nel labirinto fino all'altro lato.\n\nSpingi lo stick sinistro a sinistra o a destra\nper girare il tank in quella direzione.
-STR_TUTORIAL10_CTRL=C'è un altro modo semplice per sfuggire ai bunker:\nla velocità.\n\n\nAssicurati di essere allineato correttamente con il centro\ndella strada e spingi lo stick sinistro completamente\nin avanti per passare a tutta velocità davanti ai bunker.
-STR_TUTORIAL14_CTRL=Se guidi il tuo tank nel campo minato verrà\ndistrutto. Per fortuna puoi bonificare un campo minato\nsparando. Premi {FIRE} per sparare.\n\nSpara un varco attraverso l'edificio, poi fai cadere un\nproiettile al centro del campo minato per farlo\nesplodere. Quando fai saltare le mine si creerà un grande\ncratere nel terreno, attraverso cui puoi guidare,\nsebbene sia lento come guidare nella palude.
-STR_TUTORIAL16_CTRL=WinBolo scorre automaticamente la finestra per mostrarti\nl'area intorno al tuo tank, ma puoi spingere lo stick\ndestro per modificare manualmente la vista.\n\nSpingi lo stick destro verso l'alto ora per avere\nuna visuale migliore del fiume davanti a te.
-STR_TUTORIAL18_CTRL=Questa volta saremo più furbi nell'attraversare il fiume.\nInvece di guadarlo direttamente, costruiremo un ponte.\n\nTieni premuto {BUILD_MODE} per passare alla modalità\ncursore di costruzione - lo stick destro muove ora un\ncursore invece della visuale. Premi {BUILD_TOOL} per\nselezionare la raccolta alberi (in alto a sinistra),\npunta il cursore su un albero e premi {BUILD_PLACE}.\nIl costruttore raccoglierà un albero per i materiali.
-STR_TUTORIAL19_CTRL=Dopo aver raccolto qualche albero, premi {BUILD_TOOL}\nper selezionare lo strumento strada/ponte (il secondo\npulsante dall'alto), punta il cursore sul fiume alla\nfine della strada e premi {BUILD_PLACE}.\n\nIl tuo costruttore costruirà un segmento di ponte.\nPositiona di nuovo per completare il ponte, poi tieni\npremuto {BUILD_MODE} per uscire dalla modalità costruzione\ne attraversa fino all'altro lato.
-STR_TUTORIAL21_CTRL=Per attraversare questo fiume dovrai costruire una barca.\nLe barche richiedono cinque alberi: punta su cinque\nalberi e premi {BUILD_PLACE} su ognuno. Poi premi\n{BUILD_TOOL} per selezionare lo strumento muro/barca\n(il terzo pulsante dall'alto) e posizionalo sull'acqua.\n\nSe posizioni sulla terra costruirai un muro e\ndovrai raccogliere altri alberi. Sali sulla barca\ne attraversa il fiume fino all'altro lato.
-STR_TUTORIAL_START04_CTRL=Sei al controllo di un tank, che si trova attualmente\nsu una barca in mare. Spingi lo stick sinistro in avanti\nper far avanzare il tank (e la barca) e tiralo indietro\nper rallentare e fermarti.\n\nPiù spingi lo stick sinistro, più il tank va veloce.\nSpingi lo stick sinistro in avanti ora per guidare\nla barca verso la terraferma.\n(Premi prima {DISMISS} per chiudere la finestra)
-STR_TUTORIAL_RESPAWN1=Il tuo tank è stato distrutto, ma non devi ricominciare\ndall'inizio il tutorial. Ti è stato assegnato un nuovo\ntank appena oltre l'acqua, dove sei sbarcato. Torna\nin azione e completa la tua fuga.
-STR_TUTORIAL25=Congratulazioni. Hai completato il tutorial di WinBolo.\n\n\n\nSei pronto a giocare. Unisciti a una partita online,\nospitane una per i tuoi amici o esercitati contro i bot.\n\nSe vuoi ripetere il tutorial in futuro, puoi\nriaviarlo dal menu Impostazioni.
-STR_TUTORIAL_START01=Benvenuto nel tutorial di WinBolo. Questa isola introduce\ni principi di base di WinBolo e ti guida attraverso\ndi essi uno alla volta. Ogni nuovo principio verrà\ndescritto in una finestra come questa.\n\nDopo ogni messaggio,\npremi {DISMISS} per continuare.
-STR_TUTORIAL_START02=WinBolo è l'unico clone autorizzato del classico gioco di rete per Macintosh di Stuart Cheshire, Bolo.\nPuoi trovare suggerimenti strategici e altre informazioni sul sito ufficiale:\n\nhttps://www.winbolo.com\n\nOppure vieni a trovarci su Reddit e Discord\n
-STR_TUTORIAL_START04=Sei al controllo di un tank, che si trova attualmente su una\nbarca in mare. Premi {ACCEL} per far avanzare il tank (e la barca)\ne premi {BRAKE} per rallentare e fermarti.\n\nPremi e tieni premuti i tasti finché il tank non\nraggiunge la velocità che desideri, poi lascia andare.\nPremi {ACCEL} ora per far avanzare la barca verso\nla terraferma.\n(Premi prima {DISMISS} per chiudere la finestra)
-STR_TUTORIAL01_TOUCH=Davanti a te c'è un breve fiume che porta nell'entroterra. Spingi\nil thumbstick in avanti per guidare la barca fino alla fine\ndel fiume.\n\nQuando arrivi, continua a spingere il thumbstick\nin avanti. Il tank sbarcherà dalla barca e la\nbarca resterà ormeggiata alla fine del fiume.
-STR_TUTORIAL02_TOUCH=Sei ora sull'erba. Il tank si muove abbastanza\nvelocemente sull'erba.\n\n\nContinua a spingere il thumbstick in avanti per avanzare\nverso la foresta.
-STR_TUTORIAL03_TOUCH=Sei ora nella foresta. Il tank si muove più\nlentamente nella foresta rispetto all'erba.\n\n\nContinua a spingere il thumbstick in avanti per avanzare\nverso la palude.
-STR_TUTORIAL04_TOUCH=Sei ora nella palude. Il tank si muove molto\nlentamente nella palude. Per fortuna c'è una strada davanti.\n\n\nContinua a spingere il thumbstick in avanti per avanzare\nverso la strada.
-STR_TUTORIAL05_TOUCH=Sei ora sulla strada. Il tank può muoversi molto\nvelocemente su strada e spingere il thumbstick tutto\nin avanti lo farà accelerare.\n\n\nSe vai troppo veloce, tira il thumbstick\nindietro per rallentare.
-STR_TUTORIAL06_TOUCH=Ci sono alcuni edifici davanti. Gli edifici sono ostacoli\nsolidi attraverso cui non puoi guidare, quindi dovrai\nfarti strada nel labirinto fino all'altro lato.\n\nSpingi il thumbstick a sinistra o a destra per girare\nil tank in quella direzione.
-STR_TUTORIAL10_TOUCH=C'è un altro modo semplice per sfuggire ai bunker:\nla velocità.\n\n\nAssicurati di essere allineato correttamente con il centro\ndella strada e spingi il thumbstick completamente in avanti per\npassare a tutta velocità davanti ai bunker.
-STR_TUTORIAL14_TOUCH=Se guidi il tuo tank nel campo minato verrà\ndistrutto. Per fortuna puoi bonificare un campo minato\nsparando. Tocca il pulsante di fuoco per sparare.\n\nSpara un varco attraverso l'edificio, poi fai cadere un\nproiettile al centro del campo minato per farlo\nesplodere. Quando fai saltare le mine si creerà un grande\ncratere nel terreno, attraverso cui puoi guidare,\nsebbene sia lento come guidare nella palude.
-STR_TUTORIAL16_TOUCH=WinBolo scorre automaticamente la finestra per mostrarti\nl'area intorno al tuo tank, ma puoi trascinare la mappa\ncon un dito per modificare manualmente la vista.\n\nTrascia la mappa verso il basso ora per portare il fiume\ndavanti a te nella visuale.
-STR_TUTORIAL18_TOUCH=Questa volta saremo più furbi nel\nattraversare il fiume. Invece di guadarlo direttamente,\nconstruiremo un ponte.\n\n\nSeleziona la modalità raccolta alberi toccando l'icona\ndella foresta (in alto a sinistra della finestra) e tocca la foresta.\nIl tuo costruttore uscirà dal tank e raccoglierà un\nalbero per i materiali da costruzione.
-STR_TUTORIAL19_TOUCH=Dopo aver raccolto qualche albero, seleziona lo strumento\nstrada/ponte (il secondo pulsante dall'alto) e tocca il\nfiume alla fine della strada.\n\n\nIl tuo costruttore uscirà dal tank e costruirà un\nsegmento di ponte. Tocca di nuovo per completare il ponte\ne poi attraversa fino all'altro lato.
-STR_TUTORIAL21_TOUCH=Per attraversare questo fiume dovrai costruire una barca. Le barche\nrichiedono cinque alberi, quindi tocca i cinque alberi per raccoglierli.\nPoi seleziona lo strumento muro/barca (il terzo pulsante dall'alto)\ne tocca l'acqua per costruire una barca.\n\nSe tocchi la terra costruirai un muro\ne dovrai raccogliere altri alberi per costruire la barca.\nSali sulla barca e attraversa il fiume fino all'altro lato.
-STR_TUTORIAL_START01_TOUCH=Benvenuto nel tutorial di WinBolo. Questa isola introduce\ni principi di base di WinBolo e ti guida attraverso\ndi essi uno alla volta. Ogni nuovo principio verrà\ndescritto in una finestra come questa.\n\nDopo aver letto ogni messaggio, puoi procedere\ntoccando il pulsante "OK".
-STR_TUTORIAL_START04_TOUCH=Sei al controllo di un tank, che si trova attualmente su una\nbarca in mare. Usa il thumbstick sul lato sinistro dello\nschermo per guidare: spingi in avanti per accelerare, tira\nindietro per rallentare e fermarti.\n\nPiù spingi il thumbstick, più il tank va veloce.\nSpingi il thumbstick in avanti ora per far avanzare\nla barca verso la terraferma.\n(Tocca OK per chiudere questa finestra)
+STR_TUTORIAL_QUICK_BUILD_TOUCH=i pulsanti di costruzione
+STR_TUTTOK_PAD_ACCEL=il pulsante avanti
+STR_TUTTOK_PAD_BRAKE=il pulsante indietro
+STR_TUTTOK_PAD_LEFT=il pulsante sinistra
+STR_TUTTOK_PAD_RIGHT=il pulsante destra
+STR_TUTTOK_PAD_FIRE=il pulsante di fuoco
+STR_TUTTOK_PAD_MINE=il pulsante mina
+STR_TUTTOK_PAD_SCROLL_UP=il pulsante scorri su
+STR_TUTTOK_PAD_SCROLL_DOWN=il pulsante scorri giù
+STR_TUTTOK_PAD_SCROLL_LEFT=il pulsante scorri a sinistra
+STR_TUTTOK_PAD_SCROLL_RIGHT=il pulsante scorri a destra
+STR_TUTTOK_PAD_DISMISS=il pulsante di conferma
+STR_TUTTOK_PAD_BUILD_MODE=il pulsante del cursore di costruzione
+STR_TUTTOK_PAD_BUILD_PLACE=il pulsante costruisci
+STR_TUTTOK_PAD_BUILD_TOOL=il pulsante strumento successivo
+STR_TUTTOK_PAD_GUN_UP=il pulsante aumenta portata
+STR_TUTTOK_PAD_GUN_DOWN=il pulsante riduci portata
+STR_TUTTOK_TOUCH_FIRE=il pulsante di fuoco
+STR_TUTTOK_TOUCH_GUN_UP=il pulsante +
+STR_TUTTOK_TOUCH_GUN_DOWN=il pulsante -
 
 # LGM (little green man) messages
 LGM_MAN_DEAD=Non puoi costruire finché il tuo nuovo uomo non arriva col paracadute
@@ -2298,9 +2262,6 @@ STR_DLGLOBBY_MODS_TIP_OFF=Mod/Scenario è disattivato. Queste sono scelte per il
 STR_DLGLOBBY_MODS_TIP_NONE=Nessuna mod è caricata per questo round.
 STR_DLGLOBBY_MODS_OFF_NOTE=(disattivata, non verrà eseguita)
 STR_SCNPANEL_SETTINGS_TITLE=Pannello dello scenario
-STR_SCNPANEL_OPACITY_LBL=Opacità
-STR_SCNPANEL_OPACITY_LINE1=Sfuma ciò che il pannello disegna.
-STR_SCNPANEL_OPACITY_LINE2=Le sue parti vuote restano trasparenti.
 STR_DLGLOBBY_SCENARIO_UNSAFE=Questo server esegue gli script degli scenari con la libreria Lua completa e senza limiti.
 STR_DLGLOBBY_SCENARIO_OFFERED=Questo server offre
 STR_DLGLOBBY_SCENARIO_ROUND=Questo round esegue
@@ -2645,6 +2606,7 @@ STR_RULE_DESC_pill_base_defend_shape=Come viene misurato pill_base_defend_range.
 STR_RULE_DESC_tank_slide_armour_bonus=Passo di spinta in più a corazza zero, sommato a tank_slide_step in proporzione alla corazza mancante prima del colpo. Letto solo mentre tank_slide_mac è attivo.
 STR_RULE_DESC_tank_slide_mac=Se un colpo di proiettile spinge un tank come in Mac Bolo. Attivo, la spinta cresce al calare della corazza, di tank_slide_armour_bonus, e tank_slide_step e tank_bump_decay_shift si leggono ogni 40 ms, in una scivolata che avanza a ogni tick. Disattivo è la spinta di WinBolo, uguale con qualsiasi corazza.
 STR_RULE_DESC_tank_deep_sea_safe=Se un tank senza barca può guidare in mare aperto senza affondare. Disattivo è il gioco classico: il mare aperto affonda un tank senza barca. Un tank che si trova sul mare aperto senza barca quando questo torna disattivo affonda al tick successivo.
+STR_RULE_DESC_tank_hit_sets_off_mines=Se un proiettile che colpisce un tank fa esplodere una mina nella casella in cui scoppia. Disattivo è il valore predefinito: il colpo lascia stare le mine di quella casella. Attivo, come in WinBolo 2.1, il colpo fa esplodere lì una mina, quindi un colpo a un tank può far esplodere le mine che ha appena posato sotto o dietro di sé. Un proiettile che colpisce un bunker, una base o il terreno, o che esaurisce la portata, fa esplodere una mina in entrambi i casi.
 STR_RULE_DESC_pill_aim_iterations=Quanto si impegna un bunker per anticipare un obiettivo in movimento.
 STR_RULE_DESC_pill_massage_range=A quale distanza deve trovarsi un tank perché un bunker punti con la previsione lineare originale invece che con il risolutore, che manca un tank che gli gira intorno. Zero, la tabella classica, è un bunker che anticipa sempre correttamente il suo obiettivo; 384 è una casella e mezza, la distanza usata dal vecchio interruttore di compilazione.
 STR_RULE_DESC_pill_massage_cosine=Con quale rettitudine deve dirigersi verso un bunker vicino un tank perché venga comunque puntato correttamente, espresso come il coseno dell'angolo tra la sua direzione e la linea verso il bunker. Uno punta in modo impreciso ogni tank dentro pill_massage_range, zero nessuno di essi. Non fa nulla mentre quella regola è zero.
@@ -2749,6 +2711,7 @@ STR_SCNFN_DESC_CAN_ALLY=Se un giocatore può allearsi con un altro.
 STR_SCNFN_DESC_TANK_HIT=Un carro ha subito un proiettile o una mina, con la corazza effettivamente persa.
 STR_SCNFN_DESC_CAN_HIT=Se un proiettile può colpire il carro o il fortino che ha raggiunto.
 STR_SCNFN_DESC_PILL_DAMAGE_SCALE=Quanto vale un colpo su un fortino, chiesto a ogni proiettile ed esplosione che subisce.
+STR_SCNFN_DESC_CAN_TARGET=Se un fortino può scegliere un carro come bersaglio.
 STR_MAPEDIT_SCENARIO_KIND=Cosa può decidere
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scenario — può terminare il round e dire chi ha vinto
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — cambia il modo in cui si gioca la partita e non interferisce con la vittoria
@@ -2919,6 +2882,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=La mappa riempie lo schermo, con i pannelli 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Questo dispositivo usa i dati mobili. Una partita su Internet ospitata\ncon i dati mobili probabilmente non funzionerà: le reti mobili raramente\nlasciano che gli altri giocatori raggiungano il dispositivo. Con il Wi-Fi\nè molto più probabile che funzioni.\n\nOspitare comunque?
 
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Condividi
+STR_ANDROIDREC_EMPTY=Ancora nessuna registrazione. Le partite in singolo vengono registrate qui, e anche le registrazioni .wbv aperte da un'altra app compaiono qui.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} è stato salvato. Scegli ora un'app con cui condividerlo.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Qui non c'è ancora niente. Le mappe che salvi, qui o da una partita, compaiono qui.
+
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Le tue GIF
 STR_CLIPGIF_GALLERY_EMPTY=Ancora nessuna GIF. Creane una con il pulsante GIF sotto il replay o con il pulsante GIF di una clip.
@@ -2934,3 +2907,4 @@ STR_CLIPGIF_LENGTH_TIP=Durata della GIF in secondi, dalla testina di riproduzion
 STR_CLIPGIF_LOADING=Apertura della GIF...
 STR_CLIPGIF_TOO_LARGE=Questa GIF è troppo grande per essere mostrata qui. Puoi comunque copiarla o salvarla.
 STR_CLIPGIF_FILTER_NAME=Immagini GIF
+STR_REEL_RECORD_MODE_TIP=Modalità registrazione: mostra i controlli GIF

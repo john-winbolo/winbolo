@@ -39,6 +39,9 @@
 #include "voice_aec.h"
 #endif
 #include "sdl3draw_status.h"
+#if defined(__ANDROID__)
+#include "../../android/android_voice.h"  /* androidVoiceMicAskAgain */
+#endif
 
 /* -------------------------------------------------------
  * Voice settings — apply a value to the running voice module
@@ -48,6 +51,11 @@
  * back out through the getters below at save time.
  * ------------------------------------------------------- */
 void windowSetVoiceEnabled(bool on) {
+#if defined(__ANDROID__)
+  /* Switching voice on is the player's own ask for the microphone: a
+     permission they refused earlier may be asked about again. */
+  if (on) androidVoiceMicAskAgain();
+#endif
   voiceSetEnabled(on);
 }
 

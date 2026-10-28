@@ -16,18 +16,30 @@
  *  In landscape a phone with a notch or Dynamic Island
  *  reports the same inset on the left and the right,
  *  though the cutout is on one side only. Here the side
- *  away from it gets SAFE_INSETS_EDGE_MARGIN_FRAC of the
- *  window's width instead, which keeps clear of the
- *  screen's rounded corners. The cutout's side is found
- *  from the display orientation. A platform that reports
- *  the cutout on its own side (Android) has unequal insets
- *  and is left as it is. Zero everywhere off mobile.
+ *  away from the cutout gets SAFE_INSETS_EDGE_MARGIN_FRAC
+ *  of the window's width instead, which keeps clear of
+ *  the screen's rounded corners. The cutout's side is
+ *  found from the display orientation. Unequal insets are
+ *  left as they are. Zero everywhere off mobile.
+ *
+ *  On Android the insets are the display cutout and the
+ *  navigation bar (androidDeviceSafeInsets), what iOS's
+ *  safe area carries; SDL_GetWindowSafeArea folds in the
+ *  system gesture zones as well, a 48 dp band along the
+ *  top of every landscape screen, and is read only until
+ *  the window's insets have reached the Java side. A phone
+ *  with no cutout then reports equal side insets of zero,
+ *  which the rule above leaves alone.
  *********************************************************/
 
 #ifndef SAFE_INSETS_H
 #define SAFE_INSETS_H
 
 #include <SDL3/SDL.h>
+
+#if defined(__ANDROID__)
+#include "../../android/android_device.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -46,8 +58,23 @@ static inline SafeInsets safeInsetsGet(SDL_Window *window) {
 #if defined(__ANDROID__) || defined(__IPHONEOS__)
     SDL_Rect safeRect;
     int winW = 0, winH = 0;
+    bool haveInsets = false;
     SDL_GetWindowSize(window, &winW, &winH);
-    if (winW > 0 && winH > 0 && SDL_GetWindowSafeArea(window, &safeRect)) {
+#if defined(__ANDROID__)
+    {
+        /* The cutout and the navigation bar, in window pixels (an Android
+           window's points are its pixels). */
+        int l = 0, t = 0, r = 0, b = 0;
+        if (androidDeviceSafeInsets(&l, &t, &r, &b)) {
+            insets.left   = (float)l;
+            insets.top    = (float)t;
+            insets.right  = (float)r;
+            insets.bottom = (float)b;
+            haveInsets = true;
+        }
+    }
+#endif
+    if (!haveInsets && winW > 0 && winH > 0 && SDL_GetWindowSafeArea(window, &safeRect)) {
         insets.left   = (float)safeRect.x;
         insets.top    = (float)safeRect.y;
         insets.right  = (float)(winW - (safeRect.x + safeRect.w));

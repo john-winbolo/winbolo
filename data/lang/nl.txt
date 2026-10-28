@@ -160,62 +160,26 @@ STR_WBTIMELIMIT_END=Tijdslimiet verstreken. Het spel is afgelopen.
 STR_WBERR_SAVEMAP=Fout bij opslaan kaart (Schijf vol?)
 
 # Tutorial strings
-STR_TUTORIAL01=Voor je ligt een korte rivier die landinwaarts gaat. Houd\nde {ACCEL}-toets ingedrukt om je boot naar het einde van de\nrivier te rijden.\n\nAls je er bent, blijf dan {ACCEL} ingedrukt houden. De tank\nstapt uit de boot en de boot blijft afgemeerd aan\nhet einde van de rivier.
-STR_TUTORIAL02=Je staat nu op het gras. De tank beweegt vrij\nsnel op gras.\n\n\nBlijf {ACCEL} indrukken om verder te gaan naar het bos.
-STR_TUTORIAL03=Je bent nu in het bos. De tank beweegt langzamer\nin het bos dan op gras.\n\n\nBlijf {ACCEL} indrukken om verder te gaan naar het moeras.
-STR_TUTORIAL04=Je bent nu in het moeras. De tank beweegt heel\nlangzaam in moeras. Gelukkig is er een weg voor je.\n\n\nBlijf {ACCEL} indrukken om verder te gaan naar de weg.
-STR_TUTORIAL05=Je bent nu op de weg. De tank kan heel snel rijden\nop de weg en als je {ACCEL} indrukt, versnelt de tank.\n\n\nAls je te snel gaat, kun je op {BRAKE} drukken
-STR_TUTORIAL06=Er zijn wat gebouwen voor je. Gebouwen zijn vaste\nbelemmeringen waar je niet doorheen kunt rijden, dus\nmoe je je een weg door het doolhof vinden naar de\nandere kant.\n\nDruk op {LEFT} om de tank links te laten draaien\nDruk op {RIGHT} om de tank rechts te laten draaien
-STR_TUTORIAL07=Die ronde objecten met de rode kanonnen die uitsteken zijn\nautomatische bunkers. Ze schieten op elke tank\ndie binnen bereik komt.\n\n\nGelukkig bieden de gebouwen bescherming tegen de\nschoten, dus de bunkers kunnen je niet raken\ntenzij je zo lang wacht dat ze zich een weg door\nde gebouwen schieten.
-STR_TUTORIAL08=Bos biedt ook bescherming tegen bunkers, maar op\neen andere manier. Naast het sterk vertragen van de tank,\nbeperkt rijden door bos ook het zicht.\n\n\nAls je in het bos bent, kun je nog steeds duidelijk\nalles buiten het bos zien, maar bunkers (en\nandere spelers) kunnen je tank niet zien tenzij je\nerg dichtbij komt.
-STR_TUTORIAL09=Lijn je tank uit met het midden van de strook\nbos en rij recht naar het noorden. Als je recht rijdt\nen niet te dicht bij de randen van het bos komt,\nzullen de bunkers je niet zien en niet schieten.\n\n\nRijd niet buiten het bos of je wordt aan stukken geschoten.\n
-STR_TUTORIAL10=Er is nog één eenvoudige manier om aan bunkers te ontsnappen -\nsnelheid.\n\n\nZorg dat je correct op het midden van de weg staat\nen houd {ACCEL} ingedrukt om op volle snelheid langs de\nbunkers te rijden.
-STR_TUTORIAL11=Als ze je opmerken, beginnen ze te schieten, maar als\nje recht vooruit blijft rijden en je zenuwen niet verliest,\nben je buiten bereik voordat de schoten je kunnen\nraken.\n\n\nRijd niet van de weg af het moeras in, anders ben je\neen makkelijk doelwit voor de bunkers en kun je niet\nsnel genoeg bewegen om te ontsnappen.
-STR_TUTORIAL12=Voor je ligt een bevoorradingsbasis. Bevoorradingsbases leveren\ngranaten om te schieten, mijnen om geheime valstrikken mee te\nleggen, en ze repareren ook het pantser van je tank terug\nnaar volledige sterkte als het beschadigd is.\n\n\nStop op de bevoorradingsbasis en laad je tank\nmet granaten.
-STR_TUTORIAL13=Je staat op de bevoorradingsbasis. Je tank wordt nu\ngeladen met granaten en mijnen, zoals de indicatoren\nrechts aangeven. Voor je, achter de\ngebouwen, ligt een mijnenveld.
-STR_TUTORIAL14=Als je je tank het mijnenveld inrijdt, wordt hij\nvernietigd. Gelukkig kun je een mijnenveld opruimen door\nte schieten. Druk op {FIRE} om te schieten.\n\nSchiet een gat door het gebouw en laat dan een\ngranaat in het midden van het mijnenveld landen om het tot\nontploffing te brengen. Als je de mijnen opblaast, ontstaat\neen grote krater in de grond, waar je doorheen\nkunt rijden, hoewel het net zo langzaam gaat als door moeras.
-STR_TUTORIAL15=Voor je ligt een ander mijnenveld. Doe dezelfde truc:\nRij naar de bevoorradingsbasis, schiet door de\nmuur en laat een granaat in het midden van het mijnenveld\nlanden om het tot ontploffing te brengen.\n\nDeze keer grenst het mijnenveld aan een grote\nrivier en water zal de kraters instromen. Je kunt\nde tank door het water rijden, net als door\nkraters en moeras.
-STR_TUTORIAL16=WinBolo scrollt het venster automatisch om het\ngebied rond je tank te tonen, maar je kunt de\n{SCROLL_UP}/{SCROLL_DOWN}/{SCROLL_LEFT}/{SCROLL_RIGHT}\ntoetsen gebruiken om de weergave handmatig te sturen.\n\nDruk nu op {SCROLL_UP} voor een beter uitzicht op de\nrivier voor je.
-STR_TUTORIAL17=Naast het erg langzame rijden heeft rijden door water\nnog een nadeel: het tast ook de voorraad granaten\nen mijnen van je tank aan.\n\n\nAls je aan de andere kant aankomt, zal je tank nog\nwerken, maar je bent al je aanvalscapaciteit kwijtgeraakt.
-STR_TUTORIAL18=Deze keer gaan we subtieler te werk bij het\noversteken van de rivier. In plaats van gewoon door\nhet water te rijden, gaan we een brug bouwen.\n\n\nSelecteer de boommodus door op het bospictogram\n(linksboven in het venster) te klikken en klik op het bos.\nJe bouwer rent uit de tank en oogst één\nboom voor bouwmaterialen.
-STR_TUTORIAL19=Na het oogsten van bomen, selecteer het weg-/bruggereedschap\n(de tweede knop van boven) en klik met de muis\nop de rivier aan het einde van de weg.\n\n\nJe bouwer rent uit de tank en bouwt één\nbrugdeel. Klik nogmaals om de brug te voltooien\nen rij dan naar de andere kant.
-STR_TUTORIAL20=Deze rivier is breder dan de vorige en in het midden is\nze te diep om een brug te bouwen. Als je probeert\ndoor te rijden, zinkt de tank naar de bodem\nen wordt vernietigd.
-STR_TUTORIAL21=Om deze rivier over te steken, moet je een boot bouwen. Boten\nkosten vijf bomen, dus klik op de vijf bomen om ze te oogsten.\nSelecteer dan het muur-/bootgereedschap (de derde knop van\nboven) en klik op het water om een boot te bouwen.\n\nAls je op het land klikt, bouw je een muur\nen moet je nog meer bomen oogsten om een boot\nte bouwen. Rij op de boot en steek de rivier over.
-STR_TUTORIAL22=Er is een bunker voor je en wat bevoorradingsbases voor\nmunitie. Verzamel granaten bij de bevoorradingsbasis en\nval de bunker aan.\n\n\nHij schiet terug, maar als je tank geraakt wordt, kun je\ngemakkelijk teruggaan naar de bevoorradingsbasis om je pantser\nterug naar volle sterkte te repareren.
-STR_TUTORIAL23=Met geduld en voorzichtigheid moet je deze bunker kunnen\nvernietigen. Gebruik de vaardigheden die je hebt geleerd\nom het makkelijker te maken:\n\n\nVerschuil je in het bos zodat de bunker je niet kan zien,\noogst bomen, bouw wegen om je tank sneller te laten rijden\nen bouw gebouwen om dekking te bieden tegen\nbunkerschoten.
-STR_TUTORIAL24=Nadat je deze bunker hebt verslagen, is je einduitdaging\nvan de tutorial om de twee bunkers bij de uitgang\nte vernietigen, een boot te bouwen en te ontsnappen.\n\n\nLet goed op het pantserniveau van je tank -\nals je tank vernietigd wordt, krijg je een nieuwe tank\nin de buurt zodat je het opnieuw kunt proberen.
-STR_TUTORIAL01_CTRL=Voor je ligt een korte rivier die landinwaarts gaat. Duw\nde linker stick naar voren om je boot naar het einde\nvan de rivier te rijden.\n\nAls je er bent, houd de stick dan naar voren gedrukt.\nDe tank stapt uit de boot en de boot blijft\nafgemeerd aan het einde van de rivier.
-STR_TUTORIAL02_CTRL=Je staat nu op het gras. De tank beweegt vrij\nsnel op gras.\n\n\nHoud de linker stick naar voren om verder\nte gaan naar het bos.
-STR_TUTORIAL03_CTRL=Je bent nu in het bos. De tank beweegt langzamer\nin het bos dan op gras.\n\n\nHoud de linker stick naar voren om verder\nte gaan naar het moeras.
-STR_TUTORIAL04_CTRL=Je bent nu in het moeras. De tank beweegt heel\nlangzaam in moeras. Gelukkig is er een weg voor je.\n\n\nHoud de linker stick naar voren om verder\nte gaan naar de weg.
-STR_TUTORIAL05_CTRL=Je bent nu op de weg. De tank kan heel snel rijden\nop de weg en de linker stick helemaal naar voren\nduwen versnelt hem.\n\n\nAls je te snel gaat, trek de linker stick\nnaar achteren om te vertragen.
-STR_TUTORIAL06_CTRL=Er zijn wat gebouwen voor je. Gebouwen zijn vaste\nbelemmeringen waar je niet doorheen kunt rijden, dus\nmoe je je een weg door het doolhof vinden naar de\nandere kant.\n\nDuw de linker stick naar links of rechts om de\ntank in die richting te draaien.
-STR_TUTORIAL10_CTRL=Er is nog één eenvoudige manier om aan bunkers te ontsnappen -\nsnelheid.\n\n\nZorg dat je correct op het midden van de weg staat\nen duw de linker stick helemaal naar voren om op\nvolle snelheid langs de bunkers te rijden.
-STR_TUTORIAL14_CTRL=Als je je tank het mijnenveld inrijdt, wordt hij\nvernietigd. Gelukkig kun je een mijnenveld opruimen door\nte schieten. Druk op {FIRE} om te schieten.\n\nSchiet een gat door het gebouw en laat dan een\ngranaat in het midden van het mijnenveld landen om het tot\nontploffing te brengen. Als je de mijnen opblaast, ontstaat\neen grote krater in de grond, waar je doorheen\nkunt rijden, hoewel het net zo langzaam gaat als door moeras.
-STR_TUTORIAL16_CTRL=WinBolo scrollt het venster automatisch om het\ngebied rond je tank te tonen, maar je kunt de\nrechter stick gebruiken om de weergave handmatig te sturen.\n\nDuw de rechter stick nu omhoog voor een beter\nuitzicht op de rivier voor je.
-STR_TUTORIAL18_CTRL=Deze keer gaan we subtieler te werk bij het\noversteken van de rivier. In plaats van gewoon door\nhet water te rijden, gaan we een brug bouwen.\n\nTrek {BUILD_MODE} om van scrollen naar bouwmodus\nte schakelen - de rechter stick beweegt nu een bouwcursor\nin plaats van het beeld. Druk op {BUILD_TOOL} om de\nboomkapmodus te selecteren (linksboven), richt de cursor\nop een boom en druk op {BUILD_PLACE}. Je bouwer\noogst één boom voor bouwmaterialen.
-STR_TUTORIAL19_CTRL=Na het oogsten van bomen, druk op {BUILD_TOOL} om\nhet weg-/bruggereedschap te selecteren (de tweede knop\nvan boven), richt de bouwcursor op de rivier aan het\neinde van de weg en druk op {BUILD_PLACE}.\n\nJe bouwer bouwt één brugdeel. Plaats nogmaals om\nde brug te voltooien, trek dan {BUILD_MODE} om de\nbouwmodus te verlaten en rij naar de andere kant.
-STR_TUTORIAL21_CTRL=Om deze rivier over te steken, moet je een boot bouwen.\nBoten kosten vijf bomen: richt op vijf bomen en druk\nop {BUILD_PLACE} bij elke boom. Druk dan op {BUILD_TOOL}\nom het muur-/bootgereedschap te selecteren (de derde knop\nvan boven) en plaats het op het water.\n\nAls je op het land plaatst, bouw je een muur en\nmoet je meer bomen oogsten. Rij op de boot\nen steek de rivier over.
-STR_TUTORIAL_START04_CTRL=Je bestuurt een tank, die zich momenteel op een\nboot op zee bevindt. Duw de linker stick naar voren om\nde tank (en boot) vooruit te laten gaan en trek hem\nnaar achteren om te vertragen en te stoppen.\n\nHoe verder je de linker stick induwt, hoe sneller\nde tank gaat. Duw de linker stick nu naar voren\nom de boot naar het land te rijden.\n(Druk eerst op {DISMISS} om het venster te sluiten)
-STR_TUTORIAL_RESPAWN1=Je tank is vernietigd - maar je hoeft niet opnieuw\nte beginnen met de tutorial. Je hebt een nieuwe tank\ngekregen aan de overkant van het water, waar je aan\nland ging. Ga terug en voltooi je ontsnapping.
-STR_TUTORIAL25=Gefeliciteerd. Je hebt de WinBolo-tutorial\nvoltooid.\n\n\n\nJe bent klaar om te spelen. Doe mee aan een online spel,\nhost er een voor je vrienden, of oefen tegen bots.\n\nAls je de tutorial later opnieuw wilt spelen, kun je\nhem opnieuw starten vanuit het menu Instellingen.
-STR_TUTORIAL_START01=Welkom bij de WinBolo-tutorial. Dit eiland introduceert\nde basisprincipes van WinBolo en leidt je er stap voor\nstap doorheen. Elk nieuw principe wordt beschreven\nin een venster zoals dit.\n\nNa elk bericht:\ndruk op {DISMISS} om door te gaan.
-STR_TUTORIAL_START02=WinBolo is de enige geautoriseerde kloon van Stuart Cheshire's klassieke Macintosh-netwerkspel, Bolo.\nJe kunt strategietips en andere informatie vinden op de officiële website:\n\nhttps://www.winbolo.com\n\nOf kom je bij ons voegen op Reddit en Discord\n
-STR_TUTORIAL_START04=Je bestuurt een tank, die zich momenteel op een\nboot op zee bevindt. Druk op {ACCEL} om de tank (en boot) vooruit\nte laten gaan en druk op {BRAKE} om te vertragen en\nte stoppen.\n\nHoud de toetsen ingedrukt totdat de tank op de\ngewenste snelheid is, en laat dan los. Druk nu op\n{ACCEL} om de boot vooruit te laten rijden naar het land.\n(Druk eerst op {DISMISS} om het venster te sluiten)
-STR_TUTORIAL01_TOUCH=Voor je ligt een korte rivier die landinwaarts gaat. Duw\nde joystick naar voren om je boot naar het einde\nvan de rivier te rijden.\n\nAls je er bent, houd de joystick dan\nnaar voren gedrukt. De tank stapt uit de boot en de\nboot blijft afgemeerd aan het einde van de rivier.
-STR_TUTORIAL02_TOUCH=Je staat nu op het gras. De tank beweegt vrij\nsnel op gras.\n\n\nHoud de joystick naar voren om verder te gaan\nnaar het bos.
-STR_TUTORIAL03_TOUCH=Je bent nu in het bos. De tank beweegt langzamer\nin het bos dan op gras.\n\n\nHoud de joystick naar voren om verder te gaan\nnaar het moeras.
-STR_TUTORIAL04_TOUCH=Je bent nu in het moeras. De tank beweegt heel\nlangzaam in moeras. Gelukkig is er een weg voor je.\n\n\nHoud de joystick naar voren om verder te gaan\nnaar de weg.
-STR_TUTORIAL05_TOUCH=Je bent nu op de weg. De tank kan heel snel rijden\nop de weg en de joystick helemaal naar voren duwen\nversnelt hem.\n\n\nAls je te snel gaat, trek de\njoystick naar achteren om te vertragen.
-STR_TUTORIAL06_TOUCH=Er zijn wat gebouwen voor je. Gebouwen zijn vaste\nbelemmeringen waar je niet doorheen kunt rijden, dus\nmoe je je een weg door het doolhof vinden naar de\nandere kant.\n\nDuw de joystick naar links of rechts om de\ntank in die richting te draaien.
-STR_TUTORIAL10_TOUCH=Er is nog één eenvoudige manier om aan bunkers te ontsnappen -\nsnelheid.\n\n\nZorg dat je correct op het midden van de weg staat\nen duw de joystick helemaal naar voren om op\nvolle snelheid langs de bunkers te rijden.
-STR_TUTORIAL14_TOUCH=Als je je tank het mijnenveld inrijdt, wordt hij\nvernietigd. Gelukkig kun je een mijnenveld opruimen door\nte schieten. Tik op de vuurknop om te schieten.\n\nSchiet een gat door het gebouw en laat dan een\ngranaat in het midden van het mijnenveld landen om het tot\nontploffing te brengen. Als je de mijnen opblaast, ontstaat\neen grote krater in de grond, waar je doorheen\nkunt rijden, hoewel het net zo langzaam gaat als door moeras.
-STR_TUTORIAL16_TOUCH=WinBolo scrollt het venster automatisch om het\ngebied rond je tank te tonen, maar je kunt de kaart\nmet een vinger slepen om de weergave handmatig te sturen.\n\nSleep de kaart nu naar beneden om de rivier\nvoor je in beeld te brengen.
-STR_TUTORIAL18_TOUCH=Deze keer gaan we subtieler te werk bij het\noversteken van de rivier. In plaats van gewoon door\nhet water te rijden, gaan we een brug bouwen.\n\n\nSelecteer de boommodus door op het bospictogram\n(linksboven in het venster) te tikken en tik op het bos.\nJe bouwer rent uit de tank en oogst één\nboom voor bouwmaterialen.
-STR_TUTORIAL19_TOUCH=Na het oogsten van bomen, selecteer het weg-/bruggereedschap\n(de tweede knop van boven) en tik op de\nrivier aan het einde van de weg.\n\n\nJe bouwer rent uit de tank en bouwt één\nbrugdeel. Tik nogmaals om de brug te voltooien\nen rij dan naar de andere kant.
-STR_TUTORIAL21_TOUCH=Om deze rivier over te steken, moet je een boot bouwen. Boten\nkosten vijf bomen, dus tik op de vijf bomen om ze te oogsten.\nSelecteer dan het muur-/bootgereedschap (de derde knop van\nboven) en tik op het water om een boot te bouwen.\n\nAls je op het land tikt, bouw je een muur\nen moet je nog meer bomen oogsten om een boot\nte bouwen. Rij op de boot en steek de rivier over.
-STR_TUTORIAL_START01_TOUCH=Welkom bij de WinBolo-tutorial. Dit eiland introduceert\nde basisprincipes van WinBolo en leidt je er stap voor\nstap doorheen. Elk nieuw principe wordt beschreven\nin een venster zoals dit.\n\nNa het lezen van elk bericht kun je verdergaan door\nop de knop "OK" te tikken.
-STR_TUTORIAL_START04_TOUCH=Je bestuurt een tank, die zich momenteel op een\nboot op zee bevindt. Gebruik de joystick aan de linkerkant van\nhet scherm om te rijden: duw hem naar voren om te versnellen,\ntrek hem naar achteren om te vertragen en te stoppen.\n\nHoe verder je de joystick induwt, hoe sneller de\ntank gaat. Duw de joystick nu naar voren om de\nboot vooruit te laten rijden naar het land.\n(Tik eerst op OK om dit venster te sluiten)
+STR_TUTORIAL_QUICK_BUILD_TOUCH=de bouwknoppen
+STR_TUTTOK_PAD_ACCEL=de vooruitknop
+STR_TUTTOK_PAD_BRAKE=de achteruitknop
+STR_TUTTOK_PAD_LEFT=de linkerknop
+STR_TUTTOK_PAD_RIGHT=de rechterknop
+STR_TUTTOK_PAD_FIRE=de vuurknop
+STR_TUTTOK_PAD_MINE=de mijnknop
+STR_TUTTOK_PAD_SCROLL_UP=de knop voor omhoog scrollen
+STR_TUTTOK_PAD_SCROLL_DOWN=de knop voor omlaag scrollen
+STR_TUTTOK_PAD_SCROLL_LEFT=de knop voor naar links scrollen
+STR_TUTTOK_PAD_SCROLL_RIGHT=de knop voor naar rechts scrollen
+STR_TUTTOK_PAD_DISMISS=de bevestigknop
+STR_TUTTOK_PAD_BUILD_MODE=de bouwcursorknop
+STR_TUTTOK_PAD_BUILD_PLACE=de bouwknop
+STR_TUTTOK_PAD_BUILD_TOOL=de gereedschapsknop
+STR_TUTTOK_PAD_GUN_UP=de knop voor meer bereik
+STR_TUTTOK_PAD_GUN_DOWN=de knop voor minder bereik
+STR_TUTTOK_TOUCH_FIRE=de vuurknop
+STR_TUTTOK_TOUCH_GUN_UP=de knop +
+STR_TUTTOK_TOUCH_GUN_DOWN=de knop -
 
 # LGM (little green man) messages
 LGM_MAN_DEAD=Je kunt niet bouwen totdat je nieuwe man met een parachute landt
@@ -2296,9 +2260,6 @@ STR_DLGLOBBY_MODS_TIP_OFF=Mods/Scenario is uitgeschakeld. Deze zijn gekozen voor
 STR_DLGLOBBY_MODS_TIP_NONE=Voor deze ronde zijn geen mods geladen.
 STR_DLGLOBBY_MODS_OFF_NOTE=(uitgeschakeld, wordt niet uitgevoerd)
 STR_SCNPANEL_SETTINGS_TITLE=Scenariopaneel
-STR_SCNPANEL_OPACITY_LBL=Dekking
-STR_SCNPANEL_OPACITY_LINE1=Vervaagt wat het paneel tekent.
-STR_SCNPANEL_OPACITY_LINE2=Lege delen ervan blijven doorzichtig.
 STR_DLGLOBBY_SCENARIO_UNSAFE=Deze server voert scenarioscripts uit met de volledige Lua-bibliotheek en zonder beperkingen.
 STR_DLGLOBBY_SCENARIO_OFFERED=Deze server biedt aan
 STR_DLGLOBBY_SCENARIO_ROUND=Deze ronde draait
@@ -2643,6 +2604,7 @@ STR_RULE_DESC_pill_base_defend_shape=Hoe pill_base_defend_range wordt gemeten. 0
 STR_RULE_DESC_tank_slide_armour_bonus=Extra duwstap bij nul pantser, opgeteld bij tank_slide_step naar verhouding van het pantser dat vóór de treffer ontbrak. Wordt alleen gelezen als tank_slide_mac aan staat.
 STR_RULE_DESC_tank_slide_mac=Of een granaattreffer een tank op de Mac Bolo-manier wegduwt. Aan: de duw groeit naarmate het pantser afneemt, met tank_slide_armour_bonus, en tank_slide_step en tank_bump_decay_shift gelden per 40 ms, in een glijpartij die elke tick beweegt. Uit is de WinBolo-duw, gelijk bij elk pantser.
 STR_RULE_DESC_tank_deep_sea_safe=Of een tank zonder boot over open zee kan rijden zonder te zinken. Uit is het klassieke spel: open zee laat een tank zonder boot zinken. Een tank die zonder boot op open zee is wanneer dit weer op Uit gaat, zinkt op de volgende tick.
+STR_RULE_DESC_tank_hit_sets_off_mines=Of een granaat die een tank raakt een mijn laat afgaan op het vak waar hij ontploft. Uit is de standaard: de treffer laat de mijnen op dat vak met rust. Aan, zoals in WinBolo 2.1, laat de treffer daar een mijn afgaan, dus een schot op een tank kan de mijnen laten afgaan die hij net onder of achter zich heeft gelegd. Een granaat die een bunker, een basis of de grond raakt, of die uitvliegt, laat in beide gevallen een mijn afgaan.
 STR_RULE_DESC_pill_aim_iterations=Hoe hard een bunker werkt om een bewegend doel voor te richten.
 STR_RULE_DESC_pill_massage_range=Hoe dichtbij een tank moet zijn zodat een bunker richt met de oorspronkelijke voorspelling in plaats van de oplosser, die een tank mist die om hem heen cirkelt. Nul, de klassieke tabel, is een bunker die zijn doel altijd goed voorricht; 384 is anderhalve vak, de afstand die de oude compileertijdschakelaar gebruikte.
 STR_RULE_DESC_pill_massage_cosine=Hoe recht op een dichtbije bunker af een tank moet rijden om toch goed geraakt te worden, als de cosinus van de hoek tussen zijn koers en de lijn naar de bunker. Bij één wordt er slordig gericht op elke tank binnen pill_massage_range, bij nul op geen ervan. Doet niets zolang die regel nul is.
@@ -2747,6 +2709,7 @@ STR_SCNFN_DESC_CAN_ALLY=Of een speler een alliantie mag aangaan met een ander.
 STR_SCNFN_DESC_TANK_HIT=Een tank kreeg een granaat of een mijn, met het pantser dat hij echt verloor.
 STR_SCNFN_DESC_CAN_HIT=Of een granaat de tank of bunker mag raken die hij heeft bereikt.
 STR_SCNFN_DESC_PILL_DAMAGE_SCALE=Wat een treffer op een bunker waard is, gevraagd bij elke granaat en explosie die hij krijgt.
+STR_SCNFN_DESC_CAN_TARGET=Of een bunker een tank als doelwit mag kiezen.
 STR_MAPEDIT_SCENARIO_KIND=Wat het mag beslissen
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scenario — kan de ronde beëindigen en zeggen wie er gewonnen heeft
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — verandert hoe het spel verloopt en laat winnen met rust
@@ -2917,6 +2880,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=De kaart vult het scherm, met de status-, bo
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Dit apparaat gebruikt mobiele data. Een internetspel hosten via mobiele\ndata werkt waarschijnlijk niet: mobiele netwerken laten andere spelers\nzelden bij het apparaat komen. Met wifi is de kans veel groter.\n\nToch hosten?
 
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Delen
+STR_ANDROIDREC_EMPTY=Nog geen opnames. Rondes voor één speler worden hier opgenomen, en .wbv-opnames die vanuit een andere app zijn geopend staan hier ook.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} is bewaard. Kies nu een app om het mee te delen.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Hier staat nog niets. Kaarten die je bewaart, hier of vanuit een spel, verschijnen hier.
+
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Jouw GIF's
 STR_CLIPGIF_GALLERY_EMPTY=Nog geen GIF's. Maak er een met de GIF-knop onder de herhaling, of de GIF-knop bij een clip.
@@ -2932,3 +2905,4 @@ STR_CLIPGIF_LENGTH_TIP=GIF-lengte in seconden, vanaf de afspeelkop.\nSleep de ma
 STR_CLIPGIF_LOADING=GIF wordt geopend...
 STR_CLIPGIF_TOO_LARGE=Deze GIF is te groot om hier te tonen. Je kunt hem nog steeds kopiëren of opslaan.
 STR_CLIPGIF_FILTER_NAME=GIF-afbeeldingen
+STR_REEL_RECORD_MODE_TIP=Opnamemodus: toont de GIF-knoppen

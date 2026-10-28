@@ -28,7 +28,6 @@
 #include "input_packet.h"
 #include "client_frontend_tick.h"
 #include "client_frontend_render.h"
-#include "client_frontend_tutorial.h"
 #include "client_frontend_common.h"
 #include "gui_message.h"
 #include "../../common/wb_log.h"
@@ -87,7 +86,6 @@ bool iosDeviceIsPad(void) {
  * Globals (matching winbolo.h externs)
  * ------------------------------------------------------- */
 
-bool isTutorial = FALSE;
 int frameRate = FRAME_RATE_30;
 
 bool showGunsight = FALSE;
@@ -627,10 +625,10 @@ ios_game_start:
             gameTickAccum += elapsed;
 
             while (gameTickAccum >= GAME_TICK_LENGTH) {
-                /* A tutorial message is up, or the tick just run queued one:
-                   stop here and drop the owed time, so the interval the
-                   message is up is not fast-forwarded afterwards. */
-                if (clientFrontAnyPause() || clientFrontTutorialStepShowing()) {
+                /* A pause is up (a tutorial message, the pause menu and the
+                   others): stop here and drop the owed time, so the interval
+                   the pause is up is not fast-forwarded afterwards. */
+                if (clientFrontAnyPause()) {
                     gameTickAccum = 0.0;
                     break;
                 }
@@ -677,11 +675,7 @@ ios_game_start:
             SDL_Renderer *ren = sdl3DrawGetRenderer();
             if (ren) SDL_RenderPresent(ren);
         }
-        /* Tutorial: count the presented frame (the intro waits for a few)
-           and show the respawn message the server may have flagged. Both do
-           nothing outside the tutorial. */
-        frontEndTutorialNotePresentedFrame();
-        clientFrontTutorialPollRespawn();
+        clientFrontPollScenarioPlayer();  /* tutorial finished; language, input */
 
         /* Cap to 60 FPS */
         {
@@ -723,8 +717,7 @@ ios_game_start:
 
     sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
-    /* A step left showing, or its pause, would stop the next game's ticks. */
-    frontEndTutorialReset();
+    /* A pause left on would stop the next game's ticks. */
     windowTutorialPause(NULL, false);
     windowDeckPause(NULL, false);
     windowControllerLostPause(NULL, false);
@@ -1263,20 +1256,28 @@ void windowPlaySound(sndEffects value) {
     if (soundEffects) soundPlayEffect(value);
 }
 
+/* The three status callbacks also fire from the hosted server's tick on
+   the SDL timer thread, where a renderer call races the main thread's
+   present. The per-frame render pass repaints every icon from sim state,
+   so off the render thread the direct draw is skipped, as the desktop
+   driver does. */
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
     if (!clientFrontIsActiveUiSim(cs)) return;
+    if (!sdl3DrawOnRenderThread()) return;
     sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
     sdl3DrawCopyPillsStatus(0, 0);
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
     if (!clientFrontIsActiveUiSim(cs)) return;
+    if (!sdl3DrawOnRenderThread()) return;
     sdl3DrawStatusTank(tankNum, ts);
     sdl3DrawCopyTanksStatus(0, 0);
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
     if (!clientFrontIsActiveUiSim(cs)) return;
+    if (!sdl3DrawOnRenderThread()) return;
     sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
     sdl3DrawCopyBasesStatus(0, 0);
 }
@@ -1400,10 +1401,6 @@ void frontEndShowGunsight(ClientSim *cs, bool isShown) {
 void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
     sdl3ImguiShowAllianceRequest(playerName, playerNum);
 }
-
-/* frontEndTutorial and frontEndTutorialReset come from
-   client_frontend_common.c, the tutorial step sequencer every platform
-   calls. */
 
 /* -------------------------------------------------------
  * Misc required symbols
