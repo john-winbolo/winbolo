@@ -10,12 +10,14 @@
  *                context (like imgui_deck_pause), replacing the
  *                old blocking imguiMessageBoxRich sequence so
  *                the game's input gate and solo-pause path apply
- *                while a tutorial message is up.
+ *                while a scenario's popup is up.
  *********************************************************/
 
 #include <cfloat>
+#include <cstring>
 
 #include "imgui.h"
+#include "imgui_internal.h"  /* ClosePopupToLevel */
 #include "imgui_tutorial_overlay.h"
 #include "imgui_messagebox.h"
 #include "../sdl3imgui.h"    /* sdl3ImguiGetUiScale */
@@ -23,29 +25,28 @@
 #include "../../winbolo.h"   /* DIALOG_BOX_TITLE */
 
 extern "C" {
-#include "tutorial.h"        /* TUTORIAL_MAX_MSGS */
+#include "../input.h"        /* inputSwallowKeyUntilRelease */
 }
 
-/* All state is touched only from the main thread: tutorialOverlayShow runs
-   inside the game tick, render/advance inside the render pass — the two
-   never overlap (both on the main loop). */
-static uint16_t s_ids[TUTORIAL_MAX_MSGS];
-static int      s_count       = 0;
-static int      s_idx         = 0;
+/* All state is touched only from the main thread, by the render pass. */
 static bool     s_open        = false;
 static bool     s_pendingOpen = false;
 static bool     s_focusFirst  = false;
-static void   (*s_onComplete)(void) = nullptr;
+/* The message up. Sized past SCN_POPUP_TEXT_MAX with room. */
+static char     s_text[1024];
+/* Set by tutorialOverlayClose while the ImGui popup is open: the next render
+   takes it off ImGui's popup stack before anything else. */
+static bool     s_closePopup  = false;
 
-void tutorialOverlayShow(const uint16_t *ids, int count,
-                         void (*onComplete)(void)) {
+#define TUTORIAL_POPUP_ID DIALOG_BOX_TITLE "###TutorialMsg"
+
+void tutorialOverlayShowText(const char *text) {
     if (s_open || s_pendingOpen) return;   /* already showing — ignore */
-    if (!ids || count <= 0) return;
-    if (count > TUTORIAL_MAX_MSGS) count = TUTORIAL_MAX_MSGS;
-    for (int i = 0; i < count; ++i) s_ids[i] = ids[i];
-    s_count       = count;
-    s_idx         = 0;
-    s_onComplete  = onComplete;
+    if (!text || !*text) return;
+    size_t len = strlen(text);
+    if (len >= sizeof(s_text)) len = sizeof(s_text) - 1;
+    memcpy(s_text, text, len);
+    s_text[len]   = '\0';
     s_pendingOpen = true;
 }
 
@@ -53,20 +54,39 @@ bool tutorialOverlayIsOpen(void) {
     return s_open || s_pendingOpen;
 }
 
-/* Clears the per-run state without running the callback. */
+/* Clears the per-run state. */
 void tutorialOverlayReset(void) {
-    s_count       = 0;
-    s_idx         = 0;
     s_open        = false;
     s_pendingOpen = false;
     s_focusFirst  = false;
-    s_onComplete  = nullptr;
+    s_text[0]     = '\0';
+}
+
+/* The round ended under the message (see the header). A popup only asked for
+   (s_pendingOpen) never reached ImGui, so only an open one needs closing. */
+void tutorialOverlayClose(void) {
+    if (s_open) s_closePopup = true;
+    tutorialOverlayReset();
 }
 
 void tutorialOverlayRender(struct ClientSim *cs) {
     (void)cs;
+    if (s_closePopup) {
+        /* Close it here, inside a frame and with the same ID stack the
+           OpenPopup below used, rather than letting BeginPopupModal draw it
+           once more. ClosePopupToLevel also drops any popup opened over it. */
+        s_closePopup = false;
+        ImGuiContext &g = *GImGui;
+        ImGuiID id = ImGui::GetID(TUTORIAL_POPUP_ID);
+        for (int i = 0; i < g.OpenPopupStack.Size; ++i) {
+            if (g.OpenPopupStack[i].PopupId == id) {
+                ImGui::ClosePopupToLevel(i, true);
+                break;
+            }
+        }
+    }
     if (s_pendingOpen) {
-        ImGui::OpenPopup(DIALOG_BOX_TITLE "###TutorialMsg");
+        ImGui::OpenPopup(TUTORIAL_POPUP_ID);
         ImGui::SetNavCursorVisible(true);
         s_pendingOpen = false;
         s_open        = true;
@@ -74,13 +94,11 @@ void tutorialOverlayRender(struct ClientSim *cs) {
     }
     if (!s_open) return;
 
-    /* Resolve the current message's segments.  The producer parks TEXT runs
-       in a static buffer reused on the next call, so resolve-then-render in
-       one shot and never re-resolve before drawing. */
+    /* Resolve the message's segments.  The producer parks TEXT runs in a
+       static buffer reused on the next call, so resolve-then-render in one
+       shot and never re-resolve before drawing. */
     TutorialSeg segs[TUTORIAL_SEG_MAX];
-    int nSegs = (s_idx < s_count)
-                    ? tutorialResolveSegments(s_ids[s_idx], segs, TUTORIAL_SEG_MAX)
-                    : 0;
+    int nSegs = tutorialResolveText(s_text, segs, TUTORIAL_SEG_MAX);
 
     /* The body reflows now (single '\n' is a space, blank lines are paragraph
        breaks), so width is a free readability choice rather than something we
@@ -106,27 +124,27 @@ void tutorialOverlayRender(struct ClientSim *cs) {
                              ImGuiWindowFlags_NoMove |
                              ImGuiWindowFlags_AlwaysAutoResize;
 
-    if (ImGui::BeginPopupModal(DIALOG_BOX_TITLE "###TutorialMsg",
+    if (ImGui::BeginPopupModal(TUTORIAL_POPUP_ID,
                                nullptr, flags)) {
         bool dismissed = imguiRichSegmentsBody(segs, nSegs, &s_focusFirst);
         if (dismissed) {
-            s_idx++;
-            if (s_idx >= s_count) {
-                /* Last message in the sequence dismissed — close, clear
-                   state, then notify.  Run the callback after EndPopup so
-                   it sees the overlay already closed. */
-                ImGui::CloseCurrentPopup();
-                s_open = false;
-                void (*cb)(void) = s_onComplete;
-                s_onComplete = nullptr;
-                s_count = 0;
-                s_idx   = 0;
-                ImGui::EndPopup();
-                if (cb) cb();
-                return;
+            /* The OK button is pressed by Enter or Space going down, and the
+               game reads its keys by polling the keyboard, so the key that
+               closed the message was still down on the next game tick: Space
+               fired and Enter shortened the gunsight. The game reads these
+               as up until the player lets go. */
+            const bool *held = SDL_GetKeyboardState(NULL);
+            if (held) {
+                static const SDL_Scancode kCloseKeys[] = {
+                    SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER,
+                    SDL_SCANCODE_SPACE,
+                };
+                for (SDL_Scancode sc : kCloseKeys) {
+                    if (held[sc]) inputSwallowKeyUntilRelease((int)sc);
+                }
             }
-            /* Advance to the next message; refocus OK for it. */
-            s_focusFirst = true;
+            ImGui::CloseCurrentPopup();
+            s_open = false;
         }
         ImGui::EndPopup();
     } else {

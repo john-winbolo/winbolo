@@ -14,6 +14,15 @@
  * run_scenario_lua_voice_everyone      — set_voice_everyone and
  *                                        voice_everyone from a script, and
  *                                        the refusal with server voice off
+ * run_scenario_lua_lang                — lang(p) reads the code the
+ *                                        frontend gave the seat, and "en"
+ *                                        for anything it refuses or lacks
+ * run_scenario_lua_input               — input(p) names what the frontend
+ *                                        told the seat, and "keyboard" for
+ *                                        anything it refuses or lacks
+ * run_scenario_lua_tutorial_done       — tutorial_done(p) marks the seat
+ *                                        for the frontend to take, once,
+ *                                        and refuses an empty seat
  * run_scenario_lua_op_arguments_match_the_doc
  *                                      — every row says what arguments it
  *                                        takes, and says the same as the
@@ -141,6 +150,8 @@
 #include "lobby_bot_pools.h"
 #include "start_sides.h"
 #include "test_harness.h"
+#include "bolo_map.h"                /* mapSetPos, for game.wall_shots */
+#include "building.h"               /* buildingAddItem: one shell on a wall */
 
 /* ── A state with the table on it ─────────────────────────────────── */
 
@@ -473,6 +484,7 @@ static const char *const kSlEveryRowCalls =
     "  map_name    = function() return game.map_name() end,\n"
     "  map_tile    = function() return game.map_tile(10, 10) end,\n"
     "  is_mine     = function() return game.is_mine(10, 10) end,\n"
+    "  wall_shots  = function() return game.wall_shots(10, 10) end,\n"
     "  terrain     = function() return game.terrain() end,\n"
     "  num_pills   = function() return game.num_pills() end,\n"
     "  pill        = function() return game.pill(1) end,\n"
@@ -488,6 +500,8 @@ static const char *const kSlEveryRowCalls =
     "  allied      = function() return game.allied(0, 0) end,\n"
     "  rule        = function() return game.rule(\"tank_reload_ticks\") end,\n"
     "  voice_everyone = function() return game.voice_everyone() end,\n"
+    "  lang        = function() return game.lang(0) end,\n"
+    "  input       = function() return game.input(0) end,\n"
     "  tags        = function() return game.tags(\"pill\", 1) end,\n"
     "  tagged      = function() return game.tagged(\"keep\") end,\n"
     "  region      = function() return game.region(\"keep\") end,\n"
@@ -516,6 +530,7 @@ static const char *const kSlEveryRowCalls =
     "  give_pill   = function() return game.give_pill(9, 1) end,\n"
     "  drop_pill   = function() return game.drop_pill(9, 1) end,\n"
     "  set_modifiers = function() return game.set_modifiers(9, {speed=120}) end,\n"
+    "  set_speed   = function() return game.set_speed(9, 0) end,\n"
     "  builder_order = function() return game.builder_order(9, \"road\", 100, 100) end,\n"
     "  builder_recall = function() return game.builder_recall(9) end,\n"
     "  kill_lgm    = function() return game.kill_lgm(9) end,\n"
@@ -561,12 +576,14 @@ static const char *const kSlEveryRowCalls =
     "  score       = function() return game.score(0, 1, \"pts\") end,\n"
     "  announce    = function() return game.announce(\"hello\", 1) end,\n"
     "  status      = function() return game.status(\"hello\", 100) end,\n"
+    "  popup       = function() return game.popup(\"hello {ACCEL}\") end,\n"
     "  marker      = function() return game.marker(0, 100, 100) end,\n"
     "  marker_follow = function() return game.marker_follow(1, 0) end,\n"
     "  clear_marker = function() return game.clear_marker(0) end,\n"
     "  set_game_time = function() return game.set_game_time(1000) end,\n"
     "  add_game_time = function() return game.add_game_time(10) end,\n"
     "  set_rule    = function() return game.set_rule(\"tank_reload_ticks\", 12) end,\n"
+    "  tutorial_done = function() return game.tutorial_done(0) end,\n"
     /* The one setting slDeclareSetting puts in the manifest. */
     "  setting     = function() return game.setting(\"laps\") end,\n"
     /* The test hook. Seat 9 is empty, so the row is exercised and refused
@@ -606,6 +623,7 @@ static const struct {
     { "map_name", "string" },
     { "terrain",  "string" },
     { "is_mine",  "boolean" },
+    { "wall_shots", "number" },
     { "pill",     "table"  },
     { "regions",  "table"  },
 };
@@ -751,6 +769,222 @@ int run_scenario_lua_voice_everyone(void) {
                   "the refusal was named '%s'", code);
     UT_ASSERT_MSG(!slGlobalIsNil(L, "still") && !slGlobalBool(L, "still"),
                   "voice_everyone() did not answer false with voice off");
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 1c. The player's language through the binding ───────────────────── */
+
+/* game.lang reads what the frontend told the sim, lowercased; a seat never
+   told, a code the setter refuses, an empty seat and a seat out of range all
+   answer "en", and the code goes when the seat's player leaves. */
+static const char *const kSlLang =
+    "got = game.lang(0)\n"
+    "other = game.lang(5)\n"
+    "far = game.lang(99)\n";
+
+static void slLangRead(lua_State *L, char *got, char *other, char *outOfRange,
+                       size_t cap) {
+    char err[512];
+    if (!slRun(L, kSlLang, err, sizeof(err))) {
+        snprintf(got, cap, "chunk failed: %s", err);
+        other[0] = outOfRange[0] = '\0';
+        return;
+    }
+    slGlobalStr(L, "got", got, cap);
+    slGlobalStr(L, "other", other, cap);
+    slGlobalStr(L, "far", outOfRange, cap);
+}
+
+int run_scenario_lua_lang(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             got[64];
+    char             other[64];
+    char             outOfRange[64];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    slLangRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "en") == 0,
+                  "a seat never told read '%s', not 'en'", got);
+
+    serverSimSetPlayerLang(sim, 0, "pt-BR");
+    slLangRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "pt-br") == 0,
+                  "pt-BR read back as '%s', not 'pt-br'", got);
+    UT_ASSERT_MSG(strcmp(other, "en") == 0 && strcmp(outOfRange, "en") == 0,
+                  "an empty seat read '%s' and seat 99 '%s'", other, outOfRange);
+
+    serverSimSetPlayerLang(sim, 0, "de;rm");
+    slLangRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "en") == 0,
+                  "a code with a ';' in it was kept as '%s'", got);
+
+    serverSimSetPlayerLang(sim, 0, "abcdefghijklmnop");
+    slLangRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "en") == 0,
+                  "a 16-letter code was kept as '%s'", got);
+
+    serverSimSetPlayerLang(sim, 0, "de");
+    serverSimSetPlayerLang(sim, 0, "");
+    slLangRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "en") == 0,
+                  "an empty code did not clear the seat: '%s'", got);
+
+    serverSimSetPlayerLang(sim, 0, "ja");
+    serverSimRemovePlayer(sim, 0);
+    slLangRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "en") == 0,
+                  "the seat kept '%s' after its player left", got);
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 1c2. The player's input through the binding ───────────────────── */
+
+/* game.input names what the frontend told the sim; a seat never told, a
+   value the setter refuses, an empty seat and a seat out of range all
+   answer "keyboard", and the input goes when the seat's player leaves. */
+static const char *const kSlInput =
+    "got = game.input(0)\n"
+    "other = game.input(5)\n"
+    "far = game.input(99)\n";
+
+static void slInputRead(lua_State *L, char *got, char *other,
+                        char *outOfRange, size_t cap) {
+    char err[512];
+    if (!slRun(L, kSlInput, err, sizeof(err))) {
+        snprintf(got, cap, "chunk failed: %s", err);
+        other[0] = outOfRange[0] = '\0';
+        return;
+    }
+    slGlobalStr(L, "got", got, cap);
+    slGlobalStr(L, "other", other, cap);
+    slGlobalStr(L, "far", outOfRange, cap);
+}
+
+int run_scenario_lua_input(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             got[64];
+    char             other[64];
+    char             outOfRange[64];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    slInputRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "keyboard") == 0,
+                  "a seat never told read '%s', not 'keyboard'", got);
+
+    serverSimSetPlayerInput(sim, 0, SERVER_PLAYER_INPUT_TOUCH);
+    slInputRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "touch") == 0, "touch read back as '%s'", got);
+    UT_ASSERT_MSG(strcmp(other, "keyboard") == 0 &&
+                  strcmp(outOfRange, "keyboard") == 0,
+                  "an empty seat read '%s' and seat 99 '%s'", other,
+                  outOfRange);
+
+    serverSimSetPlayerInput(sim, 0, SERVER_PLAYER_INPUT_CONTROLLER);
+    slInputRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "controller") == 0,
+                  "controller read back as '%s'", got);
+
+    /* A value past the three is the keyboard, not left as it was. */
+    serverSimSetPlayerInput(sim, 0, 3);
+    slInputRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "keyboard") == 0, "input 3 read '%s'", got);
+    serverSimSetPlayerInput(sim, 0, SERVER_PLAYER_INPUT_TOUCH);
+    serverSimSetPlayerInput(sim, 0, 255);
+    UT_ASSERT(serverSimGetPlayerInput(sim, 0) == SERVER_PLAYER_INPUT_KEYBOARD);
+
+    /* Out of range on the C side too: ignored, and read as the keyboard. */
+    serverSimSetPlayerInput(sim, MAX_TANKS, SERVER_PLAYER_INPUT_TOUCH);
+    UT_ASSERT(serverSimGetPlayerInput(sim, MAX_TANKS) ==
+              SERVER_PLAYER_INPUT_KEYBOARD);
+    UT_ASSERT(serverSimGetPlayerInput(NULL, 0) == SERVER_PLAYER_INPUT_KEYBOARD);
+    serverSimSetPlayerInput(NULL, 0, SERVER_PLAYER_INPUT_TOUCH);
+
+    serverSimSetPlayerInput(sim, 0, SERVER_PLAYER_INPUT_CONTROLLER);
+    serverSimRemovePlayer(sim, 0);
+    slInputRead(L, got, other, outOfRange, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "keyboard") == 0,
+                  "the seat kept '%s' after its player left", got);
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 1d. A finished tutorial through the binding ──────────────────── */
+
+/* game.tutorial_done marks the seat; the frontend's take answers true once
+   and then false; an empty seat and a seat out of range are refused and mark
+   nothing; and the mark goes when the seat's player leaves. */
+static const char *const kSlTutorialDone =
+    "ok = game.tutorial_done(0)\n"
+    "empty_ok, empty_code = game.tutorial_done(5)\n"
+    "range_ok, range_code = game.tutorial_done(300)\n";
+
+int run_scenario_lua_tutorial_done(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             err[512];
+    char             code[64];
+    const char      *noSeat = scenarioLuaResultName((int)SCN_OP_NO_SUCH_PLAYER);
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    UT_ASSERT_MSG(!serverSimTakeTutorialDone(sim, 0),
+                  "seat 0 was marked before any call");
+    UT_ASSERT_MSG(slRun(L, kSlTutorialDone, err, sizeof(err)),
+                  "the chunk would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"),
+                  "tutorial_done(0) did not answer true");
+    UT_ASSERT_MSG(slGlobalIsNil(L, "empty_ok"),
+                  "tutorial_done(5) was taken for an empty seat");
+    slGlobalStr(L, "empty_code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, noSeat) == 0,
+                  "the empty seat's refusal was named '%s'", code);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "range_ok"),
+                  "tutorial_done(300) was taken");
+    slGlobalStr(L, "range_code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, noSeat) == 0,
+                  "the out-of-range refusal was named '%s'", code);
+
+    UT_ASSERT_MSG(!serverSimTakeTutorialDone(sim, 5),
+                  "the refused call marked seat 5");
+    UT_ASSERT_MSG(serverSimTakeTutorialDone(sim, 0),
+                  "the take did not see seat 0's mark");
+    UT_ASSERT_MSG(!serverSimTakeTutorialDone(sim, 0),
+                  "the mark was still there after the take");
+    UT_ASSERT(!serverSimTakeTutorialDone(sim, MAX_TANKS));
+    UT_ASSERT(!serverSimTakeTutorialDone(NULL, 0));
+
+    UT_ASSERT_MSG(slRun(L, "ok = game.tutorial_done(0)\n", err, sizeof(err)),
+                  "the chunk would not run: %s", err);
+    serverSimRemovePlayer(sim, 0);
+    UT_ASSERT_MSG(!serverSimTakeTutorialDone(sim, 0),
+                  "the mark stayed after the seat's player left");
 
     lua_close(L);
     serverSimDestroy(sim);
@@ -2397,11 +2631,13 @@ typedef struct {
     int          announces;
     int          markers;
     int          statuses;
+    int          popups;
     ControlEvent panel;
     ControlEvent score;
     ControlEvent announce;
     ControlEvent marker;
     ControlEvent status;
+    ControlEvent popup;
 } SlCapture;
 
 static void slCaptureCb(void *ctx, const ControlEvent *evt) {
@@ -2413,6 +2649,7 @@ static void slCaptureCb(void *ctx, const ControlEvent *evt) {
         case CTRL_SCN_ANNOUNCE: c->announces++; c->announce = *evt; break;
         case CTRL_SCN_MARKER:   c->markers++;   c->marker = *evt;   break;
         case CTRL_SCN_STATUS:   c->statuses++;  c->status = *evt;   break;
+        case CTRL_SCN_POPUP:    c->popups++;    c->popup = *evt;    break;
         default: break;
     }
 }
@@ -3081,6 +3318,152 @@ int run_scenario_lua_score_and_announce(void) {
  * nearest position byte, the shapes that are the call written wrong and
  * raise, the shares past the view's edge that are refused, and the shorter
  * text limit a positioned line keeps for older clients. */
+/* game.popup: the text reaches the event whole, tokens and all, and the
+ * target packs the way every presentation row's does; an empty text and a
+ * text past SCN_POPUP_TEXT_MAX are refused by name, and the longest text
+ * that fits is taken. */
+int run_scenario_lua_popup(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    SlCapture        cap;
+    char             err[512];
+    char             code[64];
+    char             chunk[128];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+    slWatch(sim, &cap);
+
+    UT_ASSERT_MSG(slRun(L, "ok = game.popup(\"Drive with {ACCEL}. Build a "
+                           "tree with {QUICK_TREE}.\")\n", err, sizeof(err)),
+                  "the popup would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "a popup was not taken");
+    UT_ASSERT_MSG(cap.popups == 1, "the arm published %d popups, expected 1",
+                  cap.popups);
+    UT_ASSERT_MSG(strcmp(cap.popup.u.scnPopup.text,
+                         "Drive with {ACCEL}. Build a tree with "
+                         "{QUICK_TREE}.") == 0,
+                  "the popup reached the event as '%s'",
+                  cap.popup.u.scnPopup.text);
+    UT_ASSERT_MSG(cap.popup.u.scnPopup.destTeam == 0 &&
+                      cap.popup.u.scnPopup.destPlayer == 0xFF,
+                  "a popup with no target went to team %u player %u",
+                  (unsigned)cap.popup.u.scnPopup.destTeam,
+                  (unsigned)cap.popup.u.scnPopup.destPlayer);
+
+    /* One seat, then one team. */
+    UT_ASSERT(slRun(L, "ok = game.popup(\"seat\", 0)\n", err, sizeof(err)));
+    UT_ASSERT(slGlobalBool(L, "ok"));
+    UT_ASSERT_MSG(cap.popup.u.scnPopup.destTeam == 0 &&
+                      cap.popup.u.scnPopup.destPlayer == 0,
+                  "a popup to seat 0 went to team %u player %u",
+                  (unsigned)cap.popup.u.scnPopup.destTeam,
+                  (unsigned)cap.popup.u.scnPopup.destPlayer);
+    UT_ASSERT(slRun(L, "ok = game.popup(\"team\", { team = 2 })\n", err,
+                    sizeof(err)));
+    UT_ASSERT(slGlobalBool(L, "ok"));
+    UT_ASSERT_MSG(cap.popup.u.scnPopup.destTeam == 2 &&
+                      cap.popup.u.scnPopup.destPlayer == 0xFF,
+                  "a popup to team 2 went to team %u player %u",
+                  (unsigned)cap.popup.u.scnPopup.destTeam,
+                  (unsigned)cap.popup.u.scnPopup.destPlayer);
+    UT_ASSERT(cap.popups == 3);
+
+    /* The longest text that fits, and one byte more. */
+    snprintf(chunk, sizeof(chunk),
+             "ok = game.popup(string.rep(\"x\", %d))\n", SCN_POPUP_TEXT_MAX);
+    UT_ASSERT(slRun(L, chunk, err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "a %d-byte popup was not taken",
+                  SCN_POPUP_TEXT_MAX);
+    UT_ASSERT_MSG(strlen(cap.popup.u.scnPopup.text) == SCN_POPUP_TEXT_MAX,
+                  "the longest popup arrived as %u bytes",
+                  (unsigned)strlen(cap.popup.u.scnPopup.text));
+    snprintf(chunk, sizeof(chunk),
+             "res, code = game.popup(string.rep(\"x\", %d))\n",
+             SCN_POPUP_TEXT_MAX + 1);
+    UT_ASSERT(slRun(L, chunk, err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "a popup past the limit was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_TOO_BIG)) == 0,
+                  "a popup past the limit answered '%s'", code);
+
+    UT_ASSERT(slRun(L, "res, code = game.popup(\"\")\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "an empty popup was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_RANGE)) == 0,
+                  "an empty popup answered '%s'", code);
+    UT_ASSERT_MSG(cap.popups == 4, "the arm published %d popups, expected 4",
+                  cap.popups);
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* game.wall_shots: an untouched wall takes building_life + 1 shells, each
+ * hit after the first takes one off what is left, and a square that is not
+ * a wall answers 0. The hits are made the way shells.c makes them. */
+int run_scenario_lua_wall_shots(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             err[512];
+    BYTE             t;
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    mapSetPos(&sim->sim, &sim->sim.mp, 30, 30, BUILDING, false, false);
+    mapSetPos(&sim->sim, &sim->sim.mp, 31, 30, GRASS, false, false);
+    UT_ASSERT(slRun(L, "n = game.wall_shots(30, 30)\n"
+                       "g = game.wall_shots(31, 30)\n"
+                       "o = game.wall_shots(-1, 30)\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == sim->sim.rules.building_life + 1,
+                  "an untouched wall answered %ld", slGlobalInt(L, "n"));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == 5,
+                  "the classic wall takes %ld shells, not 5",
+                  slGlobalInt(L, "n"));
+    UT_ASSERT_MSG(slGlobalInt(L, "g") == 0, "grass answered %ld",
+                  slGlobalInt(L, "g"));
+    UT_ASSERT_MSG(slGlobalInt(L, "o") == 0, "off the map answered %ld",
+                  slGlobalInt(L, "o"));
+
+    /* Shell one: the wall is damaged with building_life left. */
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    UT_ASSERT(t == HALFBUILDING);
+    mapSetPos(&sim->sim, &sim->sim.mp, 30, 30, t, false, false);
+    UT_ASSERT(slRun(L, "n = game.wall_shots(30, 30)\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == 4,
+                  "after one shell the wall answered %ld", slGlobalInt(L, "n"));
+
+    /* Shells two to four leave one; shell five is rubble. */
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    UT_ASSERT(t == HALFBUILDING);
+    UT_ASSERT(slRun(L, "n = game.wall_shots(30, 30)\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == 1,
+                  "after four shells the wall answered %ld",
+                  slGlobalInt(L, "n"));
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    UT_ASSERT(t == RUBBLE);
+    mapSetPos(&sim->sim, &sim->sim.mp, 30, 30, t, false, false);
+    UT_ASSERT(slRun(L, "n = game.wall_shots(30, 30)\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == 0, "rubble answered %ld",
+                  slGlobalInt(L, "n"));
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
 int run_scenario_lua_announce_position(void) {
     static const struct {
         const char *call;
