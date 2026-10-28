@@ -489,6 +489,7 @@ int run_tick_core_active_local_no_double_step(void);
 int run_tick_core_passive_local_pumps_keys_half(void);
 int run_tick_core_lobby_preserves_parity(void);
 int run_transport_ticks_server_lifecycle(void);
+int run_local_join_slot_after_seated_bots(void);
 int run_await_join_connected_immediate(void);
 int run_await_join_lobby_latch(void);
 int run_await_join_timeout_and_error(void);
@@ -1230,6 +1231,7 @@ int run_mod_lobby_starts_mac_bolo_keeps_opposite_sides(void);
 int run_mac_bolo_settings_defaults_play_old_rules(void);
 int run_mac_bolo_settings_each_part_off(void);
 int run_mac_bolo_settings_numbers(void);
+int run_mac_bolo_tank_hit_mines_part_with_mines_mod(void);
 int run_mac_bolo_first_start_lobby_off_uses_mac_pick(void);
 int run_mac_bolo_spawn_starts_off_engine_picks(void);
 int run_mac_bolo_setting_changed_after_attach(void);
@@ -1288,6 +1290,27 @@ int run_log_roundtrip_lobby_mode_drops_world_events(void);
 /* log_MapName: a log opened in the lobby on one map and started on another
  * names the second one, to a byte walk and to the viewer. */
 int run_log_roundtrip_map_name_at_round_start(void);
+int run_log_roundtrip_player_lag(void);
+int run_log_roundtrip_player_lag_recorded(void);
+/* log_OverrunStats: the record through the writer and back, and a recorded
+ * round's records at 0:30, 1:00 and the round end. */
+int run_log_roundtrip_overrun_stats(void);
+int run_log_roundtrip_overrun_stats_recorded(void);
+/* The same with two thinking bots: each record has each bot's thinks. */
+int run_log_roundtrip_overrun_stats_bots(void);
+/* A longer round has a record every 30 seconds, then the round-end one. */
+int run_log_roundtrip_overrun_stats_every_30s(void);
+int run_server_lag_log_due(void);
+int run_server_lag_log_min_gap(void);
+int run_server_overrun_stats_due(void);
+int run_lv_player_lag_read(void);
+int run_lv_lag_track(void);
+int run_lv_lag_ring(void);
+int run_lv_lag_feature_default_off(void);
+int run_lv_lag_view_draw(void);
+int run_lv_lag_view_rename(void);
+/* The viewer reads log_OverrunStats records and gives the one at the playhead. */
+int run_lv_overrun_read(void);
 /* log_Ping's six payload bytes: sender, kind, and two big-endian u16 WORLD
  * coordinates, byte for byte through the writer and back. */
 int run_log_roundtrip_ping(void);
@@ -1444,6 +1467,13 @@ int run_lv_event_list_pinned(void);
 /* WinBolo.net log browser table sort (test_wbn_browser_sort.c): each column's
  * key in both directions, ties and no sort in the server's order. */
 int run_wbn_browser_sort(void);
+
+/* Game browser server version test (test_browser_version.c): the old "M.mr"
+ * and the "M.m.r" forms, with and without a letter suffix, against 1.1.9,
+ * and text that does not parse; and the protocol bytes WINBOLO_VERSION
+ * gives. */
+int run_browser_version_parse(void);
+int run_version_protocol_bytes(void);
 
 /* Recap clip GIF rules (test_clip_gif_core.c): the length field and the seek
  * bar marker agree and are clamped, the gallery metadata file reads back and
@@ -1602,6 +1632,38 @@ int run_voice_talking_codec(void);
 /* CTRL_VOICE_EVERYONE body-codec round-trip (test_voice_everyone_codec.c):
  * on and off survive, any other byte and an empty body are refused. */
 int run_voice_everyone_codec(void);
+
+/* game.popup's delivery (test_scenario_popup.c): CTRL_SCN_POPUP's body
+ * round-trips through the body tables, an empty or over-long body is
+ * refused and a NUL ends the text; the client queues popups addressed to
+ * it, in order, drops the fifth while four wait and clears them at the
+ * lobby; and the tutorial tokens find {QUICK_*} and name the quick-build
+ * keys from the key bindings; and tutorialTokensExpand writes the tokens
+ * of a status line or announcement as names, keeps one with no name, never
+ * writes half a name and always ends with a NUL. */
+int run_scenario_popup_codec(void);
+int run_scenario_popup_client_queue(void);
+/* clientSimIsRoundOver, which closes a popup left up as the round ends:
+ * false for a new client and while running, true from the game-over hold
+ * through the lobby and the countdown. */
+int run_scenario_popup_round_over(void);
+int run_tutorial_tokens_quick_build(void);
+int run_scenario_status_tokens_expand(void);
+int run_tutorial_tokens_long_key_names(void);
+/* The token parser against untrusted text (test_tutorial_tokens_parse.c):
+ * a brace that starts no token is plain text; the split covers the text in
+ * order and says where it stopped; a cut never ends in half a UTF-8
+ * character; and random text never takes the expand past its buffer. */
+int run_tutorial_tokens_malformed(void);
+int run_tutorial_tokens_split(void);
+int run_tutorial_tokens_utf8_cut(void);
+int run_tutorial_tokens_random_input(void);
+/* The shipped tutorial's TEXT tables (test_tutorial_text_check.c): every
+ * language and input inside the limit of the call that sends it, valid
+ * UTF-8, every brace a known key token, and input wordings well formed. */
+int run_tutorial_text_fits(void);
+int run_tutorial_text_well_formed(void);
+int run_scenario_announce_waits_for_popup(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
  * round-trips through the body tables, compared field by field and
@@ -2885,6 +2947,12 @@ int run_tank_blast_builder_back_in_tank(void);
 int run_tank_blast_pill_shell_builder_now(void);
 int run_tank_blast_no_record_builder_now(void);
 int run_shell_blast_pill_hit_on_shooter_screen(void);
+/* tank_hit_sets_off_mines: a tank hit sets off the mine on its square with
+ * the rule at 1 and not at 0; a terrain hit and a shell that runs out set
+ * one off either way (test_tank_hit_mines.c). */
+int run_tank_hit_mines_rule_on_sets_off(void);
+int run_tank_hit_mines_rule_off_spares(void);
+int run_tank_hit_mines_rule_off_ground(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
@@ -2926,6 +2994,12 @@ int run_addrparse_empty(void);
 /* The map chooser's "Scenarios only" row test
  * (test_map_chooser_scenario_filter.c). */
 int run_mapchooser_scenario_filter(void);
+
+/* The background game's map name test: no tutorial is ever picked
+ * (test_bg_map_pick.c). */
+int run_bg_map_pick_skips_tutorials(void);
+/* The folder test behind game.tutorial_done (test_bg_map_pick.c). */
+int run_tutorial_maps_shipped_path(void);
 
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
@@ -3127,6 +3201,7 @@ int run_scenario_funnel_msgs_per_tick(void);
 int run_scenario_funnel_host_ops_uncounted(void);
 int run_scenario_funnel_prelude_refusal_uncounted(void);
 int run_scenario_funnel_set_tile_spends_tile_budget(void);
+int run_scenario_funnel_set_tile_resets_wall_damage(void);
 
 int run_scenario_read_roster_slot(void);
 int run_scenario_read_pill_info(void);
@@ -3141,6 +3216,7 @@ int run_scenario_tank_set_stocks(void);
 int run_scenario_tank_kill(void);
 int run_scenario_tank_teleport(void);
 int run_scenario_tank_set_boat(void);
+int run_scenario_tank_set_speed(void);
 int run_scenario_tank_give_pill(void);
 int run_scenario_tank_drop_pill(void);
 int run_scenario_tank_arm_records(void);
@@ -3291,6 +3367,12 @@ int run_lobby_scenario_refuses_game_type(void);
 int run_lobby_scenario_boot_sets_type(void);
 int run_lobby_scenario_identity_strips_controls(void);
 int run_lobby_scenario_nolobby_boot_seats_template(void);
+int run_lobby_scenario_fixes_lobby_settings(void);
+int run_lobby_scenario_fixes_visibility(void);
+int run_lobby_scenario_fixes_classic_mode(void);
+int run_lobby_scenario_fix_wins_over_host_classic(void);
+int run_lobby_scenario_no_bots(void);
+int run_lobby_scenario_no_bots_then_needs_bots(void);
 
 /* What the sim tells WinBolo.net about the scripts a round runs
  * (test_wbn_lobby_info_scenario.c): the scenario, its cap and the mods, none
@@ -3590,6 +3672,7 @@ int run_scenario_allied_read(void);
  * can_die — and the on_tank_hit event (test_scenario_friendly_fire.c). */
 int run_scenario_can_hit_tank(void);
 int run_scenario_can_hit_pill(void);
+int run_scenario_can_target(void);
 int run_scenario_pill_shell_names_pill(void);
 int run_scenario_pill_damage_scale(void);
 int run_scenario_blast_names_tank(void);
@@ -3619,6 +3702,7 @@ int run_game_event_channel_capture_wire_bytes(void);
 int run_game_event_channel_neutralised_no_client_line(void);
 int run_game_event_channel_capture_attribution(void);
 int run_game_event_channel_subscriber_count(void);
+int run_game_event_channel_same_owner_silent(void);
 
 /* The eight facts that had no event at all (test_game_events_new.c): a tank
  * spawning and respawning, a builder landing, a pill placed, picked up and
@@ -3766,6 +3850,11 @@ int run_scenario_validate_needs_bots_declared(void);
  * the rules, tags and regions a script declares read back. */
 int run_scenario_lua_every_row_answers(void);
 int run_scenario_lua_voice_everyone(void);
+int run_scenario_lua_lang(void);
+/* game.input(p): "keyboard", "touch" or "controller" as the frontend told
+ * the seat, the keyboard for any other value, and cleared on leave. */
+int run_scenario_lua_input(void);
+int run_scenario_lua_tutorial_done(void);
 int run_scenario_lua_op_arguments_match_the_doc(void);
 int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);
@@ -3794,6 +3883,8 @@ int run_scenario_lua_panel_large_size(void);
 int run_scenario_lua_presentation_targets(void);
 int run_scenario_lua_score_and_announce(void);
 int run_scenario_lua_announce_position(void);
+int run_scenario_lua_popup(void);
+int run_scenario_lua_wall_shots(void);
 int run_scenario_lua_acting_rows_refuse_a_check(void);
 
 /* The state a scenario runs in (test_scenario_sandbox.c): the names the
@@ -3949,6 +4040,7 @@ int run_scenario_manifest_json_refusals(void);
 int run_scenario_manifest_agrees(void);
 int run_scenario_manifest_from_values(void);
 int run_scenario_manifest_json_team_init(void);
+int run_scenario_manifest_json_lobby_fixes(void);
 int run_scenario_manifest_json_number_range(void);
 int run_scenario_manifest_json_kind(void);
 int run_scenario_manifest_json_triggers(void);
@@ -4050,6 +4142,10 @@ int run_scenario_details_blob(void);
 int run_scenario_details_fetch_dir_mod(void);
 int run_scenario_details_fetch_survival(void);
 int run_scenario_details_fetch_soccer(void);
+int run_scenario_details_fetch_tutorial(void);
+int run_scenario_details_fetch_joust(void);
+int run_scenario_details_fetch_respawn_loadout(void);
+int run_scenario_details_fetch_mods(void);
 int run_scenario_details_fetch_not_found(void);
 int run_scenario_details_fetch_retry(void);
 int run_scenario_details_fetch_give_up(void);
@@ -4185,6 +4281,10 @@ int run_scenario_compose_compat_write_stays_local(void);
 int run_scenario_compose_pairs_game_complete(void);
 int run_scenario_compose_unsafe_keeps_sharing(void);
 int run_scenario_compose_off_map_script_too(void);
+int run_scenario_compose_no_mods(void);
+int run_scenario_compose_lobby_fixes_read(void);
+int run_scenario_compose_mod_fixes_refused(void);
+int run_scenario_compose_lobby_fixes_validate(void);
 int run_scenario_compose_off_map_alone_plain(void);
 int run_scenario_compose_off_plain_map_none(void);
 int run_scenario_compose_on_picks_replace_map(void);
@@ -4501,6 +4601,7 @@ int run_scn_presentation_decoder_sets_broadcast(void);
 int run_scn_presentation_client_filters(void);
 int run_scn_status_codec_and_client(void);
 int run_scn_announce_position_codec(void);
+int run_scn_announce_stack_client(void);
 
 /* The four presentation ops (test_scenario_presentation_arms.c): the panel
  * list published, recorded, replayed to a joiner and pared back to the
@@ -4627,6 +4728,10 @@ int ut_brain_stub_destroys(void);
  * state holds no brain: no libraries are opened and nothing is loaded into
  * it, so a tick still does nothing. Destroyed with the instance. */
 void ut_brain_stub_lua(bool withState);
+/* Make the stub's luaBrainInstanceTick report success (it reports failure by
+ * default), so bots that tick for many frames are not kicked as crashing.
+ * ut_brain_stub_arm turns it off again. */
+void ut_brain_stub_tick_ok(bool ok);
 
 /* The map editor's scenario script file (test_editor_script_file.c): where a
  * script sits beside a map, the round trip Save and re-opening the map make,

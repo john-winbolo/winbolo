@@ -45,6 +45,15 @@ on team N rather than on no team. setting=id=value passes -setting id=value
 for one of the script's own lobby settings; two or more are separated by
 commas.
 
+THE BRAINS' TIME LIMIT. Every server is started with -brain-no-budget-kill,
+so a bot's think is never stopped for running past its per-tick time limit
+and an arena's result does not depend on how busy the machine is. The game
+itself always has the limit on. An arena that tests what a bot does when the
+limit stops its think says
+    -- GATE: budget=on
+and the server is started without that switch. Its result can then vary
+from run to run, so its verdict needs a margin rather than an exact count.
+
 A SHIPPED SCRIPT UNDER TEST. An arena that tests a mod rather than a bot
 names the file on its GATE line, from the repository root:
 
@@ -93,6 +102,7 @@ DEFAULTS = {
     "include": None,
     "allybots": None,
     "setting": None,
+    "budget": "off",
 }
 
 # The verdict helper a script= arena gets in place of the compat prelude. It
@@ -354,10 +364,13 @@ class Job(object):
                "-seed", str(o["seed"]),
                "-ticks", str(o["ticks"]),
                "-asap",
-               "-brain-no-budget-kill",
                "-brain-lua-seed", str(o["seed"]),
                "-nowinbolonet",
                "-threads", "1"]
+        # The bots' per-tick time limit stays off unless the arena asks for
+        # it (budget=on): see THE BRAINS' TIME LIMIT above.
+        if o.get("budget") != "on":
+            cmd += ["-brain-no-budget-kill"]
         if o.get("limit") is not None:
             cmd += ["-limit", str(o["limit"])]
         if o.get("mines") is not None:

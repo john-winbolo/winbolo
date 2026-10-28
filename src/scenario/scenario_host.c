@@ -1343,6 +1343,18 @@ static void scnReadIdentity(lua_State *L, int tbl, ScenarioManifest *m,
     lua_pop(L, 2);
 }
 
+/* One boolean key of the lobby block that fixes a setting: a boolean is a
+ * fix of that value, and a key left out or of another type fixes nothing. */
+static void scnReadLobbyBool(lua_State *L, int lt, const char *key, bool *fix,
+                             bool *value) {
+    scnRawField(L, lt, key);
+    if (lua_isboolean(L, -1)) {
+        *fix   = true;
+        *value = lua_toboolean(L, -1) ? true : false;
+    }
+    lua_pop(L, 1);
+}
+
 static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
     int lt;
 
@@ -1354,6 +1366,68 @@ static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
     lt = lua_gettop(L);
     lob->maxPlayers = (uint8_t)scnReadInt(L, lt, "max_players", 0);
     lob->extraTeams = scnReadBool(L, lt, "extra_teams", false);
+
+    /* The three settings the block may fix. A key of the wrong type is left
+       alone, as the other keys here are; a number out of range is read and
+       the validator names it. */
+    scnRawField(L, lt, "hidden_mines");
+    if (lua_isboolean(L, -1)) {
+        lob->fixHiddenMines = true;
+        lob->hiddenMines    = lua_toboolean(L, -1) ? true : false;
+    }
+    lua_pop(L, 1);
+    scnRawField(L, lt, "time_limit");
+    if (lua_type(L, -1) == LUA_TNUMBER) {
+        lob->fixTimeLimit = true;
+        lob->timeLimit    = (int32_t)lua_tointeger(L, -1);
+    }
+    lua_pop(L, 1);
+    scnRawField(L, lt, "start_delay");
+    if (lua_type(L, -1) == LUA_TNUMBER) {
+        lob->fixStartDelay = true;
+        lob->startDelay    = (int32_t)lua_tointeger(L, -1);
+    }
+    lua_pop(L, 1);
+
+    /* The two flags. false is the same as leaving the key out. */
+    lob->noBots = scnReadBool(L, lt, "no_bots", false);
+    lob->noMods = scnReadBool(L, lt, "no_mods", false);
+
+    /* The visibility and sound settings. A boolean key is a fix of that
+       value; a word key is a fix too when it is a string, and a word that
+       names none of the choices is kept as SCN_LOBBY_WORD_BAD for the
+       validator to name. */
+    scnReadLobbyBool(L, lt, "classic_mode", &lob->fixClassicMode,
+                     &lob->classicMode);
+    scnReadLobbyBool(L, lt, "allies_in_trees", &lob->fixAlliesInTrees,
+                     &lob->alliesInTrees);
+    scnReadLobbyBool(L, lt, "line_of_sight", &lob->fixLineOfSight,
+                     &lob->lineOfSight);
+    scnReadLobbyBool(L, lt, "positional_sound", &lob->fixPositionalSound,
+                     &lob->positionalSound);
+    scnReadLobbyBool(L, lt, "smart_pings", &lob->fixSmartPings,
+                     &lob->smartPings);
+    {
+        static const char *const viewKeys[3] = { "pill_view", "base_view",
+                                                 "ally_view" };
+        int v;
+        for (v = 0; v < 3; v++) {
+            scnRawField(L, lt, viewKeys[v]);
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                lob->fixView[v] = true;
+                lob->view[v]    = (int8_t)scnLobbyViewFromWord(
+                    lua_tostring(L, -1));
+            }
+            lua_pop(L, 1);
+        }
+    }
+    scnRawField(L, lt, "overview_window");
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        lob->fixOverviewWindow = true;
+        lob->overviewWindow    = (int8_t)scnLobbyOverviewFromWord(
+            lua_tostring(L, -1));
+    }
+    lua_pop(L, 1);
 
     scnRawField(L, lt, "teams");
     if (lua_istable(L, -1)) {
@@ -2171,6 +2245,17 @@ static bool scnModHoldsBack(const ScenarioManifest *m, const char *path,
                path, m->game);
         return false;
     }
+    /* The lobby settings a scenario may fix belong to the script that
+       decides the round, whether or not the mod plays beside one: a mod
+       played alone would otherwise take the host's settings away. */
+    if (scnLobbyFixesAny(&m->lobby)) {
+        scnFmt(err, errLen,
+               "scenario: %s is a mod and fixes lobby settings; only the "
+               "script that decides the round may, so write "
+               "scenario.kind = \"scenario\" or take those lobby keys out",
+               path);
+        return false;
+    }
     for (i = 0; i < m->numTriggers; i++) {
         const ScnTrigger *trig = &m->triggers[i];
 
@@ -2325,6 +2410,15 @@ static void scnPushTeams(lua_State *L, const ScnManifestLobby *lob) {
     }
 }
 
+/* One boolean key of the lobby block, written only when the file fixed it. */
+static void scnPushLobbyBool(lua_State *L, int t, const char *key, bool fix,
+                             bool value) {
+    if (fix) {
+        lua_pushboolean(L, value ? 1 : 0);
+        lua_setfield(L, t, key);
+    }
+}
+
 static void scnPushLobby(lua_State *L, const ScnManifestLobby *lob) {
     int t;
 
@@ -2334,6 +2428,56 @@ static void scnPushLobby(lua_State *L, const ScnManifestLobby *lob) {
     lua_setfield(L, t, "max_players");
     lua_pushboolean(L, lob->extraTeams ? 1 : 0);
     lua_setfield(L, t, "extra_teams");
+    if (lob->fixHiddenMines) {
+        lua_pushboolean(L, lob->hiddenMines ? 1 : 0);
+        lua_setfield(L, t, "hidden_mines");
+    }
+    if (lob->fixTimeLimit) {
+        lua_pushinteger(L, (lua_Integer)lob->timeLimit);
+        lua_setfield(L, t, "time_limit");
+    }
+    if (lob->fixStartDelay) {
+        lua_pushinteger(L, (lua_Integer)lob->startDelay);
+        lua_setfield(L, t, "start_delay");
+    }
+    if (lob->noBots) {
+        lua_pushboolean(L, 1);
+        lua_setfield(L, t, "no_bots");
+    }
+    if (lob->noMods) {
+        lua_pushboolean(L, 1);
+        lua_setfield(L, t, "no_mods");
+    }
+    scnPushLobbyBool(L, t, "classic_mode", lob->fixClassicMode,
+                     lob->classicMode);
+    scnPushLobbyBool(L, t, "allies_in_trees", lob->fixAlliesInTrees,
+                     lob->alliesInTrees);
+    scnPushLobbyBool(L, t, "line_of_sight", lob->fixLineOfSight,
+                     lob->lineOfSight);
+    scnPushLobbyBool(L, t, "positional_sound", lob->fixPositionalSound,
+                     lob->positionalSound);
+    scnPushLobbyBool(L, t, "smart_pings", lob->fixSmartPings,
+                     lob->smartPings);
+    /* A word that named no choice goes back as the empty string, which reads
+       back as the same bad word: the table agrees with itself, and the
+       validator still has the key to name. */
+    {
+        static const char *const viewKeys[3] = { "pill_view", "base_view",
+                                                 "ally_view" };
+        int v;
+        for (v = 0; v < 3; v++) {
+            if (lob->fixView[v]) {
+                const char *w = scnLobbyViewWord(lob->view[v]);
+                lua_pushstring(L, w != NULL ? w : "");
+                lua_setfield(L, t, viewKeys[v]);
+            }
+        }
+    }
+    if (lob->fixOverviewWindow) {
+        const char *w = scnLobbyOverviewWord(lob->overviewWindow);
+        lua_pushstring(L, w != NULL ? w : "");
+        lua_setfield(L, t, "overview_window");
+    }
     scnPushTeams(L, lob);
     lua_setfield(L, t, "teams");
 }
@@ -4059,7 +4203,7 @@ static bool scnComposeInto(ScenarioManifest *into,
                 return false;
             }
             if (m->lobby.numTeams > 0 || m->lobby.maxPlayers != 0 ||
-                m->lobby.extraTeams) {
+                m->lobby.extraTeams || scnLobbyFixesAny(&m->lobby)) {
                 scnComposeRefusal(err, errLen, e->script,
                                   "declares a lobby block, which belongs to "
                                   "%s: two scripts seating the lobby would "
@@ -5119,6 +5263,13 @@ static void scnTeamBrainPath(const ScnManifestTeam *team, char *out,
            (unsigned)team->id, team->brain);
 }
 
+/* Whether time_limit is a value the lobby can hold: 0 for no time limit, or
+ * a length in minutes the lobby's own setting takes. */
+static bool scnLobbyTimeLimitOk(int32_t minutes) {
+    return minutes == 0 || (minutes >= LOBBY_TIME_MINUTES_MIN &&
+                            minutes <= LOBBY_TIME_MINUTES_MAX);
+}
+
 /* The lobby out of the manifest and into the shape the sim reads. A straight
  * copy of the four numbers and the init table, with the brain resolved above,
  * dropping the teams the sim has no seat for: the manifest holds what the file
@@ -5138,6 +5289,60 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
     memset(out, 0, sizeof(*out));
     if (lob == NULL) return;
     out->maxPlayers = lob->maxPlayers;
+    /* A fix out of range is not a fix: the validator has named it, and the
+       lobby keeps the host's own setting. */
+    if (lob->fixHiddenMines) {
+        out->fixHiddenMines = true;
+        out->hiddenMines    = lob->hiddenMines;
+    }
+    if (lob->fixTimeLimit && scnLobbyTimeLimitOk(lob->timeLimit)) {
+        out->fixTimeLimit     = true;
+        out->timeLimitMinutes = (uint16_t)lob->timeLimit;
+    }
+    if (lob->fixStartDelay && lob->startDelay >= 0 &&
+        lob->startDelay <= SCN_LOBBY_START_DELAY_MAX) {
+        out->fixStartDelay     = true;
+        out->startDelaySeconds = (uint16_t)lob->startDelay;
+    }
+    /* A list that fields its own bots needs them allowed, so the sim lets
+       needs_bots win over no_bots; the validator names a file that says
+       both. */
+    out->noBots = lob->noBots;
+    out->noMods = lob->noMods;
+    if (lob->fixClassicMode) {
+        out->fixClassicMode = true;
+        out->classicMode    = lob->classicMode;
+    }
+    for (i = 0; i < 3; i++) {
+        if (lob->fixView[i] && lob->view[i] >= 0 &&
+            lob->view[i] <= (int8_t)viewPolicyOff) {
+            out->fixView[i]    = true;
+            out->viewPolicy[i] = (uint8_t)lob->view[i];
+        }
+    }
+    if (lob->fixAlliesInTrees) {
+        out->fixAlliesInTrees = true;
+        out->alliesInTrees    = lob->alliesInTrees;
+    }
+    if (lob->fixOverviewWindow && lob->overviewWindow >= 0 &&
+        lob->overviewWindow < (int8_t)OVERVIEW_WINDOW_COUNT) {
+        out->fixOverviewWindow = true;
+        out->overviewWindow    = (uint8_t)lob->overviewWindow;
+    }
+    if (lob->fixLineOfSight) {
+        out->fixLineOfSight = true;
+        out->lineOfSight    = lob->lineOfSight
+                                  ? (uint8_t)lineOfSightBuildingsAndTrees
+                                  : (uint8_t)lineOfSightOff;
+    }
+    if (lob->fixPositionalSound) {
+        out->fixPositionalSound = true;
+        out->positionalSound    = lob->positionalSound;
+    }
+    if (lob->fixSmartPings) {
+        out->fixSmartPings = true;
+        out->smartPings    = lob->smartPings;
+    }
     for (i = 0; i < lob->numTeams && out->numTeams < MAX_TANKS; i++) {
         const ScnManifestTeam *src = &lob->teams[i];
         ScnLobbyTeam          *dst;
@@ -5179,12 +5384,13 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  * fresh one, so the lookup goes to whichever state is current. */
 
 /* How the answers of a list of scripts are read, now that every one of them
- * is asked. The fourteen sites below each hold the arbitration for their own
+ * is asked. The fifteen sites below each hold the arbitration for their own
  * row, because what the answers mean differs by row:
  *
- *   the eight predicates
+ *   the nine predicates
  *     allow_extra_teams, can_respawn, can_build, can_capture, announce,
- *     can_hit, can_die and can_ally. Asked in list order, any false wins, and
+ *     can_target, can_hit, can_die and can_ally. Asked in list order, any
+ *     false wins, and
  *     the first no stops
  *     the asking. A predicate is a veto — false takes something out of the
  *     round — so a script that says no is not something a later script may
@@ -5704,6 +5910,31 @@ static bool scnCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
         }
         scnPushItemIndex(h, pill, MAX_PILLS);
         may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_HIT], 4,
+                            true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May this pillbox pick this seat's tank as its target? Asked by the pillbox
+ * update of a tank it would otherwise take, and of no other. A no has the
+ * pillbox pass over the tank as if it were not there. */
+static bool scnCanTarget(void *ctx, BYTE pill, BYTE player) {
+    ScenarioHost *h   = (ScenarioHost *)ctx;
+    bool          may = true;
+    int           i;
+
+    if (h == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_TARGET])) {
+            continue;
+        }
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        lua_pushinteger(h->L, (lua_Integer)player);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_TARGET], 2,
                             true);
     }
     scnLockLeave(&h->lock);
@@ -7000,6 +7231,7 @@ typedef struct {
     ScnDirStamp *stamps;
     int          stampCount;
     Uint64       stampTicks; /* SDL_GetTicks() when stamps were walked */
+    uint64_t     used;       /* scnDirCacheUseCount when last looked up */
 } ScnDirCache;
 
 #define SCN_DIR_CACHE_SLOTS (SCN_MOD_DIRS_MAX + 1)
@@ -7007,6 +7239,9 @@ typedef struct {
 static ScnVmLock   scnDirCacheLock;   /* m is NULL until the lister is
                                          registered; guards every slot */
 static ScnDirCache scnDirCache[SCN_DIR_CACHE_SLOTS];
+/* Counts slot lookups, so a full table gives up the slot used longest ago
+   (scnDirCacheSlot). Guarded by scnDirCacheLock. */
+static uint64_t    scnDirCacheUseCount;
 
 static void scnDirCacheDrop(ScnDirCache *c) {
     free(c->rows);
@@ -7144,12 +7379,22 @@ static int scnDirCacheCopyRows(const ScnDirCache *c, ScnDirEntry *out,
 }
 
 /* Which slot this directory is kept in: its own if it has one, otherwise an
-   empty slot, otherwise slot 0. Called with the lock held. */
+   empty slot, otherwise the slot looked up longest ago. Not always slot 0:
+   once every slot holds some other directory (a host whose mod directories
+   changed, or a process that has listed many), the directories of one
+   listing would each take slot 0 from the one before and none would stay
+   kept. A slot is marked used when it is found for its own directory and
+   when it is filled, not when it is only picked to be filled: a lookup that
+   is answered without filling the slot leaves it the oldest, so the next
+   lookup picks that same slot rather than another directory's. Called with
+   the lock held. */
 static ScnDirCache *scnDirCacheSlot(const char *dir) {
-    int i;
+    ScnDirCache *c;
+    int          i;
 
     for (i = 0; i < SCN_DIR_CACHE_SLOTS; i++) {
         if (scnDirCache[i].valid && strcmp(scnDirCache[i].dir, dir) == 0) {
+            scnDirCache[i].used = ++scnDirCacheUseCount;
             return &scnDirCache[i];
         }
     }
@@ -7158,7 +7403,13 @@ static ScnDirCache *scnDirCacheSlot(const char *dir) {
             return &scnDirCache[i];
         }
     }
-    return &scnDirCache[0];
+    c = &scnDirCache[0];
+    for (i = 1; i < SCN_DIR_CACHE_SLOTS; i++) {
+        if (scnDirCache[i].used < c->used) {
+            c = &scnDirCache[i];
+        }
+    }
+    return c;
 }
 
 /* scnDirList, with the last answer kept under the rule above. details, when
@@ -7254,6 +7505,7 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
             c->stampCount = stampCount;
             c->stampTicks = now;
             stamps        = NULL;
+            c->used       = ++scnDirCacheUseCount;
             c->valid      = true;
         }
     }
@@ -9217,6 +9469,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     h->policy.announce        = scnAnnounce;
     h->policy.canDie          = scnCanDie;
     h->policy.canHit          = scnCanHit;
+    h->policy.canTarget       = scnCanTarget;
     h->policy.pillDamageScale = scnPillDamageScale;
     h->policy.killCredit      = scnKillCredit;
     h->policy.canAlly         = scnCanAlly;
@@ -9948,9 +10201,15 @@ static void scnSayYield(char *said, size_t saidLen, const char *mapPath,
  * listed. Against a map's own mod it composes beside it, and it does not
  * make picked true, so the map's mod still goes at the front. The row stays
  * on the host's list either way. yieldSaid is the lobby's record of the
- * "gives way" line (scnSayYield). */
+ * "gives way" line (scnSayYield).
+ *
+ * skipHostMods composes the list as though every mod the host picked were off
+ * it: the answer to a scenario whose lobby block says no_mods. The operator's
+ * mods are not the host's and stay, and the list itself is not touched, so
+ * the mods compose again once that scenario is not the one playing. */
 static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
-                                    bool skipPicked, ScnMapOwnKind mapOwn,
+                                    bool skipPicked, bool skipHostMods,
+                                    ScnMapOwnKind mapOwn,
                                     char *yieldSaid, size_t yieldSaidLen,
                                     int *mapAtOut, char *err, size_t errLen) {
     ScnScriptSource src[SCN_SCRIPTS_MAX];
@@ -10086,6 +10345,12 @@ static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
             !serverSimIsOperatorMod(sim, row->file)) {
             continue;
         }
+        /* A mod the host picked, under a scenario that plays without
+           them. */
+        if (!own && skipHostMods && row->keepsWinCondition &&
+            !serverSimIsOperatorMod(sim, row->file)) {
+            continue;
+        }
         /* The plain -mod scenario the first loop already let go. */
         if (!own &&
             serverSimOperatorModYieldsToMap(sim, row->file,
@@ -10172,6 +10437,25 @@ static bool scnListHasPickedScenario(const ServerSim *sim) {
         }
     }
     return false;
+}
+
+/* How many mods the host picked: rows that are not the map's own, keep the
+ * win condition and are not the operator's. These are what a scenario that
+ * says no_mods leaves out. */
+static int scnListHostModCount(const ServerSim *sim) {
+    int picks = serverSimGetScriptCount(sim);
+    int count = 0;
+    int i;
+
+    for (i = 0; i < picks; i++) {
+        const ScnDirEntry *row = serverSimGetScript(sim, i);
+        if (row != NULL && row->file[0] != '\0' && !row->bound &&
+            row->keepsWinCondition &&
+            !serverSimIsOperatorMod(sim, row->file)) {
+            count++;
+        }
+    }
+    return count;
 }
 
 /* Whether the list holds a scenario no host may take off: one named by
@@ -10318,7 +10602,7 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
         scnListHasPickedScenario(sim) &&
         !scnListHasFixedOperatorScenario(sim) &&
         scenarioHostMapCarriesScript(mapPath)) {
-        ScenarioHost *h = scnComposeList(sim, mapPath, true, mapOwn,
+        ScenarioHost *h = scnComposeList(sim, mapPath, true, false, mapOwn,
                                          yieldSaid, sizeof(yieldSaid),
                                          &mapAt, err, sizeof(err));
 
@@ -10345,8 +10629,49 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
         }
     }
     if (*slot == NULL) {
-        *slot = scnComposeList(sim, mapPath, false, mapOwn, yieldSaid,
+        *slot = scnComposeList(sim, mapPath, false, false, mapOwn, yieldSaid,
                                sizeof(yieldSaid), &mapAt, err, sizeof(err));
+    }
+    /* A scenario whose lobby block says no_mods plays without the mods the
+       host picked. Which script decides the round is only known once the
+       list has attached, so a list that holds such a scenario and a host's
+       mod is composed once more without the mods, the way a newer map's
+       compose above leaves out the picks. The mods stay on the host's list
+       and compose again once that scenario is not the one playing. Where the
+       second compose does not attach, the first one plays: it loaded, and a
+       round without its scenario would be the bigger change. */
+    if (*slot != NULL && (*slot)->manifest.lobby.noMods) {
+        int mods = scnListHostModCount(sim);
+
+        if (mods > 0) {
+            char name[sizeof((*slot)->manifest.name)];
+            char err2[512];
+
+            /* The first compose goes before the second attaches: a detach
+               takes the scenario's name and lobby off the sim, and done
+               after the attach it would take the second compose's too. */
+            SDL_strlcpy(name, (*slot)->manifest.name, sizeof(name));
+            scenarioHostDetach(*slot);
+            err2[0] = '\0';
+            *slot = scnComposeList(sim, mapPath, false, true, mapOwn,
+                                   yieldSaid, sizeof(yieldSaid), &mapAt,
+                                   err2, sizeof(err2));
+            if (*slot != NULL) {
+                scnSay(NULL, 0,
+                       "scenario: %s plays without mods; %d picked mod%s left "
+                       "out of the round",
+                       name, mods, (mods == 1) ? " is" : "s are");
+            } else {
+                /* The list without the mods would not attach, which the
+                   list with them did, so that one plays again. */
+                if (err2[0] != '\0') {
+                    scnSay(NULL, 0, "%s", err2);
+                }
+                *slot = scnComposeList(sim, mapPath, false, false, mapOwn,
+                                       yieldSaid, sizeof(yieldSaid), &mapAt,
+                                       err, sizeof(err));
+            }
+        }
     }
     if (*slot != NULL) {
         SDL_strlcpy((*slot)->yieldSaid, yieldSaid,
