@@ -663,6 +663,7 @@ static const UnitTestEntry s_tests[] = {
     { "log_roundtrip_ping",                      run_log_roundtrip_ping                      },
     { "log_roundtrip_snapshot_tank_stocks",      run_log_roundtrip_snapshot_tank_stocks      },
     { "log_roundtrip_tank_stock_record",         run_log_roundtrip_tank_stock_record         },
+    { "wbv_render_args_and_frame_ticks",         run_wbv_render_args_and_frame_ticks         },
     { "replay_roundtrip_world",                  run_replay_roundtrip_world                  },
     { "replay_roundtrip_base_migrate",           run_replay_roundtrip_base_migrate           },
     { "replay_roundtrip_base_damage",            run_replay_roundtrip_base_damage            },

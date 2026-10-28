@@ -1321,6 +1321,9 @@ int run_log_roundtrip_snapshot_tank_stocks(void);
  * when one of them changed since the last record for that tank. */
 int run_log_roundtrip_tank_stock_record(void);
 
+/* WbvRender's command line and frame timing (test_wbv_render_args.c). */
+int run_wbv_render_args_and_frame_ticks(void);
+
 /* Record-and-decode round trip (test_replay_roundtrip.c, on the
  * replay_harness fixture): records a round in which a terrain cell, a base's
  * owner and stock, a pillbox's owner and a tank's stocks all change, replays

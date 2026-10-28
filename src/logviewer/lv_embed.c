@@ -26,6 +26,7 @@
  *   event loop over.
  *********************************************************/
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "backend.h"
@@ -212,6 +213,14 @@ void lv_windowPause(void) {
     lv_clientMutexRelease();
 }
 
+/* Set by a host with no screen (WbvRender): errors go to stderr, because a
+ * message box would open a window. */
+static bool s_errorsToStderr = false;
+
+void lvEmbedSetErrorsToStderr(bool on) {
+    s_errorsToStderr = on;
+}
+
 void lv_windowStop(int corruptLog) {
     /* Nothing holds the timer of a log that is stopped. */
     s_tickHold = false;
@@ -223,8 +232,12 @@ void lv_windowStop(int corruptLog) {
         return;
     }
     if (corruptLog == TRUE) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE,
-                                 "Error: Corrupt Log File", NULL);
+        if (s_errorsToStderr) {
+            fprintf(stderr, "Error: Corrupt Log File\n");
+        } else {
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE,
+                                     "Error: Corrupt Log File", NULL);
+        }
     }
     lv_windowPause();
 #ifndef __EMSCRIPTEN__
@@ -303,7 +316,11 @@ bool lvHostSetupCore(SDL_Window *window, SDL_Renderer *renderer,
     lv_screenSetLagFeature(lv_lagPrefIsOn(line) ? 1 : 0);
 
     if (lv_clientMutexCreate() == FALSE) {
-        lv_platform_dialog_error("WinBolo Log Viewer", "Could not create mutex");
+        if (s_errorsToStderr) {
+            fprintf(stderr, "Could not create mutex\n");
+        } else {
+            lv_platform_dialog_error("WinBolo Log Viewer", "Could not create mutex");
+        }
         if (window == NULL) { lv_platform_config_shutdown(); lv_platform_dialogs_shutdown(); }
         free(g_lv);
         g_lv = NULL;
