@@ -2280,41 +2280,6 @@ BYTE pillsGetPillNetData(pillboxes *value, BYTE *buff) {
 
 
 /*********************************************************
-*NAME:          pillsDropSetNeutralOwner
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/11/99
-*LAST MODIFIED: 1/11/99
-*PURPOSE:
-*  Changes all pills of owner owner back to neutral. Also
-*  if they are inside a tank it drops them.
-*
-*ARGUMENTS:
-*  value - Pointer to the pillbox structure
-*  owner - Owner to set back to neutral
-*********************************************************/
-void pillsDropSetNeutralOwner(GameSim *sim, BYTE owner) {
-	pillboxes *value = &sim->pb;
-	BYTE count;       /* Looping Variable */
-
-	count = 0;
-	while (count < ((*value)->numPills)) {
-		/* Pills owner is the same owner that has quit the game */
-		if ((*value)->active[count] != FALSE && ((*value)->item[count].owner) == owner) {
-			(*value)->item[count].owner = NEUTRAL;
-			/* A 'neutral' tank captures the pill instantly */
-			/* The tank was carrying pills */
-			if (((*value)->item[count].inTank) == TRUE) {
-				(*value)->item[count].inTank = FALSE;
-				/* Send a message that all the pills in the tank are now dead and belong to a 'neutral' player */
-        logAddEvent(log_PillSetInTank, utilPutNibble(count, FALSE), 0, 0, 0, 0, NULL);
-        logAddEvent(log_PillSetOwner, count, NEUTRAL, FALSE, 0, 0, NULL);
-			}
-		}
-		count++;
-	}
-}
-
-/*********************************************************
 *NAME:          pillsMigrate
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
@@ -2414,36 +2379,6 @@ bool pillsIsCapturable(pillboxes *value, BYTE xValue, BYTE yValue) {
   return returnValue;
 }
 
-
-/*********************************************************
-*NAME:          pillsExplicitDrop
-*AUTHOR:        John Morrison
-*CREATION DATE: 10/11/99
-*LAST MODIFIED: 10/11/99
-*PURPOSE:
-*  Drops all pills of owner owner
-*
-*
-*ARGUMENTS:
-*  value - Pointer to the pillbox structure
-*  owner - Owner to set back to neutral
-*********************************************************/
-void pillsExplicitDrop(GameSim *sim, BYTE owner) {
-  pillboxes *value = &sim->pb;
-  BYTE count;       /* Looping Variable */
-
-  count = 0;
-  while (count < ((*value)->numPills)) {
-    if ((*value)->active[count] != FALSE && ((*value)->item[count].owner) == owner) {
-      if (((*value)->item[count].inTank) == TRUE) {
-        (*value)->item[count].inTank = FALSE;
-        logAddEvent(log_PillSetInTank, utilPutNibble(count, FALSE), 0, 0, 0, 0, NULL);
-        logAddEvent(log_PillSetPlace, count, (*value)->item[count].x, (*value)->item[count].y, 0, 0, NULL);
-      }
-    }
-    count++;
-  }
-}
 
 /*********************************************************
 *NAME:          pillsGetBrainPillsInRect
