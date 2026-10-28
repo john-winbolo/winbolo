@@ -557,7 +557,7 @@ bool botManagerInit(int threads) {
         threads = MAX_TANKS;
     }
 
-#if defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS
+#if (defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS) || defined(__ANDROID__)
     /* Leave headroom for the GPU/rendering thread on small devices:
      * cap at 4 total runners (3 workers + producer). */
     if (threads > 4) {
@@ -2320,7 +2320,12 @@ bool botManagerGetBotInfo(const ServerSim *sim, BYTE playerNum, BotInfo *out) {
     }
 
     out->isBot        = true;
-    out->hasBrain     = (bot->ai == aiFull) && bot->brain.running;
+    /* A bot with a live brain thinks whatever the game's computer tank
+     * setting is: bot->ai is that setting (it decides how much of the map
+     * the brain sees), not whether the bot has a brain. Testing it for
+     * aiFull here left every bot of a game without "-ai yesfull" with no
+     * think numbers in info, the overrun lines and the round log. */
+    out->hasBrain     = bot->brain.running;
     out->lastThinkMs  = bot->lastThinkMs;
     out->maxThinkMs   = bot->maxThinkMs;
     out->targetMs     = botManagerComputePerBotTargetMs(sim, active);

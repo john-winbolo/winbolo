@@ -641,6 +641,14 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:pillNumbers];
     s_lv_pillNumbersItem = pillNumbers;
 
+    /* Exception to the both-bars rule (docs/ARCHITECTURE.md, "Contract -
+     * both bars in lockstep"): the in-window View menu's player lag view
+     * item (STR_LV_LAG_MENU, imgui_main_menu.cpp) has no native twin. The
+     * item is there only while the "Player Lag View" setting is on, and is
+     * enabled only for the selected tank at the playhead. The Tank panel's
+     * check box turns the same view on and off, and it works with the
+     * native bar. */
+
     /* Animate Rewind and Fast Forward, in the in-window menu's place. */
     NSMenuItem *jumpAnim = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_JUMP_ANIM)

@@ -210,10 +210,11 @@ static bool overviewOwnsScrollKeys(ClientSim *cs) {
 *  active  - FALSE when this poll is not reading input
 *********************************************************/
 #if defined(WINBOLO_VOICE)
-/* Whether the tablet overlay's talk button is held. Only the iOS client shows
- * that button; a desktop or web client in the tablet layout keeps its keys. */
+/* Whether the tablet overlay's talk button is held. Only the iOS and Android
+ * clients show that button; a desktop or web client in the tablet layout
+ * keeps its keys. */
 static bool inputTalkButtonHeld(void) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if (defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__)
   return inputTouchIsButtonHeld(TOUCH_BTN_TALK);
 #else
   return false;

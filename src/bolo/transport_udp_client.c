@@ -27,6 +27,8 @@
  *    - Handles join handshake and ping measurement.
  *********************************************************/
 
+#include <stdio.h>                      /* fprintf: the lockstep wait note */
+
 #include "transport_udp_internal.h"
 #include "client_timing.h"
 #include "bases.h"
@@ -467,6 +469,14 @@ typedef struct {
      * the client's datagram was lost on the wire. 0 = off. */
     uint8_t test_drop_out_type;
     int     test_drop_out_count;
+    /* Lockstep counts for a loopback test. test_wire_sent: datagrams this
+     * client has put on the wire to the server. test_rx_count: datagrams it
+     * has read off its socket. test_rx_expect: how many the server says it
+     * has sent; a read that finds the socket empty short of it waits for the
+     * rest (udpClientRecvFrom). 0 = never wait. */
+    uint32_t test_wire_sent;
+    uint32_t test_rx_count;
+    uint32_t test_rx_expect;
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -504,8 +514,11 @@ static int udpClientLoggedLocalPort = 0;
  * guarded at runtime (netImpairEnabled, and the ping's own cadence) rather
  * than by WB_ENABLE_NETIMPAIR, so they compile into every build and need a
  * definition in both arms; only the settable form exists where the tooling is
- * switched on. Nothing else in this file moves: join retries, the lobby-alone
- * timer, the command queue and the upload pump are real timing. */
+ * switched on. The command queue's resend timer reads it too: a resend is a
+ * datagram, every datagram the impairment layer takes draws from bolo_rand,
+ * and a resend timed off the wall clock would make that count depend on how
+ * fast the caller's machine is. Nothing else in this file moves: join
+ * retries, the lobby-alone timer and the upload pump are real timing. */
 #if WB_ENABLE_NETIMPAIR
 static uint64_t (*s_virtualClock)(void) = NULL;
 
@@ -546,6 +559,9 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
         return;
     }
     udpSendTo(c->sock, buf, len, &c->serverAddr);
+#if WB_ENABLE_NETIMPAIR
+    c->test_wire_sent++;
+#endif
     c->packetsSentThisSec++;
     c->bytesSentThisSec += len;
     if (!udpClientLoggedLocalPort) {
@@ -758,7 +774,7 @@ static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
     packHeader(buf, PACKET_COMMAND_TICK, c->outSequence++);
     size_t pos = PACKET_HEADER_SIZE + 1;  /* +1 for count placeholder */
     uint8_t count = 0;
-    uint32_t now = (uint32_t)SDL_GetTicks();
+    uint32_t now = (uint32_t)udpClientVirtualNow();
     for (uint32_t seq = c->outHeadSeq; seq != c->outTailSeq; seq++) {
         OutCmdEntry *e = &c->outCmdQueue[seq % OUT_CMD_QUEUE_CAP];
         uint8_t entry[COMMAND_MAX_WIRE_BYTES];
@@ -791,7 +807,7 @@ static void udpClientResendCommandHead(TransportUdpClientCtx *c) {
     OutCmdEntry *head;
 
     if (c->outHeadSeq == c->outTailSeq) return;
-    now = (uint32_t)SDL_GetTicks();
+    now = (uint32_t)udpClientVirtualNow();
     head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
     if (head->lastSentMs == 0 || (now - head->lastSentMs) > 80) {
         udpClientDrainCommandQueue(c);
@@ -1343,6 +1359,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SCN_MARKER:       return "SCN_MARKER";
     case CTRL_SCN_STATUS:       return "SCN_STATUS";
     case CTRL_VOICE_EVERYONE:   return "VOICE_EVERYONE";
+    case CTRL_SCN_POPUP:        return "SCN_POPUP";
     case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
     case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
@@ -4281,6 +4298,40 @@ static void udpClientSendPunchRequest(TransportUdpClientCtx *c) {
            (const struct sockaddr *)&dest, sizeof(dest));
 }
 
+/* One datagram off the socket, or <= 0 when it is empty. In the test build a
+ * loopback harness that drives client and server in lockstep tells the client
+ * how many datagrams the server has sent it (test_rx_expect). A read that
+ * finds the socket empty short of that number waits for the rest, so the
+ * loopback path cannot split one server tick's datagrams across two client
+ * ticks. If they do not come the wait gives up, says so, and stops counting
+ * the missing ones, so one lost datagram costs one wait and not one per tick.
+ * The default expectation of 0 never waits. */
+#if WB_ENABLE_NETIMPAIR
+#define UDP_CLIENT_TEST_RX_WAIT_MS 1000
+#endif
+static int udpClientRecvFrom(TransportUdpClientCtx *c, uint8_t *buf, int cap,
+                             struct sockaddr_in *fromAddr) {
+    int len = udpRecvFrom(c->sock, buf, cap, fromAddr);
+#if WB_ENABLE_NETIMPAIR
+    if (len <= 0 && c->test_rx_count < c->test_rx_expect) {
+        uint64_t giveUpAt = SDL_GetTicks() + UDP_CLIENT_TEST_RX_WAIT_MS;
+        while (len <= 0 && SDL_GetTicks() < giveUpAt) {
+            SDL_Delay(1);
+            len = udpRecvFrom(c->sock, buf, cap, fromAddr);
+        }
+        if (len <= 0) {
+            fprintf(stderr, "  [udp client] lockstep: %u of %u server "
+                            "datagrams arrived in %dms; going on without "
+                            "the rest\n", (unsigned)c->test_rx_count,
+                    (unsigned)c->test_rx_expect, UDP_CLIENT_TEST_RX_WAIT_MS);
+            c->test_rx_count = c->test_rx_expect;
+        }
+    }
+    if (len > 0) c->test_rx_count++;
+#endif
+    return len;
+}
+
 /* Receive-and-apply seam: drain the socket and apply any snapshots (and all
  * other inbound packet processing — control, PONG, handshake, map) without
  * advancing any per-tick state.  Called both from udpClientTick (where the
@@ -4297,7 +4348,7 @@ static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
     int len;
 
     /* Receive all pending packets from the wire */
-    while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
+    while ((len = udpClientRecvFrom(c, buf, (int)sizeof(buf), &fromAddr)) > 0) {
         if (netImpairEnabled(&c->impairIn)) {
             netImpairOffer(&c->impairIn, buf, len, &fromAddr,
                            udpClientVirtualNow());
@@ -4405,6 +4456,9 @@ static bool udpClientTick(void *ctx) {
         while ((plen = netImpairPop(&c->impairOut, pbuf, sizeof(pbuf),
                                     &paddr, now)) > 0) {
             udpSendTo(c->sock, pbuf, plen, &paddr);
+#if WB_ENABLE_NETIMPAIR
+            c->test_wire_sent++;
+#endif
         }
     }
 
@@ -6286,6 +6340,16 @@ void transportUdpClientTestDropNextOut(Transport *t, uint8_t packet_type,
 int transportUdpClientTestDropNextOutLeft(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     return c->test_drop_out_count;
+}
+
+uint32_t transportUdpClientTestWireSent(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    return c->test_wire_sent;
+}
+
+void transportUdpClientTestExpectRx(Transport *t, uint32_t serverSent) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    c->test_rx_expect = serverSent;
 }
 #endif
 

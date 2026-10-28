@@ -10,8 +10,8 @@
 *  The replay reel's public face: the calls a screen outside
 *  the lobby uses to show a reel of its own, and the part of
 *  the embedded log viewer (src/logviewer/lv_embed.c) such a
-*  screen drives directly. The iOS log player and spectator
-*  (src/gui/ios) are those screens. Everything else about
+*  screen drives directly. The mobile log player and spectator
+*  (src/gui/mobile) are those screens. Everything else about
 *  the reel belongs to the lobby and stays in
 *  lobby_internal.h, which includes this header.
 *
@@ -48,7 +48,7 @@ void lobbyReelRenderStandalone(ImVec2 rect);
 bool lobbyReelOpenSpectator(ImVec2 rect);
 void lobbyReelRenderSpectator(ImVec2 rect);
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 /* Hand every polled event over; the reel keeps the pinch ones for its zoom. */
 void lobbyReelPinchEvent(const SDL_Event *ev);
 #endif

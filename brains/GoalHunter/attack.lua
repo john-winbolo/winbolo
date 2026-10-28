@@ -1643,7 +1643,9 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
       local cx = U.mclamp(math.floor(pill.mx + math.sin(angle) * R + 0.5))
       local cy = U.mclamp(math.floor(pill.my - math.cos(angle) * R + 0.5))
       local ck = U.mkey(cx, cy)
-      if not seen[ck] and not (state and state._blitz_reject and state._blitz_reject[ck]) then
+      -- STAY_AREA (C.STAY_AREA): no standoff outside the area (off = always in).
+      if not seen[ck] and not (state and state._blitz_reject and state._blitz_reject[ck])
+         and U.stay_in(cx, cy) then
         seen[ck] = true
         -- Always track closest as fallback
         local d = U.mdist(tmx, tmy, cx, cy)
@@ -6136,8 +6138,9 @@ local function update_attack_substate_body(goal, state, world, info)
                                          bit.rshift(info.tanky or 0, 8), human_tiles)
         end
         goal._human_near = human_near
-        -- PPT_NEVER (Virus horde: no trees, cannot farm) does the same: the
-        -- take goes straight in, with no shield scan and no tree gathering.
+        -- PPT_NEVER (Virus horde: it can build and farm; this knob alone stops
+        -- its protected take) does the same: the take goes straight in, with no
+        -- shield scan and no tree gathering.
         if (state.is_pill_suicider or human_near or C.PPT_NEVER) and goal._is_ppt then
           goal._is_ppt = false
           if BRAIN_DEBUG_MODE then print2(string.format("PPT_SKIP t=%d reason=%s pill=(%d,%d) hp=%d",
@@ -6255,8 +6258,14 @@ local function update_attack_substate_body(goal, state, world, info)
     -- tiers).  Reads goal.standoff_*/goal._chosen_deg already set by
     -- the spot-selection pass; recomputes scan_radius from goal._is_ppt
     -- (no need to persist it).
+    -- _shield_scan_pending is cleared only once the scan has an answer, below.
+    -- A budget kill inside shield.scan unwinds the think before that, so the
+    -- flag survives and the next tick tries again: the blacklist counts those
+    -- tries and gives up after SHIELD_SCAN_BLACKLIST_TRIES. Clearing it here,
+    -- before the call, lost the scan to a single kill, and the take went on
+    -- with no shield plan, charging with its blocker still in the tank (the
+    -- Tutorial's 5A demo bot, whose first scan of each take is cold).
     if goal._shield_scan_pending then
-      goal._shield_scan_pending = nil
       local scan_radius = goal._is_ppt and C.PPT_STANDOFF
                           or C.ATTACK_PILL_STANDOFF
       local no_builder = (info.man_status == C.LGM_DEAD)
@@ -6377,6 +6386,7 @@ local function update_attack_substate_body(goal, state, world, info)
           sscan = nil
         end
       end
+      goal._shield_scan_pending = nil
       if BRAIN_DEBUG_MODE and state._plan_trace then
         local _t = state._plan_trace
         _t.shield_ran = true

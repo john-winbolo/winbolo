@@ -108,13 +108,51 @@ typedef struct {
  * spawn op's loadout takes. It is the host's one-way hand-over of that
  * value: the sim keeps it where the spawn and start paths can read it when
  * the round is gameScripted. 0 means none declared, which plays strict
- * tournament. */
+ * tournament.
+ *
+ * The fix flags each hold one lobby setting at the value beside it for as
+ * long as the scenario is attached: hidden mines, the time limit (in
+ * minutes, 0 for none), the start delay (in seconds), the AI policy (no_bots
+ * holds it at none), classic mode, the three view policies, allies in trees,
+ * the overview window, line of sight, positional sound and smart pings. The
+ * host cannot change a fixed setting, and the lobby gets back what it had
+ * when the scenario goes (serverSimScenarioApplyLobbyRules). A view policy
+ * fix holds the policy only; the decay seconds stay the host's.
+ *
+ * noMods is not a lobby setting. The compose reads it off the manifest and
+ * leaves the host's picked mods out of the round; it is carried here so the
+ * sim's copy of the block is the whole block. */
 typedef struct {
     uint8_t      maxPlayers;
     uint8_t      numTeams;
     uint8_t      baseGameType;   /* a gameType value, 0 for none */
+    bool         fixHiddenMines;
+    bool         hiddenMines;
+    bool         fixTimeLimit;
+    uint16_t     timeLimitMinutes;  /* 0 = no time limit */
+    bool         fixStartDelay;
+    uint16_t     startDelaySeconds;
+    bool         noBots;            /* AI policy held at none, bots removed */
+    bool         fixClassicMode;
+    bool         classicMode;
+    bool         fixView[3];        /* by ViewCategory: pill, base, ally */
+    uint8_t      viewPolicy[3];     /* a ViewPolicy value */
+    bool         fixAlliesInTrees;
+    bool         alliesInTrees;
+    bool         fixOverviewWindow;
+    uint8_t      overviewWindow;    /* an OverviewWindow value */
+    bool         fixLineOfSight;
+    uint8_t      lineOfSight;       /* a LineOfSightMode value */
+    bool         fixPositionalSound;
+    bool         positionalSound;
+    bool         fixSmartPings;
+    bool         smartPings;        /* true = pings allowed */
+    bool         noMods;
     ScnLobbyTeam teams[MAX_TANKS];
 } ScnLobbyTemplate;
+
+/* The longest start delay a scenario's lobby block may fix, in seconds. */
+#define SCN_LOBBY_START_DELAY_MAX 600
 
 /* What a scenario is called and what it asks for, as the sim reads it.
  *
@@ -253,6 +291,7 @@ typedef enum {
     SCN_OP_TANK_GIVE_PILL,
     SCN_OP_TANK_DROP_PILL,
     SCN_OP_TANK_SET_MODIFIERS,
+    SCN_OP_TANK_SET_SPEED,
 
     /* Builder */
     SCN_OP_LGM_DISPATCH,
@@ -314,10 +353,12 @@ typedef enum {
     SCN_OP_ANNOUNCE,
     SCN_OP_MARKER,
     SCN_OP_STATUS,
+    SCN_OP_POPUP,
 
     /* Flow */
     SCN_OP_END_ROUND,
     SCN_OP_SET_GAME_TIME,
+    SCN_OP_TUTORIAL_DONE,
 
     /* Rules */
     SCN_OP_SET_RULE,
@@ -383,6 +424,13 @@ typedef struct {
     TankModifiers mods;
 } ScnOpTankSetModifiers;
 
+/* Set how fast a tank is going, in the units of the speed_* rules: 0 stops
+   it where it is. Nothing else changes. */
+typedef struct {
+    BYTE slot;
+    BYTE speed;
+} ScnOpTankSetSpeed;
+
 /* ── Builder ───────────────────────────────────────────────────── */
 
 typedef struct {
@@ -404,7 +452,13 @@ typedef struct {
 typedef struct {
     BYTE slot;
     BYTE x, y;      /* 0xFF, 0xFF = to the tank */
+    BYTE from;      /* 0 = from the nearest map edge (the classic arm);
+                       1..SCN_PARACHUTE_FROM_MAX = start this many squares
+                       short of the landing square, on the line to that
+                       edge */
 } ScnOpLgmParachute;
+
+#define SCN_PARACHUTE_FROM_MAX 32
 
 typedef struct {
     BYTE slot;
@@ -658,6 +712,16 @@ typedef struct {
     char     text[SCN_TEXT_MAX];
 } ScnOpStatus;
 
+/* A popup: a message box the player has to close, drawn through the
+ * client's tutorial overlay, which pauses a local game while it is up.
+ * The text may carry the tutorial's key tokens ({ACCEL}, {QUICK_TREE} and
+ * so on), which each client turns into its own keys. A popup is shown
+ * once and is not replayed to a client that joins later. */
+typedef struct {
+    BYTE target;
+    char text[SCN_POPUP_TEXT_MAX + 1];
+} ScnOpPopup;
+
 typedef struct {
     BYTE target;
     BYTE id;
@@ -678,6 +742,15 @@ typedef struct {
     int32_t ticks;
     bool    relative;
 } ScnOpSetGameTime;
+
+/* A shipped tutorial is finished for the player in slot. The server keeps
+ * a mark for the seat and does nothing else. Only a single-player client
+ * in the same process reads the mark, and it hides the main menu's
+ * Tutorial button. A hosted or dedicated server has no such client, so
+ * there the op changes nothing a player sees. */
+typedef struct {
+    BYTE slot;
+} ScnOpTutorialDone;
 
 /* ── Rules ─────────────────────────────────────────────────────── */
 
@@ -759,6 +832,7 @@ typedef struct {
         ScnOpTankGivePill      tankGivePill;
         ScnOpTankDropPill      tankDropPill;
         ScnOpTankSetModifiers  tankSetModifiers;
+        ScnOpTankSetSpeed      tankSetSpeed;
         ScnOpLgmDispatch       lgmDispatch;
         ScnOpLgmRecall         lgmRecall;
         ScnOpLgmKill           lgmKill;
@@ -800,8 +874,10 @@ typedef struct {
         ScnOpAnnounce          announce;
         ScnOpMarker            marker;
         ScnOpStatus            status;
+        ScnOpPopup             popup;
         ScnOpEndRound          endRound;
         ScnOpSetGameTime       setGameTime;
+        ScnOpTutorialDone      tutorialDone;
         ScnOpSetRule           setRule;
         ScnOpShellExpired      shellExpired;
     } u;
@@ -915,6 +991,11 @@ typedef struct ScenarioPolicy {
                         * reached? kind is a HIT_KIND_*. NULL = always.
                         * false lets the shell fly on as if the target
                         * were not there */
+    bool (*canTarget)(void *ctx, BYTE pill, BYTE player);
+                       /* may pillbox pill pick this seat's tank as its
+                        * target? pill is the pill index. NULL = always.
+                        * false has the pillbox pass over the tank as if
+                        * it were not there, and take the next nearest */
     int  (*pillDamageScale)(void *ctx, BYTE attacker, BYTE index, BYTE cause,
                             BYTE pill);
                        /* percent of the armour a blow takes off pill

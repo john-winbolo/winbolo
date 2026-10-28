@@ -2332,6 +2332,12 @@ static void lvHostRenderFrame(const char *overlay) {
         /* The camera tank's panel, as its player saw it. */
         lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
         lv_imgui_scenario_status(g_lv->isLoaded ? true : false);
+        {
+            /* Whose screen the map shows, while the lag view is on. */
+            int winW = 0, winH = 0;
+            SDL_GetWindowSize(g_lv->window, &winW, &winH);
+            lv_imgui_lag_banner_at(0.0f, lv_imgui_get_menu_bar_height(), (float)winW);
+        }
         /* A live feed keeps the Controls panel in the game view, so the feed
          * can be moved through in time there; the viewer's game view has
          * none. The option is put back after, so the forced value is never
@@ -2432,6 +2438,12 @@ static void lvHostRenderFrame(const char *overlay) {
         }
         /* The live feed's badge and message go on the map, not under a
          * sidebar or the menu bar. */
+        {
+            /* Whose screen the map shows, while the lag view is on. */
+            float mapX, mapY, mapW, mapH;
+            lvHostMapArea(&mapX, &mapY, &mapW, &mapH);
+            lv_imgui_lag_banner_at(mapX, mapY, mapW);
+        }
         if ((panels & LV_PANEL_SET_SPEC_BADGE) || overlay != NULL) {
             float mapX, mapY, mapW, mapH;
             lvHostMapArea(&mapX, &mapY, &mapW, &mapH);

@@ -224,7 +224,7 @@ extern "C" int imguiOnboardingShow(void) {
         int seqLen = 0;
         if (!loggedIn) seq[seqLen++] = ONBOARD_STEP_ACCOUNT;
         if (!loggedIn) seq[seqLen++] = ONBOARD_STEP_NAME;
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
         /* No Keys step on iOS: it binds keyboard keys, and a phone plays by
          * touch. Signed in, nothing is left, so onboarding is complete. */
         if (seqLen == 0) {

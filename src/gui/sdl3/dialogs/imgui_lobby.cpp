@@ -251,7 +251,7 @@ extern "C" void imguiLobbyFrameReset(void) {
      * past the lobby session. */
     lobbyReelEnd();
 #endif
-#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
+#if BOLO_RECAP_CLIP_GIF
     /* A clip export waiting on its save picker holds the whole encoded GIF,
      * and nothing polls it once the lobby is gone. Deliberately not folded
      * into lobbyReelEnd above: that also runs mid-session when the countdown
@@ -259,7 +259,7 @@ extern "C" void imguiLobbyFrameReset(void) {
      * still naming. */
     lobbyClipGifSaveAbandon();
 #endif
-#if !defined(__ANDROID__) && BOLO_RECAP_WBN_RATING  /* Android does not compile lobby_rating.cpp */
+#if BOLO_RECAP_WBN_RATING
     /* Release the rating fetch and everything it filled in. The star textures
      * stay: they belong to the WBN browser as much as to the recap, and the
      * loader rebuilds them on demand. */
@@ -425,7 +425,7 @@ static void lobbyBotAnnouncePoll(ClientSim *cs) {
 extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     if (!s_lf.active) { lobbyFrameInitState(cs); s_lf.active = true; }
 
-#if !defined(__ANDROID__) && BOLO_RECAP_WBN_RATING  /* Android does not compile lobby_rating.cpp */
+#if BOLO_RECAP_WBN_RATING
     /* Before anything draws, so a round that has ended takes its rating and
      * comments with it whether or not the recap is the view on screen. */
     lobbyRatingSyncKey(cs, cs ? clientSimGetLastRoundStats(cs) : NULL);
@@ -1041,7 +1041,19 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * useTabbedLobby computed above the shared settings panel) --- */
         if (useTabbedLobby) {
             float availW = ImGui::GetContentRegionAvail().x;
+#if BOLO_MOBILE
+            /* The height each tab's panel leaves for the bottom button row:
+               the spacing after the panel, a Spacing, the Separator and its
+               spacing, a Spacing, then one row of buttons. Two pixels more
+               than that sum, so that a pixel of rounding in any of those
+               heights does not push the button row below the window's
+               bottom edge. */
+            float btnAreaH = ImGui::GetFrameHeight()
+                           + 4.0f * ImGui::GetStyle().ItemSpacing.y + 1.0f
+                           + 2.0f * s;
+#else
             float btnAreaH = ImGui::GetTextLineHeightWithSpacing() * 2 + 16.0f * s;
+#endif
 
             /* Detect new chat messages for unread indicator */
             int chatLen = (int)SDL_strlen(clientSimGetLobbyChatHistory(cs));
@@ -1678,7 +1690,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                     wantLeaveConfirm = true;
                 }
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
                 /* Ready stays disabled until the map has arrived, and the
                  * progress is otherwise only on the Map tab, while the lobby
                  * opens on Players. A phone has no hover to ask why. */
@@ -2974,8 +2986,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
             }
             ImGui_ImplSDL3_ProcessEvent(&ev);
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
+#if BOLO_LOBBY_REEL
             lobbyReelPinchEvent(&ev);  /* two-finger zoom on the Last round reel */
+#endif
             /* The same gesture on the Map tab's zoom popup and the chooser's
                preview, which take their input through map_preview_view. */
             mapPreviewViewTouchPinchEvent(&ev);
@@ -3012,7 +3026,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         voiceTick(cs);
 #endif
 
-#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
+#if BOLO_RECAP_CLIP_GIF
         /* Write out a clip export whose save picker has been answered. Here
          * rather than in the recap that started it: the picker is asynchronous
          * so this loop keeps ticking the transport underneath it, and a player

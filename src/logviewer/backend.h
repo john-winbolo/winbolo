@@ -38,6 +38,8 @@
 #include "lv_screentank.h"
 #include "lv_save_name.h"   /* LvRosterRow */
 #include "lv_ping_view.h"   /* LvPingShown */
+#include "lv_lag.h"         /* LvPlayerLag */
+#include "lv_overrun.h"     /* LvOverrunNow */
 
 /* Defines */
 
@@ -810,6 +812,45 @@ void lv_screenTogglePerspective(BYTE playerNum);
 int  lv_screenPerspectivePlayer(void);
 void lv_screenClearPerspective(void);
 bool lv_screenCheckPerspective(void);
+
+/* Each player's network lag, from the recording's log_PlayerLag records.
+ * Recorded is TRUE when the recording has any. Now gives slot's round-trip
+ * time and how far behind the present its player's screen was (the rewind
+ * the server used, in ms) at the playhead; FALSE when that player has no
+ * record yet. Snapshot fills what the Tank panel shows of slot's lag. Hold
+ * the client mutex. */
+bool lv_screenLagRecorded(void);
+bool lv_screenPlayerLagNow(int slot, int *rttMs, int *behindMs);
+
+/* The "Player Lag View" preference (LV_LAG_PREF_KEY), off until turned on.
+ * While it is off the viewer shows none of the lag records and the lag view
+ * cannot be turned on; Set to off also turns the view off. Shown is TRUE
+ * when the preference is on and the recording has lag records: the panels
+ * show the lag only then. Recorded and Now above give the records as read,
+ * whatever the preference. */
+void lv_screenSetLagFeature(int enabled);
+int  lv_screenGetLagFeature(void);
+bool lv_screenLagShown(void);
+void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out);
+
+/* The server's timing and each bot's overruns, from the recording's
+ * log_OverrunStats records: the last record at or before the playhead. Not
+ * part of the lag view, so the "Player Lag View" preference does not hide it.
+ * Hold the client mutex. */
+void lv_screenOverrunNow(LvOverrunNow *out);
+
+/* The lag view ("see what this player saw"): the map draws the other tanks,
+ * the builders and the shells as far behind as slot's player's screen was,
+ * and that player's own tank at the present. Set turns it on for slot, or
+ * off for -1. Slot gives the chosen slot, -1 when off; a view whose player
+ * is no longer in the slot is turned off. Status gives the chosen player's
+ * name, the delay at the playhead, and whether the map draws the delayed
+ * places (FALSE while the history has no frame that old); FALSE when the
+ * view is off. Hold the client mutex, and mark the map for a redraw
+ * (lv_drawDirtyScreen) after a change. */
+void lv_screenLagViewSet(int slot);
+int  lv_screenLagViewSlot(void);
+bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *drawn);
 
 void lv_screenCentreOnSelectedItem();
 

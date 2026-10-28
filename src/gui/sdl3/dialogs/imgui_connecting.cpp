@@ -9,7 +9,7 @@
  *                See imgui_connecting.h.
  *********************************************************/
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 
 #include <SDL3/SDL.h>
 
@@ -155,4 +155,4 @@ extern "C" bool imguiConnectingRun(const char *host, ConnectingStepFn step,
     return finished;
 }
 
-#endif /* __IPHONEOS__ */
+#endif /* __IPHONEOS__ || __ANDROID__ */

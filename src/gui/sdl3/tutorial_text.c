@@ -20,6 +20,7 @@
 #include "../ui_mode.h"
 #include "../../common/wb_log.h"
 #include "glyphs.h"
+#include "tutorial_tokens.h"
 #include "input_gamepad.h"
 #include "../../steam/steam_input_actions.h"
 
@@ -30,98 +31,83 @@ extern keyItems keys;
 /* Per-call render buffer.  TEXT and keycap-label runs are copied
  * here so the segment producer can return stable pointers without
  * allocating.  The dialog consumes the result synchronously inside
- * frontEndTutorial; subsequent calls overwrite the buffer. */
+ * the overlay draw; subsequent calls overwrite the buffer. */
 static char tutorialBuf[2048];
 
-typedef int (*KeyAccessor)(void);
+/* Set when a run did not fit in tutorialBuf, so tutorialResolveText can
+   say the text was cut. */
+static bool tutorialBufFull = false;
 
-static int kt_accel(void)        { return keys.kiForward; }
-static int kt_brake(void)        { return keys.kiBackward; }
-static int kt_left(void)         { return keys.kiLeft; }
-static int kt_right(void)        { return keys.kiRight; }
-static int kt_fire(void)         { return keys.kiShoot; }
-static int kt_mine(void)         { return keys.kiLayMine; }
-static int kt_scroll_up(void)    { return keys.kiScrollUp; }
-static int kt_scroll_down(void)  { return keys.kiScrollDown; }
-static int kt_scroll_left(void)  { return keys.kiScrollLeft; }
-static int kt_scroll_right(void) { return keys.kiScrollRight; }
-/* Tutorial dismissal isn't user-rebindable — always Return. */
-static int kt_dismiss(void)      { return SDL_SCANCODE_RETURN; }
-
+/* What a token draws as on a controller, one row per TutorialTokenId and
+ * in its order. The token's text and its keyboard key come from
+ * tutorial_tokens.c. The quick-build keys have no button of their own on a
+ * pad, so they show the build tool's, which is how a pad picks a tool. */
 typedef struct {
-  const char   *token;
-  KeyAccessor   get;        /* keyboard scancode accessor (NULL for controller-only tokens) */
   const char   *gpAction;   /* Path B glyph_* pseudo-action (NULL if none) */
   const char   *siAction;   /* Steam Input action name (NULL -> skip Path A) */
   GamepadAction sdlAction;  /* live SDL binding action (GP_ACT_COUNT -> none) */
 } TokenEntry;
 
-static const TokenEntry kTokens[] = {
-  { "{ACCEL}",        kt_accel,        "glyph_tank_forward",  NULL,                          GP_ACT_COUNT },
-  { "{BRAKE}",        kt_brake,        "glyph_tank_back",     NULL,                          GP_ACT_COUNT },
-  { "{LEFT}",         kt_left,         "glyph_tank_left",     NULL,                          GP_ACT_COUNT },
-  { "{RIGHT}",        kt_right,        "glyph_tank_right",    NULL,                          GP_ACT_COUNT },
-  { "{FIRE}",         kt_fire,         "glyph_fire",          SI_ACTION_FIRE,                GP_ACT_FIRE },
-  { "{MINE}",         kt_mine,         "glyph_mine",          SI_ACTION_MINE,                GP_ACT_MINE },
-  { "{SCROLL_UP}",    kt_scroll_up,    "glyph_scroll_up",     NULL,                          GP_ACT_COUNT },
-  { "{SCROLL_DOWN}",  kt_scroll_down,  "glyph_scroll_down",   NULL,                          GP_ACT_COUNT },
-  { "{SCROLL_LEFT}",  kt_scroll_left,  "glyph_scroll_left",   NULL,                          GP_ACT_COUNT },
-  { "{SCROLL_RIGHT}", kt_scroll_right, "glyph_scroll_right",  NULL,                          GP_ACT_COUNT },
-  { "{DISMISS}",      kt_dismiss,      "glyph_dismiss",       SI_ACTION_MENU_ACCEPT,         GP_ACT_COUNT },
-  { "{BUILD_MODE}",   NULL,            NULL,                  SI_ACTION_BUILD_CURSOR_TOGGLE, GP_ACT_BUILD_CURSOR_TOGGLE },
-  { "{BUILD_PLACE}",  NULL,            NULL,                  SI_ACTION_BUILD_CONFIRM,       GP_ACT_BUILD_CONFIRM },
-  { "{BUILD_TOOL}",   NULL,            NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
+static const TokenEntry kTokens[TT_COUNT] = {
+  [TT_ACCEL]        = { "glyph_tank_forward",  NULL,                          GP_ACT_COUNT },
+  [TT_BRAKE]        = { "glyph_tank_back",     NULL,                          GP_ACT_COUNT },
+  [TT_LEFT]         = { "glyph_tank_left",     NULL,                          GP_ACT_COUNT },
+  [TT_RIGHT]        = { "glyph_tank_right",    NULL,                          GP_ACT_COUNT },
+  [TT_FIRE]         = { "glyph_fire",          SI_ACTION_FIRE,                GP_ACT_FIRE },
+  [TT_MINE]         = { "glyph_mine",          SI_ACTION_MINE,                GP_ACT_MINE },
+  [TT_SCROLL_UP]    = { "glyph_scroll_up",     NULL,                          GP_ACT_COUNT },
+  [TT_SCROLL_DOWN]  = { "glyph_scroll_down",   NULL,                          GP_ACT_COUNT },
+  [TT_SCROLL_LEFT]  = { "glyph_scroll_left",   NULL,                          GP_ACT_COUNT },
+  [TT_SCROLL_RIGHT] = { "glyph_scroll_right",  NULL,                          GP_ACT_COUNT },
+  [TT_DISMISS]      = { "glyph_dismiss",       SI_ACTION_MENU_ACCEPT,         GP_ACT_COUNT },
+  [TT_BUILD_MODE]   = { NULL,                  SI_ACTION_BUILD_CURSOR_TOGGLE, GP_ACT_BUILD_CURSOR_TOGGLE },
+  [TT_BUILD_PLACE]  = { NULL,                  SI_ACTION_BUILD_CONFIRM,       GP_ACT_BUILD_CONFIRM },
+  [TT_BUILD_TOOL]   = { NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
+  [TT_QUICK_TREE]   = { NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
+  [TT_QUICK_ROAD]   = { NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
+  [TT_QUICK_WALL]   = { NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
+  [TT_QUICK_PILL]   = { NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
+  [TT_QUICK_MINE]   = { NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
+  [TT_GUN_UP]       = { NULL,                  SI_ACTION_GUNSIGHT_INC,        GP_ACT_GUNSIGHT_INC },
+  [TT_GUN_DOWN]     = { NULL,                  SI_ACTION_GUNSIGHT_DEC,        GP_ACT_GUNSIGHT_DEC },
 };
-static const int kTokenCount = (int)(sizeof(kTokens) / sizeof(kTokens[0]));
 
-/* Desktop -> input-variant lookup. Strings whose desktop wording
- * references hardware controls (keys, mouse, keypad) get touch and/or
- * controller siblings; the rest fall through unchanged. A 0 in a slot
- * means "no variant — reuse the desktop string". */
-typedef struct {
-  uint16_t desktop;
-  uint16_t touch;       /* 0 = no touch variant, reuse desktop */
-  uint16_t controller;  /* 0 = no controller variant, reuse desktop */
-} StringVariants;
-
-static const StringVariants kStringVariants[] = {
-  { STR_TUTORIAL01,       STR_TUTORIAL01_TOUCH,       STR_TUTORIAL01_CTRL       },
-  { STR_TUTORIAL02,       STR_TUTORIAL02_TOUCH,       STR_TUTORIAL02_CTRL       },
-  { STR_TUTORIAL03,       STR_TUTORIAL03_TOUCH,       STR_TUTORIAL03_CTRL       },
-  { STR_TUTORIAL04,       STR_TUTORIAL04_TOUCH,       STR_TUTORIAL04_CTRL       },
-  { STR_TUTORIAL05,       STR_TUTORIAL05_TOUCH,       STR_TUTORIAL05_CTRL       },
-  { STR_TUTORIAL06,       STR_TUTORIAL06_TOUCH,       STR_TUTORIAL06_CTRL       },
-  { STR_TUTORIAL10,       STR_TUTORIAL10_TOUCH,       STR_TUTORIAL10_CTRL       },
-  { STR_TUTORIAL14,       STR_TUTORIAL14_TOUCH,       STR_TUTORIAL14_CTRL       },
-  { STR_TUTORIAL16,       STR_TUTORIAL16_TOUCH,       STR_TUTORIAL16_CTRL       },
-  { STR_TUTORIAL18,       STR_TUTORIAL18_TOUCH,       STR_TUTORIAL18_CTRL       },
-  { STR_TUTORIAL19,       STR_TUTORIAL19_TOUCH,       STR_TUTORIAL19_CTRL       },
-  { STR_TUTORIAL21,       STR_TUTORIAL21_TOUCH,       STR_TUTORIAL21_CTRL       },
-  { STR_TUTORIAL_START01, STR_TUTORIAL_START01_TOUCH, 0                         },
-  { STR_TUTORIAL_START04, STR_TUTORIAL_START04_TOUCH, STR_TUTORIAL_START04_CTRL },
-};
-static const int kStringVariantCount =
-    (int)(sizeof(kStringVariants) / sizeof(kStringVariants[0]));
-
-static uint16_t pickStringId(uint16_t mid) {
-  int i;
-  for (i = 0; i < kStringVariantCount; i++) {
-    if (kStringVariants[i].desktop != mid) continue;
-    if (uiShouldUseControllerMode())
-      return kStringVariants[i].controller ? kStringVariants[i].controller : mid;
-    if (uiModeIsTablet())
-      return kStringVariants[i].touch ? kStringVariants[i].touch : mid;
-    return mid;
-  }
-  return mid;
+/* On a phone or tablet the touch layout first, as its controls are on the
+   screen whatever SDL counts as a gamepad (an Android keyboard with a d-pad
+   is one); then a controller; then the touch layout on a desktop. */
+TutorialInput tutorialInputNow(void) {
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  if (uiModeIsTablet()) return TUTORIAL_INPUT_TOUCH;
+#endif
+  if (uiShouldUseControllerMode()) return TUTORIAL_INPUT_CONTROLLER;
+  if (uiModeIsTablet()) return TUTORIAL_INPUT_TOUCH;
+  return TUTORIAL_INPUT_KEYBOARD;
 }
 
+/* What a token is on a touch screen, in words; NULL when the touch screen
+   has nothing of its own for it and the keyboard key is named. A quick-build
+   tool has no key and no button there: the player taps the build buttons.
+   The gunsight range has its own two round buttons, drawn "+" and "-",
+   and firing has its own button. */
+static const char *touchTokenWords(TutorialTokenId id) {
+  if (tutorialTokenIsQuickBuild(id)) {
+    const char *words = langGetText(STR_TUTORIAL_QUICK_BUILD_TOUCH);
+    return words ? words : "";
+  }
+  if (id == TT_FIRE)     return langGetText(STR_TUTTOK_TOUCH_FIRE);
+  if (id == TT_GUN_UP)   return langGetText(STR_TUTTOK_TOUCH_GUN_UP);
+  if (id == TT_GUN_DOWN) return langGetText(STR_TUTTOK_TOUCH_GUN_DOWN);
+  return NULL;
+}
+
+/* A key's name as the tutorial writes it, in a key cap or in a plain
+ * line: SDL's name, with "Keypad " cut to "Num " (tutorialShortKeyName).
+ * The answer is good until the next call; both callers copy it at once. */
 static const char *scancodeName(int scancode) {
-  const char *name;
+  static char shortName[64];
   if (scancode <= 0) return "?";
-  name = SDL_GetScancodeName((SDL_Scancode)scancode);
-  if (!name || !*name) return "?";
-  return name;
+  return tutorialShortKeyName(SDL_GetScancodeName((SDL_Scancode)scancode),
+                              shortName, sizeof(shortName));
 }
 
 /* Append `s` (NUL-terminated) into tutorialBuf at *pos, NUL-terminating
@@ -132,7 +118,10 @@ static const char *scancodeName(int scancode) {
 static const char *bufAppend(int *pos, const char *s) {
   int avail = (int)sizeof(tutorialBuf) - *pos - 1;
   int len   = (int)strlen(s);
-  if (len > avail) return NULL;
+  if (len > avail) {
+    tutorialBufFull = true;
+    return NULL;
+  }
   char *dst = tutorialBuf + *pos;
   memcpy(dst, s, (size_t)len);
   dst[len] = '\0';
@@ -144,7 +133,10 @@ static int emitText(TutorialSeg *out, int idx, int max,
                     int *bufPos, const char *start, int len) {
   if (idx >= max || len <= 0) return idx;
   int avail = (int)sizeof(tutorialBuf) - *bufPos - 1;
-  if (len > avail) return idx;
+  if (len > avail) {
+    tutorialBufFull = true;
+    return idx;
+  }
   char *dst = tutorialBuf + *bufPos;
   memcpy(dst, start, (size_t)len);
   dst[len] = '\0';
@@ -157,9 +149,19 @@ static int emitText(TutorialSeg *out, int idx, int max,
 }
 
 static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
-                             int *bufPos, const TokenEntry *t) {
+                             int *bufPos, TutorialTokenId id) {
+  const TokenEntry   *t     = &kTokens[id];
+  const TutorialInput input = tutorialInputNow();
   if (idx >= max) return idx;
-  if (uiShouldUseControllerMode()) {
+  /* A touch screen has no key for a quick-build tool or the gunsight
+     range: say in words what the player taps there. */
+  if (input == TUTORIAL_INPUT_TOUCH) {
+    const char *words = touchTokenWords(id);
+    if (words) {
+      return emitText(out, idx, max, bufPos, words, (int)strlen(words));
+    }
+  }
+  if (input == TUTORIAL_INPUT_CONTROLLER) {
     SDL_Texture *g = NULL;
     if (t->siAction || t->sdlAction < GP_ACT_COUNT) {
       g = glyphForControllerAction(t->siAction, t->sdlAction);   /* discrete: backend-correct */
@@ -178,10 +180,11 @@ static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
        Render a token-text keycap so the dialog still shows something. */
     static bool warned = false;
     if (!warned) {
-      WB_LOG_WARN(WB_LOG_CAT_GUI, "tutorial: no controller glyph for '%s'", t->token);
+      WB_LOG_WARN(WB_LOG_CAT_GUI, "tutorial: no controller glyph for '%s'",
+                  tutorialTokenText(id));
       warned = true;
     }
-    const char *label = bufAppend(bufPos, t->token);
+    const char *label = bufAppend(bufPos, tutorialTokenText(id));
     if (!label) return idx;
     out[idx].kind        = TUTORIAL_SEG_GLYPH_KEYCAP;
     out[idx].text        = NULL;
@@ -190,7 +193,7 @@ static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
     return idx + 1;
   }
   /* Keyboard path */
-  int sc = t->get ? t->get() : 0;
+  int sc = tutorialTokenScancode(id, &keys);
   SDL_Texture *g = (sc > 0) ? glyphForKeyboardScancode((SDL_Scancode)sc) : NULL;
   if (g) {
     out[idx].kind        = TUTORIAL_SEG_GLYPH_PNG;
@@ -208,13 +211,11 @@ static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
   return idx + 1;
 }
 
-int tutorialResolveSegments(uint16_t mid, TutorialSeg *out, int max) {
-  if (!out || max <= 0) return 0;
-  const char *src = langGetText(pickStringId(mid));
-  if (!src) return 0;
+int tutorialResolveText(const char *src, TutorialSeg *out, int max) {
+  if (!out || max <= 0 || !src) return 0;
 
-  /* Touch strings are plain prose — no tokens to expand.  Emit one
-     TEXT segment that points at the live language string. */
+  /* Plain prose — no tokens to expand.  Emit one TEXT segment that points
+     at the caller's own string. */
   if (!strchr(src, '{')) {
     out[0].kind        = TUTORIAL_SEG_TEXT;
     out[0].text        = src;
@@ -223,32 +224,81 @@ int tutorialResolveSegments(uint16_t mid, TutorialSeg *out, int max) {
     return 1;
   }
 
-  int idx    = 0;
-  int bufPos = 0;
-  const char *runStart = src;
-  while (*src && idx < max) {
-    if (*src == '{') {
-      int matched = 0;
-      for (int j = 0; j < kTokenCount; j++) {
-        size_t tlen = strlen(kTokens[j].token);
-        if (strncmp(src, kTokens[j].token, tlen) != 0) continue;
-        if (src > runStart) {
-          idx = emitText(out, idx, max, &bufPos, runStart, (int)(src - runStart));
-          if (idx >= max) break;
-        }
-        idx = emitGlyphForToken(out, idx, max, &bufPos, &kTokens[j]);
-        src += tlen;
-        runStart = src;
-        matched = 1;
-        break;
-      }
-      if (!matched) src++;
+  TutorialPiece pieces[TUTORIAL_SEG_MAX];
+  const char   *rest = NULL;
+  int           count;
+  int           idx    = 0;
+  int           bufPos = 0;
+  int           i;
+  if (max > TUTORIAL_SEG_MAX) max = TUTORIAL_SEG_MAX;
+  tutorialBufFull = false;
+  count = tutorialTokensSplit(src, pieces, max, &rest);
+  for (i = 0; i < count; i++) {
+    if (pieces[i].id == TT_COUNT) {
+      idx = emitText(out, idx, max, &bufPos, pieces[i].start,
+                     (int)pieces[i].len);
     } else {
-      src++;
+      idx = emitGlyphForToken(out, idx, max, &bufPos, pieces[i].id);
     }
   }
-  if (idx < max && src > runStart) {
-    idx = emitText(out, idx, max, &bufPos, runStart, (int)(src - runStart));
+  if (tutorialBufFull || (rest != NULL && *rest != '\0')) {
+    /* More pieces than segments, or more text than the buffer holds: the
+       rest is not drawn. Said once, as the text comes again every frame. */
+    static bool warned = false;
+    if (!warned) {
+      WB_LOG_WARN(WB_LOG_CAT_GUI, "tutorial: a text is too long to draw "
+                  "whole; drew %d of its pieces", idx);
+      warned = true;
+    }
   }
   return idx;
 }
+
+/* A token in words, for a controller: a plain line has no room for a
+   glyph, so it names the button ("Shoot ... with the fire button"), in
+   the player's language. The quick-build keys are picked with the build
+   tool's button. The gunsight buttons are named by what they do: a player
+   may rebind them, and the Steam and SDL defaults put them on opposite
+   shoulders. */
+static const uint16_t kTokenWordsPad[TT_COUNT] = {
+  [TT_ACCEL]        = STR_TUTTOK_PAD_ACCEL,
+  [TT_BRAKE]        = STR_TUTTOK_PAD_BRAKE,
+  [TT_LEFT]         = STR_TUTTOK_PAD_LEFT,
+  [TT_RIGHT]        = STR_TUTTOK_PAD_RIGHT,
+  [TT_FIRE]         = STR_TUTTOK_PAD_FIRE,
+  [TT_MINE]         = STR_TUTTOK_PAD_MINE,
+  [TT_SCROLL_UP]    = STR_TUTTOK_PAD_SCROLL_UP,
+  [TT_SCROLL_DOWN]  = STR_TUTTOK_PAD_SCROLL_DOWN,
+  [TT_SCROLL_LEFT]  = STR_TUTTOK_PAD_SCROLL_LEFT,
+  [TT_SCROLL_RIGHT] = STR_TUTTOK_PAD_SCROLL_RIGHT,
+  [TT_DISMISS]      = STR_TUTTOK_PAD_DISMISS,
+  [TT_BUILD_MODE]   = STR_TUTTOK_PAD_BUILD_MODE,
+  [TT_BUILD_PLACE]  = STR_TUTTOK_PAD_BUILD_PLACE,
+  [TT_BUILD_TOOL]   = STR_TUTTOK_PAD_BUILD_TOOL,
+  [TT_QUICK_TREE]   = STR_TUTTOK_PAD_BUILD_TOOL,
+  [TT_QUICK_ROAD]   = STR_TUTTOK_PAD_BUILD_TOOL,
+  [TT_QUICK_WALL]   = STR_TUTTOK_PAD_BUILD_TOOL,
+  [TT_QUICK_PILL]   = STR_TUTTOK_PAD_BUILD_TOOL,
+  [TT_QUICK_MINE]   = STR_TUTTOK_PAD_BUILD_TOOL,
+  [TT_GUN_UP]       = STR_TUTTOK_PAD_GUN_UP,
+  [TT_GUN_DOWN]     = STR_TUTTOK_PAD_GUN_DOWN,
+};
+
+static const char *plainTokenName(TutorialTokenId id, void *ctx) {
+  const TutorialInput input = tutorialInputNow();
+  (void)ctx;
+  if (input == TUTORIAL_INPUT_CONTROLLER) {
+    const char *words = langGetText(kTokenWordsPad[id]);
+    return words ? words : "";
+  }
+  if (input == TUTORIAL_INPUT_TOUCH) {
+    const char *words = touchTokenWords(id);
+    if (words) return words;
+  }
+  return scancodeName(tutorialTokenScancode(id, &keys));
+}
+
+void tutorialExpandTextPlain(const char *src, char *out, size_t cap) {
+  tutorialTokensExpand(src, out, cap, plainTokenName, NULL);
+}
+

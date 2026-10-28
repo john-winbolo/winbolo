@@ -6,8 +6,12 @@
 /*
  * android_frontend.c - Frontend callbacks and window functions for Android
  *
- * Provides the frontend callbacks that the bolo engine calls, plus all
- * the window* function implementations. Modeled on src/wasm/main_wasm.c.
+ * The window* set this driver keeps for itself and the frontEnd* callbacks
+ * that draw into the SDL3 renderer, as src/gui/ios/winbolo_ios.m keeps its
+ * own. Everything that carries sim-state logic (the active-sim test, the
+ * time-limit game over, the settings toggles
+ * that tell a running game) comes from client_frontend_common.c, the one
+ * body every platform calls; see "Platform variants" in docs/ARCHITECTURE.md.
  */
 
 #include <SDL3/SDL.h>
@@ -28,19 +32,20 @@
 #include "../gui/input.h"
 #include "../gui/lang.h"
 #include "../gui/sound.h"
+#include "../gui/voice.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/build_cursor.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
-#include "players_panel.h"
+#include "../gui/ui_mode.h"
+#include "client_frontend_common.h"
 
 /* -------------------------------------------------------
  * Externs from main_android.c
  * ------------------------------------------------------- */
 
-extern bool isTutorial;
 extern int frameRate;
 extern bool showGunsight;
 extern bool soundEffects;
@@ -48,12 +53,14 @@ extern bool backgroundSound;
 extern bool useSoundKeepalive;
 extern int  soundVolume;
 extern int  windowMasterVolume;
-extern bool allowNewPlayers;
+extern bool positionalSound;
+extern bool letterboxBarsGray;
 extern bool showNewswireMessages;
 extern bool showAssistantMessages;
 extern bool showAIMessages;
 extern bool showNetworkStatusMessages;
 extern bool showNetworkDebugMessages;
+extern bool allowNewPlayers;
 extern bool autoScrollingEnabled;
 extern BYTE zoomFactor;
 extern bool showPillLabels;
@@ -61,23 +68,16 @@ extern bool showBaseLabels;
 extern bool labelSelf;
 extern labelLen labelMsg;
 extern labelLen labelTank;
-extern bool isInMenu;
 extern keyItems keys;
 
 extern bool drawBusy;
 extern bool winboloQuit;
 extern bool finishedLoop;
-extern bool showAllianceReq;
 
 extern DWORD dwSysFrameTotal;
-extern DWORD dwSysFrame;
 extern DWORD dwSysGameTotal;
-extern DWORD dwSysGame;
 extern DWORD dwSysBrainTotal;
-extern DWORD dwSysBrain;
 
-extern DWORD oldTick;
-extern DWORD ttick;
 extern time_t ticks;
 
 /* -------------------------------------------------------
@@ -93,6 +93,7 @@ void sdl3MessageHandler(const char *message, const char *title) {
  * winbolo.h function implementations
  * ------------------------------------------------------- */
 
+void *windowWnd(void) { return NULL; }
 void windowReCreate(void)  { }
 /* Raised only by windowSetQuitting, exactly as on the desktop: winboloQuit
  * cannot answer the question on its own, because the game loop sets it TRUE
@@ -127,19 +128,33 @@ void windowSetKeys(keyItems *value) { keys = *value; }
 void windowSetZoomFactor(BYTE amount)  { zoomFactor = amount; }
 BYTE windowGetZoomFactor(void)         { return zoomFactor; }
 
+/* The touch layout rebuilds the window and renderer for a zoom change, as
+   the iOS touch layout does; ImGui is torn down first because its textures
+   were made on the renderer that goes. */
 void windowZoomChange(BYTE amount, bool fromDragResize) {
   (void)fromDragResize;  /* Android doesn't use resize detection */
   if (amount == zoomFactor) return;
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] windowZoomChange: %d -> %d", zoomFactor, amount);
+  /* A tablet's classic screen reaches this from the settings' Window Size
+     choice. docs/ARCHITECTURE.md ("Renderer / window lifetime") forbids
+     recreating the window and renderer for a zoom change: other modules'
+     textures were made on the renderer and would be left pointing at a
+     destroyed one. So the desktop layout reconfigures in place, as the
+     desktop and the iPad do. The touch layout keeps its rebuild below. */
+  if (!uiModeIsTablet()) {
+    drawBusy = TRUE;
+    clientMutexWaitFor();
+    sdl3DrawReconfigureZoom(amount);
+    clientMutexRelease();
+    drawBusy = FALSE;
+    windowSetZoomFactor(amount);
+    return;
+  }
   drawBusy = TRUE;
   clientMutexWaitFor();
+  sdl3ImguiCleanup();
   sdl3DrawCleanup();
   sdl3DrawSetup(amount);
-  clientMutexRelease();
-  drawBusy = FALSE;
-  windowSetZoomFactor(amount);
-
-  /* Re-initialise ImGui on the new window/renderer */
   {
     SDL_Window *win = sdl3DrawGetWindow();
     SDL_Renderer *ren = sdl3DrawGetRenderer();
@@ -147,6 +162,9 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
       sdl3ImguiSetup(win, ren);
     }
   }
+  clientMutexRelease();
+  drawBusy = FALSE;
+  windowSetZoomFactor(amount);
 }
 
 void windowSetFrameRate(int newFrameRate, bool setTimer) {
@@ -154,38 +172,13 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
   frameRate = newFrameRate;
 }
 
-/* Menu toggles */
-void windowShowGunsight_toggle(ClientSim *cs) {
-  showGunsight = !showGunsight;
-  clientSimSetGunsight(cs, showGunsight);
-}
-void windowAutomaticScrolling_toggle(ClientSim *cs) {
-  autoScrollingEnabled = !autoScrollingEnabled;
-  if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
-}
-void windowShowPillLabels_toggle(ClientSim *cs) {
-  BYTE count, total;
-  showPillLabels = !showPillLabels;
-  sdl3DrawSetPillsStatusClear();
-  total = clientSimGetPillCount(cs);
-  for (count = 1; count <= total; count++) {
-    BYTE pillStat = clientSimGetPillAlliance(cs, count);
-    sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
-  }
-  sdl3DrawCopyPillsStatus(0, 0);
-}
-void windowShowBaseLabels_toggle(ClientSim *cs) {
-  BYTE count, total;
-  showBaseLabels = !showBaseLabels;
-  sdl3DrawSetBasesStatusClear();
-  total = clientSimGetBaseCount(cs);
-  for (count = 1; count <= total; count++) {
-    BYTE baseStat = clientSimGetBaseAlliance(cs, count);
-    sdl3DrawStatusBase(count, baseStat, showBaseLabels);
-  }
-  sdl3DrawCopyBasesStatus(0, 0);
-}
+/* windowShowGunsight_toggle, windowAutomaticScrolling_toggle,
+   windowShowPillLabels_toggle, windowShowBaseLabels_toggle, windowKeyPressed,
+   windowSmoothScrolling_toggle and frontEndRedrawAll come from
+   client_frontend_common.c, the one body every platform calls. */
+
 void windowSoundEffects_toggle(void)          { soundEffects = !soundEffects; }
+void windowPositionalSound_toggle(void)       { positionalSound = !positionalSound; }
 void windowBackgroundSoundChange_toggle(void) {
   backgroundSound = !backgroundSound;
   if (soundEffects == TRUE) {
@@ -204,36 +197,42 @@ void windowSetSoundVolume(int pct) {
   soundVolume = pct;
   soundSetEffectsVolume(pct);
 }
+/* Master reaches the mixer and the voice module separately: voice has its own
+ * streams and its own gain, and nothing downstream of here covers both. */
 void windowSetMasterVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   windowMasterVolume = pct;
   soundSetMasterVolume(pct);
+  voiceSetMasterVolume((float)pct / 100.0f);
 }
-void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
-  allowNewPlayers = !allowNewPlayers;
-  clientSimSetAllowNewPlayers(cs, allowNewPlayers);
-}
-void windowMenuNewswire_toggle(ClientSim *cs)    { showNewswireMessages = !showNewswireMessages; if (cs) clientSimShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages); }
-void windowMenuAssistant_toggle(ClientSim *cs)   { showAssistantMessages = !showAssistantMessages; if (cs) clientSimShowMessages(cs, MSG_ASSISTANT, showAssistantMessages); }
-void windowMenuAI_toggle(ClientSim *cs)          { showAIMessages = !showAIMessages; if (cs) clientSimShowMessages(cs, MSG_AI, showAIMessages); }
-void windowMenuNetwork_toggle(ClientSim *cs)     { showNetworkStatusMessages = !showNetworkStatusMessages; if (cs) clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages); }
-void windowMenuNetworkDebug_toggle(ClientSim *cs){ showNetworkDebugMessages = !showNetworkDebugMessages; if (cs) clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages); }
 void windowLabelOwnTank_toggle(ClientSim *cs)    { labelSelf = !labelSelf; if (cs) clientSimSetLabelOwnTank(cs, labelSelf); }
 void windowSetMessageLabelLen(ClientSim *cs, labelLen n){ labelMsg = n; if (cs) clientSimSetLabelMessage(cs, labelMsg); }
 void windowSetTankLabelLen(ClientSim *cs, labelLen n)   { labelTank = n; if (cs) clientSimSetLabelTankLabel(cs, labelTank); }
-void windowNewGame(void)                 { winboloQuit = FALSE; }
-void windowQuit(void)                    { winboloQuit = TRUE; }
 
-/* Window show/hide — no-ops for now (no ImGui panels on Android yet) */
-void windowShowGameInfo(windowShowRequest req) { (void)req; }
-void windowShowSysInfo(windowShowRequest req)  { (void)req; }
-void windowShowNetInfo(windowShowRequest req)  { (void)req; }
+/* windowMenuAllowNewPlayers_toggle and the five message toggles are in
+   client_frontend_common.c: they also tell the running game. */
+
+/* Leaving a game: the loop in main_android.c ends and goes back to the
+   menu, as it does when a game ends. */
+void windowNewGame(void) {
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] windowNewGame: leaving game");
+  winboloQuit = FALSE;
+  finishedLoop = TRUE;
+}
+void windowQuit(void)                    { }
+
+/* The Session Info panels, drawn in-window as the web's are. */
+void windowShowGameInfo(windowShowRequest req) { sdl3ImguiShowGameInfo(req == wsrOpen); }
+void windowShowSysInfo(windowShowRequest req)  { sdl3ImguiShowSysInfo(req == wsrOpen); }
+void windowShowNetInfo(windowShowRequest req)  { sdl3ImguiShowNetInfo(req == wsrOpen); }
 void windowShowSetPlayerName(windowShowRequest req) { (void)req; }
-void windowShowSendMessages(windowShowRequest req)  { (void)req; }
-void windowShowSetKeys(windowShowRequest req)  { (void)req; }
+void windowShowSendMessages(windowShowRequest req)  { sdl3ImguiShowSendMsg(req == wsrOpen); }
+void windowShowSetKeys(windowShowRequest req)  { if (req == wsrOpen) sdl3ImguiShowKeySetup(); }
 void windowShowAboutBox(void)           { }
-bool windowShowAllianceRequest(void)    { return FALSE; }
+
+/* Alliance requests from other players are shown, as on the desktop. */
+bool windowShowAllianceRequest(void)    { return TRUE; }
 void windowDisableSound(void)           { soundEffects = FALSE; useSoundKeepalive = FALSE; }
 bool windowGetBackgroundSound(void)     { return backgroundSound; }
 void windowRedrawAll(ClientSim *cs) {
@@ -241,14 +240,23 @@ void windowRedrawAll(ClientSim *cs) {
   sdl3DrawRedrawAll(cs, clientSimGetCurrentBuildSelect(cs), NULL, showPillLabels, showBaseLabels);
   clientMutexRelease();
 }
-void *windowWnd(void) { return NULL; }
 
-void windowSaveMap(ClientSim *cs) { (void)cs; }
-
-void windowKeyPressed(ClientSim *cs, int keyCode) {
-  if (keyCode == keys.kiTankView) clientSimTankView(cs);
-  else if (keyCode == keys.kiPillView) clientSimPillView(cs, 0, 0);
+/* No save dialog on Android: the map goes into a Maps folder in the app's
+   own storage under a made-up name, and the message box names the file. */
+void windowSaveMap(ClientSim *cs) {
+  char *pref = SDL_GetPrefPath("WinBolo", "WinBolo");
+  char dir[FILENAME_MAX];
+  if (!pref || !pref[0]) {
+    SDL_free(pref);
+    imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+    return;
+  }
+  snprintf(dir, sizeof(dir), "%sMaps", pref);
+  SDL_free(pref);  /* SDL_GetPrefPath allocates; the caller frees it */
+  clientFrontSaveMapAutoNamed(cs, dir);
 }
+
 void windowButtonAdd(int keyCode)    { (void)keyCode; }
 void windowButtonRemove(int keyCode) { (void)keyCode; }
 void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
@@ -257,23 +265,25 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
 void windowStartTutorial(void) { }
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
-/* Active-cs gate — see desktop frontend in src/gui/sdl3/winbolo.c for
- * the rationale. NULL = no registration yet; calls fall through. */
-static ClientSim *s_activeUiCs = NULL;
+/* The Full Screen choice from the settings dialog. An Android window
+   always fills the screen, so only the preference is recorded; with it on
+   the in-window map fills the screen in place of the game view's square. */
+void windowFullScreenChoose(bool on) {
+  gameFrontFullScreen = on;
+  gameFrontSaveCurrentPrefs();
+}
 
-void frontEndSetActiveClientSim(struct ClientSim *cs) {
-  if (cs != s_activeUiCs) {
-    /* Drop the previous game's latched build target: it is the square a tap
-       builds at, and it outlives the ClientSim that set it, so without this
-       the first tap of the next game is dispatched to a tile chosen in the
-       last one. */
-    buildCursorReset();
-  }
-  s_activeUiCs = cs;
+/* Gray or black letterbox bars, from Settings. */
+void windowLetterboxBarsGray_toggle(void) {
+  letterboxBarsGray = !letterboxBarsGray;
+  gameFrontSaveCurrentPrefs();
 }
 
 /* -------------------------------------------------------
- * Frontend callbacks — called by backend (bolo engine)
+ * Frontend callbacks — called by the sim
+ *
+ * frontEndSetActiveClientSim and the active-sim test the callbacks here
+ * make (clientFrontIsActiveUiSim) come from client_frontend_common.c.
  * ------------------------------------------------------- */
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
@@ -297,73 +307,89 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 }
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   BYTE fullShells, fullMines, fullArmour, fullTrees;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
   sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
                          fullShells, fullMines, fullArmour, fullTrees);
 }
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   BYTE fullShells, fullMines, fullArmour;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
   sdl3DrawStatusBaseBars(0, 0, shells, mines, armour,
                          fullShells, fullMines, fullArmour, FALSE);
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (soundEffects == TRUE) soundPlayEffect(value);
 }
 
 void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
                           uint16_t gainL, uint16_t gainR) {
-  (void)gainL; (void)gainR;
-  frontEndPlaySound(cs, value);
+  if (!clientFrontIsActiveUiSim(cs)) return;
+  if (soundEffects) {
+    /* The player has turned positional sound off, so every sound plays
+       centred; the near/far variant is already chosen. */
+    if (!positionalSound) {
+      gainL = SOUND_GAIN_UNITY;
+      gainR = SOUND_GAIN_UNITY;
+    }
+    soundPlayEffectPan(value, gainL, gainR);
+  }
 }
 
 void windowPlaySound(sndEffects value) {
   if (soundEffects == TRUE) soundPlayEffect(value);
 }
 
+/* The three status callbacks also fire from the hosted server's tick on
+   the SDL timer thread, where a renderer call races the main thread's
+   present. The per-frame render pass repaints every icon from sim state,
+   so off the render thread the direct draw is skipped, as the desktop
+   driver does. */
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
   sdl3DrawCopyPillsStatus(0, 0);
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusTank(tankNum, ts);
   sdl3DrawCopyTanksStatus(0, 0);
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
   sdl3DrawCopyBasesStatus(0, 0);
 }
 
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (drawBusy == FALSE) sdl3DrawMessages(0, 0, top, bottom);
 }
 
 void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (drawBusy == FALSE) sdl3DrawKillsDeaths(0, 0, kills, deaths);
 }
 
 void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   clientMutexWaitFor();
   sdl3DrawSetManStatus(0, 0, isDead, angle);
   clientMutexRelease();
 }
 
 void frontEndManClear(ClientSim *cs) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   clientMutexWaitFor();
   sdl3DrawSetManClear();
   sdl3DrawCopyManStatus(0, 0);
@@ -386,19 +412,31 @@ void frontEndAudioReturningToLobby(bool active) {
   soundSetReturningToLobby(active);
 }
 
-void frontEndGameOver(ClientSim *cs) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+/* frontEndGameOver is in client_frontend_common.c; these are this driver's
+   parts of it. Every time-limit game over leaves the game: a single-player
+   round connects passively, as on the desktop, so the web's test for a
+   practice round that ends in its lobby does not apply. */
+bool windowGameOverEndsGame(ClientSim *cs) {
+  (void)cs;
+  return TRUE;
+}
+
+void windowGameOverStopTicks(void) {
+}
+
+void windowGameOverLeave(void) {
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Game over (time limit expired)");
   finishedLoop = TRUE;
 }
 
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   sdl3ImguiClearPlayer((unsigned char)value);
 }
+
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
   char cc[3];
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (!clientSimIsRunning(cs)) {
     cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
     sdl3ImguiSetPlayer((unsigned char)value, str, cc);
@@ -410,26 +448,41 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
   sdl3ImguiSetPlayer((unsigned char)value, str, cc);
   sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
 }
+
 void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (!clientSimIsRunning(cs)) return;
   sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
-void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value, uint8_t clientType, uint8_t clientFlags) {
-  (void)cs; (void)value; (void)clientType; (void)clientFlags;
+
+/* Runs off the snapshot path, so it stays cheap: the badge cache the player
+   list draws from is updated and nothing is drawn here. */
+void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value,
+                               uint8_t clientType, uint8_t clientFlags) {
+  if (!clientFrontIsActiveUiSim(cs)) return;
+  sdl3ImguiUpdatePlayerFlags((unsigned char)value, clientType, clientFlags);
 }
+
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
-void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
+
+/* The auto-slowdown and auto-hide-gunsight prefs, from gamefront.c, as on
+   the desktop. */
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) {
+  extern bool useAutoslow;
+  extern bool useAutohide;
+  if (cs == NULL) return;
+  clientSimSetTankAutoSlowdown(cs, useAutoslow);
+  clientSimSetTankAutoHideGunsight(cs, useAutohide);
+}
+
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }
 
-void frontEndRedrawAll(ClientSim *cs) { windowRedrawAll(cs); }
-
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   showGunsight = !isShown;
   clientSimSetGunsight(cs, showGunsight);
 }
@@ -437,13 +490,6 @@ void frontEndShowGunsight(ClientSim *cs, bool isShown) {
 void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
   sdl3ImguiShowAllianceRequest(playerName, playerNum);
 }
-
-bool frontEndTutorial(BYTE pos) {
-  (void)pos;
-  return FALSE;
-}
-
-void frontEndTutorialReset(void) { }
 
 /* -------------------------------------------------------
  * Misc required symbols
@@ -455,7 +501,9 @@ int winboloCC(void)             { return 0; }
 void *dialogAllianceCreate(void)                  { return NULL; }
 void dialogAllianceDestroy(void *dlg)             { (void)dlg; }
 void dialogAllianceSetName(char *playerName, BYTE playerNum) {
-  (void)playerName; (void)playerNum;
+  if (playerName != NULL) {
+    sdl3ImguiShowAllianceRequest(playerName, playerNum);
+  }
 }
 
 bool winUtilWBSubDirExist(char *subDirName) {

@@ -2,20 +2,42 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
+    <!-- Voice chat's microphone. Asked for at run time the first time voice
+         opens the recording device, not at launch. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- Predictive back off: with it on, which is the default at target 36,
+         Android handles the Back key itself and never dispatches it to the
+         app, so the activity ends from anywhere, a joined game included.
+         Off, the key reaches SDL, which hands it to the game as a key event
+         (main_android.c). -->
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
+        android:enableOnBackInvokedCallback="false"
         android:hasCode="true">
         <meta-data android:name="io.sentry.dsn" android:value="${sentryDsn}" />
-        <meta-data android:name="io.sentry.release" android:value="WinBolo-Android@1.18" />
+        <!-- The release Sentry files crashes under: WinBolo-Android@<versionName>,
+             set by build.gradle.kts from cmake/bolo_version.cmake. -->
+        <meta-data android:name="io.sentry.release" android:value="${sentryRelease}" />
         <meta-data android:name="io.sentry.tags.executable" android:value="WinBolo-Android" />
+        <!-- One instance, so a link or recording opened while the app runs
+             reaches onNewIntent; with the default launch mode Android starts
+             a second activity instance for a VIEW intent instead, and the
+             SDL activity ends the process when that happens. -->
+        <!-- Every configuration change the activity can take without being
+             recreated, SDL's own set: a recreation ends the running game,
+             and a hosted one with it. uiMode is the dark-mode toggle,
+             smallestScreenSize a fold or a multi-window resize. -->
         <activity
             android:name=".WinBoloActivity"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:screenOrientation="sensorLandscape"
             android:windowLayoutInDisplayCutoutMode="shortEdges"
             android:keepScreenOn="true"
+            android:launchMode="singleTask"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -27,6 +49,39 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="winbolo"/>
             </intent-filter>
+            <!-- A .wbv recording from another app, matched on the extension
+                 whatever type the provider reports. application/octet-stream
+                 is not taken on its own: it would offer WinBolo for every
+                 binary file, so a document URI that carries no name (one
+                 from the Downloads app, say) is not matched. The path is
+                 tested in both forms because pathPattern's glob does not
+                 match a name with more than one dot and pathSuffix is only
+                 read from API 31. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:scheme="content"/>
+                <data android:scheme="file"/>
+                <data android:host="*"/>
+                <data android:mimeType="*/*"/>
+                <data android:pathPattern=".*\\.wbv"/>
+                <data android:pathPattern=".*\\..*\\.wbv"/>
+                <data android:pathPattern=".*\\..*\\..*\\.wbv"/>
+                <data android:pathSuffix=".wbv"/>
+            </intent-filter>
         </activity>
+        <!-- Serves a recording or a clip GIF from the app's files or cache
+             directory (res/xml/file_paths.xml) to the app the share sheet
+             picks (WinBoloActivity.shareFile), which gets a one-off read
+             grant on the content URI; nothing else can reach the provider. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
     </application>
 </manifest>

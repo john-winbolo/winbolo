@@ -1,0 +1,185 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * The rules behind the recap's clip GIFs that do not need ImGui: the length
+ * the transport's GIF button records and where that length sits on the seek
+ * bar, and the small metadata file written next to each GIF in the gallery
+ * folder, with the scan that lists them newest first.
+ *
+ * Plain C over SDL and cJSON, split out of lobby_clip_gif.cpp and
+ * lobby_reel.cpp so test_clip_gif_core.c drives the same code the UI runs.
+ */
+
+#ifndef CLIP_GIF_CORE_H
+#define CLIP_GIF_CORE_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ── Length ──────────────────────────────────────────────────────────
+ * The export records one frame every 100 ms (10 fps), so a length is held in
+ * whole frames. The shortest and longest lengths are the export's own frame
+ * floor and cap (10 and 150 frames); the default is the 5 s the transport's
+ * button recorded before the length could be changed. */
+#define CLIP_GIF_LEN_STEP_MS    100u
+#define CLIP_GIF_LEN_MIN_MS     1000u
+#define CLIP_GIF_LEN_MAX_MS     15000u
+#define CLIP_GIF_LEN_DEFAULT_MS 5000u
+
+/* Rounds lenMs to the nearest whole frame and holds it inside
+ * [CLIP_GIF_LEN_MIN_MS, CLIP_GIF_LEN_MAX_MS]. Then, when totalMs is known
+ * (not 0), holds it to the replay time left after curMs, so a clip does not
+ * run past the end of the round. The minimum still applies near the end: a
+ * clip is never shorter than CLIP_GIF_LEN_MIN_MS. */
+uint32_t clipGifLenClampMs(uint32_t lenMs, uint32_t curMs, uint32_t totalMs);
+
+/* Seconds typed into the length field, to a length in ms, clamped as above.
+ * A negative or not-a-number value gives the minimum. */
+uint32_t clipGifLenFromSeconds(float secs, uint32_t curMs, uint32_t totalMs);
+
+/* A length in ms, as the seconds the length field shows. */
+float clipGifLenToSeconds(uint32_t lenMs);
+
+/* ── Recording mode ──────────────────────────────────────────────────
+ * The reel's GIF controls (the GIF button, the length field and marker, the
+ * gallery button, the crop button and frame, and the GIF button on each
+ * highlight row) show only in recording mode, which the movie camera button
+ * on the transport row turns on and off.
+ *
+ * True when the GIF controls show: in recording mode, and also while a
+ * capture is running, so the controls of a GIF that is being made do not go
+ * away until it ends. */
+bool clipGifToolsShown(bool recordMode, bool captureActive);
+
+/* ── Timeline position ───────────────────────────────────────────────
+ * The seek bar maps 0..totalMs onto the screen range [x0, x1] (the range
+ * the slider's grab centre moves over). These convert between a time and a
+ * screen x on that range, and between the clip's end handle and a length. */
+
+/* Screen x of timeMs on the bar. Times past totalMs sit at x1. When totalMs
+ * is 0 or the range is empty, the result is x0. */
+float clipGifTimelineX(uint32_t timeMs, uint32_t totalMs, float x0, float x1);
+
+/* The length that puts the clip's end at screen x, for a clip that starts at
+ * curMs. Clamped with clipGifLenClampMs, so dragging the handle before the
+ * playhead gives the minimum and dragging it past the end of the round gives
+ * the time left. */
+uint32_t clipGifLenFromTimelineX(float x, uint32_t curMs, uint32_t totalMs,
+                                 float x0, float x1);
+
+/* ── Metadata ────────────────────────────────────────────────────────
+ * One small JSON file next to each GIF, with the same base name and the
+ * extension .json. It says when the GIF was made, on which map and with which
+ * players. A GIF with no metadata file, or with one that cannot be read, is
+ * still listed: its time then comes from the file itself and the map and
+ * players are left empty. */
+#define CLIP_GIF_META_VERSION     1
+#define CLIP_GIF_META_MAX_PLAYERS 16
+#define CLIP_GIF_META_NAME_LEN    64
+#define CLIP_GIF_META_MAP_LEN     64
+#define CLIP_GIF_META_FILE_LEN    160
+
+typedef struct {
+    int64_t  createdUnix;    /* seconds since 1970-01-01 UTC */
+    char     map[CLIP_GIF_META_MAP_LEN];
+    int      playerCount;    /* 0..CLIP_GIF_META_MAX_PLAYERS */
+    char     players[CLIP_GIF_META_MAX_PLAYERS][CLIP_GIF_META_NAME_LEN];
+    uint32_t durationMs;     /* 0 when not known */
+    int      width;          /* 0 when not known */
+    int      height;         /* 0 when not known */
+    /* The GIF's file name, with no folder. Filled by the scan from the file
+     * it found, never trusted from the metadata text. */
+    char     gifFile[CLIP_GIF_META_FILE_LEN];
+    /* False when the metadata file was missing or could not be read, and the
+     * fields above other than createdUnix and gifFile are empty. */
+    bool     hasMeta;
+} ClipGifMeta;
+
+/* The metadata as JSON text. Returns NULL on failure; the caller releases the
+ * text with clipGifMetaFreeJson. gifFile and hasMeta are not written. */
+char *clipGifMetaToJson(const ClipGifMeta *m);
+void  clipGifMetaFreeJson(char *json);
+
+/* Reads metadata out of JSON text of len bytes (the text need not end in a
+ * NUL). Returns false, with *out cleared, when the text is not a JSON object
+ * or has no usable "created" time. Fields of the wrong type are left empty,
+ * long strings are cut to fit, and players past CLIP_GIF_META_MAX_PLAYERS are
+ * dropped. On success hasMeta is true; gifFile is left empty. */
+bool clipGifMetaFromJson(const char *text, size_t len, ClipGifMeta *out);
+
+/* Writes / reads one metadata file. Paths are UTF-8. */
+bool clipGifMetaWriteFile(const char *path, const ClipGifMeta *m);
+bool clipGifMetaReadFile(const char *path, ClipGifMeta *out);
+
+/* Sorts newest first: by createdUnix, larger first, and for the same time by
+ * gifFile, later name first, so the order does not depend on the scan. */
+void clipGifMetaSortNewestFirst(ClipGifMeta *items, int count);
+
+/* Lists every .gif file in dir with its metadata, newest first. Returns the
+ * count and sets *out to an SDL_malloc'd array the caller frees with
+ * SDL_free (NULL when the count is 0). A metadata file with no GIF beside it
+ * is not listed. A folder that does not exist gives 0. */
+int clipGifGalleryScan(const char *dir, ClipGifMeta **out);
+
+/* The metadata file's path for a GIF's path: the same path with its .gif
+ * extension (any case) changed to .json, or .json added when it has none.
+ * False when it does not fit in outLen. */
+bool clipGifMetaPathFor(const char *gifPath, char *out, size_t outLen);
+
+/* createdUnix as local "YYYY-MM-DD HH:MM", for the gallery's list. */
+void clipGifFormatTime(int64_t createdUnix, char *out, size_t outLen);
+
+/* createdUnix as local "YYYYMMDD-HHMMSS", for a file name. */
+void clipGifFormatFileStamp(int64_t createdUnix, char *out, size_t outLen);
+
+/* ── Preview ─────────────────────────────────────────────────────────
+ * The most memory the gallery's preview gives the decoded frames of one GIF
+ * (RGBA, 4 bytes a pixel). A 15 s export at the 480 px width is about 78 MB;
+ * a GIF that needs more, such as a long crop of a large view, is not
+ * decoded and the window says it is too large to show. The limit also counts
+ * the decoder's own working buffers (STBI_GIF_WORK_FRAMES frames), so the
+ * frames and those buffers together stay within it. The gallery also does
+ * not read a .gif file larger than this. */
+#define CLIP_GIF_PREVIEW_MAX_BYTES ((size_t)256u * 1024u * 1024u)
+
+/* ── Text ────────────────────────────────────────────────────────────
+ * The gallery shows lines longer than the lang module's {string1} slot
+ * (63 bytes), such as the list of players or a file name, so it puts them
+ * into the translated text itself. */
+
+/* Ends s at byte len, and when that cuts a UTF-8 sequence in two, drops the
+ * part of the sequence that is left so the text ends on a whole character.
+ * s must have room for len + 1 bytes. */
+void clipGifUtf8CutEnd(char *s, size_t len);
+
+/* fmt with every "{string1}" in it changed to value, into out (outLen bytes,
+ * always ended with a NUL). Text that does not fit is cut on a whole UTF-8
+ * character. A NULL value is read as "". */
+void clipGifFillString1(const char *fmt, const char *value, char *out,
+                        size_t outLen);
+
+#ifdef __cplusplus
+}  /* extern "C" */
+#endif
+
+#endif /* CLIP_GIF_CORE_H */

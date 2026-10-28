@@ -38,8 +38,8 @@ typedef struct { long left, top, right, bottom; } RECT;
 
 /* ---- log viewer stubs (the modal viewer is not built on iOS) ----
  *
- * logViewerRun is in ios_recordings.cpp: the recordings on the phone, played
- * in the reel. */
+ * logViewerRun is in src/gui/mobile/mobile_recordings.cpp: the recordings on
+ * the phone, played in the reel. */
 
 /* gamefront.c reads this after a log viewer run returns, to learn whether
  * the player quit the application from inside it. The modal viewer does not
@@ -47,7 +47,8 @@ typedef struct { long left, top, right, bottom; } RECT;
 bool logViewerAppQuitRequested(void) { return false; }
 
 /* logViewerRunFromMemory, which the WinBolo.net log browser's downloads come
- * to, is in ios_log_player.cpp: it plays the game in the lobby's reel. */
+ * to, is in src/gui/mobile/mobile_log_player.cpp: it plays the game in the
+ * lobby's reel. */
 
 /* ---- window state stubs (provided by sdl3/winbolo.c, not in iOS build) ---- */
 
@@ -79,5 +80,6 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
 void mac_menubar_install_dock_menu(void) {}
 void mac_menubar_refresh(const struct MacMenuState *s) { (void)s; }
 
-/* spectatorRun, the live spectator feed, is in ios_spectator.cpp: it shows
- * the feed in the lobby's reel. */
+/* spectatorRun, the live spectator feed, is in
+ * src/gui/mobile/mobile_spectator.cpp: it shows the feed in the lobby's
+ * reel. */

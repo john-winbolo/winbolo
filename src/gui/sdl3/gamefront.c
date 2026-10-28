@@ -82,6 +82,8 @@
 #include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
+#include "tutorial_maps.h"
+#include "client_frontend_common.h"  /* clientFrontTellScenarioPlayer */
 #include "skin_source.h"
 #include "gfx_settings.h"
 
@@ -114,9 +116,13 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
 #include "dialogs/imgui_wbn_browser.h"
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 #include "dialogs/imgui_connecting.h"
+#endif
+#if defined(__IPHONEOS__)
 #include "../ios/ios_drops.h"  /* iosDropsTakeLog */
+#elif defined(__ANDROID__)
+#include "../../android/android_drops.h"  /* androidDropsTakeLog */
 #endif
 #include "dialogs/imgui_onboarding.h"
 #include "dialogs/imgui_lobby.h"
@@ -405,8 +411,21 @@ int   gameFrontOverviewY = -1;
 int   gameFrontScnPanelX = -1;
 int   gameFrontScnPanelY = -1;
 int   gameFrontScnPanelScale = -1;
-int   gameFrontScnPanelAlpha = -1;
+int   gameFrontScnPanelBgAlpha = -1;
+int   gameFrontScnPanelTextAlpha = -1;
 bool  gameFrontScnPanelCloseAsk = TRUE;
+int   gameFrontScnTextX = -1;
+int   gameFrontScnTextY = -1;
+int   gameFrontScnTextW = -1;
+int   gameFrontScnTextH = -1;
+int   gameFrontScnTextBgAlpha = -1;
+int   gameFrontScnTextTextAlpha = -1;
+bool  gameFrontScnTextShown = TRUE;
+bool  gameFrontScnTextPopped = FALSE;
+int   gameFrontScnTextPopX = -1;
+int   gameFrontScnTextPopY = -1;
+int   gameFrontScnTextPopW = SCN_TEXT_POPOUT_DEFAULT_W;
+int   gameFrontScnTextPopH = SCN_TEXT_POPOUT_DEFAULT_H;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -736,7 +755,11 @@ void gameFrontTickSteamPresenceGame(ClientSim *cs) {
   if (gameFrontSteamPresenceDue()) gameFrontUpdateSteamPresence(cs);
 }
 
-extern bool isTutorial;
+/* The main menu's Tutorial entry: a single-player round on the Tutorial
+ * scenario (TUTORIAL_MENU_MAP and the script beside it). Set by the
+ * openTutorial case and read where the single-player path builds the
+ * server. */
+static bool isScenarioTutorial = FALSE;
 
 /* Used to set the preferences — defined in winbolo.c */
 extern int frameRate;
@@ -811,7 +834,7 @@ static bool SDLCALL gameFrontPrefsLifecycleWatch(void *userdata, SDL_Event *ev) 
 bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSim **out_cs) {
   bool OKStart;
 
-  isTutorial = FALSE;
+  isScenarioTutorial = FALSE;
   password[0] = '\0';
   gameFrontName[0] = '\0';
   gameFrontUdpAddress[0] = '\0';
@@ -1022,14 +1045,14 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     return FALSE;
   }
 
-  clientSimSetAiType(humanSim, isTutorial ? aiNone : compTanks);
+  /* The Tutorial scenario plays with computer tanks allowed, as the server
+   * it runs on was made (see the single-player setup). */
+  clientSimSetAiType(humanSim, isScenarioTutorial ? aiFull : compTanks);
 
-  if (isTutorial == FALSE) {
-    clientMutexWaitFor();
-    clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
-    clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
-    clientMutexRelease();
-  }
+  clientMutexWaitFor();
+  clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
+  clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
+  clientMutexRelease();
 
   if (out_cs) {
     *out_cs = humanSim;
@@ -1214,24 +1237,26 @@ static void gameFrontApplyVisibilityPrefs(ServerSim *sim) {
 /* -------------------------------------------------------
  * gameFrontDialogs — setup dialog state machine
  * ------------------------------------------------------- */
-/* Whether a map in the background game's directory is one it may show. The
- * tutorial map and Better Best Map Ever are left out by name, and so is any
- * map that is a scenario: one with a script beside it or packed into it,
- * whether or not this process runs scripts. A scenario's rules only hold
- * while its script runs, and the background game runs none, so what it
- * would show is the scenario's map played as something it is not. */
+/* Whether a map in the background game's directory is one it may show.
+ * bgMapNameAllowed (tutorial_maps.h) leaves out every map in a folder, the
+ * tutorials in data/maps/tutorials among them, and the old tutorial map and
+ * Better Best Map Ever by name. Any map that is a scenario goes too: one
+ * with a script beside it or packed into it, whether or not this process
+ * runs scripts. A scenario's rules only hold while its script runs, and the
+ * background game runs none, so what it would show is the scenario's map
+ * played as something it is not. */
 static bool bgMapAllowed(const char *dir, const char *name) {
     char path[512];
 
-    if (SDL_strcasecmp(name, "Inbuilt Tutorial.map") == 0 ||
-        SDL_strcasecmp(name, "Better Best Map Ever.map") == 0) {
+    if (!bgMapNameAllowed(name)) {
         return false;
     }
     SDL_snprintf(path, sizeof(path), "%s/%s", dir, name);
     return !scenarioHostMapCarriesScript(path);
 }
 
-/* Pick a random .map file from data/maps/ for the background game */
+/* Pick a random .map file from data/maps/ itself (not its folders) for the
+ * background game */
 static bool pickRandomMap(char *out, size_t outLen) {
     const char *dir = "data/maps";
     int count = 0;
@@ -1363,6 +1388,13 @@ static bool gameFrontDialogs(void) {
       openingStates prev = dlgState;
       s_isLanOnly = (dlgState == openLanManual);
       db->udpSetupShow();
+      /* A winbolo:// link that gameFrontHandleUrlOpen kept in fileName for a
+       * restart has now been offered by this dialog; the address globals
+       * carry it from here. Left in fileName, a cancelled join would hand
+       * the link to Single Player as its map name. */
+      if (strncmp(fileName, "winbolo://", 10) == 0) {
+        fileName[0] = '\0';
+      }
       /* dlgState already updated by gameFrontSetDlgState inside the dialog
        * (OnJoin/OnNew/OnCancel all call gameFrontSetDlgState before EndModal).
        * If the dialog stub didn't change state, fall back to welcome
@@ -1437,44 +1469,34 @@ static bool gameFrontDialogs(void) {
       break;
     }
     case openTutorial:
-      /* Reuse the single-player setup path: preload the tutorial map,
-       * disable bots, then drive the state machine through openSetup ->
-       * openFinished so ServerSim / ClientSim / transport are created
-       * the same way as a normal single-player game. */
-      strncpy(fileName, "data/maps/Inbuilt Tutorial.map", FILENAME_MAX - 1);
+      /* The Tutorial scenario: TUTORIAL_MENU_MAP in data/maps/tutorials and
+       * the script beside it, started as a single-player game through the
+       * same openSetup -> openFinished path as any other, so ServerSim,
+       * ClientSim and the transport are made the usual way. The game it
+       * plays on (type, computer tanks, mines, timing, no lobby) is chosen
+       * where the single-player path builds the server, off
+       * isScenarioTutorial. It is not written into the globals here: those
+       * are saved on exit as what the next hosted game opens on, and the
+       * tutorial would replace the player's picks with its own. */
+      strncpy(fileName, TUTORIAL_MENU_MAP, FILENAME_MAX - 1);
       fileName[FILENAME_MAX - 1] = '\0';
-      /* The tutorial's own type, mines, timing and AI are chosen where the
-       * single-player path builds the server, off isTutorial. They are not
-       * written into the globals here: those are saved on exit as what the
-       * next hosted game opens on, and a tutorial would replace the
-       * player's picks with its own. */
+      /* No bots from the player's own setup: the script seats its own. */
       gameFrontBotSetupData.count = 0;
-      /* Raise the client UI flag before setup runs so the very first
-       * tick (which may already place the tank on a trigger row) is
-       * handled by frontEndTutorial. Reset the step sequencer so a
-       * previously-completed tutorial in this session starts fresh. */
-      frontEndTutorialReset();
-      isTutorial = TRUE;
+      isScenarioTutorial = TRUE;
       dlgState = openSetup;
       /* Same failed-finisher handling as the openSetup case above, plus the
-       * tutorial launch state this case set up: gameFrontStart clears
-       * isTutorial and fileName only on entry, so a return to the menu from
-       * inside the dialog loop has to clear them here or the next
+       * launch state this case set up: gameFrontStart clears
+       * isScenarioTutorial and fileName only on entry, so a return to the
+       * menu from inside the dialog loop has to clear them here or the next
        * single-player start inherits the tutorial map and mode. */
       if (gameFrontSetDlgState(openFinished) == FALSE) {
         imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_GAMEFRONTERR_STARTSERVER),
                           IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        isTutorial = FALSE;
+        isScenarioTutorial = FALSE;
         fileName[0] = '\0';
         bgGameSetHiddenByForeground(bgGameGetShared(), false);
         dlgState = openStart;
-        break;
       }
-      /* Mark both sims so tank.c's tutorial stop logic fires
-       * authoritatively on the server and keeps client prediction
-       * consistent. */
-      if (spServerSim != NULL) serverSimSetTutorial(spServerSim, true);
-      if (humanSim != NULL)    clientSimSetTutorial(humanSim, true);
       break;
     case openSettings: {
       const DialogBackend *db = dialogBackendGet();
@@ -1503,15 +1525,20 @@ static bool gameFrontDialogs(void) {
       break;
     case openLogViewer: {
       /* The browser opens again after the local viewer closes, so Open File
-       * is a step inside the browser. Only iOS returns OPEN_LOCAL: its
-       * logViewerRun with no path is the list of recordings on the phone
-       * (ios_recordings.cpp), in place of a file dialog. */
-#if defined(__IPHONEOS__)
+       * is a step inside the browser. Only iOS and Android return OPEN_LOCAL:
+       * their logViewerRun with no path is the list of recordings on the
+       * phone (mobile_recordings.cpp), in place of a file dialog. */
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
       /* A recording opened from Files or Mail plays first; the browser
        * comes up when it closes. */
       {
         char dropped[FILENAME_MAX];
-        if (iosDropsTakeLog(dropped, sizeof(dropped))) {
+#if defined(__IPHONEOS__)
+        bool haveDropped = iosDropsTakeLog(dropped, sizeof(dropped));
+#else
+        bool haveDropped = androidDropsTakeLog(dropped, sizeof(dropped));
+#endif
+        if (haveDropped) {
           logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), dropped, true);
         }
       }
@@ -1813,7 +1840,7 @@ static void gameFrontValidateWbnBeforeJoin(void) {
 
 /* -------------------------------------------------------
  * The steps of a join, shared by the blocking join below
- * and the iOS join screen (gameFrontIosJoin), which waits
+ * and the iOS join screen (gameFrontMobileJoin), which waits
  * for each without blocking.
  * ------------------------------------------------------- */
 
@@ -1995,9 +2022,9 @@ static bool gameFrontJoinFailedAskAgain(const char *failFallback) {
   return FALSE;
 }
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 /* -------------------------------------------------------
- * gameFrontIosJoin — the same join on iOS, where nothing
+ * gameFrontMobileJoin — the same join on mobile, where nothing
  * may hold the main thread for long: the server's info
  * reply and the WinBolo.net token check run on threads of
  * their own, and the join is ticked once a frame, all
@@ -2009,7 +2036,7 @@ static bool gameFrontJoinFailedAskAgain(const char *failFallback) {
 /* A background job the screen polls. Whichever of the job and the screen
  * finishes with it last frees it: the job when the player cancelled first
  * (it cannot be stopped mid-call), the screen otherwise. */
-enum { IOS_JOB_RUNNING = 0, IOS_JOB_DONE, IOS_JOB_ABANDONED };
+enum { MOBILE_JOB_RUNNING = 0, MOBILE_JOB_DONE, MOBILE_JOB_ABANDONED };
 
 typedef struct {
   SDL_AtomicInt state;
@@ -2025,44 +2052,44 @@ typedef struct {
   int rank, rankTotal;
   WbnStats stats;
   bool validateOk, tokenRejected;
-} IosJoinJob;
+} MobileJoinJob;
 
 /* Called by the job when its work is done. */
-static void iosJoinJobFinish(IosJoinJob *job) {
-  if (!SDL_CompareAndSwapAtomicInt(&job->state, IOS_JOB_RUNNING, IOS_JOB_DONE)) {
+static void mobileJoinJobFinish(MobileJoinJob *job) {
+  if (!SDL_CompareAndSwapAtomicInt(&job->state, MOBILE_JOB_RUNNING, MOBILE_JOB_DONE)) {
     SDL_free(job);  /* the screen gave up on it */
   }
 }
 
 /* Called by the screen when the player cancels while the job runs. */
-static void iosJoinJobAbandon(IosJoinJob *job) {
-  if (!SDL_CompareAndSwapAtomicInt(&job->state, IOS_JOB_RUNNING, IOS_JOB_ABANDONED)) {
+static void mobileJoinJobAbandon(MobileJoinJob *job) {
+  if (!SDL_CompareAndSwapAtomicInt(&job->state, MOBILE_JOB_RUNNING, MOBILE_JOB_ABANDONED)) {
     SDL_free(job);  /* it had already finished */
   }
 }
 
-static int SDLCALL iosJoinPingThread(void *data) {
-  IosJoinJob *job = (IosJoinJob *)data;
+static int SDLCALL mobileJoinPingThread(void *data) {
+  MobileJoinJob *job = (MobileJoinJob *)data;
   job->pingOk = discoveryPingServer(job->address, job->port, &job->dpr);
-  iosJoinJobFinish(job);
+  mobileJoinJobFinish(job);
   return 0;
 }
 
-static int SDLCALL iosJoinValidateThread(void *data) {
-  IosJoinJob *job = (IosJoinJob *)data;
+static int SDLCALL mobileJoinValidateThread(void *data) {
+  MobileJoinJob *job = (MobileJoinJob *)data;
   job->validateOk = winbolonetAuthValidateEx(job->token, job->playerName,
                                              &job->rank, &job->rankTotal,
                                              &job->stats, job->errorMsg,
                                              &job->tokenRejected);
-  iosJoinJobFinish(job);
+  mobileJoinJobFinish(job);
   return 0;
 }
 
 /* Starts fn on a thread with a fresh job; NULL if the thread would not
  * start. */
-static IosJoinJob *iosJoinJobStart(SDL_ThreadFunction fn, const char *name,
-                                   IosJoinJob *job) {
-  SDL_SetAtomicInt(&job->state, IOS_JOB_RUNNING);
+static MobileJoinJob *mobileJoinJobStart(SDL_ThreadFunction fn, const char *name,
+                                   MobileJoinJob *job) {
+  SDL_SetAtomicInt(&job->state, MOBILE_JOB_RUNNING);
   SDL_Thread *t = SDL_CreateThread(fn, name, job);
   if (t == NULL) {
     SDL_free(job);
@@ -2072,23 +2099,23 @@ static IosJoinJob *iosJoinJobStart(SDL_ThreadFunction fn, const char *name,
   return job;
 }
 
-static ConnectingStep iosJoinWaitJobStep(void *ctx, const char **stageOut,
+static ConnectingStep mobileJoinWaitJobStep(void *ctx, const char **stageOut,
                                          float *progressOut) {
-  IosJoinJob *job = (IosJoinJob *)ctx;
+  MobileJoinJob *job = (MobileJoinJob *)ctx;
   *stageOut = (job->token[0] != '\0') ? langGetText(STR_DLGWBN_CHECKING)
                                        : langGetText(STR_DLGCONNECTING_PING);
   *progressOut = -1.0f;
-  return (SDL_GetAtomicInt(&job->state) == IOS_JOB_DONE) ? CONNECTING_STEP_DONE
+  return (SDL_GetAtomicInt(&job->state) == MOBILE_JOB_DONE) ? CONNECTING_STEP_DONE
                                                          : CONNECTING_STEP_WAITING;
 }
 
 /* Waits for job behind the screen. TRUE when it finished; FALSE when the
  * player cancelled or quit, and the job then frees itself. */
-static bool iosJoinWaitJob(IosJoinJob *job) {
-  if (imguiConnectingRun(gameFrontUdpAddress, iosJoinWaitJobStep, job)) {
+static bool mobileJoinWaitJob(MobileJoinJob *job) {
+  if (imguiConnectingRun(gameFrontUdpAddress, mobileJoinWaitJobStep, job)) {
     return TRUE;
   }
-  iosJoinJobAbandon(job);
+  mobileJoinJobAbandon(job);
   return FALSE;
 }
 
@@ -2097,37 +2124,37 @@ typedef struct {
   ClientFrontJoinStep result;
   Uint64 startMs;     /* when the join was first stepped */
   Uint64 lastStepMs;  /* when the join was last stepped; 0 before the first */
-} IosJoinWait;
+} MobileJoinWait;
 
 /* The step's contract is about one call every 20 ms, which is also what
  * makes 1500 steps the blocking join's 30 s; the screen draws faster than
  * that, so it steps only once 20 ms have passed. */
-#define IOS_JOIN_STEP_MS 20
-#define IOS_JOIN_STEP_LIMIT 1500
+#define MOBILE_JOIN_STEP_MS 20
+#define MOBILE_JOIN_STEP_LIMIT 1500
 /* The join also gives up after this many milliseconds on the clock. It is
- * IOS_JOIN_STEP_LIMIT x IOS_JOIN_STEP_MS, the blocking join's 30 s. Frames
- * can come further apart than IOS_JOIN_STEP_MS (an old phone, or the app
+ * MOBILE_JOIN_STEP_LIMIT x MOBILE_JOIN_STEP_MS, the blocking join's 30 s. Frames
+ * can come further apart than MOBILE_JOIN_STEP_MS (an old phone, or the app
  * briefly in the background), and then the step count alone would let the
  * wait run well past 30 s. Whichever of the two is reached first ends it. */
-#define IOS_JOIN_TIMEOUT_MS (IOS_JOIN_STEP_LIMIT * IOS_JOIN_STEP_MS)
+#define MOBILE_JOIN_TIMEOUT_MS (MOBILE_JOIN_STEP_LIMIT * MOBILE_JOIN_STEP_MS)
 
-static ConnectingStep iosJoinAwaitStep(void *ctx, const char **stageOut,
+static ConnectingStep mobileJoinAwaitStep(void *ctx, const char **stageOut,
                                        float *progressOut) {
-  IosJoinWait *w = (IosJoinWait *)ctx;
+  MobileJoinWait *w = (MobileJoinWait *)ctx;
   Uint64 now = SDL_GetTicks();
   if (w->lastStepMs == 0) {
     w->startMs = now;
   }
   if (w->result == CLIENT_FRONT_JOIN_WAITING &&
-      now - w->startMs >= IOS_JOIN_TIMEOUT_MS) {
+      now - w->startMs >= MOBILE_JOIN_TIMEOUT_MS) {
     /* Out of time: a limit equal to the steps already taken makes the step
      * settle the landing now, as it does when the step limit is reached. */
     w->lastStepMs = now;
     w->result = clientFrontAwaitJoinStep(humanSim, &w->waited, w->waited);
-  } else if (w->lastStepMs == 0 || now - w->lastStepMs >= IOS_JOIN_STEP_MS) {
+  } else if (w->lastStepMs == 0 || now - w->lastStepMs >= MOBILE_JOIN_STEP_MS) {
     w->lastStepMs = now;
     w->result = clientFrontAwaitJoinStep(humanSim, &w->waited,
-                                         IOS_JOIN_STEP_LIMIT);
+                                         MOBILE_JOIN_STEP_LIMIT);
   }
   /* A server with no lobby sends the map inside this wait; show how much
    * of it has come. */
@@ -2144,7 +2171,7 @@ static ConnectingStep iosJoinAwaitStep(void *ctx, const char **stageOut,
 
 /* The player cancelled, or quit, while the join waited: nothing to report,
  * back to the screen the join came from. */
-static bool iosJoinCancelled(openingStates prevState) {
+static bool mobileJoinCancelled(openingStates prevState) {
   if (humanSim != NULL) {
     frontEndSetActiveClientSim(NULL);
     clientSimDisconnect(humanSim);
@@ -2157,16 +2184,16 @@ static bool iosJoinCancelled(openingStates prevState) {
   return FALSE;
 }
 
-static bool gameFrontIosJoin(openingStates prevState) {
+static bool gameFrontMobileJoin(openingStates prevState) {
   if (!spServerSimActive) {
-    IosJoinJob *job = (IosJoinJob *)SDL_calloc(1, sizeof(IosJoinJob));
+    MobileJoinJob *job = (MobileJoinJob *)SDL_calloc(1, sizeof(MobileJoinJob));
     if (job != NULL) {
       SDL_strlcpy(job->address, gameFrontUdpAddress, sizeof(job->address));
       job->port = gameFrontTargetUdp;
-      job = iosJoinJobStart(iosJoinPingThread, "JoinPing", job);
+      job = mobileJoinJobStart(mobileJoinPingThread, "JoinPing", job);
     }
-    if (job != NULL && !iosJoinWaitJob(job)) {
-      return iosJoinCancelled(prevState);
+    if (job != NULL && !mobileJoinWaitJob(job)) {
+      return mobileJoinCancelled(prevState);
     }
     DiscoveryPingResult dpr;
     bool pingOk;
@@ -2195,12 +2222,12 @@ static bool gameFrontIosJoin(openingStates prevState) {
   prefsFlush();
   {
     /* With no token, gameFrontValidateWbnBeforeJoin only tries Steam, which
-     * iOS does not have, so it returns at once. */
+     * mobile does not have, so it returns at once. */
     char token[256], expiry[256];
     gameFrontGetWinbolonetToken(token, expiry);
-    IosJoinJob *job = NULL;
+    MobileJoinJob *job = NULL;
     if (token[0] != '\0') {
-      job = (IosJoinJob *)SDL_calloc(1, sizeof(IosJoinJob));
+      job = (MobileJoinJob *)SDL_calloc(1, sizeof(MobileJoinJob));
     }
     if (job == NULL) {
       gameFrontValidateWbnBeforeJoin();
@@ -2208,11 +2235,11 @@ static bool gameFrontIosJoin(openingStates prevState) {
       SDL_strlcpy(job->token, token, sizeof(job->token));
       job->rank = -1;
       job->stats.valid = FALSE;
-      job = iosJoinJobStart(iosJoinValidateThread, "JoinValidate", job);
+      job = mobileJoinJobStart(mobileJoinValidateThread, "JoinValidate", job);
       if (job == NULL) {
         gameFrontValidateWbnBeforeJoin();
-      } else if (!iosJoinWaitJob(job)) {
-        return iosJoinCancelled(prevState);
+      } else if (!mobileJoinWaitJob(job)) {
+        return mobileJoinCancelled(prevState);
       } else {
         gameFrontApplyWbnValidate(job->validateOk, job->tokenRejected,
                                   job->playerName, job->rank, job->rankTotal,
@@ -2229,13 +2256,13 @@ static bool gameFrontIosJoin(openingStates prevState) {
     if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
       failFallback = langGetText(STR_GAMEFRONTERR_JOINGAME);
     } else {
-      IosJoinWait w;
+      MobileJoinWait w;
       w.waited = 0;
       w.startMs = 0;
       w.lastStepMs = 0;
       w.result = CLIENT_FRONT_JOIN_WAITING;
-      if (!imguiConnectingRun(gameFrontUdpAddress, iosJoinAwaitStep, &w)) {
-        return iosJoinCancelled(prevState);
+      if (!imguiConnectingRun(gameFrontUdpAddress, mobileJoinAwaitStep, &w)) {
+        return mobileJoinCancelled(prevState);
       }
       if (w.result == CLIENT_FRONT_JOIN_LANDED) {
         gameFrontJoinLanded();
@@ -2250,7 +2277,7 @@ static bool gameFrontIosJoin(openingStates prevState) {
     return FALSE;
   }
 }
-#endif /* __IPHONEOS__ */
+#endif /* __IPHONEOS__ || __ANDROID__ */
 
 /* -------------------------------------------------------
  * gameFrontSetDlgState — dialog state machine transitions
@@ -2306,8 +2333,8 @@ bool gameFrontSetDlgState(openingStates newState) {
     } else {
       gameFrontLobbyServerName[0] = '\0';
     }
-#if defined(__IPHONEOS__)
-    returnValue = gameFrontIosJoin(prevState);
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    returnValue = gameFrontMobileJoin(prevState);
 #else
     if (!spServerSimActive) {
       DiscoveryPingResult dpr;
@@ -2402,26 +2429,46 @@ bool gameFrontSetDlgState(openingStates newState) {
         /* Single-player opens the lobby on the game type, computer tanks and
          * hidden mines the player last picked in a lobby they hosted, the
          * same saved values Internet New and LAN New open on. A player who
-         * has never picked gets an Open game with Full Advantage AI. The
-         * tutorial forces a solo strict-tournament game with no AI and no
-         * time limit, ignoring every saved value. */
-        gameType spGameType    = isTutorial ? gameStrictTournament : gametype;
-        aiType   spAiPolicy    = isTutorial ? aiNone : compTanks;
-        bool     spHiddenMines = isTutorial ? FALSE : hiddenMines;
-        int32_t  spStartDelay  = isTutorial ? 0 : startDelay;
-        int32_t  spTimeLen     = isTutorial ? UNLIMITED_GAME_TIME : timeLen;
+         * has never picked gets an Open game with Full Advantage AI.
+         *
+         * The Tutorial scenario ignores them. It plays the game its
+         * tutorial arenas (tests/scenario/tutorial_*) are run on: an Open
+         * game, Full Advantage AI so the bots the script seats are allowed
+         * (the script says needs_bots), hidden mines on, no start delay and
+         * no time limit. The script's own lobby rules then set the game type
+         * it declares, before the round starts. */
+        gameType spGameType    = gametype;
+        aiType   spAiPolicy    = compTanks;
+        bool     spHiddenMines = hiddenMines;
+        int32_t  spStartDelay  = startDelay;
+        int32_t  spTimeLen     = timeLen;
+        if (isScenarioTutorial) {
+          spGameType    = gameOpen;
+          spAiPolicy    = aiFull;
+          spHiddenMines = TRUE;
+          spStartDelay  = 0;
+          spTimeLen     = UNLIMITED_GAME_TIME;
+        }
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
          * the user already configured (count > 0) is left untouched. With
          * the saved AI policy on none, the bot loop below makes nothing. */
-        if (!isTutorial && gameFrontBotSetupData.count == 0) {
+        if (!isScenarioTutorial && gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
           gameFrontBotSetupData.bots[0].teamNumber = 2;
           /* brainPath left empty -> the bot loop falls back to spBrainPath. */
         }
-        if (strncmp(fileName, "randommap:", 10) == 0) {
+        if (isScenarioTutorial && !scenarioHostMapCarriesScript(fileName)) {
+          /* The Tutorial is its script: without one beside the map the round
+           * would be a plain game on the tutorial map. Fail the start, which
+           * the menu reports. */
+          WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                       "[SP-FAIL] the Tutorial needs '%s' and the scenario "
+                       "script beside it", fileName);
+          spServerSim = NULL;
+        } else if (strncmp(fileName, "randommap:", 10) == 0) {
           /* Random map — parse seed from "randommap:<seed>" */
           MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
           const char *seedStr = fileName + 10;
@@ -2450,7 +2497,9 @@ bool gameFrontSetDlgState(openingStates newState) {
              so the map commits that follow answer to it as well. Set both
              ways, because unlike a command-line switch this can be turned
              back on without restarting. */
-          scenarioHostSetEnabled(gameFrontHostingScripts);
+          /* The Tutorial runs its script whatever the preference says: it
+             is a shipped file and the round is nothing without it. */
+          scenarioHostSetEnabled(gameFrontHostingScripts || isScenarioTutorial);
           /* And the narrower one beside it, applied at the same point: a map
              this host took as an upload plays plainly with it off. */
           scenarioHostSetUploadScriptsEnabled(
@@ -2498,22 +2547,13 @@ bool gameFrontSetDlgState(openingStates newState) {
              Before gameFrontStartServerSim, so the lobby snapshot behind
              serverSimResetLobbyToDefaults is taken from these values.
 
-             Not for the tutorial. That runs with skipLobby, so it never
+             Not for the Tutorial. It runs with skipLobby, so it never
              shows the dropdown and nobody can change what it plays on;
-             it keeps the plain view it has always had, the same way it
-             ignores every other setting left over from an earlier game. */
-          if (!isTutorial) {
+             it keeps the plain view, the one its tests run with, the same
+             way it ignores every other setting left over from an earlier
+             game. */
+          if (!isScenarioTutorial) {
             gameFrontApplyVisibilityPrefs(spServerSim);
-          }
-          /* Tutorial: mark the freshly-created sim authoritative-tutorial and
-             reset the respawn start to 0 (sea) BEFORE the host player is added
-             in gameFrontStartServerSim below.  startsGetStart only takes the
-             deterministic tutorial start when sim->isTutorial is already set;
-             the old serverSimSetTutorial at openTutorial ran after the spawn,
-             so the host was placed by the open-game algorithm instead. */
-          if (isTutorial) {
-            serverSimSetTutorial(spServerSim, true);
-            serverSimSetTutorialStartIdx(spServerSim, 0);
           }
           bgGameSetHiddenByForeground(bgGameGetShared(), true);
           /* Single-player runs through the same serverInstanceStartup +
@@ -2546,7 +2586,9 @@ bool gameFrontSetDlgState(openingStates newState) {
           cfg.trackerPort         = gameFrontTrackerPort;
           cfg.useNatKeepalive     = false;
           cfg.useNatPortmap       = false;
-          if (isTutorial) {
+          /* The Tutorial scenario starts its round at once, as its arenas do
+             (-nolobby): the startup seats the script's lobby on the way in. */
+          if (isScenarioTutorial) {
             cfg.skipLobby         = true;
           } else {
             cfg.lobbyEnabled      = true;
@@ -2618,12 +2660,13 @@ bool gameFrontSetDlgState(openingStates newState) {
              * so the path composer uses them verbatim instead of auto-naming
              * a fresh timestamped file per round. dontSendLog is
              * unconditionally true; a single-player round is never uploaded
-             * to WinBolo.net. Tutorials are skipped — they set cfg.skipLobby,
-             * so they never reach the lobby that would offer the playback.
+             * to WinBolo.net. Both tutorials are skipped — they set
+             * cfg.skipLobby, so they never reach the lobby that would offer
+             * the playback.
              * Installed before the client-type resolution because the
              * subscriber's sync replay opens the log immediately, and the
              * completed path is set after the install, which clears it. */
-            if (!isTutorial) {
+            if (!cfg.skipLobby) {
               char spLogPath[FILENAME_MAX];
               char spRoundPath[FILENAME_MAX];
               const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
@@ -2683,6 +2726,11 @@ bool gameFrontSetDlgState(openingStates newState) {
             threadsWaitForMutex();
             clientSimNetSetLocalFrameQueue(humanSim, true);
             spFrameQueueSim = humanSim;
+            /* The server is in this process, so it can be told the language
+             * the player reads and the input they use; a scenario picks its
+             * text by them. The frame poll tells it again on a change. */
+            clientFrontTellScenarioPlayer(spServerSim,
+                                          clientSimGetMyPlayerNum(humanSim));
             threadsReleaseMutex();
             /* Phase 2 leaves the legacy spHumanSubHandle field unset —
              * the auto-subscriber registered by connect lives inside
@@ -2700,11 +2748,15 @@ bool gameFrontSetDlgState(openingStates newState) {
              * StartGameInPlace synchronously. netSetup just overwrote
              * netStat to netRunning, so we re-set the four lobby
              * flags here (after netSetup, the right moment). */
-            if (!isTutorial) {
+            if (!isScenarioTutorial) {
               clientSimSetIsSinglePlayer(humanSim, true);
               clientSimSetInLobby(humanSim, true);
               clientSimSetNetStatus(humanSim, netLobby);
               clientSimSetMapDownloadComplete(humanSim, true);
+            } else {
+              /* No lobby, but a single-player game all the same: the
+               * scenario's popups pause it, as a solo session's do. */
+              clientSimSetIsSinglePlayer(humanSim, true);
             }
             /* Tutorial (no-lobby) and lobby paths both rely on the
              * first-snapshot apply inside the local transport to fire
@@ -2780,7 +2832,7 @@ bool gameFrontSetDlgState(openingStates newState) {
              * AI level the seating reads are in the sim from the startup's
              * config, and the bot pool has been up since the client booted.
              *
-             * Not on a tutorial, which is the one path here that skips the
+             * Not on a tutorial, the one kind of game here that skips the
              * lobby: its round started inside the startup above, and the
              * startup seated the template itself on the way in so the round
              * could build a tank for every fielded seat. Seating again now
@@ -2791,7 +2843,7 @@ bool gameFrontSetDlgState(openingStates newState) {
              * a game that skipped the lobby has already had the settings
              * applied above and the second call changes nothing. */
             if (spScenarioHost != NULL) {
-              if (!isTutorial) {
+              if (!cfg.skipLobby) {
                 serverSimScenarioSeatLobby(spServerSim);
               }
               serverSimScenarioApplyLobbyRules(spServerSim);
@@ -3390,6 +3442,9 @@ void gameFrontSetLanguageCode(const char *code) {
    * even if the user never reaches gameFrontPutPrefs. */
   prefsSetString("SETTINGS", "Language",
                             gameFrontLanguageCode);
+  /* A single-player game already running is told the new language by the
+   * next frame's clientFrontPollScenarioPlayer, and reads it from the
+   * scenario's next line on. */
 }
 
 void gameFrontRequestPlayTutorial(void) {
@@ -3980,32 +4035,41 @@ void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
 }
 
 /* Per-scenario scenario-panel layout, kept under "SCENARIO PANEL" / the
- * scenario as one "x,y,scale,alpha" row. One row rather than four keys keeps
- * a scenario's numbers together and keeps the file short enough to read, and
- * the scenario is the whole key so a player scanning the section sees the
- * scenarios they have played by name.
+ * scenario as one "x,y,scale,text" row, with the background opacity under
+ * SCN_PANEL_PREFS_BG_SECTION / the same key (scnPanelLayoutParse). One row
+ * rather than four keys keeps a scenario's numbers together and keeps the
+ * file short enough to read, and the scenario is the whole key so a player
+ * scanning the section sees the scenarios they have played by name. The
+ * background is in a section of its own and not a fifth number on the row
+ * so that an older client, which reads the first four numbers, gets the
+ * text opacity as its one opacity (scn_panel_prefs.h says more).
  *
  * The key rule (scnPanelPrefsKey) turns a control character into an
  * underscore, and the read and the write share it. */
 bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
-                                int *scale, int *alpha) {
-  char key[SCN_PANEL_SCENARIO_LEN], buff[64];
-  int rx, ry, rscale, ralpha;
-  if (!scenario || !scenario[0] || !x || !y || !scale || !alpha) return false;
+                                int *scale, int *bgAlpha, int *textAlpha) {
+  char key[SCN_PANEL_SCENARIO_LEN], buff[64], bgBuff[32];
+  int rx, ry, rscale, rbg, rtext;
+  if (!scenario || !scenario[0] || !x || !y || !scale || !bgAlpha ||
+      !textAlpha) {
+    return false;
+  }
   scnPanelPrefsKey(scenario, key, sizeof(key));
   prefsGetString("SCENARIO PANEL", key, "", buff, sizeof(buff));
-  /* All four or none: a half-written row says nothing about where the panel
+  prefsGetString(SCN_PANEL_PREFS_BG_SECTION, key, "", bgBuff, sizeof(bgBuff));
+  /* All or none: a half-written row says nothing about where the panel
      belongs, and the caller's fallback is a whole layout of its own rather
-     than something to fill the gaps in this one with. */
-  if (SDL_sscanf(buff, "%d,%d,%d,%d", &rx, &ry, &rscale, &ralpha) != 4) {
+     than something to fill the gaps in this one with. The parse clamps the
+     opacities and reads the older rows too. */
+  if (!scnPanelLayoutParse(buff, bgBuff, &rx, &ry, &rscale, &rbg, &rtext)) {
     return false;
   }
   /* Clamped the way the [WINDOW] load clamps, and for the same reason: a
      scale out of range would open the panel bigger than the screen or too
-     small to get a pointer onto a corner of. -1 is not a size or an opacity,
-     it is "never touched", so it passes through. The coordinates pass
-     through too — the panel clamps a position against the window it is
-     restored into, which is the only place the screen size is known. */
+     small to get a pointer onto a corner of. -1 is not a size, it is "never
+     touched", so it passes through. The coordinates pass through too — the
+     panel clamps a position against the window it is restored into, which
+     is the only place the screen size is known. */
   if (rscale != -1) {
     if (rscale < SCN_PANEL_SCALE_MIN) {
       rscale = SCN_PANEL_SCALE_MIN;
@@ -4013,33 +4077,32 @@ bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
       rscale = SCN_PANEL_SCALE_MAX;
     }
   }
-  if (ralpha != -1) {
-    if (ralpha < 0) {
-      ralpha = 0;
-    } else if (ralpha > 100) {
-      ralpha = 100;
-    }
-  }
   *x = rx;
   *y = ry;
   *scale = rscale;
-  *alpha = ralpha;
+  *bgAlpha = rbg;
+  *textAlpha = rtext;
   return true;
 }
 
 void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
-                                int scale, int alpha) {
+                                int scale, int bgAlpha, int textAlpha) {
   char key[SCN_PANEL_SCENARIO_LEN], val[64];
   if (!scenario || !scenario[0]) return;
   scnPanelPrefsKey(scenario, key, sizeof(key));
-  SDL_snprintf(val, sizeof(val), "%d,%d,%d,%d", x, y, scale, alpha);
+  /* The background first, so the four-number row is never in the file
+     without it and read as an old row. */
+  scnPanelLayoutBgFormat(bgAlpha, val, sizeof(val));
+  prefsSetString(SCN_PANEL_PREFS_BG_SECTION, key, val);
+  scnPanelLayoutFormat(x, y, scale, textAlpha, val, sizeof(val));
   prefsSetString("SCENARIO PANEL", key, val);
 }
 
 /* The script's shown flag and pop-out row live in sections of their own
- * rather than as more numbers on the layout row: an old client reading a
- * five- or six-number layout row would drop the whole row. Same key rule
- * as the layout row, so the three rows of one script line up by eye. */
+ * rather than as more numbers on the layout row: the pop-out row is this
+ * machine's desktop place and is never uploaded, and the shown flag is a
+ * yes or no rather than a number. Same key rule as the layout row, so the
+ * three rows of one script line up by eye. */
 bool gameFrontGetScnPanelShown(const char *script) {
   char key[SCN_PANEL_SCENARIO_LEN], buff[16];
   if (!script || !script[0]) return TRUE;
@@ -4494,7 +4557,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", "uploads");
     }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     /* iOS always uses the default. The saved value is a full path, and an
      * iOS app's storage moves when it is reinstalled or updated, so a saved
      * path can point outside it; the host would then refuse to start, and
@@ -4530,7 +4593,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", "uploads/Scripts");
     }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     SDL_strlcpy(gameFrontHostingScriptUploadDir, def, FILENAME_MAX);  /* as Upload Dir */
 #else
     prefsGetString("HOSTING", "Script Upload Dir", def,
@@ -4567,7 +4630,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", "Mods");
     }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     (void)old;
     SDL_strlcpy(gameFrontHostingScenarioDir, def, FILENAME_MAX);  /* as Upload Dir */
 #else
@@ -4601,7 +4664,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", ".");
     }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     SDL_strlcpy(gameFrontHostingLogDir, def, FILENAME_MAX);  /* as Upload Dir */
 #else
     prefsGetString("HOSTING", "Log Dir", def, gameFrontHostingLogDir,
@@ -5264,8 +5327,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
                  gameFrontOnboardingComplete() ? "1" : "2", buff, FILENAME_MAX);
 #endif
   zoomFactor = atoi(buff);
-#if defined(__IPHONEOS__)
-  /* An iOS window always fills the screen and turns with it, so the classic
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* A mobile window always fills the screen and turns with it, so the classic
      screen's render zoom follows the window, as the desktop's resizable mode
      does (sdl3DrawAdaptRenderTarget, every frame). A saved fixed size drew the
      iPad's classic screen at zoom 1 and stretched it about five times. */
@@ -5329,13 +5392,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontOverviewFollow = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* The scenario panel's place inside the main window, the size the player
-     has dragged it to and how opaque its backing is. -1 for either
-     coordinate means it has never been moved, so it opens at the top-right
-     of the game view; -1 for the scale or the alpha means that one has never
-     been touched, so the panel opens at the size the game's zoom alone gives
-     it and at the backing it has always had.
+     has dragged it to, and how opaque its backing and its drawing are. -1
+     for either coordinate means it has never been moved, so it opens at the
+     top-right of the game view; -1 for the scale or an opacity means that
+     one has never been touched, so the panel opens at the size the game's
+     zoom alone gives it, at the backing it has always had and with its
+     drawing at full strength.
 
-     The scale and the alpha are clamped here and not only on the drag that
+     The scale and the opacities are clamped here and not only on the drag that
      writes them. The preferences file is a text file a player can edit, and a
      scale out of range would open the panel bigger than the screen or too
      small to get a pointer onto a corner of, neither of which leaves anything
@@ -5353,14 +5417,59 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
       gameFrontScnPanelScale = SCN_PANEL_SCALE_MAX;
     }
   }
-  prefsGetString("WINDOW", "Scenario Panel Alpha", "-1", buff, FILENAME_MAX);
-  gameFrontScnPanelAlpha = atoi(buff);
-  if (gameFrontScnPanelAlpha != -1) {
-    if (gameFrontScnPanelAlpha < 0) {
-      gameFrontScnPanelAlpha = 0;
-    } else if (gameFrontScnPanelAlpha > 100) {
-      gameFrontScnPanelAlpha = 100;
-    }
+  /* The two opacities, or the old single one for a file written before
+     there were two (scnOpacityFromPrefs), clamped there. */
+  {
+    char bgBuff[32], textBuff[32], oldBuff[32];
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_BG_KEY, "", bgBuff,
+                   sizeof(bgBuff));
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_TEXT_KEY, "", textBuff,
+                   sizeof(textBuff));
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_OLD_KEY, "", oldBuff,
+                   sizeof(oldBuff));
+    scnOpacityFromPrefs(bgBuff, textBuff, oldBuff, &gameFrontScnPanelBgAlpha,
+                        &gameFrontScnPanelTextAlpha);
+  }
+
+  /* The Scenario Text window's place, size, two opacities and shown flag.
+     The size is checked again against the display when the window is
+     drawn; here a value below -1 is read as never set, and the opacities
+     are clamped, for the reason given above. */
+  prefsGetString("WINDOW", "Scenario Text X", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextX = atoi(buff);
+  prefsGetString("WINDOW", "Scenario Text Y", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextY = atoi(buff);
+  prefsGetString("WINDOW", "Scenario Text Width", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextW = atoi(buff);
+  if (gameFrontScnTextW < -1) gameFrontScnTextW = -1;
+  prefsGetString("WINDOW", "Scenario Text Height", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextH = atoi(buff);
+  if (gameFrontScnTextH < -1) gameFrontScnTextH = -1;
+  /* The old single key here is from an earlier build of this change, not
+     from main (scn_panel_prefs.h). */
+  {
+    char bgBuff[32], textBuff[32], oldBuff[32];
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_BG_KEY, "", bgBuff,
+                   sizeof(bgBuff));
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_TEXT_KEY, "", textBuff,
+                   sizeof(textBuff));
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_OLD_KEY, "", oldBuff,
+                   sizeof(oldBuff));
+    scnOpacityFromPrefs(bgBuff, textBuff, oldBuff, &gameFrontScnTextBgAlpha,
+                        &gameFrontScnTextTextAlpha);
+  }
+  prefsGetString("WINDOW", "Scenario Text Shown", "Yes", buff, FILENAME_MAX);
+  gameFrontScnTextShown = scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
+  {
+    ScnPanelPopout pop;
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_POPOUT_KEY, "", buff,
+                   FILENAME_MAX);
+    scnTextPopoutLoad(buff, &pop);
+    gameFrontScnTextPopped = pop.open ? TRUE : FALSE;
+    gameFrontScnTextPopX   = pop.x;
+    gameFrontScnTextPopY   = pop.y;
+    gameFrontScnTextPopW   = pop.w;
+    gameFrontScnTextPopH   = pop.h;
   }
 
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
@@ -5865,8 +5974,35 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Scenario Panel Y", buff);
   intToStr(gameFrontScnPanelScale, buff, sizeof(buff));
   prefsSetString("WINDOW", "Scenario Panel Scale", buff);
-  intToStr(gameFrontScnPanelAlpha, buff, sizeof(buff));
-  prefsSetString("WINDOW", "Scenario Panel Alpha", buff);
+  intToStr(gameFrontScnPanelBgAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_PANEL_PREFS_BG_KEY, buff);
+  intToStr(gameFrontScnPanelTextAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_PANEL_PREFS_TEXT_KEY, buff);
+
+  intToStr(gameFrontScnTextX, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text X", buff);
+  intToStr(gameFrontScnTextY, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text Y", buff);
+  intToStr(gameFrontScnTextW, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text Width", buff);
+  intToStr(gameFrontScnTextH, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text Height", buff);
+  intToStr(gameFrontScnTextBgAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_TEXT_PREFS_BG_KEY, buff);
+  intToStr(gameFrontScnTextTextAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_TEXT_PREFS_TEXT_KEY, buff);
+  prefsSetString("WINDOW", "Scenario Text Shown",
+                 scnPanelYesNoWord(gameFrontScnTextShown));
+  {
+    ScnPanelPopout pop;
+    pop.open = gameFrontScnTextPopped ? true : false;
+    pop.x    = gameFrontScnTextPopX;
+    pop.y    = gameFrontScnTextPopY;
+    pop.w    = gameFrontScnTextPopW;
+    pop.h    = gameFrontScnTextPopH;
+    scnPanelPopoutFormat(&pop, buff, sizeof(buff));
+    prefsSetString("WINDOW", SCN_TEXT_PREFS_POPOUT_KEY, buff);
+  }
 
   s_windowSettingsDirty = false;
 }
@@ -5907,12 +6043,17 @@ ServerSim *gameFrontGetSinglePlayerServerSim(void) {
   return spServerSim;
 }
 
+const char *gameFrontScenarioMapScriptPath(void) {
+  return scenarioHostMapScriptPath(spScenarioHost);
+}
+
 BYTE gameFrontGetPlayerNum(void) {
   /* Read the slot live from the transport, never a copy taken at join.
    * clientFrontAwaitJoin returns once the lobby replay lands, which can be
    * before JOIN_ACCEPT: if the first accept is lost the slot is still 0
-   * then, and the real one arrives with the server's resent accept. */
-  if (udpTransportActive) return clientSimGetServerPlayerNum(humanSim);
-  return 0;
+   * then, and the real one arrives with the server's resent accept. A
+   * single-player game answers the slot its join gave, which is not 0 when
+   * a scenario seats its bots first. */
+  return clientSimGetServerPlayerNum(humanSim);
 }
 

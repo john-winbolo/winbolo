@@ -81,6 +81,9 @@
 #include "client_render.h"
 #include "macos_pinch.h"
 #include "safe_insets.h"     /* the black strips beside the touch layout */
+#if defined(__ANDROID__)
+#include "../../android/android_device.h"  /* androidDeviceAppPath: font files */
+#endif
 #include "../lang.h"
 #if defined(WINBOLO_VOICE)
 #include "../voice.h"        /* own mute state and level for the mic indicator */
@@ -538,7 +541,7 @@ static int          gTabletVpZoom = 0;
    status grids and newswire stay where they are and the map replaces only the
    15x15 view, so the map's own HUD is not drawn there. */
 static bool overviewInTabletView(void) {
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
   return uiModeIsTablet();
 #else
   return false;
@@ -627,15 +630,40 @@ static float        gStatusBasesOrgX = -1, gStatusBasesOrgY = -1;
    to sdl3draw_status.c. */
 
 /* Query safe area insets in renderer coordinates.
-   Returns left/top/right/bottom insets (pixels). */
+   Returns left/top/right/bottom insets (pixels). On Android the insets are
+   the shared reading in safe_insets.h (the cutout and the navigation bar,
+   the one-side rule), the same figures the lobby and the touch controls
+   use; elsewhere SDL's window safe area as it is. */
 static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
                                    float *outRight, float *outBottom) {
   float l = 0, t = 0, r = 0, b = 0;
   if (gWindow) {
-    SDL_Rect safeRect;
+    float winL = 0, winT = 0, winR = 0, winB = 0;   /* window points */
+    bool haveInsets = false;
     int winW = 0, winH = 0;
     SDL_GetWindowSize(gWindow, &winW, &winH);
-    if (SDL_GetWindowSafeArea(gWindow, &safeRect) && winW > 0 && winH > 0) {
+#if defined(__ANDROID__)
+    {
+      const SafeInsets safe = safeInsetsGet(gWindow);
+      winL = safe.left;
+      winT = safe.top;
+      winR = safe.right;
+      winB = safe.bottom;
+      haveInsets = true;
+    }
+#else
+    {
+      SDL_Rect safeRect;
+      if (SDL_GetWindowSafeArea(gWindow, &safeRect)) {
+        winL = (float)safeRect.x;
+        winT = (float)safeRect.y;
+        winR = (float)(winW - safeRect.x - safeRect.w);
+        winB = (float)(winH - safeRect.y - safeRect.h);
+        haveInsets = true;
+      }
+    }
+#endif
+    if (haveInsets && winW > 0 && winH > 0) {
       int renW = 0, renH = 0;
       SDL_RendererLogicalPresentation logMode;
       SDL_GetRenderLogicalPresentation(gRenderer, &renW, &renH, &logMode);
@@ -643,10 +671,10 @@ static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
         SDL_GetCurrentRenderOutputSize(gRenderer, &renW, &renH);
       }
       if (renW > 0 && renH > 0) {
-        l = (float)safeRect.x * (float)renW / (float)winW;
-        t = (float)safeRect.y * (float)renH / (float)winH;
-        r = (float)(winW - safeRect.x - safeRect.w) * (float)renW / (float)winW;
-        b = (float)(winH - safeRect.y - safeRect.h) * (float)renH / (float)winH;
+        l = winL * (float)renW / (float)winW;
+        t = winT * (float)renH / (float)winH;
+        r = winR * (float)renW / (float)winW;
+        b = winB * (float)renH / (float)winH;
       }
     }
   }
@@ -656,12 +684,13 @@ static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
   if (outBottom) *outBottom = b;
 }
 
-#if defined(__IPHONEOS__)
-/* The iPad's classic screen: fit the game view's blit rect, aspect kept, into
-   the part of the screen inside the safe area, so the home indicator and any
-   rounded corner do not sit on the game. Centred across and placed at the top,
-   so the height it leaves is one band below it, where the touch controls go
-   in portrait (tabletLayoutConfigureClassic).
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+/* The iPad's and the Android tablet's classic screen: fit the game view's
+   blit rect, aspect kept, into the part of the screen inside the safe area,
+   so the home indicator, a cutout and any rounded corner do not sit on the
+   game. Centred across and placed at the top, so the height it leaves is one
+   band below it, where the touch controls go in portrait
+   (tabletLayoutConfigureClassic).
    The desktop does not call this; a macOS window's safe area can exclude the
    camera housing, and its layout is left as it was. */
 static void sdl3DrawFitSafeArea(float menuBarHeight, float aspect,
@@ -1206,15 +1235,6 @@ void sdl3DrawRestoreLogicalPresentation(void) {
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
     return;
   }
-#ifdef __ANDROID__
-  if (!uiModeIsTablet()) {
-    SDL_SetRenderLogicalPresentation(gRenderer,
-                                     gZoomFactor * SDL3_SCREEN_W,
-                                     gZoomFactor * SDL3_SCREEN_H,
-                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    return;
-  }
-#endif
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (uiModeIsTablet()) {
     /* Re-apply the mobile tablet logical presentation (same logic as setup).
@@ -1729,8 +1749,18 @@ static void inGameFontPaths(const char **outPrimary, const char **outFallbackK) 
   *outPrimary   = sarasaBuf;
   *outFallbackK = "/data/fonts/SarasaMonoSlabK-Regular.ttf";
 #elif defined(__ANDROID__)
-  *outPrimary   = sarasaRel;
-  *outFallbackK = sarasaKRel;
+  /* Absolute, so SDL opens the extracted file and not the APK's deflated
+     asset, which FreeType's seeking makes very slow (androidDeviceAppPath). */
+  static char sarasaBuf[1024];
+  static char sarasaKBuf[1024];
+  if (!androidDeviceAppPath(sarasaRel, sarasaBuf, sizeof(sarasaBuf))) {
+    SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "%s", sarasaRel);
+  }
+  if (!androidDeviceAppPath(sarasaKRel, sarasaKBuf, sizeof(sarasaKBuf))) {
+    SDL_snprintf(sarasaKBuf, sizeof(sarasaKBuf), "%s", sarasaKRel);
+  }
+  *outPrimary   = sarasaBuf;
+  *outFallbackK = sarasaKBuf;
 #else
   const char *base = SDL_GetBasePath();
   static char sarasaBuf[1024];
@@ -1751,6 +1781,7 @@ static void openInGameFonts(void) {
   const char *sarasaPath  = NULL;
   const char *sarasaKPath = NULL;
   inGameFontPaths(&sarasaPath, &sarasaKPath);
+  Uint64 started = SDL_GetTicks();
 
   gFontMsg   = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
   gFontKD    = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
@@ -1777,6 +1808,9 @@ static void openInGameFonts(void) {
     }
   }
 
+  WB_LOG_INFO(WB_LOG_CAT_ASSET, "openInGameFonts: opened in %llums",
+              (unsigned long long)(SDL_GetTicks() - started));
+
   /* Push the new font handles into sdl3draw_status's private copies
      (covers both the initial sdl3DrawSetup path and the
      sdl3DrawAdaptRenderTarget reload path). */
@@ -1792,6 +1826,7 @@ static void openInGameFonts(void) {
 static TTF_Font *gFontNewswireTouch         = NULL;
 static TTF_Font *gFallbackFontNewswireTouch = NULL;
 static int       gFontNewswireTouchPx       = 0;
+static int       gFontNewswireTouchFailedPx = 0;  /* size the open last failed at */
 static bool      gTabletNewswireSet   = FALSE;
 static float     gTabletNewswireX     = 0.0f;
 static float     gTabletNewswireY     = 0.0f;
@@ -1808,17 +1843,25 @@ static void closeTabletNewswireFont(void) {
     gFallbackFontNewswireTouch = NULL;
   }
   gFontNewswireTouchPx = 0;
+  gFontNewswireTouchFailedPx = 0;
 }
 
 static TTF_Font *tabletNewswireFont(int px) {
   if (px < 1) return NULL;
   if (gFontNewswireTouch && gFontNewswireTouchPx == px) return gFontNewswireTouch;
+  /* The open failed at this size already: it is called every frame, the
+     strip hidden or not, so it is tried again only when the size changes. */
+  if (gFontNewswireTouchFailedPx == px) return NULL;
   closeTabletNewswireFont();
+  Uint64 started = SDL_GetTicks();
   const char *sarasaPath  = NULL;
   const char *sarasaKPath = NULL;
   inGameFontPaths(&sarasaPath, &sarasaKPath);
   gFontNewswireTouch = TTF_OpenFont(sarasaPath, (float)px);
-  if (!gFontNewswireTouch) return NULL;
+  if (!gFontNewswireTouch) {
+    gFontNewswireTouchFailedPx = px;
+    return NULL;
+  }
   gFontNewswireTouchPx = px;
   if (SDL_strcmp(sarasaPath, sarasaKPath) != 0) {
     gFallbackFontNewswireTouch = TTF_OpenFont(sarasaKPath, (float)px);
@@ -1826,6 +1869,8 @@ static TTF_Font *tabletNewswireFont(int px) {
       TTF_AddFallbackFont(gFontNewswireTouch, gFallbackFontNewswireTouch);
     }
   }
+  WB_LOG_INFO(WB_LOG_CAT_ASSET, "touch newswire font opened at %dpx in %llums",
+              px, (unsigned long long)(SDL_GetTicks() - started));
   return gFontNewswireTouch;
 }
 
@@ -1844,12 +1889,15 @@ void sdl3DrawSetTabletNewswire(float x, float y, float w, float edge,
 /* The touch layout's newswire, on the slide every hiding newswire shares. */
 static void tabletNewswireDraw(void) {
   if (!gTabletNewswireSet) return;
+  /* Open the face before the slide check, so the two font files are read
+     on the game's first frame and not when the first message slides the
+     strip up: with auto-hide on, the strip is off screen until then. */
+  TTF_Font *font = tabletNewswireFont(gTabletNewswirePx);
   float slide = sdl3DrawNewswireSlideStep();
   if (slide >= 1.0f) return;
-  sdl3DrawNewswireStrip(tabletNewswireFont(gTabletNewswirePx),
-                        gTabletNewswireX, gTabletNewswireY, gTabletNewswireW,
-                        gTabletNewswireEdge, slide, gTabletNewswireText,
-                        gTabletNewswireBack);
+  sdl3DrawNewswireStrip(font, gTabletNewswireX, gTabletNewswireY,
+                        gTabletNewswireW, gTabletNewswireEdge, slide,
+                        gTabletNewswireText, gTabletNewswireBack);
 }
 
 bool sdl3DrawSetup(int zoomFactor) {
@@ -1885,16 +1933,17 @@ bool sdl3DrawSetup(int zoomFactor) {
     gWindow = SDL_CreateWindow("WinBolo", 0, 0,
                                SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   } else {
-#if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
+#if defined(__EMSCRIPTEN__)
     gWindow = SDL_CreateWindow("WinBolo",
                                zoomFactor * SDL3_SCREEN_W,
                                zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT,
                                0);
-#elif defined(__IPHONEOS__)
-    /* The iPad's desktop layout. An iOS window always fills the screen. No
-       high pixel density: the render output is then in points, as a desktop
-       window's is, so the menu bar, the game blit below it and the pointer
-       all share one coordinate space and the game is scaled up to fit. */
+#elif defined(__IPHONEOS__) || defined(__ANDROID__)
+    /* The iPad's and the Android tablet's desktop layout. A mobile window
+       always fills the screen. No high pixel density: the render output is
+       then in points, as a desktop window's is, so the menu bar, the game
+       blit below it and the pointer all share one coordinate space and the
+       game is scaled up to fit. */
     gWindow = SDL_CreateWindow("WinBolo", 0, 0, SDL_WINDOW_FULLSCREEN);
 #else
     /* Big Picture / Gamepad UI: launch maximised so the game fills the
@@ -1963,17 +2012,6 @@ bool sdl3DrawSetup(int zoomFactor) {
      and start trackpad pinch-to-zoom monitoring. */
   macOSDisablePressAndHold();
   macOSPinchZoomInit();
-
-#ifdef __ANDROID__
-  if (!uiModeIsTablet()) {
-    /* On Android with desktop mode: set a logical presentation so SDL3
-       scales our fixed-size layout to fit the screen. */
-    SDL_SetRenderLogicalPresentation(gRenderer,
-                                     zoomFactor * SDL3_SCREEN_W,
-                                     zoomFactor * SDL3_SCREEN_H,
-                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
-  }
-#endif
 
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (uiModeIsTablet()) {
@@ -2067,9 +2105,8 @@ bool sdl3DrawSetup(int zoomFactor) {
                      gFallbackFontKD, gFallbackFontLabel,
                      gTankBarsTex, gBaseBarsTex);
 
-#if !defined(__ANDROID__)
-  /* Desktop, wasm and the iPad's desktop layout: create a render target for
-     the game content.
+  /* Desktop, wasm and the mobile tablets' desktop layout: create a render
+     target for the game content.
      The game is rendered at its logical size, then blitted scaled to the
      window below the menu bar. This allows the menu to stay at 1x size
      while the game scales, and gives windowToGameCoords a defined
@@ -2089,7 +2126,6 @@ bool sdl3DrawSetup(int zoomFactor) {
       WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawSetup: created game render target %dx%d", gGameRTWidth, gGameRTHeight);
     }
   }
-#endif
 
   return TRUE;
 }
@@ -2195,7 +2231,6 @@ void sdl3DrawCleanup(void) {
  * ------------------------------------------------------- */
 void sdl3DrawReconfigureZoom(int explicitZoom) {
   (void)explicitZoom;
-#if !defined(__ANDROID__)
   if (!gRenderer || !gWindow) return;
   if (uiModeIsTablet()) return;
   /* Deck is fullscreen 1280x800 with logical presentation already set in
@@ -2288,7 +2323,6 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
     SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_LINEAR);
     WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawAdaptRenderTarget: created render target %dx%d", gGameRTWidth, gGameRTHeight);
   }
-#endif
 }
 
 /* Per-frame entry: only rebuilds in Custom zoom mode, deriving the
@@ -2632,9 +2666,10 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
      desktop. */
   bool inTablet = overviewInTabletView();
   bool tabletMapFull = inTablet && sdl3DrawIsTabletMapFullScreen();
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (!inTablet) {
-    /* The iPad's desktop layout: the map stays inside the safe area. */
+    /* The mobile tablets' desktop layout: the map stays inside the safe
+       area. */
     float l = 0, t = 0, r = 0, b = 0;
     sdl3GetSafeAreaInsets(&l, &t, &r, &b);
     mapX           = l;
@@ -3311,7 +3346,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                 (clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_MINES   && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_MINES))) {
       /* Tank died and is waiting to respawn — draw Bolo-style pixel static noise */
       /* On iOS use half-res texture so static dots appear larger */
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
       int staticW = gameW / 2;
       int staticH = gameH / 2;
 #else
@@ -3699,7 +3734,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     }
 
     /* Store for coordinate transformation */
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
 #endif
     gGameDestRect.x = destX;
@@ -3844,7 +3879,7 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
       destY = menuBarHeight;
     }
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
 #endif
     gGameDestRect.x = destX;
@@ -3898,7 +3933,7 @@ static void sdl3BlitGameRTToWindow(void) {
     destY = menuBarHeight;
   }
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
   sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
 #endif
   gGameDestRect.x = destX;
@@ -4344,6 +4379,14 @@ void sdl3DrawNewGame(buildSelect value) {
      made again on the first full screen frame. */
   overviewViewDestroy(gOverviewView);
   gOverviewView = NULL;
+  /* Its copy of the map memory goes with it. The copy is refreshed when the
+     memory's change count differs from the one it was taken at, and each
+     game's memory counts up from 0 again: an idle start reaches the same
+     count the last game stood at, and the map drew the last game's memory
+     until something changed. */
+  overviewSnapshotDestroy(gOverviewSnapshot);
+  gOverviewSnapshot    = NULL;
+  gOverviewPrepPending = FALSE;
 }
 
 void sdl3DrawSelectIndentsOff(buildSelect value, int x, int y) {

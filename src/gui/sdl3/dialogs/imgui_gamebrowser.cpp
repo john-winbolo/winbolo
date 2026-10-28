@@ -72,6 +72,9 @@ extern "C" {
 #include "../map_preview_view.h"
 #include "../map_preview_popup.h"
 #include "../../../bolo/public/client_mappreview.h"
+#if defined(__ANDROID__)
+#include "../../../android/android_device.h"  /* androidDeviceMulticastHold */
+#endif
 
 #ifdef __EMSCRIPTEN__
 /* The web's internet game list (src/wasm/finder_wasm.c). Start hands the
@@ -105,17 +108,12 @@ bool wasmFinderTakeBack(void);
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
 
-#define STRVER_LEN 4
-
-/* Servers older than this are hidden from the tracker list. Version strings
- * are "%d.%d%d" (e.g. "1.19"), so a lexicographic compare of the first
- * STRVER_LEN chars orders the 1.x series correctly. */
-#define BROWSER_MIN_VERSION "1.19"
-
-static bool browserVersionAllowed(const char *ver) {
-    if (ver == nullptr || strlen(ver) < STRVER_LEN) return false;
-    return strncmp(ver, BROWSER_MIN_VERSION, STRVER_LEN) >= 0;
-}
+/* Servers older than 1.1.9 are hidden from the tracker list.
+ * browserVersionAllowed() (browser_version.h) parses the server's version
+ * text into three numbers, in either the old "M.mr" form ("1.19", "2.10")
+ * or the "M.m.r" form ("2.1.0"), with any letter suffix ignored, and
+ * compares them as numbers. Text it cannot parse is hidden. */
+#include "browser_version.h"
 
 /* ---- Per-server enriched data ---- */
 struct ServerEntry {
@@ -655,8 +653,9 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     SDL_strlcpy(e.address, src->address, sizeof(e.address));
     e.port = src->port;
     SDL_strlcpy(e.mapName, src->mapName, sizeof(e.mapName));
-    SDL_snprintf(e.version, sizeof(e.version), "%d.%d%d",
-                 src->versionMajor, src->versionMinor, src->versionRevision);
+    SDL_snprintf(e.version, sizeof(e.version), "%u.%u.%u",
+                 (unsigned)src->versionMajor, (unsigned)src->versionMinor,
+                 (unsigned)src->versionRevision);
     e.numPlayers = src->numPlayers;
     e.maxPlayers = src->maxPlayers;
     e.numBases   = src->numBases;
@@ -1123,7 +1122,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.pingMs = -1; /* pending — ping still fires below */
                         e.lobbyStatus = w.inLobby ? 1 : 0;
 
-                        /* Hide servers older than BROWSER_MIN_VERSION. */
+                        /* Hide servers older than 1.1.9. */
                         if (!browserVersionAllowed(e.version)) {
                             continue;
                         }
@@ -1503,7 +1502,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         static BroadcastCbData mcbd;
                         mcbd.servers = &servers;
                         mcbd.serversMtx = &serversMtx;
+#if defined(__ANDROID__)
+                        /* The Wi-Fi driver drops multicast unless the app
+                         * holds its multicast lock, and holding it costs
+                         * battery, so it is held for the browse alone. */
+                        androidDeviceMulticastHold(true);
+#endif
                         discoveryFindMdnsGamesAsync(broadcastServerCallback, &mcbd);
+#if defined(__ANDROID__)
+                        androidDeviceMulticastHold(false);
+#endif
                         mdnsDone = true;
                     });
                 }
@@ -1563,7 +1571,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                        + spacingY     /* Spacing */
                        + frameH       /* button row */
                        + spacingY;    /* bottom padding */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
         /* iOS is too narrow for the desktop's one row of fixed-width buttons,
          * and the status legend can run off the right edge too. Each button
          * is as wide as its label needs, and every button and legend entry
@@ -2475,19 +2483,19 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 ImGui::SameLine(0.0f, 4.0f);
                 ImGui::TextDisabled("%s", txt);
             };
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosLegPlace(IOS_LEG_LOBBY);
 #else
             ImGui::SameLine(0.0f, 16.0f * s);
 #endif
             legendDot(dotGreen,  true,  langGetText(STR_DLGBROWSER_ST_LOBBY));
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosLegPlace(IOS_LEG_INGAME);
 #else
             ImGui::SameLine(0.0f, 16.0f * s);
 #endif
             legendDot(dotOrange, true,  langGetText(STR_DLGBROWSER_ST_INGAME));
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosLegPlace(IOS_LEG_LOCKED);
 #else
             ImGui::SameLine(0.0f, 16.0f * s);
@@ -2496,7 +2504,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             /* A grey dot is a server that did not answer the ping, which the
              * web never sends. */
 #ifndef __EMSCRIPTEN__
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosLegPlace(IOS_LEG_NORESP);
 #else
             ImGui::SameLine(0.0f, 16.0f * s);
@@ -2569,7 +2577,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 #else
             if (!hasSelection) ImGui::BeginDisabled();
 
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             if (ImGui::Button(langGetText(STR_DLGTCP_JOIN),
                               ImVec2(iosBtnW(langGetText(STR_DLGTCP_JOIN)), btnH))) {
 #else
@@ -2597,16 +2605,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (!hasSelection) ImGui::EndDisabled();
 #endif
 
-            /* Android does not compile the log viewer's sources. */
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__)
             /* Spectate — beside Join. Enabled only when the selected server
              * advertises spectator support. Unlike Join it needs no player
              * name: a spectator is tankless and read-only, so the name guard
              * is deliberately skipped. The spectator host is logviewer-side:
-             * the modal viewer on the desktop, the reel on iOS
-             * (ios_spectator.cpp). The web client has neither, which matches
-             * the openSpectate case. */
-#if defined(__IPHONEOS__)
+             * the modal viewer on the desktop, the reel on iOS and Android
+             * (mobile_spectator.cpp). The web client has neither, which
+             * matches the openSpectate case. */
+#if BOLO_MOBILE
             iosPlace(IOS_BTN_SPECTATE);
             const float spectateW = iosBtnW(langGetText(STR_DLGBROWSER_SPECTATE));
 #else
@@ -2636,7 +2643,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
              * first-class footer action. Disabled until the selected server has
              * a loaded preview. */
             if (uiShouldUseControllerMode()) {
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
                 iosPlace(IOS_BTN_ENLARGE);
                 const float enlargeW = iosBtnW(langGetText(STR_DLGBROWSER_ENLARGE_BTN));
 #else
@@ -2660,13 +2667,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
              * rejoin nor the name set here would reach it. */
 #ifndef __EMSCRIPTEN__
             /* Rejoin */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosPlace(IOS_BTN_REJOIN);
 #else
             ImGui::SameLine();
 #endif
             if (!hasSelection) ImGui::BeginDisabled();
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN),
                               ImVec2(iosBtnW(langGetText(STR_DLGTCP_REJOIN)), btnH))) {
 #else
@@ -2691,7 +2698,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (!hasSelection) ImGui::EndDisabled();
 
             /* New Game, on both tabs. */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             const float newGameW = iosBtnW(langGetText(STR_DLGBROWSER_NEWGAME));
             iosPlace(IOS_BTN_NEWGAME);
 #else
@@ -2712,7 +2719,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (useTracker) imguiHelpTooltip(langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
 
             /* Player Name */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosPlace(IOS_BTN_NAME);
             if (ImGui::Button(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN),
                               ImVec2(iosBtnW(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN)), btnH))) {
@@ -2726,12 +2733,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             imguiHandOnHover();
 
             /* Manual Connect */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosPlace(IOS_BTN_MANUAL);
 #else
             ImGui::SameLine();
 #endif
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             if (ImGui::Button(langGetText(STR_DLGBROWSER_MANUAL),
                               ImVec2(iosBtnW(langGetText(STR_DLGBROWSER_MANUAL)), btnH))) {
 #else
@@ -2751,7 +2758,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
              * exact position and the glyph fits beside it. */
             float cancelX = panelW - btnW - 16.0f * s;
             if (padLegend) cancelX -= glyphH + 4.0f;
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             /* Right-aligned at its own width, on a row of its own when the
              * last row is full (see iosBreak above). */
             const float iosCancelW = iosBtnW(langGetText(STR_CANCEL));
@@ -2767,7 +2774,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 #endif
             glyphInline(SI_ACTION_MENU_CANCEL);
             WBUI::PushCancelStyle();
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(iosCancelW, btnH));
 #else
             bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH));

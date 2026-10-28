@@ -79,6 +79,27 @@ bool uiModeIsTablet(void);
 bool iosDeviceIsPad(void);
 #endif
 
+#if defined(__ANDROID__)
+/* True on an Android tablet, from the Android driver (android_device.c):
+ * a configuration whose smallest width is 600 dp or more, Android's own
+ * large-screen line. uiModeDetect gives a tablet the desktop layout, as it
+ * gives an iPad, and a phone the touch layout. */
+bool androidDeviceIsTablet(void);
+#endif
+
+/* True on a mobile device that takes the classic screen with the touch
+ * controls: an iPad, or an Android tablet. False on every phone and off
+ * mobile, so a test on it leaves the desktop as it is. */
+static inline bool uiModeIsMobileTablet(void) {
+#if defined(__IPHONEOS__)
+  return iosDeviceIsPad();
+#elif defined(__ANDROID__)
+  return androidDeviceIsTablet();
+#else
+  return false;
+#endif
+}
+
 /*********************************************************
 *NAME:          uiModeIsSteamDeck
 *PURPOSE:

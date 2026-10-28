@@ -366,7 +366,7 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
                 ImGui::TextUnformatted(
                     langGetTextFmt(lastRoundHighlightLabel(h), &args));
 
-#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
+#if BOLO_RECAP_CLIP_GIF
                 /* Export control, right-aligned so the rows keep a column of them
                  * however long the sentences run. Sized to one text line, so the
                  * row stays the height the selectable underneath was given: the
@@ -374,14 +374,18 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
                  * vertical half, which is what SmallButton does for a caption.
                  * The glyph says what the control produces and the tooltip names
                  * the format; with no icon loaded the format's name is the
-                 * caption, as it was before. */
-                if (lvEmbedIsActive()) {
+                 * caption, as it was before. Shown only in the reel's
+                 * recording mode, like the GIF controls on its transport
+                 * row. */
+                if (lvEmbedIsActive() &&
+                    clipGifToolsShown(lobbyReel()->recordMode,
+                                      lobbyClipGifActive())) {
                     ImGui::SameLine();
                     ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x -
                                          lobbyClipGifButtonWidth());
                     ImGui::PushID(i);
                     if (lobbyClipGifButton("##clipgif", true)) {
-                        lobbyClipGifStartClip(h, clientSimGetMapName(cs));
+                        lobbyClipGifStartClip(h, cs);
                     }
                     ImGui::PopID();
                 }
@@ -894,12 +898,12 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
         renderAward(picks[i]);
     }
 
-#if !defined(__ANDROID__) && BOLO_RECAP_WBN_RATING  /* Android does not compile lobby_rating.cpp */
+#if BOLO_RECAP_WBN_RATING
     /* ── WinBolo.net rating & comments ───────────────────────────── */
     lobbyRenderRatingBlock(cs, st, s);
 #endif
 
-#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
+#if BOLO_RECAP_CLIP_GIF
     /* A clip export in progress. Drawn after the rows that start it, and after
      * the rest of the body: it is a popup, so it costs the layout nothing and
      * the slack measurement below still sees what the body really used. */
