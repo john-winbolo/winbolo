@@ -8788,13 +8788,33 @@ static bool keySetupTakesKeyEvent(const SDL_Event *ev) {
     return false;
 }
 
+/* How many sdl3ImguiPollEvent calls are on the stack. Main thread only. */
+static int s_eventPollDepth = 0;
+
+/* SDL_PollEvent, marked so sdl3ImguiInEventPoll can tell that the caller is
+   this event loop and not a dialog loop that an event handler opened. The
+   mark covers only the poll itself: on Windows, a click on the title bar
+   starts the OS move loop inside this call, and that is the one place the
+   desktop driver ticks the game from. */
+static bool sdl3ImguiPollEvent(SDL_Event *ev) {
+    bool got;
+    s_eventPollDepth++;
+    got = SDL_PollEvent(ev);
+    s_eventPollDepth--;
+    return got;
+}
+
+bool sdl3ImguiInEventPoll(void) {
+    return s_eventPollDepth > 0;
+}
+
 void sdl3ImguiProcessEvents(ClientSim *cs) {
     if (!s_window) return;
 #if defined(__APPLE__) && !TARGET_OS_IOS
     mac_menubar_set_clientsim(cs);
 #endif
     SDL_Event ev;
-    while (SDL_PollEvent(&ev)) {
+    while (sdl3ImguiPollEvent(&ev)) {
         SDL_Event rawEv = ev;
         /* Convert mouse/touch coordinates from window space to the
            renderer's logical presentation coordinate space so ImGui

@@ -250,9 +250,33 @@ void windowSmoothScrolling_toggle(void) {
  * Time-limit game over
  * ------------------------------------------------------- */
 
+/* See clientFrontHoldGameOver in the header. */
+static bool s_holdGameOver = false;
+static ClientSim *s_heldGameOverCs = NULL;
+
+void clientFrontHoldGameOver(bool hold) {
+  s_holdGameOver = hold;
+}
+
+bool clientFrontGameOverHeld(void) {
+  return s_heldGameOverCs != NULL;
+}
+
+void clientFrontRunHeldGameOver(void) {
+  ClientSim *cs = s_heldGameOverCs;
+  if (cs == NULL) return;
+  s_heldGameOverCs = NULL;
+  frontEndGameOver(cs);
+}
+
 void frontEndGameOver(ClientSim *cs) {
   if (!clientFrontIsActiveUiSim(cs)) return;
   if (!windowGameOverEndsGame(cs)) return;
+  if (s_holdGameOver) {
+    /* Inside an OS modal loop: only note it. The driver shows it after. */
+    s_heldGameOverCs = cs;
+    return;
+  }
   windowGameOverStopTicks();
   imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
                     IMGUI_MSG_INFO, IMGUI_MSG_OK);
