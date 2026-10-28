@@ -28,7 +28,6 @@
 #include "client_render.h"
 #include "client_frontend_tick.h"
 #include "client_frontend_render.h"
-#include "client_frontend_tutorial.h"
 #include "client_frontend_common.h"
 #include "client_sim.h"
 #include "frontend.h"
@@ -60,7 +59,6 @@
 #include "../gui/sdl3/dialogs/imgui_welcome.h"
 #include "server_sim.h"
 #include "../server/server_lifecycle.h"  /* serverInstanceTick */
-#include "tutorial.h"
 #include "cJSON.h"
 #include "gamefront_wasm.h"
 
@@ -71,8 +69,6 @@ extern ClientSim *humanSim;
 /* -------------------------------------------------------
  * Globals declared by winbolo.h
  * ------------------------------------------------------- */
-
-bool isTutorial = FALSE;
 
 int frameRate = FRAME_RATE_30;
 static int frameRateTime = (int)(MILLISECONDS / FRAME_RATE_30) - 1;
@@ -232,7 +228,7 @@ static void windowRunGameTick(ClientSim *cs) {
 
   brainRunning = brainHandlerIsBrainRunning();
 
-  if (!clientSimHasTransport(cs) || clientFrontTutorialStepShowing()) {
+  if (!clientSimHasTransport(cs)) {
     return;
   }
 
@@ -448,10 +444,7 @@ static void main_loop_iteration(void) {
     if (ren) SDL_RenderPresent(ren);
   }
 
-  /* Tutorial: count presented frames (gates the intro overlay) and poll the
-   * server's once-per-run respawn message. No-ops outside tutorial mode. */
-  frontEndTutorialNotePresentedFrame();
-  clientFrontTutorialPollRespawn();
+  clientFrontPollScenarioPlayer();  /* tutorial finished; language, input */
 
   /* Cloud prefs upload runs from gameFrontPumpDirty, which
    * sdl3ImguiPumpAndRender calls at the top of this frame. */
@@ -1160,12 +1153,8 @@ bool windowIsQuitting(void)   { return quitRequested; }
 
 /* Runs before each game: put back the per-game state the last game may have
  * left behind — the tutorial pause, the connection-failure latch, the loop
- * and quit flags, the tick accumulator and clocks, and the timing totals.
- * The tutorial step sequencer is reset by gameFrontWasmStart
- * (frontEndTutorialReset). */
+ * and quit flags, the tick accumulator and clocks, and the timing totals. */
 static void wasmGameStateReset(void) {
-  /* A step left showing by the last game would stop this one's ticks. */
-  frontEndTutorialReset();
   s_connFailed = FALSE;
   s_connErrorShown = FALSE;
   s_connReason[0] = '\0';
@@ -1799,10 +1788,6 @@ void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
     sdl3ImguiShowAllianceRequest(playerName, playerNum);
   }
 }
-
-/* frontEndTutorial, frontEndTutorialReset and the rest of the tutorial step
-   sequencer come from client_frontend_common.c, the one body the desktop, web
-   and iOS drivers call; see "Platform variants" in docs/ARCHITECTURE.md. */
 
 /* -------------------------------------------------------
  * Misc required symbols

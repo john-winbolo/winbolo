@@ -767,8 +767,22 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
            * has passed every other test, so heldByCap means a target the
            * pill could otherwise shoot: one that leaves range, hides or
            * dies clears justSeen below the same as it always has. */
-          if (shellCapOn && t < MAX_TANKS &&
-              shellsAtTank[t] >= sim->rules.pill_max_shells_at_tank) {
+          const bool capHeld = shellCapOn && t < MAX_TANKS &&
+              shellsAtTank[t] >= sim->rules.pill_max_shells_at_tank;
+
+          /* can_target: the scenario may have this pill pass over this tank
+           * as if it were not there. Asked last, of a tank that has passed
+           * every other test, and only where the answer changes something:
+           * the tank is nearer than the best so far, or the shell cap would
+           * hold the pill for it. A refused tank sets neither the target nor
+           * heldByCap, so a pill with nobody else in range clears justSeen
+           * the same as it does for an empty field. No scenario, no
+           * question: the helper answers TRUE without a call. */
+          if ((capHeld || amount < bestDist) &&
+              gameSimCanTarget(sim, count, t) == FALSE) {
+            continue;
+          }
+          if (capHeld) {
             heldByCap = TRUE;
             continue;
           }
@@ -1617,8 +1631,9 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
        line is written here, so every client — the hosting one included —
        draws its line from the event, which carries the announce policy's
        answer. A pill going neutral is reported the same way, and the client
-       draws no line for one. */
-    if (migrate == FALSE && sim->isServer) {
+       draws no line for one. A pill handed to the player who already holds it
+       has not changed hands, so nothing is reported. */
+    if (migrate == FALSE && sim->isServer && returnValue != owner) {
       if (sim->callbacks.pillOwnerChanged) {
         BYTE captureClass;
         captureClass = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
