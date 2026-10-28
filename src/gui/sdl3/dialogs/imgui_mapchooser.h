@@ -180,6 +180,11 @@ struct MapChooserState_s {
     int             selectedIdx;       /* -1 = custom file, 0 = Everard Island, MAP_CHOOSER_IDX_RANDOM = random */
     char            selectedPath[FILENAME_MAX]; /* Path of selected map ("" = inbuilt, "randommap:..." = random) */
     char            selectedName[128]; /* Display name of selected map */
+    /* The selection came from opening a folder, which highlights its first
+     * map without calling the provider's onSelect. A click on that row then
+     * calls onSelect; without this a click on an already-selected row did
+     * nothing, and the first map in a folder could not be picked. */
+    bool            selectionUnsent;
 
     /* Preview texture */
     SDL_Texture    *previewTex;

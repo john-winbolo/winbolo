@@ -540,6 +540,16 @@ bool gameFrontGetShowTutorialButton(void);
 void gameFrontSetShowTutorialButton(bool show);
 
 /*********************************************************
+*NAME:          gameFrontScenarioMapScriptPath
+*PURPOSE:
+* The script file of the running map's own scenario, as the
+* single-player scenario host read it. "" when no scenario is
+* attached; never NULL. Read with the client mutex held: the
+* host follows the committed map on the server's thread.
+*********************************************************/
+const char *gameFrontScenarioMapScriptPath(void);
+
+/*********************************************************
 *NAME:          gameFrontGetLanguageCode
 *PURPOSE:
 * Reads the persisted BCP-47 language code (e.g. "en", "de", "pt-br")
@@ -943,8 +953,9 @@ ServerSim *gameFrontGetServerSim(void);
 /*********************************************************
 *NAME:          gameFrontGetPlayerNum
 *PURPOSE:
-*  Returns the local player's slot number.
-*  0 for single-player, assigned by server for multiplayer.
+*  Returns the local player's slot number, as the server
+*  assigned it. A single-player game is not always slot 0:
+*  a scenario can seat its bots ahead of the player.
 *********************************************************/
 BYTE gameFrontGetPlayerNum(void);
 

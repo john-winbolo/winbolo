@@ -25,6 +25,7 @@
  *  simulation separation.
  *********************************************************/
 
+#include <ctype.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1983,14 +1984,6 @@ BYTE clientSimGetNumPlayers(ClientSim *cs) {
   return playersGetNumPlayers(&clientSimGetGameSim(cs)->plyrs);
 }
 
-bool clientSimIsTutorial(const ClientSim *cs) {
-  return clientSimGetGameSim((ClientSim *)cs)->isTutorial;
-}
-
-void clientSimSetTutorial(ClientSim *cs, bool v) {
-  clientSimGetGameSim(cs)->isTutorial = v;
-}
-
 gameType clientSimGetGameType(const ClientSim *cs) {
   return clientSimGetGameSim((ClientSim *)cs)->game;
 }
@@ -2182,6 +2175,10 @@ uint8_t clientSimGetViewKind(const ClientSim *cs)         { return cs->viewport.
 BYTE clientSimGetViewTarget(const ClientSim *cs)          { return cs->viewport.viewTarget; }
 bool clientSimIsNeedScreenReCalc(const ClientSim *cs)     { return cs->viewport.needRecalc; }
 bool clientSimIsInLobby(const ClientSim *cs)              { return cs->inLobby; }
+bool clientSimIsRoundOver(const ClientSim *cs) {
+  return cs->inLobby || cs->netStat == netLobby ||
+         cs->netStat == netLobbyCountdown;
+}
 bool clientSimIsMapDownloadComplete(const ClientSim *cs)  { return cs->mapDownloadComplete; }
 
 uint8_t clientSimGetMapDownloadPercent(const ClientSim *cs) {
@@ -2300,21 +2297,165 @@ uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs) {
   return cs ? cs->scnPanelRejects : 0;
 }
 
+/* The newest line held, or NULL for none. */
+static const ClientScnAnnounce *clientSimScnAnnounceNewest(
+    const ClientSim *cs) {
+  if (cs == NULL || cs->scnAnnounceCount == 0) return NULL;
+  return &cs->scnAnnounces[cs->scnAnnounceCount - 1];
+}
+
 const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
                                     uint32_t *outArrivedTick) {
-  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return NULL;
-  if (outTicks != NULL) *outTicks = cs->scnAnnounceTicks;
-  if (outArrivedTick != NULL) *outArrivedTick = cs->scnAnnounceArrivedTick;
-  return cs->scnAnnounceText;
+  const ClientScnAnnounce *a = clientSimScnAnnounceNewest(cs);
+  if (a == NULL) return NULL;
+  if (outTicks != NULL) *outTicks = a->ticks;
+  if (outArrivedTick != NULL) *outArrivedTick = a->arrivedTick;
+  return a->text;
 }
 
 bool clientSimGetScnAnnouncePos(const ClientSim *cs, uint8_t *outX,
                                 uint8_t *outY) {
-  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return false;
-  if (cs->scnAnnounceHasPos == 0) return false;
-  if (outX != NULL) *outX = cs->scnAnnouncePosX;
-  if (outY != NULL) *outY = cs->scnAnnouncePosY;
+  const ClientScnAnnounce *a = clientSimScnAnnounceNewest(cs);
+  if (a == NULL || a->hasPos == 0) return false;
+  if (outX != NULL) *outX = a->posX;
+  if (outY != NULL) *outY = a->posY;
   return true;
+}
+
+int clientSimGetScnAnnounceCount(const ClientSim *cs) {
+  return (cs != NULL) ? (int)cs->scnAnnounceCount : 0;
+}
+
+const ClientScnAnnounce *clientSimGetScnAnnounceAt(const ClientSim *cs,
+                                                   int i) {
+  if (cs == NULL || i < 0 || i >= (int)cs->scnAnnounceCount) return NULL;
+  return &cs->scnAnnounces[i];
+}
+
+/* Takes line i out of the stack, closing the gap so the rest keep their
+   order. */
+static void clientSimScnAnnounceRemove(ClientSim *cs, int i) {
+  int n = (int)cs->scnAnnounceCount;
+  if (i < 0 || i >= n) return;
+  if (i < n - 1) {
+    memmove(&cs->scnAnnounces[i], &cs->scnAnnounces[i + 1],
+            (size_t)(n - 1 - i) * sizeof(cs->scnAnnounces[0]));
+  }
+  memset(&cs->scnAnnounces[n - 1], 0, sizeof(cs->scnAnnounces[0]));
+  cs->scnAnnounceCount = (uint8_t)(n - 1);
+}
+
+/* True when a and b read the same once each run of digits (with any '.'
+   inside it) is taken as one number, whatever its value: "dying in 8.3 s"
+   and "dying in 10.0 s" are the same line, counted down. */
+static bool clientSimScnAnnounceSameShape(const char *a, const char *b) {
+  while (*a != '\0' && *b != '\0') {
+    if (isdigit((unsigned char)*a) && isdigit((unsigned char)*b)) {
+      while (isdigit((unsigned char)*a) ||
+             (*a == '.' && isdigit((unsigned char)a[1]))) {
+        a++;
+      }
+      while (isdigit((unsigned char)*b) ||
+             (*b == '.' && isdigit((unsigned char)b[1]))) {
+        b++;
+      }
+      continue;
+    }
+    if (*a != *b) return false;
+    a++;
+    b++;
+  }
+  return *a == *b;
+}
+
+void clientSimScnAnnouncePush(ClientSim *cs, const char *text, uint16_t ticks,
+                              uint32_t nowTick, bool hasPos, uint8_t posX,
+                              uint8_t posY) {
+  ClientScnAnnounce *a;
+  int                i;
+  int                same = -1;
+
+  if (cs == NULL) return;
+  if (text == NULL || text[0] == '\0') {
+    memset(cs->scnAnnounces, 0, sizeof(cs->scnAnnounces));
+    cs->scnAnnounceCount = 0;
+    return;
+  }
+  /* Lines whose time is up go first. Walked from the top so a removal does
+     not skip the next line. While a popup holds the lines their clocks
+     stopped when the hold began. */
+  for (i = (int)cs->scnAnnounceCount - 1; i >= 0; i--) {
+    const ClientScnAnnounce *h = &cs->scnAnnounces[i];
+    const uint32_t clock =
+        (cs->scnAnnounceHeld && nowTick > cs->scnAnnounceHoldStart)
+            ? cs->scnAnnounceHoldStart : nowTick;
+    const uint32_t elapsed =
+        (clock > h->arrivedTick) ? (clock - h->arrivedTick) : 0u;
+    if (elapsed >= (uint32_t)h->ticks) {
+      clientSimScnAnnounceRemove(cs, i);
+    }
+  }
+  /* A line already held with the same text, or the same text with other
+     numbers in it (a countdown sent every frame), is written over where it
+     stands rather than stacked again. */
+  for (i = 0; i < (int)cs->scnAnnounceCount; i++) {
+    if (clientSimScnAnnounceSameShape(cs->scnAnnounces[i].text, text)) {
+      same = i;
+      break;
+    }
+  }
+  if (same >= 0) {
+    a = &cs->scnAnnounces[same];
+    memset(a, 0, sizeof(*a));
+    SDL_strlcpy(a->text, text, sizeof(a->text));
+    a->ticks       = ticks;
+    a->arrivedTick = nowTick;
+    a->hasPos      = hasPos ? 1u : 0u;
+    a->posX        = posX;
+    a->posY        = posY;
+    return;
+  }
+  if (cs->scnAnnounceCount >= SCN_ANNOUNCE_STACK_MAX) {
+    clientSimScnAnnounceRemove(cs, 0);
+  }
+  a = &cs->scnAnnounces[cs->scnAnnounceCount];
+  memset(a, 0, sizeof(*a));
+  SDL_strlcpy(a->text, text, sizeof(a->text));
+  a->ticks       = ticks;
+  a->arrivedTick = nowTick;
+  a->hasPos      = hasPos ? 1u : 0u;
+  a->posX        = posX;
+  a->posY        = posY;
+  cs->scnAnnounceCount++;
+}
+
+void clientSimScnAnnounceHold(ClientSim *cs, bool hold, uint32_t nowTick) {
+  int i;
+  if (cs == NULL || hold == cs->scnAnnounceHeld) return;
+  if (hold) {
+    cs->scnAnnounceHeld      = true;
+    cs->scnAnnounceHoldStart = nowTick;
+    return;
+  }
+  /* The hold ends: each line still up at the start of the hold moves on by
+     the time the hold took, so it keeps what it had left; a line that came
+     in during the hold starts now. A line already out stays out. */
+  for (i = 0; i < (int)cs->scnAnnounceCount; i++) {
+    ClientScnAnnounce *a     = &cs->scnAnnounces[i];
+    const uint32_t     start = cs->scnAnnounceHoldStart;
+    if (a->arrivedTick >= start) {
+      a->arrivedTick = nowTick;
+    } else if (start - a->arrivedTick < (uint32_t)a->ticks &&
+               nowTick > start) {
+      a->arrivedTick += nowTick - start;
+    }
+  }
+  cs->scnAnnounceHeld      = false;
+  cs->scnAnnounceHoldStart = 0;
+}
+
+bool clientSimScnAnnounceIsHeld(const ClientSim *cs) {
+  return cs != NULL && cs->scnAnnounceHeld;
 }
 
 const char *clientSimGetScnStatus(const ClientSim *cs, uint32_t *outEndsAt) {
@@ -2322,6 +2463,16 @@ const char *clientSimGetScnStatus(const ClientSim *cs, uint32_t *outEndsAt) {
   if (cs == NULL || cs->scnStatusText[0] == '\0') return NULL;
   if (outEndsAt != NULL) *outEndsAt = cs->scnStatusEndsAt;
   return cs->scnStatusText;
+}
+
+bool clientSimTakeScnPopup(ClientSim *cs, char *out, size_t outCap) {
+  if (cs == NULL || out == NULL || outCap == 0) return false;
+  if (cs->scnPopupCount == 0) return false;
+  SDL_strlcpy(out, cs->scnPopups[cs->scnPopupHead], outCap);
+  cs->scnPopups[cs->scnPopupHead][0] = '\0';
+  cs->scnPopupHead = (uint8_t)((cs->scnPopupHead + 1u) % SCN_POPUP_QUEUE_MAX);
+  cs->scnPopupCount--;
+  return true;
 }
 
 const ClientScnMarker *clientSimGetScnMarker(const ClientSim *cs, uint8_t id) {

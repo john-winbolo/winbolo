@@ -435,7 +435,7 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
  * bot's registered display name copied via SDL_strlcpy. */
 typedef struct {
     bool     isBot;
-    bool     hasBrain;          /* aiFull with a live brain */
+    bool     hasBrain;          /* the bot has a live brain */
     char     brainName[64];     /* brain identity: basename of the brain
                                  * script path, with .lua stripped and
                                  * "init" replaced by the parent directory
@@ -1393,6 +1393,43 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
 void serverSimInformation(ServerSim *sim, bool locked);
 
 /*********************************************************
+ *NAME:          serverSimPrintOverrunStats
+ *PURPOSE:
+ *  Prints the overrun lines of the "info" command to stdout
+ *  while a round runs: the server loop's timing with its
+ *  over-budget count, the bot pool's lines with its total
+ *  overruns, and each bot's [BOT] line with its own
+ *  overruns, under one header line. The text is made by the
+ *  same code "info" uses. Resets no counter, so the values
+ *  "info" prints later in the round are as they were.
+ *
+ *ARGUMENTS:
+ *  sim          - Pointer to the ServerSim
+ *  roundSeconds - Game time of the round so far, in seconds,
+ *                 for the header line
+ *********************************************************/
+void serverSimPrintOverrunStats(ServerSim *sim, uint32_t roundSeconds);
+
+/*********************************************************
+ *NAME:          serverSimLogOverrunStats
+ *PURPOSE:
+ *  Adds a log_OverrunStats record to the round log (.wbv)
+ *  with the numbers serverSimPrintOverrunStats prints: the
+ *  server loop's timing with its over-budget count, the bot
+ *  pool's timing with its total overruns, and each bot's
+ *  timing and overruns (layout in overrun_record.h and
+ *  docs/replay-format.md). Resets no counter. Does nothing
+ *  when no log is open.
+ *
+ *ARGUMENTS:
+ *  sim         - Pointer to the ServerSim
+ *  roundFrames - Running 20 ms server frames of the round so far
+ *  roundEnd    - TRUE for the record written as the round's log
+ *                closes, FALSE for a timed one
+ *********************************************************/
+void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEnd);
+
+/*********************************************************
  *NAME:          serverSimSaveMap
  *PURPOSE:
  *  Saves the current map state to a file.
@@ -2204,6 +2241,35 @@ bool serverSimScenarioHasLobbyTemplate(const ServerSim *sim);
  *********************************************************/
 void serverSimScenarioApplyLobbyRules(ServerSim *sim);
 
+/*********************************************************
+ *NAME:          serverSimScenarioApplyLobbyFixes
+ *PURPOSE:
+ *  Holds each lobby setting the attached scenario's lobby
+ *  block fixes (hidden mines, the time limit, the start
+ *  delay, no_bots, classic mode, the view policies, allies
+ *  in trees, the overview window, line of sight, positional
+ *  sound and smart pings) at the fixed value, and gives a
+ *  setting back to what the lobby had when its fix goes
+ *  away.
+ *  serverSimScenarioApplyLobbyRules calls this. The round
+ *  paths call it too, after they put the round length back
+ *  to the server's own, so a fixed time limit stays in force
+ *  for every round.
+ *
+ *ARGUMENTS:
+ *  sim        - The sim whose lobby settings are held
+ *  roundStart - true when a round starts now. The start
+ *               delay counts down once, in the first round,
+ *               so a held delay is used up by that round and
+ *               0 is what comes back.
+ *********************************************************/
+void serverSimScenarioApplyLobbyFixes(ServerSim *sim, bool roundStart);
+
+/* Whether the attached scenario's no_bots holds the lobby at no bots: the
+ * block says no_bots and the list fields no bots of its own (needs_bots, or
+ * a team with bots), which would win over it. */
+bool serverSimScenarioHoldsNoBots(const ServerSim *sim);
+
 /* Layout A — per-team / per-bot / brain-list events. The matching
  * client-side handlers live in clientSimApplyControl. */
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, struct ControlEvent *evt);
@@ -2831,6 +2897,37 @@ bool        serverSimGetModsOff(const ServerSim *sim);
 void            serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode);
 ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
 
+/* The language a seat's player reads, as the name of their lang file
+ * lowercased: "en", "de", "pt-br". game.lang(p) answers it, so a scenario
+ * can pick its own text for the player. Only a client in the same process
+ * as the server can tell it — the single-player frontend does, at join and
+ * whenever the player changes language — so every remote seat, and every
+ * seat on a dedicated server, reads "en".
+ *
+ * The setter lowercases the code and keeps it only when it is 1 to
+ * SERVER_PLAYER_LANG_LEN - 1 letters, digits and '-'; anything else,
+ * NULL and "" clear the seat back to "en". The seat is cleared when its
+ * player leaves. The getter answers "en" for a NULL sim, a seat out of
+ * range and a seat that was never told; never NULL. */
+#define SERVER_PLAYER_LANG_LEN 16
+void        serverSimSetPlayerLang(ServerSim *sim, BYTE seat, const char *code);
+const char *serverSimGetPlayerLang(const ServerSim *sim, BYTE seat);
+
+/* The input a seat's player uses, so a scenario can word a line for it:
+ * game.input(p) answers "keyboard", "touch" or "controller". Told the same
+ * way as the language, by a client in the server's own process at join and
+ * whenever the input changes, so a remote seat reads the keyboard.
+ *
+ * The setter keeps only the three values below; anything else clears the
+ * seat back to the keyboard. The seat is cleared when its player leaves.
+ * The getter answers SERVER_PLAYER_INPUT_KEYBOARD for a NULL sim and a
+ * seat out of range. */
+#define SERVER_PLAYER_INPUT_KEYBOARD   0
+#define SERVER_PLAYER_INPUT_TOUCH      1
+#define SERVER_PLAYER_INPUT_CONTROLLER 2
+void serverSimSetPlayerInput(ServerSim *sim, BYTE seat, BYTE input);
+BYTE serverSimGetPlayerInput(const ServerSim *sim, BYTE seat);
+
 /* Voice to everyone — the flag a scenario sets with
  * game.set_voice_everyone. The getter answers false for a NULL sim and when
  * the server's voice mode is serverVoiceOff, because then nobody hears
@@ -3126,11 +3223,11 @@ BYTE serverSimGetViewPlayer(const ServerSim *sim);
  * the bg_game rendering camera-perspective override (under a
  * per-file T2 grant). */
 
-/* Tutorial-mode flag mirrored on the embedded GameSim. */
-bool serverSimIsTutorial(const ServerSim *sim);
-void serverSimSetTutorial(ServerSim *sim, bool v);
-void serverSimSetTutorialStartIdx(ServerSim *sim, BYTE idx);
-bool serverSimTakeTutorialRespawn1(ServerSim *sim);
+/* Whether a script called game.tutorial_done for seat since the last take,
+ * and clears the mark. The single-player frontend calls it each frame, with
+ * the mutex held, to hide the main menu's Tutorial button. False for a NULL
+ * sim and a seat out of range. */
+bool serverSimTakeTutorialDone(ServerSim *sim, BYTE seat);
 
 /* Pause flag on the embedded GameSim. Unlocked: caller must hold
  * threadsMutex. */
@@ -3144,6 +3241,8 @@ void serverSimSetPaused(ServerSim *sim, bool paused);
 
 BYTE         serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y);
 bool         serverSimMapIsMine(const ServerSim *sim, BYTE x, BYTE y);
+/* Shots a wall square still takes before it is rubble; 0 for a non-wall. */
+int          serverSimWallShotsLeft(const ServerSim *sim, BYTE x, BYTE y);
 bool         serverSimPillExistsAt(const ServerSim *sim, BYTE x, BYTE y);
 BYTE         serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer);
 bool         serverSimBaseExistsAt(const ServerSim *sim, BYTE x, BYTE y);
@@ -3285,6 +3384,10 @@ typedef struct TankInfo {
     BYTE  armour;
     BYTE  trees;
     BYTE  pills;     /* How many pills the tank is carrying */
+    BYTE  sight;     /* Gun sight range in half squares, from the rules
+                        gunsight_min to gunsight_max. The server's copy:
+                        it follows the owner's crosshair once their
+                        input reaches the server. */
     bool  is_bot;
     TankModifiers mods; /* Per-tank percentages; a zeroed set is classic */
 } TankInfo;

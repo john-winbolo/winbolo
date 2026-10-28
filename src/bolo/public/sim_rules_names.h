@@ -318,7 +318,10 @@ typedef enum {
     X(tank_collision_mac, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)            \
     /* Whether deep sea drowns a tank with no boat. Last for the same        \
        reason. */                                                            \
-    X(tank_deep_sea_safe, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)
+    X(tank_deep_sea_safe, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)            \
+    /* Whether a shell that hits a tank sets off a mine on its square. Last  \
+       for the same reason. */                                               \
+    X(tank_hit_sets_off_mines, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)
 
 /* One member per rule, in the struct's own field order. SIM_RULE_COUNT is
  * one past the last, and an index at or above it names no rule. A rule's

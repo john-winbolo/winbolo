@@ -46,6 +46,7 @@
 #include "control_event.h"  /* ControlEvent — serverSimFillEntitySyncEvent's out-parameter */
 #include "attribution_track.h"
 #include "scripts_record.h"
+#include "overrun_record.h"  /* OVERRUN_RECORD_MAX_BYTES — log_OverrunStats' payload */
 #include "log_internal.h"
 #include "byte_order.h"
 #include "../winbolonet/winbolonet_core.h"
@@ -198,6 +199,14 @@ static void (*logPreTickHook)(void) = NULL;
 
 void logSetPreTickHook(void (*fn)(void)) {
   logPreTickHook = fn;
+}
+
+/* Run by logStop while the log is still open (see log.h). Install-only, for
+ * the reason logPreTickHook is. */
+static void (*logStopHook)(ServerSim *ssim) = NULL;
+
+void logSetStopHook(void (*fn)(ServerSim *ssim)) {
+  logStopHook = fn;
 }
 
 /*********************************************************
@@ -413,6 +422,34 @@ void logWriteEvents(BYTE key) {
 *********************************************************/
 void logStop() {
   BYTE data[2];
+
+  if (logIsRunning == TRUE && logStopHook != NULL && logSsim != NULL &&
+      logMem != NULL) {
+    /* The stop hook's events are written now, as one last entry. Only the
+       hook's own: what was queued before it, and not written by a
+       logWriteTick, is dropped as it always was, so the bytes before the
+       hook's entry do not change. logAddEvent takes events from the owner
+       thread only, and logStop can run on another one, so this thread is the
+       owner for the call. */
+    int keptSize = logMemSize;
+    int keptNum = logNumEvents;
+    SDL_ThreadID savedOwner = logOwnerThread;
+    logOwnerThread = SDL_GetCurrentThreadID();
+    logStopHook(logSsim);
+    logOwnerThread = savedOwner;
+    if (logNumEvents > keptNum) {
+      memmove(logMem, logMem + keptSize, (size_t)(logMemSize - keptSize));
+      logMemSize = (unsigned short)(logMemSize - keptSize);
+      logNumEvents = (unsigned short)(logNumEvents - keptNum);
+      logWriteEmpty();
+      logWriteEvents(logOldKey);
+      /* logAddEvent also put the hook's events in the spectator buffer.
+       * The tick write empties that buffer when it gives it to the ring;
+       * this entry has no tick write, so empty it here. */
+      logSpectatorAccLen = 0;
+      logOldKey = logKey;
+    }
+  }
 
   if (logIsRunning == TRUE) {
     logWriteEmpty();
@@ -1036,6 +1073,32 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
        in their own language; this is how a replay says it too. */
     out[off++] = log_VoiceEveryone;
     out[off++] = opt1;
+    break;
+  case log_PlayerLag:
+    /* One player's lag: the player, the round-trip time in ms as a big-endian
+       u16 and the rewind computed from that player's last input, which a
+       shell fired then would use, in 20 ms log entries. A reader takes the bytes it knows and skips the rest by
+       the framed length, so later fields can follow these four. */
+    out[off++] = log_PlayerLag;
+    out[off++] = opt1;
+    out[off++] = (BYTE)((short1 >> 8) & 0xFF);
+    out[off++] = (BYTE)(short1 & 0xFF);
+    out[off++] = opt2;
+    break;
+  case log_OverrunStats:
+    /* The server's timing and the bots' overruns: short1 bytes that
+       overrunRecordEncode wrote (overrun_record.h), copied as they are. The
+       framed length is the only length the record has, so a reader that does
+       not know it skips it. Layout in docs/replay-format.md. */
+    out[off++] = log_OverrunStats;
+    wordsLen = short1;
+    if (wordsLen > OVERRUN_RECORD_MAX_BYTES) {
+      wordsLen = OVERRUN_RECORD_MAX_BYTES;
+    }
+    if (wordsLen > 0 && words != NULL) {
+      memcpy(out + off, words, wordsLen);
+      off += wordsLen;
+    }
     break;
   default:
     return 0;

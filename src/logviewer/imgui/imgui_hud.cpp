@@ -60,6 +60,9 @@ extern "C" {
     void lv_screenClearPerspective(void);
     void lv_screenDeselectTank(void);
     bool lv_screenCheckPerspective(void);
+    bool lv_screenPlayerLagNow(int slot, int *rttMs, int *behindMs);
+    bool lv_screenLagShown(void);
+    bool lv_playersIsBot(unsigned char playerNumber);
     void lv_drawDirtyScreen(void);
     void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
     SDL_Texture *lv_drawGetTilesTexture(void);
@@ -252,7 +255,12 @@ static void hud_owner_text(const LvHudSlot &slot, char *out, size_t outSize) {
  * Item Information panel do. */
 static void hud_slot_tooltip(int grid, int index, const LvHudSlot &slot) {
     char item[64];
-    char tip[LANG_MSGARG_STRING_LEN];
+    /* Room for the line and the parts added after it. A part is formatted
+     * on its own, with an empty string1, and added to the end, so the line
+     * is never copied into a 64-byte message argument and cut short. This
+     * needs STR_LV_HUD_TIP_REL and STR_LV_LAG_HUD_TIP to start with
+     * {string1}, as they do in every language file. */
+    char tip[4 * LANG_MSGARG_STRING_LEN];
     char who[LANG_MSGARG_STRING_LEN];
     MessageArgs args = {};
 
@@ -282,12 +290,28 @@ static void hud_slot_tooltip(int grid, int index, const LvHudSlot &slot) {
     if (slot.relation != LV_HUD_REL_NONE && slot.icon != LV_HUD_ICON_DEAD &&
         slot.icon != LV_HUD_ICON_NEUTRAL) {
         args = {};
-        snprintf(args.string1, sizeof(args.string1), "%s", tip);
         snprintf(args.string2, sizeof(args.string2), "%s",
                  langGetText(slot.relation == LV_HUD_REL_OWN    ? STR_LV_HUD_REL_OWN :
                              slot.relation == LV_HUD_REL_ALLIED ? STR_LV_HUD_REL_ALLIED :
                                                                   STR_LV_HUD_REL_HOSTILE));
-        snprintf(tip, sizeof(tip), "%s", langGetTextFmt(STR_LV_HUD_TIP_REL, &args));
+        SDL_strlcat(tip, langGetTextFmt(STR_LV_HUD_TIP_REL, &args), sizeof(tip));
+    }
+    /* A tank's round-trip time after the rest, when the recording has
+     * one for its player at the playhead and the lag display is on. A bot
+     * has no round trip: its 0 ms would read as a player with no lag, so
+     * none is shown, as the server's info command shows no ping for one. */
+    if (grid == HUD_GRID_TANKS && slot.icon != LV_HUD_ICON_NEUTRAL) {
+        int rtt = 0;
+        bool has;
+        lv_clientMutexWaitFor();
+        has = lv_screenLagShown() && !lv_playersIsBot((unsigned char)index) &&
+              lv_screenPlayerLagNow(index, &rtt, nullptr);
+        lv_clientMutexRelease();
+        if (has) {
+            args = {};
+            args.number = rtt;
+            SDL_strlcat(tip, langGetTextFmt(STR_LV_LAG_HUD_TIP, &args), sizeof(tip));
+        }
     }
     /* A tank that a bot drives has the game's chip in front of the line. */
     if (grid == HUD_GRID_TANKS && lv_bot_chip_width(slot.chip) > 0.0f) {
