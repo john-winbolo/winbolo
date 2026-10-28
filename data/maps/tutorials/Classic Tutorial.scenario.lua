@@ -35,11 +35,11 @@
 --     and the first such respawn shows one more message.
 --
 -- THE LOBBY. As the old tutorial did, the game has no hidden mines, no
--- start delay and no time limit. The lobby block fixes all three, and the
--- host cannot change them while this scenario is attached.
+-- start delay, no time limit and no bots. The lobby block fixes all four,
+-- and the host cannot change them while this scenario is attached: no_bots
+-- takes off any bot the host added and refuses adding another.
 --
--- The scenario changes no game rule and fields no bots. A bot the host added
--- is taken off the field as the round starts, as the Tutorial does.
+-- The scenario changes no game rule.
 -- =========================================================================
 
 scenario = {
@@ -56,10 +56,11 @@ scenario = {
     hidden_mines = false,
     time_limit = 0,
     start_delay = 0,
+    no_bots = true,
   },
 
   callbacks = {
-    on_start = "Takes off the field any bot the host added.",
+    on_start = "Finds the tutorial's player.",
     on_player_join = "Makes the player who joins the tutorial's player.",
     on_player_leave = "Forgets a player who leaves, so the next one carries on from the same step.",
     on_tick = "Shows each step's messages when your tank reaches its row, and stops the tank there the first time.",
@@ -167,14 +168,6 @@ function on_start()
   for p = 0, game.max_tanks() - 1 do
     if S.player == nil and game.lobby_slot(p) ~= nil and is_player_seat(p) then
       S.player = p
-    end
-  end
-  -- A bot the tutorial did not ask for would drive about the map.
-  for p = 0, game.max_tanks() - 1 do
-    local s = game.lobby_slot(p)
-    if s ~= nil and s.bot and s.fielded and p ~= S.player and
-       p ~= CLASSIC_TUTORIAL_PLAYER then
-      game.remove_bot(p)
     end
   end
 end

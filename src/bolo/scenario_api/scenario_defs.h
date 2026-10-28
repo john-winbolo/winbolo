@@ -110,11 +110,18 @@ typedef struct {
  * the round is gameScripted. 0 means none declared, which plays strict
  * tournament.
  *
- * The three fix flags each hold one lobby setting at the value beside it for
- * as long as the scenario is attached: hidden mines, the time limit (in
- * minutes, 0 for none) and the start delay (in seconds). The host cannot
- * change a fixed setting, and the lobby gets back what it had when the
- * scenario goes (serverSimScenarioApplyLobbyRules). */
+ * The fix flags each hold one lobby setting at the value beside it for as
+ * long as the scenario is attached: hidden mines, the time limit (in
+ * minutes, 0 for none), the start delay (in seconds), the AI policy (no_bots
+ * holds it at none), classic mode, the three view policies, allies in trees,
+ * the overview window, line of sight, positional sound and smart pings. The
+ * host cannot change a fixed setting, and the lobby gets back what it had
+ * when the scenario goes (serverSimScenarioApplyLobbyRules). A view policy
+ * fix holds the policy only; the decay seconds stay the host's.
+ *
+ * noMods is not a lobby setting. The compose reads it off the manifest and
+ * leaves the host's picked mods out of the round; it is carried here so the
+ * sim's copy of the block is the whole block. */
 typedef struct {
     uint8_t      maxPlayers;
     uint8_t      numTeams;
@@ -125,6 +132,22 @@ typedef struct {
     uint16_t     timeLimitMinutes;  /* 0 = no time limit */
     bool         fixStartDelay;
     uint16_t     startDelaySeconds;
+    bool         noBots;            /* AI policy held at none, bots removed */
+    bool         fixClassicMode;
+    bool         classicMode;
+    bool         fixView[3];        /* by ViewCategory: pill, base, ally */
+    uint8_t      viewPolicy[3];     /* a ViewPolicy value */
+    bool         fixAlliesInTrees;
+    bool         alliesInTrees;
+    bool         fixOverviewWindow;
+    uint8_t      overviewWindow;    /* an OverviewWindow value */
+    bool         fixLineOfSight;
+    uint8_t      lineOfSight;       /* a LineOfSightMode value */
+    bool         fixPositionalSound;
+    bool         positionalSound;
+    bool         fixSmartPings;
+    bool         smartPings;        /* true = pings allowed */
+    bool         noMods;
     ScnLobbyTeam teams[MAX_TANKS];
 } ScnLobbyTemplate;
 

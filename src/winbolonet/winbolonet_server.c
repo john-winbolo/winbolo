@@ -180,12 +180,6 @@ void winbolonetSendLobbyUpdate(void) {
 *********************************************************/
 static cJSON *winbolonetBuildRegisterBody(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   cJSON *body;
-  char versionStr[16];
-
-  /* Build version string from game version defines.
-     Note: the hex defines (0x01, 0x08) are for the binary protocol;
-     the display version is constructed here as "major.minor.revision". */
-  snprintf(versionStr, sizeof(versionStr), "%d.%d%d", BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION);
 
   body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "map", mapName);
@@ -199,7 +193,9 @@ static cJSON *winbolonetBuildRegisterBody(char *mapName, unsigned short port, BY
   cJSON_AddNumberToObject(body, "free_bases", freeBases);
   cJSON_AddNumberToObject(body, "free_pills", freePills);
   cJSON_AddNumberToObject(body, "num_players", numPlayers);
-  cJSON_AddStringToObject(body, "version", versionStr);
+  /* The display version ("2.1.0a"), as the About box shows it, rather than
+     text rebuilt from the protocol bytes, which drops the suffix. */
+  cJSON_AddStringToObject(body, "version", WINBOLO_DISPLAY_VERSION);
   cJSON_AddBoolToObject(body, "in_lobby", TRUE);
   winbolonetAddLobbyInfoFields(body);
 

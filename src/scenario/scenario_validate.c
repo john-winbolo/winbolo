@@ -363,6 +363,42 @@ static void scnCheckLobby(const ServerSim *sim, const ScenarioManifest *m,
                     "own setting stays",
                     (int)lob->startDelay, SCN_LOBBY_START_DELAY_MAX);
     }
+    {
+        static const char *const viewKeys[3] = { "lobby.pill_view",
+                                                 "lobby.base_view",
+                                                 "lobby.ally_view" };
+        for (i = 0; i < 3; i++) {
+            if (lob->fixView[i] && lob->view[i] == SCN_LOBBY_WORD_BAD) {
+                scnIssueAdd(out, viewKeys[i],
+                            "%s is not one of \"always\", \"key\", \"decay\" "
+                            "or \"off\"; the host's own setting stays",
+                            viewKeys[i] + strlen("lobby."));
+            }
+        }
+    }
+    if (lob->fixOverviewWindow &&
+        lob->overviewWindow == SCN_LOBBY_WORD_BAD) {
+        scnIssueAdd(out, "lobby.overview_window",
+                    "overview_window is not one of \"expanded\", \"classic\" "
+                    "or \"none\"; the host's own setting stays");
+    }
+    /* no_bots takes every bot off the lobby, so a file that fields bots of
+       its own has said two things that cannot both happen. The bots win:
+       the lobby keeps them allowed. */
+    if (lob->noBots) {
+        bool fieldsBots = m->needsBots;
+        for (i = 0; i < lob->numTeams && !fieldsBots; i++) {
+            if (lob->teams[i].bots > 0) {
+                fieldsBots = true;
+            }
+        }
+        if (fieldsBots) {
+            scnIssueAdd(out, "lobby.no_bots",
+                        "no_bots is true, but the scenario fields bots of its "
+                        "own; its bots stay allowed and no_bots does "
+                        "nothing");
+        }
+    }
 
     for (i = 0; i < lob->numTeams; i++) {
         const ScnManifestTeam *t = &lob->teams[i];

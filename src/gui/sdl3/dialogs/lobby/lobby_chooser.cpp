@@ -1098,6 +1098,22 @@ void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
                     sizeof(s_chooserTabs.server.selectedName));
         s_chooserTabs.server.randomMapSelected = false;
     }
+    /* The server list now shows the lobby's own map, which the server
+       already has. */
+    s_chooserTabs.server.selectionUnsent = false;
+
+    /* The other tabs keep what was picked the last time the chooser was
+       open, which can be in an earlier game whose lobby has gone: a new
+       lobby is back on its own map (Everard Island in single player) while
+       the Local Maps tab still shows the map picked then. That highlight
+       has not been sent to this lobby, so Use This Map sends it before it
+       commits (lobbyChooseMapSendUnsentSelection); it used to commit
+       nothing, and the round started on the lobby's own map. A highlight
+       that is the lobby's map already needs nothing sent. */
+    if (s_chooserTabs.upload.selectedName[0] != '\0') {
+        s_chooserTabs.upload.selectionUnsent =
+            !(cur && SDL_strcasecmp(s_chooserTabs.upload.selectedName, cur) == 0);
+    }
 
     s_chooser.open = true;
     s_chooser.previewPending   = false;

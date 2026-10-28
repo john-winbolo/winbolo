@@ -169,7 +169,8 @@ void lv_imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char
     }
     
     /* Version string */
-    snprintf(s_version, sizeof(s_version), "%d.%d%d", versionMajor, versionMinor, versionRevision);
+    snprintf(s_version, sizeof(s_version), "%u.%u.%u", (unsigned)versionMajor, (unsigned)versionMinor,
+             (unsigned)versionRevision);
     
     /* Map name */
     strncpy(s_map_name, mapName, sizeof(s_map_name) - 1);

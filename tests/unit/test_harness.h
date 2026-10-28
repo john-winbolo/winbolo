@@ -1512,6 +1512,13 @@ int run_lv_event_list_pinned(void);
  * key in both directions, ties and no sort in the server's order. */
 int run_wbn_browser_sort(void);
 
+/* Game browser server version test (test_browser_version.c): the old "M.mr"
+ * and the "M.m.r" forms, with and without a letter suffix, against 1.1.9,
+ * and text that does not parse; and the protocol bytes WINBOLO_VERSION
+ * gives. */
+int run_browser_version_parse(void);
+int run_version_protocol_bytes(void);
+
 /* Recap clip GIF rules (test_clip_gif_core.c): the length field and the seek
  * bar marker agree and are clamped, the gallery metadata file reads back and
  * rejects bad text, the gallery scan lists newest first, long lines are cut
@@ -3444,6 +3451,11 @@ int run_lobby_scenario_boot_sets_type(void);
 int run_lobby_scenario_identity_strips_controls(void);
 int run_lobby_scenario_nolobby_boot_seats_template(void);
 int run_lobby_scenario_fixes_lobby_settings(void);
+int run_lobby_scenario_fixes_visibility(void);
+int run_lobby_scenario_fixes_classic_mode(void);
+int run_lobby_scenario_fix_wins_over_host_classic(void);
+int run_lobby_scenario_no_bots(void);
+int run_lobby_scenario_no_bots_then_needs_bots(void);
 
 /* What the sim tells WinBolo.net about the scripts a round runs
  * (test_wbn_lobby_info_scenario.c): the scenario, its cap and the mods, none
@@ -4120,6 +4132,7 @@ int run_scenario_manifest_json_refusals(void);
 int run_scenario_manifest_agrees(void);
 int run_scenario_manifest_from_values(void);
 int run_scenario_manifest_json_team_init(void);
+int run_scenario_manifest_json_lobby_fixes(void);
 int run_scenario_manifest_json_number_range(void);
 int run_scenario_manifest_json_kind(void);
 int run_scenario_manifest_json_triggers(void);
@@ -4362,6 +4375,10 @@ int run_scenario_compose_compat_write_stays_local(void);
 int run_scenario_compose_pairs_game_complete(void);
 int run_scenario_compose_unsafe_keeps_sharing(void);
 int run_scenario_compose_off_map_script_too(void);
+int run_scenario_compose_no_mods(void);
+int run_scenario_compose_lobby_fixes_read(void);
+int run_scenario_compose_mod_fixes_refused(void);
+int run_scenario_compose_lobby_fixes_validate(void);
 int run_scenario_compose_off_map_alone_plain(void);
 int run_scenario_compose_off_plain_map_none(void);
 int run_scenario_compose_on_picks_replace_map(void);

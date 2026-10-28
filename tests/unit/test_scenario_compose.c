@@ -4069,3 +4069,231 @@ int run_scenario_compose_on_tick_bottom_first(void) {
     scDropDir();
     return 0;
 }
+
+/* ── The lobby block's fixes ──────────────────────────────────────── */
+
+/* The map's own scenario, playing without the host's mods. */
+static const char kScMapNoMods[] =
+    "scenario = {\n"
+    "  name = \"Alone\",\n"
+    "  api = 1,\n"
+    "  bound = true,\n"
+    "  game = \"tournament\",\n"
+    "  lobby = { no_mods = true },\n"
+    "}\n";
+
+/* no_mods: the host's two mods are left out of the round and the map's own
+   scenario plays alone. The mods stay on the host's list, and with a map
+   whose scenario does not say no_mods they compose again. */
+int run_scenario_compose_no_mods(void) {
+    ServerSim  *sim;
+    const char *picks[2] = { "modone.lua", "modtwo.lua" };
+
+    UT_ASSERT(scMakeDir("no_mods"));
+    UT_ASSERT(scWrite("modone.lua", kScModOne));
+    UT_ASSERT(scWrite("modtwo.lua", kScModTwo));
+    UT_ASSERT(scPutMapScript(kScMapNoMods));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    scCommit(sim);
+    UT_ASSERT_MSG(scPick(sim, picks, 2) == CMD_OK, "the two mods were refused");
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached");
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 1,
+                  "the round composed %d scripts under no_mods, wanted the "
+                  "scenario alone", scenarioHostScriptCount(scSlot));
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Alone") == 0,
+                  "the round is \"%s\", wanted the map's scenario",
+                  sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(serverSimGetScriptCount(sim) == 2,
+                  "the host's list holds %d, wanted its two mods kept",
+                  serverSimGetScriptCount(sim));
+
+    /* A map whose scenario does not say no_mods: the mods play again. */
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    scCommit(sim);
+    UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 3,
+                  "without no_mods %d scripts composed, wanted the scenario "
+                  "and both mods", scenarioHostScriptCount(scSlot));
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* The map's own scenario fixing every setting the block may fix. The ally
+   view names no choice, so it fixes nothing. */
+static const char kScMapFixesAll[] =
+    "scenario = {\n"
+    "  name = \"Fixed\",\n"
+    "  api = 1,\n"
+    "  bound = true,\n"
+    "  game = \"tournament\",\n"
+    "  lobby = {\n"
+    "    no_bots = true,\n"
+    "    classic_mode = false,\n"
+    "    pill_view = \"off\",\n"
+    "    base_view = \"decay\",\n"
+    "    ally_view = \"sometimes\",\n"
+    "    allies_in_trees = true,\n"
+    "    overview_window = \"classic\",\n"
+    "    line_of_sight = true,\n"
+    "    positional_sound = true,\n"
+    "    smart_pings = false,\n"
+    "  },\n"
+    "}\n";
+
+/* Every key of the block read off the script, into the manifest and the
+   lobby template, and put in force on the lobby. */
+int run_scenario_compose_lobby_fixes_read(void) {
+    ServerSim              *sim;
+    const ScenarioManifest *m;
+
+    UT_ASSERT(scMakeDir("lobby_fixes_read"));
+    UT_ASSERT(scPutMapScript(kScMapFixesAll));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    scCommit(sim);
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached");
+    m = scenarioHostManifest(scSlot);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT(m->lobby.noBots);
+    UT_ASSERT(!m->lobby.noMods);
+    UT_ASSERT(m->lobby.fixClassicMode && !m->lobby.classicMode);
+    UT_ASSERT(m->lobby.fixView[0] && m->lobby.view[0] == viewPolicyOff);
+    UT_ASSERT(m->lobby.fixView[1] && m->lobby.view[1] == viewPolicyDecay);
+    UT_ASSERT_MSG(m->lobby.fixView[2] &&
+                      m->lobby.view[2] == SCN_LOBBY_WORD_BAD,
+                  "ally_view \"sometimes\" read as fix %d, value %d",
+                  (int)m->lobby.fixView[2], (int)m->lobby.view[2]);
+    UT_ASSERT(m->lobby.fixAlliesInTrees && m->lobby.alliesInTrees);
+    UT_ASSERT(m->lobby.fixOverviewWindow &&
+              m->lobby.overviewWindow == overviewWindowClassic);
+    UT_ASSERT(m->lobby.fixLineOfSight && m->lobby.lineOfSight);
+    UT_ASSERT(m->lobby.fixPositionalSound && m->lobby.positionalSound);
+    UT_ASSERT(m->lobby.fixSmartPings && !m->lobby.smartPings);
+
+    /* The template the lobby holds. A word that named no choice is no fix. */
+    UT_ASSERT(sim->scenarioLobbyValid);
+    UT_ASSERT(sim->scenarioLobby.noBots);
+    UT_ASSERT_MSG(!sim->scenarioLobby.fixView[2],
+                  "a word that names no choice became a fix");
+    UT_ASSERT(sim->scenarioLobby.lineOfSight ==
+              (uint8_t)lineOfSightBuildingsAndTrees);
+
+    /* And the lobby, holding them. */
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiNone);
+    UT_ASSERT(serverSimGetViewPolicy(sim, viewCategoryPill) == viewPolicyOff);
+    UT_ASSERT(serverSimGetViewPolicy(sim, viewCategoryBase) ==
+              viewPolicyDecay);
+    UT_ASSERT(serverSimGetAlliesInTrees(sim));
+    UT_ASSERT(serverSimGetOverviewWindow(sim) ==
+              (uint8_t)overviewWindowClassic);
+    UT_ASSERT(serverSimGetLineOfSight(sim) ==
+              (uint8_t)lineOfSightBuildingsAndTrees);
+    UT_ASSERT(serverSimGetPositionalSound(sim));
+    UT_ASSERT(serverSimGetSmartPingsOff(sim));
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* A mod that fixes a lobby setting is refused, played alone as much as
+   beside a scenario: the fixes belong to the script that decides the round,
+   and a mod that took them would take the host's settings away. */
+static const char kScModFixes[] =
+    "scenario = {\n"
+    "  name = \"Grabby\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
+    "  lobby = { positional_sound = false },\n"
+    "}\n";
+
+int run_scenario_compose_mod_fixes_refused(void) {
+    ServerSim  *sim;
+    const char *picks[1] = { "grabby.lua" };
+
+    UT_ASSERT(scMakeDir("mod_fixes_refused"));
+    UT_ASSERT(scWrite("grabby.lua", kScModFixes));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    /* A plain map, so the mod would play alone. */
+    scCommit(sim);
+    (void)scPick(sim, picks, 1);
+    UT_ASSERT_MSG(scSlot == NULL,
+                  "a mod that fixes a lobby setting attached alone");
+
+    /* And beside the map's own scenario. */
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    scCommit(sim);
+    UT_ASSERT_MSG(scSlot == NULL ||
+                      strcmp(sim->scenarioIdentity.name, "Grabby") != 0,
+                  "a mod that fixes a lobby setting decided the round");
+    UT_ASSERT_MSG(scSlot == NULL || scenarioHostScriptCount(scSlot) < 2,
+                  "a mod that fixes a lobby setting played beside the "
+                  "map's scenario");
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* A view word and an overview word that name no choice, and no_bots beside
+   needs_bots, which cannot both happen. */
+static const char kScMapBadFixes[] =
+    "scenario = {\n"
+    "  name = \"Muddled\",\n"
+    "  api = 1,\n"
+    "  bound = true,\n"
+    "  game = \"tournament\",\n"
+    "  needs_bots = true,\n"
+    "  lobby = {\n"
+    "    no_bots = true,\n"
+    "    base_view = \"sometimes\",\n"
+    "    overview_window = \"wide\",\n"
+    "    pill_view = \"key\",\n"
+    "  },\n"
+    "}\n";
+
+static bool scIssueAt(const ScnValidateResult *r, const char *key) {
+    uint16_t i;
+
+    for (i = 0; i < r->count; i++) {
+        if (strcmp(r->issues[i].key, key) == 0) return true;
+    }
+    return false;
+}
+
+/* -validate names each of the three, and nothing against the good word. */
+int run_scenario_compose_lobby_fixes_validate(void) {
+    BYTE              emap[6000] = E_MAP;
+    ServerSim        *sim;
+    ScnValidateResult r;
+
+    UT_ASSERT(scPutMapScript(kScMapBadFixes));
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+                                    gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+
+    UT_ASSERT_MSG(!scenarioValidateMap(sim, scMapPath(), &r),
+                  "the script was passed without a word");
+    UT_ASSERT_MSG(scIssueAt(&r, "lobby.base_view"),
+                  "nothing against base_view \"sometimes\"");
+    UT_ASSERT_MSG(scIssueAt(&r, "lobby.overview_window"),
+                  "nothing against overview_window \"wide\"");
+    UT_ASSERT_MSG(scIssueAt(&r, "lobby.no_bots"),
+                  "nothing against no_bots beside needs_bots");
+    UT_ASSERT_MSG(!scIssueAt(&r, "lobby.pill_view"),
+                  "pill_view \"key\" was reported");
+
+    serverSimDestroy(sim);
+    scDropMapScript();
+    return 0;
+}

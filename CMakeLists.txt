@@ -1419,6 +1419,8 @@ target_include_directories(winbolonet_server PRIVATE
 )
 target_link_libraries(winbolonet_server PRIVATE SDL3::SDL3)
 target_compile_definitions(winbolonet_server PRIVATE
+    # The "version" field of the server/register post.
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -2044,6 +2046,8 @@ target_include_directories(winbolonet_server PRIVATE
 )
 target_link_libraries(winbolonet_server PRIVATE SDL3::SDL3)
 target_compile_definitions(winbolonet_server PRIVATE
+    # The "version" field of the server/register post.
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -2177,6 +2181,9 @@ endif()
 set(LOGVIEWER_LIB_SOURCES
     src/logviewer/logviewer.c
     src/logviewer/lv_embed.c
+    # The map beside the sidebars and the first view of a log, which
+    # logviewer.c shares with the web viewer (src/logviewer/wasm).
+    src/logviewer/lv_host_dock.c
     # Alt+Enter in the viewer while it has the game's window: asks the game
     # for full screen. Client only; the standalone's body is in main.c.
     src/logviewer/lv_fullscreen_game.c
@@ -5241,6 +5248,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lv_event_list.c
     # WinBolo.net log browser table sort rule (test_wbn_browser_sort.c).
     tests/unit/test_wbn_browser_sort.c
+    # The game browser's server version test (browser_version.h) and the
+    # protocol bytes from WINBOLO_VERSION (test_browser_version.c).
+    tests/unit/test_browser_version.c
     # Recap clip GIF length and timeline sync, and the GIF gallery's metadata
     # files and newest-first scan, the gallery text fill and the capped preview
     # decode (test_clip_gif_core.c).
@@ -6160,6 +6170,8 @@ set(_unit_test_names
     lv_event_list_replay
     lv_event_list_pinned
     wbn_browser_sort
+    browser_version_parse
+    version_protocol_bytes
     clip_gif_len_sync
     clip_gif_record_mode
     clip_gif_meta_roundtrip
@@ -7289,6 +7301,11 @@ set(_unit_test_names
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
     lobby_scenario_fixes_lobby_settings
+    lobby_scenario_fixes_visibility
+    lobby_scenario_fixes_classic_mode
+    lobby_scenario_fix_wins_over_host_classic
+    lobby_scenario_no_bots
+    lobby_scenario_no_bots_then_needs_bots
     wbn_lobby_info_scenario
     info_script_tail_golden
     info_script_tail_read
@@ -7693,6 +7710,7 @@ set(_unit_test_names
     scenario_manifest_agrees
     scenario_manifest_from_values
     scenario_manifest_json_team_init
+    scenario_manifest_json_lobby_fixes
     scenario_manifest_json_number_range
     scenario_manifest_json_triggers
     scenario_manifest_json_trigger_operator
@@ -7842,6 +7860,10 @@ set(_unit_test_names
     scenario_compose_pairs_game_complete
     scenario_compose_unsafe_keeps_sharing
     scenario_compose_off_map_script_too
+    scenario_compose_no_mods
+    scenario_compose_lobby_fixes_read
+    scenario_compose_mod_fixes_refused
+    scenario_compose_lobby_fixes_validate
     scenario_compose_off_map_alone_plain
     scenario_compose_off_plain_map_none
     scenario_compose_on_picks_replace_map

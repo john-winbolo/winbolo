@@ -29,11 +29,6 @@
  * netpacks.h wire-protocol header. */
 #define PACKET_MAX_PLAYER_NAME 64
 
-/* Version string used in info-packet responses and surfaced in the
- * server browser to gate "join" against version-skewed servers.
- * WINBOLO_VERSION is supplied as a compile definition by CMake. */
-#define STRVER WINBOLO_VERSION
-
 /* Maximum bytes accepted by the lobby map-upload path
  * (PACKET_LOBBY_MAP_UPLOAD_BEGIN and PACKET_LOBBY_MAP_USE_LOCAL). The
  * .map RLE format encodes a fully-pathological map (every playable
