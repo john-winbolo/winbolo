@@ -9,11 +9,20 @@
  * Replaces platform_config.c — uses browser localStorage via EM_ASM
  * to persist settings across sessions without touching the filesystem.
  *
- * Each value is a localStorage item named winbolo_config_SECTION_KEY. The
- * values are kept in memory at any length: the layout of the sidebars
- * (Dock.Ini) is ImGui's settings text, many kilobytes long. A save writes
- * only the values that changed since the last one, so the page can save
- * once a frame, as the desktop viewer does, at no cost when nothing changed.
+ * Each value is a localStorage item named winbolo_config[SECTION]KEY. The
+ * name is split at the first ']', so a section name may hold any character
+ * but ']', the same rule as a section of the desktop's INI file; the key may
+ * hold any character. The values are kept in memory at any length: the
+ * layout of the sidebars (Dock.Ini) is ImGui's settings text, many kilobytes
+ * long. A save writes only the values that changed since the last one, so
+ * the page can save once a frame, as the desktop viewer does, at no cost
+ * when nothing changed.
+ *
+ * Earlier builds named the items winbolo_config_SECTION_KEY, split at the
+ * first '_'. That is not safe for a section with '_' in its name, but no
+ * section in use has one (LOGVIEWER, SETTINGS, WINBOLO.NET), so such an
+ * item is still read the old way. The next save writes it under the new
+ * name and removes the old item.
  */
 
 #include "platform/platform_config.h"
@@ -29,6 +38,7 @@ typedef struct {
     char *key;
     char *value;
     int   dirty;   /* changed since localStorage last had it */
+    int   legacy;  /* also in localStorage under the old name, to remove */
 } ConfigEntry;
 
 static ConfigEntry *g_entries = NULL;
@@ -57,6 +67,7 @@ static ConfigEntry *add_entry(const char *section, const char *key, const char *
     e->key = dup_string(key);
     e->value = dup_string(value);
     e->dirty = 0;
+    e->legacy = 0;
     if (e->section == NULL || e->key == NULL || e->value == NULL) {
         free(e->section);
         free(e->key);
@@ -65,6 +76,16 @@ static ConfigEntry *add_entry(const char *section, const char *key, const char *
     }
     g_entry_count++;
     return e;
+}
+
+static ConfigEntry *find_entry(const char *section, const char *key) {
+    for (int i = 0; i < g_entry_count; i++) {
+        if (strcmp(g_entries[i].section, section) == 0 &&
+            strcmp(g_entries[i].key, key) == 0) {
+            return &g_entries[i];
+        }
+    }
+    return NULL;
 }
 
 int lv_platform_config_init(const char *app_name) {
@@ -78,12 +99,13 @@ int lv_platform_config_init(const char *app_name) {
      * read one by one below. localStorage can throw (a private window, or
      * storage turned off); there is then nothing to read. */
     count = EM_ASM_INT({
-        var prefix = "winbolo_config_";
         var keys = [];
         try {
             for (var i = 0; i < localStorage.length; i++) {
                 var k = localStorage.key(i);
-                if (k && k.startsWith(prefix)) keys.push(k);
+                if (k && (k.startsWith("winbolo_config[") || k.startsWith("winbolo_config_"))) {
+                    keys.push(k);
+                }
             }
         } catch (e) {
             keys = [];
@@ -93,10 +115,11 @@ int lv_platform_config_init(const char *app_name) {
     });
 
     for (i = 0; i < count; i++) {
-        /* Key format: winbolo_config_SECTION_KEY. Both strings are made by
-         * the page with malloc and freed here. */
+        /* The item's name with the prefix's last character left on: '[' for
+         * the new form, '_' for the old one. Both strings are made by the
+         * page with malloc and freed here. */
         char *name = (char *)EM_ASM_INT({
-            return stringToNewUTF8(Module.wbConfigKeys[$0].substring("winbolo_config_".length));
+            return stringToNewUTF8(Module.wbConfigKeys[$0].substring("winbolo_config".length));
         }, i);
         char *val = (char *)EM_ASM_INT({
             var v = null;
@@ -104,10 +127,33 @@ int lv_platform_config_init(const char *app_name) {
             return (v === null) ? 0 : stringToNewUTF8(v);
         }, i);
         if (name != NULL && val != NULL) {
-            char *sep = strchr(name, '_');
+            int legacy = (name[0] == '_');
+            /* New form: SECTION]KEY, split at the first ']'. Old form:
+             * SECTION_KEY, split at the first '_'. */
+            char *sep = strchr(name + 1, legacy ? '_' : ']');
             if (sep != NULL) {
+                ConfigEntry *e;
                 *sep = '\0';
-                add_entry(name, sep + 1, val);
+                e = find_entry(name + 1, sep + 1);
+                if (e == NULL) {
+                    e = add_entry(name + 1, sep + 1, val);
+                } else if (legacy) {
+                    /* Both names are there. An old item is removed when its
+                     * value is written under the new name, so one still
+                     * there was written after that, by an earlier build:
+                     * its value is the newer one. */
+                    char *copy = dup_string(val);
+                    if (copy != NULL) {
+                        free(e->value);
+                        e->value = copy;
+                    }
+                }
+                if (e != NULL && legacy) {
+                    /* Written under the new name at the next save, which
+                     * removes the old item. */
+                    e->dirty = 1;
+                    e->legacy = 1;
+                }
             }
         }
         free(name);
@@ -131,16 +177,6 @@ void lv_platform_config_shutdown(void) {
     g_entry_count = 0;
     g_entry_cap = 0;
     g_initialized = 0;
-}
-
-static ConfigEntry *find_entry(const char *section, const char *key) {
-    for (int i = 0; i < g_entry_count; i++) {
-        if (strcmp(g_entries[i].section, section) == 0 &&
-            strcmp(g_entries[i].key, key) == 0) {
-            return &g_entries[i];
-        }
-    }
-    return NULL;
 }
 
 static void set_value(const char *section, const char *key, const char *value) {
@@ -212,13 +248,18 @@ void lv_platform_config_set_bool(const char *section, const char *key, int value
 /* When a save that failed may be tried again, in ms (emscripten_get_now). */
 static double g_retry_at = 0.0;
 
+int lv_platform_config_retry_waiting(void) {
+    if (g_retry_at > 0.0 && emscripten_get_now() < g_retry_at) return 1;
+    g_retry_at = 0.0;
+    return 0;
+}
+
 int lv_platform_config_save(void) {
     int ok = 1;
-    /* A write the browser refused is tried again two seconds later at the
-     * earliest, as on the desktop: not once a frame. */
-    if (g_retry_at > 0.0 && emscripten_get_now() < g_retry_at) {
-        return 0;
-    }
+    /* Every call tries the writes, so the save when the page is closed or
+     * hidden always tries once. After a refused write the page's per-frame
+     * save waits two seconds (lv_platform_config_retry_waiting), as the
+     * desktop does: it does not try once a frame. */
     g_retry_at = 0.0;
     /* Write to localStorage the values that changed since the last save. A
      * value the browser refused (storage full or turned off) stays marked,
@@ -228,15 +269,20 @@ int lv_platform_config_save(void) {
         if (!g_entries[i].dirty) continue;
         written = EM_ASM_INT({
             try {
-                localStorage.setItem("winbolo_config_" + UTF8ToString($0) + "_" + UTF8ToString($1),
-                                     UTF8ToString($2));
+                var section = UTF8ToString($0);
+                var key = UTF8ToString($1);
+                localStorage.setItem("winbolo_config[" + section + "]" + key, UTF8ToString($2));
+                /* The value is now under the new name: the old item, named
+                 * as earlier builds named it, goes. */
+                if ($3) localStorage.removeItem("winbolo_config_" + section + "_" + key);
                 return 1;
             } catch (e) {
                 return 0;
             }
-        }, g_entries[i].section, g_entries[i].key, g_entries[i].value);
+        }, g_entries[i].section, g_entries[i].key, g_entries[i].value, g_entries[i].legacy);
         if (written) {
             g_entries[i].dirty = 0;
+            g_entries[i].legacy = 0;
         } else {
             ok = 0;
         }
