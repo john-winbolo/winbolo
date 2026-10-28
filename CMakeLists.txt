@@ -7540,6 +7540,7 @@ set(_unit_test_names
     scenario_identity_blob
     scenario_identity_list_wire
     scenario_identity_details_fetch
+    scenario_identity_details_extra
     scenario_identity_shipped
     script_fetch_req_golden
     script_fetch_found_lua

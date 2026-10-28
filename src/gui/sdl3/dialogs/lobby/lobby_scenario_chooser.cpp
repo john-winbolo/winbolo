@@ -169,8 +169,7 @@ static uint32_t            s_syncGen    = 0;
  * for a row the server holds, and file is the local file's name for a row it
  * does not. workshopId is the Workshop item of the entry the row was filled
  * from, the server's for a row the server holds, and 0 for none. author and
- * updated are the entry's (scenario_identity.h), and identityKnown false for
- * a row from a server too old to send them. */
+ * updated are the entry's (scenario_identity.h), "" for not stated. */
 struct LobbyScenarioRow {
     const char         *file;
     const char         *name;
@@ -182,24 +181,18 @@ struct LobbyScenarioRow {
     LobbyScriptRowState state;
     uint8_t             source;
     uint64_t            workshopId;
-    bool                identityKnown;
     const char         *author;
     const char         *updated;
 };
 
 /* "by <author> · updated <time>" into out, with "unknown" for either one the
- * manifest does not state. Empty when the identity is not known at all,
- * which is a server too old to send it and is drawn as nothing rather than
- * as two unknowns. The author goes in as a message argument and is never
- * the format. */
-static void lobbyScenarioIdentityLine(bool known, const char *author,
-                                      const char *updated, char *out,
-                                      size_t outLen) {
+ * manifest does not state. The author goes in as a message argument and is
+ * never the format. */
+static void lobbyScenarioIdentityLine(const char *author, const char *updated,
+                                      char *out, size_t outLen) {
     MessageArgs args = {};
     char        when[32];
 
-    out[0] = '\0';
-    if (!known) return;
     scnIdentityUpdatedText(updated, when, sizeof(when));
     SDL_strlcpy(args.string1,
                 (author != NULL && author[0] != '\0')
@@ -218,13 +211,9 @@ static void lobbyScenarioIdentityLine(bool known, const char *author,
 static void lobbyScenarioIdentityTip(const struct LobbyScenarioRow *row) {
     char line[160];
 
-    if (!row->identityKnown ||
-        !ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
-        return;
-    }
-    lobbyScenarioIdentityLine(row->identityKnown, row->author, row->updated,
-                              line, sizeof(line));
-    if (line[0] != '\0') ImGui::SetTooltip("%s", line);
+    if (!ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) return;
+    lobbyScenarioIdentityLine(row->author, row->updated, line, sizeof(line));
+    ImGui::SetTooltip("%s", line);
 }
 
 /* The one script this dialog has sent, and what became of it. s_sending is
@@ -795,13 +784,6 @@ static bool s_detailsAttached   = false;
 static int  s_detailsKind       = -1;   /* -1 unknown, 0 scenario, 1 mod */
 /* The Workshop item, 0 for none or where the source did not carry one. */
 static uint64_t s_detailsWorkshopId = 0;
-/* Who wrote it and when it last changed, from the row the dialog was opened
-   from. The answer to the details request is preferred where it carries
-   them, and the catalogue by file name after that; these are for a row
-   neither holds, a file only this computer has. */
-static bool s_detailsIdentityKnown = false;
-static char s_detailsAuthor[SCN_AUTHOR_LEN];
-static char s_detailsUpdated[SCN_UPDATED_LEN];
 
 void lobbyScenarioDetailsReset(void) {
     s_detailsOpen     = false;
@@ -809,7 +791,6 @@ void lobbyScenarioDetailsReset(void) {
     s_detailsAttached = false;
     s_detailsKind     = -1;
     s_detailsWorkshopId = 0;
-    s_detailsIdentityKnown = false;
     s_detailsFile[0]  = '\0';
     s_detailsName[0]  = '\0';
     s_detailsDesc[0]  = '\0';
@@ -1023,11 +1004,6 @@ static void lobbyScenarioDetailsOpenRow(const LobbyScenarioRow *row) {
     s_detailsAttached   = false;
     s_detailsKind       = lobbyScenarioRowIsMod(row) ? 1 : 0;
     s_detailsWorkshopId = row->workshopId;
-    s_detailsIdentityKnown = row->identityKnown;
-    SDL_strlcpy(s_detailsAuthor, row->author != NULL ? row->author : "",
-                sizeof(s_detailsAuthor));
-    SDL_strlcpy(s_detailsUpdated, row->updated != NULL ? row->updated : "",
-                sizeof(s_detailsUpdated));
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -1066,8 +1042,6 @@ void lobbyScenarioDetailsOpenAttached(ClientSim *cs) {
     s_detailsKind       = clientSimGetLobbyScenarioKeepsWinCondition(cs) ? 1 : 0;
     /* CTRL_LOBBY_SETTINGS carries no Workshop id for the attached script. */
     s_detailsWorkshopId = 0;
-    /* Nor its identity, which the details answer or the catalogue gives. */
-    s_detailsIdentityKnown = false;
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -1140,8 +1114,9 @@ static const char *lobbyScenarioDescOfFile(ClientSim *cs, const char *file) {
 }
 
 /* Who the directory says wrote a file, and when it last changed, by file
- * name, the way lobbyScenarioDescOfFile finds a description. False where the
- * listing does not hold the file or a remote server sent no identity. */
+ * name, the way lobbyScenarioDescOfFile finds a description: the host's own
+ * rows, then the server's list, then the rows only this computer has. False
+ * where none of them holds the file. */
 static bool lobbyScenarioIdentityOfFile(ClientSim *cs, const char *file,
                                         const char **author,
                                         const char **updated) {
@@ -1152,16 +1127,22 @@ static bool lobbyScenarioIdentityOfFile(ClientSim *cs, const char *file,
         if (SDL_strcmp(s_hostRows[i].file, file) == 0) {
             *author  = s_hostRows[i].author;
             *updated = s_hostRows[i].updated;
-            return s_hostRows[i].identityKnown;
+            return true;
         }
     }
-    if (cs == NULL) return false;
-    n = clientSimGetLobbyScenarioListCount(cs);
+    n = cs != NULL ? clientSimGetLobbyScenarioListCount(cs) : 0;
     for (i = 0; i < n; i++) {
         if (SDL_strcmp(clientSimGetLobbyScenarioListFile(cs, i), file) == 0) {
             *author  = clientSimGetLobbyScenarioListAuthor(cs, i);
             *updated = clientSimGetLobbyScenarioListUpdated(cs, i);
-            return clientSimGetLobbyScenarioListIdentityKnown(cs, i);
+            return true;
+        }
+    }
+    for (i = 0; i < s_localCount; i++) {
+        if (SDL_strcmp(s_localRows[i].file, file) == 0) {
+            *author  = s_localRows[i].author;
+            *updated = s_localRows[i].updated;
+            return true;
         }
     }
     return false;
@@ -1209,8 +1190,6 @@ void lobbyScenarioDetailsOpenScript(ClientSim *cs, int idx) {
     s_detailsKind       = clientSimGetLobbyScriptKeepsWinCondition(cs, idx)
                               ? 1 : 0;
     s_detailsWorkshopId = clientSimGetLobbyScriptWorkshopId(cs, idx);
-    /* The script list carries no identity; see s_detailsIdentityKnown. */
-    s_detailsIdentityKnown = false;
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -1909,28 +1888,20 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
                             s_detailsFile);
         /* Who wrote it and when it last changed, as quiet as the file. The
            details answer first, which is the server's word on this file;
-           then the row the dialog was opened from; then the catalogue. A
-           server too old to send them leaves the line out. */
+           then the catalogue row of the same file name. "unknown" for each
+           one neither of them states. */
         {
             const char *author  = "";
             const char *updated = "";
-            bool        known;
             char        line[160];
 
-            known = clientSimGetLobbyScenarioIdentity(cs, s_detailsFile,
-                                                      &author, &updated);
-            if (!known && s_detailsIdentityKnown) {
-                author  = s_detailsAuthor;
-                updated = s_detailsUpdated;
-                known   = true;
+            if (!clientSimGetLobbyScenarioIdentity(cs, s_detailsFile, &author,
+                                                   &updated)) {
+                (void)lobbyScenarioIdentityOfFile(cs, s_detailsFile, &author,
+                                                  &updated);
             }
-            if (!known) {
-                known = lobbyScenarioIdentityOfFile(cs, s_detailsFile,
-                                                    &author, &updated);
-            }
-            lobbyScenarioIdentityLine(known, author, updated, line,
-                                      sizeof(line));
-            if (line[0] != '\0') ImGui::TextDisabled("%s", line);
+            lobbyScenarioIdentityLine(author, updated, line, sizeof(line));
+            ImGui::TextDisabled("%s", line);
         }
         ImGui::Separator();
 
@@ -2082,8 +2053,6 @@ static void lobbyScenarioRemoteTake(ClientSim *cs) {
             clientSimGetLobbyScenarioListKeepsWinCondition(cs, i);
         e->source     = clientSimGetLobbyScenarioListSource(cs, i);
         e->workshopId = clientSimGetLobbyScenarioListWorkshopId(cs, i);
-        e->identityKnown =
-            clientSimGetLobbyScenarioListIdentityKnown(cs, i);
         SDL_strlcpy(e->author, clientSimGetLobbyScenarioListAuthor(cs, i),
                     sizeof(e->author));
         SDL_strlcpy(e->updated, clientSimGetLobbyScenarioListUpdated(cs, i),
@@ -3101,7 +3070,6 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
             rows[i].state             = merged[i].state;
             rows[i].source            = e->source;
             rows[i].workshopId        = e->workshopId;
-            rows[i].identityKnown     = e->identityKnown;
             rows[i].author            = e->author;
             rows[i].updated           = e->updated;
         }

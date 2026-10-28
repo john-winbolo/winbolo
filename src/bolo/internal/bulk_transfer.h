@@ -82,11 +82,11 @@ enum {
     BULK_KIND_ROUND_LOG = 8,
     /* Server->client, sent in answer to PACKET_LOBBY_SCENARIO_DETAILS_REQ:
      * one script file's details. The path is the file the request named and
-     * the blob is [status 1] then, for BULK_SCN_DETAILS_FOUND, the details
-     * as scenario_details.h lays them out (which may be no bytes), and
-     * nothing more for BULK_SCN_DETAILS_NOT_FOUND. So totalSize is 1 to
-     * 1 + SCN_DETAILS_MAX, and a file the server does not know still gets an
-     * answer the client can stop waiting on. */
+     * the blob is [status 1] then, for BULK_SCN_DETAILS_FOUND, the details,
+     * settings and identity laid out below, and nothing more for
+     * BULK_SCN_DETAILS_NOT_FOUND. So totalSize is 1 to
+     * BULK_SCN_DETAILS_BLOB_MAX, and a file the server does not know still
+     * gets an answer the client can stop waiting on. */
     BULK_KIND_SCENARIO_DETAILS = 9,
     /* Server->client, sent in answer to PACKET_LOBBY_SCRIPT_FETCH_REQ: a copy
      * of one of the server's script files. The header's gen echoes the
@@ -125,34 +125,20 @@ enum {
 /* The largest BULK_KIND_BRAIN_DOCS blob. */
 #define BULK_BRAIN_DOCS_BLOB_MAX (1 + 2 + BRAIN_DOCS_Z_MAX)
 
-/* The status byte that opens a BULK_KIND_SCENARIO_DETAILS blob. */
+/* The status byte that opens a BULK_KIND_SCENARIO_DETAILS blob. A found
+ * answer is
+ *   [status 1][detailsLen 2 BE][details][settingsLen 2 BE][settings]
+ *   [identity blob (scenario_identity.h)]
+ * with the details as scenario_details.h lays them out and the settings
+ * block as scenario_settings.h does; either may be no bytes. The identity
+ * blob is two zero lengths when the server's identity lookup does not find
+ * the file, which reads as both unknown. Nothing follows the identity blob:
+ * a client refuses a found answer with more bytes, the same as any other
+ * broken one. */
 #define BULK_SCN_DETAILS_FOUND     0
 #define BULK_SCN_DETAILS_NOT_FOUND 1
-/* Found, with the file's settings block (scenario_settings.h) behind the
- * details: [status 1][detailsLen 2 BE][details][settings to the end]. Sent
- * only to a client whose request ended with a flags byte that has
- * BULK_SCN_DETAILS_WANT_SETTINGS set, because an older client reads every
- * byte after the status as details and would refuse the blob. An older
- * server ignores the flags byte and answers BULK_SCN_DETAILS_FOUND. */
-#define BULK_SCN_DETAILS_FOUND_V2  2
-/* Found, with the settings block and who wrote the file behind the details:
- * [status 1][detailsLen 2 BE][details][settingsLen 2 BE][settings]
- * [identity blob (scenario_identity.h)]. A reader ignores any bytes after
- * the identity blob, so a later field can follow it. The settings length is
- * 0 when the request did not ask for them. The identity blob is left out
- * when the server's identity lookup does not find the file (one past the
- * listing's cap, say), and a reply that ends after the settings reads as
- * identity not known. Sent only to a client whose
- * flags byte has BULK_SCN_DETAILS_WANT_IDENTITY set; a server from before it
- * ignores that bit and answers V2 or FOUND, which such a client reads as
- * identity not known. */
-#define BULK_SCN_DETAILS_FOUND_V3  3
 
-/* The flags byte a request may end with, after the file name. */
-#define BULK_SCN_DETAILS_WANT_SETTINGS 0x01u
-#define BULK_SCN_DETAILS_WANT_IDENTITY 0x02u
-
-/* The largest BULK_KIND_SCENARIO_DETAILS blob: the V3 shape, the longest. */
+/* The largest BULK_KIND_SCENARIO_DETAILS blob. */
 #define BULK_SCN_DETAILS_BLOB_MAX \
     (1 + 2 + SCN_DETAILS_MAX + 2 + SCN_SETTINGS_BLOB_MAX + \
      SCN_IDENTITY_BLOB_MAX)

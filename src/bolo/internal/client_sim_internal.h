@@ -756,10 +756,7 @@ struct ClientSim {
     uint8_t  lobbyScenarioListSource[LOBBY_SCENARIO_LIST_MAX];
     uint64_t lobbyScenarioListWorkshopId[LOBBY_SCENARIO_LIST_MAX];
     /* Who wrote each row and when it last changed (scenario_identity.h), ""
-       for not stated, from the trailer of the chunk the row came in.
-       IdentityKnown is false for a row from a server that sends no
-       trailer. */
-    bool     lobbyScenarioListIdentityKnown[LOBBY_SCENARIO_LIST_MAX];
+       for not stated. */
     char     lobbyScenarioListAuthor[LOBBY_SCENARIO_LIST_MAX][SCN_AUTHOR_LEN];
     char     lobbyScenarioListUpdated[LOBBY_SCENARIO_LIST_MAX]
                                      [SCN_UPDATED_LEN];
@@ -866,26 +863,23 @@ struct ClientSim {
         uint32_t sentTick;  /* transport localTick of the last request */
         uint16_t len;       /* bytes of details once found */
         uint8_t  bytes[SCN_DETAILS_MAX];
-        /* The file's settings block (scenario_settings.h), which only a
-           server that knows settings sends. settingsKnown false is a
-           server that did not say, which the dialog reads as no settings
-           it can draw. */
+        /* The file's settings block (scenario_settings.h). settingsKnown
+           is false until the block is put beside the details, which the
+           dialog reads as no settings it can draw. */
         bool     settingsKnown;
         uint16_t settingsLen;
         uint8_t  settings[SCN_SETTINGS_BLOB_MAX];
         /* Who wrote the file and when it last changed
-           (scenario_identity.h), which only a server that knows them
-           sends. identityKnown false is a server that did not say. */
+           (scenario_identity.h). identityKnown is false until the pair is
+           put beside the details. */
         bool     identityKnown;
         char     author[SCN_AUTHOR_LEN];
         char     updated[SCN_UPDATED_LEN];
     } lobbyScnDetails[LOBBY_SCN_DETAILS_SLOTS];
-    /* The bulk receiver's landing buffer for one answer: the status byte,
-     * then the details; for BULK_SCN_DETAILS_FOUND_V2 a details length, the
-     * details and the settings block; for _V3 a settings length and an
-     * identity blob as well (bulk_transfer.h). rxSlot is one more than the
-     * slot it is filling, and 0 for none, so a zeroed ClientSim starts with
-     * none. */
+    /* The bulk receiver's landing buffer for one answer, laid out as
+     * bulk_transfer.h says for BULK_KIND_SCENARIO_DETAILS. rxSlot is one
+     * more than the slot it is filling, and 0 for none, so a zeroed
+     * ClientSim starts with none. */
     uint8_t  lobbyScnDetailsRx[1 + 2 + SCN_DETAILS_MAX + 2 +
                                SCN_SETTINGS_BLOB_MAX +
                                SCN_IDENTITY_BLOB_MAX];

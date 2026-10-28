@@ -8453,7 +8453,6 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
                                        : SERVER_SCENARIO_SOURCE_SERVER;
             e->workshopId        = rows[i].workshopId;
             e->workshopAuthor    = rows[i].workshopAuthor;
-            e->identityKnown     = true;
             SDL_strlcpy(e->author, rows[i].author, sizeof(e->author));
             SDL_strlcpy(e->updated, rows[i].updated, sizeof(e->updated));
             n++;
@@ -8946,7 +8945,6 @@ bool scenarioHostMapPackageInfo(const char *mapPath, ServerScenarioEntry *out) {
         out->source            = SERVER_SCENARIO_SOURCE_SERVER;
         out->workshopId        = m->workshopId;
         out->workshopAuthor    = m->workshopAuthor;
-        out->identityKnown     = true;
         SDL_strlcpy(out->author, m->author, sizeof(out->author));
         SDL_strlcpy(out->updated, m->updated, sizeof(out->updated));
         ok = true;

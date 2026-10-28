@@ -1985,7 +1985,6 @@ int serverSimEnumerateScenarioDir(ServerSim *sim,
         e->source     = dirRows[i].source;
         e->workshopId = dirRows[i].workshopId;
         e->workshopAuthor = dirRows[i].workshopAuthor;
-        e->identityKnown  = true;
         SDL_strlcpy(e->author, dirRows[i].author, sizeof(e->author));
         SDL_strlcpy(e->updated, dirRows[i].updated, sizeof(e->updated));
     }
