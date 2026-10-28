@@ -1099,10 +1099,12 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
         /* Custom has no fixed description - what it does is the set itself,
          * so the hover is that set spelled out with the same rich tooltip as
          * the top server line. With none saved it says what the entry is for
-         * instead. */
+         * instead. The saved set is only this machine's to show while it is
+         * hosting, the same as the table's Custom row; anybody else sees the
+         * live settings. */
         if (customHovered) {
             const VisibilitySettings *customSettings = NULL;
-            if (gameFrontVisibilityCustomSaved) {
+            if (realHost && gameFrontVisibilityCustomSaved) {
                 customSettings = &gameFrontVisibilityCustom;
             } else if (livePreset == visibilityPresetCustom) {
                 customSettings = &live;
@@ -1584,12 +1586,18 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
      * thing as effectiveHost below - that is also true in an open-host
      * lobby and for an admin. Only the real host writes its own saved
      * visibility set from this dialog, so only there is that set worth
-     * showing and worth editing in place. */
-    bool realHost = lobbyIsHost(cs, myPlayerNum);
+     * showing and worth editing in place.
+     *
+     * Holding the host slot is not enough on its own: on somebody else's
+     * server the slot is 0 until handed on, so the first player to join
+     * holds it and would be shown their own saved set as if it were the
+     * lobby's. Same test lobbyVisibilityRemember makes. */
+    bool slotHost = lobbyIsHost(cs, myPlayerNum);
+    bool realHost = slotHost && gameFrontHasLocalServer();
     /* Same effective-host test the panel computes, recomputed here so the
      * per-control disabled state is identical whether the body renders in
      * the desktop collapsing header or the controller Settings tab. */
-    bool effectiveHost = !spectator && (realHost || clientSimGetLobbyOpenHost(cs) ||
+    bool effectiveHost = !spectator && (slotHost || clientSimGetLobbyOpenHost(cs) ||
                          (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                           (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                            & PLAYER_FLAG_ADMIN)));
