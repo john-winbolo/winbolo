@@ -711,6 +711,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_event_list_replay",                    run_lv_event_list_replay                    },
     { "lv_event_list_pinned",                    run_lv_event_list_pinned                    },
     { "wbn_browser_sort",                        run_wbn_browser_sort                        },
+    { "browser_version_parse",                   run_browser_version_parse                   },
+    { "version_protocol_bytes",                  run_version_protocol_bytes                  },
     { "clip_gif_len_sync",                       run_clip_gif_len_sync                       },
     { "clip_gif_record_mode",                    run_clip_gif_record_mode                    },
     { "clip_gif_meta_roundtrip",                 run_clip_gif_meta_roundtrip                 },

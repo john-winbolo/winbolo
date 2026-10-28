@@ -108,17 +108,12 @@ bool wasmFinderTakeBack(void);
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
 
-#define STRVER_LEN 4
-
-/* Servers older than this are hidden from the tracker list. Version strings
- * are "%d.%d%d" (e.g. "1.19"), so a lexicographic compare of the first
- * STRVER_LEN chars orders the 1.x series correctly. */
-#define BROWSER_MIN_VERSION "1.19"
-
-static bool browserVersionAllowed(const char *ver) {
-    if (ver == nullptr || strlen(ver) < STRVER_LEN) return false;
-    return strncmp(ver, BROWSER_MIN_VERSION, STRVER_LEN) >= 0;
-}
+/* Servers older than 1.1.9 are hidden from the tracker list.
+ * browserVersionAllowed() (browser_version.h) parses the server's version
+ * text into three numbers, in either the old "M.mr" form ("1.19", "2.10")
+ * or the "M.m.r" form ("2.1.0"), with any letter suffix ignored, and
+ * compares them as numbers. Text it cannot parse is hidden. */
+#include "browser_version.h"
 
 /* ---- Per-server enriched data ---- */
 struct ServerEntry {
@@ -658,8 +653,9 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     SDL_strlcpy(e.address, src->address, sizeof(e.address));
     e.port = src->port;
     SDL_strlcpy(e.mapName, src->mapName, sizeof(e.mapName));
-    SDL_snprintf(e.version, sizeof(e.version), "%d.%d%d",
-                 src->versionMajor, src->versionMinor, src->versionRevision);
+    SDL_snprintf(e.version, sizeof(e.version), "%u.%u.%u",
+                 (unsigned)src->versionMajor, (unsigned)src->versionMinor,
+                 (unsigned)src->versionRevision);
     e.numPlayers = src->numPlayers;
     e.maxPlayers = src->maxPlayers;
     e.numBases   = src->numBases;
@@ -1126,7 +1122,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.pingMs = -1; /* pending — ping still fires below */
                         e.lobbyStatus = w.inLobby ? 1 : 0;
 
-                        /* Hide servers older than BROWSER_MIN_VERSION. */
+                        /* Hide servers older than 1.1.9. */
                         if (!browserVersionAllowed(e.version)) {
                             continue;
                         }
