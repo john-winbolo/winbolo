@@ -1132,6 +1132,8 @@ static const UnitTestEntry s_tests[] = {
     { "lgm_quit_drops_carried_pill",             run_lgm_quit_drops_carried_pill             },
     { "lgm_unfield_drops_carried_pill",          run_lgm_unfield_drops_carried_pill          },
     { "lgm_start_offset",                        run_lgm_start_offset                        },
+    { "lgm_tree_grew_on_site",                   run_lgm_tree_grew_on_site                   },
+    { "lgm_tree_none_on_site",                   run_lgm_tree_none_on_site                   },
     { "position_history_lookup",                 run_position_history_lookup                 },
     { "lgm_kill_absent_on_shooter_screen",       run_lgm_kill_absent_on_shooter_screen       },
     { "lgm_kill_rewound_position",               run_lgm_kill_rewound_position               },
