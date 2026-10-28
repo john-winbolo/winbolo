@@ -35,14 +35,50 @@ extern "C" bool dialogNavWasInsideSubRegionAtFrameStart(void) {
    click on a button or a combo all give it a NavId).  That flag also
    lets Enter / Space press the focused item, so it stays on; only the
    drawing waits.  A Tab press shows the outline; a mouse move or click
-   hides it again.  A controller keeps it on: any pad button press here,
-   or the game's own record that the controller is the device in use
+   hides it again.  As in Discord, the Tab that shows the outline does not
+   move focus: the outline shows on the item that already has focus, and
+   only the next Tab moves on (see navOutlineClaimTab).  A controller
+   keeps it on: any pad button press here, or the game's own record that the controller is the device in use
    (Steam Input reaches ImGui as arrow keys, not pad keys). */
 static bool s_navOutlineByKey     = false;
 static bool s_navOutlineByPadUser = false;
 
 extern "C" void dialogNavOutlineSetControllerInUse(bool inUse) {
     s_navOutlineByPadUser = inUse;
+}
+
+/* Owner id for the Tab key while the outline is hidden. */
+static const ImGuiID kNavOutlineTabOwner = 0x4E61764Fu; /* "NavO" */
+
+/* While the outline is hidden, claim the Tab key for the next frame, so
+   the first Tab only shows the outline and does not move focus.  ImGui
+   reads Tab for tabbing in NavUpdate (inside NewFrame), with
+   IsKeyPressed(ImGuiKey_Tab, ..., ImGuiKeyOwner_NoOwner); that read fails
+   while another id owns the key.  The claim is made here, at the end of a
+   frame, so it is in place before the next NewFrame.  It has no lock
+   flag, so a plain IsKeyPressed(ImGuiKey_Tab) (owner Any), as the tracker
+   below and ImGuiColorTextEdit use, still sees the press.  The game reads
+   its own keys from SDL events, so a Tab bound to a game key is not
+   touched.
+
+   No claim while an item is active (a text field being edited): an
+   InputText with ImGuiInputTextFlags_AllowTabInput reads Tab with its own
+   id, and Tab out of a text field moves on as before.  No claim with no
+   live focused item: then the first Tab focuses the first item, as
+   before.  The claim stays while Tab is held, so a held first Tab does
+   not repeat into a move; it is given back once Tab is up. */
+static void navOutlineClaimTab(ImGuiContext *g) {
+    ImGuiID owner = ImGui::GetKeyOwner(ImGuiKey_Tab);
+    bool    want  = !s_navOutlineByKey && !s_navOutlineByPadUser &&
+                    g->NavWindow && g->NavId != 0 && g->NavIdIsAlive &&
+                    g->ActiveId == 0;
+    if (want) {
+        if (owner == ImGuiKeyOwner_NoOwner || owner == kNavOutlineTabOwner)
+            ImGui::SetKeyOwner(ImGuiKey_Tab, kNavOutlineTabOwner);
+    } else if (owner == kNavOutlineTabOwner &&
+               !ImGui::IsKeyDown(ImGuiKey_Tab)) {
+        ImGui::SetKeyOwner(ImGuiKey_Tab, ImGuiKeyOwner_NoOwner);
+    }
 }
 
 static void navOutlineTrackInput(ImGuiContext *g) {
@@ -61,6 +97,7 @@ static void navOutlineTrackInput(ImGuiContext *g) {
         s_navOutlineByKey = true;
     for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadR3; k++)
         if (ImGui::IsKeyPressed((ImGuiKey)k, false)) s_navOutlineByKey = true;
+    navOutlineClaimTab(g);
 }
 
 extern "C" void dialogDrawNavOutline(void) {
