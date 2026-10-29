@@ -790,11 +790,7 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
             bestDist = amount;
             bestTankX = tankX;
             bestTankY = tankY;
-            /* Let the Mac solver round the original heading itself.
-             * WinBolo's travel-angle helper rounds half-sectors downward,
-             * so pre-rounding here changes Mac aim at 8, 24, ... 248. */
-            bestTankDir = sim->rules.pill_aim_mac ? tankGet256Dir(&tanks[t]) :
-                tankGetTravelAngel(&tanks[t]);
+            bestTankDir = tankGetTravelAngel(&tanks[t]);
             bestTankSpeed = tankGetSpeed(&tanks[t]);
             bestTank = &tanks[t];
             bestTankNum = t;
@@ -1147,7 +1143,9 @@ static TURNTYPE pillsMacAim(int32_t x, int32_t y) {
 static TURNTYPE pillsTargetTankMac(WORLD px, WORLD py, WORLD tx, WORLD ty,
                                   TURNTYPE heading, BYTE speed, bool obstructed) {
   int distance = pillsMacRange(px, py, tx, ty);
-  int direction = ((int)(heading + 8) & 255) & 240;
+  /* Mac Bolo rounds a heading exactly halfway between two sectors up; this
+   * rounds it down, the way the tank drives. */
+  int direction = utilGet16Dir(heading);
   /* WinBolo moves speed WU per 20 ms; Mac moves speed*127/256 WU
    * per 40 ms. Its road speed 64 corresponds to WinBolo's 16. Preserve
    * the Mac byte's range for scenarios with unusually high speeds. */

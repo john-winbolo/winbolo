@@ -1167,6 +1167,7 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_pill_massage_follows",       run_sim_rules_pill_massage_follows       },
     { "sim_rules_pill_aim_mac",               run_sim_rules_pill_aim_mac               },
     { "sim_rules_tank_collision_mac",         run_sim_rules_tank_collision_mac         },
+    { "sim_rules_mac_halfway_heading",        run_sim_rules_mac_halfway_heading        },
     { "sim_rules_tank_deep_sea_safe",         run_sim_rules_tank_deep_sea_safe         },
     { "lgm_build_square_terrain_speed",         run_lgm_build_square_terrain_speed         },
     { "pill_shell_cap_off_is_no_limit", run_pill_shell_cap_off_is_no_limit },
