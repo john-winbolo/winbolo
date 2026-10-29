@@ -2343,6 +2343,12 @@ int run_interp_render(void);
  * stale death spot; a normal alive->alive pair still interpolates. */
 int run_interp_respawn_no_death_flash(void);
 
+/* No stale flash after a gap (test_interp_no_stale_flash_after_gap.c): the
+ * first snapshot of a remote tank back from a freeze-length gap (out of view,
+ * slot reused) is drawn at its new position, not where the tank was before
+ * the gap; a short gap keeps the pipeline and still tweens. */
+int run_interp_no_stale_flash_after_gap(void);
+
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */

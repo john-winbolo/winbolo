@@ -4645,6 +4645,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_client_timing.c
     tests/unit/test_interp_render.c
     tests/unit/test_interp_respawn_no_death_flash.c
+    tests/unit/test_interp_no_stale_flash_after_gap.c
     tests/unit/test_snapshot_compaction.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
@@ -6440,6 +6441,7 @@ set(_unit_test_names
     client_timing
     interp_render
     interp_respawn_no_death_flash
+    interp_no_stale_flash_after_gap
     snapshot_compaction
     edge_send_predicate
     error_smoothing
