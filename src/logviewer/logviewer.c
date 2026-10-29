@@ -67,11 +67,9 @@
 #include "imgui/imgui_scenario_panel.h"
 #include "imgui/imgui_dock.h"
 #include "lv_dock_fit.h"
-#include "lv_dock_clear.h"
 #include "lv_fullscreen_key.h"
 #include "lv_save_name.h"   /* the file name Save Log File offers */
 #include "lv_utf8_path.h"   /* lvFopenUtf8: the dialogs' paths are UTF-8 */
-#include "lv_first_view.h"  /* where the map is when a log is first shown */
 #include "lv_jump_anim.h"   /* the animation of Rewind and Fast Forward */
 #include "lv_panel_set.h"   /* the panels a frame of the overview draws */
 #include "lv_host_dock.h"   /* the map beside the sidebars, and the first view */
