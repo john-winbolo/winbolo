@@ -2181,6 +2181,9 @@ endif()
 set(LOGVIEWER_LIB_SOURCES
     src/logviewer/logviewer.c
     src/logviewer/lv_embed.c
+    # The map beside the sidebars and the first view of a log, which
+    # logviewer.c shares with the web viewer (src/logviewer/wasm).
+    src/logviewer/lv_host_dock.c
     # Alt+Enter in the viewer while it has the game's window: asks the game
     # for full screen. Client only; the standalone's body is in main.c.
     src/logviewer/lv_fullscreen_game.c
@@ -5140,6 +5143,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # (lv_dock_fit.h), and the text the sidebar layout is saved as
     # (lv_dock_layout.h). Both header only.
     tests/unit/test_lv_dock_fit.c
+    # Where slot n of a status panel sits, the one sum the game's renderer
+    # and the web Log Viewer both use (src/gui/status_grid.h, header only).
+    tests/unit/test_status_grid.c
     # Which icon a slot of the viewer's HUD panel shows, how its three grids
     # are laid out, and its colour sums (lv_hud.h, header only).
     tests/unit/test_lv_hud.c
@@ -7713,6 +7719,7 @@ set(_unit_test_names
     lv_region_rect_placement
     lv_dock_fit_sums
     lv_dock_fit_margins
+    status_grid_slots
     lv_dock_layout_sides
     lv_dock_layout_tree
     lv_hud_sums

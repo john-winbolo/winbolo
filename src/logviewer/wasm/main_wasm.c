@@ -12,7 +12,9 @@
  * blocking loop in logViewerRun with emscripten_set_main_loop. The state
  * lives in g_lv, and the half of the host every build shares -- bring-up,
  * teardown and the replay driver with its SDL timer pair -- comes from
- * lv_embed.c, as it does on the desktop.
+ * lv_embed.c, as it does on the desktop. The sidebars, the map fitted
+ * beside them and the first view of a log come from lv_host_dock.c, which
+ * the desktop viewer runs too.
  */
 
 #include <string.h>
@@ -29,9 +31,13 @@
 #include "dns.h"
 #include "positions.h"
 #include "tiles.h"
+#include "gui/status_grid.h"   /* sdl3StatusItemPos: the game's grid sum */
 #include "logviewer.h"
 #include "lv_host.h"
 #include "lv_stats.h"
+#include "lv_players.h"     /* the perspective the HUD panel picks */
+#include "lv_dock_fit.h"    /* LvDockMargins and the fit of the squares */
+#include "lv_host_dock.h"   /* the map beside the sidebars, and the first view */
 
 #include <SDL3/SDL.h>
 #include <emscripten.h>
@@ -47,6 +53,10 @@
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
 #include "imgui/imgui_scenario_panel.h"
+#include "imgui/imgui_hud.h"
+#include "imgui/imgui_overview.h"
+#include "imgui/imgui_tank.h"
+#include "imgui/imgui_dock.h"
 
 /* Platform abstraction */
 #include "platform/platform_config.h"
@@ -130,13 +140,13 @@ void lv_windowCollectAllEvents(void) {
 }
 
 /* imgui_hud.cpp asks the game's status-panel code (sdl3draw_status.c) where
- * a slot sits. That file needs the game's name-label and voice code, which
- * this target does not build, and this page never draws the HUD panel
- * (main_loop_iteration below), so the question is never asked here. */
+ * slot n (1 to 16) of a status grid sits, in the grid's own points. That
+ * file needs the game's name-label and voice code, which this target does
+ * not build, so this target gives the function itself, with the same sum
+ * (status_grid.h) the game's renderer uses. */
 void sdl3StatusItemPos(int n, int type, int *outX, int *outY) {
-    (void)n; (void)type;
-    if (outX != NULL) *outX = 0;
-    if (outY != NULL) *outY = 0;
+    (void)type;
+    statusGridItemPos(n, outX, outY);
 }
 
 /* --------------------------------------------------------------------------
@@ -381,25 +391,29 @@ static void mainSavePreferences(void) {
  * Fit the tile grid to a window of w x h points at the current zoom.
  *
  * The canvas fills the page, so the page sets the window's size and the
- * window is never resized to a whole number of tiles: the grid is the
- * nearest whole number of tiles, the way the desktop viewer fits a maximized
- * window, and the blit clips what is left over.
+ * window is never resized to a whole number of tiles. The grid is fitted
+ * the way the desktop viewer fits a maximized window (lvHostHandleResize):
+ * to the window less the menu bar and the sidebars, to the nearest whole
+ * number of tiles, and the blit clips what is left over. Beside a sidebar
+ * the grid covers the gap instead, with the last square running a little
+ * way under the sidebar's edge, so no black strip is left beside it.
  * -------------------------------------------------------------------------- */
 static void fitTilesToWindow(int w, int h) {
     int menuH = (int)lv_imgui_get_menu_bar_height();
     float zoom = lv_drawGetZoomLevel();
     float tilePxX, tilePxY;
     int tilesX, tilesY;
+    /* A sidebar whose unused part is clear takes nothing from the map. */
+    LvDockMargins dock = { 0, 0, 0, 0 };
 
     if (zoom <= 0.0f) zoom = 1.0f;
     tilePxX = (float)TILE_SIZE_X * zoom;
     tilePxY = (float)TILE_SIZE_Y * zoom;
-    tilesX = (int)(((float)w + tilePxX * 0.5f) / tilePxX);
-    tilesY = (int)(((float)(h - menuH) + tilePxY * 0.5f) / tilePxY);
-    if (tilesX < 1) tilesX = 1;
-    if (tilesY < 1) tilesY = 1;
-    if (tilesX > 255) tilesX = 255;
-    if (tilesY > 255) tilesY = 255;
+    lv_imgui_dock_map_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    tilesX = lvFitTilesBesideDock(w, dock.left + dock.right, tilePxX);
+    tilesY = lvFitTilesBesideDock(h - menuH, dock.top + dock.bottom, tilePxY);
+    /* lvHostDockSync refits from here only when the sidebars change. */
+    lvHostDockNoteFitted(&dock);
 
     /* The size setters keep the offset inside the map for the new grid. */
     lv_screenSetSizeX((BYTE)tilesX);
@@ -513,6 +527,12 @@ static void main_loop_iteration(void) {
 
     runElapsedTicks();
 
+    /* The sidebars come in or go out and the map is refitted beside them,
+     * then a log just loaded gets its first view: before the map is drawn,
+     * as in the desktop viewer's lvHostRenderFrame. */
+    lvHostDockSync();
+    lvHostFirstView();
+
     /* --- Render --- */
     SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
     SDL_RenderClear(g_lv->renderer);
@@ -520,6 +540,15 @@ static void main_loop_iteration(void) {
     /* With no log loaded the page shows only the menu bar: no splash, so
      * nothing sits behind the page's progress bars while a log downloads. */
     if (g_lv->isLoaded == TRUE) {
+        /* A perspective (picked in the HUD panel) whose player has left the
+         * game goes back to all teams. */
+        if (lv_playersHasPerspective() == TRUE) {
+            lv_clientMutexWaitFor();
+            if (lv_screenCheckPerspective() == TRUE) {
+                lv_drawDirtyScreen();
+            }
+            lv_clientMutexRelease();
+        }
         if (g_lv->wantScreenUpdate == TRUE) {
             lv_drawDirtyScreen();
             lv_screenUpdate(redraw);
@@ -529,22 +558,84 @@ static void main_loop_iteration(void) {
         }
     }
 
-    /* Render ImGui UI */
+    /* Render ImGui UI: the desktop viewer's overview (lvHostRenderFrame),
+     * less the Comments panel, which needs WinBolo.net, and the load progress
+     * window: the page shows its own progress bars. */
     lv_imgui_context_newframe();
     lv_imgui_main_menu_bar();
     lv_imgui_cache_menu_bar_height();
+    /* Before the panels: a panel docked in it has to find the dock space
+     * already submitted this frame, or ImGui undocks it. */
+    lv_imgui_dock_host();
     lv_imgui_controls_window();
+    lv_imgui_hud_window();
+    lv_imgui_overview_window();
+    lv_imgui_tank_window();
     lv_imgui_game_info_window();
     lv_imgui_events_window();
     lv_imgui_item_info_window();
     lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
+    lv_imgui_scenario_status(g_lv->isLoaded ? true : false);
+    {
+        /* Whose screen the map shows, while the lag view is on. */
+        float mapX, mapY, mapW, mapH;
+        lvHostMapArea(&mapX, &mapY, &mapW, &mapH);
+        lv_imgui_lag_banner_at(mapX, mapY, mapW);
+    }
     lv_g_reset_window_positions = false;
+    lv_imgui_zoom_label();
+    lv_imgui_game_viewport_hover();
     lv_imgui_dialogs_render();
     lv_imgui_context_render();
 
     lv_imgui_game_viewport_process_input();
 
     SDL_RenderPresent(g_lv->renderer);
+
+    /* Keep the saved layout no more than a moment behind the screen, as the
+     * desktop viewer's lvHostAutosave does. The page has no window place of
+     * its own to save: the browser window is the user's. */
+    /* What was set this frame by code that does not save for itself (the
+     * Events filter, the panels) goes to localStorage here. Only values that
+     * changed are written, so a frame that changed nothing writes nothing.
+     * After a write the browser refused, both wait two seconds; a change to
+     * the layout in that time is reported when the wait ends. The saves when
+     * the page is closed or hidden do not wait. */
+    if (!lv_platform_config_retry_waiting()) {
+        if (lv_imgui_dock_autosave_due()) {
+            mainSavePreferences();   /* ends with lv_platform_config_save */
+        } else {
+            lv_platform_config_save();
+        }
+    }
+}
+
+/* --------------------------------------------------------------------------
+ * The page is closed, reloaded or put in the background.
+ *
+ * The desktop viewer writes its preferences when it closes. A browser tab
+ * gives no such chance after the main loop, so they are written here, while
+ * the page still runs. A phone may end a page in the background without a
+ * beforeunload, so the page going hidden saves too.
+ * -------------------------------------------------------------------------- */
+static const char *onBeforeUnload(int eventType, const void *reserved, void *userData) {
+    (void)eventType;
+    (void)reserved;
+    (void)userData;
+    if (g_lv != NULL) {
+        mainSavePreferences();
+    }
+    return NULL;   /* no "leave this page?" question */
+}
+
+static EM_BOOL onVisibilityChange(int eventType, const EmscriptenVisibilityChangeEvent *e,
+                                  void *userData) {
+    (void)eventType;
+    (void)userData;
+    if (g_lv != NULL && e != NULL && e->hidden) {
+        mainSavePreferences();
+    }
+    return 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -588,6 +679,14 @@ int main(int argc, char *argv[]) {
     lv_imgui_dialogs_init(g_lv);
     lv_imgui_game_viewport_init(g_lv);
 
+    /* The sidebars, and the defaults of the options a new user has not set,
+     * as the desktop viewer's logViewerRun has them; the two share one
+     * layout code. The page places the first view of each log it opens. */
+    lvHostDockReset();
+    lv_imgui_dock_set_standalone(1);
+    lv_imgui_main_menu_standalone_defaults();
+    lvHostFirstViewSetHost(TRUE);
+
     /* The canvas covers the page and follows the browser window's size, as
      * the game's does. The grid is fitted to it now and on every resize. */
     SDL_SetWindowFillDocument(g_lv->window, true);
@@ -612,6 +711,10 @@ int main(int argc, char *argv[]) {
 
     /* Load preferences */
     mainLoadPreferences();
+
+    /* Save them when the page goes away (onBeforeUnload). */
+    emscripten_set_beforeunload_callback(NULL, onBeforeUnload);
+    emscripten_set_visibilitychange_callback(NULL, 0, onVisibilityChange);
 
     printf("[WASM] Starting main loop\n");
 

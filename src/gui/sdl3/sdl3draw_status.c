@@ -42,6 +42,7 @@
 #include "../tiles.h"
 #include "../ui_mode.h"
 #include "../positions.h"
+#include "../status_grid.h"   /* sdl3StatusItemPos: the one grid sum */
 #include "global.h"
 #include "viewport_types.h"  /* MAIN_SCREEN_SIZE_X/Y */
 #include "screentank.h"
@@ -372,34 +373,9 @@ void sdl3RenderCachedText(void) {
  * it too (declared in sdl3draw_status.h).
  *--------------------------------------------------------*/
 void sdl3StatusItemPos(int n, int type, int *outX, int *outY) {
-  /* All three panels share the same grid layout */
-  int startX, startY, gapX, gapY, itemW;
+  /* All three panels share the same grid layout (status_grid.h). */
   (void)type;
-  startX = STATUS_BASE_1_X;  /* == STATUS_PILLBOX_1_X == STATUS_TANKS_1_X == 4 */
-  startY = STATUS_BASE_1_Y;  /* == 4 */
-  gapX   = STATUS_ITEM_GAP_X;
-  gapY   = STATUS_ITEM_GAP_Y;
-  itemW  = STATUS_ITEM_SIZE_X;
-
-  /* Positions 1-6: row 0; 7-8 and 9-10: row 1 (with gap in middle for center icon);
-     11-16: row 2. This matches the positions.h explicit macros. */
-  int col, row;
-  if (n <= 6) {
-    col = n - 1;
-    row = 0;
-  } else if (n <= 8) {
-    col = n - 7;
-    row = 1;
-  } else if (n <= 10) {
-    col = (n - 9) + 4; /* cols 4,5 in row 1 */
-    row = 1;
-  } else {
-    col = n - 11;
-    row = 2;
-  }
-
-  *outX = startX + col * (gapX + itemW);
-  *outY = startY + row * (gapY + STATUS_ITEM_SIZE_Y);
+  statusGridItemPos(n, outX, outY);
 }
 
 /* Helper: get panel origin in zoomed pixels, using override if set */

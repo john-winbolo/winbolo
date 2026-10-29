@@ -132,7 +132,8 @@ list(FILTER LV_SOURCES EXCLUDE REGEX ".*main\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer\\.c$")
 # lv_embed.c stays in: main_wasm.c replaces logviewer.c, and lv_embed.c holds
 # the half of the host every build shares -- g_lv, lvHostSetupCore and the
-# replay driver.
+# replay driver. lv_host_dock.c stays in too: the map beside the sidebars and
+# the first view of a log, which main_wasm.c shares with logviewer.c.
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*clientmutex\\.c$")
 # The game view is the desktop viewer's; main_wasm.c has no key to enter it.
 # game_view_stubs.c answers draw.c's calls, as it does in the wasm client.
@@ -167,10 +168,9 @@ set(LV_IMGUI_SOURCES
     ${LV_ROOT}/imgui/imgui_dialogs.cpp
     ${LV_ROOT}/imgui/imgui_game_viewport.cpp
     ${LV_ROOT}/imgui/imgui_scenario_panel.cpp
-    # The sidebars and the HUD, Overview and Tank panels. This page draws
-    # none of them (main_wasm.c), but imgui_main_menu.cpp, draw.c and the
-    # panels above call into imgui_dock.cpp, and its panel table names the
-    # other three.
+    # The sidebars and the HUD, Overview and Tank panels, which main_wasm.c
+    # draws as the desktop viewer does. lv_host_dock.c (in the glob above)
+    # fits the map beside the sidebars for both.
     ${LV_ROOT}/imgui/imgui_dock.cpp
     ${LV_ROOT}/imgui/imgui_hud.cpp
     ${LV_ROOT}/imgui/imgui_overview.cpp
