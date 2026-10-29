@@ -1153,6 +1153,7 @@ static const UnitTestEntry s_tests[] = {
     { "client_timing",                           run_client_timing                           },
     { "interp_render",                           run_interp_render                           },
     { "interp_respawn_no_death_flash",           run_interp_respawn_no_death_flash           },
+    { "interp_no_stale_flash_after_gap",         run_interp_no_stale_flash_after_gap         },
     { "sim_rules_classic_defaults",              run_sim_rules_classic_defaults              },
     { "sim_rules_validate_ranges",               run_sim_rules_validate_ranges               },
     { "sim_rules_copies_follow",                 run_sim_rules_copies_follow                 },
