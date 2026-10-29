@@ -113,10 +113,12 @@ static void windowEnsureOnScreen(SDL_Window *win);
  * Globals declared by winbolo.h (extern in sdl3imgui.cpp)
  * ------------------------------------------------------- */
 
-/* The frame rate */
-int frameRate = FRAME_RATE_30;
-/* Time between frame updates based on frame rate */
-static int frameRateTime = (int)(MILLISECONDS / FRAME_RATE_30) - 1;
+/* The Frame Rate choice, a FrameLimit (see frame_limit.h). It changes
+ * drawing only; the game tick has its own timer. */
+int frameRate = FRAME_LIMIT_DEFAULT;
+/* True while the game loop runs. Only then does the choice apply: the
+ * menus and dialogs always draw with vsync. */
+static bool frameLimitInGame = FALSE;
 
 /* Whether the Gunsight is shown or not */
 bool showGunsight = FALSE;
@@ -176,7 +178,6 @@ labelLen labelTank = lblShort;
 
 /* SDL timers */
 static SDL_TimerID timerGameID = 0;
-static SDL_TimerID timerFrameID = 0;
 
 /* Stuff for the system info dialog box */
 static DWORD dwSysFrameTotal = 0;
@@ -217,12 +218,12 @@ static time_t ticks = 0;
 static bool showAllianceReq = TRUE;
 
 /* Flags set by timer threads to request work on the main thread */
-static SDL_AtomicInt needsRedraw = { 0 };
 static SDL_AtomicInt needsGameTick = { 0 };
 
 /* Forward declarations */
 static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
-static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
+static void windowFrameLimitApplyVsync(bool on);
+static void windowFrameLimitPace(void);
 static void windowRunGameTick(ClientSim *cs);
 static void windowSteamOverlayActivated(ClientSim *cs, bool active);
 static void windowSaveDialogPause(ClientSim *cs, bool active);
@@ -653,7 +654,7 @@ int main(int argc, char *argv[]) {
     oldTick = SDL_GetTicks();
     oldFrameTick = oldTick;
     timerGameID = SDL_AddTimer(GAME_TICK_LENGTH, windowGameTimer, NULL);
-    timerFrameID = SDL_AddTimer((Uint32)frameRateTime, windowFrameRateTimer, NULL);
+    frameLimitInGame = TRUE;
     winboloQuit = TRUE;
     finishedLoop = FALSE;
 
@@ -881,9 +882,6 @@ int main(int argc, char *argv[]) {
           sdl3DrawFlushOverviewInWindow();
           dwSysFrame += (SDL_GetTicks() - tick);
         }
-        /* Consume the timer signal so it doesn't accumulate */
-        SDL_SetAtomicInt(&needsRedraw, 0);
-
         /* Render the ImGui overlay and present the frame */
         sdl3ImguiPumpAndRender(cs);
         {
@@ -896,18 +894,9 @@ int main(int argc, char *argv[]) {
            pumps the client transport — keeps running while it is open. */
         windowSaveMapPoll(cs);
 
-        /* Cap to configured frame rate */
-        {
-          static Uint64 frameStart = 0;
-          Uint64 now = SDL_GetTicks();
-          if (frameStart > 0) {
-            Uint64 elapsed = now - frameStart;
-            if (elapsed < (Uint64)frameRateTime) {
-              SDL_Delay((Uint32)((Uint64)frameRateTime - elapsed));
-            }
-          }
-          frameStart = SDL_GetTicks();
-        }
+        /* Hold to the Frame Rate choice (#312): vsync on or off, and a
+           wait for a fixed limit. */
+        windowFrameLimitPace();
 
         if (finishedLoop) {
           done = TRUE;
@@ -929,9 +918,10 @@ int main(int argc, char *argv[]) {
 
     /* Kill Timers */
     SDL_RemoveTimer(timerGameID);
-    SDL_RemoveTimer(timerFrameID);
     timerGameID = 0;
-    timerFrameID = 0;
+    /* The menus and dialogs draw with vsync whatever the choice. */
+    frameLimitInGame = FALSE;
+    windowFrameLimitApplyVsync(TRUE);
 
     /* If returning to lobby after game-over, skip full teardown
      * and loop back to show the lobby dialog again.  Not if the player quit:
@@ -1107,24 +1097,6 @@ static void windowRunGameTick(ClientSim *cs) {
     winboloCC();
   }
 
-}
-
-/* -------------------------------------------------------
- * windowFrameRateTimer — SDL3 timer callback (runs on timer thread)
- * ------------------------------------------------------- */
-static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, Uint32 interval) {
-  (void)userdata;
-  (void)timerID;
-
-  /* Don't run frame logic until a game has actually started */
-  if (!clientSimHasTransport(humanSim)) {
-    return (Uint32)frameRateTime;
-  }
-
-  /* Signal the main thread to redraw — all SDL rendering must
-     happen on the main thread (SDL_Renderer is not thread-safe). */
-  SDL_SetAtomicInt(&needsRedraw, 1);
-  return (Uint32)frameRateTime;
 }
 
 /* -------------------------------------------------------
@@ -1658,20 +1630,107 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
 /* -------------------------------------------------------
  * Frame rate
  * ------------------------------------------------------- */
-void windowSetFrameRate(int newFrameRate, bool setTimer) {
-  switch (newFrameRate) {
-  case FRAME_RATE_10: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_10); break;
-  case FRAME_RATE_12: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_12); break;
-  case FRAME_RATE_15: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_15); break;
-  case FRAME_RATE_20: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_20) - 1; break;
-  case FRAME_RATE_30: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_30) - 1; break;
-  case FRAME_RATE_50: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_50) - 4; break;
-  case FRAME_RATE_60: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_60) - 4; break;
-  }
+void windowSetFrameRate(int newFrameRate, bool inGame) {
+  (void)inGame;   /* frameLimitInGame says whether it applies now */
+  if (!frameLimitValid(newFrameRate)) newFrameRate = FRAME_LIMIT_DEFAULT;
+  if (newFrameRate == frameRate) return;
   frameRate = newFrameRate;
-  if (setTimer == TRUE && timerFrameID != 0) {
-    SDL_RemoveTimer(timerFrameID);
-    timerFrameID = SDL_AddTimer((Uint32)frameRateTime, windowFrameRateTimer, NULL);
+  /* The game loop picks the new choice up on its next pass. */
+  gameFrontSaveCurrentPrefs();
+}
+
+/* Turn the renderer's vsync on or off. It reads the renderer's own state
+ * each time, so a new renderer (a window rebuild makes one, with vsync on)
+ * gets the choice on the next pass. A failure is logged once per change and
+ * not tried again on that renderer. A new renderer is tried again: it is
+ * known by its properties ID, which SDL never gives to a second renderer
+ * (its address can be the same as the old one's). */
+static void windowFrameLimitApplyVsync(bool on) {
+  static int failedFor = -1;
+  static SDL_PropertiesID failedOn = 0;
+  SDL_Renderer *ren = sdl3DrawGetRenderer();
+  SDL_PropertiesID props;
+  int want = on ? 1 : 0;
+  int cur = -2;
+  if (ren == NULL) return;
+  props = SDL_GetRendererProperties(ren);
+  if (props != failedOn) failedFor = -1;
+  if (SDL_GetRenderVSync(ren, &cur) && cur == want) return;
+  if (failedFor == want) return;
+  if (!SDL_SetRenderVSync(ren, want)) {
+    WB_LOG_WARN(WB_LOG_CAT_GUI, "Frame rate: could not turn vsync %s: %s",
+                on ? "on" : "off", SDL_GetError());
+    failedFor = want;
+    failedOn = props;
+    return;
+  }
+  failedFor = -1;
+}
+
+/* A dialog that runs its own draw loop calls this with TRUE when it opens
+ * and FALSE when it closes. A message box can open from inside the game
+ * loop, where Unlimited has turned vsync off, and its loop has no wait of
+ * its own. While one is open, vsync is on. When the last one closes, the
+ * game's choice comes back (vsync on outside a game). The count lets one
+ * dialog open on top of another. */
+void windowFrameLimitDialog(bool open) {
+  static int openCount = 0;
+  if (open) {
+    openCount++;
+    windowFrameLimitApplyVsync(TRUE);
+    return;
+  }
+  if (openCount > 0) openCount--;
+  if (openCount == 0) {
+    int limit = frameLimitInGame ? frameRate : FRAME_LIMIT_DEFAULT;
+    windowFrameLimitApplyVsync(frameLimitUsesVsync(limit));
+  }
+}
+
+/* One display refresh in ns. An unknown or very low rate counts as 60 Hz. */
+static Uint64 windowRefreshPeriodNs(void) {
+  float hz = 0.0f;
+  SDL_Window *win = sdl3DrawGetWindow();
+  SDL_DisplayID did = win ? SDL_GetDisplayForWindow(win) : 0;
+  const SDL_DisplayMode *dm = did ? SDL_GetCurrentDisplayMode(did) : NULL;
+  if (dm) hz = dm->refresh_rate;
+  if (hz < 20.0f) hz = 60.0f;
+  return (Uint64)(1000000000.0 / (double)hz);
+}
+
+/* Called once per pass of the game loop, after the present.
+ *
+ * Every choice but Unlimited keeps vsync on. For a fixed limit it then
+ * waits until the next frame is due. The due times are a fixed grid, one
+ * frame period apart, so the rate is the limit on average even though one
+ * wait is never exact. The wait stops half a refresh before the due time:
+ * with vsync the present then lands on the refresh nearest to it, not the
+ * one after. More than a frame late (a stall, a dialog, a slow frame)
+ * starts the grid again from now, so it does not try to catch up. */
+static void windowFrameLimitPace(void) {
+  static Uint64 nextDueNs = 0;
+  int limit = frameLimitInGame ? frameRate : FRAME_LIMIT_DEFAULT;
+  int hz = frameLimitCapHz(limit);
+
+  windowFrameLimitApplyVsync(frameLimitUsesVsync(limit));
+  if (hz <= 0) {
+    nextDueNs = 0;
+    return;
+  }
+
+  {
+    Uint64 periodNs = (Uint64)(1000000000ULL / (Uint64)hz);
+    Uint64 nowNs = SDL_GetTicksNS();
+    if (nextDueNs == 0 || nowNs > nextDueNs + periodNs) {
+      nextDueNs = nowNs + periodNs;
+      return;
+    }
+    {
+      Uint64 earlyNs = windowRefreshPeriodNs() / 2;
+      Uint64 wakeNs = nextDueNs > earlyNs ? nextDueNs - earlyNs : nextDueNs;
+      if (nowNs < wakeNs) SDL_DelayPrecise(wakeNs - nowNs);
+    }
+    nextDueNs += periodNs;
   }
 }
 
@@ -2180,9 +2239,7 @@ bool windowGameOverEndsGame(ClientSim *cs) {
 }
 
 void windowGameOverStopTicks(void) {
-  SDL_RemoveTimer(timerFrameID);
   SDL_RemoveTimer(timerGameID);
-  timerFrameID = 0;
   timerGameID = 0;
 }
 

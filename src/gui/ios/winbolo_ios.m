@@ -86,7 +86,9 @@ bool iosDeviceIsPad(void) {
  * Globals (matching winbolo.h externs)
  * ------------------------------------------------------- */
 
-int frameRate = FRAME_RATE_30;
+/* The Frame Rate choice (a FrameLimit). iOS paces its own screen, so it
+   is kept only for the shared code that reads it. */
+int frameRate = FRAME_LIMIT_DEFAULT;
 
 bool showGunsight = FALSE;
 bool soundEffects = TRUE;
@@ -1024,9 +1026,9 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
     windowSetZoomFactor(amount);
 }
 
-void windowSetFrameRate(int newFrameRate, bool setTimer) {
-    (void)setTimer;
-    frameRate = newFrameRate;
+void windowSetFrameRate(int newFrameRate, bool inGame) {
+    (void)inGame;
+    frameRate = frameLimitValid(newFrameRate) ? newFrameRate : FRAME_LIMIT_DEFAULT;
 }
 
 /* windowShowGunsight_toggle, windowAutomaticScrolling_toggle,

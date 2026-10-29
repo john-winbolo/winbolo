@@ -339,7 +339,6 @@ STR_LONG=Long
 STR_MENU_NO_OWN_LABEL=Ne pas étiqueter mon tank
 STR_MENU_PILLBOX_LABELS=Étiquettes des pillboxes
 STR_MENU_BASE_LABELS=Étiquettes des bases de ravitaillement
-STR_MENU_HIDE_MAIN=Masquer la vue principale
 STR_MENU_DEVICE=Appareil :
 STR_MENU_DESKTOP=Bureau
 STR_MENU_WINBOLO=WinBolo

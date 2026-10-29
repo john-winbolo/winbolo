@@ -330,7 +330,6 @@ STR_LONG=Long
 STR_MENU_NO_OWN_LABEL=Don't label own tank
 STR_MENU_PILLBOX_LABELS=Pillbox Labels
 STR_MENU_BASE_LABELS=Refuelling Base Labels
-STR_MENU_HIDE_MAIN=Hide Main View
 STR_MENU_DEVICE=Device:
 STR_MENU_DESKTOP=Desktop
 STR_MENU_WINBOLO=WinBolo
@@ -3034,4 +3033,10 @@ STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game
 
 # The replay's recording mode button, which shows the GIF controls
 STR_REEL_RECORD_MODE_TIP=Recording mode: shows the GIF controls
+
+# The Frame Rate choice in Settings > Display and the Edit menu (#312)
+STR_FRAMELIMIT_VSYNC=Match display (vsync)
+STR_FRAMELIMIT_CAP={number} fps
+STR_FRAMELIMIT_UNLIMITED=Unlimited (vsync off)
+STR_FRAMELIMIT_TIP=How often the game window is drawn. Match display draws once for each refresh of the screen. A number draws no more than that many frames each second, which can save power. Unlimited turns vsync off and draws as fast as the computer can, and the picture can tear. The game itself runs at the same speed with every choice.
 

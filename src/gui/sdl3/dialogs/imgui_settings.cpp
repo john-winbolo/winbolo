@@ -73,16 +73,10 @@ extern "C" {
 #endif
 }
 
-/* Frame-rate / zoom constants (mirrors winbolo.h values) */
-#ifndef FRAME_RATE_10
-#define FRAME_RATE_10  19
-#define FRAME_RATE_12  23
-#define FRAME_RATE_15  28
-#define FRAME_RATE_20  37
-#define FRAME_RATE_30  55
-#define FRAME_RATE_50  82
-#define FRAME_RATE_60  111
-#endif
+/* The Frame Rate choices (#312) */
+#include "../../frame_limit.h"
+
+/* Zoom constants (mirrors winbolo.h values) */
 #ifndef ZOOM_FACTOR_NORMAL
 #define ZOOM_FACTOR_NORMAL 1
 #define ZOOM_FACTOR_DOUBLE 2
@@ -114,7 +108,7 @@ extern "C" {
   extern bool showNetworkStatusMessages;
   extern bool showNetworkDebugMessages;
 
-  void windowSetFrameRate(int newFrameRate, bool setTimer);
+  void windowSetFrameRate(int newFrameRate, bool inGame);
   void windowAutomaticScrolling_toggle(struct ClientSim *cs);
   void windowSmoothScrolling_toggle(void);
   void windowShowGunsight_toggle(struct ClientSim *cs);
@@ -871,29 +865,42 @@ static void renderFullScreenPanelSettings(bool touchLayout) {
 }
 #endif
 
+extern "C" const char *imguiFrameLimitLabel(int limit) {
+    static char labels[FRAME_LIMIT_COUNT][64];
+    if (!frameLimitValid(limit)) limit = FRAME_LIMIT_DEFAULT;
+    const char *text;
+    if (limit == FRAME_LIMIT_VSYNC) {
+        text = langGetText(STR_FRAMELIMIT_VSYNC);
+    } else if (limit == FRAME_LIMIT_UNLIMITED) {
+        text = langGetText(STR_FRAMELIMIT_UNLIMITED);
+    } else {
+        MessageArgs args = {};
+        args.number = frameLimitCapHz(limit);
+        text = langGetTextFmt(STR_FRAMELIMIT_CAP, &args);
+    }
+    snprintf(labels[limit], sizeof(labels[limit]), "%s", text);
+    return labels[limit];
+}
+
 extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
-    /* ---- Frame rate ---- */
+    /* ---- Frame rate (#312) ---- */
+#if IMGUI_FRAME_LIMIT_UI
     if (!uiModeIsTablet()) {
-        const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
-        int frValues[] = { FRAME_RATE_60, FRAME_RATE_50, FRAME_RATE_30,
-                           FRAME_RATE_20, FRAME_RATE_15, FRAME_RATE_12, FRAME_RATE_10 };
-        int curFrIdx = 2;
-        for (int i = 0; i < 7; i++) {
-            if (frameRate == frValues[i]) { curFrIdx = i; break; }
-        }
+        int cur = frameLimitValid(frameRate) ? frameRate : FRAME_LIMIT_DEFAULT;
         ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_FRAMERATE));
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(dialogFontW(80.0f));
-        if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
-            for (int i = 0; i < 7; i++) {
-                bool selected = (curFrIdx == i);
-                if (ImGui::Selectable(frLabels[i], selected)) {
-                    windowSetFrameRate(frValues[i], ctx->inGame);
+        ImGui::SetNextItemWidth(dialogFontW(170.0f));
+        if (ImGui::BeginCombo("##framerate", imguiFrameLimitLabel(cur))) {
+            for (int i = 0; i < FRAME_LIMIT_COUNT; i++) {
+                if (ImGui::Selectable(imguiFrameLimitLabel(i), cur == i)) {
+                    windowSetFrameRate(i, ctx->inGame);
                 }
             }
             ImGui::EndCombo();
         }
+        imguiHelpTooltip(langGetText(STR_FRAMELIMIT_TIP));
     }
+#endif
 
     /* The web canvas follows the page, so it has no window size to pick. */
 #ifndef __EMSCRIPTEN__

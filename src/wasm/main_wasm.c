@@ -70,8 +70,9 @@ extern ClientSim *humanSim;
  * Globals declared by winbolo.h
  * ------------------------------------------------------- */
 
-int frameRate = FRAME_RATE_30;
-static int frameRateTime = (int)(MILLISECONDS / FRAME_RATE_30) - 1;
+/* The Frame Rate choice (a FrameLimit). The browser decides when the page
+   is drawn, so it is kept only for the shared code that reads it. */
+int frameRate = FRAME_LIMIT_DEFAULT;
 
 bool showGunsight = TRUE;  /* WASM default: gunsight on unless synced prefs override */
 bool soundEffects = TRUE;
@@ -1417,18 +1418,9 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
   (void)fromDragResize;
 }
 
-void windowSetFrameRate(int newFrameRate, bool setTimer) {
-  (void)setTimer;
-  switch (newFrameRate) {
-  case FRAME_RATE_10: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_10); break;
-  case FRAME_RATE_12: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_12); break;
-  case FRAME_RATE_15: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_15); break;
-  case FRAME_RATE_20: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_20) - 1; break;
-  case FRAME_RATE_30: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_30) - 1; break;
-  case FRAME_RATE_50: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_50) - 4; break;
-  case FRAME_RATE_60: frameRateTime = (int)(MILLISECONDS / FRAME_RATE_60) - 4; break;
-  }
-  frameRate = newFrameRate;
+void windowSetFrameRate(int newFrameRate, bool inGame) {
+  (void)inGame;
+  frameRate = frameLimitValid(newFrameRate) ? newFrameRate : FRAME_LIMIT_DEFAULT;
 }
 
 /* Menu toggles — called by sdl3imgui.cpp */

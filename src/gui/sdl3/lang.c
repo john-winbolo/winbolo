@@ -288,7 +288,6 @@ static const LangEntry langTable[] = {
     {560,  "Don't label own tank"},
     {561,  "Pillbox Labels"},
     {562,  "Refuelling Base Labels"},
-    {563,  "Hide Main View"},
     {564,  "Device:"},
     {565,  "Desktop"},
     {566,  "WinBolo"},
@@ -1419,6 +1418,11 @@ static const LangEntry langTable[] = {
     {3042, "Whether a shell that hits a tank sets off a mine on the square it bursts on. Off is the default: the hit leaves the mines on that square alone. On, as in WinBolo 2.1, the hit sets off a mine there, so a shot at a tank can set off the mines it has just laid under or behind it. A shell that hits a pillbox, a base or the ground, or that runs out, sets off a mine either way."},
 
     {3150, "Recording mode: shows the GIF controls"},
+
+    {3165, "Match display (vsync)"},
+    {3166, "{number} fps"},
+    {3167, "Unlimited (vsync off)"},
+    {3168, "How often the game window is drawn. Match display draws once for each refresh of the screen. A number draws no more than that many frames each second, which can save power. Unlimited turns vsync off and draws as fast as the computer can, and the picture can tear. The game itself runs at the same speed with every choice."},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

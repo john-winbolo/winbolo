@@ -4437,6 +4437,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # a live set of settings back as one of them.
     tests/unit/test_visibility_presets.c
     src/gui/visibility_presets.c
+    # The Frame Rate choice: the old saved value moved to the nearest new
+    # one, the saved words, and the pacing numbers. Header only.
+    tests/unit/test_frame_limit.c
     # The scenario panel pop-out row, yes/no words and lost-window rescue.
     tests/unit/test_scn_panel_prefs.c
     src/gui/scn_panel_prefs.c
