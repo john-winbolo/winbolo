@@ -102,6 +102,21 @@ end
 
 -- Called once per tick from init.lua, after perception update.
 -- Sets state.phase, state.strength, state.base_strength, and front line data.
+-- Turtle base-run end test (TURTLE_BASE_RUN_END_FRAC). Returns taken, need:
+-- taken = bases owned by anyone (total - neutral), need = ceil(FRAC x total).
+-- need is nil when the test is off (not a Turtle2 mode bot, FRAC <= 0, or no
+-- bases). Turtle nest = Turtle2 mode (C.MODE == "turtle2"). This MUST match
+-- goals.lua M.turtle_nest_on (inlined: strategy does not require goals).
+function M.turtle_base_run_end(total_bases, neutral_count)
+  local frac = C.TURTLE_BASE_RUN_END_FRAC or 0
+  local taken = (total_bases or 0) - (neutral_count or 0)
+  if C.MODE ~= "turtle2"  -- must match goals.turtle_nest_on
+     or frac <= 0 or (total_bases or 0) <= 0 then
+    return taken, nil
+  end
+  return taken, math.ceil(frac * total_bases - 1e-9)
+end
+
 function M.update(state, world, info)
   local perc = state.perc
 
@@ -170,10 +185,26 @@ function M.update(state, world, info)
   -- perception hasn't counted bases yet (all counts 0) can't false-trigger.
   local all_bases_taken = (total_bases > 0 and neutral_count == 0)
 
+  -- TURTLE BASE-RUN END (TURTLE_BASE_RUN_END_FRAC, Turtle2 mode bots only,
+  -- i.e. mode=turtle2): a Turtle2 bot stops the base
+  -- run once a share of the bases are taken by anyone (not neutral any more). The OPENING_MIN_TICKS minimum (the branch above
+  -- it) and the hysteresis below still apply. Keel 0 = off. Only while we
+  -- are still in the opening and a base is still neutral: past the opening,
+  -- or with every base taken, the normal chain below decides as before.
+  local turtle_taken, turtle_need = M.turtle_base_run_end(total_bases, neutral_count)
+  local turtle_end = turtle_need ~= nil and turtle_taken >= turtle_need
+                     and neutral_count > 0
+                     and (state.phase == nil or state.phase == "opening")
+
   local new_phase, phase_reason
   if age < C.OPENING_MIN_TICKS and not all_bases_taken then
     new_phase = "opening"
     phase_reason = string.format("tick %d < %d", age, C.OPENING_MIN_TICKS)
+  elseif turtle_end then
+    new_phase = "middle"
+    phase_reason = string.format("turtle base run over: %d of %d bases taken >= %d (ceil(%.2f[TURTLE_BASE_RUN_END_FRAC] x %d))",
+                                 turtle_taken, total_bases, turtle_need,
+                                 C.TURTLE_BASE_RUN_END_FRAC, total_bases)
   elseif opening_neutral_count > opening_tolerance then
     new_phase = "opening"
     phase_reason = string.format("neutral_bases %d (reachable %d) > %.0f tol",
@@ -226,6 +257,13 @@ function M.update(state, world, info)
         state.phase = new_phase
         state.phase_pending = nil
         log.event("phase_change", (old or "none") .. " -> " .. new_phase)
+        if turtle_end and old == "opening" then
+          local msg = string.format("TURTLE_BASE_RUN_END t=%d taken=%d total=%d threshold=%d (ceil(%.2f x %d)) -> %s",
+            state.tick or age, turtle_taken, total_bases, turtle_need,
+            C.TURTLE_BASE_RUN_END_FRAC, total_bases, new_phase)
+          print2(msg)
+          log.event("turtle_base_run_end", msg)
+        end
       end
     end
   else
