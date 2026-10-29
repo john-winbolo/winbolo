@@ -61,6 +61,7 @@
 #include "imgui/imgui_hud.h"
 #include "imgui/imgui_overview.h"
 #include "imgui/imgui_tank.h"
+#include "imgui/imgui_chat.h"
 #include "imgui/imgui_comments.h"
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
@@ -2308,6 +2309,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.showHud          = lv_g_show_hud_window;
         lvms.showOverview     = lv_g_show_overview_window;
         lvms.showTank         = lv_g_show_tank_window;
+        lvms.showChat         = lv_g_show_chat_window;
         lvms.tankBars         = lv_drawGetTankBars() ? true : false;
         lvms.builderStatus    = lv_drawGetBuilderStatus() ? true : false;
         lvms.pillNumbers      = lv_drawGetPillNumbers() ? true : false;
@@ -2424,6 +2426,9 @@ static void lvHostRenderFrame(const char *overlay) {
             lv_imgui_tank_window();
             lv_imgui_game_info_window();
             lv_imgui_events_window();
+            if (panels & LV_PANEL_SET_CHAT) {
+                lv_imgui_chat_window();
+            }
             lv_imgui_item_info_window();
             if (panels & LV_PANEL_SET_COMMENTS) {
                 lv_imgui_comments_window();

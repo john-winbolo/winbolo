@@ -1419,6 +1419,13 @@ static const LangEntry langTable[] = {
     {3042, "Whether a shell that hits a tank sets off a mine on the square it bursts on. Off is the default: the hit leaves the mines on that square alone. On, as in WinBolo 2.1, the hit sets off a mine there, so a shot at a tank can set off the mines it has just laid under or behind it. A shell that hits a pillbox, a base or the ground, or that runs out, sets off a mine either way."},
 
     {3150, "Recording mode: shows the GIF controls"},
+
+    /* The Log Viewer's Chat panel */
+    {3100, "Chat"},
+    {3101, "No chat messages yet."},
+    {3102, "(team)"},
+    {3103, "(to {player})"},
+    {3104, "Spectator {number}"},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

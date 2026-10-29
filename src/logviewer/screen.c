@@ -65,6 +65,7 @@
 #include "lv_event_flash.h"
 #include "lv_dock_clear.h"       /* the middle of the view beside a clear sidebar */
 #include "lv_messages.h"
+#include "client_command.h"   /* CHAT_DEST_IS_TEAM — a team address */
 #include "../gui/lang.h"
 #include "../gui/ping_kinds.h"   /* PING_DISPLAY_MS, pingKindMessageId */
 #include "cJSON.h"               /* scripts.json, read into g_lv->scripts */
@@ -2933,6 +2934,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
         snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
         lv_messageTagPlayers(opt1, -1);
+        lv_messageTagChat(name, NULL, str);
         lv_messageAdd(LV_EVK_CHAT, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_ALL, &args);
       }
       break;
@@ -2950,6 +2952,22 @@ void lv_screenProcessLog(unsigned short numEvents) {
         snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, name2);
         snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
         lv_messageTagPlayers(opt1, -1);
+        {
+          /* The Chat panel's note on who the line went to: the sender's
+             team (a team address) or one player. */
+          char note[FILENAME_MAX];
+          const char *rendered;
+          if (CHAT_DEST_IS_TEAM(opt2)) {
+            rendered = langGetText(STR_LV_CHAT_TEAM);
+          } else {
+            MessageArgs toArgs = {0};
+            snprintf(toArgs.playerName, sizeof(toArgs.playerName), "%.*s",
+                     (int)sizeof(toArgs.playerName) - 1, name2);
+            rendered = langGetTextFmt(STR_LV_CHAT_TO, &toArgs);
+          }
+          snprintf(note, sizeof(note), "%s", rendered ? rendered : "");
+          lv_messageTagChat(name, note, str);
+        }
         lv_messageAdd(LV_EVK_CHAT, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PLAYERS, &args);
       }
       break;
@@ -3605,6 +3623,14 @@ void lv_screenProcessLog(unsigned short numEvents) {
         MessageArgs args = {0};
         args.number = opt1;
         snprintf(args.string1, sizeof(args.string1), "%s", str);
+        {
+          /* The Chat panel names the spectator by number, as the Events
+             panel's line does. */
+          char from[FILENAME_MAX];
+          const char *rendered = langGetTextFmt(STR_LV_CHAT_SPECTATOR, &args);
+          snprintf(from, sizeof(from), "%s", rendered ? rendered : "");
+          lv_messageTagChat(from, NULL, str);
+        }
         lv_messageAdd(LV_EVK_CHAT, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_CHAT, &args);
       }
       break;
@@ -6321,6 +6347,14 @@ static int s_eventPlayer = -1;
 /* The kind of ping the next line is (lv_messageTagPing), -1 for a line that
  * is not a ping. Cleared with the teams. */
 static int s_eventPing = -1;
+/* The parts of the next line when it is a chat line (lv_messageTagChat), for
+ * the Chat panel. s_eventChat is false for any other line. Cleared with the
+ * teams. */
+static bool s_eventChat = false;
+static char s_eventChatFrom[256];
+static char s_eventChatNote[256];
+static bool s_eventChatHasNote = false;
+static char s_eventChatText[256];
 
 /* The team a player is in as the line is added, 0..15, or -1. The team is
  * kept, not the player: the player can change team later in the log, and
@@ -6340,6 +6374,23 @@ void lv_messageTagPlayers(int actor, int other) {
 
 void lv_messageTagPing(int pingKind) {
   s_eventPing = (pingKind >= 0) ? pingKind : -1;
+}
+
+void lv_messageTagChat(const char *from, const char *note, const char *text) {
+  s_eventChat = true;
+  snprintf(s_eventChatFrom, sizeof(s_eventChatFrom), "%s", from ? from : "");
+  s_eventChatHasNote = (note != NULL && note[0] != '\0');
+  snprintf(s_eventChatNote, sizeof(s_eventChatNote), "%s",
+           s_eventChatHasNote ? note : "");
+  snprintf(s_eventChatText, sizeof(s_eventChatText), "%s", text ? text : "");
+}
+
+int lv_screenEventChat(const char **from, const char **note, const char **text) {
+  if (!s_eventChat) return 0;
+  if (from != NULL) *from = s_eventChatFrom;
+  if (note != NULL) *note = s_eventChatHasNote ? s_eventChatNote : NULL;
+  if (text != NULL) *text = s_eventChatText;
+  return 1;
 }
 
 int lv_screenEventPing(void) { return s_eventPing; }
@@ -6400,15 +6451,17 @@ void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
     s_eventOtherTeam = -1;
     s_eventPing = -1;
     s_eventPlayer = -1;
+    s_eventChat = false;
     return;
   }
   lv_windowAddEvent(0, (int)kind, mapX, mapY, body);
   /* The host has taken the tag with the line (lv_screenEventTeams,
-     lv_screenEventPing). */
+     lv_screenEventPing, lv_screenEventChat). */
   s_eventTeam = -1;
   s_eventOtherTeam = -1;
   s_eventPing = -1;
   s_eventPlayer = -1;
+  s_eventChat = false;
 
   /* The text dump and the load decode the whole log once. The marquee queue
    * is walked to its tail on every append, so feeding it a whole round here

@@ -3035,3 +3035,10 @@ STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game
 # The replay's recording mode button, which shows the GIF controls
 STR_REEL_RECORD_MODE_TIP=Recording mode: shows the GIF controls
 
+# The Log Viewer's Chat panel
+STR_LV_WIN_CHAT=Chat
+STR_LV_CHAT_NONE=No chat messages yet.
+STR_LV_CHAT_TEAM=(team)
+STR_LV_CHAT_TO=(to {player})
+STR_LV_CHAT_SPECTATOR=Spectator {number}
+

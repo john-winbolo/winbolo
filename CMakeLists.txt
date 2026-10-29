@@ -2236,6 +2236,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_hud.cpp
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
+    src/logviewer/imgui/imgui_chat.cpp
     src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
@@ -2886,6 +2887,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_hud.cpp
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
+    src/logviewer/imgui/imgui_chat.cpp
     src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
@@ -5182,6 +5184,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Which parts of the viewer a frame of the overview draws, for a log
     # file and for a live feed (lv_panel_set.h, header only).
     tests/unit/test_lv_panel_set.c
+    # The Chat panel: its fade by replay time and the lines it lists
+    # (lv_chat_view.h, header only), and the chat parts of a line of the
+    # events list (lv_event_list.c).
+    tests/unit/test_lv_chat_view.c
     # The viewer's playback times as text, to the hundredth of a second, and
     # the ring flashed on the map round an event's place (lv_time_fmt.h,
     # lv_event_flash.h, header only).
