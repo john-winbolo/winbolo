@@ -4614,6 +4614,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
     tests/unit/test_map_colours.c
+    tests/unit/test_map_markers.c
     tests/unit/test_stall_lockout_rebase.c
     # The catch-up loop behind a hitch, driven without a sim through
     # serverTickCatchUp (server_lifecycle.c, in with server_static).
@@ -5024,6 +5025,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # target already builds for its own tests — and its functions are a tile
     # number in and a colour out. test_map_colours.c drives it directly.
     src/gui/sdl3/map_colours.c
+    # map_markers.c draws over those colours with plain SDL and ring_band.c,
+    # which this target already has. test_map_markers.c asks it how far the
+    # tank triangle reaches; nothing here draws one.
+    src/gui/sdl3/map_markers.c
     # news_image_budget.cpp qualifies too: it is the news image cache's
     # eviction rule over URLs, byte counts and frame numbers, with no SDL,
     # no ImGui and no textures. test_news_image_budget.cpp drives it.
@@ -6349,6 +6354,7 @@ set(_unit_test_names
     map_colours_markers
     map_colours_palette_key
     map_colours_team
+    map_markers_tank_reach
     stall_advances_processed_tick
     turn_release_no_overshoot
     turn_gap_preserves_ramp
