@@ -2533,6 +2533,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_dock_fit_margins",                             run_lv_dock_fit_margins                             },
     { "lv_dock_layout_sides",                            run_lv_dock_layout_sides                            },
     { "lv_dock_layout_tree",                             run_lv_dock_layout_tree                             },
+    { "status_grid_slots",                               run_status_grid_slots                               },
     { "lv_hud_sums",                                     run_lv_hud_sums                                     },
     { "lv_team_sprite_sums",                             run_lv_team_sprite_sums                             },
     { "lv_team_colour_lookup",                           run_lv_team_colour_lookup                           },

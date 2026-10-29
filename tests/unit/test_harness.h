@@ -4433,6 +4433,10 @@ int run_lv_dock_fit_sums(void);
 int run_lv_dock_fit_margins(void);
 int run_lv_dock_layout_sides(void);
 int run_lv_dock_layout_tree(void);
+/* Where slot n of a status panel sits (test_status_grid.c, status_grid.h):
+ * each of the sixteen slots of the bases, pillboxes and tanks panels where
+ * the explicit macros of positions.h put it. */
+int run_status_grid_slots(void);
 /* The log viewer's HUD panel (test_lv_hud.c): the icon of a base, pillbox and
  * tank slot, the layout of the three grids, and the grey and colour sums. */
 int run_lv_hud_sums(void);
