@@ -353,9 +353,19 @@ local function scale_accel(b, x)
 end
 
 -- -------------------------------------------------------------------------
--- Per-terrain tables. A new table is built only when the rules differ from
--- classic; otherwise the original table object comes back.
+-- Per-terrain tables. When the rules differ from classic, each entry fills
+-- its own output table in place and returns it, so the same object comes
+-- back every think and apply() sees no change. Otherwise the original table
+-- object comes back.
 -- -------------------------------------------------------------------------
+
+-- One output table per entry. TERRAIN_SPEED and MAP_SPEED share
+-- scale_speed_table, so the table is per entry, not per function.
+local OUT_TERRAIN_SPEED = {}
+local OUT_MAP_SPEED     = {}
+local OUT_COST_LAND     = {}
+local OUT_MAN_SPEED     = {}
+local OUT_ROAD_COST     = {}
 
 local function tbl_classic_speed(x, with_pct)
   if with_pct and x.speed_pct ~= 100 then return false end
@@ -365,15 +375,15 @@ local function tbl_classic_speed(x, with_pct)
   return true
 end
 
-local function scale_speed_table(b, x, with_pct)
+local function scale_speed_table(b, x, with_pct, out)
   if type(b) ~= "table" or tbl_classic_speed(x, with_pct) then return b end
-  local out = {}
   for _, tt in ipairs(TERRAINS) do
     local v = b[tt]
     if v ~= nil then
       local rule = SPEED_RULE[tt]
-      out[tt] = rule and scale_speed(v, x, rule, with_pct) or v
+      v = rule and scale_speed(v, x, rule, with_pct) or v
     end
+    out[tt] = v
   end
   return out
 end
@@ -385,14 +395,15 @@ local function man_table(b, x)
     if x[rule] ~= CLASSIC[rule] then same = false end
   end
   if same then return b end
-  local out = {}
+  local out = OUT_MAN_SPEED
   for _, tt in ipairs(TERRAINS) do
     local v = b[tt]
     if v ~= nil then
       local rule = MAN_RULE[tt]
       -- Same units as the engine: the live rule replaces the value.
-      out[tt] = rule and x[rule] or v
+      v = rule and x[rule] or v
     end
+    out[tt] = v
   end
   return out
 end
@@ -413,13 +424,14 @@ end
 
 local function scale_cost_table(b, x)
   if type(b) ~= "table" or tbl_classic_speed(x, false) then return b end
-  local out = {}
+  local out = OUT_COST_LAND
   for _, tt in ipairs(TERRAINS) do
     local v = b[tt]
     if v ~= nil then
       local rule = SPEED_RULE[tt]
-      out[tt] = rule and cost_entry(v, x, rule) or v
+      v = rule and cost_entry(v, x, rule) or v
     end
+    out[tt] = v
   end
   return out
 end
@@ -435,9 +447,9 @@ end
 
 local function road_cost_table(b, x)
   if type(b) ~= "table" or x.lgm_cost_road == CLASSIC.lgm_cost_road then return b end
-  local out = {}
+  local out = OUT_ROAD_COST
   for _, tt in ipairs(TERRAINS) do
-    if b[tt] ~= nil then out[tt] = x.lgm_cost_road end
+    if b[tt] ~= nil then out[tt] = x.lgm_cost_road else out[tt] = nil end
   end
   return out
 end
@@ -592,8 +604,8 @@ local ENTRIES = {
   -- Tank speed. TERRAIN_SPEED is our own top speed (rules x own speed %).
   -- MAP_SPEED models ENEMY tanks, whose modifiers we cannot see: rules only.
   -- (With ENEMY_SPEED_OWN_MODS the aim lead multiplies in enemy_speed_scale().)
-  { "TERRAIN_SPEED",     "SPEED", function(b, x) return scale_speed_table(b, x, true) end },
-  { "MAP_SPEED",         "SPEED", function(b, x) return scale_speed_table(b, x, false) end },
+  { "TERRAIN_SPEED",     "SPEED", function(b, x) return scale_speed_table(b, x, true, OUT_TERRAIN_SPEED) end },
+  { "MAP_SPEED",         "SPEED", function(b, x) return scale_speed_table(b, x, false, OUT_MAP_SPEED) end },
   { "TERRAIN_COST_LAND", "SPEED", scale_cost_table },
   { "NAV_TOP_SPEED",     "SPEED", function(b, x) return scale_speed(b, x, "speed_road", true) end },
   { "NAV_CRUISE_SPEED",  "SPEED", function(b, x) return scale_speed(b, x, "speed_road", true) end },
@@ -812,7 +824,10 @@ function M.apply(info)
     if cur ~= nil then
       local w = written[key]
       -- Someone else wrote this constant since our last write: that is the
-      -- new base.
+      -- new base. With written empty, cur is taken as the base, so it must
+      -- never be one of the OUT_* tables. That holds because each
+      -- Brain.open runs in a fresh Lua state (luabrainshandler.c), so
+      -- M.reset never runs while C still holds a scaled table.
       if w == nil or cur ~= w then base[key] = cur end
       local b = base[key]
       local v = b
