@@ -1138,11 +1138,12 @@ only source of truth for "byte-identical".
 5. **Register it everywhere else.** Steps 1–4 make the event work;
    these make it debuggable, and each is easy to miss:
 
-   - `mpDiagCtrlName` in **both** `src/server/transport_udp_server.c`
-     and `src/bolo/transport_udp_client.c` — the name the MP diag log
-     prints. Without it the event logs as `<unknown>` on that side.
-   - `src/headless/headless_main.c` — the type name and, if the payload
-     is worth seeing, a case in the event logger.
+   - `controlEventTypeName` in `src/bolo/transport_control_codec.c` —
+     the one name table. The MP diag log on both sides and the headless
+     `--log-events` output read it. Without a case the event logs as
+     `<unknown>`, and the `control_event_names` unit test fails.
+   - `src/headless/headless_main.c` — if the payload is worth seeing,
+     a case in the event logger.
 
    The reliable way to find the rest is to sweep an existing event of a
    similar shape: `rg -n "CTRL_ALLIANCE_RESET" src` names every site one

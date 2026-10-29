@@ -1886,6 +1886,11 @@ int run_view_cycle_pick_direction(void);
  * tables, with the nothing-to-watch case and the fixed body length. */
 int run_view_target_codec(void);
 
+/* The shared ControlEventType name table (test_control_event_names.c):
+ * every enumerator has its own "CTRL_" name, and a value outside the enum
+ * answers NULL, or "<unknown>" in the log form. */
+int run_control_event_names(void);
+
 /* Applying the server's answer (test_view_target_apply.c): a CTRL_VIEW_TARGET
  * for our own slot whose fromEcho matches the ally we are stepping from parks
  * the camera on the ally it names; an answer for another slot or echoing an

@@ -4592,6 +4592,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_draw_centre.c
     tests/unit/test_view_state.c
     tests/unit/test_view_target_codec.c
+    tests/unit/test_control_event_names.c
     tests/unit/test_view_target_apply.c
     tests/unit/test_view_cycling.c
     tests/unit/test_pill_pos_current.c
@@ -6276,6 +6277,7 @@ set(_unit_test_names
     view_cycle_pick_policy
     view_cycle_pick_direction
     view_target_codec
+    control_event_names
     view_target_apply
     view_cycle_bases
     view_cycle_base_direction
