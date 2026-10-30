@@ -1105,3 +1105,94 @@ int run_scenario_status_line(void) {
 
     return 0;
 }
+
+/* The desktop panel's default place and size (scnPanelDefaultPlace): the
+ * game view's top-left corner in by the inset, at the smallest cardinal
+ * from 100 to 200 that reaches 256 pixels, or the largest that fits in
+ * 0.8 of the view's shorter side and in the display. Every number is
+ * worked out by hand beside it. */
+int run_scenario_panel_default_place(void) {
+    static const int cardinals[] = SCN_PANEL_CARDINALS;
+    const size_t     count       = sizeof(cardinals) / sizeof(cardinals[0]);
+    float x, y;
+    int   pct;
+
+    /* Zoom 1: a 240 view at (10, 20), panel 128 at 100, inset 4. The room
+       is 0.8 * 240 = 192. 125 is 160 and 150 is 192, which fits; 200 is
+       256, which does not. So 150, at (14, 24). */
+    UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                   480.0f, 128.0f, 4.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 150);
+    UT_ASSERT(x == 14.0f);
+    UT_ASSERT(y == 24.0f);
+
+    /* Zoom 2: a 480 view, panel 256 at 100, which already reaches 256: 100,
+       at (20 + 8, 40 + 8). */
+    UT_ASSERT(scnPanelDefaultPlace(20.0f, 40.0f, 500.0f, 520.0f, 1280.0f,
+                                   960.0f, 256.0f, 8.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 100);
+    UT_ASSERT(x == 28.0f);
+    UT_ASSERT(y == 48.0f);
+
+    /* Zoom 3: panel 384 at 100, past 256 already: 100. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 720.0f, 720.0f, 1920.0f,
+                                   1080.0f, 384.0f, 12.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 100);
+
+    /* Custom zoom 1.25: a 300 view, panel 160 at 100, room 240. 150 is 240,
+       which fits but is under 256; 200 is 320, which does not fit: 150. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 300.0f, 300.0f, 1600.0f,
+                                   1200.0f, 160.0f, 5.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 150);
+    UT_ASSERT(x == 5.0f);
+    UT_ASSERT(y == 5.0f);
+
+    /* Zoom 1 in a display only 180 wide: from x 14 that leaves 166. 125 is
+       160, which fits; 150 is 192, which does not: 125. */
+    UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 180.0f,
+                                   400.0f, 128.0f, 4.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 125);
+
+    /* A display 130 wide leaves 116 from x 14, under the 128 of 100
+       percent: false, and the outputs are left alone. */
+    x = y = -7.0f;
+    pct = -7;
+    UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 130.0f,
+                                    400.0f, 128.0f, 4.0f, cardinals, count,
+                                    &x, &y, &pct));
+    UT_ASSERT(x == -7.0f && y == -7.0f && pct == -7);
+
+    /* No view yet, or no zoom size: false. */
+    UT_ASSERT(!scnPanelDefaultPlace(0.0f, 0.0f, 0.0f, 0.0f, 640.0f, 480.0f,
+                                    128.0f, 4.0f, cardinals, count, &x, &y,
+                                    &pct));
+    UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                    480.0f, 0.0f, 4.0f, cardinals, count,
+                                    &x, &y, &pct));
+
+    /* No cardinal from 100 up: false. */
+    {
+        static const int under100[] = {25, 50, 75};
+        UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                        480.0f, 128.0f, 4.0f, under100, 3, &x,
+                                        &y, &pct));
+    }
+
+    /* The cardinals the default picks from are ones the resize drag snaps
+       to: 100 and 150 are in the list. */
+    {
+        bool have100 = false, have150 = false;
+        size_t i;
+        for (i = 0; i < count; i++) {
+            if (cardinals[i] == 100) have100 = true;
+            if (cardinals[i] == 150) have150 = true;
+        }
+        UT_ASSERT(have100 && have150);
+    }
+    return 0;
+}

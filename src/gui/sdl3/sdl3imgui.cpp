@@ -4289,8 +4289,10 @@ static void renderPlayersPanel(ClientSim *cs) {
  * place a display list is drawn.
  * ------------------------------------------------------- */
 
-/* How far in from the top-right corner of the game view the panel sits the
-   first time it is shown, in panel units so the inset scales with it. */
+/* How far in from the corner of the game view the panel sits the first time
+   it is shown, in panel units so the inset scales with it. The corner is the
+   top-left (scnPanelDefaultPlace), or the top-right when the default size
+   does not fit at the top-left. */
 #define SCN_PANEL_DEFAULT_INSET 4.0f
 
 /* The smallest the panel is ever drawn, in screen pixels. Small enough to
@@ -4339,8 +4341,9 @@ static void renderPlayersPanel(ClientSim *cs) {
 /* The sizes the resize drag snaps to, as percents of the size the game's own
    zoom gives the panel. A hundred is that size exactly, which is the size
    every scenario was laid out against and the one worth being able to get
-   back to by feel. */
-static const int scnPanelCardinals[] = {25, 50, 75, 100, 125, 150, 200, 300};
+   back to by feel. The list is SCN_PANEL_CARDINALS in scenario_panel_draw.h,
+   where the default size is picked from it. */
+static const int scnPanelCardinals[] = SCN_PANEL_CARDINALS;
 
 /* The name a seat is playing under, for the list's name primitive. NULL for
    a seat nobody holds, which is what makes that primitive draw nothing. */
@@ -5298,7 +5301,8 @@ static void scnKeepBehindModal(void) {
 
 /* One view, in the game window. stack is how many views were placed ahead
    of it this frame, which is where a view with no saved position opens:
-   below the ones before it down the right of the game view. */
+   below the ones before it down the left of the game view (or the right,
+   when the default size does not fit at the left). */
 static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     ScnPanelView &v = s_scnViews[owner];
 
@@ -5317,6 +5321,34 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     const float baseSide = (float)SCN_PANEL_UNITS * scale;
     const ImVec2 display = ImGui::GetIO().DisplaySize;
 
+    /* The game view, in render pixels, which the default place is worked
+       out from. */
+    const float inset = SCN_PANEL_DEFAULT_INSET * scale;
+    bool  haveView = false;
+    float rx0 = 0.0f, ry0 = 0.0f, rx1 = 0.0f, ry1 = 0.0f;
+    {
+        float gx, gy, gw, gh, gtw, gth;
+        haveView =
+            sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth) &&
+            sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0) &&
+            sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1);
+    }
+
+    /* The default, used for whichever of size and place the player has not
+       saved: the top-left of the game view at a size picked to be readable
+       (scnPanelDefaultPlace). When that does not fit, the older default:
+       100 percent at the top-right. */
+    int   defPct = 100;
+    float leftX  = 0.0f;
+    float leftY  = 0.0f;
+    const bool atLeft =
+        haveView &&
+        scnPanelDefaultPlace(rx0, ry0, rx1, ry1, display.x, display.y,
+                             baseSide, inset, scnPanelCardinals,
+                             sizeof(scnPanelCardinals) / sizeof(int),
+                             &leftX, &leftY, &defPct);
+    if (!atLeft) defPct = 100;
+
     /* What the drag may reach: big enough for its handles, small enough for
        the display, and inside the percent range the preference holds. */
     float sideMin = ImMax(SCN_PANEL_MIN_PX,
@@ -5326,7 +5358,7 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     if (sideMax < SCN_PANEL_MIN_PX) sideMax = SCN_PANEL_MIN_PX;
     if (sideMin > sideMax) sideMin = sideMax;
 
-    const float percent = (v.scale >= 0) ? (float)v.scale : 100.0f;
+    const float percent = (v.scale >= 0) ? (float)v.scale : (float)defPct;
     float side = baseSide * percent / 100.0f;
 
     /* True while the resize drag sits on a cardinal size; the border shows
@@ -5347,19 +5379,17 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     if (side < sideMin) side = sideMin;
     if (side > sideMax) side = sideMax;
 
-    /* Where it goes when nothing has been saved: the top-right of the game
-       view, inset a little, below any view already placed there. */
-    const float inset = SCN_PANEL_DEFAULT_INSET * scale;
+    /* Where it goes when nothing has been saved: the top-left of the game
+       view, inset a little, or the top-right when the default size did not
+       fit there; below any view already placed there. */
     float defX = inset;
     float defY = inset;
-    {
-        float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
-        if (sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth) &&
-            sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0) &&
-            sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) {
-            defX = rx1 - side - inset;
-            defY = ry0 + inset;
-        }
+    if (atLeft) {
+        defX = leftX;
+        defY = leftY;
+    } else if (haveView) {
+        defX = rx1 - side - inset;
+        defY = ry0 + inset;
     }
     defY += (float)stack * (side + inset);
 

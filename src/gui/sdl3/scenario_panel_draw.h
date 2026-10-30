@@ -506,6 +506,98 @@ static inline void scnTextLineAcross(float srcW, float lineW, float share,
     if (outShrink != NULL) *outShrink = shrink;
 }
 
+/* The sizes the desktop panel's resize drag snaps to, as percents of the
+ * size the game's own zoom gives the panel, smallest first. A hundred is
+ * that size exactly, which is the size every scenario was laid out against.
+ * The default size below is always one of these, so a player who resizes
+ * the panel from its default starts on a size the drag knows. */
+#define SCN_PANEL_CARDINALS {25, 50, 75, 100, 125, 150, 200, 300}
+
+/* The size in screen pixels the default panel tries to reach: twice the
+ * panel at zoom 1 (128 pixels), where its writing is too small to read
+ * easily. At zoom 2 and above the zoom alone already gives this much, so
+ * the default there stays at 100 percent. */
+#define SCN_PANEL_DEFAULT_TARGET_PX 256.0f
+
+/* The largest percent the default may use, however small the zoom. */
+#define SCN_PANEL_DEFAULT_SCALE_MAX 200
+
+/* The most of the game view's shorter side the default panel may cover.
+ * At zoom 1 the view is 240 pixels, so this lets the default reach 192
+ * pixels (150 percent) and keeps a strip of the map clear beside and
+ * below it. */
+#define SCN_PANEL_DEFAULT_VIEW_SHARE 0.8f
+
+/*********************************************************
+ *NAME:          scnPanelDefaultPlace
+ *PURPOSE:
+ *  Where a desktop scenario panel opens, and how big, when
+ *  the player has saved neither: its top-left corner at the
+ *  game view's top-left corner, in by inset on both sides,
+ *  at a percent picked from the cardinals.
+ *
+ *  The percent is the smallest cardinal from 100 to
+ *  SCN_PANEL_DEFAULT_SCALE_MAX that reaches
+ *  SCN_PANEL_DEFAULT_TARGET_PX, or the largest of them that
+ *  fits when none reaches it. A cardinal fits when its side
+ *  is no more than SCN_PANEL_DEFAULT_VIEW_SHARE of the
+ *  view's shorter side and stays inside the display from
+ *  the corner it is placed at.
+ *
+ *  False when not even 100 percent fits there, or there is
+ *  no view or no zoom size: the caller then uses its older
+ *  placement. The outputs are left alone on false.
+ *
+ *ARGUMENTS:
+ *  viewX0/viewY0 - the game view's top-left, in render
+ *                  pixels
+ *  viewX1/viewY1 - its bottom-right
+ *  displayW/H    - the display, in render pixels
+ *  baseSide      - the panel's side at 100 percent
+ *  inset         - the gap from the view's corner
+ *  cardinals     - the cardinal percents, smallest first
+ *  count         - how many cardinals there are
+ *  outX/outY     - receive the panel's top-left
+ *  outPercent    - receives the percent
+ *********************************************************/
+static inline bool scnPanelDefaultPlace(float viewX0, float viewY0,
+                                        float viewX1, float viewY1,
+                                        float displayW, float displayH,
+                                        float baseSide, float inset,
+                                        const int *cardinals, size_t count,
+                                        float *outX, float *outY,
+                                        int *outPercent) {
+    const float viewW = viewX1 - viewX0;
+    const float viewH = viewY1 - viewY0;
+    const float x     = viewX0 + inset;
+    const float y     = viewY0 + inset;
+    float       room;
+    int         best = -1;
+    size_t      i;
+
+    if (viewW <= 0.0f || viewH <= 0.0f || baseSide <= 0.0f) return false;
+    if (cardinals == NULL) return false;
+    room = SCN_PANEL_DEFAULT_VIEW_SHARE * ((viewW < viewH) ? viewW : viewH);
+    if (displayW - x < room) room = displayW - x;
+    if (displayH - y < room) room = displayH - y;
+
+    for (i = 0; i < count; i++) {
+        const int   c    = cardinals[i];
+        const float side = baseSide * (float)c / 100.0f;
+        if (c < 100 || c > SCN_PANEL_DEFAULT_SCALE_MAX) continue;
+        /* Half a pixel of slack, so a side that matches the room exactly
+           is not lost to rounding. */
+        if (side > room + 0.5f) break;
+        best = c;
+        if (side >= SCN_PANEL_DEFAULT_TARGET_PX) break;
+    }
+    if (best < 0) return false;
+    if (outX != NULL) *outX = x;
+    if (outY != NULL) *outY = y;
+    if (outPercent != NULL) *outPercent = best;
+    return true;
+}
+
 
 /*********************************************************
  *NAME:          scnPanelColourRGBA

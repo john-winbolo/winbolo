@@ -4354,6 +4354,10 @@ int run_scenario_text_pointer_on_handle(void);
 int run_scenario_text_window_shown(void);
 int run_scenario_text_edge_shown(void);
 int run_scenario_text_save_place(void);
+/* The desktop scenario panel's default place and size
+ * (test_scenario_panel.c): the game view's top-left at a readable cardinal,
+ * shrunk to fit, and false when not even 100 percent fits. */
+int run_scenario_panel_default_place(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */

@@ -1025,13 +1025,16 @@ extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
  * inside the main one rather than an OS window of its own, so the position is
  * a position in the main window's own render coordinates, not a desktop one.
  * -1 for either coordinate means the player has never moved it, and it opens
- * at the top-right of the game view; a position saved on a larger display is
- * clamped back inside the window it is restored into.
+ * at the top-left of the game view (the top-right when its default size does
+ * not fit there, see scnPanelDefaultPlace); a position saved on a larger
+ * display is clamped back inside the window it is restored into.
  *
  * The scale is a percent rather than a size in pixels so that the saved value
  * keeps its meaning at every zoom: 100 is the size the game's zoom alone
  * gives the panel, which is the size it had before it could be resized. -1
- * means it has never been resized, and a loaded value is clamped to
+ * means it has never been resized: the panel then opens at the default
+ * percent scnPanelDefaultPlace picks (150 at zoom 1, 100 at zoom 2 and up).
+ * A loaded value is clamped to
  * SCN_PANEL_SCALE_MIN..SCN_PANEL_SCALE_MAX, the same range the resize drag
  * is clamped to.
  *

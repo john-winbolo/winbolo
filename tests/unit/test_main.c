@@ -2485,6 +2485,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_text_window_shown",                      run_scenario_text_window_shown                      },
     { "scenario_text_edge_shown",                        run_scenario_text_edge_shown                        },
     { "scenario_text_save_place",                        run_scenario_text_save_place                        },
+    { "scenario_panel_default_place",                    run_scenario_panel_default_place                    },
     { "scenario_status_line",                            run_scenario_status_line                            },
     { "scenario_panel_slot_rect",                        run_scenario_panel_slot_rect                        },
     { "lv_rule_names_and_panel_parse",                   run_lv_rule_names_and_panel_parse                   },

@@ -7675,6 +7675,7 @@ set(_unit_test_names
     scenario_text_window_shown
     scenario_text_edge_shown
     scenario_text_save_place
+    scenario_panel_default_place
     scenario_status_line
     scn_status_codec_and_client
     scn_announce_position_codec
