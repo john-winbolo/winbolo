@@ -1503,6 +1503,9 @@ int run_clip_gif_frame_drag(void);
 int run_clip_gif_crop_from_frame(void);
 int run_clip_gif_blit_view(void);
 int run_clip_gif_mode_state(void);
+int run_clip_gif_preview_play(void);
+int run_clip_gif_choose_crop(void);
+int run_clip_gif_meta_begin(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */

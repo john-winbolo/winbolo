@@ -9,10 +9,10 @@
  *
  * See imgui_clip_gif.h. Recording mode is the game's (lobby_reel.cpp), made
  * with the same code: its state, the length, the crop and the file name come
- * from clip_gif_core.h, its controls from clip_gif_controls.h, each frame is
- * read back and encoded by clip_gif_frame.h, and the finished bytes go to the
- * gallery (clip_gif_gallery.h), which writes them into the clips folder with
- * their metadata file.
+ * from clip_gif_core.h, its controls from clip_gif_controls.h, and Preview
+ * clip, Save clip, the progress window and where the GIF goes from
+ * clip_gif_capture.h. This file gives that code the viewer's log as a
+ * ClipGifReplay, the part of the map that shows and the players of the log.
  */
 
 #include "imgui_clip_gif.h"
@@ -25,9 +25,8 @@
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/clip_gif_core.h"
 #include "../../gui/sdl3/dialogs/clip_gif_controls.h"
+#include "../../gui/sdl3/dialogs/clip_gif_capture.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"  /* imguiLoadSvgIconWhite */
-#include "../../gui/sdl3/dialogs/clip_gif_frame.h"
-#include "../../gui/sdl3/dialogs/dialog_footer.h"
 #include "imgui_game_viewport.h"  /* lv_imgui_game_viewport_mouse_held */
 #include <SDL3/SDL.h>
 
@@ -46,14 +45,6 @@ extern "C" {
 #include "../tiles.h"
 }
 
-/* Log ticks for each frame. The log clock is 20 ms a tick, so five ticks are
- * CLIP_GIF_FRAME_MS (100 ms, 10 frames a second), as in the game's replay. */
-static const int LV_GIF_TICKS_PER_FRAME = 5;
-/* Frames made in each frame of the viewer. As in the game's replay: the
- * longest GIF takes under a second or two, and the window still updates. */
-static const int LV_GIF_FRAMES_PER_PASS = 4;
-
-static const char *const LV_GIF_PROGRESS_POPUP = "GIF##lvgifprogress";
 /* The size the GIF button's picture is made at. */
 static const int LV_GIF_PICTURE_PX = 32;
 
@@ -68,26 +59,15 @@ typedef struct LvGifState {
     SDL_Renderer   *pictureFor = nullptr;
     SDL_Texture    *picture    = nullptr;
 
-    /* One capture, from the start to the bytes given to the gallery. */
-    bool        active         = false;
-    bool        failed         = false;
-    /* True when the frames are all made: the next render ends it. */
-    bool        done           = false;
-    MsfGifState enc            = {};
-    int         frame          = 0;
-    int         total          = 0;
-    SDL_Rect    crop           = { 0, 0, 0, 0 };
+    /* The preview and the capture (clip_gif_capture.h). */
+    ClipGifSession  session    = {};
     /* The size of the render target when the capture started. A zoom or a
      * window size change makes a new target, and the crop then means
      * nothing, so the capture stops. */
     int         targetW        = 0;
     int         targetH        = 0;
-    /* What the capture changed, to put back after it. */
-    uint32_t    restoreMs      = 0;  /* the log time, as an absolute time */
-    bool        restorePlaying = false;
+    /* Whether the sounds played before the capture, to put back after it. */
     bool        restoreSound   = false;
-    char        name[96]       = "";
-    ClipGifMeta meta           = {};
 
     /* The id of the open log (clipGifGameIdFromBytes), and what it was made
      * from, so a log is read for it once only. */
@@ -158,7 +138,121 @@ static void lvGifForgetGameId(void) {
     s_gif.gameIdSet     = false;
 }
 
-/* ── The capture ──────────────────────────────────────────────────── */
+/* ── The log, as the shared capture sees it ───────────────────────── */
+
+/* The log time now and the length of the log, both from the start of the
+ * part of the log the viewer shows (as the Controls panel shows them). */
+static void lvGifProgress(void *user, uint32_t *curMs, uint32_t *totalMs) {
+    (void)user;
+    size_t pos = 0, size = 0;
+    uint32_t cur = 0, total = 0;
+    lv_clientMutexWaitFor();
+    lv_screenGetLogProgress(&pos, &size, &cur, &total);
+    lv_clientMutexRelease();
+    *curMs   = cur;
+    *totalMs = total;
+}
+
+static bool lvGifIsPlaying(void *user) {
+    (void)user;
+    return g_lv != NULL && g_lv->playIsPlaying;
+}
+
+static void lvGifPlay(void *user) {
+    (void)user;
+    lv_windowPlay();
+}
+
+static void lvGifPause(void *user) {
+    (void)user;
+    lv_windowPause();
+}
+
+/* ms is from the start of the part of the log the viewer shows; the seek
+ * takes an absolute log time. */
+static void lvGifSeek(void *user, uint32_t ms) {
+    (void)user;
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenSeekToTimeMs(lv_screenWindowStartMs() + ms);
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    if (g_lv != NULL) {
+        g_lv->wantScreenUpdate = TRUE;
+    }
+    lv_windowNeedRedraw();
+}
+
+/* On: the names over the tanks go into the render target, which is what is
+ * read back, and the sounds stop (the ticks of a capture go by many times
+ * faster than real time, and their sounds would all play at once). Off: both
+ * go back. */
+static void lvGifCaptureMode(void *user, bool on) {
+    (void)user;
+    if (on) {
+        s_gif.restoreSound = (g_lv != NULL && g_lv->isSoundsPlaying);
+        if (g_lv != NULL) {
+            g_lv->isSoundsPlaying = FALSE;
+        }
+        lv_clientMutexWaitFor();
+        lv_drawSetTankLabelsInTarget(TRUE);
+        lv_clientMutexRelease();
+        return;
+    }
+    lv_clientMutexWaitFor();
+    lv_drawSetTankLabelsInTarget(FALSE);
+    lv_clientMutexRelease();
+    if (g_lv != NULL) {
+        g_lv->isSoundsPlaying = s_gif.restoreSound ? TRUE : FALSE;
+        g_lv->wantScreenUpdate = TRUE;
+    }
+    lv_windowNeedRedraw();
+}
+
+/* One frame: the log moves on one frame's ticks and the map is drawn into
+ * the render target. False when the frame cannot be made: no map shows, or
+ * the render target is not the one the crop was made for. *ended is set
+ * when the log has no more to play. */
+static bool lvGifAdvance(void *user, bool *ended) {
+    (void)user;
+    *ended = false;
+    if (g_lv == NULL || !g_lv->isLoaded || g_lv->gameView) {
+        return false;
+    }
+    int texW = 0, texH = 0;
+    lv_clientMutexWaitFor();
+    for (int i = 0; i < CLIP_GIF_TICKS_PER_FRAME; i++) {
+        lv_screenLogTick();
+    }
+    lv_screenUpdate(redraw);
+    lv_drawGetGameTargetSize(&texW, &texH);
+    bool playing = g_lv->isPlaying ? true : false;
+    lv_clientMutexRelease();
+
+    if (texW != s_gif.targetW || texH != s_gif.targetH) {
+        return false;
+    }
+    *ended = !playing;
+    return true;
+}
+
+static bool lvGifTarget(void *user, SDL_Renderer **renderer,
+                        SDL_Texture **texture) {
+    (void)user;
+    if (g_lv == NULL) {
+        return false;
+    }
+    *renderer = g_lv->renderer;
+    *texture  = lv_drawGetGameTexture();
+    return *texture != NULL;
+}
+
+static const ClipGifReplay s_lvReplay = {
+    NULL, lvGifProgress, lvGifIsPlaying, lvGifPlay, lvGifPause, lvGifSeek,
+    lvGifCaptureMode, lvGifAdvance, lvGifTarget
+};
+
+/* ── Save clip ────────────────────────────────────────────────────── */
 
 /* The map as the last blit drew it into the window: the render-target pixels
  * that show in the map area (*slice, see clipGifBlitView), and the box in
@@ -185,96 +279,36 @@ static bool lvGifMapView(ClipGifRect *slice, ClipGifBox *view, int *blitX,
     return true;
 }
 
-/* The log time now and the length of the log, both from the start of the
- * part of the log the viewer shows (as the Controls panel shows them). */
-static void lvGifProgress(uint32_t *curMs, uint32_t *totalMs) {
-    size_t pos = 0, size = 0;
-    uint32_t cur = 0, total = 0;
-    lv_clientMutexWaitFor();
-    lv_screenGetLogProgress(&pos, &size, &cur, &total);
-    lv_clientMutexRelease();
-    *curMs   = cur;
-    *totalMs = total;
-}
-
-/* Puts back what the capture changed. restoreTime false leaves the log where
- * it is: another log is about to open. */
-static void lvGifRestore(bool restoreTime) {
-    lv_clientMutexWaitFor();
-    lv_drawSetTankLabelsInTarget(FALSE);
-    if (restoreTime) {
-        lv_drawDirtyScreen();
-        lv_screenSeekToTimeMs(s_gif.restoreMs);
-        lv_drawDirtyScreen();
-    }
-    lv_clientMutexRelease();
-    if (g_lv != NULL) {
-        g_lv->isSoundsPlaying = s_gif.restoreSound ? TRUE : FALSE;
-        g_lv->wantScreenUpdate = TRUE;
-    }
-    lv_windowNeedRedraw();
-    if (restoreTime && s_gif.restorePlaying) {
-        lv_windowPlay();
-    }
-}
-
-/* Ends the encoder. It holds memory from msf_gif_begin on, and only
- * msf_gif_end gives it back, so every way out of a capture comes here.
- * outResult takes the bytes when the caller saves them (and then frees them
- * with msf_gif_free); NULL drops them. */
-static void lvGifFinish(MsfGifResult *outResult, bool restoreTime) {
-    MsfGifResult res = msf_gif_end(&s_gif.enc);
-    if (outResult != NULL) {
-        *outResult = res;
-    } else {
-        msf_gif_free(res);
-    }
-    lvGifRestore(restoreTime);
-    s_gif.active = false;
-    s_gif.failed = false;
-    s_gif.done   = false;
-    s_gif.frame  = 0;
-    s_gif.total  = 0;
-}
-
 /* The gallery's metadata: the time now, the map, the players of the log and
  * the id of the log. */
 static void lvGifFillMeta(ClipGifMeta *m, const char *mapName) {
-    *m = ClipGifMeta{};
     SDL_Time now = 0;
+    int64_t created = 0;
     if (SDL_GetCurrentTime(&now)) {
-        m->createdUnix = (int64_t)(now / SDL_NS_PER_SECOND);
+        created = (int64_t)(now / SDL_NS_PER_SECOND);
     }
-    SDL_strlcpy(m->game, lvGifGameId(), sizeof(m->game));
-    clipGifMetaSetMap(m, mapName);
+    clipGifMetaBegin(m, created, lvGifGameId(), mapName);
 
     static LvRosterRow rows[LV_ROSTER_MAX];
     lv_clientMutexWaitFor();
     int n = lv_screenGetRoster(rows, LV_ROSTER_MAX);
     lv_clientMutexRelease();
-    for (int i = 0; i < n && m->playerCount < CLIP_GIF_META_MAX_PLAYERS; i++) {
-        if (rows[i].name[0] != '\0') {
-            SDL_utf8strlcpy(m->players[m->playerCount], rows[i].name,
-                            sizeof(m->players[0]));
-            m->playerCount++;
-        }
+    for (int i = 0; i < n; i++) {
+        clipGifMetaAddPlayer(m, rows[i].name);
     }
 }
 
-/* Starts a capture of lenMs from the current time. The frames are the map
- * as it is shown now: the same zoom, the same place, the same camera, the
- * same colours. With the crop frame on they are the part of the map in the
- * frame, with no width cap; with it off they are the middle of the part of
- * the map that shows, at most CLIP_GIF_MAX_WIDTH wide. Both as the game's
- * replay has it (lobbyClipGifStart). */
-static bool lvGifStart(uint32_t lenMs) {
+/* Starts a capture from the current time (or from the start of the preview
+ * that plays) for the length the player set. The frames are the map as it is
+ * shown now: the same zoom, the same place, the same camera, the same
+ * colours. With the crop frame on they are the part of the map in the frame,
+ * with no width cap; with it off they are the middle of the part of the map
+ * that shows, at most CLIP_GIF_MAX_WIDTH wide (clipGifChooseCrop, as the
+ * game's replay has it). */
+static void lvGifStart(void) {
     if (!lv_clip_gif_can_make()) {
-        return false;
+        return;
     }
-    uint32_t curMs = 0, totalMs = 0;
-    lvGifProgress(&curMs, &totalMs);
-    lenMs = clipGifLenClampMs(lenMs, curMs, totalMs);
-
     /* The part of the map that shows, from the last blit, before anything
      * here draws the map again. */
     ClipGifRect shown = { 0, 0, 0, 0 };
@@ -282,19 +316,15 @@ static bool lvGifStart(uint32_t lenMs) {
     int blitX = 0, blitY = 0;
     const bool haveView = lvGifMapView(&shown, &view, &blitX, &blitY);
 
-    s_gif.restoreMs      = lv_screenWindowStartMs() + curMs;
-    s_gif.restorePlaying = g_lv->playIsPlaying ? true : false;
-    s_gif.restoreSound   = g_lv->isSoundsPlaying ? true : false;
-    lv_windowPause();
-    /* The ticks of a capture go by many times faster than real time, and
-     * their sounds would all play at once. */
-    g_lv->isSoundsPlaying = FALSE;
+    if (!clipGifCaptureArm(&s_gif.session, &s_lvReplay)) {
+        return;
+    }
+    uint32_t curMs = 0, totalMs = 0;
+    lvGifProgress(NULL, &curMs, &totalMs);
+    const uint32_t lenMs = clipGifLenClampMs(s_gif.mode.lenMs, curMs, totalMs);
 
-    /* The names over the tanks go into the render target, which is what is
-     * read back. lvGifRestore takes them out again. */
     int srcX = 0, srcY = 0, texW = 0, texH = 0;
     lv_clientMutexWaitFor();
-    lv_drawSetTankLabelsInTarget(TRUE);
     lv_screenUpdate(redraw);
     lv_screenGetSubOffset(&srcX, &srcY);
     int srcW = (int)lv_screenGetSizeX() * TILE_SIZE_X;
@@ -316,72 +346,22 @@ static bool lvGifStart(uint32_t lenMs) {
     if (srcX + srcW > texW) srcW = texW - srcX;
     if (srcY + srcH > texH) srcH = texH - srcY;
     ClipGifRect c;
-    bool haveCrop;
-    if (s_gif.mode.cropOn && haveView) {
-        /* No CLIP_GIF_MAX_WIDTH here: the frame says what to take. */
-        haveCrop = clipGifCropFromFrame(&s_gif.mode.frame, srcX, srcY, srcW,
-                                        srcH, &c);
-    } else {
-        haveCrop = clipGifCentreCrop(srcX, srcY, srcW, srcH,
-                                     CLIP_GIF_MAX_WIDTH, &c);
-    }
-    if (lv_drawGetGameTexture() == NULL || !haveCrop ||
-        !msf_gif_begin(&s_gif.enc, c.w, c.h)) {
-        lvGifRestore(true);
-        return false;
-    }
-    s_gif.crop.x  = c.x;
-    s_gif.crop.y  = c.y;
-    s_gif.crop.w  = c.w;
-    s_gif.crop.h  = c.h;
+    const bool haveCrop =
+        lv_drawGetGameTexture() != NULL &&
+        clipGifChooseCrop(s_gif.mode.cropOn && haveView, &s_gif.mode.frame,
+                          srcX, srcY, srcW, srcH, &c);
     s_gif.targetW = texW;
     s_gif.targetH = texH;
 
-    uint32_t frames = clipGifFrameCount(lenMs);
     char mapName[64];
     mapName[0] = '\0';
     lv_screenGetMapName(mapName);
     mapName[sizeof(mapName) - 1] = '\0';
-    unsigned secs = (unsigned)(curMs / 1000u);
-    clipGifBaseName(s_gif.name, sizeof(s_gif.name), mapName, secs / 60u,
-                    secs % 60u);
-    lvGifFillMeta(&s_gif.meta, mapName);
-    s_gif.meta.durationMs = frames * CLIP_GIF_FRAME_MS;
-    s_gif.meta.width      = c.w;
-    s_gif.meta.height     = c.h;
-
-    s_gif.frame  = 0;
-    s_gif.total  = (int)frames;
-    s_gif.failed = false;
-    s_gif.done   = false;
-    s_gif.active = true;
-    return true;
-}
-
-/* One frame: the log moves on one frame's ticks, the map is drawn into the
- * render target, and the crop is read back into the encoder. False when the
- * frame cannot be made. *ended is set when the log has no more to play. */
-static bool lvGifCaptureFrame(bool *ended) {
-    *ended = false;
-    int texW = 0, texH = 0;
-    lv_clientMutexWaitFor();
-    for (int i = 0; i < LV_GIF_TICKS_PER_FRAME; i++) {
-        lv_screenLogTick();
-    }
-    lv_screenUpdate(redraw);
-    lv_drawGetGameTargetSize(&texW, &texH);
-    bool playing = g_lv->isPlaying ? true : false;
-    lv_clientMutexRelease();
-
-    if (texW != s_gif.targetW || texH != s_gif.targetH) {
-        return false;
-    }
-    if (!clipGifEncodeFrame(g_lv->renderer, lv_drawGetGameTexture(),
-                            &s_gif.crop, &s_gif.enc)) {
-        return false;
-    }
-    *ended = !playing;
-    return true;
+    ClipGifMeta meta;
+    lvGifFillMeta(&meta, mapName);
+    /* With no crop, this puts the log back as the arm found it. */
+    clipGifCaptureOpen(&s_gif.session, &s_lvReplay, haveCrop ? &c : NULL,
+                       curMs, lenMs, mapName, &meta);
 }
 
 /* ── The calls the host makes ─────────────────────────────────────── */
@@ -392,7 +372,7 @@ bool lv_clip_gif_available(void) {
 
 bool lv_clip_gif_can_toggle_mode(void) {
     return g_lv != NULL && g_lv->isLoaded && !lv_screenSpecIsLiveMode() &&
-           !s_gif.active;
+           !clipGifCaptureActive(&s_gif.session);
 }
 
 bool lv_clip_gif_mode_on(void) {
@@ -401,13 +381,14 @@ bool lv_clip_gif_mode_on(void) {
 
 void lv_clip_gif_toggle_mode(void) {
     if (lv_clip_gif_can_toggle_mode()) {
-        clipGifModeToggle(&s_gif.mode, s_gif.active);
+        clipGifModeToggle(&s_gif.mode, clipGifCaptureActive(&s_gif.session));
     }
 }
 
 bool lv_clip_gif_tools_shown(void) {
     return g_lv != NULL && g_lv->isLoaded && !lv_screenSpecIsLiveMode() &&
-           clipGifToolsShown(s_gif.mode.on, s_gif.active);
+           clipGifToolsShown(s_gif.mode.on,
+                             clipGifCaptureActive(&s_gif.session));
 }
 
 bool lv_clip_gif_can_make(void) {
@@ -415,37 +396,11 @@ bool lv_clip_gif_can_make(void) {
 }
 
 bool lv_clip_gif_active(void) {
-    return s_gif.active;
+    return clipGifCaptureActive(&s_gif.session);
 }
 
 void lv_clip_gif_capture_step(void) {
-    if (!s_gif.active || s_gif.done || s_gif.failed) {
-        return;
-    }
-    if (g_lv == NULL || !g_lv->isLoaded || g_lv->gameView) {
-        s_gif.failed = true;
-        return;
-    }
-    for (int i = 0; i < LV_GIF_FRAMES_PER_PASS && s_gif.frame < s_gif.total;
-         i++) {
-        bool ended = false;
-        if (!lvGifCaptureFrame(&ended)) {
-            /* A failed readback stops the GIF here, rather than writing a
-             * GIF with a part of the time not in it. */
-            s_gif.failed = true;
-            return;
-        }
-        s_gif.frame++;
-        if (ended) {
-            /* The log ended in the GIF: keep what there is. */
-            s_gif.total = s_gif.frame;
-            s_gif.meta.durationMs = (uint32_t)s_gif.frame * CLIP_GIF_FRAME_MS;
-            break;
-        }
-    }
-    if (s_gif.frame >= s_gif.total) {
-        s_gif.done = true;
-    }
+    clipGifCaptureStep(&s_gif.session, &s_lvReplay);
 }
 
 /* ── The crop frame on the map ────────────────────────────────────── */
@@ -465,7 +420,7 @@ bool lv_clip_gif_frame_has_mouse(void) {
         return true;
     }
     ClipGifBox view;
-    if (s_gif.active || !lvGifFrameView(&view)) {
+    if (clipGifCaptureActive(&s_gif.session) || !lvGifFrameView(&view)) {
         return false;
     }
     const ImGuiIO &io = ImGui::GetIO();
@@ -490,7 +445,8 @@ static void lvGifRenderFrame(void) {
     clipGifCropFrame("##lvgifcrop", ImGui::GetBackgroundDrawList(),
                      ImVec2(view.x0, view.y0),
                      ImVec2(view.x1 - view.x0, view.y1 - view.y0),
-                     &s_gif.mode.frame, &s_gif.drag, s_gif.active,
+                     &s_gif.mode.frame, &s_gif.drag,
+                     clipGifCaptureActive(&s_gif.session),
                      lv_imgui_game_viewport_mouse_held(), false);
 }
 
@@ -531,46 +487,35 @@ void lv_clip_gif_tools_row(void) {
         return;
     }
     uint32_t curMs = 0, totalMs = 0;
-    lvGifProgress(&curMs, &totalMs);
-    const ImGuiStyle &sty = ImGui::GetStyle();
+    lvGifProgress(NULL, &curMs, &totalMs);
     const ImTextureID picture = lvGifPicture();
 
     /* The row in the middle of the panel, as the panel's other rows are. */
-    const float square = ImGui::GetTextLineHeight() + sty.FramePadding.x * 2.0f;
-    const float lenW = ImGui::CalcTextSize("00.0").x + sty.FramePadding.x * 2.0f;
-    const float rowW = clipGifButtonWidth(picture != (ImTextureID)0) + lenW +
-                       square * 2.0f + sty.ItemSpacing.x * 3.0f;
+    const float rowW = clipGifToolsRowWidth(picture != (ImTextureID)0);
     const float avail = ImGui::GetContentRegionAvail().x;
     if (avail > rowW) {
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + floorf((avail - rowW) * 0.5f));
     }
 
-    /* The GIF from the current time on, of the map as it is shown. */
-    ImGui::BeginDisabled(!lv_clip_gif_can_make());
-    if (clipGifButton("##lvgif", picture, false)) {
-        lvGifStart(clipGifLenClampMs(s_gif.mode.lenMs, curMs, totalMs));
+    /* Preview clip and Save clip from the current time, of the map as it is
+     * shown; the length, the Clips window and the crop frame. The same row
+     * the game's replay shows. */
+    const ClipGifToolsPressed tools = clipGifToolsRow(
+        "##lvgif", &s_gif.mode, &s_gif.session.play,
+        clipGifCaptureActive(&s_gif.session), lv_clip_gif_can_make(), picture,
+        curMs, totalMs);
+    if (tools.preview) {
+        if (clipGifPreviewActive(&s_gif.session)) {
+            clipGifPreviewStop(&s_gif.session, &s_lvReplay);
+        } else {
+            clipGifPreviewStart(&s_gif.session, &s_lvReplay, s_gif.mode.lenMs);
+        }
     }
-    ImGui::EndDisabled();
-
-    /* How long it runs, in seconds; the marker on the timeline sets the same
-     * length. */
-    ImGui::SameLine();
-    clipGifLenField("##lvgiflen", curMs, totalMs, &s_gif.mode.lenMs,
-                    s_gif.active);
-
-    /* The GIFs made so far. */
-    ImGui::SameLine();
-    if (clipGifGalleryButton("##lvgifgallery")) {
+    if (tools.save) {
+        lvGifStart();
+    }
+    if (tools.gallery) {
         clipGifGalleryOpen();
-    }
-
-    /* The crop frame on the map: with it on, the GIF takes the part of the
-     * map in the frame. */
-    ImGui::SameLine();
-    if (clipGifToggleButton("##lvgifcrop", s_gif.mode.cropOn,
-                            CLIP_GIF_GLYPH_CROP,
-                            langGetText(STR_CLIPGIF_CROP))) {
-        clipGifModeToggleCrop(&s_gif.mode, s_gif.active);
     }
 }
 
@@ -579,69 +524,29 @@ void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,
     if (!lv_clip_gif_tools_shown()) {
         return;
     }
+    /* While a preview plays, the band stays on the clip it plays, and the
+     * length does not change under it. */
     clipGifLenMarker("##lvgiflenmark", ImVec2(minX, minY), ImVec2(maxX, maxY),
-                     startMs, totalMs, &s_gif.mode.lenMs, s_gif.active);
+                     clipGifPreviewBandStart(&s_gif.session, startMs), totalMs,
+                     &s_gif.mode.lenMs,
+                     clipGifCaptureActive(&s_gif.session) ||
+                         clipGifPreviewActive(&s_gif.session));
 }
 
 /* ── Windows ──────────────────────────────────────────────────────── */
-
-/* The window shown while a GIF is made: how far it has got, and Cancel. */
-static void lvGifRenderProgress(float s) {
-    if (!s_gif.active) {
-        return;
-    }
-    if (!ImGui::IsPopupOpen(LV_GIF_PROGRESS_POPUP)) {
-        ImGui::OpenPopup(LV_GIF_PROGRESS_POPUP);
-    }
-    MsfGifResult finished = {};
-    bool haveFinished = false;
-    if (ImGui::BeginPopupModal(LV_GIF_PROGRESS_POPUP, NULL,
-                               ImGuiWindowFlags_AlwaysAutoResize |
-                               ImGuiWindowFlags_NoCollapse |
-                               ImGuiWindowFlags_NoSavedSettings)) {
-        /* The same width for both: in a window that sizes itself, a width
-         * of -1 follows the window down to the width of the button. */
-        const float rowW = 280.0f * s;
-        float part = (s_gif.total > 0)
-                         ? (float)s_gif.frame / (float)s_gif.total
-                         : 0.0f;
-        ImGui::ProgressBar(part, ImVec2(rowW, 0.0f));
-        WBUI::PushCancelStyle();
-        bool cancel = ImGui::Button(langGetText(STR_CANCEL),
-                                    ImVec2(rowW, 0.0f));
-        WBUI::PopCancelStyle();
-        if (WBUI::CancelKeyPressed()) {
-            cancel = true;
-        }
-        if (cancel || s_gif.failed) {
-            lvGifFinish(NULL, true);
-            ImGui::CloseCurrentPopup();
-        } else if (s_gif.done) {
-            lvGifFinish(&finished, true);
-            haveFinished = true;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-    if (haveFinished) {
-        if (finished.data != NULL) {
-            /* Writes the GIF and its metadata into the clips folder, and
-             * opens the Clips window on it. */
-            clipGifGalleryAdd(finished.data, finished.dataSize, &s_gif.meta,
-                              s_gif.name);
-        }
-        msf_gif_free(finished);
-    }
-}
 
 void lv_clip_gif_render(void) {
     if (g_lv == NULL) {
         return;
     }
     const float s = ImGui::GetFontSize() / 18.0f;
+    /* The preview ends at the end of its clip, and lets go when the player
+     * pauses or moves the log, or turns recording mode off. */
+    clipGifPreviewPoll(&s_gif.session, &s_lvReplay,
+                       s_gif.mode.on && lv_clip_gif_tools_shown());
     clipGifGalleryPoll();
     lvGifRenderFrame();
-    lvGifRenderProgress(s);
+    clipGifCaptureRender(&s_gif.session, &s_lvReplay, s);
 
     ClipGifGalleryHost host;
     host.renderer  = g_lv->renderer;
@@ -664,9 +569,8 @@ bool lv_clip_gif_gallery_is_open(void) {
 }
 
 void lv_clip_gif_cancel(void) {
-    if (s_gif.active) {
-        lvGifFinish(NULL, false);
-    }
+    /* The log is not moved back: another log is about to open. */
+    clipGifSessionReset(&s_gif.session, &s_lvReplay, false);
     /* A new log starts with recording mode off, as a new replay does in the
      * game. */
     clipGifModeReset(&s_gif.mode);

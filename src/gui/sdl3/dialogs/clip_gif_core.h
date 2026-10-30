@@ -96,6 +96,13 @@ uint32_t clipGifFrameCount(uint32_t durationMs);
 bool clipGifCentreCrop(int srcX, int srcY, int srcW, int srcH, int maxW,
                        ClipGifRect *out);
 
+/* The ticks of the replay's log clock in one GIF frame (the log clock is
+ * 20 ms a tick, so five ticks are CLIP_GIF_FRAME_MS), and how many frames a
+ * capture makes in each frame of the screen, so the longest GIF takes about
+ * a second or two and the screen still updates. */
+#define CLIP_GIF_TICKS_PER_FRAME 5
+#define CLIP_GIF_FRAMES_PER_PASS 4
+
 /* ── File names ──────────────────────────────────────────────────────
  * A GIF is called <map>_<mmss>_<YYYYMMDD-HHMMSS>.gif in the gallery folder:
  * the map, the time in the replay it starts at, and when it was made. */
@@ -206,6 +213,15 @@ void clipGifFrameDrag(ClipGifBox *box, int grab, float dx, float dy,
 bool clipGifCropFromFrame(const ClipGifFrame *f, int viewX, int viewY,
                           int viewW, int viewH, ClipGifRect *out);
 
+/* The pixels a GIF takes from the visible view (viewX, viewY, viewW,
+ * viewH), as the game's replay and the Log Viewer both choose them: the part
+ * in the frame f when useFrame is true (clipGifCropFromFrame, no width cap),
+ * else the middle of the view, at most CLIP_GIF_MAX_WIDTH wide
+ * (clipGifCentreCrop). False, with *out cleared, when the view is empty or
+ * useFrame is true with no frame. */
+bool clipGifChooseCrop(bool useFrame, const ClipGifFrame *f, int viewX,
+                       int viewY, int viewW, int viewH, ClipGifRect *out);
+
 /* ── The Log Viewer's map ────────────────────────────────────────────
  * The Log Viewer draws its map with one blit of its render target: src (in
  * render-target pixels) goes to dst (in pixels of the window's frame
@@ -246,6 +262,53 @@ bool clipGifModeToggle(ClipGifMode *m, bool captureActive);
 /* Turns the crop frame on or off, and returns what it is now. While a
  * capture runs nothing changes: the GIF is being read from the frame. */
 bool clipGifModeToggleCrop(ClipGifMode *m, bool captureActive);
+
+/* ── Preview ─────────────────────────────────────────────────────────
+ * The Preview clip button plays the clip in the view, at the normal speed,
+ * from where it starts to where it ends, and makes no file. At the end the
+ * replay stops and goes back to the start of the clip, so the Save clip
+ * button then makes the GIF of the same clip. This is what the preview
+ * holds: on or off, and the clip's start and end, in the replay's ms. */
+typedef struct {
+    bool     active;
+    uint32_t startMs;
+    uint32_t endMs;
+} ClipGifPlay;
+
+#define CLIP_GIF_PLAY_INIT { false, 0u, 0u }
+
+/* How far past the clip's end the replay can be on the frame the preview
+ * sees it there and still count as the end. A time later than that is a
+ * seek by the player. */
+#define CLIP_GIF_PLAY_OVERRUN_MS 1000u
+
+/* What clipGifPlayUpdate tells the screen to do. */
+#define CLIP_GIF_PLAY_NONE   0  /* nothing: the preview plays on, or is off */
+#define CLIP_GIF_PLAY_END    1  /* the clip ended: stop the replay and go back
+                                 * to startMs */
+#define CLIP_GIF_PLAY_LET_GO 2  /* the player paused or moved the replay: the
+                                 * preview ends and the replay stays where the
+                                 * player put it */
+
+/* Starts a preview of lenMs from startMs. The length is clamped as the
+ * GIF's is (clipGifLenClampMs), and the end is never past totalMs. False,
+ * with the preview off, when there is no replay time after startMs. */
+bool clipGifPlayStart(ClipGifPlay *p, uint32_t startMs, uint32_t lenMs,
+                      uint32_t totalMs);
+
+/* Each frame while the preview is on: curMs is the replay's time now and
+ * playing whether it plays. Returns CLIP_GIF_PLAY_END when curMs is at the
+ * end (up to CLIP_GIF_PLAY_OVERRUN_MS past it), CLIP_GIF_PLAY_LET_GO when
+ * the replay is paused or is before the start or well past the end, and
+ * CLIP_GIF_PLAY_NONE else. The preview is off after END or LET_GO. */
+int clipGifPlayUpdate(ClipGifPlay *p, uint32_t curMs, bool playing);
+
+/* Turns the preview off. */
+void clipGifPlayStop(ClipGifPlay *p);
+
+/* Where the clip's band on the timeline starts: the preview's start while it
+ * plays, so the band does not move with the playhead, else curMs. */
+uint32_t clipGifPlayBandStart(const ClipGifPlay *p, uint32_t curMs);
 
 /* ── Metadata ────────────────────────────────────────────────────────
  * One small JSON file next to each GIF, with the same base name and the
@@ -325,6 +388,17 @@ int clipGifSelectAfterRemove(int count, int removed);
  * end (any case), cut on a whole UTF-8 character to fit. "" for a NULL or
  * empty name. */
 void clipGifMetaSetMap(ClipGifMeta *m, const char *mapName);
+
+/* Clears m and fills what every GIF's metadata starts with: when it was
+ * made, the id of the game (cut to fit; "" for NULL) and the map
+ * (clipGifMetaSetMap). The screen then adds the players. */
+void clipGifMetaBegin(ClipGifMeta *m, int64_t createdUnix, const char *gameId,
+                      const char *mapName);
+
+/* Adds a player's name to m, cut on a whole UTF-8 character to fit. An
+ * empty or NULL name is not added. False when it is not added, also when m
+ * has CLIP_GIF_META_MAX_PLAYERS names already. */
+bool clipGifMetaAddPlayer(ClipGifMeta *m, const char *name);
 
 /* ── Games ───────────────────────────────────────────────────────────
  * The gallery puts the GIFs from the game whose replay is open above the

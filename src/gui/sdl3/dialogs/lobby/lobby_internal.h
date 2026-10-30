@@ -802,11 +802,20 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
 #if BOLO_RECAP_CLIP_GIF
 void lobbyClipGifReset(void);
 bool lobbyClipGifActive(void);
+/* Save clip: a clip row's, and the transport's (the length the player set,
+ * from the playhead). */
 void lobbyClipGifStartClip(const HighlightWindow *h, ClientSim *cs);
-void lobbyClipGifStartFromPlayhead(uint32_t curMs, uint32_t lenMs,
-                                   ClientSim *cs);
-bool lobbyClipGifButton(const char *id, bool compact);
-float lobbyClipGifButtonWidth(void);
+void lobbyClipGifStartFromPlayhead(ClientSim *cs);
+/* Preview clip: the transport's and a clip row's. Each stops its own preview
+ * when pressed while that preview plays. */
+void lobbyClipGifPreviewToggle(void);
+void lobbyClipGifPreviewClip(int row, const HighlightWindow *h);
+/* The row whose preview plays: -1 for the transport's, -2 for none. */
+int lobbyClipGifPreviewRow(void);
+/* The preview, for the tools row, and where the band on the seek bar starts
+ * (at the preview's start while it plays, else at curMs). */
+const ClipGifPlay *lobbyClipGifPlay(void);
+uint32_t lobbyClipGifBandStart(uint32_t curMs);
 void lobbyClipGifRender(float s);
 /* The poll belongs in the lobby's event loop, above the view switch, so the
  * gallery lets go of its preview when the recap is no longer drawn; the

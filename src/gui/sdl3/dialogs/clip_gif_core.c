@@ -910,3 +910,89 @@ void clipGifMetaSetMap(ClipGifMeta *m, const char *mapName) {
         m->map[n - 4] = '\0';
     }
 }
+
+void clipGifMetaBegin(ClipGifMeta *m, int64_t createdUnix, const char *gameId,
+                      const char *mapName) {
+    if (m == NULL) {
+        return;
+    }
+    SDL_zerop(m);
+    m->createdUnix = createdUnix;
+    if (gameId != NULL) {
+        SDL_strlcpy(m->game, gameId, sizeof(m->game));
+    }
+    clipGifMetaSetMap(m, mapName);
+}
+
+bool clipGifMetaAddPlayer(ClipGifMeta *m, const char *name) {
+    if (m == NULL || name == NULL || name[0] == '\0' || m->playerCount < 0 ||
+        m->playerCount >= CLIP_GIF_META_MAX_PLAYERS) {
+        return false;
+    }
+    SDL_utf8strlcpy(m->players[m->playerCount], name, sizeof(m->players[0]));
+    m->playerCount++;
+    return true;
+}
+
+/* ── Crop choice ───────────────────────────────────────────────────── */
+
+bool clipGifChooseCrop(bool useFrame, const ClipGifFrame *f, int viewX,
+                       int viewY, int viewW, int viewH, ClipGifRect *out) {
+    if (useFrame) {
+        return clipGifCropFromFrame(f, viewX, viewY, viewW, viewH, out);
+    }
+    return clipGifCentreCrop(viewX, viewY, viewW, viewH, CLIP_GIF_MAX_WIDTH,
+                             out);
+}
+
+/* ── Preview ───────────────────────────────────────────────────────── */
+
+bool clipGifPlayStart(ClipGifPlay *p, uint32_t startMs, uint32_t lenMs,
+                      uint32_t totalMs) {
+    if (p == NULL) {
+        return false;
+    }
+    p->active  = false;
+    p->startMs = startMs;
+    p->endMs   = startMs;
+    if (totalMs == 0u || startMs >= totalMs) {
+        return false;
+    }
+    uint32_t len = clipGifLenClampMs(lenMs, startMs, totalMs);
+    /* The length's floor can take the end past the end of the round near
+     * the end; the preview then ends where the round does. */
+    uint32_t left = totalMs - startMs;
+    if (len > left) {
+        len = left;
+    }
+    p->endMs  = startMs + len;
+    p->active = true;
+    return true;
+}
+
+int clipGifPlayUpdate(ClipGifPlay *p, uint32_t curMs, bool playing) {
+    if (p == NULL || !p->active) {
+        return CLIP_GIF_PLAY_NONE;
+    }
+    /* The end first: a replay that stops at the end of the round is at the
+     * end of a clip that runs to it, not paused by the player. */
+    if (curMs >= p->endMs && curMs - p->endMs <= CLIP_GIF_PLAY_OVERRUN_MS) {
+        p->active = false;
+        return CLIP_GIF_PLAY_END;
+    }
+    if (!playing || curMs < p->startMs || curMs > p->endMs) {
+        p->active = false;
+        return CLIP_GIF_PLAY_LET_GO;
+    }
+    return CLIP_GIF_PLAY_NONE;
+}
+
+void clipGifPlayStop(ClipGifPlay *p) {
+    if (p != NULL) {
+        p->active = false;
+    }
+}
+
+uint32_t clipGifPlayBandStart(const ClipGifPlay *p, uint32_t curMs) {
+    return (p != NULL && p->active) ? p->startMs : curMs;
+}

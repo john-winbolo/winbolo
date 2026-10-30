@@ -1337,3 +1337,147 @@ int run_clip_gif_mode_state(void) {
     clipGifModeReset(NULL); /* does nothing */
     return fails ? 1 : 0;
 }
+
+/* Preview clip: where the clip starts and ends, the clamp to the length's
+ * floor and cap and to the end of the replay, and when the preview ends (at
+ * the end of the clip) or lets go (a pause or a seek). */
+int run_clip_gif_preview_play(void) {
+    int fails = 0;
+    ClipGifPlay p = CLIP_GIF_PLAY_INIT;
+    EXPECT_TRUE("starts off", !p.active);
+    EXPECT_U32("band start off: the time now", clipGifPlayBandStart(&p, 4321u),
+               4321u);
+    EXPECT_U32("band start, no preview", clipGifPlayBandStart(NULL, 77u), 77u);
+
+    /* A clip of 5 s from 10 s in a replay of 60 s. */
+    EXPECT_TRUE("start", clipGifPlayStart(&p, 10000u, 5000u, 60000u));
+    EXPECT_TRUE("on", p.active);
+    EXPECT_U32("start ms", p.startMs, 10000u);
+    EXPECT_U32("end ms", p.endMs, 15000u);
+    EXPECT_U32("band start: the clip's start", clipGifPlayBandStart(&p, 12000u),
+               10000u);
+
+    EXPECT_TRUE("plays on", clipGifPlayUpdate(&p, 10000u, true) ==
+                            CLIP_GIF_PLAY_NONE && p.active);
+    EXPECT_TRUE("plays on, inside", clipGifPlayUpdate(&p, 14999u, true) ==
+                                    CLIP_GIF_PLAY_NONE && p.active);
+    EXPECT_TRUE("the end", clipGifPlayUpdate(&p, 15000u, true) ==
+                           CLIP_GIF_PLAY_END && !p.active);
+    EXPECT_TRUE("off: nothing more", clipGifPlayUpdate(&p, 15100u, true) ==
+                                     CLIP_GIF_PLAY_NONE);
+
+    /* A frame can go a little past the end before it is seen. */
+    clipGifPlayStart(&p, 10000u, 5000u, 60000u);
+    EXPECT_TRUE("past the end in one frame",
+                clipGifPlayUpdate(&p, 15000u + CLIP_GIF_PLAY_OVERRUN_MS,
+                                  true) == CLIP_GIF_PLAY_END);
+    /* Far past the end is a seek by the player. */
+    clipGifPlayStart(&p, 10000u, 5000u, 60000u);
+    EXPECT_TRUE("seek forward lets go",
+                clipGifPlayUpdate(&p, 15001u + CLIP_GIF_PLAY_OVERRUN_MS,
+                                  true) == CLIP_GIF_PLAY_LET_GO && !p.active);
+    clipGifPlayStart(&p, 10000u, 5000u, 60000u);
+    EXPECT_TRUE("seek back lets go", clipGifPlayUpdate(&p, 9000u, true) ==
+                                     CLIP_GIF_PLAY_LET_GO && !p.active);
+    clipGifPlayStart(&p, 10000u, 5000u, 60000u);
+    EXPECT_TRUE("pause lets go", clipGifPlayUpdate(&p, 12000u, false) ==
+                                 CLIP_GIF_PLAY_LET_GO && !p.active);
+    /* Stopped at the end of the clip (the replay ended there) is the end, not
+     * a pause. */
+    clipGifPlayStart(&p, 55000u, 5000u, 60000u);
+    EXPECT_TRUE("the replay ends with the clip",
+                clipGifPlayUpdate(&p, 60000u, false) == CLIP_GIF_PLAY_END);
+
+    /* The length's floor and cap. */
+    clipGifPlayStart(&p, 0u, 10u, 60000u);
+    EXPECT_U32("floor", p.endMs, CLIP_GIF_LEN_MIN_MS);
+    clipGifPlayStart(&p, 0u, 99000u, 60000u);
+    EXPECT_U32("cap", p.endMs, CLIP_GIF_LEN_MAX_MS);
+    /* Near the end, the clip ends with the replay. */
+    clipGifPlayStart(&p, 59500u, 5000u, 60000u);
+    EXPECT_U32("end of the replay", p.endMs, 60000u);
+    EXPECT_TRUE("still on", p.active);
+
+    /* Nothing to play. */
+    EXPECT_TRUE("at the end", !clipGifPlayStart(&p, 60000u, 5000u, 60000u) &&
+                              !p.active);
+    EXPECT_TRUE("no replay", !clipGifPlayStart(&p, 0u, 5000u, 0u) && !p.active);
+    EXPECT_TRUE("no state", !clipGifPlayStart(NULL, 0u, 5000u, 60000u));
+
+    clipGifPlayStart(&p, 1000u, 5000u, 60000u);
+    clipGifPlayStop(&p);
+    EXPECT_TRUE("stop", !p.active);
+    EXPECT_U32("band start after stop", clipGifPlayBandStart(&p, 2500u), 2500u);
+    clipGifPlayStop(NULL); /* does nothing */
+    EXPECT_TRUE("no state, update", clipGifPlayUpdate(NULL, 0u, true) ==
+                                    CLIP_GIF_PLAY_NONE);
+    return fails ? 1 : 0;
+}
+
+/* The crop both hosts take: the player's frame, or the centre of the view at
+ * most CLIP_GIF_MAX_WIDTH wide. */
+int run_clip_gif_choose_crop(void) {
+    int fails = 0;
+    const ClipGifFrame f = { 0.25f, 0.25f, 0.75f, 0.75f };
+    ClipGifRect a, b;
+
+    EXPECT_TRUE("frame", clipGifChooseCrop(true, &f, 10, 20, 800, 600, &a));
+    EXPECT_TRUE("frame: as clipGifCropFromFrame",
+                clipGifCropFromFrame(&f, 10, 20, 800, 600, &b) &&
+                    a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h);
+    /* No width cap for a frame: the frame says what to take. */
+    const ClipGifFrame wide = { 0.0f, 0.0f, 1.0f, 1.0f };
+    EXPECT_TRUE("wide frame", clipGifChooseCrop(true, &wide, 0, 0, 1000, 500,
+                                                &a));
+    EXPECT_TRUE("wide frame: whole view", a.w == 1000 && a.h == 500);
+
+    EXPECT_TRUE("centre", clipGifChooseCrop(false, &f, 10, 20, 1000, 500, &a));
+    EXPECT_TRUE("centre: as clipGifCentreCrop",
+                clipGifCentreCrop(10, 20, 1000, 500, CLIP_GIF_MAX_WIDTH, &b) &&
+                    a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h);
+    EXPECT_TRUE("centre: width cap", a.w == CLIP_GIF_MAX_WIDTH);
+    /* The frame is not read when it is not used. */
+    EXPECT_TRUE("centre, no frame",
+                clipGifChooseCrop(false, NULL, 0, 0, 300, 200, &a) &&
+                    a.w == 300 && a.h == 200);
+
+    EXPECT_TRUE("empty view", !clipGifChooseCrop(false, &f, 0, 0, 0, 0, &a));
+    return fails ? 1 : 0;
+}
+
+/* The gallery's metadata as both hosts begin it: the time, the game, the map
+ * without its .map, and then the players, with no empty names and no more
+ * than the list holds. */
+int run_clip_gif_meta_begin(void) {
+    int fails = 0;
+    ClipGifMeta m;
+    memset(&m, 0x5a, sizeof(m));
+    clipGifMetaBegin(&m, 1700000000, "abcdef0123456789", "Everard Island.map");
+    EXPECT_TRUE("time", m.createdUnix == 1700000000);
+    EXPECT_STR("game", m.game, "abcdef0123456789");
+    EXPECT_STR("map", m.map, "Everard Island");
+    EXPECT_TRUE("no players", m.playerCount == 0);
+    EXPECT_U32("no length yet", m.durationMs, 0u);
+    EXPECT_TRUE("no size yet", m.width == 0 && m.height == 0);
+
+    clipGifMetaBegin(&m, 0, NULL, NULL);
+    EXPECT_STR("no game", m.game, "");
+    EXPECT_STR("no map", m.map, "");
+
+    EXPECT_TRUE("add", clipGifMetaAddPlayer(&m, "Canuck"));
+    EXPECT_TRUE("empty name", !clipGifMetaAddPlayer(&m, ""));
+    EXPECT_TRUE("no name", !clipGifMetaAddPlayer(&m, NULL));
+    EXPECT_TRUE("add 2", clipGifMetaAddPlayer(&m, "Elvis"));
+    EXPECT_TRUE("two players", m.playerCount == 2);
+    EXPECT_STR("player 1", m.players[0], "Canuck");
+    EXPECT_STR("player 2", m.players[1], "Elvis");
+    for (int i = 2; i < CLIP_GIF_META_MAX_PLAYERS; i++) {
+        clipGifMetaAddPlayer(&m, "Bot");
+    }
+    EXPECT_TRUE("full", m.playerCount == CLIP_GIF_META_MAX_PLAYERS);
+    EXPECT_TRUE("no more", !clipGifMetaAddPlayer(&m, "One more"));
+    EXPECT_TRUE("still full", m.playerCount == CLIP_GIF_META_MAX_PLAYERS);
+    EXPECT_TRUE("no meta", !clipGifMetaAddPlayer(NULL, "x"));
+    clipGifMetaBegin(NULL, 0, NULL, NULL); /* does nothing */
+    return fails ? 1 : 0;
+}

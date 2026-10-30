@@ -3050,4 +3050,7 @@ STR_LV_CLIPS_EMPTY=No GIFs yet. Turn on Recording Mode in the Action menu, then 
 STR_CLIPGIF_CROP=Crop
 STR_LV_RECORD_MODE=Recording Mode
 STR_LV_RECORD_MODE_TIP=Shows the GIF controls: the GIF button and its length, where the GIF starts and ends on the timeline, and a crop frame for the part of the map to take.
+STR_CLIPGIF_PREVIEW=Preview clip: plays the clip here and makes no file
+STR_CLIPGIF_PREVIEW_STOP=Stop the preview
+STR_CLIPGIF_SAVE=Save clip: makes the GIF file
 

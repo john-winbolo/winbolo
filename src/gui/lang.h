@@ -3675,6 +3675,9 @@
 #define STR_CLIPGIF_CROP                         3360
 #define STR_LV_RECORD_MODE                       3361
 #define STR_LV_RECORD_MODE_TIP                   3362
+#define STR_CLIPGIF_PREVIEW                      3419
+#define STR_CLIPGIF_PREVIEW_STOP                 3420
+#define STR_CLIPGIF_SAVE                         3421
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
