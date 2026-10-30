@@ -7736,6 +7736,7 @@ set(_unit_test_names
     lv_hud_sums
     lv_team_sprite_sums
     lv_team_colour_lookup
+    lv_neutral_pill_grey
     lv_overview_sums
     lv_overview_bots
     lv_overview_row_layout

@@ -15,16 +15,14 @@
  * to 15) and one more for the base.
  *
  * A thing a player owns is drawn from the items sheet, in the colour of the
- * owner's team. A thing nobody owns is drawn as the game draws it, from the
- * atlas: a neutral base is the game's neutral base tile, and a neutral
- * pillbox is the game's hostile pillbox tile, which is what every player's
- * game shows for a pillbox that is not on the player's side.
+ * owner's team. A neutral base is drawn as the game draws it, from the
+ * atlas: the game's neutral base tile. A neutral pillbox is drawn from the
+ * items sheet in the dialog's Neutral colour (lvMapPillSpriteNeutralAs,
+ * below), and not as the game's red pillbox, which is close to the
+ * palette's red.
  *
  * A team is drawn in the colour the Team Colours dialog has for it
  * (lv_team_colour.h), and that is the row of the sheet with the same number.
- * The palette has a red (entry 11), and a team that has it is drawn red. Its
- * pillboxes are then close to the game's red pillbox that no team holds; the
- * user picks the colours, and can pick another for that team.
  *
  * Header only, with no includes but the C library's, so the viewer and the
  * unit tests (tests/unit/test_lv_hud.c) use the same sums.
@@ -98,6 +96,17 @@ static inline LvMapItemSprite lvMapPillSprite(bool neutral, int armour, int pale
     return s;
 }
 
+/* A pillbox on the map, with neutralEntry the palette entry of the Team
+ * Colours dialog's Neutral colour (lv_screenNeutralPillEntry): a neutral
+ * pillbox is the cell of that entry's row of items.bmp, whatever colours the
+ * teams have. With neutralEntry -1 (team colours off, or a perspective on)
+ * it is the game's red tile. */
+static inline LvMapItemSprite lvMapPillSpriteNeutralAs(bool neutral, int armour, int palette,
+                                                       int neutralEntry) {
+    if (neutral && neutralEntry >= 0) return lvMapPillSprite(false, armour, neutralEntry);
+    return lvMapPillSprite(neutral, armour, palette);
+}
+
 /* A base on the map. A neutral one is the game's neutral base tile. */
 static inline LvMapItemSprite lvMapBaseSprite(bool neutral, int palette) {
     LvMapItemSprite s = { 0, 0, 0, 0 };
@@ -123,6 +132,14 @@ static inline LvMapItemSprite lvMapBaseSprite(bool neutral, int palette) {
 static inline LvMapItemSprite lvPanelItemSprite(bool isBase, bool hasTeam, int palette) {
     if (isBase) return lvMapBaseSprite(!hasTeam, palette);
     return lvMapPillSprite(!hasTeam, 15, palette);
+}
+
+/* The same, with the colour of a neutral pillbox (lvMapPillSpriteNeutralAs),
+ * so a panel shows a neutral pillbox in the colour the map does. */
+static inline LvMapItemSprite lvPanelItemSpriteNeutralAs(bool isBase, bool hasTeam, int palette,
+                                                         int neutralEntry) {
+    if (isBase) return lvMapBaseSprite(!hasTeam, palette);
+    return lvMapPillSpriteNeutralAs(!hasTeam, 15, palette, neutralEntry);
 }
 
 /* How the picture is made smaller or larger. Drawn at a whole number of

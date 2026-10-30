@@ -326,8 +326,11 @@ void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
  * (isBase 1), for a panel to draw small: the sheet and the place in it, in
  * pixels of the sheet. A team's number gives the picture in that team's
  * colour, out of items.bmp, as the map draws it. A number under 0 gives the
- * one no team holds, out of the tile atlas: the game's red pillbox, the
- * game's neutral base. FALSE when the sheet is not there. */
+ * one no team holds: the pillbox out of items.bmp in the Team Colours
+ * dialog's Neutral colour (the game's red pillbox out of the tile atlas
+ * while team colours are off or a perspective is on:
+ * lv_screenNeutralPillEntry), the game's neutral base out of the tile
+ * atlas. FALSE when the sheet is not there. */
 bool lv_drawItemPicture(int isBase, int team, struct SDL_Texture **tex, float *sx, float *sy,
                         float *sw, float *sh);
 

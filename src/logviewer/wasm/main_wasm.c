@@ -333,17 +333,24 @@ static void mainLoadPreferences(void) {
     lv_platform_config_get_string("LOGVIEWER", "Use Team Colours", "Yes", line, sizeof(line));
     g_lv->useTeamColours = (line[0] == '\0' || tolower((unsigned char)line[0]) == 'y') ? TRUE : FALSE;
 
-    /* Team colours */
-    count = 0;
-    while (count < MAX_TANKS) {
-        snprintf(line, sizeof(line), "Team Colour %d", count + 1);
-        getDef(def, count);
-        lv_platform_config_get_string("LOGVIEWER", line, def, val, sizeof(val));
-        g_lv->tc[count] = lvTeamColourPref(count, atoi(val));
-        count++;
+    /* Team colours. A stored old default with no mark reads as the new
+       default (lvTeamColourStoredPref). */
+    {
+        int marked;
+        lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_MARK_KEY, "", val, sizeof(val));
+        marked = lvTeamColourMarked(val);
+        count = 0;
+        while (count < MAX_TANKS) {
+            snprintf(line, sizeof(line), "Team Colour %d", count + 1);
+            getDef(def, count);
+            lv_platform_config_get_string("LOGVIEWER", line, def, val, sizeof(val));
+            g_lv->tc[count] = lvTeamColourStoredPref(count, atoi(val), marked);
+            count++;
+        }
+        snprintf(def, 12, "%d", (int)lvTeamColourDefault(LV_TEAM_COLOUR_NEUTRAL));
+        lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, def, val, sizeof(val));
+        g_lv->tc[16] = lvTeamColourStoredPref(LV_TEAM_COLOUR_NEUTRAL, atoi(val), marked);
     }
-    lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", "10", val, sizeof(val));
-    g_lv->tc[16] = lvTeamColourPref(LV_TEAM_COLOUR_NEUTRAL, atoi(val));
 
     /* Playback Speed */
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
@@ -378,7 +385,8 @@ static void mainSavePreferences(void) {
         count++;
     }
     snprintf(val, sizeof(val), "%d", g_lv->tc[16]);
-    lv_platform_config_set_string("LOGVIEWER", "Neutral Colour", val);
+    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, val);
+    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_MARK_KEY, LV_TEAM_COLOUR_MARK);
 
     snprintf(val, sizeof(val), "%d", g_lv->speed);
     lv_platform_config_set_string("LOGVIEWER", "Playback Speed", val);

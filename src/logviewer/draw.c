@@ -776,6 +776,7 @@ static void buildHudShapes(SDL_Renderer *renderer, SDL_Surface *sheet) {
         { STATUS_BASE_ALLIEGOOD_X,   STATUS_BASE_ALLIEGOOD_Y   },
         { STATUS_PILLBOX_EVIL_X,     STATUS_PILLBOX_EVIL_Y     },
         { STATUS_PILLBOX_TANKEVIL_X, STATUS_PILLBOX_TANKEVIL_Y },
+        { STATUS_PILLBOX_NEUTRAL_X,  STATUS_PILLBOX_NEUTRAL_Y  },
     };
     const int cellW = STATUS_ITEM_SIZE_X + 2 * LV_HUD_SHAPE_PAD;
     const int cellH = STATUS_ITEM_SIZE_Y + 2 * LV_HUD_SHAPE_PAD;
@@ -1310,7 +1311,9 @@ bool lv_drawItemPicture(int isBase, int team, SDL_Texture **tex, float *sx, floa
                         float *sw, float *sh) {
     LogViewerState *lv = lv_screenGetState();
     bool hasTeam = (lv != NULL && team >= 0 && team < NEUTRAL_TEAM);
-    LvMapItemSprite s = lvPanelItemSprite(isBase != 0, hasTeam, hasTeam ? lv_screenTeamColour(team) : 0);
+    LvMapItemSprite s = lvPanelItemSpriteNeutralAs(isBase != 0, hasTeam,
+                                                   hasTeam ? lv_screenTeamColour(team) : 0,
+                                                   lv_screenNeutralPillEntry());
 
     *sw = (float)TILE_SIZE_X;
     *sh = (float)TILE_SIZE_Y;
@@ -1381,6 +1384,9 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
 
     zoomFactor = lv_windowGetZoomFactor();
     bool teamColours = lvDrawTeamColours(lv);
+    /* The colour of a neutral pillbox: the dialog's Neutral colour
+       (lv_screenNeutralPillEntry). */
+    int neutralPill = lv_screenNeutralPillEntry();
 
     /* The simplified view. Tiles are drawn at their native 16 px into the
        target and the blit downscales the lot, so below 1x a square lands on
@@ -1469,8 +1475,10 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     if (teamColours && itc != NEUTRAL_TEAM) {
                         itemHits[itemHitCount].colour = lvDrawTeamColour(itc);
                     } else if (teamColours) {
-                        itemHits[itemHitCount].colour = isBase ? mapColourMarkerNeutral()
-                                                               : mapColourMarkerEvil();
+                        itemHits[itemHitCount].colour =
+                            isBase ? mapColourMarkerNeutral()
+                                   : (neutralPill >= 0 ? mapColourTeam(neutralPill)
+                                                       : mapColourMarkerEvil());
                     } else {
                         MapColourItem kind = mapColourItemKind(pos);
                         if (kind == MAP_COLOUR_ITEM_PILL_GOOD ||
@@ -1485,10 +1493,11 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     itemHitCount++;
                 }
             } else if (isPill && teamColours) {
-                /* In its team's colour; a neutral one as the game draws it
-                   (lv_team_sprite.h). */
+                /* In its team's colour; a neutral one in the dialog's
+                   Neutral colour (lv_team_sprite.h). */
                 itc = lv_screenGetPillTeam(x, y, &pillHealth);
-                lvDrawMapItem(lvMapPillSprite(itc == NEUTRAL_TEAM, pillHealth, lv_screenTeamColour(itc)),
+                lvDrawMapItem(lvMapPillSpriteNeutralAs(itc == NEUTRAL_TEAM, pillHealth,
+                                                       lv_screenTeamColour(itc), neutralPill),
                               x, y, zoomFactor);
             } else if (isBase && teamColours) {
                 itc = lv_screenGetBaseTeam(x, y);
