@@ -333,7 +333,14 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     float s = dialogComputeScale(screenW, screenH);
 
 #if !BOLO_MOBILE
-    dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
+    /* The browser lays itself out to the window each frame, so a window
+     * that already has room for it is left at its size and place. The
+     * game's main menu window is exactly this size, so nothing changes
+     * there; the standalone Log Viewer's window is usually larger, and used
+     * to shrink to this size, and move, every time the browser opened. */
+    if (screenW < DIALOG_W || screenH < DIALOG_H) {
+        dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
+    }
     dialogSetWindowTitle(window, langGetText(STR_DLGWBN_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
@@ -827,6 +834,11 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
 
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
+        /* The window was resized to DIALOG_W x DIALOG_H after the
+         * presentation was first set above, and the player can resize it
+         * again, so the point-space presentation is set at the size the
+         * frame is laid out at. */
+        dialogApplyLogicalPresentation(renderer);
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();

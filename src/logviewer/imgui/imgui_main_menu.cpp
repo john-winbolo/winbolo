@@ -70,8 +70,11 @@ static void open_wbn_browser_modal(void) {
 
     ImGuiContext *saved_ctx = ImGui::GetCurrentContext();
 
-    int saved_w = 0, saved_h = 0;
+    /* The browser resizes and centres a window too small for it, so the
+     * size and the place both go back afterwards. */
+    int saved_w = 0, saved_h = 0, saved_x = 0, saved_y = 0;
     SDL_GetWindowSize(s_lv->window, &saved_w, &saved_h);
+    SDL_GetWindowPosition(s_lv->window, &saved_x, &saved_y);
     char saved_title[256];
     const char *cur_title = SDL_GetWindowTitle(s_lv->window);
     SDL_strlcpy(saved_title, cur_title ? cur_title : "", sizeof(saved_title));
@@ -80,6 +83,7 @@ static void open_wbn_browser_modal(void) {
 
     ImGui::SetCurrentContext(saved_ctx);
     SDL_SetWindowSize(s_lv->window, saved_w, saved_h);
+    SDL_SetWindowPosition(s_lv->window, saved_x, saved_y);
     SDL_SetWindowTitle(s_lv->window, saved_title);
     httpCreate();   /* dialog destroyed it on the way out */
 
