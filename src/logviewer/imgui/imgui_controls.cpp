@@ -66,14 +66,15 @@ static LogViewerState *s_lv = nullptr;
  * sets, and its label. The slow values are numbered after the fast ones (see
  * logviewer.h), so the slider goes by this table, not by the value. */
 static const unsigned char speed_stops[] = {
-    LV_SPEED_TENTH, LV_SPEED_QUARTER, LV_SPEED_HALF, 1, 2, 3, 4, 5, 6, 7, 8, 9
+    LV_SPEED_TENTH, LV_SPEED_QUARTER, LV_SPEED_HALF, LV_SPEED_THREE_QUARTER,
+    1, 2, 3, 4, 5, 6, 7, 8, 9
 };
 static const char* speed_labels[] = {
-    "0.1x", "0.25x", "0.5x",
+    "0.1x", "0.25x", "0.5x", "0.75x",
     "1x", "1.2x", "1.4x", "1.6x", "1.8x", "2x", "2.2x", "2.4x", "Fast"
 };
 #define SPEED_STOP_COUNT ((int)(sizeof(speed_stops) / sizeof(speed_stops[0])))
-#define SPEED_STOP_NORMAL 3
+#define SPEED_STOP_NORMAL 4
 
 /* The slider stop that sets the given speed value; 1x when there is none. */
 static int speed_stop_for(int speed) {

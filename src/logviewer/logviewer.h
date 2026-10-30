@@ -114,11 +114,13 @@ typedef struct {
 } LvRules;
 
 /* Speed values. 1 is real time and 2 to 9 are faster, up to as fast as the
- * decoder runs. The three below are slower than real time. */
-#define LV_SPEED_HALF    10  /* 0.5x  */
-#define LV_SPEED_QUARTER 11  /* 0.25x */
-#define LV_SPEED_TENTH   12  /* 0.1x  */
-#define LV_SPEED_MAX     12
+ * decoder runs. The four below are slower than real time; 0.75x came after
+ * the others, so it has the next number. */
+#define LV_SPEED_HALF          10  /* 0.5x  */
+#define LV_SPEED_QUARTER       11  /* 0.25x */
+#define LV_SPEED_TENTH         12  /* 0.1x  */
+#define LV_SPEED_THREE_QUARTER 13  /* 0.75x */
+#define LV_SPEED_MAX           13
 
 /* The longest log playback holds: 1000 hours. Playback time is a uint32_t
  * count of ms, which ends at about 1193 hours; a log that states more ticks
