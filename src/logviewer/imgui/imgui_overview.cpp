@@ -9,19 +9,20 @@
  */
 
 /*
- * Who owns what, in one small table: a row for each team in the game, with
+ * Who owns what, in one small table. First the ones nobody owns, with the
+ * map's neutral pillbox and the game's neutral base, while there is one of
+ * them (lvOverviewHasNeutral). Then a row for each team in the game, with
  * the names of its players and then the number of pillboxes and of bases it
  * owns at the playback time, each number in front of the map's picture of a
- * pillbox or a base in the team's colour. Then the ones nobody owns, with
- * the game's red pillbox and its neutral base, while there is one of them
- * (lvOverviewHasNeutral), then the totals. Under the
- * table (beside it when the window is wide) two thin bars show the same
- * numbers as shares: one for the pillboxes and one for the bases, each cut
- * into the teams' colours.
+ * pillbox or a base in the team's colour. Then the totals. Under the table
+ * (beside it when the window is wide) two thin bars show the same numbers
+ * as shares: one for the pillboxes and one for the bases, each cut into the
+ * Neutral colour first and then the teams' colours (lvOverviewPartRow has
+ * the order).
  *
  * The colours are the ones the Team Colours dialog has: a team's own, and
- * the dialog's Neutral colour for the stripe and the bar part of the things
- * nobody owns.
+ * the dialog's Neutral colour for the stripe, the bar part and the pillbox
+ * picture of the things nobody owns.
  *
  * The numbers are read off the game's state every frame
  * (lv_screenOverviewSnapshot), so they follow a seek in either direction.
@@ -113,8 +114,9 @@ static ImU32 overview_team_colour(int colour) {
 }
 
 /* The colour of things nobody owns, in the stripe and in the share bars:
- * the Neutral entry of the Team Colours dialog. The pictures of a neutral
- * pillbox and base are the game's own and do not take it. */
+ * the Neutral entry of the Team Colours dialog. The picture of a neutral
+ * pillbox is in the same colour (lv_screenNeutralPillEntry); the picture of
+ * a neutral base is the game's own and does not take it. */
 static ImU32 overview_neutral_colour(void) {
     return overview_team_colour(lv_screenTeamColour(-1));
 }
@@ -131,9 +133,9 @@ static float overview_icon_size(void) {
 /* The picture of a pillbox or a base, with its top left at p: the map's own
  * picture, made smaller (lv_item_picture; the events lane uses the same). It
  * is in the colour of team; with team -1 it is the one no team holds (the
- * game's red pillbox, grey while a team is red, and the game's neutral
- * base). plain is the colour of the shape drawn when the game's sheets
- * are not there. */
+ * pillbox in the dialog's Neutral colour, and the game's neutral base).
+ * plain is the colour of the shape drawn when the game's sheets are not
+ * there. */
 static void overview_icon(ImDrawList *dl, bool isBase, int team, ImU32 plain, ImVec2 p) {
     const float size = overview_icon_size();
 
@@ -369,7 +371,26 @@ static void overview_table(const LvOverview &ov, float width) {
     ImGui::TableSetupColumn("##pills", ImGuiTableColumnFlags_WidthFixed, countW);
     ImGui::TableSetupColumn("##bases", ImGuiTableColumnFlags_WidthFixed, countW);
 
-    for (int i = 0; i < ov.rowCount; i++) {
+    /* The Neutral row first, above the teams, then the teams in team order
+     * (lvOverviewPartRow). */
+    for (int place = 0; place <= ov.rowCount; place++) {
+        const int i = lvOverviewPartRow(&ov, place);
+        if (i == LV_OVERVIEW_PART_NEUTRAL) {
+            /* The ones no team holds, with the map's neutral pillbox and
+             * the game's neutral base: only while there is one. */
+            if (lvOverviewHasNeutral(&ov)) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                overview_label_cell(overview_neutral_colour(),
+                                    langGetText(STR_MAPEDIT_OWNER_NEUTRAL), true);
+                ImGui::TableSetColumnIndex(1);
+                overview_count_cell(ov.neutralPills, true, OVERVIEW_PIC_PILL, false, -1, plain);
+                ImGui::TableSetColumnIndex(2);
+                overview_count_cell(ov.neutralBases, true, OVERVIEW_PIC_BASE, true, -1, plain);
+            }
+            continue;
+        }
+        if (i < 0) continue;
         const LvOverviewRow &row = ov.rows[i];
         const ImU32 colour = overview_team_colour(row.colour);
         ImGui::TableNextRow();
@@ -395,19 +416,6 @@ static void overview_table(const LvOverview &ov, float width) {
         overview_count_cell(row.bases, false, OVERVIEW_PIC_BASE, true, row.team, colour);
     }
 
-    /* The ones no team holds, with the game's red pillbox and its neutral
-     * base: only while there is one. */
-    if (lvOverviewHasNeutral(&ov)) {
-        ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-        overview_label_cell(overview_neutral_colour(), langGetText(STR_MAPEDIT_OWNER_NEUTRAL),
-                            true);
-        ImGui::TableSetColumnIndex(1);
-        overview_count_cell(ov.neutralPills, true, OVERVIEW_PIC_PILL, false, -1, plain);
-        ImGui::TableSetColumnIndex(2);
-        overview_count_cell(ov.neutralBases, true, OVERVIEW_PIC_BASE, true, -1, plain);
-    }
-
     /* The totals, under a line across the table: the numbers alone, under
      * the numbers of the rows. */
     ImGui::TableNextRow();
@@ -430,10 +438,10 @@ static void overview_table(const LvOverview &ov, float width) {
 }
 
 /* One share bar, width wide: the icon of the kind, then a bar cut into the
- * part each team owns, in team order, with the part nobody owns last. The
- * mouse over a part draws a white line round it and says how many that is
- * and whose: "3 pillboxes (Rider, ErYan)", and for pillboxes their numbers
- * on a line under it: "Numbers: 1, 4, 7". */
+ * part nobody owns first and then the part each team owns, in team order
+ * (lvOverviewPartRow). The mouse over a part draws a white line round it
+ * and says how many that is and whose: "3 pillboxes (Rider, ErYan)", and
+ * for pillboxes their numbers on a line under it: "Numbers: 1, 4, 7". */
 static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImGuiStyle &style = ImGui::GetStyle();
@@ -450,7 +458,8 @@ static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
     ImGui::Dummy(ImVec2(width, icon));
     const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip);
     const float mouseX = ImGui::GetIO().MousePos.x;
-    int hoverPart = -1, hoverCount = 0;
+    bool hoverFound = false;
+    int hoverPart = LV_OVERVIEW_PART_NONE, hoverCount = 0;
     float hoverFrom = 0.0f, hoverTo = 0.0f;
     if (x1 - x0 >= 8.0f) {
         dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), ImGui::GetColorU32(ImGuiCol_FrameBg));
@@ -458,8 +467,10 @@ static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
          * with no gap and the last one ends at the end of the bar. */
         int run = 0;
         float from = x0;
-        for (int i = 0; i <= ov.rowCount; i++) {
-            bool neutral = (i == ov.rowCount);
+        for (int place = 0; place <= ov.rowCount; place++) {
+            const int i = lvOverviewPartRow(&ov, place);
+            if (i == LV_OVERVIEW_PART_NONE) continue;
+            bool neutral = (i == LV_OVERVIEW_PART_NEUTRAL);
             int count = neutral ? (isBase ? ov.neutralBases : ov.neutralPills)
                                 : (isBase ? ov.rows[i].bases : ov.rows[i].pills);
             if (count <= 0) continue;
@@ -470,6 +481,7 @@ static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
                                   neutral ? overview_neutral_colour()
                                           : overview_team_colour(ov.rows[i].colour));
                 if (hovered && mouseX >= from && mouseX < to) {
+                    hoverFound = true;
                     hoverPart = i;
                     hoverCount = count;
                     hoverFrom = from;
@@ -479,7 +491,7 @@ static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
             from = to;
         }
     }
-    if (hoverPart >= 0) {
+    if (hoverFound) {
         /* Over the parts beside it, so the line shows on both sides. */
         dl->AddRect(ImVec2(hoverFrom - 1.0f, y0 - 1.0f), ImVec2(hoverTo + 1.0f, y1 + 1.0f),
                     IM_COL32(255, 255, 255, 255), 0.0f, 0, 2.0f);
@@ -489,12 +501,14 @@ static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
                               : (hoverCount == 1 ? STR_LV_OVERVIEW_BAR_PILL : STR_LV_OVERVIEW_BAR_PILLS);
         char what[LANG_MSGARG_STRING_LEN];
         snprintf(what, sizeof(what), "%s", langGetTextFmt(id, &args));
-        const char *whose = (hoverPart == ov.rowCount) ? langGetText(STR_MAPEDIT_OWNER_NEUTRAL)
-                                                       : ov.rows[hoverPart].names;
+        const char *whose = (hoverPart == LV_OVERVIEW_PART_NEUTRAL)
+                                ? langGetText(STR_MAPEDIT_OWNER_NEUTRAL)
+                                : ov.rows[hoverPart].names;
         char numbers[LANG_MSGARG_STRING_LEN * 2] = "";
         if (!isBase) {
-            const unsigned int bits = (hoverPart == ov.rowCount) ? ov.neutralPillNumbers
-                                                                 : ov.rows[hoverPart].pillNumbers;
+            const unsigned int bits = (hoverPart == LV_OVERVIEW_PART_NEUTRAL)
+                                          ? ov.neutralPillNumbers
+                                          : ov.rows[hoverPart].pillNumbers;
             char list[LV_PILL_NUMBER_LIST_MAX];
             if (lvPillNumberListText(bits, list, sizeof(list)) > 0) {
                 MessageArgs nargs = {};

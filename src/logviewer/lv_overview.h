@@ -8,9 +8,9 @@
  *Filename:      lv_overview.h
  *Purpose:
  *  The table the Log Viewer's Overview panel shows
- *  (imgui/imgui_overview.cpp): one row for each team in the
- *  game with the pillboxes and the bases it owns, a row for
- *  the ones nobody owns, and the totals.
+ *  (imgui/imgui_overview.cpp): a row for the ones nobody owns
+ *  first, then one row for each team in the game with the
+ *  pillboxes and the bases it owns, and the totals.
  *
  *  The table is built from what the pillboxes and bases are
  *  at the playback time (lv_screenOverviewSnapshot), never
@@ -188,11 +188,26 @@ static inline bool lvOverviewHasNeutral(const LvOverview *o) {
     return o->neutralPills > 0 || o->neutralBases > 0;
 }
 
-/* How many rows the table has under its header: a row for each team, the
- * Neutral row while it is there, and the totals. */
+/* How many rows the table has under its header: the Neutral row while it
+ * is there, a row for each team, and the totals. */
 static inline int lvOverviewTableRows(int teams, bool neutral) {
     if (teams < 0) teams = 0;
     return teams + (neutral ? 1 : 0) + 1;
+}
+
+/* The order of the table's rows and of the parts of a share bar: the
+ * Neutral place first, above the teams, then the teams in team order. There
+ * are rowCount + 1 places. The answer for place `at` is the team row it
+ * shows (an index of rows[]), LV_OVERVIEW_PART_NEUTRAL for the Neutral
+ * place, or LV_OVERVIEW_PART_NONE for a place the table does not have. The
+ * Neutral row is drawn only while lvOverviewHasNeutral says so. */
+#define LV_OVERVIEW_PART_NEUTRAL (-1)
+#define LV_OVERVIEW_PART_NONE    (-2)
+
+static inline int lvOverviewPartRow(const LvOverview *o, int at) {
+    if (o == NULL || at < 0 || at > o->rowCount) return LV_OVERVIEW_PART_NONE;
+    if (at == 0) return LV_OVERVIEW_PART_NEUTRAL;
+    return at - 1;
 }
 
 /* A count cell of a row holds a number and then a picture (a pillbox or a
