@@ -4507,6 +4507,11 @@ struct ScnTextView {
     /* The round has a scenario or a mod, or has shown a line: the
        Brains > Info Overlay > Scenario Text row is listed. */
     bool   menuListed;
+    /* A line has been on screen this round, and the SDL tick, in ms, it
+       was last on screen: the window stays up for SCN_TEXT_SHOW_SECONDS
+       after it (scnTextPrintedRecently). */
+    bool   everPrinted;
+    Uint64 lastPrintMs;
     /* The pop-out fields of s_scnViews[SCN_TEXT_OWNER] have been read from
        the preferences (scnTextPopLoad). */
     bool   popLoaded;
@@ -4741,6 +4746,8 @@ static void scnPanelViewsRetireAll(void) {
     s_scnText.statusRows   = 0;
     s_scnText.announceRows = 0;
     s_scnText.menuListed   = false;
+    s_scnText.everPrinted  = false;
+    s_scnText.lastPrintMs  = 0;
 }
 
 static bool scnPanelAnyListed(void) {
@@ -5797,11 +5804,12 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * position named, and the share down is not used: it is
  * always on its own row, under the status line.
  *
- * In a round that lists the window in the menu (the round
- * has a scenario or a mod, or has shown a line), the window
- * stays up while the player has it shown, also when there
- * is no line to show, so the player can move and resize it
- * at any time (scnTextWindowShown in scenario_panel_draw.h).
+ * The window is up while the player has it shown and there
+ * is a line to show, and for SCN_TEXT_SHOW_SECONDS after a
+ * line was last on screen or the player turned it on in the
+ * menu, so the player can move and resize it then
+ * (scnTextWindowShown in scenario_panel_draw.h). After that
+ * no empty window stays on the game view.
  * With no line it draws nothing: no lines, no backing and
  * no edge, so the game view looks as it does with no
  * window. While the pointer is on it, the bar, the gear,
@@ -5811,10 +5819,8 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * size, or with none saved, the size for the rows the round
  * has used so far, or for one row when it has used none. A
  * window with no line never saves its size or its place by
- * itself (scnTextSavePlace). Outside such a round the
- * window shows only while there is a line to show. In all
- * rounds it stays up while it is being dragged or its
- * settings are open.
+ * itself (scnTextSavePlace). It also stays up while it is
+ * being dragged or its settings are open.
  *
  * The gear's settings have Pop out first, as a panel's do,
  * which moves the window into an OS window of its own. That
@@ -5843,6 +5849,13 @@ static void renderScnPanelMenuItems(bool afterBrains) {
    the panel's. */
 #define SCN_TEXT_MIN_W_PX 64.0f
 #define SCN_TEXT_MIN_H_PX 32.0f
+
+/* How many seconds the Scenario Text window stays up after a line was last
+   on screen in it. After that, with no line and nothing the player is doing
+   with it, the window is not drawn, so no empty bar stays on the game view
+   (scnTextPrintedRecently). Change this number to keep it up longer or
+   shorter. */
+#define SCN_TEXT_SHOW_SECONDS 5
 
 /* The window's size before the player resizes it, in the classic 15 by 15
    view, as a share of its size elsewhere. That view is 240 units high, where
@@ -5877,6 +5890,12 @@ typedef struct ScnTextLine {
 static void scnTextSetShown(bool shown) {
     gameFrontScnTextShown = shown;
     gameFrontSaveWindowSettings();
+    if (shown) {
+        /* Up for SCN_TEXT_SHOW_SECONDS, so the player sees where it is and
+           can move it with no line on screen. */
+        s_scnText.everPrinted = true;
+        s_scnText.lastPrintMs = SDL_GetTicks();
+    }
     if (!shown) {
         s_scnText.placed       = false;
         s_scnText.moving       = false;
@@ -5902,11 +5921,19 @@ static void scnTextPopLoad(void) {
     s_scnText.popLoaded = true;
 }
 
+/* A line was on screen in the Scenario Text window, or the player turned
+   it on in the menu, within the last SCN_TEXT_SHOW_SECONDS. */
+static bool scnTextRecent(void) {
+    return scnTextPrintedRecently(s_scnText.everPrinted, s_scnText.lastPrintMs,
+                                  SDL_GetTicks(),
+                                  (Uint64)SCN_TEXT_SHOW_SECONDS * 1000u);
+}
+
 /* Whether the Scenario Text window's pop-out is to be up: the player chose
    it and pop-outs are available, and the window would be up in the game
-   window by the same rule (scnTextWindowShown), so an empty OS window is
-   up in a scenario round as the empty in-game window is. busy is only the
-   X's confirm asked from the pop-out: a drag and the settings belong to
+   window by the same rule (scnTextWindowShown), so the OS window is up for
+   the same time after its last line as the in-game window is. busy is only
+   the X's confirm asked from the pop-out: a drag and the settings belong to
    the in-game window. */
 static bool scnTextPopOutWanted(bool haveText) {
     if (!s_scnViews[SCN_TEXT_OWNER].popped || !scnPanelPopOutAvailable()) {
@@ -5915,7 +5942,7 @@ static bool scnTextPopOutWanted(bool haveText) {
     const bool shown = gameFrontScnTextShown || !scnPanelCanReopen();
     const bool busy  = s_scnCloseAskOwner == SCN_TEXT_OWNER &&
                        s_scnCloseAskPopout;
-    return scnTextWindowShown(shown, s_scnText.menuListed, haveText, busy);
+    return scnTextWindowShown(shown, scnTextRecent(), haveText, busy);
 }
 
 /* Whether the round has a scenario or a mod: a list of scripts, or, from an
@@ -6250,6 +6277,11 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     }
     s_scnText.menuListed = scnTextRoundHasScript(cs) ||
                            s_scnText.usedStatus || s_scnText.usedAnnounce;
+    /* The window stays up for SCN_TEXT_SHOW_SECONDS after this. */
+    if (haveStatus || haveAnnounce) {
+        s_scnText.everPrinted = true;
+        s_scnText.lastPrintMs = SDL_GetTicks();
+    }
 
     if (!s_scnText.alphaLoaded) {
         s_scnText.bgPct   = scnOpacityClamp(gameFrontScnTextBgAlpha);
@@ -6337,17 +6369,16 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
         return;
     }
 
-    /* Up while the round lists the window in the menu, with or without a
-       line, so the player can move and resize it when no line is on
-       screen; while there is a line to show; and while the player is busy
-       with it, so a drag or the opacity sliders are not cut off when a
-       line goes (scnTextWindowShown). */
+    /* Up while there is a line to show; for SCN_TEXT_SHOW_SECONDS after a
+       line was last on screen, so the player can still grab it; and while
+       the player is busy with it, so a drag or the opacity sliders are not
+       cut off when a line goes (scnTextWindowShown). */
     const bool haveText = haveStatus || haveAnnounce;
     const bool busy = s_scnText.moving || s_scnText.resizing ||
                       s_scnText.settingsOpen ||
                       s_scnCloseAskOwner == SCN_TEXT_OWNER;
     const bool shown = gameFrontScnTextShown || !scnPanelCanReopen();
-    if (!scnTextWindowShown(shown, s_scnText.menuListed, haveText, busy)) {
+    if (!scnTextWindowShown(shown, scnTextRecent(), haveText, busy)) {
         s_scnText.placed       = false;
         s_scnText.moving       = false;
         s_scnText.resizing     = false;

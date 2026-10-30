@@ -392,26 +392,51 @@ static inline bool scnTextPointerOnHandle(float x, float y, float w, float h,
 }
 
 /*********************************************************
+ *NAME:          scnTextPrintedRecently
+ *PURPOSE:
+ *  Whether a line was on screen in the Scenario Text
+ *  window within the last holdMs milliseconds. The window
+ *  stays up for that time after its last line goes, and
+ *  not after it, so an empty window does not stay on the
+ *  game view.
+ *
+ *ARGUMENTS:
+ *  everPrinted - a line has been on screen this round
+ *  lastMs      - the SDL tick, in ms, a line was last on
+ *                screen
+ *  nowMs       - the SDL tick now, in ms
+ *  holdMs      - how long the window stays up after its
+ *                last line, in ms
+ *********************************************************/
+static inline bool scnTextPrintedRecently(bool everPrinted, uint64_t lastMs,
+                                          uint64_t nowMs, uint64_t holdMs) {
+    if (!everPrinted) return false;
+    if (nowMs < lastMs) return true;
+    return nowMs - lastMs < holdMs;
+}
+
+/*********************************************************
  *NAME:          scnTextWindowShown
  *PURPOSE:
  *  Whether the desktop Scenario Text window is up this
- *  frame. It is up while the player has it shown and the
- *  round lists it in the menu (the round has a scenario or
- *  a mod, or has shown a line), with or without a line to
- *  show, so the player can move and resize it when no line
- *  is on screen. It is also up while the player is busy
- *  with it (a drag, its settings, its close confirm), so
- *  that is not cut off. A line to show also keeps it up.
+ *  frame. It is up while the player has it shown and there
+ *  is a line to show, or a line was on screen a short time
+ *  ago (scnTextPrintedRecently), so the player can still
+ *  grab it just after a line goes. It is also up while the
+ *  player is busy with it (a drag, its settings, its close
+ *  confirm), so that is not cut off. With no recent line
+ *  and nothing busy it is not up, so no empty window stays
+ *  on the game view.
  *
  *ARGUMENTS:
- *  shown      - the player has the window shown
- *  menuListed - the round lists the window in the menu
- *  haveText   - there is a status line or an announcement
- *  busy       - the player is busy with the window
+ *  shown    - the player has the window shown
+ *  recent   - a line was on screen a short time ago
+ *  haveText - there is a status line or an announcement
+ *  busy     - the player is busy with the window
  *********************************************************/
-static inline bool scnTextWindowShown(bool shown, bool menuListed,
+static inline bool scnTextWindowShown(bool shown, bool recent,
                                       bool haveText, bool busy) {
-    return shown && (menuListed || haveText || busy);
+    return shown && (recent || haveText || busy);
 }
 
 /*********************************************************

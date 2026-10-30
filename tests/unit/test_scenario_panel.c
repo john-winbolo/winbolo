@@ -1020,14 +1020,14 @@ int run_scenario_text_pointer_on_handle(void) {
 }
 
 /* When the desktop Scenario Text window is up: while the player has it
- * shown and the round lists it, with or without a line; while there is a
- * line; and while the player is busy with it. Never while it is closed. */
+ * shown and a line was on screen a short time ago; while there is a line;
+ * and while the player is busy with it. Never while it is closed. */
 int run_scenario_text_window_shown(void) {
-    /* Listed with no line and not busy: up, empty, so it can be moved. */
+    /* A recent line, no line now, not busy: up, so it can be grabbed. */
     UT_ASSERT(scnTextWindowShown(true, true, false, false));
-    /* Listed with a line. */
+    /* A recent line and a line now. */
     UT_ASSERT(scnTextWindowShown(true, true, true, false));
-    /* Not listed and no line: not up (outside a scenario round). */
+    /* No recent line, no line now, not busy: not up, no empty window. */
     UT_ASSERT(!scnTextWindowShown(true, false, false, false));
     /* A line or the player busy with it keeps it up. */
     UT_ASSERT(scnTextWindowShown(true, false, true, false));
@@ -1036,6 +1036,26 @@ int run_scenario_text_window_shown(void) {
     UT_ASSERT(!scnTextWindowShown(false, true, true, true));
     UT_ASSERT(!scnTextWindowShown(false, true, false, false));
     UT_ASSERT(!scnTextWindowShown(false, false, true, false));
+    return 0;
+}
+
+/* A line on screen within the hold time keeps the window up; after the
+ * hold time, or with no line this round, it does not. */
+int run_scenario_text_printed_recently(void) {
+    const uint64_t hold = 5000u;
+    /* No line this round: never recent, also at the first tick. */
+    UT_ASSERT(!scnTextPrintedRecently(false, 0u, 0u, hold));
+    UT_ASSERT(!scnTextPrintedRecently(false, 1000u, 1000u, hold));
+    /* On screen this frame. */
+    UT_ASSERT(scnTextPrintedRecently(true, 1000u, 1000u, hold));
+    /* Just inside and at the edge of the hold time. */
+    UT_ASSERT(scnTextPrintedRecently(true, 1000u, 5999u, hold));
+    UT_ASSERT(!scnTextPrintedRecently(true, 1000u, 6000u, hold));
+    UT_ASSERT(!scnTextPrintedRecently(true, 1000u, 60000u, hold));
+    /* A stamp ahead of now counts as recent. */
+    UT_ASSERT(scnTextPrintedRecently(true, 2000u, 1000u, hold));
+    /* A zero hold time: never up after the line goes. */
+    UT_ASSERT(!scnTextPrintedRecently(true, 1000u, 1000u, 0u));
     return 0;
 }
 
