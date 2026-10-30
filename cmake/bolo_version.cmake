@@ -63,7 +63,7 @@ if(DEFINED _WINBOLO_VERSION_CACHED)
 endif()
 unset(_WINBOLO_VERSION_CACHED)
 unset(_WINBOLO_VERSION_PREV_DEFAULT)
-set(WINBOLO_VERSION_SUFFIX "" CACHE STRING "Display-only version suffix (UI text only, ignored by the network protocol)")
+set(WINBOLO_VERSION_SUFFIX "a" CACHE STRING "Display-only version suffix (UI text only, ignored by the network protocol)")
 
 # Human-facing version string. Only affects displayed text; the network
 # protocol bytes below are derived from WINBOLO_VERSION alone.

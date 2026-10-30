@@ -2277,6 +2277,11 @@ int run_map_colours_markers(void);
 int run_map_colours_palette_key(void);
 int run_map_colours_team(void);
 
+/* The marker shapes (test_map_markers.c): how far the tank triangle reaches
+ * past the square its sprite would fill, which the log viewer's repaint
+ * marks. */
+int run_map_markers_tank_reach(void);
+
 int run_stall_advances_processed_tick(void);
 int run_turn_release_no_overshoot(void);
 int run_turn_gap_preserves_ramp(void);
@@ -4441,6 +4446,7 @@ int run_scenario_text_tablet_band(void);
  * mouse: a point on the text body is on neither. */
 int run_scenario_text_pointer_on_handle(void);
 int run_scenario_text_window_shown(void);
+int run_scenario_text_printed_recently(void);
 int run_scenario_text_edge_shown(void);
 int run_scenario_text_save_place(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
