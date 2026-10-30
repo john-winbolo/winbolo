@@ -291,7 +291,7 @@ end
 -- their steering module instance across instances.
 local _path_search_us    = 0  -- cpf.path_to(...) C call (dijkstra+astar)
 local _path_trace_us     = 0  -- cpf.trace_path / dijkstra_trace_path
-local _path_lookahead_us = 0  -- path_lookahead(state, info, nx, ny)
+local _path_lookahead_us = 0  -- path_lookahead(state, world, info, nx, ny)
 local _path_method       = "dij" -- cpf._last_method captured at search time
 
 -- ---------------------------------------------------------------------------
@@ -1015,18 +1015,13 @@ end
 --   In boat: stop at any water/land boundary.  Cutting diagonals through
 --            a river corridor can clip a land tile and lose the boat.
 --            Also stop at BOAT tiles on water (transition point).
--- The world table of the think in progress, for next_step_blocked (the
--- lookahead is only given state and info).  Set at the top of M.steer.
-local _cur_world = nil
-
 -- C.STUCK_COLLAPSE_NEEDS_CLIP: is one square in the way of the tank?  A
 -- building, half building or deep sea square, a live pillbox, or another
 -- tank standing on it.
-local function step_square_blocked(info, mx, my)
+local function step_square_blocked(world, info, mx, my)
   if not U.in_map(mx, my) then return true end
   if IMPASSABLE[U.ttype(mx, my)] then return true end
-  local plist = _cur_world and _cur_world.pill_at
-                and _cur_world.pill_at[my * 256 + mx]
+  local plist = world and world.pill_at and world.pill_at[my * 256 + mx]
   if plist then
     for i = 1, #plist do
       local p = plist[i].pill
@@ -1048,22 +1043,23 @@ end
 -- water edge, a blocked corner square on a diagonal step, or the tank's
 -- off-centre body sweeping into a blocked side square.  An open step is not
 -- blocked, however slowly the tank is moving onto it.
-local function next_step_blocked(info, tmx, tmy, nx, ny)
+local function next_step_blocked(world, info, tmx, tmy, nx, ny)
   if nx == tmx and ny == tmy then return true end   -- old behaviour
-  if step_square_blocked(info, nx, ny) then return true end
+  if step_square_blocked(world, info, nx, ny) then return true end
   if (WATER_TT[U.ttype(tmx, tmy)] or false)
      ~= (WATER_TT[U.ttype(nx, ny)] or false) then
     return true
   end
   if nx ~= tmx and ny ~= tmy
-     and (step_square_blocked(info, nx, tmy)
-          or step_square_blocked(info, tmx, ny)) then
+     and (step_square_blocked(world, info, nx, tmy)
+          or step_square_blocked(world, info, tmx, ny)) then
     return true
   end
   return (corridor_path_clipped(info, tmx, tmy, nx, ny))
 end
+M._next_step_blocked = next_step_blocked   -- unit tests (test_orders.lua)
 
-local function path_lookahead_inner(state, info, nx, ny)
+local function path_lookahead_inner(state, world, info, nx, ny)
   local pf = state.pf
   local chain = pf.path_chain
   if not chain or #chain < 4 then
@@ -1165,7 +1161,7 @@ local function path_lookahead_inner(state, info, nx, ny)
       -- On an open step the tank goes on driving at it; the stuck recovery
       -- at STUCK_TICKS still runs as before.
       if C.STUCK_COLLAPSE_NEEDS_CLIP
-         and not next_step_blocked(info, tmx, tmy, nx, ny) then
+         and not next_step_blocked(world, info, tmx, tmy, nx, ny) then
         sdbg("lookahead: STUCK collapse skipped (%d ticks), step (%d,%d) is open",
              (state.tick or 0) - since, nx, ny)
       else
@@ -1341,8 +1337,8 @@ end
 -- tests/sea_pills_B it entered (139,126), 8.0 tiles from the hostile pill, on
 -- its way from one raft member to the next. The overlay stamp above steers the
 -- SEARCH away; this is the hard stop that keeps the STEERING out.
-local function path_lookahead(state, info, nx, ny)
-  local lx, ly = path_lookahead_inner(state, info, nx, ny)
+local function path_lookahead(state, world, info, nx, ny)
+  local lx, ly = path_lookahead_inner(state, world, info, nx, ny)
   local nogo = state._sea_nogo
   if not nogo or not lx then return lx, ly end
   if nogo[ly * 256 + lx] then
@@ -4223,7 +4219,7 @@ local function steer_core(state, world, info, goal)
       state._kill_lgm_engage_my = engage_my
       local nx, ny = cpf_path_to(state, info, engage_mx, engage_my)
       if nx then
-        local lx, ly = path_lookahead(state, info, nx, ny)
+        local lx, ly = path_lookahead(state, world, info, nx, ny)
         state._steer_lx = lx
         state._steer_ly = ly
         move_dir    = U.aim_at(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
@@ -4360,7 +4356,7 @@ local function steer_core(state, world, info, goal)
     end
     local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
     if nx then
-      local lx, ly = path_lookahead(state, info, nx, ny)
+      local lx, ly = path_lookahead(state, world, info, nx, ny)
       state._steer_lx = lx
       state._steer_ly = ly
       move_dir    = U.aim_at(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
@@ -4398,7 +4394,7 @@ local function steer_core(state, world, info, goal)
       local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
       if nx then
         local _t_la0 = BRAIN_PROFILE and clock_us() or 0
-        local lx, ly = path_lookahead(state, info, nx, ny)
+        local lx, ly = path_lookahead(state, world, info, nx, ny)
         if BRAIN_PROFILE then
           _path_lookahead_us = _path_lookahead_us + (clock_us() - _t_la0)
         end
@@ -4591,7 +4587,7 @@ local function steer_core(state, world, info, goal)
     if nx then
       -- Skip ahead on the path when the straight line is clear
       local _t_la0 = BRAIN_PROFILE and clock_us() or 0
-      local lx, ly = path_lookahead(state, info, nx, ny)
+      local lx, ly = path_lookahead(state, world, info, nx, ny)
       if BRAIN_PROFILE then
         _path_lookahead_us = _path_lookahead_us + (clock_us() - _t_la0)
       end
@@ -6112,7 +6108,6 @@ end
 -- pass through untouched and the tank keeps rotating out of trouble on the
 -- spot. Boats are exempt: deep sea is where they belong.
 function M.steer(state, world, info, goal)
-  _cur_world = world
   -- Close out an attack_tank heat volley whose goal was replaced under it (a
   -- replan, or the enemy tank dying). Runs BEFORE steer_core so the retry latch
   -- is stamped before tank_combat_steer could pick the same pill again this
