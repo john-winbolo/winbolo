@@ -5355,11 +5355,11 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     const float defTop = menuBottom + scnPanelButtonSide(FLT_MAX);
 
     /* The default, used for whichever of size and place the player has not
-       saved: the top-left of the game view at 192 screen pixels at every
+       saved: the top-left of the game view at 288 screen pixels at every
        zoom, or a smaller cardinal size where that does not fit
        (scnPanelDefaultPlace). When nothing fits, the older default:
        100 percent at the top-right. The percent is a float because it is
-       often not a whole number (37.5 at zoom 4). */
+       often not a whole number (56.25 at zoom 4). */
     float defPct = 100.0f;
     float leftX  = 0.0f;
     float leftY  = 0.0f;

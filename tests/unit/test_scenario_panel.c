@@ -1108,7 +1108,7 @@ int run_scenario_status_line(void) {
 
 /* The desktop panel's default place and size (scnPanelDefaultPlace): the
  * game view's top-left corner in by the inset, and never above minTop,
- * which keeps room for the move bar above the panel. The size is 192
+ * which keeps room for the move bar above the panel. The size is 288
  * pixels at every zoom, as the percent of the zoom's own size, when that
  * fits in 0.8 of the view's shorter side and in the display. When it does
  * not, it is the largest cardinal from 100 up that fits. Every number is
@@ -1120,8 +1120,9 @@ int run_scenario_panel_default_place(void) {
     float pct;
 
     /* Zoom 1: a 240 view at (10, 20), panel 128 at 100, inset 4. The room
-       is 0.8 * 240 = 192, so 192 pixels fits: 192 / 128 = 150 percent, at
-       (14, 24). */
+       is 0.8 * 240 = 192, so 288 pixels does not fit. The largest cardinal
+       that does: 150 is 192, which fits; 200 is 256, which does not: 150,
+       at (14, 24). */
     UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
                                    480.0f, 128.0f, 4.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
@@ -1129,65 +1130,70 @@ int run_scenario_panel_default_place(void) {
     UT_ASSERT(x == 14.0f);
     UT_ASSERT(y == 24.0f);
 
-    /* Custom zoom 1.25: a 300 view, panel 160 at 100, room 240. 192 / 160
-       = 120 percent. */
+    /* Custom zoom 1.25: a 300 view, panel 160 at 100, room 240. 288 does
+       not fit. 150 is 240, which fits; 200 is 320, which does not: 150. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 300.0f, 300.0f, 1600.0f,
                                    1200.0f, 160.0f, 5.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
-    UT_ASSERT(pct == 120.0f);
+    UT_ASSERT(pct == 150.0f);
     UT_ASSERT(x == 5.0f);
     UT_ASSERT(y == 5.0f);
 
-    /* Custom zoom 1.5: a 360 view, panel 192 at 100. 192 / 192 = 100
-       percent. */
+    /* Custom zoom 1.5: a 360 view, panel 192 at 100, room 0.8 * 360 = 288,
+       so 288 fits exactly: 288 / 192 = 150 percent. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 360.0f, 360.0f, 1600.0f,
                                    1200.0f, 192.0f, 6.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
-    UT_ASSERT(pct == 100.0f);
+    UT_ASSERT(pct == 150.0f);
     UT_ASSERT(x == 6.0f);
     UT_ASSERT(y == 6.0f);
 
-    /* Zoom 2: a 480 view, panel 256 at 100. 192 / 256 = 75 percent, at
-       (20 + 8, 40 + 8). */
+    /* Zoom 2: a 480 view, panel 256 at 100, room 384. 288 / 256 = 112.5
+       percent, at (20 + 8, 40 + 8). */
     UT_ASSERT(scnPanelDefaultPlace(20.0f, 40.0f, 500.0f, 520.0f, 1280.0f,
                                    960.0f, 256.0f, 8.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
-    UT_ASSERT(pct == 75.0f);
+    UT_ASSERT(pct == 112.5f);
     UT_ASSERT(x == 28.0f);
     UT_ASSERT(y == 48.0f);
 
-    /* Zoom 3: panel 384 at 100. 192 / 384 = 50 percent. */
+    /* Zoom 3: panel 384 at 100. 288 / 384 = 75 percent. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 720.0f, 720.0f, 1920.0f,
                                    1080.0f, 384.0f, 12.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
-    UT_ASSERT(pct == 50.0f);
+    UT_ASSERT(pct == 75.0f);
     UT_ASSERT(x == 12.0f);
     UT_ASSERT(y == 12.0f);
 
-    /* Zoom 4: panel 512 at 100. 192 / 512 = 37.5 percent, not a cardinal
+    /* Zoom 4: panel 512 at 100. 288 / 512 = 56.25 percent, not a cardinal
        and not rounded. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 960.0f, 960.0f, 2560.0f,
                                    1440.0f, 512.0f, 16.0f, 0.0f, cardinals,
                                    count, &x, &y, &pct));
-    UT_ASSERT(pct == 37.5f);
+    UT_ASSERT(pct == 56.25f);
 
-    /* Zoom 6: panel 768 at 100. 192 / 768 = 25 percent, the least the
-       caller keeps. */
+    /* Zoom 6: panel 768 at 100. 288 / 768 = 37.5 percent. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 1440.0f, 1440.0f, 3840.0f,
                                    2160.0f, 768.0f, 24.0f, 0.0f, cardinals,
                                    count, &x, &y, &pct));
-    UT_ASSERT(pct == 25.0f);
+    UT_ASSERT(pct == 37.5f);
 
-    /* Zoom 8: panel 1024 at 100. 192 / 1024 = 18.75 percent, under the 25
-       of SCN_PANEL_SCALE_MIN; the size limits of the caller hold it at
-       25. */
+    /* Zoom 8: panel 1024 at 100. 288 / 1024 = 28.125 percent. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 1920.0f, 1920.0f, 7680.0f,
                                    4320.0f, 1024.0f, 32.0f, 0.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 28.125f);
+
+    /* Zoom 12: panel 1536 at 100. 288 / 1536 = 18.75 percent, under the 25
+       of SCN_PANEL_SCALE_MIN; the size limits of the caller hold it at
+       25. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 2880.0f, 2880.0f, 11520.0f,
+                                   6480.0f, 1536.0f, 48.0f, 0.0f, cardinals,
                                    count, &x, &y, &pct));
     UT_ASSERT(pct == 18.75f);
 
     /* Custom zoom 0.75: a 180 view, panel 96 at 100, room 0.8 * 180 =
-       144. 192 does not fit, so the largest cardinal that does: 150 is
+       144. 288 does not fit, so the largest cardinal that does: 150 is
        144, which fits; 200 is 192, which does not: 150. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 180.0f, 180.0f, 1600.0f,
                                    1200.0f, 96.0f, 3.0f, 0.0f, cardinals, count,
@@ -1195,36 +1201,41 @@ int run_scenario_panel_default_place(void) {
     UT_ASSERT(pct == 150.0f);
 
     /* Zoom 2 with minTop 44 over a view corner at 28: the panel goes down
-       to 44 and keeps its 192 pixels. */
+       to 44 and keeps its 288 pixels. */
     UT_ASSERT(scnPanelDefaultPlace(20.0f, 20.0f, 500.0f, 500.0f, 1280.0f,
                                    960.0f, 256.0f, 8.0f, 44.0f, cardinals,
                                    count, &x, &y, &pct));
-    UT_ASSERT(pct == 75.0f);
+    UT_ASSERT(pct == 112.5f);
     UT_ASSERT(x == 28.0f);
     UT_ASSERT(y == 44.0f);
 
-    /* Zoom 2 in a display that leaves under 192 below the corner: 1280 x
-       210 from y 8 leaves 202, which fits; 1280 x 190 leaves 182, which
-       does not, and 100 percent is 256, which does not fit either:
-       false. */
+    /* Zoom 2 in a short display: 1280 x 300 from y 8 leaves 292, so 288
+       fits: 112.5. 1280 x 280 leaves 272, so 288 does not; 100 is 256,
+       which fits; 125 is 320, which does not: 100. 1280 x 250 leaves 242,
+       and 100 percent is 256, which does not fit either: false. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 480.0f, 480.0f, 1280.0f,
-                                   210.0f, 256.0f, 8.0f, 0.0f, cardinals,
+                                   300.0f, 256.0f, 8.0f, 0.0f, cardinals,
                                    count, &x, &y, &pct));
-    UT_ASSERT(pct == 75.0f);
+    UT_ASSERT(pct == 112.5f);
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 480.0f, 480.0f, 1280.0f,
+                                   280.0f, 256.0f, 8.0f, 0.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 100.0f);
     UT_ASSERT(!scnPanelDefaultPlace(0.0f, 0.0f, 480.0f, 480.0f, 1280.0f,
-                                    190.0f, 256.0f, 8.0f, 0.0f, cardinals,
+                                    250.0f, 256.0f, 8.0f, 0.0f, cardinals,
                                     count, &x, &y, &pct));
 
     /* Zoom 1 in a display only 180 wide: from x 14 that leaves 166, under
-       192. 125 is 160, which fits; 150 is 192, which does not: 125. */
+       the 192 the view gives. 125 is 160, which fits; 150 is 192, which
+       does not: 125. */
     UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 180.0f,
                                    400.0f, 128.0f, 4.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
     UT_ASSERT(pct == 125.0f);
 
     /* Custom zoom 1.25 in a display 190 wide: from x 5 that leaves 185,
-       under 192. 100 is 160, which fits; 125 is 200, which does not:
-       100. */
+       under the 240 the view gives. 100 is 160, which fits; 125 is 200,
+       which does not: 100. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 300.0f, 300.0f, 190.0f,
                                    1200.0f, 160.0f, 5.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
@@ -1247,9 +1258,11 @@ int run_scenario_panel_default_place(void) {
                                     480.0f, 0.0f, 4.0f, 0.0f, cardinals, count,
                                     &x, &y, &pct));
 
-    /* The cardinals are needed only when 192 does not fit. With no
+    /* The cardinals are needed only when 288 does not fit. With no
        cardinal from 100 up, or no list, a zoom 1 display 180 wide (room
-       166) gives false; a 640 x 480 display (room 192) still gives 150. */
+       166) gives false, and so does a zoom 1 display 640 x 480 (room 192,
+       under 288). Zoom 2 in a 1280 x 960 display (room 384) still gives
+       112.5 with no list. */
     {
         static const int under100[] = {25, 50, 75};
         UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 180.0f,
@@ -1258,16 +1271,20 @@ int run_scenario_panel_default_place(void) {
         UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 180.0f,
                                         400.0f, 128.0f, 4.0f, 0.0f, NULL, 0, &x,
                                         &y, &pct));
-        UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
-                                       480.0f, 128.0f, 4.0f, 0.0f, NULL, 0, &x,
+        UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                        480.0f, 128.0f, 4.0f, 0.0f, NULL, 0, &x,
+                                        &y, &pct));
+        UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 480.0f, 480.0f, 1280.0f,
+                                       960.0f, 256.0f, 8.0f, 0.0f, NULL, 0, &x,
                                        &y, &pct));
-        UT_ASSERT(pct == 150.0f);
+        UT_ASSERT(pct == 112.5f);
     }
 
     /* minTop: the move bar above the panel is 22 high under a menu bar 22
        high, so the top may be no less than 44. The view's corner gives 24,
-       so the panel goes down to 44. The room from there is still 192
-       (the display leaves 436): 150, at (14, 44). */
+       so the panel goes down to 44. The room from there is still the 192
+       the view gives (the display leaves 436), under 288; the largest
+       cardinal that fits is 150, at (14, 44). */
     UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
                                    480.0f, 128.0f, 4.0f, 44.0f, cardinals,
                                    count, &x, &y, &pct));
@@ -1282,7 +1299,7 @@ int run_scenario_panel_default_place(void) {
     UT_ASSERT(y == 24.0f);
 
     /* The room is measured from the lowered top: a display 250 high leaves
-       250 - 100 = 150 below a top of 100, under 192. 125 is 160, which
+       250 - 100 = 150 below a top of 100, under 288. 125 is 160, which
        does not fit: 100, at (14, 100). */
     UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
                                    250.0f, 128.0f, 4.0f, 100.0f, cardinals,
