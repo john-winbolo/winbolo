@@ -42,7 +42,7 @@
 -- and 0 is now WinBolo's own default. In WinBolo 2.1 a shell that hit a
 -- tank also set off any mine on the square where it burst, so a tank that
 -- laid mines as it ran could have them set off by the shots of the tank
--- chasing it. The Tank Hits Set Off Mines mod sets 1 to play that way.
+-- chasing it. A script that sets 1 plays that way.
 -- This part keeps the rule at 0, so it only changes the round when
 -- another script on the list sets 1.
 --
