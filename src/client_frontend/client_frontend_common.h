@@ -45,13 +45,20 @@ typedef enum {
     CLIENT_FRONT_PAUSE_OVERLAY,         /* the Steam overlay */
     CLIENT_FRONT_PAUSE_CONTROLLER_LOST, /* the controller-disconnected dialog */
     CLIENT_FRONT_PAUSE_DECK,            /* the pause menu (Start / Escape) */
-    CLIENT_FRONT_PAUSE_TUTORIAL,        /* a tutorial message */
+    CLIENT_FRONT_PAUSE_TUTORIAL,        /* a popup in a shipped tutorial */
     CLIENT_FRONT_PAUSE_SAVE_DIALOG,     /* the native save-map dialog */
     CLIENT_FRONT_PAUSE_COUNT
 } ClientFrontPause;
 
 /* A solo session: a single-player game. */
 bool clientFrontIsSoloSession(struct ClientSim *cs);
+
+/* Whether an open scenario popup pauses the game cs plays: only in a shipped
+ * tutorial (tutorialMapsPopupPauses), a single-player game with its server in
+ * this process. A multiplayer game, a listen-server host and a joined game
+ * never pause for one. Takes the client mutex. Also in the web build, whose
+ * page loop asks it for the tutorial's dialog pause. */
+bool clientFrontPopupPausesGame(struct ClientSim *cs);
 
 /* One solo freeze's open (active) or close edge. Opening does nothing outside
  * a solo game or when already open. Returns true when it closed a freeze that

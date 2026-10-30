@@ -21,8 +21,9 @@
  *   Where the shipped tutorials live, and the test the
  *   menu's background game puts each map name through, so
  *   that it never shows a tutorial. The desktop, mobile and
- *   web menus share both. Pure, so the unit tests check the
- *   test without a menu (test_bg_map_pick.c).
+ *   web menus share both, and the test for whether a
+ *   scenario popup pauses the game. Pure, so the unit tests
+ *   check them without a menu (test_bg_map_pick.c).
  *********************************************************/
 
 #ifndef TUTORIAL_MAPS_H
@@ -129,6 +130,18 @@ static inline bool tutorialMapsIsShippedTutorial(const char *path) {
         }
     }
     return true;
+}
+
+/* Whether a scenario popup (game.popup) pauses the game while it is open.
+ * Only the shipped tutorials pause: a single-player game, with its server in
+ * this process, whose running map's own script is in the tutorials folder.
+ * Popups in any other game, single player or not, leave the game running.
+ * mapScriptPath is the running map's own script, "" or NULL for none. */
+static inline bool tutorialMapsPopupPauses(bool singlePlayer,
+                                           bool serverInProcess,
+                                           const char *mapScriptPath) {
+    return singlePlayer && serverInProcess &&
+           tutorialMapsIsShippedTutorial(mapScriptPath);
 }
 
 #endif /* TUTORIAL_MAPS_H */

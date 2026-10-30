@@ -88,3 +88,27 @@ int run_tutorial_maps_shipped_path(void) {
     UT_ASSERT(!tutorialMapsIsShippedTutorial("data/mymaps/tutorials/a.lua"));
     return 0;
 }
+
+/* Which games a scenario popup pauses: only a shipped tutorial played as a
+ * single-player game with its server in this process. */
+int run_tutorial_maps_popup_pauses(void) {
+    const char *tut     = "data/maps/tutorials/Tutorial.scenario.lua";
+    const char *classic = "data/maps/tutorials/Classic Tutorial.scenario.lua";
+    const char *other   = "data/maps/Survival.scenario.lua";
+
+    /* The tutorials, single player, server in this process. */
+    UT_ASSERT(tutorialMapsPopupPauses(true, true, tut));
+    UT_ASSERT(tutorialMapsPopupPauses(true, true, classic));
+
+    /* Another single-player scenario, or no script at all. */
+    UT_ASSERT(!tutorialMapsPopupPauses(true, true, other));
+    UT_ASSERT(!tutorialMapsPopupPauses(true, true, ""));
+    UT_ASSERT(!tutorialMapsPopupPauses(true, true, NULL));
+
+    /* A multiplayer game or a listen-server host on the tutorial map. */
+    UT_ASSERT(!tutorialMapsPopupPauses(false, true, tut));
+    /* A joined game: the server is not in this process. */
+    UT_ASSERT(!tutorialMapsPopupPauses(true, false, tut));
+    UT_ASSERT(!tutorialMapsPopupPauses(false, false, tut));
+    return 0;
+}
