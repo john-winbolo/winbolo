@@ -5806,8 +5806,8 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  *
  * The window is up while the player has it shown and there
  * is a line to show, and for SCN_TEXT_SHOW_SECONDS after a
- * line was last on screen or the player turned it on in the
- * menu, so the player can move and resize it then
+ * line was last on screen, so the player can move and
+ * resize it then. Turning it on in the menu does not show it
  * (scnTextWindowShown in scenario_panel_draw.h). After that
  * no empty window stays on the game view.
  * With no line it draws nothing: no lines, no backing and
@@ -5890,12 +5890,6 @@ typedef struct ScnTextLine {
 static void scnTextSetShown(bool shown) {
     gameFrontScnTextShown = shown;
     gameFrontSaveWindowSettings();
-    if (shown) {
-        /* Up for SCN_TEXT_SHOW_SECONDS, so the player sees where it is and
-           can move it with no line on screen. */
-        s_scnText.everPrinted = true;
-        s_scnText.lastPrintMs = SDL_GetTicks();
-    }
     if (!shown) {
         s_scnText.placed       = false;
         s_scnText.moving       = false;
@@ -5921,8 +5915,9 @@ static void scnTextPopLoad(void) {
     s_scnText.popLoaded = true;
 }
 
-/* A line was on screen in the Scenario Text window, or the player turned
-   it on in the menu, within the last SCN_TEXT_SHOW_SECONDS. */
+/* A line was on screen in the Scenario Text window within the last
+   SCN_TEXT_SHOW_SECONDS. Turning the window on in the menu does not count:
+   with no line, the window stays fully hidden. */
 static bool scnTextRecent(void) {
     return scnTextPrintedRecently(s_scnText.everPrinted, s_scnText.lastPrintMs,
                                   SDL_GetTicks(),
