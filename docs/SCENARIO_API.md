@@ -2343,7 +2343,7 @@ it asked for.
 drawn in one window of their own, the Scenario Text window, and not on the
 game view. A script cannot put text anywhere else on the screen. The window
 is built the same way as the scenario panel's window: it has no title bar, a
-see-through backing, a bar along its top to move it, a gear that opens its
+see-through backing, a bar just above its text to move it, a gear that opens its
 settings (Pop out, then two opacity sliders), an X that closes it, and a grip
 in its bottom-right corner to resize it. Unlike the panel, it is a rectangle
 and it can take any shape. The window is hidden until a scenario shows a

@@ -4491,9 +4491,10 @@ struct ScnTextView {
     int    bgPct, textPct;
     /* The bar, the gear and the X stay up until this SDL tick. */
     Uint64 chromeUntil;
-    /* Where the window's top-left corner is, on screen, as the last frame
-       left it: the hover test runs before the window is submitted, to
-       choose whether it takes input this frame. */
+    /* Where the text area's top-left corner is, on screen, as the last
+       frame left it: the hover test runs before the window is submitted,
+       to choose whether it takes input this frame. The bar is above this
+       corner, and the ImGui window starts the bar's height higher. */
     float  atX, atY;
     /* The kinds of line the round has shown so far. Each one has a row in
        the window from then until the round ends, so the text does not
@@ -6396,9 +6397,13 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     if (gameScale <= 0.0f) gameScale = 1.0f;
     const float scale = (float)rawZoom * gameScale;
 
+    /* The bar sits directly above the text area, so the text area is at
+       most the display's height less the tallest the bar can be, and the
+       bar stays on screen too. */
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     const float maxW = ImMax(display.x, SCN_TEXT_MIN_W_PX);
-    const float maxH = ImMax(display.y, SCN_TEXT_MIN_H_PX);
+    const float maxH = ImMax(display.y - scnPanelButtonSide(display.y),
+                             SCN_TEXT_MIN_H_PX);
 
     /* In the classic 15 by 15 view the window starts smaller
        (SCN_TEXT_CLASSIC_SHARE). The full screen map owns the window while it
@@ -6441,27 +6446,38 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
         }
     }
 
-    /* A position saved on a larger display is brought inside this one. */
-    float wantX = (gameFrontScnTextX >= 0) ? (float)gameFrontScnTextX : defX;
-    float wantY = (gameFrontScnTextY >= 0) ? (float)gameFrontScnTextY : defY;
-    if (wantX > display.x - w) wantX = display.x - w;
-    if (wantY > display.y - h) wantY = display.y - h;
-    if (wantX < 0.0f) wantX = 0.0f;
-    if (wantY < 0.0f) wantY = 0.0f;
-
-    if (!s_scnText.placed) {
-        ImGui::SetNextWindowPos(ImVec2(wantX, wantY), ImGuiCond_Always);
-        s_scnText.placed = true;
-        s_scnText.atX    = wantX;
-        s_scnText.atY    = wantY;
-    }
-    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
-
     /* The bar's height and the grip's side. Both come from this frame's
        w and h only, so they are known before Begin. */
     const float shortSide = ImMin(w, h);
     const float handle    = ImMin(SCN_PANEL_HANDLE_PX, shortSide * 0.25f);
     const float btn       = scnPanelButtonSide(shortSide);
+
+    /* x, y, w and h, and the saved gameFrontScnTextX/Y/W/H, are the text
+       area's rectangle. The ImGui window is btn taller and starts btn
+       higher: the bar is the strip above the text area, its bottom edge on
+       the text area's top edge, so it covers no text.
+       A position saved on a larger display is brought inside this one,
+       with room above the text area for the bar. */
+    float wantX = (gameFrontScnTextX >= 0) ? (float)gameFrontScnTextX : defX;
+    float wantY = (gameFrontScnTextY >= 0) ? (float)gameFrontScnTextY : defY;
+    if (wantX > display.x - w) wantX = display.x - w;
+    if (wantY > display.y - h) wantY = display.y - h;
+    if (wantX < 0.0f) wantX = 0.0f;
+    if (wantY < btn) wantY = btn;
+
+    if (!s_scnText.placed) {
+        ImGui::SetNextWindowPos(ImVec2(wantX, wantY - btn), ImGuiCond_Always);
+        s_scnText.placed = true;
+        s_scnText.atX    = wantX;
+        s_scnText.atY    = wantY;
+    } else if (s_scnText.resizing) {
+        /* A resize keeps the text area's top-left corner where it is. The
+           bar's height can change with the size, so the window is placed
+           from that corner each frame of the resize. */
+        ImGui::SetNextWindowPos(ImVec2(s_scnText.atX, s_scnText.atY - btn),
+                                ImGuiCond_Always);
+    }
+    ImGui::SetNextWindowSize(ImVec2(w, h + btn), ImGuiCond_Always);
 
     /* Some other ImGui window (a scenario panel, the settings, a menu) is
        under the pointer and in front of this one. g.HoveredWindow is the
@@ -6495,6 +6511,9 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
        place and this frame's size, for this reason: IsWindowHovered is
        never true for a NoInputs window. scnTextPointerOnHandle in
        scenario_panel_draw.h has the bar and grip rectangles.
+       The strip above the text area, where the bar goes, counts only
+       while the bar is up: with the bar hidden, the pointer on that strip
+       does not bring the bar up, and a click there goes to the game.
        ImGui works out the hovered window in NewFrame, from the flags of the
        last Begin, so the window takes input from the frame after the
        pointer first comes onto the bar or the grip. A press on the bar then
@@ -6504,15 +6523,20 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
        with the pointer still there, is taken. */
     const Uint64 nowMs  = SDL_GetTicks();
     const ImVec2 mouse  = ImGui::GetIO().MousePos;
+    const bool   barUp  = nowMs < s_scnText.chromeUntil ||
+                          s_scnText.moving || s_scnText.resizing ||
+                          s_scnText.settingsOpen ||
+                          s_scnCloseAskOwner == SCN_TEXT_OWNER;
+    const float  barH   = barUp ? btn : 0.0f;
     const bool   onRect = !covered &&
         ImGui::IsMouseHoveringRect(
-            ImVec2(s_scnText.atX, s_scnText.atY),
+            ImVec2(s_scnText.atX, s_scnText.atY - barH),
             ImVec2(s_scnText.atX + w, s_scnText.atY + h), false);
     if (onRect) {
         s_scnText.chromeUntil = nowMs + SCN_PANEL_CHROME_LINGER_MS;
     }
     const bool onHandle = onRect &&
-        scnTextPointerOnHandle(s_scnText.atX, s_scnText.atY, w, h, btn,
+        scnTextPointerOnHandle(s_scnText.atX, s_scnText.atY, w, h, barH,
                                handle, mouse.x, mouse.y);
     const bool takesInput = onHandle ||
                             s_scnText.moving || s_scnText.resizing ||
@@ -6522,17 +6546,15 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     float gearX = 0.0f;
     float gearY = 0.0f;
 
-    /* As the panel's window: no padding and no border, so the window's rect
-       is the rectangle the lines are fitted into, and a backing that is
-       black at the player's background opacity while there is a line to
-       show. With no line there is no backing. The bar and
-       the grip are the only things that move or resize it. */
+    /* As the panel's window: no padding and no border. The window has no
+       background of its own: the backing, black at the player's background
+       opacity while there is a line to show, is drawn below on the text
+       area only, so the strip above it for the bar stays clear while the
+       bar is hidden. With no line there is no backing. The bar and the
+       grip are the only things that move or resize it. */
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(
-        ImGuiCol_WindowBg,
-        IM_COL32(0, 0, 0,
-                 haveText ? scnBackingAlpha(s_scnText.bgPct) : 0));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
     const bool open = ImGui::Begin("##scenariotext", nullptr,
                                    ImGuiWindowFlags_NoTitleBar |
                                    ImGuiWindowFlags_NoResize |
@@ -6570,13 +6592,21 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
         }
         s_scnText.moving = moveActive;
 
+        /* The gear and the X sit on the bar, and the settings open from
+           the bar's top edge, as they did when the bar was inside the
+           text. */
         const ScnPanelButtons b = scnPanelSubmitButtons(pos, w, btn, withClose);
         gearX = b.gearX;
         gearY = pos.y;
         if (b.gearClicked) s_scnText.settingsOpen = !s_scnText.settingsOpen;
         if (b.closeClicked) scnPanelRequestClose(SCN_TEXT_OWNER, false);
 
-        ImGui::SetCursorScreenPos(ImVec2(pos.x + w - handle, pos.y + h - handle));
+        /* The text area's top-left corner, the bar's height below the
+           window's. */
+        const ImVec2 text(pos.x, pos.y + btn);
+
+        ImGui::SetCursorScreenPos(ImVec2(text.x + w - handle,
+                                         text.y + h - handle));
         ImGui::InvisibleButton("##scntextresize", ImVec2(handle, handle));
         const bool resizeHot    = ImGui::IsItemHovered();
         const bool resizeActive = ImGui::IsItemActive();
@@ -6620,14 +6650,17 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
            middle. With no line to show, only a drag saves it
            (scnTextSavePlace), so a window with no line never changes the
            saved place by itself. */
+        /* keepX/keepY are the text area's top-left corner: the window's
+           less the bar. The bar is kept on screen as well, so the text
+           area's top is never less than btn from the main window's top. */
         const ImVec2 moved = ImGui::GetWindowPos();
-        float keepX = moved.x, keepY = moved.y;
+        float keepX = moved.x, keepY = moved.y + btn;
         if (keepX > display.x - w) keepX = display.x - w;
         if (keepY > display.y - h) keepY = display.y - h;
         if (keepX < 0.0f) keepX = 0.0f;
-        if (keepY < 0.0f) keepY = 0.0f;
-        if (keepX != moved.x || keepY != moved.y) {
-            ImGui::SetWindowPos(ImVec2(keepX, keepY));
+        if (keepY < btn) keepY = btn;
+        if (keepX != moved.x || keepY - btn != moved.y) {
+            ImGui::SetWindowPos(ImVec2(keepX, keepY - btn));
         }
         s_scnText.atX = keepX;
         s_scnText.atY = keepY;
@@ -6656,30 +6689,40 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
            keepX/keepY are only for the clamp, the save and the next frame's
            hover test. */
 
-        /* The lines, fitted into the window at the player's text
+        /* The backing, on the text area only, while there is a line. */
+        if (haveText) {
+            dl->AddRectFilled(text, ImVec2(text.x + w, text.y + h),
+                              IM_COL32(0, 0, 0,
+                                       scnBackingAlpha(s_scnText.bgPct)));
+        }
+
+        /* The lines, fitted into the text area at the player's text
            opacity. */
-        scnTextDrawLines(dl, font, pos.x, pos.y, w, h,
+        scnTextDrawLines(dl, font, text.x, text.y, w, h,
                          (float)s_scnText.textPct / 100.0f, status,
                          haveStatus, lines, lineCount);
 
-        /* The faint edge (scnTextEdgeShown). With a line, only when there
-           is a backing: at 0% background opacity the text stands on the map
-           with no frame round it. With no line, only while the handles
-           show, at any background opacity, so the player can see the
-           window's size. */
+        /* The faint edge (scnTextEdgeShown), round the text area. With a
+           line, only when there is a backing: at 0% background opacity the
+           text stands on the map with no frame round it. With no line,
+           only while the handles show, at any background opacity, so the
+           player can see the window's size. */
         if (scnTextEdgeShown(haveText, s_scnText.bgPct, handlesVisible)) {
-            dl->AddRect(pos, ImVec2(pos.x + w - 1.0f, pos.y + h - 1.0f),
+            dl->AddRect(text, ImVec2(text.x + w - 1.0f, text.y + h - 1.0f),
                         IM_COL32(255, 255, 255, 40));
         }
 
         if (handlesVisible) {
+            /* The bar, from the window's top edge down to the text area's
+               top edge, with its dark line on its own last row of pixels so
+               it does not cover the text either. */
             const ImVec2 at = pos;
             const ImU32 barCol = (moveHot || moveActive)
                                      ? IM_COL32(150, 150, 150, 235)
                                      : IM_COL32(112, 112, 112, 205);
             dl->AddRectFilled(at, ImVec2(at.x + w - 1.0f, at.y + btn), barCol);
-            dl->AddLine(ImVec2(at.x, at.y + btn),
-                        ImVec2(at.x + w - 1.0f, at.y + btn),
+            dl->AddLine(ImVec2(at.x, at.y + btn - 1.0f),
+                        ImVec2(at.x + w - 1.0f, at.y + btn - 1.0f),
                         IM_COL32(0, 0, 0, 90));
 
             scnPanelDrawButtons(dl, at, w, btn, withClose,
@@ -6690,8 +6733,8 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
             const ImU32 resizeCol = (resizeHot || resizeActive)
                                         ? IM_COL32(255, 255, 255, 200)
                                         : IM_COL32(255, 255, 255, 110);
-            const float brX = at.x + w - 1.0f;
-            const float brY = at.y + h - 1.0f;
+            const float brX = text.x + w - 1.0f;
+            const float brY = text.y + h - 1.0f;
             for (int i = 1; i <= 3; i++) {
                 const float off = handle * (float)i / 3.5f;
                 dl->AddLine(ImVec2(brX - off, brY), ImVec2(brX, brY - off),

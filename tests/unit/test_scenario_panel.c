@@ -971,11 +971,13 @@ int run_scenario_text_tablet_band(void) {
 }
 
 /* The Scenario Text window takes the mouse only on its bar and its grip, so
- * a click or the wheel on the text goes to the game. A window at 100,50,
+ * a click or the wheel on the text goes to the game. The bar sits directly
+ * above the text area and covers none of it. A text area at 100,70,
  * 300 x 120, with a 20 high bar and a 14 square grip: the bar is
- * 100..400 x 50..70 and the grip is 386..400 x 156..170. */
+ * 100..400 x 50..70, the text area is 100..400 x 70..190 and the grip is
+ * 386..400 x 176..190. */
 int run_scenario_text_pointer_on_handle(void) {
-    const float x = 100.0f, y = 50.0f, w = 300.0f, h = 120.0f;
+    const float x = 100.0f, y = 70.0f, w = 300.0f, h = 120.0f;
     const float bar = 20.0f, grip = 14.0f;
 
     /* The bar, across the full width: its left end, its middle, and the
@@ -983,38 +985,43 @@ int run_scenario_text_pointer_on_handle(void) {
     UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 50.0f));
     UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 60.0f));
     UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.0f, 69.0f));
-    /* Its bottom edge is not in it. */
+    /* Its bottom edge is the text area's top edge, and is not in it: the
+       first row of text is not under the bar. */
     UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 70.0f));
+    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 71.0f));
+    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.0f, 75.0f));
 
     /* The grip, and the pixels just outside it. */
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 386.0f, 156.0f));
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.5f, 169.5f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 385.9f, 160.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 390.0f, 155.9f));
+    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 386.0f, 176.0f));
+    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.5f, 189.5f));
+    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 385.9f, 180.0f));
+    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 390.0f, 175.9f));
 
-    /* The text body: the middle, the left and right edges under the bar,
-       and the bottom-left corner. None of these takes the mouse. */
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 110.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 100.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.0f, 100.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 169.0f));
+    /* The text body: the middle, the left and right edges at the top, and
+       the bottom-left corner. None of these takes the mouse. */
+    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 130.0f));
+    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 120.0f));
+    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.0f, 120.0f));
+    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 189.0f));
 
-    /* Off the window: left, above, right of the bar, below the grip. */
+    /* Off the window: left, above the bar, right of the bar, below the
+       grip. */
     UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 99.9f, 60.0f));
     UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 49.9f));
     UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 400.0f, 60.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 395.0f, 170.0f));
+    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 395.0f, 190.0f));
     /* The point ImGui gives when there is no mouse. */
     UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, -FLT_MAX,
                                       -FLT_MAX));
 
-    /* A window with no area has no bar and no grip, and a bar or grip of
-       size 0 is not there. */
+    /* A text area with no area has no bar and no grip, and a bar or grip of
+       size 0 is not there. With no bar, the strip above the text area does
+       not take the mouse. */
     UT_ASSERT(!scnTextPointerOnHandle(x, y, 0.0f, h, bar, grip, 100.0f, 50.0f));
     UT_ASSERT(!scnTextPointerOnHandle(x, y, w, -1.0f, bar, grip, 100.0f,
                                       50.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, 0.0f, grip, 250.0f, 50.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, 0.0f, 399.0f, 169.0f));
+    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, 0.0f, grip, 250.0f, 60.0f));
+    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, 0.0f, 399.0f, 189.0f));
 
     return 0;
 }
