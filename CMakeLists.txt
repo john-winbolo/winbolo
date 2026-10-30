@@ -6506,6 +6506,7 @@ set(_unit_test_names
     loopback_quiet_lobby_control_loss
     loopback_command_liveness
     loopback_command_queued_behind_map_change
+    loopback_command_submitted_during_rejoin
     loopback_channel
     loopback_hitch_recovers
     loopback_quit_keeps_peer

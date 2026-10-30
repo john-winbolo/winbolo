@@ -123,3 +123,69 @@ int run_loopback_command_queued_behind_map_change(void) {
     loopbackHarnessStop(&h);
     return 0;
 }
+
+/* The client has left CONNECTED for the re-join a map change sends it on. */
+static bool pred_rejoining(LoopbackHarness *h, void *user) {
+    (void)user;
+    ClientConnectState st = clientSimGetConnectState(h->cs);
+    return st == CLIENT_CONNECT_JOINING || st == CLIENT_CONNECT_DOWNLOADING_MAP;
+}
+
+/*
+ * A command submitted while the client is re-joining after a map change
+ * still reaches the server.
+ *
+ * The case above is a command already on the queue when the re-join starts.
+ * This is one submitted during it: a host who clicks a second map in the
+ * chooser, or presses Use This Map, before the first pick's re-join and map
+ * download are done. The submit used to throw away anything outside
+ * CONNECTED, so the pick was lost without a word while the chooser's own
+ * preview, fetched separately, showed the map as picked. On a remote server
+ * the re-join is several round trips and a map download long, which is
+ * plenty of time to click.
+ */
+int run_loopback_command_submitted_during_rejoin(void) {
+    LoopbackHarness h;
+    int at;
+    char mapName[MAP_STR_SIZE];
+
+    if (!loopbackHarnessStart(&h, "CmdDuringRejoin", /*lobbyMode*/ true,
+                              /*impairSpec*/ NULL, /*seed*/ 0x5E7A5u)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("harness start (command during re-join) failed");
+    }
+    if (loopbackHarnessPumpUntil(&h, REJOIN_CONNECT_MAX,
+                                 pred_in_lobby, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached the lobby within %d pumps",
+                REJOIN_CONNECT_MAX);
+    }
+
+    threadsWaitForMutex();
+    serverSimInstallMapDirList(h.sim, NULL, 0, WB_DATA_MAPS_DIR);
+    threadsReleaseMutex();
+
+    clientSimNetSendLobbySetMap(h.cs, REJOIN_FIRST_MAP);
+    if (loopbackHarnessPumpUntil(&h, REJOIN_CHANGE_MAX,
+                                 pred_rejoining, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the first map change never sent the client to re-join");
+    }
+
+    /* The second pick, made while the first one's re-join is under way. */
+    clientSimNetSendLobbySetMap(h.cs, REJOIN_SECOND_MAP);
+    at = loopbackHarnessPumpUntil(&h, REJOIN_CHANGE_MAX, pred_settled_on,
+                                  (void *)REJOIN_SECOND_NAME);
+    SDL_strlcpy(mapName, serverSimGetMapName(h.sim), sizeof(mapName));
+    fprintf(stderr, "  command during re-join: second change landed@%d "
+                    "server map '%s'\n", at, mapName);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("a map change submitted while the client was re-joining "
+                "never reached the server (still on '%s'): the submit threw "
+                "it away outside CONNECTED", mapName);
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
