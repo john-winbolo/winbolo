@@ -29,6 +29,12 @@
 -- removes the lead. Beyond that distance the same formula leads normally.
 -- This overrides the older pill_massage_range/cosine approximation.
 --
+-- Angry pillbox fire rate. A pillbox that is hit, or whose base is shot,
+-- halves the ticks between its shots. Mac Bolo floors that at 4 and fires
+-- one tick after the count runs out, so an angry pillbox's fastest is a
+-- shot every 5 ticks. WinBolo fires as the count runs out, and floors it
+-- at pill_attack_min_ticks, 6 by default. This part sets it to 5.
+--
 -- Base defence. When a base is shot, every allied pillbox near it gets
 -- angry and fires faster. WinBolo has always counted "near" as a square:
 -- up to 9 map squares away on each axis, edge included, which reaches a
@@ -55,27 +61,29 @@
 -- the lobby has no start for is Mac Bolo's. Turn first_start_lobby off
 -- to give the opening tanks the Mac Bolo pick too.
 --
--- The Mac Bolo pick has two passes. Pass one looks for a start with
--- nothing near it at all: no other tank and no pillbox, whoever owns them.
--- If every start has something near it, pass two looks for a start with no
--- enemy tank and no enemy pillbox near it; friendly tanks and pills, and
--- neutral pills, are allowed. If both passes come up empty the engine
--- picks as it always does.
+-- The Mac Bolo pick (randstart) looks only at starts on deep sea with no
+-- mine, going round them from a random one. It takes the first with
+-- nothing near it at all: no tank and no pillbox, whoever owns them. If
+-- every start has something near it, it takes one with no enemy tank and no
+-- enemy pillbox near it. If none is free of enemies, it takes the first
+-- usable start it looked at, or the map's first start if none is usable.
+-- The engine then moves the tank off the start to the nearest clear
+-- square, as Mac Bolo does.
 --
--- "Near" is the round's own start_tank_range and start_pill_range rules,
--- measured the way the engine measures them: the larger of the two axis
--- distances, in map squares. Each pass starts at a random start and goes
--- round the list, so a map with several clear starts does not always hand
--- out the same one.
+-- "Near" is Mac Bolo's own distance: under 16 squares for a tank and under
+-- 9 for a pillbox, measured as Mac Bolo measures it, a circle by a square
+-- root table, in pixels. A dead tank does not count. A dead pillbox does;
+-- one being carried does not.
 --
--- "Enemy" is read from lobby teams. Two seats on the same team are friends;
--- a seat on no team (team 0) is friends only with itself. An alliance made
--- during play is not seen here.
+-- "Enemy" is the game's own alliances, including those made and broken in
+-- play. A neutral pillbox counts as an enemy one. Mac Bolo judges every
+-- pillbox near a start by the owner of the first one (BOLO BUG 3), so a
+-- friendly pillbox there hides an enemy one; the mod judges each pillbox
+-- by its own owner.
 --
 -- Settings. The host turns each part on or off in the lobby's details
 -- dialog, and sets the numbers a part plays with (scenario.settings below).
--- Every part is on by default, at the numbers above, so a host who changes
--- nothing plays the same game the mod always played.
+-- Every part is on by default, at the numbers above.
 --
 --   pushback            Mac Bolo shell pushback (tank_slide_mac).
 --   push_step           its push at full armour (tank_slide_step, 28).
@@ -87,6 +95,8 @@
 --                       (pill_max_shells_at_tank, 12).
 --   tank_boxes          tank clearance (tank_collision_mac).
 --   pill_aim            pillbox aiming and massage (pill_aim_mac).
+--   pill_anger          angry pillbox fire rate
+--                       (pill_attack_min_ticks, 5).
 --   base_defence        base defence circle (pill_base_defend_shape).
 --   base_defence_radius its radius (pill_base_defend_range, 7).
 --   tank_hit_mines      tank hits do not set off mines
@@ -118,18 +128,18 @@
 scenario = {
   name = "Mac Bolo Rules",
   description = "Plays the Mac Bolo shell pushback, pillbox shell cap, " ..
-                "tank clearance, pillbox massage, base defence circle, " ..
+                "tank clearance, pillbox massage, angry pillbox fire " ..
+                "rate, base defence circle, " ..
                 "tank hits that do not set off mines and spawn starts. " ..
                 "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-10-25T05:03Z",
+  updated = "2026-10-30T13:47Z",
   kind = "mod",
   bound = false,
 
   -- What the host sets in the lobby's details dialog, in the order of the
-  -- parts above. Every default is what the mod played before it had
-  -- settings. The rules table below is built from these.
+  -- parts above. The rules table below is built from these.
   settings = {
     -- Shell pushback: the Mac Bolo push, harder on a weakened tank.
     { id = "pushback", label = "Mac Bolo shell pushback", type = "bool",
@@ -161,6 +171,10 @@ scenario = {
     { id = "pill_aim", label = "Mac Bolo pillbox aiming and massage",
       type = "bool", default = true },
 
+    -- Angry pillbox fire rate: Mac Bolo's fastest, a shot every 5 ticks.
+    { id = "pill_anger", label = "Mac Bolo angry pillbox fire rate",
+      type = "bool", default = true },
+
     -- Base defence: a circle round a shot base instead of a square.
     { id = "base_defence", label = "Mac Bolo base defence circle",
       type = "bool", default = true },
@@ -185,7 +199,7 @@ scenario = {
   },
 
   callbacks = {
-    on_choose_start = "Keeps the lobby's start for an opening tank; else picks a start with no tank or pill near, else none of the enemy's. Spawn starts off: engine picks.",
+    on_choose_start = "Keeps the lobby's start for an opening tank; else Mac Bolo's pick: a start with no tank or pill near, else none of the enemy's. Spawn starts off: engine picks.",
   },
 }
 
@@ -202,6 +216,7 @@ local PUSHBACK          = game.setting("pushback")
 local SHELL_CAP         = game.setting("shell_cap")
 local TANK_BOXES        = game.setting("tank_boxes")
 local PILL_AIM          = game.setting("pill_aim")
+local PILL_ANGER        = game.setting("pill_anger")
 local BASE_DEFENCE      = game.setting("base_defence")
 local TANK_HIT_MINES    = game.setting("tank_hit_mines")
 local SPAWN_STARTS      = game.setting("spawn_starts")
@@ -240,6 +255,11 @@ if PILL_AIM then
   rules.pill_aim_mac = 1
 end
 
+if PILL_ANGER then
+  -- Mac Bolo's fastest angry pillbox: a shot every 5 ticks.
+  rules.pill_attack_min_ticks = 5
+end
+
 if BASE_DEFENCE then
   -- 1 is a circle, 0 the classic square.
   rules.pill_base_defend_shape = 1
@@ -257,48 +277,81 @@ scenario.rules = rules
 
 -- ---- Starts --------------------------------------------------------------
 
--- The seat's lobby team, or 0 when it has none.
-local function team_of(p)
-  local slot = game.lobby_slot(p)
-  return slot and slot.team or 0
-end
+-- Mac Bolo's ranges, in pixels (16 to a square): a tank under 16 squares
+-- from a start, or a pillbox under 9, is near it.
+local TANK_NEAR = 0x100
+local PILL_NEAR = 0x90
 
--- Whether seat q is on seat p's side: p itself, or a seat on p's team.
-local function is_friend(p, my_team, q)
-  if q == p then
-    return true
+-- Mac Bolo's square root table: 16 times the root of the index, truncated.
+local SQR_ROOT = {}
+do
+  local r = 0
+  for i = 0, 255 do
+    while (r + 1) * (r + 1) <= 256 * i do
+      r = r + 1
+    end
+    SQR_ROOT[i] = r
   end
-  return my_team ~= 0 and team_of(q) == my_team
 end
 
-local function distance(x1, y1, x2, y2)
-  return math.max(math.abs(x1 - x2), math.abs(y1 - y2))
+-- A world-unit difference as Mac Bolo takes it: kept to 16 bits, signed,
+-- then shifted down to pixels, rounding towards minus infinity.
+local function to_pixels(d)
+  return math.floor(((d + 32768) % 65536 - 32768) / 16)
+end
+
+-- Mac Bolo's findrange: the distance in pixels from a point dx, dy world
+-- units away, by its square root table. The lookup's rounding is what
+-- decides a start right at the edge of a range.
+local function findrange(dx, dy)
+  local px, py = to_pixels(dx), to_pixels(dy)
+  local d2 = px * px + py * py
+
+  if d2 > 0xFFFFF then
+    return 0x7FFF
+  elseif d2 > 0xFFFF then
+    return SQR_ROOT[math.floor(d2 / 4096)] * 4
+  elseif d2 > 0xFFF then
+    return SQR_ROOT[math.floor(d2 / 256)]
+  end
+  return math.floor(SQR_ROOT[math.floor(d2 / 16)] / 4)
+end
+
+-- A map square's middle in world units, where a tank put on it stands.
+local function square_middle(m)
+  return m * 256 + 128
+end
+
+-- Whether seat q is on seat p's side, by the game's own alliances.
+local function is_friend(p, q)
+  return q == p or game.allied(p, q) == true
 end
 
 -- What is near start s for seat p: whether any tank or pill is, and whether
 -- an enemy tank or enemy pill is.
-local function survey(p, my_team, s, tank_range, pill_range)
+local function survey(p, s)
+  local sx, sy = square_middle(s.x), square_middle(s.y)
   local any, enemy = false, false
 
   for q = 0, game.max_tanks() - 1 do
     if q ~= p then
       local t = game.tank(q)
-      if t and distance(s.x, s.y, t.mx, t.my) <= tank_range then
+      if t and not t.dead and findrange(t.wx - sx, t.wy - sy) < TANK_NEAR then
         any = true
-        if not is_friend(p, my_team, q) then
+        if not is_friend(p, q) then
           enemy = true
         end
       end
     end
   end
 
-  -- A pill being carried or with no armour left is no danger.
+  -- A pillbox being carried is not on the map. A dead one still counts.
   for n = 1, game.num_pills() do
     local pill = game.pill(n)
-    if pill and not pill.in_tank and pill.armour > 0 and
-        distance(s.x, s.y, pill.x, pill.y) <= pill_range then
+    if pill and not pill.in_tank and
+        findrange(square_middle(pill.x) - sx, square_middle(pill.y) - sy) < PILL_NEAR then
       any = true
-      if pill.owner ~= game.NEUTRAL and not is_friend(p, my_team, pill.owner) then
+      if pill.owner == game.NEUTRAL or not is_friend(p, pill.owner) then
         enemy = true
       end
     end
@@ -335,25 +388,29 @@ function on_choose_start(p, lobby)
     return nil
   end
 
-  local tank_range = game.rule("start_tank_range")
-  local pill_range = game.rule("start_pill_range")
-  local my_team = team_of(p)
   local offset = math.random(count) - 1
   local no_enemy = nil
+  local first_usable = nil
 
   for i = 0, count - 1 do
     local n = (offset + i) % count + 1
     local s = game.start(n)
     if s and usable(s) then
-      local any, enemy = survey(p, my_team, s, tank_range, pill_range)
+      local any, enemy = survey(p, s)
       if not any then
-        return n                 -- pass one: nothing near at all
+        return n                 -- nothing near at all
       end
-      if not enemy and no_enemy == nil then
-        no_enemy = n             -- pass two's answer, kept in case pass one finds none
+      if not enemy then
+        no_enemy = n             -- no enemy near: Mac Bolo keeps the last
+      end
+      if first_usable == nil then
+        first_usable = n
       end
     end
   end
 
-  return no_enemy                -- nil leaves the pick to the engine
+  -- With none free of enemies, the first usable start looked at, else the
+  -- map's first start. The engine moves the tank to the nearest clear
+  -- square.
+  return no_enemy or first_usable or 1
 end
