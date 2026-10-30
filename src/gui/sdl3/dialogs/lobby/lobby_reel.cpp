@@ -64,6 +64,7 @@ extern "C" {
 #include "../../macos_pinch.h"   /* macOSPinchZoomConsume — trackpad pinch over the reel */
 #include "../../../lang.h"       /* langGetText / langGetTextFmt / MessageArgs / STR_DLGLOBBY_REEL_* / STR_LV_* */
 #include "../../../gamefront.h"  /* gameFrontHasLocalServer — only a round this process recorded plays from file */
+#include "../../../../logviewer/lv_controls_layout.h"  /* LvFineDrag / lvFineDragStep � Shift and a drag of the seek bar */
 #include "../../../../common/wb_log.h"  /* WB_LOG_INFO / WB_LOG_CAT_GUI — the transfer trace */
 #include "../../../../server/server_dedicated_log.h"  /* serverDedicatedLogLastRoundFile — the last completed round's .wbv */
 #include "../../../../bolo/public/wire_limits.h"      /* ROUND_LOG_MAX_BYTES — ceiling on the WinBolo.net download */
@@ -92,6 +93,77 @@ LobbyReelState *lobbyReel(void) {
  * snapshot and replay from there — so only the newest one in a burst is paid
  * for. Forward scrubs are incremental and run every frame. */
 #define RECAP_SCRUB_BACK_MS 90
+
+/* Shift and a drag of the seek bar: one tick of the round for each
+ * LV_CONTROLS_FINE_DRAG_PX_PER_TICK pixels, measured from an anchor so the
+ * handle does not first jump to the mouse; Shift let go goes on at the bar's
+ * own rate. The same steps as the Log Viewer's bar (lvFineDragStep). While a
+ * drag is measured ImGui only draws the slider and the value comes from
+ * here. */
+static LvFineDrag s_reelFineDrag = { false, false, 0, 0.0f, 0 };
+/* The pixels the seek bar's handle moves over, from the last frame the bar
+ * was drawn. */
+static float s_reelSeekUsablePx = 0.0f;
+
+/* Before the seek slider is drawn: sets or moves the anchor, and puts the
+ * value the drag gives in s_reel.seekRatio. curMs and totalMs are the
+ * presented window's. True when the slider is to be drawn read-only in this
+ * frame. */
+static bool lobbyReelFineDragUpdate(ImGuiID seekId, uint32_t curMs,
+                                    uint32_t totalMs) {
+    const ImGuiIO &io = ImGui::GetIO();
+    const ImGuiContext &g = *ImGui::GetCurrentContext();
+    if (totalMs == 0) {
+        s_reelFineDrag.on = false;
+        return false;
+    }
+    if (ImGui::GetActiveID() != seekId) {
+        s_reelFineDrag.on = false;
+        /* A press on the bar with Shift down starts a fine drag: it must not
+         * first put the handle where the press was. Ctrl and a press is the
+         * slider's text box, left alone. */
+        return io.KeyShift && !io.KeyCtrl;
+    }
+    if (g.ActiveIdSource != ImGuiInputSource_Mouse ||
+        ImGui::TempInputIsActive(seekId)) {
+        s_reelFineDrag.on = false;
+        return false;
+    }
+    if (io.MouseDown[0]) {
+        /* The reel is where the handle is: no seek is owed. */
+        const bool atReel =
+            s_reel.seeking && s_reel.seekRatio == s_reel.seekApplied;
+        uint32_t handleMs = curMs;
+        if (s_reel.seeking) {
+            handleMs = (uint32_t)(s_reel.seekRatio * (float)totalMs);
+        }
+        if (handleMs > totalMs) handleMs = totalMs;
+        bool anchored = false;
+        if (lvFineDragStep(&s_reelFineDrag, io.KeyShift, io.MousePos.x,
+                           handleMs, 0u, totalMs, s_reelSeekUsablePx,
+                           &anchored)) {
+            s_reel.seekRatio =
+                (float)s_reelFineDrag.targetMs / (float)totalMs;
+            if (anchored && atReel) {
+                /* The same time written as another fraction: still no seek
+                 * owed, or the scrub would go back to where it is. */
+                s_reel.seekApplied = s_reel.seekRatio;
+            }
+        }
+    }
+    /* On the frame the button is let go the value stays what it was. */
+    return s_reelFineDrag.on;
+}
+
+/* The seek the scrub owes: the exact time while the drag is measured from an
+ * anchor, else the slider's fraction. */
+static void lobbyReelSeekApply(void) {
+    if (s_reelFineDrag.on) {
+        lvEmbedSeekToTime(s_reelFineDrag.targetMs);
+    } else {
+        lvEmbedSeekRatio(s_reel.seekRatio);
+    }
+}
 
 #if BOLO_REEL_WBN_FETCH
 /* Where a round shared through WinBolo.net comes from. A host registered with
@@ -1456,6 +1528,12 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
                  curSecs / 60u, curSecs % 60u);
     }
     ImGui::PushItemWidth(-1);
+    /* Shift and a drag: the value comes from lobbyReelFineDragUpdate and the
+     * slider is only drawn. */
+    ImGuiSliderFlags seekFlags = ImGuiSliderFlags_NoRoundToFormat;
+    if (lobbyReelFineDragUpdate(ImGui::GetID("##ReelSeek"), curMs, totalMs)) {
+        seekFlags |= ImGuiSliderFlags_ReadOnly;
+    }
 #if BOLO_RECAP_CLIP_GIF
     /* The GIF length marker is drawn over this slider and is submitted after
      * it, so the slider lets it take the hover where the two meet. */
@@ -1467,13 +1545,22 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
      * parses back to 0 and pins every seek to the start of the log. */
     const bool seekChanged =
         ImGui::SliderFloat("##ReelSeek", &s_reel.seekRatio, 0.0f, 1.0f,
-                           seekLabel, ImGuiSliderFlags_NoRoundToFormat);
+                           seekLabel, seekFlags);
+    {
+        /* As ImGui's own slider has it: two pixels at each end, and the
+         * handle is all on the bar. */
+        const float bar = ImGui::GetItemRectSize().x - 4.0f;
+        const float grab = ImGui::GetStyle().GrabMinSize;
+        s_reelSeekUsablePx = bar - ((grab < bar) ? grab : bar);
+    }
 #if BOLO_RECAP_CLIP_GIF
     /* The slider's frame, for the GIF length marker drawn over it below. */
     const ImVec2 seekMin = ImGui::GetItemRectMin();
     const ImVec2 seekMax = ImGui::GetItemRectMax();
 #endif
-    if (seekChanged) {
+    /* A read-only slider reports no change: a drag that is measured from an
+     * anchor starts the scrub by being held. */
+    if (seekChanged || (s_reelFineDrag.on && ImGui::IsItemActive())) {
         if (!s_reel.seeking) {
             /* Freeze playback for the scrub instead of letting every applied
              * seek pause and resume it — lvEmbedSeekRatio does that by
@@ -1510,7 +1597,7 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
             apply = (nowMs - s_reel.seekAppliedMs >= RECAP_SCRUB_BACK_MS);
         }
         if (apply) {
-            lvEmbedSeekRatio(s_reel.seekRatio);
+            lobbyReelSeekApply();
             s_reel.seekApplied   = s_reel.seekRatio;
             s_reel.seekAppliedMs = nowMs;
         }
@@ -1523,10 +1610,13 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
         /* Land exactly on the dropped value. A no-op when the last live apply
          * already got there — a forward seek to the current time decodes
          * nothing. */
-        lvEmbedSeekRatio(s_reel.seekRatio);
+        lobbyReelSeekApply();
         s_reel.seekApplied = s_reel.seekRatio;
         if (s_reel.seekWasPlaying) lvEmbedPlay();
         s_reel.seekWasPlaying = false;
+    }
+    if (!ImGui::IsItemActive()) {
+        s_reelFineDrag.on = false;
     }
 #if BOLO_RECAP_CLIP_GIF
     /* After the slider's own state is read above: from here the last item is
