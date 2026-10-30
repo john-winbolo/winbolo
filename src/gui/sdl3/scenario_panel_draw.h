@@ -534,7 +534,11 @@ static inline void scnTextLineAcross(float srcW, float lineW, float share,
  *  Where a desktop scenario panel opens, and how big, when
  *  the player has saved neither: its top-left corner at the
  *  game view's top-left corner, in by inset on both sides,
- *  at a percent picked from the cardinals.
+ *  at a percent picked from the cardinals. The corner is
+ *  never above minTop: the panel's move bar sits directly
+ *  above the panel, so minTop is the lowest the menu bar
+ *  reaches plus the bar's height, and the bar is then never
+ *  under the menu bar or off the top of the main window.
  *
  *  The percent is the smallest cardinal from 100 to
  *  SCN_PANEL_DEFAULT_SCALE_MAX that reaches
@@ -555,6 +559,7 @@ static inline void scnTextLineAcross(float srcW, float lineW, float share,
  *  displayW/H    - the display, in render pixels
  *  baseSide      - the panel's side at 100 percent
  *  inset         - the gap from the view's corner
+ *  minTop        - the least the top-left's y may be
  *  cardinals     - the cardinal percents, smallest first
  *  count         - how many cardinals there are
  *  outX/outY     - receive the panel's top-left
@@ -564,13 +569,14 @@ static inline bool scnPanelDefaultPlace(float viewX0, float viewY0,
                                         float viewX1, float viewY1,
                                         float displayW, float displayH,
                                         float baseSide, float inset,
+                                        float minTop,
                                         const int *cardinals, size_t count,
                                         float *outX, float *outY,
                                         int *outPercent) {
     const float viewW = viewX1 - viewX0;
     const float viewH = viewY1 - viewY0;
     const float x     = viewX0 + inset;
-    const float y     = viewY0 + inset;
+    const float y     = (viewY0 + inset < minTop) ? minTop : viewY0 + inset;
     float       room;
     int         best = -1;
     size_t      i;

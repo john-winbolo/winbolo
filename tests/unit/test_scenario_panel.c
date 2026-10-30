@@ -1109,8 +1109,9 @@ int run_scenario_status_line(void) {
 /* The desktop panel's default place and size (scnPanelDefaultPlace): the
  * game view's top-left corner in by the inset, at the smallest cardinal
  * from 100 to 200 that reaches 256 pixels, or the largest that fits in
- * 0.8 of the view's shorter side and in the display. Every number is
- * worked out by hand beside it. */
+ * 0.8 of the view's shorter side and in the display, and never above
+ * minTop, which keeps room for the move bar above the panel. Every number
+ * is worked out by hand beside it. */
 int run_scenario_panel_default_place(void) {
     static const int cardinals[] = SCN_PANEL_CARDINALS;
     const size_t     count       = sizeof(cardinals) / sizeof(cardinals[0]);
@@ -1121,7 +1122,7 @@ int run_scenario_panel_default_place(void) {
        is 0.8 * 240 = 192. 125 is 160 and 150 is 192, which fits; 200 is
        256, which does not. So 150, at (14, 24). */
     UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
-                                   480.0f, 128.0f, 4.0f, cardinals, count,
+                                   480.0f, 128.0f, 4.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
     UT_ASSERT(pct == 150);
     UT_ASSERT(x == 14.0f);
@@ -1130,7 +1131,7 @@ int run_scenario_panel_default_place(void) {
     /* Zoom 2: a 480 view, panel 256 at 100, which already reaches 256: 100,
        at (20 + 8, 40 + 8). */
     UT_ASSERT(scnPanelDefaultPlace(20.0f, 40.0f, 500.0f, 520.0f, 1280.0f,
-                                   960.0f, 256.0f, 8.0f, cardinals, count,
+                                   960.0f, 256.0f, 8.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
     UT_ASSERT(pct == 100);
     UT_ASSERT(x == 28.0f);
@@ -1138,14 +1139,14 @@ int run_scenario_panel_default_place(void) {
 
     /* Zoom 3: panel 384 at 100, past 256 already: 100. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 720.0f, 720.0f, 1920.0f,
-                                   1080.0f, 384.0f, 12.0f, cardinals, count,
+                                   1080.0f, 384.0f, 12.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
     UT_ASSERT(pct == 100);
 
     /* Custom zoom 1.25: a 300 view, panel 160 at 100, room 240. 150 is 240,
        which fits but is under 256; 200 is 320, which does not fit: 150. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 300.0f, 300.0f, 1600.0f,
-                                   1200.0f, 160.0f, 5.0f, cardinals, count,
+                                   1200.0f, 160.0f, 5.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
     UT_ASSERT(pct == 150);
     UT_ASSERT(x == 5.0f);
@@ -1154,7 +1155,7 @@ int run_scenario_panel_default_place(void) {
     /* Zoom 1 in a display only 180 wide: from x 14 that leaves 166. 125 is
        160, which fits; 150 is 192, which does not: 125. */
     UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 180.0f,
-                                   400.0f, 128.0f, 4.0f, cardinals, count,
+                                   400.0f, 128.0f, 4.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
     UT_ASSERT(pct == 125);
 
@@ -1163,27 +1164,53 @@ int run_scenario_panel_default_place(void) {
     x = y = -7.0f;
     pct = -7;
     UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 130.0f,
-                                    400.0f, 128.0f, 4.0f, cardinals, count,
+                                    400.0f, 128.0f, 4.0f, 0.0f, cardinals, count,
                                     &x, &y, &pct));
     UT_ASSERT(x == -7.0f && y == -7.0f && pct == -7);
 
     /* No view yet, or no zoom size: false. */
     UT_ASSERT(!scnPanelDefaultPlace(0.0f, 0.0f, 0.0f, 0.0f, 640.0f, 480.0f,
-                                    128.0f, 4.0f, cardinals, count, &x, &y,
+                                    128.0f, 4.0f, 0.0f, cardinals, count, &x, &y,
                                     &pct));
     UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
-                                    480.0f, 0.0f, 4.0f, cardinals, count,
+                                    480.0f, 0.0f, 4.0f, 0.0f, cardinals, count,
                                     &x, &y, &pct));
 
     /* No cardinal from 100 up: false. */
     {
         static const int under100[] = {25, 50, 75};
         UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
-                                        480.0f, 128.0f, 4.0f, under100, 3, &x,
+                                        480.0f, 128.0f, 4.0f, 0.0f, under100, 3, &x,
                                         &y, &pct));
     }
 
-    /* The cardinals the default picks from are ones the resize drag snaps
+        /* minTop: the move bar above the panel is 22 high under a menu bar 22
+       high, so the top may be no less than 44. The view's corner gives 24,
+       so the panel goes down to 44. The room from there is still 192
+       (the display leaves 436): 150, at (14, 44). */
+    UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                   480.0f, 128.0f, 4.0f, 44.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 150);
+    UT_ASSERT(x == 14.0f);
+    UT_ASSERT(y == 44.0f);
+
+    /* A minTop under the view's corner changes nothing: (14, 24). */
+    UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                   480.0f, 128.0f, 4.0f, 24.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(y == 24.0f);
+
+    /* The room is measured from the lowered top: a display 250 high leaves
+       250 - 100 = 150 below a top of 100. 125 is 160, which does not fit:
+       100, at (14, 100). */
+    UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                   250.0f, 128.0f, 4.0f, 100.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 100);
+    UT_ASSERT(y == 100.0f);
+
+/* The cardinals the default picks from are ones the resize drag snaps
        to: 100 and 150 are in the list. */
     {
         bool have100 = false, have150 = false;

@@ -4451,6 +4451,11 @@ struct ScnPanelView {
 
     /* ImGui is holding a position for the window. */
     bool   placed;
+    /* Where the panel square's top-left corner is, on screen, as the last
+       frame left it. The move bar is above this corner, and the ImGui
+       window starts the bar's height higher. A resize keeps this corner
+       where it is. */
+    float  atX, atY;
     /* The resize handle was being dragged last frame, and the side it is on
        before the snap. */
     bool   resizing;
@@ -5334,6 +5339,21 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
             sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1);
     }
 
+    /* The move bar sits directly above the square, so the default square's
+       top is kept at least the bar's height below the menu bar's bottom
+       (or the main window's top, with no menu bar). The bar is never taller
+       than scnPanelButtonSide gives a very large square, so that height is
+       the room kept. The menu bar is submitted earlier in the frame, so its
+       window is up to date here. */
+    float menuBottom = 0.0f;
+    {
+        ImGuiWindow *menu = ImGui::FindWindowByName("##MainMenuBar");
+        if (menu != nullptr && menu->Active && !menu->Hidden) {
+            menuBottom = menu->Pos.y + menu->Size.y;
+        }
+    }
+    const float defTop = menuBottom + scnPanelButtonSide(FLT_MAX);
+
     /* The default, used for whichever of size and place the player has not
        saved: the top-left of the game view at a size picked to be readable
        (scnPanelDefaultPlace). When that does not fit, the older default:
@@ -5344,16 +5364,18 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     const bool atLeft =
         haveView &&
         scnPanelDefaultPlace(rx0, ry0, rx1, ry1, display.x, display.y,
-                             baseSide, inset, scnPanelCardinals,
+                             baseSide, inset, defTop, scnPanelCardinals,
                              sizeof(scnPanelCardinals) / sizeof(int),
                              &leftX, &leftY, &defPct);
     if (!atLeft) defPct = 100;
 
     /* What the drag may reach: big enough for its handles, small enough for
-       the display, and inside the percent range the preference holds. */
+       the display with the bar above it, and inside the percent range the
+       preference holds. */
     float sideMin = ImMax(SCN_PANEL_MIN_PX,
                           baseSide * (float)SCN_PANEL_SCALE_MIN / 100.0f);
-    float sideMax = ImMin(ImMin(display.x, display.y),
+    float sideMax = ImMin(ImMin(display.x,
+                                display.y - scnPanelButtonSide(display.y)),
                           baseSide * (float)SCN_PANEL_SCALE_MAX / 100.0f);
     if (sideMax < SCN_PANEL_MIN_PX) sideMax = SCN_PANEL_MIN_PX;
     if (sideMin > sideMax) sideMin = sideMax;
@@ -5379,9 +5401,18 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     if (side < sideMin) side = sideMin;
     if (side > sideMax) side = sideMax;
 
+    /* The bar's height and the grip's side. Both come from this frame's
+       side only, so they are known before Begin. */
+    const float handle    = ImMin(SCN_PANEL_HANDLE_PX, side * 0.25f);
+    const float btn       = scnPanelButtonSide(side);
+    const bool  withClose = scnPanelCanReopen();
+    const float btnsW     = withClose ? btn * 2.0f : btn;
+
     /* Where it goes when nothing has been saved: the top-left of the game
        view, inset a little, or the top-right when the default size did not
-       fit there; below any view already placed there. */
+       fit there; below any view already placed there, with room between
+       them for this one's bar. Never so high that the bar is under the menu
+       bar. */
     float defX = inset;
     float defY = inset;
     if (atLeft) {
@@ -5391,34 +5422,46 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
         defX = rx1 - side - inset;
         defY = ry0 + inset;
     }
-    defY += (float)stack * (side + inset);
+    if (defY < defTop) defY = defTop;
+    defY += (float)stack * (side + inset + btn);
 
-    /* A position saved on a larger display is brought inside this one. */
+    /* x, y and scale, and the saved gameFrontScnPanel* settings, are the
+       panel square's. The ImGui window is btn taller and starts btn
+       higher: the bar is the strip above the square, its bottom edge on the
+       square's top edge, so it covers none of the script's drawing.
+       A position saved on a larger display is brought inside this one,
+       with room above the square for the bar. */
     float wantX = (v.x >= 0) ? (float)v.x : defX;
     float wantY = (v.y >= 0) ? (float)v.y : defY;
     if (wantX > display.x - side) wantX = display.x - side;
     if (wantY > display.y - side) wantY = display.y - side;
     if (wantX < 0.0f) wantX = 0.0f;
-    if (wantY < 0.0f) wantY = 0.0f;
+    if (wantY < btn) wantY = btn;
 
     if (!v.placed) {
-        ImGui::SetNextWindowPos(ImVec2(wantX, wantY), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(wantX, wantY - btn), ImGuiCond_Always);
         v.placed = true;
+        v.atX    = wantX;
+        v.atY    = wantY;
+    } else if (v.resizing) {
+        /* A resize keeps the square's top-left corner where it is. The
+           bar's height can change with the side, so the window is placed
+           from that corner each frame of the resize. */
+        ImGui::SetNextWindowPos(ImVec2(v.atX, v.atY - btn), ImGuiCond_Always);
     }
-    ImGui::SetNextWindowSize(ImVec2(side, side), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(side, side + btn), ImGuiCond_Always);
 
     float gearX = 0.0f;
     float gearY = 0.0f;
 
-    /* No padding and no border, so the window's rect is the square the list
-       is drawn in; the backing is black at the player's background
-       opacity. NoMove and NoResize: the bar and the corner
-       grip are the only things that move or resize it. */
+    /* No padding and no border. The window has no background of its own:
+       the backing, black at the player's background opacity, is drawn
+       below on the square only, so the strip above it for the bar stays
+       clear while the bar is hidden. NoMove and NoResize: the bar and the
+       corner grip are the only things that move or resize it. */
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(
-        ImGuiCol_WindowBg,
-        IM_COL32(0, 0, 0, scnBackingAlpha(v.bgPct)));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
     char winId[32];
     SDL_snprintf(winId, sizeof(winId), "##scenariopanel%d", owner);
     const bool open = ImGui::Begin(winId, nullptr,
@@ -5437,10 +5480,9 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
         const ImVec2 pos = ImGui::GetWindowPos();
         ImDrawList *dl   = ImGui::GetWindowDrawList();
 
-        const float handle    = ImMin(SCN_PANEL_HANDLE_PX, side * 0.25f);
-        const float btn       = scnPanelButtonSide(side);
-        const bool  withClose = scnPanelCanReopen();
-        const float btnsW     = withClose ? btn * 2.0f : btn;
+        /* The square's top-left corner, the bar's height below the
+           window's. */
+        const ImVec2 sq(pos.x, pos.y + btn);
 
         /* The bar and both grips are submitted every frame, drawn or not: an
            invisible button that stops being submitted stops being the
@@ -5461,6 +5503,9 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
             }
         }
 
+        /* The gear and the X sit on the bar, and the settings open from
+           the bar's top edge, as they did when the bar was inside the
+           square. */
         const ScnPanelButtons b = scnPanelSubmitButtons(pos, side, btn, withClose);
         gearX = b.gearX;
         gearY = pos.y;
@@ -5468,7 +5513,7 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
         if (b.closeClicked) scnPanelRequestClose(owner, false);
 
         ImGui::SetCursorScreenPos(
-            ImVec2(pos.x + side - handle, pos.y + side - handle));
+            ImVec2(sq.x + side - handle, sq.y + side - handle));
         ImGui::InvisibleButton("##scnpanelresize", ImVec2(handle, handle));
         const bool resizeHot    = ImGui::IsItemHovered();
         const bool resizeActive = ImGui::IsItemActive();
@@ -5499,7 +5544,8 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
         /* The bar, the buttons and the grip show while the pointer is on
            the panel, for a while after it leaves (a touch has no hover),
            while one of them is being dragged, and while the settings window
-           is up. */
+           is up. The strip above the square counts as the panel only while
+           the bar is up: see the hit test hole below. */
         const Uint64 now = SDL_GetTicks();
         if (ImGui::IsWindowHovered(
                 ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
@@ -5510,25 +5556,47 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
                                     s_scnCloseAskOwner == owner;
 
         /* Kept inside the main window, and saved through the debounced
-           window-settings path when it moves. */
+           window-settings path when it moves. keepX/keepY are the square's
+           top-left corner: the window's less the bar. The bar is kept on
+           screen as well, so the square's top is never less than btn from
+           the main window's top. */
         const ImVec2 moved = ImGui::GetWindowPos();
-        float keepX = moved.x, keepY = moved.y;
+        float keepX = moved.x, keepY = moved.y + btn;
         if (keepX > display.x - side) keepX = display.x - side;
         if (keepY > display.y - side) keepY = display.y - side;
         if (keepX < 0.0f) keepX = 0.0f;
-        if (keepY < 0.0f) keepY = 0.0f;
-        if (keepX != moved.x || keepY != moved.y) {
-            ImGui::SetWindowPos(ImVec2(keepX, keepY));
+        if (keepY < btn) keepY = btn;
+        if (keepX != moved.x || keepY - btn != moved.y) {
+            ImGui::SetWindowPos(ImVec2(keepX, keepY - btn));
         }
+        v.atX = keepX;
+        v.atY = keepY;
         if ((int)keepX != v.x || (int)keepY != v.y) {
             v.x = (int)keepX;
             v.y = (int)keepY;
             scnPanelPersistLayout(v);
         }
 
+        /* While the bar is hidden, the strip above the square is a hole in
+           the window for the hit test: the pointer there does not bring the
+           bar up, and a click or a tap there goes to the game, as it would
+           with no panel. ImGui finds the hovered window in NewFrame, from
+           the hole the last frame left, and sdl3ImguiMouseOverWindow honours
+           the same hole. The square itself is never in the hole, so it takes
+           the mouse as it always has. Begin clears the hole each frame. */
+        if (!handlesVisible) {
+            ImGui::SetWindowHitTestHole(ImGui::GetCurrentWindow(),
+                                        ImGui::GetWindowPos(),
+                                        ImVec2(side, btn));
+        }
+
+        /* The backing, on the square only. */
+        dl->AddRectFilled(sq, ImVec2(sq.x + side, sq.y + side),
+                          IM_COL32(0, 0, 0, scnBackingAlpha(v.bgPct)));
+
         /* The script's drawing, at the side the square is on screen and the
-           player's text opacity. No backing from the drawer: the window
-           background above is this panel's backing. */
+           player's text opacity. No backing from the drawer: the backing
+           above is this panel's. */
         const ScnPanelList *list = scnPanelListOf(cs, owner);
         if (list != nullptr && list->count > 0) {
             ScnPanelDrawEnv env;
@@ -5538,38 +5606,41 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
             env.scale      = side / (float)SCN_PANEL_UNITS;
             env.alpha      = (float)v.textPct / 100.0f;
             env.tiles      = (void *)sdl3DrawGetTilesTexture();
-            scnPanelDraw(list, pos.x, pos.y, &env);
+            scnPanelDraw(list, sq.x, sq.y, &env);
         }
 
-        /* The border on every frame, a shade brighter while a resize sits on
-           a cardinal size. A pixel in from the far corner, since the draw
-           list is clipped to the window's rect. */
-        dl->AddRect(pos, ImVec2(pos.x + side - 1.0f, pos.y + side - 1.0f),
+        /* The border round the square on every frame, a shade brighter
+           while a resize sits on a cardinal size. A pixel in from the far
+           corner, since the draw list is clipped to the window's rect. */
+        dl->AddRect(sq, ImVec2(sq.x + side - 1.0f, sq.y + side - 1.0f),
                     snapped ? IM_COL32(140, 220, 255, 110)
                             : IM_COL32(255, 255, 255, 40));
 
         if (handlesVisible) {
-            /* The title bar, grey, right across the top: the drag area. The
-               buttons sit on its right end with no plate of their own. */
+            /* The title bar, grey, right across the strip above the square:
+               the drag area. Its dark line is on its own last row of
+               pixels, so it does not cover the square either. The buttons
+               sit on its right end with no plate of their own. */
             const ImU32 barCol = (moveHot || moveActive)
                                      ? IM_COL32(150, 150, 150, 235)
                                      : IM_COL32(112, 112, 112, 205);
             dl->AddRectFilled(pos, ImVec2(pos.x + side - 1.0f, pos.y + btn),
                               barCol);
-            dl->AddLine(ImVec2(pos.x, pos.y + btn),
-                        ImVec2(pos.x + side - 1.0f, pos.y + btn),
+            dl->AddLine(ImVec2(pos.x, pos.y + btn - 1.0f),
+                        ImVec2(pos.x + side - 1.0f, pos.y + btn - 1.0f),
                         IM_COL32(0, 0, 0, 90));
 
             scnPanelDrawButtons(dl, pos, side, btn, withClose,
                                 s_iconScnPanelGear[activeIconSlot()], b,
                                 v.settingsOpen);
 
-            /* The resize grip: three diagonals stepping out of the corner. */
+            /* The resize grip: three diagonals stepping out of the square's
+               bottom-right corner. */
             const ImU32 resizeCol = (resizeHot || resizeActive)
                                         ? IM_COL32(255, 255, 255, 200)
                                         : IM_COL32(255, 255, 255, 110);
-            const float brX = pos.x + side - 1.0f;
-            const float brY = pos.y + side - 1.0f;
+            const float brX = sq.x + side - 1.0f;
+            const float brY = sq.y + side - 1.0f;
             for (int i = 1; i <= 3; i++) {
                 const float off = handle * (float)i / 3.5f;
                 dl->AddLine(ImVec2(brX - off, brY), ImVec2(brX, brY - off),
