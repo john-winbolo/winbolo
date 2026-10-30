@@ -81,9 +81,23 @@ static inline unsigned char lvTeamColourPref(int team, int value) {
 #define LV_TEAM_COLOUR_MARK_KEY    "Team Colours Version"
 #define LV_TEAM_COLOUR_MARK        "2"
 
+/* Nonzero when val, the stored LV_TEAM_COLOUR_MARK_KEY, is marked: its
+ * number is 2 or more. A later version can raise LV_TEAM_COLOUR_MARK, and
+ * a file marked "2" still reads as marked. No digits, or a number below 2,
+ * is not marked. Every reader of the preferences calls this. */
+static inline int lvTeamColourMarked(const char *val) {
+    int n = 0;
+    if (val == 0 || *val < '0' || *val > '9') return 0;
+    while (*val >= '0' && *val <= '9') {
+        if (n < 1000) n = n * 10 + (*val - '0');
+        val++;
+    }
+    return n >= 2;
+}
+
 /* A value read from the preferences for a team, or for Neutral (any number
- * that is not a team). marked is nonzero when LV_TEAM_COLOUR_MARK_KEY holds
- * LV_TEAM_COLOUR_MARK. Every reader of the preferences calls this. */
+ * that is not a team). marked is nonzero when lvTeamColourMarked is true
+ * for LV_TEAM_COLOUR_MARK_KEY. Every reader of the preferences calls this. */
 static inline unsigned char lvTeamColourStoredPref(int team, int value, int marked) {
     if (!marked && value == (int)lvTeamColourOldDefault(team) &&
         lvTeamColourOldDefault(team) != lvTeamColourDefault(team)) {
