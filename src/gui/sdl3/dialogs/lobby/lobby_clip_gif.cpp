@@ -458,7 +458,7 @@ static void lobbyClipGifSave(MsfGifResult res) {
 }
 #endif
 
-/* The gallery as the game shows it (lobby_reel.h): drawn with the game's
+/* The gallery as the game shows it (lobby_internal.h): drawn with the game's
  * renderer and window, with the GIFs from the reel's game listed first. */
 #if BOLO_CLIP_GIF_GALLERY
 void lobbyClipGifGalleryOpen(void) {
@@ -471,10 +471,6 @@ void lobbyClipGifGalleryRender(float s) {
     host.window   = sdl3DrawGetWindow();
     host.gameId   = lobbyReel()->gameId;
     clipGifGalleryRender(s, &host);
-}
-
-void lobbyClipGifGalleryShutdown(void) {
-    clipGifGalleryShutdown();
 }
 #endif
 

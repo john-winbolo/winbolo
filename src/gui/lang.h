@@ -3658,7 +3658,7 @@
 /* The replay's recording mode button, which shows the GIF controls */
 #define STR_REEL_RECORD_MODE_TIP                 3150
 
-/* The GIF gallery's game groups, path link and delete, and its welcome button */
+/* The GIF gallery's game groups, path link and delete */
 #define STR_CLIPGIF_THIS_GAME                    3151
 #define STR_CLIPGIF_EARLIER_GAMES                3152
 #define STR_CLIPGIF_SHOW_IN_FOLDER_TIP           3153
@@ -3666,7 +3666,6 @@
 #define STR_CLIPGIF_DELETE                       3155
 #define STR_CLIPGIF_DELETE_CONFIRM               3156
 #define STR_CLIPGIF_DELETE_FAILED                3157
-#define STR_DLGWELCOME_CLIPS                     3158
 
 /* The Log Viewer's GIFs and its Clips window */
 #define STR_LV_WIN_CLIPS                         3163

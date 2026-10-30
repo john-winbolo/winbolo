@@ -2913,4 +2913,3 @@ STR_CLIPGIF_SHOW_FAILED=Impossibile aprire la cartella.
 STR_CLIPGIF_DELETE=Elimina
 STR_CLIPGIF_DELETE_CONFIRM=Eliminare questa GIF? L'operazione non può essere annullata.
 STR_CLIPGIF_DELETE_FAILED=Impossibile eliminare la GIF.
-STR_DLGWELCOME_CLIPS=Clip

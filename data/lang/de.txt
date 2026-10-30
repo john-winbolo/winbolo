@@ -2911,4 +2911,3 @@ STR_CLIPGIF_SHOW_FAILED=Der Ordner konnte nicht geöffnet werden.
 STR_CLIPGIF_DELETE=Löschen
 STR_CLIPGIF_DELETE_CONFIRM=Dieses GIF löschen? Das kann nicht rückgängig gemacht werden.
 STR_CLIPGIF_DELETE_FAILED=Das GIF konnte nicht gelöscht werden.
-STR_DLGWELCOME_CLIPS=Clips

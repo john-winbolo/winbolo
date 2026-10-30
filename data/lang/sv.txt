@@ -2913,4 +2913,3 @@ STR_CLIPGIF_SHOW_FAILED=Mappen kunde inte öppnas.
 STR_CLIPGIF_DELETE=Ta bort
 STR_CLIPGIF_DELETE_CONFIRM=Ta bort den här GIF:en? Det går inte att ångra.
 STR_CLIPGIF_DELETE_FAILED=GIF:en kunde inte tas bort.
-STR_DLGWELCOME_CLIPS=Klipp

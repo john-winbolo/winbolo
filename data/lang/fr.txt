@@ -2911,4 +2911,3 @@ STR_CLIPGIF_SHOW_FAILED=Le dossier n'a pas pu être ouvert.
 STR_CLIPGIF_DELETE=Supprimer
 STR_CLIPGIF_DELETE_CONFIRM=Supprimer ce GIF ? Cette action est irréversible.
 STR_CLIPGIF_DELETE_FAILED=Le GIF n'a pas pu être supprimé.
-STR_DLGWELCOME_CLIPS=Clips

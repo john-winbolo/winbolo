@@ -1425,7 +1425,6 @@ static const LangEntry langTable[] = {
     {3155, "Delete"},
     {3156, "Delete this GIF? It cannot be undone."},
     {3157, "The GIF could not be deleted."},
-    {3158, "Clips"},
     {3163, "Clips"},
     {3164, "No GIFs yet. Turn on Recording Mode in the Action menu, then use the GIF button to make one from the map."},
     {3360, "Crop"},

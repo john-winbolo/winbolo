@@ -48,21 +48,6 @@ void lobbyReelRenderStandalone(ImVec2 rect);
 bool lobbyReelOpenSpectator(ImVec2 rect);
 void lobbyReelRenderSpectator(ImVec2 rect);
 
-/* The GIF gallery's window (clip_gif_gallery.cpp), which the welcome
- * screen's Clips button also opens, as the game shows it: with the game's
- * renderer and window, and the reel's game listed first. Built where
- * BOLO_CLIP_GIF_GALLERY in lobby_internal.h is on: not on iOS, Android or the
- * web. Defined in lobby_clip_gif.cpp. */
-#if !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__) && !defined(__ANDROID__)
-void lobbyClipGifGalleryOpen(void);
-/* The window, drawn once per frame while it is open, inside the ImGui frame
- * of the screen that shows it. */
-void lobbyClipGifGalleryRender(float s);
-/* Leaving the lobby or the welcome screen: frees the preview's frames and
- * texture and drops a decode still running. */
-void lobbyClipGifGalleryShutdown(void);
-#endif
-
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
 /* Hand every polled event over; the reel keeps the pinch ones for its zoom. */
 void lobbyReelPinchEvent(const SDL_Event *ev);

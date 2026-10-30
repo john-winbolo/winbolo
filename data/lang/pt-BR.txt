@@ -2912,4 +2912,3 @@ STR_CLIPGIF_SHOW_FAILED=Não foi possível abrir a pasta.
 STR_CLIPGIF_DELETE=Excluir
 STR_CLIPGIF_DELETE_CONFIRM=Excluir este GIF? Isso não pode ser desfeito.
 STR_CLIPGIF_DELETE_FAILED=Não foi possível excluir o GIF.
-STR_DLGWELCOME_CLIPS=Clipes

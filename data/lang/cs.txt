@@ -2909,4 +2909,3 @@ STR_CLIPGIF_SHOW_FAILED=Složku se nepodařilo otevřít.
 STR_CLIPGIF_DELETE=Smazat
 STR_CLIPGIF_DELETE_CONFIRM=Smazat tento GIF? Nelze to vrátit zpět.
 STR_CLIPGIF_DELETE_FAILED=GIF se nepodařilo smazat.
-STR_DLGWELCOME_CLIPS=Klipy

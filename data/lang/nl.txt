@@ -2911,4 +2911,3 @@ STR_CLIPGIF_SHOW_FAILED=De map kon niet worden geopend.
 STR_CLIPGIF_DELETE=Verwijderen
 STR_CLIPGIF_DELETE_CONFIRM=Deze GIF verwijderen? Dit kan niet ongedaan worden gemaakt.
 STR_CLIPGIF_DELETE_FAILED=De GIF kon niet worden verwijderd.
-STR_DLGWELCOME_CLIPS=Clips

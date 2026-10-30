@@ -2911,4 +2911,3 @@ STR_CLIPGIF_SHOW_FAILED=Не вдалося відкрити теку.
 STR_CLIPGIF_DELETE=Видалити
 STR_CLIPGIF_DELETE_CONFIRM=Видалити цей GIF? Це не можна скасувати.
 STR_CLIPGIF_DELETE_FAILED=Не вдалося видалити GIF.
-STR_DLGWELCOME_CLIPS=Кліпи

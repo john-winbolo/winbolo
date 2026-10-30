@@ -2912,4 +2912,3 @@ STR_CLIPGIF_SHOW_FAILED=Не удалось открыть папку.
 STR_CLIPGIF_DELETE=Удалить
 STR_CLIPGIF_DELETE_CONFIRM=Удалить этот GIF? Это нельзя отменить.
 STR_CLIPGIF_DELETE_FAILED=Не удалось удалить GIF.
-STR_DLGWELCOME_CLIPS=Клипы
