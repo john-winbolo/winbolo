@@ -2781,7 +2781,8 @@ static void mapOverviewPanelRenderOffscreen(ClientSim *cs) {
     SDL_Texture *prevTarget = SDL_GetRenderTarget(s_renderer);
     overviewViewRenderOffscreen(s_overviewView, s_renderer,
                                 sdl3DrawGetTilesTexture(),
-                                sdl3DrawGetSheetScale(), ovCross,
+                                sdl3DrawGetSheetScale(), NULL, NULL,
+                                ovCross,
                                 s_mapOverviewPanelW, s_mapOverviewPanelH,
                                 s_overviewSnapshot, false);
     SDL_SetRenderTarget(s_renderer, prevTarget);
