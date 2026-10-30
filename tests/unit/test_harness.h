@@ -2208,6 +2208,11 @@ int run_map_colours_markers(void);
 int run_map_colours_palette_key(void);
 int run_map_colours_team(void);
 
+/* The marker shapes (test_map_markers.c): how far the tank triangle reaches
+ * past the square its sprite would fill, which the log viewer's repaint
+ * marks. */
+int run_map_markers_tank_reach(void);
+
 int run_stall_advances_processed_tick(void);
 int run_turn_release_no_overshoot(void);
 int run_turn_gap_preserves_ramp(void);

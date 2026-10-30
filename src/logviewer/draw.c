@@ -1557,13 +1557,17 @@ void lv_drawMarkRedraw(int mx, int my, int px, int py, int itemSize) {
  * mx, my covers. lv_drawMarkRedraw only reaches the next square over, which
  * is one short for a tank: it is drawn two pixels further in than its offset,
  * so at an offset of 15 it reaches one pixel into the square two along, and
- * that pixel was left behind when the tank moved on. */
+ * that pixel was left behind when the tank moved on. A negative px or py is
+ * a box that starts before the square's own edge, as a marker centred near
+ * it gives: it is moved into the square it really starts in. */
 static void lv_drawMarkRedrawRect(int mx, int my, int px, int py, int w, int h) {
-    int x0 = mx + px / TILE_SIZE_X;
-    int x1 = mx + (px + w - 1) / TILE_SIZE_X;
-    int y0 = my + py / TILE_SIZE_Y;
-    int y1 = my + (py + h - 1) / TILE_SIZE_Y;
-    int x, y;
+    int x0, x1, y0, y1, x, y;
+    while (px < 0) { px += TILE_SIZE_X; mx--; }
+    while (py < 0) { py += TILE_SIZE_Y; my--; }
+    x0 = mx + px / TILE_SIZE_X;
+    x1 = mx + (px + w - 1) / TILE_SIZE_X;
+    y0 = my + py / TILE_SIZE_Y;
+    y1 = my + (py + h - 1) / TILE_SIZE_Y;
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
     if (x1 > 255) x1 = 255;
@@ -1701,10 +1705,25 @@ void lv_drawTanks(screenTanks *tks) {
                 colour = lvDrawTeamColour(team);
             }
             {
-                float side = (float)(zoomFactor * TILE_SIZE_X);
+                float side   = (float)(zoomFactor * TILE_SIZE_X);
+                float radius = SDL_max(3.0f, side * 0.45f);
+                /* The triangle is bigger than the square the sprite would
+                   fill: its nose is 1.2 radii from the centre, its tail
+                   corners further, and the outline sits outside that, so at
+                   this radius it reaches almost 11 px from the centre where
+                   the sprite stops at 8. Mark every square it can touch, in
+                   the target's pixels brought back to tile pixels, or the
+                   edge it put in a neighbouring square stays behind when
+                   the tank moves on, as the sprite's did before #502. */
+                int reach = (int)SDL_ceilf(mapMarkerTankReach(radius) /
+                                           (float)zoomFactor);
                 mapMarkerTank(sdlRenderer,
                               (float)x + side / 2.0f, (float)y + side / 2.0f,
-                              SDL_max(3.0f, side * 0.45f), (int)dir, colour);
+                              radius, (int)dir, colour);
+                lv_drawMarkRedrawRect(mx, my,
+                                      px + TILE_SIZE_X / 2 - reach,
+                                      py + TILE_SIZE_Y / 2 - reach,
+                                      2 * reach + 1, 2 * reach + 1);
             }
         } else if (allyRead) {
             srcX = zoomFactor * TILE_SIZE_X * dir;
@@ -1720,7 +1739,10 @@ void lv_drawTanks(screenTanks *tks) {
         } else {
             lvDrawRecordTankLabel(playerName, mx, my, px, py);
         }
-        lv_drawMarkRedrawRect(mx, my, px, py, TILE_SIZE_X, TILE_SIZE_Y);
+        /* The sprite's own square; the marker marked its wider box above. */
+        if (!simple) {
+            lv_drawMarkRedrawRect(mx, my, px, py, TILE_SIZE_X, TILE_SIZE_Y);
+        }
     }
 
     if (simple) SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
