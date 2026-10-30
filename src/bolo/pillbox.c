@@ -729,7 +729,6 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       bestTank = NULL;
       bestTankNum = NEUTRAL;
       foundTarget = FALSE;
-      heldByCap = FALSE;
       bestTankX = 0;
       bestTankY = 0;
       bestTankDir = 0;
@@ -762,28 +761,15 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         }
 
         if ((utilIsItemInRange(x, y, tankX, tankY, (WORLD) sim->rules.pill_range, &amount)) == TRUE) {
-          /* A tank with as many pill shells coming as the rule allows is
-           * passed over for the next nearest. Checked only once the tank
-           * has passed every other test, so heldByCap means a target the
-           * pill could otherwise shoot: one that leaves range, hides or
-           * dies clears justSeen below the same as it always has. */
-          const bool capHeld = shellCapOn && t < MAX_TANKS &&
-              shellsAtTank[t] >= sim->rules.pill_max_shells_at_tank;
-
           /* can_target: the scenario may have this pill pass over this tank
            * as if it were not there. Asked last, of a tank that has passed
            * every other test, and only where the answer changes something:
-           * the tank is nearer than the best so far, or the shell cap would
-           * hold the pill for it. A refused tank sets neither the target nor
-           * heldByCap, so a pill with nobody else in range clears justSeen
+           * the tank is nearer than the best so far. A refused tank is not
+           * the target, so a pill with nobody else in range clears justSeen
            * the same as it does for an empty field. No scenario, no
            * question: the helper answers TRUE without a call. */
-          if ((capHeld || amount < bestDist) &&
+          if (amount < bestDist &&
               gameSimCanTarget(sim, count, t) == FALSE) {
-            continue;
-          }
-          if (capHeld) {
-            heldByCap = TRUE;
             continue;
           }
           if (amount < bestDist) {
@@ -803,9 +789,19 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         }
       }
 
+      /* pill_shell_cap: the nearest tank already has as many pill shells
+       * coming as the rule allows. Mac Bolo's pill fires only from the
+       * nearest tank's own machine, out of the 12 slots it keeps for pill
+       * shells; with none free the shot is lost and the pill reloads. */
+      heldByCap = foundTarget && shellCapOn && bestTankNum < MAX_TANKS &&
+          shellsAtTank[bestTankNum] >= sim->rules.pill_max_shells_at_tank;
+
       if (foundTarget) {
-        /* Fire at closest enemy tank */
-        if ((*value)->item[count].justSeen == TRUE) {
+        if ((*value)->item[count].justSeen == TRUE && heldByCap) {
+          /* No shell free for the closest enemy tank: the shot is lost */
+          (*value)->item[count].reload = 0;
+        } else if ((*value)->item[count].justSeen == TRUE) {
+          /* Fire at closest enemy tank */
           dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank), tankIsObstructed(bestTank));
           shellsAddItem(sim, shs, x, y, dir, sim->rules.pill_fire_length, NEUTRAL, bestTankNum, count, FALSE);
           if (shellCapOn && bestTankNum < MAX_TANKS) {
@@ -818,11 +814,9 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
           (*value)->item[count].justSeen = TRUE;
           (*value)->item[count].reload = 0;
         }
-      } else if (heldByCap == FALSE) {
+      } else {
         (*value)->item[count].justSeen = FALSE;
       }
-      /* Held only by the cap: justSeen and the full reload are kept, so the
-       * pill fires on the first update a shell at its target comes free. */
     }
   }
 }

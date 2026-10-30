@@ -2384,8 +2384,8 @@ int run_lgm_build_square_terrain_speed(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);
-int run_pill_shell_cap_retargets_next_nearest(void);
-int run_pill_shell_cap_holds_then_fires_when_freed(void);
+int run_pill_shell_cap_does_not_retarget(void);
+int run_pill_shell_cap_loses_shot_and_reloads(void);
 int run_pill_shell_cap_out_of_range_clears_just_seen(void);
 int run_pill_shell_cap_counts_same_update_shots(void);
 int run_pill_shell_cap_ignores_tank_shells(void);
