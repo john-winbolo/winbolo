@@ -10,19 +10,27 @@
  * Recording mode, as the game's replay has it (lobby_reel.cpp): the movie
  * camera button on the Controls panel, Action > Recording Mode and Ctrl+G
  * turn it on and off. In recording mode the Controls panel shows the GIF
- * controls under its top row: the GIF button, the length in seconds, the
- * Clips button and the crop button. The timeline shows where the GIF starts
+ * controls under its top row: Preview clip, Save clip, the length in
+ * seconds, the Clips button and the crop button. The timeline shows where the GIF starts
  * and ends, with a marker at the end that can be dragged to change the
  * length. With the crop button on, a frame over the map shows the part of
  * the map the GIF takes; its edges, corners and inside can be dragged. The
  * controls come from clip_gif_controls.h, the same ones the game draws.
  *
- * The GIF button plays the log on from the current time and reads each
- * frame back off the map's render target, as the game's replay does
- * (clip_gif_frame.h). The GIF goes into the same clips folder as the game's
- * GIFs, through the same gallery (clip_gif_gallery.h), and the Clips window
- * opens on it. When the GIF is made, the log goes back to the time it was
- * at, and plays again if it was playing. Esc or Cancel stops it.
+ * Preview clip plays the log from the current time for the length, at the
+ * normal speed, and makes no file. At the end of the clip the log stops and
+ * goes back to the start of the clip, so Save clip then makes the GIF of the
+ * same clip. Pressed again, it stops the preview. A pause or a seek ends the
+ * preview where the log is.
+ *
+ * Save clip plays the log on from the current time (or from the start of the
+ * preview that plays) and reads each frame back off the map's render target,
+ * as the game's replay does. The GIF goes into the same clips folder as the
+ * game's GIFs, through the same gallery (clip_gif_gallery.h), and the Clips
+ * window opens on it. When the GIF is made, the log goes back to the time it
+ * was at, and plays again if it was playing. Esc or Cancel stops it. The
+ * preview, the capture and the progress window are the game's own code
+ * (clip_gif_capture.h).
  *
  * Recording mode, the crop frame and the length go back to their start
  * values with each log that opens, as the game's do with each replay.
@@ -65,7 +73,7 @@ void lv_clip_gif_toggle_mode(void);
  * The controls of a GIF being made stay until it ends. */
 bool lv_clip_gif_tools_shown(void);
 
-/* True when the GIF button can be used now: the same as
+/* True when Preview clip and Save clip can be used now: the same as
  * lv_clip_gif_can_toggle_mode, and the map (not the game view) is shown. */
 bool lv_clip_gif_can_make(void);
 
@@ -88,13 +96,14 @@ void lv_clip_gif_render(void);
 bool lv_clip_gif_frame_has_mouse(void);
 
 /* The GIF controls in the Controls panel, on a line of their own in the
- * middle of the panel: the GIF button, the length in seconds, the Clips
- * button and the crop button. The panel calls it when
+ * middle of the panel: Preview clip, Save clip, the length in seconds, the
+ * Clips button and the crop button (clipGifToolsRow). The panel calls it when
  * lv_clip_gif_tools_shown is true. */
 void lv_clip_gif_tools_row(void);
 
 /* The GIF on the timeline: the band from startMs to the GIF's end and the
- * marker at its end (clipGifLenMarker). minX..maxY is the frame of the seek
+ * marker at its end (clipGifLenMarker). While a preview plays, the band
+ * starts at the preview's start and not at startMs. minX..maxY is the frame of the seek
  * slider, which maps 0..totalMs; the panel calls it after the slider, which
  * it marks allow-overlap while lv_clip_gif_tools_shown is true. */
 void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,

@@ -537,12 +537,6 @@ static const float REEL_HEIGHT_MAX_FRAC = 0.85f;
 void lobbyChatInputAppendTime(uint32_t curMs);
 
 #if BOLO_RECAP_CLIP_GIF
-/* Defined with the clip export below, which needs the reel's own state. The
- * transport bar carries the same control the clip rows do, so both are reached
- * from here. */
-bool lobbyClipGifButton(const char *id, bool compact);
-void lobbyClipGifStartFromPlayhead(uint32_t curMs, uint32_t lenMs,
-                                   ClientSim *cs);
 /* Whether an export is running. The crop frame reads it to hold still: the
  * rect is fixed once at msf_gif_begin and every frame of the GIF is that size,
  * so letting it be dragged mid-capture would show a box the recording is not
@@ -1412,39 +1406,25 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
     ImGui::EndDisabled();
 
     if (lobbyReelGifToolsShown()) {
-        /* Export the next few seconds from wherever the reel is sitting. The
-         * view is left as the player framed it — they have already chosen
-         * what they are looking at, which is the whole point of exporting
-         * from here rather than off a row. Full height, so it sits level with
-         * the buttons before it rather than shrinking the transport row. */
+        /* Preview clip and Save clip from wherever the reel is, the length,
+         * the gallery and the crop frame: the same row the Log Viewer shows
+         * (clipGifToolsRow). The view is left as the player framed it. Full
+         * height, so the row sits level with the buttons before it. */
         ImGui::SameLine();
-        if (lobbyClipGifButton("##reelgif", false) && cs != NULL) {
-            lobbyClipGifStartFromPlayhead(
-                curMs, clipGifLenClampMs(s_reel.clip.lenMs, curMs, totalMs), cs);
+        const ClipGifToolsPressed tools = clipGifToolsRow(
+            "##reelgif", &s_reel.clip, lobbyClipGifPlay(), lobbyClipGifActive(),
+            true, (ImTextureID)lobbyIcons()->picture, curMs, totalMs);
+        if (tools.preview) {
+            lobbyClipGifPreviewToggle();
         }
-
-        /* How long that export runs, in seconds; the marker on the seek bar
-         * below sets the same value. */
-        ImGui::SameLine();
-        clipGifLenField("##reelgiflen", curMs, totalMs, &s_reel.clip.lenMs,
-                        lobbyClipGifActive());
-
+        if (tools.save && cs != NULL) {
+            lobbyClipGifStartFromPlayhead(cs);
+        }
 #if BOLO_CLIP_GIF_GALLERY
-        /* The GIFs made so far, with copy and save. */
-        ImGui::SameLine();
-        if (clipGifGalleryButton("##reelgifgallery")) {
+        if (tools.gallery) {
             lobbyClipGifGalleryOpen();
         }
 #endif
-
-        /* Crop frame, next to the export it crops: with it up, that export
-         * takes the framed rectangle instead of the whole visible view. */
-        ImGui::SameLine();
-        if (clipGifToggleButton("##reelcrop", s_reel.clip.cropOn,
-                                CLIP_GIF_GLYPH_CROP,
-                                langGetText(STR_CLIPGIF_CROP))) {
-            clipGifModeToggleCrop(&s_reel.clip, lobbyClipGifActive());
-        }
     }
 #endif
 
@@ -1558,8 +1538,13 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
         if (s_reel.seeking) {
             markStartMs = (uint32_t)(s_reel.seekRatio * (float)totalMs);
         }
+        /* While a preview plays, the band stays on the clip it plays, and
+         * the length does not change under it. */
+        markStartMs = lobbyClipGifBandStart(markStartMs);
         clipGifLenMarker("##reelgiflenmark", seekMin, seekMax, markStartMs,
-                         totalMs, &s_reel.clip.lenMs, lobbyClipGifActive());
+                         totalMs, &s_reel.clip.lenMs,
+                         lobbyClipGifActive() ||
+                             lobbyClipGifPreviewRow() != -2);
     }
 #endif
     ImGui::PopItemWidth();

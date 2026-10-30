@@ -41,13 +41,16 @@
 #include "imgui_internal.h"  /* ImRect, ItemAdd, ButtonBehavior: the marker */
 
 #include "clip_gif_core.h"
+#include "clip_gif_gallery.h"    /* CLIP_GIF_GALLERY_BUILT, clipGifGalleryButton */
 #include "imgui_dialog_utils.h"  /* imguiHelpTooltip */
 #include "../../lang.h"          /* langGetText, STR_CLIPGIF_* */
 
 /* The drawn glyphs of the toggle buttons. */
 enum ClipGifGlyph {
     CLIP_GIF_GLYPH_CAMERA = 0,  /* a movie camera: recording mode */
-    CLIP_GIF_GLYPH_CROP         /* a square frame with heavy corners: crop */
+    CLIP_GIF_GLYPH_CROP,        /* a square frame with heavy corners: crop */
+    CLIP_GIF_GLYPH_PLAY,        /* a triangle pointing right: preview */
+    CLIP_GIF_GLYPH_STOP         /* a filled square: stop the preview */
 };
 
 /* The smallest crop frame, in drawn pixels, and how far from an edge a press
@@ -77,6 +80,14 @@ static inline void clipGifDrawGlyph(ImDrawList *dl, int glyph, ImVec2 a,
                           ImVec2(a.x + w, midY - w * 0.24f),
                           ImVec2(a.x + w, midY + w * 0.24f),
                           ImVec2(bodyR, midY + w * 0.08f), col);
+    } else if (glyph == CLIP_GIF_GLYPH_PLAY) {
+        dl->AddTriangleFilled(ImVec2(a.x + w * 0.18f, a.y + w * 0.08f),
+                              ImVec2(a.x + w * 0.92f, a.y + w * 0.50f),
+                              ImVec2(a.x + w * 0.18f, a.y + w * 0.92f), col);
+    } else if (glyph == CLIP_GIF_GLYPH_STOP) {
+        dl->AddRectFilled(ImVec2(a.x + w * 0.16f, a.y + w * 0.16f),
+                          ImVec2(a.x + w * 0.84f, a.y + w * 0.84f), col,
+                          w * 0.06f);
     } else {
         /* A square outline with heavier corners, so it reads as a crop frame
          * and not as an empty box. */
@@ -134,14 +145,16 @@ static inline bool clipGifToggleButton(const char *id, bool on, int glyph,
     return clicked;
 }
 
-/* The GIF button's caption and tooltip: the format's name, not a word to
- * translate. */
+/* The GIF button's caption where it has no picture: the format's name, not
+ * a word to translate. Also the title of the capture's progress window and
+ * of the message boxes that say where a GIF went. */
 static const char *const CLIP_GIF_BUTTON_TITLE = "GIF";
 
-/* The GIF button: picture where the caller has that icon loaded, else the
- * format's name. compact takes the vertical half of the frame padding off,
- * for a row one line of text high. (Not "small": the Windows RPC headers
- * define that as a type.) Returns true when pressed. */
+/* The Save clip button: picture where the caller has that icon loaded, else
+ * the format's name. compact takes the vertical half of the frame padding
+ * off, for a row one line of text high. (Not "small": the Windows RPC
+ * headers define that as a type.) The tooltip is the Save clip text.
+ * Returns true when pressed. */
 static inline bool clipGifButton(const char *id, ImTextureID picture,
                                  bool compact) {
     const float lineH = ImGui::GetTextLineHeight();
@@ -165,7 +178,7 @@ static inline bool clipGifButton(const char *id, ImTextureID picture,
         snprintf(label, sizeof(label), "%s%s", CLIP_GIF_BUTTON_TITLE, id);
         clicked = compact ? ImGui::SmallButton(label) : ImGui::Button(label);
     }
-    imguiHelpTooltip(CLIP_GIF_BUTTON_TITLE);
+    imguiHelpTooltip(langGetText(STR_CLIPGIF_SAVE));
     return clicked;
 }
 
@@ -173,6 +186,32 @@ static inline bool clipGifButton(const char *id, ImTextureID picture,
 static inline float clipGifButtonWidth(bool havePicture) {
     return (havePicture ? ImGui::GetTextLineHeight()
                         : ImGui::CalcTextSize(CLIP_GIF_BUTTON_TITLE).x) +
+           ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
+/* The Preview clip button: a play glyph, or a stop glyph that stays pressed
+ * while the preview plays (previewing). compact is as for clipGifButton.
+ * Returns true when pressed. */
+static inline bool clipGifPreviewButton(const char *id, bool previewing,
+                                        bool compact) {
+    if (compact) {
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
+    }
+    bool clicked = clipGifToggleButton(
+        id, previewing, previewing ? CLIP_GIF_GLYPH_STOP : CLIP_GIF_GLYPH_PLAY,
+        langGetText(previewing ? STR_CLIPGIF_PREVIEW_STOP
+                               : STR_CLIPGIF_PREVIEW));
+    if (compact) {
+        ImGui::PopStyleVar();
+    }
+    return clicked;
+}
+
+/* The width clipGifPreviewButton takes: a square a line of text high, with
+ * the frame padding round it. */
+static inline float clipGifPreviewButtonWidth(void) {
+    return ImGui::GetTextLineHeight() +
            ImGui::GetStyle().FramePadding.x * 2.0f;
 }
 
@@ -405,6 +444,81 @@ static inline bool clipGifCropFrame(const char *id, ImDrawList *dl,
         drag->grab = 0;
     }
     return takesMouse;
+}
+
+/* What was pressed on the row of GIF controls this frame. The row handles
+ * the length and the crop button itself; the screen acts on these. */
+typedef struct ClipGifToolsPressed {
+    bool preview;  /* Preview clip: start or stop the preview */
+    bool save;     /* Save clip: make the GIF */
+    bool gallery;  /* open the gallery (only where it is built) */
+} ClipGifToolsPressed;
+
+/* The width of the row clipGifToolsRow draws, for a screen that centres
+ * it. */
+static inline float clipGifToolsRowWidth(bool havePicture) {
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    const float square = ImGui::GetTextLineHeight() + sty.FramePadding.x * 2.0f;
+    const float lenW = ImGui::CalcTextSize("00.0").x + sty.FramePadding.x * 2.0f;
+    float w = clipGifPreviewButtonWidth() + clipGifButtonWidth(havePicture) +
+              lenW + square + sty.ItemSpacing.x * 3.0f;
+#if CLIP_GIF_GALLERY_BUILT
+    w += square + sty.ItemSpacing.x;
+#endif
+    return w;
+}
+
+/* The row of GIF controls that recording mode shows, the same in the game's
+ * replay and the Log Viewer: Preview clip, Save clip, the length in seconds,
+ * the gallery button (where the gallery is built) and the crop button. The
+ * first control goes where the cursor is; the caller puts a SameLine before
+ * the call when the row goes on after other controls.
+ *
+ * mode is the screen's recording mode (the length and the crop are changed
+ * here), play its preview, curMs and totalMs the replay's time now and its
+ * length. Preview and Save are disabled while capturing, and when canMake is
+ * false (no GIF can be made now). The length does not change while a GIF is
+ * made or the preview plays, as that GIF or that preview is of the length it
+ * started with. */
+static inline ClipGifToolsPressed clipGifToolsRow(const char *id,
+                                                  ClipGifMode *mode,
+                                                  const ClipGifPlay *play,
+                                                  bool capturing, bool canMake,
+                                                  ImTextureID picture,
+                                                  uint32_t curMs,
+                                                  uint32_t totalMs) {
+    ClipGifToolsPressed r = { false, false, false };
+    const bool previewing = (play != NULL && play->active);
+    ImGui::PushID(id);
+
+    ImGui::BeginDisabled(!canMake || capturing);
+    r.preview = clipGifPreviewButton("##preview", previewing, false);
+    ImGui::SameLine();
+    r.save = clipGifButton("##save", picture, false);
+    ImGui::EndDisabled();
+
+    /* How long the clip runs, from where it starts: the marker on the
+     * timeline sets the same length. */
+    ImGui::SameLine();
+    clipGifLenField("##len", clipGifPlayBandStart(play, curMs), totalMs,
+                    &mode->lenMs, capturing || previewing);
+
+#if CLIP_GIF_GALLERY_BUILT
+    /* The GIFs made so far. */
+    ImGui::SameLine();
+    r.gallery = clipGifGalleryButton("##gallery");
+#endif
+
+    /* The crop frame: with it on, the GIF takes the part of the view in the
+     * frame. */
+    ImGui::SameLine();
+    if (clipGifToggleButton("##crop", mode->cropOn, CLIP_GIF_GLYPH_CROP,
+                            langGetText(STR_CLIPGIF_CROP))) {
+        clipGifModeToggleCrop(mode, capturing);
+    }
+
+    ImGui::PopID();
+    return r;
 }
 
 #endif /* CLIP_GIF_CONTROLS_H */
