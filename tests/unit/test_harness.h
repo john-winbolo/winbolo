@@ -575,6 +575,7 @@ int run_wbn_map_parse(void);
 int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
+int run_brain_push_rules_written_on_change(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
 int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);

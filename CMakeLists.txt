@@ -4476,6 +4476,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map.c
     tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
+    tests/unit/test_brain_push_rules.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
     tests/unit/test_brain_list_texts.c
@@ -5821,6 +5822,7 @@ set(_unit_test_names
     wbn_map_fetch_policy
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
+    brain_push_rules_written_on_change
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo

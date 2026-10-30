@@ -459,6 +459,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_map_fetch_policy",                    run_wbn_map_fetch_policy                    },
     { "brain_crash_log_writes_file",             run_brain_crash_log_writes_file             },
     { "brain_crash_log_falls_back_to_luaptr",    run_brain_crash_log_falls_back_to_luaptr    },
+    { "brain_push_rules_written_on_change",      run_brain_push_rules_written_on_change      },
     { "brain_msgh_budget_kill_no_traceback",     run_brain_msgh_budget_kill_no_traceback     },
     { "brain_msgh_real_error_keeps_traceback",   run_brain_msgh_real_error_keeps_traceback   },
     { "brain_inbox_push_peek_fifo",              run_brain_inbox_push_peek_fifo              },
