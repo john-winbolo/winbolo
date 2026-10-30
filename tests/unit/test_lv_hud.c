@@ -376,6 +376,19 @@ int run_lv_team_colour_lookup(void) {
                   lvTeamColourStoredPref(15, -1, 0) == 10,
                   "a value off the palette: not the default");
 
+    /* The stored mark: a number of 2 or more is marked, so a later raise of
+       LV_TEAM_COLOUR_MARK keeps a file at "2" marked. */
+    UT_ASSERT_MSG(lvTeamColourMarked(LV_TEAM_COLOUR_MARK), "the mark this version writes");
+    UT_ASSERT_MSG(lvTeamColourMarked("2"), "mark 2");
+    UT_ASSERT_MSG(lvTeamColourMarked("3"), "mark 3");
+    UT_ASSERT_MSG(lvTeamColourMarked("10"), "mark 10");
+    UT_ASSERT_MSG(!lvTeamColourMarked("1"), "mark 1");
+    UT_ASSERT_MSG(!lvTeamColourMarked("0"), "mark 0");
+    UT_ASSERT_MSG(!lvTeamColourMarked(""), "no mark");
+    UT_ASSERT_MSG(!lvTeamColourMarked("junk"), "junk mark");
+    UT_ASSERT_MSG(!lvTeamColourMarked("-3"), "negative mark");
+    UT_ASSERT_MSG(!lvTeamColourMarked(NULL), "null mark");
+
     /* A stored value that is not an entry of the palette: the default. */
     tc[3] = 17;
     UT_ASSERT_MSG(lvTeamColourEntry(tc, 3) == 4, "value 17 for team 4");

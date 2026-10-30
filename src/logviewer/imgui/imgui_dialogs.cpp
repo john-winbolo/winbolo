@@ -100,7 +100,7 @@ void lv_imgui_dialogs_init(struct LogViewerState *lv) {
     /* Load team colours from preferences. A stored old default with no
      * mark reads as the new default (lvTeamColourStoredPref). */
     lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_MARK_KEY, "", val, sizeof(val));
-    const int marked = (strcmp(val, LV_TEAM_COLOUR_MARK) == 0);
+    const int marked = lvTeamColourMarked(val);
     for (int i = 0; i < MAX_PLAYERS; i++) {
         char key[64];
         snprintf(key, sizeof(key), "Team Colour %d", i + 1);

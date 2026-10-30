@@ -1259,7 +1259,7 @@ static void loadPreferences(void) {
     {
         int marked;
         lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_MARK_KEY, "", val, sizeof(val));
-        marked = (strcmp(val, LV_TEAM_COLOUR_MARK) == 0);
+        marked = lvTeamColourMarked(val);
         count = 0;
         while (count < MAX_TANKS) {
             snprintf(line, sizeof(line), "Team Colour %d", count + 1);
