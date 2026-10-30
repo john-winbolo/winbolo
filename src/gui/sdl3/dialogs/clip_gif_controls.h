@@ -101,6 +101,25 @@ static inline void clipGifDrawGlyph(ImDrawList *dl, int glyph, ImVec2 a,
     }
 }
 
+/* While on is true, the pressed colour for the button's normal, hovered and
+ * active colours, so a toggle that is on stays pressed in, under the mouse
+ * too. Pair each call with clipGifPopLatched(on) after the button. */
+static inline void clipGifPushLatched(bool on) {
+    if (on) {
+        const ImVec4 down = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+        ImGui::PushStyleColor(ImGuiCol_Button, down);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, down);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, down);
+    }
+}
+
+/* Takes off what clipGifPushLatched(on) put on. */
+static inline void clipGifPopLatched(bool on) {
+    if (on) {
+        ImGui::PopStyleColor(3);
+    }
+}
+
 /* A button with a glyph that stays pressed while on is true. size 0 is the
  * game's square, a line of text high with the frame padding round it; any
  * other size is a button of that size with the glyph in its middle, a little
@@ -116,15 +135,10 @@ static inline bool clipGifToggleButton(const char *id, bool on, int glyph,
         size = ImVec2(lineH + sty.FramePadding.x * 2.0f,
                       lineH + sty.FramePadding.y * 2.0f);
     }
-    if (on) {
-        ImGui::PushStyleColor(ImGuiCol_Button,
-                              ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-    }
+    clipGifPushLatched(on);
     ImVec2 p = ImGui::GetCursorScreenPos();
     bool clicked = ImGui::Button(id, size);
-    if (on) {
-        ImGui::PopStyleColor();
-    }
+    clipGifPopLatched(on);
     ImVec2 a;
     float w;
     if (own) {
