@@ -4810,6 +4810,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_client_timing.c
     tests/unit/test_interp_render.c
     tests/unit/test_interp_respawn_no_death_flash.c
+    tests/unit/test_interp_no_stale_flash_after_gap.c
     tests/unit/test_snapshot_compaction.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
@@ -5307,6 +5308,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # (lv_dock_fit.h), and the text the sidebar layout is saved as
     # (lv_dock_layout.h). Both header only.
     tests/unit/test_lv_dock_fit.c
+    # Where slot n of a status panel sits, the one sum the game's renderer
+    # and the web Log Viewer both use (src/gui/status_grid.h, header only).
+    tests/unit/test_status_grid.c
     # Which icon a slot of the viewer's HUD panel shows, how its three grids
     # are laid out, and its colour sums (lv_hud.h, header only).
     tests/unit/test_lv_hud.c
@@ -5899,6 +5903,7 @@ set(_unit_test_names
     visibility_preset_round_trip
     visibility_preset_custom
     visibility_preset_ignores_decay
+    visibility_preset_ignores_classic_mode
     visibility_preset_pref_words
     scn_panel_popout_row
     scn_panel_yes_no
@@ -6669,6 +6674,7 @@ set(_unit_test_names
     client_timing
     interp_render
     interp_respawn_no_death_flash
+    interp_no_stale_flash_after_gap
     snapshot_compaction
     edge_send_predicate
     error_smoothing
@@ -7957,11 +7963,13 @@ set(_unit_test_names
     lv_region_rect_placement
     lv_dock_fit_sums
     lv_dock_fit_margins
+    status_grid_slots
     lv_dock_layout_sides
     lv_dock_layout_tree
     lv_hud_sums
     lv_team_sprite_sums
     lv_team_colour_lookup
+    lv_neutral_pill_grey
     lv_overview_sums
     lv_overview_bots
     lv_overview_row_layout

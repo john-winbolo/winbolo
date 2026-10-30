@@ -432,6 +432,7 @@ int run_frame_limit_pacing_values(void);
 int run_visibility_preset_round_trip(void);
 int run_visibility_preset_custom(void);
 int run_visibility_preset_ignores_decay(void);
+int run_visibility_preset_ignores_classic_mode(void);
 int run_visibility_preset_pref_words(void);
 int run_scn_panel_popout_row(void);
 int run_scn_panel_yes_no(void);
@@ -2415,6 +2416,12 @@ int run_interp_render(void);
  * the alive respawn (teleport) snaps to curr instead of tweening from the
  * stale death spot; a normal alive->alive pair still interpolates. */
 int run_interp_respawn_no_death_flash(void);
+
+/* No stale flash after a gap (test_interp_no_stale_flash_after_gap.c): the
+ * first snapshot of a remote tank back from a freeze-length gap (out of view,
+ * slot reused) is drawn at its new position, not where the tank was before
+ * the gap; a short gap keeps the pipeline and still tweens. */
+int run_interp_no_stale_flash_after_gap(void);
 
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
@@ -4528,6 +4535,10 @@ int run_lv_dock_fit_sums(void);
 int run_lv_dock_fit_margins(void);
 int run_lv_dock_layout_sides(void);
 int run_lv_dock_layout_tree(void);
+/* Where slot n of a status panel sits (test_status_grid.c, status_grid.h):
+ * each of the sixteen slots of the bases, pillboxes and tanks panels where
+ * the explicit macros of positions.h put it. */
+int run_status_grid_slots(void);
 /* The log viewer's HUD panel (test_lv_hud.c): the icon of a base, pillbox and
  * tank slot, the layout of the three grids, and the grey and colour sums. */
 int run_lv_hud_sums(void);
@@ -4539,6 +4550,9 @@ int run_lv_team_sprite_sums(void);
  * lv_team_colour.h): the default, the one the Team Colours dialog has, the
  * Neutral entry for a number that is not a team. */
 int run_lv_team_colour_lookup(void);
+/* A neutral pillbox on the log viewer's map turns grey while a team in the
+ * game is red (test_lv_hud.c, lv_team_sprite.h). */
+int run_lv_neutral_pill_grey(void);
 /* The table of the log viewer's Overview panel (test_lv_overview.c): the
  * rows of the teams, which row a pillbox or a base is counted in, and the
  * share a count is of the whole. */
