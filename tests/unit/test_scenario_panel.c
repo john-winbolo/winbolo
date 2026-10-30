@@ -1107,16 +1107,17 @@ int run_scenario_status_line(void) {
 }
 
 /* The desktop panel's default place and size (scnPanelDefaultPlace): the
- * game view's top-left corner in by the inset, at the smallest cardinal
- * from 100 to 200 that reaches 256 pixels, or the largest that fits in
- * 0.8 of the view's shorter side and in the display, and never above
- * minTop, which keeps room for the move bar above the panel. Every number
- * is worked out by hand beside it. */
+ * game view's top-left corner in by the inset, and never above minTop,
+ * which keeps room for the move bar above the panel. Below zoom 1.5 the
+ * size is the smallest cardinal from 100 to 200 that reaches 256 pixels,
+ * or the largest that fits in 0.8 of the view's shorter side and in the
+ * display. From zoom 1.5 up it is 128 pixels, as the percent of the zoom's
+ * own size. Every number is worked out by hand beside it. */
 int run_scenario_panel_default_place(void) {
     static const int cardinals[] = SCN_PANEL_CARDINALS;
     const size_t     count       = sizeof(cardinals) / sizeof(cardinals[0]);
     float x, y;
-    int   pct;
+    float pct;
 
     /* Zoom 1: a 240 view at (10, 20), panel 128 at 100, inset 4. The room
        is 0.8 * 240 = 192. 125 is 160 and 150 is 192, which fits; 200 is
@@ -1128,29 +1129,72 @@ int run_scenario_panel_default_place(void) {
     UT_ASSERT(x == 14.0f);
     UT_ASSERT(y == 24.0f);
 
-    /* Zoom 2: a 480 view, panel 256 at 100, which already reaches 256: 100,
-       at (20 + 8, 40 + 8). */
+    /* Zoom 2: a 480 view, panel 256 at 100. The default is 128 pixels:
+       128 / 256 = 50 percent, at (20 + 8, 40 + 8). */
     UT_ASSERT(scnPanelDefaultPlace(20.0f, 40.0f, 500.0f, 520.0f, 1280.0f,
                                    960.0f, 256.0f, 8.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
-    UT_ASSERT(pct == 100);
+    UT_ASSERT(pct == 50.0f);
     UT_ASSERT(x == 28.0f);
     UT_ASSERT(y == 48.0f);
 
-    /* Zoom 3: panel 384 at 100, past 256 already: 100. */
+    /* Zoom 3: panel 384 at 100. 128 / 384 = 33.33 percent, not a cardinal
+       and not rounded: the side it gives is 128 to well under a pixel. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 720.0f, 720.0f, 1920.0f,
                                    1080.0f, 384.0f, 12.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
-    UT_ASSERT(pct == 100);
+    UT_ASSERT(pct > 33.33f && pct < 33.34f);
+    UT_ASSERT(384.0f * pct / 100.0f > 127.99f &&
+              384.0f * pct / 100.0f < 128.01f);
+    UT_ASSERT(x == 12.0f);
+    UT_ASSERT(y == 12.0f);
 
-    /* Custom zoom 1.25: a 300 view, panel 160 at 100, room 240. 150 is 240,
-       which fits but is under 256; 200 is 320, which does not fit: 150. */
+    /* Zoom 4: panel 512 at 100. 128 / 512 = 25 percent. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 960.0f, 960.0f, 2560.0f,
+                                   1440.0f, 512.0f, 16.0f, 0.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 25.0f);
+
+    /* Custom zoom 1.5, the first zoom that takes the 128 pixels: a 360
+       view, panel 192 at 100. 128 / 192 = 66.67 percent. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 360.0f, 360.0f, 1600.0f,
+                                   1200.0f, 192.0f, 6.0f, 0.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct > 66.66f && pct < 66.67f);
+    UT_ASSERT(192.0f * pct / 100.0f > 127.99f &&
+              192.0f * pct / 100.0f < 128.01f);
+    UT_ASSERT(x == 6.0f);
+    UT_ASSERT(y == 6.0f);
+
+    /* Custom zoom 1.25 is under 1.5, so it keeps the zoom 1 rule: a 300
+       view, panel 160 at 100, room 240. 150 is 240, which fits but is
+       under 256; 200 is 320, which does not fit: 150. */
     UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 300.0f, 300.0f, 1600.0f,
                                    1200.0f, 160.0f, 5.0f, 0.0f, cardinals, count,
                                    &x, &y, &pct));
-    UT_ASSERT(pct == 150);
+    UT_ASSERT(pct == 150.0f);
     UT_ASSERT(x == 5.0f);
     UT_ASSERT(y == 5.0f);
+
+    /* Zoom 2 with minTop 44 over a view corner at 28: the panel goes down
+       to 44 and keeps its 128 pixels. */
+    UT_ASSERT(scnPanelDefaultPlace(20.0f, 20.0f, 500.0f, 500.0f, 1280.0f,
+                                   960.0f, 256.0f, 8.0f, 44.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 50.0f);
+    UT_ASSERT(x == 28.0f);
+    UT_ASSERT(y == 44.0f);
+
+    /* Zoom 2 in a display that leaves under 128 below the corner: 1280 x
+       150 from y 8 leaves 142, which fits; 1280 x 130 leaves 122, which
+       does not: false. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 480.0f, 480.0f, 1280.0f,
+                                   150.0f, 256.0f, 8.0f, 0.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 50.0f);
+    UT_ASSERT(!scnPanelDefaultPlace(0.0f, 0.0f, 480.0f, 480.0f, 1280.0f,
+                                    130.0f, 256.0f, 8.0f, 0.0f, cardinals,
+                                    count, &x, &y, &pct));
 
     /* Zoom 1 in a display only 180 wide: from x 14 that leaves 166. 125 is
        160, which fits; 150 is 192, which does not: 125. */
@@ -1162,11 +1206,11 @@ int run_scenario_panel_default_place(void) {
     /* A display 130 wide leaves 116 from x 14, under the 128 of 100
        percent: false, and the outputs are left alone. */
     x = y = -7.0f;
-    pct = -7;
+    pct = -7.0f;
     UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 130.0f,
                                     400.0f, 128.0f, 4.0f, 0.0f, cardinals, count,
                                     &x, &y, &pct));
-    UT_ASSERT(x == -7.0f && y == -7.0f && pct == -7);
+    UT_ASSERT(x == -7.0f && y == -7.0f && pct == -7.0f);
 
     /* No view yet, or no zoom size: false. */
     UT_ASSERT(!scnPanelDefaultPlace(0.0f, 0.0f, 0.0f, 0.0f, 640.0f, 480.0f,
@@ -1184,7 +1228,7 @@ int run_scenario_panel_default_place(void) {
                                         &y, &pct));
     }
 
-        /* minTop: the move bar above the panel is 22 high under a menu bar 22
+    /* minTop: the move bar above the panel is 22 high under a menu bar 22
        high, so the top may be no less than 44. The view's corner gives 24,
        so the panel goes down to 44. The room from there is still 192
        (the display leaves 436): 150, at (14, 44). */
@@ -1210,8 +1254,8 @@ int run_scenario_panel_default_place(void) {
     UT_ASSERT(pct == 100);
     UT_ASSERT(y == 100.0f);
 
-/* The cardinals the default picks from are ones the resize drag snaps
-       to: 100 and 150 are in the list. */
+    /* The cardinals the default picks from at zoom 1 are ones the resize
+       drag snaps to: 100 and 150 are in the list. */
     {
         bool have100 = false, have150 = false;
         size_t i;

@@ -509,17 +509,17 @@ static inline void scnTextLineAcross(float srcW, float lineW, float share,
 /* The sizes the desktop panel's resize drag snaps to, as percents of the
  * size the game's own zoom gives the panel, smallest first. A hundred is
  * that size exactly, which is the size every scenario was laid out against.
- * The default size below is always one of these, so a player who resizes
- * the panel from its default starts on a size the drag knows. */
+ * At a small zoom the default size below is one of these, so a player who
+ * resizes the panel from its default starts on a size the drag knows. */
 #define SCN_PANEL_CARDINALS {25, 50, 75, 100, 125, 150, 200, 300}
 
-/* The size in screen pixels the default panel tries to reach: twice the
- * panel at zoom 1 (128 pixels), where its writing is too small to read
- * easily. At zoom 2 and above the zoom alone already gives this much, so
- * the default there stays at 100 percent. */
+/* The size in screen pixels the default panel tries to reach below
+ * SCN_PANEL_DEFAULT_SCALED_ZOOM: twice the panel at zoom 1 (128 pixels),
+ * where its writing is too small to read easily. */
 #define SCN_PANEL_DEFAULT_TARGET_PX 256.0f
 
-/* The largest percent the default may use, however small the zoom. */
+/* The largest percent the default may use below
+ * SCN_PANEL_DEFAULT_SCALED_ZOOM, however small the zoom. */
 #define SCN_PANEL_DEFAULT_SCALE_MAX 200
 
 /* The most of the game view's shorter side the default panel may cover.
@@ -528,29 +528,60 @@ static inline void scnTextLineAcross(float srcW, float lineW, float share,
  * below it. */
 #define SCN_PANEL_DEFAULT_VIEW_SHARE 0.8f
 
+/* The zoom from which the whole game is drawn large enough that the
+ * default panel is given a fixed size in screen pixels instead of a
+ * readable one: SCN_PANEL_DEFAULT_SCALED_PX. The zoom is the panel's side
+ * at 100 percent over SCN_PANEL_UNITS, so a Custom zoom counts at its real
+ * size. 1.5 is halfway between zoom 1 and zoom 2, so a Custom zoom takes
+ * the default of the whole zoom it is nearer to: 1.25 keeps the zoom 1
+ * rule and 1.5 takes the zoom 2 rule. */
+#define SCN_PANEL_DEFAULT_SCALED_ZOOM 1.5f
+
+/* The side in screen pixels of the default panel from
+ * SCN_PANEL_DEFAULT_SCALED_ZOOM up: the 128 units a list is written in, at
+ * one screen pixel each. The panel then covers a small part of the large
+ * view. The percent this gives is usually not a cardinal (50 at zoom 2,
+ * 33.3 at zoom 3); the drag starts from it all the same, and snaps only
+ * when it comes near a cardinal. */
+#define SCN_PANEL_DEFAULT_SCALED_PX 128.0f
+
 /*********************************************************
  *NAME:          scnPanelDefaultPlace
  *PURPOSE:
  *  Where a desktop scenario panel opens, and how big, when
  *  the player has saved neither: its top-left corner at the
- *  game view's top-left corner, in by inset on both sides,
- *  at a percent picked from the cardinals. The corner is
- *  never above minTop: the panel's move bar sits directly
- *  above the panel, so minTop is the lowest the menu bar
- *  reaches plus the bar's height, and the bar is then never
- *  under the menu bar or off the top of the main window.
+ *  game view's top-left corner, in by inset on both sides.
+ *  The corner is never above minTop: the panel's move bar
+ *  sits directly above the panel, so minTop is the lowest
+ *  the menu bar reaches plus the bar's height, and the bar
+ *  is then never under the menu bar or off the top of the
+ *  main window.
  *
- *  The percent is the smallest cardinal from 100 to
- *  SCN_PANEL_DEFAULT_SCALE_MAX that reaches
- *  SCN_PANEL_DEFAULT_TARGET_PX, or the largest of them that
- *  fits when none reaches it. A cardinal fits when its side
- *  is no more than SCN_PANEL_DEFAULT_VIEW_SHARE of the
- *  view's shorter side and stays inside the display from
- *  the corner it is placed at.
+ *  The size depends on the zoom, which is baseSide over
+ *  SCN_PANEL_UNITS:
  *
- *  False when not even 100 percent fits there, or there is
- *  no view or no zoom size: the caller then uses its older
- *  placement. The outputs are left alone on false.
+ *  - From SCN_PANEL_DEFAULT_SCALED_ZOOM up, the side is
+ *    SCN_PANEL_DEFAULT_SCALED_PX, and the percent is that
+ *    side over baseSide (50 at zoom 2, 33.3 at zoom 3). It
+ *    is not rounded, so the side is exactly that many
+ *    pixels. Over zoom 4 the percent is under the 25 of
+ *    SCN_PANEL_SCALE_MIN, and the caller's size limits then
+ *    hold the side at 25 percent.
+ *
+ *  - Below it, the percent is the smallest cardinal from
+ *    100 to SCN_PANEL_DEFAULT_SCALE_MAX that reaches
+ *    SCN_PANEL_DEFAULT_TARGET_PX, or the largest of them
+ *    that fits when none reaches it.
+ *
+ *  A size fits when its side is no more than
+ *  SCN_PANEL_DEFAULT_VIEW_SHARE of the view's shorter side
+ *  and stays inside the display from the corner it is
+ *  placed at.
+ *
+ *  False when the size does not fit (below the scaled zoom,
+ *  not even 100 percent), or there is no view or no zoom
+ *  size: the caller then uses its older placement. The
+ *  outputs are left alone on false.
  *
  *ARGUMENTS:
  *  viewX0/viewY0 - the game view's top-left, in render
@@ -572,13 +603,13 @@ static inline bool scnPanelDefaultPlace(float viewX0, float viewY0,
                                         float minTop,
                                         const int *cardinals, size_t count,
                                         float *outX, float *outY,
-                                        int *outPercent) {
+                                        float *outPercent) {
     const float viewW = viewX1 - viewX0;
     const float viewH = viewY1 - viewY0;
     const float x     = viewX0 + inset;
     const float y     = (viewY0 + inset < minTop) ? minTop : viewY0 + inset;
     float       room;
-    int         best = -1;
+    float       best = -1.0f;
     size_t      i;
 
     if (viewW <= 0.0f || viewH <= 0.0f || baseSide <= 0.0f) return false;
@@ -587,17 +618,23 @@ static inline bool scnPanelDefaultPlace(float viewX0, float viewY0,
     if (displayW - x < room) room = displayW - x;
     if (displayH - y < room) room = displayH - y;
 
-    for (i = 0; i < count; i++) {
-        const int   c    = cardinals[i];
-        const float side = baseSide * (float)c / 100.0f;
-        if (c < 100 || c > SCN_PANEL_DEFAULT_SCALE_MAX) continue;
-        /* Half a pixel of slack, so a side that matches the room exactly
-           is not lost to rounding. */
-        if (side > room + 0.5f) break;
-        best = c;
-        if (side >= SCN_PANEL_DEFAULT_TARGET_PX) break;
+    if (baseSide >= SCN_PANEL_DEFAULT_SCALED_ZOOM * (float)SCN_PANEL_UNITS) {
+        /* Half a pixel of slack, as below. */
+        if (SCN_PANEL_DEFAULT_SCALED_PX > room + 0.5f) return false;
+        best = SCN_PANEL_DEFAULT_SCALED_PX * 100.0f / baseSide;
+    } else {
+        for (i = 0; i < count; i++) {
+            const int   c    = cardinals[i];
+            const float side = baseSide * (float)c / 100.0f;
+            if (c < 100 || c > SCN_PANEL_DEFAULT_SCALE_MAX) continue;
+            /* Half a pixel of slack, so a side that matches the room
+               exactly is not lost to rounding. */
+            if (side > room + 0.5f) break;
+            best = (float)c;
+            if (side >= SCN_PANEL_DEFAULT_TARGET_PX) break;
+        }
     }
-    if (best < 0) return false;
+    if (best < 0.0f) return false;
     if (outX != NULL) *outX = x;
     if (outY != NULL) *outY = y;
     if (outPercent != NULL) *outPercent = best;

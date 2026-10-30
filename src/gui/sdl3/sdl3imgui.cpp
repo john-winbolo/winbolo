@@ -5356,9 +5356,11 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
 
     /* The default, used for whichever of size and place the player has not
        saved: the top-left of the game view at a size picked to be readable
+       at a small zoom, or 128 screen pixels at a large one
        (scnPanelDefaultPlace). When that does not fit, the older default:
-       100 percent at the top-right. */
-    int   defPct = 100;
+       100 percent at the top-right. The percent is a float because the
+       large-zoom one is not a whole number (33.3 at zoom 3). */
+    float defPct = 100.0f;
     float leftX  = 0.0f;
     float leftY  = 0.0f;
     const bool atLeft =
@@ -5367,7 +5369,7 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
                              baseSide, inset, defTop, scnPanelCardinals,
                              sizeof(scnPanelCardinals) / sizeof(int),
                              &leftX, &leftY, &defPct);
-    if (!atLeft) defPct = 100;
+    if (!atLeft) defPct = 100.0f;
 
     /* What the drag may reach: big enough for its handles, small enough for
        the display with the bar above it, and inside the percent range the
@@ -5380,7 +5382,7 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     if (sideMax < SCN_PANEL_MIN_PX) sideMax = SCN_PANEL_MIN_PX;
     if (sideMin > sideMax) sideMin = sideMax;
 
-    const float percent = (v.scale >= 0) ? (float)v.scale : (float)defPct;
+    const float percent = (v.scale >= 0) ? (float)v.scale : defPct;
     float side = baseSide * percent / 100.0f;
 
     /* True while the resize drag sits on a cardinal size; the border shows
