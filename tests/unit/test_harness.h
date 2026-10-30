@@ -4486,6 +4486,10 @@ int run_lv_tank_bars_sums(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
+/* The log viewer's aids for recording the screen (test_lv_marks.c): the
+ * lines Shift and a drag draw on the map and their fade, and -size WxH. */
+int run_lv_marks_fade(void);
+int run_lv_window_size_parse(void);
 /* A double click on a tank on the map: when it turns that tank's view on. */
 int run_lv_map_double_click(void);
 int run_lv_name_header_sums(void);

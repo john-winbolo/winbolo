@@ -30,9 +30,11 @@
 #endif
 
 #include <stdlib.h>
+#include <string.h>
 #include <SDL3/SDL.h>
 #include "logviewer.h"
 #include "lv_dump.h"
+#include "lv_window_size.h"
 #include "../common/wb_log.h"
 #include "../common/prefs.h"
 #include "../winbolonet/http.h"
@@ -65,7 +67,9 @@ int __stdcall WinMain(void *hInst, void *hPrev, char *lpCmd, int nShow) {
 #endif
 
 int main(int argc, char *argv[]) {
-    const char *logPath = (argc > 1) ? argv[1] : NULL;
+    const char *logPath = NULL;
+    int sizeW = 0, sizeH = 0;
+    int i;
     SDL_Init(0);
     wb_log_init("WinBolo", "LogViewer", "logviewer.log");
     atexit(wb_log_shutdown);
@@ -101,6 +105,24 @@ int main(int argc, char *argv[]) {
             prefsFlush();
         }
         return dumpResult;
+    }
+
+    /* The command line: the log to open, and "-size WxH" for a window of a
+       fixed size in pixels (lv_window_size.h). */
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-size") == 0) {
+            if (i + 1 < argc && lvWindowSizeParse(argv[i + 1], &sizeW, &sizeH)) {
+                logViewerSetWindowSize(sizeW, sizeH);
+            } else {
+                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "WinBolo Log Viewer",
+                                         "-size wants a width and a height in pixels, "
+                                         "such as -size 1920x1080. The window opens at "
+                                         "its usual size.", NULL);
+            }
+            i++;
+        } else if (logPath == NULL) {
+            logPath = argv[i];
+        }
     }
 
     httpCreate();

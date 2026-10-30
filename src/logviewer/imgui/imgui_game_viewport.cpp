@@ -25,6 +25,7 @@ extern "C" {
     #include "logviewer.h"
     #include "../lv_dock_fit.h"
     #include "../lv_tank_pick.h"
+    #include "../lv_marks.h"
     void lv_screenMouseInformationClick(int xPos, int yPos);
     void lv_screenMouseClick(int xPos, int yPos);
     void lv_screenSelectTank(int slot);
@@ -73,6 +74,19 @@ static float s_drag_start_y = 0.0f;
 static int s_drag_start_total_px_x = 0;
 static int s_drag_start_total_px_y = 0;
 
+/* The lines drawn on the map with Shift and the left button (lv_marks.h),
+ * and whether one is being drawn now. */
+static LvMarks s_marks;
+static bool s_marking = false;
+/* The line's width in points, with a dark edge round it so it shows on any
+ * ground, and its colour. */
+#define MARK_THICK      4.0f
+#define MARK_EDGE_THICK 7.0f
+#define MARK_R 255
+#define MARK_G 221
+#define MARK_B 0
+/* Points closer than this on the screen to the last one kept are dropped. */
+#define MARK_MIN_STEP   2.0f
 
 void lv_imgui_game_viewport_init(struct LogViewerState *lv) {
     s_lv = lv;
@@ -82,6 +96,68 @@ void lv_imgui_game_viewport_init(struct LogViewerState *lv) {
     s_drag_start_y = 0.0f;
     s_drag_start_total_px_x = 0;
     s_drag_start_total_px_y = 0;
+    s_marking = false;
+    lvMarksClear(&s_marks);
+}
+
+static int screen_to_game_coords(float screen_x, float screen_y,
+                                  int *game_x, int *game_y);
+
+static uint64_t marks_now_ms(void) {
+    return (uint64_t)(ImGui::GetTime() * 1000.0);
+}
+
+/* Where the map's top left pixel at the current pan is drawn on the screen,
+ * the pan in map pixels at zoom 1, and the zoom: what turns a point on the
+ * screen into one on the map and back. */
+static void marks_view(float *originX, float *originY, float *panX, float *panY, float *zoom) {
+    LvDockMargins dock = { 0, 0, 0, 0 };
+    unsigned char ox = 0, oy = 0;
+    int sx = 0, sy = 0;
+
+    lv_imgui_dock_map_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    lv_screenGetOffsets(&ox, &oy);
+    lv_screenGetSubOffset(&sx, &sy);
+    *originX = (float)dock.left;
+    *originY = lv_imgui_get_menu_bar_height() + (float)dock.top;
+    *panX = (float)((int)ox * TILE_SIZE_X + sx);
+    *panY = (float)((int)oy * TILE_SIZE_Y + sy);
+    *zoom = lv_drawGetZoomLevel();
+    if (*zoom <= 0.0f) *zoom = 1.0f;
+}
+
+/* Shift and the left button on the map draws a line; the line follows the
+ * mouse until the button comes up. Returns 1 while it has the mouse, so the
+ * map is neither moved nor clicked. */
+static int marks_process_input(ImGuiIO& io) {
+    float originX, originY, panX, panY, zoom;
+
+    if (s_marking) {
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            lvMarksEnd(&s_marks, marks_now_ms());
+            s_marking = false;
+            return 1;
+        }
+        if (ImGui::IsMousePosValid()) {
+            marks_view(&originX, &originY, &panX, &panY, &zoom);
+            lvMarksAdd(&s_marks, panX + (io.MousePos.x - originX) / zoom,
+                       panY + (io.MousePos.y - originY) / zoom, MARK_MIN_STEP / zoom);
+        }
+        return 1;
+    }
+    if (io.KeyShift && !io.WantCaptureMouse && !s_is_mouse_down &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        int game_x, game_y;
+        if (!screen_to_game_coords(io.MousePos.x, io.MousePos.y, &game_x, &game_y)) {
+            return 0;
+        }
+        marks_view(&originX, &originY, &panX, &panY, &zoom);
+        lvMarksBegin(&s_marks, panX + (io.MousePos.x - originX) / zoom,
+                     panY + (io.MousePos.y - originY) / zoom);
+        s_marking = true;
+        return 1;
+    }
+    return 0;
 }
 
 /* Read the current pan position as a single total in zoom-1 native pixels. */
@@ -167,7 +243,7 @@ void lv_imgui_game_viewport_hover(void) {
     /* Only over the map of the overview, with nothing of ImGui's under the
      * mouse, and not while the map is dragged. */
     if (s_lv == nullptr || s_lv->isLoaded == 0 || s_lv->gameView) return;
-    if (io.WantCaptureMouse || s_is_dragging || !ImGui::IsMousePosValid()) return;
+    if (io.WantCaptureMouse || s_is_dragging || s_marking || !ImGui::IsMousePosValid()) return;
     if (!screen_to_game_coords(io.MousePos.x, io.MousePos.y, &game_x, &game_y)) return;
 
     name[0] = '\0';
@@ -195,6 +271,11 @@ int lv_imgui_game_viewport_process_input(void) {
         return 0;
     }
     
+    /* A line being drawn on the map has the mouse until the button is up. */
+    if (marks_process_input(io)) {
+        return 1;
+    }
+
     /* Check if ImGui wants to capture input - if so, don't process for game */
     if (io.WantCaptureMouse) {
         /* ImGui UI is using the mouse - reset drag state */
@@ -387,4 +468,38 @@ int lv_imgui_game_viewport_process_input(void) {
     }
 
     return input_processed;
+}
+
+void lv_imgui_game_viewport_draw_marks(void) {
+    static ImVec2 pts[LV_MARKS_MAX_POINTS];
+    float originX, originY, panX, panY, zoom;
+    uint64_t now = marks_now_ms();
+    int i, j;
+
+    if (s_lv == nullptr || s_lv->isLoaded == 0 || s_lv->gameView) return;
+    lvMarksPrune(&s_marks, now);
+    if (s_marks.count == 0) return;
+
+    /* Under the panels and the menu bar, over the map. */
+    ImDrawList *dl = ImGui::GetBackgroundDrawList();
+    marks_view(&originX, &originY, &panX, &panY, &zoom);
+    for (i = 0; i < s_marks.count; i++) {
+        const LvMarkStroke *st = lvMarksAt(&s_marks, i);
+        const float alpha = lvMarksAlpha(st, now);
+        if (alpha <= 0.0f || st->count == 0) continue;
+        const ImU32 edge = IM_COL32(0, 0, 0, (int)(160.0f * alpha));
+        const ImU32 fill = IM_COL32(MARK_R, MARK_G, MARK_B, (int)(255.0f * alpha));
+        for (j = 0; j < st->count; j++) {
+            pts[j].x = originX + (st->pts[j].x - panX) * zoom;
+            pts[j].y = originY + (st->pts[j].y - panY) * zoom;
+        }
+        if (st->count == 1) {
+            /* Shift and a click without a drag: a dot. */
+            dl->AddCircleFilled(pts[0], MARK_EDGE_THICK * 0.5f, edge);
+            dl->AddCircleFilled(pts[0], MARK_THICK * 0.5f, fill);
+        } else {
+            dl->AddPolyline(pts, st->count, edge, ImDrawFlags_None, MARK_EDGE_THICK);
+            dl->AddPolyline(pts, st->count, fill, ImDrawFlags_None, MARK_THICK);
+        }
+    }
 }
