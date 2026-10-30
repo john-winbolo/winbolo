@@ -145,7 +145,7 @@ scenario = {
     { id = "push_decay_shift", label = "Pushback slide length (shift)",
       type = "int", min = 0, max = 31, step = 1, default = 2 },
 
-    -- Pillbox shell cap: a pill holds or retargets when its target already
+    -- Pillbox shell cap: a pill loses its shot when its nearest target already
     -- has this many pillbox shells coming.
     { id = "shell_cap", label = "Pillbox shell cap", type = "bool",
       default = true },

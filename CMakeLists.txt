@@ -6418,8 +6418,8 @@ set(_unit_test_names
     sim_rules_tank_deep_sea_safe
     lgm_build_square_terrain_speed
     pill_shell_cap_off_is_no_limit
-    pill_shell_cap_retargets_next_nearest
-    pill_shell_cap_holds_then_fires_when_freed
+    pill_shell_cap_does_not_retarget
+    pill_shell_cap_loses_shot_and_reloads
     pill_shell_cap_out_of_range_clears_just_seen
     pill_shell_cap_counts_same_update_shots
     pill_shell_cap_ignores_tank_shells
