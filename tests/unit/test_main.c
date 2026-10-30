@@ -335,6 +335,7 @@ static const UnitTestEntry s_tests[] = {
     { "visibility_preset_round_trip",            run_visibility_preset_round_trip            },
     { "visibility_preset_custom",                run_visibility_preset_custom                },
     { "visibility_preset_ignores_decay",         run_visibility_preset_ignores_decay         },
+    { "visibility_preset_ignores_classic_mode",  run_visibility_preset_ignores_classic_mode  },
     { "visibility_preset_pref_words",            run_visibility_preset_pref_words            },
     { "scn_panel_popout_row",                    run_scn_panel_popout_row                    },
     { "scn_panel_yes_no",                        run_scn_panel_yes_no                        },

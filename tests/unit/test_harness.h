@@ -425,6 +425,7 @@ int run_fog_settings_lobby_reset(void);
 int run_visibility_preset_round_trip(void);
 int run_visibility_preset_custom(void);
 int run_visibility_preset_ignores_decay(void);
+int run_visibility_preset_ignores_classic_mode(void);
 int run_visibility_preset_pref_words(void);
 int run_scn_panel_popout_row(void);
 int run_scn_panel_yes_no(void);
