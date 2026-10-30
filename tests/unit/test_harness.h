@@ -3012,6 +3012,9 @@ int run_mapchooser_scenario_filter(void);
 int run_bg_map_pick_skips_tutorials(void);
 /* The folder test behind game.tutorial_done (test_bg_map_pick.c). */
 int run_tutorial_maps_shipped_path(void);
+/* Which games a scenario popup pauses: only the shipped tutorials
+ * (test_bg_map_pick.c). */
+int run_tutorial_maps_popup_pauses(void);
 
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the

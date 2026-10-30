@@ -6737,6 +6737,7 @@ set(_unit_test_names
     mapchooser_scenario_filter
     bg_map_pick_skips_tutorials
     tutorial_maps_shipped_path
+    tutorial_maps_popup_pauses
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop

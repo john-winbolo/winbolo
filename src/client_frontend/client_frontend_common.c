@@ -24,7 +24,7 @@
 #include "tutorial_text.h"  /* tutorialInputNow */
 #include "clientmutex.h"
 #include "server_sim.h"      /* serverSimTakeTutorialDone */
-#include "tutorial_maps.h"  /* tutorialMapsIsShippedTutorial */
+#include "tutorial_maps.h"  /* tutorialMapsIsShippedTutorial, tutorialMapsPopupPauses */
 #include "dialogs/imgui_messagebox.h"
 #include "../gui/sound.h"   /* soundIsMuted / soundSetMuted — the pause freezes */
 #include <stdio.h>
@@ -259,6 +259,19 @@ void frontEndGameOver(ClientSim *cs) {
   windowGameOverLeave();
 }
 
+bool clientFrontPopupPausesGame(ClientSim *cs) {
+  bool pauses;
+  if (cs == NULL) return false;
+  /* The script path is read under the client mutex (gamefront.h). The
+     mutex can be taken again by a thread that holds it already. */
+  clientMutexWaitFor();
+  pauses = tutorialMapsPopupPauses(clientSimIsSinglePlayer(cs),
+                                   gameFrontGetServerSim() != NULL,
+                                   gameFrontScenarioMapScriptPath());
+  clientMutexRelease();
+  return pauses;
+}
+
 #if !defined(__EMSCRIPTEN__)
 /* -------------------------------------------------------
  * Solo-game freezes and the background suspend
@@ -299,6 +312,11 @@ bool clientFrontSoloPause(ClientSim *cs, ClientFrontPause which, bool active) {
   if (active) {
     /* Only a solo session pauses; multiplayer keeps running. */
     if (!clientFrontIsSoloSession(cs)) return false;
+    /* A scenario popup pauses only the shipped tutorials. */
+    if (which == CLIENT_FRONT_PAUSE_TUTORIAL &&
+        !clientFrontPopupPausesGame(cs)) {
+      return false;
+    }
     if (s_pauseOn[which]) return false;          /* idempotent */
     s_pauseOn[which] = true;
     clientFrontUpdateServerPause(cs);

@@ -5277,6 +5277,25 @@ static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
     ImGui::End();
 }
 
+/* Keep the window just begun behind an open modal dialog, such as the
+   tutorial's message. The scenario windows have NoFocusOnAppearing, so when
+   ImGui makes one it puts it at the front of the display order and does not
+   move it behind the modal, as it does for a new window that takes focus.
+   They are submitted after the modal, so the first time one is made while
+   the modal is open (on the web, on every page load) it draws over the
+   dialog. Called right after Begin. When no modal is open, the window keeps
+   its place, so a click still brings it to the front. */
+static void scnKeepBehindModal(void) {
+    ImGuiWindow *modal = ImGui::GetTopMostAndVisiblePopupModal();
+    if (modal == nullptr) return;
+    ImGuiWindow *self = ImGui::GetCurrentWindow()->RootWindow;
+    if (self == modal->RootWindow) return;
+    if (ImGui::FindWindowDisplayIndex(self) >
+        ImGui::FindWindowDisplayIndex(modal->RootWindow)) {
+        ImGui::BringWindowToDisplayBehind(self, modal);
+    }
+}
+
 /* One view, in the game window. stack is how many views were placed ahead
    of it this frame, which is where a view with no saved position opens:
    below the ones before it down the right of the game view. */
@@ -5383,6 +5402,7 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
                                    ImGuiWindowFlags_NoFocusOnAppearing |
                                    ImGuiWindowFlags_NoDocking |
                                    ImGuiWindowFlags_NoNav);
+    scnKeepBehindModal();
     if (open) {
         const ImVec2 pos = ImGui::GetWindowPos();
         ImDrawList *dl   = ImGui::GetWindowDrawList();
@@ -6517,6 +6537,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
                                    ImGuiWindowFlags_NoDocking |
                                    ImGuiWindowFlags_NoNav |
                                    (takesInput ? 0 : ImGuiWindowFlags_NoInputs));
+    scnKeepBehindModal();
     if (open) {
         const ImVec2 pos = ImGui::GetWindowPos();
         ImDrawList *dl   = ImGui::GetWindowDrawList();
@@ -10052,8 +10073,8 @@ static void drainInGameNameReject(ClientSim *cs) {
 static void renderTutorialOverlay(ClientSim *cs) {
     /* A scenario's popup (game.popup) waits in the client sim's queue
        until the overlay is free, then takes the overlay like a tutorial
-       message does, so one popup shows at a time and pauses a solo game
-       the same way. None is taken once the round is over: the close at
+       message does, so one popup shows at a time. It pauses the game only
+       in a shipped tutorial (clientFrontPopupPausesGame). None is taken once the round is over: the close at
        the top of sdl3ImguiPumpAndRender would only shut it again. */
     if (cs != NULL && !tutorialOverlayIsOpen() &&
         !clientSimIsRoundOver(cs)) {
