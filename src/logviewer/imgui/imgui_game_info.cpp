@@ -22,6 +22,8 @@
 #include "../lv_scripts.h"
 /* And for the scenario's scores and the server's tick. */
 #include "../lv_presentation.h"
+/* And for the server's timing and the bots' overruns (log_OverrunStats). */
+#include "../lv_overrun.h"
 #include "../../gui/sim_rules_phrase.h"
 
 #include <SDL3/SDL_stdinc.h>   /* SDL_utf8strlcpy */
@@ -41,6 +43,7 @@ extern "C" {
     bool lv_playersIsInUse(unsigned char playerNumber);
     bool lv_screenGetLoggedPlayerName(unsigned char slot, char *dest, size_t destSize);
     int  lv_screenBotChip(unsigned char slot);
+    void lv_screenOverrunNow(LvOverrunNow *out);
     void lv_clientMutexWaitFor(void);
     void lv_clientMutexRelease(void);
 }
@@ -166,7 +169,8 @@ void lv_imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char
     }
     
     /* Version string */
-    snprintf(s_version, sizeof(s_version), "%d.%d%d", versionMajor, versionMinor, versionRevision);
+    snprintf(s_version, sizeof(s_version), "%u.%u.%u", (unsigned)versionMajor, (unsigned)versionMinor,
+             (unsigned)versionRevision);
     
     /* Map name */
     strncpy(s_map_name, mapName, sizeof(s_map_name) - 1);
@@ -637,6 +641,161 @@ static void game_info_draw_scores(void) {
     ImGui::EndTable();
 }
 
+/* A record's time in tenths of a ms as "12.3". */
+static void game_info_tenths(uint16_t tenths, char *buf, size_t bufLen) {
+    snprintf(buf, bufLen, "%u.%u", (unsigned)(tenths / 10u), (unsigned)(tenths % 10u));
+}
+
+/* A count against a total as a percentage with two decimals, "0.25". */
+static void game_info_rate(uint32_t part, uint32_t total, char *buf, size_t bufLen) {
+    double rate = total > 0 ? (double)part * 100.0 / (double)total : 0.0;
+    snprintf(buf, bufLen, "%.2f", rate);
+}
+
+/* The server's timing and each bot's overruns at the playhead, from the last
+ * log_OverrunStats record at or before it (one every 30 seconds of the
+ * round): the numbers the server's console prints in its overrun lines.
+ * Draws nothing for a recording with no record, which is every recording
+ * made before the record existed. Not part of the lag view, so the "Player
+ * Lag View" preference does not hide it: it says how the server ran, not
+ * what a player saw. */
+static void game_info_draw_timing(void) {
+    LvOverrunNow now;
+
+    /* A live feed adds records on the timer thread. */
+    lv_clientMutexWaitFor();
+    lv_screenOverrunNow(&now);
+    lv_clientMutexRelease();
+    if (!now.recorded) {
+        return;
+    }
+    ImGui::SeparatorText(langGetText(STR_LV_TIMING_HEADER));
+    if (!now.has) {
+        ImGui::TextWrapped("%s", langGetText(STR_LV_TIMING_NONE_YET));
+        return;
+    }
+
+    const OverrunRecord &r = now.rec;
+    {
+        /* Running 20 ms frames, 50 a second. */
+        uint32_t secs = r.roundFrames / 50u;
+        MessageArgs args = {};
+        snprintf(args.string1, sizeof(args.string1), "%u:%02u",
+                 (unsigned)(secs / 60u), (unsigned)(secs % 60u));
+        ImGui::TextUnformatted(langGetTextFmt(
+            (r.flags & OVERRUN_RECORD_FLAG_ROUND_END) ? STR_LV_TIMING_AT_END
+                                                      : STR_LV_TIMING_AT,
+            &args));
+    }
+    {
+        MessageArgs args = {};
+        game_info_tenths(r.tickLast, args.string1, sizeof(args.string1));
+        game_info_tenths(r.tickEwma, args.string2, sizeof(args.string2));
+        game_info_tenths(r.tickPeak, args.string3, sizeof(args.string3));
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIMING_TICK, &args));
+    }
+    {
+        MessageArgs args = {};
+        args.number = (int)r.ticksOverBudget;
+        args.number2 = (int)r.budgetMs;
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIMING_OVER_BUDGET, &args));
+    }
+    {
+        MessageArgs args = {};
+        game_info_tenths(r.simLast, args.string1, sizeof(args.string1));
+        game_info_tenths(r.simEwma, args.string2, sizeof(args.string2));
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIMING_SIM, &args));
+    }
+    if (!(r.flags & OVERRUN_RECORD_FLAG_BOTS)) {
+        return;
+    }
+    {
+        MessageArgs args = {};
+        game_info_tenths(r.targetPerBot, args.string1, sizeof(args.string1));
+        if (r.workers == 0) {
+            args.number = (int)r.activeBots;
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIMING_POOL_SINGLE, &args));
+        } else {
+            args.number = (int)r.workers;
+            args.number2 = (int)r.activeBots;
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIMING_POOL, &args));
+        }
+    }
+    {
+        MessageArgs args = {};
+        game_info_tenths(r.brainLast, args.string1, sizeof(args.string1));
+        game_info_tenths(r.brainEwma, args.string2, sizeof(args.string2));
+        game_info_tenths(r.brainPeak, args.string3, sizeof(args.string3));
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIMING_BRAIN, &args));
+    }
+    {
+        MessageArgs args = {};
+        game_info_tenths(r.prepLast, args.string1, sizeof(args.string1));
+        game_info_tenths(r.prepEwma, args.string2, sizeof(args.string2));
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIMING_PREP, &args));
+    }
+    {
+        MessageArgs args = {};
+        args.number = (int)r.totalOverruns;
+        args.number2 = (int)r.totalThinks;
+        game_info_rate(r.totalOverruns, r.totalThinks, args.string1, sizeof(args.string1));
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIMING_OVERRUNS, &args));
+    }
+    if (r.botCount == 0) {
+        return;
+    }
+
+    /* Each bot: its last and worst think, and its overruns against its
+     * thinks, the numbers of its [BOT] line on the console. */
+    if (!ImGui::BeginTable("##gi_timing_bots", 4,
+                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+        return;
+    }
+    ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_BOT),
+                            ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_LAST),
+                            ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_PEAK),
+                            ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_OVERRUNS),
+                            ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableHeadersRow();
+    for (int i = 0; i < (int)r.botCount; i++) {
+        const OverrunRecordBot &b = r.bots[i];
+        /* The name the slot plays under now, else the one the recording gave
+         * it, else its player number. */
+        char name[64] = "";
+        if (lv_playersIsInUse(b.player)) {
+            lv_screenGetPlayerName(name, b.player, sizeof(name));
+        } else {
+            lv_screenGetLoggedPlayerName(b.player, name, sizeof(name));
+        }
+        if (name[0] == '\0') {
+            MessageArgs args = {};
+            args.number = (int)b.player;
+            snprintf(name, sizeof(name), "%s",
+                     langGetTextFmt(STR_LV_TIMING_PLAYER, &args));
+        }
+        char last[16];
+        char peak[16];
+        char rate[16];
+        game_info_tenths(b.last, last, sizeof(last));
+        game_info_tenths(b.peak, peak, sizeof(peak));
+        game_info_rate(b.overruns, b.thinks, rate, sizeof(rate));
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(name);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(last);
+        ImGui::TableSetColumnIndex(2);
+        ImGui::TextUnformatted(peak);
+        ImGui::TableSetColumnIndex(3);
+        ImGui::Text("%u/%u (%s%%)", (unsigned)b.overruns, (unsigned)b.thinks, rate);
+    }
+    ImGui::EndTable();
+}
+
 void lv_imgui_game_info_window(void) {
     if (!lv_g_show_game_info_window) {
         return;
@@ -745,6 +904,7 @@ void lv_imgui_game_info_window(void) {
 
         game_info_draw_scripts();
         game_info_draw_scores();
+        game_info_draw_timing();
 
         /* Server visibility rules and the two mode flags, from the settings
          * event. The row labels come from the lobby form and carry no

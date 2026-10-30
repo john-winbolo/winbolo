@@ -540,6 +540,16 @@ bool gameFrontGetShowTutorialButton(void);
 void gameFrontSetShowTutorialButton(bool show);
 
 /*********************************************************
+*NAME:          gameFrontScenarioMapScriptPath
+*PURPOSE:
+* The script file of the running map's own scenario, as the
+* single-player scenario host read it. "" when no scenario is
+* attached; never NULL. Read with the client mutex held: the
+* host follows the committed map on the server's thread.
+*********************************************************/
+const char *gameFrontScenarioMapScriptPath(void);
+
+/*********************************************************
 *NAME:          gameFrontGetLanguageCode
 *PURPOSE:
 * Reads the persisted BCP-47 language code (e.g. "en", "de", "pt-br")
@@ -943,8 +953,9 @@ ServerSim *gameFrontGetServerSim(void);
 /*********************************************************
 *NAME:          gameFrontGetPlayerNum
 *PURPOSE:
-*  Returns the local player's slot number.
-*  0 for single-player, assigned by server for multiplayer.
+*  Returns the local player's slot number, as the server
+*  assigned it. A single-player game is not always slot 0:
+*  a scenario can seat its bots ahead of the player.
 *********************************************************/
 BYTE gameFrontGetPlayerNum(void);
 
@@ -1001,11 +1012,11 @@ extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
 #define SCN_PANEL_SCALE_MAX 300
 
 /* Where the scenario panel sits, how big the player has made it and how
- * opaque it is drawn ([WINDOW] section). These four are the layout of the
+ * opaque it is drawn ([WINDOW] section). These five are the layout of the
  * panel the player touched last, and they are the fallback: a scenario the
  * player has never laid out opens its panel from them, so somebody who likes
  * the panel small and out of the way gets it that way the first time they
- * meet a new scenario. A scenario that has been laid out keeps its own four
+ * meet a new scenario. A scenario that has been laid out keeps its own five
  * numbers in a row of its own under [SCENARIO PANEL], written and read by
  * gameFrontSetScnPanelLayout / gameFrontGetScnPanelLayout below, and those
  * are what the panel is placed from while that scenario is the one on screen.
@@ -1024,25 +1035,62 @@ extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
  * SCN_PANEL_SCALE_MIN..SCN_PANEL_SCALE_MAX, the same range the resize drag
  * is clamped to.
  *
- * The alpha is a percent of opaque, and it fades everything the panel puts
- * on screen: the black backing it is drawn on and every primitive the
- * scenario drew, together, so the panel stays one object at every setting.
- * It reaches no pixel that was not drawn on — the empty parts of the square
- * are as clear at 10 as they are at 100 — and it does not reach the border
- * or the corner grips, which are the frontend's own and have to stay
- * findable. It scales what the panel already looked like rather than setting
- * it outright, so 100 is the panel as it was before there was a slider — a
- * dim backing with the scenario's drawing at full strength on top — and that
- * is also what -1, never touched, resolves to. 0 leaves the square empty but
- * for those grips. A loaded value is clamped to 0..100.
+ * The two opacities are percents (see SCN_BG_OPACITY_DEFAULT in
+ * scn_panel_prefs.h). The background opacity is the real alpha of the black
+ * backing: 100 is opaque, 0 is no backing, and -1, never touched, is 43,
+ * which is the backing the panel had before there was a setting. The text
+ * opacity fades every primitive the scenario drew, and not the backing; -1
+ * is 100. Neither reaches the border or the corner grips, which are the
+ * frontend's own and have to stay findable. A loaded value is clamped to
+ * 0..100. They are kept under SCN_PANEL_PREFS_BG_KEY and
+ * SCN_PANEL_PREFS_TEXT_KEY; a file with only the old single "Scenario Panel
+ * Alpha" key fills both from it (scnOpacityFromPrefs), so the panel looks as
+ * it did.
  *
- * All four are written through the debounced gameFrontSaveWindowSettings
+ * All five are written through the debounced gameFrontSaveWindowSettings
  * path, and only as a drag ends: a drag is a burst of values and only the one
  * it finishes on is worth a write. */
 extern int   gameFrontScnPanelX;        /* -1 = never moved */
 extern int   gameFrontScnPanelY;
 extern int   gameFrontScnPanelScale;    /* percent, -1 = never resized */
-extern int   gameFrontScnPanelAlpha;    /* percent, -1 = never set */
+extern int   gameFrontScnPanelBgAlpha;   /* percent, -1 = never set */
+extern int   gameFrontScnPanelTextAlpha; /* percent, -1 = never set */
+
+/* The Scenario Text window: the one window the status line and the
+ * announcement of a scenario or mod are drawn in ([WINDOW] "Scenario Text
+ * X", "Y", "Width", "Height", "Background Opacity", "Text Opacity" and
+ * "Shown"). X and Y are its place
+ * inside the main window, -1 for never moved, which puts it at the top
+ * middle of the game view. Width and height are in screen pixels, -1 for
+ * never resized, which gives it the size the game's zoom gives the text.
+ * The background opacity is the real alpha of its black backing as a
+ * percent, -1 for never set, which is 43; the text opacity fades the text
+ * and its outline, -1 for never set, which is 100. A file with only the old
+ * single "Scenario Text Alpha" key fills both from it, as the panel's does.
+ * That key never was on main: an earlier build of this change wrote it.
+ * Shown is the Brains > Info Overlay > Scenario Text
+ * checkbox, which the window's X turns off. Written through the debounced
+ * gameFrontSaveWindowSettings path as each drag ends. */
+extern int   gameFrontScnTextX;         /* -1 = never moved */
+extern int   gameFrontScnTextY;
+extern int   gameFrontScnTextW;         /* pixels, -1 = never resized */
+extern int   gameFrontScnTextH;
+extern int   gameFrontScnTextBgAlpha;   /* percent, -1 = never set */
+extern int   gameFrontScnTextTextAlpha; /* percent, -1 = never set */
+extern bool  gameFrontScnTextShown;
+
+/* The Scenario Text window's pop-out: whether the player put it in an OS
+ * window of its own, and where that window sits, in desktop coordinates
+ * ([WINDOW] "Scenario Text Popout", the "open,x,y,w,h" row a scenario
+ * panel's pop-out has). X and Y are -1 when no place was ever saved. A
+ * missing or bad row loads as not popped out at the default size
+ * (scnTextPopoutLoad in scn_panel_prefs.h). Written through the debounced
+ * gameFrontSaveWindowSettings path. */
+extern bool  gameFrontScnTextPopped;
+extern int   gameFrontScnTextPopX;
+extern int   gameFrontScnTextPopY;
+extern int   gameFrontScnTextPopW;
+extern int   gameFrontScnTextPopH;
 
 /* The longest scenario string the pair below is asked to key a row on. The
  * caller passes the scenario's file name where there is one, because two
@@ -1053,21 +1101,26 @@ extern int   gameFrontScnPanelAlpha;    /* percent, -1 = never set */
 #define SCN_PANEL_SCENARIO_LEN 128
 
 /* One scenario's own scenario-panel layout, kept under "SCENARIO PANEL" /
- * the scenario ("Survival.scenario.lua") as "x,y,scale,alpha", so each
- * scenario remembers where its overlay sat, how big it was and how opaque.
- * The four numbers mean exactly what the globals above mean, -1 and all, and
- * are clamped on the way out of the file the same way those are: the
- * preferences file is a text file a player can edit, and a bad row must not
- * open the panel off screen or too small to get a pointer onto.
+ * the scenario ("Survival.scenario.lua") as "x,y,scale,text", with the
+ * background opacity under "SCENARIO PANEL BG" / the same key (see
+ * scnPanelLayoutParse in scn_panel_prefs.h), so each scenario remembers where
+ * its overlay sat, how big it was and how opaque. The five numbers mean
+ * exactly what the globals above mean, -1 and all, and are clamped on the way
+ * out of the file the same way those are: the preferences file is a text
+ * file a player can edit, and a bad row must not open the panel off screen or
+ * too small to get a pointer onto. A four-number row with no background
+ * value, from main or 2.1, is read, and its one opacity gives both. A
+ * five-number row "x,y,scale,bg,text", from an earlier build of this change,
+ * is read too.
  *
- * Get returns false, and leaves all four alone, when no row is remembered
- * yet or when the row does not read as four whole numbers — the caller keeps
- * the [WINDOW] fallback in that case. Set does nothing for a scenario with
- * no name, which is a game with no scenario behind it. */
+ * Get returns false, and leaves all five alone, when no row is remembered
+ * yet or when the row does not read — the caller keeps the [WINDOW] fallback
+ * in that case. Set does nothing for a scenario with no name, which is a game
+ * with no scenario behind it. */
 bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
-                                int *scale, int *alpha);
+                                int *scale, int *bgAlpha, int *textAlpha);
 void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
-                                int scale, int alpha);
+                                int scale, int bgAlpha, int textAlpha);
 
 /* Whether one script's scenario panel is shown, kept under
  * "SCENARIO PANEL SHOWN" / the script ("Survival.scenario.lua") as Yes or No.

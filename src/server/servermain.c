@@ -3046,6 +3046,10 @@ int main(int argc, char **argv) {
     if (scenarioHost != NULL && skipLobby) {
       serverSimScenarioApplyLobbyRules(serverSim);
     }
+    /* The overrun lines on the console at 1:00 of a round and every five
+       minutes after. Only the dedicated server prints them; a game hosted
+       from a client links the same tick and writes only the log record. */
+    serverLifecycleSetOverrunConsolePrint(true);
     if (serverInstanceStartup(serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
       scenarioHostDetach(scenarioHost);
@@ -3673,6 +3677,12 @@ int main(int argc, char **argv) {
   if (optSnapJson[0] != '\0' && serverSimIsTerminalGameOver(serverSim)) {
     serverEmitFinalJson(serverSim, optSnapJson, "final", TRUE);
   }
+  /* Close the round log while the bots are still here: its stop hook writes
+   * the round-end overrun record, with the bot pool and each bot. The timer
+   * is drained above, so no tick adds to the log after this. */
+  if (serverDedicatedLogIsActive() == TRUE) {
+    logStop(); /* Finalize zip — must run regardless of WBN upload */
+  }
   botWorkerPoolDestroy();
   brainRecordShutdown();   /* flush + close brainrec.btr (no-op if not recording) */
   threadsDestroy();
@@ -3684,10 +3694,6 @@ int main(int argc, char **argv) {
   }
 
   serverInstanceShutdown(serverSim);
-
-  if (serverDedicatedLogIsActive() == TRUE) {
-    logStop(); /* Finalize zip — must run regardless of WBN upload */
-  }
   if (serverDedicatedLogIsActive() == TRUE && key[0] != EMPTY_CHAR && argExist(argc, argv, "dontsendlog") == FALSE) {
     serverMessageConsoleMessage(serverSim,(char *)"Uploading log file to winbolo.net");
     httpCreate();
