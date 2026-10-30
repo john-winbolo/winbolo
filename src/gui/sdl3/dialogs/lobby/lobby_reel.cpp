@@ -64,7 +64,7 @@ extern "C" {
 #include "../../macos_pinch.h"   /* macOSPinchZoomConsume — trackpad pinch over the reel */
 #include "../../../lang.h"       /* langGetText / langGetTextFmt / MessageArgs / STR_DLGLOBBY_REEL_* / STR_LV_* */
 #include "../../../gamefront.h"  /* gameFrontHasLocalServer — only a round this process recorded plays from file */
-#include "../../../../logviewer/lv_controls_layout.h"  /* LvFineDrag / lvFineDragStep � Shift and a drag of the seek bar */
+#include "../../../../logviewer/lv_controls_layout.h"  /* LvFineDrag / lvFineDragStep — Shift and a drag of the seek bar */
 #include "../../../../common/wb_log.h"  /* WB_LOG_INFO / WB_LOG_CAT_GUI — the transfer trace */
 #include "../../../../server/server_dedicated_log.h"  /* serverDedicatedLogLastRoundFile — the last completed round's .wbv */
 #include "../../../../bolo/public/wire_limits.h"      /* ROUND_LOG_MAX_BYTES — ceiling on the WinBolo.net download */
