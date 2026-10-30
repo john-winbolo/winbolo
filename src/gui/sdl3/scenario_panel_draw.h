@@ -364,17 +364,19 @@ static inline ScnTextBand scnTextTabletBand(float viewX, float viewY,
  *PURPOSE:
  *  Whether a point is on the Scenario Text window's bar or
  *  on its resize grip: the two places where the window
- *  takes the mouse. The bar is the strip across the top of
- *  the window, the full width and barH high, and it holds
- *  the gear and the X. The grip is the gripSide square in
- *  the bottom-right corner. Each rectangle includes its
- *  top and left edges and not its bottom and right edges,
- *  as ImGui's own rectangle test does. A window with no
- *  area has no bar and no grip.
+ *  takes the mouse. The bar is the strip directly above
+ *  the text area, as wide as the text area and barH high,
+ *  so its bottom edge is the text area's top edge and it
+ *  covers no text. It holds the gear and the X. The grip
+ *  is the gripSide square in the text area's bottom-right
+ *  corner. Each rectangle includes its top and left edges
+ *  and not its bottom and right edges, as ImGui's own
+ *  rectangle test does. A text area with no area has no
+ *  bar and no grip. A barH of 0 means no bar.
  *
  *ARGUMENTS:
- *  x/y      - the window's top-left corner, in pixels
- *  w/h      - the window's size, in pixels
+ *  x/y      - the text area's top-left corner, in pixels
+ *  w/h      - the text area's size, in pixels
  *  barH     - the bar's height, in pixels
  *  gripSide - the grip's side, in pixels
  *  px/py    - the point, in pixels
@@ -383,35 +385,61 @@ static inline bool scnTextPointerOnHandle(float x, float y, float w, float h,
                                           float barH, float gripSide,
                                           float px, float py) {
     if (w <= 0.0f || h <= 0.0f) return false;
-    if (px < x || px >= x + w || py < y || py >= y + h) return false;
-    if (barH > 0.0f && py < y + barH) return true;
-    if (gripSide > 0.0f && px >= x + w - gripSide && py >= y + h - gripSide) {
+    if (px < x || px >= x + w) return false;
+    if (barH > 0.0f && py >= y - barH && py < y) return true;
+    if (gripSide > 0.0f && px >= x + w - gripSide &&
+        py >= y + h - gripSide && py < y + h) {
         return true;
     }
     return false;
 }
 
 /*********************************************************
+ *NAME:          scnTextPrintedRecently
+ *PURPOSE:
+ *  Whether a line was on screen in the Scenario Text
+ *  window within the last holdMs milliseconds. The window
+ *  stays up for that time after its last line goes, and
+ *  not after it, so an empty window does not stay on the
+ *  game view.
+ *
+ *ARGUMENTS:
+ *  everPrinted - a line has been on screen this round
+ *  lastMs      - the SDL tick, in ms, a line was last on
+ *                screen
+ *  nowMs       - the SDL tick now, in ms
+ *  holdMs      - how long the window stays up after its
+ *                last line, in ms
+ *********************************************************/
+static inline bool scnTextPrintedRecently(bool everPrinted, uint64_t lastMs,
+                                          uint64_t nowMs, uint64_t holdMs) {
+    if (!everPrinted) return false;
+    if (nowMs < lastMs) return true;
+    return nowMs - lastMs < holdMs;
+}
+
+/*********************************************************
  *NAME:          scnTextWindowShown
  *PURPOSE:
  *  Whether the desktop Scenario Text window is up this
- *  frame. It is up while the player has it shown and the
- *  round lists it in the menu (the round has a scenario or
- *  a mod, or has shown a line), with or without a line to
- *  show, so the player can move and resize it when no line
- *  is on screen. It is also up while the player is busy
- *  with it (a drag, its settings, its close confirm), so
- *  that is not cut off. A line to show also keeps it up.
+ *  frame. It is up while the player has it shown and there
+ *  is a line to show, or a line was on screen a short time
+ *  ago (scnTextPrintedRecently), so the player can still
+ *  grab it just after a line goes. It is also up while the
+ *  player is busy with it (a drag, its settings, its close
+ *  confirm), so that is not cut off. With no recent line
+ *  and nothing busy it is not up, so no empty window stays
+ *  on the game view.
  *
  *ARGUMENTS:
- *  shown      - the player has the window shown
- *  menuListed - the round lists the window in the menu
- *  haveText   - there is a status line or an announcement
- *  busy       - the player is busy with the window
+ *  shown    - the player has the window shown
+ *  recent   - a line was on screen a short time ago
+ *  haveText - there is a status line or an announcement
+ *  busy     - the player is busy with the window
  *********************************************************/
-static inline bool scnTextWindowShown(bool shown, bool menuListed,
+static inline bool scnTextWindowShown(bool shown, bool recent,
                                       bool haveText, bool busy) {
-    return shown && (menuListed || haveText || busy);
+    return shown && (recent || haveText || busy);
 }
 
 /*********************************************************

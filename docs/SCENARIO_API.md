@@ -2343,14 +2343,20 @@ it asked for.
 drawn in one window of their own, the Scenario Text window, and not on the
 game view. A script cannot put text anywhere else on the screen. The window
 is built the same way as the scenario panel's window: it has no title bar, a
-see-through backing, a bar along its top to move it, a gear that opens its
+see-through backing, a bar just above its text to move it, a gear that opens its
 settings (Pop out, then two opacity sliders), an X that closes it, and a grip
 in its bottom-right corner to resize it. Unlike the panel, it is a rectangle
-and it can take any shape. In a round with a scenario or a mod the window
-stays up for the whole round, also when there is no line to draw: with no
-line it draws nothing, and its bar, buttons, grip and edge show while the
-pointer is on it, so the player can move and resize it at any time. Outside
-such a round it shows only while there is a line to draw.
+and it can take any shape. The window is hidden until a scenario shows a
+status line or an announcement. Turning it on in **Brains > Info Overlay >
+Scenario Text** does not show it by itself, and the pointer over its place
+does not show it. It shows while it has a line to draw, and for
+`SCN_TEXT_SHOW_SECONDS` (5) seconds after a line was last on screen in it, so
+the player can still move or resize it. Then it is hidden again. It also
+stays up while the player drags its bar or its grip, has its gear settings
+open, or has its close question open, and it goes when the player is done.
+While a popup (`game.popup` or a tutorial message) is open, the lines are not
+drawn, so after 5 seconds the window is hidden until the popup closes and the
+lines show again. A popped-out window follows the same rule.
 
 By default the window sits at the top middle of the game view, sized so the
 text is as large as announcements were before: 240 units times the game's
