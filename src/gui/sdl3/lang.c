@@ -1432,7 +1432,6 @@ static const LangEntry langTable[] = {
     {3155, "Delete"},
     {3156, "Delete this GIF? It cannot be undone."},
     {3157, "The GIF could not be deleted."},
-    {3158, "Clips"},
     {3165, "Match display (vsync)"},
     {3166, "{number} fps"},
     {3167, "Unlimited (vsync off)"},

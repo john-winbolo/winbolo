@@ -18,8 +18,8 @@
 /*********************************************************
  * Name:          clip_gif_gallery.h
  * Purpose:       The GIF gallery window (clip_gif_gallery.cpp),
- *                which the game's replay, the welcome screen
- *                and the Log Viewer all open. It lists the GIFs
+ *                which the game's replay and the Log Viewer
+ *                both open. It lists the GIFs
  *                in <pref folder>/clips and plays the selected
  *                one. The screen that shows it gives it the
  *                renderer, the window and the open game's id

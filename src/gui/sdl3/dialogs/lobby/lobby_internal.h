@@ -816,12 +816,13 @@ void lobbyClipGifShutdown(void);
 #endif
 
 /* clipgif gallery: the window is clip_gif_gallery.cpp, which the Log Viewer
- * also opens. lobbyClipGifGalleryOpen, lobbyClipGifGalleryRender (drawn once
- * per recap body render in the lobby) and lobbyClipGifGalleryShutdown are in
- * lobby_reel.h, for the welcome screen; they give the gallery the game's
- * renderer, window and the reel's game. */
+ * also opens. lobbyClipGifGalleryOpen and lobbyClipGifGalleryRender (drawn
+ * once per recap body render) are in lobby_clip_gif.cpp; they give the
+ * gallery the game's renderer, window and the reel's game. */
 #if BOLO_CLIP_GIF_GALLERY
 #include "../clip_gif_gallery.h"  /* clipGifGalleryAdd / Poll / Button */
+void lobbyClipGifGalleryOpen(void);
+void lobbyClipGifGalleryRender(float s);
 #endif
 
 /* rating */
