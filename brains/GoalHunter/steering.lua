@@ -1095,22 +1095,25 @@ local function step_square_blocked(world, info, mx, my)
 end
 
 -- C.STUCK_COLLAPSE_NEEDS_CLIP: is the step from the tank's square to the
--- path's next square really blocked?  The square itself (above), a land/
--- water edge, a blocked corner square on a diagonal step, or the tank's
--- off-centre body sweeping into a blocked side square.  An open step is not
--- blocked, however slowly the tank is moving onto it.
+-- path's next square really blocked?  The square itself (above), a blocked
+-- corner square on a diagonal step, or the tank's off-centre body sweeping
+-- into a blocked side square.  An open step is not blocked, however slowly
+-- the tank is moving onto it.  A step between land and river is open: river
+-- is drivable, the path planner already prices it (RIVER_BASE_COST,
+-- RIVER_CONSECUTIVE_ADD, the ammo factor), and turning back at the bank
+-- makes the tank enter the river from a standstill, the slowest crossing
+-- and the one that loses the most ammo.  Deep sea stays blocked through
+-- IMPASSABLE.
 local function next_step_blocked(world, info, tmx, tmy, nx, ny)
   if nx == tmx and ny == tmy then return true end   -- old behaviour
   if step_square_blocked(world, info, nx, ny) then return true end
-  if (WATER_TT[U.ttype(tmx, tmy)] or false)
-     ~= (WATER_TT[U.ttype(nx, ny)] or false) then
-    return true
-  end
   if nx ~= tmx and ny ~= tmy
      and (step_square_blocked(world, info, nx, tmy)
           or step_square_blocked(world, info, tmx, ny)) then
     return true
   end
+  -- U.bresenham leaves out both end squares, so a one-square step has no
+  -- squares to check: this test only acts on longer steps.
   return (corridor_path_clipped(info, tmx, tmy, nx, ny))
 end
 M._next_step_blocked = next_step_blocked   -- unit tests (test_orders.lua)

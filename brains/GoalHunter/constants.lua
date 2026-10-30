@@ -4912,8 +4912,13 @@ M.STUCK_EXEMPT_REPOSITION_SHOOT = true   -- keel false
 -- step (pilltag_hop_ahead seed 99, brain ticks 1192 and 1329).  With this
 -- on, the collapse fires only when the next step is really blocked: a
 -- building, half building or deep sea square, a live pillbox or another
--- tank on it, a land/water edge, a blocked corner square on a diagonal
--- step, or the tank's off-centre body sweeping into a blocked side square.
+-- tank on it, a blocked corner square on a diagonal step, or the tank's
+-- off-centre body sweeping into a blocked side square (a longer step only).
+-- A step between land and river is open (Andrew approved, review of PR
+-- #593): river is drivable, the path planner already prices it
+-- (RIVER_BASE_COST, RIVER_CONSECUTIVE_ADD, the ammo factor), and turning
+-- back at the bank makes the tank enter the river from a standstill, the
+-- slowest crossing and the one that loses the most ammo.
 -- The stuck recovery and its penalty at STUCK_TICKS do not change.
 -- false = the collapse fires on any step (keel).
 M.STUCK_COLLAPSE_NEEDS_CLIP = true   -- keel false

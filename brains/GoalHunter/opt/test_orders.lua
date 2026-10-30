@@ -9037,10 +9037,12 @@ end
       { [31 * 256 + 31] = C.T_BUILDING }, W0, centre, 31, 30, false },
     { "side sweep: off centre north, wall south of step: not blocked",
       { [31 * 256 + 31] = C.T_BUILDING }, W0, inf(wc(30), wc(30) - 100), 31, 30, false },
-    -- The land/water edge test as it is now (review finding 1, not changed):
-    -- every step between land and water counts as blocked.
-    { "edge: grass to river: blocked", { [30 * 256 + 31] = C.T_RIVER }, W0, centre, 31, 30, true },
-    { "edge: river to grass: blocked", { [30 * 256 + 30] = C.T_RIVER }, W0, centre, 31, 30, true },
+    -- River is drivable: a step between land and river is open.  Deep sea
+    -- stays blocked (the row above, and from a river square below).
+    { "edge: grass to river: not blocked", { [30 * 256 + 31] = C.T_RIVER }, W0, centre, 31, 30, false },
+    { "edge: river to grass: not blocked", { [30 * 256 + 30] = C.T_RIVER }, W0, centre, 31, 30, false },
+    { "edge: river to deep sea: blocked",
+      { [30 * 256 + 30] = C.T_RIVER, [30 * 256 + 31] = C.T_DEEPSEA }, W0, centre, 31, 30, true },
     { "edge: river to river: not blocked",
       { [30 * 256 + 30] = C.T_RIVER, [30 * 256 + 31] = C.T_RIVER }, W0, centre, 31, 30, false },
   }
