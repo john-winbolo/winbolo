@@ -285,10 +285,10 @@ int run_lv_team_sprite_sums(void) {
 
 int run_lv_team_colour_lookup(void) {
     /* The defaults the Team Colours dialog opens with: Team 1 green (2),
-       Team 2 red (11), Team 3 blue (12), Team 4 yellow (4), ..., and light
-       grey (10) for neutral. */
+       Team 2 red (11), Team 3 blue (12), Team 4 yellow (4), ..., and the
+       dark grey (0) for neutral. */
     static const unsigned char defaults[LV_TEAM_COLOUR_SLOTS] = {
-        2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0, 10
+        2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0, 0
     };
     unsigned char tc[LV_TEAM_COLOUR_SLOTS];
     int team, other;
@@ -327,9 +327,9 @@ int run_lv_team_colour_lookup(void) {
     }
 
     /* Neutral: the dialog's Neutral entry, at its default and when chosen. */
-    UT_ASSERT_MSG(lvTeamColourEntry(tc, LV_TEAM_COLOUR_NEUTRAL) == 10, "neutral default");
-    tc[LV_TEAM_COLOUR_NEUTRAL] = 0;
-    UT_ASSERT_MSG(lvTeamColourEntry(tc, LV_TEAM_COLOUR_NEUTRAL) == 0, "neutral chosen");
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, LV_TEAM_COLOUR_NEUTRAL) == 0, "neutral default");
+    tc[LV_TEAM_COLOUR_NEUTRAL] = 10;
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, LV_TEAM_COLOUR_NEUTRAL) == 10, "neutral chosen");
 
     /* A number that is not a team is neutral: under 0, and past the last
        team. It never reads outside tc. */
@@ -338,9 +338,23 @@ int run_lv_team_colour_lookup(void) {
     UT_ASSERT_MSG(lvTeamColourSlot(17) == LV_TEAM_COLOUR_NEUTRAL, "team 17");
     UT_ASSERT_MSG(lvTeamColourSlot(255) == LV_TEAM_COLOUR_NEUTRAL, "team 255");
     UT_ASSERT_MSG(lvTeamColourSlot(15) == 15 && lvTeamColourSlot(0) == 0, "a team keeps its place");
-    UT_ASSERT_MSG(lvTeamColourEntry(tc, -1) == 0 && lvTeamColourEntry(tc, 17) == 0 &&
-                  lvTeamColourEntry(tc, 255) == 0, "no team: the neutral entry");
-    UT_ASSERT_MSG(lvTeamColourDefault(-1) == 10 && lvTeamColourDefault(99) == 10, "no team: neutral default");
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, -1) == 10 && lvTeamColourEntry(tc, 17) == 10 &&
+                  lvTeamColourEntry(tc, 255) == 10, "no team: the neutral entry");
+    UT_ASSERT_MSG(lvTeamColourDefault(-1) == 0 && lvTeamColourDefault(99) == 0, "no team: neutral default");
+
+    /* A stored Neutral value. With no mark (written before the dark grey
+       was the default) a light grey is the old default and reads as the
+       new one; any other value is the user's. With the mark, every value
+       is the user's, light grey too. */
+    UT_ASSERT_MSG(lvTeamColourNeutralPref(LV_TEAM_COLOUR_NEUTRAL_OLD_DEFAULT, 0) == 0,
+                  "old default not moved to the dark grey");
+    UT_ASSERT_MSG(LV_TEAM_COLOUR_NEUTRAL_OLD_DEFAULT == 10, "old default not light grey");
+    UT_ASSERT_MSG(lvTeamColourNeutralPref(6, 0) == 6, "an old pick changed");
+    UT_ASSERT_MSG(lvTeamColourNeutralPref(0, 0) == 0, "an old dark grey changed");
+    UT_ASSERT_MSG(lvTeamColourNeutralPref(10, 1) == 10, "a marked light grey changed");
+    UT_ASSERT_MSG(lvTeamColourNeutralPref(6, 1) == 6, "a marked pick changed");
+    UT_ASSERT_MSG(lvTeamColourNeutralPref(99, 1) == 0 && lvTeamColourNeutralPref(-1, 0) == 0,
+                  "a value off the palette: not the default");
 
     /* A stored value that is not an entry of the palette: the default. */
     tc[3] = 17;
@@ -349,7 +363,7 @@ int run_lv_team_colour_lookup(void) {
     UT_ASSERT_MSG(lvTeamColourEntry(tc, 3) == 4, "value 255 for team 4");
     UT_ASSERT_MSG(lvTeamColourPref(3, -1) == 4 && lvTeamColourPref(3, 17) == 4, "bad preference");
     UT_ASSERT_MSG(lvTeamColourPref(3, 0) == 0 && lvTeamColourPref(3, 16) == 16, "good preference");
-    UT_ASSERT_MSG(lvTeamColourPref(LV_TEAM_COLOUR_NEUTRAL, 99) == 10, "bad neutral preference");
+    UT_ASSERT_MSG(lvTeamColourPref(LV_TEAM_COLOUR_NEUTRAL, 99) == 0, "bad neutral preference");
 
     /* With no table at all the answer is entry 0. */
     UT_ASSERT_MSG(lvTeamColourEntry(NULL, 2) == 0, "no table");
@@ -358,22 +372,22 @@ int run_lv_team_colour_lookup(void) {
 
 /* lv_neutral_pill_grey - a neutral pillbox is drawn in the Team Colours
  * dialog's Neutral colour, whatever colours the teams have, a red team or
- * none (lv_team_sprite.h, lv_team_colour.h). The Neutral entry is light grey
- * (10) until the user picks another. With the entry -1 (team colours off,
+ * none (lv_team_sprite.h, lv_team_colour.h). The Neutral entry is the dark
+ * grey (0) until the user picks another. With the entry -1 (team colours off,
  * or a perspective on) it is the game's red tile. */
 int run_lv_neutral_pill_grey(void) {
     int entry, armour;
     LvMapItemSprite s;
     unsigned char tc[LV_TEAM_COLOUR_SLOTS];
 
-    /* The Neutral entry: light grey by default, the dialog's pick after. */
-    UT_ASSERT_MSG(lvTeamColourDefault(LV_TEAM_COLOUR_NEUTRAL) == 10, "Neutral default not light grey");
+    /* The Neutral entry: the dark grey by default, the dialog's pick after. */
+    UT_ASSERT_MSG(lvTeamColourDefault(LV_TEAM_COLOUR_NEUTRAL) == 0, "Neutral default not dark grey");
     for (entry = 0; entry < LV_TEAM_COLOUR_SLOTS; entry++) {
         tc[entry] = lvTeamColourDefault(entry);
     }
-    UT_ASSERT_MSG(lvTeamColourEntry(tc, -1) == 10, "no team: not the Neutral entry");
-    tc[LV_TEAM_COLOUR_NEUTRAL] = 0;
-    UT_ASSERT_MSG(lvTeamColourEntry(tc, -1) == 0, "the dialog's Neutral pick not used");
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, -1) == 0, "no team: not the Neutral entry");
+    tc[LV_TEAM_COLOUR_NEUTRAL] = 10;
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, -1) == 10, "the dialog's Neutral pick not used");
 
     /* Every entry, the red one too: the neutral pillbox is that entry's
        cell of items.bmp at each armour, not the game's red tile. */

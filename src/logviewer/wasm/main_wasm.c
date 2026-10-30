@@ -342,8 +342,18 @@ static void mainLoadPreferences(void) {
         g_lv->tc[count] = lvTeamColourPref(count, atoi(val));
         count++;
     }
-    lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", "10", val, sizeof(val));
-    g_lv->tc[16] = lvTeamColourPref(LV_TEAM_COLOUR_NEUTRAL, atoi(val));
+    /* Neutral: a stored light grey with no mark is the old default
+       (lvTeamColourNeutralPref). */
+    {
+        int neutralValue;
+        snprintf(def, 12, "%d", (int)lvTeamColourDefault(LV_TEAM_COLOUR_NEUTRAL));
+        lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, def, val, sizeof(val));
+        neutralValue = atoi(val);
+        lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_MARK_KEY, "", val,
+                                      sizeof(val));
+        g_lv->tc[16] = lvTeamColourNeutralPref(neutralValue,
+                                               strcmp(val, LV_TEAM_COLOUR_NEUTRAL_MARK) == 0);
+    }
 
     /* Playback Speed */
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
@@ -378,7 +388,9 @@ static void mainSavePreferences(void) {
         count++;
     }
     snprintf(val, sizeof(val), "%d", g_lv->tc[16]);
-    lv_platform_config_set_string("LOGVIEWER", "Neutral Colour", val);
+    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, val);
+    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_MARK_KEY,
+                                  LV_TEAM_COLOUR_NEUTRAL_MARK);
 
     snprintf(val, sizeof(val), "%d", g_lv->speed);
     lv_platform_config_set_string("LOGVIEWER", "Playback Speed", val);

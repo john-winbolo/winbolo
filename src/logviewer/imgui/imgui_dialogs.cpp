@@ -115,8 +115,15 @@ void lv_imgui_dialogs_init(struct LogViewerState *lv) {
         char def_val[16];
         snprintf(def_val, sizeof(def_val), "%d",
                  (int)lvTeamColourDefault(LV_TEAM_COLOUR_NEUTRAL));
-        lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", def_val, val, sizeof(val));
-        s_team_colours[16] = lvTeamColourPref(LV_TEAM_COLOUR_NEUTRAL, atoi(val));
+        lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, def_val, val,
+                                      sizeof(val));
+        int neutralValue = atoi(val);
+        /* A stored light grey with no mark is the old default
+           (lvTeamColourNeutralPref). */
+        lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_MARK_KEY, "", val,
+                                      sizeof(val));
+        s_team_colours[16] = lvTeamColourNeutralPref(
+            neutralValue, strcmp(val, LV_TEAM_COLOUR_NEUTRAL_MARK) == 0);
     }
     
     s_team_colours_loaded = true;
@@ -177,7 +184,9 @@ void lv_imgui_dialogs_save(void) {
     
     /* Neutral colour */
     snprintf(val, sizeof(val), "%d", s_team_colours[16]);
-    lv_platform_config_set_string("LOGVIEWER", "Neutral Colour", val);
+    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, val);
+    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_MARK_KEY,
+                                  LV_TEAM_COLOUR_NEUTRAL_MARK);
     
     /* Save to disk */
     lv_platform_config_save();
@@ -338,7 +347,9 @@ static void render_team_colours_dialog(void) {
             }
             char val[16];
             snprintf(val, sizeof(val), "%d", s_team_colours[16]);
-            lv_platform_config_set_string("LOGVIEWER", "Neutral Colour", val);
+            lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, val);
+            lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_MARK_KEY,
+                                          LV_TEAM_COLOUR_NEUTRAL_MARK);
             lv_platform_config_save();
             
             s_show_team_colours = false;

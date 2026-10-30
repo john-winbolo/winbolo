@@ -42,11 +42,12 @@ static inline int lvTeamColourSlot(int team) {
 }
 
 /* The entry a team has before the user picks one: Team 1 green (2), Team 2
- * red (11), Team 3 blue (12), Team 4 yellow (4), and so on. Neutral is light
- * grey (10). These are the values the Team Colours dialog opens with. */
+ * red (11), Team 3 blue (12), Team 4 yellow (4), and so on. Neutral is the
+ * dark grey (0, 0x6f6f6f on items.bmp), the colour neutral pillboxes are
+ * drawn in. These are the values the Team Colours dialog opens with. */
 static inline unsigned char lvTeamColourDefault(int team) {
     static const unsigned char defaults[LV_TEAM_COLOUR_SLOTS] = {
-        2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0, 10
+        2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0, 0
     };
     return defaults[lvTeamColourSlot(team)];
 }
@@ -56,6 +57,27 @@ static inline unsigned char lvTeamColourDefault(int team) {
 static inline unsigned char lvTeamColourPref(int team, int value) {
     if (value < 0 || value >= LV_TEAM_COLOUR_ENTRIES) return lvTeamColourDefault(team);
     return (unsigned char)value;
+}
+
+/* The Neutral entry before it was the dark grey: light grey (10). The
+ * viewer writes every colour to the preferences each time it closes, so a
+ * stored 10 is almost always this old default and not the user's pick.
+ * The key LV_TEAM_COLOUR_NEUTRAL_MARK_KEY is written beside "Neutral
+ * Colour" from now on. A stored Neutral value with no such mark comes from
+ * the time of the old default: a 10 there reads as the new default. Once
+ * the mark is written, every stored value is the user's, 10 too. */
+#define LV_TEAM_COLOUR_NEUTRAL_OLD_DEFAULT 10
+#define LV_TEAM_COLOUR_NEUTRAL_KEY         "Neutral Colour"
+#define LV_TEAM_COLOUR_NEUTRAL_MARK_KEY    "Neutral Colour Version"
+#define LV_TEAM_COLOUR_NEUTRAL_MARK        "2"
+
+/* A value read from the preferences for Neutral. marked is nonzero when
+ * LV_TEAM_COLOUR_NEUTRAL_MARK_KEY holds LV_TEAM_COLOUR_NEUTRAL_MARK. */
+static inline unsigned char lvTeamColourNeutralPref(int value, int marked) {
+    if (!marked && value == LV_TEAM_COLOUR_NEUTRAL_OLD_DEFAULT) {
+        return lvTeamColourDefault(LV_TEAM_COLOUR_NEUTRAL);
+    }
+    return lvTeamColourPref(LV_TEAM_COLOUR_NEUTRAL, value);
 }
 
 /* The entry a team is drawn in: the one tc[] has for it. tc is the
