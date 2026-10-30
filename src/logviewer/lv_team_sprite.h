@@ -15,17 +15,14 @@
  * to 15) and one more for the base.
  *
  * A thing a player owns is drawn from the items sheet, in the colour of the
- * owner's team. A thing nobody owns is drawn as the game draws it, from the
- * atlas: a neutral base is the game's neutral base tile, and a neutral
- * pillbox is the game's hostile pillbox tile, which is what every player's
- * game shows for a pillbox that is not on the player's side.
+ * owner's team. A neutral base is drawn as the game draws it, from the
+ * atlas: the game's neutral base tile. A neutral pillbox is drawn from the
+ * items sheet in the dialog's Neutral colour (lvMapPillSpriteNeutralAs,
+ * below), and not as the game's red pillbox, which is close to the
+ * palette's red.
  *
  * A team is drawn in the colour the Team Colours dialog has for it
  * (lv_team_colour.h), and that is the row of the sheet with the same number.
- * The palette has a red (entry 11), and a team that has it is drawn red. Its
- * pillboxes are then close to the game's red pillbox that no team holds, so
- * while such a team is in the game the neutral pillboxes are drawn grey
- * (lvNeutralPillEntry, below).
  *
  * Header only, with no includes but the C library's, so the viewer and the
  * unit tests (tests/unit/test_lv_hud.c) use the same sums.
@@ -99,81 +96,11 @@ static inline LvMapItemSprite lvMapPillSprite(bool neutral, int armour, int pale
     return s;
 }
 
-/* A neutral pillbox when a team is red.
- *
- * The game's neutral pillbox is red: its coloured pixels are 0xde0000. A
- * team in the palette's red (entry 11, 0xc00000 on items.bmp) has pillboxes
- * the viewer cannot tell from the neutral ones. So, when a team in the game
- * has a colour that close to the neutral pillbox's red, the neutral
- * pillboxes are drawn grey instead: from the items sheet, in a grey row.
- *
- * "Close" is an RGB distance under LV_NEUTRAL_PILL_CLASH_DIST between the
- * team's row of items.bmp and the neutral pillbox's red. Entry 11 is 30
- * away. The nearest other entry, brown (13), is 159 away, so only the red
- * team clashes.
- *
- * The grey is grey (entry 0, 0x6f6f6f) when no team in the game has it,
- * and light grey (entry 10, 0xa5a5a5) when one does. Both are far from the
- * ground and the road, which are dark. If both greys are taken, the first
- * entry no team has and that does not clash is used. */
-
-/* The coloured pixels of the game's neutral (hostile) pillbox tile. */
-#define LV_NEUTRAL_PILL_RGB 0xde0000u
-
-/* The RGB distance under which a team colour is too close to that red. */
-#define LV_NEUTRAL_PILL_CLASH_DIST 96
-
-/* The two greys, in the order they are tried. */
-#define LV_NEUTRAL_PILL_GREY       0
-#define LV_NEUTRAL_PILL_GREY_SPARE 10
-
-/* The coloured pixels of each row of items.bmp (the pixels that differ from
- * row to row), as 0xRRGGBB. */
-static inline unsigned int lvItemsRowRgb(int entry) {
-    static const unsigned int rgb[LV_TEAM_SHEET_ROWS] = {
-        0x6f6f6fu, 0xc8df00u, 0x18b510u, 0xfd77ffu, 0xffff31u, 0x008f9fu,
-        0xffce00u, 0xbf00bfu, 0x00ffffu, 0x31ce31u, 0xa5a5a5u, 0xc00000u,
-        0x0000bdu, 0x808000u, 0xffc0c0u, 0x96ff96u, 0x60127au
-    };
-    return rgb[lvTeamSheetRow(entry)];
-}
-
-/* Whether a team in this palette entry is too close to the neutral
- * pillbox's red. */
-static inline bool lvTeamClashesNeutralPill(int entry) {
-    unsigned int a = lvItemsRowRgb(entry);
-    unsigned int b = LV_NEUTRAL_PILL_RGB;
-    int dr = (int)((a >> 16) & 0xffu) - (int)((b >> 16) & 0xffu);
-    int dg = (int)((a >> 8) & 0xffu) - (int)((b >> 8) & 0xffu);
-    int db = (int)(a & 0xffu) - (int)(b & 0xffu);
-    return dr * dr + dg * dg + db * db <
-           LV_NEUTRAL_PILL_CLASH_DIST * LV_NEUTRAL_PILL_CLASH_DIST;
-}
-
-/* The palette entry neutral pillboxes are drawn in, given the entries of
- * the teams in the game (entries[0..count-1]). -1 when no team clashes:
- * the neutral pillbox is then the game's red tile, as before. */
-static inline int lvNeutralPillEntry(const unsigned char *entries, int count) {
-    bool used[LV_TEAM_SHEET_ROWS] = { false };
-    bool clash = false;
-    int i;
-    for (i = 0; entries != 0 && i < count; i++) {
-        int e = lvTeamSheetRow(entries[i]);
-        used[e] = true;
-        if (lvTeamClashesNeutralPill(e)) clash = true;
-    }
-    if (!clash) return -1;
-    if (!used[LV_NEUTRAL_PILL_GREY]) return LV_NEUTRAL_PILL_GREY;
-    if (!used[LV_NEUTRAL_PILL_GREY_SPARE]) return LV_NEUTRAL_PILL_GREY_SPARE;
-    for (i = 0; i < LV_TEAM_SHEET_ROWS; i++) {
-        if (!used[i] && !lvTeamClashesNeutralPill(i)) return i;
-    }
-    return -1;
-}
-
-/* A pillbox on the map, with neutralEntry from lvNeutralPillEntry: a
- * neutral pillbox is the game's red tile when it is -1, and the cell of that
- * entry's row of items.bmp when it is not. */
+/* A pillbox on the map, with neutralEntry the palette entry of the Team
+ * Colours dialog's Neutral colour (lv_screenNeutralPillEntry): a neutral
+ * pillbox is the cell of that entry's row of items.bmp, whatever colours the
+ * teams have. With neutralEntry -1 (team colours off, or a perspective on)
+ * it is the game's red tile. */
 static inline LvMapItemSprite lvMapPillSpriteNeutralAs(bool neutral, int armour, int palette,
                                                        int neutralEntry) {
     if (neutral && neutralEntry >= 0) return lvMapPillSprite(false, armour, neutralEntry);
@@ -207,8 +134,8 @@ static inline LvMapItemSprite lvPanelItemSprite(bool isBase, bool hasTeam, int p
     return lvMapPillSprite(!hasTeam, 15, palette);
 }
 
-/* The same, with the grey of a neutral pillbox (lvNeutralPillEntry), so a
- * panel shows a neutral pillbox in the colour the map does. */
+/* The same, with the colour of a neutral pillbox (lvMapPillSpriteNeutralAs),
+ * so a panel shows a neutral pillbox in the colour the map does. */
 static inline LvMapItemSprite lvPanelItemSpriteNeutralAs(bool isBase, bool hasTeam, int palette,
                                                          int neutralEntry) {
     if (isBase) return lvMapBaseSprite(!hasTeam, palette);

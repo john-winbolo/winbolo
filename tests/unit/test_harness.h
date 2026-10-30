@@ -4456,8 +4456,9 @@ int run_lv_team_sprite_sums(void);
  * lv_team_colour.h): the default, the one the Team Colours dialog has, the
  * Neutral entry for a number that is not a team. */
 int run_lv_team_colour_lookup(void);
-/* A neutral pillbox on the log viewer's map turns grey while a team in the
- * game is red (test_lv_hud.c, lv_team_sprite.h). */
+/* A neutral pillbox on the log viewer's map is drawn in the Team Colours
+ * dialog's Neutral colour, whatever the team colours are (test_lv_hud.c,
+ * lv_team_sprite.h). */
 int run_lv_neutral_pill_grey(void);
 /* The table of the log viewer's Overview panel (test_lv_overview.c): the
  * rows of the teams, which row a pillbox or a base is counted in, and the
@@ -4468,6 +4469,8 @@ int run_lv_overview_sums(void);
  * row starts, so the chip goes in front of the bot's name. */
 int run_lv_overview_bots(void);
 int run_lv_overview_row_layout(void);
+/* The Neutral row of the Overview panel: there only while something has no
+ * owner, and first, above the teams, in the table and the share bars. */
 int run_lv_overview_neutral_row(void);
 /* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
  * selected one, and the height of a gauge against its cap. */

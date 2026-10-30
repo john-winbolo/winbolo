@@ -190,7 +190,7 @@ static void hud_slot_icon(ImDrawList *dl, int grid, const LvHudSlot &slot,
     case LV_HUD_ICON_NEUTRAL:
         if (grid == HUD_GRID_PILLS && neutralPill >= 0 &&
             lv_drawGetHudShapesTexture() != nullptr) {
-            /* A team is red: the neutral icon in the grey the map draws a
+            /* The neutral icon in the Neutral colour the map draws a
              * neutral pillbox in (lv_team_sprite.h). */
             float r = 0.0f, g = 0.0f, b = 0.0f;
             float cell = iw + 2.0f * LV_HUD_SHAPE_PAD;

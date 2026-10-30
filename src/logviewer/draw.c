@@ -1384,8 +1384,8 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
 
     zoomFactor = lv_windowGetZoomFactor();
     bool teamColours = lvDrawTeamColours(lv);
-    /* The colour of a neutral pillbox: the game's red, or grey when a team
-       is red too (lv_screenNeutralPillEntry). */
+    /* The colour of a neutral pillbox: the dialog's Neutral colour
+       (lv_screenNeutralPillEntry). */
     int neutralPill = lv_screenNeutralPillEntry();
 
     /* The simplified view. Tiles are drawn at their native 16 px into the
@@ -1493,8 +1493,8 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     itemHitCount++;
                 }
             } else if (isPill && teamColours) {
-                /* In its team's colour; a neutral one as the game draws it,
-                   or grey when a team is red too (lv_team_sprite.h). */
+                /* In its team's colour; a neutral one in the dialog's
+                   Neutral colour (lv_team_sprite.h). */
                 itc = lv_screenGetPillTeam(x, y, &pillHealth);
                 lvDrawMapItem(lvMapPillSpriteNeutralAs(itc == NEUTRAL_TEAM, pillHealth,
                                                        lv_screenTeamColour(itc), neutralPill),

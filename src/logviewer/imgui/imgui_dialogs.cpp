@@ -267,6 +267,28 @@ static void render_team_colours_dialog(void) {
         ImGui::TextUnformatted(langGetText(STR_LV_ASSIGN_COLOURS_HINT));
         ImGui::Separator();
 
+        /* Neutral colour, first, above the teams */
+        ImGui::TextUnformatted(langGetText(STR_LV_NEUTRAL_LBL));
+        ImGui::SameLine(100);
+
+        const char* neutral_colour = langGetText(colour_name_ids[s_team_colours[16]]);
+        team_colour_swatch(s_team_colours[16], true);
+        if (ImGui::BeginCombo("##neutral", neutral_colour)) {
+            for (int j = 0; j < NUM_COLOURS; j++) {
+                bool is_selected = (s_team_colours[16] == j);
+                team_colour_swatch(j, false);
+                if (ImGui::Selectable(langGetText(colour_name_ids[j]), is_selected)) {
+                    s_team_colours[16] = j;
+                }
+                if (is_selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        ImGui::Separator();
+
         /* Colours belong to reusable alliance team slots, not player numbers. */
         for (int i = 0; i < MAX_PLAYERS; i++) {
             MessageArgs lblArgs = {};
@@ -294,28 +316,6 @@ static void render_team_colours_dialog(void) {
                 }
                 ImGui::EndCombo();
             }
-        }
-
-        ImGui::Separator();
-
-        /* Neutral colour */
-        ImGui::TextUnformatted(langGetText(STR_LV_NEUTRAL_LBL));
-        ImGui::SameLine(100);
-
-        const char* neutral_colour = langGetText(colour_name_ids[s_team_colours[16]]);
-        team_colour_swatch(s_team_colours[16], true);
-        if (ImGui::BeginCombo("##neutral", neutral_colour)) {
-            for (int j = 0; j < NUM_COLOURS; j++) {
-                bool is_selected = (s_team_colours[16] == j);
-                team_colour_swatch(j, false);
-                if (ImGui::Selectable(langGetText(colour_name_ids[j]), is_selected)) {
-                    s_team_colours[16] = j;
-                }
-                if (is_selected) {
-                    ImGui::SetItemDefaultFocus();
-                }
-            }
-            ImGui::EndCombo();
         }
 
         ImGui::Separator();

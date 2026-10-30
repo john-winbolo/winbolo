@@ -721,8 +721,9 @@ int lv_screenEventPlayer(void);
 /* The palette colour a team is drawn in (the tc[] row of the Team Colours
  * dialog); the neutral colour for a number that is not a team. */
 unsigned char lv_screenTeamColour(int team);
-/* The palette entry neutral pillboxes are drawn in, or -1 for the game's
- * red tile: grey when a team in the game is red too (lv_team_sprite.h). */
+/* The palette entry neutral pillboxes are drawn in: the Team Colours
+ * dialog's Neutral entry, or -1 for the game's red tile while the map does
+ * not draw team colours (lv_team_sprite.h). */
 int lv_screenNeutralPillEntry(void);
 
 void lv_screenMouseCentreClick(int xPos, int yPos);
