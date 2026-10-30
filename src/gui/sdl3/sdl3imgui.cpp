@@ -6183,7 +6183,9 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
        still: a line sent in the same tick as a popup, or while it is open,
        gets its whole time after the popup closes. Called after
        tutorialOverlayRender, so a popup closed this frame lets the lines
-       back this frame. The window itself stays up as it does with no line.
+       back this frame. The window then has no line, so it goes
+       SCN_TEXT_SHOW_SECONDS after the last line showed, and comes back when
+       the popup closes and the lines are drawn again.
 
        The hold is written, and the lines read, under the client mutex: in a
        single-player game the server's thread puts lines into this same
