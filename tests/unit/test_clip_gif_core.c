@@ -82,8 +82,8 @@ int run_clip_gif_len_sync(void) {
     EXPECT_U32("zero to floor", clipGifLenClampMs(0, 0, 0), 1000);
     EXPECT_U32("round down", clipGifLenClampMs(5049, 0, 0), 5000);
     EXPECT_U32("round up", clipGifLenClampMs(5050, 0, 0), 5100);
-    EXPECT_U32("cap", clipGifLenClampMs(99999, 0, 0), 15000);
-    EXPECT_U32("cap at max u32", clipGifLenClampMs(0xFFFFFFFFu, 0, 0), 15000);
+    EXPECT_U32("cap", clipGifLenClampMs(99999, 0, 0), 30000);
+    EXPECT_U32("cap at max u32", clipGifLenClampMs(0xFFFFFFFFu, 0, 0), 30000);
     EXPECT_U32("default kept", clipGifLenClampMs(CLIP_GIF_LEN_DEFAULT_MS, 0, 0),
                5000);
 
@@ -102,7 +102,7 @@ int run_clip_gif_len_sync(void) {
     EXPECT_U32("2.56 s", clipGifLenFromSeconds(2.56f, 0, 0), 2600);
     EXPECT_U32("negative", clipGifLenFromSeconds(-3.0f, 0, 0), 1000);
     EXPECT_U32("nan", clipGifLenFromSeconds(NAN, 0, 0), 1000);
-    EXPECT_U32("huge", clipGifLenFromSeconds(1.0e9f, 0, 0), 15000);
+    EXPECT_U32("huge", clipGifLenFromSeconds(1.0e9f, 0, 0), 30000);
     EXPECT_U32("seconds near end", clipGifLenFromSeconds(10.0f, 57000, 60000),
                3000);
     EXPECT_TRUE("to seconds", nearF(clipGifLenToSeconds(2500), 2.5f));
@@ -148,7 +148,7 @@ int run_clip_gif_len_sync(void) {
                clipGifLenFromTimelineX(700.0f, 57000, 60000, 100.0f, 700.0f),
                3000);
     EXPECT_U32("drag past cap",
-               clipGifLenFromTimelineX(700.0f, 0, 60000, 100.0f, 700.0f), 15000);
+               clipGifLenFromTimelineX(700.0f, 0, 60000, 100.0f, 700.0f), 30000);
     /* 10 ms of replay a pixel here: x 400 is 30000 ms, 6000 after the playhead. */
     EXPECT_U32("drag mid",
                clipGifLenFromTimelineX(400.0f, 24000, 60000, 100.0f, 700.0f),
@@ -624,14 +624,14 @@ int run_clip_gif_preview_cap(void) {
     EXPECT_TRUE("zero w", !stbiGifFramesFit(0, 10, 1, 1000));
     EXPECT_TRUE("negative h", !stbiGifFramesFit(10, -1, 1, 1000));
     EXPECT_TRUE("zero frames", !stbiGifFramesFit(10, 10, 0, 1000));
-    EXPECT_TRUE("15 s at 480 px fits",
-                stbiGifFramesFit(480, 270, 150, CLIP_GIF_PREVIEW_MAX_BYTES));
-    EXPECT_TRUE("15 s of a 4K crop does not",
-                !stbiGifFramesFit(3840, 2160, 150, CLIP_GIF_PREVIEW_MAX_BYTES));
+    EXPECT_TRUE("30 s at 480 px fits",
+                stbiGifFramesFit(480, 270, 300, CLIP_GIF_PREVIEW_MAX_BYTES));
+    EXPECT_TRUE("30 s of a 4K crop does not",
+                !stbiGifFramesFit(3840, 2160, 300, CLIP_GIF_PREVIEW_MAX_BYTES));
     EXPECT_TRUE("one 4K frame fits",
                 stbiGifFramesFit(3840, 2160, 1, CLIP_GIF_PREVIEW_MAX_BYTES));
     EXPECT_TRUE("int max sides",
-                !stbiGifFramesFit(0x7FFFFFFF, 0x7FFFFFFF, 150,
+                !stbiGifFramesFit(0x7FFFFFFF, 0x7FFFFFFF, 300,
                                   CLIP_GIF_PREVIEW_MAX_BYTES));
     EXPECT_TRUE("huge frame count",
                 !stbiGifFramesFit(1, 1, (size_t)-1, (size_t)-1));
@@ -955,7 +955,7 @@ int run_clip_gif_delete(void) {
 }
 
 /* The frame count of a GIF: one frame every 100 ms, at least 10 and at most
- * 150 frames, as the game's replay and the Log Viewer both make them. */
+ * 300 frames, as the game's replay and the Log Viewer both make them. */
 int run_clip_gif_frame_count(void) {
     int fails = 0;
     EXPECT_U32("0 ms", clipGifFrameCount(0), CLIP_GIF_MIN_FRAMES);
@@ -964,8 +964,9 @@ int run_clip_gif_frame_count(void) {
     EXPECT_U32("1.5 s", clipGifFrameCount(1500), 15);
     EXPECT_U32("1.599 s rounds down", clipGifFrameCount(1599), 15);
     EXPECT_U32("5 s", clipGifFrameCount(5000), 50);
-    EXPECT_U32("15 s", clipGifFrameCount(15000), CLIP_GIF_MAX_FRAMES);
-    EXPECT_U32("20 s", clipGifFrameCount(20000), CLIP_GIF_MAX_FRAMES);
+    EXPECT_U32("15 s", clipGifFrameCount(15000), 150);
+    EXPECT_U32("30 s", clipGifFrameCount(30000), CLIP_GIF_MAX_FRAMES);
+    EXPECT_U32("40 s", clipGifFrameCount(40000), CLIP_GIF_MAX_FRAMES);
     EXPECT_U32("most ms", clipGifFrameCount(0xFFFFFFFFu), CLIP_GIF_MAX_FRAMES);
     /* The longest length the length field takes is the cap, and the
      * shortest is the floor. */

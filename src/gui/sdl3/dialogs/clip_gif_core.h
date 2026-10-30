@@ -50,11 +50,11 @@ typedef struct {
 /* ── Length ──────────────────────────────────────────────────────────
  * The export records one frame every 100 ms (10 fps), so a length is held in
  * whole frames. The shortest and longest lengths are the export's own frame
- * floor and cap (10 and 150 frames); the default is the 5 s the transport's
+ * floor and cap (10 and 300 frames); the default is the 5 s the transport's
  * button recorded before the length could be changed. */
 #define CLIP_GIF_LEN_STEP_MS    100u
 #define CLIP_GIF_LEN_MIN_MS     1000u
-#define CLIP_GIF_LEN_MAX_MS     15000u
+#define CLIP_GIF_LEN_MAX_MS     30000u
 #define CLIP_GIF_LEN_DEFAULT_MS 5000u
 
 /* Rounds lenMs to the nearest whole frame and holds it inside
@@ -78,7 +78,7 @@ float clipGifLenToSeconds(uint32_t lenMs);
  * CLIP_GIF_MAX_WIDTH pixels cut down to its middle part. */
 #define CLIP_GIF_FRAME_MS   100u
 #define CLIP_GIF_MIN_FRAMES 10u
-#define CLIP_GIF_MAX_FRAMES 150u
+#define CLIP_GIF_MAX_FRAMES 300u
 #define CLIP_GIF_MAX_WIDTH  480
 
 /* How many frames a GIF of durationMs has: durationMs / CLIP_GIF_FRAME_MS,
@@ -431,8 +431,9 @@ void clipGifFormatFileStamp(int64_t createdUnix, char *out, size_t outLen);
 
 /* ── Preview ─────────────────────────────────────────────────────────
  * The most memory the gallery's preview gives the decoded frames of one GIF
- * (RGBA, 4 bytes a pixel). A 15 s export at the 480 px width is about 78 MB;
- * a GIF that needs more, such as a long crop of a large view, is not
+ * (RGBA, 4 bytes a pixel). A 30 s export of a 480 x 270 view is about
+ * 156 MB; a GIF that needs more, such as a long crop of a large view or a
+ * 30 s export more than about 460 px high at the 480 px width, is not
  * decoded and the window says it is too large to show. The limit also counts
  * the decoder's own working buffers (STBI_GIF_WORK_FRAMES frames), so the
  * frames and those buffers together stay within it. The gallery also does

@@ -49,7 +49,8 @@
 enum ClipGifGlyph {
     CLIP_GIF_GLYPH_CAMERA = 0,  /* a movie camera: recording mode */
     CLIP_GIF_GLYPH_CROP,        /* a square frame with heavy corners: crop */
-    CLIP_GIF_GLYPH_PLAY,        /* a triangle pointing right: preview */
+    CLIP_GIF_GLYPH_EYE,         /* an eye: preview (not a triangle, which
+                                 * is the replay's own play button) */
     CLIP_GIF_GLYPH_STOP         /* a filled square: stop the preview */
 };
 
@@ -80,10 +81,16 @@ static inline void clipGifDrawGlyph(ImDrawList *dl, int glyph, ImVec2 a,
                           ImVec2(a.x + w, midY - w * 0.24f),
                           ImVec2(a.x + w, midY + w * 0.24f),
                           ImVec2(bodyR, midY + w * 0.08f), col);
-    } else if (glyph == CLIP_GIF_GLYPH_PLAY) {
-        dl->AddTriangleFilled(ImVec2(a.x + w * 0.18f, a.y + w * 0.08f),
-                              ImVec2(a.x + w * 0.92f, a.y + w * 0.50f),
-                              ImVec2(a.x + w * 0.18f, a.y + w * 0.92f), col);
+    } else if (glyph == CLIP_GIF_GLYPH_EYE) {
+        /* Two lids that meet at the corners, and the pupil between them. */
+        const float midY = a.y + w * 0.50f;
+        const ImVec2 l(a.x, midY);
+        const ImVec2 r(a.x + w, midY);
+        dl->AddBezierQuadratic(l, ImVec2(a.x + w * 0.50f, midY - w * 0.62f),
+                               r, col, 1.5f);
+        dl->AddBezierQuadratic(l, ImVec2(a.x + w * 0.50f, midY + w * 0.62f),
+                               r, col, 1.5f);
+        dl->AddCircleFilled(ImVec2(a.x + w * 0.50f, midY), w * 0.17f, col);
     } else if (glyph == CLIP_GIF_GLYPH_STOP) {
         dl->AddRectFilled(ImVec2(a.x + w * 0.16f, a.y + w * 0.16f),
                           ImVec2(a.x + w * 0.84f, a.y + w * 0.84f), col,
@@ -98,6 +105,25 @@ static inline void clipGifDrawGlyph(ImDrawList *dl, int glyph, ImVec2 a,
         dl->AddLine(ImVec2(a.x, a.y), ImVec2(a.x, a.y + tick), col, 2.0f);
         dl->AddLine(ImVec2(b.x, b.y), ImVec2(b.x - tick, b.y), col, 2.0f);
         dl->AddLine(ImVec2(b.x, b.y), ImVec2(b.x, b.y - tick), col, 2.0f);
+    }
+}
+
+/* While on is true, the pressed colour for the button's normal, hovered and
+ * active colours, so a toggle that is on stays pressed in, under the mouse
+ * too. Pair each call with clipGifPopLatched(on) after the button. */
+static inline void clipGifPushLatched(bool on) {
+    if (on) {
+        const ImVec4 down = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+        ImGui::PushStyleColor(ImGuiCol_Button, down);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, down);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, down);
+    }
+}
+
+/* Takes off what clipGifPushLatched(on) put on. */
+static inline void clipGifPopLatched(bool on) {
+    if (on) {
+        ImGui::PopStyleColor(3);
     }
 }
 
@@ -116,15 +142,10 @@ static inline bool clipGifToggleButton(const char *id, bool on, int glyph,
         size = ImVec2(lineH + sty.FramePadding.x * 2.0f,
                       lineH + sty.FramePadding.y * 2.0f);
     }
-    if (on) {
-        ImGui::PushStyleColor(ImGuiCol_Button,
-                              ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-    }
+    clipGifPushLatched(on);
     ImVec2 p = ImGui::GetCursorScreenPos();
     bool clicked = ImGui::Button(id, size);
-    if (on) {
-        ImGui::PopStyleColor();
-    }
+    clipGifPopLatched(on);
     ImVec2 a;
     float w;
     if (own) {
@@ -189,7 +210,7 @@ static inline float clipGifButtonWidth(bool havePicture) {
            ImGui::GetStyle().FramePadding.x * 2.0f;
 }
 
-/* The Preview clip button: a play glyph, or a stop glyph that stays pressed
+/* The Preview clip button: an eye glyph, or a stop glyph that stays pressed
  * while the preview plays (previewing). compact is as for clipGifButton.
  * Returns true when pressed. */
 static inline bool clipGifPreviewButton(const char *id, bool previewing,
@@ -199,7 +220,7 @@ static inline bool clipGifPreviewButton(const char *id, bool previewing,
                             ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
     }
     bool clicked = clipGifToggleButton(
-        id, previewing, previewing ? CLIP_GIF_GLYPH_STOP : CLIP_GIF_GLYPH_PLAY,
+        id, previewing, previewing ? CLIP_GIF_GLYPH_STOP : CLIP_GIF_GLYPH_EYE,
         langGetText(previewing ? STR_CLIPGIF_PREVIEW_STOP
                                : STR_CLIPGIF_PREVIEW));
     if (compact) {

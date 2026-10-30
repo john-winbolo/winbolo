@@ -366,4 +366,53 @@ static inline uint32_t lvControlsDragTargetMs(uint32_t anchorMs, float anchorX, 
     return (uint32_t)(target + 0.5);
 }
 
+/* A drag of the seek bar that Shift made measured from an anchor. The Log
+ * Viewer's bar and the game's replay bar (lobby_reel.cpp) both keep one, so
+ * the two have the same fine drag. All zero when no drag is measured. */
+typedef struct LvFineDrag {
+    bool     on;        /* this drag is measured from an anchor */
+    bool     fine;      /* at the fine rate: Shift is down */
+    uint32_t anchorMs;  /* the log's own time at the anchor */
+    float    anchorX;   /* the mouse's x at the anchor */
+    uint32_t targetMs;  /* where the drag puts playback now */
+} LvFineDrag;
+
+/* One frame of a drag of the seek bar with the button held. When Shift
+ * (shift) goes down, or the drag started with it down, or it is let go while
+ * the drag is measured, a new anchor is set: at d->targetMs when the drag is
+ * already measured, else at handleMs, the time the handle is at now. Then
+ * d->targetMs is worked out with lvControlsDragTargetMs: one tick for each
+ * LV_CONTROLS_FINE_DRAG_PX_PER_TICK pixels with Shift, and without it the
+ * length of the log (lenMs from startMs) one pixel of the usablePx the
+ * handle moves over stands for.
+ *
+ * *anchored (may be NULL) is set true when an anchor was set in this frame.
+ * Returns d->on: true when d->targetMs is where playback goes and the slider
+ * is only drawn. A drag in which Shift is never down leaves d->on false. */
+static inline bool lvFineDragStep(LvFineDrag *d, bool shift, float mouseX,
+                                  uint32_t handleMs, uint32_t startMs,
+                                  uint32_t lenMs, float usablePx,
+                                  bool *anchored) {
+    bool anchor = (shift && !(d->on && d->fine)) || (!shift && d->on && d->fine);
+    if (anchor) {
+        /* The time the drag last asked for, so the handle does not jump. */
+        d->anchorMs = d->on ? d->targetMs : handleMs;
+        d->anchorX = mouseX;
+        d->on = true;
+        d->fine = shift;
+    }
+    if (anchored != NULL) *anchored = anchor;
+    if (d->on) {
+        float pxPerStep = LV_CONTROLS_FINE_DRAG_PX_PER_TICK;
+        float stepMs = 20.0f; /* one tick of the log */
+        if (!d->fine) {
+            pxPerStep = 1.0f;
+            stepMs = (float)lenMs / ((usablePx >= 1.0f) ? usablePx : 1.0f);
+        }
+        d->targetMs = lvControlsDragTargetMs(d->anchorMs, d->anchorX, mouseX, pxPerStep,
+                                             stepMs, startMs, startMs + lenMs);
+    }
+    return d->on;
+}
+
 #endif /* LV_CONTROLS_LAYOUT_H */

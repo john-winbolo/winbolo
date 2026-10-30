@@ -570,5 +570,37 @@ int run_lv_controls_fine_drag(void) {
     UT_ASSERT_MSG(got == 60000, "a mouse far off to the right: %u", (unsigned)got);
     got = lvControlsDragTargetMs(1000, 0.0f, -1.0e30f, fine, 20.0f, 0, 60000);
     UT_ASSERT_MSG(got == 0, "a mouse far off to the left: %u", (unsigned)got);
+
+    /* The drag step both seek bars use. A drag with no Shift is not
+       measured. */
+    {
+        LvFineDrag d = { false, false, 0, 0.0f, 0 };
+        bool anchored = true;
+        UT_ASSERT_MSG(!lvFineDragStep(&d, false, 400.0f, 30000, 0, 60000, 600.0f, &anchored),
+                      "no Shift: not measured");
+        UT_ASSERT_MSG(!anchored && !d.on, "no Shift: no anchor");
+
+        /* Shift goes down: the anchor is where the handle is, no jump. */
+        UT_ASSERT_MSG(lvFineDragStep(&d, true, 400.0f, 30007, 0, 60000, 600.0f, &anchored),
+                      "Shift: measured");
+        UT_ASSERT_MSG(anchored && d.targetMs == 30007, "Shift down: %u", (unsigned)d.targetMs);
+        lvFineDragStep(&d, true, 404.0f, 12345, 0, 60000, 600.0f, &anchored);
+        UT_ASSERT_MSG(!anchored && d.targetMs == 30047, "four pixels with Shift: %u",
+                      (unsigned)d.targetMs);
+
+        /* Shift let go: a new anchor at the time the drag asked for, then
+           the bar's own rate, 100 ms a pixel here. */
+        lvFineDragStep(&d, false, 404.0f, 12345, 0, 60000, 600.0f, &anchored);
+        UT_ASSERT_MSG(anchored && d.targetMs == 30047, "Shift up: %u", (unsigned)d.targetMs);
+        lvFineDragStep(&d, false, 414.0f, 12345, 0, 60000, 600.0f, &anchored);
+        UT_ASSERT_MSG(!anchored && d.targetMs == 31047, "ten pixels without Shift: %u",
+                      (unsigned)d.targetMs);
+
+        /* Shift down again: fine from where it is. */
+        lvFineDragStep(&d, true, 414.0f, 12345, 0, 60000, 600.0f, NULL);
+        lvFineDragStep(&d, true, 410.0f, 12345, 0, 60000, 600.0f, NULL);
+        UT_ASSERT_MSG(d.fine && d.targetMs == 31007, "Shift down again: %u",
+                      (unsigned)d.targetMs);
+    }
     return 0;
 }

@@ -148,6 +148,12 @@ typedef struct ClipGifGalleryState {
     /* The GIF the delete question is about, set when the question opens, so
      * a selection that moves under it does not change which file goes. */
     char         deleteFile[CLIP_GIF_META_FILE_LEN] = "";
+    /* The picture size of sizeFile before it is decoded, from its metadata
+     * or its GIF header (0 when neither gave it), so the room the picture
+     * takes is kept while it loads. Found once for each selection. */
+    char         sizeFile[CLIP_GIF_META_FILE_LEN] = "";
+    int          sizeW     = 0;
+    int          sizeH     = 0;
     /* The screen that draws the window this frame (clipGifGalleryRender):
      * the preview's texture is made on its renderer, and Copy gives its
      * window the clipboard. */
@@ -447,6 +453,7 @@ static void galleryRescan(const char *gameId) {
         SDL_strlcpy(keep, s_gal.items[s_gal.selected].gifFile, sizeof(keep));
     }
     s_gal.selectFile[0] = '\0';
+    s_gal.sizeFile[0] = '\0';  /* found again from the new list */
     galleryFreeItems();
 
     if (galleryFindDir()) {
@@ -717,6 +724,59 @@ static bool galleryPathLink(const char *id, const char *text) {
     return pressed;
 }
 
+/* The width and height in a GIF file's header: the logical screen size,
+ * little-endian, in bytes 6 to 9 after "GIF87a" or "GIF89a". False when the
+ * file cannot be read or is not a GIF. */
+static bool galleryGifHeaderSize(const char *path, int *w, int *h) {
+    SDL_IOStream *io = SDL_IOFromFile(path, "rb");
+    if (io == NULL) {
+        return false;
+    }
+    Uint8 head[10];
+    const bool read = (SDL_ReadIO(io, head, sizeof(head)) == sizeof(head));
+    SDL_CloseIO(io);
+    if (!read || SDL_memcmp(head, "GIF", 3) != 0) {
+        return false;
+    }
+    *w = (int)head[6] | ((int)head[7] << 8);
+    *h = (int)head[8] | ((int)head[9] << 8);
+    return *w > 0 && *h > 0;
+}
+
+/* The size item's picture has before it is decoded: the metadata's size,
+ * else the GIF header's, found once when the selection moves to it. */
+static void galleryKnownSize(const ClipGifMeta *item, const char *path,
+                             bool havePath, int *w, int *h) {
+    if (SDL_strcmp(s_gal.sizeFile, item->gifFile) != 0) {
+        SDL_strlcpy(s_gal.sizeFile, item->gifFile, sizeof(s_gal.sizeFile));
+        s_gal.sizeW = 0;
+        s_gal.sizeH = 0;
+        if (item->width > 0 && item->height > 0) {
+            s_gal.sizeW = item->width;
+            s_gal.sizeH = item->height;
+        } else if (!havePath ||
+                   !galleryGifHeaderSize(path, &s_gal.sizeW, &s_gal.sizeH)) {
+            s_gal.sizeW = 0;
+            s_gal.sizeH = 0;
+        }
+    }
+    *w = s_gal.sizeW;
+    *h = s_gal.sizeH;
+}
+
+/* A picture of w by h fitted inside maxW by maxH, keeping its shape, and
+ * never drawn larger than twice its own size so a small crop stays sharp
+ * enough to read. A size that is not known takes all the room. */
+static ImVec2 galleryFitSize(int w, int h, float maxW, float maxH) {
+    if (w <= 0 || h <= 0) {
+        return ImVec2(maxW, maxH);
+    }
+    float scale = maxW / (float)w;
+    if ((float)h * scale > maxH) scale = maxH / (float)h;
+    if (scale > 2.0f) scale = 2.0f;
+    return ImVec2((float)w * scale, (float)h * scale);
+}
+
 #define GALLERY_DELETE_POPUP "###clipgifdelete"
 
 /* The question before a delete, a plain Yes / No. No has the focus, so a
@@ -779,21 +839,31 @@ static void galleryRenderDetail(float s) {
         if (p.frames > 1 && SDL_GetTicks() >= p.nextAtMs) {
             galleryPreviewShowFrame((p.frame + 1) % p.frames);
         }
-        /* Fitted inside the room left, keeping its shape, and never drawn
-         * larger than twice its own size so a small crop stays sharp
-         * enough to read. */
-        float scale = maxW / (float)p.w;
-        if ((float)p.h * scale > maxH) scale = maxH / (float)p.h;
-        if (scale > 2.0f) scale = 2.0f;
-        ImVec2 size((float)p.w * scale, (float)p.h * scale);
+        ImVec2 size = galleryFitSize(p.w, p.h, maxW, maxH);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (maxW - size.x) * 0.5f);
         ImGui::Image((ImTextureID)p.tex, size);
-    } else if (mine && p.tooLarge) {
-        ImGui::TextWrapped("%s", langGetText(STR_CLIPGIF_TOO_LARGE));
-    } else if (mine && p.failed) {
-        ImGui::TextUnformatted(langGetText(STR_CLIPGIF_OPEN_FAILED));
     } else {
-        ImGui::TextDisabled("%s", langGetText(STR_CLIPGIF_LOADING));
+        /* The room the picture will take, kept while it loads (or when it
+         * cannot be shown), so the details and the buttons under it do not
+         * move down when it appears. The words go at the top of it. */
+        int knownW = 0, knownH = 0;
+        galleryKnownSize(item, path, havePath, &knownW, &knownH);
+        const ImVec2 size = galleryFitSize(knownW, knownH, maxW, maxH);
+        const ImVec2 start = ImGui::GetCursorPos();
+        ImGui::Dummy(ImVec2(maxW, size.y));
+        const ImVec2 after = ImGui::GetCursorPos();
+        ImGui::SetCursorPos(start);
+        if (mine && p.tooLarge) {
+            ImGui::TextWrapped("%s", langGetText(STR_CLIPGIF_TOO_LARGE));
+        } else if (mine && p.failed) {
+            ImGui::TextUnformatted(langGetText(STR_CLIPGIF_OPEN_FAILED));
+        } else {
+            ImGui::TextDisabled("%s", langGetText(STR_CLIPGIF_LOADING));
+        }
+        /* Words taller than the room push the details down, as before. */
+        if (ImGui::GetCursorPosY() < after.y) {
+            ImGui::SetCursorPos(after);
+        }
     }
 
     char when[32];

@@ -17,6 +17,7 @@
 #include "imgui_dialogs.h"
 #include "imgui_clip_gif.h"
 #include "../../gui/lang.h"
+#include "../../gui/sdl3/dialogs/clip_gif_controls.h"  /* clipGifPushLatched */
 #include <SDL3/SDL.h>
 
 extern "C" {
@@ -130,14 +131,9 @@ void lvMenuRender(struct LogViewerState *lv) {
             if (!live) {
                 const bool on = lv_clip_gif_mode_on();
                 ImGui::BeginDisabled(!lv_clip_gif_can_toggle_mode());
-                if (on) {
-                    ImGui::PushStyleColor(ImGuiCol_Button,
-                                          ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-                }
+                clipGifPushLatched(on);
                 const bool pressed = ImGui::Button(langGetText(STR_LV_RECORD_MODE), btnSize);
-                if (on) {
-                    ImGui::PopStyleColor();
-                }
+                clipGifPopLatched(on);
                 ImGui::EndDisabled();
                 if (pressed) {
                     lv_clip_gif_toggle_mode();
