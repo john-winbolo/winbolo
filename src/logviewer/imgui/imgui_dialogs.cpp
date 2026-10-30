@@ -97,17 +97,20 @@ void lv_imgui_dialogs_init(struct LogViewerState *lv) {
     s_lv = lv;
     char val[256];
 
-    /* Load team colours from preferences */
+    /* Load team colours from preferences. A stored old default with no
+     * mark reads as the new default (lvTeamColourStoredPref). */
+    lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_MARK_KEY, "", val, sizeof(val));
+    const int marked = (strcmp(val, LV_TEAM_COLOUR_MARK) == 0);
     for (int i = 0; i < MAX_PLAYERS; i++) {
         char key[64];
         snprintf(key, sizeof(key), "Team Colour %d", i + 1);
-        
+
         /* The defaults are the viewer's one table (lv_team_colour.h). */
         char def_val[16];
         snprintf(def_val, sizeof(def_val), "%d", (int)lvTeamColourDefault(i));
 
         lv_platform_config_get_string("LOGVIEWER", key, def_val, val, sizeof(val));
-        s_team_colours[i] = lvTeamColourPref(i, atoi(val));
+        s_team_colours[i] = lvTeamColourStoredPref(i, atoi(val), marked);
     }
 
     /* Neutral colour */
@@ -117,15 +120,9 @@ void lv_imgui_dialogs_init(struct LogViewerState *lv) {
                  (int)lvTeamColourDefault(LV_TEAM_COLOUR_NEUTRAL));
         lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, def_val, val,
                                       sizeof(val));
-        int neutralValue = atoi(val);
-        /* A stored light grey with no mark is the old default
-           (lvTeamColourNeutralPref). */
-        lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_MARK_KEY, "", val,
-                                      sizeof(val));
-        s_team_colours[16] = lvTeamColourNeutralPref(
-            neutralValue, strcmp(val, LV_TEAM_COLOUR_NEUTRAL_MARK) == 0);
+        s_team_colours[16] = lvTeamColourStoredPref(LV_TEAM_COLOUR_NEUTRAL, atoi(val), marked);
     }
-    
+
     s_team_colours_loaded = true;
 }
 
@@ -185,8 +182,7 @@ void lv_imgui_dialogs_save(void) {
     /* Neutral colour */
     snprintf(val, sizeof(val), "%d", s_team_colours[16]);
     lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, val);
-    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_MARK_KEY,
-                                  LV_TEAM_COLOUR_NEUTRAL_MARK);
+    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_MARK_KEY, LV_TEAM_COLOUR_MARK);
     
     /* Save to disk */
     lv_platform_config_save();
@@ -348,8 +344,8 @@ static void render_team_colours_dialog(void) {
             char val[16];
             snprintf(val, sizeof(val), "%d", s_team_colours[16]);
             lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, val);
-            lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_MARK_KEY,
-                                          LV_TEAM_COLOUR_NEUTRAL_MARK);
+            lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_MARK_KEY,
+                                          LV_TEAM_COLOUR_MARK);
             lv_platform_config_save();
             
             s_show_team_colours = false;

@@ -285,10 +285,10 @@ int run_lv_team_sprite_sums(void) {
 
 int run_lv_team_colour_lookup(void) {
     /* The defaults the Team Colours dialog opens with: Team 1 green (2),
-       Team 2 red (11), Team 3 blue (12), Team 4 yellow (4), ..., and the
-       dark grey (0) for neutral. */
+       Team 2 red (11), Team 3 blue (12), Team 4 yellow (4), ..., Team 16
+       light grey (10), and the dark grey (0) for neutral. */
     static const unsigned char defaults[LV_TEAM_COLOUR_SLOTS] = {
-        2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0, 0
+        2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 10, 0
     };
     unsigned char tc[LV_TEAM_COLOUR_SLOTS];
     int team, other;
@@ -302,9 +302,12 @@ int run_lv_team_colour_lookup(void) {
     }
     for (team = 0; team < LV_TEAM_COLOUR_TEAMS; team++) {
         UT_ASSERT_MSG(lvTeamColourEntry(tc, team) == defaults[team], "team %d at the defaults", team);
-        /* No two teams start with the same colour. */
+    }
+    /* No two rows start with the same colour, Neutral included. */
+    for (team = 0; team < LV_TEAM_COLOUR_SLOTS; team++) {
         for (other = 0; other < team; other++) {
-            UT_ASSERT_MSG(defaults[other] != defaults[team], "teams %d and %d share a default", other, team);
+            UT_ASSERT_MSG(lvTeamColourDefault(other) != lvTeamColourDefault(team),
+                          "rows %d and %d share a default", other, team);
         }
     }
     /* The second team's default is the palette's red, and it is drawn in
@@ -342,18 +345,35 @@ int run_lv_team_colour_lookup(void) {
                   lvTeamColourEntry(tc, 255) == 10, "no team: the neutral entry");
     UT_ASSERT_MSG(lvTeamColourDefault(-1) == 0 && lvTeamColourDefault(99) == 0, "no team: neutral default");
 
-    /* A stored Neutral value. With no mark (written before the dark grey
-       was the default) a light grey is the old default and reads as the
-       new one; any other value is the user's. With the mark, every value
-       is the user's, light grey too. */
-    UT_ASSERT_MSG(lvTeamColourNeutralPref(LV_TEAM_COLOUR_NEUTRAL_OLD_DEFAULT, 0) == 0,
-                  "old default not moved to the dark grey");
-    UT_ASSERT_MSG(LV_TEAM_COLOUR_NEUTRAL_OLD_DEFAULT == 10, "old default not light grey");
-    UT_ASSERT_MSG(lvTeamColourNeutralPref(6, 0) == 6, "an old pick changed");
-    UT_ASSERT_MSG(lvTeamColourNeutralPref(0, 0) == 0, "an old dark grey changed");
-    UT_ASSERT_MSG(lvTeamColourNeutralPref(10, 1) == 10, "a marked light grey changed");
-    UT_ASSERT_MSG(lvTeamColourNeutralPref(6, 1) == 6, "a marked pick changed");
-    UT_ASSERT_MSG(lvTeamColourNeutralPref(99, 1) == 0 && lvTeamColourNeutralPref(-1, 0) == 0,
+    /* A stored value (lvTeamColourStoredPref). The old defaults were Team
+       16 dark grey (0) and Neutral light grey (10). With no mark (written
+       before the new defaults) an old default reads as the new one; any
+       other value is the user's. With the mark, every value is the user's,
+       an old default too. The other teams' defaults did not change. */
+    UT_ASSERT_MSG(lvTeamColourOldDefault(15) == 0 && lvTeamColourOldDefault(-1) == 10,
+                  "old defaults");
+    UT_ASSERT_MSG(lvTeamColourStoredPref(LV_TEAM_COLOUR_NEUTRAL, 10, 0) == 0,
+                  "old Neutral default not moved to the dark grey");
+    UT_ASSERT_MSG(lvTeamColourStoredPref(15, 0, 0) == 10,
+                  "old Team 16 default not moved to light grey");
+    UT_ASSERT_MSG(lvTeamColourStoredPref(LV_TEAM_COLOUR_NEUTRAL, 6, 0) == 6, "an old Neutral pick changed");
+    UT_ASSERT_MSG(lvTeamColourStoredPref(15, 6, 0) == 6, "an old Team 16 pick changed");
+    UT_ASSERT_MSG(lvTeamColourStoredPref(15, 10, 0) == 10, "an old Team 16 light grey changed");
+    UT_ASSERT_MSG(lvTeamColourStoredPref(LV_TEAM_COLOUR_NEUTRAL, 10, 1) == 10,
+                  "a marked Neutral light grey changed");
+    UT_ASSERT_MSG(lvTeamColourStoredPref(15, 0, 1) == 0, "a marked Team 16 dark grey changed");
+    for (team = 0; team < 15; team++) {
+        UT_ASSERT_MSG(lvTeamColourOldDefault(team) == lvTeamColourDefault(team),
+                      "team %d: old default differs", team);
+        UT_ASSERT_MSG(lvTeamColourStoredPref(team, defaults[team], 0) == defaults[team],
+                      "team %d: unmarked default changed", team);
+        UT_ASSERT_MSG(lvTeamColourStoredPref(team, 6, 0) == 6, "team %d: unmarked pick changed", team);
+    }
+    /* Two rows may still hold the same colour. */
+    UT_ASSERT_MSG(lvTeamColourStoredPref(0, 11, 1) == 11 && lvTeamColourStoredPref(1, 11, 1) == 11,
+                  "a shared colour changed");
+    UT_ASSERT_MSG(lvTeamColourStoredPref(LV_TEAM_COLOUR_NEUTRAL, 99, 1) == 0 &&
+                  lvTeamColourStoredPref(15, -1, 0) == 10,
                   "a value off the palette: not the default");
 
     /* A stored value that is not an entry of the palette: the default. */

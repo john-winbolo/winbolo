@@ -1254,26 +1254,23 @@ static void loadPreferences(void) {
     lv_platform_config_get_string("LOGVIEWER", "Use Team Colours", "Yes", line, sizeof(line));
     g_lv->useTeamColours = (line[0] == '\0' || tolower((unsigned char)line[0]) == 'y') ? TRUE : FALSE;
 
-    /* Team colours */
-    count = 0;
-    while (count < MAX_TANKS) {
-        snprintf(line, sizeof(line), "Team Colour %d", count + 1);
-        getDef(def, count);
-        lv_platform_config_get_string("LOGVIEWER", line, def, val, sizeof(val));
-        g_lv->tc[count] = lvTeamColourPref(count, atoi(val));
-        count++;
-    }
-    /* Neutral: a stored light grey with no mark is the old default
-       (lvTeamColourNeutralPref). */
+    /* Team colours. A stored old default with no mark reads as the new
+       default (lvTeamColourStoredPref). */
     {
-        int neutralValue;
+        int marked;
+        lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_MARK_KEY, "", val, sizeof(val));
+        marked = (strcmp(val, LV_TEAM_COLOUR_MARK) == 0);
+        count = 0;
+        while (count < MAX_TANKS) {
+            snprintf(line, sizeof(line), "Team Colour %d", count + 1);
+            getDef(def, count);
+            lv_platform_config_get_string("LOGVIEWER", line, def, val, sizeof(val));
+            g_lv->tc[count] = lvTeamColourStoredPref(count, atoi(val), marked);
+            count++;
+        }
         snprintf(def, 12, "%d", (int)lvTeamColourDefault(LV_TEAM_COLOUR_NEUTRAL));
         lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, def, val, sizeof(val));
-        neutralValue = atoi(val);
-        lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_MARK_KEY, "", val,
-                                      sizeof(val));
-        g_lv->tc[16] = lvTeamColourNeutralPref(neutralValue,
-                                               strcmp(val, LV_TEAM_COLOUR_NEUTRAL_MARK) == 0);
+        g_lv->tc[16] = lvTeamColourStoredPref(LV_TEAM_COLOUR_NEUTRAL, atoi(val), marked);
     }
 
     /* The simplified view, from the game's own [SETTINGS] section rather than
@@ -1398,8 +1395,7 @@ static void savePreferences(void) {
     }
     snprintf(val, sizeof(val), "%d", g_lv->tc[16]);
     lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, val);
-    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_MARK_KEY,
-                                  LV_TEAM_COLOUR_NEUTRAL_MARK);
+    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_MARK_KEY, LV_TEAM_COLOUR_MARK);
 
     /* Playback speed */
     snprintf(val, sizeof(val), "%d", g_lv->speed);
