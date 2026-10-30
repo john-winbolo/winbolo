@@ -101,14 +101,14 @@ static inline LvMapItemSprite lvMapPillSprite(bool neutral, int armour, int pale
 
 /* A neutral pillbox when a team is red.
  *
- * The game's neutral pillbox is red: its coloured pixels are 0xdf0000. A
+ * The game's neutral pillbox is red: its coloured pixels are 0xde0000. A
  * team in the palette's red (entry 11, 0xc00000 on items.bmp) has pillboxes
  * the viewer cannot tell from the neutral ones. So, when a team in the game
  * has a colour that close to the neutral pillbox's red, the neutral
  * pillboxes are drawn grey instead: from the items sheet, in a grey row.
  *
  * "Close" is an RGB distance under LV_NEUTRAL_PILL_CLASH_DIST between the
- * team's row of items.bmp and the neutral pillbox's red. Entry 11 is 31
+ * team's row of items.bmp and the neutral pillbox's red. Entry 11 is 30
  * away. The nearest other entry, brown (13), is 159 away, so only the red
  * team clashes.
  *
@@ -118,7 +118,7 @@ static inline LvMapItemSprite lvMapPillSprite(bool neutral, int armour, int pale
  * entry no team has and that does not clash is used. */
 
 /* The coloured pixels of the game's neutral (hostile) pillbox tile. */
-#define LV_NEUTRAL_PILL_RGB 0xdf0000u
+#define LV_NEUTRAL_PILL_RGB 0xde0000u
 
 /* The RGB distance under which a team colour is too close to that red. */
 #define LV_NEUTRAL_PILL_CLASH_DIST 96

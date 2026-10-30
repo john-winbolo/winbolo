@@ -132,8 +132,8 @@ static float overview_icon_size(void) {
  * picture, made smaller (lv_item_picture; the events lane uses the same). It
  * is in the colour of team; with team -1 it is the one no team holds (the
  * game's red pillbox, grey while a team is red, and the game's neutral
- * base). plain is the colour of the
- * shape drawn when the game's sheets are not there. */
+ * base). plain is the colour of the shape drawn when the game's sheets
+ * are not there. */
 static void overview_icon(ImDrawList *dl, bool isBase, int team, ImU32 plain, ImVec2 p) {
     const float size = overview_icon_size();
 
