@@ -71,9 +71,8 @@
 -- square, as Mac Bolo does.
 --
 -- "Near" is Mac Bolo's own distance: under 16 squares for a tank and under
--- 9 for a pillbox, measured as Mac Bolo measures it, a circle by a square
--- root table, in pixels. A dead tank does not count. A dead pillbox does;
--- one being carried does not.
+-- 9 for a pillbox, measured as a circle. A dead tank does not count. A dead
+-- pillbox does; one being carried does not.
 --
 -- "Enemy" is the game's own alliances, including those made and broken in
 -- play. A neutral pillbox counts as an enemy one. Mac Bolo judges every
@@ -277,44 +276,16 @@ scenario.rules = rules
 
 -- ---- Starts --------------------------------------------------------------
 
--- Mac Bolo's ranges, in pixels (16 to a square): a tank under 16 squares
--- from a start, or a pillbox under 9, is near it.
-local TANK_NEAR = 0x100
-local PILL_NEAR = 0x90
+-- Mac Bolo's ranges, in map squares: a tank under 16 squares from a
+-- start, or a pillbox under 9, is near it.
+local TANK_NEAR = 16
+local PILL_NEAR = 9
 
--- Mac Bolo's square root table: 16 times the root of the index, truncated.
-local SQR_ROOT = {}
-do
-  local r = 0
-  for i = 0, 255 do
-    while (r + 1) * (r + 1) <= 256 * i do
-      r = r + 1
-    end
-    SQR_ROOT[i] = r
-  end
-end
-
--- A world-unit difference as Mac Bolo takes it: kept to 16 bits, signed,
--- then shifted down to pixels, rounding towards minus infinity.
-local function to_pixels(d)
-  return math.floor(((d + 32768) % 65536 - 32768) / 16)
-end
-
--- Mac Bolo's findrange: the distance in pixels from a point dx, dy world
--- units away, by its square root table. The lookup's rounding is what
--- decides a start right at the edge of a range.
-local function findrange(dx, dy)
-  local px, py = to_pixels(dx), to_pixels(dy)
-  local d2 = px * px + py * py
-
-  if d2 > 0xFFFFF then
-    return 0x7FFF
-  elseif d2 > 0xFFFF then
-    return SQR_ROOT[math.floor(d2 / 4096)] * 4
-  elseif d2 > 0xFFF then
-    return SQR_ROOT[math.floor(d2 / 256)]
-  end
-  return math.floor(SQR_ROOT[math.floor(d2 / 16)] / 4)
+-- Whether a point dx, dy world units away is under squares map squares
+-- off, as a circle.
+local function within(dx, dy, squares)
+  local r = squares * 256
+  return dx * dx + dy * dy < r * r
 end
 
 -- A map square's middle in world units, where a tank put on it stands.
@@ -336,7 +307,7 @@ local function survey(p, s)
   for q = 0, game.max_tanks() - 1 do
     if q ~= p then
       local t = game.tank(q)
-      if t and not t.dead and findrange(t.wx - sx, t.wy - sy) < TANK_NEAR then
+      if t and not t.dead and within(t.wx - sx, t.wy - sy, TANK_NEAR) then
         any = true
         if not is_friend(p, q) then
           enemy = true
@@ -349,7 +320,7 @@ local function survey(p, s)
   for n = 1, game.num_pills() do
     local pill = game.pill(n)
     if pill and not pill.in_tank and
-        findrange(square_middle(pill.x) - sx, square_middle(pill.y) - sy) < PILL_NEAR then
+        within(square_middle(pill.x) - sx, square_middle(pill.y) - sy, PILL_NEAR) then
       any = true
       if pill.owner == game.NEUTRAL or not is_friend(p, pill.owner) then
         enemy = true
