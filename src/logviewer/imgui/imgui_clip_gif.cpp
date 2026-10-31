@@ -117,6 +117,11 @@ static const char *lvGifGameId(void) {
                 h = clipGifGameIdAdd(h, buf, got);
                 total += got;
             }
+            /* A read that stopped before the end of the file: the hash is
+             * of a part only, so keep no id. */
+            if (SDL_GetIOStatus(io) != SDL_IO_STATUS_EOF) {
+                total = 0;
+            }
             SDL_CloseIO(io);
             if (total > 0) {
                 clipGifGameIdEnd(h, s_gif.gameId, sizeof(s_gif.gameId));
