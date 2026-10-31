@@ -5362,6 +5362,8 @@ struct ScnFloatFrame {
     bool   snapped;         /* a resize sits on a snap size: brighter edge */
     int    bgPct;           /* the background opacity, 0 to 100 */
     bool   hideFrameAtZeroOpacity;  /* see scnFloatFrameShown */
+    bool   clickThrough;    /* a click or the wheel on the content goes to
+                               the game view (scnFloatTakesInput) */
 
     /* Out. */
     bool   open;            /* Begin returned true: draw the content */
@@ -5375,6 +5377,7 @@ struct ScnFloatFrame {
     bool   resizeHot, resizeActive;
     bool   resizeDone;      /* a resize ended this frame, at w by h */
     bool   hovered;         /* the pointer is on the window */
+    bool   takesInput;      /* the window takes the mouse this frame */
     bool   handlesVisible;  /* the bar, the buttons and the grip show */
     float  keepX, keepY;    /* the content's top-left, kept on screen */
     float  gearX, gearY;    /* where the settings window opens from */
@@ -5407,6 +5410,7 @@ static bool scnFloatBegin(ScnFloatWin &s, ScnFloatFrame &f) {
     f.moveHot = f.moveActive = f.movedNow = false;
     f.resizeHot = f.resizeActive = f.resizeDone = false;
     f.hovered = f.handlesVisible = false;
+    f.takesInput = true;
     f.keepX = s.atX;
     f.keepY = s.atY;
     f.gearX = f.gearY = 0.0f;
@@ -5427,6 +5431,52 @@ static bool scnFloatBegin(ScnFloatWin &s, ScnFloatFrame &f) {
     }
     ImGui::SetNextWindowSize(ImVec2(f.w, f.h + btn), ImGuiCond_Always);
 
+    /* Who has the mouse, and the hover test. A window that is not
+       click-through always takes the mouse, and ImGui's own hover test
+       (IsWindowHovered, after Begin) is used.
+       A click-through window is NoInputs except while the pointer is on its
+       bar or its grip, or while the player is busy with it
+       (scnFloatTakesInput). While it is NoInputs it is never ImGui's
+       hovered window, io.WantCaptureMouse stays false over it, and
+       sdl3ImguiMouseOverWindow skips it, so a click or the wheel on the
+       content goes through to the game view. IsWindowHovered is never true
+       for a NoInputs window, so the hover test is a plain rectangle test on
+       the last frame's place and this frame's size, which sees the pointer
+       over the content even while the clicks go through. The strip above
+       the content counts only while the bar is up. When another ImGui
+       window under the pointer is in front of this one (a panel, the
+       settings, a menu), the pointer is not on this one. g.HoveredWindow
+       skips NoInputs windows, so it can be a window behind this one:
+       IsWindowAbove tells the two cases apart.
+       ImGui works out the hovered window in NewFrame, from the flags of the
+       last Begin, so the window takes input from the frame after the
+       pointer first comes onto the bar or the grip. A press on the bar then
+       makes the bar the active item, and the drag holds the input until
+       the button is let go. */
+    const Uint64 now  = SDL_GetTicks();
+    const bool   busy = s.moving || s.resizing || s.settingsOpen ||
+                        s_scnCloseAskOwner == f.owner;
+    bool onRect = false;
+    if (f.clickThrough) {
+        ImGuiContext &g     = *GImGui;
+        ImGuiWindow  *self  = ImGui::FindWindowByName(f.winId);
+        ImGuiWindow  *other = g.HoveredWindow ? g.HoveredWindow->RootWindow
+                                              : nullptr;
+        const bool covered = self != nullptr && other != nullptr &&
+                             other != self && ImGui::IsWindowAbove(other, self);
+        const bool   barUp = now < s.chromeUntil || busy;
+        const float  barH  = barUp ? btn : 0.0f;
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        onRect = !covered &&
+                 ImGui::IsMouseHoveringRect(ImVec2(s.atX, s.atY - barH),
+                                            ImVec2(s.atX + f.w, s.atY + f.h),
+                                            false);
+        const bool onHandle =
+            onRect && scnFloatPointerOnHandle(s.atX, s.atY, f.w, f.h, barH,
+                                              f.handle, mouse.x, mouse.y);
+        f.takesInput = scnFloatTakesInput(true, onHandle, busy);
+    }
+
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
@@ -5440,7 +5490,8 @@ static bool scnFloatBegin(ScnFloatWin &s, ScnFloatFrame &f) {
                           ImGuiWindowFlags_NoSavedSettings |
                           ImGuiWindowFlags_NoFocusOnAppearing |
                           ImGuiWindowFlags_NoDocking |
-                          ImGuiWindowFlags_NoNav);
+                          ImGuiWindowFlags_NoNav |
+                          (f.takesInput ? 0 : ImGuiWindowFlags_NoInputs));
     scnKeepBehindModal();
     if (!f.open) return false;
 
@@ -5513,9 +5564,10 @@ static bool scnFloatBegin(ScnFloatWin &s, ScnFloatFrame &f) {
        of them is being dragged, and while the settings window or the close
        confirm is up. The strip above the content counts as the window only
        while the bar is up: see the hit test hole below. */
-    const Uint64 now = SDL_GetTicks();
-    f.hovered = ImGui::IsWindowHovered(
-        ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    f.hovered = f.clickThrough
+                    ? onRect
+                    : ImGui::IsWindowHovered(
+                          ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
     if (f.hovered) s.chromeUntil = now + SCN_PANEL_CHROME_LINGER_MS;
     f.handlesVisible = now < s.chromeUntil || f.moveActive ||
                        f.resizeActive || s.settingsOpen ||
@@ -5792,6 +5844,7 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     f.snapped = snapped;
     f.bgPct   = v.bgPct;
     f.hideFrameAtZeroOpacity = false;
+    f.clickThrough           = false;
     if (scnFloatBegin(v.win, f)) {
         /* A resize saves the size as a percent of the size the zoom alone
            gives. */
@@ -6094,13 +6147,14 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * while the pointer is on it to drag it by, a gear that
  * opens the same settings (scnFloatSettings), an X that
  * hides it (with the same confirm), and a grip in the
- * bottom-right corner. It takes the mouse as the panel
- * does: on the text area always, and on the strip above it
- * only while the bar is up. Unlike the panel it is a
- * rectangle, the grip changes its width and its height
- * separately, and at 0% background opacity its edge and
- * grip show only while the pointer is on it
- * (scnFloatFrameShown).
+ * bottom-right corner. Unlike the panel it is a rectangle,
+ * the grip changes its width and its height separately, at
+ * 0% background opacity its edge and grip show only while
+ * the pointer is on it (scnFloatFrameShown), and it is
+ * click-through: it takes the mouse only on its bar and its
+ * grip, or while it is being dragged or its settings or
+ * close confirm are up (scnFloatTakesInput). A click or the
+ * wheel on the text goes through to the game view under it.
  *
  * The X turns off Brains > Info Overlay > Scenario Text,
  * and that menu item turns it back on. Its place, size,
@@ -6750,9 +6804,10 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
        (scnFloatBegin): the bar above the text area with the gear and the X,
        the grip in its corner, the edge round it. The differences are
        params: the text area is a rectangle of any shape with no snap
-       sizes, and at 0% background opacity the edge and the grip show only
+       sizes, at 0% background opacity the edge and the grip show only
        while the pointer is on the window or a drag is on
-       (hideFrameAtZeroOpacity). */
+       (hideFrameAtZeroOpacity), and a click or the wheel on the text goes
+       through to the game view (clickThrough). */
     ScnFloatFrame f = {};
     f.winId   = "##scenariotext";
     f.owner   = SCN_TEXT_OWNER;
@@ -6768,6 +6823,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     f.snapped = false;
     f.bgPct   = s_scnText.bgPct;
     f.hideFrameAtZeroOpacity = true;
+    f.clickThrough           = true;
     if (scnFloatBegin(s_scnText.win, f)) {
         /* A resize saves the size in pixels. */
         if (f.resizeDone) {

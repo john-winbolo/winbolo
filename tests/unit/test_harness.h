@@ -4353,6 +4353,7 @@ int run_scenario_text_tablet_band(void);
 int run_scenario_text_window_shown(void);
 int run_scenario_text_printed_recently(void);
 int run_scenario_float_frame_shown(void);
+int run_scenario_float_pointer_on_handle(void);
 int run_scenario_text_save_place(void);
 /* The desktop scenario panel's default place and size
  * (test_scenario_panel.c): the game view's top-left at a readable cardinal,

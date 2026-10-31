@@ -2484,6 +2484,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_text_window_shown",                      run_scenario_text_window_shown                      },
     { "scenario_text_printed_recently",                  run_scenario_text_printed_recently                  },
     { "scenario_float_frame_shown",                      run_scenario_float_frame_shown                      },
+    { "scenario_float_pointer_on_handle",                run_scenario_float_pointer_on_handle                },
     { "scenario_text_save_place",                        run_scenario_text_save_place                        },
     { "scenario_panel_default_place",                    run_scenario_panel_default_place                    },
     { "scenario_text_beside_panel_place",                run_scenario_text_beside_panel_place                },

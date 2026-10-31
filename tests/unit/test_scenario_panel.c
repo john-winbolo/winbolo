@@ -1031,6 +1031,59 @@ int run_scenario_float_frame_shown(void) {
     UT_ASSERT(scnFloatFrameShown(true, 0, false, true, false));
     UT_ASSERT(scnFloatFrameShown(true, 0, false, false, true));
     UT_ASSERT(scnFloatFrameShown(true, 0, true, true, true));
+
+    /* Who takes the mouse: the panel always; the click-through text window
+       only on its bar or grip, or while the player is busy with it. */
+    UT_ASSERT(scnFloatTakesInput(false, false, false));
+    UT_ASSERT(scnFloatTakesInput(false, true, true));
+    UT_ASSERT(!scnFloatTakesInput(true, false, false));
+    UT_ASSERT(scnFloatTakesInput(true, true, false));
+    UT_ASSERT(scnFloatTakesInput(true, false, true));
+    return 0;
+}
+
+/* A click-through window takes the mouse only on its bar and its grip, so
+ * a click or the wheel on its content goes to the game. The bar sits
+ * directly above the content and covers none of it. Content at 100,70,
+ * 300 x 120, with a 20 high bar and a 14 square grip: the bar is
+ * 100..400 x 50..70, the content is 100..400 x 70..190 and the grip is
+ * 386..400 x 176..190. */
+int run_scenario_float_pointer_on_handle(void) {
+    const float x = 100.0f, y = 70.0f, w = 300.0f, h = 120.0f;
+    const float bar = 20.0f, grip = 14.0f;
+
+    /* The bar, across the full width: its left end, its middle, and the
+       gear and the X at its right end. */
+    UT_ASSERT(scnFloatPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 50.0f));
+    UT_ASSERT(scnFloatPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 60.0f));
+    UT_ASSERT(scnFloatPointerOnHandle(x, y, w, h, bar, grip, 399.0f, 69.0f));
+    /* Its bottom edge is the content's top edge, and is not in it. */
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 70.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 71.0f));
+
+    /* The grip, and the pixels just outside it. */
+    UT_ASSERT(scnFloatPointerOnHandle(x, y, w, h, bar, grip, 386.0f, 176.0f));
+    UT_ASSERT(scnFloatPointerOnHandle(x, y, w, h, bar, grip, 399.5f, 189.5f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 385.9f, 180.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 390.0f, 175.9f));
+
+    /* The content body: none of it takes the mouse. */
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 130.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 189.0f));
+
+    /* Off the window, and the point ImGui gives when there is no mouse. */
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 99.9f, 60.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 49.9f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 400.0f, 60.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 395.0f, 190.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, -FLT_MAX,
+                                       -FLT_MAX));
+
+    /* No area, no bar, no grip. With no bar, the strip above the content
+       does not take the mouse. */
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, 0.0f, h, bar, grip, 100.0f, 50.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, 0.0f, grip, 250.0f, 60.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, 0.0f, 399.0f, 189.0f));
     return 0;
 }
 

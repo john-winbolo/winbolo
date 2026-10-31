@@ -2346,10 +2346,11 @@ uses the same window frame as the scenario panel's window, from the same code:
 it has no title bar, a see-through backing, a bar just above its text to move
 it, a gear that opens its settings (Pop out, then two opacity sliders), an X
 that closes it, a grip in its bottom-right corner to resize it, and a faint
-edge round the text. Like the panel, it takes the mouse on its text area.
-Unlike the panel, it is a rectangle and it can take any shape, and at 0%
-background opacity its edge and grip show only while the pointer is on the
-window or a drag is on. Above 0% they show as the panel's do. The window is hidden until a scenario shows a
+edge round the text. Unlike the panel, it is a rectangle and it can take any
+shape, and at 0% background opacity its edge and grip show only while the
+pointer is on the window or a drag is on. Above 0% they show as the panel's
+do. It takes the mouse only on its bar and its grip: a click or the wheel on
+its text goes through to the game view under it. The window is hidden until a scenario shows a
 status line or an announcement. Turning it on in **Brains > Info Overlay >
 Scenario Text** does not show it by itself, and the pointer over its place
 does not show it. It shows while it has a line to draw, and for
