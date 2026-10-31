@@ -446,24 +446,53 @@ static inline bool scnTextWindowShown(bool shown, bool recent,
  *NAME:          scnTextEdgeShown
  *PURPOSE:
  *  Whether the Scenario Text window draws its faint edge.
- *  With a line to show, the edge is drawn when there is a
- *  backing (background opacity above 0%): at 0% the text
- *  stands on the map with no frame round it. With no line,
- *  the window draws no backing, and the edge is drawn only
- *  while the bar and the grip show, at any background
- *  opacity, so the player can see the window's size while
- *  the pointer is on it.
+ *  While the pointer is on the window (the text area, or
+ *  the bar while the bar is up), the edge is always drawn,
+ *  at any background opacity, 0% too, so the player can
+ *  see the window's size there. This is the edge 1% gives,
+ *  and no backing is added for it.
+ *  Otherwise, with a line to show, the edge is drawn when
+ *  there is a backing (background opacity above 0%): at 0%
+ *  the text stands on the map with no frame round it. With
+ *  no line, the window draws no backing, and the edge is
+ *  drawn only while the bar shows.
  *
  *ARGUMENTS:
  *  haveText       - there is a status line or an
  *                   announcement
  *  bgPct          - the background opacity, 0 to 100
- *  handlesVisible - the bar and the grip show
+ *  handlesVisible - the bar shows
+ *  hovered        - the pointer is on the window
  *********************************************************/
 static inline bool scnTextEdgeShown(bool haveText, int bgPct,
-                                    bool handlesVisible) {
+                                    bool handlesVisible, bool hovered) {
+    if (hovered) return true;
     if (haveText) return bgPct > 0;
     return handlesVisible;
+}
+
+/*********************************************************
+ *NAME:          scnTextGripShown
+ *PURPOSE:
+ *  Whether the Scenario Text window draws its resize grip.
+ *  Only while the pointer is on the window (the text area,
+ *  which holds the grip in its corner, or the bar while the
+ *  bar is up), and while a resize drag is on, also when the
+ *  drag takes the pointer off the window. Not while the bar
+ *  stays up for a time after the pointer leaves: at 0%
+ *  background opacity a grip with nothing round it looks
+ *  like a mark on the map.
+ *  The grip takes the mouse whether it is drawn or not, so
+ *  a pointer that goes straight to the corner finds it: the
+ *  corner is in the text area, so the grip shows as the
+ *  pointer gets there.
+ *
+ *ARGUMENTS:
+ *  hovered  - the pointer is on the window
+ *  resizing - the resize drag is on
+ *********************************************************/
+static inline bool scnTextGripShown(bool hovered, bool resizing) {
+    return hovered || resizing;
 }
 
 /*********************************************************
