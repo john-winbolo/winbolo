@@ -1081,7 +1081,7 @@ extern int   gameFrontScnTextX;         /* -1 = never moved */
 extern int   gameFrontScnTextY;
 extern int   gameFrontScnTextW;         /* pixels, -1 = never resized */
 extern int   gameFrontScnTextH;
-extern int   gameFrontScnTextBgAlpha;   /* percent, -1 = never set */
+extern int   gameFrontScnTextBgAlpha;   /* percent, -1 = never set (0) */
 extern int   gameFrontScnTextTextAlpha; /* percent, -1 = never set */
 extern bool  gameFrontScnTextShown;
 
