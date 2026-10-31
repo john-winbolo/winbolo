@@ -910,13 +910,11 @@ int run_scenario_text_layout(void) {
 
     /* Kept as the script wrote it: 2 rows, not 3. */
     snprintf(text, sizeof(text), "%s",
-             "Low on shells? Stop on the base
-by the road to refill.");
+             "Low on shells? Stop on the base\nby the road to refill.");
     rows = scnTextWrapBalanced(text, scnTestMeasure, NULL,
                                457.0f / minScale - pads);
     UT_ASSERT_MSG(rows == 2, "the owner's text took %d rows", rows);
-    UT_ASSERT(strcmp(text, "Low on shells? Stop on the base
-"
+    UT_ASSERT(strcmp(text, "Low on shells? Stop on the base\n"
                            "by the road to refill.") == 0);
     /* The widest row is 31 characters, 279 units, and 6 more for the outline
        and the pad: 285. Width allows 457 / 285, height 230 / 50; the cap,
@@ -942,13 +940,10 @@ by the road to refill.");
     /* Too narrow for the first row (26 characters of room): it is broken
        into two even rows, and "base" does not sit alone. */
     snprintf(text, sizeof(text), "%s",
-             "Low on shells? Stop on the base
-by the road to refill.");
+             "Low on shells? Stop on the base\nby the road to refill.");
     rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 238.0f);
     UT_ASSERT(rows == 3);
-    UT_ASSERT_MSG(strcmp(text, "Low on shells?
-Stop on the base
-"
+    UT_ASSERT_MSG(strcmp(text, "Low on shells?\nStop on the base\n"
                                "by the road to refill.") == 0,
                   "broken as \"%s\"", text);
 
@@ -956,35 +951,28 @@ Stop on the base
     snprintf(text, sizeof(text), "%s", "aaaa aaaa aaaa b");
     rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 130.0f);
     UT_ASSERT(rows == 2);
-    UT_ASSERT_MSG(strcmp(text, "aaaa aaaa
-aaaa b") == 0, "broken as \"%s\"",
+    UT_ASSERT_MSG(strcmp(text, "aaaa aaaa\naaaa b") == 0, "broken as \"%s\"",
                   text);
     /* Three rows when two do not fit. */
     snprintf(text, sizeof(text), "%s", "aa bb cc dd ee ff");
     rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 50.0f);
     UT_ASSERT(rows == 3);
-    UT_ASSERT(strcmp(text, "aa bb
-cc dd
-ee ff") == 0);
+    UT_ASSERT(strcmp(text, "aa bb\ncc dd\nee ff") == 0);
 
     /* Never inside a word: a word too wide is a row by itself, and a row
        with no space is not changed. */
     snprintf(text, sizeof(text), "%s", "go Unbreakableword now");
     rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
     UT_ASSERT(rows == 3);
-    UT_ASSERT(strcmp(text, "go
-Unbreakableword
-now") == 0);
+    UT_ASSERT(strcmp(text, "go\nUnbreakableword\nnow") == 0);
     snprintf(text, sizeof(text), "%s", "Unbreakableword");
     rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
     UT_ASSERT(rows == 1 && strcmp(text, "Unbreakableword") == 0);
 
     /* Rows that fit are kept, and nothing to measure is no width. */
-    snprintf(text, sizeof(text), "%s", "a b
-c");
+    snprintf(text, sizeof(text), "%s", "a b\nc");
     UT_ASSERT(scnTextWrapBalanced(text, scnTestMeasure, NULL, 500.0f) == 2);
-    UT_ASSERT(strcmp(text, "a b
-c") == 0);
+    UT_ASSERT(strcmp(text, "a b\nc") == 0);
     UT_ASSERT(scnTextContentWidth("", scnTestMeasure, NULL) == 0.0f);
     return 0;
 }
