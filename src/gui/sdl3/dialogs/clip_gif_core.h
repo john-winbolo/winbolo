@@ -591,6 +591,14 @@ bool clipGifMetaAddPlayer(ClipGifMeta *m, const char *name);
 /* The id of the replay bytes data (len bytes), as 16 lower-case hex digits
  * (a 64-bit FNV-1a hash), into out (outLen bytes, always ended with a NUL).
  * No bytes give "". */
+/* The same id a piece at a time, for a replay too large to read whole:
+ * h = clipGifGameIdBegin(), then h = clipGifGameIdAdd(h, piece, n) for each
+ * piece in order, then clipGifGameIdEnd(h, out, outLen). The caller gives
+ * "" for no bytes, as clipGifGameIdFromBytes does. */
+uint64_t clipGifGameIdBegin(void);
+uint64_t clipGifGameIdAdd(uint64_t h, const void *data, size_t len);
+void clipGifGameIdEnd(uint64_t h, char *out, size_t outLen);
+
 void clipGifGameIdFromBytes(const void *data, size_t len, char *out,
                             size_t outLen);
 

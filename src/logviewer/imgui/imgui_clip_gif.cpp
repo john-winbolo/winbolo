@@ -105,12 +105,22 @@ static const char *lvGifGameId(void) {
             return s_gif.gameId;
         }
         s_gif.gameId[0] = '\0';
-        size_t fileLen = 0;
-        void *bytes = SDL_LoadFile(path, &fileLen);
-        if (bytes != NULL) {
-            clipGifGameIdFromBytes(bytes, fileLen, s_gif.gameId,
-                                   sizeof(s_gif.gameId));
-            SDL_free(bytes);
+        /* Read a piece at a time: the id is the same as the one of the
+         * whole file's bytes, without the whole log in memory. */
+        SDL_IOStream *io = SDL_IOFromFile(path, "rb");
+        if (io != NULL) {
+            uint64_t h = clipGifGameIdBegin();
+            uint64_t total = 0;
+            static unsigned char buf[64 * 1024];
+            size_t got;
+            while ((got = SDL_ReadIO(io, buf, sizeof(buf))) > 0) {
+                h = clipGifGameIdAdd(h, buf, got);
+                total += got;
+            }
+            SDL_CloseIO(io);
+            if (total > 0) {
+                clipGifGameIdEnd(h, s_gif.gameId, sizeof(s_gif.gameId));
+            }
         }
         SDL_strlcpy(s_gif.gameIdPath, path, sizeof(s_gif.gameIdPath));
         s_gif.gameIdData = NULL;
@@ -285,12 +295,7 @@ static bool lvGifMapView(ClipGifRect *slice, ClipGifBox *view, int *blitX,
 /* The gallery's metadata: the time now, the map, the players of the log and
  * the id of the log. */
 static void lvGifFillMeta(ClipGifMeta *m, const char *mapName) {
-    SDL_Time now = 0;
-    int64_t created = 0;
-    if (SDL_GetCurrentTime(&now)) {
-        created = (int64_t)(now / SDL_NS_PER_SECOND);
-    }
-    clipGifMetaBegin(m, created, lvGifGameId(), mapName);
+    clipGifMetaBeginNow(m, lvGifGameId(), mapName);
 
     static LvRosterRow rows[LV_ROSTER_MAX];
     lv_clientMutexWaitFor();
@@ -301,71 +306,70 @@ static void lvGifFillMeta(ClipGifMeta *m, const char *mapName) {
     }
 }
 
-/* Starts a capture of the GIF's span on the zoomed timeline
- * (clipGifSpanClip). The frames are the map as it is
- * shown now: the same zoom, the same place, the same camera, the same
- * colours, and they are the part of the map in the crop frame
- * (clipGifChooseCrop, as the game's replay has it). */
-static void lvGifStart(void) {
-    if (!lv_clip_gif_can_make()) {
-        return;
-    }
-    /* The part of the map that shows, from the last blit, before anything
-     * here draws the map again. */
-    ClipGifRect shown = { 0, 0, 0, 0 };
-    ClipGifBox  view  = { 0.0f, 0.0f, 0.0f, 0.0f };
-    int blitX = 0, blitY = 0;
-    const bool haveView = lvGifMapView(&shown, &view, &blitX, &blitY);
+/* The part of the map that showed at the last blit (lvGifMapView), read
+ * before the start draws the map again. */
+typedef struct LvGifShown {
+    bool        have;
+    ClipGifRect shown;
+    int         blitX;
+    int         blitY;
+} LvGifShown;
 
-    if (!clipGifCaptureArm(&s_gif.session, &s_lvReplay)) {
-        return;
-    }
-    uint32_t curMs = 0, totalMs = 0;
-    lvGifProgress(NULL, &curMs, &totalMs);
-    uint32_t startMs = 0, lenMs = 0;
-    clipGifSpanClip(&s_gif.mode, curMs, totalMs, &startMs, &lenMs);
-    if (startMs != curMs) {
-        lvGifSeek(NULL, startMs);
-    }
-
-    int srcX = 0, srcY = 0, texW = 0, texH = 0;
+/* After the seek: the map drawn again, and the part of the render target
+ * that shows, from where the camera is now. */
+static bool lvGifStartView(void *user, ClipGifRect *out, int *texW,
+                           int *texH) {
+    const LvGifShown *was = (const LvGifShown *)user;
+    int srcX = 0, srcY = 0;
     lv_clientMutexWaitFor();
     lv_screenUpdate(redraw);
     lv_screenGetSubOffset(&srcX, &srcY);
     int srcW = (int)lv_screenGetSizeX() * TILE_SIZE_X;
     int srcH = (int)lv_screenGetSizeY() * TILE_SIZE_Y;
-    lv_drawGetGameTargetSize(&texW, &texH);
+    lv_drawGetGameTargetSize(texW, texH);
     lv_clientMutexRelease();
-
-    if (haveView) {
-        /* Only the part that shows, from where the camera is now: the
-         * drawing above can have moved it, and the crop frame names a place
-         * on the view, not on the map. */
-        srcX += shown.x - blitX;
-        srcY += shown.y - blitY;
-        srcW = shown.w;
-        srcH = shown.h;
+    if (was->have) {
+        /* Only the part that shows: the drawing above can have moved the
+         * camera, and the crop frame names a place on the view, not on the
+         * map. */
+        srcX += was->shown.x - was->blitX;
+        srcY += was->shown.y - was->blitY;
+        srcW = was->shown.w;
+        srcH = was->shown.h;
     }
-    if (srcX < 0) srcX = 0;
-    if (srcY < 0) srcY = 0;
-    if (srcX + srcW > texW) srcW = texW - srcX;
-    if (srcY + srcH > texH) srcH = texH - srcY;
-    ClipGifRect c;
-    const bool haveCrop =
-        lv_drawGetGameTexture() != NULL &&
-        clipGifChooseCrop(&s_gif.mode, srcX, srcY, srcW, srcH, &c);
-    s_gif.targetW = texW;
-    s_gif.targetH = texH;
+    s_gif.targetW = *texW;
+    s_gif.targetH = *texH;
+    out->x = srcX;
+    out->y = srcY;
+    out->w = srcW;
+    out->h = srcH;
+    return lv_drawGetGameTexture() != NULL;
+}
 
+/* Starts a capture of the GIF's span on the zoomed timeline
+ * (clipGifCaptureStart). The frames are the map as it is shown now: the
+ * same zoom, the same place, the same camera, the same colours, and they
+ * are the part of the map in the crop frame (clipGifChooseCrop, as the
+ * game's replay has it). */
+static void lvGifStart(void) {
+    if (!lv_clip_gif_can_make()) {
+        return;
+    }
+    LvGifShown was = { false, { 0, 0, 0, 0 }, 0, 0 };
+    ClipGifBox view = { 0.0f, 0.0f, 0.0f, 0.0f };
+    was.have = lvGifMapView(&was.shown, &view, &was.blitX, &was.blitY);
+
+    ClipGifStartFrom from = {};
+    from.user = &was;
+    from.view = lvGifStartView;
     char mapName[64];
     mapName[0] = '\0';
     lv_screenGetMapName(mapName);
     mapName[sizeof(mapName) - 1] = '\0';
     ClipGifMeta meta;
     lvGifFillMeta(&meta, mapName);
-    /* With no crop, this puts the log back as the arm found it. */
-    clipGifCaptureOpen(&s_gif.session, &s_lvReplay, haveCrop ? &c : NULL,
-                       startMs, lenMs, mapName, &meta);
+    clipGifCaptureStart(&s_gif.session, &s_lvReplay, &s_gif.mode, &from,
+                        mapName, &meta);
 }
 
 /* ── The calls the host makes ─────────────────────────────────────── */
@@ -519,18 +523,13 @@ static void lvGifRenderWindow(void) {
     static bool s_placeRead = false;
     if (!s_placeRead) {
         s_placeRead = true;
-        const int x = lv_platform_config_get_int("LOGVIEWER", "GifWindow.X", -1);
-        const int y = lv_platform_config_get_int("LOGVIEWER", "GifWindow.Y", -1);
-        if (x >= 0 && y >= 0) {
-            s_place.saved = true;
-            s_place.x = (float)x;
-            s_place.y = (float)y;
-        }
+        clipGifWindowPlaceLoad(
+            &s_place, lv_platform_config_get_int("LOGVIEWER", "GifWindow.X", -1),
+            lv_platform_config_get_int("LOGVIEWER", "GifWindow.Y", -1));
     }
     if (s_placeReset) {
         s_placeReset = false;
-        if (s_place.saved) {
-            s_place.saved = false;
+        if (clipGifWindowPlaceForget(&s_place)) {
             lv_platform_config_set_int("LOGVIEWER", "GifWindow.X", -1);
             lv_platform_config_set_int("LOGVIEWER", "GifWindow.Y", -1);
         }
@@ -552,17 +551,13 @@ static void lvGifRenderWindow(void) {
         "LvGifWindow", &s_gif.session, &s_lvReplay, &s_gif.mode,
         lv_clip_gif_can_make(), (const void *)(intptr_t)picture, ax0, ay0,
         ax1, ay1, &s_place);
-    if (s_place.changed) {
-        s_place.changed = false;
-        lv_platform_config_set_int("LOGVIEWER", "GifWindow.X", (int)s_place.x);
-        lv_platform_config_set_int("LOGVIEWER", "GifWindow.Y", (int)s_place.y);
+    int px = 0, py = 0;
+    if (clipGifWindowPlaceTake(&s_place, &px, &py)) {
+        lv_platform_config_set_int("LOGVIEWER", "GifWindow.X", px);
+        lv_platform_config_set_int("LOGVIEWER", "GifWindow.Y", py);
     }
     if (pressed.preview) {
-        if (clipGifPreviewActive(&s_gif.session)) {
-            clipGifPreviewStop(&s_gif.session, &s_lvReplay);
-        } else {
-            clipGifPreviewSpan(&s_gif.session, &s_lvReplay, &s_gif.mode);
-        }
+        clipGifPreviewToggle(&s_gif.session, &s_lvReplay, &s_gif.mode);
     }
     if (pressed.save) {
         lvGifStart();
@@ -615,6 +610,10 @@ void lv_clip_gif_render(void) {
 }
 
 void lv_clip_gif_toggle_gallery(void) {
+    /* Not while a GIF is made: its progress window is over everything. */
+    if (clipGifCaptureActive(&s_gif.session)) {
+        return;
+    }
     if (clipGifGalleryIsOpen()) {
         clipGifGalleryClose();
     } else {

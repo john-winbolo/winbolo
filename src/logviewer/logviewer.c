@@ -2220,6 +2220,10 @@ static void lvHostRenderFrame(const char *overlay) {
             lv_imgui_controls_window();
             lv_g_show_controls_window = save_ctrl;
             lv_imgui_spectator_badge(g_lv->gamePhase);
+        } else {
+            /* No Controls panel for the GIF window to go over; this also
+             * gives it View > Reset Window Positions. */
+            lv_clip_gif_set_anchor(false, 0.0f, 0.0f, 0.0f, 0.0f);
         }
         lv_g_reset_window_positions = false;
         if (overlay != NULL) {

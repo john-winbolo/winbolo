@@ -134,12 +134,7 @@ int lobbyClipGifPreviewRow(void) {
  * round's players (the lobby's named slots when there is no round summary). */
 static void lobbyClipGifFillMeta(ClipGifMeta *m, ClientSim *cs,
                                  const char *mapName) {
-    SDL_Time now = 0;
-    int64_t created = 0;
-    if (SDL_GetCurrentTime(&now)) {
-        created = (int64_t)(now / SDL_NS_PER_SECOND);
-    }
-    clipGifMetaBegin(m, created, lobbyReel()->gameId, mapName);
+    clipGifMetaBeginNow(m, lobbyReel()->gameId, mapName);
     if (cs == NULL) {
         return;
     }
@@ -164,58 +159,67 @@ static void lobbyClipGifFillMeta(ClipGifMeta *m, ClientSim *cs,
     }
 }
 
+/* The place a clip row names, for its seek. */
+typedef struct LobbyClipAt {
+    int mapX;
+    int mapY;
+} LobbyClipAt;
+
+/* A clip row's Save clip: the row names a place as well as a moment, so the
+ * view goes to it. */
+static void lobbyClipGifSeekClip(void *user, uint32_t startMs) {
+    const LobbyClipAt *at = (const LobbyClipAt *)user;
+    lvEmbedSeekToClip(startMs, at->mapX, at->mapY);
+}
+
+/* The slice the reel shows, after the seek. The crop frame is held as
+ * fractions of the slice the reel blitted. Its size comes from the last
+ * draw (an on-screen size a seek cannot change) and its origin from the
+ * fresh one here, because the seek may have moved the camera and the frame
+ * names a place on the view, not on the map. */
+static bool lobbyClipGifView(void *user, ClipGifRect *shown, int *texW,
+                             int *texH) {
+    (void)user;
+    void *tex = NULL;
+    int srcX = 0, srcY = 0, srcW = 0, srcH = 0;
+    if (!lvEmbedFrameTexture(&tex, texW, texH, &srcX, &srcY, &srcW, &srcH) ||
+        tex == NULL || srcW <= 0 || srcH <= 0) {
+        return false;
+    }
+    const SDL_Rect *last = &lobbyReel()->lastSlice;
+    if (last->w > 0 && last->h > 0) {
+        if (last->w < srcW) srcW = last->w;
+        if (last->h < srcH) srcH = last->h;
+    }
+    shown->x = srcX;
+    shown->y = srcY;
+    shown->w = srcW;
+    shown->h = srcH;
+    return true;
+}
+
 /* Takes the reel, moves it to the moment, works out the crop and opens the
- * encoder. fromSpan is the transport's Save clip: the GIF's span on the
- * zoomed timeline (clipGifSpanClip), with the view left where the player put
- * it. Otherwise a clip row's: the row names a place as well as a moment, so
- * the view goes to it. */
+ * encoder (clipGifCaptureStart). fromSpan is the transport's Save clip: the
+ * GIF's span on the zoomed timeline, with the view left where the player put
+ * it. Otherwise a clip row's, at the row's place. */
 static void lobbyClipGifStart(bool fromSpan, uint32_t startMs,
                               uint32_t lenMs, int mapX, int mapY,
                               ClientSim *cs) {
-    if (!lvEmbedIsActive() || !clipGifCaptureArm(&s_session, &s_reelReplay)) {
+    if (!lvEmbedIsActive()) {
         return;
     }
-    if (fromSpan) {
-        uint32_t curMs = 0, totalMs = 0;
-        lvEmbedGetProgress(&curMs, &totalMs);
-        clipGifSpanClip(&lobbyReel()->clip, curMs, totalMs, &startMs, &lenMs);
-        lvEmbedSeekToTime(startMs);
-    } else {
-        lvEmbedSeekToClip(startMs, mapX, mapY);
-    }
-
-    void *tex = NULL;
-    int texW = 0, texH = 0, srcX = 0, srcY = 0, srcW = 0, srcH = 0;
-    bool haveCrop = false;
-    ClipGifRect crop = { 0, 0, 0, 0 };
-    if (lvEmbedFrameTexture(&tex, &texW, &texH, &srcX, &srcY, &srcW, &srcH) &&
-        tex != NULL && srcW > 0 && srcH > 0) {
-        /* The slice is given against a target a tile larger than itself, but
-         * clamp anyway: the crop is read back as it is for every frame. */
-        if (srcX + srcW > texW) srcW = texW - srcX;
-        if (srcY + srcH > texH) srcH = texH - srcY;
-        /* The crop frame is held as fractions of the slice the reel
-         * blitted. Its size comes from the last draw (an on-screen size a
-         * seek cannot change) and its origin from the fresh one above,
-         * because the seek may have moved the camera and the frame names a
-         * place on the view, not on the map. */
-        ClipGifMode *mode = &lobbyReel()->clip;
-        const SDL_Rect *last = &lobbyReel()->lastSlice;
-        int viewW = srcW, viewH = srcH;
-        if (last->w > 0 && last->h > 0) {
-            if (last->w < viewW) viewW = last->w;
-            if (last->h < viewH) viewH = last->h;
-        }
-        haveCrop = srcW > 0 && srcH > 0 &&
-                   clipGifChooseCrop(mode, srcX, srcY, viewW, viewH, &crop);
-    }
-
+    LobbyClipAt at = { mapX, mapY };
+    ClipGifStartFrom from = {};
+    from.user     = &at;
+    from.seekClip = fromSpan ? NULL : lobbyClipGifSeekClip;
+    from.startMs  = startMs;
+    from.lenMs    = lenMs;
+    from.view     = lobbyClipGifView;
     const char *mapName = (cs != NULL) ? clientSimGetMapName(cs) : NULL;
     ClipGifMeta meta;
     lobbyClipGifFillMeta(&meta, cs, mapName);
-    /* With no crop, this puts the reel back as the arm found it. */
-    clipGifCaptureOpen(&s_session, &s_reelReplay, haveCrop ? &crop : NULL,
-                       startMs, lenMs, mapName, &meta);
+    clipGifCaptureStart(&s_session, &s_reelReplay, &lobbyReel()->clip, &from,
+                        mapName, &meta);
 }
 
 /* A clip row's Save clip: the moment and the place the row names, for as
@@ -234,14 +238,10 @@ void lobbyClipGifStartSpan(ClientSim *cs) {
 /* The transport's Preview clip: the GIF's span on the zoomed timeline.
  * Pressed while a preview plays, it stops it. */
 void lobbyClipGifPreviewToggle(void) {
-    if (clipGifPreviewActive(&s_session)) {
-        clipGifPreviewStop(&s_session, &s_reelReplay);
+    if (!clipGifPreviewActive(&s_session) && !lvEmbedIsActive()) {
         return;
     }
-    if (!lvEmbedIsActive()) {
-        return;
-    }
-    if (clipGifPreviewSpan(&s_session, &s_reelReplay, &lobbyReel()->clip)) {
+    if (clipGifPreviewToggle(&s_session, &s_reelReplay, &lobbyReel()->clip)) {
         s_previewRow = -1;
     }
 }
@@ -257,19 +257,13 @@ void lobbyClipGifWindow(float ax0, float ay0, float ax1, float ay1,
     static bool s_placeRead = false;
     if (!s_placeRead) {
         s_placeRead = true;
-        if (gameFrontGifWinX >= 0 && gameFrontGifWinY >= 0) {
-            s_place.saved = true;
-            s_place.x = (float)gameFrontGifWinX;
-            s_place.y = (float)gameFrontGifWinY;
-        }
+        clipGifWindowPlaceLoad(&s_place, gameFrontGifWinX, gameFrontGifWinY);
     }
     const ClipGifWindowPressed pressed = clipGifToolsWindow(
         "LobbyGifWindow", &s_session, &s_reelReplay, &lobbyReel()->clip, true,
         (const void *)lobbyIcons()->picture, ax0, ay0, ax1, ay1, &s_place);
-    if (s_place.changed) {
-        s_place.changed = false;
-        gameFrontGifWinX = (int)s_place.x;
-        gameFrontGifWinY = (int)s_place.y;
+    if (clipGifWindowPlaceTake(&s_place, &gameFrontGifWinX,
+                               &gameFrontGifWinY)) {
         gameFrontSaveWindowSettings();
     }
     if (pressed.preview) {

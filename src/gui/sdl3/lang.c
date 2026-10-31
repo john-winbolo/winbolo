@@ -1318,7 +1318,7 @@ static const LangEntry langTable[] = {
     /* The recap's GIF gallery, and the GIF length beside the replay's GIF
      * button. */
     {2943, "Your GIFs"},
-    {2944, "No GIFs yet. Make one with the GIF button under the replay, or the GIF button on a clip."},
+    {2944, "No GIFs yet. Make one with Save clip in the Make a GIF window, or with Save clip on a clip."},
     {2945, "Copy to clipboard"},
     {2947, "Copied."},
     {2948, "The GIF could not be copied."},
@@ -1424,9 +1424,9 @@ static const LangEntry langTable[] = {
     {3156, "Delete this GIF? It cannot be undone."},
     {3157, "The GIF could not be deleted."},
     {3163, "Clips"},
-    {3164, "No GIFs yet. Turn on Recording Mode in the Action menu, then use the GIF button to make one from the map."},
+    {3164, "No GIFs yet. Turn on Recording Mode in the Action menu, then use Save clip in the Make a GIF window to make one from the map."},
     {3361, "Recording Mode"},
-    {3362, "Shows the GIF controls: the GIF button and its length, where the GIF starts and ends on the timeline, and a crop frame for the part of the map to take."},
+    {3362, "Shows the Make a GIF window: Preview clip, Save clip and the GIF's length, where the GIF starts and ends on the timeline, and a crop frame for the part of the map to take."},
 
     {3151, "-size wants a width and a height in pixels, such as -size 1920x1080. The window has opened at its usual size."},
     {3152, "The window could not be made {string1} pixels, as -size asked. It is {string2} pixels: the display may be too small to hold it."},

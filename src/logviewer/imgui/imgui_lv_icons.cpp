@@ -17,6 +17,7 @@
 #include <SDL3/SDL.h>
 
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"   /* imguiLoadSvgIcon */
+#include "../../gui/sdl3/dialogs/imgui_play_glyph.h"     /* imguiDrawPlayGlyph */
 
 extern "C" {
     #include "../lv_bot_chip.h"
@@ -134,14 +135,10 @@ void lv_icon_draw(ImDrawList *dl, int icon, ImVec2 p0, ImVec2 p1, ImU32 col) {
     }
 
     switch (icon) {
-    case LV_ICON_PLAY: {
-        /* A little narrower than the box, and a touch to the right: a
-         * triangle's weight is at its back, so one drawn edge to edge looks
-         * off centre to the left. */
-        const float inset = floorf(w * 0.12f);
-        icon_triangle(dl, x0 + inset + 1.0f, y0, x1 - inset + 1.0f, y1, +1, col);
+    case LV_ICON_PLAY:
+        /* The same drawing as the Preview clip button's. */
+        imguiDrawPlayGlyph(dl, ImVec2(x0, y0), ImVec2(x1, y1), col);
         break;
-    }
     case LV_ICON_PAUSE: {
         float bar = floorf(w * 0.30f);
         if (bar < 1.0f) bar = 1.0f;

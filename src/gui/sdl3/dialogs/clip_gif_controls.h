@@ -46,8 +46,7 @@
 #include "clip_gif_gallery.h"    /* CLIP_GIF_GALLERY_BUILT, clipGifGalleryButton */
 #include "imgui_dialog_utils.h"  /* imguiHelpTooltip */
 #include "../../lang.h"          /* langGetText, STR_CLIPGIF_* */
-#include "../../../logviewer/imgui/imgui_lv_icons.h" /* lv_icon_draw: the
-                                  * play triangle of the play buttons */
+#include "imgui_play_glyph.h"    /* imguiDrawPlayGlyph */
 
 /* The drawn glyphs of the toggle buttons. */
 enum ClipGifGlyph {
@@ -84,10 +83,8 @@ static inline void clipGifDrawGlyph(ImDrawList *dl, int glyph, ImVec2 a,
                           ImVec2(a.x + w, midY + w * 0.24f),
                           ImVec2(bodyR, midY + w * 0.08f), col);
     } else if (glyph == CLIP_GIF_GLYPH_PLAY) {
-        /* The same triangle as the Log Viewer's play and pause button. */
-        const float i = floorf(w * 0.12f);
-        lv_icon_draw(dl, LV_ICON_PLAY, ImVec2(a.x + i, a.y + i),
-                     ImVec2(a.x + w - i, a.y + w - i), col);
+        /* The same drawing as the Log Viewer's play and pause button. */
+        imguiDrawPlayGlyph(dl, a, ImVec2(a.x + w, a.y + w), col);
     } else {
         /* CLIP_GIF_GLYPH_STOP: a filled square. */
         dl->AddRectFilled(ImVec2(a.x + w * 0.16f, a.y + w * 0.16f),
@@ -815,7 +812,8 @@ static inline ClipGifToolsPressed clipGifToolsRow(const char *id,
      * make a GIF. */
     ImGui::SameLine();
     const float cancelW = clipGifCancelButtonWidth();
-    const float cancelX = ImGui::GetWindowContentRegionMax().x - cancelW;
+    const float cancelX = ImGui::GetCursorPosX() +
+                          ImGui::GetContentRegionAvail().x - cancelW;
     if (cancelX > ImGui::GetCursorPosX()) {
         ImGui::SetCursorPosX(cancelX);
     }

@@ -130,6 +130,12 @@ bool clipGifPreviewStart(ClipGifSession *s, const ClipGifReplay *r,
 bool clipGifPreviewSpan(ClipGifSession *s, const ClipGifReplay *r,
                         const ClipGifMode *mode);
 
+/* The GIF window's Preview clip: stops the preview while one plays, else
+ * plays the span of mode (clipGifPreviewSpan). True when a preview
+ * started. */
+bool clipGifPreviewToggle(ClipGifSession *s, const ClipGifReplay *r,
+                          const ClipGifMode *mode);
+
 /* Stops the preview, and the replay goes back to the start of the clip. */
 void clipGifPreviewStop(ClipGifSession *s, const ClipGifReplay *r);
 
@@ -161,6 +167,37 @@ bool clipGifCaptureOpen(ClipGifSession *s, const ClipGifReplay *r,
                         const ClipGifRect *crop, uint32_t startMs,
                         uint32_t lenMs, const char *mapName,
                         const ClipGifMeta *meta);
+
+/* The gallery's metadata for a GIF made now: clipGifMetaBegin with the time
+ * now, gameId and mapName. The screen then adds the players. */
+void clipGifMetaBeginNow(ClipGifMeta *m, const char *gameId,
+                         const char *mapName);
+
+/* Where a GIF that starts is taken from, as the screen gives it to
+ * clipGifCaptureStart. user is given back to each call. */
+typedef struct ClipGifStartFrom {
+    void *user;
+    /* NULL: the GIF is the span of the mode (clipGifSpanClip), and the
+     * replay seeks to its start. Else the GIF is lenMs from startMs (a
+     * clip row's), and this moves the replay there (and the view to the
+     * row's place). */
+    void (*seekClip)(void *user, uint32_t startMs);
+    uint32_t startMs;
+    uint32_t lenMs;
+    /* After the seek: the part of the render target that shows now, in
+     * its pixels (*shown), and the render target's size. The crop frame is
+     * a fraction of *shown. False when there is no target to read. */
+    bool (*view)(void *user, ClipGifRect *shown, int *texW, int *texH);
+} ClipGifStartFrom;
+
+/* Save clip, the same in every screen: the arm (clipGifCaptureArm), the
+ * seek to the GIF's start, the crop of the shown part (clipGifChooseCrop,
+ * held inside the render target) and the encoder (clipGifCaptureOpen).
+ * mapName and meta are as clipGifCaptureOpen has them. False when no GIF
+ * started; the replay is then where it was. */
+bool clipGifCaptureStart(ClipGifSession *s, const ClipGifReplay *r,
+                         ClipGifMode *mode, const ClipGifStartFrom *from,
+                         const char *mapName, const ClipGifMeta *meta);
 
 /* Makes this frame's share of the GIF: up to CLIP_GIF_FRAMES_PER_PASS
  * frames. A frame that cannot be made marks the capture failed, and the
@@ -205,6 +242,15 @@ typedef struct ClipGifWindowPlace {
 } ClipGifWindowPlace;
 
 #define CLIP_GIF_WINDOW_PLACE_INIT { false, 0.0f, 0.0f, false, false, 0.0f, 0.0f, 0.0f }
+
+/* The screen's preferences and the place: Load gives it the place the
+ * preferences hold (x or y below 0: never moved). Take is true once after a
+ * drag that ends at a new place, with the place to write in *x and *y.
+ * Forget is View > Reset Window Positions: the window goes back over the
+ * row, and it is true when a place was kept, for the screen to write -1. */
+void clipGifWindowPlaceLoad(ClipGifWindowPlace *p, int x, int y);
+bool clipGifWindowPlaceTake(ClipGifWindowPlace *p, int *x, int *y);
+bool clipGifWindowPlaceForget(ClipGifWindowPlace *p);
 
 /* What the player pressed in the GIF window this frame, for the screen to
  * do: start or stop the preview, make the GIF, open the gallery. Cancel and

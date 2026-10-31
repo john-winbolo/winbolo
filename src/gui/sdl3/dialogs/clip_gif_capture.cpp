@@ -157,6 +157,15 @@ static void clipGifPreviewBack(ClipGifSession *s, const ClipGifReplay *r) {
     }
 }
 
+bool clipGifPreviewToggle(ClipGifSession *s, const ClipGifReplay *r,
+                          const ClipGifMode *mode) {
+    if (clipGifPreviewActive(s)) {
+        clipGifPreviewStop(s, r);
+        return false;
+    }
+    return clipGifPreviewSpan(s, r, mode);
+}
+
 void clipGifPreviewStop(ClipGifSession *s, const ClipGifReplay *r) {
     if (s == NULL || !s->play.active) {
         return;
@@ -247,6 +256,56 @@ bool clipGifCaptureOpen(ClipGifSession *s, const ClipGifReplay *r,
     s->done   = false;
     s->active = true;
     return true;
+}
+
+void clipGifMetaBeginNow(ClipGifMeta *m, const char *gameId,
+                         const char *mapName) {
+    SDL_Time now = 0;
+    int64_t created = 0;
+    if (SDL_GetCurrentTime(&now)) {
+        created = (int64_t)(now / SDL_NS_PER_SECOND);
+    }
+    clipGifMetaBegin(m, created, gameId, mapName);
+}
+
+bool clipGifCaptureStart(ClipGifSession *s, const ClipGifReplay *r,
+                         ClipGifMode *mode, const ClipGifStartFrom *from,
+                         const char *mapName, const ClipGifMeta *meta) {
+    if (s == NULL || r == NULL || mode == NULL || from == NULL ||
+        from->view == NULL || r->progress == NULL ||
+        !clipGifCaptureArm(s, r)) {
+        return false;
+    }
+    uint32_t startMs = from->startMs, lenMs = from->lenMs;
+    if (from->seekClip == NULL) {
+        uint32_t curMs = 0, totalMs = 0;
+        r->progress(r->user, &curMs, &totalMs);
+        clipGifSpanClip(mode, curMs, totalMs, &startMs, &lenMs);
+        if (startMs != curMs && r->seek != NULL) {
+            r->seek(r->user, startMs);
+        }
+    } else {
+        from->seekClip(from->user, startMs);
+    }
+
+    ClipGifRect shown = { 0, 0, 0, 0 };
+    ClipGifRect crop  = { 0, 0, 0, 0 };
+    int texW = 0, texH = 0;
+    bool haveCrop = false;
+    if (from->view(from->user, &shown, &texW, &texH)) {
+        /* Inside the render target: the crop is read back as it is for
+         * every frame. */
+        if (shown.x < 0) shown.x = 0;
+        if (shown.y < 0) shown.y = 0;
+        if (shown.x + shown.w > texW) shown.w = texW - shown.x;
+        if (shown.y + shown.h > texH) shown.h = texH - shown.y;
+        haveCrop = shown.w > 0 && shown.h > 0 &&
+                   clipGifChooseCrop(mode, shown.x, shown.y, shown.w,
+                                     shown.h, &crop);
+    }
+    /* With no crop, this puts the replay back as the arm found it. */
+    return clipGifCaptureOpen(s, r, haveCrop ? &crop : NULL, startMs, lenMs,
+                              mapName, meta);
 }
 
 void clipGifCaptureStep(ClipGifSession *s, const ClipGifReplay *r) {
@@ -395,6 +454,34 @@ void clipGifZoomRow(const char *id, ClipGifSession *s, const ClipGifReplay *r,
 
 /* ── The GIF window ──────────────────────────────────────────────── */
 
+void clipGifWindowPlaceLoad(ClipGifWindowPlace *p, int x, int y) {
+    if (p == NULL) {
+        return;
+    }
+    p->saved = (x >= 0 && y >= 0);
+    p->x = p->saved ? (float)x : 0.0f;
+    p->y = p->saved ? (float)y : 0.0f;
+}
+
+bool clipGifWindowPlaceTake(ClipGifWindowPlace *p, int *x, int *y) {
+    if (p == NULL || !p->changed) {
+        return false;
+    }
+    p->changed = false;
+    if (x != NULL) *x = (int)p->x;
+    if (y != NULL) *y = (int)p->y;
+    return true;
+}
+
+bool clipGifWindowPlaceForget(ClipGifWindowPlace *p) {
+    if (p == NULL || !p->saved) {
+        return false;
+    }
+    p->saved = false;
+    p->changed = false;
+    return true;
+}
+
 ClipGifWindowPressed clipGifToolsWindow(const char *id, ClipGifSession *s,
                                         const ClipGifReplay *r,
                                         ClipGifMode *mode, bool canMake,
@@ -501,7 +588,8 @@ ClipGifWindowPressed clipGifToolsWindow(const char *id, ClipGifSession *s,
     if (!open && !capturing) {
         clipGifModeToggle(mode, capturing);
         out.preview = false;
-        out.save = false;
+        out.save    = false;
+        out.gallery = false;
     }
     return out;
 }

@@ -2933,7 +2933,7 @@ STR_GAMEFRONTERR_HOST_MOBILE_DATA=This device is on mobile data. An Internet gam
 
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Your GIFs
-STR_CLIPGIF_GALLERY_EMPTY=No GIFs yet. Make one with the GIF button under the replay, or the GIF button on a clip.
+STR_CLIPGIF_GALLERY_EMPTY=No GIFs yet. Make one with Save clip in the Make a GIF window, or with Save clip on a clip.
 STR_CLIPGIF_COPY=Copy to clipboard
 STR_CLIPGIF_COPIED=Copied.
 STR_CLIPGIF_COPY_FAILED=The GIF could not be copied.
@@ -3044,11 +3044,11 @@ STR_CLIPGIF_DELETE_FAILED=The GIF could not be deleted.
 
 # The Log Viewer's GIFs and its Clips window
 STR_LV_WIN_CLIPS=Clips
-STR_LV_CLIPS_EMPTY=No GIFs yet. Turn on Recording Mode in the Action menu, then use the GIF button to make one from the map.
+STR_LV_CLIPS_EMPTY=No GIFs yet. Turn on Recording Mode in the Action menu, then use Save clip in the Make a GIF window to make one from the map.
 
 # Recording mode, in the game's replay and the Log Viewer
 STR_LV_RECORD_MODE=Recording Mode
-STR_LV_RECORD_MODE_TIP=Shows the GIF controls: the GIF button and its length, where the GIF starts and ends on the timeline, and a crop frame for the part of the map to take.
+STR_LV_RECORD_MODE_TIP=Shows the Make a GIF window: Preview clip, Save clip and the GIF's length, where the GIF starts and ends on the timeline, and a crop frame for the part of the map to take.
 STR_CLIPGIF_PREVIEW=Preview clip: plays the clip here and makes no file
 STR_CLIPGIF_PREVIEW_STOP=Stop the preview
 STR_CLIPGIF_SAVE=Save clip: makes the GIF file
