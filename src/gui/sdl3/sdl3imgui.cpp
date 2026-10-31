@@ -6741,8 +6741,8 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
             : beside                  ? besideH
                                       : srcH * defScale;
     if (s_scnText.win.resizing) {
-        w = s_scnText.rawW;
-        h = s_scnText.rawH;
+        w = s_scnText.win.rawW;
+        h = s_scnText.win.rawH;
     }
     w = ImClamp(w, SCN_TEXT_MIN_W_PX, maxW);
     h = ImClamp(h, SCN_TEXT_MIN_H_PX, maxH);
