@@ -1225,6 +1225,22 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
     ImGui::End();
 }
 
+/* One of the chooser's tab headers, idx being the tab's s_chooser.forceTab
+   number. While busy the header alone is greyed, so a click on it does not
+   switch tabs; what the tab draws once it is open is not greyed by this.
+   BeginTabItem pushes only an ID, never an item flag, so the disabled block
+   can end before the tab's content starts. */
+static bool lobbyChooserTabItem(const char *label, int idx, bool busy) {
+    bool open;
+
+    ImGui::BeginDisabled(busy);
+    open = ImGui::BeginTabItem(label, nullptr,
+                               s_chooser.forceTab == idx
+                                   ? ImGuiTabItemFlags_SetSelected : 0);
+    ImGui::EndDisabled();
+    return open;
+}
+
 /* Opening a folder shows its first map without sending it
    (selectionUnsent): send it now, so the map Use This Map commits is the
    one on show. Called by both Use This Map buttons, the action bar's and
@@ -1394,9 +1410,9 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * left a gap of dead space between the chooser's bottom border
      * and the buttons. */
     float btnBarH = ImGui::GetFrameHeight() + 14.0f * s;
-    /* The tabs keep drawing and their pumps keep running while greyed; only
-       a click or a key does nothing. */
-    ImGui::BeginDisabled(busy);
+    /* While busy the tab headers (lobbyChooserTabItem) and each tab's list
+       and controls (holdPicks) are greyed; the previews are not, as they pick
+       nothing. The tabs keep drawing and their pumps keep running. */
     ImGui::BeginChild("##MapChooserBody",
                       ImVec2(0.0f, -btnBarH),
                       ImGuiChildFlags_NavFlattened,
@@ -1450,8 +1466,8 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
     }
     if (ImGui::BeginTabBar("##MapChooserTabs", ImGuiTabBarFlags_None)) {
-        if (!inProcessServer && ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_SERVERMAPS), nullptr,
-                s_chooser.forceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
+        if (!inProcessServer &&
+            lobbyChooserTabItem(langGetText(STR_DLGLOBBY_TAB_SERVERMAPS), 0, busy)) {
             s_chooserTabs.activeTab = 0;
             if (s_lastActiveTab != 0 && activeTabBefore != 0) {
                 lobbyMapTabClearSelection(&s_chooserTabs.server);
@@ -1463,8 +1479,8 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGui::EndTabItem();
         }
         if ((inProcessServer || clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF) &&
-            ImGui::BeginTabItem(langGetText(inProcessServer ? STR_DLGLOBBY_TAB_LOCALMAPS : STR_DLGLOBBY_TAB_UPLOAD), nullptr,
-                s_chooser.forceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
+            lobbyChooserTabItem(langGetText(inProcessServer ? STR_DLGLOBBY_TAB_LOCALMAPS : STR_DLGLOBBY_TAB_UPLOAD),
+                                1, busy)) {
             s_chooserTabs.activeTab = 1;
             if (s_lastActiveTab != 1 && activeTabBefore != 1) {
                 lobbyMapTabClearSelection(&s_chooserTabs.upload);
@@ -1472,8 +1488,7 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             lobbyRenderMapTab(&s_chooserTabs.upload, renderer, s);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_GENERATE), nullptr,
-                s_chooser.forceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
+        if (lobbyChooserTabItem(langGetText(STR_DLGLOBBY_TAB_GENERATE), 2, busy)) {
             s_chooserTabs.activeTab = 2;
             float availW = ImGui::GetContentRegionAvail().x;
             float availH = ImGui::GetContentRegionAvail().y;
@@ -1525,8 +1540,7 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGui::EndTabItem();
         }
 #ifndef __EMSCRIPTEN__
-        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS), nullptr,
-                s_chooser.forceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
+        if (lobbyChooserTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS), 3, busy)) {
             s_chooserTabs.activeTab = 3;
             if (s_lastActiveTab != 3 && activeTabBefore != 3) {
                 lobbyMapTabClearSelection(&s_chooserTabs.wbn);
@@ -1547,7 +1561,6 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * screen rect is what we want to anchor the error overlay to. */
     ImVec2 chooserBodyMin = ImGui::GetItemRectMin();
     ImVec2 chooserBodyMax = ImGui::GetItemRectMax();
-    ImGui::EndDisabled();
     /* Read again now the tabs have run: a WinBolo.net download that landed
        this frame has started its upload from inside the tab, and the buttons
        below must not send a commit or a cancel ahead of it. */

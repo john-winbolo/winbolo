@@ -1805,7 +1805,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         }
     }
 
-    /* Left panel */
+    /* Left panel. Everything that picks a map is in here, so while the owner
+       holds picks (holdPicks) it is greyed and takes no clicks or keys. The
+       preview to its right stays as it is: it picks nothing, and can still be
+       panned and zoomed. */
+    ImGui::BeginDisabled(state->holdPicks);
     ImGui::BeginChild("##MapLeft", ImVec2(leftPanelW, height), ImGuiChildFlags_Borders);
 
     if (state->randomMapSelected || state->randomTabOnly) {
@@ -2921,6 +2925,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
     }
 
     ImGui::EndChild(); /* ##MapLeft */
+    ImGui::EndDisabled();
 
     /* Draggable splitter between the list and the preview. We render
      * an InvisibleButton at the column boundary, set a horizontal-
