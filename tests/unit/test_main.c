@@ -2482,6 +2482,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_text_tablet_band",                       run_scenario_text_tablet_band                       },
     { "scenario_text_pointer_on_handle",                 run_scenario_text_pointer_on_handle                 },
     { "scenario_text_window_shown",                      run_scenario_text_window_shown                      },
+    { "scenario_text_printed_recently",                  run_scenario_text_printed_recently                  },
     { "scenario_text_edge_shown",                        run_scenario_text_edge_shown                        },
     { "scenario_text_save_place",                        run_scenario_text_save_place                        },
     { "scenario_status_line",                            run_scenario_status_line                            },

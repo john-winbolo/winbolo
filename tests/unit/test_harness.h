@@ -4349,6 +4349,7 @@ int run_scenario_text_tablet_band(void);
  * mouse: a point on the text body is on neither. */
 int run_scenario_text_pointer_on_handle(void);
 int run_scenario_text_window_shown(void);
+int run_scenario_text_printed_recently(void);
 int run_scenario_text_edge_shown(void);
 int run_scenario_text_save_place(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
