@@ -1078,8 +1078,8 @@ struct ServerSim {
        directory again.
 
        Not the list. scenarioScripts above is what the round plays; these
-       are what serverSimRecordOperatorMods puts back on it at every new
-       lobby, and what the CMD_SET_SCRIPT_LIST arm will not let a host take
+       are what serverSimRecordOperatorMods puts back on it when the lobby
+       empties, and what the CMD_SET_SCRIPT_LIST arm will not let a host take
        off. Written only by serverSimAddOperatorMod.
 
        operatorModsLocked is set by any -mod-locked, whether or not its name
@@ -1092,9 +1092,9 @@ struct ServerSim {
     /* The values the operator's -setting gave the settings of those rows,
        keyed like scriptSettingValues below and checked against the
        declaration when recorded. Put back into scriptSettingValues with
-       the rows at every new lobby (serverSimRecordOperatorMods). Held
+       the rows when the lobby empties (serverSimRecordOperatorMods). Held
        against the host only for a fixed row (serverSimOperatorModFixed):
-       a -mod row's value is a default the host may move for one game.
+       a -mod row's value is a default the host may move until then.
        Written only by serverSimRecordOperatorSetting. */
     struct {
         char    file[LOBBY_SCENARIO_FILE_LEN];

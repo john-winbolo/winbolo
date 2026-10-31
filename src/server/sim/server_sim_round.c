@@ -1137,27 +1137,12 @@ void serverSimReturnToLobby(ServerSim *sim) {
         serverSimRandomMapRegenerate(sim);
     }
 
-    /* Every lobby opens with the operator's -mod rows on its list, whoever
-       stayed: a default-on mod the host took off last lobby is on again for
-       this one, and the host may take it off again. The Mods/Scenario
-       setting comes back on with it, so the row is not listed and silent.
-       The empty-lobby reset
-       above has already done this when it ran, and then there is nothing
-       left to change here. A change is decided the way a pick is, and the
-       lobby the decision seats is told the way the CMD_SET_SCRIPT_LIST arm
-       tells it. Nothing to unready: everyone came back from a round
-       unready. */
-    if (serverSimRecordOperatorMods(sim)) {
-        serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
-        serverSimScenarioApplyLobbyRules(sim);
-        serverSimPublishLobbySettings(sim);
-        serverSimPublishScriptList(sim);
-        /* And the tracker's scenario and mod names, as the pick path does:
-           nothing else on the way back to the lobby updates the listing.
-           The session-rotation window opened above holds it as dirty until
-           the new round's key is in, so it never renames the old game. */
-        serverSimWbnLobbyUpdate(sim, FALSE);
-    }
+    /* The operator's -mod rows are not put back here. A default-on mod the
+       host took off, the Mods/Scenario setting switched off and a -setting
+       value the host moved all stay as the host left them for as long as
+       anyone stays; the empty-lobby reset above puts them back for the next
+       occupants. A -mod-required or -mod-locked row never left the list,
+       since the CMD_SET_SCRIPT_LIST arm refuses a list without it. */
 
     serverSimConsoleMessage("Returned to lobby.");
     /* Lobby state fan-out happens via the control-event bus — the

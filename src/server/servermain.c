@@ -692,8 +692,8 @@ void printArgs() {
   fprintf(stderr, "-mod <Names>  - Comma-separated mods or scenarios from -moddir (or the\n");
   fprintf(stderr, "                shipped mods) to put on every game's script list. The\n");
   fprintf(stderr, "                file name, with or without .scenario.lua. On by default:\n");
-  fprintf(stderr, "                the host may take one off for that game; the next lobby\n");
-  fprintf(stderr, "                has it again. May be given more than once.\n");
+  fprintf(stderr, "                the host may take one off, and it stays off until\n");
+  fprintf(stderr, "                everyone has left. May be given more than once.\n");
   fprintf(stderr, "-mod-required <Names> - The same, but always on: the host cannot take\n");
   fprintf(stderr, "                these off, and may add or take off any other mod. Also\n");
   fprintf(stderr, "                locks the Mods/Scenario checkbox on.\n");
@@ -716,10 +716,10 @@ void printArgs() {
   fprintf(stderr, "                number, true or false for a bool setting, or one of the\n");
   fprintf(stderr, "                words of a choice setting (quote words with spaces). May be\n");
   fprintf(stderr, "                given more than once. On a mod named by -mod the value is\n");
-  fprintf(stderr, "                every new lobby's default, and the host may change it for\n");
-  fprintf(stderr, "                that game. On a -mod-required or -mod-locked mod the value\n");
-  fprintf(stderr, "                is locked: the host cannot change it. Settings not given\n");
-  fprintf(stderr, "                stay the host's. Example:\n");
+  fprintf(stderr, "                a default, and the host's change to it lasts until\n");
+  fprintf(stderr, "                everyone has left. On a -mod-required or -mod-locked mod\n");
+  fprintf(stderr, "                the value is locked: the host cannot change it. Settings\n");
+  fprintf(stderr, "                not given stay the host's. Example:\n");
   fprintf(stderr, "                -mod-required MacBoloRules -setting MacBoloRules:pushback=false\n");
   fprintf(stderr, "-allow-unsafe-scripts - Run scenario scripts with the full Lua standard\n");
   fprintf(stderr, "                library, no memory cap, no time limits and precompiled chunks\n");
@@ -2219,8 +2219,8 @@ int main(int argc, char **argv) {
      "loaded" for it a second time). From then on the list stays put — no
      lobby means no command can change it — so -nolobby plays these every
      round, and so does -maprotate, whose every map commit composes the same
-     list again. A server with a lobby puts them back at each return to it
-     (serverSimReturnToLobby).
+     list again. A server with a lobby puts them back when the lobby
+     empties (serverSimResetLobbyToDefaults).
 
      Not under -noscenarios, which turns every script off: a mod named
      beside it would only fail to load at every game, so it is said once
@@ -2264,9 +2264,10 @@ int main(int argc, char **argv) {
      settings, for a server with no lobby to choose them in, or for the
      operator's own mods. Applied before any round starts, so on_setup
      already reads them. A value on a -mod row is also kept by the sim and
-     put back at every new lobby with the row (serverSimRecordOperatorMods),
-     and on a fixed row the host cannot change it. After the rows are
-     recorded above, so a short name finds the operator's row first. */
+     put back with the row when the lobby empties
+     (serverSimRecordOperatorMods), and on a fixed row the host cannot
+     change it. After the rows are recorded above, so a short name finds
+     the operator's row first. */
   {
     const char *mapScript = "";
     int         i;

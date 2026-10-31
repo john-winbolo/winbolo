@@ -500,10 +500,11 @@ scripts on the list for every game. Each takes a comma-separated list of file
 names, with or without `.scenario.lua` (case does not matter), and each may be
 given more than once.
 
-- `-mod <Names>` puts them on at every new lobby, and switches the
-  Mods/Scenario box back on, so a row that is back also plays. The host may
-  take one off, or switch the box off, for that game; the next lobby has them
-  back. The host's own picks stay.
+- `-mod <Names>` puts them on at startup and whenever the lobby empties,
+  and switches the Mods/Scenario box back on then, so a row that is back
+  also plays. The host may take one off, or switch the box off, and it stays
+  that way from round to round until everyone has left. The host's own
+  picks stay.
 - `-mod-required <Names>` keeps them on. The server refuses any list without
   them, the empty one included. The host may add, move and take off anything
   else. It also locks the Mods/Scenario box on.
@@ -551,8 +552,9 @@ WinBoloDS -mod-required MacBoloRules -setting MacBoloRules:pushback=false
 On a mod from one of the three switches the value holds for every game, not
 only the first:
 
-- On a `-mod` mod the value is the default of every new lobby. The host may
-  change it for that game; the next lobby has the operator's value again.
+- On a `-mod` mod the value is a default. The host may change it, and the
+  change lasts from round to round until everyone has left; the next
+  players have the operator's value again.
 - On a `-mod-required` or `-mod-locked` mod the value is locked. The details
   dialog shows it read-only with a lock, and the server refuses a change.
 
