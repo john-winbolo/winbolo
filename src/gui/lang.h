@@ -3679,6 +3679,7 @@
 #define STR_CLIPGIF_SAVE                         3421
 #define STR_CLIPGIF_CANCEL                       3422
 #define STR_CLIPGIF_ZOOM_TIP                     3423
+#define STR_CLIPGIF_WINDOW_TITLE                 3424
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

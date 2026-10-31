@@ -2973,6 +2973,7 @@ static const LangEntry langTable[] = {
     {3421, "Save clip: makes the GIF file"},
     {3422, "Cancel: leave recording mode and make no GIF"},
     {3423, "The GIF, with 10 seconds of the game before it and after it.\nDrag an end of the bright part to make the GIF longer or shorter.\nClick or drag anywhere else to go to that time. The GIF stays where it is."},
+    {3424, "Make a GIF"},
     {2810, "Whether a pillbox may pick a tank as its target."},
     {2860, "+ {number} others"},
     {2861, "+ 1 other"},

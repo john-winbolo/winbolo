@@ -426,6 +426,8 @@ int   gameFrontScnTextPopX = -1;
 int   gameFrontScnTextPopY = -1;
 int   gameFrontScnTextPopW = SCN_TEXT_POPOUT_DEFAULT_W;
 int   gameFrontScnTextPopH = SCN_TEXT_POPOUT_DEFAULT_H;
+int   gameFrontGifWinX = -1;
+int   gameFrontGifWinY = -1;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -5471,6 +5473,15 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     gameFrontScnTextPopW   = pop.w;
     gameFrontScnTextPopH   = pop.h;
   }
+  /* The replay's GIF window: a value below 0 is read as never moved. */
+  prefsGetString("WINDOW", "GIF Window X", "-1", buff, FILENAME_MAX);
+  gameFrontGifWinX = atoi(buff);
+  prefsGetString("WINDOW", "GIF Window Y", "-1", buff, FILENAME_MAX);
+  gameFrontGifWinY = atoi(buff);
+  if (gameFrontGifWinX < 0 || gameFrontGifWinY < 0) {
+    gameFrontGifWinX = -1;
+    gameFrontGifWinY = -1;
+  }
 
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
@@ -6003,6 +6014,11 @@ void gameFrontFlushWindowSettings(void) {
     scnPanelPopoutFormat(&pop, buff, sizeof(buff));
     prefsSetString("WINDOW", SCN_TEXT_PREFS_POPOUT_KEY, buff);
   }
+
+  intToStr(gameFrontGifWinX, buff, sizeof(buff));
+  prefsSetString("WINDOW", "GIF Window X", buff);
+  intToStr(gameFrontGifWinY, buff, sizeof(buff));
+  prefsSetString("WINDOW", "GIF Window Y", buff);
 
   s_windowSettingsDirty = false;
 }

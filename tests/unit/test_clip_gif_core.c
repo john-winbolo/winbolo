@@ -1782,3 +1782,61 @@ int run_clip_gif_zoom_grow(void) {
     clipGifZoomGrow(NULL, span, CLIP_GIF_EDGE_END, 5000u, 60000u); /* nothing */
     return fails ? 1 : 0;
 }
+
+/* clip_gif_window_place: where the GIF window goes. Over the transport
+ * row's box in the middle of it, with the gap; under the box when there is
+ * no room over it; always on the main window, its top-left first. */
+int run_clip_gif_window_place(void) {
+    int fails = 0;
+    float x = 0.0f, y = 0.0f;
+    /* A 800 x 600 main window, a row from 100 to 700 near its foot. */
+    clipGifWindowDefaultPos(100.0f, 500.0f, 700.0f, 580.0f, 400.0f, 60.0f,
+                            0.0f, 0.0f, 800.0f, 600.0f, &x, &y);
+    EXPECT_TRUE("over the row, in its middle",
+                x == 200.0f && y == 500.0f - CLIP_GIF_WINDOW_GAP - 60.0f);
+    /* As wide as the row: the same left edge. */
+    clipGifWindowDefaultPos(100.0f, 500.0f, 700.0f, 580.0f, 600.0f, 60.0f,
+                            0.0f, 0.0f, 800.0f, 600.0f, &x, &y);
+    EXPECT_TRUE("as wide as the row", x == 100.0f);
+    /* A row at the top: under it. */
+    clipGifWindowDefaultPos(100.0f, 20.0f, 700.0f, 100.0f, 400.0f, 60.0f,
+                            0.0f, 0.0f, 800.0f, 600.0f, &x, &y);
+    EXPECT_TRUE("under a row at the top",
+                x == 200.0f && y == 100.0f + CLIP_GIF_WINDOW_GAP);
+    /* A narrow row at the right edge: the window stays on the screen. */
+    clipGifWindowDefaultPos(700.0f, 500.0f, 800.0f, 580.0f, 400.0f, 60.0f,
+                            0.0f, 0.0f, 800.0f, 600.0f, &x, &y);
+    EXPECT_TRUE("kept in at the right", x == 400.0f);
+    /* A main window that does not start at 0. */
+    clipGifWindowDefaultPos(150.0f, 550.0f, 750.0f, 630.0f, 400.0f, 60.0f,
+                            50.0f, 50.0f, 850.0f, 650.0f, &x, &y);
+    EXPECT_TRUE("an offset main window",
+                x == 250.0f && y == 550.0f - CLIP_GIF_WINDOW_GAP - 60.0f);
+
+    /* The clamp of a saved place. */
+    x = 700.0f; y = 580.0f;
+    clipGifWindowClamp(&x, &y, 200.0f, 60.0f, 0.0f, 0.0f, 800.0f, 600.0f);
+    EXPECT_TRUE("in from the right and the foot", x == 600.0f && y == 540.0f);
+    x = -30.0f; y = -5.0f;
+    clipGifWindowClamp(&x, &y, 200.0f, 60.0f, 0.0f, 0.0f, 800.0f, 600.0f);
+    EXPECT_TRUE("in from the left and the top", x == 0.0f && y == 0.0f);
+    x = 300.0f; y = 200.0f;
+    clipGifWindowClamp(&x, &y, 200.0f, 60.0f, 0.0f, 0.0f, 800.0f, 600.0f);
+    EXPECT_TRUE("inside: it stays", x == 300.0f && y == 200.0f);
+    /* Larger than the main window: its top-left is kept in. */
+    x = 100.0f; y = 100.0f;
+    clipGifWindowClamp(&x, &y, 900.0f, 700.0f, 0.0f, 0.0f, 800.0f, 600.0f);
+    EXPECT_TRUE("too large: the top-left", x == 0.0f && y == 0.0f);
+    /* A bad number goes on the main window. */
+    {
+        volatile float zero = 0.0f;
+        x = zero / zero;
+        y = 10.0f;
+        clipGifWindowClamp(&x, &y, 200.0f, 60.0f, 0.0f, 0.0f, 800.0f, 600.0f);
+        EXPECT_TRUE("NaN goes on the window", x >= 0.0f && x <= 600.0f);
+    }
+    clipGifWindowClamp(NULL, &y, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f); /* nothing */
+    clipGifWindowDefaultPos(0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
+                            1.0f, 1.0f, NULL, &y); /* nothing */
+    return fails ? 1 : 0;
+}

@@ -128,8 +128,8 @@ bool clipGifFileName(char *out, size_t outLen, const char *baseName,
                      const char *stamp, int n);
 
 /* ── Recording mode ──────────────────────────────────────────────────
- * The GIF controls (the GIF button, the length field, the zoomed timeline
- * and the span on the main one, the gallery button, the cancel button, the
+ * The GIF controls (the GIF window with the GIF button, the length field
+ * and the zoomed timeline, the span on the main timeline, the gallery button, the cancel button, the
  * crop frame, and in the game's replay the
  * GIF button on each highlight row) show only in recording mode. The movie
  * camera button turns it on and off: on the replay's transport row, and on
@@ -379,6 +379,29 @@ void clipGifSpanDragEdge(ClipGifMode *m, int edge, uint32_t atMs,
  * never outside 0..totalMs. It never moves in. */
 void clipGifZoomGrow(ClipGifRange *zoom, ClipGifRange span, int edge,
                      uint32_t stepMs, uint32_t totalMs);
+
+/* ── The GIF window ──────────────────────────────────────────────────
+ *
+ * Recording mode's controls are in a window of their own, over the view,
+ * so the replay's own transport row and timeline stay as they are. Its
+ * place, with no ImGui in it: a box is x0, y0 (top-left) to x1, y1. */
+
+/* How far the GIF window sits from the transport row, in pixels. */
+#define CLIP_GIF_WINDOW_GAP 4.0f
+
+/* Moves the top-left *x, *y of a window w by h so all of it is in the view
+ * vx0..vy1, or as much as fits (the top-left wins when it is larger). */
+void clipGifWindowClamp(float *x, float *y, float w, float h, float vx0,
+                        float vy0, float vx1, float vy1);
+
+/* Where the GIF window goes before the player drags it: in the middle of
+ * the anchor (the replay's transport row and timeline, ax0..ay1) across,
+ * with its bottom CLIP_GIF_WINDOW_GAP over the anchor's top, so it does not
+ * cover the timeline. With no room over the anchor it goes under it. Then
+ * held in the view (clipGifWindowClamp). w and h are the window's size. */
+void clipGifWindowDefaultPos(float ax0, float ay0, float ax1, float ay1,
+                             float w, float h, float vx0, float vy0,
+                             float vx1, float vy1, float *x, float *y);
 
 /* ── Preview ─────────────────────────────────────────────────────────
  * The Preview clip button plays the clip in the view, at the normal speed,

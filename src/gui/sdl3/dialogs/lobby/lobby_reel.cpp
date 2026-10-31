@@ -64,7 +64,7 @@ extern "C" {
 #include "../../macos_pinch.h"   /* macOSPinchZoomConsume — trackpad pinch over the reel */
 #include "../../../lang.h"       /* langGetText / langGetTextFmt / MessageArgs / STR_DLGLOBBY_REEL_* / STR_LV_* */
 #include "../../../gamefront.h"  /* gameFrontHasLocalServer — only a round this process recorded plays from file */
-#include "../../../../logviewer/lv_controls_layout.h"  /* LvFineDrag / lvFineDragStep — Shift and a drag of the seek bar */
+#include "../../../../logviewer/lv_controls_layout.h"  /* LvFineDrag / lvFineDragStep — Shift and a drag of the seek bar; lvPlayToggle */
 #include "../../../../common/wb_log.h"  /* WB_LOG_INFO / WB_LOG_CAT_GUI — the transfer trace */
 #include "../../../../server/server_dedicated_log.h"  /* serverDedicatedLogLastRoundFile — the last completed round's .wbv */
 #include "../../../../bolo/public/wire_limits.h"      /* ROUND_LOG_MAX_BYTES — ceiling on the WinBolo.net download */
@@ -1418,12 +1418,9 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
     }
 
 #if BOLO_RECAP_CLIP_GIF
-    /* The zoomed timeline of recording mode, on a line of its own over the
-     * transport row and as wide as the reel: the GIF's span with its two
-     * handles, and a press on it moves the reel. */
-    if (lobbyReelGifToolsShown()) {
-        lobbyClipGifZoomRow();
-    }
+    /* The left end of the transport row, for the GIF window that goes over
+     * it. */
+    const ImVec2 transportMin = ImGui::GetCursorScreenPos();
 #endif
 
     /* Transport toggle as a glyph: a written caption is the widest thing on
@@ -1431,8 +1428,9 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
      * changes, which shoves everything after it. The icon is square and the
      * two states are the same size, so the row holds still. The written label
      * stays as the tooltip — it is already translated, and a bare glyph does
-     * not say what it does for someone meeting it the first time. */
-    const bool reelPlaying = lvEmbedIsPlaying();
+     * not say what it does for someone meeting it the first time. The one
+     * play and pause button the Log Viewer has too (lvPlayToggle). */
+    const bool reelPlaying = lvPlayToggle(true, lvEmbedIsPlaying(), false).pause;
     SDL_Texture *transportIcon = reelPlaying ? lobbyIcons()->pause : lobbyIcons()->play;
     const char  *transportText = langGetText(reelPlaying ? STR_LV_PAUSE
                                                          : STR_LV_PLAY_BTN);
@@ -1472,42 +1470,20 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
     }
 
 #if BOLO_RECAP_CLIP_GIF
-    /* Recording mode: the GIF controls after it, the zoomed timeline over
-     * this row, the span on the seek bar, the crop frame and the GIF button
-     * on each highlight row are drawn only while it is on. Held still while
-     * a capture runs: the
-     * capture's own window has the cancel control, and the controls stay up
-     * until the capture ends whatever this says. */
+    /* Recording mode: the GIF window (lobbyClipGifWindow, drawn after the
+     * seek bar), the span on the seek bar, the crop frame and the GIF button
+     * on each highlight row are drawn only while it is on. The button shows
+     * pressed while the GIF window is open. Held still while a capture
+     * runs: the capture's own window has the cancel control, and the
+     * controls stay up until the capture ends whatever this says. */
     ImGui::SameLine();
     ImGui::BeginDisabled(lobbyClipGifActive());
-    if (clipGifToggleButton("##reelrecmode", s_reel.clip.on,
+    if (clipGifToggleButton("##reelrecmode", lobbyReelGifToolsShown(),
                             CLIP_GIF_GLYPH_CAMERA,
                             langGetText(STR_REEL_RECORD_MODE_TIP))) {
         clipGifModeToggle(&s_reel.clip, lobbyClipGifActive());
     }
     ImGui::EndDisabled();
-
-    if (lobbyReelGifToolsShown()) {
-        /* Preview clip and Save clip of the span, Cancel, the length, the
-         * gallery and the crop frame: the same row the Log Viewer shows
-         * (clipGifToolsRow). The view is left as the player framed it. Full
-         * height, so the row sits level with the buttons before it. */
-        ImGui::SameLine();
-        const ClipGifToolsPressed tools = clipGifToolsRow(
-            "##reelgif", &s_reel.clip, lobbyClipGifPlay(), lobbyClipGifActive(),
-            true, (ImTextureID)lobbyIcons()->picture, curMs, totalMs);
-        if (tools.preview) {
-            lobbyClipGifPreviewToggle();
-        }
-        if (tools.save && cs != NULL) {
-            lobbyClipGifStartSpan(cs);
-        }
-#if BOLO_CLIP_GIF_GALLERY
-        if (tools.gallery) {
-            lobbyClipGifGalleryOpen();
-        }
-#endif
-    }
 #endif
 
 #if BOLO_REEL_SPAWN_VIEWER
@@ -1639,6 +1615,15 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
     }
 #endif
     ImGui::PopItemWidth();
+
+#if BOLO_RECAP_CLIP_GIF
+    /* The GIF window: its own window over this row, so the row and the seek
+     * bar stay as they are with recording mode off. */
+    if (lobbyReelGifToolsShown()) {
+        lobbyClipGifWindow(transportMin.x, transportMin.y, seekMax.x,
+                           seekMax.y, cs);
+    }
+#endif
 
 #if BOLO_REEL_SPAWN_VIEWER
     lobbyReelSpawnMessage();

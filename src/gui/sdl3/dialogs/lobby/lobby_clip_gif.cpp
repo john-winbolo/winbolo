@@ -36,6 +36,7 @@
 #include "lobby_internal.h"
 extern "C" {
 #include "../../sdl3draw.h"      /* sdl3DrawGetRenderer / Window */
+#include "../../../gamefront.h"  /* gameFrontGifWinX / Y, gameFrontSaveWindowSettings */
 }
 
 #if BOLO_RECAP_CLIP_GIF
@@ -122,17 +123,8 @@ bool lobbyClipGifActive(void) {
     return clipGifCaptureActive(&s_session);
 }
 
-const ClipGifPlay *lobbyClipGifPlay(void) {
-    return &s_session.play;
-}
-
 int lobbyClipGifPreviewRow(void) {
     return clipGifPreviewActive(&s_session) ? s_previewRow : -2;
-}
-
-void lobbyClipGifZoomRow(void) {
-    clipGifZoomRow("##reelzoom", &s_session, &s_reelReplay,
-                   &lobbyReel()->clip, 0.0f);
 }
 
 /* ── Save clip ───────────────────────────────────────────────────── */
@@ -252,6 +244,45 @@ void lobbyClipGifPreviewToggle(void) {
     if (clipGifPreviewSpan(&s_session, &s_reelReplay, &lobbyReel()->clip)) {
         s_previewRow = -1;
     }
+}
+
+/* ── The GIF window ──────────────────────────────────────────────── */
+
+/* The GIF window over the reel's transport row. Its place is the player's
+ * after a drag ([WINDOW] "GIF Window X" and "Y", through gamefront), read
+ * once at the first draw. */
+void lobbyClipGifWindow(float ax0, float ay0, float ax1, float ay1,
+                        ClientSim *cs) {
+    static ClipGifWindowPlace s_place = CLIP_GIF_WINDOW_PLACE_INIT;
+    static bool s_placeRead = false;
+    if (!s_placeRead) {
+        s_placeRead = true;
+        if (gameFrontGifWinX >= 0 && gameFrontGifWinY >= 0) {
+            s_place.saved = true;
+            s_place.x = (float)gameFrontGifWinX;
+            s_place.y = (float)gameFrontGifWinY;
+        }
+    }
+    const ClipGifWindowPressed pressed = clipGifToolsWindow(
+        "LobbyGifWindow", &s_session, &s_reelReplay, &lobbyReel()->clip, true,
+        (const void *)lobbyIcons()->picture, ax0, ay0, ax1, ay1, &s_place);
+    if (s_place.changed) {
+        s_place.changed = false;
+        gameFrontGifWinX = (int)s_place.x;
+        gameFrontGifWinY = (int)s_place.y;
+        gameFrontSaveWindowSettings();
+    }
+    if (pressed.preview) {
+        lobbyClipGifPreviewToggle();
+    }
+    if (pressed.save && cs != NULL) {
+        lobbyClipGifStartSpan(cs);
+    }
+#if BOLO_CLIP_GIF_GALLERY
+    if (pressed.gallery) {
+        lobbyClipGifGalleryOpen();
+    }
+#endif
 }
 
 /* A clip row's Preview clip: the moment and the place the row names. Pressed

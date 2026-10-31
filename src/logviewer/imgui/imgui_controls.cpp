@@ -380,6 +380,9 @@ static void controls_jump_tip(bool known, langid fmt, langid plain, uint32_t ms,
 void lv_imgui_controls_window(void) {
     bool seek_slider_drawn = false;
 
+    /* The GIF window goes over this panel; with the panel shut it goes to
+     * the bottom of the screen. Set again below while the panel shows. */
+    lv_clip_gif_set_anchor(false, 0.0f, 0.0f, 0.0f, 0.0f);
     if (!lv_g_show_controls_window) {
         controls_drop_scrub();
         return;
@@ -402,9 +405,14 @@ void lv_imgui_controls_window(void) {
     snprintf(ctrl_title, sizeof(ctrl_title), "%s###controls", langGetText(STR_LV_WIN_CONTROLS));
     if (ImGui::Begin(ctrl_title, &lv_g_show_controls_window, ImGuiWindowFlags_NoCollapse)) {
         lv_imgui_keep_window_on_screen();
+        {
+            const ImVec2 wp = ImGui::GetWindowPos();
+            const ImVec2 ws = ImGui::GetWindowSize();
+            lv_clip_gif_set_anchor(true, wp.x, wp.y, wp.x + ws.x, wp.y + ws.y);
+        }
 
         /* The top row: the playback buttons (back to the last snapshot,
-         * play, pause, on to the next snapshot, and on a live feed back to
+         * play or pause, on to the next snapshot, and on a live feed back to
          * the live head), the speed and the "Overlay events" list. Each
          * button has a drawn icon (imgui_lv_icons.cpp) and says what it
          * does, with its key, in its tooltip. A button whose action has
@@ -435,10 +443,10 @@ void lv_imgui_controls_window(void) {
 
         LvControlsTopIn topIn;
         topIn.contentW = ImGui::GetContentRegionAvail().x;
-        /* The fifth button: back to the live head on a live feed, else the
+        /* The fourth button: back to the live head on a live feed, else the
          * movie camera of recording mode where this build makes GIFs. */
         const bool recordButton = !live && lv_clip_gif_available();
-        topIn.buttons = (live || recordButton) ? 5 : 4;
+        topIn.buttons = (live || recordButton) ? 4 : 3;
         topIn.btnSide = btn;
         topIn.btnGap = style.ItemInnerSpacing.x;
         topIn.labelW = ImGui::CalcTextSize(speedLbl).x + style.ItemSpacing.x;
@@ -461,36 +469,34 @@ void lv_imgui_controls_window(void) {
                           "Ctrl+R", tip, sizeof(tip));
         controls_tooltip(tip, backKnown);
 
+        /* One button for play and pause, as the game's replay has it
+         * (lvPlayToggle): the pause icon while the log plays, else the play
+         * icon. Pause holds playback where it is; nothing moves the
+         * playhead and the log stays open. (The Stop the pause button
+         * replaced closed the log; Action > Stop still does.) One ID for
+         * both, so a press is not lost as the icon changes. */
         controls_place(topX, &topLine, top.btnLine[1], top.btnX[1]);
-        ImGui::BeginDisabled(!loaded || playing || atEnd);
-        if (lv_icon_button("play", LV_ICON_PLAY, btn, top.btnW)) {
-            lv_windowPlay();
-        }
-        ImGui::EndDisabled();
         {
+            const LvPlayToggle pt = lvPlayToggle(loaded, playing, atEnd);
+            ImGui::BeginDisabled(!pt.enabled);
+            if (lv_icon_button("playpause", pt.pause ? LV_ICON_PAUSE : LV_ICON_PLAY,
+                               btn, top.btnW)) {
+                if (pt.pause) {
+                    lv_windowPause();
+                } else {
+                    lv_windowPlay();
+                }
+            }
+            ImGui::EndDisabled();
             char keys[64];
-            snprintf(keys, sizeof(keys), "Ctrl+P, %s", langGetText(STR_OSK_SPACE));
-            controls_key_tip(langGetText(STR_LV_PLAY), keys, tip, sizeof(tip));
+            snprintf(keys, sizeof(keys), "%s, %s", pt.pause ? "Ctrl+U" : "Ctrl+P",
+                     langGetText(STR_OSK_SPACE));
+            controls_key_tip(langGetText(pt.pause ? STR_LV_PAUSE : STR_LV_PLAY), keys, tip,
+                             sizeof(tip));
+            controls_tooltip(tip, pt.enabled);
         }
-        controls_tooltip(tip, loaded && !playing && !atEnd);
 
-        /* Pause holds playback where it is; nothing moves the playhead and
-         * the log stays open. (The Stop this button replaced closed the
-         * log; Action > Stop still does.) */
         controls_place(topX, &topLine, top.btnLine[2], top.btnX[2]);
-        ImGui::BeginDisabled(!playing);
-        if (lv_icon_button("pause", LV_ICON_PAUSE, btn, top.btnW)) {
-            lv_windowPause();
-        }
-        ImGui::EndDisabled();
-        {
-            char keys[64];
-            snprintf(keys, sizeof(keys), "Ctrl+U, %s", langGetText(STR_OSK_SPACE));
-            controls_key_tip(langGetText(STR_LV_PAUSE), keys, tip, sizeof(tip));
-        }
-        controls_tooltip(tip, playing);
-
-        controls_place(topX, &topLine, top.btnLine[3], top.btnX[3]);
         /* A live feed has no snapshot ahead to name; the button still plays
          * on to the head. */
         const bool fwdOn = fwdKnown || (loaded && live);
@@ -506,7 +512,7 @@ void lv_imgui_controls_window(void) {
         /* Spectator live-DVR: jump back to the live head and resume following it.
          * Shown only on the live spectator feed, not for standalone .wbv playback. */
         if (live) {
-            controls_place(topX, &topLine, top.btnLine[4], top.btnX[4]);
+            controls_place(topX, &topLine, top.btnLine[3], top.btnX[3]);
             if (lv_icon_button("live", LV_ICON_TO_END, btn, top.btnW)) {
                 lv_screenSpecJumpToLive();
             }
@@ -514,14 +520,14 @@ void lv_imgui_controls_window(void) {
         }
 
         /* Recording mode, as the game's replay has it: the movie camera
-         * turns on the GIF controls (the row under this one, the GIF's
-         * length on the timeline and the crop frame on the map). Pressed
-         * while it is on, and held still while a GIF is made. */
+         * turns on the GIF controls (the GIF window, the GIF's span on the
+         * timeline and the crop frame on the map). Pressed while the GIF
+         * window is open, and held still while a GIF is made. */
         if (recordButton) {
-            controls_place(topX, &topLine, top.btnLine[4], top.btnX[4]);
+            controls_place(topX, &topLine, top.btnLine[3], top.btnX[3]);
             const bool canToggle = lv_clip_gif_can_toggle_mode();
             ImGui::BeginDisabled(!canToggle);
-            if (clipGifToggleButton("##recmode", lv_clip_gif_mode_on(),
+            if (clipGifToggleButton("##recmode", lv_clip_gif_tools_shown(),
                                     CLIP_GIF_GLYPH_CAMERA, NULL,
                                     ImVec2(top.btnW, btn))) {
                 lv_clip_gif_toggle_mode();
@@ -560,16 +566,9 @@ void lv_imgui_controls_window(void) {
         controls_place(topX, &topLine, top.comboLine, top.comboX);
         lv_event_overlay_combo(top.comboFull);
 
-        /* The GIF controls of recording mode, on a line of their own, and
-         * under them the zoomed timeline, over the main one. */
-        float gifRowH = 0.0f;
+        /* The GIF controls of recording mode are in the GIF window
+         * (lv_clip_gif_render); here only the GIF's span on the timeline. */
         const bool gifTools = lv_clip_gif_tools_shown();
-        if (gifTools) {
-            const float rowTop = ImGui::GetCursorPosY();
-            lv_clip_gif_tools_row();
-            lv_clip_gif_zoom_row();
-            gifRowH = ImGui::GetCursorPosY() - rowTop;
-        }
 
         /* Seek slider row */
         if (s_lv->isLoaded) {
@@ -810,25 +809,6 @@ void lv_imgui_controls_window(void) {
             }
         } else {
             ImGui::TextWrapped("%s", langGetText(STR_LV_NO_LOG_LOADED));
-        }
-
-        /* A panel that floats grows by the GIF controls' line while they
-         * show, so the timeline and the time stay in view, and gives the
-         * room back when they go. A docked panel keeps the size its
-         * sidebar gives it. */
-        {
-            static float s_gifGrow = 0.0f;
-            if (ImGui::IsWindowDocked()) {
-                s_gifGrow = 0.0f;
-            } else if (gifTools && s_gifGrow == 0.0f && gifRowH > 0.0f) {
-                const ImVec2 size = ImGui::GetWindowSize();
-                ImGui::SetWindowSize(ImVec2(size.x, size.y + gifRowH));
-                s_gifGrow = gifRowH;
-            } else if (!gifTools && s_gifGrow > 0.0f) {
-                const ImVec2 size = ImGui::GetWindowSize();
-                ImGui::SetWindowSize(ImVec2(size.x, size.y - s_gifGrow));
-                s_gifGrow = 0.0f;
-            }
         }
     }
     ImGui::End();

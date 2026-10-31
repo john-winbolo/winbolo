@@ -1514,6 +1514,9 @@ int run_clip_gif_span_place(void);
 int run_clip_gif_zoom_axis(void);
 int run_clip_gif_span_drag(void);
 int run_clip_gif_zoom_grow(void);
+/* Where the GIF window goes: over the transport row, kept on the main
+ * window. */
+int run_clip_gif_window_place(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
@@ -4584,6 +4587,8 @@ int run_lv_controls_top_row(void);
 int run_lv_controls_bottom_row(void);
 int run_lv_controls_wheel_step(void);
 int run_lv_controls_fine_drag(void);
+/* The one play and pause button of the Log Viewer and the game's replay. */
+int run_lv_play_toggle(void);
 /* The zoom of the log viewer's map as a percentage. */
 int run_lv_zoom_percent(void);
 int run_lv_fullscreen_key(void);

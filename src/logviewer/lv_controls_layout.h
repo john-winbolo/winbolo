@@ -30,7 +30,9 @@
  * panel has the room. */
 #define LV_CONTROLS_BTN_WIDE 2.0f
 
-/* The most playback buttons: four, and "to the live head" on a live feed. */
+/* The most playback buttons the layout takes. The panel has four at most:
+ * back, play or pause, forward, and "to the live head" on a live feed or
+ * recording mode on a log. */
 #define LV_CONTROLS_MAX_BUTTONS 5
 
 /* The slider of the speed is never drawn narrower than this. */
@@ -48,7 +50,7 @@ static inline float lvControlsCentreX(float lineW, float contentW) {
 /* What the top row is made of. */
 typedef struct {
     float contentW;     /* the width of the panel's content */
-    int buttons;        /* 4, or 5 on a live feed */
+    int buttons;        /* 3, or 4 with the live head or recording mode */
     float btnSide;      /* the height of a button: its width when narrow */
     float btnGap;       /* between two buttons */
     float labelW;       /* the speed's label with the space after it */
@@ -413,6 +415,24 @@ static inline bool lvFineDragStep(LvFineDrag *d, bool shift, float mouseX,
                                              stepMs, startMs, startMs + lenMs);
     }
     return d->on;
+}
+
+/* The one play and pause button, the same in the Log Viewer's Controls
+ * panel and the game's replay. While the replay plays it is the pause
+ * button: it shows the pause icon, says Pause, and a press pauses. Else it
+ * is the play button: it shows the play icon, says Play, and a press plays;
+ * it is dimmed when there is nothing to play (no replay open, or the
+ * decoder is at the end). Each screen keeps its own keys. */
+typedef struct LvPlayToggle {
+    bool pause;    /* the pause icon and Pause: a press pauses */
+    bool enabled;  /* a press does something */
+} LvPlayToggle;
+
+static inline LvPlayToggle lvPlayToggle(bool loaded, bool playing, bool atEnd) {
+    LvPlayToggle t;
+    t.pause = loaded && playing;
+    t.enabled = t.pause || (loaded && !atEnd);
+    return t;
 }
 
 #endif /* LV_CONTROLS_LAYOUT_H */

@@ -9,11 +9,10 @@
  *
  * Recording mode, as the game's replay has it (lobby_reel.cpp): the movie
  * camera button on the Controls panel, Action > Recording Mode and Ctrl+G
- * turn it on and off. In recording mode the Controls panel shows the GIF
- * controls under its top row: Preview clip, Save clip, the length in
- * seconds and the Clips button. The timeline shows where the GIF starts
- * and ends, with a marker at the end that can be dragged to change the
- * length. A frame over the map always shows the part of the map the GIF
+ * turn it on and off. In recording mode the GIF window shows the GIF
+ * controls: Preview clip, Save clip, Cancel, the length in seconds, the
+ * Clips button and the zoomed timeline, whose handles change the length.
+ * The main timeline shows where the GIF starts and ends. A frame over the map always shows the part of the map the GIF
  * takes; its edges, corners and inside can be dragged. The
  * controls come from clip_gif_controls.h, the same ones the game draws.
  *
@@ -85,9 +84,9 @@ bool lv_clip_gif_active(void);
  * the map is drawn and before the ImGui frame begins. */
 void lv_clip_gif_capture_step(void);
 
-/* Draws the crop frame over the map, the progress window and the Clips
- * window. The host calls it once a frame inside the ImGui frame, in both
- * views. */
+/* Draws the crop frame over the map, the GIF window, the progress window
+ * and the Clips window. The host calls it once a frame inside the ImGui
+ * frame, in both views. */
 void lv_clip_gif_render(void);
 
 /* True when the crop frame has the mouse now: the mouse is on the frame
@@ -95,16 +94,12 @@ void lv_clip_gif_render(void);
  * then does not pan, pick a tank or show a tooltip for that mouse. */
 bool lv_clip_gif_frame_has_mouse(void);
 
-/* The GIF controls in the Controls panel, on a line of their own in the
- * middle of the panel: Preview clip, Save clip, Cancel, the length in
- * seconds, the Clips button (clipGifToolsRow). The panel calls it when
- * lv_clip_gif_tools_shown is true. */
-void lv_clip_gif_tools_row(void);
-
-/* The zoomed timeline (clipGifZoomRow), on a line of its own as wide as the
- * panel, over the main timeline: the GIF's span with its two handles, and a
- * press on it moves the log. Nothing unless lv_clip_gif_tools_shown. */
-void lv_clip_gif_zoom_row(void);
+/* The box of the Controls panel in screen coordinates, which the GIF
+ * window (Preview clip, Save clip, Cancel, the length, the Clips button and
+ * the zoomed timeline, clipGifToolsWindow) goes over until the player drags
+ * it. The panel sets it each frame it shows; set false, the window goes to
+ * the bottom middle of the screen. */
+void lv_clip_gif_set_anchor(bool set, float x0, float y0, float x1, float y1);
 
 /* The GIF on the main timeline (clipGifSpanTint). While the slider is
  * pressed or dragged (seeking), the span goes round seekMs, the slider's

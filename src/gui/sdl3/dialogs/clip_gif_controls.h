@@ -109,15 +109,17 @@ static inline void clipGifDrawGlyph(ImDrawList *dl, int glyph, ImVec2 a,
     }
 }
 
-/* While on is true, the pressed colour for the button's normal, hovered and
- * active colours, so a toggle that is on stays pressed in, under the mouse
- * too. Pair each call with clipGifPopLatched(on) after the button. */
+/* While on is true, a toggle that is on looks pressed: filled orange, as
+ * the lobby's Skip Map button is while the player's vote is in, so it
+ * reads apart from an off button in every theme, under the mouse too.
+ * Pair each call with clipGifPopLatched(on) after the button. */
 static inline void clipGifPushLatched(bool on) {
     if (on) {
-        const ImVec4 down = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
-        ImGui::PushStyleColor(ImGuiCol_Button, down);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, down);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, down);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                              ImVec4(0.7f, 0.3f, 0.05f, 1.0f));
     }
 }
 
@@ -575,8 +577,14 @@ static inline bool clipGifCropFrame(const char *id, ImDrawList *dl,
     const float g = CLIP_GIF_CROP_GRAB_PX;
     const ImGuiIO &io = ImGui::GetIO();
     /* Without an item, only where no ImGui window is under the mouse: the
-     * panels over the map keep their own clicks. */
-    const bool mouseFree = asItem || !io.WantCaptureMouse;
+     * panels over the map keep their own clicks. As an item, only where the
+     * window it is in is the one under the mouse: a window over the view
+     * (the GIF window) keeps its own clicks, and the frame's cursor does
+     * not show through it. */
+    const bool mouseFree =
+        asItem ? ImGui::IsWindowHovered(
+                     ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)
+               : !io.WantCaptureMouse;
     const int hot = mouseFree ? clipGifFrameHit(&box, io.MousePos.x,
                                                 io.MousePos.y, g)
                               : 0;

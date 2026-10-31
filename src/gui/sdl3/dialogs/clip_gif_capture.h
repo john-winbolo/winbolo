@@ -184,6 +184,58 @@ void clipGifCaptureRender(ClipGifSession *s, const ClipGifReplay *r,
 void clipGifZoomRow(const char *id, ClipGifSession *s, const ClipGifReplay *r,
                     ClipGifMode *mode, float width);
 
+/* ── The GIF window ──────────────────────────────────────────────── */
+
+/* Where the GIF window is. Until the player drags it, it goes over the
+ * replay's transport row (clipGifWindowDefaultPos) and follows it. A drag
+ * that ends at a new place keeps that place: saved is set, x and y are the
+ * window's top-left from the main window's top-left, in whole pixels (0 or
+ * more, as the window is kept on the main window), and changed is set
+ * for the screen to write it to its preferences (it clears changed). The
+ * screen reads a saved place back into saved, x and y at the start. */
+typedef struct ClipGifWindowPlace {
+    bool  saved;
+    float x, y;
+    bool  changed;
+    /* A drag of the window is on, and where the window was when it began. */
+    bool  moving;
+    float fromX, fromY;
+    /* The window's height the last frame, for its place over the row. */
+    float lastH;
+} ClipGifWindowPlace;
+
+#define CLIP_GIF_WINDOW_PLACE_INIT { false, 0.0f, 0.0f, false, false, 0.0f, 0.0f, 0.0f }
+
+/* What the player pressed in the GIF window this frame, for the screen to
+ * do: start or stop the preview, make the GIF, open the gallery. Cancel and
+ * the window's X are done in the window: recording mode is off. */
+typedef struct ClipGifWindowPressed {
+    bool preview;
+    bool save;
+    bool gallery;
+} ClipGifWindowPressed;
+
+/* The GIF window of recording mode: Preview clip, Save clip, Cancel, the
+ * length, the gallery button (clipGifToolsRow) and under them the zoomed
+ * timeline (clipGifZoomRow). The screen draws it while the GIF controls
+ * show (clipGifToolsShown), inside its ImGui frame. The window's X does what
+ * Cancel does; it has no X while a GIF is made (the progress window has
+ * Cancel then).
+ *
+ * ax0..ay1 is the anchor: the box of the replay's own transport row and
+ * timeline, in screen coordinates. The window is about as wide as it, and
+ * goes over it until the player drags it (place). canMake and picture are
+ * as clipGifToolsRow has them; picture is the screen's picture texture
+ * (an SDL_Texture), or NULL for the written GIF button. A press on the
+ * window is the window's: ImGui gives the mouse to the window on top, so
+ * the view and the crop frame under it do not take it. */
+ClipGifWindowPressed clipGifToolsWindow(const char *id, ClipGifSession *s,
+                                        const ClipGifReplay *r,
+                                        ClipGifMode *mode, bool canMake,
+                                        const void *picture, float ax0,
+                                        float ay0, float ax1, float ay1,
+                                        ClipGifWindowPlace *place);
+
 /* Where a finished GIF goes: on the desktop into the gallery folder, with
  * its metadata, and the gallery opens on it; on iOS into Documents, with a
  * message box that names it; on Android into the app's files, then to the
