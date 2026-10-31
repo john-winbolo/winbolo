@@ -101,8 +101,8 @@ ServerModArgsResult serverArgsApplyMods(ServerSim *sim, int argc,
  *
  *  When the file is one of the operator's rows (-mod,
  *  -mod-required, -mod-locked), the value is also recorded
- *  (serverSimRecordOperatorSetting), so it is put back at
- *  every new lobby, and on a fixed row the host cannot
+ *  (serverSimRecordOperatorSetting), so it is put back when
+ *  the lobby empties, and on a fixed row the host cannot
  *  change it.
  *
  *  Says on say what it did, or why it did nothing, one line;

@@ -277,8 +277,8 @@ bool serverArgsApplySetting(ServerSim *sim, const char *arg,
         return false;
     }
 
-    /* On one of the operator's rows the value is the operator's too, kept
-       for every lobby after this one. */
+    /* On one of the operator's rows the value is the operator's too, put
+       back whenever the lobby empties. */
     switch (serverSimRecordOperatorSetting(sim, file, id, got)) {
     case SERVER_OPERATOR_SETTING_FULL:
         how = " (this game only, and the host may change it: too many "
@@ -288,7 +288,8 @@ bool serverArgsApplySetting(ServerSim *sim, const char *arg,
         how = " (every game; the host cannot change it)";
         break;
     case SERVER_OPERATOR_SETTING_DEFAULT:
-        how = " (each new lobby; the host may change it)";
+        how = " (again whenever the lobby empties; the host may change "
+              "it)";
         break;
     case SERVER_OPERATOR_SETTING_NOT_OPERATOR:
     default:

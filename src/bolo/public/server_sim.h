@@ -979,8 +979,9 @@ bool serverSimMapIsScripted(const ServerSim *sim, const char *mapPath);
 /* How firmly an operator's -mod flag holds a script on the lobby's list.
  * The values are ordered: a file named under two flags keeps the stronger. */
 typedef enum {
-    SERVER_MOD_DEFAULT  = 1, /* -mod: back on the list at every new lobby;
-                                a host may take it off until then */
+    SERVER_MOD_DEFAULT  = 1, /* -mod: on the list at startup and back on
+                                it when the lobby empties; a host may
+                                take it off until then */
     SERVER_MOD_REQUIRED = 2, /* -mod-required: always on; a host may add,
                                 remove and reorder the rest of the list */
     SERVER_MOD_LOCKED   = 3  /* -mod-locked: the list is exactly the
@@ -1084,10 +1085,11 @@ uint32_t serverSimOperatorModLocks(const ServerSim *sim);
  *  scripts are all switched off would be listed and never
  *  play. That counts as a change.
  *
- *  The sim calls this itself at every return to the lobby
- *  and at the empty-lobby reset, so a default-on -mod the
- *  host took off is back for the next game. The dedicated
- *  server calls it once at startup.
+ *  The sim calls this itself at the empty-lobby reset only,
+ *  so a default-on -mod the host took off stays off for as
+ *  long as anyone stays, round after round, and is back for
+ *  the next occupants. The dedicated server calls it once at
+ *  startup.
  *********************************************************/
 bool serverSimRecordOperatorMods(ServerSim *sim);
 
@@ -1136,8 +1138,9 @@ typedef enum {
                                                  nothing kept */
     SERVER_OPERATOR_SETTING_FULL         = 1, /* no room left; this game
                                                  only */
-    SERVER_OPERATOR_SETTING_DEFAULT      = 2, /* kept for each new lobby;
-                                                 the host may change it */
+    SERVER_OPERATOR_SETTING_DEFAULT      = 2, /* kept for each emptied
+                                                 lobby; the host may
+                                                 change it */
     SERVER_OPERATOR_SETTING_HELD         = 3  /* kept, and on a fixed row:
                                                  the host cannot change it */
 } ServerOperatorSettingHold;
@@ -1148,7 +1151,7 @@ typedef enum {
  *  Records value as the operator's own for file's setting
  *  id, when file is one of the operator's rows (-mod,
  *  -mod-required, -mod-locked): serverSimRecordOperatorMods
- *  puts it back at every new lobby, and on a fixed row
+ *  puts it back when the lobby empties, and on a fixed row
  *  (serverSimOperatorModFixed) the host cannot change it
  *  (serverSimOperatorSettingLocked); a LOCK for it is
  *  published then. Given twice, the later value counts.

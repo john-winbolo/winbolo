@@ -26,10 +26,11 @@
  *       operator's rows and every list is refused, the identical one and the
  *       empty one included; every row is fixed; the lock bits carry
  *       LOBBY_LOCK_SCRIPT_LIST and the MODS lock it implies.
- *   operator_mods_reapply  — a default-on row the host took off is back at
- *       the next return to the lobby and at the empty-lobby reset, with the
- *       host's own picks kept; an operator scenario takes the place of the
- *       host's; a list that already holds the rows is left alone.
+ *   operator_mods_reapply  — a default-on row the host took off stays off
+ *       at the next return to the lobby and is back at the empty-lobby
+ *       reset, with the host's own picks kept; an operator scenario takes
+ *       the place of the host's; a list that already holds the rows is left
+ *       alone.
  *   operator_mods_wire     — the required flag rides bit 2 of the entry's
  *       flags byte up and back, and a ClientSim answers it through
  *       clientSimGetLobbyScriptRequired.
@@ -42,7 +43,8 @@
  *   operator_mods_lock_mask — LOBBY_LOCK_SCRIPT_LIST in the lock mask alone,
  *       with no operator rows, refuses every list.
  *   operator_mods_mods_off — the re-apply switches Mods/Scenario back on
- *       when there are operator rows, and leaves it alone when there are none.
+ *       when there are operator rows, and leaves it alone when there are none;
+ *       a return to the lobby leaves the host's "off" as it was.
  *   operator_mods_map_yield — a plain -mod scenario gives way to a map's
  *       own scenario (not to a map's own mod) and keeps the map's own row
  *       on the list; a -mod-required one replaces both.
@@ -51,9 +53,9 @@
  *       by its short name, and the map's own script for a bare id; each bad
  *       argument is refused with the reason said.
  *   operator_mods_setting_reapply — a -setting value on a -mod row is the
- *       host's to change, and is back at the next return to the lobby and
- *       at the empty-lobby reset; a value on a script that is not the
- *       operator's keeps the host's pick.
+ *       host's to change, the host's value holds at the next return to the
+ *       lobby, and the operator's is back at the empty-lobby reset; a value
+ *       on a script that is not the operator's keeps the host's pick.
  *   operator_mods_setting_locked — on a -mod-required or -mod-locked row
  *       the -setting value is refused to the host (CMD_REJECT_LOCKED), the
  *       row's other settings are not, and the join sync sends a LOCK after
@@ -396,7 +398,7 @@ int run_operator_mods_locked(void) {
     return 0;
 }
 
-/* ── 4. Put back at every new lobby ───────────────────────────────── */
+/* ── 4. Put back when the lobby empties ───────────────────────────── */
 
 int run_operator_mods_reapply(void) {
     ServerSim  *sim;
@@ -419,17 +421,14 @@ int run_operator_mods_reapply(void) {
     UT_ASSERT(!omListed(sim, "wave.scenario"));
 
     /* The round ends and the lobby comes back with people still in it. The
-       -mod rows are back; the operator's scenario takes the place of the
-       host's, because a round runs one; the host's mod stays. */
+       list is the host's as they left it: the -mod rows stay off. */
     serverSimReturnToLobby(sim);
-    UT_ASSERT_MSG(omListed(sim, "nolgm.lua"),
-                  "a default-on -mod was not back at the next lobby");
-    UT_ASSERT(omListed(sim, "wave.scenario"));
-    UT_ASSERT_MSG(!omListed(sim, "duel.scenario"),
-                  "the host's scenario stayed beside the operator's");
-    UT_ASSERT_MSG(omListed(sim, "MacRules.scenario.lua"),
-                  "the host's own mod pick was dropped");
-    UT_ASSERT(serverSimGetScriptCount(sim) == 3);
+    UT_ASSERT_MSG(!omListed(sim, "nolgm.lua"),
+                  "a -mod the host took off was back after the round");
+    UT_ASSERT(!omListed(sim, "wave.scenario"));
+    UT_ASSERT(omListed(sim, "duel.scenario"));
+    UT_ASSERT(omListed(sim, "MacRules.scenario.lua"));
+    UT_ASSERT(serverSimGetScriptCount(sim) == 2);
 
     /* A list that already holds every row is left alone, order and all. */
     omPastCooldown(sim);
@@ -437,18 +436,21 @@ int run_operator_mods_reapply(void) {
     UT_ASSERT(!serverSimRecordOperatorMods(sim));
     UT_ASSERT(strcmp(serverSimGetScript(sim, 0)->file, "nolgm.lua") == 0);
 
-    /* The empty-lobby reset puts them back too. */
+    /* The empty-lobby reset puts them back for the next occupants. The
+       operator's scenario takes the place of the host's, because a round
+       runs one; the host's mod stays. */
     omPastCooldown(sim);
-    {
-        const char *only[1] = { "fastreload.lua" };
-        UT_ASSERT(omApply(sim, 0, only, 1) == CMD_OK);
-    }
+    UT_ASSERT(omApply(sim, 0, hostList, 2) == CMD_OK);
     UT_ASSERT(!omListed(sim, "nolgm.lua"));
     serverSimResetLobbyToDefaults(sim);
     UT_ASSERT_MSG(omListed(sim, "nolgm.lua") &&
                       omListed(sim, "wave.scenario"),
                   "the empty-lobby reset did not put the -mod rows back");
-    UT_ASSERT(omListed(sim, "fastreload.lua"));
+    UT_ASSERT_MSG(!omListed(sim, "duel.scenario"),
+                  "the host's scenario stayed beside the operator's");
+    UT_ASSERT_MSG(omListed(sim, "MacRules.scenario.lua"),
+                  "the host's own mod pick was dropped");
+    UT_ASSERT(serverSimGetScriptCount(sim) == 3);
 
     serverSimDestroy(sim);
     return 0;
@@ -755,7 +757,8 @@ int run_operator_mods_mods_off(void) {
     ServerSim *sim;
     OmDir      d;
 
-    /* With an operator row, the host's "off" lasts one lobby. */
+    /* With an operator row, the host's "off" lasts until the lobby
+       empties. */
     sim = omLobby(&d);
     UT_ASSERT(sim != NULL);
     UT_ASSERT(omAdd(sim, "nolgm", SERVER_MOD_DEFAULT));
@@ -770,6 +773,10 @@ int run_operator_mods_mods_off(void) {
 
     serverSimSetModsOff(sim, true);
     serverSimReturnToLobby(sim);
+    UT_ASSERT_MSG(serverSimGetModsOff(sim),
+                  "the host's Mods/Scenario off did not last the round");
+    UT_ASSERT(omListed(sim, "nolgm.lua"));
+    serverSimResetLobbyToDefaults(sim);
     UT_ASSERT_MSG(!serverSimGetModsOff(sim),
                   "the -mod row came back listed with Mods/Scenario off");
     UT_ASSERT(omListed(sim, "nolgm.lua"));
@@ -986,7 +993,7 @@ int run_operator_mods_setting_short_name(void) {
     UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "pushback", 1) ==
               0);
     UT_ASSERT_MSG(omSaidHas(&said, "MacRules.scenario.lua:pushback = 0") &&
-                      omSaidHas(&said, "each new lobby"),
+                      omSaidHas(&said, "lobby empties"),
                   "said: %s", said.lines[0]);
     /* And the full name still works. */
     UT_ASSERT(serverArgsApplySetting(sim,
@@ -1068,24 +1075,24 @@ int run_operator_mods_setting_reapply(void) {
     UT_ASSERT(!serverSimGetScriptSetting(sim, "MacRules.scenario.lua",
                                          "armour", NULL));
 
-    /* The next lobby has the operator's values again. A script that is not
-       the operator's keeps the host's pick, as it always has. */
+    /* The round ends with people still in the lobby: the host's values
+       hold, the operator's and anyone else's alike. */
     serverSimReturnToLobby(sim);
-    UT_ASSERT_MSG(omSettingValue(sim, "MacRules.scenario.lua", "pushback",
-                                 1) == 0,
-                  "the operator's pushback was not back at the next lobby");
-    UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "armour", 120) ==
-              150);
+    UT_ASSERT_MSG(!serverSimGetScriptSetting(sim, "MacRules.scenario.lua",
+                                             "pushback", NULL),
+                  "the host's pushback did not last the round");
+    UT_ASSERT(!serverSimGetScriptSetting(sim, "MacRules.scenario.lua",
+                                         "armour", NULL));
     UT_ASSERT(omSettingValue(sim, "wave.scenario", "rounds", 5) == 4);
 
-    /* And at the empty-lobby reset. */
-    UT_ASSERT(omSetSetting(sim, 0, "MacRules.scenario.lua", "pushback", 1) ==
-              CMD_OK);
+    /* The empty-lobby reset has the operator's values again. */
     serverSimResetLobbyToDefaults(sim);
     UT_ASSERT_MSG(omSettingValue(sim, "MacRules.scenario.lua", "pushback",
                                  1) == 0,
                   "the empty-lobby reset did not put the operator's value "
                   "back");
+    UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "armour", 120) ==
+              150);
 
     /* A value already in force is not published again. */
     {
