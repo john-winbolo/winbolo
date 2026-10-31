@@ -2933,7 +2933,7 @@ STR_GAMEFRONTERR_HOST_MOBILE_DATA=This device is on mobile data. An Internet gam
 
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Your GIFs
-STR_CLIPGIF_GALLERY_EMPTY=No GIFs yet. Make one with Save clip in the Make a GIF window, or with Save clip on a clip.
+STR_CLIPGIF_GALLERY_EMPTY=No GIFs yet. Make one with Save clip in the Make a GIF window, or with the GIF button on a clip.
 STR_CLIPGIF_COPY=Copy to clipboard
 STR_CLIPGIF_COPIED=Copied.
 STR_CLIPGIF_COPY_FAILED=The GIF could not be copied.

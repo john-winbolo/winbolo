@@ -1318,7 +1318,7 @@ static const LangEntry langTable[] = {
     /* The recap's GIF gallery, and the GIF length beside the replay's GIF
      * button. */
     {2943, "Your GIFs"},
-    {2944, "No GIFs yet. Make one with Save clip in the Make a GIF window, or with Save clip on a clip."},
+    {2944, "No GIFs yet. Make one with Save clip in the Make a GIF window, or with the GIF button on a clip."},
     {2945, "Copy to clipboard"},
     {2947, "Copied."},
     {2948, "The GIF could not be copied."},
