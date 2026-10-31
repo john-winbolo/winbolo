@@ -884,6 +884,224 @@ int run_scenario_text_fit(void) {
     return 0;
 }
 
+/* Nine units a character: a stand-in for the font in the layout tests. */
+static float scnTestMeasure(const char *s, const char *e, void *ctx) {
+    (void)ctx;
+    return (float)(e - s) * 9.0f;
+}
+
+/* The Scenario Text window's layout: the script's own rows are kept while
+ * they fit across at the smallest letter height, a row that does not is
+ * broken at its spaces into even rows, and the letter height is capped.
+ *
+ * The owner's case (Tutorial station 2): two script rows in a 457 x 230
+ * text area, with the UI text 18 pixels high. */
+int run_scenario_text_layout(void) {
+    const float ui       = 18.0f;
+    const float minScale = ui * SCN_TEXT_MIN_LETTER_UI_SHARE /
+                           SCN_TEXT_LINE_UNITS;
+    const float maxScale = ui * SCN_TEXT_MAX_LETTER_UI_SHARE /
+                           SCN_TEXT_LINE_UNITS;
+    const float pads = 2.0f * SCN_TEXT_OUTLINE_UNITS + 2.0f * SCN_TEXT_PAD_UNITS;
+    char        text[128];
+    float       srcW;
+    ScnTextFit  fit;
+    int         rows;
+
+    /* Kept as the script wrote it: 2 rows, not 3. */
+    snprintf(text, sizeof(text), "%s",
+             "Low on shells? Stop on the base\nby the road to refill.");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL,
+                               457.0f / minScale - pads);
+    UT_ASSERT_MSG(rows == 2, "the owner's text took %d rows", rows);
+    UT_ASSERT(strcmp(text, "Low on shells? Stop on the base\n"
+                           "by the road to refill.") == 0);
+    /* The widest row is 31 characters, 279 units, and 6 more for the outline
+       and the pad: 285. Width allows 457 / 285, height 230 / 50; the cap,
+       1.5 x 18 = 27 pixel letters, is smaller than both. */
+    srcW = scnTextContentWidth(text, scnTestMeasure, NULL);
+    UT_ASSERT(scnNear(srcW, 285.0f));
+    fit = scnTextFitRectCapped(srcW, scnTextSourceHeight(rows), 0.0f, 0.0f,
+                               457.0f, 230.0f, maxScale);
+    UT_ASSERT_MSG(scnNear(fit.scale, maxScale),
+                  "the scale is %.3f, the cap %.3f", fit.scale, maxScale);
+    UT_ASSERT(scnNear(SCN_TEXT_LINE_UNITS * fit.scale, 27.0f));
+    /* Centred both ways in the spare space the cap leaves. */
+    UT_ASSERT(scnNear(fit.originX, (457.0f - srcW * fit.scale) * 0.5f));
+    UT_ASSERT(scnNear(fit.originY, (230.0f - 50.0f * fit.scale) * 0.5f));
+    /* Under the cap the area sets the scale: 285 wide in 228 pixels. */
+    fit = scnTextFitRectCapped(srcW, 50.0f, 0.0f, 0.0f, 228.0f, 230.0f,
+                               maxScale);
+    UT_ASSERT(scnNear(fit.scale, 0.8f));
+    /* No cap: as before. */
+    fit = scnTextFitRectCapped(srcW, 50.0f, 0.0f, 0.0f, 570.0f, 100.0f, 0.0f);
+    UT_ASSERT(scnNear(fit.scale, 2.0f));
+
+    /* Too narrow for the first row (26 characters of room): it is broken
+       into two even rows, and "base" does not sit alone. */
+    snprintf(text, sizeof(text), "%s",
+             "Low on shells? Stop on the base\nby the road to refill.");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 238.0f);
+    UT_ASSERT(rows == 3);
+    UT_ASSERT_MSG(strcmp(text, "Low on shells?\nStop on the base\n"
+                               "by the road to refill.") == 0,
+                  "broken as \"%s\"", text);
+
+    /* Even rows, not a lone short word at the end. */
+    snprintf(text, sizeof(text), "%s", "aaaa aaaa aaaa b");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 130.0f);
+    UT_ASSERT(rows == 2);
+    UT_ASSERT_MSG(strcmp(text, "aaaa aaaa\naaaa b") == 0, "broken as \"%s\"",
+                  text);
+    /* Three rows when two do not fit. */
+    snprintf(text, sizeof(text), "%s", "aa bb cc dd ee ff");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 50.0f);
+    UT_ASSERT(rows == 3);
+    UT_ASSERT(strcmp(text, "aa bb\ncc dd\nee ff") == 0);
+
+    /* Never inside a word: a word too wide is a row by itself, and a row
+       with no space is not changed. */
+    snprintf(text, sizeof(text), "%s", "go Unbreakableword now");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
+    UT_ASSERT(rows == 3);
+    UT_ASSERT(strcmp(text, "go\nUnbreakableword\nnow") == 0);
+    snprintf(text, sizeof(text), "%s", "Unbreakableword");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
+    UT_ASSERT(rows == 1 && strcmp(text, "Unbreakableword") == 0);
+
+    /* Rows that fit are kept, and nothing to measure is no width. */
+    snprintf(text, sizeof(text), "%s", "a b\nc");
+    UT_ASSERT(scnTextWrapBalanced(text, scnTestMeasure, NULL, 500.0f) == 2);
+    UT_ASSERT(strcmp(text, "a b\nc") == 0);
+    UT_ASSERT(scnTextContentWidth("", scnTestMeasure, NULL) == 0.0f);
+
+    /* Both steps, as the window runs them: a single Latin word too wide is
+       one row and not broken, by scnTextWrapBalanced or by
+       scnTextBreakUnspaced after it. */
+    snprintf(text, sizeof(text), "%s", "go Unbreakableword now");
+    scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
+    rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                60.0f);
+    UT_ASSERT_MSG(rows == 3 && strcmp(text, "go\nUnbreakableword\nnow") == 0,
+                  "broken as \"%s\"", text);
+    snprintf(text, sizeof(text), "%s", "Unbreakableword");
+    scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
+    rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                60.0f);
+    UT_ASSERT(rows == 1 && strcmp(text, "Unbreakableword") == 0);
+
+    /* That word sets the scale. 80 letters are 720 units, 726 with the
+       outline and the pad, wider than the 671 units of room at the smallest
+       letter height. The scale goes below that height so the word fits the
+       457 pixels: 457 / 726, still over the letter floor. */
+    {
+        const float floorScale = ui * SCN_TEXT_FLOOR_LETTER_UI_SHARE /
+                                 SCN_TEXT_LINE_UNITS;
+        const float rowMaxW = 457.0f / minScale - pads;
+        float left = 0.0f, acrossW = 0.0f;
+        memset(text, 'w', 80);
+        text[80] = '\0';
+        scnTextWrapBalanced(text, scnTestMeasure, NULL, rowMaxW);
+        rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                    rowMaxW);
+        UT_ASSERT(rows == 1 && strlen(text) == 80);
+        srcW = scnTextContentWidth(text, scnTestMeasure, NULL);
+        UT_ASSERT(scnNear(srcW, 726.0f));
+        fit = scnTextFitRectHeld(srcW, scnTextSourceHeight(1), 0.0f, 0.0f,
+                                 457.0f, 230.0f, floorScale, maxScale);
+        UT_ASSERT_MSG(fit.scale < minScale && fit.scale > floorScale &&
+                          scnNear(fit.scale, 457.0f / 726.0f),
+                      "the long word's scale is %.3f", fit.scale);
+        UT_ASSERT(scnNear(fit.originX, 0.0f));
+        /* 120 letters would need 457 / 1086 = 0.42, under the floor of
+           0.45: held at the floor, and centred, running past both sides. */
+        fit = scnTextFitRectHeld(1086.0f, scnTextSourceHeight(1), 0.0f, 0.0f,
+                                 457.0f, 230.0f, floorScale, maxScale);
+        UT_ASSERT(scnNear(fit.scale, floorScale));
+        UT_ASSERT(scnNear(fit.originX, (457.0f - 1086.0f * floorScale) * 0.5f));
+        UT_ASSERT(fit.originX < 0.0f);
+        /* No floor (0): as scnTextFitRectCapped. */
+        fit = scnTextFitRectHeld(1086.0f, 26.0f, 0.0f, 0.0f, 457.0f, 230.0f,
+                                 0.0f, maxScale);
+        UT_ASSERT(scnNear(fit.scale, 457.0f / 1086.0f));
+        /* At the floor the span across is the text block, so no line is
+           made smaller again to fit the area. */
+        fit = scnTextFitRectHeld(1086.0f, 26.0f, 0.0f, 0.0f, 457.0f, 230.0f,
+                                 floorScale, maxScale);
+        scnTextAcrossSpan(0.0f, 457.0f, fit, 1086.0f, &left, &acrossW);
+        UT_ASSERT(scnNear(left, fit.originX) && scnNear(acrossW, 1086.0f));
+    }
+
+    /* Chinese, with no space: broken between characters. 30 of U+5B57, 3
+       bytes each, 27 units each with the stand-in font; 7 fit in 200 units,
+       so 7, 7, 7, 7 and 2, and no character is split. */
+    {
+        static const char zi[] = "\xE5\xAD\x97";
+        const char *r;
+        int i, n = 0;
+        text[0] = '\0';
+        for (i = 0; i < 30; i++) strcat(text, zi);
+        scnTextWrapBalanced(text, scnTestMeasure, NULL, 200.0f);
+        UT_ASSERT(strchr(text, '\n') == NULL);
+        rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                    200.0f);
+        UT_ASSERT_MSG(rows == 5, "the Chinese line took %d rows", rows);
+        for (r = text;; n++) {
+            const char *e = strchr(r, '\n');
+            const size_t len = (e != NULL) ? (size_t)(e - r) : strlen(r);
+            UT_ASSERT(len % 3 == 0 && len > 0);
+            UT_ASSERT(len == ((n < 4) ? 21u : 6u));
+            if (e == NULL) break;
+            r = e + 1;
+        }
+        /* A Chinese row that fits, a Japanese row that fits, and no room in
+           the buffer for a break: not changed. */
+        snprintf(text, sizeof(text), "%s", "\xE6\x97\xA5\xE6\x9C\xAC");
+        UT_ASSERT(scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure,
+                                       NULL, 200.0f) == 1);
+        UT_ASSERT(strcmp(text, "\xE6\x97\xA5\xE6\x9C\xAC") == 0);
+        UT_ASSERT(scnTextBreakUnspaced(text, strlen(text) + 1, scnTestMeasure,
+                                       NULL, 30.0f) == 1);
+        UT_ASSERT(strcmp(text, "\xE6\x97\xA5\xE6\x9C\xAC") == 0);
+        /* Korean, written with spaces: broken at the spaces first. */
+        snprintf(text, sizeof(text), "%s",
+                 "\xED\x95\x9C\xEA\xB5\xAD \xED\x95\x9C\xEA\xB5\xAD");
+        scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
+        rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                    60.0f);
+        UT_ASSERT(rows == 2);
+        UT_ASSERT(strcmp(text, "\xED\x95\x9C\xEA\xB5\xAD\n"
+                               "\xED\x95\x9C\xEA\xB5\xAD") == 0);
+    }
+
+    /* An announcement's share across is of the area's width, not of the
+       text block's. The owner's text (285 units) at the cap in a 457 pixel
+       area at x 10: the span starts at the area's left, 10, and is
+       457 / 1.35 units wide. A line 100 units wide at share 0.1 is held one
+       pad from the area's left, not near the block's left. */
+    {
+        float left = 0.0f, acrossW = 0.0f, lx = 0.0f, shrink = 0.0f;
+        fit = scnTextFitRectHeld(285.0f, 50.0f, 10.0f, 0.0f, 457.0f, 230.0f,
+                                 0.0f, maxScale);
+        UT_ASSERT(scnNear(fit.scale, maxScale));
+        UT_ASSERT(fit.originX > 10.0f + 30.0f);
+        scnTextAcrossSpan(10.0f, 457.0f, fit, 285.0f, &left, &acrossW);
+        UT_ASSERT_MSG(left == 10.0f && scnNear(acrossW, 457.0f / maxScale),
+                      "the span is %.2f wide from %.2f", acrossW, left);
+        scnTextLineAcross(acrossW, 100.0f, 0.1f, &lx, &shrink);
+        UT_ASSERT(lx == SCN_TEXT_PAD_UNITS && shrink == 1.0f);
+        UT_ASSERT(left + lx * fit.scale < fit.originX);
+        /* Share 0.5 is the middle of the area, as of the block. */
+        scnTextLineAcross(acrossW, 100.0f, 0.5f, &lx, &shrink);
+        UT_ASSERT(scnNear(left + (lx + 50.0f) * fit.scale, 10.0f + 228.5f));
+        /* No scale: the block. */
+        fit.scale = 0.0f;
+        scnTextAcrossSpan(10.0f, 457.0f, fit, 285.0f, &left, &acrossW);
+        UT_ASSERT(left == fit.originX && acrossW == 285.0f);
+    }
+    return 0;
+}
+
 /* Tablet mode's scenario text band: the source rectangle at the zoom's
  * scale, at the top middle of the view, made smaller to fit, and kept one
  * inset left of the scenario panel's square when that is shown. */
@@ -970,64 +1188,15 @@ int run_scenario_text_tablet_band(void) {
     return 0;
 }
 
-/* The Scenario Text window takes the mouse only on its bar and its grip, so
- * a click or the wheel on the text goes to the game. A window at 100,50,
- * 300 x 120, with a 20 high bar and a 14 square grip: the bar is
- * 100..400 x 50..70 and the grip is 386..400 x 156..170. */
-int run_scenario_text_pointer_on_handle(void) {
-    const float x = 100.0f, y = 50.0f, w = 300.0f, h = 120.0f;
-    const float bar = 20.0f, grip = 14.0f;
-
-    /* The bar, across the full width: its left end, its middle, and the
-       gear and the X at its right end. */
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 50.0f));
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 60.0f));
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.0f, 69.0f));
-    /* Its bottom edge is not in it. */
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 70.0f));
-
-    /* The grip, and the pixels just outside it. */
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 386.0f, 156.0f));
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.5f, 169.5f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 385.9f, 160.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 390.0f, 155.9f));
-
-    /* The text body: the middle, the left and right edges under the bar,
-       and the bottom-left corner. None of these takes the mouse. */
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 110.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 100.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.0f, 100.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 169.0f));
-
-    /* Off the window: left, above, right of the bar, below the grip. */
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 99.9f, 60.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 49.9f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 400.0f, 60.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 395.0f, 170.0f));
-    /* The point ImGui gives when there is no mouse. */
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, -FLT_MAX,
-                                      -FLT_MAX));
-
-    /* A window with no area has no bar and no grip, and a bar or grip of
-       size 0 is not there. */
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, 0.0f, h, bar, grip, 100.0f, 50.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, -1.0f, bar, grip, 100.0f,
-                                      50.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, 0.0f, grip, 250.0f, 50.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, 0.0f, 399.0f, 169.0f));
-
-    return 0;
-}
-
 /* When the desktop Scenario Text window is up: while the player has it
- * shown and the round lists it, with or without a line; while there is a
- * line; and while the player is busy with it. Never while it is closed. */
+ * shown and a line was on screen a short time ago; while there is a line;
+ * and while the player is busy with it. Never while it is closed. */
 int run_scenario_text_window_shown(void) {
-    /* Listed with no line and not busy: up, empty, so it can be moved. */
+    /* A recent line, no line now, not busy: up, so it can be grabbed. */
     UT_ASSERT(scnTextWindowShown(true, true, false, false));
-    /* Listed with a line. */
+    /* A recent line and a line now. */
     UT_ASSERT(scnTextWindowShown(true, true, true, false));
-    /* Not listed and no line: not up (outside a scenario round). */
+    /* No recent line, no line now, not busy: not up, no empty window. */
     UT_ASSERT(!scnTextWindowShown(true, false, false, false));
     /* A line or the player busy with it keeps it up. */
     UT_ASSERT(scnTextWindowShown(true, false, true, false));
@@ -1039,17 +1208,109 @@ int run_scenario_text_window_shown(void) {
     return 0;
 }
 
-/* The faint edge: with a line, only when there is a backing; with no line,
- * only while the handles show, at any background opacity. */
-int run_scenario_text_edge_shown(void) {
-    UT_ASSERT(scnTextEdgeShown(true, 50, false));
-    UT_ASSERT(scnTextEdgeShown(true, 1, true));
-    UT_ASSERT(!scnTextEdgeShown(true, 0, false));
-    UT_ASSERT(!scnTextEdgeShown(true, 0, true));
-    UT_ASSERT(scnTextEdgeShown(false, 0, true));
-    UT_ASSERT(scnTextEdgeShown(false, 100, true));
-    UT_ASSERT(!scnTextEdgeShown(false, 0, false));
-    UT_ASSERT(!scnTextEdgeShown(false, 100, false));
+/* A line on screen within the hold time keeps the window up; after the
+ * hold time, or with no line this round, it does not. */
+int run_scenario_text_printed_recently(void) {
+    const uint64_t hold = 5000u;
+    /* No line this round: never recent, also at the first tick. */
+    UT_ASSERT(!scnTextPrintedRecently(false, 0u, 0u, hold));
+    UT_ASSERT(!scnTextPrintedRecently(false, 1000u, 1000u, hold));
+    /* On screen this frame. */
+    UT_ASSERT(scnTextPrintedRecently(true, 1000u, 1000u, hold));
+    /* Just inside and at the edge of the hold time. */
+    UT_ASSERT(scnTextPrintedRecently(true, 1000u, 5999u, hold));
+    UT_ASSERT(!scnTextPrintedRecently(true, 1000u, 6000u, hold));
+    UT_ASSERT(!scnTextPrintedRecently(true, 1000u, 60000u, hold));
+    /* A stamp ahead of now counts as recent. */
+    UT_ASSERT(scnTextPrintedRecently(true, 2000u, 1000u, hold));
+    /* A zero hold time: never up after the line goes. */
+    UT_ASSERT(!scnTextPrintedRecently(true, 1000u, 1000u, 0u));
+    return 0;
+}
+
+/* The frame's edge and grip: the panel always; the Scenario Text window at
+ * 0% background opacity only while the pointer is on it or a drag is on,
+ * and above 0% always. */
+int run_scenario_float_frame_shown(void) {
+    /* The panel: at every opacity, with or without the pointer. */
+    UT_ASSERT(scnFloatFrameShown(false, 0, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(false, 1, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(false, 100, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(false, 0, true, true, true));
+
+    /* The Scenario Text window above 0%: always, as the panel. */
+    UT_ASSERT(scnFloatFrameShown(true, 1, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(true, 43, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(true, 100, false, false, false));
+
+    /* At 0%: only with the pointer on it, a move or a resize. */
+    UT_ASSERT(!scnFloatFrameShown(true, 0, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(true, 0, true, false, false));
+    UT_ASSERT(scnFloatFrameShown(true, 0, false, true, false));
+    UT_ASSERT(scnFloatFrameShown(true, 0, false, false, true));
+    UT_ASSERT(scnFloatFrameShown(true, 0, true, true, true));
+
+    /* Who takes the mouse: a frame window only on its bar or grip, or
+       while a drag that began there is on. */
+    UT_ASSERT(!scnFloatTakesInput(false, false));
+    UT_ASSERT(scnFloatTakesInput(true, false));
+    UT_ASSERT(scnFloatTakesInput(false, true));
+    UT_ASSERT(scnFloatTakesInput(true, true));
+
+    /* Motion and the wheel go on to the game over a frame window with
+       nothing dragged, and during a drag of its bar or grip. Over any other
+       window, or while another window's item is dragged, they do not. */
+    UT_ASSERT(scnFloatPointerToGame(true, false, false));
+    UT_ASSERT(scnFloatPointerToGame(true, true, true));
+    UT_ASSERT(scnFloatPointerToGame(false, true, true));
+    UT_ASSERT(!scnFloatPointerToGame(false, false, false));
+    UT_ASSERT(!scnFloatPointerToGame(true, true, false));
+    UT_ASSERT(!scnFloatPointerToGame(false, true, false));
+    return 0;
+}
+
+/* A frame window takes a click only on its bar and its grip, so
+ * a click or the wheel on its content goes to the game. The bar sits
+ * directly above the content and covers none of it. Content at 100,70,
+ * 300 x 120, with a 20 high bar and a 14 square grip: the bar is
+ * 100..400 x 50..70, the content is 100..400 x 70..190 and the grip is
+ * 386..400 x 176..190. */
+int run_scenario_float_pointer_on_handle(void) {
+    const float x = 100.0f, y = 70.0f, w = 300.0f, h = 120.0f;
+    const float bar = 20.0f, grip = 14.0f;
+
+    /* The bar, across the full width: its left end, its middle, and the
+       gear and the X at its right end. */
+    UT_ASSERT(scnFloatPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 50.0f));
+    UT_ASSERT(scnFloatPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 60.0f));
+    UT_ASSERT(scnFloatPointerOnHandle(x, y, w, h, bar, grip, 399.0f, 69.0f));
+    /* Its bottom edge is the content's top edge, and is not in it. */
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 70.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 71.0f));
+
+    /* The grip, and the pixels just outside it. */
+    UT_ASSERT(scnFloatPointerOnHandle(x, y, w, h, bar, grip, 386.0f, 176.0f));
+    UT_ASSERT(scnFloatPointerOnHandle(x, y, w, h, bar, grip, 399.5f, 189.5f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 385.9f, 180.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 390.0f, 175.9f));
+
+    /* The content body: none of it takes the mouse. */
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 130.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 189.0f));
+
+    /* Off the window, and the point ImGui gives when there is no mouse. */
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 99.9f, 60.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 49.9f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 400.0f, 60.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, 395.0f, 190.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, grip, -FLT_MAX,
+                                       -FLT_MAX));
+
+    /* No area, no bar, no grip. With no bar, the strip above the content
+       does not take the mouse. */
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, 0.0f, h, bar, grip, 100.0f, 50.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, 0.0f, grip, 250.0f, 60.0f));
+    UT_ASSERT(!scnFloatPointerOnHandle(x, y, w, h, bar, 0.0f, 399.0f, 189.0f));
     return 0;
 }
 
@@ -1102,6 +1363,303 @@ int run_scenario_status_line(void) {
         UT_ASSERT(strlen(out) == sizeof(big) - 1 + 4 + 5);
         UT_ASSERT(strcmp(out + sizeof(big) - 1, "    90:00") == 0);
     }
+
+    return 0;
+}
+
+/* The desktop panel's default place and size (scnPanelDefaultPlace): the
+ * game view's top-left corner in by the inset, and never above minTop,
+ * which keeps room for the move bar above the panel. The size is 230.4
+ * pixels at every zoom, as the percent of the zoom's own size, when that
+ * fits in 0.8 of the view's shorter side and in the display. When it does
+ * not, it is the largest cardinal from 100 up that fits. Every number is
+ * worked out by hand beside it. */
+int run_scenario_panel_default_place(void) {
+    static const int cardinals[] = SCN_PANEL_CARDINALS;
+    const size_t     count       = sizeof(cardinals) / sizeof(cardinals[0]);
+    float x, y;
+    float pct;
+
+    /* Zoom 1: a 240 view at (10, 20), panel 128 at 100, inset 4. The room
+       is 0.8 * 240 = 192, so 230.4 pixels does not fit. The largest cardinal
+       that does: 150 is 192, which fits; 200 is 256, which does not: 150,
+       at (14, 24). */
+    UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                   480.0f, 128.0f, 4.0f, 0.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 150.0f);
+    UT_ASSERT(x == 14.0f);
+    UT_ASSERT(y == 24.0f);
+
+    /* Custom zoom 1.25: a 300 view, panel 160 at 100, room 240. 230.4
+       fits: 230.4 / 160 = 144 percent. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 300.0f, 300.0f, 1600.0f,
+                                   1200.0f, 160.0f, 5.0f, 0.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 144.0f);
+    UT_ASSERT(x == 5.0f);
+    UT_ASSERT(y == 5.0f);
+
+    /* Custom zoom 1.5: a 360 view, panel 192 at 100, room 0.8 * 360 = 288,
+       so 230.4 fits: 230.4 / 192 = 120 percent. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 360.0f, 360.0f, 1600.0f,
+                                   1200.0f, 192.0f, 6.0f, 0.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 120.0f);
+    UT_ASSERT(x == 6.0f);
+    UT_ASSERT(y == 6.0f);
+
+    /* Zoom 2: a 480 view, panel 256 at 100, room 384. 230.4 / 256 = 90
+       percent, at (20 + 8, 40 + 8). */
+    UT_ASSERT(scnPanelDefaultPlace(20.0f, 40.0f, 500.0f, 520.0f, 1280.0f,
+                                   960.0f, 256.0f, 8.0f, 0.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 90.0f);
+    UT_ASSERT(x == 28.0f);
+    UT_ASSERT(y == 48.0f);
+
+    /* Zoom 3: panel 384 at 100. 230.4 / 384 = 60 percent. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 720.0f, 720.0f, 1920.0f,
+                                   1080.0f, 384.0f, 12.0f, 0.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 60.0f);
+    UT_ASSERT(x == 12.0f);
+    UT_ASSERT(y == 12.0f);
+
+    /* Zoom 4: panel 512 at 100. 230.4 / 512 = 45 percent, not a cardinal
+       and not rounded. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 960.0f, 960.0f, 2560.0f,
+                                   1440.0f, 512.0f, 16.0f, 0.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 45.0f);
+
+    /* Zoom 6: panel 768 at 100. 230.4 / 768 = 30 percent. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 1440.0f, 1440.0f, 3840.0f,
+                                   2160.0f, 768.0f, 24.0f, 0.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 30.0f);
+
+    /* Zoom 8: panel 1024 at 100. 230.4 / 1024 = 22.5 percent, under the
+       25 of SCN_PANEL_SCALE_MIN; the size limits of the caller hold it at
+       25. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 1920.0f, 1920.0f, 7680.0f,
+                                   4320.0f, 1024.0f, 32.0f, 0.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 22.5f);
+
+    /* Zoom 12: panel 1536 at 100. 230.4 / 1536 = 15 percent, held at 25
+       by the caller as at zoom 8. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 2880.0f, 2880.0f, 11520.0f,
+                                   6480.0f, 1536.0f, 48.0f, 0.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 15.0f);
+
+    /* Custom zoom 0.75: a 180 view, panel 96 at 100, room 0.8 * 180 =
+       144. 230.4 does not fit, so the largest cardinal that does: 150 is
+       144, which fits; 200 is 192, which does not: 150. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 180.0f, 180.0f, 1600.0f,
+                                   1200.0f, 96.0f, 3.0f, 0.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 150.0f);
+
+    /* Zoom 2 with minTop 44 over a view corner at 28: the panel goes down
+       to 44 and keeps its 230.4 pixels. */
+    UT_ASSERT(scnPanelDefaultPlace(20.0f, 20.0f, 500.0f, 500.0f, 1280.0f,
+                                   960.0f, 256.0f, 8.0f, 44.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 90.0f);
+    UT_ASSERT(x == 28.0f);
+    UT_ASSERT(y == 44.0f);
+
+    /* Zoom 2 in a short display: 1280 x 240 from y 8 leaves 232, so 230.4
+       fits: 90. 1280 x 230 leaves 222, so 230.4 does not; 100 percent is
+       256, which does not fit either: false. At zoom 2 the cardinals are
+       never reached, since 100 percent is larger than 230.4. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 480.0f, 480.0f, 1280.0f,
+                                   240.0f, 256.0f, 8.0f, 0.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 90.0f);
+    UT_ASSERT(!scnPanelDefaultPlace(0.0f, 0.0f, 480.0f, 480.0f, 1280.0f,
+                                    230.0f, 256.0f, 8.0f, 0.0f, cardinals,
+                                    count, &x, &y, &pct));
+
+    /* Zoom 1 in a display only 180 wide: from x 14 that leaves 166, under
+       the 192 the view gives. 125 is 160, which fits; 150 is 192, which
+       does not: 125. */
+    UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 180.0f,
+                                   400.0f, 128.0f, 4.0f, 0.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 125.0f);
+
+    /* Custom zoom 1.25 in a display 190 wide: from x 5 that leaves 185,
+       under the 240 the view gives. 100 is 160, which fits; 125 is 200,
+       which does not: 100. */
+    UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 300.0f, 300.0f, 190.0f,
+                                   1200.0f, 160.0f, 5.0f, 0.0f, cardinals, count,
+                                   &x, &y, &pct));
+    UT_ASSERT(pct == 100.0f);
+
+    /* A display 130 wide leaves 116 from x 14, under the 128 of 100
+       percent: false, and the outputs are left alone. */
+    x = y = -7.0f;
+    pct = -7.0f;
+    UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 130.0f,
+                                    400.0f, 128.0f, 4.0f, 0.0f, cardinals, count,
+                                    &x, &y, &pct));
+    UT_ASSERT(x == -7.0f && y == -7.0f && pct == -7.0f);
+
+    /* No view yet, or no zoom size: false. */
+    UT_ASSERT(!scnPanelDefaultPlace(0.0f, 0.0f, 0.0f, 0.0f, 640.0f, 480.0f,
+                                    128.0f, 4.0f, 0.0f, cardinals, count, &x, &y,
+                                    &pct));
+    UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                    480.0f, 0.0f, 4.0f, 0.0f, cardinals, count,
+                                    &x, &y, &pct));
+
+    /* The cardinals are needed only when 230.4 does not fit. With no
+       cardinal from 100 up, or no list, a zoom 1 display 180 wide (room
+       166) gives false, and so does a zoom 1 display 640 x 480 (room 192,
+       under 230.4). Zoom 2 in a 1280 x 960 display (room 384) still gives
+       90 with no list. */
+    {
+        static const int under100[] = {25, 50, 75};
+        UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 180.0f,
+                                        400.0f, 128.0f, 4.0f, 0.0f, under100, 3, &x,
+                                        &y, &pct));
+        UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 180.0f,
+                                        400.0f, 128.0f, 4.0f, 0.0f, NULL, 0, &x,
+                                        &y, &pct));
+        UT_ASSERT(!scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                        480.0f, 128.0f, 4.0f, 0.0f, NULL, 0, &x,
+                                        &y, &pct));
+        UT_ASSERT(scnPanelDefaultPlace(0.0f, 0.0f, 480.0f, 480.0f, 1280.0f,
+                                       960.0f, 256.0f, 8.0f, 0.0f, NULL, 0, &x,
+                                       &y, &pct));
+        UT_ASSERT(pct == 90.0f);
+    }
+
+    /* minTop: the move bar above the panel is 22 high under a menu bar 22
+       high, so the top may be no less than 44. The view's corner gives 24,
+       so the panel goes down to 44. The room from there is still the 192
+       the view gives (the display leaves 436), under 230.4; the largest
+       cardinal that fits is 150, at (14, 44). */
+    UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                   480.0f, 128.0f, 4.0f, 44.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 150);
+    UT_ASSERT(x == 14.0f);
+    UT_ASSERT(y == 44.0f);
+
+    /* A minTop under the view's corner changes nothing: (14, 24). */
+    UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                   480.0f, 128.0f, 4.0f, 24.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(y == 24.0f);
+
+    /* The room is measured from the lowered top: a display 250 high leaves
+       250 - 100 = 150 below a top of 100, under 230.4. 125 is 160, which
+       does not fit: 100, at (14, 100). */
+    UT_ASSERT(scnPanelDefaultPlace(10.0f, 20.0f, 250.0f, 260.0f, 640.0f,
+                                   250.0f, 128.0f, 4.0f, 100.0f, cardinals,
+                                   count, &x, &y, &pct));
+    UT_ASSERT(pct == 100);
+    UT_ASSERT(y == 100.0f);
+
+    /* The cardinals the default falls back to on a small display are ones
+       the resize drag snaps to: 100 and 150 are in the list. */
+    {
+        bool have100 = false, have150 = false;
+        size_t i;
+        for (i = 0; i < count; i++) {
+            if (cardinals[i] == 100) have100 = true;
+            if (cardinals[i] == 150) have150 = true;
+        }
+        UT_ASSERT(have100 && have150);
+    }
+    return 0;
+}
+
+/* The Scenario Text window's default place beside a default scenario panel
+   (scnTextBesidePanelPlace): from one inset right of the panel to one inset
+   left of the game view's right edge, top and bottom level with the panel,
+   and false when that room is under the least width. */
+int run_scenario_text_beside_panel_place(void) {
+    float x = -1.0f, y = -1.0f, w = -1.0f, h = -1.0f;
+
+    /* Zoom 2: a 480 pixel view at the left of a 1280 display, inset 8. The
+       default panel is 230.4 at (8, 50), so its right edge is 238.4 and its
+       bottom 280.4. The text area runs from 246.4 to 472: 225.6 wide, and
+       from 50 to 280.4: 230.4 high. The panel side is not a whole number,
+       so these are tested to a hundredth of a pixel. */
+    UT_ASSERT(scnTextBesidePanelPlace(8.0f + SCN_PANEL_DEFAULT_PX, 50.0f,
+                                      50.0f + SCN_PANEL_DEFAULT_PX, 480.0f,
+                                      1280.0f, 8.0f, SCN_TEXT_BESIDE_MIN_W_PX,
+                                      &x, &y, &w, &h));
+    UT_ASSERT(x > 246.39f && x < 246.41f);
+    UT_ASSERT(y == 50.0f);
+    UT_ASSERT(w > 225.59f && w < 225.61f);
+    UT_ASSERT(h > 230.39f && h < 230.41f);
+
+    /* The same helper with whole numbers: a panel 288 on a side at (8, 50),
+       so its right edge is 296 and its bottom 338. The text area runs from
+       304 to 472: 168 wide, and from 50 to 338: 288 high. */
+    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 338.0f, 480.0f, 1280.0f,
+                                      8.0f, SCN_TEXT_BESIDE_MIN_W_PX, &x, &y,
+                                      &w, &h));
+    UT_ASSERT(x == 304.0f);
+    UT_ASSERT(y == 50.0f);
+    UT_ASSERT(w == 168.0f);
+    UT_ASSERT(h == 288.0f);
+
+    /* A web case: a view from 390 to 1165 at scale 2.5, so inset 10, and
+       a panel 288 on a side (the default before it was made 230.4) from
+       (400, 180), so right edge 688 and bottom 468. The
+       text area runs from 698 to 1155: 457 wide, 288 high. */
+    UT_ASSERT(scnTextBesidePanelPlace(688.0f, 180.0f, 468.0f, 1165.0f,
+                                      1920.0f, 10.0f, SCN_TEXT_BESIDE_MIN_W_PX,
+                                      &x, &y, &w, &h));
+    UT_ASSERT(x == 698.0f);
+    UT_ASSERT(y == 180.0f);
+    UT_ASSERT(w == 457.0f);
+    UT_ASSERT(h == 288.0f);
+
+    /* A display that ends before the view's right edge: the room ends one
+       inset in from the display's edge, 900 - 4 = 896, so 896 - 304 = 592. */
+    UT_ASSERT(scnTextBesidePanelPlace(300.0f, 30.0f, 230.0f, 1000.0f, 900.0f,
+                                      4.0f, SCN_TEXT_BESIDE_MIN_W_PX, &x, &y,
+                                      &w, &h));
+    UT_ASSERT(x == 304.0f);
+    UT_ASSERT(y == 30.0f);
+    UT_ASSERT(w == 592.0f);
+    UT_ASSERT(h == 200.0f);
+
+    /* Exactly the least width fits: 304 to 464 is 160. */
+    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 338.0f, 472.0f, 1280.0f,
+                                      8.0f, 160.0f, &x, &y, &w, &h));
+    UT_ASSERT(w == 160.0f);
+
+    /* Too narrow (450 - 8 - 304 = 138, under 160): false, and the outputs
+       are left alone. */
+    x = y = w = h = -1.0f;
+    UT_ASSERT(!scnTextBesidePanelPlace(296.0f, 50.0f, 338.0f, 450.0f,
+                                       1280.0f, 8.0f,
+                                       SCN_TEXT_BESIDE_MIN_W_PX, &x, &y, &w,
+                                       &h));
+    UT_ASSERT(x == -1.0f && y == -1.0f && w == -1.0f && h == -1.0f);
+
+    /* A panel reaching past the view's right edge leaves no room, even with
+       no least width; nor does a panel with no height. */
+    UT_ASSERT(!scnTextBesidePanelPlace(500.0f, 50.0f, 338.0f, 480.0f, 1280.0f,
+                                       8.0f, 0.0f, &x, &y, &w, &h));
+    UT_ASSERT(!scnTextBesidePanelPlace(464.0f, 50.0f, 338.0f, 480.0f, 1280.0f,
+                                       8.0f, 0.0f, &x, &y, &w, &h));
+    UT_ASSERT(!scnTextBesidePanelPlace(296.0f, 50.0f, 50.0f, 1280.0f, 1280.0f,
+                                       8.0f, 0.0f, &x, &y, &w, &h));
+
+    /* Every output may be NULL. */
+    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 338.0f, 1280.0f, 1280.0f,
+                                      8.0f, SCN_TEXT_BESIDE_MIN_W_PX, NULL,
+                                      NULL, NULL, NULL));
 
     return 0;
 }

@@ -3012,6 +3012,9 @@ int run_mapchooser_scenario_filter(void);
 int run_bg_map_pick_skips_tutorials(void);
 /* The folder test behind game.tutorial_done (test_bg_map_pick.c). */
 int run_tutorial_maps_shipped_path(void);
+/* Which games a scenario popup pauses: only the shipped tutorials
+ * (test_bg_map_pick.c). */
+int run_tutorial_maps_popup_pauses(void);
 
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
@@ -4342,15 +4345,26 @@ int run_scenario_status_line(void);
 /* The Scenario Text window's fit: the source rectangle scaled into the
  * window with one factor for both axes and centred. */
 int run_scenario_text_fit(void);
+int run_scenario_text_layout(void);
 /* Tablet mode's scenario text band: centred at the top of the view, and
  * kept left of the scenario panel's square when that is shown. */
 int run_scenario_text_tablet_band(void);
-/* The Scenario Text window's bar and grip, the only places it takes the
- * mouse: a point on the text body is on neither. */
-int run_scenario_text_pointer_on_handle(void);
 int run_scenario_text_window_shown(void);
-int run_scenario_text_edge_shown(void);
+int run_scenario_text_printed_recently(void);
+int run_scenario_float_frame_shown(void);
+/* The bar and grip of the shared window frame (the scenario panel and the
+ * Scenario Text window), the only places it takes the mouse: a point on
+ * the body is on neither. */
+int run_scenario_float_pointer_on_handle(void);
 int run_scenario_text_save_place(void);
+/* The desktop scenario panel's default place and size
+ * (test_scenario_panel.c): the game view's top-left at a readable cardinal,
+ * shrunk to fit, and false when not even 100 percent fits. */
+int run_scenario_panel_default_place(void);
+/* The Scenario Text window's default place beside a default scenario panel
+ * (test_scenario_panel.c): the room to the game view's right edge, and false
+ * when it is under the least width. */
+int run_scenario_text_beside_panel_place(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */

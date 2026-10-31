@@ -161,6 +161,13 @@ static time_t ticks = 0;
 static double gameTickAccum = 0.0;
 static double lastFrameTime = 0.0;
 
+/* On while a tutorial message or scenario popup is open in the tutorial,
+ * whose server runs in the page: the page loop then runs no game ticks and
+ * owes none, as for a hidden page. Set by windowTutorialPause, only when
+ * clientFrontPopupPausesGame says the game is a shipped tutorial; a joined
+ * network game never sets it. */
+static bool s_tutorialDialogPause = FALSE;
+
 /* Flips on each 10 ms client step; the page ticks a practice game's server
  * on every second one (see wasmTickLocalServer). */
 static bool s_serverTickDue = FALSE;
@@ -184,16 +191,17 @@ void sdl3MessageHandler(const char *message, const char *title) {
  * positive-up, so flip the sign to a unit step. */
 extern void inputBumpGunsight(int direction);       /* gui/sdl3/input.h */
 extern uint8_t inputConsumeGunsightAdj(void);       /* gui/sdl3/input.h */
-extern bool sdl3ImguiWantCaptureMouse(void);        /* sdl3imgui.cpp */
+extern bool sdl3ImguiWheelCapturedByUi(void);       /* sdl3imgui.cpp */
 
 EMSCRIPTEN_KEEPALIVE
 void wbWasmWheel(double deltaY) {
   if (deltaY == 0.0) return;
   /* Only adjust the gunsight in a running game, and not while the wheel is over
-   * an ImGui panel/dialog (mirrors the shared desktop handler's gating). Browser
+   * an ImGui panel/dialog (mirrors the shared desktop handler's gating). The
+   * wheel over a scenario window's bar or grip still reaches the game. Browser
    * deltaY is negative when scrolling up; the gunsight increases on scroll-up. */
   if (!humanSim || clientSimGetNetStatus(humanSim) != netRunning) return;
-  if (sdl3ImguiWantCaptureMouse()) return;
+  if (sdl3ImguiWheelCapturedByUi()) return;
   inputBumpGunsight(deltaY < 0.0 ? +1 : -1);
 }
 
@@ -360,7 +368,9 @@ static void main_loop_iteration(void) {
    *
    * A single-player game (practice or the tutorial, whose server runs in the
    * page) pauses while the page is hidden: it runs no ticks and owes none, so
-   * it resumes where it stopped. A network game keeps ticking while hidden to
+   * it resumes where it stopped. The tutorial pauses the same way while its
+   * dialog is open (s_tutorialDialogPause), so there is no burst of ticks
+   * when the dialog closes. A network game keeps ticking while hidden to
    * stay in step with its server. */
   if (!s_connFailed && clientSimHasTransport(cs)) {
     const double MAX_ELAPSED_MS  = 200.0;  /* per-frame catch-up bound (ordinary jank) */
@@ -369,7 +379,8 @@ static void main_loop_iteration(void) {
     double now = emscripten_get_now();
     double gap = now - lastFrameTime;
     lastFrameTime = now;
-    if (gameFrontGetServerSim() != NULL && wasmPageHidden()) {
+    if (gameFrontGetServerSim() != NULL &&
+        (wasmPageHidden() || s_tutorialDialogPause)) {
       gameTickAccum = 0.0;
     } else if (gap > STALL_RESET_MS) {
       gameTickAccum = 0.0;
@@ -846,6 +857,7 @@ static void wasmEndGame(void) {
   }
   imguiLobbyFrameReset();
   tutorialOverlayReset();
+  s_tutorialDialogPause = FALSE;
 
   /* The in-game menu's toggles change only the live settings, as on the
    * desktop, which writes them when its game ends; do the same here, after
@@ -1164,6 +1176,7 @@ static void wasmGameStateReset(void) {
   s_leaveRequested = FALSE;
   isInMenu = FALSE;
   gameTickAccum = 0.0;
+  s_tutorialDialogPause = FALSE;
   s_serverTickDue = FALSE;
   lastFrameTime = emscripten_get_now();
   oldTick = SDL_GetTicks();
@@ -1548,12 +1561,17 @@ void windowAllowPlayerNameChange(bool allow) { (void)allow; }
  * (and solo-server) sim and mutes audio while backgrounded, while a
  * controller is lost, or while the Deck/tutorial pause menus are up.  The
  * browser build has no OS-level background/foreground or controller hot-plug
- * lifecycle to drive these, so they are no-ops. */
+ * lifecycle to drive these, so they are no-ops, except the tutorial's: its
+ * dialog stops the page loop's game ticks (s_tutorialDialogPause). */
 void windowSuspendBackground(ClientSim *cs) { (void)cs; }
 void windowResumeForeground(ClientSim *cs) { (void)cs; }
 void windowControllerLostPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
 void windowDeckPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
-void windowTutorialPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+void windowTutorialPause(ClientSim *cs, bool active) {
+  /* Opening pauses only the tutorial with its server in the page; closing
+     always clears, so a pause can never outlive its dialog. */
+  s_tutorialDialogPause = active && clientFrontPopupPausesGame(cs);
+}
 
 /* -------------------------------------------------------
  * Frontend callbacks — called by backend (bolo engine)
