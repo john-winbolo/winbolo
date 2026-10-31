@@ -2480,6 +2480,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_announce_remaining",                     run_scenario_announce_remaining                     },
     { "scenario_announce_position",                      run_scenario_announce_position                      },
     { "scenario_text_fit",                               run_scenario_text_fit                               },
+    { "scenario_text_layout",                            run_scenario_text_layout                            },
     { "scenario_text_tablet_band",                       run_scenario_text_tablet_band                       },
     { "scenario_text_window_shown",                      run_scenario_text_window_shown                      },
     { "scenario_text_printed_recently",                  run_scenario_text_printed_recently                  },

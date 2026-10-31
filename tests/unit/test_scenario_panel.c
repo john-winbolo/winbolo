@@ -884,6 +884,111 @@ int run_scenario_text_fit(void) {
     return 0;
 }
 
+/* Nine units a character: a stand-in for the font in the layout tests. */
+static float scnTestMeasure(const char *s, const char *e, void *ctx) {
+    (void)ctx;
+    return (float)(e - s) * 9.0f;
+}
+
+/* The Scenario Text window's layout: the script's own rows are kept while
+ * they fit across at the smallest letter height, a row that does not is
+ * broken at its spaces into even rows, and the letter height is capped.
+ *
+ * The owner's case (Tutorial station 2): two script rows in a 457 x 230
+ * text area, with the UI text 18 pixels high. */
+int run_scenario_text_layout(void) {
+    const float ui       = 18.0f;
+    const float minScale = ui * SCN_TEXT_MIN_LETTER_UI_SHARE /
+                           SCN_TEXT_LINE_UNITS;
+    const float maxScale = ui * SCN_TEXT_MAX_LETTER_UI_SHARE /
+                           SCN_TEXT_LINE_UNITS;
+    const float pads = 2.0f * SCN_TEXT_OUTLINE_UNITS + 2.0f * SCN_TEXT_PAD_UNITS;
+    char        text[128];
+    float       srcW;
+    ScnTextFit  fit;
+    int         rows;
+
+    /* Kept as the script wrote it: 2 rows, not 3. */
+    snprintf(text, sizeof(text), "%s",
+             "Low on shells? Stop on the base
+by the road to refill.");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL,
+                               457.0f / minScale - pads);
+    UT_ASSERT_MSG(rows == 2, "the owner's text took %d rows", rows);
+    UT_ASSERT(strcmp(text, "Low on shells? Stop on the base
+"
+                           "by the road to refill.") == 0);
+    /* The widest row is 31 characters, 279 units, and 6 more for the outline
+       and the pad: 285. Width allows 457 / 285, height 230 / 50; the cap,
+       1.5 x 18 = 27 pixel letters, is smaller than both. */
+    srcW = scnTextContentWidth(text, scnTestMeasure, NULL);
+    UT_ASSERT(scnNear(srcW, 285.0f));
+    fit = scnTextFitRectCapped(srcW, scnTextSourceHeight(rows), 0.0f, 0.0f,
+                               457.0f, 230.0f, maxScale);
+    UT_ASSERT_MSG(scnNear(fit.scale, maxScale),
+                  "the scale is %.3f, the cap %.3f", fit.scale, maxScale);
+    UT_ASSERT(scnNear(SCN_TEXT_LINE_UNITS * fit.scale, 27.0f));
+    /* Centred both ways in the spare space the cap leaves. */
+    UT_ASSERT(scnNear(fit.originX, (457.0f - srcW * fit.scale) * 0.5f));
+    UT_ASSERT(scnNear(fit.originY, (230.0f - 50.0f * fit.scale) * 0.5f));
+    /* Under the cap the area sets the scale: 285 wide in 228 pixels. */
+    fit = scnTextFitRectCapped(srcW, 50.0f, 0.0f, 0.0f, 228.0f, 230.0f,
+                               maxScale);
+    UT_ASSERT(scnNear(fit.scale, 0.8f));
+    /* No cap: as before. */
+    fit = scnTextFitRectCapped(srcW, 50.0f, 0.0f, 0.0f, 570.0f, 100.0f, 0.0f);
+    UT_ASSERT(scnNear(fit.scale, 2.0f));
+
+    /* Too narrow for the first row (26 characters of room): it is broken
+       into two even rows, and "base" does not sit alone. */
+    snprintf(text, sizeof(text), "%s",
+             "Low on shells? Stop on the base
+by the road to refill.");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 238.0f);
+    UT_ASSERT(rows == 3);
+    UT_ASSERT_MSG(strcmp(text, "Low on shells?
+Stop on the base
+"
+                               "by the road to refill.") == 0,
+                  "broken as \"%s\"", text);
+
+    /* Even rows, not a lone short word at the end. */
+    snprintf(text, sizeof(text), "%s", "aaaa aaaa aaaa b");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 130.0f);
+    UT_ASSERT(rows == 2);
+    UT_ASSERT_MSG(strcmp(text, "aaaa aaaa
+aaaa b") == 0, "broken as \"%s\"",
+                  text);
+    /* Three rows when two do not fit. */
+    snprintf(text, sizeof(text), "%s", "aa bb cc dd ee ff");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 50.0f);
+    UT_ASSERT(rows == 3);
+    UT_ASSERT(strcmp(text, "aa bb
+cc dd
+ee ff") == 0);
+
+    /* Never inside a word: a word too wide is a row by itself, and a row
+       with no space is not changed. */
+    snprintf(text, sizeof(text), "%s", "go Unbreakableword now");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
+    UT_ASSERT(rows == 3);
+    UT_ASSERT(strcmp(text, "go
+Unbreakableword
+now") == 0);
+    snprintf(text, sizeof(text), "%s", "Unbreakableword");
+    rows = scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
+    UT_ASSERT(rows == 1 && strcmp(text, "Unbreakableword") == 0);
+
+    /* Rows that fit are kept, and nothing to measure is no width. */
+    snprintf(text, sizeof(text), "%s", "a b
+c");
+    UT_ASSERT(scnTextWrapBalanced(text, scnTestMeasure, NULL, 500.0f) == 2);
+    UT_ASSERT(strcmp(text, "a b
+c") == 0);
+    UT_ASSERT(scnTextContentWidth("", scnTestMeasure, NULL) == 0.0f);
+    return 0;
+}
+
 /* Tablet mode's scenario text band: the source rectangle at the zoom's
  * scale, at the top middle of the view, made smaller to fit, and kept one
  * inset left of the scenario panel's square when that is shown. */

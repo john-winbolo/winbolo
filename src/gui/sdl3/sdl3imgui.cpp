@@ -6181,10 +6181,14 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * (SCN_TEXT_WINDOW_BG_OPACITY_DEFAULT).
  *
  * The lines are laid out in a source rectangle in panel
- * units and scaled into the window with one factor for both
- * axes, as large as the window allows, and centred in it
- * (scnTextFitRect in scenario_panel_draw.h, which has the
- * rule). The status line is centred across. The
+ * units, as wide as the widest row, and scaled into the
+ * window with one factor for both axes, as large as the
+ * window allows up to a letter height cap, and centred in it
+ * (scnTextArrange, and scnTextFitRectCapped in
+ * scenario_panel_draw.h, which has the rule). The script's
+ * own rows are kept; a line is broken into even rows at its
+ * spaces only when it does not fit across even at the
+ * smallest letter height (scnTextWrapBalanced). The status line is centred across. The
  * announcement keeps the share across the view that its
  * position named, and the share down is not used: it is
  * always on its own row, under the status line.
@@ -6360,14 +6364,12 @@ static int scnTextRowCount(const char *text) {
     return rows;
 }
 
-/* Breaks each row of text wider than maxW into rows that fit, in place. A
-   row breaks at its last space that fits, the space becoming "\n"; a row
-   with no such space (Chinese, Japanese and Korean are written without
-   them) breaks before the first character that does not fit, a "\n" put
-   in there while text has room for it. A script still splits its own
-   lines with "\n" where it wants them; this only keeps a line it did not
-   split, or a line in a longer language, inside the source rectangle, so
-   it is read at full size in rows rather than made smaller to fit across. */
+/* Breaks each row of text wider than maxW that has no space in it at all
+   into rows that fit, in place: Chinese, Japanese and Korean are written
+   without spaces, so such a row breaks before the first character that
+   does not fit, a "\n" put in there while text has room for it. A row with
+   a space is not changed here: scnTextWrapBalanced breaks it at its
+   spaces, and a single word too wide is never broken inside. */
 static void scnWrapRows(ImFont *font, float height, float maxW, char *text,
                         size_t cap) {
     if (font == nullptr || text == nullptr || cap == 0 || maxW <= 0.0f) {
@@ -6376,6 +6378,16 @@ static void scnWrapRows(ImFont *font, float height, float maxW, char *text,
     size_t len = strlen(text);
     char  *row = text;
     while (*row != '\0') {
+        {
+            const char *q = row;
+            while (*q != '\0' && *q != '\n' && *q != ' ') q++;
+            if (*q == ' ') {
+                /* A row with a space: on to the next row. */
+                while (*q != '\0' && *q != '\n') q++;
+                row = (char *)((*q == '\n') ? q + 1 : q);
+                continue;
+            }
+        }
         float  w         = 0.0f;
         char  *lastSpace = nullptr;
         char  *p         = row;
@@ -6471,24 +6483,96 @@ static int scnTextRowsUsed(void) {
     return s_scnText.statusRows + s_scnText.announceRows;
 }
 
-/* The lines, scaled into the rectangle at (x, y) of size w by h: the status
-   line in its rows at the top, then each announcement in order, oldest
-   first, in the rows under it. alpha is the player's text opacity, 0 to 1,
-   and fades the text and its outline. */
+/* Text measured at a row's letter height, in panel units (ScnTextMeasureFn,
+   ctx the font). */
+static float scnTextMeasure(const char *s, const char *e, void *ctx) {
+    return static_cast<ImFont *>(ctx)
+        ->CalcTextSizeA(SCN_TEXT_LINE_UNITS, FLT_MAX, 0.0f, s, e)
+        .x;
+}
+
+/* The lines laid out for an area areaW pixels wide: the source rectangle,
+   the rows the status line takes, and the largest scale (the letter cap,
+   SCN_TEXT_MAX_LETTER_UI_SHARE of the UI text height). */
+struct ScnTextArranged {
+    float srcW, srcH;
+    int   statusRows;
+    float maxScale;
+};
+
+/* Lays the lines out, in place, for an area areaW pixels wide. Each line
+   keeps the script's own rows while its widest row fits across areaW at
+   the smallest letter height (SCN_TEXT_MIN_LETTER_UI_SHARE); a row that does
+   not is broken at its spaces into even rows (scnTextWrapBalanced), and a
+   row with no space at all, in a language written without them, between
+   characters (scnWrapRows). The source rectangle is the widest row across,
+   and the rows the round has used so far down, or more when the rows here
+   are more (scnTextRowsUsed). The letter heights are shares of the UI font
+   size in the current ImGui context. */
+static ScnTextArranged scnTextArrange(ImFont *font, float areaW, char *status,
+                                      size_t statusCap, bool haveStatus,
+                                      ScnTextLine *lines, int lineCount) {
+    ScnTextArranged a = {};
+    const float ui       = ImGui::GetFontSize();
+    const float minScale = ui * SCN_TEXT_MIN_LETTER_UI_SHARE /
+                           SCN_TEXT_LINE_UNITS;
+    a.maxScale = ui * SCN_TEXT_MAX_LETTER_UI_SHARE / SCN_TEXT_LINE_UNITS;
+    const float rowMaxW =
+        (areaW > 0.0f && minScale > 0.0f)
+            ? areaW / minScale - 2.0f * SCN_TEXT_OUTLINE_UNITS -
+                  2.0f * SCN_TEXT_PAD_UNITS
+            : 0.0f;
+    float widest = 0.0f;
+    int   statusRows = 0, announceRows = 0;
+    if (haveStatus) {
+        if (rowMaxW > 0.0f) {
+            scnTextWrapBalanced(status, scnTextMeasure, font, rowMaxW);
+            scnWrapRows(font, SCN_TEXT_LINE_UNITS, rowMaxW, status, statusCap);
+        }
+        statusRows = scnTextRowCount(status);
+        widest = ImMax(widest, scnTextContentWidth(status, scnTextMeasure, font));
+    }
+    for (int i = 0; i < lineCount; i++) {
+        if (rowMaxW > 0.0f) {
+            scnTextWrapBalanced(lines[i].text, scnTextMeasure, font, rowMaxW);
+            scnWrapRows(font, SCN_TEXT_LINE_UNITS, rowMaxW, lines[i].text,
+                        sizeof(lines[i].text));
+        }
+        announceRows += scnTextRowCount(lines[i].text);
+        widest = ImMax(widest,
+                       scnTextContentWidth(lines[i].text, scnTextMeasure, font));
+    }
+    a.statusRows = ImMax(s_scnText.statusRows, statusRows);
+    a.srcH = scnTextSourceHeight(a.statusRows +
+                                 ImMax(s_scnText.announceRows, announceRows));
+    a.srcW = (widest > 0.0f) ? widest : SCN_TEXT_SRC_W_UNITS;
+    return a;
+}
+
+/* The lines, laid out (scnTextArrange) and scaled into the rectangle at
+   (x, y) of size w by h: the status line in its rows at the top, then each
+   announcement in order, oldest first, in the rows under it. alpha is the
+   player's text opacity, 0 to 1, and fades the text and its outline. pre is
+   a layout already made for these lines, or null to make one for w. */
 static void scnTextDrawLines(ImDrawList *dl, ImFont *font, float x, float y,
-                             float w, float h, float alpha,
-                             const char *status, bool haveStatus,
-                             const ScnTextLine *lines, int lineCount) {
-    const float srcW = SCN_TEXT_SRC_W_UNITS;
-    const float srcH = scnTextSourceHeight(scnTextRowsUsed());
-    const ScnTextFit fit = scnTextFitRect(srcW, srcH, x, y, w, h);
+                             float w, float h, float alpha, char *status,
+                             size_t statusCap, bool haveStatus,
+                             ScnTextLine *lines, int lineCount,
+                             const ScnTextArranged *pre = nullptr) {
+    const ScnTextArranged a =
+        pre ? *pre
+            : scnTextArrange(font, w, status, statusCap, haveStatus, lines,
+                             lineCount);
+    const float srcW = a.srcW;
+    const ScnTextFit fit =
+        scnTextFitRectCapped(srcW, a.srcH, x, y, w, h, a.maxScale);
     if (haveStatus) {
         scnTextDrawLine(dl, font, fit, srcW, 0, 0.5f,
                         (int)lroundf(255.0f * alpha), status);
     }
     /* Under the status line's rows whether or not it is up this frame, so an
        announcement does not move up when the status line goes. */
-    int row = s_scnText.statusRows;
+    int row = a.statusRows;
     for (int i = 0; i < lineCount; i++) {
         row += scnTextDrawLine(dl, font, fit, srcW, row, lines[i].share,
                                (int)lroundf(255.0f * alpha * lines[i].fade),
@@ -6569,9 +6653,9 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     if (font == nullptr) return;
 
     /* The status line, with its countdown worked out on this client's own
-       clock, then every line broken into rows that fit across the source
-       rectangle (scnWrapRows), measured at the size a row's letters have
-       there. */
+       clock. The rows counted here are the script's own; a line is broken
+       into more rows only when it is drawn, by the room it has there
+       (scnTextArrange). */
     char statusRaw[SCN_LINE_EXPANDED_MAX];
     char status[SCN_STATUS_LINE_MAX + SCN_LINE_EXPANDED_MAX];
     if (haveStatusWire) {
@@ -6580,14 +6664,8 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     const bool haveStatus =
         scnStatusLineText(haveStatusWire ? statusRaw : nullptr, statusEndsAt,
                           now, status, sizeof(status));
-    const float rowMaxW = SCN_TEXT_SRC_W_UNITS - 2.0f * SCN_TEXT_OUTLINE_UNITS;
-    if (haveStatus) {
-        scnWrapRows(font, SCN_TEXT_LINE_UNITS, rowMaxW, status, sizeof(status));
-    }
     int announceRows = 0;
     for (int i = 0; i < lineCount; i++) {
-        scnWrapRows(font, SCN_TEXT_LINE_UNITS, rowMaxW, lines[i].text,
-                    sizeof(lines[i].text));
         announceRows += scnTextRowCount(lines[i].text);
     }
     const bool haveAnnounce = lineCount > 0;
@@ -6627,7 +6705,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     if (!s_scnText.popLoaded) scnTextPopLoad();
 
     /* In the pop-out's own frame: the lines fitted into the whole OS window
-       the way the game window fits them (scnTextFitRect), on a black
+       the way the game window fits them (scnTextArrange), on a black
        backing at the player's background opacity, at the player's text
        opacity. With no line it draws nothing. */
     if (inPopout) {
@@ -6638,7 +6716,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
                            IM_COL32(0, 0, 0, scnBackingAlpha(s_scnText.bgPct)));
         scnTextDrawLines(pdl, font, 0.0f, 0.0f, ds.x, ds.y,
                          (float)s_scnText.textPct / 100.0f, status,
-                         haveStatus, lines, lineCount);
+                         sizeof(status), haveStatus, lines, lineCount);
         return;
     }
 
@@ -6680,9 +6758,20 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
                 slotX    = slot->Pos.x;
             }
         }
+        /* The lines laid out for the room the band has (as
+           scnTextTabletBand works it out), and the band at the zoom's scale
+           or the letter cap, whichever is smaller. */
+        const float tabInset = SCN_PANEL_DEFAULT_INSET * scale;
+        float room = (float)tvW;
+        if (haveSlot && slotX > (float)tvX && slotX < (float)(tvX + tvW)) {
+            room = slotX - tabInset - (float)tvX;
+        }
+        const ScnTextArranged arr =
+            scnTextArrange(font, room, status, sizeof(status), haveStatus,
+                           lines, lineCount);
         const ScnTextBand band = scnTextTabletBand(
-            (float)tvX, (float)tvY, (float)tvW, srcW, srcH, scale,
-            SCN_PANEL_DEFAULT_INSET * scale, haveSlot, slotX);
+            (float)tvX, (float)tvY, (float)tvW, arr.srcW, arr.srcH,
+            ImMin(scale, arr.maxScale), tabInset, haveSlot, slotX);
         if (band.w <= 0.0f || band.h <= 0.0f) return;
         ImDrawList *dl = ImGui::GetForegroundDrawList();
         if (dl == nullptr) return;
@@ -6691,7 +6780,8 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
                           IM_COL32(0, 0, 0,
                                    scnBackingAlpha(SCN_BG_OPACITY_DEFAULT)));
         scnTextDrawLines(dl, font, band.x, band.y, band.w, band.h, 1.0f,
-                         status, haveStatus, lines, lineCount);
+                         status, sizeof(status), haveStatus, lines, lineCount,
+                         &arr);
         return;
     }
 
@@ -6755,8 +6845,8 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
        from each, with its top on the panel's top and its bottom on the
        panel's bottom (scnTextBesidePanelPlace). Its width and height are
        that room unless the player has saved a size. The lines are fitted
-       into it as into any size (scnTextFitRect): as large as the width and
-       height allow, centred both ways. With less room
+       into it as into any size (scnTextArrange): as large as the width and
+       height allow up to the letter cap, centred both ways. With less room
        than SCN_TEXT_BESIDE_MIN_W_PX, with no panel there, or with the panel
        at a place the player chose, the older default below is used. */
     float besideX = 0.0f, besideY = 0.0f, besideW = 0.0f, besideH = 0.0f;
@@ -6883,7 +6973,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
            opacity. */
         scnTextDrawLines(dl, font, text.x, text.y, w, h,
                          (float)s_scnText.textPct / 100.0f, status,
-                         haveStatus, lines, lineCount);
+                         sizeof(status), haveStatus, lines, lineCount);
     }
     scnFloatEnd(s_scnText.win, f);
 
