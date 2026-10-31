@@ -1375,8 +1375,8 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
        or in the transport, so it lifts by itself when the work ends, when a
        watchdog gives up on it, or with the connection
        (clientSimNetLobbyMapChangeBusy). */
-    const bool busy = cs && !clientSimIsSinglePlayer(cs) &&
-                      clientSimNetLobbyMapChangeBusy(cs);
+    bool busy = cs && !clientSimIsSinglePlayer(cs) &&
+                clientSimNetLobbyMapChangeBusy(cs);
 
     /* Action bar height (Separator + button row) — reserved AT THE
      * WINDOW LEVEL via a child container around the tab bar so the
@@ -1524,6 +1524,11 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     ImVec2 chooserBodyMin = ImGui::GetItemRectMin();
     ImVec2 chooserBodyMax = ImGui::GetItemRectMax();
     ImGui::EndDisabled();
+    /* Read again now the tabs have run: a WinBolo.net download that landed
+       this frame has started its upload from inside the tab, and the buttons
+       below must not send a commit or a cancel ahead of it. */
+    busy = cs && !clientSimIsSinglePlayer(cs) &&
+           clientSimNetLobbyMapChangeBusy(cs);
 
     /* Error overlay — anchored top-right of the chooser body (over the
      * map preview's empty header area). Old behaviour rendered the
