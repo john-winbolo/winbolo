@@ -14,12 +14,14 @@
 #include "imgui_context.h"
 #include "imgui_lv_icons.h"
 #include "imgui_event_overlay.h"
+#include "imgui_clip_gif.h"
 #include "imgui.h"
 #include "imgui_internal.h"  /* SetKeyOwner: the wheel over the seek bar */
 #include "platform_config.h"
 #include "../../gui/lang.h"
 #include "../../gui/ui_mode.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
+#include "../../gui/sdl3/dialogs/clip_gif_controls.h"  /* clipGifToggleButton: the movie camera */
 
 #include <cstdio>
 #include <cstdlib>
@@ -138,18 +140,13 @@ static void seek_to_ms(uint32_t ms) {
  *
  * While the drag is measured like this ImGui only draws the slider
  * (ImGuiSliderFlags_ReadOnly) and the value is worked out here. A drag in
- * which Shift is never down does not come here at all. */
-static bool s_rel_drag = false;       /* this drag is measured from an anchor */
-static bool s_rel_fine = false;       /* at the fine rate: Shift is down */
-static uint32_t s_rel_anchor_ms = 0;  /* the log's own time */
-static float s_rel_anchor_x = 0.0f;
-static uint32_t s_rel_target_ms = 0;  /* where the drag puts playback now */
+ * which Shift is never down does not come here at all. The steps are
+ * lvFineDragStep's (lv_controls_layout.h), which the game's replay bar uses
+ * too. */
+static LvFineDrag s_rel = { false, false, 0, 0.0f, 0 };
 /* The pixels the handle of the seek bar can move over, from the last frame
  * the bar was drawn. */
 static float s_seek_usable_px = 0.0f;
-
-/* One tick of the log. */
-#define LV_CONTROLS_TICK_MS 20.0f
 
 /* Before the slider is drawn: sets or moves the anchor, and puts the value
  * the drag gives in s_seek_ratio. True when the slider is to be drawn
@@ -162,55 +159,40 @@ static bool seek_rel_drag_update(ImGuiID seek_id) {
     const bool active = ImGui::GetActiveID() == seek_id;
 
     if (lenMs == 0) {
-        s_rel_drag = false;
+        s_rel.on = false;
         return false;
     }
     if (!active) {
-        s_rel_drag = false;
+        s_rel.on = false;
         /* A press on the bar with Shift down starts a fine drag: it must
          * not first put the handle where the press was. Ctrl and a press is
          * the slider's text box, left alone. */
         return io.KeyShift && !io.KeyCtrl;
     }
     if (g.ActiveIdSource != ImGuiInputSource_Mouse || ImGui::TempInputIsActive(seek_id)) {
-        s_rel_drag = false;
+        s_rel.on = false;
         return false;
     }
     if (io.MouseDown[0]) {
-        const bool fine = io.KeyShift;
         /* The world is where the handle is: no seek is owed. */
         const bool at_world = s_is_seeking && s_seek_ratio == s_seek_applied;
-        bool anchored = false;
-        if ((fine && !(s_rel_drag && s_rel_fine)) || (!fine && s_rel_drag && s_rel_fine)) {
-            anchored = true;
-            /* Shift went down, or was let go: a new anchor, where the handle
-             * is. The sum is lv_screenSeekToPosition's own, so the anchor is
-             * the very time the drag last asked for. */
-            if (s_rel_drag) {
-                s_rel_anchor_ms = s_rel_target_ms;
-            } else if (s_is_seeking) {
-                s_rel_anchor_ms = startMs + (uint32_t)(s_seek_ratio * (float)lenMs);
+        /* Where the handle is, for the first anchor (Shift down in a drag
+         * that is not yet measured). The sum is lv_screenSeekToPosition's
+         * own, so the anchor is the very time the drag last asked for. */
+        uint32_t handleMs = 0;
+        if (!s_rel.on && io.KeyShift) {
+            if (s_is_seeking) {
+                handleMs = startMs + (uint32_t)(s_seek_ratio * (float)lenMs);
             } else {
-                uint32_t now = lv_screenGetTimeRunning();
-                if (now < startMs) now = startMs;
-                if (now > startMs + lenMs) now = startMs + lenMs;
-                s_rel_anchor_ms = now;
+                handleMs = lv_screenGetTimeRunning();
+                if (handleMs < startMs) handleMs = startMs;
+                if (handleMs > startMs + lenMs) handleMs = startMs + lenMs;
             }
-            s_rel_anchor_x = io.MousePos.x;
-            s_rel_drag = true;
-            s_rel_fine = fine;
         }
-        if (s_rel_drag) {
-            float pxPerStep = LV_CONTROLS_FINE_DRAG_PX_PER_TICK;
-            float stepMs = LV_CONTROLS_TICK_MS;
-            if (!s_rel_fine) {
-                pxPerStep = 1.0f;
-                stepMs = (float)lenMs / ((s_seek_usable_px >= 1.0f) ? s_seek_usable_px : 1.0f);
-            }
-            s_rel_target_ms = lvControlsDragTargetMs(s_rel_anchor_ms, s_rel_anchor_x,
-                                                     io.MousePos.x, pxPerStep, stepMs,
-                                                     startMs, startMs + lenMs);
-            s_seek_ratio = (float)(s_rel_target_ms - startMs) / (float)lenMs;
+        bool anchored = false;
+        if (lvFineDragStep(&s_rel, io.KeyShift, io.MousePos.x, handleMs, startMs, lenMs,
+                           s_seek_usable_px, &anchored)) {
+            s_seek_ratio = (float)(s_rel.targetMs - startMs) / (float)lenMs;
             if (anchored && at_world) {
                 /* The same time written as another fraction: still no seek
                  * owed, or the scrub would go back to where it is. */
@@ -219,7 +201,7 @@ static bool seek_rel_drag_update(ImGuiID seek_id) {
         }
     }
     /* On the frame the button is let go the value stays what it was. */
-    return s_rel_drag;
+    return s_rel.on;
 }
 
 /* Shift and the wheel over the seek bar, or over the lane of event markers
@@ -399,6 +381,9 @@ static void controls_jump_tip(bool known, langid fmt, langid plain, uint32_t ms,
 void lv_imgui_controls_window(void) {
     bool seek_slider_drawn = false;
 
+    /* The GIF window goes over this panel; with the panel shut it goes to
+     * the bottom of the screen. Set again below while the panel shows. */
+    lv_clip_gif_set_anchor(false, 0.0f, 0.0f, 0.0f, 0.0f);
     if (!lv_g_show_controls_window) {
         controls_drop_scrub();
         return;
@@ -421,9 +406,14 @@ void lv_imgui_controls_window(void) {
     snprintf(ctrl_title, sizeof(ctrl_title), "%s###controls", langGetText(STR_LV_WIN_CONTROLS));
     if (ImGui::Begin(ctrl_title, &lv_g_show_controls_window, ImGuiWindowFlags_NoCollapse)) {
         lv_imgui_keep_window_on_screen();
+        {
+            const ImVec2 wp = ImGui::GetWindowPos();
+            const ImVec2 ws = ImGui::GetWindowSize();
+            lv_clip_gif_set_anchor(true, wp.x, wp.y, wp.x + ws.x, wp.y + ws.y);
+        }
 
         /* The top row: the playback buttons (back to the last snapshot,
-         * play, pause, on to the next snapshot, and on a live feed back to
+         * play or pause, on to the next snapshot, and on a live feed back to
          * the live head), the speed and the "Overlay events" list. Each
          * button has a drawn icon (imgui_lv_icons.cpp) and says what it
          * does, with its key, in its tooltip. A button whose action has
@@ -454,7 +444,10 @@ void lv_imgui_controls_window(void) {
 
         LvControlsTopIn topIn;
         topIn.contentW = ImGui::GetContentRegionAvail().x;
-        topIn.buttons = live ? 5 : 4;
+        /* The fourth button: back to the live head on a live feed, else the
+         * movie camera of recording mode where this build makes GIFs. */
+        const bool recordButton = !live && lv_clip_gif_available();
+        topIn.buttons = (live || recordButton) ? 4 : 3;
         topIn.btnSide = btn;
         topIn.btnGap = style.ItemInnerSpacing.x;
         topIn.labelW = ImGui::CalcTextSize(speedLbl).x + style.ItemSpacing.x;
@@ -477,36 +470,34 @@ void lv_imgui_controls_window(void) {
                           "Ctrl+R", tip, sizeof(tip));
         controls_tooltip(tip, backKnown);
 
+        /* One button for play and pause, as the game's replay has it
+         * (lvPlayToggle): the pause icon while the log plays, else the play
+         * icon. Pause holds playback where it is; nothing moves the
+         * playhead and the log stays open. (The Stop the pause button
+         * replaced closed the log; Action > Stop still does.) One ID for
+         * both, so a press is not lost as the icon changes. */
         controls_place(topX, &topLine, top.btnLine[1], top.btnX[1]);
-        ImGui::BeginDisabled(!loaded || playing || atEnd);
-        if (lv_icon_button("play", LV_ICON_PLAY, btn, top.btnW)) {
-            lv_windowPlay();
-        }
-        ImGui::EndDisabled();
         {
+            const LvPlayToggle pt = lvPlayToggle(loaded, playing, atEnd);
+            ImGui::BeginDisabled(!pt.enabled);
+            if (lv_icon_button("playpause", pt.pause ? LV_ICON_PAUSE : LV_ICON_PLAY,
+                               btn, top.btnW)) {
+                if (pt.pause) {
+                    lv_windowPause();
+                } else {
+                    lv_windowPlay();
+                }
+            }
+            ImGui::EndDisabled();
             char keys[64];
-            snprintf(keys, sizeof(keys), "Ctrl+P, %s", langGetText(STR_OSK_SPACE));
-            controls_key_tip(langGetText(STR_LV_PLAY), keys, tip, sizeof(tip));
+            snprintf(keys, sizeof(keys), "%s, %s", pt.pause ? "Ctrl+U" : "Ctrl+P",
+                     langGetText(STR_OSK_SPACE));
+            controls_key_tip(langGetText(pt.pause ? STR_LV_PAUSE : STR_LV_PLAY), keys, tip,
+                             sizeof(tip));
+            controls_tooltip(tip, pt.enabled);
         }
-        controls_tooltip(tip, loaded && !playing && !atEnd);
 
-        /* Pause holds playback where it is; nothing moves the playhead and
-         * the log stays open. (The Stop this button replaced closed the
-         * log; Action > Stop still does.) */
         controls_place(topX, &topLine, top.btnLine[2], top.btnX[2]);
-        ImGui::BeginDisabled(!playing);
-        if (lv_icon_button("pause", LV_ICON_PAUSE, btn, top.btnW)) {
-            lv_windowPause();
-        }
-        ImGui::EndDisabled();
-        {
-            char keys[64];
-            snprintf(keys, sizeof(keys), "Ctrl+U, %s", langGetText(STR_OSK_SPACE));
-            controls_key_tip(langGetText(STR_LV_PAUSE), keys, tip, sizeof(tip));
-        }
-        controls_tooltip(tip, playing);
-
-        controls_place(topX, &topLine, top.btnLine[3], top.btnX[3]);
         /* A live feed has no snapshot ahead to name; the button still plays
          * on to the head. */
         const bool fwdOn = fwdKnown || (loaded && live);
@@ -522,11 +513,30 @@ void lv_imgui_controls_window(void) {
         /* Spectator live-DVR: jump back to the live head and resume following it.
          * Shown only on the live spectator feed, not for standalone .wbv playback. */
         if (live) {
-            controls_place(topX, &topLine, top.btnLine[4], top.btnX[4]);
+            controls_place(topX, &topLine, top.btnLine[3], top.btnX[3]);
             if (lv_icon_button("live", LV_ICON_TO_END, btn, top.btnW)) {
                 lv_screenSpecJumpToLive();
             }
             controls_tooltip(langGetText(STR_LV_TIP_LIVE), true);
+        }
+
+        /* Recording mode, as the game's replay has it: the movie camera
+         * turns on the GIF controls (the GIF window, the GIF's span on the
+         * timeline and the crop frame on the map). Pressed while the GIF
+         * window is open, and held still while a GIF is made. */
+        if (recordButton) {
+            controls_place(topX, &topLine, top.btnLine[3], top.btnX[3]);
+            const bool canToggle = lv_clip_gif_can_toggle_mode();
+            ImGui::BeginDisabled(!canToggle);
+            if (clipGifToggleButton("##recmode", lv_clip_gif_tools_shown(),
+                                    CLIP_GIF_GLYPH_CAMERA, NULL,
+                                    ImVec2(top.btnW, btn))) {
+                lv_clip_gif_toggle_mode();
+            }
+            ImGui::EndDisabled();
+            controls_key_tip(langGetText(STR_REEL_RECORD_MODE_TIP), "Ctrl+G", tip,
+                             sizeof(tip));
+            controls_tooltip(tip, canToggle);
         }
 
         /* The speed: its label and a slider. In a panel too narrow for both
@@ -556,6 +566,10 @@ void lv_imgui_controls_window(void) {
          * only its arrow, which says its name in a tooltip. */
         controls_place(topX, &topLine, top.comboLine, top.comboX);
         lv_event_overlay_combo(top.comboFull);
+
+        /* The GIF controls of recording mode are in the GIF window
+         * (lv_clip_gif_render); here only the GIF's span on the timeline. */
+        const bool gifTools = lv_clip_gif_tools_shown();
 
         /* Seek slider row */
         if (s_lv->isLoaded) {
@@ -624,6 +638,8 @@ void lv_imgui_controls_window(void) {
             }
             bool seek_changed = ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, seek_fmt,
                                                    seek_flags);
+            const ImVec2 seek_min = ImGui::GetItemRectMin();
+            const ImVec2 seek_max = ImGui::GetItemRectMax();
             {
                 /* As ImGui's own slider has it: two pixels at each end, and
                  * the handle is all on the bar. */
@@ -633,7 +649,7 @@ void lv_imgui_controls_window(void) {
             }
             /* A read-only slider reports no change: a drag that is measured
              * from an anchor starts the scrub by being held. */
-            if (seek_changed || (s_rel_drag && ImGui::IsItemActive())) {
+            if (seek_changed || (s_rel.on && ImGui::IsItemActive())) {
                 if (!s_is_seeking) {
                     /* Freeze playback for the whole scrub rather than
                      * pausing and resuming around every applied seek: that
@@ -662,8 +678,8 @@ void lv_imgui_controls_window(void) {
                     apply = (now - s_seek_applied_at >= LV_SCRUB_BACK_SECS);
                 }
                 if (apply) {
-                    if (s_rel_drag) {
-                        seek_to_ms(s_rel_target_ms);
+                    if (s_rel.on) {
+                        seek_to_ms(s_rel.targetMs);
                     } else {
                         seek_to_ratio(s_seek_ratio);
                     }
@@ -685,8 +701,8 @@ void lv_imgui_controls_window(void) {
                  * backward one to the decoder, a snapshot restore and a
                  * decode of the whole round up to here, for no change. */
                 if (s_seek_ratio != s_seek_applied) {
-                    if (s_rel_drag) {
-                        seek_to_ms(s_rel_target_ms);
+                    if (s_rel.on) {
+                        seek_to_ms(s_rel.targetMs);
                     } else {
                         seek_to_ratio(s_seek_ratio);
                     }
@@ -698,9 +714,18 @@ void lv_imgui_controls_window(void) {
                 s_seek_was_playing = false;
             }
             if (!ImGui::IsItemActive()) {
-                s_rel_drag = false;
+                s_rel.on = false;
             }
             seek_wheel_step(seek_top, ImGui::GetItemRectMax());
+
+            /* The GIF's span over the slider, after the slider's own state
+             * is read above. While the slider is pressed or dragged the span
+             * goes with it, as in the game's replay. */
+            if (gifTools) {
+                const uint32_t seekMs = (uint32_t)(s_seek_ratio * (float)totalTime);
+                lv_clip_gif_seek_marker(seek_min.x, seek_min.y, seek_max.x, seek_max.y,
+                                        s_is_seeking, seekMs, totalTime);
+            }
 
             ImGui::PopItemWidth();
 

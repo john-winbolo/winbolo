@@ -820,7 +820,8 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
         src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
-        src/gui/sdl3/dialogs/lobby/lobby_clip_gif_gallery.cpp
+        src/gui/sdl3/dialogs/clip_gif_capture.cpp
+        src/gui/sdl3/dialogs/clip_gif_gallery.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
@@ -1664,11 +1665,12 @@ target_sources(WinBoloIOS PRIVATE ${IOS_MAPEDITOR_SOURCES})
 target_compile_definitions(WinBoloIOS PRIVATE MAPEDITOR_WBN_OPEN=1)
 source_group("Map Editor" FILES ${IOS_MAPEDITOR_SOURCES})
 target_include_directories(WinBoloIOS PRIVATE src/third_party/ImGuiColorTextEdit)
-# The recap's clip GIF export and the encoder's one implementation TU. The
-# clip is written into Documents (lobby_clip_gif.cpp), as there is no save
-# dialog.
+# The recap's clips (Preview clip and Save clip) and the encoder's one
+# implementation TU. The GIF is written into Documents (clip_gif_capture.cpp),
+# as there is no save dialog.
 target_sources(WinBoloIOS PRIVATE
     src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+    src/gui/sdl3/dialogs/clip_gif_capture.cpp
     src/third_party/msf_gif/msf_gif_impl.c
     # The GIF length rules the reel's length field and marker use. The GIF
     # gallery is not in the iOS build (BOLO_CLIP_GIF_GALLERY).
@@ -2092,7 +2094,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
     src/client_frontend/client_frontend_sp.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif_gallery.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/clip_gif_capture.cpp src/gui/sdl3/dialogs/clip_gif_gallery.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/wbn_browser_sort.c
     src/gui/sdl3/map_preview_popup.cpp
@@ -2243,6 +2245,9 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
+    # Action > Recording Mode and Windows > Clips. The GIF code and the gallery
+    # it uses are in CLIENT_SOURCES already.
+    src/logviewer/imgui/imgui_clip_gif.cpp
     src/logviewer/platform/platform_config.c
     src/logviewer/platform/platform_dialogs.c
     # The client links the real game-view renderer (game_view.c) plus an
@@ -2893,6 +2898,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
+    src/logviewer/imgui/imgui_clip_gif.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/mapview.c
@@ -2917,6 +2923,18 @@ set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
 
+# Action > Recording Mode and Windows > Clips (imgui_clip_gif.cpp): the GIF
+# encoder, the GIF rules and metadata files, the clipboard copy, Preview
+# clip and Save clip with the progress window, and the gallery window. The
+# game's replay uses the same files, which CLIENT_SOURCES also lists.
+set(LOGVIEWER_CLIP_GIF_SOURCES
+    src/third_party/msf_gif/msf_gif_impl.c
+    src/gui/sdl3/dialogs/clip_gif_core.c
+    src/gui/sdl3/dialogs/clip_gif_clipboard.c
+    src/gui/sdl3/dialogs/clip_gif_capture.cpp
+    src/gui/sdl3/dialogs/clip_gif_gallery.cpp
+)
+
 set(LOGVIEWER_PLATFORM_SOURCES
     src/logviewer/platform/platform_config.c
     src/logviewer/platform/platform_dialogs.c
@@ -2934,6 +2952,7 @@ add_executable(LogViewer
     ${LOGVIEWER_PLATFORM_SOURCES}
     ${LOGVIEWER_WBN_SOURCES}
     ${LOGVIEWER_WBN_BROWSER_SOURCES}
+    ${LOGVIEWER_CLIP_GIF_SOURCES}
     # Spectator replay translator: spec_seed_load.c calls specReplay* but the
     # standalone links no bolo sim, so compile the translator in directly. It
     # pulls only public bolo headers (spectator_replay.h / log.h / platform_net.h)
@@ -6012,6 +6031,26 @@ set(_unit_test_names
     clip_gif_gallery_scan
     clip_gif_text_fill
     clip_gif_preview_cap
+    clip_gif_current_game
+    clip_gif_delete
+    clip_gif_frame_count
+    clip_gif_centre_crop
+    clip_gif_names
+    clip_gif_frame_box
+    clip_gif_frame_drag
+    clip_gif_crop_from_frame
+    clip_gif_blit_view
+    clip_gif_mode_state
+    clip_gif_preview_play
+    clip_gif_choose_crop
+    clip_gif_meta_begin
+    clip_gif_span_place
+    clip_gif_zoom_axis
+    clip_gif_span_drag
+    clip_gif_zoom_grow
+    clip_gif_window_place
+    clip_gif_span_move
+    clip_gif_grip_box
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures
@@ -7811,6 +7850,7 @@ set(_unit_test_names
     lv_controls_bottom_row
     lv_controls_wheel_step
     lv_controls_fine_drag
+    lv_play_toggle
     lv_zoom_percent
     lv_fullscreen_key
     lv_event_scan_returns_to_start

@@ -439,10 +439,12 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_commands.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
-    # The recap's clip GIF export and the encoder's one implementation TU.
-    # The clip is written into the app's files directory (lobby_clip_gif.cpp),
-    # as there is no save dialog, and offered through the share sheet.
+    # The recap's clips (Preview clip and Save clip) and the encoder's one
+    # implementation TU. The GIF is written into the app's files directory
+    # (clip_gif_capture.cpp), as there is no save dialog, and offered
+    # through the share sheet.
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/clip_gif_capture.cpp
     ${PROJ_ROOT}/src/third_party/msf_gif/msf_gif_impl.c
     # The GIF length rules the reel's length field and marker use. The GIF
     # gallery is not in the Android build (BOLO_CLIP_GIF_GALLERY).
@@ -629,10 +631,11 @@ set_source_files_properties(${PROJ_ROOT}/src/third_party/tweetnacl/tweetnacl.c
     "-Wno-shorten-64-to-32;-Wno-unterminated-string-initialization;-Wno-unknown-warning-option")
 # msf_gif.h tests the MSVC-only _M_IX86_FP in an #if, which this target's
 # -Werror=undef (below) refuses on the ABIs where __SSE2__ does not settle
-# the test first; the two files that include it are let off that one.
+# the test first; the files that include it are let off that one.
 set_source_files_properties(
     ${PROJ_ROOT}/src/third_party/msf_gif/msf_gif_impl.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/clip_gif_capture.cpp
     PROPERTIES COMPILE_OPTIONS "-Wno-undef")
 # ImGuiColorTextEdit: the same two warnings the root CMakeLists.txt turns
 # off for it, so the vendored widget stays as upstream wrote it.

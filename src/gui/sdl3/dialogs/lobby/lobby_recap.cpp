@@ -39,7 +39,13 @@
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+/* Before lobby_internal.h: a bolo header it pulls in defines IsEmpty as a
+ * macro, and imgui_internal.h (which clip_gif_controls.h needs) uses that name. */
+#include "imgui_internal.h"
 #include "lobby_internal.h"
+#if BOLO_RECAP_CLIP_GIF
+#include "../clip_gif_controls.h"  /* clipGifPreviewButton / clipGifButton */
+#endif
 #include "../../wb_theme.h"  /* g_theme / wbThemeColor — team tints, lock badge */
 extern "C" {
 #include "client_sim.h"      /* ClientSim + lobby getters; MAX_TANKS, ClientLobbySlot */
@@ -367,26 +373,38 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
                     langGetTextFmt(lastRoundHighlightLabel(h), &args));
 
 #if BOLO_RECAP_CLIP_GIF
-                /* Export control, right-aligned so the rows keep a column of them
-                 * however long the sentences run. Sized to one text line, so the
-                 * row stays the height the selectable underneath was given: the
-                 * icon takes the line height and the frame padding loses its
-                 * vertical half, which is what SmallButton does for a caption.
-                 * The glyph says what the control produces and the tooltip names
-                 * the format; with no icon loaded the format's name is the
-                 * caption, as it was before. Shown only in the reel's
-                 * recording mode, like the GIF controls on its transport
-                 * row. */
+                /* Preview clip and Save clip, right-aligned so the rows keep a
+                 * column of them however long the sentences run. Sized to one
+                 * text line, so the row stays the height the selectable
+                 * underneath was given: each button takes the line height and
+                 * the frame padding loses its vertical half. Shown only in the
+                 * reel's recording mode, like the GIF controls on its
+                 * transport row. */
                 if (lvEmbedIsActive() &&
-                    clipGifToolsShown(lobbyReel()->recordMode,
+                    clipGifToolsShown(lobbyReel()->clip.on,
                                       lobbyClipGifActive())) {
+                    /* Preview clip, then Save clip, as on the transport
+                     * row. */
+                    const ImTextureID picture =
+                        (ImTextureID)lobbyIcons()->picture;
+                    const float pairW = clipGifPreviewButtonWidth() +
+                                        ImGui::GetStyle().ItemSpacing.x +
+                                        clipGifButtonWidth(picture != 0);
                     ImGui::SameLine();
                     ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x -
-                                         lobbyClipGifButtonWidth());
+                                         pairW);
                     ImGui::PushID(i);
-                    if (lobbyClipGifButton("##clipgif", true)) {
+                    ImGui::BeginDisabled(lobbyClipGifActive());
+                    if (clipGifPreviewButton("##clippreview",
+                                             lobbyClipGifPreviewRow() == i,
+                                             true)) {
+                        lobbyClipGifPreviewClip(i, h);
+                    }
+                    ImGui::SameLine();
+                    if (clipGifButton("##clipgif", picture, true)) {
                         lobbyClipGifStartClip(h, cs);
                     }
+                    ImGui::EndDisabled();
                     ImGui::PopID();
                 }
 #endif

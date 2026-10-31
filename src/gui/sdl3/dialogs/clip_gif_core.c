@@ -112,6 +112,240 @@ uint32_t clipGifLenFromTimelineX(float x, uint32_t curMs, uint32_t totalMs,
     return clipGifLenClampMs(lenMs, curMs, totalMs);
 }
 
+/* ── Crop frame ────────────────────────────────────────────────────── */
+
+ClipGifBox clipGifFrameToBox(const ClipGifFrame *f, const ClipGifBox *image) {
+    ClipGifBox b = { 0.0f, 0.0f, 0.0f, 0.0f };
+    if (f == NULL || image == NULL) {
+        return b;
+    }
+    const float w = image->x1 - image->x0;
+    const float h = image->y1 - image->y0;
+    b.x0 = image->x0 + f->x0 * w;
+    b.y0 = image->y0 + f->y0 * h;
+    b.x1 = image->x0 + f->x1 * w;
+    b.y1 = image->y0 + f->y1 * h;
+    return b;
+}
+
+void clipGifFrameFromBox(ClipGifFrame *f, const ClipGifBox *box,
+                         const ClipGifBox *image) {
+    if (f == NULL || box == NULL || image == NULL) {
+        return;
+    }
+    const float w = image->x1 - image->x0;
+    const float h = image->y1 - image->y0;
+    if (!(w > 0.0f) || !(h > 0.0f)) {
+        return;
+    }
+    f->x0 = (box->x0 - image->x0) / w;
+    f->y0 = (box->y0 - image->y0) / h;
+    f->x1 = (box->x1 - image->x0) / w;
+    f->y1 = (box->y1 - image->y0) / h;
+}
+
+int clipGifFrameHit(const ClipGifBox *box, float mx, float my, float grab) {
+    if (box == NULL) {
+        return 0;
+    }
+    const float g = grab;
+    if (!(mx >= box->x0 - g && mx <= box->x1 + g &&
+          my >= box->y0 - g && my <= box->y1 + g)) {
+        return 0;
+    }
+    int hot = 0;
+    if (mx >= box->x0 - g && mx <= box->x0 + g) hot |= CLIP_GIF_GRAB_LEFT;
+    if (mx >= box->x1 - g && mx <= box->x1 + g) hot |= CLIP_GIF_GRAB_RIGHT;
+    if (my >= box->y0 - g && my <= box->y0 + g) hot |= CLIP_GIF_GRAB_TOP;
+    if (my >= box->y1 - g && my <= box->y1 + g) hot |= CLIP_GIF_GRAB_BOTTOM;
+    if (hot == 0 && mx > box->x0 && mx < box->x1 && my > box->y0 &&
+        my < box->y1) {
+        hot = CLIP_GIF_GRAB_MOVE;
+    }
+    return hot;
+}
+
+void clipGifFrameDrag(ClipGifBox *box, int grab, float dx, float dy,
+                      const ClipGifBox *image, float minSize) {
+    if (box == NULL || image == NULL || grab == 0) {
+        return;
+    }
+    float x0 = box->x0, y0 = box->y0, x1 = box->x1, y1 = box->y1;
+    if (grab & CLIP_GIF_GRAB_MOVE) {
+        /* Both edges together, stopped by the image rather than squashed
+         * against it. */
+        const float w = x1 - x0, h = y1 - y0;
+        x0 += dx;
+        y0 += dy;
+        if (x0 < image->x0) x0 = image->x0;
+        if (y0 < image->y0) y0 = image->y0;
+        if (x0 + w > image->x1) x0 = image->x1 - w;
+        if (y0 + h > image->y1) y0 = image->y1 - h;
+        x1 = x0 + w;
+        y1 = y0 + h;
+    } else {
+        if (grab & CLIP_GIF_GRAB_LEFT)   x0 += dx;
+        if (grab & CLIP_GIF_GRAB_RIGHT)  x1 += dx;
+        if (grab & CLIP_GIF_GRAB_TOP)    y0 += dy;
+        if (grab & CLIP_GIF_GRAB_BOTTOM) y1 += dy;
+        if (x0 < image->x0) x0 = image->x0;
+        if (y0 < image->y0) y0 = image->y0;
+        if (x1 > image->x1) x1 = image->x1;
+        if (y1 > image->y1) y1 = image->y1;
+        /* No turning inside out: the edge that moves stops minSize short
+         * of the edge across from it. */
+        if (x1 - x0 < minSize) {
+            if (grab & CLIP_GIF_GRAB_LEFT) x0 = x1 - minSize;
+            else                           x1 = x0 + minSize;
+        }
+        if (y1 - y0 < minSize) {
+            if (grab & CLIP_GIF_GRAB_TOP) y0 = y1 - minSize;
+            else                          y1 = y0 + minSize;
+        }
+        /* On a very small view that can put an edge out of the image again;
+         * once more, so it never is. */
+        if (x0 < image->x0) {
+            x0 = image->x0;
+            if (x1 < x0 + minSize) x1 = x0 + minSize;
+        }
+        if (y0 < image->y0) {
+            y0 = image->y0;
+            if (y1 < y0 + minSize) y1 = y0 + minSize;
+        }
+    }
+    box->x0 = x0;
+    box->y0 = y0;
+    box->x1 = x1;
+    box->y1 = y1;
+}
+
+bool clipGifCropFromFrame(const ClipGifFrame *f, int viewX, int viewY,
+                          int viewW, int viewH, ClipGifRect *out) {
+    if (out == NULL) {
+        return false;
+    }
+    SDL_zerop(out);
+    if (f == NULL || viewW <= 0 || viewH <= 0) {
+        return false;
+    }
+    int fx0 = (int)(f->x0 * (float)viewW + 0.5f);
+    int fy0 = (int)(f->y0 * (float)viewH + 0.5f);
+    int fx1 = (int)(f->x1 * (float)viewW + 0.5f);
+    int fy1 = (int)(f->y1 * (float)viewH + 0.5f);
+    if (fx0 < 0) fx0 = 0;
+    if (fy0 < 0) fy0 = 0;
+    if (fx1 > viewW) fx1 = viewW;
+    if (fy1 > viewH) fy1 = viewH;
+    /* At least one pixel, and inside the view. */
+    if (fx0 > viewW - 1) fx0 = viewW - 1;
+    if (fy0 > viewH - 1) fy0 = viewH - 1;
+    int w = fx1 - fx0;
+    int h = fy1 - fy0;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    out->x = viewX + fx0;
+    out->y = viewY + fy0;
+    out->w = w;
+    out->h = h;
+    return true;
+}
+
+/* ── The Log Viewer's map ──────────────────────────────────────────── */
+
+/* One axis of clipGifBlitView. srcStart is in render-target pixels, the
+ * rest in frame buffer pixels. False when no whole pixel shows. */
+static bool clipGifBlitAxis(float srcStart, float srcLen, float dstStart,
+                            float dstLen, float areaStart, float areaEnd,
+                            int *sliceStart, int *sliceLen, float *viewStart,
+                            float *viewEnd) {
+    if (!(srcLen > 0.0f) || !(dstLen > 0.0f)) {
+        return false;
+    }
+    const float scale = dstLen / srcLen;  /* frame buffer pixels a pixel */
+    float lo = (areaStart > dstStart) ? areaStart : dstStart;
+    float hi = (areaEnd < dstStart + dstLen) ? areaEnd : dstStart + dstLen;
+    if (!(hi > lo)) {
+        return false;
+    }
+    /* Whole pixels only: the first one that starts in the area and the last
+     * one that ends in it. The small allowance keeps a pixel whose edge is
+     * on the area's edge, give or take the error of a float. */
+    float k0 = ceilf((lo - dstStart) / scale - 0.001f);
+    float k1 = floorf((hi - dstStart) / scale + 0.001f);
+    if (k0 < 0.0f) k0 = 0.0f;
+    if (k1 > floorf(srcLen + 0.001f)) k1 = floorf(srcLen + 0.001f);
+    if (!(k1 > k0)) {
+        return false;
+    }
+    *sliceStart = (int)floorf(srcStart + 0.5f) + (int)k0;
+    *sliceLen   = (int)(k1 - k0);
+    *viewStart  = dstStart + k0 * scale;
+    *viewEnd    = dstStart + k1 * scale;
+    return true;
+}
+
+bool clipGifBlitView(const ClipGifBox *src, const ClipGifBox *dst,
+                     const ClipGifBox *area, float pxScale,
+                     ClipGifRect *slice, ClipGifBox *view) {
+    if (slice == NULL || view == NULL) {
+        return false;
+    }
+    SDL_zerop(slice);
+    SDL_zerop(view);
+    if (src == NULL || dst == NULL || area == NULL) {
+        return false;
+    }
+    if (!(pxScale > 0.0f)) {
+        pxScale = 1.0f;
+    }
+    ClipGifRect s;
+    ClipGifBox  v;
+    if (!clipGifBlitAxis(src->x0, src->x1 - src->x0, dst->x0, dst->x1 - dst->x0,
+                         area->x0 * pxScale, area->x1 * pxScale, &s.x, &s.w,
+                         &v.x0, &v.x1) ||
+        !clipGifBlitAxis(src->y0, src->y1 - src->y0, dst->y0, dst->y1 - dst->y0,
+                         area->y0 * pxScale, area->y1 * pxScale, &s.y, &s.h,
+                         &v.y0, &v.y1)) {
+        return false;
+    }
+    *slice = s;
+    view->x0 = v.x0 / pxScale;
+    view->y0 = v.y0 / pxScale;
+    view->x1 = v.x1 / pxScale;
+    view->y1 = v.y1 / pxScale;
+    return true;
+}
+
+/* ── Recording mode state ──────────────────────────────────────────── */
+
+void clipGifModeReset(ClipGifMode *m) {
+    if (m == NULL) {
+        return;
+    }
+    const ClipGifMode init = CLIP_GIF_MODE_INIT;
+    *m = init;
+}
+
+bool clipGifModeToggle(ClipGifMode *m, bool captureActive) {
+    if (m == NULL) {
+        return false;
+    }
+    if (!captureActive) {
+        m->on = !m->on;
+        if (m->on) {
+            m->spanSet = false;
+        }
+    }
+    return m->on;
+}
+
+void clipGifModeFitFrame(ClipGifMode *m, int viewW, int viewH) {
+    if (m == NULL || m->frameSet || viewW <= 0 || viewH <= 0) {
+        return;
+    }
+    m->frame = clipGifFrameDefault(viewW, viewH);
+}
+
 /* ── Metadata ──────────────────────────────────────────────────────── */
 
 char *clipGifMetaToJson(const ClipGifMeta *m) {
@@ -135,6 +369,11 @@ char *clipGifMetaToJson(const ClipGifMeta *m) {
     cJSON_AddNumberToObject(root, "durationMs", (double)m->durationMs);
     cJSON_AddNumberToObject(root, "width", (double)m->width);
     cJSON_AddNumberToObject(root, "height", (double)m->height);
+    /* Left out when no replay was open, so the file reads the same as one
+     * written before the field was added. */
+    if (m->game[0] != '\0') {
+        cJSON_AddStringToObject(root, "game", m->game);
+    }
     char *text = cJSON_Print(root);
     cJSON_Delete(root);
     return text;
@@ -215,6 +454,9 @@ bool clipGifMetaFromJson(const char *text, size_t len, ClipGifMeta *out) {
                                            4294967295.0, 0.0);
     out->width  = (int)metaNumber(root, "width", 0.0, 65535.0, 0.0);
     out->height = (int)metaNumber(root, "height", 0.0, 65535.0, 0.0);
+    /* Missing in a file written before the field was added: the GIF is then
+     * listed with the earlier games. */
+    metaString(root, "game", out->game, sizeof(out->game));
     out->hasMeta = true;
     cJSON_Delete(root);
     return true;
@@ -361,6 +603,108 @@ int clipGifGalleryScan(const char *dir, ClipGifMeta **out) {
     return count;
 }
 
+bool clipGifDeleteFiles(const char *gifPath) {
+    if (gifPath == NULL || gifPath[0] == '\0') {
+        return false;
+    }
+    /* The GIF first: when it cannot be removed, its metadata stays with it,
+     * so the row the player still sees keeps its details. */
+    if (!SDL_RemovePath(gifPath)) {
+        SDL_PathInfo info;
+        if (SDL_GetPathInfo(gifPath, &info)) {
+            return false;  /* still there */
+        }
+    }
+    char metaPath[1024];
+    if (clipGifMetaPathFor(gifPath, metaPath, sizeof(metaPath))) {
+        /* A GIF with no metadata file is normal, so a failure here is not
+         * one the player needs to hear about. */
+        SDL_RemovePath(metaPath);
+    }
+    return true;
+}
+
+int clipGifSelectAfterRemove(int count, int removed) {
+    if (count <= 1 || removed < 0 || removed >= count) {
+        return (count > 1) ? 0 : -1;
+    }
+    /* The row below moves up into the removed row's place; the last row has
+     * none below it, so the row above is selected. */
+    return (removed < count - 1) ? removed : removed - 1;
+}
+
+/* ── Games ─────────────────────────────────────────────────────────── */
+
+/* 64-bit FNV-1a. */
+uint64_t clipGifGameIdBegin(void) {
+    return 14695981039346656037ull;
+}
+
+uint64_t clipGifGameIdAdd(uint64_t h, const void *data, size_t len) {
+    const unsigned char *p = (const unsigned char *)data;
+    if (p == NULL) {
+        return h;
+    }
+    for (size_t i = 0; i < len; i++) {
+        h ^= (uint64_t)p[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+void clipGifGameIdEnd(uint64_t h, char *out, size_t outLen) {
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    SDL_snprintf(out, outLen, "%016llx", (unsigned long long)h);
+}
+
+void clipGifGameIdFromBytes(const void *data, size_t len, char *out,
+                            size_t outLen) {
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (data == NULL || len == 0) {
+        return;
+    }
+    clipGifGameIdEnd(clipGifGameIdAdd(clipGifGameIdBegin(), data, len), out,
+                     outLen);
+}
+
+bool clipGifMetaIsCurrentGame(const ClipGifMeta *m, const char *currentGame) {
+    if (m == NULL || currentGame == NULL || currentGame[0] == '\0' ||
+        m->game[0] == '\0') {
+        return false;
+    }
+    return SDL_strcmp(m->game, currentGame) == 0;
+}
+
+int clipGifMetaCurrentGameFirst(ClipGifMeta *items, int count,
+                                const char *currentGame) {
+    if (items == NULL || count <= 0) {
+        return 0;
+    }
+    /* Each item from the current game moves up to just after the ones
+     * already moved, and the items it passes move down one place, so both
+     * groups keep their order. The lists are short, so moving the items
+     * one by one is fast enough and needs no second array. */
+    int front = 0;
+    for (int i = 0; i < count; i++) {
+        if (!clipGifMetaIsCurrentGame(&items[i], currentGame)) {
+            continue;
+        }
+        if (i != front) {
+            ClipGifMeta keep = items[i];
+            SDL_memmove(&items[front + 1], &items[front],
+                        (size_t)(i - front) * sizeof(items[0]));
+            items[front] = keep;
+        }
+        front++;
+    }
+    return front;
+}
+
 static bool localDateTime(int64_t createdUnix, SDL_DateTime *dt) {
     SDL_Time t = (SDL_Time)createdUnix * (SDL_Time)SDL_NS_PER_SECOND;
     return SDL_TimeToDateTime(t, dt, true);
@@ -475,4 +819,492 @@ void clipGifFillString1(const char *fmt, const char *value, char *out,
     } else {
         out[used] = '\0';
     }
+}
+
+/* ── Capture ─────────────────────────────────────────────────────── */
+
+uint32_t clipGifFrameCount(uint32_t durationMs) {
+    uint32_t frames = durationMs / CLIP_GIF_FRAME_MS;
+    if (frames > CLIP_GIF_MAX_FRAMES) {
+        frames = CLIP_GIF_MAX_FRAMES;
+    }
+    if (frames < CLIP_GIF_MIN_FRAMES) {
+        frames = CLIP_GIF_MIN_FRAMES;
+    }
+    return frames;
+}
+
+bool clipGifCentreCrop(int srcX, int srcY, int srcW, int srcH, int maxW,
+                       ClipGifRect *out) {
+    if (out == NULL) {
+        return false;
+    }
+    SDL_zerop(out);
+    if (srcW <= 0 || srcH <= 0) {
+        return false;
+    }
+    int cropW = srcW;
+    int cropH = srcH;
+    if (maxW > 0 && cropW > maxW) {
+        cropW = maxW;
+        cropH = (int)((float)srcH * (float)cropW / (float)srcW);
+    }
+    if (cropW < 1) cropW = 1;
+    if (cropH < 1) cropH = 1;
+    if (cropH > srcH) cropH = srcH;
+    out->x = srcX + (srcW - cropW) / 2;
+    out->y = srcY + (srcH - cropH) / 2;
+    out->w = cropW;
+    out->h = cropH;
+    return true;
+}
+
+/* ── File names ──────────────────────────────────────────────────── */
+
+void clipGifBaseName(char *out, size_t outLen, const char *mapName,
+                     unsigned mins, unsigned secs) {
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    char base[64];
+    if (mapName != NULL && mapName[0] != '\0') {
+        snprintf(base, sizeof(base), "%s", mapName);
+        size_t blen = SDL_strlen(base);
+        if (blen > 4 && SDL_strcmp(base + blen - 4, ".map") == 0) {
+            base[blen - 4] = '\0';
+        }
+    } else {
+        snprintf(base, sizeof(base), "clip");
+    }
+    for (char *p = base; *p != '\0'; p++) {
+        char c = *p;
+        bool keep = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+                    (c >= 'a' && c <= 'z') || c == '-' || c == '_';
+        if (!keep) {
+            *p = '_';
+        }
+    }
+    snprintf(out, outLen, "%s_%02u%02u", base, mins, secs);
+}
+
+bool clipGifFileName(char *out, size_t outLen, const char *baseName,
+                     const char *stamp, int n) {
+    if (out == NULL || outLen == 0) {
+        return false;
+    }
+    out[0] = '\0';
+    if (n < 1 || n > CLIP_GIF_FILE_NAME_MAX_N) {
+        return false;
+    }
+    const char *base =
+        (baseName != NULL && baseName[0] != '\0') ? baseName : "clip";
+    if (stamp == NULL) {
+        stamp = "";
+    }
+    int len;
+    if (n == 1) {
+        len = snprintf(out, outLen, "%s_%s.gif", base, stamp);
+    } else {
+        len = snprintf(out, outLen, "%s_%s_%d.gif", base, stamp, n);
+    }
+    if (len <= 0 || (size_t)len >= outLen) {
+        out[0] = '\0';
+        return false;
+    }
+    return true;
+}
+
+void clipGifMetaSetMap(ClipGifMeta *m, const char *mapName) {
+    if (m == NULL) {
+        return;
+    }
+    m->map[0] = '\0';
+    if (mapName == NULL || mapName[0] == '\0') {
+        return;
+    }
+    SDL_utf8strlcpy(m->map, mapName, sizeof(m->map));
+    size_t n = SDL_strlen(m->map);
+    if (n > 4 && SDL_strcasecmp(m->map + n - 4, ".map") == 0) {
+        m->map[n - 4] = '\0';
+    }
+}
+
+void clipGifMetaBegin(ClipGifMeta *m, int64_t createdUnix, const char *gameId,
+                      const char *mapName) {
+    if (m == NULL) {
+        return;
+    }
+    SDL_zerop(m);
+    m->createdUnix = createdUnix;
+    if (gameId != NULL) {
+        SDL_strlcpy(m->game, gameId, sizeof(m->game));
+    }
+    clipGifMetaSetMap(m, mapName);
+}
+
+bool clipGifMetaAddPlayer(ClipGifMeta *m, const char *name) {
+    if (m == NULL || name == NULL || name[0] == '\0' || m->playerCount < 0 ||
+        m->playerCount >= CLIP_GIF_META_MAX_PLAYERS) {
+        return false;
+    }
+    SDL_utf8strlcpy(m->players[m->playerCount], name, sizeof(m->players[0]));
+    m->playerCount++;
+    return true;
+}
+
+/* ── Crop choice ───────────────────────────────────────────────────── */
+
+ClipGifFrame clipGifFrameDefault(int viewW, int viewH) {
+    ClipGifFrame f = CLIP_GIF_FRAME_INIT;
+    ClipGifRect  r;
+    if (!clipGifCentreCrop(0, 0, viewW, viewH, CLIP_GIF_MAX_WIDTH, &r)) {
+        return f;
+    }
+    f.x0 = (float)r.x / (float)viewW;
+    f.y0 = (float)r.y / (float)viewH;
+    f.x1 = (float)(r.x + r.w) / (float)viewW;
+    f.y1 = (float)(r.y + r.h) / (float)viewH;
+    return f;
+}
+
+bool clipGifChooseCrop(ClipGifMode *m, int viewX, int viewY, int viewW,
+                       int viewH, ClipGifRect *out) {
+    if (m == NULL) {
+        if (out != NULL) {
+            SDL_zerop(out);
+        }
+        return false;
+    }
+    clipGifModeFitFrame(m, viewW, viewH);
+    return clipGifCropFromFrame(&m->frame, viewX, viewY, viewW, viewH, out);
+}
+
+/* ── The GIF span and the zoomed timeline ──────────────────────────── */
+
+ClipGifRange clipGifSpanRange(const ClipGifMode *m, uint32_t totalMs) {
+    ClipGifRange r = { 0u, 0u };
+    if (m == NULL) {
+        return r;
+    }
+    uint32_t start = m->spanStartMs;
+    if (totalMs > 0u && start > totalMs) {
+        start = totalMs;
+    }
+    const uint32_t len = clipGifLenClampMs(m->lenMs, start, totalMs);
+    r.startMs = start;
+    r.endMs   = start + len;
+    if (totalMs > 0u && r.endMs > totalMs) {
+        r.endMs = totalMs;
+    }
+    return r;
+}
+
+ClipGifRange clipGifZoomFit(ClipGifRange span, uint32_t totalMs) {
+    ClipGifRange z;
+    z.startMs = (span.startMs > CLIP_GIF_ZOOM_PAD_MS)
+                    ? span.startMs - CLIP_GIF_ZOOM_PAD_MS
+                    : 0u;
+    z.endMs = (span.endMs > UINT32_MAX - CLIP_GIF_ZOOM_PAD_MS)
+                  ? UINT32_MAX
+                  : span.endMs + CLIP_GIF_ZOOM_PAD_MS;
+    if (totalMs > 0u && z.endMs > totalMs) {
+        z.endMs = totalMs;
+    }
+    if (z.startMs > z.endMs) {
+        z.startMs = z.endMs;
+    }
+    return z;
+}
+
+void clipGifSpanPlace(ClipGifMode *m, uint32_t startMs, uint32_t totalMs) {
+    if (m == NULL) {
+        return;
+    }
+    if (totalMs > 0u) {
+        /* The length the replay has room for from its start, so a span near
+         * the end moves back and keeps its length. */
+        const uint32_t len = clipGifLenClampMs(m->lenMs, 0u, totalMs);
+        const uint32_t latest = (totalMs > len) ? totalMs - len : 0u;
+        if (startMs > latest) {
+            startMs = latest;
+        }
+    }
+    m->spanStartMs = startMs;
+    m->spanSet     = true;
+    m->zoom        = clipGifZoomFit(clipGifSpanRange(m, totalMs), totalMs);
+}
+
+void clipGifSpanCentre(ClipGifMode *m, uint32_t atMs, uint32_t totalMs) {
+    if (m == NULL) {
+        return;
+    }
+    const uint32_t half = clipGifLenClampMs(m->lenMs, 0u, totalMs) / 2u;
+    clipGifSpanPlace(m, (atMs > half) ? atMs - half : 0u, totalMs);
+}
+
+void clipGifSpanRefit(ClipGifMode *m, uint32_t curMs, uint32_t totalMs) {
+    if (m == NULL || totalMs == 0u) {
+        return;
+    }
+    if (!m->spanSet) {
+        clipGifSpanPlace(m, curMs, totalMs);
+        return;
+    }
+    m->zoom = clipGifZoomFit(clipGifSpanRange(m, totalMs), totalMs);
+}
+
+float clipGifRangeX(uint32_t timeMs, ClipGifRange r, float x0, float x1) {
+    if (r.endMs <= r.startMs || !(x1 > x0)) {
+        return x0;
+    }
+    if (timeMs < r.startMs) {
+        timeMs = r.startMs;
+    }
+    if (timeMs > r.endMs) {
+        timeMs = r.endMs;
+    }
+    return x0 + (float)((double)(x1 - x0) * (double)(timeMs - r.startMs) /
+                        (double)(r.endMs - r.startMs));
+}
+
+uint32_t clipGifRangeTime(float x, ClipGifRange r, float x0, float x1) {
+    if (r.endMs <= r.startMs || !(x1 > x0)) {
+        return r.startMs;
+    }
+    double ratio = ((double)x - (double)x0) / ((double)x1 - (double)x0);
+    /* !(ratio > 0) is also true for NaN. */
+    if (!(ratio > 0.0)) {
+        ratio = 0.0;
+    }
+    if (ratio > 1.0) {
+        ratio = 1.0;
+    }
+    return r.startMs +
+           (uint32_t)(ratio * (double)(r.endMs - r.startMs) + 0.5);
+}
+
+void clipGifSpanClip(const ClipGifMode *m, uint32_t curMs, uint32_t totalMs,
+                     uint32_t *startMs, uint32_t *lenMs) {
+    uint32_t start = 0u, len = 0u;
+    if (m != NULL && m->spanSet) {
+        const ClipGifRange span = clipGifSpanRange(m, totalMs);
+        start = span.startMs;
+        len = clipGifLenClampMs(m->lenMs, start, totalMs);
+    } else if (m != NULL) {
+        start = curMs;
+        len = clipGifLenClampMs(m->lenMs, curMs, totalMs);
+    }
+    if (startMs != NULL) {
+        *startMs = start;
+    }
+    if (lenMs != NULL) {
+        *lenMs = len;
+    }
+}
+
+void clipGifSpanDragEdge(ClipGifMode *m, int edge, uint32_t atMs,
+                         uint32_t totalMs) {
+    if (m == NULL) {
+        return;
+    }
+    const ClipGifRange span = clipGifSpanRange(m, totalMs);
+    if (edge == CLIP_GIF_EDGE_END) {
+        const uint32_t len = (atMs > span.startMs) ? atMs - span.startMs : 0u;
+        m->spanStartMs = span.startMs;
+        m->lenMs = clipGifLenClampMs(len, span.startMs, totalMs);
+        return;
+    }
+    if (edge != CLIP_GIF_EDGE_START) {
+        return;
+    }
+    /* The end stays: the length is what is left between atMs and it, to
+     * whole frames, the floor and the cap, and the start follows from it. */
+    uint32_t len = (atMs < span.endMs) ? span.endMs - atMs : 0u;
+    len = clipGifLenClampMs(len, 0u, 0u);
+    if (len > span.endMs) {
+        /* No room before the end for the floor: from the start of the
+         * replay. */
+        m->spanStartMs = 0u;
+        m->lenMs = clipGifLenClampMs(span.endMs, 0u, totalMs);
+        return;
+    }
+    m->spanStartMs = span.endMs - len;
+    m->lenMs = len;
+}
+
+bool clipGifGripBox(float xs, float xe, float minX, float maxX, float *x0,
+                    float *x1, float *mid) {
+    const float c  = floorf((xs + xe) * 0.5f);
+    const float b0 = c - CLIP_GIF_GRIP_HIT_HALF_PX;
+    const float b1 = c + CLIP_GIF_GRIP_HIT_HALF_PX;
+    if (!(xe > xs) || b0 < minX || b1 > maxX) {
+        return false;
+    }
+    if (x0 != NULL) *x0 = b0;
+    if (x1 != NULL) *x1 = b1;
+    if (mid != NULL) *mid = c;
+    return true;
+}
+
+void clipGifSpanMoveBegin(ClipGifMode *m, uint32_t grabAtMs, uint32_t curMs,
+                          uint32_t totalMs) {
+    if (m == NULL) {
+        return;
+    }
+    const ClipGifRange span = clipGifSpanRange(m, totalMs);
+    m->move.on          = true;
+    m->move.fromStartMs = span.startMs;
+    m->move.grabAtMs    = grabAtMs;
+    m->move.offMs       = (curMs >= span.startMs && curMs <= span.endMs)
+                              ? curMs - span.startMs
+                              : 0u;
+    m->move.playMs      = span.startMs + m->move.offMs;
+}
+
+uint32_t clipGifSpanMoveTo(ClipGifMode *m, uint32_t atMs, uint32_t totalMs) {
+    if (m == NULL) {
+        return 0u;
+    }
+    const ClipGifRange span = clipGifSpanRange(m, totalMs);
+    const int64_t len = (int64_t)span.endMs - (int64_t)span.startMs;
+    /* The move, to whole steps, the nearer one each way. */
+    int64_t d = (int64_t)atMs - (int64_t)m->move.grabAtMs;
+    const int64_t step = (int64_t)CLIP_GIF_LEN_STEP_MS;
+    if (d >= 0) {
+        d = ((d + step / 2) / step) * step;
+    } else {
+        d = -(((-d + step / 2) / step) * step);
+    }
+    int64_t lo = 0;
+    int64_t hi = (totalMs > 0u) ? (int64_t)totalMs - len
+                                : (int64_t)UINT32_MAX - len;
+    const int64_t zoomW = (int64_t)m->zoom.endMs - (int64_t)m->zoom.startMs;
+    if (zoomW > 0 && zoomW >= len) {
+        if ((int64_t)m->zoom.startMs > lo) {
+            lo = (int64_t)m->zoom.startMs;
+        }
+        if ((int64_t)m->zoom.endMs - len < hi) {
+            hi = (int64_t)m->zoom.endMs - len;
+        }
+    }
+    int64_t start = (int64_t)m->move.fromStartMs + d;
+    if (start > hi) {
+        start = hi;
+    }
+    if (start < lo) {
+        start = lo;
+    }
+    m->spanStartMs = (uint32_t)start;
+    m->spanSet     = true;
+    int64_t play = start + (int64_t)m->move.offMs;
+    if (totalMs > 0u && play > (int64_t)totalMs) {
+        play = (int64_t)totalMs;
+    }
+    m->move.playMs = (uint32_t)play;
+    return m->move.playMs;
+}
+
+void clipGifZoomGrow(ClipGifRange *zoom, ClipGifRange span, int edge,
+                     uint32_t stepMs, uint32_t totalMs) {
+    if (zoom == NULL) {
+        return;
+    }
+    const ClipGifRange fit = clipGifZoomFit(span, totalMs);
+    if (edge == CLIP_GIF_EDGE_END && zoom->endMs < fit.endMs) {
+        const uint32_t room = fit.endMs - zoom->endMs;
+        zoom->endMs += (stepMs < room) ? stepMs : room;
+    } else if (edge == CLIP_GIF_EDGE_START && zoom->startMs > fit.startMs) {
+        const uint32_t room = zoom->startMs - fit.startMs;
+        zoom->startMs -= (stepMs < room) ? stepMs : room;
+    }
+}
+
+/* ── The GIF window ────────────────────────────────────────────────── */
+
+void clipGifWindowClamp(float *x, float *y, float w, float h, float vx0,
+                        float vy0, float vx1, float vy1) {
+    if (x == NULL || y == NULL) {
+        return;
+    }
+    /* !(a < b) is also true for NaN, so a bad number goes to the view. */
+    if (!(*x + w <= vx1)) {
+        *x = vx1 - w;
+    }
+    if (!(*y + h <= vy1)) {
+        *y = vy1 - h;
+    }
+    if (!(*x >= vx0)) {
+        *x = vx0;
+    }
+    if (!(*y >= vy0)) {
+        *y = vy0;
+    }
+}
+
+void clipGifWindowDefaultPos(float ax0, float ay0, float ax1, float ay1,
+                             float w, float h, float vx0, float vy0,
+                             float vx1, float vy1, float *x, float *y) {
+    if (x == NULL || y == NULL) {
+        return;
+    }
+    float px = ax0 + ((ax1 - ax0) - w) * 0.5f;
+    float py = ay0 - CLIP_GIF_WINDOW_GAP - h;
+    if (py < vy0) {
+        py = ay1 + CLIP_GIF_WINDOW_GAP;
+    }
+    clipGifWindowClamp(&px, &py, w, h, vx0, vy0, vx1, vy1);
+    *x = px;
+    *y = py;
+}
+
+/* ── Preview ───────────────────────────────────────────────────────── */
+
+bool clipGifPlayStart(ClipGifPlay *p, uint32_t startMs, uint32_t lenMs,
+                      uint32_t totalMs) {
+    if (p == NULL) {
+        return false;
+    }
+    p->active  = false;
+    p->startMs = startMs;
+    p->endMs   = startMs;
+    if (totalMs == 0u || startMs >= totalMs) {
+        return false;
+    }
+    uint32_t len = clipGifLenClampMs(lenMs, startMs, totalMs);
+    /* The length's floor can take the end past the end of the round near
+     * the end; the preview then ends where the round does. */
+    uint32_t left = totalMs - startMs;
+    if (len > left) {
+        len = left;
+    }
+    p->endMs  = startMs + len;
+    p->active = true;
+    return true;
+}
+
+int clipGifPlayUpdate(ClipGifPlay *p, uint32_t curMs, bool playing) {
+    if (p == NULL || !p->active) {
+        return CLIP_GIF_PLAY_NONE;
+    }
+    /* The end first: a replay that stops at the end of the round is at the
+     * end of a clip that runs to it, not paused by the player. */
+    if (curMs >= p->endMs && curMs - p->endMs <= CLIP_GIF_PLAY_OVERRUN_MS) {
+        p->active = false;
+        return CLIP_GIF_PLAY_END;
+    }
+    if (!playing || curMs < p->startMs || curMs > p->endMs) {
+        p->active = false;
+        return CLIP_GIF_PLAY_LET_GO;
+    }
+    return CLIP_GIF_PLAY_NONE;
+}
+
+void clipGifPlayStop(ClipGifPlay *p) {
+    if (p != NULL) {
+        p->active = false;
+    }
+}
+
+uint32_t clipGifPlayBandStart(const ClipGifPlay *p, uint32_t curMs) {
+    return (p != NULL && p->active) ? p->startMs : curMs;
 }

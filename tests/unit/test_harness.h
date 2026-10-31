@@ -1488,6 +1488,41 @@ int run_clip_gif_meta_bad(void);
 int run_clip_gif_gallery_scan(void);
 int run_clip_gif_text_fill(void);
 int run_clip_gif_preview_cap(void);
+/* The gallery's game groups (the replay's id, the current game first) and its
+ * delete (both files go, and the row that takes the removed one's place is
+ * selected). */
+int run_clip_gif_current_game(void);
+int run_clip_gif_delete(void);
+/* The rules the game's replay and the Log Viewer share to make a GIF: the
+ * frame count, the middle of the view, the names, the crop frame (its box on
+ * the screen, its drag and the pixels it takes), the Log Viewer's visible
+ * map, and recording mode's on, off and reset. */
+int run_clip_gif_frame_count(void);
+int run_clip_gif_centre_crop(void);
+int run_clip_gif_names(void);
+int run_clip_gif_frame_box(void);
+int run_clip_gif_frame_drag(void);
+int run_clip_gif_crop_from_frame(void);
+int run_clip_gif_blit_view(void);
+int run_clip_gif_mode_state(void);
+int run_clip_gif_preview_play(void);
+int run_clip_gif_choose_crop(void);
+int run_clip_gif_default_frame(void);
+int run_clip_gif_meta_begin(void);
+/* The GIF's span and the zoomed timeline: where the span is put, the
+ * timeline's scale, a drag of the span's handles, and the timeline's growth
+ * while a handle is held at its end. */
+int run_clip_gif_span_place(void);
+int run_clip_gif_zoom_axis(void);
+int run_clip_gif_span_drag(void);
+int run_clip_gif_zoom_grow(void);
+/* Where the GIF window goes: over the transport row, kept on the main
+ * window. */
+int run_clip_gif_window_place(void);
+/* The grip in the middle of the GIF's span moves the whole span. */
+int run_clip_gif_span_move(void);
+/* Only a small box round the grip moves the span. */
+int run_clip_gif_grip_box(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
@@ -4584,6 +4619,8 @@ int run_lv_controls_top_row(void);
 int run_lv_controls_bottom_row(void);
 int run_lv_controls_wheel_step(void);
 int run_lv_controls_fine_drag(void);
+/* The one play and pause button of the Log Viewer and the game's replay. */
+int run_lv_play_toggle(void);
 /* The zoom of the log viewer's map as a percentage. */
 int run_lv_zoom_percent(void);
 int run_lv_fullscreen_key(void);

@@ -2380,11 +2380,21 @@ worked out from URLs, byte counts and frame numbers. The cache itself,
 which downloads with libcurl and creates the textures, stays out;
 `tests/unit/test_news_image_budget.cpp` drives the rule.
 `dialogs/clip_gif_core.c` holds the recap clip GIF's length rules
-(whole 100 ms frames between 1 s and 15 s, held to the replay time
-left, and the seek bar position maths), the gallery's metadata JSON
-file with its write, read and newest-first folder scan, and the UTF-8
-safe text fill. It is plain C over SDL and cJSON, with no ImGui and no
-renderer, and `tests/unit/test_clip_gif_core.c` drives it.
+(whole 100 ms frames between 1 s and 30 s, held to the replay time
+left, and the seek bar position maths), the crop choice (the player's
+frame or the centre of the view), the Preview clip state (where the
+clip starts and ends, and when the preview ends or lets go), the
+gallery's metadata JSON file with its fill, write, read and
+newest-first folder scan, and the UTF-8 safe text fill. It is plain C
+over SDL and cJSON, with no ImGui and no renderer, and
+`tests/unit/test_clip_gif_core.c` drives it. The game's replay
+(`dialogs/lobby/lobby_clip_gif.cpp`) and the Log Viewer
+(`src/logviewer/imgui/imgui_clip_gif.cpp`) make their GIFs with one
+shared ImGui file, `dialogs/clip_gif_capture.cpp`: the preview
+playback, the capture loop, the progress window and where the GIF goes
+on each platform. Each host gives it its replay as a table of calls
+(`ClipGifReplay`), so the shared file needs nothing of the lobby or of
+the viewer.
 The first sixteen are each called directly by a test beside them;
 `gfx_settings.c` is here because `tileloader.c` calls it, and is the
 one file on the list no test drives on its own.

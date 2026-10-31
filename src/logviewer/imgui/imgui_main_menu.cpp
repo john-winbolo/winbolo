@@ -12,6 +12,7 @@
 #include "imgui_scenario_panel.h"
 #include "imgui_dock.h"
 #include "imgui_dialogs.h"
+#include "imgui_clip_gif.h"
 #include "imgui_event_overlay.h"
 #include "imgui.h"
 #include "platform_config.h"
@@ -394,6 +395,9 @@ void lv_imgui_toggle_dns_lookups(void) {
 static void handle_keyboard_shortcuts(int *clicked) {
     /* Skip shortcuts when ImGui wants the keyboard (e.g., text input focused) */
     if (ImGui::GetIO().WantCaptureKeyboard) return;
+    /* None while a GIF is made: the view and the time are the GIF's until it
+     * ends. Esc in its progress window cancels it. */
+    if (lv_clip_gif_active()) return;
 
     ImGuiIO& io = ImGui::GetIO();
 
@@ -449,6 +453,9 @@ static void handle_keyboard_shortcuts(int *clicked) {
     if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
         if (s_lv->isLoaded) { lv_windowRewind(); *clicked = 1; }
     }
+    if (!live && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
+        if (lv_clip_gif_can_toggle_mode()) { lv_clip_gif_toggle_mode(); *clicked = 1; }
+    }
 
     /* Options */
     if (ImGui::IsKeyPressed(ImGuiKey_T, false)) {
@@ -488,6 +495,11 @@ static void handle_keyboard_shortcuts(int *clicked) {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_8, false)) {
         lv_g_show_tank_window = !lv_g_show_tank_window;
+        *clicked = 1;
+    }
+    if (lv_clip_gif_available() && !lv_clip_gif_active() &&
+        ImGui::IsKeyPressed(ImGuiKey_0, false)) {
+        lv_clip_gif_toggle_gallery();
         *clicked = 1;
     }
 }
@@ -586,6 +598,26 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::MenuItem(langGetText(STR_LV_REWIND), "Ctrl+R", false, s_lv->isLoaded != 0)) {
                 lv_windowRewind();
                 clicked = 1;
+            }
+            /* Recording mode (imgui_clip_gif.h): the GIF window, the GIF on
+             * the timeline and the crop frame on the map. The same as the
+             * movie camera on the Controls panel; checked while the GIF
+             * window is open. */
+            if (!live && lv_clip_gif_available()) {
+                ImGui::Separator();
+                if (ImGui::MenuItem(langGetText(STR_LV_RECORD_MODE), "Ctrl+G",
+                                    lv_clip_gif_tools_shown(),
+                                    lv_clip_gif_can_toggle_mode())) {
+                    lv_clip_gif_toggle_mode();
+                    clicked = 1;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                    ImGui::TextUnformatted(langGetText(STR_LV_RECORD_MODE_TIP));
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
             }
             ImGui::EndMenu();
         }
@@ -806,6 +838,14 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_TANK), "Ctrl+8", lv_g_show_tank_window)) {
                 lv_g_show_tank_window = !lv_g_show_tank_window;
+                clicked = 1;
+            }
+            /* The GIFs made here and in the game (imgui_clip_gif.h). */
+            if (lv_clip_gif_available() &&
+                ImGui::MenuItem(langGetText(STR_LV_WIN_CLIPS), "Ctrl+0",
+                                lv_clip_gif_gallery_is_open(),
+                                !lv_clip_gif_active())) {
+                lv_clip_gif_toggle_gallery();
                 clicked = 1;
             }
             if (ImGui::MenuItem(langGetText(STR_SCNPANEL_SETTINGS_TITLE), NULL, lv_g_show_scenario_panel_window)) {

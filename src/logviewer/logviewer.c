@@ -62,6 +62,7 @@
 #include "imgui/imgui_overview.h"
 #include "imgui/imgui_tank.h"
 #include "imgui/imgui_comments.h"
+#include "imgui/imgui_clip_gif.h"
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
 #include "imgui/imgui_scenario_panel.h"
@@ -666,6 +667,10 @@ static void lvHostLoadBegin(void) {
     char memoryBuff[32];
     bool begun;
 
+    if (s_pendingOpen || s_pendingZipData != NULL) {
+        /* A GIF being made is of the log that closes now. */
+        lv_clip_gif_cancel();
+    }
     if (s_pendingOpen) {
         s_pendingOpen = FALSE;
         lv_platform_config_get_string("LOGVIEWER", "Memory Buffer", "4",
@@ -1601,6 +1606,8 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
     lv_imgui_comments_init();
     lv_imgui_dialogs_init(g_lv);
     lv_imgui_game_viewport_init(g_lv);
+    /* No GIF from a viewer before, and the Clips window starts closed. */
+    lv_clip_gif_session_end();
 
     /* Sound (non-fatal if it fails) */
     if (lv_soundSetup() == FALSE) {
@@ -1651,6 +1658,9 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
  * active game view and saves preferences first.
  * -------------------------------------------------------------------------- */
 static void lvHostTeardown(void) {
+    /* Drops a GIF being made and the Clips window's textures, which are made
+     * on this renderer. */
+    lv_clip_gif_session_end();
     lvHostTeardownCommon(true);
     free(g_lv);
     g_lv = NULL;
@@ -1791,6 +1801,11 @@ static void lvHostHandleFullScreenChange(const SDL_Event *e) {
  * file can. */
 static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
                                     bool allowSeek) {
+    /* While a GIF is made, the view stays as it was when it started: the
+     * keys go to its progress window, where Esc cancels it. */
+    if (lv_clip_gif_active()) {
+        return FALSE;
+    }
     /* Game-view-mode toggle. Must run BEFORE ImGui sees the event so
      * ImGui doesn't swallow the backtick keypress. Default zoom 3×.
      * Allowed in both the standalone viewer and the embedded
@@ -2128,6 +2143,11 @@ static void lvHostRenderFrame(const char *overlay) {
         }
     }
 
+    /* This frame's share of a GIF being made (the GIF button of recording mode): the log
+     * moves on and the map is drawn into its render target for each frame of
+     * the GIF. After the map above and before the ImGui frame. */
+    lv_clip_gif_capture_step();
+
     /* Render ImGui UI */
     lv_imgui_context_newframe();
 #ifdef __APPLE__
@@ -2171,6 +2191,10 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.fullScreen       = lv_windowIsFullScreen() ? true : false;
         lvms.canFullScreen    = lv_windowCanFullScreen() ? true : false;
         lvms.live             = lv_screenSpecIsLiveMode() ? true : false;
+        lvms.gifAvailable     = lv_clip_gif_available() ? true : false;
+        lvms.recordMode       = lv_clip_gif_mode_on() ? true : false;
+        lvms.canToggleRecordMode = lv_clip_gif_can_toggle_mode() ? true : false;
+        lvms.showClips        = lv_clip_gif_gallery_is_open() ? true : false;
         lv_mac_menubar_refresh(&lvms);
     }
 #endif
@@ -2196,6 +2220,10 @@ static void lvHostRenderFrame(const char *overlay) {
             lv_imgui_controls_window();
             lv_g_show_controls_window = save_ctrl;
             lv_imgui_spectator_badge(g_lv->gamePhase);
+        } else {
+            /* No Controls panel for the GIF window to go over; this also
+             * gives it View > Reset Window Positions. */
+            lv_clip_gif_set_anchor(false, 0.0f, 0.0f, 0.0f, 0.0f);
         }
         lv_g_reset_window_positions = false;
         if (overlay != NULL) {
@@ -2203,6 +2231,8 @@ static void lvHostRenderFrame(const char *overlay) {
         }
         lv_imgui_zoom_label();
         lvHostDrawLoadProgress();
+        /* The Clips window stays open in the game view. */
+        lv_clip_gif_render();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
     } else {
@@ -2308,6 +2338,9 @@ static void lvHostRenderFrame(const char *overlay) {
         lv_imgui_game_viewport_draw_marks();
         lv_imgui_game_viewport_hover();
         lvHostDrawLoadProgress();
+        /* Recording mode's crop frame, a GIF's progress and the Clips
+         * window. */
+        lv_clip_gif_render();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
 
@@ -2468,7 +2501,8 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                  * game-view mode — the trailer window size is fixed and
                  * mouse-wheel zoom would invalidate the saved teardown
                  * dimensions. */
-                if (!lv_imgui_want_capture_mouse() && !g_lv->gameView) {
+                if (!lv_imgui_want_capture_mouse() && !g_lv->gameView &&
+                    !lv_clip_gif_active()) {
                     int mx = (int)sdlEvent.wheel.mouse_x;
                     int my = (int)sdlEvent.wheel.mouse_y;
                     if (sdlEvent.wheel.y > 0.0f) {
@@ -2492,7 +2526,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
 
         /* Trackpad pinch-to-zoom (macOS) — anchor on current mouse position.
          * Suppressed in game-view mode; trailer window is fixed-size. */
-        if (!g_lv->gameView) {
+        if (!g_lv->gameView && !lv_clip_gif_active()) {
             float pinch = macOSPinchZoomConsume();
             if (pinch != 0.0f) {
                 static float pinchAccum = 0.0f;
@@ -2832,7 +2866,8 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
              * (cursor over a panel) and in game view (fixed size; 1-4 keys
              * zoom there). */
             if (sdlEvent.type == SDL_EVENT_MOUSE_WHEEL) {
-                if (!lv_imgui_want_capture_mouse() && !g_lv->gameView) {
+                if (!lv_imgui_want_capture_mouse() && !g_lv->gameView &&
+                    !lv_clip_gif_active()) {
                     int mx = (int)sdlEvent.wheel.mouse_x;
                     int my = (int)sdlEvent.wheel.mouse_y;
                     if (sdlEvent.wheel.y > 0.0f) {

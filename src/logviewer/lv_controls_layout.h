@@ -30,7 +30,9 @@
  * panel has the room. */
 #define LV_CONTROLS_BTN_WIDE 2.0f
 
-/* The most playback buttons: four, and "to the live head" on a live feed. */
+/* The most playback buttons the layout takes. The panel has four at most:
+ * back, play or pause, forward, and "to the live head" on a live feed or
+ * recording mode on a log. */
 #define LV_CONTROLS_MAX_BUTTONS 5
 
 /* The slider of the speed is never drawn narrower than this. */
@@ -48,7 +50,7 @@ static inline float lvControlsCentreX(float lineW, float contentW) {
 /* What the top row is made of. */
 typedef struct {
     float contentW;     /* the width of the panel's content */
-    int buttons;        /* 4, or 5 on a live feed */
+    int buttons;        /* 3, or 4 with the live head or recording mode */
     float btnSide;      /* the height of a button: its width when narrow */
     float btnGap;       /* between two buttons */
     float labelW;       /* the speed's label with the space after it */
@@ -364,6 +366,73 @@ static inline uint32_t lvControlsDragTargetMs(uint32_t anchorMs, float anchorX, 
     if (target < (double)startMs) return startMs;
     if (target > (double)endMs) return endMs;
     return (uint32_t)(target + 0.5);
+}
+
+/* A drag of the seek bar that Shift made measured from an anchor. The Log
+ * Viewer's bar and the game's replay bar (lobby_reel.cpp) both keep one, so
+ * the two have the same fine drag. All zero when no drag is measured. */
+typedef struct LvFineDrag {
+    bool     on;        /* this drag is measured from an anchor */
+    bool     fine;      /* at the fine rate: Shift is down */
+    uint32_t anchorMs;  /* the log's own time at the anchor */
+    float    anchorX;   /* the mouse's x at the anchor */
+    uint32_t targetMs;  /* where the drag puts playback now */
+} LvFineDrag;
+
+/* One frame of a drag of the seek bar with the button held. When Shift
+ * (shift) goes down, or the drag started with it down, or it is let go while
+ * the drag is measured, a new anchor is set: at d->targetMs when the drag is
+ * already measured, else at handleMs, the time the handle is at now. Then
+ * d->targetMs is worked out with lvControlsDragTargetMs: one tick for each
+ * LV_CONTROLS_FINE_DRAG_PX_PER_TICK pixels with Shift, and without it the
+ * length of the log (lenMs from startMs) one pixel of the usablePx the
+ * handle moves over stands for.
+ *
+ * *anchored (may be NULL) is set true when an anchor was set in this frame.
+ * Returns d->on: true when d->targetMs is where playback goes and the slider
+ * is only drawn. A drag in which Shift is never down leaves d->on false. */
+static inline bool lvFineDragStep(LvFineDrag *d, bool shift, float mouseX,
+                                  uint32_t handleMs, uint32_t startMs,
+                                  uint32_t lenMs, float usablePx,
+                                  bool *anchored) {
+    bool anchor = (shift && !(d->on && d->fine)) || (!shift && d->on && d->fine);
+    if (anchor) {
+        /* The time the drag last asked for, so the handle does not jump. */
+        d->anchorMs = d->on ? d->targetMs : handleMs;
+        d->anchorX = mouseX;
+        d->on = true;
+        d->fine = shift;
+    }
+    if (anchored != NULL) *anchored = anchor;
+    if (d->on) {
+        float pxPerStep = LV_CONTROLS_FINE_DRAG_PX_PER_TICK;
+        float stepMs = 20.0f; /* one tick of the log */
+        if (!d->fine) {
+            pxPerStep = 1.0f;
+            stepMs = (float)lenMs / ((usablePx >= 1.0f) ? usablePx : 1.0f);
+        }
+        d->targetMs = lvControlsDragTargetMs(d->anchorMs, d->anchorX, mouseX, pxPerStep,
+                                             stepMs, startMs, startMs + lenMs);
+    }
+    return d->on;
+}
+
+/* The one play and pause button, the same in the Log Viewer's Controls
+ * panel and the game's replay. While the replay plays it is the pause
+ * button: it shows the pause icon, says Pause, and a press pauses. Else it
+ * is the play button: it shows the play icon, says Play, and a press plays;
+ * it is dimmed when there is nothing to play (no replay open, or the
+ * decoder is at the end). Each screen keeps its own keys. */
+typedef struct LvPlayToggle {
+    bool pause;    /* the pause icon and Pause: a press pauses */
+    bool enabled;  /* a press does something */
+} LvPlayToggle;
+
+static inline LvPlayToggle lvPlayToggle(bool loaded, bool playing, bool atEnd) {
+    LvPlayToggle t;
+    t.pause = loaded && playing;
+    t.enabled = t.pause || (loaded && !atEnd);
+    return t;
 }
 
 #endif /* LV_CONTROLS_LAYOUT_H */
