@@ -286,7 +286,7 @@ int treeGrowCalcSquare(GameSim *sim, BYTE mx, BYTE my) {
     terrain = mapGetPos(mp, mx, my);
     if (terrain >= MINE_START && terrain <= MINE_END) {
       returnValue = sim->rules.tree_weight_mine;
-      terrain -= MINE_START;
+      terrain -= MINE_SUBTRACT;
     }
 
     switch (terrain) {
