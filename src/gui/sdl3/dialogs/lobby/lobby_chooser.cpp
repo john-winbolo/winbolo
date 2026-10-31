@@ -1483,10 +1483,18 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
              * preview on the right via the chooser's randomTabOnly
              * code path. Every config change increments genSeq —
              * we forward that to the server below so other clients
-             * see the live preview. */
+             * see the live preview.
+             *
+             * On a network server the forward waits until the control
+             * being dragged or typed into is let go, and then sends the
+             * last value once. Sent on every change, the first one made
+             * the chooser busy (an unacked map command), which greyed the
+             * slider the next frame and ended the drag under the user's
+             * hand. This tab's own preview still follows every change. */
             mapChooserRender(&s_chooserTabs.random, renderer,
                              availW, availH, s);
-            if (cs && s_chooserTabs.random.genSeq != s_chooserTabs.randomLastSeq) {
+            if (cs && s_chooserTabs.random.genSeq != s_chooserTabs.randomLastSeq &&
+                (clientSimIsSinglePlayer(cs) || !ImGui::IsAnyItemActive())) {
                 s_chooserTabs.randomLastSeq = s_chooserTabs.random.genSeq;
                 /* selectedPath is "randommap:<seed>" — strip the
                  * prefix to get the bare seed string the server
