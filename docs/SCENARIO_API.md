@@ -2342,13 +2342,14 @@ it asked for.
 **The Scenario Text window.** The status line and the announcement are both
 drawn in one window of their own, the Scenario Text window, and not on the
 game view. A script cannot put text anywhere else on the screen. The window
-is built the same way as the scenario panel's window: it has no title bar, a
-see-through backing, a bar just above its text to move it, a gear that opens its
-settings (Pop out, then two opacity sliders), an X that closes it, and a grip
-in its bottom-right corner to resize it. The grip and a faint edge round the
-text show only while the pointer is on the window (and the grip during a
-resize), at any background opacity. Unlike the panel, it is a rectangle
-and it can take any shape. The window is hidden until a scenario shows a
+uses the same window frame as the scenario panel's window, from the same code:
+it has no title bar, a see-through backing, a bar just above its text to move
+it, a gear that opens its settings (Pop out, then two opacity sliders), an X
+that closes it, a grip in its bottom-right corner to resize it, and a faint
+edge round the text. Like the panel, it takes the mouse on its text area.
+Unlike the panel, it is a rectangle and it can take any shape, and at 0%
+background opacity its edge and grip show only while the pointer is on the
+window or a drag is on. Above 0% they show as the panel's do. The window is hidden until a scenario shows a
 status line or an announcement. Turning it on in **Brains > Info Overlay >
 Scenario Text** does not show it by itself, and the pointer over its place
 does not show it. It shows while it has a line to draw, and for

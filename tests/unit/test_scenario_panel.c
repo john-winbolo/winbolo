@@ -970,62 +970,6 @@ int run_scenario_text_tablet_band(void) {
     return 0;
 }
 
-/* The Scenario Text window takes the mouse only on its bar and its grip, so
- * a click or the wheel on the text goes to the game. The bar sits directly
- * above the text area and covers none of it. A text area at 100,70,
- * 300 x 120, with a 20 high bar and a 14 square grip: the bar is
- * 100..400 x 50..70, the text area is 100..400 x 70..190 and the grip is
- * 386..400 x 176..190. */
-int run_scenario_text_pointer_on_handle(void) {
-    const float x = 100.0f, y = 70.0f, w = 300.0f, h = 120.0f;
-    const float bar = 20.0f, grip = 14.0f;
-
-    /* The bar, across the full width: its left end, its middle, and the
-       gear and the X at its right end. */
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 50.0f));
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 60.0f));
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.0f, 69.0f));
-    /* Its bottom edge is the text area's top edge, and is not in it: the
-       first row of text is not under the bar. */
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 70.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 71.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.0f, 75.0f));
-
-    /* The grip, and the pixels just outside it. */
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 386.0f, 176.0f));
-    UT_ASSERT(scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.5f, 189.5f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 385.9f, 180.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 390.0f, 175.9f));
-
-    /* The text body: the middle, the left and right edges at the top, and
-       the bottom-left corner. None of these takes the mouse. */
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 130.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 120.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 399.0f, 120.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 100.0f, 189.0f));
-
-    /* Off the window: left, above the bar, right of the bar, below the
-       grip. */
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 99.9f, 60.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 250.0f, 49.9f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 400.0f, 60.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, 395.0f, 190.0f));
-    /* The point ImGui gives when there is no mouse. */
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, grip, -FLT_MAX,
-                                      -FLT_MAX));
-
-    /* A text area with no area has no bar and no grip, and a bar or grip of
-       size 0 is not there. With no bar, the strip above the text area does
-       not take the mouse. */
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, 0.0f, h, bar, grip, 100.0f, 50.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, -1.0f, bar, grip, 100.0f,
-                                      50.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, 0.0f, grip, 250.0f, 60.0f));
-    UT_ASSERT(!scnTextPointerOnHandle(x, y, w, h, bar, 0.0f, 399.0f, 189.0f));
-
-    return 0;
-}
-
 /* When the desktop Scenario Text window is up: while the player has it
  * shown and a line was on screen a short time ago; while there is a line;
  * and while the player is busy with it. Never while it is closed. */
@@ -1066,32 +1010,27 @@ int run_scenario_text_printed_recently(void) {
     return 0;
 }
 
-/* The faint edge: with a line, only when there is a backing; with no line,
- * only while the handles show, at any background opacity. */
-int run_scenario_text_edge_shown(void) {
-    /* The pointer not on the window: the rule by opacity and the bar. */
-    UT_ASSERT(scnTextEdgeShown(true, 50, false, false));
-    UT_ASSERT(scnTextEdgeShown(true, 1, true, false));
-    UT_ASSERT(!scnTextEdgeShown(true, 0, false, false));
-    UT_ASSERT(!scnTextEdgeShown(true, 0, true, false));
-    UT_ASSERT(scnTextEdgeShown(false, 0, true, false));
-    UT_ASSERT(scnTextEdgeShown(false, 100, true, false));
-    UT_ASSERT(!scnTextEdgeShown(false, 0, false, false));
-    UT_ASSERT(!scnTextEdgeShown(false, 100, false, false));
+/* The frame's edge and grip: the panel always; the Scenario Text window at
+ * 0% background opacity only while the pointer is on it or a drag is on,
+ * and above 0% always. */
+int run_scenario_float_frame_shown(void) {
+    /* The panel: at every opacity, with or without the pointer. */
+    UT_ASSERT(scnFloatFrameShown(false, 0, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(false, 1, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(false, 100, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(false, 0, true, true, true));
 
-    /* The pointer on the window: the edge always, 0% too, with or without
-       a line. */
-    UT_ASSERT(scnTextEdgeShown(true, 0, false, true));
-    UT_ASSERT(scnTextEdgeShown(true, 0, true, true));
-    UT_ASSERT(scnTextEdgeShown(false, 0, false, true));
-    UT_ASSERT(scnTextEdgeShown(true, 100, false, true));
+    /* The Scenario Text window above 0%: always, as the panel. */
+    UT_ASSERT(scnFloatFrameShown(true, 1, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(true, 43, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(true, 100, false, false, false));
 
-    /* The grip: on the window, or while a resize is on. Not drawn
-       otherwise, also while the bar stays up after the pointer leaves. */
-    UT_ASSERT(scnTextGripShown(true, false));
-    UT_ASSERT(scnTextGripShown(false, true));
-    UT_ASSERT(scnTextGripShown(true, true));
-    UT_ASSERT(!scnTextGripShown(false, false));
+    /* At 0%: only with the pointer on it, a move or a resize. */
+    UT_ASSERT(!scnFloatFrameShown(true, 0, false, false, false));
+    UT_ASSERT(scnFloatFrameShown(true, 0, true, false, false));
+    UT_ASSERT(scnFloatFrameShown(true, 0, false, true, false));
+    UT_ASSERT(scnFloatFrameShown(true, 0, false, false, true));
+    UT_ASSERT(scnFloatFrameShown(true, 0, true, true, true));
     return 0;
 }
 

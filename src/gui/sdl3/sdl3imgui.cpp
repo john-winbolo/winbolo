@@ -4434,6 +4434,38 @@ void sdl3ImguiScnPanelDraw(struct ClientSim *cs, float originX, float originY,
    after the one that showed them. */
 #define SCN_PANEL_CHROME_LINGER_MS 2500
 
+/* The state the window frame a scenario panel and the Scenario Text window
+   share (scnFloatBegin, scnFloatEnd) keeps from one frame to the next. Each
+   window keeps one: ScnPanelView::win and ScnTextView::win. */
+struct ScnFloatWin {
+    /* ImGui is holding a position for the window. */
+    bool   placed;
+    /* Where the content's top-left corner is, on screen, as the last frame
+       left it. The move bar is above this corner, and the ImGui window
+       starts the bar's height higher. A resize keeps this corner where it
+       is. */
+    float  atX, atY;
+    /* The bar or the resize grip was being dragged last frame, and the size
+       the resize drag has reached, before a snap. */
+    bool   moving;
+    bool   resizing;
+    float  rawW, rawH;
+    /* The settings window the gear opens. */
+    bool   settingsOpen;
+    /* The bar, the gear, the X and the grip stay up until this SDL tick. */
+    Uint64 chromeUntil;
+};
+
+/* Stops what the frame was doing with the window: a drag, a resize and the
+   settings. The window is placed again the next time it shows. Called when
+   the window goes away: hidden, popped out, or the round ends. */
+static void scnFloatStop(ScnFloatWin &s) {
+    s.placed       = false;
+    s.moving       = false;
+    s.resizing     = false;
+    s.settingsOpen = false;
+}
+
 struct ScnPanelView {
     /* Filled for the script now at this position. Cleared when the script
        has no panel list, or leaves the round. */
@@ -4451,21 +4483,9 @@ struct ScnPanelView {
     int    x, y, scale, bgAlpha, textAlpha;
     int    bgPct, textPct;
 
-    /* ImGui is holding a position for the window. */
-    bool   placed;
-    /* Where the panel square's top-left corner is, on screen, as the last
-       frame left it. The move bar is above this corner, and the ImGui
-       window starts the bar's height higher. A resize keeps this corner
-       where it is. */
-    float  atX, atY;
-    /* The resize handle was being dragged last frame, and the side it is on
-       before the snap. */
-    bool   resizing;
-    float  rawSide;
-    /* The settings window the gear opens. */
-    bool   settingsOpen;
-    /* The gear and X stay up until this SDL tick. */
-    Uint64 chromeUntil;
+    /* The window frame's state. The content is the panel square, and
+       win.rawW is the side a resize has reached before the snap. */
+    ScnFloatWin win;
 
     /* The player's choice to have the panel in an OS window of its own, and
        where that window sits, in desktop coordinates. */
@@ -4486,26 +4506,13 @@ static ScnPanelView s_scnViews[SCN_POP_OWNERS];
    gameFrontScnText* preferences; this
    holds what lasts only as long as the window is up or the round runs. */
 struct ScnTextView {
-    /* ImGui is holding a position for the window. */
-    bool   placed;
-    /* The bar or the resize grip was being dragged last frame, and the size
-       the resize drag has reached. */
-    bool   moving;
-    bool   resizing;
-    float  rawW, rawH;
-    /* The settings window the gear opens, and the live opacities its
-       sliders edit. alphaLoaded is false until bgPct and textPct are read
-       from the preferences. */
-    bool   settingsOpen;
+    /* The window frame's state, the same as a panel's. The content is the
+       text area. */
+    ScnFloatWin win;
+    /* The live opacities the settings sliders edit. alphaLoaded is false
+       until bgPct and textPct are read from the preferences. */
     bool   alphaLoaded;
     int    bgPct, textPct;
-    /* The bar, the gear and the X stay up until this SDL tick. */
-    Uint64 chromeUntil;
-    /* Where the text area's top-left corner is, on screen, as the last
-       frame left it: the hover test runs before the window is submitted,
-       to choose whether it takes input this frame. The bar is above this
-       corner, and the ImGui window starts the bar's height higher. */
-    float  atX, atY;
     /* The kinds of line the round has shown so far. Each one has a row in
        the window from then until the round ends, so the text does not
        change size each time a line comes or goes. */
@@ -4765,10 +4772,7 @@ static void scnPanelViewsRetireAll(void) {
     s_scnPopInReq[SCN_TEXT_OWNER] = false;
     s_scnHideReq[SCN_TEXT_OWNER]  = false;
     if (s_scnCloseAskOwner == SCN_TEXT_OWNER) s_scnCloseAskCancel = true;
-    s_scnText.placed       = false;
-    s_scnText.moving       = false;
-    s_scnText.resizing     = false;
-    s_scnText.settingsOpen = false;
+    scnFloatStop(s_scnText.win);
     s_scnText.usedStatus   = false;
     s_scnText.usedAnnounce = false;
     s_scnText.statusRows   = 0;
@@ -4793,9 +4797,7 @@ static void scnPanelSetShown(int owner, bool shown) {
     v.shown = shown;
     if (v.key[0] != '\0') gameFrontSetScnPanelShown(v.key, shown);
     if (!shown) {
-        v.settingsOpen = false;
-        v.placed       = false;
-        v.resizing     = false;
+        scnFloatStop(v.win);
         if (s_popScnPanel[owner].open) popOutHide(&s_popScnPanel[owner]);
     }
 }
@@ -4827,8 +4829,8 @@ static void scnPanelRequestClose(int owner, bool inPopout) {
 
 static void scnPanelPopOut(int owner) {
     ScnPanelView &v = s_scnViews[owner];
-    v.popped       = true;
-    v.settingsOpen = false;
+    v.popped           = true;
+    v.win.settingsOpen = false;
     scnPanelSavePopout(owner);
     /* The panel pass, or for the Scenario Text window renderScenarioText,
        opens the window on the next frame. */
@@ -4850,8 +4852,8 @@ static void scnPanelPopIn(int owner) {
     ScnPanelView &v = s_scnViews[owner];
     WB_LOG_INFO(WB_LOG_CAT_GUI, "[ScnPanel] owner %d pop in; window open=%d",
                 owner, s_popScnPanel[owner].open ? 1 : 0);
-    v.popped = false;
-    v.placed = false;
+    v.popped     = false;
+    v.win.placed = false;
     if (s_popScnPanel[owner].open) popOutHide(&s_popScnPanel[owner]);
     if (s_scnCloseAskOwner == owner && s_scnCloseAskPopout) {
         s_scnCloseAskCancel = true;
@@ -5250,20 +5252,50 @@ static bool scnOpacitySlider(const char *label, const char *id, int *live,
     return *live != stored;
 }
 
-/* One view's settings window, opened by its gear. A window rather than a
-   popup, because a popup closes the moment the pointer goes anywhere else
-   and the whole point of an opacity control is to watch the panel while it
-   moves. Submitted after the panel's End, since one ImGui window cannot be
-   opened inside another.
+/* Keep the window just begun behind an open modal dialog, such as the
+   tutorial's message. The scenario windows have NoFocusOnAppearing, so when
+   ImGui makes one it puts it at the front of the display order and does not
+   move it behind the modal, as it does for a new window that takes focus.
+   They are submitted after the modal, so the first time one is made while
+   the modal is open (on the web, on every page load) it draws over the
+   dialog. Called right after Begin. When no modal is open, the window keeps
+   its place, so a click still brings it to the front. */
+static void scnKeepBehindModal(void) {
+    ImGuiWindow *modal = ImGui::GetTopMostAndVisiblePopupModal();
+    if (modal == nullptr) return;
+    ImGuiWindow *self = ImGui::GetCurrentWindow()->RootWindow;
+    if (self == modal->RootWindow) return;
+    if (ImGui::FindWindowDisplayIndex(self) >
+        ImGui::FindWindowDisplayIndex(modal->RootWindow)) {
+        ImGui::BringWindowToDisplayBehind(self, modal);
+    }
+}
+
+/* The settings window of a scenario panel or of the Scenario Text window,
+   opened by its gear. A window rather than a popup, because a popup closes
+   the moment the pointer goes anywhere else and the whole point of an
+   opacity control is to watch the window while it changes. Submitted after
+   the window's scnFloatEnd, since one ImGui window cannot be opened inside
+   another.
 
    Pop out (where pop-outs are available), then two sliders: the background
    opacity is the backing's real alpha, and the text opacity fades
    everything the script drew and nothing else. Empty parts stay clear, and
-   the border, the buttons and the grips keep their own alpha, so a panel
-   taken to zero on both sliders can still be found. */
-static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
-    ScnPanelView &v = s_scnViews[owner];
-    if (!v.settingsOpen) return;
+   the bar, the buttons and the grip keep their own alpha, so a window taken
+   to zero on both sliders can still be found.
+
+   title is the window's ImGui title with its ### id. bgId and textId are
+   the sliders' ids. bgPct and textPct are the live opacities, and bgStored
+   and textStored the saved ones. Returns SCN_FLOAT_BG_CHANGED and
+   SCN_FLOAT_TEXT_CHANGED for each slider whose drag has just finished on a
+   value that is not the saved one: the caller stores it and saves. */
+#define SCN_FLOAT_BG_CHANGED   1
+#define SCN_FLOAT_TEXT_CHANGED 2
+static int scnFloatSettings(ScnFloatWin &s, int owner, const char *title,
+                            float gearX, float gearY, const char *bgId,
+                            int *bgPct, int bgStored, const char *textId,
+                            int *textPct, int textStored) {
+    if (!s.settingsOpen) return 0;
 
     /* Beside the gear the first time it is opened, and the player's to move
        after that. */
@@ -5272,10 +5304,8 @@ static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
                                    gearY + SCN_PANEL_DIALOG_GAP),
                             ImGuiCond_Appearing);
 
-    char title[SCN_PANEL_SCENARIO_LEN + 32];
-    SDL_snprintf(title, sizeof(title), "%s###scnpanelsettings%d", v.name, owner);
-
-    if (ImGui::Begin(title, &v.settingsOpen,
+    int changed = 0;
+    if (ImGui::Begin(title, &s.settingsOpen,
                      ImGuiWindowFlags_AlwaysAutoResize |
                      ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoDocking |
@@ -5294,41 +5324,305 @@ static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
             ImGui::SetWindowPos(ImVec2(keepX, keepY));
         }
 
-        /* The same items in the same order as the Scenario Text window's
-           settings (renderScenarioTextSettings). */
         scnPopOutButton(owner);
 
-        if (scnOpacitySlider(langGetText(STR_SCN_BG_OPACITY_LBL),
-                             "scnBgAlpha", &v.bgPct, v.bgAlpha)) {
-            v.bgAlpha = v.bgPct;
-            scnPanelPersistLayout(v);
+        if (scnOpacitySlider(langGetText(STR_SCN_BG_OPACITY_LBL), bgId, bgPct,
+                             bgStored)) {
+            changed |= SCN_FLOAT_BG_CHANGED;
         }
-        if (scnOpacitySlider(langGetText(STR_SCN_TEXT_OPACITY_LBL),
-                             "scnTextAlpha", &v.textPct, v.textAlpha)) {
-            v.textAlpha = v.textPct;
-            scnPanelPersistLayout(v);
+        if (scnOpacitySlider(langGetText(STR_SCN_TEXT_OPACITY_LBL), textId,
+                             textPct, textStored)) {
+            changed |= SCN_FLOAT_TEXT_CHANGED;
         }
     }
     ImGui::End();
+    return changed;
 }
 
-/* Keep the window just begun behind an open modal dialog, such as the
-   tutorial's message. The scenario windows have NoFocusOnAppearing, so when
-   ImGui makes one it puts it at the front of the display order and does not
-   move it behind the modal, as it does for a new window that takes focus.
-   They are submitted after the modal, so the first time one is made while
-   the modal is open (on the web, on every page load) it draws over the
-   dialog. Called right after Begin. When no modal is open, the window keeps
-   its place, so a click still brings it to the front. */
-static void scnKeepBehindModal(void) {
-    ImGuiWindow *modal = ImGui::GetTopMostAndVisiblePopupModal();
-    if (modal == nullptr) return;
-    ImGuiWindow *self = ImGui::GetCurrentWindow()->RootWindow;
-    if (self == modal->RootWindow) return;
-    if (ImGui::FindWindowDisplayIndex(self) >
-        ImGui::FindWindowDisplayIndex(modal->RootWindow)) {
-        ImGui::BringWindowToDisplayBehind(self, modal);
+/* The bar's height (the side of the gear and the X) for content w by h.
+   The bar is as tall as the buttons, which fit the content's short side. */
+static float scnFloatBarHeight(float w, float h) {
+    return scnPanelButtonSide(ImMin(w, h));
+}
+
+/* One frame of the window frame a scenario panel and the Scenario Text
+   window share: what the caller gives (In) and what scnFloatBegin works
+   out for the caller and for scnFloatEnd (Out). */
+struct ScnFloatFrame {
+    /* In. */
+    const char *winId;      /* the ImGui window's id, "##..." */
+    int    owner;           /* for the X: s_scnViews index or SCN_TEXT_OWNER */
+    float  w, h;            /* the content's size this frame */
+    float  wantX, wantY;    /* the content's top-left, when the frame places
+                               the window: saved or default, kept on
+                               screen with room above it for the bar */
+    float  minW, maxW;      /* what a resize may reach */
+    float  minH, maxH;
+    bool   square;          /* a resize keeps w equal to h */
+    bool   snapped;         /* a resize sits on a snap size: brighter edge */
+    int    bgPct;           /* the background opacity, 0 to 100 */
+    bool   hideFrameAtZeroOpacity;  /* see scnFloatFrameShown */
+
+    /* Out. */
+    bool   open;            /* Begin returned true: draw the content */
+    ImVec2 pos;             /* the window's top-left, the bar's top-left */
+    ImVec2 at;              /* the content's top-left, btn below pos */
+    float  btn;             /* the bar's height */
+    float  handle;          /* the grip's side */
+    bool   withClose;       /* the X is there */
+    ScnPanelButtons b;
+    bool   moveHot, moveActive, movedNow;
+    bool   resizeHot, resizeActive;
+    bool   resizeDone;      /* a resize ended this frame, at w by h */
+    bool   hovered;         /* the pointer is on the window */
+    bool   handlesVisible;  /* the bar, the buttons and the grip show */
+    float  keepX, keepY;    /* the content's top-left, kept on screen */
+    float  gearX, gearY;    /* where the settings window opens from */
+};
+
+/* Begins the window frame and submits its controls: the move bar directly
+   above the content, the gear and the X on the bar's right end, and the
+   resize grip in the content's bottom-right corner. The window has no title
+   bar, no padding, no border and no background of its own: the caller draws
+   the backing on the content only, so the strip above it for the bar stays
+   clear while the bar is hidden. The bar and the grip are the only things
+   that move or resize it. The caller draws its content between this and
+   scnFloatEnd when f.open is true, and calls scnFloatEnd in every case.
+
+   x, y, w and h, and the saved place and size, are the content's. The ImGui
+   window is btn taller and starts btn higher: the bar is the strip above
+   the content, its bottom edge on the content's top edge, so it covers
+   none of the content.
+
+   The place is the caller's to save: scnFloatBegin keeps the window inside
+   the main window and gives that place in keepX and keepY, and movedNow,
+   moveActive and resizeActive. A resize ended this frame gives resizeDone,
+   with the size in w and h. */
+static bool scnFloatBegin(ScnFloatWin &s, ScnFloatFrame &f) {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    f.handle    = ImMin(SCN_PANEL_HANDLE_PX, ImMin(f.w, f.h) * 0.25f);
+    f.btn       = scnFloatBarHeight(f.w, f.h);
+    f.withClose = scnPanelCanReopen();
+    f.b         = ScnPanelButtons();
+    f.moveHot = f.moveActive = f.movedNow = false;
+    f.resizeHot = f.resizeActive = f.resizeDone = false;
+    f.hovered = f.handlesVisible = false;
+    f.keepX = s.atX;
+    f.keepY = s.atY;
+    f.gearX = f.gearY = 0.0f;
+    const float btn   = f.btn;
+    const float btnsW = f.withClose ? btn * 2.0f : btn;
+
+    if (!s.placed) {
+        ImGui::SetNextWindowPos(ImVec2(f.wantX, f.wantY - btn),
+                                ImGuiCond_Always);
+        s.placed = true;
+        s.atX    = f.wantX;
+        s.atY    = f.wantY;
+    } else if (s.resizing) {
+        /* A resize keeps the content's top-left corner where it is. The
+           bar's height can change with the size, so the window is placed
+           from that corner each frame of the resize. */
+        ImGui::SetNextWindowPos(ImVec2(s.atX, s.atY - btn), ImGuiCond_Always);
     }
+    ImGui::SetNextWindowSize(ImVec2(f.w, f.h + btn), ImGuiCond_Always);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
+    f.open = ImGui::Begin(f.winId, nullptr,
+                          ImGuiWindowFlags_NoTitleBar |
+                          ImGuiWindowFlags_NoResize |
+                          ImGuiWindowFlags_NoMove |
+                          ImGuiWindowFlags_NoScrollbar |
+                          ImGuiWindowFlags_NoScrollWithMouse |
+                          ImGuiWindowFlags_NoCollapse |
+                          ImGuiWindowFlags_NoSavedSettings |
+                          ImGuiWindowFlags_NoFocusOnAppearing |
+                          ImGuiWindowFlags_NoDocking |
+                          ImGuiWindowFlags_NoNav);
+    scnKeepBehindModal();
+    if (!f.open) return false;
+
+    const ImVec2 pos = ImGui::GetWindowPos();
+    f.pos = pos;
+    f.at  = ImVec2(pos.x, pos.y + btn);
+
+    /* The bar and the grip are submitted every frame, drawn or not: an
+       invisible button that stops being submitted stops being the active
+       item, and a drag that wanders off the window would die. The bar runs
+       from the left edge up to the buttons. */
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::InvisibleButton("##scnpanelmove",
+                           ImVec2(ImMax(f.w - btnsW, 1.0f), btn));
+    f.moveHot    = ImGui::IsItemHovered();
+    f.moveActive = ImGui::IsItemActive();
+    if (f.moveHot || f.moveActive) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    }
+    /* movedNow: the bar drag moved the window this frame. A press on the
+       bar with no movement does not count as a move. */
+    if (f.moveActive) {
+        const ImVec2 drag = ImGui::GetIO().MouseDelta;
+        if (drag.x != 0.0f || drag.y != 0.0f) {
+            ImGui::SetWindowPos(ImVec2(pos.x + drag.x, pos.y + drag.y));
+            f.movedNow = true;
+        }
+    }
+    s.moving = f.moveActive;
+
+    /* The gear and the X sit on the bar, and the settings open from the
+       bar's top edge. */
+    f.b     = scnPanelSubmitButtons(pos, f.w, btn, f.withClose);
+    f.gearX = f.b.gearX;
+    f.gearY = pos.y;
+    if (f.b.gearClicked) s.settingsOpen = !s.settingsOpen;
+    if (f.b.closeClicked) scnPanelRequestClose(f.owner, false);
+
+    ImGui::SetCursorScreenPos(ImVec2(f.at.x + f.w - f.handle,
+                                     f.at.y + f.h - f.handle));
+    ImGui::InvisibleButton("##scnpanelresize", ImVec2(f.handle, f.handle));
+    f.resizeHot    = ImGui::IsItemHovered();
+    f.resizeActive = ImGui::IsItemActive();
+    if (f.resizeHot || f.resizeActive) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+    }
+    if (ImGui::IsItemActivated()) {
+        s.rawW = f.w;
+        s.rawH = f.h;
+    }
+    if (f.resizeActive) {
+        const ImVec2 drag = ImGui::GetIO().MouseDelta;
+        if (f.square) {
+            /* The square stays square: whichever axis moved further. */
+            s.rawW += (fabsf(drag.x) >= fabsf(drag.y)) ? drag.x : drag.y;
+            s.rawW  = ImClamp(s.rawW, f.minW, f.maxW);
+            s.rawH  = s.rawW;
+        } else {
+            /* Width and height each follow the pointer: the window is a
+               rectangle of any shape. */
+            s.rawW = ImClamp(s.rawW + drag.x, f.minW, f.maxW);
+            s.rawH = ImClamp(s.rawH + drag.y, f.minH, f.maxH);
+        }
+    }
+    f.resizeDone = ImGui::IsItemDeactivated();
+    s.resizing   = f.resizeActive;
+
+    /* The bar, the buttons and the grip show while the pointer is on the
+       window, for a while after it leaves (a touch has no hover), while one
+       of them is being dragged, and while the settings window or the close
+       confirm is up. The strip above the content counts as the window only
+       while the bar is up: see the hit test hole below. */
+    const Uint64 now = SDL_GetTicks();
+    f.hovered = ImGui::IsWindowHovered(
+        ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    if (f.hovered) s.chromeUntil = now + SCN_PANEL_CHROME_LINGER_MS;
+    f.handlesVisible = now < s.chromeUntil || f.moveActive ||
+                       f.resizeActive || s.settingsOpen ||
+                       s_scnCloseAskOwner == f.owner;
+
+    /* Kept inside the main window. keepX/keepY are the content's top-left
+       corner: the window's less the bar. The bar is kept on screen as well,
+       so the content's top is never less than btn from the main window's
+       top. */
+    const ImVec2 moved = ImGui::GetWindowPos();
+    float keepX = moved.x, keepY = moved.y + btn;
+    if (keepX > display.x - f.w) keepX = display.x - f.w;
+    if (keepY > display.y - f.h) keepY = display.y - f.h;
+    if (keepX < 0.0f) keepX = 0.0f;
+    if (keepY < btn) keepY = btn;
+    if (keepX != moved.x || keepY - btn != moved.y) {
+        ImGui::SetWindowPos(ImVec2(keepX, keepY - btn));
+    }
+    s.atX   = keepX;
+    s.atY   = keepY;
+    f.keepX = keepX;
+    f.keepY = keepY;
+
+    /* While the bar is hidden, the strip above the content is a hole in the
+       window for the hit test: the pointer there does not bring the bar up,
+       and a click or a tap there goes to the game, as it would with no
+       window. ImGui finds the hovered window in NewFrame, from the hole the
+       last frame left, and sdl3ImguiMouseOverWindow honours the same hole.
+       The content itself is never in the hole, so it takes the mouse. Begin
+       clears the hole each frame. */
+    if (!f.handlesVisible) {
+        ImGui::SetWindowHitTestHole(ImGui::GetCurrentWindow(),
+                                    ImGui::GetWindowPos(), ImVec2(f.w, btn));
+    }
+
+    /* Everything is drawn at pos, where Begin put the window this frame,
+       and not at keepX/keepY. SetWindowPos moves the window at once, but
+       the draw list keeps the clip rect Begin worked out at pos, so a drag
+       would put the content one drag step past the clip rect and cut off
+       its trailing edge. The move shows from the next frame. */
+    return true;
+}
+
+/* Draws the frame over the content and ends the window: the faint edge
+   round the content, the bar with the gear and the X, and the grip, then
+   ImGui's End. Called after every scnFloatBegin, open or not. */
+static void scnFloatEnd(const ScnFloatWin &s, const ScnFloatFrame &f) {
+    if (f.open) {
+        ImDrawList *dl  = ImGui::GetWindowDrawList();
+        const ImVec2 at = f.at;
+        const ImVec2 pos = f.pos;
+        const float  btn = f.btn;
+
+        /* The edge and the grip: with hideFrameAtZeroOpacity, at 0%
+           background opacity only while the pointer is on the window or a
+           drag is on (scnFloatFrameShown). */
+        const bool frameShown =
+            scnFloatFrameShown(f.hideFrameAtZeroOpacity, f.bgPct, f.hovered,
+                               f.moveActive, f.resizeActive);
+
+        /* The edge round the content, a shade brighter while a resize sits
+           on a snap size. A pixel in from the far corner, since the draw
+           list is clipped to the window's rect. */
+        if (frameShown) {
+            dl->AddRect(at, ImVec2(at.x + f.w - 1.0f, at.y + f.h - 1.0f),
+                        f.snapped ? IM_COL32(140, 220, 255, 110)
+                                  : IM_COL32(255, 255, 255, 40));
+        }
+
+        if (f.handlesVisible) {
+            /* The title bar, grey, right across the strip above the
+               content: the drag area. Its dark line is on its own last row
+               of pixels, so it does not cover the content either. The
+               buttons sit on its right end with no plate of their own. */
+            const ImU32 barCol = (f.moveHot || f.moveActive)
+                                     ? IM_COL32(150, 150, 150, 235)
+                                     : IM_COL32(112, 112, 112, 205);
+            dl->AddRectFilled(pos, ImVec2(pos.x + f.w - 1.0f, pos.y + btn),
+                              barCol);
+            dl->AddLine(ImVec2(pos.x, pos.y + btn - 1.0f),
+                        ImVec2(pos.x + f.w - 1.0f, pos.y + btn - 1.0f),
+                        IM_COL32(0, 0, 0, 90));
+
+            scnPanelDrawButtons(dl, pos, f.w, btn, f.withClose,
+                                s_iconScnPanelGear[activeIconSlot()], f.b,
+                                s.settingsOpen);
+
+            /* The resize grip: three diagonals stepping out of the
+               content's bottom-right corner. Its button is submitted every
+               frame all the same, so it takes the mouse when not drawn. */
+            if (frameShown) {
+                const ImU32 resizeCol = (f.resizeHot || f.resizeActive)
+                                            ? IM_COL32(255, 255, 255, 200)
+                                            : IM_COL32(255, 255, 255, 110);
+                const float brX = at.x + f.w - 1.0f;
+                const float brY = at.y + f.h - 1.0f;
+                for (int i = 1; i <= 3; i++) {
+                    const float off = f.handle * (float)i / 3.5f;
+                    dl->AddLine(ImVec2(brX - off, brY),
+                                ImVec2(brX, brY - off), resizeCol);
+                }
+            }
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
 }
 
 /* One view, in the game window. stack is how many views were placed ahead
@@ -5415,8 +5709,8 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     /* True while the resize drag sits on a cardinal size; the border shows
        it. Accumulate raw, show snapped. */
     bool snapped = false;
-    if (v.resizing) {
-        side = v.rawSide;
+    if (v.win.resizing) {
+        side = v.win.rawW;
         for (size_t i = 0; i < sizeof(scnPanelCardinals) / sizeof(int); i++) {
             const float cardinal =
                 baseSide * (float)scnPanelCardinals[i] / 100.0f;
@@ -5430,12 +5724,9 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     if (side < sideMin) side = sideMin;
     if (side > sideMax) side = sideMax;
 
-    /* The bar's height and the grip's side. Both come from this frame's
-       side only, so they are known before Begin. */
-    const float handle    = ImMin(SCN_PANEL_HANDLE_PX, side * 0.25f);
-    const float btn       = scnPanelButtonSide(side);
-    const bool  withClose = scnPanelCanReopen();
-    const float btnsW     = withClose ? btn * 2.0f : btn;
+    /* The bar's height, from this frame's side only, so it is known before
+       the frame begins (scnFloatBegin works it out the same way). */
+    const float btn = scnFloatBarHeight(side, side);
 
     /* Where it goes when nothing has been saved: the top-left of the game
        view, inset a little, or the top-right when the default size did not
@@ -5455,11 +5746,9 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     defY += (float)stack * (side + inset + btn);
 
     /* x, y and scale, and the saved gameFrontScnPanel* settings, are the
-       panel square's. The ImGui window is btn taller and starts btn
-       higher: the bar is the strip above the square, its bottom edge on the
-       square's top edge, so it covers none of the script's drawing.
-       A position saved on a larger display is brought inside this one,
-       with room above the square for the bar. */
+       panel square's: the frame's content. A position saved on a larger
+       display is brought inside this one, with room above the square for
+       the bar. */
     float wantX = (v.x >= 0) ? (float)v.x : defX;
     float wantY = (v.y >= 0) ? (float)v.y : defY;
     if (wantX > display.x - side) wantX = display.x - side;
@@ -5483,103 +5772,30 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
         s_scnPanelBeside.have = true;
     }
 
-    if (!v.placed) {
-        ImGui::SetNextWindowPos(ImVec2(wantX, wantY - btn), ImGuiCond_Always);
-        v.placed = true;
-        v.atX    = wantX;
-        v.atY    = wantY;
-    } else if (v.resizing) {
-        /* A resize keeps the square's top-left corner where it is. The
-           bar's height can change with the side, so the window is placed
-           from that corner each frame of the resize. */
-        ImGui::SetNextWindowPos(ImVec2(v.atX, v.atY - btn), ImGuiCond_Always);
-    }
-    ImGui::SetNextWindowSize(ImVec2(side, side + btn), ImGuiCond_Always);
-
-    float gearX = 0.0f;
-    float gearY = 0.0f;
-
-    /* No padding and no border. The window has no background of its own:
-       the backing, black at the player's background opacity, is drawn
-       below on the square only, so the strip above it for the bar stays
-       clear while the bar is hidden. NoMove and NoResize: the bar and the
-       corner grip are the only things that move or resize it. */
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
+    /* The window frame, shared with the Scenario Text window: a square,
+       resized by whichever axis moved further and snapped to the cardinal
+       sizes above, and its edge on every frame at any opacity. */
     char winId[32];
     SDL_snprintf(winId, sizeof(winId), "##scenariopanel%d", owner);
-    const bool open = ImGui::Begin(winId, nullptr,
-                                   ImGuiWindowFlags_NoTitleBar |
-                                   ImGuiWindowFlags_NoResize |
-                                   ImGuiWindowFlags_NoMove |
-                                   ImGuiWindowFlags_NoScrollbar |
-                                   ImGuiWindowFlags_NoScrollWithMouse |
-                                   ImGuiWindowFlags_NoCollapse |
-                                   ImGuiWindowFlags_NoSavedSettings |
-                                   ImGuiWindowFlags_NoFocusOnAppearing |
-                                   ImGuiWindowFlags_NoDocking |
-                                   ImGuiWindowFlags_NoNav);
-    scnKeepBehindModal();
-    if (open) {
-        const ImVec2 pos = ImGui::GetWindowPos();
-        ImDrawList *dl   = ImGui::GetWindowDrawList();
-
-        /* The square's top-left corner, the bar's height below the
-           window's. */
-        const ImVec2 sq(pos.x, pos.y + btn);
-
-        /* The bar and both grips are submitted every frame, drawn or not: an
-           invisible button that stops being submitted stops being the
-           active item, and a drag that wanders off the panel would die. The
-           bar runs from the left edge up to the buttons. */
-        ImGui::SetCursorScreenPos(pos);
-        ImGui::InvisibleButton("##scnpanelmove",
-                               ImVec2(ImMax(side - btnsW, 1.0f), btn));
-        const bool moveHot    = ImGui::IsItemHovered();
-        const bool moveActive = ImGui::IsItemActive();
-        if (moveHot || moveActive) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
-        }
-        /* movedNow: the bar drag moved the panel this frame. A press on the
-           bar with no movement does not count as a move. */
-        bool movedNow = false;
-        if (moveActive) {
-            const ImVec2 drag = ImGui::GetIO().MouseDelta;
-            if (drag.x != 0.0f || drag.y != 0.0f) {
-                ImGui::SetWindowPos(ImVec2(pos.x + drag.x, pos.y + drag.y));
-                movedNow = true;
-            }
-        }
-
-        /* The gear and the X sit on the bar, and the settings open from
-           the bar's top edge, as they did when the bar was inside the
-           square. */
-        const ScnPanelButtons b = scnPanelSubmitButtons(pos, side, btn, withClose);
-        gearX = b.gearX;
-        gearY = pos.y;
-        if (b.gearClicked) v.settingsOpen = !v.settingsOpen;
-        if (b.closeClicked) scnPanelRequestClose(owner, false);
-
-        ImGui::SetCursorScreenPos(
-            ImVec2(sq.x + side - handle, sq.y + side - handle));
-        ImGui::InvisibleButton("##scnpanelresize", ImVec2(handle, handle));
-        const bool resizeHot    = ImGui::IsItemHovered();
-        const bool resizeActive = ImGui::IsItemActive();
-        if (resizeHot || resizeActive) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
-        }
-        if (ImGui::IsItemActivated()) {
-            v.rawSide = side;
-        }
-        if (resizeActive) {
-            /* The square stays square: whichever axis moved further. */
-            const ImVec2 drag = ImGui::GetIO().MouseDelta;
-            v.rawSide += (fabsf(drag.x) >= fabsf(drag.y)) ? drag.x : drag.y;
-            if (v.rawSide < sideMin) v.rawSide = sideMin;
-            if (v.rawSide > sideMax) v.rawSide = sideMax;
-        }
-        if (ImGui::IsItemDeactivated()) {
+    ScnFloatFrame f = {};
+    f.winId   = winId;
+    f.owner   = owner;
+    f.w       = side;
+    f.h       = side;
+    f.wantX   = wantX;
+    f.wantY   = wantY;
+    f.minW    = sideMin;
+    f.maxW    = sideMax;
+    f.minH    = sideMin;
+    f.maxH    = sideMax;
+    f.square  = true;
+    f.snapped = snapped;
+    f.bgPct   = v.bgPct;
+    f.hideFrameAtZeroOpacity = false;
+    if (scnFloatBegin(v.win, f)) {
+        /* A resize saves the size as a percent of the size the zoom alone
+           gives. */
+        if (f.resizeDone) {
             int pct = (int)lroundf(side / baseSide * 100.0f);
             if (pct < SCN_PANEL_SCALE_MIN) pct = SCN_PANEL_SCALE_MIN;
             if (pct > SCN_PANEL_SCALE_MAX) pct = SCN_PANEL_SCALE_MAX;
@@ -5588,27 +5804,8 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
                 scnPanelPersistLayout(v);
             }
         }
-        v.resizing = resizeActive;
 
-        /* The bar, the buttons and the grip show while the pointer is on
-           the panel, for a while after it leaves (a touch has no hover),
-           while one of them is being dragged, and while the settings window
-           is up. The strip above the square counts as the panel only while
-           the bar is up: see the hit test hole below. */
-        const Uint64 now = SDL_GetTicks();
-        if (ImGui::IsWindowHovered(
-                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
-            v.chromeUntil = now + SCN_PANEL_CHROME_LINGER_MS;
-        }
-        const bool handlesVisible = now < v.chromeUntil || moveActive ||
-                                    resizeActive || v.settingsOpen ||
-                                    s_scnCloseAskOwner == owner;
-
-        /* Kept inside the main window. keepX/keepY are the square's
-           top-left corner: the window's less the bar. The bar is kept on
-           screen as well, so the square's top is never less than btn from
-           the main window's top.
-           The place is saved, through the debounced window-settings path,
+        /* The place is saved, through the debounced window-settings path,
            only once the player has moved the panel with its bar. After that
            it is saved again when it changes, also when it is pushed inside a
            smaller main window. A panel never moved keeps no place: it is put
@@ -5616,42 +5813,20 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
            view when the main window or the zoom changes. A resize alone
            does not fix the place: the resize keeps the top-left corner, and
            that corner is the default place. */
-        const ImVec2 moved = ImGui::GetWindowPos();
-        float keepX = moved.x, keepY = moved.y + btn;
-        if (keepX > display.x - side) keepX = display.x - side;
-        if (keepY > display.y - side) keepY = display.y - side;
-        if (keepX < 0.0f) keepX = 0.0f;
-        if (keepY < btn) keepY = btn;
-        if (keepX != moved.x || keepY - btn != moved.y) {
-            ImGui::SetWindowPos(ImVec2(keepX, keepY - btn));
-        }
-        v.atX = keepX;
-        v.atY = keepY;
         const bool everMoved = v.x >= 0 || v.y >= 0;
-        if ((movedNow || everMoved) &&
-            ((int)keepX != v.x || (int)keepY != v.y)) {
-            v.x = (int)keepX;
-            v.y = (int)keepY;
+        if ((f.movedNow || everMoved) &&
+            ((int)f.keepX != v.x || (int)f.keepY != v.y)) {
+            v.x = (int)f.keepX;
+            v.y = (int)f.keepY;
             scnPanelPersistLayout(v);
         }
-        if (!everMoved && !movedNow && !moveActive && !resizeActive) {
-            v.placed = false;
-        }
-
-        /* While the bar is hidden, the strip above the square is a hole in
-           the window for the hit test: the pointer there does not bring the
-           bar up, and a click or a tap there goes to the game, as it would
-           with no panel. ImGui finds the hovered window in NewFrame, from
-           the hole the last frame left, and sdl3ImguiMouseOverWindow honours
-           the same hole. The square itself is never in the hole, so it takes
-           the mouse as it always has. Begin clears the hole each frame. */
-        if (!handlesVisible) {
-            ImGui::SetWindowHitTestHole(ImGui::GetCurrentWindow(),
-                                        ImGui::GetWindowPos(),
-                                        ImVec2(side, btn));
+        if (!everMoved && !f.movedNow && !f.moveActive && !f.resizeActive) {
+            v.win.placed = false;
         }
 
         /* The backing, on the square only. */
+        ImDrawList *dl  = ImGui::GetWindowDrawList();
+        const ImVec2 sq = f.at;
         dl->AddRectFilled(sq, ImVec2(sq.x + side, sq.y + side),
                           IM_COL32(0, 0, 0, scnBackingAlpha(v.bgPct)));
 
@@ -5669,51 +5844,18 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
             env.tiles      = (void *)sdl3DrawGetTilesTexture();
             scnPanelDraw(list, sq.x, sq.y, &env);
         }
-
-        /* The border round the square on every frame, a shade brighter
-           while a resize sits on a cardinal size. A pixel in from the far
-           corner, since the draw list is clipped to the window's rect. */
-        dl->AddRect(sq, ImVec2(sq.x + side - 1.0f, sq.y + side - 1.0f),
-                    snapped ? IM_COL32(140, 220, 255, 110)
-                            : IM_COL32(255, 255, 255, 40));
-
-        if (handlesVisible) {
-            /* The title bar, grey, right across the strip above the square:
-               the drag area. Its dark line is on its own last row of
-               pixels, so it does not cover the square either. The buttons
-               sit on its right end with no plate of their own. */
-            const ImU32 barCol = (moveHot || moveActive)
-                                     ? IM_COL32(150, 150, 150, 235)
-                                     : IM_COL32(112, 112, 112, 205);
-            dl->AddRectFilled(pos, ImVec2(pos.x + side - 1.0f, pos.y + btn),
-                              barCol);
-            dl->AddLine(ImVec2(pos.x, pos.y + btn - 1.0f),
-                        ImVec2(pos.x + side - 1.0f, pos.y + btn - 1.0f),
-                        IM_COL32(0, 0, 0, 90));
-
-            scnPanelDrawButtons(dl, pos, side, btn, withClose,
-                                s_iconScnPanelGear[activeIconSlot()], b,
-                                v.settingsOpen);
-
-            /* The resize grip: three diagonals stepping out of the square's
-               bottom-right corner. */
-            const ImU32 resizeCol = (resizeHot || resizeActive)
-                                        ? IM_COL32(255, 255, 255, 200)
-                                        : IM_COL32(255, 255, 255, 110);
-            const float brX = sq.x + side - 1.0f;
-            const float brY = sq.y + side - 1.0f;
-            for (int i = 1; i <= 3; i++) {
-                const float off = handle * (float)i / 3.5f;
-                dl->AddLine(ImVec2(brX - off, brY), ImVec2(brX, brY - off),
-                            resizeCol);
-            }
-        }
     }
-    ImGui::End();
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar(2);
+    scnFloatEnd(v.win, f);
 
-    renderScenarioPanelSettings(owner, gearX, gearY);
+    char title[SCN_PANEL_SCENARIO_LEN + 32];
+    SDL_snprintf(title, sizeof(title), "%s###scnpanelsettings%d", v.name, owner);
+    const int changed =
+        scnFloatSettings(v.win, owner, title, f.gearX, f.gearY, "scnBgAlpha",
+                         &v.bgPct, v.bgAlpha, "scnTextAlpha", &v.textPct,
+                         v.textAlpha);
+    if (changed & SCN_FLOAT_BG_CHANGED) v.bgAlpha = v.bgPct;
+    if (changed & SCN_FLOAT_TEXT_CHANGED) v.textAlpha = v.textPct;
+    if (changed != 0) scnPanelPersistLayout(v);
 }
 
 /* Every script's panel in the game window, and the opening and closing of
@@ -5765,9 +5907,7 @@ static void renderScenarioPanels(ClientSim *cs) {
             renderScenarioPanelView(cs, i, stack);
             stack++;
         } else {
-            v.placed       = false;
-            v.resizing     = false;
-            v.settingsOpen = false;
+            scnFloatStop(v.win);
         }
     }
 
@@ -5948,22 +6088,19 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * and the announcement (game.announce), which stays up for
  * the seconds the script asked for. Both are drawn in one
  * window, the Scenario Text window, and not at a place on
- * the game view. The window is built the way a script's
- * scenario panel window is: no title bar, a grey bar across
- * the top while the pointer is on it to drag it by, a gear
- * that opens two opacity sliders (background and text), an
- * X that hides it (with the same confirm), and a grip in
- * the bottom-right corner. Unlike the panel it is a
- * rectangle, and the grip changes its width and its height
- * separately.
- *
- * The window takes mouse input only while the pointer is
- * on the bar or the grip, while one of them is being
- * dragged, or while the settings or the close confirm are
- * up. The rest of the time it is NoInputs, so a click or
- * the wheel on the text goes through to the game view
- * under it, as the tablet's ##ScenarioSlot does, also
- * while the handles show.
+ * the game view. The window has the same window frame as a
+ * script's scenario panel, from the same code (scnFloatBegin
+ * and scnFloatEnd): no title bar, a grey bar above the text
+ * while the pointer is on it to drag it by, a gear that
+ * opens the same settings (scnFloatSettings), an X that
+ * hides it (with the same confirm), and a grip in the
+ * bottom-right corner. It takes the mouse as the panel
+ * does: on the text area always, and on the strip above it
+ * only while the bar is up. Unlike the panel it is a
+ * rectangle, the grip changes its width and its height
+ * separately, and at 0% background opacity its edge and
+ * grip show only while the pointer is on it
+ * (scnFloatFrameShown).
  *
  * The X turns off Brains > Info Overlay > Scenario Text,
  * and that menu item turns it back on. Its place, size,
@@ -5991,12 +6128,13 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * resize it then. Turning it on in the menu does not show it
  * (scnTextWindowShown in scenario_panel_draw.h). After that
  * no empty window stays on the game view.
- * With no line it draws nothing: no lines, no backing and
- * no edge, so the game view looks as it does with no
- * window. While the pointer is on it, the bar, the gear,
- * the X, the grip and the faint edge show, at any
- * background opacity, so the player can see its size
- * (scnTextEdgeShown). Its size with no line is the saved
+ * With no line it draws no lines and no backing. Its edge
+ * follows the frame's rule: at 0% background opacity only
+ * while the pointer is on it, and above 0% always, as a
+ * panel's edge does. While the pointer is on it, the bar,
+ * the gear, the X, the grip and the faint edge show, at any
+ * background opacity, so the player can see its size. Its
+ * size with no line is the saved
  * size, or with none saved, the size for the rows the round
  * has used so far, or for one row when it has used none. A
  * window with no line never saves its size or its place by
@@ -6072,10 +6210,7 @@ static void scnTextSetShown(bool shown) {
     gameFrontScnTextShown = shown;
     gameFrontSaveWindowSettings();
     if (!shown) {
-        s_scnText.placed       = false;
-        s_scnText.moving       = false;
-        s_scnText.resizing     = false;
-        s_scnText.settingsOpen = false;
+        scnFloatStop(s_scnText.win);
         if (s_popScnPanel[SCN_TEXT_OWNER].open) {
             popOutHide(&s_popScnPanel[SCN_TEXT_OWNER]);
         }
@@ -6294,57 +6429,6 @@ static void scnTextDrawLines(ImDrawList *dl, ImFont *font, float x, float y,
     }
 }
 
-/* The Scenario Text window's settings, opened by its gear: the same items
-   in the same order as a script's panel's settings
-   (renderScenarioPanelSettings): Pop out (where pop-outs are available),
-   then the background and text opacity sliders. */
-static void renderScenarioTextSettings(float gearX, float gearY) {
-    if (!s_scnText.settingsOpen) return;
-
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowPos(ImVec2(gearX + SCN_PANEL_DIALOG_GAP,
-                                   gearY + SCN_PANEL_DIALOG_GAP),
-                            ImGuiCond_Appearing);
-
-    char title[128];
-    SDL_snprintf(title, sizeof(title), "%s###scntextsettings",
-                 langGetText(STR_SCNTEXT_TITLE));
-
-    if (ImGui::Begin(title, &s_scnText.settingsOpen,
-                     ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoSavedSettings |
-                     ImGuiWindowFlags_NoDocking |
-                     ImGuiWindowFlags_NoCollapse)) {
-        /* Held inside the main window, where its title bar can be grabbed. */
-        const ImVec2 winPos  = ImGui::GetWindowPos();
-        const ImVec2 winSize = ImGui::GetWindowSize();
-        float keepX = winPos.x, keepY = winPos.y;
-        if (keepX > display.x - winSize.x) keepX = display.x - winSize.x;
-        if (keepY > display.y - winSize.y) keepY = display.y - winSize.y;
-        if (keepX < 0.0f) keepX = 0.0f;
-        if (keepY < 0.0f) keepY = 0.0f;
-        if (keepX != winPos.x || keepY != winPos.y) {
-            ImGui::SetWindowPos(ImVec2(keepX, keepY));
-        }
-
-        scnPopOutButton(SCN_TEXT_OWNER);
-
-        if (scnOpacitySlider(langGetText(STR_SCN_BG_OPACITY_LBL),
-                             "scnTextBgAlpha", &s_scnText.bgPct,
-                             gameFrontScnTextBgAlpha)) {
-            gameFrontScnTextBgAlpha = s_scnText.bgPct;
-            gameFrontSaveWindowSettings();
-        }
-        if (scnOpacitySlider(langGetText(STR_SCN_TEXT_OPACITY_LBL),
-                             "scnTextTextAlpha", &s_scnText.textPct,
-                             gameFrontScnTextTextAlpha)) {
-            gameFrontScnTextTextAlpha = s_scnText.textPct;
-            gameFrontSaveWindowSettings();
-        }
-    }
-    ImGui::End();
-}
-
 /* The status line and the announcement, in the Scenario Text window.
    inPopout is false for the game window's pass, which also opens and hides
    the window's pop-out, and true inside the pop-out's own frame
@@ -6478,7 +6562,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     /* In the pop-out's own frame: the lines fitted into the whole OS window
        the way the game window fits them (scnTextFitRect), on a black
        backing at the player's background opacity, at the player's text
-       opacity. With no line it draws nothing, as the game window does. */
+       opacity. With no line it draws nothing. */
     if (inPopout) {
         if (!haveStatus && !haveAnnounce) return;
         const ImVec2 ds  = ImGui::GetIO().DisplaySize;
@@ -6500,10 +6584,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
                  langGetText(STR_SCNTEXT_TITLE));
     if (scnPopOutSync(SCN_TEXT_OWNER,
                       scnTextPopOutWanted(haveStatus || haveAnnounce))) {
-        s_scnText.placed       = false;
-        s_scnText.moving       = false;
-        s_scnText.resizing     = false;
-        s_scnText.settingsOpen = false;
+        scnFloatStop(s_scnText.win);
         return;
     }
 
@@ -6516,10 +6597,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
        square's window, ##ScenarioSlot, is submitted earlier in the frame by
        the tablet overlay, so Active is this frame's. */
     if (uiModeIsTablet()) {
-        s_scnText.placed       = false;
-        s_scnText.moving       = false;
-        s_scnText.resizing     = false;
-        s_scnText.settingsOpen = false;
+        scnFloatStop(s_scnText.win);
         if (!haveStatus && !haveAnnounce) return;
         int tvX = 0, tvY = 0, tvW = 0, tvH = 0, tvZoom = 0;
         sdl3DrawGetTabletViewport(&tvX, &tvY, &tvW, &tvH, &tvZoom);
@@ -6555,15 +6633,12 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
        the player is busy with it, so a drag or the opacity sliders are not
        cut off when a line goes (scnTextWindowShown). */
     const bool haveText = haveStatus || haveAnnounce;
-    const bool busy = s_scnText.moving || s_scnText.resizing ||
-                      s_scnText.settingsOpen ||
+    const bool busy = s_scnText.win.moving || s_scnText.win.resizing ||
+                      s_scnText.win.settingsOpen ||
                       s_scnCloseAskOwner == SCN_TEXT_OWNER;
     const bool shown = gameFrontScnTextShown || !scnPanelCanReopen();
     if (!scnTextWindowShown(shown, scnTextRecent(), haveText, busy)) {
-        s_scnText.placed       = false;
-        s_scnText.moving       = false;
-        s_scnText.resizing     = false;
-        s_scnText.settingsOpen = false;
+        scnFloatStop(s_scnText.win);
         return;
     }
 
@@ -6632,7 +6707,7 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     float h = (gameFrontScnTextH > 0) ? (float)gameFrontScnTextH
             : beside                  ? besideH
                                       : srcH * defScale;
-    if (s_scnText.resizing) {
+    if (s_scnText.win.resizing) {
         w = s_scnText.rawW;
         h = s_scnText.rawH;
     }
@@ -6656,18 +6731,14 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
         defY = ry0 + inset;
     }
 
-    /* The bar's height and the grip's side. Both come from this frame's
-       w and h only, so they are known before Begin. */
-    const float shortSide = ImMin(w, h);
-    const float handle    = ImMin(SCN_PANEL_HANDLE_PX, shortSide * 0.25f);
-    const float btn       = scnPanelButtonSide(shortSide);
+    /* The bar's height, from this frame's w and h only, so it is known
+       before the frame begins (scnFloatBegin works it out the same way). */
+    const float btn = scnFloatBarHeight(w, h);
 
     /* x, y, w and h, and the saved gameFrontScnTextX/Y/W/H, are the text
-       area's rectangle. The ImGui window is btn taller and starts btn
-       higher: the bar is the strip above the text area, its bottom edge on
-       the text area's top edge, so it covers no text.
-       A position saved on a larger display is brought inside this one,
-       with room above the text area for the bar. */
+       area's rectangle: the frame's content. A position saved on a larger
+       display is brought inside this one, with room above the text area for
+       the bar. */
     float wantX = (gameFrontScnTextX >= 0) ? (float)gameFrontScnTextX : defX;
     float wantY = (gameFrontScnTextY >= 0) ? (float)gameFrontScnTextY : defY;
     if (wantX > display.x - w) wantX = display.x - w;
@@ -6675,170 +6746,31 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     if (wantX < 0.0f) wantX = 0.0f;
     if (wantY < btn) wantY = btn;
 
-    if (!s_scnText.placed) {
-        ImGui::SetNextWindowPos(ImVec2(wantX, wantY - btn), ImGuiCond_Always);
-        s_scnText.placed = true;
-        s_scnText.atX    = wantX;
-        s_scnText.atY    = wantY;
-    } else if (s_scnText.resizing) {
-        /* A resize keeps the text area's top-left corner where it is. The
-           bar's height can change with the size, so the window is placed
-           from that corner each frame of the resize. */
-        ImGui::SetNextWindowPos(ImVec2(s_scnText.atX, s_scnText.atY - btn),
-                                ImGuiCond_Always);
-    }
-    ImGui::SetNextWindowSize(ImVec2(w, h + btn), ImGuiCond_Always);
-
-    /* Some other ImGui window (a scenario panel, the settings, a menu) is
-       under the pointer and in front of this one. g.HoveredWindow is the
-       window ImGui chose in this frame's NewFrame, and it skips a NoInputs
-       window, so it can be a window behind this one: IsWindowAbove tells
-       the two cases apart. When this window is the hovered window, its
-       root is itself and nothing covers it. */
-    bool covered = false;
-    {
-        ImGuiContext &g     = *GImGui;
-        ImGuiWindow  *self  = ImGui::FindWindowByName("##scenariotext");
-        ImGuiWindow  *other = g.HoveredWindow ? g.HoveredWindow->RootWindow
-                                              : nullptr;
-        covered = self != nullptr && other != nullptr && other != self &&
-                  ImGui::IsWindowAbove(other, self);
-    }
-
-    /* The bar, the buttons and the grip show while the pointer is on the
-       window and no other window covers it there, for a while after it
-       leaves (a touch has no hover), while one of them is being dragged,
-       and while the settings or the close confirm are up.
-       The window takes input only while the pointer is on the bar (which
-       holds the gear and the X) or on the grip, while one of them is being
-       dragged, and while the settings or the close confirm are up. The
-       rest of the time it is NoInputs, so it is never the hovered window,
-       io.WantCaptureMouse stays false over it, and a click or the wheel on
-       the text goes through to the game view under it, as it did when the
-       lines were drawn on the view. This holds while the handles show: the
-       handles showing does not make the window take input.
-       The pointer is tested with plain rectangle tests on last frame's
-       place and this frame's size, for this reason: IsWindowHovered is
-       never true for a NoInputs window. scnTextPointerOnHandle in
-       scenario_panel_draw.h has the bar and grip rectangles.
-       The strip above the text area, where the bar goes, counts only
-       while the bar is up: with the bar hidden, the pointer on that strip
-       does not bring the bar up, and a click there goes to the game.
-       ImGui works out the hovered window in NewFrame, from the flags of the
-       last Begin, so the window takes input from the frame after the
-       pointer first comes onto the bar or the grip. A press on the bar then
-       makes the bar the active item that frame, and the drag holds the
-       input until the button is let go. A touch that lands on the bar with
-       no hover before it goes through to the game; the touch after it,
-       with the pointer still there, is taken. */
-    const Uint64 nowMs  = SDL_GetTicks();
-    const ImVec2 mouse  = ImGui::GetIO().MousePos;
-    const bool   barUp  = nowMs < s_scnText.chromeUntil ||
-                          s_scnText.moving || s_scnText.resizing ||
-                          s_scnText.settingsOpen ||
-                          s_scnCloseAskOwner == SCN_TEXT_OWNER;
-    const float  barH   = barUp ? btn : 0.0f;
-    const bool   onRect = !covered &&
-        ImGui::IsMouseHoveringRect(
-            ImVec2(s_scnText.atX, s_scnText.atY - barH),
-            ImVec2(s_scnText.atX + w, s_scnText.atY + h), false);
-    if (onRect) {
-        s_scnText.chromeUntil = nowMs + SCN_PANEL_CHROME_LINGER_MS;
-    }
-    const bool onHandle = onRect &&
-        scnTextPointerOnHandle(s_scnText.atX, s_scnText.atY, w, h, barH,
-                               handle, mouse.x, mouse.y);
-    const bool takesInput = onHandle ||
-                            s_scnText.moving || s_scnText.resizing ||
-                            s_scnText.settingsOpen ||
-                            s_scnCloseAskOwner == SCN_TEXT_OWNER;
-
-    float gearX = 0.0f;
-    float gearY = 0.0f;
-
-    /* As the panel's window: no padding and no border. The window has no
-       background of its own: the backing, black at the player's background
-       opacity while there is a line to show, is drawn below on the text
-       area only, so the strip above it for the bar stays clear while the
-       bar is hidden. With no line there is no backing. The bar and the
-       grip are the only things that move or resize it. */
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
-    const bool open = ImGui::Begin("##scenariotext", nullptr,
-                                   ImGuiWindowFlags_NoTitleBar |
-                                   ImGuiWindowFlags_NoResize |
-                                   ImGuiWindowFlags_NoMove |
-                                   ImGuiWindowFlags_NoScrollbar |
-                                   ImGuiWindowFlags_NoScrollWithMouse |
-                                   ImGuiWindowFlags_NoCollapse |
-                                   ImGuiWindowFlags_NoSavedSettings |
-                                   ImGuiWindowFlags_NoFocusOnAppearing |
-                                   ImGuiWindowFlags_NoDocking |
-                                   ImGuiWindowFlags_NoNav |
-                                   (takesInput ? 0 : ImGuiWindowFlags_NoInputs));
-    scnKeepBehindModal();
-    if (open) {
-        const ImVec2 pos = ImGui::GetWindowPos();
-        ImDrawList *dl   = ImGui::GetWindowDrawList();
-
-        const bool  withClose = scnPanelCanReopen();
-        const float btnsW     = withClose ? btn * 2.0f : btn;
-
-        /* The bar and the grip are submitted every frame, drawn or not, so a
-           drag that wanders off the window stays alive. */
-        ImGui::SetCursorScreenPos(pos);
-        ImGui::InvisibleButton("##scntextmove",
-                               ImVec2(ImMax(w - btnsW, 1.0f), btn));
-        const bool moveHot    = ImGui::IsItemHovered();
-        const bool moveActive = ImGui::IsItemActive();
-        if (moveHot || moveActive) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
-        }
-        if (moveActive) {
-            const ImVec2 drag = ImGui::GetIO().MouseDelta;
-            if (drag.x != 0.0f || drag.y != 0.0f) {
-                ImGui::SetWindowPos(ImVec2(pos.x + drag.x, pos.y + drag.y));
-            }
-        }
-        s_scnText.moving = moveActive;
-
-        /* The gear and the X sit on the bar, and the settings open from
-           the bar's top edge, as they did when the bar was inside the
-           text. */
-        const ScnPanelButtons b = scnPanelSubmitButtons(pos, w, btn, withClose);
-        gearX = b.gearX;
-        gearY = pos.y;
-        if (b.gearClicked) s_scnText.settingsOpen = !s_scnText.settingsOpen;
-        if (b.closeClicked) scnPanelRequestClose(SCN_TEXT_OWNER, false);
-
-        /* The text area's top-left corner, the bar's height below the
-           window's. */
-        const ImVec2 text(pos.x, pos.y + btn);
-
-        ImGui::SetCursorScreenPos(ImVec2(text.x + w - handle,
-                                         text.y + h - handle));
-        ImGui::InvisibleButton("##scntextresize", ImVec2(handle, handle));
-        const bool resizeHot    = ImGui::IsItemHovered();
-        const bool resizeActive = ImGui::IsItemActive();
-        if (resizeHot || resizeActive) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
-        }
-        if (ImGui::IsItemActivated()) {
-            s_scnText.rawW = w;
-            s_scnText.rawH = h;
-        }
-        if (resizeActive) {
-            /* Width and height each follow the pointer: the window is a
-               rectangle of any shape, and the text keeps its own shape
-               inside it. */
-            const ImVec2 drag = ImGui::GetIO().MouseDelta;
-            s_scnText.rawW = ImClamp(s_scnText.rawW + drag.x,
-                                     SCN_TEXT_MIN_W_PX, maxW);
-            s_scnText.rawH = ImClamp(s_scnText.rawH + drag.y,
-                                     SCN_TEXT_MIN_H_PX, maxH);
-        }
-        if (ImGui::IsItemDeactivated()) {
+    /* The window frame, the same one a scenario panel has
+       (scnFloatBegin): the bar above the text area with the gear and the X,
+       the grip in its corner, the edge round it. The differences are
+       params: the text area is a rectangle of any shape with no snap
+       sizes, and at 0% background opacity the edge and the grip show only
+       while the pointer is on the window or a drag is on
+       (hideFrameAtZeroOpacity). */
+    ScnFloatFrame f = {};
+    f.winId   = "##scenariotext";
+    f.owner   = SCN_TEXT_OWNER;
+    f.w       = w;
+    f.h       = h;
+    f.wantX   = wantX;
+    f.wantY   = wantY;
+    f.minW    = SCN_TEXT_MIN_W_PX;
+    f.maxW    = maxW;
+    f.minH    = SCN_TEXT_MIN_H_PX;
+    f.maxH    = maxH;
+    f.square  = false;
+    f.snapped = false;
+    f.bgPct   = s_scnText.bgPct;
+    f.hideFrameAtZeroOpacity = true;
+    if (scnFloatBegin(s_scnText.win, f)) {
+        /* A resize saves the size in pixels. */
+        if (f.resizeDone) {
             const int nw = (int)lroundf(w);
             const int nh = (int)lroundf(h);
             if (nw != gameFrontScnTextW || nh != gameFrontScnTextH) {
@@ -6847,60 +6779,32 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
                 gameFrontSaveWindowSettings();
             }
         }
-        s_scnText.resizing = resizeActive;
 
-        /* The handles show while the pointer is on the window or has just
-           left it, while the window takes input (see above Begin), and
-           while a drag that began this frame is active. */
-        const bool handlesVisible = nowMs < s_scnText.chromeUntil ||
-                                    takesInput || moveActive || resizeActive;
-
-        /* Kept inside the main window. The place is saved, through the
-           debounced window-settings path, once the player has moved the
-           window: a window never moved keeps following the game view's top
-           middle. With no line to show, only a drag saves it
-           (scnTextSavePlace), so a window with no line never changes the
-           saved place by itself. */
-        /* keepX/keepY are the text area's top-left corner: the window's
-           less the bar. The bar is kept on screen as well, so the text
-           area's top is never less than btn from the main window's top. */
-        const ImVec2 moved = ImGui::GetWindowPos();
-        float keepX = moved.x, keepY = moved.y + btn;
-        if (keepX > display.x - w) keepX = display.x - w;
-        if (keepY > display.y - h) keepY = display.y - h;
-        if (keepX < 0.0f) keepX = 0.0f;
-        if (keepY < btn) keepY = btn;
-        if (keepX != moved.x || keepY - btn != moved.y) {
-            ImGui::SetWindowPos(ImVec2(keepX, keepY - btn));
-        }
-        s_scnText.atX = keepX;
-        s_scnText.atY = keepY;
-        /* A resize keeps the top-left corner where it is, so it fixes the
-           place as a move does. */
+        /* The place is saved, through the debounced window-settings path,
+           once the player has moved or resized the window: a window never
+           moved keeps following its default place. A resize fixes the
+           place as a move does, since it keeps the top-left corner and the
+           default place at the top middle moves with the width. With no
+           line to show, only a drag saves it (scnTextSavePlace), so a
+           window with no line never changes the saved place by itself. */
         const bool everMoved = gameFrontScnTextX >= 0 || gameFrontScnTextY >= 0;
-        const bool dragging  = moveActive || resizeActive;
+        const bool dragging  = f.moveActive || f.resizeActive;
         if (scnTextSavePlace(dragging, everMoved, haveText) &&
-            ((int)keepX != gameFrontScnTextX || (int)keepY != gameFrontScnTextY)) {
-            gameFrontScnTextX = (int)keepX;
-            gameFrontScnTextY = (int)keepY;
+            ((int)f.keepX != gameFrontScnTextX ||
+             (int)f.keepY != gameFrontScnTextY)) {
+            gameFrontScnTextX = (int)f.keepX;
+            gameFrontScnTextY = (int)f.keepY;
             gameFrontSaveWindowSettings();
         }
         if (!dragging && !everMoved) {
             /* Not moved yet: placed again next frame, so it follows the view
                when the main window or the zoom changes. */
-            s_scnText.placed = false;
+            s_scnText.win.placed = false;
         }
 
-        /* Everything below is drawn at pos, where Begin put the window this
-           frame, and not at keepX/keepY. SetWindowPos moves the window at
-           once, but the draw list keeps the clip rect Begin worked out at
-           pos, so a drag would put the content one drag step past the clip
-           rect and cut off its trailing edge. The move shows from the next
-           frame, as the scenario panel's does (renderScenarioPanelView).
-           keepX/keepY are only for the clamp, the save and the next frame's
-           hover test. */
-
         /* The backing, on the text area only, while there is a line. */
+        ImDrawList *dl    = ImGui::GetWindowDrawList();
+        const ImVec2 text = f.at;
         if (haveText) {
             dl->AddRectFilled(text, ImVec2(text.x + w, text.y + h),
                               IM_COL32(0, 0, 0,
@@ -6912,59 +6816,23 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
         scnTextDrawLines(dl, font, text.x, text.y, w, h,
                          (float)s_scnText.textPct / 100.0f, status,
                          haveStatus, lines, lineCount);
-
-        /* The faint edge (scnTextEdgeShown), round the text area. While
-           the pointer is on the window, always, at any background opacity:
-           the edge 1% gives, with no backing added. Otherwise, with a line,
-           only when there is a backing: at 0% background opacity the text
-           stands on the map with no frame round it. With no line, only
-           while the bar shows, so the player can see the window's size. */
-        if (scnTextEdgeShown(haveText, s_scnText.bgPct, handlesVisible,
-                             onRect)) {
-            dl->AddRect(text, ImVec2(text.x + w - 1.0f, text.y + h - 1.0f),
-                        IM_COL32(255, 255, 255, 40));
-        }
-
-        if (handlesVisible) {
-            /* The bar, from the window's top edge down to the text area's
-               top edge, with its dark line on its own last row of pixels so
-               it does not cover the text either. */
-            const ImVec2 at = pos;
-            const ImU32 barCol = (moveHot || moveActive)
-                                     ? IM_COL32(150, 150, 150, 235)
-                                     : IM_COL32(112, 112, 112, 205);
-            dl->AddRectFilled(at, ImVec2(at.x + w - 1.0f, at.y + btn), barCol);
-            dl->AddLine(ImVec2(at.x, at.y + btn - 1.0f),
-                        ImVec2(at.x + w - 1.0f, at.y + btn - 1.0f),
-                        IM_COL32(0, 0, 0, 90));
-
-            scnPanelDrawButtons(dl, at, w, btn, withClose,
-                                s_iconScnPanelGear[activeIconSlot()], b,
-                                s_scnText.settingsOpen);
-        }
-
-        /* The resize grip: three diagonals stepping out of the corner,
-           only while the pointer is on the window or a resize is on
-           (scnTextGripShown). The grip's button above is submitted every
-           frame all the same, so it takes the mouse when it is not drawn. */
-        if (scnTextGripShown(onRect, resizeActive)) {
-            const ImU32 resizeCol = (resizeHot || resizeActive)
-                                        ? IM_COL32(255, 255, 255, 200)
-                                        : IM_COL32(255, 255, 255, 110);
-            const float brX = text.x + w - 1.0f;
-            const float brY = text.y + h - 1.0f;
-            for (int i = 1; i <= 3; i++) {
-                const float off = handle * (float)i / 3.5f;
-                dl->AddLine(ImVec2(brX - off, brY), ImVec2(brX, brY - off),
-                            resizeCol);
-            }
-        }
     }
-    ImGui::End();
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar(2);
+    scnFloatEnd(s_scnText.win, f);
 
-    renderScenarioTextSettings(gearX, gearY);
+    char title[128];
+    SDL_snprintf(title, sizeof(title), "%s###scntextsettings",
+                 langGetText(STR_SCNTEXT_TITLE));
+    const int changed = scnFloatSettings(
+        s_scnText.win, SCN_TEXT_OWNER, title, f.gearX, f.gearY,
+        "scnTextBgAlpha", &s_scnText.bgPct, gameFrontScnTextBgAlpha,
+        "scnTextTextAlpha", &s_scnText.textPct, gameFrontScnTextTextAlpha);
+    if (changed & SCN_FLOAT_BG_CHANGED) {
+        gameFrontScnTextBgAlpha = s_scnText.bgPct;
+    }
+    if (changed & SCN_FLOAT_TEXT_CHANGED) {
+        gameFrontScnTextTextAlpha = s_scnText.textPct;
+    }
+    if (changed != 0) gameFrontSaveWindowSettings();
 }
 
 /* The Scenario Text window's pop-out frame: the lines fitted into the whole
