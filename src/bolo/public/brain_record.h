@@ -45,6 +45,31 @@ extern "C" {
 #define BRAINREC_FRAME_MAGIC  0xB07EC0DEu
 #define BRAINREC_FILENAME     "brainrec.btr"
 
+/* The session's map, saved beside brainrec.btr when the recording opens:
+ * the bytes mapSaveCompressedMap makes (bases | pills | starts structs, then
+ * the terrain), the same blob a client receives on join.
+ *
+ * The .btr cannot do without it. Its frames carry each base's owner and
+ * stocks but not where the base is, so a reader takes base positions from
+ * the map it loads. The header only names that map, and a generated map
+ * (Map Maker, Natural, ...) has no file under that name: BrainTest then fell
+ * back to Everard Island and drew Everard's bases on the recorded terrain,
+ * most of them in the sea. Loading this blob gives the recorded map, and in
+ * the sim's own frame: mapLoadCompressedMap does not recentre the way
+ * mapRead does, so the bases stay where the recorded terrain has them.
+ *
+ * brainrec_split copies it whole into every part, as it does any file with
+ * no tick stamps. */
+#define BRAINREC_MAP_FILENAME "brainrec_map.bin"
+
+/* Write `len` bytes of compressed map to <dir>/BRAINREC_MAP_FILENAME.
+ * Returns false if the file cannot be written in full. */
+bool brainRecWriteSessionMap(const char *dir, const uint8_t *data, int len);
+
+/* Read <dir>/BRAINREC_MAP_FILENAME into `out` (capacity `cap`). Returns the
+ * byte count, or 0 when the file is missing, empty or larger than `cap`. */
+int brainRecReadSessionMap(const char *dir, uint8_t *out, int cap);
+
 /* Packed overlay command (replaces the raw 160-byte OverlayCmd on disk). Each
  * frame's per-bot overlay block is: uint32 count, then `count` of these:
  *   uint8  type
