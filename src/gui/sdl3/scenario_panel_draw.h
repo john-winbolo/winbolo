@@ -545,18 +545,19 @@ static inline void scnTextLineAcross(float srcW, float lineW, float share,
 /* The most of the game view's shorter side the default panel may cover.
  * At zoom 1 the view is 240 pixels, so this lets the default reach 192
  * pixels (150 percent) and keeps a strip of the map clear beside and
- * below it. The view must be at least 360 pixels (zoom 1.5) for the full
+ * below it. The view must be at least 288 pixels (zoom 1.2) for the full
  * SCN_PANEL_DEFAULT_PX to fit. */
 #define SCN_PANEL_DEFAULT_VIEW_SHARE 0.8f
 
-/* The side in screen pixels of the default panel, at every zoom: 225
+/* The side in screen pixels of the default panel, at every zoom: 180
  * percent of the 128 units a list is written in at zoom 1, so that its
- * writing is easy to read. The percent this gives is often not a cardinal
- * (112.5 at zoom 2, 56.25 at zoom 4); the drag starts from it all the
- * same, and snaps only when it comes near a cardinal. At zoom 1 and 1.25
- * the view is too small for this side, and the default is the largest
- * cardinal that fits (150 percent at both). */
-#define SCN_PANEL_DEFAULT_PX 288.0f
+ * writing is easy to read. It is 0.8 of the 288 it was before, which
+ * covered too much of the view. The percent this gives is often not a
+ * cardinal (90 at zoom 2, 45 at zoom 4); the drag starts from it all the
+ * same, and snaps only when it comes near a cardinal. At zoom 1 the view
+ * is too small for this side, and the default is the largest cardinal
+ * that fits (150 percent, 192 pixels). */
+#define SCN_PANEL_DEFAULT_PX 230.4f
 
 /*********************************************************
  *NAME:          scnPanelDefaultPlace
@@ -571,17 +572,16 @@ static inline void scnTextLineAcross(float srcW, float lineW, float share,
  *  main window.
  *
  *  The side is SCN_PANEL_DEFAULT_PX when that fits, and the
- *  percent is that side over baseSide: 150 at zoom 1.5,
- *  112.5 at zoom 2, 75 at zoom 3, 56.25 at zoom 4, 37.5 at
- *  zoom 6, 28.125 at zoom 8. It is not rounded, so the side
- *  is exactly that many pixels. Over zoom 9 the percent is
- *  under the 25 of SCN_PANEL_SCALE_MIN, and the caller's
- *  size limits then hold the side at 25 percent.
+ *  percent is that side over baseSide: 144 at zoom 1.25,
+ *  120 at zoom 1.5, 90 at zoom 2, 60 at zoom 3, 45 at zoom
+ *  4, 30 at zoom 6, 22.5 at zoom 8. It is not rounded, so
+ *  the side is exactly that many pixels. Over zoom 7.2 the
+ *  percent is under the 25 of SCN_PANEL_SCALE_MIN, and the
+ *  caller's size limits then hold the side at 25 percent.
  *
  *  When SCN_PANEL_DEFAULT_PX does not fit (a small display,
- *  or a zoom under 1.5), the percent is the largest cardinal
- *  from 100 up that fits: 150 (192 pixels) at zoom 1, and
- *  150 (240 pixels) at zoom 1.25.
+ *  or a zoom under 1.2), the percent is the largest cardinal
+ *  from 100 up that fits: 150 (192 pixels) at zoom 1.
  *
  *  A size fits when its side is no more than
  *  SCN_PANEL_DEFAULT_VIEW_SHARE of the view's shorter side
