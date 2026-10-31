@@ -653,35 +653,6 @@ static inline bool scnPanelDefaultPlace(float viewX0, float viewY0,
  * the window keeps its older default, the top middle of the game view. */
 #define SCN_TEXT_BESIDE_MIN_W_PX 160.0f
 
-/* How far, in pixels, a panel's place may be from its default place and
- * still count as at the default. The panel keeps its place as whole pixels,
- * so a default place with a fraction comes back up to one pixel off. */
-#define SCN_PANEL_AT_DEFAULT_SLACK_PX 1.0f
-
-/*********************************************************
- *NAME:          scnPanelAtDefault
- *PURPOSE:
- *  Whether a panel is at its default place. The panel
- *  keeps the place it is drawn at each frame, the default
- *  one too, so a kept place does not by itself mean the
- *  player moved it. It is at its default place when its
- *  place is within SCN_PANEL_AT_DEFAULT_SLACK_PX of the
- *  default on both axes.
- *
- *ARGUMENTS:
- *  x/y       - the panel's top-left this frame
- *  defX/defY - its default top-left this frame
- *********************************************************/
-static inline bool scnPanelAtDefault(float x, float y, float defX,
-                                     float defY) {
-    const float dx = x - defX;
-    const float dy = y - defY;
-    return dx <= SCN_PANEL_AT_DEFAULT_SLACK_PX &&
-           dx >= -SCN_PANEL_AT_DEFAULT_SLACK_PX &&
-           dy <= SCN_PANEL_AT_DEFAULT_SLACK_PX &&
-           dy >= -SCN_PANEL_AT_DEFAULT_SLACK_PX;
-}
-
 /*********************************************************
  *NAME:          scnTextBesidePanelPlace
  *PURPOSE:

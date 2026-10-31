@@ -1351,8 +1351,7 @@ int run_scenario_panel_default_place(void) {
 /* The Scenario Text window's default place beside a default scenario panel
    (scnTextBesidePanelPlace): from one inset right of the panel to one inset
    left of the game view's right edge, top and bottom level with the panel,
-   and false when that room is under the least width. Also the test for a
-   panel at its default place (scnPanelAtDefault). */
+   and false when that room is under the least width. */
 int run_scenario_text_beside_panel_place(void) {
     float x = -1.0f, y = -1.0f, w = -1.0f, h = -1.0f;
 
@@ -1417,12 +1416,5 @@ int run_scenario_text_beside_panel_place(void) {
                                       8.0f, SCN_TEXT_BESIDE_MIN_W_PX, NULL,
                                       NULL, NULL, NULL));
 
-    /* At its default place: the panel keeps whole pixels, so a default of
-       (400.5, 180.25) kept as (400, 180) is still the default. Two pixels
-       off on either axis is a place the player chose. */
-    UT_ASSERT(scnPanelAtDefault(400.0f, 180.0f, 400.5f, 180.25f));
-    UT_ASSERT(scnPanelAtDefault(401.0f, 179.0f, 400.0f, 180.0f));
-    UT_ASSERT(!scnPanelAtDefault(402.0f, 180.0f, 400.0f, 180.0f));
-    UT_ASSERT(!scnPanelAtDefault(400.0f, 178.0f, 400.0f, 180.0f));
     return 0;
 }
