@@ -1866,15 +1866,16 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
     }
 
     /* ',' steps one tick back and '.' one tick forward; with Shift ('<' and
-     * '>') they jump 10 s. A tick is 20 ms of log, the smallest step the
-     * decoder takes. A step leaves playback paused, so the moment stepped to
-     * stays on the screen; a jump carries on playing if it was.
+     * '>') they jump 10 s, and with Ctrl 1 s. A tick is 20 ms of log, the
+     * smallest step the decoder takes. A step leaves playback paused, so the
+     * moment stepped to stays on the screen; a jump carries on playing if it
+     * was.
      *
      * The keys are matched by scancode, the place of the key on the
      * keyboard, so the two keys right of M on a US keyboard do this on
      * every layout, also where those places give other characters. Shift
-     * on either one is the jump. A text box that has the keyboard keeps
-     * the key.
+     * or Ctrl on either one is a jump; Ctrl and Shift together is the 1 s
+     * one. A text box that has the keyboard keeps the key.
      *
      * In game view a jump re-centres the camera, because 10 s can leave the
      * followed tank far outside the viewport and the dead-zone tracker
@@ -1883,14 +1884,16 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
      * seek bar does. */
     if (allowSeek && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
         g_lv->isLoaded && !lv_imgui_want_text_input() &&
-        (sdlEvent.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
+        (sdlEvent.key.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
         (sdlEvent.key.scancode == SDL_SCANCODE_COMMA ||
          sdlEvent.key.scancode == SDL_SCANCODE_PERIOD)) {
         const uint32_t kTickMs = 20;
         const uint32_t kJumpMs = 10000;
+        const uint32_t kShortJumpMs = 1000;
         bool back = (sdlEvent.key.scancode == SDL_SCANCODE_COMMA);
-        bool jump = ((sdlEvent.key.mod & SDL_KMOD_SHIFT) != 0);
-        uint32_t stepMs = jump ? kJumpMs : kTickMs;
+        bool shortJump = ((sdlEvent.key.mod & SDL_KMOD_CTRL) != 0);
+        bool jump = shortJump || ((sdlEvent.key.mod & SDL_KMOD_SHIFT) != 0);
+        uint32_t stepMs = shortJump ? kShortJumpMs : (jump ? kJumpMs : kTickMs);
         /* Absolute log time: a 20 ms step is too fine to send through the
          * slider's 0..1 ratio. lv_screenSeekToTimeMs clamps to the log. */
         uint32_t nowMs = lv_screenGetTimeRunning();
