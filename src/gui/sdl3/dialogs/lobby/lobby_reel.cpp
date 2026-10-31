@@ -1385,15 +1385,15 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
      * below sits out the frames it did. */
     bool cropTookMouse = false;
 #if BOLO_RECAP_CLIP_GIF
-    /* The crop frame is a GIF control, so it is drawn only when they are. */
+    /* The crop frame is a GIF control, so it is drawn whenever they are:
+     * a GIF always takes the part of the view in the frame. It is fitted to
+     * the slice the blit above used, as the capture fits it. */
     if (lobbyReelGifToolsShown()) {
         static ClipGifCropDrag s_cropDrag = { 0, false };
-        if (s_reel.clip.cropOn) {
-            cropTookMouse = clipGifCropFrame(
-                "##ReelCropGrab", ImGui::GetWindowDrawList(), imgMin, imgSize,
-                &s_reel.clip.frame, &s_cropDrag, lobbyClipGifActive(),
-                reelPanActive, true);
-        }
+        cropTookMouse = clipGifCropFrame(
+            "##ReelCropGrab", ImGui::GetWindowDrawList(), imgMin, imgSize,
+            &s_reel.clip, s_reel.lastSlice.w, s_reel.lastSlice.h, &s_cropDrag,
+            lobbyClipGifActive(), reelPanActive, true);
     }
 #endif
 

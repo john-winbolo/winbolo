@@ -301,10 +301,8 @@ static void lvGifFillMeta(ClipGifMeta *m, const char *mapName) {
 /* Starts a capture from the current time (or from the start of the preview
  * that plays) for the length the player set. The frames are the map as it is
  * shown now: the same zoom, the same place, the same camera, the same
- * colours. With the crop frame on they are the part of the map in the frame,
- * with no width cap; with it off they are the middle of the part of the map
- * that shows, at most CLIP_GIF_MAX_WIDTH wide (clipGifChooseCrop, as the
- * game's replay has it). */
+ * colours, and they are the part of the map in the crop frame
+ * (clipGifChooseCrop, as the game's replay has it). */
 static void lvGifStart(void) {
     if (!lv_clip_gif_can_make()) {
         return;
@@ -348,8 +346,7 @@ static void lvGifStart(void) {
     ClipGifRect c;
     const bool haveCrop =
         lv_drawGetGameTexture() != NULL &&
-        clipGifChooseCrop(s_gif.mode.cropOn && haveView, &s_gif.mode.frame,
-                          srcX, srcY, srcW, srcH, &c);
+        clipGifChooseCrop(&s_gif.mode, srcX, srcY, srcW, srcH, &c);
     s_gif.targetW = texW;
     s_gif.targetH = texH;
 
@@ -405,24 +402,27 @@ void lv_clip_gif_capture_step(void) {
 
 /* ── The crop frame on the map ────────────────────────────────────── */
 
-/* True when the crop frame shows on the map now, with *view the box of the
- * map it is drawn on. */
-static bool lvGifFrameView(ClipGifBox *view) {
-    if (!lv_clip_gif_tools_shown() || !s_gif.mode.cropOn) {
+/* True when the crop frame shows on the map now (whenever the GIF controls
+ * show), with *view the box of the map it is drawn on and *slice the
+ * render-target pixels that show in it. */
+static bool lvGifFrameView(ClipGifBox *view, ClipGifRect *slice) {
+    if (!lv_clip_gif_tools_shown()) {
         return false;
     }
-    ClipGifRect slice;
-    return lvGifMapView(&slice, view, NULL, NULL);
+    return lvGifMapView(slice, view, NULL, NULL);
 }
 
 bool lv_clip_gif_frame_has_mouse(void) {
     if (s_gif.drag.dragging) {
         return true;
     }
-    ClipGifBox view;
-    if (clipGifCaptureActive(&s_gif.session) || !lvGifFrameView(&view)) {
+    ClipGifBox  view;
+    ClipGifRect slice;
+    if (clipGifCaptureActive(&s_gif.session) ||
+        !lvGifFrameView(&view, &slice)) {
         return false;
     }
+    clipGifModeFitFrame(&s_gif.mode, slice.w, slice.h);
     const ImGuiIO &io = ImGui::GetIO();
     if (io.WantCaptureMouse || !ImGui::IsMousePosValid()) {
         return false;
@@ -436,8 +436,9 @@ bool lv_clip_gif_frame_has_mouse(void) {
  * it straight into the window), so the frame goes on the background draw
  * list, under every panel, and takes a press only where no panel is. */
 static void lvGifRenderFrame(void) {
-    ClipGifBox view;
-    if (!lvGifFrameView(&view)) {
+    ClipGifBox  view;
+    ClipGifRect slice;
+    if (!lvGifFrameView(&view, &slice)) {
         s_gif.drag.grab = 0;
         s_gif.drag.dragging = false;
         return;
@@ -445,7 +446,7 @@ static void lvGifRenderFrame(void) {
     clipGifCropFrame("##lvgifcrop", ImGui::GetBackgroundDrawList(),
                      ImVec2(view.x0, view.y0),
                      ImVec2(view.x1 - view.x0, view.y1 - view.y0),
-                     &s_gif.mode.frame, &s_gif.drag,
+                     &s_gif.mode, slice.w, slice.h, &s_gif.drag,
                      clipGifCaptureActive(&s_gif.session),
                      lv_imgui_game_viewport_mouse_held(), false);
 }

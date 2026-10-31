@@ -201,22 +201,20 @@ static void lobbyClipGifStart(bool fromPlayhead, uint32_t startMs,
          * clamp anyway: the crop is read back as it is for every frame. */
         if (srcX + srcW > texW) srcW = texW - srcX;
         if (srcY + srcH > texH) srcH = texH - srcY;
-        /* The frame the player drew is held as fractions of the slice the
-         * reel blitted. Its size comes from the last draw (an on-screen size
-         * a seek cannot change) and its origin from the fresh one above,
+        /* The crop frame is held as fractions of the slice the reel
+         * blitted. Its size comes from the last draw (an on-screen size a
+         * seek cannot change) and its origin from the fresh one above,
          * because the seek may have moved the camera and the frame names a
          * place on the view, not on the map. */
-        const ClipGifMode *mode = &lobbyReel()->clip;
+        ClipGifMode *mode = &lobbyReel()->clip;
         const SDL_Rect *last = &lobbyReel()->lastSlice;
-        const bool useFrame = mode->cropOn && last->w > 0 && last->h > 0;
         int viewW = srcW, viewH = srcH;
-        if (useFrame) {
+        if (last->w > 0 && last->h > 0) {
             if (last->w < viewW) viewW = last->w;
             if (last->h < viewH) viewH = last->h;
         }
         haveCrop = srcW > 0 && srcH > 0 &&
-                   clipGifChooseCrop(useFrame, &mode->frame, srcX, srcY, viewW,
-                                     viewH, &crop);
+                   clipGifChooseCrop(mode, srcX, srcY, viewW, viewH, &crop);
     }
 
     const char *mapName = (cs != NULL) ? clientSimGetMapName(cs) : NULL;

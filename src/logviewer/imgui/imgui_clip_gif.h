@@ -11,10 +11,10 @@
  * camera button on the Controls panel, Action > Recording Mode and Ctrl+G
  * turn it on and off. In recording mode the Controls panel shows the GIF
  * controls under its top row: Preview clip, Save clip, the length in
- * seconds, the Clips button and the crop button. The timeline shows where the GIF starts
+ * seconds and the Clips button. The timeline shows where the GIF starts
  * and ends, with a marker at the end that can be dragged to change the
- * length. With the crop button on, a frame over the map shows the part of
- * the map the GIF takes; its edges, corners and inside can be dragged. The
+ * length. A frame over the map always shows the part of the map the GIF
+ * takes; its edges, corners and inside can be dragged. The
  * controls come from clip_gif_controls.h, the same ones the game draws.
  *
  * Preview clip plays the log from the current time for the length, at the
@@ -97,7 +97,7 @@ bool lv_clip_gif_frame_has_mouse(void);
 
 /* The GIF controls in the Controls panel, on a line of their own in the
  * middle of the panel: Preview clip, Save clip, the length in seconds, the
- * Clips button and the crop button (clipGifToolsRow). The panel calls it when
+ * Clips button (clipGifToolsRow). The panel calls it when
  * lv_clip_gif_tools_shown is true. */
 void lv_clip_gif_tools_row(void);
 

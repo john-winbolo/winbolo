@@ -48,7 +48,6 @@
 /* The drawn glyphs of the toggle buttons. */
 enum ClipGifGlyph {
     CLIP_GIF_GLYPH_CAMERA = 0,  /* a movie camera: recording mode */
-    CLIP_GIF_GLYPH_CROP,        /* a square frame with heavy corners: crop */
     CLIP_GIF_GLYPH_EYE,         /* an eye: preview (not a triangle, which
                                  * is the replay's own play button) */
     CLIP_GIF_GLYPH_STOP         /* a filled square: stop the preview */
@@ -91,20 +90,11 @@ static inline void clipGifDrawGlyph(ImDrawList *dl, int glyph, ImVec2 a,
         dl->AddBezierQuadratic(l, ImVec2(a.x + w * 0.50f, midY + w * 0.62f),
                                r, col, 1.5f);
         dl->AddCircleFilled(ImVec2(a.x + w * 0.50f, midY), w * 0.17f, col);
-    } else if (glyph == CLIP_GIF_GLYPH_STOP) {
+    } else {
+        /* CLIP_GIF_GLYPH_STOP: a filled square. */
         dl->AddRectFilled(ImVec2(a.x + w * 0.16f, a.y + w * 0.16f),
                           ImVec2(a.x + w * 0.84f, a.y + w * 0.84f), col,
                           w * 0.06f);
-    } else {
-        /* A square outline with heavier corners, so it reads as a crop frame
-         * and not as an empty box. */
-        ImVec2 b(a.x + w, a.y + w);
-        dl->AddRect(a, b, col, 0.0f, 0, 1.0f);
-        const float tick = w * 0.32f;
-        dl->AddLine(ImVec2(a.x, a.y), ImVec2(a.x + tick, a.y), col, 2.0f);
-        dl->AddLine(ImVec2(a.x, a.y), ImVec2(a.x, a.y + tick), col, 2.0f);
-        dl->AddLine(ImVec2(b.x, b.y), ImVec2(b.x - tick, b.y), col, 2.0f);
-        dl->AddLine(ImVec2(b.x, b.y), ImVec2(b.x, b.y - tick), col, 2.0f);
     }
 }
 
@@ -344,10 +334,13 @@ typedef struct {
     bool dragging;
 } ClipGifCropDrag;
 
-/* The crop frame over a view drawn at imgMin, imgSize: everything outside
- * the frame is shaded, and the frame is outlined. Its edges, corners and
- * inside can be dragged to change *f, which is stored back as fractions of
- * the view. Returns true when the frame has the mouse this frame, so the
+/* The crop frame of mode over a view drawn at imgMin, imgSize, that shows
+ * viewPxW x viewPxH pixels of the render target: everything outside the
+ * frame is shaded, and the frame is outlined. Until the player moves the
+ * frame it is the default for those pixels (clipGifModeFitFrame), the same
+ * frame the GIF takes. Its edges, corners and inside can be dragged to
+ * change mode->frame, which is stored back as fractions of the view, and a
+ * drag sets mode->frameSet. Returns true when the frame has the mouse this frame, so the
  * caller keeps its own drag (a pan) out of it.
  *
  * asItem true puts an invisible button over the frame, for a view that is an
@@ -363,12 +356,15 @@ typedef struct {
  * no mouse. The wheel is never taken: a zoom works over the frame too. */
 static inline bool clipGifCropFrame(const char *id, ImDrawList *dl,
                                     ImVec2 imgMin, ImVec2 imgSize,
-                                    ClipGifFrame *f, ClipGifCropDrag *drag,
+                                    ClipGifMode *mode, int viewPxW,
+                                    int viewPxH, ClipGifCropDrag *drag,
                                     bool locked, bool panHoldsMouse,
                                     bool asItem) {
-    if (imgSize.x < 1.0f || imgSize.y < 1.0f) {
+    if (mode == NULL || imgSize.x < 1.0f || imgSize.y < 1.0f) {
         return false;
     }
+    clipGifModeFitFrame(mode, viewPxW, viewPxH);
+    ClipGifFrame *f = &mode->frame;
     const ClipGifBox image = { imgMin.x, imgMin.y, imgMin.x + imgSize.x,
                                imgMin.y + imgSize.y };
     ClipGifBox box = clipGifFrameToBox(f, &image);
@@ -457,9 +453,12 @@ static inline bool clipGifCropFrame(const char *id, ImDrawList *dl,
     }
 
     if (drag->dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        clipGifFrameDrag(&box, drag->grab, io.MouseDelta.x, io.MouseDelta.y,
-                         &image, CLIP_GIF_CROP_MIN_PX);
-        clipGifFrameFromBox(f, &box, &image);
+        if (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f) {
+            clipGifFrameDrag(&box, drag->grab, io.MouseDelta.x,
+                             io.MouseDelta.y, &image, CLIP_GIF_CROP_MIN_PX);
+            clipGifFrameFromBox(f, &box, &image);
+            mode->frameSet = true;
+        }
     } else if (drag->dragging) {
         drag->dragging = false;
         drag->grab = 0;
@@ -468,7 +467,7 @@ static inline bool clipGifCropFrame(const char *id, ImDrawList *dl,
 }
 
 /* What was pressed on the row of GIF controls this frame. The row handles
- * the length and the crop button itself; the screen acts on these. */
+ * the length itself; the screen acts on these. */
 typedef struct ClipGifToolsPressed {
     bool preview;  /* Preview clip: start or stop the preview */
     bool save;     /* Save clip: make the GIF */
@@ -479,11 +478,11 @@ typedef struct ClipGifToolsPressed {
  * it. */
 static inline float clipGifToolsRowWidth(bool havePicture) {
     const ImGuiStyle &sty = ImGui::GetStyle();
-    const float square = ImGui::GetTextLineHeight() + sty.FramePadding.x * 2.0f;
     const float lenW = ImGui::CalcTextSize("00.0").x + sty.FramePadding.x * 2.0f;
     float w = clipGifPreviewButtonWidth() + clipGifButtonWidth(havePicture) +
-              lenW + square + sty.ItemSpacing.x * 3.0f;
+              lenW + sty.ItemSpacing.x * 2.0f;
 #if CLIP_GIF_GALLERY_BUILT
+    const float square = ImGui::GetTextLineHeight() + sty.FramePadding.x * 2.0f;
     w += square + sty.ItemSpacing.x;
 #endif
     return w;
@@ -491,12 +490,11 @@ static inline float clipGifToolsRowWidth(bool havePicture) {
 
 /* The row of GIF controls that recording mode shows, the same in the game's
  * replay and the Log Viewer: Preview clip, Save clip, the length in seconds,
- * the gallery button (where the gallery is built) and the crop button. The
+ * and the gallery button (where the gallery is built). The
  * first control goes where the cursor is; the caller puts a SameLine before
  * the call when the row goes on after other controls.
  *
- * mode is the screen's recording mode (the length and the crop are changed
- * here), play its preview, curMs and totalMs the replay's time now and its
+ * mode is the screen's recording mode (the length is changed here), play its preview, curMs and totalMs the replay's time now and its
  * length. Preview and Save are disabled while capturing, and when canMake is
  * false (no GIF can be made now). The length does not change while a GIF is
  * made or the preview plays, as that GIF or that preview is of the length it
@@ -529,14 +527,6 @@ static inline ClipGifToolsPressed clipGifToolsRow(const char *id,
     ImGui::SameLine();
     r.gallery = clipGifGalleryButton("##gallery");
 #endif
-
-    /* The crop frame: with it on, the GIF takes the part of the view in the
-     * frame. */
-    ImGui::SameLine();
-    if (clipGifToggleButton("##crop", mode->cropOn, CLIP_GIF_GLYPH_CROP,
-                            langGetText(STR_CLIPGIF_CROP))) {
-        clipGifModeToggleCrop(mode, capturing);
-    }
 
     ImGui::PopID();
     return r;
