@@ -2349,18 +2349,19 @@ that closes it, a grip in its bottom-right corner to resize it, and a faint
 edge round the text. Unlike the panel, it is a rectangle and it can take any
 shape, and at 0% background opacity its edge and grip show only while the
 pointer is on the window or a drag is on. Above 0% they show as the panel's
-do. Like the panel, it takes a click only on its bar and its grip: a click
-or the wheel on its text goes through to the game view under it. The window is hidden until a scenario shows a
-status line or an announcement. Turning it on in **Brains > Info Overlay >
-Scenario Text** does not show it by itself, and the pointer over its place
-does not show it. It shows while it has a line to draw, and for
-`SCN_TEXT_SHOW_SECONDS` (5) seconds after a line was last on screen in it, so
-the player can still move or resize it. Then it is hidden again. It also
-stays up while the player drags its bar or its grip, has its gear settings
-open, or has its close question open, and it goes when the player is done.
-While a popup (`game.popup` or a tutorial message) is open, the lines are not
-drawn, so after 5 seconds the window is hidden until the popup closes and the
-lines show again. A popped-out window follows the same rule.
+do. Like the panel, it takes a click only on its bar and its grip: a click or
+the wheel on its text goes through to the game view under it. The window is
+hidden until a scenario shows a status line or an announcement. Turning it on
+in **Brains > Info Overlay > Scenario Text** does not show it by itself, and
+the pointer over its place does not show it. It shows while it has a line to
+draw, and for `SCN_TEXT_SHOW_SECONDS` (5) seconds after a line was last on
+screen in it, so the player can still move or resize it. Then it is hidden
+again. It also stays up while the player drags its bar or its grip, has its
+gear settings open, or has its close question open, and it goes when the
+player is done. While a popup (`game.popup` or a tutorial message) is open,
+the lines are not drawn, so after 5 seconds the window is hidden until the
+popup closes and the lines show again. A popped-out window follows the same
+rule.
 
 By default the window sits at the top middle of the game view, sized so the
 text is as large as announcements were before: 240 units times the game's

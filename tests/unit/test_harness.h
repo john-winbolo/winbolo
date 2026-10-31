@@ -4349,11 +4349,12 @@ int run_scenario_text_layout(void);
 /* Tablet mode's scenario text band: centred at the top of the view, and
  * kept left of the scenario panel's square when that is shown. */
 int run_scenario_text_tablet_band(void);
-/* The Scenario Text window's bar and grip, the only places it takes the
- * mouse: a point on the text body is on neither. */
 int run_scenario_text_window_shown(void);
 int run_scenario_text_printed_recently(void);
 int run_scenario_float_frame_shown(void);
+/* The bar and grip of the shared window frame (the scenario panel and the
+ * Scenario Text window), the only places it takes the mouse: a point on
+ * the body is on neither. */
 int run_scenario_float_pointer_on_handle(void);
 int run_scenario_text_save_place(void);
 /* The desktop scenario panel's default place and size

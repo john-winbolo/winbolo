@@ -7670,13 +7670,15 @@ set(_unit_test_names
     scenario_announce_remaining
     scenario_announce_position
     scenario_text_fit
+    scenario_text_layout
     scenario_text_tablet_band
-    scenario_text_pointer_on_handle
     scenario_text_window_shown
     scenario_text_printed_recently
-    scenario_text_edge_shown
     scenario_text_save_place
+    scenario_float_frame_shown
+    scenario_float_pointer_on_handle
     scenario_panel_default_place
+    scenario_text_beside_panel_place
     scenario_status_line
     scn_status_codec_and_client
     scn_announce_position_codec
