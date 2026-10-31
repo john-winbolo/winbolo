@@ -1413,8 +1413,15 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     if (uiShouldUseControllerMode()) {
         int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
                   - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
-        if (shift == 0)
+        if (shift == 0 || busy)
             shift = imguiSteamNavConsumeMenuTabShift();
+        /* Greyed, the tabs do not change either: this is the one way to
+           switch them that the BeginDisabled below does not reach. Entering
+           Generate for the first time makes a map and sends it as a preview,
+           which an upload still on its way would then land over. The press is
+           taken and dropped, the Steam one consumed above, so it does not
+           switch the tab later on its own once busy lifts. */
+        if (busy) shift = 0;
         if (shift != 0) {
             int vis[4];
             int nVis = 0;
