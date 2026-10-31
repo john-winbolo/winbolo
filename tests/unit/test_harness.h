@@ -4349,6 +4349,7 @@ int run_scenario_text_tablet_band(void);
  * mouse: a point on the text body is on neither. */
 int run_scenario_text_pointer_on_handle(void);
 int run_scenario_text_window_shown(void);
+int run_scenario_text_printed_recently(void);
 int run_scenario_text_edge_shown(void);
 int run_scenario_text_save_place(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
@@ -4486,6 +4487,10 @@ int run_lv_tank_bars_sums(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
+/* The log viewer's aids for recording the screen (test_lv_marks.c): the
+ * lines Shift and a drag draw on the map and their fade, and -size WxH. */
+int run_lv_marks_fade(void);
+int run_lv_window_size_parse(void);
 /* A double click on a tank on the map: when it turns that tank's view on. */
 int run_lv_map_double_click(void);
 int run_lv_name_header_sums(void);

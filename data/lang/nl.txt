@@ -2906,3 +2906,7 @@ STR_CLIPGIF_LOADING=GIF wordt geopend...
 STR_CLIPGIF_TOO_LARGE=Deze GIF is te groot om hier te tonen. Je kunt hem nog steeds kopiëren of opslaan.
 STR_CLIPGIF_FILTER_NAME=GIF-afbeeldingen
 STR_REEL_RECORD_MODE_TIP=Opnamemodus: toont de GIF-knoppen
+
+# De optie -size van de Log Viewer, als de tekst geen afmeting is of niet kan worden gehaald
+STR_LV_SIZE_ARG_BAD=-size verwacht een breedte en een hoogte in pixels, bijvoorbeeld -size 1920x1080. Het venster is geopend met de gebruikelijke afmeting.
+STR_LV_SIZE_NOT_MET=Het venster kon niet {string1} pixels groot worden gemaakt, zoals -size vroeg. Het is {string2} pixels: het beeldscherm is misschien te klein om het venster te bevatten.

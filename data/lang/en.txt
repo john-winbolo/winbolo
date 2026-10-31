@@ -3035,3 +3035,7 @@ STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game
 # The replay's recording mode button, which shows the GIF controls
 STR_REEL_RECORD_MODE_TIP=Recording mode: shows the GIF controls
 
+# The Log Viewer's -size option when its text is not a size or cannot be met
+STR_LV_SIZE_ARG_BAD=-size wants a width and a height in pixels, such as -size 1920x1080. The window has opened at its usual size.
+STR_LV_SIZE_NOT_MET=The window could not be made {string1} pixels, as -size asked. It is {string2} pixels: the display may be too small to hold it.
+

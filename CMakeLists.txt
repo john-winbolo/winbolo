@@ -5168,6 +5168,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A click on a tank on the viewer's map: which tank a point is on and
     # the mark round the selected one (lv_tank_pick.h, header only).
     tests/unit/test_lv_tank_pick.c
+    # The viewer's aids for recording the screen: the lines Shift and a drag
+    # draw on the map (lv_marks.h) and -size WxH (lv_window_size.h). Both
+    # header only.
+    tests/unit/test_lv_marks.c
     # A sidebar of the viewer whose unused part is clear: where its panels
     # go, the clear part, the map under it and the preference text
     # (lv_dock_clear.h, header only), and the arrangement a new user starts
@@ -7672,6 +7676,7 @@ set(_unit_test_names
     scenario_text_tablet_band
     scenario_text_pointer_on_handle
     scenario_text_window_shown
+    scenario_text_printed_recently
     scenario_text_edge_shown
     scenario_text_save_place
     scenario_status_line
@@ -7744,6 +7749,8 @@ set(_unit_test_names
     lv_tank_status_sums
     lv_tank_bars_sums
     lv_tank_pick_sums
+    lv_marks_fade
+    lv_window_size_parse
     lv_map_double_click
     lv_name_header_sums
     lv_dock_clear_layout
