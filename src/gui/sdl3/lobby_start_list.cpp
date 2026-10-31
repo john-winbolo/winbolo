@@ -105,19 +105,44 @@ int lobbyStartListRender(ClientSim *cs, int myPlayerNum, int startCount,
          * starts on, so does activating a row others hold — that joins them,
          * the same as clicking one on the map. A row the viewer already
          * holds, and an off-side row, do nothing, mirroring the mouse
-         * marker picker. */
-        bool activated  = ImGui::Selectable(label);
+         * marker picker.
+         *
+         * The row is exactly as wide as the list. Left at its default width
+         * a Selectable takes the width of its label when that is wider, so
+         * a row with several holders reached past the list and over the map
+         * beside it. The text is cut at the list edge instead, and a cut
+         * row shows the whole of it in a tooltip while it has focus or the
+         * mouse is over it. */
+        /* A width of 0 means "label width" to Selectable, so keep at least 1. */
+        float rowW = ImGui::GetContentRegionAvail().x;
+        if (rowW < 1.0f) rowW = 1.0f;
+        const bool  cut  = ImGui::CalcTextSize(label, NULL, true).x > rowW;
+        bool activated  = ImGui::Selectable(label, false, 0, ImVec2(rowW, 0.0f));
         bool actionable = (free || (lobbySharedStartsEnabled() && !iHold)) &&
                           myPlayerNum >= 0 && !offSide;
         ImGui::PopStyleColor();
 
         if (ImGui::IsItemFocused()) focused = i;
-        /* Say why a focused off-side row does nothing — the pad has no hover,
-         * so focus stands in for it. */
-        if (offSide && (ImGui::IsItemFocused() || ImGui::IsItemHovered())) {
-            MessageArgs args = {};
-            args.number = i;
-            ImGui::SetTooltip("%s", langGetTextFmt(STR_STARTPICK_TIP_OFFSIDE, &args));
+        /* Say why a focused off-side row does nothing, and show the whole
+         * text of a focused cut row. The pad has no hover, so focus stands
+         * in for it: this list draws only in controller mode
+         * (map_preview_popup.cpp), and a real mouse move leaves that mode
+         * and hides the list, so on a PC a hover alone is never seen. */
+        const bool hoverOrFocus = ImGui::IsItemFocused() || ImGui::IsItemHovered();
+        const bool tipOffSide   = offSide && hoverOrFocus;
+        const bool tipCut       = cut && hoverOrFocus;
+        if (tipOffSide || tipCut) {
+            ImGui::BeginTooltip();
+            if (tipCut) {
+                const char *idMark = SDL_strstr(label, "##");
+                ImGui::TextUnformatted(label, idMark);
+            }
+            if (tipOffSide) {
+                MessageArgs args = {};
+                args.number = i;
+                ImGui::TextUnformatted(langGetTextFmt(STR_STARTPICK_TIP_OFFSIDE, &args));
+            }
+            ImGui::EndTooltip();
         }
         if (activated && actionable) {
             clientSimNetSendLobbyClaimStart(cs, (BYTE)myPlayerNum, (BYTE)i);

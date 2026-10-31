@@ -29,6 +29,288 @@ extern "C" bool dialogNavWasInsideSubRegionAtFrameStart(void) {
     return s_navInsideSubRegionPrevFrame;
 }
 
+/* When the outline may show.  Most contexts set
+   ConfigNavCursorVisibleAlways, so ImGui keeps NavCursorVisible on from
+   the first frame (a window that opens, a default-focus item, a mouse
+   click on a button or a combo all give it a NavId).  That flag also
+   lets Space press the focused item, so it stays on; only the drawing
+   waits.  Enter presses the focused item only while the outline shows
+   (see navOutlineClaimEnter).  A Tab press shows the outline; a mouse
+   button click (any button, also on empty space) hides it again.  As in
+   Discord, a mouse move or the mouse wheel does not hide it.  ImGui
+   itself does not hide its nav cursor on a mouse move either: a move
+   only clears NavHighlightItemUnderNav, and with
+   ConfigNavCursorVisibleAlways
+   NavUpdate keeps NavCursorVisible on.  Also as in Discord, the Tab
+   that shows the outline does not move focus: the outline shows on the
+   item that already has focus, and only the next Tab moves on (see
+   navOutlineClaimTab).  A controller keeps it on: any pad button press
+   here, or the game's own record that the controller is the device in
+   use (Steam Input reaches ImGui as arrow keys, not pad keys).
+
+   An item that a dialog focuses from code (SetKeyboardFocusHere, such
+   as a message box's OK button or the lobby's Ready button at open)
+   also shows the outline at once, so the player sees what Enter will
+   press.  It shows while that item keeps the focus, until a mouse
+   button click.  A text field being edited does not count: its caret
+   already marks it.  A mouse click on a button or a combo does not
+   focus from code, so the outline stays hidden there. */
+static bool s_navOutlineByKey     = false;
+static bool s_navOutlineByPadUser = false;
+
+/* The item focused from code, in the context s_codeFocusCtx.  Like
+   s_tabStuckCtx below, both context pointers are only compared, never
+   dereferenced. */
+static const ImGuiContext *s_codeFocusCtx        = nullptr;
+static ImGuiID             s_codeFocusId         = 0;
+static const ImGuiContext *s_codeFocusPendingCtx = nullptr;
+
+static bool navOutlineShown(const ImGuiContext *g) {
+    return s_navOutlineByKey || s_navOutlineByPadUser ||
+           (g == s_codeFocusCtx && s_codeFocusId != 0 &&
+            g->NavId == s_codeFocusId);
+}
+
+extern "C" void dialogNavOutlineSetControllerInUse(bool inUse) {
+    s_navOutlineByPadUser = inUse;
+}
+
+/* Owner id for the Tab key while the outline is hidden. */
+static const ImGuiID kNavOutlineTabOwner = 0x4E61764Fu; /* "NavO" */
+
+/* While the outline is hidden, claim the Tab key for the next frame, so
+   the first Tab only shows the outline and does not move focus.  ImGui
+   reads Tab for tabbing in NavUpdate (inside NewFrame), with
+   IsKeyPressed(ImGuiKey_Tab, ..., ImGuiKeyOwner_NoOwner); that read fails
+   while another id owns the key.  The claim is made here, at the end of a
+   frame, so it is in place before the next NewFrame.  It has no lock
+   flag, so a plain IsKeyPressed(ImGuiKey_Tab) (owner Any), as the tracker
+   below and ImGuiColorTextEdit use, still sees the press.  The game reads
+   its own keys from SDL events, so a Tab bound to a game key is not
+   touched.
+
+   A text field being edited gets the claim too, so the first Tab only
+   shows the outline on it: the field stays active, with its caret, and
+   typing goes on.  Without the claim ImGui's tabbing moves focus out of
+   the field to the next item.  The claim is not made for a field that
+   reads Tab itself (ImGuiInputTextFlags_AllowTabInput or
+   _CallbackCompletion): such a field reads Tab through Shortcut() with
+   its own id, which fails while another id owns the key.  Nor is it made
+   while any other item is active.  No claim with no live focused item:
+   then the first Tab focuses the first item, as before.  No claim while
+   ImGui's own cursor is hidden: a context without
+   ConfigNavCursorVisibleAlways (the onboarding and connecting dialogs)
+   keeps ImGui's auto mode, where the first Tab shows the cursor and
+   takes focus to the first item, as before.  With the claim there, that
+   Tab was lost and the outline still did not draw (NavCursorVisible
+   stayed off), so the player had to press Tab twice.  The claim stays
+   while Tab is held, so a held first Tab does not repeat into a move; it
+   is given back once Tab is up. */
+static bool navOutlineActiveItemAllowsClaim(ImGuiContext *g) {
+    if (g->ActiveId == 0) return true;
+    const ImGuiInputTextState &st = g->InputTextState;
+    return st.ID == g->ActiveId &&
+           (st.Flags & (ImGuiInputTextFlags_AllowTabInput |
+                        ImGuiInputTextFlags_CallbackCompletion)) == 0;
+}
+
+static void navOutlineClaimTab(ImGuiContext *g) {
+    ImGuiID owner = ImGui::GetKeyOwner(ImGuiKey_Tab);
+    bool    want  = !navOutlineShown(g) &&
+                    g->NavCursorVisible && g->NavWindow && g->NavId != 0 &&
+                    g->NavIdIsAlive && navOutlineActiveItemAllowsClaim(g);
+    if (want) {
+        if (owner == ImGuiKeyOwner_NoOwner || owner == kNavOutlineTabOwner)
+            ImGui::SetKeyOwner(ImGuiKey_Tab, kNavOutlineTabOwner);
+    } else if (owner == kNavOutlineTabOwner &&
+               !ImGui::IsKeyDown(ImGuiKey_Tab)) {
+        ImGui::SetKeyOwner(ImGuiKey_Tab, ImGuiKeyOwner_NoOwner);
+    }
+}
+
+/* While the outline is hidden, claim Enter and keypad Enter for the next
+   frame, so Enter does not press an item the player cannot see.  ImGui
+   presses the focused item in NavUpdate with
+   IsKeyPressed(ImGuiKey_Enter, ..., ImGuiKeyOwner_NoOwner), which fails
+   while another id owns the key.  The claim has no lock flag, so a plain
+   IsKeyPressed(ImGuiKey_Enter) (owner Any) still sees the press: the
+   dialog footer's Confirm on Enter (dialog_footer.cpp) keeps working, so
+   a dialog with a default button keeps Enter.  No claim while any item
+   is active: a text field being edited reads Enter through Shortcut()
+   with its own id, so Enter still submits it.  No claim while ImGui's
+   own cursor is hidden (auto mode), where ImGui does not press the
+   focused item on Enter either.  The claim stays while Enter is held,
+   and is given back once Enter is up. */
+static void navOutlineClaimEnterKey(ImGuiKey key, bool want) {
+    ImGuiID owner = ImGui::GetKeyOwner(key);
+    if (want) {
+        if (owner == ImGuiKeyOwner_NoOwner || owner == kNavOutlineTabOwner)
+            ImGui::SetKeyOwner(key, kNavOutlineTabOwner);
+    } else if (owner == kNavOutlineTabOwner && !ImGui::IsKeyDown(key)) {
+        ImGui::SetKeyOwner(key, ImGuiKeyOwner_NoOwner);
+    }
+}
+
+static void navOutlineClaimEnter(ImGuiContext *g) {
+    bool want = !navOutlineShown(g) && g->NavCursorVisible &&
+                g->NavId != 0 && g->ActiveId == 0;
+    navOutlineClaimEnterKey(ImGuiKey_Enter, want);
+    navOutlineClaimEnterKey(ImGuiKey_KeypadEnter, want);
+}
+
+/* A forward Tab that ImGui cannot move.  ImGui's Tab walk counts from the
+   focused item, and it skips a disabled item, so with the focus on a
+   disabled item (the game finder's Reload button while a search runs, or
+   Join once a refresh clears the list) no item comes after it and Tab
+   does nothing.  With no focused item (a click on an empty part of a
+   window: the finder's border around its panel, or the empty part of a
+   list) Tab also does nothing: these contexts set
+   ConfigNavCursorVisibleAlways, so ImGui always tabs forward from the
+   focused item and never takes its "focus the first item" path.  Arrow
+   keys still work in the first case, as they move from the item's rect.
+
+   Fix: just after NewFrame, when ImGui has made a forward Tab request
+   from such a state, change it to ImGui's "focus the first item" request
+   (NavTabbingDir 0): the first tab stop of the window takes the focus.
+   When the focused window has no items (the finder's full-screen host
+   behind its panel), the top window that has items takes the focus
+   first.  A Shift+Tab already moves in these states (ImGui takes the last
+   item), so it is left alone.  It runs from a NewFramePost hook because
+   NavUpdate in NewFrame drops any nav request made before it, and the
+   Tab request is made inside NewFrame.
+
+   The state is read at the end of the previous frame (NavIdIsAlive is
+   cleared in NavUpdate), for that context only.  s_tabStuckCtx is only
+   compared with the hook's context, never dereferenced, so it is safe
+   after that context is destroyed; the hook is destroyed with it. */
+static const ImGuiContext *s_tabStuckCtx = nullptr;
+static bool                s_tabStuck    = false;
+
+static void navOutlineNoteTabState(ImGuiContext *g) {
+    s_tabStuckCtx = g;
+    s_tabStuck    = g->NavWindow && g->ActiveId == 0 &&
+                    (g->NavId == 0 || !g->NavIdIsAlive ||
+                     (g->NavIdItemFlags & ImGuiItemFlags_Disabled));
+}
+
+static bool navWindowHasItems(const ImGuiWindow *w) {
+    return (w->DC.NavLayersActiveMask & (1 << ImGuiNavLayer_Main)) != 0;
+}
+
+static void navOutlineFixStuckTab(ImGuiContext *ctx, ImGuiContextHook *) {
+    ImGuiContext &g = *ctx;
+    if (ctx != s_tabStuckCtx || !s_tabStuck) return;
+    if (!g.NavWindow || !g.NavMoveSubmitted) return;
+    if ((g.NavMoveFlags & ImGuiNavMoveFlags_IsTabbing) == 0 ||
+        (g.NavMoveFlags & ImGuiNavMoveFlags_FocusApi) != 0 ||
+        g.NavTabbingDir != +1)
+        return;
+    if (!navWindowHasItems(g.NavWindow)) {
+        ImGuiWindow *target = nullptr;
+        for (int i = g.WindowsFocusOrder.Size - 1; i >= 0 && !target; i--) {
+            ImGuiWindow *w = g.WindowsFocusOrder[i];
+            if (w != g.NavWindow && w->WasActive && !w->Hidden &&
+                !(w->Flags & (ImGuiWindowFlags_NoNavFocus |
+                              ImGuiWindowFlags_NoNavInputs)) &&
+                navWindowHasItems(w))
+                target = w;
+        }
+        if (!target) return;
+        /* This runs in a NewFramePost hook, before any Begin this frame,
+           so each window's NavLayersActiveMask is last frame's value.  A
+           window that first appears this frame can be chosen only on the
+           next Tab. */
+        ImGui::FocusWindow(target);
+    }
+    g.NavTabbingDir = 0;
+}
+
+/* Find the item a dialog focused from code.  SetKeyboardFocusHere makes
+   a move request with ImGuiNavMoveFlags_FocusApi; the items after it
+   score it in the same frame, and NavUpdate in the next NewFrame applies
+   it, setting NavId to the result.  Before NewFrame (NewFramePre) the
+   request and its result are still those of the last frame, so note
+   that a request with a result is waiting; just after NewFrame
+   (NewFramePost) NavId is the item it focused.  No Tab, arrow key or pad
+   move uses FocusApi. */
+static void navOutlineNoteFocusRequest(ImGuiContext *ctx, ImGuiContextHook *) {
+    const ImGuiContext &g = *ctx;
+    bool req = g.NavMoveSubmitted &&
+               (g.NavMoveFlags & ImGuiNavMoveFlags_FocusApi) != 0 &&
+               (g.NavMoveResultLocal.ID != 0 || g.NavMoveResultOther.ID != 0 ||
+                g.NavTabbingResultFirst.ID != 0);
+    if (req)
+        s_codeFocusPendingCtx = ctx;
+    else if (s_codeFocusPendingCtx == ctx)
+        s_codeFocusPendingCtx = nullptr;
+}
+
+static void navOutlineTakeFocusRequest(ImGuiContext *ctx) {
+    if (s_codeFocusPendingCtx != ctx) return;
+    s_codeFocusPendingCtx = nullptr;
+    if (ctx->NavId == 0) return;
+    s_codeFocusCtx = ctx;
+    s_codeFocusId  = ctx->NavId;
+}
+
+static void navOutlineNewFramePost(ImGuiContext *ctx, ImGuiContextHook *hook) {
+    navOutlineTakeFocusRequest(ctx);
+    navOutlineFixStuckTab(ctx, hook);
+}
+
+/* Add the hooks once per context. */
+static void navOutlineEnsureHook(ImGuiContext *g, ImGuiContextHookType type,
+                                 ImGuiContextHookCallback callback) {
+    for (const ImGuiContextHook &h : g->Hooks)
+        if (h.Owner == kNavOutlineTabOwner && h.Type == type) return;
+    ImGuiContextHook hook;
+    hook.Type     = type;
+    hook.Owner    = kNavOutlineTabOwner;
+    hook.Callback = callback;
+    ImGui::AddContextHook(g, &hook);
+}
+
+static void navOutlineEnsureHooks(ImGuiContext *g) {
+    navOutlineEnsureHook(g, ImGuiContextHookType_NewFramePre,
+                         navOutlineNoteFocusRequest);
+    navOutlineEnsureHook(g, ImGuiContextHookType_NewFramePost,
+                         navOutlineNewFramePost);
+}
+
+/* The item focused from code stops showing the outline once the focus
+   leaves it, or while it is a text field being edited. */
+static void navOutlineCheckCodeFocus(ImGuiContext *g) {
+    if (g != s_codeFocusCtx || s_codeFocusId == 0) return;
+    const bool editing = g->ActiveId == s_codeFocusId &&
+                         g->InputTextState.ID == s_codeFocusId;
+    if (g->NavId != s_codeFocusId || editing) s_codeFocusId = 0;
+}
+
+static void navOutlineTrackInput(ImGuiContext *g) {
+    const ImGuiIO &io = g->IO;
+    /* Only a mouse button click hides the outline.  A mouse move or the
+       mouse wheel does not.  Once hidden, navOutlineClaimTab claims Tab
+       again, so the next Tab again only shows the outline. */
+    for (int b = 0; b < IM_ARRAYSIZE(io.MouseClicked); b++)
+        if (io.MouseClicked[b]) {
+            s_navOutlineByKey = false;
+            s_codeFocusId     = 0;
+        }
+    navOutlineCheckCodeFocus(g);
+
+    /* Tab counts only while a window takes nav input, so a Tab bound to
+       a game key during play does not switch the outline on.  Ctrl+Tab
+       and Alt+Tab do not count, as in ImGui's own tabbing: Alt+Tab to
+       another program reaches the game as a Tab press. */
+    if (g->NavWindow && !io.KeyCtrl && !io.KeyAlt &&
+        ImGui::IsKeyPressed(ImGuiKey_Tab, false))
+        s_navOutlineByKey = true;
+    for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadR3; k++)
+        if (ImGui::IsKeyPressed((ImGuiKey)k, false)) s_navOutlineByKey = true;
+    navOutlineClaimTab(g);
+    navOutlineClaimEnter(g);
+}
+
 extern "C" void dialogDrawNavOutline(void) {
     ImGuiContext *g = ImGui::GetCurrentContext();
     if (!g) return;
@@ -43,6 +325,11 @@ extern "C" void dialogDrawNavOutline(void) {
        pre-pop value stays current every frame regardless of nav state. */
     s_navInsideSubRegionPrevFrame = s_navInsideSubRegionThisFrame;
     s_navInsideSubRegionThisFrame = dialogNavIsInsideSubRegion();
+
+    navOutlineTrackInput(g);
+    navOutlineEnsureHooks(g);
+    navOutlineNoteTabState(g);
+    if (!navOutlineShown(g)) return;
 
     if (g->NavId == 0) return;
     if (!g->NavCursorVisible) return;
@@ -76,6 +363,27 @@ extern "C" void dialogDrawNavOutline(void) {
     /* Inflate so the outline sits clearly outside the item frame. */
     a.x -= 2.0f; a.y -= 2.0f;
     b.x += 2.0f; b.y += 2.0f;
+
+    /* Keep the outline inside the item's own window.  This draws after
+       the window has ended, when the draw list no longer clips to it, and
+       an item can be wider than its window: a Selectable takes the width
+       of its label when that is wider than the list, so a long row's
+       outline ran out of a list child and over the panel beside it.
+       ImGui's own cursor clips to the window the same way.  The main
+       layer keeps to the window's inner clip area, plus the 2px the
+       outline sits outside an item; the menu bar layer lies outside that
+       area, so it keeps to the window's outer rect. */
+    ImRect limit = win->OuterRectClipped;
+    if (layer == ImGuiNavLayer_Main) {
+        ImRect inner = win->InnerClipRect;
+        inner.Expand(2.0f);
+        limit.ClipWithFull(inner);
+    }
+    if (a.x < limit.Min.x) a.x = limit.Min.x;
+    if (a.y < limit.Min.y) a.y = limit.Min.y;
+    if (b.x > limit.Max.x) b.x = limit.Max.x;
+    if (b.y > limit.Max.y) b.y = limit.Max.y;
+    if (a.x >= b.x || a.y >= b.y) return;
 
     /* Pixel-snap.  ImGui's default cursor renders without snapping,
        which is the root cause of the "thin-in-middle, thick-at-corners"
