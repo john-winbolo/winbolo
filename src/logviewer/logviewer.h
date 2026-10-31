@@ -248,10 +248,12 @@ typedef struct LogViewerState {
 void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
 
-/* The standalone viewer's -size: open the window with a drawing area of
- * exactly w by h pixels and keep it that size, for recording the screen.
- * Call before logViewerRun; 0 by 0 is no fixed size. */
-void logViewerSetWindowSize(int w, int h);
+/* The standalone viewer's -size: the text after it, "WxH", opens the window
+ * with a drawing area of exactly that many pixels and keeps it that size,
+ * for recording the screen (lv_window_size.h). Call before logViewerRun. A
+ * text that is not a size, or NULL, leaves the window at its usual size and
+ * the viewer says so once its window is up. */
+void logViewerSetWindowSizeText(const char *text);
 
 /* Ask for the whole application to end, not just this viewer, and break the
  * loop that is running.  Wired to Quit; "Return to main menu" pushes the

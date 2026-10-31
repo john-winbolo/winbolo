@@ -2904,3 +2904,7 @@ STR_CLIPGIF_LOADING=正在開啟 GIF...
 STR_CLIPGIF_TOO_LARGE=此 GIF 太大，無法在此顯示。你仍然可以複製或儲存它。
 STR_CLIPGIF_FILTER_NAME=GIF 圖片
 STR_REEL_RECORD_MODE_TIP=錄製模式：顯示 GIF 控制項
+
+# The Log Viewer's -size option when its text is not a size or cannot be met
+STR_LV_SIZE_ARG_BAD=-size 需要以像素為單位的寬度和高度，例如 -size 1920x1080。視窗已依通常大小開啟。
+STR_LV_SIZE_NOT_MET=無法將視窗設為 -size 所要求的 {string1} 像素。視窗現為 {string2} 像素：顯示器可能太小，容納不下。

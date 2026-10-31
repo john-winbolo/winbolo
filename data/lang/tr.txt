@@ -2906,3 +2906,7 @@ STR_CLIPGIF_LOADING=GIF açılıyor...
 STR_CLIPGIF_TOO_LARGE=Bu GIF burada gösterilemeyecek kadar büyük. Yine de kopyalayabilir veya kaydedebilirsiniz.
 STR_CLIPGIF_FILTER_NAME=GIF Resimleri
 STR_REEL_RECORD_MODE_TIP=Kayıt modu: GIF denetimlerini gösterir
+
+# The Log Viewer's -size option when its text is not a size or cannot be met
+STR_LV_SIZE_ARG_BAD=-size piksel cinsinden bir genişlik ve bir yükseklik ister, örneğin -size 1920x1080. Pencere olağan boyutunda açıldı.
+STR_LV_SIZE_NOT_MET=Pencere, -size seçeneğinin istediği gibi {string1} piksel yapılamadı. Pencere {string2} piksel: ekran pencereyi sığdıramayacak kadar küçük olabilir.

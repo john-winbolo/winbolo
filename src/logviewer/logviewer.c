@@ -1298,16 +1298,30 @@ static void loadPreferences(void) {
 bool lv_windowCanFullScreen(void);
 
 /* The drawing area the command line asked for with -size, in pixels, or 0
- * for none (logViewerSetWindowSize). While one is set the window stays that
- * size: it is not snapped to whole squares, cannot be resized by hand, and
- * neither its size nor its place is saved, so the next run without -size
+ * for none (logViewerSetWindowSizeText). While one is set the window stays
+ * that size: it is not snapped to whole squares, cannot be resized by hand,
+ * and neither its size nor its place is saved, so the next run without -size
  * opens as the last one without it closed. */
-static int s_fixedWindowW = 0;
-static int s_fixedWindowH = 0;
+static int  s_fixedWindowW = 0;
+static int  s_fixedWindowH = 0;
+/* The text after -size was not a size (lvHostWarnFixedWindowSize). */
+static bool s_fixedWindowRefused = false;
+/* The size the window came out at, in pixels, once it was applied. */
+static int  s_fixedWindowGotW = 0;
+static int  s_fixedWindowGotH = 0;
 
-void logViewerSetWindowSize(int w, int h) {
-    s_fixedWindowW = w;
-    s_fixedWindowH = h;
+void logViewerSetWindowSizeText(const char *text) {
+    int w = 0, h = 0;
+
+    if (text != NULL && lvWindowSizeParse(text, &w, &h)) {
+        s_fixedWindowW = w;
+        s_fixedWindowH = h;
+        s_fixedWindowRefused = false;
+    } else {
+        s_fixedWindowW = 0;
+        s_fixedWindowH = 0;
+        s_fixedWindowRefused = true;
+    }
 }
 
 static bool lvHostFixedWindowSize(void) {
@@ -1453,8 +1467,34 @@ static void lvHostApplyFixedWindowSize(void) {
             break;
         }
     }
+    s_fixedWindowGotW = pw;
+    s_fixedWindowGotH = ph;
     SDL_LogInfo(WB_LOG_CAT_LOGVIEWER, "-size %dx%d: the window is %dx%d pixels",
                 s_fixedWindowW, s_fixedWindowH, pw, ph);
+}
+
+/* --------------------------------------------------------------------------
+ * lvHostWarnFixedWindowSize -- Tell the user when -size did not get its way.
+ *
+ * Either the text after -size was not a size, so the window opened at its
+ * usual size, or the window could not be made the size asked for, as when
+ * the display is too small to hold it, and the recording would come out at
+ * another size. Shown once the window is up, after lvHostRestoreWindowPlace,
+ * so the text comes from the language loaded.
+ * -------------------------------------------------------------------------- */
+static void lvHostWarnFixedWindowSize(void) {
+    if (g_lv == NULL || !g_lv->ownsWindow) {
+        return;
+    }
+    if (s_fixedWindowRefused) {
+        lv_platform_dialog_message(DIALOG_BOX_TITLE, langGetText(STR_LV_SIZE_ARG_BAD));
+    } else if (lvHostFixedWindowSize() &&
+               (s_fixedWindowGotW != s_fixedWindowW || s_fixedWindowGotH != s_fixedWindowH)) {
+        MessageArgs args = {0};
+        SDL_snprintf(args.string1, sizeof(args.string1), "%dx%d", s_fixedWindowW, s_fixedWindowH);
+        SDL_snprintf(args.string2, sizeof(args.string2), "%dx%d", s_fixedWindowGotW, s_fixedWindowGotH);
+        lv_platform_dialog_message(DIALOG_BOX_TITLE, langGetTextFmt(STR_LV_SIZE_NOT_MET, &args));
+    }
 }
 
 /* --------------------------------------------------------------------------
@@ -2369,6 +2409,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     s_lvJump.active = FALSE;
     s_lvJumpHost = TRUE;
     lvHostRestoreWindowPlace();
+    lvHostWarnFixedWindowSize();
 
     /* Open file from command line / caller if provided. Like a pending
      * memory buffer from logViewerRunFromMemory, it opens on the first frame. */

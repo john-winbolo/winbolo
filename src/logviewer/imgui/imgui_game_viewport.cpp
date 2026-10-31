@@ -271,9 +271,12 @@ int lv_imgui_game_viewport_process_input(void) {
         return 0;
     }
     
-    /* A line being drawn on the map has the mouse until the button is up. */
-    if (marks_process_input(io)) {
-        return 1;
+    /* A line being drawn on the map has the left button until it comes up:
+     * the map is neither moved nor clicked. The right button and the keys
+     * below still work while it is drawn. */
+    const bool marking = marks_process_input(io) != 0;
+    if (marking) {
+        input_processed = 1;
     }
 
     /* Check if ImGui wants to capture input - if so, don't process for game */
@@ -283,7 +286,7 @@ int lv_imgui_game_viewport_process_input(void) {
             s_is_mouse_down = false;
             s_is_dragging = false;
         }
-        return 0;
+        return input_processed;
     }
 
     /* Mouse-wheel zoom is handled directly in the main SDL event loop
@@ -292,7 +295,7 @@ int lv_imgui_game_viewport_process_input(void) {
      * io.MouseWheel surviving across ImGui frame boundaries. */
 
     /* Process mouse input */
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    if (!marking && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         if (!s_is_mouse_down) {
             /* Mouse just went down - start tracking */
             s_is_mouse_down = true;
@@ -332,7 +335,7 @@ int lv_imgui_game_viewport_process_input(void) {
         }
     }
 
-    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+    if (!marking && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         if (s_is_mouse_down) {
             if (s_is_dragging) {
                 /* End of drag - finalize position (sub-pixel-aware, see above) */
