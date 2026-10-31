@@ -31,10 +31,10 @@
  *   run_mac_bolo_settings_numbers
  *       the five number settings reach their rules.
  *   run_mac_bolo_tank_hit_mines_part_with_mines_mod
- *       Mac Bolo Rules and Tank Hits Set Off Mines both on the list. Mac
- *       Bolo Rules on top: tank_hit_mines on plays 0, off plays 1. Tank
- *       Hits Set Off Mines on top plays 1. This is the one case where the
- *       tank_hit_mines part changes the round.
+ *       Mac Bolo Rules and a test mod that sets tank_hit_sets_off_mines
+ *       to 1 both on the list. Mac Bolo Rules on top: tank_hit_mines on
+ *       plays 0, off plays 1. The test mod on top plays 1. This is the
+ *       one case where the tank_hit_mines part changes the round.
  *   run_mac_bolo_first_start_lobby_off_uses_mac_pick
  *       first_start_lobby off: across several rounds some opening tank
  *       stands away from its lobby pick, where the Mac Bolo pick put it,
@@ -459,7 +459,49 @@ int run_mac_bolo_settings_numbers(void) {
 
 /* ── Two scripts on the list ──────────────────────────────────────── */
 
-#define MLS_MINES_MOD_FILE "TankHitsSetOffMines.scenario.lua"
+/* No shipped mod sets tank_hit_sets_off_mines to 1, so the test writes its
+ * own beside a copy of Mac Bolo Rules in the scratch directory. */
+#define MLS_MINES_MOD_FILE "MinesTestMod.scenario.lua"
+
+static const char mlsMinesModText[] =
+    "scenario = {\n"
+    "  name = \"Mines Test Mod\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
+    "  rules = { tank_hit_sets_off_mines = 1 },\n"
+    "}\n";
+
+/* Fills the scratch directory with a copy of Mac Bolo Rules from the mods
+ * directory and the test mod, and puts the scratch directory in dir. */
+static int mlsListModDir(char *dir, size_t cap) {
+    char   modDir[512];
+    char   src[600];
+    char   dst[600];
+    void  *data;
+    size_t len = 0;
+    char  *slash;
+
+    UT_ASSERT_MSG(mlsModDir(modDir, sizeof(modDir)),
+                  "SDL cannot say where the executable is");
+    snprintf(src, sizeof(src), "%s/%s", modDir, MLS_MOD_FILE);
+    data = SDL_LoadFile(src, &len);
+    UT_ASSERT_MSG(data != NULL, "cannot read %s: %s", src, SDL_GetError());
+    UT_ASSERT(utScratchPath(dst, sizeof(dst), MLS_MOD_FILE));
+    UT_ASSERT_MSG(SDL_SaveFile(dst, data, len), "cannot write %s: %s", dst,
+                  SDL_GetError());
+    SDL_free(data);
+    UT_ASSERT(utScratchPath(dst, sizeof(dst), MLS_MINES_MOD_FILE));
+    UT_ASSERT_MSG(SDL_SaveFile(dst, mlsMinesModText,
+                               sizeof(mlsMinesModText) - 1),
+                  "cannot write %s: %s", dst, SDL_GetError());
+
+    slash = strrchr(dst, '/');
+    UT_ASSERT(slash != NULL);
+    *slash = '\0';
+    snprintf(dir, cap, "%s", dst);
+    return 0;
+}
 
 /* The ScenarioHost slot scenarioHostFollowMap writes. The cases run one at
  * a time in a process, so one slot is enough. */
@@ -479,8 +521,7 @@ static int mlsListMinesRound(const char *const *files, int count, int32_t part,
     int32_t       got = -1;
     int           i;
 
-    UT_ASSERT_MSG(mlsModDir(dir, sizeof(dir)),
-                  "SDL cannot say where the executable is");
+    UT_ASSERT(mlsListModDir(dir, sizeof(dir)) == 0);
     UT_ASSERT(utScratchPath(mapPath, sizeof(mapPath),
                             "wbtest_mls_mines_list.map"));
     sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
@@ -547,7 +588,7 @@ int run_mac_bolo_tank_hit_mines_part_with_mines_mod(void) {
      * with the part on: its 0 is kept over the 1 below it. */
     UT_ASSERT(mlsListMinesRound(macFirst, 2, 1, &v) == 0);
     UT_ASSERT_MSG(v == 0,
-                  "Mac Bolo Rules above Tank Hits Set Off Mines, part on: "
+                  "Mac Bolo Rules above the test mod, part on: "
                   "tank_hit_sets_off_mines is %d, wanted 0", (int)v);
 
     /* The part off: Mac Bolo Rules sets nothing for the rule, so the 1
@@ -555,20 +596,20 @@ int run_mac_bolo_tank_hit_mines_part_with_mines_mod(void) {
     v = -1;
     UT_ASSERT(mlsListMinesRound(macFirst, 2, 0, &v) == 0);
     UT_ASSERT_MSG(v == 1,
-                  "Mac Bolo Rules above Tank Hits Set Off Mines, part off: "
+                  "Mac Bolo Rules above the test mod, part off: "
                   "tank_hit_sets_off_mines is %d, wanted 1", (int)v);
 
-    /* Tank Hits Set Off Mines on top: its 1 is kept, part on or not. */
+    /* The test mod on top: its 1 is kept, part on or not. */
     v = -1;
     UT_ASSERT(mlsListMinesRound(minesFirst, 2, 1, &v) == 0);
     UT_ASSERT_MSG(v == 1,
-                  "Tank Hits Set Off Mines above Mac Bolo Rules, part on: "
+                  "the test mod above Mac Bolo Rules, part on: "
                   "tank_hit_sets_off_mines is %d, wanted 1", (int)v);
 
     v = -1;
     UT_ASSERT(mlsListMinesRound(minesFirst, 2, 0, &v) == 0);
     UT_ASSERT_MSG(v == 1,
-                  "Tank Hits Set Off Mines above Mac Bolo Rules, part off: "
+                  "the test mod above Mac Bolo Rules, part off: "
                   "tank_hit_sets_off_mines is %d, wanted 1", (int)v);
     return 0;
 }
