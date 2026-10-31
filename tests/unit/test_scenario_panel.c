@@ -1350,50 +1350,79 @@ int run_scenario_panel_default_place(void) {
 
 /* The Scenario Text window's default place beside a default scenario panel
    (scnTextBesidePanelPlace): from one inset right of the panel to one inset
-   left of the game view's right edge, top level with the panel, and false
-   when that room is under the least width. */
+   left of the game view's right edge, top and bottom level with the panel,
+   and false when that room is under the least width. Also the test for a
+   panel at its default place (scnPanelAtDefault). */
 int run_scenario_text_beside_panel_place(void) {
-    float x = -1.0f, y = -1.0f, w = -1.0f;
+    float x = -1.0f, y = -1.0f, w = -1.0f, h = -1.0f;
 
     /* Zoom 2: a 480 pixel view at the left of a 1280 display, inset 8. The
-       default panel is 288 at (8, 50), so its right edge is 296. The text
-       area runs from 304 to 472: 168 wide, at the panel's top. */
-    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 480.0f, 1280.0f, 8.0f,
-                                      SCN_TEXT_BESIDE_MIN_W_PX, &x, &y, &w));
+       default panel is 288 at (8, 50), so its right edge is 296 and its
+       bottom 338. The text area runs from 304 to 472: 168 wide, and from
+       50 to 338: 288 high. */
+    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 338.0f, 480.0f, 1280.0f,
+                                      8.0f, SCN_TEXT_BESIDE_MIN_W_PX, &x, &y,
+                                      &w, &h));
     UT_ASSERT(x == 304.0f);
     UT_ASSERT(y == 50.0f);
     UT_ASSERT(w == 168.0f);
+    UT_ASSERT(h == 288.0f);
+
+    /* A web case: a view from 390 to 1165 at scale 2.5, so inset 10, and
+       the panel 288 from (400, 180), so right edge 688 and bottom 468. The
+       text area runs from 698 to 1155: 457 wide, 288 high. */
+    UT_ASSERT(scnTextBesidePanelPlace(688.0f, 180.0f, 468.0f, 1165.0f,
+                                      1920.0f, 10.0f, SCN_TEXT_BESIDE_MIN_W_PX,
+                                      &x, &y, &w, &h));
+    UT_ASSERT(x == 698.0f);
+    UT_ASSERT(y == 180.0f);
+    UT_ASSERT(w == 457.0f);
+    UT_ASSERT(h == 288.0f);
 
     /* A display that ends before the view's right edge: the room ends one
        inset in from the display's edge, 900 - 4 = 896, so 896 - 304 = 592. */
-    UT_ASSERT(scnTextBesidePanelPlace(300.0f, 30.0f, 1000.0f, 900.0f, 4.0f,
-                                      SCN_TEXT_BESIDE_MIN_W_PX, &x, &y, &w));
+    UT_ASSERT(scnTextBesidePanelPlace(300.0f, 30.0f, 230.0f, 1000.0f, 900.0f,
+                                      4.0f, SCN_TEXT_BESIDE_MIN_W_PX, &x, &y,
+                                      &w, &h));
     UT_ASSERT(x == 304.0f);
     UT_ASSERT(y == 30.0f);
     UT_ASSERT(w == 592.0f);
+    UT_ASSERT(h == 200.0f);
 
     /* Exactly the least width fits: 304 to 464 is 160. */
-    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 472.0f, 1280.0f, 8.0f,
-                                      160.0f, &x, &y, &w));
+    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 338.0f, 472.0f, 1280.0f,
+                                      8.0f, 160.0f, &x, &y, &w, &h));
     UT_ASSERT(w == 160.0f);
 
     /* Too narrow (450 - 8 - 304 = 138, under 160): false, and the outputs
        are left alone. */
-    x = y = w = -1.0f;
-    UT_ASSERT(!scnTextBesidePanelPlace(296.0f, 50.0f, 450.0f, 1280.0f, 8.0f,
-                                       SCN_TEXT_BESIDE_MIN_W_PX, &x, &y, &w));
-    UT_ASSERT(x == -1.0f && y == -1.0f && w == -1.0f);
+    x = y = w = h = -1.0f;
+    UT_ASSERT(!scnTextBesidePanelPlace(296.0f, 50.0f, 338.0f, 450.0f,
+                                       1280.0f, 8.0f,
+                                       SCN_TEXT_BESIDE_MIN_W_PX, &x, &y, &w,
+                                       &h));
+    UT_ASSERT(x == -1.0f && y == -1.0f && w == -1.0f && h == -1.0f);
 
     /* A panel reaching past the view's right edge leaves no room, even with
-       no least width. */
-    UT_ASSERT(!scnTextBesidePanelPlace(500.0f, 50.0f, 480.0f, 1280.0f, 8.0f,
-                                       0.0f, &x, &y, &w));
-    UT_ASSERT(!scnTextBesidePanelPlace(464.0f, 50.0f, 480.0f, 1280.0f, 8.0f,
-                                       0.0f, &x, &y, &w));
+       no least width; nor does a panel with no height. */
+    UT_ASSERT(!scnTextBesidePanelPlace(500.0f, 50.0f, 338.0f, 480.0f, 1280.0f,
+                                       8.0f, 0.0f, &x, &y, &w, &h));
+    UT_ASSERT(!scnTextBesidePanelPlace(464.0f, 50.0f, 338.0f, 480.0f, 1280.0f,
+                                       8.0f, 0.0f, &x, &y, &w, &h));
+    UT_ASSERT(!scnTextBesidePanelPlace(296.0f, 50.0f, 50.0f, 1280.0f, 1280.0f,
+                                       8.0f, 0.0f, &x, &y, &w, &h));
 
     /* Every output may be NULL. */
-    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 1280.0f, 1280.0f, 8.0f,
-                                      SCN_TEXT_BESIDE_MIN_W_PX, NULL, NULL,
-                                      NULL));
+    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 338.0f, 1280.0f, 1280.0f,
+                                      8.0f, SCN_TEXT_BESIDE_MIN_W_PX, NULL,
+                                      NULL, NULL, NULL));
+
+    /* At its default place: the panel keeps whole pixels, so a default of
+       (400.5, 180.25) kept as (400, 180) is still the default. Two pixels
+       off on either axis is a place the player chose. */
+    UT_ASSERT(scnPanelAtDefault(400.0f, 180.0f, 400.5f, 180.25f));
+    UT_ASSERT(scnPanelAtDefault(401.0f, 179.0f, 400.0f, 180.0f));
+    UT_ASSERT(!scnPanelAtDefault(402.0f, 180.0f, 400.0f, 180.0f));
+    UT_ASSERT(!scnPanelAtDefault(400.0f, 178.0f, 400.0f, 180.0f));
     return 0;
 }
