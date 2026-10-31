@@ -4324,7 +4324,9 @@ static void renderPlayersPanel(ClientSim *cs) {
    is 43, which scnBackingAlpha turns into 110 of 255, the backing these
    windows had before there was a setting, and SCN_TEXT_OPACITY_DEFAULT is
    100, the drawing at full strength. The background percent is the
-   backing's real alpha, so 100 is opaque black. */
+   backing's real alpha, so 100 is opaque black. The Scenario Text window's
+   background default is SCN_TEXT_WINDOW_BG_OPACITY_DEFAULT, 0, so its lines
+   stand on the map with no backing until the player sets one. */
 
 /* How far off the gear the settings window first appears, in screen pixels.
    Clear of the panel rather than on top of it: the whole point of the window
@@ -4526,6 +4528,22 @@ struct ScnTextView {
     bool   popLoaded;
 };
 static ScnTextView s_scnText;
+
+/* The scenario panels drawn this frame at their own default place at the
+   left of the game view (renderScenarioPanelView), which the Scenario Text
+   window's default place is worked out from (scnTextBesidePanelPlace).
+   renderScenarioPanels clears it each frame before the panels are drawn,
+   and the panels are drawn before the text window in the same frame, so
+   the text window reads this frame's panels and does not lag a frame.
+   With several panels stacked down the left, right is the right edge of
+   the widest of them and top is the top of the highest, so the text area
+   is beside the first panel and clear of every panel below it. */
+struct ScnPanelBeside {
+    bool  have;
+    float right;
+    float top;
+};
+static ScnPanelBeside s_scnPanelBeside;
 
 static void scnTextSetShown(bool shown);
 
@@ -5448,6 +5466,20 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     if (wantX < 0.0f) wantX = 0.0f;
     if (wantY < btn) wantY = btn;
 
+    /* A panel at its default place at the left of the view, with neither
+       x nor y saved, is one the Scenario Text window may open beside. */
+    if (atLeft && v.x < 0 && v.y < 0) {
+        const float right = wantX + side;
+        if (!s_scnPanelBeside.have) {
+            s_scnPanelBeside.have  = true;
+            s_scnPanelBeside.right = right;
+            s_scnPanelBeside.top   = wantY;
+        } else {
+            s_scnPanelBeside.right = ImMax(s_scnPanelBeside.right, right);
+            s_scnPanelBeside.top   = ImMin(s_scnPanelBeside.top, wantY);
+        }
+    }
+
     if (!v.placed) {
         ImGui::SetNextWindowPos(ImVec2(wantX, wantY - btn), ImGuiCond_Always);
         v.placed = true;
@@ -5670,6 +5702,7 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
    (renderScenarioPanelPopOuts). */
 static void renderScenarioPanels(ClientSim *cs) {
     scnPanelViewsSync(cs);
+    s_scnPanelBeside.have = false;
 
     /* Tablet mode maps the square into a slot of its own
        (sdl3imgui_tablet.cpp), so no view here, grips, pop-outs and all. */
@@ -5917,7 +5950,12 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * and that menu item turns it back on. Its place, size,
  * two opacities and shown flag are kept in [WINDOW] in the
  * preferences file (gameFrontScnText*). With no place kept
- * it opens at the top middle of the game view.
+ * it opens beside a scenario panel that is at its own
+ * default place, filling the room to the game view's right
+ * edge (scnTextBesidePanelPlace in scenario_panel_draw.h),
+ * and otherwise at the top middle of the game view. With no
+ * background opacity kept it has no backing
+ * (SCN_TEXT_WINDOW_BG_OPACITY_DEFAULT).
  *
  * The lines are laid out in a source rectangle in panel
  * units and scaled into the window with one factor for both
@@ -6407,7 +6445,10 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     if (!s_scnText.alphaLoaded) {
         s_scnText.bgPct   = scnOpacityClamp(gameFrontScnTextBgAlpha);
         s_scnText.textPct = scnOpacityClamp(gameFrontScnTextTextAlpha);
-        if (s_scnText.bgPct < 0) s_scnText.bgPct = SCN_BG_OPACITY_DEFAULT;
+        /* Never set: no backing (SCN_TEXT_WINDOW_BG_OPACITY_DEFAULT). */
+        if (s_scnText.bgPct < 0) {
+            s_scnText.bgPct = SCN_TEXT_WINDOW_BG_OPACITY_DEFAULT;
+        }
         if (s_scnText.textPct < 0) {
             s_scnText.textPct = SCN_TEXT_OPACITY_DEFAULT;
         }
@@ -6531,14 +6572,42 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     /* In the classic 15 by 15 view the window starts smaller
        (SCN_TEXT_CLASSIC_SHARE). The full screen map owns the window while it
        is up, and has room for the full size. */
-    float defScale = scale;
-    {
-        float mx, my, mw, mh;
-        if (!sdl3DrawGetOverviewInWindowRect(&mx, &my, &mw, &mh)) {
-            defScale = scale * SCN_TEXT_CLASSIC_SHARE;
-        }
+    float mx = 0.0f, my = 0.0f, mw = 0.0f, mh = 0.0f;
+    const bool overview = sdl3DrawGetOverviewInWindowRect(&mx, &my, &mw, &mh);
+    const float defScale = overview ? scale : scale * SCN_TEXT_CLASSIC_SHARE;
+
+    /* The game view, in render pixels, when the full screen map is not up. */
+    bool  haveView = false;
+    float rx0 = 0.0f, ry0 = 0.0f, rx1 = 0.0f, ry1 = 0.0f;
+    if (!overview) {
+        float gx, gy, gw, gh, gtw, gth;
+        haveView =
+            sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth) &&
+            sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0) &&
+            sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1);
     }
+    const float inset = SCN_PANEL_DEFAULT_INSET * scale;
+
+    /* With no place saved, and a scenario panel at its own default place at
+       the left of the game view this frame, the text area fills the room
+       from the panel's right edge to the view's right edge, an inset in
+       from each, with its top on the panel's top (scnTextBesidePanelPlace).
+       Its width is that room unless the player has saved a width; its
+       height is the default height below, so the letters are the size they
+       always were when the room is wide enough for them. With less room
+       than SCN_TEXT_BESIDE_MIN_W_PX, with no panel there, or with the panel
+       at a place the player chose, the older default below is used. */
+    float besideX = 0.0f, besideY = 0.0f, besideW = 0.0f;
+    const bool beside =
+        haveView && s_scnPanelBeside.have &&
+        gameFrontScnTextX < 0 && gameFrontScnTextY < 0 &&
+        scnTextBesidePanelPlace(s_scnPanelBeside.right, s_scnPanelBeside.top,
+                                rx1, display.x, inset,
+                                SCN_TEXT_BESIDE_MIN_W_PX,
+                                &besideX, &besideY, &besideW);
+
     float w = (gameFrontScnTextW > 0) ? (float)gameFrontScnTextW
+            : beside                  ? besideW
                                       : srcW * defScale;
     float h = (gameFrontScnTextH > 0) ? (float)gameFrontScnTextH
                                       : srcH * defScale;
@@ -6549,24 +6618,21 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     w = ImClamp(w, SCN_TEXT_MIN_W_PX, maxW);
     h = ImClamp(h, SCN_TEXT_MIN_H_PX, maxH);
 
-    /* Where it goes when nothing has been saved: the top middle of the game
-       view, inset from the top as the panel is from its corner. The full
-       screen map is the view when it owns the window. */
-    const float inset = SCN_PANEL_DEFAULT_INSET * scale;
+    /* Where it goes when nothing has been saved: beside the default panel
+       (see beside above), or else the top middle of the game view, inset
+       from the top as the panel is from its corner. The full screen map is
+       the view when it owns the window. */
     float defX = (display.x - w) * 0.5f;
     float defY = inset;
-    {
-        float mx, my, mw, mh;
-        float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
-        if (sdl3DrawGetOverviewInWindowRect(&mx, &my, &mw, &mh)) {
-            defX = mx + (mw - w) * 0.5f;
-            defY = my + inset;
-        } else if (sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth) &&
-                   sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0) &&
-                   sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) {
-            defX = (rx0 + rx1) * 0.5f - w * 0.5f;
-            defY = ry0 + inset;
-        }
+    if (beside) {
+        defX = besideX;
+        defY = besideY;
+    } else if (overview) {
+        defX = mx + (mw - w) * 0.5f;
+        defY = my + inset;
+    } else if (haveView) {
+        defX = (rx0 + rx1) * 0.5f - w * 0.5f;
+        defY = ry0 + inset;
     }
 
     /* The bar's height and the grip's side. Both come from this frame's

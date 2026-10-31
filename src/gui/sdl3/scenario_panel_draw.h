@@ -647,6 +647,56 @@ static inline bool scnPanelDefaultPlace(float viewX0, float viewY0,
     return true;
 }
 
+/* The least width, in screen pixels, the Scenario Text window takes beside
+ * a default scenario panel (scnTextBesidePanelPlace). At this width a line
+ * of the 240-unit source is about 13 pixels high. With less room than this
+ * the window keeps its older default, the top middle of the game view. */
+#define SCN_TEXT_BESIDE_MIN_W_PX 160.0f
+
+/*********************************************************
+ *NAME:          scnTextBesidePanelPlace
+ *PURPOSE:
+ *  Where the Scenario Text window's text area goes, and how
+ *  wide it is, when the player has saved no place for it
+ *  and a scenario panel is at its own default place at the
+ *  left of the game view: in the room from the panel's
+ *  right edge to the game view's right edge.
+ *
+ *  The left edge is one inset right of the panel, and the
+ *  right edge is one inset left of the view's right edge
+ *  (or of the display's, when the display ends first). The
+ *  top is the panel's top, so the text area lines up with
+ *  the panel and the two move bars line up above them.
+ *
+ *  False when that room is narrower than minW, or the
+ *  numbers give no room at all: the caller then keeps its
+ *  older default. The outputs are left alone on false.
+ *
+ *ARGUMENTS:
+ *  panelRight - the panel's right edge, in render pixels
+ *  panelTop   - the panel's top edge (below its bar)
+ *  viewRight  - the game view's right edge
+ *  displayW   - the display's width
+ *  inset      - the gap kept on both sides
+ *  minW       - the least width the text area may have
+ *  outX/outY  - receive the text area's top-left
+ *  outW       - receives the text area's width
+ *********************************************************/
+static inline bool scnTextBesidePanelPlace(float panelRight, float panelTop,
+                                           float viewRight, float displayW,
+                                           float inset, float minW,
+                                           float *outX, float *outY,
+                                           float *outW) {
+    const float right = ((viewRight < displayW) ? viewRight : displayW) - inset;
+    const float x     = panelRight + inset;
+    const float w     = right - x;
+    if (w <= 0.0f || w < minW) return false;
+    if (outX != NULL) *outX = x;
+    if (outY != NULL) *outY = panelTop;
+    if (outW != NULL) *outW = w;
+    return true;
+}
+
 
 /*********************************************************
  *NAME:          scnPanelColourRGBA

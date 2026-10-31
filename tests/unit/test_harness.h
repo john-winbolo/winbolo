@@ -4359,6 +4359,10 @@ int run_scenario_text_save_place(void);
  * (test_scenario_panel.c): the game view's top-left at a readable cardinal,
  * shrunk to fit, and false when not even 100 percent fits. */
 int run_scenario_panel_default_place(void);
+/* The Scenario Text window's default place beside a default scenario panel
+ * (test_scenario_panel.c): the room to the game view's right edge, and false
+ * when it is under the least width. */
+int run_scenario_text_beside_panel_place(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */

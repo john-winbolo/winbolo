@@ -2360,7 +2360,13 @@ lines show again. A popped-out window follows the same rule.
 
 By default the window sits at the top middle of the game view, sized so the
 text is as large as announcements were before: 240 units times the game's
-zoom. Once the player moves or resizes it, it stays where they put it,
+zoom. When a scenario panel is shown at its own default place at the left of
+the game view, the window instead fills the room from the panel's right edge
+to the game view's right edge, 4 units in from each, with its top level with
+the panel's top. It keeps its usual height, and it goes back to the top
+middle when that room is narrower than 160 pixels. Its background starts
+fully clear (0%), so the outlined lines stand on the map; the player can add
+a backing from its gear. Once the player moves or resizes it, it stays where they put it,
 and its place, size, opacities and whether it is shown are kept in the
 preferences file. A player who closes it opens it again from **Brains > Info
 Overlay > Scenario Text**. In tablet mode there is no window: the same

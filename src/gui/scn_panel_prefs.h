@@ -171,6 +171,12 @@ bool scnPanelRescueRect(const ScnPanelRect *win, const ScnPanelRect *displays,
 #define SCN_BG_OPACITY_DEFAULT    43
 #define SCN_TEXT_OPACITY_DEFAULT  100
 
+/* The Scenario Text window's own background default is 0: no backing, so
+ * the lines stand on the map with only their outline round the letters.
+ * A scenario panel keeps SCN_BG_OPACITY_DEFAULT. A percent the player has
+ * saved for the Scenario Text window is kept as it is. */
+#define SCN_TEXT_WINDOW_BG_OPACITY_DEFAULT  0
+
 /* The [WINDOW] keys the two opacities are kept under. The old single key of
  * each window is read only to fill the two new ones the first time a player
  * with it loads (scnOpacityFromPrefs), and is not written any more.

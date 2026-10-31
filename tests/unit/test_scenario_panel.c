@@ -1347,3 +1347,53 @@ int run_scenario_panel_default_place(void) {
     }
     return 0;
 }
+
+/* The Scenario Text window's default place beside a default scenario panel
+   (scnTextBesidePanelPlace): from one inset right of the panel to one inset
+   left of the game view's right edge, top level with the panel, and false
+   when that room is under the least width. */
+int run_scenario_text_beside_panel_place(void) {
+    float x = -1.0f, y = -1.0f, w = -1.0f;
+
+    /* Zoom 2: a 480 pixel view at the left of a 1280 display, inset 8. The
+       default panel is 288 at (8, 50), so its right edge is 296. The text
+       area runs from 304 to 472: 168 wide, at the panel's top. */
+    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 480.0f, 1280.0f, 8.0f,
+                                      SCN_TEXT_BESIDE_MIN_W_PX, &x, &y, &w));
+    UT_ASSERT(x == 304.0f);
+    UT_ASSERT(y == 50.0f);
+    UT_ASSERT(w == 168.0f);
+
+    /* A display that ends before the view's right edge: the room ends one
+       inset in from the display's edge, 900 - 4 = 896, so 896 - 304 = 592. */
+    UT_ASSERT(scnTextBesidePanelPlace(300.0f, 30.0f, 1000.0f, 900.0f, 4.0f,
+                                      SCN_TEXT_BESIDE_MIN_W_PX, &x, &y, &w));
+    UT_ASSERT(x == 304.0f);
+    UT_ASSERT(y == 30.0f);
+    UT_ASSERT(w == 592.0f);
+
+    /* Exactly the least width fits: 304 to 464 is 160. */
+    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 472.0f, 1280.0f, 8.0f,
+                                      160.0f, &x, &y, &w));
+    UT_ASSERT(w == 160.0f);
+
+    /* Too narrow (450 - 8 - 304 = 138, under 160): false, and the outputs
+       are left alone. */
+    x = y = w = -1.0f;
+    UT_ASSERT(!scnTextBesidePanelPlace(296.0f, 50.0f, 450.0f, 1280.0f, 8.0f,
+                                       SCN_TEXT_BESIDE_MIN_W_PX, &x, &y, &w));
+    UT_ASSERT(x == -1.0f && y == -1.0f && w == -1.0f);
+
+    /* A panel reaching past the view's right edge leaves no room, even with
+       no least width. */
+    UT_ASSERT(!scnTextBesidePanelPlace(500.0f, 50.0f, 480.0f, 1280.0f, 8.0f,
+                                       0.0f, &x, &y, &w));
+    UT_ASSERT(!scnTextBesidePanelPlace(464.0f, 50.0f, 480.0f, 1280.0f, 8.0f,
+                                       0.0f, &x, &y, &w));
+
+    /* Every output may be NULL. */
+    UT_ASSERT(scnTextBesidePanelPlace(296.0f, 50.0f, 1280.0f, 1280.0f, 8.0f,
+                                      SCN_TEXT_BESIDE_MIN_W_PX, NULL, NULL,
+                                      NULL));
+    return 0;
+}
