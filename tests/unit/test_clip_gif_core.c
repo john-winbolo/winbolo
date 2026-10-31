@@ -1840,3 +1840,64 @@ int run_clip_gif_window_place(void) {
                             1.0f, 1.0f, NULL, &y); /* nothing */
     return fails ? 1 : 0;
 }
+
+/* clip_gif_span_move: the grip in the middle of the span moves the whole
+ * span by whole 100 ms steps; the length stays; the span is held inside
+ * the zoomed timeline and the game; the playhead goes with it. */
+int run_clip_gif_span_move(void) {
+    int fails = 0;
+    ClipGifMode m = CLIP_GIF_MODE_INIT;
+    m.lenMs = 5000u;
+    clipGifSpanPlace(&m, 20000u, 60000u);
+    EXPECT_TRUE("zoom fits the span",
+                m.zoom.startMs == 10000u && m.zoom.endMs == 35000u);
+
+    /* The playhead in the span keeps its place in it. */
+    clipGifSpanMoveBegin(&m, 22000u, 21000u, 60000u);
+    EXPECT_TRUE("begin", m.move.on && m.move.fromStartMs == 20000u &&
+                         m.move.offMs == 1000u && m.move.playMs == 21000u);
+    EXPECT_U32("forward, to whole steps",
+               clipGifSpanMoveTo(&m, 25040u, 60000u), 24000u);
+    EXPECT_U32("forward: the start", m.spanStartMs, 23000u);
+    EXPECT_U32("the length stays", m.lenMs, 5000u);
+    clipGifSpanMoveTo(&m, 22049u, 60000u);
+    EXPECT_U32("under half a step: back where it was", m.spanStartMs, 20000u);
+    clipGifSpanMoveTo(&m, 21849u, 60000u);
+    EXPECT_U32("back, to whole steps", m.spanStartMs, 19800u);
+
+    /* Held inside the zoomed timeline. */
+    clipGifSpanMoveTo(&m, 60000u, 60000u);
+    EXPECT_U32("not past the zoomed end", m.spanStartMs, 30000u);
+    EXPECT_U32("the playhead goes with it", m.move.playMs, 31000u);
+    clipGifSpanMoveTo(&m, 0u, 60000u);
+    EXPECT_U32("not before the zoomed start", m.spanStartMs, 10000u);
+    /* The timeline grown at its end: the span goes on. */
+    m.zoom.endMs = 45000u;
+    clipGifSpanMoveTo(&m, 60000u, 60000u);
+    EXPECT_U32("on into the grown part", m.spanStartMs, 40000u);
+    EXPECT_U32("the length still stays", m.lenMs, 5000u);
+
+    /* A playhead outside the span goes to the span's start. */
+    clipGifSpanPlace(&m, 20000u, 60000u);
+    clipGifSpanMoveBegin(&m, 22000u, 50000u, 60000u);
+    EXPECT_U32("outside: at the start", m.move.playMs, 20000u);
+    EXPECT_U32("outside: moves with the start",
+               clipGifSpanMoveTo(&m, 24000u, 60000u), 22000u);
+
+    /* The start and the end of the game. */
+    clipGifSpanPlace(&m, 0u, 60000u);
+    clipGifSpanMoveBegin(&m, 1000u, 0u, 60000u);
+    m.zoom.startMs = 0u;
+    clipGifSpanMoveTo(&m, 0u, 60000u);
+    EXPECT_U32("not before the game", m.spanStartMs, 0u);
+    clipGifSpanPlace(&m, 25000u, 30000u);
+    clipGifSpanMoveBegin(&m, 27000u, 26000u, 30000u);
+    m.zoom.endMs = 30000u;
+    clipGifSpanMoveTo(&m, 40000u, 30000u);
+    EXPECT_U32("not past the game", m.spanStartMs, 25000u);
+    EXPECT_U32("the end of the game: the length stays", m.lenMs, 5000u);
+
+    EXPECT_U32("no mode", clipGifSpanMoveTo(NULL, 1u, 1u), 0u);
+    clipGifSpanMoveBegin(NULL, 1u, 1u, 1u); /* nothing */
+    return fails ? 1 : 0;
+}

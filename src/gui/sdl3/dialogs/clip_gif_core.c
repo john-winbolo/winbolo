@@ -1114,6 +1114,64 @@ void clipGifSpanDragEdge(ClipGifMode *m, int edge, uint32_t atMs,
     m->lenMs = len;
 }
 
+void clipGifSpanMoveBegin(ClipGifMode *m, uint32_t grabAtMs, uint32_t curMs,
+                          uint32_t totalMs) {
+    if (m == NULL) {
+        return;
+    }
+    const ClipGifRange span = clipGifSpanRange(m, totalMs);
+    m->move.on          = true;
+    m->move.fromStartMs = span.startMs;
+    m->move.grabAtMs    = grabAtMs;
+    m->move.offMs       = (curMs >= span.startMs && curMs <= span.endMs)
+                              ? curMs - span.startMs
+                              : 0u;
+    m->move.playMs      = span.startMs + m->move.offMs;
+}
+
+uint32_t clipGifSpanMoveTo(ClipGifMode *m, uint32_t atMs, uint32_t totalMs) {
+    if (m == NULL) {
+        return 0u;
+    }
+    const ClipGifRange span = clipGifSpanRange(m, totalMs);
+    const int64_t len = (int64_t)span.endMs - (int64_t)span.startMs;
+    /* The move, to whole steps, the nearer one each way. */
+    int64_t d = (int64_t)atMs - (int64_t)m->move.grabAtMs;
+    const int64_t step = (int64_t)CLIP_GIF_LEN_STEP_MS;
+    if (d >= 0) {
+        d = ((d + step / 2) / step) * step;
+    } else {
+        d = -(((-d + step / 2) / step) * step);
+    }
+    int64_t lo = 0;
+    int64_t hi = (totalMs > 0u) ? (int64_t)totalMs - len
+                                : (int64_t)UINT32_MAX - len;
+    const int64_t zoomW = (int64_t)m->zoom.endMs - (int64_t)m->zoom.startMs;
+    if (zoomW > 0 && zoomW >= len) {
+        if ((int64_t)m->zoom.startMs > lo) {
+            lo = (int64_t)m->zoom.startMs;
+        }
+        if ((int64_t)m->zoom.endMs - len < hi) {
+            hi = (int64_t)m->zoom.endMs - len;
+        }
+    }
+    int64_t start = (int64_t)m->move.fromStartMs + d;
+    if (start > hi) {
+        start = hi;
+    }
+    if (start < lo) {
+        start = lo;
+    }
+    m->spanStartMs = (uint32_t)start;
+    m->spanSet     = true;
+    int64_t play = start + (int64_t)m->move.offMs;
+    if (totalMs > 0u && play > (int64_t)totalMs) {
+        play = (int64_t)totalMs;
+    }
+    m->move.playMs = (uint32_t)play;
+    return m->move.playMs;
+}
+
 void clipGifZoomGrow(ClipGifRange *zoom, ClipGifRange span, int edge,
                      uint32_t stepMs, uint32_t totalMs) {
     if (zoom == NULL) {

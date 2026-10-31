@@ -260,6 +260,16 @@ typedef struct {
     uint32_t endMs;
 } ClipGifRange;
 
+/* A drag of the grip in the middle of the span on the zoomed timeline
+ * (clipGifSpanMoveBegin, clipGifSpanMoveTo). on while the grip is held. */
+typedef struct {
+    bool     on;
+    uint32_t fromStartMs;  /* the span's start when the drag began */
+    uint32_t grabAtMs;     /* the time under the mouse when it began */
+    uint32_t offMs;        /* the playhead, from the span's start */
+    uint32_t playMs;       /* where the playhead goes now */
+} ClipGifSpanMove;
+
 typedef struct {
     bool         on;
     bool         frameSet;
@@ -272,11 +282,13 @@ typedef struct {
     uint32_t     spanStartMs;
     /* The part of the replay the zoomed timeline shows. */
     ClipGifRange zoom;
+    /* A drag of the span's grip. */
+    ClipGifSpanMove move;
 } ClipGifMode;
 
 #define CLIP_GIF_MODE_INIT                                            \
     { false, false, CLIP_GIF_FRAME_INIT, CLIP_GIF_LEN_DEFAULT_MS,     \
-      false, 0u, { 0u, 0u } }
+      false, 0u, { 0u, 0u }, { false, 0u, 0u, 0u, 0u } }
 
 /* Back to CLIP_GIF_MODE_INIT. */
 void clipGifModeReset(ClipGifMode *m);
@@ -310,7 +322,8 @@ bool clipGifChooseCrop(ClipGifMode *m, int viewX, int viewY, int viewW,
  * A second, zoomed timeline above the main one shows the span with
  * CLIP_GIF_ZOOM_PAD_MS of the replay before it and after it (less at the
  * start and the end of the replay). Its two handles move the span's start
- * and end; a press anywhere else on it moves the playhead only. A press on
+ * and end, and the grip in its middle moves the whole span
+ * (clipGifSpanMoveTo); a press anywhere else on it moves the playhead only. A press on
  * the main timeline moves the playhead and puts the span round it
  * (clipGifSpanCentre), so the two stay together.
  *
@@ -372,6 +385,23 @@ void clipGifSpanClip(const ClipGifMode *m, uint32_t curMs, uint32_t totalMs,
  * replay. Sets lenMs, and spanStartMs for the start. */
 void clipGifSpanDragEdge(ClipGifMode *m, int edge, uint32_t atMs,
                          uint32_t totalMs);
+
+/* The grip in the middle of the span: a drag of it moves the whole span,
+ * and its length stays. clipGifSpanMoveBegin is the press, with grabAtMs
+ * the time under the mouse and curMs the playhead. It sets m->move. The
+ * playhead goes with the span: it keeps its place in the span, or goes to
+ * the span's start when it was outside the span at the press.
+ *
+ * clipGifSpanMoveTo is each frame of the drag, with atMs the time under the
+ * mouse now. The span moves by atMs - grabAtMs, to whole
+ * CLIP_GIF_LEN_STEP_MS steps, and is held inside the zoomed timeline
+ * (m->zoom, when the span fits in it) and inside 0..totalMs. It returns the
+ * playhead's new time, which is also in m->move.playMs. Held at an end of
+ * the zoomed timeline, the screen grows the timeline (clipGifZoomGrow), so
+ * the span can go on past the old end. */
+void clipGifSpanMoveBegin(ClipGifMode *m, uint32_t grabAtMs, uint32_t curMs,
+                          uint32_t totalMs);
+uint32_t clipGifSpanMoveTo(ClipGifMode *m, uint32_t atMs, uint32_t totalMs);
 
 /* A handle held at one end of the zoomed timeline: that end of *zoom (the
  * span's edge, CLIP_GIF_EDGE_START or CLIP_GIF_EDGE_END) moves out by up to

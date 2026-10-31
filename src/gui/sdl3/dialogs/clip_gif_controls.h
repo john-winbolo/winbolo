@@ -345,6 +345,42 @@ static inline void clipGifSpanHandle(const ImRect &hit, ImGuiID hid,
     }
 }
 
+/* The grip in the middle of the span: an item of its own on the box hit,
+ * as clipGifSpanHandle is, with the move cursor. A drag of it moves the
+ * whole span (clipGifSpanMoveTo). */
+static inline void clipGifSpanGrip(const ImRect &hit, ImGuiID gid,
+                                   bool *hovered, bool *held) {
+    *hovered = false;
+    *held = false;
+    if (ImGui::ItemAdd(hit, gid, nullptr, ImGuiItemFlags_NoNav)) {
+        ImGui::ButtonBehavior(hit, gid, hovered, held,
+                              ImGuiButtonFlags_NoNavFocus);
+        if (*hovered || *held) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        }
+        if (!*held) {
+            imguiHelpTooltip(langGetText(STR_CLIPGIF_MOVE_TIP));
+        }
+    }
+}
+
+/* The grip's look: three short upright lines in the middle of the span at
+ * x, drawn only where the span has room for them between its handles. */
+#define CLIP_GIF_GRIP_GAP_PX 3.0f
+static inline void clipGifDrawSpanGrip(ImDrawList *dl, float x, float top,
+                                       float bot, bool hot, float alpha) {
+    const ImU32 col = hot ? ImGui::GetColorU32(ImGuiCol_Text, alpha)
+                          : ImGui::GetColorU32(ImGuiCol_Text, 0.65f * alpha);
+    const float lineW = hot ? 2.0f : 1.0f;
+    const float h = bot - top;
+    const float y0 = top + h * 0.25f;
+    const float y1 = bot - h * 0.25f;
+    for (int i = -1; i <= 1; i++) {
+        const float lx = floorf(x + (float)i * CLIP_GIF_GRIP_GAP_PX);
+        dl->AddRectFilled(ImVec2(lx, y0), ImVec2(lx + lineW, y1), col);
+    }
+}
+
 /* The handle of a span edge at x, from top to bot: a line with a notch at
  * the top, so it reads as a handle. */
 static inline void clipGifDrawSpanHandle(ImDrawList *dl, float x, float top,
@@ -367,7 +403,11 @@ static inline void clipGifDrawSpanHandle(ImDrawList *dl, float x, float top,
  *
  * A handle dragged moves that end of the span (clipGifSpanDragEdge); held at
  * the end of the timeline it makes the timeline grow on that side
- * (clipGifZoomGrow). While no handle is held the timeline fits the span
+ * (clipGifZoomGrow). The grip in the middle of the span moves the whole
+ * span, of the same length (clipGifSpanMoveTo), and the playhead with it;
+ * it also grows the timeline when held at an end. The handles come first
+ * where the span is narrow: the grip is the part of the span between them.
+ * While no handle is held the timeline fits the span
  * (clipGifSpanRefit), which also puts the span at the playhead the first
  * time after recording mode turns on. A press or a drag anywhere else gives
  * the time under the mouse back, for the screen to move the playhead to;
@@ -395,8 +435,13 @@ static inline ClipGifZoomPressed clipGifZoomBar(const char *id, float width,
     ImGui::PushID(id);
     const ImGuiID startId = ImGui::GetID("##start");
     const ImGuiID endId   = ImGui::GetID("##end");
+    const ImGuiID moveId  = ImGui::GetID("##move");
     const ImGuiID active  = ImGui::GetActiveID();
-    const bool edgeHeld = !spanLocked && (active == startId || active == endId);
+    const bool edgeHeld = !spanLocked && (active == startId || active == endId ||
+                                          active == moveId);
+    if (spanLocked) {
+        mode->move.on = false;
+    }
     if (!edgeHeld) {
         clipGifSpanRefit(mode, curMs, totalMs);
     }
@@ -429,6 +474,7 @@ static inline ClipGifZoomPressed clipGifZoomBar(const char *id, float width,
     float xs = clipGifRangeX(span.startMs, mode->zoom, x0, x1);
     float xe = clipGifRangeX(span.endMs, mode->zoom, x0, x1);
     bool sHot = false, sHeld = false, eHot = false, eHeld = false;
+    bool gHot = false, gHeld = false, gRoom = false;
     if (!spanLocked) {
         /* The two boxes meet at the middle of the span and do not cross,
          * so a short span still has both. */
@@ -439,6 +485,46 @@ static inline ClipGifZoomPressed clipGifZoomBar(const char *id, float width,
                           ImVec2(xe + hitW * 0.5f, q.y));
         clipGifSpanHandle(sHit, startId, &sHot, &sHeld);
         clipGifSpanHandle(eHit, endId, &eHot, &eHeld);
+        /* The grip: the span between the two handles. */
+        if (eHit.Min.x - sHit.Max.x >= 1.0f) {
+            const ImRect gHit(ImVec2(sHit.Max.x, p.y),
+                              ImVec2(eHit.Min.x, q.y));
+            clipGifSpanGrip(gHit, moveId, &gHot, &gHeld);
+            gRoom = gHit.GetWidth() >= CLIP_GIF_GRIP_GAP_PX * 2.0f + 6.0f;
+        }
+        if (gHeld && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            const float mx = io.MousePos.x;
+            const uint32_t atMs = clipGifRangeTime(mx, mode->zoom, x0, x1);
+            /* A new press, or a drag left over from a timeline that was
+             * not drawn when it ended. The grip is the last item here. */
+            if (!mode->move.on || ImGui::IsItemActivated()) {
+                clipGifSpanMoveBegin(mode, atMs, curMs, totalMs);
+            }
+            clipGifSpanMoveTo(mode, atMs, totalMs);
+            /* Held at an end of the timeline: it grows on that side, and
+             * the span goes on with it the next frame. */
+            const int growEdge = (mx >= x1) ? CLIP_GIF_EDGE_END
+                               : (mx <= x0) ? CLIP_GIF_EDGE_START : 0;
+            if (growEdge != 0) {
+                uint32_t step = (uint32_t)(io.DeltaTime *
+                                           (float)CLIP_GIF_ZOOM_GROW_MS_PER_S +
+                                           0.5f);
+                if (step < 1u) step = 1u;
+                clipGifZoomGrow(&mode->zoom, clipGifSpanRange(mode, totalMs),
+                                growEdge, step, totalMs);
+            }
+            r.held   = true;
+            r.seek   = true;
+            r.seekMs = mode->move.playMs;
+            span = clipGifSpanRange(mode, totalMs);
+            xs = clipGifRangeX(span.startMs, mode->zoom, x0, x1);
+            xe = clipGifRangeX(span.endMs, mode->zoom, x0, x1);
+        } else if (mode->move.on) {
+            /* Let go: the playhead lands where the span took it. */
+            mode->move.on = false;
+            r.seek   = true;
+            r.seekMs = mode->move.playMs;
+        }
         const int edge = sHeld ? CLIP_GIF_EDGE_START
                        : eHeld ? CLIP_GIF_EDGE_END : 0;
         if (edge != 0 && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -462,7 +548,7 @@ static inline ClipGifZoomPressed clipGifZoomBar(const char *id, float width,
             xe = clipGifRangeX(span.endMs, mode->zoom, x0, x1);
         }
     }
-    if (barHeld || barLetGo) {
+    if (!r.seek && (barHeld || barLetGo)) {
         r.held   = barHeld;
         r.seek   = true;
         r.seekMs = clipGifRangeTime(io.MousePos.x, mode->zoom, x0, x1);
@@ -483,6 +569,10 @@ static inline ClipGifZoomPressed clipGifZoomBar(const char *id, float width,
         const float xp = clipGifRangeX(curMs, mode->zoom, x0, x1);
         dl->AddRectFilled(ImVec2(xp - 1.0f, p.y), ImVec2(xp + 1.0f, q.y),
                           ImGui::GetColorU32(ImGuiCol_Text, alpha));
+    }
+    if (gRoom) {
+        clipGifDrawSpanGrip(dl, floorf((xs + xe) * 0.5f), p.y, q.y,
+                            gHot || gHeld, alpha);
     }
     clipGifDrawSpanHandle(dl, xs, p.y, q.y, sHot || sHeld, alpha);
     clipGifDrawSpanHandle(dl, xe, p.y, q.y, eHot || eHeld, alpha);
