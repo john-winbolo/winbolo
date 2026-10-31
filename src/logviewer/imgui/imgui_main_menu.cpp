@@ -71,8 +71,11 @@ static void open_wbn_browser_modal(void) {
 
     ImGuiContext *saved_ctx = ImGui::GetCurrentContext();
 
-    int saved_w = 0, saved_h = 0;
+    /* The browser resizes and centres a window too small for it, so the
+     * size and the place both go back afterwards. */
+    int saved_w = 0, saved_h = 0, saved_x = 0, saved_y = 0;
     SDL_GetWindowSize(s_lv->window, &saved_w, &saved_h);
+    SDL_GetWindowPosition(s_lv->window, &saved_x, &saved_y);
     char saved_title[256];
     const char *cur_title = SDL_GetWindowTitle(s_lv->window);
     SDL_strlcpy(saved_title, cur_title ? cur_title : "", sizeof(saved_title));
@@ -81,6 +84,7 @@ static void open_wbn_browser_modal(void) {
 
     ImGui::SetCurrentContext(saved_ctx);
     SDL_SetWindowSize(s_lv->window, saved_w, saved_h);
+    SDL_SetWindowPosition(s_lv->window, saved_x, saved_y);
     SDL_SetWindowTitle(s_lv->window, saved_title);
     httpCreate();   /* dialog destroyed it on the way out */
 
@@ -101,6 +105,16 @@ static void open_wbn_browser_modal(void) {
         break;
     }
 }
+
+/* The web viewer has no Comments panel: it reaches WinBolo.net through
+   http.c, which the browser build does not have. Its Windows menu item and
+   its key are left out there, so nothing turns on a panel that never draws
+   and then has a slot kept for it in a sidebar. */
+#ifdef __EMSCRIPTEN__
+#define LV_MENU_HAS_COMMENTS 0
+#else
+#define LV_MENU_HAS_COMMENTS 1
+#endif
 
 /* Window visibility state */
 bool lv_g_show_controls_window = true;
@@ -217,6 +231,9 @@ static bool pref_unset(const char *key) {
 
 void lv_imgui_main_menu_standalone_defaults(void) {
     if (pref_unset("Window.Comments.Visible")) lv_g_show_comments_window = true;
+#if !LV_MENU_HAS_COMMENTS
+    lv_g_show_comments_window = false;
+#endif
     if (pref_unset("Window.ItemInformation.Visible")) lv_g_show_item_info_window = false;
     if (pref_unset("Tank Bars")) lv_drawSetTankBars(1);
     if (pref_unset("Tank Builder Status")) lv_drawSetBuilderStatus(1);
@@ -464,7 +481,7 @@ static void handle_keyboard_shortcuts(int *clicked) {
         lv_g_show_item_info_window = !lv_g_show_item_info_window;
         *clicked = 1;
     }
-    if (!live && ImGui::IsKeyPressed(ImGuiKey_5, false)) {
+    if (!live && LV_MENU_HAS_COMMENTS && ImGui::IsKeyPressed(ImGuiKey_5, false)) {
         lv_g_show_comments_window = !lv_g_show_comments_window;
         *clicked = 1;
     }
@@ -805,7 +822,7 @@ int lv_imgui_main_menu_bar(void) {
                 lv_g_show_item_info_window = !lv_g_show_item_info_window;
                 clicked = 1;
             }
-            if (!live &&
+            if (!live && LV_MENU_HAS_COMMENTS &&
                 ImGui::MenuItem(langGetText(STR_LV_WIN_COMMENTS), "Ctrl+5", lv_g_show_comments_window)) {
                 lv_g_show_comments_window = !lv_g_show_comments_window;
                 clicked = 1;

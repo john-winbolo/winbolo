@@ -2911,3 +2911,7 @@ STR_CLIPGIF_SHOW_FAILED=Nie udało się otworzyć folderu.
 STR_CLIPGIF_DELETE=Usuń
 STR_CLIPGIF_DELETE_CONFIRM=Usunąć ten GIF? Tego nie można cofnąć.
 STR_CLIPGIF_DELETE_FAILED=Nie udało się usunąć GIF-a.
+
+# Opcja -size przeglądarki logów, gdy jej tekst nie jest rozmiarem lub nie można go uzyskać
+STR_LV_SIZE_ARG_BAD=-size wymaga szerokości i wysokości w pikselach, na przykład -size 1920x1080. Okno otwarto w zwykłym rozmiarze.
+STR_LV_SIZE_NOT_MET=Nie udało się utworzyć okna o rozmiarze {string1} pikseli, o jaki prosiła opcja -size. Okno ma {string2} pikseli: wyświetlacz może być za mały, aby je pomieścić.

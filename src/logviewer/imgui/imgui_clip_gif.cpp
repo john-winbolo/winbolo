@@ -40,6 +40,7 @@
 extern "C" {
 #include "logviewer.h"
 #include "../lv_host.h"
+#include "../lv_host_dock.h"   /* lvHostMapArea */
 #include "../backend.h"
 #include "../draw.h"
 #include "../blocks.h"
@@ -269,7 +270,7 @@ static bool lvGifMapView(ClipGifRect *slice, ClipGifBox *view, int *blitX,
         return false;
     }
     float ax = 0.0f, ay = 0.0f, aw = 0.0f, ah = 0.0f;
-    lvHostGetMapArea(&ax, &ay, &aw, &ah);
+    lvHostMapArea(&ax, &ay, &aw, &ah);
     const ClipGifBox s = { src[0], src[1], src[0] + src[2], src[1] + src[3] };
     const ClipGifBox d = { dst[0], dst[1], dst[0] + dst[2], dst[1] + dst[3] };
     const ClipGifBox a = { ax, ay, ax + aw, ay + ah };

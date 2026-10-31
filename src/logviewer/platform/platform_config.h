@@ -77,6 +77,14 @@ void lv_platform_config_set_bool(const char* section, const char* key, int value
  * tried again */
 int lv_platform_config_save(void);
 
+#ifdef __EMSCRIPTEN__
+/* The web build only. Its lv_platform_config_save tries the writes on every
+ * call, so the save when the page is closed or hidden always tries once.
+ * Not 0: a write was refused less than two seconds ago, and the page's
+ * per-frame save waits. */
+int lv_platform_config_retry_waiting(void);
+#endif
+
 /* Not 0: lv_platform_config_save writes the preferences. The standalone
  * viewer sets this; inside the game it stays 0, and the game writes. */
 void lv_platform_config_set_own_writes(int on);

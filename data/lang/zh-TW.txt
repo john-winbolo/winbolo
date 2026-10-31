@@ -2912,3 +2912,7 @@ STR_CLIPGIF_SHOW_FAILED=無法開啟資料夾。
 STR_CLIPGIF_DELETE=刪除
 STR_CLIPGIF_DELETE_CONFIRM=刪除此 GIF？此動作無法復原。
 STR_CLIPGIF_DELETE_FAILED=無法刪除此 GIF。
+
+# The Log Viewer's -size option when its text is not a size or cannot be met
+STR_LV_SIZE_ARG_BAD=-size 需要以像素為單位的寬度和高度，例如 -size 1920x1080。視窗已依通常大小開啟。
+STR_LV_SIZE_NOT_MET=無法將視窗設為 -size 所要求的 {string1} 像素。視窗現為 {string2} 像素：顯示器可能太小，容納不下。

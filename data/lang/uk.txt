@@ -2914,3 +2914,7 @@ STR_CLIPGIF_SHOW_FAILED=Не вдалося відкрити теку.
 STR_CLIPGIF_DELETE=Видалити
 STR_CLIPGIF_DELETE_CONFIRM=Видалити цей GIF? Це не можна скасувати.
 STR_CLIPGIF_DELETE_FAILED=Не вдалося видалити GIF.
+
+# The Log Viewer's -size option when its text is not a size or cannot be met
+STR_LV_SIZE_ARG_BAD=-size потребує ширини та висоти в пікселях, наприклад -size 1920x1080. Вікно відкрито зі звичайним розміром.
+STR_LV_SIZE_NOT_MET=Не вдалося зробити вікно розміром {string1} пікселів, як запитано в -size. Його розмір — {string2} пікселів: можливо, екран замалий, щоб вмістити його.

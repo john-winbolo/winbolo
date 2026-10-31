@@ -2916,3 +2916,7 @@ STR_CLIPGIF_SHOW_FAILED=Mappen kunde inte öppnas.
 STR_CLIPGIF_DELETE=Ta bort
 STR_CLIPGIF_DELETE_CONFIRM=Ta bort den här GIF:en? Det går inte att ångra.
 STR_CLIPGIF_DELETE_FAILED=GIF:en kunde inte tas bort.
+
+# The Log Viewer's -size option when its text is not a size or cannot be met
+STR_LV_SIZE_ARG_BAD=-size kräver en bredd och en höjd i pixlar, till exempel -size 1920x1080. Fönstret har öppnats i sin vanliga storlek.
+STR_LV_SIZE_NOT_MET=Fönstret kunde inte göras {string1} pixlar stort, som -size begärde. Det är {string2} pixlar: skärmen kan vara för liten för att rymma det.

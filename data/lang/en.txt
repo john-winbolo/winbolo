@@ -3057,3 +3057,7 @@ STR_CLIPGIF_ZOOM_TIP=The GIF, with 10 seconds of the game before it and after it
 STR_CLIPGIF_WINDOW_TITLE=Make a GIF
 STR_CLIPGIF_MOVE_TIP=Drag to move the GIF to an earlier or a later time. Its length stays the same.
 
+# The Log Viewer's -size option when its text is not a size or cannot be met
+STR_LV_SIZE_ARG_BAD=-size wants a width and a height in pixels, such as -size 1920x1080. The window has opened at its usual size.
+STR_LV_SIZE_NOT_MET=The window could not be made {string1} pixels, as -size asked. It is {string2} pixels: the display may be too small to hold it.
+

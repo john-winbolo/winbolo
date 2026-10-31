@@ -125,7 +125,7 @@ VisibilityPreset visibilityPresetMatch(const VisibilitySettings *v) {
     if (v == NULL) return visibilityPresetCustom;
     for (p = 0; p < VISIBILITY_PRESET_COUNT; p++) {
         const VisibilityPresetRow *row = &kPresets[p];
-        if (row->classicMode != v->classicMode) continue;
+        /* Classic mode is not compared: see the header. */
         if (row->overviewWindow != v->overviewWindow) continue;
         if (row->pill != v->policy[viewCategoryPill]) continue;
         if (row->base != v->policy[viewCategoryBase]) continue;

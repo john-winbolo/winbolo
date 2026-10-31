@@ -2914,3 +2914,7 @@ STR_CLIPGIF_SHOW_FAILED=Klasör açılamadı.
 STR_CLIPGIF_DELETE=Sil
 STR_CLIPGIF_DELETE_CONFIRM=Bu GIF silinsin mi? Bu işlem geri alınamaz.
 STR_CLIPGIF_DELETE_FAILED=GIF silinemedi.
+
+# The Log Viewer's -size option when its text is not a size or cannot be met
+STR_LV_SIZE_ARG_BAD=-size piksel cinsinden bir genişlik ve bir yükseklik ister, örneğin -size 1920x1080. Pencere olağan boyutunda açıldı.
+STR_LV_SIZE_NOT_MET=Pencere, -size seçeneğinin istediği gibi {string1} piksel yapılamadı. Pencere {string2} piksel: ekran pencereyi sığdıramayacak kadar küçük olabilir.

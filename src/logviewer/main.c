@@ -30,6 +30,7 @@
 #endif
 
 #include <stdlib.h>
+#include <string.h>
 #include <SDL3/SDL.h>
 #include "logviewer.h"
 #include "lv_dump.h"
@@ -65,7 +66,8 @@ int __stdcall WinMain(void *hInst, void *hPrev, char *lpCmd, int nShow) {
 #endif
 
 int main(int argc, char *argv[]) {
-    const char *logPath = (argc > 1) ? argv[1] : NULL;
+    const char *logPath = NULL;
+    int i;
     SDL_Init(0);
     wb_log_init("WinBolo", "LogViewer", "logviewer.log");
     atexit(wb_log_shutdown);
@@ -101,6 +103,18 @@ int main(int argc, char *argv[]) {
             prefsFlush();
         }
         return dumpResult;
+    }
+
+    /* The command line: the log to open, and "-size WxH" for a window of a
+       fixed size in pixels. The viewer reads the size and warns about a text
+       that is not one once its window is up (logViewerSetWindowSizeText). */
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-size") == 0) {
+            logViewerSetWindowSizeText(i + 1 < argc ? argv[i + 1] : NULL);
+            i++;
+        } else if (logPath == NULL) {
+            logPath = argv[i];
+        }
     }
 
     httpCreate();

@@ -2916,3 +2916,7 @@ STR_CLIPGIF_SHOW_FAILED=Impossibile aprire la cartella.
 STR_CLIPGIF_DELETE=Elimina
 STR_CLIPGIF_DELETE_CONFIRM=Eliminare questa GIF? L'operazione non può essere annullata.
 STR_CLIPGIF_DELETE_FAILED=Impossibile eliminare la GIF.
+
+# L'opzione -size del Log Viewer quando il suo testo non è una dimensione o non può essere rispettata
+STR_LV_SIZE_ARG_BAD=-size richiede una larghezza e un'altezza in pixel, ad esempio -size 1920x1080. La finestra è stata aperta con la sua dimensione abituale.
+STR_LV_SIZE_NOT_MET=Non è stato possibile portare la finestra a {string1} pixel, come richiesto da -size. Misura {string2} pixel: lo schermo potrebbe essere troppo piccolo per contenerla.

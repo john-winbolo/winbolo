@@ -2183,6 +2183,9 @@ endif()
 set(LOGVIEWER_LIB_SOURCES
     src/logviewer/logviewer.c
     src/logviewer/lv_embed.c
+    # The map beside the sidebars and the first view of a log, which
+    # logviewer.c shares with the web viewer (src/logviewer/wasm).
+    src/logviewer/lv_host_dock.c
     # Alt+Enter in the viewer while it has the game's window: asks the game
     # for full screen. Client only; the standalone's body is in main.c.
     src/logviewer/lv_fullscreen_game.c
@@ -4492,6 +4495,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map.c
     tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
+    tests/unit/test_brain_push_rules.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
     tests/unit/test_brain_list_texts.c
@@ -4630,6 +4634,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
     tests/unit/test_map_colours.c
+    tests/unit/test_map_markers.c
     tests/unit/test_stall_lockout_rebase.c
     # The catch-up loop behind a hitch, driven without a sim through
     # serverTickCatchUp (server_lifecycle.c, in with server_static).
@@ -4664,6 +4669,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_client_timing.c
     tests/unit/test_interp_render.c
     tests/unit/test_interp_respawn_no_death_flash.c
+    tests/unit/test_interp_no_stale_flash_after_gap.c
     tests/unit/test_snapshot_compaction.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
@@ -5039,6 +5045,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # target already builds for its own tests — and its functions are a tile
     # number in and a colour out. test_map_colours.c drives it directly.
     src/gui/sdl3/map_colours.c
+    # map_markers.c draws over those colours with plain SDL and ring_band.c,
+    # which this target already has. test_map_markers.c asks it how far the
+    # tank triangle reaches; nothing here draws one.
+    src/gui/sdl3/map_markers.c
     # news_image_budget.cpp qualifies too: it is the news image cache's
     # eviction rule over URLs, byte counts and frame numbers, with no SDL,
     # no ImGui and no textures. test_news_image_budget.cpp drives it.
@@ -5159,6 +5169,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # (lv_dock_fit.h), and the text the sidebar layout is saved as
     # (lv_dock_layout.h). Both header only.
     tests/unit/test_lv_dock_fit.c
+    # Where slot n of a status panel sits, the one sum the game's renderer
+    # and the web Log Viewer both use (src/gui/status_grid.h, header only).
+    tests/unit/test_status_grid.c
     # Which icon a slot of the viewer's HUD panel shows, how its three grids
     # are laid out, and its colour sums (lv_hud.h, header only).
     tests/unit/test_lv_hud.c
@@ -5174,6 +5187,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A click on a tank on the viewer's map: which tank a point is on and
     # the mark round the selected one (lv_tank_pick.h, header only).
     tests/unit/test_lv_tank_pick.c
+    # The viewer's aids for recording the screen: the lines Shift and a drag
+    # draw on the map (lv_marks.h) and -size WxH (lv_window_size.h). Both
+    # header only.
+    tests/unit/test_lv_marks.c
     # A sidebar of the viewer whose unused part is clear: where its panels
     # go, the clear part, the map under it and the preference text
     # (lv_dock_clear.h, header only), and the arrangement a new user starts
@@ -5736,6 +5753,7 @@ set(_unit_test_names
     visibility_preset_round_trip
     visibility_preset_custom
     visibility_preset_ignores_decay
+    visibility_preset_ignores_classic_mode
     visibility_preset_pref_words
     scn_panel_popout_row
     scn_panel_yes_no
@@ -5833,6 +5851,7 @@ set(_unit_test_names
     wbn_map_fetch_policy
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
+    brain_push_rules_written_on_change
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
@@ -6381,6 +6400,7 @@ set(_unit_test_names
     map_colours_markers
     map_colours_palette_key
     map_colours_team
+    map_markers_tank_reach
     stall_advances_processed_tick
     turn_release_no_overshoot
     turn_gap_preserves_ramp
@@ -6479,6 +6499,7 @@ set(_unit_test_names
     client_timing
     interp_render
     interp_respawn_no_death_flash
+    interp_no_stale_flash_after_gap
     snapshot_compaction
     edge_send_predicate
     error_smoothing
@@ -7694,6 +7715,7 @@ set(_unit_test_names
     scenario_text_tablet_band
     scenario_text_pointer_on_handle
     scenario_text_window_shown
+    scenario_text_printed_recently
     scenario_text_edge_shown
     scenario_text_save_place
     scenario_status_line
@@ -7752,11 +7774,13 @@ set(_unit_test_names
     lv_region_rect_placement
     lv_dock_fit_sums
     lv_dock_fit_margins
+    status_grid_slots
     lv_dock_layout_sides
     lv_dock_layout_tree
     lv_hud_sums
     lv_team_sprite_sums
     lv_team_colour_lookup
+    lv_neutral_pill_grey
     lv_overview_sums
     lv_overview_bots
     lv_overview_row_layout
@@ -7764,6 +7788,8 @@ set(_unit_test_names
     lv_tank_status_sums
     lv_tank_bars_sums
     lv_tank_pick_sums
+    lv_marks_fade
+    lv_window_size_parse
     lv_map_double_click
     lv_name_header_sums
     lv_dock_clear_layout

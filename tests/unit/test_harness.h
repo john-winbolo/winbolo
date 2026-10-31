@@ -425,6 +425,7 @@ int run_fog_settings_lobby_reset(void);
 int run_visibility_preset_round_trip(void);
 int run_visibility_preset_custom(void);
 int run_visibility_preset_ignores_decay(void);
+int run_visibility_preset_ignores_classic_mode(void);
 int run_visibility_preset_pref_words(void);
 int run_scn_panel_popout_row(void);
 int run_scn_panel_yes_no(void);
@@ -575,6 +576,7 @@ int run_wbn_map_parse(void);
 int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
+int run_brain_push_rules_written_on_change(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
 int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -2241,6 +2243,11 @@ int run_map_colours_markers(void);
 int run_map_colours_palette_key(void);
 int run_map_colours_team(void);
 
+/* The marker shapes (test_map_markers.c): how far the tank triangle reaches
+ * past the square its sprite would fill, which the log viewer's repaint
+ * marks. */
+int run_map_markers_tank_reach(void);
+
 int run_stall_advances_processed_tick(void);
 int run_turn_release_no_overshoot(void);
 int run_turn_gap_preserves_ramp(void);
@@ -2377,6 +2384,12 @@ int run_interp_render(void);
  * the alive respawn (teleport) snaps to curr instead of tweening from the
  * stale death spot; a normal alive->alive pair still interpolates. */
 int run_interp_respawn_no_death_flash(void);
+
+/* No stale flash after a gap (test_interp_no_stale_flash_after_gap.c): the
+ * first snapshot of a remote tank back from a freeze-length gap (out of view,
+ * slot reused) is drawn at its new position, not where the tank was before
+ * the gap; a short gap keeps the pipeline and still tweens. */
+int run_interp_no_stale_flash_after_gap(void);
 
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
@@ -4371,6 +4384,7 @@ int run_scenario_text_tablet_band(void);
  * mouse: a point on the text body is on neither. */
 int run_scenario_text_pointer_on_handle(void);
 int run_scenario_text_window_shown(void);
+int run_scenario_text_printed_recently(void);
 int run_scenario_text_edge_shown(void);
 int run_scenario_text_save_place(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
@@ -4468,6 +4482,10 @@ int run_lv_dock_fit_sums(void);
 int run_lv_dock_fit_margins(void);
 int run_lv_dock_layout_sides(void);
 int run_lv_dock_layout_tree(void);
+/* Where slot n of a status panel sits (test_status_grid.c, status_grid.h):
+ * each of the sixteen slots of the bases, pillboxes and tanks panels where
+ * the explicit macros of positions.h put it. */
+int run_status_grid_slots(void);
 /* The log viewer's HUD panel (test_lv_hud.c): the icon of a base, pillbox and
  * tank slot, the layout of the three grids, and the grey and colour sums. */
 int run_lv_hud_sums(void);
@@ -4479,6 +4497,10 @@ int run_lv_team_sprite_sums(void);
  * lv_team_colour.h): the default, the one the Team Colours dialog has, the
  * Neutral entry for a number that is not a team. */
 int run_lv_team_colour_lookup(void);
+/* A neutral pillbox on the log viewer's map is drawn in the Team Colours
+ * dialog's Neutral colour, whatever the team colours are (test_lv_hud.c,
+ * lv_team_sprite.h). */
+int run_lv_neutral_pill_grey(void);
 /* The table of the log viewer's Overview panel (test_lv_overview.c): the
  * rows of the teams, which row a pillbox or a base is counted in, and the
  * share a count is of the whole. */
@@ -4488,6 +4510,8 @@ int run_lv_overview_sums(void);
  * row starts, so the chip goes in front of the bot's name. */
 int run_lv_overview_bots(void);
 int run_lv_overview_row_layout(void);
+/* The Neutral row of the Overview panel: there only while something has no
+ * owner, and first, above the teams, in the table and the share bars. */
 int run_lv_overview_neutral_row(void);
 /* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
  * selected one, and the height of a gauge against its cap. */
@@ -4498,6 +4522,10 @@ int run_lv_tank_bars_sums(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
+/* The log viewer's aids for recording the screen (test_lv_marks.c): the
+ * lines Shift and a drag draw on the map and their fade, and -size WxH. */
+int run_lv_marks_fade(void);
+int run_lv_window_size_parse(void);
 /* A double click on a tank on the map: when it turns that tank's view on. */
 int run_lv_map_double_click(void);
 int run_lv_name_header_sums(void);

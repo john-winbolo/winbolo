@@ -6367,6 +6367,19 @@ unsigned char lv_screenTeamColour(int team) {
   return lvTeamColourEntry(g_lv->tc, team);
 }
 
+/* The palette entry neutral pillboxes are drawn in, or -1 for the game's
+   red tile: the Team Colours dialog's Neutral entry, whatever colours the
+   teams have. It is -1 when the map does not draw team colours (switched
+   off, or a player's perspective on), as the map then shows the game's own
+   red tile. The map, the HUD and every panel ask here, so a neutral
+   pillbox is one colour everywhere. */
+int lv_screenNeutralPillEntry(void) {
+  if (g_lv == NULL || !g_lv->useTeamColours || lv_playersHasPerspective()) {
+    return -1;
+  }
+  return (int) lv_screenTeamColour(NEUTRAL_TEAM);
+}
+
 void lv_messageAdd(lvEventKind kind, messageType msgType, langid topId,
                    langid bodyId, const MessageArgs *args) {
   lv_messageAddAt(kind, 0, 0, msgType, topId, bodyId, args);
@@ -6794,6 +6807,8 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
 
   perspective = lv_playersHasPerspective();
   viewer = lv_playersGetSelf();
+  /* The colour of a neutral pillbox, as the map draws it this frame. */
+  out->neutralPill = (signed char) lv_screenNeutralPillEntry();
   {
     int sel = lv_screenSelectedTank();
     if (sel >= 0) {

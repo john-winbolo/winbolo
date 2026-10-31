@@ -1418,8 +1418,6 @@ static const LangEntry langTable[] = {
 
     {3150, "Recording mode: shows the GIF controls"},
 
-    {3151, "This game"},
-    {3152, "Earlier games"},
     {3153, "Show this file in its folder"},
     {3154, "The folder could not be opened."},
     {3155, "Delete"},
@@ -1429,6 +1427,9 @@ static const LangEntry langTable[] = {
     {3164, "No GIFs yet. Turn on Recording Mode in the Action menu, then use the GIF button to make one from the map."},
     {3361, "Recording Mode"},
     {3362, "Shows the GIF controls: the GIF button and its length, where the GIF starts and ends on the timeline, and a crop frame for the part of the map to take."},
+
+    {3151, "-size wants a width and a height in pixels, such as -size 1920x1080. The window has opened at its usual size."},
+    {3152, "The window could not be made {string1} pixels, as -size asked. It is {string2} pixels: the display may be too small to hold it."},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},
@@ -2975,6 +2976,8 @@ static const LangEntry langTable[] = {
     {3423, "The GIF, with 10 seconds of the game before it and after it.\nDrag an end of the bright part to make the GIF longer or shorter.\nDrag the grip in its middle to move the GIF to an earlier or a later time.\nClick or drag anywhere else to go to that time. The GIF stays where it is."},
     {3424, "Make a GIF"},
     {3425, "Drag to move the GIF to an earlier or a later time. Its length stays the same."},
+    {3426, "This game"},
+    {3427, "Earlier games"},
     {2810, "Whether a pillbox may pick a tank as its target."},
     {2860, "+ {number} others"},
     {2861, "+ 1 other"},

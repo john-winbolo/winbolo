@@ -799,6 +799,7 @@ static void buildHudShapes(SDL_Renderer *renderer, SDL_Surface *sheet) {
         { STATUS_BASE_ALLIEGOOD_X,   STATUS_BASE_ALLIEGOOD_Y   },
         { STATUS_PILLBOX_EVIL_X,     STATUS_PILLBOX_EVIL_Y     },
         { STATUS_PILLBOX_TANKEVIL_X, STATUS_PILLBOX_TANKEVIL_Y },
+        { STATUS_PILLBOX_NEUTRAL_X,  STATUS_PILLBOX_NEUTRAL_Y  },
     };
     const int cellW = STATUS_ITEM_SIZE_X + 2 * LV_HUD_SHAPE_PAD;
     const int cellH = STATUS_ITEM_SIZE_Y + 2 * LV_HUD_SHAPE_PAD;
@@ -1333,7 +1334,9 @@ bool lv_drawItemPicture(int isBase, int team, SDL_Texture **tex, float *sx, floa
                         float *sw, float *sh) {
     LogViewerState *lv = lv_screenGetState();
     bool hasTeam = (lv != NULL && team >= 0 && team < NEUTRAL_TEAM);
-    LvMapItemSprite s = lvPanelItemSprite(isBase != 0, hasTeam, hasTeam ? lv_screenTeamColour(team) : 0);
+    LvMapItemSprite s = lvPanelItemSpriteNeutralAs(isBase != 0, hasTeam,
+                                                   hasTeam ? lv_screenTeamColour(team) : 0,
+                                                   lv_screenNeutralPillEntry());
 
     *sw = (float)TILE_SIZE_X;
     *sh = (float)TILE_SIZE_Y;
@@ -1404,6 +1407,9 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
 
     zoomFactor = lv_windowGetZoomFactor();
     bool teamColours = lvDrawTeamColours(lv);
+    /* The colour of a neutral pillbox: the dialog's Neutral colour
+       (lv_screenNeutralPillEntry). */
+    int neutralPill = lv_screenNeutralPillEntry();
 
     /* The simplified view. Tiles are drawn at their native 16 px into the
        target and the blit downscales the lot, so below 1x a square lands on
@@ -1492,8 +1498,10 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     if (teamColours && itc != NEUTRAL_TEAM) {
                         itemHits[itemHitCount].colour = lvDrawTeamColour(itc);
                     } else if (teamColours) {
-                        itemHits[itemHitCount].colour = isBase ? mapColourMarkerNeutral()
-                                                               : mapColourMarkerEvil();
+                        itemHits[itemHitCount].colour =
+                            isBase ? mapColourMarkerNeutral()
+                                   : (neutralPill >= 0 ? mapColourTeam(neutralPill)
+                                                       : mapColourMarkerEvil());
                     } else {
                         MapColourItem kind = mapColourItemKind(pos);
                         if (kind == MAP_COLOUR_ITEM_PILL_GOOD ||
@@ -1508,10 +1516,11 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     itemHitCount++;
                 }
             } else if (isPill && teamColours) {
-                /* In its team's colour; a neutral one as the game draws it
-                   (lv_team_sprite.h). */
+                /* In its team's colour; a neutral one in the dialog's
+                   Neutral colour (lv_team_sprite.h). */
                 itc = lv_screenGetPillTeam(x, y, &pillHealth);
-                lvDrawMapItem(lvMapPillSprite(itc == NEUTRAL_TEAM, pillHealth, lv_screenTeamColour(itc)),
+                lvDrawMapItem(lvMapPillSpriteNeutralAs(itc == NEUTRAL_TEAM, pillHealth,
+                                                       lv_screenTeamColour(itc), neutralPill),
                               x, y, zoomFactor);
             } else if (isBase && teamColours) {
                 itc = lv_screenGetBaseTeam(x, y);
@@ -1580,13 +1589,17 @@ void lv_drawMarkRedraw(int mx, int my, int px, int py, int itemSize) {
  * mx, my covers. lv_drawMarkRedraw only reaches the next square over, which
  * is one short for a tank: it is drawn two pixels further in than its offset,
  * so at an offset of 15 it reaches one pixel into the square two along, and
- * that pixel was left behind when the tank moved on. */
+ * that pixel was left behind when the tank moved on. A negative px or py is
+ * a box that starts before the square's own edge, as a marker centred near
+ * it gives: it is moved into the square it really starts in. */
 static void lv_drawMarkRedrawRect(int mx, int my, int px, int py, int w, int h) {
-    int x0 = mx + px / TILE_SIZE_X;
-    int x1 = mx + (px + w - 1) / TILE_SIZE_X;
-    int y0 = my + py / TILE_SIZE_Y;
-    int y1 = my + (py + h - 1) / TILE_SIZE_Y;
-    int x, y;
+    int x0, x1, y0, y1, x, y;
+    while (px < 0) { px += TILE_SIZE_X; mx--; }
+    while (py < 0) { py += TILE_SIZE_Y; my--; }
+    x0 = mx + px / TILE_SIZE_X;
+    x1 = mx + (px + w - 1) / TILE_SIZE_X;
+    y0 = my + py / TILE_SIZE_Y;
+    y1 = my + (py + h - 1) / TILE_SIZE_Y;
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
     if (x1 > 255) x1 = 255;
@@ -1724,10 +1737,25 @@ void lv_drawTanks(screenTanks *tks) {
                 colour = lvDrawTeamColour(team);
             }
             {
-                float side = (float)(zoomFactor * TILE_SIZE_X);
+                float side   = (float)(zoomFactor * TILE_SIZE_X);
+                float radius = SDL_max(3.0f, side * 0.45f);
+                /* The triangle is bigger than the square the sprite would
+                   fill: its nose is 1.2 radii from the centre, its tail
+                   corners further, and the outline sits outside that, so at
+                   this radius it reaches almost 11 px from the centre where
+                   the sprite stops at 8. Mark every square it can touch, in
+                   the target's pixels brought back to tile pixels, or the
+                   edge it put in a neighbouring square stays behind when
+                   the tank moves on, as the sprite's did before #502. */
+                int reach = (int)SDL_ceilf(mapMarkerTankReach(radius) /
+                                           (float)zoomFactor);
                 mapMarkerTank(sdlRenderer,
                               (float)x + side / 2.0f, (float)y + side / 2.0f,
-                              SDL_max(3.0f, side * 0.45f), (int)dir, colour);
+                              radius, (int)dir, colour);
+                lv_drawMarkRedrawRect(mx, my,
+                                      px + TILE_SIZE_X / 2 - reach,
+                                      py + TILE_SIZE_Y / 2 - reach,
+                                      2 * reach + 1, 2 * reach + 1);
             }
         } else if (allyRead) {
             srcX = zoomFactor * TILE_SIZE_X * dir;
@@ -1743,7 +1771,10 @@ void lv_drawTanks(screenTanks *tks) {
         } else {
             lvDrawRecordTankLabel(playerName, mx, my, px, py);
         }
-        lv_drawMarkRedrawRect(mx, my, px, py, TILE_SIZE_X, TILE_SIZE_Y);
+        /* The sprite's own square; the marker marked its wider box above. */
+        if (!simple) {
+            lv_drawMarkRedrawRect(mx, my, px, py, TILE_SIZE_X, TILE_SIZE_Y);
+        }
     }
 
     if (simple) SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);

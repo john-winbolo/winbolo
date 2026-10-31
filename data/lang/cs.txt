@@ -2912,3 +2912,7 @@ STR_CLIPGIF_SHOW_FAILED=Složku se nepodařilo otevřít.
 STR_CLIPGIF_DELETE=Smazat
 STR_CLIPGIF_DELETE_CONFIRM=Smazat tento GIF? Nelze to vrátit zpět.
 STR_CLIPGIF_DELETE_FAILED=GIF se nepodařilo smazat.
+
+# Volba -size prohlížeče záznamů, když její text není velikost nebo ji nelze splnit
+STR_LV_SIZE_ARG_BAD=-size vyžaduje šířku a výšku v pixelech, například -size 1920x1080. Okno se otevřelo ve své obvyklé velikosti.
+STR_LV_SIZE_NOT_MET=Okno se nepodařilo udělat velké {string1} pixelů, jak žádá -size. Má {string2} pixelů: displej může být příliš malý.

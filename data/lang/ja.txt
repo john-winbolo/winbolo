@@ -2915,3 +2915,7 @@ STR_CLIPGIF_SHOW_FAILED=フォルダーを開けませんでした。
 STR_CLIPGIF_DELETE=削除
 STR_CLIPGIF_DELETE_CONFIRM=このGIFを削除しますか？元に戻せません。
 STR_CLIPGIF_DELETE_FAILED=GIFを削除できませんでした。
+
+# Log Viewer の -size オプションの文字列がサイズではない場合、またはサイズを満たせない場合
+STR_LV_SIZE_ARG_BAD=-size には幅と高さをピクセルで指定してください。例：-size 1920x1080。ウィンドウは通常のサイズで開きました。
+STR_LV_SIZE_NOT_MET=-size で指定された {string1} ピクセルのウィンドウにできませんでした。現在のサイズは {string2} ピクセルです。ディスプレイが小さすぎる可能性があります。

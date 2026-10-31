@@ -2914,3 +2914,7 @@ STR_CLIPGIF_SHOW_FAILED=De map kon niet worden geopend.
 STR_CLIPGIF_DELETE=Verwijderen
 STR_CLIPGIF_DELETE_CONFIRM=Deze GIF verwijderen? Dit kan niet ongedaan worden gemaakt.
 STR_CLIPGIF_DELETE_FAILED=De GIF kon niet worden verwijderd.
+
+# De optie -size van de Log Viewer, als de tekst geen afmeting is of niet kan worden gehaald
+STR_LV_SIZE_ARG_BAD=-size verwacht een breedte en een hoogte in pixels, bijvoorbeeld -size 1920x1080. Het venster is geopend met de gebruikelijke afmeting.
+STR_LV_SIZE_NOT_MET=Het venster kon niet {string1} pixels groot worden gemaakt, zoals -size vroeg. Het is {string2} pixels: het beeldscherm is misschien te klein om het venster te bevatten.
