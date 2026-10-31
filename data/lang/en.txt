@@ -3053,6 +3053,7 @@ STR_CLIPGIF_PREVIEW=Preview clip: plays the clip here and makes no file
 STR_CLIPGIF_PREVIEW_STOP=Stop the preview
 STR_CLIPGIF_SAVE=Save clip: makes the GIF file
 STR_CLIPGIF_CANCEL=Cancel: leave recording mode and make no GIF
-STR_CLIPGIF_ZOOM_TIP=The GIF, with 10 seconds of the game before it and after it.\nDrag an end of the bright part to make the GIF longer or shorter.\nClick or drag anywhere else to go to that time. The GIF stays where it is.
+STR_CLIPGIF_ZOOM_TIP=The GIF, with 10 seconds of the game before it and after it.\nDrag an end of the bright part to make the GIF longer or shorter.\nDrag the grip in its middle to move the GIF to an earlier or a later time.\nClick or drag anywhere else to go to that time. The GIF stays where it is.
 STR_CLIPGIF_WINDOW_TITLE=Make a GIF
+STR_CLIPGIF_MOVE_TIP=Drag to move the GIF to an earlier or a later time. Its length stays the same.
 

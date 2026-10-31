@@ -1517,6 +1517,8 @@ int run_clip_gif_zoom_grow(void);
 /* Where the GIF window goes: over the transport row, kept on the main
  * window. */
 int run_clip_gif_window_place(void);
+/* The grip in the middle of the GIF's span moves the whole span. */
+int run_clip_gif_span_move(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
