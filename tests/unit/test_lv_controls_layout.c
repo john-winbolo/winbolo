@@ -604,3 +604,21 @@ int run_lv_controls_fine_drag(void) {
     }
     return 0;
 }
+
+/* lv_play_toggle: the one play and pause button. The pause button while the
+ * replay plays; else the play button, dimmed with nothing to play. */
+int run_lv_play_toggle(void) {
+    LvPlayToggle t = lvPlayToggle(true, true, false);
+    UT_ASSERT_MSG(t.pause && t.enabled, "playing: pause, on");
+    t = lvPlayToggle(true, false, false);
+    UT_ASSERT_MSG(!t.pause && t.enabled, "paused: play, on");
+    t = lvPlayToggle(true, false, true);
+    UT_ASSERT_MSG(!t.pause && !t.enabled, "at the end: play, dimmed");
+    t = lvPlayToggle(true, true, true);
+    UT_ASSERT_MSG(t.pause && t.enabled, "playing at the end: pause, on");
+    t = lvPlayToggle(false, false, false);
+    UT_ASSERT_MSG(!t.pause && !t.enabled, "no replay: play, dimmed");
+    t = lvPlayToggle(false, true, false);
+    UT_ASSERT_MSG(!t.pause && !t.enabled, "no replay, a stale play flag: play, dimmed");
+    return 0;
+}

@@ -812,11 +812,11 @@ void lobbyClipGifPreviewToggle(void);
 void lobbyClipGifPreviewClip(int row, const HighlightWindow *h);
 /* The row whose preview plays: -1 for the transport's, -2 for none. */
 int lobbyClipGifPreviewRow(void);
-/* The preview, for the tools row, and the zoomed timeline on a line of its
- * own over the transport row (clipGifZoomRow), with its presses made on the
- * reel. */
-const ClipGifPlay *lobbyClipGifPlay(void);
-void lobbyClipGifZoomRow(void);
+/* The GIF window of recording mode (clipGifToolsWindow), with its presses
+ * made on the reel. ax0..ay1 is the box of the reel's transport row, in
+ * screen coordinates; the window goes over it until the player drags it. */
+void lobbyClipGifWindow(float ax0, float ay0, float ax1, float ay1,
+                        ClientSim *cs);
 void lobbyClipGifRender(float s);
 /* The poll belongs in the lobby's event loop, above the view switch, so the
  * gallery lets go of its preview when the recap is no longer drawn; the

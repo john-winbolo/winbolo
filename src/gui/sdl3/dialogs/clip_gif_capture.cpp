@@ -22,11 +22,13 @@
  *                Viewer. See clip_gif_capture.h.
  *********************************************************/
 
+#include <cmath>    /* fabsf / floorf */
 #include <cstdio>   /* snprintf / FILENAME_MAX */
 
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "imgui_internal.h"  /* GImGui->MovingWindow: a drag of the GIF window */
 #include "clip_gif_capture.h"
 #include "clip_gif_controls.h"  /* CLIP_GIF_BUTTON_TITLE */
 #include "clip_gif_gallery.h"   /* CLIP_GIF_GALLERY_BUILT, clipGifGalleryAdd */
@@ -389,6 +391,118 @@ void clipGifZoomRow(const char *id, ClipGifSession *s, const ClipGifReplay *r,
         clipGifZoomBar(id, width, mode, curMs, totalMs,
                        s->active || s->play.active, s->active);
     clipGifScrubUpdate(&s->scrub, r, &p, ImGui::GetTime());
+}
+
+/* ── The GIF window ──────────────────────────────────────────────── */
+
+ClipGifWindowPressed clipGifToolsWindow(const char *id, ClipGifSession *s,
+                                        const ClipGifReplay *r,
+                                        ClipGifMode *mode, bool canMake,
+                                        const void *picture, float ax0,
+                                        float ay0, float ax1, float ay1,
+                                        ClipGifWindowPlace *place) {
+    ClipGifWindowPressed out = { false, false, false };
+    if (s == NULL || r == NULL || mode == NULL || place == NULL ||
+        r->progress == NULL) {
+        return out;
+    }
+    uint32_t curMs = 0, totalMs = 0;
+    r->progress(r->user, &curMs, &totalMs);
+    const bool capturing = s->active;
+    const ImTextureID tex = (ImTextureID)(intptr_t)picture;
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    const float vx0 = vp->Pos.x, vy0 = vp->Pos.y;
+    const float vx1 = vp->Pos.x + vp->Size.x, vy1 = vp->Pos.y + vp->Size.y;
+
+    /* As wide as the transport row, and never narrower than the buttons. */
+    float w = ax1 - ax0;
+    const float minW =
+        clipGifToolsRowWidth(picture != NULL) + sty.WindowPadding.x * 2.0f;
+    if (w < minW) w = minW;
+    if (w > vx1 - vx0) w = vx1 - vx0;
+    /* The height is the window's own (it fits its two lines); before the
+     * first frame, a guess at it. */
+    float h = place->lastH;
+    if (h <= 0.0f) {
+        h = ImGui::GetFrameHeight() + ImGui::GetFrameHeightWithSpacing() * 2.0f +
+            sty.WindowPadding.y * 2.0f;
+    }
+
+    /* Placed every frame, so a window never dragged follows the row as the
+     * screen changes size; not while a drag is on, which moves it. */
+    if (!place->moving) {
+        float x = vx0 + place->x, y = vy0 + place->y;
+        if (!place->saved) {
+            clipGifWindowDefaultPos(ax0, ay0, ax1, ay1, w, h, vx0, vy0, vx1,
+                                    vy1, &x, &y);
+        } else {
+            clipGifWindowClamp(&x, &y, w, h, vx0, vy0, vx1, vy1);
+        }
+        ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
+    }
+    /* 0 high: the window fits its lines. */
+    ImGui::SetNextWindowSize(ImVec2(w, 0.0f), ImGuiCond_Always);
+
+    char title[128];
+    snprintf(title, sizeof(title), "%s###%s",
+             langGetText(STR_CLIPGIF_WINDOW_TITLE), id);
+    /* Its place is kept by the screen, after a real drag only, so not in
+     * ImGui's settings. Not in a Log Viewer sidebar. */
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoDocking;
+    bool open = true;
+    if (ImGui::Begin(title, capturing ? NULL : &open, flags)) {
+        /* A drag of the window: its place is kept when the drag ends
+         * somewhere new. */
+        ImGuiContext &g = *GImGui;
+        ImGuiWindow *self = ImGui::GetCurrentWindow();
+        const bool moving = g.MovingWindow != NULL &&
+                            g.MovingWindow->RootWindow == self->RootWindow;
+        const ImVec2 pos = ImGui::GetWindowPos();
+        if (moving && !place->moving) {
+            place->fromX = pos.x;
+            place->fromY = pos.y;
+        } else if (!moving && place->moving &&
+                   (fabsf(pos.x - place->fromX) >= 1.0f ||
+                    fabsf(pos.y - place->fromY) >= 1.0f)) {
+            float x = pos.x, y = pos.y;
+            clipGifWindowClamp(&x, &y, w, ImGui::GetWindowHeight(), vx0, vy0,
+                               vx1, vy1);
+            place->saved = true;
+            place->x = floorf(x - vx0);
+            place->y = floorf(y - vy0);
+            place->changed = true;
+        }
+        place->moving = moving;
+
+        /* The buttons in the middle of the window, the zoomed timeline
+         * under them as wide as the window. */
+        const float rowW = clipGifToolsRowWidth(picture != NULL);
+        const float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > rowW) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                                 floorf((avail - rowW) * 0.5f));
+        }
+        const ClipGifToolsPressed tools = clipGifToolsRow(
+            "##tools", mode, &s->play, capturing, canMake, tex, curMs,
+            totalMs);
+        out.preview = tools.preview;
+        out.save    = tools.save;
+        out.gallery = tools.gallery;
+        clipGifZoomRow("##zoom", s, r, mode, 0.0f);
+        place->lastH = ImGui::GetWindowHeight();
+    }
+    ImGui::End();
+    /* The X: the same as Cancel. */
+    if (!open && !capturing) {
+        clipGifModeToggle(mode, capturing);
+        out.preview = false;
+        out.save = false;
+    }
+    return out;
 }
 
 /* ── Where the GIF goes ──────────────────────────────────────────── */

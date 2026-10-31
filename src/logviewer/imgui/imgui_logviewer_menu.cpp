@@ -126,10 +126,11 @@ void lvMenuRender(struct LogViewerState *lv) {
 
         /* Recording mode, and the GIFs made here and in the game
          * (imgui_clip_gif.h). The recording mode button stays pressed while
-         * the mode is on, as the movie camera on the Controls panel does. */
+         * the GIF window is open, as the movie camera on the Controls panel
+         * does. */
         if (lv_clip_gif_available()) {
             if (!live) {
-                const bool on = lv_clip_gif_mode_on();
+                const bool on = lv_clip_gif_tools_shown();
                 ImGui::BeginDisabled(!lv_clip_gif_can_toggle_mode());
                 clipGifPushLatched(on);
                 const bool pressed = ImGui::Button(langGetText(STR_LV_RECORD_MODE), btnSize);

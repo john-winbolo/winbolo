@@ -6209,6 +6209,7 @@ set(_unit_test_names
     clip_gif_zoom_axis
     clip_gif_span_drag
     clip_gif_zoom_grow
+    clip_gif_window_place
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures
@@ -8058,6 +8059,7 @@ set(_unit_test_names
     lv_controls_bottom_row
     lv_controls_wheel_step
     lv_controls_fine_drag
+    lv_play_toggle
     lv_zoom_percent
     lv_fullscreen_key
     lv_event_scan_returns_to_start

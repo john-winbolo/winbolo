@@ -28,6 +28,8 @@
 #include "../../gui/sdl3/dialogs/clip_gif_capture.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"  /* imguiLoadSvgIconWhite */
 #include "imgui_game_viewport.h"  /* lv_imgui_game_viewport_mouse_held */
+#include "imgui_main_menu.h"      /* lv_g_reset_window_positions */
+#include "platform_config.h"      /* the GIF window's place */
 #include <SDL3/SDL.h>
 
 #include <cmath>
@@ -455,7 +457,7 @@ static void lvGifRenderFrame(void) {
                      lv_imgui_game_viewport_mouse_held(), false);
 }
 
-/* ── The GIF controls in the Controls panel ───────────────────────── */
+/* ── The GIF window ───────────────────────────────────────────────── */
 
 /* The GIF button's picture, made the first time it is drawn on a renderer.
  * 0 when the file is not there: the button then shows "GIF". */
@@ -487,49 +489,86 @@ static ImTextureID lvGifPicture(void) {
     return (ImTextureID)(intptr_t)s_gif.picture;
 }
 
-void lv_clip_gif_tools_row(void) {
+/* The box the GIF window goes over: the Controls panel, or none. */
+static bool  s_anchorSet = false;
+static float s_anchor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+/* View > Reset Window Positions was chosen. The host clears its flag after
+ * the panels and before lv_clip_gif_render, so the panel's call here sees
+ * it for the GIF window. */
+static bool  s_placeReset = false;
+
+void lv_clip_gif_set_anchor(bool set, float x0, float y0, float x1, float y1) {
+    if (lv_g_reset_window_positions) {
+        s_placeReset = true;
+    }
+    s_anchorSet = set;
+    s_anchor[0] = x0;
+    s_anchor[1] = y0;
+    s_anchor[2] = x1;
+    s_anchor[3] = y1;
+}
+
+/* The GIF window of recording mode (clipGifToolsWindow): Preview clip,
+ * Save clip, Cancel, the length, the Clips button and the zoomed timeline.
+ * Over the Controls panel until the player drags it; the dragged place is
+ * kept in [LOGVIEWER] "GifWindow.X" and "GifWindow.Y" (-1 for never moved),
+ * and View > Reset Window Positions forgets it. */
+static void lvGifRenderWindow(void) {
+    static ClipGifWindowPlace s_place = CLIP_GIF_WINDOW_PLACE_INIT;
+    static bool s_placeRead = false;
+    if (!s_placeRead) {
+        s_placeRead = true;
+        const int x = lv_platform_config_get_int("LOGVIEWER", "GifWindow.X", -1);
+        const int y = lv_platform_config_get_int("LOGVIEWER", "GifWindow.Y", -1);
+        if (x >= 0 && y >= 0) {
+            s_place.saved = true;
+            s_place.x = (float)x;
+            s_place.y = (float)y;
+        }
+    }
+    if (s_placeReset) {
+        s_placeReset = false;
+        if (s_place.saved) {
+            s_place.saved = false;
+            lv_platform_config_set_int("LOGVIEWER", "GifWindow.X", -1);
+            lv_platform_config_set_int("LOGVIEWER", "GifWindow.Y", -1);
+        }
+    }
     if (!lv_clip_gif_tools_shown()) {
         return;
     }
-    uint32_t curMs = 0, totalMs = 0;
-    lvGifProgress(NULL, &curMs, &totalMs);
-    const ImTextureID picture = lvGifPicture();
-
-    /* The row in the middle of the panel, as the panel's other rows are. */
-    const float rowW = clipGifToolsRowWidth(picture != (ImTextureID)0);
-    const float avail = ImGui::GetContentRegionAvail().x;
-    if (avail > rowW) {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + floorf((avail - rowW) * 0.5f));
+    /* With the Controls panel shut: the bottom middle of the screen. */
+    float ax0 = s_anchor[0], ay0 = s_anchor[1], ax1 = s_anchor[2], ay1 = s_anchor[3];
+    if (!s_anchorSet) {
+        const ImGuiViewport *vp = ImGui::GetMainViewport();
+        const float w = 420.0f;
+        ax0 = vp->Pos.x + (vp->Size.x - w) * 0.5f;
+        ax1 = ax0 + w;
+        ay0 = ay1 = vp->Pos.y + vp->Size.y;
     }
-
-    /* Preview clip and Save clip of the span, of the map as it is shown;
-     * Cancel, the length, the Clips window and the crop frame. The same row
-     * the game's replay shows. */
-    const ClipGifToolsPressed tools = clipGifToolsRow(
-        "##lvgif", &s_gif.mode, &s_gif.session.play,
-        clipGifCaptureActive(&s_gif.session), lv_clip_gif_can_make(), picture,
-        curMs, totalMs);
-    if (tools.preview) {
+    const ImTextureID picture = lvGifPicture();
+    const ClipGifWindowPressed pressed = clipGifToolsWindow(
+        "LvGifWindow", &s_gif.session, &s_lvReplay, &s_gif.mode,
+        lv_clip_gif_can_make(), (const void *)(intptr_t)picture, ax0, ay0,
+        ax1, ay1, &s_place);
+    if (s_place.changed) {
+        s_place.changed = false;
+        lv_platform_config_set_int("LOGVIEWER", "GifWindow.X", (int)s_place.x);
+        lv_platform_config_set_int("LOGVIEWER", "GifWindow.Y", (int)s_place.y);
+    }
+    if (pressed.preview) {
         if (clipGifPreviewActive(&s_gif.session)) {
             clipGifPreviewStop(&s_gif.session, &s_lvReplay);
         } else {
             clipGifPreviewSpan(&s_gif.session, &s_lvReplay, &s_gif.mode);
         }
     }
-    if (tools.save) {
+    if (pressed.save) {
         lvGifStart();
     }
-    if (tools.gallery) {
+    if (pressed.gallery) {
         clipGifGalleryOpen();
     }
-}
-
-void lv_clip_gif_zoom_row(void) {
-    if (!lv_clip_gif_tools_shown()) {
-        return;
-    }
-    clipGifZoomRow("##lvgifzoom", &s_gif.session, &s_lvReplay, &s_gif.mode,
-                   0.0f);
 }
 
 void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,
@@ -560,6 +599,10 @@ void lv_clip_gif_render(void) {
                        s_gif.mode.on && lv_clip_gif_tools_shown());
     clipGifGalleryPoll();
     lvGifRenderFrame();
+    lvGifRenderWindow();
+    /* The Controls panel sets the box again next frame if it is drawn; the
+     * game view draws no panel. */
+    s_anchorSet = false;
     clipGifCaptureRender(&s_gif.session, &s_lvReplay, s);
 
     ClipGifGalleryHost host;
@@ -618,8 +661,9 @@ bool lv_clip_gif_active(void) { return false; }
 void lv_clip_gif_capture_step(void) {}
 void lv_clip_gif_render(void) {}
 bool lv_clip_gif_frame_has_mouse(void) { return false; }
-void lv_clip_gif_tools_row(void) {}
-void lv_clip_gif_zoom_row(void) {}
+void lv_clip_gif_set_anchor(bool set, float x0, float y0, float x1, float y1) {
+    (void)set; (void)x0; (void)y0; (void)x1; (void)y1;
+}
 void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,
                              bool seeking, uint32_t seekMs, uint32_t totalMs) {
     (void)minX; (void)minY; (void)maxX; (void)maxY;

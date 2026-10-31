@@ -1129,6 +1129,44 @@ void clipGifZoomGrow(ClipGifRange *zoom, ClipGifRange span, int edge,
     }
 }
 
+/* ── The GIF window ────────────────────────────────────────────────── */
+
+void clipGifWindowClamp(float *x, float *y, float w, float h, float vx0,
+                        float vy0, float vx1, float vy1) {
+    if (x == NULL || y == NULL) {
+        return;
+    }
+    /* !(a < b) is also true for NaN, so a bad number goes to the view. */
+    if (!(*x + w <= vx1)) {
+        *x = vx1 - w;
+    }
+    if (!(*y + h <= vy1)) {
+        *y = vy1 - h;
+    }
+    if (!(*x >= vx0)) {
+        *x = vx0;
+    }
+    if (!(*y >= vy0)) {
+        *y = vy0;
+    }
+}
+
+void clipGifWindowDefaultPos(float ax0, float ay0, float ax1, float ay1,
+                             float w, float h, float vx0, float vy0,
+                             float vx1, float vy1, float *x, float *y) {
+    if (x == NULL || y == NULL) {
+        return;
+    }
+    float px = ax0 + ((ax1 - ax0) - w) * 0.5f;
+    float py = ay0 - CLIP_GIF_WINDOW_GAP - h;
+    if (py < vy0) {
+        py = ay1 + CLIP_GIF_WINDOW_GAP;
+    }
+    clipGifWindowClamp(&px, &py, w, h, vx0, vy0, vx1, vy1);
+    *x = px;
+    *y = py;
+}
+
 /* ── Preview ───────────────────────────────────────────────────────── */
 
 bool clipGifPlayStart(ClipGifPlay *p, uint32_t startMs, uint32_t lenMs,
