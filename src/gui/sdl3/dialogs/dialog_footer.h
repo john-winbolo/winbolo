@@ -82,13 +82,19 @@ int DialogFooter(const char *cancelLabel,
  * cancelLabel      : far-left, e.g. "Cancel" — consistent with 2-button order
  * destructiveLabel : middle, e.g. "Discard", "Don't Save"
  * primaryLabel     : far-right, e.g. "Save"
+ * primaryDisabled, destructiveDisabled : grey out that one button, as
+ *                  DialogFooter's confirmDisabled does; Cancel always stays
+ *                  clickable. A disabled button's result is never returned
+ *                  (click and, for the primary, Enter both suppressed).
  *
  * Returns FOOTER_NONE / FOOTER_DESTRUCTIVE / FOOTER_CANCEL / FOOTER_CONFIRM. */
 int DialogFooter3(const char *cancelLabel,
                   const char *destructiveLabel,
                   const char *primaryLabel,
                   bool enterConfirms = false,
-                  bool showSeparator = true);
+                  bool showSeparator = true,
+                  bool primaryDisabled = false,
+                  bool destructiveDisabled = false);
 
 /* Apply just the muted-grey Cancel button colors (Push/Pop pair).
  *

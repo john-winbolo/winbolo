@@ -6562,6 +6562,34 @@ bool transportUdpClientStartLobbyScriptUpload(Transport *t,
     return ok;
 }
 
+/* Whether a lobby map change of this client's is still under way: the
+ * re-join a map change sends the client on, or an upload not yet over. The
+ * map chooser reads it every frame and greys its picks while it holds, since
+ * an upload started then is refused and a commit or cancel sent then can
+ * land before the upload does.
+ *
+ * Nothing here is latched, so it cannot stay true by being forgotten. Each
+ * part ends by itself: the re-join when the client is CONNECTED again or
+ * gives up (JOIN_MAX_RETRIES, the map download's restart cap), which ends
+ * the connection, and the upload with the server's answer or the upload
+ * watchdog (UPLOAD_ACK_TIMEOUT_MS, UPLOAD_STALL_TIMEOUT_MS). An upload that is
+ * over but not yet let go of (status 3 or 4) is not under way: the pump lets
+ * go of it on its next CONNECTED tick. */
+bool transportUdpClientMapChangeBusy(Transport *t) {
+    TransportUdpClientCtx *c;
+    uint8_t st;
+
+    if (t == NULL || t->ctx == NULL) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinedOnce && (c->joinState == UDP_CLIENT_JOINING ||
+                          c->joinState == UDP_CLIENT_DOWNLOADING_MAP)) {
+        return true;
+    }
+    if (!c->uploadActive || c->clientSim == NULL) return false;
+    st = c->clientSim->lobbyMapUploadStatus;
+    return st != 3 && st != 4;
+}
+
 uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t) {
     TransportUdpClientCtx *c;
     if (t == NULL) return 0;

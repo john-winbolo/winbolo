@@ -1367,6 +1367,17 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     s_lastWinPos  = ImGui::GetWindowPos();
     s_lastWinSize = ImGui::GetWindowSize();
 
+    /* A map change of this client's still under way on a network server:
+       the re-join after a pick, or an upload not yet over. Picks and Use This
+       Map are greyed while it holds, with a line saying why. An upload
+       started then was refused without a word, and a commit sent then lands
+       before the upload does. Read afresh every frame and never latched here
+       or in the transport, so it lifts by itself when the work ends, when a
+       watchdog gives up on it, or with the connection
+       (clientSimNetLobbyMapChangeBusy). */
+    const bool busy = cs && !clientSimIsSinglePlayer(cs) &&
+                      clientSimNetLobbyMapChangeBusy(cs);
+
     /* Action bar height (Separator + button row) — reserved AT THE
      * WINDOW LEVEL via a child container around the tab bar so the
      * tab content fills its area down to its own bottom border. The
@@ -1374,6 +1385,9 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * left a gap of dead space between the chooser's bottom border
      * and the buttons. */
     float btnBarH = ImGui::GetFrameHeight() + 14.0f * s;
+    /* The tabs keep drawing and their pumps keep running while greyed; only
+       a click or a key does nothing. */
+    ImGui::BeginDisabled(busy);
     ImGui::BeginChild("##MapChooserBody",
                       ImVec2(0.0f, -btnBarH),
                       ImGuiChildFlags_NavFlattened,
@@ -1509,12 +1523,17 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * screen rect is what we want to anchor the error overlay to. */
     ImVec2 chooserBodyMin = ImGui::GetItemRectMin();
     ImVec2 chooserBodyMax = ImGui::GetItemRectMax();
+    ImGui::EndDisabled();
 
     /* Error overlay — anchored top-right of the chooser body (over the
      * map preview's empty header area). Old behaviour rendered the
      * footer text below the body, which pushed the Cancel / Use This
      * Map buttons past the window bottom when the message wrapped. */
+    /* While greyed and with no error to show, the same place says why the
+       picks are greyed, in neutral colours rather than an error's. */
     const char *errMsg = lobbyGetActiveTabError(cs);
+    const bool waitNote = !(errMsg && *errMsg) && busy;
+    if (waitNote) errMsg = langGetText(STR_DLGLOBBY_AWAITING_MAP);
     if (errMsg && *errMsg) {
         ImDrawList *fg = ImGui::GetForegroundDrawList();
         float pad = 8.0f * s;
@@ -1530,10 +1549,12 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                       boxMin.y + textSz.y + pad);
 
         fg->AddRectFilled(boxMin, boxMax,
-                          IM_COL32(40, 0, 0, 200), 4.0f * s);
+                          waitNote ? IM_COL32(30, 30, 30, 200)
+                                   : IM_COL32(40, 0, 0, 200), 4.0f * s);
         fg->AddText(font, fsz,
                     ImVec2(boxMin.x + pad, boxMin.y + pad * 0.5f),
-                    IM_COL32(230, 130, 130, 255), errMsg,
+                    waitNote ? IM_COL32(220, 220, 220, 255)
+                             : IM_COL32(230, 130, 130, 255), errMsg,
                     nullptr, maxW);
     }
 
@@ -1579,7 +1600,13 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             s_chooser.open = false;
         }
         ImGui::SameLine();
-        if (ImGui::Button(setLbl)) {
+        /* Greyed while the last pick is still on its way (busy): sent now,
+           the commit would land before an upload does and commit whatever
+           was on show, leaving the upload's map an open preview. */
+        ImGui::BeginDisabled(busy);
+        const bool setPressed = ImGui::Button(setLbl);
+        ImGui::EndDisabled();
+        if (setPressed) {
             WB_LOG_INFO(WB_LOG_CAT_GUI,
                         "[MAPPICK] action-bar UseThisMap sp=%d previewPending=%d",
                         cs ? (int)clientSimIsSinglePlayer(cs) : -1,
@@ -1650,10 +1677,18 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CLOSEMAP_PROMPT));
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CLOSEMAP_QUESTION));
+        /* Use This Map is greyed here too while the last pick is on its
+           way, as on the action bar, with the same reason given. */
+        if (busy) {
+            ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_AWAITING_MAP));
+        }
         /* [Cancel: Keep picking] [Destructive: Revert and Close] [Primary: Use This Map]. */
         int f = WBUI::DialogFooter3(langGetText(STR_DLGLOBBY_KEEPPICKING),
                                     langGetText(STR_DLGLOBBY_REVERTCLOSE),
-                                    langGetText(STR_DLGLOBBY_USETHISMAP));
+                                    langGetText(STR_DLGLOBBY_USETHISMAP),
+                                    /*enterConfirms*/ false,
+                                    /*showSeparator*/ true,
+                                    /*primaryDisabled*/ busy);
         if (f == WBUI::FOOTER_CONFIRM) {
             lobbyChooseMapSendUnsentSelection(cs);
             if (cs) {

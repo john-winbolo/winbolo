@@ -492,3 +492,90 @@ int run_upload_begin_without_trailer_refused(void) {
     loopbackHarnessStop(&h);
     return 0;
 }
+
+/* The client has left CONNECTED for the re-join a map change sends it on. */
+static bool pred_busy_rejoining(LoopbackHarness *h, void *user) {
+    ClientConnectState st = clientSimGetConnectState(h->cs);
+    (void)user;
+    return st == CLIENT_CONNECT_JOINING || st == CLIENT_CONNECT_DOWNLOADING_MAP;
+}
+
+/* Back in the lobby with nothing under way. */
+static bool pred_not_busy(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED &&
+           !clientSimNetLobbyMapChangeBusy(h->cs);
+}
+
+/*
+ * clientSimNetLobbyMapChangeBusy, which the map chooser greys its picks and
+ * Use This Map by, holds while a map change is under way and lifts by itself
+ * in each way one can end: the re-join after a map pick finishing, an upload
+ * answered, and an upload whose answer never comes given up on by the
+ * watchdog.
+ */
+int run_loopback_map_change_busy_lifts(void) {
+    LoopbackHarness h;
+    BYTE emap[6000] = E_MAP;
+    bool busyIdle;
+    bool busyRejoin;
+    bool busyUpload;
+    bool busyLost;
+    bool liftedRejoin;
+    bool liftedUpload;
+    bool liftedLost;
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "Busy", /*lobbyMode*/ true,
+                                       /*impairSpec*/ NULL, 0xC0FFF6u),
+                  "harness start (map change busy) failed");
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+    threadsWaitForMutex();
+    serverSimSetOpenHost(h.sim, true);
+    serverSimInstallMapDirList(h.sim, NULL, 0, WB_DATA_MAPS_DIR);
+    threadsReleaseMutex();
+    busyIdle = clientSimNetLobbyMapChangeBusy(h.cs);
+
+    /* A server map pick: busy through its re-join, then not. */
+    clientSimNetSendLobbySetMap(h.cs, "Baringi.map");
+    busyRejoin = loopbackHarnessPumpUntil(&h, UPLOAD_MAX, pred_busy_rejoining,
+                                          NULL) >= 0 &&
+                 clientSimNetLobbyMapChangeBusy(h.cs);
+    liftedRejoin = loopbackHarnessPumpUntil(&h, UPLOAD_MAX, pred_not_busy,
+                                            NULL) >= 0;
+
+    /* An upload: busy from the kick until it is answered. */
+    busyUpload = transportUdpClientStartLobbyMapUploadFromBytes(
+                     &h.cs->transport, emap, EMAP_LEN, "busy.map") &&
+                 clientSimNetLobbyMapChangeBusy(h.cs);
+    liftedUpload = loopbackHarnessPumpUntil(&h, UPLOAD_MAX, pred_not_busy,
+                                            NULL) >= 0;
+
+    /* An upload whose answer never comes: busy until the watchdog gives up. */
+    transportUdpClientTestDropUploadReply(&h.cs->transport,
+                                          PACKET_LOBBY_MAP_UPLOAD_ACK);
+    busyLost = transportUdpClientStartLobbyMapUploadFromBytes(
+                   &h.cs->transport, emap, EMAP_LEN, "lost.map");
+    loopbackHarnessPump(&h);
+    busyLost = busyLost && clientSimNetLobbyMapChangeBusy(h.cs);
+    transportUdpClientTestUploadTimeout(&h.cs->transport);
+    liftedLost = !clientSimNetLobbyMapChangeBusy(h.cs);
+    transportUdpClientTestDropUploadReply(&h.cs->transport, 0);
+
+    fprintf(stderr, "  map change busy: idle=%d rejoin=%d->lifted %d "
+                    "upload=%d->lifted %d lost=%d->lifted %d\n",
+            (int)busyIdle, (int)busyRejoin, (int)liftedRejoin,
+            (int)busyUpload, (int)liftedUpload, (int)busyLost,
+            (int)liftedLost);
+    loopbackHarnessStop(&h);
+    UT_ASSERT_MSG(!busyIdle, "busy with nothing under way");
+    UT_ASSERT_MSG(busyRejoin, "not busy during a map change's re-join");
+    UT_ASSERT_MSG(liftedRejoin, "still busy after the re-join finished");
+    UT_ASSERT_MSG(busyUpload, "not busy while an upload was in flight");
+    UT_ASSERT_MSG(liftedUpload, "still busy after the upload was answered");
+    UT_ASSERT_MSG(busyLost, "not busy while an unanswered upload was waiting");
+    UT_ASSERT_MSG(liftedLost, "still busy after the watchdog gave up");
+    return 0;
+}
