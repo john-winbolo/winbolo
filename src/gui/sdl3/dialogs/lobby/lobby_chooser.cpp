@@ -1384,10 +1384,11 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     s_lastWinSize = ImGui::GetWindowSize();
 
     /* A map change of this client's still under way on a network server:
-       the re-join after a pick, or an upload not yet over. Picks and Use This
-       Map are greyed while it holds, with a line saying why. An upload
-       started then was refused without a word, and a commit sent then lands
-       before the upload does. Read afresh every frame and never latched here
+       the re-join after a pick, or an upload not yet over. Picks, Use This
+       Map and the cancels are greyed while it holds, with a line saying why.
+       An upload started then was refused without a word, and a commit or a
+       cancel sent then lands before the upload does. Read afresh every frame
+       and never latched here
        or in the transport, so it lifts by itself when the work ends, when a
        watchdog gives up on it, or with the connection
        (clientSimNetLobbyMapChangeBusy). */
@@ -1621,7 +1622,16 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         float total   = wCancel + gap + wSet;
         float startX  = (ImGui::GetContentRegionAvail().x - total) * 0.5f;
         if (startX > 0.0f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
-        if (ImGui::Button(cancelLbl)) {
+        /* Greyed while the last pick is still on its way (busy), as Revert
+           and Close is in the close prompt. The cancel is a small command
+           and reaches the server at once, while an upload's bytes come after
+           it: the server rolled back, then the upload finished and opened
+           the cancelled map as a new preview, which the round start then
+           committed. Wait for the upload to be answered or given up on. */
+        ImGui::BeginDisabled(busy);
+        const bool cancelPressed = ImGui::Button(cancelLbl);
+        ImGui::EndDisabled();
+        if (cancelPressed) {
             WB_LOG_INFO(WB_LOG_CAT_GUI,
                         "[MAPPICK] action-bar Cancel sp=%d previewPending=%d",
                         cs ? (int)clientSimIsSinglePlayer(cs) : -1,
@@ -1719,8 +1729,10 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CLOSEMAP_PROMPT));
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CLOSEMAP_QUESTION));
-        /* Use This Map is greyed here too while the last pick is on its
-           way, as on the action bar, with the same reason given. */
+        /* Use This Map and Revert and Close are greyed here too while the
+           last pick is on its way, as on the action bar, with the same
+           reason given. Keep Picking stays, so the prompt can always be
+           left. */
         if (busy) {
             ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_AWAITING_MAP));
         }
@@ -1730,7 +1742,8 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                                     langGetText(STR_DLGLOBBY_USETHISMAP),
                                     /*enterConfirms*/ false,
                                     /*showSeparator*/ true,
-                                    /*primaryDisabled*/ busy);
+                                    /*primaryDisabled*/ busy,
+                                    /*destructiveDisabled*/ busy);
         if (f == WBUI::FOOTER_CONFIRM) {
             lobbyChooseMapSendUnsentSelection(cs);
             if (cs) {
