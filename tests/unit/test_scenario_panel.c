@@ -974,6 +974,131 @@ int run_scenario_text_layout(void) {
     UT_ASSERT(scnTextWrapBalanced(text, scnTestMeasure, NULL, 500.0f) == 2);
     UT_ASSERT(strcmp(text, "a b\nc") == 0);
     UT_ASSERT(scnTextContentWidth("", scnTestMeasure, NULL) == 0.0f);
+
+    /* Both steps, as the window runs them: a single Latin word too wide is
+       one row and not broken, by scnTextWrapBalanced or by
+       scnTextBreakUnspaced after it. */
+    snprintf(text, sizeof(text), "%s", "go Unbreakableword now");
+    scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
+    rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                60.0f);
+    UT_ASSERT_MSG(rows == 3 && strcmp(text, "go\nUnbreakableword\nnow") == 0,
+                  "broken as \"%s\"", text);
+    snprintf(text, sizeof(text), "%s", "Unbreakableword");
+    scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
+    rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                60.0f);
+    UT_ASSERT(rows == 1 && strcmp(text, "Unbreakableword") == 0);
+
+    /* That word sets the scale. 80 letters are 720 units, 726 with the
+       outline and the pad, wider than the 671 units of room at the smallest
+       letter height. The scale goes below that height so the word fits the
+       457 pixels: 457 / 726, still over the letter floor. */
+    {
+        const float floorScale = ui * SCN_TEXT_FLOOR_LETTER_UI_SHARE /
+                                 SCN_TEXT_LINE_UNITS;
+        const float rowMaxW = 457.0f / minScale - pads;
+        float left = 0.0f, acrossW = 0.0f;
+        memset(text, 'w', 80);
+        text[80] = '\0';
+        scnTextWrapBalanced(text, scnTestMeasure, NULL, rowMaxW);
+        rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                    rowMaxW);
+        UT_ASSERT(rows == 1 && strlen(text) == 80);
+        srcW = scnTextContentWidth(text, scnTestMeasure, NULL);
+        UT_ASSERT(scnNear(srcW, 726.0f));
+        fit = scnTextFitRectHeld(srcW, scnTextSourceHeight(1), 0.0f, 0.0f,
+                                 457.0f, 230.0f, floorScale, maxScale);
+        UT_ASSERT_MSG(fit.scale < minScale && fit.scale > floorScale &&
+                          scnNear(fit.scale, 457.0f / 726.0f),
+                      "the long word's scale is %.3f", fit.scale);
+        UT_ASSERT(scnNear(fit.originX, 0.0f));
+        /* 120 letters would need 457 / 1086 = 0.42, under the floor of
+           0.45: held at the floor, and centred, running past both sides. */
+        fit = scnTextFitRectHeld(1086.0f, scnTextSourceHeight(1), 0.0f, 0.0f,
+                                 457.0f, 230.0f, floorScale, maxScale);
+        UT_ASSERT(scnNear(fit.scale, floorScale));
+        UT_ASSERT(scnNear(fit.originX, (457.0f - 1086.0f * floorScale) * 0.5f));
+        UT_ASSERT(fit.originX < 0.0f);
+        /* No floor (0): as scnTextFitRectCapped. */
+        fit = scnTextFitRectHeld(1086.0f, 26.0f, 0.0f, 0.0f, 457.0f, 230.0f,
+                                 0.0f, maxScale);
+        UT_ASSERT(scnNear(fit.scale, 457.0f / 1086.0f));
+        /* At the floor the span across is the text block, so no line is
+           made smaller again to fit the area. */
+        fit = scnTextFitRectHeld(1086.0f, 26.0f, 0.0f, 0.0f, 457.0f, 230.0f,
+                                 floorScale, maxScale);
+        scnTextAcrossSpan(0.0f, 457.0f, fit, 1086.0f, &left, &acrossW);
+        UT_ASSERT(scnNear(left, fit.originX) && scnNear(acrossW, 1086.0f));
+    }
+
+    /* Chinese, with no space: broken between characters. 30 of U+5B57, 3
+       bytes each, 27 units each with the stand-in font; 7 fit in 200 units,
+       so 7, 7, 7, 7 and 2, and no character is split. */
+    {
+        static const char zi[] = "\xE5\xAD\x97";
+        const char *r;
+        int i, n = 0;
+        text[0] = '\0';
+        for (i = 0; i < 30; i++) strcat(text, zi);
+        scnTextWrapBalanced(text, scnTestMeasure, NULL, 200.0f);
+        UT_ASSERT(strchr(text, '\n') == NULL);
+        rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                    200.0f);
+        UT_ASSERT_MSG(rows == 5, "the Chinese line took %d rows", rows);
+        for (r = text;; n++) {
+            const char *e = strchr(r, '\n');
+            const size_t len = (e != NULL) ? (size_t)(e - r) : strlen(r);
+            UT_ASSERT(len % 3 == 0 && len > 0);
+            UT_ASSERT(len == ((n < 4) ? 21u : 6u));
+            if (e == NULL) break;
+            r = e + 1;
+        }
+        /* A Chinese row that fits, a Japanese row that fits, and no room in
+           the buffer for a break: not changed. */
+        snprintf(text, sizeof(text), "%s", "\xE6\x97\xA5\xE6\x9C\xAC");
+        UT_ASSERT(scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure,
+                                       NULL, 200.0f) == 1);
+        UT_ASSERT(strcmp(text, "\xE6\x97\xA5\xE6\x9C\xAC") == 0);
+        UT_ASSERT(scnTextBreakUnspaced(text, strlen(text) + 1, scnTestMeasure,
+                                       NULL, 30.0f) == 1);
+        UT_ASSERT(strcmp(text, "\xE6\x97\xA5\xE6\x9C\xAC") == 0);
+        /* Korean, written with spaces: broken at the spaces first. */
+        snprintf(text, sizeof(text), "%s",
+                 "\xED\x95\x9C\xEA\xB5\xAD \xED\x95\x9C\xEA\xB5\xAD");
+        scnTextWrapBalanced(text, scnTestMeasure, NULL, 60.0f);
+        rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                    60.0f);
+        UT_ASSERT(rows == 2);
+        UT_ASSERT(strcmp(text, "\xED\x95\x9C\xEA\xB5\xAD\n"
+                               "\xED\x95\x9C\xEA\xB5\xAD") == 0);
+    }
+
+    /* An announcement's share across is of the area's width, not of the
+       text block's. The owner's text (285 units) at the cap in a 457 pixel
+       area at x 10: the span starts at the area's left, 10, and is
+       457 / 1.35 units wide. A line 100 units wide at share 0.1 is held one
+       pad from the area's left, not near the block's left. */
+    {
+        float left = 0.0f, acrossW = 0.0f, lx = 0.0f, shrink = 0.0f;
+        fit = scnTextFitRectHeld(285.0f, 50.0f, 10.0f, 0.0f, 457.0f, 230.0f,
+                                 0.0f, maxScale);
+        UT_ASSERT(scnNear(fit.scale, maxScale));
+        UT_ASSERT(fit.originX > 10.0f + 30.0f);
+        scnTextAcrossSpan(10.0f, 457.0f, fit, 285.0f, &left, &acrossW);
+        UT_ASSERT_MSG(left == 10.0f && scnNear(acrossW, 457.0f / maxScale),
+                      "the span is %.2f wide from %.2f", acrossW, left);
+        scnTextLineAcross(acrossW, 100.0f, 0.1f, &lx, &shrink);
+        UT_ASSERT(lx == SCN_TEXT_PAD_UNITS && shrink == 1.0f);
+        UT_ASSERT(left + lx * fit.scale < fit.originX);
+        /* Share 0.5 is the middle of the area, as of the block. */
+        scnTextLineAcross(acrossW, 100.0f, 0.5f, &lx, &shrink);
+        UT_ASSERT(scnNear(left + (lx + 50.0f) * fit.scale, 10.0f + 228.5f));
+        /* No scale: the block. */
+        fit.scale = 0.0f;
+        scnTextAcrossSpan(10.0f, 457.0f, fit, 285.0f, &left, &acrossW);
+        UT_ASSERT(left == fit.originX && acrossW == 285.0f);
+    }
     return 0;
 }
 
