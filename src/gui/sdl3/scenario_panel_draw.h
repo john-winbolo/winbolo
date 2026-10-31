@@ -812,30 +812,6 @@ static inline bool scnTextPrintedRecently(bool everPrinted, uint64_t lastMs,
 }
 
 /*********************************************************
- *NAME:          scnTextPrintedRecently
- *PURPOSE:
- *  Whether a line was on screen in the Scenario Text
- *  window within the last holdMs milliseconds. The window
- *  stays up for that time after its last line goes, and
- *  not after it, so an empty window does not stay on the
- *  game view.
- *
- *ARGUMENTS:
- *  everPrinted - a line has been on screen this round
- *  lastMs      - the SDL tick, in ms, a line was last on
- *                screen
- *  nowMs       - the SDL tick now, in ms
- *  holdMs      - how long the window stays up after its
- *                last line, in ms
- *********************************************************/
-static inline bool scnTextPrintedRecently(bool everPrinted, uint64_t lastMs,
-                                          uint64_t nowMs, uint64_t holdMs) {
-    if (!everPrinted) return false;
-    if (nowMs < lastMs) return true;
-    return nowMs - lastMs < holdMs;
-}
-
-/*********************************************************
  *NAME:          scnTextWindowShown
  *PURPOSE:
  *  Whether the desktop Scenario Text window is up this
