@@ -196,26 +196,48 @@ static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
  * The status line and the announcement are drawn in one
  * window of their own, the Scenario Text window, and not at
  * a place on the game view. The lines are laid out in a
- * fixed source rectangle measured in panel units, and that
+ * source rectangle measured in panel units, and that
  * rectangle is scaled into the window with one factor for
- * both axes, as large as the window allows, and centred in
- * it. The text is never stretched.
+ * both axes, as large as the window allows up to a cap on
+ * the letter height (SCN_TEXT_MAX_LETTER_UI_SHARE), and
+ * centred in it. The text is never stretched.
  *
- * The source rectangle is the width of the classic game
- * view at zoom 1 (15 squares of 16 units), so the share
- * across the view that an announcement's position names is
- * a share across this width. It has a row for each row of
- * text the round has used so far: the status line's on top,
- * then the announcements', oldest first, as many as have
- * been up at once. The rows are counted over the whole round
- * and not frame by frame, so the text does not change size
- * when a line comes and goes. A line too wide for the source
- * rectangle is broken into rows at its spaces; a row still
- * too wide is made smaller, by itself, until it fits across.
+ * The source rectangle is as wide as the widest row, with
+ * the outline and the pad on each side, so the text is as
+ * large as the window's width and height both allow. It has
+ * a row for each row of text the round has used so far: the
+ * status line's on top, then the announcements', oldest
+ * first, as many as have been up at once. The rows are
+ * counted over the whole round and not frame by frame, so
+ * the text does not change size when a line comes and goes.
+ * A row is the script's own: a line is split where the
+ * script put a "\n", and nowhere else, while it fits across
+ * the window at the smallest letter height
+ * (SCN_TEXT_MIN_LETTER_UI_SHARE). A line that does not fit
+ * even then is broken at its spaces into the fewest rows
+ * that fit, of widths as even as they go
+ * (scnTextWrapBalanced).
  * ------------------------------------------------------- */
 
-/* The source rectangle's width, in panel units. */
+/* The source rectangle's width for the window's own default size, in panel
+ * units: the width of the classic game view at zoom 1 (15 squares of 16
+ * units). The text inside is laid out by its own width (see above). */
 #define SCN_TEXT_SRC_W_UNITS 240.0f
+
+/* The largest letter height in the Scenario Text window, as a share of the
+ * height of the game's normal UI text (the font size the panel's bar and
+ * the dialogs use, ImGui's font size: 18 pixels at UI scale 1). Short text
+ * in a large window stops growing at this size. */
+#define SCN_TEXT_MAX_LETTER_UI_SHARE 1.5f
+
+/* The smallest letter height the Scenario Text window lays a script's line
+ * out at on one row, as a share of the game's normal UI text height. A line
+ * too wide for the window even at this size is broken into rows. */
+#define SCN_TEXT_MIN_LETTER_UI_SHARE 0.75f
+
+/* The most words a row is balanced over when it is broken into rows. A row
+ * of more words is broken at the last space that fits, row by row. */
+#define SCN_TEXT_WRAP_MAX_WORDS 96
 
 /* A line's letters, in panel units: the height the announcement was always
  * drawn at. */
@@ -276,8 +298,34 @@ typedef struct ScnTextFit {
  *  winX/winY - the window's top-left corner, in pixels
  *  winW/winH - the window's size, in pixels
  *********************************************************/
+static inline ScnTextFit scnTextFitRectCapped(float srcW, float srcH,
+                                              float winX, float winY,
+                                              float winW, float winH,
+                                              float maxScale);
 static inline ScnTextFit scnTextFitRect(float srcW, float srcH, float winX,
                                         float winY, float winW, float winH) {
+    return scnTextFitRectCapped(srcW, srcH, winX, winY, winW, winH, 0.0f);
+}
+
+/*********************************************************
+ *NAME:          scnTextFitRectCapped
+ *PURPOSE:
+ *  scnTextFitRect, with the scale held at or under
+ *  maxScale, so short text in a large window does not get
+ *  huge. The source rectangle is then smaller than the
+ *  window on both axes, and centred both ways. A maxScale
+ *  of 0 or less is no cap.
+ *
+ *ARGUMENTS:
+ *  srcW/srcH - the source rectangle's size, in units
+ *  winX/winY - the window's top-left corner, in pixels
+ *  winW/winH - the window's size, in pixels
+ *  maxScale  - the most pixels for one unit, or 0
+ *********************************************************/
+static inline ScnTextFit scnTextFitRectCapped(float srcW, float srcH,
+                                              float winX, float winY,
+                                              float winW, float winH,
+                                              float maxScale) {
     ScnTextFit fit;
     fit.scale   = 0.0f;
     fit.originX = winX;
@@ -287,9 +335,201 @@ static inline ScnTextFit scnTextFitRect(float srcW, float srcH, float winX,
     }
     fit.scale = winW / srcW;
     if (winH / srcH < fit.scale) fit.scale = winH / srcH;
+    if (maxScale > 0.0f && fit.scale > maxScale) fit.scale = maxScale;
     fit.originX = winX + (winW - srcW * fit.scale) * 0.5f;
     fit.originY = winY + (winH - srcH * fit.scale) * 0.5f;
     return fit;
+}
+
+/* Measures text from s up to e (not including e) at the line's letter
+ * height, SCN_TEXT_LINE_UNITS, in panel units. ctx is the caller's (the
+ * font, in the game). */
+typedef float (*ScnTextMeasureFn)(const char *s, const char *e, void *ctx);
+
+/* The source rectangle's width for rows of text: the widest row, with the
+ * outline and the pad on each side. Text with no row width gives 0. */
+static inline float scnTextContentWidth(const char *text,
+                                        ScnTextMeasureFn measure, void *ctx) {
+    float widest = 0.0f;
+    const char *r = text;
+    if (text == NULL || measure == NULL) return 0.0f;
+    for (;;) {
+        const char *e = r;
+        float w;
+        while (*e != '\0' && *e != '\n') e++;
+        w = measure(r, e, ctx);
+        if (w > widest) widest = w;
+        if (*e == '\0') break;
+        r = e + 1;
+    }
+    if (widest <= 0.0f) return 0.0f;
+    return widest + 2.0f * SCN_TEXT_OUTLINE_UNITS + 2.0f * SCN_TEXT_PAD_UNITS;
+}
+
+/* One way to break a row's words into rows of at most maxW: from the first
+ * word down (fromBack false), each row taking as many words as fit, or from
+ * the last word up (fromBack true). A word wider than maxW is a row by
+ * itself. Fills brk[i] with true where a row ends after word i, and gives
+ * the number of rows and, in *minW and *maxOut, the narrowest and widest
+ * row. ws/we are the words' first and past-the-end characters. */
+static inline int scnTextGreedyRows(const char *const *ws,
+                                    const char *const *we, int n, float maxW,
+                                    bool fromBack, ScnTextMeasureFn measure,
+                                    void *ctx, bool *brk, float *minW,
+                                    float *maxOut) {
+    int rows = 0;
+    int i;
+    float lo = 0.0f, hi = 0.0f;
+    for (i = 0; i < n; i++) brk[i] = false;
+    if (!fromBack) {
+        int start = 0;
+        while (start < n) {
+            int end = start;   /* the row's last word */
+            float w;
+            while (end + 1 < n && measure(ws[start], we[end + 1], ctx) <= maxW) {
+                end++;
+            }
+            w = measure(ws[start], we[end], ctx);
+            if (rows == 0 || w < lo) lo = w;
+            if (rows == 0 || w > hi) hi = w;
+            rows++;
+            brk[end] = true;
+            start = end + 1;
+        }
+    } else {
+        int last = n - 1;
+        while (last >= 0) {
+            int first = last;   /* the row's first word */
+            float w;
+            while (first - 1 >= 0 && measure(ws[first - 1], we[last], ctx) <= maxW) {
+                first--;
+            }
+            w = measure(ws[first], we[last], ctx);
+            if (rows == 0 || w < lo) lo = w;
+            if (rows == 0 || w > hi) hi = w;
+            rows++;
+            if (first > 0) brk[first - 1] = true;
+            last = first - 1;
+        }
+        brk[n - 1] = true;
+    }
+    if (minW != NULL) *minW = lo;
+    if (maxOut != NULL) *maxOut = hi;
+    return rows;
+}
+
+/*********************************************************
+ *NAME:          scnTextWrapBalanced
+ *PURPOSE:
+ *  Breaks each row of text wider than maxW into rows, in
+ *  place, at its spaces only, never inside a word: the
+ *  space at a break becomes "\n". A row is broken into the
+ *  fewest rows that fit in maxW, and those rows are made as
+ *  even in width as they go, so no short word sits alone
+ *  on a row of its own: the narrowest row width that still
+ *  gives that few rows is found, and of the two ways to
+ *  fill rows at that width (from the first word, or from
+ *  the last), the one with the smaller gap between its
+ *  widest and narrowest row is used. A row that fits is
+ *  not changed, nor is a row with no space (one word, or
+ *  a language written without spaces). A word wider than
+ *  maxW is a row by itself. Gives the number of rows the
+ *  text has after.
+ *
+ *ARGUMENTS:
+ *  text    - the rows, split by "\n"; changed in place
+ *  measure - measures text at the line's letter height
+ *  ctx     - passed to measure
+ *  maxW    - the widest a row may be, in units
+ *********************************************************/
+static inline int scnTextWrapBalanced(char *text, ScnTextMeasureFn measure,
+                                      void *ctx, float maxW) {
+    char *row = text;
+    int   rows = 0;
+    if (text == NULL || measure == NULL) return 0;
+    for (;;) {
+        char *e = row;
+        while (*e != '\0' && *e != '\n') e++;
+        if (maxW > 0.0f && measure(row, e, ctx) > maxW) {
+            const char *ws[SCN_TEXT_WRAP_MAX_WORDS];
+            const char *we[SCN_TEXT_WRAP_MAX_WORDS];
+            bool        brk[SCN_TEXT_WRAP_MAX_WORDS];
+            bool        brk2[SCN_TEXT_WRAP_MAX_WORDS];
+            int         n = 0;
+            bool        tooMany = false;
+            char       *p = row;
+            /* The words: runs of characters between spaces. */
+            while (p < e) {
+                while (p < e && *p == ' ') p++;
+                if (p >= e) break;
+                if (n == SCN_TEXT_WRAP_MAX_WORDS) { tooMany = true; break; }
+                ws[n] = p;
+                while (p < e && *p != ' ') p++;
+                we[n] = p;
+                n++;
+            }
+            if (n > 1 && !tooMany) {
+                float lo = 0.0f, hi = maxW, wordW = 0.0f;
+                int   want, i, iter;
+                float aMin, aMax, bMin, bMax;
+                const bool *use;
+                for (i = 0; i < n; i++) {
+                    const float w = measure(ws[i], we[i], ctx);
+                    if (w > wordW) wordW = w;
+                }
+                want = scnTextGreedyRows(ws, we, n, maxW, false, measure, ctx,
+                                         brk, NULL, NULL);
+                /* The narrowest width that still gives that few rows. */
+                lo = wordW;
+                if (lo > hi) lo = hi;
+                for (iter = 0; iter < 24; iter++) {
+                    const float mid = (lo + hi) * 0.5f;
+                    if (scnTextGreedyRows(ws, we, n, mid, false, measure, ctx,
+                                          brk, NULL, NULL) <= want) {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+                scnTextGreedyRows(ws, we, n, hi, false, measure, ctx, brk,
+                                  &aMin, &aMax);
+                scnTextGreedyRows(ws, we, n, hi, true, measure, ctx, brk2,
+                                  &bMin, &bMax);
+                use = (bMax - bMin < aMax - aMin) ? brk2 : brk;
+                /* A break after word i: the first space after it. */
+                for (i = 0; i + 1 < n; i++) {
+                    if (use[i]) *(char *)we[i] = '\n';
+                }
+                /* Count the rows made, and go on after this row. */
+                for (i = 0; i + 1 < n; i++) {
+                    if (use[i]) rows++;
+                }
+            } else if (tooMany) {
+                /* A row of very many words: the last space that fits. */
+                char *start = row;
+                char *lastSpace = NULL;
+                for (p = row; p < e; p++) {
+                    if (*p == ' ') {
+                        if (measure(start, p, ctx) > maxW && lastSpace != NULL) {
+                            *lastSpace = '\n';
+                            rows++;
+                            start = lastSpace + 1;
+                        }
+                        lastSpace = p;
+                    }
+                }
+                if (measure(start, e, ctx) > maxW && lastSpace != NULL &&
+                    lastSpace >= start) {
+                    *lastSpace = '\n';
+                    rows++;
+                }
+            }
+        }
+        rows++;
+        if (*e == '\0') break;
+        row = e + 1;
+    }
+    return rows;
 }
 
 /* A rectangle in screen pixels. */
