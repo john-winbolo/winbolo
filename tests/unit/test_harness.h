@@ -2468,6 +2468,7 @@ int run_loopback_quiet_lobby_control_loss(void);
  * watched directly across a window in which nothing else is refreshing it. */
 int run_loopback_command_liveness(void);
 int run_loopback_command_queued_behind_map_change(void);
+int run_loopback_command_submitted_during_rejoin(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);

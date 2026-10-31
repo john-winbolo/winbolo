@@ -131,6 +131,11 @@ typedef struct {
     uint32_t outCmdNextSeq;   /* next cmdSeq to assign on submit (init 1) */
     uint32_t outHeadSeq;      /* lowest unacked seq; advances on ACK */
     uint32_t outTailSeq;      /* exclusive tail; outTailSeq == outCmdNextSeq */
+    /* True once this connection has reached CONNECTED or SPECTATING. After
+     * that, a command submitted while a lobby map change has the client
+     * re-joining is queued rather than dropped; the drain holds it until the
+     * re-join is done and the per-tick resend then sends it. */
+    bool     joinedOnce;
 
     /* Input redundancy ring buffer */
     InputPacket inputRing[CLIENT_INPUT_RING_SIZE];
@@ -817,9 +822,19 @@ static void udpClientResendCommandHead(TransportUdpClientCtx *c) {
 void transportUdpClientSubmitCommand(Transport *t, const ClientCommand *cmd) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     /* SPECTATING is admitted alongside CONNECTED so a spectator's CMD_CHAT
-     * reaches the wire; the server rejects any non-chat spectator command. */
+     * reaches the wire; the server rejects any non-chat spectator command.
+     *
+     * So is the re-join a lobby map change sends a joined client on. It runs
+     * several round trips and a map download, and a host clicking a second
+     * map or Use This Map inside it had the command thrown away, with the
+     * chooser's own preview showing the map as picked. Queued, it waits for
+     * the drain, which sends nothing until the re-join is done, and the
+     * per-tick resend sends it then. */
+    bool rejoining = c->joinedOnce &&
+                     (c->joinState == UDP_CLIENT_JOINING ||
+                      c->joinState == UDP_CLIENT_DOWNLOADING_MAP);
     if (c->joinState != UDP_CLIENT_CONNECTED &&
-        c->joinState != UDP_CLIENT_SPECTATING) return;
+        c->joinState != UDP_CLIENT_SPECTATING && !rejoining) return;
     if (c->outTailSeq - c->outHeadSeq >= OUT_CMD_QUEUE_CAP) {
         SDL_assert(0 && "out command queue full");
         return;
@@ -2476,6 +2491,7 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
             break;
         }
         c->joinState = UDP_CLIENT_CONNECTED;
+        c->joinedOnce = true;
         /* A map list request made while the join was not complete was never
          * sent, and a map change always re-joins. Let the chooser retry a
          * missing listing now that requests can go out, but keep a completed
@@ -2960,6 +2976,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     }
                 }
                 c->joinState = UDP_CLIENT_SPECTATING;
+                c->joinedOnce = true;
                 WB_LOG_INFO(WB_LOG_CAT_NET,
                     "spectator JOIN_ACCEPT: tankless connect, mapSize=%u",
                     (unsigned)specMapSize);
