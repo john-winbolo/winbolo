@@ -1014,7 +1014,7 @@ int run_scenario_text_layout(void) {
                       "the long word's scale is %.3f", fit.scale);
         UT_ASSERT(scnNear(fit.originX, 0.0f));
         /* 120 letters would need 457 / 1086 = 0.42, under the floor of
-           0.45: held at the floor, and centred, running past both sides. */
+           0.45: held at the floor, centred, and cut off at both sides. */
         fit = scnTextFitRectHeld(1086.0f, scnTextSourceHeight(1), 0.0f, 0.0f,
                                  457.0f, 230.0f, floorScale, maxScale);
         UT_ASSERT(scnNear(fit.scale, floorScale));
@@ -1072,6 +1072,31 @@ int run_scenario_text_layout(void) {
         UT_ASSERT(rows == 2);
         UT_ASSERT(strcmp(text, "\xED\x95\x9C\xEA\xB5\xAD\n"
                                "\xED\x95\x9C\xEA\xB5\xAD") == 0);
+        /* A Latin word and Chinese with no space between them: the word is
+           not split. "WinBolo" (63 units) is wider than 60, so the row is
+           broken after it, then the Chinese between its characters. */
+        snprintf(text, sizeof(text), "WinBolo%s%s%s%s", zi, zi, zi, zi);
+        rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                    60.0f);
+        UT_ASSERT_MSG(rows == 3, "the mixed row took %d rows", rows);
+        UT_ASSERT_MSG(strcmp(text, "WinBolo\n" "\xE5\xAD\x97\xE5\xAD\x97\n"
+                                   "\xE5\xAD\x97\xE5\xAD\x97") == 0,
+                      "broken as \"%s\"", text);
+        /* The Chinese first: the first character that does not fit is inside
+           the word, so the row is broken before the word, not inside it. */
+        snprintf(text, sizeof(text), "%s%sWinBolo", zi, zi);
+        rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                    100.0f);
+        UT_ASSERT(rows == 2);
+        UT_ASSERT_MSG(strcmp(text, "\xE5\xAD\x97\xE5\xAD\x97\nWinBolo") == 0,
+                      "broken as \"%s\"", text);
+        /* A number between Chinese characters is kept whole. */
+        snprintf(text, sizeof(text), "%s123456%s", zi, zi);
+        rows = scnTextBreakUnspaced(text, sizeof(text), scnTestMeasure, NULL,
+                                    60.0f);
+        UT_ASSERT(rows == 3);
+        UT_ASSERT_MSG(strcmp(text, "\xE5\xAD\x97\n123456\n\xE5\xAD\x97") == 0,
+                      "broken as \"%s\"", text);
     }
 
     /* An announcement's share across is of the area's width, not of the

@@ -251,8 +251,8 @@ static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
  * at, as a share of the game's normal UI text height (9 pixels at UI scale
  * 1). A word is not broken inside, so a word wider than the window at
  * SCN_TEXT_MIN_LETTER_UI_SHARE is made smaller until it fits, but never
- * smaller than this; a word still too wide here runs past the window's
- * sides, centred. */
+ * smaller than this; a word still too wide here is centred and cut off at
+ * the window's sides. */
 #define SCN_TEXT_FLOOR_LETTER_UI_SHARE 0.5f
 
 /* The most words a row is balanced over when it is broken into rows. A row
@@ -355,11 +355,11 @@ static inline ScnTextFit scnTextFitRectCapped(float srcW, float srcH,
  *PURPOSE:
  *  scnTextFitRectCapped, with the scale the width allows
  *  held at or over minWScale, so a source wider than the
- *  window is not made smaller than that. The source then
- *  runs past the window's sides, centred, as much on the
- *  left as on the right. The height still makes the scale
- *  smaller, and the cap still holds it. A minWScale of 0
- *  or less is no floor.
+ *  window is not made smaller than that. The source is
+ *  then centred and cut off at the window's sides, as
+ *  much on the left as on the right. The height still
+ *  makes the scale smaller, and the cap still holds it. A
+ *  minWScale of 0 or less is no floor.
  *
  *ARGUMENTS:
  *  srcW/srcH - the source rectangle's size, in units
@@ -618,7 +618,10 @@ static inline size_t scnTextUtf8At(const char *p, uint32_t *cp) {
  *  space in it and holds a character of a language written
  *  without spaces (scnTextIsUnspacedChar: Chinese,
  *  Japanese, Korean) into rows that fit, in place, before
- *  the first character that does not fit. A "\n" is put in
+ *  the first character that does not fit. A run of other
+ *  characters in such a row, such as a Latin name or a
+ *  number, is not split: the row is broken before or after
+ *  the run instead. A "\n" is put in
  *  there while text has room for it (cap). Run after
  *  scnTextWrapBalanced. A row with a space is not changed
  *  (scnTextWrapBalanced breaks it at its spaces), nor is a
@@ -662,14 +665,33 @@ static inline int scnTextBreakUnspaced(char *text, size_t cap,
             e += n;
         }
         if (!hasSpace && unspaced) {
+            /* A break is taken only before a character where it or the
+               one before it is unspaced, so a run of Latin letters or
+               digits next to such text is never split. When the first
+               character that does not fit is inside such a run, the row
+               is broken at the last place before it that may break, or
+               at the first one after it when there is none before. */
+            char    *lastOk = NULL;
+            uint32_t prevCp = 0;
             for (p = row; p < e;) {
-                const size_t n  = scnTextUtf8At(p, NULL);
+                uint32_t     cp;
+                const size_t n  = scnTextUtf8At(p, &cp);
                 const float  cw = measure(p, p + n, ctx);
+                const bool   ok = p > row && (scnTextIsUnspacedChar(cp) ||
+                                              scnTextIsUnspacedChar(prevCp));
                 if (w + cw > maxW && p > row) {
-                    breakAt = p;
-                    break;
+                    if (ok) {
+                        breakAt = p;
+                        break;
+                    }
+                    if (lastOk != NULL) {
+                        breakAt = lastOk;
+                        break;
+                    }
                 }
+                if (ok) lastOk = p;
                 w += cw;
+                prevCp = cp;
                 p += n;
             }
         }
