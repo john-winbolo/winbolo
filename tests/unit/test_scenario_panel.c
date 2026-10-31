@@ -1069,14 +1069,29 @@ int run_scenario_text_printed_recently(void) {
 /* The faint edge: with a line, only when there is a backing; with no line,
  * only while the handles show, at any background opacity. */
 int run_scenario_text_edge_shown(void) {
-    UT_ASSERT(scnTextEdgeShown(true, 50, false));
-    UT_ASSERT(scnTextEdgeShown(true, 1, true));
-    UT_ASSERT(!scnTextEdgeShown(true, 0, false));
-    UT_ASSERT(!scnTextEdgeShown(true, 0, true));
-    UT_ASSERT(scnTextEdgeShown(false, 0, true));
-    UT_ASSERT(scnTextEdgeShown(false, 100, true));
-    UT_ASSERT(!scnTextEdgeShown(false, 0, false));
-    UT_ASSERT(!scnTextEdgeShown(false, 100, false));
+    /* The pointer not on the window: the rule by opacity and the bar. */
+    UT_ASSERT(scnTextEdgeShown(true, 50, false, false));
+    UT_ASSERT(scnTextEdgeShown(true, 1, true, false));
+    UT_ASSERT(!scnTextEdgeShown(true, 0, false, false));
+    UT_ASSERT(!scnTextEdgeShown(true, 0, true, false));
+    UT_ASSERT(scnTextEdgeShown(false, 0, true, false));
+    UT_ASSERT(scnTextEdgeShown(false, 100, true, false));
+    UT_ASSERT(!scnTextEdgeShown(false, 0, false, false));
+    UT_ASSERT(!scnTextEdgeShown(false, 100, false, false));
+
+    /* The pointer on the window: the edge always, 0% too, with or without
+       a line. */
+    UT_ASSERT(scnTextEdgeShown(true, 0, false, true));
+    UT_ASSERT(scnTextEdgeShown(true, 0, true, true));
+    UT_ASSERT(scnTextEdgeShown(false, 0, false, true));
+    UT_ASSERT(scnTextEdgeShown(true, 100, false, true));
+
+    /* The grip: on the window, or while a resize is on. Not drawn
+       otherwise, also while the bar stays up after the pointer leaves. */
+    UT_ASSERT(scnTextGripShown(true, false));
+    UT_ASSERT(scnTextGripShown(false, true));
+    UT_ASSERT(scnTextGripShown(true, true));
+    UT_ASSERT(!scnTextGripShown(false, false));
     return 0;
 }
 

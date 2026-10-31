@@ -6913,12 +6913,14 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
                          (float)s_scnText.textPct / 100.0f, status,
                          haveStatus, lines, lineCount);
 
-        /* The faint edge (scnTextEdgeShown), round the text area. With a
-           line, only when there is a backing: at 0% background opacity the
-           text stands on the map with no frame round it. With no line,
-           only while the handles show, at any background opacity, so the
-           player can see the window's size. */
-        if (scnTextEdgeShown(haveText, s_scnText.bgPct, handlesVisible)) {
+        /* The faint edge (scnTextEdgeShown), round the text area. While
+           the pointer is on the window, always, at any background opacity:
+           the edge 1% gives, with no backing added. Otherwise, with a line,
+           only when there is a backing: at 0% background opacity the text
+           stands on the map with no frame round it. With no line, only
+           while the bar shows, so the player can see the window's size. */
+        if (scnTextEdgeShown(haveText, s_scnText.bgPct, handlesVisible,
+                             onRect)) {
             dl->AddRect(text, ImVec2(text.x + w - 1.0f, text.y + h - 1.0f),
                         IM_COL32(255, 255, 255, 40));
         }
@@ -6939,8 +6941,13 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
             scnPanelDrawButtons(dl, at, w, btn, withClose,
                                 s_iconScnPanelGear[activeIconSlot()], b,
                                 s_scnText.settingsOpen);
+        }
 
-            /* The resize grip: three diagonals stepping out of the corner. */
+        /* The resize grip: three diagonals stepping out of the corner,
+           only while the pointer is on the window or a resize is on
+           (scnTextGripShown). The grip's button above is submitted every
+           frame all the same, so it takes the mouse when it is not drawn. */
+        if (scnTextGripShown(onRect, resizeActive)) {
             const ImU32 resizeCol = (resizeHot || resizeActive)
                                         ? IM_COL32(255, 255, 255, 200)
                                         : IM_COL32(255, 255, 255, 110);
