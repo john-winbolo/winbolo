@@ -1419,6 +1419,8 @@ static const LangEntry langTable[] = {
     {3042, "Whether a shell that hits a tank sets off a mine on the square it bursts on. Off is the default: the hit leaves the mines on that square alone. On, as in WinBolo 2.1, the hit sets off a mine there, so a shot at a tank can set off the mines it has just laid under or behind it. A shell that hits a pillbox, a base or the ground, or that runs out, sets off a mine either way."},
 
     {3150, "Recording mode: shows the GIF controls"},
+    {3151, "-size wants a width and a height in pixels, such as -size 1920x1080. The window has opened at its usual size."},
+    {3152, "The window could not be made {string1} pixels, as -size asked. It is {string2} pixels: the display may be too small to hold it."},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},
