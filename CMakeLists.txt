@@ -4531,6 +4531,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_autolock_on_game_start.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
+    tests/unit/test_treegrow_build_target.c
     tests/unit/test_pill_repair_load.c
     tests/unit/test_entity_lifecycle.c
     tests/unit/test_entity_event.c
@@ -6064,6 +6065,8 @@ set(_unit_test_names
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
+    treegrow_skips_square_man_is_building_on
+    treegrow_still_grows_when_man_not_building_there
     pill_repair_tops_up_from_arrival_armour
     pill_repair_short_load_spends_what_it_has
     pill_repair_full_load_covers_a_dead_pill

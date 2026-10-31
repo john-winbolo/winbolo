@@ -43,6 +43,32 @@
 #include "rubble.h"
 #include "treegrow.h"
 #include "game_sim.h"
+#include "lgm.h"
+
+
+/*********************************************************
+*NAME:          treeGrowManIsBuildingAt
+*PURPOSE:
+* Is any man on his way to build on this square? A tree
+* that grew there would sit under a road, building or
+* pillbox he puts down anyway, so the grow is skipped
+* instead. Nobody can tell it was ever going to happen.
+*
+*ARGUMENTS:
+*  sim - Pointer to the game simulation
+*  mx - Map X Position
+*  my - Map Y Position
+*********************************************************/
+static bool treeGrowManIsBuildingAt(GameSim *sim, BYTE mx, BYTE my) {
+  int i;
+
+  for (i=0; i<MAX_TANKS; i++) {
+    if (lgmIsGoingToBuildAt(&sim->lgmen[i], mx, my) == TRUE) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
 
 
 /*********************************************************
@@ -231,7 +257,7 @@ void treeGrowCheckGrowTree(GameSim *sim) {
     sim->treeGrowScore = sim->rules.tree_grow_initial_score;
     sim->treeGrowTime = sim->rules.tree_grow_initial_ticks;
     pos = mapGetPos(mp, sim->treeGrowX, sim->treeGrowY);
-    if (pos != RIVER && pos != BUILDING && pos != HALFBUILDING && pos != DEEP_SEA && pos != BOAT && pillsExistPos(pb, sim->treeGrowX, sim->treeGrowY) == FALSE && basesExistPos(bs, sim->treeGrowX, sim->treeGrowY) == FALSE) {
+    if (pos != RIVER && pos != BUILDING && pos != HALFBUILDING && pos != DEEP_SEA && pos != BOAT && pillsExistPos(pb, sim->treeGrowX, sim->treeGrowY) == FALSE && basesExistPos(bs, sim->treeGrowX, sim->treeGrowY) == FALSE && treeGrowManIsBuildingAt(sim, sim->treeGrowX, sim->treeGrowY) == FALSE) {
       newPos = FOREST;
       if (pos >= MINE_START && pos <= MINE_END) {
         newPos = MINE_FOREST;
