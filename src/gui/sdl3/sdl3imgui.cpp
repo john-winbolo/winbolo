@@ -5467,29 +5467,20 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     if (wantX < 0.0f) wantX = 0.0f;
     if (wantY < btn) wantY = btn;
 
-    /* A panel at its default place at the left of the view is one the
-       Scenario Text window may open beside. The panel keeps the place it is
-       drawn at from its first frame on (see keepX below), so v.x and v.y
-       are set even when the player never moved it. The test is therefore
-       whether this frame's place is the default place, kept inside the
-       display as wantX and wantY are (scnPanelAtDefault). */
-    {
-        float atDefX = defX, atDefY = defY;
-        if (atDefX > display.x - side) atDefX = display.x - side;
-        if (atDefY > display.y - side) atDefY = display.y - side;
-        if (atDefX < 0.0f) atDefX = 0.0f;
-        if (atDefY < btn) atDefY = btn;
-        if (atLeft && scnPanelAtDefault(wantX, wantY, atDefX, atDefY)) {
-            const float right = wantX + side;
-            if (!s_scnPanelBeside.have || wantY < s_scnPanelBeside.top) {
-                s_scnPanelBeside.top    = wantY;
-                s_scnPanelBeside.bottom = wantY + side;
-            }
-            s_scnPanelBeside.right = s_scnPanelBeside.have
-                                         ? ImMax(s_scnPanelBeside.right, right)
-                                         : right;
-            s_scnPanelBeside.have = true;
+    /* A panel the player has never moved (no x and no y kept) is at its
+       default place, which it follows from frame to frame (see everMoved
+       below). When that place is at the left of the view, the Scenario
+       Text window may open beside it. */
+    if (atLeft && v.x < 0 && v.y < 0) {
+        const float right = wantX + side;
+        if (!s_scnPanelBeside.have || wantY < s_scnPanelBeside.top) {
+            s_scnPanelBeside.top    = wantY;
+            s_scnPanelBeside.bottom = wantY + side;
         }
+        s_scnPanelBeside.right = s_scnPanelBeside.have
+                                     ? ImMax(s_scnPanelBeside.right, right)
+                                     : right;
+        s_scnPanelBeside.have = true;
     }
 
     if (!v.placed) {
@@ -5550,10 +5541,14 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
         if (moveHot || moveActive) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         }
+        /* movedNow: the bar drag moved the panel this frame. A press on the
+           bar with no movement does not count as a move. */
+        bool movedNow = false;
         if (moveActive) {
             const ImVec2 drag = ImGui::GetIO().MouseDelta;
             if (drag.x != 0.0f || drag.y != 0.0f) {
                 ImGui::SetWindowPos(ImVec2(pos.x + drag.x, pos.y + drag.y));
+                movedNow = true;
             }
         }
 
@@ -5609,11 +5604,18 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
                                     resizeActive || v.settingsOpen ||
                                     s_scnCloseAskOwner == owner;
 
-        /* Kept inside the main window, and saved through the debounced
-           window-settings path when it moves. keepX/keepY are the square's
+        /* Kept inside the main window. keepX/keepY are the square's
            top-left corner: the window's less the bar. The bar is kept on
            screen as well, so the square's top is never less than btn from
-           the main window's top. */
+           the main window's top.
+           The place is saved, through the debounced window-settings path,
+           only once the player has moved the panel with its bar. After that
+           it is saved again when it changes, also when it is pushed inside a
+           smaller main window. A panel never moved keeps no place: it is put
+           at its default place again each frame, so it follows the game
+           view when the main window or the zoom changes. A resize alone
+           does not fix the place: the resize keeps the top-left corner, and
+           that corner is the default place. */
         const ImVec2 moved = ImGui::GetWindowPos();
         float keepX = moved.x, keepY = moved.y + btn;
         if (keepX > display.x - side) keepX = display.x - side;
@@ -5625,10 +5627,15 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
         }
         v.atX = keepX;
         v.atY = keepY;
-        if ((int)keepX != v.x || (int)keepY != v.y) {
+        const bool everMoved = v.x >= 0 || v.y >= 0;
+        if ((movedNow || everMoved) &&
+            ((int)keepX != v.x || (int)keepY != v.y)) {
             v.x = (int)keepX;
             v.y = (int)keepY;
             scnPanelPersistLayout(v);
+        }
+        if (!everMoved && !movedNow && !moveActive && !resizeActive) {
+            v.placed = false;
         }
 
         /* While the bar is hidden, the strip above the square is a hole in
