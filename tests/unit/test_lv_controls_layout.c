@@ -164,9 +164,9 @@ int run_lv_controls_top_row(void) {
     o = lvControlsTopLayout(&in);
     UT_ASSERT_MSG(o.btnW == 38.0f && o.btnLine[4] == 0, "five wide buttons on a line");
 
-    /* Every width, four and five buttons: all inside, none over another,
+    /* Every width, three to five buttons: all inside, none over another,
        every line in the middle. */
-    for (n = 4; n <= 5; n++) {
+    for (n = 3; n <= 5; n++) {
         for (w = 20; w <= 900; w++) {
             in = cl_in((float)w, n);
             o = lvControlsTopLayout(&in);

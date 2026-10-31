@@ -802,6 +802,15 @@ int run_clip_gif_current_game(void) {
     /* FNV-1a 64 of "a", the published test value. */
     clipGifGameIdFromBytes("a", 1, b, sizeof(b));
     EXPECT_STR("fnv-1a of a", b, "af63dc4c8601ec8c");
+    {
+        /* A piece at a time gives the id of the whole. */
+        uint64_t h = clipGifGameIdBegin();
+        h = clipGifGameIdAdd(h, bytes1, 5);
+        h = clipGifGameIdAdd(h, bytes1 + 5, 0);
+        h = clipGifGameIdAdd(h, bytes1 + 5, sizeof(bytes1) - 5);
+        clipGifGameIdEnd(h, b, sizeof(b));
+        EXPECT_STR("in pieces, the same id", b, a);
+    }
     clipGifGameIdFromBytes(NULL, 10, b, sizeof(b));
     EXPECT_STR("null bytes", b, "");
     clipGifGameIdFromBytes(bytes1, 0, b, sizeof(b));

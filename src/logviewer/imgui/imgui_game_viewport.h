@@ -41,6 +41,11 @@ void lv_imgui_game_viewport_hover(void);
  * mouse over (imgui_clip_gif.h). */
 bool lv_imgui_game_viewport_mouse_held(void);
 
+/* The lines drawn on the overview's map with Shift and the left button,
+ * each fading out a moment after the button comes up (lv_marks.h). Call it
+ * in the ImGui frame, before the frame is drawn. */
+void lv_imgui_game_viewport_draw_marks(void);
+
 #ifdef __cplusplus
 }
 #endif

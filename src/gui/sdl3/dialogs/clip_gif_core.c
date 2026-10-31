@@ -635,6 +635,30 @@ int clipGifSelectAfterRemove(int count, int removed) {
 
 /* ── Games ─────────────────────────────────────────────────────────── */
 
+/* 64-bit FNV-1a. */
+uint64_t clipGifGameIdBegin(void) {
+    return 14695981039346656037ull;
+}
+
+uint64_t clipGifGameIdAdd(uint64_t h, const void *data, size_t len) {
+    const unsigned char *p = (const unsigned char *)data;
+    if (p == NULL) {
+        return h;
+    }
+    for (size_t i = 0; i < len; i++) {
+        h ^= (uint64_t)p[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+void clipGifGameIdEnd(uint64_t h, char *out, size_t outLen) {
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    SDL_snprintf(out, outLen, "%016llx", (unsigned long long)h);
+}
+
 void clipGifGameIdFromBytes(const void *data, size_t len, char *out,
                             size_t outLen) {
     if (out == NULL || outLen == 0) {
@@ -644,14 +668,8 @@ void clipGifGameIdFromBytes(const void *data, size_t len, char *out,
     if (data == NULL || len == 0) {
         return;
     }
-    /* 64-bit FNV-1a. */
-    const unsigned char *p = (const unsigned char *)data;
-    uint64_t h = 14695981039346656037ull;
-    for (size_t i = 0; i < len; i++) {
-        h ^= (uint64_t)p[i];
-        h *= 1099511628211ull;
-    }
-    SDL_snprintf(out, outLen, "%016llx", (unsigned long long)h);
+    clipGifGameIdEnd(clipGifGameIdAdd(clipGifGameIdBegin(), data, len), out,
+                     outLen);
 }
 
 bool clipGifMetaIsCurrentGame(const ClipGifMeta *m, const char *currentGame) {
