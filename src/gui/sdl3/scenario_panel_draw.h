@@ -411,8 +411,9 @@ static inline bool scnTextWindowShown(bool shown, bool recent,
  *NAME:          scnFloatPointerOnHandle
  *PURPOSE:
  *  Whether a point is on a window frame's move bar or on
- *  its resize grip: the two places where a click-through
- *  window (the Scenario Text window) takes the mouse. The
+ *  its resize grip: the two places where a window with
+ *  the scenario window frame (a scenario panel, the
+ *  Scenario Text window) takes a click. The
  *  bar is the strip directly above the content, as wide as
  *  the content and barH high, so its bottom edge is the
  *  content's top edge and it covers none of the content.
@@ -446,23 +447,48 @@ static inline bool scnFloatPointerOnHandle(float x, float y, float w, float h,
 /*********************************************************
  *NAME:          scnFloatTakesInput
  *PURPOSE:
- *  Whether a window frame's ImGui window takes the mouse
- *  this frame. A window that is not click-through (a
- *  scenario panel) always does. A click-through window
- *  (the Scenario Text window) takes it only while the
- *  pointer is on its bar or its grip, or while the player
- *  is busy with it (a move or resize drag, its settings,
- *  its close confirm). The rest of the time a click or the
- *  wheel on its content goes through to the game view.
+ *  Whether the ImGui window of a scenario window frame (a
+ *  scenario panel, the Scenario Text window) takes the
+ *  mouse this frame: only while the pointer is on its bar
+ *  (which holds the gear and the X) or on its grip, or
+ *  while a move or resize drag that began there is on. The
+ *  rest of the time a click or the wheel on its content
+ *  goes through to the game view. Its settings window and
+ *  its close confirm are windows of their own, and take
+ *  the mouse while they are open.
  *
  *ARGUMENTS:
- *  clickThrough - the window's clickThrough param
- *  onHandle     - the pointer is on the bar or the grip
- *  busy         - a drag, the settings or the confirm
+ *  onHandle - the pointer is on the bar or the grip
+ *  dragging - a move or resize drag is on
  *********************************************************/
-static inline bool scnFloatTakesInput(bool clickThrough, bool onHandle,
-                                      bool busy) {
-    return !clickThrough || onHandle || busy;
+static inline bool scnFloatTakesInput(bool onHandle, bool dragging) {
+    return onHandle || dragging;
+}
+
+/*********************************************************
+ *NAME:          scnFloatPointerToGame
+ *PURPOSE:
+ *  Whether a mouse motion or wheel event goes on to the
+ *  game while ImGui wants the mouse, so the game's screen
+ *  cursor keeps following the pointer over a scenario
+ *  window frame's bar and grip, as it does over the rest
+ *  of the window. It goes on when the item ImGui is
+ *  dragging is in a frame window (the bar or the grip), or
+ *  when the pointer is over a frame window and ImGui is
+ *  dragging nothing. A press and a release never go on:
+ *  the bar and the grip keep their clicks. Any other
+ *  ImGui window keeps the mouse as before.
+ *
+ *ARGUMENTS:
+ *  hoverIsFrame  - the window under the pointer is a
+ *                  scenario window frame's
+ *  anyActive     - ImGui has an active item
+ *  activeIsFrame - that item is in a frame window
+ *********************************************************/
+static inline bool scnFloatPointerToGame(bool hoverIsFrame, bool anyActive,
+                                         bool activeIsFrame) {
+    if (anyActive) return activeIsFrame;
+    return hoverIsFrame;
 }
 
 /*********************************************************

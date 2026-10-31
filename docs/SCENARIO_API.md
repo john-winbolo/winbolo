@@ -2349,8 +2349,8 @@ that closes it, a grip in its bottom-right corner to resize it, and a faint
 edge round the text. Unlike the panel, it is a rectangle and it can take any
 shape, and at 0% background opacity its edge and grip show only while the
 pointer is on the window or a drag is on. Above 0% they show as the panel's
-do. It takes the mouse only on its bar and its grip: a click or the wheel on
-its text goes through to the game view under it. The window is hidden until a scenario shows a
+do. Like the panel, it takes a click only on its bar and its grip: a click
+or the wheel on its text goes through to the game view under it. The window is hidden until a scenario shows a
 status line or an announcement. Turning it on in **Brains > Info Overlay >
 Scenario Text** does not show it by itself, and the pointer over its place
 does not show it. It shows while it has a line to draw, and for

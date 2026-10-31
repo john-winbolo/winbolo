@@ -4466,6 +4466,17 @@ static void scnFloatStop(ScnFloatWin &s) {
     s.settingsOpen = false;
 }
 
+/* The ImGui window of each window frame (by s_scnViews index, the Scenario
+   Text window's at SCN_TEXT_OWNER) and the main context's frame it was last
+   submitted in, so the event loop can tell a frame window under the pointer
+   from any other ImGui window (scnFloatOwnsPointer). */
+struct ScnFloatSeen {
+    ImGuiID id;
+    int     frame;
+};
+static ScnFloatSeen s_scnFloatSeen[SCN_POP_OWNERS];
+static bool scnFloatOwnsPointer(void);
+
 struct ScnPanelView {
     /* Filled for the script now at this position. Cleared when the script
        has no panel list, or leaves the round. */
@@ -5362,8 +5373,6 @@ struct ScnFloatFrame {
     bool   snapped;         /* a resize sits on a snap size: brighter edge */
     int    bgPct;           /* the background opacity, 0 to 100 */
     bool   hideFrameAtZeroOpacity;  /* see scnFloatFrameShown */
-    bool   clickThrough;    /* a click or the wheel on the content goes to
-                               the game view (scnFloatTakesInput) */
 
     /* Out. */
     bool   open;            /* Begin returned true: draw the content */
@@ -5431,12 +5440,10 @@ static bool scnFloatBegin(ScnFloatWin &s, ScnFloatFrame &f) {
     }
     ImGui::SetNextWindowSize(ImVec2(f.w, f.h + btn), ImGuiCond_Always);
 
-    /* Who has the mouse, and the hover test. A window that is not
-       click-through always takes the mouse, and ImGui's own hover test
-       (IsWindowHovered, after Begin) is used.
-       A click-through window is NoInputs except while the pointer is on its
-       bar or its grip, or while the player is busy with it
-       (scnFloatTakesInput). While it is NoInputs it is never ImGui's
+    /* Who has the mouse, and the hover test. The window is NoInputs except
+       while the pointer is on its bar or its grip, or while a drag that
+       began there is on (scnFloatTakesInput). While it is NoInputs it is
+       never ImGui's
        hovered window, io.WantCaptureMouse stays false over it, and
        sdl3ImguiMouseOverWindow skips it, so a click or the wheel on the
        content goes through to the game view. IsWindowHovered is never true
@@ -5452,12 +5459,16 @@ static bool scnFloatBegin(ScnFloatWin &s, ScnFloatFrame &f) {
        last Begin, so the window takes input from the frame after the
        pointer first comes onto the bar or the grip. A press on the bar then
        makes the bar the active item, and the drag holds the input until
-       the button is let go. */
+       the button is let go.
+       The game's screen cursor follows the pointer over the whole window,
+       the bar and the grip too: while the window takes the mouse, the
+       event loop still hands motion and wheel events on to the game
+       (scnFloatOwnsPointer). */
     const Uint64 now  = SDL_GetTicks();
     const bool   busy = s.moving || s.resizing || s.settingsOpen ||
                         s_scnCloseAskOwner == f.owner;
     bool onRect = false;
-    if (f.clickThrough) {
+    {
         ImGuiContext &g     = *GImGui;
         ImGuiWindow  *self  = ImGui::FindWindowByName(f.winId);
         ImGuiWindow  *other = g.HoveredWindow ? g.HoveredWindow->RootWindow
@@ -5474,7 +5485,7 @@ static bool scnFloatBegin(ScnFloatWin &s, ScnFloatFrame &f) {
         const bool onHandle =
             onRect && scnFloatPointerOnHandle(s.atX, s.atY, f.w, f.h, barH,
                                               f.handle, mouse.x, mouse.y);
-        f.takesInput = scnFloatTakesInput(true, onHandle, busy);
+        f.takesInput = scnFloatTakesInput(onHandle, s.moving || s.resizing);
     }
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -5493,6 +5504,11 @@ static bool scnFloatBegin(ScnFloatWin &s, ScnFloatFrame &f) {
                           ImGuiWindowFlags_NoNav |
                           (f.takesInput ? 0 : ImGuiWindowFlags_NoInputs));
     scnKeepBehindModal();
+    /* Marked as a frame window for the event loop (scnFloatOwnsPointer). */
+    if (GImGui == s_mainImguiCtx && f.owner >= 0 && f.owner < SCN_POP_OWNERS) {
+        s_scnFloatSeen[f.owner].id    = ImGui::GetCurrentWindow()->ID;
+        s_scnFloatSeen[f.owner].frame = ImGui::GetFrameCount();
+    }
     if (!f.open) return false;
 
     const ImVec2 pos = ImGui::GetWindowPos();
@@ -5564,10 +5580,7 @@ static bool scnFloatBegin(ScnFloatWin &s, ScnFloatFrame &f) {
        of them is being dragged, and while the settings window or the close
        confirm is up. The strip above the content counts as the window only
        while the bar is up: see the hit test hole below. */
-    f.hovered = f.clickThrough
-                    ? onRect
-                    : ImGui::IsWindowHovered(
-                          ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    f.hovered = onRect;
     if (f.hovered) s.chromeUntil = now + SCN_PANEL_CHROME_LINGER_MS;
     f.handlesVisible = now < s.chromeUntil || f.moveActive ||
                        f.resizeActive || s.settingsOpen ||
@@ -5596,8 +5609,8 @@ static bool scnFloatBegin(ScnFloatWin &s, ScnFloatFrame &f) {
        and a click or a tap there goes to the game, as it would with no
        window. ImGui finds the hovered window in NewFrame, from the hole the
        last frame left, and sdl3ImguiMouseOverWindow honours the same hole.
-       The content itself is never in the hole, so it takes the mouse. Begin
-       clears the hole each frame. */
+       It matters only while the window takes the mouse (the pointer on the
+       grip with the bar hidden). Begin clears the hole each frame. */
     if (!f.handlesVisible) {
         ImGui::SetWindowHitTestHole(ImGui::GetCurrentWindow(),
                                     ImGui::GetWindowPos(), ImVec2(f.w, btn));
@@ -5844,7 +5857,6 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     f.snapped = snapped;
     f.bgPct   = v.bgPct;
     f.hideFrameAtZeroOpacity = false;
-    f.clickThrough           = false;
     if (scnFloatBegin(v.win, f)) {
         /* A resize saves the size as a percent of the size the zoom alone
            gives. */
@@ -6150,11 +6162,12 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * bottom-right corner. Unlike the panel it is a rectangle,
  * the grip changes its width and its height separately, at
  * 0% background opacity its edge and grip show only while
- * the pointer is on it (scnFloatFrameShown), and it is
- * click-through: it takes the mouse only on its bar and its
- * grip, or while it is being dragged or its settings or
- * close confirm are up (scnFloatTakesInput). A click or the
- * wheel on the text goes through to the game view under it.
+ * the pointer is on it (scnFloatFrameShown). Like the panel,
+ * it takes a click only on its bar and its grip
+ * (scnFloatTakesInput): a click or the wheel on the text
+ * goes through to the game view under it, and the game's
+ * screen cursor follows the pointer over the whole window
+ * (scnFloatOwnsPointer).
  *
  * The X turns off Brains > Info Overlay > Scenario Text,
  * and that menu item turns it back on. Its place, size,
@@ -6806,8 +6819,8 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
        params: the text area is a rectangle of any shape with no snap
        sizes, at 0% background opacity the edge and the grip show only
        while the pointer is on the window or a drag is on
-       (hideFrameAtZeroOpacity), and a click or the wheel on the text goes
-       through to the game view (clickThrough). */
+       (hideFrameAtZeroOpacity). As on the panel, a click or the wheel on
+       the text goes through to the game view. */
     ScnFloatFrame f = {};
     f.winId   = "##scenariotext";
     f.owner   = SCN_TEXT_OWNER;
@@ -6823,7 +6836,6 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     f.snapped = false;
     f.bgPct   = s_scnText.bgPct;
     f.hideFrameAtZeroOpacity = true;
-    f.clickThrough           = true;
     if (scnFloatBegin(s_scnText.win, f)) {
         /* A resize saves the size in pixels. */
         if (f.resizeDone) {
@@ -9711,7 +9723,15 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                                  ev.type == SDL_EVENT_MOUSE_WHEEL);
             bool isKeyEvent   = (ev.type == SDL_EVENT_KEY_DOWN           ||
                                  ev.type == SDL_EVENT_KEY_UP);
-            if ((isMouseEvent && io.WantCaptureMouse) ||
+            /* Motion and the wheel over a scenario window frame's bar or
+               grip, or during its drag, still go on to the game, so its
+               screen cursor follows the pointer there as it does over the
+               rest of the window. The press and the release stay with the
+               bar and the grip (scnFloatOwnsPointer). */
+            bool toGame = (ev.type == SDL_EVENT_MOUSE_MOTION ||
+                           ev.type == SDL_EVENT_MOUSE_WHEEL) &&
+                          scnFloatOwnsPointer();
+            if ((isMouseEvent && io.WantCaptureMouse && !toGame) ||
                 (isKeyEvent && io.WantCaptureKeyboard)) {
                 continue;
             }
@@ -9969,6 +9989,37 @@ void sdl3ImguiForwardEvent(const void *event) {
 
 bool sdl3ImguiWantCaptureMouse(void) {
     return ImGui::GetIO().WantCaptureMouse;
+}
+
+/* Whether ImGui wants the mouse only because of a scenario window frame's
+   bar or grip (scnFloatPointerToGame): the window under the pointer is a
+   frame window and ImGui is dragging nothing, or the item ImGui is dragging
+   is in one. Between frames, so HoveredWindow and ActiveId are from the
+   frame on screen. In the main context only: a pop-out has its own
+   context, and its windows are not frame windows. */
+static bool scnFloatOwnsPointer(void) {
+    ImGuiContext *g = s_mainImguiCtx;
+    if (g == nullptr) return false;
+    auto isFrame = [g](const ImGuiWindow *w) {
+        if (w == nullptr) return false;
+        const ImGuiID id = w->RootWindow ? w->RootWindow->ID : w->ID;
+        for (int i = 0; i < SCN_POP_OWNERS; i++) {
+            if (s_scnFloatSeen[i].id == id &&
+                s_scnFloatSeen[i].frame >= g->FrameCount - 1) {
+                return true;
+            }
+        }
+        return false;
+    };
+    return scnFloatPointerToGame(isFrame(g->HoveredWindow), g->ActiveId != 0,
+                                 isFrame(g->ActiveIdWindow));
+}
+
+/* Whether a wheel event belongs to ImGui and not to the game: the wheel
+   over a scenario window frame's bar or grip goes to the game. Used by the
+   web build's own wheel bridge (wbWasmWheel). */
+bool sdl3ImguiWheelCapturedByUi(void) {
+    return ImGui::GetIO().WantCaptureMouse && !scnFloatOwnsPointer();
 }
 
 /* Whether the pointer, where it is now, is over an ImGui window on screen.

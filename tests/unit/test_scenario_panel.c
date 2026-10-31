@@ -1032,17 +1032,26 @@ int run_scenario_float_frame_shown(void) {
     UT_ASSERT(scnFloatFrameShown(true, 0, false, false, true));
     UT_ASSERT(scnFloatFrameShown(true, 0, true, true, true));
 
-    /* Who takes the mouse: the panel always; the click-through text window
-       only on its bar or grip, or while the player is busy with it. */
-    UT_ASSERT(scnFloatTakesInput(false, false, false));
-    UT_ASSERT(scnFloatTakesInput(false, true, true));
-    UT_ASSERT(!scnFloatTakesInput(true, false, false));
-    UT_ASSERT(scnFloatTakesInput(true, true, false));
-    UT_ASSERT(scnFloatTakesInput(true, false, true));
+    /* Who takes the mouse: a frame window only on its bar or grip, or
+       while a drag that began there is on. */
+    UT_ASSERT(!scnFloatTakesInput(false, false));
+    UT_ASSERT(scnFloatTakesInput(true, false));
+    UT_ASSERT(scnFloatTakesInput(false, true));
+    UT_ASSERT(scnFloatTakesInput(true, true));
+
+    /* Motion and the wheel go on to the game over a frame window with
+       nothing dragged, and during a drag of its bar or grip. Over any other
+       window, or while another window's item is dragged, they do not. */
+    UT_ASSERT(scnFloatPointerToGame(true, false, false));
+    UT_ASSERT(scnFloatPointerToGame(true, true, true));
+    UT_ASSERT(scnFloatPointerToGame(false, true, true));
+    UT_ASSERT(!scnFloatPointerToGame(false, false, false));
+    UT_ASSERT(!scnFloatPointerToGame(true, true, false));
+    UT_ASSERT(!scnFloatPointerToGame(false, true, false));
     return 0;
 }
 
-/* A click-through window takes the mouse only on its bar and its grip, so
+/* A frame window takes a click only on its bar and its grip, so
  * a click or the wheel on its content goes to the game. The bar sits
  * directly above the content and covers none of it. Content at 100,70,
  * 300 x 120, with a 20 high bar and a 14 square grip: the bar is

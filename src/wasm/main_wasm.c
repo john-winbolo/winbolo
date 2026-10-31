@@ -191,16 +191,17 @@ void sdl3MessageHandler(const char *message, const char *title) {
  * positive-up, so flip the sign to a unit step. */
 extern void inputBumpGunsight(int direction);       /* gui/sdl3/input.h */
 extern uint8_t inputConsumeGunsightAdj(void);       /* gui/sdl3/input.h */
-extern bool sdl3ImguiWantCaptureMouse(void);        /* sdl3imgui.cpp */
+extern bool sdl3ImguiWheelCapturedByUi(void);       /* sdl3imgui.cpp */
 
 EMSCRIPTEN_KEEPALIVE
 void wbWasmWheel(double deltaY) {
   if (deltaY == 0.0) return;
   /* Only adjust the gunsight in a running game, and not while the wheel is over
-   * an ImGui panel/dialog (mirrors the shared desktop handler's gating). Browser
+   * an ImGui panel/dialog (mirrors the shared desktop handler's gating). The
+   * wheel over a scenario window's bar or grip still reaches the game. Browser
    * deltaY is negative when scrolling up; the gunsight increases on scroll-up. */
   if (!humanSim || clientSimGetNetStatus(humanSim) != netRunning) return;
-  if (sdl3ImguiWantCaptureMouse()) return;
+  if (sdl3ImguiWheelCapturedByUi()) return;
   inputBumpGunsight(deltaY < 0.0 ? +1 : -1);
 }
 
