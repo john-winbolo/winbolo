@@ -46,14 +46,14 @@
 #include "clip_gif_gallery.h"    /* CLIP_GIF_GALLERY_BUILT, clipGifGalleryButton */
 #include "imgui_dialog_utils.h"  /* imguiHelpTooltip */
 #include "../../lang.h"          /* langGetText, STR_CLIPGIF_* */
+#include "../../../logviewer/imgui/imgui_lv_icons.h" /* lv_icon_draw: the
+                                  * play triangle of the play buttons */
 
 /* The drawn glyphs of the toggle buttons. */
 enum ClipGifGlyph {
     CLIP_GIF_GLYPH_CAMERA = 0,  /* a movie camera: recording mode */
-    CLIP_GIF_GLYPH_EYE,         /* an eye: preview (not a triangle, which
-                                 * is the replay's own play button) */
-    CLIP_GIF_GLYPH_STOP,        /* a filled square: stop the preview */
-    CLIP_GIF_GLYPH_CLOSE        /* a cross: leave recording mode */
+    CLIP_GIF_GLYPH_PLAY,        /* the play triangle: preview */
+    CLIP_GIF_GLYPH_STOP         /* a filled square: stop the preview */
 };
 
 /* The smallest crop frame, in drawn pixels, and how far from an edge a press
@@ -83,24 +83,11 @@ static inline void clipGifDrawGlyph(ImDrawList *dl, int glyph, ImVec2 a,
                           ImVec2(a.x + w, midY - w * 0.24f),
                           ImVec2(a.x + w, midY + w * 0.24f),
                           ImVec2(bodyR, midY + w * 0.08f), col);
-    } else if (glyph == CLIP_GIF_GLYPH_EYE) {
-        /* Two lids that meet at the corners, and the pupil between them. */
-        const float midY = a.y + w * 0.50f;
-        const ImVec2 l(a.x, midY);
-        const ImVec2 r(a.x + w, midY);
-        dl->AddBezierQuadratic(l, ImVec2(a.x + w * 0.50f, midY - w * 0.62f),
-                               r, col, 1.5f);
-        dl->AddBezierQuadratic(l, ImVec2(a.x + w * 0.50f, midY + w * 0.62f),
-                               r, col, 1.5f);
-        dl->AddCircleFilled(ImVec2(a.x + w * 0.50f, midY), w * 0.17f, col);
-    } else if (glyph == CLIP_GIF_GLYPH_CLOSE) {
-        /* Two strokes corner to corner. */
-        const float i = w * 0.18f;
-        const float t = w * 0.14f > 1.5f ? w * 0.14f : 1.5f;
-        dl->AddLine(ImVec2(a.x + i, a.y + i), ImVec2(a.x + w - i, a.y + w - i),
-                    col, t);
-        dl->AddLine(ImVec2(a.x + w - i, a.y + i), ImVec2(a.x + i, a.y + w - i),
-                    col, t);
+    } else if (glyph == CLIP_GIF_GLYPH_PLAY) {
+        /* The same triangle as the Log Viewer's play and pause button. */
+        const float i = floorf(w * 0.12f);
+        lv_icon_draw(dl, LV_ICON_PLAY, ImVec2(a.x + i, a.y + i),
+                     ImVec2(a.x + w - i, a.y + w - i), col);
     } else {
         /* CLIP_GIF_GLYPH_STOP: a filled square. */
         dl->AddRectFilled(ImVec2(a.x + w * 0.16f, a.y + w * 0.16f),
@@ -213,8 +200,9 @@ static inline float clipGifButtonWidth(bool havePicture) {
            ImGui::GetStyle().FramePadding.x * 2.0f;
 }
 
-/* The Preview clip button: an eye glyph, or a stop glyph that stays pressed
- * while the preview plays (previewing). compact is as for clipGifButton.
+/* The Preview clip button: the play triangle, or a stop glyph that stays
+ * pressed while the preview plays (previewing); a press of it then stops
+ * the preview. compact is as for clipGifButton.
  * Returns true when pressed. */
 static inline bool clipGifPreviewButton(const char *id, bool previewing,
                                         bool compact) {
@@ -223,7 +211,7 @@ static inline bool clipGifPreviewButton(const char *id, bool previewing,
                             ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
     }
     bool clicked = clipGifToggleButton(
-        id, previewing, previewing ? CLIP_GIF_GLYPH_STOP : CLIP_GIF_GLYPH_EYE,
+        id, previewing, previewing ? CLIP_GIF_GLYPH_STOP : CLIP_GIF_GLYPH_PLAY,
         langGetText(previewing ? STR_CLIPGIF_PREVIEW_STOP
                                : STR_CLIPGIF_PREVIEW));
     if (compact) {
@@ -345,9 +333,9 @@ static inline void clipGifSpanHandle(const ImRect &hit, ImGuiID hid,
     }
 }
 
-/* The grip in the middle of the span: an item of its own on the box hit,
- * as clipGifSpanHandle is, with the move cursor. A drag of it moves the
- * whole span (clipGifSpanMoveTo). */
+/* The grip in the middle of the span: an item of its own on its small box
+ * (clipGifGripBox), as clipGifSpanHandle is, with the move cursor. A drag
+ * of it moves the whole span (clipGifSpanMoveTo). */
 static inline void clipGifSpanGrip(const ImRect &hit, ImGuiID gid,
                                    bool *hovered, bool *held) {
     *hovered = false;
@@ -364,8 +352,8 @@ static inline void clipGifSpanGrip(const ImRect &hit, ImGuiID gid,
     }
 }
 
-/* The grip's look: three short upright lines in the middle of the span at
- * x, drawn only where the span has room for them between its handles. */
+/* The grip's look: three short upright lines round x, the middle of the
+ * span, drawn only where its box fits between the handles. */
 #define CLIP_GIF_GRIP_GAP_PX 3.0f
 static inline void clipGifDrawSpanGrip(ImDrawList *dl, float x, float top,
                                        float bot, bool hot, float alpha) {
@@ -405,8 +393,10 @@ static inline void clipGifDrawSpanHandle(ImDrawList *dl, float x, float top,
  * the end of the timeline it makes the timeline grow on that side
  * (clipGifZoomGrow). The grip in the middle of the span moves the whole
  * span, of the same length (clipGifSpanMoveTo), and the playhead with it;
- * it also grows the timeline when held at an end. The handles come first
- * where the span is narrow: the grip is the part of the span between them.
+ * it also grows the timeline when held at an end. Only the grip's small box
+ * does this; a press on the rest of the span moves the playhead, as it does
+ * outside the span. The handles come first where the span is narrow, and
+ * with no room for the grip's box there is no grip.
  * While no handle is held the timeline fits the span
  * (clipGifSpanRefit), which also puts the span at the playhead the first
  * time after recording mode turns on. A press or a drag anywhere else gives
@@ -475,6 +465,7 @@ static inline ClipGifZoomPressed clipGifZoomBar(const char *id, float width,
     float xe = clipGifRangeX(span.endMs, mode->zoom, x0, x1);
     bool sHot = false, sHeld = false, eHot = false, eHeld = false;
     bool gHot = false, gHeld = false, gRoom = false;
+    float gMid = 0.0f;
     if (!spanLocked) {
         /* The two boxes meet at the middle of the span and do not cross,
          * so a short span still has both. */
@@ -485,12 +476,13 @@ static inline ClipGifZoomPressed clipGifZoomBar(const char *id, float width,
                           ImVec2(xe + hitW * 0.5f, q.y));
         clipGifSpanHandle(sHit, startId, &sHot, &sHeld);
         clipGifSpanHandle(eHit, endId, &eHot, &eHeld);
-        /* The grip: the span between the two handles. */
-        if (eHit.Min.x - sHit.Max.x >= 1.0f) {
-            const ImRect gHit(ImVec2(sHit.Max.x, p.y),
-                              ImVec2(eHit.Min.x, q.y));
+        /* The grip: a small box round its lines, between the handles. */
+        float gx0 = 0.0f, gx1 = 0.0f;
+        if (clipGifGripBox(xs, xe, sHit.Max.x, eHit.Min.x, &gx0, &gx1,
+                           &gMid)) {
+            const ImRect gHit(ImVec2(gx0, p.y), ImVec2(gx1, q.y));
             clipGifSpanGrip(gHit, moveId, &gHot, &gHeld);
-            gRoom = gHit.GetWidth() >= CLIP_GIF_GRIP_GAP_PX * 2.0f + 6.0f;
+            gRoom = true;
         }
         if (gHeld && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             const float mx = io.MousePos.x;
@@ -519,6 +511,7 @@ static inline ClipGifZoomPressed clipGifZoomBar(const char *id, float width,
             span = clipGifSpanRange(mode, totalMs);
             xs = clipGifRangeX(span.startMs, mode->zoom, x0, x1);
             xe = clipGifRangeX(span.endMs, mode->zoom, x0, x1);
+            gMid = floorf((xs + xe) * 0.5f);
         } else if (mode->move.on) {
             /* Let go: the playhead lands where the span took it. */
             mode->move.on = false;
@@ -571,8 +564,7 @@ static inline ClipGifZoomPressed clipGifZoomBar(const char *id, float width,
                           ImGui::GetColorU32(ImGuiCol_Text, alpha));
     }
     if (gRoom) {
-        clipGifDrawSpanGrip(dl, floorf((xs + xe) * 0.5f), p.y, q.y,
-                            gHot || gHeld, alpha);
+        clipGifDrawSpanGrip(dl, gMid, p.y, q.y, gHot || gHeld, alpha);
     }
     clipGifDrawSpanHandle(dl, xs, p.y, q.y, sHot || sHeld, alpha);
     clipGifDrawSpanHandle(dl, xe, p.y, q.y, eHot || eHeld, alpha);
@@ -750,13 +742,20 @@ typedef struct ClipGifToolsPressed {
     bool gallery;  /* open the gallery (only where it is built) */
 } ClipGifToolsPressed;
 
+/* The width of the Cancel button at the right end of the GIF row: the
+ * word Cancel. */
+static inline float clipGifCancelButtonWidth(void) {
+    return ImGui::CalcTextSize(langGetText(STR_CANCEL)).x +
+           ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
 /* The width of the row clipGifToolsRow draws, for a screen that centres
  * it. */
 static inline float clipGifToolsRowWidth(bool havePicture) {
     const ImGuiStyle &sty = ImGui::GetStyle();
     const float lenW = ImGui::CalcTextSize("00.0").x + sty.FramePadding.x * 2.0f;
     float w = clipGifPreviewButtonWidth() + clipGifButtonWidth(havePicture) +
-              clipGifPreviewButtonWidth() + lenW + sty.ItemSpacing.x * 3.0f;
+              lenW + clipGifCancelButtonWidth() + sty.ItemSpacing.x * 3.0f;
 #if CLIP_GIF_GALLERY_BUILT
     const float square = ImGui::GetTextLineHeight() + sty.FramePadding.x * 2.0f;
     w += square + sty.ItemSpacing.x;
@@ -765,10 +764,11 @@ static inline float clipGifToolsRowWidth(bool havePicture) {
 }
 
 /* The row of GIF controls that recording mode shows, the same in the game's
- * replay and the Log Viewer: Preview clip, Save clip, Cancel, the length in
- * seconds, and the gallery button (where the gallery is built). The
- * first control goes where the cursor is; the caller puts a SameLine before
- * the call when the row goes on after other controls.
+ * replay and the Log Viewer: Preview clip, Save clip, the length in seconds,
+ * the gallery button (where the gallery is built), and Cancel at the right
+ * end of the window. The first control goes where the cursor is; the caller
+ * puts a SameLine before the call when the row goes on after other
+ * controls.
  *
  * mode is the screen's recording mode (the length is changed here, and
  * Cancel turns it off here: the GIF controls go, and no GIF is made), play
@@ -795,17 +795,6 @@ static inline ClipGifToolsPressed clipGifToolsRow(const char *id,
     r.save = clipGifButton("##save", picture, false);
     ImGui::EndDisabled();
 
-    /* Out of recording mode with no GIF: the same as the movie camera
-     * button, here by the Save clip button where it is easy to find. */
-    ImGui::SameLine();
-    ImGui::BeginDisabled(capturing);
-    r.cancel = clipGifToggleButton("##cancel", false, CLIP_GIF_GLYPH_CLOSE,
-                                   langGetText(STR_CLIPGIF_CANCEL));
-    ImGui::EndDisabled();
-    if (r.cancel) {
-        clipGifModeToggle(mode, capturing);
-    }
-
     /* How long the clip runs, from the span's start: the span's handles on
      * the zoomed timeline set the same length. */
     uint32_t spanStart = 0;
@@ -820,6 +809,26 @@ static inline ClipGifToolsPressed clipGifToolsRow(const char *id,
     ImGui::SameLine();
     r.gallery = clipGifGalleryButton("##gallery");
 #endif
+
+    /* Out of recording mode with no GIF: the same as the movie camera
+     * button. At the right end of the window, apart from the buttons that
+     * make a GIF. */
+    ImGui::SameLine();
+    const float cancelW = clipGifCancelButtonWidth();
+    const float cancelX = ImGui::GetWindowContentRegionMax().x - cancelW;
+    if (cancelX > ImGui::GetCursorPosX()) {
+        ImGui::SetCursorPosX(cancelX);
+    }
+    ImGui::BeginDisabled(capturing);
+    char cancelLabel[96];
+    snprintf(cancelLabel, sizeof(cancelLabel), "%s##cancel",
+             langGetText(STR_CANCEL));
+    r.cancel = ImGui::Button(cancelLabel, ImVec2(cancelW, 0.0f));
+    imguiHelpTooltip(langGetText(STR_CLIPGIF_CANCEL));
+    ImGui::EndDisabled();
+    if (r.cancel) {
+        clipGifModeToggle(mode, capturing);
+    }
 
     ImGui::PopID();
     return r;

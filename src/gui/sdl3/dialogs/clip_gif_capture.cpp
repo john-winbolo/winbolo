@@ -478,8 +478,9 @@ ClipGifWindowPressed clipGifToolsWindow(const char *id, ClipGifSession *s,
         }
         place->moving = moving;
 
-        /* The buttons in the middle of the window, the zoomed timeline
-         * under them as wide as the window. */
+        /* The buttons in the middle of the room left of Cancel, which is
+         * at the right end (clipGifToolsRow); the zoomed timeline under
+         * them as wide as the window. */
         const float rowW = clipGifToolsRowWidth(picture != NULL);
         const float avail = ImGui::GetContentRegionAvail().x;
         if (avail > rowW) {

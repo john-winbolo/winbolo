@@ -1114,6 +1114,20 @@ void clipGifSpanDragEdge(ClipGifMode *m, int edge, uint32_t atMs,
     m->lenMs = len;
 }
 
+bool clipGifGripBox(float xs, float xe, float minX, float maxX, float *x0,
+                    float *x1, float *mid) {
+    const float c  = floorf((xs + xe) * 0.5f);
+    const float b0 = c - CLIP_GIF_GRIP_HIT_HALF_PX;
+    const float b1 = c + CLIP_GIF_GRIP_HIT_HALF_PX;
+    if (!(xe > xs) || b0 < minX || b1 > maxX) {
+        return false;
+    }
+    if (x0 != NULL) *x0 = b0;
+    if (x1 != NULL) *x1 = b1;
+    if (mid != NULL) *mid = c;
+    return true;
+}
+
 void clipGifSpanMoveBegin(ClipGifMode *m, uint32_t grabAtMs, uint32_t curMs,
                           uint32_t totalMs) {
     if (m == NULL) {
