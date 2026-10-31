@@ -1427,7 +1427,6 @@ static const LangEntry langTable[] = {
     {3157, "The GIF could not be deleted."},
     {3163, "Clips"},
     {3164, "No GIFs yet. Turn on Recording Mode in the Action menu, then use the GIF button to make one from the map."},
-    {3360, "Crop"},
     {3361, "Recording Mode"},
     {3362, "Shows the GIF controls: the GIF button and its length, where the GIF starts and ends on the timeline, and a crop frame for the part of the map to take."},
     {1467, "Controller"},
