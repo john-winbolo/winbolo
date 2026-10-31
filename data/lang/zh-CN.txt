@@ -2890,7 +2890,7 @@ STR_MAPEDIT_ANDROID_NOFILES=这里还没有内容。你在这里或在游戏中�
 
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=你的 GIF
-STR_CLIPGIF_GALLERY_EMPTY=还没有 GIF。用回放下方的 GIF 按钮或片段上的 GIF 按钮制作一个。
+STR_CLIPGIF_GALLERY_EMPTY=还没有 GIF。用“制作 GIF”窗口中的“保存片段”或片段上的 GIF 按钮制作一个。
 STR_CLIPGIF_COPY=复制到剪贴板
 STR_CLIPGIF_COPIED=已复制。
 STR_CLIPGIF_COPY_FAILED=无法复制该 GIF。
@@ -2898,7 +2898,7 @@ STR_CLIPGIF_OPEN_FAILED=无法打开此 GIF。
 STR_CLIPGIF_MAP_FMT=地图：{string1}
 STR_CLIPGIF_PLAYERS_FMT=玩家：{string1}
 STR_CLIPGIF_NO_DETAILS=此 GIF 没有保存详细信息。
-STR_CLIPGIF_LENGTH_TIP=从播放位置起的 GIF 长度（秒）。\n拖动时间轴亮色部分末端的标记也可以更改。
+STR_CLIPGIF_LENGTH_TIP=从 GIF 开头起的 GIF 长度（秒）。\n拖动放大时间轴亮色部分的一端也可以更改。
 STR_CLIPGIF_LOADING=正在打开 GIF...
 STR_CLIPGIF_TOO_LARGE=此 GIF 太大，无法在此显示。你仍然可以复制它。
 STR_REEL_RECORD_MODE_TIP=录制模式：显示 GIF 控件
@@ -2912,6 +2912,14 @@ STR_CLIPGIF_SHOW_FAILED=无法打开文件夹。
 STR_CLIPGIF_DELETE=删除
 STR_CLIPGIF_DELETE_CONFIRM=删除此 GIF？此操作无法撤销。
 STR_CLIPGIF_DELETE_FAILED=无法删除此 GIF。
+STR_LV_WIN_CLIPS=片段
+STR_LV_CLIPS_EMPTY=还没有 GIF。在“操作”菜单中打开录制模式，然后用“制作 GIF”窗口中的“保存片段”从地图制作一个。
+STR_LV_RECORD_MODE=录制模式
+STR_LV_RECORD_MODE_TIP=显示“制作 GIF”窗口：预览片段、保存片段和 GIF 长度，GIF 在时间轴上的开始和结束位置，以及选取地图部分的裁剪框。
+STR_CLIPGIF_CANCEL=取消：退出录制模式，不生成 GIF
+STR_CLIPGIF_ZOOM_TIP=GIF 及其前后各 10 秒的游戏。\n拖动亮色部分的一端可让 GIF 变长或变短。\n拖动中间的手柄可把 GIF 移到更早或更晚的时间。\n点击或拖动其他任何位置可前往该时间。GIF 保持不动。
+STR_CLIPGIF_WINDOW_TITLE=制作 GIF
+STR_CLIPGIF_MOVE_TIP=拖动可把 GIF 移到更早或更晚的时间。长度保持不变。
 
 # The Log Viewer's -size option when its text is not a size or cannot be met
 STR_LV_SIZE_ARG_BAD=-size 需要以像素为单位的宽度和高度，例如 -size 1920x1080。窗口已按通常大小打开。

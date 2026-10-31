@@ -2893,7 +2893,7 @@ STR_MAPEDIT_ANDROID_NOFILES=まだ何もありません。ここで、または�
 
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=あなたのGIF
-STR_CLIPGIF_GALLERY_EMPTY=まだGIFはありません。リプレイの下のGIFボタンか、クリップのGIFボタンで作成できます。
+STR_CLIPGIF_GALLERY_EMPTY=まだGIFはありません。「GIFを作成」ウィンドウの「クリップを保存」か、クリップのGIFボタンで作成できます。
 STR_CLIPGIF_COPY=クリップボードにコピー
 STR_CLIPGIF_COPIED=コピーしました。
 STR_CLIPGIF_COPY_FAILED=GIFをコピーできませんでした。
@@ -2901,7 +2901,7 @@ STR_CLIPGIF_OPEN_FAILED=このGIFを開けませんでした。
 STR_CLIPGIF_MAP_FMT=マップ: {string1}
 STR_CLIPGIF_PLAYERS_FMT=プレイヤー: {string1}
 STR_CLIPGIF_NO_DETAILS=このGIFには詳細が保存されていません。
-STR_CLIPGIF_LENGTH_TIP=再生位置からのGIFの長さ（秒）。\nタイムラインの明るい部分の端にあるマーカーをドラッグしても変更できます。
+STR_CLIPGIF_LENGTH_TIP=GIFの開始からのGIFの長さ（秒）。\n拡大タイムラインの明るい部分の端をドラッグしても変更できます。
 STR_CLIPGIF_LOADING=GIFを開いています...
 STR_CLIPGIF_TOO_LARGE=このGIFは大きすぎるため、ここには表示できません。コピーは引き続きできます。
 STR_REEL_RECORD_MODE_TIP=録画モード：GIF の操作ボタンを表示します
@@ -2915,6 +2915,14 @@ STR_CLIPGIF_SHOW_FAILED=フォルダーを開けませんでした。
 STR_CLIPGIF_DELETE=削除
 STR_CLIPGIF_DELETE_CONFIRM=このGIFを削除しますか？元に戻せません。
 STR_CLIPGIF_DELETE_FAILED=GIFを削除できませんでした。
+STR_LV_WIN_CLIPS=クリップ
+STR_LV_CLIPS_EMPTY=まだGIFはありません。「アクション」メニューで録画モードをオンにし、「GIFを作成」ウィンドウの「クリップを保存」でマップから作成できます。
+STR_LV_RECORD_MODE=録画モード
+STR_LV_RECORD_MODE_TIP=「GIFを作成」ウィンドウを表示します：クリップをプレビュー、クリップを保存、GIF の長さ、タイムライン上の GIF の開始と終了、マップの取り込む部分を決める切り抜き枠。
+STR_CLIPGIF_CANCEL=キャンセル：録画モードを終了し、GIF は作りません
+STR_CLIPGIF_ZOOM_TIP=GIF と、その前後 10 秒間のゲーム。\n明るい部分の端をドラッグすると GIF を長くまたは短くできます。\n中央のつまみをドラッグすると GIF を前または後の時間へ移動できます。\nそれ以外の場所をクリックまたはドラッグするとその時間へ移動します。GIF はそのままです。
+STR_CLIPGIF_WINDOW_TITLE=GIFを作成
+STR_CLIPGIF_MOVE_TIP=ドラッグして GIF を前または後の時間へ移動します。長さは変わりません。
 
 # Log Viewer の -size オプションの文字列がサイズではない場合、またはサイズを満たせない場合
 STR_LV_SIZE_ARG_BAD=-size には幅と高さをピクセルで指定してください。例：-size 1920x1080。ウィンドウは通常のサイズで開きました。

@@ -2893,7 +2893,7 @@ STR_MAPEDIT_ANDROID_NOFILES=Nada aqui ainda. Os mapas que você salvar, aqui ou 
 
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Seus GIFs
-STR_CLIPGIF_GALLERY_EMPTY=Nenhum GIF ainda. Crie um com o botão GIF abaixo do replay ou com o botão GIF de um clipe.
+STR_CLIPGIF_GALLERY_EMPTY=Nenhum GIF ainda. Crie um com Salvar clipe na janela Criar um GIF ou com o botão GIF de um clipe.
 STR_CLIPGIF_COPY=Copiar para a área de transferência
 STR_CLIPGIF_COPIED=Copiado.
 STR_CLIPGIF_COPY_FAILED=Não foi possível copiar o GIF.
@@ -2901,7 +2901,7 @@ STR_CLIPGIF_OPEN_FAILED=Não foi possível abrir este GIF.
 STR_CLIPGIF_MAP_FMT=Mapa: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Jogadores: {string1}
 STR_CLIPGIF_NO_DETAILS=Nenhum detalhe foi salvo com este GIF.
-STR_CLIPGIF_LENGTH_TIP=Duração do GIF em segundos, a partir do cursor de reprodução.\nArraste o marcador no fim da parte clara da linha do tempo para mudá-la também.
+STR_CLIPGIF_LENGTH_TIP=Duração do GIF em segundos, a partir do início do GIF.\nArraste uma ponta da parte clara da linha do tempo ampliada para mudá-la também.
 STR_CLIPGIF_LOADING=Abrindo o GIF...
 STR_CLIPGIF_TOO_LARGE=Este GIF é grande demais para ser mostrado aqui. Você ainda pode copiá-lo.
 STR_REEL_RECORD_MODE_TIP=Modo de gravação: mostra os controles de GIF
@@ -2915,6 +2915,14 @@ STR_CLIPGIF_SHOW_FAILED=Não foi possível abrir a pasta.
 STR_CLIPGIF_DELETE=Excluir
 STR_CLIPGIF_DELETE_CONFIRM=Excluir este GIF? Isso não pode ser desfeito.
 STR_CLIPGIF_DELETE_FAILED=Não foi possível excluir o GIF.
+STR_LV_WIN_CLIPS=Clipes
+STR_LV_CLIPS_EMPTY=Nenhum GIF ainda. Ative o modo de gravação no menu Ação e depois use Salvar clipe na janela Criar um GIF para criar um a partir do mapa.
+STR_LV_RECORD_MODE=Modo de gravação
+STR_LV_RECORD_MODE_TIP=Mostra a janela Criar um GIF: Pré-visualizar clipe, Salvar clipe e a duração do GIF, onde o GIF começa e termina na linha do tempo, e um quadro de corte para a parte do mapa a capturar.
+STR_CLIPGIF_CANCEL=Cancelar: sair do modo de gravação sem criar o GIF
+STR_CLIPGIF_ZOOM_TIP=O GIF, com 10 segundos da partida antes e depois.\nArraste uma ponta da parte clara para deixar o GIF mais longo ou mais curto.\nArraste a alça no meio para mover o GIF para um momento anterior ou posterior.\nClique ou arraste em qualquer outro lugar para ir àquele momento. O GIF fica onde está.
+STR_CLIPGIF_WINDOW_TITLE=Criar um GIF
+STR_CLIPGIF_MOVE_TIP=Arraste para mover o GIF para um momento anterior ou posterior. A duração continua a mesma.
 
 # A opção -size do Log Viewer, quando o texto não é um tamanho ou não pode ser atendido
 STR_LV_SIZE_ARG_BAD=-size precisa de uma largura e uma altura em pixels, como -size 1920x1080. A janela foi aberta no tamanho habitual.

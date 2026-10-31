@@ -2891,7 +2891,7 @@ STR_MAPEDIT_ANDROID_NOFILES=아직 아무것도 없습니다. 여기서 또는 �
 
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=내 GIF
-STR_CLIPGIF_GALLERY_EMPTY=아직 GIF가 없습니다. 리플레이 아래의 GIF 버튼이나 클립의 GIF 버튼으로 만드세요.
+STR_CLIPGIF_GALLERY_EMPTY=아직 GIF가 없습니다. GIF 만들기 창의 클립 저장이나 클립의 GIF 버튼으로 만드세요.
 STR_CLIPGIF_COPY=클립보드에 복사
 STR_CLIPGIF_COPIED=복사했습니다.
 STR_CLIPGIF_COPY_FAILED=GIF를 복사할 수 없습니다.
@@ -2899,7 +2899,7 @@ STR_CLIPGIF_OPEN_FAILED=이 GIF를 열 수 없습니다.
 STR_CLIPGIF_MAP_FMT=맵: {string1}
 STR_CLIPGIF_PLAYERS_FMT=플레이어: {string1}
 STR_CLIPGIF_NO_DETAILS=이 GIF에는 저장된 세부 정보가 없습니다.
-STR_CLIPGIF_LENGTH_TIP=재생 위치부터의 GIF 길이(초).\n타임라인 밝은 부분 끝의 표시를 끌어서 바꿀 수도 있습니다.
+STR_CLIPGIF_LENGTH_TIP=GIF 시작부터의 GIF 길이(초).\n확대된 타임라인 밝은 부분의 끝을 끌어서 바꿀 수도 있습니다.
 STR_CLIPGIF_LOADING=GIF를 여는 중...
 STR_CLIPGIF_TOO_LARGE=이 GIF는 너무 커서 여기에 표시할 수 없습니다. 복사할 수는 있습니다.
 STR_REEL_RECORD_MODE_TIP=녹화 모드: GIF 컨트롤을 표시합니다
@@ -2913,6 +2913,14 @@ STR_CLIPGIF_SHOW_FAILED=폴더를 열 수 없습니다.
 STR_CLIPGIF_DELETE=삭제
 STR_CLIPGIF_DELETE_CONFIRM=이 GIF를 삭제할까요? 되돌릴 수 없습니다.
 STR_CLIPGIF_DELETE_FAILED=GIF를 삭제할 수 없습니다.
+STR_LV_WIN_CLIPS=클립
+STR_LV_CLIPS_EMPTY=아직 GIF가 없습니다. 동작 메뉴에서 녹화 모드를 켠 다음 GIF 만들기 창의 클립 저장으로 맵에서 만드세요.
+STR_LV_RECORD_MODE=녹화 모드
+STR_LV_RECORD_MODE_TIP=GIF 만들기 창을 표시합니다: 클립 미리 보기, 클립 저장, GIF 길이, 타임라인에서 GIF가 시작하고 끝나는 위치, 그리고 맵에서 담을 부분을 정하는 자르기 틀.
+STR_CLIPGIF_CANCEL=취소: 녹화 모드를 끝내고 GIF를 만들지 않습니다
+STR_CLIPGIF_ZOOM_TIP=GIF와 그 앞뒤 10초의 게임.\n밝은 부분의 끝을 끌어 GIF를 길게 하거나 짧게 합니다.\n가운데 손잡이를 끌어 GIF를 더 이른 시간이나 더 늦은 시간으로 옮깁니다.\n다른 곳을 클릭하거나 끌면 그 시간으로 이동합니다. GIF는 그대로 있습니다.
+STR_CLIPGIF_WINDOW_TITLE=GIF 만들기
+STR_CLIPGIF_MOVE_TIP=끌어서 GIF를 더 이른 시간이나 더 늦은 시간으로 옮깁니다. 길이는 그대로입니다.
 
 # Log Viewer의 -size 옵션 값이 크기가 아니거나 그 크기로 만들 수 없을 때
 STR_LV_SIZE_ARG_BAD=-size에는 픽셀 단위의 너비와 높이가 필요합니다. 예: -size 1920x1080. 창은 기본 크기로 열렸습니다.

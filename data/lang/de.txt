@@ -2892,7 +2892,7 @@ STR_MAPEDIT_ANDROID_NOFILES=Hier ist noch nichts. Karten, die du speicherst, hie
 
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Deine GIFs
-STR_CLIPGIF_GALLERY_EMPTY=Noch keine GIFs. Erstelle eines mit der GIF-Schaltfläche unter der Wiedergabe oder der GIF-Schaltfläche bei einem Clip.
+STR_CLIPGIF_GALLERY_EMPTY=Noch keine GIFs. Erstelle eines mit „Clip speichern“ im Fenster „GIF erstellen“ oder mit der GIF-Schaltfläche bei einem Clip.
 STR_CLIPGIF_COPY=In die Zwischenablage kopieren
 STR_CLIPGIF_COPIED=Kopiert.
 STR_CLIPGIF_COPY_FAILED=Das GIF konnte nicht kopiert werden.
@@ -2900,7 +2900,7 @@ STR_CLIPGIF_OPEN_FAILED=Dieses GIF konnte nicht geöffnet werden.
 STR_CLIPGIF_MAP_FMT=Karte: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Spieler: {string1}
 STR_CLIPGIF_NO_DETAILS=Zu diesem GIF wurden keine Details gespeichert.
-STR_CLIPGIF_LENGTH_TIP=GIF-Länge in Sekunden ab dem Abspielkopf.\nDu kannst sie auch ändern, indem du die Markierung am Ende des hellen Teils der Zeitleiste ziehst.
+STR_CLIPGIF_LENGTH_TIP=GIF-Länge in Sekunden ab dem Anfang des GIFs.\nDu kannst sie auch ändern, indem du ein Ende des hellen Teils der vergrößerten Zeitleiste ziehst.
 STR_CLIPGIF_LOADING=GIF wird geöffnet...
 STR_CLIPGIF_TOO_LARGE=Dieses GIF ist zu groß, um es hier anzuzeigen. Du kannst es trotzdem kopieren.
 STR_REEL_RECORD_MODE_TIP=Aufnahmemodus: zeigt die GIF-Steuerelemente
@@ -2914,6 +2914,14 @@ STR_CLIPGIF_SHOW_FAILED=Der Ordner konnte nicht geöffnet werden.
 STR_CLIPGIF_DELETE=Löschen
 STR_CLIPGIF_DELETE_CONFIRM=Dieses GIF löschen? Das kann nicht rückgängig gemacht werden.
 STR_CLIPGIF_DELETE_FAILED=Das GIF konnte nicht gelöscht werden.
+STR_LV_WIN_CLIPS=Clips
+STR_LV_CLIPS_EMPTY=Noch keine GIFs. Schalte im Menü „Aktion“ den Aufnahmemodus ein und erstelle dann mit „Clip speichern“ im Fenster „GIF erstellen“ eines aus der Karte.
+STR_LV_RECORD_MODE=Aufnahmemodus
+STR_LV_RECORD_MODE_TIP=Zeigt das Fenster „GIF erstellen“: Clip-Vorschau, Clip speichern und die Länge des GIFs, wo das GIF auf der Zeitleiste beginnt und endet, und einen Zuschneiderahmen für den Teil der Karte, der aufgenommen wird.
+STR_CLIPGIF_CANCEL=Abbrechen: Aufnahmemodus verlassen und kein GIF erstellen
+STR_CLIPGIF_ZOOM_TIP=Das GIF, mit 10 Sekunden des Spiels davor und danach.\nZiehe ein Ende des hellen Teils, um das GIF länger oder kürzer zu machen.\nZiehe den Griff in seiner Mitte, um das GIF auf eine frühere oder spätere Zeit zu verschieben.\nKlicke oder ziehe an einer anderen Stelle, um zu dieser Zeit zu gehen. Das GIF bleibt, wo es ist.
+STR_CLIPGIF_WINDOW_TITLE=GIF erstellen
+STR_CLIPGIF_MOVE_TIP=Ziehen, um das GIF auf eine frühere oder spätere Zeit zu verschieben. Seine Länge bleibt gleich.
 
 # Die Option -size des Log Viewers, wenn ihr Text keine Größe ist oder nicht erfüllt werden kann
 STR_LV_SIZE_ARG_BAD=-size erwartet eine Breite und eine Höhe in Pixeln, zum Beispiel -size 1920x1080. Das Fenster wurde in seiner üblichen Größe geöffnet.

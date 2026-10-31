@@ -2892,7 +2892,7 @@ STR_MAPEDIT_ANDROID_NOFILES=Hier staat nog niets. Kaarten die je bewaart, hier o
 
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Jouw GIF's
-STR_CLIPGIF_GALLERY_EMPTY=Nog geen GIF's. Maak er een met de GIF-knop onder de herhaling, of de GIF-knop bij een clip.
+STR_CLIPGIF_GALLERY_EMPTY=Nog geen GIF's. Maak er een met Clip opslaan in het venster GIF maken, of met de GIF-knop bij een clip.
 STR_CLIPGIF_COPY=Naar klembord kopiëren
 STR_CLIPGIF_COPIED=Gekopieerd.
 STR_CLIPGIF_COPY_FAILED=De GIF kon niet worden gekopieerd.
@@ -2900,7 +2900,7 @@ STR_CLIPGIF_OPEN_FAILED=Deze GIF kon niet worden geopend.
 STR_CLIPGIF_MAP_FMT=Kaart: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Spelers: {string1}
 STR_CLIPGIF_NO_DETAILS=Er zijn geen details met deze GIF opgeslagen.
-STR_CLIPGIF_LENGTH_TIP=GIF-lengte in seconden, vanaf de afspeelkop.\nSleep de markering aan het eind van het lichte deel van de tijdlijn om die ook te wijzigen.
+STR_CLIPGIF_LENGTH_TIP=GIF-lengte in seconden, vanaf het begin van de GIF.\nSleep een uiteinde van het lichte deel van de ingezoomde tijdlijn om die ook te wijzigen.
 STR_CLIPGIF_LOADING=GIF wordt geopend...
 STR_CLIPGIF_TOO_LARGE=Deze GIF is te groot om hier te tonen. Je kunt hem nog steeds kopiëren.
 STR_REEL_RECORD_MODE_TIP=Opnamemodus: toont de GIF-knoppen
@@ -2914,6 +2914,14 @@ STR_CLIPGIF_SHOW_FAILED=De map kon niet worden geopend.
 STR_CLIPGIF_DELETE=Verwijderen
 STR_CLIPGIF_DELETE_CONFIRM=Deze GIF verwijderen? Dit kan niet ongedaan worden gemaakt.
 STR_CLIPGIF_DELETE_FAILED=De GIF kon niet worden verwijderd.
+STR_LV_WIN_CLIPS=Clips
+STR_LV_CLIPS_EMPTY=Nog geen GIF's. Zet de opnamemodus aan in het menu Actie en gebruik dan Clip opslaan in het venster GIF maken om er een van de kaart te maken.
+STR_LV_RECORD_MODE=Opnamemodus
+STR_LV_RECORD_MODE_TIP=Toont het venster GIF maken: Clipvoorbeeld, Clip opslaan en de lengte van de GIF, waar de GIF op de tijdlijn begint en eindigt, en een uitsnedekader voor het deel van de kaart dat wordt opgenomen.
+STR_CLIPGIF_CANCEL=Annuleren: opnamemodus verlaten en geen GIF maken
+STR_CLIPGIF_ZOOM_TIP=De GIF, met 10 seconden van het spel ervoor en erna.\nSleep een uiteinde van het lichte deel om de GIF langer of korter te maken.\nSleep de greep in het midden om de GIF naar een eerder of later moment te verplaatsen.\nKlik of sleep ergens anders om naar dat moment te gaan. De GIF blijft waar hij is.
+STR_CLIPGIF_WINDOW_TITLE=GIF maken
+STR_CLIPGIF_MOVE_TIP=Sleep om de GIF naar een eerder of later moment te verplaatsen. De lengte blijft gelijk.
 
 # De optie -size van de Log Viewer, als de tekst geen afmeting is of niet kan worden gehaald
 STR_LV_SIZE_ARG_BAD=-size verwacht een breedte en een hoogte in pixels, bijvoorbeeld -size 1920x1080. Het venster is geopend met de gebruikelijke afmeting.

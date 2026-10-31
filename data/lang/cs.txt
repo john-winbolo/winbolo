@@ -2890,7 +2890,7 @@ STR_MAPEDIT_ANDROID_NOFILES=Zatím tu nic není. Mapy, které uložíte, zde neb
 
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Vaše GIFy
-STR_CLIPGIF_GALLERY_EMPTY=Zatím žádné GIFy. Vytvořte jeden tlačítkem GIF pod záznamem nebo tlačítkem GIF u klipu.
+STR_CLIPGIF_GALLERY_EMPTY=Zatím žádné GIFy. Vytvořte jeden tlačítkem „Uložit klip“ v okně „Vytvořit GIF“ nebo tlačítkem GIF u klipu.
 STR_CLIPGIF_COPY=Kopírovat do schránky
 STR_CLIPGIF_COPIED=Zkopírováno.
 STR_CLIPGIF_COPY_FAILED=GIF se nepodařilo zkopírovat.
@@ -2898,7 +2898,7 @@ STR_CLIPGIF_OPEN_FAILED=Tento GIF se nepodařilo otevřít.
 STR_CLIPGIF_MAP_FMT=Mapa: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Hráči: {string1}
 STR_CLIPGIF_NO_DETAILS=K tomuto GIFu nebyly uloženy žádné údaje.
-STR_CLIPGIF_LENGTH_TIP=Délka GIFu v sekundách od přehrávací hlavy.\nDélku změníte také tažením značky na konci světlé části časové osy.
+STR_CLIPGIF_LENGTH_TIP=Délka GIFu v sekundách od začátku GIFu.\nDélku změníte také tažením konce světlé části zvětšené časové osy.
 STR_CLIPGIF_LOADING=Otevírání GIFu...
 STR_CLIPGIF_TOO_LARGE=Tento GIF je příliš velký, aby se zde zobrazil. Stále ho můžete zkopírovat.
 STR_REEL_RECORD_MODE_TIP=Režim nahrávání: zobrazí ovládání GIFu
@@ -2912,6 +2912,14 @@ STR_CLIPGIF_SHOW_FAILED=Složku se nepodařilo otevřít.
 STR_CLIPGIF_DELETE=Smazat
 STR_CLIPGIF_DELETE_CONFIRM=Smazat tento GIF? Nelze to vrátit zpět.
 STR_CLIPGIF_DELETE_FAILED=GIF se nepodařilo smazat.
+STR_LV_WIN_CLIPS=Klipy
+STR_LV_CLIPS_EMPTY=Zatím žádné GIFy. V nabídce „Akce“ zapněte režim nahrávání a pak tlačítkem „Uložit klip“ v okně „Vytvořit GIF“ vytvořte GIF z mapy.
+STR_LV_RECORD_MODE=Režim nahrávání
+STR_LV_RECORD_MODE_TIP=Zobrazí okno „Vytvořit GIF“: Náhled klipu, Uložit klip a délku GIFu, kde GIF na časové ose začíná a končí, a ořezový rámeček pro část mapy, která se zaznamená.
+STR_CLIPGIF_CANCEL=Zrušit: opustit režim nahrávání a nevytvořit žádný GIF
+STR_CLIPGIF_ZOOM_TIP=GIF s 10 sekundami hry před ním a po něm.\nTažením konce světlé části GIF prodloužíte nebo zkrátíte.\nTažením úchytu uprostřed přesunete GIF na dřívější nebo pozdější čas.\nKliknutím nebo tažením kdekoli jinde přejdete na daný čas. GIF zůstane, kde je.
+STR_CLIPGIF_WINDOW_TITLE=Vytvořit GIF
+STR_CLIPGIF_MOVE_TIP=Tažením přesunete GIF na dřívější nebo pozdější čas. Jeho délka zůstane stejná.
 
 # Volba -size prohlížeče záznamů, když její text není velikost nebo ji nelze splnit
 STR_LV_SIZE_ARG_BAD=-size vyžaduje šířku a výšku v pixelech, například -size 1920x1080. Okno se otevřelo ve své obvyklé velikosti.

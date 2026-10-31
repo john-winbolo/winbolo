@@ -2893,7 +2893,7 @@ STR_MAPEDIT_ANDROID_NOFILES=Здесь пока ничего нет. Здесь 
 
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Ваши GIF
-STR_CLIPGIF_GALLERY_EMPTY=GIF пока нет. Создайте его кнопкой GIF под повтором или кнопкой GIF у клипа.
+STR_CLIPGIF_GALLERY_EMPTY=GIF пока нет. Создайте его кнопкой «Сохранить клип» в окне «Создать GIF» или кнопкой GIF у клипа.
 STR_CLIPGIF_COPY=Копировать в буфер обмена
 STR_CLIPGIF_COPIED=Скопировано.
 STR_CLIPGIF_COPY_FAILED=Не удалось скопировать GIF.
@@ -2901,7 +2901,7 @@ STR_CLIPGIF_OPEN_FAILED=Не удалось открыть этот GIF.
 STR_CLIPGIF_MAP_FMT=Карта: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Игроки: {string1}
 STR_CLIPGIF_NO_DETAILS=Для этого GIF не сохранено сведений.
-STR_CLIPGIF_LENGTH_TIP=Длина GIF в секундах от точки воспроизведения.\nЕё также можно изменить, перетащив метку в конце светлой части шкалы времени.
+STR_CLIPGIF_LENGTH_TIP=Длина GIF в секундах от начала GIF.\nЕё также можно изменить, перетащив край светлой части увеличенной шкалы времени.
 STR_CLIPGIF_LOADING=Открытие GIF...
 STR_CLIPGIF_TOO_LARGE=Этот GIF слишком большой, чтобы показать его здесь. Его всё равно можно скопировать.
 STR_REEL_RECORD_MODE_TIP=Режим записи: показывает элементы управления GIF
@@ -2915,6 +2915,14 @@ STR_CLIPGIF_SHOW_FAILED=Не удалось открыть папку.
 STR_CLIPGIF_DELETE=Удалить
 STR_CLIPGIF_DELETE_CONFIRM=Удалить этот GIF? Это нельзя отменить.
 STR_CLIPGIF_DELETE_FAILED=Не удалось удалить GIF.
+STR_LV_WIN_CLIPS=Клипы
+STR_LV_CLIPS_EMPTY=GIF пока нет. Включите режим записи в меню «Действие», затем нажмите «Сохранить клип» в окне «Создать GIF», чтобы создать GIF с карты.
+STR_LV_RECORD_MODE=Режим записи
+STR_LV_RECORD_MODE_TIP=Показывает окно «Создать GIF»: Предпросмотр клипа, Сохранить клип и длину GIF, где GIF начинается и заканчивается на шкале времени, и рамку обрезки для нужной части карты.
+STR_CLIPGIF_CANCEL=Отмена: выйти из режима записи и не создавать GIF
+STR_CLIPGIF_ZOOM_TIP=GIF и по 10 секунд игры до и после него.\nПеретащите край светлой части, чтобы сделать GIF длиннее или короче.\nПеретащите ручку в её середине, чтобы сдвинуть GIF на более раннее или более позднее время.\nЩёлкните или перетащите в любом другом месте, чтобы перейти к этому времени. GIF останется на месте.
+STR_CLIPGIF_WINDOW_TITLE=Создать GIF
+STR_CLIPGIF_MOVE_TIP=Перетащите, чтобы сдвинуть GIF на более раннее или более позднее время. Его длина не меняется.
 
 # Параметр -size программы Log Viewer, когда его текст не является размером или размер нельзя получить
 STR_LV_SIZE_ARG_BAD=Для -size нужны ширина и высота в пикселях, например -size 1920x1080. Окно открыто с обычным размером.

@@ -2894,7 +2894,7 @@ STR_MAPEDIT_ANDROID_NOFILES=Här finns inget ännu. Kartor du sparar, här eller
 
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Dina GIF:ar
-STR_CLIPGIF_GALLERY_EMPTY=Inga GIF:ar än. Skapa en med GIF-knappen under reprisen eller GIF-knappen på ett klipp.
+STR_CLIPGIF_GALLERY_EMPTY=Inga GIF:ar än. Skapa en med Spara klipp i fönstret Skapa en GIF eller med GIF-knappen på ett klipp.
 STR_CLIPGIF_COPY=Kopiera till urklipp
 STR_CLIPGIF_COPIED=Kopierad.
 STR_CLIPGIF_COPY_FAILED=GIF:en kunde inte kopieras.
@@ -2902,7 +2902,7 @@ STR_CLIPGIF_OPEN_FAILED=Den här GIF:en kunde inte öppnas.
 STR_CLIPGIF_MAP_FMT=Karta: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Spelare: {string1}
 STR_CLIPGIF_NO_DETAILS=Inga detaljer sparades med den här GIF:en.
-STR_CLIPGIF_LENGTH_TIP=GIF-längd i sekunder, från uppspelningspositionen.\nDra markören i slutet av den ljusa delen av tidslinjen för att ändra den också.
+STR_CLIPGIF_LENGTH_TIP=GIF-längd i sekunder, från början av GIF:en.\nDra en ände av den ljusa delen av den inzoomade tidslinjen för att ändra den också.
 STR_CLIPGIF_LOADING=Öppnar GIF:en...
 STR_CLIPGIF_TOO_LARGE=Den här GIF:en är för stor för att visas här. Du kan fortfarande kopiera den.
 STR_REEL_RECORD_MODE_TIP=Inspelningsläge: visar GIF-kontrollerna
@@ -2916,6 +2916,14 @@ STR_CLIPGIF_SHOW_FAILED=Mappen kunde inte öppnas.
 STR_CLIPGIF_DELETE=Ta bort
 STR_CLIPGIF_DELETE_CONFIRM=Ta bort den här GIF:en? Det går inte att ångra.
 STR_CLIPGIF_DELETE_FAILED=GIF:en kunde inte tas bort.
+STR_LV_WIN_CLIPS=Klipp
+STR_LV_CLIPS_EMPTY=Inga GIF:ar än. Slå på inspelningsläget i menyn Åtgärd och använd sedan Spara klipp i fönstret Skapa en GIF för att skapa en från kartan.
+STR_LV_RECORD_MODE=Inspelningsläge
+STR_LV_RECORD_MODE_TIP=Visar fönstret Skapa en GIF: Förhandsgranska klipp, Spara klipp och GIF:ens längd, var GIF:en börjar och slutar på tidslinjen, och en beskärningsram för den del av kartan som ska tas.
+STR_CLIPGIF_CANCEL=Avbryt: lämna inspelningsläget och skapa ingen GIF
+STR_CLIPGIF_ZOOM_TIP=GIF:en, med 10 sekunder av spelet före och efter.\nDra en ände av den ljusa delen för att göra GIF:en längre eller kortare.\nDra greppet i mitten för att flytta GIF:en till en tidigare eller senare tidpunkt.\nKlicka eller dra någon annanstans för att gå till den tidpunkten. GIF:en stannar där den är.
+STR_CLIPGIF_WINDOW_TITLE=Skapa en GIF
+STR_CLIPGIF_MOVE_TIP=Dra för att flytta GIF:en till en tidigare eller senare tidpunkt. Längden blir densamma.
 
 # The Log Viewer's -size option when its text is not a size or cannot be met
 STR_LV_SIZE_ARG_BAD=-size kräver en bredd och en höjd i pixlar, till exempel -size 1920x1080. Fönstret har öppnats i sin vanliga storlek.
