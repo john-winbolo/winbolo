@@ -1034,12 +1034,11 @@ extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
  * gives the panel, which is the size it had before it could be resized. -1
  * means it has never been resized: the panel then opens at the default
  * percent scnPanelDefaultPlace picks: the percent that makes the panel 230.4
- * screen pixels at every zoom (90 at zoom 2, 60 at zoom 3), or 150 at
- * zoom 1, where 230.4 does not fit in the view. That percent
- * is not saved until the player resizes the panel.
- * A loaded value is clamped to
- * SCN_PANEL_SCALE_MIN..SCN_PANEL_SCALE_MAX, the same range the resize drag
- * is clamped to.
+ * screen pixels at every zoom (90 at zoom 2, 60 at zoom 3), or 150 at zoom 1,
+ * where 230.4 does not fit in the view. That percent is not saved until the
+ * player resizes the panel. A loaded value is clamped to
+ * SCN_PANEL_SCALE_MIN..SCN_PANEL_SCALE_MAX, the same range the resize drag is
+ * clamped to.
  *
  * The two opacities are percents (see SCN_BG_OPACITY_DEFAULT in
  * scn_panel_prefs.h). The background opacity is the real alpha of the black
