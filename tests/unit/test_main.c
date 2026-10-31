@@ -673,6 +673,7 @@ static const UnitTestEntry s_tests[] = {
     { "replay_v2_pill_health_nibble",            run_replay_v2_pill_health_nibble            },
     { "replay_v1_pill_health_nibble",            run_replay_v1_pill_health_nibble            },
     { "brainrec_version_rejects_old",            run_brainrec_version_rejects_old            },
+    { "brainrec_session_map_roundtrip",          run_brainrec_session_map_roundtrip          },
     { "lv_tank_stocks_from_snapshot",            run_lv_tank_stocks_from_snapshot            },
     { "lv_team_colours_from_snapshot",           run_lv_team_colours_from_snapshot           },
     { "lv_team_colours_events",                  run_lv_team_colours_events                  },

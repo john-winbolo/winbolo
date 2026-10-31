@@ -6082,11 +6082,17 @@ int main(int argc, char *argv[]) {
      * line up with what we'll patch in during playback). The map name maps to
      * data/maps/<name>.map unless the user passed an explicit -map. */
     char loadSessionBtr[1200] = "";
+    char loadSessionMapName[64] = "";
+    const bool optMapExplicit = (optMap[0] != '\0');   /* -map given */
     if (optLoadSession[0]) {
         SDL_snprintf(loadSessionBtr, sizeof(loadSessionBtr), "%s/%s",
                      optLoadSession, BRAINREC_FILENAME);
         char mapName[64] = ""; int recBots = 1;
         if (btPeekSession(loadSessionBtr, mapName, &recBots, true)) {
+            SDL_strlcpy(loadSessionMapName, mapName, sizeof(loadSessionMapName));
+            /* The session's own map (BRAINREC_MAP_FILENAME) is tried first,
+             * below; this file is the fallback for a recording made before
+             * the recorder saved one. */
             if (!optMap[0] && mapName[0])
                 SDL_snprintf(optMap, sizeof(optMap), "data/maps/%s.map", mapName);
             if (recBots > 0) optNumPlayers = recBots;
@@ -6102,12 +6108,37 @@ int main(int argc, char *argv[]) {
     /* Load map */
     SDL_PumpEvents();
     bool mapLoaded = false;
-    if (optMap[0]) {
+    /* A recording's bases have no positions in its frames, so they come from
+     * the map loaded here. The map the session saved beside its .btr is the
+     * one it was played on, and loads without mapRead's recentre, so it
+     * lines up with the recorded terrain. An explicit -map still wins. */
+    if (loadSessionBtr[0] && !optMapExplicit) {
+        BYTE *smap = (BYTE *)malloc(MAP_COMPRESSED_MAX_SIZE);
+        int slen = smap ? brainRecReadSessionMap(optLoadSession, smap, MAP_COMPRESSED_MAX_SIZE) : 0;
+        if (slen > 0) {
+            app.sim = serverSimCreateCompressed(smap, slen,
+                                                loadSessionMapName[0] ? loadSessionMapName : "Session map",
+                                                optGame, false, 0, -1);
+            mapLoaded = (app.sim != NULL);
+            fprintf(stderr, "Load session: %s map from %s/%s\n",
+                    mapLoaded ? "loaded the" : "could not read the",
+                    optLoadSession, BRAINREC_MAP_FILENAME);
+        }
+        free(smap);
+    }
+    if (!mapLoaded && optMap[0]) {
         app.sim = serverSimCreate(optMap, optGame, false, 0, -1);
         mapLoaded = (app.sim != NULL);
         if (!mapLoaded) {
             fprintf(stderr, "Failed to load map '%s'\n", optMap);
         }
+    }
+    if (!mapLoaded && loadSessionBtr[0]) {
+        fprintf(stderr, "Load session: no map for '%s' (no %s in the session "
+                        "and no %s). Using Everard Island: the bases are "
+                        "Everard's and will not match the recorded terrain.\n",
+                loadSessionMapName, BRAINREC_MAP_FILENAME,
+                optMap[0] ? optMap : "data/maps file");
     }
     if (!mapLoaded) {
         BYTE emap[6000] = E_MAP;

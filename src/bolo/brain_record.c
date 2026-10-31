@@ -232,6 +232,45 @@ static int firstVizBotSlot(ServerSim *sim, char **outLegend) {
     return -1;
 }
 
+bool brainRecWriteSessionMap(const char *dir, const uint8_t *data, int len) {
+    if (!dir || !dir[0] || !data || len <= 0) return false;
+    char path[600];
+    snprintf(path, sizeof(path), "%s/%s", dir, BRAINREC_MAP_FILENAME);
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return false;
+    bool ok = fwrite(data, 1, (size_t)len, fp) == (size_t)len;
+    if (fclose(fp) != 0) ok = false;
+    return ok;
+}
+
+int brainRecReadSessionMap(const char *dir, uint8_t *out, int cap) {
+    if (!dir || !dir[0] || !out || cap <= 0) return 0;
+    char path[1200];
+    snprintf(path, sizeof(path), "%s/%s", dir, BRAINREC_MAP_FILENAME);
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return 0;
+    size_t n = fread(out, 1, (size_t)cap, fp);
+    /* A file longer than the buffer is not a map this build made. */
+    int extra = fgetc(fp);
+    fclose(fp);
+    if (extra != EOF) return 0;
+    return (int)n;
+}
+
+/* Save the map the recording is made on beside it (see BRAINREC_MAP_FILENAME
+ * in brain_record.h for why the .btr needs it). A failure only costs the
+ * replay its base positions, so it is reported and the recording goes on. */
+static void saveSessionMap(ServerSim *sim) {
+    uint8_t *buf = (uint8_t *)malloc(MAP_COMPRESSED_MAX_SIZE);
+    int len = buf ? serverSimGetCompressedMap(sim, buf, MAP_COMPRESSED_MAX_SIZE) : 0;
+    if (len <= 0 || !brainRecWriteSessionMap(g_sessionDir, buf, len)) {
+        fprintf(stderr, "brain_record: could not save %s/%s; a replay of this "
+                        "session will have no base positions\n",
+                g_sessionDir, BRAINREC_MAP_FILENAME);
+    }
+    free(buf);
+}
+
 /* Lazily open <sessionDir>/brainrec.btr. The session dir normally comes
  * straight from brainRecordSetSessionDir() (winbolods creates it under
  * -braindebug). As a fallback, if it wasn't set we read DEBUG_SESSION_DIR off
@@ -282,6 +321,7 @@ static bool ensureOpen(ServerSim *sim) {
     const char *mn = serverSimGetMapName(sim);
     if (mn) { strncpy(hdr.mapName, mn, sizeof(hdr.mapName) - 1); }
     gzwrite(g_gz, &hdr, (unsigned)sizeof hdr);
+    saveSessionMap(sim);
 
     /* One-time legend: overlay viz_idx -> category name, so the loader can
      * label/filter recorded overlays. The blob is ONE length-prefixed string

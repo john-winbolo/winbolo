@@ -1359,6 +1359,11 @@ int run_replay_v1_pill_health_nibble(void);
  * every reader shares has to refuse it rather than walk it. */
 int run_brainrec_version_rejects_old(void);
 
+/* A session keeps its own map (test_brainrec_session_map.c): the map saved
+ * beside brainrec.btr reads back whole and loads with every base where the
+ * recorded terrain has it, also for a map that is off centre. */
+int run_brainrec_session_map_roundtrip(void);
+
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /
  * lv_specRecordPump. Covers the four bytes on the end of a player block, a

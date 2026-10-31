@@ -4667,6 +4667,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_replay_version_compat.c
     # The brain recorder's own version check.
     tests/unit/test_brainrec_version.c
+    tests/unit/test_brainrec_session_map.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
     tests/unit/loopback_harness.c
