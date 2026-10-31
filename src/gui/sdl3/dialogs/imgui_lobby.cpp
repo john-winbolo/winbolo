@@ -211,9 +211,10 @@ static void lobbyFrameInitState(ClientSim *cs) {
      * Ready. Escape still leaves, which is the pair it belongs in.
      *
      * Applied once, on the first frame Ready is actually enabled — see the two
-     * sites that consume this. SetKeyboardFocusHere carries
-     * ImGuiNavMoveFlags_NoSetNavCursorVisible, so this seeds what Enter hits
-     * without lighting a focus ring the player did not ask for. */
+     * sites that consume this. An item focused from code shows the focus
+     * outline at once (imgui_nav_outline.cpp), so the player sees that Enter
+     * will press Ready; after a mouse click hides it, Enter does not press
+     * the focused item until a Tab shows the outline again. */
     s_lf.focusReadyPending = true;
     s_lf.prevCountdown     = clientSimGetCountdownSeconds(cs);
 }
