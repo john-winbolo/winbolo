@@ -34,6 +34,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "wire_limits.h"    /* PACKET_MAX_CHAT_MESSAGE, the status line's cap */
 #include "scenario_panel.h" /* the decoded list, and GAME_NUMTOTALTICKS_SEC
@@ -207,16 +208,27 @@ static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
  * large as the window's width and height both allow. It has
  * a row for each row of text the round has used so far: the
  * status line's on top, then the announcements', oldest
- * first, as many as have been up at once. The rows are
- * counted over the whole round and not frame by frame, so
- * the text does not change size when a line comes and goes.
+ * first, as many as have been up at once. The script's
+ * rows are counted over the whole round and not frame by
+ * frame, but the width is this frame's widest row, and the
+ * rows that breaking a long line adds are this frame's
+ * only. So the text size follows the widest row on screen,
+ * and stays the same when a line comes and goes only while
+ * the letter height cap holds it, which is the usual case.
  * A row is the script's own: a line is split where the
  * script put a "\n", and nowhere else, while it fits across
  * the window at the smallest letter height
  * (SCN_TEXT_MIN_LETTER_UI_SHARE). A line that does not fit
  * even then is broken at its spaces into the fewest rows
  * that fit, of widths as even as they go
- * (scnTextWrapBalanced).
+ * (scnTextWrapBalanced). A word is never broken inside: a
+ * single word wider than the window even at the smallest
+ * letter height is drawn smaller than that, down to
+ * SCN_TEXT_FLOOR_LETTER_UI_SHARE, so it fits across. A row
+ * in a language written without spaces (Chinese, Japanese,
+ * Korean) is broken between its characters instead
+ * (scnTextBreakUnspaced). An announcement's share across
+ * is taken over the window's width (scnTextAcrossSpan).
  * ------------------------------------------------------- */
 
 /* The source rectangle's width for the window's own default size, in panel
@@ -234,6 +246,14 @@ static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
  * out at on one row, as a share of the game's normal UI text height. A line
  * too wide for the window even at this size is broken into rows. */
 #define SCN_TEXT_MIN_LETTER_UI_SHARE 0.75f
+
+/* The smallest letter height a single word too wide for the window is drawn
+ * at, as a share of the game's normal UI text height (9 pixels at UI scale
+ * 1). A word is not broken inside, so a word wider than the window at
+ * SCN_TEXT_MIN_LETTER_UI_SHARE is made smaller until it fits, but never
+ * smaller than this; a word still too wide here runs past the window's
+ * sides, centred. */
+#define SCN_TEXT_FLOOR_LETTER_UI_SHARE 0.5f
 
 /* The most words a row is balanced over when it is broken into rows. A row
  * of more words is broken at the last space that fits, row by row. */
@@ -298,13 +318,13 @@ typedef struct ScnTextFit {
  *  winX/winY - the window's top-left corner, in pixels
  *  winW/winH - the window's size, in pixels
  *********************************************************/
-static inline ScnTextFit scnTextFitRectCapped(float srcW, float srcH,
-                                              float winX, float winY,
-                                              float winW, float winH,
-                                              float maxScale);
+static inline ScnTextFit scnTextFitRectHeld(float srcW, float srcH,
+                                            float winX, float winY,
+                                            float winW, float winH,
+                                            float minWScale, float maxScale);
 static inline ScnTextFit scnTextFitRect(float srcW, float srcH, float winX,
                                         float winY, float winW, float winH) {
-    return scnTextFitRectCapped(srcW, srcH, winX, winY, winW, winH, 0.0f);
+    return scnTextFitRectHeld(srcW, srcH, winX, winY, winW, winH, 0.0f, 0.0f);
 }
 
 /*********************************************************
@@ -326,6 +346,33 @@ static inline ScnTextFit scnTextFitRectCapped(float srcW, float srcH,
                                               float winX, float winY,
                                               float winW, float winH,
                                               float maxScale) {
+    return scnTextFitRectHeld(srcW, srcH, winX, winY, winW, winH, 0.0f,
+                              maxScale);
+}
+
+/*********************************************************
+ *NAME:          scnTextFitRectHeld
+ *PURPOSE:
+ *  scnTextFitRectCapped, with the scale the width allows
+ *  held at or over minWScale, so a source wider than the
+ *  window is not made smaller than that. The source then
+ *  runs past the window's sides, centred, as much on the
+ *  left as on the right. The height still makes the scale
+ *  smaller, and the cap still holds it. A minWScale of 0
+ *  or less is no floor.
+ *
+ *ARGUMENTS:
+ *  srcW/srcH - the source rectangle's size, in units
+ *  winX/winY - the window's top-left corner, in pixels
+ *  winW/winH - the window's size, in pixels
+ *  minWScale - the fewest pixels for one unit the width
+ *              may give, or 0
+ *  maxScale  - the most pixels for one unit, or 0
+ *********************************************************/
+static inline ScnTextFit scnTextFitRectHeld(float srcW, float srcH,
+                                            float winX, float winY,
+                                            float winW, float winH,
+                                            float minWScale, float maxScale) {
     ScnTextFit fit;
     fit.scale   = 0.0f;
     fit.originX = winX;
@@ -334,6 +381,7 @@ static inline ScnTextFit scnTextFitRectCapped(float srcW, float srcH,
         return fit;
     }
     fit.scale = winW / srcW;
+    if (minWScale > 0.0f && fit.scale < minWScale) fit.scale = minWScale;
     if (winH / srcH < fit.scale) fit.scale = winH / srcH;
     if (maxScale > 0.0f && fit.scale > maxScale) fit.scale = maxScale;
     fit.originX = winX + (winW - srcW * fit.scale) * 0.5f;
@@ -530,6 +578,146 @@ static inline int scnTextWrapBalanced(char *text, ScnTextMeasureFn measure,
         row = e + 1;
     }
     return rows;
+}
+
+/* True for a character of a language written without spaces between its
+ * words: the CJK marks and letters (U+2E80 to U+9FFF), Hangul syllables
+ * (U+AC00 to U+D7AF), CJK compatibility letters (U+F900 to U+FAFF), the
+ * full-width forms (U+FF00 to U+FFEF) and the CJK letters from U+20000. */
+static inline bool scnTextIsUnspacedChar(uint32_t cp) {
+    return (cp >= 0x2E80u && cp <= 0x9FFFu) ||
+           (cp >= 0xAC00u && cp <= 0xD7AFu) ||
+           (cp >= 0xF900u && cp <= 0xFAFFu) ||
+           (cp >= 0xFF00u && cp <= 0xFFEFu) || (cp >= 0x20000u);
+}
+
+/* The length in bytes of the UTF-8 character at p, 1 to 4, never past the
+ * terminating NUL, and its code point in *cp. A stray byte is one
+ * character. */
+static inline size_t scnTextUtf8At(const char *p, uint32_t *cp) {
+    const unsigned char c = (unsigned char)*p;
+    size_t   n = 1, k;
+    uint32_t v = c;
+    if (c >= 0xF0) { n = 4; v = c & 0x07u; }
+    else if (c >= 0xE0) { n = 3; v = c & 0x0Fu; }
+    else if (c >= 0xC0) { n = 2; v = c & 0x1Fu; }
+    for (k = 1; k < n; k++) {
+        const unsigned char d = (unsigned char)p[k];
+        if (d == 0 || (d & 0xC0u) != 0x80u) { n = k; break; }
+        v = (v << 6) | (uint32_t)(d & 0x3Fu);
+    }
+    if (n == 1) v = c;
+    if (cp != NULL) *cp = v;
+    return n;
+}
+
+/*********************************************************
+ *NAME:          scnTextBreakUnspaced
+ *PURPOSE:
+ *  Breaks each row of text wider than maxW that has no
+ *  space in it and holds a character of a language written
+ *  without spaces (scnTextIsUnspacedChar: Chinese,
+ *  Japanese, Korean) into rows that fit, in place, before
+ *  the first character that does not fit. A "\n" is put in
+ *  there while text has room for it (cap). Run after
+ *  scnTextWrapBalanced. A row with a space is not changed
+ *  (scnTextWrapBalanced breaks it at its spaces), nor is a
+ *  row of one word in a language written with spaces: a
+ *  word of Latin or other such letters is never broken
+ *  inside. A row always keeps at least one character.
+ *  Gives the number of rows the text has after.
+ *
+ *ARGUMENTS:
+ *  text    - the rows, split by "\n"; changed in place
+ *  cap     - the size of text's buffer, in bytes
+ *  measure - measures text at the line's letter height
+ *  ctx     - passed to measure
+ *  maxW    - the widest a row may be, in units
+ *********************************************************/
+static inline int scnTextBreakUnspaced(char *text, size_t cap,
+                                       ScnTextMeasureFn measure, void *ctx,
+                                       float maxW) {
+    size_t len;
+    char  *row;
+    int    rows = 1;
+    if (text == NULL) return 0;
+    for (row = text; *row != '\0'; row++) {
+        if (*row == '\n') rows++;
+    }
+    if (measure == NULL || cap == 0 || maxW <= 0.0f) return rows;
+    len  = strlen(text);
+    rows = 0;
+    row  = text;
+    for (;;) {
+        char *e = row;
+        char *p;
+        bool  hasSpace = false, unspaced = false;
+        char *breakAt  = NULL;
+        float w        = 0.0f;
+        while (*e != '\0' && *e != '\n') {
+            uint32_t cp;
+            const size_t n = scnTextUtf8At(e, &cp);
+            if (*e == ' ') hasSpace = true;
+            if (scnTextIsUnspacedChar(cp)) unspaced = true;
+            e += n;
+        }
+        if (!hasSpace && unspaced) {
+            for (p = row; p < e;) {
+                const size_t n  = scnTextUtf8At(p, NULL);
+                const float  cw = measure(p, p + n, ctx);
+                if (w + cw > maxW && p > row) {
+                    breakAt = p;
+                    break;
+                }
+                w += cw;
+                p += n;
+            }
+        }
+        rows++;
+        if (breakAt != NULL && len + 1 < cap) {
+            memmove(breakAt + 1, breakAt, len - (size_t)(breakAt - text) + 1);
+            *breakAt = '\n';
+            len++;
+            row = breakAt + 1;
+            continue;
+        }
+        if (*e == '\0') break;
+        row = e + 1;
+    }
+    return rows;
+}
+
+/*********************************************************
+ *NAME:          scnTextAcrossSpan
+ *PURPOSE:
+ *  The span a line's share across is taken over: the text
+ *  area's whole width, in source units, and the screen
+ *  point its left edge is at, so a line at share 0.1 sits
+ *  near the area's left side and not near the left of the
+ *  centred text block. When the text block is wider than
+ *  the area (a word held at the letter floor), the span is
+ *  the block, so no line is made smaller to fit the area.
+ *  A fit with no scale gives the block.
+ *
+ *ARGUMENTS:
+ *  areaX/areaW - the text area's left edge and width, in
+ *                pixels
+ *  fit         - the source rectangle's fit in the area
+ *  srcW        - the source rectangle's width, in units
+ *  outLeft     - receives the span's left edge, in pixels
+ *  outW        - receives the span's width, in units
+ *********************************************************/
+static inline void scnTextAcrossSpan(float areaX, float areaW, ScnTextFit fit,
+                                     float srcW, float *outLeft,
+                                     float *outW) {
+    float left = fit.originX;
+    float w    = srcW;
+    if (fit.scale > 0.0f && areaW / fit.scale > srcW) {
+        left = areaX;
+        w    = areaW / fit.scale;
+    }
+    if (outLeft != NULL) *outLeft = left;
+    if (outW != NULL) *outW = w;
 }
 
 /* A rectangle in screen pixels. */

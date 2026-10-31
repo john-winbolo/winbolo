@@ -2264,8 +2264,10 @@ language's word for "press".
 
 A popup wraps only at spaces. Chinese and Japanese text has no spaces, so put a
 single `\n` (read as a space) every 25 to 30 characters. A status line or
-announcement row too wide for the Scenario Text window is broken at its last space that fits,
-or before the first character that does not fit when the row has no space.
+announcement row too wide for the Scenario Text window is broken at its
+spaces, never inside a word. A single word too wide is drawn smaller instead,
+down to half the UI text height. A row of Chinese, Japanese or Korean with no
+space is broken before the first character that does not fit.
 
 The limits count bytes, and most languages take more bytes than English for
 the same line: Cyrillic and Greek take two a letter, Chinese, Japanese and
@@ -2379,22 +2381,33 @@ preferences file. A player who closes it opens it again from **Brains > Info
 Overlay > Scenario Text**. In tablet mode there is no window: the same
 layout is drawn in a fixed band at the top middle of tablet mode's game view.
 
-**How the text is scaled.** The window draws a fixed source rectangle, 240
-units wide, scaled to fit. Each line is 20 units of text with a 1 unit
-outline, so a row is 22 units, and a 2 unit gap goes around and between the
-rows. With one row the rectangle is 26 units high; with two it is 50. The
-rows are counted for the round: the status line takes the top row from the
-first time one is shown, and the announcement takes the row under it, or
-the top row when the round has shown no status line. So the text changes
-size at most when a new kind of line first appears in a round, and not each
-time a line comes or goes.
+**How the text is scaled.** The window draws a source rectangle scaled to
+fit. Each line is 20 units of text with a 1 unit outline, so a row is 22
+units, and a 2 unit gap goes around and between the rows. With one row the
+rectangle is 26 units high; with two it is 50. It is as wide as the widest
+row on screen, with the outline and the gap on each side. The script's rows
+are counted for the round: the status line takes the top row from the first
+time one is shown, and the announcement takes the row under it, or the top
+row when the round has shown no status line. The width, and any rows added
+by breaking a long line, are this frame's. So the text size follows the
+widest row on screen; it stays the same when a line comes or goes while the
+letter cap below holds it, which is the usual case.
+
+A row keeps the script's own breaks while it fits across the window at
+three quarters of the UI text height. A row that does not fit is broken at
+its spaces into rows of about the same width. A single word is never broken:
+a word too wide for the window is drawn smaller, down to half the UI text
+height, and a word too wide even then runs past the window's sides, centred.
+A row of Chinese, Japanese or Korean with no space is broken between its
+characters.
 
 The source rectangle is scaled by one factor for both directions, the
-largest that fits the window, and centred in the window. The letters keep
-their shape at every window size. A window wider than the text's shape has
-empty space left and right; a taller one has empty space above and below.
-A line too wide for the 236 units between the gaps is made smaller by itself
-until it fits. The gear has two sliders. **Background opacity** is the alpha
+largest that fits the window up to letters 1.5 times the UI text height, and
+centred in the window. The letters keep their shape at every window size. A
+window wider than the text's shape has empty space left and right; a taller
+one has empty space above and below. An announcement's `position` share is
+across the whole window, so a line at share 0.1 sits near the window's left
+side, not near the left of the centred text. The gear has two sliders. **Background opacity** is the alpha
 of the black backing: 100% is opaque black and 0% is no backing. It starts
 at 43%, the see-through backing the window has always had. **Text opacity**
 fades the text and its outline, and starts at 100%. A scenario panel's gear
@@ -2469,7 +2482,7 @@ client writes each one out as the name of the bound key on a keyboard, a word
 for the control on a controller, or the touch wording on a touch screen. The
 128-byte cap (125 with a position) applies to the text as sent, tokens and all.
 A row that is too wide for the Scenario Text window once its tokens are filled in is broken
-into two at its last space that fits.
+at its spaces into rows of about the same width.
 
 ```lua
 game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)

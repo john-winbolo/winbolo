@@ -6188,10 +6188,15 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * scenario_panel_draw.h, which has the rule). The script's
  * own rows are kept; a line is broken into even rows at its
  * spaces only when it does not fit across even at the
- * smallest letter height (scnTextWrapBalanced). The status line is centred across. The
- * announcement keeps the share across the view that its
- * position named, and the share down is not used: it is
- * always on its own row, under the status line.
+ * smallest letter height (scnTextWrapBalanced). A word is
+ * never broken inside; a single word too wide even then is
+ * drawn smaller, down to a letter floor, so it fits. A line
+ * with no space in a language written without spaces is
+ * broken between characters (scnTextBreakUnspaced). The
+ * status line is centred across. The announcement keeps the
+ * share across the window that its position named
+ * (scnTextAcrossSpan), and the share down is not used: it
+ * is always on its own row, under the status line.
  *
  * The window is up while the player has it shown and there
  * is a line to show, and for SCN_TEXT_SHOW_SECONDS after a
@@ -6364,80 +6369,16 @@ static int scnTextRowCount(const char *text) {
     return rows;
 }
 
-/* Breaks each row of text wider than maxW that has no space in it at all
-   into rows that fit, in place: Chinese, Japanese and Korean are written
-   without spaces, so such a row breaks before the first character that
-   does not fit, a "\n" put in there while text has room for it. A row with
-   a space is not changed here: scnTextWrapBalanced breaks it at its
-   spaces, and a single word too wide is never broken inside. */
-static void scnWrapRows(ImFont *font, float height, float maxW, char *text,
-                        size_t cap) {
-    if (font == nullptr || text == nullptr || cap == 0 || maxW <= 0.0f) {
-        return;
-    }
-    size_t len = strlen(text);
-    char  *row = text;
-    while (*row != '\0') {
-        {
-            const char *q = row;
-            while (*q != '\0' && *q != '\n' && *q != ' ') q++;
-            if (*q == ' ') {
-                /* A row with a space: on to the next row. */
-                while (*q != '\0' && *q != '\n') q++;
-                row = (char *)((*q == '\n') ? q + 1 : q);
-                continue;
-            }
-        }
-        float  w         = 0.0f;
-        char  *lastSpace = nullptr;
-        char  *p         = row;
-        char  *breakAt   = nullptr;
-        while (*p != '\0' && *p != '\n') {
-            /* One character: its UTF-8 lead byte gives its length. */
-            const unsigned char c = (unsigned char)*p;
-            size_t n = 1;
-            if (c >= 0xF0) n = 4;
-            else if (c >= 0xE0) n = 3;
-            else if (c >= 0xC0) n = 2;
-            for (size_t k = 1; k < n; k++) {
-                if (p[k] == '\0') { n = k; break; }
-            }
-            const float cw =
-                font->CalcTextSizeA(height, FLT_MAX, 0.0f, p, p + n).x;
-            if (w + cw > maxW && p > row) {
-                breakAt = p;
-                break;
-            }
-            if (*p == ' ') lastSpace = p;
-            w += cw;
-            p += n;
-        }
-        if (breakAt == nullptr) {
-            /* The row fits: on to the next. */
-            row = (*p == '\n') ? p + 1 : p;
-            continue;
-        }
-        if (lastSpace != nullptr && lastSpace > row) {
-            *lastSpace = '\n';
-            row = lastSpace + 1;
-            continue;
-        }
-        if (len + 1 >= cap) return;   /* no room for one more break */
-        memmove(breakAt + 1, breakAt, len - (size_t)(breakAt - text) + 1);
-        *breakAt = '\n';
-        len++;
-        row = breakAt + 1;
-    }
-}
-
 /* Draws one line, of one or more rows, from source row `row` down. share is
-   the line's centre across, 0 to 1. The widest row sets the line's box and
-   its shrink, so every row of a line is drawn at one size, and each row is
-   centred in that box; a line made smaller to fit across is centred down
-   its rows. Answers how many rows the line takes, drawn or not. */
+   the line's centre across, 0 to 1, of the span acrossW units wide whose
+   left edge is at the screen point acrossLeft (scnTextAcrossSpan: the text
+   area's width). The widest row sets the line's box and its shrink, so
+   every row of a line is drawn at one size, and each row is centred in that
+   box; a line made smaller to fit across is centred down its rows. Answers
+   how many rows the line takes, drawn or not. */
 static int scnTextDrawLine(ImDrawList *dl, ImFont *font, const ScnTextFit &fit,
-                           float srcW, int row, float share, int alpha,
-                           const char *text) {
+                           float acrossLeft, float acrossW, int row,
+                           float share, int alpha, const char *text) {
     if (text == nullptr || text[0] == '\0') return 0;
     const int rows = scnTextRowCount(text);
     if (alpha <= 0 || fit.scale <= 0.0f) return rows;
@@ -6453,7 +6394,7 @@ static int scnTextDrawLine(ImDrawList *dl, ImFont *font, const ScnTextFit &fit,
     }
     const float lineW = widest + 2.0f * SCN_TEXT_OUTLINE_UNITS;
     float x = 0.0f, shrink = 1.0f;
-    scnTextLineAcross(srcW, lineW, share, &x, &shrink);
+    scnTextLineAcross(acrossW, lineW, share, &x, &shrink);
 
     const float px     = fit.scale * shrink;   /* pixels per unit, this line */
     const float height = SCN_TEXT_LINE_UNITS * px;
@@ -6468,7 +6409,7 @@ static int scnTextDrawLine(ImDrawList *dl, ImFont *font, const ScnTextFit &fit,
         const float top = scnTextRowTop(row + i) +
                           SCN_TEXT_ROW_UNITS * (1.0f - shrink) * 0.5f;
         scnDrawOutlinedRow(dl, font, height,
-                           fit.originX + x * fit.scale + o +
+                           acrossLeft + x * fit.scale + o +
                                (widest - rowW) * px * 0.5f,
                            fit.originY + top * fit.scale + o, o, alpha, r, end);
         if (*end == '\0') break;
@@ -6492,20 +6433,27 @@ static float scnTextMeasure(const char *s, const char *e, void *ctx) {
 }
 
 /* The lines laid out for an area areaW pixels wide: the source rectangle,
-   the rows the status line takes, and the largest scale (the letter cap,
-   SCN_TEXT_MAX_LETTER_UI_SHARE of the UI text height). */
+   the rows the status line takes, the largest scale (the letter cap,
+   SCN_TEXT_MAX_LETTER_UI_SHARE of the UI text height), and the smallest
+   scale the width may give (the letter floor,
+   SCN_TEXT_FLOOR_LETTER_UI_SHARE), which only a single word too wide for
+   the area at the smallest letter height reaches. */
 struct ScnTextArranged {
     float srcW, srcH;
     int   statusRows;
     float maxScale;
+    float floorScale;
 };
 
 /* Lays the lines out, in place, for an area areaW pixels wide. Each line
    keeps the script's own rows while its widest row fits across areaW at
    the smallest letter height (SCN_TEXT_MIN_LETTER_UI_SHARE); a row that does
    not is broken at its spaces into even rows (scnTextWrapBalanced), and a
-   row with no space at all, in a language written without them, between
-   characters (scnWrapRows). The source rectangle is the widest row across,
+   row with no space in a language written without them (Chinese, Japanese,
+   Korean) between characters (scnTextBreakUnspaced). A word is never broken
+   inside: a row of one word too wide makes the source wider, so the scale
+   goes below the smallest letter height, down to the letter floor, and the
+   word fits across. The source rectangle is the widest row across,
    and the rows the round has used so far down, or more when the rows here
    are more (scnTextRowsUsed). The letter heights are shares of the UI font
    size in the current ImGui context. */
@@ -6517,6 +6465,7 @@ static ScnTextArranged scnTextArrange(ImFont *font, float areaW, char *status,
     const float minScale = ui * SCN_TEXT_MIN_LETTER_UI_SHARE /
                            SCN_TEXT_LINE_UNITS;
     a.maxScale = ui * SCN_TEXT_MAX_LETTER_UI_SHARE / SCN_TEXT_LINE_UNITS;
+    a.floorScale = ui * SCN_TEXT_FLOOR_LETTER_UI_SHARE / SCN_TEXT_LINE_UNITS;
     const float rowMaxW =
         (areaW > 0.0f && minScale > 0.0f)
             ? areaW / minScale - 2.0f * SCN_TEXT_OUTLINE_UNITS -
@@ -6527,7 +6476,8 @@ static ScnTextArranged scnTextArrange(ImFont *font, float areaW, char *status,
     if (haveStatus) {
         if (rowMaxW > 0.0f) {
             scnTextWrapBalanced(status, scnTextMeasure, font, rowMaxW);
-            scnWrapRows(font, SCN_TEXT_LINE_UNITS, rowMaxW, status, statusCap);
+            scnTextBreakUnspaced(status, statusCap, scnTextMeasure, font,
+                                 rowMaxW);
         }
         statusRows = scnTextRowCount(status);
         widest = ImMax(widest, scnTextContentWidth(status, scnTextMeasure, font));
@@ -6535,8 +6485,8 @@ static ScnTextArranged scnTextArrange(ImFont *font, float areaW, char *status,
     for (int i = 0; i < lineCount; i++) {
         if (rowMaxW > 0.0f) {
             scnTextWrapBalanced(lines[i].text, scnTextMeasure, font, rowMaxW);
-            scnWrapRows(font, SCN_TEXT_LINE_UNITS, rowMaxW, lines[i].text,
-                        sizeof(lines[i].text));
+            scnTextBreakUnspaced(lines[i].text, sizeof(lines[i].text),
+                                 scnTextMeasure, font, rowMaxW);
         }
         announceRows += scnTextRowCount(lines[i].text);
         widest = ImMax(widest,
@@ -6564,17 +6514,22 @@ static void scnTextDrawLines(ImDrawList *dl, ImFont *font, float x, float y,
             : scnTextArrange(font, w, status, statusCap, haveStatus, lines,
                              lineCount);
     const float srcW = a.srcW;
-    const ScnTextFit fit =
-        scnTextFitRectCapped(srcW, a.srcH, x, y, w, h, a.maxScale);
+    const ScnTextFit fit = scnTextFitRectHeld(srcW, a.srcH, x, y, w, h,
+                                              a.floorScale, a.maxScale);
+    /* A line's share across is of the area's width, not of the text
+       block's, as the script's position names it. */
+    float acrossLeft = fit.originX, acrossW = srcW;
+    scnTextAcrossSpan(x, w, fit, srcW, &acrossLeft, &acrossW);
     if (haveStatus) {
-        scnTextDrawLine(dl, font, fit, srcW, 0, 0.5f,
+        scnTextDrawLine(dl, font, fit, acrossLeft, acrossW, 0, 0.5f,
                         (int)lroundf(255.0f * alpha), status);
     }
     /* Under the status line's rows whether or not it is up this frame, so an
        announcement does not move up when the status line goes. */
     int row = a.statusRows;
     for (int i = 0; i < lineCount; i++) {
-        row += scnTextDrawLine(dl, font, fit, srcW, row, lines[i].share,
+        row += scnTextDrawLine(dl, font, fit, acrossLeft, acrossW, row,
+                               lines[i].share,
                                (int)lroundf(255.0f * alpha * lines[i].fade),
                                lines[i].text);
     }
@@ -6670,9 +6625,12 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     }
     const bool haveAnnounce = lineCount > 0;
 
-    /* The rows the round has used so far set the source rectangle. They are
-       counted over the round and not frame by frame, so the text does not
-       change size when a line comes and goes. */
+    /* The rows the round has used so far set the source rectangle's height.
+       The script's rows are counted over the round and not frame by frame;
+       the width, and the rows that breaking a long line adds, are this
+       frame's (scnTextArrange). So the text size follows the widest row on
+       screen, and stays the same when a line comes and goes only while the
+       letter height cap holds it. */
     if (haveStatus) {
         s_scnText.usedStatus = true;
         s_scnText.statusRows = ImMax(s_scnText.statusRows,
