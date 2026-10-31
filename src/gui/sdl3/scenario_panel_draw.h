@@ -360,41 +360,6 @@ static inline ScnTextBand scnTextTabletBand(float viewX, float viewY,
 }
 
 /*********************************************************
- *NAME:          scnTextPointerOnHandle
- *PURPOSE:
- *  Whether a point is on the Scenario Text window's bar or
- *  on its resize grip: the two places where the window
- *  takes the mouse. The bar is the strip directly above
- *  the text area, as wide as the text area and barH high,
- *  so its bottom edge is the text area's top edge and it
- *  covers no text. It holds the gear and the X. The grip
- *  is the gripSide square in the text area's bottom-right
- *  corner. Each rectangle includes its top and left edges
- *  and not its bottom and right edges, as ImGui's own
- *  rectangle test does. A text area with no area has no
- *  bar and no grip. A barH of 0 means no bar.
- *
- *ARGUMENTS:
- *  x/y      - the text area's top-left corner, in pixels
- *  w/h      - the text area's size, in pixels
- *  barH     - the bar's height, in pixels
- *  gripSide - the grip's side, in pixels
- *  px/py    - the point, in pixels
- *********************************************************/
-static inline bool scnTextPointerOnHandle(float x, float y, float w, float h,
-                                          float barH, float gripSide,
-                                          float px, float py) {
-    if (w <= 0.0f || h <= 0.0f) return false;
-    if (px < x || px >= x + w) return false;
-    if (barH > 0.0f && py >= y - barH && py < y) return true;
-    if (gripSide > 0.0f && px >= x + w - gripSide &&
-        py >= y + h - gripSide && py < y + h) {
-        return true;
-    }
-    return false;
-}
-
-/*********************************************************
  *NAME:          scnTextPrintedRecently
  *PURPOSE:
  *  Whether a line was on screen in the Scenario Text
@@ -443,56 +408,34 @@ static inline bool scnTextWindowShown(bool shown, bool recent,
 }
 
 /*********************************************************
- *NAME:          scnTextEdgeShown
+ *NAME:          scnFloatFrameShown
  *PURPOSE:
- *  Whether the Scenario Text window draws its faint edge.
- *  While the pointer is on the window (the text area, or
- *  the bar while the bar is up), the edge is always drawn,
- *  at any background opacity, 0% too, so the player can
- *  see the window's size there. This is the edge 1% gives,
- *  and no backing is added for it.
- *  Otherwise, with a line to show, the edge is drawn when
- *  there is a backing (background opacity above 0%): at 0%
- *  the text stands on the map with no frame round it. With
- *  no line, the window draws no backing, and the edge is
- *  drawn only while the bar shows.
+ *  Whether the window frame a scenario panel and the
+ *  Scenario Text window share draws its faint edge round
+ *  the content and, while the bar shows, its resize grip.
+ *  The panel (hideAtZero false) always draws them, at any
+ *  background opacity. The Scenario Text window
+ *  (hideAtZero true) draws them at 0% background opacity
+ *  only while the pointer is on the window (the content,
+ *  or the bar while the bar is up) or while a move or a
+ *  resize drag is on, also when the drag takes the pointer
+ *  off the window: at 0% the text stands on the map with
+ *  no frame round it. Above 0% it draws them as the panel
+ *  does. The grip takes the mouse whether it is drawn or
+ *  not.
  *
  *ARGUMENTS:
- *  haveText       - there is a status line or an
- *                   announcement
- *  bgPct          - the background opacity, 0 to 100
- *  handlesVisible - the bar shows
- *  hovered        - the pointer is on the window
+ *  hideAtZero - the window's hideFrameAtZeroOpacity
+ *  bgPct      - the background opacity, 0 to 100
+ *  hovered    - the pointer is on the window
+ *  moving     - the move drag is on
+ *  resizing   - the resize drag is on
  *********************************************************/
-static inline bool scnTextEdgeShown(bool haveText, int bgPct,
-                                    bool handlesVisible, bool hovered) {
-    if (hovered) return true;
-    if (haveText) return bgPct > 0;
-    return handlesVisible;
-}
-
-/*********************************************************
- *NAME:          scnTextGripShown
- *PURPOSE:
- *  Whether the Scenario Text window draws its resize grip.
- *  Only while the pointer is on the window (the text area,
- *  which holds the grip in its corner, or the bar while the
- *  bar is up), and while a resize drag is on, also when the
- *  drag takes the pointer off the window. Not while the bar
- *  stays up for a time after the pointer leaves: at 0%
- *  background opacity a grip with nothing round it looks
- *  like a mark on the map.
- *  The grip takes the mouse whether it is drawn or not, so
- *  a pointer that goes straight to the corner finds it: the
- *  corner is in the text area, so the grip shows as the
- *  pointer gets there.
- *
- *ARGUMENTS:
- *  hovered  - the pointer is on the window
- *  resizing - the resize drag is on
- *********************************************************/
-static inline bool scnTextGripShown(bool hovered, bool resizing) {
-    return hovered || resizing;
+static inline bool scnFloatFrameShown(bool hideAtZero, int bgPct,
+                                      bool hovered, bool moving,
+                                      bool resizing) {
+    if (!hideAtZero || bgPct > 0) return true;
+    return hovered || moving || resizing;
 }
 
 /*********************************************************
