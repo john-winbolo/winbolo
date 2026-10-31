@@ -110,8 +110,9 @@ int lobbyStartListRender(ClientSim *cs, int myPlayerNum, int startCount,
          * The row is exactly as wide as the list. Left at its default width
          * a Selectable takes the width of its label when that is wider, so
          * a row with several holders reached past the list and over the map
-         * beside it. The text is cut at the list edge instead, and hovering
-         * a cut row shows the whole of it. */
+         * beside it. The text is cut at the list edge instead, and a cut
+         * row shows the whole of it in a tooltip while it has focus or the
+         * mouse is over it. */
         /* A width of 0 means "label width" to Selectable, so keep at least 1. */
         float rowW = ImGui::GetContentRegionAvail().x;
         if (rowW < 1.0f) rowW = 1.0f;
@@ -122,11 +123,14 @@ int lobbyStartListRender(ClientSim *cs, int myPlayerNum, int startCount,
         ImGui::PopStyleColor();
 
         if (ImGui::IsItemFocused()) focused = i;
-        /* Say why a focused off-side row does nothing — the pad has no hover,
-         * so focus stands in for it. */
-        const bool hovered   = ImGui::IsItemHovered();
-        const bool tipOffSide = offSide && (ImGui::IsItemFocused() || hovered);
-        const bool tipCut     = cut && hovered;
+        /* Say why a focused off-side row does nothing, and show the whole
+         * text of a focused cut row. The pad has no hover, so focus stands
+         * in for it: this list draws only in controller mode
+         * (map_preview_popup.cpp), and a real mouse move leaves that mode
+         * and hides the list, so on a PC a hover alone is never seen. */
+        const bool hoverOrFocus = ImGui::IsItemFocused() || ImGui::IsItemHovered();
+        const bool tipOffSide   = offSide && hoverOrFocus;
+        const bool tipCut       = cut && hoverOrFocus;
         if (tipOffSide || tipCut) {
             ImGui::BeginTooltip();
             if (tipCut) {
