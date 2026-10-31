@@ -6184,7 +6184,7 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * units, as wide as the widest row, and scaled into the
  * window with one factor for both axes, as large as the
  * window allows up to a letter height cap, and centred in it
- * (scnTextArrange, and scnTextFitRectCapped in
+ * (scnTextArrange, and scnTextFitRectHeld in
  * scenario_panel_draw.h, which has the rule). The script's
  * own rows are kept; a line is broken into even rows at its
  * spaces only when it does not fit across even at the

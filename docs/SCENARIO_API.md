@@ -2374,11 +2374,11 @@ the panel's top and its bottom level with the panel's bottom. The lines are
 fitted into that area as large as its width and height allow, and centred in
 it both ways. It goes back to the top middle when that room is narrower than
 160 pixels, or when the player has moved the panel. Its background starts
-fully clear (0%), so the outlined lines stand on the map; the player can add
-a backing from its gear. Once the player moves or resizes it, it stays where they put it,
-and its place, size, opacities and whether it is shown are kept in the
-preferences file. A player who closes it opens it again from **Brains > Info
-Overlay > Scenario Text**. In tablet mode there is no window: the same
+fully clear (0%), so the outlined lines stand on the map; the player can add a
+backing from its gear. Once the player moves or resizes it, it stays where
+they put it, and its place, size, opacities and whether it is shown are kept
+in the preferences file. A player who closes it opens it again from **Brains >
+Info Overlay > Scenario Text**. In tablet mode there is no window: the same
 layout is drawn in a fixed band at the top middle of tablet mode's game view.
 
 **How the text is scaled.** The window draws a source rectangle scaled to
@@ -2393,26 +2393,26 @@ by breaking a long line, are this frame's. So the text size follows the
 widest row on screen; it stays the same when a line comes or goes while the
 letter cap below holds it, which is the usual case.
 
-A row keeps the script's own breaks while it fits across the window at
-three quarters of the UI text height. A row that does not fit is broken at
-its spaces into rows of about the same width. A single word is never broken:
-a word too wide for the window is drawn smaller, down to half the UI text
-height, and a word too wide even then runs past the window's sides, centred.
-A row of Chinese, Japanese or Korean with no space is broken between its
-characters.
+A row keeps the script's own breaks while it fits across the window at three
+quarters of the UI text height. A row that does not fit is broken at its
+spaces into rows of about the same width. A single word is never broken: a
+word too wide for the window is drawn smaller, down to half the UI text
+height, and a word too wide even then is centred and cut off at the window's
+sides. A row of Chinese, Japanese or Korean with no space is broken between
+its characters, but a Latin word or a number in it is kept whole.
 
-The source rectangle is scaled by one factor for both directions, the
-largest that fits the window up to letters 1.5 times the UI text height, and
-centred in the window. The letters keep their shape at every window size. A
-window wider than the text's shape has empty space left and right; a taller
-one has empty space above and below. An announcement's `position` share is
-across the whole window, so a line at share 0.1 sits near the window's left
-side, not near the left of the centred text. The gear has two sliders. **Background opacity** is the alpha
-of the black backing: 100% is opaque black and 0% is no backing. It starts
-at 43%, the see-through backing the window has always had. **Text opacity**
-fades the text and its outline, and starts at 100%. A scenario panel's gear
-has the same two sliders, and there the text opacity fades everything the
-script draws in the panel.
+The source rectangle is scaled by one factor for both directions, the largest
+that fits the window up to letters 1.5 times the UI text height, and centred
+in the window. The letters keep their shape at every window size. A window
+wider than the text's shape has empty space left and right; a taller one has
+empty space above and below. An announcement's `position` share is across the
+whole window, so a line at share 0.1 sits near the window's left side, not
+near the left of the centred text. The gear has two sliders. **Background
+opacity** is the alpha of the black backing: 100% is opaque black and 0% is no
+backing. It starts at 43%, the see-through backing the window has always had.
+**Text opacity** fades the text and its outline, and starts at 100%. A
+scenario panel's gear has the same two sliders, and there the text opacity
+fades everything the script draws in the panel.
 
 `position` keeps only its share across. Give a table `{ x = across, y =
 down }`, each from 0 to 1, or one of two words:
