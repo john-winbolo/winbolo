@@ -510,14 +510,19 @@ static bool pred_not_busy(LoopbackHarness *h, void *user) {
 /*
  * clientSimNetLobbyMapChangeBusy, which the map chooser greys its picks and
  * Use This Map by, holds while a map change is under way and lifts by itself
- * in each way one can end: the re-join after a map pick finishing, an upload
- * answered, and an upload whose answer never comes given up on by the
- * watchdog.
+ * in each way one can end: a map pick's command acked and its re-join
+ * finished, the same with the command's first send lost and resent, an
+ * upload answered, and an upload whose answer never comes given up on by the
+ * watchdog. It holds from the moment a pick is submitted, before the server
+ * has heard of it.
  */
 int run_loopback_map_change_busy_lifts(void) {
     LoopbackHarness h;
     BYTE emap[6000] = E_MAP;
     bool busyIdle;
+    bool busySubmitted;
+    bool busyResending;
+    bool liftedResent;
     bool busyRejoin;
     bool busyUpload;
     bool busyLost;
@@ -538,13 +543,35 @@ int run_loopback_map_change_busy_lifts(void) {
     threadsReleaseMutex();
     busyIdle = clientSimNetLobbyMapChangeBusy(h.cs);
 
-    /* A server map pick: busy through its re-join, then not. */
+    /* A server map pick: busy from the submit, before anything is sent back,
+       through its re-join, then not. */
     clientSimNetSendLobbySetMap(h.cs, "Baringi.map");
+    busySubmitted = clientSimNetLobbyMapChangeBusy(h.cs);
     busyRejoin = loopbackHarnessPumpUntil(&h, UPLOAD_MAX, pred_busy_rejoining,
                                           NULL) >= 0 &&
                  clientSimNetLobbyMapChangeBusy(h.cs);
     liftedRejoin = loopbackHarnessPumpUntil(&h, UPLOAD_MAX, pred_not_busy,
                                             NULL) >= 0;
+
+    /* The same with the command's first send lost: still busy, with the
+       client CONNECTED and nothing heard back, until the resend is acked. */
+    transportUdpClientTestDropNextOut(&h.cs->transport, PACKET_COMMAND_TICK, 1);
+    clientSimNetSendLobbySetMap(h.cs, "Bad Lands.map");
+    loopbackHarnessPump(&h);
+    busyResending = transportUdpClientTestDropNextOutLeft(&h.cs->transport) == 0 &&
+                    clientSimGetConnectState(h.cs) == CLIENT_CONNECT_CONNECTED &&
+                    clientSimNetLobbyMapChangeBusy(h.cs);
+    {
+        /* The resend waits 80 ms of wall clock, which a pump does not
+           advance, so this waits by time rather than by pump count. */
+        Uint64 until = SDL_GetTicks() + 5000;
+        liftedResent = false;
+        while (!liftedResent && SDL_GetTicks() < until) {
+            loopbackHarnessPump(&h);
+            liftedResent = pred_not_busy(&h, NULL) &&
+                           strcmp(serverSimGetMapName(h.sim), "Bad Lands") == 0;
+        }
+    }
 
     /* An upload: busy from the kick until it is answered. */
     busyUpload = transportUdpClientStartLobbyMapUploadFromBytes(
@@ -564,15 +591,21 @@ int run_loopback_map_change_busy_lifts(void) {
     liftedLost = !clientSimNetLobbyMapChangeBusy(h.cs);
     transportUdpClientTestDropUploadReply(&h.cs->transport, 0);
 
-    fprintf(stderr, "  map change busy: idle=%d rejoin=%d->lifted %d "
-                    "upload=%d->lifted %d lost=%d->lifted %d\n",
-            (int)busyIdle, (int)busyRejoin, (int)liftedRejoin,
+    fprintf(stderr, "  map change busy: idle=%d submitted=%d rejoin=%d->lifted "
+                    "%d resending=%d->lifted %d upload=%d->lifted %d "
+                    "lost=%d->lifted %d\n",
+            (int)busyIdle, (int)busySubmitted, (int)busyRejoin,
+            (int)liftedRejoin, (int)busyResending, (int)liftedResent,
             (int)busyUpload, (int)liftedUpload, (int)busyLost,
             (int)liftedLost);
     loopbackHarnessStop(&h);
     UT_ASSERT_MSG(!busyIdle, "busy with nothing under way");
+    UT_ASSERT_MSG(busySubmitted, "not busy as soon as a map pick was submitted");
     UT_ASSERT_MSG(busyRejoin, "not busy during a map change's re-join");
     UT_ASSERT_MSG(liftedRejoin, "still busy after the re-join finished");
+    UT_ASSERT_MSG(busyResending, "not busy while a lost map pick awaited "
+                  "its resend");
+    UT_ASSERT_MSG(liftedResent, "still busy after the resent pick landed");
     UT_ASSERT_MSG(busyUpload, "not busy while an upload was in flight");
     UT_ASSERT_MSG(liftedUpload, "still busy after the upload was answered");
     UT_ASSERT_MSG(busyLost, "not busy while an unanswered upload was waiting");

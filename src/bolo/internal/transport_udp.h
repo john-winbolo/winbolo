@@ -382,9 +382,9 @@ bool transportUdpClientStartLobbyScriptUpload(Transport *t,
 /* Current upload progress as 0..100 (bytesSent / fileLen * 100). */
 uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t);
 
-/* True while a lobby map change of this client's is under way: a re-join
- * after a map change, or an upload not yet over. Never latched; see the
- * definition for how each part ends. */
+/* True while a lobby map change of this client's is under way: a map command
+ * not yet acked, a re-join after a map change, or an upload not yet over.
+ * Never latched; see the definition for how each part ends. */
 bool transportUdpClientMapChangeBusy(Transport *t);
 
 /* Server-side: validates a length-prefixed upload filename against the
