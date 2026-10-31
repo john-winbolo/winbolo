@@ -39,11 +39,12 @@ extern "C" bool dialogNavWasInsideSubRegionAtFrameStart(void) {
    mouse move or the mouse wheel does not hide it.  ImGui itself does not
    hide its nav cursor on a mouse move either: a move only clears
    NavHighlightItemUnderNav, and with ConfigNavCursorVisibleAlways
-   NavUpdate keeps NavCursorVisible on.  Also as in Discord, the Tab that shows the outline does not
-   move focus: the outline shows on the item that already has focus, and
-   only the next Tab moves on (see navOutlineClaimTab).  A controller
-   keeps it on: any pad button press here, or the game's own record that the controller is the device in use
-   (Steam Input reaches ImGui as arrow keys, not pad keys). */
+   NavUpdate keeps NavCursorVisible on.  Also as in Discord, the Tab
+   that shows the outline does not move focus: the outline shows on the
+   item that already has focus, and only the next Tab moves on (see
+   navOutlineClaimTab).  A controller keeps it on: any pad button press
+   here, or the game's own record that the controller is the device in
+   use (Steam Input reaches ImGui as arrow keys, not pad keys). */
 static bool s_navOutlineByKey     = false;
 static bool s_navOutlineByPadUser = false;
 
@@ -73,7 +74,13 @@ static const ImGuiID kNavOutlineTabOwner = 0x4E61764Fu; /* "NavO" */
    _CallbackCompletion): such a field reads Tab through Shortcut() with
    its own id, which fails while another id owns the key.  Nor is it made
    while any other item is active.  No claim with no live focused item:
-   then the first Tab focuses the first item, as before.  The claim stays
+   then the first Tab focuses the first item, as before.  No claim while
+   ImGui's own cursor is hidden: a context without
+   ConfigNavCursorVisibleAlways (the onboarding and connecting dialogs)
+   keeps ImGui's auto mode, where the first Tab shows the cursor and
+   takes focus to the first item, as before.  With the claim there, that
+   Tab was lost and the outline still did not draw (NavCursorVisible
+   stayed off), so the player had to press Tab twice.  The claim stays
    while Tab is held, so a held first Tab does not repeat into a move; it
    is given back once Tab is up. */
 static bool navOutlineActiveItemAllowsClaim(ImGuiContext *g) {
@@ -87,8 +94,8 @@ static bool navOutlineActiveItemAllowsClaim(ImGuiContext *g) {
 static void navOutlineClaimTab(ImGuiContext *g) {
     ImGuiID owner = ImGui::GetKeyOwner(ImGuiKey_Tab);
     bool    want  = !s_navOutlineByKey && !s_navOutlineByPadUser &&
-                    g->NavWindow && g->NavId != 0 && g->NavIdIsAlive &&
-                    navOutlineActiveItemAllowsClaim(g);
+                    g->NavCursorVisible && g->NavWindow && g->NavId != 0 &&
+                    g->NavIdIsAlive && navOutlineActiveItemAllowsClaim(g);
     if (want) {
         if (owner == ImGuiKeyOwner_NoOwner || owner == kNavOutlineTabOwner)
             ImGui::SetKeyOwner(ImGuiKey_Tab, kNavOutlineTabOwner);
@@ -120,7 +127,9 @@ static void navOutlineClaimTab(ImGuiContext *g) {
    Tab request is made inside NewFrame.
 
    The state is read at the end of the previous frame (NavIdIsAlive is
-   cleared in NavUpdate), for that context only. */
+   cleared in NavUpdate), for that context only.  s_tabStuckCtx is only
+   compared with the hook's context, never dereferenced, so it is safe
+   after that context is destroyed; the hook is destroyed with it. */
 static const ImGuiContext *s_tabStuckCtx = nullptr;
 static bool                s_tabStuck    = false;
 
@@ -154,6 +163,10 @@ static void navOutlineFixStuckTab(ImGuiContext *ctx, ImGuiContextHook *) {
                 target = w;
         }
         if (!target) return;
+        /* This runs in a NewFramePost hook, before any Begin this frame,
+           so each window's NavLayersActiveMask is last frame's value.  A
+           window that first appears this frame can be chosen only on the
+           next Tab. */
         ImGui::FocusWindow(target);
     }
     g.NavTabbingDir = 0;

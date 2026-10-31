@@ -29,8 +29,9 @@ extern "C" {
  * no NavWindow, or the cursor is not visible.  Intended to be called
  * once per frame, just before ImGui::Render().  The outline shows only
  * after a Tab or pad button press (a mouse button click hides it
- * again; a mouse move or the wheel does not), or while dialogNavOutlineSetControllerInUse says so.  While
- * the outline is hidden, the first Tab only shows it on the focused item
+ * again; a mouse move or the wheel does not), or while
+ * dialogNavOutlineSetControllerInUse says so.  While the outline is
+ * hidden, the first Tab only shows it on the focused item
  * and does not move focus; this call claims the Tab key for the next
  * frame to do that, so call it each frame before ImGui::Render(). */
 void dialogDrawNavOutline(void);
