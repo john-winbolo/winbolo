@@ -595,7 +595,7 @@ static void galleryJoinPlayers(const ClipGifMeta *m, char *out, size_t outLen) {
 
 /* Open-gallery control for the transport row: a drawn glyph of two stacked
  * frames, so it needs no new art and follows the text colour and UI scale
- * the way the crop button beside it does. The tooltip names it. */
+ * the way the recording mode button does. The tooltip names it. */
 bool clipGifGalleryButton(const char *id) {
     const ImGuiStyle &sty = ImGui::GetStyle();
     const float lineH = ImGui::GetTextLineHeight();

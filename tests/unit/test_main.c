@@ -732,6 +732,7 @@ static const UnitTestEntry s_tests[] = {
     { "clip_gif_mode_state",                     run_clip_gif_mode_state                     },
     { "clip_gif_preview_play",                   run_clip_gif_preview_play                   },
     { "clip_gif_choose_crop",                    run_clip_gif_choose_crop                    },
+    { "clip_gif_default_frame",                  run_clip_gif_default_frame                  },
     { "clip_gif_meta_begin",                     run_clip_gif_meta_begin                     },
     { "lv_snapshot_index_lookup",                run_lv_snapshot_index_lookup                },
     { "lv_snapshot_index_ten_days",              run_lv_snapshot_index_ten_days              },

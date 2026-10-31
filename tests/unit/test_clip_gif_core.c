@@ -1116,7 +1116,7 @@ int run_clip_gif_names(void) {
 int run_clip_gif_frame_box(void) {
     int fails = 0;
     const ClipGifBox image = { 100.0f, 50.0f, 300.0f, 250.0f };
-    const ClipGifFrame init = CLIP_GIF_FRAME_INIT;
+    const ClipGifFrame init = { 0.25f, 0.25f, 0.75f, 0.75f };
 
     ClipGifBox b = clipGifFrameToBox(&init, &image);
     EXPECT_BOX("start frame", b, 150.0f, 100.0f, 250.0f, 200.0f);
@@ -1208,7 +1208,7 @@ int run_clip_gif_frame_drag(void) {
 int run_clip_gif_crop_from_frame(void) {
     int fails = 0;
     ClipGifRect r;
-    const ClipGifFrame init = CLIP_GIF_FRAME_INIT;
+    const ClipGifFrame init = { 0.25f, 0.25f, 0.75f, 0.75f };
     EXPECT_TRUE("start frame",
                 clipGifCropFromFrame(&init, 10, 20, 200, 100, &r));
     EXPECT_RECT("start frame", r, 60, 45, 100, 50);
@@ -1298,34 +1298,31 @@ int run_clip_gif_blit_view(void) {
     return fails ? 1 : 0;
 }
 
-/* Recording mode's state. It starts off, with the crop frame off, in the
- * middle half of the view and at the default length. The toggles change
- * nothing while a GIF is made. A reset puts the start values back. */
+/* Recording mode's state. It starts off, with the frame not set by the
+ * player, on the whole view until it sees one, and at the default length.
+ * The toggle changes nothing while a GIF is made. A reset puts the start
+ * values back. */
 int run_clip_gif_mode_state(void) {
     int fails = 0;
     ClipGifMode m = CLIP_GIF_MODE_INIT;
-    EXPECT_TRUE("starts off", !m.on && !m.cropOn);
-    EXPECT_BOX("starts in the middle", m.frame, 0.25f, 0.25f, 0.75f, 0.75f);
+    EXPECT_TRUE("starts off", !m.on && !m.frameSet);
+    EXPECT_BOX("starts on the whole view", m.frame, 0.0f, 0.0f, 1.0f, 1.0f);
     EXPECT_U32("starts at the default length", m.lenMs,
                CLIP_GIF_LEN_DEFAULT_MS);
 
     EXPECT_TRUE("toggle on", clipGifModeToggle(&m, false) && m.on);
     EXPECT_TRUE("held while a GIF is made",
                 clipGifModeToggle(&m, true) && m.on);
-    EXPECT_TRUE("crop on", clipGifModeToggleCrop(&m, false) && m.cropOn);
-    EXPECT_TRUE("crop held while a GIF is made",
-                clipGifModeToggleCrop(&m, true) && m.cropOn);
-    EXPECT_TRUE("crop off", !clipGifModeToggleCrop(&m, false) && !m.cropOn);
     EXPECT_TRUE("toggle off", !clipGifModeToggle(&m, false) && !m.on);
     EXPECT_TRUE("off is held too", !clipGifModeToggle(&m, true) && !m.on);
 
     m.on = true;
-    m.cropOn = true;
+    m.frameSet = true;
     m.frame.x0 = 0.1f;
     m.lenMs = 12000u;
     clipGifModeReset(&m);
-    EXPECT_TRUE("reset: off", !m.on && !m.cropOn);
-    EXPECT_BOX("reset: frame", m.frame, 0.25f, 0.25f, 0.75f, 0.75f);
+    EXPECT_TRUE("reset: off", !m.on && !m.frameSet);
+    EXPECT_BOX("reset: frame", m.frame, 0.0f, 0.0f, 1.0f, 1.0f);
     EXPECT_U32("reset: length", m.lenMs, CLIP_GIF_LEN_DEFAULT_MS);
 
     /* The tools show with the mode on, or while a GIF is made. */
@@ -1334,7 +1331,6 @@ int run_clip_gif_mode_state(void) {
     EXPECT_TRUE("tools on", clipGifToolsShown(m.on, false));
 
     EXPECT_TRUE("no mode", !clipGifModeToggle(NULL, false));
-    EXPECT_TRUE("no mode crop", !clipGifModeToggleCrop(NULL, false));
     clipGifModeReset(NULL); /* does nothing */
     return fails ? 1 : 0;
 }
@@ -1415,34 +1411,101 @@ int run_clip_gif_preview_play(void) {
     return fails ? 1 : 0;
 }
 
-/* The crop both hosts take: the player's frame, or the centre of the view at
- * most CLIP_GIF_MAX_WIDTH wide. */
+/* The crop both hosts take: always the part in the mode's frame. Before
+ * the player moves the frame that is the default frame, which takes the
+ * same pixels clipGifCentreCrop does (the centre of the view at most
+ * CLIP_GIF_MAX_WIDTH wide), on any view size. A frame the player set is
+ * kept, with no width cap. */
 int run_clip_gif_choose_crop(void) {
     int fails = 0;
-    const ClipGifFrame f = { 0.25f, 0.25f, 0.75f, 0.75f };
     ClipGifRect a, b;
 
-    EXPECT_TRUE("frame", clipGifChooseCrop(true, &f, 10, 20, 800, 600, &a));
-    EXPECT_TRUE("frame: as clipGifCropFromFrame",
-                clipGifCropFromFrame(&f, 10, 20, 800, 600, &b) &&
-                    a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h);
-    /* No width cap for a frame: the frame says what to take. */
-    const ClipGifFrame wide = { 0.0f, 0.0f, 1.0f, 1.0f };
-    EXPECT_TRUE("wide frame", clipGifChooseCrop(true, &wide, 0, 0, 1000, 500,
-                                                &a));
-    EXPECT_TRUE("wide frame: whole view", a.w == 1000 && a.h == 500);
+    /* Not set by the player: the same pixels as the centre crop, on views
+     * wider and narrower than the cap, and on odd sizes. */
+    static const int views[][4] = {
+        { 10, 20, 1000, 500 }, { 0, 0, 480, 270 },   { 3, 4, 320, 240 },
+        { 7, 9, 1921, 1081 },  { 0, 0, 3840, 2160 }, { 0, 0, 481, 1 },
+        { 5, 5, 1, 1 },
+    };
+    for (size_t i = 0; i < sizeof(views) / sizeof(views[0]); i++) {
+        ClipGifMode m = CLIP_GIF_MODE_INIT;
+        const int *v = views[i];
+        const bool gotA = clipGifChooseCrop(&m, v[0], v[1], v[2], v[3], &a);
+        const bool gotB = clipGifCentreCrop(v[0], v[1], v[2], v[3],
+                                            CLIP_GIF_MAX_WIDTH, &b);
+        if (!gotA || !gotB || a.x != b.x || a.y != b.y || a.w != b.w ||
+            a.h != b.h) {
+            fprintf(stderr,
+                    "%s: default on %dx%d: got %d,%d %dx%d, want %d,%d %dx%d\n",
+                    utCurrentTestName(), v[2], v[3], a.x, a.y, a.w, a.h, b.x,
+                    b.y, b.w, b.h);
+            fails++;
+        }
+        EXPECT_TRUE("default: not set by the choice", !m.frameSet);
+    }
 
-    EXPECT_TRUE("centre", clipGifChooseCrop(false, &f, 10, 20, 1000, 500, &a));
-    EXPECT_TRUE("centre: as clipGifCentreCrop",
-                clipGifCentreCrop(10, 20, 1000, 500, CLIP_GIF_MAX_WIDTH, &b) &&
-                    a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h);
-    EXPECT_TRUE("centre: width cap", a.w == CLIP_GIF_MAX_WIDTH);
-    /* The frame is not read when it is not used. */
-    EXPECT_TRUE("centre, no frame",
-                clipGifChooseCrop(false, NULL, 0, 0, 300, 200, &a) &&
-                    a.w == 300 && a.h == 200);
+    /* The default follows the view while the player has not set it: the
+     * view shrinks under the cap and the whole view is taken. */
+    ClipGifMode m = CLIP_GIF_MODE_INIT;
+    EXPECT_TRUE("wide view", clipGifChooseCrop(&m, 0, 0, 1000, 500, &a));
+    EXPECT_RECT("wide view", a, 260, 130, 480, 240);
+    EXPECT_TRUE("small view", clipGifChooseCrop(&m, 0, 0, 300, 200, &a));
+    EXPECT_RECT("small view", a, 0, 0, 300, 200);
 
-    EXPECT_TRUE("empty view", !clipGifChooseCrop(false, &f, 0, 0, 0, 0, &a));
+    /* Set by the player: the frame is kept, with no width cap, and stays
+     * inside a view of any size. */
+    m.frameSet = true;
+    m.frame.x0 = 0.0f;
+    m.frame.y0 = 0.0f;
+    m.frame.x1 = 1.0f;
+    m.frame.y1 = 1.0f;
+    EXPECT_TRUE("set: whole", clipGifChooseCrop(&m, 0, 0, 1000, 500, &a));
+    EXPECT_RECT("set: whole, no cap", a, 0, 0, 1000, 500);
+    m.frame.x0 = 0.25f;
+    m.frame.y0 = 0.25f;
+    m.frame.x1 = 0.75f;
+    m.frame.y1 = 0.75f;
+    EXPECT_TRUE("set", clipGifChooseCrop(&m, 10, 20, 800, 600, &a));
+    EXPECT_TRUE("set: as clipGifCropFromFrame",
+                clipGifCropFromFrame(&m.frame, 10, 20, 800, 600, &b) &&
+                    a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h);
+    EXPECT_BOX("set: kept", m.frame, 0.25f, 0.25f, 0.75f, 0.75f);
+    EXPECT_TRUE("set: tiny view", clipGifChooseCrop(&m, 0, 0, 2, 1, &a));
+    EXPECT_RECT("set: tiny view", a, 1, 0, 1, 1);
+
+    EXPECT_TRUE("empty view", !clipGifChooseCrop(&m, 0, 0, 0, 0, &a));
+    EXPECT_TRUE("no mode", !clipGifChooseCrop(NULL, 0, 0, 100, 100, &a) &&
+                               a.w == 0 && a.h == 0);
+    return fails ? 1 : 0;
+}
+
+/* The default crop frame, as fractions of the view: the whole view up to
+ * CLIP_GIF_MAX_WIDTH wide, else the middle CLIP_GIF_MAX_WIDTH pixels with
+ * the view's shape. clipGifModeFitFrame puts it in a mode only while the
+ * player has not set the frame. */
+int run_clip_gif_default_frame(void) {
+    int fails = 0;
+    ClipGifFrame f = clipGifFrameDefault(320, 240);
+    EXPECT_BOX("narrow view: whole", f, 0.0f, 0.0f, 1.0f, 1.0f);
+    f = clipGifFrameDefault(CLIP_GIF_MAX_WIDTH, 100);
+    EXPECT_BOX("at the cap: whole", f, 0.0f, 0.0f, 1.0f, 1.0f);
+    f = clipGifFrameDefault(960, 640);
+    EXPECT_BOX("twice the cap: middle half", f, 0.25f, 0.25f, 0.75f, 0.75f);
+    f = clipGifFrameDefault(0, 100);
+    EXPECT_BOX("empty view: whole", f, 0.0f, 0.0f, 1.0f, 1.0f);
+
+    ClipGifMode m = CLIP_GIF_MODE_INIT;
+    clipGifModeFitFrame(&m, 960, 640);
+    EXPECT_BOX("fit", m.frame, 0.25f, 0.25f, 0.75f, 0.75f);
+    clipGifModeFitFrame(&m, 0, 0);
+    EXPECT_BOX("fit, empty view: kept", m.frame, 0.25f, 0.25f, 0.75f, 0.75f);
+    clipGifModeFitFrame(&m, 300, 300);
+    EXPECT_BOX("fit follows the view", m.frame, 0.0f, 0.0f, 1.0f, 1.0f);
+    m.frameSet = true;
+    m.frame.x0 = 0.1f;
+    clipGifModeFitFrame(&m, 960, 640);
+    EXPECT_BOX("set by the player: kept", m.frame, 0.1f, 0.0f, 1.0f, 1.0f);
+    clipGifModeFitFrame(NULL, 960, 640); /* does nothing */
     return fails ? 1 : 0;
 }
 

@@ -336,14 +336,11 @@ bool clipGifModeToggle(ClipGifMode *m, bool captureActive) {
     return m->on;
 }
 
-bool clipGifModeToggleCrop(ClipGifMode *m, bool captureActive) {
-    if (m == NULL) {
-        return false;
+void clipGifModeFitFrame(ClipGifMode *m, int viewW, int viewH) {
+    if (m == NULL || m->frameSet || viewW <= 0 || viewH <= 0) {
+        return;
     }
-    if (!captureActive) {
-        m->cropOn = !m->cropOn;
-    }
-    return m->cropOn;
+    m->frame = clipGifFrameDefault(viewW, viewH);
 }
 
 /* ── Metadata ──────────────────────────────────────────────────────── */
@@ -936,13 +933,29 @@ bool clipGifMetaAddPlayer(ClipGifMeta *m, const char *name) {
 
 /* ── Crop choice ───────────────────────────────────────────────────── */
 
-bool clipGifChooseCrop(bool useFrame, const ClipGifFrame *f, int viewX,
-                       int viewY, int viewW, int viewH, ClipGifRect *out) {
-    if (useFrame) {
-        return clipGifCropFromFrame(f, viewX, viewY, viewW, viewH, out);
+ClipGifFrame clipGifFrameDefault(int viewW, int viewH) {
+    ClipGifFrame f = CLIP_GIF_FRAME_INIT;
+    ClipGifRect  r;
+    if (!clipGifCentreCrop(0, 0, viewW, viewH, CLIP_GIF_MAX_WIDTH, &r)) {
+        return f;
     }
-    return clipGifCentreCrop(viewX, viewY, viewW, viewH, CLIP_GIF_MAX_WIDTH,
-                             out);
+    f.x0 = (float)r.x / (float)viewW;
+    f.y0 = (float)r.y / (float)viewH;
+    f.x1 = (float)(r.x + r.w) / (float)viewW;
+    f.y1 = (float)(r.y + r.h) / (float)viewH;
+    return f;
+}
+
+bool clipGifChooseCrop(ClipGifMode *m, int viewX, int viewY, int viewW,
+                       int viewH, ClipGifRect *out) {
+    if (m == NULL) {
+        if (out != NULL) {
+            SDL_zerop(out);
+        }
+        return false;
+    }
+    clipGifModeFitFrame(m, viewW, viewH);
+    return clipGifCropFromFrame(&m->frame, viewX, viewY, viewW, viewH, out);
 }
 
 /* ── Preview ───────────────────────────────────────────────────────── */

@@ -3672,7 +3672,6 @@
 #define STR_LV_CLIPS_EMPTY                       3164
 
 /* Recording mode, in the game's replay and the Log Viewer */
-#define STR_CLIPGIF_CROP                         3360
 #define STR_LV_RECORD_MODE                       3361
 #define STR_LV_RECORD_MODE_TIP                   3362
 #define STR_CLIPGIF_PREVIEW                      3419
