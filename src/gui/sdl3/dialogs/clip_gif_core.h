@@ -399,6 +399,18 @@ void clipGifSpanDragEdge(ClipGifMode *m, int edge, uint32_t atMs,
  * playhead's new time, which is also in m->move.playMs. Held at an end of
  * the zoomed timeline, the screen grows the timeline (clipGifZoomGrow), so
  * the span can go on past the old end. */
+/* The grip's box on the zoomed timeline, in screen px: the three lines in
+ * the middle of the span (xs to xe) with a few px round them. Only this box
+ * moves the span; a press on the rest of the span moves the playhead. The
+ * box is CLIP_GIF_GRIP_HIT_HALF_PX each side of the line in the middle,
+ * floor((xs + xe) / 2). minX and maxX are the room between the two edge
+ * handles' boxes, which come first: when the box does not fit in that room
+ * there is no grip, and it returns false. On true, *x0 and *x1 are the box
+ * and *mid the middle line (any of them may be NULL). */
+#define CLIP_GIF_GRIP_HIT_HALF_PX 9.0f
+bool clipGifGripBox(float xs, float xe, float minX, float maxX, float *x0,
+                    float *x1, float *mid);
+
 void clipGifSpanMoveBegin(ClipGifMode *m, uint32_t grabAtMs, uint32_t curMs,
                           uint32_t totalMs);
 uint32_t clipGifSpanMoveTo(ClipGifMode *m, uint32_t atMs, uint32_t totalMs);

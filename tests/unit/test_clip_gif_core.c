@@ -1901,3 +1901,38 @@ int run_clip_gif_span_move(void) {
     clipGifSpanMoveBegin(NULL, 1u, 1u, 1u); /* nothing */
     return fails ? 1 : 0;
 }
+
+/* clip_gif_grip_box: only a small box round the grip's lines moves the
+ * span; the edge handles' boxes come first, and with no room there is no
+ * grip. */
+int run_clip_gif_grip_box(void) {
+    int fails = 0;
+    float b0 = 0.0f, b1 = 0.0f, mid = 0.0f;
+    /* A wide span: the box is in its middle, much less than the span. */
+    EXPECT_TRUE("wide: a grip",
+                clipGifGripBox(100.0f, 300.0f, 110.0f, 290.0f, &b0, &b1, &mid));
+    EXPECT_TRUE("wide: the middle", mid == 200.0f);
+    EXPECT_TRUE("wide: the box",
+                b0 == 200.0f - CLIP_GIF_GRIP_HIT_HALF_PX &&
+                b1 == 200.0f + CLIP_GIF_GRIP_HIT_HALF_PX);
+    EXPECT_TRUE("wide: the rest of the span is not the grip",
+                b0 > 150.0f && b1 < 250.0f);
+    /* The middle line is on a whole px. */
+    EXPECT_TRUE("odd: a grip",
+                clipGifGripBox(100.0f, 301.0f, 110.0f, 291.0f, NULL, NULL, &mid));
+    EXPECT_TRUE("odd: a whole px", mid == 200.0f);
+    /* Just room, and no room, between the handles. */
+    EXPECT_TRUE("just room",
+                clipGifGripBox(100.0f, 140.0f, 120.0f - CLIP_GIF_GRIP_HIT_HALF_PX,
+                               120.0f + CLIP_GIF_GRIP_HIT_HALF_PX, NULL, NULL,
+                               NULL));
+    EXPECT_TRUE("no room at the start",
+                !clipGifGripBox(100.0f, 140.0f, 112.0f, 160.0f, NULL, NULL, NULL));
+    EXPECT_TRUE("no room at the end",
+                !clipGifGripBox(100.0f, 140.0f, 100.0f, 128.0f, NULL, NULL, NULL));
+    EXPECT_TRUE("handles touch: no grip",
+                !clipGifGripBox(100.0f, 110.0f, 105.0f, 105.0f, NULL, NULL, NULL));
+    EXPECT_TRUE("no span: no grip",
+                !clipGifGripBox(100.0f, 100.0f, 0.0f, 400.0f, NULL, NULL, NULL));
+    return fails ? 1 : 0;
+}
