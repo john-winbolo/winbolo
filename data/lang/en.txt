@@ -2941,7 +2941,7 @@ STR_CLIPGIF_OPEN_FAILED=This GIF could not be opened.
 STR_CLIPGIF_MAP_FMT=Map: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Players: {string1}
 STR_CLIPGIF_NO_DETAILS=No details were saved with this GIF.
-STR_CLIPGIF_LENGTH_TIP=GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too.
+STR_CLIPGIF_LENGTH_TIP=GIF length in seconds, from the start of the GIF.\nDrag an end of the bright part of the zoomed timeline to change it too.
 STR_CLIPGIF_LOADING=Opening the GIF...
 STR_CLIPGIF_TOO_LARGE=This GIF is too large to show here. You can still copy it.
 STR_MAPGEN_TYPE_MAKER=Famous map maker style
@@ -3052,4 +3052,6 @@ STR_LV_RECORD_MODE_TIP=Shows the GIF controls: the GIF button and its length, wh
 STR_CLIPGIF_PREVIEW=Preview clip: plays the clip here and makes no file
 STR_CLIPGIF_PREVIEW_STOP=Stop the preview
 STR_CLIPGIF_SAVE=Save clip: makes the GIF file
+STR_CLIPGIF_CANCEL=Cancel: leave recording mode and make no GIF
+STR_CLIPGIF_ZOOM_TIP=The GIF, with 10 seconds of the game before it and after it.\nDrag an end of the bright part to make the GIF longer or shorter.\nClick or drag anywhere else to go to that time. The GIF stays where it is.
 

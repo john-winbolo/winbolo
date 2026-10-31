@@ -298,8 +298,8 @@ static void lvGifFillMeta(ClipGifMeta *m, const char *mapName) {
     }
 }
 
-/* Starts a capture from the current time (or from the start of the preview
- * that plays) for the length the player set. The frames are the map as it is
+/* Starts a capture of the GIF's span on the zoomed timeline
+ * (clipGifSpanClip). The frames are the map as it is
  * shown now: the same zoom, the same place, the same camera, the same
  * colours, and they are the part of the map in the crop frame
  * (clipGifChooseCrop, as the game's replay has it). */
@@ -319,7 +319,11 @@ static void lvGifStart(void) {
     }
     uint32_t curMs = 0, totalMs = 0;
     lvGifProgress(NULL, &curMs, &totalMs);
-    const uint32_t lenMs = clipGifLenClampMs(s_gif.mode.lenMs, curMs, totalMs);
+    uint32_t startMs = 0, lenMs = 0;
+    clipGifSpanClip(&s_gif.mode, curMs, totalMs, &startMs, &lenMs);
+    if (startMs != curMs) {
+        lvGifSeek(NULL, startMs);
+    }
 
     int srcX = 0, srcY = 0, texW = 0, texH = 0;
     lv_clientMutexWaitFor();
@@ -358,7 +362,7 @@ static void lvGifStart(void) {
     lvGifFillMeta(&meta, mapName);
     /* With no crop, this puts the log back as the arm found it. */
     clipGifCaptureOpen(&s_gif.session, &s_lvReplay, haveCrop ? &c : NULL,
-                       curMs, lenMs, mapName, &meta);
+                       startMs, lenMs, mapName, &meta);
 }
 
 /* ── The calls the host makes ─────────────────────────────────────── */
@@ -498,8 +502,8 @@ void lv_clip_gif_tools_row(void) {
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + floorf((avail - rowW) * 0.5f));
     }
 
-    /* Preview clip and Save clip from the current time, of the map as it is
-     * shown; the length, the Clips window and the crop frame. The same row
+    /* Preview clip and Save clip of the span, of the map as it is shown;
+     * Cancel, the length, the Clips window and the crop frame. The same row
      * the game's replay shows. */
     const ClipGifToolsPressed tools = clipGifToolsRow(
         "##lvgif", &s_gif.mode, &s_gif.session.play,
@@ -509,7 +513,7 @@ void lv_clip_gif_tools_row(void) {
         if (clipGifPreviewActive(&s_gif.session)) {
             clipGifPreviewStop(&s_gif.session, &s_lvReplay);
         } else {
-            clipGifPreviewStart(&s_gif.session, &s_lvReplay, s_gif.mode.lenMs);
+            clipGifPreviewSpan(&s_gif.session, &s_lvReplay, &s_gif.mode);
         }
     }
     if (tools.save) {
@@ -520,18 +524,27 @@ void lv_clip_gif_tools_row(void) {
     }
 }
 
-void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,
-                             uint32_t startMs, uint32_t totalMs) {
+void lv_clip_gif_zoom_row(void) {
     if (!lv_clip_gif_tools_shown()) {
         return;
     }
-    /* While a preview plays, the band stays on the clip it plays, and the
-     * length does not change under it. */
-    clipGifLenMarker("##lvgiflenmark", ImVec2(minX, minY), ImVec2(maxX, maxY),
-                     clipGifPreviewBandStart(&s_gif.session, startMs), totalMs,
-                     &s_gif.mode.lenMs,
-                     clipGifCaptureActive(&s_gif.session) ||
-                         clipGifPreviewActive(&s_gif.session));
+    clipGifZoomRow("##lvgifzoom", &s_gif.session, &s_lvReplay, &s_gif.mode,
+                   0.0f);
+}
+
+void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,
+                             bool seeking, uint32_t seekMs, uint32_t totalMs) {
+    if (!lv_clip_gif_tools_shown()) {
+        return;
+    }
+    /* A press or a drag on the slider takes the span with it, so the span
+     * and the playhead stay together. Not while a GIF is made. */
+    const bool capturing = clipGifCaptureActive(&s_gif.session);
+    if (seeking && !capturing) {
+        clipGifSpanCentre(&s_gif.mode, seekMs, totalMs);
+    }
+    clipGifSpanTint(ImVec2(minX, minY), ImVec2(maxX, maxY), &s_gif.mode,
+                    totalMs, capturing);
 }
 
 /* ── Windows ──────────────────────────────────────────────────────── */
@@ -606,10 +619,11 @@ void lv_clip_gif_capture_step(void) {}
 void lv_clip_gif_render(void) {}
 bool lv_clip_gif_frame_has_mouse(void) { return false; }
 void lv_clip_gif_tools_row(void) {}
+void lv_clip_gif_zoom_row(void) {}
 void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,
-                             uint32_t startMs, uint32_t totalMs) {
+                             bool seeking, uint32_t seekMs, uint32_t totalMs) {
     (void)minX; (void)minY; (void)maxX; (void)maxY;
-    (void)startMs; (void)totalMs;
+    (void)seeking; (void)seekMs; (void)totalMs;
 }
 void lv_clip_gif_toggle_gallery(void) {}
 bool lv_clip_gif_gallery_is_open(void) { return false; }

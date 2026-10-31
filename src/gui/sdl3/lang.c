@@ -1326,7 +1326,7 @@ static const LangEntry langTable[] = {
     {2950, "Map: {string1}"},
     {2951, "Players: {string1}"},
     {2952, "No details were saved with this GIF."},
-    {2953, "GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too."},
+    {2953, "GIF length in seconds, from the start of the GIF.\nDrag an end of the bright part of the zoomed timeline to change it too."},
     {2954, "Opening the GIF..."},
     {2955, "This GIF is too large to show here. You can still copy it."},
 
@@ -2972,6 +2972,8 @@ static const LangEntry langTable[] = {
     {3419, "Preview clip: plays the clip here and makes no file"},
     {3420, "Stop the preview"},
     {3421, "Save clip: makes the GIF file"},
+    {3422, "Cancel: leave recording mode and make no GIF"},
+    {3423, "The GIF, with 10 seconds of the game before it and after it.\nDrag an end of the bright part to make the GIF longer or shorter.\nClick or drag anywhere else to go to that time. The GIF stays where it is."},
     {2810, "Whether a pillbox may pick a tank as its target."},
     {2860, "+ {number} others"},
     {2861, "+ 1 other"},

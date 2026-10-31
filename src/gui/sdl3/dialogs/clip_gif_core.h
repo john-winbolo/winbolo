@@ -128,8 +128,9 @@ bool clipGifFileName(char *out, size_t outLen, const char *baseName,
                      const char *stamp, int n);
 
 /* ── Recording mode ──────────────────────────────────────────────────
- * The GIF controls (the GIF button, the length field and marker, the
- * gallery button, the crop frame, and in the game's replay the
+ * The GIF controls (the GIF button, the length field, the zoomed timeline
+ * and the span on the main one, the gallery button, the cancel button, the
+ * crop frame, and in the game's replay the
  * GIF button on each highlight row) show only in recording mode. The movie
  * camera button turns it on and off: on the replay's transport row, and on
  * the Log Viewer's Controls panel (also Action > Recording Mode, Ctrl+G).
@@ -243,28 +244,46 @@ bool clipGifBlitView(const ClipGifBox *src, const ClipGifBox *dst,
 
 /* ── Recording mode state ────────────────────────────────────────────
  * What a recording mode holds: on or off, where the crop frame is, whether
- * the player has moved or sized it, and the length the GIF button records.
- * The game's replay holds one for each replay it opens, and the Log Viewer
- * one for each log it opens; both start from CLIP_GIF_MODE_INIT.
+ * the player has moved or sized it, the length the GIF button records, and
+ * where the GIF's part of the replay (its span) starts, with the part of the
+ * replay the zoomed timeline shows round it. The game's replay holds one for
+ * each replay it opens, and the Log Viewer one for each log it opens; both
+ * start from CLIP_GIF_MODE_INIT.
  *
  * Until the player moves or sizes the frame (frameSet false), the frame is
  * the default for the view it is on (clipGifFrameDefault), and it follows
  * that view as it changes size. After that it keeps the player's fractions. */
+
+/* A part of the replay, in ms: startMs up to endMs. */
+typedef struct {
+    uint32_t startMs;
+    uint32_t endMs;
+} ClipGifRange;
+
 typedef struct {
     bool         on;
     bool         frameSet;
     ClipGifFrame frame;
     uint32_t     lenMs;
+    /* False until the span has a place: each time recording mode turns on,
+     * the span starts at the playhead the first time the timeline is drawn
+     * (clipGifSpanRefit). */
+    bool         spanSet;
+    uint32_t     spanStartMs;
+    /* The part of the replay the zoomed timeline shows. */
+    ClipGifRange zoom;
 } ClipGifMode;
 
-#define CLIP_GIF_MODE_INIT \
-    { false, false, CLIP_GIF_FRAME_INIT, CLIP_GIF_LEN_DEFAULT_MS }
+#define CLIP_GIF_MODE_INIT                                            \
+    { false, false, CLIP_GIF_FRAME_INIT, CLIP_GIF_LEN_DEFAULT_MS,     \
+      false, 0u, { 0u, 0u } }
 
 /* Back to CLIP_GIF_MODE_INIT. */
 void clipGifModeReset(ClipGifMode *m);
 
 /* Turns recording mode on or off, and returns what it is now. While a
- * capture runs nothing changes: the controls of a GIF being made stay. */
+ * capture runs nothing changes: the controls of a GIF being made stay. Each
+ * time it turns on, the span is put at the playhead again (spanSet false). */
 bool clipGifModeToggle(ClipGifMode *m, bool captureActive);
 
 /* Puts the default frame for a view of viewW x viewH pixels in m->frame
@@ -282,6 +301,84 @@ void clipGifModeFitFrame(ClipGifMode *m, int viewW, int viewH);
  * empty or there is no mode. */
 bool clipGifChooseCrop(ClipGifMode *m, int viewX, int viewY, int viewW,
                        int viewH, ClipGifRect *out);
+
+/* ── The GIF span and the zoomed timeline ────────────────────────────
+ * In recording mode the GIF is of one part of the replay, its span: from
+ * m->spanStartMs, for m->lenMs. Preview clip plays the span and Save clip
+ * makes the GIF of it, wherever the playhead is.
+ *
+ * A second, zoomed timeline above the main one shows the span with
+ * CLIP_GIF_ZOOM_PAD_MS of the replay before it and after it (less at the
+ * start and the end of the replay). Its two handles move the span's start
+ * and end; a press anywhere else on it moves the playhead only. A press on
+ * the main timeline moves the playhead and puts the span round it
+ * (clipGifSpanCentre), so the two stay together.
+ *
+ * While a handle is held the zoomed timeline keeps its scale, so the handle
+ * stays under the mouse. Held at the end of the timeline, the handle makes
+ * the timeline grow on that side, CLIP_GIF_ZOOM_GROW_MS_PER_S of replay a
+ * second, up to CLIP_GIF_ZOOM_PAD_MS past the span. When the handle is let
+ * go, the timeline fits the span again. */
+#define CLIP_GIF_ZOOM_PAD_MS        10000u
+#define CLIP_GIF_ZOOM_GROW_MS_PER_S 10000u
+
+/* The span's two ends, for clipGifSpanDragEdge and clipGifZoomGrow. */
+#define CLIP_GIF_EDGE_START 1
+#define CLIP_GIF_EDGE_END   2
+
+/* The span of m on a replay of totalMs: from spanStartMs (no later than
+ * totalMs), for lenMs clamped with clipGifLenClampMs, and never past
+ * totalMs. When totalMs is 0 the length is only held to the floor and the
+ * cap. An empty range for no mode. */
+ClipGifRange clipGifSpanRange(const ClipGifMode *m, uint32_t totalMs);
+
+/* The zoomed timeline for span: CLIP_GIF_ZOOM_PAD_MS before and after it,
+ * held inside 0..totalMs (no upper limit when totalMs is 0). */
+ClipGifRange clipGifZoomFit(ClipGifRange span, uint32_t totalMs);
+
+/* Puts the span at startMs and fits the zoomed timeline to it. The length
+ * stays as it is (held to the replay's length): a span that would run past
+ * the end of the replay starts earlier instead. Sets spanSet. */
+void clipGifSpanPlace(ClipGifMode *m, uint32_t startMs, uint32_t totalMs);
+
+/* A press on the main timeline at atMs: the span, of the same length, with
+ * its middle at atMs where it fits, else as near as the start or the end of
+ * the replay lets it (clipGifSpanPlace). */
+void clipGifSpanCentre(ClipGifMode *m, uint32_t atMs, uint32_t totalMs);
+
+/* Once a frame while no handle is held: the first time after recording mode
+ * turns on (spanSet false) the span starts at curMs; after that the zoomed
+ * timeline fits the span as it is now, which follows a length typed into the
+ * length field. Nothing when totalMs is 0 (the length is not known yet). */
+void clipGifSpanRefit(ClipGifMode *m, uint32_t curMs, uint32_t totalMs);
+
+/* Screen x of timeMs on a timeline that shows r on [x0, x1]. A time outside
+ * r sits at the nearer end. x0 for an empty r or range. */
+float clipGifRangeX(uint32_t timeMs, ClipGifRange r, float x0, float x1);
+
+/* The time at screen x on a timeline that shows r on [x0, x1], held inside
+ * r. r.startMs for an empty r or range. */
+uint32_t clipGifRangeTime(float x, ClipGifRange r, float x0, float x1);
+
+/* Where Preview clip and Save clip start and how long they run: the span
+ * (clipGifSpanRange), or from curMs for lenMs clamped to the time left
+ * before the span has a place (spanSet false). All 0 for no mode. */
+void clipGifSpanClip(const ClipGifMode *m, uint32_t curMs, uint32_t totalMs,
+                     uint32_t *startMs, uint32_t *lenMs);
+
+/* A drag of the span's start (CLIP_GIF_EDGE_START) or end
+ * (CLIP_GIF_EDGE_END) handle to atMs. The other end stays where it is, and
+ * the length is held to whole frames, to the floor and the cap, and to the
+ * replay. Sets lenMs, and spanStartMs for the start. */
+void clipGifSpanDragEdge(ClipGifMode *m, int edge, uint32_t atMs,
+                         uint32_t totalMs);
+
+/* A handle held at one end of the zoomed timeline: that end of *zoom (the
+ * span's edge, CLIP_GIF_EDGE_START or CLIP_GIF_EDGE_END) moves out by up to
+ * stepMs, but not more than CLIP_GIF_ZOOM_PAD_MS past that edge of span and
+ * never outside 0..totalMs. It never moves in. */
+void clipGifZoomGrow(ClipGifRange *zoom, ClipGifRange span, int edge,
+                     uint32_t stepMs, uint32_t totalMs);
 
 /* ── Preview ─────────────────────────────────────────────────────────
  * The Preview clip button plays the clip in the view, at the normal speed,

@@ -1507,6 +1507,13 @@ int run_clip_gif_preview_play(void);
 int run_clip_gif_choose_crop(void);
 int run_clip_gif_default_frame(void);
 int run_clip_gif_meta_begin(void);
+/* The GIF's span and the zoomed timeline: where the span is put, the
+ * timeline's scale, a drag of the span's handles, and the timeline's growth
+ * while a handle is held at its end. */
+int run_clip_gif_span_place(void);
+int run_clip_gif_zoom_axis(void);
+int run_clip_gif_span_drag(void);
+int run_clip_gif_zoom_grow(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
