@@ -2363,8 +2363,10 @@ text is as large as announcements were before: 240 units times the game's
 zoom. When a scenario panel is shown at its own default place at the left of
 the game view, the window instead fills the room from the panel's right edge
 to the game view's right edge, 4 units in from each, with its top level with
-the panel's top. It keeps its usual height, and it goes back to the top
-middle when that room is narrower than 160 pixels. Its background starts
+the panel's top and its bottom level with the panel's bottom. The lines are
+fitted into that area as large as its width and height allow, and centred in
+it both ways. It goes back to the top middle when that room is narrower than
+160 pixels, or when the player has moved the panel. Its background starts
 fully clear (0%), so the outlined lines stand on the map; the player can add
 a backing from its gear. Once the player moves or resizes it, it stays where they put it,
 and its place, size, opacities and whether it is shown are kept in the

@@ -4536,12 +4536,13 @@ static ScnTextView s_scnText;
    and the panels are drawn before the text window in the same frame, so
    the text window reads this frame's panels and does not lag a frame.
    With several panels stacked down the left, right is the right edge of
-   the widest of them and top is the top of the highest, so the text area
-   is beside the first panel and clear of every panel below it. */
+   the widest of them, and top and bottom are the highest panel's, so the
+   text area is beside the first panel and clear of every panel below it. */
 struct ScnPanelBeside {
     bool  have;
     float right;
     float top;
+    float bottom;
 };
 static ScnPanelBeside s_scnPanelBeside;
 
@@ -5466,17 +5467,28 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     if (wantX < 0.0f) wantX = 0.0f;
     if (wantY < btn) wantY = btn;
 
-    /* A panel at its default place at the left of the view, with neither
-       x nor y saved, is one the Scenario Text window may open beside. */
-    if (atLeft && v.x < 0 && v.y < 0) {
-        const float right = wantX + side;
-        if (!s_scnPanelBeside.have) {
-            s_scnPanelBeside.have  = true;
-            s_scnPanelBeside.right = right;
-            s_scnPanelBeside.top   = wantY;
-        } else {
-            s_scnPanelBeside.right = ImMax(s_scnPanelBeside.right, right);
-            s_scnPanelBeside.top   = ImMin(s_scnPanelBeside.top, wantY);
+    /* A panel at its default place at the left of the view is one the
+       Scenario Text window may open beside. The panel keeps the place it is
+       drawn at from its first frame on (see keepX below), so v.x and v.y
+       are set even when the player never moved it. The test is therefore
+       whether this frame's place is the default place, kept inside the
+       display as wantX and wantY are (scnPanelAtDefault). */
+    {
+        float atDefX = defX, atDefY = defY;
+        if (atDefX > display.x - side) atDefX = display.x - side;
+        if (atDefY > display.y - side) atDefY = display.y - side;
+        if (atDefX < 0.0f) atDefX = 0.0f;
+        if (atDefY < btn) atDefY = btn;
+        if (atLeft && scnPanelAtDefault(wantX, wantY, atDefX, atDefY)) {
+            const float right = wantX + side;
+            if (!s_scnPanelBeside.have || wantY < s_scnPanelBeside.top) {
+                s_scnPanelBeside.top    = wantY;
+                s_scnPanelBeside.bottom = wantY + side;
+            }
+            s_scnPanelBeside.right = s_scnPanelBeside.have
+                                         ? ImMax(s_scnPanelBeside.right, right)
+                                         : right;
+            s_scnPanelBeside.have = true;
         }
     }
 
@@ -6591,25 +6603,27 @@ static void renderScenarioText(ClientSim *cs, bool inPopout) {
     /* With no place saved, and a scenario panel at its own default place at
        the left of the game view this frame, the text area fills the room
        from the panel's right edge to the view's right edge, an inset in
-       from each, with its top on the panel's top (scnTextBesidePanelPlace).
-       Its width is that room unless the player has saved a width; its
-       height is the default height below, so the letters are the size they
-       always were when the room is wide enough for them. With less room
+       from each, with its top on the panel's top and its bottom on the
+       panel's bottom (scnTextBesidePanelPlace). Its width and height are
+       that room unless the player has saved a size. The lines are fitted
+       into it as into any size (scnTextFitRect): as large as the width and
+       height allow, centred both ways. With less room
        than SCN_TEXT_BESIDE_MIN_W_PX, with no panel there, or with the panel
        at a place the player chose, the older default below is used. */
-    float besideX = 0.0f, besideY = 0.0f, besideW = 0.0f;
+    float besideX = 0.0f, besideY = 0.0f, besideW = 0.0f, besideH = 0.0f;
     const bool beside =
         haveView && s_scnPanelBeside.have &&
         gameFrontScnTextX < 0 && gameFrontScnTextY < 0 &&
         scnTextBesidePanelPlace(s_scnPanelBeside.right, s_scnPanelBeside.top,
-                                rx1, display.x, inset,
-                                SCN_TEXT_BESIDE_MIN_W_PX,
-                                &besideX, &besideY, &besideW);
+                                s_scnPanelBeside.bottom, rx1, display.x,
+                                inset, SCN_TEXT_BESIDE_MIN_W_PX,
+                                &besideX, &besideY, &besideW, &besideH);
 
     float w = (gameFrontScnTextW > 0) ? (float)gameFrontScnTextW
             : beside                  ? besideW
                                       : srcW * defScale;
     float h = (gameFrontScnTextH > 0) ? (float)gameFrontScnTextH
+            : beside                  ? besideH
                                       : srcH * defScale;
     if (s_scnText.resizing) {
         w = s_scnText.rawW;

@@ -653,47 +653,83 @@ static inline bool scnPanelDefaultPlace(float viewX0, float viewY0,
  * the window keeps its older default, the top middle of the game view. */
 #define SCN_TEXT_BESIDE_MIN_W_PX 160.0f
 
+/* How far, in pixels, a panel's place may be from its default place and
+ * still count as at the default. The panel keeps its place as whole pixels,
+ * so a default place with a fraction comes back up to one pixel off. */
+#define SCN_PANEL_AT_DEFAULT_SLACK_PX 1.0f
+
+/*********************************************************
+ *NAME:          scnPanelAtDefault
+ *PURPOSE:
+ *  Whether a panel is at its default place. The panel
+ *  keeps the place it is drawn at each frame, the default
+ *  one too, so a kept place does not by itself mean the
+ *  player moved it. It is at its default place when its
+ *  place is within SCN_PANEL_AT_DEFAULT_SLACK_PX of the
+ *  default on both axes.
+ *
+ *ARGUMENTS:
+ *  x/y       - the panel's top-left this frame
+ *  defX/defY - its default top-left this frame
+ *********************************************************/
+static inline bool scnPanelAtDefault(float x, float y, float defX,
+                                     float defY) {
+    const float dx = x - defX;
+    const float dy = y - defY;
+    return dx <= SCN_PANEL_AT_DEFAULT_SLACK_PX &&
+           dx >= -SCN_PANEL_AT_DEFAULT_SLACK_PX &&
+           dy <= SCN_PANEL_AT_DEFAULT_SLACK_PX &&
+           dy >= -SCN_PANEL_AT_DEFAULT_SLACK_PX;
+}
+
 /*********************************************************
  *NAME:          scnTextBesidePanelPlace
  *PURPOSE:
  *  Where the Scenario Text window's text area goes, and how
- *  wide it is, when the player has saved no place for it
+ *  big it is, when the player has saved no place for it
  *  and a scenario panel is at its own default place at the
  *  left of the game view: in the room from the panel's
- *  right edge to the game view's right edge.
+ *  right edge to the game view's right edge, as high as
+ *  the panel.
  *
  *  The left edge is one inset right of the panel, and the
  *  right edge is one inset left of the view's right edge
  *  (or of the display's, when the display ends first). The
- *  top is the panel's top, so the text area lines up with
- *  the panel and the two move bars line up above them.
+ *  top is the panel's top and the bottom is the panel's
+ *  bottom, so the text area lines up with the panel and
+ *  the two move bars line up above them.
  *
  *  False when that room is narrower than minW, or the
- *  numbers give no room at all: the caller then keeps its
- *  older default. The outputs are left alone on false.
+ *  numbers give no room at all, or the panel has no
+ *  height: the caller then keeps its older default. The
+ *  outputs are left alone on false.
  *
  *ARGUMENTS:
- *  panelRight - the panel's right edge, in render pixels
- *  panelTop   - the panel's top edge (below its bar)
- *  viewRight  - the game view's right edge
- *  displayW   - the display's width
- *  inset      - the gap kept on both sides
- *  minW       - the least width the text area may have
- *  outX/outY  - receive the text area's top-left
- *  outW       - receives the text area's width
+ *  panelRight  - the panel's right edge, in render pixels
+ *  panelTop    - the panel's top edge (below its bar)
+ *  panelBottom - the panel's bottom edge
+ *  viewRight   - the game view's right edge
+ *  displayW    - the display's width
+ *  inset       - the gap kept on both sides
+ *  minW        - the least width the text area may have
+ *  outX/outY   - receive the text area's top-left
+ *  outW/outH   - receive the text area's width and height
  *********************************************************/
 static inline bool scnTextBesidePanelPlace(float panelRight, float panelTop,
+                                           float panelBottom,
                                            float viewRight, float displayW,
                                            float inset, float minW,
                                            float *outX, float *outY,
-                                           float *outW) {
+                                           float *outW, float *outH) {
     const float right = ((viewRight < displayW) ? viewRight : displayW) - inset;
     const float x     = panelRight + inset;
     const float w     = right - x;
-    if (w <= 0.0f || w < minW) return false;
+    const float h     = panelBottom - panelTop;
+    if (w <= 0.0f || w < minW || h <= 0.0f) return false;
     if (outX != NULL) *outX = x;
     if (outY != NULL) *outY = panelTop;
     if (outW != NULL) *outW = w;
+    if (outH != NULL) *outH = h;
     return true;
 }
 
