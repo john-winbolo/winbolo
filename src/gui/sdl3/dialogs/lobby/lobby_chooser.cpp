@@ -1377,6 +1377,15 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
        (clientSimNetLobbyMapChangeBusy). */
     bool busy = cs && !clientSimIsSinglePlayer(cs) &&
                 clientSimNetLobbyMapChangeBusy(cs);
+    /* The file dialog answers from outside this window, which greying cannot
+       stop: a file it returns while busy waits in the tab and is applied once
+       busy lifts, as a WinBolo.net download that lands then does. */
+    s_chooserTabs.server.holdPicks = busy;
+    s_chooserTabs.upload.holdPicks = busy;
+    s_chooserTabs.random.holdPicks = busy;
+#ifndef __EMSCRIPTEN__
+    s_chooserTabs.wbn.holdPicks    = busy;
+#endif
 
     /* Action bar height (Separator + button row) — reserved AT THE
      * WINDOW LEVEL via a child container around the tab bar so the

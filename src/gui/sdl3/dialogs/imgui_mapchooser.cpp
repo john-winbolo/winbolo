@@ -1728,8 +1728,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
     }
 #endif
 
-    /* Handle file dialog result */
-    if (state->fileDialogGotResult) {
+    /* Handle file dialog result, unless the owner holds picks for now
+       (holdPicks), in which case it waits here, untouched, for a later frame. */
+    if (state->fileDialogGotResult && !state->holdPicks) {
         state->fileDialogGotResult = false;
         if (state->fileDialogResult[0] != '\0') {
             state->selectedIdx = -1; /* custom file, not in list */
