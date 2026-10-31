@@ -332,6 +332,9 @@ bool clipGifModeToggle(ClipGifMode *m, bool captureActive) {
     }
     if (!captureActive) {
         m->on = !m->on;
+        if (m->on) {
+            m->spanSet = false;
+        }
     }
     return m->on;
 }
@@ -956,6 +959,174 @@ bool clipGifChooseCrop(ClipGifMode *m, int viewX, int viewY, int viewW,
     }
     clipGifModeFitFrame(m, viewW, viewH);
     return clipGifCropFromFrame(&m->frame, viewX, viewY, viewW, viewH, out);
+}
+
+/* ── The GIF span and the zoomed timeline ──────────────────────────── */
+
+ClipGifRange clipGifSpanRange(const ClipGifMode *m, uint32_t totalMs) {
+    ClipGifRange r = { 0u, 0u };
+    if (m == NULL) {
+        return r;
+    }
+    uint32_t start = m->spanStartMs;
+    if (totalMs > 0u && start > totalMs) {
+        start = totalMs;
+    }
+    const uint32_t len = clipGifLenClampMs(m->lenMs, start, totalMs);
+    r.startMs = start;
+    r.endMs   = start + len;
+    if (totalMs > 0u && r.endMs > totalMs) {
+        r.endMs = totalMs;
+    }
+    return r;
+}
+
+ClipGifRange clipGifZoomFit(ClipGifRange span, uint32_t totalMs) {
+    ClipGifRange z;
+    z.startMs = (span.startMs > CLIP_GIF_ZOOM_PAD_MS)
+                    ? span.startMs - CLIP_GIF_ZOOM_PAD_MS
+                    : 0u;
+    z.endMs = (span.endMs > UINT32_MAX - CLIP_GIF_ZOOM_PAD_MS)
+                  ? UINT32_MAX
+                  : span.endMs + CLIP_GIF_ZOOM_PAD_MS;
+    if (totalMs > 0u && z.endMs > totalMs) {
+        z.endMs = totalMs;
+    }
+    if (z.startMs > z.endMs) {
+        z.startMs = z.endMs;
+    }
+    return z;
+}
+
+void clipGifSpanPlace(ClipGifMode *m, uint32_t startMs, uint32_t totalMs) {
+    if (m == NULL) {
+        return;
+    }
+    if (totalMs > 0u) {
+        /* The length the replay has room for from its start, so a span near
+         * the end moves back and keeps its length. */
+        const uint32_t len = clipGifLenClampMs(m->lenMs, 0u, totalMs);
+        const uint32_t latest = (totalMs > len) ? totalMs - len : 0u;
+        if (startMs > latest) {
+            startMs = latest;
+        }
+    }
+    m->spanStartMs = startMs;
+    m->spanSet     = true;
+    m->zoom        = clipGifZoomFit(clipGifSpanRange(m, totalMs), totalMs);
+}
+
+void clipGifSpanCentre(ClipGifMode *m, uint32_t atMs, uint32_t totalMs) {
+    if (m == NULL) {
+        return;
+    }
+    const uint32_t half = clipGifLenClampMs(m->lenMs, 0u, totalMs) / 2u;
+    clipGifSpanPlace(m, (atMs > half) ? atMs - half : 0u, totalMs);
+}
+
+void clipGifSpanRefit(ClipGifMode *m, uint32_t curMs, uint32_t totalMs) {
+    if (m == NULL || totalMs == 0u) {
+        return;
+    }
+    if (!m->spanSet) {
+        clipGifSpanPlace(m, curMs, totalMs);
+        return;
+    }
+    m->zoom = clipGifZoomFit(clipGifSpanRange(m, totalMs), totalMs);
+}
+
+float clipGifRangeX(uint32_t timeMs, ClipGifRange r, float x0, float x1) {
+    if (r.endMs <= r.startMs || !(x1 > x0)) {
+        return x0;
+    }
+    if (timeMs < r.startMs) {
+        timeMs = r.startMs;
+    }
+    if (timeMs > r.endMs) {
+        timeMs = r.endMs;
+    }
+    return x0 + (float)((double)(x1 - x0) * (double)(timeMs - r.startMs) /
+                        (double)(r.endMs - r.startMs));
+}
+
+uint32_t clipGifRangeTime(float x, ClipGifRange r, float x0, float x1) {
+    if (r.endMs <= r.startMs || !(x1 > x0)) {
+        return r.startMs;
+    }
+    double ratio = ((double)x - (double)x0) / ((double)x1 - (double)x0);
+    /* !(ratio > 0) is also true for NaN. */
+    if (!(ratio > 0.0)) {
+        ratio = 0.0;
+    }
+    if (ratio > 1.0) {
+        ratio = 1.0;
+    }
+    return r.startMs +
+           (uint32_t)(ratio * (double)(r.endMs - r.startMs) + 0.5);
+}
+
+void clipGifSpanClip(const ClipGifMode *m, uint32_t curMs, uint32_t totalMs,
+                     uint32_t *startMs, uint32_t *lenMs) {
+    uint32_t start = 0u, len = 0u;
+    if (m != NULL && m->spanSet) {
+        const ClipGifRange span = clipGifSpanRange(m, totalMs);
+        start = span.startMs;
+        len = clipGifLenClampMs(m->lenMs, start, totalMs);
+    } else if (m != NULL) {
+        start = curMs;
+        len = clipGifLenClampMs(m->lenMs, curMs, totalMs);
+    }
+    if (startMs != NULL) {
+        *startMs = start;
+    }
+    if (lenMs != NULL) {
+        *lenMs = len;
+    }
+}
+
+void clipGifSpanDragEdge(ClipGifMode *m, int edge, uint32_t atMs,
+                         uint32_t totalMs) {
+    if (m == NULL) {
+        return;
+    }
+    const ClipGifRange span = clipGifSpanRange(m, totalMs);
+    if (edge == CLIP_GIF_EDGE_END) {
+        const uint32_t len = (atMs > span.startMs) ? atMs - span.startMs : 0u;
+        m->spanStartMs = span.startMs;
+        m->lenMs = clipGifLenClampMs(len, span.startMs, totalMs);
+        return;
+    }
+    if (edge != CLIP_GIF_EDGE_START) {
+        return;
+    }
+    /* The end stays: the length is what is left between atMs and it, to
+     * whole frames, the floor and the cap, and the start follows from it. */
+    uint32_t len = (atMs < span.endMs) ? span.endMs - atMs : 0u;
+    len = clipGifLenClampMs(len, 0u, 0u);
+    if (len > span.endMs) {
+        /* No room before the end for the floor: from the start of the
+         * replay. */
+        m->spanStartMs = 0u;
+        m->lenMs = clipGifLenClampMs(span.endMs, 0u, totalMs);
+        return;
+    }
+    m->spanStartMs = span.endMs - len;
+    m->lenMs = len;
+}
+
+void clipGifZoomGrow(ClipGifRange *zoom, ClipGifRange span, int edge,
+                     uint32_t stepMs, uint32_t totalMs) {
+    if (zoom == NULL) {
+        return;
+    }
+    const ClipGifRange fit = clipGifZoomFit(span, totalMs);
+    if (edge == CLIP_GIF_EDGE_END && zoom->endMs < fit.endMs) {
+        const uint32_t room = fit.endMs - zoom->endMs;
+        zoom->endMs += (stepMs < room) ? stepMs : room;
+    } else if (edge == CLIP_GIF_EDGE_START && zoom->startMs > fit.startMs) {
+        const uint32_t room = zoom->startMs - fit.startMs;
+        zoom->startMs -= (stepMs < room) ? stepMs : room;
+    }
 }
 
 /* ── Preview ───────────────────────────────────────────────────────── */

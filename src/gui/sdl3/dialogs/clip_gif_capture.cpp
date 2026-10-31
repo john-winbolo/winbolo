@@ -129,6 +129,22 @@ bool clipGifPreviewStart(ClipGifSession *s, const ClipGifReplay *r,
     return true;
 }
 
+bool clipGifPreviewSpan(ClipGifSession *s, const ClipGifReplay *r,
+                        const ClipGifMode *mode) {
+    if (s == NULL || r == NULL || mode == NULL || s->active ||
+        r->progress == NULL) {
+        return false;
+    }
+    uint32_t curMs = 0, totalMs = 0;
+    r->progress(r->user, &curMs, &totalMs);
+    uint32_t startMs = 0, lenMs = 0;
+    clipGifSpanClip(mode, curMs, totalMs, &startMs, &lenMs);
+    if (startMs != curMs && r->seek != NULL) {
+        r->seek(r->user, startMs);
+    }
+    return clipGifPreviewStart(s, r, lenMs);
+}
+
 /* The replay stops and goes back to the start of the clip. */
 static void clipGifPreviewBack(ClipGifSession *s, const ClipGifReplay *r) {
     if (r->pause != NULL) {
@@ -309,6 +325,70 @@ void clipGifCaptureRender(ClipGifSession *s, const ClipGifReplay *r,
         }
         msf_gif_free(finished);
     }
+}
+
+/* ── The zoomed timeline ─────────────────────────────────────────── */
+
+/* The playhead follows a press or a drag on the zoomed timeline (see
+ * ClipGifScrub). */
+static void clipGifScrubUpdate(ClipGifScrub *z, const ClipGifReplay *r,
+                               const ClipGifZoomPressed *p, double now) {
+    if (r->seek == NULL) {
+        return;
+    }
+    if (p->held) {
+        if (!z->on) {
+            /* Paused for the drag, so each seek is not fought by the
+             * playback timers. */
+            uint32_t curMs = 0, totalMs = 0;
+            r->progress(r->user, &curMs, &totalMs);
+            z->on         = true;
+            z->wasPlaying = (r->isPlaying != NULL) && r->isPlaying(r->user);
+            z->appliedMs  = curMs;
+            z->backAt     = now - CLIP_GIF_SCRUB_BACK_SECS;
+            if (z->wasPlaying && r->pause != NULL) {
+                r->pause(r->user);
+            }
+        }
+        bool apply = false;
+        if (p->seekMs > z->appliedMs) {
+            apply = true;
+        } else if (p->seekMs < z->appliedMs &&
+                   now - z->backAt >= CLIP_GIF_SCRUB_BACK_SECS) {
+            apply = true;
+            z->backAt = now;
+        }
+        if (apply) {
+            r->seek(r->user, p->seekMs);
+            z->appliedMs = p->seekMs;
+        }
+        return;
+    }
+    if (!z->on) {
+        return;
+    }
+    /* Let go: on the exact time, and playing again when it played. */
+    z->on = false;
+    if (p->seek && p->seekMs != z->appliedMs) {
+        r->seek(r->user, p->seekMs);
+    }
+    if (z->wasPlaying && r->play != NULL) {
+        r->play(r->user);
+    }
+    z->wasPlaying = false;
+}
+
+void clipGifZoomRow(const char *id, ClipGifSession *s, const ClipGifReplay *r,
+                    ClipGifMode *mode, float width) {
+    if (s == NULL || r == NULL || mode == NULL || r->progress == NULL) {
+        return;
+    }
+    uint32_t curMs = 0, totalMs = 0;
+    r->progress(r->user, &curMs, &totalMs);
+    const ClipGifZoomPressed p =
+        clipGifZoomBar(id, width, mode, curMs, totalMs,
+                       s->active || s->play.active, s->active);
+    clipGifScrubUpdate(&s->scrub, r, &p, ImGui::GetTime());
 }
 
 /* ── Where the GIF goes ──────────────────────────────────────────── */

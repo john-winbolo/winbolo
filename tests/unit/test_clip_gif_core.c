@@ -1545,3 +1545,240 @@ int run_clip_gif_meta_begin(void) {
     clipGifMetaBegin(NULL, 0, NULL, NULL); /* does nothing */
     return fails ? 1 : 0;
 }
+
+/* The GIF's span: where it is put the first time the zoomed timeline is drawn
+ * (at the playhead), where a press on the main timeline puts it (round the
+ * press), how it keeps its length at the start and the end of the replay,
+ * and the zoomed timeline that fits it with 10 s before and after. */
+int run_clip_gif_span_place(void) {
+    int fails = 0;
+    ClipGifMode m = CLIP_GIF_MODE_INIT;
+    EXPECT_TRUE("no span at first", !m.spanSet);
+    clipGifModeToggle(&m, false);
+    EXPECT_TRUE("on: no span yet", m.on && !m.spanSet);
+
+    /* No length known yet: nothing. */
+    clipGifSpanRefit(&m, 12000u, 0u);
+    EXPECT_TRUE("no length: no span", !m.spanSet);
+
+    /* The first draw: at the playhead, the default 5 s. */
+    clipGifSpanRefit(&m, 12000u, 60000u);
+    EXPECT_TRUE("span set", m.spanSet);
+    ClipGifRange s = clipGifSpanRange(&m, 60000u);
+    EXPECT_U32("first: start", s.startMs, 12000u);
+    EXPECT_U32("first: end", s.endMs, 17000u);
+    EXPECT_U32("first: zoom start", m.zoom.startMs, 2000u);
+    EXPECT_U32("first: zoom end", m.zoom.endMs, 27000u);
+
+    /* The playhead moves on: the span stays. A typed length: the zoomed
+     * timeline follows it. */
+    m.lenMs = 8000u;
+    clipGifSpanRefit(&m, 40000u, 60000u);
+    s = clipGifSpanRange(&m, 60000u);
+    EXPECT_U32("stays: start", s.startMs, 12000u);
+    EXPECT_U32("typed: end", s.endMs, 20000u);
+    EXPECT_U32("typed: zoom end", m.zoom.endMs, 30000u);
+
+    /* Near the end it starts earlier and keeps its length. */
+    clipGifSpanPlace(&m, 58000u, 60000u);
+    s = clipGifSpanRange(&m, 60000u);
+    EXPECT_U32("end: start", s.startMs, 52000u);
+    EXPECT_U32("end: end", s.endMs, 60000u);
+    EXPECT_U32("end: zoom start", m.zoom.startMs, 42000u);
+    EXPECT_U32("end: zoom end, the end of the replay", m.zoom.endMs, 60000u);
+
+    /* Near the start the zoomed timeline stops at 0. */
+    clipGifSpanPlace(&m, 3000u, 60000u);
+    EXPECT_U32("start: zoom start", m.zoom.startMs, 0u);
+    EXPECT_U32("start: zoom end", m.zoom.endMs, 21000u);
+
+    /* A press on the main timeline: the span round it. */
+    clipGifSpanCentre(&m, 30000u, 60000u);
+    s = clipGifSpanRange(&m, 60000u);
+    EXPECT_U32("centre: start", s.startMs, 26000u);
+    EXPECT_U32("centre: end", s.endMs, 34000u);
+    EXPECT_U32("centre: zoom start", m.zoom.startMs, 16000u);
+    EXPECT_U32("centre: zoom end", m.zoom.endMs, 44000u);
+    clipGifSpanCentre(&m, 1000u, 60000u);
+    EXPECT_U32("centre near the start", m.spanStartMs, 0u);
+    clipGifSpanCentre(&m, 59000u, 60000u);
+    EXPECT_U32("centre near the end", m.spanStartMs, 52000u);
+
+    /* A replay shorter than the span: all of it. */
+    clipGifSpanPlace(&m, 2000u, 3000u);
+    s = clipGifSpanRange(&m, 3000u);
+    EXPECT_U32("short: start", s.startMs, 0u);
+    EXPECT_U32("short: end", s.endMs, 3000u);
+    EXPECT_U32("short: zoom", m.zoom.endMs - m.zoom.startMs, 3000u);
+
+    /* A start past the replay (a shorter log opened) is held to its end. */
+    m.spanStartMs = 70000u;
+    s = clipGifSpanRange(&m, 60000u);
+    EXPECT_U32("past: start", s.startMs, 60000u);
+    EXPECT_U32("past: end", s.endMs, 60000u);
+
+    /* Turned off and on again: the span goes back to the playhead. */
+    clipGifModeToggle(&m, false);
+    clipGifModeToggle(&m, false);
+    EXPECT_TRUE("on again: no span", m.on && !m.spanSet);
+    clipGifSpanRefit(&m, 5000u, 60000u);
+    EXPECT_U32("on again: at the playhead", m.spanStartMs, 5000u);
+    clipGifModeReset(&m);
+    EXPECT_TRUE("reset: no span", !m.spanSet && m.spanStartMs == 0u);
+
+    /* What Preview clip and Save clip take: the span, or from the playhead
+     * before the span has a place. */
+    uint32_t st = 1u, len = 1u;
+    clipGifSpanClip(&m, 58000u, 60000u, &st, &len);
+    EXPECT_U32("no span: from the playhead", st, 58000u);
+    EXPECT_U32("no span: the time left", len, 2000u);
+    clipGifSpanPlace(&m, 20000u, 60000u);
+    clipGifSpanClip(&m, 58000u, 60000u, &st, &len);
+    EXPECT_U32("span: its start", st, 20000u);
+    EXPECT_U32("span: its length", len, 5000u);
+    clipGifSpanClip(NULL, 1u, 2u, &st, &len);
+    EXPECT_TRUE("no mode", st == 0u && len == 0u);
+
+    /* The fit on its own, and nothing to do with no mode. */
+    ClipGifRange span = { 15000u, 20000u };
+    ClipGifRange z = clipGifZoomFit(span, 0u);
+    EXPECT_U32("fit: no length, start", z.startMs, 5000u);
+    EXPECT_U32("fit: no length, end", z.endMs, 30000u);
+    s = clipGifSpanRange(NULL, 60000u);
+    EXPECT_TRUE("no mode: empty", s.startMs == 0u && s.endMs == 0u);
+    clipGifSpanPlace(NULL, 0u, 0u);   /* does nothing */
+    clipGifSpanCentre(NULL, 0u, 0u);  /* does nothing */
+    clipGifSpanRefit(NULL, 0u, 1u);   /* does nothing */
+    return fails ? 1 : 0;
+}
+
+/* The zoomed timeline's own scale: a time to a screen x and back, held to
+ * the part it shows. */
+int run_clip_gif_zoom_axis(void) {
+    int fails = 0;
+    const ClipGifRange r = { 10000u, 30000u };
+    EXPECT_TRUE("x of the middle",
+                fabsf(clipGifRangeX(20000u, r, 100.0f, 300.0f) - 200.0f) < 0.01f);
+    EXPECT_TRUE("x before: the left end",
+                clipGifRangeX(5000u, r, 100.0f, 300.0f) == 100.0f);
+    EXPECT_TRUE("x after: the right end",
+                clipGifRangeX(40000u, r, 100.0f, 300.0f) == 300.0f);
+    EXPECT_U32("time of the middle", clipGifRangeTime(200.0f, r, 100.0f, 300.0f),
+               20000u);
+    EXPECT_U32("time left of it", clipGifRangeTime(50.0f, r, 100.0f, 300.0f),
+               10000u);
+    EXPECT_U32("time right of it", clipGifRangeTime(1000.0f, r, 100.0f, 300.0f),
+               30000u);
+    EXPECT_U32("time of NaN", clipGifRangeTime(NAN, r, 100.0f, 300.0f), 10000u);
+    for (uint32_t t = 10000u; t <= 30000u; t += 2000u) {
+        const float x = clipGifRangeX(t, r, 100.0f, 300.0f);
+        EXPECT_U32("there and back", clipGifRangeTime(x, r, 100.0f, 300.0f), t);
+    }
+    const ClipGifRange e = { 5000u, 5000u };
+    EXPECT_TRUE("empty range: x0", clipGifRangeX(5000u, e, 1.0f, 9.0f) == 1.0f);
+    EXPECT_U32("empty range: its start", clipGifRangeTime(5.0f, e, 1.0f, 9.0f),
+               5000u);
+    EXPECT_TRUE("no width: x0", clipGifRangeX(20000u, r, 4.0f, 4.0f) == 4.0f);
+    EXPECT_U32("no width: the start", clipGifRangeTime(4.0f, r, 4.0f, 4.0f),
+               10000u);
+    return fails ? 1 : 0;
+}
+
+/* A drag of the span's start or end handle: the other end stays, and the
+ * length keeps to whole frames, the floor, the cap and the replay. */
+int run_clip_gif_span_drag(void) {
+    int fails = 0;
+    ClipGifMode m = CLIP_GIF_MODE_INIT;
+    m.spanSet = true;
+    m.spanStartMs = 20000u;
+    m.lenMs = 5000u;
+
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_END, 27000u, 60000u);
+    EXPECT_U32("end out", m.lenMs, 7000u);
+    EXPECT_U32("end out: start stays", m.spanStartMs, 20000u);
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_END, 27049u, 60000u);
+    EXPECT_U32("end: whole frames", m.lenMs, 7000u);
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_END, 19000u, 60000u);
+    EXPECT_U32("end before the start: the floor", m.lenMs, CLIP_GIF_LEN_MIN_MS);
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_END, 60000u, 60000u);
+    EXPECT_U32("end far out: the cap", m.lenMs, CLIP_GIF_LEN_MAX_MS);
+    m.spanStartMs = 55000u;
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_END, 70000u, 60000u);
+    EXPECT_U32("end past the replay: the time left", m.lenMs, 5000u);
+
+    m.spanStartMs = 20000u;
+    m.lenMs = 5000u;
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_START, 18000u, 60000u);
+    EXPECT_U32("start out: start", m.spanStartMs, 18000u);
+    EXPECT_U32("start out: length", m.lenMs, 7000u);
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_START, 24500u, 60000u);
+    EXPECT_U32("start to the end: the floor", m.lenMs, CLIP_GIF_LEN_MIN_MS);
+    EXPECT_U32("start to the end: end stays", m.spanStartMs + m.lenMs, 25000u);
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_START, 0u, 60000u);
+    EXPECT_U32("start to 0: start", m.spanStartMs, 0u);
+    EXPECT_U32("start to 0: length", m.lenMs, 25000u);
+    m.spanStartMs = 30000u;
+    m.lenMs = 10000u;
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_START, 0u, 60000u);
+    EXPECT_U32("start far out: the cap", m.lenMs, CLIP_GIF_LEN_MAX_MS);
+    EXPECT_U32("start far out: end stays", m.spanStartMs, 10000u);
+
+    /* A replay shorter than the floor: from its start. */
+    m.spanStartMs = 0u;
+    m.lenMs = 5000u;
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_START, 0u, 600u);
+    EXPECT_U32("short: start", m.spanStartMs, 0u);
+    EXPECT_U32("short: the floor", m.lenMs, CLIP_GIF_LEN_MIN_MS);
+
+    /* Not an edge: nothing. */
+    m.spanStartMs = 20000u;
+    m.lenMs = 5000u;
+    clipGifSpanDragEdge(&m, 0, 1000u, 60000u);
+    EXPECT_TRUE("no edge", m.spanStartMs == 20000u && m.lenMs == 5000u);
+    clipGifSpanDragEdge(NULL, CLIP_GIF_EDGE_END, 1000u, 60000u); /* nothing */
+    return fails ? 1 : 0;
+}
+
+/* A handle held at an end of the zoomed timeline: that end moves out by up
+ * to a step, to no more than 10 s past the span and not past the replay,
+ * and never moves in. */
+int run_clip_gif_zoom_grow(void) {
+    int fails = 0;
+    ClipGifRange z = { 10000u, 35000u };
+    ClipGifRange span = { 20000u, 30000u };
+    clipGifZoomGrow(&z, span, CLIP_GIF_EDGE_END, 1000u, 60000u);
+    EXPECT_U32("end: one step", z.endMs, 36000u);
+    clipGifZoomGrow(&z, span, CLIP_GIF_EDGE_END, 10000u, 60000u);
+    EXPECT_U32("end: 10 s past the span", z.endMs, 40000u);
+    clipGifZoomGrow(&z, span, CLIP_GIF_EDGE_END, 10000u, 60000u);
+    EXPECT_U32("end: no more", z.endMs, 40000u);
+    EXPECT_U32("end: the start stays", z.startMs, 10000u);
+    clipGifZoomGrow(&z, span, CLIP_GIF_EDGE_START, 10000u, 60000u);
+    EXPECT_U32("start: 10 s before already", z.startMs, 10000u);
+
+    span.startMs = 15000u;
+    clipGifZoomGrow(&z, span, CLIP_GIF_EDGE_START, 2000u, 60000u);
+    EXPECT_U32("start: one step", z.startMs, 8000u);
+    clipGifZoomGrow(&z, span, CLIP_GIF_EDGE_START, 10000u, 60000u);
+    EXPECT_U32("start: 10 s before the span", z.startMs, 5000u);
+    span.startMs = 3000u;
+    clipGifZoomGrow(&z, span, CLIP_GIF_EDGE_START, 10000u, 60000u);
+    EXPECT_U32("start: not before 0", z.startMs, 0u);
+
+    span.endMs = 55000u;
+    z.endMs = 50000u;
+    clipGifZoomGrow(&z, span, CLIP_GIF_EDGE_END, 20000u, 60000u);
+    EXPECT_U32("end: not past the replay", z.endMs, 60000u);
+
+    /* Wider than the span needs: it stays. */
+    z.startMs = 0u;
+    z.endMs = 50000u;
+    span.startMs = 20000u;
+    span.endMs = 25000u;
+    clipGifZoomGrow(&z, span, CLIP_GIF_EDGE_END, 5000u, 60000u);
+    EXPECT_U32("never in", z.endMs, 50000u);
+    clipGifZoomGrow(&z, span, 0, 5000u, 60000u);
+    EXPECT_TRUE("no edge", z.startMs == 0u && z.endMs == 50000u);
+    clipGifZoomGrow(NULL, span, CLIP_GIF_EDGE_END, 5000u, 60000u); /* nothing */
+    return fails ? 1 : 0;
+}

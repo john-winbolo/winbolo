@@ -560,12 +560,14 @@ void lv_imgui_controls_window(void) {
         controls_place(topX, &topLine, top.comboLine, top.comboX);
         lv_event_overlay_combo(top.comboFull);
 
-        /* The GIF controls of recording mode, on a line of their own. */
+        /* The GIF controls of recording mode, on a line of their own, and
+         * under them the zoomed timeline, over the main one. */
         float gifRowH = 0.0f;
         const bool gifTools = lv_clip_gif_tools_shown();
         if (gifTools) {
             const float rowTop = ImGui::GetCursorPosY();
             lv_clip_gif_tools_row();
+            lv_clip_gif_zoom_row();
             gifRowH = ImGui::GetCursorPosY() - rowTop;
         }
 
@@ -633,11 +635,6 @@ void lv_imgui_controls_window(void) {
             ImGuiSliderFlags seek_flags = ImGuiSliderFlags_NoRoundToFormat;
             if (seek_rel_drag_update(ImGui::GetID("##seek"))) {
                 seek_flags |= ImGuiSliderFlags_ReadOnly;
-            }
-            /* The GIF's end marker goes over the slider and wins the mouse
-             * where the two meet. */
-            if (gifTools) {
-                ImGui::SetNextItemAllowOverlap();
             }
             bool seek_changed = ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, seek_fmt,
                                                    seek_flags);
@@ -721,17 +718,13 @@ void lv_imgui_controls_window(void) {
             }
             seek_wheel_step(seek_top, ImGui::GetItemRectMax());
 
-            /* Where the GIF starts and ends, after the slider's own state is
-             * read above: from here the last item is the marker. The band
-             * starts at the handle while it is dragged, and at the current
-             * time otherwise, as in the game's replay. */
+            /* The GIF's span over the slider, after the slider's own state
+             * is read above. While the slider is pressed or dragged the span
+             * goes with it, as in the game's replay. */
             if (gifTools) {
-                uint32_t gifStartMs = currentTime;
-                if (s_is_seeking) {
-                    gifStartMs = (uint32_t)(s_seek_ratio * (float)totalTime);
-                }
+                const uint32_t seekMs = (uint32_t)(s_seek_ratio * (float)totalTime);
                 lv_clip_gif_seek_marker(seek_min.x, seek_min.y, seek_max.x, seek_max.y,
-                                        gifStartMs, totalTime);
+                                        s_is_seeking, seekMs, totalTime);
             }
 
             ImGui::PopItemWidth();

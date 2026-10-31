@@ -1417,6 +1417,15 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
         return;
     }
 
+#if BOLO_RECAP_CLIP_GIF
+    /* The zoomed timeline of recording mode, on a line of its own over the
+     * transport row and as wide as the reel: the GIF's span with its two
+     * handles, and a press on it moves the reel. */
+    if (lobbyReelGifToolsShown()) {
+        lobbyClipGifZoomRow();
+    }
+#endif
+
     /* Transport toggle as a glyph: a written caption is the widest thing on
      * this row and its width moves as the label swaps and as the language
      * changes, which shoves everything after it. The icon is square and the
@@ -1463,9 +1472,10 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
     }
 
 #if BOLO_RECAP_CLIP_GIF
-    /* Recording mode: the GIF controls after it, the length marker on the
-     * seek bar, the crop frame and the GIF button on each highlight row are
-     * drawn only while it is on. Held still while a capture runs: the
+    /* Recording mode: the GIF controls after it, the zoomed timeline over
+     * this row, the span on the seek bar, the crop frame and the GIF button
+     * on each highlight row are drawn only while it is on. Held still while
+     * a capture runs: the
      * capture's own window has the cancel control, and the controls stay up
      * until the capture ends whatever this says. */
     ImGui::SameLine();
@@ -1478,8 +1488,8 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
     ImGui::EndDisabled();
 
     if (lobbyReelGifToolsShown()) {
-        /* Preview clip and Save clip from wherever the reel is, the length,
-         * the gallery and the crop frame: the same row the Log Viewer shows
+        /* Preview clip and Save clip of the span, Cancel, the length, the
+         * gallery and the crop frame: the same row the Log Viewer shows
          * (clipGifToolsRow). The view is left as the player framed it. Full
          * height, so the row sits level with the buttons before it. */
         ImGui::SameLine();
@@ -1490,7 +1500,7 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
             lobbyClipGifPreviewToggle();
         }
         if (tools.save && cs != NULL) {
-            lobbyClipGifStartFromPlayhead(cs);
+            lobbyClipGifStartSpan(cs);
         }
 #if BOLO_CLIP_GIF_GALLERY
         if (tools.gallery) {
@@ -1534,11 +1544,6 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
     if (lobbyReelFineDragUpdate(ImGui::GetID("##ReelSeek"), curMs, totalMs)) {
         seekFlags |= ImGuiSliderFlags_ReadOnly;
     }
-#if BOLO_RECAP_CLIP_GIF
-    /* The GIF length marker is drawn over this slider and is submitted after
-     * it, so the slider lets it take the hover where the two meet. */
-    ImGui::SetNextItemAllowOverlap();
-#endif
     /* NoRoundToFormat is essential: seekLabel is a pre-rendered string
      * ("01:12 / 04:30"), not a numeric printf format. Without the flag ImGui
      * rounds the dragged value by round-tripping it through that label, which
@@ -1554,7 +1559,7 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
         s_reelSeekUsablePx = bar - ((grab < bar) ? grab : bar);
     }
 #if BOLO_RECAP_CLIP_GIF
-    /* The slider's frame, for the GIF length marker drawn over it below. */
+    /* The slider's frame, for the GIF's span drawn over it below. */
     const ImVec2 seekMin = ImGui::GetItemRectMin();
     const ImVec2 seekMax = ImGui::GetItemRectMax();
 #endif
@@ -1619,22 +1624,18 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
         s_reelFineDrag.on = false;
     }
 #if BOLO_RECAP_CLIP_GIF
-    /* After the slider's own state is read above: from here the last item is
-     * the marker, not the slider. */
+    /* The GIF's span over the slider. A press or a drag on the slider moves
+     * the span with it, round the slider's value, so the span and the
+     * playhead stay together; the zoomed timeline above follows. Not while
+     * a GIF is made. */
     if (lobbyReelGifToolsShown()) {
-        /* The band starts at the slider's value while it is dragged, so it
-         * follows the handle, and at the playhead otherwise. */
-        uint32_t markStartMs = curMs;
-        if (s_reel.seeking) {
-            markStartMs = (uint32_t)(s_reel.seekRatio * (float)totalMs);
+        if (s_reel.seeking && !lobbyClipGifActive()) {
+            clipGifSpanCentre(&s_reel.clip,
+                              (uint32_t)(s_reel.seekRatio * (float)totalMs),
+                              totalMs);
         }
-        /* While a preview plays, the band stays on the clip it plays, and
-         * the length does not change under it. */
-        markStartMs = lobbyClipGifBandStart(markStartMs);
-        clipGifLenMarker("##reelgiflenmark", seekMin, seekMax, markStartMs,
-                         totalMs, &s_reel.clip.lenMs,
-                         lobbyClipGifActive() ||
-                             lobbyClipGifPreviewRow() != -2);
+        clipGifSpanTint(seekMin, seekMax, &s_reel.clip, totalMs,
+                        lobbyClipGifActive());
     }
 #endif
     ImGui::PopItemWidth();

@@ -96,18 +96,22 @@ void lv_clip_gif_render(void);
 bool lv_clip_gif_frame_has_mouse(void);
 
 /* The GIF controls in the Controls panel, on a line of their own in the
- * middle of the panel: Preview clip, Save clip, the length in seconds, the
- * Clips button (clipGifToolsRow). The panel calls it when
+ * middle of the panel: Preview clip, Save clip, Cancel, the length in
+ * seconds, the Clips button (clipGifToolsRow). The panel calls it when
  * lv_clip_gif_tools_shown is true. */
 void lv_clip_gif_tools_row(void);
 
-/* The GIF on the timeline: the band from startMs to the GIF's end and the
- * marker at its end (clipGifLenMarker). While a preview plays, the band
- * starts at the preview's start and not at startMs. minX..maxY is the frame of the seek
- * slider, which maps 0..totalMs; the panel calls it after the slider, which
- * it marks allow-overlap while lv_clip_gif_tools_shown is true. */
+/* The zoomed timeline (clipGifZoomRow), on a line of its own as wide as the
+ * panel, over the main timeline: the GIF's span with its two handles, and a
+ * press on it moves the log. Nothing unless lv_clip_gif_tools_shown. */
+void lv_clip_gif_zoom_row(void);
+
+/* The GIF on the main timeline (clipGifSpanTint). While the slider is
+ * pressed or dragged (seeking), the span goes round seekMs, the slider's
+ * time (clipGifSpanCentre). minX..maxY is the frame of the seek slider,
+ * which maps 0..totalMs; the panel calls it after the slider. */
 void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,
-                             uint32_t startMs, uint32_t totalMs);
+                             bool seeking, uint32_t seekMs, uint32_t totalMs);
 
 /* Windows > Clips: opens or closes the Clips window. */
 void lv_clip_gif_toggle_gallery(void);

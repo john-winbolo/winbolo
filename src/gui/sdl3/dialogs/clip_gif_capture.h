@@ -71,10 +71,26 @@ typedef struct ClipGifReplay {
     bool (*target)(void *user, SDL_Renderer **renderer, SDL_Texture **texture);
 } ClipGifReplay;
 
-/* What one screen holds for its clips: the preview, and the capture from
- * the moment it starts to the moment its bytes are handed on. */
+/* A press or a drag on the zoomed timeline (clipGifZoomRow) that moves the
+ * playhead: the replay is paused while the mouse is held, a seek forward is
+ * made each frame and a seek back at most each CLIP_GIF_SCRUB_BACK_SECS (it
+ * decodes the round again from a snapshot), the seek lands on the exact time
+ * when the mouse is let go, and a replay that played goes on playing. */
+#define CLIP_GIF_SCRUB_BACK_SECS 0.090
+
+typedef struct ClipGifScrub {
+    bool     on;
+    bool     wasPlaying;
+    uint32_t appliedMs;  /* where the last seek put the replay */
+    double   backAt;     /* ImGui time of the last seek back */
+} ClipGifScrub;
+
+/* What one screen holds for its clips: the preview, the scrub of the zoomed
+ * timeline, and the capture from the moment it starts to the moment its
+ * bytes are handed on. */
 typedef struct ClipGifSession {
     ClipGifPlay play;
+    ClipGifScrub scrub;
     bool        active;
     bool        failed;
     bool        done;      /* all frames made: the next render ends it */
@@ -107,6 +123,12 @@ bool clipGifPreviewActive(const ClipGifSession *s);
  * being made. False when it did not start. */
 bool clipGifPreviewStart(ClipGifSession *s, const ClipGifReplay *r,
                          uint32_t lenMs);
+
+/* Preview clip in recording mode: plays the span of mode (clipGifSpanRange)
+ * from its start, wherever the playhead is. Before the span has a place
+ * (spanSet false), from the playhead for mode->lenMs. */
+bool clipGifPreviewSpan(ClipGifSession *s, const ClipGifReplay *r,
+                        const ClipGifMode *mode);
 
 /* Stops the preview, and the replay goes back to the start of the clip. */
 void clipGifPreviewStop(ClipGifSession *s, const ClipGifReplay *r);
@@ -151,6 +173,16 @@ void clipGifCaptureStep(ClipGifSession *s, const ClipGifReplay *r);
  * the screen's UI scale. */
 void clipGifCaptureRender(ClipGifSession *s, const ClipGifReplay *r,
                           float uiScale);
+
+/* ── The zoomed timeline ─────────────────────────────────────────── */
+
+/* The zoomed timeline (clipGifZoomBar) on a line of its own, width wide (0
+ * or less: the rest of the line), with the presses on it that move the
+ * playhead made on r (ClipGifScrub). The span's handles are held still while
+ * a GIF is made or the preview plays; while a GIF is made the whole timeline
+ * is. The cursor is left at the start of the next line. */
+void clipGifZoomRow(const char *id, ClipGifSession *s, const ClipGifReplay *r,
+                    ClipGifMode *mode, float width);
 
 /* Where a finished GIF goes: on the desktop into the gallery folder, with
  * its metadata, and the gallery opens on it; on iOS into Documents, with a

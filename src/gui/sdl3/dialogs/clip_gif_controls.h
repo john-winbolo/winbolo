@@ -21,9 +21,10 @@
  *                game's replay (lobby_reel.cpp) and the Log
  *                Viewer (imgui_clip_gif.cpp, imgui_controls.cpp)
  *                both draw them: the movie camera toggle, the
- *                GIF button, the length field, the length band
- *                and its end marker on the timeline, the crop
- *                button, and the crop frame over the view.
+ *                GIF button, the cancel button, the length
+ *                field, the zoomed timeline with the GIF's span
+ *                on it, the span's tint on the main timeline,
+ *                and the crop frame over the view.
  *
  *                The rules behind them, with no ImGui in them,
  *                are in clip_gif_core.h. Header only, so a
@@ -34,6 +35,7 @@
 #ifndef CLIP_GIF_CONTROLS_H
 #define CLIP_GIF_CONTROLS_H
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -50,7 +52,8 @@ enum ClipGifGlyph {
     CLIP_GIF_GLYPH_CAMERA = 0,  /* a movie camera: recording mode */
     CLIP_GIF_GLYPH_EYE,         /* an eye: preview (not a triangle, which
                                  * is the replay's own play button) */
-    CLIP_GIF_GLYPH_STOP         /* a filled square: stop the preview */
+    CLIP_GIF_GLYPH_STOP,        /* a filled square: stop the preview */
+    CLIP_GIF_GLYPH_CLOSE        /* a cross: leave recording mode */
 };
 
 /* The smallest crop frame, in drawn pixels, and how far from an edge a press
@@ -90,6 +93,14 @@ static inline void clipGifDrawGlyph(ImDrawList *dl, int glyph, ImVec2 a,
         dl->AddBezierQuadratic(l, ImVec2(a.x + w * 0.50f, midY + w * 0.62f),
                                r, col, 1.5f);
         dl->AddCircleFilled(ImVec2(a.x + w * 0.50f, midY), w * 0.17f, col);
+    } else if (glyph == CLIP_GIF_GLYPH_CLOSE) {
+        /* Two strokes corner to corner. */
+        const float i = w * 0.18f;
+        const float t = w * 0.14f > 1.5f ? w * 0.14f : 1.5f;
+        dl->AddLine(ImVec2(a.x + i, a.y + i), ImVec2(a.x + w - i, a.y + w - i),
+                    col, t);
+        dl->AddLine(ImVec2(a.x + w - i, a.y + i), ImVec2(a.x + i, a.y + w - i),
+                    col, t);
     } else {
         /* CLIP_GIF_GLYPH_STOP: a filled square. */
         dl->AddRectFilled(ImVec2(a.x + w * 0.16f, a.y + w * 0.16f),
@@ -226,9 +237,10 @@ static inline float clipGifPreviewButtonWidth(void) {
            ImGui::GetStyle().FramePadding.x * 2.0f;
 }
 
-/* The GIF length field: the length in seconds, the same length the marker
- * on the timeline sets. It shows the length the GIF will have, clamped to
- * the time left after curMs; what is typed is kept as asked for, inside the
+/* The GIF length field: the length in seconds, the same length the span's
+ * handles on the zoomed timeline set. It shows the length the GIF will have,
+ * clamped to the time left after curMs (the span's start); what is typed is
+ * kept as asked for, inside the
  * floor and the cap, and clamped again when it is used. ImGui keeps its own
  * text while the field is typed into, so the value written into it each
  * frame does not fight the typing. Disabled while locked. */
@@ -248,82 +260,247 @@ static inline void clipGifLenField(const char *id, uint32_t curMs,
     ImGui::EndDisabled();
 }
 
-/* The GIF on the timeline: a bright band from startMs to where the GIF would
- * end, and a marker at its end that can be dragged to change *lenMs.
- * barMin/barMax are the frame of the seek slider, which maps 0..totalMs on
- * to it. Call it after the slider is submitted and its own state is read,
- * with the slider marked allow-overlap, so the marker is the newer item and
- * wins the hover where the two meet. The marker is added with ItemAdd on a
- * box of its own, so it moves no cursor and takes no room. While locked (a
- * GIF is being made) it is dimmer and does not answer a drag. */
-static inline void clipGifLenMarker(const char *id, ImVec2 barMin,
-                                    ImVec2 barMax, uint32_t startMs,
-                                    uint32_t totalMs, uint32_t *lenMs,
-                                    bool locked) {
-    if (totalMs == 0 || barMax.x <= barMin.x) {
-        return;
-    }
-    const ImGuiStyle &sty = ImGui::GetStyle();
-    /* The x range the slider's grab centre moves over, as ImGui lays out a
-     * float slider: 2 px in from each end of the frame and then half the
-     * grab, so a time sits at the same x as the grab would. */
+/* The colour of the GIF's span, on the zoomed timeline and the main one: a
+ * warm amber that reads apart from the slider's own colours in each theme. */
+static inline ImU32 clipGifSpanColour(float alpha) {
+    return IM_COL32(240, 170, 40, (int)(alpha * 255.0f + 0.5f));
+}
+
+/* The x range a seek slider's grab centre moves over, as ImGui lays out a
+ * float slider in the frame barMin..barMax: 2 px in from each end of the
+ * frame and then half the grab, so a time sits at the same x as the grab
+ * would. */
+static inline void clipGifSliderXRange(ImVec2 barMin, ImVec2 barMax,
+                                       float *x0, float *x1) {
     const float grabPad = 2.0f;
-    float grabW = sty.GrabMinSize;
+    float grabW = ImGui::GetStyle().GrabMinSize;
     const float slideW = (barMax.x - barMin.x) - grabPad * 2.0f;
     if (grabW > slideW) grabW = slideW;
-    const float x0 = barMin.x + grabPad + grabW * 0.5f;
-    const float x1 = barMax.x - grabPad - grabW * 0.5f;
+    *x0 = barMin.x + grabPad + grabW * 0.5f;
+    *x1 = barMax.x - grabPad - grabW * 0.5f;
+}
 
-    const uint32_t len = clipGifLenClampMs(*lenMs, startMs, totalMs);
-    const float xs = clipGifTimelineX(startMs, totalMs, x0, x1);
-    const float xe = clipGifTimelineX(startMs + len, totalMs, x0, x1);
+/* The GIF on the main timeline: a faint tint over the part the zoomed
+ * timeline shows, and the span in the span's colour over it. Drawn only:
+ * a press on the main timeline is the slider's, and the screen then puts the
+ * span round the new time (clipGifSpanCentre). barMin/barMax are the frame
+ * of the seek slider, which maps 0..totalMs on to it. Dimmer while locked
+ * (a GIF is being made). Nothing before the span has a place. */
+static inline void clipGifSpanTint(ImVec2 barMin, ImVec2 barMax,
+                                   const ClipGifMode *mode, uint32_t totalMs,
+                                   bool locked) {
+    if (mode == NULL || !mode->spanSet || totalMs == 0 ||
+        barMax.x <= barMin.x) {
+        return;
+    }
+    float x0, x1;
+    clipGifSliderXRange(barMin, barMax, &x0, &x1);
+    const ClipGifRange span = clipGifSpanRange(mode, totalMs);
+    const float zs = clipGifTimelineX(mode->zoom.startMs, totalMs, x0, x1);
+    const float ze = clipGifTimelineX(mode->zoom.endMs, totalMs, x0, x1);
+    float xs = clipGifTimelineX(span.startMs, totalMs, x0, x1);
+    float xe = clipGifTimelineX(span.endMs, totalMs, x0, x1);
+    /* At least 2 px, so a short GIF on a long round still shows. */
+    if (xe - xs < 2.0f) {
+        const float mid = (xs + xe) * 0.5f;
+        xs = mid - 1.0f;
+        xe = mid + 1.0f;
+    }
+    const float alpha = locked ? 0.45f : 1.0f;
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(ImVec2(zs, barMin.y + 1.0f), ImVec2(ze, barMax.y - 1.0f),
+                      ImGui::GetColorU32(ImGuiCol_Text, 0.10f * alpha));
+    dl->AddRectFilled(ImVec2(xs, barMin.y + 1.0f), ImVec2(xe, barMax.y - 1.0f),
+                      clipGifSpanColour(0.45f * alpha));
+}
 
-    /* The marker's hit box is wider than the line, so it is easy to take
-     * hold of. */
+/* What the player did on the zoomed timeline this frame. The span's handles
+ * are handled inside; these are the presses that move the playhead. */
+typedef struct ClipGifZoomPressed {
+    bool     held;    /* the timeline (not a handle) is held */
+    bool     seek;    /* held, or let go this frame: the playhead goes to
+                       * seekMs */
+    uint32_t seekMs;
+} ClipGifZoomPressed;
+
+/* One handle of the span on the zoomed timeline: an item of its own on the
+ * box hit, so it moves no cursor and takes no room. Mouse only, out of
+ * keyboard and controller navigation, where it would read a mouse position
+ * that is not there; the length field is how those set the length. */
+static inline void clipGifSpanHandle(const ImRect &hit, ImGuiID hid,
+                                     bool *hovered, bool *held) {
+    *hovered = false;
+    *held = false;
+    if (ImGui::ItemAdd(hit, hid, nullptr, ImGuiItemFlags_NoNav)) {
+        ImGui::ButtonBehavior(hit, hid, hovered, held,
+                              ImGuiButtonFlags_NoNavFocus);
+        if (*hovered || *held) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        }
+        if (!*held) {
+            imguiHelpTooltip(langGetText(STR_CLIPGIF_LENGTH_TIP));
+        }
+    }
+}
+
+/* The handle of a span edge at x, from top to bot: a line with a notch at
+ * the top, so it reads as a handle. */
+static inline void clipGifDrawSpanHandle(ImDrawList *dl, float x, float top,
+                                         float bot, bool hot, float alpha) {
+    const ImU32 col = hot ? ImGui::GetColorU32(ImGuiCol_Text, alpha)
+                          : clipGifSpanColour(alpha);
+    const float lineW = hot ? 3.0f : 2.0f;
+    dl->AddRectFilled(ImVec2(x - lineW * 0.5f, top),
+                      ImVec2(x + lineW * 0.5f, bot), col);
+    const float tri = ImGui::GetTextLineHeight() * 0.25f;
+    dl->AddTriangleFilled(ImVec2(x - tri, top), ImVec2(x + tri, top),
+                          ImVec2(x, top + tri), col);
+}
+
+/* The zoomed timeline of recording mode, on a line of its own at the cursor,
+ * width wide (0 or less: the rest of the line) and a frame high. It shows
+ * mode->zoom: the span in the span's colour with a handle at each end, the
+ * playhead, and the times at its two ends. curMs and totalMs are the
+ * replay's time now and its length.
+ *
+ * A handle dragged moves that end of the span (clipGifSpanDragEdge); held at
+ * the end of the timeline it makes the timeline grow on that side
+ * (clipGifZoomGrow). While no handle is held the timeline fits the span
+ * (clipGifSpanRefit), which also puts the span at the playhead the first
+ * time after recording mode turns on. A press or a drag anywhere else gives
+ * the time under the mouse back, for the screen to move the playhead to;
+ * the span does not move.
+ *
+ * spanLocked holds the handles still (a GIF is being made or the preview
+ * plays); locked (a GIF is being made) holds the whole timeline still and
+ * draws it dimmer. */
+static inline ClipGifZoomPressed clipGifZoomBar(const char *id, float width,
+                                                ClipGifMode *mode,
+                                                uint32_t curMs,
+                                                uint32_t totalMs,
+                                                bool spanLocked, bool locked) {
+    ClipGifZoomPressed r = { false, false, 0u };
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    const float h = ImGui::GetFrameHeight();
+    if (width <= 0.0f) {
+        width = ImGui::GetContentRegionAvail().x;
+    }
     const float hitW = ImGui::GetTextLineHeight() * 0.6f;
-    ImRect hit(ImVec2(xe - hitW * 0.5f, barMin.y),
-               ImVec2(xe + hitW * 0.5f, barMax.y));
-    bool hovered = false, held = false;
-    if (!locked) {
-        /* Mouse only: out of keyboard and controller navigation, where it
-         * would read a mouse position that is not there. The length field is
-         * how those set the length. */
-        ImGuiID mid = ImGui::GetID(id);
-        if (ImGui::ItemAdd(hit, mid, nullptr, ImGuiItemFlags_NoNav)) {
-            ImGui::ButtonBehavior(hit, mid, &hovered, &held,
-                                  ImGuiButtonFlags_NoNavFocus);
-            if (held && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                *lenMs = clipGifLenFromTimelineX(ImGui::GetIO().MousePos.x,
-                                                 startMs, totalMs, x0, x1);
-            }
-            if (hovered || held) {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-            }
-            if (!held) {
-                imguiHelpTooltip(langGetText(STR_CLIPGIF_LENGTH_TIP));
-            }
+    if (mode == NULL || totalMs == 0 || width < hitW * 4.0f) {
+        ImGui::Dummy(ImVec2(width > 1.0f ? width : 1.0f, h));
+        return r;
+    }
+    ImGui::PushID(id);
+    const ImGuiID startId = ImGui::GetID("##start");
+    const ImGuiID endId   = ImGui::GetID("##end");
+    const ImGuiID active  = ImGui::GetActiveID();
+    const bool edgeHeld = !spanLocked && (active == startId || active == endId);
+    if (!edgeHeld) {
+        clipGifSpanRefit(mode, curMs, totalMs);
+    }
+
+    /* In from each end by half a handle, so a handle at an end of the
+     * timeline can still be taken hold of. */
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const ImVec2 q(p.x + width, p.y + h);
+    const float x0 = p.x + hitW * 0.5f;
+    const float x1 = q.x - hitW * 0.5f;
+    const ImGuiIO &io = ImGui::GetIO();
+
+    /* The timeline itself: a press on it moves the playhead. The handles are
+     * submitted after it and win the hover where the two meet. */
+    bool barHover = false, barHeld = false, barLetGo = false;
+    if (locked) {
+        ImGui::Dummy(ImVec2(width, h));
+    } else {
+        ImGui::SetNextItemAllowOverlap();
+        ImGui::InvisibleButton("##bar", ImVec2(width, h));
+        barHover = ImGui::IsItemHovered();
+        barHeld  = ImGui::IsItemActive();
+        barLetGo = ImGui::IsItemDeactivated();
+        if (!barHeld) {
+            imguiHelpTooltip(langGetText(STR_CLIPGIF_ZOOM_TIP));
         }
     }
 
-    /* Over the slider's frame: the band lets the time label under it show
-     * through. */
+    ClipGifRange span = clipGifSpanRange(mode, totalMs);
+    float xs = clipGifRangeX(span.startMs, mode->zoom, x0, x1);
+    float xe = clipGifRangeX(span.endMs, mode->zoom, x0, x1);
+    bool sHot = false, sHeld = false, eHot = false, eHeld = false;
+    if (!spanLocked) {
+        /* The two boxes meet at the middle of the span and do not cross,
+         * so a short span still has both. */
+        const float mid = (xs + xe) * 0.5f;
+        const ImRect sHit(ImVec2(xs - hitW * 0.5f, p.y),
+                          ImVec2(fminf(xs + hitW * 0.5f, mid), q.y));
+        const ImRect eHit(ImVec2(fmaxf(xe - hitW * 0.5f, mid), p.y),
+                          ImVec2(xe + hitW * 0.5f, q.y));
+        clipGifSpanHandle(sHit, startId, &sHot, &sHeld);
+        clipGifSpanHandle(eHit, endId, &eHot, &eHeld);
+        const int edge = sHeld ? CLIP_GIF_EDGE_START
+                       : eHeld ? CLIP_GIF_EDGE_END : 0;
+        if (edge != 0 && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            const float mx = io.MousePos.x;
+            clipGifSpanDragEdge(mode, edge,
+                                clipGifRangeTime(mx, mode->zoom, x0, x1),
+                                totalMs);
+            /* Held at the end of the timeline: it grows on that side, by
+             * this frame's share of CLIP_GIF_ZOOM_GROW_MS_PER_S. */
+            if ((edge == CLIP_GIF_EDGE_END && mx >= x1) ||
+                (edge == CLIP_GIF_EDGE_START && mx <= x0)) {
+                uint32_t step = (uint32_t)(io.DeltaTime *
+                                           (float)CLIP_GIF_ZOOM_GROW_MS_PER_S +
+                                           0.5f);
+                if (step < 1u) step = 1u;
+                clipGifZoomGrow(&mode->zoom, clipGifSpanRange(mode, totalMs),
+                                edge, step, totalMs);
+            }
+            span = clipGifSpanRange(mode, totalMs);
+            xs = clipGifRangeX(span.startMs, mode->zoom, x0, x1);
+            xe = clipGifRangeX(span.endMs, mode->zoom, x0, x1);
+        }
+    }
+    if (barHeld || barLetGo) {
+        r.held   = barHeld;
+        r.seek   = true;
+        r.seekMs = clipGifRangeTime(io.MousePos.x, mode->zoom, x0, x1);
+    }
+
+    /* Drawn over the frame: the span, the playhead, the handles, and the
+     * times at the two ends. */
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const float alpha = locked ? 0.45f : 1.0f;
-    ImU32 band = ImGui::GetColorU32(ImGuiCol_SliderGrabActive, 0.30f * alpha);
-    ImU32 mark = ImGui::GetColorU32((hovered || held) ? ImGuiCol_Text
-                                                      : ImGuiCol_SliderGrabActive,
-                                    alpha);
-    dl->AddRectFilled(ImVec2(xs, barMin.y + 1.0f), ImVec2(xe, barMax.y - 1.0f),
-                      band);
-    const float lineW = (hovered || held) ? 3.0f : 2.0f;
-    dl->AddRectFilled(ImVec2(xe - lineW * 0.5f, barMin.y),
-                      ImVec2(xe + lineW * 0.5f, barMax.y), mark);
-    /* A small notch on top, so the marker reads as a handle and not as a
-     * line in the label. */
-    const float tri = ImGui::GetTextLineHeight() * 0.25f;
-    dl->AddTriangleFilled(ImVec2(xe - tri, barMin.y),
-                          ImVec2(xe + tri, barMin.y),
-                          ImVec2(xe, barMin.y + tri), mark);
+    dl->AddRectFilled(p, q,
+                      ImGui::GetColorU32((barHover || barHeld)
+                                             ? ImGuiCol_FrameBgHovered
+                                             : ImGuiCol_FrameBg),
+                      sty.FrameRounding);
+    dl->AddRectFilled(ImVec2(xs, p.y + 1.0f), ImVec2(xe, q.y - 1.0f),
+                      clipGifSpanColour(0.55f * alpha));
+    if (curMs >= mode->zoom.startMs && curMs <= mode->zoom.endMs) {
+        const float xp = clipGifRangeX(curMs, mode->zoom, x0, x1);
+        dl->AddRectFilled(ImVec2(xp - 1.0f, p.y), ImVec2(xp + 1.0f, q.y),
+                          ImGui::GetColorU32(ImGuiCol_Text, alpha));
+    }
+    clipGifDrawSpanHandle(dl, xs, p.y, q.y, sHot || sHeld, alpha);
+    clipGifDrawSpanHandle(dl, xe, p.y, q.y, eHot || eHeld, alpha);
+
+    char a[16], b[16];
+    const unsigned as = (unsigned)(mode->zoom.startMs / 1000u);
+    const unsigned bs = (unsigned)(mode->zoom.endMs / 1000u);
+    snprintf(a, sizeof(a), "%02u:%02u", as / 60u, as % 60u);
+    snprintf(b, sizeof(b), "%02u:%02u", bs / 60u, bs % 60u);
+    const float aw = ImGui::CalcTextSize(a).x;
+    const float bw = ImGui::CalcTextSize(b).x;
+    const float pad = sty.FramePadding.x;
+    if (aw + bw + pad * 4.0f < width) {
+        const float ty = p.y + (h - ImGui::GetTextLineHeight()) * 0.5f;
+        const ImU32 tc = ImGui::GetColorU32(ImGuiCol_TextDisabled, alpha);
+        dl->AddText(ImVec2(p.x + pad, ty), tc, a);
+        dl->AddText(ImVec2(q.x - pad - bw, ty), tc, b);
+    }
+    ImGui::PopID();
+    return r;
 }
 
 /* Which part of the crop frame a press took hold of, kept until the button
@@ -471,6 +648,7 @@ static inline bool clipGifCropFrame(const char *id, ImDrawList *dl,
 typedef struct ClipGifToolsPressed {
     bool preview;  /* Preview clip: start or stop the preview */
     bool save;     /* Save clip: make the GIF */
+    bool cancel;   /* Cancel: recording mode is off now (done in the row) */
     bool gallery;  /* open the gallery (only where it is built) */
 } ClipGifToolsPressed;
 
@@ -480,7 +658,7 @@ static inline float clipGifToolsRowWidth(bool havePicture) {
     const ImGuiStyle &sty = ImGui::GetStyle();
     const float lenW = ImGui::CalcTextSize("00.0").x + sty.FramePadding.x * 2.0f;
     float w = clipGifPreviewButtonWidth() + clipGifButtonWidth(havePicture) +
-              lenW + sty.ItemSpacing.x * 2.0f;
+              clipGifPreviewButtonWidth() + lenW + sty.ItemSpacing.x * 3.0f;
 #if CLIP_GIF_GALLERY_BUILT
     const float square = ImGui::GetTextLineHeight() + sty.FramePadding.x * 2.0f;
     w += square + sty.ItemSpacing.x;
@@ -489,16 +667,19 @@ static inline float clipGifToolsRowWidth(bool havePicture) {
 }
 
 /* The row of GIF controls that recording mode shows, the same in the game's
- * replay and the Log Viewer: Preview clip, Save clip, the length in seconds,
- * and the gallery button (where the gallery is built). The
+ * replay and the Log Viewer: Preview clip, Save clip, Cancel, the length in
+ * seconds, and the gallery button (where the gallery is built). The
  * first control goes where the cursor is; the caller puts a SameLine before
  * the call when the row goes on after other controls.
  *
- * mode is the screen's recording mode (the length is changed here), play its preview, curMs and totalMs the replay's time now and its
- * length. Preview and Save are disabled while capturing, and when canMake is
- * false (no GIF can be made now). The length does not change while a GIF is
- * made or the preview plays, as that GIF or that preview is of the length it
- * started with. */
+ * mode is the screen's recording mode (the length is changed here, and
+ * Cancel turns it off here: the GIF controls go, and no GIF is made), play
+ * its preview, curMs and totalMs the replay's time now and its length.
+ * Preview, Save and Cancel are disabled while capturing (the capture's own
+ * window has its Cancel), and Preview and Save when canMake is false (no GIF
+ * can be made now). The length does not change while a GIF is made or the
+ * preview plays, as that GIF or that preview is of the length it started
+ * with. */
 static inline ClipGifToolsPressed clipGifToolsRow(const char *id,
                                                   ClipGifMode *mode,
                                                   const ClipGifPlay *play,
@@ -506,7 +687,7 @@ static inline ClipGifToolsPressed clipGifToolsRow(const char *id,
                                                   ImTextureID picture,
                                                   uint32_t curMs,
                                                   uint32_t totalMs) {
-    ClipGifToolsPressed r = { false, false, false };
+    ClipGifToolsPressed r = { false, false, false, false };
     const bool previewing = (play != NULL && play->active);
     ImGui::PushID(id);
 
@@ -516,11 +697,25 @@ static inline ClipGifToolsPressed clipGifToolsRow(const char *id,
     r.save = clipGifButton("##save", picture, false);
     ImGui::EndDisabled();
 
-    /* How long the clip runs, from where it starts: the marker on the
-     * timeline sets the same length. */
+    /* Out of recording mode with no GIF: the same as the movie camera
+     * button, here by the Save clip button where it is easy to find. */
     ImGui::SameLine();
-    clipGifLenField("##len", clipGifPlayBandStart(play, curMs), totalMs,
-                    &mode->lenMs, capturing || previewing);
+    ImGui::BeginDisabled(capturing);
+    r.cancel = clipGifToggleButton("##cancel", false, CLIP_GIF_GLYPH_CLOSE,
+                                   langGetText(STR_CLIPGIF_CANCEL));
+    ImGui::EndDisabled();
+    if (r.cancel) {
+        clipGifModeToggle(mode, capturing);
+    }
+
+    /* How long the clip runs, from the span's start: the span's handles on
+     * the zoomed timeline set the same length. */
+    uint32_t spanStart = 0;
+    clipGifSpanClip(mode, clipGifPlayBandStart(play, curMs), totalMs,
+                    &spanStart, NULL);
+    ImGui::SameLine();
+    clipGifLenField("##len", spanStart, totalMs, &mode->lenMs,
+                    capturing || previewing);
 
 #if CLIP_GIF_GALLERY_BUILT
     /* The GIFs made so far. */

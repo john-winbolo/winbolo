@@ -130,8 +130,9 @@ int lobbyClipGifPreviewRow(void) {
     return clipGifPreviewActive(&s_session) ? s_previewRow : -2;
 }
 
-uint32_t lobbyClipGifBandStart(uint32_t curMs) {
-    return clipGifPreviewBandStart(&s_session, curMs);
+void lobbyClipGifZoomRow(void) {
+    clipGifZoomRow("##reelzoom", &s_session, &s_reelReplay,
+                   &lobbyReel()->clip, 0.0f);
 }
 
 /* ── Save clip ───────────────────────────────────────────────────── */
@@ -172,20 +173,20 @@ static void lobbyClipGifFillMeta(ClipGifMeta *m, ClientSim *cs,
 }
 
 /* Takes the reel, moves it to the moment, works out the crop and opens the
- * encoder. fromPlayhead is the transport's Save clip: from where the reel is
- * once a preview has put it back, for the length the player set, clamped to
- * the time left, with the view left where the player put it. Otherwise a clip
- * row's: the row names a place as well as a moment, so the view goes to it. */
-static void lobbyClipGifStart(bool fromPlayhead, uint32_t startMs,
+ * encoder. fromSpan is the transport's Save clip: the GIF's span on the
+ * zoomed timeline (clipGifSpanClip), with the view left where the player put
+ * it. Otherwise a clip row's: the row names a place as well as a moment, so
+ * the view goes to it. */
+static void lobbyClipGifStart(bool fromSpan, uint32_t startMs,
                               uint32_t lenMs, int mapX, int mapY,
                               ClientSim *cs) {
     if (!lvEmbedIsActive() || !clipGifCaptureArm(&s_session, &s_reelReplay)) {
         return;
     }
-    if (fromPlayhead) {
-        uint32_t totalMs = 0;
-        lvEmbedGetProgress(&startMs, &totalMs);
-        lenMs = clipGifLenClampMs(lobbyReel()->clip.lenMs, startMs, totalMs);
+    if (fromSpan) {
+        uint32_t curMs = 0, totalMs = 0;
+        lvEmbedGetProgress(&curMs, &totalMs);
+        clipGifSpanClip(&lobbyReel()->clip, curMs, totalMs, &startMs, &lenMs);
         lvEmbedSeekToTime(startMs);
     } else {
         lvEmbedSeekToClip(startMs, mapX, mapY);
@@ -232,14 +233,14 @@ void lobbyClipGifStartClip(const HighlightWindow *h, ClientSim *cs) {
 }
 
 /* The transport's Save clip. */
-void lobbyClipGifStartFromPlayhead(ClientSim *cs) {
+void lobbyClipGifStartSpan(ClientSim *cs) {
     lobbyClipGifStart(true, 0u, 0u, 0, 0, cs);
 }
 
 /* ── Preview clip ────────────────────────────────────────────────── */
 
-/* The transport's Preview clip: the length the player set, from where the
- * playhead is. Pressed while a preview plays, it stops it. */
+/* The transport's Preview clip: the GIF's span on the zoomed timeline.
+ * Pressed while a preview plays, it stops it. */
 void lobbyClipGifPreviewToggle(void) {
     if (clipGifPreviewActive(&s_session)) {
         clipGifPreviewStop(&s_session, &s_reelReplay);
@@ -248,8 +249,7 @@ void lobbyClipGifPreviewToggle(void) {
     if (!lvEmbedIsActive()) {
         return;
     }
-    if (clipGifPreviewStart(&s_session, &s_reelReplay,
-                            lobbyReel()->clip.lenMs)) {
+    if (clipGifPreviewSpan(&s_session, &s_reelReplay, &lobbyReel()->clip)) {
         s_previewRow = -1;
     }
 }
