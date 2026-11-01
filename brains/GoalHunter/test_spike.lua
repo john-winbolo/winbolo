@@ -7,6 +7,7 @@
 --     a failed pair (care on the first pill, the area cooldown), a done pair
 --   * spike.second_ok / los_clear — cover distance, LOS, forest, tank reach
 --   * spike care — care_at (knob, time, tile still aggro), tank_mult,
+--     defend_mult and the defend_pill discount (time, held clamp, KEEL),
 --     the spkd advert both ways, a new friendly pill seen on an aggro tile
 --   * builder_pool — a spike pill tops up at 1 hp missing and reaches
 --     SPIKE_REPAIR_LEASH; score_row adds SPIKE_REPAIR_BONUS and score_terms
@@ -843,7 +844,8 @@ do
     nk = nk + 1
     if k ~= "FOCUS_SPIKE_ENABLED" and k ~= "SPIKE_REPAIR_PRIORITY"
        and k ~= "FOCUS_SPIKE_UTIL_TO_AGGRO" and k ~= "FOCUS_SPIKE_NEUTRAL_AS_ENEMY"
-       and k ~= "REPAIR_FRIENDLY_FIRE_REJECT_TICKS" and (sp[k] ~= v or raw[k] ~= v) then
+       and k ~= "REPAIR_FRIENDLY_FIRE_REJECT_TICKS" and k ~= "FOCUS_SPIKE_DEFEND_DISCOUNT"
+       and (sp[k] ~= v or raw[k] ~= v) then
       same = false
     end
   end
@@ -866,8 +868,8 @@ do
        and lo[k] ~= v then lsame = false end
   end
   check("keel_focus_loose = keel_focus plus the three rule values", lsame)
-  check("keel_focus is deny; _loose and _raw keep the count rules",
-        sp.FOCUS_SPIKE_RULE == "deny" and lo.FOCUS_SPIKE_RULE == "count"
+  check("keel_focus and _loose are cluster; _raw keeps the count rules",
+        sp.FOCUS_SPIKE_RULE == "cluster" and lo.FOCUS_SPIKE_RULE == "cluster"
         and raw.FOCUS_SPIKE_RULE == "count", tostring(sp.FOCUS_SPIKE_RULE))
   check("preset keel_focus_loose: pills 6, lead 2, ratio 1.25", lo.FOCUS_SPIKE_MIN_PILLS == 6
         and lo.FOCUS_SPIKE_BASE_LEAD == 2 and lo.FOCUS_SPIKE_BASE_RATIO == 1.25)
@@ -898,6 +900,76 @@ check("keel_focus and keel_focus_loose: FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true",
 check("keel_focus_raw: FOCUS_SPIKE_NEUTRAL_AS_ENEMY = false",
       C.PRESETS.keel_focus_raw.FOCUS_SPIKE_NEUTRAL_AS_ENEMY == false)
 check("defaults: rules on", true == (require("constants").FOCUS_SPIKE_BASE_RATIO == 1.5))
+
+-- ── Spike defend discount (FOCUS_SPIKE_DEFEND_DISCOUNT) ─────────────────
+print("spike defend discount")
+do
+  _G.OBJECT_TANK    = _G.OBJECT_TANK or 1
+  _G.OBJECT_HOSTILE = _G.OBJECT_HOSTILE or 0x80
+  local old_d, old_t = C.FOCUS_SPIKE_DEFEND_DISCOUNT, C.FOCUS_SPIKE_DEFEND_TICKS
+  local function state_with(src, t)
+    local s = { tick = t, perc = { enemy_tanks = {} },
+                _spike = { pair = nil, watch = {}, care = {}, cool = {} } }
+    if src then s._spike.care[104 * 256 + 103] = { mx = 103, my = 104, t = 1000, src = src } end
+    return s
+  end
+  local function info_far(objects)
+    return { player_number = 0, allies = 1 + 2, num_players = 4, shells = 40, armour = 40,
+             mines = 0, trees = 0, man_status = C.LGM_INTANK, objects = objects or {},
+             tankx = 200 * 256, tanky = 200 * 256 }
+  end
+  local function pill(sight_t)
+    return { mx = 103, my = 104, health = 15, attack_damage = 0, owner = "friendly",
+             _enemy_near_tick = sight_t }
+  end
+  local function score(s, inf, now, sight_t)
+    local c, bd = G._defend_pill_score(s, { pills = {}, bases = {} }, inf, pill(sight_t), 50, now, 200, 200)
+    return c, bd
+  end
+  C.FOCUS_SPIKE_DEFEND_DISCOUNT, C.FOCUS_SPIKE_DEFEND_TICKS = 0.30, 6000
+  -- defend_mult: plan pills only, inside 6000 ticks of landing.
+  check("defend_mult: plan pill inside 6000 ticks = 0.70",
+        near(SP.defend_mult(state_with("plan"), 103, 104, 1000 + 6000), 0.70))
+  check("defend_mult: after 6000 ticks = nil", SP.defend_mult(state_with("plan"), 103, 104, 1000 + 6001) == nil)
+  check("defend_mult: a pill not from a plan (own) = nil", SP.defend_mult(state_with("own"), 103, 104, 1100) == nil)
+  check("defend_mult: an ally advert pill = nil", SP.defend_mult(state_with("ally"), 103, 104, 1100) == nil)
+  check("defend_mult: no tag = nil", SP.defend_mult(state_with(nil), 103, 104, 1100) == nil)
+  -- The defend_pill cost: x 0.70 inside the time, unchanged after.
+  local c0, b0 = score(state_with(nil, 2000), info_far(), 2000)
+  local c1, b1 = score(state_with("plan", 2000), info_far(), 2000)
+  local c2, b2 = score(state_with("plan", 7001), info_far(), 7001)
+  local function base(c, b) return c - (b.tb or 0) end
+  check("defend cost: plan pill x 0.70 (chip value)", b1.spike_defend and near(b1.spike_defend, 0.70)
+        and math.abs(base(c1, b1) - 0.70 * base(c0, b0)) < 1e-6, c0 .. " -> " .. c1)
+  check("defend cost: after 6000 ticks no discount", b2.spike_defend == nil and near(base(c2, b2), base(c0, b0)),
+        c2)
+  local co, bo = score(state_with("own", 2000), info_far(), 2000)
+  check("defend cost: a pill not from a plan gets no discount", bo.spike_defend == nil and near(co, c0), co)
+  -- Held: an enemy seen near the pill 10 ticks ago (sight tier, under 500),
+  -- one ally tank at the pill, no foes now. The discount comes first, the
+  -- well-defended clamp still raises the cost to DEFEND_WELL_DEFENDED_COST.
+  local cs, bs = score(state_with("plan", 2000), info_far(), 2000, 1990)
+  check("sight plan pill, not held: discounted, under 500", bs.spike_defend ~= nil
+        and base(cs, bs) < C.DEFEND_WELL_DEFENDED_COST, cs)
+  local ally = { { type = OBJECT_TANK, info = 0, x = 104 * 256, y = 104 * 256 } }
+  local ch, bh = score(state_with("plan", 2000), info_far(ally), 2000, 1990)
+  check("held plan pill: still clamps to 500", bh.welldef ~= nil and bh.spike_defend ~= nil
+        and near(base(ch, bh), C.DEFEND_WELL_DEFENDED_COST), ch)
+  -- KEEL: discount 0, no change.
+  C.FOCUS_SPIKE_DEFEND_DISCOUNT = C.PRESETS.keel.FOCUS_SPIKE_DEFEND_DISCOUNT
+  check("KEEL: discount 0 (off)", C.PRESETS.keel.FOCUS_SPIKE_DEFEND_DISCOUNT == 0)
+  check("KEEL: defend_mult nil on a plan pill", SP.defend_mult(state_with("plan"), 103, 104, 1100) == nil)
+  local ck, bk = score(state_with("plan", 2000), info_far(), 2000)
+  check("KEEL: defend cost unchanged", bk.spike_defend == nil and near(ck, c0), ck)
+  check("presets: keel_focus, _loose, _bench 0.30 / 6000; default 0",
+        C.PRESETS.keel_focus.FOCUS_SPIKE_DEFEND_DISCOUNT == 0.30
+        and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_DEFEND_DISCOUNT == 0.30
+        and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_DEFEND_DISCOUNT == 0.30
+        and C.PRESETS.keel_focus.FOCUS_SPIKE_DEFEND_TICKS == 6000
+        and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_DEFEND_TICKS == 6000
+        and old_d == 0)
+  C.FOCUS_SPIKE_DEFEND_DISCOUNT, C.FOCUS_SPIKE_DEFEND_TICKS = old_d, old_t
+end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

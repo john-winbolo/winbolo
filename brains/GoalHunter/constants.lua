@@ -1852,7 +1852,43 @@ M.FOCUS_SPIKE_UTIL_TO_AGGRO   = true
 -- abort: team cooldown VOTE_FAIL_COOLDOWN (not for a fail by "better" only).
 -- While active the win shares and utility to aggro switch on (their knobs).
 -- PRESETS.keel: FOCUS_SPIKE_ENABLED = false, so none of this runs.
-M.FOCUS_SPIKE_RULE                 = "deny"   -- "deny" | "count"
+-- "cluster" (2026-11-01, Andrew: "evaluate each cluster and see if we can
+-- completely take out refueling in that cluster by spiking"): the same vote,
+-- but each plan is ONE cluster, judged on its own. It passes only when the
+-- spare pills K can put EVERY target base of that cluster within
+-- PILL_FIRE_RANGE of our pills (no DENY_FRAC). Risk per cluster (only what
+-- this bot saw; each factor adds; only the total is compared with
+-- DEFENSE_MAX, so no factor alone disqualifies):
+--   spot:   SPOT_WEIGHT x armour per known hostile pill that can fire at the
+--           SAFEST place our tank can stand to send the builder: any
+--           tank-passable tile within PLACE_DISPATCH_MAX_DIST (Manhattan) of
+--           the spike spot from which the builder walk reaches it (forest
+--           hiding counts as safe). Pills never shoot builders (pillsUpdate
+--           targets tanks only), so a spot in a hostile pill's range is
+--           allowed. The cover greedy breaks ties by this.
+--   route:  as "deny", on the route to the stand places;
+--   detour: as "deny";
+--   tanks:  as "deny" (a factor, never a skip alone);
+--   spare credit: minus SPARE_CREDIT per spare pill beyond the need (K -
+--           need at plan time), at most SPARE_CREDIT_MAX.
+-- Hostile pills near the bases that cannot fire at the stand places or the
+-- route do not count. Each pill counts once (spot before route). A bot
+-- pledges its pills only with armour >= PLEDGE_MIN_ARMOR, else it votes yes
+-- with pledge 0. Short pledges fail the vote (why=pledges). During a plan a
+-- covered spike spot is re-picked for the same bases; when no spot covers
+-- them all the plan aborts (why=incomplete). "deny" and "count" stay as the
+-- old options.
+M.FOCUS_SPIKE_RULE                 = "deny"   -- "deny" | "cluster" | "count"
+M.FOCUS_SPIKE_SPOT_WEIGHT          = 2.0
+M.FOCUS_SPIKE_SPARE_CREDIT         = 0.5
+M.FOCUS_SPIKE_SPARE_CREDIT_MAX     = 1.0
+M.FOCUS_SPIKE_PLEDGE_MIN_ARMOR     = 20       -- of 40
+-- Stand places tried with the builder walk sim before a spot counts as out
+-- of reach (focus_vote.best_stand).
+M.FOCUS_SPIKE_STAND_REACH_CHECKS   = 8
+-- Ticks a plan spot's stand place is kept (focus_vote.plan_stand) while the
+-- known hostile pills do not change.
+M.FOCUS_SPIKE_STAND_CACHE_TICKS    = 250
 M.FOCUS_SPIKE_CLUSTER_GAP          = 16
 M.FOCUS_SPIKE_DENY_FRAC            = 0.5
 M.FOCUS_SPIKE_PLAN_INTERVAL        = 50       -- ticks between plans
@@ -1911,6 +1947,16 @@ M.SPIKE_REPAIR_BONUS         = 200
 M.SPIKE_REPAIR_MIN_MISSING   = 1
 M.SPIKE_REPAIR_LEASH         = 15
 M.SPIKE_REPAIR_TANK_DISCOUNT = 0.5
+-- Spike defend discount (2026-11-01, Andrew: "a 30% discount on defend_pill
+-- for say 120 seconds"). A pill placed on a spot of a passed focused spike
+-- plan (care src "plan": every bot of the team tags it when it sees it land)
+-- gets its defend_pill cost x (1 - FOCUS_SPIKE_DEFEND_DISCOUNT) for
+-- FOCUS_SPIKE_DEFEND_TICKS after it lands (6000 = 120 s at 50 ticks/s). It
+-- applies before the well-defended clamp, so a held pill is still raised to
+-- DEFEND_WELL_DEFENDED_COST (chip spike_defend{x0.70} on the defend_pill row).
+-- 0 = off (the default and PRESETS.keel); keel_focus, _loose, _bench 0.30.
+M.FOCUS_SPIKE_DEFEND_DISCOUNT = 0
+M.FOCUS_SPIKE_DEFEND_TICKS    = 6000
 M.STRATEGIC_PLACE_FRONT_WEIGHT  = 3.0  -- bonus per tile of proximity to front line
 M.STRATEGIC_PLACE_BASE_WEIGHT   = 2.0   -- bonus per tile of proximity to nearest friendly base
 M.STRATEGIC_PLACE_THREAT_WEIGHT = 1.5   -- penalty per unit of threat.at(pos)
@@ -6114,6 +6160,8 @@ M.PRESETS = {
     -- 2026-11-01: focused spike placement (enemy-base tiles, ebase/depth terms,
     -- long builder send). KEEL scores aggro tiles like any other tile.
     FOCUS_SPIKE_ENABLED         = false,
+    -- 2026-11-01: spike defend discount off (defend_pill costs as before).
+    FOCUS_SPIKE_DEFEND_DISCOUNT = 0,
     -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
     -- keeps its utility share.
     FOCUS_SPIKE_UTIL_TO_AGGRO      = false,
@@ -6721,6 +6769,8 @@ M.PRESETS = {
 --   keel_focus_loose  keel_focus with easier base and pill rules: team
 --                   pills >= 6 (not 8), base lead >= 2 (not 3), ratio 1.25
 --                   (not 1.5). The front-at-target part is the same.
+--   keel_focus, keel_focus_loose and keel_focus_bench use FOCUS_SPIKE_RULE
+--   "cluster" (the per-cluster vote, 2026-11-01).
 -- They apply only when named, so play does not change.
 do
   local function keel_plus(extra)
@@ -6731,7 +6781,7 @@ do
     return t
   end
   M.PRESETS.keel_focus = keel_plus({
-    FOCUS_SPIKE_RULE = "deny",
+    FOCUS_SPIKE_RULE = "cluster",
     FOCUS_SPIKE_ENABLED = true, FOCUS_SPIKE_BASE_RULE = true,
     FOCUS_SPIKE_PILL_RULE = true, FOCUS_SPIKE_PAIR = "solo",
     SPIKE_REPAIR_PRIORITY = true, FOCUS_SPIKE_WIN_SHARES = true,
@@ -6740,6 +6790,7 @@ do
     -- a hidden route). The default 1500 (30 s) came from the reposition vote.
     FOCUS_SPIKE_APPROVAL_TTL = 6000,
     FOCUS_SPIKE_TILE_COVERED_RULE = "repick",
+    FOCUS_SPIKE_DEFEND_DISCOUNT = 0.30, FOCUS_SPIKE_DEFEND_TICKS = 6000,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6749,7 +6800,7 @@ do
     FOCUS_SPIKE_UTIL_TO_AGGRO = false, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = false,
   })
   M.PRESETS.keel_focus_loose = keel_plus({
-    FOCUS_SPIKE_RULE = "count",
+    FOCUS_SPIKE_RULE = "cluster",
     FOCUS_SPIKE_ENABLED = true, FOCUS_SPIKE_BASE_RULE = true,
     FOCUS_SPIKE_PILL_RULE = true, FOCUS_SPIKE_PAIR = "solo",
     SPIKE_REPAIR_PRIORITY = true, FOCUS_SPIKE_WIN_SHARES = true,
@@ -6757,6 +6808,7 @@ do
     FOCUS_SPIKE_MIN_PILLS = 6, FOCUS_SPIKE_BASE_LEAD = 2, FOCUS_SPIKE_BASE_RATIO = 1.25,
     FOCUS_SPIKE_APPROVAL_TTL = 6000,
     FOCUS_SPIKE_TILE_COVERED_RULE = "repick",
+    FOCUS_SPIKE_DEFEND_DISCOUNT = 0.30, FOCUS_SPIKE_DEFEND_TICKS = 6000,
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and
@@ -6766,7 +6818,7 @@ do
   for k, v in pairs(M.PRESETS.keel_focus) do
     if k:sub(1, 12) == "FOCUS_SPIKE_" or k == "SPIKE_REPAIR_PRIORITY" then kb[k] = v end
   end
-  kb.FOCUS_SPIKE_RULE = "deny"
+  kb.FOCUS_SPIKE_RULE = "cluster"
   kb.FOCUS_SPIKE_STDERR_LOG = true
   M.PRESETS.keel_focus_bench = kb
 end

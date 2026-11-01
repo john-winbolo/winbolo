@@ -11,6 +11,10 @@
 --     cluster goes first, the long path penalty, the tank term
 --   * the vote: majority for 2, 3 and 4 bots, silence = yes, pledges,
 --     assignments, a full open -> ballot -> go -> abort -> cooldown flow
+--   * the "cluster" rule: complete cover, the risk sum from the safest
+--     stand place (a spot in pill range with a safe stand 12 back, every
+--     stand exposed), tanks a factor only, spare credit, the pledge armour
+--     floor, the assignment cap, short pledges, the incomplete abort
 --   * state A = KEEL: no passed vote, so spike.check is false, no share
 --     switch, no spkd advert, the placement scan context is nil
 -- No engine: terrain is a table, PP counts and team pills are stubs.
@@ -719,8 +723,222 @@ do
     U.is_placeable_peek = function(x, y, w) return U.is_placeable(x, y, w) end
   end
   check("keel_focus_bench = keel + the focused spike values", same and kb.FOCUS_SPIKE_STDERR_LOG == true
-        and kb.FOCUS_SPIKE_RULE == "deny" and kb.FOCUS_SPIKE_ENABLED == true
+        and kb.FOCUS_SPIKE_RULE == "cluster" and kb.FOCUS_SPIKE_ENABLED == true
         and kb.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == C.PRESETS.keel.REPAIR_FRIENDLY_FIRE_REJECT_TICKS)
+end
+
+-- ── The cluster rule (FOCUS_SPIKE_RULE "cluster") ───────────────────────
+-- One cluster per vote, complete cover, the risk score from the safest
+-- stand place (pills never shoot builders), spare credit, the pledge armour
+-- floor, the assignment cap, and the incomplete abort.
+print("cluster rule")
+do
+  local old_rule, old_tc = C.FOCUS_SPIKE_RULE, C.FOCUS_SPIKE_TILE_COVERED_RULE
+  C.FOCUS_SPIKE_RULE = "cluster"
+  C.FOCUS_SPIKE_TILE_COVERED_RULE = "repick"
+  terrain = {}
+  local D = C.PLACE_DISPATCH_MAX_DIST
+  local function sea_box(x0, x1, y0, y1)
+    for y = y0, y1 do for x = x0, x1 do terrain[y * 256 + x] = C.T_DEEPSEA end end
+  end
+  local function land(x0, x1, y0, y1)
+    for y = y0, y1 do for x = x0, x1 do terrain[y * 256 + x] = nil end end
+  end
+  -- Hostile pill list as focus_vote reads it (id, mx, my, armour).
+  local function hpills(w)
+    local out = {}
+    for id, p in pairs(w.pills) do
+      if p.owner == "hostile" and not p.in_tank then
+        out[#out + 1] = { id = id, mx = p.mx, my = p.my, armour = p.health }
+      end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+  end
+  local function opills(w)
+    local out = {}
+    for id, p in pairs(w.pills) do
+      if p.owner == "friendly" then out[#out + 1] = { id = id, mx = p.mx, my = p.my, armour = p.health } end
+    end
+    return out
+  end
+  local function one_cl(w, id)
+    local b = w.bases[id]
+    local bb = { id = id, mx = b.mx, my = b.my, target = true }
+    return { id = 1, key = tostring(id), bases = { bb }, targets = { bb }, cx = b.mx, cy = b.my }
+  end
+  local function risk_of(w, tiles, spare, s)
+    s = s or new_state(1000)
+    return FV.risk(s, w, info_at(0, 100, 120, 1), one_cl(w, 0), tiles, hpills(w), opills(w), 1000, spare or 0), s
+  end
+
+  -- Complete cover: one hostile quadrant (NE, 4 bases, 2 spots).
+  local w = chew(function(q) return q == "NE" and "hostile" or "friendly" end)
+  local P = plan_of(w, 2)
+  check("cluster: K 2 covers the whole quadrant: pass, need 2",
+        P.pass and P.need == 2 and P.cluster == "4" and #P.bases == 4, P.why .. " " .. P.need)
+  local P1 = plan_of(w, 1)
+  check("cluster: K 1 cannot cover every base: fail no_cluster, row no_spare",
+        not P1.pass and P1.why == "no_cluster" and P1.rows[1].skip == "no_spare",
+        P1.why .. " " .. tostring(P1.rows[1] and P1.rows[1].skip))
+  local w2 = chew(function(q) return (q == "NW" or q == "NE") and "hostile" or "friendly" end)
+  local P2 = plan_of(w2, 4)
+  check("cluster: two hostile quadrants, K 4: one cluster per vote",
+        P2.pass and #P2.chosen == 1 and P2.need == 2 and #P2.bases == 4, #P2.chosen)
+  check("cluster: plan line has the risk factors",
+        FV.plan_line(1000, P2):find("spare credit", 1, true) ~= nil)
+
+  -- A spot in pill range, a safe stand place 12 tiles back. Sea all round
+  -- but a land strip x 99..101 from row 44 south to our base; the spot at
+  -- the north end of the strip, a hostile pill 3 south of it in the strip.
+  terrain = {}
+  sea_box(60, 140, 20, 140)
+  land(99, 101, 44, 130)
+  local ws = new_world()
+  add_base(ws, 0, 100, 40, "hostile")
+  add_base(ws, 2, 100, 120, "friendly")
+  add_pill(ws, 20, 100, 47, "hostile", 15)
+  local function strip_terrain()
+    terrain = {}
+    sea_box(60, 140, 20, 140)
+    land(99, 101, 44, 130)
+  end
+  local spot = { mx = 100, my = 44 }
+  local R = C.PILL_FIRE_RANGE
+  local function ed(a, b) return math.sqrt((a.mx - b.mx) ^ 2 + (a.my - b.my) ^ 2) end
+  check("stand: the spot is in the pill's range", ed(spot, { mx = 100, my = 47 }) <= R)
+  local d = risk_of(ws, { spot }, 0)
+  local q = d.stands[1]
+  local md = q and (math.abs(q.mx - spot.mx) + math.abs(q.my - spot.my)) or -1
+  check("stand: a stand place out of the pill's range", q and ed(q, { mx = 100, my = 47 }) > R,
+        q and (q.mx .. "," .. q.my))
+  check("stand: 12 tiles back (Manhattan), within the long send",
+        md == 12 and md <= D, md)
+  check("stand: spot exposure 0, route 0", d.spot == 0 and d.route == 0, d.spot .. " " .. d.route)
+  check("stand: the spot in pill range is not too risky", not FV.too_risky(d), d.total)
+  check("stand: risk_at the stand 0, at the spot 2.0",
+        FV.stand_risk_at(ws, info_at(0, 0, 0, 0), q.mx, q.my) == 0
+        and math.abs(FV.stand_risk_at(ws, info_at(0, 0, 0, 0), 100, 44) - 2.0) < 1e-9)
+  -- The cover search keeps a spot in pill range ({} as the hostile list).
+  FRONT = TEAM - 1
+  local Ps = FV.plan(new_state(1000), ws, info_at(0, 100, 120, 1), 1000)
+  check("stand: plan passes with the pill near the base", Ps.pass and Ps.need == 1, Ps.why)
+
+  -- Every stand place exposed: an island in the sea, two tiles from a pill.
+  terrain = {}
+  sea_box(80, 130, 80, 120)
+  land(100, 106, 98, 102)
+  local wi = new_world()
+  add_base(wi, 0, 100, 100, "hostile")
+  add_pill(wi, 20, 103, 95, "hostile", 15)
+  local di = risk_of(wi, { { mx = 104, my = 100 } }, 0)
+  check("exposed: every stand place seen, spot = 15/15 x 2.0 = 2.0",
+        math.abs(di.spot - 2.0) < 1e-9 and di.n_spot_pills == 1, di.spot)
+  check("exposed: stand place on the island", di.stands[1] and di.stands[1].mx >= 100
+        and di.stands[1].mx <= 106 and di.stands[1].my >= 98 and di.stands[1].my <= 102)
+  check("exposed: 2.0 alone is under DEFENSE_MAX 3.0", not FV.too_risky(di), di.total)
+  -- A second pill: each pill counts once, 4.0 >= 3.0.
+  add_pill(wi, 21, 103, 105, "hostile", 15)
+  local di2 = risk_of(wi, { { mx = 104, my = 100 }, { mx = 102, my = 100 } }, 0)
+  check("exposed: two pills, two spots: each pill once = 4.0, too risky",
+        math.abs(di2.spot - 4.0) < 1e-9 and di2.n_spot_pills == 2 and FV.too_risky(di2), di2.spot)
+  wi.pills[21] = nil; wi.pill_at[105 * C.MAP_W + 103] = nil
+
+  -- Risk sum and the tank factor.
+  local sT = new_state(1000)
+  FV.st(sT).seen = { [9] = { mx = 101, my = 101, t = 1000 } }
+  local dt = risk_of(wi, { { mx = 104, my = 100 } }, 0, sT)
+  check("sum: spot 2.0 + tanks 0.5 = 2.5", math.abs(dt.total - 2.5) < 1e-9 and dt.tanks == 0.5, dt.total)
+  FV.st(sT).seen[10] = { mx = 102, my = 101, t = 1000 }
+  dt = risk_of(wi, { { mx = 104, my = 100 } }, 0, sT)
+  check("sum: spot 2.0 + 2 tanks = 3.0, too risky", math.abs(dt.total - 3.0) < 1e-9 and FV.too_risky(dt), dt.total)
+  strip_terrain()
+  local sT2 = new_state(1000)
+  FV.st(sT2).seen = {}
+  for i = 1, 8 do FV.st(sT2).seen[i] = { mx = 100, my = 40 + i, t = 1000 } end
+  local dto = risk_of(ws, { spot }, 0, sT2)
+  check("sum: 8 tanks alone = 4.0, but tanks alone do not disqualify",
+        math.abs(dto.tanks - 4.0) < 1e-9 and dto.tanks_only and not FV.too_risky(dto), dto.total)
+  FV.st(sT2).seen = { [1] = { mx = 100, my = 41, t = 1000 - C.FOCUS_SPIKE_DEFENSE_TANK_MEMORY - 1 } }
+  check("sum: a tank seen too long ago counts 0", risk_of(ws, { spot }, 0, sT2).tanks == 0)
+
+  -- Spare credit: -0.5 per spare pill, at most 1.0 (island world).
+  terrain = {}
+  sea_box(80, 130, 80, 120)
+  land(100, 106, 98, 102)
+  local c1 = risk_of(wi, { { mx = 104, my = 100 } }, 1)
+  check("credit: 1 spare = 0.5, total 1.5", c1.credit == 0.5 and math.abs(c1.total - 1.5) < 1e-9, c1.total)
+  local c5 = risk_of(wi, { { mx = 104, my = 100 } }, 5)
+  check("credit: 5 spare = 1.0 (max), total 1.0", c5.credit == 1.0 and math.abs(c5.total - 1.0) < 1e-9, c5.total)
+  strip_terrain()
+  local cz = risk_of(ws, { spot }, 5)
+  check("credit: total never below 0", cz.total == 0, cz.total)
+  terrain = {}
+  sea_box(80, 130, 80, 120)
+  land(100, 106, 98, 102)
+
+  -- Pledge armour floor.
+  local ia = info_at(1, 0, 0, 2)
+  ia.armour = C.FOCUS_SPIKE_PLEDGE_MIN_ARMOR - 1
+  check("pledge: armour 19 pledges 0", FV.pledge(ia) == 0)
+  ia.armour = C.FOCUS_SPIKE_PLEDGE_MIN_ARMOR
+  check("pledge: armour 20 pledges its 2 pills", FV.pledge(ia) == 2)
+
+  -- Assignment cap and short pledges.
+  local tl = { { mx = 1, my = 1 }, { mx = 2, my = 2 } }
+  local a = FV.assign(tl, { { pn = 2, pledge = 1, eta = 1 }, { pn = 3, pledge = 1, eta = 50 } })
+  check("assign: no bot more spots than its pledge", a and a[1].pn == 2 and a[2].pn == 3)
+  local ok, why = FV.resolve({ me = 0, bots = { 0, 1 }, ballots = { [1] = { yes = true, pledge = 0 } },
+                               pledge = 1, need = 2 }, 2)
+  check("resolve: short pledges fail why=pledges", not ok and why == "pledges", why)
+
+  -- Incomplete abort: a pill learned after the go makes every stand place of
+  -- the island spot too risky; there is no other spot for the base.
+  local function sent(s, pat)
+    for _, m in ipairs(s._repo_outbox or {}) do if m:match(pat) then return m end end
+    return nil
+  end
+  local function active_on(tiles)
+    local s = new_state(1000)
+    FV.st(s).active = { id = 5, t_go = 900, from = 0, tiles = tiles, planned = 1, total = 1, dropped = 0 }
+    return s
+  end
+  local wa = new_world()
+  add_base(wa, 0, 100, 100, "hostile")
+  local sa = active_on({ { mx = 104, my = 100, pn = 0 } })
+  local ina = info_at(0, 104, 101, 1)
+  FV.update(sa, wa, ina, 1000, function() end)
+  check("incomplete: first check notes the stand risk 0", sa._fs.active and sa._fs.active.tiles[1].stand_r == 0)
+  -- One weak pill: the stand risk rises, but the same spot is still the best: kept.
+  add_pill(wa, 20, 103, 95, "hostile", 3)
+  FV.update(sa, wa, ina, 1001, function() end)
+  local Ak = sa._fs.active
+  check("re-pick keeps the spot when no spot is better", Ak and Ak.tiles[1].mx == 104 and Ak.tiles[1].my == 100
+        and not sent(sa, "^/info fsa"), Ak and (Ak.tiles[1].mx .. "," .. Ak.tiles[1].my))
+  -- Two strong pills: 4.0 >= 3.0, no spot fits: abort incomplete.
+  wa.pills[20].health = 15
+  add_pill(wa, 21, 103, 105, "hostile", 15)
+  FV.update(sa, wa, ina, 1002, function() end)
+  check("incomplete: plan ends", sa._fs.active == nil)
+  check("incomplete: fsa incomplete", sent(sa, "^/info fsa 5 incomplete$") ~= nil,
+        table.concat(sa._repo_outbox or {}, " | "))
+
+  -- A spot inside a hostile pill's range is no reason to re-pick.
+  terrain = {}
+  local wr = new_world()
+  add_base(wr, 0, 100, 100, "hostile")
+  add_pill(wr, 20, 108, 100, "hostile")
+  local sr = active_on({ { mx = 104, my = 100, pn = 0 } })
+  FV.update(sr, wr, info_at(0, 60, 100, 1), 1000, function() end)
+  FV.update(sr, wr, info_at(0, 60, 100, 1), 1001, function() end)
+  check("cluster: spot in pill range, safe stand: no re-pick, no abort",
+        sr._fs.active and sr._fs.active.tiles[1].mx == 104 and not sent(sr, "^/info fs[au]"))
+  check("cluster ballot: a spot in pill range is no tile_covered no",
+        select(2, FV.ballot(new_state(1000), wr, info_at(1, 60, 100, 1),
+          { tiles = { { mx = 104, my = 100 } }, planned = 1, total = 1 }, 1000)) ~= "tile_covered")
+
+  terrain = {}
+  C.FOCUS_SPIKE_RULE, C.FOCUS_SPIKE_TILE_COVERED_RULE = old_rule, old_tc
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))

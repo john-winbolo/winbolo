@@ -38,9 +38,9 @@ local FV         = require("focus_vote")
 local M = {}
 M.vote = FV
 
--- "deny" (the team vote, focus_vote.lua) or "count" (the base lead and pill
--- rules of the first builds, per bot).
-local function deny() return C.FOCUS_SPIKE_RULE == "deny" end
+-- "deny" or "cluster" (the team vote, focus_vote.lua) or "count" (the base
+-- lead and pill rules of the first builds, per bot).
+local function deny() return C.FOCUS_SPIKE_RULE == "deny" or C.FOCUS_SPIKE_RULE == "cluster" end
 
 local function st(state)
   local S = state._spike
@@ -343,6 +343,21 @@ function M.care_at(state, mx, my, now)
   return e
 end
 
+-- defend_pill cost factor for a pill from a passed focused spike plan (care
+-- src "plan") inside FOCUS_SPIKE_DEFEND_TICKS after it landed, or nil.
+-- Off (nil) when FOCUS_SPIKE_DEFEND_DISCOUNT is 0 (KEEL). Not gated by
+-- SPIKE_REPAIR_PRIORITY or SPIKE_CARE_TICKS: its own time.
+function M.defend_mult(state, mx, my, now)
+  local disc = C.FOCUS_SPIKE_DEFEND_DISCOUNT or 0
+  if disc <= 0 then return nil end
+  local S = state and state._spike
+  if not S then return nil end
+  local e = S.care[tkey(mx, my)]
+  if not e or e.src ~= "plan" then return nil end
+  if (now - e.t) > C.FOCUS_SPIKE_DEFEND_TICKS then return nil end
+  return 1 - disc
+end
+
 -- Tank repair_pill cost factor for a spike pill, or nil.
 function M.tank_mult(state, mx, my, now)
   if not M.care_at(state, mx, my, now) then return nil end
@@ -539,8 +554,15 @@ function M.update(state, world, info, now)
     -- placed (src "plan"), so no spkd advert is needed.
     local S = st(state)
     FV.update(state, world, info, now, function(mx, my, t) tag(S, mx, my, t, "plan") end)
+    -- A plan tag lives for the longer of the care time and the defend
+    -- discount time (care_at still ends the repair bias at SPIKE_CARE_TICKS).
+    local plan_age = C.SPIKE_CARE_TICKS
+    if (C.FOCUS_SPIKE_DEFEND_DISCOUNT or 0) > 0 then
+      plan_age = math.max(plan_age, C.FOCUS_SPIKE_DEFEND_TICKS)
+    end
     for k, e in pairs(S.care) do
-      if (now - e.t) > C.SPIKE_CARE_TICKS then S.care[k] = nil end
+      local age = (e.src == "plan") and plan_age or C.SPIKE_CARE_TICKS
+      if (now - e.t) > age then S.care[k] = nil end
     end
     return
   end
