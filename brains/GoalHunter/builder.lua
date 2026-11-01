@@ -600,6 +600,12 @@ function M.set_mode(state, world, info, goal)
           state.tick or 0, goal.mx, goal.my, why, pdist,
           threat.coverage_at(goal.mx, goal.my) or 0,
           state.vuln or -1, state.imdanger or -1))
+        -- Focused spike spot: keep the tank tile the builder left from, for
+        -- the event file placed line (focus_vote.note_send).
+        if goal._focus_spike then
+          require("focus_vote").note_send(state, world, info, goal.mx, goal.my, tmx, tmy,
+            goal._stand_mx, goal._stand_my, state.tick or 0)
+        end
       end
       b.mode = "place_pill"
       b.pill_target = { mx = goal.mx, my = goal.my }

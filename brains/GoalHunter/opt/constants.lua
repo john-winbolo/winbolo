@@ -1889,7 +1889,11 @@ M.FOCUS_SPIKE_STAND_REACH_CHECKS   = 8
 -- Ticks a plan spot's stand place is kept (focus_vote.plan_stand) while the
 -- known hostile pills do not change.
 M.FOCUS_SPIKE_STAND_CACHE_TICKS    = 250
-M.FOCUS_SPIKE_CLUSTER_GAP          = 16
+-- Single-link gap between bases of one cluster (euclid, inclusive). 9 =
+-- the shooting distance of a pill (2026-11-01, Andrew: "16 tiles is too big.
+-- We need that to be shooting distance of a pill, 9 tiles"). Read only while
+-- FOCUS_SPIKE_ENABLED is on (PRESETS.keel: off).
+M.FOCUS_SPIKE_CLUSTER_GAP          = 9
 M.FOCUS_SPIKE_DENY_FRAC            = 0.5
 M.FOCUS_SPIKE_PLAN_INTERVAL        = 50       -- ticks between plans
 M.FOCUS_SPIKE_MAX_TILES            = 12       -- fits the 124-byte message

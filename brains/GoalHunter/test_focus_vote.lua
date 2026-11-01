@@ -110,8 +110,8 @@ print("clusters")
 do
   local w = chew(function() return "neutral" end)
   local list = FV.bases(w)
-  local cl = FV.clusters(list, C.FOCUS_SPIKE_CLUSTER_GAP)
-  check("four quadrants = four clusters", #cl == 4, #cl)
+  local cl = FV.clusters(list, 16)
+  check("four quadrants = four clusters (gap 16)", #cl == 4, #cl)
   local ok = true
   for _, c in ipairs(cl) do if #c.bases ~= 4 then ok = false end end
   check("four bases in each", ok)
@@ -123,6 +123,32 @@ do
   add_base(w2, 0, 10, 10, "neutral"); add_base(w2, 1, 25, 10, "neutral"); add_base(w2, 2, 40, 10, "neutral")
   local c3 = FV.clusters(FV.bases(w2), 16)
   check("chain 15 + 15 apart is one cluster (single link)", #c3 == 1, #c3)
+  -- Chew Toy 3 bases with the default gap (9 = a pill's shooting distance):
+  -- four groups of 3 and four single bases.
+  check("FOCUS_SPIKE_CLUSTER_GAP default is 9", C.FOCUS_SPIKE_CLUSTER_GAP == 9, C.FOCUS_SPIKE_CLUSTER_GAP)
+  local ct3 = { {119,133},{115,140},{110,138}, {140,137},{138,142},{133,133},
+                {137,112},{142,114},{133,119}, {112,115},{114,110},{119,119},
+                {143,126},{126,143},{109,126},{126,109} }
+  local want = { {0,1,2}, {3,4,5}, {6,7,8}, {9,10,11}, {12}, {13}, {14}, {15} }
+  local w3 = new_world()
+  for i, p in ipairs(ct3) do add_base(w3, i - 1, p[1], p[2], "neutral") end
+  local c8 = FV.clusters(FV.bases(w3), C.FOCUS_SPIKE_CLUSTER_GAP)
+  check("Chew Toy 3, gap 9: 8 clusters", #c8 == 8, #c8)
+  local got = {}
+  for _, c in ipairs(c8) do
+    local ids = {}
+    for _, b in ipairs(c.bases) do ids[#ids + 1] = b.id end
+    table.sort(ids)
+    got[#got + 1] = table.concat(ids, ",")
+  end
+  table.sort(got)
+  local exp = {}
+  for _, g in ipairs(want) do exp[#exp + 1] = table.concat(g, ",") end
+  table.sort(exp)
+  check("Chew Toy 3, gap 9: exactly the four groups of 3 and four single bases",
+        table.concat(got, " ") == table.concat(exp, " "), table.concat(got, " "))
+  local c16 = FV.clusters(FV.bases(w3), 16)
+  check("Chew Toy 3, gap 16: fewer clusters (the old default)", #c16 < 8, #c16)
   -- Positionless and unknown bases count in the total.
   local w3 = new_world()
   add_base(w3, 0, 10, 10, "hostile")
@@ -174,6 +200,10 @@ end
 
 -- ── The plan table ───────────────────────────────────────────────────────
 print("deny plan")
+-- The test worlds below space the bases of a quadrant 12 apart (diagonal
+-- 17), so they use the old gap 16 to keep a quadrant as one cluster. The
+-- default (9) is checked in the clusters section.
+C.FOCUS_SPIKE_CLUSTER_GAP = 16
 local function plan_of(w, K, st)
   FRONT = TEAM - K
   st = st or new_state(1000)
