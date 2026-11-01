@@ -183,6 +183,25 @@ check("going spot", has(tx, "player 2: going"))
 check("placed spot", has(tx, "player 3: placed"))
 check("dropped spot", has(tx, "player 4: dropped"))
 
+print("adaptive spot")
+local cs = { mx = 11, my = 9, total = 0.4, stand = { mx = 11, my = 12 },
+             parts = { payoff = 1, stand = 0, route = 0, travel = 0.5, run = 0.1 } }
+F.active = { id = 10, adaptive = true, bases = { 0 }, claims = { [0] = 2 }, rel = {},
+  tiles = {}, mine = { mx = 11, my = 9, pn = 2, stand = { mx = 11, my = 12, risk = 0, val = 0.3 } },
+  switches = { { t = 3000, why = "spot_blocked", old = { mx = 10, my = 8 }, new = { mx = 11, my = 9 },
+                 new_total = 0.4 } },
+  score = { t = 3050, top = { cs }, chosen = cs, mine = { 0 } } }
+F.active.tiles[1] = F.active.mine
+calls = {}
+FZ.draw(state, world, { player_number = 2 }, 3100)
+hud, tx = texts("hud_text"), texts("text")
+check("adaptive header", has(hud, "ADAPTIVE SPIKE SPOT id=10 at 1:01  my claimed bases left: 0"))
+check("chosen spot and stand", has(hud, "chosen (11,9) stand (11,12) stand risk 0.00 + run 0.30"))
+check("top spot with every part",
+  has(hud, "1. (11,9) total 0.40 = payoff 1.00 - stand 0.00 - route 0.00 - travel 0.50 - run 0.10  CHOSEN"))
+check("claim label per player N", has(tx, "b0 claim player 2"))
+check("spot change mark with its reason", has(tx, "1:00 spot_blocked 0.40") and has(tx, "1:00 left: spot_blocked"))
+
 print("debug mode off draws nothing")
 BRAIN_DEBUG_MODE = false
 calls = {}

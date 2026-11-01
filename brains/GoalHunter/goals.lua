@@ -2965,7 +2965,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
                    _place_cat = "aggro", _focus_spike = true, _spike_role = "plan",
                    _spike_carried = info.carried_pills or 0,
                    _stand_mx = stand and stand.mx, _stand_my = stand and stand.my,
-                   _stand_r = stand and stand.risk },
+                   _stand_r = stand and stand.risk, _stand_val = stand and stand.val },
           desc = BRAIN_POOL_VIZ and string.format(
                  "focus_spike plan tile (%d,%d) cost{%.0f} = FOCUS_SPIKE_APPROVED_COST (path %.0f)",
                  bt.mx, bt.my, cost, pc) or "",

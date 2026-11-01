@@ -1973,6 +1973,44 @@ M.FOCUS_SPIKE_DEFEND_TICKS    = 6000
 -- Only what this bot saw (last seen armour > 0). Plan line: ncov=<base ids>.
 -- false = off (the default and PRESETS.keel); keel_focus, _loose, _bench on.
 M.FOCUS_SPIKE_NEUTRAL_PILL_COVER = false
+-- Adaptive spike spot (2026-11-01, Andrew: "a focus spike is just that a
+-- focus, not even a specific slot. There should be a scoring that gets
+-- updated over time of best spot. It could change if ex. wall so built where
+-- first spot was chosen." and "If it can get close to spike its safer. Long
+-- lgm run out is risky. But risks should be taken sometimes."). On: a passed
+-- vote gives each pledged bot target BASES (claims, go verb fsk), not fixed
+-- spike spots. Every FOCUS_SPIKE_RESCORE_TICKS each claiming bot scores the
+-- spike spots within PILL_FIRE_RANGE of its claimed bases that are not yet
+-- covered, from where its tank is now:
+--   score = FOCUS_SPIKE_BASE_PAYOFF x claimed bases newly covered
+--           - (stand risk + route risk + travel cost + builder run cost)
+--   stand risk  = FOCUS_SPIKE_SPOT_WEIGHT x armour/15 per known hostile pill
+--                 that sees the stand place;
+--   route risk  = FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT x armour/15 per other
+--                 hostile pill that sees the straight line tank -> stand;
+--   travel cost = floor(tank -> stand distance / 10) x DEFENSE_DETOUR_WEIGHT;
+--   builder run = FOCUS_SPIKE_LGM_RUN_COST per tile, stand -> spot (euclid).
+-- The stand place is the tank-passable tile within PLACE_DISPATCH_MAX_DIST
+-- (Manhattan) with the lowest stand risk + builder run cost. A spot is left
+-- out when it is not placeable now, when a known live hostile or neutral pill
+-- covers it, or when its danger (stand risk + route risk) is over
+-- FOCUS_SPIKE_DEFENSE_MAX. The travel and builder run costs are not danger:
+-- they never rule a spot out by themselves.
+-- The bot changes its spot only for a score better by FOCUS_SPIKE_SWITCH_MARGIN
+-- (20% of the current score, at least 0.20). A claimed base no spot can cover
+-- is released (claim verb fsc) for another bot to take.
+-- false = off (the default and PRESETS.keel); keel_focus, _loose, _bench on.
+M.FOCUS_SPIKE_ADAPTIVE_SPOT   = false
+M.FOCUS_SPIKE_RESCORE_TICKS   = 50     -- brain ticks (1 s)
+M.FOCUS_SPIKE_BASE_PAYOFF     = 1.0
+M.FOCUS_SPIKE_LGM_RUN_COST    = 0.1    -- per tile, stand place -> spike spot
+M.FOCUS_SPIKE_SWITCH_MARGIN   = 0.20
+-- Spike spots fully scored per rescore (the rest are cut by payoff, then by
+-- distance from the tank), and builder reach checks per rescore.
+M.FOCUS_SPIKE_RESCORE_MAX_SPOTS = 40
+M.FOCUS_SPIKE_RESCORE_REACH_CHECKS = 4
+-- Ticks a released base waits for a taker before the plan ends incomplete.
+M.FOCUS_SPIKE_RELEASE_WAIT    = 100
 M.STRATEGIC_PLACE_FRONT_WEIGHT  = 3.0  -- bonus per tile of proximity to front line
 M.STRATEGIC_PLACE_BASE_WEIGHT   = 2.0   -- bonus per tile of proximity to nearest friendly base
 M.STRATEGIC_PLACE_THREAT_WEIGHT = 1.5   -- penalty per unit of threat.at(pos)
@@ -6028,6 +6066,8 @@ M.PRESETS = {
     FOCUS_SPIKE_DEFEND_DISCOUNT = 0,
     -- 2026-11-01: neutral pills are not counted in the spike cluster plan.
     FOCUS_SPIKE_NEUTRAL_PILL_COVER = false,
+    -- 2026-11-01: fixed spike spots from the vote (no adaptive spot).
+    FOCUS_SPIKE_ADAPTIVE_SPOT      = false,
     -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
     -- keeps its utility share.
     FOCUS_SPIKE_UTIL_TO_AGGRO      = false,
@@ -6629,6 +6669,7 @@ do
     FOCUS_SPIKE_TILE_COVERED_RULE = "repick",
     FOCUS_SPIKE_DEFEND_DISCOUNT = 0.30, FOCUS_SPIKE_DEFEND_TICKS = 6000,
     FOCUS_SPIKE_NEUTRAL_PILL_COVER = true,
+    FOCUS_SPIKE_ADAPTIVE_SPOT = true,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6648,6 +6689,7 @@ do
     FOCUS_SPIKE_TILE_COVERED_RULE = "repick",
     FOCUS_SPIKE_DEFEND_DISCOUNT = 0.30, FOCUS_SPIKE_DEFEND_TICKS = 6000,
     FOCUS_SPIKE_NEUTRAL_PILL_COVER = true,
+    FOCUS_SPIKE_ADAPTIVE_SPOT = true,
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and

@@ -86,6 +86,7 @@ function M.note(F, kind, d)
     if not d.pass then V.t_end = d.t end
   elseif kind == "go" then
     V.go = d.tiles
+    V.go_claims = d.claims
     V.t_go = d.t
   elseif kind == "end" then
     V.ended = d
@@ -191,8 +192,54 @@ local function draw_clusters(F, world, P)
     tostring(gap), #(F.clusters or {}), P and mmss(P.t) or "-"), "topleft", 220, 220, 220, 230)
 end
 
-local function draw_plan(P)
+-- FOCUS_SPIKE_ADAPTIVE_SPOT: the live rescore of this bot (focus_vote
+-- adapt_step, A.score): the chosen spike spot and stand place, the top 3
+-- spots with every score part, as map labels and HUD lines.
+local function draw_score(A)
   local ID = "focused_spike_plan"
+  local S = A.score
+  if not S then return end
+  local x, y, dy = 150, 640, 14
+  local function line(s, r, g, b)
+    viz.hud_text(ID, x, y, s, "topleft", r or 230, g or 230, b or 230, 245)
+    y = y + dy
+  end
+  line(string.format("ADAPTIVE SPIKE SPOT id=%d at %s  my claimed bases left: %s", A.id, mmss(S.t),
+    #S.mine > 0 and table.concat(S.mine, ",") or "none"), 255, 120, 255)
+  local ch = A.mine
+  if ch then
+    local q = ch.stand
+    line(string.format("  chosen (%d,%d) stand (%d,%d) stand risk %.2f + run %.2f",
+      ch.mx, ch.my, q and q.mx or -1, q and q.my or -1, q and q.risk or 0, q and (q.val - q.risk) or 0), 120, 255, 120)
+  else
+    line("  chosen: none", 170, 170, 170)
+  end
+  for i, c in ipairs(S.top) do
+    local p = c.parts
+    local mark = (ch and ch.mx == c.mx and ch.my == c.my) and "  CHOSEN" or ""
+    line(string.format("  %d. (%d,%d) total %.2f = payoff %.2f - stand %.2f - route %.2f - travel %.2f - run %.2f%s",
+      i, c.mx, c.my, c.total, p.payoff, p.stand, p.route, p.travel, p.run, mark))
+    local cx, cy = c.mx + 0.5, c.my + 0.5
+    local r, g, b = 255, 120, 255
+    if mark ~= "" then r, g, b = 120, 255, 120 end
+    viz.rect(ID, c.mx, c.my, c.mx + 1, c.my + 1, r, g, b, 240, true, true)
+    viz.text(ID, cx, cy - 0.9, string.format("%d. %.2f", i, c.total), "center", r, g, b, 240, 0.34)
+    viz.line(ID, c.stand.mx + 0.5, c.stand.my + 0.5, cx, cy, 120, 220, 255, 200)
+    viz.rect(ID, c.stand.mx + 0.15, c.stand.my + 0.15, c.stand.mx + 0.85, c.stand.my + 0.85,
+             120, 220, 255, 240, true, true)
+  end
+  if #S.top == 0 then line("  no allowed spike spot", 255, 130, 130) end
+  if ch and ch.stand then
+    viz.circle(ID, ch.mx + 0.5, ch.my + 0.5, C.PILL_FIRE_RANGE, 120, 255, 120, 170, true, false)
+    viz.text(ID, ch.stand.mx + 0.5, ch.stand.my + 1.4, string.format("stand (%d,%d) r=%.2f", ch.stand.mx,
+             ch.stand.my, ch.stand.risk or 0), "center", 120, 220, 255, 240, 0.32)
+  end
+end
+
+local function draw_plan(F, P)
+  local ID = "focused_spike_plan"
+  local A = F.active
+  if A and A.adaptive then draw_score(A); return end
   if not P or not P.tiles or #P.tiles == 0 then return end
   local R = C.PILL_FIRE_RANGE
   local stands = P.risk and P.risk.stands or {}
@@ -286,6 +333,12 @@ local function draw_votes(F, world, info, now)
   if V.go then
     local gl = {}
     for _, t in ipairs(V.go) do gl[#gl + 1] = string.format("(%d,%d)->player %d", t.mx, t.my, t.pn or -1) end
+    if V.go_claims then
+      local ids = {}
+      for id in pairs(V.go_claims) do ids[#ids + 1] = id end
+      table.sort(ids)
+      for _, id in ipairs(ids) do gl[#gl + 1] = string.format("base %d->player %d", id, V.go_claims[id]) end
+    end
     line(string.format("  GO at %s: %s", mmss(V.t_go), table.concat(gl, " ")), 140, 240, 140)
   end
   if V.ended then
@@ -309,6 +362,34 @@ local function draw_active(F, world)
     viz.text(ID, t.mx + 0.5, t.my + 1.6, string.format("player %d: %s", t.pn or -1, st),
              "center", r, g, b, 250, 0.36)
   end
+  -- FOCUS_SPIKE_ADAPTIVE_SPOT: the claim of each target base, and a mark on
+  -- each spot change of this bot with its reason.
+  if A.adaptive then
+    local ids = {}
+    for id in pairs(A.claims or {}) do ids[#ids + 1] = id end
+    table.sort(ids)
+    for _, id in ipairs(ids) do
+      local bb = world.bases and world.bases[id]
+      if bb and bb.mx then
+        local pn = A.claims[id]
+        viz.text(ID, bb.mx + 0.5, bb.my - 1.0, pn == 255 and string.format("b%d free", id)
+                 or string.format("b%d claim player %d", id, pn), "center", 255, 200, 60, 250, 0.36)
+      end
+    end
+    for _, w in ipairs(A.switches or {}) do
+      if w.new then
+        viz.circle(ID, w.new.mx + 0.5, w.new.my + 0.5, 0.7, 255, 255, 255, 220, true, false)
+        viz.text(ID, w.new.mx + 0.5, w.new.my + 2.2, string.format("%s %s%s", mmss(w.t), w.why,
+                 w.new_total and string.format(" %.2f", w.new_total) or ""), "center", 255, 255, 255, 230, 0.32)
+      end
+      if w.old then
+        viz.line(ID, w.old.mx + 0.5, w.old.my + 0.5, w.new and w.new.mx + 0.5 or w.old.mx + 0.5,
+                 w.new and w.new.my + 0.5 or w.old.my + 0.5, 255, 255, 255, 160)
+        viz.text(ID, w.old.mx + 0.5, w.old.my + 2.2, string.format("%s left: %s", mmss(w.t), w.why),
+                 "center", 200, 200, 200, 220, 0.30)
+      end
+    end
+  end
 end
 
 function M.draw(state, world, info, now)
@@ -316,7 +397,7 @@ function M.draw(state, world, info, now)
   if not F then return end
   local P = F.plan
   if on("focused_spike_clusters") then draw_clusters(F, world, P) end
-  if on("focused_spike_plan") then draw_plan(P) end
+  if on("focused_spike_plan") then draw_plan(F, P) end
   if on("focused_spike_votes") then draw_votes(F, world, info, now) end
   if on("focused_spike_active") then draw_active(F, world) end
 end
