@@ -6423,6 +6423,9 @@ M.PRESETS = {
 --                   spike rule, spike care and the win shares on.
 --   keel_spike_raw  keel + REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50 + deep
 --                   placement with no rule, no pair, no care, no win shares.
+--   keel_spike_loose  keel_spike with easier base and pill rules: team
+--                   pills >= 6 (not 8), base lead >= 2 (not 3), ratio 1.25
+--                   (not 1.5). The front-at-target part is the same.
 -- They apply only when named, so play does not change.
 do
   local function keel_plus(extra)
@@ -6441,6 +6444,12 @@ do
     PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = false,
     AGGRO_DEEP_PILL_GATE = false, AGGRO_DEEP_PAIR = "off",
     SPIKE_REPAIR_PRIORITY = false, AGGRO_DEEP_WIN_SHARES = false,
+  })
+  M.PRESETS.keel_spike_loose = keel_plus({
+    PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = true,
+    AGGRO_DEEP_PILL_GATE = true, AGGRO_DEEP_PAIR = "solo",
+    SPIKE_REPAIR_PRIORITY = true, AGGRO_DEEP_WIN_SHARES = true,
+    AGGRO_DEEP_MIN_PILLS = 6, AGGRO_DEEP_BASE_LEAD = 2, AGGRO_DEEP_BASE_RATIO = 1.25,
   })
 end
 

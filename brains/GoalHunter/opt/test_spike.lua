@@ -591,7 +591,18 @@ do
         and raw.AGGRO_DEEP_BASE_GATE == false and raw.AGGRO_DEEP_PILL_GATE == false
         and raw.AGGRO_DEEP_PAIR == "off" and raw.SPIKE_REPAIR_PRIORITY == false
         and raw.AGGRO_DEEP_WIN_SHARES == false)
-  for _, t in ipairs({ sp, raw }) do
+  local lo = C.PRESETS.keel_spike_loose
+  local lsame = true
+  for k, v in pairs(sp) do
+    if k ~= "AGGRO_DEEP_MIN_PILLS" and k ~= "AGGRO_DEEP_BASE_LEAD"
+       and k ~= "AGGRO_DEEP_BASE_RATIO" and lo[k] ~= v then lsame = false end
+  end
+  check("keel_spike_loose = keel_spike plus the three rule values", lsame)
+  check("preset keel_spike_loose: pills 6, lead 2, ratio 1.25", lo.AGGRO_DEEP_MIN_PILLS == 6
+        and lo.AGGRO_DEEP_BASE_LEAD == 2 and lo.AGGRO_DEEP_BASE_RATIO == 1.25)
+  check("defaults stay: pills 8, lead 3, ratio 1.5", C.AGGRO_DEEP_MIN_PILLS == 8
+        and C.AGGRO_DEEP_BASE_LEAD == 3 and C.AGGRO_DEEP_BASE_RATIO == 1.5)
+  for _, t in ipairs({ sp, raw, lo }) do
     for k, v in pairs(t) do
       if type(C[k]) ~= type(v) then check("preset knob " .. k .. " type", false, type(v)) end
     end
