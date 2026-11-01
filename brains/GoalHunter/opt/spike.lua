@@ -77,15 +77,12 @@ function M.base_counts(world)
   return ours, theirs
 end
 
--- Team pills: deployed live friendly pills (every role) + pills in tanks as
+-- Team pills: deployed live friendly pills (every role, utility too: a
+-- placed pill in use as a blocker counts as utility) + pills in tanks as
 -- the world model holds them (own "friendly", ally "allied") + any of this
 -- tank's carried pills the world model does not list.
 -- Returns total, deployed, own carried, ally carried.
 function M.team_pills(world, info, pf_counts)
-  local deployed = 0
-  for k, v in pairs(pf_counts) do
-    if k ~= "utility" then deployed = deployed + v end
-  end
   local own_listed, ally_c = 0, 0
   for _, p in pairs(world.pills or {}) do
     if p.in_tank then
@@ -93,6 +90,11 @@ function M.team_pills(world, info, pf_counts)
       elseif p.owner == "allied" then ally_c = ally_c + 1 end
     end
   end
+  -- pf_counts.utility holds the in-tank pills too (PP.counts); take those
+  -- out so they are not counted twice.
+  local deployed = 0
+  for _, v in pairs(pf_counts) do deployed = deployed + v end
+  deployed = math.max(0, deployed - own_listed - ally_c)
   local own = math.max(info.carried_pills or 0, own_listed)
   return deployed + own + ally_c, deployed, own, ally_c
 end
