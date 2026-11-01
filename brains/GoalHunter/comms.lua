@@ -291,10 +291,10 @@ function M.process_message(sender, text, tick, state)
     end
   end
 
-  -- ── Focused spike vote verbs (fso/fsy/fsn/fsr/fsg/fsa) ──────────────────
+  -- ── Focused spike vote verbs (fso/fsy/fsn/fsr/fsg/fsa/fsu) ──────────────────
   -- One-shot, queued on state._fs_rx in arrival order; focus_vote.lua parses
   -- and acts on them in its next update (C.FOCUS_SPIKE_RULE "deny").
-  if text:sub(1, 8) == "/info fs" and text:match("^/info fs[oynrga] ") then
+  if text:sub(1, 8) == "/info fs" and text:match("^/info fs[oynrgau] ") then
     if state then
       state._fs_rx = state._fs_rx or {}
       -- Capped: a bot with the vote off never drains the list.

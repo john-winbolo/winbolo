@@ -30,6 +30,9 @@ local bit = require('bitcompat')
 --   /info fsr <id> <0|1> <reason>        the proposer's result
 --   /info fsg <id> <XXYYPP...>           go: tile -> player (hex)
 --   /info fsa <id> <reason>              abort
+--   /info fsu <id> <XXYY old> <XXYY new|FFFF> <bases dropped>
+--                                        re-pick: a plan tile moved (same
+--                                        bot) or dropped (FFFF)
 --
 -- State lives on state._fs. Required by spike.lua (field M.vote), so goals.lua
 -- and init.lua get no new local or upvalue.
@@ -211,8 +214,10 @@ end
 -- known live hostile pill. Each step takes the tile that covers the most
 -- bases still uncovered (ties: nearer to the anchor, then lower tile id).
 -- Answers the tile list (maybe empty: already covered) or nil when some
--- target base cannot be covered.
-function M.cover(world, targets, hpills, opills, ax, ay)
+-- target base cannot be covered. With maxn, it stops after maxn tiles or
+-- when no tile covers a base still left, and answers the tiles and the
+-- bases left uncovered (the plan re-pick uses this).
+function M.cover(world, targets, hpills, opills, ax, ay, maxn)
   local R = C.PILL_FIRE_RANGE
   local left = {}
   for _, b in ipairs(targets) do
@@ -236,7 +241,7 @@ function M.cover(world, targets, hpills, opills, ax, ay)
     end
   end
   local tiles = {}
-  while #left > 0 do
+  while #left > 0 and not (maxn and #tiles >= maxn) do
     local best, bn = nil, 0
     for _, c in ipairs(cand) do
       if not c.used then
@@ -250,7 +255,10 @@ function M.cover(world, targets, hpills, opills, ax, ay)
         end
       end
     end
-    if not best then return nil end
+    if not best then
+      if maxn then break end
+      return nil
+    end
     best.used = true
     tiles[#tiles + 1] = { mx = best.mx, my = best.my }
     local keep = {}
@@ -259,7 +267,7 @@ function M.cover(world, targets, hpills, opills, ax, ay)
     end
     left = keep
   end
-  return tiles
+  return tiles, left
 end
 
 -- ── Defense ─────────────────────────────────────────────────────────────
@@ -727,6 +735,12 @@ function M.parse(text)
     end
     return { verb = "fsg", id = tonumber(gid), tiles = out }
   end
+  local uid, uo, un, ud = text:match("^/info fsu (%d+) (%x%x%x%x) (%x%x%x%x) (%d+)$")
+  if uid then
+    local o, n = dec_tiles(uo)[1], dec_tiles(un)[1]
+    if n and n.mx == 255 and n.my == 255 then n = nil end
+    return { verb = "fsu", id = tonumber(uid), old = o, new = n, ndrop = tonumber(ud) }
+  end
   local aid, awhy = text:match("^/info fsa (%d+) ([%a_]+)$")
   if aid then return { verb = "fsa", id = tonumber(aid), reason = awhy } end
   return nil
@@ -753,18 +767,23 @@ end
 -- The bases are noted on the first check after the go. "tank_near" = the
 -- ballot test (an enemy tank near one of our bases), which in bench games
 -- ended every plan a few seconds after its go.
+-- With "base_lost" it also answers the lost base id, its owner at the go
+-- and its owner now (nil when this bot no longer knows the base).
 function M.home_lost(state, world, A)
   if C.FOCUS_SPIKE_HOME_ABORT_RULE == "tank_near" then return M.home_attacked(state, world) end
   if not A.home then
     A.home = {}
     for id, b in pairs(world.bases or {}) do
-      if ours(b.owner) then A.home[id] = true end
+      if ours(b.owner) then A.home[id] = b.owner end
     end
     return false
   end
-  for id in pairs(A.home) do
+  local ids = {}
+  for id in pairs(A.home) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
     local b = world.bases and world.bases[id]
-    if not b or not ours(b.owner) then return true end
+    if not b or not ours(b.owner) then return true, id, A.home[id], b and b.owner end
   end
   return false
 end
@@ -773,7 +792,7 @@ end
 function M.tile_covered(world, tiles)
   local hp = pills_of(world, true)
   for _, t in ipairs(tiles) do
-    if not t.placed and covered_by(hp, t.mx, t.my, C.PILL_FIRE_RANGE) then return t end
+    if not t.placed and not t.gone and covered_by(hp, t.mx, t.my, C.PILL_FIRE_RANGE) then return t end
   end
   return nil
 end
@@ -896,8 +915,14 @@ function M.resolve(open, nbots)
 end
 
 -- ── Active phase ────────────────────────────────────────────────────────
+-- planned / total: the target bases of the vote (the proposer's count, from
+-- the open message), for the re-pick limit. dropped counts the bases the
+-- plan gave up after a re-pick found no tile for them.
 local function start_active(state, F, id, tiles, now, from, info)
-  F.active = { id = id, tiles = tiles, t_go = now, from = from }
+  local vi = F.votes and F.votes[id]
+  F.active = { id = id, tiles = tiles, t_go = now, from = from,
+               planned = vi and vi.planned, total = vi and vi.total, dropped = 0 }
+  F.votes = nil
   F.open, F.voting = nil, nil
   local mine = 0
   for _, t in ipairs(tiles) do if t.pn == info.player_number then mine = mine + 1 end end
@@ -912,11 +937,14 @@ end
 local function end_active(state, F, now, why, info)
   local A = F.active
   if not A then return end
-  local placed = 0
-  for _, t in ipairs(A.tiles) do if t.placed then placed = placed + 1 end end
-  if why == "all_placed" and placed < #A.tiles then why = "tiles_gone" end
-  errline(string.format("FOCUS_SPIKE end t=%d p%d id=%d why=%s placed=%d tiles=%d after=%d",
-    now, info and info.player_number or -1, A.id, why, placed, #A.tiles, now - A.t_go))
+  local placed, dropped = 0, 0
+  for _, t in ipairs(A.tiles) do
+    if t.placed then placed = placed + 1 elseif t.dropped then dropped = dropped + 1 end
+  end
+  if why == "all_placed" and placed + dropped < #A.tiles then why = "tiles_gone" end
+  errline(string.format("FOCUS_SPIKE end t=%d p%d id=%d why=%s placed=%d tiles=%d after=%d dropped=%d bases_dropped=%d",
+    now, info and info.player_number or -1, A.id, why, placed, #A.tiles, now - A.t_go, dropped,
+    A.dropped or 0))
   F.active = nil
 end
 
@@ -984,6 +1012,7 @@ local function handle_rx(state, F, world, info, now, care_tag)
         end
         if not skip then
           F.voting = { id = v.id, from = m.from, t = now }
+          F.votes = { [v.id] = { planned = v.planned, total = v.total } }
           local yn, a, b = M.ballot(state, world, info, v, now)
           if yn == "yes" then
             send(state, string.format("/info fsy %d %d %d", v.id, a, b))
@@ -999,6 +1028,10 @@ local function handle_rx(state, F, world, info, now, care_tag)
         if not v.pass and v.reason ~= "better" then cooldown(F, now, v.reason) end
       elseif v.verb == "fsg" then
         if not F.active then start_active(state, F, v.id, v.tiles, now, m.from, info) end
+      elseif v.verb == "fsu" then
+        if F.active and F.active.id == v.id and v.old then
+          M.apply_repick(F.active, v.old, v.new, v.ndrop, m.from, info, now)
+        end
       elseif v.verb == "fsa" then
         if F.active and F.active.id == v.id then
           end_active(state, F, now, "abort_" .. v.reason, info)
@@ -1043,7 +1076,94 @@ local function resolve_open(state, F, info, now)
   for _, t in ipairs(asg) do al[#al + 1] = string.format("(%d,%d)->p%d", t.mx, t.my, t.pn) end
   errline(string.format("FOCUS_SPIKE go t=%d p%d id=%d tiles=%d label=%s %s", now,
     info.player_number or -1, O.id, #asg, O.label, table.concat(al, " ")))
+  F.votes = { [O.id] = { planned = O.planned, total = O.total } }
   start_active(state, F, O.id, asg, now, O.me, info)
+end
+
+-- -- Re-pick (FOCUS_SPIKE_TILE_COVERED_RULE "repick") --------------------
+-- Apply one tile change to the plan: the tile at old moves to new (same bot),
+-- or is dropped when new is nil, and ndrop bases leave the plan. Two bots can
+-- re-pick the same tile at once: a change from a lower player number replaces
+-- this bot's own change of that tile; a higher one is ignored.
+function M.apply_repick(A, old, new, ndrop, by, info, now)
+  local me = info and info.player_number or -1
+  local ok = tkey(old.mx, old.my)
+  local t = nil
+  for _, x in ipairs(A.tiles) do
+    if not x.placed and not x.dropped and x.mx == old.mx and x.my == old.my then t = x; break end
+  end
+  if not t then
+    for _, x in ipairs(A.tiles) do
+      if x.rp and x.rp.old == ok and x.rp.by == me and by < me and not x.placed then t = x; break end
+    end
+    if not t then return false end
+    A.dropped = (A.dropped or 0) - (t.rp.ndrop or 0)
+    t.dropped, t.gone = nil, nil
+    t.mx, t.my = t.rp.omx, t.rp.omy
+  end
+  t.rp = { old = ok, by = by, ndrop = ndrop or 0, omx = old.mx, omy = old.my }
+  if new then
+    t.mx, t.my = new.mx, new.my
+  else
+    t.dropped, t.gone = true, true
+  end
+  A.dropped = (A.dropped or 0) + (ndrop or 0)
+  return true
+end
+
+-- This bot sees a known hostile pill in fire range of plan tile ct. Find one
+-- new tile for the target bases only ct was to cover: the cover greedy with
+-- the other plan tiles and our pills as cover, tiles in range of known
+-- hostile pills left out, and the defense skip rule. Bases with no tile leave
+-- the plan. Answers true when the plan was aborted (too few bases left).
+function M.repick(state, F, world, info, now, ct)
+  local A = F.active
+  local R = C.PILL_FIRE_RANGE
+  local hp = pills_of(world, true)
+  local cov = {}
+  for _, p in ipairs(pills_of(world, false)) do cov[#cov + 1] = p end
+  for _, t in ipairs(A.tiles) do
+    if t ~= ct and not t.dropped and (t.placed or not covered_by(hp, t.mx, t.my, R)) then
+      cov[#cov + 1] = { mx = t.mx, my = t.my }
+    end
+  end
+  local list, total = M.bases(world)
+  local need = {}
+  for _, b in ipairs(list) do
+    if b.target and edist(b.mx, b.my, ct.mx, ct.my) <= R and not covered_by(cov, b.mx, b.my, R) then
+      need[#need + 1] = b
+    end
+  end
+  local new, left = nil, need
+  local def = nil
+  if #need > 0 then
+    local tiles, rest = M.cover(world, need, hp, cov, ct.mx, ct.my, 1)
+    if tiles and tiles[1] then
+      def = M.tiles_defense(state, world, info, { tiles[1] }, now, "repick")
+      if def.total < C.FOCUS_SPIKE_DEFENSE_MAX then new, left = tiles[1], rest end
+    end
+  end
+  local old = { mx = ct.mx, my = ct.my }
+  local pn = ct.pn
+  M.apply_repick(A, old, new, #left, info.player_number or -1, info, now)
+  send(state, string.format("/info fsu %d %s %s %d", A.id, enc_tiles({ old }),
+    new and enc_tiles({ new }) or "FFFF", #left))
+  A.planned = A.planned or #need
+  A.total = A.total or total
+  local keep = A.planned - (A.dropped or 0)
+  errline(string.format("FOCUS_SPIKE repick t=%d p%d id=%d old=%d,%d new=%s pn=%d need=%d drop=%d defense=%s planned=%d total=%d",
+    now, info.player_number or -1, A.id, old.mx, old.my,
+    new and string.format("%d,%d", new.mx, new.my) or "none", pn or -1, #need, #left,
+    def and string.format("%.2f", def.total) or "-", keep, A.total))
+  for _, b in ipairs(left) do
+    errline(string.format("FOCUS_SPIKE dropbase t=%d p%d id=%d base=%d at=%d,%d", now,
+      info.player_number or -1, A.id, b.id, b.mx, b.my))
+  end
+  if A.total > 0 and keep / A.total < C.FOCUS_SPIKE_DENY_FRAC then
+    abort(state, F, info, now, "covered_frac")
+    return true
+  end
+  return false
 end
 
 -- Placed tiles, the end and the abort checks of the active plan.
@@ -1082,9 +1202,24 @@ local function update_active(state, F, world, info, now, care_tag)
       F.trip = nil
     end
   end
-  if M.tile_covered(world, A.tiles) then abort(state, F, info, now, "tile_covered"); return end
-  if C.FOCUS_SPIKE_ABORT_HOME_ATTACKED and M.home_lost(state, world, A) then
-    abort(state, F, info, now, "home_attacked"); return
+  local ct = M.tile_covered(world, A.tiles)
+  if ct then
+    if C.FOCUS_SPIKE_TILE_COVERED_RULE ~= "repick" then
+      abort(state, F, info, now, "tile_covered"); return
+    end
+    if M.repick(state, F, world, info, now, ct) then return end
+  end
+  if C.FOCUS_SPIKE_ABORT_HOME_ATTACKED then
+    local lost, bid, was, nowo = M.home_lost(state, world, A)
+    if lost then
+      if bid then
+        local b = world.bases and world.bases[bid]
+        errline(string.format("FOCUS_SPIKE homelost t=%d p%d id=%d base=%d at=%s was=%s now=%s", now,
+          info.player_number or -1, A.id, bid, b and string.format("%d,%d", b.mx or 0, b.my or 0) or "?",
+          tostring(was), tostring(nowo)))
+      end
+      abort(state, F, info, now, "home_attacked"); return
+    end
   end
   if (now - (A.t_route or -1e9)) >= C.FOCUS_SPIKE_PLAN_INTERVAL then
     A.t_route = now
