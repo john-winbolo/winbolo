@@ -1570,6 +1570,12 @@ M._decide_inner = function(state, world, info, now)
           can_pbox = false
         end
       end
+      -- FOCUS_SPIKE_ALL_AGGRO: the carried pills are for the spike while a
+      -- plan is active. The slot falls through to the wall build below.
+      if can_pbox and not require("focus_vote").may_place(state, world, wx, wy) then
+        can_pbox = false
+        require("focus_vote").note_reserve(state, info, wx, wy, now, "pillbox_blocker")
+      end
       if can_pbox then
         -- NOTE: this is "attempts dispatched", not "blockers actually
         -- placed". If the engine refuses the action or the LGM dies

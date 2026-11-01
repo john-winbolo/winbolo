@@ -1992,9 +1992,10 @@ M.FOCUS_SPIKE_NEUTRAL_PILL_COVER = false
 --   builder run = FOCUS_SPIKE_LGM_RUN_COST per tile, stand -> spot (euclid).
 -- The stand place is the tank-passable tile within PLACE_DISPATCH_MAX_DIST
 -- (Manhattan) with the lowest stand risk + builder run cost. A spot is left
--- out when it is not placeable now, when a known live hostile or neutral pill
--- covers it, or when its danger (stand risk + route risk) is over
--- FOCUS_SPIKE_DEFENSE_MAX. The travel and builder run costs are not danger:
+-- out when it is not placeable now, or when its danger (stand risk + route
+-- risk) is over FOCUS_SPIKE_DEFENSE_MAX. A hostile or neutral pill near the
+-- spot does not rule it out (bug fix, 2026-11-01): a pill never shoots a
+-- builder or a pill, so only the tank risk counts. The travel and builder run costs are not danger:
 -- they never rule a spot out by themselves.
 -- The bot changes its spot only for a score better by FOCUS_SPIKE_SWITCH_MARGIN
 -- (20% of the current score, at least 0.20). A claimed base no spot can cover
@@ -2011,6 +2012,30 @@ M.FOCUS_SPIKE_RESCORE_MAX_SPOTS = 40
 M.FOCUS_SPIKE_RESCORE_REACH_CHECKS = 4
 -- Ticks a released base waits for a taker before the plan ends incomplete.
 M.FOCUS_SPIKE_RELEASE_WAIT    = 100
+-- All aggressive pills in a spike (2026-11-01, Andrew: "we need to push for
+-- using ALL the aggressive pills in a spike", and "of a cluster, count the min
+-- times a base is covered, then find all the bases covered by that many, and
+-- then favor a point that will cover those bases or as many as they can").
+-- Needs FOCUS_SPIKE_ADAPTIVE_SPOT. On, while a plan is active:
+--  * Reservation: every pill a team bot carries (also one it picks up during
+--    the plan) is for the spike. No other goal or build path places it: only
+--    a spike spot of the plan, or a repair of a pill that stands already.
+--  * Levelling: for each target base b of the plan, c(b) = our live pills
+--    within PILL_FIRE_RANGE (euclid, inclusive; with
+--    FOCUS_SPIKE_NEUTRAL_PILL_COVER also the live neutral pills) + the spike
+--    spots placed by the plan + the spike spots that teammates picked and did
+--    not build yet (go verb fss). m = min c(b); S = the bases with c(b) = m.
+--    The payoff of a spot = FOCUS_SPIKE_BASE_PAYOFF per base of S it covers;
+--    the rest of the score is as above. No base claims.
+--  * End: why=all_laid when no team bot carries a pill and no picked spot is
+--    left (at least one plan spike pill placed), why=ttl at
+--    FOCUS_SPIKE_APPROVAL_TTL. With no pill placed, or when no bot has a
+--    picked spot for FOCUS_SPIKE_RELEASE_WAIT while pills are left: abort
+--    incomplete.
+-- The pill roles are not written: the normal pill evaluation classifies the
+-- spike pills. false = off (the default and PRESETS.keel); keel_focus, _loose
+-- and _bench on.
+M.FOCUS_SPIKE_ALL_AGGRO       = false
 M.STRATEGIC_PLACE_FRONT_WEIGHT  = 3.0  -- bonus per tile of proximity to front line
 M.STRATEGIC_PLACE_BASE_WEIGHT   = 2.0   -- bonus per tile of proximity to nearest friendly base
 M.STRATEGIC_PLACE_THREAT_WEIGHT = 1.5   -- penalty per unit of threat.at(pos)
@@ -6220,6 +6245,8 @@ M.PRESETS = {
     FOCUS_SPIKE_NEUTRAL_PILL_COVER = false,
     -- 2026-11-01: fixed spike spots from the vote (no adaptive spot).
     FOCUS_SPIKE_ADAPTIVE_SPOT      = false,
+    -- 2026-11-01: no pill reservation and no levelling (no adaptive spot).
+    FOCUS_SPIKE_ALL_AGGRO          = false,
     -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
     -- keeps its utility share.
     FOCUS_SPIKE_UTIL_TO_AGGRO      = false,
@@ -6851,6 +6878,7 @@ do
     FOCUS_SPIKE_DEFEND_DISCOUNT = 0.30, FOCUS_SPIKE_DEFEND_TICKS = 6000,
     FOCUS_SPIKE_NEUTRAL_PILL_COVER = true,
     FOCUS_SPIKE_ADAPTIVE_SPOT = true,
+    FOCUS_SPIKE_ALL_AGGRO = true,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6871,6 +6899,7 @@ do
     FOCUS_SPIKE_DEFEND_DISCOUNT = 0.30, FOCUS_SPIKE_DEFEND_TICKS = 6000,
     FOCUS_SPIKE_NEUTRAL_PILL_COVER = true,
     FOCUS_SPIKE_ADAPTIVE_SPOT = true,
+    FOCUS_SPIKE_ALL_AGGRO = true,
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and

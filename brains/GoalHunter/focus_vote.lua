@@ -1199,6 +1199,12 @@ function M.parse(text)
     if n and n.mx == 255 and n.my == 255 then n = nil end
     return { verb = "fsu", id = tonumber(uid), old = o, new = n, ndrop = tonumber(ud) }
   end
+  local sid, sp = text:match("^/info fss (%d+) (%x%x%x%x)$")
+  if sid then
+    local t = dec_tiles(sp)[1]
+    if t and t.mx == 255 and t.my == 255 then t = nil end
+    return { verb = "fss", id = tonumber(sid), tile = t }
+  end
   local pid, pt = text:match("^/info fsp (%d+) (%x%x%x%x)$")
   if pid then return { verb = "fsp", id = tonumber(pid), tile = dec_tiles(pt)[1] } end
   local kid, kl = text:match("^/info fsk (%d+) (%x*)$")
@@ -1428,6 +1434,9 @@ local function start_active(state, F, id, tiles, now, from, info, claims)
   if claims then
     F.active.adaptive, F.active.claims, F.active.rel = true, claims, {}
     F.active.switches = {}
+    -- FOCUS_SPIKE_ALL_AGGRO: the spike spots teammates picked ({[pn] = tile},
+    -- verb fss) and the last tick a bot had a picked spot.
+    if C.FOCUS_SPIKE_ALL_AGGRO == true then F.active.picks, F.active.t_pick = {}, now end
   end
   F.votes = nil
   F.open, F.voting = nil, nil
@@ -1478,7 +1487,8 @@ local function cooldown(F, now, why)
 end
 
 -- why: all_placed (each tile placed), bases_covered (adaptive: every base is
--- covered, some by pills outside the plan), tiles_gone (the rest can no longer be
+-- covered, some by pills outside the plan), all_laid (FOCUS_SPIKE_ALL_AGGRO:
+-- every reserved pill is placed), tiles_gone (the rest can no longer be
 -- placed), ttl, or abort_<why>. all_placed is split here by the placed count.
 local function end_active(state, F, now, why, info)
   local A = F.active
@@ -1551,6 +1561,67 @@ local function adaptive()
   return C.FOCUS_SPIKE_ADAPTIVE_SPOT == true and cluster_rule()
 end
 M.adaptive = adaptive
+
+-- ── All aggressive pills (FOCUS_SPIKE_ALL_AGGRO, needs the adaptive spot) ─
+local function all_aggro()
+  return C.FOCUS_SPIKE_ALL_AGGRO == true and adaptive()
+end
+M.all_aggro = all_aggro
+
+-- True while an all-aggressive plan is active: every pill this bot carries
+-- (also one it picks up during the plan) is for the spike.
+function M.reserved(state)
+  if not all_aggro() then return false end
+  local F = state and state._fs
+  return F ~= nil and F.active ~= nil and F.active.adaptive == true
+end
+
+-- May this bot place a NEW pill at (mx,my)? Always true with no reservation.
+-- While reserved: only on the spike spot this bot picked, or on a tile where
+-- a pill of ours stands already (a repair also uses BUILDMODE_PBOX).
+function M.may_place(state, world, mx, my)
+  if not M.reserved(state) then return true end
+  local A = state._fs.active
+  if A.mine and A.mine.mx == mx and A.mine.my == my then return true end
+  for _, p in pairs(world and world.pills or {}) do
+    if not p.in_tank and p.mx == mx and p.my == my and ours(p.owner) then return true end
+  end
+  return false
+end
+
+-- One FOCUS_SPIKE reserve line per tile and plan: a build path wanted to
+-- place a reserved pill at (mx,my) and was stopped (where = the path).
+function M.note_reserve(state, info, mx, my, now, where)
+  local F = st(state)
+  local A = F.active
+  if not A then return end
+  if F.res_id ~= A.id then F.res_id, F.res_log = A.id, {} end
+  local k = tkey(mx, my)
+  if F.res_log[k] then return end
+  F.res_log[k] = true
+  local s = string.format("FOCUS_SPIKE reserve t=%d p%d id=%d tile=%d,%d where=%s carried=%d", now or 0,
+    info.player_number or -1, A.id, mx, my, tostring(where), info.carried_pills or 0)
+  print2(s)
+  errline(s)
+end
+
+-- The pills team bots carry, in this bot's own world model: this bot's
+-- info.carried_pills, and the carried pills of the allies (world.pills in_tank,
+-- carrier = their player number, world.sync_ally_carried). Answers the total
+-- and {[pn] = count}.
+function M.team_carried(world, info)
+  local me = info.player_number or -1
+  local per = {}
+  local n = info.carried_pills or 0
+  if n > 0 then per[me] = n end
+  for _, p in pairs(world.pills or {}) do
+    if p.in_tank and p.carrier and p.carrier ~= me and ours(p.owner) then
+      per[p.carrier] = (per[p.carrier] or 0) + 1
+      n = n + 1
+    end
+  end
+  return n, per
+end
 
 local FREE = 255   -- claim value of a released base (no player)
 
@@ -1737,8 +1808,10 @@ end
 --   total = BASE_PAYOFF x bases of left it covers
 --           - (stand + route + travel + run)
 -- A spot must cover a base of left within PILL_FIRE_RANGE (euclid,
--- inclusive), be placeable land now (not forest), have no known live hostile
--- or neutral pill within PILL_FIRE_RANGE, and have a stand place. It is
+-- inclusive), be placeable land now (not forest), and have a stand place.
+-- A hostile or neutral pill near the spot does not rule it out (bug fix): a
+-- pill never shoots a builder or a pill, so only the tank risk counts (stand
+-- + route). It is
 -- allowed only while its danger (stand + route) is at most
 -- FOCUS_SPIKE_DEFENSE_MAX: the travel and builder run costs are not danger
 -- and never rule a spot out by themselves. The spots are cut first to
@@ -1750,7 +1823,6 @@ end
 function M.score_spots(world, info, left, tx, ty, keep)
   local R = C.PILL_FIRE_RANGE
   local hp = pills_of(world, true)
-  local blk = block_pills(world)
   local cand, ck = {}, {}
   local Ri = math.floor(R)
   for _, b in ipairs(left) do
@@ -1759,8 +1831,7 @@ function M.score_spots(world, info, left, tx, ty, keep)
         local k = tkey(x, y)
         if not ck[k] and U.in_map(x, y) and edist(x, y, b.mx, b.my) <= R then
           ck[k] = true
-          if U.is_placeable_peek(x, y, world) and U.ttype_peek(x, y) ~= C.T_FOREST
-             and not covered_by(blk, x, y, R) then
+          if U.is_placeable_peek(x, y, world) and U.ttype_peek(x, y) ~= C.T_FOREST then
             local n = 0
             for _, b2 in ipairs(left) do
               if edist(x, y, b2.mx, b2.my) <= R then n = n + 1 end
@@ -1826,16 +1897,16 @@ function M.should_switch(cur_total, new_total)
   return new_total - cur_total > C.FOCUS_SPIKE_SWITCH_MARGIN * math.max(math.abs(cur_total), 1) + 1e-9
 end
 
--- Why the current spot is out of the list (the switch reason).
-local function why_out(world, A, blk, cur, left)
+-- Why the current spot is out of the list (the switch reason). none_why:
+-- the reason when the spot covers no base of left (default bases_covered).
+local function why_out(world, A, cur, left, none_why)
   local R = C.PILL_FIRE_RANGE
   if not U.is_placeable_peek(cur.mx, cur.my, world) then return "spot_blocked" end
-  if covered_by(blk, cur.mx, cur.my, R) then return "pill_covers_spot" end
   local any = false
   for _, b in ipairs(left) do
     if edist(cur.mx, cur.my, b.mx, b.my) <= R then any = true; break end
   end
-  if not any then return "bases_covered" end
+  if not any then return none_why or "bases_covered" end
   return "too_risky"
 end
 
@@ -1849,7 +1920,7 @@ M.parts_text = parts_text
 
 -- This bot's chosen spot changes: the plan tile list keeps the placed spots
 -- and this bot's chosen one.
-local function set_spot(A, info, now, c, why, old_c)
+local function set_spot(A, info, now, c, why, old_c, state)
   local me = info.player_number or -1
   local keep = {}
   for _, t in ipairs(A.tiles) do
@@ -1864,6 +1935,12 @@ local function set_spot(A, info, now, c, why, old_c)
     A.mine = nil
   end
   A.tiles = keep
+  -- FOCUS_SPIKE_ALL_AGGRO: tell the team the picked spot (FFFF = none). It
+  -- counts as pending cover for the other bots.
+  if state and A.picks then
+    send(state, string.format("/info fss %d %s", A.id,
+      c and enc_tiles({ c }) or "FFFF"))
+  end
   A.switches = A.switches or {}
   A.switches[#A.switches + 1] = { t = now, why = why,
     old = old and { mx = old.mx, my = old.my } or nil, new = c and { mx = c.mx, my = c.my } or nil,
@@ -1881,6 +1958,150 @@ local function set_spot(A, info, now, c, why, old_c)
       c.parts.travel, c.parts.run) or "-"))
 end
 
+-- Levelling (FOCUS_SPIKE_ALL_AGGRO). For each target base b of the plan
+-- (A.bases, else the claimed bases; a base that is ours now or has no known
+-- place is left out): c(b) = the cover places within PILL_FIRE_RANGE (euclid,
+-- inclusive), each place counted once: our live pills (cover_pills: with
+-- FOCUS_SPIKE_NEUTRAL_PILL_COVER also the live neutral pills), the placed
+-- spike spots of the plan, and the spots other bots picked (A.picks; this
+-- bot's own pick is not counted). m = min c(b), S = the bases with c(b) = m.
+-- Answers { m, S = {ids}, c = {[id] = n}, ids, list = S as {id, mx, my},
+-- pos = the counted cover places {mx, my, src}, at = {[id] = base place} }
+-- (m nil when there is no target base).
+function M.levels(world, A, me)
+  local R = C.PILL_FIRE_RANGE
+  local pos, seen = {}, {}
+  local function add(mx, my, src)
+    local k = tkey(mx, my)
+    if seen[k] then return end
+    seen[k] = true
+    pos[#pos + 1] = { mx = mx, my = my, src = src }
+  end
+  for _, p in ipairs(M.cover_pills(world, pills_of(world, false), nil)) do
+    add(p.mx, p.my, p.neutral and "neutral" or "pill")
+  end
+  for _, t in ipairs(A.tiles or {}) do
+    if t.placed then add(t.mx, t.my, "placed") end
+  end
+  local pk = {}
+  for pn in pairs(A.picks or {}) do pk[#pk + 1] = pn end
+  table.sort(pk)
+  for _, pn in ipairs(pk) do
+    if pn ~= me then add(A.picks[pn].mx, A.picks[pn].my, "pick") end
+  end
+  local src = A.bases
+  if not src then
+    src = {}
+    for id in pairs(A.claims or {}) do src[#src + 1] = id end
+  end
+  local ids, dup = {}, {}
+  for _, id in ipairs(src) do
+    if not dup[id] then dup[id] = true; ids[#ids + 1] = id end
+  end
+  table.sort(ids)
+  local L = { c = {}, ids = {}, S = {}, list = {}, pos = pos, at = {} }
+  for _, id in ipairs(ids) do
+    local b = world.bases and world.bases[id]
+    if b and b.mx and not ((b.mx or 0) == 0 and (b.my or 0) == 0) and not ours(b.owner) then
+      local n = 0
+      for _, q in ipairs(pos) do
+        if edist(q.mx, q.my, b.mx, b.my) <= R then n = n + 1 end
+      end
+      L.c[id] = n
+      L.at[id] = { mx = b.mx, my = b.my }
+      L.ids[#L.ids + 1] = id
+      if L.m == nil or n < L.m then L.m = n end
+    end
+  end
+  for _, id in ipairs(L.ids) do
+    if L.c[id] == L.m then
+      local b = world.bases[id]
+      L.S[#L.S + 1] = id
+      L.list[#L.list + 1] = { id = id, mx = b.mx, my = b.my }
+    end
+  end
+  return L
+end
+
+-- One levelling step (FOCUS_SPIKE_ALL_AGGRO), from adapt_step. Answers nil
+-- (go on), "all_laid" (no team bot carries a pill and no bot has a picked
+-- spot; at least one spike pill placed by the plan) or "incomplete" (the
+-- same with no pill placed, or pills are left but no bot had a picked spot
+-- for FOCUS_SPIKE_RELEASE_WAIT ticks).
+local function level_step(state, F, world, info, now)
+  local A = F.active
+  local me = info.player_number or -1
+  local team, per = M.team_carried(world, info)
+  local laid = 0
+  for _, t in ipairs(A.tiles) do if t.placed then laid = laid + 1 end end
+  local picked = A.mine ~= nil
+  for pn in pairs(A.picks) do if pn ~= me then picked = true end end
+  if picked or A.t_pick == nil then A.t_pick = now end
+  local L = M.levels(world, A, me)
+  L.t, L.reserved, L.team = now, per, team
+  A.level = L
+  local key = string.format("%s:%s", tostring(L.m), table.concat(L.S, ","))
+  if A.level_key ~= key then
+    A.level_key = key
+    local ct = {}
+    for _, id in ipairs(L.ids) do ct[#ct + 1] = string.format("%d:%d", id, L.c[id]) end
+    local rt = {}
+    local pns = {}
+    for pn in pairs(per) do pns[#pns + 1] = pn end
+    table.sort(pns)
+    for _, pn in ipairs(pns) do rt[#rt + 1] = string.format("p%d:%d", pn, per[pn]) end
+    print2(string.format("FOCUS_SPIKE_ACTIVE t=%d level id=%d m=%s S=[%s] c=[%s] reserved=[%s]", now, A.id,
+      tostring(L.m), table.concat(L.S, ","), table.concat(ct, " "), table.concat(rt, " ")))
+    errline(string.format("FOCUS_SPIKE level t=%d p%d id=%d m=%s S=%s c=%s reserved=%s laid=%d", now, me, A.id,
+      L.m and tostring(L.m) or "none", table.concat(L.S, ","), table.concat(ct, ","),
+      table.concat(rt, ","), laid))
+  end
+  if team == 0 and not picked then
+    if laid > 0 then return "all_laid" end
+    return "incomplete"
+  end
+  if not picked and (now - A.t_pick) >= C.FOCUS_SPIKE_RELEASE_WAIT then return "incomplete" end
+  -- The builder is out: keep the spot it went for.
+  if info.man_status ~= C.LGM_INTANK then return nil end
+  if (info.carried_pills or 0) < 1 then
+    if A.mine then set_spot(A, info, now, nil, "no_pill", nil, state) end
+    A.score = { t = now, top = {}, mine = {} }
+    return nil
+  end
+  local tx, ty = tank_tile(info)
+  if #L.list == 0 then
+    if A.mine then set_spot(A, info, now, nil, "no_target", nil, state) end
+    A.score = { t = now, top = {}, mine = {}, tank = { mx = tx, my = ty } }
+    return nil
+  end
+  local keep = A.mine and tkey(A.mine.mx, A.mine.my) or nil
+  local list = M.score_spots(world, info, L.list, tx, ty, keep)
+  local best = list[1]
+  local cur = nil
+  if keep then
+    for _, c in ipairs(list) do if c.k == keep then cur = c; break end end
+  end
+  if not A.mine then
+    if best then set_spot(A, info, now, best, A.n_placed and "next" or "first", nil, state) end
+  elseif not cur then
+    set_spot(A, info, now, best, why_out(world, A, A.mine, L.list, "level_moved"), nil, state)
+  elseif best and best.k ~= cur.k and M.should_switch(cur.total, best.total) then
+    set_spot(A, info, now, best, "better", cur, state)
+  else
+    A.mine.stand = { mx = cur.stand.mx, my = cur.stand.my, risk = cur.stand.risk, val = cur.stand.val }
+  end
+  if A.mine then A.t_pick = now end
+  local top = {}
+  for i = 1, math.min(3, #list) do top[i] = list[i] end
+  local chosen = nil
+  if A.mine then
+    for _, c in ipairs(list) do if c.mx == A.mine.mx and c.my == A.mine.my then chosen = c; break end end
+  end
+  A.score = { t = now, top = top, chosen = chosen, mine = L.S, tank = { mx = tx, my = ty } }
+  return nil
+end
+M.level_step = level_step
+
 -- One adaptive step of the active plan (every FOCUS_SPIKE_RESCORE_TICKS).
 -- Answers nil (go on), "all_placed" (every claimed base is covered by a
 -- placed spike spot of the plan), "bases_covered" (every claimed base is
@@ -1891,6 +2112,7 @@ function M.adapt_step(state, F, world, info, now)
   local A = F.active
   if A.t_rescore and (now - A.t_rescore) < C.FOCUS_SPIKE_RESCORE_TICKS then return nil end
   A.t_rescore = now
+  if A.picks and all_aggro() then return level_step(state, F, world, info, now) end
   local me = info.player_number or -1
   local cov = M.cover_pills(world, pills_of(world, false), nil)
   local ids = {}
@@ -1978,7 +2200,7 @@ function M.adapt_step(state, F, world, info, now)
   if not A.mine then
     if best then set_spot(A, info, now, best, A.n_placed and "next" or "first", nil) end
   elseif not cur then
-    set_spot(A, info, now, best, why_out(world, A, block_pills(world), A.mine, mine), nil)
+    set_spot(A, info, now, best, why_out(world, A, A.mine, mine), nil)
   elseif best and best.k ~= cur.k and M.should_switch(cur.total, best.total) then
     set_spot(A, info, now, best, "better", cur)
   else
@@ -2112,6 +2334,19 @@ local function handle_rx(state, F, world, info, now, care_tag)
         local A = F.active
         if A and A.id == v.id and v.tile then
           M.mark_placed(A, v.tile.mx, v.tile.my, m.from, now, care_tag)
+          -- FOCUS_SPIKE_ALL_AGGRO: the pick is built; score the levels again.
+          if A.picks then
+            local q = A.picks[m.from]
+            if q and q.mx == v.tile.mx and q.my == v.tile.my then A.picks[m.from] = nil end
+            A.t_rescore = nil
+          end
+        end
+      elseif v.verb == "fss" then
+        local A = F.active
+        if A and A.id == v.id and A.picks then
+          A.picks[m.from] = v.tile and { mx = v.tile.mx, my = v.tile.my, t = now } or nil
+          print2(string.format("FOCUS_SPIKE_ACTIVE t=%d rx pick id=%d p%d %s", now, A.id, m.from,
+            v.tile and string.format("(%d,%d)", v.tile.mx, v.tile.my) or "none"))
         end
       elseif v.verb == "fsu" then
         if F.active and F.active.id == v.id and v.old then
@@ -2333,6 +2568,7 @@ local function update_active(state, F, world, info, now, care_tag)
           -- pill kept the plan on (and voted no) until the plan ttl.
           send(state, string.format("/info fsp %d %s", A.id, enc_tiles({ t })))
           if A.adaptive and A.mine == t then A.mine, A.n_placed = nil, (A.n_placed or 0) + 1 end
+          if A.picks then A.t_rescore = nil end
         end
       elseif not A.adaptive and not U.is_placeable_peek(t.mx, t.my, world) then
         t.gone = true
@@ -2343,7 +2579,7 @@ local function update_active(state, F, world, info, now, care_tag)
   if A.adaptive then
     if (now - A.t_go) > C.FOCUS_SPIKE_APPROVAL_TTL then end_active(state, F, now, "ttl", info); return end
     local r = M.adapt_step(state, F, world, info, now)
-    if r == "all_placed" or r == "bases_covered" then
+    if r == "all_placed" or r == "bases_covered" or r == "all_laid" then
       local keep = {}
       for _, t in ipairs(A.tiles) do if t.placed then keep[#keep + 1] = t end end
       A.tiles, A.mine = keep, nil
