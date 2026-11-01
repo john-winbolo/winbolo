@@ -776,7 +776,7 @@ local function pill_blocked(state, p)
   if p._in_use and (p.health or 0) > 0 then return "take_blocker" end
   if p._friendly_shot_tick
      and ((state.tick or 0) - p._friendly_shot_tick)
-         < (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 400) then
+         < (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 50) then
     return "friendly_fire"
   end
   local g = state.goal
