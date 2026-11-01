@@ -214,7 +214,7 @@ function M.cover(world, targets, hpills, opills, ax, ay)
         local k = tkey(x, y)
         if not ck[k] and U.in_map(x, y) and edist(x, y, b.mx, b.my) <= R then
           ck[k] = true
-          if U.is_placeable(x, y, world) and U.ttype(x, y) ~= C.T_FOREST
+          if U.is_placeable_peek(x, y, world) and U.ttype_peek(x, y) ~= C.T_FOREST
              and not covered_by(hpills, x, y, R) then
             cand[#cand + 1] = { mx = x, my = y, k = k,
                                 da = ax and edist(x, y, ax, ay) or 0 }
@@ -259,7 +259,7 @@ end
 -- forest with no pill or base, and max(|dx|, |dy|) x 256 >= the distance.
 local function forest_block(world, x, y)
   local function f(tx, ty)
-    if not U.in_map(tx, ty) or U.ttype(tx, ty) ~= C.T_FOREST then return false end
+    if not U.in_map(tx, ty) or U.ttype_peek(tx, ty) ~= C.T_FOREST then return false end
     local k = ty * C.MAP_W + tx
     if world.pill_at and world.pill_at[k] then return false end
     if world.base_at and world.base_at[k] then return false end
@@ -281,7 +281,7 @@ end
 -- Tank passable for the route (a tank route; the builder walks the last
 -- tiles). Live hostile pill tiles are not passable.
 local function passable(world, x, y)
-  local tt = U.ttype(x, y)
+  local tt = U.ttype_peek(x, y)
   if tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_DEEPSEA
      or tt == C.T_PILLBOX then
     return false
@@ -1039,7 +1039,7 @@ local function update_active(state, F, world, info, now, care_tag)
         if t.pn == info.player_number then
           errline(string.format("FOCUS_SPIKE placed t=%d p%d id=%d tile=%d,%d", now, t.pn, A.id, t.mx, t.my))
         end
-      elseif not U.is_placeable(t.mx, t.my, world) then
+      elseif not U.is_placeable_peek(t.mx, t.my, world) then
         t.gone = true
       end
     end

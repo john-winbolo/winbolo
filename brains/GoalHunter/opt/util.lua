@@ -535,6 +535,22 @@ function M.is_placeable(mx, my, world)
   return true
 end
 
+-- is_placeable_peek: the same answer, but the terrain read goes through
+-- ttype_peek, so it does not record the tile in the terrain change list.
+-- For read-only planners (focus_vote.lua): a plan that reads tiles the bot
+-- would not read otherwise must not change which terrain changes it sees.
+function M.is_placeable_peek(mx, my, world)
+  local tt = M.ttype_peek(mx, my)
+  if not (tt == C.T_GRASS or tt == C.T_ROAD or tt == C.T_RUBBLE
+          or tt == C.T_SWAMP or tt == C.T_CRATER or tt == C.T_FOREST) then
+    return false
+  end
+  local k = my * C.MAP_W + mx
+  if world.pill_at[k] then return false end
+  if world.base_at[k] then return false end
+  return true
+end
+
 -- =========================================================================
 -- los_coverage — count clear LOS tiles from (mx, my) by sampling directions.
 -- Traces rays outward; stops at walls, forests, and map edges.
