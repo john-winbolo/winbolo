@@ -1472,7 +1472,8 @@ local function cooldown(F, now, why)
   F.cool_until = now + C.FOCUS_SPIKE_VOTE_FAIL_COOLDOWN
 end
 
--- why: all_placed (each tile placed), tiles_gone (the rest can no longer be
+-- why: all_placed (each tile placed), bases_covered (adaptive: every base is
+-- covered, some by pills outside the plan), tiles_gone (the rest can no longer be
 -- placed), ttl, or abort_<why>. all_placed is split here by the placed count.
 local function end_active(state, F, now, why, info)
   local A = F.active
@@ -1867,7 +1868,9 @@ local function set_spot(A, info, now, c, why, old_c)
 end
 
 -- One adaptive step of the active plan (every FOCUS_SPIKE_RESCORE_TICKS).
--- Answers nil (go on), "all_placed" (every claimed base is covered) or
+-- Answers nil (go on), "all_placed" (every claimed base is covered by a
+-- placed spike spot of the plan), "bases_covered" (every claimed base is
+-- covered, but at least one only by another pill) or
 -- "incomplete" (every base left is free for FOCUS_SPIKE_RELEASE_WAIT ticks
 -- and no bot took it).
 function M.adapt_step(state, F, world, info, now)
@@ -1889,7 +1892,16 @@ function M.adapt_step(state, F, world, info, now)
       elseif A.claims[id] == FREE then free[#free + 1] = q end
     end
   end
-  if all then return "all_placed" end
+  if all then
+    -- Bug fix: a base covered only by a pill outside the plan (a teammate's
+    -- normal placement, for example) is not a spike pill placed by the plan.
+    local empty = {}
+    for _, id in ipairs(ids) do
+      local b = world.bases and world.bases[id]
+      if b and b.mx and not base_covered(A, empty, b) then return "bases_covered" end
+    end
+    return "all_placed"
+  end
   -- A free base for too long with no taker: the plan cannot cover it.
   local stuck = #free > 0
   for _, id in ipairs(ids) do
@@ -2262,11 +2274,11 @@ local function update_active(state, F, world, info, now, care_tag)
   if A.adaptive then
     if (now - A.t_go) > C.FOCUS_SPIKE_APPROVAL_TTL then end_active(state, F, now, "ttl", info); return end
     local r = M.adapt_step(state, F, world, info, now)
-    if r == "all_placed" then
+    if r == "all_placed" or r == "bases_covered" then
       local keep = {}
       for _, t in ipairs(A.tiles) do if t.placed then keep[#keep + 1] = t end end
       A.tiles, A.mine = keep, nil
-      end_active(state, F, now, "all_placed", info)
+      end_active(state, F, now, r, info)
       return
     end
     if r == "incomplete" then abort(state, F, info, now, "incomplete"); return end

@@ -187,10 +187,16 @@ check("wall on the spot: switch", #A1.switches == 2 and A1.switches[2].why == "s
   A1.switches[2] and A1.switches[2].why)
 check("new spot is not the walled one", not (A1.mine.mx == m0.mx and A1.mine.my == m0.my))
 terrain = {}
--- Covered by a friendly pill: every claimed base done.
+-- Covered by a friendly pill outside the plan (bug fix): bases_covered.
 add_pill(w, 5, 101, 104, "friendly", 15)
-check("all claimed bases covered: all_placed", FV.adapt_step(state, state._fs, w, info, 150) == "all_placed")
+local r150 = FV.adapt_step(state, state._fs, w, info, 150)
+check("bases covered by another pill: bases_covered", r150 == "bases_covered", r150)
 w.pills[5], w.pill_at[104 * C.MAP_W + 101] = nil, nil
+-- Covered by a placed spike spot of the plan: all_placed.
+A1.mine.placed = true
+local r200 = FV.adapt_step(state, state._fs, w, info, 200)
+check("bases covered by the plan's spike pill: all_placed", r200 == "all_placed", r200)
+A1.mine.placed = nil
 
 -- No pill left: release with fsc.
 state, A1, info = mk(2, { [0] = 2 }, 0)
@@ -220,6 +226,28 @@ check("unknown spot ignored (fixed spots)", not FV.mark_placed(A3, 1, 1, 3, 410,
 A3.adaptive = true
 check("adaptive: a placed spot of another bot is added", FV.mark_placed(A3, 70, 60, 2, 420, nil)
   and #A3.tiles == 2 and A3.tiles[2].placed)
+
+-- Bug fix: comms.lua dropped fsk, fsc and fsp, so no teammate got them.
+-- Every fs verb that focus_vote.lua sends must reach state._fs_rx.
+print("every sent fs verb is accepted by comms")
+local CM = require("comms")
+local fh = assert(io.open("focus_vote.lua", "rb"))
+local src = fh:read("*a")
+fh:close()
+local verbs, nv = {}, 0
+for v in src:gmatch('send%(state, string%.format%("/info fs(%a) ') do
+  if not verbs[v] then verbs[v], nv = true, nv + 1 end
+end
+check("send verbs found (o y n r g u a k c p)", nv == 10, nv)
+local vl = {}
+for v in pairs(verbs) do vl[#vl + 1] = v end
+table.sort(vl)
+for _, v in ipairs(vl) do
+  local st = {}
+  CM.process_message(3, "/info fs" .. v .. " 7 00", 100, st)
+  check("comms accepts fs" .. v, st._fs_rx and #st._fs_rx == 1 and st._fs_rx[1].text == "/info fs" .. v .. " 7 00",
+    st._fs_rx and #st._fs_rx)
+end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
