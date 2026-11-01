@@ -8692,6 +8692,64 @@ do
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (2026-11-01): how long a friendly shell
+-- near our pill blocks its repair. Default 50 (1 s), KEEL 400 (8 s). Runs
+-- init.lua's real chunk-load parse against a fresh constants.lua, as above.
+-- ─────────────────────────────────────────────────────────────────────────
+print("\n== REPAIR_FRIENDLY_FIRE_REJECT_TICKS knob ==")
+do
+  local saved_init, saved_arg = rawget(_G, "BRAIN_INIT"), rawget(_G, "BRAIN_INIT_ARG")
+  local STOP = {}
+  local function new_brain(arg)
+    local freshC = dofile("constants.lua")
+    rawset(_G, "BRAIN_INIT", nil)
+    rawset(_G, "BRAIN_INIT_ARG", arg)
+    local chunk = assert(loadfile("init.lua"))
+    local env = setmetatable({
+      require = function(m)
+        if m == "constants" then return freshC end
+        if m == "bitcompat" then return require(m) end
+        error(STOP)
+      end,
+    }, { __index = _G, __newindex = _G })
+    setfenv(chunk, env)
+    local ok, err = pcall(chunk)
+    rawset(_G, "BRAIN_INIT", saved_init)
+    rawset(_G, "BRAIN_INIT_ARG", saved_arg)
+    return freshC, (not ok and err == STOP)
+  end
+
+  check("default is 50 ticks (1 s)",
+        C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50, tostring(C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+  check("PRESETS.keel lists 400",
+        C.PRESETS.keel.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 400,
+        tostring(C.PRESETS.keel.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+
+  local fc, reached = new_brain(nil)
+  check("no tokens: a new brain has 50",
+        reached and fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50,
+        tostring(fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+
+  fc, reached = new_brain("cfg=REPAIR_FRIENDLY_FIRE_REJECT_TICKS=125")
+  check("cfg=REPAIR_FRIENDLY_FIRE_REJECT_TICKS=125 sets 125",
+        reached and fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 125,
+        tostring(fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+
+  fc, reached = new_brain("preset=keel")
+  check("preset=keel gives 400",
+        reached and fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 400,
+        tostring(fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+
+  fc, reached = new_brain("cfg=REPAIR_FRIENDLY_FIRE_REJECT_TICKS=10;preset=keel")
+  check("cfg= beats preset=keel whatever the order",
+        reached and fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 10,
+        tostring(fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+
+  check("the shared constants were not touched by the fresh brains",
+        C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50, tostring(C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+end
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- ORDER_NEAR_DEAD_PILL_CAPTURE (K): under an order, capture_pill for a dead
 -- pill within ORDER_NEAR_DEAD_PILL_RADIUS squares of the tank is not given
 -- the "order" reject, and wins the hold phase as a fight does.

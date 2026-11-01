@@ -606,7 +606,7 @@ function M.update(state, world, info)
   -- byte, which is also true of NEUTRAL(2): every round a neutral pillbox
   -- fired counted as our own team's friendly fire, and any friendly pill
   -- within one tile of that round's flight path went unrepairable for
-  -- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (400) -- refreshed by the next round,
+  -- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (then 400; 50 since 2026-11-01) -- refreshed by the next round,
   -- so in practice forever while a neutral pill was shooting past it. The two
   -- other shell scans in this file already read the enum correctly
   -- (`ob.info == SHELL_FRIENDLY`, SHELL_FRIENDLY = 0); this one now matches.

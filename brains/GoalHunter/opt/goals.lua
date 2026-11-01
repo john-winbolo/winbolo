@@ -1862,10 +1862,11 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
              and not (ally_demolish and ally_demolish[p.my * C.MAP_W + p.mx])
              and not (repos_block and repos_block[p.my * C.MAP_W + p.mx])
              -- A friendly shot (own or ally) just landed on it → the team is
-             -- shooting it down to reposition; don't heal it for 8 s.
+             -- shooting it down to reposition; don't heal it for
+             -- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (1 s; keel 8 s).
              and not (p._friendly_shot_tick
                       and (state.tick - p._friendly_shot_tick)
-                          < (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 400))
+                          < (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 50))
     end, boat, ammo, state, info, KIND_NORMAL)
   if not pill then return nil end
   local damage = C.PILLS_MAX_HEALTH - pill.health
