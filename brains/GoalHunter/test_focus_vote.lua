@@ -197,6 +197,16 @@ do
   local P3b = plan_of(w3, 1)
   check("one quadrant, K 1: does not fit, fails", not P3b.pass and P3b.planned == 0)
   check("K 1: the row says no_spare", P3b.rows[1].skip == "no_spare", P3b.rows[1].skip)
+  -- Same state, owners change: the clusters are kept (same places), but the
+  -- targets follow the new owners (the clusters must not keep old owners).
+  local stc = new_state(1000)
+  local w4 = chew(function(q) return (q == "NW" or q == "NE") and "hostile" or "friendly" end)
+  local P4 = plan_of(w4, 4, stc)
+  check("owner change, before: 8 / 8", P4.planned == 8 and P4.total == 8, P4.planned .. "/" .. P4.total)
+  for id = 4, 7 do w4.bases[id].owner = "friendly" end
+  local P4b = plan_of(w4, 4, stc)
+  check("owner change, after: NE is ours, 4 / 4 (not 8 / 4)", P4b.planned == 4 and P4b.total == 4,
+        P4b.planned .. "/" .. P4b.total)
   local P3c = plan_of(w3, 0)
   check("K 0: why no_spare", not P3c.pass and P3c.why == "no_spare", P3c.why)
   -- One base per quadrant: they hold base j=0 of each quadrant.
