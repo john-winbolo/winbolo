@@ -52,6 +52,43 @@ function M.set_targets(back, front, aggro, util, source)
   M.TARGET_AGGRO = aggro
   M.TARGET_UTIL  = util
   M.targets_source = source or "init_arg"
+  -- Any setter other than the win switch below sets the NORMAL shares too
+  -- (and ends a win share period: the new shares are in force now).
+  if M.targets_source ~= "win" then
+    M.normal = { back = back, front = front, aggro = aggro, util = util,
+                 source = M.targets_source }
+    M.win_on = false
+  end
+end
+
+-- The normal shares: the defaults, or the "portfolio=" token's shares. The
+-- live M.TARGET_* fields equal these except while the win shares are on.
+M.normal = { back = M.TARGET_BACK, front = M.TARGET_FRONT, aggro = M.TARGET_AGGRO,
+             util = M.TARGET_UTIL, source = M.targets_source }
+M.win_on = false
+
+-- Win shares (spike.lua, C.AGGRO_DEEP_WIN_SHARES): while the deep spike base
+-- lead and pill rules pass, the live targets are AGGRO_DEEP_WIN_BACK /
+-- _FRONT / _AGGRO / _UTIL (source "win"). on = false puts the normal shares
+-- back. Answers true when the live shares changed.
+function M.set_win(on)
+  if on and not M.win_on then
+    M.TARGET_BACK  = C.AGGRO_DEEP_WIN_BACK
+    M.TARGET_FRONT = C.AGGRO_DEEP_WIN_FRONT
+    M.TARGET_AGGRO = C.AGGRO_DEEP_WIN_AGGRO
+    M.TARGET_UTIL  = C.AGGRO_DEEP_WIN_UTIL
+    M.targets_source = "win"
+    M.win_on = true
+    return true
+  elseif not on and M.win_on then
+    local n = M.normal
+    M.TARGET_BACK, M.TARGET_FRONT = n.back, n.front
+    M.TARGET_AGGRO, M.TARGET_UTIL = n.aggro, n.util
+    M.targets_source = n.source
+    M.win_on = false
+    return true
+  end
+  return false
 end
 
 -- One canonical "tgt b/f/a/u (source)" string for EVERY place that displays the
@@ -189,13 +226,13 @@ M.FILL_PRIORITY = { "utility", "front", "aggro", "back" }
 -- slots are handed out in M.FILL_PRIORITY order — so for small totals util/
 -- front/aggro fill before any back pill. (No forced >=1 back anymore: back is
 -- the lowest priority; the base-guardian bonus handles must-cover bases.)
-function M.targets(total)
+local function targets_for(total, back, front, aggro, util)
   if total <= 0 then return { back = 0, front = 0, aggro = 0, utility = 0 } end
   local t = {
-    utility = math.floor(total * M.TARGET_UTIL),
-    front   = math.floor(total * M.TARGET_FRONT),
-    aggro   = math.floor(total * M.TARGET_AGGRO),
-    back    = math.floor(total * M.TARGET_BACK),
+    utility = math.floor(total * util),
+    front   = math.floor(total * front),
+    aggro   = math.floor(total * aggro),
+    back    = math.floor(total * back),
   }
   local assigned = t.utility + t.front + t.aggro + t.back
   local i = 0
@@ -206,6 +243,17 @@ function M.targets(total)
     i = i + 1
   end
   return { back = t.back, front = t.front, aggro = t.aggro, utility = t.utility }
+end
+
+function M.targets(total)
+  return targets_for(total, M.TARGET_BACK, M.TARGET_FRONT, M.TARGET_AGGRO, M.TARGET_UTIL)
+end
+
+-- Target counts from the NORMAL shares (M.normal), whatever is live. The deep
+-- spike pill rule reads these, so the win shares cannot switch themselves off.
+function M.normal_targets(total)
+  local n = M.normal
+  return targets_for(total, n.back, n.front, n.aggro, n.util)
 end
 
 -- ── Visualizers (R1 / brainstorm batch) ───────────────────────────────────

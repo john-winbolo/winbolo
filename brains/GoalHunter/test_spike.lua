@@ -72,6 +72,8 @@ C.STRATEGIC_PLACE_MIN_SCORE       = -1e9
 C.STRATEGIC_PLACE_MIN_SCORE_FLOOR = -1e9
 C.PILL_PLACE_AGGRO_DEEP = true
 C.PILL_PLACE_TURTLE     = false
+local WIN_DEFAULT = C.AGGRO_DEEP_WIN_SHARES
+C.AGGRO_DEEP_WIN_SHARES = false   -- section 6b turns it on; the rest test the shares as set
 local DEF_T = { PP.TARGET_BACK, PP.TARGET_FRONT, PP.TARGET_AGGRO, PP.TARGET_UTIL }
 
 local function base(mx, my, owner) return { mx = mx, my = my, owner = owner } end
@@ -491,8 +493,85 @@ else
   C.AGGRO_DEEP_BASE_GATE, C.AGGRO_DEEP_PILL_GATE = true, true
 end
 
+-- ── 6b. win shares (AGGRO_DEEP_WIN_SHARES) ───────────────────────────────
+print("win shares")
+do
+  C.AGGRO_DEEP_WIN_SHARES = true
+  C.AGGRO_DEEP_BASE_GATE, C.AGGRO_DEEP_PILL_GATE = true, true
+  PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
+  -- 4 front pills on the line (x=150: +20 beside -30 at x=149), 2 back
+  -- (x=200), 2 carried: 8 team pills, normal front target 4.
+  local function wpills(nfront, nback)
+    local ps = {}
+    for i = 1, nfront do ps[#ps + 1] = pill(150, 10 + i, "friendly") end
+    for i = 1, nback do ps[#ps + 1] = pill(200, 10 + i, "friendly") end
+    return ps
+  end
+  local st = fresh_state(5000)
+  local inf = info_at(200, 30, 2)
+  local w = { pills = wpills(4, 2), bases = bases(4, 1) }
+  check("starts on normal shares", PP.win_on == false and PP.targets_source == "default")
+  SP.update(st, w, inf, 5000)
+  check("rules pass -> win shares on", PP.win_on == true, PP.targets_label())
+  check("win: back 0.10 front 0.40 aggro 0.35 util 0.15",
+        near(PP.TARGET_BACK, 0.10) and near(PP.TARGET_FRONT, 0.40)
+        and near(PP.TARGET_AGGRO, 0.35) and near(PP.TARGET_UTIL, 0.15))
+  check("label shows win", PP.targets_label() == "tgt 10/40/35/15 (win)", PP.targets_label())
+  check("targets(20) under win: aggro 7", PP.targets(20).aggro == 7, PP.targets(20).aggro)
+  check("normal_targets(20) under win: aggro 4", PP.normal_targets(20).aggro == 4,
+        PP.normal_targets(20).aggro)
+  -- The pill rule reads the normal front target: 12 team pills, front 5.
+  -- Win targets(12).front = 5 (would pass), normal = 6 (fails).
+  check("targets(12).front: win 5, normal 6",
+        PP.targets(12).front == 5 and PP.normal_targets(12).front == 6)
+  local why = SP.rules({ pills = {}, bases = bases(4, 1) }, info_at(200, 30, 2),
+                       { back = 3, front = 5, aggro = 2, utility = 0 })
+  check("rules under win use the normal front target -> front", why == "front", why)
+  SP.update(st, w, inf, 5001)
+  check("still passing: stays on", PP.win_on == true)
+  -- Base lead lost: back to normal.
+  SP.update(st, { pills = wpills(4, 2), bases = bases(3, 1) }, inf, 5002)
+  check("base lead lost -> normal shares", PP.win_on == false and PP.targets_source == "default"
+        and near(PP.TARGET_AGGRO, DEF_T[3]), PP.targets_label())
+  -- Front below the normal target: stays normal.
+  SP.update(st, { pills = wpills(3, 3), bases = bases(4, 1) }, inf, 5003)
+  check("front 3 < 4 -> normal", PP.win_on == false)
+  -- A rule with its knob off counts as a pass.
+  C.AGGRO_DEEP_BASE_GATE = false
+  SP.update(st, { pills = wpills(4, 2), bases = bases(3, 1) }, inf, 5004)
+  check("base rule off: 3 vs 1 -> win", PP.win_on == true)
+  C.AGGRO_DEEP_BASE_GATE = true
+  SP.update(st, w, inf, 5005)
+  -- portfolio= token: its shares are the normal ones.
+  PP.set_targets(0.30, 0.40, 0.20, 0.10, "init_arg")
+  check("a new portfolio= set ends win", PP.win_on == false and PP.targets_source == "init_arg")
+  SP.update(st, w, inf, 5006)
+  check("win on over portfolio=", PP.win_on == true and PP.targets_source == "win")
+  SP.update(st, { pills = wpills(4, 2), bases = bases(1, 1) }, inf, 5007)
+  check("off -> the portfolio= shares come back",
+        PP.targets_source == "init_arg" and near(PP.TARGET_BACK, 0.30)
+        and near(PP.TARGET_FRONT, 0.40) and near(PP.TARGET_AGGRO, 0.20)
+        and near(PP.TARGET_UTIL, 0.10), PP.targets_label())
+  -- Knob off while on: back to normal.
+  SP.update(st, w, inf, 5008)
+  C.AGGRO_DEEP_WIN_SHARES = false
+  SP.update(st, w, inf, 5009)
+  check("WIN_SHARES off -> normal", PP.win_on == false and PP.targets_source == "init_arg")
+  C.AGGRO_DEEP_WIN_SHARES = true
+  SP.update(st, w, inf, 5010)
+  C.PILL_PLACE_AGGRO_DEEP, C.SPIKE_REPAIR_PRIORITY = false, false
+  SP.update(st, w, inf, 5011)
+  check("deep knob off -> normal", PP.win_on == false and PP.targets_source == "init_arg")
+  C.PILL_PLACE_AGGRO_DEEP, C.SPIKE_REPAIR_PRIORITY = true, true
+  C.AGGRO_DEEP_WIN_SHARES = false
+  PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
+end
+
 -- ── 7. keel ──────────────────────────────────────────────────────────────
 print("PRESETS.keel")
+check("default: AGGRO_DEEP_WIN_SHARES = true", WIN_DEFAULT == true)
+check("win shares sum to 1", near(C.AGGRO_DEEP_WIN_BACK + C.AGGRO_DEEP_WIN_FRONT
+      + C.AGGRO_DEEP_WIN_AGGRO + C.AGGRO_DEEP_WIN_UTIL, 1))
 check("keel: SPIKE_REPAIR_PRIORITY = false", C.PRESETS.keel.SPIKE_REPAIR_PRIORITY == false)
 check("keel: PILL_PLACE_AGGRO_DEEP = false", C.PRESETS.keel.PILL_PLACE_AGGRO_DEEP == false)
 check("defaults: rules on", true == (require("constants").AGGRO_DEEP_BASE_RATIO == 1.5))
