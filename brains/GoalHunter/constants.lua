@@ -1863,6 +1863,10 @@ M.FOCUS_SPIKE_APPROVAL_TTL         = 1500
 M.FOCUS_SPIKE_VOTE_FAIL_COOLDOWN   = 1500
 M.FOCUS_SPIKE_HOME_ATTACK_RANGE    = 8
 M.FOCUS_SPIKE_ABORT_HOME_ATTACKED  = true
+-- How an active plan tests "home attacked" for the abort: "base_lost" (a
+-- base that was ours at the go is lost) or "tank_near" (the ballot test: an
+-- enemy tank within FOCUS_SPIKE_HOME_ATTACK_RANGE of one of our bases).
+M.FOCUS_SPIKE_HOME_ABORT_RULE      = "base_lost"
 M.FOCUS_SPIKE_BETTER_MARGIN        = 0.1      -- "better": my planned fraction beats theirs by this
 M.FOCUS_SPIKE_STDERR_LOG           = false    -- plain print() lines for the bench
 -- Bench event file: with FOCUS_SPIKE_STDERR_LOG on and this set to a file

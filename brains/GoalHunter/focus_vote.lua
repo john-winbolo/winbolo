@@ -748,6 +748,27 @@ function M.home_attacked(state, world)
   return false
 end
 
+-- The abort test while a plan is active (FOCUS_SPIKE_HOME_ABORT_RULE):
+-- "base_lost" = a base that was ours when the plan went is ours no more.
+-- The bases are noted on the first check after the go. "tank_near" = the
+-- ballot test (an enemy tank near one of our bases), which in bench games
+-- ended every plan a few seconds after its go.
+function M.home_lost(state, world, A)
+  if C.FOCUS_SPIKE_HOME_ABORT_RULE == "tank_near" then return M.home_attacked(state, world) end
+  if not A.home then
+    A.home = {}
+    for id, b in pairs(world.bases or {}) do
+      if ours(b.owner) then A.home[id] = true end
+    end
+    return false
+  end
+  for id in pairs(A.home) do
+    local b = world.bases and world.bases[id]
+    if not b or not ours(b.owner) then return true end
+  end
+  return false
+end
+
 -- A known live hostile pill within PILL_FIRE_RANGE of a tile in the list.
 function M.tile_covered(world, tiles)
   local hp = pills_of(world, true)
@@ -1081,7 +1102,7 @@ local function update_active(state, F, world, info, now, care_tag)
     end
   end
   if M.tile_covered(world, A.tiles) then abort(state, F, info, now, "tile_covered"); return end
-  if C.FOCUS_SPIKE_ABORT_HOME_ATTACKED and M.home_attacked(state, world) then
+  if C.FOCUS_SPIKE_ABORT_HOME_ATTACKED and M.home_lost(state, world, A) then
     abort(state, F, info, now, "home_attacked"); return
   end
   if (now - (A.t_route or -1e9)) >= C.FOCUS_SPIKE_PLAN_INTERVAL then
