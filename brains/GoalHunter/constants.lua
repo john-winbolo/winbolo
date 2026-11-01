@@ -1285,7 +1285,7 @@ M.REPAIR_DEAD_ADV_RELIEF_PER_TANK = 0.25 -- each net friendly tank cuts snipe ri
 M.REPAIR_DEAD_ADV_FLOOR          = 0.1   -- min snipe multiplier (never fully free)
 M.REPAIR_DEAD_LGM_MAX_TICKS      = 2000  -- LGM-travel sim budget (matches other callers)
 M.REPAIR_DEAD_LGM_STUCK_TICKS    = 150
-M.REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400  -- 8 s @ 50 Hz: after a friendly shot (own or ally) lands on a friendly pill, refuse to repair it ??? the team is shooting it down to reposition (perception sets pill._friendly_shot_tick)
+M.REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 50   -- keel 400 (2026-11-01; 8 s). Knob, cfg=REPAIR_FRIENDLY_FIRE_REJECT_TICKS=N. 1 s @ 50 Hz: after a friendly shot (own or ally) lands on a friendly pill, refuse to repair it -- the team is shooting it down to reposition (perception sets pill._friendly_shot_tick)
 M.ATTACK_PILL_BASE_COST    = 30    -- flat cost added to every attack_pill (like ATTACK_BASE_EXTRA_COST for bases) so a pill take isn't free vs other goals
 M.ATTACK_BASE_EXTRA_COST   = 80    -- flat cost added to hostile base attacks
 M.ATTACK_BASE_THREAT_WEIGHT = 3    -- multiplier for threat at base location (penalise bases behind enemy pills/tanks)
@@ -6226,6 +6226,10 @@ M.PRESETS = {
     --   a gun a few brads off the aim line cannot shoot our own pill.  KEEL
     --   checked the aim line only.
     TANK_COMBAT_FIRE_CHECK_HEADING = false,
+    --   2026-11-01: a friendly shell near our pill blocks its repair for 1 s
+    --   (50 ticks).  KEEL blocked it for 8 s, so allied shots at an enemy pill
+    --   on the next tile could keep our pill unrepaired until it died.
+    REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
