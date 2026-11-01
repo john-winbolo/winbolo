@@ -4428,6 +4428,13 @@ local function steer_core(state, world, info, goal)
       nav_wx = info.man_x
       nav_wy = info.man_y
     end
+    -- Focused spike spot, "cluster" rule: drive to the safest stand place
+    -- (goals.lua plan tile block, focus_vote.best_stand); builder.lua sends
+    -- the builder from there.
+    if goal.kind == "place_pill_strategic" and goal._focus_spike and goal._stand_mx then
+      nav_mx, nav_my = goal._stand_mx, goal._stand_my
+      nav_wx, nav_wy = U.m2w(nav_mx), U.m2w(nav_my)
+    end
     if goal.kind == "attack_pill" or goal.kind == "pill_place" then
       if goal.wall_shield and goal.substate == "approach" and goal.prebuild_mx then
         -- Wall-shield: navigate to prebuild position (outside pill range) first

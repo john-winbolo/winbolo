@@ -34,6 +34,11 @@ local bit = require('bitcompat')
 --                                        re-pick: a plan tile moved (same
 --                                        bot) or dropped (FFFF)
 --
+-- FOCUS_SPIKE_RULE "cluster" (2026-11-01): the same vote, but each plan is
+-- one cluster that the spare pills cover in full (plan_cluster, risk). The
+-- open message then ends with the cluster key and its target bases:
+--   /info fso <id> <need> <planned> <total> <label> <XXYY tiles...> <key> <BB bases...>
+--
 -- State lives on state._fs. Required by spike.lua (field M.vote), so goals.lua
 -- and init.lua get no new local or upvalue.
 -- =========================================================================
@@ -58,8 +63,12 @@ local function st(state)
 end
 M.st = st
 
+local function cluster_rule() return C.FOCUS_SPIKE_RULE == "cluster" end
+M.cluster_rule = cluster_rule
+
 local function on()
-  return C.FOCUS_SPIKE_ENABLED == true and C.FOCUS_SPIKE_RULE == "deny"
+  return C.FOCUS_SPIKE_ENABLED == true
+         and (C.FOCUS_SPIKE_RULE == "deny" or C.FOCUS_SPIKE_RULE == "cluster")
          and C.PILL_PLACE_TURTLE ~= true
 end
 M.on = on
@@ -216,8 +225,10 @@ end
 -- Answers the tile list (maybe empty: already covered) or nil when some
 -- target base cannot be covered. With maxn, it stops after maxn tiles or
 -- when no tile covers a base still left, and answers the tiles and the
--- bases left uncovered (the plan re-pick uses this).
-function M.cover(world, targets, hpills, opills, ax, ay, maxn)
+-- bases left uncovered (the plan re-pick uses this). With sr (a function
+-- of a tile: the risk of the place our tank stands to send the builder
+-- there), equal counts take the lower risk first ("cluster" rule).
+function M.cover(world, targets, hpills, opills, ax, ay, maxn, sr)
   local R = C.PILL_FIRE_RANGE
   local left = {}
   for _, b in ipairs(targets) do
@@ -234,7 +245,8 @@ function M.cover(world, targets, hpills, opills, ax, ay, maxn)
           if U.is_placeable_peek(x, y, world) and U.ttype_peek(x, y) ~= C.T_FOREST
              and not covered_by(hpills, x, y, R) then
             cand[#cand + 1] = { mx = x, my = y, k = k,
-                                da = ax and edist(x, y, ax, ay) or 0 }
+                                da = ax and edist(x, y, ax, ay) or 0,
+                                sr = sr and sr(x, y) or 0 }
           end
         end
       end
@@ -249,8 +261,9 @@ function M.cover(world, targets, hpills, opills, ax, ay, maxn)
         for _, b in ipairs(left) do
           if edist(c.mx, c.my, b.mx, b.my) <= R then n = n + 1 end
         end
-        if n > 0 and (n > bn or (n == bn and (c.da < best.da
-                      or (c.da == best.da and c.k < best.k)))) then
+        if n > 0 and (n > bn or (n == bn and (c.sr < best.sr
+                      or (c.sr == best.sr and (c.da < best.da
+                      or (c.da == best.da and c.k < best.k)))))) then
           best, bn = c, n
         end
       end
@@ -529,6 +542,265 @@ function M.defense(state, world, info, cl, tiles, hpills, opills, now)
   return d
 end
 
+-- -- Risk ("cluster" rule) ------------------------------------------------
+-- Does known hostile pill p see a tank on (x,y)? In range, and not hidden
+-- in a forest block HD or more tiles away on either axis.
+local function pill_sees(world, HD, p, x, y)
+  if edist(x, y, p.mx, p.my) > C.PILL_FIRE_RANGE then return false end
+  local far = math.max(math.abs(x - p.mx), math.abs(y - p.my)) >= HD
+  return not (far and forest_block(world, x, y))
+end
+M.pill_sees = pill_sees
+
+-- The place our tank stands to send the builder to spot t, with no route:
+-- the tile on the straight line from (sx,sy) to the spot, at
+-- PLACE_DISPATCH_MAX_DIST (Manhattan) from the spot, or (sx,sy) itself
+-- when it is nearer.
+local function stand_on_line(sx, sy, t)
+  local D = C.PLACE_DISPATCH_MAX_DIST or 15
+  local dx, dy = sx - t.mx, sy - t.my
+  local m = math.abs(dx) + math.abs(dy)
+  if m <= D then return sx, sy end
+  local f = D / m
+  return t.mx + math.floor(dx * f + 0.5), t.my + math.floor(dy * f + 0.5)
+end
+M.stand_on_line = stand_on_line
+
+-- Spot risk of one stand place: SPOT_WEIGHT x armour of each known hostile
+-- pill that sees it.
+local function stand_risk(world, info, hpills, x, y)
+  local HD = hide_tiles(info)
+  local r = 0
+  for _, p in ipairs(hpills) do
+    if pill_sees(world, HD, p, x, y) then r = r + (p.armour / 15) * C.FOCUS_SPIKE_SPOT_WEIGHT end
+  end
+  return r
+end
+
+-- Spot risk at one tile, with this bot's known hostile pills (builder.lua
+-- asks this of the tank's own tile before the long send).
+function M.stand_risk_at(world, info, x, y)
+  return stand_risk(world, info, pills_of(world, true), x, y)
+end
+
+-- Pills never shoot builders: pillsUpdate (src/bolo/pillbox.c) fires only at
+-- the nearest non-allied TANK in range; a builder dies only to a shell blast
+-- near it (shellsBlastTestBuilder, src/bolo/shells.c). So a spike spot in a
+-- hostile pill's range is fine; what counts is where our tank stands for the
+-- long send (builder.lua deep_send: the tank sends the builder from up to
+-- PLACE_DISPATCH_MAX_DIST, Manhattan, from the spot).
+--
+-- Stand place candidates of spot t: every tank-passable tile within
+-- PLACE_DISPATCH_MAX_DIST (Manhattan) of the spot. rc caches the risk per
+-- tile for one plan. Answers the lowest risk (no reach test; the cover
+-- greedy tie-break), stopping at 0.
+local function stand_min(world, info, hpills, t, rc)
+  local D = C.PLACE_DISPATCH_MAX_DIST or 15
+  local best = math.huge
+  for dy = -D, D do
+    local w = D - math.abs(dy)
+    for dx = -w, w do
+      local x, y = t.mx + dx, t.my + dy
+      if U.in_map(x, y) and passable(world, x, y) then
+        local k = tkey(x, y)
+        local r = rc and rc[k]
+        if r == nil then
+          r = stand_risk(world, info, hpills, x, y)
+          if rc then rc[k] = r end
+        end
+        if r < best then
+          best = r
+          if best <= 0 then return 0 end
+        end
+      end
+    end
+  end
+  return best
+end
+M.stand_min = stand_min
+
+-- The safest stand place of spot t: the lowest risk, then the nearest to the
+-- spot (Manhattan, the shorter builder walk), then the lower tile key. With
+-- the builder walk sim (cpf_lgm_travel_ticks_map, the check builder.lua
+-- lgm_can_reach makes before a send) the builder must reach the spot from it;
+-- at most FOCUS_SPIKE_STAND_REACH_CHECKS places are tried. Answers
+-- { mx, my, risk } or nil (no place within reach).
+function M.best_stand(world, info, hpills, t, rc)
+  local D = C.PLACE_DISPATCH_MAX_DIST or 15
+  local cand = {}
+  for dy = -D, D do
+    local w = D - math.abs(dy)
+    for dx = -w, w do
+      local x, y = t.mx + dx, t.my + dy
+      if U.in_map(x, y) and passable(world, x, y) then
+        local k = tkey(x, y)
+        local r = rc and rc[k]
+        if r == nil then
+          r = stand_risk(world, info, hpills, x, y)
+          if rc then rc[k] = r end
+        end
+        cand[#cand + 1] = { mx = x, my = y, risk = r, d = math.abs(dx) + math.abs(dy), k = k }
+      end
+    end
+  end
+  table.sort(cand, function(a, b)
+    if a.risk ~= b.risk then return a.risk < b.risk end
+    if a.d ~= b.d then return a.d < b.d end
+    return a.k < b.k
+  end)
+  local walk = rawget(_G, "cpf_lgm_travel_ticks_map")
+  local n = 0
+  for _, c in ipairs(cand) do
+    if not walk or c.d <= 1 then return { mx = c.mx, my = c.my, risk = c.risk } end
+    n = n + 1
+    if n > C.FOCUS_SPIKE_STAND_REACH_CHECKS then return nil end
+    if walk(c.mx, c.my, t.mx, t.my, t.mx, t.my, 2000, 150) ~= -1 then
+      return { mx = c.mx, my = c.my, risk = c.risk }
+    end
+  end
+  return nil
+end
+
+-- The stand place of spike spot t with this bot's known hostile pills
+-- (goals.lua plan tile block, each replan). Cached on state._fs per spot
+-- while the known hostile pills stay the same, for at most
+-- FOCUS_SPIKE_STAND_CACHE_TICKS (the walk sim is not cheap). false = no
+-- stand place in reach.
+function M.plan_stand(state, world, info, t, now)
+  local F = st(state)
+  local hp = pills_of(world, true)
+  local hs = {}
+  for _, p in ipairs(hp) do hs[#hs + 1] = string.format("%d,%d,%d", p.mx, p.my, p.armour) end
+  local key = tkey(t.mx, t.my) .. "|" .. table.concat(hs, ";")
+  F.stand_cache = F.stand_cache or {}
+  local ce = F.stand_cache[tkey(t.mx, t.my)]
+  now = now or 0
+  if not ce or ce.key ~= key or (now - ce.t) > C.FOCUS_SPIKE_STAND_CACHE_TICKS then
+    ce = { key = key, t = now, q = M.best_stand(world, info, hp, t, nil) or false }
+    F.stand_cache[tkey(t.mx, t.my)] = ce
+  end
+  return ce.q or nil
+end
+
+-- Risk score of one cluster (with its spike spots), from this bot's view.
+-- spare: spare pills beyond the need (for the credit). Answers a table:
+-- total, spot, route, detour, tanks, credit, label, plen, straight,
+-- n_spot_pills, n_route_pills, stands (one per spot), start. The route is
+-- cached as in M.defense.
+function M.risk(state, world, info, cl, tiles, hpills, opills, now, spare)
+  local F = st(state)
+  local D = C.PLACE_DISPATCH_MAX_DIST or 15
+  local HD = hide_tiles(info)
+  local pts = {}
+  for _, b in ipairs(cl.targets or cl.bases) do pts[#pts + 1] = b end
+  for _, t in ipairs(tiles) do pts[#pts + 1] = t end
+  local d = { total = 0, spot = 0, route = 0, detour = 0, tanks = 0, credit = 0,
+              label = "shallow", plen = 0, straight = 0, n_spot_pills = 0,
+              n_route_pills = 0, stands = {} }
+  local sx, sy = route_start(world, opills, cl.cx, cl.cy)
+  -- The safest stand place of each spot (best_stand). The route goes to the
+  -- stand places, not to the spots. A spot with no stand place in reach
+  -- blocks the plan (route = DEFENSE_MAX).
+  local rc = {}
+  local no_stand = false
+  for i, t in ipairs(tiles) do
+    local q = M.best_stand(world, info, hpills, t, rc)
+    if q then d.stands[i] = q else no_stand = true end
+  end
+  -- Spot exposure: each known hostile pill that sees a stand place, once.
+  local spot_pills, route_pills = {}, {}
+  for _, q in pairs(d.stands) do
+    for _, p in ipairs(hpills) do
+      if not spot_pills[p.id] and pill_sees(world, HD, p, q.mx, q.my) then
+        spot_pills[p.id] = p
+        d.spot = d.spot + (p.armour / 15) * C.FOCUS_SPIKE_SPOT_WEIGHT
+        d.n_spot_pills = d.n_spot_pills + 1
+      end
+    end
+  end
+  if no_stand then
+    d.label, d.blocked, d.no_stand = "deep", true, true
+    d.route = C.FOCUS_SPIKE_DEFENSE_MAX
+  elseif sx and #tiles > 0 then
+    local hsig = {}
+    for _, p in ipairs(hpills) do hsig[#hsig + 1] = string.format("%d,%d", p.mx, p.my) end
+    local tsig = {}
+    for _, q in ipairs(d.stands) do tsig[#tsig + 1] = tkey(q.mx, q.my) end
+    local key = string.format("%d,%d|%s|%s", sx, sy, table.concat(tsig, ","), table.concat(hsig, ";"))
+    local ce = F.route_cache[cl.key or cl.id]
+    if not ce or ce.key ~= key or (now - ce.t) > C.FOCUS_SPIKE_ROUTE_CACHE_TICKS then
+      local path, plen = M.route(world, info, sx, sy, d.stands, hpills)
+      ce = { key = key, t = now, path = path, plen = plen }
+      F.route_cache[cl.key or cl.id] = ce
+    end
+    d.start = { mx = sx, my = sy }
+    if not ce.path then
+      d.label, d.blocked = "deep", true
+      d.route = C.FOCUS_SPIKE_DEFENSE_MAX
+    else
+      local path = ce.path
+      local cut = #path
+      local any_exposed, any_hidden = d.n_spot_pills > 0, false
+      for i = 1, cut do
+        local t = path[i]
+        for _, p in ipairs(hpills) do
+          if edist(t.mx, t.my, p.mx, p.my) <= C.PILL_FIRE_RANGE then
+            if pill_sees(world, HD, p, t.mx, t.my) then
+              any_exposed = true
+              if not spot_pills[p.id] and not route_pills[p.id] then
+                route_pills[p.id] = p
+                d.route = d.route + (p.armour / 15) * C.FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT
+                d.n_route_pills = d.n_route_pills + 1
+              end
+            else
+              any_hidden = true
+            end
+          end
+        end
+      end
+      d.label = any_exposed and "deep" or (any_hidden and "hidden" or "shallow")
+      local last = path[#path]
+      d.plen = ce.plen
+      d.straight = edist(sx, sy, last.mx, last.my)
+      d.detour = math.floor(math.max(0, d.plen - d.straight) / 10)
+                 * C.FOCUS_SPIKE_DEFENSE_DETOUR_WEIGHT
+    end
+  end
+  local TR = C.FOCUS_SPIKE_DEFENSE_TANK_RANGE
+  for _, s in pairs(F.seen) do
+    if (now - s.t) <= C.FOCUS_SPIKE_DEFENSE_TANK_MEMORY then
+      for _, q in ipairs(pts) do
+        if edist(s.mx, s.my, q.mx, q.my) <= TR then
+          d.tanks = d.tanks + C.FOCUS_SPIKE_DEFENSE_TANK_WEIGHT
+          break
+        end
+      end
+    end
+  end
+  d.credit = math.min(C.FOCUS_SPIKE_SPARE_CREDIT_MAX,
+                      math.max(0, spare or 0) * C.FOCUS_SPIKE_SPARE_CREDIT)
+  d.total = math.max(0, d.spot + d.route + d.detour + d.tanks - d.credit)
+  -- Tanks are a factor only: with no spot, route or detour risk the tank
+  -- term alone never makes a cluster too risky (M.too_risky).
+  d.tanks_only = (d.spot + d.route + d.detour) <= 0
+  return d
+end
+
+-- A risk or defense table at or over FOCUS_SPIKE_DEFENSE_MAX. "cluster": not
+-- when the tank term is the only risk.
+function M.too_risky(d)
+  if cluster_rule() and d.tanks_only then return false end
+  return d.total >= C.FOCUS_SPIKE_DEFENSE_MAX
+end
+
+-- Spare pills K = team pills - the NORMAL front target (as plan()).
+local function spare_k(world, info, now)
+  local pf = PP.counts(world, now, true)
+  local team = require("spike").team_pills(world, info, pf)
+  local ftgt = PP.normal_targets(team).front
+  return team - ftgt, team, ftgt
+end
+
 local LABEL_TEXT = { shallow = "shallow", deep = "deep", hidden = "deep, hidden route" }
 M.LABEL_TEXT = LABEL_TEXT
 local LABEL_CODE = { shallow = "s", deep = "d", hidden = "h" }
@@ -562,6 +834,7 @@ M.before = before
 --   cluster with its numbers and why it was taken or skipped), label.
 -- Peek reads only: never writes pill roles.
 function M.plan(state, world, info, now)
+  if cluster_rule() then return M.plan_cluster(state, world, info, now) end
   local list, total, nopos = M.bases(world)
   local hp = pills_of(world, true)
   local op = pills_of(world, false)
@@ -669,7 +942,125 @@ function M.plan(state, world, info, now)
            label = label, t = now }
 end
 
+-- -- The cluster plan (FOCUS_SPIKE_RULE "cluster") ------------------------
+-- One cluster per plan, judged on its own: the spare pills K must put every
+-- target base of that cluster within PILL_FIRE_RANGE of our pills. Each
+-- cluster: cover (nil = a base cannot be covered: skip "uncoverable"; no
+-- tile = already covered: skip "covered"), risk (skip "risk" at
+-- DEFENSE_MAX), need <= K (skip "no_spare") and <= MAX_TILES. The best by
+-- the order rule is chosen. Same answer table as M.plan, plus cluster (the
+-- key: lowest base id), bases (the target base ids) and risk (the chosen
+-- risk table). Peek reads only.
+function M.plan_cluster(state, world, info, now)
+  local list, total, nopos = M.bases(world)
+  local hp = pills_of(world, true)
+  local op = pills_of(world, false)
+  local K, team, ftgt = spare_k(world, info, now)
+  local F = st(state)
+  local ck = {}
+  for _, b in ipairs(list) do ck[#ck + 1] = string.format("%d:%d,%d", b.id, b.mx, b.my) end
+  ck = table.concat(ck, ";")
+  if F.cl_key ~= ck then
+    F.cl_key = ck
+    F.clusters = M.clusters(list, C.FOCUS_SPIKE_CLUSTER_GAP)
+    F.route_cache = {}
+  end
+  local obases = {}
+  for _, b in ipairs(list) do if not b.target then obases[#obases + 1] = b end end
+  local cur = {}
+  for _, b in ipairs(list) do cur[b.id] = b end
+  local rows = {}
+  for _, cl0 in ipairs(F.clusters) do
+    local targets = {}
+    for _, b0 in ipairs(cl0.bases) do
+      local b = cur[b0.id]
+      if b and b.target then targets[#targets + 1] = b end
+    end
+    if #targets > 0 then
+      local key = tostring(cl0.bases[1].id)
+      local cl = { id = cl0.id, key = key, bases = cl0.bases, targets = targets,
+                   cx = cl0.cx, cy = cl0.cy }
+      local home, ax, ay = math.huge, nil, nil
+      for _, b in ipairs(obases) do
+        local dd = edist(b.mx, b.my, cl.cx, cl.cy)
+        if dd < home then home, ax, ay = dd, b.mx, b.my end
+      end
+      -- Pills do not shoot builders, so a spot in a hostile pill's range is
+      -- not left out ({} as the hostile list); the tie-break is the risk of
+      -- its safest stand place.
+      local rc = {}
+      local sr = function(x, y) return stand_min(world, info, hp, { mx = x, my = y }, rc) end
+      local tiles = M.cover(world, targets, {}, op, ax, ay, nil, sr)
+      local row = { id = cl.id, key = key, nb = #targets, nall = #cl.bases, home = home, cl = cl }
+      if not tiles then
+        row.skip, row.need, row.rank = "uncoverable", -1, 0
+        row.def = { total = 0, label = "shallow" }
+      elseif #tiles == 0 then
+        row.skip, row.need, row.rank = "covered", 0, 0
+        row.def = { total = 0, label = "shallow" }
+      else
+        row.tiles = tiles
+        row.need = #tiles
+        row.def = M.risk(state, world, info, cl, tiles, hp, op, now, K - #tiles)
+        row.rank = #targets / (row.need + C.FOCUS_SPIKE_DEFENSE_WEIGHT * row.def.total)
+        if M.too_risky(row.def) then row.skip = "risk"
+        elseif row.need > K then row.skip = "no_spare"
+        elseif row.need > C.FOCUS_SPIKE_MAX_TILES then row.skip = "max_tiles" end
+      end
+      rows[#rows + 1] = row
+    end
+  end
+  local order = {}
+  for _, r in ipairs(rows) do
+    if not r.skip then
+      local i = #order + 1
+      while i > 1 and before(r, order[i - 1]) do i = i - 1 end
+      table.insert(order, i, r)
+    end
+  end
+  local best = order[1]
+  local why = "ok"
+  if total == 0 then why = "no_targets"
+  elseif K <= 0 then why = "no_spare"
+  elseif not best then why = "no_cluster" end
+  local tiles, chosen, bases = {}, {}, {}
+  local planned, need, label = 0, 0, "shallow"
+  if best and why == "ok" then
+    best.taken = true
+    chosen[1] = best
+    planned, need, label = best.nb, best.need, best.def.label
+    for _, t in ipairs(best.tiles) do tiles[#tiles + 1] = { mx = t.mx, my = t.my, cl = best.id } end
+    for _, b in ipairs(best.cl.targets) do bases[#bases + 1] = b.id end
+  end
+  return { pass = why == "ok", why = why, total = total, nopos = nopos,
+           planned = planned, frac = total > 0 and planned / total or 0, K = K,
+           team = team, ftgt = ftgt, need = need, tiles = tiles, chosen = chosen,
+           rows = rows, label = label, t = now, cluster = best and why == "ok" and best.key or nil,
+           bases = bases, risk = best and best.def or nil }
+end
+
+local function plan_line_cluster(now, P)
+  local parts = {}
+  for _, r in ipairs(P.rows) do
+    local d = r.def
+    parts[#parts + 1] = string.format(
+      "c%s[%d target of %d bases, need %d, risk %.2f = spot %.2f (%d pills) + route %.2f (%d pills) + detour %.2f (path %.1f vs straight %.1f) + tanks %.2f - spare credit %.2f, %s, rank %.3f = %d / (%d + %.1f x %.2f) -> %s]",
+      r.key, r.nb, r.nall, r.need, d.total, d.spot or 0, d.n_spot_pills or 0, d.route or 0,
+      d.n_route_pills or 0, d.detour or 0, d.plen or 0, d.straight or 0, d.tanks or 0,
+      d.credit or 0, LABEL_TEXT[d.label] or d.label, r.rank, r.nb, math.max(0, r.need),
+      C.FOCUS_SPIKE_DEFENSE_WEIGHT, d.total,
+      r.taken and "taken" or ("skip " .. tostring(r.skip)))
+  end
+  return string.format(
+    "FOCUS_SPIKE_PLAN t=%d rule=cluster result=%s why=%s cluster=%s bases=%s (%d of %d target bases) spare K = team pills %d - normal front target %d = %d need %d spots label=%s clusters: %s",
+    now, P.pass and "pass" or "fail", P.why, tostring(P.cluster), table.concat(P.bases or {}, ","),
+    P.planned, P.total, P.team, P.ftgt, P.K, P.need,
+    LABEL_TEXT[P.label] or P.label, table.concat(parts, " "))
+end
+M.plan_line_cluster = plan_line_cluster
+
 local function plan_line(now, P)
+  if cluster_rule() then return plan_line_cluster(now, P) end
   local parts = {}
   for _, r in ipairs(P.rows) do
     local d = r.def
@@ -713,10 +1104,20 @@ end
 
 -- Parse one inbound verb (comms.lua stashes the raw text on state._fs_rx).
 function M.parse(text)
-  local id, need, planned, total, lab, tl = text:match("^/info fso (%d+) (%d+) (%d+) (%d+) (%a) (%x*)$")
+  local id, need, planned, total, lab, tl, ckey, bl =
+    text:match("^/info fso (%d+) (%d+) (%d+) (%d+) (%a) (%x*) (%d+) (%x*)$")
+  if not id then
+    id, need, planned, total, lab, tl = text:match("^/info fso (%d+) (%d+) (%d+) (%d+) (%a) (%x*)$")
+  end
   if id then
+    local bases = nil
+    if bl then
+      bases = {}
+      for i = 1, #bl - 1, 2 do bases[#bases + 1] = tonumber(bl:sub(i, i + 1), 16) end
+    end
     return { verb = "fso", id = tonumber(id), need = tonumber(need), planned = tonumber(planned),
-             total = tonumber(total), label = CODE_LABEL[lab] or "deep", tiles = dec_tiles(tl) }
+             total = tonumber(total), label = CODE_LABEL[lab] or "deep", tiles = dec_tiles(tl),
+             cluster = ckey, bases = bases }
   end
   local yid, pl, eta = text:match("^/info fsy (%d+) (%d+) (%d+)$")
   if yid then return { verb = "fsy", id = tonumber(yid), pledge = tonumber(pl), eta = tonumber(eta) } end
@@ -797,6 +1198,25 @@ function M.tile_covered(world, tiles)
   return nil
 end
 
+-- "cluster" rule: the first plan spot whose safest stand place got more
+-- dangerous (a hostile pill learned since the go). The risk of each spot is
+-- noted on the first check; later a rise answers that spot.
+function M.stand_worse(world, info, tiles)
+  local hp = pills_of(world, true)
+  local rc = {}
+  for _, t in ipairs(tiles) do
+    if not t.placed and not t.gone then
+      local r = stand_min(world, info, hp, t, rc)
+      if t.stand_r == nil then
+        t.stand_r = r
+      elseif r > t.stand_r + 1e-6 then
+        return t, r
+      end
+    end
+  end
+  return nil
+end
+
 -- not_target: this bot sees bases within range of the plan tiles and every
 -- one of them is ours. A tile with no base it knows near it is not proof.
 function M.not_target(world, tiles)
@@ -834,6 +1254,11 @@ function M.tiles_defense(state, world, info, tiles, now, key)
                cx = sx / math.max(1, #tiles), cy = sy / math.max(1, #tiles) }
   local pend = {}
   for _, t in ipairs(tiles) do if not t.placed then pend[#pend + 1] = t end end
+  if cluster_rule() then
+    local K = spare_k(world, info, now)
+    return M.risk(state, world, info, cl, pend, pills_of(world, true), pills_of(world, false), now,
+                  K - #pend)
+  end
   return M.defense(state, world, info, cl, pend, pills_of(world, true), pills_of(world, false), now)
 end
 
@@ -854,22 +1279,31 @@ function M.ballot(state, world, info, prop, now)
   local F = st(state)
   if F.active or now < F.cool_until then return "no", "cooldown" end
   if M.home_attacked(state, world) then return "no", "home_attacked" end
-  if M.tile_covered(world, prop.tiles) then return "no", "tile_covered" end
+  if not cluster_rule() and M.tile_covered(world, prop.tiles) then return "no", "tile_covered" end
   if M.not_target(world, prop.tiles) then return "no", "not_target" end
   local d = M.tiles_defense(state, world, info, prop.tiles, now, "vote")
-  if d.total >= C.FOCUS_SPIKE_DEFENSE_MAX then return "no", "defended", d end
+  if M.too_risky(d) then return "no", "defended", d end
   local mine = M.plan(state, world, info, now)
   F.plan = mine
-  if mine.pass and prop.total > 0
+  if not cluster_rule() and mine.pass and prop.total > 0
      and mine.frac > (prop.planned / prop.total) + C.FOCUS_SPIKE_BETTER_MARGIN then
     return "no", "better"
   end
-  return "yes", math.max(0, info.carried_pills or 0), eta_to(info, prop.tiles)
+  return "yes", M.pledge(info), eta_to(info, prop.tiles)
+end
+
+-- The pills this bot pledges: its carried pills; "cluster" rule: 0 when its
+-- tank armour is below FOCUS_SPIKE_PLEDGE_MIN_ARMOR (it still votes yes).
+function M.pledge(info)
+  local n = math.max(0, info.carried_pills or 0)
+  if cluster_rule() and (info.armour or 40) < C.FOCUS_SPIKE_PLEDGE_MIN_ARMOR then return 0 end
+  return n
 end
 
 -- Assignments: candidates nearest ETA first (ties: lower player number) take
--- tiles in plan order, up to their pledge. Answers the tile list with pn set,
--- or nil when the pledges do not cover every tile.
+-- tiles in plan order, up to their pledge: no bot gets more tiles than it
+-- pledged. Answers the tile list with pn set, or nil when the pledges do not
+-- cover every tile.
 function M.assign(tiles, cands)
   table.sort(cands, function(a, b)
     if a.eta ~= b.eta then return a.eta < b.eta end
@@ -910,7 +1344,9 @@ function M.resolve(open, nbots)
   if not M.majority(yes, nbots) then
     return false, only_better and "better" or "majority", yes, pledged, reasons
   end
-  if pledged < open.need then return false, "pledge", yes, pledged, reasons end
+  if pledged < open.need then
+    return false, cluster_rule() and "pledges" or "pledge", yes, pledged, reasons
+  end
   return true, "ok", yes, pledged, reasons
 end
 
@@ -921,13 +1357,20 @@ end
 local function start_active(state, F, id, tiles, now, from, info)
   local vi = F.votes and F.votes[id]
   F.active = { id = id, tiles = tiles, t_go = now, from = from,
-               planned = vi and vi.planned, total = vi and vi.total, dropped = 0 }
+               planned = vi and vi.planned, total = vi and vi.total, dropped = 0,
+               cluster = vi and vi.cluster, bases = vi and vi.bases }
   F.votes = nil
   F.open, F.voting = nil, nil
   local mine = 0
   for _, t in ipairs(tiles) do if t.pn == info.player_number then mine = mine + 1 end end
   print2(string.format("FOCUS_SPIKE_ACTIVE t=%d on id=%d from p%d tiles=%d mine=%d ttl=%d",
     now, id, from, #tiles, mine, C.FOCUS_SPIKE_APPROVAL_TTL))
+end
+
+-- " cluster=<key> bases=<ids>" for the event lines, or "" (no cluster).
+function M.cluster_text(v)
+  if not v or not v.cluster then return "" end
+  return string.format(" cluster=%s bases=%s", tostring(v.cluster), table.concat(v.bases or {}, ","))
 end
 
 local function cooldown(F, now, why)
@@ -946,9 +1389,9 @@ local function end_active(state, F, now, why, info)
   if why == "all_placed" and placed + dropped < #A.tiles then why = "tiles_gone" end
   print2(string.format("FOCUS_SPIKE_ACTIVE t=%d off id=%d why=%s placed %d of %d (%d dropped) after %dt",
     now, A.id, why, placed, #A.tiles, dropped, now - A.t_go))
-  errline(string.format("FOCUS_SPIKE end t=%d p%d id=%d why=%s placed=%d tiles=%d after=%d dropped=%d bases_dropped=%d",
+  errline(string.format("FOCUS_SPIKE end t=%d p%d id=%d why=%s placed=%d tiles=%d after=%d dropped=%d bases_dropped=%d%s",
     now, info and info.player_number or -1, A.id, why, placed, #A.tiles, now - A.t_go, dropped,
-    A.dropped or 0))
+    A.dropped or 0, M.cluster_text(A)))
   F.active = nil
 end
 
@@ -1021,7 +1464,8 @@ local function handle_rx(state, F, world, info, now, care_tag)
         end
         if not skip then
           F.voting = { id = v.id, from = m.from, t = now }
-          F.votes = { [v.id] = { planned = v.planned, total = v.total } }
+          F.votes = { [v.id] = { planned = v.planned, total = v.total, cluster = v.cluster,
+                                 bases = v.bases } }
           local yn, a, b = M.ballot(state, world, info, v, now)
           if yn == "yes" then
             send(state, string.format("/info fsy %d %d %d", v.id, a, b))
@@ -1096,9 +1540,9 @@ local function resolve_open(state, F, info, now)
   local al = {}
   for _, t in ipairs(asg) do al[#al + 1] = string.format("(%d,%d)->p%d", t.mx, t.my, t.pn) end
   print2(string.format("FOCUS_SPIKE_VOTE t=%d go id=%d %s", now, O.id, table.concat(al, " ")))
-  errline(string.format("FOCUS_SPIKE go t=%d p%d id=%d tiles=%d label=%s %s", now,
-    info.player_number or -1, O.id, #asg, O.label, table.concat(al, " ")))
-  F.votes = { [O.id] = { planned = O.planned, total = O.total } }
+  errline(string.format("FOCUS_SPIKE go t=%d p%d id=%d tiles=%d label=%s %s%s", now,
+    info.player_number or -1, O.id, #asg, O.label, table.concat(al, " "), M.cluster_text(O)))
+  F.votes = { [O.id] = { planned = O.planned, total = O.total, cluster = O.cluster, bases = O.bases } }
   start_active(state, F, O.id, asg, now, O.me, info)
 end
 
@@ -1148,7 +1592,8 @@ function M.repick(state, F, world, info, now, ct)
   local cov = {}
   for _, p in ipairs(pills_of(world, false)) do cov[#cov + 1] = p end
   for _, t in ipairs(A.tiles) do
-    if t ~= ct and not t.dropped and (t.placed or not covered_by(hp, t.mx, t.my, R)) then
+    if t ~= ct and not t.dropped
+       and (t.placed or cluster_rule() or not covered_by(hp, t.mx, t.my, R)) then
       cov[#cov + 1] = { mx = t.mx, my = t.my }
     end
   end
@@ -1162,14 +1607,35 @@ function M.repick(state, F, world, info, now, ct)
   local new, left = nil, need
   local def = nil
   if #need > 0 then
-    local tiles, rest = M.cover(world, need, hp, cov, ct.mx, ct.my, 1)
+    local excl, sr = hp, nil
+    if cluster_rule() then
+      local rc = {}
+      excl = {}
+      sr = function(x, y) return stand_min(world, info, hp, { mx = x, my = y }, rc) end
+    end
+    local tiles, rest = M.cover(world, need, excl, cov, ct.mx, ct.my, 1, sr)
     if tiles and tiles[1] then
       def = M.tiles_defense(state, world, info, { tiles[1] }, now, "repick")
-      if def.total < C.FOCUS_SPIKE_DEFENSE_MAX then new, left = tiles[1], rest end
+      if not M.too_risky(def) then new, left = tiles[1], rest end
     end
   end
   local old = { mx = ct.mx, my = ct.my }
   local pn = ct.pn
+  -- "cluster": the old spot is still the best one (its stand place got
+  -- worse, but no spot is safer): keep it and note the new risk.
+  if cluster_rule() and #left == 0 and new and new.mx == ct.mx and new.my == ct.my then
+    ct.stand_r = stand_min(world, info, hp, ct, nil)
+    return false
+  end
+  -- "cluster": the plan must cover every target base of its cluster. No spot
+  -- for the bases this one was to cover: the cluster is not complete.
+  if cluster_rule() and #left > 0 then
+    errline(string.format("FOCUS_SPIKE repick t=%d p%d id=%d old=%d,%d new=none pn=%d need=%d drop=%d defense=%s planned=%d total=%d",
+      now, info.player_number or -1, A.id, old.mx, old.my, pn or -1, #need, #left,
+      def and string.format("%.2f", def.total) or "-", A.planned or #need, A.total or total))
+    abort(state, F, info, now, "incomplete")
+    return true
+  end
   M.apply_repick(A, old, new, #left, info.player_number or -1, info, now)
   send(state, string.format("/info fsu %d %s %s %d", A.id, enc_tiles({ old }),
     new and enc_tiles({ new }) or "FFFF", #left))
@@ -1230,7 +1696,12 @@ local function update_active(state, F, world, info, now, care_tag)
       F.trip = nil
     end
   end
-  local ct = M.tile_covered(world, A.tiles)
+  local ct
+  if cluster_rule() then
+    ct = M.stand_worse(world, info, A.tiles)
+  else
+    ct = M.tile_covered(world, A.tiles)
+  end
   if ct then
     if C.FOCUS_SPIKE_TILE_COVERED_RULE ~= "repick" then
       abort(state, F, info, now, "tile_covered"); return
@@ -1298,14 +1769,24 @@ function M.update(state, world, info, now, care_tag)
   local me = info.player_number or 0
   local id = me * 65536 + bit.band(now, 0xFFFF)
   F.open = { id = id, t = now, me = me, bots = bots, ballots = {}, need = P.need,
-             tiles = P.tiles, pledge = math.max(0, info.carried_pills or 0),
-             eta = eta_to(info, P.tiles), label = P.label, planned = P.planned, total = P.total }
-  send(state, string.format("/info fso %d %d %d %d %s %s", id, P.need, P.planned, P.total,
-    LABEL_CODE[P.label], enc_tiles(P.tiles)))
+             tiles = P.tiles, pledge = M.pledge(info),
+             eta = eta_to(info, P.tiles), label = P.label, planned = P.planned, total = P.total,
+             cluster = P.cluster, bases = P.bases }
+  local suffix = ""
+  if P.cluster then
+    local bh = {}
+    for _, b in ipairs(P.bases or {}) do bh[#bh + 1] = string.format("%02X", b) end
+    suffix = string.format(" %s %s", P.cluster, table.concat(bh))
+  end
+  send(state, string.format("/info fso %d %d %d %d %s %s%s", id, P.need, P.planned, P.total,
+    LABEL_CODE[P.label], enc_tiles(P.tiles), suffix))
   print2(string.format("FOCUS_SPIKE_VOTE t=%d open id=%d p%d need=%d planned %d/%d label=%s bots=%d pledge=%d tiles=%s",
     now, id, me, P.need, P.planned, P.total, LABEL_TEXT[P.label], #bots, F.open.pledge, enc_tiles(P.tiles)))
-  errline(string.format("FOCUS_SPIKE open t=%d p%d id=%d need=%d planned=%d total=%d label=%s bots=%d",
-    now, me, id, P.need, P.planned, P.total, LABEL_TEXT[P.label], #bots))
+  errline(string.format("FOCUS_SPIKE open t=%d p%d id=%d need=%d planned=%d total=%d label=%s bots=%d%s%s",
+    now, me, id, P.need, P.planned, P.total, LABEL_TEXT[P.label], #bots, M.cluster_text(F.open),
+    P.risk and string.format(" risk=%.2f spot=%.2f route=%.2f detour=%.2f tanks=%.2f credit=%.2f",
+      P.risk.total, P.risk.spot or 0, P.risk.route or 0, P.risk.detour or 0, P.risk.tanks or 0,
+      P.risk.credit or 0) or ""))
   -- A team of one bot resolves at once.
   if #bots <= 1 then resolve_open(state, F, info, now) end
 end

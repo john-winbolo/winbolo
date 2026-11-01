@@ -2876,7 +2876,8 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- is still placeable and reachable, at the flat FOCUS_SPIKE_APPROVED_COST
   -- (the builder leaves at once with the long send). Before a vote passes
   -- spike.check answers false here and nothing below changes.
-  if not only and actionable and C.FOCUS_SPIKE_ENABLED and C.FOCUS_SPIKE_RULE == "deny"
+  if not only and actionable and C.FOCUS_SPIKE_ENABLED
+     and (C.FOCUS_SPIKE_RULE == "deny" or C.FOCUS_SPIKE_RULE == "cluster")
      and (info.trees or 0) >= (C.PILL_PLACE_TREE_COST or 4) then
     local fchk = M.spike.check(state, world, info, nil, true)
     if fchk and fchk.role == "plan" then
@@ -2887,7 +2888,16 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           if d < bd then bt, bd = t, d end
         end
       end
-      local pc = bt and smart_cost(KIND_NORMAL, tmx, tmy, bt.mx, bt.my, boat and 1 or 0,
+      -- "cluster" rule: the tank drives to the spot's safest stand place
+      -- (focus_vote.best_stand) and sends the builder from there.
+      local stand = nil
+      if bt and C.FOCUS_SPIKE_RULE == "cluster" then
+        stand = M.spike.vote.plan_stand(state, world, info, bt, state and state.tick or 0)
+        if not stand then bt = nil end
+      end
+      local px, py = bt and bt.mx, bt and bt.my
+      if stand then px, py = stand.mx, stand.my end
+      local pc = bt and smart_cost(KIND_NORMAL, tmx, tmy, px, py, boat and 1 or 0,
                                    info.shells or 32, info.trees or 0, info.mines or 0,
                                    info.armour or 40)
       if bt and pc and pc < 1e20 then
@@ -2900,7 +2910,9 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           goal = { kind = "place_pill_strategic", mx = bt.mx, my = bt.my,
                    wx = U.m2w(bt.mx), wy = U.m2w(bt.my),
                    _place_cat = "aggro", _focus_spike = true, _spike_role = "plan",
-                   _spike_carried = info.carried_pills or 0 },
+                   _spike_carried = info.carried_pills or 0,
+                   _stand_mx = stand and stand.mx, _stand_my = stand and stand.my,
+                   _stand_r = stand and stand.risk },
           desc = BRAIN_POOL_VIZ and string.format(
                  "focus_spike plan tile (%d,%d) cost{%.0f} = FOCUS_SPIKE_APPROVED_COST (path %.0f)",
                  bt.mx, bt.my, cost, pc) or "",
@@ -5101,6 +5113,16 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
     end
   end
 
+  -- Spike defend discount (spike.defend_mult, FOCUS_SPIKE_DEFEND_DISCOUNT;
+  -- nil when off, as in KEEL): a pill from a passed focused spike plan, for
+  -- FOCUS_SPIKE_DEFEND_TICKS after it landed. Before the well-defended
+  -- clamp, so a held pill is still raised to DEFEND_WELL_DEFENDED_COST.
+  local sdm = M.spike.defend_mult(state, p.mx, p.my, now)
+  if sdm then
+    bd.spike_defend = sdm   -- panel: spike_defend{} chip
+    cost = cost * sdm
+  end
+
   -- ── Well-defended gate ─────────────────────────────────────────────
   -- Allies ALREADY at the pill (fresh /info positions, bidder excluded)
   -- covering the enemies there in team-ratio proportion means this pill
@@ -5132,6 +5154,9 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
   bd.cost = cost
   return cost, bd
 end
+
+-- Test hook (test_spike.lua: the spike defend discount and the clamp).
+M._defend_pill_score = defend_pill_score
 
 -- =========================================================================
 -- ALARM MODE (C.DEFEND_ALARM_MODE, 2026-09-06) — Andrew's redesign of the
@@ -5874,6 +5899,8 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
                                bd.hits_win or 0)
             local fl = bd.floored
               and string.format(" floor{%.0f}", bd.floored) or ""
+            fl = fl .. (bd.spike_defend
+              and string.format(" *spike_defend{x%.2f}", bd.spike_defend) or "")
             local wd = bd.welldef
               and string.format(" WELLDEF{%d ally vs %d foe, R=%d -> %.0f}",
                                 bd.welldef.ours, bd.welldef.foes,
@@ -6010,7 +6037,8 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
         -- Post-product clamps, in application order, so the printed
         -- formula multiplies out to the final number instead of
         -- silently jumping (the "=500 but the parts say 253" report).
-        b.floored and string.format(" floor{%.0f}", b.floored) or "",
+        (b.floored and string.format(" floor{%.0f}", b.floored) or "")
+          .. (b.spike_defend and string.format(" *spike_defend{x%.2f}", b.spike_defend) or ""),
         b.welldef and string.format(" WELLDEF{%d ally vs %d foe R=%d -> %.0f}",
             b.welldef.ours, b.welldef.foes, b.welldef.ratio,
             C.DEFEND_WELL_DEFENDED_COST or 500) or "",

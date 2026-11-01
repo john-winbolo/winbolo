@@ -558,6 +558,14 @@ function M.set_mode(state, world, info, goal)
     -- decide()'s place_pill checks (lgm_can_reach etc.) still apply.
     local deep_send = goal._focus_spike and trigger == nil and pdist > 1
                       and pdist <= C.PLACE_DISPATCH_MAX_DIST
+    -- "cluster" rule: the plan chose a stand place (goal._stand_mx). Send from
+    -- it, or from an earlier tile that is no riskier, so the plan and the
+    -- send agree on the exposure.
+    if deep_send and goal._stand_mx
+       and U.mdist(tmx, tmy, goal._stand_mx, goal._stand_my) > 1 then
+      local r = require("focus_vote").stand_risk_at(world, info, tmx, tmy)
+      if r > (goal._stand_r or 0) + 1e-6 then deep_send = false end
+    end
     local close_enough = (goal._place_forced and pdist <= C.PLACE_EMERGENCY_MAX_DIST)
                          or (trigger ~= nil and pdist <= C.PLACE_DISPATCH_MAX_DIST)
                          or pdist <= 1
