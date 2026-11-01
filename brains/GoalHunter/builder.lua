@@ -578,7 +578,12 @@ function M.set_mode(state, world, info, goal)
     if deep_send and goal._stand_mx
        and U.mdist(tmx, tmy, goal._stand_mx, goal._stand_my) > 1 then
       local r = require("focus_vote").stand_risk_at(world, info, tmx, tmy)
-      if r > (goal._stand_r or 0) + 1e-6 then deep_send = false end
+      if goal._stand_val then
+        -- FOCUS_SPIKE_ADAPTIVE_SPOT: the tank tile must be no worse than the
+        -- chosen stand place in stand risk + builder run cost.
+        r = r + C.FOCUS_SPIKE_LGM_RUN_COST * U.edist(tmx, tmy, goal.mx, goal.my)
+        if r > goal._stand_val + 1e-6 then deep_send = false end
+      elseif r > (goal._stand_r or 0) + 1e-6 then deep_send = false end
     end
     local close_enough = (goal._place_forced and pdist <= C.PLACE_EMERGENCY_MAX_DIST)
                          or (trigger ~= nil and pdist <= C.PLACE_DISPATCH_MAX_DIST)
