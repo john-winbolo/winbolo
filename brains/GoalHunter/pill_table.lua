@@ -10,7 +10,7 @@ local cpf = require("cpathfinder")
 
 local M = {}
 
-local AGGRO_DEEP = -50  -- influence deeper than this = overextended
+local AGGRO_OVEREXTENDED_INF = -50  -- influence deeper than this = overextended
 
 local COLORS = {
   back    = {  90, 220, 120 },  -- green:  holding friendly territory
@@ -109,7 +109,7 @@ function M.draw(viz, world, state, info)
 
   for _, r in ipairs(rows) do
     local c = COLORS[r.key] or { 200, 200, 200 }
-    local deep = (r.key == "aggro" and r.inf and r.inf < AGGRO_DEEP) and " !deep" or ""
+    local deep = (r.key == "aggro" and r.inf and r.inf < AGGRO_OVEREXTENDED_INF) and " !deep" or ""
     viz.hud_text("pill_portfolio", x, y,
       string.format("#%d %s%s", r.id, r.label, deep), "topleft", c[1], c[2], c[3], 245)
     y = y + dy

@@ -1,21 +1,21 @@
 local bit = require('bitcompat')
 -- =========================================================================
--- GoalHunter/spike.lua -- deep spike rules, spike pairs and spike care.
+-- GoalHunter/spike.lua -- focused spike rules, spike pairs and spike care.
 --
--- Owns the rules added on top of the deep aggro placement
--- (C.PILL_PLACE_AGGRO_DEEP, goals.lua aggro_deep_ctx / score_cell). See the
--- AGGRO_DEEP_* / SPIKE_* block in constants.lua for every knob.
+-- Owns the rules added on top of the focused spike placement
+-- (C.FOCUS_SPIKE_ENABLED, goals.lua focus_spike_ctx / score_cell). See the
+-- FOCUS_SPIKE_* / SPIKE_* block in constants.lua for every knob.
 --
---   check()      may this bot place a deep spike now, and in which role:
---                "single" (AGGRO_DEEP_PAIR off: the first version, one deep
+--   check()      may this bot place a focused spike now, and in which role:
+--                "single" (FOCUS_SPIKE_PAIR off: the first version, one deep
 --                pill at a time), "first" (a pair: this tank carries the
 --                second pill too) or "second" (the pair's second pill).
---                false = no deep spike: the normal aggro placement applies.
+--                false = no focused spike: the normal aggro placement applies.
 --   on_dispatch  init.lua PLACE_TRIP_SET, when the dispatched goal carries
 --                _spike_role.
 --   update()     once per tick from init.lua, before the trip lifecycle:
---                switches the win shares (update_win, AGGRO_DEEP_WIN_SHARES)
---                and utility to aggro (AGGRO_DEEP_UTIL_TO_AGGRO),
+--                switches the win shares (update_win, FOCUS_SPIKE_WIN_SHARES)
+--                and utility to aggro (FOCUS_SPIKE_UTIL_TO_AGGRO),
 --                watches landings, moves the pair through its phases, ends a
 --                failed pair (care on the first pill, area cooldown), reads
 --                ally spkd adverts and new friendly pills on aggro tiles.
@@ -59,13 +59,13 @@ end
 M.pill_alive_at = pill_alive_at
 
 local function pair_on()
-  local m = C.AGGRO_DEEP_PAIR
+  local m = C.FOCUS_SPIKE_PAIR
   return m == "solo" or m == "team"
 end
 
 -- ── Counts, from this bot's own world model only ─────────────────────────
 -- ours = friendly + allied bases. theirs = hostile bases, and with
--- C.AGGRO_DEEP_NEUTRAL_AS_ENEMY also neutral bases and every base whose owner
+-- C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY also neutral bases and every base whose owner
 -- this bot does not know: a base on the map (world._bases_on_map, the map's
 -- base list) with no world.bases record yet, or a record with no known owner.
 -- Only this bot's own world model: it knows a base exists, not its owner
@@ -96,7 +96,7 @@ function M.base_counts(world)
     end
   end
   local theirs = hostile
-  if C.AGGRO_DEEP_NEUTRAL_AS_ENEMY then theirs = hostile + neutral + unknown end
+  if C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY then theirs = hostile + neutral + unknown end
   return ours, theirs, hostile, neutral, unknown
 end
 
@@ -132,13 +132,13 @@ function M.rules(world, info, pf_counts)
   local ours, theirs, b_host, b_neut, b_unk = M.base_counts(world)
   local total, deployed, own, ally_c = M.team_pills(world, info, pf_counts)
   local ftgt = PP.normal_targets(total).front
-  local need_ours = theirs * C.AGGRO_DEEP_BASE_RATIO
-  if C.AGGRO_DEEP_BASE_GATE
-     and (ours < need_ours or (ours - theirs) < C.AGGRO_DEEP_BASE_LEAD) then
+  local need_ours = theirs * C.FOCUS_SPIKE_BASE_RATIO
+  if C.FOCUS_SPIKE_BASE_RULE
+     and (ours < need_ours or (ours - theirs) < C.FOCUS_SPIKE_BASE_LEAD) then
     why = "base_lead"
-  elseif C.AGGRO_DEEP_PILL_GATE and total < C.AGGRO_DEEP_MIN_PILLS then
+  elseif C.FOCUS_SPIKE_PILL_RULE and total < C.FOCUS_SPIKE_MIN_PILLS then
     why = "pills"
-  elseif C.AGGRO_DEEP_PILL_GATE and (pf_counts.front or 0) < ftgt then
+  elseif C.FOCUS_SPIKE_PILL_RULE and (pf_counts.front or 0) < ftgt then
     why = "front"
   end
   return why, { ours = ours, theirs = theirs, need_ours = need_ours,
@@ -147,55 +147,55 @@ function M.rules(world, info, pf_counts)
                 ftgt = ftgt }
 end
 
--- Win shares (C.AGGRO_DEEP_WIN_SHARES): the portfolio targets switch to the
--- AGGRO_DEEP_WIN_* shares while M.rules passes, and back when it stops (or
--- when a knob turns off). One AGGRO_DEEP_WIN_SHARES line per switch.
--- Utility to aggro (C.AGGRO_DEEP_UTIL_TO_AGGRO): at the same moment the
+-- Win shares (C.FOCUS_SPIKE_WIN_SHARES): the portfolio targets switch to the
+-- FOCUS_SPIKE_WIN_* shares while M.rules passes, and back when it stops (or
+-- when a knob turns off). One FOCUS_SPIKE_WIN_SHARES line per switch.
+-- Utility to aggro (C.FOCUS_SPIKE_UTIL_TO_AGGRO): at the same moment the
 -- utility share becomes 0 and goes to aggro (PP.set_u2a), on top of the win
--- shares or the normal shares. One AGGRO_DEEP_UTIL_TO_AGGRO line per switch.
+-- shares or the normal shares. One FOCUS_SPIKE_UTIL_TO_AGGRO line per switch.
 function M.update_win(state, world, info, now)
   local want, want_u2a = false, false
   local why, r, pf = "off", nil, nil
-  if C.PILL_PLACE_AGGRO_DEEP and C.PILL_PLACE_TURTLE ~= true
-     and (C.AGGRO_DEEP_WIN_SHARES or C.AGGRO_DEEP_UTIL_TO_AGGRO) then
+  if C.FOCUS_SPIKE_ENABLED and C.PILL_PLACE_TURTLE ~= true
+     and (C.FOCUS_SPIKE_WIN_SHARES or C.FOCUS_SPIKE_UTIL_TO_AGGRO) then
     -- peek: this runs every tick, so it must not write the cached pill
     -- roles (that moved the re-evaluation times and changed play even
     -- while the rules failed).
     pf = PP.counts(world, now, true)
     why, r = M.rules(world, info, pf)
-    want = (why == "ok") and C.AGGRO_DEEP_WIN_SHARES == true
-    want_u2a = (why == "ok") and C.AGGRO_DEEP_UTIL_TO_AGGRO == true
+    want = (why == "ok") and C.FOCUS_SPIKE_WIN_SHARES == true
+    want_u2a = (why == "ok") and C.FOCUS_SPIKE_UTIL_TO_AGGRO == true
   end
   if PP.set_win(want) then
     local n = PP.normal
-    if r and C.AGGRO_DEEP_WIN_SHARES then
+    if r and C.FOCUS_SPIKE_WIN_SHARES then
       print2(string.format(
-        "AGGRO_DEEP_WIN_SHARES t=%d %s why=%s bases ours=%d theirs=%d (rule %s) pills team=%d (need >= %d) front=%d/%d normal target (rule %s) -> %s (normal %d/%d/%d/%d %s)",
+        "FOCUS_SPIKE_WIN_SHARES t=%d %s why=%s bases ours=%d theirs=%d (rule %s) pills team=%d (need >= %d) front=%d/%d normal target (rule %s) -> %s (normal %d/%d/%d/%d %s)",
         now, want and "on" or "off", why, r.ours, r.theirs,
-        C.AGGRO_DEEP_BASE_GATE and "on" or "off", r.total, C.AGGRO_DEEP_MIN_PILLS,
-        pf.front or 0, r.ftgt, C.AGGRO_DEEP_PILL_GATE and "on" or "off",
+        C.FOCUS_SPIKE_BASE_RULE and "on" or "off", r.total, C.FOCUS_SPIKE_MIN_PILLS,
+        pf.front or 0, r.ftgt, C.FOCUS_SPIKE_PILL_RULE and "on" or "off",
         PP.targets_label(),
         math.floor(n.back * 100 + 0.5), math.floor(n.front * 100 + 0.5),
         math.floor(n.aggro * 100 + 0.5), math.floor(n.util * 100 + 0.5), n.source))
     else
-      print2(string.format("AGGRO_DEEP_WIN_SHARES t=%d off why=knob_off -> %s",
+      print2(string.format("FOCUS_SPIKE_WIN_SHARES t=%d off why=knob_off -> %s",
         now, PP.targets_label()))
     end
   end
   local before = PP.targets_label()
   if PP.set_u2a(want_u2a) then
     print2(string.format(
-      "AGGRO_DEEP_UTIL_TO_AGGRO t=%d %s why=%s (knob %s, win shares %s) %s -> %s",
-      now, want_u2a and "on" or "off", (r and C.AGGRO_DEEP_UTIL_TO_AGGRO) and why or "knob_off",
-      C.AGGRO_DEEP_UTIL_TO_AGGRO and "on" or "off", PP.win_on and "on" or "off",
+      "FOCUS_SPIKE_UTIL_TO_AGGRO t=%d %s why=%s (knob %s, win shares %s) %s -> %s",
+      now, want_u2a and "on" or "off", (r and C.FOCUS_SPIKE_UTIL_TO_AGGRO) and why or "knob_off",
+      C.FOCUS_SPIKE_UTIL_TO_AGGRO and "on" or "off", PP.win_on and "on" or "off",
       before, PP.targets_label()))
   end
 end
 
--- Returns false (no deep spike) or a table { role = ... }.
--- quiet: no AGGRO_DEEP_GATE line (harvest re-score, heatmap overlay).
+-- Returns false (no focused spike) or a table { role = ... }.
+-- quiet: no FOCUS_SPIKE_RULES line (harvest re-score, heatmap overlay).
 function M.check(state, world, info, pf_counts, quiet)
-  if not C.PILL_PLACE_AGGRO_DEEP or C.PILL_PLACE_TURTLE == true then return false end
+  if not C.FOCUS_SPIKE_ENABLED or C.PILL_PLACE_TURTLE == true then return false end
   local S = st(state)
   local now = state.tick or 0
   local P = S.pair
@@ -224,15 +224,15 @@ function M.check(state, world, info, pf_counts, quiet)
     if S.log_key ~= key then
       S.log_key = key
       print2(string.format(
-        "AGGRO_DEEP_GATE t=%d result=%s why=%s bases ours=%d theirs=%d = hostile %d + neutral %d + unknown %d (neutral as enemy %s) (need ours >= theirs x %.1f = %.1f and lead %d >= %d; rule %s) pills team=%d = deployed %d + own carried %d + ally carried %d (need >= %d) front=%d/%d normal target (rule %s) pair=%s carried=%d trees=%d (pair needs 2 pills, %d trees) %s",
+        "FOCUS_SPIKE_RULES t=%d result=%s why=%s bases ours=%d theirs=%d = hostile %d + neutral %d + unknown %d (neutral as enemy %s) (need ours >= theirs x %.1f = %.1f and lead %d >= %d; rule %s) pills team=%d = deployed %d + own carried %d + ally carried %d (need >= %d) front=%d/%d normal target (rule %s) pair=%s carried=%d trees=%d (pair needs 2 pills, %d trees) %s",
         now, role, why, ours, theirs, r.b_host,
-        C.AGGRO_DEEP_NEUTRAL_AS_ENEMY and r.b_neut or 0, C.AGGRO_DEEP_NEUTRAL_AS_ENEMY and r.b_unk or 0,
-        C.AGGRO_DEEP_NEUTRAL_AS_ENEMY and "on" or ("off: " .. r.b_neut .. " neutral, " .. r.b_unk .. " unknown not counted"),
-        C.AGGRO_DEEP_BASE_RATIO, need_ours,
-        ours - theirs, C.AGGRO_DEEP_BASE_LEAD, C.AGGRO_DEEP_BASE_GATE and "on" or "off",
-        total, deployed, own, ally_c, C.AGGRO_DEEP_MIN_PILLS,
-        pf_counts.front or 0, ftgt, C.AGGRO_DEEP_PILL_GATE and "on" or "off",
-        tostring(C.AGGRO_DEEP_PAIR), carried, info.trees or 0,
+        C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY and r.b_neut or 0, C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY and r.b_unk or 0,
+        C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY and "on" or ("off: " .. r.b_neut .. " neutral, " .. r.b_unk .. " unknown not counted"),
+        C.FOCUS_SPIKE_BASE_RATIO, need_ours,
+        ours - theirs, C.FOCUS_SPIKE_BASE_LEAD, C.FOCUS_SPIKE_BASE_RULE and "on" or "off",
+        total, deployed, own, ally_c, C.FOCUS_SPIKE_MIN_PILLS,
+        pf_counts.front or 0, ftgt, C.FOCUS_SPIKE_PILL_RULE and "on" or "off",
+        tostring(C.FOCUS_SPIKE_PAIR), carried, info.trees or 0,
         2 * (C.PILL_PLACE_TREE_COST or 4), PP.targets_label()))
     end
   end
@@ -252,7 +252,7 @@ function M.in_cool(state, mx, my, now)
   return false
 end
 
--- May (cx,cy) be a deep spike tile for this role? "single" keeps the first
+-- May (cx,cy) be a focused spike tile for this role? "single" keeps the first
 -- version's rule (every aggro tile). Pair roles: not forest (a harvest trip
 -- would turn the spike into a tree run) and not in a failed pair's cooldown.
 function M.deep_ok(ad, cx, cy)
@@ -326,7 +326,7 @@ function M.on_dispatch(state, goal, mx, my, tmx, tmy, now)
     print2(string.format(
       "SPIKE_PAIR t=%d propose first=(%d,%d) tank=(%d,%d) d=%d carried_pills_before=%d mode=%s window=%dt cover<=%d -> builder makes both trips, tank holds",
       now, mx, my, tmx, tmy, U.mdist(tmx, tmy, mx, my), goal._spike_carried or -1,
-      tostring(C.AGGRO_DEEP_PAIR), C.SPIKE_PAIR_WINDOW, C.SPIKE_PAIR_COVER_DIST))
+      tostring(C.FOCUS_SPIKE_PAIR), C.SPIKE_PAIR_WINDOW, C.SPIKE_PAIR_COVER_DIST))
   elseif role == "second" then
     local P = S.pair
     if P and P.phase == "second_wait" then
@@ -340,7 +340,7 @@ function M.on_dispatch(state, goal, mx, my, tmx, tmy, now)
 end
 
 -- End a pair that did not finish. A first pill that landed gets spike care
--- from now; the area around the first tile gets no deep spike for
+-- from now; the area around the first tile gets no focused spike for
 -- SPIKE_FAIL_COOLDOWN ticks.
 function M.fail(state, why, now)
   local S = st(state)
@@ -351,7 +351,7 @@ function M.fail(state, why, now)
   if landed then tag(S, P.mx, P.my, now, "own") end
   S.cool[#S.cool + 1] = { mx = P.mx, my = P.my, until_t = now + C.SPIKE_FAIL_COOLDOWN }
   print2(string.format(
-    "SPIKE_PAIR t=%d abort why=%s phase=%s first=(%d,%d) landed=%s second=%s -> %s; no deep spike within %d of (%d,%d) until t=%d",
+    "SPIKE_PAIR t=%d abort why=%s phase=%s first=(%d,%d) landed=%s second=%s -> %s; no focused spike within %d of (%d,%d) until t=%d",
     now, why, P.phase, P.mx, P.my, tostring(landed),
     P.mx2 and string.format("(%d,%d)", P.mx2, P.my2) or "none",
     landed and "first pill gets spike care now" or "no pill to care for",
@@ -416,7 +416,7 @@ local function update_pair(state, S, world, info, now)
   end
 end
 
--- New friendly pill on a deep aggro tile (aggro, and within PILL_FIRE_RANGE
+-- New friendly pill on a focused spike tile (aggro, and within PILL_FIRE_RANGE
 -- of a hostile base this bot knows) = a spike some ally placed. A tile is
 -- "new" when no pill of any owner stood on it at the last look; the first
 -- look only records.
@@ -488,8 +488,8 @@ local function read_adverts(S, info, now)
 end
 
 function M.update(state, world, info, now)
-  if C.PILL_PLACE_AGGRO_DEEP or PP.win_on or PP.u2a_on then M.update_win(state, world, info, now) end
-  if not C.PILL_PLACE_AGGRO_DEEP and not C.SPIKE_REPAIR_PRIORITY then return end
+  if C.FOCUS_SPIKE_ENABLED or PP.win_on or PP.u2a_on then M.update_win(state, world, info, now) end
+  if not C.FOCUS_SPIKE_ENABLED and not C.SPIKE_REPAIR_PRIORITY then return end
   local S = st(state)
   -- Watches: a dispatched spike that lands (late landings too).
   for k, w in pairs(S.watch) do

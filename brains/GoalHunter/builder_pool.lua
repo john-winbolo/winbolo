@@ -730,7 +730,7 @@ function M.eligibility(state, world, info, now)
     d.fire_ok, d.fire_reason = false, string.format("under_fire(%dt)", age)
   end
 
-  -- 3. Spike pair (spike.lua, C.AGGRO_DEEP_PAIR): the first spike landed
+  -- 3. Spike pair (spike.lua, C.FOCUS_SPIKE_PAIR): the first spike landed
   --    and the second trip is due, so the man waits for it. False with the
   --    pair rule off.
   if spike.second_pending(state) then
@@ -1600,7 +1600,7 @@ function M.row_formula(row)
     segs[#segs + 1] = string.format(
       "pre_spike:the score BEFORE the spike care bonus = %.0f", row.spike_pre or 0)
     segs[#segs + 1] = string.format(
-      "spike_care:SPIKE_REPAIR_BONUS(%.0f) -- this pill is a deep spike (src %s,"
+      "spike_care:SPIKE_REPAIR_BONUS(%.0f) -- this pill is a focused spike (src %s,"
       .. " landed t=%s) under spike care for SPIKE_CARE_TICKS(%d) while its tile"
       .. " stays aggro; it also tops up from SPIKE_REPAIR_MIN_MISSING(%d) hp and"
       .. " reaches SPIKE_REPAIR_LEASH(%d): %.0f + %.0f = %s",

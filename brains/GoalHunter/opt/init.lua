@@ -2684,8 +2684,8 @@ function Brain.think(info)
       (t_scores - t_load_danger) / 1000, state.vuln, state.imdanger))
   end
 
-  -- Deep spike pairs and spike care (spike.lua, through goals.spike so
-  -- think() gets no new upvalue). A no-op with PILL_PLACE_AGGRO_DEEP and
+  -- Focused spike pairs and spike care (spike.lua, through goals.spike so
+  -- think() gets no new upvalue). A no-op with FOCUS_SPIKE_ENABLED and
   -- SPIKE_REPAIR_PRIORITY both off.
   goals.spike.update(state, world, info, now)
 
@@ -4767,9 +4767,9 @@ function Brain.think(info)
       -- Invalid if we no longer carry a pill, or pill was placed at target
       if (info.carried_pills or 0) == 0 and info.man_status == C.LGM_INTANK then
         goal_valid = false
-      elseif state.goal._aggro_deep and info.man_status ~= C.LGM_INTANK
+      elseif state.goal._focus_spike and info.man_status ~= C.LGM_INTANK
              and not (state._place_trip and state._place_trip.harvest) then
-        -- Deep aggro spot (C.PILL_PLACE_AGGRO_DEEP): the builder is out on
+        -- Focused spike spot (C.FOCUS_SPIKE_ENABLED): the builder is out on
         -- the long send, so stop driving toward the spot. Replan now: the
         -- pool picks what the tank does while it waits. (A harvest trip
         -- keeps the goal: the follow-through row holds the tank.)
@@ -7632,9 +7632,9 @@ function Brain.think(info)
         -- check alone -- there is no strategic score to hold it to.
         score_at_dispatch = on_goal and g._spot_score or nil,
         sc7_at_dispatch   = on_goal and g._spot_sc7 or nil,
-        -- C.PILL_PLACE_AGGRO_DEEP: the follow-through hold stands fast
+        -- C.FOCUS_SPIKE_ENABLED: the follow-through hold stands fast
         -- instead of driving near a deep trip tile (nil when off).
-        aggro_deep = on_goal and g._aggro_deep or nil,
+        focus_spike = on_goal and g._focus_spike or nil,
         -- Where the tank stood when the builder left. The harvest re-score is
         -- asked FROM here (goals.score_place_tile's tank_mx/tank_my), so the
         -- margin measures the tile changing, not the tank moving.
@@ -7646,7 +7646,7 @@ function Brain.think(info)
         left = false,   -- set once the LGM is seen out of the tank
       }
       if state.builder.place_resume then state._place_resume = nil end
-      -- A deep spike (goal._spike_role, spike.lua): start or move its pair.
+      -- A focused spike (goal._spike_role, spike.lua): start or move its pair.
       if on_goal and g._spike_role then
         goals.spike.on_dispatch(state, g, build_cmd.x, build_cmd.y,
           state._place_trip.tank_mx, state._place_trip.tank_my, now)

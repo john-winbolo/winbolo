@@ -70,13 +70,13 @@ C.PLACE_PILL_MAN_PATH_SAFE = false
 C.PLACE_PILL_BEHIND_ONLY   = false
 C.STRATEGIC_PLACE_MIN_SCORE       = -1e9
 C.STRATEGIC_PLACE_MIN_SCORE_FLOOR = -1e9
-C.PILL_PLACE_AGGRO_DEEP = true
+C.FOCUS_SPIKE_ENABLED = true
 C.PILL_PLACE_TURTLE     = false
-local WIN_DEFAULT = C.AGGRO_DEEP_WIN_SHARES
-C.AGGRO_DEEP_WIN_SHARES = false   -- section 6b turns it on; the rest test the shares as set
-local U2A_DEFAULT = C.AGGRO_DEEP_UTIL_TO_AGGRO
-local NAE_DEFAULT = C.AGGRO_DEEP_NEUTRAL_AS_ENEMY
-C.AGGRO_DEEP_UTIL_TO_AGGRO = false  -- section 6d turns it on
+local WIN_DEFAULT = C.FOCUS_SPIKE_WIN_SHARES
+C.FOCUS_SPIKE_WIN_SHARES = false   -- section 6b turns it on; the rest test the shares as set
+local U2A_DEFAULT = C.FOCUS_SPIKE_UTIL_TO_AGGRO
+local NAE_DEFAULT = C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY
+C.FOCUS_SPIKE_UTIL_TO_AGGRO = false  -- section 6d turns it on
 local DEF_T = { PP.TARGET_BACK, PP.TARGET_FRONT, PP.TARGET_AGGRO, PP.TARGET_UTIL }
 
 local function base(mx, my, owner) return { mx = mx, my = my, owner = owner } end
@@ -101,8 +101,8 @@ end
 -- ── 1. spike.check: the rules ───────────────────────────────────────────
 print("spike.check")
 PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "test")   -- default: front target 4 of 8
-C.AGGRO_DEEP_BASE_GATE, C.AGGRO_DEEP_PILL_GATE = true, true
-C.AGGRO_DEEP_PAIR = "solo"
+C.FOCUS_SPIKE_BASE_RULE, C.FOCUS_SPIKE_PILL_RULE = true, true
+C.FOCUS_SPIKE_PAIR = "solo"
 local cnt8 = { back = 1, front = 4, aggro = 1, utility = 0 }   -- 6 deployed
 local function chk(nf, nh, counts, carried, trees, st)
   local w = { pills = {}, bases = bases(nf, nh) }
@@ -120,36 +120,36 @@ check("3 vs 0 bases: lead 3 -> yes", (chk(3, 0, cnt8, 2, 8) or {}).role == "firs
 check("2 vs 0 bases: lead 2 -> no", chk(2, 0, cnt8, 2, 8) == false)
 do
   local _, st = chk(3, 1, cnt8, 2, 8)
-  check("AGGRO_DEEP_GATE key names the base rule", st._spike.log_key == "none:base_lead",
+  check("FOCUS_SPIKE_RULES key names the base rule", st._spike.log_key == "none:base_lead",
         st._spike.log_key)
 end
-C.AGGRO_DEEP_BASE_GATE = false
+C.FOCUS_SPIKE_BASE_RULE = false
 check("base rule off: 3 vs 1 -> first", (chk(3, 1, cnt8, 2, 8) or {}).role == "first")
-C.AGGRO_DEEP_BASE_GATE = true
+C.FOCUS_SPIKE_BASE_RULE = true
 local cnt7 = { back = 1, front = 4, aggro = 0, utility = 0 }   -- 5 + 2 = 7
 check("7 team pills < 8 -> no", chk(4, 1, cnt7, 2, 8) == false)
 local cntf = { back = 2, front = 3, aggro = 1, utility = 0 }   -- front 3 < 4
 check("front 3 < target 4 -> no", chk(4, 1, cntf, 2, 8) == false)
 do
   local _, st = chk(4, 1, cntf, 2, 8)
-  check("AGGRO_DEEP_GATE key names the front rule", st._spike.log_key == "none:front")
+  check("FOCUS_SPIKE_RULES key names the front rule", st._spike.log_key == "none:front")
 end
-C.AGGRO_DEEP_PILL_GATE = false
+C.FOCUS_SPIKE_PILL_RULE = false
 check("pill rule off: 7 pills -> first", (chk(4, 1, cnt7, 2, 8) or {}).role == "first")
 check("pill rule off: front short -> first", (chk(4, 1, cntf, 2, 8) or {}).role == "first")
-C.AGGRO_DEEP_PILL_GATE = true
+C.FOCUS_SPIKE_PILL_RULE = true
 check("1 carried: no second pill -> no", chk(4, 1, { back = 1, front = 4, aggro = 2 }, 1, 8) == false)
 check("2 carried, 7 trees: no wood for two -> no", chk(4, 1, cnt8, 2, 7) == false)
-C.AGGRO_DEEP_PAIR = "off"
+C.FOCUS_SPIKE_PAIR = "off"
 check("pair off, 1 carried: single", (chk(4, 1, { back = 1, front = 4, aggro = 2 }, 1, 0) or {}).role == "single")
-C.AGGRO_DEEP_PAIR = "team"
+C.FOCUS_SPIKE_PAIR = "team"
 check("pair team acts as solo", (chk(4, 1, cnt8, 2, 8) or {}).role == "first")
-C.AGGRO_DEEP_PAIR = "solo"
-C.PILL_PLACE_AGGRO_DEEP = false
+C.FOCUS_SPIKE_PAIR = "solo"
+C.FOCUS_SPIKE_ENABLED = false
 check("deep knob off: false", chk(4, 1, cnt8, 2, 8) == false)
-C.PILL_PLACE_AGGRO_DEEP = true
-check("aggro_deep_ctx(world, false) = nil", G.aggro_deep_ctx({ bases = bases(1, 1) }, false) == nil)
-check("aggro_deep_ctx(world) = role single", G.aggro_deep_ctx({ bases = bases(1, 1) }).role == "single")
+C.FOCUS_SPIKE_ENABLED = true
+check("focus_spike_ctx(world, false) = nil", G.focus_spike_ctx({ bases = bases(1, 1) }, false) == nil)
+check("focus_spike_ctx(world) = role single", G.focus_spike_ctx({ bases = bases(1, 1) }).role == "single")
 
 -- team_pills
 do
@@ -248,7 +248,7 @@ do
 end
 do
   -- Pair off: the single spike is still tagged by its watch.
-  C.AGGRO_DEEP_PAIR = "off"
+  C.FOCUS_SPIKE_PAIR = "off"
   local st = fresh_state(1000)
   SP.on_dispatch(st, { _spike_role = "single" }, 103, 104, 95, 104, 1000)
   check("single: no pair", st._spike.pair == nil)
@@ -256,7 +256,7 @@ do
   check("single: tagged on landing", st._spike.care[104 * 256 + 103]
         and st._spike.care[104 * 256 + 103].t == 1080)
   check("single: hold row nil (pair off)", SP.hold_row(st, info_at(95, 104), 95, 104) == nil)
-  C.AGGRO_DEEP_PAIR = "solo"
+  C.FOCUS_SPIKE_PAIR = "solo"
 end
 
 -- ── 3. second tile rules ─────────────────────────────────────────────────
@@ -311,7 +311,7 @@ do
   check("ally advert: tagged, landing t=2050", e and e.src == "ally" and e.t == 2050,
         e and (e.src .. " " .. e.t))
   check("advert: ally tags not re-advertised", SP.advert(st2, 2100) == "-")
-  -- New friendly pill seen on a deep aggro tile.
+  -- New friendly pill seen on a focused spike tile.
   local wseen = { pills = {}, bases = { base(100, 100, "hostile") } }
   SP.update(st2, wseen, info_at(60, 60), 2101)
   wseen.pills[1] = pill(104, 100, "friendly")
@@ -371,10 +371,10 @@ do
   st._spike.pair = { phase = "second_wait", mx = 1, my = 1, t_first = 2990 }
   local ok, why = BP.eligibility(st, w, inf, 3000)
   check("eligibility: spike_pair_second", ok == false and why == "spike_pair_second", why)
-  C.AGGRO_DEEP_PAIR = "off"
+  C.FOCUS_SPIKE_PAIR = "off"
   ok, why = BP.eligibility(st, w, inf, 3000)
   check("eligibility: pair off -> no wait", why ~= "spike_pair_second", why)
-  C.AGGRO_DEEP_PAIR = "solo"
+  C.FOCUS_SPIKE_PAIR = "solo"
 end
 
 -- ── 6. eval_place_pill_strategic ─────────────────────────────────────────
@@ -399,18 +399,18 @@ local function wspike(extra_pills)
 end
 do
   -- Role first from the full rules (pill rule off: no deployed pills here).
-  C.AGGRO_DEEP_PILL_GATE = false
+  C.FOCUS_SPIKE_PILL_RULE = false
   local st = fresh_state(1000)
   local r = eval_pps(st, wspike(), info_at(60, 104, 5, 40), 60, 104, false, 40, nil)
   check("rules met, 5 carried: deep goal with role first",
-        r and r.goal._aggro_deep and r.goal._spike_role == "first",
+        r and r.goal._focus_spike and r.goal._spike_role == "first",
         r and tostring(r.goal._spike_role))
   local st2 = fresh_state(1000)
   local r2 = eval_pps(st2, wspike(), info_at(60, 104, 1, 40), 60, 104, false, 40, nil)
-  check("1 carried: no deep spike (normal placement)",
-        r2 == nil or (r2.goal._aggro_deep == nil and r2.goal._spike_role == nil),
-        r2 and tostring(r2.goal._aggro_deep))
-  C.AGGRO_DEEP_PILL_GATE = true
+  check("1 carried: no focused spike (normal placement)",
+        r2 == nil or (r2.goal._focus_spike == nil and r2.goal._spike_role == nil),
+        r2 and tostring(r2.goal._focus_spike))
+  C.FOCUS_SPIKE_PILL_RULE = true
 end
 do
   -- Hold row while the first trip is out.
@@ -438,7 +438,7 @@ end
 do
   local r = eval_second()
   check("second: a goal with 1 carried and no util surplus", r ~= nil)
-  check("second: role second, deep", r and r.goal._spike_role == "second" and r.goal._aggro_deep)
+  check("second: role second, deep", r and r.goal._spike_role == "second" and r.goal._focus_spike)
   check("second: within 8 of the first, LOS",
         r and U.edist(r.goal.mx, r.goal.my, 103, 104) <= 8
         and not (r.goal.mx == 103 and r.goal.my == 104),
@@ -490,21 +490,21 @@ else
     check("second: terms add up to the score", total and math.abs(sum - total) <= 1,
           string.format("sum %.1f score %s", sum, tostring(total)))
   end
-  -- The same tile scored as a role-single deep spike pays ebase for both
+  -- The same tile scored as a role-single focused spike pays ebase for both
   -- near bases (60 + 60).
-  C.AGGRO_DEEP_PAIR = "off"
-  C.AGGRO_DEEP_BASE_GATE, C.AGGRO_DEEP_PILL_GATE = false, false
+  C.FOCUS_SPIKE_PAIR = "off"
+  C.FOCUS_SPIKE_BASE_RULE, C.FOCUS_SPIKE_PILL_RULE = false, false
   local s_single = G.score_place_tile(fresh_state(), wspike(), info_at(103, 104, 5), 103, 104, -5, 103, 104)
   check("single deep at (103,104) scores (ebase counts all bases)", s_single ~= nil)
-  C.AGGRO_DEEP_PAIR = "solo"
-  C.AGGRO_DEEP_BASE_GATE, C.AGGRO_DEEP_PILL_GATE = true, true
+  C.FOCUS_SPIKE_PAIR = "solo"
+  C.FOCUS_SPIKE_BASE_RULE, C.FOCUS_SPIKE_PILL_RULE = true, true
 end
 
--- ── 6b. win shares (AGGRO_DEEP_WIN_SHARES) ───────────────────────────────
+-- ── 6b. win shares (FOCUS_SPIKE_WIN_SHARES) ───────────────────────────────
 print("win shares")
 do
-  C.AGGRO_DEEP_WIN_SHARES = true
-  C.AGGRO_DEEP_BASE_GATE, C.AGGRO_DEEP_PILL_GATE = true, true
+  C.FOCUS_SPIKE_WIN_SHARES = true
+  C.FOCUS_SPIKE_BASE_RULE, C.FOCUS_SPIKE_PILL_RULE = true, true
   PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
   -- 4 front pills on the line (x=150: +20 beside -30 at x=149), 2 back
   -- (x=200), 2 carried: 8 team pills, normal front target 4.
@@ -544,10 +544,10 @@ do
   SP.update(st, { pills = wpills(3, 3), bases = bases(4, 1) }, inf, 5003)
   check("front 3 < 4 -> normal", PP.win_on == false)
   -- A rule with its knob off counts as a pass.
-  C.AGGRO_DEEP_BASE_GATE = false
+  C.FOCUS_SPIKE_BASE_RULE = false
   SP.update(st, { pills = wpills(4, 2), bases = bases(3, 1) }, inf, 5004)
   check("base rule off: 3 vs 1 -> win", PP.win_on == true)
-  C.AGGRO_DEEP_BASE_GATE = true
+  C.FOCUS_SPIKE_BASE_RULE = true
   SP.update(st, w, inf, 5005)
   -- portfolio= token: its shares are the normal ones.
   PP.set_targets(0.30, 0.40, 0.20, 0.10, "init_arg")
@@ -561,16 +561,16 @@ do
         and near(PP.TARGET_UTIL, 0.10), PP.targets_label())
   -- Knob off while on: back to normal.
   SP.update(st, w, inf, 5008)
-  C.AGGRO_DEEP_WIN_SHARES = false
+  C.FOCUS_SPIKE_WIN_SHARES = false
   SP.update(st, w, inf, 5009)
   check("WIN_SHARES off -> normal", PP.win_on == false and PP.targets_source == "init_arg")
-  C.AGGRO_DEEP_WIN_SHARES = true
+  C.FOCUS_SPIKE_WIN_SHARES = true
   SP.update(st, w, inf, 5010)
-  C.PILL_PLACE_AGGRO_DEEP, C.SPIKE_REPAIR_PRIORITY = false, false
+  C.FOCUS_SPIKE_ENABLED, C.SPIKE_REPAIR_PRIORITY = false, false
   SP.update(st, w, inf, 5011)
   check("deep knob off -> normal", PP.win_on == false and PP.targets_source == "init_arg")
-  C.PILL_PLACE_AGGRO_DEEP, C.SPIKE_REPAIR_PRIORITY = true, true
-  C.AGGRO_DEEP_WIN_SHARES = false
+  C.FOCUS_SPIKE_ENABLED, C.SPIKE_REPAIR_PRIORITY = true, true
+  C.FOCUS_SPIKE_WIN_SHARES = false
   PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
 end
 
@@ -578,7 +578,7 @@ end
 -- writing moved the role re-evaluation times and changed play while the
 -- rules failed (round 1 bench: WIN_SHARES on and off gave different games).
 do
-  C.AGGRO_DEEP_WIN_SHARES = true
+  C.FOCUS_SPIKE_WIN_SHARES = true
   local ps = { pill(150, 11, "friendly"), pill(200, 11, "friendly") }
   ps[2].role, ps[2].role_tick = "aggro", 0          -- stale at t=9000
   local w = { pills = ps, bases = bases(1, 4) }      -- base lead fails
@@ -592,11 +592,11 @@ do
         and (function() local c2 = PP.counts(w, 9000); return c1.front == c2.front
              and c1.back == c2.back and c1.aggro == c2.aggro end)())
   check("counts (no peek) still writes the cache", ps[1].role ~= nil and ps[2].role_tick == 9000)
-  C.AGGRO_DEEP_WIN_SHARES = false
+  C.FOCUS_SPIKE_WIN_SHARES = false
   PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
 end
 
--- ── 6d. utility to aggro (AGGRO_DEEP_UTIL_TO_AGGRO) ──────────────────────
+-- ── 6d. utility to aggro (FOCUS_SPIKE_UTIL_TO_AGGRO) ──────────────────────
 print("utility to aggro")
 do
   -- The targets_for code before the share-0 leftover skip, to show that
@@ -621,7 +621,7 @@ do
   -- portfolio= values with no 0 share (no preset sets portfolio=).
   local sets = {
     { "default", DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4] },
-    { "win", C.AGGRO_DEEP_WIN_BACK, C.AGGRO_DEEP_WIN_FRONT, C.AGGRO_DEEP_WIN_AGGRO, C.AGGRO_DEEP_WIN_UTIL },
+    { "win", C.FOCUS_SPIKE_WIN_BACK, C.FOCUS_SPIKE_WIN_FRONT, C.FOCUS_SPIKE_WIN_AGGRO, C.FOCUS_SPIKE_WIN_UTIL },
     { "30/40/20/10", 0.30, 0.40, 0.20, 0.10 },
     { "25/25/25/25", 0.25, 0.25, 0.25, 0.25 },
     { "10/30/50/10", 0.10, 0.30, 0.50, 0.10 },
@@ -657,8 +657,8 @@ do
   local want_nrm = {
     [8] = "1/4/3/0", [9] = "1/5/3/0", [10] = "2/5/3/0", [11] = "2/5/4/0", [12] = "2/6/4/0",
     [13] = "2/6/5/0", [14] = "2/7/5/0", [15] = "3/7/5/0", [16] = "3/8/5/0" }
-  C.AGGRO_DEEP_BASE_GATE, C.AGGRO_DEEP_PILL_GATE = true, true
-  C.AGGRO_DEEP_UTIL_TO_AGGRO = true
+  C.FOCUS_SPIKE_BASE_RULE, C.FOCUS_SPIKE_PILL_RULE = true, true
+  C.FOCUS_SPIKE_UTIL_TO_AGGRO = true
   local function wpills(nfront, nback)
     local ps = {}
     for i = 1, nfront do ps[#ps + 1] = pill(150, 10 + i, "friendly") end
@@ -669,7 +669,7 @@ do
   local inf = info_at(200, 30, 2)
   local w = { pills = wpills(4, 2), bases = bases(4, 1) }
   for _, win in ipairs({ true, false }) do
-    C.AGGRO_DEEP_WIN_SHARES = win
+    C.FOCUS_SPIKE_WIN_SHARES = win
     PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
     local tag = win and "win on" or "win off"
     SP.update(st, { pills = wpills(4, 2), bases = bases(1, 1) }, inf, 6000)
@@ -713,20 +713,20 @@ do
     check(tag .. ": after switch-back targets(8..16) are the normal ones", back_ok)
   end
   -- Knob off: the rules pass but the shares do not change.
-  C.AGGRO_DEEP_WIN_SHARES, C.AGGRO_DEEP_UTIL_TO_AGGRO = false, false
+  C.FOCUS_SPIKE_WIN_SHARES, C.FOCUS_SPIKE_UTIL_TO_AGGRO = false, false
   PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
   SP.update(st, w, inf, 6010)
   check("knob off: rules pass, shares unchanged", PP.u2a_on == false and PP.win_on == false
         and PP.targets_source == "default" and near(PP.TARGET_UTIL, DEF_T[4]))
   -- Knob turned off while on: back to normal.
-  C.AGGRO_DEEP_UTIL_TO_AGGRO = true
+  C.FOCUS_SPIKE_UTIL_TO_AGGRO = true
   SP.update(st, w, inf, 6011)
   check("knob on -> switch on", PP.u2a_on == true)
-  C.AGGRO_DEEP_UTIL_TO_AGGRO = false
+  C.FOCUS_SPIKE_UTIL_TO_AGGRO = false
   SP.update(st, w, inf, 6012)
   check("knob turned off -> switch off", PP.u2a_on == false and near(PP.TARGET_UTIL, DEF_T[4]))
   -- A new portfolio= set ends it; the portfolio= utility share moves to aggro.
-  C.AGGRO_DEEP_UTIL_TO_AGGRO = true
+  C.FOCUS_SPIKE_UTIL_TO_AGGRO = true
   SP.update(st, w, inf, 6013)
   PP.set_targets(0.30, 0.40, 0.20, 0.10, "init_arg")
   check("portfolio= set ends the switch", PP.u2a_on == false and near(PP.TARGET_UTIL, 0.10))
@@ -751,10 +751,10 @@ do
   PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
   local function hold_cat()
     local hs = fresh_state(7000)
-    C.PILL_PLACE_AGGRO_DEEP = false
+    C.FOCUS_SPIKE_ENABLED = false
     eval_pps(hs, { pills = { pill(60, 104, "friendly", 15, true) }, bases = bases(4, 1) },
              info_at(60, 104, 1, 40), 60, 104, false, 40, nil)
-    C.PILL_PLACE_AGGRO_DEEP = true
+    C.FOCUS_SPIKE_ENABLED = true
     return hs._place_need_cat
   end
   check("normal shares, 1 carried, utility 1 = reserve 1: hold", hold_cat() == "util_reserve",
@@ -762,16 +762,16 @@ do
   PP.set_u2a(true)
   check("switch on: reserve 0, no utility hold", hold_cat() ~= "util_reserve", tostring(hold_cat()))
   PP.set_u2a(false)
-  C.AGGRO_DEEP_UTIL_TO_AGGRO = false
-  C.AGGRO_DEEP_WIN_SHARES = false
+  C.FOCUS_SPIKE_UTIL_TO_AGGRO = false
+  C.FOCUS_SPIKE_WIN_SHARES = false
   PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
 end
 
--- ── 6e. neutral as enemy (AGGRO_DEEP_NEUTRAL_AS_ENEMY) ───────────────────
+-- ── 6e. neutral as enemy (FOCUS_SPIKE_NEUTRAL_AS_ENEMY) ───────────────────
 print("neutral as enemy")
 do
-  local saved = C.AGGRO_DEEP_NEUTRAL_AS_ENEMY
-  C.AGGRO_DEEP_BASE_GATE = true
+  local saved = C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY
+  C.FOCUS_SPIKE_BASE_RULE = true
   -- world.bases is keyed by base id (world.lua). Mixed owners: 2 friendly,
   -- 1 allied, 2 hostile, 2 neutral, 1 record with no owner; the map has
   -- ids 0..9, so ids 8 and 9 are on the map with no record (not seen yet).
@@ -784,16 +784,16 @@ do
     b[7] = { mx = 18, my = 240 }      -- a record with no owner field
     return { bases = b, pills = {}, _bases_on_map = 0x3FF }
   end
-  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = true
+  C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true
   local o, t, h, n, u = SP.base_counts(mixed())
   check("knob on: ours 3, theirs 2 + 2 + 3 = 7", o == 3 and t == 7 and h == 2 and n == 2 and u == 3,
         string.format("%d %d %d %d %d", o, t, h, n, u))
-  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = false
+  C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY = false
   o, t, h, n, u = SP.base_counts(mixed())
   check("knob off: ours 3, theirs = hostile 2 (old count)", o == 3 and t == 2,
         string.format("%d %d", o, t))
   -- No map mask (an older engine): only records count.
-  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = true
+  C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true
   local w = mixed(); w._bases_on_map = nil
   o, t, h, n, u = SP.base_counts(w)
   check("no map mask: unknown = the record with no owner only", u == 1 and t == 5,
@@ -811,85 +811,85 @@ do
   end
   local cnt = { back = 1, front = 4, aggro = 1, utility = 0 }
   for _, on in ipairs({ true, false }) do
-    C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = on
+    C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY = on
     local tag = on and "knob on" or "knob off"
     local why = SP.rules(nb(10, 6, 0), info_at(200, 30, 2), cnt)
     check(tag .. ": 10 vs 6 hostile, no neutral -> pass", why == "ok", why)
   end
-  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = true
+  C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true
   local why = SP.rules(nb(8, 5, 3), info_at(200, 30, 2), cnt)
   check("knob on: 8 vs 5 hostile + 3 neutral = 8 -> base_lead", why == "base_lead", why)
-  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = false
+  C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY = false
   why = SP.rules(nb(8, 5, 3), info_at(200, 30, 2), cnt)
   check("knob off: 8 vs 5 hostile (neutral not counted) -> pass", why == "ok", why)
   -- The check log line shows the parts (a rules table carries them).
-  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = true
+  C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true
   local _, r = SP.rules(nb(8, 5, 3), info_at(200, 30, 2), cnt)
   check("rules table: hostile 5, neutral 3, unknown 0", r.b_host == 5 and r.b_neut == 3 and r.b_unk == 0)
-  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = saved
+  C.FOCUS_SPIKE_NEUTRAL_AS_ENEMY = saved
 end
 
 -- ── 7. keel ──────────────────────────────────────────────────────────────
 print("PRESETS.keel")
-check("default: AGGRO_DEEP_WIN_SHARES = true", WIN_DEFAULT == true)
+check("default: FOCUS_SPIKE_WIN_SHARES = true", WIN_DEFAULT == true)
 do
-  local sp, raw = C.PRESETS.keel_spike, C.PRESETS.keel_spike_raw
+  local sp, raw = C.PRESETS.keel_focus, C.PRESETS.keel_focus_raw
   local nk, same = 0, true
   for k, v in pairs(C.PRESETS.keel) do
     nk = nk + 1
-    if k ~= "PILL_PLACE_AGGRO_DEEP" and k ~= "SPIKE_REPAIR_PRIORITY"
-       and k ~= "AGGRO_DEEP_UTIL_TO_AGGRO" and k ~= "AGGRO_DEEP_NEUTRAL_AS_ENEMY"
+    if k ~= "FOCUS_SPIKE_ENABLED" and k ~= "SPIKE_REPAIR_PRIORITY"
+       and k ~= "FOCUS_SPIKE_UTIL_TO_AGGRO" and k ~= "FOCUS_SPIKE_NEUTRAL_AS_ENEMY"
        and k ~= "REPAIR_FRIENDLY_FIRE_REJECT_TICKS" and (sp[k] ~= v or raw[k] ~= v) then
       same = false
     end
   end
-  check("keel_spike / _raw carry every other keel value", nk > 10 and same, nk)
-  check("keel_spike / _raw: friendly fire 50", sp.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50
+  check("keel_focus / _raw carry every other keel value", nk > 10 and same, nk)
+  check("keel_focus / _raw: friendly fire 50", sp.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50
         and raw.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50)
-  check("preset keel_spike: every rule on", sp.PILL_PLACE_AGGRO_DEEP == true
-        and sp.AGGRO_DEEP_BASE_GATE == true and sp.AGGRO_DEEP_PILL_GATE == true
-        and sp.AGGRO_DEEP_PAIR == "solo" and sp.SPIKE_REPAIR_PRIORITY == true
-        and sp.AGGRO_DEEP_WIN_SHARES == true)
-  check("preset keel_spike_raw: deep on, the rest off", raw.PILL_PLACE_AGGRO_DEEP == true
-        and raw.AGGRO_DEEP_BASE_GATE == false and raw.AGGRO_DEEP_PILL_GATE == false
-        and raw.AGGRO_DEEP_PAIR == "off" and raw.SPIKE_REPAIR_PRIORITY == false
-        and raw.AGGRO_DEEP_WIN_SHARES == false)
-  local lo = C.PRESETS.keel_spike_loose
+  check("preset keel_focus: every rule on", sp.FOCUS_SPIKE_ENABLED == true
+        and sp.FOCUS_SPIKE_BASE_RULE == true and sp.FOCUS_SPIKE_PILL_RULE == true
+        and sp.FOCUS_SPIKE_PAIR == "solo" and sp.SPIKE_REPAIR_PRIORITY == true
+        and sp.FOCUS_SPIKE_WIN_SHARES == true)
+  check("preset keel_focus_raw: deep on, the rest off", raw.FOCUS_SPIKE_ENABLED == true
+        and raw.FOCUS_SPIKE_BASE_RULE == false and raw.FOCUS_SPIKE_PILL_RULE == false
+        and raw.FOCUS_SPIKE_PAIR == "off" and raw.SPIKE_REPAIR_PRIORITY == false
+        and raw.FOCUS_SPIKE_WIN_SHARES == false)
+  local lo = C.PRESETS.keel_focus_loose
   local lsame = true
   for k, v in pairs(sp) do
-    if k ~= "AGGRO_DEEP_MIN_PILLS" and k ~= "AGGRO_DEEP_BASE_LEAD"
-       and k ~= "AGGRO_DEEP_BASE_RATIO" and lo[k] ~= v then lsame = false end
+    if k ~= "FOCUS_SPIKE_MIN_PILLS" and k ~= "FOCUS_SPIKE_BASE_LEAD"
+       and k ~= "FOCUS_SPIKE_BASE_RATIO" and lo[k] ~= v then lsame = false end
   end
-  check("keel_spike_loose = keel_spike plus the three rule values", lsame)
-  check("preset keel_spike_loose: pills 6, lead 2, ratio 1.25", lo.AGGRO_DEEP_MIN_PILLS == 6
-        and lo.AGGRO_DEEP_BASE_LEAD == 2 and lo.AGGRO_DEEP_BASE_RATIO == 1.25)
-  check("defaults stay: pills 8, lead 3, ratio 1.5", C.AGGRO_DEEP_MIN_PILLS == 8
-        and C.AGGRO_DEEP_BASE_LEAD == 3 and C.AGGRO_DEEP_BASE_RATIO == 1.5)
+  check("keel_focus_loose = keel_focus plus the three rule values", lsame)
+  check("preset keel_focus_loose: pills 6, lead 2, ratio 1.25", lo.FOCUS_SPIKE_MIN_PILLS == 6
+        and lo.FOCUS_SPIKE_BASE_LEAD == 2 and lo.FOCUS_SPIKE_BASE_RATIO == 1.25)
+  check("defaults stay: pills 8, lead 3, ratio 1.5", C.FOCUS_SPIKE_MIN_PILLS == 8
+        and C.FOCUS_SPIKE_BASE_LEAD == 3 and C.FOCUS_SPIKE_BASE_RATIO == 1.5)
   for _, t in ipairs({ sp, raw, lo }) do
     for k, v in pairs(t) do
       if type(C[k]) ~= type(v) then check("preset knob " .. k .. " type", false, type(v)) end
     end
   end
 end
-check("win shares sum to 1", near(C.AGGRO_DEEP_WIN_BACK + C.AGGRO_DEEP_WIN_FRONT
-      + C.AGGRO_DEEP_WIN_AGGRO + C.AGGRO_DEEP_WIN_UTIL, 1))
+check("win shares sum to 1", near(C.FOCUS_SPIKE_WIN_BACK + C.FOCUS_SPIKE_WIN_FRONT
+      + C.FOCUS_SPIKE_WIN_AGGRO + C.FOCUS_SPIKE_WIN_UTIL, 1))
 check("keel: SPIKE_REPAIR_PRIORITY = false", C.PRESETS.keel.SPIKE_REPAIR_PRIORITY == false)
-check("keel: PILL_PLACE_AGGRO_DEEP = false", C.PRESETS.keel.PILL_PLACE_AGGRO_DEEP == false)
-check("default: AGGRO_DEEP_UTIL_TO_AGGRO = true", U2A_DEFAULT == true)
-check("keel: AGGRO_DEEP_UTIL_TO_AGGRO = false", C.PRESETS.keel.AGGRO_DEEP_UTIL_TO_AGGRO == false)
-check("keel_spike and keel_spike_loose: AGGRO_DEEP_UTIL_TO_AGGRO = true",
-      C.PRESETS.keel_spike.AGGRO_DEEP_UTIL_TO_AGGRO == true
-      and C.PRESETS.keel_spike_loose.AGGRO_DEEP_UTIL_TO_AGGRO == true)
-check("keel_spike_raw (placement only): AGGRO_DEEP_UTIL_TO_AGGRO = false",
-      C.PRESETS.keel_spike_raw.AGGRO_DEEP_UTIL_TO_AGGRO == false)
-check("default: AGGRO_DEEP_NEUTRAL_AS_ENEMY = true", NAE_DEFAULT == true)
-check("keel: AGGRO_DEEP_NEUTRAL_AS_ENEMY = false", C.PRESETS.keel.AGGRO_DEEP_NEUTRAL_AS_ENEMY == false)
-check("keel_spike and keel_spike_loose: AGGRO_DEEP_NEUTRAL_AS_ENEMY = true",
-      C.PRESETS.keel_spike.AGGRO_DEEP_NEUTRAL_AS_ENEMY == true
-      and C.PRESETS.keel_spike_loose.AGGRO_DEEP_NEUTRAL_AS_ENEMY == true)
-check("keel_spike_raw: AGGRO_DEEP_NEUTRAL_AS_ENEMY = false",
-      C.PRESETS.keel_spike_raw.AGGRO_DEEP_NEUTRAL_AS_ENEMY == false)
-check("defaults: rules on", true == (require("constants").AGGRO_DEEP_BASE_RATIO == 1.5))
+check("keel: FOCUS_SPIKE_ENABLED = false", C.PRESETS.keel.FOCUS_SPIKE_ENABLED == false)
+check("default: FOCUS_SPIKE_UTIL_TO_AGGRO = true", U2A_DEFAULT == true)
+check("keel: FOCUS_SPIKE_UTIL_TO_AGGRO = false", C.PRESETS.keel.FOCUS_SPIKE_UTIL_TO_AGGRO == false)
+check("keel_focus and keel_focus_loose: FOCUS_SPIKE_UTIL_TO_AGGRO = true",
+      C.PRESETS.keel_focus.FOCUS_SPIKE_UTIL_TO_AGGRO == true
+      and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_UTIL_TO_AGGRO == true)
+check("keel_focus_raw (placement only): FOCUS_SPIKE_UTIL_TO_AGGRO = false",
+      C.PRESETS.keel_focus_raw.FOCUS_SPIKE_UTIL_TO_AGGRO == false)
+check("default: FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true", NAE_DEFAULT == true)
+check("keel: FOCUS_SPIKE_NEUTRAL_AS_ENEMY = false", C.PRESETS.keel.FOCUS_SPIKE_NEUTRAL_AS_ENEMY == false)
+check("keel_focus and keel_focus_loose: FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true",
+      C.PRESETS.keel_focus.FOCUS_SPIKE_NEUTRAL_AS_ENEMY == true
+      and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_NEUTRAL_AS_ENEMY == true)
+check("keel_focus_raw: FOCUS_SPIKE_NEUTRAL_AS_ENEMY = false",
+      C.PRESETS.keel_focus_raw.FOCUS_SPIKE_NEUTRAL_AS_ENEMY == false)
+check("defaults: rules on", true == (require("constants").FOCUS_SPIKE_BASE_RATIO == 1.5))
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

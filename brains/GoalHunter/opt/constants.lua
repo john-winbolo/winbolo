@@ -1711,8 +1711,8 @@ M.DIJKSTRA_PILL_DANGER_SCALE    = 0.1   -- danger weighting for the "pill take" 
 M.STRATEGIC_PLACE_ENABLED       = true
 M.STRATEGIC_PLACE_SEARCH_RADIUS = 12    -- tiles around the tank to search for a placement spot. Widened from 8: the spot-quality floor (STRATEGIC_PLACE_MIN_SCORE) holds placement whenever no GOOD spot is within range, so a too-tight radius made a slightly-forward tank carry pills forever (its 8-tile bubble was all front/enemy ground). 12 reaches the good back/guardian spots near our bases without lowering standards. CPU is (2R+1)^2 but bounded by the capacity clamp (place_r) on constrained ticks; far spots also cost more travel (path_cost), so they still only win when worth it.
 M.STRATEGIC_PLACE_AGGRO_SEARCH_RADIUS = 14  -- wider scan when filling the AGGRO role: aggro tiles sit beyond the front (negative influence), deeper than the default radius reaches from the tank's (rear) position. Lets a good forward aggro tile up to 14 tiles out be found + placed.
--- ── Deep aggro placement (2026-11-01, Andrew) ──
--- PILL_PLACE_AGGRO_DEEP is the master switch. Off = the placement scan is
+-- ── Focused spike placement (2026-11-01, Andrew) ──
+-- FOCUS_SPIKE_ENABLED is the master switch. Off = the placement scan is
 -- exactly the old one. On, ONLY for a tile whose category is "aggro"
 -- (PP.classify): goals.lua eval_place_pill_strategic and its heatmap mirror
 --   * also score every tile within PILL_FIRE_RANGE (a 17x17 square) of each
@@ -1731,22 +1731,22 @@ M.STRATEGIC_PLACE_AGGRO_SEARCH_RADIUS = 14  -- wider scan when filling the AGGRO
 -- no dispatch trigger, and init.lua drops the goal once the builder is out,
 -- so the tank does not keep driving in. Off while PILL_PLACE_TURTLE is on.
 -- PRESETS.keel = false.
-M.PILL_PLACE_AGGRO_DEEP                   = true
-M.STRATEGIC_PLACE_AGGRO_ENEMY_BASE_BONUS  = 60    -- per hostile base the aggro tile covers
-M.STRATEGIC_PLACE_AGGRO_DEPTH_WEIGHT      = 2     -- per point of enemy influence under the tile
-M.STRATEGIC_PLACE_AGGRO_DEPTH_CAP         = 80    -- most the depth term can add
-M.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT  = 0.1   -- per tile from the tank (normal tiles: 0.5)
--- ── Deep spike rules (2026-11-01 late, Andrew: "run with this") ──
--- spike.lua owns these. All are read ONLY while PILL_PLACE_AGGRO_DEEP is on,
+M.FOCUS_SPIKE_ENABLED                   = true
+M.FOCUS_SPIKE_PLACE_ENEMY_BASE_BONUS  = 60    -- per hostile base the aggro tile covers
+M.FOCUS_SPIKE_PLACE_DEPTH_WEIGHT      = 2     -- per point of enemy influence under the tile
+M.FOCUS_SPIKE_PLACE_DEPTH_CAP         = 80    -- most the depth term can add
+M.FOCUS_SPIKE_PLACE_TANK_DIST_WEIGHT  = 0.1   -- per tile from the tank (normal tiles: 0.5)
+-- ── Focused spike rules (2026-11-01 late, Andrew: "run with this") ──
+-- spike.lua owns these. All are read ONLY while FOCUS_SPIKE_ENABLED is on,
 -- except the SPIKE_REPAIR_* / SPIKE_CARE_* group (see below). A rule that
 -- fails sends the pill to the normal (old) aggro placement, never alone.
---  * Base lead (AGGRO_DEEP_BASE_GATE): bases this bot's world model holds as
+--  * Base lead (FOCUS_SPIKE_BASE_RULE): bases this bot's world model holds as
 --    ours ("friendly") and theirs ("hostile"); deep only when
 --    ours >= theirs x BASE_RATIO and ours - theirs >= BASE_LEAD.
---  * Pills (AGGRO_DEEP_PILL_GATE): team pills (our deployed live pills +
+--  * Pills (FOCUS_SPIKE_PILL_RULE): team pills (our deployed live pills +
 --    this tank's carried + pills allies advertise as carried) >= MIN_PILLS,
 --    and the front role at its NORMAL portfolio target (PP.normal_targets).
---  * Pair (AGGRO_DEEP_PAIR): "off" = one deep spike per pill (the first
+--  * Pair (FOCUS_SPIKE_PAIR): "off" = one focused spike per pill (the first
 --    version of this rule). "solo" = deep only with a second pill ready:
 --    this tank carries >= 2 pills and wood for both (2 x PILL_PLACE_TREE_COST).
 --    The tank holds at its dispatch tile while the builder makes both trips;
@@ -1756,30 +1756,30 @@ M.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT  = 0.1   -- per tile from the tank (nor
 --    tank, not forest; ebase gives no credit for a hostile base the first
 --    already covers. It must land within SPIKE_PAIR_WINDOW ticks of the
 --    first. A miss: the first gets spike care at once and the area (within
---    SPIKE_FAIL_COOLDOWN_RADIUS of the first) gets no deep spike for
+--    SPIKE_FAIL_COOLDOWN_RADIUS of the first) gets no focused spike for
 --    SPIKE_FAIL_COOLDOWN ticks. "team" (an ally carrying a pill joins by
 --    advert) is NOT built yet: it acts as "solo".
-M.AGGRO_DEEP_BASE_GATE       = true
--- Neutral as enemy (AGGRO_DEEP_NEUTRAL_AS_ENEMY, 2026-11-01, Andrew: "let's
--- do all our stuff from now on with AGGRO_DEEP_NEUTRAL_AS_ENEMY but I'm glad
+M.FOCUS_SPIKE_BASE_RULE       = true
+-- Neutral as enemy (FOCUS_SPIKE_NEUTRAL_AS_ENEMY, 2026-11-01, Andrew: "let's
+-- do all our stuff from now on with FOCUS_SPIKE_NEUTRAL_AS_ENEMY but I'm glad
 -- it's a knob we can tweak later"). On: the base lead rule's "theirs" is
 -- hostile + neutral + every base whose owner this bot does not know (on the
 -- map but not seen yet, or a record with no owner). Off: hostile only.
--- PRESETS.keel = false (no effect there: the deep spike is off).
-M.AGGRO_DEEP_NEUTRAL_AS_ENEMY = true
-M.AGGRO_DEEP_BASE_RATIO      = 1.5
-M.AGGRO_DEEP_BASE_LEAD       = 3
-M.AGGRO_DEEP_PILL_GATE       = true
-M.AGGRO_DEEP_MIN_PILLS       = 8
-M.AGGRO_DEEP_PAIR            = "solo"   -- "off" | "solo" | "team" (team = solo for now)
+-- PRESETS.keel = false (no effect there: the focused spike is off).
+M.FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true
+M.FOCUS_SPIKE_BASE_RATIO      = 1.5
+M.FOCUS_SPIKE_BASE_LEAD       = 3
+M.FOCUS_SPIKE_PILL_RULE       = true
+M.FOCUS_SPIKE_MIN_PILLS       = 8
+M.FOCUS_SPIKE_PAIR            = "solo"   -- "off" | "solo" | "team" (team = solo for now)
 M.SPIKE_PAIR_WINDOW          = 300      -- ticks from the first landing to the second landing
 M.SPIKE_PAIR_COVER_DIST      = 8        -- tiles (euclid) between the two spikes, with LOS
 M.SPIKE_PAIR_SECOND_COST     = 1        -- pool cost of the second trip (wins the tank pool)
-M.SPIKE_FAIL_COOLDOWN        = 1500     -- ticks with no deep spike near a failed pair
+M.SPIKE_FAIL_COOLDOWN        = 1500     -- ticks with no focused spike near a failed pair
 M.SPIKE_FAIL_COOLDOWN_RADIUS = 16       -- tiles (Manhattan) around the first spike
 M.SPIKE_SYNC_TICKS           = 50       -- reserved for "team" (not built)
 M.SPIKE_JOIN_TIMEOUT         = 750      -- reserved for "team" (not built)
--- Win shares (AGGRO_DEEP_WIN_SHARES, 2026-11-01 night, Andrew: "up the
+-- Win shares (FOCUS_SPIKE_WIN_SHARES, 2026-11-01 night, Andrew: "up the
 -- proportion of aggressive pills in those 'we could win if we spiked'
 -- situations"). While the base lead rule and the pill rule both pass (a rule
 -- whose knob is off counts as a pass, as in spike.check), the portfolio
@@ -1787,14 +1787,14 @@ M.SPIKE_JOIN_TIMEOUT         = 750      -- reserved for "team" (not built)
 -- label source "win". When they stop passing, the normal shares come back
 -- (the defaults, or the "portfolio=" token's shares). The pill rule always
 -- reads the NORMAL front target, so the switch cannot turn itself off.
--- Log line: AGGRO_DEEP_WIN_SHARES. Read only while PILL_PLACE_AGGRO_DEEP is
+-- Log line: FOCUS_SPIKE_WIN_SHARES. Read only while FOCUS_SPIKE_ENABLED is
 -- on, so PRESETS.keel needs no entry.
-M.AGGRO_DEEP_WIN_SHARES      = true
-M.AGGRO_DEEP_WIN_BACK        = 0.10
-M.AGGRO_DEEP_WIN_FRONT       = 0.40
-M.AGGRO_DEEP_WIN_AGGRO       = 0.35
-M.AGGRO_DEEP_WIN_UTIL        = 0.15
--- Utility to aggro (AGGRO_DEEP_UTIL_TO_AGGRO, 2026-11-01, Andrew: "When 'I
+M.FOCUS_SPIKE_WIN_SHARES      = true
+M.FOCUS_SPIKE_WIN_BACK        = 0.10
+M.FOCUS_SPIKE_WIN_FRONT       = 0.40
+M.FOCUS_SPIKE_WIN_AGGRO       = 0.35
+M.FOCUS_SPIKE_WIN_UTIL        = 0.15
+-- Utility to aggro (FOCUS_SPIKE_UTIL_TO_AGGRO, 2026-11-01, Andrew: "When 'I
 -- can deep spike!' kicks in, yes, utility should be 0. Let's use those pills
 -- to attack."). At the same moment as the win shares (the base lead and pill
 -- rules pass), the live utility share becomes 0 and its share goes to aggro:
@@ -1803,8 +1803,8 @@ M.AGGRO_DEEP_WIN_UTIL        = 0.15
 -- the utility reserve is 0: no PLACE_HOLD_UTIL hold and no last-pill 1.5x
 -- cost. When the rules fail again, the utility share comes back. The pill
 -- rule reads the NORMAL targets, so the switch cannot turn itself off.
--- Log line: AGGRO_DEEP_UTIL_TO_AGGRO. PRESETS.keel = false.
-M.AGGRO_DEEP_UTIL_TO_AGGRO   = true
+-- Log line: FOCUS_SPIKE_UTIL_TO_AGGRO. PRESETS.keel = false.
+M.FOCUS_SPIKE_UTIL_TO_AGGRO   = true
 -- Spike care (SPIKE_REPAIR_PRIORITY). Read OUTSIDE the deep path (builder
 -- pool, the tank repair_pill pool, the spkd advert), so PRESETS.keel = false.
 -- A spike pill is one this bot placed by the deep rule (seen to land), or
@@ -6023,15 +6023,15 @@ M.PRESETS = {
     TURTLE_BASE_MULT_CAP          = 1,
     -- KEEL keeps the influence tail for turtle bots too.
     TURTLE_NO_INFLUENCE_TAIL      = false,
-    -- 2026-11-01: deep aggro placement (enemy-base tiles, ebase/depth terms,
+    -- 2026-11-01: focused spike placement (enemy-base tiles, ebase/depth terms,
     -- long builder send). KEEL scores aggro tiles like any other tile.
-    PILL_PLACE_AGGRO_DEEP         = false,
-    -- 2026-11-01: utility to aggro while the deep spike rules pass. KEEL
+    FOCUS_SPIKE_ENABLED         = false,
+    -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
     -- keeps its utility share.
-    AGGRO_DEEP_UTIL_TO_AGGRO      = false,
+    FOCUS_SPIKE_UTIL_TO_AGGRO      = false,
     -- 2026-11-01: neutral and unknown bases count as theirs in the deep
-    -- spike base lead rule. KEEL has no deep spike.
-    AGGRO_DEEP_NEUTRAL_AS_ENEMY   = false,
+    -- spike base lead rule. KEEL has no focused spike.
+    FOCUS_SPIKE_NEUTRAL_AS_ENEMY   = false,
     -- 2026-11-01: spike care (builder pool bonus, wider repair reach, tank
     -- repair discount, spkd advert). KEEL repairs spike pills like any pill.
     SPIKE_REPAIR_PRIORITY         = false,
@@ -6620,17 +6620,17 @@ M.PRESETS = {
   },
 }
 
--- Deep spike bench presets (2026-11-01 night). The -bot-init [..] text
+-- Focused spike bench presets (2026-11-01 night). The -bot-init [..] text
 -- reaches the brain as a key table, so one bot gets ONE preset= and ONE
 -- cfg= (a second one with the same key replaces the first). These two carry
 -- keel in full, so a variant is one preset plus at most one cfg=:
---   keel_spike      keel + REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50 + every deep
+--   keel_focus      keel + REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50 + every deep
 --                   spike rule, spike care, the win shares and utility to
 --                   aggro on.
---   keel_spike_raw  keel + REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50 + deep
+--   keel_focus_raw  keel + REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50 + deep
 --                   placement with no rule, no pair, no care, no win shares,
 --                   no utility to aggro.
---   keel_spike_loose  keel_spike with easier base and pill rules: team
+--   keel_focus_loose  keel_focus with easier base and pill rules: team
 --                   pills >= 6 (not 8), base lead >= 2 (not 3), ratio 1.25
 --                   (not 1.5). The front-at-target part is the same.
 -- They apply only when named, so play does not change.
@@ -6642,24 +6642,24 @@ do
     for k, v in pairs(extra) do t[k] = v end
     return t
   end
-  M.PRESETS.keel_spike = keel_plus({
-    PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = true,
-    AGGRO_DEEP_PILL_GATE = true, AGGRO_DEEP_PAIR = "solo",
-    SPIKE_REPAIR_PRIORITY = true, AGGRO_DEEP_WIN_SHARES = true,
-    AGGRO_DEEP_UTIL_TO_AGGRO = true, AGGRO_DEEP_NEUTRAL_AS_ENEMY = true,
+  M.PRESETS.keel_focus = keel_plus({
+    FOCUS_SPIKE_ENABLED = true, FOCUS_SPIKE_BASE_RULE = true,
+    FOCUS_SPIKE_PILL_RULE = true, FOCUS_SPIKE_PAIR = "solo",
+    SPIKE_REPAIR_PRIORITY = true, FOCUS_SPIKE_WIN_SHARES = true,
+    FOCUS_SPIKE_UTIL_TO_AGGRO = true, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true,
   })
-  M.PRESETS.keel_spike_raw = keel_plus({
-    PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = false,
-    AGGRO_DEEP_PILL_GATE = false, AGGRO_DEEP_PAIR = "off",
-    SPIKE_REPAIR_PRIORITY = false, AGGRO_DEEP_WIN_SHARES = false,
-    AGGRO_DEEP_UTIL_TO_AGGRO = false, AGGRO_DEEP_NEUTRAL_AS_ENEMY = false,
+  M.PRESETS.keel_focus_raw = keel_plus({
+    FOCUS_SPIKE_ENABLED = true, FOCUS_SPIKE_BASE_RULE = false,
+    FOCUS_SPIKE_PILL_RULE = false, FOCUS_SPIKE_PAIR = "off",
+    SPIKE_REPAIR_PRIORITY = false, FOCUS_SPIKE_WIN_SHARES = false,
+    FOCUS_SPIKE_UTIL_TO_AGGRO = false, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = false,
   })
-  M.PRESETS.keel_spike_loose = keel_plus({
-    PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = true,
-    AGGRO_DEEP_PILL_GATE = true, AGGRO_DEEP_PAIR = "solo",
-    SPIKE_REPAIR_PRIORITY = true, AGGRO_DEEP_WIN_SHARES = true,
-    AGGRO_DEEP_UTIL_TO_AGGRO = true, AGGRO_DEEP_NEUTRAL_AS_ENEMY = true,
-    AGGRO_DEEP_MIN_PILLS = 6, AGGRO_DEEP_BASE_LEAD = 2, AGGRO_DEEP_BASE_RATIO = 1.25,
+  M.PRESETS.keel_focus_loose = keel_plus({
+    FOCUS_SPIKE_ENABLED = true, FOCUS_SPIKE_BASE_RULE = true,
+    FOCUS_SPIKE_PILL_RULE = true, FOCUS_SPIKE_PAIR = "solo",
+    SPIKE_REPAIR_PRIORITY = true, FOCUS_SPIKE_WIN_SHARES = true,
+    FOCUS_SPIKE_UTIL_TO_AGGRO = true, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true,
+    FOCUS_SPIKE_MIN_PILLS = 6, FOCUS_SPIKE_BASE_LEAD = 2, FOCUS_SPIKE_BASE_RATIO = 1.25,
   })
 end
 
