@@ -6731,6 +6731,9 @@ do
     FOCUS_SPIKE_PILL_RULE = true, FOCUS_SPIKE_PAIR = "solo",
     SPIKE_REPAIR_PRIORITY = true, FOCUS_SPIKE_WIN_SHARES = true,
     FOCUS_SPIKE_UTIL_TO_AGGRO = true, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true,
+    -- 2 minutes: a focused spike trip is long (cross to the cluster, maybe by
+    -- a hidden route). The default 1500 (30 s) came from the reposition vote.
+    FOCUS_SPIKE_APPROVAL_TTL = 6000,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6746,6 +6749,7 @@ do
     SPIKE_REPAIR_PRIORITY = true, FOCUS_SPIKE_WIN_SHARES = true,
     FOCUS_SPIKE_UTIL_TO_AGGRO = true, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true,
     FOCUS_SPIKE_MIN_PILLS = 6, FOCUS_SPIKE_BASE_LEAD = 2, FOCUS_SPIKE_BASE_RATIO = 1.25,
+    FOCUS_SPIKE_APPROVAL_TTL = 6000,
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and
