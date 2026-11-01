@@ -1867,6 +1867,11 @@ M.FOCUS_SPIKE_ABORT_HOME_ATTACKED  = true
 -- base that was ours at the go is lost) or "tank_near" (the ballot test: an
 -- enemy tank within FOCUS_SPIKE_HOME_ATTACK_RANGE of one of our bases).
 M.FOCUS_SPIKE_HOME_ABORT_RULE      = "base_lost"
+-- When a bot on an active plan learns a hostile pill in fire range of a plan
+-- tile: "abort" ends the plan; "repick" finds one new tile for the bases that
+-- tile was to cover (same bot), or drops those bases, and aborts only when the
+-- bases left fall below FOCUS_SPIKE_DENY_FRAC of all target bases.
+M.FOCUS_SPIKE_TILE_COVERED_RULE    = "abort"
 M.FOCUS_SPIKE_BETTER_MARGIN        = 0.1      -- "better": my planned fraction beats theirs by this
 M.FOCUS_SPIKE_STDERR_LOG           = false    -- plain print() lines for the bench
 -- Bench event file: with FOCUS_SPIKE_STDERR_LOG on and this set to a file
@@ -6553,6 +6558,7 @@ do
     -- 2 minutes: a focused spike trip is long (cross to the cluster, maybe by
     -- a hidden route). The default 1500 (30 s) came from the reposition vote.
     FOCUS_SPIKE_APPROVAL_TTL = 6000,
+    FOCUS_SPIKE_TILE_COVERED_RULE = "repick",
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6569,6 +6575,7 @@ do
     FOCUS_SPIKE_UTIL_TO_AGGRO = true, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true,
     FOCUS_SPIKE_MIN_PILLS = 6, FOCUS_SPIKE_BASE_LEAD = 2, FOCUS_SPIKE_BASE_RATIO = 1.25,
     FOCUS_SPIKE_APPROVAL_TTL = 6000,
+    FOCUS_SPIKE_TILE_COVERED_RULE = "repick",
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and

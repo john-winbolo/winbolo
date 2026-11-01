@@ -583,6 +583,96 @@ do
   C.FOCUS_SPIKE_HOME_ABORT_RULE = old
 end
 
+-- -- Re-pick of a covered plan tile (FOCUS_SPIKE_TILE_COVERED_RULE) -------
+print("repick")
+do
+  terrain = {}
+  local R = C.PILL_FIRE_RANGE
+  local function dist(a, b) return math.sqrt((a.mx - b.mx) ^ 2 + (a.my - b.my) ^ 2) end
+  local function sent(s, pat)
+    for _, m in ipairs(s._repo_outbox or {}) do if m:match(pat) then return m end end
+    return nil
+  end
+  local function active_on(w, tiles, planned, total)
+    local s = new_state(1000)
+    FV.st(s).active = { id = 5, t_go = 900, from = 0, tiles = tiles, planned = planned,
+                        total = total, dropped = 0 }
+    return s
+  end
+  local old_rule = C.FOCUS_SPIKE_TILE_COVERED_RULE
+  C.FOCUS_SPIKE_TILE_COVERED_RULE = "repick"
+  -- One hostile base, the plan tile east of it, a hostile pill learned east of the tile.
+  local w = new_world()
+  add_base(w, 0, 100, 100, "hostile")
+  add_pill(w, 20, 108, 100, "hostile")
+  local s = active_on(w, { { mx = 104, my = 100, pn = 0 } }, 1, 1)
+  FV.update(s, w, info_at(0, 60, 100, 1), 1000, function() end)
+  local A = s._fs.active
+  local t = A and A.tiles[1]
+  check("repick: plan still active", A ~= nil)
+  check("repick: tile moved", t and not (t.mx == 104 and t.my == 100), t and (t.mx .. "," .. t.my))
+  check("repick: new tile covers the base", t and dist(t, { mx = 100, my = 100 }) <= R)
+  check("repick: new tile out of the hostile pill range", t and dist(t, { mx = 108, my = 100 }) > R)
+  check("repick: same bot", t and t.pn == 0)
+  check("repick: one fsu message with old and new tile", sent(s, "^/info fsu 5 6864 %x%x%x%x 0$") ~= nil
+        and not sent(s, "FFFF"), table.concat(s._repo_outbox or {}, " | "))
+  -- The other bot applies the message.
+  local A2 = { id = 5, tiles = { { mx = 104, my = 100, pn = 0 } }, dropped = 0 }
+  local u = FV.parse(sent(s, "^/info fsu"))
+  FV.apply_repick(A2, u.old, u.new, u.ndrop, 0, info_at(1, 0, 0, 0), 1000)
+  check("repick rx: other bot has the same tile", A2.tiles[1].mx == t.mx and A2.tiles[1].my == t.my)
+  -- Drop: pills on four sides of the base, every cover tile is in their range.
+  local wd = new_world()
+  add_base(wd, 0, 100, 100, "hostile")
+  add_pill(wd, 20, 101, 100, "hostile"); add_pill(wd, 21, 99, 100, "hostile")
+  add_pill(wd, 22, 100, 101, "hostile"); add_pill(wd, 23, 100, 99, "hostile")
+  local sd = active_on(wd, { { mx = 104, my = 100, pn = 0 } }, 4, 4)
+  FV.update(sd, wd, info_at(0, 60, 100, 1), 1000, function() end)
+  local Ad = sd._fs.active
+  check("drop: plan still active (3 of 4 bases left >= 0.5)", Ad ~= nil)
+  check("drop: tile dropped, base counted", Ad and Ad.tiles[1].dropped and Ad.dropped == 1, Ad and Ad.dropped)
+  check("drop: fsu with FFFF and 1 base", sent(sd, "^/info fsu 5 6864 FFFF 1$") ~= nil,
+        table.concat(sd._repo_outbox or {}, " | "))
+  check("drop: no abort sent", not sent(sd, "^/info fsa"))
+  local u2 = FV.parse(sent(sd, "^/info fsu"))
+  check("drop: parse new = nil, ndrop 1", u2 and u2.new == nil and u2.ndrop == 1)
+  -- Abort limit: the plan had 1 of 1 bases; after the drop 0 / 1 < DENY_FRAC.
+  local sa = active_on(wd, { { mx = 104, my = 100, pn = 0 } }, 1, 1)
+  FV.update(sa, wd, info_at(0, 60, 100, 1), 1000, function() end)
+  check("abort limit: plan ends", sa._fs.active == nil)
+  check("abort limit: fsa covered_frac", sent(sa, "^/info fsa 5 covered_frac$") ~= nil,
+        table.concat(sa._repo_outbox or {}, " | "))
+  -- Two bots re-pick the same tile: the lower player number wins.
+  local Ac = { id = 5, tiles = { { mx = 104, my = 100, pn = 0 } }, dropped = 0 }
+  FV.apply_repick(Ac, { mx = 104, my = 100 }, nil, 1, 2, info_at(2, 0, 0, 0), 1000)
+  check("conflict: own drop applied", Ac.tiles[1].dropped and Ac.dropped == 1)
+  FV.apply_repick(Ac, { mx = 104, my = 100 }, { mx = 93, my = 100 }, 0, 1, info_at(2, 0, 0, 0), 1001)
+  check("conflict: lower player number replaces it", not Ac.tiles[1].dropped and Ac.tiles[1].mx == 93
+        and Ac.dropped == 0, Ac.dropped)
+  FV.apply_repick(Ac, { mx = 104, my = 100 }, nil, 1, 3, info_at(2, 0, 0, 0), 1002)
+  check("conflict: higher player number ignored", Ac.tiles[1].mx == 93 and Ac.dropped == 0)
+  -- Old rule: abort at once.
+  C.FOCUS_SPIKE_TILE_COVERED_RULE = "abort"
+  local so = active_on(w, { { mx = 104, my = 100, pn = 0 } }, 1, 1)
+  FV.update(so, w, info_at(0, 60, 100, 1), 1000, function() end)
+  check("rule abort: fsa tile_covered", so._fs.active == nil and sent(so, "^/info fsa 5 tile_covered$") ~= nil)
+  C.FOCUS_SPIKE_TILE_COVERED_RULE = old_rule
+  check("presets: repick in keel_focus, _loose, _bench; default abort",
+        C.PRESETS.keel_focus.FOCUS_SPIKE_TILE_COVERED_RULE == "repick"
+        and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_TILE_COVERED_RULE == "repick"
+        and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_TILE_COVERED_RULE == "repick"
+        and C.FOCUS_SPIKE_TILE_COVERED_RULE == "abort")
+  -- home_lost names the lost base and its owners.
+  local wh = new_world()
+  add_base(wh, 3, 50, 50, "friendly")
+  local Ah = {}
+  FV.home_lost(new_state(1000), wh, Ah)
+  wh.bases[3].owner = "hostile"
+  local lost, bid, was, nowo = FV.home_lost(new_state(1000), wh, Ah)
+  check("home_lost: base 3 friendly -> hostile", lost and bid == 3 and was == "friendly" and nowo == "hostile",
+        tostring(bid) .. " " .. tostring(was) .. " " .. tostring(nowo))
+end
+
 print("state A")
 do
   local s = new_state(1000)
