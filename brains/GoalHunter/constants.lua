@@ -1787,6 +1787,17 @@ M.AGGRO_DEEP_WIN_BACK        = 0.10
 M.AGGRO_DEEP_WIN_FRONT       = 0.40
 M.AGGRO_DEEP_WIN_AGGRO       = 0.35
 M.AGGRO_DEEP_WIN_UTIL        = 0.15
+-- Utility to aggro (AGGRO_DEEP_UTIL_TO_AGGRO, 2026-11-01, Andrew: "When 'I
+-- can deep spike!' kicks in, yes, utility should be 0. Let's use those pills
+-- to attack."). At the same moment as the win shares (the base lead and pill
+-- rules pass), the live utility share becomes 0 and its share goes to aggro:
+-- with win shares on 10/40/50/0, with win shares off (normal 20/45/20/15)
+-- 20/45/35/0. A role with share 0 gets no leftover slot (PP targets_for), so
+-- the utility reserve is 0: no PLACE_HOLD_UTIL hold and no last-pill 1.5x
+-- cost. When the rules fail again, the utility share comes back. The pill
+-- rule reads the NORMAL targets, so the switch cannot turn itself off.
+-- Log line: AGGRO_DEEP_UTIL_TO_AGGRO. PRESETS.keel = false.
+M.AGGRO_DEEP_UTIL_TO_AGGRO   = true
 -- Spike care (SPIKE_REPAIR_PRIORITY). Read OUTSIDE the deep path (builder
 -- pool, the tank repair_pill pool, the spkd advert), so PRESETS.keel = false.
 -- A spike pill is one this bot placed by the deep rule (seen to land), or
@@ -5856,6 +5867,9 @@ M.PRESETS = {
     -- 2026-11-01: deep aggro placement (enemy-base tiles, ebase/depth terms,
     -- long builder send). KEEL scores aggro tiles like any other tile.
     PILL_PLACE_AGGRO_DEEP         = false,
+    -- 2026-11-01: utility to aggro while the deep spike rules pass. KEEL
+    -- keeps its utility share.
+    AGGRO_DEEP_UTIL_TO_AGGRO      = false,
     -- 2026-11-01: spike care (builder pool bonus, wider repair reach, tank
     -- repair discount, spkd advert). KEEL repairs spike pills like any pill.
     SPIKE_REPAIR_PRIORITY         = false,
@@ -6420,9 +6434,11 @@ M.PRESETS = {
 -- cfg= (a second one with the same key replaces the first). These two carry
 -- keel in full, so a variant is one preset plus at most one cfg=:
 --   keel_spike      keel + REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50 + every deep
---                   spike rule, spike care and the win shares on.
+--                   spike rule, spike care, the win shares and utility to
+--                   aggro on.
 --   keel_spike_raw  keel + REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50 + deep
---                   placement with no rule, no pair, no care, no win shares.
+--                   placement with no rule, no pair, no care, no win shares,
+--                   no utility to aggro.
 --   keel_spike_loose  keel_spike with easier base and pill rules: team
 --                   pills >= 6 (not 8), base lead >= 2 (not 3), ratio 1.25
 --                   (not 1.5). The front-at-target part is the same.
@@ -6439,16 +6455,19 @@ do
     PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = true,
     AGGRO_DEEP_PILL_GATE = true, AGGRO_DEEP_PAIR = "solo",
     SPIKE_REPAIR_PRIORITY = true, AGGRO_DEEP_WIN_SHARES = true,
+    AGGRO_DEEP_UTIL_TO_AGGRO = true,
   })
   M.PRESETS.keel_spike_raw = keel_plus({
     PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = false,
     AGGRO_DEEP_PILL_GATE = false, AGGRO_DEEP_PAIR = "off",
     SPIKE_REPAIR_PRIORITY = false, AGGRO_DEEP_WIN_SHARES = false,
+    AGGRO_DEEP_UTIL_TO_AGGRO = false,
   })
   M.PRESETS.keel_spike_loose = keel_plus({
     PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = true,
     AGGRO_DEEP_PILL_GATE = true, AGGRO_DEEP_PAIR = "solo",
     SPIKE_REPAIR_PRIORITY = true, AGGRO_DEEP_WIN_SHARES = true,
+    AGGRO_DEEP_UTIL_TO_AGGRO = true,
     AGGRO_DEEP_MIN_PILLS = 6, AGGRO_DEEP_BASE_LEAD = 2, AGGRO_DEEP_BASE_RATIO = 1.25,
   })
 end
