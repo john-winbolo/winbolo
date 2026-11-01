@@ -1334,6 +1334,7 @@ function M.ballot(state, world, info, prop, now)
   if M.too_risky(d) then return "no", "defended", d end
   local mine = M.plan(state, world, info, now)
   F.plan = mine
+  if BRAIN_DEBUG_MODE then require("focus_viz").snapshot(F, world, pills_of(world, false)) end
   if not cluster_rule() and mine.pass and prop.total > 0
      and mine.frac > (prop.planned / prop.total) + C.FOCUS_SPIKE_BETTER_MARGIN then
     return "no", "better"
@@ -1410,6 +1411,7 @@ local function start_active(state, F, id, tiles, now, from, info)
                cluster = vi and vi.cluster, bases = vi and vi.bases }
   F.votes = nil
   F.open, F.voting = nil, nil
+  if BRAIN_DEBUG_MODE then require("focus_viz").note(F, "go", { id = id, tiles = tiles, t = now }) end
   local mine = 0
   for _, t in ipairs(tiles) do if t.pn == info.player_number then mine = mine + 1 end end
   print2(string.format("FOCUS_SPIKE_ACTIVE t=%d on id=%d from p%d tiles=%d mine=%d ttl=%d",
@@ -1469,6 +1471,7 @@ local function end_active(state, F, now, why, info)
   errline(string.format("FOCUS_SPIKE end t=%d p%d id=%d why=%s placed=%d tiles=%d after=%d dropped=%d bases_dropped=%d%s",
     now, info and info.player_number or -1, A.id, why, placed, #A.tiles, now - A.t_go, dropped,
     A.dropped or 0, M.cluster_text(A)))
+  if BRAIN_DEBUG_MODE then require("focus_viz").note(F, "end", { id = A.id, why = why, t = now }) end
   F.active = nil
 end
 
@@ -1525,6 +1528,15 @@ local function handle_rx(state, F, world, info, now, care_tag)
   local me = info.player_number
   for _, m in ipairs(rx) do
     local v = M.parse(m.text)
+    if BRAIN_DEBUG_MODE and v and m.from ~= me then
+      local FZ = require("focus_viz")
+      if v.verb == "fsy" or v.verb == "fsn" then
+        FZ.note(F, "ballot", { id = v.id, pn = m.from, yes = v.verb == "fsy", pledge = v.pledge or 0,
+                               eta = v.eta, reason = v.reason })
+      elseif v.verb == "fsr" then
+        FZ.note(F, "result", { id = v.id, pass = v.pass, why = v.reason, t = now })
+      end
+    end
     if v and m.from ~= me then
       if v.verb == "fso" then
         print2(string.format("FOCUS_SPIKE_VOTE t=%d rx open id=%d from p%d need=%d planned %d/%d label=%s tiles=%d",
@@ -1544,6 +1556,16 @@ local function handle_rx(state, F, world, info, now, care_tag)
           F.votes = { [v.id] = { planned = v.planned, total = v.total, cluster = v.cluster,
                                  bases = v.bases } }
           local yn, a, b = M.ballot(state, world, info, v, now)
+          if BRAIN_DEBUG_MODE then
+            local FZ = require("focus_viz")
+            FZ.note(F, "open", { id = v.id, from = m.from, me = me, t = now, need = v.need,
+                                 tiles = v.tiles, cluster = v.cluster, bases = v.bases,
+                                 bots = M.team_bots(info) })
+            FZ.note(F, "ballot", { id = v.id, pn = m.from, yes = true, proposer = true })
+            FZ.note(F, "ballot", { id = v.id, pn = me, yes = yn == "yes",
+                                   pledge = yn == "yes" and a or 0, eta = yn == "yes" and b or nil,
+                                   reason = yn ~= "yes" and a or nil, armour = info.armour })
+          end
           if yn == "yes" then
             send(state, string.format("/info fsy %d %d %d", v.id, a, b))
           else
@@ -1598,6 +1620,10 @@ local function resolve_open(state, F, info, now)
   errline(string.format("FOCUS_SPIKE result t=%d p%d id=%d %s why=%s yes=%d bots=%d pledged=%d need=%d label=%s no=%s",
     now, info.player_number or -1, O.id, pass and "pass" or "fail", why, yes, #O.bots,
     pledged, O.need, O.label, table.concat(reasons, ",")))
+  if BRAIN_DEBUG_MODE then
+    require("focus_viz").note(F, "result", { id = O.id, pass = pass, why = why, t = now, yes = yes,
+                                             pledged = pledged, nbots = #O.bots, reasons = reasons })
+  end
   if not pass then
     if why ~= "better" then cooldown(F, now, why) end
     return
@@ -1608,6 +1634,9 @@ local function resolve_open(state, F, info, now)
   end
   local asg = M.assign(O.tiles, cands)
   if not asg then
+    if BRAIN_DEBUG_MODE then
+      require("focus_viz").note(F, "end", { id = O.id, why = "no_assignment", t = now })
+    end
     cooldown(F, now, "pledge")
     return
   end
@@ -1842,6 +1871,7 @@ function M.update(state, world, info, now, care_tag)
   if F.active or F.open or F.voting or now < F.cool_until then return end
   local P = M.plan(state, world, info, now)
   F.plan = P
+  if BRAIN_DEBUG_MODE then require("focus_viz").snapshot(F, world, pills_of(world, false)) end
   local key = string.format("%s:%s:%d:%d:%d:%s", P.why, P.label, P.planned, P.total, P.need,
                             enc_tiles(P.tiles))
   if F.plan_key ~= key then
@@ -1880,6 +1910,12 @@ function M.update(state, world, info, now, care_tag)
     P.risk and string.format(" risk=%.2f spot=%.2f route=%.2f detour=%.2f tanks=%.2f credit=%.2f",
       P.risk.total, P.risk.spot or 0, P.risk.route or 0, P.risk.detour or 0, P.risk.tanks or 0,
       P.risk.credit or 0) or ""))
+  if BRAIN_DEBUG_MODE then
+    local FZ = require("focus_viz")
+    FZ.note(F, "open", { id = id, from = me, me = me, t = now, need = P.need, tiles = P.tiles,
+                         cluster = P.cluster, bases = P.bases, bots = bots })
+    FZ.note(F, "ballot", { id = id, pn = me, yes = true, pledge = F.open.pledge, armour = info.armour })
+  end
   -- A team of one bot resolves at once.
   if #bots <= 1 then resolve_open(state, F, info, now) end
 end
