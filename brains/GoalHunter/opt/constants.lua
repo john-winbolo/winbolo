@@ -6354,6 +6354,22 @@ M.PRESETS = {
   turtle = {
     PILL_PLACE_TURTLE = true,
   },
+  -- Deep spike bench parts (2026-11-01 night). BRAIN_INIT_ARG holds 127
+  -- characters, too few for preset=keel plus five or six cfg= tokens, so a
+  -- bench names one of these after keel ("preset=keel;preset=spike;...")
+  -- and adds at most one cfg= to change a single knob.
+  -- spike: every deep spike rule on, spike care on, win shares on.
+  spike = {
+    PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = true,
+    AGGRO_DEEP_PILL_GATE = true, AGGRO_DEEP_PAIR = "solo",
+    SPIKE_REPAIR_PRIORITY = true, AGGRO_DEEP_WIN_SHARES = true,
+  },
+  -- spike_raw: deep placement with no rule, no pair, no care, no win shares.
+  spike_raw = {
+    PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = false,
+    AGGRO_DEEP_PILL_GATE = false, AGGRO_DEEP_PAIR = "off",
+    SPIKE_REPAIR_PRIORITY = false, AGGRO_DEEP_WIN_SHARES = false,
+  },
   -- joust: the Joust scenario's bots (2026-10-01). Joust hands every bot
   -- this preset with game.bot_init, so the knobs touch no other game.
   joust = {
