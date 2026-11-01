@@ -331,6 +331,28 @@ local function tag(S, mx, my, t, src)
   S.care[k] = { mx = mx, my = my, t = t, src = src }
 end
 
+-- Care by range (C.FOCUS_SPIKE_CARE_BY_RANGE, 2026-11-01, Andrew: "just make
+-- any pill that's in range of an enemy base have that discount"). The first
+-- hostile base (lowest id) within PILL_FIRE_RANGE (euclid, inclusive) of
+-- (mx,my), in this bot's own world model, and its distance; or nil.
+local function hostile_base_in_range(world, mx, my)
+  local R = C.PILL_FIRE_RANGE
+  local ids = {}
+  for id in pairs(world and world.bases or {}) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local b = world.bases[id]
+    if b.owner == "hostile" and b.mx and not (b.mx == 0 and b.my == 0) then
+      local d = math.sqrt((b.mx - mx) ^ 2 + (b.my - my) ^ 2)
+      if d <= R + 1e-9 then return id, b, d end
+    end
+  end
+  return nil
+end
+M.hostile_base_in_range = hostile_base_in_range
+
+local function by_range() return C.FOCUS_SPIKE_CARE_BY_RANGE == true end
+
 function M.care_at(state, mx, my, now)
   if not C.SPIKE_REPAIR_PRIORITY then return nil end
   local S = state._spike
@@ -338,6 +360,9 @@ function M.care_at(state, mx, my, now)
   local e = S.care[tkey(mx, my)]
   if not e then return nil end
   if (now - e.t) > C.SPIKE_CARE_TICKS then return nil end
+  -- FOCUS_SPIKE_CARE_BY_RANGE: the update prunes a tag with no hostile base
+  -- in range, so a tag here has one. The pill class does not count.
+  if by_range() then return e end
   -- A plan tile keeps care for its time whatever its category.
   if e.src ~= "plan" and PP.classify(mx, my, false) ~= "aggro" then return nil end
   return e
@@ -353,7 +378,9 @@ function M.defend_mult(state, mx, my, now)
   local S = state and state._spike
   if not S then return nil end
   local e = S.care[tkey(mx, my)]
-  if not e or e.src ~= "plan" then return nil end
+  -- FOCUS_SPIKE_CARE_BY_RANGE: a pill of ours in range of a hostile base
+  -- (care src "range") gets the discount too.
+  if not e or not (e.src == "plan" or (e.src == "range" and by_range())) then return nil end
   if (now - e.t) > C.FOCUS_SPIKE_DEFEND_TICKS then return nil end
   return 1 - disc
 end
@@ -511,6 +538,55 @@ local function scan_seen(S, world, now)
   end
 end
 
+-- FOCUS_SPIKE_CARE_BY_RANGE: every live pill of ours (not in a tank) with a
+-- hostile base in range gets a care tag (src "range") when it comes in range;
+-- a tag of any src goes when no hostile base is in range (for example after
+-- we take the base). The time limits stay: a range tag is not given again
+-- while the pill stays in range (S.range_on), only after it leaves range or
+-- the pill goes. One SPIKE_CARE line (and one FOCUS_SPIKE care event line)
+-- per gain or loss.
+local function care_by_range(S, world, info, now)
+  S.range_on = S.range_on or {}
+  local live = {}
+  local ids = {}
+  for id in pairs(world.pills or {}) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local p = world.pills[id]
+    if not p.in_tank and p.mx and (p.owner == "friendly" or p.owner == "allied") then
+      local k = tkey(p.mx, p.my)
+      local bid, b, d = hostile_base_in_range(world, p.mx, p.my)
+      if bid then
+        live[k] = true
+        if (p.health or 0) > 0 and not S.range_on[k] then
+          S.range_on[k] = true
+          if not S.care[k] then
+            S.care[k] = { mx = p.mx, my = p.my, t = now, src = "range" }
+            local s = string.format("SPIKE_CARE t=%d gain (%d,%d) src=range pill %d hostile base %d at (%d,%d) d=%.2f <= %d care %dt",
+              now, p.mx, p.my, id, bid, b.mx, b.my, d, C.PILL_FIRE_RANGE, C.SPIKE_CARE_TICKS)
+            print2(s)
+            FV.errline(string.format("FOCUS_SPIKE care t=%d p%d gain tile=%d,%d pill=%d base=%d d=%.2f",
+              now, info and info.player_number or -1, p.mx, p.my, id, bid, d))
+          end
+        end
+      end
+    end
+  end
+  for k in pairs(S.range_on) do
+    if not live[k] then S.range_on[k] = nil end
+  end
+  for k, e in pairs(S.care) do
+    if not hostile_base_in_range(world, e.mx, e.my) then
+      S.care[k] = nil
+      print2(string.format("SPIKE_CARE t=%d lose (%d,%d) src=%s no hostile base within %d",
+        now, e.mx, e.my, tostring(e.src), C.PILL_FIRE_RANGE))
+      FV.errline(string.format("FOCUS_SPIKE care t=%d p%d lose tile=%d,%d src=%s why=no_hostile_base",
+        now, info and info.player_number or -1, e.mx, e.my, tostring(e.src)))
+    end
+  end
+end
+M.care_by_range = care_by_range
+
 -- Ally adverts: spkd = one or two "XXYYCCCC" (tile, landing tick low 16 bits).
 local function read_adverts(S, info, now)
   local maxage = C.SPIKE_CARE_TICKS
@@ -560,8 +636,10 @@ function M.update(state, world, info, now)
     if (C.FOCUS_SPIKE_DEFEND_DISCOUNT or 0) > 0 then
       plan_age = math.max(plan_age, C.FOCUS_SPIKE_DEFEND_TICKS)
     end
+    if by_range() then care_by_range(S, world, info, now) end
     for k, e in pairs(S.care) do
-      local age = (e.src == "plan") and plan_age or C.SPIKE_CARE_TICKS
+      -- A range tag also has the defend discount: it lives as long as a plan tag.
+      local age = (e.src == "plan" or e.src == "range") and plan_age or C.SPIKE_CARE_TICKS
       if (now - e.t) > age then S.care[k] = nil end
     end
     return
@@ -586,9 +664,23 @@ function M.update(state, world, info, now)
     read_adverts(S, info, now)
   end
   -- Prune care tags: out of time, or the tile is no longer aggro.
-  for k, e in pairs(S.care) do
-    if (now - e.t) > C.SPIKE_CARE_TICKS or PP.classify(e.mx, e.my, false) ~= "aggro" then
-      S.care[k] = nil
+  -- FOCUS_SPIKE_CARE_BY_RANGE: out of time, or no hostile base in range
+  -- (care_by_range); the pill class does not count.
+  if by_range() then
+    care_by_range(S, world, info, now)
+    local range_age = C.SPIKE_CARE_TICKS
+    if (C.FOCUS_SPIKE_DEFEND_DISCOUNT or 0) > 0 then
+      range_age = math.max(range_age, C.FOCUS_SPIKE_DEFEND_TICKS)
+    end
+    for k, e in pairs(S.care) do
+      local age = (e.src == "range") and range_age or C.SPIKE_CARE_TICKS
+      if (now - e.t) > age then S.care[k] = nil end
+    end
+  else
+    for k, e in pairs(S.care) do
+      if (now - e.t) > C.SPIKE_CARE_TICKS or PP.classify(e.mx, e.my, false) ~= "aggro" then
+        S.care[k] = nil
+      end
     end
   end
   local i = 1

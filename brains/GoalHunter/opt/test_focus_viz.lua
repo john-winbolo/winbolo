@@ -213,6 +213,14 @@ check("c(b) at the base, S marked", has(tx, "c=0 S"))
 check("teammate pick marked", has(tx, "picked"))
 F.active.level = nil
 
+print("spike care marks")
+state._spike = { care = { [107 * 256 + 100] = { mx = 100, my = 107, t = 3000, src = "range" } } }
+calls = {}
+FZ.draw(state, world, { player_number = 2 }, 3100)
+tx = texts("text")
+check("care by range marked with the ticks left", has(tx, "care range " .. (C.SPIKE_CARE_TICKS - 100) .. "t"))
+state._spike = nil
+
 print("debug mode off draws nothing")
 BRAIN_DEBUG_MODE = false
 calls = {}

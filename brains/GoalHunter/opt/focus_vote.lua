@@ -97,6 +97,8 @@ local function errline(s)
   end
 end
 
+M.errline = errline
+
 local function ours(o) return o == "friendly" or o == "allied" end
 
 -- ── Team ────────────────────────────────────────────────────────────────

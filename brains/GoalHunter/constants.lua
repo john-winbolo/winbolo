@@ -1951,6 +1951,18 @@ M.SPIKE_REPAIR_BONUS         = 200
 M.SPIKE_REPAIR_MIN_MISSING   = 1
 M.SPIKE_REPAIR_LEASH         = 15
 M.SPIKE_REPAIR_TANK_DISCOUNT = 0.5
+-- Care by range (2026-11-01, Andrew: "just make any pill that's in range of
+-- an enemy base have that discount"). On: spike care (SPIKE_REPAIR_BONUS on
+-- builder repair rows, the wider SPIKE_REPAIR_LEASH, the tank repair discount
+-- and the FOCUS_SPIKE_DEFEND_DISCOUNT on defend_pill) goes to ANY live pill of
+-- ours with a hostile base within PILL_FIRE_RANGE (euclid, inclusive), as this
+-- bot knows the bases. It does not depend on the pill class. The care starts
+-- when the pill comes in range (care src "range") and keeps the normal time
+-- limits (SPIKE_CARE_TICKS; FOCUS_SPIKE_DEFEND_TICKS for the defend discount).
+-- Every care tag (also a plan tag) goes when no hostile base is in range, for
+-- example after we take the base. false = off (the default and PRESETS.keel):
+-- care needs the aggro class, as before. keel_focus, _loose and _bench on.
+M.FOCUS_SPIKE_CARE_BY_RANGE  = false
 -- Spike defend discount (2026-11-01, Andrew: "a 30% discount on defend_pill
 -- for say 120 seconds"). A pill placed on a spot of a passed focused spike
 -- plan (care src "plan": every bot of the team tags it when it sees it land)
@@ -6247,6 +6259,8 @@ M.PRESETS = {
     FOCUS_SPIKE_ADAPTIVE_SPOT      = false,
     -- 2026-11-01: no pill reservation and no levelling (no adaptive spot).
     FOCUS_SPIKE_ALL_AGGRO          = false,
+    -- 2026-11-01: spike care needs the aggro class (no care by range).
+    FOCUS_SPIKE_CARE_BY_RANGE      = false,
     -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
     -- keeps its utility share.
     FOCUS_SPIKE_UTIL_TO_AGGRO      = false,
@@ -6879,6 +6893,7 @@ do
     FOCUS_SPIKE_NEUTRAL_PILL_COVER = true,
     FOCUS_SPIKE_ADAPTIVE_SPOT = true,
     FOCUS_SPIKE_ALL_AGGRO = true,
+    FOCUS_SPIKE_CARE_BY_RANGE = true,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6900,6 +6915,7 @@ do
     FOCUS_SPIKE_NEUTRAL_PILL_COVER = true,
     FOCUS_SPIKE_ADAPTIVE_SPOT = true,
     FOCUS_SPIKE_ALL_AGGRO = true,
+    FOCUS_SPIKE_CARE_BY_RANGE = true,
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and

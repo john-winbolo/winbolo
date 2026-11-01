@@ -435,8 +435,31 @@ local function draw_active(F, world)
   end
 end
 
+-- Spike care tags of this bot (spike.lua S.care) on our pills: a ring and
+-- "care <src>" (src range = FOCUS_SPIKE_CARE_BY_RANGE, a hostile base within
+-- PILL_FIRE_RANGE; plan = a plan spike pill; own / seen / ally), with the
+-- ticks of care left (SPIKE_CARE_TICKS).
+local function draw_care(state, now)
+  local S = state and state._spike
+  if not S or not S.care then return end
+  local ID = "focused_spike_active"
+  local keys = {}
+  for k in pairs(S.care) do keys[#keys + 1] = k end
+  table.sort(keys)
+  for _, k in ipairs(keys) do
+    local e = S.care[k]
+    local r, g, b = 120, 255, 200
+    if e.src == "range" then r, g, b = 255, 210, 80 end
+    viz.circle(ID, e.mx + 0.5, e.my + 0.5, 0.9, r, g, b, 230, false, false)
+    local left = C.SPIKE_CARE_TICKS - ((now or 0) - e.t)
+    viz.text(ID, e.mx + 0.5, e.my + 1.5, string.format("care %s %s", tostring(e.src),
+      left > 0 and string.format("%dt", left) or "ended"), "center", r, g, b, 235, 0.30)
+  end
+end
+
 function M.draw(state, world, info, now)
   local F = state and state._fs
+  if on("focused_spike_active") then draw_care(state, now) end
   if not F then return end
   local P = F.plan
   if on("focused_spike_clusters") then draw_clusters(F, world, P) end
