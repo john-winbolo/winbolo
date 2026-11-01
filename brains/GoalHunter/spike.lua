@@ -14,6 +14,7 @@ local bit = require('bitcompat')
 --   on_dispatch  init.lua PLACE_TRIP_SET, when the dispatched goal carries
 --                _spike_role.
 --   update()     once per tick from init.lua, before the trip lifecycle:
+--                switches the win shares (update_win, AGGRO_DEEP_WIN_SHARES),
 --                watches landings, moves the pair through its phases, ends a
 --                failed pair (care on the first pill, area cooldown), reads
 --                ally spkd adverts and new friendly pills on aggro tiles.
@@ -97,6 +98,59 @@ function M.team_pills(world, info, pf_counts)
 end
 
 -- ── The rules ────────────────────────────────────────────────────────────
+-- The base lead rule and the pill rule. Answers why ("ok", "base_lead",
+-- "pills", "front") and the numbers behind it. A rule whose knob is off
+-- passes. The front test reads the NORMAL targets (PP.normal_targets), so the
+-- win shares below do not change the answer they are switched by.
+function M.rules(world, info, pf_counts)
+  local why = "ok"
+  local ours, theirs = M.base_counts(world)
+  local total, deployed, own, ally_c = M.team_pills(world, info, pf_counts)
+  local ftgt = PP.normal_targets(total).front
+  local need_ours = theirs * C.AGGRO_DEEP_BASE_RATIO
+  if C.AGGRO_DEEP_BASE_GATE
+     and (ours < need_ours or (ours - theirs) < C.AGGRO_DEEP_BASE_LEAD) then
+    why = "base_lead"
+  elseif C.AGGRO_DEEP_PILL_GATE and total < C.AGGRO_DEEP_MIN_PILLS then
+    why = "pills"
+  elseif C.AGGRO_DEEP_PILL_GATE and (pf_counts.front or 0) < ftgt then
+    why = "front"
+  end
+  return why, { ours = ours, theirs = theirs, need_ours = need_ours,
+                total = total, deployed = deployed, own = own, ally_c = ally_c,
+                ftgt = ftgt }
+end
+
+-- Win shares (C.AGGRO_DEEP_WIN_SHARES): the portfolio targets switch to the
+-- AGGRO_DEEP_WIN_* shares while M.rules passes, and back when it stops (or
+-- when a knob turns off). One AGGRO_DEEP_WIN_SHARES line per switch.
+function M.update_win(state, world, info, now)
+  local want = false
+  local why, r, pf = "off", nil, nil
+  if C.PILL_PLACE_AGGRO_DEEP and C.AGGRO_DEEP_WIN_SHARES
+     and C.PILL_PLACE_TURTLE ~= true then
+    pf = PP.counts(world, now)
+    why, r = M.rules(world, info, pf)
+    want = (why == "ok")
+  end
+  if PP.set_win(want) then
+    local n = PP.normal
+    if r then
+      print2(string.format(
+        "AGGRO_DEEP_WIN_SHARES t=%d %s why=%s bases ours=%d theirs=%d (rule %s) pills team=%d (need >= %d) front=%d/%d normal target (rule %s) -> %s (normal %d/%d/%d/%d %s)",
+        now, want and "on" or "off", why, r.ours, r.theirs,
+        C.AGGRO_DEEP_BASE_GATE and "on" or "off", r.total, C.AGGRO_DEEP_MIN_PILLS,
+        pf.front or 0, r.ftgt, C.AGGRO_DEEP_PILL_GATE and "on" or "off",
+        PP.targets_label(),
+        math.floor(n.back * 100 + 0.5), math.floor(n.front * 100 + 0.5),
+        math.floor(n.aggro * 100 + 0.5), math.floor(n.util * 100 + 0.5), n.source))
+    else
+      print2(string.format("AGGRO_DEEP_WIN_SHARES t=%d off why=knob_off -> %s",
+        now, PP.targets_label()))
+    end
+  end
+end
+
 -- Returns false (no deep spike) or a table { role = ... }.
 -- quiet: no AGGRO_DEEP_GATE line (harvest re-score, heatmap overlay).
 function M.check(state, world, info, pf_counts, quiet)
@@ -116,19 +170,10 @@ function M.check(state, world, info, pf_counts, quiet)
     end
     return false
   end
-  local why = "ok"
-  local ours, theirs = M.base_counts(world)
-  local total, deployed, own, ally_c = M.team_pills(world, info, pf_counts)
-  local ftgt = PP.targets(total).front
-  local need_ours = theirs * C.AGGRO_DEEP_BASE_RATIO
-  if C.AGGRO_DEEP_BASE_GATE
-     and (ours < need_ours or (ours - theirs) < C.AGGRO_DEEP_BASE_LEAD) then
-    why = "base_lead"
-  elseif C.AGGRO_DEEP_PILL_GATE and total < C.AGGRO_DEEP_MIN_PILLS then
-    why = "pills"
-  elseif C.AGGRO_DEEP_PILL_GATE and (pf_counts.front or 0) < ftgt then
-    why = "front"
-  elseif paired and (carried < 2
+  local why, r = M.rules(world, info, pf_counts)
+  local ours, theirs, need_ours = r.ours, r.theirs, r.need_ours
+  local total, deployed, own, ally_c, ftgt = r.total, r.deployed, r.own, r.ally_c, r.ftgt
+  if why == "ok" and paired and (carried < 2
          or (info.trees or 0) < 2 * (C.PILL_PLACE_TREE_COST or 4)) then
     why = "no_second_pill"
   end
@@ -138,13 +183,13 @@ function M.check(state, world, info, pf_counts, quiet)
     if S.log_key ~= key then
       S.log_key = key
       print2(string.format(
-        "AGGRO_DEEP_GATE t=%d result=%s why=%s bases ours=%d theirs=%d (need ours >= theirs x %.1f = %.1f and lead %d >= %d; rule %s) pills team=%d = deployed %d + own carried %d + ally carried %d (need >= %d) front=%d/%d target (rule %s) pair=%s carried=%d trees=%d (pair needs 2 pills, %d trees)",
+        "AGGRO_DEEP_GATE t=%d result=%s why=%s bases ours=%d theirs=%d (need ours >= theirs x %.1f = %.1f and lead %d >= %d; rule %s) pills team=%d = deployed %d + own carried %d + ally carried %d (need >= %d) front=%d/%d normal target (rule %s) pair=%s carried=%d trees=%d (pair needs 2 pills, %d trees) %s",
         now, role, why, ours, theirs, C.AGGRO_DEEP_BASE_RATIO, need_ours,
         ours - theirs, C.AGGRO_DEEP_BASE_LEAD, C.AGGRO_DEEP_BASE_GATE and "on" or "off",
         total, deployed, own, ally_c, C.AGGRO_DEEP_MIN_PILLS,
         pf_counts.front or 0, ftgt, C.AGGRO_DEEP_PILL_GATE and "on" or "off",
         tostring(C.AGGRO_DEEP_PAIR), carried, info.trees or 0,
-        2 * (C.PILL_PLACE_TREE_COST or 4)))
+        2 * (C.PILL_PLACE_TREE_COST or 4), PP.targets_label()))
     end
   end
   if why ~= "ok" then return false end
@@ -399,6 +444,7 @@ local function read_adverts(S, info, now)
 end
 
 function M.update(state, world, info, now)
+  if C.PILL_PLACE_AGGRO_DEEP or PP.win_on then M.update_win(state, world, info, now) end
   if not C.PILL_PLACE_AGGRO_DEEP and not C.SPIKE_REPAIR_PRIORITY then return end
   local S = st(state)
   -- Watches: a dispatched spike that lands (late landings too).

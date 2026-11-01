@@ -1745,7 +1745,7 @@ M.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT  = 0.1   -- per tile from the tank (nor
 --    ours >= theirs x BASE_RATIO and ours - theirs >= BASE_LEAD.
 --  * Pills (AGGRO_DEEP_PILL_GATE): team pills (our deployed live pills +
 --    this tank's carried + pills allies advertise as carried) >= MIN_PILLS,
---    and the front role at its portfolio target (PP.targets).
+--    and the front role at its NORMAL portfolio target (PP.normal_targets).
 --  * Pair (AGGRO_DEEP_PAIR): "off" = one deep spike per pill (the first
 --    version of this rule). "solo" = deep only with a second pill ready:
 --    this tank carries >= 2 pills and wood for both (2 x PILL_PLACE_TREE_COST).
@@ -1772,6 +1772,21 @@ M.SPIKE_FAIL_COOLDOWN        = 1500     -- ticks with no deep spike near a faile
 M.SPIKE_FAIL_COOLDOWN_RADIUS = 16       -- tiles (Manhattan) around the first spike
 M.SPIKE_SYNC_TICKS           = 50       -- reserved for "team" (not built)
 M.SPIKE_JOIN_TIMEOUT         = 750      -- reserved for "team" (not built)
+-- Win shares (AGGRO_DEEP_WIN_SHARES, 2026-11-01 night, Andrew: "up the
+-- proportion of aggressive pills in those 'we could win if we spiked'
+-- situations"). While the base lead rule and the pill rule both pass (a rule
+-- whose knob is off counts as a pass, as in spike.check), the portfolio
+-- targets (PP.targets) become WIN_BACK / WIN_FRONT / WIN_AGGRO / WIN_UTIL,
+-- label source "win". When they stop passing, the normal shares come back
+-- (the defaults, or the "portfolio=" token's shares). The pill rule always
+-- reads the NORMAL front target, so the switch cannot turn itself off.
+-- Log line: AGGRO_DEEP_WIN_SHARES. Read only while PILL_PLACE_AGGRO_DEEP is
+-- on, so PRESETS.keel needs no entry.
+M.AGGRO_DEEP_WIN_SHARES      = true
+M.AGGRO_DEEP_WIN_BACK        = 0.10
+M.AGGRO_DEEP_WIN_FRONT       = 0.40
+M.AGGRO_DEEP_WIN_AGGRO       = 0.35
+M.AGGRO_DEEP_WIN_UTIL        = 0.15
 -- Spike care (SPIKE_REPAIR_PRIORITY). Read OUTSIDE the deep path (builder
 -- pool, the tank repair_pill pool, the spkd advert), so PRESETS.keel = false.
 -- A spike pill is one this bot placed by the deep rule (seen to land), or
