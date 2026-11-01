@@ -1026,5 +1026,73 @@ do
   C.FOCUS_SPIKE_RULE, C.FOCUS_SPIKE_TILE_COVERED_RULE = old_rule, old_tc
 end
 
+-- ── Care by range (FOCUS_SPIKE_CARE_BY_RANGE) ────────────────────────────
+print("care by range")
+do
+  local old = { C.FOCUS_SPIKE_CARE_BY_RANGE, C.SPIKE_REPAIR_PRIORITY, C.FOCUS_SPIKE_DEFEND_DISCOUNT,
+                C.FOCUS_SPIKE_DEFEND_TICKS, PP.classify, C.FOCUS_SPIKE_STDERR_LOG }
+  check("care-by-range knob: default off", old[1] == false)
+  C.FOCUS_SPIKE_CARE_BY_RANGE, C.SPIKE_REPAIR_PRIORITY = true, true
+  C.FOCUS_SPIKE_DEFEND_DISCOUNT, C.FOCUS_SPIKE_DEFEND_TICKS = 0.30, 6000
+  C.FOCUS_SPIKE_STDERR_LOG = false
+  PP.classify = function() return "front" end   -- not aggro: the class must not count
+  local w = new_world()
+  add_base(w, 0, 100, 100, "hostile")
+  add_pill(w, 1, 100, 107, "friendly", 15)      -- 7 tiles from base 0
+  add_pill(w, 2, 130, 130, "friendly", 15)      -- no hostile base in range
+  add_pill(w, 3, 106, 106, "friendly", 15)      -- 8.49 tiles: out of range
+  add_pill(w, 4, 100, 92, "friendly", 15)       -- 8 tiles: in range (inclusive)
+  local s = { _spike = { care = {}, watch = {}, cool = {} } }
+  local inf = { player_number = 2 }
+  SP.care_by_range(s._spike, w, inf, 1000)
+  check("7 tiles from a hostile base: care (src range)",
+    SP.care_at(s, 100, 107, 1000) ~= nil and s._spike.care[107 * 256 + 100].src == "range")
+  check("the pill class does not count (classify says front)", SP.care_at(s, 100, 107, 1000) ~= nil)
+  check("8 tiles (inclusive): care", SP.care_at(s, 100, 92, 1000) ~= nil)
+  check("no hostile base in range: no care", SP.care_at(s, 130, 130, 1000) == nil)
+  check("8.49 tiles: no care", SP.care_at(s, 106, 106, 1000) == nil)
+  check("defend discount x0.70", math.abs((SP.defend_mult(s, 100, 107, 1000) or 0) - 0.70) < 1e-9,
+    SP.defend_mult(s, 100, 107, 1000))
+  check("tank repair discount", SP.tank_mult(s, 100, 107, 1000) ~= nil)
+  check("care keeps SPIKE_CARE_TICKS", SP.care_at(s, 100, 107, 1000 + C.SPIKE_CARE_TICKS + 1) == nil)
+  check("defend discount keeps FOCUS_SPIKE_DEFEND_TICKS",
+    SP.defend_mult(s, 100, 107, 1000 + C.FOCUS_SPIKE_DEFEND_TICKS) ~= nil
+    and SP.defend_mult(s, 100, 107, 1000 + C.FOCUS_SPIKE_DEFEND_TICKS + 1) == nil)
+  -- Still in range: the tag is not given again (the time limit stays).
+  s._spike.care[107 * 256 + 100] = nil
+  SP.care_by_range(s._spike, w, inf, 1100)
+  check("still in range: no new tag", s._spike.care[107 * 256 + 100] == nil)
+  -- A plan tag with a hostile base in range stays.
+  s._spike.care[105 * 256 + 101] = { mx = 101, my = 105, t = 1000, src = "plan" }
+  SP.care_by_range(s._spike, w, inf, 1200)
+  check("plan tag in range stays", s._spike.care[105 * 256 + 101] ~= nil)
+  -- We take the base: every tag goes.
+  w.bases[0].owner = "friendly"
+  SP.care_by_range(s._spike, w, inf, 1300)
+  check("base becomes ours: the tags go", next(s._spike.care) == nil)
+  check("base becomes ours: no care", SP.care_at(s, 100, 92, 1300) == nil)
+  -- The base is lost again: the pill comes in range again and gets care.
+  w.bases[0].owner = "hostile"
+  SP.care_by_range(s._spike, w, inf, 1400)
+  check("back in range: care again", SP.care_at(s, 100, 107, 1400) ~= nil)
+  -- Knob off: the old rules (the class counts, range tags get no discount).
+  C.FOCUS_SPIKE_CARE_BY_RANGE = false
+  check("knob off: a non-plan tag on a front tile has no care", SP.care_at(s, 100, 107, 1400) == nil)
+  check("knob off: a range tag has no defend discount", SP.defend_mult(s, 100, 107, 1400) == nil)
+  PP.classify = function() return "aggro" end
+  check("knob off: an aggro tile keeps care", SP.care_at(s, 100, 107, 1400) ~= nil)
+  s._spike.care[50 * 256 + 50] = { mx = 50, my = 50, t = 1400, src = "plan" }
+  check("knob off: a plan tag keeps the defend discount out of range",
+    SP.defend_mult(s, 50, 50, 1400) ~= nil)
+  check("care-by-range knob: PRESETS.keel off, keel_focus / _loose / _bench on",
+    C.PRESETS.keel.FOCUS_SPIKE_CARE_BY_RANGE == false
+    and C.PRESETS.keel_focus.FOCUS_SPIKE_CARE_BY_RANGE == true
+    and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_CARE_BY_RANGE == true
+    and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_CARE_BY_RANGE == true)
+  C.FOCUS_SPIKE_CARE_BY_RANGE, C.SPIKE_REPAIR_PRIORITY, C.FOCUS_SPIKE_DEFEND_DISCOUNT,
+    C.FOCUS_SPIKE_DEFEND_TICKS, PP.classify, C.FOCUS_SPIKE_STDERR_LOG =
+    old[1], old[2], old[3], old[4], old[5], old[6]
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
