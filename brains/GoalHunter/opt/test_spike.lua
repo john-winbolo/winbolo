@@ -75,6 +75,7 @@ C.PILL_PLACE_TURTLE     = false
 local WIN_DEFAULT = C.AGGRO_DEEP_WIN_SHARES
 C.AGGRO_DEEP_WIN_SHARES = false   -- section 6b turns it on; the rest test the shares as set
 local U2A_DEFAULT = C.AGGRO_DEEP_UTIL_TO_AGGRO
+local NAE_DEFAULT = C.AGGRO_DEEP_NEUTRAL_AS_ENEMY
 C.AGGRO_DEEP_UTIL_TO_AGGRO = false  -- section 6d turns it on
 local DEF_T = { PP.TARGET_BACK, PP.TARGET_FRONT, PP.TARGET_AGGRO, PP.TARGET_UTIL }
 
@@ -766,6 +767,68 @@ do
   PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
 end
 
+-- ── 6e. neutral as enemy (AGGRO_DEEP_NEUTRAL_AS_ENEMY) ───────────────────
+print("neutral as enemy")
+do
+  local saved = C.AGGRO_DEEP_NEUTRAL_AS_ENEMY
+  C.AGGRO_DEEP_BASE_GATE = true
+  -- world.bases is keyed by base id (world.lua). Mixed owners: 2 friendly,
+  -- 1 allied, 2 hostile, 2 neutral, 1 record with no owner; the map has
+  -- ids 0..9, so ids 8 and 9 are on the map with no record (not seen yet).
+  local function mixed()
+    local b = {}
+    b[0] = base(200, 20, "friendly"); b[1] = base(202, 20, "friendly")
+    b[2] = base(204, 20, "allied")
+    b[3] = base(10, 240, "hostile");  b[4] = base(12, 240, "hostile")
+    b[5] = base(14, 240, "neutral");  b[6] = base(16, 240, "neutral")
+    b[7] = { mx = 18, my = 240 }      -- a record with no owner field
+    return { bases = b, pills = {}, _bases_on_map = 0x3FF }
+  end
+  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = true
+  local o, t, h, n, u = SP.base_counts(mixed())
+  check("knob on: ours 3, theirs 2 + 2 + 3 = 7", o == 3 and t == 7 and h == 2 and n == 2 and u == 3,
+        string.format("%d %d %d %d %d", o, t, h, n, u))
+  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = false
+  o, t, h, n, u = SP.base_counts(mixed())
+  check("knob off: ours 3, theirs = hostile 2 (old count)", o == 3 and t == 2,
+        string.format("%d %d", o, t))
+  -- No map mask (an older engine): only records count.
+  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = true
+  local w = mixed(); w._bases_on_map = nil
+  o, t, h, n, u = SP.base_counts(w)
+  check("no map mask: unknown = the record with no owner only", u == 1 and t == 5,
+        string.format("%d %d", u, t))
+  -- A base seen later moves from unknown to its owner.
+  w = mixed(); w.bases[8] = base(20, 240, "neutral")
+  o, t, h, n, u = SP.base_counts(w)
+  check("seen base 8 (neutral): unknown 2, neutral 3, theirs 7", u == 2 and n == 3 and t == 7)
+
+  -- The strict rule (ratio 1.5, lead 3).
+  local function nb(nf, nh, nn)
+    local b = bases(nf, nh)
+    for i = 1, nn do b[#b + 1] = base(60 + i * 2, 240, "neutral") end
+    return { bases = b, pills = {} }
+  end
+  local cnt = { back = 1, front = 4, aggro = 1, utility = 0 }
+  for _, on in ipairs({ true, false }) do
+    C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = on
+    local tag = on and "knob on" or "knob off"
+    local why = SP.rules(nb(10, 6, 0), info_at(200, 30, 2), cnt)
+    check(tag .. ": 10 vs 6 hostile, no neutral -> pass", why == "ok", why)
+  end
+  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = true
+  local why = SP.rules(nb(8, 5, 3), info_at(200, 30, 2), cnt)
+  check("knob on: 8 vs 5 hostile + 3 neutral = 8 -> base_lead", why == "base_lead", why)
+  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = false
+  why = SP.rules(nb(8, 5, 3), info_at(200, 30, 2), cnt)
+  check("knob off: 8 vs 5 hostile (neutral not counted) -> pass", why == "ok", why)
+  -- The check log line shows the parts (a rules table carries them).
+  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = true
+  local _, r = SP.rules(nb(8, 5, 3), info_at(200, 30, 2), cnt)
+  check("rules table: hostile 5, neutral 3, unknown 0", r.b_host == 5 and r.b_neut == 3 and r.b_unk == 0)
+  C.AGGRO_DEEP_NEUTRAL_AS_ENEMY = saved
+end
+
 -- ── 7. keel ──────────────────────────────────────────────────────────────
 print("PRESETS.keel")
 check("default: AGGRO_DEEP_WIN_SHARES = true", WIN_DEFAULT == true)
@@ -775,7 +838,7 @@ do
   for k, v in pairs(C.PRESETS.keel) do
     nk = nk + 1
     if k ~= "PILL_PLACE_AGGRO_DEEP" and k ~= "SPIKE_REPAIR_PRIORITY"
-       and k ~= "AGGRO_DEEP_UTIL_TO_AGGRO"
+       and k ~= "AGGRO_DEEP_UTIL_TO_AGGRO" and k ~= "AGGRO_DEEP_NEUTRAL_AS_ENEMY"
        and k ~= "REPAIR_FRIENDLY_FIRE_REJECT_TICKS" and (sp[k] ~= v or raw[k] ~= v) then
       same = false
     end
@@ -819,6 +882,13 @@ check("keel_spike and keel_spike_loose: AGGRO_DEEP_UTIL_TO_AGGRO = true",
       and C.PRESETS.keel_spike_loose.AGGRO_DEEP_UTIL_TO_AGGRO == true)
 check("keel_spike_raw (placement only): AGGRO_DEEP_UTIL_TO_AGGRO = false",
       C.PRESETS.keel_spike_raw.AGGRO_DEEP_UTIL_TO_AGGRO == false)
+check("default: AGGRO_DEEP_NEUTRAL_AS_ENEMY = true", NAE_DEFAULT == true)
+check("keel: AGGRO_DEEP_NEUTRAL_AS_ENEMY = false", C.PRESETS.keel.AGGRO_DEEP_NEUTRAL_AS_ENEMY == false)
+check("keel_spike and keel_spike_loose: AGGRO_DEEP_NEUTRAL_AS_ENEMY = true",
+      C.PRESETS.keel_spike.AGGRO_DEEP_NEUTRAL_AS_ENEMY == true
+      and C.PRESETS.keel_spike_loose.AGGRO_DEEP_NEUTRAL_AS_ENEMY == true)
+check("keel_spike_raw: AGGRO_DEEP_NEUTRAL_AS_ENEMY = false",
+      C.PRESETS.keel_spike_raw.AGGRO_DEEP_NEUTRAL_AS_ENEMY == false)
 check("defaults: rules on", true == (require("constants").AGGRO_DEEP_BASE_RATIO == 1.5))
 
 print(string.format("\n%d passed, %d failed", pass, fail))
