@@ -57,6 +57,7 @@ local PP     = require("pill_portfolio")
 local ally_state = require("ally_state")
 local print2 = require("print2")
 local viz    = require("viz")
+local spike  = require("spike")   -- spike care (C.SPIKE_REPAIR_PRIORITY)
 
 local M = {}
 
@@ -698,6 +699,13 @@ function M.eligibility(state, world, info, now)
     d.fire_ok, d.fire_reason = false, string.format("under_fire(%dt)", age)
   end
 
+  -- 3. Spike pair (spike.lua, C.AGGRO_DEEP_PAIR): the first spike landed
+  --    and the second trip is due, so the man waits for it. False with the
+  --    pair rule off.
+  if spike.second_pending(state) then
+    d.spike_wait = true
+    return false, "spike_pair_second", d
+  end
   if not d.mode_ok then return false, d.mode_reason, d end
   if not d.fire_ok then return false, d.fire_reason, d end
   return true, nil, d
@@ -774,12 +782,19 @@ function M.discover(state, world, info)
     if (p.owner == "friendly" or p.owner == "allied")
        and not p.in_tank and not p.carrier then
       local d = U.mdist(tmx, tmy, p.mx, p.my)
-      if d <= rleash * 2 then
+      -- Spike care (spike.lua): a spike pill tops up from
+      -- SPIKE_REPAIR_MIN_MISSING hp and reaches SPIKE_REPAIR_LEASH tiles.
+      -- nil with C.SPIKE_REPAIR_PRIORITY off: the rows are the old ones.
+      local spk = spike.care_at(state, p.mx, p.my, state.tick or 0)
+      local pleash = spk and math.max(rleash, C.SPIKE_REPAIR_LEASH) or rleash
+      local tmin = spk and C.SPIKE_REPAIR_MIN_MISSING
+                   or (C.BUILDER_POOL_TOPUP_MIN_MISSING or 4)
+      if d <= pleash * 2 then
         local hp = p.health or 0
         local kind, need
         if hp <= 0 then
           kind, need = "rebuild", C.BUILDER_POOL_TREES_REBUILD or 4
-        elseif (maxhp - hp) >= (C.BUILDER_POOL_TOPUP_MIN_MISSING or 4) then
+        elseif (maxhp - hp) >= tmin then
           kind, need = "topup", math.max(C.BUILDER_POOL_TREES_TOPUP or 1,
                         math.ceil((maxhp - hp) / (C.PILL_REPAIR_AMOUNT or 4)))
         end
@@ -789,9 +804,12 @@ function M.discover(state, world, info)
             type = kind, id = pid, mx = p.mx, my = p.my,
             dist = d, hp = hp, missing = maxhp - hp, own = p.owner,
             trees_need = need,
-            leash = rleash,                   -- the reach THIS row was measured against
+            leash = pleash,                   -- the reach THIS row was measured against
             hard = blk,                       -- discovery-level refusal, shown as REJECT
-            out_of_leash = (d > rleash) or nil,
+            out_of_leash = (d > pleash) or nil,
+            spike = spk and true or nil,      -- spike care: + SPIKE_REPAIR_BONUS
+            spike_t = spk and spk.t or nil,
+            spike_src = spk and spk.src or nil,
           }
         end
       end
@@ -985,6 +1003,24 @@ local function apply_goal_weight(state, row)
   end
 end
 
+-- Spike care bonus: + SPIKE_REPAIR_BONUS on a spike pill's rebuild/topup
+-- row, after the goal weight (row.spike_pre = the score before it). Not on a
+-- forced row (its own flat bonus follows) or the no-route sentinel.
+local function apply_spike(state, row, now)
+  row.spike_pre, row.spike_bonus = nil, nil
+  if not row.spike or row.type == "farm" or row.forced or not row.trip then return end
+  row.spike_pre = row.score
+  row.spike_bonus = C.SPIKE_REPAIR_BONUS
+  row.score = row.score + row.spike_bonus
+  -- One line per (tile, type, hp), not one per tick.
+  state._spk_log = state._spk_log or {}
+  local k = row.my * 256 + row.mx
+  local lk = string.format("%s:%d", row.type, row.hp or 0)
+  if state._spk_log[k] ~= lk then
+    state._spk_log[k] = lk
+  end
+end
+
 function M.score_row(state, world, info, now, row, ctx)
   local FMAX = C.BUILDER_POOL_FRONT_MAX_TILES or 12
   -- front_dist is still MEASURED for every row: BP_DISPATCH prints it and the
@@ -1018,6 +1054,7 @@ function M.score_row(state, world, info, now, row, ctx)
       row.c_trip, row.c_danger, row.score = 0, 0, -1e9
     end
     apply_goal_weight(state, row)
+    apply_spike(state, row, now)
     return M.gate_row(state, world, info, now, row, ctx)
   end
 
@@ -1060,6 +1097,7 @@ function M.score_row(state, world, info, now, row, ctx)
   end
 
   apply_goal_weight(state, row)
+  apply_spike(state, row, now)
   return M.gate_row(state, world, info, now, row, ctx)
 end
 
@@ -1225,6 +1263,16 @@ end
 -- above it produces bp_raw{}, and bp_raw + ping_force is the bp_score{} at the
 -- head of the line. forced{} names the step (repair / harvest). Absent on
 -- every row that is not forced, and on every row with the knob off.
+-- The spike care bonus, as a link of the chain after the goal weight:
+-- pre_spike{} + spike_care{} is the next number. Absent unless the row is a
+-- spike pill (C.SPIKE_REPAIR_PRIORITY).
+local function spike_chips(row)
+  if not row.spike_bonus then return "" end
+  return string.format(" = pre_spike{%.0f} + spike_care{%.0f}",
+                       row.spike_pre or 0, row.spike_bonus)
+end
+M.spike_chips = spike_chips
+
 local function force_chips(row)
   if not row.forced then return "" end
   if not row.force_bonus then
@@ -1259,7 +1307,7 @@ function M.score_terms(row)
       score_str, row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30),
       row.missing or 0, row.value or 0,
       C.BUILDER_POOL_REPAIR_TRIP_W or 0.25, tostring(row.trip or "-"),
-      row.c_trip or 0, goal_chips(row), force_chips(row), leg_chips(row))
+      row.c_trip or 0, goal_chips(row) .. spike_chips(row), force_chips(row), leg_chips(row))
   end
   local urg_name = (row.type == "farm") and "urg" or "topup_hp"
   return string.format(
@@ -1270,7 +1318,7 @@ function M.score_terms(row)
     row.value or 0,
     C.BUILDER_POOL_TRIP_W or 0.5, tostring(row.trip or "-"), row.c_trip or 0,
     C.BUILDER_POOL_DANGER_W or 1.5, row.danger or 0, row.c_danger or 0,
-    goal_chips(row), force_chips(row), leg_chips(row))
+    goal_chips(row) .. spike_chips(row), force_chips(row), leg_chips(row))
 end
 
 -- -------------------------------------------------------------------------
@@ -1315,6 +1363,16 @@ function M.row_formula(row)
   elseif row.force_bonus then
     chain = string.format("bp_raw(%.0f) + ping_force(%.0f) = %s",
                           row.raw_score or 0, row.force_bonus, score_str)
+  end
+  -- Spike care: the chain ends in pre_spike + spike_care (after goal_w).
+  local gw_res = score_str
+  if row.spike_bonus then
+    gw_res = string.format("%.0f", row.spike_pre or 0)
+    local pre = gw_res
+    if gw ~= 1.0 then
+      pre = string.format("bp_raw(%.0f) x goal_w(%.2f) = %s", row.raw_score or 0, gw, pre)
+    end
+    chain = string.format("%s + spike_care(%.0f) = %s", pre, row.spike_bonus, score_str)
   end
   local short = string.format("%s %s%s", label, M.score_terms(row),
                               reject and (" REJECT " .. reject) or "")
@@ -1487,7 +1545,7 @@ function M.row_formula(row)
         .. " bonus (the larger one is used, never both).",
         gw, tostring(row.ping_by or "?"), tostring(row.id or "?"),
         tostring(row.ping_until or "?"),
-        row.raw_score or 0, gw, score_str)
+        row.raw_score or 0, gw, gw_res)
     else
       segs[#segs + 1] = string.format(
         "goal_w:BUILDER_POOL_GOAL_PILL_BONUS(%.2f) -- this row's pill (#%s) IS"
@@ -1496,8 +1554,21 @@ function M.row_formula(row)
         .. " other row, and on every row when the bonus is 1.0 (preset=keel).",
         gw, tostring(row.id or "?"),
         tostring(row.goal_kind or "goal"), tostring(row.id or "?"),
-        row.raw_score or 0, gw, score_str)
+        row.raw_score or 0, gw, gw_res)
     end
+  end
+  -- The spike care bonus's own two segments, only when it applied.
+  if row.spike_bonus then
+    segs[#segs + 1] = string.format(
+      "pre_spike:the score BEFORE the spike care bonus = %.0f", row.spike_pre or 0)
+    segs[#segs + 1] = string.format(
+      "spike_care:SPIKE_REPAIR_BONUS(%.0f) -- this pill is a deep spike (src %s,"
+      .. " landed t=%s) under spike care for SPIKE_CARE_TICKS(%d) while its tile"
+      .. " stays aggro; it also tops up from SPIKE_REPAIR_MIN_MISSING(%d) hp and"
+      .. " reaches SPIKE_REPAIR_LEASH(%d): %.0f + %.0f = %s",
+      row.spike_bonus, tostring(row.spike_src), tostring(row.spike_t),
+      C.SPIKE_CARE_TICKS, C.SPIKE_REPAIR_MIN_MISSING, C.SPIKE_REPAIR_LEASH,
+      row.spike_pre or 0, row.spike_bonus, score_str)
   end
   -- The PING_DEFEND_REPAIR force's own segments, one per chip it prints.
   if row.forced then
@@ -1950,6 +2021,10 @@ function M.builder_can_repair(state, world, info, p)
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
   local leash = M.repair_leash()
+  -- Spike care: the same reach as the pool's spike rows (discover).
+  if spike.care_at(state, p.mx, p.my, state.tick or 0) then
+    leash = math.max(leash, C.SPIKE_REPAIR_LEASH)
+  end
   if U.mdist(tmx, tmy, p.mx, p.my) > leash then return nil end
   local maxhp = C.PILLS_MAX_HEALTH or 15
   local hp = p.health or 0

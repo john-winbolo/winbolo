@@ -30,6 +30,9 @@ local PP     = require("pill_portfolio")
 local _SELF_PN = -1   -- updated each tick by step_eval_queue / get_pool_breakdown_json
 
 local M = {}
+-- Deep spike rules, pairs and spike care (spike.lua). A field, not a local:
+-- this chunk is at Lua's 200-local cap. init.lua calls it as goals.spike.
+M.spike = require("spike")
 
 -- Local aliases for the smart_cost helper / kind constants in cpathfinder.
 local smart_cost = cpf.smart_cost
@@ -2641,14 +2644,35 @@ end
 -- lower tile id), and that count. gmx is nil with no hostile base. The scan
 -- writes best_* and n_extra on it. On M, not a module local: this chunk is at
 -- Lua's 200-local cap.
-function M.aggro_deep_ctx(world)
+--
+-- chk = spike.check's answer (spike.lua): nil = the first version (role
+-- "single", for callers that pass only the world), false = no deep spike now
+-- (returns nil: the normal aggro placement), or { role = ... }. ad.role,
+-- ad.spike (the module), ad.state/ad.now (cooldown lookups) and, for the
+-- pair's second pill, ad.fmx/fmy (the first spike), ad.tmx/tmy (the tank)
+-- and ad.hb_eb (the hostile bases the first spike does not already cover:
+-- ebase counts only these, so no base is paid for twice).
+function M.aggro_deep_ctx(world, chk, state, tmx, tmy)
   if not C.PILL_PLACE_AGGRO_DEEP or C.PILL_PLACE_TURTLE == true then return nil end
+  if chk == false then return nil end
   local hb = {}
   for _, b in pairs(world.bases) do
     if b.owner == "hostile" then hb[#hb + 1] = b end
   end
   table.sort(hb, function(a, b) return a.my * 256 + a.mx < b.my * 256 + b.mx end)
-  local ad = { hb = hb, n_extra = 0, best_deep = false }
+  local ad = { hb = hb, n_extra = 0, best_deep = false,
+               role = chk and chk.role or "single", spike = M.spike,
+               state = state, now = state and state.tick or 0 }
+  if ad.role == "second" then
+    ad.fmx, ad.fmy, ad.tmx, ad.tmy = chk.fmx, chk.fmy, tmx, tmy
+    local eb = {}
+    for i = 1, #hb do
+      if U.mdist(hb[i].mx, hb[i].my, chk.fmx, chk.fmy) > C.PILL_FIRE_RANGE then
+        eb[#eb + 1] = hb[i]
+      end
+    end
+    ad.hb_eb = eb
+  end
   local R2 = 2 * C.PILL_FIRE_RANGE
   for i = 1, #hb do
     local n = 0
@@ -2747,6 +2771,14 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         },
       }
     end
+  end
+
+  -- Spike pair hold (spike.lua, C.AGGRO_DEEP_PAIR): a pair trip is out, so
+  -- the tank waits where it stood at the dispatch, at the follow-through
+  -- price. nil when no pair is open (and always with the pair rule off).
+  if not only then
+    local hold = M.spike.hold_row(state, info, tmx, tmy)
+    if hold then return hold end
   end
 
   -- Seek-trees redirect (BEFORE the LGM-in-tank actionable gate below, so it
@@ -3166,7 +3198,10 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   state._place_need_cat = pf_need_cat   -- shared with the heatmap viz
   -- Deep aggro placement (C.PILL_PLACE_AGGRO_DEEP): nil = knob off (or
   -- turtle), and score_cell and the scan below are exactly the old ones.
-  local ad = M.aggro_deep_ctx(world)
+  -- spike.check applies the base lead, pill and pair rules: false = no deep
+  -- spike now, so ad is nil and the normal aggro placement runs.
+  local ad = M.aggro_deep_ctx(world,
+    M.spike.check(state, world, info, pf_counts, only ~= nil), state, tmx, tmy)
 
   -- Aggro builds sit deeper in enemy influence than the default radius reaches:
   -- the scan is tank-centric and the tank usually sits behind the front, so a
@@ -3224,7 +3259,9 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- is at/below reserve (concentrated in one tank the reserve is fragile:
   -- one death loses all of it, and carried pills can't block takes). After
   -- placing down to 1 carried, the normal hold re-engages.
-  if not only and util_surplus <= 0 and (info.carried_pills or 0) < 2 then
+  -- The spike pair's second pill is exempt: it is the pair's own pill.
+  if not only and util_surplus <= 0 and (info.carried_pills or 0) < 2
+     and not (ad and ad.role == "second") then
     state._place_need_cat = "util_reserve"   -- viz hint
     return nil
   end
@@ -3298,7 +3335,14 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- Defensive turtle: the pill-type balance does not steer the cluster
         -- (no surplus skip, no STRICT_NEED gate, port term 0 below).
         local turtle = C.PILL_PLACE_TURTLE == true
-        if not turtle and _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then return end
+        -- Spike pair second pill (spike.lua): aggro tiles that cover the
+        -- first spike only (second_ok), and the surplus and STRICT_NEED
+        -- checks below do not apply (the first spike may have filled aggro).
+        local pair2 = ad ~= nil and ad.role == "second"
+        if pair2 then
+          if cell_cat ~= "aggro" or not ad.spike.second_ok(ad, cx, cy) then return end
+        end
+        if not pair2 and not turtle and _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then return end
         -- HARD balance gate (STRATEGIC_PLACE_STRICT_NEED): non-panic
         -- placement fills ONLY the single most-needed category. Merely
         -- being under target isn't enough — classification drifts with
@@ -3307,7 +3351,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- back 5/1), so any slack here bleeds the portfolio out of
         -- balance. Panic/offensive_build/desperate drops bypass this scan
         -- entirely and stay exempt.
-        if not turtle and (C.STRATEGIC_PLACE_STRICT_NEED ~= false)
+        if not pair2 and not turtle and (C.STRATEGIC_PLACE_STRICT_NEED ~= false)
            and pf_need_cat and cell_cat ~= pf_need_cat then
           return
         end
@@ -3324,8 +3368,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         local sc_center = 0
         local sc_ebase, sc_depth = 0, 0
         -- Deep aggro rule (C.PILL_PLACE_AGGRO_DEEP): aggro tiles only. Changes
-        -- prx, ctr, inf and dst below and adds ebase + depth.
+        -- prx, ctr, inf and dst below and adds ebase + depth. Pair roles also
+        -- need spike.deep_ok (no forest, no failed-pair cooldown); role
+        -- "single" is the first version (every aggro tile).
         local deep = ad ~= nil and cell_cat == "aggro"
+                     and (pair2 or ad.spike.deep_ok(ad, cx, cy))
 
         -- 1. Base proximity (soft bonus only — no hard cutoff. A far spot just
         --    misses the bonus; it isn't rejected, so aggressive pills can still
@@ -3500,7 +3547,8 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         --     within PILL_FIRE_RANGE (Manhattan, as sc12/sc13); depth =
         --     DEPTH_WEIGHT per point of enemy influence, capped at DEPTH_CAP.
         if deep then
-          for _, hb in ipairs(ad.hb) do
+          -- Pair second: only hostile bases the first spike does not cover.
+          for _, hb in ipairs(ad.hb_eb or ad.hb) do
             if U.mdist(cx, cy, hb.mx, hb.my) <= C.PILL_FIRE_RANGE then
               sc_ebase = sc_ebase + C.STRATEGIC_PLACE_AGGRO_ENEMY_BASE_BONUS
             end
@@ -3571,11 +3619,18 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     return nil
   end
 
-  for dy = -R, R do
-    for dx = -R, R do
+  -- Spike pair second pill: scan the square of SPIKE_PAIR_COVER_DIST around
+  -- the first spike instead of the tank square (score_cell keeps only the
+  -- tiles second_ok accepts), and no extra deep tiles below.
+  local sq_mx, sq_my, sq_r = scan_mx, scan_my, R
+  if ad and ad.role == "second" then
+    sq_mx, sq_my, sq_r = ad.fmx, ad.fmy, math.ceil(C.SPIKE_PAIR_COVER_DIST)
+  end
+  for dy = -sq_r, sq_r do
+    for dx = -sq_r, sq_r do
       -- TANK-centric: scan around our position (the turtle home instead,
       -- when C.PILL_PLACE_TURTLE found one: scan_mx/scan_my above)
-      local cx, cy = U.mclamp(scan_mx + dx), U.mclamp(scan_my + dy)
+      local cx, cy = U.mclamp(sq_mx + dx), U.mclamp(sq_my + dy)
       if blitz_lines and U.is_placeable(cx, cy, world)
          and squad.tile_on_blitz_line(world, blitz_lines, cx, cy, blk_now) then
         n_line_skip = n_line_skip + 1
@@ -3594,7 +3649,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- STRICT_NEED not filling a different category): else score_cell skips
   -- every aggro tile anyway. Non-aggro tiles here are never scored, so the
   -- back/front choice is the old one.
-  if ad and #ad.hb > 0
+  if ad and #ad.hb > 0 and ad.role ~= "second"
      and (pf_counts.aggro or 0) < (pf_targets.aggro or 0)
      and (C.STRATEGIC_PLACE_STRICT_NEED == false or not pf_need_cat
           or pf_need_cat == "aggro") then
@@ -3636,6 +3691,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     -- No placeable, non-surplus spot anywhere in range. The right move is to
     -- KEEP CARRYING (return nil) until we're somewhere a needed pill belongs —
     -- there is intentionally no fallback that would dump a surplus pill nearby.
+    -- A spike pair with no second tile ends here (spike.fail: the first pill
+    -- gets spike care, the area gets the cooldown).
+    if ad and ad.role == "second" and actionable then
+      ad.spike.fail(state, "no_second_tile", state.tick or 0)
+    end
     return nil
   end
 
@@ -3653,7 +3713,9 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local eff_min = math.max(C.STRATEGIC_PLACE_MIN_SCORE_FLOOR or 0,
                            (C.STRATEGIC_PLACE_MIN_SCORE or 0)
                            - math.max(0, util_surplus) * (C.STRATEGIC_PLACE_MIN_SCORE_SURPLUS_DROP or 0))
-  if not place_urgent and best_score < eff_min and not viz_only then
+  -- The spike pair's second pill is exempt (its tile rules are second_ok).
+  if not place_urgent and best_score < eff_min and not viz_only
+     and not (ad and ad.role == "second") then
     return nil
   end
 
@@ -3715,6 +3777,13 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- tankpen term). Emergency offensive_build is exempt — it returns earlier.
   local tank_pen = place_near_tank_penalty(state, best_mx, best_my)
   cost = cost + tank_pen
+  -- Spike pair second pill: a flat SPIKE_PAIR_SECOND_COST in place of the
+  -- whole chain above, so the second trip wins the pool (shown in the desc).
+  local spike_cost = nil
+  if ad and ad.role == "second" and ad.best_deep then
+    spike_cost = cost
+    cost = C.SPIKE_PAIR_SECOND_COST
+  end
 
   -- Build pool-grid candidate list: winner gets actual cost, others get cost + score delta.
   -- Pool-grid panel data only — wrapped so lua_strip removes it from opt/.
@@ -3747,7 +3816,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
              -- and the flag builder.set_mode reads for the long send and
              -- init.lua reads to drop the goal once the builder is out.
              _place_cat  = ad and ad.best_cat or nil,
-             _aggro_deep = deep_win or nil },
+             _aggro_deep = deep_win or nil,
+             -- spike.lua: "single" / "first" / "second" on a deep spike, read
+             -- by init.lua's PLACE_TRIP_SET (spike.on_dispatch). nil otherwise.
+             _spike_role = deep_win and ad.role or nil,
+             _spike_carried = deep_win and (info.carried_pills or 0) or nil },
     -- Every multiplier that actually shapes `cost` has to appear here — this
     -- desc is what FINAL_SCORES prints, and lastpill/surplus/multi were missing,
     -- so the printed formula did not reproduce the printed number. Order matches
@@ -3760,9 +3833,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
            pf_counts.back, pf_targets.back, pf_counts.front, pf_targets.front,
            pf_counts.aggro, pf_targets.aggro, pf_counts.utility or 0, util_reserve,
            #unguarded_bases, PP.targets_label(),
-           deep_win and string.format(" | aggro_deep ebase{%.0f} depth{%.0f} group=%s extra_tiles=%d",
+           deep_win and string.format(" | aggro_deep ebase{%.0f} depth{%.0f} group=%s extra_tiles=%d spike_role=%s%s",
              ad.best_ebase or 0, ad.best_depth or 0,
-             ad.gmx and string.format("(%d,%d)", ad.gmx, ad.gmy) or "none", ad.n_extra) or "") or "",
+             ad.gmx and string.format("(%d,%d)", ad.gmx, ad.gmy) or "none", ad.n_extra,
+             ad.role, spike_cost and string.format(" | cost{%.0f} = spike_pair_second{%.0f} (SPIKE_PAIR_SECOND_COST) in place of the chain above (%.1f)",
+               cost, C.SPIKE_PAIR_SECOND_COST, spike_cost) or "") or "") or "",
     cands = cands,
   }
 end
@@ -4073,8 +4148,10 @@ function M.get_strategic_place_heatmap(state, world, info)
     end
   end
 
-  -- Deep aggro (C.PILL_PLACE_AGGRO_DEEP), as in the eval scan: nil = off.
-  local ad = M.aggro_deep_ctx(world)
+  -- Deep aggro (C.PILL_PLACE_AGGRO_DEEP), as in the eval scan: nil = off,
+  -- or the spike rules say no deep spike now (spike.check, quiet).
+  local ad = M.aggro_deep_ctx(world,
+    M.spike.check(state, world, info, pf_counts, true), state, tmx, tmy)
 
   local function hm_cell(cx, cy)
       if U.is_placeable(cx, cy, world) then
@@ -4082,8 +4159,13 @@ function M.get_strategic_place_heatmap(state, world, info)
         -- Turtle: no skip (matches the eval scan).
         local cell_cat = PP.classify(cx, cy, false, true)
         local _ctgt = pf_targets[cell_cat]
-        if not turtle and _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then return end
+        local pair2 = ad ~= nil and ad.role == "second"
+        if pair2 then
+          if cell_cat ~= "aggro" or not ad.spike.second_ok(ad, cx, cy) then return end
+        end
+        if not pair2 and not turtle and _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then return end
         local deep = ad ~= nil and cell_cat == "aggro"
+                     and (pair2 or ad.spike.deep_ok(ad, cx, cy))
         local w_base  = turtle and C.PILL_PLACE_TURTLE_BASE_WEIGHT or C.STRATEGIC_PLACE_BASE_WEIGHT
         local w_undef = turtle and C.PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS or C.STRATEGIC_PLACE_UNDERDEFENDED_BONUS
         local w_bfp   = turtle and C.PILL_PLACE_TURTLE_BEYOND_FRONT_PENALTY or C.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY
@@ -4192,7 +4274,7 @@ function M.get_strategic_place_heatmap(state, world, info)
         end
         -- 14. Deep aggro: ebase + depth (matches the eval scan).
         if deep then
-          for _, hb in ipairs(ad.hb) do
+          for _, hb in ipairs(ad.hb_eb or ad.hb) do
             if U.mdist(cx, cy, hb.mx, hb.my) <= C.PILL_FIRE_RANGE then
               score = score + C.STRATEGIC_PLACE_AGGRO_ENEMY_BASE_BONUS
             end
@@ -4208,15 +4290,22 @@ function M.get_strategic_place_heatmap(state, world, info)
       end
   end  -- hm_cell
 
-  for dy = -R, R do
-    for dx = -R, R do
+  -- Spike pair second pill: the square around the first spike (matches the
+  -- eval scan).
+  local sq_mx, sq_my, sq_r = scan_mx, scan_my, R
+  if ad and ad.role == "second" then
+    sq_mx, sq_my, sq_r = ad.fmx, ad.fmy, math.ceil(C.SPIKE_PAIR_COVER_DIST)
+  end
+  for dy = -sq_r, sq_r do
+    for dx = -sq_r, sq_r do
       -- TANK-centric, or turtle home (matches the eval scan)
-      hm_cell(U.mclamp(scan_mx + dx), U.mclamp(scan_my + dy))
+      hm_cell(U.mclamp(sq_mx + dx), U.mclamp(sq_my + dy))
     end
   end
   -- Deep aggro: the aggro tiles around each hostile base, outside the tank
   -- square (matches the eval scan's extra tiles).
-  if ad and #ad.hb > 0 and (pf_counts.aggro or 0) < (pf_targets.aggro or 0) then
+  if ad and #ad.hb > 0 and ad.role ~= "second"
+     and (pf_counts.aggro or 0) < (pf_targets.aggro or 0) then
     local x0, x1 = U.mclamp(scan_mx - R), U.mclamp(scan_mx + R)
     local y0, y1 = U.mclamp(scan_my - R), U.mclamp(scan_my + R)
     local FR = C.PILL_FIRE_RANGE
@@ -13348,6 +13437,15 @@ function M.step_eval_queue(state, world, info)
         end
       end
 
+      -- Spike care (spike.lua, C.SPIKE_REPAIR_PRIORITY): a spike pill's
+      -- repair row costs x (1 - SPIKE_REPAIR_TANK_DISCOUNT), so the tank may
+      -- drive out to it beyond the builder's reach. Not on an INF row.
+      local _rp_spk = nil
+      if pool_idx == 5 and c < 1e30 then
+        _rp_spk = M.spike.tank_mult(state, obj.mx, obj.my, now)
+        if _rp_spk then c = c * _rp_spk end
+      end
+
       -- Ally-claimed handling for generic pools (2,3,4,5,6,7,8).
       --
       -- Pools 9 (attack_tank) and 13 (kill_lgm) are EXEMPT — time-
@@ -13556,6 +13654,7 @@ function M.step_eval_queue(state, world, info)
         entry._rp_soft_id = _rp_soft_id
         entry._rp_soft_d = _rp_soft_d
         entry._rp_soft_why = _rp_soft_why
+        entry._spk_mult = _rp_spk
         entry._skipped = entry_skipped_builder
       else
         entry._stale=stale_cost; entry._age=_gen_age
@@ -15247,8 +15346,11 @@ function M.finalize_pools(state, world, info)
     local desc5 = ""
     if BRAIN_POOL_VIZ then
       if pill.health == 0 then
-        desc5 = string.format("repair_pill#%d@(%d,%d) cost=%.0f REBUILD(dead)",
-                              pid, pill.mx, pill.my, pcost)
+        local ce5d = state.cost_cache and state.cost_cache["5:" .. pid]
+        desc5 = string.format("repair_pill#%d@(%d,%d) cost=%.0f REBUILD(dead)%s",
+                              pid, pill.mx, pill.my, pcost,
+                              (ce5d and ce5d._spk_mult) and string.format(" x%.2f spike_care(1 - SPIKE_REPAIR_TANK_DISCOUNT %.2f)",
+                                ce5d._spk_mult, C.SPIKE_REPAIR_TANK_DISCOUNT) or "")
       else
         local ce5 = state.cost_cache and state.cost_cache["5:" .. pid]
         -- Name the contest term that actually fired, with its evidence, so the
@@ -15265,6 +15367,10 @@ function M.finalize_pools(state, world, info)
                   C.REPAIR_ENEMY_IN_RANGE_MULT or 1.5,
                   tostring(ce5._rp_soft_id), ce5._rp_soft_d or -1,
                   tostring(ce5._rp_soft_why))
+        end
+        if ce5 and ce5._spk_mult then
+          _c5 = _c5 .. string.format(" x%.2f spike_care(1 - SPIKE_REPAIR_TANK_DISCOUNT %.2f)",
+                  ce5._spk_mult, C.SPIKE_REPAIR_TANK_DISCOUNT)
         end
         desc5 = string.format("repair_pill#%d@(%d,%d) cost=%.0f (base+path-dam=%d×%d)%s",
                 pid, pill.mx, pill.my, pcost,
