@@ -909,13 +909,18 @@ local function cooldown(F, now, why)
   F.cool_until = now + C.FOCUS_SPIKE_VOTE_FAIL_COOLDOWN
 end
 
-local function end_active(state, F, now, why)
+-- why: all_placed (each tile placed), tiles_gone (the rest can no longer be
+-- placed), ttl, or abort_<why>. all_placed is split here by the placed count.
+local function end_active(state, F, now, why, info)
   local A = F.active
   if not A then return end
   local placed = 0
   for _, t in ipairs(A.tiles) do if t.placed then placed = placed + 1 end end
+  if why == "all_placed" and placed < #A.tiles then why = "tiles_gone" end
   print2(string.format("FOCUS_SPIKE_ACTIVE t=%d off id=%d why=%s placed %d of %d after %dt",
     now, A.id, why, placed, #A.tiles, now - A.t_go))
+  errline(string.format("FOCUS_SPIKE end t=%d p%d id=%d why=%s placed=%d tiles=%d after=%d",
+    now, info and info.player_number or -1, A.id, why, placed, #A.tiles, now - A.t_go))
   F.active = nil
 end
 
@@ -925,7 +930,7 @@ local function abort(state, F, info, now, why)
   send(state, string.format("/info fsa %d %s", A.id, why))
   print2(string.format("FOCUS_SPIKE_VOTE t=%d abort id=%d why=%s by p%d", now, A.id, why, info.player_number or -1))
   errline(string.format("FOCUS_SPIKE abort t=%d p%d id=%d why=%s", now, info.player_number or -1, A.id, why))
-  end_active(state, F, now, "abort_" .. why)
+  end_active(state, F, now, "abort_" .. why, info)
   cooldown(F, now, why)
 end
 
@@ -1014,7 +1019,7 @@ local function handle_rx(state, F, world, info, now, care_tag)
       elseif v.verb == "fsa" then
         if F.active and F.active.id == v.id then
           print2(string.format("FOCUS_SPIKE_VOTE t=%d rx abort id=%d from p%d why=%s", now, v.id, m.from, v.reason))
-          end_active(state, F, now, "abort_" .. v.reason)
+          end_active(state, F, now, "abort_" .. v.reason, info)
           cooldown(F, now, v.reason)
         end
       end
@@ -1085,8 +1090,8 @@ local function update_active(state, F, world, info, now, care_tag)
     end
     if not t.placed and not t.gone then all = false end
   end
-  if all then end_active(state, F, now, "all_placed"); return end
-  if (now - A.t_go) > C.FOCUS_SPIKE_APPROVAL_TTL then end_active(state, F, now, "ttl"); return end
+  if all then end_active(state, F, now, "all_placed", info); return end
+  if (now - A.t_go) > C.FOCUS_SPIKE_APPROVAL_TTL then end_active(state, F, now, "ttl", info); return end
   -- Abort checks, this bot's own view.
   local tr = F.trip
   if tr then

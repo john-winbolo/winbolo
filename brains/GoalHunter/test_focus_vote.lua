@@ -502,6 +502,40 @@ do
   FV.st(sT).active = { id = 1, t_go = 0, from = 0, tiles = { { mx = 146, my = 36, pn = 0 } } }
   FV.update(sT, team_world(), info_at(0, 0, 0, 0), C.FOCUS_SPIKE_APPROVAL_TTL + 1, function() end)
   check("TTL: active ends", not FV.active(sT))
+  -- Each plan end writes one "FOCUS_SPIKE end" event line with its reason.
+  do
+    local got = {}
+    local real_print = print
+    print = function(x, ...)
+      if type(x) == "string" and x:match("^FOCUS_SPIKE end ") then got[#got + 1] = x end
+      return real_print(x, ...)
+    end
+    C.FOCUS_SPIKE_STDERR_LOG = true
+    local function run(tiles, w, t)
+      got = {}
+      local s = new_state(1000)
+      FV.st(s).active = { id = 7, t_go = 0, from = 0, tiles = tiles }
+      FV.update(s, w, info_at(0, 0, 0, 0), t, function() end)
+      return got[1] or "", FV.active(s)
+    end
+    local l1, a1 = run({ { mx = 146, my = 36, pn = 0 } }, team_world(), C.FOCUS_SPIKE_APPROVAL_TTL + 1)
+    check("end line: ttl", not a1 and l1:match("id=7 why=ttl placed=0 tiles=1"), l1)
+    local wp = team_world(); add_pill(wp, 30, 146, 36, "friendly")
+    local l2, a2 = run({ { mx = 146, my = 36, pn = 0 } }, wp, 10)
+    check("end line: all_placed", not a2 and l2:match("why=all_placed placed=1 tiles=1"), l2)
+    local l3, a3 = run({ { mx = 146, my = 36, pn = 0, placed = true }, { mx = 150, my = 36, pn = 0, gone = true } },
+                       wp, 10)
+    check("end line: tiles_gone", not a3 and l3:match("why=tiles_gone placed=1 tiles=2"), l3)
+    local wh = team_world(); add_pill(wh, 31, 147, 37, "hostile")
+    local l4, a4 = run({ { mx = 146, my = 36, pn = 0 } }, wh, 10)
+    check("end line: abort_tile_covered", not a4 and l4:match("why=abort_tile_covered placed=0 tiles=1"), l4)
+    C.FOCUS_SPIKE_STDERR_LOG = false
+    print = real_print
+  end
+  check("keel_focus and keel_focus_bench: TTL 6000, default 1500",
+        C.PRESETS.keel_focus.FOCUS_SPIKE_APPROVAL_TTL == 6000
+        and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_APPROVAL_TTL == 6000
+        and C.FOCUS_SPIKE_APPROVAL_TTL == 1500)
   -- A failed vote (majority) starts the cooldown; by "better" only it does not.
   local sF = new_state(1000)
   local iF = info_at(0, 140, 90, 2); iF.allies = 3; iF.player_bots = 3
