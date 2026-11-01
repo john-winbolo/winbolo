@@ -570,6 +570,22 @@ end
 -- ── 7. keel ──────────────────────────────────────────────────────────────
 print("PRESETS.keel")
 check("default: AGGRO_DEEP_WIN_SHARES = true", WIN_DEFAULT == true)
+do
+  local sp, raw = C.PRESETS.spike, C.PRESETS.spike_raw
+  check("preset spike: every rule on", sp.PILL_PLACE_AGGRO_DEEP == true
+        and sp.AGGRO_DEEP_BASE_GATE == true and sp.AGGRO_DEEP_PILL_GATE == true
+        and sp.AGGRO_DEEP_PAIR == "solo" and sp.SPIKE_REPAIR_PRIORITY == true
+        and sp.AGGRO_DEEP_WIN_SHARES == true)
+  check("preset spike_raw: deep on, the rest off", raw.PILL_PLACE_AGGRO_DEEP == true
+        and raw.AGGRO_DEEP_BASE_GATE == false and raw.AGGRO_DEEP_PILL_GATE == false
+        and raw.AGGRO_DEEP_PAIR == "off" and raw.SPIKE_REPAIR_PRIORITY == false
+        and raw.AGGRO_DEEP_WIN_SHARES == false)
+  for _, t in ipairs({ sp, raw }) do
+    for k, v in pairs(t) do
+      if type(C[k]) ~= type(v) then check("preset knob " .. k .. " type", false, type(v)) end
+    end
+  end
+end
 check("win shares sum to 1", near(C.AGGRO_DEEP_WIN_BACK + C.AGGRO_DEEP_WIN_FRONT
       + C.AGGRO_DEEP_WIN_AGGRO + C.AGGRO_DEEP_WIN_UTIL, 1))
 check("keel: SPIKE_REPAIR_PRIORITY = false", C.PRESETS.keel.SPIKE_REPAIR_PRIORITY == false)
