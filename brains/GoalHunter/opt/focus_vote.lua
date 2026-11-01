@@ -191,6 +191,8 @@ end
 
 -- ── Pills ───────────────────────────────────────────────────────────────
 -- Known live deployed pills of one side, from this bot's world model.
+-- With FOCUS_SPIKE_NEUTRAL_PILL_COVER, the hostile list also holds the
+-- neutral pills (they fire at every team).
 local function pills_of(world, want_hostile)
   local out = {}
   local ids = {}
@@ -200,6 +202,7 @@ local function pills_of(world, want_hostile)
     local p = world.pills[id]
     if not p.in_tank and p.mx and (p.health or 0) > 0 then
       local h = p.owner == "hostile"
+                or (p.owner == "neutral" and C.FOCUS_SPIKE_NEUTRAL_PILL_COVER == true)
       if (want_hostile and h) or (not want_hostile and p.owner == "friendly") then
         out[#out + 1] = { id = id, mx = p.mx, my = p.my, armour = p.health or 0 }
       end
@@ -208,6 +211,40 @@ local function pills_of(world, want_hostile)
   return out
 end
 M.pills_of = pills_of
+
+-- The pills that cover target bases in the cover greedy: ours, plus the
+-- known live neutral pills when FOCUS_SPIKE_NEUTRAL_PILL_COVER is on.
+-- Answers the list and the ids of the target bases of list that only a
+-- neutral pill covers (sorted; the ncov= of the plan line).
+function M.cover_pills(world, opills, list)
+  if C.FOCUS_SPIKE_NEUTRAL_PILL_COVER ~= true then return opills, {} end
+  local out = {}
+  for _, p in ipairs(opills) do out[#out + 1] = p end
+  local np = {}
+  local ids = {}
+  for id in pairs(world.pills or {}) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local p = world.pills[id]
+    if not p.in_tank and p.mx and (p.health or 0) > 0 and p.owner == "neutral" then
+      local q = { id = id, mx = p.mx, my = p.my, armour = p.health or 0, neutral = true }
+      np[#np + 1] = q
+      out[#out + 1] = q
+    end
+  end
+  local ncov = {}
+  local R = C.PILL_FIRE_RANGE
+  for _, b in ipairs(list or {}) do
+    if b.target then
+      local by_n, by_o = false, false
+      for _, p in ipairs(np) do if edist(b.mx, b.my, p.mx, p.my) <= R then by_n = true; break end end
+      for _, p in ipairs(opills) do if edist(b.mx, b.my, p.mx, p.my) <= R then by_o = true; break end end
+      if by_n and not by_o then ncov[#ncov + 1] = b.id end
+    end
+  end
+  table.sort(ncov)
+  return out, ncov
+end
 
 local function covered_by(pills, mx, my, r)
   for _, p in ipairs(pills) do
@@ -838,6 +875,7 @@ function M.plan(state, world, info, now)
   local list, total, nopos = M.bases(world)
   local hp = pills_of(world, true)
   local op = pills_of(world, false)
+  local cvp, ncov = M.cover_pills(world, op, list)
   local pf = PP.counts(world, now, true)
   local spike = require("spike")
   local team = spike.team_pills(world, info, pf)
@@ -883,7 +921,7 @@ function M.plan(state, world, info, now)
           if dd < best then best, ax, ay = dd, b.mx, b.my end
         end
       end
-      local tiles = M.cover(world, targets, hp, op, ax, ay)
+      local tiles = M.cover(world, targets, hp, cvp, ax, ay)
       local row = { id = cl.id, key = key, nb = #targets, nall = #cl.bases,
                     home = home, cl = cl }
       if not tiles then
@@ -937,7 +975,7 @@ function M.plan(state, world, info, now)
     if r.def.label == "deep" then label = "deep"
     elseif r.def.label == "hidden" and label ~= "deep" then label = "hidden" end
   end
-  return { pass = why == "ok", why = why, total = total, nopos = nopos,
+  return { ncov = ncov, pass = why == "ok", why = why, total = total, nopos = nopos,
            planned = planned, frac = frac, K = K, team = team, ftgt = ftgt,
            need = need, tiles = tiles, chosen = chosen, rows = rows,
            label = label, t = now }
@@ -956,6 +994,7 @@ function M.plan_cluster(state, world, info, now)
   local list, total, nopos = M.bases(world)
   local hp = pills_of(world, true)
   local op = pills_of(world, false)
+  local cvp, ncov = M.cover_pills(world, op, list)
   local K, team, ftgt = spare_k(world, info, now)
   local F = st(state)
   local ck = {}
@@ -992,7 +1031,7 @@ function M.plan_cluster(state, world, info, now)
       -- its safest stand place.
       local rc = {}
       local sr = function(x, y) return stand_min(world, info, hp, { mx = x, my = y }, rc) end
-      local tiles = M.cover(world, targets, {}, op, ax, ay, nil, sr)
+      local tiles = M.cover(world, targets, {}, cvp, ax, ay, nil, sr)
       local row = { id = cl.id, key = key, nb = #targets, nall = #cl.bases, home = home, cl = cl }
       if not tiles then
         row.skip, row.need, row.rank = "uncoverable", -1, 0
@@ -1034,11 +1073,19 @@ function M.plan_cluster(state, world, info, now)
     for _, t in ipairs(best.tiles) do tiles[#tiles + 1] = { mx = t.mx, my = t.my, cl = best.id } end
     for _, b in ipairs(best.cl.targets) do bases[#bases + 1] = b.id end
   end
-  return { pass = why == "ok", why = why, total = total, nopos = nopos,
+  return { ncov = ncov, pass = why == "ok", why = why, total = total, nopos = nopos,
            planned = planned, frac = total > 0 and planned / total or 0, K = K,
            team = team, ftgt = ftgt, need = need, tiles = tiles, chosen = chosen,
            rows = rows, label = label, t = now, cluster = best and why == "ok" and best.key or nil,
            bases = bases, risk = best and best.def or nil }
+end
+
+-- " ncov=<base ids>" (target bases only a neutral pill covers), "" when
+-- FOCUS_SPIKE_NEUTRAL_PILL_COVER is off; "ncov=none" when on and empty.
+function M.ncov_text(P)
+  if C.FOCUS_SPIKE_NEUTRAL_PILL_COVER ~= true then return "" end
+  local n = P and P.ncov or {}
+  return " ncov=" .. (#n > 0 and table.concat(n, ",") or "none")
 end
 
 local function plan_line_cluster(now, P)
@@ -1054,10 +1101,10 @@ local function plan_line_cluster(now, P)
       r.taken and "taken" or ("skip " .. tostring(r.skip)))
   end
   return string.format(
-    "FOCUS_SPIKE_PLAN t=%d rule=cluster result=%s why=%s cluster=%s bases=%s (%d of %d target bases) spare K = team pills %d - normal front target %d = %d need %d spots label=%s clusters: %s",
+    "FOCUS_SPIKE_PLAN t=%d rule=cluster result=%s why=%s cluster=%s bases=%s (%d of %d target bases) spare K = team pills %d - normal front target %d = %d need %d spots label=%s%s clusters: %s",
     now, P.pass and "pass" or "fail", P.why, tostring(P.cluster), table.concat(P.bases or {}, ","),
     P.planned, P.total, P.team, P.ftgt, P.K, P.need,
-    LABEL_TEXT[P.label] or P.label, table.concat(parts, " "))
+    LABEL_TEXT[P.label] or P.label, M.ncov_text(P), table.concat(parts, " "))
 end
 M.plan_line_cluster = plan_line_cluster
 
@@ -1598,7 +1645,7 @@ function M.repick(state, F, world, info, now, ct)
   local R = C.PILL_FIRE_RANGE
   local hp = pills_of(world, true)
   local cov = {}
-  for _, p in ipairs(pills_of(world, false)) do cov[#cov + 1] = p end
+  for _, p in ipairs((M.cover_pills(world, pills_of(world, false), nil))) do cov[#cov + 1] = p end
   for _, t in ipairs(A.tiles) do
     if t ~= ct and not t.dropped
        and (t.placed or cluster_rule() or not covered_by(hp, t.mx, t.my, R)) then
@@ -1795,7 +1842,8 @@ function M.update(state, world, info, now, care_tag)
   send(state, string.format("/info fso %d %d %d %d %s %s%s", id, P.need, P.planned, P.total,
     LABEL_CODE[P.label], enc_tiles(P.tiles), suffix))
   errline(string.format("FOCUS_SPIKE open t=%d p%d id=%d need=%d planned=%d total=%d label=%s bots=%d%s%s",
-    now, me, id, P.need, P.planned, P.total, LABEL_TEXT[P.label], #bots, M.cluster_text(F.open),
+    now, me, id, P.need, P.planned, P.total, LABEL_TEXT[P.label], #bots,
+    M.cluster_text(F.open) .. M.ncov_text(P),
     P.risk and string.format(" risk=%.2f spot=%.2f route=%.2f detour=%.2f tanks=%.2f credit=%.2f",
       P.risk.total, P.risk.spot or 0, P.risk.route or 0, P.risk.detour or 0, P.risk.tanks or 0,
       P.risk.credit or 0) or ""))

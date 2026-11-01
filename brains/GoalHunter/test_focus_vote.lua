@@ -967,6 +967,61 @@ do
         select(2, FV.ballot(new_state(1000), wr, info_at(1, 60, 100, 1),
           { tiles = { { mx = 104, my = 100 } }, planned = 1, total = 1 }, 1000)) ~= "tile_covered")
 
+  -- Neutral pills (FOCUS_SPIKE_NEUTRAL_PILL_COVER). The land strip world:
+  -- a hostile base at the north end, our base at the south end.
+  local old_nc = C.FOCUS_SPIKE_NEUTRAL_PILL_COVER
+  local function nworld(npx, npy)
+    local wn = new_world()
+    add_base(wn, 0, 100, 40, "hostile")
+    add_base(wn, 2, 100, 120, "friendly")
+    if npx then add_pill(wn, 30, npx, npy, "neutral", 15) end
+    return wn
+  end
+  local function nplan(wn)
+    FRONT = TEAM - 1
+    return FV.plan(new_state(1000), wn, info_at(0, 100, 120, 1), 1000)
+  end
+  strip_terrain()
+  -- A neutral pill 4 tiles north of the hostile base (in range of it).
+  local wnc = nworld(100, 36)
+  C.FOCUS_SPIKE_NEUTRAL_PILL_COVER = false
+  local Pn0 = nplan(wnc)
+  check("neutral off: the base still needs a spike pill (old answer)", Pn0.pass and Pn0.need == 1,
+        Pn0.why .. " " .. Pn0.need)
+  check("neutral off: pills_of leaves the neutral pill out", #FV.pills_of(wnc, true) == 0)
+  check("neutral off: no ncov in the plan line", not FV.plan_line(1000, Pn0):find("ncov=", 1, true))
+  C.FOCUS_SPIKE_NEUTRAL_PILL_COVER = true
+  local Pn1 = nplan(wnc)
+  check("neutral on: a base in a neutral pill's range needs no spike pill (not proposed)",
+        not Pn1.pass and Pn1.rows[1] and Pn1.rows[1].skip == "covered",
+        Pn1.why .. " " .. tostring(Pn1.rows[1] and Pn1.rows[1].skip))
+  check("neutral on: ncov lists the base", #Pn1.ncov == 1 and Pn1.ncov[1] == 0, table.concat(Pn1.ncov, ","))
+  check("neutral on: plan line says ncov=0", FV.plan_line(1000, Pn1):find("ncov=0", 1, true) ~= nil)
+  check("neutral on: pills_of counts the neutral pill as hostile", #FV.pills_of(wnc, true) == 1)
+  -- A dead neutral pill (armour 0) covers nothing.
+  local wnd = nworld(100, 36)
+  wnd.pills[30].health = 0
+  local Pnd = nplan(wnd)
+  check("neutral on: a dead neutral pill covers nothing", Pnd.pass and Pnd.need == 1, Pnd.why)
+  -- A neutral pill on the route (mid strip, far from the spot and stand).
+  local wnr = nworld(100, 80)
+  C.FOCUS_SPIKE_NEUTRAL_PILL_COVER = false
+  local Pr0 = nplan(wnr)
+  check("neutral off: a neutral pill on the route adds no risk",
+        Pr0.pass and Pr0.risk and Pr0.risk.route == 0, Pr0.risk and Pr0.risk.route)
+  C.FOCUS_SPIKE_NEUTRAL_PILL_COVER = true
+  local Pr1 = nplan(wnr)
+  check("neutral on: a neutral pill on the route adds route risk (15 hp: 1 x 2.0)",
+        Pr1.risk and math.abs(Pr1.risk.route - 2.0) < 1e-9 and Pr1.risk.total > Pr0.risk.total,
+        Pr1.risk and Pr1.risk.route)
+  check("neutral on: the route pill is far from the base: no ncov", #Pr1.ncov == 0)
+  check("neutral knob: PRESETS.keel off, keel_focus / _loose / _bench on",
+        C.PRESETS.keel.FOCUS_SPIKE_NEUTRAL_PILL_COVER == false
+        and C.PRESETS.keel_focus.FOCUS_SPIKE_NEUTRAL_PILL_COVER == true
+        and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_NEUTRAL_PILL_COVER == true
+        and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_NEUTRAL_PILL_COVER == true)
+  C.FOCUS_SPIKE_NEUTRAL_PILL_COVER = old_nc
+
   terrain = {}
   C.FOCUS_SPIKE_RULE, C.FOCUS_SPIKE_TILE_COVERED_RULE = old_rule, old_tc
 end
