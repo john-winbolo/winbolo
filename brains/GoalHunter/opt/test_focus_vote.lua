@@ -50,6 +50,9 @@ U.is_placeable = function(x, y, world)
   if world.pill_at[k] or world.base_at[k] then return false end
   return true
 end
+-- focus_vote reads terrain through the peek versions (no change list).
+U.ttype_peek = function(x, y) return U.ttype(x, y) end
+U.is_placeable_peek = function(x, y, world) return U.is_placeable(x, y, world) end
 local TEAM, FRONT = 10, 8   -- spare K = TEAM - FRONT
 SP.team_pills = function() return TEAM, 0, 0, 0 end
 PP.normal_targets = function() return { back = 0, front = FRONT, aggro = 0, util = 0 } end
@@ -541,6 +544,23 @@ do
   local same = true
   for k, v in pairs(C.PRESETS.keel) do
     if not (k:sub(1, 12) == "FOCUS_SPIKE_" or k == "SPIKE_REPAIR_PRIORITY") and kb[k] ~= v then same = false end
+  end
+  -- The plan reads terrain only through the peek versions. U.ttype records
+  -- each tile it reads in the terrain change list, so a plan that used it
+  -- would change play before any vote (bench seed 201 left KEEL at t=3599).
+  do
+    local real_tt, real_pl = U.ttype, U.is_placeable
+    local n = 0
+    U.ttype = function(x, y) n = n + 1; return real_tt(x, y) end
+    U.is_placeable = function(x, y, w) n = n + 1; return real_pl(x, y, w) end
+    U.ttype_peek = function(x, y) return real_tt(x, y) end
+    U.is_placeable_peek = function(x, y, w) return real_pl(x, y, w) end
+    FRONT = TEAM - 2
+    local Pp = FV.plan(new_state(1000), line_world(false), info_at(0, 102, 120, 1), 1000)
+    check("plan reads no terrain through U.ttype / U.is_placeable", n == 0 and #Pp.rows > 0, n)
+    U.ttype, U.is_placeable = real_tt, real_pl
+    U.ttype_peek = function(x, y) return U.ttype(x, y) end
+    U.is_placeable_peek = function(x, y, w) return U.is_placeable(x, y, w) end
   end
   check("keel_focus_bench = keel + the focused spike values", same and kb.FOCUS_SPIKE_STDERR_LOG == true
         and kb.FOCUS_SPIKE_RULE == "deny" and kb.FOCUS_SPIKE_ENABLED == true
