@@ -853,6 +853,7 @@ function M.plan(state, world, info, now)
     F.cl_key = ck
     F.clusters = M.clusters(list, C.FOCUS_SPIKE_CLUSTER_GAP)
     F.route_cache = {}
+    M.log_clusters(F, info, now)
   end
   -- Our nearest base (for the tie-break).
   local obases = {}
@@ -964,6 +965,7 @@ function M.plan_cluster(state, world, info, now)
     F.cl_key = ck
     F.clusters = M.clusters(list, C.FOCUS_SPIKE_CLUSTER_GAP)
     F.route_cache = {}
+    M.log_clusters(F, info, now)
   end
   local obases = {}
   for _, b in ipairs(list) do if not b.target then obases[#obases + 1] = b end end
@@ -1373,6 +1375,34 @@ function M.cluster_text(v)
   return string.format(" cluster=%s bases=%s", tostring(v.cluster), table.concat(v.bases or {}, ","))
 end
 
+-- One line with every cluster (print2 and the event file), when the
+-- cluster list is built: the gap, then each cluster key (its lowest base
+-- id, as cluster= in the other lines) with its base ids and places.
+function M.log_clusters(F, info, now)
+  local parts = {}
+  for _, cl in ipairs(F.clusters or {}) do
+    local bs = {}
+    for _, b in ipairs(cl.bases) do bs[#bs + 1] = string.format("%d@(%d,%d)", b.id, b.mx, b.my) end
+    parts[#parts + 1] = string.format("c%d=[%s]", cl.bases[1].id, table.concat(bs, " "))
+  end
+  local s = string.format("FOCUS_SPIKE clusters t=%d p%d gap=%s n=%d %s", now or 0,
+    info and info.player_number or -1, tostring(C.FOCUS_SPIKE_CLUSTER_GAP), #(F.clusters or {}),
+    table.concat(parts, " "))
+  print2(s)
+  errline(s)
+end
+
+-- The stand place a builder of ours was last sent from to a spike spot
+-- (builder.lua, on the dispatch edge): tank tile, its stand risk and the
+-- planned stand place. Read by the placed line.
+function M.note_send(state, world, info, mx, my, tmx, tmy, smx, smy, now)
+  if not on() then return end
+  local F = st(state)
+  F.sent = F.sent or {}
+  F.sent[tkey(mx, my)] = { mx = tmx, my = tmy, r = M.stand_risk_at(world, info, tmx, tmy),
+                           smx = smx, smy = smy, t = now or 0 }
+end
+
 local function cooldown(F, now, why)
   F.cool_until = now + C.FOCUS_SPIKE_VOTE_FAIL_COOLDOWN
 end
@@ -1538,7 +1568,11 @@ local function resolve_open(state, F, info, now)
   for _, t in ipairs(asg) do s[#s + 1] = string.format("%02X%02X%02X", t.mx, t.my, t.pn) end
   send(state, string.format("/info fsg %d %s", O.id, table.concat(s)))
   local al = {}
-  for _, t in ipairs(asg) do al[#al + 1] = string.format("(%d,%d)->p%d", t.mx, t.my, t.pn) end
+  for _, t in ipairs(asg) do
+    local q = O.stands and O.stands[tkey(t.mx, t.my)]
+    al[#al + 1] = string.format("(%d,%d)->p%d", t.mx, t.my, t.pn)
+      .. (q and string.format(" stand=(%d,%d) r=%.2f", q.mx, q.my, q.risk or 0) or "")
+  end
   print2(string.format("FOCUS_SPIKE_VOTE t=%d go id=%d %s", now, O.id, table.concat(al, " ")))
   errline(string.format("FOCUS_SPIKE go t=%d p%d id=%d tiles=%d label=%s %s%s", now,
     info.player_number or -1, O.id, #asg, O.label, table.concat(al, " "), M.cluster_text(O)))
@@ -1672,7 +1706,11 @@ local function update_active(state, F, world, info, now, care_tag)
         print2(string.format("FOCUS_SPIKE_ACTIVE t=%d placed (%d,%d) by p%d id=%d %dt after go -> spike care %dt",
           now, t.mx, t.my, t.pn, A.id, now - A.t_go, C.SPIKE_CARE_TICKS))
         if t.pn == info.player_number then
-          errline(string.format("FOCUS_SPIKE placed t=%d p%d id=%d tile=%d,%d", now, t.pn, A.id, t.mx, t.my))
+          local sd = F.sent and F.sent[tkey(t.mx, t.my)]
+          local stxt = sd and string.format(" stand=(%d,%d) r=%.2f planned=%s sent_t=%d", sd.mx, sd.my, sd.r or 0,
+            sd.smx and string.format("(%d,%d)", sd.smx, sd.smy) or "none", sd.t) or " stand=none"
+          print2(string.format("FOCUS_SPIKE_ACTIVE t=%d placed (%d,%d) by me:%s", now, t.mx, t.my, stxt))
+          errline(string.format("FOCUS_SPIKE placed t=%d p%d id=%d tile=%d,%d%s", now, t.pn, A.id, t.mx, t.my, stxt))
         end
       elseif not U.is_placeable_peek(t.mx, t.my, world) then
         t.gone = true
@@ -1771,7 +1809,14 @@ function M.update(state, world, info, now, care_tag)
   F.open = { id = id, t = now, me = me, bots = bots, ballots = {}, need = P.need,
              tiles = P.tiles, pledge = M.pledge(info),
              eta = eta_to(info, P.tiles), label = P.label, planned = P.planned, total = P.total,
-             cluster = P.cluster, bases = P.bases }
+             cluster = P.cluster, bases = P.bases, stands = {} }
+  -- The stand place of each spike spot (cluster rule), for the go line.
+  if P.risk and P.risk.stands then
+    for i, t in ipairs(P.tiles or {}) do
+      local q = P.risk.stands[i]
+      if q then F.open.stands[tkey(t.mx, t.my)] = q end
+    end
+  end
   local suffix = ""
   if P.cluster then
     local bh = {}
