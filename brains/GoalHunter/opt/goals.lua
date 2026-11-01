@@ -3083,6 +3083,36 @@ function M.turtle_home(world, tmx, tmy, fbx, fby)
   return nil
 end
 
+-- Deep aggro placement (C.PILL_PLACE_AGGRO_DEEP) scan context. nil when the
+-- knob is off or turtle is on, and then nothing in the scan changes. Else a
+-- table: hb = the hostile bases this bot has seen (world.bases, owner
+-- "hostile"), sorted by tile id (my*256+mx) so the scan order never depends
+-- on pairs() order; gmx/gmy/gn = the group centre, the hostile base with the
+-- most other hostile bases within 2 x PILL_FIRE_RANGE (Manhattan; ties: the
+-- lower tile id), and that count. gmx is nil with no hostile base. The scan
+-- writes best_* and n_extra on it. On M, not a module local: this chunk is at
+-- Lua's 200-local cap.
+function M.aggro_deep_ctx(world)
+  if not C.PILL_PLACE_AGGRO_DEEP or C.PILL_PLACE_TURTLE == true then return nil end
+  local hb = {}
+  for _, b in pairs(world.bases) do
+    if b.owner == "hostile" then hb[#hb + 1] = b end
+  end
+  table.sort(hb, function(a, b) return a.my * 256 + a.mx < b.my * 256 + b.mx end)
+  local ad = { hb = hb, n_extra = 0, best_deep = false }
+  local R2 = 2 * C.PILL_FIRE_RANGE
+  for i = 1, #hb do
+    local n = 0
+    for j = 1, #hb do
+      if j ~= i and U.mdist(hb[i].mx, hb[i].my, hb[j].mx, hb[j].my) <= R2 then
+        n = n + 1
+      end
+    end
+    if not ad.gmx or n > ad.gn then ad.gmx, ad.gmy, ad.gn = hb[i].mx, hb[i].my, n end
+  end
+  return ad
+end
+
 local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo, only)
   if not C.STRATEGIC_PLACE_ENABLED then return nil end
 
@@ -3123,7 +3153,12 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       -- is not a hold -- preferring "stand exactly where you are" when that is
       -- already in range, since not moving is the whole point.
       local hmx, hmy, hsrc = defend_hold_tile(state, info, { mx = ft.mx, my = ft.my })
-      if U.mdist(hmx, hmy, ft.mx, ft.my) > hold_r then
+      if ft.aggro_deep and U.mdist(tmx, tmy, ft.mx, ft.my) <= C.PLACE_DISPATCH_MAX_DIST then
+        -- Deep aggro trip (C.PILL_PLACE_AGGRO_DEEP): the builder was sent from
+        -- up to PLACE_DISPATCH_MAX_DIST out so the tank would not drive into
+        -- enemy ground. Hold where the tank stands, not near the trip tile.
+        hmx, hmy, hsrc = tmx, tmy, "aggro_deep_stand"
+      elseif U.mdist(hmx, hmy, ft.mx, ft.my) > hold_r then
         if U.mdist(tmx, tmy, ft.mx, ft.my) <= hold_r then
           hmx, hmy, hsrc = tmx, tmy, "stand_fast"
         else
@@ -3580,6 +3615,9 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     if d > pf_max_deficit then pf_max_deficit = d; pf_need_cat = cat end
   end
   state._place_need_cat = pf_need_cat   -- shared with the heatmap viz
+  -- Deep aggro placement (C.PILL_PLACE_AGGRO_DEEP): nil = knob off (or
+  -- turtle), and score_cell and the scan below are exactly the old ones.
+  local ad = M.aggro_deep_ctx(world)
 
   -- Aggro builds sit deeper in enemy influence than the default radius reaches:
   -- the scan is tank-centric and the tank usually sits behind the front, so a
@@ -3735,20 +3773,28 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         local score = 0
         local sc1, sc2, sc3, sc4, sc5, sc6, sc7, sc8, sc9, sc10, sc11, sc12, sc13 = 0,0,0,0,0,0,0,0,0,0,0,0,0
         local sc_center = 0
+        local sc_ebase, sc_depth = 0, 0
+        -- Deep aggro rule (C.PILL_PLACE_AGGRO_DEEP): aggro tiles only. Changes
+        -- prx, ctr, inf and dst below and adds ebase + depth.
+        local deep = ad ~= nil and cell_cat == "aggro"
 
         -- 1. Base proximity (soft bonus only — no hard cutoff. A far spot just
         --    misses the bonus; it isn't rejected, so aggressive pills can still
         --    be placed deep. nil base_dist = no friendly base, contributes 0.)
+        --    Deep aggro: 0 (the spot must not lean toward our own bases).
         local _, _, base_dist = nearest_friendly_base_pos(world, cx, cy)
-        if base_dist then
+        if base_dist and not deep then
           sc1 = math.max(0, C.STRATEGIC_PLACE_MAX_BASE_DIST - base_dist) * w_base
           score = score + sc1
         end
 
         -- 1b. Strategic-center bias: nudge toward the chosen center (war zone /
         --     base-vs-threat / contested pill). Optional — 0 when no center.
-        if search_mx then
-          local cdist = U.mdist(cx, cy, search_mx, search_my)
+        --     Deep aggro: the hostile base group centre (ad.gmx) instead.
+        local cmx, cmy = search_mx, search_my
+        if deep and ad.gmx then cmx, cmy = ad.gmx, ad.gmy end
+        if cmx then
+          local cdist = U.mdist(cx, cy, cmx, cmy)
           sc_center = math.max(0, (C.STRATEGIC_PLACE_CENTER_BIAS_CAP or 16) - cdist)
                       * (C.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT or 4)
           score = score + sc_center
@@ -3769,10 +3815,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           local influence = cpf.influence_at(cx, cy)
           -- FRONT_ZERO_IS_FRONT=false: an unclaimed 0 tile off the line is
           -- beyond our claim and pays the same penalty as enemy ground.
+          -- Deep aggro: no beyond-front penalty (being beyond it is the point).
           if influence < 0
              or (influence == 0 and C.FRONT_ZERO_IS_FRONT == false
                  and not PP.near_front(cx, cy, C.FRONT_NEAR_RADIUS_PLACE or 0)) then
-            score = score - w_bfp
+            if not deep then score = score - w_bfp end
           elseif influence > 0 then
             score = score + math.max(0, C.STRATEGIC_PLACE_FRONT_PROX_CAP - influence)
                    * C.STRATEGIC_PLACE_FRONT_PROX_WEIGHT
@@ -3813,8 +3860,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
 
         -- 7. Distance from tank (pinned to the dispatch value on a harvest
         --    re-score: the tank moved on by design, so live distance would
-        --    say nothing about the tile)
-        sc7 = (only and only.sc7) or (-U.mdist(tmx, tmy, cx, cy) * 0.5)
+        --    say nothing about the tile). Deep aggro: AGGRO_TANK_DIST_WEIGHT
+        --    per tile, so the best spot wins, not the nearest one.
+        sc7 = (only and only.sc7)
+              or (-U.mdist(tmx, tmy, cx, cy)
+                  * (deep and C.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT or 0.5))
         score = score + sc7
 
         -- 8. Offensive spike bonus
@@ -3897,6 +3947,22 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           end
         end
 
+        -- 14. Deep aggro only: ebase = ENEMY_BASE_BONUS per hostile base
+        --     within PILL_FIRE_RANGE (Manhattan, as sc12/sc13); depth =
+        --     DEPTH_WEIGHT per point of enemy influence, capped at DEPTH_CAP.
+        if deep then
+          for _, hb in ipairs(ad.hb) do
+            if U.mdist(cx, cy, hb.mx, hb.my) <= C.PILL_FIRE_RANGE then
+              sc_ebase = sc_ebase + C.STRATEGIC_PLACE_AGGRO_ENEMY_BASE_BONUS
+            end
+          end
+          if cell_inf < 0 then
+            sc_depth = math.min(C.STRATEGIC_PLACE_AGGRO_DEPTH_CAP,
+                                -cell_inf * C.STRATEGIC_PLACE_AGGRO_DEPTH_WEIGHT)
+          end
+          score = score + sc_ebase + sc_depth
+        end
+
         all_cands[#all_cands + 1] = {
           mx = cx, my = cy, score = score,
           inf = cell_inf,
@@ -3904,9 +3970,14 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           sc1=sc1, sc2=sc2, sc3=sc3, sc4=sc4, sc5=sc5,
           sc6=sc6, sc7=sc7, sc8=sc8, sc9=sc9, sc10=sc10,
           sc11=sc11, sc12=sc12, sc13=sc13, sc_center=sc_center,
+          sc_ebase=sc_ebase, sc_depth=sc_depth, deep=deep,
         }
         if score > best_score then
           best_score = score; best_mx = cx; best_my = cy
+          if ad then
+            ad.best_deep, ad.best_cat = deep, cell_cat
+            ad.best_ebase, ad.best_depth = sc_ebase, sc_depth
+          end
         end
       end
   end  -- score_cell
@@ -3964,6 +4035,46 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         n_tchk_skip = n_tchk_skip + 1
       else
         score_cell(cx, cy)
+      end
+    end
+  end
+  -- Deep aggro (C.PILL_PLACE_AGGRO_DEEP): also score the AGGRO tiles within
+  -- PILL_FIRE_RANGE (a 17x17 square) of each hostile base this bot has seen,
+  -- once each, skipping the tank square just scanned. Only when an aggro pill
+  -- can be placed at all under the existing rules (room under its target, and
+  -- STRICT_NEED not filling a different category): else score_cell skips
+  -- every aggro tile anyway. Non-aggro tiles here are never scored, so the
+  -- back/front choice is the old one.
+  if ad and #ad.hb > 0
+     and (pf_counts.aggro or 0) < (pf_targets.aggro or 0)
+     and (C.STRATEGIC_PLACE_STRICT_NEED == false or not pf_need_cat
+          or pf_need_cat == "aggro") then
+    local x0, x1 = U.mclamp(scan_mx - R), U.mclamp(scan_mx + R)
+    local y0, y1 = U.mclamp(scan_my - R), U.mclamp(scan_my + R)
+    local FR = C.PILL_FIRE_RANGE
+    local seen = {}
+    for _, hb in ipairs(ad.hb) do
+      for cy = hb.my - FR, hb.my + FR do
+        for cx = hb.mx - FR, hb.mx + FR do
+          if U.in_map(cx, cy)
+             and not (cx >= x0 and cx <= x1 and cy >= y0 and cy <= y1) then
+            local k = cy * 256 + cx
+            if not seen[k] then
+              seen[k] = true
+              if U.is_placeable(cx, cy, world)
+                 and PP.classify(cx, cy, false, true) == "aggro" then
+                if blitz_lines and squad.tile_on_blitz_line(world, blitz_lines, cx, cy, blk_now) then
+                  n_line_skip = n_line_skip + 1
+                elseif tchk_on and builder.place_tile_check(state, world, info, cx, cy, blk_now, true) then
+                  n_tchk_skip = n_tchk_skip + 1
+                else
+                  ad.n_extra = ad.n_extra + 1
+                  score_cell(cx, cy)
+                end
+              end
+            end
+          end
+        end
       end
     end
   end
@@ -4063,6 +4174,15 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- viz_only (debug overlay): scan + spot stash done above; emit no goal.
   if not actionable then return nil end
 
+  -- Deep aggro winner: say so once per spot (the pool re-evaluates often).
+  local deep_win = ad ~= nil and ad.best_deep
+  if ad then
+    local dkey = deep_win and string.format("%d:%d", best_mx, best_my) or nil
+    if deep_win and state._aggro_deep_log ~= dkey then
+    end
+    state._aggro_deep_log = dkey
+  end
+
   return {
     cost = cost,
     goal = { kind = "place_pill_strategic", mx = best_mx, my = best_my,
@@ -4070,21 +4190,30 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
              -- Spot score + its tank-distance term, carried on the goal so the
              -- dispatch can stamp them on state._place_trip: the harvest resume
              -- compares a fresh re-score (sc7 pinned to _spot_sc7) against
-             -- _spot_score.
+             -- _spot_score. A deep aggro spot's sc7 uses its own weight.
              _spot_score = best_score,
-             _spot_sc7   = -U.mdist(tmx, tmy, best_mx, best_my) * 0.5 },
+             _spot_sc7   = -U.mdist(tmx, tmy, best_mx, best_my)
+                           * (deep_win and C.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT or 0.5),
+             -- C.PILL_PLACE_AGGRO_DEEP only (nil when off): the spot's category,
+             -- and the flag builder.set_mode reads for the long send and
+             -- init.lua reads to drop the goal once the builder is out.
+             _place_cat  = ad and ad.best_cat or nil,
+             _aggro_deep = deep_win or nil },
     -- Every multiplier that actually shapes `cost` has to appear here — this
     -- desc is what FINAL_SCORES prints, and lastpill/surplus/multi were missing,
     -- so the printed formula did not reproduce the printed number. Order matches
     -- the code above: (path + base + carry_pen - carry) x mult x lastpill, then
     -- x bal x surplus x multi, then + tankpen.
-    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}*armour{%.2f}+tankpen{%.0f} = cost{%.1f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d util %d/%d unguarded=%d | %s",
+    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}*armour{%.2f}+tankpen{%.0f} = cost{%.1f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d util %d/%d unguarded=%d | %s%s",
            path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
            C.STRATEGIC_PLACE_COST_MULT, last_pill_mult, imbalance_mult, surplus_mult,
            multi_carry_mult, armour_mult, tank_pen, cost, search_reason, best_score,
            pf_counts.back, pf_targets.back, pf_counts.front, pf_targets.front,
            pf_counts.aggro, pf_targets.aggro, pf_counts.utility or 0, util_reserve,
-           #unguarded_bases, PP.targets_label()) or "",
+           #unguarded_bases, PP.targets_label(),
+           deep_win and string.format(" | aggro_deep ebase{%.0f} depth{%.0f} group=%s extra_tiles=%d",
+             ad.best_ebase or 0, ad.best_depth or 0,
+             ad.gmx and string.format("(%d,%d)", ad.gmx, ad.gmy) or "none", ad.n_extra) or "") or "",
     cands = cands,
   }
 end
@@ -4395,16 +4524,17 @@ function M.get_strategic_place_heatmap(state, world, info)
     end
   end
 
-  for dy = -R, R do
-    for dx = -R, R do
-      local cx = U.mclamp(scan_mx + dx)   -- TANK-centric, or turtle home (matches the eval scan)
-      local cy = U.mclamp(scan_my + dy)
+  -- Deep aggro (C.PILL_PLACE_AGGRO_DEEP), as in the eval scan: nil = off.
+  local ad = M.aggro_deep_ctx(world)
+
+  local function hm_cell(cx, cy)
       if U.is_placeable(cx, cy, world) then
         -- Skip a category already at/over its projected target (no room).
         -- Turtle: no skip (matches the eval scan).
         local cell_cat = PP.classify(cx, cy, false, true)
         local _ctgt = pf_targets[cell_cat]
-        if not turtle and _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then goto skip_hm end
+        if not turtle and _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then return end
+        local deep = ad ~= nil and cell_cat == "aggro"
         local w_base  = turtle and C.PILL_PLACE_TURTLE_BASE_WEIGHT or C.STRATEGIC_PLACE_BASE_WEIGHT
         local w_undef = turtle and C.PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS or C.STRATEGIC_PLACE_UNDERDEFENDED_BONUS
         local w_bfp   = turtle and C.PILL_PLACE_TURTLE_BEYOND_FRONT_PENALTY or C.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY
@@ -4413,15 +4543,17 @@ function M.get_strategic_place_heatmap(state, world, info)
         local w_gap   = turtle and C.PILL_PLACE_TURTLE_SPACING or C.STRATEGIC_PLACE_PILL_SPACING
         local score = 0
 
-        -- Strategic-center bias.
-        if search_mx then
+        -- Strategic-center bias (deep aggro: the hostile base group centre).
+        local cmx, cmy = search_mx, search_my
+        if deep and ad.gmx then cmx, cmy = ad.gmx, ad.gmy end
+        if cmx then
           score = score + math.max(0, (C.STRATEGIC_PLACE_CENTER_BIAS_CAP or 16)
-                                       - U.mdist(cx, cy, search_mx, search_my))
+                                       - U.mdist(cx, cy, cmx, cmy))
                          * (C.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT or 4)
         end
 
         local _, _, base_dist = nearest_friendly_base_pos(world, cx, cy)
-        if base_dist then
+        if base_dist and not deep then
           score = score + math.max(0, C.STRATEGIC_PLACE_MAX_BASE_DIST - base_dist) * w_base
         end
 
@@ -4437,7 +4569,7 @@ function M.get_strategic_place_heatmap(state, world, info)
           if influence < 0
              or (influence == 0 and C.FRONT_ZERO_IS_FRONT == false
                  and not PP.near_front(cx, cy, C.FRONT_NEAR_RADIUS_PLACE or 0)) then
-            score = score - w_bfp
+            if not deep then score = score - w_bfp end
           elseif influence > 0 then
             score = score + math.max(0, C.STRATEGIC_PLACE_FRONT_PROX_CAP - influence)
                    * C.STRATEGIC_PLACE_FRONT_PROX_WEIGHT
@@ -4462,7 +4594,8 @@ function M.get_strategic_place_heatmap(state, world, info)
         end
 
         score = score - threat.at(cx, cy) * w_thr
-        score = score - U.mdist(tmx, tmy, cx, cy) * 0.5
+        score = score - U.mdist(tmx, tmy, cx, cy)
+                        * (deep and C.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT or 0.5)
 
         if spike_base then
           if U.mdist(cx, cy, spike_base.mx, spike_base.my) <= 2 then
@@ -4508,10 +4641,48 @@ function M.get_strategic_place_heatmap(state, world, info)
             score = score + C.STRATEGIC_PLACE_GUARDIAN_BONUS
           end
         end
+        -- 14. Deep aggro: ebase + depth (matches the eval scan).
+        if deep then
+          for _, hb in ipairs(ad.hb) do
+            if U.mdist(cx, cy, hb.mx, hb.my) <= C.PILL_FIRE_RANGE then
+              score = score + C.STRATEGIC_PLACE_AGGRO_ENEMY_BASE_BONUS
+            end
+          end
+          local inf = cpf.influence_at(cx, cy)
+          if inf < 0 then
+            score = score + math.min(C.STRATEGIC_PLACE_AGGRO_DEPTH_CAP,
+                                     -inf * C.STRATEGIC_PLACE_AGGRO_DEPTH_WEIGHT)
+          end
+        end
 
         lines[#lines + 1] = string.format("%d\t%d\t%.1f", cx, cy, score)
       end
-      ::skip_hm::
+  end  -- hm_cell
+
+  for dy = -R, R do
+    for dx = -R, R do
+      -- TANK-centric, or turtle home (matches the eval scan)
+      hm_cell(U.mclamp(scan_mx + dx), U.mclamp(scan_my + dy))
+    end
+  end
+  -- Deep aggro: the aggro tiles around each hostile base, outside the tank
+  -- square (matches the eval scan's extra tiles).
+  if ad and #ad.hb > 0 and (pf_counts.aggro or 0) < (pf_targets.aggro or 0) then
+    local x0, x1 = U.mclamp(scan_mx - R), U.mclamp(scan_mx + R)
+    local y0, y1 = U.mclamp(scan_my - R), U.mclamp(scan_my + R)
+    local FR = C.PILL_FIRE_RANGE
+    local seen = {}
+    for _, hb in ipairs(ad.hb) do
+      for cy = hb.my - FR, hb.my + FR do
+        for cx = hb.mx - FR, hb.mx + FR do
+          local k = cy * 256 + cx
+          if U.in_map(cx, cy) and not seen[k]
+             and not (cx >= x0 and cx <= x1 and cy >= y0 and cy <= y1) then
+            seen[k] = true
+            if PP.classify(cx, cy, false, true) == "aggro" then hm_cell(cx, cy) end
+          end
+        end
+      end
     end
   end
   return table.concat(lines, "\n")

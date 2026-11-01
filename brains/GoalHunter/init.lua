@@ -5790,6 +5790,16 @@ function Brain.think(info)
       -- Invalid if we no longer carry a pill, or pill was placed at target
       if (info.carried_pills or 0) == 0 and info.man_status == C.LGM_INTANK then
         goal_valid = false
+      elseif state.goal._aggro_deep and info.man_status ~= C.LGM_INTANK
+             and not (state._place_trip and state._place_trip.harvest) then
+        -- Deep aggro spot (C.PILL_PLACE_AGGRO_DEEP): the builder is out on
+        -- the long send, so stop driving toward the spot. Replan now: the
+        -- pool picks what the tank does while it waits. (A harvest trip
+        -- keeps the goal: the follow-through row holds the tank.)
+        goal_valid = false
+        print2(string.format("PLACE_AGGRO_DEEP_SENT t=%d spot=(%d,%d) tank=(%d,%d) man=%d -> builder out, drop the drive-in, replan",
+          now, gmx, gmy, bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
+          info.man_status or -1))
       else
         local p = W.pill_at(world, gmx, gmy)
         if p and p.owner == "friendly" and p.health > 0 then goal_valid = false end
@@ -9163,6 +9173,9 @@ function Brain.think(info)
         -- check alone -- there is no strategic score to hold it to.
         score_at_dispatch = on_goal and g._spot_score or nil,
         sc7_at_dispatch   = on_goal and g._spot_sc7 or nil,
+        -- C.PILL_PLACE_AGGRO_DEEP: the follow-through hold stands fast
+        -- instead of driving near a deep trip tile (nil when off).
+        aggro_deep = on_goal and g._aggro_deep or nil,
         -- Where the tank stood when the builder left. The harvest re-score is
         -- asked FROM here (goals.score_place_tile's tank_mx/tank_my), so the
         -- margin measures the tile changing, not the tank moving.

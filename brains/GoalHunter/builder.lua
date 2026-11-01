@@ -566,22 +566,30 @@ function M.set_mode(state, world, info, goal)
     -- A healthy bot would then fall back to pdist <= 1 and drive to within one
     -- tile of a spot up to 5 tiles out TOWARD the enemy, which is the failure
     -- this plan opens with. Do not "clean up" this line as redundant.
+    -- Deep aggro spot (goal._aggro_deep, C.PILL_PLACE_AGGRO_DEEP; nil when
+    -- off): always the long send, trigger or not, so the tank stops at
+    -- PLACE_DISPATCH_MAX_DIST instead of driving into enemy ground.
+    -- decide()'s place_pill checks (lgm_can_reach etc.) still apply.
+    local deep_send = goal._aggro_deep and trigger == nil and pdist > 1
+                      and pdist <= C.PLACE_DISPATCH_MAX_DIST
     local close_enough = (goal._place_forced and pdist <= C.PLACE_EMERGENCY_MAX_DIST)
                          or (trigger ~= nil and pdist <= C.PLACE_DISPATCH_MAX_DIST)
                          or pdist <= 1
+                         or deep_send
     local _pp_ok = close_enough and (info.carried_pills or 0) > 0
        and info.man_status == C.LGM_INTANK and not info.inboat
-    print2(string.format("PLACE_PILL_SETMODE t=%d goal=(%d,%d) tank=(%d,%d) pdist=%d emerg=%s carried=%d man=%d inboat=%s -> %s", state.tick or 0, goal.mx, goal.my, tmx, tmy, pdist, tostring(goal._place_forced or false), info.carried_pills or 0, info.man_status or -1, tostring(info.inboat), _pp_ok and "place_pill" or "no-dispatch"))
+    print2(string.format("PLACE_PILL_SETMODE t=%d goal=(%d,%d) tank=(%d,%d) pdist=%d emerg=%s carried=%d man=%d inboat=%s%s -> %s", state.tick or 0, goal.mx, goal.my, tmx, tmy, pdist, tostring(goal._place_forced or false), info.carried_pills or 0, info.man_status or -1, tostring(info.inboat), goal._aggro_deep and " aggro_deep=true" or "", _pp_ok and "place_pill" or "no-dispatch"))
     if _pp_ok then
       -- Edge-triggered: one line per (target, trigger), not one per tick the
       -- mode holds (2273 lines for 9 dispatches in 20260831_000722). The
       -- key clears at the bottom of set_mode whenever the mode leaves
       -- place_pill, so a re-dispatch after a return logs again.
-      local dkey = string.format("%d:%d:%s", goal.mx, goal.my, trigger or "close")
+      local why = trigger or (deep_send and "aggro_deep") or "close"
+      local dkey = string.format("%d:%d:%s", goal.mx, goal.my, why)
       if b._dispatch_key ~= dkey then
         b._dispatch_key = dkey
         print2(string.format("DISPATCH t=%d target=(%d,%d) reason=%s pdist=%d coverage=%d v=%.1f i=%.1f",
-          state.tick or 0, goal.mx, goal.my, trigger or "close", pdist,
+          state.tick or 0, goal.mx, goal.my, why, pdist,
           threat.coverage_at(goal.mx, goal.my) or 0,
           state.vuln or -1, state.imdanger or -1))
       end

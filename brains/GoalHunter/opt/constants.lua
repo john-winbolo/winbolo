@@ -1711,6 +1711,31 @@ M.DIJKSTRA_PILL_DANGER_SCALE    = 0.1   -- danger weighting for the "pill take" 
 M.STRATEGIC_PLACE_ENABLED       = true
 M.STRATEGIC_PLACE_SEARCH_RADIUS = 12    -- tiles around the tank to search for a placement spot. Widened from 8: the spot-quality floor (STRATEGIC_PLACE_MIN_SCORE) holds placement whenever no GOOD spot is within range, so a too-tight radius made a slightly-forward tank carry pills forever (its 8-tile bubble was all front/enemy ground). 12 reaches the good back/guardian spots near our bases without lowering standards. CPU is (2R+1)^2 but bounded by the capacity clamp (place_r) on constrained ticks; far spots also cost more travel (path_cost), so they still only win when worth it.
 M.STRATEGIC_PLACE_AGGRO_SEARCH_RADIUS = 14  -- wider scan when filling the AGGRO role: aggro tiles sit beyond the front (negative influence), deeper than the default radius reaches from the tank's (rear) position. Lets a good forward aggro tile up to 14 tiles out be found + placed.
+-- ── Deep aggro placement (2026-11-01, Andrew) ──
+-- PILL_PLACE_AGGRO_DEEP is the master switch. Off = the placement scan is
+-- exactly the old one. On, ONLY for a tile whose category is "aggro"
+-- (PP.classify): goals.lua eval_place_pill_strategic and its heatmap mirror
+--   * also score every tile within PILL_FIRE_RANGE (a 17x17 square) of each
+--     hostile base this bot has seen (world.bases), when the scan can place
+--     an aggro pill at all. Tiles already in the tank square are skipped;
+--   * ebase: + ENEMY_BASE_BONUS per hostile base within PILL_FIRE_RANGE
+--     (Manhattan, the same test as the coverage terms);
+--   * depth: + DEPTH_WEIGHT per point of enemy influence (-influence),
+--     capped at DEPTH_CAP;
+--   * no beyond-front penalty (inf) and no own-base proximity (prx);
+--   * tank distance (dst) costs TANK_DIST_WEIGHT per tile, not 0.5;
+--   * the centre bias (ctr) uses the hostile base with the most other hostile
+--     bases within 2 x PILL_FIRE_RANGE (ties: lower tile id), not the normal
+--     centre. Same CENTER_BIAS_CAP / _WEIGHT.
+-- builder.lua then sends the builder from up to PLACE_DISPATCH_MAX_DIST with
+-- no dispatch trigger, and init.lua drops the goal once the builder is out,
+-- so the tank does not keep driving in. Off while PILL_PLACE_TURTLE is on.
+-- PRESETS.keel = false.
+M.PILL_PLACE_AGGRO_DEEP                   = true
+M.STRATEGIC_PLACE_AGGRO_ENEMY_BASE_BONUS  = 60    -- per hostile base the aggro tile covers
+M.STRATEGIC_PLACE_AGGRO_DEPTH_WEIGHT      = 2     -- per point of enemy influence under the tile
+M.STRATEGIC_PLACE_AGGRO_DEPTH_CAP         = 80    -- most the depth term can add
+M.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT  = 0.1   -- per tile from the tank (normal tiles: 0.5)
 M.STRATEGIC_PLACE_FRONT_WEIGHT  = 3.0   -- bonus per tile of proximity to front line
 M.STRATEGIC_PLACE_BASE_WEIGHT   = 2.0   -- bonus per tile of proximity to nearest friendly base
 M.STRATEGIC_PLACE_THREAT_WEIGHT = 1.5   -- penalty per unit of threat.at(pos)
@@ -5911,6 +5936,9 @@ M.PRESETS = {
     TURTLE_BASE_MULT_CAP          = 1,
     -- KEEL keeps the influence tail for turtle bots too.
     TURTLE_NO_INFLUENCE_TAIL      = false,
+    -- 2026-11-01: deep aggro placement (enemy-base tiles, ebase/depth terms,
+    -- long builder send). KEEL scores aggro tiles like any other tile.
+    PILL_PLACE_AGGRO_DEEP         = false,
     -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
     -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
     -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy
