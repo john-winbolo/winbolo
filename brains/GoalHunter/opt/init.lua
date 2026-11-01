@@ -2684,6 +2684,11 @@ function Brain.think(info)
       (t_scores - t_load_danger) / 1000, state.vuln, state.imdanger))
   end
 
+  -- Deep spike pairs and spike care (spike.lua, through goals.spike so
+  -- think() gets no new upvalue). A no-op with PILL_PLACE_AGGRO_DEEP and
+  -- SPIKE_REPAIR_PRIORITY both off.
+  goals.spike.update(state, world, info, now)
+
   -- ── Placement trip lifecycle ─────────────────────────────────────────────
   -- state._place_trip is set when a placement request goes out (after
   -- builder.decide, below) and examined HERE, once per tick, before goal
@@ -4753,7 +4758,9 @@ function Brain.think(info)
       -- as the harvest trip it follows -- the lifecycle block above already
       -- cleared _place_trip on the return, so this drops the goal on the same
       -- tick the resume dispatch takes over.
-      if not (state._place_trip and state._place_trip.harvest) then
+      -- A spike pair hold (spike.lua) is valid while the pair trip is out.
+      if not (state._place_trip and state._place_trip.harvest)
+         and not (state.goal.spike_hold and goals.spike.holding(state, info)) then
         goal_valid = false
       end
     elseif gk == "place_pill_strategic" then
@@ -7639,6 +7646,11 @@ function Brain.think(info)
         left = false,   -- set once the LGM is seen out of the tank
       }
       if state.builder.place_resume then state._place_resume = nil end
+      -- A deep spike (goal._spike_role, spike.lua): start or move its pair.
+      if on_goal and g._spike_role then
+        goals.spike.on_dispatch(state, g, build_cmd.x, build_cmd.y,
+          state._place_trip.tank_mx, state._place_trip.tank_my, now)
+      end
       -- One line per dispatch, on the edge (DISPATCH above repeats every tick
       -- the mode holds; this is the line to count).
     end
@@ -8695,6 +8707,9 @@ function Brain.think(info)
     -- allies must not duplicate. Five bots must not all rebuild one corpse.
     -- Format and arbitration: builder_pool.claim_advert / ally_claim_on.
     bse.bpj = bpool.claim_advert(state, now)
+    -- Spike care advert: spkd = "XXYYCCCC" per own spike under care (up to
+    -- two), or "-". nil (key not sent) with SPIKE_REPAIR_PRIORITY off.
+    bse.spkd = goals.spike.advert(state, now)
     -- ── "KILL ME" tokens ─────────────────────────────────────────────────
     -- km  = "XXYYAA"  our request: the tile we are parked on and our armour,
     --                 present ONLY while the kill_me_wait goal is held. The

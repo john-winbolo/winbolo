@@ -1736,7 +1736,61 @@ M.STRATEGIC_PLACE_AGGRO_ENEMY_BASE_BONUS  = 60    -- per hostile base the aggro 
 M.STRATEGIC_PLACE_AGGRO_DEPTH_WEIGHT      = 2     -- per point of enemy influence under the tile
 M.STRATEGIC_PLACE_AGGRO_DEPTH_CAP         = 80    -- most the depth term can add
 M.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT  = 0.1   -- per tile from the tank (normal tiles: 0.5)
-M.STRATEGIC_PLACE_FRONT_WEIGHT  = 3.0   -- bonus per tile of proximity to front line
+-- ── Deep spike rules (2026-11-01 late, Andrew: "run with this") ──
+-- spike.lua owns these. All are read ONLY while PILL_PLACE_AGGRO_DEEP is on,
+-- except the SPIKE_REPAIR_* / SPIKE_CARE_* group (see below). A rule that
+-- fails sends the pill to the normal (old) aggro placement, never alone.
+--  * Base lead (AGGRO_DEEP_BASE_GATE): bases this bot's world model holds as
+--    ours ("friendly") and theirs ("hostile"); deep only when
+--    ours >= theirs x BASE_RATIO and ours - theirs >= BASE_LEAD.
+--  * Pills (AGGRO_DEEP_PILL_GATE): team pills (our deployed live pills +
+--    this tank's carried + pills allies advertise as carried) >= MIN_PILLS,
+--    and the front role at its portfolio target (PP.targets).
+--  * Pair (AGGRO_DEEP_PAIR): "off" = one deep spike per pill (the first
+--    version of this rule). "solo" = deep only with a second pill ready:
+--    this tank carries >= 2 pills and wood for both (2 x PILL_PLACE_TREE_COST).
+--    The tank holds at its dispatch tile while the builder makes both trips;
+--    the second trip goes first (SPIKE_PAIR_SECOND_COST, builder pool waits).
+--    The second tile: aggro, within SPIKE_PAIR_COVER_DIST (euclid) of the
+--    first with clear line of sight, within PLACE_DISPATCH_MAX_DIST of the
+--    tank, not forest; ebase gives no credit for a hostile base the first
+--    already covers. It must land within SPIKE_PAIR_WINDOW ticks of the
+--    first. A miss: the first gets spike care at once and the area (within
+--    SPIKE_FAIL_COOLDOWN_RADIUS of the first) gets no deep spike for
+--    SPIKE_FAIL_COOLDOWN ticks. "team" (an ally carrying a pill joins by
+--    advert) is NOT built yet: it acts as "solo".
+M.AGGRO_DEEP_BASE_GATE       = true
+M.AGGRO_DEEP_BASE_RATIO      = 1.5
+M.AGGRO_DEEP_BASE_LEAD       = 3
+M.AGGRO_DEEP_PILL_GATE       = true
+M.AGGRO_DEEP_MIN_PILLS       = 8
+M.AGGRO_DEEP_PAIR            = "solo"   -- "off" | "solo" | "team" (team = solo for now)
+M.SPIKE_PAIR_WINDOW          = 300      -- ticks from the first landing to the second landing
+M.SPIKE_PAIR_COVER_DIST      = 8        -- tiles (euclid) between the two spikes, with LOS
+M.SPIKE_PAIR_SECOND_COST     = 1        -- pool cost of the second trip (wins the tank pool)
+M.SPIKE_FAIL_COOLDOWN        = 1500     -- ticks with no deep spike near a failed pair
+M.SPIKE_FAIL_COOLDOWN_RADIUS = 16       -- tiles (Manhattan) around the first spike
+M.SPIKE_SYNC_TICKS           = 50       -- reserved for "team" (not built)
+M.SPIKE_JOIN_TIMEOUT         = 750      -- reserved for "team" (not built)
+-- Spike care (SPIKE_REPAIR_PRIORITY). Read OUTSIDE the deep path (builder
+-- pool, the tank repair_pill pool, the spkd advert), so PRESETS.keel = false.
+-- A spike pill is one this bot placed by the deep rule (seen to land), or
+-- one an ally advertises (spkd=XXYYCCCC: tile + tick low 16 bits). For
+-- SPIKE_CARE_TICKS after it lands, and while its tile still classifies as
+-- aggro: builder pool rebuild/topup rows on it get + SPIKE_REPAIR_BONUS
+-- (chip spike_care{} on the BP line), top up from SPIKE_REPAIR_MIN_MISSING hp
+-- missing (normal BUILDER_POOL_TOPUP_MIN_MISSING), and reach
+-- SPIKE_REPAIR_LEASH tiles (normal repair leash 11); the tank repair_pill row
+-- on it costs x (1 - SPIKE_REPAIR_TANK_DISCOUNT).
+-- Bonus 200: the farm row tops out near 159 and a routine 4-hp top-up is
+-- 120 - trip, so a 1-hp spike top-up (30 - trip + 200) still outranks both.
+M.SPIKE_REPAIR_PRIORITY      = true
+M.SPIKE_CARE_TICKS           = 3000
+M.SPIKE_REPAIR_BONUS         = 200
+M.SPIKE_REPAIR_MIN_MISSING   = 1
+M.SPIKE_REPAIR_LEASH         = 15
+M.SPIKE_REPAIR_TANK_DISCOUNT = 0.5
+M.STRATEGIC_PLACE_FRONT_WEIGHT  = 3.0  -- bonus per tile of proximity to front line
 M.STRATEGIC_PLACE_BASE_WEIGHT   = 2.0   -- bonus per tile of proximity to nearest friendly base
 M.STRATEGIC_PLACE_THREAT_WEIGHT = 1.5   -- penalty per unit of threat.at(pos)
 M.STRATEGIC_PLACE_PILL_SPACING  = 5     -- target minimum tile gap from existing friendly pills
@@ -5939,6 +5993,9 @@ M.PRESETS = {
     -- 2026-11-01: deep aggro placement (enemy-base tiles, ebase/depth terms,
     -- long builder send). KEEL scores aggro tiles like any other tile.
     PILL_PLACE_AGGRO_DEEP         = false,
+    -- 2026-11-01: spike care (builder pool bonus, wider repair reach, tank
+    -- repair discount, spkd advert). KEEL repairs spike pills like any pill.
+    SPIKE_REPAIR_PRIORITY         = false,
     -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
     -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
     -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy

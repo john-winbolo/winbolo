@@ -59,6 +59,11 @@ C.PLACE_PILL_MAN_PATH_SAFE = false
 C.PLACE_PILL_BEHIND_ONLY   = false
 C.STRATEGIC_PLACE_MIN_SCORE       = -1e9   -- no spot-quality floor in the test
 C.STRATEGIC_PLACE_MIN_SCORE_FLOOR = -1e9
+-- The first version of the deep rule: the spike rules (spike.lua) are tested
+-- in test_spike.lua. All three off = one deep spike per pill, every aggro tile.
+C.AGGRO_DEEP_BASE_GATE = false
+C.AGGRO_DEEP_PILL_GATE = false
+C.AGGRO_DEEP_PAIR      = "off"
 PP.set_targets(0, 0, 1, 0, "test")         -- every pill is wanted as aggro
 
 local function base(mx, my, owner) return { mx = mx, my = my, owner = owner } end
