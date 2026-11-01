@@ -34,6 +34,10 @@ local G      = require("goals")
 local BP     = require("builder_pool")
 local SP     = require("spike")
 
+-- These tests cover the per-bot rules of the first builds ("count");
+-- the deny plan and its team vote are in test_focus_vote.lua.
+C.FOCUS_SPIKE_RULE = "count"
+
 local pass, fail = 0, 0
 local function check(name, cond, got)
   if cond then
@@ -858,9 +862,13 @@ do
   local lsame = true
   for k, v in pairs(sp) do
     if k ~= "FOCUS_SPIKE_MIN_PILLS" and k ~= "FOCUS_SPIKE_BASE_LEAD"
-       and k ~= "FOCUS_SPIKE_BASE_RATIO" and lo[k] ~= v then lsame = false end
+       and k ~= "FOCUS_SPIKE_BASE_RATIO" and k ~= "FOCUS_SPIKE_RULE"
+       and lo[k] ~= v then lsame = false end
   end
   check("keel_focus_loose = keel_focus plus the three rule values", lsame)
+  check("keel_focus is deny; _loose and _raw keep the count rules",
+        sp.FOCUS_SPIKE_RULE == "deny" and lo.FOCUS_SPIKE_RULE == "count"
+        and raw.FOCUS_SPIKE_RULE == "count", tostring(sp.FOCUS_SPIKE_RULE))
   check("preset keel_focus_loose: pills 6, lead 2, ratio 1.25", lo.FOCUS_SPIKE_MIN_PILLS == 6
         and lo.FOCUS_SPIKE_BASE_LEAD == 2 and lo.FOCUS_SPIKE_BASE_RATIO == 1.25)
   check("defaults stay: pills 8, lead 3, ratio 1.5", C.FOCUS_SPIKE_MIN_PILLS == 8

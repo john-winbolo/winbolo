@@ -1805,6 +1805,79 @@ M.FOCUS_SPIKE_WIN_UTIL        = 0.15
 -- rule reads the NORMAL targets, so the switch cannot turn itself off.
 -- Log line: FOCUS_SPIKE_UTIL_TO_AGGRO. PRESETS.keel = false.
 M.FOCUS_SPIKE_UTIL_TO_AGGRO   = true
+-- ── Focused spike deny plan and team vote (2026-11-01, Andrew: "the true
+-- 'focused' spikes ... requires a passing vote of majority (not all)") ──
+-- FOCUS_SPIKE_RULE: "deny" = focus_vote.lua: with no passed vote, play is
+-- KEEL (no deep placement, normal shares, no spike care). "count" = the base
+-- lead and pill rules above, per bot (the first builds, kept for benches).
+-- The deny plan, from each bot's own world model, about once per PLAN_INTERVAL:
+--  * clusters: single-link groups of bases within CLUSTER_GAP tiles (euclid);
+--  * target bases: every base not ours (hostile, neutral, unknown); a base
+--    with no known position counts in the total but cannot be covered;
+--  * cover tiles per cluster: greedy, every target base within
+--    PILL_FIRE_RANGE (euclid, inclusive) of our pills (our live pills count);
+--    placeable, not forest, out of range of every known live hostile pill.
+--    A cluster with a base that cannot be covered is skipped;
+--  * defense per cluster (armour = last seen hp / 15):
+--      pills:  armour per known hostile pill within PILL_FIRE_RANGE +
+--              DEFENSE_PILL_MARGIN of a target base or cover tile;
+--      tanks:  DEFENSE_TANK_WEIGHT per enemy tank seen within
+--              DEFENSE_TANK_RANGE in the last DEFENSE_TANK_MEMORY ticks;
+--      route:  armour x DEFENSE_ROUTE_WEIGHT per hostile pill that sees a
+--              tile of the lowest-cost route from our nearest base or pill
+--              (exposed tiles cost ROUTE_EXPOSED_COST more; a tank in a 2x2
+--              forest block 3+ tiles away on either axis is hidden, the
+--              engine rule); each pill counted once;
+--      detour: DEFENSE_DETOUR_WEIGHT per 10 tiles the route is longer than
+--              the straight line.
+--    Label: shallow (no route tile in hostile pill range), deep (exposed),
+--    hidden ("deep, hidden route": in range but hidden by forest).
+--    defense >= DEFENSE_MAX: skipped (no route at all counts as DEFENSE_MAX);
+--  * rank = target bases / (tiles + DEFENSE_WEIGHT x defense); with
+--    UNDEFENDED_FIRST, clusters with defense < UNDEFENDED_MAX come first;
+--    shallow before deep when ranks are within 10%; then nearer our bases;
+--  * spare K = team pills - the NORMAL front target; whole clusters, best
+--    first, while K and MAX_TILES allow;
+--  * pass: planned / total target bases >= DENY_FRAC (and tiles to place).
+-- The vote (copy of the reposition vote): a bot whose plan passes and whose
+-- placement goal won its pool opens it; ballots: yes + pledge (carried
+-- pills, ETA) or no + reason (not_target, tile_covered, home_attacked,
+-- better, cooldown, defended); silence = yes; VOTE_WINDOW_TICKS, early when
+-- every bot answered. Pass: YES > half the team bots (proposer included,
+-- humans do not vote) and pledges >= tiles. Go: tile -> player, nearest ETA
+-- first; each assigned bot places at APPROVED_COST. Active APPROVAL_TTL ticks
+-- or until every tile is placed; placed tiles keep spike care
+-- (SPIKE_CARE_TICKS). Abort: lost_pill, tile_covered, home_attacked
+-- (ABORT_HOME_ATTACKED), route_blocked (route defense >= DEFENSE_MAX). Fail or
+-- abort: team cooldown VOTE_FAIL_COOLDOWN (not for a fail by "better" only).
+-- While active the win shares and utility to aggro switch on (their knobs).
+-- PRESETS.keel: FOCUS_SPIKE_ENABLED = false, so none of this runs.
+M.FOCUS_SPIKE_RULE                 = "deny"   -- "deny" | "count"
+M.FOCUS_SPIKE_CLUSTER_GAP          = 16
+M.FOCUS_SPIKE_DENY_FRAC            = 0.5
+M.FOCUS_SPIKE_PLAN_INTERVAL        = 50       -- ticks between plans
+M.FOCUS_SPIKE_MAX_TILES            = 12       -- fits the 124-byte message
+M.FOCUS_SPIKE_VOTE_WINDOW_TICKS    = 25
+M.FOCUS_SPIKE_APPROVED_COST        = 80
+M.FOCUS_SPIKE_APPROVAL_TTL         = 1500
+M.FOCUS_SPIKE_VOTE_FAIL_COOLDOWN   = 1500
+M.FOCUS_SPIKE_HOME_ATTACK_RANGE    = 8
+M.FOCUS_SPIKE_ABORT_HOME_ATTACKED  = true
+M.FOCUS_SPIKE_BETTER_MARGIN        = 0.1      -- "better": my planned fraction beats theirs by this
+M.FOCUS_SPIKE_STDERR_LOG           = false    -- plain print() lines for the bench
+M.FOCUS_SPIKE_DEFENSE_PILL_MARGIN  = 2
+M.FOCUS_SPIKE_DEFENSE_TANK_RANGE   = 12
+M.FOCUS_SPIKE_DEFENSE_TANK_MEMORY  = 600
+M.FOCUS_SPIKE_DEFENSE_TANK_WEIGHT  = 0.5
+M.FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT = 2.0
+M.FOCUS_SPIKE_DEFENSE_DETOUR_WEIGHT = 0.5
+M.FOCUS_SPIKE_DEFENSE_WEIGHT       = 1.0
+M.FOCUS_SPIKE_DEFENSE_MAX          = 3.0
+M.FOCUS_SPIKE_UNDEFENDED_FIRST     = true
+M.FOCUS_SPIKE_UNDEFENDED_MAX       = 0.5
+M.FOCUS_SPIKE_ROUTE_EXPOSED_COST   = 50       -- extra route cost of a tile a hostile pill sees
+M.FOCUS_SPIKE_ROUTE_PAD            = 12       -- route search box padding (tiles)
+M.FOCUS_SPIKE_ROUTE_CACHE_TICKS    = 1500
 -- Spike care (SPIKE_REPAIR_PRIORITY). Read OUTSIDE the deep path (builder
 -- pool, the tank repair_pill pool, the spkd advert), so PRESETS.keel = false.
 -- A spike pill is one this bot placed by the deep rule (seen to land), or
@@ -6462,24 +6535,38 @@ do
     return t
   end
   M.PRESETS.keel_focus = keel_plus({
+    FOCUS_SPIKE_RULE = "deny",
     FOCUS_SPIKE_ENABLED = true, FOCUS_SPIKE_BASE_RULE = true,
     FOCUS_SPIKE_PILL_RULE = true, FOCUS_SPIKE_PAIR = "solo",
     SPIKE_REPAIR_PRIORITY = true, FOCUS_SPIKE_WIN_SHARES = true,
     FOCUS_SPIKE_UTIL_TO_AGGRO = true, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
+    FOCUS_SPIKE_RULE = "count",
     FOCUS_SPIKE_ENABLED = true, FOCUS_SPIKE_BASE_RULE = false,
     FOCUS_SPIKE_PILL_RULE = false, FOCUS_SPIKE_PAIR = "off",
     SPIKE_REPAIR_PRIORITY = false, FOCUS_SPIKE_WIN_SHARES = false,
     FOCUS_SPIKE_UTIL_TO_AGGRO = false, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = false,
   })
   M.PRESETS.keel_focus_loose = keel_plus({
+    FOCUS_SPIKE_RULE = "count",
     FOCUS_SPIKE_ENABLED = true, FOCUS_SPIKE_BASE_RULE = true,
     FOCUS_SPIKE_PILL_RULE = true, FOCUS_SPIKE_PAIR = "solo",
     SPIKE_REPAIR_PRIORITY = true, FOCUS_SPIKE_WIN_SHARES = true,
     FOCUS_SPIKE_UTIL_TO_AGGRO = true, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true,
     FOCUS_SPIKE_MIN_PILLS = 6, FOCUS_SPIKE_BASE_LEAD = 2, FOCUS_SPIKE_BASE_RATIO = 1.25,
   })
+  -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
+  -- change), so a game plays exactly as preset=keel until the first vote, and
+  -- the plain stderr lines on.
+  local kb = {}
+  for k, v in pairs(M.PRESETS.keel) do kb[k] = v end
+  for k, v in pairs(M.PRESETS.keel_focus) do
+    if k:sub(1, 12) == "FOCUS_SPIKE_" or k == "SPIKE_REPAIR_PRIORITY" then kb[k] = v end
+  end
+  kb.FOCUS_SPIKE_RULE = "deny"
+  kb.FOCUS_SPIKE_STDERR_LOG = true
+  M.PRESETS.keel_focus_bench = kb
 end
 
 -- ── SIDE SETTINGS (2026-09-29, Andrew; Virus) ─────────────────────────

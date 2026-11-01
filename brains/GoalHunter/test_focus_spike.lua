@@ -26,6 +26,10 @@ local squad  = require("squad")
 local G      = require("goals")
 local B      = require("builder")
 
+-- These tests cover the per-bot rules of the first builds ("count");
+-- the deny plan and its team vote are in test_focus_vote.lua.
+C.FOCUS_SPIKE_RULE = "count"
+
 local pass, fail = 0, 0
 local function check(name, cond, got)
   if cond then

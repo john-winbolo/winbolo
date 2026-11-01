@@ -2655,6 +2655,9 @@ end
 function M.focus_spike_ctx(world, chk, state, tmx, tmy)
   if not C.FOCUS_SPIKE_ENABLED or C.PILL_PLACE_TURTLE == true then return nil end
   if chk == false then return nil end
+  -- Deny mode plan tiles are placed by their own goal (eval_place_pill_strategic,
+  -- the plan tile block); the scan keeps its normal (KEEL) scoring.
+  if chk and chk.role == "plan" then return nil end
   local hb = {}
   for _, b in pairs(world.bases) do
     if b.owner == "hostile" then hb[#hb + 1] = b end
@@ -2866,6 +2869,44 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     actionable = true   -- re-score: the LGM is back aboard by definition
   elseif not actionable and not viz_only then
     return nil
+  end
+
+  -- ── Focused spike plan tile (C.FOCUS_SPIKE_RULE "deny", spike.lua) ──────
+  -- A passed team vote assigned this bot tiles: go to the nearest one that
+  -- is still placeable and reachable, at the flat FOCUS_SPIKE_APPROVED_COST
+  -- (the builder leaves at once with the long send). Before a vote passes
+  -- spike.check answers false here and nothing below changes.
+  if not only and actionable and C.FOCUS_SPIKE_ENABLED and C.FOCUS_SPIKE_RULE == "deny"
+     and (info.trees or 0) >= (C.PILL_PLACE_TREE_COST or 4) then
+    local fchk = M.spike.check(state, world, info, nil, true)
+    if fchk and fchk.role == "plan" then
+      local bt, bd = nil, math.huge
+      for _, t in ipairs(fchk.plan) do
+        if U.is_placeable(t.mx, t.my, world) then
+          local d = U.edist(tmx, tmy, t.mx, t.my)
+          if d < bd then bt, bd = t, d end
+        end
+      end
+      local pc = bt and smart_cost(KIND_NORMAL, tmx, tmy, bt.mx, bt.my, boat and 1 or 0,
+                                   info.shells or 32, info.trees or 0, info.mines or 0,
+                                   info.armour or 40)
+      if bt and pc and pc < 1e20 then
+        local cost = C.FOCUS_SPIKE_APPROVED_COST
+        if state._focus_spike_log ~= string.format("plan:%d:%d", bt.mx, bt.my) then
+          state._focus_spike_log = string.format("plan:%d:%d", bt.mx, bt.my)
+        end
+        return {
+          cost = cost,
+          goal = { kind = "place_pill_strategic", mx = bt.mx, my = bt.my,
+                   wx = U.m2w(bt.mx), wy = U.m2w(bt.my),
+                   _place_cat = "aggro", _focus_spike = true, _spike_role = "plan",
+                   _spike_carried = info.carried_pills or 0 },
+          desc = BRAIN_POOL_VIZ and string.format(
+                 "focus_spike plan tile (%d,%d) cost{%.0f} = FOCUS_SPIKE_APPROVED_COST (path %.0f)",
+                 bt.mx, bt.my, cost, pc) or "",
+        }
+      end
+    end
   end
 
   -- ── Carry value penalty ─────────────────────────────────────────────────

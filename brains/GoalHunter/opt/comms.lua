@@ -272,6 +272,20 @@ function M.process_message(sender, text, tick, state)
     end
   end
 
+  -- ── Focused spike vote verbs (fso/fsy/fsn/fsr/fsg/fsa) ──────────────────
+  -- One-shot, queued on state._fs_rx in arrival order; focus_vote.lua parses
+  -- and acts on them in its next update (C.FOCUS_SPIKE_RULE "deny").
+  if text:sub(1, 8) == "/info fs" and text:match("^/info fs[oynrga] ") then
+    if state then
+      state._fs_rx = state._fs_rx or {}
+      -- Capped: a bot with the vote off never drains the list.
+      if #state._fs_rx < 32 then
+        state._fs_rx[#state._fs_rx + 1] = { from = sender, text = text, tick = tick }
+      end
+    end
+    return
+  end
+
   -- ── Bot-command ORDER verbs (obd bid / obc claim / obr release) ─────────
   -- Their own verbs, like the reposition vote's: order traffic is bursty and
   -- the /info state slate is already near the 124-byte batch budget. The
