@@ -577,9 +577,16 @@ function M.plan(state, world, info, now)
   local obases = {}
   for _, b in ipairs(list) do if not b.target then obases[#obases + 1] = b end end
   local rows = {}
+  -- The clusters keep the base list of the plan that built them, so read
+  -- each base's owner from this plan's list (owners change, places do not).
+  local cur = {}
+  for _, b in ipairs(list) do cur[b.id] = b end
   for _, cl0 in ipairs(F.clusters) do
     local targets = {}
-    for _, b in ipairs(cl0.bases) do if b.target then targets[#targets + 1] = b end end
+    for _, b0 in ipairs(cl0.bases) do
+      local b = cur[b0.id]
+      if b and b.target then targets[#targets + 1] = b end
+    end
     if #targets > 0 then
       local key = tostring(cl0.bases[1].id)
       local cl = { id = cl0.id, key = key, bases = cl0.bases, targets = targets,
