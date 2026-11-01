@@ -1961,6 +1961,18 @@ M.SPIKE_REPAIR_TANK_DISCOUNT = 0.5
 -- 0 = off (the default and PRESETS.keel); keel_focus, _loose, _bench 0.30.
 M.FOCUS_SPIKE_DEFEND_DISCOUNT = 0
 M.FOCUS_SPIKE_DEFEND_TICKS    = 6000
+-- Neutral pills in the cluster plan (2026-11-01, Andrew: "if there are
+-- neutrals in range of the cluster, we can score that lower, since those
+-- would interfere with the enemy refuelling there, too"). A neutral pill has
+-- no allies, so pillsUpdate fires at every team's tanks. On:
+--  * cover: a target base within PILL_FIRE_RANGE of a known live neutral
+--    pill counts as covered, as our own pills do (a cluster covered that way
+--    needs 0 spike pills and is not proposed);
+--  * risk: neutral pills count like hostile pills in the stand place and
+--    route exposure (armour / 15 x weight, forest hiding counts).
+-- Only what this bot saw (last seen armour > 0). Plan line: ncov=<base ids>.
+-- false = off (the default and PRESETS.keel); keel_focus, _loose, _bench on.
+M.FOCUS_SPIKE_NEUTRAL_PILL_COVER = false
 M.STRATEGIC_PLACE_FRONT_WEIGHT  = 3.0  -- bonus per tile of proximity to front line
 M.STRATEGIC_PLACE_BASE_WEIGHT   = 2.0   -- bonus per tile of proximity to nearest friendly base
 M.STRATEGIC_PLACE_THREAT_WEIGHT = 1.5   -- penalty per unit of threat.at(pos)
@@ -6014,6 +6026,8 @@ M.PRESETS = {
     FOCUS_SPIKE_ENABLED         = false,
     -- 2026-11-01: spike defend discount off (defend_pill costs as before).
     FOCUS_SPIKE_DEFEND_DISCOUNT = 0,
+    -- 2026-11-01: neutral pills are not counted in the spike cluster plan.
+    FOCUS_SPIKE_NEUTRAL_PILL_COVER = false,
     -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
     -- keeps its utility share.
     FOCUS_SPIKE_UTIL_TO_AGGRO      = false,
@@ -6614,6 +6628,7 @@ do
     FOCUS_SPIKE_APPROVAL_TTL = 6000,
     FOCUS_SPIKE_TILE_COVERED_RULE = "repick",
     FOCUS_SPIKE_DEFEND_DISCOUNT = 0.30, FOCUS_SPIKE_DEFEND_TICKS = 6000,
+    FOCUS_SPIKE_NEUTRAL_PILL_COVER = true,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6632,6 +6647,7 @@ do
     FOCUS_SPIKE_APPROVAL_TTL = 6000,
     FOCUS_SPIKE_TILE_COVERED_RULE = "repick",
     FOCUS_SPIKE_DEFEND_DISCOUNT = 0.30, FOCUS_SPIKE_DEFEND_TICKS = 6000,
+    FOCUS_SPIKE_NEUTRAL_PILL_COVER = true,
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and

@@ -845,6 +845,7 @@ do
     if k ~= "FOCUS_SPIKE_ENABLED" and k ~= "SPIKE_REPAIR_PRIORITY"
        and k ~= "FOCUS_SPIKE_UTIL_TO_AGGRO" and k ~= "FOCUS_SPIKE_NEUTRAL_AS_ENEMY"
        and k ~= "REPAIR_FRIENDLY_FIRE_REJECT_TICKS" and k ~= "FOCUS_SPIKE_DEFEND_DISCOUNT"
+       and k ~= "FOCUS_SPIKE_NEUTRAL_PILL_COVER"
        and (sp[k] ~= v or raw[k] ~= v) then
       same = false
     end
