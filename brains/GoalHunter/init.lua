@@ -9737,6 +9737,8 @@ function Brain.think(info)
     ally_state.draw(viz, state.tick, info.player_number, 1750)
     ally_state.draw_chat_log(viz, state.tick, info.player_number)
     reposition_vote.draw(state, world, info, state.tick)
+    -- Focused spike overlays (require, not a local: think() is at the upvalue cap).
+    require("focus_viz").draw(state, world, info, state.tick)
     squad.draw_roster(state, info, state.tick)
     squad.draw_labels(state, info, state.tick)
     squad.draw_blitz(state, info, state.tick)
