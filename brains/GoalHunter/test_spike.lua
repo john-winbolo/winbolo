@@ -155,6 +155,10 @@ do
   local t, dep, own, ally = SP.team_pills(w, { carried_pills = 3 }, { back = 2, front = 1, aggro = 1, utility = 2 })
   check("team pills = 4 deployed + 3 own + 1 ally = 8", t == 8 and dep == 4 and own == 3 and ally == 1,
         string.format("%d %d %d %d", t, dep, own, ally))
+  -- a placed pill in use as a blocker counts as utility; it still counts
+  t, dep, own, ally = SP.team_pills(w, { carried_pills = 3 }, { back = 2, front = 1, aggro = 1, utility = 3 })
+  check("team pills count a placed utility pill: 5 deployed + 3 own + 1 ally = 9",
+        t == 9 and dep == 5 and own == 3 and ally == 1, string.format("%d %d %d %d", t, dep, own, ally))
 end
 
 -- ── 2. pair lifecycle ────────────────────────────────────────────────────
