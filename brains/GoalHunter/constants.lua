@@ -1760,6 +1760,13 @@ M.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT  = 0.1   -- per tile from the tank (nor
 --    SPIKE_FAIL_COOLDOWN ticks. "team" (an ally carrying a pill joins by
 --    advert) is NOT built yet: it acts as "solo".
 M.AGGRO_DEEP_BASE_GATE       = true
+-- Neutral as enemy (AGGRO_DEEP_NEUTRAL_AS_ENEMY, 2026-11-01, Andrew: "let's
+-- do all our stuff from now on with AGGRO_DEEP_NEUTRAL_AS_ENEMY but I'm glad
+-- it's a knob we can tweak later"). On: the base lead rule's "theirs" is
+-- hostile + neutral + every base whose owner this bot does not know (on the
+-- map but not seen yet, or a record with no owner). Off: hostile only.
+-- PRESETS.keel = false (no effect there: the deep spike is off).
+M.AGGRO_DEEP_NEUTRAL_AS_ENEMY = true
 M.AGGRO_DEEP_BASE_RATIO      = 1.5
 M.AGGRO_DEEP_BASE_LEAD       = 3
 M.AGGRO_DEEP_PILL_GATE       = true
@@ -5870,6 +5877,9 @@ M.PRESETS = {
     -- 2026-11-01: utility to aggro while the deep spike rules pass. KEEL
     -- keeps its utility share.
     AGGRO_DEEP_UTIL_TO_AGGRO      = false,
+    -- 2026-11-01: neutral and unknown bases count as theirs in the deep
+    -- spike base lead rule. KEEL has no deep spike.
+    AGGRO_DEEP_NEUTRAL_AS_ENEMY   = false,
     -- 2026-11-01: spike care (builder pool bonus, wider repair reach, tank
     -- repair discount, spkd advert). KEEL repairs spike pills like any pill.
     SPIKE_REPAIR_PRIORITY         = false,
@@ -6455,19 +6465,19 @@ do
     PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = true,
     AGGRO_DEEP_PILL_GATE = true, AGGRO_DEEP_PAIR = "solo",
     SPIKE_REPAIR_PRIORITY = true, AGGRO_DEEP_WIN_SHARES = true,
-    AGGRO_DEEP_UTIL_TO_AGGRO = true,
+    AGGRO_DEEP_UTIL_TO_AGGRO = true, AGGRO_DEEP_NEUTRAL_AS_ENEMY = true,
   })
   M.PRESETS.keel_spike_raw = keel_plus({
     PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = false,
     AGGRO_DEEP_PILL_GATE = false, AGGRO_DEEP_PAIR = "off",
     SPIKE_REPAIR_PRIORITY = false, AGGRO_DEEP_WIN_SHARES = false,
-    AGGRO_DEEP_UTIL_TO_AGGRO = false,
+    AGGRO_DEEP_UTIL_TO_AGGRO = false, AGGRO_DEEP_NEUTRAL_AS_ENEMY = false,
   })
   M.PRESETS.keel_spike_loose = keel_plus({
     PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = true,
     AGGRO_DEEP_PILL_GATE = true, AGGRO_DEEP_PAIR = "solo",
     SPIKE_REPAIR_PRIORITY = true, AGGRO_DEEP_WIN_SHARES = true,
-    AGGRO_DEEP_UTIL_TO_AGGRO = true,
+    AGGRO_DEEP_UTIL_TO_AGGRO = true, AGGRO_DEEP_NEUTRAL_AS_ENEMY = true,
     AGGRO_DEEP_MIN_PILLS = 6, AGGRO_DEEP_BASE_LEAD = 2, AGGRO_DEEP_BASE_RATIO = 1.25,
   })
 end

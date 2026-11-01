@@ -64,18 +64,40 @@ local function pair_on()
 end
 
 -- ── Counts, from this bot's own world model only ─────────────────────────
--- ours = friendly + allied bases, theirs = hostile bases. Neutral and
--- unknown bases count for neither side.
+-- ours = friendly + allied bases. theirs = hostile bases, and with
+-- C.AGGRO_DEEP_NEUTRAL_AS_ENEMY also neutral bases and every base whose owner
+-- this bot does not know: a base on the map (world._bases_on_map, the map's
+-- base list) with no world.bases record yet, or a record with no known owner.
+-- Only this bot's own world model: it knows a base exists, not its owner
+-- until it (or an ally) has seen it. Answers ours, theirs, hostile, neutral,
+-- unknown.
 function M.base_counts(world)
-  local ours, theirs = 0, 0
-  for _, b in pairs(world.bases or {}) do
-    if b.owner == "friendly" or b.owner == "allied" then
+  local ours, hostile, neutral, unknown = 0, 0, 0, 0
+  local known = {}
+  for id, b in pairs(world.bases or {}) do
+    known[id] = true
+    local o = b.owner
+    if o == "friendly" or o == "allied" then
       ours = ours + 1
-    elseif b.owner == "hostile" then
-      theirs = theirs + 1
+    elseif o == "hostile" then
+      hostile = hostile + 1
+    elseif o == "neutral" then
+      neutral = neutral + 1
+    else
+      unknown = unknown + 1
     end
   end
-  return ours, theirs
+  local mask = world._bases_on_map
+  if type(mask) == "number" then
+    for id = 0, 31 do
+      if bit.band(mask, bit.lshift(1, id)) ~= 0 and not known[id] then
+        unknown = unknown + 1
+      end
+    end
+  end
+  local theirs = hostile
+  if C.AGGRO_DEEP_NEUTRAL_AS_ENEMY then theirs = hostile + neutral + unknown end
+  return ours, theirs, hostile, neutral, unknown
 end
 
 -- Team pills: deployed live friendly pills (every role, utility too: a
@@ -107,7 +129,7 @@ end
 -- win shares below do not change the answer they are switched by.
 function M.rules(world, info, pf_counts)
   local why = "ok"
-  local ours, theirs = M.base_counts(world)
+  local ours, theirs, b_host, b_neut, b_unk = M.base_counts(world)
   local total, deployed, own, ally_c = M.team_pills(world, info, pf_counts)
   local ftgt = PP.normal_targets(total).front
   local need_ours = theirs * C.AGGRO_DEEP_BASE_RATIO
@@ -120,6 +142,7 @@ function M.rules(world, info, pf_counts)
     why = "front"
   end
   return why, { ours = ours, theirs = theirs, need_ours = need_ours,
+                b_host = b_host, b_neut = b_neut, b_unk = b_unk,
                 total = total, deployed = deployed, own = own, ally_c = ally_c,
                 ftgt = ftgt }
 end
@@ -201,8 +224,11 @@ function M.check(state, world, info, pf_counts, quiet)
     if S.log_key ~= key then
       S.log_key = key
       print2(string.format(
-        "AGGRO_DEEP_GATE t=%d result=%s why=%s bases ours=%d theirs=%d (need ours >= theirs x %.1f = %.1f and lead %d >= %d; rule %s) pills team=%d = deployed %d + own carried %d + ally carried %d (need >= %d) front=%d/%d normal target (rule %s) pair=%s carried=%d trees=%d (pair needs 2 pills, %d trees) %s",
-        now, role, why, ours, theirs, C.AGGRO_DEEP_BASE_RATIO, need_ours,
+        "AGGRO_DEEP_GATE t=%d result=%s why=%s bases ours=%d theirs=%d = hostile %d + neutral %d + unknown %d (neutral as enemy %s) (need ours >= theirs x %.1f = %.1f and lead %d >= %d; rule %s) pills team=%d = deployed %d + own carried %d + ally carried %d (need >= %d) front=%d/%d normal target (rule %s) pair=%s carried=%d trees=%d (pair needs 2 pills, %d trees) %s",
+        now, role, why, ours, theirs, r.b_host,
+        C.AGGRO_DEEP_NEUTRAL_AS_ENEMY and r.b_neut or 0, C.AGGRO_DEEP_NEUTRAL_AS_ENEMY and r.b_unk or 0,
+        C.AGGRO_DEEP_NEUTRAL_AS_ENEMY and "on" or ("off: " .. r.b_neut .. " neutral, " .. r.b_unk .. " unknown not counted"),
+        C.AGGRO_DEEP_BASE_RATIO, need_ours,
         ours - theirs, C.AGGRO_DEEP_BASE_LEAD, C.AGGRO_DEEP_BASE_GATE and "on" or "off",
         total, deployed, own, ally_c, C.AGGRO_DEEP_MIN_PILLS,
         pf_counts.front or 0, ftgt, C.AGGRO_DEEP_PILL_GATE and "on" or "off",
