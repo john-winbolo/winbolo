@@ -68,9 +68,21 @@ local function edist(ax, ay, bx, by)
 end
 
 -- Plain stderr line for the bench (FOCUS_SPIKE_STDERR_LOG). print2 lines
--- are stripped from opt/, this one is not.
+-- are stripped from opt/, this one is not. With FOCUS_SPIKE_EVENT_FILE set,
+-- the line also goes to <brain dir>/fs_events/<name> (a release DS drops
+-- brain print() output).
 local function errline(s)
-  if C.FOCUS_SPIKE_STDERR_LOG then print(s) end
+  if not C.FOCUS_SPIKE_STDERR_LOG then return end
+  print(s)
+  local name = C.FOCUS_SPIKE_EVENT_FILE
+  if type(name) == "string" and name:match("^[%w_%.%-]+$") then
+    local dir = (rawget(_G, "BRAIN_DIR") or "."):gsub("[/\\]opt$", "")
+    local f = io.open(dir .. "/fs_events/" .. name, "a")
+    if f then
+      f:write(s, "\n")
+      f:close()
+    end
+  end
 end
 
 local function ours(o) return o == "friendly" or o == "allied" end
