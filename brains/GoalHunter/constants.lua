@@ -1865,6 +1865,12 @@ M.FOCUS_SPIKE_HOME_ATTACK_RANGE    = 8
 M.FOCUS_SPIKE_ABORT_HOME_ATTACKED  = true
 M.FOCUS_SPIKE_BETTER_MARGIN        = 0.1      -- "better": my planned fraction beats theirs by this
 M.FOCUS_SPIKE_STDERR_LOG           = false    -- plain print() lines for the bench
+-- Bench event file: with FOCUS_SPIKE_STDERR_LOG on and this set to a file
+-- name, each bench line is also appended to <brain dir>/fs_events/<name>.
+-- A release WinBoloDS drops brain print() output (wb_log debug level is
+-- compiled out), so the bench reads this file. "" = off. The fs_events
+-- folder must exist (the brain does not create folders).
+M.FOCUS_SPIKE_EVENT_FILE           = ""
 M.FOCUS_SPIKE_DEFENSE_PILL_MARGIN  = 2
 M.FOCUS_SPIKE_DEFENSE_TANK_RANGE   = 12
 M.FOCUS_SPIKE_DEFENSE_TANK_MEMORY  = 600
