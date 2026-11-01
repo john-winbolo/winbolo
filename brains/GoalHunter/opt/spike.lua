@@ -129,7 +129,10 @@ function M.update_win(state, world, info, now)
   local why, r, pf = "off", nil, nil
   if C.PILL_PLACE_AGGRO_DEEP and C.AGGRO_DEEP_WIN_SHARES
      and C.PILL_PLACE_TURTLE ~= true then
-    pf = PP.counts(world, now)
+    -- peek: this runs every tick, so it must not write the cached pill
+    -- roles (that moved the re-evaluation times and changed play even
+    -- while the rules failed).
+    pf = PP.counts(world, now, true)
     why, r = M.rules(world, info, pf)
     want = (why == "ok")
   end

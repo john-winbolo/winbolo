@@ -177,7 +177,10 @@ end
 -- can't trigger a move the rest of the team (who reclassified more recently)
 -- disagrees with. Roles are per-bot and never shared, so the only defence
 -- against acting on a stale role is to refresh it at the decision point.
-function M.role_of(pill, tick, force_fresh)
+-- peek: give the role this call would give, but do not write the cache.
+-- A caller that only reads (spike.update_win, every tick) must not move
+-- the re-evaluation times the placement code sees.
+function M.role_of(pill, tick, force_fresh, peek)
   if not pill then return "front" end
   -- A pill carried IN A TANK is always utility (a mobile reserve).
   if pill.in_tank then return "utility" end
@@ -189,6 +192,7 @@ function M.role_of(pill, tick, force_fresh)
   local stale = force_fresh or (not pill.role) or (not pill.role_tick)
     or (tick - pill.role_tick) >= (C.PILL_ROLE_REEVAL_TICKS or 3000)
   if stale then
+    if peek then return (M.classify(pill.mx, pill.my, false)) end
     pill.role      = (M.classify(pill.mx, pill.my, false))
     pill.role_tick = tick
   end
@@ -197,8 +201,8 @@ end
 
 -- Current friendly-pill counts per category, using the cached 60s role.
 -- In-tank pills (own = "friendly", ally = "allied") always count as utility;
--- deployed friendly pills count by their cached role.
-function M.counts(world, tick)
+-- deployed friendly pills count by their cached role. peek: see role_of.
+function M.counts(world, tick, peek)
   local c = { back = 0, front = 0, aggro = 0, utility = 0 }
   if world and world.pills then
     for _, p in pairs(world.pills) do
@@ -207,7 +211,7 @@ function M.counts(world, tick)
           c.utility = c.utility + 1
         end
       elseif p.owner == "friendly" and (p.health or 0) > 0 then
-        local cat = M.role_of(p, tick)
+        local cat = M.role_of(p, tick, false, peek)
         c[cat] = (c[cat] or 0) + 1
       end
     end

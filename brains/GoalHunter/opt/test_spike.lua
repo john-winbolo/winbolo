@@ -567,6 +567,28 @@ do
   PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
 end
 
+-- The every-tick rule check reads the pill roles but must not write them:
+-- writing moved the role re-evaluation times and changed play while the
+-- rules failed (round 1 bench: WIN_SHARES on and off gave different games).
+do
+  C.AGGRO_DEEP_WIN_SHARES = true
+  local ps = { pill(150, 11, "friendly"), pill(200, 11, "friendly") }
+  ps[2].role, ps[2].role_tick = "aggro", 0          -- stale at t=9000
+  local w = { pills = ps, bases = bases(1, 4) }      -- base lead fails
+  SP.update(fresh_state(9000), w, info_at(200, 30, 0), 9000)
+  check("update_win leaves an unset role unset", ps[1].role == nil and ps[1].role_tick == nil,
+        tostring(ps[1].role))
+  check("update_win leaves a stale role as it was", ps[2].role == "aggro" and ps[2].role_tick == 0,
+        tostring(ps[2].role) .. "@" .. tostring(ps[2].role_tick))
+  local c1 = PP.counts(w, 9000, true)
+  check("peek counts give the same roles as counts", ps[1].role == nil
+        and (function() local c2 = PP.counts(w, 9000); return c1.front == c2.front
+             and c1.back == c2.back and c1.aggro == c2.aggro end)())
+  check("counts (no peek) still writes the cache", ps[1].role ~= nil and ps[2].role_tick == 9000)
+  C.AGGRO_DEEP_WIN_SHARES = false
+  PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
+end
+
 -- ── 7. keel ──────────────────────────────────────────────────────────────
 print("PRESETS.keel")
 check("default: AGGRO_DEEP_WIN_SHARES = true", WIN_DEFAULT == true)
