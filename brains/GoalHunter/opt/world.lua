@@ -609,14 +609,11 @@ function M.process_events(world, info, state)
       if idx then
         local owner_val = d[2] or 0xFF
         local new_health = d[3] or 0
-        local owner_str
-        if owner_val == NEUTRAL_PLAYER then
-          owner_str = "neutral"
-        elseif owner_val == info.player_number then
-          owner_str = "friendly"
-        else
-          owner_str = "hostile"
-        end
+        -- Alliance aware (2026-11-01 fix): an ally's base is "friendly", the
+        -- same answer the object scan gives (owner_string reads the alliance
+        -- bits). The old test (owner == me or "hostile") made an ally's base
+        -- "hostile" from this event until the next object scan saw it.
+        local owner_str = classify_owner(owner_val, info, false)
 
         -- Exactly what the engine sent us about this base's stock this tick.
 
@@ -630,7 +627,7 @@ function M.process_events(world, info, state)
             my          = 0,
             health      = new_health,
             owner       = owner_str,
-            owner_player = owner_val,   -- real player number; lets the LGM-block stamp do an alliance check (owner_str lumps ally bases in with "hostile")
+            owner_player = owner_val,   -- real player number; lets the LGM-block stamp do an alliance check
             last_seen   = tick,
             last_health = new_health,
             obs_shells  = d[4],

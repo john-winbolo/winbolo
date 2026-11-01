@@ -32,8 +32,15 @@ local U          = require("util")
 local PP         = require("pill_portfolio")
 local ally_state = require("ally_state")
 local print2     = require("print2")
+-- The deny plan and the team vote (C.FOCUS_SPIKE_RULE = "deny").
+local FV         = require("focus_vote")
 
 local M = {}
+M.vote = FV
+
+-- "deny" (the team vote, focus_vote.lua) or "count" (the base lead and pill
+-- rules of the first builds, per bot).
+local function deny() return C.FOCUS_SPIKE_RULE == "deny" end
 
 local function st(state)
   local S = state._spike
@@ -59,6 +66,9 @@ end
 M.pill_alive_at = pill_alive_at
 
 local function pair_on()
+  -- Deny mode: the vote's go sends every assigned builder at once, in
+  -- place of the pair.
+  if deny() then return false end
   local m = C.FOCUS_SPIKE_PAIR
   return m == "solo" or m == "team"
 end
@@ -156,6 +166,25 @@ end
 function M.update_win(state, world, info, now)
   local want, want_u2a = false, false
   local why, r, pf = "off", nil, nil
+  if deny() then
+    -- Deny mode: only a passed team vote switches the shares, for the
+    -- whole team, while its plan is active.
+    local act = C.FOCUS_SPIKE_ENABLED and C.PILL_PLACE_TURTLE ~= true and FV.active(state)
+    why = act and "ok" or "no_vote"
+    want = act and C.FOCUS_SPIKE_WIN_SHARES == true
+    want_u2a = act and C.FOCUS_SPIKE_UTIL_TO_AGGRO == true
+    local before = PP.targets_label()
+    if PP.set_win(want) then
+      print2(string.format("FOCUS_SPIKE_WIN_SHARES t=%d %s why=%s (team vote) %s -> %s",
+        now, want and "on" or "off", why, before, PP.targets_label()))
+    end
+    before = PP.targets_label()
+    if PP.set_u2a(want_u2a) then
+      print2(string.format("FOCUS_SPIKE_UTIL_TO_AGGRO t=%d %s why=%s (team vote) %s -> %s",
+        now, want_u2a and "on" or "off", why, before, PP.targets_label()))
+    end
+    return
+  end
   if C.FOCUS_SPIKE_ENABLED and C.PILL_PLACE_TURTLE ~= true
      and (C.FOCUS_SPIKE_WIN_SHARES or C.FOCUS_SPIKE_UTIL_TO_AGGRO) then
     -- peek: this runs every tick, so it must not write the cached pill
@@ -196,6 +225,12 @@ end
 -- quiet: no FOCUS_SPIKE_RULES line (harvest re-score, heatmap overlay).
 function M.check(state, world, info, pf_counts, quiet)
   if not C.FOCUS_SPIKE_ENABLED or C.PILL_PLACE_TURTLE == true then return false end
+  -- Deny mode: a focused spike only on this bot's tiles of a passed plan.
+  if deny() then
+    local tiles = FV.my_tiles(state, info)
+    if not tiles or (info.carried_pills or 0) < 1 then return false end
+    return { role = "plan", plan = tiles }
+  end
   local S = st(state)
   local now = state.tick or 0
   local P = S.pair
@@ -292,6 +327,7 @@ local function tag(S, mx, my, t, src)
   local k = tkey(mx, my)
   local e = S.care[k]
   if e and e.t >= t and (e.src == "own" or src ~= "own") then return end
+  if e and e.src == "plan" and src == "plan" then return end
   S.care[k] = { mx = mx, my = my, t = t, src = src }
 end
 
@@ -302,7 +338,8 @@ function M.care_at(state, mx, my, now)
   local e = S.care[tkey(mx, my)]
   if not e then return nil end
   if (now - e.t) > C.SPIKE_CARE_TICKS then return nil end
-  if PP.classify(mx, my, false) ~= "aggro" then return nil end
+  -- A plan tile keeps care for its time whatever its category.
+  if e.src ~= "plan" and PP.classify(mx, my, false) ~= "aggro" then return nil end
   return e
 end
 
@@ -316,6 +353,12 @@ end
 function M.on_dispatch(state, goal, mx, my, tmx, tmy, now)
   local role = goal and goal._spike_role
   if not role then return end
+  if role == "plan" then
+    FV.on_dispatch(state, mx, my, now)
+    print2(string.format("FOCUS_SPIKE_ACTIVE t=%d dispatch (%d,%d) tank=(%d,%d) d=%d",
+      now, mx, my, tmx, tmy, U.mdist(tmx, tmy, mx, my)))
+    return
+  end
   local S = st(state)
   S.watch[tkey(mx, my)] = { mx = mx, my = my, t = now }
   if role == "first" then
@@ -490,6 +533,17 @@ end
 function M.update(state, world, info, now)
   if C.FOCUS_SPIKE_ENABLED or PP.win_on or PP.u2a_on then M.update_win(state, world, info, now) end
   if not C.FOCUS_SPIKE_ENABLED and not C.SPIKE_REPAIR_PRIORITY then return end
+  if deny() then
+    if not C.FOCUS_SPIKE_ENABLED then return end
+    -- The deny plan and the vote. Every bot tags the plan tiles it sees
+    -- placed (src "plan"), so no spkd advert is needed.
+    local S = st(state)
+    FV.update(state, world, info, now, function(mx, my, t) tag(S, mx, my, t, "plan") end)
+    for k, e in pairs(S.care) do
+      if (now - e.t) > C.SPIKE_CARE_TICKS then S.care[k] = nil end
+    end
+    return
+  end
   local S = st(state)
   -- Watches: a dispatched spike that lands (late landings too).
   for k, w in pairs(S.watch) do
@@ -567,6 +621,8 @@ end
 -- or "-". nil (key not sent) with SPIKE_REPAIR_PRIORITY off.
 function M.advert(state, now)
   if not C.SPIKE_REPAIR_PRIORITY then return nil end
+  -- Deny mode: every bot tags the plan tiles itself (no key sent).
+  if deny() then return nil end
   local S = state._spike
   if not S then return "-" end
   local list = {}
