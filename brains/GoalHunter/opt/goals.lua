@@ -30,7 +30,7 @@ local PP     = require("pill_portfolio")
 local _SELF_PN = -1   -- updated each tick by step_eval_queue / get_pool_breakdown_json
 
 local M = {}
--- Deep spike rules, pairs and spike care (spike.lua). A field, not a local:
+-- Focused spike rules, pairs and spike care (spike.lua). A field, not a local:
 -- this chunk is at Lua's 200-local cap. init.lua calls it as goals.spike.
 M.spike = require("spike")
 
@@ -2635,7 +2635,7 @@ function M.turtle_home(world, tmx, tmy, fbx, fby)
   return nil
 end
 
--- Deep aggro placement (C.PILL_PLACE_AGGRO_DEEP) scan context. nil when the
+-- Focused spike placement (C.FOCUS_SPIKE_ENABLED) scan context. nil when the
 -- knob is off or turtle is on, and then nothing in the scan changes. Else a
 -- table: hb = the hostile bases this bot has seen (world.bases, owner
 -- "hostile"), sorted by tile id (my*256+mx) so the scan order never depends
@@ -2646,14 +2646,14 @@ end
 -- Lua's 200-local cap.
 --
 -- chk = spike.check's answer (spike.lua): nil = the first version (role
--- "single", for callers that pass only the world), false = no deep spike now
+-- "single", for callers that pass only the world), false = no focused spike now
 -- (returns nil: the normal aggro placement), or { role = ... }. ad.role,
 -- ad.spike (the module), ad.state/ad.now (cooldown lookups) and, for the
 -- pair's second pill, ad.fmx/fmy (the first spike), ad.tmx/tmy (the tank)
 -- and ad.hb_eb (the hostile bases the first spike does not already cover:
 -- ebase counts only these, so no base is paid for twice).
-function M.aggro_deep_ctx(world, chk, state, tmx, tmy)
-  if not C.PILL_PLACE_AGGRO_DEEP or C.PILL_PLACE_TURTLE == true then return nil end
+function M.focus_spike_ctx(world, chk, state, tmx, tmy)
+  if not C.FOCUS_SPIKE_ENABLED or C.PILL_PLACE_TURTLE == true then return nil end
   if chk == false then return nil end
   local hb = {}
   for _, b in pairs(world.bases) do
@@ -2726,11 +2726,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       -- is not a hold -- preferring "stand exactly where you are" when that is
       -- already in range, since not moving is the whole point.
       local hmx, hmy, hsrc = defend_hold_tile(state, info, { mx = ft.mx, my = ft.my })
-      if ft.aggro_deep and U.mdist(tmx, tmy, ft.mx, ft.my) <= C.PLACE_DISPATCH_MAX_DIST then
-        -- Deep aggro trip (C.PILL_PLACE_AGGRO_DEEP): the builder was sent from
+      if ft.focus_spike and U.mdist(tmx, tmy, ft.mx, ft.my) <= C.PLACE_DISPATCH_MAX_DIST then
+        -- Focused spike trip (C.FOCUS_SPIKE_ENABLED): the builder was sent from
         -- up to PLACE_DISPATCH_MAX_DIST out so the tank would not drive into
         -- enemy ground. Hold where the tank stands, not near the trip tile.
-        hmx, hmy, hsrc = tmx, tmy, "aggro_deep_stand"
+        hmx, hmy, hsrc = tmx, tmy, "focus_spike_stand"
       elseif U.mdist(hmx, hmy, ft.mx, ft.my) > hold_r then
         if U.mdist(tmx, tmy, ft.mx, ft.my) <= hold_r then
           hmx, hmy, hsrc = tmx, tmy, "stand_fast"
@@ -2773,7 +2773,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     end
   end
 
-  -- Spike pair hold (spike.lua, C.AGGRO_DEEP_PAIR): a pair trip is out, so
+  -- Spike pair hold (spike.lua, C.FOCUS_SPIKE_PAIR): a pair trip is out, so
   -- the tank waits where it stood at the dispatch, at the follow-through
   -- price. nil when no pair is open (and always with the pair rule off).
   if not only then
@@ -3196,11 +3196,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     if d > pf_max_deficit then pf_max_deficit = d; pf_need_cat = cat end
   end
   state._place_need_cat = pf_need_cat   -- shared with the heatmap viz
-  -- Deep aggro placement (C.PILL_PLACE_AGGRO_DEEP): nil = knob off (or
+  -- Focused spike placement (C.FOCUS_SPIKE_ENABLED): nil = knob off (or
   -- turtle), and score_cell and the scan below are exactly the old ones.
   -- spike.check applies the base lead, pill and pair rules: false = no deep
   -- spike now, so ad is nil and the normal aggro placement runs.
-  local ad = M.aggro_deep_ctx(world,
+  local ad = M.focus_spike_ctx(world,
     M.spike.check(state, world, info, pf_counts, only ~= nil), state, tmx, tmy)
 
   -- Aggro builds sit deeper in enemy influence than the default radius reaches:
@@ -3367,7 +3367,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         local sc1, sc2, sc3, sc4, sc5, sc6, sc7, sc8, sc9, sc10, sc11, sc12, sc13 = 0,0,0,0,0,0,0,0,0,0,0,0,0
         local sc_center = 0
         local sc_ebase, sc_depth = 0, 0
-        -- Deep aggro rule (C.PILL_PLACE_AGGRO_DEEP): aggro tiles only. Changes
+        -- Focused spike rule (C.FOCUS_SPIKE_ENABLED): aggro tiles only. Changes
         -- prx, ctr, inf and dst below and adds ebase + depth. Pair roles also
         -- need spike.deep_ok (no forest, no failed-pair cooldown); role
         -- "single" is the first version (every aggro tile).
@@ -3377,7 +3377,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- 1. Base proximity (soft bonus only — no hard cutoff. A far spot just
         --    misses the bonus; it isn't rejected, so aggressive pills can still
         --    be placed deep. nil base_dist = no friendly base, contributes 0.)
-        --    Deep aggro: 0 (the spot must not lean toward our own bases).
+        --    Focused spike: 0 (the spot must not lean toward our own bases).
         local _, _, base_dist = nearest_friendly_base_pos(world, cx, cy)
         if base_dist and not deep then
           sc1 = math.max(0, C.STRATEGIC_PLACE_MAX_BASE_DIST - base_dist) * w_base
@@ -3386,7 +3386,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
 
         -- 1b. Strategic-center bias: nudge toward the chosen center (war zone /
         --     base-vs-threat / contested pill). Optional — 0 when no center.
-        --     Deep aggro: the hostile base group centre (ad.gmx) instead.
+        --     Focused spike: the hostile base group centre (ad.gmx) instead.
         local cmx, cmy = search_mx, search_my
         if deep and ad.gmx then cmx, cmy = ad.gmx, ad.gmy end
         if cmx then
@@ -3411,7 +3411,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           local influence = cpf.influence_at(cx, cy)
           -- FRONT_ZERO_IS_FRONT=false: an unclaimed 0 tile off the line is
           -- beyond our claim and pays the same penalty as enemy ground.
-          -- Deep aggro: no beyond-front penalty (being beyond it is the point).
+          -- Focused spike: no beyond-front penalty (being beyond it is the point).
           if influence < 0
              or (influence == 0 and C.FRONT_ZERO_IS_FRONT == false
                  and not PP.near_front(cx, cy, C.FRONT_NEAR_RADIUS_PLACE or 0)) then
@@ -3456,11 +3456,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
 
         -- 7. Distance from tank (pinned to the dispatch value on a harvest
         --    re-score: the tank moved on by design, so live distance would
-        --    say nothing about the tile). Deep aggro: AGGRO_TANK_DIST_WEIGHT
+        --    say nothing about the tile). Focused spike: FOCUS_SPIKE_PLACE_TANK_DIST_WEIGHT
         --    per tile, so the best spot wins, not the nearest one.
         sc7 = (only and only.sc7)
               or (-U.mdist(tmx, tmy, cx, cy)
-                  * (deep and C.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT or 0.5))
+                  * (deep and C.FOCUS_SPIKE_PLACE_TANK_DIST_WEIGHT or 0.5))
         score = score + sc7
 
         -- 8. Offensive spike bonus
@@ -3543,19 +3543,19 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           end
         end
 
-        -- 14. Deep aggro only: ebase = ENEMY_BASE_BONUS per hostile base
+        -- 14. Focused spike only: ebase = ENEMY_BASE_BONUS per hostile base
         --     within PILL_FIRE_RANGE (Manhattan, as sc12/sc13); depth =
         --     DEPTH_WEIGHT per point of enemy influence, capped at DEPTH_CAP.
         if deep then
           -- Pair second: only hostile bases the first spike does not cover.
           for _, hb in ipairs(ad.hb_eb or ad.hb) do
             if U.mdist(cx, cy, hb.mx, hb.my) <= C.PILL_FIRE_RANGE then
-              sc_ebase = sc_ebase + C.STRATEGIC_PLACE_AGGRO_ENEMY_BASE_BONUS
+              sc_ebase = sc_ebase + C.FOCUS_SPIKE_PLACE_ENEMY_BASE_BONUS
             end
           end
           if cell_inf < 0 then
-            sc_depth = math.min(C.STRATEGIC_PLACE_AGGRO_DEPTH_CAP,
-                                -cell_inf * C.STRATEGIC_PLACE_AGGRO_DEPTH_WEIGHT)
+            sc_depth = math.min(C.FOCUS_SPIKE_PLACE_DEPTH_CAP,
+                                -cell_inf * C.FOCUS_SPIKE_PLACE_DEPTH_WEIGHT)
           end
           score = score + sc_ebase + sc_depth
         end
@@ -3642,7 +3642,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       end
     end
   end
-  -- Deep aggro (C.PILL_PLACE_AGGRO_DEEP): also score the AGGRO tiles within
+  -- Focused spike (C.FOCUS_SPIKE_ENABLED): also score the AGGRO tiles within
   -- PILL_FIRE_RANGE (a 17x17 square) of each hostile base this bot has seen,
   -- once each, skipping the tank square just scanned. Only when an aggro pill
   -- can be placed at all under the existing rules (room under its target, and
@@ -3792,13 +3792,13 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- viz_only (debug overlay): scan + spot stash done above; emit no goal.
   if not actionable then return nil end
 
-  -- Deep aggro winner: say so once per spot (the pool re-evaluates often).
+  -- Focused spike winner: say so once per spot (the pool re-evaluates often).
   local deep_win = ad ~= nil and ad.best_deep
   if ad then
     local dkey = deep_win and string.format("%d:%d", best_mx, best_my) or nil
-    if deep_win and state._aggro_deep_log ~= dkey then
+    if deep_win and state._focus_spike_log ~= dkey then
     end
-    state._aggro_deep_log = dkey
+    state._focus_spike_log = dkey
   end
 
   return {
@@ -3808,16 +3808,16 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
              -- Spot score + its tank-distance term, carried on the goal so the
              -- dispatch can stamp them on state._place_trip: the harvest resume
              -- compares a fresh re-score (sc7 pinned to _spot_sc7) against
-             -- _spot_score. A deep aggro spot's sc7 uses its own weight.
+             -- _spot_score. A focused spike spot's sc7 uses its own weight.
              _spot_score = best_score,
              _spot_sc7   = -U.mdist(tmx, tmy, best_mx, best_my)
-                           * (deep_win and C.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT or 0.5),
-             -- C.PILL_PLACE_AGGRO_DEEP only (nil when off): the spot's category,
+                           * (deep_win and C.FOCUS_SPIKE_PLACE_TANK_DIST_WEIGHT or 0.5),
+             -- C.FOCUS_SPIKE_ENABLED only (nil when off): the spot's category,
              -- and the flag builder.set_mode reads for the long send and
              -- init.lua reads to drop the goal once the builder is out.
              _place_cat  = ad and ad.best_cat or nil,
-             _aggro_deep = deep_win or nil,
-             -- spike.lua: "single" / "first" / "second" on a deep spike, read
+             _focus_spike = deep_win or nil,
+             -- spike.lua: "single" / "first" / "second" on a focused spike, read
              -- by init.lua's PLACE_TRIP_SET (spike.on_dispatch). nil otherwise.
              _spike_role = deep_win and ad.role or nil,
              _spike_carried = deep_win and (info.carried_pills or 0) or nil },
@@ -3833,7 +3833,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
            pf_counts.back, pf_targets.back, pf_counts.front, pf_targets.front,
            pf_counts.aggro, pf_targets.aggro, pf_counts.utility or 0, util_reserve,
            #unguarded_bases, PP.targets_label(),
-           deep_win and string.format(" | aggro_deep ebase{%.0f} depth{%.0f} group=%s extra_tiles=%d spike_role=%s%s",
+           deep_win and string.format(" | focus_spike ebase{%.0f} depth{%.0f} group=%s extra_tiles=%d spike_role=%s%s",
              ad.best_ebase or 0, ad.best_depth or 0,
              ad.gmx and string.format("(%d,%d)", ad.gmx, ad.gmy) or "none", ad.n_extra,
              ad.role, spike_cost and string.format(" | cost{%.0f} = spike_pair_second{%.0f} (SPIKE_PAIR_SECOND_COST) in place of the chain above (%.1f)",
@@ -4148,9 +4148,9 @@ function M.get_strategic_place_heatmap(state, world, info)
     end
   end
 
-  -- Deep aggro (C.PILL_PLACE_AGGRO_DEEP), as in the eval scan: nil = off,
-  -- or the spike rules say no deep spike now (spike.check, quiet).
-  local ad = M.aggro_deep_ctx(world,
+  -- Focused spike (C.FOCUS_SPIKE_ENABLED), as in the eval scan: nil = off,
+  -- or the spike rules say no focused spike now (spike.check, quiet).
+  local ad = M.focus_spike_ctx(world,
     M.spike.check(state, world, info, pf_counts, true), state, tmx, tmy)
 
   local function hm_cell(cx, cy)
@@ -4174,7 +4174,7 @@ function M.get_strategic_place_heatmap(state, world, info)
         local w_gap   = turtle and C.PILL_PLACE_TURTLE_SPACING or C.STRATEGIC_PLACE_PILL_SPACING
         local score = 0
 
-        -- Strategic-center bias (deep aggro: the hostile base group centre).
+        -- Strategic-center bias (focused spike: the hostile base group centre).
         local cmx, cmy = search_mx, search_my
         if deep and ad.gmx then cmx, cmy = ad.gmx, ad.gmy end
         if cmx then
@@ -4226,7 +4226,7 @@ function M.get_strategic_place_heatmap(state, world, info)
 
         score = score - threat.at(cx, cy) * w_thr
         score = score - U.mdist(tmx, tmy, cx, cy)
-                        * (deep and C.STRATEGIC_PLACE_AGGRO_TANK_DIST_WEIGHT or 0.5)
+                        * (deep and C.FOCUS_SPIKE_PLACE_TANK_DIST_WEIGHT or 0.5)
 
         if spike_base then
           if U.mdist(cx, cy, spike_base.mx, spike_base.my) <= 2 then
@@ -4272,17 +4272,17 @@ function M.get_strategic_place_heatmap(state, world, info)
             score = score + C.STRATEGIC_PLACE_GUARDIAN_BONUS
           end
         end
-        -- 14. Deep aggro: ebase + depth (matches the eval scan).
+        -- 14. Focused spike: ebase + depth (matches the eval scan).
         if deep then
           for _, hb in ipairs(ad.hb_eb or ad.hb) do
             if U.mdist(cx, cy, hb.mx, hb.my) <= C.PILL_FIRE_RANGE then
-              score = score + C.STRATEGIC_PLACE_AGGRO_ENEMY_BASE_BONUS
+              score = score + C.FOCUS_SPIKE_PLACE_ENEMY_BASE_BONUS
             end
           end
           local inf = cpf.influence_at(cx, cy)
           if inf < 0 then
-            score = score + math.min(C.STRATEGIC_PLACE_AGGRO_DEPTH_CAP,
-                                     -inf * C.STRATEGIC_PLACE_AGGRO_DEPTH_WEIGHT)
+            score = score + math.min(C.FOCUS_SPIKE_PLACE_DEPTH_CAP,
+                                     -inf * C.FOCUS_SPIKE_PLACE_DEPTH_WEIGHT)
           end
         end
 
@@ -4302,7 +4302,7 @@ function M.get_strategic_place_heatmap(state, world, info)
       hm_cell(U.mclamp(sq_mx + dx), U.mclamp(sq_my + dy))
     end
   end
-  -- Deep aggro: the aggro tiles around each hostile base, outside the tank
+  -- Focused spike: the aggro tiles around each hostile base, outside the tank
   -- square (matches the eval scan's extra tiles).
   if ad and #ad.hb > 0 and ad.role ~= "second"
      and (pf_counts.aggro or 0) < (pf_targets.aggro or 0) then

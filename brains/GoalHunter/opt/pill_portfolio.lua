@@ -70,15 +70,15 @@ M.normal = { back = M.TARGET_BACK, front = M.TARGET_FRONT, aggro = M.TARGET_AGGR
 M.win_on = false
 M.u2a_on = false
 
--- Put the live M.TARGET_* fields together from the two deep spike switches:
---   win shares (M.win_on): the AGGRO_DEEP_WIN_* shares, else the normal ones;
+-- Put the live M.TARGET_* fields together from the two focused spike switches:
+--   win shares (M.win_on): the FOCUS_SPIKE_WIN_* shares, else the normal ones;
 --   utility to aggro (M.u2a_on): the utility share moves into aggro, utility 0.
 -- Source label: "win", the normal source, or either one + "+u2a".
 local function apply_live()
   local b, f, a, u, src
   if M.win_on then
-    b, f = C.AGGRO_DEEP_WIN_BACK, C.AGGRO_DEEP_WIN_FRONT
-    a, u = C.AGGRO_DEEP_WIN_AGGRO, C.AGGRO_DEEP_WIN_UTIL
+    b, f = C.FOCUS_SPIKE_WIN_BACK, C.FOCUS_SPIKE_WIN_FRONT
+    a, u = C.FOCUS_SPIKE_WIN_AGGRO, C.FOCUS_SPIKE_WIN_UTIL
     src = "win"
   else
     local n = M.normal
@@ -95,8 +95,8 @@ local function apply_live()
   M.targets_source = src
 end
 
--- Win shares (spike.lua, C.AGGRO_DEEP_WIN_SHARES): while the deep spike base
--- lead and pill rules pass, the live targets are AGGRO_DEEP_WIN_BACK /
+-- Win shares (spike.lua, C.FOCUS_SPIKE_WIN_SHARES): while the focused spike base
+-- lead and pill rules pass, the live targets are FOCUS_SPIKE_WIN_BACK /
 -- _FRONT / _AGGRO / _UTIL (source "win"). on = false puts the normal shares
 -- back. Answers true when the live shares changed.
 function M.set_win(on)
@@ -107,7 +107,7 @@ function M.set_win(on)
   return true
 end
 
--- Utility to aggro (spike.lua, C.AGGRO_DEEP_UTIL_TO_AGGRO): while the deep
+-- Utility to aggro (spike.lua, C.FOCUS_SPIKE_UTIL_TO_AGGRO): while the deep
 -- spike rules pass, the utility share is 0 and its share goes to aggro, on
 -- top of the win shares or the normal shares. on = false puts the utility
 -- share back. Answers true when the live shares changed.
