@@ -527,6 +527,28 @@ do
 end
 
 -- ── State A = KEEL ───────────────────────────────────────────────────────
+-- ── Home abort rule while a plan is active ───────────────────────────────
+print("home abort")
+do
+  local w = chew(function(q) return q == "NE" and "hostile" or "friendly" end)
+  local s = new_state(1000)
+  s.perc.enemy_tanks = { { mx = 44, my = 44, id = 9 } }
+  local A = {}
+  check("base_lost: first call notes bases, no abort", FV.home_lost(s, w, A) == false)
+  check("base_lost: 12 bases noted", (function() local n = 0 for _ in pairs(A.home) do n = n + 1 end return n end)() == 12)
+  check("base_lost: tank near but no base lost -> no abort", FV.home_lost(s, w, A) == false)
+  w.bases[4].owner = "friendly"
+  check("base_lost: new base gained -> no abort", FV.home_lost(s, w, A) == false)
+  w.bases[0].owner = "hostile"
+  check("base_lost: noted base lost -> abort", FV.home_lost(s, w, A) == true)
+  local old = C.FOCUS_SPIKE_HOME_ABORT_RULE
+  C.FOCUS_SPIKE_HOME_ABORT_RULE = "tank_near"
+  local w2 = chew(function() return "friendly" end)
+  check("tank_near: enemy tank near our base -> abort", FV.home_lost(s, w2, {}) == true)
+  check("tank_near: no tank -> no abort", FV.home_lost(new_state(1000), w2, {}) == false)
+  C.FOCUS_SPIKE_HOME_ABORT_RULE = old
+end
+
 print("state A")
 do
   local s = new_state(1000)
