@@ -6535,22 +6535,6 @@ M.PRESETS = {
   turtle = {
     PILL_PLACE_TURTLE = true,
   },
-  -- Deep spike bench parts (2026-11-01 night). BRAIN_INIT_ARG holds 127
-  -- characters, too few for preset=keel plus five or six cfg= tokens, so a
-  -- bench names one of these after keel ("preset=keel;preset=spike;...")
-  -- and adds at most one cfg= to change a single knob.
-  -- spike: every deep spike rule on, spike care on, win shares on.
-  spike = {
-    PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = true,
-    AGGRO_DEEP_PILL_GATE = true, AGGRO_DEEP_PAIR = "solo",
-    SPIKE_REPAIR_PRIORITY = true, AGGRO_DEEP_WIN_SHARES = true,
-  },
-  -- spike_raw: deep placement with no rule, no pair, no care, no win shares.
-  spike_raw = {
-    PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = false,
-    AGGRO_DEEP_PILL_GATE = false, AGGRO_DEEP_PAIR = "off",
-    SPIKE_REPAIR_PRIORITY = false, AGGRO_DEEP_WIN_SHARES = false,
-  },
   -- joust: the Joust scenario's bots (2026-10-01). Joust hands every bot
   -- this preset with game.bot_init, so the knobs touch no other game.
   joust = {
@@ -6611,6 +6595,35 @@ M.PRESETS = {
     },
   },
 }
+
+-- Deep spike bench presets (2026-11-01 night). The -bot-init [..] text
+-- reaches the brain as a key table, so one bot gets ONE preset= and ONE
+-- cfg= (a second one with the same key replaces the first). These two carry
+-- keel in full, so a variant is one preset plus at most one cfg=:
+--   keel_spike      keel + REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50 + every deep
+--                   spike rule, spike care and the win shares on.
+--   keel_spike_raw  keel + REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50 + deep
+--                   placement with no rule, no pair, no care, no win shares.
+-- They apply only when named, so play does not change.
+do
+  local function keel_plus(extra)
+    local t = {}
+    for k, v in pairs(M.PRESETS.keel) do t[k] = v end
+    t.REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 50
+    for k, v in pairs(extra) do t[k] = v end
+    return t
+  end
+  M.PRESETS.keel_spike = keel_plus({
+    PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = true,
+    AGGRO_DEEP_PILL_GATE = true, AGGRO_DEEP_PAIR = "solo",
+    SPIKE_REPAIR_PRIORITY = true, AGGRO_DEEP_WIN_SHARES = true,
+  })
+  M.PRESETS.keel_spike_raw = keel_plus({
+    PILL_PLACE_AGGRO_DEEP = true, AGGRO_DEEP_BASE_GATE = false,
+    AGGRO_DEEP_PILL_GATE = false, AGGRO_DEEP_PAIR = "off",
+    SPIKE_REPAIR_PRIORITY = false, AGGRO_DEEP_WIN_SHARES = false,
+  })
+end
 
 -- ── SIDE SETTINGS (2026-09-29, Andrew; Virus) ─────────────────────────
 -- What the init words `survivor` and `horde` write into C (init.lua

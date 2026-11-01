@@ -571,12 +571,23 @@ end
 print("PRESETS.keel")
 check("default: AGGRO_DEEP_WIN_SHARES = true", WIN_DEFAULT == true)
 do
-  local sp, raw = C.PRESETS.spike, C.PRESETS.spike_raw
-  check("preset spike: every rule on", sp.PILL_PLACE_AGGRO_DEEP == true
+  local sp, raw = C.PRESETS.keel_spike, C.PRESETS.keel_spike_raw
+  local nk, same = 0, true
+  for k, v in pairs(C.PRESETS.keel) do
+    nk = nk + 1
+    if k ~= "PILL_PLACE_AGGRO_DEEP" and k ~= "SPIKE_REPAIR_PRIORITY"
+       and k ~= "REPAIR_FRIENDLY_FIRE_REJECT_TICKS" and (sp[k] ~= v or raw[k] ~= v) then
+      same = false
+    end
+  end
+  check("keel_spike / _raw carry every other keel value", nk > 10 and same, nk)
+  check("keel_spike / _raw: friendly fire 50", sp.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50
+        and raw.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50)
+  check("preset keel_spike: every rule on", sp.PILL_PLACE_AGGRO_DEEP == true
         and sp.AGGRO_DEEP_BASE_GATE == true and sp.AGGRO_DEEP_PILL_GATE == true
         and sp.AGGRO_DEEP_PAIR == "solo" and sp.SPIKE_REPAIR_PRIORITY == true
         and sp.AGGRO_DEEP_WIN_SHARES == true)
-  check("preset spike_raw: deep on, the rest off", raw.PILL_PLACE_AGGRO_DEEP == true
+  check("preset keel_spike_raw: deep on, the rest off", raw.PILL_PLACE_AGGRO_DEEP == true
         and raw.AGGRO_DEEP_BASE_GATE == false and raw.AGGRO_DEEP_PILL_GATE == false
         and raw.AGGRO_DEEP_PAIR == "off" and raw.SPIKE_REPAIR_PRIORITY == false
         and raw.AGGRO_DEEP_WIN_SHARES == false)
