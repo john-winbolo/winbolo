@@ -7534,6 +7534,20 @@ function Brain.think(info)
       (t_build_pool - t_build_setmode) / 1000))
   end
   local build_cmd = builder.decide(state, world, info, now)
+  -- FOCUS_SPIKE_ALL_AGGRO: while a plan is active every carried pill is for
+  -- the spike. A new pill goes only on this bot's picked spike spot; a repair
+  -- (a pill of ours on the tile) still goes. Every build path ends here, so
+  -- this stops any path the goal checks do not stop. A player's place order
+  -- (goal pill_place, commands.lua) is not stopped.
+  if build_cmd and build_cmd.action == BUILDMODE_PBOX and build_cmd.x and build_cmd.y
+     and not (state.goal and state.goal.kind == "pill_place") then
+    local FV = require("focus_vote")
+    if not FV.may_place(state, world, build_cmd.x, build_cmd.y) then
+      FV.note_reserve(state, info, build_cmd.x, build_cmd.y, now,
+        (state.builder and state.builder.mode) or "build")
+      build_cmd = nil
+    end
+  end
   -- Repair-pill completion: the builder dispatched the LGM onto a
   -- friendly damaged pill (engine auto-repairs on arrival). Clear the
   -- goal so this tick's downstream goal-tracking and next tick's

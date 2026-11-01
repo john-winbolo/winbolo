@@ -195,6 +195,43 @@ end
 -- FOCUS_SPIKE_ADAPTIVE_SPOT: the live rescore of this bot (focus_vote
 -- adapt_step, A.score): the chosen spike spot and stand place, the top 3
 -- spots with every score part, as map labels and HUD lines.
+-- FOCUS_SPIKE_ALL_AGGRO: the levels of this bot's last rescore (focus_vote
+-- level_step, A.level): c(b) at each target base (orange = in S, the bases
+-- with c(b) = m), the counted cover places that are teammates' picks, and HUD
+-- lines with m, S, every c(b) and the reserved (carried) pills of each
+-- player N. Answers the next HUD y.
+local ID_PLAN = "focused_spike_plan"
+local function draw_level(A, line)
+  local L = A.level
+  if not L then return end
+  for _, id in ipairs(L.ids) do
+    local b = L.at[id]
+    local inS = L.c[id] == L.m
+    local r, g, bl = 200, 200, 200
+    if inS then r, g, bl = 255, 170, 60 end
+    viz.text(ID_PLAN, b.mx + 0.5, b.my - 1.6, string.format("c=%d%s", L.c[id], inS and " S" or ""),
+             "center", r, g, bl, 245, 0.40)
+    if inS then viz.circle(ID_PLAN, b.mx + 0.5, b.my + 0.5, 1.2, 255, 170, 60, 230, false, false) end
+  end
+  for _, q in ipairs(L.pos or {}) do
+    if q.src == "pick" then
+      viz.rect(ID_PLAN, q.mx + 0.2, q.my + 0.2, q.mx + 0.8, q.my + 0.8, 255, 170, 60, 230, true, true)
+      viz.text(ID_PLAN, q.mx + 0.5, q.my + 1.3, "picked", "center", 255, 170, 60, 230, 0.30)
+    end
+  end
+  local ct = {}
+  for _, id in ipairs(L.ids) do ct[#ct + 1] = string.format("b%d=%d", id, L.c[id]) end
+  line(string.format("LEVELS m=%s  S=[%s]  c(b): %s", L.m and tostring(L.m) or "none",
+    table.concat(L.S, ","), #ct > 0 and table.concat(ct, " ") or "none"), 255, 170, 60)
+  local pns = {}
+  for pn in pairs(L.reserved or {}) do pns[#pns + 1] = pn end
+  table.sort(pns)
+  local rt = {}
+  for _, pn in ipairs(pns) do rt[#rt + 1] = string.format("player %d: %d", pn, L.reserved[pn]) end
+  line(string.format("  reserved pills (team %d): %s", L.team or 0, #rt > 0 and table.concat(rt, ", ") or "none"),
+    255, 170, 60)
+end
+
 local function draw_score(A)
   local ID = "focused_spike_plan"
   local S = A.score
@@ -204,8 +241,14 @@ local function draw_score(A)
     viz.hud_text(ID, x, y, s, "topleft", r or 230, g or 230, b or 230, 245)
     y = y + dy
   end
-  line(string.format("ADAPTIVE SPIKE SPOT id=%d at %s  my claimed bases left: %s", A.id, mmss(S.t),
-    #S.mine > 0 and table.concat(S.mine, ",") or "none"), 255, 120, 255)
+  if A.level then
+    line(string.format("ADAPTIVE SPIKE SPOT id=%d at %s  all aggressive pills: payoff per base of S", A.id,
+      mmss(S.t)), 255, 120, 255)
+    draw_level(A, line)
+  else
+    line(string.format("ADAPTIVE SPIKE SPOT id=%d at %s  my claimed bases left: %s", A.id, mmss(S.t),
+      #S.mine > 0 and table.concat(S.mine, ",") or "none"), 255, 120, 255)
+  end
   local ch = A.mine
   if ch then
     local q = ch.stand

@@ -127,17 +127,29 @@ check("travel = floor(dist / 10) x 0.5",
   near(b.parts.travel, math.floor(math.sqrt((b.stand.mx - 100) ^ 2 + (b.stand.my - 130) ^ 2) / 10) * 0.5),
   b.parts.travel)
 check("payoff 1.0 for one base", near(b.parts.payoff, 1.0))
--- A live neutral pill rules out the spots in its range (knob off too).
+-- Bug fix: a pill never shoots a builder or a pill, so a live neutral or
+-- hostile pill near a spot does not rule the spot out. Only the tank risk
+-- (stand + route) counts.
 local wn = new_world()
 add_base(wn, 0, 100, 100, "hostile")
 add_pill(wn, 1, 100, 110, "neutral", 15)
 C.FOCUS_SPIKE_NEUTRAL_PILL_COVER = false
 local ln = FV.score_spots(wn, {}, left, 100, 130, nil)
-local none_in = true
+local some_in = false
 for _, s in ipairs(ln) do
-  if math.sqrt((s.mx - 100) ^ 2 + (s.my - 110) ^ 2) <= C.PILL_FIRE_RANGE then none_in = false end
+  if math.sqrt((s.mx - 100) ^ 2 + (s.my - 110) ^ 2) <= C.PILL_FIRE_RANGE then some_in = true end
 end
-check("no spot in a live neutral pill's range", none_in and #ln > 0, #ln)
+check("spots in a live neutral pill's range stay (bug fix)", some_in and #ln > 0, #ln)
+local wq = new_world()
+add_base(wq, 0, 100, 100, "hostile")
+add_pill(wq, 1, 100, 110, "hostile", 15)
+local lq = FV.score_spots(wq, {}, left, 100, 130, nil)
+local q_in, q_risk = false, true
+for _, s in ipairs(lq) do
+  if math.sqrt((s.mx - 100) ^ 2 + (s.my - 110) ^ 2) <= C.PILL_FIRE_RANGE then q_in = true end
+  if s.danger > C.FOCUS_SPIKE_DEFENSE_MAX + 1e-9 then q_risk = false end
+end
+check("spots in a live hostile pill's range stay, danger at most DEFENSE_MAX (bug fix)", q_in and q_risk, #lq)
 -- A hostile pill that sees every stand place near the base: the stand risk
 -- 2.0 x 15/15 per pill; two such pills = 4.0 > DEFENSE_MAX: no spot.
 local wh = new_world()
@@ -237,7 +249,7 @@ local verbs, nv = {}, 0
 for v in src:gmatch('send%(state, string%.format%("/info fs(%a) ') do
   if not verbs[v] then verbs[v], nv = true, nv + 1 end
 end
-check("send verbs found (o y n r g u a k c p)", nv == 10, nv)
+check("send verbs found (o y n r g u a k c p s)", nv == 11, nv)
 local vl = {}
 for v in pairs(verbs) do vl[#vl + 1] = v end
 table.sort(vl)

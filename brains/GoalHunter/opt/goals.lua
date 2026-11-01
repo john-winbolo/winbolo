@@ -2921,6 +2921,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     end
   end
 
+  -- FOCUS_SPIKE_ALL_AGGRO: while a plan is active every carried pill is for
+  -- the spike. Only the plan tile above may be placed; no other spot is
+  -- scored (the coverage and close sends follow this goal).
+  if not only and M.spike.vote.reserved(state) then return nil end
+
   -- ── Carry value penalty ─────────────────────────────────────────────────
   -- Increase placement cost when carrying is more useful than placing.
   -- Offset by urgency (base undefended + enemy nearby, or critical health).

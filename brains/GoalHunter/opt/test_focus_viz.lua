@@ -200,6 +200,19 @@ check("top spot with every part",
 check("claim label per player N", has(tx, "b0 claim player 2"))
 check("spot change mark with its reason", has(tx, "1:00 spot_blocked 0.40") and has(tx, "1:00 left: spot_blocked"))
 
+print("levels (FOCUS_SPIKE_ALL_AGGRO)")
+F.active.level = { t = 3050, m = 0, S = { 0 }, ids = { 0 }, c = { [0] = 0 }, at = { [0] = { mx = 10, my = 10 } },
+  pos = { { mx = 14, my = 6, src = "pick" } }, reserved = { [2] = 2, [4] = 1 }, team = 3 }
+calls = {}
+FZ.draw(state, world, { player_number = 2 }, 3100)
+hud, tx = texts("hud_text"), texts("text")
+check("level header", has(hud, "ADAPTIVE SPIKE SPOT id=10 at 1:01  all aggressive pills: payoff per base of S"))
+check("m, S and c(b) on the HUD", has(hud, "LEVELS m=0  S=[0]  c(b): b0=0"))
+check("reserved pills per player N", has(hud, "reserved pills (team 3): player 2: 2, player 4: 1"))
+check("c(b) at the base, S marked", has(tx, "c=0 S"))
+check("teammate pick marked", has(tx, "picked"))
+F.active.level = nil
+
 print("debug mode off draws nothing")
 BRAIN_DEBUG_MODE = false
 calls = {}
