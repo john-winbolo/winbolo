@@ -74,6 +74,8 @@ C.PILL_PLACE_AGGRO_DEEP = true
 C.PILL_PLACE_TURTLE     = false
 local WIN_DEFAULT = C.AGGRO_DEEP_WIN_SHARES
 C.AGGRO_DEEP_WIN_SHARES = false   -- section 6b turns it on; the rest test the shares as set
+local U2A_DEFAULT = C.AGGRO_DEEP_UTIL_TO_AGGRO
+C.AGGRO_DEEP_UTIL_TO_AGGRO = false  -- section 6d turns it on
 local DEF_T = { PP.TARGET_BACK, PP.TARGET_FRONT, PP.TARGET_AGGRO, PP.TARGET_UTIL }
 
 local function base(mx, my, owner) return { mx = mx, my = my, owner = owner } end
@@ -593,6 +595,177 @@ do
   PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
 end
 
+-- ── 6d. utility to aggro (AGGRO_DEEP_UTIL_TO_AGGRO) ──────────────────────
+print("utility to aggro")
+do
+  -- The targets_for code before the share-0 leftover skip, to show that
+  -- every share set with no 0 share gives the same targets as before.
+  local function old_targets(total, b, f, a, u)
+    if total <= 0 then return { back = 0, front = 0, aggro = 0, utility = 0 } end
+    local t = { utility = math.floor(total * u), front = math.floor(total * f),
+                aggro = math.floor(total * a), back = math.floor(total * b) }
+    local assigned, i = t.utility + t.front + t.aggro + t.back, 0
+    while assigned < total do
+      local cat = PP.FILL_PRIORITY[(i % #PP.FILL_PRIORITY) + 1]
+      t[cat] = t[cat] + 1; assigned = assigned + 1; i = i + 1
+    end
+    return t
+  end
+  local function same_t(x, y)
+    return x.back == y.back and x.front == y.front and x.aggro == y.aggro
+       and x.utility == y.utility
+  end
+  local function tstr(t) return string.format("%d/%d/%d/%d", t.back, t.front, t.aggro, t.utility) end
+  -- Every share set in use today: the defaults, the win shares, and
+  -- portfolio= values with no 0 share (no preset sets portfolio=).
+  local sets = {
+    { "default", DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4] },
+    { "win", C.AGGRO_DEEP_WIN_BACK, C.AGGRO_DEEP_WIN_FRONT, C.AGGRO_DEEP_WIN_AGGRO, C.AGGRO_DEEP_WIN_UTIL },
+    { "30/40/20/10", 0.30, 0.40, 0.20, 0.10 },
+    { "25/25/25/25", 0.25, 0.25, 0.25, 0.25 },
+    { "10/30/50/10", 0.10, 0.30, 0.50, 0.10 },
+  }
+  local all_same = true
+  for _, sset in ipairs(sets) do
+    PP.set_targets(sset[2], sset[3], sset[4], sset[5], "test")
+    for n = 0, 60 do
+      if not same_t(PP.targets(n), old_targets(n, sset[2], sset[3], sset[4], sset[5])) then
+        all_same = false
+        check("targets unchanged " .. sset[1] .. " n=" .. n, false, tstr(PP.targets(n)))
+      end
+    end
+  end
+  check("no 0 share: targets(0..60) same as before for default, win and 3 portfolio= sets", all_same)
+
+  -- Leftover skip: a role with share exactly 0 gets no leftover slot.
+  PP.set_targets(0.25, 0.25, 0.50, 0, "test")
+  check("share 0: targets(3) util 0 (old code gave util 1)",
+        tstr(PP.targets(3)) == "0/1/2/0" and tstr(old_targets(3, 0.25, 0.25, 0.50, 0)) == "0/1/1/1",
+        tstr(PP.targets(3)))
+  check("share 0: util 0 for every total 1..60", (function()
+    for n = 1, 60 do if PP.targets(n).utility ~= 0 then return false end end
+    return true end)())
+  PP.set_targets(0, 0, 0, 0, "test")
+  check("all shares 0: the old fill (no endless loop)", tstr(PP.targets(3)) == "0/1/1/1",
+        tstr(PP.targets(3)))
+
+  -- The switch with win shares on and off: targets for 8..16 pills.
+  local want_win = {
+    [8] = "0/4/4/0", [9] = "0/4/5/0", [10] = "1/4/5/0", [11] = "1/5/5/0", [12] = "1/5/6/0",
+    [13] = "1/6/6/0", [14] = "1/6/7/0", [15] = "1/7/7/0", [16] = "1/7/8/0" }
+  local want_nrm = {
+    [8] = "1/4/3/0", [9] = "1/5/3/0", [10] = "2/5/3/0", [11] = "2/5/4/0", [12] = "2/6/4/0",
+    [13] = "2/6/5/0", [14] = "2/7/5/0", [15] = "3/7/5/0", [16] = "3/8/5/0" }
+  C.AGGRO_DEEP_BASE_GATE, C.AGGRO_DEEP_PILL_GATE = true, true
+  C.AGGRO_DEEP_UTIL_TO_AGGRO = true
+  local function wpills(nfront, nback)
+    local ps = {}
+    for i = 1, nfront do ps[#ps + 1] = pill(150, 10 + i, "friendly") end
+    for i = 1, nback do ps[#ps + 1] = pill(200, 10 + i, "friendly") end
+    return ps
+  end
+  local st = fresh_state(6000)
+  local inf = info_at(200, 30, 2)
+  local w = { pills = wpills(4, 2), bases = bases(4, 1) }
+  for _, win in ipairs({ true, false }) do
+    C.AGGRO_DEEP_WIN_SHARES = win
+    PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
+    local tag = win and "win on" or "win off"
+    SP.update(st, { pills = wpills(4, 2), bases = bases(1, 1) }, inf, 6000)
+    check(tag .. ": rules fail -> switch off", PP.u2a_on == false and near(PP.TARGET_UTIL, DEF_T[4]))
+    SP.update(st, w, inf, 6001)
+    check(tag .. ": rules pass -> switch on", PP.u2a_on == true and PP.win_on == win, PP.targets_label())
+    if win then
+      check("win on: shares 10/40/50/0", near(PP.TARGET_BACK, 0.10) and near(PP.TARGET_FRONT, 0.40)
+            and PP.TARGET_AGGRO == 0.5 and PP.TARGET_UTIL == 0, PP.targets_label())
+      check("win on: label", PP.targets_label() == "tgt 10/40/50/0 (win+u2a)", PP.targets_label())
+    else
+      check("win off: shares 20/45/35/0", near(PP.TARGET_BACK, 0.20) and near(PP.TARGET_FRONT, 0.45)
+            and PP.TARGET_AGGRO == 0.35 and PP.TARGET_UTIL == 0, PP.targets_label())
+      check("win off: label", PP.targets_label() == "tgt 20/45/35/0 (default+u2a)", PP.targets_label())
+    end
+    local want = win and want_win or want_nrm
+    for n = 8, 16 do
+      check(tag .. ": targets(" .. n .. ") = " .. want[n], tstr(PP.targets(n)) == want[n], tstr(PP.targets(n)))
+    end
+    -- The hold reserve (goals.lua util_reserve = PP.targets(pf_all).utility).
+    check(tag .. ": utility reserve 0 for 1..60 pills", (function()
+      for n = 1, 60 do if PP.targets(n).utility ~= 0 then return false end end
+      return true end)())
+    -- The pill rule reads the normal targets: the switch does not turn itself off.
+    check(tag .. ": normal_targets(8) still the normal targets",
+          same_t(PP.normal_targets(8), old_targets(8, DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4])),
+          tstr(PP.normal_targets(8)))
+    SP.update(st, w, inf, 6002)
+    check(tag .. ": still passing -> stays on", PP.u2a_on == true)
+    -- Switch-back: the rules fail, the normal shares come back.
+    SP.update(st, { pills = wpills(4, 2), bases = bases(3, 1) }, inf, 6003)
+    check(tag .. ": base lead lost -> switch off, normal shares back",
+          PP.u2a_on == false and PP.win_on == false and PP.targets_source == "default"
+          and near(PP.TARGET_AGGRO, DEF_T[3]) and near(PP.TARGET_UTIL, DEF_T[4]), PP.targets_label())
+    local back_ok = true
+    for n = 8, 16 do
+      if not same_t(PP.targets(n), old_targets(n, DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4])) then
+        back_ok = false
+      end
+    end
+    check(tag .. ": after switch-back targets(8..16) are the normal ones", back_ok)
+  end
+  -- Knob off: the rules pass but the shares do not change.
+  C.AGGRO_DEEP_WIN_SHARES, C.AGGRO_DEEP_UTIL_TO_AGGRO = false, false
+  PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
+  SP.update(st, w, inf, 6010)
+  check("knob off: rules pass, shares unchanged", PP.u2a_on == false and PP.win_on == false
+        and PP.targets_source == "default" and near(PP.TARGET_UTIL, DEF_T[4]))
+  -- Knob turned off while on: back to normal.
+  C.AGGRO_DEEP_UTIL_TO_AGGRO = true
+  SP.update(st, w, inf, 6011)
+  check("knob on -> switch on", PP.u2a_on == true)
+  C.AGGRO_DEEP_UTIL_TO_AGGRO = false
+  SP.update(st, w, inf, 6012)
+  check("knob turned off -> switch off", PP.u2a_on == false and near(PP.TARGET_UTIL, DEF_T[4]))
+  -- A new portfolio= set ends it; the portfolio= utility share moves to aggro.
+  C.AGGRO_DEEP_UTIL_TO_AGGRO = true
+  SP.update(st, w, inf, 6013)
+  PP.set_targets(0.30, 0.40, 0.20, 0.10, "init_arg")
+  check("portfolio= set ends the switch", PP.u2a_on == false and near(PP.TARGET_UTIL, 0.10))
+  SP.update(st, w, inf, 6014)
+  check("portfolio= 30/40/20/10 -> 30/40/30/0", PP.u2a_on == true and near(PP.TARGET_AGGRO, 0.30)
+        and PP.TARGET_UTIL == 0 and PP.targets_label() == "tgt 30/40/30/0 (init_arg+u2a)",
+        PP.targets_label())
+  SP.update(st, { pills = wpills(4, 2), bases = bases(1, 1) }, inf, 6015)
+  check("off -> the portfolio= shares come back", PP.u2a_on == false
+        and PP.targets_label() == "tgt 30/40/20/10 (init_arg)", PP.targets_label())
+  -- The every-tick check uses the peek reads: no pill role written.
+  PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
+  local ps = wpills(4, 2)
+  SP.update(fresh_state(6020), { pills = ps, bases = bases(4, 1) }, inf, 6020)
+  check("switch check writes no pill role", (function()
+    for _, p in ipairs(ps) do if p.role ~= nil or p.role_tick ~= nil then return false end end
+    return true end)() and PP.u2a_on == true)
+
+  -- The hold rule (goals.lua PLACE_HOLD_UTIL) with one carried pill and one
+  -- utility pill (in this tank). Normal shares: reserve 1 -> hold. Switch
+  -- on: reserve 0 -> no hold.
+  PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
+  local function hold_cat()
+    local hs = fresh_state(7000)
+    C.PILL_PLACE_AGGRO_DEEP = false
+    eval_pps(hs, { pills = { pill(60, 104, "friendly", 15, true) }, bases = bases(4, 1) },
+             info_at(60, 104, 1, 40), 60, 104, false, 40, nil)
+    C.PILL_PLACE_AGGRO_DEEP = true
+    return hs._place_need_cat
+  end
+  check("normal shares, 1 carried, utility 1 = reserve 1: hold", hold_cat() == "util_reserve",
+        tostring(hold_cat()))
+  PP.set_u2a(true)
+  check("switch on: reserve 0, no utility hold", hold_cat() ~= "util_reserve", tostring(hold_cat()))
+  PP.set_u2a(false)
+  C.AGGRO_DEEP_UTIL_TO_AGGRO = false
+  C.AGGRO_DEEP_WIN_SHARES = false
+  PP.set_targets(DEF_T[1], DEF_T[2], DEF_T[3], DEF_T[4], "default")
+end
+
 -- ── 7. keel ──────────────────────────────────────────────────────────────
 print("PRESETS.keel")
 check("default: AGGRO_DEEP_WIN_SHARES = true", WIN_DEFAULT == true)
@@ -602,6 +775,7 @@ do
   for k, v in pairs(C.PRESETS.keel) do
     nk = nk + 1
     if k ~= "PILL_PLACE_AGGRO_DEEP" and k ~= "SPIKE_REPAIR_PRIORITY"
+       and k ~= "AGGRO_DEEP_UTIL_TO_AGGRO"
        and k ~= "REPAIR_FRIENDLY_FIRE_REJECT_TICKS" and (sp[k] ~= v or raw[k] ~= v) then
       same = false
     end
@@ -638,6 +812,13 @@ check("win shares sum to 1", near(C.AGGRO_DEEP_WIN_BACK + C.AGGRO_DEEP_WIN_FRONT
       + C.AGGRO_DEEP_WIN_AGGRO + C.AGGRO_DEEP_WIN_UTIL, 1))
 check("keel: SPIKE_REPAIR_PRIORITY = false", C.PRESETS.keel.SPIKE_REPAIR_PRIORITY == false)
 check("keel: PILL_PLACE_AGGRO_DEEP = false", C.PRESETS.keel.PILL_PLACE_AGGRO_DEEP == false)
+check("default: AGGRO_DEEP_UTIL_TO_AGGRO = true", U2A_DEFAULT == true)
+check("keel: AGGRO_DEEP_UTIL_TO_AGGRO = false", C.PRESETS.keel.AGGRO_DEEP_UTIL_TO_AGGRO == false)
+check("keel_spike and keel_spike_loose: AGGRO_DEEP_UTIL_TO_AGGRO = true",
+      C.PRESETS.keel_spike.AGGRO_DEEP_UTIL_TO_AGGRO == true
+      and C.PRESETS.keel_spike_loose.AGGRO_DEEP_UTIL_TO_AGGRO == true)
+check("keel_spike_raw (placement only): AGGRO_DEEP_UTIL_TO_AGGRO = false",
+      C.PRESETS.keel_spike_raw.AGGRO_DEEP_UTIL_TO_AGGRO == false)
 check("defaults: rules on", true == (require("constants").AGGRO_DEEP_BASE_RATIO == 1.5))
 
 print(string.format("\n%d passed, %d failed", pass, fail))

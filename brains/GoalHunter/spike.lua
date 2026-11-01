@@ -14,7 +14,8 @@ local bit = require('bitcompat')
 --   on_dispatch  init.lua PLACE_TRIP_SET, when the dispatched goal carries
 --                _spike_role.
 --   update()     once per tick from init.lua, before the trip lifecycle:
---                switches the win shares (update_win, AGGRO_DEEP_WIN_SHARES),
+--                switches the win shares (update_win, AGGRO_DEEP_WIN_SHARES)
+--                and utility to aggro (AGGRO_DEEP_UTIL_TO_AGGRO),
 --                watches landings, moves the pair through its phases, ends a
 --                failed pair (care on the first pill, area cooldown), reads
 --                ally spkd adverts and new friendly pills on aggro tiles.
@@ -126,21 +127,25 @@ end
 -- Win shares (C.AGGRO_DEEP_WIN_SHARES): the portfolio targets switch to the
 -- AGGRO_DEEP_WIN_* shares while M.rules passes, and back when it stops (or
 -- when a knob turns off). One AGGRO_DEEP_WIN_SHARES line per switch.
+-- Utility to aggro (C.AGGRO_DEEP_UTIL_TO_AGGRO): at the same moment the
+-- utility share becomes 0 and goes to aggro (PP.set_u2a), on top of the win
+-- shares or the normal shares. One AGGRO_DEEP_UTIL_TO_AGGRO line per switch.
 function M.update_win(state, world, info, now)
-  local want = false
+  local want, want_u2a = false, false
   local why, r, pf = "off", nil, nil
-  if C.PILL_PLACE_AGGRO_DEEP and C.AGGRO_DEEP_WIN_SHARES
-     and C.PILL_PLACE_TURTLE ~= true then
+  if C.PILL_PLACE_AGGRO_DEEP and C.PILL_PLACE_TURTLE ~= true
+     and (C.AGGRO_DEEP_WIN_SHARES or C.AGGRO_DEEP_UTIL_TO_AGGRO) then
     -- peek: this runs every tick, so it must not write the cached pill
     -- roles (that moved the re-evaluation times and changed play even
     -- while the rules failed).
     pf = PP.counts(world, now, true)
     why, r = M.rules(world, info, pf)
-    want = (why == "ok")
+    want = (why == "ok") and C.AGGRO_DEEP_WIN_SHARES == true
+    want_u2a = (why == "ok") and C.AGGRO_DEEP_UTIL_TO_AGGRO == true
   end
   if PP.set_win(want) then
     local n = PP.normal
-    if r then
+    if r and C.AGGRO_DEEP_WIN_SHARES then
       print2(string.format(
         "AGGRO_DEEP_WIN_SHARES t=%d %s why=%s bases ours=%d theirs=%d (rule %s) pills team=%d (need >= %d) front=%d/%d normal target (rule %s) -> %s (normal %d/%d/%d/%d %s)",
         now, want and "on" or "off", why, r.ours, r.theirs,
@@ -153,6 +158,14 @@ function M.update_win(state, world, info, now)
       print2(string.format("AGGRO_DEEP_WIN_SHARES t=%d off why=knob_off -> %s",
         now, PP.targets_label()))
     end
+  end
+  local before = PP.targets_label()
+  if PP.set_u2a(want_u2a) then
+    print2(string.format(
+      "AGGRO_DEEP_UTIL_TO_AGGRO t=%d %s why=%s (knob %s, win shares %s) %s -> %s",
+      now, want_u2a and "on" or "off", (r and C.AGGRO_DEEP_UTIL_TO_AGGRO) and why or "knob_off",
+      C.AGGRO_DEEP_UTIL_TO_AGGRO and "on" or "off", PP.win_on and "on" or "off",
+      before, PP.targets_label()))
   end
 end
 
@@ -449,7 +462,7 @@ local function read_adverts(S, info, now)
 end
 
 function M.update(state, world, info, now)
-  if C.PILL_PLACE_AGGRO_DEEP or PP.win_on then M.update_win(state, world, info, now) end
+  if C.PILL_PLACE_AGGRO_DEEP or PP.win_on or PP.u2a_on then M.update_win(state, world, info, now) end
   if not C.PILL_PLACE_AGGRO_DEEP and not C.SPIKE_REPAIR_PRIORITY then return end
   local S = st(state)
   -- Watches: a dispatched spike that lands (late landings too).

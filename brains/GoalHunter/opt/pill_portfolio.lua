@@ -53,11 +53,13 @@ function M.set_targets(back, front, aggro, util, source)
   M.TARGET_UTIL  = util
   M.targets_source = source or "init_arg"
   -- Any setter other than the win switch below sets the NORMAL shares too
-  -- (and ends a win share period: the new shares are in force now).
+  -- (and ends a win share or utility-to-aggro period: the new shares are in
+  -- force now).
   if M.targets_source ~= "win" then
     M.normal = { back = back, front = front, aggro = aggro, util = util,
                  source = M.targets_source }
     M.win_on = false
+    M.u2a_on = false
   end
 end
 
@@ -66,29 +68,55 @@ end
 M.normal = { back = M.TARGET_BACK, front = M.TARGET_FRONT, aggro = M.TARGET_AGGRO,
              util = M.TARGET_UTIL, source = M.targets_source }
 M.win_on = false
+M.u2a_on = false
+
+-- Put the live M.TARGET_* fields together from the two deep spike switches:
+--   win shares (M.win_on): the AGGRO_DEEP_WIN_* shares, else the normal ones;
+--   utility to aggro (M.u2a_on): the utility share moves into aggro, utility 0.
+-- Source label: "win", the normal source, or either one + "+u2a".
+local function apply_live()
+  local b, f, a, u, src
+  if M.win_on then
+    b, f = C.AGGRO_DEEP_WIN_BACK, C.AGGRO_DEEP_WIN_FRONT
+    a, u = C.AGGRO_DEEP_WIN_AGGRO, C.AGGRO_DEEP_WIN_UTIL
+    src = "win"
+  else
+    local n = M.normal
+    b, f, a, u, src = n.back, n.front, n.aggro, n.util, n.source
+  end
+  if M.u2a_on then
+    -- Rounded to 1e-6 so 0.35 + 0.15 is exactly the double 0.5 (a sum one
+    -- bit short of an integer share would lose a pill in math.floor).
+    a = math.floor((a + u) * 1e6 + 0.5) / 1e6
+    u = 0
+    src = src .. "+u2a"
+  end
+  M.TARGET_BACK, M.TARGET_FRONT, M.TARGET_AGGRO, M.TARGET_UTIL = b, f, a, u
+  M.targets_source = src
+end
 
 -- Win shares (spike.lua, C.AGGRO_DEEP_WIN_SHARES): while the deep spike base
 -- lead and pill rules pass, the live targets are AGGRO_DEEP_WIN_BACK /
 -- _FRONT / _AGGRO / _UTIL (source "win"). on = false puts the normal shares
 -- back. Answers true when the live shares changed.
 function M.set_win(on)
-  if on and not M.win_on then
-    M.TARGET_BACK  = C.AGGRO_DEEP_WIN_BACK
-    M.TARGET_FRONT = C.AGGRO_DEEP_WIN_FRONT
-    M.TARGET_AGGRO = C.AGGRO_DEEP_WIN_AGGRO
-    M.TARGET_UTIL  = C.AGGRO_DEEP_WIN_UTIL
-    M.targets_source = "win"
-    M.win_on = true
-    return true
-  elseif not on and M.win_on then
-    local n = M.normal
-    M.TARGET_BACK, M.TARGET_FRONT = n.back, n.front
-    M.TARGET_AGGRO, M.TARGET_UTIL = n.aggro, n.util
-    M.targets_source = n.source
-    M.win_on = false
-    return true
-  end
-  return false
+  on = on and true or false
+  if on == M.win_on then return false end
+  M.win_on = on
+  apply_live()
+  return true
+end
+
+-- Utility to aggro (spike.lua, C.AGGRO_DEEP_UTIL_TO_AGGRO): while the deep
+-- spike rules pass, the utility share is 0 and its share goes to aggro, on
+-- top of the win shares or the normal shares. on = false puts the utility
+-- share back. Answers true when the live shares changed.
+function M.set_u2a(on)
+  on = on and true or false
+  if on == M.u2a_on then return false end
+  M.u2a_on = on
+  apply_live()
+  return true
 end
 
 -- One canonical "tgt b/f/a/u (source)" string for EVERY place that displays the
@@ -230,6 +258,8 @@ M.FILL_PRIORITY = { "utility", "front", "aggro", "back" }
 -- slots are handed out in M.FILL_PRIORITY order — so for small totals util/
 -- front/aggro fill before any back pill. (No forced >=1 back anymore: back is
 -- the lowest priority; the base-guardian bonus handles must-cover bases.)
+-- A role whose share is exactly 0 gets no leftover slot (utility-to-aggro sets
+-- utility to 0: no pill is held back for it). Shares above 0 are unchanged.
 local function targets_for(total, back, front, aggro, util)
   if total <= 0 then return { back = 0, front = 0, aggro = 0, utility = 0 } end
   local t = {
@@ -239,11 +269,15 @@ local function targets_for(total, back, front, aggro, util)
     back    = math.floor(total * back),
   }
   local assigned = t.utility + t.front + t.aggro + t.back
+  local share = { utility = util, front = front, aggro = aggro, back = back }
+  local skip_zero = (util > 0 or front > 0 or aggro > 0 or back > 0)
   local i = 0
   while assigned < total do
     local cat = M.FILL_PRIORITY[(i % #M.FILL_PRIORITY) + 1]
-    t[cat] = t[cat] + 1
-    assigned = assigned + 1
+    if not (skip_zero and share[cat] == 0) then
+      t[cat] = t[cat] + 1
+      assigned = assigned + 1
+    end
     i = i + 1
   end
   return { back = t.back, front = t.front, aggro = t.aggro, utility = t.utility }
