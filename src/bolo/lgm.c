@@ -1026,6 +1026,31 @@ void lgmRecall(GameSim *sim, lgm *lgman) {
   (*lgman)->nextAction = LGM_IDLE;
 }
 
+/*********************************************************
+*NAME:          lgmIsGoingToBuildAt
+*PURPOSE:
+*  Is the man out on his way to put a road, building or
+*  pillbox on this square? Tree growth asks, so that a tree
+*  doesn't come up under an order the player has already
+*  sent him on. Only the trip in hand counts: a queued order
+*  is checked against the square again when he sets out,
+*  and a tree he can see by then turns it into farming.
+*
+*ARGUMENTS:
+*  lgman  - Pointer to the lgm sturcture
+*  mapX   - X Map Co-ordinate
+*  mapY   - Y Map Co-ordinate
+*********************************************************/
+bool lgmIsGoingToBuildAt(lgm *lgman, BYTE mapX, BYTE mapY) {
+  if (*lgman == NULL || (*lgman)->isDead == TRUE || (*lgman)->state != LGM_STATE_GOING) {
+    return FALSE;
+  }
+  if ((*lgman)->action != LGM_ROAD_REQUEST && (*lgman)->action != LGM_BUILDING_REQUEST && (*lgman)->action != LGM_PILL_REQUEST) {
+    return FALSE;
+  }
+  return (BYTE) ((*lgman)->destX >> TANK_SHIFT_MAPSIZE) == mapX && (BYTE) ((*lgman)->destY >> TANK_SHIFT_MAPSIZE) == mapY;
+}
+
 
 /*********************************************************
 *NAME:          lgmReturn
