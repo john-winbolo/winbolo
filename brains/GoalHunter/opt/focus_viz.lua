@@ -219,17 +219,36 @@ local function draw_level(A, line)
     255, 170, 60)
 end
 
-local function draw_score(A)
+-- The rescore pass (FOCUS_SPIKE_RESCORE_SLICES): slice k of N in work and
+-- the age of the last finished pass.
+local function pass_text(A, S, now)
+  local P = A.pass
+  local t = P and string.format("pass: slice %d of %d (started %s, restarts %d)", P.k, P.slices,
+    mmss(P.t0), P.restarts) or "pass: none in work"
+  local age = (S and S.t and now) and string.format("%.1f s", (now - S.t) / 50) or "-"
+  return string.format("  %s; last finished pass %s ago; every %d ticks, %d slices", t, age,
+    C.FOCUS_SPIKE_RESCORE_TICKS, C.FOCUS_SPIKE_RESCORE_SLICES or 1)
+end
+M.pass_text = pass_text
+
+local function draw_score(A, now)
   local ID = "focused_spike_plan"
   local S = A.score
-  if not S then return end
   local x, y, dy = 150, 640, 14
   local function line(s, r, g, b)
     y = y + dy
   end
+  if not S then
+    if A.pass then
+      line(string.format("ADAPTIVE SPIKE SPOT id=%d  first pass in work", A.id), 255, 120, 255)
+      line(pass_text(A, nil, now), 200, 200, 255)
+    end
+    return
+  end
   if A.level then
     line(string.format("ADAPTIVE SPIKE SPOT id=%d at %s  all aggressive pills: payoff per base of S", A.id,
       mmss(S.t)), 255, 120, 255)
+    line(pass_text(A, S, now), 200, 200, 255)
     draw_level(A, line)
   else
     line(string.format("ADAPTIVE SPIKE SPOT id=%d at %s  my claimed bases left: %s", A.id, mmss(S.t),
@@ -325,10 +344,10 @@ local function draw_score(A)
   end
 end
 
-local function draw_plan(F, P)
+local function draw_plan(F, P, now)
   local ID = "focused_spike_plan"
   local A = F.active
-  if A and A.adaptive then draw_score(A); return end
+  if A and A.adaptive then draw_score(A, now); return end
   if not P or not P.tiles or #P.tiles == 0 then return end
   local R = C.PILL_FIRE_RANGE
   local stands = P.risk and P.risk.stands or {}
@@ -483,7 +502,7 @@ function M.draw(state, world, info, now)
   if not F then return end
   local P = F.plan
   if on("focused_spike_clusters") then draw_clusters(F, world, P) end
-  if on("focused_spike_plan") then draw_plan(F, P) end
+  if on("focused_spike_plan") then draw_plan(F, P, now) end
   if on("focused_spike_votes") then draw_votes(F, world, info, now) end
   if on("focused_spike_active") then draw_active(F, world) end
 end
