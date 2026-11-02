@@ -2493,43 +2493,31 @@ local function now_us()
   return (o and o.clock and o.clock() or 0) * 1e6
 end
 
--- The level key of a pass: m, S and every c(b). A pass is thrown away and
--- started again when it changes.
-local function level_pass_key(L)
-  local ct = {}
-  for _, id in ipairs(L.ids) do ct[#ct + 1] = string.format("%d:%d", id, L.c[id]) end
-  return string.format("%s|%s|%s", tostring(L.m), table.concat(L.S, ","), table.concat(ct, ","))
-end
-
 local level_step
 
 -- One slice of the rescore pass A.pass (FOCUS_SPIKE_RESCORE_SLICES). The
 -- first slice runs in the think that starts the pass. The next thinks each
 -- score the next 1/N of the spots (the step A scan and the step B route of
--- those spots). Before a slice, the pass is checked against its start:
--- a new level key (m, S or a c(b)), another tank tile, or the tank in or
--- out of a boat throws the pass away and starts a new one at once (a
--- restart; the interval counts again from it). The builder out of the
--- tank or no pill carried throws it away with no new pass (level_step:
--- the builder out keeps the spot, no pill drops it). The spot of the bot
--- stays until the pass is finished; the pick, change and drop rules apply
--- only then. Answers nil.
+-- those spots). The inputs are fixed at the start of the pass: the tank
+-- tile, the boat state, m, S and every c(b) of slice 1 are used for all
+-- slices. A change of them mid-pass does not start the pass again; the
+-- next pass (FOCUS_SPIKE_RESCORE_TICKS after the start of this one) uses
+-- the new values. Each slice reads the live Dijkstra slate as it is in
+-- that think: its root moves less than 1 tile in 5 thinks (road 16 WU per
+-- tick, 256 WU per tile). The builder out of the tank or no pill carried
+-- throws the pass away with no new pass (level_step: the builder out keeps
+-- the spot, no pill drops it); the restarts count of the next finished
+-- pass counts these. A plan that ends takes its pass with it. The spot of
+-- the bot stays until the pass is finished; the pick, change and drop
+-- rules apply only then. Answers nil.
 local function level_slice(state, F, world, info, now)
   local A = F.active
   local S = A.pass
-  local me = info.player_number or -1
-  if S.k > 0 then
-    local L = M.levels(world, A, me)
-    local tx, ty = tank_tile(info)
-    if info.man_status ~= C.LGM_INTANK or (info.carried_pills or 0) < 1
-       or level_pass_key(L) ~= S.key or tx ~= S.tx or ty ~= S.ty
-       or (info.inboat and true or false) ~= S.boat then
-      -- level_step: the builder out keeps the spot, no pill drops it, else
-      -- a new pass (a restart).
-      A.pass = nil
-      A.pass_restarts = S.restarts + 1
-      return level_step(state, F, world, info, now)
-    end
+  if S.k > 0 and (info.man_status ~= C.LGM_INTANK or (info.carried_pills or 0) < 1) then
+    -- level_step: the builder out keeps the spot, no pill drops it.
+    A.pass = nil
+    A.pass_restarts = S.restarts + 1
+    return level_step(state, F, world, info, now)
   end
   local t0 = now_us()
   S.k = S.k + 1
@@ -2616,11 +2604,9 @@ function level_step(state, F, world, info, now)
   if not picked and (now - A.t_pick) >= C.FOCUS_SPIKE_RELEASE_WAIT then return "incomplete" end
   -- The builder is out: keep the spot it went for.
   if info.man_status ~= C.LGM_INTANK then
-    A.pass_restarts = nil
     return nil
   end
   if (info.carried_pills or 0) < 1 then
-    A.pass_restarts = nil
     if A.mine then set_spot(A, info, now, nil, "no_pill", nil, state) end
     A.score = { t = now, top = {}, mine = {}, skip = "no_pill" }
     spot_eval(A, info, now, L, nil, nil, "no_pill")
@@ -2628,7 +2614,6 @@ function level_step(state, F, world, info, now)
   end
   local tx, ty = tank_tile(info)
   if #L.list == 0 then
-    A.pass_restarts = nil
     if A.mine then set_spot(A, info, now, nil, "no_target", nil, state) end
     A.score = { t = now, top = {}, mine = {}, tank = { mx = tx, my = ty }, skip = "no_target" }
     spot_eval(A, info, now, L, nil, nil, "no_target")
@@ -2637,7 +2622,7 @@ function level_step(state, F, world, info, now)
   -- A new rescore pass: the inputs of slice 1 (see level_slice).
   local keep = A.mine and tkey(A.mine.mx, A.mine.my) or nil
   A.t_rescore = now
-  A.pass = { P = M.spots_begin(world, info, L.list, tx, ty, keep), key = level_pass_key(L), L = L,
+  A.pass = { P = M.spots_begin(world, info, L.list, tx, ty, keep), L = L,
              tx = tx, ty = ty, boat = info.inboat and true or false, t0 = now,
              slices = math.max(1, math.floor(C.FOCUS_SPIKE_RESCORE_SLICES or 1)), k = 0, ms_max = 0,
              restarts = A.pass_restarts or 0 }

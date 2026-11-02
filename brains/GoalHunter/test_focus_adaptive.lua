@@ -386,35 +386,56 @@ do
   FV.adapt_step(s5, s5._fs, wl, i5, 100)
   check("slices 5: a new pass at 100; the spot stays in it", B5.pass and B5.pass.k == 1 and B5.mine
     and B5.mine.mx == B1.mine.mx and B5.score.t == 4)
-  -- A restart: the S set changes mid-pass (a teammate picks a spot).
+  -- The S set changes mid-pass (a teammate picks a spot): no restart. The
+  -- pass ends on the inputs of slice 1; the next pass uses the new S.
   local sr, Br, ir = mkl(3)
   FV.adapt_step(sr, sr._fs, wl, ir, 0)
   FV.adapt_step(sr, sr._fs, wl, ir, 1)
   Br.picks[4] = { mx = 112, my = 106, t = 1 }
   FV.adapt_step(sr, sr._fs, wl, ir, 2)
-  check("S changes mid-pass: the pass starts again (slice 1, restarts 1)", Br.pass and Br.pass.k == 1
-    and Br.pass.restarts == 1 and Br.pass.t0 == 2 and Br.t_rescore == 2, Br.pass and Br.pass.k)
-  for t = 3, 6 do FV.adapt_step(sr, sr._fs, wl, ir, t) end
-  check("restart: the pass is finished 5 thinks later", Br.pass == nil and Br.score and Br.score.t == 6
-    and Br.score.diag.restarts == 1, Br.pass and Br.pass.k)
+  check("S changes mid-pass: no restart (slice 3 of 5)", Br.pass and Br.pass.k == 3
+    and Br.pass.restarts == 0 and Br.pass.t0 == 0 and Br.t_rescore == 0, Br.pass and Br.pass.k)
+  for t = 3, 4 do FV.adapt_step(sr, sr._fs, wl, ir, t) end
+  check("S change mid-pass: the pass ends on the S of slice 1", Br.pass == nil and Br.score
+    and Br.score.t == 4 and Br.score.diag.restarts == 0 and same(B1.score.list, Br.score.list)
+    and table.concat(Br.score.mine, ",") == table.concat(B1.score.mine, ","),
+    Br.score and table.concat(Br.score.mine, ","))
   C.FOCUS_SPIKE_RESCORE_SLICES = 1
   local so, Bo, io2 = mkl(3)
   Bo.picks[4] = { mx = 112, my = 106, t = 1 }
   FV.adapt_step(so, so._fs, wl, io2, 0)
-  check("restart: the same list as one pass on the new levels", same(Bo.score.list, Br.score.list)
-    and table.concat(Bo.score.mine, ",") == table.concat(Br.score.mine, ","),
-    table.concat(Br.score.mine, ","))
-  -- The tank moves to another tile mid-pass: a restart.
   C.FOCUS_SPIKE_RESCORE_SLICES = 5
+  for t = 100, 104 do FV.adapt_step(sr, sr._fs, wl, ir, t) end
+  check("S change: the next pass uses the new S (same list as one pass)", Br.pass == nil
+    and Br.score.t == 104 and same(Bo.score.list, Br.score.list)
+    and table.concat(Bo.score.mine, ",") == table.concat(Br.score.mine, ",")
+    and table.concat(Bo.score.mine, ",") ~= table.concat(B1.score.mine, ","),
+    table.concat(Br.score.mine, ","))
+  -- The tank moves to another tile mid-pass: no restart, the tile of slice 1.
   local sm, Bm, im = mkl(3)
   FV.adapt_step(sm, sm._fs, wl, im, 0)
   im.tankx = 107 * 256
   FV.adapt_step(sm, sm._fs, wl, im, 1)
-  check("tank tile changes mid-pass: restart", Bm.pass and Bm.pass.k == 1 and Bm.pass.restarts == 1)
+  check("tank tile changes mid-pass: no restart", Bm.pass and Bm.pass.k == 2 and Bm.pass.restarts == 0
+    and Bm.pass.tx == 106)
+  for t = 2, 4 do FV.adapt_step(sm, sm._fs, wl, im, t) end
+  check("tank tile change: the pass ends on the tile of slice 1", Bm.pass == nil and Bm.score
+    and Bm.score.tank.mx == 106 and same(B1.score.list, Bm.score.list))
   -- The builder goes out mid-pass: the pass is thrown away, no new one.
-  im.man_status = C.LGM_MOVING
-  FV.adapt_step(sm, sm._fs, wl, im, 2)
-  check("builder out mid-pass: no pass, no spot_eval line", Bm.pass == nil and Bm.eval_line == nil)
+  local sb, Bb, ib = mkl(3)
+  FV.adapt_step(sb, sb._fs, wl, ib, 0)
+  ib.man_status = C.LGM_MOVING
+  FV.adapt_step(sb, sb._fs, wl, ib, 1)
+  check("builder out mid-pass: no pass, no spot_eval line", Bb.pass == nil and Bb.eval_line == nil)
+  ib.man_status = C.LGM_INTANK
+  FV.adapt_step(sb, sb._fs, wl, ib, 2)
+  check("builder back in: no new pass before the next interval", Bb.pass == nil)
+  -- (interval 50 here: no pick for RELEASE_WAIT 100 ends the plan)
+  C.FOCUS_SPIKE_RESCORE_TICKS = 50
+  for t = 50, 54 do FV.adapt_step(sb, sb._fs, wl, ib, t) end
+  C.FOCUS_SPIKE_RESCORE_TICKS = 100
+  check("the next finished pass counts the thrown-away pass (restarts 1)", Bb.pass == nil and Bb.score
+    and Bb.score.t == 54 and Bb.score.diag.restarts == 1, Bb.score and Bb.score.diag.restarts or (Bb.pass and ("k" .. Bb.pass.k .. " t0 " .. Bb.pass.t0) or ("nopass " .. tostring(Bb.t_rescore))))
   -- KEEL values: slices 1, every 50 ticks, each pass in one think.
   C.FOCUS_SPIKE_RESCORE_TICKS, C.FOCUS_SPIKE_RESCORE_SLICES = 50, 1
   local sk, Bk, ik = mkl(3)
