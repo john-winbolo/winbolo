@@ -258,12 +258,21 @@ check("team_carried counts the allies' carried pills",
 check("an ally still carries a pill, its pick is pending: go on",
   (function() A7.picks[4] = { mx = 115, my = 104, t = 0 }; return FV.adapt_step(s7, s7._fs, wa, i7, 0) == nil end)())
 -- Pills left but no bot has a pick for FOCUS_SPIKE_RELEASE_WAIT: incomplete.
-local s8, A8, i8 = mk(3, 1, { 1 })
-i8.man_status = C.LGM_MOVING   -- builder out (not in the tank): no pick
+-- This bot has no pill; only ally 4 (not a plan bot) carries one, so the
+-- wait counts (see the bug fix test below for the builder-out case).
+local s8, A8, i8 = mk(3, 0, { 1 })
 A8.t_pick = 0
 check("no pick, still waiting", FV.adapt_step(s8, s8._fs, wa, i8, C.FOCUS_SPIKE_RELEASE_WAIT - 50) == nil)
 check("no pick for RELEASE_WAIT: incomplete",
   FV.adapt_step(s8, s8._fs, wa, i8, C.FOCUS_SPIKE_RELEASE_WAIT) == "incomplete")
+-- Bug fix (2026-11-02): the builder of the carrier is out (it walks back
+-- from a spike pill). The wait stops, so the plan goes on.
+local s8b, A8b, i8b = mk(3, 1, { 1 })
+i8b.man_status = C.LGM_MOVING
+A8b.t_pick = 0
+check("builder out with a pill: the wait stops",
+  FV.adapt_step(s8b, s8b._fs, wa, i8b, C.FOCUS_SPIKE_RELEASE_WAIT * 3) == nil)
+check("builder out with a pill: t_pick moves", A8b.t_pick == C.FOCUS_SPIKE_RELEASE_WAIT * 3, tostring(A8b.t_pick))
 -- The pill runs out with a pick: the pick is cleared and sent as FFFF.
 local s9, A9, i9 = mk(3, 1, { 0, 1, 2 })
 FV.adapt_step(s9, s9._fs, w, i9, 0)

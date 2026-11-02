@@ -2555,6 +2555,20 @@ end
 -- spot; at least one spike pill placed by the plan) or "incomplete" (the
 -- same with no pill placed, or pills are left but no bot had a picked spot
 -- for FOCUS_SPIKE_RELEASE_WAIT ticks).
+-- True when the release wait of level_step must not count this tick: this
+-- bot's builder is out and it carries a pill, or this bot carries no pill
+-- and another plan bot (a player in A.claims) carries one. per = the
+-- carried pills per player (M.team_carried).
+function M.pick_wait_paused(A, info, per)
+  local me = info.player_number or -1
+  local mine = info.carried_pills or 0
+  if mine >= 1 then return info.man_status ~= C.LGM_INTANK end
+  for _, pn in pairs(A.claims or {}) do
+    if pn ~= FREE and pn ~= me and (per[pn] or 0) > 0 then return true end
+  end
+  return false
+end
+
 function level_step(state, F, world, info, now)
   local A = F.active
   local me = info.player_number or -1
@@ -2563,6 +2577,11 @@ function level_step(state, F, world, info, now)
   for _, t in ipairs(A.tiles) do if t.placed then laid = laid + 1 end end
   local picked = A.mine ~= nil
   for pn in pairs(A.picks) do if pn ~= me then picked = true end end
+  -- Bug fix (2026-11-02): the wait counts only the ticks in which a plan
+  -- bot can pick. It stops while this bot's builder is out with a pill
+  -- (the builder walks back from a spike pill), and while this bot has no
+  -- pill and another plan bot carries one (that bot decides).
+  if not picked and A.t_pick ~= nil and M.pick_wait_paused(A, info, per) then A.t_pick = now end
   if picked or A.t_pick == nil then A.t_pick = now end
   local L = M.levels(world, A, me)
   L.t, L.reserved, L.team = now, per, team

@@ -1136,5 +1136,25 @@ do
   check("a spike row with no stand place: the same table", G.wsim_goal(nos) == nos, "?")
 end
 
+
+print("release wait pause (bug fix, 2026-11-02)")
+do
+  local IN = C.LGM_INTANK
+  local OUT = IN + 1
+  local A = { claims = { [9] = 2, [10] = 3, [14] = 255 } }
+  check("pill, builder in: the wait counts",
+    FV.pick_wait_paused(A, { player_number = 3, carried_pills = 2, man_status = IN }, { [3] = 2 }) == false, "?")
+  check("pill, builder out: the wait stops",
+    FV.pick_wait_paused(A, { player_number = 3, carried_pills = 2, man_status = OUT }, { [3] = 2 }) == true, "?")
+  check("no pill, a plan bot carries one: the wait stops",
+    FV.pick_wait_paused(A, { player_number = 2, carried_pills = 0, man_status = IN }, { [3] = 3 }) == true, "?")
+  check("no pill, only a bot outside the plan carries: the wait counts",
+    FV.pick_wait_paused(A, { player_number = 2, carried_pills = 0, man_status = IN }, { [5] = 1 }) == false, "?")
+  check("no pill, no carrier: the wait counts",
+    FV.pick_wait_paused(A, { player_number = 2, carried_pills = 0, man_status = OUT }, {}) == false, "?")
+  check("a released base (255) is not a plan bot",
+    FV.pick_wait_paused({ claims = { [9] = 255 } }, { player_number = 2, carried_pills = 0, man_status = IN },
+      { [255] = 1 }) == false, "?")
+end
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
