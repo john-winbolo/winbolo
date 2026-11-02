@@ -1194,9 +1194,9 @@ end
 print("solo carrier (FOCUS_SPIKE_SOLO_CARRIER, 2026-11-02)")
 do
   check("KEEL value false", C.PRESETS.keel.FOCUS_SPIKE_SOLO_CARRIER == false, tostring(C.PRESETS.keel.FOCUS_SPIKE_SOLO_CARRIER))
-  check("keel_focus, _loose, _bench true",
-    C.PRESETS.keel_focus.FOCUS_SPIKE_SOLO_CARRIER == true and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_SOLO_CARRIER == true
-    and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_SOLO_CARRIER == true, "?")
+  check("keel_focus, _loose, _bench false (true was worse in the bench)",
+    C.PRESETS.keel_focus.FOCUS_SPIKE_SOLO_CARRIER == false and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_SOLO_CARRIER == false
+    and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_SOLO_CARRIER == false, "?")
   local keep = C.FOCUS_SPIKE_SOLO_CARRIER
   C.FOCUS_SPIKE_SOLO_CARRIER = false
   check("knob off: never skip", FV.solo_skip({ player_number = 3 }, { [2] = 4, [3] = 1 }) == false)
