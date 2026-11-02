@@ -1156,5 +1156,39 @@ do
     FV.pick_wait_paused({ claims = { [9] = 255 } }, { player_number = 2, carried_pills = 0, man_status = IN },
       { [255] = 1 }) == false, "?")
 end
+
+print("home abort near (FOCUS_SPIKE_HOME_ABORT_NEAR, 2026-11-02)")
+do
+  check("KEEL value 0", C.PRESETS.keel.FOCUS_SPIKE_HOME_ABORT_NEAR == 0, tostring(C.PRESETS.keel.FOCUS_SPIKE_HOME_ABORT_NEAR))
+  check("keel_focus, _loose, _bench 16",
+    C.PRESETS.keel_focus.FOCUS_SPIKE_HOME_ABORT_NEAR == 16 and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_HOME_ABORT_NEAR == 16
+    and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_HOME_ABORT_NEAR == 16, "?")
+  local keep = C.FOCUS_SPIKE_HOME_ABORT_NEAR
+  local function setup()
+    local w = chew(function(q) return q == "NE" and "hostile" or "friendly" end)
+    local s = new_state(1000)
+    local A = { id = 5 }
+    FV.home_lost(s, w, A, nil, 0)
+    w.bases[0].owner = "hostile"
+    return s, w, A, w.bases[0]
+  end
+  local function at(b, d) return { player_number = 2, tankx = (b.mx + d) * 256, tanky = b.my * 256 } end
+  C.FOCUS_SPIKE_HOME_ABORT_NEAR = 0
+  local s, w, A, b = setup()
+  check("knob 0: a far lost base ends the plan (old rule)", FV.home_lost(s, w, A, at(b, 40), 10) == true)
+  C.FOCUS_SPIKE_HOME_ABORT_NEAR = 16
+  s, w, A, b = setup()
+  check("knob 16: lost base 40 tiles away: the plan goes on", FV.home_lost(s, w, A, at(b, 40), 10) == false)
+  check("knob 16: the far base leaves A.home", A.home[0] == nil, tostring(A.home[0]))
+  w.bases[0].owner = "friendly"; w.bases[0].owner = "hostile"
+  check("knob 16: the same base does not end the plan later", FV.home_lost(s, w, A, at(b, 2), 20) == false)
+  s, w, A, b = setup()
+  check("knob 16: lost base 16 tiles away: the plan ends", FV.home_lost(s, w, A, at(b, 16), 10) == true)
+  s, w, A, b = setup()
+  check("knob 16: lost base 3 tiles away: the plan ends", FV.home_lost(s, w, A, at(b, 3), 10) == true)
+  s, w, A, b = setup()
+  check("knob 16, no info: the old rule", FV.home_lost(s, w, A, nil, 10) == true)
+  C.FOCUS_SPIKE_HOME_ABORT_NEAR = keep
+end
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
