@@ -2024,9 +2024,11 @@ M.FOCUS_SPIKE_RESCORE_TICKS   = 50     -- brain ticks (1 s)
 -- (FOCUS_SPIKE_ALL_AGGRO) is cut into, for a lower CPU peak per think. Each
 -- think scores the next 1/N of the spots (the stand search and the route
 -- risk). The spot of the bot stays until the pass is finished; the pick,
--- change and drop rules apply only then. The pass is started again when the
--- levels (m, S or a c(b)), the tank tile or the boat state change in it.
--- The answer is the same as one full pass while the world does not change.
+-- change and drop rules apply only then. The inputs (tank tile, boat
+-- state, m, S, every c(b)) are fixed at the start of the pass; a change of
+-- them mid-pass waits for the next pass. The builder out of the tank or no
+-- pill carried throws the pass away. The answer is the same as one full
+-- pass while the world does not change.
 -- The first pick of a plan waits N thinks. The claim mode is always one
 -- pass. KEEL 1 (the full pass in one think); keel_focus, _loose, _bench 5.
 M.FOCUS_SPIKE_RESCORE_SLICES  = 1
