@@ -31,8 +31,6 @@
  *   run_mac_bolo_settings_each_part_off
  *       each part turned off on its own: that part's rules are back on the
  *       classic table and every other part's rules are unchanged.
- *   run_mac_bolo_settings_numbers
- *       the five number settings reach their rules.
  *   run_mac_bolo_tank_hit_mines_part_with_mines_mod
  *       Mac Bolo Rules and Tank Hits Set Off Mines both on the list. Mac
  *       Bolo Rules on top: tank_hit_mines on plays 0, off plays 1. Tank
@@ -51,8 +49,8 @@
  *       classic shell cap rules, so the round reads the host's picks, not
  *       the ones the mod was attached with.
  *   run_mac_bolo_setting_changed_between_rounds
- *       round 1 on the defaults, back to the lobby, shell_cap off and
- *       push_step changed: round 2 plays the new picks.
+ *       round 1 on the defaults, back to the lobby, shell_cap and superboom
+ *       off: round 2 plays the new picks.
  *
  * on_choose_start(p, lobby): the engine hands each script the start the
  * lobby reserved for the tank, and game.lobby_start / game.lobby_side read
@@ -479,38 +477,6 @@ int run_mac_bolo_settings_each_part_off(void) {
     return 0;
 }
 
-int run_mac_bolo_settings_numbers(void) {
-    static const MlsSetting set[] = {
-        { "push_step",           40 },
-        { "push_armour_bonus",   10 },
-        { "push_decay_shift",    3  },
-        { "shell_cap_count",     5  },
-        { "base_defence_radius", 9  },
-    };
-    SimRules got;
-
-    UT_ASSERT(mlsRulesRound(set, (int)(sizeof(set) / sizeof(set[0])),
-                            &got) == 0);
-    UT_ASSERT(got.tank_slide_mac == 1);
-    UT_ASSERT_MSG(got.tank_slide_step == 40, "tank_slide_step is %d",
-                  (int)got.tank_slide_step);
-    UT_ASSERT_MSG(got.tank_slide_armour_bonus == 10,
-                  "tank_slide_armour_bonus is %d",
-                  (int)got.tank_slide_armour_bonus);
-    UT_ASSERT_MSG(got.tank_bump_decay_shift == 3,
-                  "tank_bump_decay_shift is %d",
-                  (int)got.tank_bump_decay_shift);
-    UT_ASSERT(got.pill_shell_cap == 1);
-    UT_ASSERT_MSG(got.pill_max_shells_at_tank == 5,
-                  "pill_max_shells_at_tank is %d",
-                  (int)got.pill_max_shells_at_tank);
-    UT_ASSERT(got.pill_base_defend_shape == 1);
-    UT_ASSERT_MSG(got.pill_base_defend_range == 9,
-                  "pill_base_defend_range is %d",
-                  (int)got.pill_base_defend_range);
-    return 0;
-}
-
 /* ── Two scripts on the list ──────────────────────────────────────── */
 
 #define MLS_MINES_MOD_FILE "TankHitsSetOffMines.scenario.lua"
@@ -770,9 +736,8 @@ int run_mac_bolo_spawn_starts_off_engine_picks(void) {
 }
 
 /* The shell cap rules in r are the classic table's, and the pushback rules
- * are the mod's at push_step. */
-static int mlsShellCapOff(const SimRules *r, int32_t pushStep,
-                          const char *when) {
+ * are the mod's. */
+static int mlsShellCapOff(const SimRules *r, const char *when) {
     SimRules classic;
 
     simRulesClassic(&classic);
@@ -784,10 +749,10 @@ static int mlsShellCapOff(const SimRules *r, int32_t pushStep,
                   (int)r->pill_shell_cap, (int)r->pill_max_shells_at_tank,
                   (int)classic.pill_shell_cap,
                   (int)classic.pill_max_shells_at_tank);
-    UT_ASSERT_MSG(r->tank_slide_mac == 1 && r->tank_slide_step == pushStep,
+    UT_ASSERT_MSG(r->tank_slide_mac == 1 && r->tank_slide_step == 28,
                   "%s: tank_slide_mac %d and tank_slide_step %d, wanted 1 "
-                  "and %d", when, (int)r->tank_slide_mac,
-                  (int)r->tank_slide_step, (int)pushStep);
+                  "and 28", when, (int)r->tank_slide_mac,
+                  (int)r->tank_slide_step);
     return 0;
 }
 
@@ -807,7 +772,7 @@ int run_mac_bolo_setting_changed_after_attach(void) {
     UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
     UT_ASSERT_MSG(scenarioHostLastError(h)[0] == '\0',
                   "the round complained: %s", scenarioHostLastError(h));
-    UT_ASSERT(mlsShellCapOff(&serverSimGetGameSim(sim)->rules, 28,
+    UT_ASSERT(mlsShellCapOff(&serverSimGetGameSim(sim)->rules,
                              "shell_cap off after the attach") == 0);
 
     scenarioHostDetach(h);
@@ -817,15 +782,17 @@ int run_mac_bolo_setting_changed_after_attach(void) {
 
 int run_mac_bolo_setting_changed_between_rounds(void) {
     static const MlsSetting set[] = {
-        { "shell_cap", 0  },
-        { "push_step", 40 },
+        { "shell_cap", 0 },
+        { "superboom", 0 },
     };
     ServerSim      *sim = NULL;
     ScenarioHost   *h   = NULL;
     const SimRules *r;
+    SimRules        classic;
     BYTE            west = 0;
     BYTE            east = 0;
 
+    simRulesClassic(&classic);
     UT_ASSERT(mlsLobby(NULL, 0, &sim, &h, &west, &east) == 0);
 
     /* Round 1 plays the defaults. */
@@ -836,9 +803,9 @@ int run_mac_bolo_setting_changed_between_rounds(void) {
                   "round 1 on the defaults: pill_shell_cap %d and "
                   "pill_max_shells_at_tank %d, wanted 1 and 12",
                   (int)r->pill_shell_cap, (int)r->pill_max_shells_at_tank);
-    UT_ASSERT_MSG(r->tank_slide_step == 28,
-                  "round 1 on the defaults: tank_slide_step %d, wanted 28",
-                  (int)r->tank_slide_step);
+    UT_ASSERT_MSG(r->big_explosion_threshold == 60,
+                  "round 1 on the defaults: big_explosion_threshold %d, "
+                  "wanted 60", (int)r->big_explosion_threshold);
 
     /* Back in the lobby the host changes two values; round 2 plays them. */
     serverSimReturnToLobby(sim);
@@ -847,8 +814,13 @@ int run_mac_bolo_setting_changed_between_rounds(void) {
     UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
     UT_ASSERT_MSG(scenarioHostLastError(h)[0] == '\0',
                   "round 2 complained: %s", scenarioHostLastError(h));
-    UT_ASSERT(mlsShellCapOff(&serverSimGetGameSim(sim)->rules, 40,
-                             "round 2 after the lobby change") == 0);
+    r = &serverSimGetGameSim(sim)->rules;
+    UT_ASSERT(mlsShellCapOff(r, "round 2 after the lobby change") == 0);
+    UT_ASSERT_MSG(r->big_explosion_threshold ==
+                      classic.big_explosion_threshold,
+                  "round 2 with superboom off: big_explosion_threshold %d, "
+                  "wanted the classic %d", (int)r->big_explosion_threshold,
+                  (int)classic.big_explosion_threshold);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

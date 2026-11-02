@@ -16,7 +16,7 @@
 -- are in the air at any one tank. A pillbox whose nearest target already
 -- has that many coming fires at the next nearest enemy in range instead;
 -- with no other target it holds its shot and fires as soon as one of those
--- shells lands. The limit is twelve by default.
+-- shells lands. This part sets the limit to twelve.
 --
 -- Tank clearance. Use the original direction-dependent tank boxes and
 -- pixel nudges against solid tiles, allowing close passes beside pills.
@@ -102,31 +102,29 @@
 -- by its own owner.
 --
 -- Settings. The host turns each part on or off in the lobby's details
--- dialog, and sets the numbers a part plays with (scenario.settings below).
--- Every part is on by default, at the numbers above.
+-- dialog (scenario.settings below). Every part is on by default, and plays
+-- at the numbers above, which the host cannot change. Every setting is a
+-- switch, so the parts fit in the 16 settings a script may have.
 --
---   pushback            Mac Bolo shell pushback (tank_slide_mac).
---   push_step           its push at full armour (tank_slide_step, 28).
---   push_armour_bonus   its extra push at zero armour
---                       (tank_slide_armour_bonus, 32).
---   push_decay_shift    its slide length (tank_bump_decay_shift, 2).
---   shell_cap           pillbox shell cap (pill_shell_cap).
---   shell_cap_count     shells in the air at one tank
---                       (pill_max_shells_at_tank, 12).
+--   pushback            Mac Bolo shell pushback (tank_slide_mac, with
+--                       tank_slide_step 28, tank_slide_armour_bonus 32
+--                       and tank_bump_decay_shift 2).
+--   shell_cap           pillbox shell cap (pill_shell_cap, with
+--                       pill_max_shells_at_tank 12).
 --   tank_boxes          tank clearance (tank_collision_mac).
 --   pill_aim            pillbox aiming and massage (pill_aim_mac).
 --   pill_anger          angry pillbox fire rate
 --                       (pill_attack_min_ticks, 5).
 --   pill_shell_range    pillbox shell range (pill_fire_length, 8.25).
---   base_defence        base defence circle (pill_base_defend_shape).
---   base_defence_radius its radius (pill_base_defend_range, 7).
+--   base_defence        base defence circle (pill_base_defend_shape, with
+--                       pill_base_defend_range 7).
 --   tank_hit_mines      tank hits do not set off mines
 --                       (tank_hit_sets_off_mines). 0 is the default,
 --                       and this part keeps it at 0.
 --   superboom           superboom threshold
 --                       (big_explosion_threshold, 60).
 --   parachute           parachute speed (lgm_helicopter_speed, 2).
---   spawn_starts       the Mac Bolo start pick for spawns.
+--   spawn_starts        the Mac Bolo start pick for spawns.
 --   first_start_lobby   "Override first start to what was chosen in lobby".
 --                       On (the default): a tank the lobby has a start
 --                       for takes it, as above. Off: the Mac Bolo pick
@@ -134,9 +132,9 @@
 --                       while spawn_starts is off.
 --
 -- A part that is off sets none of its rules: the round plays the classic
--- table there, or the value another script on the list sets. Its numbers
--- are then not read. With spawn_starts off, on_choose_start names no start
--- and the engine picks every start as it always does.
+-- table there, or the value another script on the list sets. With
+-- spawn_starts off, on_choose_start names no start and the engine picks
+-- every start as it always does.
 --
 -- The rules table is built from the settings when the file runs, so the
 -- rules are in force before the opening tanks are built and keep the list's
@@ -169,24 +167,11 @@ scenario = {
     -- Shell pushback: the Mac Bolo push, harder on a weakened tank.
     { id = "pushback", label = "Mac Bolo shell pushback", type = "bool",
       default = true },
-    -- The push at full armour, in world units per 40 ms.
-    { id = "push_step", label = "Pushback at full armour", type = "int",
-      min = 0, max = 63, step = 1, default = 28 },
-    -- The extra push at zero armour, scaled by the armour missing. The rule
-    -- allows 255; the max is capped by the dropdown's 100 entries.
-    { id = "push_armour_bonus", label = "Pushback extra at zero armour",
-      type = "int", min = 0, max = 96, step = 1, default = 32 },
-    -- The slide's length: a push travels step * 2^shift in all.
-    { id = "push_decay_shift", label = "Pushback slide length (shift)",
-      type = "int", min = 0, max = 31, step = 1, default = 2 },
 
     -- Pillbox shell cap: a pill holds or retargets when its target already
-    -- has this many pillbox shells coming.
+    -- has twelve pillbox shells coming.
     { id = "shell_cap", label = "Pillbox shell cap", type = "bool",
       default = true },
-    -- The rule allows 255; the max is capped by the dropdown's 100 entries.
-    { id = "shell_cap_count", label = "Pillbox shells in the air at one tank",
-      type = "int", min = 1, max = 100, step = 1, default = 12 },
 
     -- Tank clearance: the Mac Bolo tank boxes against solid squares.
     { id = "tank_boxes", label = "Mac Bolo tank collision boxes",
@@ -204,12 +189,10 @@ scenario = {
     { id = "pill_shell_range", label = "Mac Bolo pillbox shell range",
       type = "bool", default = true },
 
-    -- Base defence: a circle round a shot base instead of a square.
+    -- Base defence: a circle of radius 7 round a shot base instead of a
+    -- square.
     { id = "base_defence", label = "Mac Bolo base defence circle",
       type = "bool", default = true },
-    -- Its radius in map squares, with the edge left out.
-    { id = "base_defence_radius", label = "Base defence circle radius",
-      type = "int", min = 1, max = 30, step = 1, default = 7 },
 
     -- Tank hits and mines: a shell that hits a tank leaves the mines on
     -- its square alone. That is the default; the part keeps it so when
@@ -270,19 +253,19 @@ local rules = {}
 if PUSHBACK then
   -- Turn the Mac Bolo push on; the classic table plays with it off.
   rules.tank_slide_mac = 1
-  -- The push at full armour, in world units per 40 ms (28 by default).
-  rules.tank_slide_step = game.setting("push_step")
-  -- 32 and 2 by default, the rules' own defaults, written here so the mod
-  -- says what it plays with rather than relying on them.
-  rules.tank_slide_armour_bonus = game.setting("push_armour_bonus")
-  rules.tank_bump_decay_shift = game.setting("push_decay_shift")
+  -- The push at full armour, in world units per 40 ms.
+  rules.tank_slide_step = 28
+  -- The rules' own defaults, written here so the mod says what it plays
+  -- with rather than relying on them.
+  rules.tank_slide_armour_bonus = 32
+  rules.tank_bump_decay_shift = 2
 end
 
 if SHELL_CAP then
-  -- Turn the cap on; the classic table plays with it off. Twelve by
-  -- default, the rule's own default, written here for the same reason.
+  -- Turn the cap on; the classic table plays with it off. Twelve is the
+  -- rule's own default, written here for the same reason.
   rules.pill_shell_cap = 1
-  rules.pill_max_shells_at_tank = game.setting("shell_cap_count")
+  rules.pill_max_shells_at_tank = 12
 end
 
 if TANK_BOXES then
@@ -308,8 +291,8 @@ end
 if BASE_DEFENCE then
   -- 1 is a circle, 0 the classic square.
   rules.pill_base_defend_shape = 1
-  -- A radius, with the edge left out (7 by default).
-  rules.pill_base_defend_range = game.setting("base_defence_radius")
+  -- A radius, with the edge left out.
+  rules.pill_base_defend_range = 7
 end
 
 if TANK_HIT_MINES then
