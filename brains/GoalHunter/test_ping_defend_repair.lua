@@ -227,11 +227,13 @@ do
   local w10 = world_of({ [7] = pill(110, 100, 10), [8] = pill(100, 104, 0) })
   local bp10 = run(fresh_state(ping_order()), w10, info_at(TMX, TMY))
   check("exactly 10.0 tiles -> forced", bp10.force ~= nil)
-  -- Straight line, not Manhattan: (107,107) is 9.9 tiles, Manhattan 14 (> leash 11).
+  -- Straight line, not Manhattan: (107,107) is 9.9 tiles, Manhattan 14. With
+  -- BUILDER_LEASH_EUCLID the leash measure is also 9.9 (<= 11), so the row is
+  -- in reach on its own; with the knob off it is the force that waives it.
   local wd = world_of({ [7] = pill(107, 107, 10), [8] = pill(100, 104, 0) })
   local bpd, cd = run(fresh_state(ping_order()), wd, info_at(TMX, TMY))
   local fd = forced_row(bpd)
-  check("diagonal 9.9 tiles: forced, leash waived", fd and fd.out_of_leash == nil and cd and cd.x == 107 and cd.y == 107,
+  check("diagonal 9.9 tiles: forced, not out_of_leash", fd and fd.out_of_leash == nil and cd and cd.x == 107 and cd.y == 107,
         fd and fd.reject)
 end
 

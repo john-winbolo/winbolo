@@ -75,7 +75,7 @@ local WEDGE_NAME = { "N", "E", "S", "W" }
 -- repair_leash: how far a REBUILD/TOPUP target may sit from the tank.
 --
 -- Two leashes now, and every reader has to ask for the right one: repair rows
--- reach BUILDER_POOL_REPAIR_LEASH (11 tiles, Manhattan) under the linear
+-- reach BUILDER_POOL_REPAIR_LEASH (11 tiles, measured by M.leash_dist) under the linear
 -- formula, the farm row keeps BUILDER_POOL_LEASH (8). Gated on
 -- BUILDER_POOL_REPAIR_LINEAR so `preset=keel` puts BOTH back to 8 with one
 -- entry. Exported because goals.lua's REPAIR_SPLIT prints the number it hands
@@ -87,6 +87,28 @@ function M.repair_leash()
     return C.BUILDER_POOL_REPAIR_LEASH or 11
   end
   return C.BUILDER_POOL_LEASH or 8
+end
+
+-- -------------------------------------------------------------------------
+-- leash_dist: the distance every builder leash test measures, tank tile to
+-- target tile. The engine's builder walks a straight line, so with
+-- BUILDER_LEASH_EUCLID (default true) this is the straight-line distance:
+-- Manhattan said a pill on the diagonal was up to 41% further than the walk
+-- really is, and a dead pill at Euclid 8 / Manhattan 12 sat out_of_leash
+-- while the man could have reached it. false = the old Manhattan measure.
+-- The leash values (8, 11, 15) are unchanged.
+-- -------------------------------------------------------------------------
+function M.leash_dist(ax, ay, bx, by)
+  if C.BUILDER_LEASH_EUCLID then return U.edist(ax, ay, bx, by) end
+  return U.mdist(ax, ay, bx, by)
+end
+
+-- A leash distance for a log or panel line: one decimal when it is not a
+-- whole number (Euclid), the old integer text when it is (Manhattan).
+function M.fmt_ld(d)
+  if d == nil then return "-" end
+  if d == math.floor(d) then return string.format("%d", d) end
+  return string.format("%.1f", d)
 end
 
 -- -------------------------------------------------------------------------
@@ -812,7 +834,7 @@ function M.discover(state, world, info)
     -- for every one of them. The bpj claim is what keeps that from happening.
     if (p.owner == "friendly" or p.owner == "allied")
        and not p.in_tank and not p.carrier then
-      local d = U.mdist(tmx, tmy, p.mx, p.my)
+      local d = M.leash_dist(tmx, tmy, p.mx, p.my)
       -- Spike care (spike.lua): a spike pill tops up from
       -- SPIKE_REPAIR_MIN_MISSING hp and reaches SPIKE_REPAIR_LEASH tiles.
       -- nil with C.SPIKE_REPAIR_PRIORITY off: the rows are the old ones.
@@ -1152,7 +1174,7 @@ function M.gate_row(state, world, info, now, row, ctx)
   -- ── per-candidate eligibility, in cost order (cheap tests first) ──────
   local reject = row.hard and ("discovery:" .. row.hard) or nil
   if not reject and row.out_of_leash then
-    reject = string.format("out_of_leash (%d > %d)", row.dist,
+    reject = string.format("out_of_leash (%.1f > %d)", row.dist,
                            row.leash or C.BUILDER_POOL_LEASH or 8)
   end
   if not reject and not trip then reject = "unreachable" end
@@ -1493,14 +1515,14 @@ function M.row_formula(row)
     .. " 'all' = BUILDER_POOL_FARM_SECTORS is 1 (one row, nearest anywhere).",
     C.BUILDER_POOL_LEASH or 8) or nil
   local tail = string.format(
-    " %s trees need %d, have %d, reserved %d. leash %d, dist %d, front_dist %d.%s",
+    " %s trees need %d, have %d, reserved %d. leash %d, dist %s, front_dist %d.%s",
     row.forced
       and "FORCED (PING_DEFEND_REPAIR): MIN_SCORE, leash, tree reserve,"
           .. " reserve_eta and mode_owned are waived; the safety gates still apply."
       or string.format("Fires only if score >= BUILDER_POOL_MIN_SCORE(%d) and no"
                        .. " gate rejects.", MIN),
     row.trees_need or 0, row.f_trees or 0, row.f_reserve or 0,
-    row.leash or C.BUILDER_POOL_LEASH or 8, row.dist or -1, fd,
+    row.leash or C.BUILDER_POOL_LEASH or 8, row.dist and M.fmt_ld(row.dist) or "-1", fd,
     reject and (" REJECTED: " .. reject) or " ACCEPTED.")
   local segs
   -- The linear repair row (BUILDER_POOL_REPAIR_LINEAR). Two terms and no
@@ -1881,7 +1903,7 @@ function M.repair_feeder(state, world, info, now)
 
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
-  local dist = U.mdist(tmx, tmy, px, py)
+  local dist = M.leash_dist(tmx, tmy, px, py)
   local DANGER_LOW     = C.REPAIR_DISPATCH_DANGER_LOW or 50
   local DANGER_HIGH    = C.REPAIR_DISPATCH_DANGER_HIGH or 150
   local DIST_BASE      = C.REPAIR_DISPATCH_DIST_BASE or 5
@@ -1958,8 +1980,8 @@ function M.repair_feeder(state, world, info, now)
     local tank_fx, tank_fy = info.tankx / 256.0, info.tanky / 256.0
     viz.line("repair_pill_viz", tank_fx, tank_fy, px + 0.5, py + 0.5, r, gg, bb, 120)
     viz.text("repair_pill_viz", tank_fx + 0.6, tank_fy - 1.2,
-             string.format("Repair d=%d/%.1f tr=%d dgr=%d lgm=%d%s",
-                           dist, effective_max, info.trees or 0,
+             string.format("Repair d=%s/%.1f tr=%d dgr=%d lgm=%d%s",
+                           M.fmt_ld(dist), effective_max, info.trees or 0,
                            math.floor(danger_at_tank or 0),
                            math.floor(ticks or 0),
                            under_fire_hold
@@ -1967,9 +1989,9 @@ function M.repair_feeder(state, world, info, now)
                              or (enemy_hold and " HOLD(enemy near)" or "")),
              "topleft", r, gg, bb, 240)
     print2(string.format(
-      "REPAIR_DISPATCH_CHECK t=%d pill=(%d,%d) tank=(%d,%d) dist=%d eff_max=%.1f trees=%d danger=%d lgm_ticks=%d"
+      "REPAIR_DISPATCH_CHECK t=%d pill=(%d,%d) tank=(%d,%d) dist=%s eff_max=%.1f trees=%d danger=%d lgm_ticks=%d"
       .. " hold=%s (enemy_near=%s under_fire=%s hit_age=%s) goal=%s can=%s",
-      state.tick or 0, px, py, tmx, tmy, dist, effective_max, info.trees or 0,
+      state.tick or 0, px, py, tmx, tmy, M.fmt_ld(dist), effective_max, info.trees or 0,
       math.floor(danger_at_tank or 0), math.floor(ticks or 0), tostring(_hold),
       tostring(enemy_hold), tostring(under_fire_hold),
       _uf_age and tostring(_uf_age) or "-", g.kind or "?", tostring(can_dispatch)))
@@ -2113,7 +2135,7 @@ function M.builder_can_repair(state, world, info, p)
   if spike.care_at(state, p.mx, p.my, state.tick or 0) then
     leash = math.max(leash, C.SPIKE_REPAIR_LEASH)
   end
-  if U.mdist(tmx, tmy, p.mx, p.my) > leash then return nil end
+  if M.leash_dist(tmx, tmy, p.mx, p.my) > leash then return nil end
   local maxhp = C.PILLS_MAX_HEALTH or 15
   local hp = p.health or 0
   local need = (hp <= 0) and (C.BUILDER_POOL_TREES_REBUILD or 4)
