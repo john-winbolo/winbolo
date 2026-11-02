@@ -556,8 +556,12 @@ function M.set_mode(state, world, info, goal)
     -- off): always the long send, trigger or not, so the tank stops at
     -- PLACE_DISPATCH_MAX_DIST instead of driving into enemy ground.
     -- decide()'s place_pill checks (lgm_can_reach etc.) still apply.
+    -- The long send limit is a builder walk: measured with U.leash_dist
+    -- (straight line under BUILDER_LEASH_EUCLID). pdist (Manhattan) stays for
+    -- the "on the spot" (<= 1) and PLACE_EMERGENCY_MAX_DIST tests.
+    local ldist = U.leash_dist(tmx, tmy, goal.mx, goal.my)
     local deep_send = goal._focus_spike and trigger == nil and pdist > 1
-                      and pdist <= C.PLACE_DISPATCH_MAX_DIST
+                      and ldist <= C.PLACE_DISPATCH_MAX_DIST
     -- "cluster" rule: the plan chose a stand place (goal._stand_mx). Send from
     -- it, or from an earlier tile that is no riskier, so the plan and the
     -- send agree on the exposure.
@@ -572,7 +576,7 @@ function M.set_mode(state, world, info, goal)
       elseif r > (goal._stand_r or 0) + 1e-6 then deep_send = false end
     end
     local close_enough = (goal._place_forced and pdist <= C.PLACE_EMERGENCY_MAX_DIST)
-                         or (trigger ~= nil and pdist <= C.PLACE_DISPATCH_MAX_DIST)
+                         or (trigger ~= nil and ldist <= C.PLACE_DISPATCH_MAX_DIST)
                          or pdist <= 1
                          or deep_send
     local _pp_ok = close_enough and (info.carried_pills or 0) > 0

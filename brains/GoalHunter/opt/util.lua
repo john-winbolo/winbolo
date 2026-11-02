@@ -256,6 +256,34 @@ function M.edist(mx1, my1, mx2, my2)
   return math.sqrt(dx * dx + dy * dy)
 end
 
+-- Builder walk limits: the builder leashes (builder_pool) and
+-- PLACE_DISPATCH_MAX_DIST (the long send). The engine's builder walks a
+-- straight line, so with C.BUILDER_LEASH_EUCLID (default true) every one of
+-- them measures straight-line distance. false = the old Manhattan measure.
+function M.leash_dist(mx1, my1, mx2, my2)
+  if C.BUILDER_LEASH_EUCLID then return M.edist(mx1, my1, mx2, my2) end
+  return M.mdist(mx1, my1, mx2, my2)
+end
+
+-- A builder walk distance for a log or panel line: one decimal when it is
+-- not a whole number (straight line), the old integer text when it is.
+function M.fmt_ld(d)
+  if d == nil then return "-" end
+  if d == math.floor(d) then return string.format("%d", d) end
+  return string.format("%.1f", d)
+end
+
+-- Half width of row dy of the tiles within builder reach r of a centre
+-- (|dx| <= this): the circle with BUILDER_LEASH_EUCLID, else the diamond.
+function M.leash_row_w(r, dy)
+  if C.BUILDER_LEASH_EUCLID then
+    local q = r * r - dy * dy
+    if q < 0 then return -1 end
+    return math.floor(math.sqrt(q) + 1e-9)
+  end
+  return r - math.abs(dy)
+end
+
 -- Chebyshev: diagonal neighbours are distance 1. "Beside" in the sense the
 -- pill-spacing rule means -- the 8 tiles touching a pill are all distance 1.
 function M.cdist(mx1, my1, mx2, my2)

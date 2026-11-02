@@ -99,16 +99,13 @@ end
 -- The leash values (8, 11, 15) are unchanged.
 -- -------------------------------------------------------------------------
 function M.leash_dist(ax, ay, bx, by)
-  if C.BUILDER_LEASH_EUCLID then return U.edist(ax, ay, bx, by) end
-  return U.mdist(ax, ay, bx, by)
+  return U.leash_dist(ax, ay, bx, by)   -- the one builder walk measure (util.lua)
 end
 
 -- A leash distance for a log or panel line: one decimal when it is not a
 -- whole number (Euclid), the old integer text when it is (Manhattan).
 function M.fmt_ld(d)
-  if d == nil then return "-" end
-  if d == math.floor(d) then return string.format("%d", d) end
-  return string.format("%.1f", d)
+  return U.fmt_ld(d)
 end
 
 -- -------------------------------------------------------------------------

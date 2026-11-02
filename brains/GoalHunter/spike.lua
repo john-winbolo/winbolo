@@ -317,7 +317,7 @@ end
 function M.second_ok(ad, cx, cy)
   if cx == ad.fmx and cy == ad.fmy then return false end
   if U.edist(cx, cy, ad.fmx, ad.fmy) > C.SPIKE_PAIR_COVER_DIST then return false end
-  if ad.tmx and U.mdist(ad.tmx, ad.tmy, cx, cy) > C.PLACE_DISPATCH_MAX_DIST then return false end
+  if ad.tmx and U.leash_dist(ad.tmx, ad.tmy, cx, cy) > C.PLACE_DISPATCH_MAX_DIST then return false end
   if U.ttype(cx, cy) == C.T_FOREST then return false end
   return M.los_clear(ad.fmx, ad.fmy, cx, cy)
 end

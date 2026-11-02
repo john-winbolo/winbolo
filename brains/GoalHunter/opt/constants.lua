@@ -1861,7 +1861,7 @@ M.FOCUS_SPIKE_UTIL_TO_AGGRO   = true
 -- DEFENSE_MAX, so no factor alone disqualifies):
 --   spot:   SPOT_WEIGHT x armour per known hostile pill that can fire at the
 --           SAFEST place our tank can stand to send the builder: any
---           tank-passable tile within PLACE_DISPATCH_MAX_DIST (Manhattan) of
+--           tank-passable tile within PLACE_DISPATCH_MAX_DIST (U.leash_dist) of
 --           the spike spot from which the builder walk reaches it (forest
 --           hiding counts as safe). Pills never shoot builders (pillsUpdate
 --           targets tanks only), so a spot in a hostile pill's range is
@@ -2026,7 +2026,7 @@ M.FOCUS_SPIKE_NEUTRAL_PILL_COVER = false
 --   travel cost = floor(tank -> stand distance / 10) x DEFENSE_DETOUR_WEIGHT;
 --   builder run = FOCUS_SPIKE_LGM_RUN_COST per tile, stand -> spot (euclid).
 -- The stand place: see FOCUS_SPIKE_STAND_RADIUS (KEEL: the tank-passable
--- tile within PLACE_DISPATCH_MAX_DIST, Manhattan, with the lowest stand
+-- tile within PLACE_DISPATCH_MAX_DIST, U.leash_dist, with the lowest stand
 -- risk + builder run cost). The payoff: see FOCUS_SPIKE_CLOSE_PAYOFF and
 -- FOCUS_SPIKE_MULTI_BOOST. A spot is left
 -- out when it is not placeable now, or when its danger (stand risk + route
@@ -4556,10 +4556,12 @@ M.BUILDER_POOL_ENABLED = true   -- master switch; false = behaviour at the HARBO
 M.BUILDER_POOL_LEASH = 8
 -- BUILDER_LEASH_EUCLID (2026-11-02, Andrew's order): every builder leash test
 -- (the pool's farm/repair/spike-care reach and its 2 x leash collection,
--- builder_can_repair, the repair dispatch feeder) measures STRAIGHT-LINE
--- distance from the tank tile, because the engine's builder walks a straight
--- line. Manhattan overstated a diagonal walk by up to 41%. The leash values
--- (8, 11, 15) are unchanged. KEEL is true as well -- the change is for all
+-- builder_can_repair, the repair dispatch feeder) and every
+-- PLACE_DISPATCH_MAX_DIST test (the long send in builder.lua, spike.second_ok,
+-- the goals.lua focus hold, the focus_vote stand place search) measures
+-- STRAIGHT-LINE distance (U.leash_dist), because the engine's builder walks a
+-- straight line. Manhattan overstated a diagonal walk by up to 41%. The
+-- values (8, 11, 15, and PLACE_DISPATCH_MAX_DIST 15) are unchanged. KEEL is true as well -- the change is for all
 -- bots; the knob is only a rollback. false = the old Manhattan measure.
 M.BUILDER_LEASH_EUCLID = true
 M.BUILDER_POOL_GRASS_TICKS_PER_TILE = 16   -- = REPAIR_DEAD_GRASS_TICKS_PER_TILE
