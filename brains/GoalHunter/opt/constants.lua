@@ -2016,7 +2016,20 @@ M.FOCUS_SPIKE_NEUTRAL_PILL_COVER = false
 -- is released (claim verb fsc) for another bot to take.
 -- false = off (the default and PRESETS.keel); keel_focus, _loose, _bench on.
 M.FOCUS_SPIKE_ADAPTIVE_SPOT   = false
+-- FOCUS_SPIKE_RESCORE_TICKS: the brain ticks from the start of one rescore
+-- pass to the start of the next. KEEL 50 (1 s); keel_focus, _loose, _bench
+-- 100 (2 s).
 M.FOCUS_SPIKE_RESCORE_TICKS   = 50     -- brain ticks (1 s)
+-- FOCUS_SPIKE_RESCORE_SLICES: the thinks one levelling rescore pass
+-- (FOCUS_SPIKE_ALL_AGGRO) is cut into, for a lower CPU peak per think. Each
+-- think scores the next 1/N of the spots (the stand search and the route
+-- risk). The spot of the bot stays until the pass is finished; the pick,
+-- change and drop rules apply only then. The pass is started again when the
+-- levels (m, S or a c(b)), the tank tile or the boat state change in it.
+-- The answer is the same as one full pass while the world does not change.
+-- The first pick of a plan waits N thinks. The claim mode is always one
+-- pass. KEEL 1 (the full pass in one think); keel_focus, _loose, _bench 5.
+M.FOCUS_SPIKE_RESCORE_SLICES  = 1
 M.FOCUS_SPIKE_BASE_PAYOFF     = 1.0
 M.FOCUS_SPIKE_LGM_RUN_COST    = 0.1    -- per tile, stand place -> spike spot
 M.FOCUS_SPIKE_SWITCH_MARGIN   = 0.20
@@ -6139,6 +6152,8 @@ M.PRESETS = {
     FOCUS_SPIKE_CLOSE_PAYOFF       = false,
     FOCUS_SPIKE_MULTI_RADIUS       = 5,
     FOCUS_SPIKE_MULTI_BOOST        = 1.0,
+    FOCUS_SPIKE_RESCORE_TICKS      = 50,
+    FOCUS_SPIKE_RESCORE_SLICES     = 1,
     -- 2026-11-01: spike care needs the aggro class (no care by range).
     FOCUS_SPIKE_CARE_BY_RANGE      = false,
     -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
@@ -6747,6 +6762,7 @@ do
     FOCUS_SPIKE_CARE_BY_RANGE = true,
     FOCUS_SPIKE_STAND_RADIUS = 15, FOCUS_SPIKE_CLOSE_PAYOFF = true,
     FOCUS_SPIKE_MULTI_BOOST = 1.5,
+    FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6771,6 +6787,7 @@ do
     FOCUS_SPIKE_CARE_BY_RANGE = true,
     FOCUS_SPIKE_STAND_RADIUS = 15, FOCUS_SPIKE_CLOSE_PAYOFF = true,
     FOCUS_SPIKE_MULTI_BOOST = 1.5,
+    FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and

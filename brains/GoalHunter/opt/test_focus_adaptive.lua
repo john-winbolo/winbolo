@@ -313,6 +313,134 @@ FV.adapt_step(state, state._fs, w, info, C.FOCUS_SPIKE_RELEASE_WAIT - 50)
 check("free, still waiting", A1.claims[0] == 255)
 check("free too long: incomplete", FV.adapt_step(state, state._fs, w, info, C.FOCUS_SPIKE_RELEASE_WAIT) == "incomplete")
 
+print("rescore pass in slices (2026-11-02)")
+do
+  local FVZ = require("focus_viz")
+  local old = { C.FOCUS_SPIKE_ALL_AGGRO, C.FOCUS_SPIKE_STAND_RADIUS, C.FOCUS_SPIKE_CLOSE_PAYOFF,
+                C.FOCUS_SPIKE_MULTI_BOOST, C.FOCUS_SPIKE_RESCORE_TICKS, C.FOCUS_SPIKE_RESCORE_SLICES }
+  C.FOCUS_SPIKE_ALL_AGGRO = true
+  C.FOCUS_SPIKE_STAND_RADIUS, C.FOCUS_SPIKE_CLOSE_PAYOFF, C.FOCUS_SPIKE_MULTI_BOOST = 15, true, 1.5
+  local wl = new_world()
+  add_base(wl, 0, 100, 100, "hostile")
+  add_base(wl, 1, 112, 100, "hostile")
+  add_pill(wl, 3, 106, 94, "hostile", 15)
+  local function mkl(pn)
+    local st = { _fs = { cool_until = 0, seen = {}, route_cache = {} } }
+    local A0 = { id = 7, adaptive = true, claims = {}, rel = {}, tiles = {}, switches = {}, t_go = 0,
+                 picks = {}, t_pick = 0, bases = { 0, 1 } }
+    st._fs.active = A0
+    local inf = { player_number = pn, man_status = C.LGM_INTANK, carried_pills = 2,
+                  tankx = 106 * 256, tanky = 115 * 256 }
+    return st, A0, inf
+  end
+  local function same(l1, l2)
+    if #l1 ~= #l2 then return false end
+    for i = 1, #l1 do
+      if l1[i].k ~= l2[i].k or math.abs(l1[i].total - l2[i].total) > 1e-9
+         or l1[i].stand.mx ~= l2[i].stand.mx or l1[i].stand.my ~= l2[i].stand.my then return false end
+    end
+    return true
+  end
+  -- One pass in one think (slices 1).
+  C.FOCUS_SPIKE_RESCORE_TICKS, C.FOCUS_SPIKE_RESCORE_SLICES = 100, 1
+  local s1, B1, i1 = mkl(3)
+  FV.adapt_step(s1, s1._fs, wl, i1, 0)
+  check("slices 1: the pass is finished in one think", B1.pass == nil and B1.score and B1.score.t == 0
+    and B1.mine ~= nil, B1.pass)
+  -- The same world in 5 slices.
+  C.FOCUS_SPIKE_RESCORE_SLICES = 5
+  local s5, B5, i5 = mkl(3)
+  local waits, prog = 0, true
+  for t = 0, 3 do
+    FV.adapt_step(s5, s5._fs, wl, i5, t)
+    if B5.mine == nil and B5.score == nil and B5.eval_line == nil then waits = waits + 1 end
+    if not (B5.pass and B5.pass.k == t + 1 and B5.pass.slices == 5) then prog = false end
+  end
+  check("slices 5: no pick and no spot_eval line before the pass is finished", waits == 4, waits)
+  check("slices 5: slice k of 5 in work", prog)
+  check("viz: the pass progress text", FVZ.pass_text(B5, nil, 3):find("slice 4 of 5", 1, true) ~= nil,
+    FVZ.pass_text(B5, nil, 3))
+  FV.adapt_step(s5, s5._fs, wl, i5, 4)
+  check("slices 5: the first pick waits 5 thinks", B5.pass == nil and B5.mine ~= nil and B5.score.t == 4,
+    B5.pass and B5.pass.k)
+  check("slices 5: the same list as one pass", same(B1.score.list, B5.score.list),
+    #B1.score.list .. "/" .. #B5.score.list)
+  check("slices 5: the same spot and stand as one pass", B1.mine.mx == B5.mine.mx and B1.mine.my == B5.mine.my
+    and B1.mine.stand.mx == B5.mine.stand.mx and B1.mine.stand.my == B5.mine.stand.my)
+  local d5 = B5.score.diag
+  check("slices 5: pass facts (slices 5, 5 slices run, pass 4 ticks, no restart)",
+    d5.slices == 5 and d5.slice_n == 5 and d5.pass_ticks == 4 and d5.restarts == 0,
+    string.format("%s/%s/%s/%s", tostring(d5.slices), tostring(d5.slice_n), tostring(d5.pass_ticks),
+      tostring(d5.restarts)))
+  local el = B5.eval_line or ""
+  check("spot_eval: slices, slice_ms_max, pass_ticks, restarts", el:find(" slices=5 ", 1, true)
+    and el:find(" slice_ms_max=%d+%.%d%d ") and el:find(" pass_ticks=4 ", 1, true)
+    and el:find(" restarts=0 ", 1, true), el)
+  check("viz: the age of the last finished pass",
+    FVZ.pass_text(B5, B5.score, 54):find("last finished pass 1.0 s ago", 1, true) ~= nil,
+    FVZ.pass_text(B5, B5.score, 54))
+  -- The interval counts from the start of a pass (t = 0): the next pass at 100.
+  FV.adapt_step(s5, s5._fs, wl, i5, 99)
+  check("slices 5: no new pass before RESCORE_TICKS from the pass start", B5.pass == nil)
+  FV.adapt_step(s5, s5._fs, wl, i5, 100)
+  check("slices 5: a new pass at 100; the spot stays in it", B5.pass and B5.pass.k == 1 and B5.mine
+    and B5.mine.mx == B1.mine.mx and B5.score.t == 4)
+  -- A restart: the S set changes mid-pass (a teammate picks a spot).
+  local sr, Br, ir = mkl(3)
+  FV.adapt_step(sr, sr._fs, wl, ir, 0)
+  FV.adapt_step(sr, sr._fs, wl, ir, 1)
+  Br.picks[4] = { mx = 112, my = 106, t = 1 }
+  FV.adapt_step(sr, sr._fs, wl, ir, 2)
+  check("S changes mid-pass: the pass starts again (slice 1, restarts 1)", Br.pass and Br.pass.k == 1
+    and Br.pass.restarts == 1 and Br.pass.t0 == 2 and Br.t_rescore == 2, Br.pass and Br.pass.k)
+  for t = 3, 6 do FV.adapt_step(sr, sr._fs, wl, ir, t) end
+  check("restart: the pass is finished 5 thinks later", Br.pass == nil and Br.score and Br.score.t == 6
+    and Br.score.diag.restarts == 1, Br.pass and Br.pass.k)
+  C.FOCUS_SPIKE_RESCORE_SLICES = 1
+  local so, Bo, io2 = mkl(3)
+  Bo.picks[4] = { mx = 112, my = 106, t = 1 }
+  FV.adapt_step(so, so._fs, wl, io2, 0)
+  check("restart: the same list as one pass on the new levels", same(Bo.score.list, Br.score.list)
+    and table.concat(Bo.score.mine, ",") == table.concat(Br.score.mine, ","),
+    table.concat(Br.score.mine, ","))
+  -- The tank moves to another tile mid-pass: a restart.
+  C.FOCUS_SPIKE_RESCORE_SLICES = 5
+  local sm, Bm, im = mkl(3)
+  FV.adapt_step(sm, sm._fs, wl, im, 0)
+  im.tankx = 107 * 256
+  FV.adapt_step(sm, sm._fs, wl, im, 1)
+  check("tank tile changes mid-pass: restart", Bm.pass and Bm.pass.k == 1 and Bm.pass.restarts == 1)
+  -- The builder goes out mid-pass: the pass is thrown away, no new one.
+  im.man_status = C.LGM_MOVING
+  FV.adapt_step(sm, sm._fs, wl, im, 2)
+  check("builder out mid-pass: no pass, no spot_eval line", Bm.pass == nil and Bm.eval_line == nil)
+  -- KEEL values: slices 1, every 50 ticks, each pass in one think.
+  C.FOCUS_SPIKE_RESCORE_TICKS, C.FOCUS_SPIKE_RESCORE_SLICES = 50, 1
+  local sk, Bk, ik = mkl(3)
+  local tk = {}
+  for t = 0, 150 do
+    FV.adapt_step(sk, sk._fs, wl, ik, t)
+    if Bk.pass then tk[#tk + 1] = "open" end
+    if Bk.score and Bk.score.t == t then tk[#tk + 1] = t end
+  end
+  check("KEEL timing: a pass at 0, 50, 100, 150, each in one think", table.concat(tk, ",") == "0,50,100,150",
+    table.concat(tk, ","))
+  C.FOCUS_SPIKE_ALL_AGGRO, C.FOCUS_SPIKE_STAND_RADIUS, C.FOCUS_SPIKE_CLOSE_PAYOFF = old[1], old[2], old[3]
+  C.FOCUS_SPIKE_MULTI_BOOST, C.FOCUS_SPIKE_RESCORE_TICKS, C.FOCUS_SPIKE_RESCORE_SLICES = old[4], old[5], old[6]
+  check("knob defaults = KEEL: RESCORE_TICKS 50, RESCORE_SLICES 1",
+    C.FOCUS_SPIKE_RESCORE_TICKS == 50 and C.FOCUS_SPIKE_RESCORE_SLICES == 1)
+  local P = C.PRESETS
+  check("PRESETS.keel: RESCORE_TICKS 50, RESCORE_SLICES 1",
+    P.keel.FOCUS_SPIKE_RESCORE_TICKS == 50 and P.keel.FOCUS_SPIKE_RESCORE_SLICES == 1)
+  local pok = true
+  for _, n in ipairs({ "keel_focus", "keel_focus_loose", "keel_focus_bench" }) do
+    if not (P[n] and P[n].FOCUS_SPIKE_RESCORE_TICKS == 100 and P[n].FOCUS_SPIKE_RESCORE_SLICES == 5) then
+      pok = false
+    end
+  end
+  check("keel_focus, _loose, _bench: RESCORE_TICKS 100, RESCORE_SLICES 5", pok)
+end
+
 print("placed message (bug fix)")
 local tagged = nil
 local A3 = { id = 9, tiles = { { mx = 50, my = 60, pn = 3 } } }
