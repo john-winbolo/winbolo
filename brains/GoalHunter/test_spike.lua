@@ -972,5 +972,52 @@ do
   C.FOCUS_SPIKE_DEFEND_DISCOUNT, C.FOCUS_SPIKE_DEFEND_TICKS = old_d, old_t
 end
 
+-- â”€â”€ Euclid builder leash (BUILDER_LEASH_EUCLID, 2026-11-02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+print("builder leash euclid")
+do
+  C.BUILDER_POOL_REPAIR_LINEAR = true
+  local saved_eu = C.BUILDER_LEASH_EUCLID
+  local real_trip = BP.lgm_trip
+  BP.lgm_trip = function() return 50, 100, nil end
+  C.BUILDER_LEASH_EUCLID = true
+  local st = fresh_state(3000)
+  st._spike = { pair = nil, watch = {}, care = {}, cool = {} }
+  -- run11 session 2: dead pill #2 at (120,114), tank at (126,109).
+  local w = { pills = { [2] = pill(120, 114, "friendly", 0) }, bases = {} }
+  local rows = BP.discover(st, w, info_at(126, 109, 0, 40))
+  local r = rows[1]
+  check("(126,109)->(120,114): rebuild row, leash 11, in reach",
+        r and r.type == "rebuild" and r.leash == 11 and not r.out_of_leash, r and r.dist)
+  check("(126,109)->(120,114): dist is straight line 7.8",
+        r and math.abs(r.dist - math.sqrt(61)) < 1e-9, r and r.dist)
+  check("builder_can_repair (126,109)->(120,114) in reach",
+        BP.builder_can_repair(st, w, info_at(126, 109, 0, 40), w.pills[2]) ~= nil)
+  -- (126,108): Euclid 8.5 (in), Manhattan 12 (out).
+  rows = BP.discover(st, w, info_at(126, 108, 0, 40))
+  check("(126,108): euclid 8.5 is in reach", rows[1] and not rows[1].out_of_leash, rows[1] and rows[1].dist)
+  check("builder_can_repair (126,108) in reach",
+        BP.builder_can_repair(st, w, info_at(126, 108, 0, 40), w.pills[2]) ~= nil)
+  -- Knob off: the old Manhattan measure.
+  C.BUILDER_LEASH_EUCLID = false
+  rows = BP.discover(st, w, info_at(126, 108, 0, 40))
+  check("knob off: (126,108) Manhattan 12 -> out_of_leash",
+        rows[1] and rows[1].out_of_leash and rows[1].dist == 12, rows[1] and rows[1].dist)
+  check("knob off: builder_can_repair (126,108) refuses",
+        BP.builder_can_repair(st, w, info_at(126, 108, 0, 40), w.pills[2]) == nil)
+  C.BUILDER_LEASH_EUCLID = true
+  -- Panel text: d with one decimal. (126,103) to (120,114) is 12.5 straight line.
+  rows = BP.discover(st, w, info_at(126, 103, 0, 40))
+  local ro = rows[1]
+  check("(126,103): euclid 12.5 > 11 -> out_of_leash", ro and ro.out_of_leash, ro and ro.dist)
+  if ro then
+    ro.trip = 100
+    BP.gate_row(st, w, info_at(126, 103, 0, 40), 3000, ro, { ok = true, reserve = 0 })
+  end
+  check("reject text 'out_of_leash (12.5 > 11)'",
+        ro and ro.reject == "out_of_leash (12.5 > 11)", ro and ro.reject)
+  C.BUILDER_LEASH_EUCLID = saved_eu
+  BP.lgm_trip = real_trip
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

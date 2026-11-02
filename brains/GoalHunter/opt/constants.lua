@@ -4654,6 +4654,14 @@ M.BUILDER_POOL_ENABLED = true   -- master switch; false = behaviour at the HARBO
 -- side-quest and becomes a reason to move the tank (that is the out-of-leash
 -- repair_pill goal, below).
 M.BUILDER_POOL_LEASH = 8
+-- BUILDER_LEASH_EUCLID (2026-11-02, Andrew's order): every builder leash test
+-- (the pool's farm/repair/spike-care reach and its 2 x leash collection,
+-- builder_can_repair, the repair dispatch feeder) measures STRAIGHT-LINE
+-- distance from the tank tile, because the engine's builder walks a straight
+-- line. Manhattan overstated a diagonal walk by up to 41%. The leash values
+-- (8, 11, 15) are unchanged. KEEL is true as well -- the change is for all
+-- bots; the knob is only a rollback. false = the old Manhattan measure.
+M.BUILDER_LEASH_EUCLID = true
 M.BUILDER_POOL_GRASS_TICKS_PER_TILE = 16   -- = REPAIR_DEAD_GRASS_TICKS_PER_TILE
                                            -- (MAP_MANSPEED_TGRASS); only used for
                                            -- the fallback ETA when the walk sim
@@ -4822,7 +4830,8 @@ M.BUILDER_POOL_REPAIR_LINEAR = true   -- false = the pre-2026-09-05 formula
                                       -- TRIP_W x trip - DANGER_W x threat)
 M.BUILDER_POOL_REPAIR_HP_W   = 30     -- score per point of missing armour
 M.BUILDER_POOL_REPAIR_TRIP_W = 0.25   -- score per tick of simulated round trip
--- Repair reach. 11 tiles (MANHATTAN, same measure as BUILDER_POOL_LEASH), for
+-- Repair reach. 11 tiles (same measure as BUILDER_POOL_LEASH: straight line
+-- under BUILDER_LEASH_EUCLID, Manhattan without), for
 -- rebuild and topup rows only -- the farm row keeps the 8-tile leash, because
 -- opportunistic wood was never worth a longer walk. The walk-sim budget covers
 -- it with room to spare: the slowest ground the LGM can cross is swamp/crater/
@@ -6334,6 +6343,7 @@ M.PRESETS = {
     FOCUS_SPIKE_PLAN_FLAT          = false,
     FOCUS_SPIKE_HOME_ABORT_NEAR    = 0,
     FOCUS_SPIKE_SOLO_CARRIER       = false,
+    BUILDER_LEASH_EUCLID           = true,
     -- 2026-11-01: spike care needs the aggro class (no care by range).
     FOCUS_SPIKE_CARE_BY_RANGE      = false,
     -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
