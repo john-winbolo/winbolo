@@ -2689,6 +2689,34 @@ function M.focus_spike_ctx(world, chk, state, tmx, tmy)
   return ad
 end
 
+-- FOCUS_SPIKE_PLAN_FLAT: the pool row of a focused spike plan tile (the
+-- plan tile block of eval_place_pill_strategic) keeps its flat
+-- FOCUS_SPIKE_APPROVED_COST after the phase weight and gets no influence
+-- x2/x0.5. True only with the knob on, for a plan tile row, and while the
+-- tank is not low (armour > ARMOUR_LOW and shells > SHELLS_LOW): a low tank
+-- prices the row as before, so refuel and flee win. KEEL false.
+function M.focus_plan_flat(goal, info)
+  if not C.FOCUS_SPIKE_PLAN_FLAT then return false end
+  if not (goal and goal._focus_spike and goal._spike_role == "plan") then return false end
+  if (info.armour or 40) <= C.ARMOUR_LOW or (info.shells or 40) <= C.SHELLS_LOW then return false end
+  return true
+end
+
+-- The goal wsim drives to. A focused spike plan tile row: the tank drives to
+-- the stand place (steering.lua nav_mx), not to the spike spot, so the walk
+-- sim goes to the stand place (bug fix 2026-11-02: it went to the spike
+-- spot, next to the hostile pills, and added 140 to 345 to the row).
+function M.wsim_goal(goal)
+  if goal and goal.kind == "place_pill_strategic" and goal._focus_spike and goal._stand_mx then
+    local g = {}
+    for k, v in pairs(goal) do g[k] = v end
+    g.mx, g.my = goal._stand_mx, goal._stand_my
+    g.wx, g.wy = U.m2w(goal._stand_mx), U.m2w(goal._stand_my)
+    return g
+  end
+  return goal
+end
+
 local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo, only)
   if not C.STRATEGIC_PLACE_ENABLED then return nil end
 
@@ -17302,6 +17330,10 @@ local function goal_selection(state, world, info, quiet)
         if entry.goal and entry.goal.follow_through then
           cost = C.PLACE_FOLLOW_THROUGH_COST or 25
         end
+        -- FOCUS_SPIKE_PLAN_FLAT: the plan tile row keeps its flat cost too.
+        if M.focus_plan_flat(entry.goal, info) then
+          cost = C.FOCUS_SPIKE_APPROVED_COST
+        end
         pool[#pool + 1] = {
           cost = cost, _base_cost = cost,  -- _base_cost preserved for breakdown display
           goal = entry.goal, desc = entry.desc,
@@ -17487,6 +17519,7 @@ local function goal_selection(state, world, info, quiet)
         -- still scaled.
         if c.goal and c.goal.mx and c.goal.my
            and not INF_EXEMPT[c.goal.kind] and not c.goal.follow_through
+           and not M.focus_plan_flat(c.goal, info)
            and not c.goal.km_ally_pn
            and not c._reject_sentinel then
           local inf = cpf.influence_at(c.goal.mx, c.goal.my) or 0
@@ -18167,7 +18200,7 @@ local function goal_selection(state, world, info, quiet)
               spot_x, spot_y = cached._spot_mx, cached._spot_my
             end
           end
-          local extra, killed, sdesc, wsim_path, wsim_result = wsim_evaluate_goal(c.goal, world, info, attack_id, spot_x, spot_y)
+          local extra, killed, sdesc, wsim_path, wsim_result = wsim_evaluate_goal(M.wsim_goal(c.goal), world, info, attack_id, spot_x, spot_y)
           -- Fresh-kill sweep: damp the wsim DANGER penalty (not the KILL reject)
           -- for capturing a pill WE just killed, within SWEEP_KILL_WINDOW, so a
           -- neighbouring pill's predicted fire doesn't scare us off the sweep.

@@ -1094,5 +1094,47 @@ do
     old[1], old[2], old[3], old[4], old[5], old[6]
 end
 
+print("plan tile pool price (FOCUS_SPIKE_PLAN_FLAT, 2026-11-02)")
+do
+  local keep = C.FOCUS_SPIKE_PLAN_FLAT
+  check("KEEL value off", C.PRESETS.keel.FOCUS_SPIKE_PLAN_FLAT == false, tostring(C.PRESETS.keel.FOCUS_SPIKE_PLAN_FLAT))
+  check("keel_focus, _loose, _bench on",
+    C.PRESETS.keel_focus.FOCUS_SPIKE_PLAN_FLAT == true and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_PLAN_FLAT == true
+    and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_PLAN_FLAT == true, "?")
+  local plan = { kind = "place_pill_strategic", mx = 30, my = 40, _focus_spike = true, _spike_role = "plan",
+                 _stand_mx = 33, _stand_my = 44 }
+  local ok_info = { armour = 40, shells = 40 }
+  C.FOCUS_SPIKE_PLAN_FLAT = false
+  check("knob off: not flat (old pricing)", G.focus_plan_flat(plan, ok_info) == false, "?")
+  C.FOCUS_SPIKE_PLAN_FLAT = true
+  check("knob on, plan tile row, healthy tank: flat", G.focus_plan_flat(plan, ok_info) == true, "?")
+  check("a normal placement row is not flat",
+    G.focus_plan_flat({ kind = "place_pill_strategic", mx = 1, my = 1 }, ok_info) == false, "?")
+  check("a deep spike row (not a plan tile) is not flat",
+    G.focus_plan_flat({ kind = "place_pill_strategic", mx = 1, my = 1, _focus_spike = true }, ok_info) == false, "?")
+  -- Low armour or shells: the row keeps the old pricing (x2), so refuel wins.
+  check("armour at ARMOUR_LOW: not flat (refuel wins)",
+    G.focus_plan_flat(plan, { armour = C.ARMOUR_LOW, shells = 40 }) == false, "?")
+  check("armour 2: not flat", G.focus_plan_flat(plan, { armour = 2, shells = 40 }) == false, "?")
+  check("shells at SHELLS_LOW: not flat (refuel wins)",
+    G.focus_plan_flat(plan, { armour = 40, shells = C.SHELLS_LOW }) == false, "?")
+  check("armour one over ARMOUR_LOW: flat",
+    G.focus_plan_flat(plan, { armour = C.ARMOUR_LOW + 1, shells = 40 }) == true, "?")
+  -- The flat price is above the urgent bands: the critical flee (at most 40,
+  -- goals.lua pool 1) and the refuel floor (REFUEL_MIN_COST).
+  check("flat 80 is above the critical flee cap 40", C.FOCUS_SPIKE_APPROVED_COST > 40, C.FOCUS_SPIKE_APPROVED_COST)
+  check("flat 80 is above the refuel floor", C.FOCUS_SPIKE_APPROVED_COST > C.REFUEL_MIN_COST, C.REFUEL_MIN_COST)
+  C.FOCUS_SPIKE_PLAN_FLAT = keep
+  -- wsim drives to the stand place (bug fix, no knob).
+  local g = G.wsim_goal(plan)
+  check("wsim goal of a plan tile row: the stand place", g.mx == 33 and g.my == 44
+    and g.wx == U.m2w(33) and g.wy == U.m2w(44), string.format("%s,%s", tostring(g.mx), tostring(g.my)))
+  check("the pool goal keeps the spike spot", plan.mx == 30 and plan.my == 40, "?")
+  local n = { kind = "attack_pill", mx = 5, my = 6 }
+  check("other goals: the same table", G.wsim_goal(n) == n, "?")
+  local nos = { kind = "place_pill_strategic", mx = 5, my = 6, _focus_spike = true }
+  check("a spike row with no stand place: the same table", G.wsim_goal(nos) == nos, "?")
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
