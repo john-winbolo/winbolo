@@ -338,13 +338,12 @@ enum {
     MLS_PART_PILL_AIM,
     MLS_PART_BASE_DEFENCE,
     MLS_PART_TANK_HIT_MINES,
-    MLS_PART_DEAD_PILL_SPEED,
     MLS_PART_COUNT
 };
 
 static const char *const kMlsPartSetting[MLS_PART_COUNT] = {
     "pushback", "shell_cap", "tank_boxes", "pill_aim", "base_defence",
-    "tank_hit_mines", "dead_pill_speed",
+    "tank_hit_mines",
 };
 
 /* Every rule the mod sets, the part that sets it, and the value its
@@ -371,7 +370,6 @@ static const MlsRule kMlsRules[] = {
     MLS_RULE(pill_base_defend_shape,       MLS_PART_BASE_DEFENCE, 1),
     MLS_RULE(pill_base_defend_range,       MLS_PART_BASE_DEFENCE, 7),
     MLS_RULE(tank_hit_sets_off_mines,      MLS_PART_TANK_HIT_MINES, 0),
-    MLS_RULE(man_dead_pill_terrain_speed,  MLS_PART_DEAD_PILL_SPEED, 0),
 };
 
 #define MLS_RULE_COUNT ((int)(sizeof(kMlsRules) / sizeof(kMlsRules[0])))
