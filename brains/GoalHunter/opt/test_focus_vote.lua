@@ -1160,9 +1160,9 @@ end
 print("home abort near (FOCUS_SPIKE_HOME_ABORT_NEAR, 2026-11-02)")
 do
   check("KEEL value 0", C.PRESETS.keel.FOCUS_SPIKE_HOME_ABORT_NEAR == 0, tostring(C.PRESETS.keel.FOCUS_SPIKE_HOME_ABORT_NEAR))
-  check("keel_focus, _loose, _bench 16",
-    C.PRESETS.keel_focus.FOCUS_SPIKE_HOME_ABORT_NEAR == 16 and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_HOME_ABORT_NEAR == 16
-    and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_HOME_ABORT_NEAR == 16, "?")
+  check("keel_focus, _loose, _bench 0 (16 gave no gain in the bench)",
+    C.PRESETS.keel_focus.FOCUS_SPIKE_HOME_ABORT_NEAR == 0 and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_HOME_ABORT_NEAR == 0
+    and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_HOME_ABORT_NEAR == 0, "?")
   local keep = C.FOCUS_SPIKE_HOME_ABORT_NEAR
   local function setup()
     local w = chew(function(q) return q == "NE" and "hostile" or "friendly" end)
