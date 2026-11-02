@@ -31,6 +31,7 @@
 #include <string.h>
 
 #include "global.h"
+#include "bolo_rand.h"      /* bolo_srand: both rounds draw the same numbers */
 #include "input_packet.h"   /* PING_KIND_* — log_Ping's kind byte */
 #include "log.h"
 #include "server_sim.h"
@@ -1211,6 +1212,13 @@ static bool recordOverrunRound(const char *tag, bool hook, uint32_t frames,
     *reports = 0;
     *reportFrame = 0;
     *prints = 0;
+    /* The two rounds must draw the same random numbers, the tank's start
+     * among them, so each begins from the same seed. Without one they share
+     * whatever state the process's generator is in: unseeded it returns 0
+     * every time and the two rounds match only by that accident, and after
+     * any earlier test in the same process has seeded it the second round's
+     * tank starts elsewhere. */
+    bolo_srand(0x0E7E44u);
     if (!replayHarnessPrepare(&h, tag, "Tester")) {
         replayHarnessStop(&h);
         return false;
