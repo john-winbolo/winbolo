@@ -121,10 +121,11 @@ struct BrainPathfinder {
   const BYTE *coastal_mask_map;       /* map ptr the mask was computed for (recompute on change) */
   /* LGM overlay: 0 = the terrain decides, BRAIN_PF_LGM_BLOCKED = a wall,
    * BRAIN_PF_LGM_ROAD = road speed (a dead pillbox). Stamped by the brain
-   * each tick with live pills and enemy bases the LGM can't walk onto — the engine's mapGetManSpeed returns
-   * speed 0 there (basesCantDrive: non-ally, non-neutral, armour > capture),
-   * but the brain LGM sim only sees terrain type (refbase = walkable), so it
-   * would otherwise march the LGM straight into an enemy base. */
+   * each tick with live pills and enemy bases the LGM can't walk onto —
+   * the engine's mapGetManSpeed returns speed 0 there (basesCantDrive:
+   * non-ally, non-neutral, armour > capture), but the brain LGM sim only
+   * sees terrain type (refbase = walkable), so it would otherwise march the
+   * LGM straight into an enemy base. */
   uint8_t  lgm_block[65536];
   /* The man's speed per terrain type (0..15) and on his blessed tile, for
    * the LGM walk sim. brainPathfinderCreate seeds them with the classic

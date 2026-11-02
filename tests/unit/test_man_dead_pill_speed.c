@@ -28,6 +28,10 @@
  *     swamp reaches it in the same number of ticks as one on road with the
  *     rule at 0, and in more ticks with the rule at 1.
  *
+ *   man_dead_pill_walk_across_water — a builder sent to a square beyond
+ *     a dead pillbox on river crosses it with the rule at 0, and is turned
+ *     back by it with the rule at 1.
+ *
  *   man_dead_pill_brain_walk — the bots' builder walk sim walks a square
  *     the brain marks as a dead pillbox at road speed, on swamp and on
  *     river, and a wall mark is not replaced by a road mark.
@@ -272,11 +276,15 @@ int run_man_dead_pill_speed_follows_road_rule(void) {
     return rc;
 }
 
-/* Send the builder from a tank on road at (MDP_TANK_X, MDP_Y) to repair a
- * dead pillbox at (MDP_X, MDP_Y) standing on `under`, and count the ticks
- * until he arrives. The squares between are road. *ticks is -1 when he
- * never arrives. */
-static int mdpWalkTicks(int rule, BYTE under, int *ticks) {
+/* The most ticks a walk is given, well over the longest walk here. */
+#define MDP_WALK_LIMIT 3000
+
+/* Send the builder from a tank on road at (MDP_TANK_X, MDP_Y) to the square
+ * (destX, MDP_Y), across a dead pillbox at (MDP_X, MDP_Y) standing on
+ * `under`, and count the ticks until he arrives. With destX at MDP_X the
+ * order is to repair the pillbox; beyond it, the order is a road on grass.
+ * The other squares are road. *ticks is -1 when he never arrives. */
+static int mdpWalkTicks(int rule, BYTE under, BYTE destX, int *ticks) {
     ServerSim *sim = mdpMakeSim();
     GameSim *gs;
     lgm *man;
@@ -289,8 +297,11 @@ static int mdpWalkTicks(int rule, BYTE under, int *ticks) {
                   "slot %d joined without a tank or a builder", MDP_SLOT);
     gs->rules.man_dead_pill_terrain_speed = rule;
 
-    mdpPaintRow(sim, ROAD, MDP_TANK_X - 2, MDP_X + 2, MDP_Y);
+    mdpPaintRow(sim, ROAD, MDP_TANK_X - 2, MDP_X + 3, MDP_Y);
     mdpPaintRow(sim, under, MDP_X, MDP_X, MDP_Y);
+    if (destX != MDP_X) {
+        mdpPaintRow(sim, GRASS, destX, destX, MDP_Y);
+    }
     if (mdpPlacePill(sim, MDP_X, MDP_Y, 0) != 0) {
         serverSimDestroy(sim);
         return 1;
@@ -303,17 +314,18 @@ static int mdpWalkTicks(int rule, BYTE under, int *ticks) {
     tankSetTrees(gs, &gs->tanks[MDP_SLOT], (BYTE) TANK_FULL_TREES);
 
     man = &gs->lgmen[MDP_SLOT];
-    lgmAddRequest(gs, man, &gs->tanks[MDP_SLOT], MDP_X, MDP_Y,
-                  LGM_PILL_REQUEST);
+    lgmAddRequest(gs, man, &gs->tanks[MDP_SLOT], destX, MDP_Y,
+                  destX == MDP_X ? LGM_PILL_REQUEST : LGM_ROAD_REQUEST);
     if ((*man)->inTank == TRUE || (*man)->state != LGM_STATE_GOING) {
-        fprintf(stderr, "  FAIL: the repair order on %u never sent the "
-                "builder out (state %u)\n", (unsigned) under,
+        fprintf(stderr, "  FAIL: the order to (%u,%u) across %u never sent "
+                "the builder out (state %u)\n", (unsigned) destX,
+                (unsigned) MDP_Y, (unsigned) under,
                 (unsigned) (*man)->state);
         serverSimDestroy(sim);
         return 1;
     }
 
-    for (t = 1; t <= 2000; t++) {
+    for (t = 1; t <= MDP_WALK_LIMIT; t++) {
         lgmUpdate(gs, man, &gs->tanks[MDP_SLOT]);
         if ((*man)->state != LGM_STATE_GOING) {
             /* He leaves GOING when he reaches the square, or when he is
@@ -331,10 +343,10 @@ static int mdpWalkTicks(int rule, BYTE under, int *ticks) {
 int run_man_dead_pill_walk_ticks(void) {
     int onRoad0 = -1, onSwamp0 = -1, onSwamp1 = -1, onRoad1 = -1;
 
-    UT_ASSERT(mdpWalkTicks(0, ROAD, &onRoad0) == 0);
-    UT_ASSERT(mdpWalkTicks(0, SWAMP, &onSwamp0) == 0);
-    UT_ASSERT(mdpWalkTicks(1, ROAD, &onRoad1) == 0);
-    UT_ASSERT(mdpWalkTicks(1, SWAMP, &onSwamp1) == 0);
+    UT_ASSERT(mdpWalkTicks(0, ROAD, MDP_X, &onRoad0) == 0);
+    UT_ASSERT(mdpWalkTicks(0, SWAMP, MDP_X, &onSwamp0) == 0);
+    UT_ASSERT(mdpWalkTicks(1, ROAD, MDP_X, &onRoad1) == 0);
+    UT_ASSERT(mdpWalkTicks(1, SWAMP, MDP_X, &onSwamp1) == 0);
 
     UT_ASSERT_MSG(onRoad0 > 0 && onSwamp0 > 0 && onRoad1 > 0 && onSwamp1 > 0,
                   "a builder never reached the dead pillbox: road %d, "
@@ -354,6 +366,28 @@ int run_man_dead_pill_walk_ticks(void) {
                   "with man_dead_pill_terrain_speed 1 he reached a dead "
                   "pillbox on swamp in %d ticks, no slower than the %d with "
                   "the rule at 0", onSwamp1, onSwamp0);
+    return 0;
+}
+
+int run_man_dead_pill_walk_across_water(void) {
+    int onRoad0 = -1, onRiver0 = -1, onRiver1 = -1;
+
+    /* The same walk with road where the river is, for the tick count. */
+    UT_ASSERT(mdpWalkTicks(0, ROAD, MDP_X + 2, &onRoad0) == 0);
+    UT_ASSERT(mdpWalkTicks(0, RIVER, MDP_X + 2, &onRiver0) == 0);
+    UT_ASSERT(mdpWalkTicks(1, RIVER, MDP_X + 2, &onRiver1) == 0);
+
+    UT_ASSERT_MSG(onRoad0 > 0, "a builder never reached (%d,%d) along a "
+                  "road with a dead pillbox on it", MDP_X + 2, MDP_Y);
+    /* Rule 0: the dead pillbox on river is a road square on his way. */
+    UT_ASSERT_MSG(onRiver0 == onRoad0,
+                  "with man_dead_pill_terrain_speed 0 he crossed a dead "
+                  "pillbox on river in %d ticks, one on road in %d",
+                  onRiver0, onRoad0);
+    /* Rule 1: the river under it stops him, as it did in WinBolo 2.1. */
+    UT_ASSERT_MSG(onRiver1 == -1,
+                  "with man_dead_pill_terrain_speed 1 he crossed a dead "
+                  "pillbox on river in %d ticks", onRiver1);
     return 0;
 }
 

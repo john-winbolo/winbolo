@@ -6512,6 +6512,7 @@ set(_unit_test_names
     man_dead_pill_speed_terrain_rule
     man_dead_pill_speed_follows_road_rule
     man_dead_pill_walk_ticks
+    man_dead_pill_walk_across_water
     man_dead_pill_brain_walk
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
