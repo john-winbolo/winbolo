@@ -26,8 +26,8 @@
  *       classic table's value, so that part only matters when another
  *       script on the list sets 1. The later parts play at their numbers
  *       too: pill_attack_min_ticks 5 (pill_anger),
- *       big_explosion_threshold 60 (superboom) and pill_fire_length 8.25
- *       (pill_shell_range).
+ *       big_explosion_threshold 60 (superboom), pill_fire_length 8.25
+ *       (pill_shell_range) and lgm_helicopter_speed 2 (parachute).
  *   run_mac_bolo_settings_each_part_off
  *       each part turned off on its own: that part's rules are back on the
  *       classic table and every other part's rules are unchanged.
@@ -344,12 +344,14 @@ enum {
     MLS_PART_PILL_ANGER,
     MLS_PART_SUPERBOOM,
     MLS_PART_PILL_SHELL_RANGE,
+    MLS_PART_PARACHUTE,
     MLS_PART_COUNT
 };
 
 static const char *const kMlsPartSetting[MLS_PART_COUNT] = {
     "pushback", "shell_cap", "tank_boxes", "pill_aim", "base_defence",
     "tank_hit_mines", "pill_anger", "superboom", "pill_shell_range",
+    "parachute",
 };
 
 /* Every rule the mod sets, the part that sets it, and the value its
@@ -384,6 +386,7 @@ static const MlsRule kMlsRules[] = {
     MLS_RULE(pill_attack_min_ticks,        MLS_PART_PILL_ANGER,   5),
     MLS_RULE(big_explosion_threshold,      MLS_PART_SUPERBOOM,    60),
     MLS_RULE_FLT(pill_fire_length,         MLS_PART_PILL_SHELL_RANGE, 8.25f),
+    MLS_RULE(lgm_helicopter_speed,         MLS_PART_PARACHUTE,    2),
 };
 
 #define MLS_RULE_COUNT ((int)(sizeof(kMlsRules) / sizeof(kMlsRules[0])))

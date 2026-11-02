@@ -65,6 +65,14 @@
 -- more than 60, three quarters of the 80 a full tank holds. This part sets
 -- big_explosion_threshold to 60.
 --
+-- Parachute speed. A builder who dies parachutes back in, flying straight
+-- at his tank. Mac Bolo moves him every other tick by its trig table
+-- shifted down, so his speed depends on his heading: 1.41 to 2.5 world
+-- units a tick, 1.92 on average. WinBolo moves him lgm_helicopter_speed a
+-- tick, rounded on each axis: 2.83 to 3.61 at the default 3. This part
+-- sets 2, which is 1.41 to 2.24, 2.09 on average. The rule is a whole
+-- number, so 2 is the nearest it comes to Mac Bolo.
+--
 -- Starts. The engine tells on_choose_start which start the lobby put the
 -- seat on: the start its player picked by hand, else one on the team's
 -- side, else the engine's own spread of the field. That start is the
@@ -117,6 +125,7 @@
 --                       and this part keeps it at 0.
 --   superboom           superboom threshold
 --                       (big_explosion_threshold, 60).
+--   parachute           parachute speed (lgm_helicopter_speed, 2).
 --   spawn_starts       the Mac Bolo start pick for spawns.
 --   first_start_lobby   "Override first start to what was chosen in lobby".
 --                       On (the default): a tank the lobby has a start
@@ -146,11 +155,11 @@ scenario = {
                 "tank clearance, pillbox massage, angry pillbox fire " ..
                 "rate, pillbox shell range, base defence circle, " ..
                 "tank hits that do not set off mines, superboom " ..
-                "threshold and spawn starts. " ..
+                "threshold, parachute speed and spawn starts. " ..
                 "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-11-02T20:38Z",
+  updated = "2026-11-02T21:33Z",
   kind = "mod",
   bound = false,
 
@@ -212,6 +221,10 @@ scenario = {
     { id = "superboom", label = "Mac Bolo superboom threshold",
       type = "bool", default = true },
 
+    -- Parachute speed: the nearest whole number to Mac Bolo's.
+    { id = "parachute", label = "Mac Bolo parachute speed",
+      type = "bool", default = true },
+
     -- Starts: the two-pass Mac Bolo pick for spawns.
     { id = "spawn_starts", label = "Mac Bolo spawn starts", type = "bool",
       default = true },
@@ -245,6 +258,7 @@ local PILL_SHELL_RANGE  = game.setting("pill_shell_range")
 local BASE_DEFENCE      = game.setting("base_defence")
 local TANK_HIT_MINES    = game.setting("tank_hit_mines")
 local SUPERBOOM         = game.setting("superboom")
+local PARACHUTE         = game.setting("parachute")
 local SPAWN_STARTS      = game.setting("spawn_starts")
 local FIRST_START_LOBBY = game.setting("first_start_lobby")
 
@@ -307,6 +321,11 @@ end
 if SUPERBOOM then
   -- A dying tank superbooms with more than 60 shells and mines, not 20.
   rules.big_explosion_threshold = 60
+end
+
+if PARACHUTE then
+  -- A parachuting builder flies 2 world units a tick, not 3.
+  rules.lgm_helicopter_speed = 2
 end
 
 scenario.rules = rules
