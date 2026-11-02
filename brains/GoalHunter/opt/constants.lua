@@ -1920,7 +1920,8 @@ M.FOCUS_SPIKE_HOME_ABORT_RULE      = "base_lost"
 -- tiles of the bot's tank ends it; a farther loss is dropped and the plan
 -- goes on. Why: in the bench, 19 of 26 home_attacked ends lost a base 13-41
 -- tiles from both plan bots, and the base stayed lost 2 minutes later in 19
--- of 26, so the abort did not win it back. KEEL 0; focus presets 16.
+-- of 26, so the abort did not win it back. KEEL 0. Focus presets 0 too:
+-- 16 gave the same losses (4 of 12) and +1 focus base in bench n6.
 M.FOCUS_SPIKE_HOME_ABORT_NEAR      = 0
 -- When a bot on an active plan learns a hostile pill in fire range of a plan
 -- tile: "abort" ends the plan; "repick" finds one new tile for the bases that
@@ -6964,7 +6965,7 @@ do
     FOCUS_SPIKE_MULTI_BOOST = 1.5,
     FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
     FOCUS_SPIKE_PLAN_FLAT = true,
-    FOCUS_SPIKE_HOME_ABORT_NEAR = 16,
+    FOCUS_SPIKE_HOME_ABORT_NEAR = 0,   -- 16 tested Nov 2: no gain (bench n6)
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6991,7 +6992,7 @@ do
     FOCUS_SPIKE_MULTI_BOOST = 1.5,
     FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
     FOCUS_SPIKE_PLAN_FLAT = true,
-    FOCUS_SPIKE_HOME_ABORT_NEAR = 16,
+    FOCUS_SPIKE_HOME_ABORT_NEAR = 0,   -- 16 tested Nov 2: no gain (bench n6)
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and
