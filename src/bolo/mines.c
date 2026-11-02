@@ -90,6 +90,23 @@ bool minesGetAllowHiddenMines(mines *visMines) {
 }
 
 /*********************************************************
+*NAME:          minesSetAllowHiddenMines
+*PURPOSE:
+*  Sets whether hidden mines are allowed. Only the flag
+*  changes: the mines already marked as seen stay seen, so
+*  a lobby settings event that arrives during a round
+*  (re-sent for some other setting, or caught up on by a
+*  joiner) never wipes them.
+*
+*ARGUMENTS:
+*  visMines - Pointer to the mines structure
+*  allow    - TRUE if hidden mines are allowed
+*********************************************************/
+void minesSetAllowHiddenMines(mines *visMines, bool allow) {
+  (*visMines)->minesHiddenMines = allow;
+}
+
+/*********************************************************
 *NAME:          minesAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/1/99

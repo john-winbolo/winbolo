@@ -4474,7 +4474,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_upload_busy.c
     tests/unit/test_upload_filename_safe.c
     tests/unit/test_lobby_time_minutes_valid.c
-    # Lobby settings the round then plays: the time limit.
+    # Lobby settings the round then plays: the time limit and hidden mines.
     tests/unit/test_lobby_round_settings.c
     tests/unit/test_lobby_bot_name.c
     tests/unit/test_lobby_map_list_chunked.c
@@ -6798,6 +6798,9 @@ set(_unit_test_names
     lobby_time_limit_reaches_round
     lobby_time_limit_removed_reaches_round
     lobby_time_limit_empty_reset
+    lobby_hidden_mines_client_follows
+    lobby_hidden_mines_in_place_start
+    lobby_hidden_mines_empty_reset
     control_overflow_defers_disconnect
     join_collision_verified_rejects_will_auth
     join_collision_verified_flag_irrelevant

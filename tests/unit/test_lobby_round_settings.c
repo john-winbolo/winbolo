@@ -24,6 +24,25 @@
  *       the host's 1 minute, then the last human leaves: the lobby is reset
  *       to the operator's settings, and the next round plays the operator's
  *       unlimited time, not the departed host's minute.
+ *
+ * Hidden mines: the setting lived in sim.hiddenMines, but what decides which
+ * mines are drawn is the flag in the mines object, which was only built from
+ * it when the world was reset. A client built its object with hidden mines
+ * off and rebuilt it only on the return to the lobby, so its first round
+ * showed every mine whatever the lobby said; the server's start with no
+ * countdown never rebuilt its own.
+ *
+ *   run_lobby_hidden_mines_client_follows
+ *       the client's mines object follows each lobby settings event, and a
+ *       mine it has already seen stays seen when the event is sent again,
+ *       as it is mid-round for other settings and to joiners.
+ *   run_lobby_hidden_mines_in_place_start
+ *       a server created without hidden mines, turned on in the lobby, and
+ *       started with no countdown (the single-player first round): its
+ *       mines object plays hidden mines.
+ *   run_lobby_hidden_mines_empty_reset
+ *       the host's hidden mines, then the last human leaves: the operator's
+ *       visible mines come back to the mines object as well as the setting.
  */
 
 #include <stdint.h>
@@ -31,6 +50,11 @@
 
 #include "global.h"
 #include "client_command.h"
+#include "client_sim.h"
+#include "client_sim_control.h"    /* clientSimApplyControl */
+#include "control_event.h"
+#include "game_sim.h"
+#include "mines.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"  /* serverSimApplyLobbySettingResult, ServerInstanceConfig */
@@ -134,6 +158,91 @@ int run_lobby_time_limit_empty_reset(void) {
                   "the next round started with %d ticks, wanted the "
                   "operator's no limit (%d), not the departed host's minute",
                   (int)serverSimGetGameLength(sim), (int)UNLIMITED_GAME_TIME);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+static bool lrsSetHiddenMines(ServerSim *sim, bool on) {
+    uint8_t v = on ? 1 : 0;
+    return serverSimApplyLobbySettingResult(sim, LST_HIDDEN_MINES, &v, 1) == CMD_OK;
+}
+
+int run_lobby_hidden_mines_client_follows(void) {
+    ClientSim *cs = clientSimAlloc();
+    ControlEvent in;
+    GameSim *gs;
+
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    gs = clientSimGetGameSim(cs);
+    UT_ASSERT_MSG(minesGetAllowHiddenMines(&gs->mns) == FALSE,
+                  "setup: a new client's mines object already hides mines");
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_SETTINGS;
+    in.u.lobbySettings.lobbyHiddenMines = true;
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT_MSG(clientSimIsLobbyHiddenMines(cs),
+                  "setup: the lobby did not take hidden mines on");
+    UT_ASSERT_MSG(minesGetAllowHiddenMines(&gs->mns) == TRUE,
+                  "the lobby shows hidden mines on, but the mines object that "
+                  "draws them still has them off");
+
+    /* A mine this client has been shown, then the event again, the way a
+       round re-sends it for another setting or a joiner catches up on it. */
+    minesAddItem(&gs->mns, 100, 100);
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT_MSG(minesExistPos(&gs->mns, &gs->mp, 100, 100) == TRUE,
+                  "a settings event sent again wiped a mine already seen");
+
+    in.u.lobbySettings.lobbyHiddenMines = false;
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT_MSG(minesGetAllowHiddenMines(&gs->mns) == FALSE,
+                  "hidden mines turned off in the lobby stayed on in the "
+                  "mines object");
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+int run_lobby_hidden_mines_in_place_start(void) {
+    ServerSim *sim = lrsLobbySim(UNLIMITED_GAME_TIME);
+    GameSim *gs;
+
+    UT_ASSERT_MSG(sim != NULL, "lrsLobbySim returned NULL");
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(minesGetAllowHiddenMines(&gs->mns) == FALSE,
+                  "setup: the server was created with hidden mines");
+    UT_ASSERT_MSG(lrsSetHiddenMines(sim, true), "hidden mines were refused");
+
+    serverSimStartGameInPlace(sim);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(minesGetAllowHiddenMines(&gs->mns) == TRUE,
+                  "the round started with no countdown has hidden mines off "
+                  "in its mines object, though the lobby set them on");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_lobby_hidden_mines_empty_reset(void) {
+    ServerSim *sim = lrsLobbySim(UNLIMITED_GAME_TIME);
+    GameSim *gs;
+
+    UT_ASSERT_MSG(sim != NULL, "lrsLobbySim returned NULL");
+    UT_ASSERT_MSG(lrsSetHiddenMines(sim, true), "hidden mines were refused");
+
+    /* The last human out resets the lobby to the operator's settings. */
+    serverSimRemovePlayer(sim, 0);
+    UT_ASSERT_MSG(serverSimGetNumHumans(sim) == 0,
+                  "setup: the host did not leave");
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs->hiddenMines == FALSE,
+                  "setup: the emptied lobby kept the host's hidden mines");
+    UT_ASSERT_MSG(minesGetAllowHiddenMines(&gs->mns) == FALSE,
+                  "the emptied lobby is back to the operator's visible mines, "
+                  "but its mines object still hides them");
 
     serverSimDestroy(sim);
     return 0;

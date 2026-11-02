@@ -128,7 +128,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
      * it somehow wasn't, leave the live settings untouched. */
     if (sim->originalLobbySettings.valid) {
         sim->sim.game            = sim->originalLobbySettings.gameType;
-        sim->sim.hiddenMines     = sim->originalLobbySettings.hiddenMines;
+        serverSimSetHiddenMines(sim, sim->originalLobbySettings.hiddenMines);
         sim->botAiType           = sim->originalLobbySettings.botAiType;
         sim->aiPolicy            = sim->originalLobbySettings.aiPolicy;
         sim->timeLimit           = sim->originalLobbySettings.timeLimit;
