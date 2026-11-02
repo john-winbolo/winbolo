@@ -3209,7 +3209,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       -- is not a hold -- preferring "stand exactly where you are" when that is
       -- already in range, since not moving is the whole point.
       local hmx, hmy, hsrc = defend_hold_tile(state, info, { mx = ft.mx, my = ft.my })
-      if ft.focus_spike and U.mdist(tmx, tmy, ft.mx, ft.my) <= C.PLACE_DISPATCH_MAX_DIST then
+      if ft.focus_spike and U.leash_dist(tmx, tmy, ft.mx, ft.my) <= C.PLACE_DISPATCH_MAX_DIST then
         -- Focused spike trip (C.FOCUS_SPIKE_ENABLED): the builder was sent from
         -- up to PLACE_DISPATCH_MAX_DIST out so the tank would not drive into
         -- enemy ground. Hold where the tank stands, not near the trip tile.

@@ -3252,7 +3252,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       -- is not a hold -- preferring "stand exactly where you are" when that is
       -- already in range, since not moving is the whole point.
       local hmx, hmy, hsrc = defend_hold_tile(state, info, { mx = ft.mx, my = ft.my })
-      if ft.focus_spike and U.mdist(tmx, tmy, ft.mx, ft.my) <= C.PLACE_DISPATCH_MAX_DIST then
+      if ft.focus_spike and U.leash_dist(tmx, tmy, ft.mx, ft.my) <= C.PLACE_DISPATCH_MAX_DIST then
         -- Focused spike trip (C.FOCUS_SPIKE_ENABLED): the builder was sent from
         -- up to PLACE_DISPATCH_MAX_DIST out so the tank would not drive into
         -- enemy ground. Hold where the tank stands, not near the trip tile.
@@ -4506,11 +4506,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     local dkey = deep_win and string.format("%d:%d", best_mx, best_my) or nil
     if deep_win and state._focus_spike_log ~= dkey then
       print2(string.format(
-        "FOCUS_SPIKE_PLACE t=%d best=(%d,%d) score=%.0f ebase=%.0f depth=%.0f inf=%.0f hostile_bases=%d group=%s extra_tiles=%d tank=(%d,%d) d=%d cost=%.1f spike_role=%s carried=%d -> focused spike rule (long send <= %d)",
+        "FOCUS_SPIKE_PLACE t=%d best=(%d,%d) score=%.0f ebase=%.0f depth=%.0f inf=%.0f hostile_bases=%d group=%s extra_tiles=%d tank=(%d,%d) d=%.1f cost=%.1f spike_role=%s carried=%d -> focused spike rule (long send <= %d)",
         state.tick or 0, best_mx, best_my, best_score, ad.best_ebase or 0, ad.best_depth or 0,
         cpf.influence_at(best_mx, best_my) or 0, #ad.hb,
         ad.gmx and string.format("(%d,%d)+%d", ad.gmx, ad.gmy, ad.gn) or "none",
-        ad.n_extra, tmx, tmy, U.mdist(tmx, tmy, best_mx, best_my), cost,
+        ad.n_extra, tmx, tmy, U.leash_dist(tmx, tmy, best_mx, best_my), cost,
         ad.role, info.carried_pills or 0, C.PLACE_DISPATCH_MAX_DIST))
     end
     state._focus_spike_log = dkey

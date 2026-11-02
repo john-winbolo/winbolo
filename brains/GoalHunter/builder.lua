@@ -570,8 +570,12 @@ function M.set_mode(state, world, info, goal)
     -- off): always the long send, trigger or not, so the tank stops at
     -- PLACE_DISPATCH_MAX_DIST instead of driving into enemy ground.
     -- decide()'s place_pill checks (lgm_can_reach etc.) still apply.
+    -- The long send limit is a builder walk: measured with U.leash_dist
+    -- (straight line under BUILDER_LEASH_EUCLID). pdist (Manhattan) stays for
+    -- the "on the spot" (<= 1) and PLACE_EMERGENCY_MAX_DIST tests.
+    local ldist = U.leash_dist(tmx, tmy, goal.mx, goal.my)
     local deep_send = goal._focus_spike and trigger == nil and pdist > 1
-                      and pdist <= C.PLACE_DISPATCH_MAX_DIST
+                      and ldist <= C.PLACE_DISPATCH_MAX_DIST
     -- "cluster" rule: the plan chose a stand place (goal._stand_mx). Send from
     -- it, or from an earlier tile that is no riskier, so the plan and the
     -- send agree on the exposure.
@@ -586,12 +590,12 @@ function M.set_mode(state, world, info, goal)
       elseif r > (goal._stand_r or 0) + 1e-6 then deep_send = false end
     end
     local close_enough = (goal._place_forced and pdist <= C.PLACE_EMERGENCY_MAX_DIST)
-                         or (trigger ~= nil and pdist <= C.PLACE_DISPATCH_MAX_DIST)
+                         or (trigger ~= nil and ldist <= C.PLACE_DISPATCH_MAX_DIST)
                          or pdist <= 1
                          or deep_send
     local _pp_ok = close_enough and (info.carried_pills or 0) > 0
        and info.man_status == C.LGM_INTANK and not info.inboat
-    print2(string.format("PLACE_PILL_SETMODE t=%d goal=(%d,%d) tank=(%d,%d) pdist=%d emerg=%s carried=%d man=%d inboat=%s%s -> %s", state.tick or 0, goal.mx, goal.my, tmx, tmy, pdist, tostring(goal._place_forced or false), info.carried_pills or 0, info.man_status or -1, tostring(info.inboat), goal._focus_spike and " focus_spike=true" or "", _pp_ok and "place_pill" or "no-dispatch"))
+    print2(string.format("PLACE_PILL_SETMODE t=%d goal=(%d,%d) tank=(%d,%d) pdist=%d ldist=%.1f emerg=%s carried=%d man=%d inboat=%s%s -> %s", state.tick or 0, goal.mx, goal.my, tmx, tmy, pdist, ldist, tostring(goal._place_forced or false), info.carried_pills or 0, info.man_status or -1, tostring(info.inboat), goal._focus_spike and " focus_spike=true" or "", _pp_ok and "place_pill" or "no-dispatch"))
     if _pp_ok then
       -- Edge-triggered: one line per (target, trigger), not one per tick the
       -- mode holds (2273 lines for 9 dispatches in 20260831_000722). The

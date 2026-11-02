@@ -1019,5 +1019,35 @@ do
   BP.lgm_trip = real_trip
 end
 
+-- â”€â”€ Euclid long send (PLACE_DISPATCH_MAX_DIST 15, BUILDER_LEASH_EUCLID) â”€â”€
+print("long send euclid")
+do
+  local saved_eu = C.BUILDER_LEASH_EUCLID
+  local FV = require("focus_vote")
+  C.BUILDER_LEASH_EUCLID = true
+  check("leash_dist 10 across, 8 down = 12.8",
+        math.abs(U.leash_dist(92, 94, 102, 102) - math.sqrt(164)) < 1e-9)
+  -- Tank (92,94), first spike (100,100), second tile (102,102): 12.8 from the
+  -- tank (Manhattan 18), 2.8 from the first spike.
+  local diag = { role = "second", fmx = 100, fmy = 100, tmx = 92, tmy = 94 }
+  check("second_ok: 10 across, 8 down = 12.8 <= 15 is in reach", SP.second_ok(diag, 102, 102))
+  check("second_ok: 11 across, 11 down = 15.6 > 15 is out",
+        not SP.second_ok({ role = "second", fmx = 100, fmy = 100, tmx = 92, tmy = 92 }, 103, 103))
+  check("leash_row_w(15, 9) = 12 (circle)", U.leash_row_w(15, 9) == 12, U.leash_row_w(15, 9))
+  check("leash_row_w(15, 15) = 0", U.leash_row_w(15, 15) == 0)
+  local x, y = FV.stand_on_line(120, 116, { mx = 100, my = 100 })
+  check("stand_on_line: straight-line 15 from the spot", x == 112 and y == 109
+        and U.edist(x, y, 100, 100) <= 15 + 1e-9, string.format("(%s,%s)", x, y))
+  C.BUILDER_LEASH_EUCLID = false
+  check("knob off: leash_dist is Manhattan 18", U.leash_dist(92, 94, 102, 102) == 18)
+  check("knob off: second_ok 10 across, 8 down (Manhattan 18) is out",
+        not SP.second_ok(diag, 102, 102))
+  check("knob off: leash_row_w(15, 9) = 6 (diamond)", U.leash_row_w(15, 9) == 6)
+  x, y = FV.stand_on_line(120, 116, { mx = 100, my = 100 })
+  check("knob off: stand_on_line Manhattan 15 from the spot", x == 108 and y == 107,
+        string.format("(%s,%s)", x, y))
+  C.BUILDER_LEASH_EUCLID = saved_eu
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

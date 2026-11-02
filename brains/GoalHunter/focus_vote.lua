@@ -616,15 +616,22 @@ end
 
 -- The place our tank stands to send the builder to spot t, with no route:
 -- the tile on the straight line from (sx,sy) to the spot, at
--- PLACE_DISPATCH_MAX_DIST (Manhattan) from the spot, or (sx,sy) itself
+-- PLACE_DISPATCH_MAX_DIST (U.leash_dist: straight line under
+-- BUILDER_LEASH_EUCLID, else Manhattan) from the spot, or (sx,sy) itself
 -- when it is nearer.
 local function stand_on_line(sx, sy, t)
   local D = C.PLACE_DISPATCH_MAX_DIST or 15
   local dx, dy = sx - t.mx, sy - t.my
-  local m = math.abs(dx) + math.abs(dy)
+  local m = U.leash_dist(sx, sy, t.mx, t.my)
   if m <= D then return sx, sy end
   local f = D / m
-  return t.mx + math.floor(dx * f + 0.5), t.my + math.floor(dy * f + 0.5)
+  local x, y = t.mx + math.floor(dx * f + 0.5), t.my + math.floor(dy * f + 0.5)
+  if C.BUILDER_LEASH_EUCLID and U.edist(x, y, t.mx, t.my) > D then
+    -- Rounding put it past the reach: round toward the spot instead.
+    local function tz(v) return v < 0 and math.ceil(v) or math.floor(v) end
+    x, y = t.mx + tz(dx * f), t.my + tz(dy * f)
+  end
+  return x, y
 end
 M.stand_on_line = stand_on_line
 
@@ -660,17 +667,17 @@ end
 -- near it (shellsBlastTestBuilder, src/bolo/shells.c). So a spike spot in a
 -- hostile pill's range is fine; what counts is where our tank stands for the
 -- long send (builder.lua deep_send: the tank sends the builder from up to
--- PLACE_DISPATCH_MAX_DIST, Manhattan, from the spot).
+-- PLACE_DISPATCH_MAX_DIST, U.leash_dist, from the spot).
 --
 -- Stand place candidates of spot t: every tank-passable tile within
--- PLACE_DISPATCH_MAX_DIST (Manhattan) of the spot. rc caches the risk per
+-- PLACE_DISPATCH_MAX_DIST (U.leash_dist) of the spot. rc caches the risk per
 -- tile for one plan. Answers the lowest risk (no reach test; the cover
 -- greedy tie-break), stopping at 0.
 local function stand_min(world, info, hpills, t, rc)
   local D = C.PLACE_DISPATCH_MAX_DIST or 15
   local best = math.huge
   for dy = -D, D do
-    local w = D - math.abs(dy)
+    local w = U.leash_row_w(D, dy)
     for dx = -w, w do
       local x, y = t.mx + dx, t.my + dy
       if U.in_map(x, y) and passable(world, x, y) then
@@ -692,7 +699,7 @@ end
 M.stand_min = stand_min
 
 -- The safest stand place of spot t: the lowest risk, then the nearest to the
--- spot (Manhattan, the shorter builder walk), then the lower tile key. With
+-- spot (U.leash_dist, the shorter builder walk), then the lower tile key. With
 -- the builder walk sim (cpf_lgm_travel_ticks_map, the check builder.lua
 -- lgm_can_reach makes before a send) the builder must reach the spot from it;
 -- at most FOCUS_SPIKE_STAND_REACH_CHECKS places are tried. Answers
@@ -701,7 +708,7 @@ function M.best_stand(world, info, hpills, t, rc)
   local D = C.PLACE_DISPATCH_MAX_DIST or 15
   local cand = {}
   for dy = -D, D do
-    local w = D - math.abs(dy)
+    local w = U.leash_row_w(D, dy)
     for dx = -w, w do
       local x, y = t.mx + dx, t.my + dy
       if U.in_map(x, y) and passable(world, x, y) then
@@ -711,7 +718,7 @@ function M.best_stand(world, info, hpills, t, rc)
           r = stand_risk(world, info, hpills, x, y)
           if rc then rc[k] = r end
         end
-        cand[#cand + 1] = { mx = x, my = y, risk = r, d = math.abs(dx) + math.abs(dy), k = k }
+        cand[#cand + 1] = { mx = x, my = y, risk = r, d = U.leash_dist(x, y, t.mx, t.my), k = k }
       end
     end
   end
@@ -1784,7 +1791,7 @@ end
 M.block_pills = block_pills
 
 -- The stand place of spike spot c: the tank-passable tile within
--- PLACE_DISPATCH_MAX_DIST (Manhattan, not the spot itself) with the lowest
+-- PLACE_DISPATCH_MAX_DIST (U.leash_dist, not the spot itself) with the lowest
 -- stand risk + FOCUS_SPIKE_LGM_RUN_COST x builder run (euclid, stand ->
 -- spot); ties: the nearer ring, then the scan order. rc caches the stand
 -- risk per tile for one rescore. Answers { mx, my, risk, run, val, d } or nil.
@@ -1792,12 +1799,18 @@ function M.adapt_stand(world, info, hpills, c, rc)
   local D = C.PLACE_DISPATCH_MAX_DIST or 15
   local RC = C.FOCUS_SPIKE_LGM_RUN_COST
   local best = nil
-  for d = 1, D do
+  -- BUILDER_LEASH_EUCLID: the reach is a circle of radius D. The scan keeps
+  -- its Manhattan rings (same order, same break bound) out to the ring of
+  -- the circle's corner, floor(D x sqrt 2), and skips tiles past D.
+  local euc = C.BUILDER_LEASH_EUCLID
+  local DR = euc and math.floor(D * math.sqrt(2) + 1e-9) or D
+  local D2 = D * D
+  for d = 1, DR do
     for dx = -d, d do
       local w = d - math.abs(dx)
       for s = -1, 1, 2 do
         local dy = w * s
-        if not (w == 0 and s == 1) then
+        if not (w == 0 and s == 1) and (not euc or dx * dx + dy * dy <= D2) then
           local x, y = c.mx + dx, c.my + dy
           if U.in_map(x, y) and passable(world, x, y) then
             local k = tkey(x, y)
@@ -1889,24 +1902,35 @@ local SQRT2 = math.sqrt(2)
 -- The tile offsets of the wide stand search, ring by ring (Manhattan 1..R),
 -- and where each ring ends; built once per radius.
 local OFFS = {}
+-- BUILDER_LEASH_EUCLID: the tiles within straight-line R, still in
+-- Manhattan ring order, out to ring floor(R x sqrt 2) (every ring up to
+-- there has a tile inside the circle, so o.last[d] is always a real end).
+-- o.rmax: the last ring.
 local function offsets(R)
-  local o = OFFS[R]
+  local euc = C.BUILDER_LEASH_EUCLID and true or false
+  local key = euc and (R + 100000) or R
+  local o = OFFS[key]
   if o then return o end
   o = { x = {}, y = {}, run = {}, ring = {}, last = {} }
   local n = 0
-  for d = 1, R do
+  local RM = euc and math.floor(R * math.sqrt(2) + 1e-9) or R
+  local R2 = R * R
+  for d = 1, RM do
     for dx = -d, d do
       local w = d - math.abs(dx)
       for s = 1, (w ~= 0) and 2 or 1 do
-        n = n + 1
-        o.x[n], o.y[n], o.ring[n] = dx, (s == 1) and w or -w, d
-        o.run[n] = math.sqrt(dx * dx + w * w)
+        if not euc or dx * dx + w * w <= R2 then
+          n = n + 1
+          o.x[n], o.y[n], o.ring[n] = dx, (s == 1) and w or -w, d
+          o.run[n] = math.sqrt(dx * dx + w * w)
+        end
       end
     end
     o.last[d] = n
   end
   o.n = n
-  OFFS[R] = o
+  o.rmax = RM
+  OFFS[key] = o
   return o
 end
 
@@ -1992,7 +2016,7 @@ local function wide_stands(world, info, hp, c, ti, tx, ty, slate)
       if n == 3 then
         local lim = top[3].a + 1e-9
         local stop = true
-        for e = d + 1, Rm do
+        for e = d + 1, O.rmax do
           if math.floor(math.max(0, dts - e) / 10) * W + RC * e / SQRT2 <= lim then stop = false; break end
         end
         if stop then break end
@@ -2261,7 +2285,8 @@ M.parts_text = parts_text
 -- One line, stable key=value names (no spaces in a value), to print2 and
 -- the event file, on each rescore of an active adaptive plan and on every
 -- pick, change or drop. The parts of a spot (eval_parts):
---   st:x,y|sd:(stand Manhattan tiles from the spot)|sr:(stand radius
+--   st:x,y|sd:(stand tiles from the spot, U.leash_dist: one decimal when
+--   not whole)|sr:(stand radius
 --   used: FOCUS_SPIKE_STAND_RADIUS, at most PLACE_DISPATCH_MAX_DIST)|
 --   cov:ids|pay:(3 places)|pb:id@d=v;...(each base: euclid d, payoff v)|
 --   nm:(bases within FOCUS_SPIKE_MULTI_RADIUS)|boost:(x on the sum of v)|
@@ -2283,7 +2308,8 @@ local function eval_parts(c)
   end
   return string.format("st:%s|sd:%s|sr:%s|cov:%s|pay:%s|pb:%s|nm:%d|boost:%s|stand:%s|route:%s|plen:%s|rp:%s|cut:%d|travel:%s|run:%s|risk:%s|total:%s",
     c.stand and string.format("%d,%d", c.stand.mx, c.stand.my) or "none",
-    c.stand and tostring(c.stand.d) or "-", tostring(c.sr or "-"),
+    c.stand and U.fmt_ld(U.leash_dist(c.stand.mx, c.stand.my, c.mx, c.my)) or "-",
+    tostring(c.sr or "-"),
     (c.cov and #c.cov > 0) and table.concat(c.cov, ",") or "-",
     string.format("%.3f", p.payoff or 0), #pb > 0 and table.concat(pb, ";") or "-",
     c.pay_multi or 0, f2(c.boost or 1), f2(p.stand), f2(p.route), c.plen and string.format("%.1f", c.plen) or "-",
