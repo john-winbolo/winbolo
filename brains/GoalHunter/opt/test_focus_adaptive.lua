@@ -435,6 +435,21 @@ do
   C.FOCUS_SPIKE_RESCORE_TICKS = 100
   check("the next finished pass counts the thrown-away pass (restarts 1)", Bb.pass == nil and Bb.score
     and Bb.score.t == 54 and Bb.score.diag.restarts == 1, Bb.score and Bb.score.diag.restarts or (Bb.pass and ("k" .. Bb.pass.k .. " t0 " .. Bb.pass.t0) or ("nopass " .. tostring(Bb.t_rescore))))
+  -- No pill: the spot_eval line only when a held spot is dropped.
+  local sn, Bn, inn = mkl(3)
+  inn.carried_pills = 0
+  FV.adapt_step(sn, sn._fs, wl, inn, 0)
+  check("no pill, no spot held: no spot_eval line", Bn.eval_line == nil and Bn.mine == nil, Bn.eval_line)
+  sn, Bn, inn = mkl(3)
+  for t = 0, 4 do FV.adapt_step(sn, sn._fs, wl, inn, t) end
+  inn.carried_pills = 0
+  Bn.eval_line = nil
+  FV.adapt_step(sn, sn._fs, wl, inn, 100)
+  check("no pill, spot held: dropped, spot_eval skip=no_pill change=no_pill", Bn.mine == nil and Bn.eval_line
+    and Bn.eval_line:find(" skip=no_pill ", 1, true) and Bn.eval_line:find(" change=no_pill", 1, true), Bn.eval_line)
+  Bn.eval_line = nil
+  FV.adapt_step(sn, sn._fs, wl, inn, 200)
+  check("no pill again, nothing held: no new spot_eval line", Bn.eval_line == nil, Bn.eval_line)
   -- KEEL values: slices 1, every 50 ticks, each pass in one think.
   C.FOCUS_SPIKE_RESCORE_TICKS, C.FOCUS_SPIKE_RESCORE_SLICES = 50, 1
   local sk, Bk, ik = mkl(3)
