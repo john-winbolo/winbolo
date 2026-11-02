@@ -256,6 +256,14 @@ void simRulesClassic(SimRules *out) {
      * no constant of its own. */
     out->tank_hit_sets_off_mines = 0;
 
+    /* ---- Dead pillbox builder speed ---- */
+    /* 0: a builder on the square of a dead pillbox walks at man_speed_road,
+     * whatever terrain the pillbox stands on, as in Mac Bolo, where the
+     * square reads as a pillbox and a pillbox square walks as fast as a
+     * road. 1 is the WinBolo 2.1 way: he walks at the speed of the terrain
+     * under the pillbox. This rule has no constant of its own. */
+    out->man_dead_pill_terrain_speed = 0;
+
 }
 
 /* ---- Against the classic table -------------------------------------------
@@ -643,7 +651,9 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     /* Deep sea */                                                          \
     X(tank_deep_sea_safe,        INT,    0,      1)                          \
     /* Tank hit mines */                                                    \
-    X(tank_hit_sets_off_mines,   INT,    0,      1)
+    X(tank_hit_sets_off_mines,   INT,    0,      1)                          \
+    /* Dead pillbox builder speed */                                        \
+    X(man_dead_pill_terrain_speed, INT,  0,      1)
 
 /* The rules a single other rule also caps, as the pairs below hold them.
  * Only a direct field against other_field test is here: where a ceiling is
