@@ -385,9 +385,9 @@ const ScnDirEntry *serverSimGetScript(const ServerSim *sim, int i) {
 
 /* ── The operator's -mod rows ─────────────────────────────────────
  * What the dedicated server's -mod, -mod-required and -mod-locked name,
- * held apart from the list and put back on it at every new lobby. The list
- * is the host's; these are the operator's, and the CMD_SET_SCRIPT_LIST arm
- * is where the host is held to them. */
+ * held apart from the list and put back on it when the lobby empties. The
+ * list is the host's; these are the operator's, and the CMD_SET_SCRIPT_LIST
+ * arm is where the host is held to them. */
 
 /* Whether the directory's file is the one the operator named: the name as
    given or with one of the three endings a mod file carries, ignoring case
