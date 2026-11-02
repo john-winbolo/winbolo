@@ -2589,16 +2589,20 @@ function level_step(state, F, world, info, now)
     return nil
   end
   if (info.carried_pills or 0) < 1 then
-    if A.mine then set_spot(A, info, now, nil, "no_pill", nil, state) end
+    -- The spot_eval line only on a drop (a spot was held).
+    local held = A.mine ~= nil
+    if held then set_spot(A, info, now, nil, "no_pill", nil, state) end
     A.score = { t = now, top = {}, mine = {}, skip = "no_pill" }
-    spot_eval(A, info, now, L, nil, nil, "no_pill")
+    if held then spot_eval(A, info, now, L, nil, nil, "no_pill") end
     return nil
   end
   local tx, ty = tank_tile(info)
   if #L.list == 0 then
-    if A.mine then set_spot(A, info, now, nil, "no_target", nil, state) end
+    -- The spot_eval line only on a drop (a spot was held).
+    local held = A.mine ~= nil
+    if held then set_spot(A, info, now, nil, "no_target", nil, state) end
     A.score = { t = now, top = {}, mine = {}, tank = { mx = tx, my = ty }, skip = "no_target" }
-    spot_eval(A, info, now, L, nil, nil, "no_target")
+    if held then spot_eval(A, info, now, L, nil, nil, "no_target") end
     return nil
   end
   -- A new rescore pass: the inputs of slice 1 (see level_slice).
