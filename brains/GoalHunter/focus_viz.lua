@@ -272,7 +272,29 @@ local function draw_score(A)
       (c.danger or 0) <= MAXR + 1e-9 and "<=" or ">", MAXR, #rp > 0 and table.concat(rp, ", ") or "none"),
       r or 200, g or 200, b or 200)
   end
+  -- The payoff of one spot, each term (focus_vote M.spot_payoff): each base
+  -- d (euclid) and value v, the multi-base boost, and the stand place
+  -- distance with the stand radius used.
+  local function pay_line(c, r, g, b)
+    local pb, sum = {}, 0
+    for _, q in ipairs(c.pay_bases or {}) do
+      pb[#pb + 1] = string.format("base %s d %.2f v %.3f", tostring(q.id or "?"), q.d, q.v)
+      sum = sum + q.v
+    end
+    line(string.format("       payoff %.3f = (%s = %.3f) x boost %.2f (%d bases within %d, boost %.2f at 2+;"
+      .. " close payoff %s: v = %s); stand (%d,%d) %s tiles from the spot, stand radius %s",
+      (c.parts and c.parts.payoff) or 0, #pb > 0 and table.concat(pb, " + ") or "none", sum, c.boost or 1,
+      c.pay_multi or 0, C.FOCUS_SPIKE_MULTI_RADIUS or 0, C.FOCUS_SPIKE_MULTI_BOOST or 1,
+      C.FOCUS_SPIKE_CLOSE_PAYOFF and "on" or "off",
+      C.FOCUS_SPIKE_CLOSE_PAYOFF and string.format("(%d + 1 - d) / %d x %.2f", C.PILL_FIRE_RANGE,
+        C.PILL_FIRE_RANGE, C.FOCUS_SPIKE_BASE_PAYOFF) or string.format("%.2f", C.FOCUS_SPIKE_BASE_PAYOFF),
+      c.stand and c.stand.mx or -1, c.stand and c.stand.my or -1, c.stand and tostring(c.stand.d) or "-",
+      tostring(c.sr or "-")), r or 200, g or 200, b or 200)
+  end
   if D then
+    line(string.format("  stand radius %d (%s), route traced for %d stand places", D.radius or 1,
+      (D.radius or 1) > 1 and "best 3 of each spot by stand + run + travel" or "tile next to the spot first",
+      D.traced or 0), 200, 200, 255)
     line(string.format("  checks: tiles %d, not placeable %d, found %d, tested %d (cut %d), no stand %d, unreachable %d,"
       .. " stand risk %d, route risk %d, builder cannot reach %d, unchecked %d, allowed %d",
       D.tiles or 0, D.not_placeable or 0, D.found or 0, D.tested or 0, D.cut or 0, D.no_stand or 0,
@@ -286,6 +308,7 @@ local function draw_score(A)
     local mark = (ch and ch.mx == c.mx and ch.my == c.my) and "  CHOSEN" or ""
     line(string.format("  %d. (%d,%d) total %.2f = payoff %.2f - stand %.2f - route %.2f - travel %.2f - run %.2f%s",
       i, c.mx, c.my, c.total, p.payoff, p.stand, p.route, p.travel, p.run, mark))
+    pay_line(c)
     route_line(c)
     if mark ~= "" and c.path then
       for j = 2, #c.path do
@@ -315,7 +338,7 @@ local function draw_score(A)
     line(string.format("  best rejected (%d,%d) [%s] total %.2f = payoff %.2f - stand %.2f - route %.2f - travel %.2f - run %.2f",
       rj.mx, rj.my, rj.why or "?", rj.total or 0, p.payoff or 0, p.stand or 0, p.route or 0, p.travel or 0,
       p.run or 0), 255, 130, 130)
-    if rj.stand then line(string.format("       stand (%d,%d)", rj.stand.mx, rj.stand.my), 255, 130, 130) end
+    if rj.stand then pay_line(rj, 255, 130, 130) end
     route_line(rj, 255, 130, 130)
     viz.rect(ID, rj.mx, rj.my, rj.mx + 1, rj.my + 1, 255, 130, 130, 240, true, true)
     viz.text(ID, rj.mx + 0.5, rj.my - 0.9, "rejected: " .. (rj.why or "?"), "center", 255, 130, 130, 240, 0.32)

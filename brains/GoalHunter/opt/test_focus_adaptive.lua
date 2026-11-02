@@ -162,6 +162,93 @@ for _, s in ipairs(lh) do
 end
 check("hostile pill range left out", far_ok)
 
+print("stand radius, closer payoff, multi-base boost (2026-11-01)")
+check("KEEL defaults: stand radius 1, close payoff off, boost 1.0, multi radius 5",
+  C.FOCUS_SPIKE_STAND_RADIUS == 1 and C.FOCUS_SPIKE_CLOSE_PAYOFF == false
+  and C.FOCUS_SPIKE_MULTI_BOOST == 1.0 and C.FOCUS_SPIKE_MULTI_RADIUS == 5)
+check("PRESETS.keel has the KEEL values",
+  C.PRESETS.keel.FOCUS_SPIKE_STAND_RADIUS == 1 and C.PRESETS.keel.FOCUS_SPIKE_CLOSE_PAYOFF == false
+  and C.PRESETS.keel.FOCUS_SPIKE_MULTI_BOOST == 1.0 and C.PRESETS.keel.FOCUS_SPIKE_MULTI_RADIUS == 5)
+check("keel_focus, _loose, _bench: radius 15, close payoff on, boost 1.5",
+  C.PRESETS.keel_focus.FOCUS_SPIKE_STAND_RADIUS == 15 and C.PRESETS.keel_focus.FOCUS_SPIKE_CLOSE_PAYOFF == true
+  and C.PRESETS.keel_focus.FOCUS_SPIKE_MULTI_BOOST == 1.5
+  and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_STAND_RADIUS == 15
+  and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_CLOSE_PAYOFF == true
+  and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_MULTI_BOOST == 1.5
+  and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_STAND_RADIUS == 15
+  and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_CLOSE_PAYOFF == true
+  and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_MULTI_BOOST == 1.5)
+local two = { { id = 0, mx = 100, my = 100 }, { id = 1, mx = 108, my = 100 } }
+-- KEEL: flat 1.0 per base, no boost.
+local pk, bk, nk, xk = FV.spot_payoff(104, 100, two)
+check("KEEL: 4 tiles from two bases = 1.0 + 1.0 = 2.00", near(pk, 2.0) and xk == 1.0 and nk == 2, pk)
+C.FOCUS_SPIKE_CLOSE_PAYOFF, C.FOCUS_SPIKE_MULTI_BOOST = true, 1.5
+local p2, b2, n2, x2 = FV.spot_payoff(104, 100, two)
+check("on: 4 tiles from two bases = (0.625 + 0.625) x 1.5 = 1.875", near(p2, 1.875), p2)
+check("on: each base d 4, v 0.625", #b2 == 2 and near(b2[1].d, 4) and near(b2[1].v, 0.625)
+  and near(b2[2].d, 4) and near(b2[2].v, 0.625))
+check("on: boost 1.5 with 2 bases within 5", near(x2, 1.5) and n2 == 2, x2)
+local p1, _, n1, x1 = FV.spot_payoff(101, 100, { two[1] })
+check("on: beside one base = (9 - 1) / 8 = 1.00, no boost", near(p1, 1.0) and x1 == 1.0 and n1 == 1, p1)
+local p8 = FV.spot_payoff(100, 108, { two[1] })
+check("on: 8 tiles from one base = 0.125", near(p8, 0.125), p8)
+local p6, _, n6, x6 = FV.spot_payoff(104, 106, two)
+check("on: d 7.21 from both bases, outside multi radius 5: no boost",
+  x6 == 1.0 and n6 == 0 and near(p6, 2 * (9 - math.sqrt(52)) / 8), p6)
+C.FOCUS_SPIKE_CLOSE_PAYOFF, C.FOCUS_SPIKE_MULTI_BOOST = false, 1.0
+
+-- Stand place away from the spot. Tank at (100,130), base at (100,100),
+-- spot (100,108): a tile next to it is 21 or more tiles from the tank
+-- (travel 1.0, run 0.1 = 1.10). (100,111) is 19 tiles (travel 0.5) and 3
+-- from the spot (run 0.3 = 0.80): the wide search takes it.
+local ws = new_world()
+add_base(ws, 0, 100, 100, "hostile")
+local one = { { id = 0, mx = 100, my = 100 } }
+local function spot_of(l, x, y)
+  for _, s in ipairs(l) do if s.mx == x and s.my == y then return s end end
+end
+local lk, Dk = FV.score_spots(ws, {}, one, 100, 130, nil)
+local ck = spot_of(lk, 100, 108)
+check("KEEL: (100,108) stand on a tile next to the spot",
+  ck and ck.stand.d == 1, ck and ck.stand.d)
+check("KEEL: (100,108) total = 1.0 - 1.0 travel - 0.1 run = -0.10", ck and near(ck.total, -0.1), ck and ck.total)
+check("KEEL: spots cut to RESCORE_MAX_SPOTS", Dk.tested == math.min(Dk.found, C.FOCUS_SPIKE_RESCORE_MAX_SPOTS)
+  and Dk.radius == 1, Dk.tested)
+local keel_ok = true
+for _, s in ipairs(lk) do
+  local q = FV.adapt_stand(ws, {}, {}, s, {})
+  if not (q and q.mx == s.stand.mx and q.my == s.stand.my and near(s.parts.payoff, s.n * C.FOCUS_SPIKE_BASE_PAYOFF)
+          and s.boost == 1.0) then keel_ok = false end
+end
+check("KEEL: every stand is the old adapt_stand pick, payoff = bases x 1.0", keel_ok)
+C.FOCUS_SPIKE_STAND_RADIUS = 15
+local lw, Dw = FV.score_spots(ws, {}, one, 100, 130, nil)
+local cw = spot_of(lw, 100, 108)
+check("radius 15: (100,108) stand (100,111), 3 tiles from the spot",
+  cw and cw.stand.mx == 100 and cw.stand.my == 111 and cw.stand.d == 3,
+  cw and string.format("%d,%d", cw.stand.mx, cw.stand.my))
+check("radius 15: (100,108) travel 0.5, run 0.3, total 0.20",
+  cw and near(cw.parts.travel, 0.5) and near(cw.parts.run, 0.3) and near(cw.total, 0.2), cw and cw.total)
+check("radius 15: no spot cut (every spot found is scored)", Dw.cut == 0 and Dw.tested == Dw.found
+  and Dw.radius == 15, Dw.cut)
+check("radius 15: at most 3 stand places traced per spot", Dw.traced <= 3 * Dw.tested and Dw.traced > 0, Dw.traced)
+local ep = FV.eval_parts(cw)
+check("eval parts: stand distance, radius, base d and value, boost",
+  ep:find("|sd:3|sr:15|", 1, true) ~= nil and ep:find("|pb:0@8.00=1.000|", 1, true) ~= nil
+  and ep:find("|nm:0|boost:1.00|", 1, true) ~= nil, ep)
+-- A stand place the wide search finds away from the spot because the tiles
+-- near the spot are seen by a hostile pill (stand risk).
+local wp = new_world()
+add_base(wp, 0, 100, 100, "hostile")
+add_pill(wp, 1, 108, 108, "hostile", 15)
+local rk = FV.stand_risk_at(wp, {}, 101, 108)
+local lp = FV.score_spots(wp, {}, one, 100, 130, nil)
+local cp = spot_of(lp, 100, 107)
+check("radius 15, pill near: (100,107) stand place not seen by the pill",
+  cp and rk > 0 and cp.stand.risk == 0 and cp.stand.d > 1,
+  cp and string.format("%d,%d r=%.2f (tile next to the spot r=%.2f)", cp.stand.mx, cp.stand.my, cp.stand.risk, rk))
+C.FOCUS_SPIKE_STAND_RADIUS = 1
+
 print("rescore")
 w = new_world()
 add_base(w, 0, 100, 100, "hostile")

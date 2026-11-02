@@ -329,17 +329,21 @@ end
 -- axis (classic 768 world units = 3 tiles), unless the tank just fired.
 -- Tile model: the tile is forest and one of its four 2x2 blocks is all
 -- forest with no pill or base, and max(|dx|, |dy|) x 256 >= the distance.
+local function forest_free(world, tx, ty)
+  if not U.in_map(tx, ty) or U.ttype_peek(tx, ty) ~= C.T_FOREST then return false end
+  local k = ty * C.MAP_W + tx
+  if world.pill_at and world.pill_at[k] then return false end
+  if world.base_at and world.base_at[k] then return false end
+  return true
+end
 local function forest_block(world, x, y)
-  local function f(tx, ty)
-    if not U.in_map(tx, ty) or U.ttype_peek(tx, ty) ~= C.T_FOREST then return false end
-    local k = ty * C.MAP_W + tx
-    if world.pill_at and world.pill_at[k] then return false end
-    if world.base_at and world.base_at[k] then return false end
-    return true
-  end
-  if not f(x, y) then return false end
-  for _, d in ipairs({ { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }) do
-    if f(x + d[1], y) and f(x, y + d[2]) and f(x + d[1], y + d[2]) then return true end
+  if not forest_free(world, x, y) then return false end
+  for sx = -1, 1, 2 do
+    if forest_free(world, x + sx, y) then
+      for sy = -1, 1, 2 do
+        if forest_free(world, x, y + sy) and forest_free(world, x + sx, y + sy) then return true end
+      end
+    end
   end
   return false
 end
@@ -628,9 +632,19 @@ M.stand_on_line = stand_on_line
 -- pill that sees it.
 local function stand_risk(world, info, hpills, x, y)
   local HD = hide_tiles(info)
+  local R = C.PILL_FIRE_RANGE
   local r = 0
+  local fb = nil  -- forest_block of (x,y), found once when a pill needs it
   for _, p in ipairs(hpills) do
-    if pill_sees(world, HD, p, x, y) then r = r + (p.armour / 15) * C.FOCUS_SPIKE_SPOT_WEIGHT end
+    -- The same test as pill_sees, with forest_block found once per tile.
+    if edist(x, y, p.mx, p.my) <= R then
+      local seen = true
+      if math.max(math.abs(x - p.mx), math.abs(y - p.my)) >= HD then
+        if fb == nil then fb = forest_block(world, x, y) end
+        seen = not fb
+      end
+      if seen then r = r + (p.armour / 15) * C.FOCUS_SPIKE_SPOT_WEIGHT end
+    end
   end
   return r
 end
@@ -1803,9 +1817,167 @@ function M.tank_path(world, info, hpills, tx, ty, x, y)
   return M.route(world, info, tx, ty, { { mx = x, my = y } }, hpills)
 end
 
+-- The payoff of spike spot (x,y) for the bases in left (the bases of S, or
+-- the claimed bases): for each base within PILL_FIRE_RANGE (euclid,
+-- inclusive) BASE_PAYOFF x v, v = (R + 1 - d) / R with
+-- FOCUS_SPIKE_CLOSE_PAYOFF (d = euclid spot -> base, R = PILL_FIRE_RANGE),
+-- else 1.0. The sum is multiplied by FOCUS_SPIKE_MULTI_BOOST when 2 or more
+-- of these bases are within FOCUS_SPIKE_MULTI_RADIUS (euclid, inclusive).
+-- Answers payoff, the bases { id, d, v } (v with BASE_PAYOFF), the count
+-- within MULTI_RADIUS and the boost used (1.0 when not used).
+function M.spot_payoff(x, y, left)
+  local R = C.PILL_FIRE_RANGE
+  local close = C.FOCUS_SPIKE_CLOSE_PAYOFF
+  local MR = C.FOCUS_SPIKE_MULTI_RADIUS or 0
+  local sum, bl, nm = 0, {}, 0
+  for _, b in ipairs(left) do
+    local d = edist(x, y, b.mx, b.my)
+    if d <= R + 1e-9 then
+      local v = (close and (R + 1 - d) / R or 1.0) * C.FOCUS_SPIKE_BASE_PAYOFF
+      sum = sum + v
+      bl[#bl + 1] = { id = b.id, d = d, v = v }
+      if d <= MR + 1e-9 then nm = nm + 1 end
+    end
+  end
+  local boost = (nm >= 2) and (C.FOCUS_SPIKE_MULTI_BOOST or 1.0) or 1.0
+  return sum * boost, bl, nm, boost
+end
+
+-- Wide stand search (FOCUS_SPIKE_STAND_RADIUS > 1). ti: the tile facts of
+-- one rescore, per tile key (tank-passable, reached by the tank's map, stand
+-- risk, travel, map cost); filled on first use. Step A: every tile within
+-- the radius (Manhattan, not the spot) that is passable, reached by the map
+-- and has stand risk <= DEFENSE_MAX, ranked by stand risk + builder run +
+-- travel (ties: the lower map cost, then the lower tile key); the best 3
+-- are kept. With no such tile, the tile with the lowest stand risk + run +
+-- travel of all reached tiles (it is ruled out by its stand risk). Answers
+-- the list of the best (at most 3), each { mx, my, risk, run, val, d, k,
+-- travel, a, sc }, val = risk + run (the builder send check), a = the step
+-- A value.
+local SQRT2 = math.sqrt(2)
+-- The tile offsets of the wide stand search, ring by ring (Manhattan 1..R),
+-- and where each ring ends; built once per radius.
+local OFFS = {}
+local function offsets(R)
+  local o = OFFS[R]
+  if o then return o end
+  o = { x = {}, y = {}, run = {}, ring = {}, last = {} }
+  local n = 0
+  for d = 1, R do
+    for dx = -d, d do
+      local w = d - math.abs(dx)
+      for s = 1, (w ~= 0) and 2 or 1 do
+        n = n + 1
+        o.x[n], o.y[n], o.ring[n] = dx, (s == 1) and w or -w, d
+        o.run[n] = math.sqrt(dx * dx + w * w)
+      end
+    end
+    o.last[d] = n
+  end
+  o.n = n
+  OFFS[R] = o
+  return o
+end
+
+-- Answers true when (a, sc, k) ranks before q: the lower step A value, then
+-- the lower map cost, then the lower tile key.
+local function ranks_before(a, sc, k, q)
+  local qa = q.a
+  if a < qa - 1e-9 then return true end
+  if a > qa + 1e-9 then return false end
+  if sc ~= q.sc then return sc < q.sc end
+  return k < q.k
+end
+
+-- One tile's facts for the wide stand search (ti: this rescore's cache).
+local function tile_fact(world, info, hp, ti, x, y, tx, ty, slate, W)
+  local k = y * 256 + x
+  local base = false
+  if passable(world, x, y) then
+    local sc = slate and slate(0 --[[KIND_NORMAL]], x, y, 0) or edist(tx, ty, x, y)
+    if sc and sc < 1e29 then
+      local r = stand_risk(world, info, hp, x, y)
+      local tr = math.floor(edist(tx, ty, x, y) / 10) * W
+      ti.r[k], ti.t[k], ti.s[k] = r, tr, sc
+      base = r + tr
+    end
+  end
+  ti.b[k] = base
+  return base
+end
+
+local function wide_stands(world, info, hp, c, ti, tx, ty, slate)
+  local Rm = math.min(C.FOCUS_SPIKE_STAND_RADIUS, C.PLACE_DISPATCH_MAX_DIST or 15)
+  local RC = C.FOCUS_SPIKE_LGM_RUN_COST
+  local MAX = C.FOCUS_SPIKE_DEFENSE_MAX + 1e-9
+  local W = C.FOCUS_SPIKE_DEFENSE_DETOUR_WEIGHT
+  -- ti.b[k]: stand risk + travel of tile k (false: not passable or not
+  -- reached by the map); ti.r, ti.t, ti.s: stand risk, travel, map cost.
+  local TB, TR, TS = ti.b, ti.r, ti.s
+  local O = offsets(Rm)
+  local OX, OY, ORUN, ORING, OLAST = O.x, O.y, O.run, O.ring, O.last
+  local top, n, fb = {}, 0, nil
+  local cx, cy = c.mx, c.my
+  local dts = edist(tx, ty, cx, cy)
+  local d = 1
+  for i = 1, O.n do
+    local x, y = cx + OX[i], cy + OY[i]
+    if x >= 0 and y >= 0 and x < 256 and y < 256 then
+      local k = y * 256 + x
+      local base = TB[k]
+      if base == nil then
+        base = U.in_map(x, y) and tile_fact(world, info, hp, ti, x, y, tx, ty, slate, W) or false
+        TB[k] = base
+      end
+      if base then
+        local run = RC * ORUN[i]
+        local av = base + run
+        local sc = TS[k]
+        if TR[k] <= MAX then
+          if n < 3 or ranks_before(av, sc, k, top[3]) then
+            local q = { mx = x, my = y, risk = TR[k], run = run, val = TR[k] + run, d = ORING[i], k = k,
+                        travel = ti.t[k], sc = sc, a = av }
+            local j = (n < 3) and n + 1 or 3
+            if n < 3 then n = n + 1 end
+            top[j] = q
+            while j > 1 and ranks_before(q.a, q.sc, q.k, top[j - 1]) do
+              top[j], top[j - 1] = top[j - 1], q
+              j = j - 1
+            end
+          end
+        elseif not fb or ranks_before(av, sc, k, fb) then
+          fb = { mx = x, my = y, risk = TR[k], run = run, val = TR[k] + run, d = ORING[i], k = k,
+                 travel = ti.t[k], sc = sc, a = av }
+        end
+      end
+    end
+    -- At the end of ring d: stop when no tile of a farther ring can rank in
+    -- the best 3, not even in a tie (the answer is the same as a scan of
+    -- every ring). A tile on ring e (Manhattan e from the spot): stand risk
+    -- >= 0, run >= RUN_COST x e / sqrt(2), and it is at least (spot -> tank
+    -- - e) from the tank, so travel >= floor((spot -> tank - e) / 10) x
+    -- DETOUR_WEIGHT.
+    if i == OLAST[d] then
+      if n == 3 then
+        local lim = top[3].a + 1e-9
+        local stop = true
+        for e = d + 1, Rm do
+          if math.floor(math.max(0, dts - e) / 10) * W + RC * e / SQRT2 <= lim then stop = false; break end
+        end
+        if stop then break end
+      end
+      d = d + 1
+    end
+  end
+  if n == 0 and fb then top[1] = fb end
+  return top
+end
+
 -- Every spike spot for the bases in left (this bot's claimed bases not yet
 -- covered), scored from the tank tile (tx,ty):
---   total = BASE_PAYOFF x bases of left it covers
+--   total = payoff (M.spot_payoff: BASE_PAYOFF per base of left it covers;
+--           closer and multi-base terms with FOCUS_SPIKE_CLOSE_PAYOFF and
+--           FOCUS_SPIKE_MULTI_BOOST)
 --           - (stand + route + travel + run)
 -- A spot must cover a base of left within PILL_FIRE_RANGE (euclid,
 -- inclusive), be placeable land now (not forest), and have a stand place.
@@ -1814,9 +1986,12 @@ end
 -- + route). It is
 -- allowed only while its danger (stand + route) is at most
 -- FOCUS_SPIKE_DEFENSE_MAX: the travel and builder run costs are not danger
--- and never rule a spot out by themselves. The spots are cut first to
--- FOCUS_SPIKE_RESCORE_MAX_SPOTS (most bases, then nearest the tank; keep is
--- one tile key that always stays). The best spots must pass the builder walk
+-- and never rule a spot out by themselves. With FOCUS_SPIKE_STAND_RADIUS 1
+-- (KEEL) the spots are cut first to FOCUS_SPIKE_RESCORE_MAX_SPOTS (most
+-- bases, then nearest the tank; keep is one tile key that always stays) and
+-- the stand place is M.adapt_stand. With a radius > 1 every spot is scored
+-- and the stand place comes from wide_stands (step A) and the route risk of
+-- its best 3 (step B). The best spots must pass the builder walk
 -- check (at most FOCUS_SPIKE_RESCORE_REACH_CHECKS). Answers the allowed
 -- spots, best total first (ties: lower tile key), each
 -- { mx, my, k, n, cov, stand, parts = {payoff, stand, route, travel, run},
@@ -1881,32 +2056,66 @@ function M.score_spots(world, info, left, tx, ty, keep)
   end)
   local rc, out = {}, {}
   local prc = {}  -- path risk per stand place, this rescore
-  D.tested = math.min(#cand, C.FOCUS_SPIKE_RESCORE_MAX_SPOTS)
+  -- FOCUS_SPIKE_STAND_RADIUS > 1: the wide stand search, and every spot is
+  -- scored (no RESCORE_MAX_SPOTS cut).
+  local wide = (C.FOCUS_SPIKE_STAND_RADIUS or 1) > 1
+  local ti = { b = {}, r = {}, t = {}, s = {} }  -- wide: tile facts per tile key, this rescore
+  local slate = wide and (rawget(_G, "cpf_dijkstra_lookup_by_kind") or M.tank_cost_hook) or nil
+  D.radius = wide and math.min(C.FOCUS_SPIKE_STAND_RADIUS, C.PLACE_DISPATCH_MAX_DIST or 15) or 1
+  D.tested = wide and #cand or math.min(#cand, C.FOCUS_SPIKE_RESCORE_MAX_SPOTS)
   D.cut = #cand - D.tested
+  D.traced = 0
+  local function route_of(q)
+    local pr = prc[q.k]
+    if pr == nil then
+      -- The pills that see the stand place are stand risk already.
+      local skip = {}
+      for _, p in ipairs(hp) do
+        if pill_sees(world, HD, p, q.mx, q.my) then skip[p.id] = true end
+      end
+      local path, plen = M.tank_path(world, info, hp, tx, ty, q.mx, q.my)
+      pr = false
+      if path then
+        local r, hits = M.path_risk(world, info, hp, path, skip)
+        local last = path[#path]
+        pr = { r = r, hits = hits, plen = plen or 0, path = path,
+               cut = not (last and last.mx == q.mx and last.my == q.my) }
+      end
+      prc[q.k] = pr
+      D.traced = D.traced + 1
+    end
+    return pr
+  end
   for i = 1, D.tested do
     local c = cand[i]
-    local q = M.adapt_stand(world, info, hp, c, rc)
-    if q then
-      local pr = prc[q.k]
-      if pr == nil then
-        -- The pills that see the stand place are stand risk already.
-        local skip = {}
-        for _, p in ipairs(hp) do
-          if pill_sees(world, HD, p, q.mx, q.my) then skip[p.id] = true end
+    local q, pr = nil, nil
+    if wide then
+      -- Step B: the route risk of the best 3 of step A. The stand place: the
+      -- lowest stand + route + travel + run with danger allowed; else the
+      -- lowest of the 3 that the map path reaches (it is ruled out).
+      local top = wide_stands(world, info, hp, c, ti, tx, ty, slate)
+      local bv, bok = nil, false
+      for _, s in ipairs(top) do
+        local p = route_of(s)
+        if p then
+          local v = s.risk + p.r + s.travel + s.run
+          local ok = s.risk + p.r <= C.FOCUS_SPIKE_DEFENSE_MAX + 1e-9
+          if not q or (ok and not bok) or (ok == bok and v < bv - 1e-9) then
+            q, pr, bv, bok = s, p, v, ok
+          end
         end
-        local path, plen = M.tank_path(world, info, hp, tx, ty, q.mx, q.my)
-        pr = false
-        if path then
-          local r, hits = M.path_risk(world, info, hp, path, skip)
-          local last = path[#path]
-          pr = { r = r, hits = hits, plen = plen or 0, path = path,
-                 cut = not (last and last.mx == q.mx and last.my == q.my) }
-        end
-        prc[q.k] = pr
       end
+      if not q and top[1] then q, pr = top[1], false end
+      c.stands = top
+    else
+      q = M.adapt_stand(world, info, hp, c, rc)
+      if q then pr = route_of(q) end
+    end
+    if q then
       local route = pr and pr.r or 0
       local travel = math.floor(edist(tx, ty, q.mx, q.my) / 10) * C.FOCUS_SPIKE_DEFENSE_DETOUR_WEIGHT
-      local payoff = c.n * C.FOCUS_SPIKE_BASE_PAYOFF
+      local payoff, pb, nm, boost = M.spot_payoff(c.mx, c.my, left)
+      c.pay_bases, c.pay_multi, c.boost, c.sr = pb, nm, boost, D.radius
       c.stand = q
       c.parts = { payoff = payoff, stand = q.risk, route = route, travel = travel, run = q.run }
       c.route_pills = pr and pr.hits or {}
@@ -1990,9 +2199,14 @@ M.parts_text = parts_text
 -- One line, stable key=value names (no spaces in a value), to print2 and
 -- the event file, on each rescore of an active adaptive plan and on every
 -- pick, change or drop. The parts of a spot (eval_parts):
---   st:x,y|cov:ids|pay:|stand:|route:|plen:|rp:id/armour@x,y;...|cut:0/1|
---   travel:|run:|risk:(stand+route, the value compared with
---   FOCUS_SPIKE_DEFENSE_MAX)|total:
+--   st:x,y|sd:(stand Manhattan tiles from the spot)|sr:(stand radius
+--   used: FOCUS_SPIKE_STAND_RADIUS, at most PLACE_DISPATCH_MAX_DIST)|
+--   cov:ids|pay:(3 places)|pb:id@d=v;...(each base: euclid d, payoff v)|
+--   nm:(bases within FOCUS_SPIKE_MULTI_RADIUS)|boost:(x on the sum of v)|
+--   stand:|route:|plen:|rp:id/armour@x,y;...|cut:0/1|travel:|run:|
+--   risk:(stand+route, the value compared with FOCUS_SPIKE_DEFENSE_MAX)|
+--   total:
+-- pay = (sum of v) x boost; total = pay - stand - route - travel - run.
 local function f2(v) return string.format("%.2f", v or 0) end
 local function eval_parts(c)
   if not c then return "-" end
@@ -2001,10 +2215,16 @@ local function eval_parts(c)
   for _, h in ipairs(c.route_pills or {}) do
     rp[#rp + 1] = string.format("%d/%d@%d,%d", h.id, h.armour, h.mx, h.my)
   end
-  return string.format("st:%s|cov:%s|pay:%s|stand:%s|route:%s|plen:%s|rp:%s|cut:%d|travel:%s|run:%s|risk:%s|total:%s",
+  local pb = {}
+  for _, b in ipairs(c.pay_bases or {}) do
+    pb[#pb + 1] = string.format("%s@%.2f=%.3f", tostring(b.id or "?"), b.d, b.v)
+  end
+  return string.format("st:%s|sd:%s|sr:%s|cov:%s|pay:%s|pb:%s|nm:%d|boost:%s|stand:%s|route:%s|plen:%s|rp:%s|cut:%d|travel:%s|run:%s|risk:%s|total:%s",
     c.stand and string.format("%d,%d", c.stand.mx, c.stand.my) or "none",
+    c.stand and tostring(c.stand.d) or "-", tostring(c.sr or "-"),
     (c.cov and #c.cov > 0) and table.concat(c.cov, ",") or "-",
-    f2(p.payoff), f2(p.stand), f2(p.route), c.plen and string.format("%.1f", c.plen) or "-",
+    string.format("%.3f", p.payoff or 0), #pb > 0 and table.concat(pb, ";") or "-",
+    c.pay_multi or 0, f2(c.boost or 1), f2(p.stand), f2(p.route), c.plen and string.format("%.1f", c.plen) or "-",
     #rp > 0 and table.concat(rp, ";") or "-", c.path_cut and 1 or 0,
     f2(p.travel), f2(p.run), f2(c.danger), f2(c.total))
 end
@@ -2048,6 +2268,11 @@ local function spot_eval(A, info, now, L, list, D, skip)
   kv("other", (D.cut or 0) + (D.unchecked or 0))
   kv("allowed", D.allowed or 0)
   kv("risk_max", f2(C.FOCUS_SPIKE_DEFENSE_MAX))
+  kv("stand_radius", D.radius or math.min(C.FOCUS_SPIKE_STAND_RADIUS or 1, C.PLACE_DISPATCH_MAX_DIST or 15))
+  kv("traced", D.traced or 0)
+  kv("close_pay", C.FOCUS_SPIKE_CLOSE_PAYOFF and 1 or 0)
+  kv("multi_r", C.FOCUS_SPIKE_MULTI_RADIUS or 0)
+  kv("multi_boost", f2(C.FOCUS_SPIKE_MULTI_BOOST or 1))
   local chosen = nil
   if A.mine and list then
     for _, c in ipairs(list) do
