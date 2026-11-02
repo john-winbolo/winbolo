@@ -14,9 +14,8 @@
 --
 -- Pillbox shell cap. No more than pill_max_shells_at_tank pillbox shells
 -- are in the air at any one tank. A pillbox whose nearest target already
--- has that many coming fires at the next nearest enemy in range instead;
--- with no other target it holds its shot and fires as soon as one of those
--- shells lands. This part sets the limit to twelve.
+-- has that many coming loses its shot and reloads. This part sets the
+-- limit to twelve.
 --
 -- Tank clearance. Use the original direction-dependent tank boxes and
 -- pixel nudges against solid tiles, allowing close passes beside pills.
@@ -180,7 +179,7 @@ scenario = {
     { id = "pushback", label = "Mac Bolo shell pushback", type = "bool",
       default = true },
 
-    -- Pillbox shell cap: a pill holds or retargets when its target already
+    -- Pillbox shell cap: a pill loses its shot when its nearest target already
     -- has twelve pillbox shells coming.
     { id = "shell_cap", label = "Pillbox shell cap", type = "bool",
       default = true },
