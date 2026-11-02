@@ -260,7 +260,7 @@ void treeGrowCheckGrowTree(GameSim *sim) {
 *NAME:          treeGrowCalcSquare
 *AUTHOR:        John Morrison
 *CREATION DATE: 22/1/99
-*LAST MODIFIED: 22/1/99
+*LAST MODIFIED: 31/10/26
 *PURPOSE:
 * Calculates the tree growth score for a specific square
 *
@@ -286,7 +286,7 @@ int treeGrowCalcSquare(GameSim *sim, BYTE mx, BYTE my) {
     terrain = mapGetPos(mp, mx, my);
     if (terrain >= MINE_START && terrain <= MINE_END) {
       returnValue = sim->rules.tree_weight_mine;
-      terrain -= MINE_START;
+      terrain -= MINE_SUBTRACT;
     }
 
     switch (terrain) {
