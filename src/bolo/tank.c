@@ -3166,9 +3166,9 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
       BYTE dyingPlayer = gameSimGetTankPlayer(sim, value);
       (*value)->pendingDeathCause = DEATH_CAUSE_MINE;
       if (((*value)->shells + (*value)->mines) > sim->rules.big_explosion_threshold) {
-        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_BIG, dyingPlayer);
+        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), TK_LARGE_EXPLOSION, dyingPlayer);
       } else {
-        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_SMALL, dyingPlayer);
+        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), TK_SMALL_EXPLOSION, dyingPlayer);
       }
       (*value)->deathWait = (uint16_t) sim->rules.tank_death_ticks;
       /* owner is the slot that laid the mine, or NEUTRAL for a mine that came
