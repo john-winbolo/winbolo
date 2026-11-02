@@ -1999,11 +1999,13 @@ M.FOCUS_SPIKE_NEUTRAL_PILL_COVER = false
 --   stand risk  = FOCUS_SPIKE_SPOT_WEIGHT x armour/15 per known hostile pill
 --                 that sees the stand place;
 --   route risk  = FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT x armour/15 per other
---                 hostile pill that sees the straight line tank -> stand;
+--                 hostile pill that sees the tank's map path to the stand;
 --   travel cost = floor(tank -> stand distance / 10) x DEFENSE_DETOUR_WEIGHT;
 --   builder run = FOCUS_SPIKE_LGM_RUN_COST per tile, stand -> spot (euclid).
--- The stand place is the tank-passable tile within PLACE_DISPATCH_MAX_DIST
--- (Manhattan) with the lowest stand risk + builder run cost. A spot is left
+-- The stand place: see FOCUS_SPIKE_STAND_RADIUS (KEEL: the tank-passable
+-- tile within PLACE_DISPATCH_MAX_DIST, Manhattan, with the lowest stand
+-- risk + builder run cost). The payoff: see FOCUS_SPIKE_CLOSE_PAYOFF and
+-- FOCUS_SPIKE_MULTI_BOOST. A spot is left
 -- out when it is not placeable now, or when its danger (stand risk + route
 -- risk) is over FOCUS_SPIKE_DEFENSE_MAX. A hostile or neutral pill near the
 -- spot does not rule it out (bug fix, 2026-11-01): a pill never shoots a
@@ -2022,6 +2024,30 @@ M.FOCUS_SPIKE_SWITCH_MARGIN   = 0.20
 -- distance from the tank), and builder reach checks per rescore.
 M.FOCUS_SPIKE_RESCORE_MAX_SPOTS = 40
 M.FOCUS_SPIKE_RESCORE_REACH_CHECKS = 4
+-- Wide stand search (2026-11-01, Andrew approved): the tiles a stand place of
+-- a spike spot may be on, Manhattan from the spot (at most
+-- PLACE_DISPATCH_MAX_DIST). 1 = KEEL: the old search (the lowest stand risk +
+-- builder run, nearest ring first, no travel and no route in the pick). > 1:
+--  step A ranks every tank-passable tile within the radius that the tank's
+--  Dijkstra map reaches by stand risk + builder run + travel (ties: the
+--  shorter map distance, then the lower tile key);
+--  step B traces the route risk (M.path_risk along the map path) only for
+--  the best 3 of step A. The stand place is the one of the 3 with the lowest
+--  stand + route + travel + run whose danger is allowed.
+-- With a radius > 1 every spike spot found is scored (no
+-- FOCUS_SPIKE_RESCORE_MAX_SPOTS cut).
+M.FOCUS_SPIKE_STAND_RADIUS    = 1
+-- Closer = more payoff (2026-11-01, Andrew approved): on, the payoff for each
+-- base of S a spot covers is FOCUS_SPIKE_BASE_PAYOFF x (R + 1 - d) / R, d =
+-- euclid spot -> base, R = PILL_FIRE_RANGE (8: (9 - d) / 8; 1.00 at d = 1,
+-- 0.625 at d = 4, 0.125 at d = 8). false = KEEL: BASE_PAYOFF per base.
+M.FOCUS_SPIKE_CLOSE_PAYOFF    = false
+-- Multi-base boost (2026-11-01, Andrew approved): when 2 or more bases of S
+-- are within FOCUS_SPIKE_MULTI_RADIUS (euclid, inclusive) of the spot, the
+-- payoff is multiplied by FOCUS_SPIKE_MULTI_BOOST. Example (close payoff on):
+-- 4 tiles from two bases = (0.625 + 0.625) x 1.5 = 1.875. 1.0 = KEEL.
+M.FOCUS_SPIKE_MULTI_RADIUS    = 5
+M.FOCUS_SPIKE_MULTI_BOOST     = 1.0
 -- Ticks a released base waits for a taker before the plan ends incomplete.
 M.FOCUS_SPIKE_RELEASE_WAIT    = 100
 -- All aggressive pills in a spike (2026-11-01, Andrew: "we need to push for
@@ -6107,6 +6133,12 @@ M.PRESETS = {
     FOCUS_SPIKE_ADAPTIVE_SPOT      = false,
     -- 2026-11-01: no pill reservation and no levelling (no adaptive spot).
     FOCUS_SPIKE_ALL_AGGRO          = false,
+    -- 2026-11-01: stand place next to the spot (no wide stand search), flat
+    -- payoff per base, no multi-base boost.
+    FOCUS_SPIKE_STAND_RADIUS       = 1,
+    FOCUS_SPIKE_CLOSE_PAYOFF       = false,
+    FOCUS_SPIKE_MULTI_RADIUS       = 5,
+    FOCUS_SPIKE_MULTI_BOOST        = 1.0,
     -- 2026-11-01: spike care needs the aggro class (no care by range).
     FOCUS_SPIKE_CARE_BY_RANGE      = false,
     -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
@@ -6713,6 +6745,8 @@ do
     FOCUS_SPIKE_ADAPTIVE_SPOT = true,
     FOCUS_SPIKE_ALL_AGGRO = true,
     FOCUS_SPIKE_CARE_BY_RANGE = true,
+    FOCUS_SPIKE_STAND_RADIUS = 15, FOCUS_SPIKE_CLOSE_PAYOFF = true,
+    FOCUS_SPIKE_MULTI_BOOST = 1.5,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6735,6 +6769,8 @@ do
     FOCUS_SPIKE_ADAPTIVE_SPOT = true,
     FOCUS_SPIKE_ALL_AGGRO = true,
     FOCUS_SPIKE_CARE_BY_RANGE = true,
+    FOCUS_SPIKE_STAND_RADIUS = 15, FOCUS_SPIKE_CLOSE_PAYOFF = true,
+    FOCUS_SPIKE_MULTI_BOOST = 1.5,
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and

@@ -237,7 +237,8 @@ do
     if not (line and line:find(" " .. k .. "=", 1, true)) then miss[#miss + 1] = k end
   end
   check("spot_eval has every key", #miss == 0, table.concat(miss, ","))
-  check("spot_eval chosen parts", line and line:find("chosen_p=st:%d+,%d+|cov:") ~= nil
+  check("spot_eval chosen parts", line and line:find("chosen_p=st:%d+,%d+|sd:%d+|sr:%d+|cov:") ~= nil
+    and line:find("|pb:") ~= nil and line:find("|nm:") ~= nil and line:find("|boost:") ~= nil
     and line:find("|route:") ~= nil and line:find("|plen:") ~= nil and line:find("|rp:") ~= nil
     and line:find("|risk:") ~= nil and line:find("|total:") ~= nil, line)
   check("spot_eval first pick: change=first", line and line:find(" change=first ", 1, true) ~= nil, line)

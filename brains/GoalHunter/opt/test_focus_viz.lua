@@ -198,6 +198,24 @@ check("chosen spot and stand", has(hud, "chosen (11,9) stand (11,12) stand risk 
 check("top spot with every part",
   has(hud, "1. (11,9) total 0.40 = payoff 1.00 - stand 0.00 - route 0.00 - travel 0.50 - run 0.10  CHOSEN"))
 check("claim label per player N", has(tx, "b0 claim player 2"))
+-- Payoff terms (2026-11-01): each base d and v, the boost, the stand radius.
+cs.pay_bases = { { id = 0, d = 4, v = 0.625 }, { id = 1, d = 4, v = 0.625 } }
+cs.pay_multi, cs.boost, cs.sr = 2, 1.5, 15
+cs.stand.d = 3
+cs.parts.payoff = 1.875
+C.FOCUS_SPIKE_CLOSE_PAYOFF, C.FOCUS_SPIKE_MULTI_BOOST = true, 1.5
+F.active.score.diag = { radius = 15, traced = 3, tested = 1, found = 1 }
+calls = {}
+FZ.draw(state, world, { player_number = 2 }, 3100)
+hud = texts("hud_text")
+check("payoff line: each base d and v, boost, stand radius",
+  has(hud, "payoff 1.875 = (base 0 d 4.00 v 0.625 + base 1 d 4.00 v 0.625 = 1.250) x boost 1.50 (2 bases within 5, boost 1.50 at 2+; close payoff on: v = (8 + 1 - d) / 8 x 1.00); stand (11,12) 3 tiles from the spot, stand radius 15"),
+  table.concat(hud, " || "))
+check("stand radius line", has(hud, "stand radius 15 (best 3 of each spot by stand + run + travel), route traced for 3 stand places"))
+C.FOCUS_SPIKE_CLOSE_PAYOFF, C.FOCUS_SPIKE_MULTI_BOOST = false, 1.0
+F.active.score.diag = nil
+cs.pay_bases, cs.pay_multi, cs.boost, cs.sr = nil, nil, nil, nil
+cs.parts.payoff = 1
 check("spot change mark with its reason", has(tx, "1:00 spot_blocked 0.40") and has(tx, "1:00 left: spot_blocked"))
 
 print("levels (FOCUS_SPIKE_ALL_AGGRO)")
