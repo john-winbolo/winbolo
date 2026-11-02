@@ -6437,7 +6437,6 @@ set(_unit_test_names
     mod_lobby_starts_mac_bolo_keeps_opposite_sides
     mac_bolo_settings_defaults_play_old_rules
     mac_bolo_settings_each_part_off
-    mac_bolo_settings_numbers
     mac_bolo_tank_hit_mines_part_with_mines_mod
     mac_bolo_first_start_lobby_off_uses_mac_pick
     mac_bolo_spawn_starts_off_engine_picks

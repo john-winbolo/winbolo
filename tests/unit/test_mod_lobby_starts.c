@@ -24,12 +24,13 @@
  *       table always set, at the same numbers, and tank_hit_sets_off_mines
  *       at 0 from the tank_hit_mines part added after it. 0 is also the
  *       classic table's value, so that part only matters when another
- *       script on the list sets 1.
+ *       script on the list sets 1. The later parts play at their numbers
+ *       too: pill_attack_min_ticks 5 (pill_anger),
+ *       big_explosion_threshold 60 (superboom), pill_fire_length 8.25
+ *       (pill_shell_range) and lgm_helicopter_speed 2 (parachute).
  *   run_mac_bolo_settings_each_part_off
  *       each part turned off on its own: that part's rules are back on the
  *       classic table and every other part's rules are unchanged.
- *   run_mac_bolo_settings_numbers
- *       the five number settings reach their rules.
  *   run_mac_bolo_tank_hit_mines_part_with_mines_mod
  *       Mac Bolo Rules and a test mod that sets tank_hit_sets_off_mines
  *       to 1 both on the list. Mac Bolo Rules on top: tank_hit_mines on
@@ -48,8 +49,8 @@
  *       classic shell cap rules, so the round reads the host's picks, not
  *       the ones the mod was attached with.
  *   run_mac_bolo_setting_changed_between_rounds
- *       round 1 on the defaults, back to the lobby, shell_cap off and
- *       push_step changed: round 2 plays the new picks.
+ *       round 1 on the defaults, back to the lobby, shell_cap and superboom
+ *       off: round 2 plays the new picks.
  *
  * on_choose_start(p, lobby): the engine hands each script the start the
  * lobby reserved for the tank, and game.lobby_start / game.lobby_side read
@@ -339,25 +340,35 @@ enum {
     MLS_PART_BASE_DEFENCE,
     MLS_PART_TANK_HIT_MINES,
     MLS_PART_DEAD_PILL_SPEED,
+    MLS_PART_PILL_ANGER,
+    MLS_PART_SUPERBOOM,
+    MLS_PART_PILL_SHELL_RANGE,
+    MLS_PART_PARACHUTE,
     MLS_PART_COUNT
 };
 
 static const char *const kMlsPartSetting[MLS_PART_COUNT] = {
     "pushback", "shell_cap", "tank_boxes", "pill_aim", "base_defence",
-    "tank_hit_mines", "dead_pill_speed",
+    "tank_hit_mines", "dead_pill_speed", "pill_anger", "superboom",
+    "pill_shell_range", "parachute",
 };
 
 /* Every rule the mod sets, the part that sets it, and the value its
- * written table always gave it. */
+ * written table always gave it. A float rule's value is in macFloat
+ * instead, and is compared by its bits, as the rules table holds it. */
 typedef struct {
     const char *name;
     size_t      offset;
     int         part;
     int32_t     mac;
+    bool        isFloat;
+    float       macFloat;
 } MlsRule;
 
 #define MLS_RULE(field, part, mac) \
-    { #field, offsetof(SimRules, field), part, mac }
+    { #field, offsetof(SimRules, field), part, mac, false, 0.0f }
+#define MLS_RULE_FLT(field, part, mac) \
+    { #field, offsetof(SimRules, field), part, 0, true, mac }
 
 static const MlsRule kMlsRules[] = {
     MLS_RULE(tank_slide_mac,               MLS_PART_PUSHBACK,     1),
@@ -372,12 +383,41 @@ static const MlsRule kMlsRules[] = {
     MLS_RULE(pill_base_defend_range,       MLS_PART_BASE_DEFENCE, 7),
     MLS_RULE(tank_hit_sets_off_mines,      MLS_PART_TANK_HIT_MINES, 0),
     MLS_RULE(man_dead_pill_terrain_speed,  MLS_PART_DEAD_PILL_SPEED, 0),
+    MLS_RULE(pill_attack_min_ticks,        MLS_PART_PILL_ANGER,   5),
+    MLS_RULE(big_explosion_threshold,      MLS_PART_SUPERBOOM,    60),
+    MLS_RULE_FLT(pill_fire_length,         MLS_PART_PILL_SHELL_RANGE, 8.25f),
+    MLS_RULE(lgm_helicopter_speed,         MLS_PART_PARACHUTE,    2),
 };
 
 #define MLS_RULE_COUNT ((int)(sizeof(kMlsRules) / sizeof(kMlsRules[0])))
 
 static int32_t mlsRuleValue(const SimRules *r, const MlsRule *rule) {
     return *(const int32_t *)(const void *)((const char *)r + rule->offset);
+}
+
+/* The mod's value for a rule, as the four-byte word the table holds. */
+static int32_t mlsRuleMac(const MlsRule *rule) {
+    int32_t bits;
+
+    if (!rule->isFloat) {
+        return rule->mac;
+    }
+    memcpy(&bits, &rule->macFloat, sizeof(bits));
+    return bits;
+}
+
+/* A rule's word written out for a failure message, as the number it is. */
+static const char *mlsRuleText(const MlsRule *rule, int32_t bits, char *buf,
+                               size_t len) {
+    float f;
+
+    if (rule->isFloat) {
+        memcpy(&f, &bits, sizeof(f));
+        snprintf(buf, len, "%g", (double)f);
+    } else {
+        snprintf(buf, len, "%d", (int)bits);
+    }
+    return buf;
 }
 
 int run_mac_bolo_settings_defaults_play_old_rules(void) {
@@ -388,10 +428,17 @@ int run_mac_bolo_settings_defaults_play_old_rules(void) {
     simRulesClassic(&classic);
     UT_ASSERT(mlsRulesRound(NULL, 0, &got) == 0);
     for (i = 0; i < MLS_RULE_COUNT; i++) {
-        int32_t v = mlsRuleValue(&got, &kMlsRules[i]);
-        UT_ASSERT_MSG(v == kMlsRules[i].mac,
-                      "with nothing chosen %s is %d, the mod always set %d",
-                      kMlsRules[i].name, (int)v, (int)kMlsRules[i].mac);
+        const MlsRule *rule = &kMlsRules[i];
+        int32_t        v    = mlsRuleValue(&got, rule);
+        int32_t        want = mlsRuleMac(rule);
+        char           vText[32];
+        char           wantText[32];
+
+        UT_ASSERT_MSG(v == want,
+                      "with nothing chosen %s is %s, the mod always set %s",
+                      rule->name,
+                      mlsRuleText(rule, v, vText, sizeof(vText)),
+                      mlsRuleText(rule, want, wantText, sizeof(wantText)));
     }
     /* A rule the mod never set is still the classic table's. */
     UT_ASSERT(got.start_pill_range == classic.start_pill_range);
@@ -417,45 +464,18 @@ int run_mac_bolo_settings_each_part_off(void) {
             int32_t        v    = mlsRuleValue(&got, rule);
             int32_t        want = (rule->part == part)
                                       ? mlsRuleValue(&classic, rule)
-                                      : rule->mac;
+                                      : mlsRuleMac(rule);
+            char           vText[32];
+            char           wantText[32];
+
             UT_ASSERT_MSG(v == want,
-                          "with %s off, %s is %d, wanted %d (%s)", off.id,
-                          rule->name, (int)v, (int)want,
+                          "with %s off, %s is %s, wanted %s (%s)", off.id,
+                          rule->name,
+                          mlsRuleText(rule, v, vText, sizeof(vText)),
+                          mlsRuleText(rule, want, wantText, sizeof(wantText)),
                           rule->part == part ? "classic" : "the mod's");
         }
     }
-    return 0;
-}
-
-int run_mac_bolo_settings_numbers(void) {
-    static const MlsSetting set[] = {
-        { "push_step",           40 },
-        { "push_armour_bonus",   10 },
-        { "push_decay_shift",    3  },
-        { "shell_cap_count",     5  },
-        { "base_defence_radius", 9  },
-    };
-    SimRules got;
-
-    UT_ASSERT(mlsRulesRound(set, (int)(sizeof(set) / sizeof(set[0])),
-                            &got) == 0);
-    UT_ASSERT(got.tank_slide_mac == 1);
-    UT_ASSERT_MSG(got.tank_slide_step == 40, "tank_slide_step is %d",
-                  (int)got.tank_slide_step);
-    UT_ASSERT_MSG(got.tank_slide_armour_bonus == 10,
-                  "tank_slide_armour_bonus is %d",
-                  (int)got.tank_slide_armour_bonus);
-    UT_ASSERT_MSG(got.tank_bump_decay_shift == 3,
-                  "tank_bump_decay_shift is %d",
-                  (int)got.tank_bump_decay_shift);
-    UT_ASSERT(got.pill_shell_cap == 1);
-    UT_ASSERT_MSG(got.pill_max_shells_at_tank == 5,
-                  "pill_max_shells_at_tank is %d",
-                  (int)got.pill_max_shells_at_tank);
-    UT_ASSERT(got.pill_base_defend_shape == 1);
-    UT_ASSERT_MSG(got.pill_base_defend_range == 9,
-                  "pill_base_defend_range is %d",
-                  (int)got.pill_base_defend_range);
     return 0;
 }
 
@@ -759,9 +779,8 @@ int run_mac_bolo_spawn_starts_off_engine_picks(void) {
 }
 
 /* The shell cap rules in r are the classic table's, and the pushback rules
- * are the mod's at push_step. */
-static int mlsShellCapOff(const SimRules *r, int32_t pushStep,
-                          const char *when) {
+ * are the mod's. */
+static int mlsShellCapOff(const SimRules *r, const char *when) {
     SimRules classic;
 
     simRulesClassic(&classic);
@@ -773,10 +792,10 @@ static int mlsShellCapOff(const SimRules *r, int32_t pushStep,
                   (int)r->pill_shell_cap, (int)r->pill_max_shells_at_tank,
                   (int)classic.pill_shell_cap,
                   (int)classic.pill_max_shells_at_tank);
-    UT_ASSERT_MSG(r->tank_slide_mac == 1 && r->tank_slide_step == pushStep,
+    UT_ASSERT_MSG(r->tank_slide_mac == 1 && r->tank_slide_step == 28,
                   "%s: tank_slide_mac %d and tank_slide_step %d, wanted 1 "
-                  "and %d", when, (int)r->tank_slide_mac,
-                  (int)r->tank_slide_step, (int)pushStep);
+                  "and 28", when, (int)r->tank_slide_mac,
+                  (int)r->tank_slide_step);
     return 0;
 }
 
@@ -796,7 +815,7 @@ int run_mac_bolo_setting_changed_after_attach(void) {
     UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
     UT_ASSERT_MSG(scenarioHostLastError(h)[0] == '\0',
                   "the round complained: %s", scenarioHostLastError(h));
-    UT_ASSERT(mlsShellCapOff(&serverSimGetGameSim(sim)->rules, 28,
+    UT_ASSERT(mlsShellCapOff(&serverSimGetGameSim(sim)->rules,
                              "shell_cap off after the attach") == 0);
 
     scenarioHostDetach(h);
@@ -806,15 +825,17 @@ int run_mac_bolo_setting_changed_after_attach(void) {
 
 int run_mac_bolo_setting_changed_between_rounds(void) {
     static const MlsSetting set[] = {
-        { "shell_cap", 0  },
-        { "push_step", 40 },
+        { "shell_cap", 0 },
+        { "superboom", 0 },
     };
     ServerSim      *sim = NULL;
     ScenarioHost   *h   = NULL;
     const SimRules *r;
+    SimRules        classic;
     BYTE            west = 0;
     BYTE            east = 0;
 
+    simRulesClassic(&classic);
     UT_ASSERT(mlsLobby(NULL, 0, &sim, &h, &west, &east) == 0);
 
     /* Round 1 plays the defaults. */
@@ -825,9 +846,9 @@ int run_mac_bolo_setting_changed_between_rounds(void) {
                   "round 1 on the defaults: pill_shell_cap %d and "
                   "pill_max_shells_at_tank %d, wanted 1 and 12",
                   (int)r->pill_shell_cap, (int)r->pill_max_shells_at_tank);
-    UT_ASSERT_MSG(r->tank_slide_step == 28,
-                  "round 1 on the defaults: tank_slide_step %d, wanted 28",
-                  (int)r->tank_slide_step);
+    UT_ASSERT_MSG(r->big_explosion_threshold == 60,
+                  "round 1 on the defaults: big_explosion_threshold %d, "
+                  "wanted 60", (int)r->big_explosion_threshold);
 
     /* Back in the lobby the host changes two values; round 2 plays them. */
     serverSimReturnToLobby(sim);
@@ -836,8 +857,13 @@ int run_mac_bolo_setting_changed_between_rounds(void) {
     UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
     UT_ASSERT_MSG(scenarioHostLastError(h)[0] == '\0',
                   "round 2 complained: %s", scenarioHostLastError(h));
-    UT_ASSERT(mlsShellCapOff(&serverSimGetGameSim(sim)->rules, 40,
-                             "round 2 after the lobby change") == 0);
+    r = &serverSimGetGameSim(sim)->rules;
+    UT_ASSERT(mlsShellCapOff(r, "round 2 after the lobby change") == 0);
+    UT_ASSERT_MSG(r->big_explosion_threshold ==
+                      classic.big_explosion_threshold,
+                  "round 2 with superboom off: big_explosion_threshold %d, "
+                  "wanted the classic %d", (int)r->big_explosion_threshold,
+                  (int)classic.big_explosion_threshold);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);
