@@ -32,6 +32,11 @@
  *     a dead pillbox on river crosses it with the rule at 0, and is turned
  *     back by it with the rule at 1.
  *
+ *   man_dead_pill_lifted_waits_for_tank — a builder crossing a dead
+ *     pillbox on river or deep sea, when the pillbox is lifted from under
+ *     him, stays on that square, as in Mac Bolo, until his tank comes to
+ *     him; then he gets back in.
+ *
  *   man_dead_pill_brain_walk — the bots' builder walk sim walks a square
  *     the brain marks as a dead pillbox at road speed, on swamp and on
  *     river, and a wall mark is not replaced by a road mark.
@@ -388,6 +393,120 @@ int run_man_dead_pill_walk_across_water(void) {
     UT_ASSERT_MSG(onRiver1 == -1,
                   "with man_dead_pill_terrain_speed 1 he crossed a dead "
                   "pillbox on river in %d ticks", onRiver1);
+    return 0;
+}
+
+/* How long he is watched standing on the water before his tank comes, and
+ * how long he is given to get in once it is there. */
+#define MDP_STAND_TICKS  500
+#define MDP_RESCUE_TICKS 200
+
+/* The tank on a boat stands this far west of him: inside
+ * lgm_boat_return_offset (160), so he walks to it, and outside
+ * lgm_return_tolerance (128), so he has to walk. */
+#define MDP_BOAT_GAP 144
+
+/* Send the builder across a dead pillbox at (MDP_X, MDP_Y) standing on
+ * `under` (river or deep sea) to a road order at (MDP_X + 2, MDP_Y). On the
+ * first tick he stands on its square the pillbox is lifted, as a tank
+ * lifting it does. He must then stay where he is, and get back in when his
+ * tank comes to him: on river the tank drives onto his spot; on deep sea
+ * it sails to MDP_BOAT_GAP west of him on a boat.
+ *
+ * This is the Mac Bolo behaviour, from the rooklift clone at commit
+ * f355e4f: goport/sim/man.go:452-485 (each step is tested at the man's new
+ * place by man_blocked, his four feet in the middle of his square, and a
+ * refused step turns him back), man.go:534-544 (only his tank within 9 px,
+ * 13 px on his way back, lets him through), man.go:554 (blocks_man refuses
+ * river and deep sea), and goport/sim/audit_man_test.go:84-88 (a man in
+ * the water "stays there for good" unless his tank comes within 13 px). */
+static int mdpLiftedWaits(BYTE under) {
+    const char *water = under == RIVER ? "river" : "deep sea";
+    ServerSim *sim = mdpMakeSim();
+    GameSim *gs;
+    lgm *man;
+    WORLD x0 = 0, y0 = 0;
+    int t;
+    int lifted = 0;
+
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    UT_ASSERT_MSG(gs->tanks[MDP_SLOT] != NULL && gs->lgmen[MDP_SLOT] != NULL,
+                  "slot %d joined without a tank or a builder", MDP_SLOT);
+    gs->rules.man_dead_pill_terrain_speed = 0;
+
+    mdpPaintRow(sim, ROAD, MDP_TANK_X - 2, MDP_X + 3, MDP_Y);
+    mdpPaintRow(sim, under, MDP_X, MDP_X, MDP_Y);
+    mdpPaintRow(sim, GRASS, MDP_X + 2, MDP_X + 2, MDP_Y);
+    UT_ASSERT(mdpPlacePill(sim, MDP_X, MDP_Y, 0) == 0);
+    tankSetWorld(gs, &gs->tanks[MDP_SLOT],
+                 (WORLD) ((MDP_TANK_X << TANK_SHIFT_MAPSIZE) +
+                          MAP_SQUARE_MIDDLE),
+                 (WORLD) ((MDP_Y << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE),
+                 (TURNTYPE) 0, FALSE);
+    tankSetTrees(gs, &gs->tanks[MDP_SLOT], (BYTE) TANK_FULL_TREES);
+
+    man = &gs->lgmen[MDP_SLOT];
+    lgmAddRequest(gs, man, &gs->tanks[MDP_SLOT], MDP_X + 2, MDP_Y,
+                  LGM_ROAD_REQUEST);
+    UT_ASSERT_MSG((*man)->inTank == FALSE &&
+                      (*man)->state == LGM_STATE_GOING,
+                  "the order across %s never sent the builder out", water);
+
+    /* Out to the pillbox, which is lifted the first tick he is on it. */
+    for (t = 1; t <= MDP_WALK_LIMIT && lifted == 0; t++) {
+        lgmUpdate(gs, man, &gs->tanks[MDP_SLOT]);
+        if ((*man)->state == LGM_STATE_GOING &&
+            ((*man)->x >> TANK_SHIFT_MAPSIZE) == MDP_X &&
+            ((*man)->y >> TANK_SHIFT_MAPSIZE) == MDP_Y) {
+            pillsSetPillInTank(&gs->pb, MDP_PILL, TRUE);
+            UT_ASSERT_MSG(pillsExistPos(&gs->pb, MDP_X, MDP_Y) == FALSE,
+                          "the lifted pillbox still reads as on its square");
+            UT_ASSERT_MSG(mdpManSpeed(sim, MDP_X, MDP_Y) == 0,
+                          "bare %s under the lifted pillbox walks at %u",
+                          water, (unsigned) mdpManSpeed(sim, MDP_X, MDP_Y));
+            x0 = (*man)->x;
+            y0 = (*man)->y;
+            lifted = 1;
+        }
+    }
+    UT_ASSERT_MSG(lifted == 1, "the builder never stood on the dead pillbox "
+                  "on %s", water);
+
+    /* He stays: no step out, and not back in the tank. */
+    for (t = 1; t <= MDP_STAND_TICKS; t++) {
+        lgmUpdate(gs, man, &gs->tanks[MDP_SLOT]);
+        UT_ASSERT_MSG((*man)->inTank == FALSE,
+                      "on %s he was back in his tank %d ticks after the "
+                      "lift, with the tank 4 squares off", water, t);
+        UT_ASSERT_MSG((*man)->x == x0 && (*man)->y == y0,
+                      "on %s he moved from (%04X,%04X) to (%04X,%04X) %d "
+                      "ticks after the lift", water, (unsigned) x0,
+                      (unsigned) y0, (unsigned) (*man)->x,
+                      (unsigned) (*man)->y, t);
+    }
+
+    /* His tank comes to him. */
+    if (under == RIVER) {
+        tankSetWorld(gs, &gs->tanks[MDP_SLOT], x0, y0, (TURNTYPE) 0, FALSE);
+    } else {
+        tankSetWorld(gs, &gs->tanks[MDP_SLOT], (WORLD) (x0 - MDP_BOAT_GAP),
+                     y0, (TURNTYPE) 0, FALSE);
+        tankSetOnBoat(&gs->tanks[MDP_SLOT], TRUE);
+    }
+    for (t = 1; t <= MDP_RESCUE_TICKS && (*man)->inTank == FALSE; t++) {
+        lgmUpdate(gs, man, &gs->tanks[MDP_SLOT]);
+    }
+    UT_ASSERT_MSG((*man)->inTank == TRUE,
+                  "on %s he was not back in his tank %d ticks after it "
+                  "came to him", water, MDP_RESCUE_TICKS);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_man_dead_pill_lifted_waits_for_tank(void) {
+    UT_ASSERT(mdpLiftedWaits(RIVER) == 0);
+    UT_ASSERT(mdpLiftedWaits(DEEP_SEA) == 0);
     return 0;
 }
 

@@ -2974,6 +2974,7 @@ int run_man_dead_pill_speed_terrain_rule(void);
 int run_man_dead_pill_speed_follows_road_rule(void);
 int run_man_dead_pill_walk_ticks(void);
 int run_man_dead_pill_walk_across_water(void);
+int run_man_dead_pill_lifted_waits_for_tank(void);
 int run_man_dead_pill_brain_walk(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
