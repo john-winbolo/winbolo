@@ -1148,15 +1148,16 @@ static bool lobbySettingScenarioFixes(const ServerSim *sim, uint8_t lst,
     }
 }
 
-/* The round length the lobby settles on, in 20 ms frames (50 a second), or
- * UNLIMITED_GAME_TIME. Written to originalGameLength as well as gameLength:
- * serverSimStartGame and the return to the lobby put gameLength back to
- * originalGameLength, so a length written to gameLength alone lasted only
- * until the round started, and the round ran on the length the server was
- * started with. */
-static void lobbySetRoundLength(ServerSim *sim, int32_t frames) {
-    serverSimSetGameLength(sim, frames);
-    sim->originalGameLength = frames;
+/* The round length the lobby's time settings choose. Every round start
+ * after a countdown, and the return to the lobby, put gameLength back to
+ * originalGameLength, so a choice written to gameLength alone lasted only
+ * until the next start: the round played the length the server was
+ * created with while the lobby showed the host's. Both are set here. A
+ * scenario's clock (set_game_time, a fixed time limit) still writes
+ * gameLength alone, so it never outlasts its round or its scenario. */
+static void lobbySetRoundLength(ServerSim *sim, int32_t ticks) {
+    serverSimSetGameLength(sim, ticks);
+    sim->originalGameLength = ticks;
 }
 
 /* Shared apply path for the LST_* setting cluster carried in
