@@ -6457,6 +6457,56 @@ bool transportUdpClientStartLobbyScriptUpload(Transport *t,
     return ok;
 }
 
+/* Whether a lobby map change of this client's is still under way: a map
+ * command not yet acked, the re-join a map change sends the client on, or an
+ * upload not yet over. The
+ * map chooser reads it every frame and greys its picks while it holds, since
+ * an upload started then is refused and a commit or cancel sent then can
+ * land before the upload does.
+ *
+ * Nothing here is latched, so it cannot stay true by being forgotten. Each
+ * part ends by itself: the command with its ack or the connection, the
+ * re-join when the client is CONNECTED again or
+ * gives up (JOIN_MAX_RETRIES, the map download's restart cap), which ends
+ * the connection, and the upload with the server's answer or the upload
+ * watchdog (UPLOAD_ACK_TIMEOUT_MS, UPLOAD_STALL_TIMEOUT_MS). An upload that is
+ * over but not yet let go of (status 3 or 4) is not under way: the pump lets
+ * go of it on its next CONNECTED tick. */
+bool transportUdpClientMapChangeBusy(Transport *t) {
+    TransportUdpClientCtx *c;
+    uint8_t st;
+    uint32_t seq;
+
+    if (t == NULL || t->ctx == NULL) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinedOnce && (c->joinState == UDP_CLIENT_JOINING ||
+                          c->joinState == UDP_CLIENT_DOWNLOADING_MAP)) {
+        return true;
+    }
+    /* A map pick, random map, Use This Map or cancel the server has not yet
+       acked. An upload does not ride the command queue, so one started now
+       could reach the server ahead of the command, lost and being resent,
+       and the command then land over it. The server acks every command it
+       applies, refused or not, and applies a map change before it acks, so
+       this ends with the ack (the re-join above usually taking over first)
+       or with the connection: an unacked head is resent every 80 ms until
+       then. */
+    for (seq = c->outHeadSeq; seq != c->outTailSeq; seq++) {
+        switch (c->outCmdQueue[seq % OUT_CMD_QUEUE_CAP].cmd.type) {
+        case CMD_LOBBY_SET_MAP:
+        case CMD_LOBBY_PREVIEW_RANDOM:
+        case CMD_LOBBY_PREVIEW_COMMIT:
+        case CMD_LOBBY_PREVIEW_CANCEL:
+            return true;
+        default:
+            break;
+        }
+    }
+    if (!c->uploadActive || c->clientSim == NULL) return false;
+    st = c->clientSim->lobbyMapUploadStatus;
+    return st != 3 && st != 4;
+}
+
 uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t) {
     TransportUdpClientCtx *c;
     if (t == NULL) return 0;

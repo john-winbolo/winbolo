@@ -2637,6 +2637,7 @@ int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);
+int run_loopback_map_change_busy_lifts(void);
 /* A loaded map upload re-joins the client; once it is CONNECTED again the
  * Server Maps listing is asked for and answered. */
 int run_loopback_map_upload_list_after_rejoin(void);
