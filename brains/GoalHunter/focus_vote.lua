@@ -523,27 +523,11 @@ function M.defense(state, world, info, cl, tiles, hpills, opills, now)
       d.label, d.blocked = "deep", true
       d.route = C.FOCUS_SPIKE_DEFENSE_MAX
     else
-      local HD = hide_tiles(info)
-      local any_exposed, any_hidden = false, false
-      for _, t in ipairs(ce.path) do
-        local fb = nil
-        for _, p in ipairs(hpills) do
-          if edist(t.mx, t.my, p.mx, p.my) <= R then
-            if fb == nil then fb = forest_block(world, t.mx, t.my) end
-            local far = math.max(math.abs(t.mx - p.mx), math.abs(t.my - p.my)) >= HD
-            if fb and far then
-              any_hidden = true
-            else
-              any_exposed = true
-              route_pills[p.id] = p
-            end
-          end
-        end
-      end
-      for _, p in pairs(route_pills) do
-        d.route = d.route + (p.armour / 15) * C.FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT
-        d.n_route_pills = d.n_route_pills + 1
-      end
+      -- The shared route risk (M.path_risk).
+      local r, hits, any_exposed, any_hidden = M.path_risk(world, info, hpills, ce.path, nil)
+      d.route = r
+      for _, h in ipairs(hits) do route_pills[h.id] = h end
+      d.n_route_pills = #hits
       d.label = any_exposed and "deep" or (any_hidden and "hidden" or "shallow")
       local last = ce.path[#ce.path]
       d.plen = ce.plen
@@ -590,6 +574,41 @@ local function pill_sees(world, HD, p, x, y)
   return not (far and forest_block(world, x, y))
 end
 M.pill_sees = pill_sees
+
+-- Route risk of one tank path (a list of { mx, my }, start first). The one
+-- route risk function of the vote planner (M.defense, M.risk) and of the
+-- adaptive spot score (M.score_spots): each known hostile pill that sees a
+-- tile of the path (pill_sees) adds FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT x
+-- armour/15, once per pill. A pill in skip (the pills already counted as
+-- stand risk) adds nothing. Answers the risk, the pills that add to it
+-- ({ id, armour, mx, my, add, at = the first path tile it sees }, in path
+-- order), any_exposed (a pill sees a path tile, skip included) and
+-- any_hidden (a pill in range is blind to a path tile in a forest block).
+function M.path_risk(world, info, hpills, path, skip)
+  local HD = hide_tiles(info)
+  local R = C.PILL_FIRE_RANGE
+  local r, hits, seen = 0, {}, {}
+  local any_exposed, any_hidden = false, false
+  for _, t in ipairs(path) do
+    for _, p in ipairs(hpills) do
+      if edist(t.mx, t.my, p.mx, p.my) <= R then
+        if pill_sees(world, HD, p, t.mx, t.my) then
+          any_exposed = true
+          if not (skip and skip[p.id]) and not seen[p.id] then
+            seen[p.id] = true
+            local add = (p.armour / 15) * C.FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT
+            r = r + add
+            hits[#hits + 1] = { id = p.id, armour = p.armour, mx = p.mx, my = p.my, add = add,
+                                at = { mx = t.mx, my = t.my } }
+          end
+        else
+          any_hidden = true
+        end
+      end
+    end
+  end
+  return r, hits, any_exposed, any_hidden
+end
 
 -- The place our tank stands to send the builder to spot t, with no route:
 -- the tile on the straight line from (sx,sy) to the spot, at
@@ -786,25 +805,13 @@ function M.risk(state, world, info, cl, tiles, hpills, opills, now, spare)
       d.route = C.FOCUS_SPIKE_DEFENSE_MAX
     else
       local path = ce.path
-      local cut = #path
-      local any_exposed, any_hidden = d.n_spot_pills > 0, false
-      for i = 1, cut do
-        local t = path[i]
-        for _, p in ipairs(hpills) do
-          if edist(t.mx, t.my, p.mx, p.my) <= C.PILL_FIRE_RANGE then
-            if pill_sees(world, HD, p, t.mx, t.my) then
-              any_exposed = true
-              if not spot_pills[p.id] and not route_pills[p.id] then
-                route_pills[p.id] = p
-                d.route = d.route + (p.armour / 15) * C.FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT
-                d.n_route_pills = d.n_route_pills + 1
-              end
-            else
-              any_hidden = true
-            end
-          end
-        end
-      end
+      -- The shared route risk (M.path_risk); the pills that see a stand
+      -- place are counted once, as spot risk.
+      local r, hits, ex, hid = M.path_risk(world, info, hpills, path, spot_pills)
+      d.route = r
+      for _, h in ipairs(hits) do route_pills[h.id] = h end
+      d.n_route_pills = #hits
+      local any_exposed, any_hidden = d.n_spot_pills > 0 or ex, hid
       d.label = any_exposed and "deep" or (any_hidden and "hidden" or "shallow")
       local last = path[#path]
       d.plen = ce.plen
@@ -1782,27 +1789,30 @@ function M.adapt_stand(world, info, hpills, c, rc)
   return best
 end
 
--- Route risk from the tank to a stand place: each known hostile pill that
--- does not see the stand place but sees a tile of the straight line from the
--- tank to it, FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT x armour/15, once per pill.
-function M.line_risk(world, info, hpills, tx, ty, q)
-  local HD = hide_tiles(info)
-  local n = math.max(math.abs(q.mx - tx), math.abs(q.my - ty))
-  local r = 0
-  for _, p in ipairs(hpills) do
-    if not pill_sees(world, HD, p, q.mx, q.my) then
-      for i = 0, n do
-        local f = n > 0 and i / n or 0
-        local x = math.floor(tx + (q.mx - tx) * f + 0.5)
-        local y = math.floor(ty + (q.my - ty) * f + 0.5)
-        if pill_sees(world, HD, p, x, y) then
-          r = r + (p.armour / 15) * C.FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT
-          break
-        end
-      end
+-- The path our tank would drive from its tile to (x,y), read from the map
+-- the bot already has: its tank-rooted KIND_NORMAL Dijkstra slates
+-- (init.lua start_slate; the map the goal ETAs read). The path is traced
+-- back from (x,y) through the slate's parent links
+-- (cpf_dijkstra_trace_path_by_kind, braincore.c; at most 2048 tiles). No
+-- new search per spot. With no slate (unit tests and offline checks) the
+-- vote planner's own search M.route from the tank tile, or
+-- M.tank_path_hook when set. Answers the path ({ mx, my } list, start
+-- first) and its length (diagonal steps 1.414), or nil (not reachable).
+function M.tank_path(world, info, hpills, tx, ty, x, y)
+  local tr = rawget(_G, "cpf_dijkstra_trace_path_by_kind")
+  if tr then
+    local f = tr(0 --[[KIND_NORMAL]], x, y, 2048)
+    if not f or #f < 2 then return nil end
+    local path, plen = {}, 0
+    for i = 1, #f - 1, 2 do path[#path + 1] = { mx = f[i], my = f[i + 1] } end
+    for i = 2, #path do
+      local a, b = path[i - 1], path[i]
+      plen = plen + ((a.mx ~= b.mx and a.my ~= b.my) and math.sqrt(2) or 1)
     end
+    return path, plen
   end
-  return r
+  if M.tank_path_hook then return M.tank_path_hook(world, info, hpills, tx, ty, x, y) end
+  return M.route(world, info, tx, ty, { { mx = x, my = y } }, hpills)
 end
 
 -- Every spike spot for the bases in left (this bot's claimed bases not yet
@@ -1821,29 +1831,59 @@ end
 -- one tile key that always stays). The best spots must pass the builder walk
 -- check (at most FOCUS_SPIKE_RESCORE_REACH_CHECKS). Answers the allowed
 -- spots, best total first (ties: lower tile key), each
--- { mx, my, k, n, stand, parts = {payoff, stand, route, travel, run}, total }.
+-- { mx, my, k, n, cov, stand, parts = {payoff, stand, route, travel, run},
+-- route_pills, plen, path, danger, total }.
+-- The route risk (M.path_risk, the vote planner's function) is counted along
+-- the path the tank would drive to the stand place (M.tank_path, the bot's
+-- Dijkstra map), not a straight line. A stand place the map cannot reach
+-- rules the spot out ("unreachable").
+-- Second answer (log only, for the spot_eval line): the counts of each
+-- check and the best rejected spot, { tiles, not_placeable, found, cut,
+-- tested, no_stand, unreachable, stand_risk, route_risk, noreach,
+-- unchecked, allowed, rej, all } (rej.why = the check that ruled it out;
+-- all = every candidate found, the tested ones with their parts).
 function M.score_spots(world, info, left, tx, ty, keep)
   local R = C.PILL_FIRE_RANGE
   local hp = pills_of(world, true)
   local cand, ck = {}, {}
   local Ri = math.floor(R)
+  local D = { tiles = 0, not_placeable = 0, found = 0, cut = 0, tested = 0, no_stand = 0,
+              unreachable = 0, stand_risk = 0, route_risk = 0, noreach = 0, unchecked = 0,
+              allowed = 0 }
+  local HD = hide_tiles(info)
+  local function reject(c, why)
+    c.why = why
+    D[why] = D[why] + 1
+    local r = D.rej
+    if not r or c.total > r.total + 1e-9 or (math.abs(c.total - r.total) <= 1e-9 and c.k < r.k) then
+      D.rej = c
+    end
+  end
   for _, b in ipairs(left) do
     for y = b.my - Ri, b.my + Ri do
       for x = b.mx - Ri, b.mx + Ri do
         local k = tkey(x, y)
         if not ck[k] and U.in_map(x, y) and edist(x, y, b.mx, b.my) <= R then
           ck[k] = true
+          D.tiles = D.tiles + 1
           if U.is_placeable_peek(x, y, world) and U.ttype_peek(x, y) ~= C.T_FOREST then
-            local n = 0
+            local n, cov = 0, {}
             for _, b2 in ipairs(left) do
-              if edist(x, y, b2.mx, b2.my) <= R then n = n + 1 end
+              if edist(x, y, b2.mx, b2.my) <= R then
+                n = n + 1
+                if b2.id then cov[#cov + 1] = b2.id end
+              end
             end
-            cand[#cand + 1] = { mx = x, my = y, k = k, n = n, dt = edist(tx, ty, x, y) }
+            cand[#cand + 1] = { mx = x, my = y, k = k, n = n, cov = cov, dt = edist(tx, ty, x, y) }
+          else
+            D.not_placeable = D.not_placeable + 1
           end
         end
       end
     end
   end
+  D.found = #cand
+  D.all = cand
   table.sort(cand, function(a, b)
     if a.k == keep then return b.k ~= keep end
     if b.k == keep then return false end
@@ -1852,18 +1892,52 @@ function M.score_spots(world, info, left, tx, ty, keep)
     return a.k < b.k
   end)
   local rc, out = {}, {}
-  for i = 1, math.min(#cand, C.FOCUS_SPIKE_RESCORE_MAX_SPOTS) do
+  local prc = {}  -- path risk per stand place, this rescore
+  D.tested = math.min(#cand, C.FOCUS_SPIKE_RESCORE_MAX_SPOTS)
+  D.cut = #cand - D.tested
+  for i = 1, D.tested do
     local c = cand[i]
     local q = M.adapt_stand(world, info, hp, c, rc)
     if q then
-      local route = M.line_risk(world, info, hp, tx, ty, q)
+      local pr = prc[q.k]
+      if pr == nil then
+        -- The pills that see the stand place are stand risk already.
+        local skip = {}
+        for _, p in ipairs(hp) do
+          if pill_sees(world, HD, p, q.mx, q.my) then skip[p.id] = true end
+        end
+        local path, plen = M.tank_path(world, info, hp, tx, ty, q.mx, q.my)
+        pr = false
+        if path then
+          local r, hits = M.path_risk(world, info, hp, path, skip)
+          local last = path[#path]
+          pr = { r = r, hits = hits, plen = plen or 0, path = path,
+                 cut = not (last and last.mx == q.mx and last.my == q.my) }
+        end
+        prc[q.k] = pr
+      end
+      local route = pr and pr.r or 0
       local travel = math.floor(edist(tx, ty, q.mx, q.my) / 10) * C.FOCUS_SPIKE_DEFENSE_DETOUR_WEIGHT
       local payoff = c.n * C.FOCUS_SPIKE_BASE_PAYOFF
       c.stand = q
       c.parts = { payoff = payoff, stand = q.risk, route = route, travel = travel, run = q.run }
+      c.route_pills = pr and pr.hits or {}
+      c.plen = pr and pr.plen or nil
+      c.path = pr and pr.path or nil
+      c.path_cut = pr and pr.cut or false
       c.danger = q.risk + route
       c.total = payoff - (q.risk + route + travel + q.run)
-      if c.danger <= C.FOCUS_SPIKE_DEFENSE_MAX + 1e-9 then out[#out + 1] = c end
+      if not pr then
+        reject(c, "unreachable")
+      elseif c.danger <= C.FOCUS_SPIKE_DEFENSE_MAX + 1e-9 then
+        out[#out + 1] = c
+      elseif q.risk > C.FOCUS_SPIKE_DEFENSE_MAX + 1e-9 then
+        reject(c, "stand_risk")
+      else
+        reject(c, "route_risk")
+      end
+    else
+      D.no_stand = D.no_stand + 1
     end
   end
   table.sort(out, function(a, b)
@@ -1884,12 +1958,16 @@ function M.score_spots(world, info, left, tx, ty, keep)
           found = true
         else
           c.noreach = true
+          reject(c, "noreach")
         end
+      else
+        reject(c, "unchecked")
       end
     end
     out = kept
   end
-  return out
+  D.allowed = #out
+  return out, D
 end
 
 -- Switch rule: the new spot must beat the current one by
@@ -1919,6 +1997,127 @@ local function parts_text(c)
     c.mx, c.my, c.stand.mx, c.stand.my, c.total, p.payoff, p.stand, p.route, p.travel, p.run)
 end
 M.parts_text = parts_text
+
+-- ── spot_eval log line (log only) ──────────────────────────────────────
+-- One line, stable key=value names (no spaces in a value), to print2 and
+-- the event file, on each rescore of an active adaptive plan and on every
+-- pick, change or drop. The parts of a spot (eval_parts):
+--   st:x,y|cov:ids|pay:|stand:|route:|plen:|rp:id/armour@x,y;...|cut:0/1|
+--   travel:|run:|risk:(stand+route, the value compared with
+--   FOCUS_SPIKE_DEFENSE_MAX)|total:
+local function f2(v) return string.format("%.2f", v or 0) end
+local function eval_parts(c)
+  if not c then return "-" end
+  local p = c.parts or {}
+  local rp = {}
+  for _, h in ipairs(c.route_pills or {}) do
+    rp[#rp + 1] = string.format("%d/%d@%d,%d", h.id, h.armour, h.mx, h.my)
+  end
+  return string.format("st:%s|cov:%s|pay:%s|stand:%s|route:%s|plen:%s|rp:%s|cut:%d|travel:%s|run:%s|risk:%s|total:%s",
+    c.stand and string.format("%d,%d", c.stand.mx, c.stand.my) or "none",
+    (c.cov and #c.cov > 0) and table.concat(c.cov, ",") or "-",
+    f2(p.payoff), f2(p.stand), f2(p.route), c.plen and string.format("%.1f", c.plen) or "-",
+    #rp > 0 and table.concat(rp, ";") or "-", c.path_cut and 1 or 0,
+    f2(p.travel), f2(p.run), f2(c.danger), f2(c.total))
+end
+M.eval_parts = eval_parts
+
+local function xy(c) return c and string.format("%d,%d", c.mx, c.my) or "none" end
+
+-- The spot_eval line. L: the levels (nil in the claim mode), list and D: the
+-- answers of score_spots (nil when the rescore was skipped), skip: why the
+-- rescore was skipped (builder_out, no_pill, no_target) or nil. The change
+-- is the A.switches entry of this tick. Keeps A.eval_line (the viz and
+-- the unit test).
+local function spot_eval(A, info, now, L, list, D, skip)
+  local me = info.player_number or -1
+  local tx, ty = tank_tile(info)
+  D = D or {}
+  local o = {}
+  local function kv(k, v) o[#o + 1] = k .. "=" .. tostring(v) end
+  o[1] = "FOCUS_SPIKE spot_eval"
+  kv("t", now)
+  o[#o + 1] = "p" .. tostring(me)
+  kv("id", A.id)
+  kv("tank", string.format("%d,%d", tx, ty))
+  kv("arm", info.armour or 0)
+  kv("carried", info.carried_pills or 0)
+  kv("builder", info.man_status == C.LGM_INTANK and "in" or "out")
+  if L then
+    local ct = {}
+    for _, id in ipairs(L.ids or {}) do ct[#ct + 1] = string.format("%d:%d", id, L.c[id]) end
+    kv("m", L.m ~= nil and tostring(L.m) or "none")
+    kv("S", #(L.S or {}) > 0 and table.concat(L.S, ",") or "-")
+    kv("c", #ct > 0 and table.concat(ct, ",") or "-")
+  else
+    kv("m", "-"); kv("S", "-"); kv("c", "-")
+  end
+  kv("skip", skip or "-")
+  for _, k in ipairs({ "tiles", "not_placeable", "found", "cut", "tested", "no_stand", "unreachable",
+                       "stand_risk", "route_risk", "noreach", "unchecked" }) do
+    kv(k, D[k] or 0)
+  end
+  kv("other", (D.cut or 0) + (D.unchecked or 0))
+  kv("allowed", D.allowed or 0)
+  kv("risk_max", f2(C.FOCUS_SPIKE_DEFENSE_MAX))
+  local chosen = nil
+  if A.mine and list then
+    for _, c in ipairs(list) do
+      if c.mx == A.mine.mx and c.my == A.mine.my then chosen = c; break end
+    end
+  end
+  kv("chosen", xy(A.mine))
+  if chosen then
+    kv("chosen_p", eval_parts(chosen))
+  elseif A.mine and A.mine.stand then
+    kv("chosen_p", string.format("st:%d,%d", A.mine.stand.mx, A.mine.stand.my))
+  else
+    kv("chosen_p", "-")
+  end
+  local alts = {}
+  for _, c in ipairs(list or {}) do
+    if c ~= chosen and #alts < 2 then alts[#alts + 1] = c end
+  end
+  for i = 1, 2 do
+    local c = alts[i]
+    kv("alt" .. i, xy(c))
+    kv("alt" .. i .. "_p", eval_parts(c))
+    kv("alt" .. i .. "_margin", (c and chosen) and f2(chosen.total - c.total) or "-")
+  end
+  kv("switch_need", chosen and f2(C.FOCUS_SPIKE_SWITCH_MARGIN * math.max(math.abs(chosen.total), 1)) or "-")
+  kv("rej", xy(D.rej))
+  kv("rej_why", D.rej and D.rej.why or "-")
+  kv("rej_p", eval_parts(D.rej))
+  local sw = A.switches and A.switches[#A.switches]
+  if sw and sw.t == now then
+    local ot = sw.old_total
+    local owhy = "-"
+    if sw.old and D.all then
+      for _, c in ipairs(D.all) do
+        if c.mx == sw.old.mx and c.my == sw.old.my then
+          if ot == nil and c.total then ot = c.total end
+          owhy = c.why or (c.total and "allowed") or "not_tested"
+          break
+        end
+      end
+      if owhy == "-" then owhy = "not_found" end
+    end
+    kv("change", sw.why)
+    kv("change_old", xy(sw.old))
+    kv("change_old_total", ot and f2(ot) or "-")
+    kv("change_old_why", owhy)
+    kv("change_new", xy(sw.new))
+    kv("change_new_total", sw.new_total and f2(sw.new_total) or "-")
+  else
+    kv("change", "-")
+  end
+  local s = table.concat(o, " ")
+  A.eval_line = s
+  print2(s)
+  errline(s)
+  return s
+end
+M.spot_eval = spot_eval
 
 -- This bot's chosen spot changes: the plan tile list keeps the placed spots
 -- and this bot's chosen one.
@@ -2064,20 +2263,25 @@ local function level_step(state, F, world, info, now)
   end
   if not picked and (now - A.t_pick) >= C.FOCUS_SPIKE_RELEASE_WAIT then return "incomplete" end
   -- The builder is out: keep the spot it went for.
-  if info.man_status ~= C.LGM_INTANK then return nil end
+  if info.man_status ~= C.LGM_INTANK then
+    spot_eval(A, info, now, L, nil, nil, "builder_out")
+    return nil
+  end
   if (info.carried_pills or 0) < 1 then
     if A.mine then set_spot(A, info, now, nil, "no_pill", nil, state) end
-    A.score = { t = now, top = {}, mine = {} }
+    A.score = { t = now, top = {}, mine = {}, skip = "no_pill" }
+    spot_eval(A, info, now, L, nil, nil, "no_pill")
     return nil
   end
   local tx, ty = tank_tile(info)
   if #L.list == 0 then
     if A.mine then set_spot(A, info, now, nil, "no_target", nil, state) end
-    A.score = { t = now, top = {}, mine = {}, tank = { mx = tx, my = ty } }
+    A.score = { t = now, top = {}, mine = {}, tank = { mx = tx, my = ty }, skip = "no_target" }
+    spot_eval(A, info, now, L, nil, nil, "no_target")
     return nil
   end
   local keep = A.mine and tkey(A.mine.mx, A.mine.my) or nil
-  local list = M.score_spots(world, info, L.list, tx, ty, keep)
+  local list, D = M.score_spots(world, info, L.list, tx, ty, keep)
   local best = list[1]
   local cur = nil
   if keep then
@@ -2099,7 +2303,9 @@ local function level_step(state, F, world, info, now)
   if A.mine then
     for _, c in ipairs(list) do if c.mx == A.mine.mx and c.my == A.mine.my then chosen = c; break end end
   end
-  A.score = { t = now, top = top, chosen = chosen, mine = L.S, tank = { mx = tx, my = ty } }
+  A.score = { t = now, top = top, chosen = chosen, mine = L.S, tank = { mx = tx, my = ty }, diag = D,
+              list = list }
+  spot_eval(A, info, now, L, list, D, nil)
   return nil
 end
 M.level_step = level_step
@@ -2183,7 +2389,7 @@ function M.adapt_step(state, F, world, info, now)
     return nil
   end
   local keep = A.mine and tkey(A.mine.mx, A.mine.my) or nil
-  local list = M.score_spots(world, info, mine, tx, ty, keep)
+  local list, D = M.score_spots(world, info, mine, tx, ty, keep)
   -- Claimed bases no allowed spot covers: release them.
   local rl = {}
   for _, q in ipairs(mine) do
@@ -2217,7 +2423,9 @@ function M.adapt_step(state, F, world, info, now)
   end
   local mids = {}
   for _, q in ipairs(mine) do mids[#mids + 1] = q.id end
-  A.score = { t = now, top = top, chosen = chosen, mine = mids, tank = { mx = tx, my = ty } }
+  A.score = { t = now, top = top, chosen = chosen, mine = mids, tank = { mx = tx, my = ty }, diag = D,
+              list = list }
+  spot_eval(A, info, now, nil, list, D, nil)
   return nil
 end
 
@@ -2596,14 +2804,45 @@ local function update_active(state, F, world, info, now, care_tag)
   -- Abort checks, this bot's own view.
   local tr = F.trip
   if tr then
+    -- Log only: one line when the builder leaves for a plan spot, one when
+    -- it lands (placed), comes back, dies or the trip times out.
+    local me = info.player_number or -1
+    local function trip_line(ev, why)
+      local tx, ty = tank_tile(info)
+      local s = string.format("FOCUS_SPIKE %s t=%d p%d id=%d to=%d,%d tank=%d,%d", ev, now, me, A.id,
+        tr.mx, tr.my, tx, ty)
+      if ev == "builder_out" then
+        s = s .. string.format(" from=%d,%d d=%.1f", tx, ty, edist(tx, ty, tr.mx, tr.my))
+      else
+        s = s .. string.format(" why=%s ticks=%d from=%s", why, now - (tr.t_left or tr.t),
+          tr.from and string.format("%d,%d", tr.from.mx, tr.from.my) or "-")
+      end
+      print2(s)
+      errline(s)
+    end
+    if info.man_status ~= C.LGM_INTANK and not tr.left then
+      local tx, ty = tank_tile(info)
+      tr.from, tr.t_left = { mx = tx, my = ty }, now
+      trip_line("builder_out")
+    end
     if info.man_status ~= C.LGM_INTANK then tr.left = true end
+    if info.man_status == C.LGM_DEAD and not tr.dead then
+      tr.dead = true
+      trip_line("builder_back", spike.pill_alive_at(world, tr.mx, tr.my) and "dead_after_place" or "dead")
+    end
     if info.man_status == C.LGM_DEAD and M.plan_tile(state, tr.mx, tr.my)
        and not spike.pill_alive_at(world, tr.mx, tr.my) then
       F.trip = nil
       abort(state, F, info, now, "lost_pill")
       return
     end
-    if (tr.left and info.man_status == C.LGM_INTANK) or (now - tr.t) > (C.PLACE_TRIP_MAX_TICKS or 2000) then
+    if tr.left and info.man_status == C.LGM_INTANK then
+      if not tr.dead then
+        trip_line("builder_back", spike.pill_alive_at(world, tr.mx, tr.my) and "placed" or "returned")
+      end
+      F.trip = nil
+    elseif (now - tr.t) > (C.PLACE_TRIP_MAX_TICKS or 2000) then
+      if not tr.dead then trip_line("builder_back", "timeout") end
       F.trip = nil
     end
   end

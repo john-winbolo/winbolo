@@ -756,8 +756,10 @@ end
 --- older-slate fallback — the single-slate dijkstra_trace_path picks
 --- the "best" slate which may be a newer one that hasn't expanded to
 --- (dx, dy) yet, returning nil even though some other slate has it.
-function M.dijkstra_trace_path_by_kind(kind, dx, dy)
-  return cpf_dijkstra_trace_path_by_kind(kind, dx, dy)
+--- max_steps (optional, default 64, at most 2048): the path is cut to its
+--- first max_steps tiles from the source.
+function M.dijkstra_trace_path_by_kind(kind, dx, dy, max_steps)
+  return cpf_dijkstra_trace_path_by_kind(kind, dx, dy, max_steps)
 end
 
 function M.estimate_tank_travel_ticks(sx, sy, dx, dy, in_boat, max_ticks, stuck_ticks)

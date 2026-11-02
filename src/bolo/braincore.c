@@ -2101,20 +2101,28 @@ static int l_cpf_dijkstra_trace_path(lua_State *L) {
   return 1;
 }
 
-/* cpf_dijkstra_trace_path_by_kind(kind, dx, dy) → flat array {x1,y1,...} or nil.
+/* cpf_dijkstra_trace_path_by_kind(kind, dx, dy [, max_steps]) → flat array
+ * {x1,y1,...} or nil.
  * Multi-slate: walks slates of given kind in recency order, picks the
  * first where (dx,dy) is reachable, traces from THAT slate. Use when
  * the cost was found via lookup_by_kind's older-slate fallback — the
  * single-slate trace_path picks "best" which may be a newer slate that
- * hasn't reached (dx,dy) yet, returning nil. */
+ * hasn't reached (dx,dy) yet, returning nil.
+ * max_steps (optional, default 64, at most 2048): the path is cut to its
+ * first max_steps tiles from the source. The focused spike route risk
+ * (focus_vote.lua) asks for the whole path to the stand place. */
+#define CPF_TRACE_MAX_STEPS 2048
 static int l_cpf_dijkstra_trace_path_by_kind(lua_State *L) {
   CPF_GET(L);
   int kind = (int)luaL_checkinteger(L, 1);
   int dx   = (int)luaL_checkinteger(L, 2);
   int dy   = (int)luaL_checkinteger(L, 3);
-  int path_x[64], path_y[64];
+  int max_steps = (int)luaL_optinteger(L, 4, 64);
+  if (max_steps < 1) max_steps = 1;
+  if (max_steps > CPF_TRACE_MAX_STEPS) max_steps = CPF_TRACE_MAX_STEPS;
+  int path_x[CPF_TRACE_MAX_STEPS], path_y[CPF_TRACE_MAX_STEPS];
   int n = brainPathfinderDijkstraTracePathByKind(pf, kind, dx, dy,
-                                                  path_x, path_y, 64);
+                                                  path_x, path_y, max_steps);
   if (n <= 0) { lua_pushnil(L); return 1; }
   lua_createtable(L, n * 2, 0);
   for (int i = 0; i < n; i++) {
