@@ -1927,7 +1927,8 @@ M.FOCUS_SPIKE_HOME_ABORT_NEAR      = 0
 -- team bot that carries the most pills (tie: lower player number) picks
 -- spike spots; the other plan bots hold no spot and keep their normal goals
 -- (defend, recapture, refuel). false = every carrier picks (the old rule).
--- KEEL false.
+-- KEEL false. Focus presets false too: true gave 5 losses (4 before) and
+-- 55 focus bases at the end (61 before) in bench n8.
 M.FOCUS_SPIKE_SOLO_CARRIER         = false
 -- When a bot on an active plan learns a hostile pill in fire range of a plan
 -- tile: "abort" ends the plan; "repick" finds one new tile for the bases that
@@ -6792,7 +6793,7 @@ do
     FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
     FOCUS_SPIKE_PLAN_FLAT = true,
     FOCUS_SPIKE_HOME_ABORT_NEAR = 0,   -- 16 tested Nov 2: no gain (bench n6)
-    FOCUS_SPIKE_SOLO_CARRIER = true,
+    FOCUS_SPIKE_SOLO_CARRIER = false,  -- true tested Nov 2: worse (bench n8)
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6820,7 +6821,7 @@ do
     FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
     FOCUS_SPIKE_PLAN_FLAT = true,
     FOCUS_SPIKE_HOME_ABORT_NEAR = 0,   -- 16 tested Nov 2: no gain (bench n6)
-    FOCUS_SPIKE_SOLO_CARRIER = true,
+    FOCUS_SPIKE_SOLO_CARRIER = false,  -- true tested Nov 2: worse (bench n8)
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and
