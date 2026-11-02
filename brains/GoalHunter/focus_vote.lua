@@ -2530,6 +2530,8 @@ local function level_slice(state, F, world, info, now)
   if ms > S.ms_max then S.ms_max = ms end
   if not done then return nil end
   A.pass = nil
+  A.n_pass = (A.n_pass or 0) + 1
+  A.last_allowed = #list
   D.slices, D.slice_n, D.slice_ms_max = S.slices, S.k, S.ms_max
   D.pass_ticks, D.restarts, D.pass_t0 = now - S.t0, S.restarts, S.t0
   local L, tx, ty, keep = S.L, S.tx, S.ty, S.P.keep
@@ -2597,13 +2599,29 @@ function level_step(state, F, world, info, now)
       L.m and tostring(L.m) or "none", table.concat(L.S, ","), table.concat(ct, ","),
       table.concat(rt, ","), laid))
   end
+  -- The bench line of an end with no pick (log only): what this bot did
+  -- in the wait.
+  local function nopick(why)
+    errline(string.format(
+      "FOCUS_SPIKE nopick t=%d p%d id=%d why=%s team=%d carried=%d builder=%s boat=%s m=%s S=%s list=%d passes=%d allowed=%s builder_out=%d restarts=%d wait=%d",
+      now, me, A.id, why, team, info.carried_pills or 0,
+      info.man_status == C.LGM_INTANK and "in" or "out", tostring(info.inboat and true or false),
+      L.m and tostring(L.m) or "none", table.concat(L.S, ","), #L.list, A.n_pass or 0,
+      A.last_allowed and tostring(A.last_allowed) or "-", A.n_out or 0, A.pass_restarts or 0,
+      now - (A.t_pick or now)))
+  end
   if team == 0 and not picked then
     if laid > 0 then return "all_laid" end
+    nopick("no_team_pill")
     return "incomplete"
   end
-  if not picked and (now - A.t_pick) >= C.FOCUS_SPIKE_RELEASE_WAIT then return "incomplete" end
+  if not picked and (now - A.t_pick) >= C.FOCUS_SPIKE_RELEASE_WAIT then
+    nopick("release_wait")
+    return "incomplete"
+  end
   -- The builder is out: keep the spot it went for.
   if info.man_status ~= C.LGM_INTANK then
+    A.n_out = (A.n_out or 0) + 1
     return nil
   end
   if (info.carried_pills or 0) < 1 then
