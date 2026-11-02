@@ -35,6 +35,13 @@
 -- shot every 5 ticks. WinBolo fires as the count runs out, and floors it
 -- at pill_attack_min_ticks, 6 by default. This part sets it to 5.
 --
+-- Pillbox shell range. A Mac Bolo pillbox's shell starts half a square
+-- out and flies 32 steps of about a quarter square, so it falls 2143 to
+-- 2175 world units (256 to a square) from the pillbox, by direction.
+-- WinBolo's starts 160 out and flies pill_fire_length, 8.5 by default,
+-- which ends it 2208 out, a quarter square further. This part sets
+-- pill_fire_length to 8.25, which ends it 2144 out.
+--
 -- Base defence. When a base is shot, every allied pillbox near it gets
 -- angry and fires faster. WinBolo has always counted "near" as a square:
 -- up to 9 map squares away on each axis, edge included, which reaches a
@@ -102,6 +109,7 @@
 --   pill_aim            pillbox aiming and massage (pill_aim_mac).
 --   pill_anger          angry pillbox fire rate
 --                       (pill_attack_min_ticks, 5).
+--   pill_shell_range    pillbox shell range (pill_fire_length, 8.25).
 --   base_defence        base defence circle (pill_base_defend_shape).
 --   base_defence_radius its radius (pill_base_defend_range, 7).
 --   tank_hit_mines      tank hits do not set off mines
@@ -136,13 +144,13 @@ scenario = {
   name = "Mac Bolo Rules",
   description = "Plays the Mac Bolo shell pushback, pillbox shell cap, " ..
                 "tank clearance, pillbox massage, angry pillbox fire " ..
-                "rate, base defence circle, " ..
+                "rate, pillbox shell range, base defence circle, " ..
                 "tank hits that do not set off mines, superboom " ..
                 "threshold and spawn starts. " ..
                 "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-11-02T11:02Z",
+  updated = "2026-11-02T20:38Z",
   kind = "mod",
   bound = false,
 
@@ -181,6 +189,10 @@ scenario = {
 
     -- Angry pillbox fire rate: Mac Bolo's fastest, a shot every 5 ticks.
     { id = "pill_anger", label = "Mac Bolo angry pillbox fire rate",
+      type = "bool", default = true },
+
+    -- Pillbox shell range: Mac Bolo's, a quarter square short of WinBolo's.
+    { id = "pill_shell_range", label = "Mac Bolo pillbox shell range",
       type = "bool", default = true },
 
     -- Base defence: a circle round a shot base instead of a square.
@@ -229,6 +241,7 @@ local SHELL_CAP         = game.setting("shell_cap")
 local TANK_BOXES        = game.setting("tank_boxes")
 local PILL_AIM          = game.setting("pill_aim")
 local PILL_ANGER        = game.setting("pill_anger")
+local PILL_SHELL_RANGE  = game.setting("pill_shell_range")
 local BASE_DEFENCE      = game.setting("base_defence")
 local TANK_HIT_MINES    = game.setting("tank_hit_mines")
 local SUPERBOOM         = game.setting("superboom")
@@ -271,6 +284,11 @@ end
 if PILL_ANGER then
   -- Mac Bolo's fastest angry pillbox: a shot every 5 ticks.
   rules.pill_attack_min_ticks = 5
+end
+
+if PILL_SHELL_RANGE then
+  -- A pillbox shell falls 2144 world units out, as Mac Bolo's do, not 2208.
+  rules.pill_fire_length = 8.25
 end
 
 if BASE_DEFENCE then

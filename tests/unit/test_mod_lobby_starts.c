@@ -25,8 +25,9 @@
  *       at 0 from the tank_hit_mines part added after it. 0 is also the
  *       classic table's value, so that part only matters when another
  *       script on the list sets 1. The later parts play at their numbers
- *       too: pill_attack_min_ticks 5 (pill_anger) and
- *       big_explosion_threshold 60 (superboom).
+ *       too: pill_attack_min_ticks 5 (pill_anger),
+ *       big_explosion_threshold 60 (superboom) and pill_fire_length 8.25
+ *       (pill_shell_range).
  *   run_mac_bolo_settings_each_part_off
  *       each part turned off on its own: that part's rules are back on the
  *       classic table and every other part's rules are unchanged.
@@ -342,25 +343,31 @@ enum {
     MLS_PART_TANK_HIT_MINES,
     MLS_PART_PILL_ANGER,
     MLS_PART_SUPERBOOM,
+    MLS_PART_PILL_SHELL_RANGE,
     MLS_PART_COUNT
 };
 
 static const char *const kMlsPartSetting[MLS_PART_COUNT] = {
     "pushback", "shell_cap", "tank_boxes", "pill_aim", "base_defence",
-    "tank_hit_mines", "pill_anger", "superboom",
+    "tank_hit_mines", "pill_anger", "superboom", "pill_shell_range",
 };
 
 /* Every rule the mod sets, the part that sets it, and the value its
- * written table always gave it. */
+ * written table always gave it. A float rule's value is in macFloat
+ * instead, and is compared by its bits, as the rules table holds it. */
 typedef struct {
     const char *name;
     size_t      offset;
     int         part;
     int32_t     mac;
+    bool        isFloat;
+    float       macFloat;
 } MlsRule;
 
 #define MLS_RULE(field, part, mac) \
-    { #field, offsetof(SimRules, field), part, mac }
+    { #field, offsetof(SimRules, field), part, mac, false, 0.0f }
+#define MLS_RULE_FLT(field, part, mac) \
+    { #field, offsetof(SimRules, field), part, 0, true, mac }
 
 static const MlsRule kMlsRules[] = {
     MLS_RULE(tank_slide_mac,               MLS_PART_PUSHBACK,     1),
@@ -376,12 +383,38 @@ static const MlsRule kMlsRules[] = {
     MLS_RULE(tank_hit_sets_off_mines,      MLS_PART_TANK_HIT_MINES, 0),
     MLS_RULE(pill_attack_min_ticks,        MLS_PART_PILL_ANGER,   5),
     MLS_RULE(big_explosion_threshold,      MLS_PART_SUPERBOOM,    60),
+    MLS_RULE_FLT(pill_fire_length,         MLS_PART_PILL_SHELL_RANGE, 8.25f),
 };
 
 #define MLS_RULE_COUNT ((int)(sizeof(kMlsRules) / sizeof(kMlsRules[0])))
 
 static int32_t mlsRuleValue(const SimRules *r, const MlsRule *rule) {
     return *(const int32_t *)(const void *)((const char *)r + rule->offset);
+}
+
+/* The mod's value for a rule, as the four-byte word the table holds. */
+static int32_t mlsRuleMac(const MlsRule *rule) {
+    int32_t bits;
+
+    if (!rule->isFloat) {
+        return rule->mac;
+    }
+    memcpy(&bits, &rule->macFloat, sizeof(bits));
+    return bits;
+}
+
+/* A rule's word written out for a failure message, as the number it is. */
+static const char *mlsRuleText(const MlsRule *rule, int32_t bits, char *buf,
+                               size_t len) {
+    float f;
+
+    if (rule->isFloat) {
+        memcpy(&f, &bits, sizeof(f));
+        snprintf(buf, len, "%g", (double)f);
+    } else {
+        snprintf(buf, len, "%d", (int)bits);
+    }
+    return buf;
 }
 
 int run_mac_bolo_settings_defaults_play_old_rules(void) {
@@ -392,10 +425,17 @@ int run_mac_bolo_settings_defaults_play_old_rules(void) {
     simRulesClassic(&classic);
     UT_ASSERT(mlsRulesRound(NULL, 0, &got) == 0);
     for (i = 0; i < MLS_RULE_COUNT; i++) {
-        int32_t v = mlsRuleValue(&got, &kMlsRules[i]);
-        UT_ASSERT_MSG(v == kMlsRules[i].mac,
-                      "with nothing chosen %s is %d, the mod always set %d",
-                      kMlsRules[i].name, (int)v, (int)kMlsRules[i].mac);
+        const MlsRule *rule = &kMlsRules[i];
+        int32_t        v    = mlsRuleValue(&got, rule);
+        int32_t        want = mlsRuleMac(rule);
+        char           vText[32];
+        char           wantText[32];
+
+        UT_ASSERT_MSG(v == want,
+                      "with nothing chosen %s is %s, the mod always set %s",
+                      rule->name,
+                      mlsRuleText(rule, v, vText, sizeof(vText)),
+                      mlsRuleText(rule, want, wantText, sizeof(wantText)));
     }
     /* A rule the mod never set is still the classic table's. */
     UT_ASSERT(got.start_pill_range == classic.start_pill_range);
@@ -421,10 +461,15 @@ int run_mac_bolo_settings_each_part_off(void) {
             int32_t        v    = mlsRuleValue(&got, rule);
             int32_t        want = (rule->part == part)
                                       ? mlsRuleValue(&classic, rule)
-                                      : rule->mac;
+                                      : mlsRuleMac(rule);
+            char           vText[32];
+            char           wantText[32];
+
             UT_ASSERT_MSG(v == want,
-                          "with %s off, %s is %d, wanted %d (%s)", off.id,
-                          rule->name, (int)v, (int)want,
+                          "with %s off, %s is %s, wanted %s (%s)", off.id,
+                          rule->name,
+                          mlsRuleText(rule, v, vText, sizeof(vText)),
+                          mlsRuleText(rule, want, wantText, sizeof(wantText)),
                           rule->part == part ? "classic" : "the mod's");
         }
     }
