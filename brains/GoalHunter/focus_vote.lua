@@ -1262,7 +1262,11 @@ end
 -- ended every plan a few seconds after its go.
 -- With "base_lost" it also answers the lost base id, its owner at the go
 -- and its owner now (nil when this bot no longer knows the base).
-function M.home_lost(state, world, A)
+-- FOCUS_SPIKE_HOME_ABORT_NEAR > 0 (with "base_lost"): a lost base farther
+-- than that many tiles (euclid) from this bot's tank does not end the plan.
+-- The base leaves A.home (one "homefar" event line), and the plan goes on.
+-- info = this bot's info (the tank place); nil = the old rule.
+function M.home_lost(state, world, A, info, now)
   if C.FOCUS_SPIKE_HOME_ABORT_RULE == "tank_near" then return M.home_attacked(state, world) end
   if not A.home then
     A.home = {}
@@ -1276,7 +1280,22 @@ function M.home_lost(state, world, A)
   table.sort(ids)
   for _, id in ipairs(ids) do
     local b = world.bases and world.bases[id]
-    if not b or not ours(b.owner) then return true, id, A.home[id], b and b.owner end
+    if not b or not ours(b.owner) then
+      local near = C.FOCUS_SPIKE_HOME_ABORT_NEAR or 0
+      if near > 0 and info and b and b.mx then
+        local tx, ty = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
+        local d = edist(tx, ty, b.mx, b.my)
+        if d > near then
+          errline(string.format("FOCUS_SPIKE homefar t=%d p%d id=%d base=%d at=%d,%d dist=%.1f near=%d",
+            now or 0, info.player_number or -1, A.id or -1, id, b.mx, b.my, d, near))
+          A.home[id] = nil
+        else
+          return true, id, A.home[id], b.owner
+        end
+      else
+        return true, id, A.home[id], b and b.owner
+      end
+    end
   end
   return false
 end
@@ -3236,7 +3255,7 @@ local function update_active(state, F, world, info, now, care_tag)
     if M.repick(state, F, world, info, now, ct) then return end
   end
   if C.FOCUS_SPIKE_ABORT_HOME_ATTACKED then
-    local lost, bid, was, nowo = M.home_lost(state, world, A)
+    local lost, bid, was, nowo = M.home_lost(state, world, A, info, now)
     if lost then
       if bid then
         local b = world.bases and world.bases[bid]

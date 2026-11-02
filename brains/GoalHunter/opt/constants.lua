@@ -1915,6 +1915,13 @@ M.FOCUS_SPIKE_ABORT_HOME_ATTACKED  = true
 -- base that was ours at the go is lost) or "tank_near" (the ballot test: an
 -- enemy tank within FOCUS_SPIKE_HOME_ATTACK_RANGE of one of our bases).
 M.FOCUS_SPIKE_HOME_ABORT_RULE      = "base_lost"
+-- FOCUS_SPIKE_HOME_ABORT_NEAR (2026-11-02, with "base_lost"): 0 = every lost
+-- base ends the plan (the old rule). > 0 = only a lost base within this many
+-- tiles of the bot's tank ends it; a farther loss is dropped and the plan
+-- goes on. Why: in the bench, 19 of 26 home_attacked ends lost a base 13-41
+-- tiles from both plan bots, and the base stayed lost 2 minutes later in 19
+-- of 26, so the abort did not win it back. KEEL 0; focus presets 16.
+M.FOCUS_SPIKE_HOME_ABORT_NEAR      = 0
 -- When a bot on an active plan learns a hostile pill in fire range of a plan
 -- tile: "abort" ends the plan; "repick" finds one new tile for the bases that
 -- tile was to cover (same bot), or drops those bases, and aborts only when the
@@ -6317,6 +6324,7 @@ M.PRESETS = {
     FOCUS_SPIKE_RESCORE_TICKS      = 50,
     FOCUS_SPIKE_RESCORE_SLICES     = 1,
     FOCUS_SPIKE_PLAN_FLAT          = false,
+    FOCUS_SPIKE_HOME_ABORT_NEAR    = 0,
     -- 2026-11-01: spike care needs the aggro class (no care by range).
     FOCUS_SPIKE_CARE_BY_RANGE      = false,
     -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
@@ -6956,6 +6964,7 @@ do
     FOCUS_SPIKE_MULTI_BOOST = 1.5,
     FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
     FOCUS_SPIKE_PLAN_FLAT = true,
+    FOCUS_SPIKE_HOME_ABORT_NEAR = 16,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6982,6 +6991,7 @@ do
     FOCUS_SPIKE_MULTI_BOOST = 1.5,
     FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
     FOCUS_SPIKE_PLAN_FLAT = true,
+    FOCUS_SPIKE_HOME_ABORT_NEAR = 16,
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and
