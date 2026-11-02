@@ -2581,8 +2581,14 @@ function level_step(state, F, world, info, now)
   -- bot can pick. It stops while this bot's builder is out with a pill
   -- (the builder walks back from a spike pill), and while this bot has no
   -- pill and another plan bot carries one (that bot decides).
-  if not picked and A.t_pick ~= nil and M.pick_wait_paused(A, info, per) then A.t_pick = now end
-  if picked or A.t_pick == nil then A.t_pick = now end
+  -- A bot that can pick ends the wait only after one finished rescore pass
+  -- from the start of the wait: level_step runs every
+  -- FOCUS_SPIKE_RESCORE_TICKS, so the first step after the builder comes
+  -- back can already see the full wait with no pass.
+  if not picked and A.t_pick ~= nil and M.pick_wait_paused(A, info, per) then
+    A.t_pick, A.wait_pass0 = now, A.n_pass or 0
+  end
+  if picked or A.t_pick == nil then A.t_pick, A.wait_pass0 = now, A.n_pass or 0 end
   local L = M.levels(world, A, me)
   L.t, L.reserved, L.team = now, per, team
   A.level = L
@@ -2616,7 +2622,9 @@ function level_step(state, F, world, info, now)
     nopick("no_team_pill")
     return "incomplete"
   end
-  if not picked and (now - A.t_pick) >= C.FOCUS_SPIKE_RELEASE_WAIT then
+  local can_pick = info.man_status == C.LGM_INTANK and (info.carried_pills or 0) >= 1
+  local no_pass = can_pick and (A.n_pass or 0) <= (A.wait_pass0 or 0)
+  if not picked and not no_pass and (now - A.t_pick) >= C.FOCUS_SPIKE_RELEASE_WAIT then
     nopick("release_wait")
     return "incomplete"
   end

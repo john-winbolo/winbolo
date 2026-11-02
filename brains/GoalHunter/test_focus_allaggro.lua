@@ -274,6 +274,15 @@ A8b.t_pick = 0
 check("builder out with a pill: the wait stops",
   FV.adapt_step(s8b, s8b._fs, wa, i8b, C.FOCUS_SPIKE_RELEASE_WAIT * 3) == nil)
 check("builder out with a pill: t_pick moves", A8b.t_pick == C.FOCUS_SPIKE_RELEASE_WAIT * 3, tostring(A8b.t_pick))
+-- Bug fix (2026-11-02): a carrier with its builder in the tank and no
+-- finished pass since the wait started does not end the plan; the step
+-- starts a pass.
+local s8c, A8c, i8c = mk(3, 1, { 1 })
+A8c.t_pick, A8c.n_pass, A8c.wait_pass0 = 0, 0, 0
+check("carrier, no pass in the wait: go on",
+  FV.adapt_step(s8c, s8c._fs, wa, i8c, C.FOCUS_SPIKE_RELEASE_WAIT * 2) == nil)
+check("carrier, no pass in the wait: a pass ran or started",
+  (A8c.n_pass or 0) >= 1 or A8c.pass ~= nil or A8c.mine ~= nil, tostring(A8c.n_pass))
 -- The pill runs out with a pick: the pick is cleared and sent as FFFF.
 local s9, A9, i9 = mk(3, 1, { 0, 1, 2 })
 FV.adapt_step(s9, s9._fs, w, i9, 0)
