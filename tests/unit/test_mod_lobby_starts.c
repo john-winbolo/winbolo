@@ -339,7 +339,6 @@ enum {
     MLS_PART_PILL_AIM,
     MLS_PART_BASE_DEFENCE,
     MLS_PART_TANK_HIT_MINES,
-    MLS_PART_DEAD_PILL_SPEED,
     MLS_PART_PILL_ANGER,
     MLS_PART_SUPERBOOM,
     MLS_PART_PILL_SHELL_RANGE,
@@ -349,7 +348,7 @@ enum {
 
 static const char *const kMlsPartSetting[MLS_PART_COUNT] = {
     "pushback", "shell_cap", "tank_boxes", "pill_aim", "base_defence",
-    "tank_hit_mines", "dead_pill_speed", "pill_anger", "superboom",
+    "tank_hit_mines", "pill_anger", "superboom",
     "pill_shell_range", "parachute",
 };
 
@@ -382,7 +381,6 @@ static const MlsRule kMlsRules[] = {
     MLS_RULE(pill_base_defend_shape,       MLS_PART_BASE_DEFENCE, 1),
     MLS_RULE(pill_base_defend_range,       MLS_PART_BASE_DEFENCE, 7),
     MLS_RULE(tank_hit_sets_off_mines,      MLS_PART_TANK_HIT_MINES, 0),
-    MLS_RULE(man_dead_pill_terrain_speed,  MLS_PART_DEAD_PILL_SPEED, 0),
     MLS_RULE(pill_attack_min_ticks,        MLS_PART_PILL_ANGER,   5),
     MLS_RULE(big_explosion_threshold,      MLS_PART_SUPERBOOM,    60),
     MLS_RULE_FLT(pill_fire_length,         MLS_PART_PILL_SHELL_RANGE, 8.25f),

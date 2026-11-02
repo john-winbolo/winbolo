@@ -58,14 +58,6 @@
 -- This part keeps the rule at 0, so it only changes the round when
 -- another script on the list sets 1.
 --
--- Builders on dead pillboxes. In Mac Bolo the square of a dead pillbox is
--- still a pillbox square, and the man walks onto it at the road step,
--- whatever the pillbox stands on. man_dead_pill_terrain_speed at 0 plays
--- that way, and 0 is WinBolo's own default. At 1, the WinBolo 2.1 way, the
--- builder walks the square at the speed of the terrain under the pillbox.
--- This part keeps the rule at 0, so it only changes the round when
--- another script on the list sets 1.
---
 -- Superbooms. A tank that dies carrying enough shells and mines goes up in
 -- a big explosion, which craters a 2 x 2 block and hurts any pillbox in
 -- it. WinBolo needs more than 20 shells and mines together; Mac Bolo needs
@@ -128,9 +120,6 @@
 --   tank_hit_mines      tank hits do not set off mines
 --                       (tank_hit_sets_off_mines). 0 is the default,
 --                       and this part keeps it at 0.
---   dead_pill_speed     builders walk onto a dead pillbox at road speed
---                       (man_dead_pill_terrain_speed). 0 is the default,
---                       and this part keeps it at 0.
 --   superboom           superboom threshold
 --                       (big_explosion_threshold, 60).
 --   parachute           parachute speed (lgm_helicopter_speed, 2).
@@ -162,9 +151,8 @@ scenario = {
   description = "Plays the Mac Bolo shell pushback, pillbox shell cap, " ..
                 "tank clearance, pillbox massage, angry pillbox fire " ..
                 "rate, pillbox shell range, base defence circle, " ..
-                "tank hits that do not set off mines, builders on dead " ..
-                "pillboxes at road speed, superboom threshold, " ..
-                "parachute speed and spawn starts. " ..
+                "tank hits that do not set off mines, superboom " ..
+                "threshold, parachute speed and spawn starts. " ..
                 "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
@@ -211,13 +199,6 @@ scenario = {
     { id = "tank_hit_mines", label = "Tank hits do not set off mines",
       type = "bool", default = true },
 
-    -- Builders on dead pillboxes: road speed whatever the pillbox stands
-    -- on. That is the default; the part keeps it so when another script
-    -- sets the rule to 1.
-    { id = "dead_pill_speed",
-      label = "Builders walk dead pillboxes at road speed",
-      type = "bool", default = true },
-
     -- Superbooms: Mac Bolo's threshold, more than 60 shells and mines.
     { id = "superboom", label = "Mac Bolo superboom threshold",
       type = "bool", default = true },
@@ -258,7 +239,6 @@ local PILL_ANGER        = game.setting("pill_anger")
 local PILL_SHELL_RANGE  = game.setting("pill_shell_range")
 local BASE_DEFENCE      = game.setting("base_defence")
 local TANK_HIT_MINES    = game.setting("tank_hit_mines")
-local DEAD_PILL_SPEED   = game.setting("dead_pill_speed")
 local SUPERBOOM         = game.setting("superboom")
 local PARACHUTE         = game.setting("parachute")
 local SPAWN_STARTS      = game.setting("spawn_starts")
@@ -318,13 +298,6 @@ if TANK_HIT_MINES then
   -- 0 leaves the mines under a tank that is hit alone. The classic table
   -- plays with 0 too, so this only matters when another script sets 1.
   rules.tank_hit_sets_off_mines = 0
-end
-
-if DEAD_PILL_SPEED then
-  -- 0 walks a builder onto a dead pillbox at road speed, on any terrain.
-  -- The classic table plays with 0 too, so this only matters when another
-  -- script sets 1.
-  rules.man_dead_pill_terrain_speed = 0
 end
 
 if SUPERBOOM then
