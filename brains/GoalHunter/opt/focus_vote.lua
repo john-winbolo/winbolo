@@ -2578,8 +2578,25 @@ end
 -- bot's builder is out and it carries a pill, or this bot carries no pill
 -- and another plan bot (a player in A.claims) carries one. per = the
 -- carried pills per player (M.team_carried).
+-- FOCUS_SPIKE_SOLO_CARRIER: true when this bot carries a pill but another
+-- team bot carries more (a tie: the lower player number runs the plan).
+-- This bot then holds no spike spot and keeps its normal goals; the top
+-- carrier runs the plan. per = the carried pills per player
+-- (M.team_carried, this bot's own world model).
+function M.solo_skip(info, per)
+  if not C.FOCUS_SPIKE_SOLO_CARRIER then return false end
+  local me = info.player_number or -1
+  local mine = per[me] or 0
+  if mine < 1 then return false end
+  for pn, n in pairs(per) do
+    if pn ~= me and (n > mine or (n == mine and pn < me)) then return true end
+  end
+  return false
+end
+
 function M.pick_wait_paused(A, info, per)
   local me = info.player_number or -1
+  if M.solo_skip(info, per) then return true end
   local mine = info.carried_pills or 0
   if mine >= 1 then return info.man_status ~= C.LGM_INTANK end
   for _, pn in pairs(A.claims or {}) do
@@ -2650,6 +2667,14 @@ function level_step(state, F, world, info, now)
   -- The builder is out: keep the spot it went for.
   if info.man_status ~= C.LGM_INTANK then
     A.n_out = (A.n_out or 0) + 1
+    return nil
+  end
+  if M.solo_skip(info, per) then
+    -- FOCUS_SPIKE_SOLO_CARRIER: another bot runs the plan; drop the spot.
+    local held = A.mine ~= nil
+    if held then set_spot(A, info, now, nil, "solo", nil, state) end
+    A.score = { t = now, top = {}, mine = {}, skip = "solo" }
+    if held then spot_eval(A, info, now, L, nil, nil, "solo") end
     return nil
   end
   if (info.carried_pills or 0) < 1 then

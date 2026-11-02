@@ -1923,6 +1923,12 @@ M.FOCUS_SPIKE_HOME_ABORT_RULE      = "base_lost"
 -- of 26, so the abort did not win it back. KEEL 0. Focus presets 0 too:
 -- 16 gave the same losses (4 of 12) and +1 focus base in bench n6.
 M.FOCUS_SPIKE_HOME_ABORT_NEAR      = 0
+-- FOCUS_SPIKE_SOLO_CARRIER (2026-11-02): with FOCUS_SPIKE_ALL_AGGRO, only the
+-- team bot that carries the most pills (tie: lower player number) picks
+-- spike spots; the other plan bots hold no spot and keep their normal goals
+-- (defend, recapture, refuel). false = every carrier picks (the old rule).
+-- KEEL false.
+M.FOCUS_SPIKE_SOLO_CARRIER         = false
 -- When a bot on an active plan learns a hostile pill in fire range of a plan
 -- tile: "abort" ends the plan; "repick" finds one new tile for the bases that
 -- tile was to cover (same bot), or drops those bases, and aborts only when the
@@ -6174,6 +6180,7 @@ M.PRESETS = {
     FOCUS_SPIKE_RESCORE_SLICES     = 1,
     FOCUS_SPIKE_PLAN_FLAT          = false,
     FOCUS_SPIKE_HOME_ABORT_NEAR    = 0,
+    FOCUS_SPIKE_SOLO_CARRIER       = false,
     -- 2026-11-01: spike care needs the aggro class (no care by range).
     FOCUS_SPIKE_CARE_BY_RANGE      = false,
     -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
@@ -6785,6 +6792,7 @@ do
     FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
     FOCUS_SPIKE_PLAN_FLAT = true,
     FOCUS_SPIKE_HOME_ABORT_NEAR = 0,   -- 16 tested Nov 2: no gain (bench n6)
+    FOCUS_SPIKE_SOLO_CARRIER = true,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6812,6 +6820,7 @@ do
     FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
     FOCUS_SPIKE_PLAN_FLAT = true,
     FOCUS_SPIKE_HOME_ABORT_NEAR = 0,   -- 16 tested Nov 2: no gain (bench n6)
+    FOCUS_SPIKE_SOLO_CARRIER = true,
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and
