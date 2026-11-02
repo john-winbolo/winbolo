@@ -52,6 +52,12 @@
 -- This part keeps the rule at 0, so it only changes the round when
 -- another script on the list sets 1.
 --
+-- Superbooms. A tank that dies carrying enough shells and mines goes up in
+-- a big explosion, which craters a 2 x 2 block and hurts any pillbox in
+-- it. WinBolo needs more than 20 shells and mines together; Mac Bolo needs
+-- more than 60, three quarters of the 80 a full tank holds. This part sets
+-- big_explosion_threshold to 60.
+--
 -- Starts. The engine tells on_choose_start which start the lobby put the
 -- seat on: the start its player picked by hand, else one on the team's
 -- side, else the engine's own spread of the field. That start is the
@@ -101,7 +107,9 @@
 --   tank_hit_mines      tank hits do not set off mines
 --                       (tank_hit_sets_off_mines). 0 is the default,
 --                       and this part keeps it at 0.
---   spawn_starts        the Mac Bolo start pick for spawns.
+--   superboom           superboom threshold
+--                       (big_explosion_threshold, 60).
+--   spawn_starts       the Mac Bolo start pick for spawns.
 --   first_start_lobby   "Override first start to what was chosen in lobby".
 --                       On (the default): a tank the lobby has a start
 --                       for takes it, as above. Off: the Mac Bolo pick
@@ -129,11 +137,12 @@ scenario = {
   description = "Plays the Mac Bolo shell pushback, pillbox shell cap, " ..
                 "tank clearance, pillbox massage, angry pillbox fire " ..
                 "rate, base defence circle, " ..
-                "tank hits that do not set off mines and spawn starts. " ..
+                "tank hits that do not set off mines, superboom " ..
+                "threshold and spawn starts. " ..
                 "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-10-30T13:47Z",
+  updated = "2026-11-02T11:02Z",
   kind = "mod",
   bound = false,
 
@@ -187,6 +196,10 @@ scenario = {
     { id = "tank_hit_mines", label = "Tank hits do not set off mines",
       type = "bool", default = true },
 
+    -- Superbooms: Mac Bolo's threshold, more than 60 shells and mines.
+    { id = "superboom", label = "Mac Bolo superboom threshold",
+      type = "bool", default = true },
+
     -- Starts: the two-pass Mac Bolo pick for spawns.
     { id = "spawn_starts", label = "Mac Bolo spawn starts", type = "bool",
       default = true },
@@ -218,6 +231,7 @@ local PILL_AIM          = game.setting("pill_aim")
 local PILL_ANGER        = game.setting("pill_anger")
 local BASE_DEFENCE      = game.setting("base_defence")
 local TANK_HIT_MINES    = game.setting("tank_hit_mines")
+local SUPERBOOM         = game.setting("superboom")
 local SPAWN_STARTS      = game.setting("spawn_starts")
 local FIRST_START_LOBBY = game.setting("first_start_lobby")
 
@@ -270,6 +284,11 @@ if TANK_HIT_MINES then
   -- 0 leaves the mines under a tank that is hit alone. The classic table
   -- plays with 0 too, so this only matters when another script sets 1.
   rules.tank_hit_sets_off_mines = 0
+end
+
+if SUPERBOOM then
+  -- A dying tank superbooms with more than 60 shells and mines, not 20.
+  rules.big_explosion_threshold = 60
 end
 
 scenario.rules = rules
