@@ -3257,7 +3257,7 @@
 #define STR_RULE_DESC_tank_collision_mac         2712
 #define STR_RULE_DESC_tank_deep_sea_safe         2760
 #define STR_RULE_DESC_tank_hit_sets_off_mines    3042
-#define STR_RULE_DESC_man_dead_pill_terrain_speed 3419
+#define STR_RULE_DESC_man_dead_pill_terrain_speed 3428
 
 /* Rule range wording */
 
