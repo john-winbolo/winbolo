@@ -258,6 +258,11 @@ typedef struct SimRules {
     int32_t tank_hit_sets_off_mines; /* a shell that hits a tank sets off a
                                         mine on the square it burst on */
 
+    /* ---- Dead pillbox builder speed ---- appended to preserve rule indices */
+    int32_t man_dead_pill_terrain_speed; /* a builder on a dead pillbox's
+                                            square walks at the speed of the
+                                            terrain under it, not road */
+
 } SimRules;
 
 /*********************************************************

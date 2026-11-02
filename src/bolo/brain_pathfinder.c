@@ -3910,11 +3910,16 @@ static const BYTE lgm_man_speed[16] = {
 };
 
 static BYTE lgmGetBrainManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my) {
+  uint8_t mark = pf->lgm_block[my * MAP_SIZE + mx];
   /* Enemy bases the brain stamped as impassable: the terrain type is "refbase"
    * (walkable) but the engine's mapGetManSpeed returns 0 there for a non-ally,
    * non-neutral base above capture armour. Mirror that so the LGM sim doesn't
    * march straight into an enemy base. */
-  if (pf->lgm_block[my * MAP_SIZE + mx]) return 0;
+  if (mark == BRAIN_PF_LGM_BLOCKED) return 0;
+  /* A dead pillbox: the engine's mapGetManSpeed gives its square the road
+   * speed whatever terrain is under it (man_dead_pill_terrain_speed 0, the
+   * classic table, as in Mac Bolo), water included. */
+  if (mark == BRAIN_PF_LGM_ROAD) return pf->man_speed[BRAIN_PF_TERRAIN_ROAD];
   uint8_t type = pf->map[my * MAP_SIZE + mx] & 0x0F;
   return pf->man_speed[type];
 }
@@ -3944,7 +3949,15 @@ void brainPathfinderClearLgmBlock(BrainPathfinder *pf) {
 
 void brainPathfinderSetLgmBlock(BrainPathfinder *pf, BYTE mx, BYTE my) {
   if (!pf) return;
-  pf->lgm_block[my * MAP_SIZE + mx] = 1;
+  pf->lgm_block[my * MAP_SIZE + mx] = BRAIN_PF_LGM_BLOCKED;
+}
+
+void brainPathfinderSetLgmRoad(BrainPathfinder *pf, BYTE mx, BYTE my) {
+  if (!pf) return;
+  /* A blocked mark wins: a square is never both, but if the brain stamps
+   * one twice the wall is the safer reading. */
+  if (pf->lgm_block[my * MAP_SIZE + mx] == BRAIN_PF_LGM_BLOCKED) return;
+  pf->lgm_block[my * MAP_SIZE + mx] = BRAIN_PF_LGM_ROAD;
 }
 
 /* The one LGM walk simulation. Everything below it is a wrapper.
