@@ -257,11 +257,42 @@ local function draw_score(A)
   else
     line("  chosen: none", 170, 170, 170)
   end
+  local D = S.diag
+  local MAXR = C.FOCUS_SPIKE_DEFENSE_MAX
+  -- The route of one spot: path length, the enemy pills on the path, and
+  -- the risk (stand + route) compared with FOCUS_SPIKE_DEFENSE_MAX.
+  local function route_line(c, r, g, b)
+    local rp = {}
+    for _, h in ipairs(c.route_pills or {}) do
+      rp[#rp + 1] = string.format("pill %d (%d,%d) armour %d +%.2f", h.id, h.mx, h.my, h.armour, h.add or 0)
+    end
+    line(string.format("       path %s tiles%s, covers bases %s, risk %.2f %s %.2f; route pills: %s",
+      c.plen and string.format("%.1f", c.plen) or "none", c.path_cut and " (cut)" or "",
+      (c.cov and #c.cov > 0) and table.concat(c.cov, ",") or "-", c.danger or 0,
+      (c.danger or 0) <= MAXR + 1e-9 and "<=" or ">", MAXR, #rp > 0 and table.concat(rp, ", ") or "none"),
+      r or 200, g or 200, b or 200)
+  end
+  if D then
+    line(string.format("  checks: tiles %d, not placeable %d, found %d, tested %d (cut %d), no stand %d, unreachable %d,"
+      .. " stand risk %d, route risk %d, builder cannot reach %d, unchecked %d, allowed %d",
+      D.tiles or 0, D.not_placeable or 0, D.found or 0, D.tested or 0, D.cut or 0, D.no_stand or 0,
+      D.unreachable or 0, D.stand_risk or 0, D.route_risk or 0, D.noreach or 0, D.unchecked or 0,
+      D.allowed or 0), 200, 200, 255)
+  elseif S.skip then
+    line("  no rescore: " .. S.skip, 170, 170, 170)
+  end
   for i, c in ipairs(S.top) do
     local p = c.parts
     local mark = (ch and ch.mx == c.mx and ch.my == c.my) and "  CHOSEN" or ""
     line(string.format("  %d. (%d,%d) total %.2f = payoff %.2f - stand %.2f - route %.2f - travel %.2f - run %.2f%s",
       i, c.mx, c.my, c.total, p.payoff, p.stand, p.route, p.travel, p.run, mark))
+    route_line(c)
+    if mark ~= "" and c.path then
+      for j = 2, #c.path do
+        local a, b2 = c.path[j - 1], c.path[j]
+        viz.line(ID, a.mx + 0.5, a.my + 0.5, b2.mx + 0.5, b2.my + 0.5, 120, 255, 120, 200)
+      end
+    end
     local cx, cy = c.mx + 0.5, c.my + 0.5
     local r, g, b = 255, 120, 255
     if mark ~= "" then r, g, b = 120, 255, 120 end
@@ -271,7 +302,24 @@ local function draw_score(A)
     viz.rect(ID, c.stand.mx + 0.15, c.stand.my + 0.15, c.stand.mx + 0.85, c.stand.my + 0.85,
              120, 220, 255, 240, true, true)
   end
+  if S.chosen and S.top[2] then
+    local alt = S.top[1] == S.chosen and S.top[2] or S.top[1]
+    line(string.format("  chosen margin over (%d,%d): %.2f (a switch needs %.2f)", alt.mx, alt.my,
+      S.chosen.total - alt.total, C.FOCUS_SPIKE_SWITCH_MARGIN * math.max(math.abs(S.chosen.total), 1)),
+      200, 200, 255)
+  end
   if #S.top == 0 then line("  no allowed spike spot", 255, 130, 130) end
+  local rj = D and D.rej
+  if rj then
+    local p = rj.parts or {}
+    line(string.format("  best rejected (%d,%d) [%s] total %.2f = payoff %.2f - stand %.2f - route %.2f - travel %.2f - run %.2f",
+      rj.mx, rj.my, rj.why or "?", rj.total or 0, p.payoff or 0, p.stand or 0, p.route or 0, p.travel or 0,
+      p.run or 0), 255, 130, 130)
+    if rj.stand then line(string.format("       stand (%d,%d)", rj.stand.mx, rj.stand.my), 255, 130, 130) end
+    route_line(rj, 255, 130, 130)
+    viz.rect(ID, rj.mx, rj.my, rj.mx + 1, rj.my + 1, 255, 130, 130, 240, true, true)
+    viz.text(ID, rj.mx + 0.5, rj.my - 0.9, "rejected: " .. (rj.why or "?"), "center", 255, 130, 130, 240, 0.32)
+  end
   if ch and ch.stand then
     viz.circle(ID, ch.mx + 0.5, ch.my + 0.5, C.PILL_FIRE_RANGE, 120, 255, 120, 170, true, false)
     viz.text(ID, ch.stand.mx + 0.5, ch.stand.my + 1.4, string.format("stand (%d,%d) r=%.2f", ch.stand.mx,

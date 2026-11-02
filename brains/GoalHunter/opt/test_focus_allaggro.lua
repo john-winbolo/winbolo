@@ -202,6 +202,45 @@ check("every base covered at 50 (pick + pills): m = 1, S = the bases with c(b) =
 w.pills[8], w.pill_at[104 * C.MAP_W + 130] = nil, nil
 w.pills[9], w.pill_at[104 * C.MAP_W + 115] = nil, nil
 A1.picks[4] = nil
+-- The spot_eval log line (log only): written to the event log (errline)
+-- and to print2 on each rescore, one line, with the stable key=value names.
+-- (opt/ strips the print2 calls: the print2 check runs only in the source.)
+do
+  local P2 = require("print2")
+  local mt = getmetatable(P2)
+  local old_call, old_print, old_log = mt.__call, print, C.FOCUS_SPIKE_STDERR_LOG
+  local got, out = {}, {}
+  mt.__call = function(_, s) got[#got + 1] = s end
+  print = function(s) out[#out + 1] = s end
+  C.FOCUS_SPIKE_STDERR_LOG = true
+  local se, Ae, ie = mk(3, 2, { 0, 1, 2 })
+  FV.adapt_step(se, se._fs, w, ie, 0)
+  mt.__call, print, C.FOCUS_SPIKE_STDERR_LOG = old_call, old_print, old_log
+  local function find(t)
+    local r = nil
+    for _, s in ipairs(t) do
+      if type(s) == "string" and s:match("^FOCUS_SPIKE spot_eval ") then r = s end
+    end
+    return r
+  end
+  local line, l2 = find(out), find(got)
+  check("spot_eval line written to the event log", line ~= nil and Ae.eval_line == line, #out)
+  check("spot_eval line written to print2 (source only)", #got == 0 or l2 == line, #got)
+  check("spot_eval is one line", line and not line:find("\n", 1, true), line)
+  local miss = {}
+  for _, k in ipairs({ "t", "id", "tank", "arm", "carried", "builder", "m", "S", "c", "skip", "tiles",
+                       "not_placeable", "found", "cut", "tested", "no_stand", "unreachable", "stand_risk",
+                       "route_risk", "noreach", "unchecked", "other", "allowed", "risk_max", "chosen",
+                       "chosen_p", "alt1", "alt1_p", "alt1_margin", "alt2", "alt2_p", "alt2_margin",
+                       "switch_need", "rej", "rej_why", "rej_p", "change" }) do
+    if not (line and line:find(" " .. k .. "=", 1, true)) then miss[#miss + 1] = k end
+  end
+  check("spot_eval has every key", #miss == 0, table.concat(miss, ","))
+  check("spot_eval chosen parts", line and line:find("chosen_p=st:%d+,%d+|cov:") ~= nil
+    and line:find("|route:") ~= nil and line:find("|plen:") ~= nil and line:find("|rp:") ~= nil
+    and line:find("|risk:") ~= nil and line:find("|total:") ~= nil, line)
+  check("spot_eval first pick: change=first", line and line:find(" change=first ", 1, true) ~= nil, line)
+end
 -- Out of pills, no picks, one spike pill laid: all_laid.
 local s5, A5, i5 = mk(3, 0, { 0, 1, 2 })
 A5.tiles[1] = { mx = 115, my = 104, pn = 3, placed = true }
