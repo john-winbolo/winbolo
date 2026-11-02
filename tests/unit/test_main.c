@@ -973,6 +973,7 @@ static const UnitTestEntry s_tests[] = {
     { "tank_knockback_timing_drive",             run_tank_knockback_timing_drive             },
     { "tank_knockback_replaces_mines",           run_tank_knockback_replaces_mines           },
     { "tank_knockback_rules_respawn",            run_tank_knockback_rules_respawn            },
+    { "tank_mine_sweep_follows_heading",         run_tank_mine_sweep_follows_heading         },
     { "tank_knockback_mac_off_ignores_bonus",    run_tank_knockback_mac_off_ignores_bonus    },
     { "tank_status_wire_bits",                   run_tank_status_wire_bits                   },
     { "tank_status_wire_start_find_round_trip",  run_tank_status_wire_start_find_round_trip  },

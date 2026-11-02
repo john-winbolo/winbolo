@@ -4586,6 +4586,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_tank_alliance_unfielded.c
     tests/unit/test_tank_death_state.c
     tests/unit/test_tank_knockback.c
+    tests/unit/test_tank_mine_sweep.c
     tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
@@ -6251,6 +6252,7 @@ set(_unit_test_names
     tank_knockback_timing_drive
     tank_knockback_replaces_mines
     tank_knockback_rules_respawn
+    tank_mine_sweep_follows_heading
     tank_knockback_mac_off_ignores_bonus
     tank_status_wire_bits
     tank_status_wire_start_find_round_trip
