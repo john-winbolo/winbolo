@@ -1190,5 +1190,26 @@ do
   check("knob 16, no info: the old rule", FV.home_lost(s, w, A, nil, 10) == true)
   C.FOCUS_SPIKE_HOME_ABORT_NEAR = keep
 end
+
+print("solo carrier (FOCUS_SPIKE_SOLO_CARRIER, 2026-11-02)")
+do
+  check("KEEL value false", C.PRESETS.keel.FOCUS_SPIKE_SOLO_CARRIER == false, tostring(C.PRESETS.keel.FOCUS_SPIKE_SOLO_CARRIER))
+  check("keel_focus, _loose, _bench true",
+    C.PRESETS.keel_focus.FOCUS_SPIKE_SOLO_CARRIER == true and C.PRESETS.keel_focus_loose.FOCUS_SPIKE_SOLO_CARRIER == true
+    and C.PRESETS.keel_focus_bench.FOCUS_SPIKE_SOLO_CARRIER == true, "?")
+  local keep = C.FOCUS_SPIKE_SOLO_CARRIER
+  C.FOCUS_SPIKE_SOLO_CARRIER = false
+  check("knob off: never skip", FV.solo_skip({ player_number = 3 }, { [2] = 4, [3] = 1 }) == false)
+  C.FOCUS_SPIKE_SOLO_CARRIER = true
+  check("fewer pills than a teammate: skip", FV.solo_skip({ player_number = 3 }, { [2] = 4, [3] = 1 }) == true)
+  check("most pills: run the plan", FV.solo_skip({ player_number = 2 }, { [2] = 4, [3] = 1 }) == false)
+  check("tie: lower player number runs it", FV.solo_skip({ player_number = 2 }, { [2] = 2, [3] = 2 }) == false
+    and FV.solo_skip({ player_number = 3 }, { [2] = 2, [3] = 2 }) == true)
+  check("only carrier: run the plan", FV.solo_skip({ player_number = 3 }, { [3] = 1 }) == false)
+  check("no pill: no skip (the no-pill rule applies)", FV.solo_skip({ player_number = 3 }, { [2] = 4 }) == false)
+  check("skipped bot: the release wait stops",
+    FV.pick_wait_paused({ claims = {} }, { player_number = 3, carried_pills = 1, man_status = C.LGM_INTANK }, { [2] = 4, [3] = 1 }) == true)
+  C.FOCUS_SPIKE_SOLO_CARRIER = keep
+end
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
