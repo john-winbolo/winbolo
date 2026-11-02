@@ -1899,6 +1899,14 @@ M.FOCUS_SPIKE_PLAN_INTERVAL        = 50       -- ticks between plans
 M.FOCUS_SPIKE_MAX_TILES            = 12       -- fits the 124-byte message
 M.FOCUS_SPIKE_VOTE_WINDOW_TICKS    = 25
 M.FOCUS_SPIKE_APPROVED_COST        = 80
+-- FOCUS_SPIKE_PLAN_FLAT (2026-11-02): the pool row of a plan tile keeps
+-- FOCUS_SPIKE_APPROVED_COST after the phase weight and gets no influence
+-- x2 (goals.focus_plan_flat). A spike spot is always in enemy ground, so
+-- the x2 always applied: in run10 the row won 7 of 687 pool passes and no
+-- spike pill was placed. Not while armour <= ARMOUR_LOW or shells <=
+-- SHELLS_LOW (refuel and flee win). Switch and commitment penalties still
+-- apply. KEEL false (old pricing); keel_focus, _loose, _bench true.
+M.FOCUS_SPIKE_PLAN_FLAT            = false
 M.FOCUS_SPIKE_APPROVAL_TTL         = 1500
 M.FOCUS_SPIKE_VOTE_FAIL_COOLDOWN   = 1500
 M.FOCUS_SPIKE_HOME_ATTACK_RANGE    = 8
@@ -6308,6 +6316,7 @@ M.PRESETS = {
     FOCUS_SPIKE_MULTI_BOOST        = 1.0,
     FOCUS_SPIKE_RESCORE_TICKS      = 50,
     FOCUS_SPIKE_RESCORE_SLICES     = 1,
+    FOCUS_SPIKE_PLAN_FLAT          = false,
     -- 2026-11-01: spike care needs the aggro class (no care by range).
     FOCUS_SPIKE_CARE_BY_RANGE      = false,
     -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
@@ -6946,6 +6955,7 @@ do
     FOCUS_SPIKE_STAND_RADIUS = 15, FOCUS_SPIKE_CLOSE_PAYOFF = true,
     FOCUS_SPIKE_MULTI_BOOST = 1.5,
     FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
+    FOCUS_SPIKE_PLAN_FLAT = true,
   })
   M.PRESETS.keel_focus_raw = keel_plus({
     FOCUS_SPIKE_RULE = "count",
@@ -6971,6 +6981,7 @@ do
     FOCUS_SPIKE_STAND_RADIUS = 15, FOCUS_SPIKE_CLOSE_PAYOFF = true,
     FOCUS_SPIKE_MULTI_BOOST = 1.5,
     FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
+    FOCUS_SPIKE_PLAN_FLAT = true,
   })
   -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
   -- change), so a game plays exactly as preset=keel until the first vote, and
