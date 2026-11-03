@@ -2896,9 +2896,16 @@ static float tile_hazard(const BrainPathfinder *pf, const DijkstraSlate *s,
  * when its hazard (tile_hazard: danger, overlay, mine) is more than the
  * hazard of the chain tile it touches plus the plain terrain cost of the
  * step. A tile ON the chain always passes: the path already pays it. The
- * chain-rank order among the rest is unchanged. */
+ * chain-rank order among the rest is unchanged.
+ *
+ * Layer bound (2026-11-03): k_min is the lowest chain index the tank may
+ * match. A tank on foot can only reach the land part of the route up to and
+ * including the boarding square; chain tiles nearer the destination are sea
+ * or land after the landing. 20261103_095144_1 bot0 t=1385: on foot next to
+ * its boat, the pick took coast tiles beside the SEA part of the route and
+ * the tank circled at (101,125). */
 static int chain_rank_pick(const BrainPathfinder *pf, const DijkstraSlate *s,
-                           const int *chain, int limit,
+                           const int *chain, int k_min, int limit,
                            int sx, int sy, int dx, int dy,
                            const int *obstacles, int n_obstacles,
                            int foot_rule, int *out_x, int *out_y) {
@@ -2920,7 +2927,7 @@ static int chain_rank_pick(const BrainPathfinder *pf, const DijkstraSlate *s,
     float step_ec = pf->edge_cost ? pf->edge_cost[s_node * 8 + d] : 0.0f;
     if (step_ec >= COST_INF) continue;
     int k_hit = -1, on = 0;
-    for (int k = 0; k < limit && k < best_k + 1; k++) {
+    for (int k = k_min; k < limit && k < best_k + 1; k++) {
       int cdx = node_x(chain[k]) - ax, cdy = node_y(chain[k]) - ay;
       if (cdx >= -1 && cdx <= 1 && cdy >= -1 && cdy <= 1) {
         k_hit = k;
@@ -3011,6 +3018,17 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
       cur_ni = node_idx(px, py, parent_boat);
     }
 
+    /* Lowest chain index a tank on foot can reach: the first boat-layer node
+     * from the source end (the boarding square). Sea tiles and land after
+     * the landing come before it and are only reachable in the boat. A tank
+     * in a boat keeps the whole chain (k_min = 0). */
+    int k_min = 0;
+    if (!((tank_in_boat >= 0) ? tank_in_boat : s->in_boat)) {
+      for (int k = chain_len - 1; k >= 0; k--) {
+        if (chain[k] >= BOAT_OFFSET) { k_min = k; break; }
+      }
+    }
+
     /* chain[0] = destination, chain[chain_len-1] = source (or near it).
      * Find (sx,sy) in the chain and return the immediate next tile
      * (chain[i-1]). Previously this compacted straight runs into a
@@ -3019,7 +3037,7 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
      * as a far waypoint instead of the adjacent tile. The Lua-side
      * path_lookahead already handles LOS-based skipping in steering,
      * so this C-side compaction was redundant — removed. */
-    for (int i = chain_len - 1; i >= 0; i--) {
+    for (int i = chain_len - 1; i >= k_min; i--) {
       if (node_x(chain[i]) == sx && node_y(chain[i]) == sy) {
         if (i <= 0) return 0; /* Already at destination */
         int nnx = node_x(chain[i - 1]);
@@ -3045,7 +3063,8 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
           float best_d2  = 1e30f;
           /* Chain-rank veer: only chain tiles AHEAD of the tank (index < i). */
           int chain_ok = (pf->nextstep_chain_veer != 0.0f)
-                         && chain_rank_pick(pf, s, chain, i, sx, sy, dx, dy,
+                         && chain_rank_pick(pf, s, chain, k_min, i,
+                                            sx, sy, dx, dy,
                                             obstacles, n_obstacles, foot_rule,
                                             &nnx, &nny);
           for (int d = 0; d < 8 && !chain_ok; d++) {
@@ -3111,7 +3130,7 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
      * back to the slate root). No neighbour touches the chain: old pick. */
     if (pf->nextstep_chain_veer != 0.0f) {
       int cx = -1, cy = -1;
-      if (chain_rank_pick(pf, s, chain, chain_len, sx, sy, dx, dy,
+      if (chain_rank_pick(pf, s, chain, k_min, chain_len, sx, sy, dx, dy,
                           obstacles, n_obstacles, foot_rule, &cx, &cy)) {
         if (out_next_x) *out_next_x = cx;
         if (out_next_y) *out_next_y = cy;

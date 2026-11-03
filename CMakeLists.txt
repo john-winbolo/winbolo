@@ -4486,6 +4486,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_view_data.c
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
+    tests/unit/test_pf_foot_boat_route.c
     tests/unit/test_pf_influence_tail.c
     # Bench (does nothing unless WB_BENCH=1): the decoy-square blocker step.
     tests/unit/test_bench_decoy_step.c
@@ -5858,6 +5859,7 @@ set(_unit_test_names
     pf_dijkstra_no_solid_corner_cut
     pf_astar_no_solid_corner_cut
     pf_costto_no_solid_corner_cut
+    pf_foot_next_step_goes_to_boat
     bench_decoy_step_first
     pf_tail_reaches_radius_and_stops
     pf_tail_blocked_by_wall_and_sea

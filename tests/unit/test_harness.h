@@ -622,6 +622,9 @@ int run_bolo_rand_golden_sequence(void);
 int run_pf_dijkstra_no_solid_corner_cut(void);
 int run_pf_astar_no_solid_corner_cut(void);
 int run_pf_costto_no_solid_corner_cut(void);
+/* A tank on foot on a land -> boat -> sea route steps toward the boat, not
+ * along the sea part (test_pf_foot_boat_route.c, 20261103_095144_1 bot0). */
+int run_pf_foot_next_step_goes_to_boat(void);
 /* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
  * cost of decoy_getaway's blocker step on the decoy square. */
 int run_bench_decoy_step_first(void);
