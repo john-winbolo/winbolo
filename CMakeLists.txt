@@ -5923,6 +5923,9 @@ set(_unit_test_names
     loadbrowser_rename_family_plan
     loadbrowser_rename_rejections
     loadbrowser_rename_applies
+    session_name_natural_sort
+    session_ticks_recorder_note
+    session_ticks_real_dirs
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
     mapdir_root_fallback
