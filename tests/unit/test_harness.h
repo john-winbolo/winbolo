@@ -2075,6 +2075,8 @@ int run_pill_pos_current_snapshot_apply(void);
 int run_pill_pos_current_server_unchanged(void);
 int run_pill_pos_current_moved_state(void);
 int run_pill_pos_current_carry_cycle(void);
+/* A brain is not told about a pill at a square this client knows it has left. */
+int run_brain_pills_skip_moved_square(void);
 
 /* Pure viewport square calculator (test_viewport_calc.c):
  * viewportCalcSquarePure agrees with viewportCalcSquare on every map square,
