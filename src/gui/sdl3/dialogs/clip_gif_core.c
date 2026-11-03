@@ -340,10 +340,23 @@ bool clipGifModeToggle(ClipGifMode *m, bool captureActive) {
 }
 
 void clipGifModeFitFrame(ClipGifMode *m, int viewW, int viewH) {
-    if (m == NULL || m->frameSet || viewW <= 0 || viewH <= 0) {
+    if (m == NULL || viewW <= 0 || viewH <= 0) {
         return;
     }
-    m->frame = clipGifFrameDefault(viewW, viewH);
+    if (!m->frameSet) {
+        m->frame = clipGifFrameDefault(viewW, viewH);
+        return;
+    }
+    /* A frame the player set is at most CLIP_GIF_MAX_WIDTH pixels of the
+     * view wide. The left edge and the height stay and the right edge comes
+     * in. The height is not cut with the width: the screen draws the frame
+     * through here each frame of a drag, so a height cut with the width
+     * would get smaller on every frame that an edge is pulled out past the
+     * cap. */
+    const float maxW = (float)CLIP_GIF_MAX_WIDTH / (float)viewW;
+    if (m->frame.x1 - m->frame.x0 > maxW) {
+        m->frame.x1 = m->frame.x0 + maxW;
+    }
 }
 
 /* ── Metadata ──────────────────────────────────────────────────────── */
@@ -384,6 +397,11 @@ void clipGifMetaFreeJson(char *json) {
         cJSON_free(json);
     }
 }
+
+/* The largest metadata file clipGifMetaReadFile reads. One with the longest
+ * map name and every player, each character written as an escape, is under
+ * 8 KiB. */
+#define CLIP_GIF_META_MAX_FILE_BYTES (64u * 1024u)
 
 /* A whole number in [lo, hi] read from key, or dflt when the key is missing,
  * is not a number or is out of range. */
@@ -426,8 +444,10 @@ bool clipGifMetaFromJson(const char *text, size_t len, ClipGifMeta *out) {
         return false;
     }
     /* The time is what the list is sorted on, so metadata without one is no
-     * better than none. 2^53 is the largest whole number a double holds. */
-    double created = metaNumber(root, "created", 0.0, 9007199254740992.0, -1.0);
+     * better than none. No later than the last second that SDL's time in
+     * nanoseconds holds, so the time shown cannot overflow. */
+    double created = metaNumber(root, "created", 0.0,
+                                (double)(INT64_MAX / SDL_NS_PER_SECOND), -1.0);
     if (created < 0.0) {
         cJSON_Delete(root);
         return false;
@@ -491,9 +511,21 @@ bool clipGifMetaReadFile(const char *path, ClipGifMeta *out) {
     if (path == NULL) {
         return false;
     }
+    /* Only a plain file of a size the metadata could be: a .json beside a
+     * GIF can be anything. */
+    SDL_PathInfo info;
+    if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE ||
+        info.size > CLIP_GIF_META_MAX_FILE_BYTES) {
+        return false;
+    }
     size_t len = 0;
     void *data = SDL_LoadFile(path, &len);
     if (data == NULL) {
+        return false;
+    }
+    if (len > CLIP_GIF_META_MAX_FILE_BYTES) {
+        /* It grew after the check. */
+        SDL_free(data);
         return false;
     }
     bool ok = clipGifMetaFromJson((const char *)data, len, out);
@@ -976,7 +1008,14 @@ bool clipGifChooseCrop(ClipGifMode *m, int viewX, int viewY, int viewW,
         return false;
     }
     clipGifModeFitFrame(m, viewW, viewH);
-    return clipGifCropFromFrame(&m->frame, viewX, viewY, viewW, viewH, out);
+    if (!clipGifCropFromFrame(&m->frame, viewX, viewY, viewW, viewH, out)) {
+        return false;
+    }
+    /* Rounding each edge to a pixel can give one pixel over the cap. */
+    if (out->w > CLIP_GIF_MAX_WIDTH) {
+        out->w = CLIP_GIF_MAX_WIDTH;
+    }
+    return true;
 }
 
 /* ── The GIF span and the zoomed timeline ──────────────────────────── */
@@ -1089,7 +1128,12 @@ void clipGifSpanClip(const ClipGifMode *m, uint32_t curMs, uint32_t totalMs,
     if (m != NULL && m->spanSet) {
         const ClipGifRange span = clipGifSpanRange(m, totalMs);
         start = span.startMs;
-        len = clipGifLenClampMs(m->lenMs, start, totalMs);
+        /* The span's own length, which stops at the end of the replay. A
+         * span at the very end has none: one frame then. */
+        len = span.endMs - span.startMs;
+        if (len == 0u) {
+            len = CLIP_GIF_FRAME_MS;
+        }
     } else if (m != NULL) {
         start = curMs;
         len = clipGifLenClampMs(m->lenMs, curMs, totalMs);
@@ -1117,9 +1161,12 @@ void clipGifSpanDragEdge(ClipGifMode *m, int edge, uint32_t atMs,
     if (edge != CLIP_GIF_EDGE_START) {
         return;
     }
-    /* The end stays: the length is what is left between atMs and it, to
-     * whole frames, the floor and the cap, and the start follows from it. */
+    /* The end stays: the length is what is left between atMs and it, down
+     * to whole frames, then to the floor and the cap, and the start follows
+     * from it. Down, not to the nearest frame, so an end that is not on a
+     * whole frame does not move. */
     uint32_t len = (atMs < span.endMs) ? span.endMs - atMs : 0u;
+    len = (len / CLIP_GIF_LEN_STEP_MS) * CLIP_GIF_LEN_STEP_MS;
     len = clipGifLenClampMs(len, 0u, 0u);
     if (len > span.endMs) {
         /* No room before the end for the floor: from the start of the
