@@ -2412,9 +2412,9 @@ playback, the capture loop, the progress window and where the GIF goes
 on each platform. Each host gives it its replay as a table of calls
 (`ClipGifReplay`), so the shared file needs nothing of the lobby or of
 the viewer.
-The first twenty-one are each called directly by a test beside them;
-`gfx_settings.c` is here because `tileloader.c` calls it, and is the
-one file on the list no test drives on its own.
+All twenty-two are each called directly by a test beside them;
+`gfx_settings.c` is also here because `tileloader.c` calls it, and
+`test_fog_roads.c` drives it on its own.
 
 They do not borrow the target's T2 access. They keep the `gui`
 profile's public-only rule. That is the rule which qualifies a file
