@@ -65,7 +65,8 @@ typedef struct ClipGifReplay {
     void (*captureMode)(void *user, bool on);
     /* Moves the replay on by one GIF frame (CLIP_GIF_TICKS_PER_FRAME log
      * ticks) and draws it into the render target. Sets *ended when the
-     * replay has no more to play. False when the frame cannot be made. */
+     * replay has no more to play. False when the frame cannot be made. Not
+     * called for the first frame, which is the moment the start seeked to. */
     bool (*advance)(void *user, bool *ended);
     /* The renderer and the render target a frame is read from. */
     bool (*target)(void *user, SDL_Renderer **renderer, SDL_Texture **texture);
