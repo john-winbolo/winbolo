@@ -647,6 +647,12 @@ int run_pf_offchain_dead_end_keeps_root(void);
 /* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
  * cost of decoy_getaway's blocker step on the decoy square. */
 int run_bench_decoy_step_first(void);
+/* GoalHunter shield scan: a pill of any owner on our own outgoing shell path
+ * blocks the aim (test_shield_outgoing_pill.c). */
+int run_shield_outgoing_pill_blocks(void);
+/* GoalHunter shield scan: a friendly pill is worth floor(health / 5) walls
+ * of cover (knob PILL_COVER_BY_HEALTH, test_shield_pill_cover.c). */
+int run_shield_pill_cover_walls(void);
 int run_pf_tail_reaches_radius_and_stops(void);
 int run_pf_tail_blocked_by_wall_and_sea(void);
 int run_pf_tail_neutral_zone_slows(void);
