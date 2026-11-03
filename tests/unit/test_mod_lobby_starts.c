@@ -20,7 +20,7 @@
  * first_start_lobby ("Override first start to what was chosen in lobby").
  *
  *   run_mac_bolo_settings_defaults_play_old_rules
- *       nothing chosen: the round plays the eleven rules the mod's written
+ *       nothing chosen: the round plays the ten rules the mod's written
  *       table always set, at the same numbers.
  *   run_mac_bolo_settings_each_part_off
  *       each part turned off on its own: that part's rules are back on the
