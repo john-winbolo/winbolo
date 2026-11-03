@@ -17,10 +17,13 @@
 
 /*********************************************************
  * Name:          clip_gif_frame.h
- * Purpose:       One GIF frame, read back off the viewer's
- *                render target and given to the GIF encoder.
- *                The game's replay (lobby_clip_gif.cpp) and
- *                the Log Viewer (imgui_clip_gif.cpp) both
+ * Purpose:       One GIF frame: the crop of the viewer's render
+ *                target (1x pixel art) drawn into a texture at
+ *                the scale the screen shows it, the tank names
+ *                drawn over it as the screen draws them, and
+ *                that texture read back and given to the GIF
+ *                encoder. The game's replay (lobby_clip_gif.cpp)
+ *                and the Log Viewer (imgui_clip_gif.cpp) both
  *                make their GIFs with it. Header only, so a
  *                target that builds one of them needs no other
  *                file for it.
@@ -42,6 +45,66 @@
  * quality. */
 #define CLIP_GIF_CS_PER_FRAME 10
 #define CLIP_GIF_QUALITY      16
+
+/* Draws the tank names over a frame: src is the part of the render target
+ * the frame holds and dst where it went in the frame, both in pixels of
+ * their textures, so a name at target pixel (x, y) goes at
+ * dst->x + (x - src->x) * (dst->w / src->w). The frame is the render target
+ * while this runs. */
+typedef void (*ClipGifDrawNames)(void *user, SDL_Renderer *renderer,
+                                 const SDL_FRect *src, const SDL_FRect *dst);
+
+/* Makes one frame: crop of world (the 1x render target) drawn into all of
+ * frame (a render target of frameW x frameH) with nearest-pixel scaling, as
+ * the screen magnifies it, and the tank names drawn over it by drawNames at
+ * that scale. The render target the caller had is put back, as a screen
+ * calls this in the middle of its own frame; so is world's scale mode, which
+ * the screen's own blit relies on. False when world is now too small to
+ * hold all of crop (a window resize made a new one), or a draw fails. */
+static inline bool clipGifComposeFrame(SDL_Renderer *renderer,
+                                       SDL_Texture *world,
+                                       const SDL_Rect *crop,
+                                       SDL_Texture *frame, int frameW,
+                                       int frameH, ClipGifDrawNames drawNames,
+                                       void *user) {
+    if (renderer == NULL || world == NULL || crop == NULL || frame == NULL ||
+        crop->w <= 0 || crop->h <= 0 || frameW <= 0 || frameH <= 0) {
+        return false;
+    }
+    float worldW = 0.0f, worldH = 0.0f;
+    if (!SDL_GetTextureSize(world, &worldW, &worldH) || crop->x < 0 ||
+        crop->y < 0 || (float)(crop->x + crop->w) > worldW ||
+        (float)(crop->y + crop->h) > worldH) {
+        return false;
+    }
+    SDL_Texture *saved = SDL_GetRenderTarget(renderer);
+    if (!SDL_SetRenderTarget(renderer, frame)) {
+        return false;
+    }
+    SDL_ScaleMode savedMode = SDL_SCALEMODE_NEAREST;
+    const bool hadMode = SDL_GetTextureScaleMode(world, &savedMode);
+    SDL_SetTextureScaleMode(world, SDL_SCALEMODE_NEAREST);
+    /* The draw colour is the screen's, put back below like the scale mode. */
+    Uint8 cr = 0, cg = 0, cb = 0, ca = 255;
+    const bool hadColor = SDL_GetRenderDrawColor(renderer, &cr, &cg, &cb, &ca);
+    const SDL_FRect src = { (float)crop->x, (float)crop->y, (float)crop->w,
+                            (float)crop->h };
+    const SDL_FRect dst = { 0.0f, 0.0f, (float)frameW, (float)frameH };
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    const bool ok = SDL_RenderTexture(renderer, world, &src, &dst);
+    if (ok && drawNames != NULL) {
+        drawNames(user, renderer, &src, &dst);
+    }
+    if (hadMode) {
+        SDL_SetTextureScaleMode(world, savedMode);
+    }
+    if (hadColor) {
+        SDL_SetRenderDrawColor(renderer, cr, cg, cb, ca);
+    }
+    SDL_SetRenderTarget(renderer, saved);
+    return ok;
+}
 
 /* Reads crop out of texture (a render target of renderer) and gives it to
  * enc as the next frame. The render target the caller had is put back, as a

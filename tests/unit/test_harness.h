@@ -1533,6 +1533,8 @@ int run_clip_gif_window_place(void);
 int run_clip_gif_span_move(void);
 /* Only a small box round the grip moves the span. */
 int run_clip_gif_grip_box(void);
+int run_clip_gif_frame_scale(void);
+int run_clip_gif_preview_shrink(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
@@ -3057,8 +3059,28 @@ int run_mapchooser_scenario_filter(void);
 /* The background game's map name test: no tutorial is ever picked
  * (test_bg_map_pick.c). */
 int run_bg_map_pick_skips_tutorials(void);
-/* The folder test behind game.tutorial_done (test_bg_map_pick.c). */
+/* The text half of the shipped-tutorial test, tutorialMapsPathInDir
+ * (test_bg_map_pick.c). */
 int run_tutorial_maps_shipped_path(void);
+/* Which games a scenario popup pauses: only the shipped tutorials
+ * (test_bg_map_pick.c). */
+int run_tutorial_maps_popup_pauses(void);
+/* Which scripts have game.popup, with script popups off and on
+ * (test_bg_map_pick.c). */
+int run_tutorial_maps_script_has_popup(void);
+/* game.popup is nil in a map script outside the tutorials and in a mod, and
+ * there in a tutorial's map script; -validate reads the same rule
+ * (test_scenario_host.c). */
+int run_scenario_host_popup_nil_outside_tutorials(void);
+int run_scenario_host_popup_in_tutorial(void);
+int run_scenario_validate_popup_tutorial_only(void);
+/* The disk half of the shipped-tutorial test: a script directly in
+ * <data folder>/maps/tutorials, both paths canonical
+ * (test_scenario_host.c). */
+int run_scenario_host_shipped_tutorial_rooted(void);
+/* Under -allow-unsafe-scripts, game.popup is nil on every route for a
+ * script outside the tutorials (test_scenario_host.c). */
+int run_scenario_host_popup_unsafe_unreachable(void);
 
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
@@ -4389,16 +4411,26 @@ int run_scenario_status_line(void);
 /* The Scenario Text window's fit: the source rectangle scaled into the
  * window with one factor for both axes and centred. */
 int run_scenario_text_fit(void);
+int run_scenario_text_layout(void);
 /* Tablet mode's scenario text band: centred at the top of the view, and
  * kept left of the scenario panel's square when that is shown. */
 int run_scenario_text_tablet_band(void);
-/* The Scenario Text window's bar and grip, the only places it takes the
- * mouse: a point on the text body is on neither. */
-int run_scenario_text_pointer_on_handle(void);
 int run_scenario_text_window_shown(void);
 int run_scenario_text_printed_recently(void);
-int run_scenario_text_edge_shown(void);
+int run_scenario_float_frame_shown(void);
+/* The bar and grip of the shared window frame (the scenario panel and the
+ * Scenario Text window), the only places it takes the mouse: a point on
+ * the body is on neither. */
+int run_scenario_float_pointer_on_handle(void);
 int run_scenario_text_save_place(void);
+/* The desktop scenario panel's default place and size
+ * (test_scenario_panel.c): the game view's top-left at a readable cardinal,
+ * shrunk to fit, and false when not even 100 percent fits. */
+int run_scenario_panel_default_place(void);
+/* The Scenario Text window's default place beside a default scenario panel
+ * (test_scenario_panel.c): the room to the game view's right edge, and false
+ * when it is under the least width. */
+int run_scenario_text_beside_panel_place(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */

@@ -2064,3 +2064,156 @@ int run_clip_gif_grip_box(void) {
                 !clipGifGripBox(100.0f, 100.0f, 0.0f, 400.0f, NULL, NULL, NULL));
     return fails ? 1 : 0;
 }
+
+/* clip_gif_frame_scale: a GIF frame is the crop at the screen's scale, held
+ * between 1 and CLIP_GIF_MAX_SCALE, and its size is the crop times that
+ * scale to the nearest pixel. */
+int run_clip_gif_frame_scale(void) {
+    int fails = 0;
+    int w = -1, h = -1;
+    ClipGifRect crop = { 10, 20, 480, 270 };
+    /* The scale. */
+    EXPECT_TRUE("1x stays", clipGifFrameScale(1.0f) == 1.0f);
+    EXPECT_TRUE("1.5x stays", clipGifFrameScale(1.5f) == 1.5f);
+    EXPECT_TRUE("2x stays", clipGifFrameScale(2.0f) == CLIP_GIF_MAX_SCALE);
+    EXPECT_TRUE("3x held to the cap", clipGifFrameScale(3.0f) == CLIP_GIF_MAX_SCALE);
+    EXPECT_TRUE("4x on a dense display held to the cap",
+                clipGifFrameScale(8.0f) == CLIP_GIF_MAX_SCALE);
+    EXPECT_TRUE("zoomed out keeps the pixel art's pixels",
+                clipGifFrameScale(0.5f) == 1.0f);
+    EXPECT_TRUE("zero", clipGifFrameScale(0.0f) == 1.0f);
+    EXPECT_TRUE("negative", clipGifFrameScale(-2.0f) == 1.0f);
+    EXPECT_TRUE("nan", clipGifFrameScale(NAN) == 1.0f);
+    /* The size. */
+    clipGifFrameSize(&crop, 1.0f, &w, &h);
+    EXPECT_TRUE("1x: the crop", w == 480 && h == 270);
+    clipGifFrameSize(&crop, 2.0f, &w, &h);
+    EXPECT_TRUE("2x: twice the crop", w == 960 && h == 540);
+    clipGifFrameSize(&crop, 1.5f, &w, &h);
+    EXPECT_TRUE("1.5x: to the nearest pixel", w == 720 && h == 405);
+    crop.w = 3; crop.h = 3;
+    clipGifFrameSize(&crop, 1.5f, &w, &h);
+    EXPECT_TRUE("rounds half up", w == 5 && h == 5);
+    crop.w = 0;
+    clipGifFrameSize(&crop, 2.0f, &w, &h);
+    EXPECT_TRUE("no width: no frame", w == 0 && h == 0);
+    clipGifFrameSize(NULL, 2.0f, &w, &h);
+    EXPECT_TRUE("no crop: no frame", w == 0 && h == 0);
+    crop.w = 480; crop.h = 270;
+    clipGifFrameSize(&crop, 2.0f, NULL, NULL);
+    EXPECT_TRUE("no out pointers: nothing to check", 1);
+    return fails ? 1 : 0;
+}
+
+/* clip_gif_preview_shrink: a GIF whose planned frames would not fit in the
+ * preview's memory is decoded shrunk by the smallest whole factor that makes
+ * them fit, each pixel the mean of its block, with dispose mode 3 still
+ * restoring the real frame two back. */
+int run_clip_gif_preview_shrink(void) {
+    int fails = 0;
+    unsigned char gif[1024];
+    int *delays = NULL;
+    int x = 0, y = 0, frames = 0, tooLarge = 0;
+    stbi_uc *px;
+
+    /* The 4 x 4 dispose GIF: 64 bytes a frame, 4 frames. Unshrunk with stb's
+     * 3 working frames it needs 448 bytes. */
+    size_t len = makeDisposeGif(gif, sizeof(gif));
+    EXPECT_TRUE("dispose GIF built", len > 0);
+
+    /* Room for it as it is: not shrunk. */
+    px = stbiLoadGifCappedShrink(gif, (int)len, 448, 4, &delays, &x, &y,
+                                 &frames, &tooLarge, NULL, NULL);
+    EXPECT_TRUE("fits: full size", px != NULL && x == 4 && y == 4 &&
+                                       frames == 4 && !tooLarge);
+    if (px != NULL) stbi_image_free(px);
+    if (delays != NULL) stbi_image_free(delays);
+    delays = NULL;
+
+    /* No plan: never shrunk, so too large, as stbiLoadGifCapped has it. */
+    px = stbiLoadGifCappedShrink(gif, (int)len, 447, 0, NULL, &x, &y,
+                                 &frames, &tooLarge, NULL, NULL);
+    EXPECT_TRUE("no plan: too large", px == NULL && tooLarge);
+    px = stbiLoadGifCapped(gif, (int)len, 447, NULL, &x, &y, &frames,
+                           &tooLarge, NULL, NULL);
+    EXPECT_TRUE("capped: too large", px == NULL && tooLarge);
+
+    /* By 2: 2 x 2 frames of 16 bytes, 4 of them 64, beside 3 working and 2
+     * kept full frames, 320: 384 in all. */
+    px = stbiLoadGifCappedShrink(gif, (int)len, 384, 4, &delays, &x, &y,
+                                 &frames, &tooLarge, NULL, NULL);
+    EXPECT_TRUE("by 2", px != NULL && x == 2 && y == 2 && frames == 4 &&
+                            !tooLarge);
+    EXPECT_TRUE("by 2: delays", delays != NULL && delays[0] == 100);
+    if (px != NULL && frames == 4) {
+        /* Frame 0: black at 0,0 and three clear pixels in the block: a
+         * quarter opaque, black. */
+        EXPECT_TRUE("by 2: frame 0 top left", pixelIs(px, 0, 0, 0, 64));
+        EXPECT_TRUE("by 2: frame 0 top right clear", pixelIs(px + 4, 0, 0, 0, 0));
+        /* Frame 3: 0,0 white (restored from frame 1) and 1,1 blue among the
+         * four of the block: r 255/4, g 255/4, b 510/4, a 510/4, rounded. */
+        EXPECT_TRUE("by 2: frame 3 restored and blue",
+                    pixelIs(px + 3 * 16, 64, 64, 128, 128));
+    }
+    if (px != NULL) stbi_image_free(px);
+    if (delays != NULL) stbi_image_free(delays);
+    delays = NULL;
+
+    /* One byte less: by 2 does not fit, nor by 3 (also 2 x 2); by 4 the
+     * frames are one pixel, 16 bytes in all beside the 320: 336. */
+    px = stbiLoadGifCappedShrink(gif, (int)len, 383, 4, NULL, &x, &y,
+                                 &frames, &tooLarge, NULL, NULL);
+    EXPECT_TRUE("by 4", px != NULL && x == 1 && y == 1 && frames == 4 &&
+                            !tooLarge);
+    if (px != NULL && frames == 4) {
+        /* Frame 3's one pixel: white and blue among 16: r 255/16, g 255/16,
+         * b 510/16, a 510/16, each rounded. */
+        EXPECT_TRUE("by 4: frame 3 mean", pixelIs(px + 3 * 4, 16, 16, 32, 32));
+        EXPECT_TRUE("by 4: frame 0 mean", pixelIs(px, 0, 0, 0, 16));
+    }
+    if (px != NULL) stbi_image_free(px);
+
+    /* Not even one pixel a frame fits beside the full frames kept: too
+     * large. */
+    px = stbiLoadGifCappedShrink(gif, (int)len, 335, 4, NULL, &x, &y,
+                                 &frames, &tooLarge, NULL, NULL);
+    EXPECT_TRUE("too small to shrink into", px == NULL && tooLarge);
+
+    /* More frames than planned: the plan said 2 would fit unshrunk in 320
+     * (2 + 3 working frames), so the frames are kept full size and the
+     * third does not fit. */
+    px = stbiLoadGifCappedShrink(gif, (int)len, 320, 2, NULL, &x, &y,
+                                 &frames, &tooLarge, NULL, NULL);
+    EXPECT_TRUE("more frames than planned", px == NULL && tooLarge);
+
+    /* Odd sizes: a 5 x 3 screen by 2 is 3 x 2, the edge blocks smaller. The
+     * frames are 1 x 1 black at 0,0 on a clear screen. */
+    len = makeGif(gif, sizeof(gif), 5, 3, 1, 1);
+    EXPECT_TRUE("odd GIF built", len > 0);
+    /* Full: 60 bytes a frame, 5 held = 300; by 2: 24 a frame; plan 100
+     * frames: 2400 + 300 do not fit in 1000, by 3 (2 x 1, 8 a frame) 800 +
+     * 300 do not either, by 4 (2 x 1) the same, by 5 (1 x 1, 4 a frame) 400
+     * + 300 fit. */
+    px = stbiLoadGifCappedShrink(gif, (int)len, 1000, 100, NULL, &x, &y,
+                                 &frames, &tooLarge, NULL, NULL);
+    EXPECT_TRUE("odd by 5", px != NULL && x == 1 && y == 1 && frames == 1 &&
+                                !tooLarge);
+    if (px != NULL && frames == 1) {
+        /* One black pixel among 15. */
+        EXPECT_TRUE("odd by 5: mean", pixelIs(px, 0, 0, 0, 17));
+    }
+    if (px != NULL) stbi_image_free(px);
+    px = stbiLoadGifCappedShrink(gif, (int)len, 2800, 100, NULL, &x, &y,
+                                 &frames, &tooLarge, NULL, NULL);
+    EXPECT_TRUE("odd by 2", px != NULL && x == 3 && y == 2 && frames == 1 &&
+                                !tooLarge);
+    if (px != NULL && frames == 1) {
+        /* The top left block, 2 x 2 with one black pixel; the right column
+         * is 1 wide, the bottom row 1 high. */
+        EXPECT_TRUE("odd by 2: top left", pixelIs(px, 0, 0, 0, 64));
+        EXPECT_TRUE("odd by 2: edge clear", pixelIs(px + 5 * 4, 0, 0, 0, 0));
+    }
+    if (px != NULL) stbi_image_free(px);
+
+    return fails ? 1 : 0;
+}

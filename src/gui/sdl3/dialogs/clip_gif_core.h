@@ -77,11 +77,13 @@ float clipGifLenToSeconds(uint32_t lenMs);
  * and at most CLIP_GIF_MAX_FRAMES frames, and, until the player moves the
  * crop frame, a view wider than CLIP_GIF_MAX_WIDTH pixels cut down to its
  * middle part (clipGifFrameDefault). A frame the player moves or sizes is
- * held to CLIP_GIF_MAX_WIDTH pixels wide too (clipGifModeFitFrame), as the
- * capture reads the frame's pixels from the view one for one and cannot
- * scale them down. The width cap keeps the file small and
- * keeps a long GIF inside the gallery's preview memory
- * (CLIP_GIF_PREVIEW_MAX_BYTES). */
+ * held to CLIP_GIF_MAX_WIDTH pixels wide too (clipGifModeFitFrame). The
+ * width is in pixels of the render target, the 1x pixel art of the map; the
+ * GIF's own pixels are those times the scale the screen shows them at
+ * (clipGifFrameScale, at most CLIP_GIF_MAX_SCALE), so the widest GIF is
+ * CLIP_GIF_MAX_WIDTH * CLIP_GIF_MAX_SCALE pixels. The width cap keeps the
+ * file small, and with the gallery's preview memory
+ * (CLIP_GIF_PREVIEW_MAX_BYTES) keeps a long GIF playable there. */
 #define CLIP_GIF_FRAME_MS   100u
 #define CLIP_GIF_MIN_FRAMES 10u
 #define CLIP_GIF_MAX_FRAMES 300u
@@ -321,6 +323,29 @@ void clipGifModeFitFrame(ClipGifMode *m, int viewW, int viewH);
  * False, with *out cleared, when the view is empty or there is no mode. */
 bool clipGifChooseCrop(ClipGifMode *m, int viewX, int viewY, int viewW,
                        int viewH, ClipGifRect *out);
+
+/* ── The size of a frame ─────────────────────────────────────────────
+ * The render target is 1x pixel art that the screen magnifies, and the
+ * tank names are drawn over the magnified image at the size they appear.
+ * A GIF frame is made the same way: the crop is drawn at a scale into a
+ * texture of its own and the names over it, and that texture is what the
+ * encoder is given. The scale is the screen's (zoom times pixel density),
+ * held between 1 (zoomed out, the pixel art keeps its own pixels) and
+ * CLIP_GIF_MAX_SCALE (a high-density display at a high zoom would
+ * otherwise make a file many times the size and leave few whole GIFs in
+ * the gallery's preview memory). */
+#define CLIP_GIF_MAX_SCALE 2.0f
+
+/* The scale a frame is drawn at for a screen that draws the render target
+ * at screenScale pixels per target pixel. 1 for a scale that is not a
+ * number. */
+float clipGifFrameScale(float screenScale);
+
+/* The pixels of a frame of crop at scale: each side times the scale, to
+ * the nearest pixel, at least 1. A crop with no width or no height gives
+ * 0 x 0. */
+void clipGifFrameSize(const ClipGifRect *crop, float scale, int *outW,
+                      int *outH);
 
 /* ── The GIF span and the zoomed timeline ────────────────────────────
  * In recording mode the GIF is of one part of the replay, its span: from
@@ -633,12 +658,16 @@ void clipGifFormatFileStamp(int64_t createdUnix, char *out, size_t outLen);
 /* ── Preview ─────────────────────────────────────────────────────────
  * The most memory the gallery's preview gives the decoded frames of one GIF
  * (RGBA, 4 bytes a pixel). A 30 s export of a 480 x 270 view is about
- * 156 MB; a GIF that needs more, such as a long crop of a large view or a
- * 30 s export more than about 460 px high at the 480 px width, is not
- * decoded and the window says it is too large to show. The limit also counts
- * the decoder's own working buffers (STBI_GIF_WORK_FRAMES frames), so the
- * frames and those buffers together stay within it. The gallery also does
- * not read a .gif file larger than this. */
+ * 156 MB. A GIF whose CLIP_GIF_MAX_FRAMES frames would need more, such as
+ * one made at 2x (960 x 540, four times the pixels) or a 30 s export more
+ * than about 460 px high at the 480 px width, is decoded shrunk by a whole
+ * factor (stbiLoadGifCappedShrink), so the preview plays the whole clip at
+ * a smaller size; the file itself is as it was made. Only a GIF that does
+ * not fit even then is not decoded, and the window says it is too large to
+ * show. The limit also counts the decoder's own working buffers
+ * (STBI_GIF_WORK_FRAMES frames, and the two full frames a shrunk decode
+ * keeps), so the frames and those buffers together stay within it. The
+ * gallery also does not read a .gif file larger than this. */
 #define CLIP_GIF_PREVIEW_MAX_BYTES ((size_t)256u * 1024u * 1024u)
 
 /* ── Text ────────────────────────────────────────────────────────────
