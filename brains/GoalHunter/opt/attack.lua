@@ -4999,7 +4999,10 @@ local function update_attack_substate_body(goal, state, world, info)
       local placed = false
       for _, wp in ipairs(goal._wall_build_list or {}) do
         local tt = U.ttype(wp.mx, wp.my)
-        if tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX then
+        -- A friendly pill worth a wall or more is a blocker too (the terrain
+        -- map does not show pills).
+        if tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX
+           or require("pill_cover").square_walls(world, wp.mx, wp.my) > 0 then
           placed = true; break
         end
       end
@@ -7232,7 +7235,10 @@ local function update_attack_substate_body(goal, state, world, info)
         if goal._wall_build_list then
           for _, _p in ipairs(goal._wall_build_list) do
             local _tt = U.ttype(_p.mx, _p.my)
-            if _tt == C.T_BUILDING or _tt == C.T_HALFBUILD or _tt == C.T_PILLBOX then
+            -- A friendly pill worth a wall or more is a blocker too (the
+            -- terrain map does not show pills).
+            if _tt == C.T_BUILDING or _tt == C.T_HALFBUILD or _tt == C.T_PILLBOX
+               or require("pill_cover").square_walls(world, _p.mx, _p.my) > 0 then
               _have_blocker = true; break
             end
           end
@@ -7281,17 +7287,24 @@ local function update_attack_substate_body(goal, state, world, info)
       -- Snapshot initial tile types per slot so we can tell pre-existing cover
       -- from blockers we actually placed (used by the early-success gate — one
       -- newly-built blocker is enough — and the "0 BUILT" diagnostic banner).
+      -- A friendly pill worth at least one wall (pill_cover.lua) on a slot is
+      -- cover too: the terrain map does not show pills, so look for it.
       do
+        local PC = require("pill_cover")
         local initial_tt = {}
+        local initial_pw = {}
         local preexisting = 0
         for i, p in ipairs(sorted) do
           local tt0 = U.ttype(p.mx, p.my)
           initial_tt[i] = tt0
-          if tt0 == C.T_BUILDING or tt0 == C.T_HALFBUILD or tt0 == C.T_PILLBOX then
+          initial_pw[i] = PC.square_walls(world, p.mx, p.my)
+          if tt0 == C.T_BUILDING or tt0 == C.T_HALFBUILD or tt0 == C.T_PILLBOX
+             or initial_pw[i] > 0 then
             preexisting = preexisting + 1
           end
         end
         goal._wall_build_initial_tt   = initial_tt
+        goal._wall_build_initial_pw   = initial_pw
         goal._wall_build_preexisting  = preexisting
       end
       -- Reset the LGM-progress trackers too, otherwise they retain
@@ -7313,14 +7326,23 @@ local function update_attack_substate_body(goal, state, world, info)
     -- Skip walls that are already built (could be by us, ally, or just
     -- pre-existing terrain we re-checked). Counts as progress so the
     -- give-up timer resets.
+    local PC = require("pill_cover")
     while idx <= #list do
       local target = list[idx]
       local tt = U.ttype(target.mx, target.my)
-      -- T_PILLBOX too: a slot that got a pillbox dropped on it (by us
-      -- using one of the carried pills as a blocker) is just as valid
-      -- a shield as a wall — even better since the pillbox actively
-      -- shoots back. Advance past it.
-      if tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX then
+      -- A pill on the slot too (pill_cover.slot_done): a slot that got a
+      -- pillbox dropped on it (by us using one of the carried pills as a
+      -- blocker) is just as valid a shield as a wall — even better since
+      -- the pillbox actively shoots back. The terrain map does not show
+      -- pills, so the old T_PILLBOX test never matched and the loop waited
+      -- for a wall on the pill (player 0, ticks 15858-17090: pill #4 on
+      -- (140,127), "0 built" after 250 ticks, replan). Any pill counts here,
+      -- whatever its owner or health: no wall can go on it. Its cover is
+      -- counted below (5 * floor(health / 5) shots for a friendly pill).
+      if PC.slot_done(world, target.mx, target.my, tt) then
+        if tt ~= C.T_BUILDING and tt ~= C.T_HALFBUILD and tt ~= C.T_PILLBOX then
+          local sp = PC.pill_on_square(world, target.mx, target.my)
+        end
         idx = idx + 1
         goal._wall_build_last_progress = now
         goal._wall_idx_started = nil  -- reset per-wall sub-timer
@@ -7429,13 +7451,17 @@ local function update_attack_substate_body(goal, state, world, info)
     -- wall or a dropped pillbox on a slot that wasn't cover when we started —
     -- end the build phase successfully instead of grinding through the rest of
     -- the queue. (Counts only T_BUILDING/T_PILLBOX, not a still-rising halfwall.)
+    -- A friendly pill worth at least one wall on a slot counts as a blocker
+    -- (pill_cover.slot_blocker).
     local newly_built = 0
     do
       local initial_tt = goal._wall_build_initial_tt or {}
+      local initial_pw = goal._wall_build_initial_pw or {}
       for i, p in ipairs(list) do
         local tt1 = U.ttype(p.mx, p.my)
-        local now_block = (tt1 == C.T_BUILDING or tt1 == C.T_PILLBOX)
+        local now_block = PC.slot_blocker(world, p.mx, p.my, tt1)
         local was_block = (initial_tt[i] == C.T_BUILDING or initial_tt[i] == C.T_HALFBUILD or initial_tt[i] == C.T_PILLBOX)
+                          or (initial_pw[i] or 0) > 0
         if now_block and not was_block then newly_built = newly_built + 1 end
       end
     end
@@ -7456,24 +7482,17 @@ local function update_attack_substate_body(goal, state, world, info)
     if built_enough and idx <= #list and not stalled then
     end
 
-    -- Cover-sufficient: a friendly pill blocker is worth 3 walls (PILLS_MAX_HEALTH
-    -- 15 vs WALL_HP_FULL 5 shots-to-break), matching the shield scorer. Sum the
-    -- current cover among the slots in shots and stop the build the moment it
-    -- reaches PPT_COVER_TARGET_SHOTS — so one dropped/pre-existing pill ends it
-    -- immediately, while a walls-only shield still builds out to three walls.
+    -- Cover-sufficient: a friendly pill on a slot is worth floor(health / 5)
+    -- walls of WALL_HP_FULL (5) shots each (pill_cover.slot_cover_shots), so a
+    -- 15-health pill is 15 shots, a 10-health pill 10 and a 4-health pill 0.
+    -- Sum the current cover among the slots in shots and stop the build the
+    -- moment it reaches PPT_COVER_TARGET_SHOTS — so one full-health
+    -- dropped/pre-existing pill ends it immediately, a 10-health pill needs one
+    -- wall more, while a walls-only shield still builds out to three walls.
     -- Independent of the blitz gate (real cover is real cover, solo or not).
     local cover_shots = 0
     for _, p in ipairs(list) do
-      local tt1 = U.ttype(p.mx, p.my)
-      if tt1 == C.T_PILLBOX then
-        local fp = M.find_pill_at(world, p.mx, p.my)
-        if fp and (fp.owner == "friendly" or fp.owner == "allied")
-           and (fp.health or 0) > 0 then
-          cover_shots = cover_shots + (C.PILLS_MAX_HEALTH or 15)
-        end
-      elseif tt1 == C.T_BUILDING or tt1 == C.T_HALFBUILD then
-        cover_shots = cover_shots + (C.WALL_HP_FULL or 5)
-      end
+      cover_shots = cover_shots + PC.slot_cover_shots(world, p.mx, p.my, U.ttype(p.mx, p.my))
     end
     local cover_enough = cover_shots >= (C.PPT_COVER_TARGET_SHOTS or 15)
     if cover_enough and idx <= #list and not stalled then
