@@ -6,15 +6,14 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-/* ── WinBolo: a GIF decode with a memory limit (stb_image_gif_capped.h) ──
- * In this file because it calls stb's static frame reader. The loop is
- * stbi__load_gif_main's, with these changes: the block size is size_t and is
- * checked against a limit (which also counts stb's working buffers) before
- * each frame is added; the file is checked to be a GIF, and its logical
- * screen's size against the limit, before the first frame is read, so a
- * huge screen is not allocated at all; a stop function is asked before each
- * frame; and the frame two back that dispose mode 3 restores is
- * the real one (stbi__load_gif_main points before the start of its block). */
+/* ── WinBolo: a GIF read a frame at a time (stb_image_gif_capped.h) ──
+ * In this file because it calls stb's static frame reader. The reading is
+ * stbi__load_gif_main's, one frame for each call instead of all at once,
+ * with these changes: the file is checked to be a GIF, and its logical
+ * screen's size against a limit, before anything is allocated, so a huge
+ * screen is not allocated at all; the size arithmetic is in size_t; and the
+ * frame two back that dispose mode 3 restores is the real one, kept by the
+ * stream (stbi__load_gif_main points before the start of its block). */
 
 int stbiGifFramesFit(int w, int h, size_t frames, size_t maxBytes) {
    size_t frameBytes;
@@ -34,217 +33,127 @@ int stbiGifFramesFit(int w, int h, size_t frames, size_t maxBytes) {
    return frames <= maxBytes / frameBytes;
 }
 
-/* The smallest whole factor the frames of a w x h GIF are shrunk by so that
- * planFrames of them fit in maxBytes beside stb's working buffers and, once
- * they are shrunk, the two full frames kept for dispose mode 3. 1 when they
- * fit as they are, when planFrames is 0, or when the full frames alone do
- * not fit (shrinking the kept frames cannot help then, and the decode goes
- * on to find the GIF too large as it would unshrunk). The caller has
- * checked that one full frame and the working buffers fit. */
-static int stbiGifShrinkFor(int w, int h, size_t planFrames, size_t maxBytes) {
-   const size_t full = (size_t)w * (size_t)h * 4u;
-   const size_t held = full * (STBI_GIF_WORK_FRAMES + STBI_GIF_SHRINK_FRAMES);
-   int k;
-   if (planFrames == 0 ||
-       stbiGifFramesFit(w, h, planFrames + STBI_GIF_WORK_FRAMES, maxBytes) ||
-       held > maxBytes) {
-      return 1;
-   }
-   for (k = 2;; k++) {
-      const int rw = (w + k - 1) / k;
-      const int rh = (h + k - 1) / k;
-      if (stbiGifFramesFit(rw, rh, planFrames, maxBytes - held) ||
-          (rw == 1 && rh == 1)) {
-         return k;
-      }
-   }
-}
-
-/* Shrinks the w x h RGBA frame src by k into dst, rw x rh: each pixel of
- * dst is the mean of the k x k block of src it stands for (a smaller block
- * at the right and bottom edges when k does not divide w or h). */
-static void stbiGifShrinkFrame(const stbi_uc *src, int w, int h, int k,
-                               stbi_uc *dst, int rw, int rh) {
-   int rx, ry;
-   for (ry = 0; ry < rh; ry++) {
-      const int y0 = ry * k;
-      const int y1 = (y0 + k < h) ? y0 + k : h;
-      for (rx = 0; rx < rw; rx++) {
-         const int x0 = rx * k;
-         const int x1 = (x0 + k < w) ? x0 + k : w;
-         unsigned sum[4] = { 0, 0, 0, 0 };
-         unsigned n = 0;
-         stbi_uc *d = dst + ((size_t)ry * (size_t)rw + (size_t)rx) * 4u;
-         int x, y, c;
-         for (y = y0; y < y1; y++) {
-            const stbi_uc *p = src + ((size_t)y * (size_t)w + (size_t)x0) * 4u;
-            for (x = x0; x < x1; x++, p += 4) {
-               sum[0] += p[0];
-               sum[1] += p[1];
-               sum[2] += p[2];
-               sum[3] += p[3];
-               n++;
-            }
-         }
-         for (c = 0; c < 4; c++) {
-            d[c] = (stbi_uc)((sum[c] + n / 2u) / n);
-         }
-      }
-   }
-}
-
-stbi_uc *stbiLoadGifCappedShrink(const stbi_uc *buffer, int len,
-                                 size_t maxBytes, size_t planFrames,
-                                 int **delays, int *x, int *y, int *frames,
-                                 int *tooLarge, StbiGifStopFn stop,
-                                 void *stopUser) {
+struct StbiGifStream {
    stbi__context s;
-   stbi__gif *g;
-   stbi_uc *out = NULL;
-   int *dl = NULL;
-   /* The last two full frames, kept while the frames out holds are shrunk:
-    * frame i in keep[i % 2]. */
-   stbi_uc *keep[2] = { NULL, NULL };
-   size_t layers = 0;
-   size_t stride = 0;
-   size_t full = 0;
-   size_t held = 0;
-   int comp = 0;
-   int w = 0, h = 0;
-   int shrink = 1;
-   int rw = 0, rh = 0;
+   /* About 35 KB, with the stream on the heap rather than a stack. */
+   stbi__gif g;
+   const stbi_uc *buffer;
+   int len;
+   int w, h;
+   /* The two frames before the current one, frame i in keep[i % 2], for a
+    * frame whose dispose mode restores the frame two back. */
+   stbi_uc *keep[2];
+   int read;   /* frames given since the open or the last rewind */
+   int ended;  /* the end of the GIF, or a fault, was reached */
+};
 
-   if (delays) *delays = NULL;
-   *x = 0;
-   *y = 0;
-   *frames = 0;
-   *tooLarge = 0;
+/* Frees what stb's reader allocated for the GIF, so the reader starts the
+ * GIF again (it allocates when g->out is NULL). */
+static void stbiGifStreamFreeReader(StbiGifStream *st) {
+   STBI_FREE(st->g.out);
+   STBI_FREE(st->g.history);
+   STBI_FREE(st->g.background);
+   memset(&st->g, 0, sizeof(st->g));
+}
+
+StbiGifStream *stbiGifStreamOpen(const stbi_uc *buffer, int len,
+                                 size_t maxBytes, int *w, int *h,
+                                 int *tooLarge) {
+   stbi__context s;
+   StbiGifStream *st;
+   size_t full;
+   int comp = 0;
+   int sw = 0, sh = 0;
+
+   if (w) *w = 0;
+   if (h) *h = 0;
+   if (tooLarge) *tooLarge = 0;
    if (buffer == NULL || len <= 0) {
       return NULL;
    }
    /* The GIF test first, so a file of another kind is "could not be opened"
-    * and never "too large". stbi__gif_info does not rewind when it reads the
-    * header, so the read starts again after it. */
+    * and never "too large". */
    stbi__start_mem(&s, buffer, len);
    if (!stbi__gif_test(&s)) {
       return NULL;
    }
-   if (!stbi__gif_info(&s, &w, &h, &comp)) {
+   if (!stbi__gif_info(&s, &sw, &sh, &comp)) {
       return NULL;
    }
-   stbi__rewind(&s);
-   if (!stbiGifFramesFit(w, h, 1 + STBI_GIF_WORK_FRAMES, maxBytes)) {
-      *tooLarge = 1;
+   if (!stbiGifFramesFit(sw, sh, STBI_GIF_STREAM_FRAMES, maxBytes)) {
+      if (tooLarge) *tooLarge = 1;
       return NULL;
    }
-   shrink = stbiGifShrinkFor(w, h, planFrames, maxBytes);
-   rw = (w + shrink - 1) / shrink;
-   rh = (h + shrink - 1) / shrink;
-   stride = (size_t)rw * (size_t)rh * 4u;
-   /* What is held beside the frames kept: stb's buffers, and the two full
-    * frames when the kept ones are shrunk. Within maxBytes: the header check
-    * above for the one, stbiGifShrinkFor for the other. */
-   full = (size_t)w * (size_t)h * 4u;
-   held = full * (STBI_GIF_WORK_FRAMES +
-                  ((shrink > 1) ? STBI_GIF_SHRINK_FRAMES : 0u));
-
-   /* About 35 KB, so on the heap rather than a worker thread's stack. */
-   g = (stbi__gif *)STBI_MALLOC(sizeof(stbi__gif));
-   if (g == NULL) {
+   st = (StbiGifStream *)STBI_MALLOC(sizeof(StbiGifStream));
+   if (st == NULL) {
       return NULL;
    }
-   memset(g, 0, sizeof(*g));
-   if (shrink > 1) {
-      keep[0] = (stbi_uc *)STBI_MALLOC(full);
-      keep[1] = (stbi_uc *)STBI_MALLOC(full);
-      if (keep[0] == NULL || keep[1] == NULL) {
-         goto fail;
-      }
-   }
-
-   for (;;) {
-      stbi_uc *two_back = NULL;
-      stbi_uc *u;
-      stbi_uc *grown;
-      int *grownDelays;
-      if (layers >= 2) {
-         two_back = (shrink > 1) ? keep[layers % 2]
-                                 : out + (layers - 2) * stride;
-      }
-      if (stop != NULL && stop(stopUser)) {
-         goto fail;
-      }
-      u = stbi__gif_load_next(&s, g, &comp, 4, two_back);
-      if (u == (stbi_uc *)&s) {
-         u = NULL;  /* the end of the GIF */
-      }
-      if (u == NULL) {
-         break;
-      }
-      /* Every frame is the logical screen's size, which the header gave. */
-      if (g->w != w || g->h != h ||
-          !stbiGifFramesFit(rw, rh, layers + 1, maxBytes - held)) {
-         *tooLarge = 1;
-         goto fail;
-      }
-      grown = (stbi_uc *)STBI_REALLOC(out, (layers + 1) * stride);
-      if (grown == NULL) {
-         goto fail;
-      }
-      out = grown;
-      grownDelays = (int *)STBI_REALLOC(dl, (layers + 1) * sizeof(int));
-      if (grownDelays == NULL) {
-         goto fail;
-      }
-      dl = grownDelays;
-      if (shrink > 1) {
-         memcpy(keep[layers % 2], u, full);
-         stbiGifShrinkFrame(u, w, h, shrink, out + layers * stride, rw, rh);
-      } else {
-         memcpy(out + layers * stride, u, stride);
-      }
-      dl[layers] = g->delay;
-      layers++;
-   }
-
-   STBI_FREE(g->out);
-   STBI_FREE(g->history);
-   STBI_FREE(g->background);
-   STBI_FREE(keep[0]);
-   STBI_FREE(keep[1]);
-   if (layers == 0) {
-      STBI_FREE(g);
-      STBI_FREE(out);
-      STBI_FREE(dl);
+   memset(st, 0, sizeof(*st));
+   st->buffer = buffer;
+   st->len = len;
+   st->w = sw;
+   st->h = sh;
+   full = (size_t)sw * (size_t)sh * 4u;
+   st->keep[0] = (stbi_uc *)STBI_MALLOC(full);
+   st->keep[1] = (stbi_uc *)STBI_MALLOC(full);
+   if (st->keep[0] == NULL || st->keep[1] == NULL) {
+      stbiGifStreamClose(st);
       return NULL;
    }
-   *x = rw;
-   *y = rh;
-   *frames = (int)layers;
-   STBI_FREE(g);
-   if (delays) {
-      *delays = dl;
-   } else {
-      STBI_FREE(dl);
-   }
-   return out;
-
-fail:
-   STBI_FREE(g->out);
-   STBI_FREE(g->history);
-   STBI_FREE(g->background);
-   STBI_FREE(g);
-   STBI_FREE(keep[0]);
-   STBI_FREE(keep[1]);
-   STBI_FREE(out);
-   STBI_FREE(dl);
-   return NULL;
+   stbi__start_mem(&st->s, buffer, len);
+   if (w) *w = sw;
+   if (h) *h = sh;
+   return st;
 }
 
-stbi_uc *stbiLoadGifCapped(const stbi_uc *buffer, int len, size_t maxBytes,
-                           int **delays, int *x, int *y, int *frames,
-                           int *tooLarge, StbiGifStopFn stop,
-                           void *stopUser) {
-   return stbiLoadGifCappedShrink(buffer, len, maxBytes, 0u, delays, x, y,
-                                  frames, tooLarge, stop, stopUser);
+int stbiGifStreamNext(StbiGifStream *st, const stbi_uc **out, int *delayMs) {
+   stbi_uc *two_back;
+   stbi_uc *u;
+   int comp = 0;
+
+   if (out) *out = NULL;
+   if (delayMs) *delayMs = 0;
+   if (st == NULL || st->ended) {
+      return 0;
+   }
+   two_back = (st->read >= 2) ? st->keep[st->read % 2] : NULL;
+   u = stbi__gif_load_next(&st->s, &st->g, &comp, 4, two_back);
+   if (u == (stbi_uc *)&st->s) {
+      u = NULL;  /* the end of the GIF */
+   }
+   /* Every frame is the logical screen's size, which the header gave; a
+    * frame of another size is a fault, as a cut-off frame is. */
+   if (u == NULL || st->g.w != st->w || st->g.h != st->h) {
+      st->ended = 1;
+      return 0;
+   }
+   memcpy(st->keep[st->read % 2], u, (size_t)st->w * (size_t)st->h * 4u);
+   st->read++;
+   if (out) *out = u;
+   if (delayMs) *delayMs = st->g.delay;
+   return 1;
+}
+
+int stbiGifStreamFramesRead(const StbiGifStream *st) {
+   return (st != NULL) ? st->read : 0;
+}
+
+void stbiGifStreamRewind(StbiGifStream *st) {
+   if (st == NULL) {
+      return;
+   }
+   stbiGifStreamFreeReader(st);
+   stbi__start_mem(&st->s, st->buffer, st->len);
+   st->read = 0;
+   st->ended = 0;
+}
+
+void stbiGifStreamClose(StbiGifStream *st) {
+   if (st == NULL) {
+      return;
+   }
+   stbiGifStreamFreeReader(st);
+   STBI_FREE(st->keep[0]);
+   STBI_FREE(st->keep[1]);
+   STBI_FREE(st);
 }
