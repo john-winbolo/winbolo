@@ -6598,6 +6598,7 @@ set(_unit_test_names
     pill_pos_current_duplicate_square
     pill_pos_current_snapshot_apply
     pill_pos_current_server_unchanged
+    brain_pills_skip_moved_square
     pill_pos_current_moved_state
     pill_pos_current_carry_cycle
     viewport_calc_square_pure
