@@ -2136,7 +2136,7 @@ to escort a person stays where it is.
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
-| `game.tutorial_done(p)` | Says that seat `p`'s player has finished a tutorial. In a single-player game of a map in `data/maps/tutorials`, the main menu stops showing its Tutorial button. Anywhere else it changes nothing. See [Finishing a tutorial](#finishing-a-tutorial). |
+| `game.tutorial_done(p)` | Says that seat `p`'s player has finished a tutorial. In a single-player game of a map in the shipped `data/maps/tutorials` folder, the main menu stops showing its Tutorial button. Anywhere else it changes nothing. See [Finishing a tutorial](#finishing-a-tutorial). |
 
 `message` and `say` are two different voices, and the difference decides
 whether a bot hears the line at all.
@@ -2211,10 +2211,11 @@ Tutorial entry in Settings turns it back on.
 The server only marks the seat. Nothing is sent to any client and nothing
 goes in the replay. The one reader is a single-player client, whose server
 runs in the same process: once a frame it takes the mark for its own seat.
-It acts on the mark only when the running map's own script is in
-`data/maps/tutorials`. So the call does nothing on a hosted or dedicated
-server, nothing for any other seat, and nothing for a script outside that
-folder.
+It acts on the mark only when the running map's own script is directly in
+the shipped `data/maps/tutorials` folder: the one in the data folder beside
+the program (see [Popups](#popups)). So the call does nothing on a hosted or
+dedicated server, nothing for any other seat, and nothing for a script
+outside that folder.
 
 The call is refused with `SCN_OP_NO_SUCH_PLAYER` when `p` is not a seat or
 nobody is in it.
@@ -2238,7 +2239,7 @@ local function tr(p, key)
   return mine[key] or TEXT.en[key]
 end
 
-game.popup(tr(p, "hello"), p)
+game.announce(tr(p, "hello"), 6, p)
 ```
 
 Only a single-player game knows the player's language: there the server runs
@@ -2264,8 +2265,10 @@ language's word for "press".
 
 A popup wraps only at spaces. Chinese and Japanese text has no spaces, so put a
 single `\n` (read as a space) every 25 to 30 characters. A status line or
-announcement row too wide for the Scenario Text window is broken at its last space that fits,
-or before the first character that does not fit when the row has no space.
+announcement row too wide for the Scenario Text window is broken at its
+spaces, never inside a word. A single word too wide is drawn smaller instead,
+down to half the UI text height. A row of Chinese, Japanese or Korean with no
+space is broken before the first character that does not fit.
 
 The limits count bytes, and most languages take more bytes than English for
 the same line: Cyrillic and Greek take two a letter, Chinese, Japanese and
@@ -2317,7 +2320,7 @@ exist.
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
 | `game.announce(text[, seconds[, target[, position]]])` | A big line in the Scenario Text window for that many seconds. Left out, `position` centres the line across the window. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line further left or right; only the share across is used. Empty text takes the line away. |
-| `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. While it is up a local game is paused, as the tutorial pauses it. See [Popups](#popups). |
+| `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. Only the built-in tutorials (a map's own script in the shipped `data/maps/tutorials` folder) have this call. In every other scenario and in every mod, `game.popup` is nil. While the box is up, only the built-in tutorials pause the game: a single-player game, with its server in this process. See [Popups](#popups). |
 | `game.status(text[, countdown_to[, target]])` | The status line: one line in the top row of the Scenario Text window, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
@@ -2342,45 +2345,76 @@ it asked for.
 **The Scenario Text window.** The status line and the announcement are both
 drawn in one window of their own, the Scenario Text window, and not on the
 game view. A script cannot put text anywhere else on the screen. The window
-is built the same way as the scenario panel's window: it has no title bar, a
-see-through backing, a bar along its top to move it, a gear that opens its
-settings (Pop out, then two opacity sliders), an X that closes it, and a grip
-in its bottom-right corner to resize it. Unlike the panel, it is a rectangle
-and it can take any shape. In a round with a scenario or a mod the window
-stays up for the whole round, also when there is no line to draw: with no
-line it draws nothing, and its bar, buttons, grip and edge show while the
-pointer is on it, so the player can move and resize it at any time. Outside
-such a round it shows only while there is a line to draw.
+uses the same window frame as the scenario panel's window, from the same code:
+it has no title bar, a see-through backing, a bar just above its text to move
+it, a gear that opens its settings (Pop out, then two opacity sliders), an X
+that closes it, a grip in its bottom-right corner to resize it, and a faint
+edge round the text. Unlike the panel, it is a rectangle and it can take any
+shape, and at 0% background opacity its edge and grip show only while the
+pointer is on the window or a drag is on. Above 0% they show as the panel's
+do. Like the panel, it takes a click only on its bar and its grip: a click or
+the wheel on its text goes through to the game view under it. The window is
+hidden until a scenario shows a status line or an announcement. Turning it on
+in **Brains > Info Overlay > Scenario Text** does not show it by itself, and
+the pointer over its place does not show it. It shows while it has a line to
+draw, and for `SCN_TEXT_SHOW_SECONDS` (5) seconds after a line was last on
+screen in it, so the player can still move or resize it. Then it is hidden
+again. It also stays up while the player drags its bar or its grip, has its
+gear settings open, or has its close question open, and it goes when the
+player is done. While a popup (`game.popup` or a tutorial message) is open,
+the lines are not drawn, so after 5 seconds the window is hidden until the
+popup closes and the lines show again. A popped-out window follows the same
+rule.
 
 By default the window sits at the top middle of the game view, sized so the
 text is as large as announcements were before: 240 units times the game's
-zoom. Once the player moves or resizes it, it stays where they put it,
-and its place, size, opacities and whether it is shown are kept in the
-preferences file. A player who closes it opens it again from **Brains > Info
-Overlay > Scenario Text**. In tablet mode there is no window: the same
+zoom. When a scenario panel is shown at its own default place at the left of
+the game view, the window instead fills the room from the panel's right edge
+to the game view's right edge, 4 units in from each, with its top level with
+the panel's top and its bottom level with the panel's bottom. The lines are
+fitted into that area as large as its width and height allow, and centred in
+it both ways. It goes back to the top middle when that room is narrower than
+160 pixels, or when the player has moved the panel. Its background starts
+fully clear (0%), so the outlined lines stand on the map; the player can add a
+backing from its gear. Once the player moves or resizes it, it stays where
+they put it, and its place, size, opacities and whether it is shown are kept
+in the preferences file. A player who closes it opens it again from **Brains >
+Info Overlay > Scenario Text**. In tablet mode there is no window: the same
 layout is drawn in a fixed band at the top middle of tablet mode's game view.
 
-**How the text is scaled.** The window draws a fixed source rectangle, 240
-units wide, scaled to fit. Each line is 20 units of text with a 1 unit
-outline, so a row is 22 units, and a 2 unit gap goes around and between the
-rows. With one row the rectangle is 26 units high; with two it is 50. The
-rows are counted for the round: the status line takes the top row from the
-first time one is shown, and the announcement takes the row under it, or
-the top row when the round has shown no status line. So the text changes
-size at most when a new kind of line first appears in a round, and not each
-time a line comes or goes.
+**How the text is scaled.** The window draws a source rectangle scaled to
+fit. Each line is 20 units of text with a 1 unit outline, so a row is 22
+units, and a 2 unit gap goes around and between the rows. With one row the
+rectangle is 26 units high; with two it is 50. It is as wide as the widest
+row on screen, with the outline and the gap on each side. The script's rows
+are counted for the round: the status line takes the top row from the first
+time one is shown, and the announcement takes the row under it, or the top
+row when the round has shown no status line. The width, and any rows added
+by breaking a long line, are this frame's. So the text size follows the
+widest row on screen; it stays the same when a line comes or goes while the
+letter cap below holds it, which is the usual case.
 
-The source rectangle is scaled by one factor for both directions, the
-largest that fits the window, and centred in the window. The letters keep
-their shape at every window size. A window wider than the text's shape has
-empty space left and right; a taller one has empty space above and below.
-A line too wide for the 236 units between the gaps is made smaller by itself
-until it fits. The gear has two sliders. **Background opacity** is the alpha
-of the black backing: 100% is opaque black and 0% is no backing. It starts
-at 43%, the see-through backing the window has always had. **Text opacity**
-fades the text and its outline, and starts at 100%. A scenario panel's gear
-has the same two sliders, and there the text opacity fades everything the
-script draws in the panel.
+A row keeps the script's own breaks while it fits across the window at three
+quarters of the UI text height. A row that does not fit is broken at its
+spaces into rows of about the same width. A single word is never broken: a
+word too wide for the window is drawn smaller, down to half the UI text
+height, and a word too wide even then is centred and cut off at the window's
+sides. A row of Chinese, Japanese or Korean with no space is broken between
+its characters, but a Latin word or a number in it is kept whole.
+
+The source rectangle is scaled by one factor for both directions, the largest
+that fits the window up to letters 1.5 times the UI text height, and centred
+in the window. The letters keep their shape at every window size. A window
+wider than the text's shape has empty space left and right; a taller one has
+empty space above and below. An announcement's `position` share is across the
+whole window, so a line at share 0.1 sits near the window's left side, not
+near the left of the centred text. The gear has two sliders. **Background
+opacity** is the alpha of the black backing: 100% is opaque black and 0% is no
+backing. In the Scenario Text window it starts at 0%, with no backing.
+**Text opacity** fades the text and its outline, and starts at 100%. A
+scenario panel's gear has the same two sliders. There the background opacity
+starts at 43%, and the text opacity fades everything the script draws in the
+panel.
 
 `position` keeps only its share across. Give a table `{ x = across, y =
 down }`, each from 0 to 1, or one of two words:
@@ -2450,7 +2484,7 @@ client writes each one out as the name of the bound key on a keyboard, a word
 for the control on a controller, or the touch wording on a touch screen. The
 128-byte cap (125 with a position) applies to the text as sent, tokens and all.
 A row that is too wide for the Scenario Text window once its tokens are filled in is broken
-into two at its last space that fits.
+at its spaces into rows of about the same width.
 
 ```lua
 game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)
@@ -2485,6 +2519,50 @@ is for a sentence or two the player has to read before going on, where
 `announce` would be gone too soon. A client queues up to four, and shows the
 next when one is closed. A popup is not kept: a player who joins after it
 was sent does not see it.
+
+Only the built-in tutorials have `game.popup`: the script beside a map
+directly in the shipped `data/maps/tutorials` folder. That is the
+`data` folder beside the program (beside `WinBolo` or `WinBoloDS`, or in the
+app bundle), the same folder the shipped mods are read from. The server
+makes both paths full and canonical first, so `..`, links, either slash and
+(on Windows and macOS) the case make no difference. A folder named
+`maps/tutorials` anywhere else does not count: one in your own maps folder,
+in a map pack, in an upload, or in the install folder outside `data`. A map
+in a folder below `data/maps/tutorials` does not count either. In every
+other scenario and in every mod the server leaves `popup` off the script's
+game table, so `game.popup` is nil there. A call stops the script with Lua's
+usual "attempt to call a nil value" error, and a `popup` trigger action does
+nothing (`-validate` says so). A script that runs in both places can test
+for it first:
+
+```lua
+if game.popup then
+  game.popup("Read this first.", p)
+else
+  game.announce("Read this first.", 6, p)
+end
+```
+
+`-validate` (and the map editor's check, and the check the server makes of
+an uploaded map's script) does not know whether a file is a map's script or
+a mod, so it reads every file as a map's own script, at the path it is
+given: run `-validate` with the path from the map's folder up (for example
+`data/maps/tutorials/Tutorial.scenario.lua`), not a bare file name from
+inside the folder. A mod in the tutorials folder passes the check with
+`game.popup` and is then refused by the server, because a mod never has the
+call. An uploaded map's script is checked at a temporary path, so one that
+calls `game.popup` at its top level is refused at upload.
+
+Under `-allow-unsafe-scripts` every script in a Lua state can reach every
+table in it (`debug.getregistry()`, `package.loaded._G`, `load`), so the
+server takes `popup` off the one real game table, not off a copy. If any
+script on the list may not have the call, no script on the list has it: a
+built-in tutorial played with a mod in that mode finds `game.popup` nil, as
+the mod does. A built-in tutorial on its own keeps the call there.
+
+This is one setting in the game (`TUTORIAL_MAPS_SCRIPT_POPUPS` in
+`src/bolo/public/tutorial_scripts.h`). A later build may give every scenario
+the call.
 
 A popup belongs to its round. When the round ends (`game.end_round`, the time
 limit, or a return to the lobby) the client closes a popup that is still up

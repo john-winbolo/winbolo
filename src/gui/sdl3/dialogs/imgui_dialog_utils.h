@@ -749,14 +749,18 @@ static inline void dialogApplyScaling(float uiScale) {
     }
 }
 
-/* Save logical presentation before a dialog (Android needs this).
- * When HIGH_PIXEL_DENSITY is active, we set a point-space logical
- * presentation so dialogs (which use SDL_GetWindowSize for coordinates)
- * render correctly onto the native-resolution backing buffer. */
-static inline void dialogSaveLogicalPresentation(SDL_Renderer *renderer,
-                                                  int *outW, int *outH,
-                                                  SDL_RendererLogicalPresentation *outMode) {
-    SDL_GetRenderLogicalPresentation(renderer, outW, outH, outMode);
+/* Put the dialog's point-space logical presentation on at the window's
+ * current size. On a window with HIGH_PIXEL_DENSITY the renderer draws in
+ * pixels while the dialogs lay out in points (SDL_GetWindowSize), so the
+ * presentation maps one onto the other; on any other window it is turned
+ * off and the two are the same space already.
+ *
+ * The presentation is fixed to the size it was set at, so a dialog that
+ * changes its window's size after setting it — dialogSetWindowSize, or the
+ * player dragging a resizable dialog's edge — has to set it again: the
+ * standalone Log Viewer's WinBolo.net browser drew too small and off
+ * centre, with the mouse landing elsewhere, until it did so every frame. */
+static inline void dialogApplyLogicalPresentation(SDL_Renderer *renderer) {
     SDL_Window *win = SDL_GetRenderWindow(renderer);
     if (win && (SDL_GetWindowFlags(win) & SDL_WINDOW_HIGH_PIXEL_DENSITY)) {
         int winW = 0, winH = 0;
@@ -768,6 +772,15 @@ static inline void dialogSaveLogicalPresentation(SDL_Renderer *renderer,
     } else {
         SDL_SetRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
     }
+}
+
+/* Save logical presentation before a dialog (Android needs this), then put
+ * the dialog's own on: see dialogApplyLogicalPresentation. */
+static inline void dialogSaveLogicalPresentation(SDL_Renderer *renderer,
+                                                  int *outW, int *outH,
+                                                  SDL_RendererLogicalPresentation *outMode) {
+    SDL_GetRenderLogicalPresentation(renderer, outW, outH, outMode);
+    dialogApplyLogicalPresentation(renderer);
 }
 
 /* Restore logical presentation after a dialog. */

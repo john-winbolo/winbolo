@@ -215,7 +215,9 @@ int DialogFooter3(const char *cancelLabel,
                   const char *destructiveLabel,
                   const char *primaryLabel,
                   bool enterConfirms,
-                  bool showSeparator) {
+                  bool showSeparator,
+                  bool primaryDisabled,
+                  bool destructiveDisabled) {
     IM_ASSERT(cancelLabel && destructiveLabel && primaryLabel &&
               "DialogFooter3 requires all three labels; use DialogFooter for fewer buttons");
     if (showSeparator) drawSeparatorAbove();
@@ -240,21 +242,26 @@ int DialogFooter3(const char *cancelLabel,
     imguiHandOnHover();
 
     ImGui::SameLine(0.0f, spacing);
+    if (destructiveDisabled) ImGui::BeginDisabled();
     if (ImGui::Button(destructiveLabel, ImVec2(btnW, 0))) {
         result = FOOTER_DESTRUCTIVE;
     }
     imguiHandOnHover();
+    if (destructiveDisabled) ImGui::EndDisabled();
 
     ImGui::SameLine(0.0f, spacing);
+    if (primaryDisabled) ImGui::BeginDisabled();
     if (ImGui::Button(primaryLabel, ImVec2(btnW, 0))) {
         result = FOOTER_CONFIRM;
     }
     imguiHandOnHover();
+    if (primaryDisabled) ImGui::EndDisabled();
 
     if (result == FOOTER_NONE && CancelKeyPressed()) {
         result = FOOTER_CANCEL;
     }
-    if (result == FOOTER_NONE && enterConfirms && confirmKeyPressed()) {
+    if (result == FOOTER_NONE && enterConfirms && !primaryDisabled &&
+        confirmKeyPressed()) {
         result = FOOTER_CONFIRM;
     }
 

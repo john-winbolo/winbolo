@@ -2,7 +2,7 @@
  * WinBoloUnitTests entry point. Dispatches one named test per
  * invocation so each CTest entry maps to a single test case.
  *
- *   WinBoloUnitTests --test <name>      run a single test
+ *   WinBoloUnitTests --test <name>...   run the named tests in order
  *   WinBoloUnitTests --list             print test names
  *   WinBoloUnitTests                    run every test in sequence,
  *                                      bar the fixture writers
@@ -13,6 +13,7 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
+#include "bolo_rand.h"
 #include "test_harness.h"
 
 #include "everard_map.h"
@@ -335,6 +336,7 @@ static const UnitTestEntry s_tests[] = {
     { "visibility_preset_round_trip",            run_visibility_preset_round_trip            },
     { "visibility_preset_custom",                run_visibility_preset_custom                },
     { "visibility_preset_ignores_decay",         run_visibility_preset_ignores_decay         },
+    { "visibility_preset_ignores_classic_mode",  run_visibility_preset_ignores_classic_mode  },
     { "visibility_preset_pref_words",            run_visibility_preset_pref_words            },
     { "scn_panel_popout_row",                    run_scn_panel_popout_row                    },
     { "scn_panel_yes_no",                        run_scn_panel_yes_no                        },
@@ -459,6 +461,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_map_fetch_policy",                    run_wbn_map_fetch_policy                    },
     { "brain_crash_log_writes_file",             run_brain_crash_log_writes_file             },
     { "brain_crash_log_falls_back_to_luaptr",    run_brain_crash_log_falls_back_to_luaptr    },
+    { "brain_push_rules_written_on_change",      run_brain_push_rules_written_on_change      },
     { "brain_msgh_budget_kill_no_traceback",     run_brain_msgh_budget_kill_no_traceback     },
     { "brain_msgh_real_error_keeps_traceback",   run_brain_msgh_real_error_keeps_traceback   },
     { "brain_inbox_push_peek_fifo",              run_brain_inbox_push_peek_fifo              },
@@ -711,6 +714,16 @@ static const UnitTestEntry s_tests[] = {
     { "lv_event_list_replay",                    run_lv_event_list_replay                    },
     { "lv_event_list_pinned",                    run_lv_event_list_pinned                    },
     { "wbn_browser_sort",                        run_wbn_browser_sort                        },
+    { "nav_outline_first_enter_shows", run_nav_outline_first_enter_shows },
+    { "nav_outline_first_space_shows", run_nav_outline_first_space_shows },
+    { "nav_outline_first_arrow_shows", run_nav_outline_first_arrow_shows },
+    { "nav_outline_code_focus_enter_acts", run_nav_outline_code_focus_enter_acts },
+    { "nav_outline_quiet_focus_hidden", run_nav_outline_quiet_focus_hidden },
+    { "nav_outline_ctrl_enter_not_claimed", run_nav_outline_ctrl_enter_not_claimed },
+    { "nav_outline_alt_arrow_not_claimed", run_nav_outline_alt_arrow_not_claimed },
+    { "nav_outline_first_home_end_shows", run_nav_outline_first_home_end_shows },
+    { "nav_outline_first_page_keys_shows", run_nav_outline_first_page_keys_shows },
+    { "nav_outline_destroyed_context_forgets_focus", run_nav_outline_destroyed_context_forgets_focus },
     { "browser_version_parse",                   run_browser_version_parse                   },
     { "version_protocol_bytes",                  run_version_protocol_bytes                  },
     { "clip_gif_len_sync",                       run_clip_gif_len_sync                       },
@@ -720,6 +733,28 @@ static const UnitTestEntry s_tests[] = {
     { "clip_gif_gallery_scan",                   run_clip_gif_gallery_scan                   },
     { "clip_gif_text_fill",                      run_clip_gif_text_fill                      },
     { "clip_gif_preview_cap",                    run_clip_gif_preview_cap                    },
+    { "clip_gif_current_game",                   run_clip_gif_current_game                   },
+    { "clip_gif_delete",                         run_clip_gif_delete                         },
+    { "clip_gif_frame_count",                    run_clip_gif_frame_count                    },
+    { "clip_gif_centre_crop",                    run_clip_gif_centre_crop                    },
+    { "clip_gif_names",                          run_clip_gif_names                          },
+    { "clip_gif_frame_box",                      run_clip_gif_frame_box                      },
+    { "clip_gif_frame_drag",                     run_clip_gif_frame_drag                     },
+    { "clip_gif_crop_from_frame",                run_clip_gif_crop_from_frame                },
+    { "clip_gif_blit_view",                      run_clip_gif_blit_view                      },
+    { "clip_gif_mode_state",                     run_clip_gif_mode_state                     },
+    { "clip_gif_preview_play",                   run_clip_gif_preview_play                   },
+    { "clip_gif_choose_crop",                    run_clip_gif_choose_crop                    },
+    { "clip_gif_default_frame",                  run_clip_gif_default_frame                  },
+    { "clip_gif_meta_begin",                     run_clip_gif_meta_begin                     },
+    { "clip_gif_span_place",                     run_clip_gif_span_place                     },
+    { "clip_gif_zoom_axis",                      run_clip_gif_zoom_axis                      },
+    { "clip_gif_span_drag",                      run_clip_gif_span_drag                      },
+    { "clip_gif_zoom_grow",                      run_clip_gif_zoom_grow                      },
+    { "clip_gif_window_place",                   run_clip_gif_window_place                   },
+    { "clip_gif_span_move",                      run_clip_gif_span_move                      },
+    { "clip_gif_grip_box",                       run_clip_gif_grip_box                       },
+    { "clip_gif_frame_scale",                    run_clip_gif_frame_scale                    },
     { "lv_snapshot_index_lookup",                run_lv_snapshot_index_lookup                },
     { "lv_snapshot_index_ten_days",              run_lv_snapshot_index_ten_days              },
     { "lv_load_walk_fixtures",                   run_lv_load_walk_fixtures                   },
@@ -792,6 +827,9 @@ static const UnitTestEntry s_tests[] = {
                                                  run_round_start_owners_kept_after_manual_alliance },
     { "treegrow_never_plants_on_deep_sea",       run_treegrow_never_plants_on_deep_sea       },
     { "treegrow_reset_clears_stale_target",      run_treegrow_reset_clears_stale_target      },
+    { "treegrow_skips_square_man_is_building_on", run_treegrow_skips_square_man_is_building_on },
+    { "treegrow_still_grows_when_man_not_building_there",
+                                                 run_treegrow_still_grows_when_man_not_building_there },
     { "pill_repair_tops_up_from_arrival_armour", run_pill_repair_tops_up_from_arrival_armour },
     { "pill_repair_short_load_spends_what_it_has", run_pill_repair_short_load_spends_what_it_has },
     { "pill_repair_full_load_covers_a_dead_pill", run_pill_repair_full_load_covers_a_dead_pill },
@@ -1107,6 +1145,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_colours_markers",                     run_map_colours_markers                     },
     { "map_colours_palette_key",                 run_map_colours_palette_key                 },
     { "map_colours_team",                        run_map_colours_team                        },
+    { "map_markers_tank_reach",                  run_map_markers_tank_reach                  },
     { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
     { "turn_release_no_overshoot",               run_turn_release_no_overshoot               },
     { "turn_gap_preserves_ramp",                 run_turn_gap_preserves_ramp                 },
@@ -1153,6 +1192,7 @@ static const UnitTestEntry s_tests[] = {
     { "client_timing",                           run_client_timing                           },
     { "interp_render",                           run_interp_render                           },
     { "interp_respawn_no_death_flash",           run_interp_respawn_no_death_flash           },
+    { "interp_no_stale_flash_after_gap",         run_interp_no_stale_flash_after_gap         },
     { "sim_rules_classic_defaults",              run_sim_rules_classic_defaults              },
     { "sim_rules_validate_ranges",               run_sim_rules_validate_ranges               },
     { "sim_rules_copies_follow",                 run_sim_rules_copies_follow                 },
@@ -1167,6 +1207,7 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_pill_massage_follows",       run_sim_rules_pill_massage_follows       },
     { "sim_rules_pill_aim_mac",               run_sim_rules_pill_aim_mac               },
     { "sim_rules_tank_collision_mac",         run_sim_rules_tank_collision_mac         },
+    { "sim_rules_mac_halfway_heading",        run_sim_rules_mac_halfway_heading        },
     { "sim_rules_tank_deep_sea_safe",         run_sim_rules_tank_deep_sea_safe         },
     { "lgm_build_square_terrain_speed",         run_lgm_build_square_terrain_speed         },
     { "pill_shell_cap_off_is_no_limit", run_pill_shell_cap_off_is_no_limit },
@@ -1212,6 +1253,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_quiet_lobby_control_loss",       run_loopback_quiet_lobby_control_loss       },
     { "loopback_command_liveness",               run_loopback_command_liveness               },
     { "loopback_command_queued_behind_map_change", run_loopback_command_queued_behind_map_change },
+    { "loopback_command_submitted_during_rejoin", run_loopback_command_submitted_during_rejoin },
     { "loopback_channel",                        run_loopback_channel                        },
     { "loopback_hitch_recovers",                 run_loopback_hitch_recovers                 },
     { "loopback_quit_keeps_peer",                run_loopback_quit_keeps_peer                },
@@ -1235,6 +1277,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_bot_pool_survives_bulk_rebase",  run_loopback_bot_pool_survives_bulk_rebase  },
     { "loopback_brain_docs_survives_bulk_rebase", run_loopback_brain_docs_survives_bulk_rebase },
     { "loopback_map_upload",                     run_loopback_map_upload                     },
+    { "loopback_map_change_busy_lifts",          run_loopback_map_change_busy_lifts          },
     { "loopback_map_upload_list_after_rejoin",   run_loopback_map_upload_list_after_rejoin   },
     { "upload_begin_golden",                     run_upload_begin_golden                     },
     { "script_upload_begin_refusals",            run_script_upload_begin_refusals            },
@@ -1443,6 +1486,13 @@ static const UnitTestEntry s_tests[] = {
     { "mapchooser_scenario_filter",              run_mapchooser_scenario_filter              },
     { "bg_map_pick_skips_tutorials",             run_bg_map_pick_skips_tutorials             },
     { "tutorial_maps_shipped_path",              run_tutorial_maps_shipped_path              },
+    { "tutorial_maps_popup_pauses",              run_tutorial_maps_popup_pauses              },
+    { "tutorial_maps_script_has_popup",          run_tutorial_maps_script_has_popup          },
+    { "scenario_host_popup_nil_outside_tutorials", run_scenario_host_popup_nil_outside_tutorials },
+    { "scenario_host_popup_in_tutorial",         run_scenario_host_popup_in_tutorial         },
+    { "scenario_validate_popup_tutorial_only",   run_scenario_validate_popup_tutorial_only   },
+    { "scenario_host_shipped_tutorial_rooted",   run_scenario_host_shipped_tutorial_rooted   },
+    { "scenario_host_popup_unsafe_unreachable",  run_scenario_host_popup_unsafe_unreachable  },
     { "voice_core_roundtrip",                    run_voice_core_roundtrip                    },
     { "voice_device_resolve",                    run_voice_device_resolve                    },
     { "voice_peak",                              run_voice_peak                              },
@@ -2475,11 +2525,15 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_announce_remaining",                     run_scenario_announce_remaining                     },
     { "scenario_announce_position",                      run_scenario_announce_position                      },
     { "scenario_text_fit",                               run_scenario_text_fit                               },
+    { "scenario_text_layout",                            run_scenario_text_layout                            },
     { "scenario_text_tablet_band",                       run_scenario_text_tablet_band                       },
-    { "scenario_text_pointer_on_handle",                 run_scenario_text_pointer_on_handle                 },
     { "scenario_text_window_shown",                      run_scenario_text_window_shown                      },
-    { "scenario_text_edge_shown",                        run_scenario_text_edge_shown                        },
+    { "scenario_text_printed_recently",                  run_scenario_text_printed_recently                  },
+    { "scenario_float_frame_shown",                      run_scenario_float_frame_shown                      },
+    { "scenario_float_pointer_on_handle",                run_scenario_float_pointer_on_handle                },
     { "scenario_text_save_place",                        run_scenario_text_save_place                        },
+    { "scenario_panel_default_place",                    run_scenario_panel_default_place                    },
+    { "scenario_text_beside_panel_place",                run_scenario_text_beside_panel_place                },
     { "scenario_status_line",                            run_scenario_status_line                            },
     { "scenario_panel_slot_rect",                        run_scenario_panel_slot_rect                        },
     { "lv_rule_names_and_panel_parse",                   run_lv_rule_names_and_panel_parse                   },
@@ -2533,9 +2587,11 @@ static const UnitTestEntry s_tests[] = {
     { "lv_dock_fit_margins",                             run_lv_dock_fit_margins                             },
     { "lv_dock_layout_sides",                            run_lv_dock_layout_sides                            },
     { "lv_dock_layout_tree",                             run_lv_dock_layout_tree                             },
+    { "status_grid_slots",                               run_status_grid_slots                               },
     { "lv_hud_sums",                                     run_lv_hud_sums                                     },
     { "lv_team_sprite_sums",                             run_lv_team_sprite_sums                             },
     { "lv_team_colour_lookup",                           run_lv_team_colour_lookup                           },
+    { "lv_neutral_pill_grey",                            run_lv_neutral_pill_grey                            },
     { "lv_overview_sums",                                run_lv_overview_sums                                },
     { "lv_overview_bots",                                run_lv_overview_bots                                },
     { "lv_overview_row_layout",                          run_lv_overview_row_layout                          },
@@ -2543,6 +2599,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_tank_status_sums",                             run_lv_tank_status_sums                             },
     { "lv_tank_bars_sums",                               run_lv_tank_bars_sums                               },
     { "lv_tank_pick_sums",                               run_lv_tank_pick_sums                               },
+    { "lv_marks_fade",                                   run_lv_marks_fade                                   },
+    { "lv_window_size_parse",                            run_lv_window_size_parse                            },
     { "lv_map_double_click",                             run_lv_map_double_click                             },
     { "lv_name_header_sums",                             run_lv_name_header_sums                             },
     { "lv_dock_clear_layout",                            run_lv_dock_clear_layout                            },
@@ -2606,6 +2664,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_controls_bottom_row",                          run_lv_controls_bottom_row                          },
     { "lv_controls_wheel_step",                          run_lv_controls_wheel_step                          },
     { "lv_controls_fine_drag",                           run_lv_controls_fine_drag                           },
+    { "lv_play_toggle",                                  run_lv_play_toggle                                  },
     { "lv_zoom_percent",                                 run_lv_zoom_percent                                 },
     { "lv_fullscreen_key",                               run_lv_fullscreen_key                               },
     { "lv_event_scan_returns_to_start",                  run_lv_event_scan_returns_to_start                  },
@@ -2742,6 +2801,21 @@ static int run_one(const char *name) {
     for (i = 0; i < NUM_TESTS; i++) {
         if (strcmp(s_tests[i].name, name) == 0) {
             fprintf(stderr, "RUN  %s\n", s_tests[i].name);
+            /* Each test starts with the harness as a process of its own
+             * would, which is how CTest runs it. The brain stub is
+             * process-wide and a test that arms it seldom disarms it (an
+             * assert that fails returns before any cleanup), so a test
+             * that needs a brain build to fail used to pass alone and fail
+             * in the bare run after any test that armed it. */
+            ut_brain_stub_arm(false);
+            /* The same for bolo_rand: a fresh process has its state all
+             * zero, and the loopback harness and others seed it and leave
+             * it seeded, so a test that drew from it unseeded saw different
+             * numbers in the bare run than alone. */
+            {
+                static const BoloRandState kFreshProcess = { { 0, 0, 0, 0 } };
+                bolo_rand_restore(&kFreshProcess);
+            }
             s_currentTest = s_tests[i].name;
             int rc = s_tests[i].fn();
             s_currentTest = "none";
@@ -2780,8 +2854,19 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    /* Several names run in that order in one process, which is how to
+     * reproduce a test that passes alone and fails in the full run: give it
+     * the tests that ran before it until the failure comes back. The exit
+     * code is the first nonzero one. */
     if (argc >= 3 && strcmp(argv[1], "--test") == 0) {
-        int rc = run_one(argv[2]);
+        int rc = 0;
+        int a;
+        for (a = 2; a < argc; a++) {
+            int one = run_one(argv[a]);
+            if (rc == 0) {
+                rc = one;
+            }
+        }
         SDL_Quit();
         return rc;
     }

@@ -425,6 +425,7 @@ int run_fog_settings_lobby_reset(void);
 int run_visibility_preset_round_trip(void);
 int run_visibility_preset_custom(void);
 int run_visibility_preset_ignores_decay(void);
+int run_visibility_preset_ignores_classic_mode(void);
 int run_visibility_preset_pref_words(void);
 int run_scn_panel_popout_row(void);
 int run_scn_panel_yes_no(void);
@@ -575,6 +576,7 @@ int run_wbn_map_parse(void);
 int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
+int run_brain_push_rules_written_on_change(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
 int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -1007,6 +1009,12 @@ int run_autolock_released_on_return_to_lobby(void);
  * points at open sea; the grow gate also failed to reject DEEP_SEA. */
 int run_treegrow_never_plants_on_deep_sea(void);
 int run_treegrow_reset_clears_stale_target(void);
+
+/* Tree growth and the man's build orders (test_treegrow_build_target.c).
+ * The grow is skipped on a square a man is on his way to put a road,
+ * building or pillbox on, and only there. */
+int run_treegrow_skips_square_man_is_building_on(void);
+int run_treegrow_still_grows_when_man_not_building_there(void);
 
 /* Pillbox repair load (test_pill_repair_load.c). The man carries a full
  * load and spends it against the armour the pill has when he arrives, so a
@@ -1466,6 +1474,16 @@ int run_lv_event_list_pinned(void);
 /* WinBolo.net log browser table sort (test_wbn_browser_sort.c): each column's
  * key in both directions, ties and no sort in the server's order. */
 int run_wbn_browser_sort(void);
+int run_nav_outline_first_enter_shows(void);
+int run_nav_outline_first_space_shows(void);
+int run_nav_outline_first_arrow_shows(void);
+int run_nav_outline_code_focus_enter_acts(void);
+int run_nav_outline_quiet_focus_hidden(void);
+int run_nav_outline_ctrl_enter_not_claimed(void);
+int run_nav_outline_alt_arrow_not_claimed(void);
+int run_nav_outline_first_home_end_shows(void);
+int run_nav_outline_first_page_keys_shows(void);
+int run_nav_outline_destroyed_context_forgets_focus(void);
 
 /* Game browser server version test (test_browser_version.c): the old "M.mr"
  * and the "M.m.r" forms, with and without a letter suffix, against 1.1.9,
@@ -1486,6 +1504,42 @@ int run_clip_gif_meta_bad(void);
 int run_clip_gif_gallery_scan(void);
 int run_clip_gif_text_fill(void);
 int run_clip_gif_preview_cap(void);
+/* The gallery's game groups (the replay's id, the current game first) and its
+ * delete (both files go, and the row that takes the removed one's place is
+ * selected). */
+int run_clip_gif_current_game(void);
+int run_clip_gif_delete(void);
+/* The rules the game's replay and the Log Viewer share to make a GIF: the
+ * frame count, the middle of the view, the names, the crop frame (its box on
+ * the screen, its drag and the pixels it takes), the Log Viewer's visible
+ * map, and recording mode's on, off and reset. */
+int run_clip_gif_frame_count(void);
+int run_clip_gif_centre_crop(void);
+int run_clip_gif_names(void);
+int run_clip_gif_frame_box(void);
+int run_clip_gif_frame_drag(void);
+int run_clip_gif_crop_from_frame(void);
+int run_clip_gif_blit_view(void);
+int run_clip_gif_mode_state(void);
+int run_clip_gif_preview_play(void);
+int run_clip_gif_choose_crop(void);
+int run_clip_gif_default_frame(void);
+int run_clip_gif_meta_begin(void);
+/* The GIF's span and the zoomed timeline: where the span is put, the
+ * timeline's scale, a drag of the span's handles, and the timeline's growth
+ * while a handle is held at its end. */
+int run_clip_gif_span_place(void);
+int run_clip_gif_zoom_axis(void);
+int run_clip_gif_span_drag(void);
+int run_clip_gif_zoom_grow(void);
+/* Where the GIF window goes: over the transport row, kept on the main
+ * window. */
+int run_clip_gif_window_place(void);
+/* The grip in the middle of the GIF's span moves the whole span. */
+int run_clip_gif_span_move(void);
+/* Only a small box round the grip moves the span. */
+int run_clip_gif_grip_box(void);
+int run_clip_gif_frame_scale(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
@@ -2206,6 +2260,11 @@ int run_map_colours_markers(void);
 int run_map_colours_palette_key(void);
 int run_map_colours_team(void);
 
+/* The marker shapes (test_map_markers.c): how far the tank triangle reaches
+ * past the square its sprite would fill, which the log viewer's repaint
+ * marks. */
+int run_map_markers_tank_reach(void);
+
 int run_stall_advances_processed_tick(void);
 int run_turn_release_no_overshoot(void);
 int run_turn_gap_preserves_ramp(void);
@@ -2343,6 +2402,12 @@ int run_interp_render(void);
  * stale death spot; a normal alive->alive pair still interpolates. */
 int run_interp_respawn_no_death_flash(void);
 
+/* No stale flash after a gap (test_interp_no_stale_flash_after_gap.c): the
+ * first snapshot of a remote tank back from a freeze-length gap (out of view,
+ * slot reused) is drawn at its new position, not where the tank was before
+ * the gap; a short gap keeps the pipeline and still tweens. */
+int run_interp_no_stale_flash_after_gap(void);
+
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */
@@ -2366,6 +2431,7 @@ int run_sim_rules_pill_angry_divisor_follows(void);
 int run_sim_rules_pill_massage_follows(void);
 int run_sim_rules_pill_aim_mac(void);
 int run_sim_rules_tank_collision_mac(void);
+int run_sim_rules_mac_halfway_heading(void);
 int run_sim_rules_tank_deep_sea_safe(void);
 int run_lgm_build_square_terrain_speed(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
@@ -2455,6 +2521,7 @@ int run_loopback_quiet_lobby_control_loss(void);
  * watched directly across a window in which nothing else is refreshing it. */
 int run_loopback_command_liveness(void);
 int run_loopback_command_queued_behind_map_change(void);
+int run_loopback_command_submitted_during_rejoin(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);
@@ -2512,6 +2579,7 @@ int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);
+int run_loopback_map_change_busy_lifts(void);
 /* A loaded map upload re-joins the client; once it is CONNECTED again the
  * Server Maps listing is asked for and answered. */
 int run_loopback_map_upload_list_after_rejoin(void);
@@ -2997,8 +3065,28 @@ int run_mapchooser_scenario_filter(void);
 /* The background game's map name test: no tutorial is ever picked
  * (test_bg_map_pick.c). */
 int run_bg_map_pick_skips_tutorials(void);
-/* The folder test behind game.tutorial_done (test_bg_map_pick.c). */
+/* The text half of the shipped-tutorial test, tutorialMapsPathInDir
+ * (test_bg_map_pick.c). */
 int run_tutorial_maps_shipped_path(void);
+/* Which games a scenario popup pauses: only the shipped tutorials
+ * (test_bg_map_pick.c). */
+int run_tutorial_maps_popup_pauses(void);
+/* Which scripts have game.popup, with script popups off and on
+ * (test_bg_map_pick.c). */
+int run_tutorial_maps_script_has_popup(void);
+/* game.popup is nil in a map script outside the tutorials and in a mod, and
+ * there in a tutorial's map script; -validate reads the same rule
+ * (test_scenario_host.c). */
+int run_scenario_host_popup_nil_outside_tutorials(void);
+int run_scenario_host_popup_in_tutorial(void);
+int run_scenario_validate_popup_tutorial_only(void);
+/* The disk half of the shipped-tutorial test: a script directly in
+ * <data folder>/maps/tutorials, both paths canonical
+ * (test_scenario_host.c). */
+int run_scenario_host_shipped_tutorial_rooted(void);
+/* Under -allow-unsafe-scripts, game.popup is nil on every route for a
+ * script outside the tutorials (test_scenario_host.c). */
+int run_scenario_host_popup_unsafe_unreachable(void);
 
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
@@ -4329,15 +4417,26 @@ int run_scenario_status_line(void);
 /* The Scenario Text window's fit: the source rectangle scaled into the
  * window with one factor for both axes and centred. */
 int run_scenario_text_fit(void);
+int run_scenario_text_layout(void);
 /* Tablet mode's scenario text band: centred at the top of the view, and
  * kept left of the scenario panel's square when that is shown. */
 int run_scenario_text_tablet_band(void);
-/* The Scenario Text window's bar and grip, the only places it takes the
- * mouse: a point on the text body is on neither. */
-int run_scenario_text_pointer_on_handle(void);
 int run_scenario_text_window_shown(void);
-int run_scenario_text_edge_shown(void);
+int run_scenario_text_printed_recently(void);
+int run_scenario_float_frame_shown(void);
+/* The bar and grip of the shared window frame (the scenario panel and the
+ * Scenario Text window), the only places it takes the mouse: a point on
+ * the body is on neither. */
+int run_scenario_float_pointer_on_handle(void);
 int run_scenario_text_save_place(void);
+/* The desktop scenario panel's default place and size
+ * (test_scenario_panel.c): the game view's top-left at a readable cardinal,
+ * shrunk to fit, and false when not even 100 percent fits. */
+int run_scenario_panel_default_place(void);
+/* The Scenario Text window's default place beside a default scenario panel
+ * (test_scenario_panel.c): the room to the game view's right edge, and false
+ * when it is under the least width. */
+int run_scenario_text_beside_panel_place(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */
@@ -4433,6 +4532,10 @@ int run_lv_dock_fit_sums(void);
 int run_lv_dock_fit_margins(void);
 int run_lv_dock_layout_sides(void);
 int run_lv_dock_layout_tree(void);
+/* Where slot n of a status panel sits (test_status_grid.c, status_grid.h):
+ * each of the sixteen slots of the bases, pillboxes and tanks panels where
+ * the explicit macros of positions.h put it. */
+int run_status_grid_slots(void);
 /* The log viewer's HUD panel (test_lv_hud.c): the icon of a base, pillbox and
  * tank slot, the layout of the three grids, and the grey and colour sums. */
 int run_lv_hud_sums(void);
@@ -4444,6 +4547,10 @@ int run_lv_team_sprite_sums(void);
  * lv_team_colour.h): the default, the one the Team Colours dialog has, the
  * Neutral entry for a number that is not a team. */
 int run_lv_team_colour_lookup(void);
+/* A neutral pillbox on the log viewer's map is drawn in the Team Colours
+ * dialog's Neutral colour, whatever the team colours are (test_lv_hud.c,
+ * lv_team_sprite.h). */
+int run_lv_neutral_pill_grey(void);
 /* The table of the log viewer's Overview panel (test_lv_overview.c): the
  * rows of the teams, which row a pillbox or a base is counted in, and the
  * share a count is of the whole. */
@@ -4453,6 +4560,8 @@ int run_lv_overview_sums(void);
  * row starts, so the chip goes in front of the bot's name. */
 int run_lv_overview_bots(void);
 int run_lv_overview_row_layout(void);
+/* The Neutral row of the Overview panel: there only while something has no
+ * owner, and first, above the teams, in the table and the share bars. */
 int run_lv_overview_neutral_row(void);
 /* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
  * selected one, and the height of a gauge against its cap. */
@@ -4463,6 +4572,10 @@ int run_lv_tank_bars_sums(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
+/* The log viewer's aids for recording the screen (test_lv_marks.c): the
+ * lines Shift and a drag draw on the map and their fade, and -size WxH. */
+int run_lv_marks_fade(void);
+int run_lv_window_size_parse(void);
 /* A double click on a tank on the map: when it turns that tank's view on. */
 int run_lv_map_double_click(void);
 int run_lv_name_header_sums(void);
@@ -4561,6 +4674,8 @@ int run_lv_controls_top_row(void);
 int run_lv_controls_bottom_row(void);
 int run_lv_controls_wheel_step(void);
 int run_lv_controls_fine_drag(void);
+/* The one play and pause button of the Log Viewer and the game's replay. */
+int run_lv_play_toggle(void);
 /* The zoom of the log viewer's map as a percentage. */
 int run_lv_zoom_percent(void);
 int run_lv_fullscreen_key(void);
