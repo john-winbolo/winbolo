@@ -4673,6 +4673,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # test_stubs.c provides here, so it compiles in without lang.c.
     tests/unit/test_sim_rules_describe.c
     src/gui/sdl3/sim_rules_phrase.c
+    # shell_start_add in the pillbox aim solver's lead.
+    tests/unit/test_pill_aim_start_add.c
     # pill_shell_cap and pill_max_shells_at_tank, driven through pillsUpdate.
     tests/unit/test_pill_shell_cap.c
     # The range behind each rule, against the validator that refuses on it.
@@ -6499,6 +6501,7 @@ set(_unit_test_names
     sim_rules_mac_halfway_heading
     sim_rules_tank_deep_sea_safe
     lgm_build_square_terrain_speed
+    pill_aim_lead_follows_shell_start_add
     pill_shell_cap_off_is_no_limit
     pill_shell_cap_does_not_retarget
     pill_shell_cap_loses_shot_and_reloads

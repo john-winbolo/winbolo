@@ -1324,8 +1324,10 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
     
     estimate = utilCalcAngle(xValue, yValue, tankX,tankY);
     utilCalcDistance(&shellAddX, &shellAddY, estimate, sim->rules.shell_speed);    
-    shellX = (WORLD) (xValue + ((count+  5) * shellAddX));
-    shellY = (WORLD) (yValue + ((count +  5) * shellAddY));
+    /* The shell starts shell_start_add steps out (shellApplyStartOffset),
+       so that is where the count steps it has flown are counted from */
+    shellX = (WORLD) (xValue + ((count + sim->rules.shell_start_add) * shellAddX));
+    shellY = (WORLD) (yValue + ((count + sim->rules.shell_start_add) * shellAddY));
     /* Set it anyway */
     returnValue = estimate;
   }
