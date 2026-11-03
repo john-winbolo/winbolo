@@ -68,8 +68,7 @@ static void closeFileWithTicks(void) {
     g_gz = NULL;
     if (g_fileFrames > 0 && g_sessionDir[0]) {
         if (!brainRecTicksWrite(g_sessionDir, g_fileFirstTick, g_fileLastTick, g_fileFrames))
-            fprintf(stderr, "brain_record: could not write %s/%s
-",
+            fprintf(stderr, "brain_record: could not write %s/%s\n",
                     g_sessionDir, BRAINREC_TICKS_FILENAME);
     }
     g_fileFrames = 0;

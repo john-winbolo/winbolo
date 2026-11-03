@@ -1159,8 +1159,7 @@ int main(int argc, char **argv) {
         /* The tick note lets BrainTest show this part's game length without
          * reading the whole part again. Only a session part has a dir. */
         if (match && sessionMode && !brainRecTicksWrite(partDir[p], first, last, frames)) {
-            fprintf(stderr, "  part %d/%d: could not write %s
-", p + 1, parts,
+            fprintf(stderr, "  part %d/%d: could not write %s\n", p + 1, parts,
                     BRAINREC_TICKS_FILENAME);
         }
     }
