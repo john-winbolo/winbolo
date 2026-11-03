@@ -115,7 +115,22 @@ void brainCoreSetInitTable(lua_State *L, const ScnTable *init) {
   lua_createtable(L, 0, n);
   for (i = 0; i < n; i++) {
     if (init->kv[i].key[0] == '\0') continue;
-    lua_pushstring(L, init->kv[i].value);
+    /* A key the table holds more than once (the -bot-init text keeps each
+     * cfg=NAME=VALUE token as its own pair) becomes one field that reads
+     * back as the original tokens: "A=1;cfg=B=2". A brain that flattens
+     * BRAIN_INIT to "key=value" text and splits it on ';' then sees
+     * cfg=A=1;cfg=B=2, every token, in the order written. */
+    lua_getfield(L, -1, init->kv[i].key);
+    if (lua_isstring(L, -1)) {
+      lua_pushliteral(L, ";");
+      lua_pushstring(L, init->kv[i].key);
+      lua_pushliteral(L, "=");
+      lua_pushstring(L, init->kv[i].value);
+      lua_concat(L, 5);
+    } else {
+      lua_pop(L, 1);
+      lua_pushstring(L, init->kv[i].value);
+    }
     lua_setfield(L, -2, init->kv[i].key);
   }
   lua_setglobal(L, "BRAIN_INIT");

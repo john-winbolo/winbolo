@@ -8182,6 +8182,7 @@ set(_unit_test_names
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table
+    bot_init_cfg_tokens_all_count
     scenario_bot_init_lands
     scenario_bot_init_refusals
     scenario_bot_init_parked_seat
