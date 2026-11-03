@@ -336,8 +336,9 @@ static void navOutlineNewFramePost(ImGuiContext *ctx, ImGuiContextHook *hook) {
 }
 
 /* The context is being destroyed (DestroyContext calls Shutdown, which
-   calls this hook before it tears the context down).  Forget every record kept for it.  Without
-   this, a new context created later at the same address would inherit
+   calls this hook before it tears the context down).  Forget every
+   record kept for it.  Without this, a new context created later at
+   the same address would inherit
    them: an item focused from code in the old context would show the
    outline in the new one if its first NavId had the same id. */
 static void navOutlineShutdown(ImGuiContext *ctx, ImGuiContextHook *) {
