@@ -48,6 +48,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* CLIP_GIF_GALLERY_BUILT. Included here, outside the extern "C" block, so
+ * the gallery's own C++ declarations keep their linkage. */
+#include "../../gui/sdl3/dialogs/clip_gif_gallery.h"
+
+#if CLIP_GIF_GALLERY_BUILT
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -124,5 +130,37 @@ void lv_clip_gif_session_end(void);
 #ifdef __cplusplus
 }
 #endif
+
+#else /* !CLIP_GIF_GALLERY_BUILT */
+
+/* The web, iOS and Android have no GIFs and no Clips window, and do not
+ * build imgui_clip_gif.cpp. These do nothing, so the callers need no test
+ * of their own. They are static inline, so they need no C linkage. */
+static inline bool lv_clip_gif_available(void) { return false; }
+static inline bool lv_clip_gif_can_toggle_mode(void) { return false; }
+static inline bool lv_clip_gif_mode_on(void) { return false; }
+static inline void lv_clip_gif_toggle_mode(void) {}
+static inline bool lv_clip_gif_tools_shown(void) { return false; }
+static inline bool lv_clip_gif_can_make(void) { return false; }
+static inline bool lv_clip_gif_active(void) { return false; }
+static inline void lv_clip_gif_capture_step(void) {}
+static inline void lv_clip_gif_render(void) {}
+static inline bool lv_clip_gif_frame_has_mouse(void) { return false; }
+static inline void lv_clip_gif_set_anchor(bool set, float x0, float y0,
+                                          float x1, float y1) {
+    (void)set; (void)x0; (void)y0; (void)x1; (void)y1;
+}
+static inline void lv_clip_gif_seek_marker(float minX, float minY, float maxX,
+                                           float maxY, bool seeking,
+                                           uint32_t seekMs, uint32_t totalMs) {
+    (void)minX; (void)minY; (void)maxX; (void)maxY; (void)seeking;
+    (void)seekMs; (void)totalMs;
+}
+static inline void lv_clip_gif_toggle_gallery(void) {}
+static inline bool lv_clip_gif_gallery_is_open(void) { return false; }
+static inline void lv_clip_gif_cancel(void) {}
+static inline void lv_clip_gif_session_end(void) {}
+
+#endif /* CLIP_GIF_GALLERY_BUILT */
 
 #endif /* IMGUI_CLIP_GIF_H */
