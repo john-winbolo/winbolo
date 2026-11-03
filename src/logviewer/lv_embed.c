@@ -702,17 +702,19 @@ bool lvEmbedTankLabel(int index, void **outTexture, int *outX, int *outY,
     return true;
 }
 
-/* True puts the names back into the texture, for a host that reads the
- * texture's pixels (the GIF export); false, the default, leaves them to
- * lvEmbedTankLabel. */
-void lvEmbedSetTankLabelsInTexture(bool inTexture) {
-    if (!s_embedActive || g_lv == NULL) {
+/* The names drawn over an image of the texture on the host's current render
+ * target (the GIF export's frame): src is the part of the texture the image
+ * holds and dst where it went, each x, y, w, h in pixels of its texture.
+ * Rasterized at dst's scale over src's, in the game's look. */
+void lvEmbedDrawTankLabels(const float src[4], const float dst[4]) {
+    SDL_FRect s, d;
+
+    if (!s_embedActive || g_lv == NULL || src == NULL || dst == NULL) {
         return;
     }
-    lv_clientMutexWaitFor();
-    lv_drawSetTankLabelsInTarget(inTexture ? TRUE : FALSE);
-    lv_clientMutexRelease();
-    g_lv->wantScreenUpdate = TRUE;
+    s.x = src[0]; s.y = src[1]; s.w = src[2]; s.h = src[3];
+    d.x = dst[0]; d.y = dst[1]; d.w = dst[2]; d.h = dst[3];
+    lv_drawTankLabelsOver(LV_TANK_LABELS_EXPORT, &s, &d);
 }
 
 void lvEmbedPlay(void) {

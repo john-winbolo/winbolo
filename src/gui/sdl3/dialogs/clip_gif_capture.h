@@ -59,17 +59,26 @@ typedef struct ClipGifReplay {
     void (*play)(void *user);
     void (*pause)(void *user);
     void (*seek)(void *user, uint32_t ms);
-    /* on true as a capture starts: the tank names go into the render target
-     * (which is what is read back), and anything else the screen does only
-     * while a GIF is made. on false as it ends: those go back. */
+    /* on true as a capture starts: whatever the screen does only while a GIF
+     * is made (the Log Viewer silences its sounds, as the ticks of a capture
+     * go by many times faster than real time). on false as it ends: that
+     * goes back. NULL for a screen with nothing to do. */
     void (*captureMode)(void *user, bool on);
     /* Moves the replay on by one GIF frame (CLIP_GIF_TICKS_PER_FRAME log
      * ticks) and draws it into the render target. Sets *ended when the
      * replay has no more to play. False when the frame cannot be made. Not
      * called for the first frame, which is the moment the start seeked to. */
     bool (*advance)(void *user, bool *ended);
-    /* The renderer and the render target a frame is read from. */
+    /* The renderer and the render target (the 1x pixel art of the map) a
+     * frame is made from. */
     bool (*target)(void *user, SDL_Renderer **renderer, SDL_Texture **texture);
+    /* The scale the screen draws the render target at now: its pixels per
+     * target pixel (zoom times pixel density). The frames are made at
+     * clipGifFrameScale of it, read once as the capture opens. NULL: 1. */
+    float (*scale)(void *user);
+    /* Draws the tank names over a frame, as the screen draws them over its
+     * own image (clip_gif_frame.h). NULL: no names. */
+    ClipGifDrawNames drawNames;
 } ClipGifReplay;
 
 /* A press or a drag on the zoomed timeline (clipGifZoomRow) that moves the
@@ -99,6 +108,15 @@ typedef struct ClipGifSession {
     int         frame;
     int         total;
     SDL_Rect    crop;      /* in the render target, fixed for the capture */
+    /* The frame: crop drawn at scale into a texture of frameW x frameH
+     * pixels (clipGifComposeFrame), which the encoder was opened at. The
+     * texture is made on the renderer the first frame comes from and ends
+     * with the capture. */
+    float        scale;
+    int          frameW;
+    int          frameH;
+    SDL_Texture *frameTex;
+    SDL_Renderer *frameFor;
     uint32_t    restoreMs; /* where the replay was before the capture */
     bool        restorePlaying;
     char        name[96];  /* <map>_<mmss>, the file's base name */
@@ -159,7 +177,8 @@ uint32_t clipGifPreviewBandStart(const ClipGifSession *s, uint32_t curMs);
  * with nothing changed, while a GIF is being made already. */
 bool clipGifCaptureArm(ClipGifSession *s, const ClipGifReplay *r);
 
-/* The second half: opens the encoder at the crop's size, for lenMs from
+/* The second half: opens the encoder at the frame's size (the crop at the
+ * screen's scale, clipGifFrameScale and clipGifFrameSize), for lenMs from
  * startMs, with the file name made from mapName and startMs and the
  * metadata meta (its length and size are filled here). When crop is NULL
  * or the encoder cannot open, the replay goes back to where the arm found

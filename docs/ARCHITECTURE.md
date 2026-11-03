@@ -2412,7 +2412,17 @@ shared ImGui file, `dialogs/clip_gif_capture.cpp`: the preview
 playback, the capture loop, the progress window and where the GIF goes
 on each platform. Each host gives it its replay as a table of calls
 (`ClipGifReplay`), so the shared file needs nothing of the lobby or of
-the viewer.
+the viewer. A frame is not read straight off the viewer's render
+target, which is 1x pixel art: `dialogs/clip_gif_frame.h` draws the
+crop into a texture of its own at the scale the screen shows it
+(`clipGifFrameScale`, the zoom times the pixel density, held between 1
+and 2), asks the host to draw the tank names over it as its screen
+does (`lv_drawTankLabelsOver`, which the viewer's own blit and the
+reel's `lvEmbedDrawTankLabels` share), and reads that back, so a GIF
+shows the names at the size they appear rather than a 10 px face
+blown up with the tiles. The gallery's preview decodes a GIF whose
+frames would not all fit in its memory limit shrunk by a whole factor
+(`stbiLoadGifCappedShrink`) instead of refusing it.
 All twenty-two are each called directly by a test beside them;
 `gfx_settings.c` is also here because `tileloader.c` calls it, and
 `test_fog_roads.c` drives it on its own.

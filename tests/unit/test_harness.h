@@ -1593,6 +1593,8 @@ int run_clip_gif_window_place(void);
 int run_clip_gif_span_move(void);
 /* Only a small box round the grip moves the span. */
 int run_clip_gif_grip_box(void);
+int run_clip_gif_frame_scale(void);
+int run_clip_gif_preview_shrink(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
