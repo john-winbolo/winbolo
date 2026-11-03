@@ -2129,6 +2129,12 @@ int run_fog_style_setting(void);
 int run_fog_road_edges(void);
 int run_fog_road_edge_masks(void);
 
+/* The full screen key (test_fullscreen_key.c): outside a game it toggles the
+ * app full screen flag, in a game the full screen map, and in a game whose
+ * server withholds the map it goes back to the app flag on the desktop and
+ * does nothing where the window does not own the flag. */
+int run_fullscreen_key_action(void);
+
 /* Line of sight (test_sight.c): the square the player stands on is seen even
  * when it is itself a building, a building across the line hides everything
  * behind it while the building itself is seen, the same building beside the

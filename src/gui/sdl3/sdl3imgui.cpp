@@ -80,6 +80,7 @@ extern "C" {
 #include "input_gate.h"
 #include "sdl3draw.h"
 #include "overview_view.h"
+#include "fullscreen_key.h"  /* what Alt+Enter does */
 #include "key_claims.h"     /* keyIsClaimedByGame */
 #include "tileloader.h"
 #include "luabrainshandler.h"
@@ -11413,14 +11414,29 @@ void sdl3ImguiShowOverviewInWindow(bool active) {
 #endif
 }
 /* The one full screen command, shared by Alt+Enter and the macOS Window menu
- * so the two routes cannot drift. In a game it is the full screen map, which
- * carries the window full screen with it; outside one there is no map to
- * show, so it is the plain app full screen flag. */
+ * so the two routes cannot go separate ways. In a game it is the full screen
+ * map, which carries the window full screen with it; outside one there is no
+ * map to show, so it is the plain app full screen flag. So is a game whose
+ * server withholds the map (classic mode): a full screen lobby leaves the
+ * window full screen there, and the key must still be able to take it back
+ * to windowed (fullscreen_key.h). */
 void sdl3ImguiToggleFullScreen(struct ClientSim *cs) {
-    if (cs != nullptr && clientSimIsRunning(cs)) {
+#if BOLO_MOBILE
+    const bool windowOwnsFlag = false;
+#else
+    const bool windowOwnsFlag = !uiModeIsTablet() && !uiModeIsSteamDeck() &&
+                                !overviewLeavesWindowAlone(s_window);
+#endif
+    switch (fullScreenKeyAction(cs != nullptr && clientSimIsRunning(cs),
+                                overviewSuppressed(), windowOwnsFlag)) {
+    case FULLSCREEN_KEY_MAP:
         sdl3ImguiShowOverviewInWindow(!sdl3ImguiIsOverviewInWindowOpen());
-    } else {
+        break;
+    case FULLSCREEN_KEY_WINDOW:
         windowFullScreenChoose(!gameFrontFullScreen);
+        break;
+    case FULLSCREEN_KEY_NOTHING:
+        break;
     }
 }
 bool sdl3ImguiIsOverviewOffered(void) {

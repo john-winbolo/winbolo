@@ -1113,6 +1113,7 @@ static const UnitTestEntry s_tests[] = {
     { "fog_style_setting",                       run_fog_style_setting                       },
     { "fog_road_edges",                          run_fog_road_edges                          },
     { "fog_road_edge_masks",                     run_fog_road_edge_masks                     },
+    { "fullscreen_key_action",                   run_fullscreen_key_action                   },
     { "sight",                                   run_sight                                   },
     { "sight_shadow",                            run_sight_shadow                            },
     { "sight_shadow_cost",                       run_sight_shadow_cost                       },
