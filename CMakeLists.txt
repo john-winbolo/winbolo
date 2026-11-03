@@ -6222,6 +6222,10 @@ set(_unit_test_names
     nav_outline_first_arrow_shows
     nav_outline_code_focus_enter_acts
     nav_outline_quiet_focus_hidden
+    nav_outline_ctrl_enter_not_claimed
+    nav_outline_alt_arrow_not_claimed
+    nav_outline_first_home_end_shows
+    nav_outline_first_page_keys_shows
     browser_version_parse
     version_protocol_bytes
     clip_gif_len_sync
@@ -7034,9 +7038,12 @@ set(_unit_test_names
     bg_map_pick_skips_tutorials
     tutorial_maps_shipped_path
     tutorial_maps_popup_pauses
-    tutorial_maps_popup_opens_window
-    tutorial_maps_popup_fallback_lines
-    tutorial_maps_popup_lines_wait
+    tutorial_maps_script_has_popup
+    scenario_host_popup_nil_outside_tutorials
+    scenario_host_popup_in_tutorial
+    scenario_validate_popup_tutorial_only
+    scenario_host_shipped_tutorial_rooted
+    scenario_host_popup_unsafe_unreachable
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop

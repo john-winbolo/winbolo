@@ -51,8 +51,9 @@
  * imguiPush/PopNearestSampling. */
 #include "lobby_internal.h"
 #if BOLO_RECAP_CLIP_GIF
-/* The recording mode controls the Log Viewer draws too: the camera and crop
- * toggles, the length field and marker, and the crop frame. */
+/* The recording mode controls the Log Viewer draws too: the camera toggle,
+ * the Preview and Save buttons, Cancel, the length field, the zoomed
+ * timeline, the span's tint and the crop frame. */
 #include "../clip_gif_controls.h"
 #endif
 #include "../../wb_theme.h"  /* g_theme / wbThemeColor — the spawn failure line */

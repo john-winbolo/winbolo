@@ -68,6 +68,19 @@
  *  nothing under src/bolo/internal/.
  *********************************************************/
 
+/* GetFullPathNameA and GetFinalPathNameByHandleA, for the real path of a
+   script in scenarioHostScriptIsShippedTutorial. Before every other header,
+   as elsewhere in the tree, so winsock2.h comes ahead of windows.h. */
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <winsock2.h>
+#  include <windows.h>
+#else
+#  include <unistd.h>              /* getcwd */
+#endif
+
 #include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -89,6 +102,11 @@
 #include "platform_types.h"        /* BOLO_STATIC_ASSERT */
 #include "bolo_rand.h"             /* BoloRandState, bolo_rand_save */
 #include "../common/wb_log.h"      /* WB_LOG_INFO — the line a saved copy logs */
+/* TUTORIAL_MAPS_SCRIPT_POPUPS, tutorialMapsScriptHasPopup and
+ * tutorialMapsPathInDir: which scripts get game.popup. A public header with
+ * no SDL or GUI in it, so the dedicated server reads the same rule as the
+ * client's menus. */
+#include "tutorial_scripts.h"
 #include "brain_list.h"            /* brainListResolve — the brain a team
                                     * names, against this server's own
                                     * brains directory */
@@ -1088,6 +1106,59 @@ int scnEnvNew(lua_State *L) {
     lua_rawset(L, -3);
 
     return luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+/* Takes popup off the game table in the globals envRef names, so that the
+ * script finds game.popup nil.
+ *
+ * In a sandboxed state the env's game is the script's own copy (scnEnvNew
+ * copies it two levels deep), and the field comes off that copy only, so
+ * every other script is left as it was. The state's real game table keeps
+ * the field there, and no script can reach it: the sandbox has no debug
+ * library, no load, no require and no package table.
+ *
+ * Under -allow-unsafe-scripts the env holds the state's one game table, the
+ * same table the real globals name, and every script there has the whole
+ * standard library: debug.getregistry(), package.loaded._G and a chunk from
+ * load() all reach the real globals and every other script's globals. A
+ * copy for one script would therefore not keep the call from it. So here
+ * the field comes off that one real table, for every script in the state.
+ * The callers make that agree with the list (scnLoadListPopup): in an unsafe
+ * state, either every script on the list has game.popup or none does, and
+ * then no route in the state leads to the call.
+ *
+ * Raw reads and writes throughout, so no metatable runs. False where there
+ * was no stack for it. */
+static bool scnEnvDropPopup(lua_State *L, int envRef) {
+    int env;
+
+    if (!lua_checkstack(L, 6)) {
+        return false;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, envRef);
+    env = lua_gettop(L);
+    lua_pushstring(L, "game");
+    lua_rawget(L, env);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "popup");
+        lua_pushnil(L);
+        lua_rawset(L, -3);
+    }
+    /* And the real globals' game table under -allow-unsafe-scripts, which is
+       the table above in a state built by scnEnvNew there; said again here
+       so that no other table the real globals name keeps the call. */
+    if (scenarioHostUnsafeScripts()) {
+        scnPushGlobals(L);
+        lua_pushstring(L, "game");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "popup");
+            lua_pushnil(L);
+            lua_rawset(L, -3);
+        }
+    }
+    lua_settop(L, env - 1);
+    return true;
 }
 
 /* One script's globals on the stack. LUA_NOREF is the validator and the
@@ -3823,7 +3894,42 @@ typedef struct ScnScriptLoad {
      * holds, and this writes into that same struct. */
     ScnLuaCtx              *ctx;
     int                     entry;
+    /* Whether this script's game table keeps popup. False takes game.popup
+     * out of this script's globals before its chunk runs, so the call is
+     * nil there (scnEnvDropPopup). Set by scnLoadHasPopup. */
+    bool                    popup;
 } ScnScriptLoad;
+
+/* Whether a script of the list gets game.popup: every script while
+ * TUTORIAL_MAPS_SCRIPT_POPUPS is 1, and only a shipped tutorial's own map
+ * script while it is 0: a map's own script directly in the shipped
+ * tutorials folder under the data folder
+ * (scenarioHostScriptIsShippedTutorial). A mod never gets it while it is 0,
+ * wherever its file is. path is the script's full path, not its file name.
+ * One script's answer; scnLoadListPopup then applies the list's rule. */
+static bool scnLoadHasPopup(LobbyScenarioSource source, const char *path) {
+    if (TUTORIAL_MAPS_SCRIPT_POPUPS != 0) {
+        return true;
+    }
+    return tutorialMapsScriptHasPopup(
+        false, source == lobbyScenarioMap,
+        source == lobbyScenarioMap && scenarioHostScriptIsShippedTutorial(path));
+}
+
+/* The list's rule, after each script's own answer (scnLoadHasPopup).
+ * listAll is whether every script on the list has its own answer true.
+ *
+ * In a sandboxed state each script's answer stands: a script's game table is
+ * its own copy and no script can reach another's.
+ *
+ * Under -allow-unsafe-scripts every script in the state can reach every
+ * table in it (scnEnvDropPopup says how), so a list on which one script may
+ * not have the call gives it to none of them: a shipped tutorial played with
+ * a mod in that mode finds game.popup nil, as the mod does. A tutorial on its
+ * own keeps the call there. */
+static bool scnLoadListPopup(bool own, bool listAll) {
+    return own && (listAll || !scenarioHostUnsafeScripts());
+}
 
 /* A slot ready to take a script: every reference empty and a zeroed table of
  * its own on the heap, which is the table the chunk's own read fills and the
@@ -3888,6 +3994,15 @@ static bool scnScriptLoad(lua_State *L, ScnScriptEntry *e,
 
     e->envRef = scnEnvNew(L);
     if (e->envRef == LUA_NOREF) {
+        scnFmt(err, errLen, "scenario: no memory for %s's own globals",
+               in->path);
+        return false;
+    }
+    /* game.popup is only for the shipped tutorials while
+       TUTORIAL_MAPS_SCRIPT_POPUPS is 0: every other script's globals lose
+       it here, before its chunk runs, so a top level, a hook and the trigger
+       router all find it nil. */
+    if (!in->popup && !scnEnvDropPopup(L, e->envRef)) {
         scnFmt(err, errLen, "scenario: no memory for %s's own globals",
                in->path);
         return false;
@@ -6531,9 +6646,22 @@ static void scnRoundBootLocked(ScenarioHost *h) {
         load[n].pkg       = h->entry[n].pkgManifest;
         load[n].ctx       = &h->lua;
         load[n].entry     = n;
+        load[n].popup     = scnLoadHasPopup(h->entry[n].source,
+                                            h->entry[n].script);
         /* This is the state the round dispatches from, so it is the one
            whose hooks the host holds on to. */
         load[n].resolveHooks = true;
+    }
+    /* And the list's rule for game.popup, which needs every script's own
+       answer first. */
+    {
+        bool all = true;
+        for (i = 0; i < n; i++) {
+            all = all && load[i].popup;
+        }
+        for (i = 0; i < n; i++) {
+            load[i].popup = scnLoadListPopup(load[i].popup, all);
+        }
     }
 
     for (i = 0; i < n; i++) {
@@ -6743,6 +6871,217 @@ void scenarioHostSetUnsafeScripts(bool unsafe) {
 
 bool scenarioHostUnsafeScripts(void) {
     return scnUnsafeScripts;
+}
+
+/* The shipped tutorials: the data folder and the test of a script's path
+ * against <data folder>/maps/tutorials.
+ *
+ * The longest path the test works on. A longer one is never a shipped
+ * tutorial: the test says false rather than cut it. */
+#define SCN_CANON_PATH_MAX 1024
+
+/* What scenarioHostSetDataRoot was given, "" for the default. Written once
+ * at startup (by a test, in practice) and read at each load after that. */
+static char scnDataRoot[SCN_CANON_PATH_MAX];
+/* True when the folder given was too long to keep. The test then finds no
+ * shipped tutorial at all, rather than going back to the default. */
+static bool scnDataRootTooLong = false;
+
+void scenarioHostSetDataRoot(const char *dir) {
+    scnDataRoot[0]     = '\0';
+    scnDataRootTooLong = false;
+    if (dir == NULL || dir[0] == '\0') {
+        return;
+    }
+    if (strlen(dir) >= sizeof(scnDataRoot)) {
+        scnDataRootTooLong = true;
+        return;
+    }
+    memcpy(scnDataRoot, dir, strlen(dir) + 1);
+}
+
+/* The data folder, as given or by default: the data folder beside the
+ * program, which is where the shipped mods are read from too
+ * (scnModDirShipped), and "data" in the working directory where SDL cannot
+ * name the program's folder. Not made canonical here. */
+static bool scnDataRootDir(char *out, size_t outLen) {
+    const char *base;
+
+    if (scnDataRootTooLong) {
+        return false;
+    }
+    if (scnDataRoot[0] != '\0') {
+        return (size_t)snprintf(out, outLen, "%s", scnDataRoot) < outLen;
+    }
+    base = SDL_GetBasePath();
+    if (base == NULL || base[0] == '\0') {
+        return (size_t)snprintf(out, outLen, "data") < outLen;
+    }
+    /* SDL_GetBasePath ends in a separator, so there is none to add. */
+    return (size_t)snprintf(out, outLen, "%sdata", base) < outLen;
+}
+
+/* Whether the file system ignores case, so the test does too. */
+#if defined(_WIN32) || defined(__APPLE__)
+#define SCN_PATH_FOLD_CASE true
+#else
+#define SCN_PATH_FOLD_CASE false
+#endif
+
+#ifdef _WIN32
+/* The real path of a file or folder that exists, links and junctions
+ * followed, without the "\\?\" in front that Windows puts there. False
+ * where it is not there or the answer does not fit. */
+static bool scnFinalPath(const char *full, char *out, size_t outLen) {
+    char   buf[SCN_CANON_PATH_MAX];
+    HANDLE f;
+    DWORD  n;
+
+    /* No access asked for, and FILE_FLAG_BACKUP_SEMANTICS so a folder opens
+       too: this only names the file. */
+    f = CreateFileA(full, 0,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (f == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    n = GetFinalPathNameByHandleA(f, buf, (DWORD)sizeof(buf),
+                                  FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    CloseHandle(f);
+    if (n == 0 || n >= sizeof(buf)) {
+        return false;
+    }
+    if (strncmp(buf, "\\\\?\\UNC\\", 8) == 0) {
+        return (size_t)snprintf(out, outLen, "\\\\%s", buf + 8) < outLen;
+    }
+    if (strncmp(buf, "\\\\?\\", 4) == 0) {
+        return (size_t)snprintf(out, outLen, "%s", buf + 4) < outLen;
+    }
+    return (size_t)snprintf(out, outLen, "%s", buf) < outLen;
+}
+#else
+/* "." and ".." taken out of an absolute path, in place, and runs of '/'
+ * made one. A ".." at the top stays at the top. */
+static void scnPathCollapse(char *p) {
+    char  *out = p;
+    char  *in  = p;
+    size_t len;
+
+    /* p starts with '/'. Each pass reads one part after a slash. */
+    while (*in == '/') {
+        char *part;
+
+        while (*in == '/') in++;
+        part = in;
+        while (*in != '\0' && *in != '/') in++;
+        len = (size_t)(in - part);
+        if (len == 0 || (len == 1 && part[0] == '.')) {
+            continue;
+        }
+        if (len == 2 && part[0] == '.' && part[1] == '.') {
+            while (out > p && *(out - 1) != '/') out--;
+            if (out > p) out--;              /* the slash before that part */
+            continue;
+        }
+        *out++ = '/';
+        memmove(out, part, len);
+        out += len;
+    }
+    if (out == p) {
+        *out++ = '/';
+    }
+    *out = '\0';
+}
+#endif
+
+/* path made full and canonical: the working directory in front of a
+ * relative path, "." and ".." taken out, and links followed where the file,
+ * or else its folder, exists. Where neither exists the full path is used as
+ * it is. False where it does not fit. */
+static bool scnCanonPath(const char *path, char *out, size_t outLen) {
+    char  full[SCN_CANON_PATH_MAX];
+    char  dir[SCN_CANON_PATH_MAX];
+    char *slash;
+
+#ifdef _WIN32
+    DWORD n = GetFullPathNameA(path, (DWORD)sizeof(full), full, NULL);
+
+    if (n == 0 || n >= sizeof(full)) {
+        return false;
+    }
+    if (scnFinalPath(full, out, outLen)) {
+        return true;
+    }
+    /* GetFullPathNameA writes '\\' throughout. */
+    slash = strrchr(full, '\\');
+    if (slash != NULL && slash > full) {
+        *slash = '\0';
+        if (scnFinalPath(full, dir, sizeof(dir))) {
+            *slash = '\\';
+            return (size_t)snprintf(out, outLen, "%s%s", dir, slash) < outLen;
+        }
+        *slash = '\\';
+    }
+    return (size_t)snprintf(out, outLen, "%s", full) < outLen;
+#else
+    char *real = realpath(path, NULL);
+
+    if (real != NULL) {
+        bool fits = (size_t)snprintf(out, outLen, "%s", real) < outLen;
+        free(real);
+        return fits;
+    }
+    if (path[0] == '/') {
+        if ((size_t)snprintf(full, sizeof(full), "%s", path) >= sizeof(full)) {
+            return false;
+        }
+    } else {
+        if (getcwd(dir, sizeof(dir)) == NULL) {
+            return false;
+        }
+        if ((size_t)snprintf(full, sizeof(full), "%s/%s", dir, path) >=
+            sizeof(full)) {
+            return false;
+        }
+    }
+    scnPathCollapse(full);
+    slash = strrchr(full, '/');
+    if (slash != NULL && slash > full) {
+        *slash = '\0';
+        real = realpath(full, NULL);
+        *slash = '/';
+        if (real != NULL) {
+            bool fits = (size_t)snprintf(out, outLen, "%s%s", real, slash) <
+                        outLen;
+            free(real);
+            return fits;
+        }
+    }
+    return (size_t)snprintf(out, outLen, "%s", full) < outLen;
+#endif
+}
+
+bool scenarioHostScriptIsShippedTutorial(const char *path) {
+    char root[SCN_CANON_PATH_MAX];
+    char dir[SCN_CANON_PATH_MAX];
+    char canonDir[SCN_CANON_PATH_MAX];
+    char canonPath[SCN_CANON_PATH_MAX];
+
+    if (path == NULL || path[0] == '\0') {
+        return false;
+    }
+    if (!scnDataRootDir(root, sizeof(root))) {
+        return false;
+    }
+    if ((size_t)snprintf(dir, sizeof(dir), "%s/%s", root,
+                         TUTORIAL_MAPS_UNDER_DATA) >= sizeof(dir)) {
+        return false;
+    }
+    if (!scnCanonPath(dir, canonDir, sizeof(canonDir)) ||
+        !scnCanonPath(path, canonPath, sizeof(canonPath))) {
+        return false;
+    }
+    return tutorialMapsPathInDir(canonDir, canonPath, SCN_PATH_FOLD_CASE);
 }
 
 /* One character of a path, for the comparison below: separators levelled and
@@ -9364,12 +9703,25 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
         load[i].pkg       = from[i].fromPackage ? from[i].manifest : NULL;
         load[i].ctx       = &h->lua;
         load[i].entry     = i;
+        load[i].popup     = scnLoadHasPopup(h->entry[i].source,
+                                            h->entry[i].script);
         /* No hook is dispatched off this state — the hooks belong to a
            round's VM and the first round start resolves them — so nothing
            here asks for them. What the load settles is that the chunk runs,
            the table reads and the router installs at all, said at the attach
            rather than at the first round start. */
         load[i].resolveHooks = false;
+    }
+    /* And the list's rule for game.popup, which needs every script's own
+       answer first. */
+    {
+        bool all = true;
+        for (i = 0; i < n; i++) {
+            all = all && load[i].popup;
+        }
+        for (i = 0; i < n; i++) {
+            load[i].popup = scnLoadListPopup(load[i].popup, all);
+        }
     }
 
     for (i = 0; i < n; i++) {
@@ -9718,6 +10070,9 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     int               base = 0;
     int               i;
     bool              ok   = false;
+    /* Whether every script on the list has game.popup of its own, for the
+       list's rule (scnLoadListPopup). */
+    bool              allPopup = true;
 
     if (err != NULL && errLen > 0) {
         err[0] = '\0';
@@ -9790,6 +10145,11 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     check.runningEnv   = 0;
     check.timers    = NULL;
     check.checkOnly = true;
+    /* Every source is read by now, so the list's rule can be worked out. */
+    for (i = 0; i < n; i++) {
+        allPopup = allPopup &&
+                   scnLoadHasPopup(from[i].source, from[i].script);
+    }
     L = scnBootVmWith(&check);
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
@@ -9835,6 +10195,10 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
         load.pkg          = from[i].fromPackage ? from[i].manifest : NULL;
         load.ctx          = &check;
         load.entry        = i;
+        /* The full path, not the name the chunk is called by above: the
+           tutorial test reads the folders the file is in. */
+        load.popup        = scnLoadListPopup(
+            scnLoadHasPopup(from[i].source, from[i].script), allPopup);
         load.resolveHooks = false;
         if (!scnScriptLoad(L, &reloaded[i], &load, err, errLen, &rep)) {
             goto done;

@@ -369,6 +369,49 @@ void scenarioHostSetUnsafeScripts(bool unsafe);
 bool scenarioHostUnsafeScripts(void);
 
 /*********************************************************
+ *NAME:          scenarioHostSetDataRoot
+ *PURPOSE:
+ *  The data folder whose maps/tutorials folder holds the
+ *  shipped tutorials. Only a map's own script directly in
+ *  that folder is a shipped tutorial
+ *  (scenarioHostScriptIsShippedTutorial). NULL or "" goes
+ *  back to the default: the data folder beside the program
+ *  (SDL_GetBasePath, then "data"), the same place the
+ *  shipped mods are read from, or "data" in the working
+ *  directory where SDL cannot name the program's folder.
+ *  No binary sets it: the default is the shipped data
+ *  folder. The unit tests set it to a folder of their own
+ *  and set it back to NULL after.
+ *
+ *  Set it before the first attach. It is one answer for the
+ *  process; the path is copied.
+ *********************************************************/
+void scenarioHostSetDataRoot(const char *dir);
+
+/*********************************************************
+ *NAME:          scenarioHostScriptIsShippedTutorial
+ *PURPOSE:
+ *  Whether the file at path is directly in the shipped
+ *  tutorials folder: <data folder>/maps/tutorials, with the
+ *  data folder from scenarioHostSetDataRoot. Both paths are
+ *  made full and canonical first (the working directory in
+ *  front of a relative path, "." and ".." taken out, links
+ *  followed where the file or its folder exists), and on
+ *  Windows and macOS the case is ignored. So a folder of the
+ *  same name anywhere else (the player's own folder, a map
+ *  pack, an upload, the install folder outside data) does
+ *  not pass. False for NULL or "".
+ *
+ *  The one test for "a shipped tutorial": the scenario host
+ *  and -validate ask it before a script gets game.popup, the
+ *  single-player frontend asks it before a popup pauses the
+ *  game and before game.tutorial_done hides the main menu's
+ *  Tutorial button. Reads the disk; call it at a load or
+ *  when a dialog opens, not every frame.
+ *********************************************************/
+bool scenarioHostScriptIsShippedTutorial(const char *path);
+
+/*********************************************************
  *NAME:          scenarioHostMapHasScript
  *PURPOSE:
  *  Whether picking the map at mapPath here would run a

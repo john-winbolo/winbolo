@@ -46,7 +46,8 @@
 /* Reads crop out of texture (a render target of renderer) and gives it to
  * enc as the next frame. The render target the caller had is put back, as a
  * screen calls this in the middle of its own frame. False when the readback
- * or the encoder fails. */
+ * or the encoder fails, or when the render target is now too small to hold
+ * all of crop. */
 static inline bool clipGifEncodeFrame(SDL_Renderer *renderer,
                                       SDL_Texture *texture,
                                       const SDL_Rect *crop,
@@ -61,6 +62,14 @@ static inline bool clipGifEncodeFrame(SDL_Renderer *renderer,
     SDL_Surface *raw = SDL_RenderReadPixels(renderer, crop);
     SDL_SetRenderTarget(renderer, saved);
     if (raw == NULL) {
+        return false;
+    }
+    /* SDL clips the rect to the render target as it is now. When the target
+     * has become smaller since the capture started (the window was resized),
+     * the surface is smaller than the crop, and the encoder, which was told
+     * the crop's size at msf_gif_begin, would read past its end. */
+    if (raw->w != crop->w || raw->h != crop->h) {
+        SDL_DestroySurface(raw);
         return false;
     }
     /* Convert rather than assume: the readback's layout follows the render

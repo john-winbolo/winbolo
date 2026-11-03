@@ -178,6 +178,9 @@ static bool lvGifIsPlaying(void *user) {
 
 static void lvGifPlay(void *user) {
     (void)user;
+    if (g_lv == NULL || !g_lv->isLoaded) {
+        return;
+    }
     lv_windowPlay();
 }
 
@@ -369,7 +372,11 @@ static void lvGifStart(void) {
     from.view = lvGifStartView;
     char mapName[64];
     mapName[0] = '\0';
+    /* The timer thread may still be playing the log, so the name is read
+     * under the client mutex, as logviewer.c reads it. */
+    lv_clientMutexWaitFor();
     lv_screenGetMapName(mapName);
+    lv_clientMutexRelease();
     mapName[sizeof(mapName) - 1] = '\0';
     ClipGifMeta meta;
     lvGifFillMeta(&meta, mapName);
@@ -654,29 +661,7 @@ void lv_clip_gif_session_end(void) {
     clipGifGalleryShutdown();
 }
 
-#else /* !CLIP_GIF_GALLERY_BUILT */
-
-bool lv_clip_gif_available(void) { return false; }
-bool lv_clip_gif_can_toggle_mode(void) { return false; }
-bool lv_clip_gif_mode_on(void) { return false; }
-void lv_clip_gif_toggle_mode(void) {}
-bool lv_clip_gif_tools_shown(void) { return false; }
-bool lv_clip_gif_can_make(void) { return false; }
-bool lv_clip_gif_active(void) { return false; }
-void lv_clip_gif_capture_step(void) {}
-void lv_clip_gif_render(void) {}
-bool lv_clip_gif_frame_has_mouse(void) { return false; }
-void lv_clip_gif_set_anchor(bool set, float x0, float y0, float x1, float y1) {
-    (void)set; (void)x0; (void)y0; (void)x1; (void)y1;
-}
-void lv_clip_gif_seek_marker(float minX, float minY, float maxX, float maxY,
-                             bool seeking, uint32_t seekMs, uint32_t totalMs) {
-    (void)minX; (void)minY; (void)maxX; (void)maxY;
-    (void)seeking; (void)seekMs; (void)totalMs;
-}
-void lv_clip_gif_toggle_gallery(void) {}
-bool lv_clip_gif_gallery_is_open(void) { return false; }
-void lv_clip_gif_cancel(void) {}
-void lv_clip_gif_session_end(void) {}
+/* Where CLIP_GIF_GALLERY_BUILT is 0, imgui_clip_gif.h has static inline
+ * versions of these calls that do nothing, so this file defines none. */
 
 #endif /* CLIP_GIF_GALLERY_BUILT */

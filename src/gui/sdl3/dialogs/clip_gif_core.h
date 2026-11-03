@@ -76,7 +76,10 @@ float clipGifLenToSeconds(uint32_t lenMs);
  * one frame every CLIP_GIF_FRAME_MS (10 fps), at least CLIP_GIF_MIN_FRAMES
  * and at most CLIP_GIF_MAX_FRAMES frames, and, until the player moves the
  * crop frame, a view wider than CLIP_GIF_MAX_WIDTH pixels cut down to its
- * middle part (clipGifFrameDefault). The width cap keeps the file small and
+ * middle part (clipGifFrameDefault). A frame the player moves or sizes is
+ * held to CLIP_GIF_MAX_WIDTH pixels wide too (clipGifModeFitFrame), as the
+ * capture reads the frame's pixels from the view one for one and cannot
+ * scale them down. The width cap keeps the file small and
  * keeps a long GIF inside the gallery's preview memory
  * (CLIP_GIF_PREVIEW_MAX_BYTES). */
 #define CLIP_GIF_FRAME_MS   100u
@@ -252,7 +255,9 @@ bool clipGifBlitView(const ClipGifBox *src, const ClipGifBox *dst,
  *
  * Until the player moves or sizes the frame (frameSet false), the frame is
  * the default for the view it is on (clipGifFrameDefault), and it follows
- * that view as it changes size. After that it keeps the player's fractions. */
+ * that view as it changes size. After that it keeps the player's fractions,
+ * except that it is never wider than CLIP_GIF_MAX_WIDTH pixels of the view
+ * (clipGifModeFitFrame). */
 
 /* A part of the replay, in ms: startMs up to endMs. */
 typedef struct {
@@ -300,17 +305,20 @@ bool clipGifModeToggle(ClipGifMode *m, bool captureActive);
 
 /* Puts the default frame for a view of viewW x viewH pixels in m->frame
  * when the player has not moved or sized the frame (frameSet false). A
- * frame the player set, and an empty view, leave it as it is. The frame on
- * the screen and the frame a GIF takes both come through here, so they are
- * the same frame. */
+ * frame the player set is kept, but when it is wider than
+ * CLIP_GIF_MAX_WIDTH pixels of the view its right edge comes in to that
+ * width; its left edge and its height stay. So a drag cannot make the frame
+ * wider than the cap: an edge pulled out past it stops, or with the left
+ * edge the whole frame moves left. An empty view leaves the frame as it is.
+ * The frame on the screen and the frame a GIF takes both come through here,
+ * so they are the same frame. */
 void clipGifModeFitFrame(ClipGifMode *m, int viewW, int viewH);
 
 /* The pixels a GIF takes from the visible view (viewX, viewY, viewW,
  * viewH), as the game's replay and the Log Viewer both choose them: the
  * part in the mode's crop frame (clipGifModeFitFrame, then
- * clipGifCropFromFrame). There is no width cap on a frame the player set:
- * the frame says what to take. False, with *out cleared, when the view is
- * empty or there is no mode. */
+ * clipGifCropFromFrame), never more than CLIP_GIF_MAX_WIDTH pixels wide.
+ * False, with *out cleared, when the view is empty or there is no mode. */
 bool clipGifChooseCrop(ClipGifMode *m, int viewX, int viewY, int viewW,
                        int viewH, ClipGifRect *out);
 
@@ -374,7 +382,9 @@ float clipGifRangeX(uint32_t timeMs, ClipGifRange r, float x0, float x1);
 uint32_t clipGifRangeTime(float x, ClipGifRange r, float x0, float x1);
 
 /* Where Preview clip and Save clip start and how long they run: the span
- * (clipGifSpanRange), or from curMs for lenMs clamped to the time left
+ * (clipGifSpanRange) for its own length, which stops at the end of the
+ * replay and so can be under CLIP_GIF_LEN_MIN_MS there (one frame for a
+ * span at the very end), or from curMs for lenMs clamped to the time left
  * before the span has a place (spanSet false). All 0 for no mode. */
 void clipGifSpanClip(const ClipGifMode *m, uint32_t curMs, uint32_t totalMs,
                      uint32_t *startMs, uint32_t *lenMs);
@@ -399,6 +409,10 @@ void clipGifSpanDragEdge(ClipGifMode *m, int edge, uint32_t atMs,
  * playhead's new time, which is also in m->move.playMs. Held at an end of
  * the zoomed timeline, the screen grows the timeline (clipGifZoomGrow), so
  * the span can go on past the old end. */
+void clipGifSpanMoveBegin(ClipGifMode *m, uint32_t grabAtMs, uint32_t curMs,
+                          uint32_t totalMs);
+uint32_t clipGifSpanMoveTo(ClipGifMode *m, uint32_t atMs, uint32_t totalMs);
+
 /* The grip's box on the zoomed timeline, in screen px: the three lines in
  * the middle of the span (xs to xe) with a few px round them. Only this box
  * moves the span; a press on the rest of the span moves the playhead. The
@@ -410,10 +424,6 @@ void clipGifSpanDragEdge(ClipGifMode *m, int edge, uint32_t atMs,
 #define CLIP_GIF_GRIP_HIT_HALF_PX 9.0f
 bool clipGifGripBox(float xs, float xe, float minX, float maxX, float *x0,
                     float *x1, float *mid);
-
-void clipGifSpanMoveBegin(ClipGifMode *m, uint32_t grabAtMs, uint32_t curMs,
-                          uint32_t totalMs);
-uint32_t clipGifSpanMoveTo(ClipGifMode *m, uint32_t atMs, uint32_t totalMs);
 
 /* A handle held at one end of the zoomed timeline: that end of *zoom (the
  * span's edge, CLIP_GIF_EDGE_START or CLIP_GIF_EDGE_END) moves out by up to
@@ -537,7 +547,8 @@ void  clipGifMetaFreeJson(char *json);
  * dropped. On success hasMeta is true; gifFile is left empty. */
 bool clipGifMetaFromJson(const char *text, size_t len, ClipGifMeta *out);
 
-/* Writes / reads one metadata file. Paths are UTF-8. */
+/* Writes / reads one metadata file. Paths are UTF-8. A read of a path that
+ * is not a plain file, or is over 64 KiB, gives false. */
 bool clipGifMetaWriteFile(const char *path, const ClipGifMeta *m);
 bool clipGifMetaReadFile(const char *path, ClipGifMeta *out);
 
@@ -588,9 +599,6 @@ bool clipGifMetaAddPlayer(ClipGifMeta *m, const char *name);
  * round's replay gives the same id each time it is opened, and two rounds
  * do not give the same id. */
 
-/* The id of the replay bytes data (len bytes), as 16 lower-case hex digits
- * (a 64-bit FNV-1a hash), into out (outLen bytes, always ended with a NUL).
- * No bytes give "". */
 /* The same id a piece at a time, for a replay too large to read whole:
  * h = clipGifGameIdBegin(), then h = clipGifGameIdAdd(h, piece, n) for each
  * piece in order, then clipGifGameIdEnd(h, out, outLen). The caller gives
@@ -599,6 +607,9 @@ uint64_t clipGifGameIdBegin(void);
 uint64_t clipGifGameIdAdd(uint64_t h, const void *data, size_t len);
 void clipGifGameIdEnd(uint64_t h, char *out, size_t outLen);
 
+/* The id of the replay bytes data (len bytes), as 16 lower-case hex digits
+ * (a 64-bit FNV-1a hash), into out (outLen bytes, always ended with a NUL).
+ * No bytes give "". */
 void clipGifGameIdFromBytes(const void *data, size_t len, char *out,
                             size_t outLen);
 

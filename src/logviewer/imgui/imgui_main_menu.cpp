@@ -458,7 +458,7 @@ static void handle_keyboard_shortcuts(int *clicked) {
     if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
         if (s_lv->isLoaded) { lv_windowRewind(); *clicked = 1; }
     }
-    if (!live && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
+    if (!live && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
         if (lv_clip_gif_can_toggle_mode()) { lv_clip_gif_toggle_mode(); *clicked = 1; }
     }
 

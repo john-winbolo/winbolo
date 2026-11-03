@@ -24,7 +24,8 @@
 #include "tutorial_text.h"  /* tutorialInputNow */
 #include "clientmutex.h"
 #include "server_sim.h"      /* serverSimTakeTutorialDone */
-#include "tutorial_maps.h"  /* tutorialMapsIsShippedTutorial, tutorialMapsPopupPauses */
+#include "tutorial_maps.h"  /* tutorialMapsPopupPauses */
+#include "../scenario/scenario_host.h" /* scenarioHostScriptIsShippedTutorial */
 #include "dialogs/imgui_messagebox.h"
 #include "../gui/sound.h"   /* soundIsMuted / soundSetMuted — the pause freezes */
 #include <stdio.h>
@@ -289,9 +290,12 @@ bool clientFrontPopupPausesGame(ClientSim *cs) {
   /* The script path is read under the client mutex (gamefront.h). The
      mutex can be taken again by a thread that holds it already. */
   clientMutexWaitFor();
-  pauses = tutorialMapsPopupPauses(clientSimIsSinglePlayer(cs),
-                                   gameFrontGetServerSim() != NULL,
-                                   gameFrontScenarioMapScriptPath());
+  /* The same test that gives a script game.popup: the running map's own
+     script directly in the shipped tutorials folder under the data folder.
+     Asked once, when the popup opens. */
+  pauses = tutorialMapsPopupPauses(
+      clientSimIsSinglePlayer(cs), gameFrontGetServerSim() != NULL,
+      scenarioHostScriptIsShippedTutorial(gameFrontScenarioMapScriptPath()));
   clientMutexRelease();
   return pauses;
 }
@@ -441,7 +445,11 @@ void clientFrontPollScenarioPlayer(void) {
     }
     done = serverSimTakeTutorialDone(srv, seat);
     if (done) {
-      shipped = tutorialMapsIsShippedTutorial(gameFrontScenarioMapScriptPath());
+      /* Only the shipped tutorials, by the test that gives game.popup: a
+         map script in a maps/tutorials folder of the player's own does not
+         hide the button. */
+      shipped = scenarioHostScriptIsShippedTutorial(
+          gameFrontScenarioMapScriptPath());
     }
   }
   clientMutexRelease();

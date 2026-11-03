@@ -149,7 +149,8 @@ static void navOutlineClaimTab(ImGuiContext *g) {
 /* While the outline is hidden, claim the other keys that move or press
    the focused item for the next frame, so the first press only shows the
    outline, as the first Tab does: Enter, keypad Enter, Space, the arrow
-   keys, the d-pad and the pad's activate button.  ImGui reads each of
+   keys, Home, End, PageUp, PageDown, the d-pad and the pad's activate
+   button.  ImGui reads each of
    them in NavUpdate with IsKeyPressed or IsKeyDown(key, ...,
    ImGuiKeyOwner_NoOwner), which fails while another id owns the key.
    navOutlineTrackInput reads the press with owner Any and shows the
@@ -167,7 +168,17 @@ static void navOutlineClaimTab(ImGuiContext *g) {
    to ImGui.  The claim stays while the key is held, so a held first
    arrow does not repeat into a move.  The pad's activate button is
    FaceDown, or FaceRight with ConfigNavSwapGamepadButtons; the other
-   face button is ImGui's cancel and is never claimed. */
+   face button is ImGui's cancel and is never claimed.
+
+   No keyboard claim while Ctrl or Alt is held.  ImGui tests no modifier
+   for these keys, so on main Ctrl+Enter pressed the focused item and
+   Ctrl+Arrow moved the focus.  Such a press keeps that action, and does
+   not show the outline.  A claim with no show would make the press do
+   nothing at all, every time.  The claim is made at the end of the frame
+   before the press, so the test reads the modifiers at that time; if Ctrl
+   or Alt goes down in the same frame as the key, the key is still
+   claimed, and navOutlineTrackInput then shows the outline for it.  The
+   pad keys are claimed as before, as a pad has no Ctrl or Alt. */
 static void navOutlineClaimKey(ImGuiKey key, bool want) {
     ImGuiID owner = ImGui::GetKeyOwner(key);
     if (want) {
@@ -181,7 +192,8 @@ static void navOutlineClaimKey(ImGuiKey key, bool want) {
 static const ImGuiKey kNavOutlineKeyboardKeys[] = {
     ImGuiKey_Enter,     ImGuiKey_KeypadEnter, ImGuiKey_Space,
     ImGuiKey_LeftArrow, ImGuiKey_RightArrow,  ImGuiKey_UpArrow,
-    ImGuiKey_DownArrow,
+    ImGuiKey_DownArrow, ImGuiKey_Home,        ImGuiKey_End,
+    ImGuiKey_PageUp,    ImGuiKey_PageDown,
 };
 static const ImGuiKey kNavOutlinePadMoveKeys[] = {
     ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight,
@@ -192,7 +204,9 @@ static void navOutlineClaimNavKeys(ImGuiContext *g) {
     const bool want = !navOutlineShown(g) && g->NavCursorVisible &&
                       g->NavWindow && g->NavId != 0 && g->NavIdIsAlive &&
                       g->ActiveId == 0;
-    for (ImGuiKey key : kNavOutlineKeyboardKeys) navOutlineClaimKey(key, want);
+    const bool wantKeyboard = want && !g->IO.KeyCtrl && !g->IO.KeyAlt;
+    for (ImGuiKey key : kNavOutlineKeyboardKeys)
+        navOutlineClaimKey(key, wantKeyboard);
     for (ImGuiKey key : kNavOutlinePadMoveKeys) navOutlineClaimKey(key, want);
     const bool swap = g->IO.ConfigNavSwapGamepadButtons;
     navOutlineClaimKey(ImGuiKey_GamepadFaceDown,  want && !swap);
@@ -353,15 +367,21 @@ static void navOutlineTrackInput(ImGuiContext *g) {
     if (g->NavWindow && !io.KeyCtrl && !io.KeyAlt &&
         ImGui::IsKeyPressed(ImGuiKey_Tab, false))
         s_navOutlineByKey = true;
-    /* Enter, Space and the arrow keys show it the same way, while a
-       window takes keyboard nav input and no item is active (a text field
-       reads these keys itself).  While the outline was hidden,
-       navOutlineClaimNavKeys claimed the key, so ImGui did not act on this
-       press; the next press acts. */
-    if (g->NavWindow && g->ActiveId == 0 && !io.KeyCtrl && !io.KeyAlt &&
+    /* Enter, Space, the arrow keys, Home, End, PageUp and PageDown show it
+       the same way, while a window takes keyboard nav input and no item is
+       active (a text field reads these keys itself).  While the outline
+       was hidden, navOutlineClaimNavKeys claimed the key, so ImGui did not
+       act on this press; the next press acts.  A press with Ctrl or Alt
+       held counts only if the key was claimed: an unclaimed press already
+       had its ImGui action (navOutlineClaimNavKeys).  The claim is read
+       here before navOutlineClaimNavKeys runs for the next frame. */
+    if (g->NavWindow && g->ActiveId == 0 &&
         (io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard))
         for (ImGuiKey key : kNavOutlineKeyboardKeys)
-            if (ImGui::IsKeyPressed(key, false)) s_navOutlineByKey = true;
+            if (ImGui::IsKeyPressed(key, false) &&
+                ((!io.KeyCtrl && !io.KeyAlt) ||
+                 ImGui::GetKeyOwner(key) == kNavOutlineTabOwner))
+                s_navOutlineByKey = true;
     for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadR3; k++)
         if (ImGui::IsKeyPressed((ImGuiKey)k, false)) s_navOutlineByKey = true;
     navOutlineClaimTab(g);

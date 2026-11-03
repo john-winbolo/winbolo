@@ -2194,7 +2194,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.canFullScreen    = lv_windowCanFullScreen() ? true : false;
         lvms.live             = lv_screenSpecIsLiveMode() ? true : false;
         lvms.gifAvailable     = lv_clip_gif_available() ? true : false;
-        lvms.recordMode       = lv_clip_gif_mode_on() ? true : false;
+        lvms.recordMode       = lv_clip_gif_tools_shown() ? true : false;
         lvms.canToggleRecordMode = lv_clip_gif_can_toggle_mode() ? true : false;
         lvms.showClips        = lv_clip_gif_gallery_is_open() ? true : false;
         lv_mac_menubar_refresh(&lvms);

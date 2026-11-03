@@ -1534,6 +1534,10 @@ int run_nav_outline_first_space_shows(void);
 int run_nav_outline_first_arrow_shows(void);
 int run_nav_outline_code_focus_enter_acts(void);
 int run_nav_outline_quiet_focus_hidden(void);
+int run_nav_outline_ctrl_enter_not_claimed(void);
+int run_nav_outline_alt_arrow_not_claimed(void);
+int run_nav_outline_first_home_end_shows(void);
+int run_nav_outline_first_page_keys_shows(void);
 
 /* Game browser server version test (test_browser_version.c): the old "M.mr"
  * and the "M.m.r" forms, with and without a letter suffix, against 1.1.9,
@@ -3144,19 +3148,28 @@ int run_mapchooser_scenario_filter(void);
 /* The background game's map name test: no tutorial is ever picked
  * (test_bg_map_pick.c). */
 int run_bg_map_pick_skips_tutorials(void);
-/* The folder test behind game.tutorial_done (test_bg_map_pick.c). */
+/* The text half of the shipped-tutorial test, tutorialMapsPathInDir
+ * (test_bg_map_pick.c). */
 int run_tutorial_maps_shipped_path(void);
 /* Which games a scenario popup pauses: only the shipped tutorials
  * (test_bg_map_pick.c). */
 int run_tutorial_maps_popup_pauses(void);
-/* Which popups open the popup window, with script popups off and on, and
- * the Scenario Text lines a popup with no window is split into
+/* Which scripts have game.popup, with script popups off and on
  * (test_bg_map_pick.c). */
-int run_tutorial_maps_popup_opens_window(void);
-int run_tutorial_maps_popup_fallback_lines(void);
-/* The wait for a popup's Scenario Text lines across games
- * (test_bg_map_pick.c). */
-int run_tutorial_maps_popup_lines_wait(void);
+int run_tutorial_maps_script_has_popup(void);
+/* game.popup is nil in a map script outside the tutorials and in a mod, and
+ * there in a tutorial's map script; -validate reads the same rule
+ * (test_scenario_host.c). */
+int run_scenario_host_popup_nil_outside_tutorials(void);
+int run_scenario_host_popup_in_tutorial(void);
+int run_scenario_validate_popup_tutorial_only(void);
+/* The disk half of the shipped-tutorial test: a script directly in
+ * <data folder>/maps/tutorials, both paths canonical
+ * (test_scenario_host.c). */
+int run_scenario_host_shipped_tutorial_rooted(void);
+/* Under -allow-unsafe-scripts, game.popup is nil on every route for a
+ * script outside the tutorials (test_scenario_host.c). */
+int run_scenario_host_popup_unsafe_unreachable(void);
 
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the

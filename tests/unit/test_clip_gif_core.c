@@ -263,6 +263,14 @@ int run_clip_gif_meta_bad(void) {
     EXPECT_TRUE("created text", !readsAs("{\"created\":\"yesterday\"}", &m));
     EXPECT_TRUE("created negative", !readsAs("{\"created\":-5}", &m));
     EXPECT_TRUE("created huge", !readsAs("{\"created\":1e300}", &m));
+    /* Past the last second SDL's time in nanoseconds holds: refused, so the
+     * time shown in the gallery cannot overflow. */
+    EXPECT_TRUE("created past int64 ns",
+                !readsAs("{\"created\":9223372037}", &m));
+    EXPECT_TRUE("created 1e10", !readsAs("{\"created\":1e10}", &m));
+    EXPECT_TRUE("created at the last second",
+                readsAs("{\"created\":9223372036}", &m) &&
+                    m.createdUnix == 9223372036LL);
     EXPECT_TRUE("cut short", !readsAs("{\"created\":100,\"map\":\"Ev", &m));
     EXPECT_TRUE("cleared on failure", m.createdUnix == 0 && !m.hasMeta);
     {
@@ -328,6 +336,41 @@ int run_clip_gif_meta_bad(void) {
         }
     }
     EXPECT_TRUE("bad file", !clipGifMetaReadFile(path, &m));
+
+    /* Good metadata padded past 64 KiB: refused without being read. The
+     * same text at 64 KiB reads. */
+    EXPECT_TRUE("scratch", utScratchPath(path, sizeof(path), "big.json"));
+    {
+        const size_t cap = 64u * 1024u;
+        char *text = (char *)malloc(cap + 1u);
+        EXPECT_TRUE("alloc big", text != NULL);
+        if (text != NULL) {
+            const char *head = "{\"created\":100}";
+            memset(text, ' ', cap + 1u);
+            memcpy(text, head, strlen(head));
+            for (int pass = 0; pass < 2; pass++) {
+                const size_t n = pass ? cap + 1u : cap;
+                SDL_IOStream *io = SDL_IOFromFile(path, "wb");
+                EXPECT_TRUE("open big", io != NULL);
+                if (io != NULL) {
+                    EXPECT_TRUE("write big", SDL_WriteIO(io, text, n) == n);
+                    SDL_CloseIO(io);
+                }
+                if (pass) {
+                    EXPECT_TRUE("over 64 KiB", !clipGifMetaReadFile(path, &m));
+                    EXPECT_TRUE("over 64 KiB: cleared", !m.hasMeta);
+                } else {
+                    EXPECT_TRUE("at 64 KiB", clipGifMetaReadFile(path, &m) &&
+                                                 m.createdUnix == 100);
+                }
+            }
+            free(text);
+        }
+    }
+    /* Not a plain file. */
+    EXPECT_TRUE("scratch", utScratchPath(path, sizeof(path), "dir.json"));
+    SDL_CreateDirectory(path);
+    EXPECT_TRUE("directory", !clipGifMetaReadFile(path, &m));
 
     return fails ? 1 : 0;
 }
@@ -1461,15 +1504,33 @@ int run_clip_gif_choose_crop(void) {
     EXPECT_TRUE("small view", clipGifChooseCrop(&m, 0, 0, 300, 200, &a));
     EXPECT_RECT("small view", a, 0, 0, 300, 200);
 
-    /* Set by the player: the frame is kept, with no width cap, and stays
-     * inside a view of any size. */
+    /* Set by the player: the frame is kept, but no wider than the cap: the
+     * left edge and the height stay and the right edge comes in. */
     m.frameSet = true;
     m.frame.x0 = 0.0f;
     m.frame.y0 = 0.0f;
     m.frame.x1 = 1.0f;
     m.frame.y1 = 1.0f;
     EXPECT_TRUE("set: whole", clipGifChooseCrop(&m, 0, 0, 1000, 500, &a));
-    EXPECT_RECT("set: whole, no cap", a, 0, 0, 1000, 500);
+    EXPECT_RECT("set: whole, capped", a, 0, 0, CLIP_GIF_MAX_WIDTH, 500);
+    EXPECT_BOX("set: whole, frame capped", m.frame, 0.0f, 0.0f, 0.48f, 1.0f);
+    m.frame.x0 = 0.5f;
+    m.frame.x1 = 1.0f;
+    EXPECT_TRUE("set: 4K", clipGifChooseCrop(&m, 0, 0, 3840, 2160, &a));
+    EXPECT_RECT("set: 4K, capped", a, 1920, 0, CLIP_GIF_MAX_WIDTH, 2160);
+    /* Never over the cap, whatever the rounding of the edges. */
+    for (int w = 481; w <= 4096; w += 7) {
+        m.frame.x0 = 0.0013f;
+        m.frame.y0 = 0.0f;
+        m.frame.x1 = 1.0f;
+        m.frame.y1 = 1.0f;
+        if (!clipGifChooseCrop(&m, 3, 4, w, 300, &a) ||
+            a.w > CLIP_GIF_MAX_WIDTH || a.w < CLIP_GIF_MAX_WIDTH - 1) {
+            fprintf(stderr, "%s: set on %d wide: got %d wide\n",
+                    utCurrentTestName(), w, a.w);
+            fails++;
+        }
+    }
     m.frame.x0 = 0.25f;
     m.frame.y0 = 0.25f;
     m.frame.x1 = 0.75f;
@@ -1512,8 +1573,42 @@ int run_clip_gif_default_frame(void) {
     EXPECT_BOX("fit follows the view", m.frame, 0.0f, 0.0f, 1.0f, 1.0f);
     m.frameSet = true;
     m.frame.x0 = 0.1f;
-    clipGifModeFitFrame(&m, 960, 640);
+    clipGifModeFitFrame(&m, 300, 300);
     EXPECT_BOX("set by the player: kept", m.frame, 0.1f, 0.0f, 1.0f, 1.0f);
+    clipGifModeFitFrame(&m, 960, 640);
+    EXPECT_BOX("set by the player: capped", m.frame, 0.1f, 0.0f, 0.6f, 1.0f);
+
+    /* A drag as the screen does it: the frame is fitted, drawn as a box,
+     * dragged, and stored back, each frame. Past the cap the right edge
+     * stops, and the left edge takes the whole frame with it; the height
+     * does not change. */
+    {
+        const ClipGifBox image = { 0.0f, 0.0f, 960.0f, 640.0f };
+        m.frame.x0 = 0.25f;
+        m.frame.y0 = 0.25f;
+        m.frame.x1 = 0.75f;
+        m.frame.y1 = 0.75f;
+        for (int i = 0; i < 10; i++) {
+            clipGifModeFitFrame(&m, 960, 640);
+            ClipGifBox box = clipGifFrameToBox(&m.frame, &image);
+            clipGifFrameDrag(&box, CLIP_GIF_GRAB_RIGHT, 20.0f, 0.0f, &image,
+                             8.0f);
+            clipGifFrameFromBox(&m.frame, &box, &image);
+        }
+        clipGifModeFitFrame(&m, 960, 640);
+        EXPECT_BOX("drag right past the cap: stops", m.frame, 0.25f, 0.25f,
+                   0.75f, 0.75f);
+        for (int i = 0; i < 10; i++) {
+            clipGifModeFitFrame(&m, 960, 640);
+            ClipGifBox box = clipGifFrameToBox(&m.frame, &image);
+            clipGifFrameDrag(&box, CLIP_GIF_GRAB_LEFT, -24.0f, 0.0f, &image,
+                             8.0f);
+            clipGifFrameFromBox(&m.frame, &box, &image);
+        }
+        clipGifModeFitFrame(&m, 960, 640);
+        EXPECT_BOX("drag left past the cap: moves", m.frame, 0.0f, 0.25f,
+                   0.5f, 0.75f);
+    }
     clipGifModeFitFrame(NULL, 960, 640); /* does nothing */
     return fails ? 1 : 0;
 }
@@ -1645,6 +1740,16 @@ int run_clip_gif_span_place(void) {
     clipGifSpanClip(&m, 58000u, 60000u, &st, &len);
     EXPECT_U32("span: its start", st, 20000u);
     EXPECT_U32("span: its length", len, 5000u);
+    /* A span at the end of the replay runs to the end and no further, even
+     * under the floor; one at the very end is one frame. */
+    m.spanStartMs = 59500u;
+    clipGifSpanClip(&m, 0u, 60000u, &st, &len);
+    EXPECT_U32("span at the end: its start", st, 59500u);
+    EXPECT_U32("span at the end: to the end", len, 500u);
+    m.spanStartMs = 60000u;
+    clipGifSpanClip(&m, 0u, 60000u, &st, &len);
+    EXPECT_U32("span at the very end: its start", st, 60000u);
+    EXPECT_U32("span at the very end: one frame", len, CLIP_GIF_FRAME_MS);
     clipGifSpanClip(NULL, 1u, 2u, &st, &len);
     EXPECT_TRUE("no mode", st == 0u && len == 0u);
 
@@ -1731,6 +1836,20 @@ int run_clip_gif_span_drag(void) {
     clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_START, 0u, 60000u);
     EXPECT_U32("start far out: the cap", m.lenMs, CLIP_GIF_LEN_MAX_MS);
     EXPECT_U32("start far out: end stays", m.spanStartMs, 10000u);
+
+    /* An end that is not on a whole frame stays where it is: the length
+     * is rounded down, not to the nearest frame. */
+    m.spanStartMs = 60u;
+    m.lenMs = 1000u;
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_START, 0u, 60000u);
+    EXPECT_U32("off-grid end: start", m.spanStartMs, 60u);
+    EXPECT_U32("off-grid end: length", m.lenMs, 1000u);
+    EXPECT_U32("off-grid end: end stays", m.spanStartMs + m.lenMs, 1060u);
+    m.spanStartMs = 2060u;
+    m.lenMs = 1000u;
+    clipGifSpanDragEdge(&m, CLIP_GIF_EDGE_START, 1010u, 60000u);
+    EXPECT_U32("off-grid end, out: start", m.spanStartMs, 1060u);
+    EXPECT_U32("off-grid end, out: end stays", m.spanStartMs + m.lenMs, 3060u);
 
     /* A replay shorter than the floor: from its start. */
     m.spanStartMs = 0u;

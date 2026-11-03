@@ -163,7 +163,13 @@ static void lv_push_sdl_quit(void) {
 - (void)onQuit:(id)sender { (void)sender; logViewerRequestAppQuit(); }
 - (void)onAbout:(id)sender { (void)sender; lv_imgui_show_about_dialog(); }
 - (void)onOpenWbn:(id)sender { (void)sender; lv_imgui_open_wbn_browser(); }
-- (void)onOpenFile:(id)sender { (void)sender; lv_windowOpenFile(NULL); }
+- (void)onOpenFile:(id)sender {
+    (void)sender;
+    /* None of the log's actions while a GIF is made: the GIF is the log as
+     * it plays, and the in-window menus and keys refuse them too. */
+    if (lv_clip_gif_active()) return;
+    lv_windowOpenFile(NULL);
+}
 - (void)onSaveMap:(id)sender {
     (void)sender;
     if (s_lv_state && s_lv_state->isLoaded) lv_windowSaveMap();
@@ -192,28 +198,34 @@ static void lv_push_sdl_quit(void) {
 }
 - (void)onPlay:(id)sender {
     (void)sender;
+    if (lv_clip_gif_active()) return;
     if (s_lv_state && s_lv_state->isLoaded && !s_lv_state->playIsPlaying) lv_windowPlay();
 }
 - (void)onPause:(id)sender {
     (void)sender;
+    if (lv_clip_gif_active()) return;
     if (s_lv_state && s_lv_state->isLoaded && s_lv_state->playIsPlaying) lv_windowPause();
 }
 - (void)onStop:(id)sender {
     (void)sender;
     /* A live feed has no Stop (the item is hidden there). */
     if (lv_screenSpecIsLiveMode()) return;
+    if (lv_clip_gif_active()) return;
     if (s_lv_state && s_lv_state->isLoaded) lv_windowStop(0);
 }
 - (void)onFastForward:(id)sender {
     (void)sender;
+    if (lv_clip_gif_active()) return;
     if (s_lv_state && s_lv_state->isLoaded) lv_windowFastForward();
 }
 - (void)onRewind:(id)sender {
     (void)sender;
+    if (lv_clip_gif_active()) return;
     if (s_lv_state && s_lv_state->isLoaded) lv_windowRewind();
 }
 - (void)onRecordMode:(id)sender {
     (void)sender;
+    if (lv_clip_gif_active()) return;
     lv_clip_gif_toggle_mode();
 }
 - (void)onZoomStep:(id)sender {

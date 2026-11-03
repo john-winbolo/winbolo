@@ -316,12 +316,17 @@ void clipGifCaptureStep(ClipGifSession *s, const ClipGifReplay *r) {
         bool ended = false;
         SDL_Renderer *renderer = NULL;
         SDL_Texture  *texture  = NULL;
+        /* The first frame is the moment the start seeked to, as it is drawn
+         * now. Each later frame is one advance on from the one before, so
+         * there is no advance after the last frame. */
         if (r == NULL || r->advance == NULL || r->target == NULL ||
-            !r->advance(r->user, &ended) ||
+            (s->frame > 0 && !r->advance(r->user, &ended)) ||
             !r->target(r->user, &renderer, &texture) ||
             !clipGifEncodeFrame(renderer, texture, &s->crop, &s->enc)) {
-            /* A failed readback stops the GIF here, rather than writing a
-             * GIF with a part of the time not in it. */
+            /* A failed readback (a render target made smaller by a window
+             * resize is one) stops the GIF here, rather than writing a GIF
+             * with a part of the time not in it. The next render ends the
+             * capture and puts the replay back, as Cancel does. */
             s->failed = true;
             return;
         }

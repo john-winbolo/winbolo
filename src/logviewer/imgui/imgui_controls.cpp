@@ -534,7 +534,7 @@ void lv_imgui_controls_window(void) {
                 lv_clip_gif_toggle_mode();
             }
             ImGui::EndDisabled();
-            controls_key_tip(langGetText(STR_REEL_RECORD_MODE_TIP), "Ctrl+G", tip,
+            controls_key_tip(langGetText(STR_LV_RECORD_MODE_TIP), "Ctrl+G", tip,
                              sizeof(tip));
             controls_tooltip(tip, canToggle);
         }
