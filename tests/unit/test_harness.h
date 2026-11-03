@@ -1468,6 +1468,15 @@ int run_lv_event_list_pinned(void);
 /* WinBolo.net log browser table sort (test_wbn_browser_sort.c): each column's
  * key in both directions, ties and no sort in the server's order. */
 int run_wbn_browser_sort(void);
+int run_nav_outline_first_enter_shows(void);
+int run_nav_outline_first_space_shows(void);
+int run_nav_outline_first_arrow_shows(void);
+int run_nav_outline_code_focus_enter_acts(void);
+int run_nav_outline_quiet_focus_hidden(void);
+int run_nav_outline_ctrl_enter_not_claimed(void);
+int run_nav_outline_alt_arrow_not_claimed(void);
+int run_nav_outline_first_home_end_shows(void);
+int run_nav_outline_first_page_keys_shows(void);
 
 /* Game browser server version test (test_browser_version.c): the old "M.mr"
  * and the "M.m.r" forms, with and without a letter suffix, against 1.1.9,
