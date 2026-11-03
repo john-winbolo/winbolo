@@ -39,7 +39,7 @@ document is the stable reference for the rules themselves.
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host), WinBoloIOS (SP, LAN and Internet host), Android `main` (SP host, and host of games other players join). |
 | `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer, WinBoloIOS, Android `main`. |
-| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links seventeen leaf `src/gui/sdl3` files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources" for the list and the rule a file has to meet. |
+| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links twenty-two leaf `src/gui/sdl3` files and the one ImGui file `dialogs/imgui_nav_outline.cpp`, which keep public-only access rather than borrowing this row's — see "Linked GUI sources" for the list and the rule a file has to meet. |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
 **The enforced rule of thumb is two-tier**: outside `src/bolo/`, you get
@@ -2331,14 +2331,17 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Eighteen `src/gui/sdl3` files
+same target, and it is not a T2 grant. Twenty-two `src/gui/sdl3` files
 are compiled *into* `WinBoloUnitTests`, the only files from a
-renderer directory that are: `skin_source.c`, `tileloader.c`,
-`sdl_bmp.c`, `sound_variants.c`, `sound_mix.c`, `overview_camera.cpp`,
-`overview_fog.cpp`, `overview_hud_layout.cpp`, `sprite_positions.c`,
-`ring_band.c`, `dialogs/dialog_quit.cpp`, `workshop_sync.c`,
-`input_source.c`, `news_image_budget.cpp`, `dialogs/clip_gif_core.c`,
-`newswire_slide.c`, `gfx_settings.c` and `tutorial_tokens.c`.
+renderer directory that are, with the one ImGui file named below:
+`skin_source.c`, `tileloader.c`, `sdl_bmp.c`, `sound_variants.c`,
+`sound_mix.c`, `overview_camera.cpp`, `overview_fog.cpp`,
+`overview_hud_layout.cpp`, `sprite_positions.c`, `ring_band.c`,
+`map_colours.c`, `map_markers.c`, `dialogs/dialog_quit.cpp`,
+`workshop_sync.c`, `input_source.c`, `news_image_budget.cpp`,
+`dialogs/clip_gif_core.c`, `dialogs/wbn_browser_sort.c`,
+`newswire_slide.c`, `sim_rules_phrase.c`, `tutorial_tokens.c` and
+`gfx_settings.c`.
 Between them they hold skin lookup, the tile sheet
 builder, the BMP sheet reader, the sound variant naming, the
 effects mixer's step that scales one slot's samples by its left and
@@ -2351,9 +2354,23 @@ arithmetic on the times it is given, with no clock and no SDL.
 is and how solid after a given elapsed time — pure arithmetic, no
 renderer, and the one piece of the smart ping's arrival effect and
 the overview's respawn ring that a test can observe at all.
+`map_colours.c` is the colours a map square and its markers get when
+they are drawn too small for their sprites, with a skin's
+`[MapPalette]` entries over the built-in ones, and `map_markers.c`
+is the marker shapes themselves (the tank triangle, the pill disc and
+the base square), drawn with an `SDL_Renderer *` they are handed, as
+`sdl_bmp.c`'s upload calls are; `tests/unit/test_map_colours.c` and
+`test_map_markers.c` drive them.
+`sim_rules_phrase.c` is the words a player reads beside a sim rule's
+value, built from lang table strings; `tests/unit/test_sim_rules_desc.c`
+and `test_sim_rules_describe.c` drive it.
+`dialogs/wbn_browser_sort.c` is the sort rule of the WinBolo.net log
+browser's results table, plain C with no SDL, and
+`tests/unit/test_wbn_browser_sort.c` drives it.
 `dialogs/dialog_quit.cpp` is the odd one by directory and not by
-rule: it is one of the two files under `dialogs/` that hold no ImGui
-(the other is `dialogs/clip_gif_core.c`), and it is there so that
+rule: it is one of the files under `dialogs/` that hold no ImGui
+(`dialogs/clip_gif_core.c` and `dialogs/wbn_browser_sort.c` are two
+more on this list), and it is there so that
 `dialogQuitClassify` — what a quit means to
 whichever dialog is up — can be driven from a test with hand-built
 events instead of a window (see "Standalone ImGui dialogs" below).
@@ -2395,7 +2412,7 @@ playback, the capture loop, the progress window and where the GIF goes
 on each platform. Each host gives it its replay as a table of calls
 (`ClipGifReplay`), so the shared file needs nothing of the lobby or of
 the viewer.
-The first sixteen are each called directly by a test beside them;
+The first twenty-one are each called directly by a test beside them;
 `gfx_settings.c` is here because `tileloader.c` calls it, and is the
 one file on the list no test drives on its own.
 
@@ -2403,7 +2420,7 @@ They do not borrow the target's T2 access. They keep the `gui`
 profile's public-only rule. That is the rule which qualifies a file
 for this list: **a leaf a test can call with no display attached — no
 ImGui, and no window, renderer or audio device of its own.** Nothing
-here creates or holds one. One file outside the eighteen is the single
+here creates or holds one. One file outside the twenty-two is the single
 named exception to the "no ImGui" part; see the paragraph after this
 one. `sdl_bmp.c` marks where the boundary runs: its upload calls take
 an `SDL_Renderer *` they are handed, and the surface-level half the
@@ -2431,13 +2448,13 @@ The alternative, for the geometry files, was moving the maths into
 onto the sim purely to buy testability. Keeping them in the renderer
 and linking the leaf files is the smaller distortion of the two.
 
-**Rests on** each of the eighteen still meeting that rule, so it is
+**Rests on** each of the twenty-two still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
 include (other than `dialogs/imgui_nav_outline.cpp`, above), or that
 opens a renderer or a device of its own, has left the category, and
 the answer is to split the leaf back out — the link break is the
 signal, not a build problem to route around by widening the test
-binary. An eighteenth file joins only on the same test: callable with
+binary. A twenty-third file joins only on the same test: callable with
 no display attached, or it does not go in.
 
 Six `src/mapeditor` files ride the same rule from a different

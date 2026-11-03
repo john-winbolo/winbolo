@@ -194,7 +194,9 @@ void *s_ctxBlock = nullptr; /* the live context's block */
 void *s_ctxSpare = nullptr; /* a freed context block, kept for reuse */
 
 void *reuseAlloc(size_t sz, void *) {
-    if (sz != sizeof(ImGuiContext)) return malloc(sz);
+    /* Only the first context-sized block while no context block is
+       held is the context. */
+    if (sz != sizeof(ImGuiContext) || s_ctxBlock) return malloc(sz);
     void *p = s_ctxSpare ? s_ctxSpare : malloc(sz);
     s_ctxSpare = nullptr;
     s_ctxBlock = p;

@@ -86,8 +86,15 @@ extern "C" void dialogNavOutlineSetControllerInUse(bool inUse) {
     s_navOutlineByPadUser = inUse;
 }
 
+static void navOutlineEnsureHooks(ImGuiContext *g);
+
 extern "C" void dialogNavOutlineQuietCodeFocus(void) {
-    s_codeFocusQuietCtx = ImGui::GetCurrentContext();
+    ImGuiContext *g = ImGui::GetCurrentContext();
+    /* Add the hooks now, so the Shutdown hook clears this record even
+       if the context is destroyed before a frame reaches
+       dialogDrawNavOutline. */
+    if (g) navOutlineEnsureHooks(g);
+    s_codeFocusQuietCtx = g;
 }
 
 extern "C" bool dialogNavOutlineIsShown(void) {
@@ -329,7 +336,7 @@ static void navOutlineNewFramePost(ImGuiContext *ctx, ImGuiContextHook *hook) {
 }
 
 /* The context is being destroyed (DestroyContext calls Shutdown, which
-   calls this hook first).  Forget every record kept for it.  Without
+   calls this hook before it tears the context down).  Forget every record kept for it.  Without
    this, a new context created later at the same address would inherit
    them: an item focused from code in the old context would show the
    outline in the new one if its first NavId had the same id. */
