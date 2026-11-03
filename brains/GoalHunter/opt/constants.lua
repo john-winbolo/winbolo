@@ -2450,6 +2450,16 @@ M.KILL_PICKUP_MAX_TICKS = 500
 -- TTL, tank moved CAPTURE_ROUTE_MOVE_TILES, threat rebuild). No new value.
 -- Log line: KILL_PICKUP_EXIT lethal. KEEL false.
 M.KILL_PICKUP_LETHAL_EXIT = true
+-- Lethal replan, 2026-11-03. The lethal exit above acts only when a replan
+-- runs Override 3b, and nothing started one: in the recorded game the probe
+-- said LETHAL at brain tick 6725 (armour 10), the next timer replan came too
+-- late, and the tank died at 6750 still on the claim.
+-- true => when capture_route_probe's verdict for the claimed body is LETHAL
+-- (same pill id as state.kill_pickup, goal is the kill grab, verdict still
+-- current), raise the force-replan flag (reason "KILL PICKUP LETHAL") once per
+-- verdict, so the replan runs on the same think. No new value.
+-- Log line: KILL_PICKUP_LETHAL_REPLAN. KEEL false.
+M.KILL_PICKUP_LETHAL_REPLAN = true
 -- Pair pickup (2026-09-25). When the blitz that killed the pill had at least
 -- this many tanks, the TWO best claimers keep their claims (rank 1 and rank 2
 -- under the handoff rule: lower kc, tie -> lower player number); rank 3+ stand
@@ -6466,6 +6476,9 @@ M.PRESETS = {
     -- 2026-11-03: the fresh-kill claim ends when capture_pill's direct-route
     -- probe says the grab is LETHAL. KEEL kept the claim through it.
     KILL_PICKUP_LETHAL_EXIT       = false,
+    -- 2026-11-03: a LETHAL verdict on the claimed body forces a replan at
+    -- once. KEEL waited for the next replan.
+    KILL_PICKUP_LETHAL_REPLAN     = false,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).

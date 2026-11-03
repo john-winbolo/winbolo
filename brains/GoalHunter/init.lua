@@ -1751,15 +1751,19 @@ function Brain.think(info)
       -- Replan gating that a killed tick can spend without deciding anything:
       -- the replan rate floor, the attack_pill TANK PREEMPT edge stamp and its
       -- rate limiter, the one-shot warmup exit, the consumed blitz-call and
-      -- force-replan flags, and the reposition bid clock. Each of these is
-      -- read-then-consumed on the replan path, so a kill after the consume
-      -- silently swallows the event that would have driven the next decision.
+      -- force-replan flags, the kill-pickup lethal replan marker (rolled
+      -- back with the force flag, so a lost request is raised again), and
+      -- the reposition bid clock. Each of these is read-then-consumed on the
+      -- replan path, so a kill after the consume silently swallows the event
+      -- that would have driven the next decision.
       state._last_full_replan_tick = snap.last_full_replan_tick
       state._atk_interrupt_stamp   = snap.atk_interrupt_stamp
       state._last_atk_preempt_tick = snap.last_atk_preempt_tick
       state._warm_exit_done        = snap.warm_exit_done
       state._blitz_new_call        = snap.blitz_new_call
       state._force_replan_reason   = snap.force_replan_reason
+      state._kp_lethal_replan_tick = snap.kp_lethal_replan_tick
+      state._kp_lethal_replan_pid  = snap.kp_lethal_replan_pid
       state._repo_bid_tick         = snap.repo_bid_tick
       state._repo_bid_pid          = snap.repo_bid_pid
       print2(string.format(
@@ -1796,6 +1800,8 @@ function Brain.think(info)
       snap.warm_exit_done        = state._warm_exit_done
       snap.blitz_new_call        = state._blitz_new_call
       snap.force_replan_reason   = state._force_replan_reason
+      snap.kp_lethal_replan_tick = state._kp_lethal_replan_tick
+      snap.kp_lethal_replan_pid  = state._kp_lethal_replan_pid
       snap.repo_bid_tick         = state._repo_bid_tick
       snap.repo_bid_pid          = state._repo_bid_pid
     end
