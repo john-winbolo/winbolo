@@ -2480,7 +2480,11 @@ void pillsGetBrainPillsInRect(ClientSim *cs, GameSim *sim, pillboxes *value, BYT
     if ((*value)->item[count].owner != NEUTRAL) {
       isAllie = playersIsAllie(&sim->plyrs, playerNum, (*value)->item[count].owner);
     }
-    if ((*value)->active[count] != FALSE && ((((*value)->item[count].x) >= leftPos && ((*value)->item[count].x) <= rightPos && ((*value)->item[count].y) >= top && ((*value)->item[count].y) <= bottom) || isAllie == TRUE) && ((*value)->item[count].inTank == FALSE)) {
+    /* A moved square is where the pill was picked up from, not where it is, so
+       it is left out even for an ally: a server bot is only told an allied
+       pill's square while the pill is in its view. */
+    if ((*value)->active[count] != FALSE && ((((*value)->item[count].x) >= leftPos && ((*value)->item[count].x) <= rightPos && ((*value)->item[count].y) >= top && ((*value)->item[count].y) <= bottom) || isAllie == TRUE) && ((*value)->item[count].inTank == FALSE)
+        && ((*value)->posStale[count]) != PILL_SQUARE_MOVED) {
       /* In the rectangle */
       wx = (*value)->item[count].x;
       wx <<= TANK_SHIFT_MAPSIZE;

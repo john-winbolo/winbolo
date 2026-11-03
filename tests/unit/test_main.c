@@ -1092,6 +1092,7 @@ static const UnitTestEntry s_tests[] = {
     { "pill_pos_current_server_unchanged",       run_pill_pos_current_server_unchanged       },
     { "pill_pos_current_moved_state",            run_pill_pos_current_moved_state            },
     { "pill_pos_current_carry_cycle",            run_pill_pos_current_carry_cycle            },
+    { "brain_pills_skip_moved_square",           run_brain_pills_skip_moved_square           },
     { "viewport_calc_square_pure",               run_viewport_calc_square_pure               },
     { "viewport_calc_pill_square_moved",         run_viewport_calc_pill_square_moved         },
     { "overview_regions",                        run_overview_regions                        },
