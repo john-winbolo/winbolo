@@ -2402,9 +2402,11 @@ and 2), asks the host to draw the tank names over it as its screen
 does (`lv_drawTankLabelsOver`, which the viewer's own blit and the
 reel's `lvEmbedDrawTankLabels` share), and reads that back, so a GIF
 shows the names at the size they appear rather than a 10 px face
-blown up with the tiles. The gallery's preview decodes a GIF whose
-frames would not all fit in its memory limit shrunk by a whole factor
-(`stbiLoadGifCappedShrink`) instead of refusing it.
+blown up with the tiles. The gallery's preview plays a GIF the way a
+browser does: `stbiGifStreamOpen` in `src/third_party/stb` reads one
+frame at a time as each is shown and rewinds at the end, so the
+preview holds the file's bytes and five frames' worth of pixels
+however long the clip is, rather than every decoded frame at once.
 The first sixteen are each called directly by a test beside them;
 `gfx_settings.c` is here because `tileloader.c` calls it, and is the
 one file on the list no test drives on its own.
