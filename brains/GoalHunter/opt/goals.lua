@@ -2056,6 +2056,21 @@ end
 
 -- Compute attack_pill cost adjustments for a given pill/path-cost.
 -- Returns adjusted_cost, description_suffix.
+-- SPIKE_PEN_SKIP_MAX_SHOTS: the shots this player's own model says the pill
+-- needs, when that is few enough to waive the spike cross-penalty; else nil.
+-- Shots = ceil(known armour / rules.pill_shell_damage), the rule being the
+-- armour one shell takes (classic 1; see the constant for the engine lines).
+function M.spike_pen_skip_shots(pill, info)
+  local max_shots = C.SPIKE_PEN_SKIP_MAX_SHOTS or 0
+  if max_shots <= 0 or not pill then return nil end
+  local r = info and info.rules
+  local psd = r and tonumber(r.pill_shell_damage) or 1
+  if psd <= 0 then return nil end   -- shells take nothing: the pill never dies
+  local shots = math.ceil((pill.health or 0) / psd)
+  if shots >= 1 and shots <= max_shots then return shots end
+  return nil
+end
+
 local function attack_pill_adjustments(pill, pcost, state, world)
   -- Separate path cost from combat cost. Only the combat portion gets
   -- scaled by health-based multipliers (wounded, eLGMdead, bkiller).
@@ -2180,7 +2195,11 @@ local function attack_pill_adjustments(pill, pcost, state, world)
       if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *spike(x%.2f n=%d cover=%d)", sm, sp.n or 1, sp.cover or 1) end
     elseif state._spike_present then
       spike_pen_mult = 1.0 + ((C.SPIKE_OTHER_PENALTY_MULT or 1.15) - 1.0) * (state._spike_pen_scale or 1.0)
-      if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *spike_pen(x%.3f)", spike_pen_mult) end
+      local skip = M.spike_pen_skip_shots(pill, state._last_info)
+      if skip then
+        spike_pen_mult = 1.0
+        if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *spike_pen{skip: %d shots}", skip) end
+      elseif BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *spike_pen(x%.3f)", spike_pen_mult) end
     end
   end
 
@@ -8408,6 +8427,45 @@ local function filter_capture_pill(obj, state)
   return nil
 end
 
+-- The pill the tank is driving to for repair_pill, while our builder is out
+-- of the tank (a farm trip on the way, LGM_MOVING). The pool-5 checks below
+-- need the builder aboard, so without this the committed goal's row left the
+-- pool for the whole trip, the hysteresis had no price to carry, and any
+-- other row won the next replan (20261102 bot0 t=50153: refuel_at_base took
+-- over while the builder was out farming 15 tiles from the pill). The row
+-- stays only for the current target, and only while the builder is alive and
+-- out: it comes back with the wood, and the feeder sends it on from there.
+function M.repair_hold_while_out(obj, state, info)
+  if info.man_status ~= C.LGM_MOVING then return false end
+  local g = state and state.goal
+  return g ~= nil and g.kind == "repair_pill"
+         and g.mx == obj.mx and g.my == obj.my
+end
+
+-- Why the committed repair_pill goal must give way, or nil. init.lua drops
+-- the goal on a non-nil answer. Two signs, both from this player's own model:
+--   1. the pill tile is blocked (a nav or build give-up stamped it);
+--   2. the pool-5 row for this pill is INF for a reason that is not the
+--      builder_can split. That split means "the builder can walk it from
+--      here", so the goal is about to hand off, not stuck. An INF row with no
+--      reason is a path the planner could not find; ally_capturing means a
+--      team-mate takes the corpse.
+function M.repair_give_way_reason(state, gmx, gmy, now)
+  local bk = U.mkey(gmx, gmy)
+  if state.blocked and state.blocked[bk] and now < state.blocked[bk] then
+    return "blocked_until_" .. tostring(state.blocked[bk])
+  end
+  local tid = state.goal and state.goal.target_id
+  local ce = tid and state.cost_cache and state.cost_cache["5:" .. tid]
+  if ce and (ce.cost or 0) >= 1e29 then
+    local sk = ce._skipped
+    if not (type(sk) == "string" and sk:sub(1, 12) == "builder_can ") then
+      return "pool5_inf(" .. tostring(sk or ce._reject or "no_path") .. ")"
+    end
+  end
+  return nil
+end
+
 local function filter_repair_pill(obj, state, info)
   -- health < MAX includes 0-HP (dead) friendly pills: those rebuild IN PLACE
   -- (the LGM walks out with wood). 0-HP is the 4× wood tier, so we additionally
@@ -8418,7 +8476,8 @@ local function filter_repair_pill(obj, state, info)
   if not (obj.owner == "friendly"
           and obj.health < C.PILLS_MAX_HEALTH
           and (C.REPAIR_FIX_ENABLED or obj.health > 0)) then return false end
-  if not (info.man_status == C.LGM_INTANK and info.trees > 0) then return false end
+  local _hold_out = M.repair_hold_while_out(obj, state, info)
+  if not (info.man_status == C.LGM_INTANK and info.trees > 0) and not _hold_out then return false end
   -- A live ALLY builder-pool claim covers the OUTCOME, not just the trip
   -- (BUILDER_POOL_PLAN section 6): if p2's man is walking to this pill, it is
   -- going to be repaired, so it should not appear in our "damaged friendly
@@ -8441,7 +8500,7 @@ local function filter_repair_pill(obj, state, info)
   -- against the BUILDER strip's matching row. INF cannot win a competition, so
   -- the refusal is just as hard as a `return false` here would be.
   if C.REPAIR_FIX_ENABLED and obj.health == 0 then
-    if (info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4) then return false end
+    if (info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4) and not _hold_out then return false end
     -- Capture outranks rebuild: a corpse that capture_pill can take (on the
     -- ground, unclaimed, unblocked, fresh) is a FREE pill — rebuilding it in
     -- place makes it alive and un-grabbable, wasting both the kill and the
@@ -8925,6 +8984,37 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
                                     info.shells or 32, info.trees or 0,
                                     info.mines or 0, info.armour or 40,
                                     16000, true)
+    end
+    if dist_raw >= 1e29 and state.dij then
+      -- Both A* runs gave up (node budget, or the boat run failed too), but
+      -- a slate from before the threat rebuild may still hold a path. Its
+      -- cost can carry the danger of a pill that just died, so it is a high
+      -- price, not a wrong one -- far better than INF, which dropped the row
+      -- out of the competition for the 2 ticks the fresh slate needs
+      -- (20261102 bot0: capture_pill #5 priced 75.65 from the slate, then
+      -- 1e30 on the next re-price while the slates were stale).
+      local slates = state.dij.slates
+      local best = math.huge
+      local NDX = { 0,  1,  1,  1,  0, -1, -1, -1 }
+      local NDY = {-1, -1,  0,  1,  1,  1,  0, -1 }
+      for d = 1, 8 do
+        local ax = obj.mx + NDX[d]
+        local ay = obj.my + NDY[d]
+        if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
+          for idx = 0, 3 do
+            if slates[idx] then
+              local c0 = cpf.dijkstra_cost_at(idx, ax, ay, 0)
+              local c1 = cpf.dijkstra_cost_at(idx, ax, ay, 1)
+              local c = (c1 and c1 < c0) and c1 or c0
+              if c and c < best then best = c end
+            end
+          end
+        end
+      end
+      if best < 1e29 then
+        dist_method = "dij_stale"
+        dist_raw = best
+      end
     end
     if dist_raw >= 1e29 then
       return 1e30, 1e30, 1e30, 0
@@ -11676,6 +11766,14 @@ function M.build_eval_queue(state, world, info)
         queue[#queue + 1] = { pool = 5, id = id, obj = obj }
       end
     end
+  elseif has_damaged and info.man_status == C.LGM_MOVING
+         and state.goal and state.goal.kind == "repair_pill" then
+    -- Builder out: only the committed target stays (repair_hold_while_out).
+    for id, obj in pairs(world.pills) do
+      if M.repair_hold_while_out(obj, state, info) and filter_repair_pill(obj, state, info) then
+        queue[#queue + 1] = { pool = 5, id = id, obj = obj }
+      end
+    end
   end
 
   -- Pool 6: attack_pill. Always populate when hostile pills exist —
@@ -11803,6 +11901,12 @@ function M.build_eval_queue(state, world, info)
   state.eval_queue_pos = 1
   -- Partial results: pool_idx → { candidates = {}, best_cost, best_id, best_obj }
   state.pool_partial = {}
+  -- A rebuild puts every item back in its distance place; event re-price ids
+  -- still waiting must keep the head of the queue.
+  if state._atk_reprice then
+    state._atk_reprice.inserted = false
+    M.apply_reprice_queue(state)
+  end
   -- Cost cache persists across cycles (initialized once)
   if not state.cost_cache then state.cost_cache = {} end
 
@@ -12241,7 +12345,9 @@ local function get_formula_inner(e)
     -- elsewhere. Detail row is always present (matches the intcpt pattern —
     -- an absent row read as "not part of the cost").
     local _spike_mult_term = e._spike_mult and string.format(" * spike{%.2f}", e._spike_mult) or ""
-    local _spike_pen_term  = e._spike_pen and string.format(" * spike_pen{%.3f}", e._spike_pen) or ""
+    local _spike_pen_term  = e._spike_pen and string.format(" * spike_pen{%.3f}", e._spike_pen)
+                             or (e._spike_pen_skip and string.format(" * spike_pen{skip: %d shots}", e._spike_pen_skip))
+                             or ""
     local _d_spike = e._spike_mult
       and string.format(
         "SPIKING: this pill sits within PILL_FIRE_RANGE=%d of %d friendly base(s) (first @(%d,%d)); its least-contested base is covered by %d spike(s) → decisiveness 1/%d → combat × %.2f (SPIKE_PILL_DISCOUNT=%.2f at full decisiveness; each EXTRA denied base strengthens the pull by SPIKE_BASES_BONUS, floored at SPIKE_DISCOUNT_FLOOR; a co-spiked area is 'kinda lost' so clearing one of many pulls weakly)",
@@ -12252,6 +12358,9 @@ local function get_formula_inner(e)
       and string.format(
         "a spiking pill exists elsewhere (@(%d,%d), in range of a friendly base) → WHOLE cost × %.3f [1 + (SPIKE_OTHER_PENALTY_MULT-1) × best decisiveness] on every non-spiking pill (clear the spike first; fades toward ×1.0 when every spike shares its base with others)",
         e._spike_ex_mx or -1, e._spike_ex_my or -1, e._spike_pen)
+      or (e._spike_pen_skip and string.format(
+        "a spiking pill exists elsewhere (@(%d,%d)), but this pill dies in %d shot(s) (known armour / rules.pill_shell_damage, rounded up) <= SPIKE_PEN_SKIP_MAX_SHOTS=%d → x1.0, no cross-penalty",
+        e._spike_ex_mx or -1, e._spike_ex_my or -1, e._spike_pen_skip, C.SPIKE_PEN_SKIP_MAX_SHOTS or 0))
       or "no spiking pill elsewhere (or this IS the spike) → no cross-penalty"
     -- INF terms print as "INF" (a %.0f of 1e30 is a 31-digit number and
     -- math.huge prints "inf"); the SKIP prefix + skip: row name which
@@ -13788,6 +13897,7 @@ function M.step_eval_queue(state, world, info)
       local spike_mult, spike_pen_mult = 1.0, 1.0
       local _spike_n, _spike_cover, _spike_bmx, _spike_bmy = 0, 1, nil, nil
       local _spike_ex_mx, _spike_ex_my = nil, nil
+      local _spike_pen_skip = nil
       if pool_idx == 6 then
         refresh_spike_detection(state, world)
         local sp = state._spike_pills and state._spike_pills[obj.my * 256 + obj.mx]
@@ -13801,6 +13911,9 @@ function M.step_eval_queue(state, world, info)
             _spike_ex_mx, _spike_ex_my = esp.pmx, esp.pmy
             break
           end
+          -- SPIKE_PEN_SKIP_MAX_SHOTS: a pill this close to dead pays x1.0.
+          _spike_pen_skip = M.spike_pen_skip_shots(obj, info)
+          if _spike_pen_skip then spike_pen_mult = 1.0 end
         end
       end
       local combat = (stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult * spike_mult
@@ -14242,6 +14355,7 @@ function M.step_eval_queue(state, world, info)
         entry._spike_bmx  = _spike_bmx
         entry._spike_bmy  = _spike_bmy
         entry._spike_pen  = (spike_pen_mult ~= 1.0) and spike_pen_mult or nil
+        entry._spike_pen_skip = _spike_pen_skip
         entry._spike_ex_mx = _spike_ex_mx
         entry._spike_ex_my = _spike_ex_my
         entry._danger_mult = (_danger_nearby_mult ~= 1.0) and _danger_nearby_mult or nil
@@ -14306,6 +14420,15 @@ function M.step_eval_queue(state, world, info)
         entry._stale=stale_cost; entry._age=_gen_age
       end
       state.cost_cache[cache_key] = entry
+
+      -- Event re-price bookkeeping (M.note_reprice_events): this id is done.
+      if item._reprice and pool_idx == 6 then
+        local pend = state._atk_reprice
+        if pend and pend.ids then
+          pend.ids[id] = nil
+          if next(pend.ids) == nil then state._atk_reprice = nil end
+        end
+      end
 
       pr.candidates[#pr.candidates + 1] = {
         id = id, mx = obj.mx, my = obj.my, cost = c,
@@ -16294,6 +16417,220 @@ end
 -- Tick 0 of cycle: build the eval queue (filter candidates).
 -- Subsequent ticks: process 2 candidates from the queue.
 -- =========================================================================
+-- =========================================================================
+-- Event re-price for attack_pill (pool 6).
+--
+-- A pool-6 price is made of parts that change when the pills or the tanks
+-- round the target change: the crossfire term (other live pills near the
+-- target), the difficulty scan (pill threat from every pill), the intercept
+-- term (enemy tanks near the target) and the spot path (the short slate).
+-- The queue re-prices each pill about once per GOAL_REPLAN_INTERVAL, and the
+-- difficulty scan keeps its own 50-tick TTL, so after a neighbour pill died
+-- the pool kept a price that still counted the dead pill for up to 50 ticks.
+--
+-- M.note_reprice_events runs once per think, after percept.update and
+-- before the Dijkstra scheduler. It looks at three things in this player's
+-- own world model and event list:
+--   1. a known pill went from alive to dead (or dead to alive),
+--   2. a known pill changed owner,
+--   3. an enemy tank died (EVENT_TANK_KILLED, data[2] = killed player) whose
+--      last seen tile is within the pill range + ATK_REPRICE_TANK_PAD
+--      (8 + 2 = 10 tiles, Euclidean) of a live hostile/neutral pill.
+-- For 1 and 2 the affected pills are the live hostile/neutral pills within
+-- PILL_FIRE_RANGE + ATTACK_PILL_STANDOFF (Manhattan, the xfire_cost reach)
+-- of the changed pill, plus the changed pill itself. For 3 they are the live
+-- hostile/neutral pills inside that 10-tile circle.
+--
+-- It then:
+--   * drops the difficulty-scan cache of each affected pill (1 and 2 only:
+--     the scan does not read enemy tanks),
+--   * asks the scheduler for an at-once short-slate restart from the
+--     current tank tile (state._dij_force_short), so the spot path and the
+--     slate the re-price reads come from where the tank is now and from the
+--     threat grid that already lost the dead pill,
+--   * marks the pill that died or turned friendly as REJECT in pool 6 so
+--     the pool cannot choose it before the next queue rebuild,
+--   * records the affected ids in state._atk_reprice. On the NEXT tick
+--     (the restarted slate then has two steps of nodes) update_pool_cache
+--     puts their pool-6 queue items at the head of the queue. Only those
+--     entries are priced again; the rest of the queue is untouched.
+-- Cost: one pass over world.pills per tick plus a pass over the event list.
+-- =========================================================================
+function M.note_reprice_events(state, world, info)
+  local now = state.tick or 0
+  local pills = world and world.pills
+  if not pills then return end
+  local snap = state._atk_reprice_snap
+  local first = (snap == nil)
+  if first then snap = {}; state._atk_reprice_snap = snap end
+
+  local changed       -- list of {id=, why=} for pills that died/revived/flipped
+  for id, p in pairs(pills) do
+    local alive = (p.health or 0) > 0
+    local own = p.owner
+    local s = snap[id]
+    if not s then
+      snap[id] = { alive = alive, owner = own }
+    else
+      local why
+      if s.alive ~= alive then why = alive and "pill_alive" or "pill_died"
+      elseif s.owner ~= own then why = "owner_" .. tostring(s.owner) .. "_to_" .. tostring(own) end
+      if why then
+        changed = changed or {}
+        changed[#changed + 1] = { id = id, why = why }
+      end
+      s.alive = alive; s.owner = own
+    end
+  end
+
+  -- Last seen tile of every enemy tank, kept a short while so a tank that
+  -- dies this tick (and so is gone from perc.enemy_tanks) still has a place.
+  local seen = state._atk_reprice_tanks
+  if not seen then seen = {}; state._atk_reprice_tanks = seen end
+  local ets = state.perc and state.perc.enemy_tanks
+  if ets then
+    for i = 1, #ets do
+      local et = ets[i]
+      if et.id then
+        local r = seen[et.id]
+        if not r then r = {}; seen[et.id] = r end
+        r.mx = et.mx; r.my = et.my; r.tick = now
+      end
+    end
+  end
+
+  local dead_tanks
+  local events = info and info.events
+  if events and #events > 0 then
+    for _, ev in ipairs(events) do
+      local d = ev.data
+      -- data = [killer, killed, deathCause, carriedPills] (init.lua header).
+      if ev.type == EVENT_TANK_KILLED and d and d[2] ~= nil then
+        local r = seen[d[2]]
+        if r and (now - (r.tick or -1e9)) <= (C.ATK_REPRICE_TANK_SEEN_TICKS or 50) then
+          dead_tanks = dead_tanks or {}
+          dead_tanks[#dead_tanks + 1] = { pn = d[2], mx = r.mx, my = r.my }
+        end
+        seen[d[2]] = nil
+      end
+    end
+  end
+
+  if not changed and not dead_tanks then return end
+
+  local function attackable(p)
+    return (p.owner == "hostile" or p.owner == "neutral") and (p.health or 0) > 0
+  end
+  local ids, n_ids = {}, 0
+  local reasons = {}
+  local function add(id, why)
+    if not ids[id] then ids[id] = true; n_ids = n_ids + 1 end
+    reasons[#reasons + 1] = tostring(id) .. ":" .. why
+  end
+  local drop_diff = {}
+  local reach = (C.PILL_FIRE_RANGE or 8) + (C.ATTACK_PILL_STANDOFF or 7.4)
+
+  if changed then
+    for _, ch in ipairs(changed) do
+      local cp = pills[ch.id]
+      if attackable(cp) then
+        add(ch.id, ch.why); drop_diff[ch.id] = true
+      else
+        -- Dead now, or now ours or an ally's: pool 6 must not choose it.
+        reasons[#reasons + 1] = tostring(ch.id) .. ":" .. ch.why
+        local ce = state.cost_cache and state.cost_cache["6:" .. ch.id]
+        if ce and not ce._reject then
+          ce._reject = ch.why
+          ce._reject_remaining = 0
+          ce.cost = 1e30
+        end
+      end
+      for oid, op in pairs(pills) do
+        if oid ~= ch.id and attackable(op)
+           and U.mdist(op.mx, op.my, cp.mx, cp.my) <= reach then
+          add(oid, "near#" .. tostring(ch.id)); drop_diff[oid] = true
+        end
+      end
+    end
+  end
+
+  if dead_tanks then
+    local r = (C.PILLBOX_RANGE_WU or 2048) / 256 + (C.ATK_REPRICE_TANK_PAD or 2)
+    local r2 = r * r
+    for _, dt in ipairs(dead_tanks) do
+      reasons[#reasons + 1] = string.format("tank_p%s_died@(%d,%d)", tostring(dt.pn), dt.mx, dt.my)
+      for oid, op in pairs(pills) do
+        if attackable(op) then
+          local dx, dy = op.mx - dt.mx, op.my - dt.my
+          if dx * dx + dy * dy <= r2 then
+            add(oid, "near_tank_p" .. tostring(dt.pn))
+          end
+        end
+      end
+    end
+  end
+
+  -- Difficulty scans of the affected pills read the old pill set: drop them
+  -- (every phase key, matched on the pill tile the entry was made for).
+  local dcache = state._pill_diff_cache
+  if dcache and next(drop_diff) then
+    for k, dc in pairs(dcache) do
+      for oid in pairs(drop_diff) do
+        local op = pills[oid]
+        if op and dc.mx == op.mx and dc.my == op.my then dcache[k] = nil; break end
+      end
+    end
+  end
+
+  if n_ids == 0 then
+    return
+  end
+
+  -- Fresh short slate from the current tank tile (the scheduler reads this
+  -- the same tick).
+  state._dij_force_short = now
+
+  local pend = state._atk_reprice
+  if pend and pend.ids then
+    for id in pairs(ids) do pend.ids[id] = true end
+    pend.due = now + 1
+    pend.inserted = false
+  else
+    state._atk_reprice = { ids = ids, due = now + 1, inserted = false }
+  end
+end
+
+-- Put the pending re-price ids at the head of the eval queue. update_pool_cache
+-- calls this before step_eval_queue, and build_eval_queue calls it after a
+-- rebuild so a rebuild does not push them back to their distance place.
+function M.apply_reprice_queue(state)
+  local pend = state._atk_reprice
+  local queue = state.eval_queue
+  if not pend or not queue then return end
+  local now = state.tick or 0
+  if now < (pend.due or 0) or pend.inserted then return end
+  local pos = state.eval_queue_pos or 1
+  local picked = {}
+  local have = {}
+  for i = 1, #queue do
+    local it = queue[i]
+    if it.pool == 6 and pend.ids[it.id] and not have[it.id] then
+      have[it.id] = true
+      picked[#picked + 1] = it
+    end
+  end
+  -- Ids the queue does not hold (filtered out this cycle) cannot be priced.
+  for id in pairs(pend.ids) do
+    if not have[id] then pend.ids[id] = nil end
+  end
+  for i = #picked, 1, -1 do
+    local it = picked[i]
+    table.insert(queue, pos, { pool = 6, id = it.id, obj = it.obj, reject = it.reject, _reprice = true })
+  end
+  pend.inserted = true
+  if #picked == 0 then state._atk_reprice = nil end
+end
+
 function M.update_pool_cache(state, world, info)
   -- Keep pool-8 stub fields fresh so get_pool_breakdown_json sees current state
   -- even between replans (e.g. tank just picked up a pill mid-cycle).
@@ -16312,6 +16649,10 @@ function M.update_pool_cache(state, world, info)
     state._deferred_build_eval = nil
     M.build_eval_queue(state, world, info)
   end
+
+  -- Event re-price (M.note_reprice_events): pending attack_pill ids go to the
+  -- head of the queue once their tick is due.
+  M.apply_reprice_queue(state)
 
   -- Process candidates from the eval queue (2 per tick).
   -- The queue is built by init.lua after each replan decision,
@@ -18188,6 +18529,9 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- WINNERS row breakdown: the cost after every whole-cost multiplier and
+    -- before the additive penalties, so the row can show each part apart.
+
     -- ── Apply hysteresis to discourage thrashing ──
     -- High-value opportunistic goals are exempt so they can win on raw
     -- cost (flee_to_base / rescue_lgm skip this pool entirely as
@@ -19862,10 +20206,22 @@ function M.get_pool_breakdown_json(state)
   for _, item in ipairs(state.eval_queue or {}) do
     local p = item.pool
     local obj = item.obj
-    if obj then
+    -- _reprice items are extra copies of a queue item (apply_reprice_queue):
+    -- the original item already gives the pill its row.
+    if obj and not item._reprice then
       by_pool[p] = by_pool[p] or {}
       local cached = cache[p .. ":" .. item.id]
       local formula_str = (cached and get_formula(cached)) or ""
+      -- The tick this price was computed, on the row line itself.
+      if cached and cached.tick then
+        local tag = string.format(" [t=%d]", cached.tick)
+        local cut = formula_str:find("!!", 1, true) or formula_str:find("||", 1, true)
+        if cut then
+          formula_str = formula_str:sub(1, cut - 1) .. tag .. " " .. formula_str:sub(cut)
+        else
+          formula_str = formula_str .. tag
+        end
+      end
       local hist_str = format_reject_history(reject_history[p .. ":" .. item.id])
       if hist_str ~= "" then
         local sep = formula_str:find("||", 1, true)
@@ -20265,15 +20621,58 @@ function M.get_pool_breakdown_json(state)
       -- gc.base is raw_pool_cost * phase_weight. w.cost is the raw pre-phase
       -- cost shown in the per-pool section / detail popup.
 
-      -- hist = whatever is left of penalty after removing the named components.
-      -- NOTE: do NOT subtract wsim_add here — wsim is not inside gc.penalty
-      -- (penalty is captured before wsim runs). Subtracting it would make
-      -- hist go negative and drop wsim_add from the displayed sum.
+      -- gc.penalty = total - base, so it holds EVERY step after the phase
+      -- weight: the whole-cost multipliers (influence, suicider, focus,
+      -- refuel, behind-team, fight), switch + commitment, the history
+      -- penalty and the builder-less multiplier. hist used to be "whatever
+      -- is left" after switch / commit / ally, so the influence x2.0 (and
+      -- any other multiplier) showed up inside HT. Each part is now its own
+      -- number, in the order goal_selection applies it:
+      --   base x inf x suicider x focus x refuel x ahead x fight
+      --     + switch + commit + hist, then x nobuild
+      -- A multiplier's part is the amount it added: running cost x (m - 1).
+      -- ally_claimed is NOT in penalty: step_eval_queue adds it to the pool
+      -- cost, so it is already inside raw (the row says "AC .. in raw").
+      -- wsim is not inside gc.penalty either (captured before wsim runs).
       local switch_flat = gc and gc.switch_flat or 0
       local commit_val  = gc and gc.commit_val  or 0
       local ally_pen    = gc and gc.ally_claimed_pen or 0
       local ally_by     = gc and gc.ally_claimed_by
-      local hist_pen    = penalty - switch_flat - commit_val - ally_pen
+      local hist_pen    = gc and gc.hist_pen or 0
+      local mult_parts  = {}   -- { abbr, v = value added, run = running cost, m, name }
+      do
+        local run = base_cost
+        local function madd(m, abbr, name)
+          if m and m ~= 1.0 then
+            mult_parts[#mult_parts + 1] = { abbr = abbr, v = run * (m - 1),
+                                            run = run, m = m, name = name }
+            run = run * m
+          end
+        end
+        if gc then
+          madd(gc.inf_mult, "INF", "territory influence")
+          madd(gc.suicider_mult, "SU", "pill_suicider")
+          madd(gc.focus_mult, "FO", "team focus")
+          madd(gc.refuel_mult, "RF", "refuel group")
+          madd(gc.ahead_mult, "AH", "behind-team attack")
+          madd(gc.fight_mult, "FT", "scenario fight")
+        end
+      end
+      local mult_sum = 0
+      for _, mp in ipairs(mult_parts) do mult_sum = mult_sum + mp.v end
+      local nb_m   = (gc and gc.nobuild_mult) or 1.0
+      local nb_add = (gc and gc.pre_nb and nb_m ~= 1.0) and gc.pre_nb * (nb_m - 1) or 0
+      -- Anything in penalty the named parts do not explain (0 when the
+      -- parts are complete; shown as OT so the row still adds up).
+      local other_pen = gc and (penalty - mult_sum - switch_flat - commit_val
+                                - hist_pen - nb_add) or 0
+      if math.abs(other_pen) < 0.5 then other_pen = 0 end
+      -- Ticks: when the pool row was priced (the cost_cache entry) and when
+      -- goal_selection made this competition record.
+      local priced_t = (w.stale and w.stale >= 0) and (now - w.stale) or nil
+      local picked_t = gc and gc.tick
+      local tick_tag = string.format(" [priced t=%s, picked t=%s]",
+        priced_t and tostring(priced_t) or "?", picked_t and tostring(picked_t) or "?")
 
       -- Build a rich formula for the detail popup
       local detail_formula = string.format("%s(x%.2f): %s", pname,
@@ -20380,7 +20779,26 @@ function M.get_pool_breakdown_json(state)
         detail_map[#detail_map + 1] = string.format("imminent:cost_forced_to_floor(%.0f) because neutral and close", C.IMMINENT_CAPTURE_FLOOR)
       end
 
-      if (penalty > 0 or wsim_add > 0) then
+      for _, mp in ipairs(mult_parts) do
+        detail_map[#detail_map + 1] = string.format(
+          "%s:%s x%.2f adds %.0f = running cost %.0f x (%.2f - 1)",
+          mp.abbr, mp.name, mp.m, mp.v, mp.run, mp.m)
+      end
+      if nb_add ~= 0 then
+        detail_map[#detail_map + 1] = string.format(
+          "NB:builder-less x%.0f adds %.0f = cost before it %.0f x (%.0f - 1)",
+          nb_m, nb_add, gc.pre_nb, nb_m)
+      end
+      if other_pen ~= 0 then
+        detail_map[#detail_map + 1] = string.format(
+          "OT:%.0f of the penalty that no named part explains (penalty %.0f - multipliers %.0f - switch %.0f - commit %.0f - hist %.0f - nobuild %.0f)",
+          other_pen, penalty, mult_sum, switch_flat, commit_val, hist_pen, nb_add)
+      end
+      detail_map[#detail_map + 1] = string.format(
+        "ticks:pool row priced at t=%s (cost_cache entry), WINNERS record made at t=%s (goal_selection), panel built at t=%d",
+        priced_t and tostring(priced_t) or "?", picked_t and tostring(picked_t) or "?", now)
+
+      if (penalty ~= 0 or wsim_add > 0) then
         local parts = {}
         if switch_flat > 0 then
           parts[#parts + 1] = string.format("hyst{%.0f}", switch_flat)
@@ -20388,11 +20806,11 @@ function M.get_pool_breakdown_json(state)
         if commit_val > 0 then
           parts[#parts + 1] = string.format("hyst{%.0f}", commit_val)
         end
-        if hist_pen > 1 then
+        if hist_pen > 0 then
           parts[#parts + 1] = string.format("hist{%.0f}", hist_pen)
         end
-        if ally_pen > 0 then
-          parts[#parts + 1] = string.format("ally_claimed{%.0f}", ally_pen)
+        if other_pen ~= 0 then
+          parts[#parts + 1] = string.format("other{%.0f}", other_pen)
         end
         if wsim_add > 0 then
           parts[#parts + 1] = string.format("wsim{%.0f}", wsim_add)
@@ -20408,16 +20826,20 @@ function M.get_pool_breakdown_json(state)
           if commit_val  > 0 then hparts[#hparts + 1] = string.format("commit(%.0f)", commit_val)  end
           detail_map[#detail_map + 1] = "hyst:" .. table.concat(hparts, " + ")
         end
-        if hist_pen > 1 then
+        if hist_pen > 0 then
           detail_map[#detail_map + 1] = string.format("hist:recurrence_penalty(%.0f)", hist_pen)
         end
-        if ally_pen > 0 then
-          detail_map[#detail_map + 1] = string.format("ally_claimed:p%s holds same goal(+%.0f)",
-                                                       tostring(ally_by), ally_pen)
+        if other_pen ~= 0 then
+          detail_map[#detail_map + 1] = string.format("other:see OT (%.0f)", other_pen)
         end
         if wsim_add > 0 then
           detail_map[#detail_map + 1] = string.format("wsim:damage_prediction(%.0f)", wsim_add)
         end
+      end
+
+      if ally_pen > 0 then
+        detail_map[#detail_map + 1] = string.format("ally_claimed:p%s holds same goal(+%.0f, already inside the raw pool cost)",
+                                                     tostring(ally_by), ally_pen)
       end
 
       if gc and gc.hyst then
@@ -20446,50 +20868,47 @@ function M.get_pool_breakdown_json(state)
       -- balanced against =total (defend_pill 100 x MD@0.50 +38 "=75"
       -- actually meant 100 x 0.74 x inf0.5 + 38 = 75).
       local eff_pw   = (gc and gc.phase_weight) or pw
-      local inf_mult = (gc and gc.inf_mult) or 1.0
+      -- Every multiplier after the phase weight is shown as the amount it
+      -- added (e.g. "+173 INF" for x2.0 on 173), in the order applied, so
+      -- the row reads raw x PHASE@pw +parts = total.
       local row_summary = string.format("%s %.0f x %s@%.2f",
         pname, raw_base, phase_abbrev, eff_pw)
-      if inf_mult ~= 1.0 then
-        row_summary = row_summary .. string.format(" x inf@%.1f", inf_mult)
-      end
-      if suicider_mult ~= 1.0 then
-        row_summary = row_summary .. string.format(" x suicider{%.1f, %s}", suicider_mult,
-                                                   tostring(state.suicider_src or "?"))
-      end
-      local refuel_mult = (gc and gc.refuel_mult) or 1.0
-      if refuel_mult ~= 1.0 then
-        row_summary = row_summary .. " x " .. M.refuel_mult_label()
-      end
-      local fight_mult = (gc and gc.fight_mult) or 1.0
-      if fight_mult ~= 1.0 then
-        row_summary = row_summary .. string.format(" x fight{%.2f}", fight_mult)
+      if ally_pen > 0 then
+        row_summary = row_summary .. string.format(" (AC %.0f in raw)", ally_pen)
       end
 
-      if penalty > 0 or wsim_add > 0 or w.imminent then
+      if penalty ~= 0 or wsim_add > 0 or w.imminent then
         local parts = {}
         if w.imminent then
           parts[#parts + 1] = "IM"
         end
+        for _, mp in ipairs(mult_parts) do
+          parts[#parts + 1] = string.format("%+.0f %s", mp.v, mp.abbr)
+        end
         if switch_flat > 0 then
-          parts[#parts + 1] = string.format("%.0f SW", switch_flat)
+          parts[#parts + 1] = string.format("+%.0f SW", switch_flat)
         end
         if commit_val > 0 then
-          parts[#parts + 1] = string.format("%.0f CM", commit_val)
+          parts[#parts + 1] = string.format("+%.0f CM", commit_val)
         end
-        if hist_pen > 1 then
-          parts[#parts + 1] = string.format("%.0f HT", hist_pen)
+        if hist_pen > 0 then
+          parts[#parts + 1] = string.format("+%.0f HT", hist_pen)
         end
-        if ally_pen > 0 then
-          parts[#parts + 1] = string.format("%.0f AC", ally_pen)
+        if nb_add ~= 0 then
+          parts[#parts + 1] = string.format("%+.0f NB", nb_add)
+        end
+        if other_pen ~= 0 then
+          parts[#parts + 1] = string.format("%+.0f OT", other_pen)
         end
         if wsim_add > 0 then
-          parts[#parts + 1] = string.format("%.0f WS", wsim_add)
+          parts[#parts + 1] = string.format("+%.0f WS", wsim_add)
         end
         if #parts > 0 then
-          row_summary = row_summary .. " +" .. table.concat(parts, " +")
+          row_summary = row_summary .. " " .. table.concat(parts, " ")
         end
         row_summary = row_summary .. " =" .. string.format("%.0f", final_cost)
       end
+      row_summary = row_summary .. tick_tag
 
       -- Final formula format: "RowSummary !! FullDisplayFormula || TermMapping"
       local final_formula = string.format("%s !! %s", row_summary, detail_formula)
