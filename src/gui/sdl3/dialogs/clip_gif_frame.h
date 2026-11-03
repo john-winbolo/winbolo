@@ -84,6 +84,9 @@ static inline bool clipGifComposeFrame(SDL_Renderer *renderer,
     SDL_ScaleMode savedMode = SDL_SCALEMODE_NEAREST;
     const bool hadMode = SDL_GetTextureScaleMode(world, &savedMode);
     SDL_SetTextureScaleMode(world, SDL_SCALEMODE_NEAREST);
+    /* The draw colour is the screen's, put back below like the scale mode. */
+    Uint8 cr = 0, cg = 0, cb = 0, ca = 255;
+    const bool hadColor = SDL_GetRenderDrawColor(renderer, &cr, &cg, &cb, &ca);
     const SDL_FRect src = { (float)crop->x, (float)crop->y, (float)crop->w,
                             (float)crop->h };
     const SDL_FRect dst = { 0.0f, 0.0f, (float)frameW, (float)frameH };
@@ -95,6 +98,9 @@ static inline bool clipGifComposeFrame(SDL_Renderer *renderer,
     }
     if (hadMode) {
         SDL_SetTextureScaleMode(world, savedMode);
+    }
+    if (hadColor) {
+        SDL_SetRenderDrawColor(renderer, cr, cg, cb, ca);
     }
     SDL_SetRenderTarget(renderer, saved);
     return ok;

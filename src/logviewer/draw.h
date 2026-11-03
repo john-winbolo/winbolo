@@ -166,6 +166,7 @@ void lv_drawLGMs(screenLgm *lgms);
 *  shadow), its top-left in target pixels and its pixel size;
 *  an out pointer may be NULL. A name keeps its texture across
 *  Count calls until it leaves the screen or the size changes.
+*  Both work on the screen's names (LV_TANK_LABELS_SCREEN).
 *********************************************************/
 struct SDL_Texture;
 int  lv_drawTankLabelCount(float scale);
@@ -182,10 +183,19 @@ BYTE lv_drawTankLabelGet(int index, struct SDL_Texture **outTex, int *outX, int 
 *  at dst->w / src->w and drawn in the game's look, grey over
 *  a black shadow. The viewer's own blit draws its names with
 *  this, and so does a GIF export over the frame it has drawn
-*  the target into.
+*  the target into. The names are rasterized and kept per
+*  use: the screen's at its scale, an export's at the GIF's,
+*  so an export in the middle of a screen frame never flushes
+*  the screen's textures or reopens its font.
 *********************************************************/
+typedef enum {
+    LV_TANK_LABELS_SCREEN = 0,   /* the blit and the embedding host's image */
+    LV_TANK_LABELS_EXPORT,       /* a GIF export's frame */
+    LV_TANK_LABEL_USES
+} LvTankLabelUse;
 struct SDL_FRect;
-void lv_drawTankLabelsOver(const struct SDL_FRect *src, const struct SDL_FRect *dst);
+void lv_drawTankLabelsOver(LvTankLabelUse use, const struct SDL_FRect *src,
+                           const struct SDL_FRect *dst);
 
 void lv_drawDirtyScreen(void);
 

@@ -697,7 +697,7 @@ void lvEmbedDrawTankLabels(const float src[4], const float dst[4]) {
     }
     s.x = src[0]; s.y = src[1]; s.w = src[2]; s.h = src[3];
     d.x = dst[0]; d.y = dst[1]; d.w = dst[2]; d.h = dst[3];
-    lv_drawTankLabelsOver(&s, &d);
+    lv_drawTankLabelsOver(LV_TANK_LABELS_EXPORT, &s, &d);
 }
 
 void lvEmbedPlay(void) {

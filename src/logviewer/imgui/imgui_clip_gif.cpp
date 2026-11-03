@@ -239,7 +239,7 @@ static void lvGifDrawNames(void *user, SDL_Renderer *renderer,
                            const SDL_FRect *src, const SDL_FRect *dst) {
     (void)user;
     (void)renderer;
-    lv_drawTankLabelsOver(src, dst);
+    lv_drawTankLabelsOver(LV_TANK_LABELS_EXPORT, src, dst);
 }
 
 /* One frame: the log moves on one frame's ticks and the map is drawn into

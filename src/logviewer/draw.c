@@ -104,15 +104,19 @@ static TTF_Font *labelFont = NULL;
  * here, by the host through lvEmbedTankLabel when embedded, and by a GIF
  * export over the frame it has drawn the target into (lv_drawTankLabelsOver).
  * The list is rebuilt only when the target is, so it always describes what
- * the target holds. */
+ * the target holds. The rasterized names are kept per use (LvTankLabelUse):
+ * the screen's and a GIF export's, because an export draws at its own scale
+ * (held to 2x) in the middle of a screen frame, and one cache for both would
+ * be flushed and the font reopened twice a frame, destroying textures the
+ * reel's draw list still points at. */
 #define LV_TANK_LABEL_PX      13   /* the game's label face, gFontMsg, at 1x */
 #define LV_TANK_LABEL_MIN_PX  8    /* below this the name cannot be read */
 #define LV_TANK_LABEL_GREY    200  /* the game's TANK_LABEL_NAME_GREY */
 typedef struct {
     char name[PLAYER_NAME_LEN];
     int  x, y;                     /* top-left, in render-target pixels */
-    int  tex;                      /* s_tankLabelTex slot, -1 for none;
-                                      set by lv_drawTankLabelCount */
+    int  tex[LV_TANK_LABEL_USES];  /* slot in that use's cache, -1 for none;
+                                      set by lvDrawTankLabelCount */
 } LvTankLabelPos;
 /* One rasterized name. Found by name, not by list position, so a name keeps
  * its texture when a tank entering or leaving view shifts the list. */
@@ -121,11 +125,15 @@ typedef struct {
     SDL_Texture *tex;              /* white; tinted at draw time */
     int          w, h;
 } LvTankLabelTex;
-static LvTankLabelPos s_tankLabelPos[MAX_TANKS];
-static int            s_tankLabelCount = 0;
-static LvTankLabelTex s_tankLabelTex[MAX_TANKS];
-static TTF_Font      *s_tankLabelFont = NULL;
-static int            s_tankLabelFontPx = 0;
+/* The names rasterized for one use, at one pixel size. */
+typedef struct {
+    LvTankLabelTex tex[MAX_TANKS];
+    TTF_Font      *font;
+    int            fontPx;
+} LvTankLabelCache;
+static LvTankLabelPos   s_tankLabelPos[MAX_TANKS];
+static int              s_tankLabelCount = 0;
+static LvTankLabelCache s_tankLabelCache[LV_TANK_LABEL_USES];
 
 /* The bars over the tanks (lv_tank_bars.h). Like the names they are drawn
  * over the blit, at the screen's own resolution, from where lv_drawTanks put
@@ -1798,6 +1806,7 @@ void lv_drawLGMs(screenLgm *lgms) {
 static void lvDrawRecordTankLabel(const char *str, int mx, int my, BYTE px, BYTE py) {
     LvTankLabelPos *l;
     BYTE zf;
+    int u;
 
     if (str == NULL || str[0] == '\0' || s_tankLabelCount >= MAX_TANKS) return;
     zf = lv_windowGetZoomFactor();
@@ -1805,50 +1814,61 @@ static void lvDrawRecordTankLabel(const char *str, int mx, int my, BYTE px, BYTE
     SDL_strlcpy(l->name, str, sizeof(l->name));
     l->x = (mx+1) * zf * TILE_SIZE_X + zf * (px+1);
     l->y = my * zf * TILE_SIZE_Y + zf * py;
-    l->tex = -1;
+    for (u = 0; u < LV_TANK_LABEL_USES; u++) l->tex[u] = -1;
+}
+
+static void lvFlushTankLabelCache(LvTankLabelCache *c) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (c->tex[i].tex != NULL) SDL_DestroyTexture(c->tex[i].tex);
+        c->tex[i].tex = NULL;
+        c->tex[i].name[0] = '\0';
+    }
+    if (c->font != NULL) TTF_CloseFont(c->font);
+    c->font = NULL;
+    c->fontPx = 0;
 }
 
 static void lvFlushTankLabels(void) {
-    int i;
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (s_tankLabelTex[i].tex != NULL) SDL_DestroyTexture(s_tankLabelTex[i].tex);
-        s_tankLabelTex[i].tex = NULL;
-        s_tankLabelTex[i].name[0] = '\0';
+    int u;
+    for (u = 0; u < LV_TANK_LABEL_USES; u++) {
+        lvFlushTankLabelCache(&s_tankLabelCache[u]);
     }
-    if (s_tankLabelFont != NULL) TTF_CloseFont(s_tankLabelFont);
-    s_tankLabelFont = NULL;
-    s_tankLabelFontPx = 0;
 }
 
-int lv_drawTankLabelCount(float scale) {
+/* Rasterizes the names for one use at scale, in that use's cache alone, and
+   returns how many there are. */
+static int lvDrawTankLabelCount(LvTankLabelUse use, float scale) {
+    LvTankLabelCache *c;
     int px, i, j;
     bool used[MAX_TANKS];
 
-    if (sdlRenderer == NULL) return 0;
+    if (sdlRenderer == NULL || use < 0 || use >= LV_TANK_LABEL_USES) return 0;
+    c = &s_tankLabelCache[use];
 
     /* The game's label size times the scale the target is drawn at, so the
        glyphs are rasterized at the size they appear and never resampled. */
     px = (int)SDL_lroundf((float)LV_TANK_LABEL_PX * scale);
     if (px < LV_TANK_LABEL_MIN_PX) px = LV_TANK_LABEL_MIN_PX;
-    if (px != s_tankLabelFontPx) {
+    if (px != c->fontPx) {
         const char *base = SDL_GetBasePath();
         char path[1024];
-        lvFlushTankLabels();
+        lvFlushTankLabelCache(c);
         SDL_snprintf(path, sizeof(path), "%sdata/fonts/SarasaMonoSlabJ-Regular.ttf",
                      base ? base : "./");
-        s_tankLabelFont = TTF_OpenFont(path, (float)px);
-        s_tankLabelFontPx = px;
+        c->font = TTF_OpenFont(path, (float)px);
+        c->fontPx = px;
     }
-    if (s_tankLabelFont == NULL) return 0;
+    if (c->font == NULL) return 0;
 
     /* First the names that already have a texture, wherever it sits. */
     for (j = 0; j < MAX_TANKS; j++) used[j] = FALSE;
     for (i = 0; i < s_tankLabelCount; i++) {
-        s_tankLabelPos[i].tex = -1;
+        s_tankLabelPos[i].tex[use] = -1;
         for (j = 0; j < MAX_TANKS; j++) {
-            if (!used[j] && s_tankLabelTex[j].tex != NULL &&
-                SDL_strcmp(s_tankLabelTex[j].name, s_tankLabelPos[i].name) == 0) {
-                s_tankLabelPos[i].tex = j;
+            if (!used[j] && c->tex[j].tex != NULL &&
+                SDL_strcmp(c->tex[j].name, s_tankLabelPos[i].name) == 0) {
+                s_tankLabelPos[i].tex[use] = j;
                 used[j] = TRUE;
                 break;
             }
@@ -1858,17 +1878,17 @@ int lv_drawTankLabelCount(float scale) {
        many slots as names, so one is always free. */
     for (i = 0; i < s_tankLabelCount; i++) {
         LvTankLabelTex *t;
-        if (s_tankLabelPos[i].tex >= 0) continue;
+        if (s_tankLabelPos[i].tex[use] >= 0) continue;
         for (j = 0; j < MAX_TANKS && used[j]; j++) {}
         if (j == MAX_TANKS) break;
         used[j] = TRUE;
-        t = &s_tankLabelTex[j];
+        t = &c->tex[j];
         if (t->tex != NULL) SDL_DestroyTexture(t->tex);
         t->tex = NULL;
         SDL_strlcpy(t->name, s_tankLabelPos[i].name, sizeof(t->name));
         {
             SDL_Color white = {255, 255, 255, 255};
-            SDL_Surface *s = TTF_RenderText_Blended(s_tankLabelFont, t->name, 0, white);
+            SDL_Surface *s = TTF_RenderText_Blended(c->font, t->name, 0, white);
             if (s == NULL) continue;
             t->tex = SDL_CreateTextureFromSurface(sdlRenderer, s);
             t->w = s->w;
@@ -1877,20 +1897,21 @@ int lv_drawTankLabelCount(float scale) {
         }
         if (t->tex != NULL) {
             SDL_SetTextureBlendMode(t->tex, SDL_BLENDMODE_BLEND);
-            s_tankLabelPos[i].tex = j;
+            s_tankLabelPos[i].tex[use] = j;
         }
     }
     return s_tankLabelCount;
 }
 
-BYTE lv_drawTankLabelGet(int index, SDL_Texture **outTex, int *outX, int *outY,
-                         int *outW, int *outH) {
+static BYTE lvDrawTankLabelGet(LvTankLabelUse use, int index, SDL_Texture **outTex,
+                               int *outX, int *outY, int *outW, int *outH) {
     const LvTankLabelTex *t;
 
-    if (index < 0 || index >= s_tankLabelCount || s_tankLabelPos[index].tex < 0) {
+    if (use < 0 || use >= LV_TANK_LABEL_USES || index < 0 ||
+        index >= s_tankLabelCount || s_tankLabelPos[index].tex[use] < 0) {
         return FALSE;
     }
-    t = &s_tankLabelTex[s_tankLabelPos[index].tex];
+    t = &s_tankLabelCache[use].tex[s_tankLabelPos[index].tex[use]];
     if (t->tex == NULL) return FALSE;
     if (outTex != NULL) *outTex = t->tex;
     if (outX != NULL) *outX = s_tankLabelPos[index].x;
@@ -1900,22 +1921,33 @@ BYTE lv_drawTankLabelGet(int index, SDL_Texture **outTex, int *outX, int *outY,
     return TRUE;
 }
 
+int lv_drawTankLabelCount(float scale) {
+    return lvDrawTankLabelCount(LV_TANK_LABELS_SCREEN, scale);
+}
+
+BYTE lv_drawTankLabelGet(int index, SDL_Texture **outTex, int *outX, int *outY,
+                         int *outW, int *outH) {
+    return lvDrawTankLabelGet(LV_TANK_LABELS_SCREEN, index, outTex, outX, outY,
+                              outW, outH);
+}
+
 /* The names over the world the blit just drew: src is the slice of the target
    it took, dst where it went. The game's look: grey over a black shadow
    offset about one glyph pixel, so a name reads on sea and on road alike. */
 static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
-    lv_drawTankLabelsOver(src, dst);
+    lv_drawTankLabelsOver(LV_TANK_LABELS_SCREEN, src, dst);
 }
 
-void lv_drawTankLabelsOver(const SDL_FRect *src, const SDL_FRect *dst) {
+void lv_drawTankLabelsOver(LvTankLabelUse use, const SDL_FRect *src,
+                           const SDL_FRect *dst) {
     float scale;
     int n, i;
     SDL_Rect clip, oldClip;
     bool hadClip;
 
-    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    if (src == NULL || dst == NULL || src->w <= 0.0f || src->h <= 0.0f) return;
     scale = dst->w / src->w;
-    n = lv_drawTankLabelCount(scale);
+    n = lvDrawTankLabelCount(use, scale);
     if (n == 0) return;
 
     hadClip = SDL_RenderClipEnabled(sdlRenderer);
@@ -1932,7 +1964,7 @@ void lv_drawTankLabelsOver(const SDL_FRect *src, const SDL_FRect *dst) {
         float off;
         SDL_FRect d;
 
-        if (!lv_drawTankLabelGet(i, &tex, &tx, &ty, &tw, &th)) continue;
+        if (!lvDrawTankLabelGet(use, i, &tex, &tx, &ty, &tw, &th)) continue;
         d.x = SDL_floorf(dst->x + ((float)tx - src->x) * scale);
         d.y = SDL_floorf(dst->y + ((float)ty - src->y) * scale);
         d.w = (float)tw;

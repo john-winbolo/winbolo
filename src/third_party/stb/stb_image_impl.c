@@ -72,8 +72,10 @@ static void stbiGifShrinkFrame(const stbi_uc *src, int w, int h, int k,
       for (rx = 0; rx < rw; rx++) {
          const int x0 = rx * k;
          const int x1 = (x0 + k < w) ? x0 + k : w;
-         unsigned sum[4] = { 0, 0, 0, 0 };
-         unsigned n = 0;
+         /* size_t: a block can be most of a frame, and a frame's pixels
+          * times 255 is near the top of 32 bits at the preview's limit. */
+         size_t sum[4] = { 0, 0, 0, 0 };
+         size_t n = 0;
          stbi_uc *d = dst + ((size_t)ry * (size_t)rw + (size_t)rx) * 4u;
          int x, y, c;
          for (y = y0; y < y1; y++) {
