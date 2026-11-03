@@ -8909,7 +8909,11 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
             local c0 = cpf.dijkstra_cost_at(idx, ax, ay, 0)
             local c1 = cpf.dijkstra_cost_at(idx, ax, ay, 1)
             local c = (c1 and c1 < c0) and c1 or c0
-            if c and c < ac then ac = c end
+            -- dijkstra_cost_at returns COST_INF (1e30), not math.huge, for a
+            -- square the slate has not reached yet (a new slate just after a
+            -- threat rebuild). 1e30 is "no value", not a distance: taken as
+            -- one, dist_score became 5e43 and the row dropped out of the pool.
+            if c and c < 1e29 and c < ac then ac = c end
           end
         end
         if ac < best_adj then
@@ -8930,6 +8934,11 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
                       pcontrib, obj.mx, obj.my, 0)
       else
         dist_raw = best_adj
+      end
+      if dist_raw and dist_raw >= 1e29 then
+        -- COST_INF from the slate lookup: no value, use the A* fallback.
+        dist_raw = nil
+        dij_stale = true
       end
     else
       -- No fresh slate has expanded any neighbour yet — fall through to A*.
@@ -19718,6 +19727,14 @@ local function goal_selection(state, world, info, quiet)
             gc.wsim_arm_after  = c.wsim_arm_after
             gc.wsim_ticks = c.wsim_ticks or 0
             gc.total    = c.cost
+            if c._reject_sentinel then
+              -- A rejected row is pinned to the one sentinel (below, and in
+              -- the wsim re-sort). base was copied before that pin and can
+              -- read 5e43; show the sentinel for both, as the pool will.
+              gc.total   = C.POOL_REJECT_COST or 1e30
+              gc.base    = gc.total
+              gc.penalty = 0
+            end
             -- DIAGNOSTIC: high-cost watch at post-wsim patch
             if (c.cost or 0) > 99999 then
               print(string.format(
