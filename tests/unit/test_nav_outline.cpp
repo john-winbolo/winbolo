@@ -1,7 +1,8 @@
 /*
  * Tests for the focus outline's key rule (imgui_nav_outline.cpp). While the
- * outline is hidden, the first Enter, Space or arrow key press only shows it
- * on the focused item, and the next press acts. An item focused from code (a
+ * outline is hidden, the first Enter, Space, arrow, Home, End, PageUp or
+ * PageDown press only shows it on the focused item, and the next press acts.
+ * A press with Ctrl or Alt held is not claimed and keeps its ImGui action. An item focused from code (a
  * message box's OK button) shows the outline at once, so Enter presses it at
  * once. A quiet focus from code (the lobby's Ready button at open) leaves the
  * outline hidden.
@@ -124,6 +125,53 @@ done:
     return rc;
 }
 
+/* Hold or let go of a modifier, with one frame after it, so the claim made
+   at the end of that frame sees it. */
+void rigMod(NavRig &r, ImGuiKey mod, bool down) {
+    ImGui::SetCurrentContext(r.ctx);
+    ImGui::GetIO().AddKeyEvent(mod, down);
+    rigFrame(r);
+}
+
+/* With the outline hidden and the focus on the start item (A, or B from a
+   quiet focus), the first press of `key` only shows the outline and leaves
+   the focus where it is; the second press moves the focus to the other
+   item. No item is pressed. */
+int checkFirstMoveShows(ImGuiKey key, bool startOnB, const char *name) {
+    NavRig r;
+    rigOpen(r, name);
+    int rc = 0;
+    if (startOnB) {
+        r.focusB = true;
+        r.quiet  = true;
+        rigFrames(r, 2);
+    }
+    {
+        const ImGuiID start = startOnB ? r.idB : r.idA;
+        const ImGuiID other = startOnB ? r.idA : r.idB;
+        UT_CHECK_MSG(GImGui->NavId == start && start != 0,
+                     "%s: focus should start on %s (NavId %08x)", name,
+                     startOnB ? "B" : "A", (unsigned)GImGui->NavId);
+        UT_CHECK(!dialogNavOutlineIsShown());
+
+        rigPress(r, key);
+        UT_CHECK_MSG(GImGui->NavId == start,
+                     "%s: first press moved the focus (NavId %08x)", name,
+                     (unsigned)GImGui->NavId);
+        UT_CHECK(dialogNavOutlineIsShown());
+
+        rigPress(r, key);
+        UT_CHECK_MSG(GImGui->NavId == other,
+                     "%s: second press should move the focus (NavId %08x, "
+                     "want %08x)",
+                     name, (unsigned)GImGui->NavId, (unsigned)other);
+        UT_CHECK(r.pressA == 0 && r.pressB == 0);
+    }
+done:
+    rigClose(r);
+    return rc;
+}
+
 } // namespace
 
 extern "C" int run_nav_outline_first_enter_shows(void) {
@@ -230,4 +278,63 @@ extern "C" int run_nav_outline_quiet_focus_hidden(void) {
 done:
     rigClose(r);
     return rc;
+}
+
+/* Ctrl+Enter with the outline hidden is not claimed, so it presses A at
+   once, as on main, and it does not show the outline. The next plain
+   Enter only shows the outline. */
+extern "C" int run_nav_outline_ctrl_enter_not_claimed(void) {
+    NavRig r;
+    rigOpen(r, "CtrlEnterWin");
+    int rc = 0;
+    UT_CHECK(GImGui->NavId == r.idA && r.idA != 0);
+    UT_CHECK(!dialogNavOutlineIsShown());
+
+    rigMod(r, ImGuiMod_Ctrl, true);
+    rigPress(r, ImGuiKey_Enter);
+    UT_CHECK_MSG(r.pressA == 1, "Ctrl+Enter pressed A %d time(s)", r.pressA);
+    UT_CHECK(!dialogNavOutlineIsShown());
+    rigMod(r, ImGuiMod_Ctrl, false);
+
+    rigPress(r, ImGuiKey_Enter);
+    UT_CHECK_MSG(r.pressA == 1, "plain Enter pressed A, count %d", r.pressA);
+    UT_CHECK(dialogNavOutlineIsShown());
+done:
+    rigClose(r);
+    return rc;
+}
+
+/* Alt+Down with the outline hidden is not claimed, so it moves the focus to
+   B at once, as on main. */
+extern "C" int run_nav_outline_alt_arrow_not_claimed(void) {
+    NavRig r;
+    rigOpen(r, "AltArrowWin");
+    int rc = 0;
+    UT_CHECK(GImGui->NavId == r.idA && r.idA != 0);
+    UT_CHECK(!dialogNavOutlineIsShown());
+
+    rigMod(r, ImGuiMod_Alt, true);
+    rigPress(r, ImGuiKey_DownArrow);
+    UT_CHECK_MSG(GImGui->NavId == r.idB,
+                 "Alt+Down should focus B (NavId %08x, A %08x, B %08x)",
+                 (unsigned)GImGui->NavId, (unsigned)r.idA, (unsigned)r.idB);
+    UT_CHECK(!dialogNavOutlineIsShown());
+    rigMod(r, ImGuiMod_Alt, false);
+    UT_CHECK(r.pressA == 0 && r.pressB == 0);
+done:
+    rigClose(r);
+    return rc;
+}
+
+/* End from A and Home from B: the first press only shows the outline. */
+extern "C" int run_nav_outline_first_home_end_shows(void) {
+    if (checkFirstMoveShows(ImGuiKey_End, false, "EndWin")) return 1;
+    return checkFirstMoveShows(ImGuiKey_Home, true, "HomeWin");
+}
+
+/* PageDown from A and PageUp from B: the first press only shows the
+   outline. */
+extern "C" int run_nav_outline_first_page_keys_shows(void) {
+    if (checkFirstMoveShows(ImGuiKey_PageDown, false, "PageDownWin")) return 1;
+    return checkFirstMoveShows(ImGuiKey_PageUp, true, "PageUpWin");
 }

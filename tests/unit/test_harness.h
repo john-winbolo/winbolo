@@ -1471,6 +1471,10 @@ int run_nav_outline_first_space_shows(void);
 int run_nav_outline_first_arrow_shows(void);
 int run_nav_outline_code_focus_enter_acts(void);
 int run_nav_outline_quiet_focus_hidden(void);
+int run_nav_outline_ctrl_enter_not_claimed(void);
+int run_nav_outline_alt_arrow_not_claimed(void);
+int run_nav_outline_first_home_end_shows(void);
+int run_nav_outline_first_page_keys_shows(void);
 
 /* Game browser server version test (test_browser_version.c): the old "M.mr"
  * and the "M.m.r" forms, with and without a letter suffix, against 1.1.9,

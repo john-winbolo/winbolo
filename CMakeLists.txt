@@ -5996,6 +5996,10 @@ set(_unit_test_names
     nav_outline_first_arrow_shows
     nav_outline_code_focus_enter_acts
     nav_outline_quiet_focus_hidden
+    nav_outline_ctrl_enter_not_claimed
+    nav_outline_alt_arrow_not_claimed
+    nav_outline_first_home_end_shows
+    nav_outline_first_page_keys_shows
     browser_version_parse
     version_protocol_bytes
     clip_gif_len_sync
