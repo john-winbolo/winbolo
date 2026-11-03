@@ -415,8 +415,17 @@ static void handle_keyboard_shortcuts(int *clicked) {
 
     /* Not with Super (Cmd on macOS) held: a Ctrl+Cmd key is a menu bar item
      * there (Ctrl+Cmd+F is Full Screen, Cmd+6/7/8 the sidebars), and the
-     * menu bar has acted on it already. */
+     * menu bar has acted on it already.
+     *
+     * On macOS ImGui swaps the two (io.ConfigMacOSXBehaviors, on by default
+     * there): io.KeyCtrl is the Cmd key and io.KeySuper is the Control key.
+     * Read them the other way round, or Cmd+8 would toggle a panel here and
+     * in the native menu bar, twice in all, and Control+8 would do nothing. */
+#ifdef __APPLE__
+    bool ctrl = io.KeySuper && !io.KeyCtrl;
+#else
     bool ctrl = io.KeyCtrl && !io.KeySuper;
+#endif
     if (!ctrl) return;
 
     /* A live game watched from the game (spectatorRun). Open, Stop and the
