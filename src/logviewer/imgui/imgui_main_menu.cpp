@@ -128,6 +128,7 @@ bool lv_g_show_scenario_panel_window = true;
 bool lv_g_show_hud_window = true;
 bool lv_g_show_overview_window = true;
 bool lv_g_show_tank_window = true;
+bool lv_g_show_chat_window = true;
 bool lv_g_reset_window_positions = false;
 /* Off until asked for: the outlines sit over the map a recording is watched
    for. */
@@ -191,6 +192,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
     lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Visible", "Yes", val, sizeof(val));
     lv_g_show_tank_window = (val[0] == 'Y' || val[0] == 'y');
+
+    lv_platform_config_get_string("LOGVIEWER", "Window.Chat.Visible", "Yes", val, sizeof(val));
+    lv_g_show_chat_window = (val[0] == 'Y' || val[0] == 'y');
 
     /* The panel's side in whole pixels. A value that is not a whole number
        keeps the default; the panel raises one under its smallest side and
@@ -256,6 +260,7 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.HUD.Visible", lv_g_show_hud_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Overview.Visible", lv_g_show_overview_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Visible", lv_g_show_tank_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Chat.Visible", lv_g_show_chat_window ? "Yes" : "No");
     {
         char side[16];
         snprintf(side, sizeof(side), "%d", lv_imgui_scenario_panel_side());
@@ -495,6 +500,10 @@ static void handle_keyboard_shortcuts(int *clicked) {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_8, false)) {
         lv_g_show_tank_window = !lv_g_show_tank_window;
+        *clicked = 1;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_9, false)) {
+        lv_g_show_chat_window = !lv_g_show_chat_window;
         *clicked = 1;
     }
     if (lv_clip_gif_available() && !lv_clip_gif_active() &&
@@ -838,6 +847,10 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_TANK), "Ctrl+8", lv_g_show_tank_window)) {
                 lv_g_show_tank_window = !lv_g_show_tank_window;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_WIN_CHAT), "Ctrl+9", lv_g_show_chat_window)) {
+                lv_g_show_chat_window = !lv_g_show_chat_window;
                 clicked = 1;
             }
             /* The GIFs made here and in the game (imgui_clip_gif.h). */
