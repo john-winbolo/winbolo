@@ -14,9 +14,8 @@
 --
 -- Pillbox shell cap. No more than pill_max_shells_at_tank pillbox shells
 -- are in the air at any one tank. A pillbox whose nearest target already
--- has that many coming fires at the next nearest enemy in range instead;
--- with no other target it holds its shot and fires as soon as one of those
--- shells lands. The limit is twelve by default.
+-- has that many coming loses its shot and reloads. The limit is twelve by
+-- default.
 --
 -- Tank clearance. Use the original direction-dependent tank boxes and
 -- pixel nudges against solid tiles, allowing close passes beside pills.
@@ -145,7 +144,7 @@ scenario = {
     { id = "push_decay_shift", label = "Pushback slide length (shift)",
       type = "int", min = 0, max = 31, step = 1, default = 2 },
 
-    -- Pillbox shell cap: a pill holds or retargets when its target already
+    -- Pillbox shell cap: a pill loses its shot when its nearest target already
     -- has this many pillbox shells coming.
     { id = "shell_cap", label = "Pillbox shell cap", type = "bool",
       default = true },
