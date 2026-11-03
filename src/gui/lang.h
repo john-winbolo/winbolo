@@ -3553,7 +3553,6 @@
 #define STR_CLIPGIF_GALLERY_TITLE                2943
 #define STR_CLIPGIF_GALLERY_EMPTY                2944
 #define STR_CLIPGIF_COPY                         2945
-#define STR_CLIPGIF_SAVE                         2946
 #define STR_CLIPGIF_COPIED                       2947
 #define STR_CLIPGIF_COPY_FAILED                  2948
 #define STR_CLIPGIF_OPEN_FAILED                  2949
@@ -3563,7 +3562,6 @@
 #define STR_CLIPGIF_LENGTH_TIP                   2953
 #define STR_CLIPGIF_LOADING                      2954
 #define STR_CLIPGIF_TOO_LARGE                    2955
-#define STR_CLIPGIF_FILTER_NAME                  2956
 
 /* Map Maker random maps: the generator type, the Size control, the
  * presets named after classic Bolo map makers, and their controls */
@@ -3659,6 +3657,30 @@
 
 /* The replay's recording mode button, which shows the GIF controls */
 #define STR_REEL_RECORD_MODE_TIP                 3150
+
+/* The GIF gallery's game groups, path link and delete */
+#define STR_CLIPGIF_THIS_GAME                    3426
+#define STR_CLIPGIF_EARLIER_GAMES                3427
+#define STR_CLIPGIF_SHOW_IN_FOLDER_TIP           3153
+#define STR_CLIPGIF_SHOW_FAILED                  3154
+#define STR_CLIPGIF_DELETE                       3155
+#define STR_CLIPGIF_DELETE_CONFIRM               3156
+#define STR_CLIPGIF_DELETE_FAILED                3157
+
+/* The Log Viewer's GIFs and its Clips window */
+#define STR_LV_WIN_CLIPS                         3163
+#define STR_LV_CLIPS_EMPTY                       3164
+
+/* Recording mode, in the game's replay and the Log Viewer */
+#define STR_LV_RECORD_MODE                       3361
+#define STR_LV_RECORD_MODE_TIP                   3362
+#define STR_CLIPGIF_PREVIEW                      3419
+#define STR_CLIPGIF_PREVIEW_STOP                 3420
+#define STR_CLIPGIF_SAVE                         3421
+#define STR_CLIPGIF_CANCEL                       3422
+#define STR_CLIPGIF_ZOOM_TIP                     3423
+#define STR_CLIPGIF_WINDOW_TITLE                 3424
+#define STR_CLIPGIF_MOVE_TIP                     3425
 
 /* The Log Viewer's -size option when its text is not a size or cannot be met */
 #define STR_LV_SIZE_ARG_BAD                      3151

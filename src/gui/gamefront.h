@@ -1092,6 +1092,14 @@ extern int   gameFrontScnTextPopY;
 extern int   gameFrontScnTextPopW;
 extern int   gameFrontScnTextPopH;
 
+/* The GIF window of the replay's recording mode: its top-left inside the
+ * main window ([WINDOW] "GIF Window X" and "GIF Window Y"), -1 for never
+ * moved, which puts it over the replay's transport row. Set only when a
+ * drag of the window ends at a new place, and written through the debounced
+ * gameFrontSaveWindowSettings path. */
+extern int   gameFrontGifWinX;
+extern int   gameFrontGifWinY;
+
 /* The longest scenario string the pair below is asked to key a row on. The
  * caller passes the scenario's file name where there is one, because two
  * scenarios can carry the same display name and the file name is what the

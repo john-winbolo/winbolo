@@ -89,7 +89,7 @@
 
 /* BOLO_CLIP_GIF_GALLERY — the recap's GIF gallery: every clip export is kept
  *   in a "clips" folder under the per-user pref folder with a small metadata
- *   file beside it, and a window lists them with copy and save. On wherever
+ *   file beside it, and a window lists them with copy and delete. On wherever
  *   the clip export is, except iOS, which keeps writing each clip into the
  *   app's Documents folder for the Files app to show, and Android, where the
  *   clip goes to the share sheet (see above). */
@@ -373,20 +373,21 @@ typedef struct LobbyReelState {
     bool   seekWasPlaying = false;
 
 #if BOLO_RECAP_CLIP_GIF
-    /* Crop frame: an optional rectangle over the reel that an export takes
-     * instead of the whole visible view, so a clip can be posted without the
-     * map around it. Off by default, and off is the untouched full-view path.
+    /* Recording mode (clip_gif_core.h): on or off, the crop frame and its
+     * place, and the length the transport's GIF button records. The movie
+     * camera button on the transport row turns the mode on and off. With it
+     * off the GIF controls are not drawn: the GIF button, the length field
+     * and the length marker on the seek bar, the gallery button, the crop
+     * button and frame, and the GIF button on each highlight row
+     * (clipGifToolsShown says when they show).
      *
-     * Held normalized to the displayed image rather than in pixels, so resizing
-     * the lobby or zooming the reel keeps the same framing rather than leaving
-     * the box pointing at a different part of the map. Session-only, by design
-     * — a crop is chosen for the clip being taken, not kept as a preference,
-     * which is what the reset below makes true. */
-    bool  cropOn = false;
-    float cropX0 = 0.25f;
-    float cropY0 = 0.25f;
-    float cropX1 = 0.75f;
-    float cropY1 = 0.75f;
+     * The crop frame is held as fractions of the displayed image, so a new
+     * lobby size or a zoom keeps the same framing. The length is kept as the
+     * player last set it and clamped to the time left where it is used
+     * (clipGifLenClampMs). All of it goes back to CLIP_GIF_MODE_INIT each
+     * time a reel opens, with the rest of the reel: a crop and a length are
+     * chosen for the clip being taken, not kept as preferences. */
+    ClipGifMode clip = CLIP_GIF_MODE_INIT;
 
     /* The slice the reel last blitted, in render-target pixels: origin plus the
      * whole-pixel visible extent the draw computed. The crop frame is
@@ -395,24 +396,10 @@ typedef struct LobbyReelState {
      * mapping and risking a different answer. */
     SDL_Rect lastSlice = { 0, 0, 0, 0 };
 
-    /* How long the transport's GIF button records, as the player last set it
-     * with the length field or the marker on the seek bar. What is used is
-     * this clamped to the time left after the playhead (clipGifLenClampMs).
-     * The field keeps a typed length as asked for, inside the export's own
-     * floor and cap, so seeking back from near the end gives the longer
-     * length back. The marker keeps the length as dragged: it cannot be
-     * dragged past the end of the round, so a drag near the end keeps the
-     * shorter length after a seek back. Goes back to the default with the
-     * rest of the reel, like the crop frame. */
-    uint32_t gifLenMs = CLIP_GIF_LEN_DEFAULT_MS;
-
-    /* Recording mode, which the movie camera button on the transport row
-     * turns on and off. With it off the GIF controls are not drawn: the GIF
-     * button, the length field and the length marker on the seek bar, the
-     * gallery button, the crop button and frame, and the GIF button on each
-     * highlight row (clipGifToolsShown says when they show). Off each time a
-     * reel opens, the same as the crop frame. */
-    bool recordMode = false;
+    /* The id of the replay the reel opened (clipGifGameIdFromBytes), which
+     * each GIF made from it keeps in its metadata. The gallery lists the GIFs
+     * with this id as the current game. Empty while no replay is open. */
+    char gameId[CLIP_GIF_META_GAME_LEN] = "";
 #endif
 
     /* Where a client that did not record the round stands in getting it from
@@ -815,40 +802,37 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
 #if BOLO_RECAP_CLIP_GIF
 void lobbyClipGifReset(void);
 bool lobbyClipGifActive(void);
+/* Save clip: a clip row's, and the transport's (the GIF's span on the
+ * zoomed timeline). */
 void lobbyClipGifStartClip(const HighlightWindow *h, ClientSim *cs);
-void lobbyClipGifStartFromPlayhead(uint32_t curMs, uint32_t lenMs,
-                                   ClientSim *cs);
-bool lobbyClipGifButton(const char *id, bool compact);
-float lobbyClipGifButtonWidth(void);
+void lobbyClipGifStartSpan(ClientSim *cs);
+/* Preview clip: the transport's and a clip row's. Each stops its own preview
+ * when pressed while that preview plays. */
+void lobbyClipGifPreviewToggle(void);
+void lobbyClipGifPreviewClip(int row, const HighlightWindow *h);
+/* The row whose preview plays: -1 for the transport's, -2 for none. */
+int lobbyClipGifPreviewRow(void);
+/* The GIF window of recording mode (clipGifToolsWindow), with its presses
+ * made on the reel. ax0..ay1 is the box of the reel's transport row, in
+ * screen coordinates; the window goes over it until the player drags it. */
+void lobbyClipGifWindow(float ax0, float ay0, float ax1, float ay1,
+                        ClientSim *cs);
 void lobbyClipGifRender(float s);
-/* The clip export's save picker is asynchronous. The poll writes out a clip
- * whose picker has been answered and belongs in the lobby's event loop, above
- * the view switch, so an export survives navigating away from the recap; the
- * abandon releases one still waiting when the lobby session ends. */
-void lobbyClipGifSavePoll(void);
-void lobbyClipGifSaveAbandon(void);
+/* The poll belongs in the lobby's event loop, above the view switch, so the
+ * gallery lets go of its preview when the recap is no longer drawn; the
+ * shutdown frees the gallery when the lobby session ends. */
+void lobbyClipGifPoll(void);
+void lobbyClipGifShutdown(void);
 #endif
 
-/* clipgif gallery (lobby_clip_gif_gallery.cpp) */
+/* clipgif gallery: the window is clip_gif_gallery.cpp, which the Log Viewer
+ * also opens. lobbyClipGifGalleryOpen and lobbyClipGifGalleryRender (drawn
+ * once per recap body render) are in lobby_clip_gif.cpp; they give the
+ * gallery the game's renderer, window and the reel's game. */
 #if BOLO_CLIP_GIF_GALLERY
-/* Keeps a finished export in the gallery folder, with its metadata, then
- * opens the gallery on it. Writes the bytes to a file and keeps no
- * pointer to them, so the caller still frees them. */
-void lobbyClipGifGalleryAdd(const void *data, size_t len,
-                            const ClipGifMeta *meta, const char *baseName);
+#include "../clip_gif_gallery.h"  /* clipGifGalleryAdd / Poll / Button */
 void lobbyClipGifGalleryOpen(void);
-/* The gallery window, drawn once per recap body render while it is open. */
 void lobbyClipGifGalleryRender(float s);
-/* A save picker from the gallery that has been answered; with
- * lobbyClipGifSavePoll in the lobby's event loop. Also lets go of the
- * preview, a decode still running and the list when the open window was not
- * drawn on the last frame; the window stays open. */
-void lobbyClipGifGallerySavePoll(void);
-/* Leaving the lobby: frees the preview's frames and texture and drops a save
- * picker still waiting. */
-void lobbyClipGifGalleryShutdown(void);
-/* The control that opens the gallery, for the transport row. */
-bool lobbyClipGifGalleryButton(const char *id);
 #endif
 
 /* rating */
