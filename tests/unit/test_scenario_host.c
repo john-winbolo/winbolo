@@ -4528,6 +4528,14 @@ int run_scenario_host_shipped_tutorial_rooted(void) {
               "the maps folder itself");
     SH_ROOTED(!scenarioHostScriptIsShippedTutorial("maps/tutorials/x.lua"),
               "a bare maps/tutorials path");
+#ifdef _WIN32
+    /* A missing file at the root of the current drive: its folder part is
+     * "X:\", kept with the backslash so that the drive's root is resolved,
+     * not its current folder. */
+    SH_ROOTED(!scenarioHostScriptIsShippedTutorial(
+                  "\\scnhost_no_such_file.scenario.lua"),
+              "a missing file at the drive root");
+#endif
 
     /* A trailing slash on the data folder makes no difference. */
     scenarioHostSetDataRoot(SH_POPUP_TUT_ROOT "/");

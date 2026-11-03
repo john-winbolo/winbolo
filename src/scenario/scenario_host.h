@@ -376,9 +376,11 @@ bool scenarioHostUnsafeScripts(void);
  *  that folder is a shipped tutorial
  *  (scenarioHostScriptIsShippedTutorial). NULL or "" goes
  *  back to the default: the data folder beside the program
- *  (SDL_GetBasePath, then "data"), the same place the
- *  shipped mods are read from, or "data" in the working
- *  directory where SDL cannot name the program's folder.
+ *  (SDL_GetBasePath, then "data"), or "data" in the
+ *  working directory where SDL cannot name the program's
+ *  folder. The shipped mods are read from the same folder
+ *  unless WB_MOD_DIR_SHIPPED moves them; this call does not
+ *  read that variable.
  *  No binary sets it: the default is the shipped data
  *  folder. The unit tests set it to a folder of their own
  *  and set it back to NULL after.

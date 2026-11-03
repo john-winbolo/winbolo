@@ -6901,9 +6901,10 @@ void scenarioHostSetDataRoot(const char *dir) {
 }
 
 /* The data folder, as given or by default: the data folder beside the
- * program, which is where the shipped mods are read from too
- * (scnModDirShipped), and "data" in the working directory where SDL cannot
- * name the program's folder. Not made canonical here. */
+ * program, and "data" in the working directory where SDL cannot name the
+ * program's folder. The shipped mods are read from that folder too
+ * (scnModDirShipped), unless WB_MOD_DIR_SHIPPED moves the mods; this
+ * function does not read that variable. Not made canonical here. */
 static bool scnDataRootDir(char *out, size_t outLen) {
     const char *base;
 
@@ -6961,7 +6962,7 @@ static bool scnFinalPath(const char *full, char *out, size_t outLen) {
 }
 #else
 /* "." and ".." taken out of an absolute path, in place, and runs of '/'
- * made one. A ".." at the top stays at the top. */
+ * made one. A ".." at the root is dropped, as realpath drops it. */
 static void scnPathCollapse(char *p) {
     char  *out = p;
     char  *in  = p;
@@ -7015,12 +7016,21 @@ static bool scnCanonPath(const char *path, char *out, size_t outLen) {
     /* GetFullPathNameA writes '\\' throughout. */
     slash = strrchr(full, '\\');
     if (slash != NULL && slash > full) {
-        *slash = '\0';
+        /* A folder part that is only a drive ("D:") keeps its backslash:
+         * "D:" alone names the drive's current folder, not its root. */
+        char *cut  = (slash == full + 2 && full[1] == ':') ? slash + 1 : slash;
+        char  kept = *cut;
+
+        *cut = '\0';
         if (scnFinalPath(full, dir, sizeof(dir))) {
-            *slash = '\\';
-            return (size_t)snprintf(out, outLen, "%s%s", dir, slash) < outLen;
+            size_t      dl   = strlen(dir);
+            const char *name = (dl > 0 && dir[dl - 1] == '\\') ? slash + 1
+                                                             : slash;
+
+            *cut = kept;
+            return (size_t)snprintf(out, outLen, "%s%s", dir, name) < outLen;
         }
-        *slash = '\\';
+        *cut = kept;
     }
     return (size_t)snprintf(out, outLen, "%s", full) < outLen;
 #else

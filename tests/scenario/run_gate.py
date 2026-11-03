@@ -311,7 +311,9 @@ class Job(object):
                          "WinBoloDS has to hold the shipped tutorials"
                          % (self.name, TUTORIALS_DIR))
             self.map_dir = TUTORIALS_DIR
-            self.stem = "scngate_" + self.name
+            # The process id keeps two runs against one build folder off
+            # each other's files.
+            self.stem = "scngate_%d_%s" % (os.getpid(), self.name)
             self.staged = [os.path.join(self.map_dir, self.stem + ext)
                            for ext in (".map", ".scenario.lua")]
             STAGED_TUTORIAL_FILES.extend(self.staged)
@@ -494,6 +496,20 @@ def unstage_tutorials(files):
             pass               # already gone
 
 
+def remove_left_over_tutorials():
+    """Remove scngate_ files a run killed before its atexit left behind in
+    TUTORIALS_DIR. Only names that start with scngate_ are touched, so the
+    shipped tutorials stay."""
+    if not os.path.isdir(TUTORIALS_DIR):
+        return
+    for f in os.listdir(TUTORIALS_DIR):
+        if f.startswith("scngate_"):
+            try:
+                os.remove(os.path.join(TUTORIALS_DIR, f))
+            except OSError:
+                pass           # already gone, or open in another run
+
+
 def find_ds(build_dir):
     for c in ("WinBoloDS.exe", "WinBoloDS",
               os.path.join("Release", "WinBoloDS.exe")):
@@ -522,6 +538,7 @@ def main():
     global TUTORIALS_DIR
     TUTORIALS_DIR = os.path.join(os.path.dirname(os.path.abspath(ds)),
                                  "data", "maps", "tutorials")
+    remove_left_over_tutorials()
 
     ncpu = os.cpu_count() or 4
     jobs_max = ncpu if args.jobs == "auto" else max(1, int(args.jobs))
