@@ -3667,6 +3667,13 @@
 /* The replay's recording mode button, which shows the GIF controls */
 #define STR_REEL_RECORD_MODE_TIP                 3150
 
+/* The Log Viewer's Chat panel: title, empty line, team and private notes */
+#define STR_LV_WIN_CHAT                          3100
+#define STR_LV_CHAT_NONE                         3101
+#define STR_LV_CHAT_TEAM                         3102
+#define STR_LV_CHAT_TO                           3103
+#define STR_LV_CHAT_SPECTATOR                    3104
+
 /* The GIF gallery's game groups, path link and delete */
 #define STR_CLIPGIF_THIS_GAME                    3426
 #define STR_CLIPGIF_EARLIER_GAMES                3427

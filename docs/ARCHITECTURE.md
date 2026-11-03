@@ -2420,9 +2420,11 @@ and 2), asks the host to draw the tank names over it as its screen
 does (`lv_drawTankLabelsOver`, which the viewer's own blit and the
 reel's `lvEmbedDrawTankLabels` share), and reads that back, so a GIF
 shows the names at the size they appear rather than a 10 px face
-blown up with the tiles. The gallery's preview decodes a GIF whose
-frames would not all fit in its memory limit shrunk by a whole factor
-(`stbiLoadGifCappedShrink`) instead of refusing it.
+blown up with the tiles. The gallery's preview plays a GIF the way a
+browser does: `stbiGifStreamOpen` in `src/third_party/stb` reads one
+frame at a time as each is shown and rewinds at the end, so the
+preview holds the file's bytes and five frames' worth of pixels
+however long the clip is, rather than every decoded frame at once.
 All twenty-two are each called directly by a test beside them;
 `gfx_settings.c` is also here because `tileloader.c` calls it, and
 `test_fog_roads.c` drives it on its own.
@@ -2461,12 +2463,11 @@ and linking the leaf files is the smaller distortion of the two.
 
 **Rests on** each of the twenty-two still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
-include (other than `dialogs/imgui_nav_outline.cpp`, above), or that
-opens a renderer or a device of its own, has left the category, and
-the answer is to split the leaf back out — the link break is the
-signal, not a build problem to route around by widening the test
-binary. A twenty-third file joins only on the same test: callable with
-no display attached, or it does not go in.
+include, or that opens a renderer or a device of its own, has left the
+category, and the answer is to split the leaf back out — the link
+break is the signal, not a build problem to route around by widening
+the test binary. Another file joins only on the same test: callable
+with no display attached, or it does not go in.
 
 Six `src/mapeditor` files ride the same rule from a different
 directory and are not on that list: `mapeditor_scenario.c`,

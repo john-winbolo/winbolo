@@ -82,8 +82,7 @@ float clipGifLenToSeconds(uint32_t lenMs);
  * GIF's own pixels are those times the scale the screen shows them at
  * (clipGifFrameScale, at most CLIP_GIF_MAX_SCALE), so the widest GIF is
  * CLIP_GIF_MAX_WIDTH * CLIP_GIF_MAX_SCALE pixels. The width cap keeps the
- * file small, and with the gallery's preview memory
- * (CLIP_GIF_PREVIEW_MAX_BYTES) keeps a long GIF playable there. */
+ * file small. */
 #define CLIP_GIF_FRAME_MS   100u
 #define CLIP_GIF_MIN_FRAMES 10u
 #define CLIP_GIF_MAX_FRAMES 300u
@@ -656,18 +655,13 @@ void clipGifFormatTime(int64_t createdUnix, char *out, size_t outLen);
 void clipGifFormatFileStamp(int64_t createdUnix, char *out, size_t outLen);
 
 /* ── Preview ─────────────────────────────────────────────────────────
- * The most memory the gallery's preview gives the decoded frames of one GIF
- * (RGBA, 4 bytes a pixel). A 30 s export of a 480 x 270 view is about
- * 156 MB. A GIF whose CLIP_GIF_MAX_FRAMES frames would need more, such as
- * one made at 2x (960 x 540, four times the pixels) or a 30 s export more
- * than about 460 px high at the 480 px width, is decoded shrunk by a whole
- * factor (stbiLoadGifCappedShrink), so the preview plays the whole clip at
- * a smaller size; the file itself is as it was made. Only a GIF that does
- * not fit even then is not decoded, and the window says it is too large to
- * show. The limit also counts the decoder's own working buffers
- * (STBI_GIF_WORK_FRAMES frames, and the two full frames a shrunk decode
- * keeps), so the frames and those buffers together stay within it. The
- * gallery also does not read a .gif file larger than this. */
+ * The most memory the gallery's preview gives one GIF. The preview reads a
+ * GIF a frame at a time as it plays (stbiGifStreamOpen), as a browser does,
+ * so what it holds is the file's bytes and STBI_GIF_STREAM_FRAMES frames of
+ * the picture's size (RGBA, 4 bytes a pixel): about 10 MB of frames for a
+ * 960 x 540 GIF however long it is. A GIF whose frames alone are over the
+ * limit (a picture of some thousands of pixels a side), or whose file is
+ * larger than it, is not shown, and the window says it is too large. */
 #define CLIP_GIF_PREVIEW_MAX_BYTES ((size_t)256u * 1024u * 1024u)
 
 /* ── Text ────────────────────────────────────────────────────────────

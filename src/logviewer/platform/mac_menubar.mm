@@ -825,6 +825,7 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [winChat setTarget:s_lv_bridge];
     [winMenu addItem:winChat];
     s_lv_winChatItem = winChat;
+
     NSMenuItem *winClips = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_WIN_CLIPS)
         action:@selector(onToggleClips:)

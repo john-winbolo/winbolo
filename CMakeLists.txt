@@ -4786,6 +4786,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # only the test itself is added here; the setting store it also exercises
     # comes in with gfx_settings.c above.
     tests/unit/test_fog_roads.c
+    # What Alt+Enter does in a game the server keeps in classic mode;
+    # header-only logic (fullscreen_key.h).
+    tests/unit/test_fullscreen_key.c
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_newswire_slide.c
     tests/unit/test_sight.c
@@ -6261,7 +6264,6 @@ set(_unit_test_names
     clip_gif_span_move
     clip_gif_grip_box
     clip_gif_frame_scale
-    clip_gif_preview_shrink
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures
@@ -6611,6 +6613,7 @@ set(_unit_test_names
     fog_style_setting
     fog_road_edges
     fog_road_edge_masks
+    fullscreen_key_action
     overview_hud_layout
     newswire_slide
     sight

@@ -1600,7 +1600,6 @@ int run_clip_gif_span_move(void);
 /* Only a small box round the grip moves the span. */
 int run_clip_gif_grip_box(void);
 int run_clip_gif_frame_scale(void);
-int run_clip_gif_preview_shrink(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
@@ -2191,6 +2190,12 @@ int run_fog_style_setting(void);
  * FOG_EDGE_ALL_TERRAIN, 1 in this build. */
 int run_fog_road_edges(void);
 int run_fog_road_edge_masks(void);
+
+/* The full screen key (test_fullscreen_key.c): outside a game it toggles the
+ * app full screen flag, in a game the full screen map, and in a game whose
+ * server withholds the map it goes back to the app flag on the desktop and
+ * does nothing where the window does not own the flag. */
+int run_fullscreen_key_action(void);
 
 /* Line of sight (test_sight.c): the square the player stands on is seen even
  * when it is itself a building, a building across the line hides everything
