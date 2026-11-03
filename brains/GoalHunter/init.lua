@@ -4458,12 +4458,29 @@ function Brain.think(info)
       end
     end
 
+    -- Boat-change re-root: a landing or a boarding changes the layer the tank
+    -- is in, but the slates stay rooted in the old layer until their interval
+    -- runs out (the LONG one waits for done). 20261103_095144_1 bot0: re-rooted
+    -- in a boat at (109,110) after respawn, landed at t=1385 from deep sea (no
+    -- boat left behind), and costs and next steps kept using the boat-rooted
+    -- tree. Count only a change between squares at most one apart, so the
+    -- respawn jump (handled by the respawn re-root) is not counted twice. The
+    -- engine flag changes only on a real exit or on driving onto a boat
+    -- square, so this cannot repeat every tick.
+    local prev_boat = d.last_in_boat
+    if prev_boat ~= nil and prev_boat ~= in_boat and not state._dij_reroot
+       and math.abs(tmx - d.last_mx) <= 1 and math.abs(tmy - d.last_my) <= 1 then
+      state._dij_reroot = "boat"
+    end
+    d.last_in_boat, d.last_mx, d.last_my = in_boat, tmx, tmy
+
     -- Respawn re-root: restart ALL slates from the new spawn position now,
     -- instead of waiting out each slate's interval. Mains get stepped/filled
     -- below; the backups are re-seeded empty here so far-tile lookups fall back
     -- to "unknown" (fallback cost) rather than serving DEATH-rooted-cheap costs
     -- until a main completes and overwrites them via the normal copy.
     if state._dij_reroot then
+      local reroot_why = state._dij_reroot
       state._dij_reroot = nil
       start_slate(SLATE_SHORT_MAIN,   C.DIJKSTRA_SHORT_MAX_COST, in_boat, in_boat)
       start_slate(SLATE_SHORT_BACKUP, C.DIJKSTRA_SHORT_MAX_COST, in_boat, in_boat)
@@ -4474,7 +4491,13 @@ function Brain.think(info)
       -- main completes (see the step loop below), so the surface goes live in
       -- ~2.5s instead of waiting out the recompute interval (~15s of INF after
       -- a respawn). No special-case flag needed — it's the general behavior.
-      if BRAIN_DEBUG_MODE then print2(string.format("DIJ_REROOT t=%d src=(%d,%d) — all slates re-rooted after respawn", now, tmx, tmy)) end
+      if BRAIN_DEBUG_MODE then
+        if reroot_why == "boat" then
+          print2(string.format("DIJ_REROOT t=%d src=(%d,%d) boat %d->%d — slates re-rooted on boat change", now, tmx, tmy, prev_boat, in_boat))
+        else
+          print2(string.format("DIJ_REROOT t=%d src=(%d,%d) — all slates re-rooted after respawn", now, tmx, tmy))
+        end
+      end
     end
 
     -- Short: land-only unless on a boat. Long: always allow boat.
