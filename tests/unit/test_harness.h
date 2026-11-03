@@ -4680,6 +4680,7 @@ int run_scenario_hint_records(void);
 int run_bot_init_table_two_bots_keep_own(void);
 int run_bot_init_table_empty_when_none(void);
 int run_bot_init_arg_text_to_table(void);
+int run_bot_init_cfg_tokens_all_count(void);
 
 /* New data for a bot already playing (test_scenario_bot_init.c): the op
  * lands a tick later and replaces the table whole, every refusal in the
