@@ -665,6 +665,7 @@ int run_loadbrowser_rename_splits_names(void);
 int run_loadbrowser_rename_family_plan(void);
 int run_loadbrowser_rename_rejections(void);
 int run_loadbrowser_rename_applies(void);
+int run_session_name_natural_sort(void);
 
 int run_net_impair(void);
 

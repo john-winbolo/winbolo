@@ -89,6 +89,14 @@ int loadBrowserFindSegment(const LoadSessionEntry *list, int count,
  * than paths. NULL is never equal to anything. */
 bool loadBrowserNameEq(const char *a, const char *b);
 
+/* Natural order for session names, for the Load Session list: a run of
+ * digits compares by its number value, so "x_part2of23" comes before
+ * "x_part10of23" (plain text order would put part10 first). Letters compare
+ * with the same case fold as loadBrowserNameEq. Names that are still equal
+ * fall back to plain strcmp, so the order is total. qsort-style result:
+ * <0, 0 or >0. NULL sorts before any name. */
+int loadBrowserNaturalCmp(const char *a, const char *b);
+
 /* Decompose a session BASENAME into its four pieces:
  *
  *   "20260903_011013_2_oilrig_part1of3"

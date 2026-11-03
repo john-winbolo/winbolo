@@ -192,7 +192,7 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
     int chosen = -1;
     bool renamed = false;
 
-    ImGui::SetNextWindowSize(ImVec2(660, 440), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(1000, 440), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Load Session", open)) {
         ImGui::TextUnformatted(
             "Replay a winbolods recording. Loading ABANDONS the current game "
@@ -250,10 +250,17 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
             ImGui::TextDisabled("No session matches \"%s\".", s_filter);
         } else if (ImGui::BeginTable("sessions", 7,
                        ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
-                       ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupScrollFreeze(0, 1);
-            ImGui::TableSetupColumn("Session",  ImGuiTableColumnFlags_WidthStretch, 2.0f);
-            ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthStretch, 1.5f);
+                       ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX |
+                       ImGuiTableFlags_Resizable |
+                       ImGuiTableFlags_SizingFixedFit)) {
+            /* Every column can be dragged wider or narrower. The Session
+             * column starts wide enough for a long split-part name such as
+             * "20261103_132136_1_v2_anchor_helm_s205_part23of23"; when the
+             * columns add up to more than the window, ScrollX scrolls the
+             * table sideways instead of squeezing the names. */
+            ImGui::TableSetupScrollFreeze(1, 1);
+            ImGui::TableSetupColumn("Session",  ImGuiTableColumnFlags_WidthFixed,  380.0f);
+            ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed,  160.0f);
             ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed,   60.0f);
             ImGui::TableSetupColumn("Length",   ImGuiTableColumnFlags_WidthFixed,   52.0f);
             ImGui::TableSetupColumn("Game clock", ImGuiTableColumnFlags_WidthFixed, 90.0f);

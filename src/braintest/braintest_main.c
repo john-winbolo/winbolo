@@ -1333,6 +1333,13 @@ static void peekCacheStore(const char *name, uint64_t size, int64_t mtime,
     c->bots = bots; c->loadable = loadable;
 }
 
+/* Session list order: natural name order, so a split game lists part1,
+ * part2, ... part10 by number rather than as text (part10 before part1). */
+static int sessionNameCmp(const void *a, const void *b) {
+    return loadBrowserNaturalCmp(((const LoadSessionEntry *)a)->name,
+                                 ((const LoadSessionEntry *)b)->name);
+}
+
 static void scanSessions(void) {
     static bool ticksReady = false;
     if (!ticksReady) {
@@ -1389,6 +1396,8 @@ static void scanSessions(void) {
         if (e->loadable) g_sessionCount++;
     }
     SDL_free(entries);
+    SDL_qsort(g_sessionList, (size_t)g_sessionCount, sizeof g_sessionList[0],
+              sessionNameCmp);
 }
 
 /* Spawn a fresh BrainTest replaying `dir` and quit this one. */
