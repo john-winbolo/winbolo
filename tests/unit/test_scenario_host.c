@@ -182,7 +182,7 @@
 #include "scenario_manifest_json.h" /* scnManifestParse — the other form of
                                      * the table the trigger case reads */
 #include "scenario_validate.h"    /* scenarioHostManifest */
-#include "tutorial_maps.h"        /* TUTORIAL_MAPS_SCRIPT_POPUPS */
+#include "tutorial_scripts.h"     /* TUTORIAL_MAPS_SCRIPT_POPUPS */
 #include "test_harness.h"
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
@@ -4307,7 +4307,8 @@ static void shPopupDirsDrop(void) {
     (void)SDL_RemovePath(SH_POPUP_TUT_ROOT);
 }
 
-/* A map's script outside data/maps/tutorials, and a mod, with
+/* A map's script outside the shipped tutorials folder, a map's script in a
+ * maps/tutorials folder that is not under the data folder, and a mod, with
  * TUTORIAL_MAPS_SCRIPT_POPUPS 0: game.popup is nil at the top level and in a
  * hook, and a call is the Lua error for a nil value. */
 int run_scenario_host_popup_nil_outside_tutorials(void) {
@@ -4331,7 +4332,24 @@ int run_scenario_host_popup_nil_outside_tutorials(void) {
                   "a map script outside the tutorials wrote '%s', expected "
                   "game.popup to be nil", got);
 
-    /* A mod, at a path that would pass for a tutorial's. Only a mod with
+    /* A map's script in a maps/tutorials folder of its own, with the data
+     * folder left at the default: the folder's names are not enough. */
+    UT_ASSERT(shPopupDirsMake());
+    UT_ASSERT(shPut(SH_POPUP_TUT_MAP, lua));
+    scenarioHostSetDataRoot(NULL);
+    rc = shPopupRun(shPopupAttachTutorial, got, sizeof(got));
+    shDrop(SH_POPUP_TUT_MAP);
+    shPopupDirsDrop();
+    if (rc != 0) return rc;
+    UT_ASSERT_MSG(strstr(got, "top=nil;") != NULL &&
+                      strstr(got, "setup=nil;") != NULL &&
+                      strstr(got, "call=nil;") != NULL &&
+                      strstr(got, "function") == NULL,
+                  "a map script in a maps/tutorials folder outside the data "
+                  "folder wrote '%s', expected game.popup to be nil", got);
+
+    /* A mod, at a path that passes for a tutorial's: the data folder is the
+     * test's own folder. Only a mod with
      * bound = false can be played over another map, so the mod's first line
      * says so. The rest of the script is the same. */
     {
@@ -4349,7 +4367,9 @@ int run_scenario_host_popup_nil_outside_tutorials(void) {
         fputs(lua, f);
         fclose(f);
     }
+    scenarioHostSetDataRoot(SH_POPUP_TUT_ROOT);
     rc = shPopupRun(shPopupAttachMod, got, sizeof(got));
+    scenarioHostSetDataRoot(NULL);
     remove(path);
     shPopupDirsDrop();
     if (rc != 0) return rc;
@@ -4361,8 +4381,9 @@ int run_scenario_host_popup_nil_outside_tutorials(void) {
     return 0;
 }
 
-/* A map's own script in a maps/tutorials folder, as a shipped tutorial is:
- * game.popup is there at the top level and in a hook. */
+/* A map's own script directly in <data folder>/maps/tutorials, as a shipped
+ * tutorial is: game.popup is there at the top level and in a hook. The data
+ * folder is the test's own folder here (scenarioHostSetDataRoot). */
 int run_scenario_host_popup_in_tutorial(void) {
     char lua[2048];
     char got[512];
@@ -4371,7 +4392,9 @@ int run_scenario_host_popup_in_tutorial(void) {
     shScript(lua, sizeof(lua), kShPopupBody);
     UT_ASSERT(shPopupDirsMake());
     UT_ASSERT(shPut(SH_POPUP_TUT_MAP, lua));
+    scenarioHostSetDataRoot(SH_POPUP_TUT_ROOT);
     rc = shPopupRun(shPopupAttachTutorial, got, sizeof(got));
+    scenarioHostSetDataRoot(NULL);
     shDrop(SH_POPUP_TUT_MAP);
     shPopupDirsDrop();
     if (rc != 0) return rc;
@@ -4384,8 +4407,10 @@ int run_scenario_host_popup_in_tutorial(void) {
 }
 
 /* -validate reads the same rule: the stub game table has no popup outside
- * the tutorials, and a popup trigger action there is an issue. In a
- * tutorial's script both are fine. */
+ * the shipped tutorials folder, and a popup trigger action there is an
+ * issue. In a tutorial's script both are fine. The data folder is "data" in
+ * the working directory here, so the test does not depend on where the
+ * program is; a maps/tutorials folder under another folder is outside. */
 int run_scenario_validate_popup_tutorial_only(void) {
     static const char kOther[] =
         "scenario = { api = 1, triggers = {\n"
@@ -4401,25 +4426,44 @@ int run_scenario_validate_popup_tutorial_only(void) {
     uint16_t           i;
     bool               found = false;
 
+    static const char *const kOutside[] = {
+        "data/maps/Other.scenario.lua",
+        "packs/data/maps/tutorials/Tut.scenario.lua",
+        "data/maps/tutorials/sub/Tut.scenario.lua",
+    };
+    size_t k;
+
     r = (ScnValidateResult *)calloc(1, sizeof(*r));
     UT_ASSERT(r != NULL);
+    scenarioHostSetDataRoot("data");
 
-    (void)scenarioValidateSource(NULL, kOther, strlen(kOther),
-                                 "data/maps/Other.scenario.lua", NULL, r);
-    UT_ASSERT_MSG(r->haveManifest, "the script outside the tutorials did "
-                  "not run: game.popup was on the stub table");
-    for (i = 0; i < r->count; i++) {
-        if (strcmp(r->issues[i].key, "triggers[0].actions[0]") == 0 &&
-            strstr(r->issues[i].message, "built-in tutorial") != NULL) {
-            found = true;
+    for (k = 0; k < sizeof(kOutside) / sizeof(kOutside[0]); k++) {
+        bool ran;
+
+        found = false;
+        (void)scenarioValidateSource(NULL, kOther, strlen(kOther),
+                                     kOutside[k], NULL, r);
+        ran = r->haveManifest;
+        for (i = 0; i < r->count; i++) {
+            if (strcmp(r->issues[i].key, "triggers[0].actions[0]") == 0 &&
+                strstr(r->issues[i].message, "built-in tutorial") != NULL) {
+                found = true;
+            }
         }
+        if (!ran || !found) {
+            scenarioHostSetDataRoot(NULL);
+            free(r);
+        }
+        UT_ASSERT_MSG(ran, "%s did not run: game.popup was on the stub "
+                      "table", kOutside[k]);
+        UT_ASSERT_MSG(found, "the popup action in %s was not reported",
+                      kOutside[k]);
     }
-    UT_ASSERT_MSG(found, "the popup action outside the tutorials was not "
-                  "reported");
 
     (void)scenarioValidateSource(NULL, kTut, strlen(kTut),
                                  "data/maps/tutorials/Tut.scenario.lua", NULL,
                                  r);
+    scenarioHostSetDataRoot(NULL);
     UT_ASSERT_MSG(r->haveManifest, "the tutorial script did not run: "
                   "game.popup was missing from the stub table");
     for (i = 0; i < r->count; i++) {
@@ -4428,5 +4472,166 @@ int run_scenario_validate_popup_tutorial_only(void) {
                       r->issues[i].message);
     }
     free(r);
+    return 0;
+}
+
+/* The disk half of the shipped-tutorial test,
+ * scenarioHostScriptIsShippedTutorial: a script directly in
+ * <data folder>/maps/tutorials, with both paths made full and canonical, so
+ * "." and "..", either slash and (where the file system ignores it) the case
+ * make no difference, and the same folder names anywhere else do not pass. */
+#define SH_OTHER_ROOT "scnhost_popup_other"
+#define SH_OTHER_DIR  SH_OTHER_ROOT "/maps/tutorials"
+
+int run_scenario_host_shipped_tutorial_rooted(void) {
+    static const char kIn[] = SH_POPUP_TUT_DIR "/Popup.scenario.lua";
+    char              longRoot[1100];
+    bool              ok  = true;
+    const char       *why = "";
+
+    UT_ASSERT(shPopupDirsMake());
+    (void)SDL_RemovePath(SH_OTHER_DIR);
+    if (!SDL_CreateDirectory(SH_OTHER_DIR)) {
+        shPopupDirsDrop();
+        UT_ASSERT_MSG(false, "could not make %s", SH_OTHER_DIR);
+    }
+    scenarioHostSetDataRoot(SH_POPUP_TUT_ROOT);
+
+#define SH_ROOTED(cond, text) \
+    do { if (ok && !(cond)) { ok = false; why = (text); } } while (0)
+    /* In the folder, whether or not the file is there yet. */
+    SH_ROOTED(scenarioHostScriptIsShippedTutorial(kIn), kIn);
+    SH_ROOTED(scenarioHostScriptIsShippedTutorial(
+                  "./" SH_POPUP_TUT_ROOT "/maps/../maps/./tutorials/x.lua"),
+              "the path with . and ..");
+    SH_ROOTED(scenarioHostScriptIsShippedTutorial(
+                  SH_POPUP_TUT_ROOT "\\maps\\tutorials\\x.lua"),
+              "the path with back slashes");
+#if defined(_WIN32) || defined(__APPLE__)
+    SH_ROOTED(scenarioHostScriptIsShippedTutorial(
+                  "SCNHOST_POPUP_TUT/MAPS/Tutorials/x.lua"),
+              "the path in another case");
+#endif
+    /* Not in the folder. */
+    SH_ROOTED(!scenarioHostScriptIsShippedTutorial(NULL), "NULL");
+    SH_ROOTED(!scenarioHostScriptIsShippedTutorial(""), "an empty path");
+    SH_ROOTED(!scenarioHostScriptIsShippedTutorial(SH_OTHER_DIR "/x.lua"),
+              "a maps/tutorials folder outside the data folder");
+    SH_ROOTED(!scenarioHostScriptIsShippedTutorial(
+                  SH_POPUP_TUT_ROOT "/../" SH_OTHER_DIR "/x.lua"),
+              "a .. out of the data folder");
+    SH_ROOTED(!scenarioHostScriptIsShippedTutorial(
+                  SH_POPUP_TUT_DIR "/sub/x.lua"),
+              "a folder below the tutorials folder");
+    SH_ROOTED(!scenarioHostScriptIsShippedTutorial(
+                  SH_POPUP_TUT_ROOT "/maps/x.lua"),
+              "the maps folder itself");
+    SH_ROOTED(!scenarioHostScriptIsShippedTutorial("maps/tutorials/x.lua"),
+              "a bare maps/tutorials path");
+
+    /* A trailing slash on the data folder makes no difference. */
+    scenarioHostSetDataRoot(SH_POPUP_TUT_ROOT "/");
+    SH_ROOTED(scenarioHostScriptIsShippedTutorial(kIn),
+              "the data folder with a trailing slash");
+
+    /* The default data folder is beside the program, not this folder. */
+    scenarioHostSetDataRoot(NULL);
+    SH_ROOTED(!scenarioHostScriptIsShippedTutorial(kIn),
+              "the test's folder with the default data folder");
+
+    /* A data folder too long to keep matches nothing. */
+    memset(longRoot, 'a', sizeof(longRoot) - 1);
+    longRoot[sizeof(longRoot) - 1] = '\0';
+    scenarioHostSetDataRoot(longRoot);
+    SH_ROOTED(!scenarioHostScriptIsShippedTutorial(kIn),
+              "a data folder too long to keep");
+#undef SH_ROOTED
+
+    scenarioHostSetDataRoot(NULL);
+    (void)SDL_RemovePath(SH_OTHER_DIR);
+    (void)SDL_RemovePath(SH_OTHER_ROOT "/maps");
+    (void)SDL_RemovePath(SH_OTHER_ROOT);
+    shPopupDirsDrop();
+    UT_ASSERT_MSG(ok, "the shipped-tutorial test was wrong for %s", why);
+    return 0;
+}
+
+/* The script the unsafe case runs. Under -allow-unsafe-scripts it has the
+ * whole standard library, and tries every route to the call it has: its own
+ * game table, the real globals through package.loaded._G, a chunk from
+ * load() (which runs in the real globals), and every table in the registry
+ * (each script's own globals among them), at the top level and in a hook. */
+static const char kShPopupUnsafeBody[] =
+    "scenario = { name = \"Popup\", api = 1 }\n"
+    "local function routes(where)\n"
+    "  local reg = \"none\"\n"
+    "  for _, v in pairs(debug.getregistry()) do\n"
+    "    if type(v) == \"table\" then\n"
+    "      local g = rawget(v, \"game\")\n"
+    "      if type(g) == \"table\" and rawget(g, \"popup\") ~= nil then\n"
+    "        reg = \"found\"\n"
+    "      end\n"
+    "      if rawget(v, \"popup\") ~= nil then reg = \"found\" end\n"
+    "    end\n"
+    "  end\n"
+    "  note(where .. \":env=\" .. type(game.popup) ..\n"
+    "       \",pkg=\" .. type(package.loaded._G.game.popup) ..\n"
+    "       \",load=\" .. type(load(\"return game.popup\")()) ..\n"
+    "       \",reg=\" .. reg .. \";\")\n"
+    "end\n"
+    "routes(\"top\")\n"
+    "function on_setup() routes(\"setup\") end\n";
+
+/* Under -allow-unsafe-scripts, a map's script outside the shipped tutorials
+ * finds game.popup nil on every route: the server takes the field off the
+ * state's one real game table, not off a copy. A shipped tutorial on its own
+ * keeps the call there. */
+int run_scenario_host_popup_unsafe_unreachable(void) {
+    char lua[4096];
+    char got[512];
+    int  rc;
+    bool good;
+
+    shScript(lua, sizeof(lua), kShPopupUnsafeBody);
+    scenarioHostSetUnsafeScripts(true);
+
+    /* Another map's own script. */
+    if (!shPut(SH_POPUP_MAP, lua)) {
+        scenarioHostSetUnsafeScripts(false);
+        UT_ASSERT_MSG(false, "could not write %s's script", SH_POPUP_MAP);
+    }
+    rc = shPopupRun(shPopupAttachMap, got, sizeof(got));
+    shDrop(SH_POPUP_MAP);
+    if (rc != 0) {
+        scenarioHostSetUnsafeScripts(false);
+        return rc;
+    }
+    good = strstr(got, "top:env=nil,pkg=nil,load=nil,reg=none;") != NULL &&
+           strstr(got, "setup:env=nil,pkg=nil,load=nil,reg=none;") != NULL;
+    if (!good) {
+        scenarioHostSetUnsafeScripts(false);
+    }
+    UT_ASSERT_MSG(good, "a map script outside the tutorials under "
+                  "-allow-unsafe-scripts wrote '%s', expected game.popup to "
+                  "be nil on every route", got);
+
+    /* A shipped tutorial's own script, on its own. */
+    if (!shPopupDirsMake() || !shPut(SH_POPUP_TUT_MAP, lua)) {
+        shPopupDirsDrop();
+        scenarioHostSetUnsafeScripts(false);
+        UT_ASSERT_MSG(false, "could not write the tutorial's script");
+    }
+    scenarioHostSetDataRoot(SH_POPUP_TUT_ROOT);
+    rc = shPopupRun(shPopupAttachTutorial, got, sizeof(got));
+    scenarioHostSetDataRoot(NULL);
+    scenarioHostSetUnsafeScripts(false);
+    shDrop(SH_POPUP_TUT_MAP);
+    shPopupDirsDrop();
+    if (rc != 0) return rc;
+    UT_ASSERT_MSG(strstr(got, "top:env=function,pkg=function,"
+                              "load=function") != NULL &&
+                      strstr(got, "setup:env=function") != NULL,
+                  "a tutorial's script under -allow-unsafe-scripts wrote "
+                  "'%s', expected game.popup to be a function", got);
     return 0;
 }

@@ -90,6 +90,16 @@ BRAINS = os.path.join(ROOT, "tests", "brains")
 PRELUDE = os.path.join(HERE, "scenario_compat.lua")
 SCRIPT_MARK = "--@@SCRIPT@@"
 
+# The shipped tutorials folder of the server under test: data/maps/tutorials
+# in the data folder beside WinBoloDS, which is where the server looks for the
+# shipped tutorials (scenarioHostScriptIsShippedTutorial in
+# src/scenario/scenario_host.c). Set by main() once the server is found.
+TUTORIALS_DIR = None
+# The files this run put in TUTORIALS_DIR, so that they are taken away
+# however the run ends. Only these: the folder and the tutorials in it are not
+# ours.
+STAGED_TUTORIAL_FILES = []
+
 DEFAULTS = {
     "ticks": "6000",
     "bots": "1",
@@ -272,6 +282,8 @@ class Job(object):
         self.log_path = os.path.join(log_dir, name + ".log")
         self.work = None
         self.map_dir = None      # where the arena's map and script go
+        self.stem = name         # the map's file name, less ".map"
+        self.staged = []         # files put in TUTORIALS_DIR for this arena
         self.proc = None
         self.log = None
         self.t0 = None
@@ -282,21 +294,33 @@ class Job(object):
 
     def prepare(self):
         self.work = tempfile.mkdtemp(prefix="scngate_" + self.name + "_")
-        # A script= arena of a shipped tutorial runs from a maps/tutorials
-        # folder, as the tutorial does. The server gives game.popup only to a
-        # map script in such a folder (tutorialMapsScriptHasPopup in
-        # src/gui/sdl3/tutorial_maps.h), and the tutorials call it.
+        # A script= arena of a shipped tutorial runs from the shipped
+        # tutorials folder, as the tutorial does. The server gives game.popup
+        # only to a map script directly in data/maps/tutorials in the data
+        # folder beside WinBoloDS (tutorialMapsScriptHasPopup in
+        # src/bolo/public/tutorial_scripts.h), and the tutorials call it. A
+        # maps/tutorials folder anywhere else, the temporary folder included,
+        # does not get the call. The two files go in under a scngate_ name,
+        # so they cannot replace a shipped tutorial, and are taken away when
+        # the arena ends (finish) or the run does (unstage_tutorials).
         self.map_dir = self.work
         script = (self.opts.get("script") or "").replace("\\", "/")
         if os.path.dirname(script).lower() == "data/maps/tutorials":
-            self.map_dir = os.path.join(self.work, "maps", "tutorials")
-            os.makedirs(self.map_dir)
+            if not os.path.isdir(TUTORIALS_DIR):
+                sys.exit("%s: %s is missing; the data folder beside "
+                         "WinBoloDS has to hold the shipped tutorials"
+                         % (self.name, TUTORIALS_DIR))
+            self.map_dir = TUTORIALS_DIR
+            self.stem = "scngate_" + self.name
+            self.staged = [os.path.join(self.map_dir, self.stem + ext)
+                           for ext in (".map", ".scenario.lua")]
+            STAGED_TUTORIAL_FILES.extend(self.staged)
         shutil.copy(os.path.join(MAPS, self.name + ".map"),
-                    os.path.join(self.map_dir, self.name + ".map"))
+                    os.path.join(self.map_dir, self.stem + ".map"))
         with open(os.path.join(HERE, self.name + ".scenario.lua"),
                   encoding="utf-8") as f:
             body = f.read()
-        out = os.path.join(self.map_dir, self.name + ".scenario.lua")
+        out = os.path.join(self.map_dir, self.stem + ".scenario.lua")
         if self.opts.get("script"):
             self.prepare_with_script(out, body)
             return
@@ -363,7 +387,7 @@ class Job(object):
     def command(self, ds):
         o = self.opts
         cmd = [ds,
-               "-map", os.path.join(self.map_dir, self.name + ".map"),
+               "-map", os.path.join(self.map_dir, self.stem + ".map"),
                "-port", "0",
                "-nolobby",
                "-gametype", o["gametype"],
@@ -424,6 +448,7 @@ class Job(object):
         self.read_verdict()
         if self.work and os.path.isdir(self.work):
             shutil.rmtree(self.work, ignore_errors=True)
+        unstage_tutorials(self.staged)
         return True
 
     def read_verdict(self):
@@ -460,6 +485,15 @@ class Job(object):
         return "\n".join("      " + l for l in lines[-n:])
 
 
+def unstage_tutorials(files):
+    """Remove the files a tutorial arena put in TUTORIALS_DIR."""
+    for f in files:
+        try:
+            os.remove(f)
+        except OSError:
+            pass               # already gone
+
+
 def find_ds(build_dir):
     for c in ("WinBoloDS.exe", "WinBoloDS",
               os.path.join("Release", "WinBoloDS.exe")):
@@ -485,6 +519,9 @@ def main():
     ds = find_ds(build_dir)
     if ds is None:
         sys.exit("no WinBoloDS under %s" % build_dir)
+    global TUTORIALS_DIR
+    TUTORIALS_DIR = os.path.join(os.path.dirname(os.path.abspath(ds)),
+                                 "data", "maps", "tutorials")
 
     ncpu = os.cpu_count() or 4
     jobs_max = ncpu if args.jobs == "auto" else max(1, int(args.jobs))
@@ -497,6 +534,7 @@ def main():
     # Staged before the first arena starts and taken away however the run
     # ends, including a failing one.
     atexit.register(unstage_brains, *stage_brains(build_dir))
+    atexit.register(unstage_tutorials, STAGED_TUTORIAL_FILES)
 
     pending, skipped, expected = [], [], {}
     for name in arena_names(args.only, args.skip):

@@ -82,8 +82,9 @@ bool clientFrontAnyPause(void);
 /* Once a frame in a single-player game, with the client mutex free:
  *   - hide the main menu's Tutorial button, and save that, once a shipped
  *     tutorial's script says the player has finished it
- *     (game.tutorial_done), when the running map's own script is in
- *     data/maps/tutorials;
+ *     (game.tutorial_done), when the running map's own script is directly
+ *     in the shipped data folder's maps/tutorials
+ *     (scenarioHostScriptIsShippedTutorial);
  *   - tell the server the player's language and input (game.lang,
  *     game.input) when either changed since it was last told. */
 void clientFrontPollScenarioPlayer(void);

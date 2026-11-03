@@ -2136,7 +2136,7 @@ to escort a person stays where it is.
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
-| `game.tutorial_done(p)` | Says that seat `p`'s player has finished a tutorial. In a single-player game of a map in `data/maps/tutorials`, the main menu stops showing its Tutorial button. Anywhere else it changes nothing. See [Finishing a tutorial](#finishing-a-tutorial). |
+| `game.tutorial_done(p)` | Says that seat `p`'s player has finished a tutorial. In a single-player game of a map in the shipped `data/maps/tutorials` folder, the main menu stops showing its Tutorial button. Anywhere else it changes nothing. See [Finishing a tutorial](#finishing-a-tutorial). |
 
 `message` and `say` are two different voices, and the difference decides
 whether a bot hears the line at all.
@@ -2211,10 +2211,11 @@ Tutorial entry in Settings turns it back on.
 The server only marks the seat. Nothing is sent to any client and nothing
 goes in the replay. The one reader is a single-player client, whose server
 runs in the same process: once a frame it takes the mark for its own seat.
-It acts on the mark only when the running map's own script is in
-`data/maps/tutorials`. So the call does nothing on a hosted or dedicated
-server, nothing for any other seat, and nothing for a script outside that
-folder.
+It acts on the mark only when the running map's own script is directly in
+the shipped `data/maps/tutorials` folder: the one in the data folder beside
+the program (see [Popups](#popups)). So the call does nothing on a hosted or
+dedicated server, nothing for any other seat, and nothing for a script
+outside that folder.
 
 The call is refused with `SCN_OP_NO_SUCH_PLAYER` when `p` is not a seat or
 nobody is in it.
@@ -2319,7 +2320,7 @@ exist.
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
 | `game.announce(text[, seconds[, target[, position]]])` | A big line in the Scenario Text window for that many seconds. Left out, `position` centres the line across the window. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line further left or right; only the share across is used. Empty text takes the line away. |
-| `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. Only the built-in tutorials (a map's own script in `data/maps/tutorials`) have this call. In every other scenario and in every mod, `game.popup` is nil. While the box is up, only the built-in tutorials pause the game: a single-player game, with its server in this process. See [Popups](#popups). |
+| `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. Only the built-in tutorials (a map's own script in the shipped `data/maps/tutorials` folder) have this call. In every other scenario and in every mod, `game.popup` is nil. While the box is up, only the built-in tutorials pause the game: a single-player game, with its server in this process. See [Popups](#popups). |
 | `game.status(text[, countdown_to[, target]])` | The status line: one line in the top row of the Scenario Text window, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
@@ -2519,12 +2520,20 @@ is for a sentence or two the player has to read before going on, where
 next when one is closed. A popup is not kept: a player who joins after it
 was sent does not see it.
 
-Only the built-in tutorials have `game.popup`: the script beside a map in
-`data/maps/tutorials`. In every other scenario and in every mod the server
-leaves it off the script's game table, so `game.popup` is nil there. A call
-stops the script with Lua's usual "attempt to call a nil value" error, and a
-`popup` trigger action does nothing (`-validate` says so). A script that
-runs in both places can test for it first:
+Only the built-in tutorials have `game.popup`: the script beside a map
+directly in the shipped `data/maps/tutorials` folder. That is the
+`data` folder beside the program (beside `WinBolo` or `WinBoloDS`, or in the
+app bundle), the same folder the shipped mods are read from. The server
+makes both paths full and canonical first, so `..`, links, either slash and
+(on Windows and macOS) the case make no difference. A folder named
+`maps/tutorials` anywhere else does not count: one in your own maps folder,
+in a map pack, in an upload, or in the install folder outside `data`. A map
+in a folder below `data/maps/tutorials` does not count either. In every
+other scenario and in every mod the server leaves `popup` off the script's
+game table, so `game.popup` is nil there. A call stops the script with Lua's
+usual "attempt to call a nil value" error, and a `popup` trigger action does
+nothing (`-validate` says so). A script that runs in both places can test
+for it first:
 
 ```lua
 if game.popup then
@@ -2534,9 +2543,26 @@ else
 end
 ```
 
+`-validate` (and the map editor's check, and the check the server makes of
+an uploaded map's script) does not know whether a file is a map's script or
+a mod, so it reads every file as a map's own script, at the path it is
+given: run `-validate` with the path from the map's folder up (for example
+`data/maps/tutorials/Tutorial.scenario.lua`), not a bare file name from
+inside the folder. A mod in the tutorials folder passes the check with
+`game.popup` and is then refused by the server, because a mod never has the
+call. An uploaded map's script is checked at a temporary path, so one that
+calls `game.popup` at its top level is refused at upload.
+
+Under `-allow-unsafe-scripts` every script in a Lua state can reach every
+table in it (`debug.getregistry()`, `package.loaded._G`, `load`), so the
+server takes `popup` off the one real game table, not off a copy. If any
+script on the list may not have the call, no script on the list has it: a
+built-in tutorial played with a mod in that mode finds `game.popup` nil, as
+the mod does. A built-in tutorial on its own keeps the call there.
+
 This is one setting in the game (`TUTORIAL_MAPS_SCRIPT_POPUPS` in
-`src/gui/sdl3/tutorial_maps.h`). A later build may give every scenario the
-call.
+`src/bolo/public/tutorial_scripts.h`). A later build may give every scenario
+the call.
 
 A popup belongs to its round. When the round ends (`game.end_round`, the time
 limit, or a return to the lobby) the client closes a popup that is still up

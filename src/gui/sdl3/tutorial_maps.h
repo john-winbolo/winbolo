@@ -18,14 +18,15 @@
 /*********************************************************
  * Name:          tutorial_maps.h
  * Purpose:
- *   Where the shipped tutorials live, and the test the
- *   menu's background game puts each map name through, so
- *   that it never shows a tutorial. The desktop, mobile and
- *   web menus share both, and the test for whether a
- *   scenario popup pauses the game. The scenario host and
- *   -validate read the test for which scripts have the
- *   popup call. Pure, so the unit tests check them without
- *   a menu (test_bg_map_pick.c).
+ *   The test the menu's background game puts each map name
+ *   through, so that it never shows a tutorial, and the
+ *   test for whether a scenario popup pauses the game. The
+ *   desktop, mobile and web menus share both. The tutorials
+ *   folder, the popup flag and the popup rule are in
+ *   src/bolo/public/tutorial_scripts.h, which the scenario
+ *   library and the dedicated server read too. Pure, so the
+ *   unit tests check them without a menu
+ *   (test_bg_map_pick.c).
  *********************************************************/
 
 #ifndef TUTORIAL_MAPS_H
@@ -34,20 +35,12 @@
 #include <stdbool.h>
 #include <string.h>
 
-/* The folder under data/maps that holds every shipped tutorial. Each
- * tutorial is a map with its scenario script beside it, as any scripted
- * map is, so the map chooser, the lobby's map list and the packaging treat
- * the folder as they treat any other folder of maps. */
-#define TUTORIAL_MAPS_DIR_NAME "tutorials"
-#define TUTORIAL_MAPS_DIR      "data/maps/" TUTORIAL_MAPS_DIR_NAME
+/* TUTORIAL_MAPS_DIR, TUTORIAL_MAPS_SCRIPT_POPUPS, tutorialMapsFold and the
+ * popup rule. */
+#include "tutorial_scripts.h"
 
 /* The tutorial the main menu's Tutorial entry starts. */
 #define TUTORIAL_MENU_MAP      TUTORIAL_MAPS_DIR "/Tutorial.map"
-
-/* ASCII case folding for the name test below, so it does not need SDL. */
-static inline char tutorialMapsFold(char c) {
-    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
-}
 
 /* Whether a and b are the same name, ignoring ASCII case. */
 static inline bool tutorialMapsSameName(const char *a, const char *b) {
@@ -93,86 +86,18 @@ static inline bool bgMapNameAllowed(const char *relPath) {
     return true;
 }
 
-/* Whether path names a file in the shipped tutorials folder: its folder is
- * TUTORIAL_MAPS_DIR_NAME and that folder's own folder is "maps". Either
- * slash, any case, and anything in front, so a relative path, an absolute
- * one and an app bundle's path all pass. The single-player frontend asks it
- * of the running map's own script before a script's game.tutorial_done may
- * hide the main menu's Tutorial button. */
-static inline bool tutorialMapsIsShippedTutorial(const char *path) {
-    const char *seg[3];   /* starts of the file, its folder, that folder's */
-    size_t      len[3];
-    const char *end;
-    const char *p;
-    int         i;
-
-    if (path == NULL || path[0] == '\0') return false;
-    end = path + strlen(path);
-    for (i = 0; i < 3; i++) {
-        p = end;
-        while (p > path && p[-1] != '/' && p[-1] != '\\') p--;
-        seg[i] = p;
-        len[i] = (size_t)(end - p);
-        if (len[i] == 0) return false;
-        if (i < 2) {
-            if (p == path) return false;   /* no folder in front of it */
-            end = p - 1;
-        }
-    }
-    {
-        const char *names[2] = { TUTORIAL_MAPS_DIR_NAME, "maps" };
-        for (i = 0; i < 2; i++) {
-            size_t k;
-            if (len[i + 1] != strlen(names[i])) return false;
-            for (k = 0; k < len[i + 1]; k++) {
-                if (tutorialMapsFold(seg[i + 1][k]) != names[i][k]) {
-                    return false;
-                }
-            }
-        }
-    }
-    return true;
-}
-
 /* Whether a scenario popup (game.popup) pauses the game while it is open.
  * Only the shipped tutorials pause: a single-player game, with its server in
- * this process, whose running map's own script is in the tutorials folder.
- * Popups in any other game, single player or not, leave the game running.
- * mapScriptPath is the running map's own script, "" or NULL for none. */
+ * this process, whose running map's own script is directly in the shipped
+ * tutorials folder under the data folder. mapScriptShipped is that test's
+ * answer for the running map's own script
+ * (scenarioHostScriptIsShippedTutorial), false for none. It is the same test
+ * that gives a script game.popup while TUTORIAL_MAPS_SCRIPT_POPUPS is 0.
+ * Popups in any other game, single player or not, leave the game running. */
 static inline bool tutorialMapsPopupPauses(bool singlePlayer,
                                            bool serverInProcess,
-                                           const char *mapScriptPath) {
-    return singlePlayer && serverInProcess &&
-           tutorialMapsIsShippedTutorial(mapScriptPath);
-}
-
-/* Whether a scenario or mod that is not a built-in tutorial has the popup
- * call, game.popup.
- *   1 (on):  every scenario and mod script has game.popup, and each popup
- *            opens the popup window, as a built-in tutorial's does. The
- *            pause rule above still applies: only the built-in tutorials
- *            pause.
- *   0 (off): only a built-in tutorial's own map script has game.popup
- *            (tutorialMapsScriptHasPopup). In every other script game.popup
- *            is nil, so a call is the usual Lua error "attempt to call a nil
- *            value", and `if game.popup then` finds nothing.
- * The scenario host reads it where it builds each script's globals
- * (scnScriptLoad in src/scenario/scenario_host.c), and -validate reads it for
- * the stub game table. Off for now. */
-#define TUTORIAL_MAPS_SCRIPT_POPUPS 0
-
-/* Whether one script gets game.popup in its globals. scriptPopupsOn is
- * TUTORIAL_MAPS_SCRIPT_POPUPS, a parameter so a test can try both values.
- * isMapScript is true for the committed map's own script and false for a
- * mod. scriptPath is that script's path. With script popups off, only a
- * map's own script in the shipped tutorials folder
- * (tutorialMapsIsShippedTutorial) gets the call: a mod never does, wherever
- * its file is. */
-static inline bool tutorialMapsScriptHasPopup(bool scriptPopupsOn,
-                                              bool isMapScript,
-                                              const char *scriptPath) {
-    return scriptPopupsOn ||
-           (isMapScript && tutorialMapsIsShippedTutorial(scriptPath));
+                                           bool mapScriptShipped) {
+    return singlePlayer && serverInProcess && mapScriptShipped;
 }
 
 #endif /* TUTORIAL_MAPS_H */

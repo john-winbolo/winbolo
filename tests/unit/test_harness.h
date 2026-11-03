@@ -3012,7 +3012,8 @@ int run_mapchooser_scenario_filter(void);
 /* The background game's map name test: no tutorial is ever picked
  * (test_bg_map_pick.c). */
 int run_bg_map_pick_skips_tutorials(void);
-/* The folder test behind game.tutorial_done (test_bg_map_pick.c). */
+/* The text half of the shipped-tutorial test, tutorialMapsPathInDir
+ * (test_bg_map_pick.c). */
 int run_tutorial_maps_shipped_path(void);
 /* Which games a scenario popup pauses: only the shipped tutorials
  * (test_bg_map_pick.c). */
@@ -3026,6 +3027,13 @@ int run_tutorial_maps_script_has_popup(void);
 int run_scenario_host_popup_nil_outside_tutorials(void);
 int run_scenario_host_popup_in_tutorial(void);
 int run_scenario_validate_popup_tutorial_only(void);
+/* The disk half of the shipped-tutorial test: a script directly in
+ * <data folder>/maps/tutorials, both paths canonical
+ * (test_scenario_host.c). */
+int run_scenario_host_shipped_tutorial_rooted(void);
+/* Under -allow-unsafe-scripts, game.popup is nil on every route for a
+ * script outside the tutorials (test_scenario_host.c). */
+int run_scenario_host_popup_unsafe_unreachable(void);
 
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the

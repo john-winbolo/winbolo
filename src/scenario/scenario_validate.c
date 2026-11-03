@@ -67,8 +67,9 @@
 #include "sim_rules_names.h"      /* simRulesRuleName — a rule in a reason */
 #include "scenario_validate.h"
 /* TUTORIAL_MAPS_SCRIPT_POPUPS and tutorialMapsScriptHasPopup: which scripts
- * have game.popup, read the way the host reads it. A pure header. */
-#include "../gui/sdl3/tutorial_maps.h"
+ * get game.popup. The path test is scenarioHostScriptIsShippedTutorial, in
+ * scenario_host.h above. */
+#include "tutorial_scripts.h"
 
 /* One line from the parse or from Lua, before it becomes an issue. Lua's own
  * messages carry the file path and the line ahead of the text, so this is
@@ -1556,10 +1557,14 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
     ScnParseReport rep;
     size_t         before;
     /* Whether this script has game.popup. A check does not know whether the
-       file is a map's script or a mod, so it is read as a map's: a file in
-       the shipped tutorials folder keeps the call. */
+       file is a map's script or a mod, so it is read as a map's: a file
+       directly in the shipped tutorials folder under the data folder keeps
+       the call (scenarioHostScriptIsShippedTutorial). name is the path the
+       caller gave; a bare file name is read against the working directory,
+       as the host reads it. */
     const bool     popup = tutorialMapsScriptHasPopup(
-        TUTORIAL_MAPS_SCRIPT_POPUPS != 0, true, name);
+        TUTORIAL_MAPS_SCRIPT_POPUPS != 0, true,
+        scenarioHostScriptIsShippedTutorial(name));
 
     L = scnNewVm();
     if (L == NULL) {

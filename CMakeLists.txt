@@ -6757,6 +6757,8 @@ set(_unit_test_names
     scenario_host_popup_nil_outside_tutorials
     scenario_host_popup_in_tutorial
     scenario_validate_popup_tutorial_only
+    scenario_host_shipped_tutorial_rooted
+    scenario_host_popup_unsafe_unreachable
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop

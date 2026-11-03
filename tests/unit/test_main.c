@@ -1455,6 +1455,8 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_host_popup_nil_outside_tutorials", run_scenario_host_popup_nil_outside_tutorials },
     { "scenario_host_popup_in_tutorial",         run_scenario_host_popup_in_tutorial         },
     { "scenario_validate_popup_tutorial_only",   run_scenario_validate_popup_tutorial_only   },
+    { "scenario_host_shipped_tutorial_rooted",   run_scenario_host_shipped_tutorial_rooted   },
+    { "scenario_host_popup_unsafe_unreachable",  run_scenario_host_popup_unsafe_unreachable  },
     { "voice_core_roundtrip",                    run_voice_core_roundtrip                    },
     { "voice_device_resolve",                    run_voice_device_resolve                    },
     { "voice_peak",                              run_voice_peak                              },

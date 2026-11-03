@@ -57,94 +57,99 @@ int run_bg_map_pick_skips_tutorials(void) {
     return 0;
 }
 
-/* The test the single-player frontend puts the running script through
- * before game.tutorial_done may hide the main menu's Tutorial button: the
- * file has to be in a folder named tutorials inside a folder named maps. */
+/* The text half of the shipped-tutorial test (tutorialMapsPathInDir in
+ * src/bolo/public/tutorial_scripts.h): a file directly in the canonical
+ * tutorials folder passes; the folder itself, a file in a folder below it, a
+ * folder whose name only starts the same, and the same names under another
+ * folder do not. The half that reads the disk is
+ * scenario_host_shipped_tutorial_rooted. */
 int run_tutorial_maps_shipped_path(void) {
-    UT_ASSERT(tutorialMapsIsShippedTutorial(
-        "data/maps/tutorials/Tutorial.scenario.lua"));
-    UT_ASSERT(tutorialMapsIsShippedTutorial(
-        "data/maps/tutorials/Classic Tutorial.scenario.lua"));
-    UT_ASSERT(tutorialMapsIsShippedTutorial(TUTORIAL_MENU_MAP));
-    UT_ASSERT(tutorialMapsIsShippedTutorial(
-        "C:\\Games\\WinBolo\\data\\maps\\tutorials\\Tutorial.scenario.lua"));
-    UT_ASSERT(tutorialMapsIsShippedTutorial(
-        "/var/app/data/Maps/Tutorials/Tutorial.scenario.lua"));
-    UT_ASSERT(tutorialMapsIsShippedTutorial("maps/tutorials/x.lua"));
+    const char *win = "C:\\Games\\WinBolo\\data\\maps\\tutorials";
+    const char *nix = "/opt/winbolo/data/maps/tutorials";
 
-    /* Not in that folder. */
-    UT_ASSERT(!tutorialMapsIsShippedTutorial(NULL));
-    UT_ASSERT(!tutorialMapsIsShippedTutorial(""));
-    UT_ASSERT(!tutorialMapsIsShippedTutorial(
-        "data/maps/Survival.scenario.lua"));
-    UT_ASSERT(!tutorialMapsIsShippedTutorial("tutorials/Tutorial.scenario.lua"));
-    UT_ASSERT(!tutorialMapsIsShippedTutorial(
-        "data/mods/tutorials/Tutorial.scenario.lua"));
-    UT_ASSERT(!tutorialMapsIsShippedTutorial(
-        "data/maps/tutorials2/Tutorial.scenario.lua"));
-    UT_ASSERT(!tutorialMapsIsShippedTutorial(
-        "data/maps/tutorials/sub/Tutorial.scenario.lua"));
-    UT_ASSERT(!tutorialMapsIsShippedTutorial("data/maps/tutorials/"));
-    UT_ASSERT(!tutorialMapsIsShippedTutorial("data/mymaps/tutorials/a.lua"));
+    UT_ASSERT(tutorialMapsPathInDir(
+        win, "C:\\Games\\WinBolo\\data\\maps\\tutorials\\Tutorial.scenario.lua",
+        true));
+    /* Either slash, and the case where the file system ignores it. */
+    UT_ASSERT(tutorialMapsPathInDir(
+        win, "c:/games/winbolo/DATA/Maps/Tutorials/Classic Tutorial.scenario.lua",
+        true));
+    UT_ASSERT(!tutorialMapsPathInDir(
+        nix, "/opt/winbolo/data/Maps/tutorials/Tutorial.scenario.lua", false));
+    UT_ASSERT(tutorialMapsPathInDir(
+        nix, "/opt/winbolo/data/maps/tutorials/Tutorial.scenario.lua", false));
+    /* A trailing slash on the folder. */
+    UT_ASSERT(tutorialMapsPathInDir(
+        "/opt/winbolo/data/maps/tutorials/",
+        "/opt/winbolo/data/maps/tutorials/Tutorial.scenario.lua", false));
+
+    /* Not directly in that folder. */
+    UT_ASSERT(!tutorialMapsPathInDir(nix, NULL, false));
+    UT_ASSERT(!tutorialMapsPathInDir(NULL, "/a", false));
+    UT_ASSERT(!tutorialMapsPathInDir("", "/a", false));
+    UT_ASSERT(!tutorialMapsPathInDir(nix, "", false));
+    UT_ASSERT(!tutorialMapsPathInDir(nix, nix, false));
+    UT_ASSERT(!tutorialMapsPathInDir(
+        nix, "/opt/winbolo/data/maps/tutorials/", false));
+    UT_ASSERT(!tutorialMapsPathInDir(
+        nix, "/opt/winbolo/data/maps/tutorials/sub/Tutorial.scenario.lua",
+        false));
+    UT_ASSERT(!tutorialMapsPathInDir(
+        nix, "/opt/winbolo/data/maps/tutorials2/Tutorial.scenario.lua",
+        false));
+    /* A maps/tutorials folder of the same name somewhere else. */
+    UT_ASSERT(!tutorialMapsPathInDir(
+        nix, "/home/me/maps/tutorials/Tutorial.scenario.lua", false));
+    UT_ASSERT(!tutorialMapsPathInDir(
+        nix, "/opt/winbolo/maps/tutorials/Tutorial.scenario.lua", false));
+    UT_ASSERT(!tutorialMapsPathInDir(
+        win, "D:\\Packs\\data\\maps\\tutorials\\Tutorial.scenario.lua", true));
+    UT_ASSERT(!tutorialMapsPathInDir(
+        win, "data/maps/tutorials/Tutorial.scenario.lua", true));
     return 0;
 }
 
 /* Which games a scenario popup pauses: only a shipped tutorial played as a
- * single-player game with its server in this process. */
+ * single-player game with its server in this process. The third value is
+ * the shipped-tutorial test's answer for the running map's own script. */
 int run_tutorial_maps_popup_pauses(void) {
-    const char *tut     = "data/maps/tutorials/Tutorial.scenario.lua";
-    const char *classic = "data/maps/tutorials/Classic Tutorial.scenario.lua";
-    const char *other   = "data/maps/Survival.scenario.lua";
-
-    /* The tutorials, single player, server in this process. */
-    UT_ASSERT(tutorialMapsPopupPauses(true, true, tut));
-    UT_ASSERT(tutorialMapsPopupPauses(true, true, classic));
+    /* A shipped tutorial, single player, server in this process. */
+    UT_ASSERT(tutorialMapsPopupPauses(true, true, true));
 
     /* Another single-player scenario, or no script at all. */
-    UT_ASSERT(!tutorialMapsPopupPauses(true, true, other));
-    UT_ASSERT(!tutorialMapsPopupPauses(true, true, ""));
-    UT_ASSERT(!tutorialMapsPopupPauses(true, true, NULL));
+    UT_ASSERT(!tutorialMapsPopupPauses(true, true, false));
 
     /* A multiplayer game or a listen-server host on the tutorial map. */
-    UT_ASSERT(!tutorialMapsPopupPauses(false, true, tut));
+    UT_ASSERT(!tutorialMapsPopupPauses(false, true, true));
     /* A joined game: the server is not in this process. */
-    UT_ASSERT(!tutorialMapsPopupPauses(true, false, tut));
-    UT_ASSERT(!tutorialMapsPopupPauses(false, false, tut));
+    UT_ASSERT(!tutorialMapsPopupPauses(true, false, true));
+    UT_ASSERT(!tutorialMapsPopupPauses(false, false, true));
     return 0;
 }
 
 /* Which scripts have game.popup. Off (TUTORIAL_MAPS_SCRIPT_POPUPS 0): only
- * a built-in tutorial's own map script; another map's script, any mod (even
- * one whose file is in a tutorials folder) and no script do not. On: every
+ * a map's own script that the shipped-tutorial test passes; another map's
+ * script and any mod (even one the test would pass) do not. On: every
  * script. The pause rule is separate (run_tutorial_maps_popup_pauses): only a
  * tutorial in a local game pauses. */
 int run_tutorial_maps_script_has_popup(void) {
-    const char *tut     = "data/maps/tutorials/Tutorial.scenario.lua";
-    const char *classic = "data/maps/tutorials/Classic Tutorial.scenario.lua";
-    const char *other   = "data/maps/Survival.scenario.lua";
-    const char *mod     = "data/mods/MyMod.scenario.lua";
-
     /* The flag as it is built. */
     UT_ASSERT(TUTORIAL_MAPS_SCRIPT_POPUPS == 0);
 
-    /* Off: the tutorials' map scripts have the call, and in a local game
-       their popups pause. */
-    UT_ASSERT(tutorialMapsScriptHasPopup(false, true, tut));
-    UT_ASSERT(tutorialMapsScriptHasPopup(false, true, classic));
-    UT_ASSERT(tutorialMapsPopupPauses(true, true, tut));
-    /* Off: another map's script, a mod, or no script has no call. */
-    UT_ASSERT(!tutorialMapsScriptHasPopup(false, true, other));
-    UT_ASSERT(!tutorialMapsScriptHasPopup(false, false, mod));
-    UT_ASSERT(!tutorialMapsScriptHasPopup(false, true, ""));
-    UT_ASSERT(!tutorialMapsScriptHasPopup(false, true, NULL));
-    /* Off: a mod is never a tutorial, even at a tutorial's path. */
-    UT_ASSERT(!tutorialMapsScriptHasPopup(false, false, tut));
+    /* Off: a shipped tutorial's map script has the call, and in a local game
+       its popups pause. */
+    UT_ASSERT(tutorialMapsScriptHasPopup(false, true, true));
+    UT_ASSERT(tutorialMapsPopupPauses(true, true, true));
+    /* Off: another map's script, or a mod, has no call. */
+    UT_ASSERT(!tutorialMapsScriptHasPopup(false, true, false));
+    UT_ASSERT(!tutorialMapsScriptHasPopup(false, false, false));
+    /* Off: a mod is never a tutorial, even where the test passes. */
+    UT_ASSERT(!tutorialMapsScriptHasPopup(false, false, true));
 
     /* On: every script has the call. Only a tutorial pauses. */
-    UT_ASSERT(tutorialMapsScriptHasPopup(true, true, tut));
-    UT_ASSERT(tutorialMapsScriptHasPopup(true, true, other));
-    UT_ASSERT(tutorialMapsScriptHasPopup(true, false, mod));
-    UT_ASSERT(tutorialMapsScriptHasPopup(true, true, ""));
-    UT_ASSERT(!tutorialMapsPopupPauses(true, true, other));
+    UT_ASSERT(tutorialMapsScriptHasPopup(true, true, true));
+    UT_ASSERT(tutorialMapsScriptHasPopup(true, true, false));
+    UT_ASSERT(tutorialMapsScriptHasPopup(true, false, false));
+    UT_ASSERT(!tutorialMapsPopupPauses(true, true, false));
     return 0;
 }
