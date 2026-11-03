@@ -77,7 +77,8 @@ local nav_turn_speed = U.nav_turn_speed
 -- max_walls (default 0): how many walls the shot may cross and still count as
 -- "clear". 0 = the legacy strict behavior (any wall blocks). >0 lets the path
 -- cross that many walls (e.g. attack_base grinds 1 wall down) while STILL
--- blocking on pillboxes (any owner), bases, and allied tanks — anywhere on the
+-- blocking on pillboxes (any owner), bases that stop the shell
+-- (U.base_stops_tank_shell), and allied tanks — anywhere on the
 -- line, including beyond a within-budget wall.
 -- src_wx/src_wy: optional shot origin (defaults to the tank). Lets callers test
 --   whether a shot FROM SOME OTHER TILE would reach the target (e.g. scoring a
@@ -190,8 +191,10 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
         end
         if blocked then break end
       end
-      local bentry = world.base_at and world.base_at[st.my * 256 + st.mx]
-      if bentry and bentry.base then  -- a base of ANY owner stops the shell
+      -- A base stops the shell only under the engine rule
+      -- (U.base_stops_tank_shell): from land, our own, allied and neutral
+      -- bases do not.
+      if U.base_tile_stops_tank_shell(world, st.mx, st.my, origin_mx, origin_my) then
         blocked = true
         block_reason = "base"
         block_mx, block_my = st.mx, st.my

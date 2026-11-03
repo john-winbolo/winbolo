@@ -9571,7 +9571,8 @@ end
 -- purely geometric — it reports the tiles crossed and stops for nothing — so
 -- terrain and object collision are applied here, exactly as shells.c does:
 -- the shell dies on the first impassable tile (building / half-building /
--- forest / boat) or the first LIVE pill or base. A DEAD pill does not block
+-- forest / boat) or the first LIVE pill, or a base that stops this shooter's
+-- shell (a pill shell flies over every base). A DEAD pill does not block
 -- (it is rubble the shell flies over), which is what lets us test a line onto
 -- the dead sea pills at all.
 -- Returns reached (bool), stop_mx, stop_my (the tile that ate it, or nil when
@@ -9580,8 +9581,9 @@ end
 -- square then does NOT mean the shell ran out.
 -- `stoppers` (optional) replaces SEA_SHOT_STOPPERS as the set of terrain
 -- types that eat the shell.  The decoy getaway (decoy_getaway.lua) passes
--- walls only: a tree or a boat is shot away, so it is not cover.  Pills and
--- bases still stop the shell whatever the set is.
+-- walls only: a tree or a boat is shot away, so it is not cover.  Pills (and
+-- bases, for a tank shell that a base stops) still stop the shell whatever
+-- the set is.
 local function sea_shot_reaches(world, owx, owy, tmx, tmy, shooter, stoppers)
   if owx == U.m2w(tmx) and owy == U.m2w(tmy) then return true, tmx, tmy end
   local ok, tiles = pcall(cpf.simulate_shot, owx, owy, U.m2w(tmx), U.m2w(tmy),
@@ -9603,8 +9605,18 @@ local function sea_shot_reaches(world, owx, owy, tmx, tmy, shooter, stoppers)
           end
         end
       end
-      if world.base_at and world.base_at[st.my * 256 + st.mx] then
-        return false, st.mx, st.my
+      -- A base stops the shell only under the engine rule: never for a
+      -- pill shell (U.base_stops_pill_shell), and for our tank's shell
+      -- per U.base_stops_tank_shell.
+      local be = world.base_at and world.base_at[st.my * 256 + st.mx]
+      if be and be.base then
+        local stops
+        if shooter == cpf.SHOT_TANK then
+          stops = U.base_stops_tank_shell(world, be.base, U.tank_shell_on_boat(world, omx, omy))
+        else
+          stops = U.base_stops_pill_shell()
+        end
+        if stops then return false, st.mx, st.my end
       end
     end
   end

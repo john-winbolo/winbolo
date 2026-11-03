@@ -91,6 +91,7 @@ static const int s_impassable[16] = {
 #define ENG_T_SWAMP      2
 #define ENG_T_FOREST     5
 #define ENG_T_HALFBUILD  8
+#define ENG_T_BOAT       9
 #define ENG_T_DEEPSEA   10
 #define ENG_T_PILLBOX   12
 
@@ -143,6 +144,10 @@ typedef struct NaAttackCtx {
     uint8_t  p_friendly[MAP_TILES];  /* a live entry with owner=="friendly"  */
     uint8_t  p_blocker[MAP_TILES];   /* aim_line_trees' live-table blocker   */
     uint8_t  base_any[MAP_TILES];    /* world.base_at[k].base exists         */
+    uint8_t  base_land[MAP_TILES];   /* ...and it stops a shell fired from
+                                      * land: base._shell_pass_land is not
+                                      * true (util.lua mark_base_shell_pass) */
+    int      shell_inboat;           /* world._shell_rules.inboat            */
     uint8_t  base_hostile[MAP_TILES];/* ...with owner == "hostile"           */
 
     /* Constants, all mirrored from constants.lua via init_stamps' cfg. */
@@ -542,6 +547,8 @@ static void scan_pill_entries(lua_State *L, NaAttackCtx *ctx,
  *   scan B penalty   any entry .pill.owner=="friendly", hp>0 -> p_friendly
  *   aim_line_trees   live-table pill blocker                 -> p_blocker
  *   aim_line_trees   world.base_at[k].base                   -> base_any
+ *   aim_line_trees   ...without ._shell_pass_land            -> base_land
+ *   aim_line_trees   world._shell_rules.inboat               -> shell_inboat
  *   scan B penalty   ...with .owner == "hostile"             -> base_hostile
  */
 static void sync_world_flags(lua_State *L, NaAttackCtx *ctx, int widx) {
@@ -549,7 +556,13 @@ static void sync_world_flags(lua_State *L, NaAttackCtx *ctx, int widx) {
     memset(ctx->p_friendly,   0, sizeof(ctx->p_friendly));
     memset(ctx->p_blocker,    0, sizeof(ctx->p_blocker));
     memset(ctx->base_any,     0, sizeof(ctx->base_any));
+    memset(ctx->base_land,    0, sizeof(ctx->base_land));
     memset(ctx->base_hostile, 0, sizeof(ctx->base_hostile));
+    ctx->shell_inboat = 0;
+
+    lua_getfield(L, widx, "_shell_rules");     /* +1 (may be nil) */
+    if (lua_istable(L, -1)) ctx->shell_inboat = tbl_is_true(L, "inboat");
+    lua_pop(L, 1);
 
     lua_getfield(L, widx, "pills");            /* +1 (may be nil) */
     int pills_slot = lua_gettop(L);
@@ -583,6 +596,8 @@ static void sync_world_flags(lua_State *L, NaAttackCtx *ctx, int widx) {
                     lua_getfield(L, -1, "base");
                     if (lua_istable(L, -1)) {
                         ctx->base_any[k] = 1;
+                        if (!tbl_is_true(L, "_shell_pass_land"))
+                            ctx->base_land[k] = 1;
                         if (tbl_str_eq(L, "owner", "hostile"))
                             ctx->base_hostile[k] = 1;
                     }
@@ -688,6 +703,14 @@ static int aim_line_trees(NaAttackCtx *ctx, const BYTE *w,
                                         BRAIN_SHOT_SHOOTER_TANK, 0,
                                         tiles, GH_ATK_SHOT_TILES);
     int blocked = 0, reached = 0, trees = 0;
+    /* util.lua tank_shell_on_boat: deep sea or a boat tile is a boat shot,
+     * a river tile only when our tank is on a boat now. A boat shot stops at
+     * any base; a land shot only at a base in base_land
+     * (util.lua base_stops_tank_shell). */
+    int ott = ttype_at(w, omx, omy);
+    int from_boat = (ott == ctx->t_deepsea || ott == ENG_T_BOAT ||
+                     (ott == ctx->t_river && ctx->shell_inboat));
+    const uint8_t *base_stop = from_boat ? ctx->base_any : ctx->base_land;
     for (int ti = 0; ti < n; ti++) {
         int tx = tiles[ti].mx, ty = tiles[ti].my;
         if (tx == pmx && ty == pmy) { reached = 1; break; }
@@ -698,7 +721,7 @@ static int aim_line_trees(NaAttackCtx *ctx, const BYTE *w,
             else if (tt == ctx->t_forest) trees++;
             int key = ty * MAP_W + tx;
             if (key >= 0 && key < MAP_TILES) {
-                if (ctx->base_any[key])  { blocked = 1; break; }
+                if (base_stop[key])      { blocked = 1; break; }
                 if (ctx->p_blocker[key]) { blocked = 1; break; }
             }
         }
