@@ -806,6 +806,39 @@ M.SHIELD_ADJ_FRIENDLY_PENALTY = 3  -- shield-slot score: per would-be blocker sl
 M.SANITY_PILL_REPLANS_MAX = 3      -- attack_pill: consecutive shot-path sanity replans caused by a FRIENDLY pill in the line before the take is abandoned (each one also bans the angle; this is the backstop). SHARED counter across every blocked-line site (standoff sanity, blitz GO gate, charge, shoot_pill) so "spots tried" is one number for the whole take, not one per site.
 M.CHARGE_SHOT_CHECK_AT_SPOT_TILES = 1.0  -- charge: how close (tiles) the tank must be to its standoff before the impassable-obstacle shot-path check is allowed to fire at all. While still driving in, the live gun line swings across whatever happens to be beside the target and clears itself on arrival — checking early binned whole takes (loss_b6 bot3 t=9483: a pill at (130,131) crossed the line to pill (129,130) 8 tiles out). Being closer to the pill than the standoff is also counts as "at spot".
 M.BLOCKED_AIM_RETRY_TICKS = 10     -- blocked-line ladder: minimum ticks between two 5-aim-point clear-line searches at the SAME site on one goal. The search costs five shell simulations, and after a successful re-aim the gun needs a few ticks to swing onto the new corner, during which the live line is still blocked — so we hold rather than re-search (or abort) every tick.
+-- Turn-in progress, 2026-11-03. In finetune the gun gets CLEAR_TURN_IN_TAPS
+-- (6) ticks after the shot first reaches the pill to also clear a pill on the
+-- line. In the recorded game (bot3, ATTACK_CLEARED t=7281 "turn-in clear
+-- failed: +6/6 taps") the clear lane was narrower than one tap step, so every
+-- tick counted and the take ended.
+-- true => a tick that brings the gun closer to the nearest clear angle than
+-- before does not count against the 6; the raw count has a hard cap of 12
+-- (2 x 6). Steering turns toward the nearest clear angle instead of the pill
+-- centre, so a tap that jumps past a narrow lane turns back to it. No new
+-- value. Log line: FINETUNE_LANE. KEEL false.
+M.CLEAR_TURN_TAP_PROGRESS = true
+-- Minimum clear lane, 2026-11-03. The planner accepted a firing spot whose
+-- aim had a clear lane of about 0.09 brad (a 4 world-unit gap at 7.2 tiles,
+-- bot3 t=6765), smaller than one finetune tap.
+-- > 0 => when the planner picks a firing spot and aim (the spot sweep in
+-- plan_position and the shield scan winner), the shell must also reach the
+-- pill clear of pills (and walls, bases, pending pills, as the aim test
+-- already asks) at every gun angle within this many brad on both sides of
+-- the aim. The sweep drops an aim that fails; a shield scan winner that
+-- fails bans its angle and plans again (the pill-on-the-line replan, so the
+-- take ends after SANITY_PILL_REPLANS_MAX spots). 0 = off.
+-- Log lines: SHIELD_LANE, SHIELD_LANE_BAN, SHIELD_LANE_ABANDON. KEEL 0.
+M.BLOCKER_MIN_LANE_BRAD = 0.5
+-- Pill cover by health, 2026-11-03. The shield planner counted every friendly
+-- pill on a square as PPT_PILL_WALL_EQUIV (3) walls of cover, whatever its
+-- health, and a pill of any other owner on a square as a square to build on.
+-- true => a friendly (own or allied) pill is worth floor(health / 5) walls
+-- (pill_cover.lua; the C scan uses the same rule, naShieldPillCoverWalls):
+-- 15 -> 3, 10-14 -> 2, 5-9 -> 1, 1-4 -> 0. A pill worth 0 walls (and any
+-- enemy, neutral or dead pill) is not an existing blocker, and its square is
+-- not a square to build on. Dropped pills the plan has yet to place are
+-- unchanged (PPT_PILL_WALL_EQUIV each). No new value. KEEL false.
+M.PILL_COVER_BY_HEALTH = true
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = WALL_HP_FULL 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / WALL_HP_FULL 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
@@ -6517,6 +6550,18 @@ M.PRESETS = {
     -- 2026-11-03: the turn cap also applies when the next route square is
     -- inside the turning circle. KEEL capped only within 4 tiles of the goal.
     STEER_TURN_CAP_NEXT_SQUARE    = false,
+    -- 2026-11-03: a finetune turn-in tick that brings the gun closer to the
+    -- clear lane does not count against CLEAR_TURN_IN_TAPS (hard cap 2x), and
+    -- steering turns toward the lane. KEEL counted every tick and turned
+    -- toward the pill centre.
+    CLEAR_TURN_TAP_PROGRESS       = false,
+    -- 2026-11-03: the planner asks for a clear lane of +/-0.5 brad around the
+    -- aim of a firing spot. KEEL took any aim whose own line was clear.
+    BLOCKER_MIN_LANE_BRAD         = 0,
+    -- 2026-11-03: the shield planner weights a friendly pill by
+    -- floor(health / 5) walls. KEEL counted every friendly pill as
+    -- PPT_PILL_WALL_EQUIV walls.
+    PILL_COVER_BY_HEALTH          = false,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).

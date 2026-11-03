@@ -1490,9 +1490,15 @@ M._decide_inner = function(state, world, info, now)
   -- Priority 2.5: wall-shield / base-shield — build wall at target location
   if (b.mode == "wall_shield" or b.mode == "base_shield") and b.wall_target then
     local wx, wy = b.wall_target.mx, b.wall_target.my
-    -- Only build if the tile doesn't already have a wall
+    -- Only build if the tile doesn't already have a wall, and never on a
+    -- square with a pill on it (any owner, any health): no wall or pillbox
+    -- can go there. The terrain map does not show pills, so ask
+    -- pill_cover.pill_on_square.
     local wtt = U.ttype(wx, wy)
-    if wtt ~= C.T_BUILDING and wtt ~= C.T_HALFBUILD then
+    local on_pill = require("pill_cover").pill_on_square(world, wx, wy)
+    if on_pill and BRAIN_DEBUG_MODE then
+    end
+    if wtt ~= C.T_BUILDING and wtt ~= C.T_HALFBUILD and not on_pill then
       local cost = b.mode == "base_shield" and C.BASE_SHIELD_BUILD_COST
                                              or C.WALL_SHIELD_BUILD_COST
       -- Check for angry pills close to the wall tile — if a pill has woken up

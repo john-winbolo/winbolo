@@ -254,12 +254,32 @@ end
 -- attack.lua (attack.lua aliases it) so squad.lua's arbiter can share it.
 -- `wallset` (optional, packed my*256+mx) adds a commander's broadcast shield
 -- walls as blockers; nil = exactly the old behaviour.
+--
+-- The walk over the shell's squares is line_trees (below), shared with
+-- M.angle_line_trees, which fires at a gun angle instead of an aim point.
+local line_trees
 function M.aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
   local off = shield.AIM_OFFSETS_TILE_FIRE[i]
   local awx = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
   local awy = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
   local tiles = cpf.simulate_shot(ox, oy, awx, awy, cpf.SHOT_TANK, 0)
   if not tiles then return nil end
+  local trees = line_trees(tiles, omx, omy, pmx, pmy, world, wallset)
+  if trees then return trees, awx, awy end
+  return nil
+end
+
+-- Same test for a shell fired at gun angle a (brad, float) from (ox,oy) world
+-- units. Returns the tree count, or nil when the line is blocked or never
+-- reaches the pill. Used by the clear-lane width check
+-- (C.BLOCKER_MIN_LANE_BRAD, attack.lua M.aim_lane_wide).
+function M.angle_line_trees(ox, oy, omx, omy, pmx, pmy, world, a, wallset)
+  local tiles = cpf.simulate_shot_angle(ox, oy, a, cpf.SHOT_TANK, 0)
+  if not tiles then return nil end
+  return line_trees(tiles, omx, omy, pmx, pmy, world, wallset)
+end
+
+line_trees = function(tiles, omx, omy, pmx, pmy, world, wallset)
   local pill_at = world and world.pill_at
   local base_at = world and world.base_at
   local pills   = world and world.pills
@@ -304,7 +324,7 @@ function M.aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
       end
     end
   end
-  if reached and not blocked then return trees, awx, awy end
+  if reached and not blocked then return trees end
   return nil
 end
 

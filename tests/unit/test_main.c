@@ -508,6 +508,8 @@ static const UnitTestEntry s_tests[] = {
     { "pf_offchain_chain_rank_not_root",         run_pf_offchain_chain_rank_not_root         },
     { "pf_offchain_dead_end_keeps_root",         run_pf_offchain_dead_end_keeps_root         },
     { "bench_decoy_step_first",                  run_bench_decoy_step_first                  },
+    { "shield_outgoing_pill_blocks",             run_shield_outgoing_pill_blocks             },
+    { "shield_pill_cover_walls",                 run_shield_pill_cover_walls                 },
     { "pf_tail_reaches_radius_and_stops",        run_pf_tail_reaches_radius_and_stops        },
     { "pf_tail_blocked_by_wall_and_sea",         run_pf_tail_blocked_by_wall_and_sea         },
     { "pf_tail_neutral_zone_slows",              run_pf_tail_neutral_zone_slows              },
