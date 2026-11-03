@@ -829,6 +829,16 @@ M.CLEAR_TURN_TAP_PROGRESS = true
 -- take ends after SANITY_PILL_REPLANS_MAX spots). 0 = off.
 -- Log lines: SHIELD_LANE, SHIELD_LANE_BAN, SHIELD_LANE_ABANDON. KEEL 0.
 M.BLOCKER_MIN_LANE_BRAD = 0.5
+-- Pill cover by health, 2026-11-03. The shield planner counted every friendly
+-- pill on a square as PPT_PILL_WALL_EQUIV (3) walls of cover, whatever its
+-- health, and a pill of any other owner on a square as a square to build on.
+-- true => a friendly (own or allied) pill is worth floor(health / 5) walls
+-- (pill_cover.lua; the C scan uses the same rule, naShieldPillCoverWalls):
+-- 15 -> 3, 10-14 -> 2, 5-9 -> 1, 1-4 -> 0. A pill worth 0 walls (and any
+-- enemy, neutral or dead pill) is not an existing blocker, and its square is
+-- not a square to build on. Dropped pills the plan has yet to place are
+-- unchanged (PPT_PILL_WALL_EQUIV each). No new value. KEEL false.
+M.PILL_COVER_BY_HEALTH = true
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = WALL_HP_FULL 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / WALL_HP_FULL 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
@@ -6358,6 +6368,10 @@ M.PRESETS = {
     -- 2026-11-03: the planner asks for a clear lane of +/-0.5 brad around the
     -- aim of a firing spot. KEEL took any aim whose own line was clear.
     BLOCKER_MIN_LANE_BRAD         = 0,
+    -- 2026-11-03: the shield planner weights a friendly pill by
+    -- floor(health / 5) walls. KEEL counted every friendly pill as
+    -- PPT_PILL_WALL_EQUIV walls.
+    PILL_COVER_BY_HEALTH          = false,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).
