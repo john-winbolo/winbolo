@@ -2409,10 +2409,11 @@ empty space above and below. An announcement's `position` share is across the
 whole window, so a line at share 0.1 sits near the window's left side, not
 near the left of the centred text. The gear has two sliders. **Background
 opacity** is the alpha of the black backing: 100% is opaque black and 0% is no
-backing. It starts at 43%, the see-through backing the window has always had.
+backing. In the Scenario Text window it starts at 0%, with no backing.
 **Text opacity** fades the text and its outline, and starts at 100%. A
-scenario panel's gear has the same two sliders, and there the text opacity
-fades everything the script draws in the panel.
+scenario panel's gear has the same two sliders. There the background opacity
+starts at 43%, and the text opacity fades everything the script draws in the
+panel.
 
 `position` keeps only its share across. Give a table `{ x = across, y =
 down }`, each from 0 to 1, or one of two words:
