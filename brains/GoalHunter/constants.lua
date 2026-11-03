@@ -2439,6 +2439,17 @@ M.KILL_PICKUP_HANDOFF = true   -- defer the pickup to the blitz member with the
 -- bodies; this backstops the reachable-but-slow case. ~10 s. A body you just
 -- killed is normally a few tiles away, so a real grab finishes well inside it.
 M.KILL_PICKUP_MAX_TICKS = 500
+-- Lethal exit, 2026-11-03. The claim overrides refuel / flee / survival, and
+-- before this it ended only on the TTL, the cap, the pill gone / taken /
+-- ours again, or an INF route. A recorded game (player 2, brain ticks
+-- 6564-6750) drove into a live pill one square past the body until it died.
+-- true => Override 3b drops the claim when capture_pill's own direct-route
+-- probe (capture_route_probe) holds a fresh verdict that the wsim of the
+-- drive to the body KILLS us (the "refused: LETHAL" log line), and normal
+-- goal selection decides. Freshness uses the probe's own rules (CAPTURE_ROUTE_
+-- TTL, tank moved CAPTURE_ROUTE_MOVE_TILES, threat rebuild). No new value.
+-- Log line: KILL_PICKUP_EXIT lethal. KEEL false.
+M.KILL_PICKUP_LETHAL_EXIT = true
 -- Pair pickup (2026-09-25). When the blitz that killed the pill had at least
 -- this many tanks, the TWO best claimers keep their claims (rank 1 and rank 2
 -- under the handoff rule: lower kc, tie -> lower player number); rank 3+ stand
@@ -6452,6 +6463,9 @@ M.PRESETS = {
     -- 2), and our own cost is rounded like kc before the handoff compare. KEEL
     -- kept one grabber and compared the unrounded cost. 0 = off.
     KILL_PICKUP_PAIR_MIN_SQUAD    = 0,
+    -- 2026-11-03: the fresh-kill claim ends when capture_pill's direct-route
+    -- probe says the grab is LETHAL. KEEL kept the claim through it.
+    KILL_PICKUP_LETHAL_EXIT       = false,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).
