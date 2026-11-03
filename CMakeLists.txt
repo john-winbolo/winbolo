@@ -7755,6 +7755,9 @@ set(_unit_test_names
     lv_event_overlay_no_sign
     lv_event_overlay_live_rebuild
     lv_panel_set_live
+    lv_chat_view_fade
+    lv_chat_view_visible
+    lv_chat_view_parts
     lv_event_kinds_filter
     lv_event_kinds_prefs
     lv_event_marker
