@@ -8362,7 +8362,7 @@ local function filter_capture_pill(obj, state)
 end
 
 -- The pill the tank is driving to for repair_pill, while our builder is out
--- of the tank (a farm trip on the way, LGM_MOVING). The pool-5 gates below
+-- of the tank (a farm trip on the way, LGM_MOVING). The pool-5 checks below
 -- need the builder aboard, so without this the committed goal's row left the
 -- pool for the whole trip, the hysteresis had no price to carry, and any
 -- other row won the next replan (20261102 bot0 t=50153: refuel_at_base took
