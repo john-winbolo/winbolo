@@ -5935,6 +5935,10 @@ set(_unit_test_names
     fog_settings_lock_implied
     fog_settings_lobby_edits
     fog_settings_lobby_reset
+    frame_limit_migrate_old
+    frame_limit_new_value_wins
+    frame_limit_pref_round_trip
+    frame_limit_pacing_values
     info_packet_view_policy_layout
     info_packet_view_policy_length_tier
     visibility_preset_round_trip
