@@ -723,6 +723,7 @@ static const UnitTestEntry s_tests[] = {
     { "nav_outline_alt_arrow_not_claimed", run_nav_outline_alt_arrow_not_claimed },
     { "nav_outline_first_home_end_shows", run_nav_outline_first_home_end_shows },
     { "nav_outline_first_page_keys_shows", run_nav_outline_first_page_keys_shows },
+    { "nav_outline_destroyed_context_forgets_focus", run_nav_outline_destroyed_context_forgets_focus },
     { "browser_version_parse",                   run_browser_version_parse                   },
     { "version_protocol_bytes",                  run_version_protocol_bytes                  },
     { "clip_gif_len_sync",                       run_clip_gif_len_sync                       },
