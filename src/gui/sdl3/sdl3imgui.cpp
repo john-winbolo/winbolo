@@ -235,6 +235,12 @@ extern "C" void windowTutorialPause(struct ClientSim *cs, bool active);
    the render path's edge-detect, and the round-end close, which lifts the
    pause itself. */
 static bool s_lastTutorialPause = false;
+/* The server ticks from and until which the Scenario Text lines of the
+   last popup that opened no window are up (renderTutorialOverlay). The
+   server's tick clock starts at 0 in each game, so sdl3ImguiNewGame sets
+   both to 0. */
+static uint32_t s_popupLinesFrom  = 0;
+static uint32_t s_popupLinesUntil = 0;
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -10367,22 +10373,22 @@ static void renderTutorialOverlay(ClientSim *cs) {
        until the overlay is free, then takes the overlay like a tutorial
        message does, so one popup shows at a time. It pauses the game only
        in a shipped tutorial (clientFrontPopupPausesGame), and only a shipped
-       tutorial opens the window while TUTORIAL_MAPS_SCRIPT_POPUPS is 0. None is taken once the round is over: the close at
-       the top of sdl3ImguiPumpAndRender would only shut it again. */
+       tutorial opens the window while TUTORIAL_MAPS_SCRIPT_POPUPS is 0.
+       None is taken once the round is over: the close at the top of
+       sdl3ImguiPumpAndRender would only shut it again. */
     /* A popup that opens no window (TUTORIAL_MAPS_SCRIPT_POPUPS) is shown
-       as Scenario Text lines from s_popupLinesFrom to s_popupLinesUntil, on
-       clientSimGetLastServerTick's clock. The next popup waits until they
-       are gone, as it waits for a closed window, so one does not push the
-       one before it off the screen. A clock that went back (a new round)
-       ends the wait. */
-    static uint32_t s_popupLinesFrom  = 0;
-    static uint32_t s_popupLinesUntil = 0;
+       as Scenario Text lines from s_popupLinesFrom to s_popupLinesUntil
+       (the file statics above), on clientSimGetLastServerTick's clock. The
+       next popup waits until they are gone, as it waits for a closed
+       window, so one does not push the one before it off the screen.
+       sdl3ImguiNewGame sets both to 0, and a clock that went back (a new
+       round) sets both to 0 too (tutorialMapsPopupLinesUp). */
     if (cs != NULL && !tutorialOverlayIsOpen() &&
         !clientSimIsRoundOver(cs)) {
         static char s_popupText[SCN_POPUP_TEXT_MAX + 1];
         const uint32_t now = clientSimGetLastServerTick(cs);
-        const bool linesUp = now >= s_popupLinesFrom &&
-                             now < s_popupLinesUntil;
+        const bool linesUp = tutorialMapsPopupLinesUp(
+            now, &s_popupLinesFrom, &s_popupLinesUntil);
         bool took      = false;
         bool inWindow  = true;
         if (!linesUp) {
@@ -11700,6 +11706,10 @@ void sdl3ImguiNewGame(ClientSim *cs) {
        see sdl3DrawNewGame. */
     overviewSnapshotDestroy(s_overviewSnapshot);
     s_overviewSnapshot = nullptr;
+    /* The wait for a popup's Scenario Text lines is on the last game's
+       tick clock: see s_popupLinesFrom. */
+    s_popupLinesFrom  = 0;
+    s_popupLinesUntil = 0;
     sdl3ImguiTabletNewGame();
     sdl3DrawNewGame(clientSimGetCurrentBuildSelect(cs));
 }

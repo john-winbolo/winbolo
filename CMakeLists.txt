@@ -6755,6 +6755,7 @@ set(_unit_test_names
     tutorial_maps_popup_pauses
     tutorial_maps_popup_opens_window
     tutorial_maps_popup_fallback_lines
+    tutorial_maps_popup_lines_wait
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop

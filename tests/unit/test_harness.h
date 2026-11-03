@@ -3022,6 +3022,9 @@ int run_tutorial_maps_popup_pauses(void);
  * (test_bg_map_pick.c). */
 int run_tutorial_maps_popup_opens_window(void);
 int run_tutorial_maps_popup_fallback_lines(void);
+/* The wait for a popup's Scenario Text lines across games
+ * (test_bg_map_pick.c). */
+int run_tutorial_maps_popup_lines_wait(void);
 
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
