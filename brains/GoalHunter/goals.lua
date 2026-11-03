@@ -8917,6 +8917,37 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
                                     info.mines or 0, info.armour or 40,
                                     16000, true)
     end
+    if dist_raw >= 1e29 and state.dij then
+      -- Both A* runs gave up (node budget, or the boat run failed too), but
+      -- a slate from before the threat rebuild may still hold a path. Its
+      -- cost can carry the danger of a pill that just died, so it is a high
+      -- price, not a wrong one -- far better than INF, which dropped the row
+      -- out of the competition for the 2 ticks the fresh slate needs
+      -- (20261102 bot0: capture_pill #5 priced 75.65 from the slate, then
+      -- 1e30 on the next re-price while the slates were stale).
+      local slates = state.dij.slates
+      local best = math.huge
+      local NDX = { 0,  1,  1,  1,  0, -1, -1, -1 }
+      local NDY = {-1, -1,  0,  1,  1,  1,  0, -1 }
+      for d = 1, 8 do
+        local ax = obj.mx + NDX[d]
+        local ay = obj.my + NDY[d]
+        if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
+          for idx = 0, 3 do
+            if slates[idx] then
+              local c0 = cpf.dijkstra_cost_at(idx, ax, ay, 0)
+              local c1 = cpf.dijkstra_cost_at(idx, ax, ay, 1)
+              local c = (c1 and c1 < c0) and c1 or c0
+              if c and c < best then best = c end
+            end
+          end
+        end
+      end
+      if best < 1e29 then
+        dist_method = "dij_stale"
+        dist_raw = best
+      end
+    end
     if dist_raw >= 1e29 then
       return 1e30, 1e30, 1e30, 0
     end
@@ -18806,6 +18837,10 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- WINNERS row breakdown: the cost after every whole-cost multiplier and
+    -- before the additive penalties, so the row can show each part apart.
+    if BRAIN_DEBUG_MODE then for _, c in ipairs(pool) do c._shaped_cost = c.cost end end
+
     -- ── Apply hysteresis to discourage thrashing ──
     -- High-value opportunistic goals are exempt so they can win on raw
     -- cost (flee_to_base / rescue_lgm skip this pool entirely as
@@ -19081,6 +19116,7 @@ local function goal_selection(state, world, info, quiet)
         end
         if hist_pen > 0 then
           c.cost = c.cost + hist_pen
+          if BRAIN_DEBUG_MODE then c._hist_pen = hist_pen end
           c.hist_target = target_count
           c.hist_kind   = kind_count
         end
@@ -19116,6 +19152,7 @@ local function goal_selection(state, world, info, quiet)
         if c.goal and KM.ATTACK_KINDS[c.goal.kind]
            and not c.goal.km_ally_pn
            and c.cost and c.cost > 0 and not c._reject_sentinel then
+          if BRAIN_DEBUG_MODE then c._pre_nb_cost = c.cost end
           c.cost = c.cost * nbm
           c._nobuild_mult = nbm
         end
@@ -19251,6 +19288,13 @@ local function goal_selection(state, world, info, quiet)
         wsim_add     = 0,
         ally_claimed_pen = c.ally_claimed_pen or 0,
         ally_claimed_by  = c.ally_claimed_by,
+        -- Exact parts for the WINNERS row (see the row builder): the cost
+        -- after the multipliers, the history penalty as charged, the cost
+        -- before the builder-less multiplier, and the selection tick.
+        shaped   = c._shaped_cost,
+        hist_pen = c._hist_pen or 0,
+        pre_nb   = c._pre_nb_cost,
+        tick     = state.tick or 0,
       }
     end
     end -- BRAIN_DEBUG_MODE
@@ -20743,10 +20787,22 @@ function M.get_pool_breakdown_json(state)
   for _, item in ipairs(state.eval_queue or {}) do
     local p = item.pool
     local obj = item.obj
-    if obj then
+    -- _reprice items are extra copies of a queue item (apply_reprice_queue):
+    -- the original item already gives the pill its row.
+    if obj and not item._reprice then
       by_pool[p] = by_pool[p] or {}
       local cached = cache[p .. ":" .. item.id]
       local formula_str = (cached and get_formula(cached)) or ""
+      -- The tick this price was computed, on the row line itself.
+      if cached and cached.tick then
+        local tag = string.format(" [t=%d]", cached.tick)
+        local cut = formula_str:find("!!", 1, true) or formula_str:find("||", 1, true)
+        if cut then
+          formula_str = formula_str:sub(1, cut - 1) .. tag .. " " .. formula_str:sub(cut)
+        else
+          formula_str = formula_str .. tag
+        end
+      end
       local hist_str = format_reject_history(reject_history[p .. ":" .. item.id])
       if hist_str ~= "" then
         local sep = formula_str:find("||", 1, true)
@@ -21146,15 +21202,58 @@ function M.get_pool_breakdown_json(state)
       -- gc.base is raw_pool_cost * phase_weight. w.cost is the raw pre-phase
       -- cost shown in the per-pool section / detail popup.
 
-      -- hist = whatever is left of penalty after removing the named components.
-      -- NOTE: do NOT subtract wsim_add here — wsim is not inside gc.penalty
-      -- (penalty is captured before wsim runs). Subtracting it would make
-      -- hist go negative and drop wsim_add from the displayed sum.
+      -- gc.penalty = total - base, so it holds EVERY step after the phase
+      -- weight: the whole-cost multipliers (influence, suicider, focus,
+      -- refuel, behind-team, fight), switch + commitment, the history
+      -- penalty and the builder-less multiplier. hist used to be "whatever
+      -- is left" after switch / commit / ally, so the influence x2.0 (and
+      -- any other multiplier) showed up inside HT. Each part is now its own
+      -- number, in the order goal_selection applies it:
+      --   base x inf x suicider x focus x refuel x ahead x fight
+      --     + switch + commit + hist, then x nobuild
+      -- A multiplier's part is the amount it added: running cost x (m - 1).
+      -- ally_claimed is NOT in penalty: step_eval_queue adds it to the pool
+      -- cost, so it is already inside raw (the row says "AC .. in raw").
+      -- wsim is not inside gc.penalty either (captured before wsim runs).
       local switch_flat = gc and gc.switch_flat or 0
       local commit_val  = gc and gc.commit_val  or 0
       local ally_pen    = gc and gc.ally_claimed_pen or 0
       local ally_by     = gc and gc.ally_claimed_by
-      local hist_pen    = penalty - switch_flat - commit_val - ally_pen
+      local hist_pen    = gc and gc.hist_pen or 0
+      local mult_parts  = {}   -- { abbr, v = value added, run = running cost, m, name }
+      do
+        local run = base_cost
+        local function madd(m, abbr, name)
+          if m and m ~= 1.0 then
+            mult_parts[#mult_parts + 1] = { abbr = abbr, v = run * (m - 1),
+                                            run = run, m = m, name = name }
+            run = run * m
+          end
+        end
+        if gc then
+          madd(gc.inf_mult, "INF", "territory influence")
+          madd(gc.suicider_mult, "SU", "pill_suicider")
+          madd(gc.focus_mult, "FO", "team focus")
+          madd(gc.refuel_mult, "RF", "refuel group")
+          madd(gc.ahead_mult, "AH", "behind-team attack")
+          madd(gc.fight_mult, "FT", "scenario fight")
+        end
+      end
+      local mult_sum = 0
+      for _, mp in ipairs(mult_parts) do mult_sum = mult_sum + mp.v end
+      local nb_m   = (gc and gc.nobuild_mult) or 1.0
+      local nb_add = (gc and gc.pre_nb and nb_m ~= 1.0) and gc.pre_nb * (nb_m - 1) or 0
+      -- Anything in penalty the named parts do not explain (0 when the
+      -- parts are complete; shown as OT so the row still adds up).
+      local other_pen = gc and (penalty - mult_sum - switch_flat - commit_val
+                                - hist_pen - nb_add) or 0
+      if math.abs(other_pen) < 0.5 then other_pen = 0 end
+      -- Ticks: when the pool row was priced (the cost_cache entry) and when
+      -- goal_selection made this competition record.
+      local priced_t = (w.stale and w.stale >= 0) and (now - w.stale) or nil
+      local picked_t = gc and gc.tick
+      local tick_tag = string.format(" [priced t=%s, picked t=%s]",
+        priced_t and tostring(priced_t) or "?", picked_t and tostring(picked_t) or "?")
 
       -- Build a rich formula for the detail popup
       local detail_formula = string.format("%s(x%.2f): %s", pname,
@@ -21261,7 +21360,26 @@ function M.get_pool_breakdown_json(state)
         detail_map[#detail_map + 1] = string.format("imminent:cost_forced_to_floor(%.0f) because neutral and close", C.IMMINENT_CAPTURE_FLOOR)
       end
 
-      if (penalty > 0 or wsim_add > 0) then
+      for _, mp in ipairs(mult_parts) do
+        detail_map[#detail_map + 1] = string.format(
+          "%s:%s x%.2f adds %.0f = running cost %.0f x (%.2f - 1)",
+          mp.abbr, mp.name, mp.m, mp.v, mp.run, mp.m)
+      end
+      if nb_add ~= 0 then
+        detail_map[#detail_map + 1] = string.format(
+          "NB:builder-less x%.0f adds %.0f = cost before it %.0f x (%.0f - 1)",
+          nb_m, nb_add, gc.pre_nb, nb_m)
+      end
+      if other_pen ~= 0 then
+        detail_map[#detail_map + 1] = string.format(
+          "OT:%.0f of the penalty that no named part explains (penalty %.0f - multipliers %.0f - switch %.0f - commit %.0f - hist %.0f - nobuild %.0f)",
+          other_pen, penalty, mult_sum, switch_flat, commit_val, hist_pen, nb_add)
+      end
+      detail_map[#detail_map + 1] = string.format(
+        "ticks:pool row priced at t=%s (cost_cache entry), WINNERS record made at t=%s (goal_selection), panel built at t=%d",
+        priced_t and tostring(priced_t) or "?", picked_t and tostring(picked_t) or "?", now)
+
+      if (penalty ~= 0 or wsim_add > 0) then
         local parts = {}
         if switch_flat > 0 then
           parts[#parts + 1] = string.format("hyst{%.0f}", switch_flat)
@@ -21269,11 +21387,11 @@ function M.get_pool_breakdown_json(state)
         if commit_val > 0 then
           parts[#parts + 1] = string.format("hyst{%.0f}", commit_val)
         end
-        if hist_pen > 1 then
+        if hist_pen > 0 then
           parts[#parts + 1] = string.format("hist{%.0f}", hist_pen)
         end
-        if ally_pen > 0 then
-          parts[#parts + 1] = string.format("ally_claimed{%.0f}", ally_pen)
+        if other_pen ~= 0 then
+          parts[#parts + 1] = string.format("other{%.0f}", other_pen)
         end
         if wsim_add > 0 then
           parts[#parts + 1] = string.format("wsim{%.0f}", wsim_add)
@@ -21289,16 +21407,20 @@ function M.get_pool_breakdown_json(state)
           if commit_val  > 0 then hparts[#hparts + 1] = string.format("commit(%.0f)", commit_val)  end
           detail_map[#detail_map + 1] = "hyst:" .. table.concat(hparts, " + ")
         end
-        if hist_pen > 1 then
+        if hist_pen > 0 then
           detail_map[#detail_map + 1] = string.format("hist:recurrence_penalty(%.0f)", hist_pen)
         end
-        if ally_pen > 0 then
-          detail_map[#detail_map + 1] = string.format("ally_claimed:p%s holds same goal(+%.0f)",
-                                                       tostring(ally_by), ally_pen)
+        if other_pen ~= 0 then
+          detail_map[#detail_map + 1] = string.format("other:see OT (%.0f)", other_pen)
         end
         if wsim_add > 0 then
           detail_map[#detail_map + 1] = string.format("wsim:damage_prediction(%.0f)", wsim_add)
         end
+      end
+
+      if ally_pen > 0 then
+        detail_map[#detail_map + 1] = string.format("ally_claimed:p%s holds same goal(+%.0f, already inside the raw pool cost)",
+                                                     tostring(ally_by), ally_pen)
       end
 
       if gc and gc.hyst then
@@ -21327,50 +21449,47 @@ function M.get_pool_breakdown_json(state)
       -- balanced against =total (defend_pill 100 x MD@0.50 +38 "=75"
       -- actually meant 100 x 0.74 x inf0.5 + 38 = 75).
       local eff_pw   = (gc and gc.phase_weight) or pw
-      local inf_mult = (gc and gc.inf_mult) or 1.0
+      -- Every multiplier after the phase weight is shown as the amount it
+      -- added (e.g. "+173 INF" for x2.0 on 173), in the order applied, so
+      -- the row reads raw x PHASE@pw +parts = total.
       local row_summary = string.format("%s %.0f x %s@%.2f",
         pname, raw_base, phase_abbrev, eff_pw)
-      if inf_mult ~= 1.0 then
-        row_summary = row_summary .. string.format(" x inf@%.1f", inf_mult)
-      end
-      if suicider_mult ~= 1.0 then
-        row_summary = row_summary .. string.format(" x suicider{%.1f, %s}", suicider_mult,
-                                                   tostring(state.suicider_src or "?"))
-      end
-      local refuel_mult = (gc and gc.refuel_mult) or 1.0
-      if refuel_mult ~= 1.0 then
-        row_summary = row_summary .. " x " .. M.refuel_mult_label()
-      end
-      local fight_mult = (gc and gc.fight_mult) or 1.0
-      if fight_mult ~= 1.0 then
-        row_summary = row_summary .. string.format(" x fight{%.2f}", fight_mult)
+      if ally_pen > 0 then
+        row_summary = row_summary .. string.format(" (AC %.0f in raw)", ally_pen)
       end
 
-      if penalty > 0 or wsim_add > 0 or w.imminent then
+      if penalty ~= 0 or wsim_add > 0 or w.imminent then
         local parts = {}
         if w.imminent then
           parts[#parts + 1] = "IM"
         end
+        for _, mp in ipairs(mult_parts) do
+          parts[#parts + 1] = string.format("%+.0f %s", mp.v, mp.abbr)
+        end
         if switch_flat > 0 then
-          parts[#parts + 1] = string.format("%.0f SW", switch_flat)
+          parts[#parts + 1] = string.format("+%.0f SW", switch_flat)
         end
         if commit_val > 0 then
-          parts[#parts + 1] = string.format("%.0f CM", commit_val)
+          parts[#parts + 1] = string.format("+%.0f CM", commit_val)
         end
-        if hist_pen > 1 then
-          parts[#parts + 1] = string.format("%.0f HT", hist_pen)
+        if hist_pen > 0 then
+          parts[#parts + 1] = string.format("+%.0f HT", hist_pen)
         end
-        if ally_pen > 0 then
-          parts[#parts + 1] = string.format("%.0f AC", ally_pen)
+        if nb_add ~= 0 then
+          parts[#parts + 1] = string.format("%+.0f NB", nb_add)
+        end
+        if other_pen ~= 0 then
+          parts[#parts + 1] = string.format("%+.0f OT", other_pen)
         end
         if wsim_add > 0 then
-          parts[#parts + 1] = string.format("%.0f WS", wsim_add)
+          parts[#parts + 1] = string.format("+%.0f WS", wsim_add)
         end
         if #parts > 0 then
-          row_summary = row_summary .. " +" .. table.concat(parts, " +")
+          row_summary = row_summary .. " " .. table.concat(parts, " ")
         end
         row_summary = row_summary .. " =" .. string.format("%.0f", final_cost)
       end
+      row_summary = row_summary .. tick_tag
 
       -- Final formula format: "RowSummary !! FullDisplayFormula || TermMapping"
       local final_formula = string.format("%s !! %s", row_summary, detail_formula)
