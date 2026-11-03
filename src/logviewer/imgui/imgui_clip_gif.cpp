@@ -204,10 +204,8 @@ static void lvGifSeek(void *user, uint32_t ms) {
     lv_windowNeedRedraw();
 }
 
-/* On: the names over the tanks go into the render target, which is what is
- * read back, and the sounds stop (the ticks of a capture go by many times
- * faster than real time, and their sounds would all play at once). Off: both
- * go back. */
+/* On: the sounds stop (the ticks of a capture go by many times faster than
+ * real time, and their sounds would all play at once). Off: they go back. */
 static void lvGifCaptureMode(void *user, bool on) {
     (void)user;
     if (on) {
@@ -215,19 +213,33 @@ static void lvGifCaptureMode(void *user, bool on) {
         if (g_lv != NULL) {
             g_lv->isSoundsPlaying = FALSE;
         }
-        lv_clientMutexWaitFor();
-        lv_drawSetTankLabelsInTarget(TRUE);
-        lv_clientMutexRelease();
         return;
     }
-    lv_clientMutexWaitFor();
-    lv_drawSetTankLabelsInTarget(FALSE);
-    lv_clientMutexRelease();
     if (g_lv != NULL) {
         g_lv->isSoundsPlaying = s_gif.restoreSound ? TRUE : FALSE;
         g_lv->wantScreenUpdate = TRUE;
     }
     lv_windowNeedRedraw();
+}
+
+/* The scale the map is drawn at: frame buffer pixels per render-target pixel
+ * at the last blit (the zoom times the display's pixel density). 1 before
+ * the map has been drawn. */
+static float lvGifScale(void *user) {
+    (void)user;
+    float src[4], dst[4], pxScale = 1.0f;
+    if (!lv_drawGetMapBlit(src, dst, &pxScale) || src[2] <= 0.0f) {
+        return 1.0f;
+    }
+    return dst[2] / src[2];
+}
+
+/* The names over a GIF frame, as the blit draws them over the map. */
+static void lvGifDrawNames(void *user, SDL_Renderer *renderer,
+                           const SDL_FRect *src, const SDL_FRect *dst) {
+    (void)user;
+    (void)renderer;
+    lv_drawTankLabelsOver(src, dst);
 }
 
 /* One frame: the log moves on one frame's ticks and the map is drawn into
@@ -270,7 +282,7 @@ static bool lvGifTarget(void *user, SDL_Renderer **renderer,
 
 static const ClipGifReplay s_lvReplay = {
     NULL, lvGifProgress, lvGifIsPlaying, lvGifPlay, lvGifPause, lvGifSeek,
-    lvGifCaptureMode, lvGifAdvance, lvGifTarget
+    lvGifCaptureMode, lvGifAdvance, lvGifTarget, lvGifScale, lvGifDrawNames
 };
 
 /* ── Save clip ────────────────────────────────────────────────────── */

@@ -71,6 +71,24 @@ stbi_uc *stbiLoadGifCapped(const stbi_uc *buffer, int len, size_t maxBytes,
                            int **delays, int *x, int *y, int *frames,
                            int *tooLarge, StbiGifStopFn stop, void *stopUser);
 
+/* The full frames a shrunk decode keeps beside stb's buffers: the last two,
+ * for a frame whose dispose mode restores the frame two back. */
+#define STBI_GIF_SHRINK_FRAMES 2u
+
+/* stbiLoadGifCapped for a GIF expected to have about planFrames frames.
+ * When planFrames frames of the GIF's size would not fit in maxBytes (with
+ * stb's buffers), every frame is shrunk by the smallest whole factor that
+ * makes them fit, each pixel the mean of the block it stands for, and *x
+ * and *y are the shrunk size. The limit then also counts the two full
+ * frames kept for dispose mode 3 (STBI_GIF_SHRINK_FRAMES). A GIF with more
+ * frames than planned can still be too large. planFrames 0 never shrinks:
+ * that is stbiLoadGifCapped. */
+stbi_uc *stbiLoadGifCappedShrink(const stbi_uc *buffer, int len,
+                                 size_t maxBytes, size_t planFrames,
+                                 int **delays, int *x, int *y, int *frames,
+                                 int *tooLarge, StbiGifStopFn stop,
+                                 void *stopUser);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif

@@ -6077,6 +6077,8 @@ set(_unit_test_names
     clip_gif_window_place
     clip_gif_span_move
     clip_gif_grip_box
+    clip_gif_frame_scale
+    clip_gif_preview_shrink
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures

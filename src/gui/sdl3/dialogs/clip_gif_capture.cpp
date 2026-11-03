@@ -83,6 +83,11 @@ static void clipGifFinish(ClipGifSession *s, const ClipGifReplay *r,
     } else {
         msf_gif_free(res);
     }
+    if (s->frameTex != NULL) {
+        SDL_DestroyTexture(s->frameTex);
+    }
+    s->frameTex = NULL;
+    s->frameFor = NULL;
     clipGifRestore(s, r, restoreTime);
     s->active = false;
     s->failed = false;
@@ -226,8 +231,16 @@ bool clipGifCaptureOpen(ClipGifSession *s, const ClipGifReplay *r,
     if (s == NULL || s->active) {
         return false;
     }
-    if (crop == NULL || crop->w <= 0 || crop->h <= 0 ||
-        !msf_gif_begin(&s->enc, crop->w, crop->h)) {
+    /* The frame is the crop at the screen's scale, so a GIF holds what the
+     * player sees: the pixel art magnified as it is on the screen, with the
+     * names over it at the size they appear. */
+    const float screenScale =
+        (r != NULL && r->scale != NULL) ? r->scale(r->user) : 1.0f;
+    const float scale = clipGifFrameScale(screenScale);
+    int frameW = 0, frameH = 0;
+    clipGifFrameSize(crop, scale, &frameW, &frameH);
+    if (crop == NULL || frameW <= 0 || frameH <= 0 ||
+        !msf_gif_begin(&s->enc, frameW, frameH)) {
         clipGifRestore(s, r, true);
         return false;
     }
@@ -235,6 +248,11 @@ bool clipGifCaptureOpen(ClipGifSession *s, const ClipGifReplay *r,
     s->crop.y = crop->y;
     s->crop.w = crop->w;
     s->crop.h = crop->h;
+    s->scale    = scale;
+    s->frameW   = frameW;
+    s->frameH   = frameH;
+    s->frameTex = NULL;
+    s->frameFor = NULL;
 
     /* From the length in ms, not in ticks: the replay steps a log clock and
      * a highlight is measured in sim ticks, and the two do not share a
@@ -248,8 +266,8 @@ bool clipGifCaptureOpen(ClipGifSession *s, const ClipGifReplay *r,
         s->meta = ClipGifMeta{};
     }
     s->meta.durationMs = frames * CLIP_GIF_FRAME_MS;
-    s->meta.width      = crop->w;
-    s->meta.height     = crop->h;
+    s->meta.width      = frameW;
+    s->meta.height     = frameH;
     s->frame  = 0;
     s->total  = (int)frames;
     s->failed = false;
@@ -308,10 +326,32 @@ bool clipGifCaptureStart(ClipGifSession *s, const ClipGifReplay *r,
                               mapName, meta);
 }
 
+/* The texture the frames are drawn into, made on renderer the first time
+ * and again should the frames come from another renderer. False when it
+ * cannot be made. */
+static bool clipGifFrameTexture(ClipGifSession *s, SDL_Renderer *renderer) {
+    if (renderer == NULL || s->frameW <= 0 || s->frameH <= 0) {
+        return false;
+    }
+    if (s->frameTex != NULL && s->frameFor == renderer) {
+        return true;
+    }
+    if (s->frameTex != NULL) {
+        SDL_DestroyTexture(s->frameTex);
+        s->frameTex = NULL;
+    }
+    s->frameTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
+                                    SDL_TEXTUREACCESS_TARGET, s->frameW,
+                                    s->frameH);
+    s->frameFor = (s->frameTex != NULL) ? renderer : NULL;
+    return s->frameTex != NULL;
+}
+
 void clipGifCaptureStep(ClipGifSession *s, const ClipGifReplay *r) {
     if (s == NULL || !s->active || s->done || s->failed) {
         return;
     }
+    const SDL_Rect whole = { 0, 0, s->frameW, s->frameH };
     for (int i = 0; i < CLIP_GIF_FRAMES_PER_PASS && s->frame < s->total; i++) {
         bool ended = false;
         SDL_Renderer *renderer = NULL;
@@ -322,11 +362,15 @@ void clipGifCaptureStep(ClipGifSession *s, const ClipGifReplay *r) {
         if (r == NULL || r->advance == NULL || r->target == NULL ||
             (s->frame > 0 && !r->advance(r->user, &ended)) ||
             !r->target(r->user, &renderer, &texture) ||
-            !clipGifEncodeFrame(renderer, texture, &s->crop, &s->enc)) {
-            /* A failed readback (a render target made smaller by a window
-             * resize is one) stops the GIF here, rather than writing a GIF
-             * with a part of the time not in it. The next render ends the
-             * capture and puts the replay back, as Cancel does. */
+            !clipGifFrameTexture(s, renderer) ||
+            !clipGifComposeFrame(renderer, texture, &s->crop, s->frameTex,
+                                 s->frameW, s->frameH, r->drawNames, r->user) ||
+            !clipGifEncodeFrame(renderer, s->frameTex, &whole, &s->enc)) {
+            /* A frame that cannot be made (a render target made smaller by
+             * a window resize is one) stops the GIF here, rather than
+             * writing a GIF with a part of the time not in it. The next
+             * render ends the capture and puts the replay back, as Cancel
+             * does. */
             s->failed = true;
             return;
         }
