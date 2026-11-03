@@ -8279,6 +8279,23 @@ local function capture_route_probe(state, world, info, pill, pid, tmx, tmy)
   state.capture_route[key] = ent
 end
 
+-- Public: the probe's LETHAL verdict for the fresh-kill claim (Override 3b,
+-- KILL_PICKUP_LETHAL_EXIT). Returns the capture_route entry when the probe's
+-- own wsim of the direct route said we die on it (ent.killed, the
+-- "refused: LETHAL" line above) and that verdict is still good by the probe's
+-- own rules (capture_route_stale: age, threat rebuild, tank moved). nil when
+-- the knob is off, there is no verdict, it is stale, or it said we live.
+-- No probe runs here: the override reuses what step_eval_queue measured, and
+-- the claimed body is that probe's focus pill (rule 2 in its caller).
+function M.kill_pickup_lethal_verdict(state, pill, pid, now, tmx, tmy)
+  if not C.KILL_PICKUP_LETHAL_EXIT then return nil end
+  if not pill or not state.capture_route then return nil end
+  local ent = state.capture_route[pill.my * 256 + pill.mx]
+  if not ent or ent.id ~= pid or not ent.killed then return nil end
+  if capture_route_stale(ent, now, tmx, tmy) then return nil end
+  return ent
+end
+
 -- =========================================================================
 -- PILL CLUSTERING — shared by the sea harvest and the land capture discount.
 --
@@ -17336,6 +17353,8 @@ local function goal_selection(state, world, info, quiet)
   -- LOWEST capture_pill score grabs (tie → lower player number); the rest
   -- stand down and the whole team treats the pill as claimed (the kg/_kill_-
   -- claimed reject in build_eval_queue). Mirrors Override 3 (cp command).
+  -- With KILL_PICKUP_LETHAL_EXIT on, the claim also ends when capture_pill's
+  -- direct-route probe says the grab is LETHAL (see the LETHAL exit below).
   -- ════════════════════════════════════════════════════════════════════
   if not result and C.KILL_PICKUP_ENABLED and state.kill_pickup then
     local kp  = state.kill_pickup
@@ -17349,8 +17368,15 @@ local function goal_selection(state, world, info, quiet)
     -- Claim dies when: TTL lapsed, capped, pill gone, already scooped (in_tank),
     -- or (re)captured by the team (friendly & alive again). in_tank is the
     -- "enemy/ally took it" exit — the one interruption we honor.
+    -- LETHAL exit (KILL_PICKUP_LETHAL_EXIT): capture_pill's own direct-route
+    -- probe says the drive to the body kills us. Drop the claim and let the
+    -- normal pool decide, so a safer goal (take_cover, refuel) can win.
+    local kp_lethal = p and (p.health or 0) == 0
+                      and M.kill_pickup_lethal_verdict(state, p, kp.id, now, tmx, tmy)
     if ttl_lapsed or capped or not p or p.in_tank
        or (p.owner == "friendly" and (p.health or 0) > 0) then
+      state.kill_pickup = nil
+    elseif kp_lethal then
       state.kill_pickup = nil
     elseif (p.health or 0) == 0 then
       -- Our own capture_pill score for the body — drives BOTH the handoff
