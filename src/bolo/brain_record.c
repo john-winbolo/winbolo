@@ -12,6 +12,7 @@
 #include <SDL3/SDL.h>   /* SDL_GetPerformanceCounter for the perf log */
 
 #include "brain_record.h"
+#include "brain_record_ticks.h"  /* tick-range note written at close */
 #include "server_sim.h"
 #include "input_packet.h"
 #include "brain_overlay.h"
@@ -52,6 +53,27 @@ static uint32_t g_legendBytes = 0;
 static BYTE     g_prevMap[BRAINREC_MAP_TILES];
 static bool     g_hasPrevMap = false;
 static uint32_t g_frameCount = 0;
+
+/* First and last frame tick written to the open .btr, and how many frames.
+ * At close they go into brainrec_ticks.txt, so BrainTest can show the game
+ * length without reading the whole gzip stream. */
+static uint32_t g_fileFirstTick = 0;
+static uint32_t g_fileLastTick  = 0;
+static uint64_t g_fileFrames    = 0;
+
+/* Close the open .btr and write its tick-range note beside it. */
+static void closeFileWithTicks(void) {
+    if (!g_gz) return;
+    gzclose(g_gz);
+    g_gz = NULL;
+    if (g_fileFrames > 0 && g_sessionDir[0]) {
+        if (!brainRecTicksWrite(g_sessionDir, g_fileFirstTick, g_fileLastTick, g_fileFrames))
+            fprintf(stderr, "brain_record: could not write %s/%s
+",
+                    g_sessionDir, BRAINREC_TICKS_FILENAME);
+    }
+    g_fileFrames = 0;
+}
 
 /* Selective recording parts (winbolods -bd-noviz / -bd-nopool /
  * -bd-pool-full). When off, the per-bot overlay block / pool-breakdown
@@ -511,6 +533,9 @@ void brainRecordTick(ServerSim *sim) {
 
     wr_u32(BRAINREC_FRAME_MAGIC);
     wr_u32(tick);
+    if (g_fileFrames == 0) g_fileFirstTick = tick;
+    g_fileLastTick = tick;
+    g_fileFrames++;
 
     wr_u8(hdr.tankCount);   wr_buf(tanks,  (size_t)hdr.tankCount  * sizeof(TankSnapshot));
     wr_u8(hdr.shellCount);  wr_buf(shells, (size_t)hdr.shellCount * sizeof(ShellSnapshot));
@@ -677,10 +702,7 @@ void brainRecordEndGame(void) {
      * per-game state so the NEXT game (after a fresh brainRecordSetSessionDir)
      * opens a clean file anchored at its own first tick. Keeps g_enabled
      * (armed) and g_sessionDir (the host overwrites the dir per game). */
-    if (g_gz) {
-        gzclose(g_gz);
-        g_gz = NULL;
-    }
+    closeFileWithTicks();
     g_sinceFlush   = 0;
     g_lastTick     = 0xFFFFFFFFu;
     g_failed       = false;
@@ -701,10 +723,7 @@ void brainRecordEndGame(void) {
 }
 
 void brainRecordShutdown(void) {
-    if (g_gz) {
-        gzclose(g_gz);
-        g_gz = NULL;
-    }
+    closeFileWithTicks();
     g_sinceFlush = 0;
     g_enabled    = false;
     g_lastTick   = 0xFFFFFFFFu;
