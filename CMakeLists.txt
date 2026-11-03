@@ -6753,6 +6753,8 @@ set(_unit_test_names
     bg_map_pick_skips_tutorials
     tutorial_maps_shipped_path
     tutorial_maps_popup_pauses
+    tutorial_maps_popup_opens_window
+    tutorial_maps_popup_fallback_lines
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop

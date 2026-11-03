@@ -3017,6 +3017,11 @@ int run_tutorial_maps_shipped_path(void);
 /* Which games a scenario popup pauses: only the shipped tutorials
  * (test_bg_map_pick.c). */
 int run_tutorial_maps_popup_pauses(void);
+/* Which popups open the popup window, with script popups off and on, and
+ * the Scenario Text lines a popup with no window is split into
+ * (test_bg_map_pick.c). */
+int run_tutorial_maps_popup_opens_window(void);
+int run_tutorial_maps_popup_fallback_lines(void);
 
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
