@@ -956,7 +956,7 @@ float lvEmbedGetZoomLevel(void);
 int  lvEmbedTankLabelCount(float pxPerSourcePx);
 bool lvEmbedTankLabel(int index, void **outTexture, int *outX, int *outY,
                       int *outW, int *outH);
-void lvEmbedSetTankLabelsInTexture(bool inTexture);
+void lvEmbedDrawTankLabels(const float src[4], const float dst[4]);
 void lvEmbedPlay(void);
 void lvEmbedPause(void);
 bool lvEmbedIsPlaying(void);

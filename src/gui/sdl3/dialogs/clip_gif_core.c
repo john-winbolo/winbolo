@@ -1018,6 +1018,32 @@ bool clipGifChooseCrop(ClipGifMode *m, int viewX, int viewY, int viewW,
     return true;
 }
 
+/* ── The size of a frame ───────────────────────────────────────────── */
+
+float clipGifFrameScale(float screenScale) {
+    if (!(screenScale >= 1.0f)) {
+        /* Below 1, and NaN. */
+        return 1.0f;
+    }
+    if (screenScale > CLIP_GIF_MAX_SCALE) {
+        return CLIP_GIF_MAX_SCALE;
+    }
+    return screenScale;
+}
+
+void clipGifFrameSize(const ClipGifRect *crop, float scale, int *outW,
+                      int *outH) {
+    int w = 0, h = 0;
+    if (crop != NULL && crop->w > 0 && crop->h > 0) {
+        w = (int)((float)crop->w * scale + 0.5f);
+        h = (int)((float)crop->h * scale + 0.5f);
+        if (w < 1) w = 1;
+        if (h < 1) h = 1;
+    }
+    if (outW != NULL) *outW = w;
+    if (outH != NULL) *outH = h;
+}
+
 /* ── The GIF span and the zoomed timeline ──────────────────────────── */
 
 ClipGifRange clipGifSpanRange(const ClipGifMode *m, uint32_t totalMs) {

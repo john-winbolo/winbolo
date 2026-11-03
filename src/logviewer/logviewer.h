@@ -296,8 +296,8 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
  * size its image at the slice times the zoom instead of stretching it to fill.
  * The tank names are not in the texture: lvEmbedTankLabelCount and
  * lvEmbedTankLabel give them for the host to draw over its image, and
- * lvEmbedSetTankLabelsInTexture(true) puts them back in for a host that reads
- * the texture's pixels.
+ * lvEmbedDrawTankLabels draws them over an image the host has made of the
+ * texture on its own render target (a GIF export's frame).
  * lvEmbedGetProgress, lvEmbedSeekRatio, lvEmbedSeekToClip and lvEmbedSeekToTime
  * all speak in the presented window rather than the whole log: progress is
  * elapsed and total milliseconds within it (zeros while no embed is running), a
@@ -323,7 +323,7 @@ float lvEmbedGetZoomLevel(void);
 int  lvEmbedTankLabelCount(float pxPerSourcePx);
 bool lvEmbedTankLabel(int index, void **outTexture, int *outX, int *outY,
                       int *outW, int *outH);
-void lvEmbedSetTankLabelsInTexture(bool inTexture);
+void lvEmbedDrawTankLabels(const float src[4], const float dst[4]);
 void lvEmbedPlay(void);
 void lvEmbedPause(void);
 bool lvEmbedIsPlaying(void);

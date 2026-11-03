@@ -325,11 +325,17 @@ static int SDLCALL galleryDecodeThread(void *userdata) {
         job->tooLarge = true;  /* stb takes an int length */
     } else if (data != NULL && len > 0) {
         int tooLarge = 0;
-        job->pixels = stbiLoadGifCapped((const stbi_uc *)data, (int)len,
-                                        CLIP_GIF_PREVIEW_MAX_BYTES,
-                                        &job->delays, &job->w, &job->h,
-                                        &job->frames, &tooLarge,
-                                        galleryJobStopped, job);
+        /* A GIF the game made is at most CLIP_GIF_MAX_FRAMES frames. One
+         * whose frames would not all fit in the limit at that length (a GIF
+         * made at 2x is four times the pixels of one at 1x) is decoded
+         * shrunk, so the preview plays the whole clip at a smaller size
+         * rather than saying it is too large. */
+        job->pixels = stbiLoadGifCappedShrink((const stbi_uc *)data, (int)len,
+                                              CLIP_GIF_PREVIEW_MAX_BYTES,
+                                              CLIP_GIF_MAX_FRAMES,
+                                              &job->delays, &job->w, &job->h,
+                                              &job->frames, &tooLarge,
+                                              galleryJobStopped, job);
         job->tooLarge = (tooLarge != 0);
     }
     SDL_free(data);

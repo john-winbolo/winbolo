@@ -72,11 +72,24 @@ static void reelSeek(void *user, uint32_t ms) {
     lvEmbedSeekToTime(ms);
 }
 
-/* The reel draws the tank names over its image and not into the texture,
- * and the texture is what is read back: so the names go in for a GIF. */
-static void reelCaptureMode(void *user, bool on) {
+/* The scale the reel's image is drawn at: frame buffer pixels per texture
+ * pixel, the zoom times the display's density (as lobbyReelDrawTankLabels
+ * rasterizes the names). */
+static float reelScale(void *user) {
     (void)user;
-    lvEmbedSetTankLabelsInTexture(on);
+    float fb = ImGui::GetIO().DisplayFramebufferScale.x;
+    if (fb <= 0.0f) fb = 1.0f;
+    return lvEmbedGetZoomLevel() * fb;
+}
+
+/* The names over a GIF frame, as the reel draws them over its image. */
+static void reelDrawNames(void *user, SDL_Renderer *renderer,
+                          const SDL_FRect *src, const SDL_FRect *dst) {
+    (void)user;
+    (void)renderer;
+    const float s[4] = { src->x, src->y, src->w, src->h };
+    const float d[4] = { dst->x, dst->y, dst->w, dst->h };
+    lvEmbedDrawTankLabels(s, d);
 }
 
 /* One GIF frame of log ticks. The texture is drawn again when it is read
@@ -105,7 +118,7 @@ static bool reelTarget(void *user, SDL_Renderer **renderer,
 
 static const ClipGifReplay s_reelReplay = {
     NULL, reelProgress, reelIsPlaying, reelPlay, reelPause, reelSeek,
-    reelCaptureMode, reelAdvance, reelTarget
+    NULL, reelAdvance, reelTarget, reelScale, reelDrawNames
 };
 
 static ClipGifSession s_session = {};
