@@ -1571,6 +1571,7 @@ static const UnitTestEntry s_tests[] = {
     { "tutorial_maps_popup_pauses",              run_tutorial_maps_popup_pauses              },
     { "tutorial_maps_popup_opens_window",        run_tutorial_maps_popup_opens_window        },
     { "tutorial_maps_popup_fallback_lines",      run_tutorial_maps_popup_fallback_lines      },
+    { "tutorial_maps_popup_lines_wait",          run_tutorial_maps_popup_lines_wait          },
     { "voice_core_roundtrip",                    run_voice_core_roundtrip                    },
     { "voice_device_resolve",                    run_voice_device_resolve                    },
     { "voice_peak",                              run_voice_peak                              },

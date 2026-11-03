@@ -210,3 +210,30 @@ int run_tutorial_maps_popup_fallback_lines(void) {
     UT_ASSERT(tutorialMapsPopupFallbackSeconds(511) == 30);
     return 0;
 }
+
+/* The wait for a popup's Scenario Text lines: up from "from" until
+ * "until", and both set to 0 when the clock is before "from", as it is in a
+ * new game whose server tick clock started at 0 again. */
+int run_tutorial_maps_popup_lines_wait(void) {
+    uint32_t from  = 5000;
+    uint32_t until = 6500;
+
+    /* In the window, and at its two ends. */
+    UT_ASSERT(tutorialMapsPopupLinesUp(5000, &from, &until));
+    UT_ASSERT(tutorialMapsPopupLinesUp(6499, &from, &until));
+    UT_ASSERT(!tutorialMapsPopupLinesUp(6500, &from, &until));
+    UT_ASSERT(from == 5000 && until == 6500);
+
+    /* A new game: the clock is back near 0. The old window is cleared, so
+       a popup that arrives later in the new game, inside the old window's
+       ticks, does not wait. */
+    UT_ASSERT(!tutorialMapsPopupLinesUp(10, &from, &until));
+    UT_ASSERT(from == 0 && until == 0);
+    UT_ASSERT(!tutorialMapsPopupLinesUp(5500, &from, &until));
+
+    /* Nothing shown yet. */
+    from = 0;
+    until = 0;
+    UT_ASSERT(!tutorialMapsPopupLinesUp(0, &from, &until));
+    return 0;
+}

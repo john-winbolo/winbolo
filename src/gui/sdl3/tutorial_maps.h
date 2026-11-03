@@ -30,6 +30,7 @@
 #define TUTORIAL_MAPS_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
 
 /* The folder under data/maps that holds every shipped tutorial. Each
@@ -172,6 +173,20 @@ static inline bool tutorialMapsPopupOpensWindow(bool scriptPopupsOn,
 static inline int tutorialMapsPopupFallbackSeconds(size_t textLen) {
     size_t s = 6u + textLen / 20u;
     return (int)(s > 30u ? 30u : s);
+}
+
+/* Whether the Scenario Text lines of the last popup that opened no window
+ * are still up at server tick now: from *from (inclusive) to *until. The
+ * server's tick clock starts at 0 again in each new game, so a now before
+ * *from means the window belongs to an earlier game: both are set to 0,
+ * and the lines are not up. */
+static inline bool tutorialMapsPopupLinesUp(uint32_t now, uint32_t *from,
+                                            uint32_t *until) {
+    if (now < *from) {
+        *from  = 0;
+        *until = 0;
+    }
+    return now >= *from && now < *until;
 }
 
 /* Splits a popup's text into lines for the Scenario Text window, for a
