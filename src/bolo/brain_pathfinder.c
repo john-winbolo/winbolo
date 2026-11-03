@@ -2997,25 +2997,28 @@ static int chain_rank_pick(const BrainPathfinder *pf, const DijkstraSlate *s,
  *
  * Why: the slate restarts on the tank's tile only every few ticks. When the
  * tank moves onto a square that is not on the traced chain before then, the
- * fallbacks below pick a neighbour by g, which is cost FROM THE ROOT, so the
- * root itself (g = 0) or a chain square the tank has already passed wins, and
- * the tank turns back. Debug session 20261103_165532_1_v3_anchor_helm_s205,
- * player 2, brain ticks 1663, 1703, 1860, 1880, 2146-2147: the chain-rank
- * pick's hazard bound refused the square ahead and the root was left.
+ * fallbacks below can send it back: the lowest-g pick takes the root itself
+ * (g = 0), and the chain-rank pick, when its hazard bound refuses the squares
+ * ahead, takes a square that touches only the chain behind the tank (the
+ * root, or a square next to it). The tank turns back. Debug session
+ * 20261103_165532_1_v3_anchor_helm_s205, player 2, brain ticks 1663, 1703,
+ * 1860, 1880, 2146-2147.
  *
- * What: the fallback's pick (*px,*py) is checked. It is replaced when it is
- * the slate root (and not the destination), or a chain square while another
- * neighbour touches the chain nearer the destination. The new pick is the
- * neighbour with the lowest
- *     step cost (tank -> a) + cost to go from a,
- * where the cost to go is g(dest) - g(c) for a chain square a = c, and
- * step(a -> c) + g(dest) - g(c) for a square next to a chain square c (the
- * best such c). Step costs are edge cost + hazard (tile_hazard), times the
- * diagonal factor; a live obstacle adds `penalty`. Only chain squares from
- * k_min (the on-foot layer bound) count. The root stays possible: it wins
- * only when going back through it is the cheapest way to the destination.
- * Returns 1 when the pick was replaced. Cost: 8 x chain length compares,
- * only on a fallback tick whose pick is the root or behind. */
+ * What: for each legal neighbour a of the tank (in bounds, legal on foot when
+ * foot_rule, step from the tank not COST_INF), find
+ *   - the lowest chain index it is on or next to (k_min and up), and
+ *   - its score = step cost (tank -> a) + cost to go from a, where the cost
+ *     to go is g(dest) - g(c) for a chain square a = c, and
+ *     step(a -> c) + g(dest) - g(c) for a square next to a chain square c
+ *     (the best such c).
+ * Step costs are edge cost + hazard (tile_hazard), times the diagonal factor;
+ * a live obstacle adds `penalty`. The fallback's pick (*px,*py) is replaced
+ * by the lowest score when the pick is the slate root (and not the
+ * destination), or when the pick touches the chain only further from the
+ * destination than another legal neighbour does. The root stays possible:
+ * it wins only when going back through it is the cheapest way to the
+ * destination, for example from a dead end. Returns 1 when the pick was
+ * replaced. Cost: 8 x chain length compares, only on a fallback tick. */
 static int offchain_repick(const BrainPathfinder *pf, const DijkstraSlate *s,
                            const int *chain, int k_min, int chain_len,
                            int sx, int sy, int dx, int dy,
@@ -3025,19 +3028,6 @@ static int offchain_repick(const BrainPathfinder *pf, const DijkstraSlate *s,
   if (chain_len <= 0 || !pf->edge_cost) return 0;
   int is_root = (*px == s->src_x && *py == s->src_y)
                 && !(*px == dx && *py == dy);
-  /* Index of the pick on the chain (-1 off it), and the lowest chain index
-   * any neighbour of the tank touches. */
-  int k_pick = -1, k_touch = chain_len;
-  for (int k = k_min; k < chain_len; k++) {
-    int cx = node_x(chain[k]), cy = node_y(chain[k]);
-    if (k_pick < 0 && cx == *px && cy == *py) k_pick = k;
-    if (k < k_touch) {
-      int ddx = cx - sx, ddy = cy - sy;
-      if (ddx >= -2 && ddx <= 2 && ddy >= -2 && ddy <= 2) k_touch = k;
-    }
-  }
-  if (!is_root && !(k_pick >= 0 && k_touch < k_pick)) return 0;
-
   float g_dst = s->g_cost[chain[0]];
   float sgl = s->g_cost[node_idx(sx, sy, 0)];
   float sgb = s->g_cost[node_idx(sx, sy, 1)];
@@ -3045,6 +3035,7 @@ static int offchain_repick(const BrainPathfinder *pf, const DijkstraSlate *s,
   int s_node = node_idx(sx, sy, s_boat);
   float best = COST_INF, best_d2 = 1e30f;
   int bx = -1, by = -1;
+  int k_best = chain_len, k_pick = chain_len;
   for (int d = 0; d < 8; d++) {
     int ax = sx + DX8[d], ay = sy + DY8[d];
     if (ax < 0 || ax > 255 || ay < 0 || ay > 255) continue;
@@ -3055,15 +3046,17 @@ static int offchain_repick(const BrainPathfinder *pf, const DijkstraSlate *s,
     if (obs_contains(obstacles, n_obstacles, ax, ay)) step += penalty;
     int a_node = node_idx(ax, ay, s_boat);
     float to_go = COST_INF;
+    int k_touch = chain_len;
     for (int k = k_min; k < chain_len; k++) {
       int cx = node_x(chain[k]), cy = node_y(chain[k]);
       int ddx = cx - ax, ddy = cy - ay;
       if (ddx < -1 || ddx > 1 || ddy < -1 || ddy > 1) continue;
+      if (k < k_touch) k_touch = k;
       float gc = s->g_cost[chain[k]];
       if (gc >= COST_INF) continue;
       float rest = g_dst - gc;
       if (ddx != 0 || ddy != 0) {
-        int e = -1;
+        int e = 0;
         for (int q = 0; q < 8; q++) {
           if (DX8[q] == ddx && DY8[q] == ddy) { e = q; break; }
         }
@@ -3074,13 +3067,16 @@ static int offchain_repick(const BrainPathfinder *pf, const DijkstraSlate *s,
       }
       if (rest < to_go) to_go = rest;
     }
+    if (ax == *px && ay == *py) k_pick = k_touch;
     if (to_go >= COST_INF) continue;
+    if (k_touch < k_best) k_best = k_touch;
     float score = step + to_go;
     float d2 = (float)((ax - dx) * (ax - dx) + (ay - dy) * (ay - dy));
     if (score < best - 1e-3f || (score < best + 1e-3f && d2 < best_d2)) {
       best = score; best_d2 = d2; bx = ax; by = ay;
     }
   }
+  if (!is_root && k_pick <= k_best) return 0;
   if (bx < 0 || (bx == *px && by == *py)) return 0;
   *px = bx;
   *py = by;
