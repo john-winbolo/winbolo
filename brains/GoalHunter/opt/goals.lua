@@ -1628,6 +1628,21 @@ end
 
 -- Compute attack_pill cost adjustments for a given pill/path-cost.
 -- Returns adjusted_cost, description_suffix.
+-- SPIKE_PEN_SKIP_MAX_SHOTS: the shots this player's own model says the pill
+-- needs, when that is few enough to waive the spike cross-penalty; else nil.
+-- Shots = ceil(known armour / rules.pill_shell_damage), the rule being the
+-- armour one shell takes (classic 1; see the constant for the engine lines).
+function M.spike_pen_skip_shots(pill, info)
+  local max_shots = C.SPIKE_PEN_SKIP_MAX_SHOTS or 0
+  if max_shots <= 0 or not pill then return nil end
+  local r = info and info.rules
+  local psd = r and tonumber(r.pill_shell_damage) or 1
+  if psd <= 0 then return nil end   -- shells take nothing: the pill never dies
+  local shots = math.ceil((pill.health or 0) / psd)
+  if shots >= 1 and shots <= max_shots then return shots end
+  return nil
+end
+
 local function attack_pill_adjustments(pill, pcost, state, world)
   -- Separate path cost from combat cost. Only the combat portion gets
   -- scaled by health-based multipliers (wounded, eLGMdead, bkiller).
@@ -1752,7 +1767,11 @@ local function attack_pill_adjustments(pill, pcost, state, world)
       if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *spike(x%.2f n=%d cover=%d)", sm, sp.n or 1, sp.cover or 1) end
     elseif state._spike_present then
       spike_pen_mult = 1.0 + ((C.SPIKE_OTHER_PENALTY_MULT or 1.15) - 1.0) * (state._spike_pen_scale or 1.0)
-      if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *spike_pen(x%.3f)", spike_pen_mult) end
+      local skip = M.spike_pen_skip_shots(pill, state._last_info)
+      if skip then
+        spike_pen_mult = 1.0
+        if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *spike_pen{skip: %d shots}", skip) end
+      elseif BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *spike_pen(x%.3f)", spike_pen_mult) end
     end
   end
 
@@ -11869,7 +11888,9 @@ local function get_formula_inner(e)
     -- elsewhere. Detail row is always present (matches the intcpt pattern —
     -- an absent row read as "not part of the cost").
     local _spike_mult_term = e._spike_mult and string.format(" * spike{%.2f}", e._spike_mult) or ""
-    local _spike_pen_term  = e._spike_pen and string.format(" * spike_pen{%.3f}", e._spike_pen) or ""
+    local _spike_pen_term  = e._spike_pen and string.format(" * spike_pen{%.3f}", e._spike_pen)
+                             or (e._spike_pen_skip and string.format(" * spike_pen{skip: %d shots}", e._spike_pen_skip))
+                             or ""
     local _d_spike = e._spike_mult
       and string.format(
         "SPIKING: this pill sits within PILL_FIRE_RANGE=%d of %d friendly base(s) (first @(%d,%d)); its least-contested base is covered by %d spike(s) → decisiveness 1/%d → combat × %.2f (SPIKE_PILL_DISCOUNT=%.2f at full decisiveness; each EXTRA denied base strengthens the pull by SPIKE_BASES_BONUS, floored at SPIKE_DISCOUNT_FLOOR; a co-spiked area is 'kinda lost' so clearing one of many pulls weakly)",
@@ -11880,6 +11901,9 @@ local function get_formula_inner(e)
       and string.format(
         "a spiking pill exists elsewhere (@(%d,%d), in range of a friendly base) → WHOLE cost × %.3f [1 + (SPIKE_OTHER_PENALTY_MULT-1) × best decisiveness] on every non-spiking pill (clear the spike first; fades toward ×1.0 when every spike shares its base with others)",
         e._spike_ex_mx or -1, e._spike_ex_my or -1, e._spike_pen)
+      or (e._spike_pen_skip and string.format(
+        "a spiking pill exists elsewhere (@(%d,%d)), but this pill dies in %d shot(s) (known armour / rules.pill_shell_damage, rounded up) <= SPIKE_PEN_SKIP_MAX_SHOTS=%d → x1.0, no cross-penalty",
+        e._spike_ex_mx or -1, e._spike_ex_my or -1, e._spike_pen_skip, C.SPIKE_PEN_SKIP_MAX_SHOTS or 0))
       or "no spiking pill elsewhere (or this IS the spike) → no cross-penalty"
     -- INF terms print as "INF" (a %.0f of 1e30 is a 31-digit number and
     -- math.huge prints "inf"); the SKIP prefix + skip: row name which
@@ -13408,6 +13432,7 @@ function M.step_eval_queue(state, world, info)
       local spike_mult, spike_pen_mult = 1.0, 1.0
       local _spike_n, _spike_cover, _spike_bmx, _spike_bmy = 0, 1, nil, nil
       local _spike_ex_mx, _spike_ex_my = nil, nil
+      local _spike_pen_skip = nil
       if pool_idx == 6 then
         refresh_spike_detection(state, world)
         local sp = state._spike_pills and state._spike_pills[obj.my * 256 + obj.mx]
@@ -13421,6 +13446,9 @@ function M.step_eval_queue(state, world, info)
             _spike_ex_mx, _spike_ex_my = esp.pmx, esp.pmy
             break
           end
+          -- SPIKE_PEN_SKIP_MAX_SHOTS: a pill this close to dead pays x1.0.
+          _spike_pen_skip = M.spike_pen_skip_shots(obj, info)
+          if _spike_pen_skip then spike_pen_mult = 1.0 end
         end
       end
       local combat = (stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult * spike_mult
@@ -13852,6 +13880,7 @@ function M.step_eval_queue(state, world, info)
         entry._spike_bmx  = _spike_bmx
         entry._spike_bmy  = _spike_bmy
         entry._spike_pen  = (spike_pen_mult ~= 1.0) and spike_pen_mult or nil
+        entry._spike_pen_skip = _spike_pen_skip
         entry._spike_ex_mx = _spike_ex_mx
         entry._spike_ex_my = _spike_ex_my
         entry._danger_mult = (_danger_nearby_mult ~= 1.0) and _danger_nearby_mult or nil

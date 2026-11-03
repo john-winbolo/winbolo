@@ -2930,6 +2930,19 @@ M.BASE_KILLER_PILL_PENALTY      = 2.0   -- multiply attack_pill cost (deprioriti
 -- selection.)
 M.SPIKE_PILL_DISCOUNT           = 0.7   -- combat-cost multiplier at FULL decisiveness (lerps toward 1.0 as cover grows: cover 2 ??? 0.85, 4 ??? 0.925)
 M.SPIKE_OTHER_PENALTY_MULT      = 1.2   -- whole-cost multiplier on every NON-spiking attack_pill candidate at full decisiveness (lerps toward 1.0: cover 2 ??? 1.10, 4 ??? 1.05)
+-- SPIKE_PEN_SKIP_MAX_SHOTS (2026-11-03): no spike cross-penalty on a pill
+-- that is nearly dead. When this player's own world model says the attack
+-- target pill dies in at most this many of our shells, its
+-- SPIKE_OTHER_PENALTY_MULT is x1.0: finishing it is a few shots, not a
+-- wander away from the spike. Shots = ceil(known armour / armour one shell
+-- takes). The engine takes rules.pill_shell_damage per shell (classic
+-- PILLBOX_SHELL_DAMAGE = 1, src/bolo/internal/pillbox.h:56; applied in
+-- pillsDamagePos, src/bolo/pillbox.c:928-938, scaled there by the host's
+-- pill damage percent, which the brain cannot read). The brain reads the
+-- rule from info.rules.pill_shell_damage (1 when not sent). So under
+-- classic rules shots = armour, and 5 means armour 5 or less.
+-- 0 = off (every non-spiking pill pays the penalty, as before). KEEL 0.
+M.SPIKE_PEN_SKIP_MAX_SHOTS      = 5
 -- Breadth scaling: each base a spike denies BEYOND the first strengthens the
 -- discount pull by this fraction (decisive 3-base spike: effect x1.7 ???
 -- 1-0.3*1.7 = 0.49 ??? floored at SPIKE_DISCOUNT_FLOOR). Applied on top of
@@ -6218,6 +6231,9 @@ M.PRESETS = {
     FOCUS_SPIKE_SOLO_CARRIER       = false,
     -- 2026-11-02: no rch term in the placement scan (enemy reach weight).
     PLACE_ENEMY_REACH              = 0,
+    -- 2026-11-03: every non-spiking pill pays the spike cross-penalty,
+    -- however few shots it needs.
+    SPIKE_PEN_SKIP_MAX_SHOTS       = 0,
     BUILDER_LEASH_EUCLID           = true,
     -- 2026-11-01: spike care needs the aggro class (no care by range).
     FOCUS_SPIKE_CARE_BY_RANGE      = false,
