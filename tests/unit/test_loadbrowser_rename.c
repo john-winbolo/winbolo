@@ -520,7 +520,7 @@ int run_session_name_natural_sort(void) {
         SDL_snprintf(names[i], sizeof names[i], "%s%dof23", P, order[i]);
         ptrs[i] = names[i];
     }
-    SDL_qsort(ptrs, 23, sizeof ptrs[0], natCmpQ);
+    SDL_qsort((void *)ptrs, 23, sizeof ptrs[0], natCmpQ);
     for (int i = 0; i < 23; i++) {
         char want[80];
         SDL_snprintf(want, sizeof want, "%s%dof23", P, i + 1);
