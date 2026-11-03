@@ -450,7 +450,9 @@ M.ALLY_PILL_TAKE_PRIORITY_TICKS = 100
 -- queries, so a cluster of (re)spawns can't make us re-dump our whole known
 -- world every tick. The dump itself drains a few objects per idle message slot.
 M.KW_RESYNC_COOLDOWN = 150
-M.REFUEL_MIN_STOCK = 5    -- skip bases with less than this in observed stock (not worth the trip)
+M.REFUEL_MIN_STOCK = 5    -- skip bases with less than this in observed stock (not worth the trip).
+                          -- Shells are raw; armour is counted in steps of five raw armour, the
+                          -- info.base.armour number (util.lua base_armour_steps), so 5 = 25 raw.
 -- Dynamic refuel targets (state.shell_target / state.armour_target).
 -- Must stay above SHELLS_LOW (20) or offense pools (eval_attack_pill /
 -- attack_tank) refuse to fire and the bot leaves base unable to fight.
@@ -467,8 +469,8 @@ M.REFUEL_OBS_STALE = 500  -- ignore observed stock older than this many ticks (b
 -- trip; both short at once compounds to x1.21. Fresh observations only (within
 -- REFUEL_OBS_STALE) -- an unseen or stale base pays nothing here, the staleness
 -- terms own that. Compared the way the reject compares (see
--- refuel_low_stock_mult in goals.lua for the obs_armour units caveat).
-M.REFUEL_LOW_ARMOUR_MULT = 1.10  -- need armour and obs_armour < REFUEL_MIN_STOCK
+-- refuel_low_stock_mult in goals.lua for the obs_armour units note).
+M.REFUEL_LOW_ARMOUR_MULT = 1.10  -- need armour and obs_armour / 5 < REFUEL_MIN_STOCK
 M.REFUEL_LOW_SHELLS_MULT = 1.10  -- need shells and obs_shells < REFUEL_MIN_STOCK
 M.REFUEL_DEPLETED_COOLDOWN = 500  -- when a COMMITTED refuel goal is abandoned because its base went depleted, block that base tile for this many ticks (~10s at 50Hz) so finalize can't re-pick it the moment the depleted observation ages out (prevents the drive-there / observe-depleted / leave flip-flop). Re-arms on each abandon.
 -- When true, suppress goal-replan while traveling to or topping up at a
@@ -4457,7 +4459,9 @@ M.CAPTURE_CLUSTER_GUARD_MAX   = 4.0  -- cap: three or more guards is already a n
 -- The REAL armour reaches a bot through EVENT_BASE_STOCK.  The server culls that
 -- event to neutral/allied bases for HUMANS but sends every one of them to BOTS
 -- (server_sim.c ~3667: `if (evType == EVENT_BASE_STOCK && !recipientIsBot)`), and
--- world.lua stores it as bases[id].obs_armour with bases[id].obs_tick.  So
+-- world.lua stores it as bases[id].obs_armour with bases[id].obs_tick (RAW
+-- armour, 0..90; every writer stores this unit, see util.lua
+-- base_armour_steps).  So
 -- obs_armour/obs_tick is the ONLY armour source for a hostile base.  It is
 -- emitted on CHANGE only, which means:
 --   * while anyone is shelling the base it refreshes every hit (age ~0),

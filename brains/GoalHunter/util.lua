@@ -900,13 +900,45 @@ end
 --                 / x REFUEL_LOW_SHELLS_MULT for each resource we need that
 --                 a fresh observation (now - obs_tick < REFUEL_OBS_STALE)
 --                 has below REFUEL_MIN_STOCK.  See refuel_low_stock_mult in
---                 goals.lua for why, and for the obs_armour units note.
+--                 goals.lua for why.
+--
+-- UNITS.  b.obs_armour is RAW engine base armour (0..90), see
+-- base_armour_steps below.  REFUEL_MIN_STOCK counts armour in steps of five
+-- (the info.base.armour number), so these rules compare
+-- base_armour_steps(b.obs_armour) against it.  Shells are raw on every path
+-- and are compared as they are.
 -- =========================================================================
+
+-- BASE ARMOUR UNITS.  world.bases[id].obs_armour always holds RAW engine
+-- base armour, 0..90 (bases.h BASE_FULL_ARMOUR), which is the number
+-- EVENT_BASE_STOCK carries.  One tank refuel moves the same raw amount from
+-- the base to the tank (bases.c basesRefueling), and the attack_base markup and
+-- steal (goals.lua base_armour_obs) count shells against it.
+-- info.base.armour is that number divided by five and rounded down (bases.c
+-- basesGetBrainBaseItem: armour / 5, so a full 90 reads 18).
+local BASE_ARMOUR_STEP = 5
+
+-- Raw base armour -> the info.base.armour number (steps of five).
+function M.base_armour_steps(raw)
+  return math.floor((raw or 0) / BASE_ARMOUR_STEP)
+end
+
+-- The raw armour to store for an info.base.armour reading.  When the raw
+-- number already stored (from EVENT_BASE_STOCK) rounds down to this same
+-- reading, it is the exact value and is kept.  Else the reading times five,
+-- the lowest raw armour that gives this reading.
+function M.base_armour_raw_from_info(steps, prev_raw)
+  steps = steps or 0
+  if prev_raw and M.base_armour_steps(prev_raw) == steps then
+    return prev_raw
+  end
+  return steps * BASE_ARMOUR_STEP
+end
 
 -- Rule 1.  True when the base is seen holding 0 of everything we need.
 function M.refuel_base_empty(b, need_a, need_s)
   if not b.obs_tick then return false end
-  local has_a = (b.obs_armour or 0) > 0
+  local has_a = M.base_armour_steps(b.obs_armour) > 0
   local has_s = (b.obs_shells or 0) > 0
   return not ((need_a and has_a) or (need_s and has_s))
 end
@@ -917,19 +949,22 @@ function M.refuel_base_low_stock(b, need_a, need_s, now)
   if not (b.obs_tick and now > 0 and (now - b.obs_tick) < C.REFUEL_OBS_STALE) then
     return false
   end
-  if need_a and (b.obs_armour or 0) >= C.REFUEL_MIN_STOCK then return false end
+  if need_a and M.base_armour_steps(b.obs_armour) >= C.REFUEL_MIN_STOCK then return false end
   if need_s and (b.obs_shells or 0) >= C.REFUEL_MIN_STOCK then return false end
   return true
 end
 
 -- Rule 3.  Returns mult, detail.  detail carries the chip inputs for the
 -- panels: fresh, low_arm, low_sh, need_arm, need_sh (need_* are set only
--- on a fresh observation), obs_sh, obs_arm, age.
+-- on a fresh observation), obs_sh, obs_arm (armour in steps of five, the
+-- number compared against REFUEL_MIN_STOCK), obs_arm_raw, age.
 function M.refuel_base_low_mult(b, need_a, need_s, now)
   local d = {
     fresh = false, low_arm = false, low_sh = false,
     need_arm = false, need_sh = false,
-    obs_sh = b.obs_shells, obs_arm = b.obs_armour,
+    obs_sh = b.obs_shells,
+    obs_arm = b.obs_armour and M.base_armour_steps(b.obs_armour) or nil,
+    obs_arm_raw = b.obs_armour,
     age = b.obs_tick and (now - b.obs_tick) or nil,
   }
   if not d.age or d.age >= (C.REFUEL_OBS_STALE or 500) then
@@ -939,7 +974,7 @@ function M.refuel_base_low_mult(b, need_a, need_s, now)
   d.need_arm = need_a and true or false
   d.need_sh  = need_s and true or false
   local mult = 1.0
-  if d.need_arm and (b.obs_armour or 0) < C.REFUEL_MIN_STOCK then
+  if d.need_arm and M.base_armour_steps(b.obs_armour) < C.REFUEL_MIN_STOCK then
     d.low_arm = true
     mult = mult * (C.REFUEL_LOW_ARMOUR_MULT or 1.0)
   end
