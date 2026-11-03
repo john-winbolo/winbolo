@@ -708,6 +708,7 @@ void brainPathfinderSetConfig(BrainPathfinder *pf, const char *key, float value)
   else if (strcmp(key, "road_build_danger_max") == 0) pf->road_build_danger_max = value;
   else if (strcmp(key, "nextstep_foot_sea_rule") == 0) pf->nextstep_foot_sea_rule = value;
   else if (strcmp(key, "nextstep_chain_veer") == 0) pf->nextstep_chain_veer = value;
+  else if (strcmp(key, "start_heading") == 0) pf->start_heading = value;
 }
 
 /*********************************************************
@@ -2370,6 +2371,8 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
   s->version++;
   s->started_tick   = tick;
   s->completed_tick = 0;
+  s->has_src_heading = 0; /* set by brainPathfinderDijkstraSetSourceHeading */
+  s->src_heading     = 0;
 
   if (dijkstra_log) {
     fprintf(dijkstra_log,
@@ -2378,6 +2381,16 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
       s->max_cost, exact, shells, danger_scale);
     fflush(dijkstra_log);
   }
+}
+
+void brainPathfinderDijkstraSetSourceHeading(BrainPathfinder *pf, int slate,
+                                              int heading) {
+  if (!pf) return;
+  if (slate < 0 || slate >= DIJKSTRA_NUM_SLATES) return;
+  if (pf->start_heading == 0.0f) return; /* off: the root keeps no heading */
+  DijkstraSlate *s = &pf->dij_slates[slate];
+  s->has_src_heading = 1;
+  s->src_heading     = heading & 0xFF;
 }
 
 int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, int budget) {
@@ -2421,6 +2434,26 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
       int diff = abs(a - b);
       if (diff > 4) diff = 8 - diff;
       turn_lut[a][b] = (float)diff * turn_cost;
+    }
+  }
+  /* Turn cost of the root's first steps from the tank heading (start_heading
+   * on). The tank heading is a Bolo direction 0..255, 0 = north, clockwise,
+   * the same order as DX8/DY8, so grid direction = heading / 32 rounded. A
+   * heading half way between two grid directions (heading % 32 == 16, one of
+   * the tank's 16 directions) takes the lower of the two turn_lut entries. */
+  float src_turn[8];
+  int has_src_turn = s->has_src_heading;
+  if (has_src_turn) {
+    int h = s->src_heading & 0xFF;
+    int lo = (h >> 5) & 7;
+    int hi = (lo + 1) & 7;
+    int nearest = ((h + 16) >> 5) & 7;
+    for (int d = 0; d < 8; d++) {
+      if ((h & 31) == 16) {
+        src_turn[d] = fminf(turn_lut[lo][d], turn_lut[hi][d]);
+      } else {
+        src_turn[d] = turn_lut[nearest][d];
+      }
     }
   }
 
@@ -2538,8 +2571,10 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
       int ni = node_idx(nx, ny, next_boat);
       if (closed_test(closed, ni)) continue;
 
-      /* Turn penalty — LUT entry for d==cur_dir is 0, so no explicit guard needed. */
+      /* Turn penalty — LUT entry for d==cur_dir is 0, so no explicit guard needed.
+       * The root (0xFF) pays from the tank heading when the slate has one. */
       if (cur_dir != 0xFF) tc += turn_lut[cur_dir][d];
+      else if (has_src_turn) tc += src_turn[d];
 
       float new_g = g[ci] + tc * DMUL8[d];
       if (has_cap && new_g > max_cost) continue;
@@ -2649,6 +2684,8 @@ void brainPathfinderDijkstraCopySlate(BrainPathfinder *pf, int src, int dst) {
   d->version        = s->version;
   d->started_tick   = s->started_tick;
   d->completed_tick = s->completed_tick;
+  d->has_src_heading = s->has_src_heading;
+  d->src_heading     = s->src_heading;
 
   /* Clear the heap — dst won't be stepped so we don't need it */
   slate_heap_clear(d);

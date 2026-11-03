@@ -1924,9 +1924,11 @@ static int l_cpf_dijkstra_from(lua_State *L) {
 }
 
 /* cpf_dijkstra_start(slate, tick, sx, sy, in_boat, shells, trees, mines, armour,
- *                    max_cost, exact, danger_scale, kind[, allow_boat])
+ *                    max_cost, exact, danger_scale, kind[, allow_boat[, heading]])
  * allow_boat defaults to 1 (boat transitions enabled). Pass 0 to restrict
- * the search to land nodes only (no T_BOAT pickup, no water expansion). */
+ * the search to land nodes only (no T_BOAT pickup, no water expansion).
+ * heading: the tank's Bolo direction 0..255 at the root. Used only while
+ * the "start_heading" config key is on; nil or absent = no heading. */
 static int l_cpf_dijkstra_start(lua_State *L) {
   CPF_GET(L);
   int slate = (int)luaL_checkinteger(L, 1);
@@ -1953,6 +1955,10 @@ static int l_cpf_dijkstra_start(lua_State *L) {
   brainPathfinderDijkstraStart(pf, slate, tick, sx, sy, in_boat,
                                 shells, trees, mines, armour,
                                 max_cost, exact, danger_scale, kind, allow_boat);
+  if (!lua_isnoneornil(L, 15)) {
+    brainPathfinderDijkstraSetSourceHeading(pf, slate,
+                                            (int)luaL_checkinteger(L, 15));
+  }
   return 0;
 }
 

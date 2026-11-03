@@ -2659,7 +2659,7 @@ function Brain.think(info)
         info.shells or 32, info.trees or 0,
         info.mines or 0, info.armour or 40,
         C.DIJKSTRA_SHORT_MAX_COST, C.DIJKSTRA_EXACT,
-        1.0, 0 --[[KIND_NORMAL]], in_boat_s)
+        1.0, 0 --[[KIND_NORMAL]], in_boat_s, info.direction)
     end
     cpf.dijkstra_step(0, now, C.DIJKSTRA_SHORT_BUDGET)
     if BRAIN_PROFILE then
@@ -4403,7 +4403,7 @@ function Brain.think(info)
         info.shells or 32, info.trees or 0,
         info.mines or 0, info.armour or 40,
         max_cost, C.DIJKSTRA_EXACT,
-        1.0, 0 --[[KIND_NORMAL]], allow_boat)
+        1.0, 0 --[[KIND_NORMAL]], allow_boat, info.direction)
       refresh_slate(idx)
       if BRAIN_DEBUG_MODE then print2(string.format(
         "dij START slate=%d max_cost=%.0f src=(%d,%d) boat=%d allow_boat=%d tick=%d",
