@@ -1506,6 +1506,22 @@ M.TURN_CAP_UTURN_PIVOT = false    -- committed u-turn: turn-cap floor 6 -> 0 (pi
 --    half-turn sweep crosses no deep sea within a tile; a tie (both clear or
 --    both fouled) keeps today's shorter-angle choice.
 M.UTURN_SIDE_AVOID_SEA = false    -- u-turn side prefers the sweep with no deep sea under the nose
+-- Turn cap from the next route square, 2026-11-03. The heading-error turn cap
+-- in steer_core only works when the GOAL is within 4 tiles. Far from the goal
+-- a tank with a large heading error to its next route square kept speed 48,
+-- its turn radius was larger than the square's distance, and it drove circles
+-- round the square (recorded game, player 2, brain ticks 1524-2266: about 7
+-- squares of progress in 740 ticks, goal 6-12 tiles away).
+-- true => the same turn cap (base_cap x ramp, floor 6) also applies when the
+-- next route square is inside the tank's turning circle: distance to the
+-- square < 2 x R x sin(heading error), with sin taken as 1 at 90 degrees or
+-- more (a square behind the tank and nearer than one turn diameter), and
+-- R = turn radius = (speed / 4) / (turn rate x 2 pi / 256), turn rate =
+-- 2 brads per think x the live turn rule of the terrain under the tank x our
+-- turn modifier. Small heading wobble far from the goal stays outside the
+-- circle, so it does not slow the tank. No new value.
+-- Log line: TURN_CAP_NEXT_SQUARE. KEEL false.
+M.STEER_TURN_CAP_NEXT_SQUARE = true
 
 -- 5. STICKY CLIFF BRAKE (2026-09-06 drowning analysis, fix (c)).
 --    Both guards above are decided FRESH every tick off a heading ray. While
@@ -6346,6 +6362,9 @@ M.PRESETS = {
     -- 2026-11-03: a LETHAL verdict on the claimed body forces a replan at
     -- once. KEEL waited for the next replan.
     KILL_PICKUP_LETHAL_REPLAN     = false,
+    -- 2026-11-03: the turn cap also applies when the next route square is
+    -- inside the turning circle. KEEL capped only within 4 tiles of the goal.
+    STEER_TURN_CAP_NEXT_SQUARE    = false,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).
