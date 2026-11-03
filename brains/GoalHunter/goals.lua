@@ -8698,6 +8698,48 @@ function M.kill_pickup_lethal_verdict(state, pill, pid, now, tmx, tmy)
   return ent
 end
 
+-- Public: the replan request for a LETHAL verdict on the claimed body
+-- (KILL_PICKUP_LETHAL_REPLAN). The verdict alone does nothing until the next
+-- replan runs Override 3b, and the timer replan can come too late (recorded
+-- game: verdict at brain tick 6725, armour 10, dead at 6750 on the claim).
+-- So when the verdict is for the pill of the active claim and we drive the
+-- kill grab, raise _force_replan_reason. update_pool_cache calls this after
+-- step_eval_queue, which runs before the replan decision in Brain.think, so
+-- the replan runs on this same think, with the verdict still current (same
+-- tick, same tank tile) when Override 3b reads it.
+-- Once per verdict: the verdict's own probe tick (and pill id) is kept in
+-- state._kp_lethal_replan_tick / _pid. A later probe that again says LETHAL
+-- writes a new entry with a new tick, and that one fires again. The killed-
+-- tick rollback in init.lua restores these two fields with the force flag,
+-- so a budget-killed think does not use up the request.
+-- Returns true when it raised the request.
+function M.kill_pickup_lethal_replan(state, world, now, tmx, tmy)
+  if not C.KILL_PICKUP_LETHAL_REPLAN then return false end
+  local kp = state.kill_pickup
+  if not kp or not kp.id then return false end
+  local g = state.goal
+  if not g or g.kind ~= "capture_pill" or not g.kill_grab or g.target_id ~= kp.id then
+    return false
+  end
+  local p = world.pills and world.pills[kp.id]
+  if not p or (p.health or 0) ~= 0 or p.in_tank then return false end
+  -- The same verdict test as kill_pickup_lethal_verdict, without its
+  -- KILL_PICKUP_LETHAL_EXIT check (this knob stands on its own).
+  local ent = state.capture_route and state.capture_route[p.my * 256 + p.mx]
+  if not ent or ent.id ~= kp.id or not ent.killed then return false end
+  if capture_route_stale(ent, now, tmx, tmy) then return false end
+  if state._kp_lethal_replan_tick == ent.tick and state._kp_lethal_replan_pid == kp.id then
+    return false
+  end
+  state._kp_lethal_replan_tick = ent.tick
+  state._kp_lethal_replan_pid  = kp.id
+  state._force_replan_reason = state._force_replan_reason or "KILL PICKUP LETHAL"
+  print2(string.format("KILL_PICKUP_LETHAL_REPLAN t=%d pid=%d dmg=%d verdict_t=%d mode=%s exit=%s",
+    now, kp.id, ent.damage or 0, ent.tick or -1, tostring(ent.mode),
+    tostring(C.KILL_PICKUP_LETHAL_EXIT)))
+  return true
+end
+
 -- =========================================================================
 -- PILL CLUSTERING — shared by the sea harvest and the land capture discount.
 --
@@ -16914,6 +16956,13 @@ function M.update_pool_cache(state, world, info)
   local _t_seq0 = clock_us()
   M.step_eval_queue(state, world, info)
   if BRAIN_PROFILE then opt(string.format("  step_eval_queue done %.2f ms", (clock_us() - _t_seq0) / 1000)) end
+
+  -- KILL_PICKUP_LETHAL_REPLAN: a LETHAL verdict on the claimed body (stored
+  -- by the probe just above, or on an earlier tick) asks for a replan now.
+  if C.KILL_PICKUP_LETHAL_REPLAN and state.kill_pickup then
+    M.kill_pickup_lethal_replan(state, world, state.tick or 0,
+                                bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8))
+  end
 
   -- Staged-reveal pass for the pool-6 per-pill candidate overlays.
   -- Iterates the diff cache and emits each pill's spots with a mode
