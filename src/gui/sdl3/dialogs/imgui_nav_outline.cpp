@@ -33,10 +33,9 @@ extern "C" bool dialogNavWasInsideSubRegionAtFrameStart(void) {
    ConfigNavCursorVisibleAlways, so ImGui keeps NavCursorVisible on from
    the first frame (a window that opens, a default-focus item, a mouse
    click on a button or a combo all give it a NavId).  That flag also
-   lets Space press the focused item, so it stays on; only the drawing
-   waits.  Enter presses the focused item only while the outline shows
-   (see navOutlineClaimEnter).  A Tab press shows the outline; a mouse
-   button click (any button, also on empty space) hides it again.  As in
+   lets Space and Enter press the focused item, so it stays on; only the
+   drawing waits.  A Tab press shows the outline; a mouse button click
+   (any button, also on empty space) hides it again.  As in
    Discord, a mouse move or the mouse wheel does not hide it.  ImGui
    itself does not hide its nav cursor on a mouse move either: a move
    only clears NavHighlightItemUnderNav, and with
@@ -44,14 +43,21 @@ extern "C" bool dialogNavWasInsideSubRegionAtFrameStart(void) {
    NavUpdate keeps NavCursorVisible on.  Also as in Discord, the Tab
    that shows the outline does not move focus: the outline shows on the
    item that already has focus, and only the next Tab moves on (see
-   navOutlineClaimTab).  A controller keeps it on: any pad button press
+   navOutlineClaimTab).  The other keys that move or press the focused
+   item (Enter, keypad Enter, Space, the arrow keys, the d-pad and the
+   pad's activate button) do the same: while the outline is hidden, the
+   first press only shows it, and only the next press acts (see
+   navOutlineClaimNavKeys).  A controller keeps it on: any pad button press
    here, or the game's own record that the controller is the device in
    use (Steam Input reaches ImGui as arrow keys, not pad keys).
 
    An item that a dialog focuses from code (SetKeyboardFocusHere, such
-   as a message box's OK button or the lobby's Ready button at open)
-   also shows the outline at once, so the player sees what Enter will
-   press.  It shows while that item keeps the focus, until a mouse
+   as a message box's OK button) also shows the outline at once, so the
+   player sees what Enter will press, and Enter presses it at once.  A
+   dialog can ask for a quiet focus instead (dialogNavOutlineQuietCodeFocus,
+   used for the lobby's Ready button at open): then the outline stays
+   hidden, and the first Enter only shows it.  The outline of a focus
+   from code shows while that item keeps the focus, until a mouse
    button click.  A text field being edited does not count: its caret
    already marks it.  A mouse click on a button or a combo does not
    focus from code, so the outline stays hidden there. */
@@ -64,6 +70,9 @@ static bool s_navOutlineByPadUser = false;
 static const ImGuiContext *s_codeFocusCtx        = nullptr;
 static ImGuiID             s_codeFocusId         = 0;
 static const ImGuiContext *s_codeFocusPendingCtx = nullptr;
+/* The context whose next focus from code does not show the outline
+   (dialogNavOutlineQuietCodeFocus). */
+static const ImGuiContext *s_codeFocusQuietCtx   = nullptr;
 
 static bool navOutlineShown(const ImGuiContext *g) {
     return s_navOutlineByKey || s_navOutlineByPadUser ||
@@ -73,6 +82,15 @@ static bool navOutlineShown(const ImGuiContext *g) {
 
 extern "C" void dialogNavOutlineSetControllerInUse(bool inUse) {
     s_navOutlineByPadUser = inUse;
+}
+
+extern "C" void dialogNavOutlineQuietCodeFocus(void) {
+    s_codeFocusQuietCtx = ImGui::GetCurrentContext();
+}
+
+extern "C" bool dialogNavOutlineIsShown(void) {
+    const ImGuiContext *g = ImGui::GetCurrentContext();
+    return g && navOutlineShown(g);
 }
 
 /* Owner id for the Tab key while the outline is hidden. */
@@ -128,20 +146,29 @@ static void navOutlineClaimTab(ImGuiContext *g) {
     }
 }
 
-/* While the outline is hidden, claim Enter and keypad Enter for the next
-   frame, so Enter does not press an item the player cannot see.  ImGui
-   presses the focused item in NavUpdate with
-   IsKeyPressed(ImGuiKey_Enter, ..., ImGuiKeyOwner_NoOwner), which fails
-   while another id owns the key.  The claim has no lock flag, so a plain
+/* While the outline is hidden, claim the other keys that move or press
+   the focused item for the next frame, so the first press only shows the
+   outline, as the first Tab does: Enter, keypad Enter, Space, the arrow
+   keys, the d-pad and the pad's activate button.  ImGui reads each of
+   them in NavUpdate with IsKeyPressed or IsKeyDown(key, ...,
+   ImGuiKeyOwner_NoOwner), which fails while another id owns the key.
+   navOutlineTrackInput reads the press with owner Any and shows the
+   outline; the claim is given back once the key is up, so the next press
+   acts.  The claim has no lock flag, so a plain
    IsKeyPressed(ImGuiKey_Enter) (owner Any) still sees the press: the
-   dialog footer's Confirm on Enter (dialog_footer.cpp) keeps working, so
-   a dialog with a default button keeps Enter.  No claim while any item
-   is active: a text field being edited reads Enter through Shortcut()
-   with its own id, so Enter still submits it.  No claim while ImGui's
-   own cursor is hidden (auto mode), where ImGui does not press the
-   focused item on Enter either.  The claim stays while Enter is held,
-   and is given back once Enter is up. */
-static void navOutlineClaimEnterKey(ImGuiKey key, bool want) {
+   dialog footer's Confirm on Enter (dialog_footer.cpp) still confirms on
+   the first Enter, as on main.
+
+   No claim while any item is active: a text field being edited reads
+   Enter and the arrow keys itself, so Enter still submits it and the
+   arrows still move the caret.  No claim with no live focused item, nor
+   while ImGui's own cursor is hidden (auto mode): there ImGui presses no
+   item, and an arrow key takes the focus to an item, so the press is left
+   to ImGui.  The claim stays while the key is held, so a held first
+   arrow does not repeat into a move.  The pad's activate button is
+   FaceDown, or FaceRight with ConfigNavSwapGamepadButtons; the other
+   face button is ImGui's cancel and is never claimed. */
+static void navOutlineClaimKey(ImGuiKey key, bool want) {
     ImGuiID owner = ImGui::GetKeyOwner(key);
     if (want) {
         if (owner == ImGuiKeyOwner_NoOwner || owner == kNavOutlineTabOwner)
@@ -151,11 +178,25 @@ static void navOutlineClaimEnterKey(ImGuiKey key, bool want) {
     }
 }
 
-static void navOutlineClaimEnter(ImGuiContext *g) {
-    bool want = !navOutlineShown(g) && g->NavCursorVisible &&
-                g->NavId != 0 && g->ActiveId == 0;
-    navOutlineClaimEnterKey(ImGuiKey_Enter, want);
-    navOutlineClaimEnterKey(ImGuiKey_KeypadEnter, want);
+static const ImGuiKey kNavOutlineKeyboardKeys[] = {
+    ImGuiKey_Enter,     ImGuiKey_KeypadEnter, ImGuiKey_Space,
+    ImGuiKey_LeftArrow, ImGuiKey_RightArrow,  ImGuiKey_UpArrow,
+    ImGuiKey_DownArrow,
+};
+static const ImGuiKey kNavOutlinePadMoveKeys[] = {
+    ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight,
+    ImGuiKey_GamepadDpadUp,   ImGuiKey_GamepadDpadDown,
+};
+
+static void navOutlineClaimNavKeys(ImGuiContext *g) {
+    const bool want = !navOutlineShown(g) && g->NavCursorVisible &&
+                      g->NavWindow && g->NavId != 0 && g->NavIdIsAlive &&
+                      g->ActiveId == 0;
+    for (ImGuiKey key : kNavOutlineKeyboardKeys) navOutlineClaimKey(key, want);
+    for (ImGuiKey key : kNavOutlinePadMoveKeys) navOutlineClaimKey(key, want);
+    const bool swap = g->IO.ConfigNavSwapGamepadButtons;
+    navOutlineClaimKey(ImGuiKey_GamepadFaceDown,  want && !swap);
+    navOutlineClaimKey(ImGuiKey_GamepadFaceRight, want && swap);
 }
 
 /* A forward Tab that ImGui cannot move.  ImGui's Tab walk counts from the
@@ -239,6 +280,13 @@ static void navOutlineNoteFocusRequest(ImGuiContext *ctx, ImGuiContextHook *) {
                (g.NavMoveFlags & ImGuiNavMoveFlags_FocusApi) != 0 &&
                (g.NavMoveResultLocal.ID != 0 || g.NavMoveResultOther.ID != 0 ||
                 g.NavTabbingResultFirst.ID != 0);
+    /* A quiet focus (dialogNavOutlineQuietCodeFocus) is the request made
+       in the frame that just ended.  It is used up here either way, so it
+       cannot mute a later focus from code. */
+    if (s_codeFocusQuietCtx == ctx) {
+        s_codeFocusQuietCtx = nullptr;
+        req                 = false;
+    }
     if (req)
         s_codeFocusPendingCtx = ctx;
     else if (s_codeFocusPendingCtx == ctx)
@@ -305,10 +353,19 @@ static void navOutlineTrackInput(ImGuiContext *g) {
     if (g->NavWindow && !io.KeyCtrl && !io.KeyAlt &&
         ImGui::IsKeyPressed(ImGuiKey_Tab, false))
         s_navOutlineByKey = true;
+    /* Enter, Space and the arrow keys show it the same way, while a
+       window takes keyboard nav input and no item is active (a text field
+       reads these keys itself).  While the outline was hidden,
+       navOutlineClaimNavKeys claimed the key, so ImGui did not act on this
+       press; the next press acts. */
+    if (g->NavWindow && g->ActiveId == 0 && !io.KeyCtrl && !io.KeyAlt &&
+        (io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard))
+        for (ImGuiKey key : kNavOutlineKeyboardKeys)
+            if (ImGui::IsKeyPressed(key, false)) s_navOutlineByKey = true;
     for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadR3; k++)
         if (ImGui::IsKeyPressed((ImGuiKey)k, false)) s_navOutlineByKey = true;
     navOutlineClaimTab(g);
-    navOutlineClaimEnter(g);
+    navOutlineClaimNavKeys(g);
 }
 
 extern "C" void dialogDrawNavOutline(void) {

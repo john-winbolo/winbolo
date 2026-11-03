@@ -5081,6 +5081,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lv_event_list.c
     # WinBolo.net log browser table sort rule (test_wbn_browser_sort.c).
     tests/unit/test_wbn_browser_sort.c
+    # The focus outline's key rule: the first Enter, Space or arrow with the
+    # outline hidden only shows it (test_nav_outline.cpp).
+    tests/unit/test_nav_outline.cpp
     # The game browser's server version test (browser_version.h) and the
     # protocol bytes from WINBOLO_VERSION (test_browser_version.c).
     tests/unit/test_browser_version.c
@@ -5300,6 +5303,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/lv_event_list.c
     # The WinBolo.net log browser's sort rule, for test_wbn_browser_sort.c.
     src/gui/sdl3/dialogs/wbn_browser_sort.c
+    # The focus outline, for test_nav_outline.cpp (needs imgui_backends).
+    src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     # The recap clip GIF rules, for test_clip_gif_core.c.
     src/gui/sdl3/dialogs/clip_gif_core.c
 )
@@ -5436,7 +5441,9 @@ target_link_libraries(WinBoloUnitTests PRIVATE
     # so the include dir doesn't propagate transitively).
     mdns
     # voice_core.c is compiled into this target for the codec round-trip test.
-    Opus::opus)
+    Opus::opus
+    # imgui_nav_outline.cpp and test_nav_outline.cpp drive a real ImGui context.
+    imgui_backends)
 
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
@@ -5984,6 +5991,11 @@ set(_unit_test_names
     lv_event_list_replay
     lv_event_list_pinned
     wbn_browser_sort
+    nav_outline_first_enter_shows
+    nav_outline_first_space_shows
+    nav_outline_first_arrow_shows
+    nav_outline_code_focus_enter_acts
+    nav_outline_quiet_focus_hidden
     browser_version_parse
     version_protocol_bytes
     clip_gif_len_sync
