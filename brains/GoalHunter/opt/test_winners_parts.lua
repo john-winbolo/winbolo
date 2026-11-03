@@ -84,9 +84,13 @@ local function winners_formula(state)
   return f, js
 end
 
+-- json.encode writes an object's keys in pairs() order, and that order is not
+-- fixed from one run to the next. "id" can be the last key of a row, so it is
+-- followed by "}" and not ",". Match both. The '"' before id keeps
+-- "winner_id" out of the count.
 local function n_rows_for_13(js)
   local n = 0
-  for _ in js:gmatch('"id":13,') do n = n + 1 end
+  for _ in js:gmatch('"id":13[,}]') do n = n + 1 end
   return n
 end
 
