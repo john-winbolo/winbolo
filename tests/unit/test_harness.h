@@ -1010,6 +1010,12 @@ int run_autolock_released_on_return_to_lobby(void);
 int run_treegrow_never_plants_on_deep_sea(void);
 int run_treegrow_reset_clears_stale_target(void);
 
+/* Tree growth and the man's build orders (test_treegrow_build_target.c).
+ * The grow is skipped on a square a man is on his way to put a road,
+ * building or pillbox on, and only there. */
+int run_treegrow_skips_square_man_is_building_on(void);
+int run_treegrow_still_grows_when_man_not_building_there(void);
+
 /* Pillbox repair load (test_pill_repair_load.c). The man carries a full
  * load and spends it against the armour the pill has when he arrives, so a
  * pill that took more fire on the way still ends up topped up, and the
