@@ -1186,7 +1186,9 @@ function M.update(state, world, info)
     for id, b in pairs(world.bases) do
       if b.mx == bmx and b.my == bmy then
         b.obs_shells = info.base.shells or 0
-        b.obs_armour = info.base.armour or 0
+        -- info.base.armour is raw / 5; obs_armour holds RAW armour (util.lua
+        -- base_armour_steps), the same unit EVENT_BASE_STOCK writes.
+        b.obs_armour = U.base_armour_raw_from_info(info.base.armour or 0, b.obs_armour)
         b.obs_tick   = now
         break
       end

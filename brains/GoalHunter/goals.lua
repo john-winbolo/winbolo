@@ -408,14 +408,14 @@ end
 -- anything up. Absent or stale pays nothing -- bases regenerate, and the
 -- low_stock/depleted rejects plus STALE_PENALTY_* already own that case.
 --
--- UNITS: obs_armour is compared against REFUEL_MIN_STOCK exactly the way the
--- low_stock reject compares it, deliberately. Base armour reaches the brain
--- through TWO engine paths that disagree by 5x -- EVENT_BASE_STOCK carries it
--- raw (world.lua writes 90) while the per-tick "closest base" item divides by
--- five (bases.c basesGetBrainBaseItem: armour/5, which perception.lua writes
--- into the same obs_armour field, 90 -> 18) -- so the field's units depend on
--- which source wrote last. Reading it the same way as the reject means the
--- markup can never contradict the reject, whichever number is in there.
+-- UNITS: base armour reaches the brain through two engine paths that
+-- disagree by 5x -- EVENT_BASE_STOCK carries it raw (90 when full) while the
+-- per-tick "closest base" item divides by five (bases.c
+-- basesGetBrainBaseItem: armour/5, 90 -> 18). Every writer stores RAW armour
+-- in obs_armour (util.lua base_armour_raw_from_info converts the /5 reading
+-- back). The markup and the low_stock reject both compare
+-- U.base_armour_steps(obs_armour), the /5 number, against REFUEL_MIN_STOCK,
+-- so the markup can never contradict the reject.
 --
 -- Returns mult, detail (detail carries the chip inputs for the panels).
 -- The rule itself is U.refuel_base_low_mult, shared with the order bid's
@@ -964,10 +964,11 @@ local function refuel_shape(info, state, now)
   -- UNITS: info.base.armour is the engine's per-tick "closest base" item,
   -- which is the raw base armour DIVIDED BY FIVE (bases.c
   -- basesGetBrainBaseItem: armour/5, so a full 90 reads 18); shells are raw.
-  -- perception.lua writes those same two numbers into obs_armour/obs_shells
-  -- for the base we're standing on, so comparing them against REFUEL_MIN_STOCK
-  -- here reads the base exactly the way nearest_resupply_base's low_stock
-  -- reject reads it, and the waiver can never contradict the reject.
+  -- The low_stock reject compares U.base_armour_steps(obs_armour), which is
+  -- this same /5 number, and shells raw, so comparing info.base against
+  -- REFUEL_MIN_STOCK here reads the base exactly the way
+  -- nearest_resupply_base's low_stock reject reads it, and the waiver can
+  -- never contradict the reject.
   local mines_carried = info.mines or 0
   local mine_free  = C.REFUEL_MINE_FREE or 5
   local mines_over = math.max(0, mines_carried - mine_free)
@@ -12710,8 +12711,8 @@ local function get_formula_inner(e)
       _low_detail = string.format(
         "|low:observed stock below %d[REFUEL_MIN_STOCK] for a resource we need (obs %dt ago, fresh < %d[REFUEL_OBS_STALE]): %s%s— multiply by %.2f",
         C.REFUEL_MIN_STOCK, e._low_d.age or 0, C.REFUEL_OBS_STALE,
-        e._low_d.low_arm and string.format("armour obs %d, we need armour → x%.2f[REFUEL_LOW_ARMOUR_MULT] ",
-                                           e._low_d.obs_arm or 0, C.REFUEL_LOW_ARMOUR_MULT or 1) or "",
+        e._low_d.low_arm and string.format("armour obs %d (raw %d / 5, rounded down), we need armour → x%.2f[REFUEL_LOW_ARMOUR_MULT] ",
+                                           e._low_d.obs_arm or 0, e._low_d.obs_arm_raw or 0, C.REFUEL_LOW_ARMOUR_MULT or 1) or "",
         e._low_d.low_sh and string.format("shells obs %d, we need shells → x%.2f[REFUEL_LOW_SHELLS_MULT] ",
                                           e._low_d.obs_sh or 0, C.REFUEL_LOW_SHELLS_MULT or 1) or "",
         e._low_mult or 1)

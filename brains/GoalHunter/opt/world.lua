@@ -10,6 +10,7 @@ local bit = require('bitcompat')
 -- =========================================================================
 
 local C       = require("constants")
+local U       = require("util")
 local log     = require("logger")
 local metrics = require("metrics")
 local print2  = require("print2")
@@ -444,10 +445,12 @@ function M.update(world, info, tick)
   -- and it tells us its id + live armour/shells/mines. Store it as the observed
   -- stock (obs_*) so the refuel eval scores it on fresh first-hand data instead of
   -- stale memory. (The object scan carries base HEALTH but not refuel stock.)
+  -- info.base.armour is raw armour / 5; obs_armour holds RAW armour (see
+  -- util.lua base_armour_steps), so it is converted back here.
   if info.base and info.base.idnum then
     local b = world.bases[info.base.idnum]
     if b then
-      b.obs_armour = info.base.armour
+      b.obs_armour = U.base_armour_raw_from_info(info.base.armour, b.obs_armour)
       b.obs_shells = info.base.shells
       b.obs_mines  = info.base.mines
       b.obs_tick   = tick
@@ -603,7 +606,12 @@ function M.process_events(world, info, state)
       end
 
     elseif ev.type == EVENT_BASE_UPDATE and d then
-      -- data: [baseIndex, owner, armour, shells, mines]
+      -- data: [baseIndex, owner] (input_packet.h; gameEventDataSize is 2).
+      -- The stock left this event for EVENT_BASE_STOCK, so d[3], d[4] and
+      -- d[5] are nil here, and this handler must not write obs_armour,
+      -- obs_shells, obs_mines or obs_tick. It wrote 0 / nil / nil with a
+      -- fresh obs_tick, which made a base read as "empty" for the refuel
+      -- rules and as zero shells from capturable for attack_base.
       local idx = d[1]
       if idx and not id_on_map(world._bases_on_map, idx) then idx = nil end
       if idx then
@@ -630,10 +638,6 @@ function M.process_events(world, info, state)
             owner_player = owner_val,   -- real player number; lets the LGM-block stamp do an alliance check
             last_seen   = tick,
             last_health = new_health,
-            obs_shells  = d[4],
-            obs_armour  = new_health,
-            obs_mines   = d[5],
-            obs_tick    = tick,
           }
           world.bases[idx] = b
           world.base_at[mkey(0, 0)] = { id = idx, base = b }
@@ -645,10 +649,6 @@ function M.process_events(world, info, state)
           b.owner       = owner_str
           b.owner_player = owner_val
           b.last_seen   = tick
-          b.obs_shells  = d[4]
-          b.obs_armour  = new_health
-          b.obs_mines   = d[5]
-          b.obs_tick    = tick
           b._ally_only  = nil   -- first-hand engine event → engine truth wins
           b._kw_ally    = nil
         end
@@ -658,6 +658,8 @@ function M.process_events(world, info, state)
       -- Dedicated best-effort base-stock event (engine: [baseIndex, armour,
       -- shells, mines], culled to our CLOSEST base). Fold it into that base's
       -- observed stock (same data info.base carries; this is the event form).
+      -- d[2] is RAW base armour (server_sim_tick.c / server_sim_snapshot.c
+      -- copy item.armour as it is), the unit obs_armour holds.
       local idx = d[1]
       if idx then
         local b = world.bases[idx]
