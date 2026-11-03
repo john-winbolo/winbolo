@@ -488,6 +488,7 @@ static const UnitTestEntry s_tests[] = {
     { "pf_start_heading_first_step_goes_ahead",  run_pf_start_heading_first_step_goes_ahead  },
     { "pf_start_heading_off_keeps_old_costs",    run_pf_start_heading_off_keeps_old_costs    },
     { "bench_decoy_step_first",                  run_bench_decoy_step_first                  },
+    { "shield_outgoing_pill_blocks",             run_shield_outgoing_pill_blocks             },
     { "pf_tail_reaches_radius_and_stops",        run_pf_tail_reaches_radius_and_stops        },
     { "pf_tail_blocked_by_wall_and_sea",         run_pf_tail_blocked_by_wall_and_sea         },
     { "pf_tail_neutral_zone_slows",              run_pf_tail_neutral_zone_slows              },

@@ -675,11 +675,15 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       min_chain = math.min(min_chain + 1, 3)
     end
 
+    -- Only LIVE pills go in: a shell passes over a dead pill (pillsHitSlot
+    -- needs armour > 0), so a dead pill neither blocks our own shot nor
+    -- shields us. scan_c blocks an aim on any pill in this table that sits
+    -- on our outgoing path.
     local pill_table = {}
     if world.pill_at then
       for _, plist in pairs(world.pill_at) do
         for _, e in ipairs(plist) do
-          if e.pill then
+          if e.pill and (e.pill.health or 0) > 0 then
             local p = e.pill
             pill_table[#pill_table+1] = p.mx
             pill_table[#pill_table+1] = p.my

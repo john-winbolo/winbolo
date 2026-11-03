@@ -869,6 +869,23 @@ static int lgm_reachable(lua_State *L, const NaShieldStampCtx *ctx,
     return result;
 }
 
+/* Does our own shell hit a pill before it reaches the target pill?
+ * pill_map is the 17x17 map centred on the target pill (0 = no pill,
+ * 1 = enemy or neutral, 2 = own or allied). dx/dy are the squares of the
+ * outgoing path, relative to the target pill, in flight order. The walk
+ * stops at the target square (0,0): the target pill never blocks itself.
+ * A shell hits a live pill of ANY owner, so every non-zero entry blocks.
+ * Squares outside the map window are ignored. */
+int naShieldOutgoingPillBlocks(const uint8_t *pill_map,
+                               const int8_t *dx, const int8_t *dy, int n) {
+    for (int i = 0; i < n; i++) {
+        if (dx[i] == 0 && dy[i] == 0) break;
+        int ci = lgm_cache_idx(dx[i], dy[i]);
+        if (ci >= 0 && pill_map[ci] != 0) return 1;
+    }
+    return 0;
+}
+
 static int in_outgoing(const OutgoingSet *os, int8_t dx, int8_t dy) {
     for (int i = 0; i < os->n; i++)
         if (os->dx[i] == dx && os->dy[i] == dy) return 1;
@@ -889,7 +906,6 @@ static void score_one_aim(lua_State *L,
                           float standoff_cx, float standoff_cy,
                           int approach_mx, int approach_my,
                           const uint8_t *pill_map,
-                          int target_is_pill,
                           int no_builder,
                           ScanAimResult *res) {
     res->blocked = 0;
@@ -905,15 +921,18 @@ static void score_one_aim(lua_State *L,
         int tx = pmx + dx, ty = pmy + dy;
         int tt = naThreatRawTT(L, tx, ty);
         if (tt == ctx->t_building || tt == ctx->t_halfbuild) { res->blocked = 1; return; }
-        /* Non-target pill in outgoing path blocks the aim */
-        int ci = lgm_cache_idx(dx, dy);
-        if (ci >= 0) {
-            uint8_t pm = pill_map[ci];
-            if (pm != 0 && !target_is_pill) { res->blocked = 1; return; }
-        }
         if (os.n < STAMP_MAX_TILES) {
             os.dx[os.n] = dx; os.dy[os.n] = dy; os.n++;
         }
+    }
+    /* A pill of any owner on our own outgoing path (other than the target
+     * pill) takes the shell, so the aim is blocked. This used to be skipped
+     * whenever target_is_pill was set, and every caller set it, so a pill on
+     * the line never blocked an aim in the C scan (the Lua scorer, score_aim
+     * in attack_shield.lua, always blocked on it). */
+    if (naShieldOutgoingPillBlocks(pill_map, os.dx, os.dy, os.n)) {
+        res->blocked = 1;
+        return;
     }
 
     /* Distance gate: pill_to_standoff_d in tiles */
@@ -1164,7 +1183,7 @@ static int l_scan_c(lua_State *L) {
             score_one_aim(L, ctx, lgm_reach,
                           &e0->aim[ai], &e0->pill_to_tank,
                           pmx, pmy, cx, cy, lgm_mx, lgm_my,
-                          pill_map, 1 /*target_is_pill*/, no_builder, ar);
+                          pill_map, no_builder, ar);
 
             /* Check if base shot hits pill — if not, find nudge */
             if (!ar->blocked && !e0->aim[ai].has_pill) {
@@ -1197,7 +1216,7 @@ static int l_scan_c(lua_State *L) {
                                   &en->aim[ai], &en->pill_to_tank,
                                   pmx, pmy, ncx, ncy,
                                   nlgm_mx, nlgm_my,
-                                  pill_map, 1, no_builder, ar);
+                                  pill_map, no_builder, ar);
                     ar->nudge_step = found_step;
                 } else {
                     /* No nudge works — mark blocked */

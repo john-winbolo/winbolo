@@ -4491,6 +4491,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_pf_influence_tail.c
     # Bench (does nothing unless WB_BENCH=1): the decoy-square blocker step.
     tests/unit/test_bench_decoy_step.c
+    # GoalHunter shield scan: a pill on our own shell path blocks the aim.
+    tests/unit/test_shield_outgoing_pill.c
     # BrainTest Load Session next/prev-segment lookup. The finder is plain C
     # and ImGui-free precisely so it can be linked here; the rest of the
     # browser (braintest_loadbrowser.cpp) is not part of this target.
@@ -5865,6 +5867,7 @@ set(_unit_test_names
     pf_start_heading_first_step_goes_ahead
     pf_start_heading_off_keeps_old_costs
     bench_decoy_step_first
+    shield_outgoing_pill_blocks
     pf_tail_reaches_radius_and_stops
     pf_tail_blocked_by_wall_and_sea
     pf_tail_neutral_zone_slows

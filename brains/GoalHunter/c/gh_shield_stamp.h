@@ -2,6 +2,7 @@
 #define GH_SHIELD_STAMP_H
 
 #include <lua.h>
+#include <stdint.h>
 
 /*
  * gh_shield_stamp — precomputed shield-scan shot-path lookup table.
@@ -21,5 +22,17 @@
  */
 
 void naShieldStampRegister(lua_State *L);
+
+/*
+ * True when our own outgoing shell path hits a pill before the target pill.
+ *   pill_map  17x17 map centred on the target pill, index (dx+8)*17 + (dy+8):
+ *             0 = no pill, 1 = enemy or neutral pill, 2 = own or allied pill
+ *   dx, dy    the path squares relative to the target pill, in flight order
+ *   n         number of squares
+ * The walk stops at the target square (0,0). A pill of any owner blocks.
+ * Used by the scan's score_one_aim; public for the unit test.
+ */
+int naShieldOutgoingPillBlocks(const uint8_t *pill_map,
+                               const int8_t *dx, const int8_t *dy, int n);
 
 #endif /* GH_SHIELD_STAMP_H */

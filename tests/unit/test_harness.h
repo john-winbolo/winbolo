@@ -636,6 +636,9 @@ int run_pf_start_heading_off_keeps_old_costs(void);
 /* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
  * cost of decoy_getaway's blocker step on the decoy square. */
 int run_bench_decoy_step_first(void);
+/* GoalHunter shield scan: a pill of any owner on our own outgoing shell path
+ * blocks the aim (test_shield_outgoing_pill.c). */
+int run_shield_outgoing_pill_blocks(void);
 int run_pf_tail_reaches_radius_and_stops(void);
 int run_pf_tail_blocked_by_wall_and_sea(void);
 int run_pf_tail_neutral_zone_slows(void);
