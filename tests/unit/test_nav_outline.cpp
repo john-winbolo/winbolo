@@ -12,6 +12,8 @@
  * the game calls it.
  */
 
+#include <stdlib.h>
+
 #include "imgui.h"
 #include "imgui_internal.h"
 
@@ -26,6 +28,7 @@ struct NavRig {
     bool          drawWin   = false;
     bool          focusB    = false; /* SetKeyboardFocusHere before B, once */
     bool          quiet     = false; /* ... as a quiet focus (the lobby) */
+    bool          setFocusB = false; /* SetFocusID on B in this frame, once */
     bool          enterSeen = false; /* Enter read with owner Any, as the footer reads it */
     int           pressA    = 0;
     int           pressB    = 0;
@@ -50,6 +53,10 @@ void rigFrame(NavRig &r) {
         }
         if (ImGui::Button("B")) r.pressB++;
         r.idB = ImGui::GetItemID();
+        if (r.setFocusB) {
+            ImGui::SetFocusID(r.idB, ImGui::GetCurrentWindow());
+            r.setFocusB = false;
+        }
         if (ImGui::IsKeyPressed(ImGuiKey_Enter)) r.enterSeen = true;
         ImGui::End();
     }
@@ -74,7 +81,7 @@ void rigPress(NavRig &r, ImGuiKey key) {
 /* A new context, as a dialog has. A mouse click on empty space with no window
    drawn hides the outline (the outline's state is shared by all contexts),
    then the window opens and ImGui's nav init focuses A. */
-void rigOpen(NavRig &r, const char *name) {
+void rigCreate(NavRig &r, const char *name) {
     r       = NavRig();
     r.name  = name;
     r.ctx   = ImGui::CreateContext();
@@ -91,6 +98,11 @@ void rigOpen(NavRig &r, const char *name) {
     io.ConfigMacOSXBehaviors = false;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.Fonts->AddFontDefault();
+}
+
+void rigOpen(NavRig &r, const char *name) {
+    rigCreate(r, name);
+    ImGuiIO &io = ImGui::GetIO();
     io.AddMousePosEvent(700.0f, 500.0f);
     io.AddMouseButtonEvent(0, true);
     rigFrame(r);
@@ -174,6 +186,30 @@ int checkFirstMoveShows(ImGuiKey key, bool startOnB, const char *name) {
 done:
     rigClose(r);
     return rc;
+}
+
+/* An allocator that gives a freed ImGuiContext block to the next
+   ImGuiContext, so a new context gets the old one's address. */
+void *s_ctxBlock = nullptr; /* the live context's block */
+void *s_ctxSpare = nullptr; /* a freed context block, kept for reuse */
+
+void *reuseAlloc(size_t sz, void *) {
+    /* Only the first context-sized block while no context block is
+       held is the context. */
+    if (sz != sizeof(ImGuiContext) || s_ctxBlock) return malloc(sz);
+    void *p = s_ctxSpare ? s_ctxSpare : malloc(sz);
+    s_ctxSpare = nullptr;
+    s_ctxBlock = p;
+    return p;
+}
+
+void reuseFree(void *p, void *) {
+    if (p && p == s_ctxBlock) {
+        s_ctxBlock = nullptr;
+        s_ctxSpare = p;
+        return;
+    }
+    free(p);
 }
 
 } // namespace
@@ -341,4 +377,53 @@ extern "C" int run_nav_outline_first_home_end_shows(void) {
 extern "C" int run_nav_outline_first_page_keys_shows(void) {
     if (checkFirstMoveShows(ImGuiKey_PageDown, false, "PageDownWin")) return 1;
     return checkFirstMoveShows(ImGuiKey_PageUp, true, "PageUpWin");
+}
+
+/* A destroyed context leaves no record of its focus from code. A message
+   box focuses B from code, so the outline shows, and the box is then
+   destroyed. A new context at the same address, with the same window, has
+   B as its first NavId in its first frame. The outline must stay hidden
+   there: the record of the old box's B must be gone. */
+extern "C" int run_nav_outline_destroyed_context_forgets_focus(void) {
+    ImGuiMemAllocFunc oldAlloc = nullptr;
+    ImGuiMemFreeFunc  oldFree  = nullptr;
+    void             *oldUser  = nullptr;
+    ImGui::GetAllocatorFunctions(&oldAlloc, &oldFree, &oldUser);
+    ImGui::SetAllocatorFunctions(reuseAlloc, reuseFree, nullptr);
+
+    NavRig        r;
+    int           rc      = 0;
+    ImGuiContext *oldCtx  = nullptr;
+    ImGuiID       oldIdB  = 0;
+    rigOpen(r, "ReuseWin");
+    r.focusB = true;
+    rigFrames(r, 2);
+    UT_CHECK_MSG(GImGui->NavId == r.idB && r.idB != 0,
+                 "focus from code should focus B (NavId %08x, B %08x)",
+                 (unsigned)GImGui->NavId, (unsigned)r.idB);
+    UT_CHECK(dialogNavOutlineIsShown());
+    oldCtx = r.ctx;
+    oldIdB = r.idB;
+    rigClose(r);
+
+    /* No mouse click here: a click would clear the record in any case. */
+    rigCreate(r, "ReuseWin");
+    UT_CHECK_MSG(r.ctx == oldCtx,
+                 "the new context should reuse the old address (%p, %p)",
+                 (void *)r.ctx, (void *)oldCtx);
+    r.drawWin   = true;
+    r.setFocusB = true;
+    rigFrame(r);
+    UT_CHECK_MSG(r.idB == oldIdB && GImGui->NavId == r.idB,
+                 "B should have the old id and the focus (NavId %08x, B %08x, "
+                 "old B %08x)",
+                 (unsigned)GImGui->NavId, (unsigned)r.idB, (unsigned)oldIdB);
+    UT_CHECK_MSG(!dialogNavOutlineIsShown(),
+                 "the old context's focus from code still shows the outline");
+done:
+    rigClose(r);
+    ImGui::SetAllocatorFunctions(oldAlloc, oldFree, oldUser);
+    free(s_ctxSpare);
+    s_ctxSpare = nullptr;
+    return rc;
 }
