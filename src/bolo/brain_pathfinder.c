@@ -2993,6 +2993,100 @@ static int chain_rank_pick(const BrainPathfinder *pf, const DijkstraSlate *s,
   return 1;
 }
 
+/* Stale-root guard for the off-chain fallbacks (always on, a bug fix).
+ *
+ * Why: the slate restarts on the tank's tile only every few ticks. When the
+ * tank moves onto a square that is not on the traced chain before then, the
+ * fallbacks below pick a neighbour by g, which is cost FROM THE ROOT, so the
+ * root itself (g = 0) or a chain square the tank has already passed wins, and
+ * the tank turns back. Debug session 20261103_165532_1_v3_anchor_helm_s205,
+ * player 2, brain ticks 1663, 1703, 1860, 1880, 2146-2147: the chain-rank
+ * pick's hazard bound refused the square ahead and the root was left.
+ *
+ * What: the fallback's pick (*px,*py) is checked. It is replaced when it is
+ * the slate root (and not the destination), or a chain square while another
+ * neighbour touches the chain nearer the destination. The new pick is the
+ * neighbour with the lowest
+ *     step cost (tank -> a) + cost to go from a,
+ * where the cost to go is g(dest) - g(c) for a chain square a = c, and
+ * step(a -> c) + g(dest) - g(c) for a square next to a chain square c (the
+ * best such c). Step costs are edge cost + hazard (tile_hazard), times the
+ * diagonal factor; a live obstacle adds `penalty`. Only chain squares from
+ * k_min (the on-foot layer bound) count. The root stays possible: it wins
+ * only when going back through it is the cheapest way to the destination.
+ * Returns 1 when the pick was replaced. Cost: 8 x chain length compares,
+ * only on a fallback tick whose pick is the root or behind. */
+static int offchain_repick(const BrainPathfinder *pf, const DijkstraSlate *s,
+                           const int *chain, int k_min, int chain_len,
+                           int sx, int sy, int dx, int dy,
+                           const int *obstacles, int n_obstacles,
+                           float penalty, int foot_rule,
+                           int *px, int *py) {
+  if (chain_len <= 0 || !pf->edge_cost) return 0;
+  int is_root = (*px == s->src_x && *py == s->src_y)
+                && !(*px == dx && *py == dy);
+  /* Index of the pick on the chain (-1 off it), and the lowest chain index
+   * any neighbour of the tank touches. */
+  int k_pick = -1, k_touch = chain_len;
+  for (int k = k_min; k < chain_len; k++) {
+    int cx = node_x(chain[k]), cy = node_y(chain[k]);
+    if (k_pick < 0 && cx == *px && cy == *py) k_pick = k;
+    if (k < k_touch) {
+      int ddx = cx - sx, ddy = cy - sy;
+      if (ddx >= -2 && ddx <= 2 && ddy >= -2 && ddy <= 2) k_touch = k;
+    }
+  }
+  if (!is_root && !(k_pick >= 0 && k_touch < k_pick)) return 0;
+
+  float g_dst = s->g_cost[chain[0]];
+  float sgl = s->g_cost[node_idx(sx, sy, 0)];
+  float sgb = s->g_cost[node_idx(sx, sy, 1)];
+  int s_boat = (foot_rule || !(sgb < sgl)) ? 0 : 1;
+  int s_node = node_idx(sx, sy, s_boat);
+  float best = COST_INF, best_d2 = 1e30f;
+  int bx = -1, by = -1;
+  for (int d = 0; d < 8; d++) {
+    int ax = sx + DX8[d], ay = sy + DY8[d];
+    if (ax < 0 || ax > 255 || ay < 0 || ay > 255) continue;
+    if (foot_rule && !foot_step_ok(pf, sx, sy, ax, ay)) continue;
+    float ec = pf->edge_cost[s_node * 8 + d];
+    if (ec >= COST_INF) continue;
+    float step = (ec + tile_hazard(pf, s, ax, ay, s_boat)) * DMUL8[d];
+    if (obs_contains(obstacles, n_obstacles, ax, ay)) step += penalty;
+    int a_node = node_idx(ax, ay, s_boat);
+    float to_go = COST_INF;
+    for (int k = k_min; k < chain_len; k++) {
+      int cx = node_x(chain[k]), cy = node_y(chain[k]);
+      int ddx = cx - ax, ddy = cy - ay;
+      if (ddx < -1 || ddx > 1 || ddy < -1 || ddy > 1) continue;
+      float gc = s->g_cost[chain[k]];
+      if (gc >= COST_INF) continue;
+      float rest = g_dst - gc;
+      if (ddx != 0 || ddy != 0) {
+        int e = -1;
+        for (int q = 0; q < 8; q++) {
+          if (DX8[q] == ddx && DY8[q] == ddy) { e = q; break; }
+        }
+        float ec2 = pf->edge_cost[a_node * 8 + e];
+        if (ec2 >= COST_INF) continue;
+        int c_boat = (chain[k] >= BOAT_OFFSET) ? 1 : 0;
+        rest += (ec2 + tile_hazard(pf, s, cx, cy, c_boat)) * DMUL8[e];
+      }
+      if (rest < to_go) to_go = rest;
+    }
+    if (to_go >= COST_INF) continue;
+    float score = step + to_go;
+    float d2 = (float)((ax - dx) * (ax - dx) + (ay - dy) * (ay - dy));
+    if (score < best - 1e-3f || (score < best + 1e-3f && d2 < best_d2)) {
+      best = score; best_d2 = d2; bx = ax; by = ay;
+    }
+  }
+  if (bx < 0 || (bx == *px && by == *py)) return 0;
+  *px = bx;
+  *py = by;
+  return 1;
+}
+
 /* Record which slate gave the next step (see ns_* in brain_pathfinder.h).
  * The chain itself is already in pf->ns_chain: the trace writes there. */
 static void note_answer(BrainPathfinder *pf, int slate, int si,
@@ -3194,6 +3288,8 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
       int cx = -1, cy = -1;
       if (chain_rank_pick(pf, s, chain, k_min, chain_len, sx, sy, dx, dy,
                           obstacles, n_obstacles, foot_rule, &cx, &cy)) {
+        offchain_repick(pf, s, chain, k_min, chain_len, sx, sy, dx, dy,
+                        obstacles, n_obstacles, penalty, foot_rule, &cx, &cy);
         note_answer(pf, order[si], si, chain_len, 3);
         if (out_next_x) *out_next_x = cx;
         if (out_next_y) *out_next_y = cy;
@@ -3245,6 +3341,9 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
       note_sea_veto(pf, sx, sy, veto_x, veto_y, best_nx, best_ny);
     }
     if (best_nx >= 0) {
+      offchain_repick(pf, s, chain, k_min, chain_len, sx, sy, dx, dy,
+                      obstacles, n_obstacles, penalty, foot_rule,
+                      &best_nx, &best_ny);
       note_answer(pf, order[si], si, chain_len, 4);
       if (out_next_x) *out_next_x = best_nx;
       if (out_next_y) *out_next_y = best_ny;
