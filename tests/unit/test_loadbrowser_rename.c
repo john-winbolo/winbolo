@@ -479,3 +479,53 @@ int run_loadbrowser_rename_applies(void) {
     UT_ASSERT_MSG(!isDir(TMPROOT), "test left %s behind", TMPROOT);
     return 0;
 }
+
+/* session_name_natural_sort: the Load Session list order. A game split into
+ * parts must list part1, part2, ... part10 in number order, not text order
+ * (where "part10of23" sorts before "part1of23"). */
+static int natCmpQ(const void *a, const void *b) {
+    return loadBrowserNaturalCmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+int run_session_name_natural_sort(void) {
+    const char *P = "20261103_132136_1_v2_anchor_helm_s205_part";
+    /* The direct compares. */
+    UT_ASSERT(loadBrowserNaturalCmp("x_part1of23", "x_part2of23") < 0);
+    UT_ASSERT(loadBrowserNaturalCmp("x_part2of23", "x_part10of23") < 0);
+    UT_ASSERT(loadBrowserNaturalCmp("x_part10of23", "x_part1of23") > 0);
+    UT_ASSERT(loadBrowserNaturalCmp("x_part9of23", "x_part10of23") < 0);
+    UT_ASSERT(loadBrowserNaturalCmp("x_part3of9", "x_part3of10") < 0);
+    UT_ASSERT(loadBrowserNaturalCmp("abc", "abc") == 0);
+    UT_ASSERT(loadBrowserNaturalCmp("abc", "abcd") < 0);
+    UT_ASSERT(loadBrowserNaturalCmp("abcd", "abc") > 0);
+    UT_ASSERT(loadBrowserNaturalCmp("a2", "b1") < 0);
+    /* Same value, different text: still a strict order, both directions. */
+    UT_ASSERT(loadBrowserNaturalCmp("part01", "part1") != 0);
+    UT_ASSERT((loadBrowserNaturalCmp("part01", "part1") < 0)
+              == (loadBrowserNaturalCmp("part1", "part01") > 0));
+    /* Timestamps (fixed width) keep their text order; block 2 after block 1;
+     * a game's whole block dir before its parts. */
+    UT_ASSERT(loadBrowserNaturalCmp("20261103_132136_1", "20261104_000000_1") < 0);
+    UT_ASSERT(loadBrowserNaturalCmp("20261103_132136_2_x", "20261103_132136_10_x") < 0);
+    UT_ASSERT(loadBrowserNaturalCmp("20261103_132136_1_x", "20261103_132136_1_x_part1of2") < 0);
+    UT_ASSERT(loadBrowserNaturalCmp(NULL, "a") < 0);
+    UT_ASSERT(loadBrowserNaturalCmp(NULL, NULL) == 0);
+
+    /* The real case: 23 parts in a scrambled order sort to part1 .. part23. */
+    char names[23][80];
+    const char *ptrs[23];
+    const int order[23] = { 10, 1, 23, 2, 11, 19, 3, 20, 12, 4, 13, 5, 21,
+                            14, 6, 15, 7, 22, 16, 8, 17, 9, 18 };
+    for (int i = 0; i < 23; i++) {
+        SDL_snprintf(names[i], sizeof names[i], "%s%dof23", P, order[i]);
+        ptrs[i] = names[i];
+    }
+    SDL_qsort(ptrs, 23, sizeof ptrs[0], natCmpQ);
+    for (int i = 0; i < 23; i++) {
+        char want[80];
+        SDL_snprintf(want, sizeof want, "%s%dof23", P, i + 1);
+        UT_ASSERT_MSG(strcmp(ptrs[i], want) == 0, "row %d is %s, want %s",
+                      i, ptrs[i], want);
+    }
+    return 0;
+}
