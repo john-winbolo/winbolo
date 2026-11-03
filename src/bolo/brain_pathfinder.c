@@ -3086,9 +3086,16 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
     /* Lowest chain index a tank on foot can reach: the first boat-layer node
      * from the source end (the boarding square). Sea tiles and land after
      * the landing come before it and are only reachable in the boat. A tank
-     * in a boat keeps the whole chain (k_min = 0). */
+     * in a boat keeps the whole chain (k_min = 0).
+     *
+     * Only when the slate root is on foot too. A slate rooted in a boat with
+     * the tank now on foot is a stale root (the tank has just landed and the
+     * slate has not restarted): the boarding square is the root itself, often
+     * deep sea, and the land the tank stands on is "after the landing". The
+     * limit would then turn the tank back to the root, so keep the whole
+     * chain (k_min = 0, the old behaviour). Seed 330 bot1 t=184-185. */
     int k_min = 0;
-    if (!((tank_in_boat >= 0) ? tank_in_boat : s->in_boat)) {
+    if (!((tank_in_boat >= 0) ? tank_in_boat : s->in_boat) && !s->in_boat) {
       for (int k = chain_len - 1; k >= 0; k--) {
         if (chain[k] >= BOAT_OFFSET) { k_min = k; break; }
       }
