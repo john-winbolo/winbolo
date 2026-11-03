@@ -817,6 +817,18 @@ M.BLOCKED_AIM_RETRY_TICKS = 10     -- blocked-line ladder: minimum ticks between
 -- centre, so a tap that jumps past a narrow lane turns back to it. No new
 -- value. Log line: FINETUNE_LANE. KEEL false.
 M.CLEAR_TURN_TAP_PROGRESS = true
+-- Minimum clear lane, 2026-11-03. The planner accepted a firing spot whose
+-- aim had a clear lane of about 0.09 brad (a 4 world-unit gap at 7.2 tiles,
+-- bot3 t=6765), smaller than one finetune tap.
+-- > 0 => when the planner picks a firing spot and aim (the spot sweep in
+-- plan_position and the shield scan winner), the shell must also reach the
+-- pill clear of pills (and walls, bases, pending pills, as the aim test
+-- already asks) at every gun angle within this many brad on both sides of
+-- the aim. The sweep drops an aim that fails; a shield scan winner that
+-- fails bans its angle and plans again (the pill-on-the-line replan, so the
+-- take ends after SANITY_PILL_REPLANS_MAX spots). 0 = off.
+-- Log lines: SHIELD_LANE, SHIELD_LANE_BAN, SHIELD_LANE_ABANDON. KEEL 0.
+M.BLOCKER_MIN_LANE_BRAD = 0.5
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = WALL_HP_FULL 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / WALL_HP_FULL 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
@@ -6343,6 +6355,9 @@ M.PRESETS = {
     -- steering turns toward the lane. KEEL counted every tick and turned
     -- toward the pill centre.
     CLEAR_TURN_TAP_PROGRESS       = false,
+    -- 2026-11-03: the planner asks for a clear lane of +/-0.5 brad around the
+    -- aim of a firing spot. KEEL took any aim whose own line was clear.
+    BLOCKER_MIN_LANE_BRAD         = 0,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).

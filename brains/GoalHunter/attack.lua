@@ -2735,6 +2735,21 @@ end
 -- Returns aim_idx, aim_wx, aim_wy (world units), aim_trees — or nil when every
 -- aim point is blocked, and the caller must drop the spot.
 
+-- C.BLOCKER_MIN_LANE_BRAD: is the clear lane from (ox,oy) to the aim point
+-- (awx,awy) (all world units) at least min_brad wide on both sides of the aim
+-- angle? A gun angle is clear when spot_margin's shell test
+-- (SM.angle_line_trees: the same blockers as aim_line_trees) reaches the pill.
+-- Samples every 1/16 brad out to min_brad each side (aim_lane.wide_enough).
+-- Returns (ok, left, right, aim_angle).
+function M.aim_lane_wide(ox, oy, pmx, pmy, world, awx, awy, min_brad)
+  local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)
+  local a0 = U.aim_at_f(ox / 256.0, oy / 256.0, awx / 256.0, awy / 256.0) % 256
+  local ok, left, right = require("aim_lane").wide_enough(function(a)
+    return SM.angle_line_trees(ox, oy, omx, omy, pmx, pmy, world, a) ~= nil
+  end, a0, min_brad)
+  return ok, left, right, a0
+end
+
 -- One aim point, one shell simulation. Returns the forest-tile count on the
 -- line (0 = perfectly clear) plus the aim point in world units, or nil when the
 -- line is BLOCKED / never reaches the pill.
@@ -2757,16 +2772,28 @@ local aim_line_trees = SM.aim_line_trees
 -- comes back clear, even if another point has fewer trees. Callers pass the aim
 -- the take is already committed to, so a line that is still fine does not get
 -- swapped out from under a gun that is halfway through turning onto it.
-local function clear_aim_from_world(ox, oy, pmx, pmy, world, prefer_idx)
+--
+-- min_lane (optional, brad): also require the clear lane around the aim to be
+-- at least this wide on both sides (C.BLOCKER_MIN_LANE_BRAD, M.aim_lane_wide).
+-- An aim with a narrower lane counts as blocked. nil or 0 = the old test.
+local function clear_aim_from_world(ox, oy, pmx, pmy, world, prefer_idx, min_lane)
   local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)
+  local function line(i)
+    local trees, awx, awy = aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i)
+    if trees and min_lane and min_lane > 0
+       and not M.aim_lane_wide(ox, oy, pmx, pmy, world, awx, awy, min_lane) then
+      return nil
+    end
+    return trees, awx, awy
+  end
   if prefer_idx and shield.AIM_OFFSETS_TILE_FIRE[prefer_idx] then
-    local trees, awx, awy = aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, prefer_idx)
+    local trees, awx, awy = line(prefer_idx)
     if trees then return prefer_idx, awx, awy, trees end
   end
   local best_i, best_trees, best_wx, best_wy = nil, nil, nil, nil
   for i = 1, 5 do
     if i ~= prefer_idx then
-      local trees, awx, awy = aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i)
+      local trees, awx, awy = line(i)
       if trees then
         if i == 1 and trees == 0 then
           return 1, awx, awy, 0            -- clear centre: one simulation, done
@@ -2782,10 +2809,14 @@ local function clear_aim_from_world(ox, oy, pmx, pmy, world, prefer_idx)
   return best_i, best_wx, best_wy, best_trees
 end
 
+M._clear_aim_from_world = clear_aim_from_world   -- unit tests
+
+-- The spot sweep in plan_position. C.BLOCKER_MIN_LANE_BRAD > 0 also asks for
+-- a clear lane that wide around the aim (0 = the old test).
 local function spot_clear_aim(sfx, sfy, pmx, pmy, world)
   return clear_aim_from_world(math.floor(sfx * 256 + 0.5),
                               math.floor(sfy * 256 + 0.5),
-                              pmx, pmy, world)
+                              pmx, pmy, world, nil, C.BLOCKER_MIN_LANE_BRAD or 0)
 end
 
 -- ── Blocked-line ladder ──────────────────────────────────────────────────
@@ -6536,6 +6567,34 @@ local function update_attack_substate_body(goal, state, world, info)
         goal.aim_wx  = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
         goal.aim_wy  = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
         goal.aim_idx = w.best_aim_idx or 1
+        -- C.BLOCKER_MIN_LANE_BRAD: the winner's aim needs a clear lane at least
+        -- this wide on both sides, from its firing spot. A narrower lane makes
+        -- the finetune chase a gap smaller than one tap (bot3 t=7281). Ban this
+        -- angle and plan again, the same way a pill on the line does; after
+        -- SANITY_PILL_REPLANS_MAX spots the take is given up.
+        local _mlb = C.BLOCKER_MIN_LANE_BRAD or 0
+        if _mlb > 0 then
+          local _ox = math.floor(w.cx * 256 + 0.5)
+          local _oy = math.floor(w.cy * 256 + 0.5)
+          local _ok, _l, _r, _a0 = M.aim_lane_wide(_ox, _oy, pmx, pmy, world,
+                                                   goal.aim_wx, goal.aim_wy, _mlb)
+          print2(string.format("SHIELD_LANE t=%d pill=(%d,%d) spot=(%.2f,%.2f) aim=%s angle=%.3f left=%.4f right=%.4f need=%.2f -> %s",
+            now, pmx, pmy, w.cx, w.cy, shield.AIM_NAMES[goal.aim_idx] or tostring(goal.aim_idx),
+            _a0, _l, _r, _mlb, _ok and "ok" or "narrow, replan"))
+          if not _ok then
+            local abandon, bucket, tries = blocked_line_replan(state, goal, pmx, pmy, now)
+            if bucket then
+              print2(string.format("SHIELD_LANE_BAN t=%d pill=(%d,%d) angles=%d..%d replans=%d",
+                now, pmx, pmy, (bucket - 5) % 360, (bucket + 5) % 360, tries))
+            end
+            if abandon then
+              print2(string.format("SHIELD_LANE_ABANDON t=%d pill=(%d,%d) after %d replans; off the pool until t=%d",
+                now, pmx, pmy, tries, now + (C.PP_BLACKLIST_TICKS or 500)))
+              clear_attack_goal(state, "shield scan lane narrower than BLOCKER_MIN_LANE_BRAD on every tried angle")
+            end
+            return
+          end
+        end
         end  -- if w (winner not on a banned angle)
       end
     end

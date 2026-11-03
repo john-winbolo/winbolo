@@ -11,6 +11,8 @@
 --   * M.nearest  — the clear sample nearest to an angle, and the error.
 --   * M.width    — how far the clear run that holds an angle reaches on
 --                  each side of it.
+--   * M.wide_enough — is the lane at least a given width on both sides of
+--                  an aim (C.BLOCKER_MIN_LANE_BRAD)?
 --   * M.turn_in_step — the turn-in tap counter for C.CLEAR_TURN_TAP_PROGRESS.
 --
 -- No engine calls here. The callers pass a clear test, so the tests can
@@ -86,6 +88,28 @@ function M.width(lane, a)
   local ka = adiff(lane.base, a) / lane.step
   -- Half a step past each end sample: the run edge lies between samples.
   return (ka - lo + 0.5) * lane.step, (hi - ka + 0.5) * lane.step
+end
+
+-- Is the clear lane around angle a0 at least min_brad wide on BOTH sides?
+-- Tests a0, then a0 +/- k*step for k = 1..ceil(min_brad/step), each side
+-- stopping at its first blocked angle. Returns (ok, left, right): left and
+-- right are how far (brad) the clear samples reach on each side, at most
+-- the tested span.
+function M.wide_enough(clear_at, a0, min_brad, step)
+  step = step or M.STEP
+  if not clear_at(wrap(a0)) then return false, 0, 0 end
+  local n = math.ceil(min_brad / step - 1e-9)
+  local reach = {}
+  for side = -1, 1, 2 do
+    local r = 0
+    for k = 1, n do
+      if not clear_at(wrap(a0 + side * k * step)) then break end
+      r = k * step
+    end
+    reach[side] = r
+  end
+  local left, right = reach[-1], reach[1]
+  return left >= min_brad - 1e-9 and right >= min_brad - 1e-9, left, right
 end
 
 -- One finetune tick while the shot reaches the pill but is not clear.
