@@ -3660,6 +3660,10 @@
 /* The replay's recording mode button, which shows the GIF controls */
 #define STR_REEL_RECORD_MODE_TIP                 3150
 
+/* The Log Viewer's -size option when its text is not a size or cannot be met */
+#define STR_LV_SIZE_ARG_BAD                      3151
+#define STR_LV_SIZE_NOT_MET                      3152
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

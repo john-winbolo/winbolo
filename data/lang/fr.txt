@@ -2906,3 +2906,7 @@ STR_CLIPGIF_LOADING=Ouverture du GIF...
 STR_CLIPGIF_TOO_LARGE=Ce GIF est trop grand pour être affiché ici. Vous pouvez quand même le copier ou l'enregistrer.
 STR_CLIPGIF_FILTER_NAME=Images GIF
 STR_REEL_RECORD_MODE_TIP=Mode enregistrement : affiche les commandes GIF
+
+# L'option -size du Log Viewer quand son texte n'est pas une taille ou ne peut pas être respecté
+STR_LV_SIZE_ARG_BAD=-size attend une largeur et une hauteur en pixels, par exemple -size 1920x1080. La fenêtre s'est ouverte à sa taille habituelle.
+STR_LV_SIZE_NOT_MET=La fenêtre n'a pas pu être mise à {string1} pixels, comme -size le demandait. Elle fait {string2} pixels : l'écran est peut-être trop petit pour la contenir.

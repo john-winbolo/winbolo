@@ -2,7 +2,7 @@
  * WinBoloUnitTests entry point. Dispatches one named test per
  * invocation so each CTest entry maps to a single test case.
  *
- *   WinBoloUnitTests --test <name>      run a single test
+ *   WinBoloUnitTests --test <name>...   run the named tests in order
  *   WinBoloUnitTests --list             print test names
  *   WinBoloUnitTests                    run every test in sequence,
  *                                      bar the fixture writers
@@ -13,6 +13,7 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
+#include "bolo_rand.h"
 #include "test_harness.h"
 
 #include "everard_map.h"
@@ -1216,6 +1217,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_quiet_lobby_control_loss",       run_loopback_quiet_lobby_control_loss       },
     { "loopback_command_liveness",               run_loopback_command_liveness               },
     { "loopback_command_queued_behind_map_change", run_loopback_command_queued_behind_map_change },
+    { "loopback_command_submitted_during_rejoin", run_loopback_command_submitted_during_rejoin },
     { "loopback_channel",                        run_loopback_channel                        },
     { "loopback_hitch_recovers",                 run_loopback_hitch_recovers                 },
     { "loopback_quit_keeps_peer",                run_loopback_quit_keeps_peer                },
@@ -1239,6 +1241,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_bot_pool_survives_bulk_rebase",  run_loopback_bot_pool_survives_bulk_rebase  },
     { "loopback_brain_docs_survives_bulk_rebase", run_loopback_brain_docs_survives_bulk_rebase },
     { "loopback_map_upload",                     run_loopback_map_upload                     },
+    { "loopback_map_change_busy_lifts",          run_loopback_map_change_busy_lifts          },
     { "loopback_map_upload_list_after_rejoin",   run_loopback_map_upload_list_after_rejoin   },
     { "upload_begin_golden",                     run_upload_begin_golden                     },
     { "script_upload_begin_refusals",            run_script_upload_begin_refusals            },
@@ -2554,6 +2557,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_tank_status_sums",                             run_lv_tank_status_sums                             },
     { "lv_tank_bars_sums",                               run_lv_tank_bars_sums                               },
     { "lv_tank_pick_sums",                               run_lv_tank_pick_sums                               },
+    { "lv_marks_fade",                                   run_lv_marks_fade                                   },
+    { "lv_window_size_parse",                            run_lv_window_size_parse                            },
     { "lv_map_double_click",                             run_lv_map_double_click                             },
     { "lv_name_header_sums",                             run_lv_name_header_sums                             },
     { "lv_dock_clear_layout",                            run_lv_dock_clear_layout                            },
@@ -2750,6 +2755,21 @@ static int run_one(const char *name) {
     for (i = 0; i < NUM_TESTS; i++) {
         if (strcmp(s_tests[i].name, name) == 0) {
             fprintf(stderr, "RUN  %s\n", s_tests[i].name);
+            /* Each test starts with the harness as a process of its own
+             * would, which is how CTest runs it. The brain stub is
+             * process-wide and a test that arms it seldom disarms it (an
+             * assert that fails returns before any cleanup), so a test
+             * that needs a brain build to fail used to pass alone and fail
+             * in the bare run after any test that armed it. */
+            ut_brain_stub_arm(false);
+            /* The same for bolo_rand: a fresh process has its state all
+             * zero, and the loopback harness and others seed it and leave
+             * it seeded, so a test that drew from it unseeded saw different
+             * numbers in the bare run than alone. */
+            {
+                static const BoloRandState kFreshProcess = { { 0, 0, 0, 0 } };
+                bolo_rand_restore(&kFreshProcess);
+            }
             s_currentTest = s_tests[i].name;
             int rc = s_tests[i].fn();
             s_currentTest = "none";
@@ -2788,8 +2808,19 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    /* Several names run in that order in one process, which is how to
+     * reproduce a test that passes alone and fails in the full run: give it
+     * the tests that ran before it until the failure comes back. The exit
+     * code is the first nonzero one. */
     if (argc >= 3 && strcmp(argv[1], "--test") == 0) {
-        int rc = run_one(argv[2]);
+        int rc = 0;
+        int a;
+        for (a = 2; a < argc; a++) {
+            int one = run_one(argv[a]);
+            if (rc == 0) {
+                rc = one;
+            }
+        }
         SDL_Quit();
         return rc;
     }

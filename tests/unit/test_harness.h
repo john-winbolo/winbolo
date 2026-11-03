@@ -2468,6 +2468,7 @@ int run_loopback_quiet_lobby_control_loss(void);
  * watched directly across a window in which nothing else is refreshing it. */
 int run_loopback_command_liveness(void);
 int run_loopback_command_queued_behind_map_change(void);
+int run_loopback_command_submitted_during_rejoin(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);
@@ -2525,6 +2526,7 @@ int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);
+int run_loopback_map_change_busy_lifts(void);
 /* A loaded map upload re-joins the client; once it is CONNECTED again the
  * Server Maps listing is asked for and answered. */
 int run_loopback_map_upload_list_after_rejoin(void);
@@ -4500,6 +4502,10 @@ int run_lv_tank_bars_sums(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
+/* The log viewer's aids for recording the screen (test_lv_marks.c): the
+ * lines Shift and a drag draw on the map and their fade, and -size WxH. */
+int run_lv_marks_fade(void);
+int run_lv_window_size_parse(void);
 /* A double click on a tank on the map: when it turns that tank's view on. */
 int run_lv_map_double_click(void);
 int run_lv_name_header_sums(void);

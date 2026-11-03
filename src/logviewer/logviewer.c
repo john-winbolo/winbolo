@@ -74,6 +74,8 @@
 #include "lv_panel_set.h"   /* the panels a frame of the overview draws */
 #include "lv_host_dock.h"   /* the map beside the sidebars, and the first view */
 #include "lv_fullscreen_game.h"
+#include "lv_window_size.h" /* -size: a window of a fixed size in pixels */
+#include "../common/wb_log.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
 #include "game_view.h"
@@ -1295,6 +1297,37 @@ static void loadPreferences(void) {
 
 bool lv_windowCanFullScreen(void);
 
+/* The drawing area the command line asked for with -size, in pixels, or 0
+ * for none (logViewerSetWindowSizeText). While one is set the window stays
+ * that size: it is not snapped to whole squares, cannot be resized by hand,
+ * and neither its size nor its place is saved, so the next run without -size
+ * opens as the last one without it closed. */
+static int  s_fixedWindowW = 0;
+static int  s_fixedWindowH = 0;
+/* The text after -size was not a size (lvHostWarnFixedWindowSize). */
+static bool s_fixedWindowRefused = false;
+/* The size the window came out at, in pixels, once it was applied. */
+static int  s_fixedWindowGotW = 0;
+static int  s_fixedWindowGotH = 0;
+
+void logViewerSetWindowSizeText(const char *text) {
+    int w = 0, h = 0;
+
+    if (text != NULL && lvWindowSizeParse(text, &w, &h)) {
+        s_fixedWindowW = w;
+        s_fixedWindowH = h;
+        s_fixedWindowRefused = false;
+    } else {
+        s_fixedWindowW = 0;
+        s_fixedWindowH = 0;
+        s_fixedWindowRefused = true;
+    }
+}
+
+static bool lvHostFixedWindowSize(void) {
+    return s_fixedWindowW > 0 && s_fixedWindowH > 0 && g_lv != NULL && g_lv->ownsWindow;
+}
+
 static void savePreferences(void) {
     char line[256];
     char val[64];
@@ -1331,9 +1364,10 @@ static void savePreferences(void) {
     {
         SDL_WindowFlags wflags = SDL_GetWindowFlags(g_lv->window);
         bool big = (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
-        bool placed = g_lv->ownsWindow && !big && !(wflags & SDL_WINDOW_MINIMIZED);
+        bool fixed = lvHostFixedWindowSize();
+        bool placed = g_lv->ownsWindow && !big && !fixed && !(wflags & SDL_WINDOW_MINIMIZED);
 
-        if (g_lv->ownsWindow && !big) {
+        if (g_lv->ownsWindow && !big && !fixed) {
             /* The next launch makes the window sizeX * TILE_SIZE_X points
              * wide (draw.c), at zoom 1, so the count saved is the window's
              * in whole squares at zoom 1. The grid itself
@@ -1364,7 +1398,7 @@ static void savePreferences(void) {
          * FullScreen there), so the viewer opens the way it was closed.
          * While the window is full screen "maximized" is left as it was
          * saved: that is the state the window goes back to. */
-        if (g_lv->ownsWindow) {
+        if (g_lv->ownsWindow && !fixed) {
             if (!(wflags & SDL_WINDOW_FULLSCREEN)) {
                 lv_platform_config_set_string("LOGVIEWER", "Window.Maximized",
                                               (wflags & SDL_WINDOW_MAXIMIZED) ? "Yes" : "No");
@@ -1409,6 +1443,61 @@ static void savePreferences(void) {
 #define LV_WINDOW_PLACE_NONE (-1000000)
 
 /* --------------------------------------------------------------------------
+ * lvHostApplyFixedWindowSize -- Give the window the size -size asked for.
+ *
+ * The size is in pixels, but SDL sizes a window in its own units, which are
+ * pixels divided by the pixel density; the density is only certain once the
+ * window is on its display, so the size is set, read back in pixels, and set
+ * once more if it came out wrong. The window is centred on its display and
+ * opens neither maximized nor full screen, whatever the last run saved.
+ * -------------------------------------------------------------------------- */
+static void lvHostApplyFixedWindowSize(void) {
+    int pw = 0, ph = 0, i;
+
+    SDL_SetWindowResizable(g_lv->window, false);
+    for (i = 0; i < 2; i++) {
+        float density = SDL_GetWindowPixelDensity(g_lv->window);
+        int unitsW = lvWindowSizeUnits(s_fixedWindowW, density);
+        int unitsH = lvWindowSizeUnits(s_fixedWindowH, density);
+        SDL_SetWindowSize(g_lv->window, unitsW, unitsH);
+        SDL_SetWindowPosition(g_lv->window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        SDL_SyncWindow(g_lv->window);
+        SDL_GetWindowSizeInPixels(g_lv->window, &pw, &ph);
+        if (pw == s_fixedWindowW && ph == s_fixedWindowH) {
+            break;
+        }
+    }
+    s_fixedWindowGotW = pw;
+    s_fixedWindowGotH = ph;
+    SDL_LogInfo(WB_LOG_CAT_LOGVIEWER, "-size %dx%d: the window is %dx%d pixels",
+                s_fixedWindowW, s_fixedWindowH, pw, ph);
+}
+
+/* --------------------------------------------------------------------------
+ * lvHostWarnFixedWindowSize -- Tell the user when -size did not get its way.
+ *
+ * Either the text after -size was not a size, so the window opened at its
+ * usual size, or the window could not be made the size asked for, as when
+ * the display is too small to hold it, and the recording would come out at
+ * another size. Shown once the window is up, after lvHostRestoreWindowPlace,
+ * so the text comes from the language loaded.
+ * -------------------------------------------------------------------------- */
+static void lvHostWarnFixedWindowSize(void) {
+    if (g_lv == NULL || !g_lv->ownsWindow) {
+        return;
+    }
+    if (s_fixedWindowRefused) {
+        lv_platform_dialog_message(DIALOG_BOX_TITLE, langGetText(STR_LV_SIZE_ARG_BAD));
+    } else if (lvHostFixedWindowSize() &&
+               (s_fixedWindowGotW != s_fixedWindowW || s_fixedWindowGotH != s_fixedWindowH)) {
+        MessageArgs args = {0};
+        SDL_snprintf(args.string1, sizeof(args.string1), "%dx%d", s_fixedWindowW, s_fixedWindowH);
+        SDL_snprintf(args.string2, sizeof(args.string2), "%dx%d", s_fixedWindowGotW, s_fixedWindowGotH);
+        lv_platform_dialog_message(DIALOG_BOX_TITLE, langGetTextFmt(STR_LV_SIZE_NOT_MET, &args));
+    }
+}
+
+/* --------------------------------------------------------------------------
  * lvHostRestoreWindowPlace -- Put the viewer's own window back where it was.
  *
  * Size, position and the maximized state from the last run. Called once the
@@ -1424,6 +1513,10 @@ static void lvHostRestoreWindowPlace(void) {
     bool placed = FALSE;
 
     if (g_lv == NULL || !g_lv->ownsWindow || g_lv->window == NULL) {
+        return;
+    }
+    if (lvHostFixedWindowSize()) {
+        lvHostApplyFixedWindowSize();
         return;
     }
     x = lv_platform_config_get_int("LOGVIEWER", "Window.X", LV_WINDOW_PLACE_NONE);
@@ -1813,15 +1906,16 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
     }
 
     /* ',' steps one tick back and '.' one tick forward; with Shift ('<' and
-     * '>') they jump 10 s. A tick is 20 ms of log, the smallest step the
-     * decoder takes. A step leaves playback paused, so the moment stepped to
-     * stays on the screen; a jump carries on playing if it was.
+     * '>') they jump 10 s, and with Ctrl 1 s. A tick is 20 ms of log, the
+     * smallest step the decoder takes. A step leaves playback paused, so the
+     * moment stepped to stays on the screen; a jump carries on playing if it
+     * was.
      *
      * The keys are matched by scancode, the place of the key on the
      * keyboard, so the two keys right of M on a US keyboard do this on
      * every layout, also where those places give other characters. Shift
-     * on either one is the jump. A text box that has the keyboard keeps
-     * the key.
+     * or Ctrl on either one is a jump; Ctrl and Shift together is the 1 s
+     * one. A text box that has the keyboard keeps the key.
      *
      * In game view a jump re-centres the camera, because 10 s can leave the
      * followed tank far outside the viewport and the dead-zone tracker
@@ -1830,14 +1924,16 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
      * seek bar does. */
     if (allowSeek && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
         g_lv->isLoaded && !lv_imgui_want_text_input() &&
-        (sdlEvent.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
+        (sdlEvent.key.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
         (sdlEvent.key.scancode == SDL_SCANCODE_COMMA ||
          sdlEvent.key.scancode == SDL_SCANCODE_PERIOD)) {
         const uint32_t kTickMs = 20;
         const uint32_t kJumpMs = 10000;
+        const uint32_t kShortJumpMs = 1000;
         bool back = (sdlEvent.key.scancode == SDL_SCANCODE_COMMA);
-        bool jump = ((sdlEvent.key.mod & SDL_KMOD_SHIFT) != 0);
-        uint32_t stepMs = jump ? kJumpMs : kTickMs;
+        bool shortJump = ((sdlEvent.key.mod & SDL_KMOD_CTRL) != 0);
+        bool jump = shortJump || ((sdlEvent.key.mod & SDL_KMOD_SHIFT) != 0);
+        uint32_t stepMs = shortJump ? kShortJumpMs : (jump ? kJumpMs : kTickMs);
         /* Absolute log time: a 20 ms step is too fine to send through the
          * slider's 0..1 ratio. lv_screenSeekToTimeMs clamps to the log. */
         uint32_t nowMs = lv_screenGetTimeRunning();
@@ -1906,8 +2002,10 @@ static void lvHostHandleResize(const SDL_Event *e) {
      * state, fit the tile counts to the actual window (the event's data1/data2
      * are the real maximized dimensions) and leave the window alone. A normal
      * windowed resize still snaps to a clean tile boundary. */
+    /* A window -size fixed is not snapped either: it must stay the size
+     * asked for, so it is fitted as a maximized one is. */
     SDL_WindowFlags wflags = SDL_GetWindowFlags(g_lv->window);
-    if (!(wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))) {
+    if (!lvHostFixedWindowSize() && !(wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))) {
         int snappedW = (int)(newTilesX * tilePxX + 0.5f);
         int snappedH = (int)(newTilesY * tilePxY + 0.5f);
         SDL_SetWindowSize(g_lv->window, snappedW + reservedX,
@@ -2207,6 +2305,7 @@ static void lvHostRenderFrame(const char *overlay) {
             lvMenuRender(g_lv);
         }
         lv_imgui_zoom_label();
+        lv_imgui_game_viewport_draw_marks();
         lv_imgui_game_viewport_hover();
         lvHostDrawLoadProgress();
         lv_imgui_dialogs_render();
@@ -2310,6 +2409,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     s_lvJump.active = FALSE;
     s_lvJumpHost = TRUE;
     lvHostRestoreWindowPlace();
+    lvHostWarnFixedWindowSize();
 
     /* Open file from command line / caller if provided. Like a pending
      * memory buffer from logViewerRunFromMemory, it opens on the first frame. */

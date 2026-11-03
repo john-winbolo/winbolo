@@ -131,6 +131,11 @@ typedef struct {
     uint32_t outCmdNextSeq;   /* next cmdSeq to assign on submit (init 1) */
     uint32_t outHeadSeq;      /* lowest unacked seq; advances on ACK */
     uint32_t outTailSeq;      /* exclusive tail; outTailSeq == outCmdNextSeq */
+    /* True once this connection has reached CONNECTED or SPECTATING. After
+     * that, a command submitted while a lobby map change has the client
+     * re-joining is queued rather than dropped; the drain holds it until the
+     * re-join is done and the per-tick resend then sends it. */
+    bool     joinedOnce;
 
     /* Input redundancy ring buffer */
     InputPacket inputRing[CLIENT_INPUT_RING_SIZE];
@@ -817,9 +822,19 @@ static void udpClientResendCommandHead(TransportUdpClientCtx *c) {
 void transportUdpClientSubmitCommand(Transport *t, const ClientCommand *cmd) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     /* SPECTATING is admitted alongside CONNECTED so a spectator's CMD_CHAT
-     * reaches the wire; the server rejects any non-chat spectator command. */
+     * reaches the wire; the server rejects any non-chat spectator command.
+     *
+     * So is the re-join a lobby map change sends a joined client on. It runs
+     * several round trips and a map download, and a host clicking a second
+     * map or Use This Map inside it had the command thrown away, with the
+     * chooser's own preview showing the map as picked. Queued, it waits for
+     * the drain, which sends nothing until the re-join is done, and the
+     * per-tick resend sends it then. */
+    bool rejoining = c->joinedOnce &&
+                     (c->joinState == UDP_CLIENT_JOINING ||
+                      c->joinState == UDP_CLIENT_DOWNLOADING_MAP);
     if (c->joinState != UDP_CLIENT_CONNECTED &&
-        c->joinState != UDP_CLIENT_SPECTATING) return;
+        c->joinState != UDP_CLIENT_SPECTATING && !rejoining) return;
     if (c->outTailSeq - c->outHeadSeq >= OUT_CMD_QUEUE_CAP) {
         SDL_assert(0 && "out command queue full");
         return;
@@ -2476,6 +2491,7 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
             break;
         }
         c->joinState = UDP_CLIENT_CONNECTED;
+        c->joinedOnce = true;
         /* A map list request made while the join was not complete was never
          * sent, and a map change always re-joins. Let the chooser retry a
          * missing listing now that requests can go out, but keep a completed
@@ -2960,6 +2976,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     }
                 }
                 c->joinState = UDP_CLIENT_SPECTATING;
+                c->joinedOnce = true;
                 WB_LOG_INFO(WB_LOG_CAT_NET,
                     "spectator JOIN_ACCEPT: tankless connect, mapSize=%u",
                     (unsigned)specMapSize);
@@ -6543,6 +6560,56 @@ bool transportUdpClientStartLobbyScriptUpload(Transport *t,
                                /*useLocalLen=*/0);
     SDL_free(fileData);
     return ok;
+}
+
+/* Whether a lobby map change of this client's is still under way: a map
+ * command not yet acked, the re-join a map change sends the client on, or an
+ * upload not yet over. The
+ * map chooser reads it every frame and greys its picks while it holds, since
+ * an upload started then is refused and a commit or cancel sent then can
+ * land before the upload does.
+ *
+ * Nothing here is latched, so it cannot stay true by being forgotten. Each
+ * part ends by itself: the command with its ack or the connection, the
+ * re-join when the client is CONNECTED again or
+ * gives up (JOIN_MAX_RETRIES, the map download's restart cap), which ends
+ * the connection, and the upload with the server's answer or the upload
+ * watchdog (UPLOAD_ACK_TIMEOUT_MS, UPLOAD_STALL_TIMEOUT_MS). An upload that is
+ * over but not yet let go of (status 3 or 4) is not under way: the pump lets
+ * go of it on its next CONNECTED tick. */
+bool transportUdpClientMapChangeBusy(Transport *t) {
+    TransportUdpClientCtx *c;
+    uint8_t st;
+    uint32_t seq;
+
+    if (t == NULL || t->ctx == NULL) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinedOnce && (c->joinState == UDP_CLIENT_JOINING ||
+                          c->joinState == UDP_CLIENT_DOWNLOADING_MAP)) {
+        return true;
+    }
+    /* A map pick, random map, Use This Map or cancel the server has not yet
+       acked. An upload does not ride the command queue, so one started now
+       could reach the server ahead of the command, lost and being resent,
+       and the command then land over it. The server acks every command it
+       applies, refused or not, and applies a map change before it acks, so
+       this ends with the ack (the re-join above usually taking over first)
+       or with the connection: an unacked head is resent every 80 ms until
+       then. */
+    for (seq = c->outHeadSeq; seq != c->outTailSeq; seq++) {
+        switch (c->outCmdQueue[seq % OUT_CMD_QUEUE_CAP].cmd.type) {
+        case CMD_LOBBY_SET_MAP:
+        case CMD_LOBBY_PREVIEW_RANDOM:
+        case CMD_LOBBY_PREVIEW_COMMIT:
+        case CMD_LOBBY_PREVIEW_CANCEL:
+            return true;
+        default:
+            break;
+        }
+    }
+    if (!c->uploadActive || c->clientSim == NULL) return false;
+    st = c->clientSim->lobbyMapUploadStatus;
+    return st != 3 && st != 4;
 }
 
 uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t) {

@@ -200,6 +200,14 @@ struct MapChooserState_s {
     bool            fileDialogPending;
     bool            fileDialogGotResult;
     char            fileDialogResult[FILENAME_MAX];
+    /* Set by the owner every frame. While true, the left panel (the list and
+     * every control that picks a map) is greyed and takes no input, and a
+     * file the open-file dialog returns is kept, not applied, and is applied
+     * on the first frame it is false. The preview is left as it is. The dialog runs outside the chooser's window, so greying the
+     * chooser cannot stop it answering. The lobby sets it while a map change
+     * is still under way (clientSimNetLobbyMapChangeBusy); zero, as
+     * mapChooserInit leaves it, is the old behaviour. */
+    bool            holdPicks;
 
     /* Random map generation state */
     bool            randomMapSelected;

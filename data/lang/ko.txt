@@ -2905,3 +2905,7 @@ STR_CLIPGIF_LOADING=GIF를 여는 중...
 STR_CLIPGIF_TOO_LARGE=이 GIF는 너무 커서 여기에 표시할 수 없습니다. 복사하거나 저장할 수는 있습니다.
 STR_CLIPGIF_FILTER_NAME=GIF 이미지
 STR_REEL_RECORD_MODE_TIP=녹화 모드: GIF 컨트롤을 표시합니다
+
+# Log Viewer의 -size 옵션 값이 크기가 아니거나 그 크기로 만들 수 없을 때
+STR_LV_SIZE_ARG_BAD=-size에는 픽셀 단위의 너비와 높이가 필요합니다. 예: -size 1920x1080. 창은 기본 크기로 열렸습니다.
+STR_LV_SIZE_NOT_MET=-size에서 요청한 대로 창을 {string1} 픽셀로 만들 수 없었습니다. 현재 창은 {string2} 픽셀입니다. 화면이 너무 작아서 창을 담을 수 없을 수 있습니다.

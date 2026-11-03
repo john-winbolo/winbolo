@@ -2906,3 +2906,7 @@ STR_CLIPGIF_LOADING=Відкриття GIF...
 STR_CLIPGIF_TOO_LARGE=Цей GIF завеликий, щоб показати його тут. Його все одно можна скопіювати або зберегти.
 STR_CLIPGIF_FILTER_NAME=Зображення GIF
 STR_REEL_RECORD_MODE_TIP=Режим запису: показує елементи керування GIF
+
+# The Log Viewer's -size option when its text is not a size or cannot be met
+STR_LV_SIZE_ARG_BAD=-size потребує ширини та висоти в пікселях, наприклад -size 1920x1080. Вікно відкрито зі звичайним розміром.
+STR_LV_SIZE_NOT_MET=Не вдалося зробити вікно розміром {string1} пікселів, як запитано в -size. Його розмір — {string2} пікселів: можливо, екран замалий, щоб вмістити його.

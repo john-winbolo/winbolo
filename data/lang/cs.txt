@@ -2904,3 +2904,7 @@ STR_CLIPGIF_LOADING=Otevírání GIFu...
 STR_CLIPGIF_TOO_LARGE=Tento GIF je příliš velký, aby se zde zobrazil. Stále ho můžete zkopírovat nebo uložit.
 STR_CLIPGIF_FILTER_NAME=Obrázky GIF
 STR_REEL_RECORD_MODE_TIP=Režim nahrávání: zobrazí ovládání GIFu
+
+# Volba -size prohlížeče záznamů, když její text není velikost nebo ji nelze splnit
+STR_LV_SIZE_ARG_BAD=-size vyžaduje šířku a výšku v pixelech, například -size 1920x1080. Okno se otevřelo ve své obvyklé velikosti.
+STR_LV_SIZE_NOT_MET=Okno se nepodařilo udělat velké {string1} pixelů, jak žádá -size. Má {string2} pixelů: displej může být příliš malý.

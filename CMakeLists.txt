@@ -47,6 +47,21 @@ endif()
 
 include(cmake/bolo_version.cmake)
 
+# The commit hash and build date go only on the two files that print them.
+# Both values are read at configure time, and every edit to this file
+# reconfigures, so as target-wide defines they changed the compile command of
+# every source in every target that carried them (about 1,000 files, the 570
+# of WinBoloUnitTests among them) and MSBuild recompiled the lot after nearly
+# any commit. Here a new hash or date recompiles these two files and nothing
+# else. Every target that compiles them is defined in this file, which is the
+# scope a source file property has.
+set_source_files_properties(
+    src/gui/sdl3/dialogs/imgui_about.cpp
+    src/logviewer/imgui/imgui_dialogs.cpp
+    PROPERTIES COMPILE_DEFINITIONS
+    "WINBOLO_GIT_HASH=\"${WINBOLO_GIT_HASH}\";WINBOLO_BUILD_DATE=\"${WINBOLO_BUILD_DATE}\";WINBOLO_BUILD_YEAR=\"${WINBOLO_BUILD_YEAR}\""
+)
+
 # Global macOS bundle metadata. Set once here so every MACOSX_BUNDLE target
 # (WinBolo, Log Viewer, Map Editor) picks up matching version/copyright keys
 # in its Info.plist, and so the deployment target applies to all of them.
@@ -1495,9 +1510,6 @@ target_compile_definitions(WinBoloIOS PRIVATE
     __IPHONEOS__=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1953,6 +1965,9 @@ if(ENABLE_SENTRY AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
     #     collisions inside libc++ headers (isnan / isfinite) hit
     #     crashpad TUs that include <format> / <cmath>. Upstream
     #     crashpad has not been updated for these yet.
+    # src/common/sentry_nsexception.m depends on the inproc choice on
+    # Apple: its on_crash hook does not run under crashpad on macOS, so
+    # moving macOS to crashpad loses the NSException name in reports.
     if(MINGW OR APPLE)
         set(SENTRY_BACKEND "inproc" CACHE STRING "" FORCE)
     else()
@@ -2264,9 +2279,6 @@ target_compile_definitions(WinBolo PRIVATE
     MAPEDITOR_WBN_OPEN=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -2424,6 +2436,13 @@ if(HAVE_SENTRY)
         target_compile_definitions(WinBolo PRIVATE SENTRY_DSN="${SENTRY_DSN}")
     endif()
     target_link_libraries(WinBolo PRIVATE sentry::sentry)
+    if(APPLE AND SENTRY_BACKEND STREQUAL "inproc")
+        # Names uncaught NSExceptions in the crash event. Needs on_crash,
+        # which sentry-native only runs for the inproc backend on macOS.
+        target_sources(WinBolo PRIVATE src/common/sentry_nsexception.m)
+        target_compile_definitions(WinBolo PRIVATE HAVE_SENTRY_NSEXCEPTION=1)
+        target_link_libraries(WinBolo PRIVATE "-framework Foundation")
+    endif()
 endif()
 
 # Steamworks SDK integration (optional)
@@ -2697,9 +2716,6 @@ target_sources(WinBoloDS PRIVATE src/steam/steam_wrapper_stub.c
 target_compile_definitions(WinBoloDS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -2774,6 +2790,13 @@ if(HAVE_SENTRY)
         target_compile_definitions(WinBoloDS PRIVATE SENTRY_DSN="${SENTRY_DSN}")
     endif()
     target_link_libraries(WinBoloDS PRIVATE sentry::sentry)
+    if(APPLE AND SENTRY_BACKEND STREQUAL "inproc")
+        # Names uncaught NSExceptions in the crash event. Needs on_crash,
+        # which sentry-native only runs for the inproc backend on macOS.
+        target_sources(WinBoloDS PRIVATE src/common/sentry_nsexception.m)
+        target_compile_definitions(WinBoloDS PRIVATE HAVE_SENTRY_NSEXCEPTION=1)
+        target_link_libraries(WinBoloDS PRIVATE "-framework Foundation")
+    endif()
 endif()
 
 # Copy geo database to server output directory
@@ -2987,9 +3010,6 @@ add_executable(LogViewer
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -3118,9 +3138,6 @@ target_compile_definitions(WinBoloHeadless PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -3171,6 +3188,13 @@ if(HAVE_SENTRY)
         target_compile_definitions(WinBoloHeadless PRIVATE SENTRY_DSN="${SENTRY_DSN}")
     endif()
     target_link_libraries(WinBoloHeadless PRIVATE sentry::sentry)
+    if(APPLE AND SENTRY_BACKEND STREQUAL "inproc")
+        # Names uncaught NSExceptions in the crash event. Needs on_crash,
+        # which sentry-native only runs for the inproc backend on macOS.
+        target_sources(WinBoloHeadless PRIVATE src/common/sentry_nsexception.m)
+        target_compile_definitions(WinBoloHeadless PRIVATE HAVE_SENTRY_NSEXCEPTION=1)
+        target_link_libraries(WinBoloHeadless PRIVATE "-framework Foundation")
+    endif()
 endif()
 
 # Copy shared libraries and brain scripts next to headless executable
@@ -3234,9 +3258,6 @@ target_compile_definitions(winbolo_gym PRIVATE
     WINBOLO_GYM_EXPORTS=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -3394,9 +3415,6 @@ target_compile_definitions(BrainTest PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -3551,9 +3569,6 @@ target_compile_definitions(MapEditor PRIVATE
     MAPEDITOR_WBN_OPEN=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -3630,9 +3645,6 @@ target_compile_definitions(MakeTileTestMap PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -5168,6 +5180,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A click on a tank on the viewer's map: which tank a point is on and
     # the mark round the selected one (lv_tank_pick.h, header only).
     tests/unit/test_lv_tank_pick.c
+    # The viewer's aids for recording the screen: the lines Shift and a drag
+    # draw on the map (lv_marks.h) and -size WxH (lv_window_size.h). Both
+    # header only.
+    tests/unit/test_lv_marks.c
     # A sidebar of the viewer whose unused part is clear: where its panels
     # go, the clear part, the map under it and the preference text
     # (lv_dock_clear.h, header only), and the arrangement a new user starts
@@ -5340,9 +5356,6 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -6506,6 +6519,7 @@ set(_unit_test_names
     loopback_quiet_lobby_control_loss
     loopback_command_liveness
     loopback_command_queued_behind_map_change
+    loopback_command_submitted_during_rejoin
     loopback_channel
     loopback_hitch_recovers
     loopback_quit_keeps_peer
@@ -6530,6 +6544,7 @@ set(_unit_test_names
     loopback_bot_pool_survives_bulk_rebase
     loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
+    loopback_map_change_busy_lifts
     loopback_map_upload_list_after_rejoin
     upload_begin_golden
     script_upload_begin_refusals
@@ -7749,6 +7764,8 @@ set(_unit_test_names
     lv_tank_status_sums
     lv_tank_bars_sums
     lv_tank_pick_sums
+    lv_marks_fade
+    lv_window_size_parse
     lv_map_double_click
     lv_name_header_sums
     lv_dock_clear_layout
@@ -8111,9 +8128,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -8157,9 +8171,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -8227,9 +8238,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -8342,9 +8350,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -8384,9 +8389,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -8425,9 +8427,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
