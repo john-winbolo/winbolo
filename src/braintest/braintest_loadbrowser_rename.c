@@ -120,7 +120,7 @@ bool loadBrowserSplitName(const char *name, char *ts, size_t tsSz, int *block,
     }
 
     /* The timestamp shape is pinned (8 digits, '_', 6 digits) the same way
-     * btParseDirTime() pins it, so a numeric LABEL can never be mistaken for
+     * the recorder writes it, so a numeric LABEL can never be mistaken for
      * the block number. A short stem stops the loops at its NUL. */
     for (i = 0; i < 8; i++)  if (!lbIsDigit(stem[i])) return false;
     if (stem[8] != '_') return false;

@@ -1073,6 +1073,13 @@ int run_entity_record_seek_lands_on_the_right_liveness(void);
 int run_brain_removed_items_info_masks(void);
 int run_brain_removed_items_recording_masks(void);
 
+/* The game length BrainTest's Load Session list shows (test_session_ticks.c):
+ * the recorder's brainrec_ticks.txt note, the full-walk fallback and the
+ * cache file. real_dirs checks real recordings named in
+ * WINBOLO_SESSION_TICKS_DIRS and passes when that is unset. */
+int run_session_ticks_recorder_note(void);
+int run_session_ticks_real_dirs(void);
+
 /* The entity-sync control event (test_entity_sync.c). CTRL_ENTITY_SYNC
  * carries three 16-bit masks, one per item list, saying which indices hold
  * an item that is on the map — the part the compressed map blob leaves out,

@@ -869,6 +869,8 @@ static const UnitTestEntry s_tests[] = {
     { "entity_record_lobby_removal_replays",     run_entity_record_lobby_removal_replays     },
     { "brain_removed_items_info_masks",          run_brain_removed_items_info_masks          },
     { "brain_removed_items_recording_masks",     run_brain_removed_items_recording_masks     },
+    { "session_ticks_recorder_note",             run_session_ticks_recorder_note             },
+    { "session_ticks_real_dirs",                 run_session_ticks_real_dirs                 },
     { "entity_record_seek_lands_on_the_right_liveness",
                                                  run_entity_record_seek_lands_on_the_right_liveness },
     { "starts_pick_cluster_nearest_teammate",    run_starts_pick_cluster_nearest_teammate    },
