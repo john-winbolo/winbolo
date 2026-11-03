@@ -2164,6 +2164,16 @@ M.STRATEGIC_PLACE_ENEMY_PILL_SWEET_MAX     = 11   -- sweet spot max distance
 M.STRATEGIC_PLACE_ENEMY_PILL_SWEET_BONUS   = 40   -- bonus for crossfire support position
 M.STRATEGIC_PLACE_ENEMY_PILL_FAR_RANGE     = 15   -- outer limit for small bonus
 M.STRATEGIC_PLACE_ENEMY_PILL_FAR_BONUS     = 10   -- small bonus for general proximity
+-- PLACE_ENEMY_REACH (2026-11-02): the placement scan's rch term. rch = this
+-- weight x (known hostile pills + known hostile bases) a pill on the spot
+-- could shoot: Euclidean tile distance <= PILLBOX_RANGE_WU / 256 (8 tiles
+-- under classic rules; the live pill_range when LIVE_PHYSICS_PILL_RANGE_WU
+-- is on), the same test as the engine's utilIsItemInRange. Hostile = owner
+-- "hostile" in this bot's own world model (not ours, not allied); neutral
+-- pills, dead pills (health 0) and carried pills do not count. On a focused
+-- spike tile ebase already pays for hostile bases, so rch counts pills only
+-- there. 0 = no rch term (the old scoring). KEEL 0.
+M.PLACE_ENEMY_REACH = 0
 
 -- Pill war reinforcement
 M.STRATEGIC_PLACE_WAR_ZONE_BONUS          = 60   -- bonus for tiles near an active pill war
@@ -6345,6 +6355,8 @@ M.PRESETS = {
     FOCUS_SPIKE_PLAN_FLAT          = false,
     FOCUS_SPIKE_HOME_ABORT_NEAR    = 0,
     FOCUS_SPIKE_SOLO_CARRIER       = false,
+    -- 2026-11-02: no rch term in the placement scan (enemy reach weight).
+    PLACE_ENEMY_REACH              = 0,
     BUILDER_LEASH_EUCLID           = true,
     -- 2026-11-01: spike care needs the aggro class (no care by range).
     FOCUS_SPIKE_CARE_BY_RANGE      = false,

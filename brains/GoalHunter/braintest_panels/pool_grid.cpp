@@ -122,6 +122,7 @@ static const TermDoc kTermDocs[] = {
     {"cov",     "Protective coverage — friendly pills + bases this spot covers within fire range; the key 'good back protector' signal."},
     {"grd",     "Base-guardian — big bonus per currently-unguarded friendly base this spot would cover (top placement priority)."},
     {"ctr",     "Strategic-center bias — nudge toward the chosen search center (war zone / base-vs-threat / contested pill)."},
+    {"rch",     "Enemy reach (PLACE_ENEMY_REACH, 0 = off) — weight x (known hostile pills + known hostile bases) within pill fire range of the spot (Euclidean, 8 tiles under classic rules). Neutral, dead and carried pills do not count. On a focused spike tile only pills count (ebase pays for the bases)."},
     // ... and the winner's cost{} = (path + base + carry_pen - carry) x mult x lastpill x bal x surplus x multi + tankpen (goal COST, lower competes harder)
     {"cost",    "Final goal cost for this candidate = (path + base + carry_pen - carry) x mult x lastpill x bal x surplus x multi + tankpen, floored at 1. LOWER competes harder against other goals."},
     {"path",    "A* travel cost from the tank to the placement spot."},

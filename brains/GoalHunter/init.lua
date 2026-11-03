@@ -9199,6 +9199,8 @@ function Brain.think(info)
         -- check alone -- there is no strategic score to hold it to.
         score_at_dispatch = on_goal and g._spot_score or nil,
         sc7_at_dispatch   = on_goal and g._spot_sc7 or nil,
+        -- PLACE_ENEMY_REACH: the spot's rch text for the line below (nil off).
+        rch_at_dispatch   = on_goal and g._spot_rch or nil,
         -- C.FOCUS_SPIKE_ENABLED: the follow-through hold stands fast
         -- instead of driving near a deep trip tile (nil when off).
         focus_spike = on_goal and g._focus_spike or nil,
@@ -9220,12 +9222,14 @@ function Brain.think(info)
       end
       -- One line per dispatch, on the edge (DISPATCH above repeats every tick
       -- the mode holds; this is the line to count).
-      print2(string.format("%s t=%d tile=(%d,%d) score=%s origin=%s carried=%d trees=%d",
+      print2(string.format("%s t=%d tile=(%d,%d) score=%s origin=%s carried=%d trees=%d%s",
         harvest and "HARVEST_SET" or "PLACE_TRIP_SET",
         now, build_cmd.x, build_cmd.y,
         state._place_trip.score_at_dispatch
           and string.format("%.1f", state._place_trip.score_at_dispatch) or "none",
-        state._place_trip.origin, info.carried_pills or 0, info.trees or 0))
+        state._place_trip.origin, info.carried_pills or 0, info.trees or 0,
+        state._place_trip.rch_at_dispatch
+          and (" rch=" .. state._place_trip.rch_at_dispatch) or ""))
     end
   end
 
