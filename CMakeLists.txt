@@ -6808,6 +6808,13 @@ set(_unit_test_names
     mapchooser_scenario_filter
     bg_map_pick_skips_tutorials
     tutorial_maps_shipped_path
+    tutorial_maps_popup_pauses
+    tutorial_maps_script_has_popup
+    scenario_host_popup_nil_outside_tutorials
+    scenario_host_popup_in_tutorial
+    scenario_validate_popup_tutorial_only
+    scenario_host_shipped_tutorial_rooted
+    scenario_host_popup_unsafe_unreachable
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop
@@ -7740,12 +7747,15 @@ set(_unit_test_names
     scenario_announce_remaining
     scenario_announce_position
     scenario_text_fit
+    scenario_text_layout
     scenario_text_tablet_band
-    scenario_text_pointer_on_handle
     scenario_text_window_shown
     scenario_text_printed_recently
-    scenario_text_edge_shown
     scenario_text_save_place
+    scenario_float_frame_shown
+    scenario_float_pointer_on_handle
+    scenario_panel_default_place
+    scenario_text_beside_panel_place
     scenario_status_line
     scn_status_codec_and_client
     scn_announce_position_codec
