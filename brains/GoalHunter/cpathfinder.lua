@@ -331,6 +331,165 @@ end
 -- panel can label "search (dijkstra)" vs "search (A*)".
 M._last_method = "dij"
 
+-- Route keep (C.PF_REROUTE_KEEP_MARGIN / C.PF_REROUTE_KEEP_FRAC; PRESETS.keel
+-- = 0 and 0, off). The slates are rooted at the tank, and each new slate can
+-- pick a different first step from a route of near equal cost, so the tank
+-- turned from one to the other (debug session
+-- 20261103_165532_1_v3_anchor_helm_s205, player 2, brain ticks 1524-2266).
+-- When a NEW slate answers with another first step, the old route is priced
+-- again (cpf_dijkstra_keep_check) and the old step is kept when
+--   g_keep <= g_new + max(PF_REROUTE_KEEP_MARGIN, PF_REROUTE_KEEP_FRAC * g_new).
+-- One check per new slate answer, not per tick.
+--
+-- The old step is never kept when (reason in the PF_KEEP line):
+--   dest      the destination changed            (start over below)
+--   boat      the tank boarded or left a boat    (start over below)
+--   jump      the tank moved more than one square: respawn (start over below)
+--   reroot    init.lua re-rooted the slates (boat change or respawn) and
+--             called M.route_keep_reset
+--   (none)    the tank is on the old step: a normal advance
+--   backup    an older slate answered, because the newest slate has not
+--             reached the destination yet (C rc 2)
+--   not_next  the old step is not one of the tank's 8 neighbours
+--   ally      the old step is in the live obstacle set (an ally tank)
+--   overlay   the old step has overlay 32767 (C rc 3)
+--   inf       the new slate does not reach the old step (C rc 4)
+--   off_route the old step is not on the saved route (C rc 5)
+--   limit     the same step was kept for PF_REROUTE_KEEP_MAX_RESTARTS new
+--             slates in a row
+-- A keep ends when the tank reaches the old step, at the next check, or when
+-- the old step stops being a neighbour, an ally moves onto it or its overlay
+-- goes to 32767 (reason "drop:<why>").
+--
+-- The PF_FLIP guard in steering.lua sees the step this returns, as before.
+-- Its fresh A* calls path_to with skip_dijkstra, and every A* answer ends the
+-- memory here (M.route_keep_reset), so no keep runs across an A* hold.
+local _keep = { dx = -1, dy = -1, n = 0, keeping = false }
+local KEEP_SKIP = { [1] = "no_answer", [2] = "backup", [3] = "overlay",
+                    [4] = "inf", [5] = "off_route" }
+
+function M.route_keep_reset()
+  local K = _keep
+  K.dx, K.dy, K.ox, K.oy, K.sx, K.sy = -1, -1, nil, nil, nil, nil
+  K.boat, K.ia, K.ib, K.ic = nil, nil, nil, nil
+  K.keeping, K.n = false, 0
+end
+
+-- true when tile (x,y) is in the live obstacle set: a list of packed keys
+-- (y*256+x) or a key set, as M.flip_astar in steering.lua reads it.
+local function _keep_obstacle(obstacles, x, y)
+  if not obstacles then return false end
+  local key = y * 256 + x
+  for k, v in pairs(obstacles) do
+    if ((v == true) and k or v) == key then return true end
+  end
+  return false
+end
+
+-- Follow this answer: save its route and take its step as the old step.
+local function _keep_adopt(K, sx, sy, dx, dy, in_boat, nx, ny, ia, ib, ic)
+  cpf_dijkstra_route_save()
+  K.dx, K.dy, K.sx, K.sy, K.boat = dx, dy, sx, sy, in_boat
+  K.ox, K.oy, K.ia, K.ib, K.ic = nx, ny, ia, ib, ic
+  K.keeping, K.n = false, 0
+end
+
+local function _keep_log(sx, sy, dx, dy, K, nx, ny, g_new, g_keep, margin, what)
+  if BRAIN_DEBUG_MODE then print2(string.format(
+    "PF_KEEP t=%d tile=(%d,%d) dest=(%d,%d) old=(%d,%d) new=(%d,%d) g_new=%.1f g_keep=%.1f gap=%.1f margin=%.1f -> %s kept=%d",
+    _G._BRAIN_TICK or 0, sx, sy, dx, dy, K.ox or -1, K.oy or -1, nx, ny,
+    g_new or 0, g_keep or 0, (g_keep or 0) - (g_new or 0), margin or 0,
+    what, K.n)) end
+end
+
+--- M.route_keep(sx, sy, dx, dy, in_boat, nx, ny, obstacles) -> x, y, what
+--- Called by M.path_to right after a Dijkstra next step (nx,ny). Returns the
+--- step to take: (nx,ny), or the old step while a keep holds. what (for
+--- tests) is nil when no check ran, else "keep", "switch", "skip:<reason>"
+--- or "drop:<reason>". With both knobs 0 it returns (nx,ny) and calls nothing.
+function M.route_keep(sx, sy, dx, dy, in_boat, nx, ny, obstacles)
+  local margin0 = C.PF_REROUTE_KEEP_MARGIN or 0
+  local frac = C.PF_REROUTE_KEEP_FRAC or 0
+  if margin0 <= 0 and frac <= 0 then return nx, ny end
+  if not rawget(_G, "cpf_dijkstra_keep_check") then return nx, ny end
+  local K = _keep
+  local slate, started, version, fresh = cpf_dijkstra_answer()
+  if not slate then
+    M.route_keep_reset()
+    return nx, ny
+  end
+  -- Answer identity: slates 0/1 (SHORT) and 2/3 (LONG) copy into each other
+  -- with started_tick and version, so a backup copy is the same answer.
+  local ia, ib, ic = math.floor(slate / 2), started, version
+
+  -- Start over: no memory, a new destination, a boat change, or a jump.
+  if K.ox == nil or K.dx ~= dx or K.dy ~= dy or K.boat ~= in_boat
+     or math.abs(sx - K.sx) > 1 or math.abs(sy - K.sy) > 1 then
+    _keep_adopt(K, sx, sy, dx, dy, in_boat, nx, ny, ia, ib, ic)
+    return nx, ny
+  end
+  -- Normal advance: the tank is on the old step.
+  if sx == K.ox and sy == K.oy then
+    _keep_adopt(K, sx, sy, dx, dy, in_boat, nx, ny, ia, ib, ic)
+    return nx, ny
+  end
+
+  local not_next = math.abs(K.ox - sx) > 1 or math.abs(K.oy - sy) > 1
+  if K.ia == ia and K.ib == ib and K.ic == ic then
+    -- The same answer as before.
+    if K.keeping then
+      local why = not_next and "not_next"
+               or _keep_obstacle(obstacles, K.ox, K.oy) and "ally"
+               or (cpf_get_overlay(K.ox, K.oy) or 0) >= 32767 and "overlay"
+               or nil
+      if not why then
+        K.sx, K.sy = sx, sy
+        return K.ox, K.oy, "keep"
+      end
+      _keep_log(sx, sy, dx, dy, K, nx, ny, nil, nil, nil, "drop:" .. why)
+      _keep_adopt(K, sx, sy, dx, dy, in_boat, nx, ny, ia, ib, ic)
+      return nx, ny, "drop:" .. why
+    end
+    -- Follow it. A running slate can change its step as it grows: save the
+    -- route again so the old step is on the saved route.
+    if nx ~= K.ox or ny ~= K.oy then cpf_dijkstra_route_save() end
+    K.sx, K.sy, K.ox, K.oy = sx, sy, nx, ny
+    return nx, ny
+  end
+
+  -- A new slate answers.
+  if nx == K.ox and ny == K.oy then
+    _keep_adopt(K, sx, sy, dx, dy, in_boat, nx, ny, ia, ib, ic)
+    return nx, ny
+  end
+  -- It wants another first step: one check.
+  local why
+  if not fresh then why = "backup"
+  elseif not_next then why = "not_next"
+  elseif _keep_obstacle(obstacles, K.ox, K.oy) then why = "ally"
+  elseif K.keeping and K.n >= (C.PF_REROUTE_KEEP_MAX_RESTARTS or 3) then why = "limit"
+  end
+  local g_new, g_keep, margin
+  if not why then
+    local rc
+    rc, g_new, g_keep = cpf_dijkstra_keep_check(sx, sy, K.ox, K.oy, dx, dy)
+    if rc ~= 0 then why = KEEP_SKIP[rc] or ("rc" .. tostring(rc)) end
+  end
+  if not why then
+    margin = math.max(margin0, frac * g_new)
+    if g_keep <= g_new + margin then
+      K.keeping, K.n = true, K.n + 1
+      _keep_log(sx, sy, dx, dy, K, nx, ny, g_new, g_keep, margin, "keep")
+      K.sx, K.sy, K.ia, K.ib, K.ic = sx, sy, ia, ib, ic
+      return K.ox, K.oy, "keep"
+    end
+  end
+  local what = why and ("skip:" .. why) or "switch"
+  _keep_log(sx, sy, dx, dy, K, nx, ny, g_new, g_keep, margin, what)
+  _keep_adopt(K, sx, sy, dx, dy, in_boat, nx, ny, ia, ib, ic)
+  return nx, ny, what
+end
+
 function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget, skip_dijkstra, obstacles, avoid_penalty)
   -- Try Dijkstra first — same cost surface, no duplicate A* search.
   -- Uses KIND_NORMAL (0) for general navigation.
@@ -351,6 +510,7 @@ function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget
                                           obstacles, avoid_penalty, in_boat)
     _report_sea_veto()
     if nx then
+      nx, ny = M.route_keep(sx, sy, dx, dy, in_boat, nx, ny, obstacles)
       if BRAIN_DEBUG_MODE then
         print2(string.format("nav: dij (%d,%d)->(%d,%d) next=(%d,%d)", sx, sy, dx, dy, nx, ny))
       end
@@ -361,7 +521,9 @@ function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget
       print2(string.format("nav: dij MISS (%d,%d)->(%d,%d) — falling back to A*", sx, sy, dx, dy))
     end
   end
-  -- Fallback to A* if Dijkstra hasn't reached the destination yet
+  -- Fallback to A* if Dijkstra hasn't reached the destination yet. An A*
+  -- step is not a slate step, so the route keep starts over after it.
+  if _keep.ox then M.route_keep_reset() end
   local status, nx, ny = cpf_path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget)
   if BRAIN_DEBUG_MODE then
     print2(string.format("nav: A* (%d,%d)->(%d,%d) status=%d next=(%s,%s)",

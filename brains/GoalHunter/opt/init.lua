@@ -3558,6 +3558,9 @@ function Brain.think(info)
     if state._dij_reroot then
       local reroot_why = state._dij_reroot
       state._dij_reroot = nil
+      -- Route keep (C.PF_REROUTE_KEEP_MARGIN): never keep a step across a
+      -- re-root; the old route was planned from the old layer or life.
+      cpf.route_keep_reset()
       start_slate(SLATE_SHORT_MAIN,   C.DIJKSTRA_SHORT_MAX_COST, in_boat, in_boat)
       start_slate(SLATE_SHORT_BACKUP, C.DIJKSTRA_SHORT_MAX_COST, in_boat, in_boat)
       start_slate(SLATE_LONG_MAIN,    C.DIJKSTRA_MAX_COST,       in_boat, 1)

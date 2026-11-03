@@ -2101,6 +2101,67 @@ static int l_cpf_sea_veto(lua_State *L) {
   return 7;
 }
 
+/* cpf_dijkstra_answer() → slate, started_tick, version, fresh, mode or nil
+ *
+ * Which slate gave the last cpf_dijkstra_next_step answer (route keep,
+ * GoalHunter PF_REROUTE_KEEP_MARGIN). nil when that call gave no step.
+ * fresh: true when the most recently started slate of the kind answered.
+ * mode: 1 chain step, 2 veer, 3 chain-rank pick off the chain, 4 lowest-g
+ * neighbour off the chain. */
+static int l_cpf_dijkstra_answer(lua_State *L) {
+  CPF_GET(L);
+  if (!pf->ns_valid) {
+    lua_pushnil(L);
+    return 1;
+  }
+  lua_pushinteger(L, pf->ns_slate);
+  lua_pushinteger(L, (lua_Integer)pf->ns_started);
+  lua_pushinteger(L, (lua_Integer)pf->ns_version);
+  lua_pushboolean(L, pf->ns_fresh);
+  lua_pushinteger(L, pf->ns_mode);
+  return 5;
+}
+
+/* cpf_dijkstra_route_save() → length of the saved route (0 = none)
+ * Saves the chain of the last cpf_dijkstra_next_step answer. */
+static int l_cpf_dijkstra_route_save(lua_State *L) {
+  CPF_GET(L);
+  lua_pushinteger(L, brainPathfinderDijkstraRouteSave(pf));
+  return 1;
+}
+
+/* cpf_dijkstra_route_reprice(x, y) → cost of the saved route from (x,y) to
+ * its destination with the current grids (about 1e30 when (x,y) is not on
+ * it). */
+static int l_cpf_dijkstra_route_reprice(lua_State *L) {
+  CPF_GET(L);
+  int x = (int)luaL_checkinteger(L, 1);
+  int y = (int)luaL_checkinteger(L, 2);
+  lua_pushnumber(L, (double)brainPathfinderDijkstraRouteReprice(pf, x, y));
+  return 1;
+}
+
+/* cpf_dijkstra_keep_check(tx, ty, ox, oy, dx, dy) → rc, g_new, g_keep
+ * rc 0: g_new and g_keep are set. rc 1..5: a reason not to keep the old
+ * step (see brainPathfinderDijkstraKeepCheck); g_new and g_keep are 0. */
+static int l_cpf_dijkstra_keep_check(lua_State *L) {
+  CPF_GET(L);
+  int tx = (int)luaL_checkinteger(L, 1);
+  int ty = (int)luaL_checkinteger(L, 2);
+  int ox = (int)luaL_checkinteger(L, 3);
+  int oy = (int)luaL_checkinteger(L, 4);
+  int dx = (int)luaL_checkinteger(L, 5);
+  int dy = (int)luaL_checkinteger(L, 6);
+  float g_new = 0.0f, g_keep = 0.0f;
+  int rc = brainPathfinderDijkstraKeepCheck(pf, tx, ty, ox, oy, dx, dy,
+                                            &g_new, &g_keep);
+  if (rc != 0) { g_new = 0.0f; g_keep = 0.0f; }
+  lua_pushinteger(L, rc);
+  lua_pushnumber(L, (double)g_new);
+  lua_pushnumber(L, (double)g_keep);
+  return 3;
+}
+
 /* cpf_dijkstra_trace_path(kind, dx, dy) → flat array {x1,y1,x2,y2,...} or nil */
 static int l_cpf_dijkstra_trace_path(lua_State *L) {
   CPF_GET(L);
@@ -2746,6 +2807,10 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_lookup_by_kind", l_cpf_dijkstra_lookup_by_kind },
     { "cpf_dijkstra_lookup_subtract_by_kind", l_cpf_dijkstra_lookup_subtract_by_kind },
     { "cpf_dijkstra_next_step",     l_cpf_dijkstra_next_step },
+    { "cpf_dijkstra_answer",        l_cpf_dijkstra_answer },
+    { "cpf_dijkstra_route_save",    l_cpf_dijkstra_route_save },
+    { "cpf_dijkstra_route_reprice", l_cpf_dijkstra_route_reprice },
+    { "cpf_dijkstra_keep_check",    l_cpf_dijkstra_keep_check },
     { "cpf_sea_veto",               l_cpf_sea_veto },
     { "cpf_dijkstra_trace_path",    l_cpf_dijkstra_trace_path },
     { "cpf_dijkstra_trace_path_by_kind", l_cpf_dijkstra_trace_path_by_kind },
