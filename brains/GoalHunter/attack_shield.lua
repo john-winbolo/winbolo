@@ -211,9 +211,9 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
             end
           end
         end
-        -- A base of ANY owner is solid and blocks the shot (same rule shot_path_clear uses).
-        local bentry = world.base_at and world.base_at[tmy * 256 + tmx]
-        if bentry and bentry.base then
+        -- A base blocks the shot only under the engine rule
+        -- (U.base_stops_tank_shell, the same rule shot_path_clear uses).
+        if U.base_tile_stops_tank_shell(world, tmx, tmy, origin_mx, origin_my) then
           outgoing_blocked_by_wall = true
         end
       end
@@ -242,9 +242,9 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
               end
             end
           end
-          -- A base of ANY owner is solid and blocks the shot (matches shot_path_clear).
-          local bentry = world.base_at and world.base_at[t.my * 256 + t.mx]
-          if bentry and bentry.base then
+          -- A base blocks the shot only under the engine rule
+          -- (U.base_stops_tank_shell, matches shot_path_clear).
+          if U.base_tile_stops_tank_shell(world, t.mx, t.my, origin_mx, origin_my) then
             outgoing_blocked_by_wall = true
           end
         end

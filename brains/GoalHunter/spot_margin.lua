@@ -13,8 +13,9 @@ local bit = require('bitcompat')
 -- THE RULE
 --   A shot line runs from the tank's origin point O to an aim point A on the
 --   target pill. L = |OA|. For every blocker tile near the line (a built wall
---   or half-wall, a live deployed pill of any owner, a base of any owner — the
---   same set the scan's shell test blocks on):
+--   or half-wall, a live deployed pill of any owner, a base that stops the
+--   shell (U.base_stops_tank_shell) — the same set the scan's shell test
+--   blocks on):
 --     off  = distance from the line SEGMENT to the blocker's tile SQUARE
 --            (its edges, not its centre)
 --     d    = distance from A, measured along the line, to the line point
@@ -141,7 +142,11 @@ function M.pending_pill_at(world, x, y)
   return pp ~= nil and pp[y * 256 + x] ~= nil
 end
 
--- Blocker kind at tile (x,y): "wall", "base", "pill", "pill_pending" or false.
+-- Blocker kind at tile (x,y): "wall", "base", "base_boat", "pill",
+-- "pill_pending" or false. "base" stops every shell from our tank;
+-- "base_boat" stops only a shell fired from a boat (U.base_stops_tank_shell:
+-- from land we shoot over our own, allied and neutral bases), so line_margin
+-- counts it only when the origin is a boat shot.
 -- Reads terrain through U.ttype_peek (a pure read): U.ttype is a change
 -- DETECTOR and priming new tiles from here would move threat recomputes.
 local function world_blocker(world, x, y)
@@ -150,7 +155,10 @@ local function world_blocker(world, x, y)
   if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return "wall" end
   local key = y * 256 + x
   local be = world and world.base_at and world.base_at[key]
-  if be and be.base then return "base" end
+  if be and be.base then
+    if U.base_stops_tank_shell(world, be.base, false) then return "base" end
+    return "base_boat"
+  end
   local plist = world and world.pill_at and world.pill_at[key]
   if plist then
     local pills = world.pills
@@ -199,6 +207,7 @@ function M.line_margin(ctx, ofx, ofy, afx, afy, margin)
   if not margin or margin <= 0 then return true end
   local pmx, pmy = ctx.pmx, ctx.pmy
   local omx, omy = floor(ofx), floor(ofy)
+  local from_boat = nil   -- asked only when a "base_boat" tile is near the line
   local x0 = floor((ofx < afx and ofx or afx) - margin) - 1
   local x1 = floor((ofx > afx and ofx or afx) + margin)
   local y0 = floor((ofy < afy and ofy or afy) - margin) - 1
@@ -215,6 +224,10 @@ function M.line_margin(ctx, ofx, ofy, afx, afy, margin)
     for bx = x0, x1 do
       if not (bx == pmx and by == pmy) and not (bx == omx and by == omy) then
         local kind = blocker_at(ctx, bx, by)
+        if kind == "base_boat" then
+          if from_boat == nil then from_boat = U.tank_shell_on_boat(ctx.world, omx, omy) end
+          if not from_boat then kind = false end
+        end
         if kind then
           local off, d, L = M.seg_square_dist(afx, afy, ofx, ofy, bx, by)
           local need = (L > 0) and (margin * d / L) or 0
@@ -270,7 +283,10 @@ function M.aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
       local key = t.my * 256 + t.mx
       if wallset and wallset[key] then blocked = true; break end
       local be = base_at and base_at[key]
-      if be and be.base then blocked = true; break end
+      if be and be.base
+         and U.base_stops_tank_shell(world, be.base, U.tank_shell_on_boat(world, omx, omy)) then
+        blocked = true; break
+      end
       if pending and pending[key] then blocked = true; break end
       local plist = pill_at and pill_at[key]
       if plist then

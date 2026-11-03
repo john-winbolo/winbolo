@@ -1112,7 +1112,7 @@ end
 -- (cpf.simulate_shot — same physics as the engine, the authoritative "what tiles
 -- does this shell actually cover" answer) rather than a naive grid line. The shot
 -- is clear iff the simulated trajectory REACHES the pill tile; if it stops short
--- on a wall, a hostile base, or another pillbox, the shell hits that instead — a
+-- on a wall, a base that stops it, or another pillbox, the shell hits that instead — a
 -- take from such a standoff would just shell the obstacle (e.g. an enemy base
 -- between us and the pill). Endpoints excluded. Shared by score_standoff AND
 -- pick_standoff's fallback so EVERY chosen standoff is verified to have a real
@@ -1129,10 +1129,10 @@ local function standoff_clear_shot(world, cx, cy, pill)
       return true  -- shell trajectory reaches the target pill → clear shot
     end
     if not (t.mx == cx and t.my == cy) then  -- skip our own (origin) tile
-      -- A base of ANY owner (hostile/friendly/neutral) is solid and stops the
-      -- shell before it reaches the pill.
-      local bentry = world.base_at and world.base_at[t.my * 256 + t.mx]
-      if bentry and bentry.base then return false end
+      -- A base stops the shell before it reaches the pill only under the
+      -- engine rule (U.base_stops_tank_shell): from land, our own, allied
+      -- and neutral bases do not.
+      if U.base_tile_stops_tank_shell(world, t.mx, t.my, cx, cy) then return false end
       -- A wall stops the shell.
       local tt = U.ttype(t.mx, t.my)
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return false end
@@ -2676,7 +2676,8 @@ end
 -- back as one of three things:
 --   CLEAR       shell reaches the pill tile with nothing in between
 --   TREES_ONLY  only forest in the way — we can shoot the trees down first
---   BLOCKED     a live deployed pill of ANY owner, a base of any owner, or a
+--   BLOCKED     a live deployed pill of ANY owner, a base that stops the shell
+--               (U.base_stops_tank_shell), or a
 --               built wall / half-wall stops the shell, or it never gets there
 -- A wall counts as BLOCKED even though we could shell it down: the planner has
 -- a whole circle of angles to choose from, so there is no reason to take a line
@@ -3551,6 +3552,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     -- what selects the C parity evaluator -- GoalHunter 1.5 / 1.6 link the
     -- same C object and still pass a bare pill_at, which keeps them on the
     -- frozen legacy evaluator.
+    U.mark_base_shell_pass(world)   -- C reads base._shell_pass_land
     gh_attack.sync_pill_at(world, pmx, pmy)
     local phase_not_opening = (phase and phase ~= "opening") and true or false
     local self_contrib = threat.pill_contrib and threat.pill_contrib[pmy * 256 + pmx] or nil
@@ -4567,11 +4569,13 @@ local _AIM_OFFS = { {128,128}, {1,1}, {254,1}, {1,254}, {254,254} }
 
 -- First aim point whose shell path from spot float (sfx,sfy) REACHES pill
 -- (pmx,pmy) crossing no tile in `wallset` (packed my*256+mx — a commander's
--- broadcast bwl shield walls) and no world wall / base / live pill. Returns the
+-- broadcast bwl shield walls) and no world wall / live pill / base that stops
+-- the shell (U.base_stops_tank_shell). Returns the
 -- aim point as float tile coords (aim_fx, aim_fy), or nil if every aim is blocked.
 local function blitz_clear_aim(sfx, sfy, pmx, pmy, wallset, world)
   local ox = math.floor(sfx * 256 + 0.5)
   local oy = math.floor(sfy * 256 + 0.5)
+  local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)  -- spot tile: boat or land shot
   for _, a in ipairs(_AIM_OFFS) do
     local tiles = cpf.simulate_shot(ox, oy, bit.bor((bit.lshift(pmx, 8)), a[1]), bit.bor((bit.lshift(pmy, 8)), a[2]), cpf.SHOT_TANK, 0)
     if tiles then
@@ -4581,8 +4585,7 @@ local function blitz_clear_aim(sfx, sfy, pmx, pmy, wallset, world)
         if wallset and wallset[t.my * 256 + t.mx] then blocked = true; break end
         local tt = U.ttype(t.mx, t.my)
         if tt == C.T_BUILDING or tt == C.T_HALFBUILD then blocked = true; break end
-        local be = world and world.base_at and world.base_at[t.my * 256 + t.mx]
-        if be and be.base then blocked = true; break end
+        if U.base_tile_stops_tank_shell(world, t.mx, t.my, omx, omy) then blocked = true; break end
         if SM.pending_pill_at(world, t.mx, t.my) then blocked = true; break end
         local plist = world and world.pill_at and world.pill_at[t.my * 256 + t.mx]
         if plist then for _, e in ipairs(plist) do local pp = e.id and world.pills[e.id]; if pp and not pp.in_tank and (pp.health or 0) > 0 and pp.mx == t.mx and pp.my == t.my then blocked = true; break end end end

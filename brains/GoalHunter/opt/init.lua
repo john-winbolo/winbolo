@@ -1113,6 +1113,7 @@ function Brain.open(info)
   -- literal 0 makes everything the bot can see at birth look maximally stale
   -- once ticks are seeded from the engine clock. Identical at seed 0.
   W.update(world, info, state.tick)
+  U.note_shell_rules(world, info)
   local t_open_wupd = BRAIN_PROFILE and clock_us() or 0
   if BRAIN_PROFILE then
     opt(string.format("  W.update (initial) done %.2f ms", (t_open_wupd - t_open_wreset) / 1000))
@@ -1564,6 +1565,8 @@ function Brain.think(info)
   -- Live rules -> physics constants, before anything reads C this think.
   -- Classic rules (or C.LIVE_PHYSICS false) change nothing.
   U.live_physics.apply(info)
+  -- Shell rules for the base-on-the-line checks (U.base_stops_tank_shell).
+  U.note_shell_rules(world, info)
   local now  = state.tick
   -- Ticks since THIS brain instance opened. `now` is seeded from the engine
   -- clock (see Brain.open), so it is NOT the age of the bot: a Survival wave
@@ -6776,8 +6779,10 @@ function Brain.think(info)
                     end
                     if los_blocked then break end
                   end
-                  local bentry = world.base_at and world.base_at[t.my * 256 + t.mx]
-                  if bentry and bentry.base then  -- a base of ANY owner stops the shell
+                  -- A base stops the shell only under the engine rule
+                  -- (U.base_stops_tank_shell): our own, allied and neutral
+                  -- bases do not stop a shot from land.
+                  if U.base_tile_stops_tank_shell(world, t.mx, t.my, origin_mx, origin_my) then
                     los_blocked = true; break
                   end
                 end
