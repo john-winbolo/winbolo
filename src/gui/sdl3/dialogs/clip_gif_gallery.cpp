@@ -265,9 +265,10 @@ static void galleryPreviewShowNext(void) {
 
 /* Opens item's GIF as the preview: the file read into memory, a stream over
  * it and its first frame in a new texture. The old preview is let go first,
- * so two files are never held at once. A file that is not a GIF, or is over
- * the preview's memory limit, leaves the preview marked failed or too large,
- * so the window says so instead of trying again every frame. */
+ * so two files are never held at once. A file that is not a GIF or has no
+ * frame that decodes, or is over the preview's memory limit, leaves the
+ * preview marked failed or too large, so the window says so instead of
+ * trying again every frame. */
 static void galleryPreviewOpen(const ClipGifMeta *item) {
     galleryPreviewFree();
     ClipGifPreview &p = s_gal.preview;
@@ -278,7 +279,9 @@ static void galleryPreviewOpen(const ClipGifMeta *item) {
         return;
     }
     /* A file over the limit is not read: its bytes alone would be over it.
-     * If the size cannot be found, the load below runs as before. */
+     * If the size cannot be found, the load below runs as before. The read
+     * is on this thread; a clip the game made is a few hundred KB, so it is
+     * over in a moment. */
     SDL_PathInfo info;
     if (SDL_GetPathInfo(path, &info) &&
         info.size > (Uint64)CLIP_GIF_PREVIEW_MAX_BYTES) {
@@ -318,7 +321,12 @@ static void galleryPreviewOpen(const ClipGifMeta *item) {
     }
     galleryPreviewShowNext();
     if (stbiGifStreamFramesRead(p.stream) == 0) {
-        /* Not one frame decodes. */
+        /* Not one frame decodes (a file cut off inside its header opens as
+         * a GIF but gives no frame). The texture goes, so the window shows
+         * the failure text rather than a picture nothing was copied into. */
+        SDL_DestroyTexture(p.tex);
+        p.tex = nullptr;
+        p.still = false;
         p.failed = true;
     }
 }
@@ -559,8 +567,8 @@ bool clipGifGalleryButton(const char *id) {
  * keep it (the file itself was read into memory and closed when the preview
  * opened). The selection moves to the row that takes its place in the list.
  * Runs before the window is begun (galleryPendingDeleteStep), so no texture
- * it frees is queued to be drawn. Returns false to be called again on a
- * later frame; nothing makes it wait now. */
+ * it frees is queued to be drawn. Always returns true: nothing makes the
+ * delete wait for a later frame now that no worker holds the file open. */
 static bool galleryDelete(const char *file) {
     int index = -1;
     for (int i = 0; i < s_gal.count; i++) {
