@@ -604,6 +604,14 @@ M.STALE_SKIP_TICKS       = 500   -- skip object entirely if unseen this long (~1
 -- that range: close enough for shells to hit, far enough that pill shots are
 -- harder to land.  Standoff ring is placed at 7 tiles (shell range) not 6.
 M.ATTACK_PILL_STANDOFF = 7.4  -- desired engagement distance from pill (max shell range)
+-- attack_pill event re-price (goals.note_reprice_events). An enemy tank that
+-- dies within (PILLBOX_RANGE_WU / 256) + ATK_REPRICE_TANK_PAD tiles (Euclidean)
+-- of a live hostile/neutral pill makes that pill's pool-6 price be made again
+-- at once (the intercept term read the tank). The tank's place is its last
+-- tile in this player's perc.enemy_tanks, if seen in the last
+-- ATK_REPRICE_TANK_SEEN_TICKS ticks.
+M.ATK_REPRICE_TANK_PAD        = 2
+M.ATK_REPRICE_TANK_SEEN_TICKS = 50
 M.ATTACK_PILL_STANDOFF_CHARGE = 7.0  -- non-PPT charge pulls the engage spot in to here on the first charge tick (PPT keeps its shielded standoff)
 M.ATTACK_PILL_RANGE    = 9.5  -- max distance to start shooting
 M.ATTACK_PILL_MIN_ARMOUR = 1  -- minimum armour to attempt pill take

@@ -11346,6 +11346,12 @@ function M.build_eval_queue(state, world, info)
   state.eval_queue_pos = 1
   -- Partial results: pool_idx → { candidates = {}, best_cost, best_id, best_obj }
   state.pool_partial = {}
+  -- A rebuild puts every item back in its distance place; event re-price ids
+  -- still waiting must keep the head of the queue.
+  if state._atk_reprice then
+    state._atk_reprice.inserted = false
+    M.apply_reprice_queue(state)
+  end
   -- Cost cache persists across cycles (initialized once)
   if not state.cost_cache then state.cost_cache = {} end
 
@@ -13830,6 +13836,15 @@ function M.step_eval_queue(state, world, info)
       end
       state.cost_cache[cache_key] = entry
 
+      -- Event re-price bookkeeping (M.note_reprice_events): this id is done.
+      if item._reprice and pool_idx == 6 then
+        local pend = state._atk_reprice
+        if pend and pend.ids then
+          pend.ids[id] = nil
+          if next(pend.ids) == nil then state._atk_reprice = nil end
+        end
+      end
+
       pr.candidates[#pr.candidates + 1] = {
         id = id, mx = obj.mx, my = obj.my, cost = c,
         own = obj.owner or "?", hp = obj.health or 0,
@@ -15811,6 +15826,220 @@ end
 -- Tick 0 of cycle: build the eval queue (filter candidates).
 -- Subsequent ticks: process 2 candidates from the queue.
 -- =========================================================================
+-- =========================================================================
+-- Event re-price for attack_pill (pool 6).
+--
+-- A pool-6 price is made of parts that change when the pills or the tanks
+-- round the target change: the crossfire term (other live pills near the
+-- target), the difficulty scan (pill threat from every pill), the intercept
+-- term (enemy tanks near the target) and the spot path (the short slate).
+-- The queue re-prices each pill about once per GOAL_REPLAN_INTERVAL, and the
+-- difficulty scan keeps its own 50-tick TTL, so after a neighbour pill died
+-- the pool kept a price that still counted the dead pill for up to 50 ticks.
+--
+-- M.note_reprice_events runs once per think, after percept.update and
+-- before the Dijkstra scheduler. It looks at three things in this player's
+-- own world model and event list:
+--   1. a known pill went from alive to dead (or dead to alive),
+--   2. a known pill changed owner,
+--   3. an enemy tank died (EVENT_TANK_KILLED, data[2] = killed player) whose
+--      last seen tile is within the pill range + ATK_REPRICE_TANK_PAD
+--      (8 + 2 = 10 tiles, Euclidean) of a live hostile/neutral pill.
+-- For 1 and 2 the affected pills are the live hostile/neutral pills within
+-- PILL_FIRE_RANGE + ATTACK_PILL_STANDOFF (Manhattan, the xfire_cost reach)
+-- of the changed pill, plus the changed pill itself. For 3 they are the live
+-- hostile/neutral pills inside that 10-tile circle.
+--
+-- It then:
+--   * drops the difficulty-scan cache of each affected pill (1 and 2 only:
+--     the scan does not read enemy tanks),
+--   * asks the scheduler for an at-once short-slate restart from the
+--     current tank tile (state._dij_force_short), so the spot path and the
+--     slate the re-price reads come from where the tank is now and from the
+--     threat grid that already lost the dead pill,
+--   * marks the pill that died or turned friendly as REJECT in pool 6 so
+--     the pool cannot choose it before the next queue rebuild,
+--   * records the affected ids in state._atk_reprice. On the NEXT tick
+--     (the restarted slate then has two steps of nodes) update_pool_cache
+--     puts their pool-6 queue items at the head of the queue. Only those
+--     entries are priced again; the rest of the queue is untouched.
+-- Cost: one pass over world.pills per tick plus a pass over the event list.
+-- =========================================================================
+function M.note_reprice_events(state, world, info)
+  local now = state.tick or 0
+  local pills = world and world.pills
+  if not pills then return end
+  local snap = state._atk_reprice_snap
+  local first = (snap == nil)
+  if first then snap = {}; state._atk_reprice_snap = snap end
+
+  local changed       -- list of {id=, why=} for pills that died/revived/flipped
+  for id, p in pairs(pills) do
+    local alive = (p.health or 0) > 0
+    local own = p.owner
+    local s = snap[id]
+    if not s then
+      snap[id] = { alive = alive, owner = own }
+    else
+      local why
+      if s.alive ~= alive then why = alive and "pill_alive" or "pill_died"
+      elseif s.owner ~= own then why = "owner_" .. tostring(s.owner) .. "_to_" .. tostring(own) end
+      if why then
+        changed = changed or {}
+        changed[#changed + 1] = { id = id, why = why }
+      end
+      s.alive = alive; s.owner = own
+    end
+  end
+
+  -- Last seen tile of every enemy tank, kept a short while so a tank that
+  -- dies this tick (and so is gone from perc.enemy_tanks) still has a place.
+  local seen = state._atk_reprice_tanks
+  if not seen then seen = {}; state._atk_reprice_tanks = seen end
+  local ets = state.perc and state.perc.enemy_tanks
+  if ets then
+    for i = 1, #ets do
+      local et = ets[i]
+      if et.id then
+        local r = seen[et.id]
+        if not r then r = {}; seen[et.id] = r end
+        r.mx = et.mx; r.my = et.my; r.tick = now
+      end
+    end
+  end
+
+  local dead_tanks
+  local events = info and info.events
+  if events and #events > 0 then
+    for _, ev in ipairs(events) do
+      local d = ev.data
+      -- data = [killer, killed, deathCause, carriedPills] (init.lua header).
+      if ev.type == EVENT_TANK_KILLED and d and d[2] ~= nil then
+        local r = seen[d[2]]
+        if r and (now - (r.tick or -1e9)) <= (C.ATK_REPRICE_TANK_SEEN_TICKS or 50) then
+          dead_tanks = dead_tanks or {}
+          dead_tanks[#dead_tanks + 1] = { pn = d[2], mx = r.mx, my = r.my }
+        end
+        seen[d[2]] = nil
+      end
+    end
+  end
+
+  if not changed and not dead_tanks then return end
+
+  local function attackable(p)
+    return (p.owner == "hostile" or p.owner == "neutral") and (p.health or 0) > 0
+  end
+  local ids, n_ids = {}, 0
+  local reasons = {}
+  local function add(id, why)
+    if not ids[id] then ids[id] = true; n_ids = n_ids + 1 end
+    reasons[#reasons + 1] = tostring(id) .. ":" .. why
+  end
+  local drop_diff = {}
+  local reach = (C.PILL_FIRE_RANGE or 8) + (C.ATTACK_PILL_STANDOFF or 7.4)
+
+  if changed then
+    for _, ch in ipairs(changed) do
+      local cp = pills[ch.id]
+      if attackable(cp) then
+        add(ch.id, ch.why); drop_diff[ch.id] = true
+      else
+        -- Dead now, or now ours or an ally's: pool 6 must not choose it.
+        reasons[#reasons + 1] = tostring(ch.id) .. ":" .. ch.why
+        local ce = state.cost_cache and state.cost_cache["6:" .. ch.id]
+        if ce and not ce._reject then
+          ce._reject = ch.why
+          ce._reject_remaining = 0
+          ce.cost = 1e30
+        end
+      end
+      for oid, op in pairs(pills) do
+        if oid ~= ch.id and attackable(op)
+           and U.mdist(op.mx, op.my, cp.mx, cp.my) <= reach then
+          add(oid, "near#" .. tostring(ch.id)); drop_diff[oid] = true
+        end
+      end
+    end
+  end
+
+  if dead_tanks then
+    local r = (C.PILLBOX_RANGE_WU or 2048) / 256 + (C.ATK_REPRICE_TANK_PAD or 2)
+    local r2 = r * r
+    for _, dt in ipairs(dead_tanks) do
+      reasons[#reasons + 1] = string.format("tank_p%s_died@(%d,%d)", tostring(dt.pn), dt.mx, dt.my)
+      for oid, op in pairs(pills) do
+        if attackable(op) then
+          local dx, dy = op.mx - dt.mx, op.my - dt.my
+          if dx * dx + dy * dy <= r2 then
+            add(oid, "near_tank_p" .. tostring(dt.pn))
+          end
+        end
+      end
+    end
+  end
+
+  -- Difficulty scans of the affected pills read the old pill set: drop them
+  -- (every phase key, matched on the pill tile the entry was made for).
+  local dcache = state._pill_diff_cache
+  if dcache and next(drop_diff) then
+    for k, dc in pairs(dcache) do
+      for oid in pairs(drop_diff) do
+        local op = pills[oid]
+        if op and dc.mx == op.mx and dc.my == op.my then dcache[k] = nil; break end
+      end
+    end
+  end
+
+  if n_ids == 0 then
+    return
+  end
+
+  -- Fresh short slate from the current tank tile (the scheduler reads this
+  -- the same tick).
+  state._dij_force_short = now
+
+  local pend = state._atk_reprice
+  if pend and pend.ids then
+    for id in pairs(ids) do pend.ids[id] = true end
+    pend.due = now + 1
+    pend.inserted = false
+  else
+    state._atk_reprice = { ids = ids, due = now + 1, inserted = false }
+  end
+end
+
+-- Put the pending re-price ids at the head of the eval queue. update_pool_cache
+-- calls this before step_eval_queue, and build_eval_queue calls it after a
+-- rebuild so a rebuild does not push them back to their distance place.
+function M.apply_reprice_queue(state)
+  local pend = state._atk_reprice
+  local queue = state.eval_queue
+  if not pend or not queue then return end
+  local now = state.tick or 0
+  if now < (pend.due or 0) or pend.inserted then return end
+  local pos = state.eval_queue_pos or 1
+  local picked = {}
+  local have = {}
+  for i = 1, #queue do
+    local it = queue[i]
+    if it.pool == 6 and pend.ids[it.id] and not have[it.id] then
+      have[it.id] = true
+      picked[#picked + 1] = it
+    end
+  end
+  -- Ids the queue does not hold (filtered out this cycle) cannot be priced.
+  for id in pairs(pend.ids) do
+    if not have[id] then pend.ids[id] = nil end
+  end
+  for i = #picked, 1, -1 do
+    local it = picked[i]
+    table.insert(queue, pos, { pool = 6, id = it.id, obj = it.obj, reject = it.reject, _reprice = true })
+  end
+  pend.inserted = true
+  if #picked == 0 then state._atk_reprice = nil end
+end
+
 function M.update_pool_cache(state, world, info)
   -- Keep pool-8 stub fields fresh so get_pool_breakdown_json sees current state
   -- even between replans (e.g. tank just picked up a pill mid-cycle).
@@ -15829,6 +16058,10 @@ function M.update_pool_cache(state, world, info)
     state._deferred_build_eval = nil
     M.build_eval_queue(state, world, info)
   end
+
+  -- Event re-price (M.note_reprice_events): pending attack_pill ids go to the
+  -- head of the queue once their tick is due.
+  M.apply_reprice_queue(state)
 
   -- Process candidates from the eval queue (2 per tick).
   -- The queue is built by init.lua after each replan decision,

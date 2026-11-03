@@ -3348,6 +3348,11 @@ function Brain.think(info)
   -- a while. No-op without a "peace=" token.
   attack.peace_update(state, info, now)
 
+  -- attack_pill event re-price: a known pill died or changed owner, or an
+  -- enemy tank near a pill died. Marks the affected pool-6 entries for an
+  -- at-once re-price and asks for a fresh short slate below.
+  goals.note_reprice_events(state, world, info)
+
   -- ── Incremental Dijkstra scheduler ──
   --
   -- Generic multi-slate scheduler. The C side has 4 slates and a
@@ -3475,11 +3480,16 @@ function Brain.think(info)
     -- tactical decisions much more than stale long-range data.
     local function maybe_copy_and_restart(main_idx, backup_idx, interval,
                                           max_cost, boat, allow_boat,
-                                          wait_for_done)
+                                          wait_for_done, force)
       refresh_slate(main_idx)
       local s = d.slates[main_idx]
       local age = now - s.started_tick
-      local schedule_hit = age >= interval
+      -- force: goals.note_reprice_events saw the pill set change this tick,
+      -- so the slate must restart now from the current tank tile and the
+      -- rebuilt threat grid (not at the next 10-tick restart, and not
+      -- yielded to a replan tick).
+      if force and age <= 0 then force = false end
+      local schedule_hit = age >= interval or force
       -- `s.active` is in this test for the same reason it is in the yield
       -- guard below: an INACTIVE slate has never been started, so there is
       -- nothing to "keep stepping until it finishes" and no backup to serve
@@ -3500,7 +3510,7 @@ function Brain.think(info)
       -- snapshot doesn't stack on the goals block. Only when the slate is active
       -- (backup has coverage) and not overdue past MAX_DEFER; an inactive slate
       -- must start now since there's no backup to serve lookups.
-      if schedule_hit and s.active and predicted_replan
+      if schedule_hit and s.active and predicted_replan and not force
          and age < interval + DIJ_RESTART_MAX_DEFER then
         return
       end
@@ -3542,7 +3552,8 @@ function Brain.think(info)
     -- finish within DIJKSTRA_RECOMPUTE_INTERVAL.
     maybe_copy_and_restart(SLATE_SHORT_MAIN, SLATE_SHORT_BACKUP,
                            C.DIJKSTRA_SHORT_INTERVAL, C.DIJKSTRA_SHORT_MAX_COST,
-                           in_boat, in_boat, false)
+                           in_boat, in_boat, false,
+                           state._dij_force_short == now)
     maybe_copy_and_restart(SLATE_LONG_MAIN, SLATE_LONG_BACKUP,
                            C.DIJKSTRA_RECOMPUTE_INTERVAL, C.DIJKSTRA_MAX_COST,
                            in_boat, 1, true)
