@@ -2458,6 +2458,14 @@ local function attack_pill_steer(state, world, info, goal)
       local pdir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
                               pcx, pcy)
       local pcorr = U.adiff(info.direction, pdir)
+      -- C.CLEAR_TURN_TAP_PROGRESS: while the shot reaches the pill but is not
+      -- clear, attack.lua names the nearest clear gun angle. Turn toward it
+      -- (float gun angle, since the lane can be narrower than one brad), so a
+      -- tap that jumps past a narrow lane turns back instead of going on to
+      -- the centre. nil when the knob is off: the old centre turn.
+      if goal._finetune_lane_dir then
+        pcorr = U.adiff(info.tank_angle or info.direction, goal._finetune_lane_dir)
+      end
       -- 3-tier turn (hold for big corrections, tap for fine):
       -- holds give continuous engine rotation; taps stay at /8 ramp
       -- speed PROVIDED the engine's firstLeft/firstRight counter

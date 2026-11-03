@@ -941,7 +941,11 @@ end
 -- target pill tile. Returns (shots_needed, reason_str) where
 -- shots_needed is the extra shots to clear the path (0 = clear path),
 -- or (math.huge, reason) if an impassable obstacle (other pillbox) blocks.
-local function shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy, from_wx, from_wy)
+--
+-- Optional quiet (8th arg): no SHOT_REACH_DBG line when the shell misses the
+-- pill. The finetune lane sampler (M.finetune_lane_target) tests many angles
+-- that miss on purpose.
+local function shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy, from_wx, from_wy, quiet)
   local pmx, pmy = goal.mx, goal.my
   -- Fire the tank's LIVE float gun angle (info.tank_angle, straight from the
   -- engine's MY_TANK->angle) — bit-exact with the shot the engine will actually
@@ -1028,13 +1032,48 @@ local function shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy, from_
       end
     end
   end
-  if not reached_pill then
+  if not reached_pill and not quiet then
     local lastt = tiles[#tiles]
     print2(string.format("SHOT_REACH_DBG reached=false pill=(%d,%d) angle=%.1f tank=(%d,%d) ntiles=%d last=(%s,%s)",
       pmx, pmy, info.tank_angle or -1, bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
       #tiles, lastt and tostring(lastt.mx) or "?", lastt and tostring(lastt.my) or "?"))
   end
   return shots, nil, reached_pill
+end
+
+-- CLEAR_TURN_TAP_PROGRESS: the clear lane around the gun from where the tank
+-- stands now. An angle is clear when its shell (same sim and gun range as the
+-- finetune on_pill test) crosses the pill square and shot_path_obstacle_count
+-- finds no live pill before it. The lane is sampled once per tank position on
+-- a grid around the gun angle (aim_lane.lua) and kept in goal._ft_lane; a new
+-- sample is taken when the tank moves, the pill changes or the gun leaves the
+-- middle half of the window. Returns (nearest clear angle, abs error in brad)
+-- or nil when no sampled angle is clear.
+function M.finetune_lane_target(info, goal, world, angle_f)
+  local AL = require("aim_lane")
+  local lane = goal._ft_lane
+  if not lane or lane.x ~= info.tankx or lane.y ~= info.tanky
+     or lane.pmx ~= goal.mx or lane.pmy ~= goal.my
+     or math.abs(AL.adiff(lane.base, angle_f)) > lane.n * lane.step / 2 then
+    local pmx, pmy = goal.mx, goal.my
+    local probe = setmetatable({}, { __index = info })
+    lane = AL.scan(function(a)
+      local path = cpf.simulate_shot_angle(info.tankx, info.tanky, a,
+                                           cpf.SHOT_TANK, info.gunrange or 14)
+      local on = false
+      if path then
+        for _, t in ipairs(path) do
+          if t.mx == pmx and t.my == pmy then on = true; break end
+        end
+      end
+      if not on then return false end
+      probe.tank_angle = a
+      return shot_path_obstacle_count(probe, goal, world, nil, nil, nil, nil, true) ~= math.huge
+    end, angle_f)
+    lane.x, lane.y, lane.pmx, lane.pmy = info.tankx, info.tanky, pmx, pmy
+    goal._ft_lane = lane
+  end
+  return AL.nearest(lane, angle_f)
 end
 
 -- Ban the approach angle we are CURRENTLY using on this pill (the 5° bucket of
@@ -8881,6 +8920,29 @@ local function update_attack_substate_body(goal, state, world, info)
     if on_pill and not goal._finetune_reached_tap then
       goal._finetune_reached_tap = goal._finetune_taps or 0
     end
+    -- Turn-in limit. Knob off: every tick since the shot first reached the
+    -- pill counts. Knob on (C.CLEAR_TURN_TAP_PROGRESS): a tick that brings the
+    -- gun closer to the nearest clear angle than ever before in this finetune
+    -- does not count, with a hard cap of 2 x CLEAR_TURN_IN_TAPS ticks. Steering
+    -- then turns toward that clear angle (goal._finetune_lane_dir), not the
+    -- pill centre, so a tap that jumps past a narrow lane turns back to it.
+    local _ti_extra = (on_pill and goal._finetune_reached_tap)
+                      and ((goal._finetune_taps or 0) - goal._finetune_reached_tap) or 0
+    local _ti_give_up = on_pill and goal._finetune_reached_tap
+                        and _ti_extra >= CLEAR_TURN_IN_TAPS
+    goal._finetune_lane_dir = nil
+    if C.CLEAR_TURN_TAP_PROGRESS and on_pill and not _fine_clear
+       and goal._finetune_reached_tap then
+      local lane_dir, lane_err = M.finetune_lane_target(info, goal, world, angle_f)
+      goal._finetune_lane_dir = lane_dir
+      local _ti_raw
+      _ti_extra, _ti_raw, _ti_give_up = require("aim_lane").turn_in_step(
+        goal, goal._finetune_taps or 0, lane_err, CLEAR_TURN_IN_TAPS)
+      print2(string.format("FINETUNE_LANE t=%d pill=(%d,%d) angle=%.3f lane=%s err=%s counted=%d raw=%d cap=%d give_up=%s",
+        now, pmx, pmy, angle_f, lane_dir and string.format("%.3f", lane_dir) or "none",
+        lane_err and string.format("%.3f", lane_err) or "none",
+        _ti_extra, _ti_raw, 2 * CLEAR_TURN_IN_TAPS, tostring(_ti_give_up)))
+    end
 
     if on_pill and _fine_clear then
       -- Lock the verified angle as the new aim point so shoot_pill's
@@ -8912,12 +8974,11 @@ local function update_attack_substate_body(goal, state, world, info)
       print(string.format(TAG ..
         " ATTACK: finetune verified (angle %.2f, %d taps) — opening fire",
         angle_f, goal._finetune_taps or 0))
-    elseif on_pill and goal._finetune_reached_tap
-       and ((goal._finetune_taps or 0) - goal._finetune_reached_tap) >= CLEAR_TURN_IN_TAPS then
+    elseif _ti_give_up then
       -- Reached the pill but the blocker is still on the lane after a few more
       -- brad of turn-in — the lane is pinched (e.g. friendly pill + own walls
       -- straddle it). Give up here rather than firing a blocked shot.
-      local extra = (goal._finetune_taps or 0) - goal._finetune_reached_tap
+      local extra = _ti_extra
       print(string.format(TAG ..
         " ATTACK: reached pill but blocker won't clear after +%d turn-in taps (angle %.2f, pill@(%d,%d)) — aborting",
         extra, angle_f, pmx, pmy))
