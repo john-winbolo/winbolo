@@ -2635,6 +2635,34 @@ function M.turtle_home(world, tmx, tmy, fbx, fby)
   return nil
 end
 
+-- PLACE_ENEMY_REACH (the rch term): how many known hostile pills (np) and,
+-- when with_bases, known hostile bases (nb) a pill built at (cx,cy) could
+-- shoot. Euclidean tile distance <= PILLBOX_RANGE_WU / 256 (8 under classic
+-- rules), as the engine's utilIsItemInRange. This bot's own world model only:
+-- owner "hostile" (not ours, not allied); neutral, dead (health 0) and
+-- carried pills do not count. Returns np, nb and the range in tiles. On M,
+-- not a module local: this chunk is at Lua's 200-local cap.
+function M.enemy_reach(world, cx, cy, with_bases)
+  local r = (C.PILLBOX_RANGE_WU or 2048) / 256
+  local r2 = r * r
+  local np, nb = 0, 0
+  for _, p in pairs(world.pills) do
+    if p.owner == "hostile" and (p.health or 0) > 0 and not p.in_tank and p.mx then
+      local dx, dy = p.mx - cx, p.my - cy
+      if dx * dx + dy * dy <= r2 then np = np + 1 end
+    end
+  end
+  if with_bases then
+    for _, b in pairs(world.bases) do
+      if b.owner == "hostile" then
+        local dx, dy = b.mx - cx, b.my - cy
+        if dx * dx + dy * dy <= r2 then nb = nb + 1 end
+      end
+    end
+  end
+  return np, nb, r
+end
+
 -- Focused spike placement (C.FOCUS_SPIKE_ENABLED) scan context. nil when the
 -- knob is off or turtle is on, and then nothing in the scan changes. Else a
 -- table: hb = the hostile bases this bot has seen (world.bases, owner
@@ -3255,6 +3283,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local R = C.STRATEGIC_PLACE_SEARCH_RADIUS
   local best_score = -math.huge
   local best_mx, best_my = nil, nil
+  local best_row = nil   -- the winner's all_cands row (rch for the logs)
   local all_cands = {}
 
   -- Portfolio state: classify existing friendly pills and compute targets for
@@ -3646,7 +3675,18 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           score = score + sc_ebase + sc_depth
         end
 
-        all_cands[#all_cands + 1] = {
+        -- 15. PLACE_ENEMY_REACH: rch = weight x (known hostile pills + known
+        --     hostile bases) within pill fire range (Euclidean, M.enemy_reach).
+        --     A focused spike tile (deep) counts pills only: ebase above
+        --     already pays for its hostile bases. Weight 0 = no term (KEEL).
+        local sc_rch, rch_np, rch_nb = 0, 0, 0
+        if C.PLACE_ENEMY_REACH ~= 0 then
+          rch_np, rch_nb = M.enemy_reach(world, cx, cy, not deep)
+          sc_rch = C.PLACE_ENEMY_REACH * (rch_np + rch_nb)
+          score = score + sc_rch
+        end
+
+        local row = {
           mx = cx, my = cy, score = score,
           inf = cell_inf,
           cat = cell_cat,
@@ -3654,9 +3694,12 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           sc6=sc6, sc7=sc7, sc8=sc8, sc9=sc9, sc10=sc10,
           sc11=sc11, sc12=sc12, sc13=sc13, sc_center=sc_center,
           sc_ebase=sc_ebase, sc_depth=sc_depth, deep=deep,
+          sc_rch=sc_rch, rch_np=rch_np, rch_nb=rch_nb,
         }
+        all_cands[#all_cands + 1] = row
         if score > best_score then
           best_score = score; best_mx = cx; best_my = cy
+          best_row = row
           if ad then
             ad.best_deep, ad.best_cat = deep, cell_cat
             ad.best_ebase, ad.best_depth = sc_ebase, sc_depth
@@ -3898,6 +3941,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
              _spot_score = best_score,
              _spot_sc7   = -U.mdist(tmx, tmy, best_mx, best_my)
                            * (deep_win and C.FOCUS_SPIKE_PLACE_TANK_DIST_WEIGHT or 0.5),
+             -- PLACE_ENEMY_REACH on: the spot's rch and its target counts,
+             -- for PLACE_TRIP_SET (init.lua). nil when the weight is 0.
+             _spot_rch   = (C.PLACE_ENEMY_REACH ~= 0 and best_row)
+                           and string.format("%.0f(pills=%d,bases=%d)", best_row.sc_rch,
+                                             best_row.rch_np, best_row.rch_nb) or nil,
              -- C.FOCUS_SPIKE_ENABLED only (nil when off): the spot's category,
              -- and the flag builder.set_mode reads for the long send and
              -- init.lua reads to drop the goal once the builder is out.
@@ -3912,13 +3960,15 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     -- so the printed formula did not reproduce the printed number. Order matches
     -- the code above: (path + base + carry_pen - carry) x mult x lastpill, then
     -- x bal x surplus x multi, then + tankpen.
-    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}*armour{%.2f}+tankpen{%.0f} = cost{%.1f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d util %d/%d unguarded=%d | %s%s",
+    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}*armour{%.2f}+tankpen{%.0f} = cost{%.1f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d util %d/%d unguarded=%d | %s%s%s",
            path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
            C.STRATEGIC_PLACE_COST_MULT, last_pill_mult, imbalance_mult, surplus_mult,
            multi_carry_mult, armour_mult, tank_pen, cost, search_reason, best_score,
            pf_counts.back, pf_targets.back, pf_counts.front, pf_targets.front,
            pf_counts.aggro, pf_targets.aggro, pf_counts.utility or 0, util_reserve,
            #unguarded_bases, PP.targets_label(),
+           (C.PLACE_ENEMY_REACH ~= 0 and best_row) and string.format(" | rch{%.0f} = %g x (%d hostile pills + %d hostile bases)",
+             best_row.sc_rch, C.PLACE_ENEMY_REACH, best_row.rch_np, best_row.rch_nb) or "",
            deep_win and string.format(" | focus_spike ebase{%.0f} depth{%.0f} group=%s extra_tiles=%d spike_role=%s%s",
              ad.best_ebase or 0, ad.best_depth or 0,
              ad.gmx and string.format("(%d,%d)", ad.gmx, ad.gmy) or "none", ad.n_extra,
@@ -4370,6 +4420,11 @@ function M.get_strategic_place_heatmap(state, world, info)
             score = score + math.min(C.FOCUS_SPIKE_PLACE_DEPTH_CAP,
                                      -inf * C.FOCUS_SPIKE_PLACE_DEPTH_WEIGHT)
           end
+        end
+        -- 15. PLACE_ENEMY_REACH: rch (matches the eval scan).
+        if C.PLACE_ENEMY_REACH ~= 0 then
+          local np, nb = M.enemy_reach(world, cx, cy, not deep)
+          score = score + C.PLACE_ENEMY_REACH * (np + nb)
         end
 
         lines[#lines + 1] = string.format("%d\t%d\t%.1f", cx, cy, score)

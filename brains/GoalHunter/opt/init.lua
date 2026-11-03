@@ -7616,6 +7616,8 @@ function Brain.think(info)
         -- check alone -- there is no strategic score to hold it to.
         score_at_dispatch = on_goal and g._spot_score or nil,
         sc7_at_dispatch   = on_goal and g._spot_sc7 or nil,
+        -- PLACE_ENEMY_REACH: the spot's rch text for the line below (nil off).
+        rch_at_dispatch   = on_goal and g._spot_rch or nil,
         -- C.FOCUS_SPIKE_ENABLED: the follow-through hold stands fast
         -- instead of driving near a deep trip tile (nil when off).
         focus_spike = on_goal and g._focus_spike or nil,
