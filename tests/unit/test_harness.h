@@ -647,6 +647,17 @@ int run_pf_foot_stale_boat_root_keeps_route(void);
  * (test_pf_start_heading.c, player 2 brain ticks 2147-2328). */
 int run_pf_start_heading_first_step_goes_ahead(void);
 int run_pf_start_heading_off_keeps_old_costs(void);
+/* Route keep (test_pf_route_keep.c): the saved route priced again matches
+ * the slate cost, and the keep check gives g_new, g_keep and its skip codes
+ * (player 2 brain ticks 1524-2266). */
+int run_pf_route_keep_reprice_matches_slate(void);
+int run_pf_route_keep_check_values(void);
+/* Off-chain next step (test_pf_offchain_root.c): the fallback pick does not
+ * turn back to a stale slate root unless the root is the cheapest way
+ * (player 2 brain ticks 1663-2147). */
+int run_pf_offchain_lowest_g_not_root(void);
+int run_pf_offchain_chain_rank_not_root(void);
+int run_pf_offchain_dead_end_keeps_root(void);
 /* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
  * cost of decoy_getaway's blocker step on the decoy square. */
 int run_bench_decoy_step_first(void);

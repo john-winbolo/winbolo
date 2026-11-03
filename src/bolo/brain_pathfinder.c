@@ -3058,6 +3058,114 @@ static int chain_rank_pick(const BrainPathfinder *pf, const DijkstraSlate *s,
   return 1;
 }
 
+/* Stale-root guard for the off-chain fallbacks (always on, a bug fix).
+ *
+ * Why: the slate restarts on the tank's tile only every few ticks. When the
+ * tank moves onto a square that is not on the traced chain before then, the
+ * fallbacks below pick a neighbour by g, which is cost FROM THE ROOT, so the
+ * root itself (g = 0) or a chain square the tank has already passed wins, and
+ * the tank turns back. Debug session 20261103_165532_1_v3_anchor_helm_s205,
+ * player 2, brain ticks 1663, 1703, 1860, 1880, 2146-2147: the chain-rank
+ * pick's hazard bound refused the square ahead and the root was left.
+ *
+ * What: the fallback's pick (*px,*py) is checked. It is replaced when it is
+ * the slate root (and not the destination), or a chain square while another
+ * neighbour touches the chain nearer the destination. The new pick is the
+ * neighbour with the lowest
+ *     step cost (tank -> a) + cost to go from a,
+ * where the cost to go is g(dest) - g(c) for a chain square a = c, and
+ * step(a -> c) + g(dest) - g(c) for a square next to a chain square c (the
+ * best such c). Step costs are edge cost + hazard (tile_hazard), times the
+ * diagonal factor; a live obstacle adds `penalty`. Only chain squares from
+ * k_min (the on-foot layer bound) count. The root stays possible: it wins
+ * only when going back through it is the cheapest way to the destination.
+ * Returns 1 when the pick was replaced. Cost: 8 x chain length compares,
+ * only on a fallback tick whose pick is the root or behind. */
+static int offchain_repick(const BrainPathfinder *pf, const DijkstraSlate *s,
+                           const int *chain, int k_min, int chain_len,
+                           int sx, int sy, int dx, int dy,
+                           const int *obstacles, int n_obstacles,
+                           float penalty, int foot_rule,
+                           int *px, int *py) {
+  if (chain_len <= 0 || !pf->edge_cost) return 0;
+  int is_root = (*px == s->src_x && *py == s->src_y)
+                && !(*px == dx && *py == dy);
+  /* Index of the pick on the chain (-1 off it), and the lowest chain index
+   * any neighbour of the tank touches. */
+  int k_pick = -1, k_touch = chain_len;
+  for (int k = k_min; k < chain_len; k++) {
+    int cx = node_x(chain[k]), cy = node_y(chain[k]);
+    if (k_pick < 0 && cx == *px && cy == *py) k_pick = k;
+    if (k < k_touch) {
+      int ddx = cx - sx, ddy = cy - sy;
+      if (ddx >= -2 && ddx <= 2 && ddy >= -2 && ddy <= 2) k_touch = k;
+    }
+  }
+  if (!is_root && !(k_pick >= 0 && k_touch < k_pick)) return 0;
+
+  float g_dst = s->g_cost[chain[0]];
+  float sgl = s->g_cost[node_idx(sx, sy, 0)];
+  float sgb = s->g_cost[node_idx(sx, sy, 1)];
+  int s_boat = (foot_rule || !(sgb < sgl)) ? 0 : 1;
+  int s_node = node_idx(sx, sy, s_boat);
+  float best = COST_INF, best_d2 = 1e30f;
+  int bx = -1, by = -1;
+  for (int d = 0; d < 8; d++) {
+    int ax = sx + DX8[d], ay = sy + DY8[d];
+    if (ax < 0 || ax > 255 || ay < 0 || ay > 255) continue;
+    if (foot_rule && !foot_step_ok(pf, sx, sy, ax, ay)) continue;
+    float ec = pf->edge_cost[s_node * 8 + d];
+    if (ec >= COST_INF) continue;
+    float step = (ec + tile_hazard(pf, s, ax, ay, s_boat)) * DMUL8[d];
+    if (obs_contains(obstacles, n_obstacles, ax, ay)) step += penalty;
+    int a_node = node_idx(ax, ay, s_boat);
+    float to_go = COST_INF;
+    for (int k = k_min; k < chain_len; k++) {
+      int cx = node_x(chain[k]), cy = node_y(chain[k]);
+      int ddx = cx - ax, ddy = cy - ay;
+      if (ddx < -1 || ddx > 1 || ddy < -1 || ddy > 1) continue;
+      float gc = s->g_cost[chain[k]];
+      if (gc >= COST_INF) continue;
+      float rest = g_dst - gc;
+      if (ddx != 0 || ddy != 0) {
+        int e = -1;
+        for (int q = 0; q < 8; q++) {
+          if (DX8[q] == ddx && DY8[q] == ddy) { e = q; break; }
+        }
+        float ec2 = pf->edge_cost[a_node * 8 + e];
+        if (ec2 >= COST_INF) continue;
+        int c_boat = (chain[k] >= BOAT_OFFSET) ? 1 : 0;
+        rest += (ec2 + tile_hazard(pf, s, cx, cy, c_boat)) * DMUL8[e];
+      }
+      if (rest < to_go) to_go = rest;
+    }
+    if (to_go >= COST_INF) continue;
+    float score = step + to_go;
+    float d2 = (float)((ax - dx) * (ax - dx) + (ay - dy) * (ay - dy));
+    if (score < best - 1e-3f || (score < best + 1e-3f && d2 < best_d2)) {
+      best = score; best_d2 = d2; bx = ax; by = ay;
+    }
+  }
+  if (bx < 0 || (bx == *px && by == *py)) return 0;
+  *px = bx;
+  *py = by;
+  return 1;
+}
+
+/* Record which slate gave the next step (see ns_* in brain_pathfinder.h).
+ * The chain itself is already in pf->ns_chain: the trace writes there. */
+static void note_answer(BrainPathfinder *pf, int slate, int si,
+                        int chain_len, int mode) {
+  const DijkstraSlate *s = &pf->dij_slates[slate];
+  pf->ns_valid     = 1;
+  pf->ns_slate     = slate;
+  pf->ns_fresh     = (si == 0);
+  pf->ns_mode      = mode;
+  pf->ns_started   = s->started_tick;
+  pf->ns_version   = s->version;
+  pf->ns_chain_len = chain_len;
+}
+
 int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                                      int sx, int sy,
                                      int dx, int dy,
@@ -3065,6 +3173,7 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                                      float penalty, int tank_in_boat,
                                      int *out_next_x, int *out_next_y) {
   if (!pf) return 0;
+  pf->ns_valid = 0;
   if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
   if (out_next_x) *out_next_x = -1;
   if (out_next_y) *out_next_y = -1;
@@ -3104,8 +3213,10 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
     int cur_ni = (c_boat < c_land) ? ni_boat : ni_land;
 
     /* Trace backwards from destination toward source.
-     * Build a reversed chain and find where (sx,sy) appears. */
-    int chain[512];
+     * Build a reversed chain and find where (sx,sy) appears. The chain goes
+     * into pf->ns_chain so the route keep can save the answering slate's
+     * chain without tracing it again. */
+    int *chain = pf->ns_chain;
     int chain_len = 0;
     int steps = 0;
     while (steps++ < NODE_COUNT && chain_len < 512) {
@@ -3220,6 +3331,7 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
             note_sea_veto(pf, sx, sy, veer_rej_x, veer_rej_y, nnx, nny);
           }
         }
+        note_answer(pf, order[si], si, chain_len, need_veer ? 2 : 1);
         if (out_next_x) *out_next_x = nnx;
         if (out_next_y) *out_next_y = nny;
         return 1;
@@ -3241,6 +3353,9 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
       int cx = -1, cy = -1;
       if (chain_rank_pick(pf, s, chain, k_min, chain_len, sx, sy, dx, dy,
                           obstacles, n_obstacles, foot_rule, &cx, &cy)) {
+        offchain_repick(pf, s, chain, k_min, chain_len, sx, sy, dx, dy,
+                        obstacles, n_obstacles, penalty, foot_rule, &cx, &cy);
+        note_answer(pf, order[si], si, chain_len, 3);
         if (out_next_x) *out_next_x = cx;
         if (out_next_y) *out_next_y = cy;
         return 1;
@@ -3291,11 +3406,170 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
       note_sea_veto(pf, sx, sy, veto_x, veto_y, best_nx, best_ny);
     }
     if (best_nx >= 0) {
+      offchain_repick(pf, s, chain, k_min, chain_len, sx, sy, dx, dy,
+                      obstacles, n_obstacles, penalty, foot_rule,
+                      &best_nx, &best_ny);
+      note_answer(pf, order[si], si, chain_len, 4);
       if (out_next_x) *out_next_x = best_nx;
       if (out_next_y) *out_next_y = best_ny;
       return 1;
     }
   }
+  return 0;
+}
+
+/*********************************************************
+ * Route keep (GoalHunter PF_REROUTE_KEEP_MARGIN / PF_REROUTE_KEEP_FRAC).
+ *
+ * The slates are rooted at the tank, and each new slate can pick a different
+ * first step from a route of near equal cost, so the tank turned from one to
+ * the other and drove in circles (debug session
+ * 20261103_165532_1_v3_anchor_helm_s205, player 2, brain ticks 1524-2266).
+ * The brain saves the route it follows and, when a new slate wants another
+ * first step, asks KeepCheck what the old route costs now. The decision
+ * (margin) is in the brain: cpathfinder.lua M.route_keep.
+ *********************************************************/
+
+int brainPathfinderDijkstraRouteSave(BrainPathfinder *pf) {
+  if (!pf) return 0;
+  if (!pf->ns_valid || pf->ns_chain_len <= 0) {
+    pf->keep_len = 0;
+    return 0;
+  }
+  const DijkstraSlate *s = &pf->dij_slates[pf->ns_slate];
+  memcpy(pf->keep_chain, pf->ns_chain,
+         (size_t)pf->ns_chain_len * sizeof(pf->ns_chain[0]));
+  pf->keep_len          = pf->ns_chain_len;
+  pf->keep_exact        = s->exact;
+  pf->keep_danger_scale = s->danger_scale;
+  return pf->keep_len;
+}
+
+/* Direction index 0..7 (DX8/DY8 order) of a one-square step, or -1. */
+static int step_dir(int ddx, int ddy) {
+  for (int d = 0; d < 8; d++) {
+    if (DX8[d] == ddx && DY8[d] == ddy) return d;
+  }
+  return -1;
+}
+
+/* Cost of one step from node from_ni in direction d, with the arrival
+ * direction cur_dir at from_ni (0xFF = none), priced with the current grids.
+ * Same formula as the normal and wall-shoot branches of the slate expansion
+ * in brainPathfinderDijkstraStep. Two differences, both because the route is
+ * priced without the shells the slate tracked: no shell pruning, and the
+ * wall-break escalation counts only the walls broken on this part of the
+ * route (*walls, from 0). Returns COST_INF when the step cannot be made. */
+static float route_step_cost(const BrainPathfinder *pf, int exact,
+                             float danger_scale, int from_ni, int d,
+                             int cur_dir, int *walls) {
+  int cur_boat = (from_ni >= BOAT_OFFSET) ? 1 : 0;
+  float ec = pf->edge_cost[from_ni * 8 + d];
+  if (ec >= COST_INF) return COST_INF;
+  int nx = node_x(from_ni) + DX8[d];
+  int ny = node_y(from_ni) + DY8[d];
+  if (nx < 0 || nx > 255 || ny < 0 || ny > 255) return COST_INF;
+  int nm = ny * MAP_SIZE + nx;
+  int n_type = pf->map[nm] & 0x0F;
+  int next_boat = next_boat_state(cur_boat, n_type);
+  float tc;
+  if (!next_boat && (n_type == TT_BUILDING || n_type == TT_HALFBUILD)) {
+    float wall_danger = (float)pf->danger_grid[nm] * danger_scale
+                      * (16.0f / fmaxf(3.0f, 0.1f));
+    tc = ec + wall_danger;
+    if (exact) {
+      tc *= wall_escalation_mult(pf, *walls);
+      (*walls)++;
+    }
+  } else {
+    float danger = (float)pf->danger_grid[nm] + (float)pf->danger_offset_grid[nm];
+    if (danger < 0.0f) danger = 0.0f;
+    float spd = (next_boat && is_water_tile(n_type))
+                ? pf->terrain_speed_table[TT_BOAT]
+                : pf->terrain_speed_table[n_type];
+    float inv_spd = 16.0f / fmaxf(spd, 0.1f);
+    tc = ec + danger * danger_scale * inv_spd + (float)pf->overlay_grid[nm];
+    if (pf->map[nm] & 0x80) tc += pf->mine_penalty;
+    if (!next_boat && n_type == TT_RIVER && pf->water_drain_rate > 0.0f) {
+      float wd = pf->water_drain_rate;
+      tc += wd * pf->shell_loss_cost;
+      tc += wd * pf->mine_loss_cost;
+    }
+    if (!next_boat && danger < pf->road_build_danger_max
+        && (n_type == TT_SWAMP || n_type == TT_CRATER
+            || n_type == TT_RUBBLE || n_type == TT_RIVER)) {
+      if (tc > pf->road_build_cost) tc = pf->road_build_cost;
+    }
+  }
+  if (cur_dir != 0xFF) {
+    int diff = abs(cur_dir - d);
+    if (diff > 4) diff = 8 - diff;
+    tc += (float)diff * pf->turn_cost;
+  }
+  return tc * DMUL8[d];
+}
+
+float brainPathfinderDijkstraRouteReprice(const BrainPathfinder *pf,
+                                          int fx, int fy) {
+  if (!pf || !pf->edge_cost || !pf->map || pf->keep_len <= 0) return COST_INF;
+  const int *chain = pf->keep_chain;
+  int len = pf->keep_len;
+  /* From the root end, as NextStep finds the tank. */
+  int k = -1;
+  for (int i = len - 1; i >= 0; i--) {
+    if (node_x(chain[i]) == fx && node_y(chain[i]) == fy) { k = i; break; }
+  }
+  if (k < 0) return COST_INF;
+  int cur_dir = 0xFF;
+  if (k + 1 < len) {
+    cur_dir = step_dir(node_x(chain[k]) - node_x(chain[k + 1]),
+                       node_y(chain[k]) - node_y(chain[k + 1]));
+    if (cur_dir < 0) cur_dir = 0xFF;
+  }
+  float total = 0.0f;
+  int walls = 0;
+  for (int i = k; i > 0; i--) {
+    int d = step_dir(node_x(chain[i - 1]) - node_x(chain[i]),
+                     node_y(chain[i - 1]) - node_y(chain[i]));
+    if (d < 0) return COST_INF;
+    float c = route_step_cost(pf, pf->keep_exact, pf->keep_danger_scale,
+                              chain[i], d, cur_dir, &walls);
+    if (c >= COST_INF) return COST_INF;
+    total += c;
+    cur_dir = d;
+  }
+  return total;
+}
+
+int brainPathfinderDijkstraKeepCheck(const BrainPathfinder *pf,
+                                     int tx, int ty, int ox, int oy,
+                                     int dx, int dy,
+                                     float *g_new, float *g_keep) {
+  if (!pf || !pf->ns_valid || pf->ns_chain_len <= 0) return 1;
+  if (tx < 0 || tx > 255 || ty < 0 || ty > 255) return 1;
+  if (ox < 0 || ox > 255 || oy < 0 || oy > 255) return 4;
+  if (!pf->ns_fresh) return 2;
+  if (pf->overlay_grid[oy * MAP_SIZE + ox] >= 32767) return 3;
+  const DijkstraSlate *s = &pf->dij_slates[pf->ns_slate];
+  if (!s->g_cost) return 1;
+  float gt = fminf(s->g_cost[node_idx(tx, ty, 0)], s->g_cost[node_idx(tx, ty, 1)]);
+  float go = fminf(s->g_cost[node_idx(ox, oy, 0)], s->g_cost[node_idx(ox, oy, 1)]);
+  float gd = s->g_cost[pf->ns_chain[0]];
+  if (go >= COST_INF) return 4;
+  if (gt >= COST_INF) gt = 0.0f; /* tank on no layer of this slate: from the root */
+  int end = pf->keep_len > 0 ? pf->keep_chain[0] : -1;
+  if (end < 0 || node_x(end) != dx || node_y(end) != dy) return 5;
+  float rep = brainPathfinderDijkstraRouteReprice(pf, ox, oy);
+  if (rep >= COST_INF) return 5;
+  /* g is cost from the slate root. The slate restarts on the tank's tile, so
+   * the root is normally the tank (gt = 0); otherwise these are the costs
+   * from the tank's place on the slate, never below 0. */
+  float to_old = go - gt;
+  float to_dst = gd - gt;
+  if (to_old < 0.0f) to_old = 0.0f;
+  if (to_dst < 0.0f) to_dst = 0.0f;
+  if (g_new)  *g_new  = to_dst;
+  if (g_keep) *g_keep = to_old + rep;
   return 0;
 }
 

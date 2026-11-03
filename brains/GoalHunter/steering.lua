@@ -4032,6 +4032,75 @@ local function uturn_sweep_hits_sea(info, side)
   return false
 end
 
+-- C.STEER_TURN_CAP_NEXT_SQUARE: the tank's full turn rate in brads per think.
+-- The engine turns the tank twice per think (the keys tick and the game
+-- tick), each time by the terrain's turn rule x our turn modifier, so at
+-- turn rule 1 the tank turns 2 brads per think (recorded: 2 brads per think
+-- at speed 48). `tt` is the terrain under the tank; afloat on river or deep
+-- sea the boat rule applies, as in the engine. With live physics off (or
+-- its TURN group off) the classic rules are used.
+function M.turn_rate_brads(info, tt)
+  local LP = require("live_physics")
+  local rule = LP.TURN_RULE[tt] or "turn_road"
+  if info.inboat and (tt == C.T_RIVER or tt == C.T_DEEPSEA) then
+    rule = "turn_boat"
+  end
+  local rate = LP.CLASSIC[rule] or 1
+  local pct  = 100
+  if C.LIVE_PHYSICS == true and C.LIVE_PHYSICS_TURN == true then
+    local r = info.rules and info.rules[rule]
+    if type(r) == "number" and r == r and r > 0 then rate = r end
+    local m = info.mods and info.mods.turn
+    if type(m) == "number" and m > 0 then pct = m end
+  end
+  return 2 * rate * pct / 100
+end
+
+-- C.STEER_TURN_CAP_NEXT_SQUARE: the farthest a square can be and still be
+-- inside the tank's turning circle, for this speed, heading error and turn
+-- rate. Turn radius R = (speed / 4) / (rate x 2 pi / 256) wu (speed is the
+-- engine speed x 4; the tank moves speed / 4 wu per think). A point at
+-- distance d and heading error e is inside the circle on the side the tank
+-- turns to when d < 2 R sin(e). At an error of 64 brads (90 degrees) or more
+-- sin is taken as 1: a square behind the tank and nearer than one turn
+-- diameter is passed or circled before the turn ends. Returns reach, R.
+function M.next_square_reach(speed, abs_corr, rate)
+  if not speed or speed <= 0 or not rate or rate <= 0 then return 0, 0 end
+  local R = (speed / 4) / (rate * C.TWO_PI / 256)
+  local s = 1
+  if abs_corr < 64 then s = math.sin(abs_corr * C.TWO_PI / 256) end
+  return 2 * R * s, R
+end
+
+-- C.STEER_TURN_CAP_NEXT_SQUARE: true when the next route square (sq_dist wu
+-- away, abs_corr brads off the nose) is inside the turning circle at the
+-- current speed, so the tank cannot reach it without slowing. steer_core
+-- then applies its heading-error turn cap even with the goal 4+ tiles away.
+function M.turn_cap_next_square(info, tmx, tmy, abs_corr, sq_dist)
+  if not sq_dist then return false end
+  local rate = M.turn_rate_brads(info, U.ttype_peek(tmx, tmy))
+  local reach, R = M.next_square_reach(info.speed, abs_corr, rate)
+  local fire = sq_dist < reach
+  if BRAIN_DEBUG_MODE and fire then
+    print2(string.format(
+      "TURN_CAP_NEXT_SQUARE spd=%d err=%d sq_dist=%.0f rate=%.2f R=%.0f reach=%.0f",
+      info.speed or 0, abs_corr, sq_dist, rate, R, reach))
+  end
+  return fire
+end
+
+-- Whether steer_core's heading-error turn cap applies this think. The old
+-- rule: error past ramp_start and the target (dist_t, tiles) within 4 tiles.
+-- With C.STEER_TURN_CAP_NEXT_SQUARE also when the square the error is
+-- measured to (sq_dist wu) is inside the turning circle. Knob off: exactly
+-- the old rule, and the circle test is not run.
+function M.turn_cap_on(info, tmx, tmy, abs_corr, ramp_start, dist_t, sq_dist)
+  if abs_corr <= ramp_start then return false end
+  if dist_t < 4 then return true end
+  if C.STEER_TURN_CAP_NEXT_SQUARE ~= true then return false end
+  return M.turn_cap_next_square(info, tmx, tmy, abs_corr, sq_dist)
+end
+
 -- The whole of steering lives in steer_core; M.steer (bottom of this file) is
 -- a thin wrapper around it so there is ONE place every key leaves the module,
 -- whichever of the many `return`s inside produced it. See the
@@ -5737,7 +5806,13 @@ local function steer_core(state, world, info, goal)
     -- the map.
     local dist_t        = eff_dist / 256.0
     local plow_ease     = (dist_t >= 4) and 1.0 or 0.0  -- legacy var name kept for viz
-    if abs_corr > ramp_start and dist_t < 4 then
+    -- C.STEER_TURN_CAP_NEXT_SQUARE: past 4 tiles the cap also applies when
+    -- the square the heading error is measured to (the route square, or
+    -- next_goal under the lookahead) is inside the turning circle, so a tank
+    -- far from its goal no longer drives circles round that square. Small
+    -- heading wobble stays outside the circle and keeps full speed.
+    if M.turn_cap_on(info, tmx, tmy, abs_corr, ramp_start, dist_t,
+                     lookahead_active and eff_dist or target_dist) then
       if plow_through then
         turn_base_cap = (under_fire or race_mode)
                         and U.nav_turn_cap(C.NAV_TOP_SPEED, C.NAV_TURN_TOP_SPEED) * 2
@@ -5812,6 +5887,10 @@ local function steer_core(state, world, info, goal)
         decision_line = string.format(
           "|err|=%d <= ramp_start=%d brad  ->  no cap  (turn_max_speed=%d)",
           abs_corr, ramp_start, turn_max_speed)
+      elseif dist_t >= 4 and turn_base_cap > 0 then
+        decision_line = string.format(
+          "dist=%.1ft >= 4t, next square inside turn circle -> base_cap=%d x ramp_factor=%.2f = %d  (turn_max_speed=%d)",
+          dist_t, math.floor(turn_base_cap), turn_factor, turn_capped, turn_max_speed)
       elseif dist_t >= 4 then
         decision_line = string.format(
           "dist=%.1ft >= 4t -> cap OFF  (turn_max_speed=%d)",

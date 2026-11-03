@@ -1506,6 +1506,22 @@ M.TURN_CAP_UTURN_PIVOT = false    -- committed u-turn: turn-cap floor 6 -> 0 (pi
 --    half-turn sweep crosses no deep sea within a tile; a tie (both clear or
 --    both fouled) keeps today's shorter-angle choice.
 M.UTURN_SIDE_AVOID_SEA = false    -- u-turn side prefers the sweep with no deep sea under the nose
+-- Turn cap from the next route square, 2026-11-03. The heading-error turn cap
+-- in steer_core only works when the GOAL is within 4 tiles. Far from the goal
+-- a tank with a large heading error to its next route square kept speed 48,
+-- its turn radius was larger than the square's distance, and it drove circles
+-- round the square (recorded game, player 2, brain ticks 1524-2266: about 7
+-- squares of progress in 740 ticks, goal 6-12 tiles away).
+-- true => the same turn cap (base_cap x ramp, floor 6) also applies when the
+-- next route square is inside the tank's turning circle: distance to the
+-- square < 2 x R x sin(heading error), with sin taken as 1 at 90 degrees or
+-- more (a square behind the tank and nearer than one turn diameter), and
+-- R = turn radius = (speed / 4) / (turn rate x 2 pi / 256), turn rate =
+-- 2 brads per think x the live turn rule of the terrain under the tank x our
+-- turn modifier. Small heading wobble far from the goal stays outside the
+-- circle, so it does not slow the tank. No new value.
+-- Log line: TURN_CAP_NEXT_SQUARE. KEEL false.
+M.STEER_TURN_CAP_NEXT_SQUARE = true
 
 -- 5. STICKY CLIFF BRAKE (2026-09-06 drowning analysis, fix (c)).
 --    Both guards above are decided FRESH every tick off a heading ray. While
@@ -1719,6 +1735,25 @@ M.PF_FLIP_FRESH_ASTAR_TICKS     = 60
 -- per 45 degrees) as every other step. No new cost value. Plumbed to the C
 -- pathfinder in cpathfinder.lua's M.configure as "start_heading". KEEL false.
 M.PF_START_HEADING              = true
+-- Route keep, 2026-11-03. The slates are rooted at the tank, and each new
+-- slate can pick a different first step from a route of near equal cost, so
+-- the tank turned from one to the other and drove in circles in a forest
+-- (debug session 20261103_165532_1_v3_anchor_helm_s205, player 2, brain
+-- ticks 1524-2266). When a new slate wants another first step, the old route
+-- is priced again with the current costs (C side,
+-- brainPathfinderDijkstraKeepCheck) and the tank keeps its old step when
+--   g_keep <= g_new + max(PF_REROUTE_KEEP_MARGIN, PF_REROUTE_KEEP_FRAC * g_new)
+-- g_new = new route cost to the destination; g_keep = new slate cost to the
+-- old step + the old route from there. 12 is more than a full reverse on a
+-- diagonal step (11.3), so a pure geometry change does not turn the tank; an
+-- angry pill adds 50-200 per step, so a real threat still does. Logic in
+-- cpathfinder.lua M.route_keep (log tag PF_KEEP). Both 0 = off, the old
+-- behaviour exactly. KEEL 0 and 0.
+M.PF_REROUTE_KEEP_MARGIN        = 12
+M.PF_REROUTE_KEEP_FRAC          = 0.06
+-- Most slate restarts in a row that may keep the same old step; at the next
+-- one the tank takes the new step. Unused while the two knobs above are 0.
+M.PF_REROUTE_KEEP_MAX_RESTARTS  = 3
 M.DIJKSTRA_USE_FOR_GOALS        = true  -- replace cost_to in step_eval_queue with dijkstra
                                         -- lookup_by_kind. Pill pools use kind=1 (low-danger
                                         -- slate), other pools use kind=0 (normal-danger slate).
@@ -6479,6 +6514,9 @@ M.PRESETS = {
     -- 2026-11-03: a LETHAL verdict on the claimed body forces a replan at
     -- once. KEEL waited for the next replan.
     KILL_PICKUP_LETHAL_REPLAN     = false,
+    -- 2026-11-03: the turn cap also applies when the next route square is
+    -- inside the turning circle. KEEL capped only within 4 tiles of the goal.
+    STEER_TURN_CAP_NEXT_SQUARE    = false,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).
@@ -6535,6 +6573,9 @@ M.PRESETS = {
     -- 2026-11-03: the Dijkstra slate root pays the turn cost from the tank
     -- heading. KEEL gave the root's first steps no turn cost.
     PF_START_HEADING              = false,
+    -- 2026-11-03: the route keep is off. KEEL took every new first step.
+    PF_REROUTE_KEEP_MARGIN        = 0,
+    PF_REROUTE_KEEP_FRAC          = 0,
     -- 2026-09-05 (evening): BLITZ_CONTESTED_ALL_SUICIDERS had an entry here and
     -- no longer needs one -- the bench sent it back and its DEFAULT is now
     -- false, which is already the KEEL value. A knob whose default equals its

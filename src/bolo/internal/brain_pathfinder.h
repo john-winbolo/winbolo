@@ -209,6 +209,32 @@ struct BrainPathfinder {
   int16_t  sea_veto_rej_x,  sea_veto_rej_y;
   int16_t  sea_veto_pick_x, sea_veto_pick_y;
 
+  /* Last answer of brainPathfinderDijkstraNextStep, for the route keep
+   * (GoalHunter PF_REROUTE_KEEP_MARGIN / PF_REROUTE_KEEP_FRAC). Written on
+   * every call; no decision in this file reads it. ns_valid 0 = the last
+   * call gave no step. ns_slate is the slate that answered, ns_fresh 1 when
+   * it was the most recently started slate of the kind (0 = a newer slate
+   * has not reached the destination yet and an older one answered).
+   * ns_mode: 1 = step on the traced chain, 2 = veer round an obstacle,
+   * 3 = chain-rank pick with the tank off the chain, 4 = lowest-g neighbour
+   * with the tank off the chain. ns_chain holds the traced chain of that
+   * slate, destination first (ns_chain[0]) toward the root. */
+  int      ns_valid;
+  int      ns_slate;
+  int      ns_fresh;
+  int      ns_mode;
+  uint32_t ns_started;
+  uint32_t ns_version;
+  int      ns_chain_len;
+  int      ns_chain[512];
+  /* Route saved by brainPathfinderDijkstraRouteSave from the ns_* answer:
+   * the chain the tank was following, priced again later with the current
+   * grids by brainPathfinderDijkstraRouteReprice. */
+  int      keep_len;
+  int      keep_exact;
+  float    keep_danger_scale;
+  int      keep_chain[512];
+
   /* A* working state — doubled for boat/land state pairs.
    * Node index = (boat ? 65536 : 0) + y*256 + x
    * NODE_COUNT = 131072 = 256*256*2 */
@@ -420,6 +446,37 @@ void  brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick
 void  brainPathfinderDijkstraSetSourceHeading(BrainPathfinder *pf, int slate,
                                                int heading);
 int   brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, int budget);
+
+/* Route keep (GoalHunter PF_REROUTE_KEEP_MARGIN). See the ns_* and keep_*
+ * fields above.
+ *
+ * RouteSave: copy the chain of the last NextStep answer into the saved
+ * route. Returns its length, 0 when the last call gave no step.
+ *
+ * RouteReprice: cost of the saved route from tile (fx,fy) to its end (the
+ * destination), priced again with the current edge costs, danger, overlay
+ * and mines, by the same formula as the slate expansion, including the turn
+ * cost at each square (the turn at (fx,fy) itself is priced from the
+ * direction the route arrived there). COST_INF when (fx,fy) is not on the
+ * saved route or a step can no longer be made. O(route length, max 512).
+ *
+ * KeepCheck: compare the last NextStep answer (the new slate) with keeping
+ * the old step (ox,oy) from tank tile (tx,ty), destination (dx,dy).
+ *   *g_new  = new slate cost from the tank to the destination;
+ *   *g_keep = new slate cost from the tank to (ox,oy)
+ *             + RouteReprice(ox,oy).
+ * Returns 0 when both values are set, else a reason not to keep:
+ *   1 no answer, 2 an older slate answered (the newest has not reached the
+ *   destination), 3 (ox,oy) has overlay 32767, 4 (ox,oy) is not reached by
+ *   the new slate, 5 (ox,oy) is not on the saved route or the saved route
+ *   ends somewhere else. */
+int   brainPathfinderDijkstraRouteSave(BrainPathfinder *pf);
+float brainPathfinderDijkstraRouteReprice(const BrainPathfinder *pf,
+                                          int fx, int fy);
+int   brainPathfinderDijkstraKeepCheck(const BrainPathfinder *pf,
+                                       int tx, int ty, int ox, int oy,
+                                       int dx, int dy,
+                                       float *g_new, float *g_keep);
 float brainPathfinderDijkstraCostAt(BrainPathfinder *pf, int slate,
                                      int x, int y, int boat);
 int   brainPathfinderDijkstraStatus(BrainPathfinder *pf, int slate,
