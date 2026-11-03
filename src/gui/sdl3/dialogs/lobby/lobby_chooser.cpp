@@ -1225,6 +1225,22 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
     ImGui::End();
 }
 
+/* One of the chooser's tab headers, idx being the tab's s_chooser.forceTab
+   number. While busy the header alone is greyed, so a click on it does not
+   switch tabs; what the tab draws once it is open is not greyed by this.
+   BeginTabItem pushes only an ID, never an item flag, so the disabled block
+   can end before the tab's content starts. */
+static bool lobbyChooserTabItem(const char *label, int idx, bool busy) {
+    bool open;
+
+    ImGui::BeginDisabled(busy);
+    open = ImGui::BeginTabItem(label, nullptr,
+                               s_chooser.forceTab == idx
+                                   ? ImGuiTabItemFlags_SetSelected : 0);
+    ImGui::EndDisabled();
+    return open;
+}
+
 /* Opening a folder shows its first map without sending it
    (selectionUnsent): send it now, so the map Use This Map commits is the
    one on show. Called by both Use This Map buttons, the action bar's and
@@ -1367,6 +1383,26 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     s_lastWinPos  = ImGui::GetWindowPos();
     s_lastWinSize = ImGui::GetWindowSize();
 
+    /* A map change of this client's still under way on a network server:
+       the re-join after a pick, or an upload not yet over. Picks and Use This
+       Map are greyed while it holds, with a line saying why. An upload
+       started then was refused without a word, and a commit sent then lands
+       before the upload does. Read afresh every frame and never latched here
+       or in the transport, so it lifts by itself when the work ends, when a
+       watchdog gives up on it, or with the connection
+       (clientSimNetLobbyMapChangeBusy). */
+    bool busy = cs && !clientSimIsSinglePlayer(cs) &&
+                clientSimNetLobbyMapChangeBusy(cs);
+    /* The file dialog answers from outside this window, which greying cannot
+       stop: a file it returns while busy waits in the tab and is applied once
+       busy lifts, as a WinBolo.net download that lands then does. */
+    s_chooserTabs.server.holdPicks = busy;
+    s_chooserTabs.upload.holdPicks = busy;
+    s_chooserTabs.random.holdPicks = busy;
+#ifndef __EMSCRIPTEN__
+    s_chooserTabs.wbn.holdPicks    = busy;
+#endif
+
     /* Action bar height (Separator + button row) — reserved AT THE
      * WINDOW LEVEL via a child container around the tab bar so the
      * tab content fills its area down to its own bottom border. The
@@ -1374,6 +1410,9 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * left a gap of dead space between the chooser's bottom border
      * and the buttons. */
     float btnBarH = ImGui::GetFrameHeight() + 14.0f * s;
+    /* While busy the tab headers (lobbyChooserTabItem) and each tab's list
+       and controls (holdPicks) are greyed; the previews are not, as they pick
+       nothing. The tabs keep drawing and their pumps keep running. */
     ImGui::BeginChild("##MapChooserBody",
                       ImVec2(0.0f, -btnBarH),
                       ImGuiChildFlags_NavFlattened,
@@ -1399,8 +1438,15 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     if (uiShouldUseControllerMode()) {
         int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
                   - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
-        if (shift == 0)
+        if (shift == 0 || busy)
             shift = imguiSteamNavConsumeMenuTabShift();
+        /* Greyed, the tabs do not change either: this is the one way to
+           switch them that the BeginDisabled below does not reach. Entering
+           Generate for the first time makes a map and sends it as a preview,
+           which an upload still on its way would then land over. The press is
+           taken and dropped, the Steam one consumed above, so it does not
+           switch the tab later on its own once busy lifts. */
+        if (busy) shift = 0;
         if (shift != 0) {
             int vis[4];
             int nVis = 0;
@@ -1420,8 +1466,8 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
     }
     if (ImGui::BeginTabBar("##MapChooserTabs", ImGuiTabBarFlags_None)) {
-        if (!inProcessServer && ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_SERVERMAPS), nullptr,
-                s_chooser.forceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
+        if (!inProcessServer &&
+            lobbyChooserTabItem(langGetText(STR_DLGLOBBY_TAB_SERVERMAPS), 0, busy)) {
             s_chooserTabs.activeTab = 0;
             if (s_lastActiveTab != 0 && activeTabBefore != 0) {
                 lobbyMapTabClearSelection(&s_chooserTabs.server);
@@ -1433,8 +1479,8 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGui::EndTabItem();
         }
         if ((inProcessServer || clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF) &&
-            ImGui::BeginTabItem(langGetText(inProcessServer ? STR_DLGLOBBY_TAB_LOCALMAPS : STR_DLGLOBBY_TAB_UPLOAD), nullptr,
-                s_chooser.forceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
+            lobbyChooserTabItem(langGetText(inProcessServer ? STR_DLGLOBBY_TAB_LOCALMAPS : STR_DLGLOBBY_TAB_UPLOAD),
+                                1, busy)) {
             s_chooserTabs.activeTab = 1;
             if (s_lastActiveTab != 1 && activeTabBefore != 1) {
                 lobbyMapTabClearSelection(&s_chooserTabs.upload);
@@ -1442,8 +1488,7 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             lobbyRenderMapTab(&s_chooserTabs.upload, renderer, s);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_GENERATE), nullptr,
-                s_chooser.forceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
+        if (lobbyChooserTabItem(langGetText(STR_DLGLOBBY_TAB_GENERATE), 2, busy)) {
             s_chooserTabs.activeTab = 2;
             float availW = ImGui::GetContentRegionAvail().x;
             float availH = ImGui::GetContentRegionAvail().y;
@@ -1453,10 +1498,18 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
              * preview on the right via the chooser's randomTabOnly
              * code path. Every config change increments genSeq —
              * we forward that to the server below so other clients
-             * see the live preview. */
+             * see the live preview.
+             *
+             * On a network server the forward waits until the control
+             * being dragged or typed into is let go, and then sends the
+             * last value once. Sent on every change, the first one made
+             * the chooser busy (an unacked map command), which greyed the
+             * slider the next frame and ended the drag under the user's
+             * hand. This tab's own preview still follows every change. */
             mapChooserRender(&s_chooserTabs.random, renderer,
                              availW, availH, s);
-            if (cs && s_chooserTabs.random.genSeq != s_chooserTabs.randomLastSeq) {
+            if (cs && s_chooserTabs.random.genSeq != s_chooserTabs.randomLastSeq &&
+                (clientSimIsSinglePlayer(cs) || !ImGui::IsAnyItemActive())) {
                 s_chooserTabs.randomLastSeq = s_chooserTabs.random.genSeq;
                 /* selectedPath is "randommap:<seed>" — strip the
                  * prefix to get the bare seed string the server
@@ -1487,8 +1540,7 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGui::EndTabItem();
         }
 #ifndef __EMSCRIPTEN__
-        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS), nullptr,
-                s_chooser.forceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
+        if (lobbyChooserTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS), 3, busy)) {
             s_chooserTabs.activeTab = 3;
             if (s_lastActiveTab != 3 && activeTabBefore != 3) {
                 lobbyMapTabClearSelection(&s_chooserTabs.wbn);
@@ -1509,12 +1561,21 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * screen rect is what we want to anchor the error overlay to. */
     ImVec2 chooserBodyMin = ImGui::GetItemRectMin();
     ImVec2 chooserBodyMax = ImGui::GetItemRectMax();
+    /* Read again now the tabs have run: a WinBolo.net download that landed
+       this frame has started its upload from inside the tab, and the buttons
+       below must not send a commit or a cancel ahead of it. */
+    busy = cs && !clientSimIsSinglePlayer(cs) &&
+           clientSimNetLobbyMapChangeBusy(cs);
 
     /* Error overlay — anchored top-right of the chooser body (over the
      * map preview's empty header area). Old behaviour rendered the
      * footer text below the body, which pushed the Cancel / Use This
      * Map buttons past the window bottom when the message wrapped. */
+    /* While greyed and with no error to show, the same place says why the
+       picks are greyed, in neutral colours rather than an error's. */
     const char *errMsg = lobbyGetActiveTabError(cs);
+    const bool waitNote = !(errMsg && *errMsg) && busy;
+    if (waitNote) errMsg = langGetText(STR_DLGLOBBY_AWAITING_MAP);
     if (errMsg && *errMsg) {
         ImDrawList *fg = ImGui::GetForegroundDrawList();
         float pad = 8.0f * s;
@@ -1530,10 +1591,12 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                       boxMin.y + textSz.y + pad);
 
         fg->AddRectFilled(boxMin, boxMax,
-                          IM_COL32(40, 0, 0, 200), 4.0f * s);
+                          waitNote ? IM_COL32(30, 30, 30, 200)
+                                   : IM_COL32(40, 0, 0, 200), 4.0f * s);
         fg->AddText(font, fsz,
                     ImVec2(boxMin.x + pad, boxMin.y + pad * 0.5f),
-                    IM_COL32(230, 130, 130, 255), errMsg,
+                    waitNote ? IM_COL32(220, 220, 220, 255)
+                             : IM_COL32(230, 130, 130, 255), errMsg,
                     nullptr, maxW);
     }
 
@@ -1579,7 +1642,13 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             s_chooser.open = false;
         }
         ImGui::SameLine();
-        if (ImGui::Button(setLbl)) {
+        /* Greyed while the last pick is still on its way (busy): sent now,
+           the commit would land before an upload does and commit whatever
+           was on show, leaving the upload's map an open preview. */
+        ImGui::BeginDisabled(busy);
+        const bool setPressed = ImGui::Button(setLbl);
+        ImGui::EndDisabled();
+        if (setPressed) {
             WB_LOG_INFO(WB_LOG_CAT_GUI,
                         "[MAPPICK] action-bar UseThisMap sp=%d previewPending=%d",
                         cs ? (int)clientSimIsSinglePlayer(cs) : -1,
@@ -1650,10 +1719,18 @@ void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CLOSEMAP_PROMPT));
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CLOSEMAP_QUESTION));
+        /* Use This Map is greyed here too while the last pick is on its
+           way, as on the action bar, with the same reason given. */
+        if (busy) {
+            ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_AWAITING_MAP));
+        }
         /* [Cancel: Keep picking] [Destructive: Revert and Close] [Primary: Use This Map]. */
         int f = WBUI::DialogFooter3(langGetText(STR_DLGLOBBY_KEEPPICKING),
                                     langGetText(STR_DLGLOBBY_REVERTCLOSE),
-                                    langGetText(STR_DLGLOBBY_USETHISMAP));
+                                    langGetText(STR_DLGLOBBY_USETHISMAP),
+                                    /*enterConfirms*/ false,
+                                    /*showSeparator*/ true,
+                                    /*primaryDisabled*/ busy);
         if (f == WBUI::FOOTER_CONFIRM) {
             lobbyChooseMapSendUnsentSelection(cs);
             if (cs) {
