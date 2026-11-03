@@ -612,6 +612,11 @@ M.ATTACK_PILL_STANDOFF = 7.4  -- desired engagement distance from pill (max shel
 -- ATK_REPRICE_TANK_SEEN_TICKS ticks.
 M.ATK_REPRICE_TANK_PAD        = 2
 M.ATK_REPRICE_TANK_SEEN_TICKS = 50
+-- repair_pill give-way (init.lua, REPAIR_GIVE_WAY): when the tank cannot get
+-- to the pill (its pool-5 row is INF for a reason other than the builder_can
+-- split), the goal drops and the pill tile is kept out of pool 5 for this
+-- many ticks (4 s), so the next replan does not choose it again at once.
+M.REPAIR_GIVE_WAY_BLOCK_TICKS = 200
 M.ATTACK_PILL_STANDOFF_CHARGE = 7.0  -- non-PPT charge pulls the engage spot in to here on the first charge tick (PPT keeps its shielded standoff)
 M.ATTACK_PILL_RANGE    = 9.5  -- max distance to start shooting
 M.ATTACK_PILL_MIN_ARMOUR = 1  -- minimum armour to attempt pill take

@@ -4740,6 +4740,19 @@ function Brain.think(info)
       -- the LGM is killed, so we don't sit on a pill we can't fix).
       if not p or p.owner ~= "friendly" or p.health >= C.PILLS_MAX_HEALTH
          or info.man_status == C.LGM_DEAD then goal_valid = false end
+      -- The tank cannot get there: give way (goals.repair_give_way_reason).
+      if goal_valid then
+        local why = goals.repair_give_way_reason(state, gmx, gmy, now)
+        local bk = U.mkey(gmx, gmy)
+        if why then
+          goal_valid = false
+          -- Keep the pill out of pool 5 for a short while, so the next
+          -- replan does not choose the same stuck goal again at once.
+          if why:sub(1, 6) == "pool5_" then
+            U.set_blocked(state, bk, now + (C.REPAIR_GIVE_WAY_BLOCK_TICKS or 200), "repair_give_way")
+          end
+        end
+      end
     elseif gk == "place_pill_strategic" and state.goal.follow_through then
       -- FOLLOW_THROUGH hold: goal.mx/my is a tile for the TANK to wait on, not
       -- a drop spot, so the "a friendly pill is already there" test below would

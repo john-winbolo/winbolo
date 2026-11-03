@@ -7956,6 +7956,45 @@ local function filter_capture_pill(obj, state)
   return nil
 end
 
+-- The pill the tank is driving to for repair_pill, while our builder is out
+-- of the tank (a farm trip on the way, LGM_MOVING). The pool-5 gates below
+-- need the builder aboard, so without this the committed goal's row left the
+-- pool for the whole trip, the hysteresis had no price to carry, and any
+-- other row won the next replan (20261102 bot0 t=50153: refuel_at_base took
+-- over while the builder was out farming 15 tiles from the pill). The row
+-- stays only for the current target, and only while the builder is alive and
+-- out: it comes back with the wood, and the feeder sends it on from there.
+function M.repair_hold_while_out(obj, state, info)
+  if info.man_status ~= C.LGM_MOVING then return false end
+  local g = state and state.goal
+  return g ~= nil and g.kind == "repair_pill"
+         and g.mx == obj.mx and g.my == obj.my
+end
+
+-- Why the committed repair_pill goal must give way, or nil. init.lua drops
+-- the goal on a non-nil answer. Two signs, both from this player's own model:
+--   1. the pill tile is blocked (a nav or build give-up stamped it);
+--   2. the pool-5 row for this pill is INF for a reason that is not the
+--      builder_can split. That split means "the builder can walk it from
+--      here", so the goal is about to hand off, not stuck. An INF row with no
+--      reason is a path the planner could not find; ally_capturing means a
+--      team-mate takes the corpse.
+function M.repair_give_way_reason(state, gmx, gmy, now)
+  local bk = U.mkey(gmx, gmy)
+  if state.blocked and state.blocked[bk] and now < state.blocked[bk] then
+    return "blocked_until_" .. tostring(state.blocked[bk])
+  end
+  local tid = state.goal and state.goal.target_id
+  local ce = tid and state.cost_cache and state.cost_cache["5:" .. tid]
+  if ce and (ce.cost or 0) >= 1e29 then
+    local sk = ce._skipped
+    if not (type(sk) == "string" and sk:sub(1, 12) == "builder_can ") then
+      return "pool5_inf(" .. tostring(sk or ce._reject or "no_path") .. ")"
+    end
+  end
+  return nil
+end
+
 local function filter_repair_pill(obj, state, info)
   -- health < MAX includes 0-HP (dead) friendly pills: those rebuild IN PLACE
   -- (the LGM walks out with wood). 0-HP is the 4× wood tier, so we additionally
@@ -7966,7 +8005,8 @@ local function filter_repair_pill(obj, state, info)
   if not (obj.owner == "friendly"
           and obj.health < C.PILLS_MAX_HEALTH
           and (C.REPAIR_FIX_ENABLED or obj.health > 0)) then return false end
-  if not (info.man_status == C.LGM_INTANK and info.trees > 0) then return false end
+  local _hold_out = M.repair_hold_while_out(obj, state, info)
+  if not (info.man_status == C.LGM_INTANK and info.trees > 0) and not _hold_out then return false end
   -- A live ALLY builder-pool claim covers the OUTCOME, not just the trip
   -- (BUILDER_POOL_PLAN section 6): if p2's man is walking to this pill, it is
   -- going to be repaired, so it should not appear in our "damaged friendly
@@ -7989,7 +8029,7 @@ local function filter_repair_pill(obj, state, info)
   -- against the BUILDER strip's matching row. INF cannot win a competition, so
   -- the refusal is just as hard as a `return false` here would be.
   if C.REPAIR_FIX_ENABLED and obj.health == 0 then
-    if (info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4) then return false end
+    if (info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4) and not _hold_out then return false end
     -- Capture outranks rebuild: a corpse that capture_pill can take (on the
     -- ground, unclaimed, unblocked, fresh) is a FREE pill — rebuilding it in
     -- place makes it alive and un-grabbable, wasting both the kill and the
@@ -11216,6 +11256,14 @@ function M.build_eval_queue(state, world, info)
   if has_damaged and info.man_status == C.LGM_INTANK and info.trees > 0 then
     for id, obj in pairs(world.pills) do
       if filter_repair_pill(obj, state, info) then
+        queue[#queue + 1] = { pool = 5, id = id, obj = obj }
+      end
+    end
+  elseif has_damaged and info.man_status == C.LGM_MOVING
+         and state.goal and state.goal.kind == "repair_pill" then
+    -- Builder out: only the committed target stays (repair_hold_while_out).
+    for id, obj in pairs(world.pills) do
+      if M.repair_hold_while_out(obj, state, info) and filter_repair_pill(obj, state, info) then
         queue[#queue + 1] = { pool = 5, id = id, obj = obj }
       end
     end
