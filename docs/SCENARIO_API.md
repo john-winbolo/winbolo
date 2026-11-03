@@ -2238,7 +2238,7 @@ local function tr(p, key)
   return mine[key] or TEXT.en[key]
 end
 
-game.popup(tr(p, "hello"), p)
+game.announce(tr(p, "hello"), 6, p)
 ```
 
 Only a single-player game knows the player's language: there the server runs
@@ -2319,7 +2319,7 @@ exist.
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
 | `game.announce(text[, seconds[, target[, position]]])` | A big line in the Scenario Text window for that many seconds. Left out, `position` centres the line across the window. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line further left or right; only the share across is used. Empty text takes the line away. |
-| `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. Today only the built-in tutorials (a map in `data/maps/tutorials`) open this box. In any other scenario or mod the text is shown as lines in the Scenario Text window instead, and the call still succeeds. While the box is up, only the built-in tutorials pause the game: a single-player game, with its server in this process. In a player's own scenario or a mod, the game keeps running. See [Popups](#popups). |
+| `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. Only the built-in tutorials (a map's own script in `data/maps/tutorials`) have this call. In every other scenario and in every mod, `game.popup` is nil. While the box is up, only the built-in tutorials pause the game: a single-player game, with its server in this process. See [Popups](#popups). |
 | `game.status(text[, countdown_to[, target]])` | The status line: one line in the top row of the Scenario Text window, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
@@ -2519,18 +2519,24 @@ is for a sentence or two the player has to read before going on, where
 next when one is closed. A popup is not kept: a player who joins after it
 was sent does not see it.
 
-Today only the built-in tutorials, the maps in `data/maps/tutorials`, open
-the box. A popup from any other scenario or mod opens no box and does not
-pause the game. Its text is shown in the Scenario Text window instead, as
-centred lines like `game.announce` lines, with the line breaks read as
-spaces. The lines stay up for 6 seconds, and 1 more for each 20 bytes of
-text, at most 30 seconds. The player cannot close them. The next popup waits
-until they are gone. The Scenario Text window holds four lines of up to 128
-bytes, so text past that is dropped, and the client log says so. The call
-itself succeeds in every scenario, so a script need not check where it runs.
+Only the built-in tutorials have `game.popup`: the script beside a map in
+`data/maps/tutorials`. In every other scenario and in every mod the server
+leaves it off the script's game table, so `game.popup` is nil there. A call
+stops the script with Lua's usual "attempt to call a nil value" error, and a
+`popup` trigger action does nothing (`-validate` says so). A script that
+runs in both places can test for it first:
+
+```lua
+if game.popup then
+  game.popup("Read this first.", p)
+else
+  game.announce("Read this first.", 6, p)
+end
+```
+
 This is one setting in the game (`TUTORIAL_MAPS_SCRIPT_POPUPS` in
-`src/gui/sdl3/tutorial_maps.h`). A later build may let every scenario open
-the box.
+`src/gui/sdl3/tutorial_maps.h`). A later build may give every scenario the
+call.
 
 A popup belongs to its round. When the round ends (`game.end_round`, the time
 limit, or a return to the lobby) the client closes a popup that is still up

@@ -3017,14 +3017,15 @@ int run_tutorial_maps_shipped_path(void);
 /* Which games a scenario popup pauses: only the shipped tutorials
  * (test_bg_map_pick.c). */
 int run_tutorial_maps_popup_pauses(void);
-/* Which popups open the popup window, with script popups off and on, and
- * the Scenario Text lines a popup with no window is split into
+/* Which scripts have game.popup, with script popups off and on
  * (test_bg_map_pick.c). */
-int run_tutorial_maps_popup_opens_window(void);
-int run_tutorial_maps_popup_fallback_lines(void);
-/* The wait for a popup's Scenario Text lines across games
- * (test_bg_map_pick.c). */
-int run_tutorial_maps_popup_lines_wait(void);
+int run_tutorial_maps_script_has_popup(void);
+/* game.popup is nil in a map script outside the tutorials and in a mod, and
+ * there in a tutorial's map script; -validate reads the same rule
+ * (test_scenario_host.c). */
+int run_scenario_host_popup_nil_outside_tutorials(void);
+int run_scenario_host_popup_in_tutorial(void);
+int run_scenario_validate_popup_tutorial_only(void);
 
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the

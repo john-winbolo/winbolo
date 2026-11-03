@@ -271,6 +271,7 @@ class Job(object):
         self.tail = tail
         self.log_path = os.path.join(log_dir, name + ".log")
         self.work = None
+        self.map_dir = None      # where the arena's map and script go
         self.proc = None
         self.log = None
         self.t0 = None
@@ -281,12 +282,21 @@ class Job(object):
 
     def prepare(self):
         self.work = tempfile.mkdtemp(prefix="scngate_" + self.name + "_")
+        # A script= arena of a shipped tutorial runs from a maps/tutorials
+        # folder, as the tutorial does. The server gives game.popup only to a
+        # map script in such a folder (tutorialMapsScriptHasPopup in
+        # src/gui/sdl3/tutorial_maps.h), and the tutorials call it.
+        self.map_dir = self.work
+        script = (self.opts.get("script") or "").replace("\\", "/")
+        if os.path.dirname(script).lower() == "data/maps/tutorials":
+            self.map_dir = os.path.join(self.work, "maps", "tutorials")
+            os.makedirs(self.map_dir)
         shutil.copy(os.path.join(MAPS, self.name + ".map"),
-                    os.path.join(self.work, self.name + ".map"))
+                    os.path.join(self.map_dir, self.name + ".map"))
         with open(os.path.join(HERE, self.name + ".scenario.lua"),
                   encoding="utf-8") as f:
             body = f.read()
-        out = os.path.join(self.work, self.name + ".scenario.lua")
+        out = os.path.join(self.map_dir, self.name + ".scenario.lua")
         if self.opts.get("script"):
             self.prepare_with_script(out, body)
             return
@@ -353,7 +363,7 @@ class Job(object):
     def command(self, ds):
         o = self.opts
         cmd = [ds,
-               "-map", os.path.join(self.work, self.name + ".map"),
+               "-map", os.path.join(self.map_dir, self.name + ".map"),
                "-port", "0",
                "-nolobby",
                "-gametype", o["gametype"],

@@ -121,7 +121,6 @@ extern "C" {
 #include "dialogs/imgui_deck_pause.h"
 #include "dialogs/imgui_tutorial_overlay.h"
 #include "tutorial_text.h"   /* tutorialExpandTextPlain */
-#include "tutorial_maps.h"   /* tutorialMapsPopupOpensWindow */
 #include "dialogs/imgui_keyboard.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
@@ -235,12 +234,6 @@ extern "C" void windowTutorialPause(struct ClientSim *cs, bool active);
    the render path's edge-detect, and the round-end close, which lifts the
    pause itself. */
 static bool s_lastTutorialPause = false;
-/* The server ticks from and until which the Scenario Text lines of the
-   last popup that opened no window are up (renderTutorialOverlay). The
-   server's tick clock starts at 0 in each game, so sdl3ImguiNewGame sets
-   both to 0. */
-static uint32_t s_popupLinesFrom  = 0;
-static uint32_t s_popupLinesUntil = 0;
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -10372,73 +10365,22 @@ static void renderTutorialOverlay(ClientSim *cs) {
     /* A scenario's popup (game.popup) waits in the client sim's queue
        until the overlay is free, then takes the overlay like a tutorial
        message does, so one popup shows at a time. It pauses the game only
-       in a shipped tutorial (clientFrontPopupPausesGame), and only a shipped
-       tutorial opens the window while TUTORIAL_MAPS_SCRIPT_POPUPS is 0.
-       None is taken once the round is over: the close at the top of
-       sdl3ImguiPumpAndRender would only shut it again. */
-    /* A popup that opens no window (TUTORIAL_MAPS_SCRIPT_POPUPS) is shown
-       as Scenario Text lines from s_popupLinesFrom to s_popupLinesUntil
-       (the file statics above), on clientSimGetLastServerTick's clock. The
-       next popup waits until they are gone, as it waits for a closed
-       window, so one does not push the one before it off the screen.
-       sdl3ImguiNewGame sets both to 0, and a clock that went back (a new
-       round) sets both to 0 too (tutorialMapsPopupLinesUp). */
+       in a shipped tutorial (clientFrontPopupPausesGame). Which scripts may
+       send one at all is the server's to say: while
+       TUTORIAL_MAPS_SCRIPT_POPUPS is 0, only a shipped tutorial's script
+       has game.popup (tutorialMapsScriptHasPopup). None is taken once the
+       round is over: the close at the top of sdl3ImguiPumpAndRender would
+       only shut it again. */
     if (cs != NULL && !tutorialOverlayIsOpen() &&
         !clientSimIsRoundOver(cs)) {
         static char s_popupText[SCN_POPUP_TEXT_MAX + 1];
-        const uint32_t now = clientSimGetLastServerTick(cs);
-        const bool linesUp = tutorialMapsPopupLinesUp(
-            now, &s_popupLinesFrom, &s_popupLinesUntil);
-        bool took      = false;
-        bool inWindow  = true;
-        if (!linesUp) {
-            /* Under the client mutex: in a single-player game the server's
-               thread puts popups on this queue as it publishes them, and
-               the map's script path follows the server's committed map. */
-            clientMutexWaitFor();
-            took = clientSimTakeScnPopup(cs, s_popupText,
-                                         sizeof(s_popupText));
-            if (took) {
-                inWindow = tutorialMapsPopupOpensWindow(
-                    TUTORIAL_MAPS_SCRIPT_POPUPS != 0,
-                    gameFrontScenarioMapScriptPath());
-            }
-            clientMutexRelease();
-        }
-        if (took && inWindow) {
-            tutorialOverlayShowText(s_popupText);
-        } else if (took) {
-            /* Not a built-in tutorial, and script popups are off: no
-               window and no pause. The text goes to the Scenario Text
-               window as announcement lines, centred, which draw the key
-               tokens as words. */
-            char lines[SCN_ANNOUNCE_STACK_MAX][PACKET_MAX_CHAT_MESSAGE + 1];
-            bool dropped = false;
-            const int n = tutorialMapsPopupFallbackLines(
-                s_popupText, &lines[0][0], sizeof(lines[0]),
-                SCN_ANNOUNCE_STACK_MAX, &dropped);
-            const int secs =
-                tutorialMapsPopupFallbackSeconds(strlen(s_popupText));
-            const uint16_t ticks = (uint16_t)(secs * GAME_NUMTOTALTICKS_SEC);
-            clientMutexWaitFor();
-            for (int i = 0; i < n; i++) {
-                clientSimScnAnnouncePush(cs, lines[i], ticks, now, false,
-                                         0, 0);
-            }
-            clientMutexRelease();
-            s_popupLinesFrom  = now;
-            s_popupLinesUntil = now + ticks;
-            static bool s_loggedFallback = false;
-            if (!s_loggedFallback || dropped) {
-                WB_LOG_INFO(WB_LOG_CAT_GUI,
-                            "[ScnPopup] game.popup shown as %d Scenario Text "
-                            "line(s): only the built-in tutorials open a "
-                            "popup window%s",
-                            n, dropped ? "; the rest of the text did not "
-                                         "fit and was dropped" : "");
-                s_loggedFallback = true;
-            }
-        }
+        /* Under the client mutex: in a single-player game the server's
+           thread puts popups on this queue as it publishes them. */
+        clientMutexWaitFor();
+        const bool took =
+            clientSimTakeScnPopup(cs, s_popupText, sizeof(s_popupText));
+        clientMutexRelease();
+        if (took) tutorialOverlayShowText(s_popupText);
     }
     tutorialOverlayRender(cs);
     /* s_lastTutorialPause is the file static above: the round-end close
@@ -11706,10 +11648,6 @@ void sdl3ImguiNewGame(ClientSim *cs) {
        see sdl3DrawNewGame. */
     overviewSnapshotDestroy(s_overviewSnapshot);
     s_overviewSnapshot = nullptr;
-    /* The wait for a popup's Scenario Text lines is on the last game's
-       tick clock: see s_popupLinesFrom. */
-    s_popupLinesFrom  = 0;
-    s_popupLinesUntil = 0;
     sdl3ImguiTabletNewGame();
     sdl3DrawNewGame(clientSimGetCurrentBuildSelect(cs));
 }

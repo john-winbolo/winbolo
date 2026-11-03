@@ -182,6 +182,7 @@
 #include "scenario_manifest_json.h" /* scnManifestParse — the other form of
                                      * the table the trigger case reads */
 #include "scenario_validate.h"    /* scenarioHostManifest */
+#include "tutorial_maps.h"        /* TUTORIAL_MAPS_SCRIPT_POPUPS */
 #include "test_harness.h"
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
@@ -4222,5 +4223,210 @@ int run_scenario_host_rules_table_whole(void) {
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMapBreak);
+    return 0;
+}
+
+/* ── game.popup: only for the shipped tutorials ───────────────────── */
+
+/* The script the popup cases run. It writes what type game.popup has at
+ * its top level and in on_setup, and in on_setup whether a call to it is
+ * the Lua error a nil value gives. */
+static const char kShPopupBody[] =
+    "scenario = { name = \"Popup\", api = 1 }\n"
+    "note(\"top=\" .. type(game.popup) .. \";\")\n"
+    "function on_setup()\n"
+    "  note(\"setup=\" .. type(game.popup) .. \";\")\n"
+    "  if game.popup == nil then\n"
+    "    local ok, why = pcall(function() game.popup(\"hi\") end)\n"
+    "    local isNil = not ok and\n"
+    "                  string.find(tostring(why), \"nil value\", 1, true)\n"
+    "    note(isNil and \"call=nil;\" or \"call=other;\")\n"
+    "  end\n"
+    "end\n";
+
+/* One host on a fresh sim, attached by attach (a map or a mod), through
+   one round start. What the script wrote is left in got. */
+static int shPopupRun(ScenarioHost *(*attach)(ServerSim *sim, char *err,
+                                              size_t errLen),
+                      char *got, size_t gotLen) {
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+
+    shNoteReset();
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    shWatchConsole(sim, shNoteLine);
+    h = attach(sim, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    serverSimTick(sim);
+    shRead(got, gotLen);
+    shUnwatchConsole(sim);
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shNoteReset();
+    return 0;
+}
+
+#define SH_POPUP_TUT_ROOT "scnhost_popup_tut"
+#define SH_POPUP_TUT_DIR  SH_POPUP_TUT_ROOT "/maps/tutorials"
+#define SH_POPUP_TUT_MAP  SH_POPUP_TUT_DIR "/Popup.map"
+#define SH_POPUP_MAP      "scnhost_popup.map"
+#define SH_POPUP_MOD_FILE "popupmod.lua"
+
+static ScenarioHost *shPopupAttachMap(ServerSim *sim, char *err,
+                                      size_t errLen) {
+    return scenarioHostAttach(sim, SH_POPUP_MAP, err, errLen);
+}
+
+static ScenarioHost *shPopupAttachTutorial(ServerSim *sim, char *err,
+                                           size_t errLen) {
+    return scenarioHostAttach(sim, SH_POPUP_TUT_MAP, err, errLen);
+}
+
+/* A mod whose file sits in a maps/tutorials folder: a mod is never a
+   tutorial, wherever it is. */
+static ScenarioHost *shPopupAttachMod(ServerSim *sim, char *err,
+                                      size_t errLen) {
+    return scenarioHostAttachMod(sim, SH_POPUP_TUT_DIR, SH_POPUP_MOD_FILE,
+                                 err, errLen);
+}
+
+/* The folders the tutorial cases write into, made and taken away. */
+static bool shPopupDirsMake(void) {
+    (void)SDL_RemovePath(SH_POPUP_TUT_DIR);
+    (void)SDL_RemovePath(SH_POPUP_TUT_ROOT "/maps");
+    (void)SDL_RemovePath(SH_POPUP_TUT_ROOT);
+    return SDL_CreateDirectory(SH_POPUP_TUT_DIR);
+}
+
+static void shPopupDirsDrop(void) {
+    (void)SDL_RemovePath(SH_POPUP_TUT_DIR);
+    (void)SDL_RemovePath(SH_POPUP_TUT_ROOT "/maps");
+    (void)SDL_RemovePath(SH_POPUP_TUT_ROOT);
+}
+
+/* A map's script outside data/maps/tutorials, and a mod, with
+ * TUTORIAL_MAPS_SCRIPT_POPUPS 0: game.popup is nil at the top level and in a
+ * hook, and a call is the Lua error for a nil value. */
+int run_scenario_host_popup_nil_outside_tutorials(void) {
+    char lua[2048];
+    char got[512];
+    char path[512];
+    int  rc;
+
+    UT_ASSERT(TUTORIAL_MAPS_SCRIPT_POPUPS == 0);
+    shScript(lua, sizeof(lua), kShPopupBody);
+
+    /* Another map's own script. */
+    UT_ASSERT(shPut(SH_POPUP_MAP, lua));
+    rc = shPopupRun(shPopupAttachMap, got, sizeof(got));
+    shDrop(SH_POPUP_MAP);
+    if (rc != 0) return rc;
+    UT_ASSERT_MSG(strstr(got, "top=nil;") != NULL &&
+                      strstr(got, "setup=nil;") != NULL &&
+                      strstr(got, "call=nil;") != NULL &&
+                      strstr(got, "function") == NULL,
+                  "a map script outside the tutorials wrote '%s', expected "
+                  "game.popup to be nil", got);
+
+    /* A mod, at a path that would pass for a tutorial's. Only a mod with
+     * bound = false can be played over another map, so the mod's first line
+     * says so. The rest of the script is the same. */
+    {
+        char body[1024];
+        snprintf(body, sizeof(body),
+                 "scenario = { name = \"Popup\", api = 1, bound = false }\n%s",
+                 strchr(kShPopupBody, '\n') + 1);
+        shScript(lua, sizeof(lua), body);
+    }
+    UT_ASSERT(shPopupDirsMake());
+    snprintf(path, sizeof(path), "%s/%s", SH_POPUP_TUT_DIR, SH_POPUP_MOD_FILE);
+    {
+        FILE *f = fopen(path, "wb");
+        UT_ASSERT(f != NULL);
+        fputs(lua, f);
+        fclose(f);
+    }
+    rc = shPopupRun(shPopupAttachMod, got, sizeof(got));
+    remove(path);
+    shPopupDirsDrop();
+    if (rc != 0) return rc;
+    UT_ASSERT_MSG(strstr(got, "top=nil;") != NULL &&
+                      strstr(got, "setup=nil;") != NULL &&
+                      strstr(got, "call=nil;") != NULL &&
+                      strstr(got, "function") == NULL,
+                  "a mod wrote '%s', expected game.popup to be nil", got);
+    return 0;
+}
+
+/* A map's own script in a maps/tutorials folder, as a shipped tutorial is:
+ * game.popup is there at the top level and in a hook. */
+int run_scenario_host_popup_in_tutorial(void) {
+    char lua[2048];
+    char got[512];
+    int  rc;
+
+    shScript(lua, sizeof(lua), kShPopupBody);
+    UT_ASSERT(shPopupDirsMake());
+    UT_ASSERT(shPut(SH_POPUP_TUT_MAP, lua));
+    rc = shPopupRun(shPopupAttachTutorial, got, sizeof(got));
+    shDrop(SH_POPUP_TUT_MAP);
+    shPopupDirsDrop();
+    if (rc != 0) return rc;
+    UT_ASSERT_MSG(strstr(got, "top=function;") != NULL &&
+                      strstr(got, "setup=function;") != NULL &&
+                      strstr(got, "nil") == NULL,
+                  "a tutorial's script wrote '%s', expected game.popup to be "
+                  "a function", got);
+    return 0;
+}
+
+/* -validate reads the same rule: the stub game table has no popup outside
+ * the tutorials, and a popup trigger action there is an issue. In a
+ * tutorial's script both are fine. */
+int run_scenario_validate_popup_tutorial_only(void) {
+    static const char kOther[] =
+        "scenario = { api = 1, triggers = {\n"
+        "  { when = \"on_start\", actions = { { \"popup\", \"hi\" } } },\n"
+        "} }\n"
+        "if game.popup ~= nil then error(\"popup is here\") end\n";
+    static const char kTut[] =
+        "scenario = { api = 1, triggers = {\n"
+        "  { when = \"on_start\", actions = { { \"popup\", \"hi\" } } },\n"
+        "} }\n"
+        "if game.popup == nil then error(\"popup is not here\") end\n";
+    ScnValidateResult *r;
+    uint16_t           i;
+    bool               found = false;
+
+    r = (ScnValidateResult *)calloc(1, sizeof(*r));
+    UT_ASSERT(r != NULL);
+
+    (void)scenarioValidateSource(NULL, kOther, strlen(kOther),
+                                 "data/maps/Other.scenario.lua", NULL, r);
+    UT_ASSERT_MSG(r->haveManifest, "the script outside the tutorials did "
+                  "not run: game.popup was on the stub table");
+    for (i = 0; i < r->count; i++) {
+        if (strcmp(r->issues[i].key, "triggers[0].actions[0]") == 0 &&
+            strstr(r->issues[i].message, "built-in tutorial") != NULL) {
+            found = true;
+        }
+    }
+    UT_ASSERT_MSG(found, "the popup action outside the tutorials was not "
+                  "reported");
+
+    (void)scenarioValidateSource(NULL, kTut, strlen(kTut),
+                                 "data/maps/tutorials/Tut.scenario.lua", NULL,
+                                 r);
+    UT_ASSERT_MSG(r->haveManifest, "the tutorial script did not run: "
+                  "game.popup was missing from the stub table");
+    for (i = 0; i < r->count; i++) {
+        UT_ASSERT_MSG(strcmp(r->issues[i].key, "triggers[0].actions[0]") != 0,
+                      "the tutorial's popup action was reported: %s",
+                      r->issues[i].message);
+    }
+    free(r);
     return 0;
 }

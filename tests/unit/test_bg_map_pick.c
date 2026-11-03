@@ -113,127 +113,38 @@ int run_tutorial_maps_popup_pauses(void) {
     return 0;
 }
 
-/* Which popups open the popup window. Off (TUTORIAL_MAPS_SCRIPT_POPUPS 0):
- * only a built-in tutorial's, and any other script's goes to the Scenario
- * Text lines. On: every script's. The pause rule is separate
- * (run_tutorial_maps_popup_pauses): only a tutorial in a local game pauses. */
-int run_tutorial_maps_popup_opens_window(void) {
+/* Which scripts have game.popup. Off (TUTORIAL_MAPS_SCRIPT_POPUPS 0): only
+ * a built-in tutorial's own map script; another map's script, any mod (even
+ * one whose file is in a tutorials folder) and no script do not. On: every
+ * script. The pause rule is separate (run_tutorial_maps_popup_pauses): only a
+ * tutorial in a local game pauses. */
+int run_tutorial_maps_script_has_popup(void) {
     const char *tut     = "data/maps/tutorials/Tutorial.scenario.lua";
     const char *classic = "data/maps/tutorials/Classic Tutorial.scenario.lua";
     const char *other   = "data/maps/Survival.scenario.lua";
-    const char *mod     = "data/mods/MyMod/MyMod.scenario.lua";
+    const char *mod     = "data/mods/MyMod.scenario.lua";
 
     /* The flag as it is built. */
     UT_ASSERT(TUTORIAL_MAPS_SCRIPT_POPUPS == 0);
 
-    /* Off: the tutorials open the window, and in a local game they pause. */
-    UT_ASSERT(tutorialMapsPopupOpensWindow(false, tut));
-    UT_ASSERT(tutorialMapsPopupOpensWindow(false, classic));
+    /* Off: the tutorials' map scripts have the call, and in a local game
+       their popups pause. */
+    UT_ASSERT(tutorialMapsScriptHasPopup(false, true, tut));
+    UT_ASSERT(tutorialMapsScriptHasPopup(false, true, classic));
     UT_ASSERT(tutorialMapsPopupPauses(true, true, tut));
-    /* Off: another scenario, a mod, or no script opens no window, and so
-       pauses nothing. */
-    UT_ASSERT(!tutorialMapsPopupOpensWindow(false, other));
-    UT_ASSERT(!tutorialMapsPopupOpensWindow(false, mod));
-    UT_ASSERT(!tutorialMapsPopupOpensWindow(false, ""));
-    UT_ASSERT(!tutorialMapsPopupOpensWindow(false, NULL));
+    /* Off: another map's script, a mod, or no script has no call. */
+    UT_ASSERT(!tutorialMapsScriptHasPopup(false, true, other));
+    UT_ASSERT(!tutorialMapsScriptHasPopup(false, false, mod));
+    UT_ASSERT(!tutorialMapsScriptHasPopup(false, true, ""));
+    UT_ASSERT(!tutorialMapsScriptHasPopup(false, true, NULL));
+    /* Off: a mod is never a tutorial, even at a tutorial's path. */
+    UT_ASSERT(!tutorialMapsScriptHasPopup(false, false, tut));
+
+    /* On: every script has the call. Only a tutorial pauses. */
+    UT_ASSERT(tutorialMapsScriptHasPopup(true, true, tut));
+    UT_ASSERT(tutorialMapsScriptHasPopup(true, true, other));
+    UT_ASSERT(tutorialMapsScriptHasPopup(true, false, mod));
+    UT_ASSERT(tutorialMapsScriptHasPopup(true, true, ""));
     UT_ASSERT(!tutorialMapsPopupPauses(true, true, other));
-
-    /* On: every script's popup opens the window. Only a tutorial pauses. */
-    UT_ASSERT(tutorialMapsPopupOpensWindow(true, tut));
-    UT_ASSERT(tutorialMapsPopupOpensWindow(true, other));
-    UT_ASSERT(tutorialMapsPopupOpensWindow(true, mod));
-    UT_ASSERT(tutorialMapsPopupOpensWindow(true, ""));
-    UT_ASSERT(!tutorialMapsPopupPauses(true, true, mod));
-    return 0;
-}
-
-/* A popup with no window, split into Scenario Text lines: line breaks are
- * spaces, words are packed in order and broken only at a space, a word
- * longer than a line is cut at a UTF-8 character's start, and text past the
- * last line is reported dropped. */
-int run_tutorial_maps_popup_fallback_lines(void) {
-    char out[4][11];   /* 10 bytes a line */
-    bool dropped = true;
-    int  n;
-
-    /* One short line, with its line breaks and extra spaces as one space. */
-    n = tutorialMapsPopupFallbackLines("Hi\n\n  {FIRE}", &out[0][0],
-                                       sizeof(out[0]), 4, &dropped);
-    UT_ASSERT(n == 1);
-    UT_ASSERT(strcmp(out[0], "Hi {FIRE}") == 0);
-    UT_ASSERT(!dropped);
-
-    /* Packed into lines of up to 10 bytes, broken at spaces. */
-    n = tutorialMapsPopupFallbackLines("one two three four five", &out[0][0],
-                                       sizeof(out[0]), 4, &dropped);
-    UT_ASSERT(n == 3);
-    UT_ASSERT(strcmp(out[0], "one two") == 0);
-    UT_ASSERT(strcmp(out[1], "three four") == 0);
-    UT_ASSERT(strcmp(out[2], "five") == 0);
-    UT_ASSERT(!dropped);
-
-    /* A word longer than a line is cut. */
-    n = tutorialMapsPopupFallbackLines("abcdefghijklm", &out[0][0],
-                                       sizeof(out[0]), 4, &dropped);
-    UT_ASSERT(n == 2);
-    UT_ASSERT(strcmp(out[0], "abcdefghij") == 0);
-    UT_ASSERT(strcmp(out[1], "klm") == 0);
-
-    /* Never inside a UTF-8 character: "\xC3\xA9" is one two-byte letter,
-       and byte 10 would split the fifth one. */
-    n = tutorialMapsPopupFallbackLines(
-        "a\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9", &out[0][0],
-        sizeof(out[0]), 4, &dropped);
-    UT_ASSERT(n == 2);
-    UT_ASSERT(strcmp(out[0], "a\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9") == 0);
-    UT_ASSERT(strcmp(out[1], "\xC3\xA9") == 0);
-
-    /* More text than the lines hold: the first lines, and dropped. */
-    n = tutorialMapsPopupFallbackLines("aaaa bbbb cccc dddd eeee ffff gggg "
-                                       "hhhh iiii", &out[0][0],
-                                       sizeof(out[0]), 4, &dropped);
-    UT_ASSERT(n == 4);
-    UT_ASSERT(strcmp(out[3], "gggg hhhh") == 0);
-    UT_ASSERT(dropped);
-
-    /* Nothing to show. */
-    n = tutorialMapsPopupFallbackLines(" \n ", &out[0][0], sizeof(out[0]), 4,
-                                       &dropped);
-    UT_ASSERT(n == 0);
-    UT_ASSERT(tutorialMapsPopupFallbackLines(NULL, &out[0][0],
-                                             sizeof(out[0]), 4, NULL) == 0);
-
-    /* How long the lines stay up: 6 s, 1 more for each 20 bytes, at most
-       30. */
-    UT_ASSERT(tutorialMapsPopupFallbackSeconds(0) == 6);
-    UT_ASSERT(tutorialMapsPopupFallbackSeconds(100) == 11);
-    UT_ASSERT(tutorialMapsPopupFallbackSeconds(511) == 30);
-    return 0;
-}
-
-/* The wait for a popup's Scenario Text lines: up from "from" until
- * "until", and both set to 0 when the clock is before "from", as it is in a
- * new game whose server tick clock started at 0 again. */
-int run_tutorial_maps_popup_lines_wait(void) {
-    uint32_t from  = 5000;
-    uint32_t until = 6500;
-
-    /* In the window, and at its two ends. */
-    UT_ASSERT(tutorialMapsPopupLinesUp(5000, &from, &until));
-    UT_ASSERT(tutorialMapsPopupLinesUp(6499, &from, &until));
-    UT_ASSERT(!tutorialMapsPopupLinesUp(6500, &from, &until));
-    UT_ASSERT(from == 5000 && until == 6500);
-
-    /* A new game: the clock is back near 0. The old window is cleared, so
-       a popup that arrives later in the new game, inside the old window's
-       ticks, does not wait. */
-    UT_ASSERT(!tutorialMapsPopupLinesUp(10, &from, &until));
-    UT_ASSERT(from == 0 && until == 0);
-    UT_ASSERT(!tutorialMapsPopupLinesUp(5500, &from, &until));
-
-    /* Nothing shown yet. */
-    from = 0;
-    until = 0;
-    UT_ASSERT(!tutorialMapsPopupLinesUp(0, &from, &until));
     return 0;
 }

@@ -6753,9 +6753,10 @@ set(_unit_test_names
     bg_map_pick_skips_tutorials
     tutorial_maps_shipped_path
     tutorial_maps_popup_pauses
-    tutorial_maps_popup_opens_window
-    tutorial_maps_popup_fallback_lines
-    tutorial_maps_popup_lines_wait
+    tutorial_maps_script_has_popup
+    scenario_host_popup_nil_outside_tutorials
+    scenario_host_popup_in_tutorial
+    scenario_validate_popup_tutorial_only
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop

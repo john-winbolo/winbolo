@@ -66,6 +66,9 @@
 #include "scenario_lua.h"
 #include "sim_rules_names.h"      /* simRulesRuleName — a rule in a reason */
 #include "scenario_validate.h"
+/* TUTORIAL_MAPS_SCRIPT_POPUPS and tutorialMapsScriptHasPopup: which scripts
+ * have game.popup, read the way the host reads it. A pure header. */
+#include "../gui/sdl3/tutorial_maps.h"
 
 /* One line from the parse or from Lua, before it becomes an issue. Lua's own
  * messages carry the file path and the line ahead of the text, so this is
@@ -120,8 +123,12 @@ static int scnStubSetting(lua_State *L) {
 
 /* The shape of the game table with none of its substance. The names come off
  * the registry the real table is built from, so a row added to the surface is
- * on this table too with no second edit. */
-static void scnInstallStubGame(lua_State *L) {
+ * on this table too with no second edit.
+ *
+ * popup false leaves game.popup off, as the host does for every script that
+ * is not a shipped tutorial while TUTORIAL_MAPS_SCRIPT_POPUPS is 0, so a top
+ * level that calls it fails here as it would in a round. */
+static void scnInstallStubGame(lua_State *L, bool popup) {
     const ScnLuaRow       *rows;
     const ScnLuaConst     *consts;
     const ScnLuaTerrain   *terrain;
@@ -133,6 +140,9 @@ static void scnInstallStubGame(lua_State *L) {
 
     rows = scenarioLuaRows(&n);
     for (i = 0; i < n; i++) {
+        if (!popup && strcmp(rows[i].name, "popup") == 0) {
+            continue;
+        }
         lua_pushcclosure(L, strcmp(rows[i].name, "setting") == 0
                                 ? scnStubSetting
                                 : scnStubRow,
@@ -1345,7 +1355,7 @@ static void scnCheckTrigActArgs(const ScnTrigAct *a,
  * hook is one the surface has not got. */
 static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
                             const char *when, unsigned trig, unsigned at,
-                            ScnValidateResult *out) {
+                            bool popup, ScnValidateResult *out) {
     const ScnLuaRow *op;
     char             key[SCN_VALIDATE_KEY_LEN];
     size_t           required = 0;
@@ -1393,6 +1403,13 @@ static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
     if (op == NULL) {
         scnIssueAdd(out, key, "'%s' is no op the game table carries, so this "
                               "action does nothing", a->op);
+        return;
+    }
+    /* The host takes popup off this script's game table, and the router
+       finds nothing to run. */
+    if (!popup && strcmp(op->name, "popup") == 0) {
+        scnIssueAdd(out, key, "popup is only on the game table of a built-in "
+                              "tutorial, so this action does nothing");
         return;
     }
     if (!scenarioLuaOpIsScalar(op)) {
@@ -1462,7 +1479,7 @@ static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
  * holding a script and no map is told what a server would tell it. A
  * trigger has no name, so the key is its position, counted from zero as the
  * two readers count it. */
-static void scnCheckTriggers(const ScenarioManifest *m,
+static void scnCheckTriggers(const ScenarioManifest *m, bool popup,
                              ScnValidateResult *out) {
     uint8_t i;
 
@@ -1511,7 +1528,7 @@ static void scnCheckTriggers(const ScenarioManifest *m,
         for (j = 0; j < t->numActions; j++) {
             scnCheckTrigAct(&t->actions[j], (fn != NULL) ? &fields : NULL,
                             (fn != NULL) ? t->when : NULL, (unsigned)i,
-                            (unsigned)j, out);
+                            (unsigned)j, popup, out);
         }
     }
 }
@@ -1538,13 +1555,18 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
     lua_State     *L;
     ScnParseReport rep;
     size_t         before;
+    /* Whether this script has game.popup. A check does not know whether the
+       file is a map's script or a mod, so it is read as a map's: a file in
+       the shipped tutorials folder keeps the call. */
+    const bool     popup = tutorialMapsScriptHasPopup(
+        TUTORIAL_MAPS_SCRIPT_POPUPS != 0, true, name);
 
     L = scnNewVm();
     if (L == NULL) {
         scnIssueAdd(out, "", "no memory for a Lua state to check %s", name);
         return false;
     }
-    scnInstallStubGame(L);
+    scnInstallStubGame(L, popup);
 
     /* The manifest the caller holds, before the chunk, exactly where the host
        puts it. A script that declares no table of its own then reads back this
@@ -1608,7 +1630,7 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
        table of 64 triggers can report several faults apiece, and the list
        holds 64 in all — anything after this could be pushed off the end by
        a trigger table nobody has fixed yet. */
-    scnCheckTriggers(&out->manifest, out);
+    scnCheckTriggers(&out->manifest, popup, out);
 
     scnAttributeLines(out, src, srcLen);
 

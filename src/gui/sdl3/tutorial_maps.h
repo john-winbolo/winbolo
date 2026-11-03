@@ -22,15 +22,16 @@
  *   menu's background game puts each map name through, so
  *   that it never shows a tutorial. The desktop, mobile and
  *   web menus share both, and the test for whether a
- *   scenario popup pauses the game. Pure, so the unit tests
- *   check them without a menu (test_bg_map_pick.c).
+ *   scenario popup pauses the game. The scenario host and
+ *   -validate read the test for which scripts have the
+ *   popup call. Pure, so the unit tests check them without
+ *   a menu (test_bg_map_pick.c).
  *********************************************************/
 
 #ifndef TUTORIAL_MAPS_H
 #define TUTORIAL_MAPS_H
 
 #include <stdbool.h>
-#include <stdint.h>
 #include <string.h>
 
 /* The folder under data/maps that holds every shipped tutorial. Each
@@ -145,116 +146,33 @@ static inline bool tutorialMapsPopupPauses(bool singlePlayer,
            tutorialMapsIsShippedTutorial(mapScriptPath);
 }
 
-/* Whether a scenario or mod that is not a built-in tutorial may open a
- * popup window with game.popup.
- *   1 (on):  every scenario and mod opens its popups in the popup window, as
- *            the built-in tutorials do. The pause rule above still applies:
- *            only the built-in tutorials pause.
- *   0 (off): only the built-in tutorials (tutorialMapsIsShippedTutorial)
- *            open the window. Any other script's popup opens no window and
- *            pauses nothing: its text is shown as lines in the Scenario Text
- *            window, as game.announce lines are
- *            (tutorialMapsPopupFallbackLines). The server still accepts the
- *            call, so a script does not error.
- * Off for now. */
+/* Whether a scenario or mod that is not a built-in tutorial has the popup
+ * call, game.popup.
+ *   1 (on):  every scenario and mod script has game.popup, and each popup
+ *            opens the popup window, as a built-in tutorial's does. The
+ *            pause rule above still applies: only the built-in tutorials
+ *            pause.
+ *   0 (off): only a built-in tutorial's own map script has game.popup
+ *            (tutorialMapsScriptHasPopup). In every other script game.popup
+ *            is nil, so a call is the usual Lua error "attempt to call a nil
+ *            value", and `if game.popup then` finds nothing.
+ * The scenario host reads it where it builds each script's globals
+ * (scnScriptLoad in src/scenario/scenario_host.c), and -validate reads it for
+ * the stub game table. Off for now. */
 #define TUTORIAL_MAPS_SCRIPT_POPUPS 0
 
-/* Whether a scenario popup opens the popup window. scriptPopupsOn is
+/* Whether one script gets game.popup in its globals. scriptPopupsOn is
  * TUTORIAL_MAPS_SCRIPT_POPUPS, a parameter so a test can try both values.
- * mapScriptPath is the running map's own script, "" or NULL for none. */
-static inline bool tutorialMapsPopupOpensWindow(bool scriptPopupsOn,
-                                                const char *mapScriptPath) {
-    return scriptPopupsOn || tutorialMapsIsShippedTutorial(mapScriptPath);
-}
-
-/* How long, in seconds, the Scenario Text lines of a popup that opens no
- * window stay up: 6 seconds, and 1 more for each 20 bytes of text, at most
- * 30. The player cannot close them, so a long popup gets more time. */
-static inline int tutorialMapsPopupFallbackSeconds(size_t textLen) {
-    size_t s = 6u + textLen / 20u;
-    return (int)(s > 30u ? 30u : s);
-}
-
-/* Whether the Scenario Text lines of the last popup that opened no window
- * are still up at server tick now: from *from (inclusive) to *until. The
- * server's tick clock starts at 0 again in each new game, so a now before
- * *from means the window belongs to an earlier game: both are set to 0,
- * and the lines are not up. */
-static inline bool tutorialMapsPopupLinesUp(uint32_t now, uint32_t *from,
-                                            uint32_t *until) {
-    if (now < *from) {
-        *from  = 0;
-        *until = 0;
-    }
-    return now >= *from && now < *until;
-}
-
-/* Splits a popup's text into lines for the Scenario Text window, for a
- * popup that opens no window. Each line is at most lineCap - 1 bytes, and
- * out holds maxLines of them, lineCap bytes apart. As in the popup window,
- * a line break is read as a space. The words are packed into each line in
- * order, and a line is broken only at a space. A word longer than a line is
- * cut, but never inside a UTF-8 character. Returns the number of lines
- * written. *dropped is set true when text was left over after maxLines
- * lines. */
-static inline int tutorialMapsPopupFallbackLines(const char *text, char *out,
-                                                 size_t lineCap, int maxLines,
-                                                 bool *dropped) {
-    int    n   = 0;
-    size_t len = 0;   /* bytes in line n so far */
-    const char *p = text;
-
-    if (dropped != NULL) *dropped = false;
-    if (text == NULL || out == NULL || lineCap < 2 || maxLines <= 0) {
-        return 0;
-    }
-    for (;;) {
-        const char *w;
-        size_t      wl;
-        while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') p++;
-        if (*p == '\0') break;
-        w = p;
-        while (*p != '\0' && *p != ' ' && *p != '\n' && *p != '\r' &&
-               *p != '\t') {
-            p++;
-        }
-        wl = (size_t)(p - w);
-        while (wl > 0) {
-            char  *line = out + (size_t)n * lineCap;
-            /* The bytes left in this line, less the space before the word
-               when the line has words already. */
-            const size_t used = len + (len > 0 ? 1u : 0u);
-            size_t room = (used < lineCap - 1) ? lineCap - 1 - used : 0u;
-            size_t take = wl;
-            if (take > room) {
-                if (len > 0) {
-                    /* The word goes on a new line. */
-                    if (++n >= maxLines) {
-                        if (dropped != NULL) *dropped = true;
-                        return n;
-                    }
-                    len = 0;
-                    continue;
-                }
-                /* A word longer than a whole line: cut it, at the start of
-                   a UTF-8 character. */
-                take = room;
-                while (take > 0 &&
-                       ((unsigned char)w[take] & 0xC0u) == 0x80u) {
-                    take--;
-                }
-                if (take == 0) take = room;
-            }
-            if (len > 0) line[len++] = ' ';
-            memcpy(line + len, w, take);
-            len += take;
-            line[len] = '\0';
-            w  += take;
-            wl -= take;
-        }
-    }
-    if (len > 0) n++;
-    return n;
+ * isMapScript is true for the committed map's own script and false for a
+ * mod. scriptPath is that script's path. With script popups off, only a
+ * map's own script in the shipped tutorials folder
+ * (tutorialMapsIsShippedTutorial) gets the call: a mod never does, wherever
+ * its file is. */
+static inline bool tutorialMapsScriptHasPopup(bool scriptPopupsOn,
+                                              bool isMapScript,
+                                              const char *scriptPath) {
+    return scriptPopupsOn ||
+           (isMapScript && tutorialMapsIsShippedTutorial(scriptPath));
 }
 
 #endif /* TUTORIAL_MAPS_H */

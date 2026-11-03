@@ -89,6 +89,10 @@
 #include "platform_types.h"        /* BOLO_STATIC_ASSERT */
 #include "bolo_rand.h"             /* BoloRandState, bolo_rand_save */
 #include "../common/wb_log.h"      /* WB_LOG_INFO — the line a saved copy logs */
+/* TUTORIAL_MAPS_SCRIPT_POPUPS and tutorialMapsScriptHasPopup: which scripts
+ * get game.popup. A pure header with no SDL or GUI in it, so the dedicated
+ * server reads the same rule as the client's menus. */
+#include "../gui/sdl3/tutorial_maps.h"
 #include "brain_list.h"            /* brainListResolve — the brain a team
                                     * names, against this server's own
                                     * brains directory */
@@ -1088,6 +1092,53 @@ int scnEnvNew(lua_State *L) {
     lua_rawset(L, -3);
 
     return luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+/* Takes popup off the game table in the globals envRef names, so that one
+ * script finds game.popup nil and every other script is left as it was.
+ *
+ * The env's game is the script's own copy in a sandboxed state (scnEnvNew
+ * copies it two levels deep), and the field comes off that copy. Under
+ * -allow-unsafe-scripts the env holds the state's one game table, shared
+ * with every script, so a copy one level deep is made for this script first
+ * and the field comes off the copy. TERRAIN and the word tables in it stay
+ * shared there, as every other table is in that state.
+ *
+ * Raw reads and writes throughout, so no metatable runs. False where there
+ * was no stack or no memory for it. */
+static bool scnEnvDropPopup(lua_State *L, int envRef) {
+    int env;
+
+    if (!lua_checkstack(L, 10)) {
+        return false;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, envRef);
+    env = lua_gettop(L);
+    lua_pushstring(L, "game");
+    lua_rawget(L, env);
+    if (!lua_istable(L, -1)) {
+        lua_settop(L, env - 1);
+        return true;                 /* no game table, so no popup either */
+    }
+    scnPushGlobals(L);
+    lua_pushstring(L, "game");
+    lua_rawget(L, -2);
+    if (lua_rawequal(L, -1, -3)) {
+        /* The shared table: this script gets a copy of its own. */
+        lua_pop(L, 2);               /* the globals' game, the globals */
+        scnCopyTable(L, lua_gettop(L), 1);
+        lua_remove(L, -2);           /* the shared game, under the copy */
+        lua_pushstring(L, "game");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, env);
+    } else {
+        lua_pop(L, 2);
+    }
+    lua_pushstring(L, "popup");
+    lua_pushnil(L);
+    lua_rawset(L, -3);
+    lua_settop(L, env - 1);
+    return true;
 }
 
 /* One script's globals on the stack. LUA_NOREF is the validator and the
@@ -3823,7 +3874,20 @@ typedef struct ScnScriptLoad {
      * holds, and this writes into that same struct. */
     ScnLuaCtx              *ctx;
     int                     entry;
+    /* Whether this script's game table keeps popup. False takes game.popup
+     * out of this script's globals before its chunk runs, so the call is
+     * nil there (scnEnvDropPopup). Set by scnLoadHasPopup. */
+    bool                    popup;
 } ScnScriptLoad;
+
+/* Whether a script of the list gets game.popup: every script while
+ * TUTORIAL_MAPS_SCRIPT_POPUPS is 1, and only a shipped tutorial's own map
+ * script while it is 0. A mod never gets it while it is 0, wherever its file
+ * is. path is the script's full path, not its file name. */
+static bool scnLoadHasPopup(LobbyScenarioSource source, const char *path) {
+    return tutorialMapsScriptHasPopup(TUTORIAL_MAPS_SCRIPT_POPUPS != 0,
+                                      source == lobbyScenarioMap, path);
+}
 
 /* A slot ready to take a script: every reference empty and a zeroed table of
  * its own on the heap, which is the table the chunk's own read fills and the
@@ -3888,6 +3952,15 @@ static bool scnScriptLoad(lua_State *L, ScnScriptEntry *e,
 
     e->envRef = scnEnvNew(L);
     if (e->envRef == LUA_NOREF) {
+        scnFmt(err, errLen, "scenario: no memory for %s's own globals",
+               in->path);
+        return false;
+    }
+    /* game.popup is only for the shipped tutorials while
+       TUTORIAL_MAPS_SCRIPT_POPUPS is 0: every other script's globals lose
+       it here, before its chunk runs, so a top level, a hook and the trigger
+       router all find it nil. */
+    if (!in->popup && !scnEnvDropPopup(L, e->envRef)) {
         scnFmt(err, errLen, "scenario: no memory for %s's own globals",
                in->path);
         return false;
@@ -6531,6 +6604,8 @@ static void scnRoundBootLocked(ScenarioHost *h) {
         load[n].pkg       = h->entry[n].pkgManifest;
         load[n].ctx       = &h->lua;
         load[n].entry     = n;
+        load[n].popup     = scnLoadHasPopup(h->entry[n].source,
+                                            h->entry[n].script);
         /* This is the state the round dispatches from, so it is the one
            whose hooks the host holds on to. */
         load[n].resolveHooks = true;
@@ -9366,6 +9441,8 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
         load[i].pkg       = from[i].fromPackage ? from[i].manifest : NULL;
         load[i].ctx       = &h->lua;
         load[i].entry     = i;
+        load[i].popup     = scnLoadHasPopup(h->entry[i].source,
+                                            h->entry[i].script);
         /* No hook is dispatched off this state — the hooks belong to a
            round's VM and the first round start resolves them — so nothing
            here asks for them. What the load settles is that the chunk runs,
@@ -9837,6 +9914,9 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
         load.pkg          = from[i].fromPackage ? from[i].manifest : NULL;
         load.ctx          = &check;
         load.entry        = i;
+        /* The full path, not the name the chunk is called by above: the
+           tutorial test reads the folders the file is in. */
+        load.popup        = scnLoadHasPopup(from[i].source, from[i].script);
         load.resolveHooks = false;
         if (!scnScriptLoad(L, &reloaded[i], &load, err, errLen, &rep)) {
             goto done;
