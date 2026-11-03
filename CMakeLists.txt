@@ -6489,6 +6489,7 @@ set(_unit_test_names
     sim_rules_pill_massage_follows
     sim_rules_pill_aim_mac
     sim_rules_tank_collision_mac
+    sim_rules_mac_halfway_heading
     sim_rules_tank_deep_sea_safe
     lgm_build_square_terrain_speed
     pill_shell_cap_off_is_no_limit
