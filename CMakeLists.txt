@@ -6047,6 +6047,7 @@ set(_unit_test_names
     nav_outline_alt_arrow_not_claimed
     nav_outline_first_home_end_shows
     nav_outline_first_page_keys_shows
+    nav_outline_destroyed_context_forgets_focus
     browser_version_parse
     version_protocol_bytes
     clip_gif_len_sync

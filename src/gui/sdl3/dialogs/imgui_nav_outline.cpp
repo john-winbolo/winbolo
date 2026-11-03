@@ -65,8 +65,10 @@ static bool s_navOutlineByKey     = false;
 static bool s_navOutlineByPadUser = false;
 
 /* The item focused from code, in the context s_codeFocusCtx.  Like
-   s_tabStuckCtx below, both context pointers are only compared, never
-   dereferenced. */
+   s_tabStuckCtx below, the context pointers are only compared, never
+   dereferenced.  navOutlineShutdown clears them when their context is
+   destroyed, so a later context at the same address does not inherit
+   them. */
 static const ImGuiContext *s_codeFocusCtx        = nullptr;
 static ImGuiID             s_codeFocusId         = 0;
 static const ImGuiContext *s_codeFocusPendingCtx = nullptr;
@@ -178,7 +180,12 @@ static void navOutlineClaimTab(ImGuiContext *g) {
    before the press, so the test reads the modifiers at that time; if Ctrl
    or Alt goes down in the same frame as the key, the key is still
    claimed, and navOutlineTrackInput then shows the outline for it.  The
-   pad keys are claimed as before, as a pad has no Ctrl or Alt. */
+   pad keys are claimed as before, as a pad has no Ctrl or Alt.  The
+   other order is not covered either: if Ctrl or Alt is let go in the
+   same frame as the key goes down, the claim was not made, so ImGui
+   acts on that press with the outline hidden, and navOutlineTrackInput
+   then shows the outline.  This is one frame wide and is left as it
+   is. */
 static void navOutlineClaimKey(ImGuiKey key, bool want) {
     ImGuiID owner = ImGui::GetKeyOwner(key);
     if (want) {
@@ -237,7 +244,8 @@ static void navOutlineClaimNavKeys(ImGuiContext *g) {
    The state is read at the end of the previous frame (NavIdIsAlive is
    cleared in NavUpdate), for that context only.  s_tabStuckCtx is only
    compared with the hook's context, never dereferenced, so it is safe
-   after that context is destroyed; the hook is destroyed with it. */
+   after that context is destroyed; the hook is destroyed with it, and
+   navOutlineShutdown clears s_tabStuckCtx. */
 static const ImGuiContext *s_tabStuckCtx = nullptr;
 static bool                s_tabStuck    = false;
 
@@ -320,6 +328,24 @@ static void navOutlineNewFramePost(ImGuiContext *ctx, ImGuiContextHook *hook) {
     navOutlineFixStuckTab(ctx, hook);
 }
 
+/* The context is being destroyed (DestroyContext calls Shutdown, which
+   calls this hook first).  Forget every record kept for it.  Without
+   this, a new context created later at the same address would inherit
+   them: an item focused from code in the old context would show the
+   outline in the new one if its first NavId had the same id. */
+static void navOutlineShutdown(ImGuiContext *ctx, ImGuiContextHook *) {
+    if (s_codeFocusCtx == ctx) {
+        s_codeFocusCtx = nullptr;
+        s_codeFocusId  = 0;
+    }
+    if (s_codeFocusPendingCtx == ctx) s_codeFocusPendingCtx = nullptr;
+    if (s_codeFocusQuietCtx == ctx) s_codeFocusQuietCtx = nullptr;
+    if (s_tabStuckCtx == ctx) {
+        s_tabStuckCtx = nullptr;
+        s_tabStuck    = false;
+    }
+}
+
 /* Add the hooks once per context. */
 static void navOutlineEnsureHook(ImGuiContext *g, ImGuiContextHookType type,
                                  ImGuiContextHookCallback callback) {
@@ -337,6 +363,8 @@ static void navOutlineEnsureHooks(ImGuiContext *g) {
                          navOutlineNoteFocusRequest);
     navOutlineEnsureHook(g, ImGuiContextHookType_NewFramePost,
                          navOutlineNewFramePost);
+    navOutlineEnsureHook(g, ImGuiContextHookType_Shutdown,
+                         navOutlineShutdown);
 }
 
 /* The item focused from code stops showing the outline once the focus

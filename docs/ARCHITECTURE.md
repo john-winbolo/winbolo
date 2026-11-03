@@ -2401,14 +2401,30 @@ one file on the list no test drives on its own.
 
 They do not borrow the target's T2 access. They keep the `gui`
 profile's public-only rule. That is the rule which qualifies a file
-for this list: **a leaf a test can call with no display attached —
-no ImGui, and no window, renderer or audio device of its own.**
-Nothing here creates or holds one. `sdl_bmp.c` marks where the
-boundary runs: its upload calls take an `SDL_Renderer *` they are
-handed, and the surface-level half the tests use needs none, so the
-file goes in while a file that opened a renderer would not. The
-drawing half of the overview (`overview_view.cpp`) does not qualify
-and stays out.
+for this list: **a leaf a test can call with no display attached — no
+ImGui, and no window, renderer or audio device of its own.** Nothing
+here creates or holds one. One file outside the eighteen is the single
+named exception to the "no ImGui" part; see the paragraph after this
+one. `sdl_bmp.c` marks where the boundary runs: its upload calls take
+an `SDL_Renderer *` they are handed, and the surface-level half the
+tests use needs none, so the file goes in while a file that opened a
+renderer would not. The drawing half of the overview
+(`overview_view.cpp`) does not qualify and stays out.
+
+`dialogs/imgui_nav_outline.cpp` is that exception: it is the one
+source linked into `WinBoloUnitTests` that uses ImGui, and for it the
+test binary also links `imgui_backends`. It is the focus outline and
+its key rule: which key press only shows the outline and which press
+acts, read from and written to ImGui's own nav state and key owners.
+That rule cannot be tested without ImGui, because ImGui is what it
+acts on. `tests/unit/test_nav_outline.cpp` drives it in a headless
+ImGui context: the test creates a context, feeds it key and mouse
+events, and runs `NewFrame` and `Render` with no window, no renderer
+and no platform or renderer backend running. So the file still meets
+the aim of the rule, no display attached, and only the "no ImGui" part
+is set aside, for this file alone. A second ImGui file joins only on
+the same terms: it opens no window, renderer or device, and its test
+runs ImGui with no display.
 
 The alternative, for the geometry files, was moving the maths into
 `src/bolo/`, which would put pixel, zoom and panel-layout concerns
@@ -2417,11 +2433,12 @@ and linking the leaf files is the smaller distortion of the two.
 
 **Rests on** each of the eighteen still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
-include, or that opens a renderer or a device of its own, has left
-the category, and the answer is to split the leaf back out — the
-link break is the signal, not a build problem to route around by
-widening the test binary. An eighteenth file joins only on the same
-test: callable with no display attached, or it does not go in.
+include (other than `dialogs/imgui_nav_outline.cpp`, above), or that
+opens a renderer or a device of its own, has left the category, and
+the answer is to split the leaf back out — the link break is the
+signal, not a build problem to route around by widening the test
+binary. An eighteenth file joins only on the same test: callable with
+no display attached, or it does not go in.
 
 Six `src/mapeditor` files ride the same rule from a different
 directory and are not on that list: `mapeditor_scenario.c`,
