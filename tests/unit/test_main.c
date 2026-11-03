@@ -484,6 +484,7 @@ static const UnitTestEntry s_tests[] = {
     { "pf_astar_no_solid_corner_cut",            run_pf_astar_no_solid_corner_cut            },
     { "pf_costto_no_solid_corner_cut",           run_pf_costto_no_solid_corner_cut           },
     { "pf_foot_next_step_goes_to_boat",          run_pf_foot_next_step_goes_to_boat          },
+    { "pf_foot_stale_boat_root_keeps_route",     run_pf_foot_stale_boat_root_keeps_route     },
     { "bench_decoy_step_first",                  run_bench_decoy_step_first                  },
     { "pf_tail_reaches_radius_and_stops",        run_pf_tail_reaches_radius_and_stops        },
     { "pf_tail_blocked_by_wall_and_sea",         run_pf_tail_blocked_by_wall_and_sea         },
