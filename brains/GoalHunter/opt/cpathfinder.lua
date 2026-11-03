@@ -188,6 +188,15 @@ function M.configure(opts)
   local chain_veer = opts.nextstep_chain_veer
   if chain_veer == nil then chain_veer = C.PF_NEXTSTEP_CHAIN_VEER end
   cpf_set_config("nextstep_chain_veer", chain_veer and 1 or 0)
+
+  -- Slate root heading (C.PF_START_HEADING; PRESETS.keel = false): the root's
+  -- first steps pay the turn cost from the tank heading passed to
+  -- dijkstra_start. Same explicit-false handling as the rules above. An
+  -- engine without the key ignores it, and with the key off the C side drops
+  -- the heading, so the old results are kept.
+  local start_heading = opts.start_heading
+  if start_heading == nil then start_heading = C.PF_START_HEADING end
+  cpf_set_config("start_heading", start_heading and 1 or 0)
 end
 
 -- Last veto sequence number seen from the C pathfinder, so the debug print
@@ -395,12 +404,15 @@ end
 ---   exact: nil/true = exact wall_shoot shell tracking, false = optimistic
 ---   danger_scale: per-slate danger weighting (1.0 = standard)
 ---   kind: matcher tag — lookups search slates with the same kind
+---   heading: tank direction 0..255 at the root, or nil. The C side uses it
+---            only while "start_heading" is on (C.PF_START_HEADING).
 function M.dijkstra_start(slate, tick, sx, sy, in_boat, shells, trees, mines, armour,
-                          max_cost, exact, danger_scale, kind, allow_boat)
+                          max_cost, exact, danger_scale, kind, allow_boat, heading)
   if exact == nil then exact = true end
   if allow_boat == nil then allow_boat = 1 end
   cpf_dijkstra_start(slate, tick, sx, sy, in_boat, shells, trees, mines, armour,
-                     max_cost or 0, exact, danger_scale or 1.0, kind or 0, allow_boat)
+                     max_cost or 0, exact, danger_scale or 1.0, kind or 0, allow_boat,
+                     heading)
 end
 
 function M.dijkstra_copy_slate(src, dst)

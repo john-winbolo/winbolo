@@ -83,6 +83,13 @@ typedef struct {
   uint32_t version;
   uint32_t started_tick;   /* tick passed to Start; identifies "recency" for lookups */
   uint32_t completed_tick; /* tick when done flipped true; 0 while running */
+  /* Tank heading at the slate root, set by
+   * brainPathfinderDijkstraSetSourceHeading only while the "start_heading"
+   * config key is on. has_src_heading 0 = no heading (the old behaviour: the
+   * root's first steps pay no turn cost). src_heading is the Bolo direction
+   * 0..255 (0 = north, clockwise), read when the slate was started. */
+  int      has_src_heading;
+  int      src_heading;
 } DijkstraSlate;
 
 /* Per-instance pathfinder state */
@@ -177,6 +184,13 @@ struct BrainPathfinder {
    * touches the chain ahead. Set from Lua via
    * cpf_set_config("nextstep_chain_veer", 1). */
   float nextstep_chain_veer;
+  /* start_heading: 0 = off (historical behaviour), non-zero = on. The
+   * Dijkstra slate root has no arrival direction, so its first steps paid no
+   * turn cost and a full reverse was as cheap as straight ahead. When on,
+   * brainPathfinderDijkstraSetSourceHeading records the tank heading on the
+   * slate and the root's first steps pay the same turn_lut cost as any other
+   * step. Set from Lua via cpf_set_config("start_heading", 1). */
+  float start_heading;
 
   /* Last tile the rule above vetoed, for the brain's debug print only.
    * sea_veto_seq increments on every veto, so the Lua wrapper can tell a
@@ -392,6 +406,11 @@ void  brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick
                                     int shells, int trees, int mines, int armour,
                                     float max_cost, int exact,
                                     float danger_scale, int kind, int allow_boat);
+/* Give the slate root the tank heading (Bolo direction 0..255) so its first
+ * steps pay the turn cost. Call right after Start, before the first Step.
+ * Does nothing unless the "start_heading" config key is on; Start clears it. */
+void  brainPathfinderDijkstraSetSourceHeading(BrainPathfinder *pf, int slate,
+                                               int heading);
 int   brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, int budget);
 float brainPathfinderDijkstraCostAt(BrainPathfinder *pf, int slate,
                                      int x, int y, int boat);

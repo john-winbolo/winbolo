@@ -628,6 +628,11 @@ int run_pf_foot_next_step_goes_to_boat(void);
 /* Same file: a slate rooted in a boat with the tank now on foot (stale root)
  * keeps the old pick, the route's next square (seed 330 bot1 t=184). */
 int run_pf_foot_stale_boat_root_keeps_route(void);
+/* The Dijkstra slate root pays the turn cost from the tank heading when
+ * "start_heading" is on; off, every cost matches the old slate
+ * (test_pf_start_heading.c, player 2 brain ticks 2147-2328). */
+int run_pf_start_heading_first_step_goes_ahead(void);
+int run_pf_start_heading_off_keeps_old_costs(void);
 /* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
  * cost of decoy_getaway's blocker step on the decoy square. */
 int run_bench_decoy_step_first(void);

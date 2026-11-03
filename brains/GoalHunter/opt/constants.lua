@@ -1709,6 +1709,16 @@ M.PF_FLIP_FRESH_ASTAR           = true
 -- tile and no new hold starts until the tank moves. Before it the hold had no
 -- cap. KEEL 60 (unused there: PF_FLIP_FRESH_ASTAR is false).
 M.PF_FLIP_FRESH_ASTAR_TICKS     = 60
+-- Slate root heading, 2026-11-03. The Dijkstra slate root has no arrival
+-- direction, so its first steps paid no turn cost: a full reverse at speed
+-- was as cheap as going straight on, and with two routes of near equal cost
+-- the slate could pick the step behind the tank. Steering then made a U-turn
+-- at speed 48 that became a wide loop (recorded game, player 2, brain ticks
+-- 2147-2328, about 230 ticks lost). true => each slate is started with the
+-- tank heading and the root's first steps pay the same turn cost (turn_cost
+-- per 45 degrees) as every other step. No new cost value. Plumbed to the C
+-- pathfinder in cpathfinder.lua's M.configure as "start_heading". KEEL false.
+M.PF_START_HEADING              = true
 M.DIJKSTRA_USE_FOR_GOALS        = true  -- replace cost_to in step_eval_queue with dijkstra
                                         -- lookup_by_kind. Pill pools use kind=1 (low-danger
                                         -- slate), other pools use kind=0 (normal-danger slate).
@@ -6343,6 +6353,9 @@ M.PRESETS = {
     -- 2026-09-26: cap on that hold. Unused with the guard off; same value as
     -- the default.
     PF_FLIP_FRESH_ASTAR_TICKS     = 60,
+    -- 2026-11-03: the Dijkstra slate root pays the turn cost from the tank
+    -- heading. KEEL gave the root's first steps no turn cost.
+    PF_START_HEADING              = false,
     -- 2026-09-05 (evening): BLITZ_CONTESTED_ALL_SUICIDERS had an entry here and
     -- no longer needs one -- the bench sent it back and its DEFAULT is now
     -- false, which is already the KEEL value. A knob whose default equals its
