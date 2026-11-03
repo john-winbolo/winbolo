@@ -2435,6 +2435,9 @@ int run_pill_shell_cap_holds_then_fires_when_freed(void);
 int run_pill_shell_cap_out_of_range_clears_just_seen(void);
 int run_pill_shell_cap_counts_same_update_shots(void);
 int run_pill_shell_cap_ignores_tank_shells(void);
+/* pill_aim_iterations through pillsTargetTankMove (test_pill_aim_budget.c). */
+int run_pill_aim_budget_past_a_byte_ends(void);
+int run_pill_aim_budget_one_aims_at_tank(void);
 int run_sim_rules_tank_explosion_follows(void);
 int run_sim_rules_water_loss_follows(void);
 int run_sim_rules_pairs(void);

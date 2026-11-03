@@ -1212,6 +1212,8 @@ static const UnitTestEntry s_tests[] = {
     { "pill_shell_cap_out_of_range_clears_just_seen", run_pill_shell_cap_out_of_range_clears_just_seen },
     { "pill_shell_cap_counts_same_update_shots", run_pill_shell_cap_counts_same_update_shots },
     { "pill_shell_cap_ignores_tank_shells", run_pill_shell_cap_ignores_tank_shells },
+    { "pill_aim_budget_past_a_byte_ends", run_pill_aim_budget_past_a_byte_ends },
+    { "pill_aim_budget_one_aims_at_tank", run_pill_aim_budget_one_aims_at_tank },
     { "sim_rules_tank_explosion_follows", run_sim_rules_tank_explosion_follows },
     { "sim_rules_water_loss_follows", run_sim_rules_water_loss_follows },
     { "sim_rules_pairs",                         run_sim_rules_pairs                         },
