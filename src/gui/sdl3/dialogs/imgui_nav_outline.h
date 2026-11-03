@@ -33,11 +33,23 @@ extern "C" {
  * dialogNavOutlineSetControllerInUse says so.  An item that a dialog
  * focuses from code (SetKeyboardFocusHere) shows it at once, until a
  * mouse button click or until the focus leaves it.  While the outline
- * is hidden, the first Tab only shows it on the focused item and does
- * not move focus, and Enter does not press the focused item; this call
- * claims the Tab and Enter keys for the next frame to do that, so call
- * it each frame before ImGui::Render(). */
+ * is hidden, the first press of a key that moves or presses the focused
+ * item (Tab, Enter, keypad Enter, Space, the arrow keys, the d-pad or
+ * the pad's activate button) only shows the outline on the focused item;
+ * the next press acts.  This call claims those keys for the next frame
+ * to do that, so call it each frame before ImGui::Render(). */
 void dialogDrawNavOutline(void);
+
+/* Call just before or after SetKeyboardFocusHere() when that focus from
+ * code must not show the outline at once (the lobby's Ready button at
+ * open).  The outline then stays hidden, and the first Enter only shows
+ * it on the focused item.  It applies to the current context's next
+ * focus from code only. */
+void dialogNavOutlineQuietCodeFocus(void);
+
+/* True when the outline shows in the current context this frame (if
+ * ImGui has a live focused item to draw it on).  For tests. */
+bool dialogNavOutlineIsShown(void);
 
 /* Tell the outline that a controller is the device in use, so it shows
  * without a Tab press.  The game calls this each frame from its input

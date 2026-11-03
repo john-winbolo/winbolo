@@ -211,10 +211,11 @@ static void lobbyFrameInitState(ClientSim *cs) {
      * Ready. Escape still leaves, which is the pair it belongs in.
      *
      * Applied once, on the first frame Ready is actually enabled — see the two
-     * sites that consume this. An item focused from code shows the focus
-     * outline at once (imgui_nav_outline.cpp), so the player sees that Enter
-     * will press Ready; after a mouse click hides it, Enter does not press
-     * the focused item until a Tab shows the outline again. */
+     * sites that consume this. The seed is a quiet focus
+     * (dialogNavOutlineQuietCodeFocus), so the lobby opens with no focus
+     * outline, as before. While the outline is hidden, the first Enter only
+     * shows it on Ready, and the next Enter presses Ready
+     * (imgui_nav_outline.cpp). */
     s_lf.focusReadyPending = true;
     s_lf.prevCountdown     = clientSimGetCountdownSeconds(cs);
 }
@@ -1658,7 +1659,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      * down. Their choice wins, and the seed is dropped rather
                      * than held, so it cannot yank the caret out of a
                      * half-typed line the moment they pause. */
-                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
+                    if (!ImGui::GetIO().WantTextInput) {
+                        ImGui::SetKeyboardFocusHere();
+                        /* Seed what Enter hits, with no outline. */
+                        dialogNavOutlineQuietCodeFocus();
+                    }
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
@@ -2437,7 +2442,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      * down. Their choice wins, and the seed is dropped rather
                      * than held, so it cannot yank the caret out of a
                      * half-typed line the moment they pause. */
-                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
+                    if (!ImGui::GetIO().WantTextInput) {
+                        ImGui::SetKeyboardFocusHere();
+                        /* Seed what Enter hits, with no outline. */
+                        dialogNavOutlineQuietCodeFocus();
+                    }
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(-1, 0))) {
