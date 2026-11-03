@@ -6243,6 +6243,7 @@ set(_unit_test_names
     clip_gif_mode_state
     clip_gif_preview_play
     clip_gif_choose_crop
+    clip_gif_default_frame
     clip_gif_meta_begin
     clip_gif_span_place
     clip_gif_zoom_axis
