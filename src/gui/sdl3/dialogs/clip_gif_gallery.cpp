@@ -66,6 +66,26 @@ static const Uint64 GALLERY_DECODE_DELAY_MS = 150;
 #define GALLERY_PLAYERS_LEN \
     (CLIP_GIF_META_MAX_PLAYERS * (CLIP_GIF_META_NAME_LEN + 2))
 
+/* How long a delete the player said Yes to waits for a decode worker to end
+ * before it is tried anyway. On Windows the worker's open file stops the
+ * delete, and a stopped worker ends within a frame, so 2 seconds is far more
+ * than it needs; the limit is there so a worker that does not end cannot
+ * keep the delete waiting for ever. When the limit is reached the delete is
+ * tried, and if it fails the failure message shows. */
+static const Uint64 GALLERY_DELETE_WAIT_MS = 2000;
+
+/* The text of one list row, made once when the list is read rather than on
+ * every frame: the first line ("<when>  <map>") with the row's "##gif" id on
+ * the end, and the players line. The widths are measured with the font the
+ * list was last drawn with (s_gal.rowsFont and s_gal.rowsFontSize). */
+typedef struct GalleryRowText {
+    char  label[CLIP_GIF_META_MAP_LEN + 48 + 8];
+    int   textLen;   /* the first line's length, without the id */
+    char  players[GALLERY_PLAYERS_LEN];
+    float textW;
+    float playersW;
+} GalleryRowText;
+
 /* The selected GIF, decoded: every frame as RGBA in one block, the time each
  * one is shown, and one streaming texture the current frame is copied into.
  * One texture rather than one per frame, so the GPU holds a single frame
@@ -115,6 +135,13 @@ typedef struct ClipGifGalleryState {
      * did not draw the window (another lobby view was showing). */
     bool         renderedThisFrame = false;
     ClipGifMeta *items     = nullptr;  /* SDL_malloc'd by the scan */
+    /* count rows of text, in the order of items, made by the scan; null
+     * when there was no memory for them, and each row is then made as it
+     * is drawn. */
+    GalleryRowText *rows   = nullptr;
+    /* The font the rows' widths were measured with; null for not yet. */
+    ImFont      *rowsFont  = nullptr;
+    float        rowsFontSize = 0.0f;
     int          count     = 0;
     int          selected  = -1;
     /* The id of the game whose replay the reel had open at the last scan
@@ -148,6 +175,14 @@ typedef struct ClipGifGalleryState {
     /* The GIF the delete question is about, set when the question opens, so
      * a selection that moves under it does not change which file goes. */
     char         deleteFile[CLIP_GIF_META_FILE_LEN] = "";
+    /* The GIF the player said Yes to deleting, removed at the start of a
+     * later frame (galleryPendingDeleteStep) rather than inside the
+     * question: the frame that asked has already queued the preview's
+     * texture to be drawn, so it cannot be destroyed until that frame is
+     * drawn. It also waits there for a decode worker that still has the file
+     * open, for up to GALLERY_DELETE_WAIT_MS from pendingDeleteSinceMs. */
+    char         pendingDelete[CLIP_GIF_META_FILE_LEN] = "";
+    Uint64       pendingDeleteSinceMs = 0;
     /* The picture size of sizeFile before it is decoded, from its metadata
      * or its GIF header (0 when neither gave it), so the room the picture
      * takes is kept while it loads. Found once for each selection. */
@@ -230,6 +265,9 @@ static void galleryPreviewFree(void) {
 static void galleryFreeItems(void) {
     SDL_free(s_gal.items);
     s_gal.items    = nullptr;
+    SDL_free(s_gal.rows);
+    s_gal.rows     = nullptr;
+    s_gal.rowsFont = nullptr;
     s_gal.count    = 0;
     s_gal.selected = -1;
 }
@@ -442,6 +480,30 @@ static void galleryDropJob(void) {
 
 /* ── The list ───────────────────────────────────────────────────── */
 
+static void galleryJoinPlayers(const ClipGifMeta *m, char *out, size_t outLen);
+
+/* Makes the text of m's row. The widths are measured later, when the list
+ * is drawn, as only then is the font known. */
+static void galleryRowFill(const ClipGifMeta *m, GalleryRowText *r) {
+    char when[32];
+    clipGifFormatTime(m->createdUnix, when, sizeof(when));
+    char text[CLIP_GIF_META_MAP_LEN + 48];
+    snprintf(text, sizeof(text), "%s  %s", when, m->map);
+    r->textLen = (int)SDL_strlen(text);
+    snprintf(r->label, sizeof(r->label), "%s##gif", text);
+    galleryJoinPlayers(m, r->players, sizeof(r->players));
+    r->textW    = 0.0f;
+    r->playersW = 0.0f;
+}
+
+/* Measures r's two lines with the current font. */
+static void galleryRowMeasure(GalleryRowText *r) {
+    r->textW = ImGui::CalcTextSize(r->label, r->label + r->textLen).x;
+    r->playersW = (r->players[0] != '\0')
+                      ? ImGui::CalcTextSize(r->players).x
+                      : 0.0f;
+}
+
 /* Read the folder again, put the GIFs from the open game first, and keep (or
  * move to) the selection by file name, since the scan's order is newest first
  * and a new GIF shifts every index. */
@@ -462,6 +524,14 @@ static void galleryRescan(const char *gameId) {
     SDL_strlcpy(s_gal.game, gameId, sizeof(s_gal.game));
     s_gal.currentCount =
         clipGifMetaCurrentGameFirst(s_gal.items, s_gal.count, s_gal.game);
+    /* The rows' text, after the order above is final. */
+    if (s_gal.count > 0) {
+        s_gal.rows = (GalleryRowText *)SDL_malloc((size_t)s_gal.count *
+                                                  sizeof(GalleryRowText));
+        for (int i = 0; s_gal.rows != nullptr && i < s_gal.count; i++) {
+            galleryRowFill(&s_gal.items[i], &s_gal.rows[i]);
+        }
+    }
     s_gal.selected = (s_gal.count > 0) ? 0 : -1;
     for (int i = 0; keep[0] != '\0' && i < s_gal.count; i++) {
         if (SDL_strcmp(s_gal.items[i].gifFile, keep) == 0) {
@@ -623,8 +693,13 @@ bool clipGifGalleryButton(const char *id) {
 /* Removes the gallery GIF file (a name in the folder) and its metadata file.
  * A preview or a decode of that GIF is let go of first, so the frames, the
  * texture and the worker's open file do not keep it. The selection moves to
- * the row that takes its place in the list. */
-static void galleryDelete(const char *file) {
+ * the row that takes its place in the list. Runs before the window is begun
+ * (galleryPendingDeleteStep), so no texture it frees is queued to be drawn.
+ * Returns false to be called again on a later frame: a decode worker has not
+ * ended yet, and on Windows its open file would stop the delete. A worker
+ * for another GIF is waited for too, as one let go of earlier (no longer
+ * s_gal.job) may still be reading this file. */
+static bool galleryDelete(const char *file) {
     int index = -1;
     for (int i = 0; i < s_gal.count; i++) {
         if (SDL_strcmp(s_gal.items[i].gifFile, file) == 0) {
@@ -634,7 +709,7 @@ static void galleryDelete(const char *file) {
     }
     char path[FILENAME_MAX];
     if (index < 0 || !galleryPath(path, sizeof(path), file)) {
-        return;
+        return true;
     }
     if (SDL_strcmp(s_gal.preview.file, file) == 0) {
         galleryPreviewFree();
@@ -642,9 +717,13 @@ static void galleryDelete(const char *file) {
     if (s_gal.job != nullptr && SDL_strcmp(s_gal.job->file, file) == 0) {
         galleryDropJob();
     }
+    if (SDL_GetAtomicInt(&s_galDecodesRunning) != 0 &&
+        SDL_GetTicks() - s_gal.pendingDeleteSinceMs < GALLERY_DELETE_WAIT_MS) {
+        return false;
+    }
     if (!clipGifDeleteFiles(path)) {
         galleryShowMessage(STR_CLIPGIF_DELETE_FAILED, true, NULL);
-        return;
+        return true;
     }
     /* The row to select is named by its file, as the scan finds it again. Its
      * index in the new list is one less than in this list when it was below
@@ -659,6 +738,25 @@ static void galleryDelete(const char *file) {
     }
     s_gal.selected = -1;
     s_gal.needScan = true;
+    return true;
+}
+
+/* Each frame, before the window is begun: carries out the delete the player
+ * said Yes to, or leaves it for a later frame while galleryDelete waits. The
+ * list is read first when it is due (for example after the window was not
+ * drawn and the poll let go of it), so the file is found in it. */
+static void galleryPendingDeleteStep(const char *gameId) {
+    if (s_gal.pendingDelete[0] == '\0') {
+        return;
+    }
+    if (s_gal.needScan) {
+        galleryRescan(gameId);
+    }
+    char file[CLIP_GIF_META_FILE_LEN];
+    SDL_strlcpy(file, s_gal.pendingDelete, sizeof(file));
+    if (galleryDelete(file)) {
+        s_gal.pendingDelete[0] = '\0';
+    }
 }
 
 /* The path as a link: the link colour, underlined, wrapped to the width
@@ -780,7 +878,11 @@ static ImVec2 galleryFitSize(int w, int h, float maxW, float maxH) {
 #define GALLERY_DELETE_POPUP "###clipgifdelete"
 
 /* The question before a delete, a plain Yes / No. No has the focus, so a
- * stray press of the confirm button does not delete. */
+ * stray press of the confirm button does not delete. Escape and the
+ * controller's cancel button answer No: ImGui's own nav cancel does not
+ * close a modal. Yes only notes the file; the delete is done at the start
+ * of the next frame (galleryPendingDeleteStep), after this frame, which has
+ * the preview's texture queued, is drawn. */
 static void galleryRenderDeleteConfirm(float s) {
     char title[128];
     snprintf(title, sizeof(title), "%s" GALLERY_DELETE_POPUP,
@@ -795,23 +897,23 @@ static void galleryRenderDeleteConfirm(float s) {
     ImGui::Spacing();
     const float btnW = 90.0f * s;
     if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0.0f))) {
-        char file[CLIP_GIF_META_FILE_LEN];
-        SDL_strlcpy(file, s_gal.deleteFile, sizeof(file));
+        SDL_strlcpy(s_gal.pendingDelete, s_gal.deleteFile,
+                    sizeof(s_gal.pendingDelete));
+        s_gal.pendingDeleteSinceMs = SDL_GetTicks();
         s_gal.deleteFile[0] = '\0';
         ImGui::CloseCurrentPopup();
-        galleryDelete(file);
     }
     imguiHandOnHover();
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0.0f)) ||
-        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
         s_gal.deleteFile[0] = '\0';
         ImGui::CloseCurrentPopup();
     }
+    /* The popup's first nav pick is this button rather than Yes. */
+    ImGui::SetItemDefaultFocus();
     imguiHandOnHover();
-    if (ImGui::IsWindowAppearing()) {
-        ImGui::SetKeyboardFocusHere(-1);
-    }
     ImGui::EndPopup();
 }
 
@@ -820,7 +922,12 @@ static void galleryRenderDetail(float s) {
         return;
     }
     const ClipGifMeta *item = &s_gal.items[s_gal.selected];
-    galleryPreviewUpdate(item);
+    /* A GIF waiting to be deleted is not decoded again, which would open the
+     * file the delete is waiting for a worker to close. */
+    const bool deleting = (s_gal.pendingDelete[0] != '\0');
+    if (!deleting || SDL_strcmp(s_gal.pendingDelete, item->gifFile) != 0) {
+        galleryPreviewUpdate(item);
+    }
 
     char path[FILENAME_MAX];
     const bool havePath = galleryPath(path, sizeof(path), item->gifFile);
@@ -902,7 +1009,12 @@ static void galleryRenderDetail(float s) {
     }
     imguiHandOnHover();
     ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_CLIPGIF_DELETE))) {
+    /* Greyed while a delete is still waiting, so a second question is not
+     * asked over it. */
+    ImGui::BeginDisabled(deleting);
+    const bool deletePressed = ImGui::Button(langGetText(STR_CLIPGIF_DELETE));
+    ImGui::EndDisabled();
+    if (deletePressed) {
         SDL_strlcpy(s_gal.deleteFile, item->gifFile, sizeof(s_gal.deleteFile));
         ImGui::OpenPopup(GALLERY_DELETE_POPUP);
     }
@@ -917,31 +1029,22 @@ static void galleryRenderDetail(float s) {
 /* One row of the list: when it was made and the map, and the players under
  * it. The row is the list's width, so a long one is cut at the edge instead
  * of widening the list, and its tooltip then gives the whole of it. */
-static void galleryRenderRow(int i) {
-    const ClipGifMeta *m = &s_gal.items[i];
-    char when[32];
-    clipGifFormatTime(m->createdUnix, when, sizeof(when));
-    char text[CLIP_GIF_META_MAP_LEN + 48];
-    snprintf(text, sizeof(text), "%s  %s", when, m->map);
-    char label[sizeof(text) + 16];
-    snprintf(label, sizeof(label), "%s##gif%d", text, i);
-    char players[GALLERY_PLAYERS_LEN];
-    galleryJoinPlayers(m, players, sizeof(players));
-
+static void galleryRenderRow(int i, const GalleryRowText *r) {
+    const char *players = r->players;
     const float rowW = ImGui::GetContentRegionAvail().x;
-    if (ImGui::Selectable(label, i == s_gal.selected, 0, ImVec2(rowW, 0.0f))) {
+    if (ImGui::Selectable(r->label, i == s_gal.selected, 0,
+                          ImVec2(rowW, 0.0f))) {
         s_gal.selected = i;
     }
     const float indent = ImGui::GetStyle().IndentSpacing;
     const bool cut =
-        ImGui::CalcTextSize(text).x > rowW ||
-        (players[0] != '\0' &&
-         ImGui::CalcTextSize(players).x > rowW - indent);
+        r->textW > rowW ||
+        (players[0] != '\0' && r->playersW > rowW - indent);
     if (cut && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
         if (players[0] != '\0') {
-            ImGui::SetTooltip("%s\n%s", text, players);
+            ImGui::SetTooltip("%.*s\n%s", r->textLen, r->label, players);
         } else {
-            ImGui::SetTooltip("%s", text);
+            ImGui::SetTooltip("%.*s", r->textLen, r->label);
         }
     }
     if (players[0] != '\0') {
@@ -964,6 +1067,18 @@ static void galleryRenderGroupLabel(langid id) {
  * no label. */
 static void galleryRenderList(void) {
     const bool grouped = (s_gal.currentCount > 0);
+    /* The widths are measured again only when the font or its size has
+     * changed since they were last measured (a new UI scale, say). */
+    ImFont *font = ImGui::GetFont();
+    const float fontSize = ImGui::GetFontSize();
+    if (s_gal.rows != nullptr &&
+        (s_gal.rowsFont != font || s_gal.rowsFontSize != fontSize)) {
+        for (int i = 0; i < s_gal.count; i++) {
+            galleryRowMeasure(&s_gal.rows[i]);
+        }
+        s_gal.rowsFont     = font;
+        s_gal.rowsFontSize = fontSize;
+    }
     for (int i = 0; i < s_gal.count; i++) {
         if (grouped && i == 0) {
             galleryRenderGroupLabel(STR_CLIPGIF_THIS_GAME);
@@ -972,7 +1087,15 @@ static void galleryRenderList(void) {
             galleryRenderGroupLabel(STR_CLIPGIF_EARLIER_GAMES);
         }
         ImGui::PushID(i);
-        galleryRenderRow(i);
+        if (s_gal.rows != nullptr) {
+            galleryRenderRow(i, &s_gal.rows[i]);
+        } else {
+            /* No memory for the rows at the scan: made here instead. */
+            GalleryRowText r;
+            galleryRowFill(&s_gal.items[i], &r);
+            galleryRowMeasure(&r);
+            galleryRenderRow(i, &r);
+        }
         ImGui::PopID();
     }
 }
@@ -1018,6 +1141,10 @@ void clipGifGalleryRender(float s, const ClipGifGalleryHost *host) {
     if (SDL_strcmp(s_gal.game, gameId) != 0) {
         s_gal.needScan = true;
     }
+    /* Before the window is begun, so the preview texture it may free is not
+     * one this frame has queued, and so the list read below already lacks
+     * the deleted GIF and selects the row after it. */
+    galleryPendingDeleteStep(gameId);
     if (s_gal.needScan) {
         galleryRescan(gameId);
     }
