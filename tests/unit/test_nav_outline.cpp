@@ -85,6 +85,10 @@ void rigOpen(NavRig &r, const char *name) {
     io.DisplaySize  = ImVec2(800.0f, 600.0f);
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigNavCursorVisibleAlways = true;
+    /* ImGui on a Mac swaps Ctrl and Cmd in AddKeyEvent, so the rig's
+       ImGuiMod_Ctrl would arrive as Super there.  Off, so the keys mean
+       the same on every platform. */
+    io.ConfigMacOSXBehaviors = false;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.Fonts->AddFontDefault();
     io.AddMousePosEvent(700.0f, 500.0f);
