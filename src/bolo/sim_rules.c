@@ -883,6 +883,23 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
               (long) rules->shell_life, (long) rules->gunsight_max,
               (long) rules->shell_start_add)
 
+    /* A pillbox's shell goes through the same shellLifeTicks with
+     * pill_fire_length as its length, and into the same BYTE. Past 255 the
+     * budget wraps to a few ticks and the shell lands a square or so out.
+     * The sum is written out here rather than calling shellLifeTicks, since
+     * the log viewer builds this file without the sim's shells.c, but it is
+     * the same float product truncated the same way, so the two agree at the
+     * edge. Pill shells are made only on the server and pill_fire_length is
+     * not carried, so the client's pass does not ask this one. */
+    RULE_PAIR(PAIR_ASKED3(shell_life, pill_fire_length, shell_start_add),
+              1 + (int64_t) (int) (rules->shell_life *
+                                   rules->pill_fire_length) -
+                      (int64_t) rules->shell_start_add <= 255,
+              "shell_life %ld times pill_fire_length %g, less "
+              "shell_start_add %ld, plus 1, is above 255",
+              (long) rules->shell_life, (double) rules->pill_fire_length,
+              (long) rules->shell_start_add)
+
     return SIM_RULES_OK;
 }
 
