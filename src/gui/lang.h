@@ -3658,7 +3658,7 @@
 /* The replay's recording mode button, which shows the GIF controls */
 #define STR_REEL_RECORD_MODE_TIP                 3150
 
-/* The Log Viewer's Chat panel: its title and Windows menu item, the line before any chat, the team and one-player notes, and a spectator's name */
+/* The Log Viewer's Chat panel: title, empty line, team and private notes */
 #define STR_LV_WIN_CHAT                          3100
 #define STR_LV_CHAT_NONE                         3101
 #define STR_LV_CHAT_TEAM                         3102
