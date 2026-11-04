@@ -222,6 +222,12 @@ struct BrainPathfinder {
   float   *edge_cost;          /* malloc'd: 131072 * 8 floats = 4MB */
   int      edge_cost_valid;    /* 0 = stale (rebuild needed), 1 = current */
   const BYTE *edge_cost_map;   /* map pointer the cache was built from */
+  /* The map bytes the table was built from. The brain's map is one buffer
+   * that changes in place as squares are seen or changed, so the pointer
+   * compare above never sees those changes. brainPathfinderSyncEdgeCosts
+   * compares the live map with this copy and rebuilds only the entries
+   * next to a square whose terrain type changed. */
+  BYTE     edge_cost_src[65536];
 
   /* Binary min-heap */
   BrainPFHeapEntry *heap;
@@ -495,6 +501,16 @@ int brainPathfinderDijkstraTracePathByKind(BrainPathfinder *pf, int kind,
  * for every direction. Speeds up Dijkstra/A* inner loops by ~30-40%.
  * Call this whenever the map changes (which is rare for the brain). */
 void  brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf);
+
+/* Bring the edge cost grid up to date with the live map. If the grid is not
+ * valid, or the map pointer changed, this is a full rebuild. Otherwise it
+ * compares the map with the bytes the grid was built from and rebuilds the
+ * entries out of each square next to a square whose terrain type changed
+ * (both layers, all 8 directions). Above BRAINPF_EDGE_SYNC_FULL_AT changed
+ * squares it does a full rebuild instead. Gives the same grid as a full
+ * rebuild. Returns the number of squares whose terrain type changed, or -1
+ * when it did a full rebuild. */
+int   brainPathfinderSyncEdgeCosts(BrainPathfinder *pf);
 
 /* Configuration */
 void brainPathfinderSetTerrainCost(BrainPathfinder *pf, int type, float cost);

@@ -622,6 +622,13 @@ int run_bolo_rand_golden_sequence(void);
 int run_pf_dijkstra_no_solid_corner_cut(void);
 int run_pf_astar_no_solid_corner_cut(void);
 int run_pf_costto_no_solid_corner_cut(void);
+/* The Dijkstra edge cost grid follows squares that change on the brain's map
+ * after it was built (test_pf_edge_cost_sync.c). Regression for
+ * 20261103_165532_1 player 2 ticks 6555-6762: a diagonal between a half wall
+ * and a building stayed open because the grid still priced both as unknown. */
+int run_pf_edge_sync_blocks_new_corner(void);
+int run_pf_edge_sync_prices_new_wall(void);
+int run_pf_edge_sync_matches_full_rebuild(void);
 /* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
  * cost of decoy_getaway's blocker step on the decoy square. */
 int run_bench_decoy_step_first(void);
