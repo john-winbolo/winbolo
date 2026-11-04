@@ -495,6 +495,7 @@ static const UnitTestEntry s_tests[] = {
     { "bench_decoy_step_first",                  run_bench_decoy_step_first                  },
     { "shield_outgoing_pill_blocks",             run_shield_outgoing_pill_blocks             },
     { "shield_pill_cover_walls",                 run_shield_pill_cover_walls                 },
+    { "gh_attack_lane_parity",                   run_gh_attack_lane_parity                   },
     { "pf_tail_reaches_radius_and_stops",        run_pf_tail_reaches_radius_and_stops        },
     { "pf_tail_blocked_by_wall_and_sea",         run_pf_tail_blocked_by_wall_and_sea         },
     { "pf_tail_neutral_zone_slows",              run_pf_tail_neutral_zone_slows              },

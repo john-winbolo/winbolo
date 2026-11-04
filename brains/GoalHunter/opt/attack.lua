@@ -3457,9 +3457,11 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     gh_attack.sync_pill_at(world, pmx, pmy)
     local phase_not_opening = (phase and phase ~= "opening") and true or false
     local self_contrib = threat.pill_contrib and threat.pill_contrib[pmy * 256 + pmx] or nil
+    -- C.BLOCKER_MIN_LANE_BRAD is read here on every call (not at
+    -- init_stamps), so a cfg= override reaches the C clear-aim test too.
     local c_score, c_mx, c_my, c_deg = gh_attack.evaluate_pill_difficulty(
       pmx, pmy, step_deg, phase_not_opening,
-      tmx or -1, tmy or -1, self_contrib)
+      tmx or -1, tmy or -1, self_contrib, C.BLOCKER_MIN_LANE_BRAD or 0)
     if c_mx >= 0 then
       return c_score, nil, { mx = c_mx, my = c_my, deg = c_deg, score = c_score }
     elseif not C.ATTACK_PILL_WALL_FALLBACK then

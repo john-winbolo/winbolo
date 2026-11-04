@@ -653,6 +653,10 @@ int run_shield_outgoing_pill_blocks(void);
 /* GoalHunter shield scan: a friendly pill is worth floor(health / 5) walls
  * of cover (knob PILL_COVER_BY_HEALTH, test_shield_pill_cover.c). */
 int run_shield_pill_cover_walls(void);
+/* GoalHunter clear-aim test: gh_attack.c and attack.lua keep the same aims
+ * with the minimum clear lane (knob BLOCKER_MIN_LANE_BRAD,
+ * test_gh_attack_lane_parity.c). */
+int run_gh_attack_lane_parity(void);
 int run_pf_tail_reaches_radius_and_stops(void);
 int run_pf_tail_blocked_by_wall_and_sea(void);
 int run_pf_tail_neutral_zone_slows(void);
