@@ -4,8 +4,8 @@
 --   * C.BUILDER_SEND_CERTAIN_DEATH_ONLY: danger.lgm_certain_death against a
 --     real shell list (a shell that ends on the builder; one that ends on
 --     another tank, on a base, far away, or flies past him), the rewind
---     range C.BUILDER_CERTAIN_DEATH_REWIND_MAX (a tank's shell must kill at
---     every r = 1 .. MAX; a pill's shell is r = 0), and every
+--     range C.BUILDER_CERTAIN_DEATH_REWIND_MAX (a tank's shell is a kill
+--     when any r = 1 .. MAX kills; a pill's shell is r = 0), and every
 --     builder.decide send site refuses on certain death, sends under fire
 --     without it, and keeps the old fire checks with the knob off;
 --   * C.BUILDER_NO_IDLE_FARM_UNDER_FIRE: the on-path farm and the pool's
@@ -335,9 +335,11 @@ do
 end
 
 -- ── 2b. the rewind range (BUILDER_CERTAIN_DEATH_REWIND_MAX) ─────────────
--- Same walk: east from 25728 at 16 a tick, on the target (26496) from tick
--- 48 to tick 68 (dwell 20). A tank's shell kills only if it kills him at
--- every r = 1 .. MAX; a pill's shell is r = 0 only.
+-- Same walk: east from 25728 at 16 a tick (square 101 = x 25856..26111 on
+-- ticks 8..23). A tank's shell is a kill when ANY r = 1 .. MAX kills him; a
+-- pill's shell is r = 0 only. A wall on (101,100): a blast on a wall kills
+-- only a builder on that square. p3's shell flies south along x 25984 (the
+-- square's centre) and hits the wall on the tick it enters y square 100.
 print("2b. rewind range")
 do
   reset()
@@ -347,43 +349,57 @@ do
     inf.objects = objs
     return REAL(w, inf, 103, 100)
   end
+  local function south(y0, life) return { shot(25984, y0, 128, 3, life, true) } end
+  TER[100 * 256 + 101] = C.T_BUILDING
 
-  -- p3's shell, life 20: blast on tick 21 at 26112. He was at 26048 on
-  -- tick 20 (r 1, 64 away), 25984 on tick 16 (r 5, 128: still a kill) and
-  -- 25968 on tick 15 (r 6, 144: a miss).
-  local s20 = { shot(26752, WX, 192, 3, 20, true) }
-  local h = with_max(1, s20)
-  check("kills at r=1: certain with MAX 1", h ~= nil and h.how == "expiry", h and h.how)
-  check("  rewind '1'", h and h.rewind == "1", h and h.rewind)
-  h = with_max(5, s20)
-  check("kills at r=1..5: certain with MAX 5", h ~= nil, h and h.how)
-  check("  rewind '1..5'", h and h.rewind == "1..5", h and h.rewind)
-  check("misses at r=6: not certain with MAX 6", with_max(6, s20) == nil)
-  check("misses at r=6: not certain with MAX 13", with_max(13, s20) == nil)
+  -- Wall hit on tick 9 (y 25320 + 9*32 = 25608). r = 1 (tick 8, x 25856)
+  -- is on square 101; r = 2..13 (ticks 7..-4) are on square 100 or in the
+  -- tank: only r = 1 kills.
+  local s9 = south(25320, 40)
+  local h = with_max(13, s9)
+  check("kills at r=1 only: certain with MAX 13", h ~= nil and h.how == "wall" and h.t == 9,
+        h and (tostring(h.how) .. "@" .. tostring(h.t)))
+  check("  rewind '1 of 1..13'", h and h.rewind == "1 of 1..13", h and h.rewind)
+  check("  lx is his place at r=1 (25856)", h and h.lx == 25856, h and h.lx)
+  h = with_max(1, s9)
+  check("kills at r=1 only: certain with MAX 1, rewind '1'", h ~= nil and h.rewind == "1",
+        h and h.rewind)
 
-  -- p3's shell, life 60, from 28416 west: it expires on tick 61 at 26496,
-  -- the target. He stands there for ticks 48..68, so every r = 1..13 (ticks
-  -- 60..48) kills him.
-  local s60 = { shot(26496 + 60 * 32, WX, 192, 3, 60, true) }
-  h = with_max(13, s60)
-  check("kills at every r=1..13: certain with MAX 13", h ~= nil and h.how == "expiry",
-        h and h.how)
-  check("  at tick 61", h and h.t == 61, h and h.t)
-  check("  rewind '1..13'", h and h.rewind == "1..13", h and h.rewind)
-  check("  lx is his place at r=1 (26496)", h and h.lx == 26496, h and h.lx)
+  -- Wall hit on tick 32 (y 24580 + 32*32 = 25604). r = 1..8 (ticks 31..24)
+  -- are on square 102; r = 9..13 (ticks 23..19) are on square 101. The
+  -- first r that kills is 9.
+  local s32 = south(24580, 40)
+  h = with_max(13, s32)
+  check("kills only from r=9: certain with MAX 13", h ~= nil and h.how == "wall" and h.t == 32,
+        h and (tostring(h.how) .. "@" .. tostring(h.t)))
+  check("  rewind '9 of 1..13'", h and h.rewind == "9 of 1..13", h and h.rewind)
+  check("  lx is his place at r=9 (26096)", h and h.lx == 26096, h and h.lx)
+  check("kills only from r=9: certain with MAX 9", with_max(9, s32) ~= nil)
+  check("kills only from r=9: not certain with MAX 8", with_max(8, s32) == nil)
+  check("kills only from r=9: not certain with MAX 5", with_max(5, s32) == nil)
+  check("kills only from r=9: not certain with MAX 1", with_max(1, s32) == nil)
+  TER[100 * 256 + 101] = nil
+
+  -- Kills at no r: p3's shell, life 5, expires on tick 6 at 26592; he is
+  -- 25808 or nearer the tank at every r.
+  check("kills at no r: not certain with MAX 13",
+        with_max(13, { shot(26752, WX, 192, 3, 5, true) }) == nil)
+
+  -- A wall on (100,99), north of the tank: p3's shell from y 25250 flying
+  -- south hits it on tick 3 (y 25346). He is never on that square: r = 1, 2
+  -- (ticks 2, 1) do not kill, r = 3..13 he is still in the tank.
+  TER[99 * 256 + 100] = C.T_BUILDING
+  local s3 = { shot(25728, 25250, 128, 3, 40, true) }
+  check("still in the tank at large r, no kill at the others: not certain with MAX 13",
+        with_max(13, s3) == nil)
+  check("  and not with MAX 1", with_max(1, s3) == nil)
+  TER[99 * 256 + 100] = nil
 
   -- p3's shell from 25968 west, life 5: it ends on our tank on tick 5 at
-  -- 25808. He left on tick 1, so r = 1..4 (ticks 4..1) kill him, and at
-  -- r = 5 (tick 0) he was still in the tank: no test there, not certain.
-  local s5 = { shot(25968, WX, 192, 3, 5, true) }
-  h = with_max(1, s5)
-  check("early blast: certain with MAX 1", h ~= nil and h.how == "tank" and h.t == 5,
-        h and (tostring(h.how) .. "@" .. tostring(h.t)))
-  check("early blast: certain with MAX 4", with_max(4, s5) ~= nil)
-  check("early blast, still in the tank at r=5: not certain with MAX 5",
-        with_max(5, s5) == nil)
-  check("early blast, still in the tank at large r: not certain with MAX 13",
-        with_max(13, s5) == nil)
+  -- 25808. r = 1 (tick 4, 25792) kills; r = 5..13 he was in the tank.
+  h = with_max(13, { shot(25968, WX, 192, 3, 5, true) })
+  check("early blast on our tank: certain with MAX 13 at r=1",
+        h ~= nil and h.how == "tank" and h.rewind == "1 of 1..13", h and h.rewind)
 
   -- A pill's shell, life 20: r = 0 only, whatever MAX says.
   local p20 = { shot(26752, WX, 192, 255, 20) }
@@ -396,17 +412,14 @@ do
   check("pill shell far away: nil with MAX 13",
         with_max(13, { shot(26752, WX, 192, 255, 5) }) == nil)
 
-  -- Two shells: the first is not certain at MAX 13, the second is.
-  h = with_max(13, { s20[1], s60[1] })
-  check("a later shell that kills at every r is still found", h ~= nil and h.t == 61,
-        h and h.t)
-
   if HAS_LOGS then
+    TER[100 * 256 + 101] = C.T_BUILDING
     for i = #LOG, 1, -1 do LOG[i] = nil end
-    danger.log_certain_death(1000, "test", 103, 100, with_max(13, s60))
-    check("BUILDER_CERTAIN_DEATH line shows rewind=1..13",
-          log_has("^BUILDER_CERTAIN_DEATH t=1000 site=test .* rewind=1%.%.13%)") ~= nil,
+    danger.log_certain_death(1000, "test", 103, 100, with_max(13, s32))
+    check("BUILDER_CERTAIN_DEATH line shows rewind=9 of 1..13",
+          log_has("^BUILDER_CERTAIN_DEATH t=1000 site=test .* rewind=9 of 1%.%.13%)") ~= nil,
           LOG[1])
+    TER[100 * 256 + 101] = nil
   end
   C.BUILDER_CERTAIN_DEATH_REWIND_MAX = REWIND_MAX_DEFAULT
 end
