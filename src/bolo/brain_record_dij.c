@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /*********************************************************
  *NAME:          brain_record_dij.c
- *PURPOSE:       Encode / decode the recorded Dijkstra box
- *               (see brain_record_dij.h for the layout).
+ *PURPOSE:       Encode / decode the recorded Dijkstra box and danger
+ *               box (see brain_record_dij.h for the layout).
  *
  *  The writer and the reader go through the same helpers: the
  *  encoder writes a record, then applies those very bytes to its own
@@ -45,6 +45,7 @@ static void botClear(BrainRecDijBotBox *b) {
     b->onBoat   = false;
     b->cx = b->cy = 0;
     for (int s = 0; s < BRAINREC_DIJ_SLATES; s++) slateClear(&b->slates[s]);
+    memset(b->danger, 0, sizeof b->danger);
 }
 
 void brainRecDijStateClear(BrainRecDijState *st) {
@@ -77,6 +78,7 @@ static bool putBytes(BrainRecDijBuf *b, const void *p, size_t n) {
     return true;
 }
 static bool putU8 (BrainRecDijBuf *b, uint8_t v)  { return putBytes(b, &v, 1); }
+static bool putU16(BrainRecDijBuf *b, uint16_t v) { return putBytes(b, &v, 2); }
 static bool putU32(BrainRecDijBuf *b, uint32_t v) { return putBytes(b, &v, 4); }
 static bool putI32(BrainRecDijBuf *b, int32_t v)  { return putBytes(b, &v, 4); }
 static bool putF32(BrainRecDijBuf *b, float v)    { return putBytes(b, &v, 4); }
@@ -94,6 +96,7 @@ static void getBytes(DijCur *c, void *dst, size_t n) {
     c->pos += n;
 }
 static uint8_t  getU8 (DijCur *c) { uint8_t v;  getBytes(c, &v, 1); return v; }
+static uint16_t getU16(DijCur *c) { uint16_t v; getBytes(c, &v, 2); return v; }
 static uint32_t getU32(DijCur *c) { uint32_t v; getBytes(c, &v, 4); return v; }
 static int32_t  getI32(DijCur *c) { int32_t v;  getBytes(c, &v, 4); return v; }
 static float    getF32(DijCur *c) { float v;    getBytes(c, &v, 4); return v; }
@@ -103,7 +106,7 @@ static float    getF32(DijCur *c) { float v;    getBytes(c, &v, 4); return v; }
 /* Start a bot's frame: move its box to the new centre. Cells that stay in
  * the box keep their values; cells that newly enter it are empty. A box
  * that is not valid now (or was not before) holds no cells. Slate metas
- * are kept either way. */
+ * are kept either way. Danger cells move the same way; a new cell is 0. */
 static void botBegin(BrainRecDijBotBox *b, bool boxValid, bool onBoat, int cx, int cy) {
     if (b->boxValid && boxValid && (b->cx != cx || b->cy != cy)) {
         int dx = cx - b->cx, dy = cy - b->cy;
@@ -128,8 +131,21 @@ static void botBegin(BrainRecDijBotBox *b, bool boxValid, bool onBoat, int cx, i
                 }
             }
         }
+        uint16_t odg[BRAINREC_DIJ_CELLS];
+        memcpy(odg, b->danger, sizeof odg);
+        memset(b->danger, 0, sizeof b->danger);
+        for (int j = 0; j < BRAINREC_DIJ_BOX; j++) {
+            int oj = j + dy;
+            if (oj < 0 || oj >= BRAINREC_DIJ_BOX) continue;
+            for (int i = 0; i < BRAINREC_DIJ_BOX; i++) {
+                int oi = i + dx;
+                if (oi < 0 || oi >= BRAINREC_DIJ_BOX) continue;
+                b->danger[j * BRAINREC_DIJ_BOX + i] = odg[oj * BRAINREC_DIJ_BOX + oi];
+            }
+        }
     } else if (!(b->boxValid && boxValid)) {
         for (int s = 0; s < BRAINREC_DIJ_SLATES; s++) slateCellsClear(&b->slates[s]);
+        memset(b->danger, 0, sizeof b->danger);
     }
     b->present  = true;
     b->boxValid = boxValid;
@@ -198,6 +214,18 @@ static void applyRecord(DijCur *c, BrainRecDijBotBox *b) {
                 sl->dir[l][cell]  = BRAINREC_DIJ_DIR_NONE;
             }
         }
+    }
+}
+
+/* Read one bot's danger section and apply it. */
+static void applyDanger(DijCur *c, BrainRecDijBotBox *b) {
+    int n = getU8(c);
+    for (int k = 0; k < n && c->ok; k++) {
+        int      cell = getU8(c);
+        uint16_t v    = getU16(c);
+        if (!c->ok) return;
+        if (cell >= BRAINREC_DIJ_CELLS) { c->ok = false; return; }
+        b->danger[cell] = v;
     }
 }
 
@@ -320,6 +348,35 @@ static bool encodeSlate(BrainRecDijBotBox *pb, int s, const BrainRecDijBotIn *in
     return true;
 }
 
+/* Write one bot's danger section: the cells whose value differs from what
+ * the reader holds (a 0 only to clear a non-zero cell), then apply the
+ * written bytes to the writer's memory. */
+static bool encodeDanger(BrainRecDijBotBox *pb, const BrainRecDijBotIn *in,
+                         BrainRecDijBuf *out) {
+    size_t at = out->len;
+    int n = 0;
+    if (!putU8(out, 0)) return false;
+    if (pb->boxValid) {
+        for (int j = 0; j < BRAINREC_DIJ_BOX; j++) {
+            int y = pb->cy - BRAINREC_DIJ_HALF + j;
+            for (int i = 0; i < BRAINREC_DIJ_BOX; i++) {
+                int x = pb->cx - BRAINREC_DIJ_HALF + i;
+                int cell = j * BRAINREC_DIJ_BOX + i;
+                uint16_t v = 0;
+                if (in->danger && x >= 0 && x <= 255 && y >= 0 && y <= 255)
+                    v = in->danger[y * 256 + x];
+                if (v == pb->danger[cell]) continue;
+                if (!putU8(out, (uint8_t)cell) || !putU16(out, v)) return false;
+                n++;
+            }
+        }
+    }
+    out->data[at] = (uint8_t)n;
+    DijCur c = { out->data + at, out->len - at, 0, true };
+    applyDanger(&c, pb);
+    return true;
+}
+
 bool brainRecDijEncodeFrame(BrainRecDijState *prev,
                             const BrainRecDijBotIn *const bots[BRAINREC_DIJ_MAX_BOTS],
                             bool keyframe, BrainRecDijBuf *out) {
@@ -354,6 +411,7 @@ bool brainRecDijEncodeFrame(BrainRecDijState *prev,
             if (!encodeSlate(pb, s, in, out, &recCount)) return false;
         }
         out->data[countAt] = (uint8_t)recCount;
+        if (!encodeDanger(pb, in, out)) return false;
     }
     return true;
 }
@@ -387,6 +445,7 @@ bool brainRecDijDecodeFrame(BrainRecDijState *st, const uint8_t *blob, size_t le
         BrainRecDijBotBox *bb = &st->bots[slot];
         botBegin(bb, valid, (bflags & BRAINREC_DIJ_BOT_ONBOAT) != 0, cx, cy);
         for (int r = 0; r < nRec && c.ok; r++) applyRecord(&c, bb);
+        if (c.ok) applyDanger(&c, bb);
     }
     if (!c.ok) return false;
     for (int i = 0; i < BRAINREC_DIJ_MAX_BOTS; i++) {
@@ -403,6 +462,12 @@ int brainRecDijCellIndex(const BrainRecDijBotBox *b, int x, int y) {
     int j = y - (b->cy - BRAINREC_DIJ_HALF);
     if (i < 0 || i >= BRAINREC_DIJ_BOX || j < 0 || j >= BRAINREC_DIJ_BOX) return -1;
     return j * BRAINREC_DIJ_BOX + i;
+}
+
+bool brainRecDijDangerAt(const BrainRecDijBotBox *b, int x, int y, uint16_t *out) {
+    int cell = brainRecDijCellIndex(b, x, y);
+    if (out) *out = (cell >= 0) ? b->danger[cell] : 0;
+    return cell >= 0;
 }
 
 float brainRecDijCostAt(const BrainRecDijBotBox *b, int slate, int x, int y,

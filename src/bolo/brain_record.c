@@ -470,6 +470,7 @@ static void fillDijBot(ServerSim *sim, BYTE slot, BrainRecDijBotIn *in) {
     }
     BrainPathfinder *pf = serverSimGetBotBrainPathfinder(sim, slot);
     if (!pf) return;
+    in->danger = pf->danger_grid;
     for (int s = 0; s < DIJKSTRA_NUM_SLATES; s++) {
         const DijkstraSlate *ds = &pf->dij_slates[s];
         BrainRecDijSlateIn  *si = &in->slates[s];
@@ -495,7 +496,8 @@ static void fillDijBot(ServerSim *sim, BYTE slot, BrainRecDijBotIn *in) {
     }
 }
 
-/* v8 tail: the recorded Dijkstra box of every bot, length-prefixed. */
+/* v8 tail: the recorded Dijkstra box and danger box of every bot,
+ * length-prefixed. */
 static void writeDijkstra(ServerSim *sim, bool keyframe) {
     uint64_t t0 = SDL_GetPerformanceCounter();
     if (!g_dijPrev) {

@@ -37,7 +37,7 @@ extern "C" {
  * version whenever the frame layout below changes; the loader checks it. */
 #define BRAINREC_MAGIC        "WBNREC1"
 #define BRAINREC_MAGIC_LEN    8
-#define BRAINREC_VERSION      8u     /* v8: + recorded Dijkstra box per bot */
+#define BRAINREC_VERSION      8u     /* v8: + recorded Dijkstra and danger box per bot */
 /* The oldest version a reader still loads. v7 and v8 only appended a tail to
  * each frame, so a v6 file reads the same up to the tail and has no masks:
  * every pill and base in it is on the map. A v6 or v7 file has no Dijkstra
@@ -71,7 +71,7 @@ extern "C" {
 #define BRAINREC_MAP_KEYFRAME_INTERVAL 500
 
 /* v8 frame tail, after the on-map masks: uint32 dijLen, then dijLen bytes of
- * the recorded Dijkstra box (layout in brain_record_dij.h). The block is a
+ * the recorded Dijkstra box and danger box (layout in brain_record_dij.h). The block is a
  * keyframe on the same frames as the map track, so a frame that starts a
  * brainrec_split part rebuilds both. */
 

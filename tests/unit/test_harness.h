@@ -1366,12 +1366,14 @@ int run_brainrec_version_rejects_old(void);
 /* The recorded Dijkstra box in brainrec v8 (test_brainrec_dij.c): only
  * changed nodes are written, unreached nodes and unused boat nodes never,
  * a new search resets the slate, a keyframe seek equals a full replay, and
- * a v7 file without the block still loads. */
+ * a v7 file without the block still loads. The danger box in the same
+ * block writes changed cells only, and a 0 only to clear a cell. */
 int run_brainrec_dij_changed_only(void);
 int run_brainrec_dij_boat_layer(void);
 int run_brainrec_dij_reset_on_new_start(void);
 int run_brainrec_dij_keyframe_equals_replay(void);
 int run_brainrec_dij_old_file_loads(void);
+int run_brainrec_dij_danger_box(void);
 
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /
