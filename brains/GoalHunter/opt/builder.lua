@@ -73,7 +73,12 @@ local M = {}
 -- No new numbers: PILL_FIRE_RANGE, the shot lines, and one sample per tile
 -- (max(|dx|,|dy|) steps).
 function M.place_tile_check(state, world, info, tx, ty, now, no_block_all)
-  if not (C.BLITZ_NO_BUILD_ACTIVE or C.PLACE_PILL_BEHIND_ONLY or C.PLACE_PILL_MAN_PATH_SAFE) then
+  -- BUILDER_SEND_CERTAIN_DEATH_ONLY: "man_path" is a refusal about fire (pill
+  -- range, blitz shot lines), so it is off; the send asks
+  -- danger.lgm_certain_death instead. "blitz_active" and "not_behind" stay.
+  local man_path_on = C.PLACE_PILL_MAN_PATH_SAFE
+                      and not C.BUILDER_SEND_CERTAIN_DEATH_ONLY
+  if not (C.BLITZ_NO_BUILD_ACTIVE or C.PLACE_PILL_BEHIND_ONLY or man_path_on) then
     return nil
   end
   if not (state and world and info and tx and ty) then return nil end
@@ -96,7 +101,7 @@ function M.place_tile_check(state, world, info, tx, ty, now, no_block_all)
       end
     end
   end
-  if C.PLACE_PILL_MAN_PATH_SAFE then
+  if man_path_on then
     local r = C.PILL_FIRE_RANGE or 8
     local r2 = r * r
     -- The pill list and the shot lines are the same for every tile this
@@ -413,6 +418,12 @@ local function goal_mode(kind, goal)
      and not (goal and goal.sea) then
     return "opportunistic"
   end
+  -- C.BUILDER_FREE_COMBAT_GOALS (2026-11-04): a tank fight or a base attack
+  -- does not keep the builder in the tank.
+  if C.BUILDER_FREE_COMBAT_GOALS
+     and (kind == "attack_tank" or kind == "attack_base") then
+    return "opportunistic"
+  end
   return GOAL_TO_MODE[kind] or "opportunistic"
 end
 
@@ -457,6 +468,9 @@ function M.set_mode(state, world, info, goal)
     elseif sub == "build_boat" then
       b.mode = "sea_boat"
       b.sea_target = { mx = goal.sea.S[1], my = goal.sea.S[2] }
+    elseif C.BUILDER_FREE_COMBAT_GOALS then
+      -- Between its builder jobs the sea plan does not keep him in.
+      b.mode = "opportunistic"
     else
       b.mode = "suppressed"
     end
@@ -999,6 +1013,25 @@ function M.road_tree_reserve(state, world, info)
 end
 
 -- -------------------------------------------------------------------------
+-- C.BUILDER_SEND_CERTAIN_DEATH_ONLY (2026-11-04): the one refusal a send
+-- keeps about shells. With the knob on, true when a shell already in the air
+-- will kill the builder on this errand (danger.lgm_certain_death): it logs
+-- one BUILDER_CERTAIN_DEATH line and records the bail "shell_will_hit". With
+-- the knob off, always false (the old fire checks run instead).
+-- -------------------------------------------------------------------------
+local function send_refused(state, world, info, now, site, x, y)
+  if not C.BUILDER_SEND_CERTAIN_DEATH_ONLY then return false end
+  local hit = danger.lgm_certain_death(world, info, x, y)
+  if not hit then return false end
+  danger.log_certain_death(now, site, x, y, hit)
+  state._builder_no_dispatch = { tick = now, why = "shell_will_hit",
+                                 site = site,
+                                 mode = state.builder and state.builder.mode }
+  return true
+end
+M._send_refused = send_refused
+
+-- -------------------------------------------------------------------------
 -- road_ahead: pave the next A* waypoint if it's slow terrain and we have
 -- enough trees.  Extracted from the old init.lua inline block.
 -- -------------------------------------------------------------------------
@@ -1017,6 +1050,10 @@ local function road_ahead(state, info, now, world)
   local tree_cost = C.ROAD_BUILD_TERRAIN[next_tt]
   if not tree_cost then return nil end
   if info.trees < tree_cost + M.road_tree_reserve(state, world, info) then return nil end
+  if C.BUILDER_SEND_CERTAIN_DEATH_ONLY then
+    if send_refused(state, world, info, now, "road_ahead", nmx, nmy) then return nil end
+    return { x = nmx, y = nmy, action = BUILDMODE_ROAD }
+  end
   -- Quick reject: if threat_at_tank > 0, the LGM path starting at the tank
   -- tile already exceeds LGM_DANGER_LOW (0), so lgm_path_safe will fail.
   if state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then return nil end
@@ -1056,6 +1093,13 @@ M._decide_inner = function(state, world, info, now)
   local function bail(why)
     state._builder_no_dispatch = { tick = now, why = why, mode = b.mode }
     return nil
+  end
+  -- C.BUILDER_SEND_CERTAIN_DEATH_ONLY: fire_free skips every check below that
+  -- is about fire (angry pills, lgm_path_safe_enhanced, threat_at_tank), and
+  -- refuse() is asked before each send instead (see send_refused).
+  local fire_free = C.BUILDER_SEND_CERTAIN_DEATH_ONLY == true
+  local function refuse(site, x, y)
+    return send_refused(state, world, info, now, site, x, y)
   end
 
   -- Compute LGM ETA when out on a mission (for base departure timing)
@@ -1130,6 +1174,7 @@ M._decide_inner = function(state, world, info, now)
       if (info.trees or 0) < (C.SEA_PILL_TREES_TOTAL or 21) then
         return bail("sea_trees_short")
       end
+      if refuse("sea_mine", t.mx, t.my) then return nil end
       return { x = t.mx, y = t.my, action = BUILDMODE_MINE }
     else
       if U.ttype(t.mx, t.my) ~= C.T_RIVER then return bail("sea_not_river_yet") end
@@ -1140,6 +1185,7 @@ M._decide_inner = function(state, world, info, now)
       -- adjacent" and the boat was never built at all.
       if U.cdist(tmx, tmy, t.mx, t.my) > 1 then return bail("sea_boat_not_adjacent") end
       if (info.trees or 0) < (C.SEA_BOAT_TREES or 20) then return bail("sea_trees_short") end
+      if refuse("sea_boat", t.mx, t.my) then return nil end
       return { x = t.mx, y = t.my, action = BUILDMODE_BUILD }
     end
   end
@@ -1254,6 +1300,10 @@ M._decide_inner = function(state, world, info, now)
         break
       end
     end
+    if fire_free then
+      if refuse("water_build", bx, by) then return nil end
+      return { x = bx, y = by, action = BUILDMODE_ROAD }
+    end
     if not angry_pill_close
        and danger.lgm_path_safe_enhanced(info, bx, by, C.LGM_DANGER_HIGH, now, world) then
       return { x = bx, y = by, action = BUILDMODE_ROAD }
@@ -1269,7 +1319,11 @@ M._decide_inner = function(state, world, info, now)
   -- allows builds with a calm pill at 4+ tiles but aborts under heavy/angry fire.
   if state.slow_build and b.mode ~= "suppressed" then
     local bx, by = state.slow_build.x, state.slow_build.y
-    if danger.lgm_path_safe_enhanced(info, bx, by, C.LGM_DANGER_MED, now, world) then
+    if fire_free then
+      if not refuse("slow_build", bx, by) then
+        return { x = bx, y = by, action = BUILDMODE_ROAD }
+      end
+    elseif danger.lgm_path_safe_enhanced(info, bx, by, C.LGM_DANGER_MED, now, world) then
       return { x = bx, y = by, action = BUILDMODE_ROAD }
     end
   end
@@ -1338,7 +1392,8 @@ M._decide_inner = function(state, world, info, now)
         if (bmx ~= tmx or bmy ~= tmy) and U.is_placeable(bmx, bmy, world)
            and U.ttype(bmx, bmy) ~= C.T_FOREST
            and lgm_can_reach(info, bmx, bmy)
-           and not M.place_tile_check(state, world, info, bmx, bmy, now) then
+           and not M.place_tile_check(state, world, info, bmx, bmy, now)
+           and not refuse("trail_drop", bmx, bmy) then
           state.trail_drop_cooldown = now + C.TRAIL_DROP_COOLDOWN
           log.reason("build", { mode = "trail_drop", behind_mx = bmx, behind_my = bmy })
           return { x = bmx, y = bmy, action = BUILDMODE_PBOX }
@@ -1437,6 +1492,7 @@ M._decide_inner = function(state, world, info, now)
 
 
     if gate_ok then
+      if refuse("place_pill", px, py) then return nil end
       log.reason("build", { mode = "place_pill", why = "placing pill",
                              pill_mx = px, pill_my = py })
       return { x = px, y = py, action = BUILDMODE_PBOX }
@@ -1562,7 +1618,7 @@ M._decide_inner = function(state, world, info, now)
       -- physically reach the tile) still apply. base_shield (the
       -- refuel-defense variant) keeps full safety.
       local force_mode = (b.mode == "wall_shield")
-      local safety_ok  = force_mode
+      local safety_ok  = force_mode or fire_free
         or (not angry_pill_close and path_safe)
 
       -- Pillbox-as-blocker: if the bot has carried pills on hand,
@@ -1596,6 +1652,11 @@ M._decide_inner = function(state, world, info, now)
       if can_pbox and not require("focus_vote").may_place(state, world, wx, wy) then
         can_pbox = false
         require("focus_vote").note_reserve(state, info, wx, wy, now, "pillbox_blocker")
+      end
+      -- Certain death on the slot: no pillbox, no farm, no wall this tick.
+      if (can_pbox or (has_trees and can_reach and safety_ok))
+         and refuse(b.mode, wx, wy) then
+        return nil
       end
       if can_pbox then
         -- NOTE: this is "attempts dispatched", not "blockers actually
@@ -1689,7 +1750,7 @@ M._decide_inner = function(state, world, info, now)
     local deploy = C.LGM_DEPLOY_DIST_REFUEL or 5
     local radius = math.max(C.FARM_GATHER_RADIUS or 3, deploy)
     local reason
-    if state.perc and state.perc.threat_at_tank > maxd then
+    if not fire_free and state.perc and state.perc.threat_at_tank > maxd then
       -- Tank tile itself too hot — the LGM starts here, so no path can be safe.
       reason = string.format("threat_at_tank=%.1f > LGM_GATHER_MAX_DANGER=%d", state.perc.threat_at_tank, maxd)
     else
@@ -1700,7 +1761,9 @@ M._decide_inner = function(state, world, info, now)
         for _, fc in ipairs(cands) do
           if fc.d <= deploy
              and lgm_can_reach(info, fc.mx, fc.my)
-             and danger.lgm_path_safe_enhanced(info, fc.mx, fc.my, maxd, now, world) then
+             and (fire_free
+                  or danger.lgm_path_safe_enhanced(info, fc.mx, fc.my, maxd, now, world))
+             and not refuse("gather", fc.mx, fc.my) then
             b._gather_diag = nil
             return { x = fc.mx, y = fc.my, action = BUILDMODE_FARM }
           end
@@ -1732,8 +1795,10 @@ M._decide_inner = function(state, world, info, now)
     local ttt  = U.ttype(tj.mx, tj.my)
     local tcost = C.ROAD_BUILD_TERRAIN[ttt]
     if tcost and (info.trees or 0) >= tcost + M.road_tree_reserve(state, world, info)
-       and danger.lgm_path_safe_enhanced(info, tj.mx, tj.my, C.LGM_DANGER_LOW,
-                                         now, world) then
+       and (fire_free
+            or danger.lgm_path_safe_enhanced(info, tj.mx, tj.my, C.LGM_DANGER_LOW,
+                                             now, world))
+       and not refuse("trepair", tj.mx, tj.my) then
       return { x = tj.mx, y = tj.my, action = BUILDMODE_ROAD }
     end
     -- Job blocked this tick (trees/safety): fall through to farming etc.;
@@ -1761,8 +1826,20 @@ M._decide_inner = function(state, world, info, now)
      -- delay the grab. No auto farming while driving to take a base.
      and not (state.goal and state.goal.kind == "capture_base")
      and not (_enemy_near and (info.trees or 0) >= (C.FARM_ENEMY_MIN_TREES or 4)) then
+    -- C.BUILDER_NO_IDLE_FARM_UNDER_FIRE: this top-up is an idle harvest (a
+    -- gather that still needs trees returned above), so it waits out the
+    -- fire once the tank holds the minimum. The road ahead may still go.
+    local farm_age, farm_min = danger.idle_farm_blocked(state, info, now)
+    if farm_age then
+      local key = string.format("%d>=%d", info.trees or 0, farm_min)
+      if b._idle_farm_diag ~= key then
+        b._idle_farm_diag = key
+      end
+      return road_ahead(state, info, now, world)
+    end
+    b._idle_farm_diag = nil
     -- Quick reject: any threat at tank tile means lgm_path_safe(LOW) will fail
-    if state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then
+    if not fire_free and state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then
       return road_ahead(state, info, now, world)
     end
     -- Wider radius when stationary at refuel base — tank isn't moving so
@@ -1778,7 +1855,9 @@ M._decide_inner = function(state, world, info, now)
     local fx, fy, fd = nearest_onpath_forest(state, info, farm_radius)
     if fx and fd <= deploy_dist
        and lgm_can_reach(info, fx, fy)
-       and danger.lgm_path_safe_enhanced(info, fx, fy, C.LGM_DANGER_LOW, now, world) then
+       and (fire_free
+            or danger.lgm_path_safe_enhanced(info, fx, fy, C.LGM_DANGER_LOW, now, world))
+       and not refuse("onpath_farm", fx, fy) then
       return { x = fx, y = fy, action = BUILDMODE_FARM }
     end
   end

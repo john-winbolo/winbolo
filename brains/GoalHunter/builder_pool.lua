@@ -715,7 +715,11 @@ function M.eligibility(state, world, info, now)
     else
       local cls = sub and (C.BUILDER_POOL_SUBSTATE_CLASS or {})[sub] or nil
       d.class = cls
-      if cls == "fire" then
+      if cls == "fire" and C.BUILDER_SEND_CERTAIN_DEATH_ONLY then
+        -- Shells flying either way is not a refusal: the winner asks
+        -- danger.lgm_certain_death before it goes.
+        d.fire_exchange_waived = sub
+      elseif cls == "fire" then
         d.mode_ok, d.mode_reason = false, string.format("fire_exchange:%s", sub)
       elseif cls ~= "travel" then
         -- No substate at all: a defender parked and watching is the plan's
@@ -755,7 +759,13 @@ function M.eligibility(state, world, info, now)
   local quiet = C.BUILDER_POOL_UNDER_FIRE_TICKS or 100
   d.fire_ok, d.fire_reason = true, nil
   if age ~= nil and age < quiet then
-    d.fire_ok, d.fire_reason = false, string.format("under_fire(%dt)", age)
+    if C.BUILDER_SEND_CERTAIN_DEATH_ONLY then
+      -- The fire clock is not a refusal: the winner asks
+      -- danger.lgm_certain_death before it goes.
+      d.under_fire_waived = age
+    else
+      d.fire_ok, d.fire_reason = false, string.format("under_fire(%dt)", age)
+    end
   end
 
   -- 3. Spike pair (spike.lua, C.FOCUS_SPIKE_PAIR): the first spike landed
@@ -1222,6 +1232,17 @@ function M.gate_row(state, world, info, now, row, ctx)
   -- for "no wood" should not read "mode_owned" -- fixing the mode would not
   -- make it go).
   if not reject and not ctx.ok then reject = ctx.reason end
+  -- C.BUILDER_NO_IDLE_FARM_UNDER_FIRE: a farm row is an idle harvest, so it
+  -- waits out the fire once the tank holds the minimum. ctx.not_idle is the
+  -- ping-forced harvest, which is step 1 of a repair the human ordered.
+  if not reject and row.type == "farm" and not ctx.not_idle then
+    local fage, fmin = danger.idle_farm_blocked(state, info, now)
+    if fage then
+      reject = string.format("idle_farm_under_fire(%dt, trees %d >= %d)",
+                             fage, info.trees or 0, fmin)
+      row.reject_key = "idle_farm_under_fire"
+    end
+  end
   if not reject and ctx.reserve_eta then
     local need_t = (trip or 0) + (C.BUILDER_POOL_RESERVE_MARGIN or 40)
     if need_t > ctx.reserve_eta then
@@ -1240,6 +1261,9 @@ function M.gate_row(state, world, info, now, row, ctx)
   -- preset=keel.
   local skip_path = row.linear and true or false
   row.path_gate = not skip_path
+  -- BUILDER_SEND_CERTAIN_DEATH_ONLY: the danger sample is a fire check, so
+  -- it is off; the winner asks danger.lgm_certain_death instead.
+  if C.BUILDER_SEND_CERTAIN_DEATH_ONLY then skip_path = true end
   if not reject and not skip_path then
     if not danger.lgm_path_safe_enhanced(info, row.mx, row.my,
            C.BUILDER_POOL_PATH_DANGER or C.LGM_DANGER_MED, now, world) then
@@ -1965,7 +1989,9 @@ function M.repair_feeder(state, world, info, now)
     end
   end
   local under_fire_hold, _uf_age = false, nil
-  if C.REPAIR_HOLD_UNDER_FIRE_ENABLED then
+  -- BUILDER_SEND_CERTAIN_DEATH_ONLY: shells landing on the pill are not a
+  -- refusal; the pool's winner asks danger.lgm_certain_death.
+  if C.REPAIR_HOLD_UNDER_FIRE_ENABLED and not C.BUILDER_SEND_CERTAIN_DEATH_ONLY then
     local lh = _tgt_pill and _tgt_pill.last_hit_tick
     if lh and lh > 0 then
       _uf_age = (state.tick or 0) - lh
@@ -2325,7 +2351,7 @@ function M.update(state, world, info, now)
       fok, freason = false, d.mode_reason
     end
     force_ctx = { ok = fok, reason = freason, reserve = 0,
-                  reserve_eta = nil, waive_min = true }
+                  reserve_eta = nil, waive_min = true, not_idle = true }
   end
 
   local rows = M.discover(state, world, info)
@@ -2458,7 +2484,19 @@ function M.update(state, world, info, now)
   if can_send then
     for _, row in ipairs(rows) do
       if not row.reject then
-        local hit = danger.lgm_shell_gate(world, info, row.mx, row.my)
+        -- BUILDER_SEND_CERTAIN_DEATH_ONLY: the improved prediction, run
+        -- whatever BUILDER_POOL_SHELL_GATE says. Off: lgm_shell_gate.
+        local cd = C.BUILDER_SEND_CERTAIN_DEATH_ONLY
+        local hit
+        if cd then
+          hit = danger.lgm_certain_death(world, info, row.mx, row.my)
+          if hit then
+            danger.log_certain_death(now, "pool:" .. tostring(row.type),
+                                     row.mx, row.my, hit)
+          end
+        else
+          hit = danger.lgm_shell_gate(world, info, row.mx, row.my)
+        end
         if hit then
           row.shell_hit = hit
           -- Every factor the refusal turned on is on the line: WHOSE shell,

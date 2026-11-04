@@ -572,6 +572,271 @@ function M.lgm_shell_gate_walk(hit)
   return out, n
 end
 
+-- =========================================================================
+-- M.lgm_certain_death(world, info, dest_mx, dest_my) -> nil | hit
+--
+-- C.BUILDER_SEND_CERTAIN_DEATH_ONLY (2026-11-04). Andrew: "I want the LGM
+-- blocked if it will get killed 100% for sure, and I want it able to go out
+-- otherwise, even under heavy fire." This is the one check every send asks
+-- with that knob on. It is lgm_shell_gate's model (the same walk sim, the same
+-- shells in the air, the same `hit` table) with the parts of the engine the
+-- old check left out put back in. It runs whatever BUILDER_POOL_SHELL_GATE says.
+--
+-- What it reads, all of it visible to this player: the shells in
+-- info.objects (exact angle, owner and remaining life), the other tanks in
+-- info.objects, our tank, the pills and bases on the brain map, and the
+-- terrain. No shell is invented: a pill that fires again, or a tank that
+-- shoots after the send, is not in it.
+--
+-- The engine, tick by tick (shells.c shellsUpdate / shellsCalcCollision):
+--   * a shell with length > 0 moves (SHELL_SPEED a tick), then collides;
+--     with length 0 it does not move and explodes where it is. So a shell
+--     with life L moves on ticks 1..L and expires on tick L + 1, at its
+--     place after L moves.
+--   * collisions, in this order: a live pill on the square (armour > 0, not
+--     in a tank) - the blast moves to the square's centre; any tank but the
+--     shooter's, within tank_hit_radius (strictly less) - the blast is at the
+--     shell; a base that stops it (below) - the square's centre; a wall
+--     (building / half building) - the square's centre.
+--   * the builder test (lgm.c lgmBlastCatches) for every blast: a blast on a
+--     building, a half building, a pill on the ground (alive or dead) or a
+--     base kills only a builder on that square; elsewhere one within
+--     MAP_SQUARE_MIDDLE (<=).
+--   * a tank's shell tests the builder where he was one tick earlier
+--     (shellsBlastTestBuilder: compensation 1 for a bot's shell; a human's
+--     lag rewind cannot be seen, so 1 is used for every tank's shell). With no
+--     builder out at that tick there is no test. A pill's shell tests him
+--     where he is now.
+--   * the builder leaves the tank on the tick after the order; tick t of his
+--     walk is read as tick t of the shell, as lgm_shell_gate does.
+--
+-- Bases (bases.c basesCanHit), only when the brain can see the answer; when
+-- it cannot, the shell flies on, which is lgm_shell_gate's answer:
+--   * a pill's shell (owner NEUTRAL) never stops at a base;
+--   * our own shell: util.base_stops_tank_shell, with our boat state now;
+--   * an enemy's shell at one of our side's bases: it stops when the armour
+--     the brain sees (armour / BASE_BRAIN_ARMOUR_DIV) is above
+--     base_hit_armour;
+--   * an ally's shell at a hostile base: base_stops_tank_shell on land, which
+--     is a stop on a boat too;
+--   * a base seen only through an ally's report is not used.
+--
+-- What it still cannot see: the walk starts on the tank square's centre (the
+-- C walk sim), where the engine starts him on the tank's own position moved
+-- LGM_START_OFFSET towards the target; the tank and the other tanks are taken
+-- to stand still; a shell's angle is the 8-bit one the snapshot carries.
+-- =========================================================================
+
+-- bases.c basesGetBrainBaseInRect: a base on our side shows its armour / 5.
+-- An engine fact, not a tuning value.
+local BASE_BRAIN_ARMOUR_DIV = 5
+
+-- Where the builder is at tick t of the errand, or nil when he is in the
+-- tank (before he leaves, and after he is home). nw == 0 (no step at all)
+-- keeps lgm_shell_gate's answer: he is on the tank.
+local function man_at_cd(nw, dwell, t, home_x, home_y)
+  if t < 1 then return nil end
+  if nw < 1 then return home_x, home_y end
+  local i
+  if t <= nw then
+    i = t
+  elseif t <= nw + dwell then
+    i = nw
+  else
+    i = nw - (t - nw - dwell)
+    if i < 1 then return nil end
+  end
+  return WALK[i * 2 - 1], WALK[i * 2]
+end
+
+-- lgmBlastCatches's "solid" square: a building, a half building, a pill on
+-- the ground (pillsExistPos: alive or dead, not in a tank) or a base.
+local function blast_square_solid(world, mx, my)
+  local tt = U.ttype(mx, my)
+  if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
+  local k = my * 256 + mx
+  local lst = world and world.pill_at and world.pill_at[k]
+  if lst then
+    for i = 1, #lst do
+      local p = lst[i].pill
+      if p and not p.in_tank then return true end
+    end
+  end
+  if world and world.base_at and world.base_at[k] then return true end
+  return false
+end
+
+local function blast_catches(world, lx, ly, ex, ey, kill2)
+  local emx = bit.rshift(math.floor(ex), 8)
+  local emy = bit.rshift(math.floor(ey), 8)
+  if blast_square_solid(world, emx, emy) then
+    return bit.rshift(math.floor(lx), 8) == emx
+       and bit.rshift(math.floor(ly), 8) == emy
+  end
+  local dx, dy = ex - lx, ey - ly
+  return dx * dx + dy * dy <= kill2
+end
+
+-- Does the base on (mx, my) stop shell `ob` for sure? See the header.
+local function base_stops_for_sure(world, info, ob, mx, my)
+  local e = world and world.base_at and world.base_at[my * 256 + mx]
+  local b = e and e.base
+  if not b then return false end
+  if b._ally_only then return false end
+  local owner = ob.owner or 255
+  if owner == 255 then return U.base_stops_pill_shell() end
+  if owner == info.player_number then
+    return U.base_stops_tank_shell(world, b, U.tank_shell_on_boat(world))
+  end
+  if bit.band(ob.info or 0, OBJECT_HOSTILE) ~= 0 then
+    if b.owner ~= "friendly" then return false end
+    local sr = world and world._shell_rules
+    local hit = (sr and sr.hit) or U.CLASSIC_BASE_HIT_ARMOUR
+    return (b.health or 0) * BASE_BRAIN_ARMOUR_DIV > hit
+  end
+  if b.owner == "hostile" then return U.base_stops_tank_shell(world, b, false) end
+  return false
+end
+
+-- Reused across calls: the tanks a shell can end on, as flat triples
+-- (x, y, player number). Our tank first.
+local TANKS = {}
+
+function M.lgm_certain_death(world, info, dest_mx, dest_my)
+  local objs = info.objects
+  if not objs then return nil end
+  local any = false
+  for _, ob in ipairs(objs) do
+    if ob.type == OBJECT_SHOT then any = true; break end
+  end
+  if not any then return nil end
+
+  local N = C.LGM_SHELL_PREDICT_TICKS or 63
+  local KILL = C.LGM_SHELL_KILL_RADIUS_WU or 128
+  local KILL2 = KILL * KILL
+  local TANK_HIT2 = (C.TANK_HIT_RADIUS_WU or 112) ^ 2
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+  local nw = cpf_lgm_walk_path(tmx, tmy, dest_mx, dest_my, dest_mx, dest_my,
+                               N, C.BUILDER_POOL_LGM_STUCK_TICKS or 150, WALK)
+  local dwell = C.LGM_BUILD_TIME or 20
+  local home_x, home_y = info.tankx, info.tanky
+
+  local nt = 1
+  TANKS[1], TANKS[2], TANKS[3] = info.tankx, info.tanky, info.player_number
+  for _, ob in ipairs(objs) do
+    if ob.type == OBJECT_TANK and ob.x and ob.y then
+      TANKS[nt * 3 + 1], TANKS[nt * 3 + 2], TANKS[nt * 3 + 3] = ob.x, ob.y, ob.idnum
+      nt = nt + 1
+    end
+  end
+
+  for _, ob in ipairs(objs) do
+    if ob.type == OBJECT_SHOT then
+      local life = ob.life
+      local known_life = type(life) == "number" and life >= 0
+      local moves = (known_life and life <= N) and life or N
+      local rewind = ((ob.owner or 255) ~= 255) and 1 or 0
+      local vx =  U.bsin_f(ob.angle or 0) * C.SHELL_SPEED
+      local vy = -U.bcos_f(ob.angle or 0) * C.SHELL_SPEED
+      local sx, sy = ob.x + 0.0, ob.y + 0.0
+      local src = shell_src(ob)
+      local ended = false
+      -- The builder test for a blast at (ex, ey) on tick t.
+      local function test(t, ex, ey, how)
+        local lx, ly = man_at_cd(nw, dwell, t - rewind, home_x, home_y)
+        if lx and blast_catches(world, lx, ly, ex, ey, KILL2) then
+          return { t = t, sx = ex, sy = ey, lx = lx, ly = ly, src = src,
+                   how = how, solid = (how == "wall" or how == "pill"
+                                       or how == "base"),
+                   walk_n = nw }
+        end
+        return nil
+      end
+      for t = 1, moves do
+        sx = sx + vx
+        sy = sy + vy
+        if sx < 0x100 or sx > 0xFEFF or sy < 0x100 or sy > 0xFEFF then
+          ended = true
+          break
+        end
+        local smx = bit.rshift(math.floor(sx), 8)
+        local smy = bit.rshift(math.floor(sy), 8)
+        local cx, cy = smx * 256 + 128, smy * 256 + 128
+        local hit, how = false, nil
+        -- (1) a live pill on the square.
+        local lst = world and world.pill_at and world.pill_at[smy * 256 + smx]
+        if lst then
+          for i = 1, #lst do
+            local p = lst[i].pill
+            if p and (p.health or 0) > 0 and not p.in_tank then
+              hit, how = true, "pill"
+              break
+            end
+          end
+        end
+        if hit then
+          local h = test(t, cx, cy, how)
+          if h then return h end
+          ended = true
+          break
+        end
+        -- (2) any tank but the shooter's.
+        for i = 0, nt - 1 do
+          if TANKS[i * 3 + 3] ~= ob.owner then
+            local hx = sx - TANKS[i * 3 + 1]
+            local hy = sy - TANKS[i * 3 + 2]
+            if hx * hx + hy * hy < TANK_HIT2 then
+              hit = true
+              how = (i == 0) and "tank" or ("tank_p" .. tostring(TANKS[i * 3 + 3]))
+              break
+            end
+          end
+        end
+        if hit then
+          local h = test(t, sx, sy, how)
+          if h then return h end
+          ended = true
+          break
+        end
+        -- (3) a base that stops it; (4) a wall (not on a base square).
+        local on_base = world and world.base_at and world.base_at[smy * 256 + smx]
+        if on_base and base_stops_for_sure(world, info, ob, smx, smy) then
+          local h = test(t, cx, cy, "base")
+          if h then return h end
+          ended = true
+          break
+        end
+        if not on_base then
+          local tt = U.ttype(smx, smy)
+          if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+            local h = test(t, cx, cy, "wall")
+            if h then return h end
+            ended = true
+            break
+          end
+        end
+      end
+      -- (5) end of life, one tick after the last move, where it stands.
+      if not ended and known_life and life <= N then
+        local h = test(life + 1, sx, sy, "expiry")
+        if h then return h end
+      end
+    end
+  end
+  return nil
+end
+
+-- One line per refusal, in the shell_will_hit style: the site that wanted
+-- to send him, where to, whose shell, how many engine ticks from now it
+-- lands, and which ending it is.
+function M.log_certain_death(now, site, mx, my, hit)
+  print2(string.format(
+    "BUILDER_CERTAIN_DEATH t=%d site=%s dest=(%d,%d) shell_will_hit (shell from %s at +%dt, %s)",
+    now or 0, tostring(site), mx or -1, my or -1, tostring(hit.src), hit.t or -1,
+    tostring(hit.how)))
+end
+
 -- -------------------------------------------------------------------------
 -- Public: call once per tick (after world.update, before build decisions)
 -- -------------------------------------------------------------------------
@@ -627,6 +892,22 @@ function M.tank_fire_age(state, tick)
   local t = state._tank_fire_tick
   if not t then return nil, nil end
   return tick - t, state._tank_fire_why
+end
+
+-- C.BUILDER_NO_IDLE_FARM_UNDER_FIRE (2026-11-04): an idle tree harvest is
+-- blocked while the tank's fire clock is hot and it already holds
+-- BUILDER_NO_IDLE_FARM_MIN_TREES trees. Returns the fire age and the minimum
+-- when blocked, nil otherwise (and always nil with the knob off). Asked by
+-- builder.decide's on-path farm and the builder pool's farm rows.
+function M.idle_farm_blocked(state, info, now)
+  if not C.BUILDER_NO_IDLE_FARM_UNDER_FIRE then return nil end
+  local min = C.BUILDER_NO_IDLE_FARM_MIN_TREES or C.FARM_ENEMY_MIN_TREES
+  if (info.trees or 0) < min then return nil end
+  local age = M.tank_fire_age(state, now)
+  if age ~= nil and age < (C.BUILDER_POOL_UNDER_FIRE_TICKS or 100) then
+    return age, min
+  end
+  return nil
 end
 
 -- =========================================================================
