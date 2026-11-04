@@ -371,6 +371,7 @@ function M.update(world, info, tick)
           anger_tick    = 0,
           last_hit_tick = 0,
           last_seen     = tick,
+          info_tick     = tick,
           in_tank       = false,  -- a visible map object is always DEPLOYED
           under_attack  = false,
           attack_tick   = 0,
@@ -476,6 +477,7 @@ function M.update(world, info, tick)
         p.health    = new_health
         p.owner     = owner_str
         p.last_seen = tick
+        p.info_tick = tick
         -- Clear any stale in_tank flag: a pill visible in the object scan is
         -- DEPLOYED on the map (carried pills aren't map objects — see the
         -- inTank==FALSE gate note above). in_tank is otherwise only set true
@@ -601,6 +603,7 @@ function M.process_events(world, info, state)
           u.health       = new_health
           u.owner        = owner_str
           u.owner_player = owner_val
+          u.info_tick    = tick
           print2(string.format("PILL_POS_UNKNOWN t=%d pill#%d owner=%s hp=%d since=%d (sent square %d,%d is not current)",
                  tick, idx, owner_str, new_health, u.pos_unknown_tick or -1, d[2] or -1, d[3] or -1))
         elseif p == nil then
@@ -614,6 +617,7 @@ function M.process_events(world, info, state)
             anger_tick    = 0,
             last_hit_tick = 0,
             last_seen     = tick,
+            info_tick     = tick,
             in_tank       = in_tank,
             under_attack  = false,
             attack_tick   = 0,
@@ -691,6 +695,9 @@ function M.process_events(world, info, state)
           p.health       = new_health
           p.owner        = owner_str
           p.owner_player = owner_val
+          -- Owner and armour are public: every update gives them, seen or
+          -- not, so they have their own tick (read by sync_ally_world).
+          p.info_tick    = tick
           -- last_seen is the tick we last knew the square, so an update
           -- without one does not move it.
           if take_square then p.last_seen = tick end
@@ -1034,6 +1041,16 @@ end
 -- marked _kw_ally=now so collect_kw_changes won't relay them. Never-seen
 -- objects get a minimal entry (health defaulted — influence needs only
 -- owner+location; targeting evaluators re-confirm health on first real sight).
+-- True when an ally's pill record is older than the last engine update that
+-- gave us this pill's owner and armour (p.info_tick).  Those two are public:
+-- the engine sends them also for a pill we cannot see, and such an update
+-- does not move last_seen, because it has no square.  So a record can be newer
+-- than last_seen and still older than our owner and armour.  It may then give
+-- the square, but not the owner or the armour.
+local function kw_info_older(r, p)
+  return p.info_tick ~= nil and r.tick < p.info_tick
+end
+
 function M.sync_ally_world(world, recs, now, my_pn)
   for _, r in ipairs(recs) do
     local owner = r.cls and KW_CHAR_OWNER[r.cls]
@@ -1081,8 +1098,11 @@ function M.sync_ally_world(world, recs, now, my_pn)
           if r.tick >= (u.pos_unknown_tick or 0) then
             p = pill_take_back(world, r.id)
             p.mx, p.my = r.mx, r.my
-            p.owner, p.in_tank, p.last_seen, p._kw_ally = owner, intank, r.tick, now
-            if r.hp ~= nil then p.health = r.hp end
+            p.in_tank, p.last_seen, p._kw_ally = intank, r.tick, now
+            if not kw_info_older(r, p) then
+              p.owner = owner
+              if r.hp ~= nil then p.health = r.hp end
+            end
             print2(string.format("KW_MERGE t=%d p%d FILL square (%d,%d) %s%s@%d from p%s", now, r.id, r.mx, r.my, r.cls, intank and "T" or "", r.tick, tostring(from)))
           else
             print2(string.format("KW_MERGE t=%d p%d SKIP in@%d < square-lost@%d from p%s", now, r.id, r.tick, u.pos_unknown_tick or -1, tostring(from)))
@@ -1113,11 +1133,15 @@ function M.sync_ally_world(world, recs, now, my_pn)
             p.mx, p.my = r.mx, r.my
           end
           print2(string.format("KW_MERGE t=%d p%d ADOPT %s@%d->%s%s@%d from p%s", now, r.id, oc, p.last_seen or -1, r.cls, intank and "T" or "", r.tick, tostring(from)))
-          p.owner, p.in_tank, p.last_seen, p._kw_ally = owner, intank, r.tick, now
+          p.in_tank, p.last_seen, p._kw_ally = intank, r.tick, now
+          -- Owner and armour only from a record no older than the last
+          -- engine update that gave them (see kw_info_older).
+          local _info_older = kw_info_older(r, p)
+          if not _info_older then p.owner = owner end
           -- Adopt the ally's shared health too (it's the freshest first-hand
           -- value team-wide for this out-of-view pill); fall back to keeping ours
           -- only if the record somehow lacks hp.
-          if r.hp ~= nil then p.health = r.hp end
+          if r.hp ~= nil and not _info_older then p.health = r.hp end
         else
           print2(string.format("KW_MERGE t=%d p%d SKIP in@%d <= local@%d(%s) from p%s", now, r.id, r.tick, p.last_seen or -1, KW_CLS_CHAR[p.owner] or "?", tostring(from)))
         end

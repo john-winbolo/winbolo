@@ -245,5 +245,58 @@ do
         and W.pill_at(world, 61, 62) == world.pills[9])
 end
 
+print("older ally record does not change owner or armour from an unseen update")
+do
+  -- Our pill, seen at tick 100. Out of view, an enemy (player 7) takes it
+  -- over at tick 200: owner changes, 0x20 clear, square unchanged.
+  local world = new_world()
+  W.update(world, ally_info({ obj(5, 40, 40, 15) }), 100)
+  events(world, 200, pill_ev(5, 40, 40, 7, 0, 9))
+  local p = world.pills[5]
+  check("owner change taken", p and p.owner == "hostile" and p.health == 9)
+  check("info_tick moved, last_seen not", p and p.info_tick == 200 and p.last_seen == 100)
+  -- An ally saw it at tick 150, before the change: still ours, full armour.
+  W.sync_ally_world(world, {
+    { kind = "p", id = 5, cls = "f", tick = 150, mx = 40, my = 40, hp = 15, intank = 0, from = ALLY },
+  }, 210, ME)
+  check("older ally record keeps the new owner", p.owner == "hostile", p.owner)
+  check("older ally record keeps the new armour", p.health == 9, p.health)
+  check("older ally record still gives last_seen", p.last_seen == 150, p.last_seen)
+  -- An ally saw it at tick 250, after the change.
+  W.sync_ally_world(world, {
+    { kind = "p", id = 5, cls = "n", tick = 250, mx = 40, my = 40, hp = 0, intank = 0, from = ALLY },
+  }, 260, ME)
+  check("newer ally record updates owner", p.owner == "neutral", p.owner)
+  check("newer ally record updates armour", p.health == 0, p.health)
+end
+
+print("older ally record moves the square but not owner or armour (only armour changed)")
+do
+  local world = new_world()
+  W.update(world, ally_info({ obj(5, 40, 40, 15) }), 100)
+  events(world, 200, pill_ev(5, 40, 40, ME, 0, 6))
+  local p = world.pills[5]
+  W.sync_ally_world(world, {
+    { kind = "p", id = 5, cls = "f", tick = 150, mx = 41, my = 40, hp = 15, intank = 0, from = ALLY },
+  }, 210, ME)
+  check("square from the ally record", p.mx == 41 and W.pill_at(world, 41, 40) == p)
+  check("armour kept", p.health == 6, p.health)
+end
+
+print("held without a square: older ally record fills the square, not owner or armour")
+do
+  local world = carried_by_ally(9280)
+  events(world, 9288, pill_ev(12, 130, 139, ALLY, 0, 15))
+  -- Later unseen update: player 7 now owns it, armour 4.
+  events(world, 9300, pill_ev(12, 130, 139, 7, 0, 4))
+  W.sync_ally_world(world, {
+    { kind = "p", id = 12, cls = "f", tick = 9290, mx = 101, my = 127, hp = 15, intank = 0, from = ALLY },
+  }, 9305, ME)
+  local p = world.pills[12]
+  check("square filled", p and p.mx == 101 and p.my == 127)
+  check("owner kept", p and p.owner == "hostile", p and p.owner)
+  check("armour kept", p and p.health == 4, p and p.health)
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
