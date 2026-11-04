@@ -96,6 +96,7 @@
 #include "brain_record.h"
 #include "braintest_loadbrowser.h"
 #include "braintest_session_ticks.h"
+#include "braintest_tank_dead.h"
 #include <zlib.h>
 #include <time.h>
 #include "braintest_viz_registry.h"
@@ -1643,7 +1644,7 @@ static void renderTankIds(BrainTestApp *app, int screenW, int screenH) {
         for (int i = 0; i < pf_->tankCount; i++) {
             const TankSnapshot *ts = &pf_->tanks[i];
             if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) continue; /* stub */
-            if (ts->tankStatus & (TANK_STATUS_DEAD | TANK_STATUS_DESTROYED)) continue;
+            if (braintestTankStatusIsDead(ts->tankStatus)) continue;
             int pn = ts->playerNum & TANK_SNAPSHOT_PLAYER_MASK;
             float tx = ts->worldX / 256.0f;
             float ty = ts->worldY / 256.0f - 0.5f;
@@ -1658,6 +1659,9 @@ static void renderTankIds(BrainTestApp *app, int screenW, int screenH) {
         for (int pn = 0; pn < MAX_TANKS; pn++) {
             WORLD wx = 0, wy = 0;
             if (!serverSimGetTankState(app->sim, (BYTE)pn, &wx, &wy)) continue;
+            /* No label on a dead tank: the map does not draw it either. */
+            TankRenderInfo info;
+            if (!serverSimGetTankRender(app->sim, (BYTE)pn, &info) || !info.alive) continue;
             float tx = wx / 256.0f;
             float ty = wy / 256.0f - 0.5f;
             float sx, sy;
@@ -5333,6 +5337,15 @@ static void appRender(BrainTestApp *app) {
                 TankSnapshot *ts = &pf_->tanks[i];
                 BYTE pn = ts->playerNum;
                 if (pn >= MAX_TANKS) continue;
+                /* A dead tank stays out of the sim, the same as a stub,
+                 * so the map does not draw it. Its recorded angle keeps
+                 * changing for the whole respawn wait, and the renderer
+                 * reads only deathWait, which the recording holds for
+                 * slot 0 alone: the other dead tanks were drawn turning
+                 * on the spot. The respawn frame clears the status bits
+                 * and carries the new place, so the tank comes back
+                 * there with no frame at the old place. */
+                if (braintestTankStatusIsDead(ts->tankStatus)) continue;
                 struct tankObj *t = &tempTanks[pn];
                 t->x         = ts->worldX;
                 t->y         = ts->worldY;
