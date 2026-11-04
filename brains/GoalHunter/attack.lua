@@ -2887,6 +2887,112 @@ local function try_reaim(state, goal, world, ox, oy, pmx, pmy, now, tag, obstacl
   return "ok"
 end
 
+-- C.CHARGE_LEEWAY (2026-11-03): where the charge will stop. The charge
+-- steering (steering.lua, non-PPT stop decision) brakes when the predicted
+-- brake-now stop (cpf.predict_stop) comes within the engage distance of the
+-- pill: the charge spot's distance, or CHARGE_SUICIDE_STANDOFF for an ammo
+-- starved tank. So:
+--   * the brake-now stop is already inside that distance: it stops there
+--     ("brake");
+--   * else it stops where its travel line first comes to that distance
+--     ("ring"). The engine moves a tank in 16 directions only (dir16), so
+--     the travel line is dir16 of the facing, not the facing itself;
+--   * the travel line never comes that close: the brake-now stop ("brake").
+-- Returns (wx, wy, how) in world units.
+function M.charge_stop_point(state, goal, info, pmx, pmy)
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+  local tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(tmx, tmy)]) or 16
+  local ang_f = info.tank_angle or info.direction or 0
+  local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f,
+                                    (info.speed or 0) / 4, tcap)
+  if not psx then return info.tankx, info.tanky, "here" end
+  local pwx, pwy = U.m2w(pmx), U.m2w(pmy)
+  local sfx = goal.standoff_fx or (pmx + 0.5)
+  local sfy = goal.standoff_fy or (pmy + 0.5)
+  local R
+  if state and state.ammo_deprived == true then
+    R = (C.CHARGE_SUICIDE_STANDOFF or 1.5) * 256
+  else
+    R = U.wdist(math.floor(sfx * 256 + 0.5), math.floor(sfy * 256 + 0.5), pwx, pwy)
+  end
+  if U.wdist(psx, psy, pwx, pwy) <= R then return psx, psy, "brake" end
+  local a = M._dir16(ang_f) * C.TWO_PI / 256   -- dir16 is defined further down
+  local ux, uy = math.sin(a), -math.cos(a)
+  local wx, wy = info.tankx - pwx, info.tanky - pwy
+  local b = wx * ux + wy * uy
+  local disc = b * b - (wx * wx + wy * wy - R * R)
+  if disc >= 0 then
+    local d = -b - math.sqrt(disc)
+    if d >= 0 then
+      return math.floor(info.tankx + d * ux + 0.5),
+             math.floor(info.tanky + d * uy + 0.5), "ring"
+    end
+  end
+  return psx, psy, "brake"
+end
+
+-- C.CHARGE_LEEWAY: the charge's step 1, in place of try_reaim. Andrew's rule:
+-- the take is fine as long as ONE aim on the pill (centre or a corner) hits it
+-- clear from where the tank will be. The 5 aims are tested from the stop
+-- point (M.charge_stop_point) while the tank moves, else from where it
+-- stands. Each aim is "clear", "blocked" (wall, base or pill in the way) or
+-- "short" (the shell dies before the pill with nothing in the way); from the
+-- live position a moving tank's lines often fall short, and that is no
+-- reason to give the spot up. Same rate limit and site key as try_reaim.
+-- Returns:
+--   "ok"      an aim is clear (written onto the goal) -- keep charging
+--   "wait"    tested too recently -- keep charging
+--   "go_on"   no aim clear yet, but not at the spot -- keep charging
+--   "blocked" at the spot and no aim clear -- caller bans and replans
+local function charge_leeway(state, goal, world, info, pmx, pmy, now, at_spot, obstacle)
+  local key  = "_reaim_tick_CHARGE"
+  local last = goal[key]
+  if last and (now - last) < (C.BLOCKED_AIM_RETRY_TICKS or 10) then return "wait" end
+  goal[key] = now
+  local moving = (info.speed or 0) > 1
+  local ox, oy, how = info.tankx, info.tanky, "stopped"
+  if moving then ox, oy, how = M.charge_stop_point(state, goal, info, pmx, pmy) end
+  local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)
+  local cur = goal.aim_idx
+  local cls, trs, wxs, wys = {}, {}, {}, {}
+  local pick = nil
+  for i = 1, 5 do
+    cls[i], trs[i], wxs[i], wys[i] = SM.aim_line_class(ox, oy, omx, omy, pmx, pmy, world, i)
+    if cls[i] == "clear" and (pick == nil or trs[i] < trs[pick]) then pick = i end
+  end
+  if cur and cls[cur] == "clear" then pick = cur end
+  local decision
+  if pick then
+    decision = (pick == cur) and "keep" or "switch"
+    if pick ~= cur then
+      set_goal_aim(goal, pmx, pmy, pick, wxs[pick], wys[pick])
+      local w = goal._shield_scan and goal._shield_scan.best
+      if w and w.aims and w.aims[pick] then w.best_aim_idx = pick end
+    end
+  elseif at_spot then
+    decision = "ban"
+  else
+    decision = "go_on"
+  end
+  if BRAIN_DEBUG_MODE then
+    local parts = {}
+    for i = 1, 5 do
+      parts[i] = string.format("%s=%s%s", shield.AIM_NAMES[i] or tostring(i), cls[i],
+        trs[i] and ("/" .. trs[i]) or "")
+    end
+    print2(string.format("CHARGE_LEEWAY t=%d pill=(%d,%d) tank=(%.3f,%.3f) spd=%d stop=(%.3f,%.3f) how=%s at_spot=%s obstacle=%s aims=[%s] from=%s chosen=%s decision=%s",
+      now, pmx, pmy, info.tankx / 256.0, info.tanky / 256.0, info.speed or 0,
+      ox / 256.0, oy / 256.0, how, tostring(at_spot), tostring(obstacle),
+      table.concat(parts, " "),
+      cur and (shield.AIM_NAMES[cur] or tostring(cur)) or "planned",
+      pick and (shield.AIM_NAMES[pick] or tostring(pick)) or "none", decision))
+  end
+  if pick then return "ok" end
+  if at_spot then return "blocked" end
+  return "go_on"
+end
+M._charge_leeway = charge_leeway   -- unit tests
+
 -- Step 2. Count this SPOT as tried, ban the approach angle (the blocker is a
 -- pill — it will not move, so replanning onto the same line just loops) and
 -- reset to plan_position for a fresh spot. _sanity_pill_replans is the one
@@ -8604,10 +8710,17 @@ local function update_attack_substate_body(goal, state, world, info)
             at_spot = (tdx * tdx + tdy * tdy) <= (qdx * qdx + qdy * qdy)
           end
         end
-        if at_spot then
+        if at_spot or C.CHARGE_LEEWAY then
           -- Step 1: try the pill's other aim points from where we are standing.
-          local ladder = try_reaim(state, goal, world, info.tankx, info.tanky,
-                                   pmx, pmy, now, "CHARGE", obstacle_reason)
+          -- C.CHARGE_LEEWAY: from where the tank will stop, while it is still
+          -- moving, and before it reaches the spot too (charge_leeway).
+          local ladder
+          if C.CHARGE_LEEWAY then
+            ladder = charge_leeway(state, goal, world, info, pmx, pmy, now, at_spot, obstacle_reason)
+          else
+            ladder = try_reaim(state, goal, world, info.tankx, info.tanky,
+                               pmx, pmy, now, "CHARGE", obstacle_reason)
+          end
           if ladder == "blocked" then
             -- Step 2: nothing on this pill is shootable from this spot. Ban the
             -- angle and go find another spot; only give the take up once

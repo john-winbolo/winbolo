@@ -1245,6 +1245,15 @@ M.BLITZ_SETUP_16DIR             = true
 -- 8 = always fall back. Only read when BLITZ_SETUP_16DIR is true. KEEL 0.5
 -- (unused there: KEEL has BLITZ_SETUP_16DIR false).
 M.BLITZ_SETUP_16DIR_EDGE_BRAD   = 0.5
+-- Charge leeway, 2026-11-03. true => when the charge's live gun line is
+-- blocked, the 5 aims (centre + 4 corners) are tested from the point where
+-- the tank will stop (moving: the predicted stop on its travel line; stopped:
+-- where it stands). A line that falls short from the live position does not
+-- count as blocked. If any aim reaches the pill clear from that point, the
+-- charge switches its aim there and keeps going; the angle is banned and a
+-- new spot planned only when no aim is clear from it. Log line CHARGE_LEEWAY.
+-- false = the old test from the live position (try_reaim). KEEL false.
+M.CHARGE_LEEWAY                 = true
 -- Blitz spot pending pills, 2026-09-25. true => a tile where a pill WILL stand
 -- soon blocks a blitz shot line like a live pill: our man is out on a pill
 -- build/repair trip, our place_pill_strategic target while we carry a pill, or
@@ -6611,6 +6620,9 @@ M.PRESETS = {
     -- travel line that ends on its charge spot. KEEL used the radial point.
     BLITZ_SETUP_16DIR             = false,
     BLITZ_SETUP_16DIR_EDGE_BRAD   = 0.5,
+    -- 2026-11-03: the charge tests its aims from its stop point and keeps
+    -- going when one is clear. KEEL tested from the live tank and replanned.
+    CHARGE_LEEWAY                 = false,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).
