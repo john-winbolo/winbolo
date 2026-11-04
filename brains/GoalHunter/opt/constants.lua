@@ -2733,11 +2733,13 @@ M.BOAT_SHELL_DODGE_DEFER         = 0
 -- 1 = always dodge (old behaviour; no roll is made).
 M.BOAT_SHELL_DODGE_CHANCE        = 1.0
 -- EDGE_COST_REFRESH_THINKS: rebuild the pathfinder's Dijkstra edge-cost table
--- every this many thinks (steering.lua M.steer). The table is built once in
--- Brain.open and kept until the map pointer changes, so terrain that differs
--- from the open-time map stays priced as the old tile: in Joust the slate
--- route named an arena wall as plain water and the boat drove into it for
--- good. 0 = never (old behaviour: built once).
+-- every this many thinks (steering.lua M.steer). Added when the table was
+-- built once in Brain.open and kept until the map pointer changed, so terrain
+-- that differed from the open-time map stayed priced as the old tile: in
+-- Joust the slate route named an arena wall as plain water and the boat drove
+-- into it for good. The C pathfinder now updates the table for each changed
+-- square at every Dijkstra start, so this full rebuild is no longer needed
+-- for that; it is kept for now. 0 = never.
 M.EDGE_COST_REFRESH_THINKS       = 0
 -- ── attack_tank: heat a FRIENDLY pill mid-fight (2026-09-06) ──────────────
 -- While fighting enemy tank E, a friendly pill CLOSER to E than we are is a

@@ -4668,6 +4668,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_pf_start_heading.c
     tests/unit/test_pf_route_keep.c
     tests/unit/test_pf_offchain_root.c
+    tests/unit/test_pf_edge_cost_sync.c
     tests/unit/test_pf_influence_tail.c
     # Bench (does nothing unless WB_BENCH=1): the decoy-square blocker step.
     tests/unit/test_bench_decoy_step.c
@@ -6093,6 +6094,9 @@ set(_unit_test_names
     pf_offchain_lowest_g_not_root
     pf_offchain_chain_rank_not_root
     pf_offchain_dead_end_keeps_root
+    pf_edge_sync_blocks_new_corner
+    pf_edge_sync_prices_new_wall
+    pf_edge_sync_matches_full_rebuild
     bench_decoy_step_first
     shield_outgoing_pill_blocks
     shield_pill_cover_walls

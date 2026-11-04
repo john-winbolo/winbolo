@@ -658,6 +658,13 @@ int run_pf_route_keep_check_values(void);
 int run_pf_offchain_lowest_g_not_root(void);
 int run_pf_offchain_chain_rank_not_root(void);
 int run_pf_offchain_dead_end_keeps_root(void);
+/* The Dijkstra edge cost grid follows squares that change on the brain's map
+ * after it was built (test_pf_edge_cost_sync.c). Regression for
+ * 20261103_165532_1 player 2 ticks 6555-6762: a diagonal between a half wall
+ * and a building stayed open because the grid still priced both as unknown. */
+int run_pf_edge_sync_blocks_new_corner(void);
+int run_pf_edge_sync_prices_new_wall(void);
+int run_pf_edge_sync_matches_full_rebuild(void);
 /* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
  * cost of decoy_getaway's blocker step on the decoy square. */
 int run_bench_decoy_step_first(void);
