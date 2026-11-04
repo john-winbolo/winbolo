@@ -1000,6 +1000,20 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               dropped, and the client asks
                                               again. */
 
+#define PACKET_BOT_TEAM_MSG            232  /* Bot Host bot -> server
+                                              { textLen u8, text }
+                                              a team message from a brain on
+                                              a Bot Host (CMD_BOT_TEAM_MSG).
+                                              Refused from any connection
+                                              that is not a Bot Host bot. */
+
+#define PACKET_BOT_STATS               233  /* Bot Host bot -> server
+                                              { think stats, tier, host name }
+                                              a Bot Host bot's think
+                                              statistics (CMD_BOT_STATS).
+                                              Refused from any connection
+                                              that is not a Bot Host bot. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

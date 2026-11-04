@@ -69,6 +69,25 @@ typedef struct {
 /* bit 2: client requests a tankless spectator connection rather than a tank
  * slot.  Branches the join handler to the spectator-accept path. */
 #define JOIN_FLAG_SPECTATOR         0x04
+/* bit 3: the joiner is a Bot Host bot connection for a bot seat the server
+ * already holds. JOIN_BOT_SLOT_TOKEN_LEN bytes of one-time token follow the
+ * address-proof cookie. The server binds the connection to the seat the token
+ * was issued for, without a roster join; it never takes a free seat. */
+#define JOIN_FLAG_BOT_SLOT          0x08
+/* bit 4: the joiner is a Bot Host control connection. A key
+ * (JOIN_BOT_HOST_KEY_LEN bytes), a slot count (1 byte) and a host name
+ * (JOIN_BOT_HOST_NAME_LEN bytes) follow the cookie. Accepted only when the
+ * server runs with -bothostkey and the key matches. The connection holds no
+ * tank seat and is not shown to players. */
+#define JOIN_FLAG_BOT_HOST          0x10
+
+#define JOIN_BOT_SLOT_TOKEN_LEN     16
+#define JOIN_BOT_HOST_KEY_LEN       64
+#define JOIN_BOT_HOST_NAME_LEN      32
+/* Most bot connections one Bot Host may offer. */
+#define BOT_HOST_MAX_SLOTS          MAX_TANKS
+/* Most Bot Host control connections one server holds at once. */
+#define MAX_BOT_HOSTS               8
 
 /* JOIN_ACCEPT slot byte the server sends to a tankless spectator in place of a
  * real 0..MAX_TANKS-1 slot — the viewer holds no tank.  A spectator client keys

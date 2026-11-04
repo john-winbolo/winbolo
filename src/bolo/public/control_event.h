@@ -45,6 +45,15 @@
 #include "sim_rules_names.h" /* SIM_RULE_COUNT — the scenario rules event's
                              * row cap, taken from the rule list itself */
 
+#include "scenario_table.h" /* SCN_TABLE_KEY_LEN for the Bot Host table events */
+
+/* Field sizes of the Bot Host events. */
+#define BOT_HOST_TOKEN_LEN        16   /* == JOIN_BOT_SLOT_TOKEN_LEN */
+#define BOT_HOST_EVT_NAME_LEN     PACKET_MAX_PLAYER_NAME
+#define BOT_HOST_BRAIN_NAME_LEN   64
+#define BOT_HOST_INIT_ARG_LEN     128  /* == BRAIN_INIT_ARG_MAX */
+#define BOT_HOST_TEAM_MSG_LEN     (PACKET_MAX_CHAT_MESSAGE + 2) /* == BRAIN_INBOX_MSG_LEN */
+
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
 #endif
@@ -419,6 +428,32 @@ typedef enum {
      * Appended at the END, like every type above it: the tables in
      * transport_control_codec.c are indexed by this enum. */
     CTRL_SCN_POPUP,
+    /* Bot Host events. The server sends all five on a Bot Host's control
+     * connection only, straight onto that connection's CHANNEL_CONTROL and
+     * never through the control bus, so no player and no spectator ever
+     * receives one. Each names the bot seat it is about.
+     *
+     * CTRL_BOT_HOST_ASSIGN — run a brain for this seat: open a bot
+     * connection with the token and run the named brain at the given AI
+     * level with the given init arg. A later assign for a seat the host
+     * already runs carries a higher gen and replaces the brain settings;
+     * reload set asks the host to make a new brain (a round start). */
+    CTRL_BOT_HOST_ASSIGN,
+    /* CTRL_BOT_HOST_UNASSIGN — stop the brain for this seat and close its
+     * bot connection. */
+    CTRL_BOT_HOST_UNASSIGN,
+    /* CTRL_BOT_INIT_TABLE — one entry of the seat's BRAIN_INIT table, the
+     * table a scenario gives the bot. Entries arrive idx 0..count-1 in order;
+     * the host takes the table when idx == count - 1. An empty table is one
+     * event with count 0. */
+    CTRL_BOT_INIT_TABLE,
+    /* CTRL_BOT_HINT — one entry of a scenario hint for the seat's brain, in
+     * the same form as CTRL_BOT_INIT_TABLE. The host calls the brain's hint
+     * handler when the last entry arrives. */
+    CTRL_BOT_HINT,
+    /* CTRL_BOT_TEAM_MSG — a bot team message from an allied bot, for the
+     * seat's brain inbox. Humans never receive these. */
+    CTRL_BOT_TEAM_MSG,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1399,6 +1434,43 @@ typedef struct ControlEvent {
             uint32_t id;
             uint32_t len;    /* compressed blob bytes, <= LOBBY_BOT_CATALOG_WIRE_MAX */
         } lobbyBotPoolInfo;
+
+        /* CTRL_BOT_HOST_ASSIGN — see the enum. */
+        struct {
+            uint8_t  seat;
+            uint8_t  reload;       /* 1: make a new brain now */
+            uint8_t  ai;           /* aiType */
+            uint8_t  team;
+            uint16_t gen;          /* rises with every change for the seat */
+            uint32_t startTick;    /* BRAIN_START_ENGINE_TICK for the brain */
+            uint32_t brainVersion; /* the brain file's version stamp */
+            uint8_t  token[BOT_HOST_TOKEN_LEN];
+            char     name[BOT_HOST_EVT_NAME_LEN];
+            char     brain[BOT_HOST_BRAIN_NAME_LEN];
+            char     initArg[BOT_HOST_INIT_ARG_LEN];
+        } botHostAssign;
+
+        /* CTRL_BOT_HOST_UNASSIGN — see the enum. */
+        struct {
+            uint8_t seat;
+        } botHostUnassign;
+
+        /* CTRL_BOT_INIT_TABLE and CTRL_BOT_HINT — one table entry. key is
+         * empty when count is 0. */
+        struct {
+            uint8_t seat;
+            uint8_t idx;
+            uint8_t count;
+            char    key[SCN_TABLE_KEY_LEN];
+            char    value[SCN_TABLE_VALUE_LEN];
+        } botTableEntry;
+
+        /* CTRL_BOT_TEAM_MSG — see the enum. */
+        struct {
+            uint8_t seat;        /* the receiving bot */
+            uint8_t fromPlayer;  /* the sending bot */
+            char    text[BOT_HOST_TEAM_MSG_LEN];
+        } botTeamMsg;
     } u;
 } ControlEvent;
 

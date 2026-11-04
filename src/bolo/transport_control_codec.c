@@ -3477,6 +3477,239 @@ static bool decodeScnPopupBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* -- Bot Host events --------------------------------------------------
+ *
+ * Strings travel as [len 1][bytes len], with no terminator. A length that
+ * does not fit the field it decodes into is refused, so a decoded event
+ * always holds terminated strings. */
+
+/* Writes one length-prefixed string. False when it does not fit. */
+static bool botHostPutStr(uint8_t *buf, size_t cap, size_t *pos,
+                          const char *str, size_t fieldCap) {
+    size_t n = strnlen(str, fieldCap);
+    if (n >= fieldCap || n > 255) return false;
+    if (*pos + 1 + n > cap) return false;
+    buf[(*pos)++] = (uint8_t)n;
+    memcpy(buf + *pos, str, n);
+    *pos += n;
+    return true;
+}
+
+/* Reads one length-prefixed string into a field of fieldCap bytes. */
+static bool botHostGetStr(const uint8_t *buf, size_t len, size_t *pos,
+                          char *out, size_t fieldCap) {
+    size_t n;
+    if (*pos + 1 > len) return false;
+    n = buf[(*pos)++];
+    if (n >= fieldCap || *pos + n > len) return false;
+    memcpy(out, buf + *pos, n);
+    out[n] = '\0';
+    *pos += n;
+    return true;
+}
+
+/* CTRL_BOT_HOST_ASSIGN body:
+ *   [seat 1][reload 1][ai 1][team 1][gen 2][startTick 4][brainVersion 4]
+ *   [token BOT_HOST_TOKEN_LEN][name str][brain str][initArg str] */
+#define BOT_HOST_ASSIGN_FIXED_LEN (4 + 2 + 4 + 4 + BOT_HOST_TOKEN_LEN)
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostAssignBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (bufCap < BOT_HOST_ASSIGN_FIXED_LEN) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botHostAssign.seat;
+    buf[pos++] = evt->u.botHostAssign.reload;
+    buf[pos++] = evt->u.botHostAssign.ai;
+    buf[pos++] = evt->u.botHostAssign.team;
+    packU16(buf + pos, evt->u.botHostAssign.gen);           pos += 2;
+    packU32(buf + pos, evt->u.botHostAssign.startTick);     pos += 4;
+    packU32(buf + pos, evt->u.botHostAssign.brainVersion);  pos += 4;
+    memcpy(buf + pos, evt->u.botHostAssign.token, BOT_HOST_TOKEN_LEN);
+    pos += BOT_HOST_TOKEN_LEN;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botHostAssign.name,
+                       sizeof(evt->u.botHostAssign.name)) ||
+        !botHostPutStr(buf, bufCap, &pos, evt->u.botHostAssign.brain,
+                       sizeof(evt->u.botHostAssign.brain)) ||
+        !botHostPutStr(buf, bufCap, &pos, evt->u.botHostAssign.initArg,
+                       sizeof(evt->u.botHostAssign.initArg))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostAssignBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < BOT_HOST_ASSIGN_FIXED_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_ASSIGN;
+    outEvt->u.botHostAssign.seat   = buf[pos++];
+    outEvt->u.botHostAssign.reload = buf[pos++];
+    outEvt->u.botHostAssign.ai     = buf[pos++];
+    outEvt->u.botHostAssign.team   = buf[pos++];
+    outEvt->u.botHostAssign.gen          = unpackU16(buf + pos); pos += 2;
+    outEvt->u.botHostAssign.startTick    = unpackU32(buf + pos); pos += 4;
+    outEvt->u.botHostAssign.brainVersion = unpackU32(buf + pos); pos += 4;
+    memcpy(outEvt->u.botHostAssign.token, buf + pos, BOT_HOST_TOKEN_LEN);
+    pos += BOT_HOST_TOKEN_LEN;
+    if (outEvt->u.botHostAssign.seat >= MAX_TANKS) return false;
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botHostAssign.name,
+                       sizeof(outEvt->u.botHostAssign.name)) ||
+        !botHostGetStr(buf, len, &pos, outEvt->u.botHostAssign.brain,
+                       sizeof(outEvt->u.botHostAssign.brain)) ||
+        !botHostGetStr(buf, len, &pos, outEvt->u.botHostAssign.initArg,
+                       sizeof(outEvt->u.botHostAssign.initArg))) {
+        return false;
+    }
+    return pos == len;
+}
+
+/* CTRL_BOT_HOST_UNASSIGN body: [seat 1]. */
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostUnassignBody(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 1) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostUnassign.seat;
+    *outLen = 1;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostUnassignBody(const uint8_t *buf, size_t len,
+                                      ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len != 1) return false;
+    if (buf[0] >= MAX_TANKS) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_UNASSIGN;
+    outEvt->u.botHostUnassign.seat = buf[0];
+    return true;
+}
+
+/* CTRL_BOT_INIT_TABLE and CTRL_BOT_HINT body:
+ *   [seat 1][idx 1][count 1][key str][value str]
+ * count is at most SCN_TABLE_MAX, and idx is below count unless count is 0,
+ * when idx is 0 and both strings are empty. */
+static EncodeResult encodeBotTableEntryBody(const ControlEvent *evt,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    size_t pos = 0;
+    if (bufCap < 3) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botTableEntry.seat;
+    buf[pos++] = evt->u.botTableEntry.idx;
+    buf[pos++] = evt->u.botTableEntry.count;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botTableEntry.key,
+                       sizeof(evt->u.botTableEntry.key)) ||
+        !botHostPutStr(buf, bufCap, &pos, evt->u.botTableEntry.value,
+                       sizeof(evt->u.botTableEntry.value))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotTableEntryBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt,
+                                    ControlEventType type) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL || len < 3) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = type;
+    outEvt->u.botTableEntry.seat  = buf[pos++];
+    outEvt->u.botTableEntry.idx   = buf[pos++];
+    outEvt->u.botTableEntry.count = buf[pos++];
+    if (outEvt->u.botTableEntry.seat >= MAX_TANKS) return false;
+    if (outEvt->u.botTableEntry.count > SCN_TABLE_MAX) return false;
+    if (outEvt->u.botTableEntry.count == 0) {
+        if (outEvt->u.botTableEntry.idx != 0) return false;
+    } else if (outEvt->u.botTableEntry.idx >= outEvt->u.botTableEntry.count) {
+        return false;
+    }
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botTableEntry.key,
+                       sizeof(outEvt->u.botTableEntry.key)) ||
+        !botHostGetStr(buf, len, &pos, outEvt->u.botTableEntry.value,
+                       sizeof(outEvt->u.botTableEntry.value))) {
+        return false;
+    }
+    return pos == len;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotInitTableBody(const ControlEvent *evt,
+                                           const struct UdpServerClient *recipient,
+                                           uint8_t *buf, size_t bufCap,
+                                           size_t *outLen) {
+    (void)recipient;
+    return encodeBotTableEntryBody(evt, buf, bufCap, outLen);
+}
+
+static bool decodeBotInitTableBody(const uint8_t *buf, size_t len,
+                                   ControlEvent *outEvt) {
+    return decodeBotTableEntryBody(buf, len, outEvt, CTRL_BOT_INIT_TABLE);
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHintBody(const ControlEvent *evt,
+                                      const struct UdpServerClient *recipient,
+                                      uint8_t *buf, size_t bufCap,
+                                      size_t *outLen) {
+    (void)recipient;
+    return encodeBotTableEntryBody(evt, buf, bufCap, outLen);
+}
+
+static bool decodeBotHintBody(const uint8_t *buf, size_t len,
+                              ControlEvent *outEvt) {
+    return decodeBotTableEntryBody(buf, len, outEvt, CTRL_BOT_HINT);
+}
+
+/* CTRL_BOT_TEAM_MSG body: [seat 1][fromPlayer 1][text str]. The text is
+ * never empty. */
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotTeamMsgBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (evt->u.botTeamMsg.text[0] == '\0') return ENCODE_SKIP;
+    if (bufCap < 2) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botTeamMsg.seat;
+    buf[pos++] = evt->u.botTeamMsg.fromPlayer;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botTeamMsg.text,
+                       sizeof(evt->u.botTeamMsg.text))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotTeamMsgBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL || len < 3) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_TEAM_MSG;
+    outEvt->u.botTeamMsg.seat       = buf[pos++];
+    outEvt->u.botTeamMsg.fromPlayer = buf[pos++];
+    if (outEvt->u.botTeamMsg.seat >= MAX_TANKS ||
+        outEvt->u.botTeamMsg.fromPlayer >= MAX_TANKS) {
+        return false;
+    }
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botTeamMsg.text,
+                       sizeof(outEvt->u.botTeamMsg.text))) {
+        return false;
+    }
+    if (outEvt->u.botTeamMsg.text[0] == '\0') return false;
+    return pos == len;
+}
+
 /* CTRL_SCN_MARKER body: [id 1][kind 1][x 1][y 1][slot 1][colour 1]. */
 #define SCN_MARKER_BODY_LEN 6
 
@@ -3997,6 +4230,11 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_SCRIPT_SETTING]  = encodeLobbyScriptSettingBody,
     [CTRL_LOBBY_BRAIN_ANNOUNCE]  = encodeLobbyBrainAnnounceBody,
     [CTRL_LOBBY_BOT_POOL_INFO]   = encodeLobbyBotPoolInfoBody,
+    [CTRL_BOT_HOST_ASSIGN]       = encodeBotHostAssignBody,
+    [CTRL_BOT_HOST_UNASSIGN]     = encodeBotHostUnassignBody,
+    [CTRL_BOT_INIT_TABLE]        = encodeBotInitTableBody,
+    [CTRL_BOT_HINT]              = encodeBotHintBody,
+    [CTRL_BOT_TEAM_MSG]          = encodeBotTeamMsgBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -4055,6 +4293,11 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_SCRIPT_SETTING]  = decodeLobbyScriptSettingBody,
     [CTRL_LOBBY_BRAIN_ANNOUNCE]  = decodeLobbyBrainAnnounceBody,
     [CTRL_LOBBY_BOT_POOL_INFO]   = decodeLobbyBotPoolInfoBody,
+    [CTRL_BOT_HOST_ASSIGN]       = decodeBotHostAssignBody,
+    [CTRL_BOT_HOST_UNASSIGN]     = decodeBotHostUnassignBody,
+    [CTRL_BOT_INIT_TABLE]        = decodeBotInitTableBody,
+    [CTRL_BOT_HINT]              = decodeBotHintBody,
+    [CTRL_BOT_TEAM_MSG]          = decodeBotTeamMsgBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -4177,6 +4420,11 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_SCN_STATUS:             return "CTRL_SCN_STATUS";
     case CTRL_VOICE_EVERYONE:         return "CTRL_VOICE_EVERYONE";
     case CTRL_SCN_POPUP:              return "CTRL_SCN_POPUP";
+    case CTRL_BOT_HOST_ASSIGN:        return "CTRL_BOT_HOST_ASSIGN";
+    case CTRL_BOT_HOST_UNASSIGN:      return "CTRL_BOT_HOST_UNASSIGN";
+    case CTRL_BOT_INIT_TABLE:         return "CTRL_BOT_INIT_TABLE";
+    case CTRL_BOT_HINT:               return "CTRL_BOT_HINT";
+    case CTRL_BOT_TEAM_MSG:           return "CTRL_BOT_TEAM_MSG";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

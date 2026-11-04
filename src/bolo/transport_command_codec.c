@@ -1222,6 +1222,88 @@ static bool commandDecodePing(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_BOT_TEAM_MSG — PACKET_BOT_TEAM_MSG
+ * Wire: [header 8] [cmdSeq 4] [textLen 1] [text N], N from 1 to
+ * CMD_BOT_TEAM_MSG_LEN - 1, with no terminator. */
+static bool commandEncodeBotTeamMsg(const ClientCommand *cmd,
+                                    uint8_t *buf, size_t bufCap,
+                                    size_t *outLen) {
+    size_t n = strnlen(cmd->u.botTeamMsg.text, CMD_BOT_TEAM_MSG_LEN);
+    if (n == 0 || n >= CMD_BOT_TEAM_MSG_LEN) return false;
+    if (bufCap < CMD_PACKET_BODY_OFFSET + 1 + n) return false;
+    packHeader(buf, PACKET_BOT_TEAM_MSG, 0);
+    buf[CMD_PACKET_BODY_OFFSET] = (uint8_t)n;
+    memcpy(buf + CMD_PACKET_BODY_OFFSET + 1, cmd->u.botTeamMsg.text, n);
+    *outLen = CMD_PACKET_BODY_OFFSET + 1 + n;
+    return true;
+}
+
+static bool commandDecodeBotTeamMsg(const uint8_t *buf, size_t len,
+                                    ClientCommand *cmd) {
+    size_t n;
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
+    n = buf[CMD_PACKET_BODY_OFFSET];
+    if (n == 0 || n >= CMD_BOT_TEAM_MSG_LEN) return false;
+    if (len != CMD_PACKET_BODY_OFFSET + 1 + n) return false;
+    memset(&cmd->u.botTeamMsg, 0, sizeof(cmd->u.botTeamMsg));
+    cmd->type = CMD_BOT_TEAM_MSG;
+    memcpy(cmd->u.botTeamMsg.text, buf + CMD_PACKET_BODY_OFFSET + 1, n);
+    cmd->u.botTeamMsg.text[n] = '\0';
+    /* A NUL inside the text would make it a shorter message. */
+    return strlen(cmd->u.botTeamMsg.text) == n;
+}
+
+/* CMD_BOT_STATS — PACKET_BOT_STATS
+ * Wire: [header 8] [cmdSeq 4] [last 2] [avg 2] [max 2] [target 2]
+ *       [thinks 4] [overruns 4] [kills 4] [tier 1] [hostLen 1] [host N] */
+#define BOT_STATS_FIXED_LEN (2 + 2 + 2 + 2 + 4 + 4 + 4 + 1 + 1)
+static bool commandEncodeBotStats(const ClientCommand *cmd,
+                                  uint8_t *buf, size_t bufCap,
+                                  size_t *outLen) {
+    const CmdBotStats *st = &cmd->u.botStats;
+    size_t hn = strnlen(st->hostName, CMD_BOT_STATS_HOST_LEN);
+    size_t pos = CMD_PACKET_BODY_OFFSET;
+    if (hn >= CMD_BOT_STATS_HOST_LEN) return false;
+    if (bufCap < CMD_PACKET_BODY_OFFSET + BOT_STATS_FIXED_LEN + hn) return false;
+    packHeader(buf, PACKET_BOT_STATS, 0);
+    packU16(buf + pos, st->lastThinkTenths); pos += 2;
+    packU16(buf + pos, st->avgThinkTenths);  pos += 2;
+    packU16(buf + pos, st->maxThinkTenths);  pos += 2;
+    packU16(buf + pos, st->targetTenths);    pos += 2;
+    packU32(buf + pos, st->thinkCount);      pos += 4;
+    packU32(buf + pos, st->overrunCount);    pos += 4;
+    packU32(buf + pos, st->killCount);       pos += 4;
+    buf[pos++] = st->tier;
+    buf[pos++] = (uint8_t)hn;
+    memcpy(buf + pos, st->hostName, hn);
+    pos += hn;
+    *outLen = pos;
+    return true;
+}
+
+static bool commandDecodeBotStats(const uint8_t *buf, size_t len,
+                                  ClientCommand *cmd) {
+    CmdBotStats *st = &cmd->u.botStats;
+    size_t pos = CMD_PACKET_BODY_OFFSET;
+    size_t hn;
+    if (len < CMD_PACKET_BODY_OFFSET + BOT_STATS_FIXED_LEN) return false;
+    memset(st, 0, sizeof(*st));
+    cmd->type = CMD_BOT_STATS;
+    st->lastThinkTenths = unpackU16(buf + pos); pos += 2;
+    st->avgThinkTenths  = unpackU16(buf + pos); pos += 2;
+    st->maxThinkTenths  = unpackU16(buf + pos); pos += 2;
+    st->targetTenths    = unpackU16(buf + pos); pos += 2;
+    st->thinkCount      = unpackU32(buf + pos); pos += 4;
+    st->overrunCount    = unpackU32(buf + pos); pos += 4;
+    st->killCount       = unpackU32(buf + pos); pos += 4;
+    st->tier            = buf[pos++];
+    hn = buf[pos++];
+    if (hn >= CMD_BOT_STATS_HOST_LEN || len != pos + hn) return false;
+    memcpy(st->hostName, buf + pos, hn);
+    st->hostName[hn] = '\0';
+    return strlen(st->hostName) == hn;
+}
+
 /* ================================================================
  * Public API — switch dispatch keyed off cmd->type for encode and
  * buf[2] (packet type) for decode. Mirrors transport_control_codec.c
@@ -1274,6 +1356,8 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_VIEW_CYCLE:            ok = commandEncodeViewCycle(cmd, buf, bufCap, outLen); break;
         case CMD_PING:                  ok = commandEncodePing(cmd, buf, bufCap, outLen); break;
         case CMD_PLAYER_PING_MUTE:      ok = commandEncodePlayerPingMute(cmd, buf, bufCap, outLen); break;
+        case CMD_BOT_TEAM_MSG:          ok = commandEncodeBotTeamMsg(cmd, buf, bufCap, outLen); break;
+        case CMD_BOT_STATS:             ok = commandEncodeBotStats(cmd, buf, bufCap, outLen); break;
         case CMD_NONE:
         default:                        return false;
     }
@@ -1329,6 +1413,8 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_VIEW_CYCLE:            return commandDecodeViewCycle(buf, len, cmd);
         case PACKET_MAP_PING:              return commandDecodePing(buf, len, cmd);
         case PACKET_PLAYER_PING_MUTE:      return commandDecodePlayerPingMute(buf, len, cmd);
+        case PACKET_BOT_TEAM_MSG:          return commandDecodeBotTeamMsg(buf, len, cmd);
+        case PACKET_BOT_STATS:             return commandDecodeBotStats(buf, len, cmd);
         default:                           return false;
     }
 }
