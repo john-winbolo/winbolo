@@ -413,6 +413,17 @@ local GOAL_TO_MODE = {
   kill_mine            = "suppressed",  -- de-mine interrupt: LGM stays in (blast!)
 }
 
+-- The goal's own builder mode. A land capture_pill (no goal.sea) is
+-- "opportunistic" under C.CAPTURE_PILL_BUILDER_FREE, so the builder pool may
+-- send the builder on its jobs during the drive; otherwise GOAL_TO_MODE.
+local function goal_mode(kind, goal)
+  if kind == "capture_pill" and C.CAPTURE_PILL_BUILDER_FREE
+     and not (goal and goal.sea) then
+    return "opportunistic"
+  end
+  return GOAL_TO_MODE[kind] or "opportunistic"
+end
+
 -- -------------------------------------------------------------------------
 -- set_mode: call each tick after goal selection to populate state.builder
 -- -------------------------------------------------------------------------
@@ -420,7 +431,7 @@ function M.set_mode(state, world, info, goal)
   local b    = state.builder
   local kind = goal.kind
 
-  b.mode           = GOAL_TO_MODE[kind] or "opportunistic"
+  b.mode           = goal_mode(kind, goal)
   b.target         = nil
   b.need_trees     = 0
   b.defensive_debug = nil
@@ -762,7 +773,7 @@ function M.set_mode(state, world, info, goal)
         print2(string.format("PLACE_BLOCKED t=%d goal=%s tile=(%d,%d) reason=%s %s -> no new pill",
           state.tick or 0, tostring(kind), b.pill_target.mx, b.pill_target.my, why, det or ""))
       end
-      b.mode         = GOAL_TO_MODE[kind] or "opportunistic"
+      b.mode         = goal_mode(kind, goal)
       b.pill_target  = nil
       b.place_resume = nil
     elseif b._place_block_key then

@@ -5152,6 +5152,21 @@ M.BUILDER_POOL_IDLE_MODES = {
   infrastructure = true,
   repair_nearby  = true,
 }
+-- Free builder on a land pill pickup, 2026-11-04. capture_pill used to give
+-- the builder mode "gather", but a land pickup never sets need_trees, so the
+-- gather step never ran and "gather" is not an idle mode above: the pool
+-- answered mode_owned (gather) to every job (rebuild a dead pill, top up,
+-- farm) for the whole drive. Recorded: print2_bot2.log t=10577 of
+-- 20261103_230822_1_v5_anchor_helm_s205_part2of23, "owner=capture_pill/gather
+-- elig=no: mode_owned (gather) cands=4 ok=0 trees=12/res=8".
+-- true => a land capture_pill (no goal.sea) gives the builder mode
+-- "opportunistic", the same as capture_base, so the pool may send the builder
+-- on its jobs during the drive. The pool's own checks (under fire, fire
+-- exchange, leash, tree reserve, claims) are unchanged, and the sea pickup
+-- (goal.sea) keeps its own modes. Log effect: BUILDER_POOL lines read
+-- owner=capture_pill/opportunistic instead of elig=no: mode_owned (gather).
+-- false = "gather" as before. KEEL false.
+M.CAPTURE_PILL_BUILDER_FREE = true
 
 -- ── Claims (multi-bot arbitration) ───────────────────────────────────────
 -- Five allies must not all repair the same pill. The claim rides the existing
@@ -6912,6 +6927,9 @@ M.PRESETS = {
     --   (50 ticks).  KEEL blocked it for 8 s, so allied shots at an enemy pill
     --   on the next tile could keep our pill unrepaired until it died.
     REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400,
+    --   2026-11-04: a land capture_pill frees the builder for pool jobs.
+    --   KEEL kept the builder in "gather" (mode_owned) for the whole drive.
+    CAPTURE_PILL_BUILDER_FREE     = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
