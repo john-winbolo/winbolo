@@ -6800,6 +6800,8 @@ set(_unit_test_names
     pill_shadow_withheld_crc_matches
     loopback_map_cull
     loopback_map_cull_resync
+    loopback_map_unculled_drop_heals
+    console_bot_set
     sound_delivery_wire_cull
     sound_tier_playback
     view_ally_loopback

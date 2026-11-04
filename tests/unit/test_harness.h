@@ -2781,6 +2781,8 @@ int run_pill_shadow_withheld_crc_matches(void);
  * resync while the client is behind: the blob is its copy, not the live map. */
 int run_loopback_map_cull(void);
 int run_loopback_map_cull_resync(void);
+int run_loopback_map_unculled_drop_heals(void);
+int run_console_bot_set(void);
 
 /* Sound culling over the loopback transport (test_sound_delivery_wire.c): for a
  * recipient whose only viewport rect is its own tank screen, both delivery

@@ -1361,6 +1361,8 @@ static const UnitTestEntry s_tests[] = {
     { "pill_shadow_withheld_crc_matches",        run_pill_shadow_withheld_crc_matches        },
     { "loopback_map_cull",                       run_loopback_map_cull                       },
     { "loopback_map_cull_resync",                run_loopback_map_cull_resync                },
+    { "loopback_map_unculled_drop_heals",        run_loopback_map_unculled_drop_heals        },
+    { "console_bot_set",                         run_console_bot_set                         },
     { "sound_delivery_wire_cull",                run_sound_delivery_wire_cull                },
     { "sound_tier_playback",                     run_sound_tier_playback                     },
     { "view_ally_loopback",                      run_view_ally_loopback                      },

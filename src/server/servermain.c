@@ -306,6 +306,48 @@ static void consoleOpMemReport(bool deep) {
   serverMemReportRequest(deep);
 }
 
+/* bot <n> difficulty|brain <value>: the same changes the lobby's bot popup
+   makes. A brain change is applied now (an in-process bot reloads at once,
+   a Bot Host seat's host is told); a difficulty change reaches the brain at
+   the next round start, as it does from the lobby. */
+static bool consoleOpBotSet(int player, const char *what, const char *value,
+                            char *msg, size_t msgLen) {
+  bool ok = false;
+  threadsWaitForMutex();
+  if (player < 0 || player >= MAX_TANKS ||
+      !serverSimIsBot(serverSim, (BYTE)player)) {
+    snprintf(msg, msgLen, "Player %d is not a bot", player);
+  } else if (strcmp(what, "difficulty") == 0) {
+    uint8_t level;
+    const LobbyBotConfig *bc = serverSimGetBotConfig(serverSim, (BYTE)player);
+    if (!botDifficultyFromName(value, &level) || bc == NULL) {
+      snprintf(msg, msgLen, "Unknown difficulty '%s'", value);
+    } else {
+      serverSimSetBotConfig(serverSim, (BYTE)player, bc->mode, level,
+                            bc->personality, NULL);
+      snprintf(msg, msgLen, "Bot %d difficulty is now %s", player,
+               botDifficultyName(level));
+      ok = true;
+    }
+  } else if (strcmp(what, "brain") == 0) {
+    char *end = NULL;
+    long idx = strtol(value, &end, 10);
+    const char *path = (end != value && idx >= 0 && idx < 255)
+        ? serverSimGetBrainPathForIdx(serverSim, (uint8_t)idx) : NULL;
+    if (path == NULL) {
+      snprintf(msg, msgLen, "No brain at index '%s'", value);
+    } else {
+      serverSimSwitchBotBrain(serverSim, (BYTE)player, (uint8_t)idx);
+      snprintf(msg, msgLen, "Bot %d brain is now %s", player, path);
+      ok = true;
+    }
+  } else {
+    snprintf(msg, msgLen, "Unknown bot setting '%s'", what);
+  }
+  threadsReleaseMutex();
+  return ok;
+}
+
 /* Positional, and the struct's own comment says why the newest entry goes
    last rather than beside a relative. */
 static const ServerConsoleOps serverConsoleOps = {
@@ -318,7 +360,8 @@ static const ServerConsoleOps serverConsoleOps = {
   consoleOpKick,
   consoleOpSetHost,
   consoleOpReloadScenario,
-  consoleOpMemReport
+  consoleOpMemReport,
+  consoleOpBotSet
 };
 
 

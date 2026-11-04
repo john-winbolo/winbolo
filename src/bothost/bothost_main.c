@@ -552,6 +552,10 @@ static void onAssign(const ControlEvent *evt) {
     } else if (evt->u.botHostAssign.reload) {
         fprintf(stderr, "[bothost] bot %d \"%s\": new brain owed (brain "
                         "\"%s\")\n", (int)s, hs->name, hs->brainName);
+    } else {
+        fprintf(stderr, "[bothost] bot %d \"%s\": settings kept for the next "
+                        "brain (team %u, init arg '%s')\n", (int)s, hs->name,
+                (unsigned)hs->team, hs->initArg);
     }
 }
 

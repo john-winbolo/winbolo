@@ -620,3 +620,100 @@ int run_loopback_map_cull_resync(void) {
     loopbackHarnessStop(&h);
     return 0;
 }
+
+/* A map event dropped for a slot that is not culled: a full-view slot, which a
+ * full-view Bot Host bot connection is. The sweep only runs for culled slots,
+ * so it cannot repair this one. What repairs it is the checksum: an unculled
+ * slot's copy takes every change in serverSimShadowTick whether or not the
+ * drain managed to queue it, so the full-sync checksum describes the live map,
+ * the client sees that its own map differs, and after the debounce it asks for
+ * a resync whose blob (the copy) holds the change. The drop is staged the way
+ * the drain makes one when the slot's queue is full: the live map and every
+ * copy move, and nothing is queued. */
+int run_loopback_map_unculled_drop_heals(void) {
+    LoopbackHarness h;
+    GameSim *gs;
+    Transport *ct;
+    BYTE slotB;
+    BYTE tankMX = 0, tankMY = 0;
+    BYTE x = 0, y = 0;
+    BYTE before, live;
+    uint32_t gen0 = 0, resync0 = 0, gen1 = 0, resync1 = 0;
+    uint32_t queued0;
+    int i;
+
+    if (loopbackHarnessStart(&h, "CullDrop", /*lobbyMode*/ false,
+                             /*impairSpec*/ NULL, CULL_SEED) != true) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("harness start (unculled drop) failed");
+    }
+    if (loopbackHarnessPumpUntil(&h, CULL_CONNECT_MAX, cullConnected, NULL) < 0 ||
+        loopbackHarnessPumpUntil(&h, CULL_READY_MAX, cullServerReady, NULL) < 0 ||
+        loopbackHarnessPumpUntil(&h, CULL_READY_MAX, cullHaveTank, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never connected, finished its download and got a "
+                "tank");
+    }
+
+    gs = serverSimGetGameSim(h.sim);
+    ct = &h.cs->transport;
+    slotB = clientSimGetMyPlayerNum(h.cs);
+    if (gs == NULL || slotB >= MAX_TANKS ||
+        clientSimGetMyTankMapPos(h.cs, &tankMX, &tankMY) != TRUE) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("no sim, slot or tank position after convergence");
+    }
+
+    threadsWaitForMutex();
+    serverSimSetShadowCulled(h.sim, slotB, false);
+    threadsReleaseMutex();
+
+    if (!cullFindGroundNear(gs, tankMX, tankMY, 8, &x, &y)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("no usable ground near the tank at %u,%u", (unsigned)tankMX,
+                (unsigned)tankMY);
+    }
+    before = clientSimGetMapTerrain(h.cs, x, y);
+    live = cullFlip((*gs->mp).mapItem[x][y]);
+    queued0 = transportUdpServerTestMapQueueCount(slotB);
+    transportUdpClientTestMapState(ct, &gen0, &resync0);
+
+    /* The drop: the map and every copy move, the slot's queue gets nothing. */
+    threadsWaitForMutex();
+    mapSetPos(gs, &gs->mp, x, y, live, FALSE, TRUE);
+    serverSimShadowApply(h.sim, x, y, live);
+    threadsReleaseMutex();
+
+    if (before == live) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client already held the new terrain — the case proves "
+                "nothing");
+    }
+
+    for (i = 0; i < CULL_MAP_MAX; i++) {
+        loopbackHarnessPump(&h);
+        if (clientSimGetMapTerrain(h.cs, x, y) == live) break;
+    }
+    transportUdpClientTestMapState(ct, &gen1, &resync1);
+    if (clientSimGetMapTerrain(h.cs, x, y) != live) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the unculled client still holds %u at %u,%u after %d pumps; "
+                "the live map holds %u — the drop was never repaired",
+                (unsigned)clientSimGetMapTerrain(h.cs, x, y), (unsigned)x,
+                (unsigned)y, CULL_MAP_MAX, (unsigned)live);
+    }
+    if (transportUdpServerTestMapQueueHasSquare(slotB, x, y) &&
+        transportUdpServerTestMapQueueCount(slotB) != queued0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the square reached the client as a queued map event, so the "
+                "case did not test a drop");
+    }
+    if (resync1 == resync0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client took the change without a resync — it was not "
+                "repaired by the checksum path this case is for");
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}

@@ -573,6 +573,8 @@ void serverBindBotSlot(ServerSim *sim, const struct sockaddr_in *fromAddr,
     serverSimSetShadowCulled(sim, (BYTE)s, false);
     serverSimShadowSeed(sim, (BYTE)s);
     serverSimSetShadowCulled(sim, (BYTE)s, culled);
+    fprintf(stderr, "[bothost] bot %d \"%s\" map view: culled=%d ai=%u\n",
+            s, botSeatName(sim, s), culled ? 1 : 0, (unsigned)seat->ai);
     {
         int mapLen = serverSimGetCompressedMapFor(sim, (BYTE)s,
                                                   udpServer.compressedMap,
@@ -950,13 +952,22 @@ void serverServiceBotHosts(ServerSim *sim) {
             seat->lastPollTick = udpServer.tickCount;
             botSeatCurrent(sim, s, brain, sizeof(brain), &ai, &team,
                            initArg, sizeof(initArg));
-            if (strcmp(brain, seat->brain) != 0 || ai != seat->ai ||
-                strcmp(initArg, seat->initArg) != 0) {
-                fprintf(stderr, "[bothost] bot %d: settings changed, Bot Host "
-                                "\"%s\" makes a new brain\n",
+            if (strcmp(brain, seat->brain) != 0 || ai != seat->ai) {
+                /* An in-process bot swaps its brain at once
+                 * (botManagerSetBrainIdx), so the host does too. */
+                fprintf(stderr, "[bothost] bot %d: brain or AI level changed, "
+                                "Bot Host \"%s\" makes a new brain\n",
                         s, udpServer.botHosts[seat->host].name);
                 botSeatSendAssign(sim, s, true);
-            } else if (team != seat->team) {
+            } else if (strcmp(initArg, seat->initArg) != 0 ||
+                       team != seat->team) {
+                /* An in-process bot reads its init arg when its brain is
+                 * next built, at the round start, so the host gets it now
+                 * for that brain and the running one is left alone. */
+                fprintf(stderr, "[bothost] bot %d: init arg or team changed, "
+                                "Bot Host \"%s\" keeps it for the next "
+                                "brain\n",
+                        s, udpServer.botHosts[seat->host].name);
                 botSeatSendAssign(sim, s, false);
             }
         }
