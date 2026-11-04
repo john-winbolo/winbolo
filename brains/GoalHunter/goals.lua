@@ -11733,6 +11733,14 @@ function M.build_eval_queue(state, world, info)
         combat_ahead = true
       end
     end
+    -- Pills we hold without a square (world.lua pill_mark_unknown) are still
+    -- on the map with a known owner and armour; this check needs no square.
+    for _, obj in pairs(world.pills_unk or {}) do
+      if (obj.owner == "hostile" or obj.owner == "neutral") and (obj.health or 0) > 0 then
+        if obj.health > worst_pill_hp then worst_pill_hp = obj.health end
+        combat_ahead = true
+      end
+    end
   end
 
   -- Expand refuel threshold if combat is likely

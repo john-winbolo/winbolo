@@ -107,6 +107,49 @@ local function pill_reindex(world, id, p)
   world._pill_ikey[id] = k
 end
 
+-- PILLS WHOSE SQUARE WE DO NOT KNOW.  The server does not tell a player where
+-- a pill is unless that player can see it.  A pill update for a pill out of
+-- view carries the last square this player was given, with bit 0x20 of the
+-- flags byte (PILL_POS_CURRENT, pillbox.h) clear.  Owner, armour and the
+-- in-tank bit are still real.  When such an update says a pill we held as
+-- carried is now out of the tank, the pill was put down somewhere we were not
+-- told about, and the square we hold is where it was picked up.
+--
+-- Such a record moves out of world.pills into world.pills_unk.  Every reader
+-- of world.pills uses the square (tile index, influence, targets, counts by
+-- role, overlays), so a record that is not there cannot be read as a pill
+-- standing on a square.  It is not relayed to allies either.  It comes back
+-- into world.pills when we are told the square: an update with 0x20 set, an
+-- update that says it is in a tank, the object scan seeing it, or an ally's
+-- known-world record at or after the tick we lost it (sync_ally_world).
+-- pos_unknown_tick is that tick; 0 means we never had a square for it.
+local function pill_mark_unknown(world, id, p, tick)
+  pill_unindex(world, id)
+  world.pills[id] = nil
+  if world._ally_carry_ids then world._ally_carry_ids[id] = nil end
+  p.pos_unknown      = true
+  p.pos_unknown_tick = tick
+  p.in_tank          = false
+  p.carrier          = nil
+  p._synth_carry     = nil
+  p._kw_ally         = nil
+  world.pills_unk = world.pills_unk or {}
+  world.pills_unk[id] = p
+end
+
+-- Move a record from world.pills_unk back into world.pills, or return nil if
+-- there is none.  The caller sets the square and calls pill_reindex.
+local function pill_take_back(world, id)
+  local t = world.pills_unk
+  local p = t and t[id]
+  if p == nil then return nil end
+  t[id] = nil
+  p.pos_unknown      = nil
+  p.pos_unknown_tick = nil
+  world.pills[id] = p
+  return p
+end
+
 -- Safety net only — nothing calls this in the hot path now that update and
 -- process_events maintain pill_at / base_at incrementally. Kept around for
 -- debugging / replay re-seeding if a snapshot ever arrives without indexes.
@@ -166,6 +209,11 @@ local function purge_removed(world)
         print2(string.format("WORLD_REMOVED t=%d pill#%d is off the map", world.tick or 0, id))
       end
     end
+    if world.pills_unk then
+      for id in pairs(world.pills_unk) do
+        if not id_on_map(pm, id) then world.pills_unk[id] = nil end
+      end
+    end
   end
   if bm ~= nil then
     for id, b in pairs(world.bases) do
@@ -197,6 +245,11 @@ function M.sync_ally_carried(world, ally_carry, now)
     -- An ally's advert can name a pill that has since been removed from the
     -- map; never bring its record back.
     if not id_on_map(world._pills_on_map, id) then goto continue_carry end
+    -- The engine has told us this pill is out of the tank and on the map at a
+    -- square we do not know (see pill_mark_unknown).  An advert has no tick,
+    -- so it can be older than that update; it must not put the pill back into
+    -- the tank.
+    if world.pills_unk and world.pills_unk[id] then goto continue_carry end
     -- Never clobber first-hand knowledge refreshed THIS tick by a real event
     -- (last_seen == now) — the in-view truth always wins over the advert.
     if not (p and (p.last_seen or 0) >= now) then
@@ -284,6 +337,8 @@ function M.update(world, info, tick)
       local new_my     = bit.rshift(obj.y, 8)
       local new_health = obj.direction
       local p = world.pills[obj.idnum]
+      -- Seen on the map: a record we held without a square takes this one.
+      if p == nil then p = pill_take_back(world, obj.idnum) end
       -- The object scan only carries alliance BITS. A visible pillbox object is
       -- always DEPLOYED (carried pills aren't map objects), so reclassify from
       -- the cached real owner_player with in_tank=false — an ally's deployed
@@ -316,6 +371,7 @@ function M.update(world, info, tick)
           anger_tick    = 0,
           last_hit_tick = 0,
           last_seen     = tick,
+          info_tick     = tick,
           in_tank       = false,  -- a visible map object is always DEPLOYED
           under_attack  = false,
           attack_tick   = 0,
@@ -421,6 +477,7 @@ function M.update(world, info, tick)
         p.health    = new_health
         p.owner     = owner_str
         p.last_seen = tick
+        p.info_tick = tick
         -- Clear any stale in_tank flag: a pill visible in the object scan is
         -- DEPLOYED on the map (carried pills aren't map objects — see the
         -- inTank==FALSE gate note above). in_tank is otherwise only set true
@@ -517,8 +574,39 @@ function M.process_events(world, info, state)
         -- below so the bits-only object scan can stay consistent.
         local owner_str = classify_owner(owner_val, info, in_tank)
 
+        -- Bit 0x20 clear: the server did not tell us where the pill is, and
+        -- d[2]/d[3] is only the last square it gave us (see pill_mark_unknown).
+        -- The server clears it for EVERY update of a pill we cannot see, also
+        -- one that has not moved, so a clear bit alone does not mean the pill
+        -- moved.  A pill in a tank holds no square, so its update is taken as
+        -- before.  This is the same rule the game client uses
+        -- (pillsUpdatePosState in pillbox.c).
+        local take_square = in_tank or (bit.band(flags, 0x20)) ~= 0
+
         local p = world.pills[idx]
-        if p == nil then
+        if p == nil and take_square then p = pill_take_back(world, idx) end
+        if not take_square and (p == nil or p.in_tank) then
+          -- No square, and none we can keep: either a pill we have no record
+          -- of, or one we held as carried that is now out of the tank (put
+          -- down out of view).  Keep owner and armour, which are public, and
+          -- hold the record without a square.  A new record gets tick 0, so
+          -- any ally sighting can give it a square.
+          local u = p or (world.pills_unk and world.pills_unk[idx])
+          if u == nil then
+            u = { mx = d[2] or 0, my = d[3] or 0, anger = 0, anger_tick = 0,
+                  last_hit_tick = 0, last_seen = tick, under_attack = false,
+                  attack_tick = 0, attack_damage = 0 }
+            pill_mark_unknown(world, idx, u, 0)
+          elseif u == p then
+            pill_mark_unknown(world, idx, u, tick)
+          end
+          u.health       = new_health
+          u.owner        = owner_str
+          u.owner_player = owner_val
+          u.info_tick    = tick
+          print2(string.format("PILL_POS_UNKNOWN t=%d pill#%d owner=%s hp=%d since=%d (sent square %d,%d is not current)",
+                 tick, idx, owner_str, new_health, u.pos_unknown_tick or -1, d[2] or -1, d[3] or -1))
+        elseif p == nil then
           p = {
             mx            = d[2] or 0,
             my            = d[3] or 0,
@@ -529,6 +617,7 @@ function M.process_events(world, info, state)
             anger_tick    = 0,
             last_hit_tick = 0,
             last_seen     = tick,
+            info_tick     = tick,
             in_tank       = in_tank,
             under_attack  = false,
             attack_tick   = 0,
@@ -545,8 +634,10 @@ function M.process_events(world, info, state)
           local old_mx      = p.mx
           local old_my      = p.my
           local old_in_tank = p.in_tank
-          local new_mx      = d[2] or old_mx
-          local new_my      = d[3] or old_my
+          -- Without 0x20 the sent square is not news: keep the one we hold
+          -- (it can be newer, from an ally's record).
+          local new_mx      = take_square and d[2] or old_mx
+          local new_my      = take_square and d[3] or old_my
 
           -- REPAIR TELL -- see the note on the other update path above.
           if new_health > old_health then p._repair_tick = tick end
@@ -604,14 +695,23 @@ function M.process_events(world, info, state)
           p.health       = new_health
           p.owner        = owner_str
           p.owner_player = owner_val
-          p.last_seen    = tick
+          -- Owner and armour are public: every update gives them, seen or
+          -- not, so they have their own tick (read by sync_ally_world).
+          p.info_tick    = tick
+          -- last_seen is the tick we last knew the square, so an update
+          -- without one does not move it.
+          if take_square then p.last_seen = tick end
           p.in_tank      = in_tank
         end
         -- First-hand engine event → drop ally-sourced flags (engine truth wins).
+        -- Only when it gave us the square: otherwise the square we hold is
+        -- still the ally's.
         local _ep = world.pills[idx]
-        if _ep then _ep._ally_only = nil; _ep._kw_ally = nil; _ep._synth_carry = nil end
+        if _ep and take_square then _ep._ally_only = nil; _ep._kw_ally = nil; _ep._synth_carry = nil end
         -- Reindex to match the event's deployed/carried state (a capture sets
-        -- in_tank → pulls it off the tile; a redeploy adds it back).
+        -- in_tank → pulls it off the tile; a redeploy adds it back).  A record
+        -- held without a square is not in world.pills, so this only pulls
+        -- any old entry.
         pill_reindex(world, idx, _ep)
       end
 
@@ -726,6 +826,7 @@ function M.reset(world)
   world.pill_at = {}
   world.base_at = {}
   world._pill_ikey = {}
+  world.pills_unk = {}
 end
 
 -- Lookup: return the pill entry at (mx, my) with health > 0, or nil.
@@ -838,7 +939,7 @@ function M.collect_kw_changes(world, now)
     -- or a KW-adopted entry (_ally_only). Relaying a synth carry as a fresh "n0"
     -- neutral is exactly what made an ally un-carry its own held pill.
     if p.last_seen == now and p._kw_ally ~= now
-       and not p._synth_carry and not p._ally_only then
+       and not p._synth_carry and not p._ally_only and not p.pos_unknown then
       -- ci = shared class+intank ("h0"/"n0"/"h1"…) or nil to skip. Dead pills
       -- (health<=0) share as neutral so allies holding a stale hostile/friendly
       -- view stop stamping them.
@@ -881,7 +982,8 @@ function M.kw_queue_all(world)
     -- Dead pills share as neutral too (see collect_kw_changes), so a resync
     -- corrects a respawned ally's stale hostile view of a since-killed pill.
     local ci = ((p.health or 0) <= 0) and "n0" or kw_sig(p, true)
-    if ci and p.last_seen and not p._synth_carry and not p._ally_only then   -- first-hand only
+    if ci and p.last_seen and not p._synth_carry and not p._ally_only
+       and not p.pos_unknown then   -- first-hand only, and only with a square
       -- Mirror collect_kw_changes' position-aware detect sig for deployed pills.
       local sig = (ci:sub(2, 2) == "0") and (ci .. "@" .. p.mx .. "," .. p.my) or ci
       world._kw_shared["p" .. id] = sig
@@ -939,6 +1041,16 @@ end
 -- marked _kw_ally=now so collect_kw_changes won't relay them. Never-seen
 -- objects get a minimal entry (health defaulted — influence needs only
 -- owner+location; targeting evaluators re-confirm health on first real sight).
+-- True when an ally's pill record is older than the last engine update that
+-- gave us this pill's owner and armour (p.info_tick).  Those two are public:
+-- the engine sends them also for a pill we cannot see, and such an update
+-- does not move last_seen, because it has no square.  So a record can be newer
+-- than last_seen and still older than our owner and armour.  It may then give
+-- the square, but not the owner or the armour.
+local function kw_info_older(r, p)
+  return p.info_tick ~= nil and r.tick < p.info_tick
+end
+
 function M.sync_ally_world(world, recs, now, my_pn)
   for _, r in ipairs(recs) do
     local owner = r.cls and KW_CHAR_OWNER[r.cls]
@@ -976,7 +1088,26 @@ function M.sync_ally_world(world, recs, now, my_pn)
       elseif r.kind == "p" then
         local intank = (r.intank == 1 or r.intank == "1")
         local p = world.pills[r.id]
-        if p and p.in_tank and my_pn and p.owner_player == my_pn then
+        local u = (p == nil) and world.pills_unk and world.pills_unk[r.id] or nil
+        if u then
+          -- We hold this pill without a square (see pill_mark_unknown).  An
+          -- ally's record taken at or after the tick we lost the square is
+          -- better than none, so it wins also on an equal tick.  One taken
+          -- before that tick shows where the pill was before it was put down,
+          -- the same wrong square we would not use ourselves.
+          if r.tick >= (u.pos_unknown_tick or 0) then
+            p = pill_take_back(world, r.id)
+            p.mx, p.my = r.mx, r.my
+            p.in_tank, p.last_seen, p._kw_ally = intank, r.tick, now
+            if not kw_info_older(r, p) then
+              p.owner = owner
+              if r.hp ~= nil then p.health = r.hp end
+            end
+            print2(string.format("KW_MERGE t=%d p%d FILL square (%d,%d) %s%s@%d from p%s", now, r.id, r.mx, r.my, r.cls, intank and "T" or "", r.tick, tostring(from)))
+          else
+            print2(string.format("KW_MERGE t=%d p%d SKIP in@%d < square-lost@%d from p%s", now, r.id, r.tick, u.pos_unknown_tick or -1, tostring(from)))
+          end
+        elseif p and p.in_tank and my_pn and p.owner_player == my_pn then
           -- We are PERSONALLY carrying this pill (first-hand, engine-confirmed via
           -- info.carried_pills). An ally's relayed KW can't know our own tank's
           -- contents better than we do, and a carried pill is invisible to our
@@ -1002,11 +1133,15 @@ function M.sync_ally_world(world, recs, now, my_pn)
             p.mx, p.my = r.mx, r.my
           end
           print2(string.format("KW_MERGE t=%d p%d ADOPT %s@%d->%s%s@%d from p%s", now, r.id, oc, p.last_seen or -1, r.cls, intank and "T" or "", r.tick, tostring(from)))
-          p.owner, p.in_tank, p.last_seen, p._kw_ally = owner, intank, r.tick, now
+          p.in_tank, p.last_seen, p._kw_ally = intank, r.tick, now
+          -- Owner and armour only from a record no older than the last
+          -- engine update that gave them (see kw_info_older).
+          local _info_older = kw_info_older(r, p)
+          if not _info_older then p.owner = owner end
           -- Adopt the ally's shared health too (it's the freshest first-hand
           -- value team-wide for this out-of-view pill); fall back to keeping ours
           -- only if the record somehow lacks hp.
-          if r.hp ~= nil then p.health = r.hp end
+          if r.hp ~= nil and not _info_older then p.health = r.hp end
         else
           print2(string.format("KW_MERGE t=%d p%d SKIP in@%d <= local@%d(%s) from p%s", now, r.id, r.tick, p.last_seen or -1, KW_CLS_CHAR[p.owner] or "?", tostring(from)))
         end
