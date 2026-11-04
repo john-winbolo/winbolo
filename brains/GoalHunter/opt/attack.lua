@@ -2849,6 +2849,15 @@ local function reset_to_plan_position(state, goal)
   goal._reaim_tick_SHOOT_PILL   = nil
   goal._reaim_tick_BLITZ_GO     = nil
   goal._reaim_tick_SANITY       = nil
+  -- The next plan_position tick is a fresh entry: its cleanup clears the old
+  -- spot (standoff_*, approach_*, _chosen_deg, aim_*, through_walls, ...).
+  -- A caller that runs while that cleanup flag is still set (the shield scan
+  -- lane check inside plan_position, or a replan on the first tick after
+  -- plan_position) otherwise keeps the old standoff. The angle ban drops the
+  -- sweep cache, so the new sweep takes some ticks, and the 3-tick move to
+  -- approach saw the old standoff and drove to the banned spot with no
+  -- shield scan (bot2 t=5123..5127).
+  goal._plan_position_cleared   = nil
 end
 
 -- THE HUMAN WALKS ONTO OUR SPOT (C.HUMAN_DECOY_AWARE).  While a human-decoy
@@ -3033,6 +3042,8 @@ local function blocked_line_replan(state, goal, pmx, pmy, now)
   reset_to_plan_position(state, goal)
   return false, bucket, tries
 end
+M._reset_to_plan_position = reset_to_plan_position   -- unit tests
+M._blocked_line_replan    = blocked_line_replan      -- unit tests
 
 -- Blitz GO gate origin, world units (C.BLITZ_GO_GATE_FROM_STANDOFF, fix C,
 -- 2026-09-24). A blitz SOLDIER waits at its SETUP point, 2.25 tiles behind its
