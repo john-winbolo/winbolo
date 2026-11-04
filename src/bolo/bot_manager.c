@@ -1940,6 +1940,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
 void botManagerOnGameStart(ServerSim *sim) {
     BYTE i;
     if (sim == NULL) return;
+    sim->botMgr.gameStarts++;
     for (i = 0; i < MAX_TANKS; i++) {
         BotContext *bot = &sim->botMgr.bots[i];
         /* A parked runner is not this function's to deal with. It is released
@@ -2950,6 +2951,10 @@ void botManagerSetRemoteHooks(ServerSim *sim, const BotRemoteHooks *hooks) {
     } else {
         memset(&sim->botMgr.remoteHooks, 0, sizeof(sim->botMgr.remoteHooks));
     }
+}
+
+uint32_t botManagerGameStarts(const ServerSim *sim) {
+    return sim != NULL ? sim->botMgr.gameStarts : 0;
 }
 
 bool botManagerIsRemote(const ServerSim *sim, BYTE playerNum) {

@@ -263,7 +263,7 @@ static void ctlSendPing(void) {
     if (t == 0) t = 1;
     packHeader(buf, PACKET_PING, ctl.outSeq++);
     packU32(buf + PACKET_HEADER_SIZE, t);
-    packU32(buf + PACKET_HEADER_SIZE + 4, ctl.serverNow);
+    packU32(buf + PACKET_HEADER_SIZE + 4, 0);
     udpSendTo(ctl.sock, buf, sizeof(buf), &ctl.addr);
     ctl.lastPingMs = t;
 }
@@ -583,6 +583,9 @@ static void onInitTable(const ControlEvent *evt) {
     if (!hs->used) return;
     if (!tableTake(&hs->tableIn, evt)) return;
     hs->bot.initTable = hs->tableIn;
+    fprintf(stderr, "[bothost] bot %d \"%s\": init table with %d entries%s\n",
+            (int)s, hs->name, evt->u.botTableEntry.count,
+            hs->awaitTable ? " (for the next brain)" : "");
     if (hs->awaitTable) {
         /* The table that goes with an assign: the next brain reads it. */
         hs->awaitTable = false;
@@ -608,6 +611,8 @@ static void onHint(const ControlEvent *evt) {
     hs = &seats[s];
     if (!hs->used) return;
     if (!tableTake(&hs->hintIn, evt)) return;
+    fprintf(stderr, "[bothost] bot %d \"%s\": hint with %d entries\n", (int)s,
+            hs->name, evt->u.botTableEntry.count);
     if (!hs->bot.brain.running || hs->bot.brain.L == NULL) return;
     err[0] = '\0';
     if (brainCoreCallScenarioHint(hs->bot.brain.L, &hs->hintIn, err,
@@ -721,6 +726,16 @@ static bool ctlReceive(void) {
                     uint32_t sent = unpackU32(buf + PACKET_HEADER_SIZE);
                     ctl.serverNow = unpackU32(buf + PACKET_HEADER_SIZE + 4);
                     ctl.rttMs = (uint16_t)(nowMs() - sent);
+                    /* Echo the server time back at once, with clientTime 0,
+                     * so the server measures the round trip and not the
+                     * gap to the next 500 ms PING. Same as a game client. */
+                    {
+                        uint8_t echo[PACKET_HEADER_SIZE + 8];
+                        packHeader(echo, PACKET_PING, ctl.outSeq++);
+                        packU32(echo + PACKET_HEADER_SIZE, 0);
+                        packU32(echo + PACKET_HEADER_SIZE + 4, ctl.serverNow);
+                        udpSendTo(ctl.sock, echo, sizeof(echo), &ctl.addr);
+                    }
                 }
                 break;
             case PACKET_CHANNEL:
@@ -843,6 +858,11 @@ static void seatsService(void) {
             seatClear(hs, why);
             continue;
         }
+        /* A new round sends the connection back through a map download.
+         * The join limit counts from the last moment it was connected, not
+         * from the first join, so a seat that has played for a while is not
+         * dropped the moment the next round starts. */
+        hs->connectStartMs = nowMs();
         if (!hs->lobbyNoted) {
             hs->lobbyNoted = true;
             if (clientSimIsInLobby(hs->cs)) {

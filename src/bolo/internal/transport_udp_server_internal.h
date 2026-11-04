@@ -530,6 +530,7 @@ typedef struct UdpServerState {
     BotHostConn botHosts[MAX_BOT_HOSTS];
     BotHostSeat botSeats[MAX_TANKS];
     int         botHostLastState; /* serverState seen last tick, -1 at start */
+    uint32_t    botHostLastGameStarts; /* botManagerGameStarts seen last tick */
 } UdpServerState;
 
 extern UdpServerState udpServer;

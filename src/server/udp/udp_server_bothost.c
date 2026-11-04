@@ -603,7 +603,7 @@ void serverBindBotSlot(ServerSim *sim, const struct sockaddr_in *fromAddr,
     seat->mineSeedDone = false;
     seat->mineSeedColumn = 0;
     fprintf(stderr, "[bothost] bot %d \"%s\" bound to Bot Host \"%s\" from %s\n",
-            s, c->playerName,
+            s, botSeatName(sim, s),
             seat->host >= 0 ? udpServer.botHosts[seat->host].name : "?", addr);
     WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] bot %d bound from %s", s, addr);
 }
@@ -881,8 +881,13 @@ void serverServiceBotHosts(ServerSim *sim) {
     }
 
     /* A new round or the lobby: a seat that came back from a host may be
-     * offered again, and a bound seat's host makes the round's brain. */
-    if ((int)st != udpServer.botHostLastState) {
+     * offered again, and a bound seat's host makes the round's brain. A map
+     * rotation goes from one round to the next inside one tick, so the
+     * state can read Running on both sides of it; the game start count
+     * shows that round start too. */
+    if ((int)st != udpServer.botHostLastState ||
+        botManagerGameStarts(sim) != udpServer.botHostLastGameStarts) {
+        udpServer.botHostLastGameStarts = botManagerGameStarts(sim);
         if (st == serverStateLobby || st == serverStateRunning) {
             for (s = 0; s < MAX_TANKS; s++) {
                 udpServer.botSeats[s].noReturn = false;

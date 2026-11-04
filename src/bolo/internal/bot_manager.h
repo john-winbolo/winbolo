@@ -372,6 +372,10 @@ typedef struct BotManager {
 
     /* Bot Host side. Zeroed unless a Bot Host key is set. */
     BotRemoteHooks remoteHooks;
+    /* Counts botManagerOnGameStart calls. A map rotation ends one round and
+     * starts the next inside one server tick, so the server state alone does
+     * not show the Bot Host code that a new round began. */
+    uint32_t       gameStarts;
 } BotManager;
 
 /* ---- One bot's think, shared by the in-process pool and the Bot Host ----
@@ -420,6 +424,7 @@ void botManagerBuildInitArg(struct ServerSim *sim, BYTE playerNum,
 void botManagerSetRemoteHooks(struct ServerSim *sim,
                               const BotRemoteHooks *hooks);
 bool botManagerIsRemote(const struct ServerSim *sim, BYTE playerNum);
+uint32_t botManagerGameStarts(const struct ServerSim *sim);
 bool botManagerIsHeld(const struct ServerSim *sim, BYTE playerNum);
 bool botManagerSetRemote(struct ServerSim *sim, BYTE playerNum);
 bool botManagerClearRemote(struct ServerSim *sim, BYTE playerNum);
