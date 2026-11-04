@@ -12,6 +12,7 @@ local log    = require("logger")
 local threat = require("threat")
 local danger = require("danger")
 local shot_tracker = require("shot_tracker")
+local QR = require("quick_repair")   -- C.QUICK_REPAIR_ON_TAKE: shell landing ticks
 local shield = require("attack_shield")
 local viz    = require("viz")
 local squad      = require("squad")
@@ -4328,12 +4329,17 @@ end
 -- and goal._on_target_misses (shots that died without landing on the pill).
 -- For each newly-detected miss, bump goal._bullets_needed by one so the
 -- charge/engage swerve trigger waits for a replacement shot.
-local function update_shot_accounting(goal, world)
+-- C.QUICK_REPAIR_ON_TAKE (2026-11-04): also records goal._on_target_land, the
+-- landing tick (brain ticks) of each counted in-flight shell, for
+-- quick_repair.kill_tick's T_kill. `now` stamps the list (_on_target_land_tick).
+local function update_shot_accounting(goal, world, now)
   if not goal._attack_start_tick then
     goal._on_target_fired  = 0
     goal._on_target_misses = 0
+    goal._on_target_land   = nil
     return
   end
+  local land = C.QUICK_REPAIR_ON_TAKE and {} or nil
   local pmx, pmy = goal.mx, goal.my
   local pwx = (pmx + 0.5) * 256
   local pwy = (pmy + 0.5) * 256
@@ -4398,6 +4404,10 @@ local function update_shot_accounting(goal, world)
         on_target_fired = on_target_fired + 1
         if s.status == "in_flight" then
           on_target_in_flight = on_target_in_flight + 1
+          if land then
+            local lt = QR.shot_land_tick(s, pmx, pmy, now)
+            if lt then land[#land + 1] = lt end
+          end
         elseif s.status == "dead" then
           local ddx = s.dead_fx - pwx
           local ddy = s.dead_fy - pwy
@@ -4418,6 +4428,8 @@ local function update_shot_accounting(goal, world)
   goal._on_target_fired     = on_target_fired
   goal._on_target_in_flight = on_target_in_flight
   goal._on_target_misses    = misses
+  goal._on_target_land      = land
+  goal._on_target_land_tick = now
 end
 
 -- C.BLITZ_SETUP_16DIR (2026-11-03): the engine moves a tank in 16 directions
@@ -5138,7 +5150,7 @@ local function update_attack_substate_body(goal, state, world, info)
 
   state._attack_substate_name = goal.substate
   -- Tally on-target shots and bump bullets_needed for any misses.
-  update_shot_accounting(goal, world)
+  update_shot_accounting(goal, world, state.tick)
 
   -- HUD: kill attempt indicator (top-left)
 

@@ -122,13 +122,15 @@ static int build_sort_order(void) {
 enum {
     VCAT_HUD = 0, VCAT_CHARGE, VCAT_PILLTAKE, VCAT_SQUAD, VCAT_NAV,
     VCAT_LGM, VCAT_TANKCBT, VCAT_THREAT, VCAT_CIRCLES, VCAT_PLACEMENT,
-    VCAT_ALLY, VCAT_SHELLS, VCAT_REPOSITION, VCAT_DECOY, VCAT_FOCUS, VCAT_MISC, VCAT_COUNT
+    VCAT_ALLY, VCAT_SHELLS, VCAT_REPOSITION, VCAT_DECOY, VCAT_FOCUS, VCAT_QUICKREPAIR,
+    VCAT_MISC, VCAT_COUNT
 };
 
 static const char *kVizCatLabel[VCAT_COUNT] = {
     "Core HUD", "Charge", "Pill take", "Squad/Blitz", "Nav",
     "LGM", "Tank combat", "Threat", "Circles", "Placement",
-    "Ally/Comms", "Shells/Hitbox", "Reposition", "Decoy", "Focused spike", "Misc",
+    "Ally/Comms", "Shells/Hitbox", "Reposition", "Decoy", "Focused spike",
+    "Quick repair", "Misc",
 };
 
 struct VizMeta { const char *id; unsigned char cat; bool hud; };
@@ -229,6 +231,10 @@ static const VizMeta kVizMeta[] = {
     {"decoy_chain", VCAT_DECOY, false},      {"decoy_scan_cells", VCAT_DECOY, false},
     {"decoy_score_terms", VCAT_DECOY, false},{"decoy_pill_lines", VCAT_DECOY, false},
     {"decoy_blocker_count", VCAT_DECOY, false}, {"decoy_status", VCAT_DECOY, false},
+    /* Quick repair of a take blocker (quick_repair.lua) */
+    {"quick_repair_blocker", VCAT_QUICKREPAIR, false},
+    {"quick_repair_kill", VCAT_QUICKREPAIR, false},
+    {"quick_repair_walk", VCAT_QUICKREPAIR, false},
     /* Misc / meta / test */
     {"label_overlays", VCAT_MISC, false},    {"label_hud_overlays", VCAT_MISC, true},
     {"test_lgm_target", VCAT_MISC, false},   {"test_victim_marker", VCAT_MISC, false},
