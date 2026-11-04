@@ -413,6 +413,7 @@ struct ClientSim {
     /* Lobby state (client-side mirror of server lobby) */
     ClientLobbySlot  lobbySlots[16];    /* MAX_TANKS */
     ClientSpectatorSlot spectatorSlots[MAX_SPECTATORS]; /* spectator roster mirror */
+    ClientBotHostRow    botHostRows[CLIENT_BOT_HOST_ROWS]; /* Bot Host list mirror */
     int              countdownSeconds;  /* 0 = not counting down */
     bool             mapDownloadComplete; /* Gate for ready button */
     bool             inLobby;           /* TRUE if server is lobby-enabled */

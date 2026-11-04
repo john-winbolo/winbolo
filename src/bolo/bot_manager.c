@@ -2957,6 +2957,10 @@ uint32_t botManagerGameStarts(const ServerSim *sim) {
     return sim != NULL ? sim->botMgr.gameStarts : 0;
 }
 
+bool botManagerDefaultDebugMode(const ServerSim *sim) {
+    return sim != NULL && sim->botMgr.defaultDebugMode;
+}
+
 bool botManagerIsRemote(const ServerSim *sim, BYTE playerNum) {
     if (sim == NULL || playerNum >= MAX_TANKS) return false;
     return sim->botMgr.bots[playerNum].active &&

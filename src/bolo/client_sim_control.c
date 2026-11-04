@@ -420,6 +420,22 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
 
+    case CTRL_BOT_HOST_STATUS:
+        if (evt->u.botHostStatus.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostStatus.idx];
+            memset(r, 0, sizeof(*r));
+            r->connected = evt->u.botHostStatus.connected != 0;
+            if (r->connected) {
+                r->state   = evt->u.botHostStatus.state;
+                r->percent = evt->u.botHostStatus.percent;
+                r->used    = evt->u.botHostStatus.used;
+                r->slots   = evt->u.botHostStatus.slots;
+                SDL_strlcpy(r->name, evt->u.botHostStatus.name,
+                            sizeof(r->name));
+            }
+        }
+        break;
+
     case CTRL_SPECTATOR_CHAT: {
         /* A spectator's lobby chat line. Resolve the sender's name from the
          * mirrored spectator roster and render it [Spectator]-tagged in the

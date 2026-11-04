@@ -3710,6 +3710,124 @@ static bool decodeBotTeamMsgBody(const uint8_t *buf, size_t len,
     return pos == len;
 }
 
+/* CTRL_BOT_HOST_STATUS body:
+ *   [idx 1][connected 1][state 1][percent 1][used 1][slots 1][name str]
+ * A row with connected 0 carries an empty name. */
+#define BOT_HOST_STATUS_FIXED_LEN 6
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostStatusBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (bufCap < BOT_HOST_STATUS_FIXED_LEN) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botHostStatus.idx;
+    buf[pos++] = evt->u.botHostStatus.connected;
+    buf[pos++] = evt->u.botHostStatus.state;
+    buf[pos++] = evt->u.botHostStatus.percent;
+    buf[pos++] = evt->u.botHostStatus.used;
+    buf[pos++] = evt->u.botHostStatus.slots;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botHostStatus.name,
+                       sizeof(evt->u.botHostStatus.name))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostStatusBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < BOT_HOST_STATUS_FIXED_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_STATUS;
+    outEvt->u.botHostStatus.idx       = buf[pos++];
+    outEvt->u.botHostStatus.connected = buf[pos++] ? 1 : 0;
+    outEvt->u.botHostStatus.state     = buf[pos++];
+    outEvt->u.botHostStatus.percent   = buf[pos++];
+    outEvt->u.botHostStatus.used      = buf[pos++];
+    outEvt->u.botHostStatus.slots     = buf[pos++];
+    if (outEvt->u.botHostStatus.idx >= BOT_HOST_STATUS_ROWS) return false;
+    if (outEvt->u.botHostStatus.state > BOT_HOST_SYNC_LATE) return false;
+    if (outEvt->u.botHostStatus.percent > 100) return false;
+    if (outEvt->u.botHostStatus.used > MAX_TANKS ||
+        outEvt->u.botHostStatus.slots > MAX_TANKS) {
+        return false;
+    }
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botHostStatus.name,
+                       sizeof(outEvt->u.botHostStatus.name))) {
+        return false;
+    }
+    return pos == len;
+}
+
+/* CTRL_BOT_HOST_FILE_REQ body: [gen 4][brain 1][file 2]. */
+#define BOT_HOST_FILE_REQ_LEN 7
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostFileReqBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_FILE_REQ_LEN) return ENCODE_OVERFLOW;
+    packU32(buf, evt->u.botHostFileReq.gen);
+    buf[4] = evt->u.botHostFileReq.brain;
+    packU16(buf + 5, evt->u.botHostFileReq.file);
+    *outLen = BOT_HOST_FILE_REQ_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostFileReqBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len != BOT_HOST_FILE_REQ_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_FILE_REQ;
+    outEvt->u.botHostFileReq.gen   = unpackU32(buf);
+    outEvt->u.botHostFileReq.brain = buf[4];
+    outEvt->u.botHostFileReq.file  = unpackU16(buf + 5);
+    return true;
+}
+
+/* CTRL_BOT_HOST_SYNC body: [gen 4][done 4][total 4][ready 1]. done is at
+ * most total. */
+#define BOT_HOST_SYNC_LEN 13
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostSyncBody(const ControlEvent *evt,
+                                          const struct UdpServerClient *recipient,
+                                          uint8_t *buf, size_t bufCap,
+                                          size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_SYNC_LEN) return ENCODE_OVERFLOW;
+    packU32(buf, evt->u.botHostSync.gen);
+    packU32(buf + 4, evt->u.botHostSync.done);
+    packU32(buf + 8, evt->u.botHostSync.total);
+    buf[12] = evt->u.botHostSync.ready ? 1 : 0;
+    *outLen = BOT_HOST_SYNC_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostSyncBody(const uint8_t *buf, size_t len,
+                                  ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len != BOT_HOST_SYNC_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_SYNC;
+    outEvt->u.botHostSync.gen   = unpackU32(buf);
+    outEvt->u.botHostSync.done  = unpackU32(buf + 4);
+    outEvt->u.botHostSync.total = unpackU32(buf + 8);
+    outEvt->u.botHostSync.ready = buf[12] ? 1 : 0;
+    if (outEvt->u.botHostSync.done > outEvt->u.botHostSync.total) return false;
+    return true;
+}
+
 /* CTRL_SCN_MARKER body: [id 1][kind 1][x 1][y 1][slot 1][colour 1]. */
 #define SCN_MARKER_BODY_LEN 6
 
@@ -4235,6 +4353,9 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_INIT_TABLE]        = encodeBotInitTableBody,
     [CTRL_BOT_HINT]              = encodeBotHintBody,
     [CTRL_BOT_TEAM_MSG]          = encodeBotTeamMsgBody,
+    [CTRL_BOT_HOST_STATUS]       = encodeBotHostStatusBody,
+    [CTRL_BOT_HOST_FILE_REQ]     = encodeBotHostFileReqBody,
+    [CTRL_BOT_HOST_SYNC]         = encodeBotHostSyncBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -4298,6 +4419,9 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_INIT_TABLE]        = decodeBotInitTableBody,
     [CTRL_BOT_HINT]              = decodeBotHintBody,
     [CTRL_BOT_TEAM_MSG]          = decodeBotTeamMsgBody,
+    [CTRL_BOT_HOST_STATUS]       = decodeBotHostStatusBody,
+    [CTRL_BOT_HOST_FILE_REQ]     = decodeBotHostFileReqBody,
+    [CTRL_BOT_HOST_SYNC]         = decodeBotHostSyncBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -4425,6 +4549,9 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_INIT_TABLE:         return "CTRL_BOT_INIT_TABLE";
     case CTRL_BOT_HINT:               return "CTRL_BOT_HINT";
     case CTRL_BOT_TEAM_MSG:           return "CTRL_BOT_TEAM_MSG";
+    case CTRL_BOT_HOST_STATUS:        return "CTRL_BOT_HOST_STATUS";
+    case CTRL_BOT_HOST_FILE_REQ:      return "CTRL_BOT_HOST_FILE_REQ";
+    case CTRL_BOT_HOST_SYNC:          return "CTRL_BOT_HOST_SYNC";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

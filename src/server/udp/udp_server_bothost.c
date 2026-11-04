@@ -34,7 +34,8 @@
  *********************************************************/
 
 #include <stdio.h>   /* fprintf, snprintf, stderr, stdout */
-#include <string.h>  /* memcpy, memset, strcmp, strlen */
+#include <stdlib.h>  /* free */
+#include <string.h>  /* memcpy, memset, memmove, strcmp, strlen */
 
 #include <SDL3/SDL.h> /* SDL_LoadFile, SDL_crc32, SDL_free, SDL_strlcpy */
 
@@ -58,6 +59,7 @@
 #include "channel_mux.h"     /* channelMuxInit, channelSend, channelTick,
                               * channelBuildFrame, channelRecvFrame */
 #include "bulk_transfer.h"   /* bulkSenderInit, bulkSenderReset, bulkReceiverInit */
+#include "brain_sync.h"      /* brainSyncBuildManifest, the Bot Host brain sync */
 #include "bot_manager.h"     /* botManager*, BotRemoteHooks */
 #include "../../common/wb_log.h" /* WB_LOG_* */
 
@@ -119,6 +121,289 @@ static int botHostUsedSlots(int h) {
         }
     }
     return used;
+}
+
+/* ── Brain sync ────────────────────────────────────────────────────────── */
+
+/* A Bot Host's sync time limit: 60 s at 50 ticks a second. A host still
+ * downloading after it no longer holds the lobby, and takes no bots for
+ * that game. */
+#define BOT_HOST_SYNC_LIMIT_TICKS   3000
+/* Ticks between looks at the brain files in the lobby, so a file changed
+ * there reaches the hosts before the game starts. */
+#define BOT_HOST_MANIFEST_POLL_TICKS 250
+
+/* Drop the file being sent and the files asked for. */
+static void botHostFileReset(BotHostConn *hc) {
+    SDL_free(hc->fileData);
+    hc->fileData = NULL;
+    hc->fileSending = false;
+    hc->fileOffset = 0;
+    hc->fileSize = 0;
+    hc->fileReqCount = 0;
+}
+
+/* The host holds every file of the current manifest. */
+static bool botHostSynced(int h) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    return hc->connected && udpServer.brainManifestGen != 0 &&
+           hc->syncReady && hc->syncGen == udpServer.brainManifestGen;
+}
+
+/* The host may be given bots now: it holds the brain files and is not
+ * skipped for this game. */
+static bool botHostTakesBots(ServerSim *sim, int h) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    if (!botHostSynced(h)) return false;
+    if (hc->skipGame && botManagerGameStarts(sim) <= hc->skipUntilStarts) {
+        return false;
+    }
+    return true;
+}
+
+/* Make the brain manifest again from the brain folders. When it differs
+ * from the one the hosts have, it gets the next generation and every
+ * connected host is sent it. */
+static void botHostRefreshManifest(ServerSim *sim, const char *why) {
+    BrainSyncManifest next;
+    uint8_t *blob;
+    size_t blobLen = 0;
+    uint32_t files = 0, bytes = 0;
+    char hex[17];
+    int b, h;
+
+    brainSyncBuildManifest(&next, botManagerDefaultDebugMode(sim),
+                           &udpServer.brainManifest);
+    if (udpServer.brainManifestGen != 0 &&
+        next.version == udpServer.brainManifest.version) {
+        /* Same files. Keep the new list for its change times. */
+        brainSyncFree(&udpServer.brainManifest);
+        udpServer.brainManifest = next;
+        return;
+    }
+    blob = brainSyncManifestEncode(&next, &blobLen);
+    if (blob == NULL) {
+        fprintf(stderr, "[bothost] the brain file list is too large to send; "
+                        "Bot Hosts keep the last one\n");
+        brainSyncFree(&next);
+        return;
+    }
+    brainSyncFree(&udpServer.brainManifest);
+    udpServer.brainManifest = next;
+    free(udpServer.brainManifestBlob);
+    udpServer.brainManifestBlob = blob;
+    udpServer.brainManifestBlobLen = blobLen;
+    udpServer.brainManifestGen++;
+    if (udpServer.brainManifestGen == 0) udpServer.brainManifestGen = 1;
+    for (b = 0; b < next.brainCount; b++) {
+        files += (uint32_t)next.brains[b].fileCount;
+        bytes += next.brains[b].totalBytes;
+    }
+    brainSyncVersionHex(next.version, hex);
+    fprintf(stderr, "[bothost] brain files (%s): %d brains, %u files, %u "
+                    "bytes, version %s, generation %u\n",
+            why, next.brainCount, (unsigned)files, (unsigned)bytes, hex,
+            (unsigned)udpServer.brainManifestGen);
+    for (b = 0; b < next.brainCount; b++) {
+        brainSyncVersionHex(next.brains[b].version, hex);
+        fprintf(stderr, "[bothost]   brain \"%s\": %d files, %u bytes, "
+                        "version %s\n",
+                next.brains[b].name, next.brains[b].fileCount,
+                (unsigned)next.brains[b].totalBytes, hex);
+    }
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        BotHostConn *hc = &udpServer.botHosts[h];
+        if (!hc->connected) continue;
+        botHostFileReset(hc);
+        hc->manifestOwed = true;
+        hc->syncSentTick = udpServer.tickCount;
+        hc->syncLate = false;
+        hc->syncDone = 0;
+        hc->syncTotal = 0;
+    }
+}
+
+/* Start the next bulk transfer for a host: the manifest when it is owed,
+ * else the next piece of the file being sent, else the next file asked
+ * for. One transfer at a time, so a piece is compressed only when the last
+ * one has gone. */
+static void botHostServiceFiles(ServerSim *sim, int h) {
+    BotHostConn *hc = &udpServer.botHosts[h];
+    BulkStreamHeader hdr;
+    uint8_t *blob;
+    uint32_t blobLen = 0, n;
+
+    if (bulkSenderBusy(&hc->bulk)) return;
+    memset(&hdr, 0, sizeof(hdr));
+    if (hc->manifestOwed) {
+        hdr.kind = BULK_KIND_BRAIN_MANIFEST;
+        hdr.gen = udpServer.brainManifestGen;
+        hdr.totalSize = (uint32_t)udpServer.brainManifestBlobLen;
+        if (bulkSenderBegin(&hc->bulk, &hdr, udpServer.brainManifestBlob,
+                            (uint32_t)udpServer.brainManifestBlobLen)) {
+            hc->manifestOwed = false;
+        }
+        return;
+    }
+    if (!hc->fileSending) {
+        const BrainSyncBrain *br;
+        const BrainSyncFile *f;
+        char path[1024];
+        size_t sz = 0;
+        uint32_t id, bi, fi;
+        void *data;
+
+        if (hc->fileReqCount == 0) return;
+        id = hc->fileReq[0];
+        memmove(hc->fileReq, hc->fileReq + 1,
+                sizeof(hc->fileReq[0]) * (size_t)(hc->fileReqCount - 1));
+        hc->fileReqCount--;
+        bi = id >> 16;
+        fi = id & 0xffffu;
+        if (bi >= (uint32_t)udpServer.brainManifest.brainCount) return;
+        br = &udpServer.brainManifest.brains[bi];
+        if (fi >= (uint32_t)br->fileCount) return;
+        f = &br->files[fi];
+        SDL_snprintf(path, sizeof(path), "%s/%s", br->dir, f->path);
+        data = SDL_LoadFile(path, &sz);
+        if ((data == NULL && f->size != 0) || sz != f->size ||
+            brainSyncHash(BRAIN_SYNC_HASH_SEED, data, sz) != f->hash) {
+            SDL_free(data);
+            fprintf(stderr, "[bothost] brain file \"%s\" changed since the "
+                            "list was made\n", path);
+            botHostRefreshManifest(sim, "a brain file changed");
+            return;
+        }
+        hc->fileData = (uint8_t *)data;
+        hc->fileSize = (uint32_t)sz;
+        hc->fileOffset = 0;
+        hc->fileId = id;
+        hc->fileSending = true;
+    }
+    n = hc->fileSize - hc->fileOffset;
+    if (n > BRAIN_SYNC_CHUNK_BYTES) n = BRAIN_SYNC_CHUNK_BYTES;
+    blob = brainSyncChunkPack(hc->fileData != NULL ? hc->fileData + hc->fileOffset
+                                                   : (const uint8_t *)"",
+                              n, &blobLen);
+    if (blob == NULL) {
+        botHostFileReset(hc);
+        return;
+    }
+    hdr.kind = BULK_KIND_BRAIN_CHUNK;
+    hdr.gen = udpServer.brainManifestGen;
+    hdr.totalSize = blobLen;
+    hdr.pathLen = (uint8_t)SDL_snprintf(hdr.path, sizeof(hdr.path), "%u/%u/%u",
+                                        (unsigned)(hc->fileId >> 16),
+                                        (unsigned)(hc->fileId & 0xffffu),
+                                        (unsigned)hc->fileOffset);
+    if (!bulkSenderBegin(&hc->bulk, &hdr, blob, blobLen)) {
+        free(blob);
+        return;
+    }
+    free(blob);
+    hc->fileOffset += n;
+    if (hc->fileOffset >= hc->fileSize) {
+        SDL_free(hc->fileData);
+        hc->fileData = NULL;
+        hc->fileSending = false;
+    }
+}
+
+/* A control event from a Bot Host: a file request or a sync report. */
+static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
+    BotHostConn *hc = &udpServer.botHosts[h];
+    ControlDecodeBodyFn dec;
+    ControlEvent evt;
+    uint16_t bodyLen;
+
+    if (len < 3) return;
+    bodyLen = unpackU16(msg + 1);
+    if ((size_t)bodyLen + 3 > len) return;
+    if (msg[0] != CTRL_BOT_HOST_FILE_REQ && msg[0] != CTRL_BOT_HOST_SYNC) return;
+    dec = transportControlCodecBodyDecoder((ControlEventType)msg[0]);
+    if (dec == NULL || !dec(msg + 3, bodyLen, &evt)) return;
+    if (evt.type == CTRL_BOT_HOST_FILE_REQ) {
+        if (evt.u.botHostFileReq.gen != udpServer.brainManifestGen) return;
+        if (hc->fileReqCount >= (int)(sizeof(hc->fileReq) / sizeof(hc->fileReq[0]))) {
+            return;
+        }
+        hc->fileReq[hc->fileReqCount++] =
+            ((uint32_t)evt.u.botHostFileReq.brain << 16) |
+            evt.u.botHostFileReq.file;
+        return;
+    }
+    if (evt.u.botHostSync.gen != udpServer.brainManifestGen) return;
+    {
+        bool wasReady = hc->syncReady && hc->syncGen == evt.u.botHostSync.gen;
+        hc->syncGen = evt.u.botHostSync.gen;
+        hc->syncDone = evt.u.botHostSync.done;
+        hc->syncTotal = evt.u.botHostSync.total;
+        hc->syncReady = evt.u.botHostSync.ready != 0;
+        if (hc->syncReady && !wasReady) {
+            fprintf(stderr, "[bothost] Bot Host \"%s\" holds the brain files "
+                            "(generation %u, %u bytes downloaded)\n",
+                    hc->name, (unsigned)hc->syncGen, (unsigned)hc->syncDone);
+        }
+    }
+}
+
+/* The lobby's row for host h. */
+static void botHostFillRow(int h, ControlEvent *evt) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_STATUS;
+    evt->u.botHostStatus.idx = (uint8_t)h;
+    if (!hc->connected) return;
+    evt->u.botHostStatus.connected = 1;
+    evt->u.botHostStatus.used = (uint8_t)botHostUsedSlots(h);
+    evt->u.botHostStatus.slots = hc->slots;
+    SDL_strlcpy(evt->u.botHostStatus.name, hc->name,
+                sizeof(evt->u.botHostStatus.name));
+    if (botHostSynced(h)) {
+        evt->u.botHostStatus.state = BOT_HOST_SYNC_READY;
+        evt->u.botHostStatus.percent = 100;
+        return;
+    }
+    if (hc->syncLate) {
+        evt->u.botHostStatus.state = BOT_HOST_SYNC_LATE;
+    } else if (hc->syncGen == udpServer.brainManifestGen &&
+               udpServer.brainManifestGen != 0) {
+        evt->u.botHostStatus.state = BOT_HOST_SYNC_SYNCING;
+    } else {
+        evt->u.botHostStatus.state = BOT_HOST_SYNC_WAITING;
+    }
+    if (hc->syncGen == udpServer.brainManifestGen && hc->syncTotal > 0) {
+        uint64_t pct = (uint64_t)hc->syncDone * 100u / hc->syncTotal;
+        evt->u.botHostStatus.percent = (uint8_t)(pct > 99 ? 99 : pct);
+    }
+}
+
+/* The rows last sent to the lobby, so a row goes out only when it changes. */
+static ControlEvent botHostRowSent[MAX_BOT_HOSTS];
+
+static void botHostBroadcastRows(void) {
+    int h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        ControlEvent evt;
+        botHostFillRow(h, &evt);
+        if (memcmp(&evt.u.botHostStatus, &botHostRowSent[h].u.botHostStatus,
+                   sizeof(evt.u.botHostStatus)) == 0) {
+            continue;
+        }
+        botHostRowSent[h] = evt;
+        serverBroadcastLobbyControl(&evt);
+    }
+}
+
+void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
+                           void *deliverCtx) {
+    int h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        ControlEvent evt;
+        if (!udpServer.botHosts[h].connected) continue;
+        botHostFillRow(h, &evt);
+        deliver(deliverCtx, &evt);
+    }
 }
 
 /* Queue one control event on a host's control channel. False when the
@@ -393,6 +678,8 @@ static void botHostDrop(ServerSim *sim, int h, const char *why) {
             botHostAddrStr(&hc->addr, addr, sizeof(addr)), why);
     WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] Bot Host \"%s\" gone (%s)",
                 hc->name, why);
+    botHostFileReset(hc);
+    bulkSenderReset(&hc->bulk);
     memset(hc, 0, sizeof(*hc));
 }
 
@@ -474,12 +761,21 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
         hc->lastReceivedTick = udpServer.tickCount;
         hc->outSequence = 1;
         channelMuxInit(&hc->channelMux);
+        bulkSenderInit(&hc->bulk);
     }
     fprintf(stderr, "[bothost] Bot Host \"%s\" connected from %s with %u "
                     "slots\n", hostName, addr, (unsigned)slots);
     WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] Bot Host \"%s\" connected from %s "
                 "slots=%u", hostName, addr, (unsigned)slots);
     serverSendBotHostAccept(freeIdx, sim);
+    /* The brain files go out now: the list first, then each file the host
+     * asks for. */
+    botHostRefreshManifest(sim, "Bot Host connected");
+    {
+        BotHostConn *hc = &udpServer.botHosts[freeIdx];
+        hc->manifestOwed = true;
+        hc->syncSentTick = udpServer.tickCount;
+    }
 }
 
 /* The seat's own alliance row and every other seat's, straight onto the bot
@@ -677,9 +973,11 @@ bool serverBotHostHandleChannel(const uint8_t *buf, int len,
         (void)channelRecvFrame(&hc->channelMux, buf + PACKET_HEADER_SIZE,
                                len - PACKET_HEADER_SIZE);
     }
-    /* The host sends nothing on its channels but acks; drop anything else. */
+    /* The host sends its file requests and sync reports on CHANNEL_CONTROL
+     * and nothing else. */
     outLen = sizeof(out);
     while (channelReceive(&hc->channelMux, CHANNEL_CONTROL, out, &outLen)) {
+        botHostOnControl(h, out, outLen);
         outLen = sizeof(out);
     }
     return true;
@@ -792,12 +1090,18 @@ bool transportUdpServerSetBotHostKey(ServerSim *sim, const char *key) {
     hooks.released   = botHookReleased;
     botManagerSetRemoteHooks(sim, &hooks);
     fprintf(stderr, "[bothost] Bot Host connections enabled\n");
+    botHostRefreshManifest(sim, "start");
     return true;
 }
 
 void serverBotHostsReset(void) {
-    int s;
+    int s, h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        botHostFileReset(&udpServer.botHosts[h]);
+        bulkSenderReset(&udpServer.botHosts[h].bulk);
+    }
     memset(udpServer.botHosts, 0, sizeof(udpServer.botHosts));
+    memset(botHostRowSent, 0, sizeof(botHostRowSent));
     for (s = 0; s < MAX_TANKS; s++) {
         memset(&udpServer.botSeats[s], 0, sizeof(udpServer.botSeats[s]));
         udpServer.botSeats[s].host = -1;
@@ -854,6 +1158,7 @@ static void botSeatSeedMines(ServerSim *sim, int s) {
 static void botHostPump(int h) {
     BotHostConn *hc = &udpServer.botHosts[h];
     int frames;
+    bulkSenderPump(&hc->bulk, &hc->channelMux);
     channelTick(&hc->channelMux, udpServer.tickCount, hc->pingMs);
     for (frames = 0; frames < MAP_DOWNLOAD_FRAMES_PER_TICK; frames++) {
         uint8_t cbuf[UDP_MAX_PAYLOAD];
@@ -890,6 +1195,19 @@ void serverServiceBotHosts(ServerSim *sim) {
     if ((int)st != udpServer.botHostLastState ||
         botManagerGameStarts(sim) != udpServer.botHostLastGameStarts) {
         udpServer.botHostLastGameStarts = botManagerGameStarts(sim);
+        if (st == serverStateLobby &&
+            udpServer.botHostLastState != (int)serverStateLobby) {
+            /* Back in the lobby: the game a late host sat out is over. */
+            for (h = 0; h < MAX_BOT_HOSTS; h++) {
+                udpServer.botHosts[h].skipGame = false;
+            }
+        }
+        if (udpServer.botHostEnabled &&
+            (st == serverStateLobby || st == serverStateRunning)) {
+            /* A new round or the lobby: the brain files may have changed. */
+            botHostRefreshManifest(sim, st == serverStateLobby ? "lobby"
+                                                               : "round start");
+        }
         if (st == serverStateLobby || st == serverStateRunning) {
             for (s = 0; s < MAX_TANKS; s++) {
                 udpServer.botSeats[s].noReturn = false;
@@ -921,6 +1239,14 @@ void serverServiceBotHosts(ServerSim *sim) {
         }
         if (seat->host < 0 || !udpServer.botHosts[seat->host].connected) {
             botSeatFallBack(sim, s, "Bot Host gone", false);
+            continue;
+        }
+        if (!botHostSynced(seat->host)) {
+            /* The brain files changed and the host does not hold the new
+             * ones yet: the seat runs in-process until it does, and then
+             * goes back to a host. */
+            botSeatFallBack(sim, s, "brain files changed", true);
+            udpServer.botSeats[s].noReturn = false;
             continue;
         }
         if (seat->state == BOT_SEAT_PENDING) {
@@ -987,9 +1313,19 @@ void serverServiceBotHosts(ServerSim *sim) {
             if (udpServer.clients[s].connected) continue;
             if (botManagerGetBrainPath(sim, (BYTE)s) == NULL ||
                 botManagerGetBrainPath(sim, (BYTE)s)[0] == '\0') continue;
+            {
+                /* A host runs only brains whose files it was sent. */
+                char brainName[BOT_HOST_BRAIN_NAME_LEN];
+                botHostBrainName(botManagerGetBrainPath(sim, (BYTE)s),
+                                 brainName, sizeof(brainName));
+                if (brainSyncFindBrain(&udpServer.brainManifest,
+                                       brainName) == NULL) {
+                    continue;
+                }
+            }
             for (h = 0; h < MAX_BOT_HOSTS; h++) {
                 int freeSlots;
-                if (!udpServer.botHosts[h].connected) continue;
+                if (!botHostTakesBots(sim, h)) continue;
                 freeSlots = (int)udpServer.botHosts[h].slots - botHostUsedSlots(h);
                 if (freeSlots > bestFree) {
                     bestFree = freeSlots;
@@ -1013,6 +1349,31 @@ void serverServiceBotHosts(ServerSim *sim) {
         }
     }
 
+    /* Brain sync: look at the files again now and then in the lobby, give
+     * up waiting on a host past the time limit, and feed each host its
+     * next transfer. */
+    if (udpServer.botHostEnabled && st == serverStateLobby &&
+        udpServer.tickCount % BOT_HOST_MANIFEST_POLL_TICKS == 0) {
+        botHostRefreshManifest(sim, "brain files changed");
+    }
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        BotHostConn *hc = &udpServer.botHosts[h];
+        if (!hc->connected) continue;
+        if (!botHostSynced(h) && !hc->syncLate &&
+            udpServer.tickCount - hc->syncSentTick > BOT_HOST_SYNC_LIMIT_TICKS) {
+            hc->syncLate = true;
+            hc->skipGame = true;
+            hc->skipUntilStarts = botManagerGameStarts(sim) +
+                ((st == serverStateLobby || st == serverStateCountdown) ? 1u : 0u);
+            fprintf(stderr, "[bothost] Bot Host \"%s\" is still getting the "
+                            "brain files after %d s; the lobby does not wait "
+                            "for it and it takes no bots this game\n",
+                    hc->name, BOT_HOST_SYNC_LIMIT_TICKS / 50);
+        }
+        botHostServiceFiles(sim, h);
+    }
+    botHostBroadcastRows();
+
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         if (udpServer.botHosts[h].connected) botHostPump(h);
     }
@@ -1034,6 +1395,17 @@ void transportUdpServerPrintBotHosts(void) {
                 hc->name, botHostUsedSlots(h), (unsigned)hc->slots,
                 (unsigned)hc->pingMs,
                 botHostAddrStr(&hc->addr, addr, sizeof(addr)));
+        {
+            ControlEvent row;
+            static const char *const states[] = {
+                "waiting for its brain file report", "getting brain files",
+                "holds the brain files", "late with the brain files"
+            };
+            botHostFillRow(h, &row);
+            fprintf(stdout, "    brain files: %s (%u%%)\n",
+                    states[row.u.botHostStatus.state & 3],
+                    (unsigned)row.u.botHostStatus.percent);
+        }
         for (s = 0; s < MAX_TANKS; s++) {
             const BotHostSeat *seat = &udpServer.botSeats[s];
             const char *what;

@@ -425,6 +425,9 @@ void botManagerSetRemoteHooks(struct ServerSim *sim,
                               const BotRemoteHooks *hooks);
 bool botManagerIsRemote(const struct ServerSim *sim, BYTE playerNum);
 uint32_t botManagerGameStarts(const struct ServerSim *sim);
+/* True when brains are built in debug mode (they then load their source,
+ * not opt/), which is what the Bot Host brain manifest lists. */
+bool botManagerDefaultDebugMode(const struct ServerSim *sim);
 bool botManagerIsHeld(const struct ServerSim *sim, BYTE playerNum);
 bool botManagerSetRemote(struct ServerSim *sim, BYTE playerNum);
 bool botManagerClearRemote(struct ServerSim *sim, BYTE playerNum);

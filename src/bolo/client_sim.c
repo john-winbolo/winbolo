@@ -2268,6 +2268,27 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
   return &cs->spectatorSlots[idx];
 }
 
+const ClientBotHostRow *clientSimGetBotHostRow(const ClientSim *cs, uint8_t idx) {
+  if (cs == NULL || idx >= CLIENT_BOT_HOST_ROWS) return NULL;
+  return &cs->botHostRows[idx];
+}
+
+bool clientSimBotHostSyncing(const ClientSim *cs, int *percent) {
+  bool any = false;
+  int low = 100;
+  int i;
+  if (cs != NULL) {
+    for (i = 0; i < CLIENT_BOT_HOST_ROWS; i++) {
+      const ClientBotHostRow *r = &cs->botHostRows[i];
+      if (!r->connected || r->state != BOT_HOST_SYNC_SYNCING) continue;
+      any = true;
+      if (r->percent < low) low = r->percent;
+    }
+  }
+  if (percent != NULL) *percent = any ? low : 100;
+  return any;
+}
+
 const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id) {
   uint8_t owner;
   if (cs == NULL || id >= SCN_PANEL_IDS) return NULL;

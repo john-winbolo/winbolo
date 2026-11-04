@@ -876,6 +876,13 @@ int run_bot_host_team_msg_fanout(void);
 int run_bot_host_ping_gap(void);
 int run_bot_host_remote_seat_stays_bot(void);
 int run_bot_host_target_ms(void);
+int run_bot_host_sync_codec(void);
+
+/* Bot Host brain sync (test_brain_sync.c). */
+int run_brain_sync_path_check(void);
+int run_brain_sync_manifest_codec(void);
+int run_brain_sync_cache_plan(void);
+int run_brain_sync_chunk(void);
 
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with

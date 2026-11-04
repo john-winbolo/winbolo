@@ -209,6 +209,9 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_MAP_SKIP_STATE:
     case CTRL_SPECTATOR_SLOT:
     case CTRL_SPECTATOR_CHAT:
+    /* The lobby's Bot Host list sits where the spectators are listed, and a
+     * spectator sees that list too. */
+    case CTRL_BOT_HOST_STATUS:
     case CTRL_LOBBY_SYNC_COMPLETE:
     /* The live scoreboard is public — a viewer can already read captures and
      * kills off the map, and a spectator whose board never leaves zero looks
@@ -443,6 +446,22 @@ void serverEnumSpectatorRoster(
         if (!udpServer.spectators[sp].connected) continue;
         serverFillSpectatorSlotEvent(sp, &evt);
         deliver(deliverCtx, &evt);
+    }
+    /* The Bot Host list, which the lobby draws next to the spectators. */
+    serverEnumBotHostRows(deliver, deliverCtx);
+}
+
+void serverBroadcastLobbyControl(const ControlEvent *evt) {
+    int idx;
+    for (idx = 0; idx < MAX_TANKS; idx++) {
+        if (udpServer.clients[idx].connected && !udpServer.clients[idx].botSlot) {
+            udpClientDeliverControl(&udpServer.clients[idx], evt);
+        }
+    }
+    for (idx = 0; idx < MAX_SPECTATORS; idx++) {
+        if (udpServer.spectators[idx].live) {
+            serverSpectatorDeliverControl(&udpServer.spectators[idx], evt);
+        }
     }
 }
 

@@ -459,6 +459,17 @@
 #define STR_DLGLOBBY_SPECTATORS_FMT         1848
 /* Sender-name tag prepended to a spectator's lobby chat line */
 #define STR_DLGLOBBY_SPECTATOR_TAG          1866
+/* Lobby list of the Bot Hosts that run the server's bots: header ({number}
+ * = hosts), a row ({string1} = host name, {string2} = its state, {number} =
+ * bots it runs, {number2} = bots it can run), and the states */
+#define STR_DLGLOBBY_BOTHOSTS_FMT           3428
+#define STR_DLGLOBBY_BOTHOST_ROW_FMT        3429
+#define STR_DLGLOBBY_BOTHOST_CONNECTED      3430
+#define STR_DLGLOBBY_BOTHOST_SYNCING_FMT    3431
+#define STR_DLGLOBBY_BOTHOST_READY          3432
+#define STR_DLGLOBBY_BOTHOST_LATE           3433
+/* Why Ready is off while a Bot Host gets the brain files ({number} = %) */
+#define STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT 3434
 /* Map-preview start-picker tooltips and the assign-to-someone menu */
 #define STR_STARTPICK_TIP_FREE_HOST         1512
 #define STR_STARTPICK_TIP_FREE              1513

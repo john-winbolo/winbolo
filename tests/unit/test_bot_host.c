@@ -432,3 +432,89 @@ int run_bot_host_target_ms(void) {
     UT_ASSERT(bh_near(botRunnerTargetMs(30.0, 1, 2), 0.5));
     return 0;
 }
+
+/* ================================================================
+ * 10. The brain sync events: CTRL_BOT_HOST_STATUS (the lobby's Bot Host
+ *     row), CTRL_BOT_HOST_FILE_REQ and CTRL_BOT_HOST_SYNC keep every
+ *     field, and out-of-range values are refused.
+ * ================================================================ */
+int run_bot_host_sync_codec(void) {
+    ControlEvent in, out;
+    uint8_t buf[MAX_CONTROL_PACKET];
+    size_t len = 0;
+    int r;
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_STATUS;
+    in.u.botHostStatus.idx = 5;
+    in.u.botHostStatus.connected = 1;
+    in.u.botHostStatus.state = BOT_HOST_SYNC_SYNCING;
+    in.u.botHostStatus.percent = 42;
+    in.u.botHostStatus.used = 3;
+    in.u.botHostStatus.slots = 6;
+    SDL_strlcpy(in.u.botHostStatus.name, "Laptop",
+                sizeof(in.u.botHostStatus.name));
+    r = bh_body_roundtrip(&in, &out, NULL);
+    UT_ASSERT_MSG(r == 0, "status round trip failed (%d)", r);
+    UT_ASSERT(out.u.botHostStatus.idx == 5);
+    UT_ASSERT(out.u.botHostStatus.connected == 1);
+    UT_ASSERT(out.u.botHostStatus.state == BOT_HOST_SYNC_SYNCING);
+    UT_ASSERT(out.u.botHostStatus.percent == 42);
+    UT_ASSERT(out.u.botHostStatus.used == 3);
+    UT_ASSERT(out.u.botHostStatus.slots == 6);
+    UT_ASSERT(strcmp(out.u.botHostStatus.name, "Laptop") == 0);
+
+    /* A bad row index, state or percent is refused. */
+    {
+        ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(CTRL_BOT_HOST_STATUS);
+        ControlDecodeBodyFn dec = transportControlCodecBodyDecoder(CTRL_BOT_HOST_STATUS);
+        UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+        buf[0] = BOT_HOST_STATUS_ROWS;
+        UT_ASSERT(!dec(buf, len, &out));
+        buf[0] = 5;
+        buf[2] = BOT_HOST_SYNC_LATE + 1;
+        UT_ASSERT(!dec(buf, len, &out));
+        buf[2] = BOT_HOST_SYNC_SYNCING;
+        buf[3] = 101;
+        UT_ASSERT(!dec(buf, len, &out));
+    }
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_FILE_REQ;
+    in.u.botHostFileReq.gen = 0x01020304u;
+    in.u.botHostFileReq.brain = 9;
+    in.u.botHostFileReq.file = 0x0405;
+    r = bh_body_roundtrip(&in, &out, NULL);
+    UT_ASSERT_MSG(r == 0, "file request round trip failed (%d)", r);
+    UT_ASSERT(out.u.botHostFileReq.gen == 0x01020304u);
+    UT_ASSERT(out.u.botHostFileReq.brain == 9);
+    UT_ASSERT(out.u.botHostFileReq.file == 0x0405);
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_SYNC;
+    in.u.botHostSync.gen = 7;
+    in.u.botHostSync.done = 2700000u;
+    in.u.botHostSync.total = 18800000u;
+    in.u.botHostSync.ready = 0;
+    r = bh_body_roundtrip(&in, &out, NULL);
+    UT_ASSERT_MSG(r == 0, "sync round trip failed (%d)", r);
+    UT_ASSERT(out.u.botHostSync.gen == 7);
+    UT_ASSERT(out.u.botHostSync.done == 2700000u);
+    UT_ASSERT(out.u.botHostSync.total == 18800000u);
+    UT_ASSERT(out.u.botHostSync.ready == 0);
+    in.u.botHostSync.ready = 1;
+    in.u.botHostSync.done = in.u.botHostSync.total;
+    r = bh_body_roundtrip(&in, &out, NULL);
+    UT_ASSERT(r == 0 && out.u.botHostSync.ready == 1);
+
+    /* More done than total is refused. */
+    in.u.botHostSync.done = in.u.botHostSync.total + 1;
+    {
+        ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(CTRL_BOT_HOST_SYNC);
+        ControlDecodeBodyFn dec = transportControlCodecBodyDecoder(CTRL_BOT_HOST_SYNC);
+        if (enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK) {
+            UT_ASSERT(!dec(buf, len, &out));
+        }
+    }
+    return 0;
+}

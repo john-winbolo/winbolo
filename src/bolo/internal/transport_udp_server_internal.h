@@ -35,6 +35,7 @@
 #include "control_event.h"  /* BOT_HOST_BRAIN_NAME_LEN, BOT_HOST_INIT_ARG_LEN */
 #include "client_command.h" /* CmdBotStats */
 #include "bulk_transfer.h"  /* BulkSender, BulkReceiver */
+#include "brain_sync.h"     /* BrainSyncManifest — the Bot Host brain sync */
 #include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy */
 #include "net_impair.h"     /* NetImpair */
 #include "../../winbolonet/winbolonet_core.h" /* WINBOLONET_KEY_LEN */
@@ -243,6 +244,31 @@ typedef struct {
     uint32_t outSequence;
     uint16_t pingMs;
     ChannelMux channelMux;
+
+    /* Brain sync. The manifest and the file pieces go out on this
+     * connection's CHANNEL_BULK through bulk. manifestOwed: the current
+     * manifest is still to be sent. */
+    BulkSender bulk;
+    bool     manifestOwed;
+    uint32_t syncSentTick;       /* tickCount the current manifest went out */
+    uint32_t syncGen;            /* manifest generation the host reported on */
+    uint32_t syncDone;           /* bytes the host has downloaded */
+    uint32_t syncTotal;          /* bytes it has to download */
+    bool     syncReady;          /* it holds every file of syncGen */
+    bool     syncLate;           /* past the sync time limit for this gen */
+    /* After the sync time limit the host takes no bots for that game: not
+     * while botManagerGameStarts is at most skipUntilStarts. */
+    bool     skipGame;
+    uint32_t skipUntilStarts;
+    /* Files asked for, as (brain << 16) | file, oldest first. */
+    uint32_t fileReq[32];
+    int      fileReqCount;
+    /* The file being sent, a piece per bulk transfer. */
+    bool     fileSending;
+    uint32_t fileId;
+    uint32_t fileOffset;
+    uint32_t fileSize;
+    uint8_t *fileData;
 } BotHostConn;
 
 /* Where one bot seat's brain runs.
@@ -531,6 +557,12 @@ typedef struct UdpServerState {
     BotHostSeat botSeats[MAX_TANKS];
     int         botHostLastState; /* serverState seen last tick, -1 at start */
     uint32_t    botHostLastGameStarts; /* botManagerGameStarts seen last tick */
+    /* The brain files a Bot Host must hold before it takes bots, and the
+     * generation that rises each time they change. Gen 0 is no manifest. */
+    BrainSyncManifest brainManifest;
+    uint32_t    brainManifestGen;
+    uint8_t    *brainManifestBlob;
+    size_t      brainManifestBlobLen;
 } UdpServerState;
 
 extern UdpServerState udpServer;
@@ -704,6 +736,11 @@ void serverBotSlotStats(struct ServerSim *sim, int slot,
 bool serverBotSlotPingAllowed(struct ServerSim *sim, int slot);
 void serverServiceBotHosts(struct ServerSim *sim);
 void serverBotHostsReset(void);
+/* One CTRL_BOT_HOST_STATUS per connected Bot Host through deliver: the join
+ * replay's part of the lobby's Bot Host list. serverEnumSpectatorRoster
+ * calls it. */
+void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
+                           void *deliverCtx);
 void serverSendServerEnglishBroadcast(struct ServerSim *sim,
                                       const char *message);
 void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
@@ -791,6 +828,10 @@ void serverDisconnectSpectator(struct ServerSim *sim, int s, bool graceful);
 void serverEnumSpectatorRoster(void *enumCtx,
                                void (*deliver)(void *, const ControlEvent *),
                                void *deliverCtx);
+/* Send a lobby event to every connected player client (bot connections of a
+ * Bot Host left out) and every live spectator, as the spectator roster rows
+ * go. */
+void serverBroadcastLobbyControl(const ControlEvent *evt);
 int  serverFindSpectator(const struct sockaddr_in *addr);
 void serverSendSpectatorAccept(int s, struct ServerSim *sim,
                                const struct sockaddr_in *addr);

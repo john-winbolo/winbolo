@@ -53,6 +53,10 @@
 #define BOT_HOST_BRAIN_NAME_LEN   64
 #define BOT_HOST_INIT_ARG_LEN     128  /* == BRAIN_INIT_ARG_MAX */
 #define BOT_HOST_TEAM_MSG_LEN     (PACKET_MAX_CHAT_MESSAGE + 2) /* == BRAIN_INBOX_MSG_LEN */
+#define BOT_HOST_STATUS_NAME_LEN  CLIENT_BOT_HOST_NAME_LEN /* == JOIN_BOT_HOST_NAME_LEN */
+#define BOT_HOST_STATUS_ROWS      CLIENT_BOT_HOST_ROWS     /* == MAX_BOT_HOSTS */
+
+/* BOT_HOST_SYNC_* (the brain sync states) are in client_sim.h. */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -454,6 +458,21 @@ typedef enum {
     /* CTRL_BOT_TEAM_MSG — a bot team message from an allied bot, for the
      * seat's brain inbox. Humans never receive these. */
     CTRL_BOT_TEAM_MSG,
+    /* CTRL_BOT_HOST_STATUS — one row of the lobby's Bot Host list: a
+     * connected Bot Host's name, its slots, and how far its brain sync has
+     * gone. The server sends it to lobby players and spectators when a row
+     * changes, and in the join replay, so the lobby can show the hosts
+     * where it lists spectators. A Bot Host is never a player: it has no
+     * roster row and no join or leave line. connected 0 clears the row. */
+    CTRL_BOT_HOST_STATUS,
+    /* CTRL_BOT_HOST_FILE_REQ — Bot Host to server, on the host's control
+     * connection: send this file of the brain manifest. The server answers
+     * on CHANNEL_BULK with the file in BULK_KIND_BRAIN_CHUNK pieces. */
+    CTRL_BOT_HOST_FILE_REQ,
+    /* CTRL_BOT_HOST_SYNC — Bot Host to server: how far the host is with the
+     * manifest of generation gen (bytes done and to do), and ready once it
+     * holds every file of it. */
+    CTRL_BOT_HOST_SYNC,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1471,6 +1490,32 @@ typedef struct ControlEvent {
             uint8_t fromPlayer;  /* the sending bot */
             char    text[BOT_HOST_TEAM_MSG_LEN];
         } botTeamMsg;
+
+        /* CTRL_BOT_HOST_STATUS — see the enum. */
+        struct {
+            uint8_t idx;         /* the host's row, below BOT_HOST_STATUS_ROWS */
+            uint8_t connected;
+            uint8_t state;       /* BOT_HOST_SYNC_* */
+            uint8_t percent;     /* 0..100, while state is SYNCING or LATE */
+            uint8_t used;        /* bot seats the host runs */
+            uint8_t slots;       /* bot seats the host offers */
+            char    name[BOT_HOST_STATUS_NAME_LEN];
+        } botHostStatus;
+
+        /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
+        struct {
+            uint32_t gen;        /* the manifest generation */
+            uint8_t  brain;      /* index into the manifest's brains */
+            uint16_t file;       /* index into that brain's files */
+        } botHostFileReq;
+
+        /* CTRL_BOT_HOST_SYNC — see the enum. */
+        struct {
+            uint32_t gen;
+            uint32_t done;       /* bytes downloaded */
+            uint32_t total;      /* bytes to download */
+            uint8_t  ready;      /* every file of gen is held and checked */
+        } botHostSync;
     } u;
 } ControlEvent;
 

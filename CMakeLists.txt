@@ -4652,6 +4652,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bot_ping.c
     tests/unit/test_brain_internal_msg_routing.c
     tests/unit/test_bot_host.c
+    # Bot Host brain sync: the manifest codec, the cache path checks and the
+    # cache plan (held, copied from another version, to download).
+    tests/unit/test_brain_sync.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
@@ -6045,6 +6048,11 @@ set(_unit_test_names
     bot_host_ping_gap
     bot_host_remote_seat_stays_bot
     bot_host_target_ms
+    bot_host_sync_codec
+    brain_sync_path_check
+    brain_sync_manifest_codec
+    brain_sync_cache_plan
+    brain_sync_chunk
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot
     internal_msg_skips_inactive_bot_slot
