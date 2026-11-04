@@ -369,8 +369,21 @@ local function order_hold_parked(state, goal, info)
 end
 M.order_hold_parked = order_hold_parked
 
+-- REPAIR_STANDOFF (2026-11-03): the standoff square for a repair_pill goal,
+-- or nil. Called through M so steer_core takes no new upvalue.
+function M.repair_standoff_nav(state, goal)
+  return bpool.RS.nav_target(state, goal)
+end
+
 local function intentionally_stationary(goal, info, state)
   if order_hold_parked(state, goal, info) then return true end
+  -- REPAIR_STANDOFF: parked on the standoff square on purpose (sending the
+  -- builder, or waiting while the builder is out).
+  if goal.kind == "repair_pill" and state and info and info.tankx
+     and bpool.RS.at_standoff(state, goal, bit.rshift(info.tankx, 8),
+                              bit.rshift(info.tanky, 8)) then
+    return true
+  end
   local s = goal.substate or ""
   if goal.kind == "attack_pill" and _ap_stationary[s] then return true end
   if goal.kind == "pill_place"  and _pp_stationary[s] then return true end
@@ -4566,6 +4579,16 @@ local function steer_core(state, world, info, goal)
     if goal.kind == "place_pill_strategic" and goal._focus_spike and goal._stand_mx then
       nav_mx, nav_my = goal._stand_mx, goal._stand_my
       nav_wx, nav_wy = U.m2w(nav_mx), U.m2w(nav_my)
+    end
+    -- REPAIR_STANDOFF (2026-11-03): a repair_pill goal drives to its standoff
+    -- square (repair_standoff.lua) and stops there; the repair feeder sends
+    -- the builder from it. No standoff: the pill square, as before.
+    if goal.kind == "repair_pill" then
+      local so_mx, so_my = M.repair_standoff_nav(state, goal)
+      if so_mx then
+        nav_mx, nav_my = so_mx, so_my
+        nav_wx, nav_wy = U.m2w(nav_mx), U.m2w(nav_my)
+      end
     end
     if goal.kind == "attack_pill" or goal.kind == "pill_place" then
       if goal.wall_shield and goal.substate == "approach" and goal.prebuild_mx then
