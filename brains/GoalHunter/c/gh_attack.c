@@ -682,26 +682,13 @@ static int push_no_spot(lua_State *L) {
 }
 
 /* ── Parity path: attack.lua's clear-aim gate ─────────────────────────────
- * One aim point, one shell simulation.  Returns the forest-tile count on the
- * line (>= 0), or -1 when the line is BLOCKED / never reaches the pill.
- * Mirrors attack.lua's aim_line_trees. */
-static int aim_line_trees(NaAttackCtx *ctx, const BYTE *w,
-                          int ox, int oy, int omx, int omy,
-                          int pmx, int pmy, int i,
-                          int *out_awx, int *out_awy) {
-    int awx = (pmx << 8) + (int)floor(ctx->aim_off[i][0] * 256.0);
-    int awy = (pmy << 8) + (int)floor(ctx->aim_off[i][1] * 256.0);
-
-    BrainShotTile tiles[GH_ATK_SHOT_TILES];
-    /* The same pathfinder cpf_simulate_shot uses: the shot walk reads this
-     * sim's shell rules off it, so an aim line simulated without it is not
-     * the line the engine will fire. It answers 0 tiles when there is none,
-     * which this treats as a blocked line — the safe reading. */
-    int n = brainPathfinderSimulateShot(ctx->pf,
-                                        (WORLD)ox, (WORLD)oy,
-                                        (WORLD)awx, (WORLD)awy,
-                                        BRAIN_SHOT_SHOOTER_TANK, 0,
-                                        tiles, GH_ATK_SHOT_TILES);
+ * The walk over one simulated shell's squares.  Returns the forest-tile
+ * count on the line (>= 0), or -1 when the line is BLOCKED / never reaches
+ * the pill.  Mirrors spot_margin.lua's line_trees (no wall pass, no
+ * wallset), shared by aim_line_trees and angle_line_trees below. */
+static int walk_line_trees(NaAttackCtx *ctx, const BYTE *w,
+                           const BrainShotTile *tiles, int n,
+                           int omx, int omy, int pmx, int pmy) {
     int blocked = 0, reached = 0, trees = 0;
     /* util.lua tank_shell_on_boat: deep sea or a boat tile is a boat shot,
      * a river tile only when our tank is on a boat now. A boat shot stops at
@@ -726,20 +713,104 @@ static int aim_line_trees(NaAttackCtx *ctx, const BYTE *w,
             }
         }
     }
-    if (reached && !blocked) { *out_awx = awx; *out_awy = awy; return trees; }
+    if (reached && !blocked) return trees;
     return -1;
+}
+
+/* One aim point, one shell simulation.  Returns the forest-tile count on the
+ * line (>= 0), or -1 when the line is BLOCKED / never reaches the pill.
+ * Mirrors spot_margin.lua's aim_line_trees. */
+static int aim_line_trees(NaAttackCtx *ctx, const BYTE *w,
+                          int ox, int oy, int omx, int omy,
+                          int pmx, int pmy, int i,
+                          int *out_awx, int *out_awy) {
+    int awx = (pmx << 8) + (int)floor(ctx->aim_off[i][0] * 256.0);
+    int awy = (pmy << 8) + (int)floor(ctx->aim_off[i][1] * 256.0);
+
+    BrainShotTile tiles[GH_ATK_SHOT_TILES];
+    /* The same pathfinder cpf_simulate_shot uses: the shot walk reads this
+     * sim's shell rules off it, so an aim line simulated without it is not
+     * the line the engine will fire. It answers 0 tiles when there is none,
+     * which this treats as a blocked line — the safe reading. */
+    int n = brainPathfinderSimulateShot(ctx->pf,
+                                        (WORLD)ox, (WORLD)oy,
+                                        (WORLD)awx, (WORLD)awy,
+                                        BRAIN_SHOT_SHOOTER_TANK, 0,
+                                        tiles, GH_ATK_SHOT_TILES);
+    int trees = walk_line_trees(ctx, w, tiles, n, omx, omy, pmx, pmy);
+    if (trees >= 0) { *out_awx = awx; *out_awy = awy; }
+    return trees;
+}
+
+/* The same test for a shell fired at gun angle a (brad, float) from (ox,oy)
+ * world units.  Mirrors spot_margin.lua's angle_line_trees: the shot is
+ * cpf_simulate_shot_angle's (brainPathfinderSimulateShotAngle, the angle
+ * passed as a float). */
+static int angle_line_trees(NaAttackCtx *ctx, const BYTE *w,
+                            int ox, int oy, int omx, int omy,
+                            int pmx, int pmy, double a) {
+    BrainShotTile tiles[GH_ATK_SHOT_TILES];
+    int n = brainPathfinderSimulateShotAngle(ctx->pf,
+                                             (WORLD)ox, (WORLD)oy, (float)a,
+                                             BRAIN_SHOT_SHOOTER_TANK, 0,
+                                             tiles, GH_ATK_SHOT_TILES);
+    return walk_line_trees(ctx, w, tiles, n, omx, omy, pmx, pmy);
+}
+
+/* Lua's a % 256 (aim_lane.lua wrap): the result is in [0, 256). */
+static double lane_wrap(double a) {
+    return a - floor(a / 256.0) * 256.0;
+}
+
+/* C.BLOCKER_MIN_LANE_BRAD: is the clear lane from (ox,oy) to the aim point
+ * (awx,awy) (all world units) at least min_brad wide on both sides of the
+ * aim angle?  Mirrors attack.lua's M.aim_lane_wide plus aim_lane.lua's
+ * wide_enough: the aim angle is U.aim_at_f's (float, from the tile-unit
+ * positions), then the aim and every 1/16 brad out to min_brad on each side
+ * are shell-tested with angle_line_trees, each side stopping at its first
+ * blocked angle. */
+#define GH_ATK_LANE_STEP (1.0 / 16.0)
+static int aim_lane_wide(NaAttackCtx *ctx, const BYTE *w,
+                         int ox, int oy, int pmx, int pmy,
+                         int awx, int awy, double min_brad) {
+    int omx = ox >> 8, omy = oy >> 8;
+    double sx = (double)ox / 256.0, sy = (double)oy / 256.0;
+    double tx = (double)awx / 256.0, ty = (double)awy / 256.0;
+    double a0 = lane_wrap(atan2(tx - sx, -(ty - sy)) * 256.0 / (2.0 * M_PI));
+    const double step = GH_ATK_LANE_STEP;
+    if (angle_line_trees(ctx, w, ox, oy, omx, omy, pmx, pmy, lane_wrap(a0)) < 0)
+        return 0;
+    int n = (int)ceil(min_brad / step - 1e-9);
+    double reach[2];
+    for (int si = 0; si < 2; si++) {
+        double side = (si == 0) ? -1.0 : 1.0;
+        double r = 0.0;
+        for (int k = 1; k <= n; k++) {
+            double a = lane_wrap(a0 + side * (double)k * step);
+            if (angle_line_trees(ctx, w, ox, oy, omx, omy, pmx, pmy, a) < 0) break;
+            r = (double)k * step;
+        }
+        reach[si] = r;
+    }
+    return reach[0] >= min_brad - 1e-9 && reach[1] >= min_brad - 1e-9;
 }
 
 /* attack.lua's clear_aim_from_world with prefer_idx = nil.  Returns the
  * 0-based aim index (-1 when every line is blocked) and writes the tree
- * count of the chosen line to *out_trees. */
+ * count of the chosen line to *out_trees.  min_lane > 0 (brad,
+ * C.BLOCKER_MIN_LANE_BRAD) also asks for a clear lane that wide on both
+ * sides of the aim (aim_lane_wide); an aim with a narrower lane counts as
+ * blocked.  0 = the old test. */
 static int clear_aim_from_world(NaAttackCtx *ctx, const BYTE *w,
                                 int ox, int oy, int pmx, int pmy,
-                                int *out_trees) {
+                                double min_lane, int *out_trees) {
     int omx = ox >> 8, omy = oy >> 8;
     int best_i = -1, best_trees = -1, awx, awy;
     for (int i = 0; i < GH_ATK_AIMS; i++) {
         int t = aim_line_trees(ctx, w, ox, oy, omx, omy, pmx, pmy, i, &awx, &awy);
+        if (t >= 0 && min_lane > 0.0 &&
+            !aim_lane_wide(ctx, w, ox, oy, pmx, pmy, awx, awy, min_lane))
+            t = -1;
         if (t >= 0) {
             if (i == 0 && t == 0) { *out_trees = 0; return 0; }
             if (best_trees < 0 || t < best_trees) {
@@ -760,7 +831,7 @@ static int clear_aim_from_world(NaAttackCtx *ctx, const BYTE *w,
  * Lua uses, so the 50-point bucket boundary falls the same way. */
 static int eval_parity(lua_State *L, NaAttackCtx *ctx, const BYTE *w,
                        int pmx, int pmy, int step, int phase_not_opening,
-                       int tmx, int tmy) {
+                       int tmx, int tmy, double min_lane) {
     const double R   = ctx->cfg_standoff;
     const double pcx = (double)pmx + 0.5;
     const double pcy = (double)pmy + 0.5;
@@ -812,7 +883,8 @@ static int eval_parity(lua_State *L, NaAttackCtx *ctx, const BYTE *w,
         int ox = (int)floor(cx * 256.0 + 0.5);
         int oy = (int)floor(cy * 256.0 + 0.5);
         int aim_trees = 0;
-        int aim_idx = clear_aim_from_world(ctx, w, ox, oy, pmx, pmy, &aim_trees);
+        int aim_idx = clear_aim_from_world(ctx, w, ox, oy, pmx, pmy, min_lane,
+                                           &aim_trees);
         if (aim_idx < 0) continue;
 
         const EllStamp *es = &ctx->ell[stamp_idx];
@@ -1146,8 +1218,12 @@ static int eval_legacy(lua_State *L, NaAttackCtx *ctx, const BYTE *world,
 /*
  * gh_attack.evaluate_pill_difficulty(
  *     pmx, pmy, step_deg, phase_not_opening, tmx, tmy,
- *     self_contrib_table_or_nil)
+ *     self_contrib_table_or_nil [, min_lane_brad])
  * -> best_score, best_mx, best_my, best_deg
+ *
+ * min_lane_brad (parity path only): C.BLOCKER_MIN_LANE_BRAD, read live by
+ * attack.lua on every call so a cfg= override reaches the C sweep.  nil or
+ * 0 = no lane rule (GoalHunter 1.5 / 1.6 never pass it).
  *
  * Returns math.huge, -1, -1, -1 when no valid spot is found.
  */
@@ -1168,13 +1244,44 @@ static int l_evaluate_pill_difficulty(lua_State *L) {
     const BYTE *world = *wpp;
 
     load_self_contrib(L, ctx);
+    double min_lane = luaL_optnumber(L, 8, 0.0);
 
     /* Avoid looking up stamp_idx 0 for step_deg != 5 when stamps are 5-deg only */
     int step = (step_deg > 0) ? step_deg : 5;
 
     if (ctx->world_synced)
-        return eval_parity(L, ctx, world, pmx, pmy, step, phase_not_opening, tmx, tmy);
+        return eval_parity(L, ctx, world, pmx, pmy, step, phase_not_opening, tmx, tmy,
+                           min_lane);
     return eval_legacy(L, ctx, world, pmx, pmy, step, phase_not_opening, tmx, tmy);
+}
+
+/*
+ * gh_attack.clear_aim(ox, oy, pmx, pmy [, min_lane_brad])
+ * -> aim_idx (1-based, as attack.lua's) and trees, or nil
+ *
+ * The parity path's clear-aim test for one origin (world units), on the
+ * world last handed to sync_pill_at(world, ...).  The game never calls it:
+ * it is here so a test can hold the C answer next to attack.lua's
+ * _clear_aim_from_world(ox, oy, pmx, pmy, world, nil, min_lane)
+ * (test_gh_attack_lane_parity.c).
+ */
+static int l_clear_aim(lua_State *L) {
+    NaAttackCtx *ctx = getCtx(L);
+    int ox  = (int)luaL_checkinteger(L, 1);
+    int oy  = (int)luaL_checkinteger(L, 2);
+    int pmx = (int)luaL_checkinteger(L, 3);
+    int pmy = (int)luaL_checkinteger(L, 4);
+    double min_lane = luaL_optnumber(L, 5, 0.0);
+    if (!ctx->world_synced)
+        return luaL_error(L, "gh_attack.clear_aim: sync_pill_at(world, ...) first");
+    const BYTE **wpp = brainCoreGetWorldPtrPtr(L);
+    if (!wpp || !*wpp) return luaL_error(L, "gh_attack.clear_aim: no world map");
+    int trees = 0;
+    int idx = clear_aim_from_world(ctx, *wpp, ox, oy, pmx, pmy, min_lane, &trees);
+    if (idx < 0) { lua_pushnil(L); return 1; }
+    lua_pushinteger(L, idx + 1);
+    lua_pushinteger(L, trees);
+    return 2;
 }
 
 /* ── Registration ─────────────────────────────────────────────────────── */
@@ -1183,6 +1290,7 @@ static const luaL_Reg gh_attack_lib[] = {
     { "sync_pill_at",             l_sync_pill_at             },
     { "sync_grids",               l_sync_grids               },
     { "evaluate_pill_difficulty", l_evaluate_pill_difficulty },
+    { "clear_aim",                l_clear_aim                },
     { NULL, NULL }
 };
 
