@@ -3399,6 +3399,7 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_loadbrowser_segment.c
     src/braintest/braintest_loadbrowser_rename.c
     src/braintest/braintest_session_ticks.c
+    src/braintest/braintest_tank_dead.c
     src/bolo/brain_record_walk.c
     src/braintest/braintest_panel_registry.c
     src/braintest/braintest_panel_types.c
@@ -4577,6 +4578,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The Load Session list's game length (BrainTest's tick-range lookup).
     tests/unit/test_session_ticks.c
     src/braintest/braintest_session_ticks.c
+    # The rule that keeps a dead tank off BrainTest's playback map.
+    tests/unit/test_braintest_tank_dead.c
+    src/braintest/braintest_tank_dead.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -5926,6 +5930,8 @@ set(_unit_test_names
     session_name_natural_sort
     session_ticks_recorder_note
     session_ticks_real_dirs
+    braintest_tank_status_dead
+    braintest_tank_render_dead
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
     mapdir_root_fallback

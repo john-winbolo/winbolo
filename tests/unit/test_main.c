@@ -872,6 +872,8 @@ static const UnitTestEntry s_tests[] = {
     { "brain_removed_items_recording_masks",     run_brain_removed_items_recording_masks     },
     { "session_ticks_recorder_note",             run_session_ticks_recorder_note             },
     { "session_ticks_real_dirs",                 run_session_ticks_real_dirs                 },
+    { "braintest_tank_status_dead",              run_braintest_tank_status_dead              },
+    { "braintest_tank_render_dead",              run_braintest_tank_render_dead              },
     { "entity_record_seek_lands_on_the_right_liveness",
                                                  run_entity_record_seek_lands_on_the_right_liveness },
     { "starts_pick_cluster_nearest_teammate",    run_starts_pick_cluster_nearest_teammate    },

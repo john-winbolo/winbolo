@@ -1081,6 +1081,12 @@ int run_brain_removed_items_recording_masks(void);
 int run_session_ticks_recorder_note(void);
 int run_session_ticks_real_dirs(void);
 
+/* BrainTest does not draw a dead tank (test_braintest_tank_dead.c): the
+ * playback rule on a recorded tankStatus, and serverSimGetTankRender's
+ * alive flag for a tank in its respawn wait or destroyed. */
+int run_braintest_tank_status_dead(void);
+int run_braintest_tank_render_dead(void);
+
 /* The entity-sync control event (test_entity_sync.c). CTRL_ENTITY_SYNC
  * carries three 16-bit masks, one per item list, saying which indices hold
  * an item that is on the map — the part the compressed map blob leaves out,

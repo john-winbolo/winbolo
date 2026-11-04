@@ -3355,13 +3355,13 @@ typedef struct TankRenderInfo {
        either way. */
     TURNTYPE angle;
     bool  on_boat;
-    bool  alive;     /* false when slot is empty or tank is in death-wait */
+    bool  alive;     /* false when the tank is in death-wait or destroyed */
 } TankRenderInfo;
 
 /* Populate *out from sim->tanks[i]. Returns false (without touching
  * *out) if i >= MAX_TANKS or the slot is empty. When the slot is
- * occupied but the tank is in death-wait, returns true with
- * out->alive = false. */
+ * occupied but the tank is in death-wait, or destroyed and not yet
+ * respawned, returns true with out->alive = false. */
 bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out);
 
 /* Fuller per-slot snapshot for scoreboard / end-of-game readers:
