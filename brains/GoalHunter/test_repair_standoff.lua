@@ -384,12 +384,22 @@ do
   check("push: nav to the pill (nil)", RS.nav_target(sp, sp.goal) == nil)
   WALK_FN = nil
   check("push: send from 1 square as before", feed(sp, w, mk_info(100, 101)) ~= nil)
-  -- Under-fire hold is unchanged: a fresh hit on the pill holds at the standoff.
+  -- Under-fire hold (KEEL, C.BUILDER_SEND_CERTAIN_DEATH_ONLY off): a fresh
+  -- hit on the pill holds at the standoff.
   reset()
+  local cd_was = C.BUILDER_SEND_CERTAIN_DEATH_ONLY
+  C.BUILDER_SEND_CERTAIN_DEATH_ONLY = false
   local sh = mk_state(w)
   bpool.standoff_update(sh, w, mk_info(100, 115), 1000)
   T.last_hit_tick = 990
-  check("under-fire hold still holds at the standoff", feed(sh, w, mk_info(100, 105)) == nil)
+  check("under-fire hold still holds at the standoff (certain-death knob off)",
+        feed(sh, w, mk_info(100, 105)) == nil)
+  -- HELM (knob on, 2026-11-04): the fire clock is not a refusal, so the
+  -- feeder sends from the standoff; the pool winner asks lgm_certain_death.
+  C.BUILDER_SEND_CERTAIN_DEATH_ONLY = true
+  check("under fire: certain-death knob on sends from the standoff",
+        feed(sh, w, mk_info(100, 105)) ~= nil)
+  C.BUILDER_SEND_CERTAIN_DEATH_ONLY = cd_was
   T.last_hit_tick = nil
   if HAS_LOGS then
     _G.BRAIN_DEBUG_MODE = true   -- REPAIR_DISPATCH_CHECK is a debug-mode line

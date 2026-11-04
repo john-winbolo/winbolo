@@ -55,6 +55,10 @@ local SHELL = {}                        -- [my*256+mx] = hit
 danger.update_fire_clock      = function() end
 danger.tank_fire_age          = function() return FIRE_AGE, FIRE_AGE and "hit" or nil end
 danger.lgm_shell_gate         = function(_, _, mx, my) return SHELL[my * 256 + mx] end
+-- C.BUILDER_SEND_CERTAIN_DEATH_ONLY (2026-11-04): the pool winner asks this
+-- one instead of lgm_shell_gate; the same table answers both.
+danger.lgm_certain_death      = function(_, _, mx, my) return SHELL[my * 256 + mx] end
+danger.log_certain_death      = function() end
 danger.lgm_path_safe_enhanced = function() return true end
 threat.at          = function() return 0 end
 PP.on_front_line   = function() return false end
@@ -297,6 +301,10 @@ end
 -- ── 7. Safety gates still apply ──────────────────────────────────────────
 print("7. what still blocks the forced repair")
 do
+  -- These three (under fire, the shell check, fire_exchange) are the KEEL
+  -- rules: C.BUILDER_SEND_CERTAIN_DEATH_ONLY off. The knob-on answers follow.
+  local cd_was = C.BUILDER_SEND_CERTAIN_DEATH_ONLY
+  C.BUILDER_SEND_CERTAIN_DEATH_ONLY = false
   -- Under fire: the whole pool waits (the man's two risky ends).
   FIRE_AGE = 20
   local st = fresh_state(ping_order())
@@ -313,6 +321,30 @@ do
   SHELL = {}
   check("shell gate: no dispatch (rebuild not sent instead)", c2 == nil, c2 and (c2.x .. "," .. c2.y))
   check("shell gate: force_hold", bp2.force_hold == "shell_will_hit", bp2.force_hold)
+  -- Kept (knob off): fire_exchange substate.
+  local st9 = fresh_state(ping_order()); st9.goal = { kind = "attack_tank", substate = "engage" }
+  local bp9, c9 = run(st9, base_world(), info_at(TMX, TMY))
+  check("fire_exchange kept", c9 == nil and forced_row(bp9).reject:find("^fire_exchange"), forced_row(bp9) and forced_row(bp9).reject)
+  -- Knob on (HELM): under fire and fire_exchange are not refusals; certain
+  -- death (lgm_certain_death) still holds the man.
+  C.BUILDER_SEND_CERTAIN_DEATH_ONLY = true
+  FIRE_AGE = 20
+  local stA = fresh_state(ping_order())
+  local bpA, cA = run(stA, base_world(), info_at(TMX, TMY))
+  FIRE_AGE = nil
+  check("certain-death knob on: under fire, forced repair dispatched",
+        cA and cA.x == 106 and cA.y == 100, forced_row(bpA) and forced_row(bpA).reject)
+  SHELL[100 * 256 + 106] = { src = "p3", t = 12, how = "expiry" }
+  local stB = fresh_state(ping_order())
+  local bpB, cB = run(stB, base_world(), info_at(TMX, TMY))
+  SHELL = {}
+  check("certain-death knob on: certain death -> no dispatch", cB == nil, cB and (cB.x .. "," .. cB.y))
+  check("certain-death knob on: force_hold", bpB.force_hold == "shell_will_hit", bpB.force_hold)
+  local stC = fresh_state(ping_order()); stC.goal = { kind = "attack_tank", substate = "engage" }
+  local bpC, cC = run(stC, base_world(), info_at(TMX, TMY))
+  check("certain-death knob on: fire_exchange substate dispatched",
+        cC and cC.x == 106 and cC.y == 100, forced_row(bpC) and forced_row(bpC).reject)
+  C.BUILDER_SEND_CERTAIN_DEATH_ONLY = cd_was
   -- Man out on another job: wait, do not recall.
   local st3 = fresh_state(ping_order())
   st3._bp_job = { type = "farm", mx = 95, my = 100, dispatch_tick = NOW - 10, phase = "outbound" }
@@ -342,10 +374,6 @@ do
   local st8 = fresh_state(ping_order()); st8.builder.mode = "gather"; st8.goal = { kind = "capture_pill" }
   local _, c8 = run(st8, base_world(), info_at(TMX, TMY))
   check("mode_owned waived", c8 and c8.x == 106)
-  -- Kept: fire_exchange substate.
-  local st9 = fresh_state(ping_order()); st9.goal = { kind = "attack_tank", substate = "engage" }
-  local bp9, c9 = run(st9, base_world(), info_at(TMX, TMY))
-  check("fire_exchange kept", c9 == nil and forced_row(bp9).reject:find("^fire_exchange"), forced_row(bp9) and forced_row(bp9).reject)
 end
 
 -- ── 8. No wood -> harvest first, then repair ─────────────────────────────

@@ -5168,6 +5168,65 @@ M.BUILDER_POOL_IDLE_MODES = {
 -- false = "gather" as before. KEEL false.
 M.CAPTURE_PILL_BUILDER_FREE = true
 
+-- ── Builder sends: refuse only certain death (2026-11-04) ─────────────────
+-- Andrew: "go through the code, meticulously, to all the places the LGM can
+-- be sent out. I want the LGM blocked if it will get killed 100% for sure,
+-- and I want it able to go out otherwise, even under heavy fire."
+-- true => every place that sends the builder out (builder.decide's sites and
+-- the builder pool's winner) refuses a send ONLY when danger.lgm_certain_death
+-- says a shell already in the air will kill him on that exact errand. Every
+-- refusal that was about shells, the under-fire clock, a fire_exchange
+-- substate, an angry pill or a danger-field sample along the walk
+-- (lgm_path_safe_enhanced, threat_at_tank, the place_pill man_path tile check,
+-- the repair under-fire hold, the trepair "unsafe LGM walk") is skipped.
+-- Refusals that are not about fire stay. The prediction is lgm_shell_gate's
+-- model, with more of the engine in it: a shell also ends on another visible
+-- tank (never its shooter's), on a base the brain can prove stops it, and on
+-- expiry one tick after its last move; a tank's shell is tested against where
+-- the builder was one tick earlier (the engine's rewind), and a builder back
+-- in the tank cannot die. No future shots are predicted.
+-- Log effect: each refusal prints one line
+--   BUILDER_CERTAIN_DEATH t=<tick> site=<site> dest=(x,y) shell from <src>
+--   at +<n>t, <ending>
+-- and the pool's BP_DENY reason reads "shell_will_hit (...)" as before.
+-- Pool rows no longer read under_fire(...), fire_exchange:<sub> or
+-- path_unsafe, and BUILDER_HOLD_UNDER_FIRE no longer prints.
+-- false = the old checks, and the pool's shell check is lgm_shell_gate.
+-- KEEL false.
+M.BUILDER_SEND_CERTAIN_DEATH_ONLY = true
+-- Andrew, same order: "That said, let's avoid just idle tree harvesting when
+-- under fire once we have a minimum level of trees in tank (no need to risk
+-- it). This should be behind another feature flag type thing"
+-- true => while danger.tank_fire_age is under BUILDER_POOL_UNDER_FIRE_TICKS,
+-- and the tank holds BUILDER_NO_IDLE_FARM_MIN_TREES trees or more, the idle
+-- harvests do not go: the pool's farm rows (reject
+-- "idle_farm_under_fire(<age>t, trees <n> >= <min>)") and decide()'s
+-- on-path farm (Priority 4; prints IDLE_FARM_UNDER_FIRE once per change).
+-- Harvests a build needs now still go: the gather mode while trees are
+-- under its need_trees (a pill take's walls, a sea plan's boat), the forest
+-- under a wall-shield slot, a forest placement spot, and a ping-forced
+-- harvest. Building jobs still go.
+-- false = no such block. KEEL false.
+M.BUILDER_NO_IDLE_FARM_UNDER_FIRE = true
+-- The minimum: the same number the on-path farm's enemy-near brake already
+-- calls "critically low" (FARM_ENEMY_MIN_TREES). Below it the farm still goes.
+M.BUILDER_NO_IDLE_FARM_MIN_TREES = M.FARM_ENEMY_MIN_TREES
+-- Andrew, 2026-11-04: "attack_tank, attack_base, capture_pill should have no
+-- such restrictions" (the builder mode "suppressed", which keeps the builder
+-- in the tank).
+-- true => attack_tank and attack_base give builder mode "opportunistic"
+-- instead of "suppressed", so decide() does not stop at its suppressed bail
+-- and the pool does not answer mode_owned for them. A sea capture_pill in a
+-- substate that is not one of its builder jobs (seek_trees, lay_mine,
+-- build_boat) is "opportunistic" too; those three keep their modes. A land
+-- capture_pill is CAPTURE_PILL_BUILDER_FREE's. A terrain-repair job may also
+-- start during attack_tank. Shell safety is the certain-death prediction
+-- (BUILDER_SEND_CERTAIN_DEATH_ONLY).
+-- Log effect: BUILDER_POOL lines read owner=attack_tank/opportunistic, not
+-- elig=no: fire_exchange:<sub> or mode_owned (suppressed/...).
+-- false = "suppressed" as before. KEEL false.
+M.BUILDER_FREE_COMBAT_GOALS = true
+
 -- ── Claims (multi-bot arbitration) ───────────────────────────────────────
 -- Five allies must not all repair the same pill. The claim rides the existing
 -- /info extra channel as `bpj=TTXXYYCCCCEEEE` (type, tile, claim tick low 16
@@ -6930,6 +6989,16 @@ M.PRESETS = {
     --   2026-11-04: a land capture_pill frees the builder for pool jobs.
     --   KEEL kept the builder in "gather" (mode_owned) for the whole drive.
     CAPTURE_PILL_BUILDER_FREE     = false,
+    --   2026-11-04: the builder is refused a send only on certain death.
+    --   KEEL refused on the under-fire clock, fire_exchange substates, angry
+    --   pills, path danger samples, and (pool) lgm_shell_gate.
+    BUILDER_SEND_CERTAIN_DEATH_ONLY = false,
+    --   2026-11-04: no idle tree harvest while under fire with enough trees.
+    --   KEEL harvested whenever the other checks allowed.
+    BUILDER_NO_IDLE_FARM_UNDER_FIRE = false,
+    --   2026-11-04: attack_tank, attack_base and a sea capture_pill between
+    --   its builder jobs free the builder. KEEL kept him in ("suppressed").
+    BUILDER_FREE_COMBAT_GOALS     = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and

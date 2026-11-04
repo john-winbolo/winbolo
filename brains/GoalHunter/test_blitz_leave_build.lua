@@ -316,10 +316,17 @@ do
   check("behind-only: no blitz -> (123,141) allowed",
         B.place_tile_check({ tick = 10, goal = { kind = "pill_place" } }, w, INFO, 123, 141, 10) == nil)
 
-  -- Man-path safe.
+  -- Man-path safe. C.BUILDER_SEND_CERTAIN_DEATH_ONLY (2026-11-04) turns this
+  -- fire check off, so the man_path cases run with that knob off (KEEL).
   knobs({ BLITZ_NO_BUILD_ACTIVE = false, PLACE_PILL_MAN_PATH_SAFE = true })
   AS.init()
-  local plain = { tick = 10, goal = { kind = "pill_place" } }
+  local cd_was = C.BUILDER_SEND_CERTAIN_DEATH_ONLY
+  C.BUILDER_SEND_CERTAIN_DEATH_ONLY = true
+  local plain = { tick = 9, goal = { kind = "pill_place" } }
+  check("path-safe: certain-death knob on -> (123,141) allowed",
+        B.place_tile_check(plain, w, INFO, 123, 141, 9) == nil)
+  C.BUILDER_SEND_CERTAIN_DEATH_ONLY = false
+  plain = { tick = 10, goal = { kind = "pill_place" } }
   why = B.place_tile_check(plain, w, INFO, 123, 141, 10)
   check("path-safe: (123,141) inside pill #2's range rejected", why == "man_path", why)
   local wfar = { pills = { [2] = { mx = 123, my = 120, health = 15, owner = "hostile" } } }
@@ -344,6 +351,7 @@ do
   stL.tick = 4003
   check("path-safe: walk clear of the lines -> allowed",
         B.place_tile_check(stL, wfar, INFO, 119, 145, 4003) == nil)
+  C.BUILDER_SEND_CERTAIN_DEATH_ONLY = cd_was
 
   -- Keel: every tile allowed.
   keel()
