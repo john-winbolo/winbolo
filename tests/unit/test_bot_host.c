@@ -452,6 +452,7 @@ int run_bot_host_sync_codec(void) {
     in.u.botHostStatus.percent = 42;
     in.u.botHostStatus.used = 3;
     in.u.botHostStatus.slots = 6;
+    in.u.botHostStatus.seats = (uint16_t)((1u << 0) | (1u << 4) | (1u << 15));
     SDL_strlcpy(in.u.botHostStatus.name, "Laptop",
                 sizeof(in.u.botHostStatus.name));
     r = bh_body_roundtrip(&in, &out, NULL);
@@ -462,6 +463,7 @@ int run_bot_host_sync_codec(void) {
     UT_ASSERT(out.u.botHostStatus.percent == 42);
     UT_ASSERT(out.u.botHostStatus.used == 3);
     UT_ASSERT(out.u.botHostStatus.slots == 6);
+    UT_ASSERT(out.u.botHostStatus.seats == ((1u << 0) | (1u << 4) | (1u << 15)));
     UT_ASSERT(strcmp(out.u.botHostStatus.name, "Laptop") == 0);
 
     /* A bad row index, state or percent is refused. */
@@ -476,6 +478,15 @@ int run_bot_host_sync_codec(void) {
         UT_ASSERT(!dec(buf, len, &out));
         buf[2] = BOT_HOST_SYNC_SYNCING;
         buf[3] = 101;
+        UT_ASSERT(!dec(buf, len, &out));
+        buf[3] = 42;
+        UT_ASSERT(dec(buf, len, &out));
+        /* The seat bits must match the bots used: one bit too many or
+         * one too few is refused. */
+        buf[6] |= 0x02;
+        UT_ASSERT(!dec(buf, len, &out));
+        buf[6] = 0x80;
+        buf[7] = 0x01;
         UT_ASSERT(!dec(buf, len, &out));
     }
 

@@ -3711,9 +3711,10 @@ static bool decodeBotTeamMsgBody(const uint8_t *buf, size_t len,
 }
 
 /* CTRL_BOT_HOST_STATUS body:
- *   [idx 1][connected 1][state 1][percent 1][used 1][slots 1][name str]
+ *   [idx 1][connected 1][state 1][percent 1][used 1][slots 1][seats 2]
+ *   [name str]. seats has bit n set for player n placed on the host.
  * A row with connected 0 carries an empty name. */
-#define BOT_HOST_STATUS_FIXED_LEN 6
+#define BOT_HOST_STATUS_FIXED_LEN 8
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeBotHostStatusBody(const ControlEvent *evt,
@@ -3729,6 +3730,8 @@ static EncodeResult encodeBotHostStatusBody(const ControlEvent *evt,
     buf[pos++] = evt->u.botHostStatus.percent;
     buf[pos++] = evt->u.botHostStatus.used;
     buf[pos++] = evt->u.botHostStatus.slots;
+    packU16(buf + pos, evt->u.botHostStatus.seats);
+    pos += 2;
     if (!botHostPutStr(buf, bufCap, &pos, evt->u.botHostStatus.name,
                        sizeof(evt->u.botHostStatus.name))) {
         return ENCODE_OVERFLOW;
@@ -3750,12 +3753,24 @@ static bool decodeBotHostStatusBody(const uint8_t *buf, size_t len,
     outEvt->u.botHostStatus.percent   = buf[pos++];
     outEvt->u.botHostStatus.used      = buf[pos++];
     outEvt->u.botHostStatus.slots     = buf[pos++];
+    outEvt->u.botHostStatus.seats     = unpackU16(buf + pos);
+    pos += 2;
     if (outEvt->u.botHostStatus.idx >= BOT_HOST_STATUS_ROWS) return false;
     if (outEvt->u.botHostStatus.state > BOT_HOST_SYNC_LATE) return false;
     if (outEvt->u.botHostStatus.percent > 100) return false;
     if (outEvt->u.botHostStatus.used > MAX_TANKS ||
         outEvt->u.botHostStatus.slots > MAX_TANKS) {
         return false;
+    }
+    {
+        /* Each bot the host runs is one seat bit. */
+        uint16_t m = outEvt->u.botHostStatus.seats;
+        int n = 0;
+        while (m != 0) {
+            n += (int)(m & 1u);
+            m >>= 1;
+        }
+        if (n != outEvt->u.botHostStatus.used) return false;
     }
     if (!botHostGetStr(buf, len, &pos, outEvt->u.botHostStatus.name,
                        sizeof(outEvt->u.botHostStatus.name))) {

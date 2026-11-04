@@ -430,6 +430,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 r->percent = evt->u.botHostStatus.percent;
                 r->used    = evt->u.botHostStatus.used;
                 r->slots   = evt->u.botHostStatus.slots;
+                r->seats   = evt->u.botHostStatus.seats;
                 SDL_strlcpy(r->name, evt->u.botHostStatus.name,
                             sizeof(r->name));
             }

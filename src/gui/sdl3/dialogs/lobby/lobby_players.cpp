@@ -650,9 +650,9 @@ static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
 }
 
 /* The Bot Hosts list, below the spectators: each machine that runs the
- * server's bots, with how many it runs and whether it holds the server's
- * brain files yet. A Bot Host is not a player and has no roster slot, so it
- * appears only here. Nothing is drawn when no Bot Host is connected. */
+ * server's bots, with how many it runs, which bots they are, and whether
+ * it holds the server's brain files yet. A Bot Host is not a player and has
+ * no roster slot, so it appears only here. Nothing is drawn when no Bot Host is connected. */
 static void renderBotHostGroup(ClientSim *cs) {
     int count = 0;
     for (int idx = 0; ; idx++) {
@@ -698,11 +698,32 @@ static void renderBotHostGroup(ClientSim *cs) {
         SDL_strlcpy(args.string1, r->name, sizeof(args.string1));
         args.number = r->used;
         args.number2 = r->slots;
+
+        /* The row, then the host's bots in brackets by their roster names:
+         * "Laptop: ready, 2 of 2 bots (ALF, Sonny Chiba)". */
+        char line[512];
+        SDL_strlcpy(line, langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &args),
+                    sizeof(line));
+        bool first = true;
+        for (int s = 0; s < MAX_TANKS; s++) {
+            if ((r->seats & (1u << s)) == 0) continue;
+            const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)s);
+            const char *nm = (ls != NULL && ls->connected && ls->playerName[0])
+                                 ? ls->playerName : "?";
+            SDL_strlcat(line, first ? " (" : ", ", sizeof(line));
+            SDL_strlcat(line, nm, sizeof(line));
+            first = false;
+        }
+        if (!first) SDL_strlcat(line, ")", sizeof(line));
+
         ImGui::Bullet();
         if (r->state == BOT_HOST_SYNC_READY) {
-            ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &args));
+            ImGui::TextWrapped("%s", line);
         } else {
-            ImGui::TextDisabled("%s", langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &args));
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", line);
+            ImGui::PopStyleColor();
         }
     }
 }
