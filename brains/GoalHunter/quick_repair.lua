@@ -351,11 +351,15 @@ function M.evaluate(state, world, info, now)
       state._qr_log_key = key
       print2(string.format(
         "QUICK_REPAIR t=%d pill=(%d,%d) hp=%d target=(%d,%d) T_kill=%s src=%s"
-        .. " T_safe=%s walk=%s dwell=%d -> %s"
+        .. " T_safe=%s walk=%s dwell=%d -> %s%s"
         .. " (T_repair=now+1+walk=%s margin=%d hostile_hits=%d inflight=%d/%d%s trees=%d/%d)",
         now, p.mx, p.my, qr.hp, goal.mx, goal.my, tostring(k.t),
         tostring(k.src or k.why or "-"), tostring(t_safe), tostring(qr.walk),
-        qr.dwell, result, tostring(qr.t_repair), margin, #qr.hits,
+        qr.dwell, result,
+        qr.death and string.format(" (shell %s at +%dt, %s, rewind=%s)",
+          tostring(qr.death.src), qr.death.t or 0, tostring(qr.death.how),
+          tostring(qr.death.rewind)) or "",
+        tostring(qr.t_repair), margin, #qr.hits,
         k.n_inflight or 0, k.hp or 0,
         k.src == "predict" and string.format(
           " reload=%d first_fire=%d remaining=%d flight=%d", k.reload, k.first,
@@ -394,8 +398,9 @@ function M.draw(state, info, qr)
   if qr.result == "wait:early" then
     tail = string.format(" opens in %dt", qr.open_in or 0)
   elseif qr.result == "wait:death" and qr.death then
-    tail = string.format(" (shell %s at +%dt, %s)", tostring(qr.death.src),
-                         qr.death.t or 0, tostring(qr.death.how))
+    tail = string.format(" (shell %s at +%dt, %s, rewind=%s)", tostring(qr.death.src),
+                         qr.death.t or 0, tostring(qr.death.how),
+                         tostring(qr.death.rewind))
   elseif qr.result == "wait:wood" then
     tail = string.format(" (trees %d < %d)", info.trees or 0, qr.trees_need)
   else
