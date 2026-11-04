@@ -90,6 +90,9 @@ typedef struct {
    * 0..255 (0 = north, clockwise), read when the slate was started. */
   int      has_src_heading;
   int      src_heading;
+  /* brain_record.c copies the two heading fields into the recorded
+   * Dijkstra box only when this is defined. */
+#define BRAIN_PF_SLATE_HAS_SRC_HEADING 1
 } DijkstraSlate;
 
 /* Per-instance pathfinder state */

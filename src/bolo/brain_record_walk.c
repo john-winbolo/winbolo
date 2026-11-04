@@ -144,6 +144,14 @@ BrainRecWalkStatus brainRecWalkFrame(BrainRecReader *r, BrainRecFrameInfo *out) 
         if (!rdU32(r, &info.pillsOnMap) || !rdU32(r, &info.basesOnMap)) return BRAINREC_WALK_BAD;
     }
 
+    /* v8 tail: the recorded Dijkstra box, length-prefixed. Its keyframes
+     * fall on the map keyframes, so mapKeyframe stays the split-safe flag. */
+    if (r->version == 0 || r->version >= 8u) {
+        uint32_t dl = 0;
+        if (!rdU32(r, &dl)) return BRAINREC_WALK_BAD;
+        if (dl && !r->skip(r->ctx, dl)) return BRAINREC_WALK_BAD;
+    }
+
     if (out) *out = info;
     return BRAINREC_WALK_OK;
 }

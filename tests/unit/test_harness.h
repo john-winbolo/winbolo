@@ -1466,6 +1466,15 @@ int run_replay_v1_pill_health_nibble(void);
  * the frames are raw snapshot structs and the structs changed size. The check
  * every reader shares has to refuse it rather than walk it. */
 int run_brainrec_version_rejects_old(void);
+/* The recorded Dijkstra box in brainrec v8 (test_brainrec_dij.c): only
+ * changed nodes are written, unreached nodes and unused boat nodes never,
+ * a new search resets the slate, a keyframe seek equals a full replay, and
+ * a v7 file without the block still loads. */
+int run_brainrec_dij_changed_only(void);
+int run_brainrec_dij_boat_layer(void);
+int run_brainrec_dij_reset_on_new_start(void);
+int run_brainrec_dij_keyframe_equals_replay(void);
+int run_brainrec_dij_old_file_loads(void);
 
 /* A session keeps its own map (test_brainrec_session_map.c): the map saved
  * beside brainrec.btr reads back whole and loads with every base where the

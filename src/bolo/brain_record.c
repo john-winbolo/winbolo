@@ -21,6 +21,8 @@
 #include "players.h"     /* players / struct playersObj: per-player alliance bitmap */
 #include "pillbox.h"     /* pillSetInTank — the pill flags byte */
 #include "bases.h"       /* basesIsActive — the base on-map mask */
+#include "brain_record_dij.h"  /* v8 recorded Dijkstra box */
+#include "brain_pathfinder.h"  /* DijkstraSlate, DIJKSTRA_NUM_SLATES */
 
 #define BRAINREC_MAP_TILES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
 
@@ -73,6 +75,17 @@ static void closeFileWithTicks(void) {
     }
     g_fileFrames = 0;
 }
+/* Recorded Dijkstra box (v8): what a reader holds after the last frame, so
+ * the next frame writes only what changed. Heap, because it is ~150 KB. */
+static BrainRecDijState *g_dijPrev = NULL;
+static BrainRecDijBuf    g_dijBuf  = {0};
+static uint64_t          g_pfDijBytes = 0;
+static double            g_pfDijMs = 0;
+
+BOLO_STATIC_ASSERT(BRAINREC_DIJ_SLATES == DIJKSTRA_NUM_SLATES,
+                   dij_box_covers_every_slate);
+BOLO_STATIC_ASSERT(BRAINREC_DIJ_MAX_BOTS == MAX_TANKS,
+                   dij_box_covers_every_player_slot);
 
 /* Selective recording parts (winbolods -bd-noviz / -bd-nopool /
  * -bd-pool-full). When off, the per-bot overlay block / pool-breakdown
@@ -175,11 +188,15 @@ static void perf_dump(uint32_t tick) {
     double n = (double)(g_pfTicks ? g_pfTicks : 1);
     fprintf(g_perf,
         "PERF t=%u wall_s=%.2f eff_hz=%.1f think_ms=%.2f rec_snap=%.3f "
-        "rec_map=%.3f rec_ovl=%.3f rec_pool=%.3f ovl_cmds=%.0f pool_B=%.0f\n",
+        "rec_map=%.3f rec_ovl=%.3f rec_pool=%.3f ovl_cmds=%.0f pool_B=%.0f "
+        "rec_dij=%.3f dij_B=%.0f\n",
         tick, wallS, (double)g_pfTicks / (wallS > 0 ? wallS : 1),
         g_pfThinkMs / n, g_pfSnapMs / n, g_pfMapMs / n, g_pfOvlMs / n,
-        g_pfPoolMs / n, (double)g_pfOvlCmds / n, (double)g_pfPoolBytes / n);
+        g_pfPoolMs / n, (double)g_pfOvlCmds / n, (double)g_pfPoolBytes / n,
+        g_pfDijMs / n, (double)g_pfDijBytes / n);
     fflush(g_perf);
+    g_pfDijMs = 0;
+    g_pfDijBytes = 0;
     g_pfSnapMs = g_pfMapMs = g_pfOvlMs = g_pfPoolMs = g_pfThinkMs = 0;
     g_pfOvlCmds = g_pfPoolBytes = 0;
     g_pfTicks = 0;
@@ -467,10 +484,10 @@ static void writeGoalInfo(ServerSim *sim, BYTE slot) {
  * Keyframe on the first frame, every N frames, or when a huge fraction of the
  * map changed (reload / mass terrain event) so deltas stay small. The terrain
  * bytes carry mines + boats too, so this replays all three. */
-static void writeMap(ServerSim *sim) {
+static bool writeMap(ServerSim *sim) {
     GameSim    *gs  = serverSimGetGameSim(sim);
     const BYTE *cur = (gs && gs->mp) ? &gs->mp->mapItem[0][0] : NULL;
-    if (!cur) { wr_u8(0); wr_u32(0); return; }   /* no map this frame */
+    if (!cur) { wr_u8(0); wr_u32(0); return false; }   /* no map this frame */
 
     bool keyframe = !g_hasPrevMap
                     || (g_frameCount % BRAINREC_MAP_KEYFRAME_INTERVAL) == 0;
@@ -498,6 +515,83 @@ static void writeMap(ServerSim *sim) {
     memcpy(g_prevMap, cur, BRAINREC_MAP_TILES);
     g_hasPrevMap = true;
     g_frameCount++;
+    return keyframe;
+}
+
+/* Fill one bot's recorder input from its pathfinder and tank. */
+static void fillDijBot(ServerSim *sim, BYTE slot, BrainRecDijBotIn *in) {
+    memset(in, 0, sizeof *in);
+    TankInfo ti;
+    if (serverSimGetTankInfo(sim, slot, &ti) && ti.has_tank && ti.alive) {
+        in->hasTank = true;
+        in->onBoat  = ti.on_boat;
+        in->tx      = ti.map_x;
+        in->ty      = ti.map_y;
+    }
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(sim, slot);
+    if (!pf) return;
+    for (int s = 0; s < DIJKSTRA_NUM_SLATES; s++) {
+        const DijkstraSlate *ds = &pf->dij_slates[s];
+        BrainRecDijSlateIn  *si = &in->slates[s];
+        if (!ds->g_cost || !ds->dir_at) continue;
+        si->active = true;
+        si->g_cost = ds->g_cost;
+        si->dir_at = ds->dir_at;
+        si->meta.kind         = (int32_t)ds->kind;
+        si->meta.src_x        = (uint8_t)ds->src_x;
+        si->meta.src_y        = (uint8_t)ds->src_y;
+        si->meta.in_boat      = (uint8_t)(ds->in_boat ? 1 : 0);
+        si->meta.allow_boat   = (uint8_t)(ds->allow_boat ? 1 : 0);
+#ifdef BRAIN_PF_SLATE_HAS_SRC_HEADING
+        /* Only a pathfinder with the start-heading slate fields defines
+         * this; without them the record says "no heading". */
+        si->meta.has_src_heading = (uint8_t)(ds->has_src_heading ? 1 : 0);
+        si->meta.src_heading     = (uint8_t)(ds->src_heading & 0xFF);
+#endif
+        si->meta.danger_scale   = ds->danger_scale;
+        si->meta.started_tick   = ds->started_tick;
+        si->meta.done           = (uint8_t)(ds->done ? 1 : 0);
+        si->meta.completed_tick = ds->completed_tick;
+    }
+}
+
+/* v8 tail: the recorded Dijkstra box of every bot, length-prefixed. */
+static void writeDijkstra(ServerSim *sim, bool keyframe) {
+    uint64_t t0 = SDL_GetPerformanceCounter();
+    if (!g_dijPrev) {
+        g_dijPrev = (BrainRecDijState *)malloc(sizeof *g_dijPrev);
+        if (g_dijPrev) brainRecDijStateClear(g_dijPrev);
+        keyframe = true;
+    }
+    static BrainRecDijBotIn botIn[MAX_TANKS];
+    const BrainRecDijBotIn *bots[MAX_TANKS];
+    for (int i = 0; i < MAX_TANKS; i++) {
+        bots[i] = NULL;
+        if (!serverSimIsBot(sim, (BYTE)i)) continue;
+        fillDijBot(sim, (BYTE)i, &botIn[i]);
+        bots[i] = &botIn[i];
+    }
+    if (!g_dijPrev || !brainRecDijEncodeFrame(g_dijPrev, bots, keyframe, &g_dijBuf)) {
+        /* Out of memory: write an empty block, and start over with a
+         * keyframe once memory is back. */
+        wr_u32(0);
+        free(g_dijPrev);
+        g_dijPrev = NULL;
+    } else {
+        wr_u32((uint32_t)g_dijBuf.len);
+        wr_buf(g_dijBuf.data, g_dijBuf.len);
+        g_pfDijBytes += g_dijBuf.len;
+    }
+    g_pfDijMs += perf_ms(t0, SDL_GetPerformanceCounter());
+}
+
+/* Forget the Dijkstra memory: the next file starts on a keyframe. */
+static void resetDijkstra(void) {
+    free(g_dijPrev);
+    g_dijPrev = NULL;
+    brainRecDijBufFree(&g_dijBuf);
+    g_pfDijBytes = 0;
+    g_pfDijMs = 0;
 }
 
 void brainRecordTick(ServerSim *sim) {
@@ -575,7 +669,7 @@ void brainRecordTick(ServerSim *sim) {
     g_pfSnapMs += perf_ms(_tp0, _tp1);
 
     /* ── Map terrain (keyframe / delta) — also carries mines + boats ── */
-    writeMap(sim);
+    bool mapKeyframe = writeMap(sim);
     uint64_t _tp2 = SDL_GetPerformanceCounter();
     g_pfMapMs += perf_ms(_tp1, _tp2);
 
@@ -684,6 +778,9 @@ void brainRecordTick(ServerSim *sim) {
         wr_u32(baseMask);
     }
 
+    /* ── Recorded Dijkstra box (v8) ── keyframe on the map's keyframes. */
+    writeDijkstra(sim, mapKeyframe);
+
     /* Throttled gzip flush: a Z_SYNC_FLUSH every ~64 frames keeps the on-disk
      * gzip valid (a hard kill loses at most ~1-2s) without the ratio hit of
      * flushing every frame. A clean shutdown gzcloses for the final bytes. */
@@ -708,6 +805,7 @@ void brainRecordEndGame(void) {
     g_openAttempts = 0;
     g_hasPrevMap   = false;
     g_frameCount   = 0;
+    resetDijkstra();
     g_haveSkip     = false;
     memset(g_skipViz, 0, sizeof g_skipViz);
     memset(g_skipVizSlot, 0, sizeof g_skipVizSlot);
@@ -728,6 +826,7 @@ void brainRecordShutdown(void) {
     g_lastTick   = 0xFFFFFFFFu;
     g_hasPrevMap = false;
     g_frameCount = 0;
+    resetDijkstra();
     g_haveSkip   = false;
     memset(g_skipViz, 0, sizeof g_skipViz);
     memset(g_skipVizSlot, 0, sizeof g_skipVizSlot);

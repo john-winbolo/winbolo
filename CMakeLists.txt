@@ -4871,6 +4871,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The brain recorder's own version check.
     tests/unit/test_brainrec_version.c
     tests/unit/test_brainrec_session_map.c
+    # The recorded Dijkstra box (brainrec v8).
+    tests/unit/test_brainrec_dij.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
     tests/unit/loopback_harness.c
@@ -6220,6 +6222,11 @@ set(_unit_test_names
     replay_v1_pill_health_nibble
     brainrec_version_rejects_old
     brainrec_session_map_roundtrip
+    brainrec_dij_changed_only
+    brainrec_dij_boat_layer
+    brainrec_dij_reset_on_new_start
+    brainrec_dij_keyframe_equals_replay
+    brainrec_dij_old_file_loads
     lv_tank_stocks_from_snapshot
     lv_team_colours_from_snapshot
     lv_team_colours_events
