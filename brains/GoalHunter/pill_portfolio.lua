@@ -158,6 +158,26 @@ function M.near_front(mx, my, r)
   return false
 end
 
+-- The classify() steps after the front test: "aggro" (own tile in enemy
+-- influence, OR surrounded by it: >= AGGRO_NEG_NEIGHBORS of the 8 adjacent
+-- tiles negative, which catches a positive tile boxed in by enemy), "back"
+-- (positive influence, not surrounded), or nil (influence 0: unclaimed).
+local function after_front(mx, my, inf)
+  if inf < 0 then return "aggro" end
+  local neg = 0
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      if not (dx == 0 and dy == 0)
+         and (cpf.influence_at(mx + dx, my + dy) or 0) < 0 then
+        neg = neg + 1
+      end
+    end
+  end
+  if neg >= (C.AGGRO_NEG_NEIGHBORS or 5) then return "aggro" end
+  if inf > 0 then return "back" end
+  return nil
+end
+
 -- Precise classification of a pill/tile (front-line aware). Returns
 -- (category, influence). `in_use` flags a pill reserved for a pill take.
 -- `placing` = classifying a CANDIDATE TILE for a new placement (strategic
@@ -171,27 +191,75 @@ function M.classify(mx, my, in_use, placing)
   -- front: on/near the front line (radius by purpose — see above).
   local r = placing and (C.FRONT_NEAR_RADIUS_PLACE or 0) or FRONT_NEAR_RADIUS
   if M.near_front(mx, my, r) then return "front", inf end
-  -- aggro: own tile in enemy influence, OR surrounded by it (>= AGGRO_NEG_NEIGHBORS
-  -- of the 8 adjacent tiles negative — catches a positive tile boxed in by enemy).
-  if inf < 0 then return "aggro", inf end
-  local neg = 0
-  for dy = -1, 1 do
-    for dx = -1, 1 do
-      if not (dx == 0 and dy == 0)
-         and (cpf.influence_at(mx + dx, my + dy) or 0) < 0 then
-        neg = neg + 1
-      end
-    end
-  end
-  if neg >= (C.AGGRO_NEG_NEIGHBORS or 5) then return "aggro", inf end
-  -- back: positive influence AND outside the front range AND not surrounded.
-  if inf > 0 then return "back", inf end
+  local cat = after_front(mx, my, inf)
+  if cat then return cat, inf end
   -- inf == 0, away from the line, not surrounded: unclaimed ground.
   -- FRONT_ZERO_IS_FRONT (constants.lua): true = treat as front (fillable);
   -- false = "beyond" -- not a portfolio role, so the placement scan's
   -- STRICT_NEED gate skips it and its sc3 term pays the beyond-front penalty.
   if C.FRONT_ZERO_IS_FRONT ~= false then return "front", inf end
   return "beyond", inf
+end
+
+-- Front needs a target (C.PLACE_FRONT_NEED_TARGET, 2026-11-04). A placement
+-- spot counts as "front" only when at least one known enemy base, enemy pill
+-- or neutral pill is within C.PLACE_FRONT_TARGET_RANGE tiles (Euclidean, tile
+-- centre to tile centre, inclusive). Before this, a spot on the front band
+-- (or on unclaimed ground) was "front" even with nothing in range, so the
+-- bot put front pills where they could shoot nothing.
+--
+-- M.front_targets(world): the target list, built ONCE per placement scan
+-- from this bot's own world model: world.pills with owner "hostile" or
+-- "neutral", world.bases with owner "hostile", each with a known position
+-- (mx, my) and, for pills, not in a tank. Entries are { mx, my, kind, id }.
+-- Returns nil when the knob is off: M.place_classify is then classify().
+function M.front_targets(world)
+  if not C.PLACE_FRONT_NEED_TARGET then return nil end
+  local t = {}
+  if world and world.pills then
+    for id, p in pairs(world.pills) do
+      if (p.owner == "hostile" or p.owner == "neutral")
+         and not p.in_tank and p.mx and p.my then
+        t[#t + 1] = { p.mx, p.my, "pill", id }
+      end
+    end
+  end
+  if world and world.bases then
+    for id, b in pairs(world.bases) do
+      if b.owner == "hostile" and b.mx and b.my then
+        t[#t + 1] = { b.mx, b.my, "base", id }
+      end
+    end
+  end
+  return t
+end
+
+-- Classify a placement CANDIDATE tile (classify(mx, my, false, true)) with
+-- the target test above. tgts = M.front_targets(world); nil = the knob is
+-- off, and the answer is exactly classify()'s. A "front" tile with no target
+-- in range loses front credit and gets the class the classify() steps after
+-- the front test give it: "aggro" (enemy influence or surrounded), "back"
+-- (positive influence), or "beyond" (influence 0: the class classify() gives
+-- unclaimed ground when FRONT_ZERO_IS_FRONT is false, so it fills no role).
+-- Returns (category, influence, lost, nearest, dist): lost = true when the
+-- tile lost front credit; nearest = the nearest target entry (nil when the
+-- list is empty) and dist its distance in tiles. The last three are for the
+-- PLACE_FRONT_NOTARGET log.
+function M.place_classify(mx, my, tgts)
+  local cat, inf = M.classify(mx, my, false, true)
+  if cat ~= "front" or not tgts then return cat, inf end
+  local r  = C.PLACE_FRONT_TARGET_RANGE or C.PILL_FIRE_RANGE or 8
+  local r2 = r * r
+  local best_d2, best = math.huge, nil
+  for i = 1, #tgts do
+    local e = tgts[i]
+    local dx, dy = e[1] - mx, e[2] - my
+    local d2 = dx * dx + dy * dy
+    if d2 <= r2 then return cat, inf end
+    if d2 < best_d2 then best_d2 = d2; best = e end
+  end
+  local nc = after_front(mx, my, inf) or "beyond"
+  return nc, inf, true, best, best and math.sqrt(best_d2) or nil
 end
 
 -- Cached role for an EXISTING pill, re-evaluated every PILL_ROLE_REEVAL_TICKS

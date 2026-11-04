@@ -3599,6 +3599,12 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local blocked_tiles = state.blocked
   local blk_now       = state.tick or 0
   local MAPW          = C.MAP_W
+  -- Front needs a target (C.PLACE_FRONT_NEED_TARGET): the enemy base / enemy
+  -- pill / neutral pill list, built once for the whole scan (tgts nil = knob
+  -- off). n = spots that lost front credit; best = the best-scoring row of
+  -- them; fx/fy/fc/fe/fd = the first of them (spot, new class, nearest
+  -- target, its distance). For the PLACE_FRONT_NOTARGET line.
+  local fnt = { tgts = PP.front_targets(world), n = 0 }
 
   -- Per-tile scoring. One closure over the scan context above (pf_counts /
   -- pf_targets / pf_need_cat / unguarded_bases / search center / spike / war
@@ -3619,7 +3625,15 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- one. If every placeable spot is a surplus category, best_mx stays nil
         -- and we keep carrying — there is no fallback.
         local cell_inf = cpf.influence_at(cx, cy)
-        local cell_cat = PP.classify(cx, cy, false, true)
+        -- Front needs a target: a front spot with no enemy base, enemy pill
+        -- or neutral pill in range gets its next class (place_classify).
+        local cell_cat, _, nt_lost, nt_e, nt_d = PP.place_classify(cx, cy, fnt.tgts)
+        if nt_lost then
+          fnt.n = fnt.n + 1
+          if not fnt.fx then
+            fnt.fx, fnt.fy, fnt.fc, fnt.fe, fnt.fd = cx, cy, cell_cat, nt_e, nt_d
+          end
+        end
         local _ctgt = pf_targets[cell_cat]
         -- Defensive turtle: the pill-type balance does not steer the cluster
         -- (no surplus skip, no STRICT_NEED gate, port term 0 below).
@@ -3869,8 +3883,10 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           sc11=sc11, sc12=sc12, sc13=sc13, sc_center=sc_center,
           sc_ebase=sc_ebase, sc_depth=sc_depth, deep=deep,
           sc_rch=sc_rch, rch_np=rch_np, rch_nb=rch_nb,
+          nt_lost = nt_lost, nt_e = nt_e, nt_d = nt_d,
         }
         all_cands[#all_cands + 1] = row
+        if nt_lost and (not fnt.best or score > fnt.best.score) then fnt.best = row end
         if score > best_score then
           best_score = score; best_mx = cx; best_my = cy
           best_row = row
@@ -3971,7 +3987,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
             if not seen[k] then
               seen[k] = true
               if U.is_placeable(cx, cy, world)
-                 and PP.classify(cx, cy, false, true) == "aggro" then
+                 and PP.place_classify(cx, cy, fnt.tgts) == "aggro" then
                 if blitz_lines and squad.tile_on_blitz_line(world, blitz_lines, cx, cy, blk_now) then
                   n_line_skip = n_line_skip + 1
                 elseif tchk_on and builder.place_tile_check(state, world, info, cx, cy, blk_now, true) then
@@ -3995,6 +4011,25 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     print2(string.format("PLACE_BLITZ_LINE t=%d site=strategic_scan skipped=%d tile(s) on a blitz shot line (%d line(s)) -> best=%s",
       blk_now, n_line_skip, #blitz_lines,
       best_mx and string.format("(%d,%d)", best_mx, best_my) or "none"))
+  end
+  -- Front needs a target: one line for the scan, only when the reported spot
+  -- or its class changes (the pool runs this scan often). spot = the
+  -- best-scoring spot that lost front credit, else the first one seen;
+  -- lost = how many spots lost it; win=yes when that spot is the winner.
+  if fnt.n > 0 then
+    local b = fnt.best
+    local fx, fy, fc, fe, fd = fnt.fx, fnt.fy, fnt.fc, fnt.fe, fnt.fd
+    if b then fx, fy, fc, fe, fd = b.mx, b.my, b.cat, b.nt_e, b.nt_d end
+    local fkey = (fy * 256 + fx) .. fc
+    if state._place_fnt_log ~= fkey then
+      state._place_fnt_log = fkey
+      print2(string.format("PLACE_FRONT_NOTARGET t=%d spot=(%d,%d) nearest=%s -> %s lost=%d range=%g win=%s best=%s",
+        blk_now, fx, fy,
+        fe and string.format("%s#%s@%.1f", fe[3], tostring(fe[4]), fd) or "none",
+        fc, fnt.n, C.PLACE_FRONT_TARGET_RANGE or C.PILL_FIRE_RANGE,
+        (b and b == best_row) and "yes" or "no",
+        best_mx and string.format("(%d,%d)", best_mx, best_my) or "none"))
+    end
   end
 
   if not best_mx then
@@ -4613,11 +4648,14 @@ function M.get_strategic_place_heatmap(state, world, info)
   local ad = M.focus_spike_ctx(world,
     M.spike.check(state, world, info, pf_counts, true), state, tmx, tmy)
 
+  -- Front needs a target, as in the eval scan (nil = knob off).
+  local hm_tgts = PP.front_targets(world)
+
   local function hm_cell(cx, cy)
       if U.is_placeable(cx, cy, world) then
         -- Skip a category already at/over its projected target (no room).
         -- Turtle: no skip (matches the eval scan).
-        local cell_cat = PP.classify(cx, cy, false, true)
+        local cell_cat = PP.place_classify(cx, cy, hm_tgts)
         local _ctgt = pf_targets[cell_cat]
         local pair2 = ad ~= nil and ad.role == "second"
         if pair2 then
@@ -4782,7 +4820,7 @@ function M.get_strategic_place_heatmap(state, world, info)
           if U.in_map(cx, cy) and not seen[k]
              and not (cx >= x0 and cx <= x1 and cy >= y0 and cy <= y1) then
             seen[k] = true
-            if PP.classify(cx, cy, false, true) == "aggro" then hm_cell(cx, cy) end
+            if PP.place_classify(cx, cy, hm_tgts) == "aggro" then hm_cell(cx, cy) end
           end
         end
       end
