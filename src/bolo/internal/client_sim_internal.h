@@ -413,6 +413,7 @@ struct ClientSim {
     /* Lobby state (client-side mirror of server lobby) */
     ClientLobbySlot  lobbySlots[16];    /* MAX_TANKS */
     ClientSpectatorSlot spectatorSlots[MAX_SPECTATORS]; /* spectator roster mirror */
+    ClientBotHostRow    botHostRows[CLIENT_BOT_HOST_ROWS]; /* Bot Host list mirror */
     int              countdownSeconds;  /* 0 = not counting down */
     bool             mapDownloadComplete; /* Gate for ready button */
     bool             inLobby;           /* TRUE if server is lobby-enabled */
@@ -1113,6 +1114,12 @@ struct ClientSim {
      * transport fields (connection-lifetime state). */
     struct ServerSim *boundServerSim;
 
+    /* A Bot Host bot's way out for what a hosted bot hands its ServerSim:
+     * the internal team message and the smart ping. NULL everywhere but on
+     * a Bot Host. Preserved across clientSimCreate's memset with the
+     * transport fields. */
+    const struct ClientSimBrainRelay *brainRelay;
+
     /* Unified rejection-reason buffer. Local connect failures write
      * directly here; UDP JOIN_REJECT mirrors its reason here too. The
      * clientSimGetConnectErrorReason accessor reads from this field. */
@@ -1233,6 +1240,17 @@ BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
  * JOIN_REJECT handler. */
 void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
 struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
+
+/* What a brain on a Bot Host sends where an in-process bot would hand it to
+ * its bound ServerSim. Both are called on the thread running the think. */
+typedef struct ClientSimBrainRelay {
+    void  *ctx;
+    void (*internalMsg)(void *ctx, BYTE fromPlayer, const char *msg);
+    void (*ping)(void *ctx, BYTE fromPlayer, uint8_t kind,
+                 uint16_t worldX, uint16_t worldY);
+} ClientSimBrainRelay;
+void clientSimSetBrainRelay(ClientSim *cs, const ClientSimBrainRelay *relay);
+const ClientSimBrainRelay *clientSimGetBrainRelay(const ClientSim *cs);
 void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
 void                    clientSimSetConnectErrorId(ClientSim *cs, unsigned int id);
 

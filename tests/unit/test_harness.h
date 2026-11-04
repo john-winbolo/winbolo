@@ -922,6 +922,30 @@ int run_bot_ping_rate_limit_drops_extras(void);
 int run_bot_ping_ignores_bad_slot(void);
 int run_bot_ping_ignores_a_slot_that_is_not_a_bot(void);
 
+/* Bot Host wire messages and remote seats (test_bot_host.c). */
+int run_bot_host_assign_codec(void);
+int run_bot_host_unassign_codec(void);
+int run_bot_host_table_codec(void);
+int run_bot_host_team_msg_codec(void);
+int run_bot_host_commands_codec(void);
+int run_bot_host_team_msg_fanout(void);
+int run_bot_host_ping_gap(void);
+int run_bot_host_remote_seat_stays_bot(void);
+int run_bot_host_target_ms(void);
+int run_bot_host_sync_codec(void);
+
+/* Bot Host brain sync (test_brain_sync.c). */
+int run_brain_sync_path_check(void);
+int run_brain_sync_manifest_codec(void);
+int run_brain_sync_cache_plan(void);
+int run_brain_sync_chunk(void);
+
+/* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
+int run_bot_host_link_announce_codec(void);
+int run_bot_host_link_addr_list(void);
+int run_bot_host_link_allow(void);
+int run_bot_host_slots_codec(void);
+
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with
  * messagedest=0 fan out into allied bot inboxes only, never the chat
@@ -2912,6 +2936,8 @@ int run_pill_shadow_withheld_crc_matches(void);
  * resync while the client is behind: the blob is its copy, not the live map. */
 int run_loopback_map_cull(void);
 int run_loopback_map_cull_resync(void);
+int run_loopback_map_unculled_drop_heals(void);
+int run_console_bot_set(void);
 
 /* Sound culling over the loopback transport (test_sound_delivery_wire.c): for a
  * recipient whose only viewport rect is its own tank screen, both delivery

@@ -49,6 +49,10 @@ typedef struct {
     bool reloadResult;
     int  memCalls;
     bool lastMemDeep;
+    int  botCalls;
+    int  lastBotPlayer;
+    char lastBotWhat[32];
+    char lastBotValue[64];
 } ConsoleRec;
 
 static ConsoleRec g_rec;
@@ -103,11 +107,21 @@ static void recMemReport(bool deep) {
     g_rec.lastMemDeep = deep;
 }
 
+static bool recBotSet(int player, const char *what, const char *value,
+                      char *msg, size_t msgLen) {
+    g_rec.botCalls++;
+    g_rec.lastBotPlayer = player;
+    snprintf(g_rec.lastBotWhat, sizeof(g_rec.lastBotWhat), "%s", what);
+    snprintf(g_rec.lastBotValue, sizeof(g_rec.lastBotValue), "%s", value);
+    snprintf(msg, msgLen, "set");
+    return true;
+}
+
 /* Positional, like the server's own list, so a new entry goes last. */
 static const ServerConsoleOps kRecOps = {
     recSetLock, recInfo, recSaveMap, recSay,
     recLogSay,  recStatus, recKick,  recSetHost,
-    recReloadScenario, recMemReport
+    recReloadScenario, recMemReport, recBotSet
 };
 
 /* Fresh recorder; both "did it work" ops answer yes unless a test says
@@ -412,6 +426,47 @@ int run_console_mem_report(void) {
         UT_ASSERT_MSG(g_rec.memCalls == 0,
                   "a NULL memReport must not be called (calls=%d)",
                   g_rec.memCalls);
+    }
+    return 0;
+}
+
+/* bot <n> <setting> <value> reaches botSet with the three words; a line
+ * missing a word, and a server with no botSet, call nothing. */
+int run_console_bot_set(void) {
+    recReset();
+    runLine("Bot 3 Difficulty Easy\n");
+    UT_ASSERT_MSG(g_rec.botCalls == 1 && g_rec.lastBotPlayer == 3 &&
+                  strcmp(g_rec.lastBotWhat, "difficulty") == 0 &&
+                  strcmp(g_rec.lastBotValue, "easy") == 0,
+                  "bot 3 difficulty easy gave calls=%d player=%d '%s' '%s'",
+                  g_rec.botCalls, g_rec.lastBotPlayer, g_rec.lastBotWhat,
+                  g_rec.lastBotValue);
+
+    recReset();
+    runLine("bot 0 brain 2\n");
+    UT_ASSERT_MSG(g_rec.botCalls == 1 && g_rec.lastBotPlayer == 0 &&
+                  strcmp(g_rec.lastBotWhat, "brain") == 0 &&
+                  strcmp(g_rec.lastBotValue, "2") == 0,
+                  "bot 0 brain 2 gave calls=%d player=%d '%s' '%s'",
+                  g_rec.botCalls, g_rec.lastBotPlayer, g_rec.lastBotWhat,
+                  g_rec.lastBotValue);
+
+    recReset();
+    runLine("bot 1 brain\n");
+    UT_ASSERT_MSG(g_rec.botCalls == 0,
+                  "a line with no value must not call botSet (calls=%d)",
+                  g_rec.botCalls);
+
+    {
+        ServerConsoleOps noBot = kRecOps;
+        char keyBuff[SERVER_CONSOLE_LINE] = "bot 1 brain 0\n";
+        char saveBuff[SERVER_CONSOLE_LINE] = "bot 1 brain 0\n";
+        recReset();
+        noBot.botSet = NULL;
+        serverConsoleDispatch(&noBot, keyBuff, saveBuff);
+        UT_ASSERT_MSG(g_rec.botCalls == 0,
+                      "a NULL botSet must not be called (calls=%d)",
+                      g_rec.botCalls);
     }
     return 0;
 }

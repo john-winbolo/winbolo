@@ -1618,7 +1618,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                               ? lobbyComputeRankedEligibility(cs)
                                               : LobbyRankedEligibility{true, 0, 0, 0};
                 bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
-                bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady;
+                /* While a Bot Host gets the server's brain files the lobby
+                 * waits for it: Ready is off (Unready stays on) until it
+                 * holds them or the server stops waiting after 60 s. */
+                int botHostSyncPct = 0;
+                bool botHostBlocksReady = !myReady &&
+                    clientSimBotHostSyncing(cs, &botHostSyncPct);
+                bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady &&
+                                !botHostBlocksReady;
 
                 /* Controller mode draws each action's bound glyph inline, just
                  * left of the button it triggers (A = Ready, B = Leave); the
@@ -1676,6 +1683,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 if (rankedBlocksReady &&
                     ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     lobbyRankedShapeTooltip(readyRe);
+                } else if (botHostBlocksReady &&
+                           ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    MessageArgs syncArgs = {};
+                    syncArgs.number = botHostSyncPct;
+                    ImGui::SetTooltip("%s", langGetTextFmt(STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT,
+                                                           &syncArgs));
                 }
                 }  /* close !spectator: Ready button */
 
@@ -2417,7 +2430,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                               ? lobbyComputeRankedEligibility(cs)
                                               : LobbyRankedEligibility{true, 0, 0, 0};
                 bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
-                bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady;
+                /* While a Bot Host gets the server's brain files the lobby
+                 * waits for it: Ready is off (Unready stays on) until it
+                 * holds them or the server stops waiting after 60 s. */
+                int botHostSyncPct = 0;
+                bool botHostBlocksReady = !myReady &&
+                    clientSimBotHostSyncing(cs, &botHostSyncPct);
+                bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady &&
+                                !botHostBlocksReady;
 
                 /* No legacy Balance Teams button in the right column —
                  * the Balance-from-WBN affordance lives next to the
@@ -2459,6 +2479,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 if (rankedBlocksReady &&
                     ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     lobbyRankedShapeTooltip(readyRe);
+                } else if (botHostBlocksReady &&
+                           ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    MessageArgs syncArgs = {};
+                    syncArgs.number = botHostSyncPct;
+                    ImGui::SetTooltip("%s", langGetTextFmt(STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT,
+                                                           &syncArgs));
                 }
                 }  /* close !spectator: Ready button */
             }

@@ -71,6 +71,13 @@ typedef struct {
    * bot's Lua tables. May be NULL, in which case the commands say the
    * report is not available. Last, for the reason given above. */
   void (*memReport)(bool deep);
+  /* bot <n> difficulty <easy|medium|hard> / bot <n> brain <index> — change
+   * one bot seat's settings, as the lobby's bot popup does. `what` is
+   * "difficulty" or "brain" and `value` the word after it. Writes one line
+   * into msg either way. May be NULL, in which case the command says it is
+   * not available. Last, for the reason given above. */
+  bool (*botSet)(int player, const char *what, const char *value,
+                 char *msg, size_t msgLen);
 } ServerConsoleOps;
 
 /* Lower-case `s` in place. */

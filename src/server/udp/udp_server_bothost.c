@@ -1,0 +1,1851 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/*********************************************************
+ *Name:          UDP Server Bot Host
+ *Filename:      udp_server_bothost.c
+ *Purpose:
+ *  The server side of the Bot Host: a separate program that
+ *  runs bot brains for this server on another machine.
+ *
+ *  Finding each other (bot_host_link.h): a Bot Host sends an
+ *  ANNOUNCE to each server on its --servers list. The server
+ *  takes ANNOUNCEs only from hosts on its -bothosts list (or,
+ *  with no list, from any host, which must then give the
+ *  -bothostkey key). It sends a QUERY to each listed host at
+ *  start, after each game, and when a player joins an empty
+ *  lobby; a host answers with an ANNOUNCE. To an ANNOUNCE with
+ *  free slots, while the server wants bots run, it answers
+ *  with an INVITE. The host then connects, so the connection
+ *  always starts from the host's side. A host that holds no
+ *  seats for 60 s while nothing wants bots is released.
+ *
+ *  A Bot Host opens one control connection (JOIN_FLAG_BOT_HOST
+ *  with the -bothostkey key, when set). It holds no tank seat and no
+ *  player ever sees it. Through it the server hands the host
+ *  bot seats: CTRL_BOT_HOST_ASSIGN carries what the host needs
+ *  to build the seat's brain and a one-time token, and the
+ *  host then opens a bot connection for the seat
+ *  (JOIN_FLAG_BOT_SLOT with the token). The bot connection is
+ *  a normal client connection on the seat's own slot, with no
+ *  roster join: the seat, its tank, its name and its score
+ *  stay the bot manager's.
+ *
+ *  A seat's brain moves to the host at the first input the
+ *  bot connection sends, so the tank is driven without a gap.
+ *  When the host or the bot connection goes, the seat's brain
+ *  comes back in-process without a word to the players.
+ *
+ *  Placement rule: each tick, at most one in-process bot seat
+ *  is offered to the connected Bot Host with the most free
+ *  slots. A host's slots are shared by every server it serves,
+ *  so it reports its count (CTRL_BOT_HOST_SLOTS) and turns down
+ *  an assign that finds its pool full; that seat stays
+ *  in-process. A seat with no host free stays in-process. A seat
+ *  that came back from a host is offered again only at the
+ *  next round start or in the lobby.
+ *********************************************************/
+
+#include <stdio.h>   /* fprintf, snprintf, stderr, stdout */
+#include <stdlib.h>  /* free */
+#include <string.h>  /* memcpy, memset, memmove, strcmp, strlen */
+
+#include <SDL3/SDL.h> /* SDL_LoadFile, SDL_crc32, SDL_free, SDL_strlcpy */
+
+#include "transport_udp_internal.h"        /* packHeader, packU32, unpackU32,
+                                            * packU16, packConnId, packGameEvent */
+#include "transport_udp_server_internal.h" /* udpServer, srvSendTo, BotHostConn,
+                                            * BotHostSeat, serverFindClient */
+#include "transport_udp.h"   /* UdpServerClient, JOIN_BOT_*, MAX_BOT_HOSTS */
+#include "netpacks.h"        /* PACKET_*, PACKET_HEADER_SIZE */
+#include "global.h"          /* BYTE, MAX_TANKS */
+#include "input_packet.h"    /* GameEvent, EVENT_MINE_VISIBLE */
+#include "game_sim.h"        /* GameSim, and via lang.h the STR_ message ids */
+#include "mines.h"           /* struct minesObj */
+#include "players.h"         /* players, allie */
+#include "server_sim.h"      /* ServerSim, serverSimGetState, serverSimIsBot */
+#include "server_sim_internal.h" /* serverSimShadowSeed, serverSimSetShadowCulled,
+                                  * serverSimGetCompressedMapFor */
+#include "control_event.h"   /* ControlEvent, CTRL_BOT_* */
+#include "client_command.h"  /* CmdBotStats */
+#include "transport_control_codec.h" /* transportControlCodecBodyEncoder */
+#include "channel_mux.h"     /* channelMuxInit, channelSend, channelTick,
+                              * channelBuildFrame, channelRecvFrame */
+#include "bulk_transfer.h"   /* bulkSenderInit, bulkSenderReset, bulkReceiverInit */
+#include "brain_sync.h"      /* brainSyncBuildManifest, the Bot Host brain sync */
+#include "bot_manager.h"     /* botManager*, BotRemoteHooks */
+#include "../../common/wb_log.h" /* WB_LOG_* */
+
+/* Ticks without a datagram from a Bot Host before it is dropped. The host
+ * pings every 500 ms. */
+#define BOT_HOST_TIMEOUT_TICKS   250
+/* Ticks a seat waits for its bot connection after the assign. */
+#define BOT_SEAT_PENDING_TICKS   500
+/* Ticks between checks of a remote seat's brain, AI level, team and init
+ * argument against what its host was last sent. */
+#define BOT_SEAT_POLL_TICKS      50
+/* Mine reveals a full-view seat is sent per tick while its mines are seeded. */
+#define BOT_SEAT_MINES_PER_TICK  32
+
+/* The sim the hooks were installed on. */
+static ServerSim *botHostSim = NULL;
+
+static void botSeatReset(int s, bool noReturn);
+static void botHostDrop(ServerSim *sim, int h, const char *why);
+
+static bool botHostAddrEqual(const struct sockaddr_in *a,
+                             const struct sockaddr_in *b) {
+    return a->sin_addr.s_addr == b->sin_addr.s_addr &&
+           a->sin_port == b->sin_port;
+}
+
+static const char *botHostAddrStr(const struct sockaddr_in *a,
+                                  char *buf, size_t sz) {
+    snprintf(buf, sz, "%s:%u", inet_ntoa(a->sin_addr),
+             (unsigned)ntohs(a->sin_port));
+    return buf;
+}
+
+/* Compare two byte strings in a time that does not depend on where they
+ * first differ. */
+static bool botHostBytesEqual(const uint8_t *a, const uint8_t *b, size_t n) {
+    uint8_t diff = 0;
+    size_t i;
+    for (i = 0; i < n; i++) {
+        diff |= (uint8_t)(a[i] ^ b[i]);
+    }
+    return diff == 0;
+}
+
+int serverFindBotHost(const struct sockaddr_in *addr) {
+    int h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (udpServer.botHosts[h].connected &&
+            botHostAddrEqual(&udpServer.botHosts[h].addr, addr)) {
+            return h;
+        }
+    }
+    return -1;
+}
+
+/* ── The -bothosts list ────────────────────────────────────────────────── */
+
+/* Ticks with no bots wanted (no player, no bot) before a connected host
+ * with no seats is let go: 60 s. It announces again, and is invited again
+ * once bots are wanted. */
+#define BOT_HOST_IDLE_RELEASE_TICKS 3000
+
+/* True when a host at ip, listening on port, may be heard. *entry is its
+ * list entry, or -1 when the server has no list (a key only). */
+static bool botHostListed(uint32_t ip, uint16_t port, int *entry) {
+    *entry = -1;
+    if (udpServer.botHostAllowCount == 0) return true;
+    *entry = botHostAllowFind(udpServer.botHostAllow,
+                              udpServer.botHostAllowCount, ip, port);
+    return *entry >= 0;
+}
+
+/* Any entry with this address, whatever its port: a host's bot connections
+ * come from ports of their own. */
+static bool botHostIpListed(uint32_t ip) {
+    int i;
+    if (udpServer.botHostAllowCount == 0) return true;
+    for (i = 0; i < udpServer.botHostAllowCount; i++) {
+        if (udpServer.botHostAllow[i].ip == ip) return true;
+    }
+    return false;
+}
+
+/* Log a host that is not on the list, once per address. */
+static void botHostLogIgnored(const struct sockaddr_in *from, const char *what) {
+    char addr[48];
+    int i;
+    for (i = 0; i < udpServer.botHostIgnoredCount; i++) {
+        if (botHostAddrEqual(&udpServer.botHostIgnored[i], from)) return;
+    }
+    if (udpServer.botHostIgnoredCount <
+        (int)(sizeof(udpServer.botHostIgnored) /
+              sizeof(udpServer.botHostIgnored[0]))) {
+        udpServer.botHostIgnored[udpServer.botHostIgnoredCount++] = *from;
+    }
+    fprintf(stderr, "[bothost] %s from %s ignored: not on the -bothosts list "
+                    "(logged once)\n", what,
+            botHostAddrStr(from, addr, sizeof(addr)));
+    WB_LOG_WARN(WB_LOG_CAT_NET, "[bothost] %s from %s ignored: not listed",
+                what, addr);
+}
+
+/* The connected host that listens at addr, or -1. */
+static int botHostFindByListen(const struct sockaddr_in *addr) {
+    int h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (udpServer.botHosts[h].connected &&
+            udpServer.botHosts[h].listenAddr.sin_port != 0 &&
+            botHostAddrEqual(&udpServer.botHosts[h].listenAddr, addr)) {
+            return h;
+        }
+    }
+    return -1;
+}
+
+/* Where list entry i listens. */
+static void botHostEntryAddr(int i, struct sockaddr_in *out) {
+    memset(out, 0, sizeof(*out));
+    out->sin_family = AF_INET;
+    out->sin_addr.s_addr = udpServer.botHostAllow[i].ip;
+    out->sin_port = htons(udpServer.botHostAllow[i].port != 0
+                              ? udpServer.botHostAllow[i].port
+                              : BOT_HOST_DEFAULT_LISTEN_PORT);
+}
+
+/* The server wants bots run when it is in the lobby or a game and holds a
+ * player or a bot. *humans is the players connected. */
+static bool botHostWanted(ServerSim *sim, int *humans) {
+    ServerState st = serverSimGetState(sim);
+    int s, people = 0, bots = 0;
+    for (s = 0; s < MAX_TANKS; s++) {
+        if (udpServer.clients[s].connected && !udpServer.clients[s].botSlot) {
+            people++;
+        }
+        if (botManagerIsBot(sim, (BYTE)s)) bots++;
+    }
+    if (humans != NULL) *humans = people;
+    if (st != serverStateLobby && st != serverStateCountdown &&
+        st != serverStateRunning) {
+        return false;
+    }
+    return people > 0 || bots > 0;
+}
+
+/* Ask every listed host that is not connected whether it has free slots.
+ * A host with free slots answers with an ANNOUNCE, which the server
+ * answers with an INVITE. */
+static void botHostSendQueries(const char *why) {
+    int i, sent = 0;
+    for (i = 0; i < udpServer.botHostAllowCount; i++) {
+        struct sockaddr_in to;
+        uint8_t buf[PACKET_HEADER_SIZE + BOT_HOST_LINK_SHORT_LEN];
+        botHostEntryAddr(i, &to);
+        if (botHostFindByListen(&to) >= 0) continue;
+        packHeader(buf, PACKET_BOT_HOST_QUERY, 0);
+        buf[PACKET_HEADER_SIZE] = BOT_HOST_LINK_PROTO;
+        srvSendTo(buf, sizeof(buf), &to);
+        sent++;
+    }
+    if (sent > 0) {
+        fprintf(stderr, "[bothost] asking %d listed Bot Host%s for free slots "
+                        "(%s)\n", sent, sent == 1 ? "" : "s", why);
+    }
+}
+
+static int botHostUsedSlots(int h) {
+    int s, used = 0;
+    for (s = 0; s < MAX_TANKS; s++) {
+        if (udpServer.botSeats[s].state != BOT_SEAT_LOCAL &&
+            udpServer.botSeats[s].host == h) {
+            used++;
+        }
+    }
+    return used;
+}
+
+/* ── Brain sync ────────────────────────────────────────────────────────── */
+
+/* A Bot Host's sync time limit: 60 s at 50 ticks a second. A host still
+ * downloading after it no longer holds the lobby, and takes no bots for
+ * that game. */
+#define BOT_HOST_SYNC_LIMIT_TICKS   3000
+/* Ticks between looks at the brain files in the lobby, so a file changed
+ * there reaches the hosts before the game starts. */
+#define BOT_HOST_MANIFEST_POLL_TICKS 250
+
+/* Drop the file being sent and the files asked for. */
+static void botHostFileReset(BotHostConn *hc) {
+    SDL_free(hc->fileData);
+    hc->fileData = NULL;
+    hc->fileSending = false;
+    hc->fileOffset = 0;
+    hc->fileSize = 0;
+    hc->fileReqCount = 0;
+}
+
+/* The host holds every file of the current manifest. */
+static bool botHostSynced(int h) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    return hc->connected && udpServer.brainManifestGen != 0 &&
+           hc->syncReady && hc->syncGen == udpServer.brainManifestGen;
+}
+
+/* The host may be given bots now: it holds the brain files and is not
+ * skipped for this game. */
+static bool botHostTakesBots(ServerSim *sim, int h) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    if (!botHostSynced(h)) return false;
+    if (hc->skipGame && botManagerGameStarts(sim) <= hc->skipUntilStarts) {
+        return false;
+    }
+    return true;
+}
+
+/* Make the brain manifest again from the brain folders. When it differs
+ * from the one the hosts have, it gets the next generation and every
+ * connected host is sent it. */
+static void botHostRefreshManifest(ServerSim *sim, const char *why) {
+    BrainSyncManifest next;
+    uint8_t *blob;
+    size_t blobLen = 0;
+    uint32_t files = 0, bytes = 0;
+    char hex[17];
+    int b, h;
+
+    brainSyncBuildManifest(&next, botManagerDefaultDebugMode(sim),
+                           &udpServer.brainManifest);
+    if (udpServer.brainManifestGen != 0 &&
+        next.version == udpServer.brainManifest.version) {
+        /* Same files. Keep the new list for its change times. */
+        brainSyncFree(&udpServer.brainManifest);
+        udpServer.brainManifest = next;
+        return;
+    }
+    blob = brainSyncManifestEncode(&next, &blobLen);
+    if (blob == NULL) {
+        fprintf(stderr, "[bothost] the brain file list is too large to send; "
+                        "Bot Hosts keep the last one\n");
+        brainSyncFree(&next);
+        return;
+    }
+    brainSyncFree(&udpServer.brainManifest);
+    udpServer.brainManifest = next;
+    free(udpServer.brainManifestBlob);
+    udpServer.brainManifestBlob = blob;
+    udpServer.brainManifestBlobLen = blobLen;
+    udpServer.brainManifestGen++;
+    if (udpServer.brainManifestGen == 0) udpServer.brainManifestGen = 1;
+    for (b = 0; b < next.brainCount; b++) {
+        files += (uint32_t)next.brains[b].fileCount;
+        bytes += next.brains[b].totalBytes;
+    }
+    brainSyncVersionHex(next.version, hex);
+    fprintf(stderr, "[bothost] brain files (%s): %d brains, %u files, %u "
+                    "bytes, version %s, generation %u\n",
+            why, next.brainCount, (unsigned)files, (unsigned)bytes, hex,
+            (unsigned)udpServer.brainManifestGen);
+    for (b = 0; b < next.brainCount; b++) {
+        brainSyncVersionHex(next.brains[b].version, hex);
+        fprintf(stderr, "[bothost]   brain \"%s\": %d files, %u bytes, "
+                        "version %s\n",
+                next.brains[b].name, next.brains[b].fileCount,
+                (unsigned)next.brains[b].totalBytes, hex);
+    }
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        BotHostConn *hc = &udpServer.botHosts[h];
+        if (!hc->connected) continue;
+        botHostFileReset(hc);
+        hc->manifestOwed = true;
+        hc->syncSentTick = udpServer.tickCount;
+        hc->syncLate = false;
+        hc->syncDone = 0;
+        hc->syncTotal = 0;
+    }
+}
+
+/* Start the next bulk transfer for a host: the manifest when it is owed,
+ * else the next piece of the file being sent, else the next file asked
+ * for. One transfer at a time, so a piece is compressed only when the last
+ * one has gone. */
+static void botHostServiceFiles(ServerSim *sim, int h) {
+    BotHostConn *hc = &udpServer.botHosts[h];
+    BulkStreamHeader hdr;
+    uint8_t *blob;
+    uint32_t blobLen = 0, n;
+
+    if (bulkSenderBusy(&hc->bulk)) return;
+    memset(&hdr, 0, sizeof(hdr));
+    if (hc->manifestOwed) {
+        hdr.kind = BULK_KIND_BRAIN_MANIFEST;
+        hdr.gen = udpServer.brainManifestGen;
+        hdr.totalSize = (uint32_t)udpServer.brainManifestBlobLen;
+        if (bulkSenderBegin(&hc->bulk, &hdr, udpServer.brainManifestBlob,
+                            (uint32_t)udpServer.brainManifestBlobLen)) {
+            hc->manifestOwed = false;
+        }
+        return;
+    }
+    if (!hc->fileSending) {
+        const BrainSyncBrain *br;
+        const BrainSyncFile *f;
+        char path[1024];
+        size_t sz = 0;
+        uint32_t id, bi, fi;
+        void *data;
+
+        if (hc->fileReqCount == 0) return;
+        id = hc->fileReq[0];
+        memmove(hc->fileReq, hc->fileReq + 1,
+                sizeof(hc->fileReq[0]) * (size_t)(hc->fileReqCount - 1));
+        hc->fileReqCount--;
+        bi = id >> 16;
+        fi = id & 0xffffu;
+        if (bi >= (uint32_t)udpServer.brainManifest.brainCount) return;
+        br = &udpServer.brainManifest.brains[bi];
+        if (fi >= (uint32_t)br->fileCount) return;
+        f = &br->files[fi];
+        SDL_snprintf(path, sizeof(path), "%s/%s", br->dir, f->path);
+        data = SDL_LoadFile(path, &sz);
+        if ((data == NULL && f->size != 0) || sz != f->size ||
+            brainSyncHash(BRAIN_SYNC_HASH_SEED, data, sz) != f->hash) {
+            SDL_free(data);
+            fprintf(stderr, "[bothost] brain file \"%s\" changed since the "
+                            "list was made\n", path);
+            botHostRefreshManifest(sim, "a brain file changed");
+            return;
+        }
+        hc->fileData = (uint8_t *)data;
+        hc->fileSize = (uint32_t)sz;
+        hc->fileOffset = 0;
+        hc->fileId = id;
+        hc->fileSending = true;
+    }
+    n = hc->fileSize - hc->fileOffset;
+    if (n > BRAIN_SYNC_CHUNK_BYTES) n = BRAIN_SYNC_CHUNK_BYTES;
+    blob = brainSyncChunkPack(hc->fileData != NULL ? hc->fileData + hc->fileOffset
+                                                   : (const uint8_t *)"",
+                              n, &blobLen);
+    if (blob == NULL) {
+        botHostFileReset(hc);
+        return;
+    }
+    hdr.kind = BULK_KIND_BRAIN_CHUNK;
+    hdr.gen = udpServer.brainManifestGen;
+    hdr.totalSize = blobLen;
+    hdr.pathLen = (uint8_t)SDL_snprintf(hdr.path, sizeof(hdr.path), "%u/%u/%u",
+                                        (unsigned)(hc->fileId >> 16),
+                                        (unsigned)(hc->fileId & 0xffffu),
+                                        (unsigned)hc->fileOffset);
+    if (!bulkSenderBegin(&hc->bulk, &hdr, blob, blobLen)) {
+        free(blob);
+        return;
+    }
+    free(blob);
+    hc->fileOffset += n;
+    if (hc->fileOffset >= hc->fileSize) {
+        SDL_free(hc->fileData);
+        hc->fileData = NULL;
+        hc->fileSending = false;
+    }
+}
+
+/* A control event from a Bot Host: a file request or a sync report. */
+static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
+    BotHostConn *hc = &udpServer.botHosts[h];
+    ControlDecodeBodyFn dec;
+    ControlEvent evt;
+    uint16_t bodyLen;
+
+    if (len < 3) return;
+    bodyLen = unpackU16(msg + 1);
+    if ((size_t)bodyLen + 3 > len) return;
+    if (msg[0] != CTRL_BOT_HOST_FILE_REQ && msg[0] != CTRL_BOT_HOST_SYNC &&
+        msg[0] != CTRL_BOT_HOST_SLOTS) {
+        return;
+    }
+    dec = transportControlCodecBodyDecoder((ControlEventType)msg[0]);
+    if (dec == NULL || !dec(msg + 3, bodyLen, &evt)) return;
+    if (evt.type == CTRL_BOT_HOST_SLOTS) {
+        uint8_t rs = evt.u.botHostSlots.refuseSeat;
+        if (evt.u.botHostSlots.slots != hc->slots) {
+            fprintf(stderr, "[bothost] Bot Host \"%s\" now offers this server "
+                            "%u slots\n", hc->name,
+                    (unsigned)evt.u.botHostSlots.slots);
+        }
+        hc->slots = evt.u.botHostSlots.slots;
+        if (rs < MAX_TANKS) {
+            BotHostSeat *seat = &udpServer.botSeats[rs];
+            if (seat->state == BOT_SEAT_PENDING && seat->host == h &&
+                seat->gen == evt.u.botHostSlots.refuseGen) {
+                /* Another server took the host's last slot first. The seat
+                 * stays in-process; it may go to a host again when one has
+                 * a free slot. */
+                fprintf(stderr, "[bothost] bot %d: Bot Host \"%s\" is full "
+                                "(another server was first); it stays "
+                                "in-process\n", (int)rs, hc->name);
+                botSeatReset(rs, false);
+            }
+        }
+        return;
+    }
+    if (evt.type == CTRL_BOT_HOST_FILE_REQ) {
+        if (evt.u.botHostFileReq.gen != udpServer.brainManifestGen) return;
+        if (hc->fileReqCount >= (int)(sizeof(hc->fileReq) / sizeof(hc->fileReq[0]))) {
+            return;
+        }
+        hc->fileReq[hc->fileReqCount++] =
+            ((uint32_t)evt.u.botHostFileReq.brain << 16) |
+            evt.u.botHostFileReq.file;
+        return;
+    }
+    if (evt.u.botHostSync.gen != udpServer.brainManifestGen) return;
+    {
+        bool wasReady = hc->syncReady && hc->syncGen == evt.u.botHostSync.gen;
+        hc->syncGen = evt.u.botHostSync.gen;
+        hc->syncDone = evt.u.botHostSync.done;
+        hc->syncTotal = evt.u.botHostSync.total;
+        hc->syncReady = evt.u.botHostSync.ready != 0;
+        if (hc->syncReady && !wasReady) {
+            fprintf(stderr, "[bothost] Bot Host \"%s\" holds the brain files "
+                            "(generation %u, %u bytes downloaded)\n",
+                    hc->name, (unsigned)hc->syncGen, (unsigned)hc->syncDone);
+        }
+    }
+}
+
+/* The lobby's row for host h. */
+static void botHostFillRow(int h, ControlEvent *evt) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_STATUS;
+    evt->u.botHostStatus.idx = (uint8_t)h;
+    if (!hc->connected) return;
+    evt->u.botHostStatus.connected = 1;
+    evt->u.botHostStatus.used = (uint8_t)botHostUsedSlots(h);
+    evt->u.botHostStatus.slots = hc->slots;
+    SDL_strlcpy(evt->u.botHostStatus.name, hc->name,
+                sizeof(evt->u.botHostStatus.name));
+    if (botHostSynced(h)) {
+        evt->u.botHostStatus.state = BOT_HOST_SYNC_READY;
+        evt->u.botHostStatus.percent = 100;
+        return;
+    }
+    if (hc->syncLate) {
+        evt->u.botHostStatus.state = BOT_HOST_SYNC_LATE;
+    } else if (hc->syncGen == udpServer.brainManifestGen &&
+               udpServer.brainManifestGen != 0) {
+        evt->u.botHostStatus.state = BOT_HOST_SYNC_SYNCING;
+    } else {
+        evt->u.botHostStatus.state = BOT_HOST_SYNC_WAITING;
+    }
+    if (hc->syncGen == udpServer.brainManifestGen && hc->syncTotal > 0) {
+        uint64_t pct = (uint64_t)hc->syncDone * 100u / hc->syncTotal;
+        evt->u.botHostStatus.percent = (uint8_t)(pct > 99 ? 99 : pct);
+    }
+}
+
+/* The rows last sent to the lobby, so a row goes out only when it changes. */
+static ControlEvent botHostRowSent[MAX_BOT_HOSTS];
+
+static void botHostBroadcastRows(void) {
+    int h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        ControlEvent evt;
+        botHostFillRow(h, &evt);
+        if (memcmp(&evt.u.botHostStatus, &botHostRowSent[h].u.botHostStatus,
+                   sizeof(evt.u.botHostStatus)) == 0) {
+            continue;
+        }
+        botHostRowSent[h] = evt;
+        serverBroadcastLobbyControl(&evt);
+    }
+}
+
+void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
+                           void *deliverCtx) {
+    int h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        ControlEvent evt;
+        if (!udpServer.botHosts[h].connected) continue;
+        botHostFillRow(h, &evt);
+        deliver(deliverCtx, &evt);
+    }
+}
+
+/* Queue one control event on a host's control channel. False when the
+ * channel is full: the host is then too far behind to keep. */
+static bool botHostSendEvent(int h, const ControlEvent *evt) {
+    BotHostConn *hc = &udpServer.botHosts[h];
+    ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(evt->type);
+    uint8_t msg[CHANNEL_CONTROL_SEG];
+    size_t bodyLen = 0;
+
+    if (!hc->connected || enc == NULL) return false;
+    if (enc(evt, NULL, msg + 3, sizeof(msg) - 3, &bodyLen) != ENCODE_OK) {
+        WB_LOG_ERROR(WB_LOG_CAT_NET, "[bothost] encode failed type=%s",
+                     controlEventDiagName(evt->type));
+        return false;
+    }
+    msg[0] = (uint8_t)evt->type;
+    packU16(msg + 1, (uint16_t)bodyLen);
+    if (!channelSend(&hc->channelMux, CHANNEL_CONTROL, msg,
+                     (uint16_t)(3 + bodyLen))) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "[bothost] control channel full for Bot Host \"%s\"",
+                    hc->name);
+        return false;
+    }
+    return true;
+}
+
+/* Send a whole table as one event per entry; an empty table is one event
+ * with count 0. */
+static void botHostSendTable(int h, ControlEventType type, BYTE seat,
+                             const ScnTable *t) {
+    ControlEvent evt;
+    uint8_t count = (t != NULL) ? t->count : 0;
+    uint8_t i;
+
+    if (count > SCN_TABLE_MAX) count = SCN_TABLE_MAX;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = type;
+    evt.u.botTableEntry.seat  = seat;
+    evt.u.botTableEntry.count = count;
+    if (count == 0) {
+        (void)botHostSendEvent(h, &evt);
+        return;
+    }
+    for (i = 0; i < count; i++) {
+        evt.u.botTableEntry.idx = i;
+        SDL_strlcpy(evt.u.botTableEntry.key, t->kv[i].key,
+                    sizeof(evt.u.botTableEntry.key));
+        SDL_strlcpy(evt.u.botTableEntry.value, t->kv[i].value,
+                    sizeof(evt.u.botTableEntry.value));
+        (void)botHostSendEvent(h, &evt);
+    }
+}
+
+/* The brain's name from its path: the folder that holds its init.lua
+ * ("Brains/GoalHunter/init.lua" gives "GoalHunter"). The host finds the
+ * brain by that name in its own brain folders (brainListResolve), as a
+ * scenario names a brain. A path with no folder gives its file name
+ * without ".lua". */
+static void botHostBrainName(const char *path, char *out, size_t sz) {
+    const char *last = NULL, *prev = NULL, *p;
+    const char *start, *stop;
+    size_t n;
+
+    out[0] = '\0';
+    if (path == NULL || sz == 0) return;
+    for (p = path; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') {
+            prev = last;
+            last = p;
+        }
+    }
+    if (last != NULL) {
+        start = (prev != NULL) ? prev + 1 : path;
+        stop = last;
+    } else {
+        start = path;
+        stop = path + strlen(path);
+        if (stop - start > 4 && SDL_strcasecmp(stop - 4, ".lua") == 0) stop -= 4;
+    }
+    n = (size_t)(stop - start);
+    if (n >= sz) n = sz - 1;
+    memcpy(out, start, n);
+    out[n] = '\0';
+}
+
+/* The brain file's version stamp: a CRC-32 of its bytes, 0 when it cannot
+ * be read. The host warns when its copy differs. */
+static uint32_t botHostBrainVersion(const char *path) {
+    size_t size = 0;
+    void *data;
+    uint32_t crc;
+    if (path == NULL || path[0] == '\0') return 0;
+    data = SDL_LoadFile(path, &size);
+    if (data == NULL) return 0;
+    crc = SDL_crc32(0, data, size);
+    SDL_free(data);
+    return crc;
+}
+
+/* The seat's player name, from the roster. A bot seat that runs
+ * in-process has no UDP client, so udpServer.clients[s] has no name.
+ * The last name read is kept so that the operator listing, which has no
+ * ServerSim, can print it too. */
+static char botSeatNames[MAX_TANKS][PLAYER_NAME_LEN];
+
+static const char *botSeatName(ServerSim *sim, int s) {
+    GameSim *gs = serverSimGetGameSim(sim);
+    if (gs != NULL) {
+        botSeatNames[s][0] = '\0';
+        playersGetPlayerName(&gs->plyrs, (BYTE)s, botSeatNames[s],
+                             sizeof(botSeatNames[s]), true);
+    }
+    return botSeatNames[s];
+}
+
+/* What a seat's brain is built from now: brain, AI level, team and init
+ * argument. */
+static void botSeatCurrent(ServerSim *sim, int s, char *brain, size_t brainSz,
+                           uint8_t *ai, uint8_t *team,
+                           char *initArg, size_t argSz) {
+    const char *path = botManagerGetBrainPath(sim, (BYTE)s);
+    const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, (BYTE)s);
+    botHostBrainName(path, brain, brainSz);
+    *ai = (uint8_t)botManagerGetBotAi(sim, (BYTE)s);
+    *team = (lp != NULL) ? lp->teamNumber : 0;
+    initArg[0] = '\0';
+    if (path != NULL) {
+        botManagerBuildInitArg(sim, (BYTE)s, path, NULL, initArg, argSz);
+    }
+}
+
+/* Send a seat's assign and then its init table. reload asks the host for a
+ * new brain now. */
+static void botSeatSendAssign(ServerSim *sim, int s, bool reload) {
+    BotHostSeat *seat = &udpServer.botSeats[s];
+    ControlEvent evt;
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_HOST_ASSIGN;
+    seat->gen++;
+    botSeatCurrent(sim, s, seat->brain, sizeof(seat->brain), &seat->ai,
+                   &seat->team, seat->initArg, sizeof(seat->initArg));
+    evt.u.botHostAssign.seat   = (uint8_t)s;
+    evt.u.botHostAssign.reload = reload ? 1 : 0;
+    evt.u.botHostAssign.ai     = seat->ai;
+    evt.u.botHostAssign.team   = seat->team;
+    evt.u.botHostAssign.gen    = seat->gen;
+    evt.u.botHostAssign.startTick = (uint32_t)serverSimGetTick(sim);
+    evt.u.botHostAssign.brainVersion =
+        botHostBrainVersion(botManagerGetBrainPath(sim, (BYTE)s));
+    memcpy(evt.u.botHostAssign.token, seat->token, BOT_HOST_TOKEN_LEN);
+    SDL_strlcpy(evt.u.botHostAssign.name, botSeatName(sim, s),
+                sizeof(evt.u.botHostAssign.name));
+    SDL_strlcpy(evt.u.botHostAssign.brain, seat->brain,
+                sizeof(evt.u.botHostAssign.brain));
+    SDL_strlcpy(evt.u.botHostAssign.initArg, seat->initArg,
+                sizeof(evt.u.botHostAssign.initArg));
+    (void)botHostSendEvent(seat->host, &evt);
+    botHostSendTable(seat->host, CTRL_BOT_INIT_TABLE, (BYTE)s,
+                     botManagerGetBotInitTable(sim, (BYTE)s));
+}
+
+static void botSeatSendUnassign(int s) {
+    BotHostSeat *seat = &udpServer.botSeats[s];
+    ControlEvent evt;
+    if (seat->host < 0 || !udpServer.botHosts[seat->host].connected) return;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_HOST_UNASSIGN;
+    evt.u.botHostUnassign.seat = (uint8_t)s;
+    (void)botHostSendEvent(seat->host, &evt);
+}
+
+/* Take a seat's bot connection down without a word to anyone: no console
+ * line for the players, no WBN event, no leave message. The seat's name
+ * stays, because it is the bot's. */
+static void botSlotRelease(ServerSim *sim, int s) {
+    UdpServerClient *c = &udpServer.clients[s];
+
+    if (!c->connected || !c->botSlot) return;
+    {
+        uint8_t kbuf[PACKET_HEADER_SIZE];
+        packHeader(kbuf, PACKET_KICKED, 0);
+        srvSendTo(kbuf, sizeof(kbuf), &c->addr);
+    }
+    c->connected = false;
+    c->botSlot = false;
+    serverSimUnregisterSubscriber(sim, c->controlSub);
+    c->controlSub = SUBSCRIBER_HANDLE_INVALID;
+    c->connId = 0;
+    c->inboundCmdSeq = 0;
+    c->pingMs = 0;
+    udpServer.pendingSimRemove[s] = false;
+    udpServer.controlSyncInProgress[s] = false;
+    serverCleanupMapDownload(s);
+    channelMuxInit(&udpServer.channelMux[s]);
+    udpServer.channelFramesRx[s] = 0;
+    udpServer.mapGen[s] = 0;
+    udpServer.mapEventQueues[s].nextSeq = 1;
+    udpServer.mapEventQueues[s].ackedSeq = 1;
+    udpServer.mapEventQueueDrops[s] = 0;
+    udpServer.mapChannelStalled[s] = false;
+    bulkSenderReset(&udpServer.bulkSend[s]);
+    bulkReceiverInit(&udpServer.bulkRecvUp[s]);
+    udpServerResetRoundLogLimits(s);
+    udpServerResetMapReaskLimit(s);
+    /* The slot's copy of the terrain goes back to the tick's, which every
+     * in-process bot reads. */
+    serverSimSetShadowCulled(sim, (BYTE)s, false);
+    serverSimShadowSeed(sim, (BYTE)s);
+}
+
+static void botSeatReset(int s, bool noReturn) {
+    BotHostSeat *seat = &udpServer.botSeats[s];
+    uint16_t gen = seat->gen;
+    memset(seat, 0, sizeof(*seat));
+    seat->state = BOT_SEAT_LOCAL;
+    seat->host = -1;
+    seat->gen = gen;
+    seat->noReturn = noReturn;
+}
+
+/* A seat leaves its host and its brain comes back in-process. */
+static void botSeatFallBack(ServerSim *sim, int s, const char *why,
+                            bool tellHost) {
+    BotHostSeat *seat = &udpServer.botSeats[s];
+    bool wasRemote;
+    const char *hostName = "?";
+
+    if (seat->state == BOT_SEAT_LOCAL) return;
+    if (seat->host >= 0) hostName = udpServer.botHosts[seat->host].name;
+    botSlotRelease(sim, s);
+    wasRemote = botManagerIsRemote(sim, (BYTE)s);
+    if (tellHost) botSeatSendUnassign(s);
+    fprintf(stderr, "[bothost] bot %d \"%s\" back in-process from Bot Host "
+                    "\"%s\" (%s)\n",
+            s, botSeatName(sim, s), hostName, why);
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+                "[bothost] bot %d back in-process from Bot Host \"%s\" (%s)",
+                s, hostName, why);
+    botSeatReset(s, true);
+    if (wasRemote && !botManagerClearRemote(sim, (BYTE)s)) {
+        fprintf(stderr, "[bothost] bot %d held: its brain could not be "
+                        "built in-process\n", s);
+    }
+}
+
+void serverBotSlotLost(ServerSim *sim, int slot, const char *why) {
+    if (slot < 0 || slot >= MAX_TANKS) return;
+    if (udpServer.botSeats[slot].state == BOT_SEAT_LOCAL) {
+        /* No seat behind it any more: just let the connection go. */
+        botSlotRelease(sim, slot);
+        return;
+    }
+    botSeatFallBack(sim, slot, why, true);
+}
+
+static void botHostDrop(ServerSim *sim, int h, const char *why) {
+    BotHostConn *hc = &udpServer.botHosts[h];
+    char addr[48];
+    int s;
+
+    if (!hc->connected) return;
+    for (s = 0; s < MAX_TANKS; s++) {
+        if (udpServer.botSeats[s].state != BOT_SEAT_LOCAL &&
+            udpServer.botSeats[s].host == h) {
+            botSeatFallBack(sim, s, why, false);
+        }
+    }
+    fprintf(stderr, "[bothost] Bot Host \"%s\" at %s gone (%s)\n", hc->name,
+            botHostAddrStr(&hc->addr, addr, sizeof(addr)), why);
+    WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] Bot Host \"%s\" gone (%s)",
+                hc->name, why);
+    botHostFileReset(hc);
+    bulkSenderReset(&hc->bulk);
+    memset(hc, 0, sizeof(*hc));
+}
+
+void serverSendBotHostAccept(int h, ServerSim *sim) {
+    BotHostConn *hc = &udpServer.botHosts[h];
+    uint8_t buf[PACKET_HEADER_SIZE + 9 + 8];
+    int pos = PACKET_HEADER_SIZE;
+
+    packHeader(buf, PACKET_JOIN_ACCEPT, hc->outSequence++);
+    buf[pos++] = (uint8_t)BOT_HOST_ACCEPT_NO_SLOT;
+    packU32(buf + pos, serverSimGetTick(sim));
+    pos += 4;
+    packU32(buf + pos, 0);  /* no map for a control connection */
+    pos += 4;
+    packConnId(buf + pos, hc->connId);
+    pos += 8;
+    srvSendTo(buf, pos, &hc->addr);
+}
+
+void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
+                         const char *name, const uint8_t *extra,
+                         int extraLen) {
+    uint8_t key[JOIN_BOT_HOST_KEY_LEN];
+    uint8_t want[JOIN_BOT_HOST_KEY_LEN];
+    char hostName[JOIN_BOT_HOST_NAME_LEN];
+    char addr[48];
+    uint8_t slots;
+    uint16_t listenPort = 0;
+    int h, freeIdx = -1, entry;
+    const int baseLen = JOIN_BOT_HOST_KEY_LEN + 1 + JOIN_BOT_HOST_NAME_LEN;
+
+    botHostAddrStr(fromAddr, addr, sizeof(addr));
+    if (extraLen < baseLen) {
+        fprintf(stderr, "[bothost] Bot Host join from %s malformed\n", addr);
+        return;
+    }
+    if (extraLen >= baseLen + 2) {
+        listenPort = unpackU16(extra + baseLen);
+    }
+    if (!udpServer.botHostEnabled) {
+        fprintf(stderr, "[bothost] Bot Host join from %s refused: this server "
+                        "takes no Bot Host\n", addr);
+        serverSendJoinReject(fromAddr, STR_REJECT_INCORRECT_PASSWORD, 0, NULL);
+        return;
+    }
+    if (!botHostListed(fromAddr->sin_addr.s_addr, listenPort, &entry)) {
+        /* Not on the list: ignored, as its announces are. */
+        botHostLogIgnored(fromAddr, "Bot Host join");
+        return;
+    }
+    memcpy(key, extra, JOIN_BOT_HOST_KEY_LEN);
+    memset(want, 0, sizeof(want));
+    memcpy(want, udpServer.botHostKey,
+           strlen(udpServer.botHostKey) < sizeof(want)
+               ? strlen(udpServer.botHostKey) : sizeof(want));
+    if (udpServer.botHostKey[0] != '\0' &&
+        !botHostBytesEqual(key, want, JOIN_BOT_HOST_KEY_LEN)) {
+        fprintf(stderr, "[bothost] Bot Host join from %s refused: wrong key\n",
+                addr);
+        WB_LOG_WARN(WB_LOG_CAT_NET, "[bothost] Bot Host join from %s refused",
+                    addr);
+        serverSendJoinReject(fromAddr, STR_REJECT_INCORRECT_PASSWORD, 0, NULL);
+        return;
+    }
+    slots = extra[JOIN_BOT_HOST_KEY_LEN];
+    if (slots > BOT_HOST_MAX_SLOTS) slots = BOT_HOST_MAX_SLOTS;
+    memcpy(hostName, extra + JOIN_BOT_HOST_KEY_LEN + 1, sizeof(hostName));
+    hostName[sizeof(hostName) - 1] = '\0';
+    if (hostName[0] == '\0') {
+        SDL_strlcpy(hostName, name, sizeof(hostName));
+    }
+    if (listenPort != 0) {
+        /* The same host joining again on a new socket: the old connection
+         * is gone. */
+        struct sockaddr_in la = *fromAddr;
+        la.sin_port = htons(listenPort);
+        h = botHostFindByListen(&la);
+        if (h >= 0) botHostDrop(sim, h, "it joined again");
+    }
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (!udpServer.botHosts[h].connected) {
+            freeIdx = h;
+            break;
+        }
+    }
+    if (freeIdx < 0) {
+        fprintf(stderr, "[bothost] Bot Host \"%s\" from %s refused: %d Bot "
+                        "Hosts already connected\n",
+                hostName, addr, MAX_BOT_HOSTS);
+        serverSendJoinReject(fromAddr, STR_REJECT_SERVER_FULL, 0, NULL);
+        return;
+    }
+    {
+        BotHostConn *hc = &udpServer.botHosts[freeIdx];
+        memset(hc, 0, sizeof(*hc));
+        hc->addr = *fromAddr;
+        if (listenPort != 0) {
+            hc->listenAddr = *fromAddr;
+            hc->listenAddr.sin_port = htons(listenPort);
+        }
+        hc->connected = true;
+        hc->connId = serverNextConnId();
+        SDL_strlcpy(hc->name, hostName, sizeof(hc->name));
+        hc->slots = slots;
+        hc->lastReceivedTick = udpServer.tickCount;
+        hc->outSequence = 1;
+        channelMuxInit(&hc->channelMux);
+        bulkSenderInit(&hc->bulk);
+    }
+    fprintf(stderr, "[bothost] Bot Host \"%s\" connected from %s with %u "
+                    "slots\n", hostName, addr, (unsigned)slots);
+    WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] Bot Host \"%s\" connected from %s "
+                "slots=%u", hostName, addr, (unsigned)slots);
+    serverSendBotHostAccept(freeIdx, sim);
+    /* The brain files go out now: the list first, then each file the host
+     * asks for. */
+    botHostRefreshManifest(sim, "Bot Host connected");
+    {
+        BotHostConn *hc = &udpServer.botHosts[freeIdx];
+        hc->manifestOwed = true;
+        hc->syncSentTick = udpServer.tickCount;
+    }
+}
+
+/* "GoalHunter 1a2b3c4d5e6f7a8b (current), ..." for the announce log line. */
+static void botHostCacheText(const BotHostAnnounce *a, char *out, size_t sz) {
+    int b;
+    size_t n = 0;
+    out[0] = '\0';
+    if (a->brainCount == 0) {
+        SDL_strlcpy(out, "none", sz);
+        return;
+    }
+    for (b = 0; b < a->brainCount && n + 1 < sz; b++) {
+        const BrainSyncBrain *cur =
+            brainSyncFindBrain(&udpServer.brainManifest, a->brains[b].name);
+        char hex[17];
+        brainSyncVersionHex(a->brains[b].version, hex);
+        n += (size_t)SDL_snprintf(out + n, sz - n, "%s%s %s%s",
+                                  b > 0 ? ", " : "", a->brains[b].name, hex,
+                                  (cur != NULL &&
+                                   cur->version == a->brains[b].version)
+                                      ? " (current)" : "");
+    }
+}
+
+void serverBotHostHandleAnnounce(ServerSim *sim, const uint8_t *buf, int len,
+                                 const struct sockaddr_in *fromAddr) {
+    BotHostAnnounce a;
+    char addr[48];
+    int entry, h, freeIdx = -1;
+    bool changed = true;
+
+    if (sim == NULL || !udpServer.botHostEnabled) return;
+    if (len < PACKET_HEADER_SIZE ||
+        !botHostAnnounceDecode(buf + PACKET_HEADER_SIZE,
+                               (size_t)(len - PACKET_HEADER_SIZE), &a)) {
+        return;
+    }
+    if (!botHostListed(fromAddr->sin_addr.s_addr, ntohs(fromAddr->sin_port),
+                       &entry)) {
+        botHostLogIgnored(fromAddr, "Bot Host announce");
+        return;
+    }
+    /* A host already connected tells its slots over its connection. */
+    if (botHostFindByListen(fromAddr) >= 0) return;
+    botHostAddrStr(fromAddr, addr, sizeof(addr));
+    if (entry >= 0) {
+        changed = udpServer.botHostAnnounceTick[entry] == 0 ||
+                  memcmp(&udpServer.botHostAnnounce[entry], &a, sizeof(a)) != 0;
+        udpServer.botHostAnnounce[entry] = a;
+        udpServer.botHostAnnounceTick[entry] = udpServer.tickCount;
+        if (udpServer.botHostAnnounceTick[entry] == 0) {
+            udpServer.botHostAnnounceTick[entry] = 1;
+        }
+    } else {
+        /* No list: anyone may announce, so the server answers at most one
+         * announce in each half second. */
+        static uint32_t lastOpenTick = 0;
+        static bool any = false;
+        if (any && udpServer.tickCount - lastOpenTick < 25) return;
+        any = true;
+        lastOpenTick = udpServer.tickCount;
+    }
+    if (changed) {
+        char cached[512];
+        botHostCacheText(&a, cached, sizeof(cached));
+        fprintf(stderr, "[bothost] Bot Host \"%s\" at %s announces %u of %u "
+                        "slots free; cached brains: %s\n",
+                a.name, addr, (unsigned)a.freeSlots, (unsigned)a.slots,
+                cached);
+    }
+    if (a.freeSlots == 0) return;
+    if (!botHostWanted(sim, NULL)) {
+        if (changed) {
+            fprintf(stderr, "[bothost] Bot Host \"%s\" not invited: no "
+                            "player and no bot here now\n", a.name);
+        }
+        return;
+    }
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (!udpServer.botHosts[h].connected) {
+            freeIdx = h;
+            break;
+        }
+    }
+    if (freeIdx < 0) {
+        if (changed) {
+            fprintf(stderr, "[bothost] Bot Host \"%s\" not invited: %d Bot "
+                            "Hosts already connected\n", a.name,
+                    MAX_BOT_HOSTS);
+        }
+        return;
+    }
+    {
+        uint8_t inv[PACKET_HEADER_SIZE + BOT_HOST_LINK_SHORT_LEN];
+        packHeader(inv, PACKET_BOT_HOST_INVITE, 0);
+        inv[PACKET_HEADER_SIZE] = BOT_HOST_LINK_PROTO;
+        srvSendTo(inv, sizeof(inv), fromAddr);
+    }
+    fprintf(stderr, "[bothost] Bot Host \"%s\" at %s invited\n", a.name, addr);
+    WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] Bot Host \"%s\" at %s invited",
+                a.name, addr);
+}
+
+/* The seat's own alliance row and every other seat's, straight onto the bot
+ * connection: a connection that joins mid-round cannot learn the matrix
+ * from the join replay. */
+static void botSlotSendAlliances(ServerSim *sim, int s) {
+    ControlEvent evt;
+    int i;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ALLIANCE_RESET;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        evt.u.allianceReset.allies[i] =
+            (uint16_t)(sim->sim.plyrs->item[i].allie | (1u << i));
+    }
+    udpClientDeliverControl(&udpServer.clients[s], &evt);
+}
+
+void serverBindBotSlot(ServerSim *sim, const struct sockaddr_in *fromAddr,
+                       const uint8_t *extra, int extraLen,
+                       uint8_t clientType) {
+    char addr[48];
+    int s, found = -1;
+    BotHostSeat *seat;
+    UdpServerClient *c;
+    bool culled;
+
+    (void)clientType;
+    botHostAddrStr(fromAddr, addr, sizeof(addr));
+    if (extraLen < JOIN_BOT_SLOT_TOKEN_LEN) {
+        fprintf(stderr, "[bothost] bot connection from %s malformed\n", addr);
+        return;
+    }
+    if (!botHostIpListed(fromAddr->sin_addr.s_addr)) {
+        botHostLogIgnored(fromAddr, "bot connection");
+        return;
+    }
+    for (s = 0; s < MAX_TANKS; s++) {
+        seat = &udpServer.botSeats[s];
+        if (seat->state != BOT_SEAT_PENDING) continue;
+        if (botHostBytesEqual(seat->token, extra, JOIN_BOT_SLOT_TOKEN_LEN)) {
+            found = s;
+        }
+    }
+    if (found < 0 || udpServer.clients[found].connected ||
+        !serverSimIsBot(sim, (BYTE)found)) {
+        fprintf(stderr, "[bothost] bot connection from %s refused: no seat "
+                        "waits for its token\n", addr);
+        serverSendJoinReject(fromAddr, STR_REJECT_INCORRECT_PASSWORD, 0, NULL);
+        return;
+    }
+    s = found;
+    seat = &udpServer.botSeats[s];
+    c = &udpServer.clients[s];
+
+    /* The token is good for one bind. */
+    memset(seat->token, 0, sizeof(seat->token));
+
+    /* Taken from a normal accept, without anything a player would see:
+     * no roster join, no announce, no WBN event, no lobby change. The name,
+     * country and client type stay the bot's. */
+    c->connected = true;
+    c->botSlot = true;
+    c->connId = serverNextConnId();
+    c->nameStickySuffix = false;
+    c->addr = *fromAddr;
+    c->playerNum = (uint8_t)s;
+    c->lastReceivedTick = udpServer.tickCount;
+    c->outSequence = 1;
+    c->inboundCmdSeq = 0;
+    c->lastPingTime = udpServer.tickCount;
+    c->pingMs = 0;
+    c->wantRejoin = false;
+    c->wbnWasVerified = false;
+    wbnJoinClear(&c->wbnJoin);
+    udpServer.pendingSimRemove[s] = false;
+    udpServer.mapEventQueues[s].nextSeq = 1;
+    udpServer.mapEventQueues[s].ackedSeq = 1;
+    memset(udpServer.mapEventQueues[s].buffer, 0,
+           sizeof(udpServer.mapEventQueues[s].buffer));
+    udpServer.mapEventQueueDrops[s] = 0;
+    udpServer.mapChannelStalled[s] = false;
+    udpServer.mapGen[s] = 0;
+    channelMuxInit(&udpServer.channelMux[s]);
+    udpServer.channelFramesRx[s] = 0;
+    bulkSenderInit(&udpServer.bulkSend[s]);
+    bulkReceiverInit(&udpServer.bulkRecvUp[s]);
+    udpServerResetRoundLogLimits(s);
+    udpServerResetMapReaskLimit(s);
+
+    /* The live map, as an in-process bot reads it. A plain bot is then fed
+     * the changes inside its view like any player; a full-view bot gets
+     * every change. */
+    culled = (seat->ai == (uint8_t)aiYes);
+    serverSimSetShadowCulled(sim, (BYTE)s, false);
+    serverSimShadowSeed(sim, (BYTE)s);
+    serverSimSetShadowCulled(sim, (BYTE)s, culled);
+    fprintf(stderr, "[bothost] bot %d \"%s\" map view: culled=%d ai=%u\n",
+            s, botSeatName(sim, s), culled ? 1 : 0, (unsigned)seat->ai);
+    {
+        int mapLen = serverSimGetCompressedMapFor(sim, (BYTE)s,
+                                                  udpServer.compressedMap,
+                                                  (int)sizeof(udpServer.compressedMap));
+        if (mapLen <= 0) {
+            c->connected = false;
+            c->botSlot = false;
+            serverSimSetShadowCulled(sim, (BYTE)s, false);
+            serverSimShadowSeed(sim, (BYTE)s);
+            serverSendJoinReject(fromAddr, NETERR_MAPSERIALIZE, 0, NULL);
+            return;
+        }
+        udpServer.compressedMapSize = (uint32_t)mapLen;
+    }
+    serverSendJoinAccept(s, sim, fromAddr);
+
+    udpServer.controlSyncInProgress[s] = true;
+    c->controlSub = serverSimRegisterSubscriber(sim, udpClientDeliverControl, c);
+    udpServer.controlSyncInProgress[s] = false;
+    botSlotSendAlliances(sim, s);
+    if (serverSimGetState(sim) != serverStateRunning) {
+        transportUdpServerFlushChannel(s);
+    }
+    serverInitMapDownload(s);
+
+    seat->state = BOT_SEAT_BOUND;
+    seat->sinceTick = udpServer.tickCount;
+    seat->mineSeedDone = false;
+    seat->mineSeedColumn = 0;
+    fprintf(stderr, "[bothost] bot %d \"%s\" bound to Bot Host \"%s\" from %s\n",
+            s, botSeatName(sim, s),
+            seat->host >= 0 ? udpServer.botHosts[seat->host].name : "?", addr);
+    WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] bot %d bound from %s", s, addr);
+}
+
+bool serverBotSlotOnInput(ServerSim *sim, int slot) {
+    BotHostSeat *seat = &udpServer.botSeats[slot];
+    if (seat->state == BOT_SEAT_REMOTE) return true;
+    if (seat->state != BOT_SEAT_BOUND) return false;
+    if (!botManagerSetRemote(sim, (BYTE)slot)) {
+        botSeatFallBack(sim, slot, "seat cannot move", true);
+        return false;
+    }
+    seat->state = BOT_SEAT_REMOTE;
+    seat->sinceTick = udpServer.tickCount;
+    seat->lastPollTick = udpServer.tickCount;
+    fprintf(stderr, "[bothost] bot %d \"%s\" now thinks on Bot Host \"%s\"\n",
+            slot, botSeatName(sim, slot),
+            seat->host >= 0 ? udpServer.botHosts[seat->host].name : "?");
+    return true;
+}
+
+void serverBotSlotTeamMsg(ServerSim *sim, int slot, const char *text) {
+    if (!botManagerIsRemote(sim, (BYTE)slot)) return;
+    botManagerDeliverInternalMessage(sim, (BYTE)slot, text);
+}
+
+void serverBotSlotStats(ServerSim *sim, int slot, const CmdBotStats *st) {
+    botManagerSetRemoteStats(sim, (BYTE)slot, st);
+}
+
+bool serverBotSlotPingAllowed(ServerSim *sim, int slot) {
+    return botManagerRemotePingAllowed(sim, (BYTE)slot);
+}
+
+bool serverBotHostHandlePing(const uint8_t *buf, int len,
+                             const struct sockaddr_in *fromAddr) {
+    int h = serverFindBotHost(fromAddr);
+    BotHostConn *hc;
+    uint32_t clientTime, echoed, now;
+    uint8_t pong[PACKET_HEADER_SIZE + 8];
+
+    if (h < 0) return false;
+    hc = &udpServer.botHosts[h];
+    hc->lastReceivedTick = udpServer.tickCount;
+    if (len < PACKET_HEADER_SIZE + 8) return true;
+    clientTime = unpackU32(buf + PACKET_HEADER_SIZE);
+    echoed = unpackU32(buf + PACKET_HEADER_SIZE + 4);
+    now = (uint32_t)srvNow();
+    if (echoed > 0) hc->pingMs = (uint16_t)(now - echoed);
+    if (clientTime == 0) return true;
+    packHeader(pong, PACKET_PONG, 0);
+    packU32(pong + PACKET_HEADER_SIZE, clientTime);
+    packU32(pong + PACKET_HEADER_SIZE + 4, now);
+    srvSendTo(pong, sizeof(pong), fromAddr);
+    return true;
+}
+
+bool serverBotHostHandleChannel(const uint8_t *buf, int len,
+                                const struct sockaddr_in *fromAddr) {
+    int h = serverFindBotHost(fromAddr);
+    BotHostConn *hc;
+    uint8_t out[CHANNEL_MAX_SEG];
+    uint16_t outLen;
+
+    if (h < 0) return false;
+    hc = &udpServer.botHosts[h];
+    hc->lastReceivedTick = udpServer.tickCount;
+    if (len > PACKET_HEADER_SIZE) {
+        (void)channelRecvFrame(&hc->channelMux, buf + PACKET_HEADER_SIZE,
+                               len - PACKET_HEADER_SIZE);
+    }
+    /* The host sends its file requests and sync reports on CHANNEL_CONTROL
+     * and nothing else. */
+    outLen = sizeof(out);
+    while (channelReceive(&hc->channelMux, CHANNEL_CONTROL, out, &outLen)) {
+        botHostOnControl(h, out, outLen);
+        outLen = sizeof(out);
+    }
+    return true;
+}
+
+bool serverBotHostHandleQuit(ServerSim *sim, const struct sockaddr_in *fromAddr) {
+    int h = serverFindBotHost(fromAddr);
+    if (h < 0) return false;
+    botHostDrop(sim, h, "quit");
+    return true;
+}
+
+/* ── Bot manager hooks ─────────────────────────────────────────────────── */
+
+static void botHookTeamMsg(void *ctx, BYTE seat, BYTE fromPlayer,
+                           const char *msg) {
+    BotHostSeat *bs;
+    ControlEvent evt;
+    (void)ctx;
+    if (seat >= MAX_TANKS || msg == NULL) return;
+    bs = &udpServer.botSeats[seat];
+    if (bs->state != BOT_SEAT_REMOTE || bs->host < 0) return;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_TEAM_MSG;
+    evt.u.botTeamMsg.seat = seat;
+    evt.u.botTeamMsg.fromPlayer = fromPlayer;
+    SDL_strlcpy(evt.u.botTeamMsg.text, msg, sizeof(evt.u.botTeamMsg.text));
+    (void)botHostSendEvent(bs->host, &evt);
+}
+
+static void botHookHint(void *ctx, BYTE seat, const ScnTable *hint) {
+    BotHostSeat *bs;
+    (void)ctx;
+    if (seat >= MAX_TANKS) return;
+    bs = &udpServer.botSeats[seat];
+    if (bs->state != BOT_SEAT_REMOTE || bs->host < 0) return;
+    botHostSendTable(bs->host, CTRL_BOT_HINT, seat, hint);
+}
+
+static void botHookInitTable(void *ctx, BYTE seat) {
+    ServerSim *sim = (ServerSim *)ctx;
+    BotHostSeat *bs;
+    if (seat >= MAX_TANKS) return;
+    bs = &udpServer.botSeats[seat];
+    if (bs->state == BOT_SEAT_LOCAL || bs->host < 0) return;
+    botHostSendTable(bs->host, CTRL_BOT_INIT_TABLE, seat,
+                     botManagerGetBotInitTable(sim, seat));
+}
+
+static bool botHookRoundStart(void *ctx, BYTE seat) {
+    ServerSim *sim = (ServerSim *)ctx;
+    BotHostSeat *bs;
+    if (seat >= MAX_TANKS) return false;
+    bs = &udpServer.botSeats[seat];
+    if (bs->state == BOT_SEAT_REMOTE && bs->host >= 0 &&
+        udpServer.botHosts[bs->host].connected &&
+        udpServer.clients[seat].connected && udpServer.clients[seat].botSlot) {
+        /* The host makes the round's new brain once the bot connection holds
+         * the round's map. */
+        bs->reloadOwed = true;
+        bs->mineSeedDone = false;
+        bs->mineSeedColumn = 0;
+        return true;
+    }
+    /* No host to take it: the seat is built here. */
+    botSlotRelease(sim, seat);
+    botSeatSendUnassign(seat);
+    botSeatReset(seat, false);
+    return false;
+}
+
+static void botHookReleased(void *ctx, BYTE seat) {
+    ServerSim *sim = (ServerSim *)ctx;
+    if (seat >= MAX_TANKS) return;
+    if (udpServer.botSeats[seat].state == BOT_SEAT_LOCAL) return;
+    botSlotRelease(sim, seat);
+    botSeatSendUnassign(seat);
+    botSeatReset(seat, false);
+}
+
+/* Turn Bot Hosts on or off to match the key and the list. */
+static void botHostApplySettings(ServerSim *sim) {
+    BotRemoteHooks hooks;
+    int s;
+    bool want = udpServer.botHostKey[0] != '\0' ||
+                udpServer.botHostAllowCount > 0;
+
+    if (!want) {
+        udpServer.botHostEnabled = false;
+        botManagerSetRemoteHooks(sim, NULL);
+        return;
+    }
+    if (udpServer.botHostEnabled) return;
+    udpServer.botHostEnabled = true;
+    udpServer.botHostLastState = -1;
+    for (s = 0; s < MAX_TANKS; s++) {
+        botSeatReset(s, false);
+    }
+    memset(&hooks, 0, sizeof(hooks));
+    hooks.ctx        = sim;
+    hooks.teamMsg    = botHookTeamMsg;
+    hooks.hint       = botHookHint;
+    hooks.initTable  = botHookInitTable;
+    hooks.roundStart = botHookRoundStart;
+    hooks.released   = botHookReleased;
+    botManagerSetRemoteHooks(sim, &hooks);
+    fprintf(stderr, "[bothost] Bot Host connections enabled\n");
+    botHostRefreshManifest(sim, "start");
+    udpServer.botHostQueryWhy = "server start";
+}
+
+/* Say who may connect: the key and the list combine. */
+static void botHostPrintRule(void) {
+    if (!udpServer.botHostEnabled) return;
+    if (udpServer.botHostAllowCount > 0 && udpServer.botHostKey[0] != '\0') {
+        fprintf(stderr, "[bothost] Bot Hosts taken: the %d listed, and each "
+                        "must give the key\n", udpServer.botHostAllowCount);
+    } else if (udpServer.botHostAllowCount > 0) {
+        fprintf(stderr, "[bothost] Bot Hosts taken: the %d listed (no key)\n",
+                udpServer.botHostAllowCount);
+    } else {
+        fprintf(stderr, "[bothost] Bot Hosts taken: any that gives the key "
+                        "(no list, so none is asked for free slots)\n");
+    }
+}
+
+bool transportUdpServerSetBotHostKey(ServerSim *sim, const char *key) {
+    if (sim == NULL) return false;
+    botHostSim = sim;
+    memset(udpServer.botHostKey, 0, sizeof(udpServer.botHostKey));
+    if (key != NULL && strlen(key) > JOIN_BOT_HOST_KEY_LEN) {
+        fprintf(stderr, "[bothost] -bothostkey is longer than %d characters\n",
+                JOIN_BOT_HOST_KEY_LEN);
+        return false;
+    }
+    if (key != NULL) {
+        SDL_strlcpy(udpServer.botHostKey, key, sizeof(udpServer.botHostKey));
+    }
+    botHostApplySettings(sim);
+    return true;
+}
+
+bool transportUdpServerSetBotHostList(ServerSim *sim, const char *arg) {
+    BotHostAddrList list;
+    char err[256];
+    int i, n = 0;
+
+    if (sim == NULL) return false;
+    botHostSim = sim;
+    if (!botHostAddrListLoad(arg, &list, err, sizeof(err))) {
+        fprintf(stderr, "[bothost] -bothosts not used: %s\n", err);
+        return false;
+    }
+    for (i = 0; i < list.count; i++) {
+        struct in_addr ip;
+        ip.s_addr = inet_addr(list.e[i].host);
+        if (ip.s_addr == INADDR_NONE &&
+            bolo_resolve_ipv4(list.e[i].host, &ip) != 0) {
+            fprintf(stderr, "[bothost] -bothosts: cannot resolve \"%s\"; "
+                            "list not used\n", list.e[i].host);
+            return false;
+        }
+        udpServer.botHostAllow[n].ip = ip.s_addr;
+        udpServer.botHostAllow[n].port = list.e[i].port;
+        SDL_snprintf(udpServer.botHostAllowText[n],
+                     sizeof(udpServer.botHostAllowText[n]), "%s:%u",
+                     inet_ntoa(ip),
+                     (unsigned)(list.e[i].port != 0
+                                    ? list.e[i].port
+                                    : BOT_HOST_DEFAULT_LISTEN_PORT));
+        n++;
+    }
+    udpServer.botHostAllowCount = n;
+    memset(udpServer.botHostAnnounce, 0, sizeof(udpServer.botHostAnnounce));
+    memset(udpServer.botHostAnnounceTick, 0,
+           sizeof(udpServer.botHostAnnounceTick));
+    for (i = 0; i < n; i++) {
+        fprintf(stderr, "[bothost] listed Bot Host: %s\n",
+                udpServer.botHostAllowText[i]);
+    }
+    botHostApplySettings(sim);
+    return true;
+}
+
+void serverBotHostsReset(void) {
+    int s, h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        botHostFileReset(&udpServer.botHosts[h]);
+        bulkSenderReset(&udpServer.botHosts[h].bulk);
+    }
+    memset(udpServer.botHosts, 0, sizeof(udpServer.botHosts));
+    memset(botHostRowSent, 0, sizeof(botHostRowSent));
+    for (s = 0; s < MAX_TANKS; s++) {
+        memset(&udpServer.botSeats[s], 0, sizeof(udpServer.botSeats[s]));
+        udpServer.botSeats[s].host = -1;
+    }
+    udpServer.botHostLastState = -1;
+}
+
+/* ── Per-tick service ──────────────────────────────────────────────────── */
+
+/* A full-view seat reads every mine on the map, as an in-process full-view
+ * bot does from the server map. Its bot connection is sent the server's mine
+ * list a few columns per tick once its map download is done; later mines
+ * reach it through the event drain. */
+static void botSeatSeedMines(ServerSim *sim, int s) {
+    BotHostSeat *seat = &udpServer.botSeats[s];
+    GameSim *gs = serverSimGetGameSim(sim);
+    int sent = 0;
+
+    if (seat->mineSeedDone) return;
+    if (serverSimIsShadowCulled(sim, (BYTE)s) || gs == NULL ||
+        gs->mns == NULL || !gs->mns->minesHiddenMines) {
+        seat->mineSeedDone = true;
+        return;
+    }
+    while (seat->mineSeedColumn < MINES_ARRAY_SIZE &&
+           sent < BOT_SEAT_MINES_PER_TICK) {
+        int x = seat->mineSeedColumn;
+        int y;
+        bool full = false;
+        for (y = 0; y < MINES_ARRAY_SIZE; y++) {
+            GameEvent ev;
+            uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
+            int evLen;
+            if (!gs->mns->pos[x][y]) continue;
+            memset(&ev, 0, sizeof(ev));
+            ev.type = EVENT_MINE_VISIBLE;
+            ev.data[0] = (BYTE)x;
+            ev.data[1] = (BYTE)y;
+            ev.data[2] = 0x80;
+            evLen = packGameEvent(evBuf, &ev);
+            if (!channelSend(&udpServer.channelMux[s], CHANNEL_GAME, evBuf,
+                             (uint16_t)evLen)) {
+                full = true;
+                break;
+            }
+            sent++;
+        }
+        if (full) return;  /* the column again next tick */
+        seat->mineSeedColumn++;
+    }
+    if (seat->mineSeedColumn >= MINES_ARRAY_SIZE) seat->mineSeedDone = true;
+}
+
+static void botHostPump(int h) {
+    BotHostConn *hc = &udpServer.botHosts[h];
+    int frames;
+    bulkSenderPump(&hc->bulk, &hc->channelMux);
+    channelTick(&hc->channelMux, udpServer.tickCount, hc->pingMs);
+    for (frames = 0; frames < MAP_DOWNLOAD_FRAMES_PER_TICK; frames++) {
+        uint8_t cbuf[UDP_MAX_PAYLOAD];
+        int frameLen = channelBuildFrame(&hc->channelMux,
+                                         cbuf + PACKET_HEADER_SIZE,
+                                         UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+        if (frameLen <= 2) break;
+        packHeader(cbuf, PACKET_CHANNEL, hc->outSequence++);
+        srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &hc->addr);
+    }
+}
+
+void serverServiceBotHosts(ServerSim *sim) {
+    int h, s;
+    ServerState st;
+    bool placed = false;
+
+    if (sim == NULL) return;
+    st = serverSimGetState(sim);
+    {
+        static bool ruleShown = false;
+        if (udpServer.botHostEnabled && !ruleShown) {
+            ruleShown = true;
+            botHostPrintRule();
+        }
+    }
+
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        BotHostConn *hc = &udpServer.botHosts[h];
+        if (!hc->connected) continue;
+        if (udpServer.tickCount - hc->lastReceivedTick > BOT_HOST_TIMEOUT_TICKS) {
+            botHostDrop(sim, h, "timed out");
+        }
+    }
+
+    /* A new round or the lobby: a seat that came back from a host may be
+     * offered again, and a bound seat's host makes the round's brain. A map
+     * rotation goes from one round to the next inside one tick, so the
+     * state can read Running on both sides of it; the game start count
+     * shows that round start too. */
+    if ((int)st != udpServer.botHostLastState ||
+        botManagerGameStarts(sim) != udpServer.botHostLastGameStarts) {
+        udpServer.botHostLastGameStarts = botManagerGameStarts(sim);
+        if ((st == serverStateLobby &&
+             udpServer.botHostLastState != (int)serverStateLobby &&
+             udpServer.botHostLastState != -1) ||
+            (st == serverStateRunning &&
+             udpServer.botHostLastState == (int)serverStateRunning)) {
+            /* Back to the lobby, or a map rotation into the next round:
+             * a game ended, and hosts may have slots free again. */
+            udpServer.botHostQueryWhy = "a game ended";
+        }
+        if (st == serverStateLobby &&
+            udpServer.botHostLastState != (int)serverStateLobby) {
+            /* Back in the lobby: the game a late host sat out is over. */
+            for (h = 0; h < MAX_BOT_HOSTS; h++) {
+                udpServer.botHosts[h].skipGame = false;
+            }
+        }
+        if (udpServer.botHostEnabled &&
+            (st == serverStateLobby || st == serverStateRunning)) {
+            /* A new round or the lobby: the brain files may have changed. */
+            botHostRefreshManifest(sim, st == serverStateLobby ? "lobby"
+                                                               : "round start");
+        }
+        if (st == serverStateLobby || st == serverStateRunning) {
+            for (s = 0; s < MAX_TANKS; s++) {
+                udpServer.botSeats[s].noReturn = false;
+            }
+        }
+        if (st == serverStateRunning) {
+            for (s = 0; s < MAX_TANKS; s++) {
+                BotHostSeat *seat = &udpServer.botSeats[s];
+                if (seat->state == BOT_SEAT_BOUND) {
+                    seat->reloadOwed = true;
+                    seat->mineSeedDone = false;
+                    seat->mineSeedColumn = 0;
+                }
+            }
+        }
+        udpServer.botHostLastState = (int)st;
+    }
+
+    for (s = 0; s < MAX_TANKS; s++) {
+        BotHostSeat *seat = &udpServer.botSeats[s];
+        if (seat->state == BOT_SEAT_LOCAL) continue;
+
+        if (!serverSimIsBot(sim, (BYTE)s)) {
+            /* The bot is gone; the bot manager's hook missed it. */
+            botSlotRelease(sim, s);
+            botSeatSendUnassign(s);
+            botSeatReset(s, false);
+            continue;
+        }
+        if (seat->host < 0 || !udpServer.botHosts[seat->host].connected) {
+            botSeatFallBack(sim, s, "Bot Host gone", false);
+            continue;
+        }
+        if (!botHostSynced(seat->host)) {
+            /* The brain files changed and the host does not hold the new
+             * ones yet: the seat runs in-process until it does, and then
+             * goes back to a host. */
+            botSeatFallBack(sim, s, "brain files changed", true);
+            udpServer.botSeats[s].noReturn = false;
+            continue;
+        }
+        if (seat->state == BOT_SEAT_PENDING) {
+            if (udpServer.tickCount - seat->sinceTick > BOT_SEAT_PENDING_TICKS) {
+                fprintf(stderr, "[bothost] bot %d: Bot Host \"%s\" did not "
+                                "connect it; it stays in-process\n",
+                        s, udpServer.botHosts[seat->host].name);
+                botSeatSendUnassign(s);
+                botSeatReset(s, true);
+            }
+            continue;
+        }
+        if (!udpServer.clients[s].connected || !udpServer.clients[s].botSlot) {
+            botSeatFallBack(sim, s, "bot connection gone", true);
+            continue;
+        }
+        if (st != serverStateRunning) continue;
+        if (!udpServer.mapDownload[s].downloadComplete) continue;
+
+        if (seat->reloadOwed) {
+            seat->reloadOwed = false;
+            botSeatSendAssign(sim, s, true);
+            seat->lastPollTick = udpServer.tickCount;
+        } else if (seat->state == BOT_SEAT_REMOTE &&
+                   udpServer.tickCount - seat->lastPollTick >= BOT_SEAT_POLL_TICKS) {
+            char brain[BOT_HOST_BRAIN_NAME_LEN];
+            char initArg[BOT_HOST_INIT_ARG_LEN];
+            uint8_t ai, team;
+            seat->lastPollTick = udpServer.tickCount;
+            botSeatCurrent(sim, s, brain, sizeof(brain), &ai, &team,
+                           initArg, sizeof(initArg));
+            if (strcmp(brain, seat->brain) != 0 || ai != seat->ai) {
+                /* An in-process bot swaps its brain at once
+                 * (botManagerSetBrainIdx), so the host does too. */
+                fprintf(stderr, "[bothost] bot %d: brain or AI level changed, "
+                                "Bot Host \"%s\" makes a new brain\n",
+                        s, udpServer.botHosts[seat->host].name);
+                botSeatSendAssign(sim, s, true);
+            } else if (strcmp(initArg, seat->initArg) != 0 ||
+                       team != seat->team) {
+                /* An in-process bot reads its init arg when its brain is
+                 * next built, at the round start, so the host gets it now
+                 * for that brain and the running one is left alone. */
+                fprintf(stderr, "[bothost] bot %d: init arg or team changed, "
+                                "Bot Host \"%s\" keeps it for the next "
+                                "brain\n",
+                        s, udpServer.botHosts[seat->host].name);
+                botSeatSendAssign(sim, s, false);
+            }
+        }
+        botSeatSeedMines(sim, s);
+    }
+
+    /* Placement: one seat per tick, to the host with the most free slots. */
+    if (udpServer.botHostEnabled &&
+        (st == serverStateLobby || st == serverStateCountdown ||
+         st == serverStateRunning)) {
+        for (s = 0; s < MAX_TANKS && !placed; s++) {
+            BotHostSeat *seat = &udpServer.botSeats[s];
+            int best = -1, bestFree = 0;
+            if (seat->state != BOT_SEAT_LOCAL || seat->noReturn) continue;
+            if (!botManagerIsBot(sim, (BYTE)s)) continue;
+            if (botManagerIsRemote(sim, (BYTE)s)) continue;
+            if (udpServer.clients[s].connected) continue;
+            if (botManagerGetBrainPath(sim, (BYTE)s) == NULL ||
+                botManagerGetBrainPath(sim, (BYTE)s)[0] == '\0') continue;
+            {
+                /* A host runs only brains whose files it was sent. */
+                char brainName[BOT_HOST_BRAIN_NAME_LEN];
+                botHostBrainName(botManagerGetBrainPath(sim, (BYTE)s),
+                                 brainName, sizeof(brainName));
+                if (brainSyncFindBrain(&udpServer.brainManifest,
+                                       brainName) == NULL) {
+                    continue;
+                }
+            }
+            for (h = 0; h < MAX_BOT_HOSTS; h++) {
+                int freeSlots;
+                if (!botHostTakesBots(sim, h)) continue;
+                freeSlots = (int)udpServer.botHosts[h].slots - botHostUsedSlots(h);
+                if (freeSlots > bestFree) {
+                    bestFree = freeSlots;
+                    best = h;
+                }
+            }
+            if (best < 0) break;
+            if (!serverFillRandomBytes(seat->token, sizeof(seat->token))) {
+                WB_LOG_ERROR(WB_LOG_CAT_NET, "[bothost] no random bytes for a token");
+                break;
+            }
+            seat->state = BOT_SEAT_PENDING;
+            seat->host = (int8_t)best;
+            seat->sinceTick = udpServer.tickCount;
+            seat->reloadOwed = false;
+            botSeatSendAssign(sim, s, false);
+            fprintf(stderr, "[bothost] bot %d \"%s\" offered to Bot Host \"%s\"\n",
+                    s, botSeatName(sim, s),
+                    udpServer.botHosts[best].name);
+            placed = true;
+        }
+    }
+
+    /* Brain sync: look at the files again now and then in the lobby, give
+     * up waiting on a host past the time limit, and feed each host its
+     * next transfer. */
+    if (udpServer.botHostEnabled && st == serverStateLobby &&
+        udpServer.tickCount % BOT_HOST_MANIFEST_POLL_TICKS == 0) {
+        botHostRefreshManifest(sim, "brain files changed");
+    }
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        BotHostConn *hc = &udpServer.botHosts[h];
+        if (!hc->connected) continue;
+        if (!botHostSynced(h) && !hc->syncLate &&
+            udpServer.tickCount - hc->syncSentTick > BOT_HOST_SYNC_LIMIT_TICKS) {
+            hc->syncLate = true;
+            hc->skipGame = true;
+            hc->skipUntilStarts = botManagerGameStarts(sim) +
+                ((st == serverStateLobby || st == serverStateCountdown) ? 1u : 0u);
+            fprintf(stderr, "[bothost] Bot Host \"%s\" is still getting the "
+                            "brain files after %d s; the lobby does not wait "
+                            "for it and it takes no bots this game\n",
+                    hc->name, BOT_HOST_SYNC_LIMIT_TICKS / 50);
+        }
+        botHostServiceFiles(sim, h);
+    }
+    botHostBroadcastRows();
+
+    /* Finding hosts: ask the listed ones for free slots when the first
+     * player comes into an empty lobby (and at the start and after each
+     * game, set above), and let a connected host with no seats go once no
+     * bots have been wanted for a while. */
+    if (udpServer.botHostEnabled) {
+        int humans = 0;
+        bool wanted = botHostWanted(sim, &humans);
+        /* A server with no lobby (-nolobby, -maprotate) gets the same
+         * query when the first player joins its empty game. */
+        if (humans > 0 && udpServer.botHostLastHumans == 0) {
+            if (st == serverStateLobby) {
+                udpServer.botHostQueryWhy = "a player joined the empty lobby";
+            } else if (st == serverStateCountdown || st == serverStateRunning) {
+                udpServer.botHostQueryWhy = "a player joined the empty game";
+            }
+        }
+        udpServer.botHostLastHumans = humans;
+        if (wanted) {
+            udpServer.botHostUnwantedSince = 0;
+        } else if (udpServer.botHostUnwantedSince == 0) {
+            udpServer.botHostUnwantedSince = udpServer.tickCount | 1u;
+        } else if (udpServer.tickCount - udpServer.botHostUnwantedSince >
+                   BOT_HOST_IDLE_RELEASE_TICKS) {
+            for (h = 0; h < MAX_BOT_HOSTS; h++) {
+                uint8_t kbuf[PACKET_HEADER_SIZE];
+                if (!udpServer.botHosts[h].connected ||
+                    botHostUsedSlots(h) > 0) {
+                    continue;
+                }
+                packHeader(kbuf, PACKET_KICKED, 0);
+                srvSendTo(kbuf, sizeof(kbuf), &udpServer.botHosts[h].addr);
+                botHostDrop(sim, h, "not needed now: no player and no bot");
+            }
+        }
+        if (udpServer.botHostQueryWhy != NULL) {
+            botHostSendQueries(udpServer.botHostQueryWhy);
+            udpServer.botHostQueryWhy = NULL;
+        }
+    }
+
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (udpServer.botHosts[h].connected) botHostPump(h);
+    }
+}
+
+void transportUdpServerPrintBotHosts(void) {
+    int h, s;
+    bool any = false;
+    char addr[48];
+
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        BotHostConn *hc = &udpServer.botHosts[h];
+        if (!hc->connected) continue;
+        if (!any) {
+            fprintf(stdout, "\nBot Hosts:\n");
+            any = true;
+        }
+        fprintf(stdout, "Bot Host \"%s\": %d/%u slots used (Ping:%ums Addr:%s)\n",
+                hc->name, botHostUsedSlots(h), (unsigned)hc->slots,
+                (unsigned)hc->pingMs,
+                botHostAddrStr(&hc->addr, addr, sizeof(addr)));
+        {
+            ControlEvent row;
+            static const char *const states[] = {
+                "waiting for its brain file report", "getting brain files",
+                "holds the brain files", "late with the brain files"
+            };
+            botHostFillRow(h, &row);
+            fprintf(stdout, "    brain files: %s (%u%%)\n",
+                    states[row.u.botHostStatus.state & 3],
+                    (unsigned)row.u.botHostStatus.percent);
+        }
+        for (s = 0; s < MAX_TANKS; s++) {
+            const BotHostSeat *seat = &udpServer.botSeats[s];
+            const char *what;
+            if (seat->state == BOT_SEAT_LOCAL || seat->host != h) continue;
+            what = seat->state == BOT_SEAT_REMOTE ? "thinking"
+                 : seat->state == BOT_SEAT_BOUND  ? "connected"
+                                                  : "offered";
+            fprintf(stdout, "    player %d \"%s\": %s\n", s,
+                    botSeatNames[s], what);
+        }
+    }
+    if (!any && udpServer.botHostEnabled) {
+        fprintf(stdout, "\nBot Hosts: none connected\n");
+    }
+    for (h = 0; h < udpServer.botHostAllowCount; h++) {
+        struct sockaddr_in la;
+        const BotHostAnnounce *a = &udpServer.botHostAnnounce[h];
+        botHostEntryAddr(h, &la);
+        if (h == 0) fprintf(stdout, "Bot Host list (-bothosts):\n");
+        if (botHostFindByListen(&la) >= 0) {
+            fprintf(stdout, "    %s: connected\n", udpServer.botHostAllowText[h]);
+        } else if (udpServer.botHostAnnounceTick[h] == 0) {
+            fprintf(stdout, "    %s: not heard from\n",
+                    udpServer.botHostAllowText[h]);
+        } else {
+            fprintf(stdout, "    %s: \"%s\" announced %u of %u slots free, "
+                            "%u s ago\n",
+                    udpServer.botHostAllowText[h], a->name,
+                    (unsigned)a->freeSlots, (unsigned)a->slots,
+                    (unsigned)((udpServer.tickCount -
+                                udpServer.botHostAnnounceTick[h]) / 50));
+        }
+    }
+}

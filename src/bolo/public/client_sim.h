@@ -105,6 +105,33 @@ typedef struct {
     uint8_t clientFlags;      /* PLAYER_FLAG_* bits */
 } ClientSpectatorSlot;
 
+/* Client-side mirror of one row of the server's Bot Host list
+ * (CTRL_BOT_HOST_STATUS). A Bot Host runs bot brains for the server on
+ * another machine; it is not a player and has no roster slot. state is a
+ * BOT_HOST_SYNC_* value (control_event.h). */
+#define CLIENT_BOT_HOST_ROWS     8
+/* A Bot Host's brain sync state, as CTRL_BOT_HOST_STATUS carries it.
+ *   WAITING - connected, the manifest not yet answered.
+ *   SYNCING - downloading brain files; the lobby holds Ready.
+ *   READY   - holds the server's brain files; it can take bots.
+ *   LATE    - still downloading after the sync time limit; the lobby no
+ *             longer waits for it, and it takes no bots this game. */
+enum {
+    BOT_HOST_SYNC_WAITING = 0,
+    BOT_HOST_SYNC_SYNCING = 1,
+    BOT_HOST_SYNC_READY   = 2,
+    BOT_HOST_SYNC_LATE    = 3
+};
+#define CLIENT_BOT_HOST_NAME_LEN 32
+typedef struct {
+    bool    connected;
+    uint8_t state;
+    uint8_t percent;   /* brain sync progress, 0..100 */
+    uint8_t used;      /* bot seats it runs */
+    uint8_t slots;     /* bot seats it offers */
+    char    name[CLIENT_BOT_HOST_NAME_LEN];
+} ClientBotHostRow;
+
 /* Live per-slot scoreboard counters, accumulated on the client from the
  * reliable game-event stream (clientSimApplyGameEvents). Field names
  * mirror RoundPlayerSummary so the end-of-round recap and the live board
@@ -708,6 +735,14 @@ const ClientPlayerStats *clientSimGetPlayerStats(const ClientSim *cs,
 
 /* Spectator roster slot mirror; out-of-range idx returns NULL. */
 const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx);
+
+/* Bot Host list row mirror; out-of-range idx returns NULL. */
+const ClientBotHostRow *clientSimGetBotHostRow(const ClientSim *cs, uint8_t idx);
+
+/* True while a connected Bot Host is still downloading the server's brain
+ * files and the lobby waits for it. *percent, when not NULL, is the lowest
+ * progress among those hosts. */
+bool clientSimBotHostSyncing(const ClientSim *cs, int *percent);
 
 /* ── What a scenario is presenting ─────────────────────────────────
  * The four CTRL_SCN_* events store here and the render pass reads.

@@ -1,0 +1,1861 @@
+/*
+ * WinBoloBotHost - runs WinBoloDS servers' bot brains on another machine.
+ *
+ * The host is given a list of servers (--servers) and listens on a UDP port
+ * of its own (--listen). It tells each server it is open to take bots (a
+ * PACKET_BOT_HOST_ANNOUNCE) at start, every BOT_HOST_ANNOUNCE_MS while it
+ * has free slots, and each time its free slots change. A server that wants
+ * bots run answers with an INVITE; a server may also ask first (a QUERY,
+ * which the host answers with an ANNOUNCE). On an INVITE the host opens a
+ * tankless control connection to that server. The connection always starts
+ * from the host's side, so it works from behind a NAT.
+ *
+ * Over a control connection the server hands the host bot seats
+ * (CTRL_BOT_HOST_ASSIGN with a one-time token). For each seat the host opens
+ * a bot connection - a normal UDP client connection that joins with
+ * JOIN_FLAG_BOT_SLOT and the token - and runs the seat's brain against that
+ * connection's ClientSim, through the same think path the server's
+ * in-process bot pool uses (botRunner*).
+ *
+ * Several servers at once: one control connection per server; the slots
+ * (--slots) are one pool for all of them. A slot is taken when a server's
+ * assign arrives and freed when the server takes the seat back, the round
+ * ends without it, or the connection drops. Each server is told the slots
+ * it may use (CTRL_BOT_HOST_SLOTS: its own seats plus the pool's free ones);
+ * an assign that finds the pool full is turned down, and that seat stays
+ * in-process on its server. Seats of every server think in the same worker
+ * pool with the same per-slot budget, and the brain cache is shared: a brain
+ * version is kept once, whichever server sent it.
+ *
+ * Players never see the host or its connections: the server binds each bot
+ * connection to the existing bot seat without a roster change.
+ *
+ * Usage:
+ *   WinBoloBotHost --servers ADDR[:PORT],... [--listen PORT] [--key KEY]
+ *                  [--slots N] [--threads N] [--name NAME] [--cachedir DIR]
+ */
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <process.h>
+#define getpid _getpid
+#else
+#include <unistd.h>
+#endif
+
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
+
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#include "bolo_rand.h"
+#include "client_sim.h"
+#include "client_net.h"
+#include "client_command.h"
+#include "client_connect_state.h"
+#include "control_event.h"
+#include "brain_list.h"
+#include "gui_message.h"
+#include "platform_net.h"
+#include "server_sim.h"
+#include "scenario_table.h"
+#include "tank.h"
+#include "messages.h"
+#include "braincore.h"
+#include "bot_manager.h"
+#include "bot_worker_pool.h"
+#include "channel_mux.h"
+#include "bulk_transfer.h"
+#include "brain_sync.h"
+#include "bot_host_link.h"
+#include "client_sim_internal.h"
+#include "transport_control_codec.h"
+#include "transport_udp.h"
+#include "transport_udp_internal.h"
+#include "../gui/lang.h"
+#include "../gui/clientmutex.h"
+#include "../gui/sdl3/luabrainshandler.h"
+#include "../common/sentry_integration.h"
+#include "../common/wb_log.h"
+#include "../common/prefs.h"
+
+/* ------------------------------------------------------------------ */
+/* Settings                                                            */
+/* ------------------------------------------------------------------ */
+
+#define BOT_HOST_TICK_MS           20      /* one think per 20 ms */
+#define BOT_HOST_PING_MS           500     /* control connection keepalive */
+#define BOT_HOST_JOIN_RETRY_MS     1000    /* join resend while joining */
+#define BOT_HOST_JOIN_GIVE_UP_MS   10000   /* no answer to a join this long */
+#define BOT_HOST_SILENCE_MS        5000    /* no packet this long: dropped */
+#define BOT_HOST_REANNOUNCE_WAIT_MS 5000   /* wait before announcing after a drop */
+#define BOT_HOST_ANNOUNCE_MS       30000   /* announce again while slots are free */
+#define BOT_HOST_STATS_TICKS       50      /* CMD_BOT_STATS about once a second */
+#define BOT_HOST_CONNECT_MS        30000   /* a bot connection must join in this */
+#define BOT_HOST_MAX_SERVERS       BOT_HOST_LINK_MAX_ADDRS
+
+static uint16_t optListenPort  = BOT_HOST_DEFAULT_LISTEN_PORT;
+static int      optSlots       = 4;
+static int      optThreads     = 0;
+static char     optKey[JOIN_BOT_HOST_KEY_LEN + 1];
+static char     optName[JOIN_BOT_HOST_NAME_LEN];
+/* The brain cache: the servers' brain files, one folder per version. */
+static char     optCacheDir[512];
+static BotHostAddrList optServers;
+
+static volatile sig_atomic_t hostQuit = 0;
+
+static void signalHandler(int sig) {
+    (void)sig;
+    hostQuit = 1;
+}
+
+static void hostMessageHandler(const char *message, const char *title) {
+    fprintf(stderr, "[bothost] [%s] %s\n", title ? title : "WinBolo",
+            message ? message : "");
+}
+
+static uint32_t nowMs(void) {
+    return (uint32_t)SDL_GetTicks();
+}
+
+/* ------------------------------------------------------------------ */
+/* Seats                                                               */
+/* ------------------------------------------------------------------ */
+
+/* One bot seat a server handed this host. A seat belongs to one server
+ * (srv) and is that server's seat number seat; two servers may each have a
+ * seat 3. */
+typedef struct {
+    bool        used;
+    int         srv;
+    uint8_t     seat;
+    uint16_t    gen;
+    uint8_t     token[JOIN_BOT_SLOT_TOKEN_LEN];
+    char        name[BOT_HOST_EVT_NAME_LEN];
+    char        brainName[BOT_HOST_BRAIN_NAME_LEN];
+    char        initArg[BOT_HOST_INIT_ARG_LEN];
+    uint8_t     ai;
+    uint8_t     team;
+    uint32_t    startTick;
+    uint32_t    brainVersion;
+
+    /* The init table arriving after an assign, or a live game.bot_init
+     * update. awaitTable is set by an assign until its table is complete. */
+    ScnTable    tableIn;
+    bool        awaitTable;
+    /* A scenario hint arriving entry by entry. */
+    ScnTable    hintIn;
+
+    /* A brain is owed: built once the table is complete and the bot
+     * connection is in the game. */
+    bool        wantBuild;
+    bool        buildFailed;
+
+    ClientSim  *cs;
+    uint32_t    connectStartMs;
+    bool        lobbyNoted;
+    BotContext  bot;
+    BotJobCtx   job;
+    ClientSimBrainRelay relay;
+
+    /* The bot connection's own input tick counter: two half-steps a think. */
+    uint32_t    inputTick;
+    uint32_t    statsTick;
+    double      thinkMsSum;
+    uint32_t    killCount;
+    uint32_t    teamMsgsOut;   /* CMD_BOT_TEAM_MSG sent */
+    uint32_t    teamMsgsIn;    /* CTRL_BOT_TEAM_MSG received */
+
+    /* Pings asked for during the think, sent after it (CMD_PING). */
+    ClientCommand pings[BOT_PENDING_CMD_MAX];
+    int           pingCount;
+} HostSeat;
+
+/* The pool: one entry per slot, whichever server holds it. */
+static HostSeat seats[BOT_HOST_MAX_SLOTS];
+
+/* ------------------------------------------------------------------ */
+/* Servers                                                             */
+/* ------------------------------------------------------------------ */
+
+typedef enum {
+    CTL_IDLE,        /* announcing; waiting for an INVITE */
+    CTL_JOINING,
+    CTL_CONNECTED
+} CtlState;
+
+/* Brain sync with one server. The server sends the list of its brain files
+ * (the manifest) when the host connects and each time the files change. The
+ * host keeps each brain version in its own folder of the cache,
+ * <cache>/<brain>/<version>/, asks for each file it does not hold, and
+ * reports its progress. The server gives it bots only once it reports that
+ * it holds every file. */
+typedef struct {
+    BulkReceiver      bulk;
+    bool              haveManifest;
+    uint32_t          gen;         /* the manifest's generation */
+    BrainSyncManifest man;
+    uint32_t         *need;        /* (brain << 16) | file, to download */
+    int               needCount;
+    int               nextReq;     /* need[] entries asked for so far */
+    int               gotCount;    /* need[] entries written */
+    uint32_t          done;        /* raw bytes written */
+    uint32_t          total;       /* raw bytes to write */
+    bool              ready;
+    /* The file being received. */
+    bool              fileActive;
+    uint32_t          fileId;
+    uint32_t          fileGot;
+    uint8_t          *fileBuf;
+    uint32_t          syncStartMs;
+    int               retries;     /* files asked for again this manifest */
+} HostSync;
+
+typedef struct {
+    char       host[BOT_HOST_LINK_HOST_LEN];
+    uint16_t   port;
+    char       label[BOT_HOST_LINK_HOST_LEN + 8];   /* "host:port" */
+    struct sockaddr_in addr;
+    bool       resolved;
+    bool       resolveLogged;
+    /* The server refused the key: it is not tried again. */
+    bool       refused;
+
+    /* The control connection. */
+    SOCKET     sock;
+    CtlState   state;
+    uint8_t    cookie[JOIN_COOKIE_LEN];
+    bool       haveCookie;
+    uint32_t   outSeq;
+    uint32_t   lastRecvMs;
+    uint32_t   lastJoinMs;
+    uint32_t   joinStartMs;
+    uint32_t   lastPingMs;
+    uint32_t   serverNow;      /* last PONG's server time, echoed back */
+    uint16_t   rttMs;
+    uint32_t   muxTick;
+    ChannelMux mux;
+    /* The slot count last sent in CTRL_BOT_HOST_SLOTS, -1 for none. */
+    int        lastSlotsSent;
+
+    HostSync   sync;
+
+    /* Announcing while idle. */
+    bool       announceDue;
+    uint32_t   announceAtMs;
+    int        lastAnnouncedFree;
+} HostServer;
+
+static HostServer servers[BOT_HOST_MAX_SERVERS];
+static int        serverCount;
+static SOCKET     listenSock = INVALID_SOCKET;
+
+static int serverIndex(const HostServer *sv) {
+    return (int)(sv - servers);
+}
+
+/* ------------------------------------------------------------------ */
+/* The slot pool                                                       */
+/* ------------------------------------------------------------------ */
+
+static int poolUsed(void) {
+    int i, n = 0;
+    for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+        if (seats[i].used) n++;
+    }
+    return n;
+}
+
+static int poolFree(void) {
+    int f = optSlots - poolUsed();
+    return f > 0 ? f : 0;
+}
+
+static int poolUsedFor(int srv) {
+    int i, n = 0;
+    for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+        if (seats[i].used && seats[i].srv == srv) n++;
+    }
+    return n;
+}
+
+/* The slots server srv may use now: its own seats and the free ones. */
+static int poolSlotsFor(int srv) {
+    return poolUsedFor(srv) + poolFree();
+}
+
+static HostSeat *seatFind(int srv, uint8_t seat) {
+    int i;
+    for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+        if (seats[i].used && seats[i].srv == srv && seats[i].seat == seat) {
+            return &seats[i];
+        }
+    }
+    return NULL;
+}
+
+static HostSeat *seatTakeFree(void) {
+    int i;
+    if (poolUsed() >= optSlots) return NULL;
+    for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+        if (!seats[i].used) return &seats[i];
+    }
+    return NULL;
+}
+
+/* ------------------------------------------------------------------ */
+/* Control connection                                                  */
+/* ------------------------------------------------------------------ */
+
+static void ctlCloseSocket(HostServer *sv) {
+    if (sv->sock != INVALID_SOCKET) {
+        closesocket(sv->sock);
+        sv->sock = INVALID_SOCKET;
+    }
+}
+
+static bool svResolve(HostServer *sv) {
+    struct sockaddr_in *out = &sv->addr;
+    memset(out, 0, sizeof(*out));
+    out->sin_family = AF_INET;
+    out->sin_port = htons(sv->port);
+    out->sin_addr.s_addr = inet_addr(sv->host);
+    if (out->sin_addr.s_addr == INADDR_NONE) {
+        if (bolo_resolve_ipv4(sv->host, &out->sin_addr) != 0) {
+            if (!sv->resolveLogged) {
+                sv->resolveLogged = true;
+                fprintf(stderr, "[bothost] cannot resolve server \"%s\"; "
+                                "trying again later\n", sv->host);
+            }
+            sv->resolved = false;
+            return false;
+        }
+    }
+    sv->resolved = true;
+    return true;
+}
+
+static void ctlSendJoin(HostServer *sv) {
+    uint8_t buf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 +
+                WBN_JOIN_KEY_WIRE_LEN + 1 + 2 + 2 + JOIN_COOKIE_LEN +
+                JOIN_BOT_HOST_KEY_LEN + 1 + JOIN_BOT_HOST_NAME_LEN + 2];
+    int pos = PACKET_HEADER_SIZE;
+
+    memset(buf, 0, sizeof(buf));
+    packHeader(buf, PACKET_JOIN_REQUEST, sv->outSeq++);
+    SDL_strlcpy((char *)buf + pos, optName, PACKET_MAX_PLAYER_NAME);
+    pos += PACKET_MAX_PLAYER_NAME;
+    pos += MAP_STR_SIZE;                    /* no game password */
+    buf[pos++] = BOLO_VERSION_MAJOR;
+    buf[pos++] = BOLO_VERSION_MINOR;
+    buf[pos++] = BOLO_VERSION_REVISION;
+    pos += WBN_JOIN_KEY_WIRE_LEN;           /* no WinBolo.net key */
+    buf[pos++] = JOIN_FLAG_BOT_HOST;
+    buf[pos++] = 0;                         /* client type: unknown */
+    buf[pos++] = 0;                         /* client hints */
+    pos += 2;                               /* no fallback country */
+    if (sv->haveCookie) {
+        memcpy(buf + pos, sv->cookie, JOIN_COOKIE_LEN);
+    }
+    pos += JOIN_COOKIE_LEN;
+    memcpy(buf + pos, optKey, strlen(optKey));
+    pos += JOIN_BOT_HOST_KEY_LEN;
+    buf[pos++] = (uint8_t)poolSlotsFor(serverIndex(sv));
+    SDL_strlcpy((char *)buf + pos, optName, JOIN_BOT_HOST_NAME_LEN);
+    pos += JOIN_BOT_HOST_NAME_LEN;
+    packU16(buf + pos, optListenPort);
+    pos += 2;
+    udpSendTo(sv->sock, buf, pos, &sv->addr);
+    sv->lastJoinMs = nowMs();
+}
+
+/* Start a join on a new socket, so the server sees a new address and never
+ * mistakes it for a connection that went away. */
+static void ctlStartJoin(HostServer *sv) {
+    ctlCloseSocket(sv);
+    if (!sv->resolved && !svResolve(sv)) return;
+    sv->sock = createUdpSocket(false);
+    if (sv->sock == INVALID_SOCKET) {
+        fprintf(stderr, "[bothost] cannot open a UDP socket\n");
+        return;
+    }
+    sv->state = CTL_JOINING;
+    sv->haveCookie = false;
+    sv->outSeq = 1;
+    sv->lastRecvMs = nowMs();
+    sv->joinStartMs = nowMs();
+    channelMuxInit(&sv->mux);
+    ctlSendJoin(sv);
+}
+
+static void ctlSendPing(HostServer *sv) {
+    uint8_t buf[PACKET_HEADER_SIZE + 8];
+    uint32_t t = nowMs();
+    if (t == 0) t = 1;
+    packHeader(buf, PACKET_PING, sv->outSeq++);
+    packU32(buf + PACKET_HEADER_SIZE, t);
+    packU32(buf + PACKET_HEADER_SIZE + 4, 0);
+    udpSendTo(sv->sock, buf, sizeof(buf), &sv->addr);
+    sv->lastPingMs = t;
+}
+
+static void ctlSendQuit(HostServer *sv) {
+    uint8_t buf[PACKET_HEADER_SIZE];
+    if (sv->sock == INVALID_SOCKET || sv->state != CTL_CONNECTED) return;
+    packHeader(buf, PACKET_QUIT, sv->outSeq++);
+    udpSendTo(sv->sock, buf, sizeof(buf), &sv->addr);
+}
+
+/* Send the channel's acks and the host's sync messages. */
+static void ctlPump(HostServer *sv) {
+    int frames;
+    if (sv->state != CTL_CONNECTED) return;
+    channelTick(&sv->mux, sv->muxTick++, sv->rttMs);
+    for (frames = 0; frames < 4; frames++) {
+        uint8_t buf[UDP_MAX_PAYLOAD];
+        int len = channelBuildFrame(&sv->mux, buf + PACKET_HEADER_SIZE,
+                                    UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+        if (len <= 2) break;
+        packHeader(buf, PACKET_CHANNEL, sv->outSeq++);
+        udpSendTo(sv->sock, buf, PACKET_HEADER_SIZE + len, &sv->addr);
+    }
+}
+
+static void ctlSendEvent(HostServer *sv, const ControlEvent *evt) {
+    ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(evt->type);
+    uint8_t msg[CHANNEL_CONTROL_SEG];
+    size_t bodyLen = 0;
+    if (enc == NULL ||
+        enc(evt, NULL, msg + 3, sizeof(msg) - 3, &bodyLen) != ENCODE_OK) {
+        return;
+    }
+    msg[0] = (uint8_t)evt->type;
+    packU16(msg + 1, (uint16_t)bodyLen);
+    if (!channelSend(&sv->mux, CHANNEL_CONTROL, msg, (uint16_t)(3 + bodyLen))) {
+        fprintf(stderr, "[bothost] control channel to %s full; a message is "
+                        "lost\n", sv->label);
+    }
+}
+
+/* Tell the server the slots it may use, and turn down an assign when
+ * refuseSeat is a seat. */
+static void ctlSendSlots(HostServer *sv, uint8_t refuseSeat, uint16_t refuseGen) {
+    ControlEvent evt;
+    int slots = poolSlotsFor(serverIndex(sv));
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_HOST_SLOTS;
+    evt.u.botHostSlots.slots = (uint8_t)slots;
+    evt.u.botHostSlots.refuseSeat = refuseSeat;
+    evt.u.botHostSlots.refuseGen = refuseGen;
+    ctlSendEvent(sv, &evt);
+    sv->lastSlotsSent = slots;
+}
+
+/* ------------------------------------------------------------------ */
+/* Brain sync                                                          */
+/* ------------------------------------------------------------------ */
+
+/* Files asked for and not yet received, at most. */
+#define BOT_HOST_SYNC_REQ_WINDOW 8
+/* The largest packed chunk the server sends: zlib's worst case for one
+ * BRAIN_SYNC_CHUNK_BYTES piece, the 4-byte length, and some room. */
+#define BOT_HOST_SYNC_CHUNK_WIRE_MAX (BRAIN_SYNC_CHUNK_BYTES + \
+                                      BRAIN_SYNC_CHUNK_BYTES / 1000u + 1024u)
+
+/* The brain versions in the cache, for the announce. Read again after a
+ * sync writes a new version. */
+static BotHostLinkBrain cacheBrains[BOT_HOST_LINK_MAX_BRAINS];
+static int              cacheBrainCount;
+static bool             cacheListDirty = true;
+
+static void syncSendProgress(HostServer *sv) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_HOST_SYNC;
+    evt.u.botHostSync.gen = sv->sync.gen;
+    evt.u.botHostSync.done = sv->sync.done;
+    evt.u.botHostSync.total = sv->sync.total;
+    evt.u.botHostSync.ready = sv->sync.ready ? 1 : 0;
+    ctlSendEvent(sv, &evt);
+}
+
+static void syncRequestFile(HostServer *sv, uint32_t id) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_HOST_FILE_REQ;
+    evt.u.botHostFileReq.gen = sv->sync.gen;
+    evt.u.botHostFileReq.brain = (uint8_t)(id >> 16);
+    evt.u.botHostFileReq.file = (uint16_t)(id & 0xffffu);
+    ctlSendEvent(sv, &evt);
+}
+
+/* Ask for files until BOT_HOST_SYNC_REQ_WINDOW are on the way. */
+static void syncRequestMore(HostServer *sv) {
+    HostSync *hs = &sv->sync;
+    while (hs->nextReq < hs->needCount &&
+           hs->nextReq - hs->gotCount < BOT_HOST_SYNC_REQ_WINDOW) {
+        syncRequestFile(sv, hs->need[hs->nextReq++]);
+    }
+}
+
+static void syncDropFile(HostSync *hs) {
+    free(hs->fileBuf);
+    hs->fileBuf = NULL;
+    hs->fileActive = false;
+    hs->fileGot = 0;
+}
+
+/* A file came in damaged or could not be written: forget its bytes and ask
+ * for it again, a few times a manifest at most. After that the host stays
+ * not ready for this server, which runs its bots in-process. */
+#define BOT_HOST_SYNC_MAX_RETRIES 3
+static void syncRetryFile(HostServer *sv, uint32_t id) {
+    HostSync *hs = &sv->sync;
+    hs->done -= hs->fileGot;
+    syncDropFile(hs);
+    if (hs->retries >= BOT_HOST_SYNC_MAX_RETRIES) {
+        if (hs->retries == BOT_HOST_SYNC_MAX_RETRIES) {
+            hs->retries++;   /* the files still on the way are ignored */
+            fprintf(stderr, "[bothost] too many bad brain files from %s; "
+                            "this host waits for its next brain file list\n",
+                    sv->label);
+        }
+        return;
+    }
+    hs->retries++;
+    syncRequestFile(sv, id);
+}
+
+/* Forget the manifest and any transfer under way (connection lost). */
+static void syncReset(HostSync *hs) {
+    if (hs->bulk.state == BULK_RECV_BODY) free(hs->bulk.dst);
+    bulkReceiverInit(&hs->bulk);
+    syncDropFile(hs);
+    brainSyncFree(&hs->man);
+    free(hs->need);
+    hs->need = NULL;
+    hs->needCount = hs->nextReq = hs->gotCount = 0;
+    hs->haveManifest = false;
+    hs->ready = false;
+    hs->gen = 0;
+    hs->done = hs->total = 0;
+}
+
+static void syncFinishIfDone(HostServer *sv) {
+    HostSync *hs = &sv->sync;
+    if (hs->ready || hs->gotCount < hs->needCount) return;
+    hs->ready = true;
+    cacheListDirty = true;
+    fprintf(stderr, "[bothost] brain files from %s ready (generation %u): %u "
+                    "bytes downloaded in %u ms\n",
+            sv->label, (unsigned)hs->gen, (unsigned)hs->done,
+            (unsigned)(nowMs() - hs->syncStartMs));
+    syncSendProgress(sv);
+}
+
+static void syncOnManifest(HostServer *sv, const uint8_t *buf, uint32_t len,
+                           uint32_t gen) {
+    HostSync *hs = &sv->sync;
+    BrainSyncManifest m;
+    BrainSyncPlan plan;
+    int b;
+
+    if (!brainSyncManifestDecode(buf, len, &m)) {
+        fprintf(stderr, "[bothost] the brain file list from %s is damaged; "
+                        "ignored\n", sv->label);
+        return;
+    }
+    syncDropFile(hs);
+    brainSyncFree(&hs->man);
+    free(hs->need);
+    hs->need = NULL;
+    hs->man = m;
+    hs->gen = gen;
+    hs->haveManifest = true;
+    hs->ready = false;
+    hs->nextReq = hs->gotCount = 0;
+    hs->needCount = 0;
+    hs->done = 0;
+    hs->total = 0;
+    hs->syncStartMs = nowMs();
+    hs->retries = 0;
+    memset(&plan, 0, sizeof(plan));
+    if (!brainSyncPlanCache(&hs->man, optCacheDir, &plan)) {
+        fprintf(stderr, "[bothost] cannot check the brain cache at \"%s\"\n",
+                optCacheDir);
+        free(plan.need);
+        return;
+    }
+    hs->need = plan.need;
+    hs->needCount = plan.needCount;
+    hs->total = plan.needBytes;
+    fprintf(stderr, "[bothost] brain file list from %s, generation %u: %d "
+                    "brains; %d files held, %d copied from another version, "
+                    "%d to download (%u bytes)\n",
+            sv->label, (unsigned)gen, hs->man.brainCount, plan.haveCount,
+            plan.copyCount, plan.needCount, (unsigned)plan.needBytes);
+    for (b = 0; b < hs->man.brainCount; b++) {
+        char hex[17];
+        brainSyncVersionHex(hs->man.brains[b].version, hex);
+        fprintf(stderr, "[bothost]   brain \"%s\" version %s\n",
+                hs->man.brains[b].name, hex);
+    }
+    if (plan.copyCount > 0) cacheListDirty = true;
+    syncSendProgress(sv);
+    if (hs->needCount == 0) {
+        syncFinishIfDone(sv);
+        return;
+    }
+    syncRequestMore(sv);
+}
+
+/* Parse "<brain>/<file>/<offset>". */
+static bool syncParseChunkPath(const char *p, uint32_t *bi, uint32_t *fi,
+                               uint32_t *off) {
+    unsigned long v[3];
+    int i;
+    for (i = 0; i < 3; i++) {
+        char *end = NULL;
+        if (*p < '0' || *p > '9') return false;
+        v[i] = strtoul(p, &end, 10);
+        if (end == p) return false;
+        p = end;
+        if (i < 2) {
+            if (*p != '/') return false;
+            p++;
+        }
+    }
+    if (*p != '\0') return false;
+    *bi = (uint32_t)v[0];
+    *fi = (uint32_t)v[1];
+    *off = (uint32_t)v[2];
+    return true;
+}
+
+static void syncOnChunk(HostServer *sv, const BulkStreamHeader *h,
+                        const uint8_t *buf) {
+    HostSync *hs = &sv->sync;
+    const BrainSyncBrain *br;
+    const BrainSyncFile *f;
+    uint32_t bi, fi, off, id;
+    int64_t n;
+    char path[1024];
+
+    if (!hs->haveManifest || h->gen != hs->gen || hs->ready) return;
+    if (hs->retries > BOT_HOST_SYNC_MAX_RETRIES) return;
+    if (!syncParseChunkPath(h->path, &bi, &fi, &off)) return;
+    if (bi >= (uint32_t)hs->man.brainCount) return;
+    br = &hs->man.brains[bi];
+    if (fi >= (uint32_t)br->fileCount) return;
+    f = &br->files[fi];
+    id = (bi << 16) | fi;
+    if (off == 0) {
+        syncDropFile(hs);
+        hs->fileBuf = (uint8_t *)malloc(f->size > 0 ? f->size : 1);
+        if (hs->fileBuf == NULL) return;
+        hs->fileActive = true;
+        hs->fileId = id;
+        hs->fileGot = 0;
+    }
+    if (!hs->fileActive || hs->fileId != id || off != hs->fileGot) {
+        return;
+    }
+    n = brainSyncChunkUnpack(buf, h->totalSize, hs->fileBuf + off,
+                             f->size - off);
+    if (n < 0 || (n == 0 && f->size != 0)) {
+        fprintf(stderr, "[bothost] a piece of \"%s/%s\" is damaged\n",
+                br->name, f->path);
+        syncRetryFile(sv, id);
+        return;
+    }
+    hs->fileGot += (uint32_t)n;
+    hs->done += (uint32_t)n;
+    if (hs->fileGot < f->size) {
+        syncSendProgress(sv);
+        return;
+    }
+    if (brainSyncHash(BRAIN_SYNC_HASH_SEED, hs->fileBuf, f->size) != f->hash ||
+        !brainSyncCacheFile(path, sizeof(path), optCacheDir, br->name,
+                            br->version, f->path) ||
+        !brainSyncWriteFile(path, hs->fileBuf, f->size)) {
+        fprintf(stderr, "[bothost] brain file \"%s/%s\" failed its check or "
+                        "could not be written\n", br->name, f->path);
+        syncRetryFile(sv, id);
+        return;
+    }
+    syncDropFile(hs);
+    hs->gotCount++;
+    syncRequestMore(sv);
+    syncSendProgress(sv);
+    syncFinishIfDone(sv);
+}
+
+static uint8_t *syncBulkBegin(void *ctx, const BulkStreamHeader *h) {
+    (void)ctx;
+    if (h->kind == BULK_KIND_BRAIN_MANIFEST) {
+        if (h->totalSize == 0 || h->totalSize > BRAIN_SYNC_MANIFEST_MAX) {
+            return NULL;
+        }
+    } else if (h->kind == BULK_KIND_BRAIN_CHUNK) {
+        if (h->totalSize < 4 || h->totalSize > BOT_HOST_SYNC_CHUNK_WIRE_MAX) {
+            return NULL;
+        }
+    } else {
+        return NULL;
+    }
+    return (uint8_t *)malloc(h->totalSize);
+}
+
+static void syncBulkComplete(void *ctx, const BulkStreamHeader *h,
+                             uint8_t *buf) {
+    HostServer *sv = (HostServer *)ctx;
+    if (h->kind == BULK_KIND_BRAIN_MANIFEST) {
+        syncOnManifest(sv, buf, h->totalSize, h->gen);
+    } else if (h->kind == BULK_KIND_BRAIN_CHUNK) {
+        syncOnChunk(sv, h, buf);
+    }
+    free(buf);
+}
+
+static void syncDrainBulk(HostServer *sv) {
+    BulkRecvSink sink;
+    uint8_t frag[CHANNEL_MAX_SEG];
+    uint16_t fragLen = sizeof(frag);
+    sink.onBegin = syncBulkBegin;
+    sink.onComplete = syncBulkComplete;
+    sink.ctx = sv;
+    while (channelReceive(&sv->mux, CHANNEL_BULK, frag, &fragLen)) {
+        bulkReceiverFeed(&sv->sync.bulk, frag, fragLen, &sink);
+        fragLen = sizeof(frag);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Seat work                                                           */
+/* ------------------------------------------------------------------ */
+
+static void seatPrintCount(void) {
+    int i;
+    fprintf(stderr, "Bot Host \"%s\": %d/%d slots used", optName, poolUsed(),
+            optSlots);
+    for (i = 0; i < serverCount; i++) {
+        int n = poolUsedFor(i);
+        if (n > 0) fprintf(stderr, ", %d for %s", n, servers[i].label);
+    }
+    fprintf(stderr, "\n");
+}
+
+static HostSeat *seatForCs(ClientSim *cs) {
+    int i;
+    for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+        if (seats[i].used && seats[i].cs == cs) return &seats[i];
+    }
+    return NULL;
+}
+
+/* The brain's chat, queued during the think as an in-process bot's is and
+ * sent after it. Runs on a worker thread; writes only this seat's job. */
+static void seatChatSend(ClientSim *cs, uint8_t fromPlayer, uint8_t destPlayer,
+                         const char *message) {
+    HostSeat *hs;
+    BotJobCtx *j;
+    ClientCommand *cmd;
+    size_t msgLen;
+
+    (void)fromPlayer;
+    if (cs == NULL || message == NULL || message[0] == '\0') return;
+    hs = seatForCs(cs);
+    if (hs == NULL) return;
+    j = &hs->job;
+    if (j->pendingCmdCount >= BOT_PENDING_CMD_MAX) return;
+    cmd = &j->pendingCmds[j->pendingCmdCount++];
+    memset(cmd, 0, sizeof(*cmd));
+    cmd->type = CMD_CHAT;
+    cmd->u.chat.destPlayer = destPlayer;
+    msgLen = strlen(message);
+    if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
+    cmd->u.chat.bodyLen = (uint16_t)msgLen;
+    memcpy(cmd->u.chat.body, message, msgLen);
+}
+
+/* The brain's internal team message: queued like an in-process bot's, then
+ * sent to the server as CMD_BOT_TEAM_MSG, which fans it out to the allied
+ * bots. Worker thread; this seat's job only. */
+static void seatRelayInternalMsg(void *ctx, BYTE fromPlayer, const char *msg) {
+    HostSeat *hs = (HostSeat *)ctx;
+    BotJobCtx *j = &hs->job;
+    (void)fromPlayer;
+    if (msg == NULL || msg[0] == '\0') return;
+    if (j->pendingInternalMsgCount >= BOT_PENDING_INTERNAL_MSG_MAX) {
+        memmove(j->pendingInternalMsg[0], j->pendingInternalMsg[1],
+                (size_t)(BOT_PENDING_INTERNAL_MSG_MAX - 1) * BRAIN_INBOX_MSG_LEN);
+        j->pendingInternalMsgCount = BOT_PENDING_INTERNAL_MSG_MAX - 1;
+    }
+    SDL_strlcpy(j->pendingInternalMsg[j->pendingInternalMsgCount], msg,
+                BRAIN_INBOX_MSG_LEN);
+    j->pendingInternalMsgCount++;
+}
+
+/* The brain's smart ping. The server holds a Bot Host seat to the same gap
+ * between pings as an in-process bot. Worker thread; this seat only. */
+static void seatRelayPing(void *ctx, BYTE fromPlayer, uint8_t kind,
+                          uint16_t worldX, uint16_t worldY) {
+    HostSeat *hs = (HostSeat *)ctx;
+    ClientCommand *cmd;
+    (void)fromPlayer;
+    if (hs->pingCount >= BOT_PENDING_CMD_MAX) return;
+    cmd = &hs->pings[hs->pingCount++];
+    memset(cmd, 0, sizeof(*cmd));
+    cmd->type = CMD_PING;
+    cmd->u.ping.kind = kind;
+    cmd->u.ping.worldX = worldX;
+    cmd->u.ping.worldY = worldY;
+}
+
+static void seatDestroyBrain(HostSeat *hs) {
+    if (hs->bot.brain.L != NULL || hs->bot.brain.running) {
+        luaBrainInstanceDestroy(&hs->bot.brain);
+    }
+    memset(&hs->bot.brain, 0, sizeof(hs->bot.brain));
+}
+
+static void seatCloseConnection(HostSeat *hs) {
+    seatDestroyBrain(hs);
+    if (hs->cs != NULL) {
+        clientSimDestroy(hs->cs);  /* sends PACKET_QUIT, frees the transport */
+        hs->cs = NULL;
+    }
+}
+
+static void seatClear(HostSeat *hs, const char *why) {
+    if (!hs->used) return;
+    fprintf(stderr, "[bothost] bot %d \"%s\" of %s stopped (%s); team "
+                    "messages sent %u, received %u\n", (int)hs->seat, hs->name,
+            servers[hs->srv].label, why, (unsigned)hs->teamMsgsOut,
+            (unsigned)hs->teamMsgsIn);
+    seatCloseConnection(hs);
+    memset(hs, 0, sizeof(*hs));
+    seatPrintCount();
+}
+
+/* Clear every seat of server srv, or of every server when srv is -1. */
+static void clearSeats(int srv, const char *why) {
+    int i;
+    for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+        if (seats[i].used && (srv < 0 || seats[i].srv == srv)) {
+            seatClear(&seats[i], why);
+        }
+    }
+}
+
+/* Open the seat's bot connection with its token. */
+static bool seatOpenConnection(HostSeat *hs) {
+    const HostServer *sv = &servers[hs->srv];
+    hs->cs = clientSimAlloc();
+    if (hs->cs == NULL) return false;
+    clientSimCreate(hs->cs);
+    clientSimSetIsBot(hs->cs, true);
+    clientSimSetMyLastPlayerName(hs->cs, hs->name);
+    clientSimSetChatSendFunc(hs->cs, seatChatSend);
+    hs->relay.ctx = hs;
+    hs->relay.internalMsg = seatRelayInternalMsg;
+    hs->relay.ping = seatRelayPing;
+    clientSimSetBrainRelay(hs->cs, &hs->relay);
+    *clientSimGetAllowComputerTanks(hs->cs) = (aiType)hs->ai;
+
+    clientSimConnectUdp(hs->cs, sv->host, sv->port, hs->name, "", "", "", "",
+                        false, NULL, 0, false);
+    if (clientSimGetConnectState(hs->cs) == CLIENT_CONNECT_ERROR ||
+        !clientSimHasTransport(hs->cs)) {
+        clientSimDestroy(hs->cs);
+        hs->cs = NULL;
+        return false;
+    }
+    (void)transportUdpClientSetBotSlotToken(&hs->cs->transport, hs->token);
+    hs->connectStartMs = nowMs();
+    hs->lobbyNoted = false;
+    hs->inputTick = 0;
+    return true;
+}
+
+/* Build the seat's brain the way the bot pool builds an in-process one. */
+static void seatBuildBrain(HostSeat *hs) {
+    char path[512];
+    const BrainSyncBrain *br;
+    const HostSync *sync = &servers[hs->srv].sync;
+
+    hs->wantBuild = false;
+    seatDestroyBrain(hs);
+    /* The brain runs from the cache: the server's own files, sent to this
+     * host. */
+    br = (sync->haveManifest && sync->ready)
+             ? brainSyncFindBrain(&sync->man, hs->brainName) : NULL;
+    if (br == NULL ||
+        !brainSyncCacheFile(path, sizeof(path), optCacheDir, br->name,
+                            br->version, "init.lua")) {
+        fprintf(stderr, "[bothost] bot %d: the brain \"%s\" of %s is not in "
+                        "the cache; it goes back to the server\n",
+                (int)hs->seat, hs->brainName, servers[hs->srv].label);
+        hs->buildFailed = true;
+        return;
+    }
+
+    hs->bot.sim = NULL;
+    hs->bot.cs = hs->cs;
+    hs->bot.playerNum = hs->seat;
+    hs->bot.ai = (aiType)hs->ai;
+    hs->bot.active = true;
+    SDL_strlcpy(hs->bot.brainPath, path, sizeof(hs->bot.brainPath));
+    hs->bot.lastThinkMs = 0.0;
+    hs->bot.maxThinkMs = 0.0;
+    hs->bot.thinkCount = 0;
+    hs->bot.overrunCount = 0;
+    hs->bot.consecutiveCrashes = 0;
+    hs->bot.lastPingTick = 0;
+    hs->thinkMsSum = 0.0;
+    hs->killCount = 0;
+    *clientSimGetAllowComputerTanks(hs->cs) = (aiType)hs->ai;
+
+    luaBrainsSetNextStartEngineTick((unsigned int)hs->startTick);
+    luaBrainsSetNextInitArg(hs->initArg);
+    fprintf(stderr, "Bot %d: brain init arg '%s'\n", (int)hs->seat,
+            hs->initArg);
+    if (!luaBrainInstanceCreate(&hs->bot.brain, path, hs->brainName, hs->cs,
+                                (aiType)hs->ai, sync->man.debugMode,
+                                (int)hs->seat,
+                                &hs->bot.initTable)) {
+        fprintf(stderr, "[bothost] bot %d: brain \"%s\" failed to load; it "
+                        "goes back to the server\n", (int)hs->seat,
+                hs->brainName);
+        memset(&hs->bot.brain, 0, sizeof(hs->bot.brain));
+        hs->buildFailed = true;
+        return;
+    }
+    botRunnerWireBrain(&hs->bot);
+    hs->bot.builtInit = hs->bot.initTable;
+    fprintf(stderr, "[bothost] bot %d \"%s\" of %s runs brain \"%s\" (ai %d)\n",
+            (int)hs->seat, hs->name, servers[hs->srv].label, hs->brainName,
+            (int)hs->ai);
+}
+
+/* ------------------------------------------------------------------ */
+/* Control events                                                      */
+/* ------------------------------------------------------------------ */
+
+static void onAssign(HostServer *sv, const ControlEvent *evt) {
+    int srv = serverIndex(sv);
+    uint8_t s = evt->u.botHostAssign.seat;
+    HostSeat *hs;
+    static const uint8_t zero[JOIN_BOT_SLOT_TOKEN_LEN] = {0};
+    bool newPlacement;
+
+    if (s >= MAX_TANKS) return;
+    hs = seatFind(srv, s);
+    newPlacement = memcmp(evt->u.botHostAssign.token, zero,
+                          JOIN_BOT_SLOT_TOKEN_LEN) != 0;
+    if (!newPlacement && hs == NULL) return;    /* an update for a seat gone */
+    if (newPlacement && hs != NULL) {
+        seatCloseConnection(hs);
+    }
+    if (newPlacement) {
+        bool wasUsed = hs != NULL;
+        if (hs == NULL) hs = seatTakeFree();
+        if (hs == NULL) {
+            /* Every slot is taken (another server was first): the seat
+             * stays in-process on its server. */
+            fprintf(stderr, "[bothost] bot %d of %s turned down: all %d "
+                            "slots are taken\n", (int)s, sv->label, optSlots);
+            ctlSendSlots(sv, s, evt->u.botHostAssign.gen);
+            return;
+        }
+        memset(hs, 0, sizeof(*hs));
+        hs->used = true;
+        hs->srv = srv;
+        hs->seat = s;
+        memcpy(hs->token, evt->u.botHostAssign.token, JOIN_BOT_SLOT_TOKEN_LEN);
+        hs->wantBuild = true;
+        if (!wasUsed) seatPrintCount();
+    } else if (evt->u.botHostAssign.reload) {
+        hs->wantBuild = true;
+        hs->buildFailed = false;
+    }
+    hs->gen = evt->u.botHostAssign.gen;
+    hs->ai = evt->u.botHostAssign.ai;
+    hs->team = evt->u.botHostAssign.team;
+    hs->startTick = evt->u.botHostAssign.startTick;
+    hs->brainVersion = evt->u.botHostAssign.brainVersion;
+    SDL_strlcpy(hs->name, evt->u.botHostAssign.name, sizeof(hs->name));
+    SDL_strlcpy(hs->brainName, evt->u.botHostAssign.brain,
+                sizeof(hs->brainName));
+    SDL_strlcpy(hs->initArg, evt->u.botHostAssign.initArg,
+                sizeof(hs->initArg));
+    hs->awaitTable = true;
+    scnTableClear(&hs->tableIn);
+
+    if (newPlacement) {
+        fprintf(stderr, "[bothost] bot %d \"%s\" of %s assigned (brain "
+                        "\"%s\")\n", (int)s, hs->name, sv->label,
+                hs->brainName);
+        if (!seatOpenConnection(hs)) {
+            fprintf(stderr, "[bothost] bot %d: cannot open its connection\n",
+                    (int)s);
+            memset(hs, 0, sizeof(*hs));
+            seatPrintCount();
+        }
+    } else if (evt->u.botHostAssign.reload) {
+        fprintf(stderr, "[bothost] bot %d \"%s\": new brain owed (brain "
+                        "\"%s\")\n", (int)s, hs->name, hs->brainName);
+    } else {
+        fprintf(stderr, "[bothost] bot %d \"%s\": settings kept for the next "
+                        "brain (team %u, init arg '%s')\n", (int)s, hs->name,
+                (unsigned)hs->team, hs->initArg);
+    }
+}
+
+static void onUnassign(HostServer *sv, const ControlEvent *evt) {
+    HostSeat *hs = seatFind(serverIndex(sv), evt->u.botHostUnassign.seat);
+    if (hs != NULL) seatClear(hs, "server took it back");
+}
+
+/* Collect one table entry; true when the table is complete. */
+static bool tableTake(ScnTable *t, const ControlEvent *evt) {
+    uint8_t idx = evt->u.botTableEntry.idx;
+    uint8_t count = evt->u.botTableEntry.count;
+    if (count == 0) {
+        scnTableClear(t);
+        return true;
+    }
+    if (idx == 0) scnTableClear(t);
+    (void)scnTableSet(t, evt->u.botTableEntry.key, evt->u.botTableEntry.value);
+    return idx + 1 >= count;
+}
+
+static void onInitTable(HostServer *sv, const ControlEvent *evt) {
+    uint8_t s = evt->u.botTableEntry.seat;
+    HostSeat *hs = seatFind(serverIndex(sv), s);
+    char why[256];
+    if (hs == NULL) return;
+    if (!tableTake(&hs->tableIn, evt)) return;
+    hs->bot.initTable = hs->tableIn;
+    fprintf(stderr, "[bothost] bot %d \"%s\": init table with %d entries%s\n",
+            (int)s, hs->name, evt->u.botTableEntry.count,
+            hs->awaitTable ? " (for the next brain)" : "");
+    if (hs->awaitTable) {
+        /* The table that goes with an assign: the next brain reads it. */
+        hs->awaitTable = false;
+        return;
+    }
+    /* game.bot_init: the running brain is told, as in-process. */
+    if (!hs->bot.brain.running || hs->bot.brain.L == NULL) return;
+    why[0] = '\0';
+    if (brainCoreUpdateInitTable(hs->bot.brain.L, &hs->bot.initTable, why,
+                                 sizeof(why))) {
+        WB_LOG_INFO(WB_LOG_CAT_LUA, "brain %d: init table replaced, on_init ran",
+                    (int)s);
+    } else if (why[0] != '\0') {
+        WB_LOG_WARN(WB_LOG_CAT_LUA, "brain %d: on_init raised: %s", (int)s, why);
+    }
+}
+
+static void onHint(HostServer *sv, const ControlEvent *evt) {
+    uint8_t s = evt->u.botTableEntry.seat;
+    HostSeat *hs = seatFind(serverIndex(sv), s);
+    char err[256];
+    if (hs == NULL) return;
+    if (!tableTake(&hs->hintIn, evt)) return;
+    fprintf(stderr, "[bothost] bot %d \"%s\": hint with %d entries\n", (int)s,
+            hs->name, evt->u.botTableEntry.count);
+    if (!hs->bot.brain.running || hs->bot.brain.L == NULL) return;
+    err[0] = '\0';
+    if (brainCoreCallScenarioHint(hs->bot.brain.L, &hs->hintIn, err,
+                                  sizeof(err)) == BRAIN_HINT_ERROR) {
+        WB_LOG_WARN(WB_LOG_CAT_LUA, "brain %d: on_scenario_hint error: %s",
+                    (int)s, err);
+    }
+}
+
+static void onTeamMsg(HostServer *sv, const ControlEvent *evt) {
+    HostSeat *hs = seatFind(serverIndex(sv), evt->u.botTeamMsg.seat);
+    MessageState *ms;
+    if (hs == NULL || hs->cs == NULL) return;
+    ms = clientSimGetMessages(hs->cs);
+    if (ms == NULL) return;
+    messageInboxPushLine(ms, evt->u.botTeamMsg.fromPlayer,
+                         evt->u.botTeamMsg.text);
+    hs->teamMsgsIn++;
+}
+
+static void ctlHandleControl(HostServer *sv, const uint8_t *msg, uint16_t len) {
+    ControlEvent evt;
+    ControlDecodeBodyFn dec;
+    uint16_t bodyLen;
+
+    if (len < 3) return;
+    bodyLen = unpackU16(msg + 1);
+    if ((size_t)bodyLen + 3 > len) return;
+    dec = transportControlCodecBodyDecoder((ControlEventType)msg[0]);
+    if (dec == NULL) return;
+    memset(&evt, 0, sizeof(evt));
+    if (!dec(msg + 3, bodyLen, &evt)) return;
+    switch (evt.type) {
+        case CTRL_BOT_HOST_ASSIGN:   onAssign(sv, &evt);    break;
+        case CTRL_BOT_HOST_UNASSIGN: onUnassign(sv, &evt);  break;
+        case CTRL_BOT_INIT_TABLE:    onInitTable(sv, &evt); break;
+        case CTRL_BOT_HINT:          onHint(sv, &evt);      break;
+        case CTRL_BOT_TEAM_MSG:      onTeamMsg(sv, &evt);   break;
+        default: break;
+    }
+}
+
+/* Back to announcing after a wait. */
+static void svGoIdle(HostServer *sv) {
+    ctlCloseSocket(sv);
+    sv->state = CTL_IDLE;
+    sv->announceDue = true;
+    sv->announceAtMs = nowMs() + BOT_HOST_REANNOUNCE_WAIT_MS;
+    sv->lastAnnouncedFree = poolFree();
+}
+
+/* The control connection dropped: the server's seats go back to it, which
+ * runs them in-process; the host announces again. */
+static void ctlDrop(HostServer *sv, const char *why) {
+    fprintf(stderr, "[bothost] connection to %s ended (%s)\n", sv->label, why);
+    clearSeats(serverIndex(sv), "connection to the server ended");
+    syncReset(&sv->sync);
+    svGoIdle(sv);
+}
+
+static void ctlReceive(HostServer *sv) {
+    uint8_t buf[UDP_MAX_PAYLOAD + 64];
+    struct sockaddr_in from;
+    int len;
+
+    if (sv->sock == INVALID_SOCKET) return;
+    while ((len = udpRecvFrom(sv->sock, buf, sizeof(buf), &from)) > 0) {
+        uint8_t type;
+        if (from.sin_addr.s_addr != sv->addr.sin_addr.s_addr ||
+            from.sin_port != sv->addr.sin_port) {
+            continue;
+        }
+        if (len < PACKET_HEADER_SIZE) continue;
+        type = getPacketType(buf, len);
+        sv->lastRecvMs = nowMs();
+        switch (type) {
+            case PACKET_JOIN_CHALLENGE:
+                if (sv->state == CTL_JOINING &&
+                    len >= PACKET_HEADER_SIZE + JOIN_COOKIE_LEN) {
+                    memcpy(sv->cookie, buf + PACKET_HEADER_SIZE,
+                           JOIN_COOKIE_LEN);
+                    sv->haveCookie = true;
+                    ctlSendJoin(sv);
+                }
+                break;
+            case PACKET_JOIN_ACCEPT:
+                if (sv->state == CTL_JOINING) {
+                    sv->state = CTL_CONNECTED;
+                    sv->lastPingMs = 0;
+                    sv->lastSlotsSent = -1;
+                    syncReset(&sv->sync);
+                    fprintf(stderr, "[bothost] connected to %s as Bot Host "
+                                    "\"%s\" (%d slots free)\n",
+                            sv->label, optName, poolFree());
+                    seatPrintCount();
+                }
+                break;
+            case PACKET_JOIN_REJECT: {
+                uint16_t id = 0;
+                if (len >= PACKET_HEADER_SIZE + 2) {
+                    id = unpackU16(buf + PACKET_HEADER_SIZE);
+                }
+                if (sv->state != CTL_JOINING) break;
+                if (id == STR_REJECT_INCORRECT_PASSWORD) {
+                    fprintf(stderr, "[bothost] %s refused the key (or takes "
+                                    "no Bot Host); it is not tried again\n",
+                            sv->label);
+                    sv->refused = true;
+                    ctlCloseSocket(sv);
+                    sv->state = CTL_IDLE;
+                    sv->announceDue = false;
+                    return;
+                }
+                fprintf(stderr, "[bothost] %s refused the join (reason %u)\n",
+                        sv->label, (unsigned)id);
+                svGoIdle(sv);
+                return;
+            }
+            case PACKET_PONG:
+                if (len >= PACKET_HEADER_SIZE + 8) {
+                    uint32_t sent = unpackU32(buf + PACKET_HEADER_SIZE);
+                    sv->serverNow = unpackU32(buf + PACKET_HEADER_SIZE + 4);
+                    sv->rttMs = (uint16_t)(nowMs() - sent);
+                    /* Echo the server time back at once, with clientTime 0,
+                     * so the server measures the round trip and not the
+                     * gap to the next 500 ms PING. Same as a game client. */
+                    {
+                        uint8_t echo[PACKET_HEADER_SIZE + 8];
+                        packHeader(echo, PACKET_PING, sv->outSeq++);
+                        packU32(echo + PACKET_HEADER_SIZE, 0);
+                        packU32(echo + PACKET_HEADER_SIZE + 4, sv->serverNow);
+                        udpSendTo(sv->sock, echo, sizeof(echo), &sv->addr);
+                    }
+                }
+                break;
+            case PACKET_CHANNEL:
+                if (sv->state == CTL_CONNECTED) {
+                    uint8_t msg[CHANNEL_MAX_SEG];
+                    uint16_t msgLen = sizeof(msg);
+                    (void)channelRecvFrame(&sv->mux, buf + PACKET_HEADER_SIZE,
+                                           len - PACKET_HEADER_SIZE);
+                    while (channelReceive(&sv->mux, CHANNEL_CONTROL, msg,
+                                          &msgLen)) {
+                        ctlHandleControl(sv, msg, msgLen);
+                        msgLen = sizeof(msg);
+                    }
+                    syncDrainBulk(sv);
+                }
+                break;
+            case PACKET_KICKED:
+                if (sv->state == CTL_CONNECTED) {
+                    ctlDrop(sv, "the server closed it");
+                    return;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+static void ctlService(HostServer *sv) {
+    uint32_t t = nowMs();
+    switch (sv->state) {
+        case CTL_IDLE:
+            break;
+        case CTL_JOINING:
+            if (t - sv->joinStartMs >= BOT_HOST_JOIN_GIVE_UP_MS) {
+                fprintf(stderr, "[bothost] %s did not answer the join\n",
+                        sv->label);
+                svGoIdle(sv);
+                break;
+            }
+            if (t - sv->lastJoinMs >= BOT_HOST_JOIN_RETRY_MS) {
+                ctlSendJoin(sv);
+            }
+            break;
+        case CTL_CONNECTED:
+            if (t - sv->lastRecvMs >= BOT_HOST_SILENCE_MS) {
+                ctlDrop(sv, "no reply");
+                break;
+            }
+            if (sv->lastPingMs == 0 || t - sv->lastPingMs >= BOT_HOST_PING_MS) {
+                ctlSendPing(sv);
+            }
+            if (poolSlotsFor(serverIndex(sv)) != sv->lastSlotsSent) {
+                ctlSendSlots(sv, BOT_HOST_SLOTS_NO_REFUSE, 0);
+            }
+            ctlPump(sv);
+            break;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Announce, query and invite                                          */
+/* ------------------------------------------------------------------ */
+
+static void announceSend(HostServer *sv, const struct sockaddr_in *to) {
+    BotHostAnnounce a;
+    uint8_t buf[PACKET_HEADER_SIZE + 1024];
+    int len;
+
+    if (cacheListDirty) {
+        cacheListDirty = false;
+        cacheBrainCount = botHostLinkListCache(optCacheDir, cacheBrains,
+                                               BOT_HOST_LINK_MAX_BRAINS);
+    }
+    memset(&a, 0, sizeof(a));
+    a.verMajor = BOLO_VERSION_MAJOR;
+    a.verMinor = BOLO_VERSION_MINOR;
+    a.verRevision = BOLO_VERSION_REVISION;
+    a.listenPort = optListenPort;
+    a.slots = (uint8_t)optSlots;
+    a.freeSlots = (uint8_t)poolFree();
+    SDL_strlcpy(a.name, optName, sizeof(a.name));
+    a.brainCount = (uint8_t)cacheBrainCount;
+    memcpy(a.brains, cacheBrains, sizeof(a.brains));
+    len = botHostAnnounceEncode(&a, buf + PACKET_HEADER_SIZE,
+                                sizeof(buf) - PACKET_HEADER_SIZE);
+    if (len < 0) return;
+    packHeader(buf, PACKET_BOT_HOST_ANNOUNCE, 0);
+    udpSendTo(listenSock, buf, PACKET_HEADER_SIZE + len, to);
+    (void)sv;
+}
+
+/* Announce to each idle server: at start, again every BOT_HOST_ANNOUNCE_MS
+ * while slots are free, and at once when the free slots change. */
+static void announceService(void) {
+    int i, freeNow = poolFree();
+    uint32_t t = nowMs();
+    for (i = 0; i < serverCount; i++) {
+        HostServer *sv = &servers[i];
+        bool due;
+        if (sv->refused || sv->state != CTL_IDLE) continue;
+        due = (sv->announceDue && (int32_t)(t - sv->announceAtMs) >= 0) ||
+              freeNow != sv->lastAnnouncedFree;
+        if (!due) continue;
+        sv->lastAnnouncedFree = freeNow;
+        if (freeNow > 0) {
+            sv->announceDue = true;
+            sv->announceAtMs = t + BOT_HOST_ANNOUNCE_MS;
+        } else {
+            sv->announceDue = false;
+        }
+        if (!sv->resolved && !svResolve(sv)) continue;
+        announceSend(sv, &sv->addr);
+    }
+}
+
+static HostServer *serverForAddr(const struct sockaddr_in *a) {
+    int i;
+    for (i = 0; i < serverCount; i++) {
+        if (servers[i].resolved &&
+            servers[i].addr.sin_addr.s_addr == a->sin_addr.s_addr &&
+            servers[i].addr.sin_port == a->sin_port) {
+            return &servers[i];
+        }
+    }
+    return NULL;
+}
+
+/* QUERY and INVITE on the listen port. */
+static void listenReceive(void) {
+    static struct sockaddr_in logged[32];
+    static int loggedCount = 0;
+    uint8_t buf[UDP_MAX_PAYLOAD + 64];
+    struct sockaddr_in from;
+    int len;
+
+    if (listenSock == INVALID_SOCKET) return;
+    while ((len = udpRecvFrom(listenSock, buf, sizeof(buf), &from)) > 0) {
+        uint8_t type = getPacketType(buf, len);
+        HostServer *sv;
+        if (type != PACKET_BOT_HOST_QUERY && type != PACKET_BOT_HOST_INVITE) {
+            continue;
+        }
+        if (!botHostLinkShortValid(buf + PACKET_HEADER_SIZE,
+                                   (size_t)(len - PACKET_HEADER_SIZE))) {
+            continue;
+        }
+        sv = serverForAddr(&from);
+        if (sv == NULL) {
+            int k;
+            bool seen = false;
+            for (k = 0; k < loggedCount; k++) {
+                if (logged[k].sin_addr.s_addr == from.sin_addr.s_addr &&
+                    logged[k].sin_port == from.sin_port) {
+                    seen = true;
+                }
+            }
+            if (!seen) {
+                if (loggedCount < 32) logged[loggedCount++] = from;
+                fprintf(stderr, "[bothost] %s from %s:%u ignored: not on the "
+                                "--servers list (logged once)\n",
+                        type == PACKET_BOT_HOST_QUERY ? "query" : "invite",
+                        inet_ntoa(from.sin_addr),
+                        (unsigned)ntohs(from.sin_port));
+            }
+            continue;
+        }
+        if (sv->refused) continue;
+        if (type == PACKET_BOT_HOST_QUERY) {
+            fprintf(stderr, "[bothost] %s asks for free slots: %d free\n",
+                    sv->label, poolFree());
+            announceSend(sv, &from);
+            if (sv->state == CTL_IDLE) sv->lastAnnouncedFree = poolFree();
+            continue;
+        }
+        if (sv->state != CTL_IDLE) continue;
+        if (poolFree() == 0) {
+            fprintf(stderr, "[bothost] %s invites this host, but no slot is "
+                            "free\n", sv->label);
+            continue;
+        }
+        fprintf(stderr, "[bothost] %s invites this host; connecting\n",
+                sv->label);
+        ctlStartJoin(sv);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* The think loop                                                      */
+/* ------------------------------------------------------------------ */
+
+static double serialMsEwma = 0.0;
+static double lastTargetMs = 0.0;
+static int    jobIndices[BOT_HOST_MAX_SLOTS];
+
+static void hostThinkJob(int index, void *userData) {
+    HostSeat *hs = &seats[index];
+    GameSim *gs = clientSimGetGameSim(hs->cs);
+    TankModifiers mods;
+    (void)userData;
+
+    memset(&mods, 0, sizeof(mods));
+    if (MY_TANK(hs->cs) != NULL) {
+        tankGetModifiers(MY_TANK(hs->cs), &mods);
+    }
+    botRunnerPrepareThink(&hs->bot, gs, &mods);
+    botRunnerThink(&hs->job, lastTargetMs, hs->inputTick);
+}
+
+static void seatSendStats(HostSeat *hs) {
+    ClientCommand cmd;
+    double avg;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = CMD_BOT_STATS;
+    avg = hs->bot.thinkCount > 0 ? hs->thinkMsSum / hs->bot.thinkCount : 0.0;
+#define TENTHS(ms) ((uint16_t)((ms) * 10.0 > 65535.0 ? 65535 : (ms) * 10.0))
+    cmd.u.botStats.lastThinkTenths = TENTHS(hs->bot.lastThinkMs);
+    cmd.u.botStats.avgThinkTenths  = TENTHS(avg);
+    cmd.u.botStats.maxThinkTenths  = TENTHS(hs->bot.maxThinkMs);
+    cmd.u.botStats.targetTenths    = TENTHS(lastTargetMs);
+#undef TENTHS
+    cmd.u.botStats.thinkCount   = hs->bot.thinkCount;
+    cmd.u.botStats.overrunCount = hs->bot.overrunCount;
+    cmd.u.botStats.killCount    = hs->killCount;
+    cmd.u.botStats.tier         = 0;
+    SDL_strlcpy(cmd.u.botStats.hostName, optName,
+                sizeof(cmd.u.botStats.hostName));
+    clientSimSubmitCommand(hs->cs, &cmd);
+}
+
+/* Bot connections: keep them ticking, notice when they end, and build the
+ * brains that are owed. */
+static void seatsService(void) {
+    int i;
+    for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+        HostSeat *hs = &seats[i];
+        ClientConnectState st;
+        if (!hs->used || hs->cs == NULL) continue;
+        clientSimNetTick(hs->cs);
+        st = clientSimGetConnectState(hs->cs);
+        if (st == CLIENT_CONNECT_JOINING || st == CLIENT_CONNECT_DOWNLOADING_MAP) {
+            if (nowMs() - hs->connectStartMs > BOT_HOST_CONNECT_MS) {
+                seatClear(hs, "its connection did not join");
+            }
+            continue;
+        }
+        if (st != CLIENT_CONNECT_CONNECTED) {
+            const char *why = "its connection ended";
+            if (st == CLIENT_CONNECT_KICKED) why = "the server released it";
+            else if (st == CLIENT_CONNECT_ERROR) why = "its connection was refused";
+            else if (st == CLIENT_CONNECT_SERVER_SHUTDOWN) why = "the server shut down";
+            seatClear(hs, why);
+            continue;
+        }
+        /* A new round sends the connection back through a map download.
+         * The join limit counts from the last moment it was connected, not
+         * from the first join, so a seat that has played for a while is not
+         * dropped the moment the next round starts. */
+        hs->connectStartMs = nowMs();
+        if (!hs->lobbyNoted) {
+            hs->lobbyNoted = true;
+            if (clientSimIsInLobby(hs->cs)) {
+                clientSimSetMapDownloadComplete(hs->cs, true);
+                clientSimSetNetStatus(hs->cs, netLobby);
+            }
+        }
+        if (hs->buildFailed) {
+            /* Give the seat back: the server runs it in-process. */
+            seatClear(hs, "no brain here");
+            continue;
+        }
+        if (hs->wantBuild && !hs->awaitTable) {
+            seatBuildBrain(hs);
+        }
+    }
+}
+
+static void hostTick(void) {
+    int i, active = 0, runners;
+    bool anyFirst = false;
+    Uint64 setupStart, brainStart, brainEnd, sendEnd;
+    double freq = (double)SDL_GetPerformanceFrequency();
+
+    setupStart = SDL_GetPerformanceCounter();
+    seatsService();
+
+    for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+        HostSeat *hs = &seats[i];
+        netStatus ns;
+        if (!hs->used || hs->cs == NULL) continue;
+        if (!hs->bot.brain.running || hs->wantBuild || hs->awaitTable) continue;
+        if (clientSimGetConnectState(hs->cs) != CLIENT_CONNECT_CONNECTED) continue;
+        ns = clientSimGetNetStatus(hs->cs);
+        if (ns == netLobby || ns == netLobbyCountdown) continue;
+        if (clientSimIsInLobby(hs->cs)) continue;
+        if (MY_TANK(hs->cs) == NULL) continue;
+
+        hs->job.bot = &hs->bot;
+        hs->job.sim = NULL;
+        hs->job.needRemove = false;
+        hs->job.hasInput = false;
+        hs->job.wasKilled = false;
+        hs->job.pendingCmdCount = 0;
+        hs->job.pendingInternalMsgCount = 0;
+        hs->pingCount = 0;
+        hs->inputTick += 2;
+        jobIndices[active++] = i;
+    }
+    botManagerSetHostActiveBots(poolUsed());
+
+    runners = botWorkerPoolGetSize() + 1;
+    if (optThreads > runners) runners = optThreads;
+    lastTargetMs = botRunnerTargetMs(serialMsEwma, runners, active);
+    for (i = 0; i < active; i++) {
+        HostSeat *hs = &seats[jobIndices[i]];
+        botRunnerBeginTick(&hs->bot, lastTargetMs);
+        if (hs->bot.brain.isFirst) anyFirst = true;
+    }
+
+    brainStart = SDL_GetPerformanceCounter();
+    if (anyFirst) {
+        for (i = 0; i < active; i++) hostThinkJob(jobIndices[i], NULL);
+    } else if (active > 0) {
+        botWorkerPoolRun(jobIndices, active, hostThinkJob, NULL);
+    }
+    brainEnd = SDL_GetPerformanceCounter();
+
+    for (i = 0; i < active; i++) {
+        HostSeat *hs = &seats[jobIndices[i]];
+        BotJobCtx *j = &hs->job;
+        int q;
+
+        if (hs->bot.thinkCount > 0) hs->thinkMsSum += hs->bot.lastThinkMs;
+
+        for (q = 0; q < j->pendingInternalMsgCount; q++) {
+            ClientCommand cmd;
+            memset(&cmd, 0, sizeof(cmd));
+            cmd.type = CMD_BOT_TEAM_MSG;
+            SDL_strlcpy(cmd.u.botTeamMsg.text, j->pendingInternalMsg[q],
+                        sizeof(cmd.u.botTeamMsg.text));
+            clientSimSubmitCommand(hs->cs, &cmd);
+            hs->teamMsgsOut++;
+        }
+        j->pendingInternalMsgCount = 0;
+
+        if (j->needRemove) {
+            /* The in-process crash rule: the seat goes back to the server,
+             * whose bot pool then kicks the bot as it would its own. */
+            fprintf(stderr, "[bothost] bot %d: brain crashed %u ticks in a "
+                            "row\n", (int)hs->seat,
+                    (unsigned)hs->bot.consecutiveCrashes);
+            seatClear(hs, "brain crashed");
+            continue;
+        }
+        if (j->wasKilled) {
+            hs->bot.wasKilled = true;
+            hs->bot.overrunCount++;
+            hs->killCount++;
+            continue;
+        }
+        if (j->hasInput) {
+            clientSimNetRecordInput(hs->cs, &j->pkt1);
+            clientSimNetSendInput(hs->cs, &j->pkt2);
+            for (q = 0; q < j->pendingCmdCount; q++) {
+                clientSimSubmitCommand(hs->cs, &j->pendingCmds[q]);
+            }
+            for (q = 0; q < hs->pingCount; q++) {
+                clientSimSubmitCommand(hs->cs, &hs->pings[q]);
+            }
+            if (hs->bot.lastThinkMs > lastTargetMs * 1.5) {
+                hs->bot.overrunCount++;
+            }
+        }
+        j->pendingCmdCount = 0;
+        hs->pingCount = 0;
+    }
+
+    for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+        HostSeat *hs = &seats[i];
+        if (!hs->used || hs->cs == NULL || !hs->bot.brain.running) continue;
+        if (clientSimGetConnectState(hs->cs) != CLIENT_CONNECT_CONNECTED) continue;
+        if (++hs->statsTick >= BOT_HOST_STATS_TICKS) {
+            hs->statsTick = 0;
+            seatSendStats(hs);
+        }
+    }
+
+    sendEnd = SDL_GetPerformanceCounter();
+    {
+        double serialMs = ((double)(brainStart - setupStart) +
+                           (double)(sendEnd - brainEnd)) * 1000.0 / freq;
+        if (serialMsEwma <= 0.0) serialMsEwma = serialMs;
+        else serialMsEwma = 0.1 * serialMs + 0.9 * serialMsEwma;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Arguments                                                           */
+/* ------------------------------------------------------------------ */
+
+static void printUsage(const char *prog) {
+    fprintf(stderr,
+            "Usage: %s --servers ADDR[:PORT],... [options]\n"
+            "Runs WinBoloDS servers' bots on this machine.\n"
+            "  --servers LIST  the servers this host offers its slots to\n"
+            "                  (required): ADDR[:PORT] entries split by commas,\n"
+            "                  or @FILE, or a file name (one entry per line,\n"
+            "                  # comments). PORT is the server's game port\n"
+            "                  (default %d).\n"
+            "  --listen PORT   UDP port for the servers' queries and invites\n"
+            "                  (default %d). List it in the server's -bothosts.\n"
+            "  --slots N       bots this host runs at most, for all servers\n"
+            "                  together (default 4)\n"
+            "  --threads N     brain threads (default: one per CPU core)\n"
+            "  --key KEY       the servers' -bothostkey, when they have one\n"
+            "  --name NAME     the name the server operators and players see\n"
+            "  --cachedir DIR  where the servers' brain files are kept\n"
+            "                  (default: bothost_cache next to this program)\n",
+            prog, BOT_HOST_DEFAULT_SERVER_PORT, BOT_HOST_DEFAULT_LISTEN_PORT);
+}
+
+static bool parseArgs(int argc, char **argv) {
+    int i;
+    bool haveServers = false;
+    for (i = 1; i < argc; i++) {
+        const char *a = argv[i];
+        const char *v = (i + 1 < argc) ? argv[i + 1] : NULL;
+        if (strcmp(a, "--help") == 0 || strcmp(a, "-h") == 0) {
+            printUsage(argv[0]);
+            return false;
+        }
+        if (v == NULL) {
+            fprintf(stderr, "%s needs a value\n", a);
+            return false;
+        }
+        if (strcmp(a, "--servers") == 0) {
+            char err[256];
+            if (!botHostAddrListLoad(v, &optServers, err, sizeof(err))) {
+                fprintf(stderr, "--servers: %s\n", err);
+                return false;
+            }
+            haveServers = true;
+        } else if (strcmp(a, "--server") == 0 || strcmp(a, "--port") == 0) {
+            fprintf(stderr, "%s is gone: use --servers ADDR[:PORT],...\n", a);
+            return false;
+        } else if (strcmp(a, "--listen") == 0) {
+            int p = atoi(v);
+            if (p <= 0 || p > 65535) {
+                fprintf(stderr, "bad port %s\n", v);
+                return false;
+            }
+            optListenPort = (uint16_t)p;
+        } else if (strcmp(a, "--slots") == 0) {
+            optSlots = atoi(v);
+            if (optSlots < 1 || optSlots > BOT_HOST_MAX_SLOTS) {
+                fprintf(stderr, "--slots takes 1 to %d\n", BOT_HOST_MAX_SLOTS);
+                return false;
+            }
+        } else if (strcmp(a, "--threads") == 0) {
+            optThreads = atoi(v);
+            if (optThreads < 0) optThreads = 0;
+        } else if (strcmp(a, "--key") == 0) {
+            if (strlen(v) > JOIN_BOT_HOST_KEY_LEN) {
+                fprintf(stderr, "--key takes up to %d characters\n",
+                        JOIN_BOT_HOST_KEY_LEN);
+                return false;
+            }
+            SDL_strlcpy(optKey, v, sizeof(optKey));
+        } else if (strcmp(a, "--name") == 0) {
+            SDL_strlcpy(optName, v, sizeof(optName));
+        } else if (strcmp(a, "--cachedir") == 0) {
+            SDL_strlcpy(optCacheDir, v, sizeof(optCacheDir));
+        } else {
+            fprintf(stderr, "unknown option %s\n", a);
+            printUsage(argv[0]);
+            return false;
+        }
+        i++;
+    }
+    if (!haveServers) {
+        fprintf(stderr, "--servers is required\n");
+        printUsage(argv[0]);
+        return false;
+    }
+    if (optCacheDir[0] == '\0') {
+        const char *base = SDL_GetBasePath();
+        SDL_snprintf(optCacheDir, sizeof(optCacheDir), "%sbothost_cache",
+                     base != NULL ? base : "");
+    }
+    {
+        /* Cache paths use '/' throughout; drop a trailing separator. */
+        size_t n = strlen(optCacheDir);
+        char *c;
+        for (c = optCacheDir; *c != '\0'; c++) {
+            if (*c == '\\') *c = '/';
+        }
+        while (n > 1 && optCacheDir[n - 1] == '/') optCacheDir[--n] = '\0';
+    }
+    if (optName[0] == '\0') {
+        const char *h = SDL_getenv("COMPUTERNAME");
+        if (h == NULL || h[0] == '\0') h = SDL_getenv("HOSTNAME");
+        SDL_strlcpy(optName, (h != NULL && h[0] != '\0') ? h : "Bot Host",
+                    sizeof(optName));
+    }
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Main                                                                */
+/* ------------------------------------------------------------------ */
+
+static bool openListenSocket(void) {
+    struct sockaddr_in a;
+    listenSock = createUdpSocket(true);
+    if (listenSock == INVALID_SOCKET) return false;
+    memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_ANY);
+    a.sin_port = htons(optListenPort);
+    if (bind(listenSock, (struct sockaddr *)&a, sizeof(a)) != 0) {
+        closesocket(listenSock);
+        listenSock = INVALID_SOCKET;
+        return false;
+    }
+#ifdef _WIN32
+    {
+        /* An announce to a server that is not running yet comes back as an
+         * ICMP "port unreachable", which Windows would report on the next
+         * receive. It means nothing here. */
+        BOOL off = FALSE;
+        DWORD got = 0;
+        (void)WSAIoctl(listenSock, _WSAIOW(IOC_VENDOR, 12), &off, sizeof(off),
+                       NULL, 0, &got, NULL, NULL);
+    }
+#endif
+    return true;
+}
+
+int main(int argc, char *argv[]) {
+    uint32_t nextTick;
+    int i;
+
+    bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
+    sentryInit("WinBoloBotHost", argc, argv);
+    atexit(sentryClose);
+
+    if (!parseArgs(argc, argv)) return 1;
+
+    signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);
+#ifdef SIGBREAK
+    signal(SIGBREAK, signalHandler);
+#endif
+
+    if (!SDL_Init(0)) {
+        fprintf(stderr, "Error: SDL_Init failed: %s\n", SDL_GetError());
+        return 1;
+    }
+    wb_log_init("WinBolo", "WinBoloBotHost", "winbolo-bothost.log");
+    atexit(wb_log_shutdown);
+
+    if (!serverSimBotPoolInit(optThreads)) {
+        fprintf(stderr, "Error: cannot start %d brain threads\n", optThreads);
+        return 1;
+    }
+    prefsInit("WinBolo.json");
+    if (!clientMutexCreate()) {
+        fprintf(stderr, "Error: failed to create client mutex\n");
+        return 1;
+    }
+    guiMessageSetHandler(hostMessageHandler);
+    langSetup();
+    if (bolo_net_init() != 0) {
+        fprintf(stderr, "Error: network start failed\n");
+        return 1;
+    }
+    if (!openListenSocket()) {
+        fprintf(stderr, "Error: cannot listen on UDP port %u (another "
+                        "program may use it; see --listen)\n",
+                (unsigned)optListenPort);
+        return 1;
+    }
+
+    memset(seats, 0, sizeof(seats));
+    memset(servers, 0, sizeof(servers));
+    serverCount = optServers.count;
+    for (i = 0; i < serverCount; i++) {
+        HostServer *sv = &servers[i];
+        SDL_strlcpy(sv->host, optServers.e[i].host, sizeof(sv->host));
+        sv->port = optServers.e[i].port != 0 ? optServers.e[i].port
+                                             : BOT_HOST_DEFAULT_SERVER_PORT;
+        SDL_snprintf(sv->label, sizeof(sv->label), "%s:%u", sv->host,
+                     (unsigned)sv->port);
+        sv->sock = INVALID_SOCKET;
+        sv->state = CTL_IDLE;
+        sv->announceDue = true;
+        sv->announceAtMs = nowMs();
+        sv->lastAnnouncedFree = -1;
+        sv->lastSlotsSent = -1;
+        bulkReceiverInit(&sv->sync.bulk);
+        (void)svResolve(sv);
+    }
+
+    fprintf(stderr, "[bothost] WinBoloBotHost \"%s\": %d slots for %d "
+                    "server%s, listening on UDP port %u\n",
+            optName, optSlots, serverCount, serverCount == 1 ? "" : "s",
+            (unsigned)optListenPort);
+    for (i = 0; i < serverCount; i++) {
+        fprintf(stderr, "[bothost]   server %s\n", servers[i].label);
+    }
+    fprintf(stderr, "[bothost] brain cache: %s\n", optCacheDir);
+
+    nextTick = nowMs();
+    while (!hostQuit) {
+        uint32_t t;
+        bool anyUsable = false;
+        listenReceive();
+        for (i = 0; i < serverCount; i++) {
+            ctlReceive(&servers[i]);
+            ctlService(&servers[i]);
+            if (!servers[i].refused) anyUsable = true;
+        }
+        if (!anyUsable) {
+            fprintf(stderr, "[bothost] every server refused this host\n");
+            break;
+        }
+        t = nowMs();
+        if ((int32_t)(t - nextTick) >= 0) {
+            hostTick();
+            nextTick += BOT_HOST_TICK_MS;
+            /* After a long stall, start counting again from now. */
+            if ((int32_t)(t - nextTick) > 10 * BOT_HOST_TICK_MS) {
+                nextTick = t + BOT_HOST_TICK_MS;
+            }
+        }
+        announceService();
+        SDL_Delay(1);
+    }
+
+    fprintf(stderr, "[bothost] stopping\n");
+    clearSeats(-1, "the host stops");
+    for (i = 0; i < serverCount; i++) {
+        ctlSendQuit(&servers[i]);
+        ctlCloseSocket(&servers[i]);
+        syncReset(&servers[i].sync);
+    }
+    if (listenSock != INVALID_SOCKET) closesocket(listenSock);
+
+    clientMutexDestroy();
+    langCleanup();
+    serverSimBotPoolDestroy();
+    SDL_Quit();
+    return hostQuit ? 0 : 2;
+}

@@ -417,6 +417,19 @@ STR_DLGLOBBY_TEAM_LEFT_FMT={player} left {string1}.
 # Lobby roster header above the spectator list ({number} = live count)
 STR_DLGLOBBY_SPECTATORS_FMT=Spectators ({number}):
 
+# Lobby list of the Bot Hosts that run the server's bots. Header ({number} =
+# hosts); a row ({string1} = host name, {string2} = its state, {number} = bots
+# it runs, {number2} = bots it can run); the states
+STR_DLGLOBBY_BOTHOSTS_FMT=Bot Hosts ({number}):
+STR_DLGLOBBY_BOTHOST_ROW_FMT={string1}: {string2}, {number} of {number2} bots
+STR_DLGLOBBY_BOTHOST_CONNECTED=connected
+STR_DLGLOBBY_BOTHOST_SYNCING_FMT=syncing {number}%
+STR_DLGLOBBY_BOTHOST_READY=ready
+STR_DLGLOBBY_BOTHOST_LATE=too slow, not used this game
+
+# Why Ready is off while a Bot Host gets the server's brain files ({number} = %)
+STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT=Bot Host syncing {number}%
+
 # Sender-name tag prepended to a spectator's lobby chat line
 STR_DLGLOBBY_SPECTATOR_TAG=[Spectator] {string1}
 

@@ -306,6 +306,48 @@ static void consoleOpMemReport(bool deep) {
   serverMemReportRequest(deep);
 }
 
+/* bot <n> difficulty|brain <value>: the same changes the lobby's bot popup
+   makes. A brain change is applied now (an in-process bot reloads at once,
+   a Bot Host seat's host is told); a difficulty change reaches the brain at
+   the next round start, as it does from the lobby. */
+static bool consoleOpBotSet(int player, const char *what, const char *value,
+                            char *msg, size_t msgLen) {
+  bool ok = false;
+  threadsWaitForMutex();
+  if (player < 0 || player >= MAX_TANKS ||
+      !serverSimIsBot(serverSim, (BYTE)player)) {
+    snprintf(msg, msgLen, "Player %d is not a bot", player);
+  } else if (strcmp(what, "difficulty") == 0) {
+    uint8_t level;
+    const LobbyBotConfig *bc = serverSimGetBotConfig(serverSim, (BYTE)player);
+    if (!botDifficultyFromName(value, &level) || bc == NULL) {
+      snprintf(msg, msgLen, "Unknown difficulty '%s'", value);
+    } else {
+      serverSimSetBotConfig(serverSim, (BYTE)player, bc->mode, level,
+                            bc->personality, NULL);
+      snprintf(msg, msgLen, "Bot %d difficulty is now %s", player,
+               botDifficultyName(level));
+      ok = true;
+    }
+  } else if (strcmp(what, "brain") == 0) {
+    char *end = NULL;
+    long idx = strtol(value, &end, 10);
+    const char *path = (end != value && idx >= 0 && idx < 255)
+        ? serverSimGetBrainPathForIdx(serverSim, (uint8_t)idx) : NULL;
+    if (path == NULL) {
+      snprintf(msg, msgLen, "No brain at index '%s'", value);
+    } else {
+      serverSimSwitchBotBrain(serverSim, (BYTE)player, (uint8_t)idx);
+      snprintf(msg, msgLen, "Bot %d brain is now %s", player, path);
+      ok = true;
+    }
+  } else {
+    snprintf(msg, msgLen, "Unknown bot setting '%s'", what);
+  }
+  threadsReleaseMutex();
+  return ok;
+}
+
 /* Positional, and the struct's own comment says why the newest entry goes
    last rather than beside a relative. */
 static const ServerConsoleOps serverConsoleOps = {
@@ -318,7 +360,8 @@ static const ServerConsoleOps serverConsoleOps = {
   consoleOpKick,
   consoleOpSetHost,
   consoleOpReloadScenario,
-  consoleOpMemReport
+  consoleOpMemReport,
+  consoleOpBotSet
 };
 
 
@@ -912,6 +955,14 @@ void printArgs() {
   fprintf(stderr, "                -tracker <host> uses <host> with default port %d\n", DEFAULT_TRACKER_PORT);
   fprintf(stderr, "                -tracker <host:port> uses the specified host and port\n");
   fprintf(stderr, "-notracker    - do not notify any Internet tracker\n");
+  fprintf(stderr, "-bothostkey <key> - let WinBoloBotHost programs that give this key\n");
+  fprintf(stderr, "                run this server's bots on other machines (up to 64 characters)\n");
+  fprintf(stderr, "-bothosts <ip[:port],...> - the WinBoloBotHost programs this server may use\n");
+  fprintf(stderr, "                (or @file, or a file name: one entry per line, # comments).\n");
+  fprintf(stderr, "                The port is the host's --listen port (default %d). The server\n", BOT_HOST_DEFAULT_LISTEN_PORT);
+  fprintf(stderr, "                asks them for free slots at start, after each game and when a\n");
+  fprintf(stderr, "                player joins an empty lobby. With -bothostkey too, a listed host\n");
+  fprintf(stderr, "                must also give the key; without it the list alone is the proof.\n");
   fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
   fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
@@ -3059,6 +3110,22 @@ int main(int argc, char **argv) {
       SDL_Quit();
 #endif
       return 0;
+    }
+    /* Bot Hosts: other machines that run this server's bot brains. Off
+     * without a key and a list. */
+    {
+      int argNum = findArg(argc, argv, "bothostkey");
+      if (argNum != ARG_NOT_FOUND) {
+        if (!transportUdpServerSetBotHostKey(serverSim, argv[argNum])) {
+          fprintf(stderr, "Bot Host key not used\n");
+        }
+      }
+      argNum = findArg(argc, argv, "bothosts");
+      if (argNum != ARG_NOT_FOUND) {
+        if (!transportUdpServerSetBotHostList(serverSim, argv[argNum])) {
+          fprintf(stderr, "Bot Host list not used\n");
+        }
+      }
     }
     /* Say what the finder will show, after the sanitising, so an operator
      * sees a name that came out shorter or cleaner than typed. */

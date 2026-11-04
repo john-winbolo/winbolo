@@ -40,7 +40,7 @@ void strlower(char *s) {
 }
 
 void serverConsolePrintHelp(void) {
-  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n Reload - Re-reads the scenario file beside the map. Takes effect at the next round.\n Mem - Writes a memory report line: process memory, each bot's Lua heap, world list sizes.\n MemDeep - Mem plus the biggest Lua tables of each bot. Pauses the game while it walks. The walk allocates inside each bot's Lua state, so do not use it in seeded repro runs.\n");
+  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n Reload - Re-reads the scenario file beside the map. Takes effect at the next round.\n Mem - Writes a memory report line: process memory, each bot's Lua heap, world list sizes.\n MemDeep - Mem plus the biggest Lua tables of each bot. Pauses the game while it walks. The walk allocates inside each bot's Lua state, so do not use it in seeded repro runs.\n Bot <n> difficulty <easy|medium|hard> - Sets bot n's difficulty, as the lobby's bot settings do.\n Bot <n> brain <index> - Gives bot n the brain at that index of the brain list.\n");
 }
 
 /* savemap <file>: step over the command word and any whitespace, append
@@ -150,6 +150,22 @@ void serverConsoleDispatch(const ServerConsoleOps *ops, char *keyBuff,
       fprintf(stderr, "The memory report is not available on this server\n");
     } else {
       ops->memReport(strncmp(keyBuff, "memdeep", 7) == 0);
+    }
+  } else if (strncmp(keyBuff, "bot ", 4) == 0) {
+    int player = -1;
+    char what[16] = "";
+    char value[64] = "";
+    char msg[SERVER_CONSOLE_LINE];
+    msg[0] = '\0';
+    if (sscanf(keyBuff + 4, "%d %15s %63s", &player, what, value) != 3) {
+      fprintf(stderr, "Usage: bot <n> difficulty <easy|medium|hard>, or "
+                      "bot <n> brain <index>\n");
+    } else if (ops->botSet == NULL) {
+      fprintf(stderr, "Bot settings are not available on this server\n");
+    } else if (ops->botSet(player, what, value, msg, sizeof(msg))) {
+      printf("%s\n", msg);
+    } else {
+      fprintf(stderr, "%s\n", msg);
     }
   } else if(strncmp(keyBuff, "status", 6) == 0){
     ops->status();

@@ -113,6 +113,7 @@ static void voiceStatsWrite(void) {
         uint32_t sent, ringDropped, budgetSkipped;
 
         if (!udpServer.clients[i].connected) continue;
+        if (udpServer.clients[i].botSlot) continue;
         channelGetBestEffortStats(&udpServer.channelMux[i], CHANNEL_VOICE,
                                   &sent, &ringDropped, &budgetSkipped);
         fprintf(fp, "%u,%d,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
@@ -214,6 +215,7 @@ void serverPumpVoice(ServerSim *sim) {
         /* A slot with no live remote client behind it — an empty slot or a
          * bot — has no voice to forward. */
         if (!udpServer.clients[from].connected) continue;
+        if (udpServer.clients[from].botSlot) continue;
 
         /* One tick's worth of credit, banked up to the burst depth. Pass 1
          * runs exactly once per tick in every server state, so this is the
@@ -341,6 +343,7 @@ void serverPumpVoice(ServerSim *sim) {
         int t, f;
 
         if (!udpServer.clients[to].connected) continue;
+        if (udpServer.clients[to].botSlot) continue;
         if (!udpServer.mapDownload[to].downloadComplete) continue;
 
         for (t = 0; t < talkerCount; t++) {

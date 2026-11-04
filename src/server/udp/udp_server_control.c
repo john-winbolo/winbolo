@@ -143,6 +143,12 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
         return;
     }
 
+    /* A Bot Host bot connection outlives the round: a map rotation's
+     * CTRL_SERVER_SHUTDOWN is for the players it disconnects, not for it. */
+    if (client->botSlot && evt->type == CTRL_SERVER_SHUTDOWN) {
+        return;
+    }
+
     /* Per-recipient filtering for single-target variants.  The codec
      * stays UdpServerClient-agnostic; the slot comparison lives here
      * where the recipient's player number is in scope. */

@@ -649,6 +649,64 @@ static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
     }
 }
 
+/* The Bot Hosts list, below the spectators: each machine that runs the
+ * server's bots, with how many it runs and whether it holds the server's
+ * brain files yet. A Bot Host is not a player and has no roster slot, so it
+ * appears only here. Nothing is drawn when no Bot Host is connected. */
+static void renderBotHostGroup(ClientSim *cs) {
+    int count = 0;
+    for (int idx = 0; ; idx++) {
+        const ClientBotHostRow *r = clientSimGetBotHostRow(cs, (uint8_t)idx);
+        if (r == NULL) break;
+        if (r->connected) count++;
+    }
+    if (count == 0) return;
+
+    {
+        MessageArgs args = {};
+        args.number = count;
+        ImGui::TextDisabled("%s", langGetTextFmt(STR_DLGLOBBY_BOTHOSTS_FMT, &args));
+    }
+    for (int idx = 0; ; idx++) {
+        const ClientBotHostRow *r = clientSimGetBotHostRow(cs, (uint8_t)idx);
+        if (r == NULL) break;
+        if (!r->connected) continue;
+
+        MessageArgs args = {};
+        switch (r->state) {
+            case BOT_HOST_SYNC_SYNCING: {
+                MessageArgs pa = {};
+                pa.number = r->percent;
+                SDL_strlcpy(args.string2,
+                            langGetTextFmt(STR_DLGLOBBY_BOTHOST_SYNCING_FMT, &pa),
+                            sizeof(args.string2));
+                break;
+            }
+            case BOT_HOST_SYNC_READY:
+                SDL_strlcpy(args.string2, langGetText(STR_DLGLOBBY_BOTHOST_READY),
+                            sizeof(args.string2));
+                break;
+            case BOT_HOST_SYNC_LATE:
+                SDL_strlcpy(args.string2, langGetText(STR_DLGLOBBY_BOTHOST_LATE),
+                            sizeof(args.string2));
+                break;
+            default:
+                SDL_strlcpy(args.string2, langGetText(STR_DLGLOBBY_BOTHOST_CONNECTED),
+                            sizeof(args.string2));
+                break;
+        }
+        SDL_strlcpy(args.string1, r->name, sizeof(args.string1));
+        args.number = r->used;
+        args.number2 = r->slots;
+        ImGui::Bullet();
+        if (r->state == BOT_HOST_SYNC_READY) {
+            ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &args));
+        } else {
+            ImGui::TextDisabled("%s", langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &args));
+        }
+    }
+}
+
 /* True when the lobby's right panel is currently showing the replay reel
  * rather than the map. Defined below, next to the recap view statics it
  * reads; declared here because the player list is rendered before them. */
@@ -2759,6 +2817,8 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
 
     /* Connected spectators, listed below the teams + unassigned tray. */
     renderSpectatorGroup(cs, myPlayerNum, s);
+    /* Connected Bot Hosts, below the spectators. */
+    renderBotHostGroup(cs);
 
     /* Deferred-open kick-confirm modal. OpenPopup must happen in the
      * same ID scope as BeginPopupModal, so we set a flag inside the

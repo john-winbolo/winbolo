@@ -69,12 +69,36 @@ typedef struct {
 /* bit 2: client requests a tankless spectator connection rather than a tank
  * slot.  Branches the join handler to the spectator-accept path. */
 #define JOIN_FLAG_SPECTATOR         0x04
+/* bit 3: the joiner is a Bot Host bot connection for a bot seat the server
+ * already holds. JOIN_BOT_SLOT_TOKEN_LEN bytes of one-time token follow the
+ * address-proof cookie. The server binds the connection to the seat the token
+ * was issued for, without a roster join; it never takes a free seat. */
+#define JOIN_FLAG_BOT_SLOT          0x08
+/* bit 4: the joiner is a Bot Host control connection. A key
+ * (JOIN_BOT_HOST_KEY_LEN bytes), a slot count (1 byte), a host name
+ * (JOIN_BOT_HOST_NAME_LEN bytes) and the host's listen port (2 bytes,
+ * big-endian; left out by an older host) follow the cookie. Accepted only
+ * when the server runs with -bothostkey or -bothosts, the key matches (with
+ * a key) and the host is on the list (with a list). The connection holds no
+ * tank seat and is not shown to players. */
+#define JOIN_FLAG_BOT_HOST          0x10
+
+#define JOIN_BOT_SLOT_TOKEN_LEN     16
+#define JOIN_BOT_HOST_KEY_LEN       64
+#define JOIN_BOT_HOST_NAME_LEN      32
+/* Most bot connections one Bot Host may offer. */
+#define BOT_HOST_MAX_SLOTS          MAX_TANKS
+/* Most Bot Host control connections one server holds at once. */
+#define MAX_BOT_HOSTS               8
 
 /* JOIN_ACCEPT slot byte the server sends to a tankless spectator in place of a
  * real 0..MAX_TANKS-1 slot — the viewer holds no tank.  A spectator client keys
  * its accept handling off this sentinel; a player-join client sees it as an
  * out-of-range slot (>= MAX_TANKS) and rejects the accept. */
 #define SPECTATOR_ACCEPT_NO_SLOT    0xFFu
+/* JOIN_ACCEPT slot byte the server sends to a Bot Host control connection. The
+ * connection holds no tank seat, like a spectator, but is not one. */
+#define BOT_HOST_ACCEPT_NO_SLOT     0xFEu
 
 /* Cap on concurrent tankless spectator connections held transport-side in
  * spectators[], independent of the MAX_TANKS player slots.  The operator's
@@ -249,6 +273,12 @@ Transport transportUdpClientCreate(struct ClientSim *clientSim,
 
 /* Destroys a client-side UDP transport. */
 void transportUdpClientDestroy(Transport *t);
+
+/* Turns a new client transport into a Bot Host bot connection: its JOINs
+ * carry JOIN_FLAG_BOT_SLOT and the one-time token
+ * (JOIN_BOT_SLOT_TOKEN_LEN bytes) from the server's CTRL_BOT_HOST_ASSIGN.
+ * Call it right after the connect, before the first tick. */
+bool transportUdpClientSetBotSlotToken(Transport *t, const uint8_t *token);
 
 /* Returns the client join state (for UI to display connecting/error). */
 UdpClientJoinState transportUdpClientGetJoinState(Transport *t);
@@ -608,6 +638,12 @@ typedef struct UdpServerClient {
                                   * encodes via the codec table and unicasts
                                   * to this client.  SUBSCRIBER_HANDLE_INVALID
                                   * when no subscription is active. */
+    bool botSlot;                /* this connection is a Bot Host bot
+                                  * connection bound to the bot seat of the
+                                  * same index. It is not a player: it never
+                                  * joined the roster and is never counted,
+                                  * listed or announced. Cleared when the
+                                  * connection is released. */
 } UdpServerClient;
 
 /* The port the server's socket is actually bound to, valid once
@@ -802,6 +838,19 @@ uint32_t transportUdpServerGetTickCount(void);
  * therefore needs a settling window before client UIs flip to game
  * render mode). */
 bool transportUdpServerHasAnyClient(void);
+
+/* Bot Host. SetBotHostKey turns Bot Host connections on with this key (an
+ * empty key turns them off) and hands the bot manager the hooks for seats
+ * whose brains run on a host. PrintBotHosts writes one line per connected
+ * host to stdout for the info and status commands. */
+bool transportUdpServerSetBotHostKey(struct ServerSim *sim, const char *key);
+/* -bothosts: the Bot Hosts this server may use, "ip[:port],..." or a file of
+ * them (see botHostAddrListLoad). The port is the host's listen port
+ * (BOT_HOST_DEFAULT_LISTEN_PORT when left out). Turns Bot Host connections
+ * on as a key does. False when the list cannot be read or a host name does
+ * not resolve. */
+bool transportUdpServerSetBotHostList(struct ServerSim *sim, const char *arg);
+void transportUdpServerPrintBotHosts(void);
 
 /* Refresh the server's compressed map data and re-prime each connected
  * client for download (resend JOIN_ACCEPT, reset chunk tracking).
