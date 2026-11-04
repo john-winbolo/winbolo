@@ -5298,6 +5298,18 @@ M.QUICK_REPAIR_FIRE_SUBSTATES = {
 -- the claim covers the outcome, not just the trip.
 M.BUILDER_POOL_CLAIM_MAX_AGE = M.SQUAD_ALLY_MAX_AGE or 1750  -- claim expiry (heartbeat gap)
 M.BUILDER_POOL_CLAIM_TYPES = { rebuild = 1, topup = 2, farm = 3 }
+-- 2026-11-04 REPAIR CLAIM BY ARRIVAL. true => a repair claim (rebuild/topup)
+-- also carries the tick our builder reaches the pill: 4 more hex chars on bpj,
+-- `bpj=TTXXYYCCCCEEEEAAAA`, AAAA = arrival tick low 16 bits. An ally then
+-- decides by arrival, not by claim tick: it does not send its own builder to
+-- that pill when the claimant arrives at the same tick or earlier, and it may
+-- send when its own builder would arrive strictly earlier. A claim is
+-- ignored once BUILDER_POOL_JOB_MAX_TICKS have gone by after its arrival tick
+-- (the claimant's own job record is gone by then). Farm claims and an ally
+-- that sends no arrival keep the claim-tick rule.
+-- Log effect: REPAIR_CLAIM_TX / _RX / _YIELD / _GO / _CLEAR lines.
+-- false = the old 14-char bpj and the claim-tick rule only. KEEL false.
+M.BUILDER_REPAIR_CLAIM_SHARE = true
 
 -- ── Ally CAPTURE guard (2026-09-05) ──────────────────────────────────────
 -- The bpj claim above says "my man is fixing that pill". It says nothing about
@@ -7072,6 +7084,9 @@ M.PRESETS = {
     --   2026-11-04: low-damage markup on the repair_pill cost. KEEL priced
     --   a 1-HP top-up like any other repair (x1).
     REPAIR_LOW_DMG_MULT_MAX       = 1.0,
+    --   2026-11-04: repair claims carry the builder's arrival tick and allies
+    --   yield by arrival. KEEL sent the 14-char bpj and used the claim tick.
+    BUILDER_REPAIR_CLAIM_SHARE    = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
