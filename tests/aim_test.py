@@ -42,6 +42,7 @@ from pathlib import Path
 # clock. Same seed -> byte-identical game, just faster. --no-asap (or
 # WINBOLO_ASAP=0) puts this run back on the 20 ms live-game pacing.
 from asap import asap_args, pacing_line, take_asap_flag  # noqa: E402
+from session_log_io import log_exists, read_log_text
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -134,9 +135,9 @@ def read_shooter_launches(sess):
     if not sess:
         return None
     log = sess / "print2_bot0.log"
-    if not log.exists():
+    if not log_exists(log):
         return None
-    text = log.read_text(errors="ignore")
+    text = read_log_text(log)
     flight = {}
     for m in re.finditer(r"TANK_ENGAGE t=(\d+).*?flight=([0-9.]+)", text):
         flight[int(m.group(1))] = float(m.group(2))

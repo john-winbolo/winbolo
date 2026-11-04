@@ -91,6 +91,9 @@ void brainCoreRegisterVizDetail(struct lua_State *L);
  * and not only on internal/braincore.h — that header is T2 and a frontend
  * never sees it. Full contract documented there. */
 void brainCoreSetLogFlushHook(void (*fn)(void));
+/* The same for the hook that closes the writer's open files (see
+ * internal/braincore.h, brainCoreSetLogReleaseHook). */
+void brainCoreSetLogReleaseHook(void (*fn)(void));
 bool brainCoreCallThink(struct lua_State *L, BrainInfo *info, bool *out_killed);
 bool brainCoreCallMethod(struct lua_State *L, BrainInfo *info, const char *method);
 

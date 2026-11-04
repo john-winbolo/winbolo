@@ -1204,6 +1204,15 @@ static void (*s_log_flush_hook)(void) = NULL;
 
 void brainCoreSetLogFlushHook(void (*fn)(void)) { s_log_flush_hook = fn; }
 
+/* Set the same way; closes the brain log writer's open files. */
+static void (*s_log_release_hook)(void) = NULL;
+
+void brainCoreSetLogReleaseHook(void (*fn)(void)) { s_log_release_hook = fn; }
+
+void brainCoreReleaseLogFiles(void) {
+  if (s_log_release_hook) s_log_release_hook();
+}
+
 void brc_write_crash_log(lua_State *L,
                          const char *method,
                          const char *err_or_traceback) {

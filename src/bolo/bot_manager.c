@@ -960,6 +960,11 @@ static void botHandLiveSessionDir(ServerSim *sim, BotContext *bot,
     botManagerExecLua(sim, playerNum,
         "local ok,p=pcall(require,'print2'); "
         "if ok and p.reset_log then p.reset_log() end");
+  /* The brain's jsonl follows it too, for a runner whose logger opened in
+   * an earlier block. */
+  botManagerExecLua(sim, playerNum,
+        "local ok,l=pcall(require,'logger'); "
+        "if ok and type(l)=='table' and l.reopen_in_session_dir then l.reopen_in_session_dir() end");
 }
 
 /* Hand a parked runner back to the seat it belongs to. The ClientSim, the

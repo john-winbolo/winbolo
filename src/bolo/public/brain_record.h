@@ -17,6 +17,10 @@
  *  portable encoding is attempted. Versioned via BRAINREC_VERSION;
  *  a reader accepts the versions brainRecVersionReadable names and
  *  refuses the rest.
+ *
+ *  The byte stream is stored in the container brain_record_io.h
+ *  describes (zstd for new files, gzip for old ones); open, write and
+ *  read it only through those functions.
  *********************************************************/
 #ifndef BRAIN_RECORD_H
 #define BRAIN_RECORD_H
@@ -176,6 +180,40 @@ void brainRecordEndGame(void);
 
 /* Flush + close the output file. Call at server shutdown. */
 void brainRecordShutdown(void);
+
+/* === Block log compression ==============================================
+ * The brains' text logs in a finished -brain-debug block directory
+ * (print2_bot*.log, player*.jsonl, brain_p*.jsonl) are gzip-compressed in
+ * place: each file becomes <name>.gz and the plain file is removed. The
+ * block that is open stays plain, so a hard kill never leaves a log cut
+ * inside a gzip stream. Readers accept <name>, <name>.gz, or both (then the
+ * .gz holds the earlier lines and the plain file the later ones).
+ *
+ * A file is written to <name>.gz.tmp, renamed to <name>.gz, and only then
+ * is the plain file removed. If the remove fails (a writer still has the
+ * file open), the .gz is removed again and the plain file stays. A file
+ * that already has a .gz is left alone. */
+
+/* Start compressing dir's logs on a background thread. First closes the
+ * brain log writer's open files (brainCoreReleaseLogFiles), so call it
+ * after the bots write to a different directory. */
+void brainRecordCompressLogsAsync(const char *dir);
+
+/* Remember dir to compress later: at game over the bots can still write to
+ * the block until the next block opens. A dir already remembered is started
+ * first. */
+void brainRecordDeferLogCompress(const char *dir);
+
+/* Start the remembered dir, if any (brainRecordCompressLogsAsync). */
+void brainRecordRunDeferredLogCompress(void);
+
+/* Start the remembered dir and wait for every compression to end. Call at
+ * shutdown after the bots are destroyed. */
+void brainRecordFinishLogCompress(void);
+
+/* Compress one directory now, on this thread. Returns the number of files
+ * compressed. For tests and tools. */
+int brainRecordCompressLogsNow(const char *dir);
 
 #ifdef __cplusplus
 }
