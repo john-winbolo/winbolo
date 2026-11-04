@@ -7,7 +7,9 @@
 --     range C.BUILDER_CERTAIN_DEATH_REWIND_MAX (a tank's shell is a kill
 --     when any r = 1 .. MAX kills; a pill's shell is r = 0), and every
 --     builder.decide send site refuses on certain death, sends under fire
---     without it, and keeps the old fire checks with the knob off;
+--     without it, and keeps the old fire checks with the knob off; the
+--     walk starts where the engine puts the builder down (section 2c,
+--     danger.lgm_start_pos, with the s206 t=1909 case);
 --   * C.BUILDER_NO_IDLE_FARM_UNDER_FIRE: the on-path farm and the pool's
 --     farm rows wait while under fire with trees at or above the minimum;
 --     a needed harvest and a building job still go;
@@ -226,6 +228,9 @@ check("KEEL: rewind max 1", K.BUILDER_CERTAIN_DEATH_REWIND_MAX == 1,
 local REWIND_MAX_DEFAULT = C.BUILDER_CERTAIN_DEATH_REWIND_MAX
 
 -- ── 2. the prediction (danger.lgm_certain_death, real) ───────────────────
+-- Sections 2 and 2b run with no cpf_lgm_walk_path_wu, so the walk starts on
+-- the tank square's centre (the older game's form); the start the engine
+-- uses is section 2c.
 -- Tank at (100,100) = world (25728, 25728); destination (103,100), so the
 -- walk is 48 steps east at 16 a tick. A shell from square (104,100)'s centre
 -- (26752) flying west (angle 192) at 32 a tick.
@@ -422,6 +427,131 @@ do
     TER[100 * 256 + 101] = nil
   end
   C.BUILDER_CERTAIN_DEATH_REWIND_MAX = REWIND_MAX_DEFAULT
+end
+
+-- ── 2c. where the walk starts (lgm.c lgmApplyStartOffset) ───────────────
+-- The engine puts the builder on the tank's own world position moved 16
+-- towards the target square's centre, not on the tank square's centre.
+-- The walk stub here steps the way the engine's lgmMoveAway does: angle
+-- by utilCalcAngle, step by utilCalcDistance at 16 a tick, from a start in
+-- world units, until within 16 of the target on both axes.
+print("2c. walk start")
+do
+  local function calc_angle(x1, y1, x2, y2)
+    local gx, gy = math.abs(x2 - x1), math.abs(y2 - y1)
+    local a = (256.0 / 360.0) * ((math.atan(gx / gy) / (2.0 * 3.14159)) * 360.0)
+    if x2 - x1 <= 0 and y2 - y1 <= 0 then a = 256.0 - a
+    elseif x2 - x1 > 0 and y2 - y1 >= 0 then a = 128.0 - a
+    elseif x2 - x1 <= 0 and y2 - y1 >= 0 then a = a + 128.0 end
+    return a
+  end
+  local function rnd(v) return v >= 0 and math.floor(v + 0.5) or -math.floor(-v + 0.5) end
+  local function calc_dist(a, speed)
+    a = a - 64
+    if a < 0 then a = a + 256.0 end
+    local r = (((360.0 / 256.0) * a) / 360.0) * (2.0 * 3.14159)
+    return rnd(speed * math.cos(r)), rnd(speed * math.sin(r))
+  end
+  local SPEED0 = {}            -- squares the builder cannot walk on
+  local ASKED = {}
+  _G.cpf_lgm_walk_path_wu = function(x, y, dmx, dmy, bx, by, maxt, stuck, out)
+    ASKED[#ASKED + 1] = { x = x, y = y }
+    local tx, ty = dmx * 256 + 128, dmy * 256 + 128
+    local n = 0
+    while n < maxt do
+      local ax, ay = calc_dist(calc_angle(x, y, tx, ty), 16)
+      x, y = x + ax, y + ay
+      n = n + 1
+      out[n * 2 - 1], out[n * 2] = x, y
+      if math.abs(x - tx) <= 16 and math.abs(y - ty) <= 16 then break end
+    end
+    return n
+  end
+  _G.cpf_lgm_man_speed = function(mx, my)
+    return SPEED0[my * 256 + mx] and 0 or 16
+  end
+
+  reset()
+  local st, w, inf = mk()
+  -- Tank on (100,100)'s centre (25728, 25728).
+  local x, y = danger.lgm_start_pos(inf, 103, 100)
+  check("start: east target -> tank + 16 east", x == 25744 and y == 25728,
+        string.format("%d,%d", x, y))
+  x, y = danger.lgm_start_pos(inf, 97, 100)
+  check("start: west target -> tank - 16", x == 25712 and y == 25728,
+        string.format("%d,%d", x, y))
+  x, y = danger.lgm_start_pos(inf, 100, 100)
+  check("start: target on the tank's own centre -> the tank", x == 25728 and y == 25728,
+        string.format("%d,%d", x, y))
+  -- dist exactly 16: no offset (only dist > 16 moves him).
+  inf.tankx = 25728 - 16
+  x, y = danger.lgm_start_pos(inf, 100, 100)
+  check("start: target 16 away -> the tank", x == 25712 and y == 25728,
+        string.format("%d,%d", x, y))
+  -- s206: tank (37008, 32524), target (141,130) = (36224, 33408).
+  -- dx -784, dy 884, dist = isqrt(1396112) = 1181;
+  -- -784*16/1181 = -10.6 -> -10, 884*16/1181 = 11.97 -> 11 (towards 0).
+  inf.tankx, inf.tanky = 37008, 32524
+  x, y = danger.lgm_start_pos(inf, 141, 130)
+  check("start: s206 -> (36998, 32535), C division towards 0",
+        x == 36998 and y == 32535, string.format("%d,%d", x, y))
+  -- A square he cannot walk on: the step's y part enters it -> no offset.
+  -- Tank 8 from the bottom edge of (100,100), target south.
+  inf.tankx, inf.tanky = 25728, 100 * 256 + 248
+  SPEED0[101 * 256 + 100] = true
+  x, y = danger.lgm_start_pos(inf, 100, 104)
+  check("start: step into a square he cannot walk on -> the tank",
+        x == 25728 and y == 100 * 256 + 248, string.format("%d,%d", x, y))
+  inf.inboat = true
+  x, y = danger.lgm_start_pos(inf, 100, 104)
+  check("start: same, tank on a boat -> offset given",
+        x == 25728 and y == 100 * 256 + 264, string.format("%d,%d", x, y))
+  inf.inboat = false
+  SPEED0[101 * 256 + 100] = nil
+  -- Not walkable under the tank itself -> no offset.
+  inf.tankx, inf.tanky = 25728, 25728
+  SPEED0[100 * 256 + 100] = true
+  x, y = danger.lgm_start_pos(inf, 103, 100)
+  check("start: tank square not walkable -> the tank", x == 25728 and y == 25728,
+        string.format("%d,%d", x, y))
+  SPEED0[100 * 256 + 100] = nil
+
+  -- s206, player 2, t=1909: the pill's shell (owner 255, angle 87) at
+  -- (36656, 32401) ends on our tank on tick 10 (94.8 from it, inside 112),
+  -- the blast at (36926, 32572). The builder walking from the engine's start
+  -- is about 90 away then: inside 128, so he dies (he died at t=1920). From the square's centre (144,127) the model had him at
+  -- (36882, 32750), 183 away, and let him go.
+  reset()
+  st, w, inf = mk()
+  inf.tankx, inf.tanky, inf.player_number = 37008, 32524, 2
+  inf.objects = { shot(36656, 32401, 87, 255, 40) }
+  for i = #ASKED, 1, -1 do ASKED[i] = nil end
+  local h = REAL(w, inf, 141, 130)
+  check("s206 t=1909: send to (141,130) refused (certain death)", h ~= nil,
+        h and h.how)
+  check("  walk started at the engine's start (36998, 32535)",
+        ASKED[1] and ASKED[1].x == 36998 and ASKED[1].y == 32535,
+        ASKED[1] and string.format("%d,%d", ASKED[1].x, ASKED[1].y))
+  check("  ends on our tank", h and h.how == "tank", h and h.how)
+  check("  on tick 10", h and h.t == 10, h and h.t)
+  check("  from the pill, r = 0", h and h.src == "pill" and h.rewind == "0",
+        h and (tostring(h.src) .. "/" .. tostring(h.rewind)))
+  local d = h and math.sqrt((h.lx - h.sx) ^ 2 + (h.ly - h.sy) ^ 2)
+  check("  builder about 90 from the blast then (inside 128)",
+        d and d > 80 and d < 100, d)
+  -- The same case with the older game's walk (square-centre start) is the
+  -- bug: no refusal.
+  local wu, map_walk = _G.cpf_lgm_walk_path_wu, _G.cpf_lgm_walk_path
+  _G.cpf_lgm_walk_path_wu = nil
+  _G.cpf_lgm_walk_path = function(sx, sy, dmx, dmy, bx, by, maxt, stuck, out)
+    return wu(sx * 256 + 128, sy * 256 + 128, dmx, dmy, bx, by, maxt, stuck, out)
+  end
+  check("s206 with the square-centre start: not refused (the old bug)",
+        REAL(w, inf, 141, 130) == nil)
+  _G.cpf_lgm_walk_path = map_walk
+
+  -- Leave the next sections as they were: no world-unit walk, no speed.
+  _G.cpf_lgm_walk_path_wu, _G.cpf_lgm_man_speed = nil, nil
 end
 
 -- ── 3. every decide() send site ──────────────────────────────────────────

@@ -2596,6 +2596,54 @@ static int l_cpf_lgm_walk_path(lua_State *L) {
   return 1;
 }
 
+/* cpf_lgm_walk_path_wu(sx, sy, dmx, dmy, blessX, blessY, maxTicks,
+ *                      stuckTicks, out) -> n
+ *
+ * cpf_lgm_walk_path with the start in WORLD units (sx, sy) instead of a map
+ * square. The engine starts the builder on the tank's own position moved
+ * towards his target (lgm.c lgmApplyStartOffset), which can be most of a
+ * square away from the centre the map form starts on. Same walk, same flat
+ * pair list in `out`. */
+static int l_cpf_lgm_walk_path_wu(lua_State *L) {
+  CPF_GET(L);
+  WORLD sx = (WORLD)luaL_checkinteger(L, 1);
+  WORLD sy = (WORLD)luaL_checkinteger(L, 2);
+  BYTE dmx = (BYTE)luaL_checkinteger(L, 3);
+  BYTE dmy = (BYTE)luaL_checkinteger(L, 4);
+  BYTE blessX = (BYTE)luaL_checkinteger(L, 5);
+  BYTE blessY = (BYTE)luaL_checkinteger(L, 6);
+  int maxTicks = (int)luaL_checkinteger(L, 7);
+  int stuckTicks = (int)luaL_checkinteger(L, 8);
+  WORLD px[BRAIN_LGM_WALK_PATH_MAX];
+  WORLD py[BRAIN_LGM_WALK_PATH_MAX];
+  int n, i;
+  luaL_checktype(L, 9, LUA_TTABLE);
+  if (maxTicks < 0) maxTicks = 0;
+  if (maxTicks > BRAIN_LGM_WALK_PATH_MAX) maxTicks = BRAIN_LGM_WALK_PATH_MAX;
+  n = brainPathfinderLgmWalkPath(pf, sx, sy, dmx, dmy, blessX, blessY,
+                                  maxTicks, stuckTicks, px, py, maxTicks);
+  for (i = 0; i < n; i++) {
+    lua_pushinteger(L, px[i]); lua_rawseti(L, 9, i * 2 + 1);
+    lua_pushinteger(L, py[i]); lua_rawseti(L, 9, i * 2 + 2);
+  }
+  lua_pushinteger(L, n);
+  return 1;
+}
+
+/* cpf_lgm_man_speed(mx, my) -> speed
+ *
+ * The builder's walk speed on square (mx, my) as the LGM walk sim sees it
+ * (terrain speed, 0 on a square stamped LGM-impassable). 0 = he cannot walk
+ * there. Lets the brain ask the same "can he step there" question the
+ * engine's start offset asks. */
+static int l_cpf_lgm_man_speed(lua_State *L) {
+  CPF_GET(L);
+  BYTE mx = (BYTE)luaL_checkinteger(L, 1);
+  BYTE my = (BYTE)luaL_checkinteger(L, 2);
+  lua_pushinteger(L, brainPathfinderLgmManSpeed(pf, mx, my));
+  return 1;
+}
+
 /* cpf_set_man_speed(type, speed) -- the man's walk speed on terrain `type`
  * (0..15), or on his blessed tile when `type` is -1, for the LGM walk sim
  * (cpf_lgm_travel_ticks*, cpf_lgm_walk_path). The pathfinder starts on the
@@ -2859,6 +2907,8 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
     { "cpf_lgm_walk_path",         l_cpf_lgm_walk_path },
+    { "cpf_lgm_walk_path_wu",      l_cpf_lgm_walk_path_wu },
+    { "cpf_lgm_man_speed",         l_cpf_lgm_man_speed },
     { "cpf_set_lgm_blocked",       l_cpf_set_lgm_blocked },
     { "cpf_set_man_speed",         l_cpf_set_man_speed },
     { "cpf_estimate_tank_travel_ticks", l_cpf_estimate_tank_travel_ticks },

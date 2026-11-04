@@ -617,6 +617,11 @@ end
 --     that r. A pill's shell tests him where he is now (r = 0 only).
 --   * the builder leaves the tank on the tick after the order; tick t of his
 --     walk is read as tick t of the shell, as lgm_shell_gate does.
+--   * his walk starts where the engine puts him down: the tank's own world
+--     position moved LGM_START_OFFSET towards the target square's centre
+--     (lgm.c lgmApplyStartOffset, see M.lgm_start_pos), not the centre of
+--     the tank's square. The centre can be most of a square away from the
+--     tank, which put him on the wrong side of a blast.
 --
 -- Bases (bases.c basesCanHit), only when the brain can see the answer; when
 -- it cannot, the shell flies on, which is lgm_shell_gate's answer:
@@ -629,10 +634,8 @@ end
 --     is a stop on a boat too;
 --   * a base seen only through an ally's report is not used.
 --
--- What it still cannot see: the walk starts on the tank square's centre (the
--- C walk sim), where the engine starts him on the tank's own position moved
--- LGM_START_OFFSET towards the target; the tank and the other tanks are taken
--- to stand still; a shell's angle is the 8-bit one the snapshot carries.
+-- What it still cannot see: the tank and the other tanks are taken to stand
+-- still; a shell's angle is the 8-bit one the snapshot carries.
 -- =========================================================================
 
 -- bases.c basesGetBrainBaseInRect: a base on our side shows its armour / 5.
@@ -706,6 +709,65 @@ local function base_stops_for_sure(world, info, ob, mx, my)
   return false
 end
 
+-- lgm.c LGM_START_OFFSET: how far from the tank the engine puts the builder
+-- down, towards his target. An engine fact, not a tuning value.
+local LGM_START_OFFSET = 16
+
+-- C integer division: the quotient with its fraction dropped (towards 0).
+local function idiv_trunc(a, b)
+  local q = a / b
+  if q >= 0 then return math.floor(q) end
+  return math.ceil(q)
+end
+
+-- The whole part of the square root of n (n >= 0), exact for any n below
+-- 2^52.
+local function isqrt(n)
+  local r = math.floor(math.sqrt(n))
+  while r * r > n do r = r - 1 end
+  while (r + 1) * (r + 1) <= n do r = r + 1 end
+  return r
+end
+
+-- M.lgm_start_pos(info, dest_mx, dest_my) -> x, y
+--
+-- Where the engine puts the builder down when he is sent to square
+-- (dest_mx, dest_my): lgm.c lgmNewPrimaryRequest sets his target to the
+-- square's centre and puts him on the tank (tankGetWorld), then
+-- lgmApplyStartOffset moves him LGM_START_OFFSET towards the target:
+--   dist = whole part of sqrt(dx^2 + dy^2), dx, dy = target - tank;
+--   only when dist > LGM_START_OFFSET:
+--     x = tank x + dx * LGM_START_OFFSET / dist (C division, towards 0),
+--     y the same;
+--   and not when he could not walk there: the tank's square, the square
+--   the y part enters, and the square the x part enters from there must
+--   all have a man speed above 0 (cpf_lgm_man_speed, the walk sim's view
+--   of mapGetManSpeed). A tank on a boat skips that test
+--   (lgmCheckTankBoat), so he always gets the offset there.
+-- Otherwise he starts on the tank itself. World units.
+function M.lgm_start_pos(info, dest_mx, dest_my)
+  local x, y = info.tankx, info.tanky
+  local dx = dest_mx * 256 + 128 - x
+  local dy = dest_my * 256 + 128 - y
+  local dist = isqrt(dx * dx + dy * dy)
+  if dist <= LGM_START_OFFSET then return x, y end
+  local nx = x + idiv_trunc(dx * LGM_START_OFFSET, dist)
+  local ny = y + idiv_trunc(dy * LGM_START_OFFSET, dist)
+  if not info.inboat and type(cpf_lgm_man_speed) == "function" then
+    local bmx, bmy = bit.rshift(x, 8), bit.rshift(y, 8)
+    local nbmx, nbmy = bit.rshift(nx, 8), bit.rshift(ny, 8)
+    -- No answer (no pathfinder yet) counts as walkable.
+    local function blocked(mx, my)
+      local sp = cpf_lgm_man_speed(mx, my)
+      return sp ~= nil and sp == 0
+    end
+    if blocked(bmx, bmy) then return x, y end
+    if nbmy ~= bmy and blocked(bmx, nbmy) then return x, y end
+    if nbmx ~= bmx and blocked(nbmx, nbmy) then return x, y end
+  end
+  return nx, ny
+end
+
 -- Reused across calls: the tanks a shell can end on, as flat triples
 -- (x, y, player number). Our tank first.
 local TANKS = {}
@@ -723,12 +785,22 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
   local KILL = C.LGM_SHELL_KILL_RADIUS_WU or 128
   local KILL2 = KILL * KILL
   local TANK_HIT2 = (C.TANK_HIT_RADIUS_WU or 112) ^ 2
-  local tmx = bit.rshift(info.tankx, 8)
-  local tmy = bit.rshift(info.tanky, 8)
-  local nw = cpf_lgm_walk_path(tmx, tmy, dest_mx, dest_my, dest_mx, dest_my,
-                               N, C.BUILDER_POOL_LGM_STUCK_TICKS or 150, WALK)
-  local dwell = C.LGM_BUILD_TIME or 20
+  -- The walk starts where the engine puts him down (M.lgm_start_pos), in
+  -- world units. A game built before cpf_lgm_walk_path_wu existed starts
+  -- him on the tank square's centre, as before.
+  -- With no step at all (nw == 0) he stands where he was put down.
+  local nw
   local home_x, home_y = info.tankx, info.tanky
+  if type(cpf_lgm_walk_path_wu) == "function" then
+    home_x, home_y = M.lgm_start_pos(info, dest_mx, dest_my)
+    nw = cpf_lgm_walk_path_wu(home_x, home_y, dest_mx, dest_my, dest_mx, dest_my,
+                              N, C.BUILDER_POOL_LGM_STUCK_TICKS or 150, WALK)
+  else
+    nw = cpf_lgm_walk_path(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
+                           dest_mx, dest_my, dest_mx, dest_my,
+                           N, C.BUILDER_POOL_LGM_STUCK_TICKS or 150, WALK)
+  end
+  local dwell = C.LGM_BUILD_TIME or 20
   local rewind_max = math.max(1, math.floor(C.BUILDER_CERTAIN_DEATH_REWIND_MAX or 1))
 
   local nt = 1

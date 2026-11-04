@@ -4533,6 +4533,24 @@ int brainPathfinderLgmWalkPathMap(BrainPathfinder *pf,
   return n;
 }
 
+int brainPathfinderLgmWalkPath(BrainPathfinder *pf,
+                                WORLD sx, WORLD sy, BYTE dmx, BYTE dmy,
+                                BYTE blessX, BYTE blessY,
+                                int maxTicks, int stuckTicks,
+                                WORLD *pathX, WORLD *pathY, int pathMax) {
+  WORLD dx = ((WORLD)dmx << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
+  WORLD dy = ((WORLD)dmy << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
+  int n = 0;
+  lgmTravelTicksCore(pf, sx, sy, dx, dy, blessX, blessY,
+                     maxTicks, stuckTicks, pathX, pathY, pathMax, &n);
+  return n;
+}
+
+int brainPathfinderLgmManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my) {
+  if (!pf || !pf->map) return 0;
+  return (int)lgmGetBrainManSpeed(pf, mx, my);
+}
+
 /* ------------------------------------------------------------------ */
 /* Tank travel-time estimation (straight-line, tick-by-tick)            */
 /* ------------------------------------------------------------------ */
