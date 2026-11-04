@@ -347,9 +347,17 @@ const char *botManagerLastKillSite(struct lua_State *L) {
     return bot->killSite;
 }
 
+/* The Bot Host has no ServerSim: its brains read the count of bots it runs. */
+static int botHostActiveBots = 0;
+
+void botManagerSetHostActiveBots(int count) {
+    botHostActiveBots = count;
+}
+
 int botManagerActiveBotCountForLua(struct lua_State *L) {
     BotContext *bot = botFromLua((lua_State *)L);
-    if (bot == NULL || bot->sim == NULL) return 0;
+    if (bot == NULL) return 0;
+    if (bot->sim == NULL) return botHostActiveBots;
     return botManagerGetActiveBotCount(bot->sim);
 }
 
@@ -2200,13 +2208,14 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     bot = &sim->botMgr.bots[playerNum];
     if (!bot->active) return;
 
-    /* A seat on a Bot Host: the host is told to let it go and its bot
-     * connection is released without a word, before the seat itself goes. */
+    /* A seat on a Bot Host, or on its way to one: the host is told to let it
+     * go and its bot connection is released without a word, before the seat
+     * itself goes. The hook does nothing for a seat no host was offered. */
+    if (sim->botMgr.remoteHooks.released != NULL) {
+        sim->botMgr.remoteHooks.released(sim->botMgr.remoteHooks.ctx,
+                                         playerNum);
+    }
     if (bot->remote) {
-        if (sim->botMgr.remoteHooks.released != NULL) {
-            sim->botMgr.remoteHooks.released(sim->botMgr.remoteHooks.ctx,
-                                             playerNum);
-        }
         bot->remote = false;
         bot->remoteStatsValid = false;
     }
@@ -2239,11 +2248,11 @@ void botManagerRemoveBotKeepSeat(ServerSim *sim, BYTE playerNum) {
 
     /* A parked runner keeps its brain for the next fielding, so a seat on a
      * Bot Host comes back in-process first and parks like any other. */
+    if (sim->botMgr.remoteHooks.released != NULL) {
+        sim->botMgr.remoteHooks.released(sim->botMgr.remoteHooks.ctx,
+                                         playerNum);
+    }
     if (bot->remote) {
-        if (sim->botMgr.remoteHooks.released != NULL) {
-            sim->botMgr.remoteHooks.released(sim->botMgr.remoteHooks.ctx,
-                                             playerNum);
-        }
         (void)botManagerClearRemote(sim, playerNum);
     }
 
@@ -2569,6 +2578,12 @@ bool botManagerExecLua(ServerSim *sim, BYTE playerNum, const char *src) {
        any of them. The two lines below are what actually decide whether
        there is a state to run in. */
     if (!botManagerHasRunner(sim, playerNum)) return false;
+    if (sim->botMgr.bots[playerNum].remote) {
+        WB_LOG_INFO(WB_LOG_CAT_LUA,
+                    "[bothost] Lua for bot %d: not available for remote bot",
+                    (int)playerNum);
+        return false;
+    }
     if (!sim->botMgr.bots[playerNum].brain.running) return false;
     lua_State *L = sim->botMgr.bots[playerNum].brain.L;
     if (!L || !src) return false;
@@ -2629,6 +2644,12 @@ bool botManagerSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
     /* Parked counts here too, and for the same reason: see botManagerExecLua
        above. This is the call the session-dir publish actually goes through. */
     if (!botManagerHasRunner(sim, playerNum)) return false;
+    if (sim->botMgr.bots[playerNum].remote) {
+        WB_LOG_INFO(WB_LOG_CAT_LUA,
+                    "[bothost] Lua for bot %d: not available for remote bot",
+                    (int)playerNum);
+        return false;
+    }
     if (!sim->botMgr.bots[playerNum].brain.running) return false;
     lua_State *L = sim->botMgr.bots[playerNum].brain.L;
     if (!L || !name || !value) return false;
@@ -2768,6 +2789,12 @@ const ScnTable *botManagerGetBotInitTable(ServerSim *sim, BYTE playerNum) {
 char *botManagerEvalLuaString(ServerSim *sim, BYTE playerNum, const char *src) {
     if (sim == NULL || playerNum >= MAX_TANKS) return NULL;
     if (!sim->botMgr.bots[playerNum].active) return NULL;
+    if (sim->botMgr.bots[playerNum].remote) {
+        WB_LOG_INFO(WB_LOG_CAT_LUA,
+                    "[bothost] Lua eval for bot %d: not available for remote bot",
+                    (int)playerNum);
+        return NULL;
+    }
     if (!sim->botMgr.bots[playerNum].brain.running) return NULL;
     lua_State *L = sim->botMgr.bots[playerNum].brain.L;
     if (!L || !src) return NULL;
@@ -3026,6 +3053,23 @@ bool botManagerClearRemote(ServerSim *sim, BYTE playerNum) {
     botHandLiveSessionDir(sim, bot, playerNum);
     WB_LOG_INFO(WB_LOG_CAT_SIM, "[bothost] bot %d back in-process",
                 (int)playerNum);
+    return true;
+}
+
+bool botManagerRemotePingAllowed(ServerSim *sim, BYTE playerNum) {
+    BotContext *bot;
+    uint32_t    now;
+
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    bot = &sim->botMgr.bots[playerNum];
+    if (!bot->active || !bot->remote) return false;
+    /* The same gap botManagerQueuePing holds an in-process bot to. */
+    now = serverSimGetTick(sim);
+    if (bot->lastPingTick != 0 &&
+        (now + 1 - bot->lastPingTick) < BOT_PING_MIN_GAP_TICKS) {
+        return false;
+    }
+    bot->lastPingTick = now + 1;
     return true;
 }
 

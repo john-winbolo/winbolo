@@ -119,6 +119,7 @@ void transportUdpServerHandleWbnReauth(struct ServerSim *sim,
 const char *transportUdpServerGetClientCountryCode(BYTE playerNum) { (void)playerNum; return ""; }
 uint8_t transportUdpServerGetClientType(BYTE playerNum) { (void)playerNum; return 0; /* CLIENT_TYPE_UNKNOWN */ }
 bool transportUdpServerHasAnyClient(void) { return false; }
+void transportUdpServerPrintBotHosts(void) { }
 bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen) {
   (void)playerNum; (void)out; (void)outLen; return false;
 }

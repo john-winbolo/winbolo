@@ -866,6 +866,17 @@ int run_bot_ping_rate_limit_drops_extras(void);
 int run_bot_ping_ignores_bad_slot(void);
 int run_bot_ping_ignores_a_slot_that_is_not_a_bot(void);
 
+/* Bot Host wire messages and remote seats (test_bot_host.c). */
+int run_bot_host_assign_codec(void);
+int run_bot_host_unassign_codec(void);
+int run_bot_host_table_codec(void);
+int run_bot_host_team_msg_codec(void);
+int run_bot_host_commands_codec(void);
+int run_bot_host_team_msg_fanout(void);
+int run_bot_host_ping_gap(void);
+int run_bot_host_remote_seat_stays_bot(void);
+int run_bot_host_target_ms(void);
+
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with
  * messagedest=0 fan out into allied bot inboxes only, never the chat

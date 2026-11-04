@@ -428,6 +428,12 @@ void botManagerSetRemoteStats(struct ServerSim *sim, BYTE playerNum,
 const char *botManagerGetBrainPath(const struct ServerSim *sim,
                                    BYTE playerNum);
 aiType botManagerGetBotAi(const struct ServerSim *sim, BYTE playerNum);
+/* A smart ping from a Bot Host seat may go to the server: the same
+ * BOT_PING_MIN_GAP_TICKS gap an in-process bot is held to. True records it. */
+bool botManagerRemotePingAllowed(struct ServerSim *sim, BYTE playerNum);
+/* The Bot Host's count of the bots it runs, which its brains read where an
+ * in-process brain reads the server's active bot count. */
+void botManagerSetHostActiveBots(int count);
 
 /*********************************************************
  *NAME:          botManagerInit

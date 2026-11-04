@@ -32,6 +32,8 @@
 #include "transport_udp.h"  /* UdpServerClient, MAX_SPECTATORS, SubscriberHandle */
 #include "transport_udp_internal.h" /* ClientEventQueue, UDP_MAX_PAYLOAD */
 #include "channel_mux.h"    /* ChannelMux */
+#include "control_event.h"  /* BOT_HOST_BRAIN_NAME_LEN, BOT_HOST_INIT_ARG_LEN */
+#include "client_command.h" /* CmdBotStats */
 #include "bulk_transfer.h"  /* BulkSender, BulkReceiver */
 #include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy */
 #include "net_impair.h"     /* NetImpair */
@@ -227,6 +229,59 @@ typedef struct {
 #define PUNCH_QUEUE_SIZE        8
 #define PUNCH_BURST_PACKETS     5
 #define PUNCH_BURST_INTERVAL    3   /* 3 ticks @ 50 Hz ≈ 60 ms */
+
+/* A Bot Host control connection. It holds no tank seat and is never shown to
+ * players; the server sends it the assign, unassign, init table, hint and team
+ * message events on its own CHANNEL_CONTROL. */
+typedef struct {
+    struct sockaddr_in addr;
+    bool     connected;
+    uint64_t connId;
+    char     name[JOIN_BOT_HOST_NAME_LEN];
+    uint8_t  slots;              /* bot connections the host offers */
+    uint32_t lastReceivedTick;
+    uint32_t outSequence;
+    uint16_t pingMs;
+    ChannelMux channelMux;
+} BotHostConn;
+
+/* Where one bot seat's brain runs.
+ *   LOCAL   - in-process.
+ *   PENDING - an assign went to a host; the brain still runs in-process
+ *             until the host's bot connection binds with the token.
+ *   BOUND   - the bot connection is bound; the brain still runs in-process
+ *             until the first input arrives from the host.
+ *   REMOTE  - the brain runs on the host. */
+enum {
+    BOT_SEAT_LOCAL = 0,
+    BOT_SEAT_PENDING,
+    BOT_SEAT_BOUND,
+    BOT_SEAT_REMOTE
+};
+
+typedef struct {
+    uint8_t  state;
+    int8_t   host;               /* index into botHosts[], -1 when LOCAL */
+    uint8_t  token[JOIN_BOT_SLOT_TOKEN_LEN];
+    uint16_t gen;                /* rises with every assign for the seat */
+    uint32_t sinceTick;          /* tickCount the state was entered */
+    uint32_t lastPollTick;       /* tickCount of the last settings check */
+    /* The settings the host was last sent, compared by the settings check. */
+    char     brain[BOT_HOST_BRAIN_NAME_LEN];
+    uint8_t  ai;
+    uint8_t  team;
+    char     initArg[BOT_HOST_INIT_ARG_LEN];
+    /* A round started: the host is owed a reload once the bot connection
+     * holds the round's map. */
+    bool     reloadOwed;
+    /* The seat fell back to in-process: it goes back to a host only at the
+     * next round start or in the lobby. */
+    bool     noReturn;
+    /* Full-view seats: the server's mines are sent to the bot connection
+     * once its map download is done, a column range per tick. */
+    bool     mineSeedDone;
+    uint16_t mineSeedColumn;
+} BotHostSeat;
 
 /* Server-side global state */
 typedef struct UdpServerState {
@@ -467,6 +522,14 @@ typedef struct UdpServerState {
      * without this the only case that matters, the leaver being the one talker,
      * computes back to the same empty set and is never sent. */
     bool voiceTalkingResend;
+
+    /* Bot Host. botHostEnabled is set by -bothostkey; with it off every Bot
+     * Host join is refused and no seat ever leaves the process. */
+    bool        botHostEnabled;
+    char        botHostKey[JOIN_BOT_HOST_KEY_LEN + 1];
+    BotHostConn botHosts[MAX_BOT_HOSTS];
+    BotHostSeat botSeats[MAX_TANKS];
+    int         botHostLastState; /* serverState seen last tick, -1 at start */
 } UdpServerState;
 
 extern UdpServerState udpServer;
@@ -607,6 +670,39 @@ bool     serverChooseUnverifiedSuffix(const char *baseName, int excludeSlot,
  * rename notice and the join chat line through the two broadcast helpers. The
  * rest of the file is public API and is declared in transport_udp.h. */
 void serverDisconnectClient(struct ServerSim *sim, int idx, bool graceful);
+
+/* Bot Host connections and the seats they run. Owned by
+ * src/server/udp/udp_server_bothost.c. The join handler hands it the two Bot
+ * Host join kinds; the dispatcher hands it the host's ping, channel frame and
+ * quit and a bot connection's first input and its two Bot Host commands; the
+ * timeout sweep services it once per tick. serverBotSlotLost is what every
+ * path that would tear a player down calls instead for a bot connection: the
+ * seat goes back in-process without a word to anyone. */
+bool serverFillRandomBytes(uint8_t *buf, size_t n);
+int  serverFindBotHost(const struct sockaddr_in *addr);
+void serverSendBotHostAccept(int h, struct ServerSim *sim);
+void serverAcceptBotHost(struct ServerSim *sim,
+                         const struct sockaddr_in *fromAddr,
+                         const char *name, const uint8_t *extra,
+                         int extraLen);
+void serverBindBotSlot(struct ServerSim *sim,
+                       const struct sockaddr_in *fromAddr,
+                       const uint8_t *extra, int extraLen,
+                       uint8_t clientType);
+bool serverBotHostHandlePing(const uint8_t *buf, int len,
+                             const struct sockaddr_in *fromAddr);
+bool serverBotHostHandleChannel(const uint8_t *buf, int len,
+                                const struct sockaddr_in *fromAddr);
+bool serverBotHostHandleQuit(struct ServerSim *sim,
+                             const struct sockaddr_in *fromAddr);
+bool serverBotSlotOnInput(struct ServerSim *sim, int slot);
+void serverBotSlotLost(struct ServerSim *sim, int slot, const char *why);
+void serverBotSlotTeamMsg(struct ServerSim *sim, int slot, const char *text);
+void serverBotSlotStats(struct ServerSim *sim, int slot,
+                        const CmdBotStats *st);
+bool serverBotSlotPingAllowed(struct ServerSim *sim, int slot);
+void serverServiceBotHosts(struct ServerSim *sim);
+void serverBotHostsReset(void);
 void serverSendServerEnglishBroadcast(struct ServerSim *sim,
                                       const char *message);
 void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,

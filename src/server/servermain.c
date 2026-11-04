@@ -912,6 +912,8 @@ void printArgs() {
   fprintf(stderr, "                -tracker <host> uses <host> with default port %d\n", DEFAULT_TRACKER_PORT);
   fprintf(stderr, "                -tracker <host:port> uses the specified host and port\n");
   fprintf(stderr, "-notracker    - do not notify any Internet tracker\n");
+  fprintf(stderr, "-bothostkey <key> - let WinBoloBotHost programs that give this key\n");
+  fprintf(stderr, "                run this server's bots on other machines (up to 64 characters)\n");
   fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
   fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
@@ -3058,6 +3060,16 @@ int main(int argc, char **argv) {
       SDL_Quit();
 #endif
       return 0;
+    }
+    /* Bot Hosts: other machines that run this server's bot brains. Off
+     * without a key. */
+    {
+      int argNum = findArg(argc, argv, "bothostkey");
+      if (argNum != ARG_NOT_FOUND) {
+        if (!transportUdpServerSetBotHostKey(serverSim, argv[argNum])) {
+          fprintf(stderr, "Bot Host key not used\n");
+        }
+      }
     }
     /* Say what the finder will show, after the sanitising, so an operator
      * sees a name that came out shorter or cleaner than typed. */

@@ -255,6 +255,26 @@ bool serverSimIsTerminalGameOver(const ServerSim *sim) {
  * against thinkCount so a cumulative count can't masquerade as "spiking right
  * now". Shared by the info command and the periodic overrun lines. */
 static void serverSimPrintBotTiming(const BotInfo *bi) {
+    if (bi->remote) {
+        /* The brain runs on a Bot Host: its numbers are the host's last
+         * report, about once a second. */
+        double rate = bi->thinkCount > 0
+            ? (double)bi->overrunCount * 100.0 / (double)bi->thinkCount
+            : 0.0;
+        fprintf(stdout,
+                "    [BOT] brain=%s host=\"%s\" last=%.1fms avg=%.1fms peak=%.1fms target=%.1fms overruns=%u/%u (%.2f%%) kills=%u tier=%u\n",
+                bi->brainName,
+                bi->hostName[0] != '\0' ? bi->hostName : "?",
+                bi->lastThinkMs, bi->avgThinkMs, bi->maxThinkMs,
+                bi->targetMs, bi->overrunCount, bi->thinkCount, rate,
+                bi->killCount, (unsigned)bi->tier);
+        return;
+    }
+    if (bi->held) {
+        fprintf(stdout,
+                "    [BOT] held: back from a Bot Host, no brain until the next round\n");
+        return;
+    }
     if (bi->hasBrain) {
         if (bi->overrunCount == 0) {
             fprintf(stdout,
@@ -462,6 +482,9 @@ void serverSimInformation(ServerSim *sim, bool locked) {
             }
         }
     }
+
+    /* The Bot Hosts, for the operator only. Prints nothing without one. */
+    transportUdpServerPrintBotHosts();
 
     serverSimPrintTiming(sim);
 

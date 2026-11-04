@@ -3246,6 +3246,107 @@ if(HAVE_SENTRY AND TARGET crashpad_handler)
 endif()
 
 # ---------------------------------------------------------------------------
+# WinBoloBotHost (runs a WinBoloDS server's bot brains on another machine)
+# ---------------------------------------------------------------------------
+
+set(BOTHOST_SOURCES
+    src/bolo/transport_udp_client.c
+    src/bolo/nat_portmap.c
+    src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
+    src/gui/sdl3/lang.c
+    src/gui/sdl3/dns_lookups.c
+    src/bothost/bothost_main.c src/headless/headless_frontend.c
+    src/third_party/tweetnacl/tweetnacl.c
+)
+file(GLOB BOTHOST_BSD_SOURCES src/bsd/*.c)
+list(APPEND BOTHOST_SOURCES ${BOTHOST_BSD_SOURCES})
+file(GLOB BOTHOST_COMMON_SOURCES src/common/*.c)
+list(APPEND BOTHOST_SOURCES ${BOTHOST_COMMON_SOURCES})
+if(NOT WIN32)
+    list(FILTER BOTHOST_SOURCES EXCLUDE REGEX ".*common/util\\.c$")
+endif()
+
+add_executable(WinBoloBotHost ${BOTHOST_SOURCES})
+target_sources(WinBoloBotHost PRIVATE src/steam/steam_wrapper_stub.c)
+target_compile_definitions(WinBoloBotHost PRIVATE
+    HAVE_SCREEN_C=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+target_include_directories(WinBoloBotHost PRIVATE
+    src/gui/sdl3
+    src/gui
+    src/server
+    src/headless
+    src/bothost
+    src/mapeditor
+    ${cjson_SOURCE_DIR}
+    src/third_party/tweetnacl
+)
+bolo_apply_include_rules(WinBoloBotHost runtime_only)
+# The host drives bot ClientSims with the server's bot runner, so its main
+# file reads bot and transport internals, as transport_udp_client.c does.
+bolo_grant_internal_source_access(WinBoloBotHost
+    src/bolo/transport_udp_client.c
+    src/bothost/bothost_main.c)
+
+if(WIN32)
+    target_link_libraries(WinBoloBotHost PRIVATE ws2_32 winmm user32)
+    target_compile_options(WinBoloBotHost PRIVATE -fcommon)
+else()
+    target_link_libraries(WinBoloBotHost PRIVATE ${MATH_LIB} pthread)
+    target_compile_options(WinBoloBotHost PRIVATE -fcommon)
+endif()
+if(TARGET maxminddb)
+    target_link_libraries(WinBoloBotHost PRIVATE maxminddb)
+    target_compile_definitions(WinBoloBotHost PRIVATE HAVE_MAXMINDDB=1)
+endif()
+target_link_libraries(WinBoloBotHost PRIVATE
+    bolo_static
+    scenario_static
+    ${SERVER_LINK_GROUP}
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server
+    winbolonet_client)
+target_link_libraries(WinBoloBotHost PRIVATE
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
+
+target_sources(WinBoloBotHost PRIVATE src/common/sentry_integration.c)
+if(HAVE_SENTRY)
+    target_compile_definitions(WinBoloBotHost PRIVATE HAVE_SENTRY=1)
+    if(SENTRY_DSN)
+        target_compile_definitions(WinBoloBotHost PRIVATE SENTRY_DSN="${SENTRY_DSN}")
+    endif()
+    target_link_libraries(WinBoloBotHost PRIVATE sentry::sentry)
+endif()
+
+add_custom_command(TARGET WinBoloBotHost POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:WinBoloBotHost>"
+    COMMENT "Copying SDL3 shared library to WinBoloBotHost output directory"
+)
+winbolo_stage_onnxruntime(WinBoloBotHost)
+add_custom_command(TARGET WinBoloBotHost POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloBotHost>/Brains"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "$<TARGET_FILE_DIR:WinBoloBotHost>/Brains/GoalHunter"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:WinBoloBotHost>/data/lang"
+    COMMENT "Copying brain scripts and lang files to WinBoloBotHost output directory"
+)
+if(HAVE_SENTRY AND TARGET crashpad_handler)
+    add_custom_command(TARGET WinBoloBotHost POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:crashpad_handler>" "$<TARGET_FILE_DIR:WinBoloBotHost>"
+        COMMENT "Copying crashpad_handler to WinBoloBotHost output directory"
+    )
+endif()
+
+# ---------------------------------------------------------------------------
 # WinBoloGym shared library (C API for ML training)
 # ---------------------------------------------------------------------------
 
@@ -3746,7 +3847,7 @@ endif()
 # MinGW: statically link the GCC/C++ runtime so the executables don't need
 # libgcc_s_seh-1.dll, libstdc++-6.dll, or libwinpthread-1.dll at runtime.
 if(MINGW)
-    foreach(_tgt WinBolo WinBoloDS LogViewer WinBoloHeadless BrainTest MapEditor)
+    foreach(_tgt WinBolo WinBoloDS LogViewer WinBoloHeadless WinBoloBotHost BrainTest MapEditor)
         if(TARGET ${_tgt})
             target_link_options(${_tgt} PRIVATE -static)
         endif()
@@ -3757,6 +3858,7 @@ set_flat_output(LogViewer        "${CMAKE_BINARY_DIR}")
 set_flat_output(WinBolo          "${CMAKE_BINARY_DIR}")
 set_flat_output(WinBoloDS        "${CMAKE_BINARY_DIR}")
 set_flat_output(WinBoloHeadless  "${CMAKE_BINARY_DIR}")
+set_flat_output(WinBoloBotHost   "${CMAKE_BINARY_DIR}")
 set_flat_output(BrainTest        "${CMAKE_BINARY_DIR}")
 set_flat_output(MapEditor        "${CMAKE_BINARY_DIR}")
 set_flat_output(winbolo_gym      "${CMAKE_BINARY_DIR}")
@@ -4549,6 +4651,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bot_chat_routing.c
     tests/unit/test_bot_ping.c
     tests/unit/test_brain_internal_msg_routing.c
+    tests/unit/test_bot_host.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
@@ -5933,6 +6036,15 @@ set(_unit_test_names
     bot_ping_ignores_bad_slot
     bot_ping_ignores_a_slot_that_is_not_a_bot
     internal_msg_reaches_allied_bot
+    bot_host_assign_codec
+    bot_host_unassign_codec
+    bot_host_table_codec
+    bot_host_team_msg_codec
+    bot_host_commands_codec
+    bot_host_team_msg_fanout
+    bot_host_ping_gap
+    bot_host_remote_seat_stays_bot
+    bot_host_target_ms
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot
     internal_msg_skips_inactive_bot_slot

@@ -94,6 +94,9 @@ typedef struct {
  * its accept handling off this sentinel; a player-join client sees it as an
  * out-of-range slot (>= MAX_TANKS) and rejects the accept. */
 #define SPECTATOR_ACCEPT_NO_SLOT    0xFFu
+/* JOIN_ACCEPT slot byte the server sends to a Bot Host control connection. The
+ * connection holds no tank seat, like a spectator, but is not one. */
+#define BOT_HOST_ACCEPT_NO_SLOT     0xFEu
 
 /* Cap on concurrent tankless spectator connections held transport-side in
  * spectators[], independent of the MAX_TANKS player slots.  The operator's
@@ -268,6 +271,12 @@ Transport transportUdpClientCreate(struct ClientSim *clientSim,
 
 /* Destroys a client-side UDP transport. */
 void transportUdpClientDestroy(Transport *t);
+
+/* Turns a new client transport into a Bot Host bot connection: its JOINs
+ * carry JOIN_FLAG_BOT_SLOT and the one-time token
+ * (JOIN_BOT_SLOT_TOKEN_LEN bytes) from the server's CTRL_BOT_HOST_ASSIGN.
+ * Call it right after the connect, before the first tick. */
+bool transportUdpClientSetBotSlotToken(Transport *t, const uint8_t *token);
 
 /* Returns the client join state (for UI to display connecting/error). */
 UdpClientJoinState transportUdpClientGetJoinState(Transport *t);
@@ -627,6 +636,12 @@ typedef struct UdpServerClient {
                                   * encodes via the codec table and unicasts
                                   * to this client.  SUBSCRIBER_HANDLE_INVALID
                                   * when no subscription is active. */
+    bool botSlot;                /* this connection is a Bot Host bot
+                                  * connection bound to the bot seat of the
+                                  * same index. It is not a player: it never
+                                  * joined the roster and is never counted,
+                                  * listed or announced. Cleared when the
+                                  * connection is released. */
 } UdpServerClient;
 
 /* The port the server's socket is actually bound to, valid once
@@ -821,6 +836,13 @@ uint32_t transportUdpServerGetTickCount(void);
  * therefore needs a settling window before client UIs flip to game
  * render mode). */
 bool transportUdpServerHasAnyClient(void);
+
+/* Bot Host. SetBotHostKey turns Bot Host connections on with this key (an
+ * empty key turns them off) and hands the bot manager the hooks for seats
+ * whose brains run on a host. PrintBotHosts writes one line per connected
+ * host to stdout for the info and status commands. */
+bool transportUdpServerSetBotHostKey(struct ServerSim *sim, const char *key);
+void transportUdpServerPrintBotHosts(void);
 
 /* Refresh the server's compressed map data and re-prime each connected
  * client for download (resend JOIN_ACCEPT, reset chunk tracking).
