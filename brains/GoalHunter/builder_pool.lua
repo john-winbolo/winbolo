@@ -1863,6 +1863,13 @@ function M.update_job(state, world, info, now)
       dead and (outcome .. "+lgm_dead") or outcome,
       age, dead and "dead" or "home", detail, lgm_chip))
   end
+  -- QUICK_REPAIR_DONE / QUICK_REPAIR_ABORT: how a quick repair ended.
+  if job.quick then
+    print2(string.format(
+      "%s t=%d pill=(%d,%d) outcome=%s took=%dt lgm=%s",
+      outcome == "ok" and "QUICK_REPAIR_DONE" or "QUICK_REPAIR_ABORT",
+      now, job.mx, job.my, outcome, age, dead and "dead" or "home"))
+  end
   state._bp_last = { type = job.type, mx = job.mx, my = job.my,
                      outcome = outcome, lgm_dead = dead or nil, tick = now }
   state._bp_job = nil
@@ -2772,6 +2779,14 @@ function M.rung(state, world, info, now)
     seed_tail(bp.rows or {}, row, false)
       .. (row.forced and (" forced=" .. row.forced) or "")
       .. (row.quick and " quick=1" or "")))
+  -- QUICK_REPAIR_SEND: one searchable line when the quick repair of a take
+  -- blocker (C.QUICK_REPAIR_ON_TAKE) actually sends the builder.
+  if row.quick then
+    print2(string.format(
+      "QUICK_REPAIR_SEND t=%d pill=(%d,%d) hp=%d job=%s out=%s trees=%d-%d goal=%s",
+      now, row.mx, row.my, row.hp or 0, row.type, tostring(row.out_ticks or "-"),
+      info.trees or 0, row.trees_need or 0, (state.goal and state.goal.kind) or "?"))
+  end
   -- BP_PRED: the ROUTE the return leg was priced against, tile by tile, on the
   -- one tick it actually decided something. The trip on the dispatch line is
   -- only hand-checkable if the reader can see the path pred{} was read off --
