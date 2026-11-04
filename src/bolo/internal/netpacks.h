@@ -1014,6 +1014,26 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               Refused from any connection
                                               that is not a Bot Host bot. */
 
+/* How a Bot Host and a server find each other (bot_host_link.h). None of the
+ * three belongs to a connection. */
+#define PACKET_BOT_HOST_ANNOUNCE       234  /* Bot Host -> server game port
+                                              { BotHostAnnounce }
+                                              "I am open to take bots".
+                                              Taken only from a host on the
+                                              server's -bothosts list (any
+                                              host when the server has a key
+                                              and no list). */
+#define PACKET_BOT_HOST_QUERY          235  /* server -> Bot Host listen port
+                                              { proto 1 }
+                                              "do you have free slots?" The
+                                              host answers with an ANNOUNCE
+                                              when the server is on its
+                                              --servers list. */
+#define PACKET_BOT_HOST_INVITE         236  /* server -> Bot Host listen port
+                                              { proto 1 }
+                                              "connect now": the host opens
+                                              its control connection. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

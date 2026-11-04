@@ -55,6 +55,8 @@
 #define BOT_HOST_TEAM_MSG_LEN     (PACKET_MAX_CHAT_MESSAGE + 2) /* == BRAIN_INBOX_MSG_LEN */
 #define BOT_HOST_STATUS_NAME_LEN  CLIENT_BOT_HOST_NAME_LEN /* == JOIN_BOT_HOST_NAME_LEN */
 #define BOT_HOST_STATUS_ROWS      CLIENT_BOT_HOST_ROWS     /* == MAX_BOT_HOSTS */
+/* CTRL_BOT_HOST_SLOTS refuseSeat when no assign is turned down. */
+#define BOT_HOST_SLOTS_NO_REFUSE  0xFFu
 
 /* BOT_HOST_SYNC_* (the brain sync states) are in client_sim.h. */
 
@@ -473,6 +475,13 @@ typedef enum {
      * manifest of generation gen (bytes done and to do), and ready once it
      * holds every file of it. */
     CTRL_BOT_HOST_SYNC,
+    /* CTRL_BOT_HOST_SLOTS — Bot Host to server: the bot seats this server
+     * may give the host now, which is the seats it runs for this server
+     * plus the seats of its pool no server holds. A host shared by several
+     * servers sends it each time that number changes. With refuseSeat below
+     * MAX_TANKS it also turns down the assign of that seat (refuseGen is the
+     * assign's gen): its pool filled first, and the seat stays in-process. */
+    CTRL_BOT_HOST_SLOTS,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1516,6 +1525,13 @@ typedef struct ControlEvent {
             uint32_t total;      /* bytes to download */
             uint8_t  ready;      /* every file of gen is held and checked */
         } botHostSync;
+
+        /* CTRL_BOT_HOST_SLOTS — see the enum. */
+        struct {
+            uint8_t  slots;      /* at most BOT_HOST_MAX_SLOTS */
+            uint8_t  refuseSeat; /* BOT_HOST_SLOTS_NO_REFUSE: none */
+            uint16_t refuseGen;
+        } botHostSlots;
     } u;
 } ControlEvent;
 

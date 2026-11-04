@@ -176,7 +176,10 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_MAP_PING, "MAP_PING") \
     X(PACKET_PLAYER_PING_MUTE, "PLAYER_PING_MUTE") \
     X(PACKET_BOT_TEAM_MSG, "BOT_TEAM_MSG") \
-    X(PACKET_BOT_STATS, "BOT_STATS")
+    X(PACKET_BOT_STATS, "BOT_STATS") \
+    X(PACKET_BOT_HOST_ANNOUNCE, "BOT_HOST_ANNOUNCE") \
+    X(PACKET_BOT_HOST_QUERY, "BOT_HOST_QUERY") \
+    X(PACKET_BOT_HOST_INVITE, "BOT_HOST_INVITE")
 
 const char *packetTypeName(uint8_t type) {
     switch (type) {

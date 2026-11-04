@@ -3828,6 +3828,40 @@ static bool decodeBotHostSyncBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_BOT_HOST_SLOTS body: [slots 1][refuseSeat 1][refuseGen 2]. slots is
+ * at most BOT_HOST_MAX_SLOTS (MAX_TANKS); refuseSeat is a seat below
+ * MAX_TANKS or BOT_HOST_SLOTS_NO_REFUSE. */
+#define BOT_HOST_SLOTS_LEN 4
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostSlotsBody(const ControlEvent *evt,
+                                           const struct UdpServerClient *recipient,
+                                           uint8_t *buf, size_t bufCap,
+                                           size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_SLOTS_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostSlots.slots;
+    buf[1] = evt->u.botHostSlots.refuseSeat;
+    packU16(buf + 2, evt->u.botHostSlots.refuseGen);
+    *outLen = BOT_HOST_SLOTS_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostSlotsBody(const uint8_t *buf, size_t len,
+                                   ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len != BOT_HOST_SLOTS_LEN) {
+        return false;
+    }
+    if (buf[0] > MAX_TANKS) return false;
+    if (buf[1] >= MAX_TANKS && buf[1] != BOT_HOST_SLOTS_NO_REFUSE) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_SLOTS;
+    outEvt->u.botHostSlots.slots      = buf[0];
+    outEvt->u.botHostSlots.refuseSeat = buf[1];
+    outEvt->u.botHostSlots.refuseGen  = unpackU16(buf + 2);
+    return true;
+}
+
 /* CTRL_SCN_MARKER body: [id 1][kind 1][x 1][y 1][slot 1][colour 1]. */
 #define SCN_MARKER_BODY_LEN 6
 
@@ -4356,6 +4390,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_STATUS]       = encodeBotHostStatusBody,
     [CTRL_BOT_HOST_FILE_REQ]     = encodeBotHostFileReqBody,
     [CTRL_BOT_HOST_SYNC]         = encodeBotHostSyncBody,
+    [CTRL_BOT_HOST_SLOTS]        = encodeBotHostSlotsBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -4422,6 +4457,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_STATUS]       = decodeBotHostStatusBody,
     [CTRL_BOT_HOST_FILE_REQ]     = decodeBotHostFileReqBody,
     [CTRL_BOT_HOST_SYNC]         = decodeBotHostSyncBody,
+    [CTRL_BOT_HOST_SLOTS]        = decodeBotHostSlotsBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -4552,6 +4588,7 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_STATUS:        return "CTRL_BOT_HOST_STATUS";
     case CTRL_BOT_HOST_FILE_REQ:      return "CTRL_BOT_HOST_FILE_REQ";
     case CTRL_BOT_HOST_SYNC:          return "CTRL_BOT_HOST_SYNC";
+    case CTRL_BOT_HOST_SLOTS:         return "CTRL_BOT_HOST_SLOTS";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

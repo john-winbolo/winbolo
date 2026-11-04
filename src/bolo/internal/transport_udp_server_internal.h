@@ -36,6 +36,7 @@
 #include "client_command.h" /* CmdBotStats */
 #include "bulk_transfer.h"  /* BulkSender, BulkReceiver */
 #include "brain_sync.h"     /* BrainSyncManifest — the Bot Host brain sync */
+#include "bot_host_link.h"  /* BotHostAllow, BotHostAnnounce — -bothosts */
 #include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy */
 #include "net_impair.h"     /* NetImpair */
 #include "../../winbolonet/winbolonet_core.h" /* WINBOLONET_KEY_LEN */
@@ -236,10 +237,16 @@ typedef struct {
  * message events on its own CHANNEL_CONTROL. */
 typedef struct {
     struct sockaddr_in addr;
+    /* Where the host listens for QUERY and INVITE: the join's address with
+     * the listen port the join carries (0 from a host that sent none). */
+    struct sockaddr_in listenAddr;
     bool     connected;
     uint64_t connId;
     char     name[JOIN_BOT_HOST_NAME_LEN];
-    uint8_t  slots;              /* bot connections the host offers */
+    /* Bot seats this server may give the host: the join's count, then each
+     * CTRL_BOT_HOST_SLOTS. A host shared with other servers lowers it as
+     * they take its slots. */
+    uint8_t  slots;
     uint32_t lastReceivedTick;
     uint32_t outSequence;
     uint16_t pingMs;
@@ -549,10 +556,28 @@ typedef struct UdpServerState {
      * computes back to the same empty set and is never sent. */
     bool voiceTalkingResend;
 
-    /* Bot Host. botHostEnabled is set by -bothostkey; with it off every Bot
-     * Host join is refused and no seat ever leaves the process. */
+    /* Bot Host. botHostEnabled is set by -bothostkey or -bothosts; with it
+     * off every Bot Host join is refused and no seat ever leaves the
+     * process. With a list only the listed hosts are heard; with a key a
+     * host must give it; with both, both. */
     bool        botHostEnabled;
     char        botHostKey[JOIN_BOT_HOST_KEY_LEN + 1];
+    int          botHostAllowCount;
+    BotHostAllow botHostAllow[BOT_HOST_LINK_MAX_ADDRS];
+    char         botHostAllowText[BOT_HOST_LINK_MAX_ADDRS][BOT_HOST_LINK_HOST_LEN + 8];
+    /* The last ANNOUNCE from each listed host and when it came (tickCount,
+     * 0: none yet). */
+    BotHostAnnounce botHostAnnounce[BOT_HOST_LINK_MAX_ADDRS];
+    uint32_t     botHostAnnounceTick[BOT_HOST_LINK_MAX_ADDRS];
+    /* Ask every listed host for free slots at the next service. */
+    const char  *botHostQueryWhy;
+    int          botHostLastHumans;
+    /* tickCount since which no bots were wanted, 0 while they are. */
+    uint32_t     botHostUnwantedSince;
+    /* Hosts not on the list that were already logged, so each is logged
+     * once. */
+    struct sockaddr_in botHostIgnored[32];
+    int          botHostIgnoredCount;
     BotHostConn botHosts[MAX_BOT_HOSTS];
     BotHostSeat botSeats[MAX_TANKS];
     int         botHostLastState; /* serverState seen last tick, -1 at start */
@@ -728,6 +753,10 @@ bool serverBotHostHandleChannel(const uint8_t *buf, int len,
                                 const struct sockaddr_in *fromAddr);
 bool serverBotHostHandleQuit(struct ServerSim *sim,
                              const struct sockaddr_in *fromAddr);
+/* PACKET_BOT_HOST_ANNOUNCE from any address: invite a listed host with free
+ * slots while this server wants bots run. */
+void serverBotHostHandleAnnounce(struct ServerSim *sim, const uint8_t *buf,
+                                 int len, const struct sockaddr_in *fromAddr);
 bool serverBotSlotOnInput(struct ServerSim *sim, int slot);
 void serverBotSlotLost(struct ServerSim *sim, int slot, const char *why);
 void serverBotSlotTeamMsg(struct ServerSim *sim, int slot, const char *text);

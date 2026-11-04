@@ -884,6 +884,12 @@ int run_brain_sync_manifest_codec(void);
 int run_brain_sync_cache_plan(void);
 int run_brain_sync_chunk(void);
 
+/* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
+int run_bot_host_link_announce_codec(void);
+int run_bot_host_link_addr_list(void);
+int run_bot_host_link_allow(void);
+int run_bot_host_slots_codec(void);
+
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with
  * messagedest=0 fan out into allied bot inboxes only, never the chat

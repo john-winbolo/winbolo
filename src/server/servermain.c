@@ -957,6 +957,12 @@ void printArgs() {
   fprintf(stderr, "-notracker    - do not notify any Internet tracker\n");
   fprintf(stderr, "-bothostkey <key> - let WinBoloBotHost programs that give this key\n");
   fprintf(stderr, "                run this server's bots on other machines (up to 64 characters)\n");
+  fprintf(stderr, "-bothosts <ip[:port],...> - the WinBoloBotHost programs this server may use\n");
+  fprintf(stderr, "                (or @file, or a file name: one entry per line, # comments).\n");
+  fprintf(stderr, "                The port is the host's --listen port (default %d). The server\n", BOT_HOST_DEFAULT_LISTEN_PORT);
+  fprintf(stderr, "                asks them for free slots at start, after each game and when a\n");
+  fprintf(stderr, "                player joins an empty lobby. With -bothostkey too, a listed host\n");
+  fprintf(stderr, "                must also give the key; without it the list alone is the proof.\n");
   fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
   fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
@@ -3105,12 +3111,18 @@ int main(int argc, char **argv) {
       return 0;
     }
     /* Bot Hosts: other machines that run this server's bot brains. Off
-     * without a key. */
+     * without a key and a list. */
     {
       int argNum = findArg(argc, argv, "bothostkey");
       if (argNum != ARG_NOT_FOUND) {
         if (!transportUdpServerSetBotHostKey(serverSim, argv[argNum])) {
           fprintf(stderr, "Bot Host key not used\n");
+        }
+      }
+      argNum = findArg(argc, argv, "bothosts");
+      if (argNum != ARG_NOT_FOUND) {
+        if (!transportUdpServerSetBotHostList(serverSim, argv[argNum])) {
+          fprintf(stderr, "Bot Host list not used\n");
         }
       }
     }

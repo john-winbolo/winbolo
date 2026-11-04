@@ -4655,6 +4655,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Bot Host brain sync: the manifest codec, the cache path checks and the
     # cache plan (held, copied from another version, to download).
     tests/unit/test_brain_sync.c
+    # Bot Host link: the announce codec, the address lists and the allow
+    # list a server and a Bot Host use to find each other.
+    tests/unit/test_bot_host_link.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
@@ -6053,6 +6056,10 @@ set(_unit_test_names
     brain_sync_manifest_codec
     brain_sync_cache_plan
     brain_sync_chunk
+    bot_host_link_announce_codec
+    bot_host_link_addr_list
+    bot_host_link_allow
+    bot_host_slots_codec
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot
     internal_msg_skips_inactive_bot_slot

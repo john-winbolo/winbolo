@@ -75,9 +75,11 @@ typedef struct {
  * was issued for, without a roster join; it never takes a free seat. */
 #define JOIN_FLAG_BOT_SLOT          0x08
 /* bit 4: the joiner is a Bot Host control connection. A key
- * (JOIN_BOT_HOST_KEY_LEN bytes), a slot count (1 byte) and a host name
- * (JOIN_BOT_HOST_NAME_LEN bytes) follow the cookie. Accepted only when the
- * server runs with -bothostkey and the key matches. The connection holds no
+ * (JOIN_BOT_HOST_KEY_LEN bytes), a slot count (1 byte), a host name
+ * (JOIN_BOT_HOST_NAME_LEN bytes) and the host's listen port (2 bytes,
+ * big-endian; left out by an older host) follow the cookie. Accepted only
+ * when the server runs with -bothostkey or -bothosts, the key matches (with
+ * a key) and the host is on the list (with a list). The connection holds no
  * tank seat and is not shown to players. */
 #define JOIN_FLAG_BOT_HOST          0x10
 
@@ -842,6 +844,12 @@ bool transportUdpServerHasAnyClient(void);
  * whose brains run on a host. PrintBotHosts writes one line per connected
  * host to stdout for the info and status commands. */
 bool transportUdpServerSetBotHostKey(struct ServerSim *sim, const char *key);
+/* -bothosts: the Bot Hosts this server may use, "ip[:port],..." or a file of
+ * them (see botHostAddrListLoad). The port is the host's listen port
+ * (BOT_HOST_DEFAULT_LISTEN_PORT when left out). Turns Bot Host connections
+ * on as a key does. False when the list cannot be read or a host name does
+ * not resolve. */
+bool transportUdpServerSetBotHostList(struct ServerSim *sim, const char *arg);
 void transportUdpServerPrintBotHosts(void);
 
 /* Refresh the server's compressed map data and re-prime each connected

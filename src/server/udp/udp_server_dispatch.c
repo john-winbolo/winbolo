@@ -1921,6 +1921,9 @@ void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
     }
 
     switch (pktType) {
+        case PACKET_BOT_HOST_ANNOUNCE:
+            serverBotHostHandleAnnounce(sim, buf, len, fromAddr);
+            break;
         case PACKET_JOIN_REQUEST:
             serverHandleJoinRequest(buf, len, fromAddr, sim);
             break;
