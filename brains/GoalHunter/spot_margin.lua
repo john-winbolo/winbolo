@@ -269,6 +269,31 @@ function M.aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
   return nil
 end
 
+-- Same shell test as M.aim_line_trees, but it also tells WHY a line fails
+-- (C.CHARGE_LEEWAY, attack.lua charge_leeway). Returns (class, trees, awx, awy):
+--   "clear"   the shell reaches the pill; trees as aim_line_trees
+--   "blocked" a wall, base, pill or pending pill stops it before the pill
+--   "short"   the shell dies before the pill with nothing in its way
+-- "short" is found by running the same blocker walk on the shell's squares
+-- with the pill square added at the end: if that walk passes, nothing on the
+-- shell's real path stopped it, so it only ran out of range.
+function M.aim_line_class(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
+  local off = shield.AIM_OFFSETS_TILE_FIRE[i]
+  local awx = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
+  local awy = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
+  local tiles = cpf.simulate_shot(ox, oy, awx, awy, cpf.SHOT_TANK, 0)
+  if not tiles then return "short", nil, awx, awy end
+  local trees = line_trees(tiles, omx, omy, pmx, pmy, world, wallset)
+  if trees then return "clear", trees, awx, awy end
+  local ext = {}
+  for ti = 1, #tiles do ext[ti] = tiles[ti] end
+  ext[#ext + 1] = { mx = pmx, my = pmy }
+  if line_trees(ext, omx, omy, pmx, pmy, world, wallset) then
+    return "short", nil, awx, awy
+  end
+  return "blocked", nil, awx, awy
+end
+
 -- Same test for a shell fired at gun angle a (brad, float) from (ox,oy) world
 -- units. Returns the tree count, or nil when the line is blocked or never
 -- reaches the pill. Used by the clear-lane width check
