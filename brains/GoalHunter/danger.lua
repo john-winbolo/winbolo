@@ -602,11 +602,18 @@ end
 --     building, a half building, a pill on the ground (alive or dead) or a
 --     base kills only a builder on that square; elsewhere one within
 --     MAP_SQUARE_MIDDLE (<=).
---   * a tank's shell tests the builder where he was one tick earlier
---     (shellsBlastTestBuilder: compensation 1 for a bot's shell; a human's
---     lag rewind cannot be seen, so 1 is used for every tank's shell). With no
---     builder out at that tick there is no test. A pill's shell tests him
---     where he is now.
+--   * a tank's shell tests the builder where he was r ticks earlier
+--     (shellsBlastTestBuilder). A bot's shell rewinds 1; a human's rewinds
+--     his measured view age (up to LAG_COMP_MAX_TICKS 14) minus
+--     SHELL_LGM_REWIND_LESS 1, and the brain cannot see his lag. So the
+--     blast is tested at every r = 1 .. C.BUILDER_CERTAIN_DEATH_REWIND_MAX,
+--     and the shell is a certain kill only when EVERY r kills him. With no
+--     builder out at some r (still in the tank, or home again) that r has no
+--     test, so it does not kill and the shell is not certain. The shell's
+--     flight is worked out once; only the builder's place repeats per r, and
+--     the r loop stops at the first r that does not kill. The hit names the
+--     range it used (hit.rewind, "1..13"). A pill's shell tests him where he
+--     is now (r = 0 only).
 --   * the builder leaves the tank on the tick after the order; tick t of his
 --     walk is read as tick t of the shell, as lgm_shell_gate does.
 --
@@ -721,6 +728,7 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
                                N, C.BUILDER_POOL_LGM_STUCK_TICKS or 150, WALK)
   local dwell = C.LGM_BUILD_TIME or 20
   local home_x, home_y = info.tankx, info.tanky
+  local rewind_max = math.max(1, math.floor(C.BUILDER_CERTAIN_DEATH_REWIND_MAX or 1))
 
   local nt = 1
   TANKS[1], TANKS[2], TANKS[3] = info.tankx, info.tanky, info.player_number
@@ -736,22 +744,31 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
       local life = ob.life
       local known_life = type(life) == "number" and life >= 0
       local moves = (known_life and life <= N) and life or N
-      local rewind = ((ob.owner or 255) ~= 255) and 1 or 0
+      -- A pill's shell: r = 0 only. A tank's shell: every r = 1 .. r_hi.
+      local r_lo, r_hi = 0, 0
+      if (ob.owner or 255) ~= 255 then r_lo, r_hi = 1, rewind_max end
       local vx =  U.bsin_f(ob.angle or 0) * C.SHELL_SPEED
       local vy = -U.bcos_f(ob.angle or 0) * C.SHELL_SPEED
       local sx, sy = ob.x + 0.0, ob.y + 0.0
       local src = shell_src(ob)
       local ended = false
-      -- The builder test for a blast at (ex, ey) on tick t.
+      -- The builder test for a blast at (ex, ey) on tick t: it must kill him
+      -- at every rewind r_lo .. r_hi. lx, ly are his place at r_lo.
       local function test(t, ex, ey, how)
-        local lx, ly = man_at_cd(nw, dwell, t - rewind, home_x, home_y)
-        if lx and blast_catches(world, lx, ly, ex, ey, KILL2) then
-          return { t = t, sx = ex, sy = ey, lx = lx, ly = ly, src = src,
-                   how = how, solid = (how == "wall" or how == "pill"
-                                       or how == "base"),
-                   walk_n = nw }
+        local lx0, ly0
+        for r = r_lo, r_hi do
+          local lx, ly = man_at_cd(nw, dwell, t - r, home_x, home_y)
+          if not (lx and blast_catches(world, lx, ly, ex, ey, KILL2)) then
+            return nil
+          end
+          if r == r_lo then lx0, ly0 = lx, ly end
         end
-        return nil
+        return { t = t, sx = ex, sy = ey, lx = lx0, ly = ly0, src = src,
+                 how = how, solid = (how == "wall" or how == "pill"
+                                     or how == "base"),
+                 walk_n = nw,
+                 rewind = (r_lo == r_hi) and tostring(r_lo)
+                          or (tostring(r_lo) .. ".." .. tostring(r_hi)) }
       end
       for t = 1, moves do
         sx = sx + vx
@@ -829,12 +846,12 @@ end
 
 -- One line per refusal, in the shell_will_hit style: the site that wanted
 -- to send him, where to, whose shell, how many engine ticks from now it
--- lands, and which ending it is.
+-- lands, which ending it is, and the rewind range tested (rewind=1..13).
 function M.log_certain_death(now, site, mx, my, hit)
   print2(string.format(
-    "BUILDER_CERTAIN_DEATH t=%d site=%s dest=(%d,%d) shell_will_hit (shell from %s at +%dt, %s)",
+    "BUILDER_CERTAIN_DEATH t=%d site=%s dest=(%d,%d) shell_will_hit (shell from %s at +%dt, %s, rewind=%s)",
     now or 0, tostring(site), mx or -1, my or -1, tostring(hit.src), hit.t or -1,
-    tostring(hit.how)))
+    tostring(hit.how), tostring(hit.rewind)))
 end
 
 -- -------------------------------------------------------------------------

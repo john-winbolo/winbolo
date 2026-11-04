@@ -3,7 +3,9 @@
 -- three knobs (constants.lua, "Builder sends: refuse only certain death"):
 --   * C.BUILDER_SEND_CERTAIN_DEATH_ONLY: danger.lgm_certain_death against a
 --     real shell list (a shell that ends on the builder; one that ends on
---     another tank, on a base, far away, or flies past him), and every
+--     another tank, on a base, far away, or flies past him), the rewind
+--     range C.BUILDER_CERTAIN_DEATH_REWIND_MAX (a tank's shell must kill at
+--     every r = 1 .. MAX; a pill's shell is r = 0), and every
 --     builder.decide send site refuses on certain death, sends under fire
 --     without it, and keeps the old fire checks with the knob off;
 --   * C.BUILDER_NO_IDLE_FARM_UNDER_FIRE: the on-path farm and the pool's
@@ -102,7 +104,7 @@ local function has_logs()
   local f = io.open("danger.lua", "r")
   if not f then return false end
   local src = f:read("*a"); f:close()
-  return src:find("BUILDER_CERTAIN_DEATH", 1, true) ~= nil
+  return src:find('"BUILDER_CERTAIN_DEATH t=', 1, true) ~= nil
 end
 local HAS_LOGS = has_logs()
 local function log_has(pat)
@@ -217,12 +219,20 @@ local K = C.PRESETS.keel
 check("KEEL: certain-death knob false", K.BUILDER_SEND_CERTAIN_DEATH_ONLY == false)
 check("KEEL: idle-farm knob false", K.BUILDER_NO_IDLE_FARM_UNDER_FIRE == false)
 check("KEEL: free-combat knob false", K.BUILDER_FREE_COMBAT_GOALS == false)
+check("BUILDER_CERTAIN_DEATH_REWIND_MAX default 13", C.BUILDER_CERTAIN_DEATH_REWIND_MAX == 13,
+      C.BUILDER_CERTAIN_DEATH_REWIND_MAX)
+check("KEEL: rewind max 1", K.BUILDER_CERTAIN_DEATH_REWIND_MAX == 1,
+      K.BUILDER_CERTAIN_DEATH_REWIND_MAX)
+local REWIND_MAX_DEFAULT = C.BUILDER_CERTAIN_DEATH_REWIND_MAX
 
 -- ── 2. the prediction (danger.lgm_certain_death, real) ───────────────────
 -- Tank at (100,100) = world (25728, 25728); destination (103,100), so the
 -- walk is 48 steps east at 16 a tick. A shell from square (104,100)'s centre
 -- (26752) flying west (angle 192) at 32 a tick.
+-- This section is the rewind-1 model (REWIND_MAX 1, KEEL's value); the
+-- rewind range is section 2b.
 print("2. prediction")
+C.BUILDER_CERTAIN_DEATH_REWIND_MAX = 1
 local WX = TX * 256 + 128
 local function shot(x, y, angle, owner, life, hostile)
   return { type = OBJECT_SHOT, x = x, y = y, angle = angle, owner = owner,
@@ -322,6 +332,83 @@ do
   -- use a short errand: (101,100), 16 steps, home after tick 52).
   inf.objects = { shot(26752, WX, 192, 255, 60) }
   check("blast after he is home -> nil", REAL(w, inf, 101, 100) == nil)
+end
+
+-- ── 2b. the rewind range (BUILDER_CERTAIN_DEATH_REWIND_MAX) ─────────────
+-- Same walk: east from 25728 at 16 a tick, on the target (26496) from tick
+-- 48 to tick 68 (dwell 20). A tank's shell kills only if it kills him at
+-- every r = 1 .. MAX; a pill's shell is r = 0 only.
+print("2b. rewind range")
+do
+  reset()
+  local st, w, inf = mk()
+  local function with_max(m, objs)
+    C.BUILDER_CERTAIN_DEATH_REWIND_MAX = m
+    inf.objects = objs
+    return REAL(w, inf, 103, 100)
+  end
+
+  -- p3's shell, life 20: blast on tick 21 at 26112. He was at 26048 on
+  -- tick 20 (r 1, 64 away), 25984 on tick 16 (r 5, 128: still a kill) and
+  -- 25968 on tick 15 (r 6, 144: a miss).
+  local s20 = { shot(26752, WX, 192, 3, 20, true) }
+  local h = with_max(1, s20)
+  check("kills at r=1: certain with MAX 1", h ~= nil and h.how == "expiry", h and h.how)
+  check("  rewind '1'", h and h.rewind == "1", h and h.rewind)
+  h = with_max(5, s20)
+  check("kills at r=1..5: certain with MAX 5", h ~= nil, h and h.how)
+  check("  rewind '1..5'", h and h.rewind == "1..5", h and h.rewind)
+  check("misses at r=6: not certain with MAX 6", with_max(6, s20) == nil)
+  check("misses at r=6: not certain with MAX 13", with_max(13, s20) == nil)
+
+  -- p3's shell, life 60, from 28416 west: it expires on tick 61 at 26496,
+  -- the target. He stands there for ticks 48..68, so every r = 1..13 (ticks
+  -- 60..48) kills him.
+  local s60 = { shot(26496 + 60 * 32, WX, 192, 3, 60, true) }
+  h = with_max(13, s60)
+  check("kills at every r=1..13: certain with MAX 13", h ~= nil and h.how == "expiry",
+        h and h.how)
+  check("  at tick 61", h and h.t == 61, h and h.t)
+  check("  rewind '1..13'", h and h.rewind == "1..13", h and h.rewind)
+  check("  lx is his place at r=1 (26496)", h and h.lx == 26496, h and h.lx)
+
+  -- p3's shell from 25968 west, life 5: it ends on our tank on tick 5 at
+  -- 25808. He left on tick 1, so r = 1..4 (ticks 4..1) kill him, and at
+  -- r = 5 (tick 0) he was still in the tank: no test there, not certain.
+  local s5 = { shot(25968, WX, 192, 3, 5, true) }
+  h = with_max(1, s5)
+  check("early blast: certain with MAX 1", h ~= nil and h.how == "tank" and h.t == 5,
+        h and (tostring(h.how) .. "@" .. tostring(h.t)))
+  check("early blast: certain with MAX 4", with_max(4, s5) ~= nil)
+  check("early blast, still in the tank at r=5: not certain with MAX 5",
+        with_max(5, s5) == nil)
+  check("early blast, still in the tank at large r: not certain with MAX 13",
+        with_max(13, s5) == nil)
+
+  -- A pill's shell, life 20: r = 0 only, whatever MAX says.
+  local p20 = { shot(26752, WX, 192, 255, 20) }
+  h = with_max(13, p20)
+  check("pill shell: certain with MAX 13", h ~= nil and h.how == "expiry" and h.t == 21,
+        h and h.how)
+  check("  rewind '0'", h and h.rewind == "0", h and h.rewind)
+  h = with_max(1, p20)
+  check("pill shell: certain with MAX 1", h ~= nil and h.rewind == "0", h and h.rewind)
+  check("pill shell far away: nil with MAX 13",
+        with_max(13, { shot(26752, WX, 192, 255, 5) }) == nil)
+
+  -- Two shells: the first is not certain at MAX 13, the second is.
+  h = with_max(13, { s20[1], s60[1] })
+  check("a later shell that kills at every r is still found", h ~= nil and h.t == 61,
+        h and h.t)
+
+  if HAS_LOGS then
+    for i = #LOG, 1, -1 do LOG[i] = nil end
+    danger.log_certain_death(1000, "test", 103, 100, with_max(13, s60))
+    check("BUILDER_CERTAIN_DEATH line shows rewind=1..13",
+          log_has("^BUILDER_CERTAIN_DEATH t=1000 site=test .* rewind=1%.%.13%)") ~= nil,
+          LOG[1])
+  end
+  C.BUILDER_CERTAIN_DEATH_REWIND_MAX = REWIND_MAX_DEFAULT
 end
 
 -- ── 3. every decide() send site ──────────────────────────────────────────

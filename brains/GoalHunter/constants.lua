@@ -5285,7 +5285,8 @@ M.CAPTURE_PILL_BUILDER_FREE = true
 -- model, with more of the engine in it: a shell also ends on another visible
 -- tank (never its shooter's), on a base the brain can prove stops it, and on
 -- expiry one tick after its last move; a tank's shell is tested against where
--- the builder was one tick earlier (the engine's rewind), and a builder back
+-- the builder was at every rewind 1 .. BUILDER_CERTAIN_DEATH_REWIND_MAX ticks
+-- earlier (the engine's rewind; all of them must kill), and a builder back
 -- in the tank cannot die. No future shots are predicted.
 -- Log effect: each refusal prints one line
 --   BUILDER_CERTAIN_DEATH t=<tick> site=<site> dest=(x,y) shell from <src>
@@ -5296,6 +5297,15 @@ M.CAPTURE_PILL_BUILDER_FREE = true
 -- false = the old checks, and the pool's shell check is lgm_shell_gate.
 -- KEEL false.
 M.BUILDER_SEND_CERTAIN_DEATH_ONLY = true
+-- The rewinds the certain-death check tries for a tank's shell: r = 1 .. this.
+-- The engine rewinds a human's shell by his measured view age (up to
+-- LAG_COMP_MAX_TICKS 14), minus SHELL_LGM_REWIND_LESS 1 against builders; the
+-- brain cannot see his lag, so the shell is a certain kill only when it kills
+-- the builder at every r. 13: a 260 ms ping gives view age (260 + 20) / 20 =
+-- 14, minus 1 against builders = 13. 1 = a bot's exact rewind (the old check).
+-- A pill's shell is always r = 0. Log effect: BUILDER_CERTAIN_DEATH and the
+-- quick repair's death tail show rewind=1..13. KEEL 1.
+M.BUILDER_CERTAIN_DEATH_REWIND_MAX = 13
 -- Andrew, same order: "That said, let's avoid just idle tree harvesting when
 -- under fire once we have a minimum level of trees in tank (no need to risk
 -- it). This should be behind another feature flag type thing"
@@ -7215,6 +7225,9 @@ M.PRESETS = {
     --   KEEL refused on the under-fire clock, fire_exchange substates, angry
     --   pills, path danger samples, and (pool) lgm_shell_gate.
     BUILDER_SEND_CERTAIN_DEATH_ONLY = false,
+    --   2026-11-04: a tank's shell is a certain kill only when it kills the
+    --   builder at every rewind 1..13. KEEL tested rewind 1 only.
+    BUILDER_CERTAIN_DEATH_REWIND_MAX = 1,
     --   2026-11-04: no idle tree harvest while under fire with enough trees.
     --   KEEL harvested whenever the other checks allowed.
     BUILDER_NO_IDLE_FARM_UNDER_FIRE = false,
