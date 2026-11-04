@@ -59,6 +59,7 @@ local print2 = require("print2")
 local viz    = require("viz")
 local spike  = require("spike")   -- spike care (C.SPIKE_REPAIR_PRIORITY)
 local RS     = require("repair_standoff")  -- C.REPAIR_STANDOFF_ENABLED
+local QR     = require("quick_repair")     -- C.QUICK_REPAIR_ON_TAKE
 
 local M = {}
 
@@ -803,7 +804,7 @@ end
 -- rows: the panel should show that we can SEE the job and say why the man is
 -- not going (the tank goal repair_pill is what relocates for those).
 -- -------------------------------------------------------------------------
-local function pill_blocked(state, p)
+local function pill_blocked(state, p, skip_take)
   if state.blocked then
     local bk = U.mkey(p.mx, p.my)
     if state.blocked[bk] and (state.tick or 0) < state.blocked[bk] then return "blocked" end
@@ -819,7 +820,8 @@ local function pill_blocked(state, p)
   -- p15 died to return fire at t=21471, and four trees would have made it a
   -- live friendly pill again -- restoring the shield the take is relying on
   -- AND denying the corpse to the enemy driver who took it 190 ticks later.
-  if p._in_use and (p.health or 0) > 0 then return "take_blocker" end
+  -- skip_take: the quick repair (C.QUICK_REPAIR_ON_TAKE) inside its window.
+  if p._in_use and (p.health or 0) > 0 and not skip_take then return "take_blocker" end
   if p._friendly_shot_tick
      and ((state.tick or 0) - p._friendly_shot_tick)
          < (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 50) then
@@ -1721,6 +1723,9 @@ local function order_rows(rows)
     -- it (the repair and, with no wood, the harvest); the scores order them.
     local fa, fb = a.forced and 1 or 0, b.forced and 1 or 0
     if fa ~= fb then return fa > fb end
+    -- A QUICK row (C.QUICK_REPAIR_ON_TAKE) is next: its window is now.
+    local qa, qb = a.quick and 1 or 0, b.quick and 1 or 0
+    if qa ~= qb then return qa > qb end
     if seed_first then
       local sa, sb = a.seeded and 1 or 0, b.seeded and 1 or 0
       if sa ~= sb then return sa > sb end
@@ -2232,6 +2237,13 @@ function M.update(state, world, info, now)
 
   state._bp_seed = nil
   M.repair_feeder(state, world, info, now)
+  -- C.QUICK_REPAIR_ON_TAKE: the take blocker's repair window (quick_repair.lua).
+  -- Only a "send" makes a quick row; every other answer leaves the pool as it
+  -- was, with the blocker refused (take_blocker) like before.
+  local quick = QR.evaluate(state, world, info, now)
+  if quick and quick.result ~= "send" then quick = nil end
+  local quick_pill = quick and world.pills and world.pills[quick.id] or nil
+  if quick and not quick_pill then quick = nil end
 
   local b = state.builder
   local goal = state.goal or {}
@@ -2338,6 +2350,16 @@ function M.update(state, world, info, now)
                      reserve = 0,
                      reserve_eta = nil }
 
+  -- The QUICK row's context (C.QUICK_REPAIR_ON_TAKE). quick_repair.evaluate
+  -- already answered the man, the wood, the window and certain death, so the
+  -- row waives the mode check (the take owns the builder), the fire clock, the
+  -- tree reserve, the goal's reserve_eta and MIN_SCORE. It keeps the spike
+  -- pair wait and every per-row reject in gate_row: `have >= need` wood,
+  -- unreachable, the ally claim and ally capture.
+  local quick_ctx = quick and { ok = not d.spike_wait, reason = "spike_pair_second",
+                                reserve = 0, reserve_eta = nil,
+                                waive_min = true, not_idle = true } or nil
+
   -- The FORCED row's context (PING_DEFEND_REPAIR). Like the seed's, it keeps
   -- the man-safety half of the eligibility stack -- the tank's under-fire
   -- clock AND a fire_exchange substate (shells flying either way) -- and drops
@@ -2357,6 +2379,7 @@ function M.update(state, world, info, now)
   local rows = M.discover(state, world, info)
   local seed_seen = false
   local force_seen = false
+  local quick_seen = false
   for _, row in ipairs(rows) do
     local rctx = ctx
     if force and row.type ~= "farm" and row.id == force.tid then
@@ -2366,6 +2389,16 @@ function M.update(state, world, info, now)
       force_seen = true
       if seed and row.mx == seed.mx and row.my == seed.my then seed_seen = true end
       rctx = force_ctx
+    elseif quick and row.type ~= "farm" and row.mx == quick.mx
+           and row.my == quick.my then
+      -- The take blocker inside its repair window: the take_blocker refusal
+      -- and the leash are waived for this row on this tick. pill_blocked's
+      -- other reasons (blocked, repos, friendly_fire, our_target) still hold.
+      row.quick = true
+      row.hard = pill_blocked(state, quick_pill, true)
+      row.out_of_leash = nil
+      quick_seen = true
+      rctx = quick_ctx
     elseif seed and row.mx == seed.mx and row.my == seed.my then
       row.seeded = seed.src
       row.out_of_leash = nil
@@ -2393,6 +2426,22 @@ function M.update(state, world, info, now)
     M.apply_force_bonus(row)
     rows[#rows + 1] = row
     if seed and seed.mx == force.mx and seed.my == force.my then seed_seen = true end
+  end
+  if quick and not quick_seen then
+    -- Discovery does not offer a blocker missing less than
+    -- BUILDER_POOL_TOPUP_MIN_MISSING; the quick repair wants any damage.
+    local maxhp = C.PILLS_MAX_HEALTH or 15
+    local row = {
+      type = (quick.hp <= 0) and "rebuild" or "topup",
+      id = quick.id or -1, mx = quick.mx, my = quick.my,
+      dist = U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
+                     quick.mx, quick.my),
+      hp = quick.hp, missing = maxhp - quick.hp, own = "friendly",
+      trees_need = quick.trees_need, quick = true,
+      hard = pill_blocked(state, quick_pill, true),
+    }
+    M.score_row(state, world, info, now, row, quick_ctx)
+    rows[#rows + 1] = row
   end
   if seed and not seed_seen then
     -- The feeder named a tile ordinary discovery does not offer. The common
@@ -2486,7 +2535,8 @@ function M.update(state, world, info, now)
       if not row.reject then
         -- BUILDER_SEND_CERTAIN_DEATH_ONLY: the improved prediction, run
         -- whatever BUILDER_POOL_SHELL_GATE says. Off: lgm_shell_gate.
-        local cd = C.BUILDER_SEND_CERTAIN_DEATH_ONLY
+        -- A quick row always asks the certain-death prediction (its rule).
+        local cd = C.BUILDER_SEND_CERTAIN_DEATH_ONLY or row.quick
         local hit
         if cd then
           hit = danger.lgm_certain_death(world, info, row.mx, row.my)
@@ -2663,6 +2713,7 @@ function M.rung(state, world, info, now)
     hp_at_dispatch = row.hp or 0,
     seeded = row.seeded,
     forced = row.forced,
+    quick = row.quick,
   }
   if row.forced then
     print2(string.format(
@@ -2719,7 +2770,8 @@ function M.rung(state, world, info, now)
     -- BUILDER_POOL_SEEDED_COMPETES is for. `seeded_by=` is already up beside
     -- target= when the winner IS the seeded row, so it is not repeated here.
     seed_tail(bp.rows or {}, row, false)
-      .. (row.forced and (" forced=" .. row.forced) or "")))
+      .. (row.forced and (" forced=" .. row.forced) or "")
+      .. (row.quick and " quick=1" or "")))
   -- BP_PRED: the ROUTE the return leg was priced against, tile by tile, on the
   -- one tick it actually decided something. The trip on the dispatch line is
   -- only hand-checkable if the reader can see the path pred{} was read off --

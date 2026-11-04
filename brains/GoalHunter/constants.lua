@@ -5329,6 +5329,45 @@ M.BUILDER_NO_IDLE_FARM_MIN_TREES = M.FARM_ENEMY_MIN_TREES
 -- false = "suppressed" as before. KEEL false.
 M.BUILDER_FREE_COMBAT_GOALS = true
 
+-- ── Quick repair of a take blocker (2026-11-04) ───────────────────────────
+-- Andrew approved: during an attack_pill take, send the builder to repair a
+-- friendly take-blocker pill (damaged or dead) as soon as the repair can no
+-- longer get in the way: after the target pill dies and after every hostile
+-- shell in the air that will hit the blocker has landed. quick_repair.lua has
+-- the whole rule; in short, every tick:
+--   T_kill   = landing tick of the shell that takes the target to 0 (our
+--              in-flight shells, sorted by landing); with
+--              QUICK_REPAIR_PREDICT_SHOTS and the take in its firing run, the
+--              shells still needed are fired one reload apart and fly the
+--              current distance; otherwise unknown (no send).
+--   T_safe   = max(T_kill, landing tick of each non-friendly shell in the air
+--              that reaches the blocker tile).
+--   T_repair = now + 1 + walk ticks (the armour comes back on arrival; the
+--              build dwell comes after, lgm.c lgmMoveAway).
+--   send when T_repair >= T_safe + QUICK_REPAIR_MARGIN_TICKS, the builder is
+--   in the tank, the wood is there and danger.lgm_certain_death is false.
+-- The send goes through the builder pool as a "quick" row: the take_blocker
+-- refusal, the leash, the mode check, the tree reserve and MIN_SCORE are
+-- waived for that one row on that tick only; wood, reach, the ally claim and
+-- the certain-death check stay. No other repair path changes.
+-- Log effect: QUICK_REPAIR t=.. pill=(x,y) hp=.. target=(x,y) T_kill=..
+-- src=inflight|predict T_safe=.. walk=.. dwell=0 -> send|wait:<why>, once per
+-- change; BP_DISPATCH for the row carries quick=1.
+-- false = the blocker is never repaired during the take, as before. KEEL false.
+M.QUICK_REPAIR_ON_TAKE = true
+-- true => when our in-flight shells do not cover the target's armour, T_kill
+-- is predicted from the shots not yet fired (see above). false = T_kill is
+-- known only once the killing shell is in the air. KEEL false.
+M.QUICK_REPAIR_PREDICT_SHOTS = true
+-- Brain ticks the repair must land after T_safe (Andrew approved 2).
+M.QUICK_REPAIR_MARGIN_TICKS = 2
+-- The take substates in which the tank is shooting the target pill: the
+-- firing run that QUICK_REPAIR_PREDICT_SHOTS needs.
+M.QUICK_REPAIR_FIRE_SUBSTATES = {
+  charge = true, engage = true, ws_engage = true, shoot_pill = true,
+  kill_hardline = true, finish = true,
+}
+
 -- ── Claims (multi-bot arbitration) ───────────────────────────────────────
 -- Five allies must not all repair the same pill. The claim rides the existing
 -- /info extra channel as `bpj=TTXXYYCCCCEEEE` (type, tile, claim tick low 16
@@ -7182,6 +7221,12 @@ M.PRESETS = {
     --   2026-11-04: attack_tank, attack_base and a sea capture_pill between
     --   its builder jobs free the builder. KEEL kept him in ("suppressed").
     BUILDER_FREE_COMBAT_GOALS     = false,
+    --   2026-11-04: quick repair of a take blocker inside the safe window.
+    --   KEEL never repaired a live blocker during the take.
+    QUICK_REPAIR_ON_TAKE          = false,
+    --   2026-11-04: T_kill also from shots not yet fired (firing run only).
+    --   KEEL had no such prediction.
+    QUICK_REPAIR_PREDICT_SHOTS    = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
