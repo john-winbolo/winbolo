@@ -1800,6 +1800,27 @@ local function compute_repair_dead_cost(state, world, info, pill, tmx, tmy)
   return total
 end
 
+-- LOW-DAMAGE MARKUP on the repair_pill cost (live pills only, 2026-11-04).
+-- base + path - dmg*REPAIR_DAMAGE_BONUS prices a pill missing 1 HP almost the
+-- same as one missing 10, so the bot drove out to fix a 1-HP loss. For
+-- 1 <= dmg <= REPAIR_LOW_DMG_MAX:
+--   mult = 1 + (MAX - 1) * r^(dmg - 1)
+--   r    = ((AT5 - 1) / (MAX - 1)) ^ (1 / (LOW_MAX - 1))
+-- so mult(1) = MAX and mult(LOW_MAX) = AT5. dmg above LOW_MAX (or below 1)
+-- is x1. MAX <= 1 is off (x1 for every dmg). LOW_MAX < 2 has no curve: dmg 1
+-- gets MAX, the rest x1. AT5 <= 1 gives r = 0: dmg 1 gets MAX, the rest x1.
+-- Shared by the pool-5 copy in step_eval_queue and eval_repair_pill.
+function M.repair_lowdmg_mult(dmg)
+  local mx = C.REPAIR_LOW_DMG_MULT_MAX or 1
+  local lo = C.REPAIR_LOW_DMG_MAX or 0
+  if not (mx > 1) or not dmg or dmg < 1 or dmg > lo then return 1 end
+  if lo < 2 then return mx end
+  local ratio = ((C.REPAIR_LOW_DMG_MULT_AT5 or 1) - 1) / (mx - 1)
+  if not (ratio > 0) then ratio = 0 end
+  local r = ratio ^ (1 / (lo - 1))
+  return 1 + (mx - 1) * r ^ (dmg - 1)
+end
+
 local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
   if not C.REPAIR_FIX_ENABLED then
     -- 1.90-beta1 repair behavior: alive-damaged friendly pills only; plain
@@ -1882,6 +1903,7 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
   -- desc says it means on both paths.
   local rp_uf, rp_hit_age = false, nil
   local rp_soft, rp_soft_id, rp_soft_d, rp_soft_why = false, nil, nil, nil
+  local rp_lowdmg = 1
   if pill.health == 0 then
     -- Dead pill → rebuild-in-place model (own terrain + tank-snipe cost; the
     -- contest multipliers below are skipped — snipe already prices in nearby
@@ -1889,6 +1911,9 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
     adj_cost = compute_repair_dead_cost(state, world, info, pill, tmx, tmy)
   else
     adj_cost = (C.REPAIR_BASE_COST or 30) + math.max(0, pcost - damage * C.REPAIR_DAMAGE_BONUS)
+    -- MIRROR of the live pool-5 copy in step_eval_queue: low-damage markup.
+    rp_lowdmg = M.repair_lowdmg_mult(damage)
+    if rp_lowdmg ~= 1 then adj_cost = adj_cost * rp_lowdmg end
     -- Same two contest terms as the live pool-5 copy in step_eval_queue (see
     -- the long note there and REPAIR_QUIET_TICKS in constants.lua):
     --   UNDER_FIRE      x3    the pill took a hit less than REPAIR_QUIET_TICKS
@@ -1928,13 +1953,16 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
     end
   end
   local rp_chip = ""
+  if rp_lowdmg ~= 1 then
+    rp_chip = string.format(" x%.2f lowdmg(dmg=%d)", rp_lowdmg, damage)
+  end
   if rp_uf then
-    rp_chip = string.format(" x%.1f UNDER_FIRE(hit %st ago < quiet %d)",
+    rp_chip = rp_chip .. string.format(" x%.1f UNDER_FIRE(hit %st ago < quiet %d)",
       C.REPAIR_UNDER_FIRE_MULT or 3.0,
       rp_hit_age and string.format("%d", rp_hit_age) or "?",
       C.REPAIR_QUIET_TICKS or 75)
   elseif rp_soft then
-    rp_chip = string.format(" x%.1f ENEMY_IN_RANGE(#%s %.1ft %s)",
+    rp_chip = rp_chip .. string.format(" x%.1f ENEMY_IN_RANGE(#%s %.1ft %s)",
       C.REPAIR_ENEMY_IN_RANGE_MULT or 1.5,
       tostring(rp_soft_id), rp_soft_d or -1, tostring(rp_soft_why))
   end
@@ -14132,6 +14160,7 @@ function M.step_eval_queue(state, world, info)
       -- keep raw_cost: it is already the full rebuild-in-place model.
       local _rp_dmg, _rp_contested = 0, false
       local _rp_uf, _rp_hit_age = false, nil
+      local _rp_lowdmg = 1
       local _rp_soft, _rp_soft_id, _rp_soft_d, _rp_soft_why = false, nil, nil, nil
       -- Set by the repair_pill split below; becomes entry._skipped so the row
       -- carries its reject chip like every other INF row in the grid.
@@ -14141,6 +14170,12 @@ function M.step_eval_queue(state, world, info)
         c = (C.REPAIR_BASE_COST or 30)
             + math.max(0, raw_cost - _rp_dmg * (C.REPAIR_DAMAGE_BONUS or 10))
             + stale_cost
+        -- LOW-DAMAGE MARKUP (see M.repair_lowdmg_mult): a pill missing only a
+        -- few HP is not worth the trip. Applied first of the multipliers, so
+        -- the desc prints it first; all are multipliers, so order does not
+        -- change the number.
+        _rp_lowdmg = M.repair_lowdmg_mult(_rp_dmg)
+        if _rp_lowdmg ~= 1 then c = c * _rp_lowdmg end
         -- CONTEST TERMS (2026-09-02 rework; see REPAIR_QUIET_TICKS in
         -- constants.lua for the whole rationale). The old single "contested"
         -- flag was (enemy closer to the pill than us, at ANY range) OR (a
@@ -14473,6 +14508,7 @@ function M.step_eval_queue(state, world, info)
       elseif pool_idx == 5 then
         entry._stale=stale_cost; entry._age=_gen_age
         entry._dmg=_rp_dmg
+        entry._lowdmg_mult = (_rp_lowdmg ~= 1) and _rp_lowdmg or nil
         entry._contested=_rp_contested or nil
         entry._rp_uf = _rp_uf or nil
         entry._rp_hit_age = _rp_hit_age
@@ -16195,13 +16231,17 @@ function M.finalize_pools(state, world, info)
         -- row's multiplier is attributable (a bare "CONTESTED" told you nothing
         -- about which of two very different signals tripped).
         local _c5 = ""
+        if ce5 and ce5._lowdmg_mult then
+          _c5 = string.format(" x%.2f lowdmg(dmg=%d)", ce5._lowdmg_mult,
+                  ce5._dmg or (C.PILLS_MAX_HEALTH - pill.health))
+        end
         if ce5 and ce5._rp_uf then
-          _c5 = string.format(" x%.1f UNDER_FIRE(hit %st ago < quiet %d)",
+          _c5 = _c5 .. string.format(" x%.1f UNDER_FIRE(hit %st ago < quiet %d)",
                   C.REPAIR_UNDER_FIRE_MULT or 3.0,
                   ce5._rp_hit_age and string.format("%d", ce5._rp_hit_age) or "?",
                   C.REPAIR_QUIET_TICKS or 75)
         elseif ce5 and ce5._rp_soft then
-          _c5 = string.format(" x%.1f ENEMY_IN_RANGE(#%s %.1ft %s)",
+          _c5 = _c5 .. string.format(" x%.1f ENEMY_IN_RANGE(#%s %.1ft %s)",
                   C.REPAIR_ENEMY_IN_RANGE_MULT or 1.5,
                   tostring(ce5._rp_soft_id), ce5._rp_soft_d or -1,
                   tostring(ce5._rp_soft_why))

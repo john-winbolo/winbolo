@@ -1307,6 +1307,17 @@ M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pil
 M.REPAIR_FIX_ENABLED       = true  -- repair fix ON (dead-pill rebuild + guards); tested OK
 M.REPAIR_BASE_COST         = 30    -- flat floor so a close/damaged repair doesn't trivially out-rank other goals
 M.REPAIR_DAMAGE_BONUS      = 3     -- cost reduction per missing HP on friendly pill
+-- Low-damage markup on the repair_pill goal cost (live pills only; see
+-- goals.repair_lowdmg_mult). mult(dmg) = 1 + (MAX-1) * r^(dmg-1) for
+-- 1 <= dmg <= REPAIR_LOW_DMG_MAX, r = ((AT5-1)/(MAX-1))^(1/(LOW_MAX-1)),
+-- else x1. With MAX 4.0, AT5 1.10, LOW_MAX 5:
+--   dmg 1 x4.00 | 2 x2.28 | 3 x1.55 | 4 x1.23 | 5 x1.10 | 6+ x1.00
+-- Applied after base + path - dmg*BONUS + stale, with the contest and spike
+-- multipliers, before the phase weight. Dead pills (rebuild) and the builder
+-- pool's own repair rows are not changed. MAX <= 1 = off (PRESETS.keel 1.0).
+M.REPAIR_LOW_DMG_MULT_MAX  = 4.0   -- markup at dmg 1
+M.REPAIR_LOW_DMG_MULT_AT5  = 1.10  -- markup at dmg REPAIR_LOW_DMG_MAX
+M.REPAIR_LOW_DMG_MAX       = 5     -- last dmg with a markup; above it x1
 M.REPAIR_CONTESTED_MULT    = 3.0   -- repair cost ??N when an enemy tank is closer to the pill than us (contested ??? likely futile)
 -- Repair contest terms (2026-09-02 rework). REPAIR_CONTESTED_MULT above is kept
 -- as the value and as the name anything older may still read; the live pool-5
@@ -7241,6 +7252,9 @@ M.PRESETS = {
     --   2026-11-04: T_kill also from shots not yet fired (firing run only).
     --   KEEL had no such prediction.
     QUICK_REPAIR_PREDICT_SHOTS    = false,
+    --   2026-11-04: low-damage markup on the repair_pill cost. KEEL priced
+    --   a 1-HP top-up like any other repair (x1).
+    REPAIR_LOW_DMG_MULT_MAX       = 1.0,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
