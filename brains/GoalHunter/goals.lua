@@ -1086,8 +1086,9 @@ end
 -- SHELLS_LOW. Then the urgency term is 1.0 and refuel would cost a
 -- well-stocked tank about 63, so the cost is multiplied by the knob. Both
 -- cost paths (eval_refuel and the pool-1 finalize path) multiply it in after
--- urgency and after the REFUEL_MIN_COST floor; goal_selection scales its
--- LGM-wait cap by the same factor. Returns the multiplier: 1.0 when either
+-- urgency and after the REFUEL_MIN_COST floor. The LGM-wait cap in
+-- goal_selection is NOT scaled: a tank already on the base waiting for its
+-- builder keeps the old cap. Returns the multiplier: 1.0 when either
 -- resource is low or the knob is 1.0.
 function M.refuel_notlow_mult(arm, sh)
   local k = C.REFUEL_NOT_LOW_MULT or 1.0
@@ -12341,11 +12342,11 @@ local function get_formula_inner(e)
         and string.format("LGM returning, at this base → floor=%.0f (cost capped)", _lgm)
         or  "no LGM-wait active → no floor"
       -- Not-low markup: applied after urgency (and the REFUEL_MIN_COST floor);
-      -- the LGM-wait floor above is already scaled by it.
+      -- the LGM-wait floor above is not scaled by it.
       local _d_notlow = (_nl ~= 1.0)
         and string.format(
           "|notlow:armour %d > %d[ARMOUR_LOW] and shells %d > %d[SHELLS_LOW]"
-          .. " (neither low) → x%.2f[REFUEL_NOT_LOW_MULT]; any LGM-wait floor is scaled by it too",
+          .. " (neither low) → x%.2f[REFUEL_NOT_LOW_MULT]; the LGM-wait floor is not scaled",
           _arm, C.ARMOUR_LOW, _sh, C.SHELLS_LOW, _nl)
         or ""
       _shape_detail = string.format("|urgency:%s%s|deficit:%s|fill:%s|scarcity:%s|lgm:%s",
@@ -18685,10 +18686,6 @@ local function goal_selection(state, world, info, quiet)
             local danger_frac = math.min(1.0, thr / C.LGM_WAIT_SAFE_THRESHOLD)
             local wait_floor = C.LGM_WAIT_COST_SAFE
               + (C.LGM_WAIT_COST - C.LGM_WAIT_COST_SAFE) * danger_frac
-            -- The cached cost already carries the not-low markup
-            -- (C.REFUEL_NOT_LOW_MULT, from the finalize path). Scale the cap
-            -- by the same factor so the cap cannot take the markup back.
-            wait_floor = wait_floor * M.refuel_notlow_mult(info.armour, info.shells)
             if final_cost > wait_floor then
               final_cost = wait_floor
             end
