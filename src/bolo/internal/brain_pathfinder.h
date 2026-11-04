@@ -702,6 +702,23 @@ int brainPathfinderLgmWalkPathMap(BrainPathfinder *pf,
                                    int maxTicks, int stuckTicks,
                                    WORLD *pathX, WORLD *pathY, int pathMax);
 
+/* The same walk again, from a start given in WORLD units instead of a map
+ * square's centre. The engine puts the builder down on the tank's own
+ * position moved LGM_START_OFFSET towards his target (lgm.c
+ * lgmApplyStartOffset), not on the centre of the tank's square; a caller
+ * that needs where he is tick by tick starts him there. The destination is
+ * still the centre of square (dmx, dmy), as lgmNewPrimaryRequest sets it. */
+int brainPathfinderLgmWalkPath(BrainPathfinder *pf,
+                                WORLD sx, WORLD sy, BYTE dmx, BYTE dmy,
+                                BYTE blessX, BYTE blessY,
+                                int maxTicks, int stuckTicks,
+                                WORLD *pathX, WORLD *pathY, int pathMax);
+
+/* The man's speed on square (mx, my) as every LGM walk sim above sees it:
+ * the terrain speed, or 0 on a square marked LGM-impassable. 0 means he
+ * cannot walk there. */
+int brainPathfinderLgmManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my);
+
 /* LGM-impassable overlay: clear all, then mark (mx,my) tiles the LGM can't
  * cross (enemy bases). Brain stamps these each tick before LGM reach checks. */
 void brainPathfinderClearLgmBlock(BrainPathfinder *pf);
