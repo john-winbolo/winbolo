@@ -464,7 +464,8 @@ typedef enum {
      * connected Bot Host's name, its slots, and how far its brain sync has
      * gone. The server sends it to lobby players and spectators when a row
      * changes, and in the join replay, so the lobby can show the hosts
-     * where it lists spectators. A Bot Host is never a player: it has no
+     * where it lists spectators, with the bots placed on each host. A Bot
+ * Host is never a player: it has no
      * roster row and no join or leave line. connected 0 clears the row. */
     CTRL_BOT_HOST_STATUS,
     /* CTRL_BOT_HOST_FILE_REQ — Bot Host to server, on the host's control
@@ -1508,6 +1509,9 @@ typedef struct ControlEvent {
             uint8_t percent;     /* 0..100, while state is SYNCING or LATE */
             uint8_t used;        /* bot seats the host runs */
             uint8_t slots;       /* bot seats the host offers */
+            /* The bots placed on the host, bit n for player n; the lobby
+             * looks their names up in the roster. */
+            uint16_t seats;
             char    name[BOT_HOST_STATUS_NAME_LEN];
         } botHostStatus;
 

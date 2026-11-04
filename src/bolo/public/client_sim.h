@@ -129,6 +129,7 @@ typedef struct {
     uint8_t percent;   /* brain sync progress, 0..100 */
     uint8_t used;      /* bot seats it runs */
     uint8_t slots;     /* bot seats it offers */
+    uint16_t seats;    /* its bots: bit n for player n */
     char    name[CLIENT_BOT_HOST_NAME_LEN];
 } ClientBotHostRow;
 

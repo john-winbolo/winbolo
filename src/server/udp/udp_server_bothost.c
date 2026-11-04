@@ -510,6 +510,15 @@ static void botHostFillRow(int h, ControlEvent *evt) {
     if (!hc->connected) return;
     evt->u.botHostStatus.connected = 1;
     evt->u.botHostStatus.used = (uint8_t)botHostUsedSlots(h);
+    {
+        int s;
+        for (s = 0; s < MAX_TANKS; s++) {
+            if (udpServer.botSeats[s].state != BOT_SEAT_LOCAL &&
+                udpServer.botSeats[s].host == h) {
+                evt->u.botHostStatus.seats |= (uint16_t)(1u << s);
+            }
+        }
+    }
     evt->u.botHostStatus.slots = hc->slots;
     SDL_strlcpy(evt->u.botHostStatus.name, hc->name,
                 sizeof(evt->u.botHostStatus.name));
