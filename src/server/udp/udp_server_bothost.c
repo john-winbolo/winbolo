@@ -220,6 +220,22 @@ static uint32_t botHostBrainVersion(const char *path) {
     return crc;
 }
 
+/* The seat's player name, from the roster. A bot seat that runs
+ * in-process has no UDP client, so udpServer.clients[s] has no name.
+ * The last name read is kept so that the operator listing, which has no
+ * ServerSim, can print it too. */
+static char botSeatNames[MAX_TANKS][PLAYER_NAME_LEN];
+
+static const char *botSeatName(ServerSim *sim, int s) {
+    GameSim *gs = serverSimGetGameSim(sim);
+    if (gs != NULL) {
+        botSeatNames[s][0] = '\0';
+        playersGetPlayerName(&gs->plyrs, (BYTE)s, botSeatNames[s],
+                             sizeof(botSeatNames[s]), true);
+    }
+    return botSeatNames[s];
+}
+
 /* What a seat's brain is built from now: brain, AI level, team and init
  * argument. */
 static void botSeatCurrent(ServerSim *sim, int s, char *brain, size_t brainSz,
@@ -256,7 +272,7 @@ static void botSeatSendAssign(ServerSim *sim, int s, bool reload) {
     evt.u.botHostAssign.brainVersion =
         botHostBrainVersion(botManagerGetBrainPath(sim, (BYTE)s));
     memcpy(evt.u.botHostAssign.token, seat->token, BOT_HOST_TOKEN_LEN);
-    SDL_strlcpy(evt.u.botHostAssign.name, udpServer.clients[s].playerName,
+    SDL_strlcpy(evt.u.botHostAssign.name, botSeatName(sim, s),
                 sizeof(evt.u.botHostAssign.name));
     SDL_strlcpy(evt.u.botHostAssign.brain, seat->brain,
                 sizeof(evt.u.botHostAssign.brain));
@@ -340,7 +356,7 @@ static void botSeatFallBack(ServerSim *sim, int s, const char *why,
     if (tellHost) botSeatSendUnassign(s);
     fprintf(stderr, "[bothost] bot %d \"%s\" back in-process from Bot Host "
                     "\"%s\" (%s)\n",
-            s, udpServer.clients[s].playerName, hostName, why);
+            s, botSeatName(sim, s), hostName, why);
     WB_LOG_INFO(WB_LOG_CAT_NET,
                 "[bothost] bot %d back in-process from Bot Host \"%s\" (%s)",
                 s, hostName, why);
@@ -604,7 +620,7 @@ bool serverBotSlotOnInput(ServerSim *sim, int slot) {
     seat->sinceTick = udpServer.tickCount;
     seat->lastPollTick = udpServer.tickCount;
     fprintf(stderr, "[bothost] bot %d \"%s\" now thinks on Bot Host \"%s\"\n",
-            slot, udpServer.clients[slot].playerName,
+            slot, botSeatName(sim, slot),
             seat->host >= 0 ? udpServer.botHosts[seat->host].name : "?");
     return true;
 }
@@ -975,7 +991,7 @@ void serverServiceBotHosts(ServerSim *sim) {
             seat->reloadOwed = false;
             botSeatSendAssign(sim, s, false);
             fprintf(stderr, "[bothost] bot %d \"%s\" offered to Bot Host \"%s\"\n",
-                    s, udpServer.clients[s].playerName,
+                    s, botSeatName(sim, s),
                     udpServer.botHosts[best].name);
             placed = true;
         }
@@ -1010,7 +1026,7 @@ void transportUdpServerPrintBotHosts(void) {
                  : seat->state == BOT_SEAT_BOUND  ? "connected"
                                                   : "offered";
             fprintf(stdout, "    player %d \"%s\": %s\n", s,
-                    udpServer.clients[s].playerName, what);
+                    botSeatNames[s], what);
         }
     }
     if (!any && udpServer.botHostEnabled) {
