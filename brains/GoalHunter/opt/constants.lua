@@ -1227,6 +1227,16 @@ M.BLITZ_SPOT_EXACT_ORIGIN       = true
 -- standoff float point (where the charge fires from), not from where it waits,
 -- 2.25 tiles further out. false = the live tank position. KEEL false.
 M.BLITZ_GO_GATE_FROM_STANDOFF   = true
+-- Blitz soldier setup on the 16-direction line, 2026-11-03. true => the
+-- soldier's setup (wait) point sits on the 16-direction travel line that ends
+-- on the spot its charge stops at (the 7.0-ring pulled spot), on the same
+-- setup ring as before. The engine moves a tank in 16 directions only, so
+-- the old radial setup could end the charge up to half a tile off the spot.
+-- Falls back to the radial point near a sector edge or when the new point
+-- fails the passable / drive-line / threat checks (attack.lua
+-- M.blitz_setup_16dir). Log line BLITZ_SETUP_16DIR. false = the radial
+-- setup point, as before. KEEL false.
+M.BLITZ_SETUP_16DIR             = true
 -- Blitz spot pending pills, 2026-09-25. true => a tile where a pill WILL stand
 -- soon blocks a blitz shot line like a live pill: our man is out on a pill
 -- build/repair trip, our place_pill_strategic target while we carry a pill, or
@@ -6435,6 +6445,9 @@ M.PRESETS = {
     -- hostile and neutral pill range (or behind a wall) and sends the builder
     -- from there. KEEL drove to the pill square.
     REPAIR_STANDOFF_ENABLED       = false,
+    -- 2026-11-03: the blitz soldier's setup point sits on the 16-direction
+    -- travel line that ends on its charge spot. KEEL used the radial point.
+    BLITZ_SETUP_16DIR             = false,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).
