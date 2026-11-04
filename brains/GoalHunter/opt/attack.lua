@@ -4325,6 +4325,123 @@ local function update_shot_accounting(goal, world)
   goal._on_target_misses    = misses
 end
 
+-- C.BLITZ_SETUP_16DIR (2026-11-03): the engine moves a tank in 16 directions
+-- only (tank.c: ang = utilGet16Dir(angle), then utilCalcDistance(ang)). The
+-- charge turns the tank to face the aim point and drives forward, so the
+-- tank travels along utilGet16Dir(facing), not along the line to the aim.
+-- A setup point on the radial line (spot -> away from the pill) then puts
+-- the charge on a line that misses the spot: debug session 20261103_192602
+-- part 2, player 2, t=9570-9636, facing 248 moved north only and the tank
+-- ended 0.5 tile right of the spot.
+--
+-- dir16 is utilGet16Dir (util.c) for a float angle in brads: an angle in
+-- (c-8, c+8] gives c. (The Mac movement rule rounds a half sector up
+-- instead; the brain cannot see that rule, so the default rule is used.)
+local function dir16(a)
+  a = a % 256
+  if a <= 8 or a > 248 then return 0 end
+  return math.ceil((a - 8) / 16) * 16
+end
+M._dir16 = dir16
+
+-- Facing noise at the edge of a 16-direction sector, in brads. On the line
+-- F - t*u(D) the bearing to the aim moves from near D (at the setup) to the
+-- spot bearing (at the spot), so it moves TOWARD the sector edge and the
+-- tank's facing lags behind it on the D side: the charge only turns when
+-- |corr| > 1 (steering.lua attack_pill_steer fine taps), so it never leads
+-- the aim by more than the size of one fine turn step. Half a brad covers
+-- that step and float noise. The recorded case sits 0.89 brad from the edge.
+local SETUP16_EDGE_BRAD = 0.5
+
+-- The setup point on the 16-direction travel line that ends on the spot the
+-- charge stops at. Returns new_fx, new_fy, rec; new_fx is nil on a fallback
+-- (rec.reason says why). rec carries the values the log line prints.
+--
+--   final spot F: the charge's first tick pulls the standoff to the
+--     ATTACK_PILL_STANDOFF_CHARGE ring along the same bearing (steering.lua,
+--     goal._charge_pulled). BLITZ_ENGAGE_SYNC only copies that pulled
+--     standoff into the broadcast spot, so this pull is the only move. We
+--     predict it here and leave the pull where it is.
+--   D: dir16 of the bearing F -> planned aim. A point P = F - t*u(D) has a
+--     bearing to the aim between D and that bearing (the sum of two vectors
+--     lies between them), so for every t > 0 the facing from P rounds to D
+--     too, and the charge travels along D all the way to F. The only risk is
+--     facing noise at a sector edge (SETUP16_EDGE_BRAD): then fall back.
+--   t: the setup stays on the same ring as today (setup_dist from the pill
+--     centre), so the point only moves around the ring and never nearer the
+--     pill. Here t is about 2.65 (the 2.25 offset plus the 0.4 pull).
+--   checks: the same rules the current setup line gets in score_standoff
+--     (standable land tile; no building, half-building, pillbox or hostile
+--     base on the drive line to the spot), and threat.at no higher than at
+--     the current setup point. A failed check keeps the current point.
+function M.blitz_setup_16dir(world, goal, pcx, pcy, setup_dist, old_fx, old_fy)
+  local rec = { old_fx = old_fx, old_fy = old_fy }
+  local sfx, sfy = goal.standoff_fx, goal.standoff_fy
+  if not (sfx and sfy) then rec.reason = "no_spot"; return nil, nil, rec end
+  local fx, fy = sfx, sfy
+  if not goal._charge_pulled then
+    local dx, dy = sfx - pcx, sfy - pcy
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d > 0.001 then
+      local R2 = C.ATTACK_PILL_STANDOFF_CHARGE or 7.0
+      fx, fy = pcx + dx / d * R2, pcy + dy / d * R2
+    end
+  end
+  rec.spot_fx, rec.spot_fy = fx, fy
+  local ax = goal.aim_wx and goal.aim_wx / 256.0 or goal.aim_mx or pcx
+  local ay = goal.aim_wy and goal.aim_wy / 256.0 or goal.aim_my or pcy
+  rec.aim_fx, rec.aim_fy = ax, ay
+  local brg = U.aim_at_f(fx, fy, ax, ay) % 256
+  local D = dir16(brg)
+  rec.bearing, rec.D = brg, D
+  if 8 - math.abs(U.adiff(D, brg)) < SETUP16_EDGE_BRAD then
+    rec.reason = "near_boundary"; return nil, nil, rec
+  end
+  local rad = D * C.TWO_PI / 256
+  local ux, uy = math.sin(rad), -math.cos(rad)   -- engine: 0 = north, 64 = east
+  -- P = F - t*u on the ring |P - pc| = setup_dist, t > 0.
+  local wx, wy = fx - pcx, fy - pcy
+  local wu = wx * ux + wy * uy
+  local disc = wu * wu - (wx * wx + wy * wy) + setup_dist * setup_dist
+  if disc < 0 then rec.reason = "no_ring"; return nil, nil, rec end
+  local t = wu + math.sqrt(disc)
+  if t <= 0.01 then rec.reason = "no_ring"; return nil, nil, rec end
+  local nfx, nfy = fx - t * ux, fy - t * uy
+  rec.new_fx, rec.new_fy, rec.L = nfx, nfy, t
+  -- The facing from the new point must round to D as well (true by the
+  -- geometry above; checked so a rounding case falls back, not drives off).
+  local sbrg = U.aim_at_f(nfx, nfy, ax, ay) % 256
+  rec.setup_bearing = sbrg
+  if dir16(sbrg) ~= D or 8 - math.abs(U.adiff(D, sbrg)) < SETUP16_EDGE_BRAD then
+    rec.reason = "setup_dir_mismatch"; return nil, nil, rec
+  end
+  local nmx, nmy = math.floor(nfx), math.floor(nfy)
+  if not U.in_map(nmx, nmy) then rec.reason = "off_map"; return nil, nil, rec end
+  local tt = U.ttype(nmx, nmy)
+  if U.is_water(tt) or (C.TERRAIN_COST_LAND[tt] or 9999) >= 9999 then
+    rec.reason = "not_passable"; return nil, nil, rec
+  end
+  local smx, smy = math.floor(fx), math.floor(fy)
+  local blocked = false
+  U.line_walk(nfx, nfy, fx, fy, function(lx, ly)
+    if lx == smx and ly == smy then return end  -- the spot tile itself is fine
+    local wt = U.ttype(lx, ly)
+    if wt == C.T_BUILDING or wt == C.T_HALFBUILD or wt == C.T_PILLBOX then
+      blocked = true; return true
+    end
+    local be = world and world.base_at and world.base_at[ly * 256 + lx]
+    if be and be.base and be.base.owner == "hostile" then
+      blocked = true; return true
+    end
+  end)
+  if blocked then rec.reason = "drive_blocked"; return nil, nil, rec end
+  local th_new = threat.at(nmx, nmy)
+  local th_old = threat.at(math.floor(old_fx), math.floor(old_fy))
+  rec.th_new, rec.th_old = th_new, th_old
+  if th_new > th_old then rec.reason = "more_danger"; return nil, nil, rec end
+  return nfx, nfy, rec
+end
+
 -- Commit a soldier's blitz take from the NEGOTIATED engage spot. The squad
 -- negotiation (blitz_negotiate, via M.pick_standoff) already chose this spot,
 -- broadcast it as bes, and the commander approved it (no clash, shot not
@@ -4376,6 +4493,14 @@ local function blitz_commit_negotiated(goal, state, world, info, pmx, pmy)
     local setup_dist = (C.ATTACK_PILL_STANDOFF or 7.4) + (C.ATTACK_APPROACH_OFFSET or 2.25)
     goal.approach_fx = (pmx + 0.5) + ux * setup_dist
     goal.approach_fy = (pmy + 0.5) + uy * setup_dist
+    -- C.BLITZ_SETUP_16DIR: move the setup onto the 16-direction travel line
+    -- that ends on the spot the charge stops at (M.blitz_setup_16dir).
+    if C.BLITZ_SETUP_16DIR then
+      local nfx, nfy, r = M.blitz_setup_16dir(world, goal, pmx + 0.5, pmy + 0.5,
+        setup_dist, goal.approach_fx, goal.approach_fy)
+      local function f2(v) return v and string.format("%.2f", v) or "-" end
+      if nfx then goal.approach_fx, goal.approach_fy = nfx, nfy end
+    end
     goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
     goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
   else
@@ -4388,6 +4513,7 @@ local function blitz_commit_negotiated(goal, state, world, info, pmx, pmy)
   goal.substate = "approach"
   return true
 end
+M._blitz_commit_negotiated = blitz_commit_negotiated  -- for tests
 
 -- Parallel blitz-soldier standoff OFFER (pre-commit, runs while the soldier is
 -- on its normal goal). For a soldier negotiating with a commander (squad layer
