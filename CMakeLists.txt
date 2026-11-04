@@ -4497,6 +4497,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_shield_outgoing_pill.c
     # GoalHunter shield scan: a friendly pill's cover by its health.
     tests/unit/test_shield_pill_cover.c
+    # GoalHunter clear-aim test with the minimum clear lane, C next to Lua.
+    tests/unit/test_gh_attack_lane_parity.c
     # BrainTest Load Session next/prev-segment lookup. The finder is plain C
     # and ImGui-free precisely so it can be linked here; the rest of the
     # browser (braintest_loadbrowser.cpp) is not part of this target.
@@ -5878,6 +5880,7 @@ set(_unit_test_names
     bench_decoy_step_first
     shield_outgoing_pill_blocks
     shield_pill_cover_walls
+    gh_attack_lane_parity
     pf_tail_reaches_radius_and_stops
     pf_tail_blocked_by_wall_and_sea
     pf_tail_neutral_zone_slows

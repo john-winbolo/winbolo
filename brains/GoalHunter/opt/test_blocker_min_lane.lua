@@ -5,8 +5,10 @@
 --   * spot_margin.angle_line_trees — the shell test at a gun angle.
 --   * attack.aim_lane_wide — the lane from a spot to an aim point.
 --   * attack._clear_aim_from_world — with min_lane 0 (knob off) a narrow
---     centre lane is taken as before; with 0.5 it is dropped for a corner
---     whose lane is wide.
+--     centre lane is taken as before; with 0.5 or the 0.125 default it is
+--     dropped for a corner whose lane is wide.
+--   * the 0.125 default on the recorded cases: a 0.09-brad lane fails, a
+--     lane of 0.1875 left and 0.5 right passes.
 -- No engine: terrain is all road and the shell simulator is a stand-in that
 -- decides by gun angle.
 --
@@ -50,7 +52,7 @@ end
 -- ── Knobs ────────────────────────────────────────────────────────────────
 print("knobs")
 local keel = C.PRESETS and C.PRESETS.keel or {}
-check("BLOCKER_MIN_LANE_BRAD default 0.5", C.BLOCKER_MIN_LANE_BRAD == 0.5, C.BLOCKER_MIN_LANE_BRAD)
+check("BLOCKER_MIN_LANE_BRAD default 0.125", C.BLOCKER_MIN_LANE_BRAD == 0.125, C.BLOCKER_MIN_LANE_BRAD)
 check("PRESETS.keel BLOCKER_MIN_LANE_BRAD = 0", keel.BLOCKER_MIN_LANE_BRAD == 0)
 
 -- ── aim_lane.wide_enough ─────────────────────────────────────────────────
@@ -73,6 +75,24 @@ do
   check("lane across the wrap, 0.4 each side -> fails", not ok)
   ok = AL.wide_enough(function(a) return a >= 255.4 or a <= 0.6 end, 0.0, 0.5)
   check("lane across the wrap, 0.6 each side -> passes", ok)
+end
+
+-- ── The 0.125 default on the recorded cases ──────────────────────────────
+print("aim_lane.wide_enough at 0.125")
+do
+  local MIN = C.BLOCKER_MIN_LANE_BRAD
+  local function band(lo, hi) return function(a) return a >= lo and a <= hi end end
+  local ok, l, r = AL.wide_enough(band(99.955, 100.045), 100.0, MIN)
+  check("t=6765: 0.09-brad lane in total -> fails", not ok and l == 0 and r == 0,
+        tostring(l) .. "/" .. tostring(r))
+  ok, l, r = AL.wide_enough(band(100.0 - 0.1875, 100.5), 100.0, MIN)
+  check("t=5123: 0.1875 left, 0.5 right -> passes", ok and l == 0.125 and r == 0.125,
+        tostring(l) .. "/" .. tostring(r))
+  ok, l, r = AL.wide_enough(band(100.0 - 0.1, 100.5), 100.0, MIN)
+  check("0.1 left (under one tap) -> fails", not ok and l == 0.0625 and r == 0.125,
+        tostring(l) .. "/" .. tostring(r))
+  ok = AL.wide_enough(band(100.0 - 0.125, 100.0 + 0.125), 100.0, MIN)
+  check("lane exactly one tap each side -> passes", ok)
 end
 
 -- ── Shell stand-in by gun angle ──────────────────────────────────────────
@@ -121,6 +141,11 @@ do
   local _, twx, twy = aim_angle(3)
   ok = A.aim_lane_wide(OX, OY, PMX, PMY, world, twx, twy, 0.5)
   check("top-right aim: lane wide", ok == true)
+  ok, l, r = A.aim_lane_wide(OX, OY, PMX, PMY, world, awx, awy, 0.125)
+  check("centre aim, 0.125: 0.1-brad lane too narrow", ok == false,
+        tostring(l) .. "/" .. tostring(r))
+  ok = A.aim_lane_wide(OX, OY, PMX, PMY, world, twx, twy, 0.125)
+  check("top-right aim, 0.125: lane wide", ok == true)
 end
 
 print("attack._clear_aim_from_world")
@@ -133,6 +158,8 @@ do
   check("min_lane 0.5: the narrow centre is dropped", idx2 ~= nil and idx2 ~= 1, idx2)
   check("min_lane 0.5: the aim it picks has a wide lane",
         idx2 and A.aim_lane_wide(OX, OY, PMX, PMY, world, awx, awy, 0.5) == true)
+  local idx3 = A._clear_aim_from_world(OX, OY, PMX, PMY, world, nil, C.BLOCKER_MIN_LANE_BRAD)
+  check("min_lane 0.125 (default): the narrow centre is dropped", idx3 ~= nil and idx3 ~= 1, idx3)
   -- A dead blocker: every angle in the sector is clear, the centre stands.
   bp.health = 0
   check("dead blocker, min_lane 0.5: centre",

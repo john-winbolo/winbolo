@@ -826,9 +826,15 @@ M.CLEAR_TURN_TAP_PROGRESS = true
 -- already asks) at every gun angle within this many brad on both sides of
 -- the aim. The sweep drops an aim that fails; a shield scan winner that
 -- fails bans its angle and plans again (the pill-on-the-line replan, so the
--- take ends after SANITY_PILL_REPLANS_MAX spots). 0 = off.
+-- take ends after SANITY_PILL_REPLANS_MAX spots). The C goal-pick sweep
+-- (gh_attack.c, the attack.lua C fast path) uses the same rule, so the goal
+-- pick and plan_position agree on the spot. 0 = off.
+-- 0.125 brad is one smallest finetune tap: the lane must reach at least one
+-- tap on each side of the aim, so a gun that ends one tap away from the aim
+-- is still in the lane. Recorded cases: t=6765, a lane of 0.09 brad in total,
+-- must fail; t=5123, 0.1875 brad left and 0.5 brad right, must pass.
 -- Log lines: SHIELD_LANE, SHIELD_LANE_BAN, SHIELD_LANE_ABANDON. KEEL 0.
-M.BLOCKER_MIN_LANE_BRAD = 0.5
+M.BLOCKER_MIN_LANE_BRAD = 0.125
 -- Pill cover by health, 2026-11-03. The shield planner counted every friendly
 -- pill on a square as PPT_PILL_WALL_EQUIV (3) walls of cover, whatever its
 -- health, and a pill of any other owner on a square as a square to build on.
