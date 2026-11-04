@@ -6227,6 +6227,7 @@ set(_unit_test_names
     brainrec_dij_reset_on_new_start
     brainrec_dij_keyframe_equals_replay
     brainrec_dij_old_file_loads
+    brainrec_dij_danger_box
     lv_tank_stocks_from_snapshot
     lv_team_colours_from_snapshot
     lv_team_colours_events

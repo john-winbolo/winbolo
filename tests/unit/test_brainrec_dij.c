@@ -32,6 +32,10 @@
  *   - a frame rebuilt from its keyframe equals the same frame rebuilt by
  *     replaying every delta from the start, and both equal the slates;
  *   - a v7 file (no Dijkstra block) still walks, and a v8 one walks too.
+ * The danger box (the bot's danger_grid in the same box) is checked too:
+ *   - only changed danger cells are written; a 0 is written only to clear
+ *     a cell that was non-zero, and a 0 cell entering the box is skipped;
+ *   - a keyframe holds every non-zero cell, and a seek equals the replay.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -125,6 +129,8 @@ static void tMeta(BrainRecDijMeta *m, int kind, int sx, int sy, uint32_t started
 typedef struct {
     int records, resets, metas, inactive;
     int landWrites, boatWrites, landClears, boatClears;
+    int dangerWrites, dangerZeros;   /* danger cells written; of them, 0s */
+    size_t dangerBytes;              /* danger section bytes, count byte included */
 } TCount;
 
 static bool tCountBlock(const uint8_t *b, size_t n, TCount *c) {
@@ -165,6 +171,17 @@ static bool tCountBlock(const uint8_t *b, size_t n, TCount *c) {
                 }
             }
         }
+        NEED(1);
+        int nd = b[p++];
+        NEED((size_t)nd * 3);
+        for (int k = 0; k < nd; k++) {
+            uint16_t v;
+            memcpy(&v, b + p + (size_t)k * 3 + 1, 2);
+            if (v == 0) c->dangerZeros++;
+        }
+        p += (size_t)nd * 3;
+        c->dangerWrites += nd;
+        c->dangerBytes  += 1 + (size_t)nd * 3;
     }
 #undef NEED
     return p == n;
@@ -202,11 +219,28 @@ static bool tBoxMatches(const BrainRecDijBotBox *bb, int slate, const BrainRecDi
     return true;
 }
 
+/* The danger box a reader should hold: the grid's values in the box (0
+ * off the map or with no grid). */
+static bool tDangerMatches(const BrainRecDijBotBox *bb, const BrainRecDijBotIn *in) {
+    if (!in->hasTank) return !bb->boxValid;
+    for (int j = 0; j < BRAINREC_DIJ_BOX; j++) {
+        for (int i = 0; i < BRAINREC_DIJ_BOX; i++) {
+            int x = in->tx - BRAINREC_DIJ_HALF + i, y = in->ty - BRAINREC_DIJ_HALF + j;
+            uint16_t want = 0, got = 0;
+            if (in->danger && x >= 0 && x <= 255 && y >= 0 && y <= 255)
+                want = in->danger[y * 256 + x];
+            if (!brainRecDijDangerAt(bb, x, y, &got) || got != want) return false;
+        }
+    }
+    return true;
+}
+
 static bool tStatesEqual(const BrainRecDijState *a, const BrainRecDijState *b) {
     for (int i = 0; i < BRAINREC_DIJ_MAX_BOTS; i++) {
         const BrainRecDijBotBox *x = &a->bots[i], *y = &b->bots[i];
         if (x->present != y->present || x->boxValid != y->boxValid
             || x->onBoat != y->onBoat || x->cx != y->cx || x->cy != y->cy) return false;
+        if (memcmp(x->danger, y->danger, sizeof x->danger) != 0) return false;
         for (int s = 0; s < BRAINREC_DIJ_SLATES; s++) {
             const BrainRecDijSlateBox *p = &x->slates[s], *q = &y->slates[s];
             if (p->active != q->active) return false;
@@ -260,8 +294,9 @@ int run_brainrec_dij_changed_only(void) {
     UT_ASSERT(brainRecDijEncodeFrame(prev, bots, false, &buf));
     UT_ASSERT(tCountBlock(buf.data, buf.len, &c));
     UT_ASSERT_MSG(c.records == 0, "an unchanged frame wrote %d records", c.records);
-    UT_ASSERT_MSG(buf.len == 7, "an unchanged frame is %u bytes, want 7 "
-                  "(flags, count, slot, bot flags, cx, cy, record count)", (unsigned)buf.len);
+    UT_ASSERT_MSG(buf.len == 8, "an unchanged frame is %u bytes, want 8 "
+                  "(flags, count, slot, bot flags, cx, cy, record count, danger count)",
+                  (unsigned)buf.len);
     UT_ASSERT(brainRecDijDecodeFrame(rd, buf.data, buf.len));
     UT_ASSERT(tBoxMatches(&rd->bots[3], 0, &in));
 
@@ -501,6 +536,8 @@ int run_brainrec_dij_keyframe_equals_replay(void) {
     enum { NBOT = 4, NFRAMES = 3000, KEYINT = BRAINREC_MAP_KEYFRAME_INTERVAL };
     static TSlate ts[NBOT][BRAINREC_DIJ_SLATES];
     static BrainRecDijBotIn in[NBOT];
+    static uint16_t dg[NBOT][65536];   /* each bot's danger grid */
+    memset(dg, 0, sizeof dg);
     const BrainRecDijBotIn *bots[BRAINREC_DIJ_MAX_BOTS] = {0};
     int slotOf[NBOT] = {0, 2, 7, 15};
     for (int b = 0; b < NBOT; b++) {
@@ -519,6 +556,7 @@ int run_brainrec_dij_keyframe_equals_replay(void) {
     UT_ASSERT(snap);
 
     size_t total = 0, keyTotal = 0, deltaTotal = 0;
+    size_t dangerTotal = 0, dangerKeyTotal = 0;
     int keyFrames = 0;
     int sx[NBOT][BRAINREC_DIJ_SLATES], sy[NBOT][BRAINREC_DIJ_SLATES];
     uint32_t st[NBOT][BRAINREC_DIJ_SLATES];
@@ -535,6 +573,26 @@ int run_brainrec_dij_keyframe_equals_replay(void) {
             bi->ty = 80 + ((step / 40) % 2 ? 10 : 0) + b * 5;
             bi->hasTank = (f % 900) < 860;
             bi->onBoat  = ((f / 300) % 3) == 1;
+            /* Danger: hostile pills on the tank's route, each a diamond of
+             * radius 8. A pill's anger goes up while it shoots and decays;
+             * a pill dies now and then (its danger drops to 0). */
+            bi->danger = dg[b];
+            memset(dg[b], 0, sizeof dg[b]);
+            for (int k = 0; k < 6; k++) {
+                int px = 50 + b * 30 + k * 7, py = 75 + b * 5 + (k % 3) * 6;
+                if (((f / 400) + k) % 5 == 0) continue;            /* dead */
+                int anger = ((f + k * 37) % 120) < 30 ? ((f + k * 37) % 120) / 3 : 0;
+                for (int dy = -8; dy <= 8; dy++) {
+                    for (int dx = -8; dx <= 8; dx++) {
+                        int md = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+                        if (md > 8) continue;
+                        int x = px + dx, y = py + dy;
+                        if (x < 0 || x > 255 || y < 0 || y > 255) continue;
+                        int v = dg[b][y * 256 + x] + (15 + anger) * (9 - md) / 9;
+                        dg[b][y * 256 + x] = (uint16_t)(v > 65535 ? 65535 : v);
+                    }
+                }
+            }
             for (int s = 0; s < BRAINREC_DIJ_SLATES; s++) {
                 BrainRecDijSlateIn *si = &bi->slates[s];
                 TSlate *t = &ts[b][s];
@@ -566,6 +624,12 @@ int run_brainrec_dij_keyframe_equals_replay(void) {
         UT_ASSERT(brainRecDijEncodeFrame(prev, bots, key, &buf));
         total += buf.len;
         if (key) { keyTotal += buf.len; keyFrames++; } else deltaTotal += buf.len;
+        {
+            TCount cc;
+            UT_ASSERT(tCountBlock(buf.data, buf.len, &cc));
+            dangerTotal += cc.dangerBytes;
+            if (key) dangerKeyTotal += cc.dangerBytes;
+        }
         UT_ASSERT(brainRecDijStoreSet(&store, f, buf.data, buf.len));
         UT_ASSERT(brainRecDijDecodeFrame(seq, buf.data, buf.len));
 
@@ -574,6 +638,9 @@ int run_brainrec_dij_keyframe_equals_replay(void) {
             const BrainRecDijBotBox *bb = &seq->bots[slotOf[b]];
             UT_ASSERT(bb->present);
             if (!in[b].hasTank) { UT_ASSERT(!bb->boxValid); continue; }
+            UT_ASSERT_MSG(tDangerMatches(bb, &in[b]),
+                          "frame %d bot %d: the replayed danger box does not match "
+                          "the grid", f, b);
             for (int s = 0; s < BRAINREC_DIJ_SLATES; s++) {
                 UT_ASSERT_MSG(tBoxMatches(bb, s, &in[b]),
                               "frame %d bot %d slate %d: the replayed box does not "
@@ -620,6 +687,11 @@ int run_brainrec_dij_keyframe_equals_replay(void) {
            NBOT, NFRAMES, (double)total / NFRAMES / NBOT,
            (double)deltaTotal / (NFRAMES - keyFrames) / NBOT,
            (double)keyTotal / keyFrames / NBOT, (unsigned)total);
+    printf("  brainrec_dij danger part: %.2f bytes/tick/bot on average "
+           "(delta frames %.2f, keyframes %.1f); %u bytes total\n",
+           (double)dangerTotal / NFRAMES / NBOT,
+           (double)(dangerTotal - dangerKeyTotal) / (NFRAMES - keyFrames) / NBOT,
+           (double)dangerKeyTotal / keyFrames / NBOT, (unsigned)dangerTotal);
     UT_ASSERT_MSG((double)total / NFRAMES / NBOT < 2000.0,
                   "%.1f bytes per tick per bot", (double)total / NFRAMES / NBOT);
 
@@ -630,6 +702,124 @@ int run_brainrec_dij_keyframe_equals_replay(void) {
     free(prev); free(seq);
     for (int b = 0; b < NBOT; b++)
         for (int s = 0; s < BRAINREC_DIJ_SLATES; s++) tSlateFree(&ts[b][s]);
+    return 0;
+}
+
+/* ---- danger box ----------------------------------------------------- */
+
+int run_brainrec_dij_danger_box(void) {
+    static uint16_t grid[65536];
+    memset(grid, 0, sizeof grid);
+    BrainRecDijState *prev = (BrainRecDijState *)malloc(sizeof *prev);
+    BrainRecDijState *rd   = (BrainRecDijState *)malloc(sizeof *rd);
+    UT_ASSERT(prev && rd);
+    brainRecDijStateClear(prev);
+    brainRecDijStateClear(rd);
+    BrainRecDijBuf buf = {0};
+    TCount c;
+
+    /* A pill's danger in a 5x5 square round (102, 100), inside the box
+     * round the tank at (100, 100); one more cell outside the box. No
+     * slate: the danger box is written on its own. */
+    for (int y = 98; y <= 102; y++)
+        for (int x = 100; x <= 104; x++) grid[y * 256 + x] = (uint16_t)(20 + x - y);
+    grid[100 * 256 + 140] = 99;
+    static BrainRecDijBotIn in;
+    memset(&in, 0, sizeof in);
+    in.hasTank = true; in.tx = 100; in.ty = 100;
+    in.danger = grid;
+    const BrainRecDijBotIn *bots[BRAINREC_DIJ_MAX_BOTS] = {0};
+    bots[5] = &in;
+
+    /* Keyframe: every non-zero cell in the box, no 0s. */
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, true, &buf));
+    UT_ASSERT(tCountBlock(buf.data, buf.len, &c));
+    UT_ASSERT_MSG(c.dangerWrites == 25 && c.dangerZeros == 0,
+                  "keyframe wrote %d danger cells (%d zeros), want 25 and 0",
+                  c.dangerWrites, c.dangerZeros);
+    UT_ASSERT(brainRecDijDecodeFrame(rd, buf.data, buf.len));
+    UT_ASSERT(tDangerMatches(&rd->bots[5], &in));
+    uint16_t v = 1;
+    UT_ASSERT(brainRecDijDangerAt(&rd->bots[5], 102, 100, &v) && v == 22);
+    UT_ASSERT_MSG(!brainRecDijDangerAt(&rd->bots[5], 140, 100, &v) && v == 0,
+                  "a tile outside the box must read as not recorded");
+
+    /* Nothing changed: no danger cell. */
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, false, &buf));
+    UT_ASSERT(tCountBlock(buf.data, buf.len, &c));
+    UT_ASSERT_MSG(c.dangerWrites == 0, "an unchanged frame wrote %d danger cells",
+                  c.dangerWrites);
+
+    /* The pill gets angry at one cell and a new cell gets danger: 2 writes. */
+    grid[100 * 256 + 102] = 300;
+    grid[96 * 256 + 100]  = 7;
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, false, &buf));
+    UT_ASSERT(tCountBlock(buf.data, buf.len, &c));
+    UT_ASSERT_MSG(c.dangerWrites == 2 && c.dangerZeros == 0,
+                  "two changed cells wrote %d (%d zeros)", c.dangerWrites, c.dangerZeros);
+    UT_ASSERT(brainRecDijDecodeFrame(rd, buf.data, buf.len));
+    UT_ASSERT(tDangerMatches(&rd->bots[5], &in));
+
+    /* The pill dies: its 25 cells go to 0. Each is written as a 0 so the
+     * reader clears it; the other non-zero cell stays. */
+    for (int y = 98; y <= 102; y++)
+        for (int x = 100; x <= 104; x++) grid[y * 256 + x] = 0;
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, false, &buf));
+    UT_ASSERT(tCountBlock(buf.data, buf.len, &c));
+    UT_ASSERT_MSG(c.dangerWrites == 25 && c.dangerZeros == 25,
+                  "a dead pill wrote %d cells (%d zeros), want 25 zeros",
+                  c.dangerWrites, c.dangerZeros);
+    UT_ASSERT(brainRecDijDecodeFrame(rd, buf.data, buf.len));
+    UT_ASSERT(tDangerMatches(&rd->bots[5], &in));
+    UT_ASSERT(brainRecDijDangerAt(&rd->bots[5], 102, 100, &v) && v == 0);
+
+    /* Zero cells were not written again: the next frame writes nothing. */
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, false, &buf));
+    UT_ASSERT(tCountBlock(buf.data, buf.len, &c));
+    UT_ASSERT(c.dangerWrites == 0);
+
+    /* The tank moves 1 tile east. The new column has danger 0 except one
+     * cell: 1 write, and no 0 for the cells that enter the box. The column
+     * that leaves the box (x = 93) holds no danger. */
+    grid[100 * 256 + 108] = 12;
+    in.tx = 101;
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, false, &buf));
+    UT_ASSERT(tCountBlock(buf.data, buf.len, &c));
+    UT_ASSERT_MSG(c.dangerWrites == 1 && c.dangerZeros == 0,
+                  "a one-tile move wrote %d danger cells (%d zeros), want 1 and 0",
+                  c.dangerWrites, c.dangerZeros);
+    UT_ASSERT(brainRecDijDecodeFrame(rd, buf.data, buf.len));
+    UT_ASSERT(tDangerMatches(&rd->bots[5], &in));
+
+    /* The tank dies: no box and no danger cells. It comes back: every
+     * non-zero cell is new. */
+    in.hasTank = false;
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, false, &buf));
+    UT_ASSERT(tCountBlock(buf.data, buf.len, &c));
+    UT_ASSERT(c.dangerWrites == 0);
+    UT_ASSERT(brainRecDijDecodeFrame(rd, buf.data, buf.len));
+    UT_ASSERT(!brainRecDijDangerAt(&rd->bots[5], 101, 100, NULL));
+    in.hasTank = true;
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, false, &buf));
+    UT_ASSERT(tCountBlock(buf.data, buf.len, &c));
+    UT_ASSERT_MSG(c.dangerWrites == 2 && c.dangerZeros == 0,
+                  "respawn wrote %d danger cells (%d zeros), want 2 and 0",
+                  c.dangerWrites, c.dangerZeros);
+    UT_ASSERT(brainRecDijDecodeFrame(rd, buf.data, buf.len));
+    UT_ASSERT(tDangerMatches(&rd->bots[5], &in));
+
+    /* No grid (NULL): every cell reads 0, so the two non-zero cells are
+     * cleared with 0s. */
+    in.danger = NULL;
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, false, &buf));
+    UT_ASSERT(tCountBlock(buf.data, buf.len, &c));
+    UT_ASSERT(c.dangerWrites == 2 && c.dangerZeros == 2);
+    UT_ASSERT(brainRecDijDecodeFrame(rd, buf.data, buf.len));
+    UT_ASSERT(tDangerMatches(&rd->bots[5], &in));
+    UT_ASSERT(tStatesEqual(prev, rd));
+
+    brainRecDijBufFree(&buf);
+    free(prev); free(rd);
     return 0;
 }
 

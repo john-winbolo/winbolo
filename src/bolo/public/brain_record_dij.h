@@ -2,7 +2,7 @@
 /*********************************************************
  *NAME:          brain_record_dij.h
  *PURPOSE:
- *  The recorded Dijkstra box in brainrec.btr (format v8).
+ *  The recorded Dijkstra box and danger box in brainrec.btr (format v8).
  *
  *  Per bot, per tick, the recorder writes the bot's active Dijkstra
  *  slates, but only in a BRAINREC_DIJ_BOX x BRAINREC_DIJ_BOX box that
@@ -17,6 +17,10 @@
  *    - the boat layer is skipped for a slate with allow_boat = 0. When
  *      the tank is on land, a boat node is kept only if it is cheaper
  *      than the land node of the same tile.
+ *  In the same box the recorder also writes the bot's pathfinder
+ *  danger_grid (uint16 per tile), changed cells only. A cell that
+ *  enters the box holds 0 for the reader, so a 0 is written only when
+ *  the cell was non-zero before (so the reader clears it).
  *  On a map keyframe frame (BRAINREC_MAP_KEYFRAME_INTERVAL) the block is
  *  a keyframe too: it holds the whole box, so a reader that seeks needs
  *  to replay only from the last keyframe.
@@ -24,7 +28,8 @@
  *  This module is pure C with no SDL, sim or GUI dependency: the
  *  recorder (brain_record.c) fills BrainRecDijBotIn from each bot's
  *  pathfinder and BrainTest reads the blobs back through the store, so
- *  the unit test exercises the same code both sides use.
+ *  the unit test exercises the same code both sides use. The name says
+ *  "Dij" for the whole block, the danger box included.
  *
  *  Block layout (all native byte order, as the rest of the .btr):
  *    u8 flags                  bit0 = keyframe
@@ -47,6 +52,10 @@
  *                                u8 n, n x (u8 cell, f32 g_cost, u8 dir_at)
  *                              then for land, then boat:
  *                                u8 n, n x u8 cell   (cleared cells)
+ *      u8 nd                   danger cells written (0 when box not valid)
+ *      nd x (u8 cell, u16 danger)
+ *                              a cell whose danger differs from what the
+ *                              reader holds; 0 only to clear a cell
  *  A cell index is (y - cy + HALF) * BOX + (x - cx + HALF).
  *  In the frame the block is written as u32 length + bytes, so readers
  *  that do not decode it skip it by its length.
@@ -113,6 +122,9 @@ typedef struct {
     bool onBoat;
     int  tx, ty;   /* tank tile */
     BrainRecDijSlateIn slates[BRAINREC_DIJ_SLATES];
+    /* The pathfinder's danger_grid, 256x256 at y * 256 + x. NULL = no
+     * grid: every cell reads 0. */
+    const uint16_t *danger;
 } BrainRecDijBotIn;
 
 /* One slate's recorded box. layer 0 = land, 1 = boat. A cell holds
@@ -132,6 +144,7 @@ typedef struct {
     bool onBoat;
     int  cx, cy;
     BrainRecDijSlateBox slates[BRAINREC_DIJ_SLATES];
+    uint16_t danger[BRAINREC_DIJ_CELLS];   /* recorded danger in the box */
 } BrainRecDijBotBox;
 
 /* Everything a reader (or the writer's memory) holds after a frame. */
@@ -179,6 +192,10 @@ int brainRecDijCellIndex(const BrainRecDijBotBox *b, int x, int y);
  * *layerOut (may be NULL) gets 0 land / 1 boat. */
 float brainRecDijCostAt(const BrainRecDijBotBox *b, int slate, int x, int y,
                         int *layerOut);
+
+/* Recorded danger at map tile (x, y). Returns false when (x, y) is outside
+ * the box or the box is not valid; *out (may be NULL) gets the value, or 0. */
+bool brainRecDijDangerAt(const BrainRecDijBotBox *b, int x, int y, uint16_t *out);
 
 /* Why a recorded path trace stopped. */
 typedef enum {

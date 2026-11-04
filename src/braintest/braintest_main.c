@@ -2019,6 +2019,56 @@ static bool btRecordedDijClick(BrainTestApp *app, BtRecDijClick *out) {
     return true;
 }
 
+/* Recorded danger box (key 2 in playback of a v8 session). The playback
+ * patch writes the followed bot's recorded box into its danger_grid and
+ * zeroes the rest, so the key-2 texture and the key-9 numbers show only
+ * the box. Returns true when it wrote the grid. */
+static bool btPatchRecordedDanger(BrainTestApp *app, uint16_t *dangerGrid) {
+    const BrainRecDijBotBox *b = btRecordedDijBot(app);
+    if (!b || !dangerGrid) return false;
+    memset(dangerGrid, 0, 65536 * sizeof(uint16_t));
+    if (!b->boxValid) return true;
+    for (int j = 0; j < BRAINREC_DIJ_BOX; j++) {
+        int y = b->cy - BRAINREC_DIJ_HALF + j;
+        if (y < 0 || y > 255) continue;
+        for (int i = 0; i < BRAINREC_DIJ_BOX; i++) {
+            int x = b->cx - BRAINREC_DIJ_HALF + i;
+            if (x < 0 || x > 255) continue;
+            dangerGrid[y * 256 + x] = b->danger[j * BRAINREC_DIJ_BOX + i];
+        }
+    }
+    return true;
+}
+
+/* Label and outline for the recorded danger box (key 2, playback of a v8
+ * session). Nothing outside the box was recorded. */
+static void renderRecordedDangerBox(BrainTestApp *app, int screenW, int screenH) {
+    if (!vizFlag(app->regIdxDanger)) return;
+    const BrainRecDijBotBox *b = btRecordedDijBot(app);
+    if (!b) return;
+    char label[160];
+    SDL_snprintf(label, sizeof(label),
+        "[2] recorded danger box %dx%d%s (outside the box: not recorded)",
+        BRAINREC_DIJ_BOX, BRAINREC_DIJ_BOX,
+        !b->present ? " - not recorded for this player"
+                    : (b->boxValid ? "" : " - no tank: no box"));
+    SDL_SetRenderDrawColor(app->renderer, 255, 140, 0, 255);
+    SDL_RenderDebugText(app->renderer, 4.0f, 156.0f, label);
+    if (!b->boxValid) return;
+
+    int   tp, startX, startY, endX, endY;
+    float moX, moY;
+    mapTileWindow(app, screenW, screenH, &tp, &moX, &moY,
+                  &startX, &startY, &endX, &endY);
+    (void)startX; (void)startY; (void)endX; (void)endY;
+    int x0 = b->cx - BRAINREC_DIJ_HALF, y0 = b->cy - BRAINREC_DIJ_HALF;
+    SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(app->renderer, 255, 140, 0, 220);
+    SDL_FRect box = { moX + x0 * tp, moY + y0 * tp,
+                      (float)(BRAINREC_DIJ_BOX * tp), (float)(BRAINREC_DIJ_BOX * tp) };
+    SDL_RenderRect(app->renderer, &box);
+}
+
 /* Recorded Dijkstra heatmap (key 7 in playback of a v8 session): the
  * followed bot's recorded box for the viewed slate (Shift+7 cycles), with
  * the box outlined. Nothing outside the box was recorded. */
@@ -4526,10 +4576,21 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
      * computeClickPath already uses the playback tank position when
      * scrubbing, so A* / est track history correctly. */
     if (app->clickActive) {
-        char l1[200], l2[160], l3[160];
+        char l1[200], l2[160], l3[160], l4[96];
         const char *dijStr;
         char dijBuf[96];
         l3[0] = '\0';
+        l4[0] = '\0';
+        /* The recorded danger at the clicked tile (playback, v8 session). */
+        if (app->playbackMode) {
+            const BrainRecDijBotBox *db = btRecordedDijBot(app);
+            uint16_t dv = 0;
+            if (db && brainRecDijDangerAt(db, app->clickMX, app->clickMY, &dv)) {
+                SDL_snprintf(l4, sizeof(l4), "recorded danger: %u", (unsigned)dv);
+            } else if (db) {
+                SDL_snprintf(l4, sizeof(l4), "recorded danger: not recorded (outside box)");
+            }
+        }
         static BtRecDijClick rc;
         if (app->playbackMode && btRecordedDijClick(app, &rc)) {
             /* The bot's recorded slate at the scrubbed frame. */
@@ -4601,12 +4662,14 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
             "(A* / est use the followed tank's%s position)",
             app->playbackMode ? " playback" : " live");
         float cs = 1.5f;
-        int   nLines = l3[0] ? 3 : 2;
+        int   nLines = 2 + (l3[0] ? 1 : 0) + (l4[0] ? 1 : 0);
         float cw1 = (float)strlen(l1) * 8.0f * cs + 8.0f;
         float cw2 = (float)strlen(l2) * 8.0f * cs + 8.0f;
         float cw3 = (float)strlen(l3) * 8.0f * cs + 8.0f;
+        float cw4 = (float)strlen(l4) * 8.0f * cs + 8.0f;
         float cw  = cw1 > cw2 ? cw1 : cw2;
         if (cw3 > cw) cw = cw3;
+        if (cw4 > cw) cw = cw4;
         float ch  = (8.0f * cs + 2.0f) * nLines + 6.0f;
         float cx  = (float)screenW - cw - 4.0f;
         /* +80 px up so the playback slider doesn't cover the panel. */
@@ -4620,6 +4683,11 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
         if (l3[0]) {
             drawHudLine(app->renderer, cx + 4.0f, cy + 3.0f + (8.0f * cs + 2.0f) * 2,
                         cs, 255, 170, 0, l3);
+        }
+        if (l4[0]) {
+            drawHudLine(app->renderer, cx + 4.0f,
+                        cy + 3.0f + (8.0f * cs + 2.0f) * (l3[0] ? 3 : 2),
+                        cs, 255, 140, 0, l4);
         }
     }
 
@@ -5477,6 +5545,9 @@ static void appRender(BrainTestApp *app) {
                 memcpy(savedInflu,  pbPf->influence_grid, gridSz * sizeof(int16_t));
                 memcpy(savedOverl,  pbPf->overlay_grid,   gridSz * sizeof(uint16_t));
                 memcpy(pbPf->danger_grid,    app->recording.playbackDanger,    gridSz * sizeof(uint16_t));
+                /* A v8 session: show the bot's recorded danger box, and
+                 * nothing outside it. */
+                btPatchRecordedDanger(app, pbPf->danger_grid);
                 memcpy(pbPf->influence_grid, app->recording.playbackInfluence, gridSz * sizeof(int16_t));
                 memcpy(pbPf->overlay_grid,   app->recording.playbackOverlay,   gridSz * sizeof(uint16_t));
                 /* brainMap is externally-owned memory the pathfinder
@@ -5727,6 +5798,9 @@ static void appRender(BrainTestApp *app) {
 
         /* Numeric cell values (companion to 1/2 grid overlays). */
         renderCellValues(app, screenW, screenH);
+
+        /* Recorded danger box outline + label (playback, v8 session). */
+        renderRecordedDangerBox(app, screenW, screenH);
 
         /* Fog-of-war (drawn between BrainTest pathfinder overlays
          * and the brain's own overlays so the brain's stuff isn't
