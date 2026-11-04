@@ -1055,6 +1055,27 @@ local function refuel_need(state, info)
   return (low or topoff), low, topoff
 end
 
+-- Not-low refuel markup (C.REFUEL_NOT_LOW_MULT). "Not low" is the exact
+-- opposite of refuel_need's `low`: armour > ARMOUR_LOW AND shells >
+-- SHELLS_LOW. Then the urgency term is 1.0 and refuel would cost a
+-- well-stocked tank about 63, so the cost is multiplied by the knob. Both
+-- cost paths (eval_refuel and the pool-1 finalize path) multiply it in after
+-- urgency and after the REFUEL_MIN_COST floor; goal_selection scales its
+-- LGM-wait cap by the same factor. Returns the multiplier: 1.0 when either
+-- resource is low or the knob is 1.0.
+function M.refuel_notlow_mult(arm, sh)
+  local k = C.REFUEL_NOT_LOW_MULT or 1.0
+  if k == 1.0 then return 1.0 end
+  if (arm or 99) > C.ARMOUR_LOW and (sh or 99) > C.SHELLS_LOW then return k end
+  return 1.0
+end
+-- The desc term for that multiplier: "" at x1, so a 1.0 knob leaves the desc
+-- exactly as it was.
+function M.refuel_notlow_term(nl, arm, sh)
+  if nl == 1.0 then return "" end
+  return string.format(" x%.2f notlow(arm=%d,sh=%d)", nl, arm or 99, sh or 99)
+end
+
 -- =========================================================================
 -- Pool evaluators — each evaluates one category of goal candidates.
 -- Called one-per-tick by update_pool_cache() to spread the cost.
@@ -1120,6 +1141,11 @@ local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
   if (info.armour or 0) > C.ARMOUR_CRITICAL then
     cost = math.max(cost, C.REFUEL_MIN_COST)
   end
+  -- Not-low markup (C.REFUEL_NOT_LOW_MULT): after urgency and after the
+  -- floor above, so the floor cannot take it back. x1 when anything is low.
+  local cost_pre_nl = cost
+  local nl = M.refuel_notlow_mult(info.armour, info.shells)
+  cost = cost * nl
   -- Ammo-deprived SUICIDE decoy: it has written off resupply (shells AND armour),
   -- so heavily deprioritise refuel/flee so attack_pill/blitz out-bids it. Applied
   -- last (even over the critical-armour band) — it's meant to die charging, and the
@@ -1139,8 +1165,10 @@ local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
     cost = cost,
     goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
              wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-    desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d/%d sh=%d/%d%s%s",
-           bid, base.mx, base.my, bscore, urgency, cost,
+    desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f%s arm=%d/%d sh=%d/%d%s%s",
+           bid, base.mx, base.my, bscore, urgency, (nl ~= 1.0) and cost_pre_nl or cost,
+           (nl ~= 1.0) and (M.refuel_notlow_term(nl, info.armour, info.shells)
+                            .. string.format("=%.0f", cost)) or "",
            info.armour, state.armour_target or C.TANK_FULL_ARMOUR,
            info.shells, state.shell_target or C.TANK_FULL_SHELLS,
            state._refuel_topoff_only and " topoff=on" or "", hyst_str) or "",
@@ -11774,9 +11802,11 @@ local function get_formula_inner(e)
       local _db = e._defic_bonus or 0
       local _fm = e._fill_mult or 1
       local _lgm = e._lgm_wait_floor
+      local _nl = e._notlow or 1.0
       _shape_head = string.format(
-        " × ur{%.2f} - def{%.0f} × mult{%.2f fill %.2f sh %d/%d arm %d/%d} scar{%.2f}%s",
-        _u, _db, _fm, e._fill or 0,
+        " × ur{%.2f}%s - def{%.0f} × mult{%.2f fill %.2f sh %d/%d arm %d/%d} scar{%.2f}%s",
+        _u, (_nl ~= 1.0) and string.format(" × notlow{%.2f}", _nl) or "",
+        _db, _fm, e._fill or 0,
         e._sh or 0, e._sh_target or 0, e._arm or 0, e._arm_target or 0,
         e._scarcity or 1,
         _lgm and string.format(" → lgm_wait_floor{%.0f}", _lgm) or "")
@@ -11815,8 +11845,16 @@ local function get_formula_inner(e)
       local _d_lgm   = _lgm
         and string.format("LGM returning, at this base → floor=%.0f (cost capped)", _lgm)
         or  "no LGM-wait active → no floor"
-      _shape_detail = string.format("|urgency:%s|deficit:%s|fill:%s|scarcity:%s|lgm:%s",
-        _d_urgency, _d_def, _d_fill, _d_scar, _d_lgm)
+      -- Not-low markup: applied after urgency (and the REFUEL_MIN_COST floor);
+      -- the LGM-wait floor above is already scaled by it.
+      local _d_notlow = (_nl ~= 1.0)
+        and string.format(
+          "|notlow:armour %d > %d[ARMOUR_LOW] and shells %d > %d[SHELLS_LOW]"
+          .. " (neither low) → x%.2f[REFUEL_NOT_LOW_MULT]; any LGM-wait floor is scaled by it too",
+          _arm, C.ARMOUR_LOW, _sh, C.SHELLS_LOW, _nl)
+        or ""
+      _shape_detail = string.format("|urgency:%s%s|deficit:%s|fill:%s|scarcity:%s|lgm:%s",
+        _d_urgency, _d_notlow, _d_def, _d_fill, _d_scar, _d_lgm)
     end
 
     local _danger_pen = C.REFUEL_DANGER_PENALTY or (1 / 0.75)
@@ -15547,6 +15585,11 @@ function M.finalize_pools(state, world, info)
     if (info.armour or 0) > C.ARMOUR_CRITICAL then
       cost = math.max(cost, C.REFUEL_MIN_COST)
     end
+    -- Not-low markup (C.REFUEL_NOT_LOW_MULT) — same rule as eval_refuel:
+    -- after urgency and the floor above. x1 when anything is low.
+    local cost_pre_nl = cost
+    local nl = M.refuel_notlow_mult(info.armour, info.shells)
+    cost = cost * nl
     -- Pool-panel display: candidates carry the raw bscore (travel+danger),
     -- but the winner that flows to the cross-pool "winners pool" is
     -- bscore*urgency. Scale each candidate's displayed cost by the same
@@ -15555,12 +15598,13 @@ function M.finalize_pools(state, world, info)
     -- unchanged. Rejected candidates (non-numeric cost) pass through as-is.
     -- (The REFUEL_FINALIZE log above already printed the raw bscores.)
     local disp_cands = pr1.candidates
-    if BRAIN_POOL_VIZ and urgency ~= 1.0 and pr1.candidates then
+    -- The not-low markup (nl) is a uniform multiplier too, so it is folded in.
+    if BRAIN_POOL_VIZ and urgency * nl ~= 1.0 and pr1.candidates then
       disp_cands = {}
       for i, cand in ipairs(pr1.candidates) do
         local nc = {}
         for k, v in pairs(cand) do nc[k] = v end
-        if type(nc.cost) == "number" and nc.cost < 1e29 then nc.cost = nc.cost * urgency end
+        if type(nc.cost) == "number" and nc.cost < 1e29 then nc.cost = nc.cost * urgency * nl end
         disp_cands[i] = nc
       end
     end
@@ -15568,8 +15612,10 @@ function M.finalize_pools(state, world, info)
       cost = cost,
       goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
                wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-      desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d/%d sh=%d/%d%s",
-             bid, base.mx, base.my, bscore, urgency, cost,
+      desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f%s arm=%d/%d sh=%d/%d%s",
+             bid, base.mx, base.my, bscore, urgency, (nl ~= 1.0) and cost_pre_nl or cost,
+             (nl ~= 1.0) and (M.refuel_notlow_term(nl, info.armour, info.shells)
+                              .. string.format("=%.0f", cost)) or "",
              info.armour, state.armour_target or C.TANK_FULL_ARMOUR,
              info.shells, state.shell_target or C.TANK_FULL_SHELLS,
              state._refuel_topoff_only and " topoff=on" or "") or "",
@@ -17677,6 +17723,7 @@ local function goal_selection(state, world, info, quiet)
           e._sh_target      = state.shell_target  or C.TANK_FULL_SHELLS
           e._arm_def        = _ref_arm_def
           e._sh_def         = _ref_sh_def
+          e._notlow         = M.refuel_notlow_mult(info.armour, info.shells)
           e._lgm_wait_floor = nil
           e.formula         = nil  -- invalidate cached formula so live shape re-renders
         end
@@ -17815,6 +17862,10 @@ local function goal_selection(state, world, info, quiet)
             local danger_frac = math.min(1.0, thr / C.LGM_WAIT_SAFE_THRESHOLD)
             local wait_floor = C.LGM_WAIT_COST_SAFE
               + (C.LGM_WAIT_COST - C.LGM_WAIT_COST_SAFE) * danger_frac
+            -- The cached cost already carries the not-low markup
+            -- (C.REFUEL_NOT_LOW_MULT, from the finalize path). Scale the cap
+            -- by the same factor so the cap cannot take the markup back.
+            wait_floor = wait_floor * M.refuel_notlow_mult(info.armour, info.shells)
             if final_cost > wait_floor then
               final_cost = wait_floor
             end
@@ -19759,6 +19810,7 @@ function M.get_pool_breakdown_json(state)
           e._sh          = li.shells or 0
           e._arm_def     = arm_def
           e._sh_def      = sh_def
+          e._notlow      = M.refuel_notlow_mult(li.armour, li.shells)
           e.formula      = nil  -- force live re-render with shape tokens
         end
       end
