@@ -58,8 +58,17 @@ local ally_state = require("ally_state")
 local print2 = require("print2")
 local viz    = require("viz")
 local spike  = require("spike")   -- spike care (C.SPIKE_REPAIR_PRIORITY)
+local RS     = require("repair_standoff")  -- C.REPAIR_STANDOFF_ENABLED
 
 local M = {}
+
+-- 2026-11-03 REPAIR_STANDOFF: pick (or keep) the repair_pill standoff square.
+-- init.lua calls this once per tick before steering; steering and the feeder
+-- read the record through M.RS.active.
+M.RS = RS
+function M.standoff_update(state, world, info, now)
+  return RS.update(state, world, info, now)
+end
 
 -- Deterministic type ordering for tie-breaks (and the claim wire format).
 local TYPE_RANK = { rebuild = 1, topup = 2, farm = 3 }
@@ -1931,6 +1940,15 @@ function M.repair_feeder(state, world, info, now)
   -- the ordinary side-quest path would still be denying mode_owned.
   local effective_max = math.max(blend_max, M.repair_leash())
   local in_range = dist <= effective_max
+  -- 2026-11-03 REPAIR_STANDOFF: a repair_pill goal with a standoff square
+  -- (repair_standoff.lua) sends the builder from that square and from no
+  -- other: the dispatch cap is REPAIR_DISPATCH_DIST_DANGEROUS, and the tank
+  -- has to be on the square. No standoff (mode push or clear): as before.
+  local _so = (src == "repair_pill") and RS.active(state, g) or nil
+  if _so then
+    effective_max = DIST_DANGEROUS
+    in_range = (tmx == _so.mx and tmy == _so.my) and dist <= effective_max
+  end
   local has_trees = (info.trees or 0) > 0
 
   local _tgt_pill
@@ -1991,7 +2009,8 @@ function M.repair_feeder(state, world, info, now)
       state.tick or 0, px, py, tmx, tmy, M.fmt_ld(dist), effective_max, info.trees or 0,
       math.floor(danger_at_tank or 0), math.floor(ticks or 0), tostring(_hold),
       tostring(enemy_hold), tostring(under_fire_hold),
-      _uf_age and tostring(_uf_age) or "-", g.kind or "?", tostring(can_dispatch)))
+      _uf_age and tostring(_uf_age) or "-", g.kind or "?", tostring(can_dispatch))
+      .. (_so and string.format(" standoff=(%d,%d)", _so.mx, _so.my) or ""))
   end
 
   if can_dispatch then

@@ -7669,6 +7669,10 @@ function Brain.think(info)
   -- Keeps the covered-water no-go set alive for the whole boat trip, including
   -- the run home after the harvest plan itself has ended.
   goals.sea_nogo_tick(state, info)
+  -- REPAIR_STANDOFF (2026-11-03): pick or keep the repair_pill standoff
+  -- square before steering drives to it (the builder pool's feeder reads it
+  -- later this tick). Through bpool: think() has no free upvalue.
+  bpool.standoff_update(state, world, info, now)
   local keys, taps = steer.steer(state, world, info, state.goal)
   -- NO-GO WATER: SLOW DOWN EARLY, do not brake late.
   -- A boat's turn RATE is terrain-fixed, so its turn RADIUS grows with speed:

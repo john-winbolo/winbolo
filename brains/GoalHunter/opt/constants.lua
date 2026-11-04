@@ -3464,6 +3464,27 @@ M.REPAIR_DISPATCH_DIST_DANGEROUS = 12   -- tiles, at DANGER_HIGH
 M.REPAIR_DISPATCH_DANGER_LOW     = 50   -- threat_at_tank where the widening starts
 M.REPAIR_DISPATCH_DANGER_HIGH    = 150  -- ...and where it is fully widened
 
+-- REPAIR STANDOFF (2026-11-03). With a repair_pill goal the tank drives to a
+-- STANDOFF square, not to the pill, and sends the builder from there
+-- (repair_standoff.lua has the full rule). A square is safe from a hostile or
+-- neutral pill when it is at least pill range (PILLBOX_RANGE_WU / 256, 8
+-- tiles) + REPAIR_STANDOFF_MARGIN_TILES from that pill, or (with
+-- REPAIR_STANDOFF_WALL_COVER) when the pill is not heated
+-- (anger <= REPAIR_STANDOFF_HEATED_ANGER) and a wall stops every shell line
+-- from it to the tank body. The standoff is the safe square nearest the pill
+-- within REPAIR_DISPATCH_DIST_DANGEROUS whose builder walk is within
+-- REPAIR_STANDOFF_MAX_WALK_TICKS and whose tank route enters no unsafe
+-- square. None: the tank pushes in as before. Seen in debug session
+-- 20261103_192602 part 2, player 2: the tank parked one square from the pill
+-- inside the range of two neutral pills, their misses kept the under-fire
+-- hold on and the repair never went out. Log line: REPAIR_STANDOFF.
+-- KEEL false (the tank drove to the pill square).
+M.REPAIR_STANDOFF_ENABLED        = true
+M.REPAIR_STANDOFF_MARGIN_TILES   = 1.0   -- tiles past pill range
+M.REPAIR_STANDOFF_MAX_WALK_TICKS = 400   -- builder walk sim, standoff -> pill
+M.REPAIR_STANDOFF_WALL_COVER     = true  -- a wall-covered square is safe
+M.REPAIR_STANDOFF_HEATED_ANGER   = 0.34  -- above this anger, walls do not count
+
 -- Strategy / game phase detection
 M.OPENING_MIN_TICKS       = 500    -- ~10 seconds minimum opening phase
 M.OPENING_UNREACHABLE_GRACE_TICKS = 1500  -- ~30s: only AFTER this do we drop genuinely-unreachable (INF dijkstra cost) neutral bases from the opening-exit count. Before it, the cold-start dijkstra surface hasn't expanded and bases legitimately aren't reached yet, so every neutral still counts (don't disrupt the early land-grab).
@@ -6410,6 +6431,10 @@ M.PRESETS = {
     -- floor(health / 5) walls. KEEL counted every friendly pill as
     -- PPT_PILL_WALL_EQUIV walls.
     PILL_COVER_BY_HEALTH          = false,
+    -- 2026-11-03: a repair_pill tank drives to a standoff square out of
+    -- hostile and neutral pill range (or behind a wall) and sends the builder
+    -- from there. KEEL drove to the pill square.
+    REPAIR_STANDOFF_ENABLED       = false,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).
