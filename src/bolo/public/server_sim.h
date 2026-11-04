@@ -447,6 +447,12 @@ typedef struct {
     uint32_t overrunCount;      /* overruns this game */
     uint32_t thinkCount;        /* total thinks this game
                                  * (overrun-rate denominator) */
+    bool     remote;            /* the brain runs on a Bot Host */
+    bool     held;              /* back from a Bot Host, no brain yet */
+    double   avgThinkMs;        /* Bot Host only: its running average */
+    uint32_t killCount;         /* Bot Host only: thinks cut by the budget */
+    uint8_t  tier;              /* Bot Host only: the brain's last tier */
+    char     hostName[32];      /* Bot Host only: the host's name */
 } BotInfo;
 
 /* Bot pool snapshot populated by serverSimGetBotPoolStats. POD;

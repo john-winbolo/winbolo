@@ -191,6 +191,17 @@ typedef struct {
      * needs no lock. The gap it enforces is BOT_PING_MIN_GAP_TICKS; the
      * server's own ping rate limit still applies after it. */
     uint32_t        lastPingTick;
+    /* Bot Host. remote is true while this seat's brain runs on a Bot Host:
+     * the seat, its tank, its ClientSim and its control subscription stay
+     * here and the brain does not, so botManagerTick passes the seat by.
+     * held is true when the seat came back from a Bot Host and the
+     * in-process build failed: the seat keeps its tank, its name and its
+     * stats, thinks nothing, and is built again at the next round start.
+     * remoteStats is the last CMD_BOT_STATS the host sent for the seat. */
+    bool            remote;
+    bool            held;
+    bool            remoteStatsValid;
+    CmdBotStats     remoteStats;
 } BotContext;
 
 /* Per-bot scratch carried across the three within-tick stages
@@ -270,6 +281,25 @@ typedef struct {
     char               *poolJson;
 } BotJobCtx;
 
+/* What the bot manager asks of the Bot Host side for a seat whose brain
+ * runs on a Bot Host. Every member may be NULL. All are called on the
+ * producer thread, between ticks or in Stage 3, never from a worker.
+ *   teamMsg    - an allied bot's internal team message for that seat
+ *   hint       - a scenario hint for that seat
+ *   initTable  - the seat's init table changed (game.bot_init)
+ *   roundStart - a round starts; true when the host takes the reload, false
+ *                when the seat must be rebuilt in-process
+ *   released   - the seat is leaving the field or the game; the host must
+ *                let it go and its bot connection is released */
+typedef struct BotRemoteHooks {
+    void  *ctx;
+    void (*teamMsg)(void *ctx, BYTE seat, BYTE fromPlayer, const char *msg);
+    void (*hint)(void *ctx, BYTE seat, const ScnTable *hint);
+    void (*initTable)(void *ctx, BYTE seat);
+    bool (*roundStart)(void *ctx, BYTE seat);
+    void (*released)(void *ctx, BYTE seat);
+} BotRemoteHooks;
+
 typedef struct BotManager {
     struct ServerSim *sim;  /* back-pointer; callbacks read it */
 
@@ -339,7 +369,65 @@ typedef struct BotManager {
     int          jobIndices[MAX_TANKS];
 
     void       (*preThinkHook)(int playerNum);
+
+    /* Bot Host side. Zeroed unless a Bot Host key is set. */
+    BotRemoteHooks remoteHooks;
 } BotManager;
+
+/* ---- One bot's think, shared by the in-process pool and the Bot Host ----
+ *
+ * The in-process pool and the Bot Host run a bot through these same calls,
+ * so the two cannot prepare, budget or run a brain differently.
+ *
+ * botRunnerWireBrain    - after luaBrainInstanceCreate: the lua_State's
+ *                         extraspace, the abort flag and its pathfinder and
+ *                         world-sim plumbing.
+ * botRunnerBeginTick    - before the think stage: the brain's tick inputs
+ *                         (last think, target, killed, tier) and a clear
+ *                         abort flag.
+ * botRunnerPrepareThink - after the bot's ClientSim took its snapshot:
+ *                         display explosions dropped, the brain map filled
+ *                         from `world` (the full map for a full-view bot,
+ *                         the view window otherwise), the pathfinder's
+ *                         acceleration and rules set from `mods` and
+ *                         world->rules, and the brain keys cleared. The
+ *                         in-process pool passes the server's GameSim and
+ *                         the server tank's modifiers; the Bot Host passes
+ *                         the bot's own ClientSim world and own tank.
+ * botRunnerThink        - the think itself: deadline, budget hook, brain
+ *                         tick and both input packets stamped for `tick`.
+ * botRunnerTargetMs     - the per-bot budget from the 20 ms formula. */
+void   botRunnerWireBrain(BotContext *bot);
+void   botRunnerBeginTick(BotContext *bot, double targetMs);
+void   botRunnerPrepareThink(BotContext *bot, GameSim *world,
+                             const TankModifiers *mods);
+void   botRunnerThink(BotJobCtx *j, double targetMs, uint32_t tick);
+double botRunnerTargetMs(double serialMsEwma, int runners, int activeBots);
+
+/* The BRAIN_INIT_ARG a brain built for this seat now would read: `staged`
+ * (may be NULL) plus the seat's mode and difficulty tokens when the brain
+ * at brainPath ships a modes.txt. */
+void botManagerBuildInitArg(struct ServerSim *sim, BYTE playerNum,
+                            const char *brainPath, const char *staged,
+                            char *arg, size_t argSz);
+
+/* ---- Bot Host seats ----
+ * SetRemote: the seat's brain now runs on a Bot Host. The in-process brain
+ *   is destroyed; the player, tank, ClientSim and subscription stay.
+ * ClearRemote: the seat comes back in-process. False when the brain could
+ *   not be built here; the seat is then held until the next round start.
+ * SetRemoteStats: the host's latest CMD_BOT_STATS for the seat. */
+void botManagerSetRemoteHooks(struct ServerSim *sim,
+                              const BotRemoteHooks *hooks);
+bool botManagerIsRemote(const struct ServerSim *sim, BYTE playerNum);
+bool botManagerIsHeld(const struct ServerSim *sim, BYTE playerNum);
+bool botManagerSetRemote(struct ServerSim *sim, BYTE playerNum);
+bool botManagerClearRemote(struct ServerSim *sim, BYTE playerNum);
+void botManagerSetRemoteStats(struct ServerSim *sim, BYTE playerNum,
+                              const CmdBotStats *st);
+const char *botManagerGetBrainPath(const struct ServerSim *sim,
+                                   BYTE playerNum);
+aiType botManagerGetBotAi(const struct ServerSim *sim, BYTE playerNum);
 
 /*********************************************************
  *NAME:          botManagerInit

@@ -208,6 +208,7 @@ bool clientSimCreate(ClientSim *cs) {
   bool savedIsUdpTransport = cs->isUdpTransport;
   bool savedTransportTicksServer = cs->transportTicksServer;
   struct ServerSim *savedBoundServerSim = cs->boundServerSim;
+  const ClientSimBrainRelay *savedBrainRelay = cs->brainRelay;
   SubscriberHandle savedAutoSubHandle = cs->autoSubHandle;
   BrainList savedBrainList = cs->lobbyBrainList;
   /* The per-brain lobby texts arrive with that list and are never resent,
@@ -226,6 +227,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->isUdpTransport     = savedIsUdpTransport;
   cs->transportTicksServer = savedTransportTicksServer;
   cs->boundServerSim     = savedBoundServerSim;
+  cs->brainRelay         = savedBrainRelay;
   cs->autoSubHandle      = savedAutoSubHandle;
   cs->lobbyBrainList     = savedBrainList;
   cs->lobbyBrainTexts    = savedBrainTexts;
@@ -2758,6 +2760,16 @@ void clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim) {
 struct ServerSim *clientSimGetBoundServerSim(const ClientSim *cs) {
   if (cs == NULL) return NULL;
   return cs->boundServerSim;
+}
+
+void clientSimSetBrainRelay(ClientSim *cs, const ClientSimBrainRelay *relay) {
+  if (cs == NULL) return;
+  cs->brainRelay = relay;
+}
+
+const ClientSimBrainRelay *clientSimGetBrainRelay(const ClientSim *cs) {
+  if (cs == NULL) return NULL;
+  return cs->brainRelay;
 }
 
 void clientSimSetConnectErrorReason(ClientSim *cs, const char *str) {
