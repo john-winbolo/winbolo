@@ -1081,6 +1081,28 @@ local function refuel_need(state, info)
   return (low or topoff), low, topoff
 end
 
+-- Not-low refuel markup (C.REFUEL_NOT_LOW_MULT). "Not low" is the exact
+-- opposite of refuel_need's `low`: armour > ARMOUR_LOW AND shells >
+-- SHELLS_LOW. Then the urgency term is 1.0 and refuel would cost a
+-- well-stocked tank about 63, so the cost is multiplied by the knob. Both
+-- cost paths (eval_refuel and the pool-1 finalize path) multiply it in after
+-- urgency and after the REFUEL_MIN_COST floor. The LGM-wait cap in
+-- goal_selection is NOT scaled: a tank already on the base waiting for its
+-- builder keeps the old cap. Returns the multiplier: 1.0 when either
+-- resource is low or the knob is 1.0.
+function M.refuel_notlow_mult(arm, sh)
+  local k = C.REFUEL_NOT_LOW_MULT or 1.0
+  if k == 1.0 then return 1.0 end
+  if (arm or 99) > C.ARMOUR_LOW and (sh or 99) > C.SHELLS_LOW then return k end
+  return 1.0
+end
+-- The desc term for that multiplier: "" at x1, so a 1.0 knob leaves the desc
+-- exactly as it was.
+function M.refuel_notlow_term(nl, arm, sh)
+  if nl == 1.0 then return "" end
+  return string.format(" x%.2f notlow(arm=%d,sh=%d)", nl, arm or 99, sh or 99)
+end
+
 -- =========================================================================
 -- Pool evaluators — each evaluates one category of goal candidates.
 -- Called one-per-tick by update_pool_cache() to spread the cost.
@@ -1146,6 +1168,11 @@ local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
   if (info.armour or 0) > C.ARMOUR_CRITICAL then
     cost = math.max(cost, C.REFUEL_MIN_COST)
   end
+  -- Not-low markup (C.REFUEL_NOT_LOW_MULT): after urgency and after the
+  -- floor above, so the floor cannot take it back. x1 when anything is low.
+  local cost_pre_nl = cost
+  local nl = M.refuel_notlow_mult(info.armour, info.shells)
+  cost = cost * nl
   -- Ammo-deprived SUICIDE decoy: it has written off resupply (shells AND armour),
   -- so heavily deprioritise refuel/flee so attack_pill/blitz out-bids it. Applied
   -- last (even over the critical-armour band) — it's meant to die charging, and the
@@ -1165,8 +1192,10 @@ local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
     cost = cost,
     goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
              wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-    desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d/%d sh=%d/%d%s%s",
-           bid, base.mx, base.my, bscore, urgency, cost,
+    desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f%s arm=%d/%d sh=%d/%d%s%s",
+           bid, base.mx, base.my, bscore, urgency, (nl ~= 1.0) and cost_pre_nl or cost,
+           (nl ~= 1.0) and (M.refuel_notlow_term(nl, info.armour, info.shells)
+                            .. string.format("=%.0f", cost)) or "",
            info.armour, state.armour_target or C.TANK_FULL_ARMOUR,
            info.shells, state.shell_target or C.TANK_FULL_SHELLS,
            state._refuel_topoff_only and " topoff=on" or "", hyst_str) or "",
@@ -4022,6 +4051,12 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local blocked_tiles = state.blocked
   local blk_now       = state.tick or 0
   local MAPW          = C.MAP_W
+  -- Front needs a target (C.PLACE_FRONT_NEED_TARGET): the enemy base / enemy
+  -- pill / neutral pill list, built once for the whole scan (tgts nil = knob
+  -- off). n = spots that lost front credit; best = the best-scoring row of
+  -- them; fx/fy/fc/fe/fd = the first of them (spot, new class, nearest
+  -- target, its distance). For the PLACE_FRONT_NOTARGET line.
+  local fnt = { tgts = PP.front_targets(world), n = 0 }
 
   -- Per-tile scoring. One closure over the scan context above (pf_counts /
   -- pf_targets / pf_need_cat / unguarded_bases / search center / spike / war
@@ -4042,7 +4077,15 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- one. If every placeable spot is a surplus category, best_mx stays nil
         -- and we keep carrying — there is no fallback.
         local cell_inf = cpf.influence_at(cx, cy)
-        local cell_cat = PP.classify(cx, cy, false, true)
+        -- Front needs a target: a front spot with no enemy base, enemy pill
+        -- or neutral pill in range gets its next class (place_classify).
+        local cell_cat, _, nt_lost, nt_e, nt_d = PP.place_classify(cx, cy, fnt.tgts)
+        if nt_lost then
+          fnt.n = fnt.n + 1
+          if not fnt.fx then
+            fnt.fx, fnt.fy, fnt.fc, fnt.fe, fnt.fd = cx, cy, cell_cat, nt_e, nt_d
+          end
+        end
         local _ctgt = pf_targets[cell_cat]
         -- Defensive turtle: the pill-type balance does not steer the cluster
         -- (no surplus skip, no STRICT_NEED gate, port term 0 below).
@@ -4292,8 +4335,10 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           sc11=sc11, sc12=sc12, sc13=sc13, sc_center=sc_center,
           sc_ebase=sc_ebase, sc_depth=sc_depth, deep=deep,
           sc_rch=sc_rch, rch_np=rch_np, rch_nb=rch_nb,
+          nt_lost = nt_lost, nt_e = nt_e, nt_d = nt_d,
         }
         all_cands[#all_cands + 1] = row
+        if nt_lost and (not fnt.best or score > fnt.best.score) then fnt.best = row end
         if score > best_score then
           best_score = score; best_mx = cx; best_my = cy
           best_row = row
@@ -4394,7 +4439,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
             if not seen[k] then
               seen[k] = true
               if U.is_placeable(cx, cy, world)
-                 and PP.classify(cx, cy, false, true) == "aggro" then
+                 and PP.place_classify(cx, cy, fnt.tgts) == "aggro" then
                 if blitz_lines and squad.tile_on_blitz_line(world, blitz_lines, cx, cy, blk_now) then
                   n_line_skip = n_line_skip + 1
                 elseif tchk_on and builder.place_tile_check(state, world, info, cx, cy, blk_now, true) then
@@ -4418,6 +4463,25 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     print2(string.format("PLACE_BLITZ_LINE t=%d site=strategic_scan skipped=%d tile(s) on a blitz shot line (%d line(s)) -> best=%s",
       blk_now, n_line_skip, #blitz_lines,
       best_mx and string.format("(%d,%d)", best_mx, best_my) or "none"))
+  end
+  -- Front needs a target: one line for the scan, only when the reported spot
+  -- or its class changes (the pool runs this scan often). spot = the
+  -- best-scoring spot that lost front credit, else the first one seen;
+  -- lost = how many spots lost it; win=yes when that spot is the winner.
+  if fnt.n > 0 then
+    local b = fnt.best
+    local fx, fy, fc, fe, fd = fnt.fx, fnt.fy, fnt.fc, fnt.fe, fnt.fd
+    if b then fx, fy, fc, fe, fd = b.mx, b.my, b.cat, b.nt_e, b.nt_d end
+    local fkey = (fy * 256 + fx) .. fc
+    if state._place_fnt_log ~= fkey then
+      state._place_fnt_log = fkey
+      print2(string.format("PLACE_FRONT_NOTARGET t=%d spot=(%d,%d) nearest=%s -> %s lost=%d range=%g win=%s best=%s",
+        blk_now, fx, fy,
+        fe and string.format("%s#%s@%.1f", fe[3], tostring(fe[4]), fd) or "none",
+        fc, fnt.n, C.PLACE_FRONT_TARGET_RANGE or C.PILL_FIRE_RANGE,
+        (b and b == best_row) and "yes" or "no",
+        best_mx and string.format("(%d,%d)", best_mx, best_my) or "none"))
+    end
   end
 
   if not best_mx then
@@ -5036,11 +5100,14 @@ function M.get_strategic_place_heatmap(state, world, info)
   local ad = M.focus_spike_ctx(world,
     M.spike.check(state, world, info, pf_counts, true), state, tmx, tmy)
 
+  -- Front needs a target, as in the eval scan (nil = knob off).
+  local hm_tgts = PP.front_targets(world)
+
   local function hm_cell(cx, cy)
       if U.is_placeable(cx, cy, world) then
         -- Skip a category already at/over its projected target (no room).
         -- Turtle: no skip (matches the eval scan).
-        local cell_cat = PP.classify(cx, cy, false, true)
+        local cell_cat = PP.place_classify(cx, cy, hm_tgts)
         local _ctgt = pf_targets[cell_cat]
         local pair2 = ad ~= nil and ad.role == "second"
         if pair2 then
@@ -5205,7 +5272,7 @@ function M.get_strategic_place_heatmap(state, world, info)
           if U.in_map(cx, cy) and not seen[k]
              and not (cx >= x0 and cx <= x1 and cy >= y0 and cy <= y1) then
             seen[k] = true
-            if PP.classify(cx, cy, false, true) == "aggro" then hm_cell(cx, cy) end
+            if PP.place_classify(cx, cy, hm_tgts) == "aggro" then hm_cell(cx, cy) end
           end
         end
       end
@@ -12123,6 +12190,14 @@ function M.build_eval_queue(state, world, info)
         combat_ahead = true
       end
     end
+    -- Pills we hold without a square (world.lua pill_mark_unknown) are still
+    -- on the map with a known owner and armour; this check needs no square.
+    for _, obj in pairs(world.pills_unk or {}) do
+      if (obj.owner == "hostile" or obj.owner == "neutral") and (obj.health or 0) > 0 then
+        if obj.health > worst_pill_hp then worst_pill_hp = obj.health end
+        combat_ahead = true
+      end
+    end
   end
 
   -- Expand refuel threshold if combat is likely
@@ -12726,9 +12801,11 @@ local function get_formula_inner(e)
       local _db = e._defic_bonus or 0
       local _fm = e._fill_mult or 1
       local _lgm = e._lgm_wait_floor
+      local _nl = e._notlow or 1.0
       _shape_head = string.format(
-        " × ur{%.2f} - def{%.0f} × mult{%.2f fill %.2f sh %d/%d arm %d/%d} scar{%.2f}%s",
-        _u, _db, _fm, e._fill or 0,
+        " × ur{%.2f}%s - def{%.0f} × mult{%.2f fill %.2f sh %d/%d arm %d/%d} scar{%.2f}%s",
+        _u, (_nl ~= 1.0) and string.format(" × notlow{%.2f}", _nl) or "",
+        _db, _fm, e._fill or 0,
         e._sh or 0, e._sh_target or 0, e._arm or 0, e._arm_target or 0,
         e._scarcity or 1,
         _lgm and string.format(" → lgm_wait_floor{%.0f}", _lgm) or "")
@@ -12767,8 +12844,16 @@ local function get_formula_inner(e)
       local _d_lgm   = _lgm
         and string.format("LGM returning, at this base → floor=%.0f (cost capped)", _lgm)
         or  "no LGM-wait active → no floor"
-      _shape_detail = string.format("|urgency:%s|deficit:%s|fill:%s|scarcity:%s|lgm:%s",
-        _d_urgency, _d_def, _d_fill, _d_scar, _d_lgm)
+      -- Not-low markup: applied after urgency (and the REFUEL_MIN_COST floor);
+      -- the LGM-wait floor above is not scaled by it.
+      local _d_notlow = (_nl ~= 1.0)
+        and string.format(
+          "|notlow:armour %d > %d[ARMOUR_LOW] and shells %d > %d[SHELLS_LOW]"
+          .. " (neither low) → x%.2f[REFUEL_NOT_LOW_MULT]; the LGM-wait floor is not scaled",
+          _arm, C.ARMOUR_LOW, _sh, C.SHELLS_LOW, _nl)
+        or ""
+      _shape_detail = string.format("|urgency:%s%s|deficit:%s|fill:%s|scarcity:%s|lgm:%s",
+        _d_urgency, _d_notlow, _d_def, _d_fill, _d_scar, _d_lgm)
     end
 
     local _danger_pen = C.REFUEL_DANGER_PENALTY or (1 / 0.75)
@@ -16660,6 +16745,11 @@ function M.finalize_pools(state, world, info)
     if (info.armour or 0) > C.ARMOUR_CRITICAL then
       cost = math.max(cost, C.REFUEL_MIN_COST)
     end
+    -- Not-low markup (C.REFUEL_NOT_LOW_MULT) — same rule as eval_refuel:
+    -- after urgency and the floor above. x1 when anything is low.
+    local cost_pre_nl = cost
+    local nl = M.refuel_notlow_mult(info.armour, info.shells)
+    cost = cost * nl
     -- Pool-panel display: candidates carry the raw bscore (travel+danger),
     -- but the winner that flows to the cross-pool "winners pool" is
     -- bscore*urgency. Scale each candidate's displayed cost by the same
@@ -16668,12 +16758,13 @@ function M.finalize_pools(state, world, info)
     -- unchanged. Rejected candidates (non-numeric cost) pass through as-is.
     -- (The REFUEL_FINALIZE log above already printed the raw bscores.)
     local disp_cands = pr1.candidates
-    if BRAIN_POOL_VIZ and urgency ~= 1.0 and pr1.candidates then
+    -- The not-low markup (nl) is a uniform multiplier too, so it is folded in.
+    if BRAIN_POOL_VIZ and urgency * nl ~= 1.0 and pr1.candidates then
       disp_cands = {}
       for i, cand in ipairs(pr1.candidates) do
         local nc = {}
         for k, v in pairs(cand) do nc[k] = v end
-        if type(nc.cost) == "number" and nc.cost < 1e29 then nc.cost = nc.cost * urgency end
+        if type(nc.cost) == "number" and nc.cost < 1e29 then nc.cost = nc.cost * urgency * nl end
         disp_cands[i] = nc
       end
     end
@@ -16681,8 +16772,10 @@ function M.finalize_pools(state, world, info)
       cost = cost,
       goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
                wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-      desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d/%d sh=%d/%d%s",
-             bid, base.mx, base.my, bscore, urgency, cost,
+      desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f%s arm=%d/%d sh=%d/%d%s",
+             bid, base.mx, base.my, bscore, urgency, (nl ~= 1.0) and cost_pre_nl or cost,
+             (nl ~= 1.0) and (M.refuel_notlow_term(nl, info.armour, info.shells)
+                              .. string.format("=%.0f", cost)) or "",
              info.armour, state.armour_target or C.TANK_FULL_ARMOUR,
              info.shells, state.shell_target or C.TANK_FULL_SHELLS,
              state._refuel_topoff_only and " topoff=on" or "") or "",
@@ -18958,6 +19051,7 @@ local function goal_selection(state, world, info, quiet)
           e._sh_target      = state.shell_target  or C.TANK_FULL_SHELLS
           e._arm_def        = _ref_arm_def
           e._sh_def         = _ref_sh_def
+          e._notlow         = M.refuel_notlow_mult(info.armour, info.shells)
           e._lgm_wait_floor = nil
           e.formula         = nil  -- invalidate cached formula so live shape re-renders
         end
@@ -21349,6 +21443,7 @@ function M.get_pool_breakdown_json(state)
           e._sh          = li.shells or 0
           e._arm_def     = arm_def
           e._sh_def      = sh_def
+          e._notlow      = M.refuel_notlow_mult(li.armour, li.shells)
           e.formula      = nil  -- force live re-render with shape tokens
         end
       end

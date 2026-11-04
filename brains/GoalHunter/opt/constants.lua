@@ -229,6 +229,16 @@ M.EXPAND_DEBUG_MAP     = false -- debug only: TAIL_MAP print2 (ASCII 64x64 aroun
 -- (today's behaviour: fillable, placement can land there); false = "beyond"
 -- (not a fillable role; the placement scan pays the beyond-front penalty).
 M.FRONT_ZERO_IS_FRONT  = true
+-- Front needs a target (2026-11-04). A placement spot counts as "front" only
+-- when a known enemy base, enemy pill or neutral pill (this bot's own world
+-- model; pills in a tank do not count) is within PLACE_FRONT_TARGET_RANGE
+-- tiles (Euclidean, tile centre to tile centre, inclusive). A front spot with
+-- no target in range gets the next class classify() gives: aggro, back, or
+-- "beyond" for influence 0 (pill_portfolio.lua place_classify). Placement
+-- scan and heatmap only; existing pills keep classify(). false = every front
+-- spot keeps front credit, as before. PRESETS.keel = false.
+M.PLACE_FRONT_NEED_TARGET  = true
+M.PLACE_FRONT_TARGET_RANGE = M.PILL_FIRE_RANGE   -- 8 tiles: pill fire range
 
 -- Pill anger decay: engine takes ~3000 ticks (speed 6->100, +1 every 32 ticks)
 M.PILL_ANGER_DECAY = 3000
@@ -1296,6 +1306,16 @@ M.REFUEL_COST_MULT = 1.0  -- whole-cost multiplier on the "refuel" GOAL_GROUP (r
 M.REFUEL_MIN_COST          = 25    -- routine-refuel cost floor: an on-base top-off otherwise collapses to ~4 and outbids free-pill grabs (20260703_210207 t=5747). Bypassed at ARMOUR_CRITICAL ??? survival refuel may enter the reserved <20 band.
                                    -- (with squared urgency: floor cost at
                                    -- bscore ?? 0.37; e.g. bscore=60 ??? ~22)
+-- 2026-11-04 (Andrew): not-low refuel markup. When armour > ARMOUR_LOW AND
+-- shells > SHELLS_LOW (neither is low, the same test refuel_need uses), the
+-- urgency term is 1.0 and a well-stocked tank sees refuel at about 63, cheap
+-- enough to win too often. Multiply the refuel cost by this. Applied after the
+-- urgency multiply and after the REFUEL_MIN_COST floor in BOTH refuel cost
+-- paths (eval_refuel and the pool-1 finalize path), and the LGM-wait cap in
+-- goal_selection is scaled by the same factor, so the markup is in the final
+-- number. The goal desc shows it as " x5.00 notlow(arm=40,sh=35)".
+-- 1.0 = off (PRESETS.keel).
+M.REFUEL_NOT_LOW_MULT      = 5.0
 M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pill = +75)
 -- ?????? Repair fix master toggle ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 -- false ??? repair_pill reverts to the 1.90-beta1 behavior: alive-damaged pills
@@ -6565,6 +6585,8 @@ M.PRESETS = {
     -- 2026-10-10: man-only aim handicap (the Tutorial's Station 7 bot);
     -- 0 / 100 aim straight at the man as before.
     LGM_MISS_WU = 0, LGM_HIT_PCT = 100,
+    -- 2026-11-04: not-low refuel markup; 1.0 is no markup.
+    REFUEL_NOT_LOW_MULT = 1.0,
     -- 2026-10-01: flat capture_base cost for game modes; 0 is no such term.
     CAPTURE_BASE_EXTRA_COST = 0,
     -- 2026-10-01: a base this many tiles away skips that cost; 0 is no waiver.
@@ -6689,6 +6711,9 @@ M.PRESETS = {
     FOCUS_SPIKE_SOLO_CARRIER       = false,
     -- 2026-11-02: no rch term in the placement scan (enemy reach weight).
     PLACE_ENEMY_REACH              = 0,
+    -- 2026-11-04: every front placement spot keeps front credit, with or
+    -- without an enemy base, enemy pill or neutral pill in range.
+    PLACE_FRONT_NEED_TARGET        = false,
     -- 2026-11-03: every non-spiking pill pays the spike cross-penalty,
     -- however few shots it needs.
     SPIKE_PEN_SKIP_MAX_SHOTS       = 0,
