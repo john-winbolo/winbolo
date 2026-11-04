@@ -159,7 +159,7 @@ check("approach_mx/my follow the float", g1.approach_mx == math.floor(g1.approac
   and g1.approach_my == math.floor(g1.approach_fy), tostring(g1.approach_mx) .. "," .. tostring(g1.approach_my))
 
 -- A spot whose bearing to the aim sits 0.3 brad from the 8-brad sector edge
--- (inside SETUP16_EDGE_BRAD, 0.5).
+-- (inside C.BLITZ_SETUP_16DIR_EDGE_BRAD, 0.5).
 local function spot_for_bearing(brg_to_pill_brads, r)
   -- bearing FROM the spot TO the pill centre = brg; spot = pc - r*u(brg)
   local rad = brg_to_pill_brads * C.TWO_PI / 256
@@ -191,6 +191,25 @@ do
   local fx2, fy2 = spot_for_bearing(9, R2)
   local ex, ey = travel(g2.approach_fx, g2.approach_fy, PCX, PCY, PCX, PCY, R2)
   check("1 brad from edge: travel ends on the spot within 0.1", dist(ex, ey, fx2, fy2) <= 0.1, dist(ex, ey, fx2, fy2))
+end
+
+print("edge margin knob")
+do
+  check("BLITZ_SETUP_16DIR_EDGE_BRAD default 0.5", C.BLITZ_SETUP_16DIR_EDGE_BRAD == 0.5, C.BLITZ_SETUP_16DIR_EDGE_BRAD)
+  check("PRESETS.keel BLITZ_SETUP_16DIR_EDGE_BRAD = 0.5",
+    C.PRESETS.keel.BLITZ_SETUP_16DIR_EDGE_BRAD == 0.5, C.PRESETS.keel.BLITZ_SETUP_16DIR_EDGE_BRAD)
+  local sx, sy = spot_for_bearing(8.3, C.ATTACK_PILL_STANDOFF)
+  local saved = C.BLITZ_SETUP_16DIR_EDGE_BRAD
+  C.BLITZ_SETUP_16DIR_EDGE_BRAD = 0.2
+  local _, ga = commit(sx, sy, PCX, PCY)
+  local Ra = reason(ga)
+  check("edge 0.2: 0.3 brad from the edge is not near_boundary", Ra ~= "near_boundary", Ra)
+  C.BLITZ_SETUP_16DIR_EDGE_BRAD = 2
+  local sx2, sy2 = spot_for_bearing(9, C.ATTACK_PILL_STANDOFF)
+  local _, gb = commit(sx2, sy2, PCX, PCY)
+  local Rb = reason(gb)
+  check("edge 2: 1 brad from the edge is near_boundary", Rb == "near_boundary", Rb)
+  C.BLITZ_SETUP_16DIR_EDGE_BRAD = saved
 end
 
 print("sweep of spot bearings, aim = recorded corner offset")

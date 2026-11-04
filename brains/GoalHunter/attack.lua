@@ -4582,9 +4582,9 @@ M._dir16 = dir16
 -- spot bearing (at the spot), so it moves TOWARD the sector edge and the
 -- tank's facing lags behind it on the D side: the charge only turns when
 -- |corr| > 1 (steering.lua attack_pill_steer fine taps), so it never leads
--- the aim by more than the size of one fine turn step. Half a brad covers
--- that step and float noise. The recorded case sits 0.89 brad from the edge.
-local SETUP16_EDGE_BRAD = 0.5
+-- the aim by more than the size of one fine turn step. The knob
+-- C.BLITZ_SETUP_16DIR_EDGE_BRAD (0.5) covers that step and float noise. The
+-- recorded case sits 0.89 brad from the edge.
 
 -- The setup point on the 16-direction travel line that ends on the spot the
 -- charge stops at. Returns new_fx, new_fy, rec; new_fx is nil on a fallback
@@ -4599,7 +4599,7 @@ local SETUP16_EDGE_BRAD = 0.5
 --     bearing to the aim between D and that bearing (the sum of two vectors
 --     lies between them), so for every t > 0 the facing from P rounds to D
 --     too, and the charge travels along D all the way to F. The only risk is
---     facing noise at a sector edge (SETUP16_EDGE_BRAD): then fall back.
+--     facing noise at a sector edge (C.BLITZ_SETUP_16DIR_EDGE_BRAD): then fall back.
 --   t: the setup stays on the same ring as today (setup_dist from the pill
 --     centre), so the point only moves around the ring and never nearer the
 --     pill. Here t is about 2.65 (the 2.25 offset plus the 0.4 pull).
@@ -4609,6 +4609,7 @@ local SETUP16_EDGE_BRAD = 0.5
 --     the current setup point. A failed check keeps the current point.
 function M.blitz_setup_16dir(world, goal, pcx, pcy, setup_dist, old_fx, old_fy)
   local rec = { old_fx = old_fx, old_fy = old_fy }
+  local edge = C.BLITZ_SETUP_16DIR_EDGE_BRAD or 0.5
   local sfx, sfy = goal.standoff_fx, goal.standoff_fy
   if not (sfx and sfy) then rec.reason = "no_spot"; return nil, nil, rec end
   local fx, fy = sfx, sfy
@@ -4627,7 +4628,7 @@ function M.blitz_setup_16dir(world, goal, pcx, pcy, setup_dist, old_fx, old_fy)
   local brg = U.aim_at_f(fx, fy, ax, ay) % 256
   local D = dir16(brg)
   rec.bearing, rec.D = brg, D
-  if 8 - math.abs(U.adiff(D, brg)) < SETUP16_EDGE_BRAD then
+  if 8 - math.abs(U.adiff(D, brg)) < edge then
     rec.reason = "near_boundary"; return nil, nil, rec
   end
   local rad = D * C.TWO_PI / 256
@@ -4645,7 +4646,7 @@ function M.blitz_setup_16dir(world, goal, pcx, pcy, setup_dist, old_fx, old_fy)
   -- geometry above; checked so a rounding case falls back, not drives off).
   local sbrg = U.aim_at_f(nfx, nfy, ax, ay) % 256
   rec.setup_bearing = sbrg
-  if dir16(sbrg) ~= D or 8 - math.abs(U.adiff(D, sbrg)) < SETUP16_EDGE_BRAD then
+  if dir16(sbrg) ~= D or 8 - math.abs(U.adiff(D, sbrg)) < edge then
     rec.reason = "setup_dir_mismatch"; return nil, nil, rec
   end
   local nmx, nmy = math.floor(nfx), math.floor(nfy)

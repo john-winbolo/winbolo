@@ -1237,6 +1237,14 @@ M.BLITZ_GO_GATE_FROM_STANDOFF   = true
 -- M.blitz_setup_16dir). Log line BLITZ_SETUP_16DIR. false = the radial
 -- setup point, as before. KEEL false.
 M.BLITZ_SETUP_16DIR             = true
+-- Edge margin for BLITZ_SETUP_16DIR, in brads (1 brad = 1/256 turn, 1.41
+-- degrees). When the bearing from the charge spot to the aim is less than
+-- this far from the edge between two of the 16 travel directions, the
+-- facing could round to the other direction, so the soldier keeps the
+-- radial setup point (log fallback=near_boundary). 0 = never fall back,
+-- 8 = always fall back. Only read when BLITZ_SETUP_16DIR is true. KEEL 0.5
+-- (unused there: KEEL has BLITZ_SETUP_16DIR false).
+M.BLITZ_SETUP_16DIR_EDGE_BRAD   = 0.5
 -- Blitz spot pending pills, 2026-09-25. true => a tile where a pill WILL stand
 -- soon blocks a blitz shot line like a live pill: our man is out on a pill
 -- build/repair trip, our place_pill_strategic target while we carry a pill, or
@@ -6602,6 +6610,7 @@ M.PRESETS = {
     -- 2026-11-03: the blitz soldier's setup point sits on the 16-direction
     -- travel line that ends on its charge spot. KEEL used the radial point.
     BLITZ_SETUP_16DIR             = false,
+    BLITZ_SETUP_16DIR_EDGE_BRAD   = 0.5,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).
