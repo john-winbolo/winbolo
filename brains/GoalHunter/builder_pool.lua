@@ -474,13 +474,21 @@ function M.claim_advert(state, now)
   if not job then return "-" end
   local left = (job.claim_eta_tick or now) - now
   if left < 0 then left = 0 elseif left > 65535 then left = 65535 end
-  return string.format("%02X%02X%02X%04X%04X",
+  local s = string.format("%02X%02X%02X%04X%04X",
     bit.band(TYPE_RANK[job.type] or 0, 0xFF),
     bit.band(job.mx or 0, 0xFF), bit.band(job.my or 0, 0xFF),
     tick16(job.claim_tick), left)
+  -- C.BUILDER_REPAIR_CLAIM_SHARE: a repair claim also says WHEN our builder
+  -- reaches the pill (AAAA, arrival tick low 16 bits). Off, or a farm job:
+  -- the old 14 chars, byte for byte.
+  if C.BUILDER_REPAIR_CLAIM_SHARE and job.type ~= "farm" then
+    s = s .. string.format("%04X", tick16(job.arrive_tick or job.claim_eta_tick or now))
+  end
+  return s
 end
 
--- Parse one ally's bpj advert. Returns mx, my, type_rank, claim_tick16, eta.
+-- Parse one ally's bpj advert. Returns mx, my, type_rank, claim_tick16, eta,
+-- and arrive_tick16 (nil when the advert carries no arrival).
 local function parse_claim(s)
   if not s or s == "-" or #s < 14 then return nil end
   local tt = tonumber(string.sub(s, 1, 2), 16)
@@ -489,7 +497,18 @@ local function parse_claim(s)
   local ct = tonumber(string.sub(s, 7, 10), 16)
   local et = tonumber(string.sub(s, 11, 14), 16)
   if not (tt and mx and my and ct and et) then return nil end
-  return mx, my, tt, ct, et
+  local at = (#s >= 18) and tonumber(string.sub(s, 15, 18), 16) or nil
+  return mx, my, tt, ct, et, at
+end
+M.parse_claim = parse_claim
+
+-- The old claim-tick rule for one ally claim: earlier claim wins; same tick
+-- breaks to the LOWER player number.
+local function claim_tick_wins(pn, cct, info, our_tick)
+  if cct == tick16(our_tick) then
+    return pn < (info.player_number or 0)
+  end
+  return claim_earlier(cct, our_tick)
 end
 
 -- Is an ALLY claiming this tile, and does their claim beat ours?
@@ -503,14 +522,7 @@ function M.ally_claim_on(state, info, mx, my, now, our_tick)
       local h = slot.info
       local cmx, cmy, _ctt, cct, cet = parse_claim(h and h.bpj)
       if cmx and cmx == mx and cmy == my then
-        -- Earlier claim wins; same tick breaks to the LOWER player number.
-        local theirs_wins
-        if cct == tick16(our_tick) then
-          theirs_wins = pn < (info.player_number or 0)
-        else
-          theirs_wins = claim_earlier(cct, our_tick)
-        end
-        if theirs_wins then
+        if claim_tick_wins(pn, cct, info, our_tick) then
           local age = now - (slot.last_tick or now)
           local eta = cet - age
           if eta < 0 then eta = 0 end
@@ -522,6 +534,130 @@ function M.ally_claim_on(state, info, mx, my, now, our_tick)
     end
   end
   return best
+end
+
+-- -------------------------------------------------------------------------
+-- Repair claims by ARRIVAL (C.BUILDER_REPAIR_CLAIM_SHARE).
+--
+-- The rule: an ally has sent (or is sending) its builder to repair this pill.
+-- We do not send ours when the ally's builder reaches the pill at the same
+-- tick or earlier than ours would. We may send ours when it would get there
+-- strictly earlier.
+--
+-- Our arrival: now + row.out_ticks, the pool's own outbound walk (the C walk
+-- sim from the tank). The ally's arrival: the AAAA tick on its bpj, which is
+-- the same number on its side -- dispatch tick + out_ticks, then now + the
+-- remaining walk while its builder walks out, frozen at the tick he first
+-- stands on the pill. Ticks are the shared engine tick, as the claim tick
+-- already is; both go over the wire as low 16 bits and are compared with the
+-- same half-range guard.
+--
+-- Expiry: a claim whose arrival tick is more than BUILDER_POOL_JOB_MAX_TICKS
+-- in the past is ignored. The claimant's own job record is dropped at
+-- dispatch + JOB_MAX_TICKS at the latest, and arrival is never before
+-- dispatch, so by then the claim cannot be live. The slot age
+-- (BUILDER_POOL_CLAIM_MAX_AGE) still applies on top, as for every claim.
+--
+-- An ally whose advert has no AAAA (KEEL, or an older brain) is judged by the
+-- old claim-tick rule, so a mixed team still never doubles up.
+--
+-- Returns nil when we may send, else { pn, eta, ctick, arrive, ours, by }.
+-- -------------------------------------------------------------------------
+local function signed16(d)
+  d = bit.band(d, 0xFFFF)
+  if d >= 32768 then d = d - 65536 end
+  return d
+end
+
+-- Log one yield/go verdict per (pill, ally, ally claim), not per tick.
+local function log_claim_verdict(state, now, row, pn, cct, verdict, ally_abs, ours)
+  if BRAIN_DEBUG_MODE then
+    state._rc_verdict = state._rc_verdict or {}
+    local k = string.format("%d:%d:%d:%d", row.mx, row.my, pn, cct)
+    if state._rc_verdict[k] ~= verdict then
+      state._rc_verdict[k] = verdict
+      if verdict == "yield" then
+        print2(string.format(
+          "REPAIR_CLAIM_YIELD t=%d pill=(%d,%d) ours=%d ally=%d allyplayer=%d"
+          .. " job=%s%s -- player %d's builder gets there first or at the"
+          .. " same tick; ours stays home",
+          now, row.mx, row.my, ours, ally_abs, pn, tostring(row.type),
+          row.quick and " quick=1" or "", pn))
+      elseif verdict == "go" then
+        print2(string.format(
+          "REPAIR_CLAIM_GO t=%d pill=(%d,%d) ours=%d ally=%d allyplayer=%d"
+          .. " job=%s%s -- ours gets there %d ticks earlier, so the claim"
+          .. " does not hold ours back",
+          now, row.mx, row.my, ours, ally_abs, pn, tostring(row.type),
+          row.quick and " quick=1" or "", ally_abs - ours))
+      else
+        print2(string.format(
+          "REPAIR_CLAIM_EXPIRED t=%d pill=(%d,%d) ally=%d allyplayer=%d"
+          .. " -- more than %d ticks after its arrival tick; ignored",
+          now, row.mx, row.my, ally_abs, pn, C.BUILDER_POOL_JOB_MAX_TICKS or 900))
+      end
+    end
+  end
+end
+
+function M.ally_repair_claim(state, info, row, now)
+  local best = nil
+  local ours = row.out_ticks and (now + row.out_ticks) or nil
+  local max_after = C.BUILDER_POOL_JOB_MAX_TICKS or 900
+  for pn, slot in ally_state.iter_active(now, C.BUILDER_POOL_CLAIM_MAX_AGE or 1750) do
+    if pn ~= info.player_number then
+      local h = slot.info
+      local cmx, cmy, _ctt, cct, cet, cat = parse_claim(h and h.bpj)
+      if cmx and cmx == row.mx and cmy == row.my then
+        local age = now - (slot.last_tick or now)
+        local eta = cet - age
+        if eta < 0 then eta = 0 end
+        local yield, ally_abs, by = false, nil, "claim_tick"
+        if cat and ours then
+          by = "arrive"
+          ally_abs = now + signed16(cat - now)
+          if now - ally_abs > max_after then
+            log_claim_verdict(state, now, row, pn, cct, "expired", ally_abs, ours)
+          elseif ally_abs <= ours then
+            yield = true
+            log_claim_verdict(state, now, row, pn, cct, "yield", ally_abs, ours)
+          else
+            log_claim_verdict(state, now, row, pn, cct, "go", ally_abs, ours)
+          end
+        else
+          yield = claim_tick_wins(pn, cct, info, now)
+        end
+        if yield and (not best or pn < best.pn) then
+          best = { pn = pn, eta = eta, ctick = cct, arrive = ally_abs,
+                   ours = ours, by = by }
+        end
+      end
+    end
+  end
+  return best
+end
+
+-- REPAIR_CLAIM_RX: one line when an ally's repair claim first shows up (a new
+-- claim tick or tile from that player). Read-only; debug logging only.
+function M.log_claims_rx(state, info, now)
+  if BRAIN_DEBUG_MODE then
+    if not C.BUILDER_REPAIR_CLAIM_SHARE then return end
+    state._rc_rx = state._rc_rx or {}
+    for pn, slot in ally_state.iter_active(now, C.BUILDER_POOL_CLAIM_MAX_AGE or 1750) do
+      if pn ~= info.player_number then
+        local h = slot.info
+        local cmx, cmy, ctt, cct, cet, cat = parse_claim(h and h.bpj)
+        local k = cmx and cat and string.format("%d:%d:%d", cmx, cmy, cct) or nil
+        if k and state._rc_rx[pn] ~= k then
+          print2(string.format(
+            "REPAIR_CLAIM_RX t=%d pill=(%d,%d) arrive=%d player=%d type=%d"
+            .. " claim=t%d eta=%dt",
+            now, cmx, cmy, now + signed16(cat - now), pn, ctt, cct, cet))
+        end
+        state._rc_rx[pn] = k
+      end
+    end
+  end
 end
 
 -- -------------------------------------------------------------------------
@@ -1208,10 +1344,27 @@ function M.gate_row(state, world, info, now, row, ctx)
     end
   end
   if not reject then
-    local ac = M.ally_claim_on(state, info, row.mx, row.my, now, now)
-    if ac then
-      row.ally = ac
-      reject = string.format("ally_repairing (p%d eta %dt)", ac.pn, ac.eta)
+    if C.BUILDER_REPAIR_CLAIM_SHARE and row.type ~= "farm" then
+      -- Repair rows (normal, seeded, forced and quick alike) by ARRIVAL.
+      local ac = M.ally_repair_claim(state, info, row, now)
+      if ac then
+        row.ally = ac
+        if ac.by == "arrive" then
+          reject = string.format("ally_repairing (p%d arrives t%d <= ours t%d)",
+                                 ac.pn, ac.arrive, ac.ours)
+        else
+          reject = string.format("ally_repairing (p%d eta %dt)", ac.pn, ac.eta)
+        end
+        -- The ticks in the reason move as the builders walk; keep BP_DENY to
+        -- one line per ally.
+        row.reject_key = string.format("ally_repairing:p%d", ac.pn)
+      end
+    else
+      local ac = M.ally_claim_on(state, info, row.mx, row.my, now, now)
+      if ac then
+        row.ally = ac
+        reject = string.format("ally_repairing (p%d eta %dt)", ac.pn, ac.eta)
+      end
     end
   end
   -- An ally is coming to SCOOP this corpse (not to repair it). Rebuild only --
@@ -1787,6 +1940,8 @@ function M.update_job(state, world, info, now)
   local man_my = bit.rshift(info.man_y or info.tanky, 8)
   if info.man_status == C.LGM_MOVING then
     if man_mx == job.mx and man_my == job.my then
+      -- The arrival tick freezes on the first tick he stands on the pill.
+      if not job.reached then job.arrive_tick = now end
       job.reached = true
       job.phase = "working"
     else
@@ -1814,6 +1969,8 @@ function M.update_job(state, world, info, now)
     if left == nil or left < 0 then left = 0 end
     job.eta = left
     job.claim_eta_tick = now + left
+    -- Outbound, the remaining walk IS the arrival estimate (the bpj AAAA).
+    if not job.reached then job.arrive_tick = now + left end
   end
 
   local age = now - (job.dispatch_tick or now)
@@ -1869,6 +2026,16 @@ function M.update_job(state, world, info, now)
       "%s t=%d pill=(%d,%d) outcome=%s took=%dt lgm=%s",
       outcome == "ok" and "QUICK_REPAIR_DONE" or "QUICK_REPAIR_ABORT",
       now, job.mx, job.my, outcome, age, dead and "dead" or "home"))
+  end
+  -- REPAIR_CLAIM_CLEAR: the repair claim leaves with the job (bpj goes back
+  -- to "-" on the next /info extra send).
+  if BRAIN_DEBUG_MODE then
+    if C.BUILDER_REPAIR_CLAIM_SHARE and job.type ~= "farm" then
+      print2(string.format(
+        "REPAIR_CLAIM_CLEAR t=%d pill=(%d,%d) arrive=%s player=%s why=%s",
+        now, job.mx, job.my, tostring(job.arrive_tick or "-"),
+        tostring(info.player_number), dead and (outcome .. "+builder_dead") or outcome))
+    end
   end
   state._bp_last = { type = job.type, mx = job.mx, my = job.my,
                      outcome = outcome, lgm_dead = dead or nil, tick = now }
@@ -2243,6 +2410,7 @@ function M.update(state, world, info, now)
   end
 
   state._bp_seed = nil
+  M.log_claims_rx(state, info, now)   -- REPAIR_CLAIM_RX (debug log only)
   M.repair_feeder(state, world, info, now)
   -- C.QUICK_REPAIR_ON_TAKE: the take blocker's repair window (quick_repair.lua).
   -- Only a "send" makes a quick row; every other answer leaves the pool as it
@@ -2716,6 +2884,7 @@ function M.rung(state, world, info, now)
     phase = "outbound", claim_tick = now, dispatch_tick = now,
     eta = row.out_ticks, trip = row.trip,
     claim_eta_tick = now + (row.out_ticks or 0),
+    arrive_tick = now + (row.out_ticks or 0),
     trees_at_dispatch = info.trees or 0,
     hp_at_dispatch = row.hp or 0,
     seeded = row.seeded,
@@ -2734,6 +2903,16 @@ function M.rung(state, world, info, now)
   end
   bp.job = state._bp_job
   bp.dispatch = nil
+  -- REPAIR_CLAIM_TX: the repair claim allies will read on our next bpj.
+  if BRAIN_DEBUG_MODE then
+    if C.BUILDER_REPAIR_CLAIM_SHARE and row.type ~= "farm" then
+      print2(string.format(
+        "REPAIR_CLAIM_TX t=%d pill=(%d,%d) arrive=%d player=%s job=%s%s bpj=%s",
+        now, row.mx, row.my, state._bp_job.arrive_tick,
+        tostring(info.player_number), row.type, row.quick and " quick=1" or "",
+        M.claim_advert(state, now)))
+    end
+  end
   local seed = state._bp_seed
   state._bp_seed = nil
   -- Feeder bookkeeping. A seeded repair is still a repair as far as the rest
