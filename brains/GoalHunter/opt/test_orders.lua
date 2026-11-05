@@ -6879,6 +6879,8 @@ do
     { "ORDER_GOTO_BLOCKED_RELEASE",       true, false },
     { "STUCK_COLLAPSE_ACCUM",             true, false },
     { "STUCK_EXEMPT_REPOSITION_SHOOT",    true, false },
+    { "STUCK_COLLAPSE_NEEDS_CLIP",        true, false },
+    { "STUCK_COLLAPSE_BRAKE",             true, false },
     { "ORDER_BID_STOP_AWARE",             true, false },
     { "ORDER_BID_REFUEL_STOP_COST",       30,   0 },
     { "ORDER_BID_ENGAGED_COST",           30,   0 },
@@ -8968,6 +8970,181 @@ do
   rawset(_G, "clock_us", saved_clock)
   C.ORDER_SKIPS_WARMUP, C.ORDER_GOAL_KIND_FIX = saved_skip, saved_fix
 end
+
+-- =========================================================================
+-- STUCK LOOKAHEAD COLLAPSE (PR #593).  Two knobs, both keel false:
+--   STUCK_COLLAPSE_NEEDS_CLIP  the collapse to the tank's own square fires
+--                              only when the next step is blocked
+--                              (steering._next_step_blocked)
+--   STUCK_COLLAPSE_BRAKE       while collapsed, slow to ORBIT_BRAKE_SPEED
+--                              (the "collapse_brake" throttle branch)
+-- The terrain is a table (grass by default) and the path search is stubbed.
+-- =========================================================================
+;(function()
+  print("steering.lua -- stuck lookahead collapse: next_step_blocked")
+  local ST = require("steering")
+  local UT = require("util")
+  local saved = { gt = _G.get_terrain, tm = _G.TERRAIN_MASK,
+                  kl = _G.KEY_TURNLEFT, kr = _G.KEY_TURNRIGHT,
+                  kf = _G.KEY_FASTER, ks = _G.KEY_SLOWER, ksh = _G.KEY_SHOOT,
+                  pt = cpf.path_to, tp = cpf.trace_path, ps = cpf.predict_stop,
+                  clip = C.STUCK_COLLAPSE_NEEDS_CLIP, brake = C.STUCK_COLLAPSE_BRAKE }
+  local TMAP = {}
+  _G.TERRAIN_MASK = 0x0F
+  _G.get_terrain = function(mx, my) return TMAP[my * 256 + mx] or C.T_GRASS end
+  local function wc(m) return m * 256 + 128 end
+  local function inf(tx, ty, objs)
+    return { tankx = tx, tanky = ty, objects = objs or {}, player_number = 0 }
+  end
+  local function nsb(world, info, nx, ny)
+    return ST._next_step_blocked(world, info, bit.rshift(info.tankx, 8),
+                                 bit.rshift(info.tanky, 8), nx, ny)
+  end
+  local W0 = { pill_at = {} }
+  local centre = inf(wc(30), wc(30))
+
+  -- Each row: name, terrain {key -> type}, world, info, step x, step y,
+  -- expected.  The tank is on (30,30) unless the row says otherwise.
+  local function pill_w(health)
+    return { pill_at = { [30 * 256 + 31] = { { pill = { health = health } } } } }
+  end
+  local tank_on_step = { { type = _G.OBJECT_TANK, idnum = 5, x = wc(31), y = wc(30) } }
+  local own_on_step  = { { type = _G.OBJECT_TANK, idnum = 0, x = wc(31), y = wc(30) } }
+  local rows = {
+    { "open grass step: not blocked", {}, W0, centre, 31, 30, false },
+    { "own square: blocked (old collapse)", {}, W0, centre, 30, 30, true },
+    { "building step: blocked", { [30 * 256 + 31] = C.T_BUILDING }, W0, centre, 31, 30, true },
+    { "half building step: blocked", { [30 * 256 + 31] = C.T_HALFBUILD }, W0, centre, 31, 30, true },
+    { "deep sea step: blocked", { [30 * 256 + 31] = C.T_DEEPSEA }, W0, centre, 31, 30, true },
+    { "step off the map: blocked", {}, W0, inf(wc(0), wc(30)), -1, 30, true },
+    { "live pillbox on step: blocked", {}, pill_w(5), centre, 31, 30, true },
+    { "dead pillbox on step: not blocked", {}, pill_w(0), centre, 31, 30, false },
+    { "no world table: pillbox test skipped", {}, nil, centre, 31, 30, false },
+    { "another tank on step: blocked", {}, W0, inf(wc(30), wc(30), tank_on_step), 31, 30, true },
+    { "own tank in the list: not blocked", {}, W0, inf(wc(30), wc(30), own_on_step), 31, 30, false },
+    { "diagonal, both corners open: not blocked", {}, W0, centre, 31, 31, false },
+    { "diagonal, x corner a building: blocked", { [30 * 256 + 31] = C.T_BUILDING }, W0, centre, 31, 31, true },
+    { "diagonal, y corner a building: blocked", { [31 * 256 + 30] = C.T_BUILDING }, W0, centre, 31, 31, true },
+    -- The sweep walks U.bresenham, which leaves out both end squares, so a
+    -- one-square step has no square to sweep (as the code is now).
+    { "side sweep: one-square step, off centre south, wall south of step: not blocked",
+      { [31 * 256 + 31] = C.T_BUILDING }, W0, inf(wc(30), wc(30) + 100), 31, 30, false },
+    { "side sweep: two-square step, off centre south, wall south of mid square: blocked",
+      { [31 * 256 + 31] = C.T_BUILDING }, W0, inf(wc(30), wc(30) + 100), 32, 30, true },
+    { "side sweep: two-square step, centred, wall south of mid square: not blocked",
+      { [31 * 256 + 31] = C.T_BUILDING }, W0, centre, 32, 30, false },
+    { "side sweep: centred, wall south of step: not blocked",
+      { [31 * 256 + 31] = C.T_BUILDING }, W0, centre, 31, 30, false },
+    { "side sweep: off centre north, wall south of step: not blocked",
+      { [31 * 256 + 31] = C.T_BUILDING }, W0, inf(wc(30), wc(30) - 100), 31, 30, false },
+    -- River is drivable: a step between land and river is open.  Deep sea
+    -- stays blocked (the row above, and from a river square below).
+    { "edge: grass to river: not blocked", { [30 * 256 + 31] = C.T_RIVER }, W0, centre, 31, 30, false },
+    { "edge: river to grass: not blocked", { [30 * 256 + 30] = C.T_RIVER }, W0, centre, 31, 30, false },
+    { "edge: river to deep sea: blocked",
+      { [30 * 256 + 30] = C.T_RIVER, [30 * 256 + 31] = C.T_DEEPSEA }, W0, centre, 31, 30, true },
+    { "edge: river to river: not blocked",
+      { [30 * 256 + 30] = C.T_RIVER, [30 * 256 + 31] = C.T_RIVER }, W0, centre, 31, 30, false },
+  }
+  for _, r in ipairs(rows) do
+    for key in pairs(TMAP) do TMAP[key] = nil end
+    for key, v in pairs(r[2]) do TMAP[key] = v end
+    local got = nsb(r[3], r[4], r[5], r[6])
+    check(r[1], got == r[7], tostring(got))
+  end
+  for key in pairs(TMAP) do TMAP[key] = nil end
+
+  -- The collapse_brake throttle branch, through steering.steer.
+  -- A capture_base drive east along y=30 (plow-through, so the old code
+  -- holds KEY_FASTER on its own square).  The path's next step is (31,30);
+  -- another tank on it makes the step blocked.  The stuck window opened
+  -- `ago` thinks back: 40 is past STUCK_LOOKAHEAD_COLLAPSE_TICKS (30) and
+  -- short of STUCK_TICKS (100), so only the collapse can fire.
+  print("steering.lua -- stuck lookahead collapse: the collapse_brake throttle")
+  _G.KEY_TURNLEFT, _G.KEY_TURNRIGHT, _G.KEY_FASTER, _G.KEY_SLOWER, _G.KEY_SHOOT =
+    0x04, 0x08, 0x10, 0x20, 0x01
+  local FAST, SLOW = 0x10, 0x20
+  local CHAIN = { 30, 30, 31, 30, 32, 30, 33, 30 }
+  cpf.path_to      = function() return 1, 31, 30 end
+  cpf.trace_path   = function() return CHAIN end
+  cpf.predict_stop = function(x, y) return x, y end
+  local TICK = 1000
+  -- o: clip, brake (the knobs), speed, off (world units east of the square's
+  -- centre), ago, blocker (a tank on the step), stale (a _collapse_tick left
+  -- from the think before).  Returns keys, collapsed this think, target is
+  -- the own square.
+  local function drive(o)
+    C.STUCK_COLLAPSE_NEEDS_CLIP, C.STUCK_COLLAPSE_BRAKE = o.clip, o.brake
+    local tx, ty = wc(30) + (o.off or 0), wc(30)
+    local objs = o.blocker
+      and { { type = _G.OBJECT_TANK, idnum = 5, x = wc(31), y = wc(30) } } or {}
+    local info = { tankx = tx, tanky = ty, speed = o.speed, direction = 64,
+                   tank_angle = 64, objects = objs, player_number = 0,
+                   inboat = false, armor = 40, shells = 40, mines = 0, trees = 0 }
+    local d = math.max(math.abs(tx - wc(31)), math.abs(ty - wc(30)))
+    local goal = { kind = "capture_base", mx = 40, my = 30, wx = wc(40), wy = wc(30) }
+    local state = { tick = TICK, builder = {}, goal = goal,
+                    pf = { status = "done", next_mx = 31, next_my = 30, path_chain = CHAIN },
+                    stuck_progress = { best_d = d, next_mx = 31, next_my = 30,
+                                       since = TICK - o.ago, acc_best = d,
+                                       acc_since = TICK - o.ago, final_step = false },
+                    _collapse_tick = o.stale and (TICK - 1) or nil }
+    local keys = ST.steer(state, { pill_at = {}, pills = {}, bases = {} }, info, goal)
+    local own = state._steer_lx == 30 and state._steer_ly == 30
+    return keys, (state._collapse_tick == TICK) and own, own
+  end
+  local function has(k, b) return bit.band(k, b) ~= 0 end
+  local function ks(k) return string.format("0x%02x", k) end
+
+  local k_on, fired_on   = drive{ clip = true, brake = true, speed = 30, ago = 40, blocker = true }
+  local k_off, fired_off = drive{ clip = true, brake = false, speed = 30, ago = 40, blocker = true }
+  check("blocked step, window 40: the collapse fires (brake on)", fired_on, tostring(fired_on))
+  check("blocked step, window 40: the collapse fires (brake off)", fired_off, tostring(fired_off))
+  check("brake on, collapsed, speed 30: KEY_SLOWER, no KEY_FASTER",
+        has(k_on, SLOW) and not has(k_on, FAST), ks(k_on))
+  check("brake off, collapsed, speed 30: old plow, KEY_FASTER, no KEY_SLOWER",
+        has(k_off, FAST) and not has(k_off, SLOW), ks(k_off))
+  local k = drive{ clip = true, brake = true, speed = C.ORBIT_BRAKE_SPEED, ago = 40, blocker = true }
+  check("brake on, collapsed, at ORBIT_BRAKE_SPEED: no throttle key",
+        not has(k, SLOW) and not has(k, FAST), ks(k))
+  k = drive{ clip = true, brake = true, speed = 0, ago = 40, blocker = true }
+  check("brake on, collapsed, standstill on the centre: no throttle key",
+        not has(k, FAST) and not has(k, SLOW), ks(k))
+  k = drive{ clip = true, brake = true, speed = 0, off = 100, ago = 40, blocker = true }
+  check("brake on, collapsed, standstill off the centre: KEY_FASTER",
+        has(k, FAST) and not has(k, SLOW), ks(k))
+  k = drive{ clip = true, brake = false, speed = 0, ago = 40, blocker = true }
+  check("brake off, collapsed, standstill on the centre: old KEY_FASTER",
+        has(k, FAST), ks(k))
+
+  -- Not collapsed this think: the brake knob changes nothing.
+  local function same(name, o)
+    o.brake = true
+    local a, fa, owna = drive(o)
+    o.brake = false
+    local b = drive(o)
+    check(name, a == b and not fa and not owna, ks(a) .. " vs " .. ks(b))
+  end
+  same("window 5 (no collapse): brake on keys = brake off keys",
+       { clip = true, speed = 30, ago = 5, blocker = true })
+  same("stale _collapse_tick from the last think: brake on keys = brake off keys",
+       { clip = true, speed = 30, ago = 5, blocker = true, stale = true })
+  same("open step, NEEDS_CLIP on: no collapse, brake on keys = brake off keys",
+       { clip = true, speed = 30, ago = 40, blocker = false })
+
+  -- Keel (both knobs off): the open step still collapses, at plow speed.
+  local kk, fk = drive{ clip = false, brake = false, speed = 30, ago = 40, blocker = false }
+  check("keel: open step, window 40: the collapse fires (old code)", fk, tostring(fk))
+  check("keel: collapsed: KEY_FASTER, no KEY_SLOWER (old plow)",
+        has(kk, FAST) and not has(kk, SLOW), ks(kk))
+
+  _G.get_terrain, _G.TERRAIN_MASK = saved.gt, saved.tm
+  _G.KEY_TURNLEFT, _G.KEY_TURNRIGHT, _G.KEY_FASTER, _G.KEY_SLOWER, _G.KEY_SHOOT =
+    saved.kl, saved.kr, saved.kf, saved.ks, saved.ksh
+  cpf.path_to, cpf.trace_path, cpf.predict_stop = saved.pt, saved.tp, saved.ps
+  C.STUCK_COLLAPSE_NEEDS_CLIP, C.STUCK_COLLAPSE_BRAKE = saved.clip, saved.brake
+  UT.reset()
+end)()
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
