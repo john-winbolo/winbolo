@@ -103,7 +103,7 @@ int run_early_blast_server_end(void) {
   ebSet(&s);
   earlyBlastAdd(&s, 600, 30000, 30000, EARLY_BLAST_SOUND_BUILDING);
   b = earlyBlastServerEnd(&s, 600, 30000 + 300, 30000);
-  UT_ASSERT(b != NULL && !b->active && s.stats.far == 1);
+  UT_ASSERT(b != NULL && !b->active && s.stats.farEnds == 1);
   ebServerPlace(30000 + 300, 30000, &mx, &my, &px, &py);
   UT_ASSERT(!earlyBlastClaimExplosion(&s, mx, my, px, py));
   ebServerPlace(30000 + 100, 30000, &mx, &my, &px, &py);

@@ -98,7 +98,7 @@ typedef struct {
 typedef struct {
   uint32_t made;      /* early blasts drawn */
   uint32_t hidden;    /* server explosions not drawn */
-  uint32_t far;       /* server explosions drawn too, as the server place was far */
+  uint32_t farEnds;   /* server explosions drawn too, as the server place was far */
   uint32_t timedOut;  /* early blasts with no server explosion found */
   uint32_t sounds;    /* server sounds not played */
 } EarlyBlastStats;
@@ -179,7 +179,7 @@ static inline EarlyBlast *earlyBlastServerEnd(EarlyBlastSet *s, uint32_t fireTic
       if (earlyBlastDist2(b->x, b->y, x, y) >
           (int64_t)EARLY_BLAST_NEAR_WU * EARLY_BLAST_NEAR_WU) {
         b->active = false;
-        s->stats.far++;
+        s->stats.farEnds++;
       }
       return b;
     }
