@@ -1023,6 +1023,8 @@ static const UnitTestEntry s_tests[] = {
     { "btr_zstd_cut_file_reads_its_prefix",      run_btr_zstd_cut_file_reads_its_prefix      },
     { "btr_block_logs_compress",                 run_btr_block_logs_compress                 },
     { "brainrec_split_cuts_brain_logs_by_engine_tick", run_brainrec_split_cuts_brain_logs_by_engine_tick },
+    { "pool_render_raw_matches_old_json",        run_pool_render_raw_matches_old_json        },
+    { "pool_render_json_and_bad_blocks",         run_pool_render_json_and_bad_blocks         },
     { "entity_record_seek_lands_on_the_right_liveness",
                                                  run_entity_record_seek_lands_on_the_right_liveness },
     { "starts_pick_cluster_nearest_teammate",    run_starts_pick_cluster_nearest_teammate    },

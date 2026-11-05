@@ -37,3 +37,6 @@ tests/fixtures/wbv/*.summary    text eol=lf
 # eol conversion whatever the platform's autocrlf setting is.
 *.map                           binary
 tests/fuzz/corpus/**            binary
+
+# Pool render fixtures are compared byte for byte (see test_pool_render_host.c).
+tests/fixtures/pool_render/*  -text

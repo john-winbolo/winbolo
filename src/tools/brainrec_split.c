@@ -31,7 +31,12 @@
  *  Usage:
  *    brainrec_split <session-dir | brainrec.btr> [-parts N]
  *                   [-frames-per-part N] [-out <dir>] [-dry-run]
- *                   [-companions-only]
+ *                   [-companions-only] [-render-pool <brain-dir>]
+ *
+ *  -render-pool turns every raw pool block (the brain's raw capture, see
+ *  brains/GoalHunter/pool_render.lua) into the panel JSON it stands for,
+ *  using that brain directory's pool_render.lua. With -parts 1 this makes a
+ *  whole-game copy in the old JSON form. JSON blocks are copied as they are.
  *
  *  The input is opened read-only and never modified; the tool refuses to
  *  start if a target directory already exists.
@@ -54,6 +59,7 @@
 #include "brain_record_io.h"
 #include "brain_record_walk.h"
 #include "brain_record_ticks.h"
+#include "pool_render_host.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -78,6 +84,8 @@ typedef struct {
     BrainRecOut   *out;
     bool           writeFailed;
     unsigned char *buf;         /* SPLIT_COPY_BYTES scratch for skip() */
+    const char    *renderDir;   /* -render-pool brain dir, or NULL */
+    unsigned long long poolRendered, poolKept, poolFailed;
 } BtrTee;
 
 static size_t btrTeeRead(void *ctx, void *dst, size_t len) {
@@ -102,11 +110,49 @@ static bool btrTeeSkip(void *ctx, size_t len) {
     return true;
 }
 
+/* -render-pool: one bot's pool block. Reads the length and the bytes, and
+ * writes the block back with a raw capture replaced by its panel JSON. */
+static bool btrTeePoolBlock(void *ctx) {
+    BtrTee *t = (BtrTee *)ctx;
+    uint32_t pl = 0;
+    if (brainRecInRead(t->in, &pl, 4) != 4) return false;
+    char *blk = (char *)malloc((size_t)pl + 1);
+    if (!blk) return false;
+    if (pl && brainRecInRead(t->in, blk, pl) != pl) { free(blk); return false; }
+    blk[pl] = '\0';
+    char *json = NULL;
+    const char *outBlk = blk;
+    uint32_t outLen = pl;
+    if (pl && poolRenderIsRaw(blk)) {
+        char err[512];
+        json = poolRenderToJson(t->renderDir, blk, err, sizeof err);
+        if (!json) { free(blk); return false; }
+        if (err[0]) {
+            if (t->poolFailed == 0) fprintf(stderr, "brainrec_split: %s\n", err);
+            t->poolFailed++;
+        } else {
+            t->poolRendered++;
+        }
+        outBlk = json;
+        outLen = (uint32_t)strlen(json);
+    } else if (pl) {
+        t->poolKept++;
+    }
+    if (t->out) {
+        if (!brainRecOutWrite(t->out, &outLen, 4)) t->writeFailed = true;
+        if (outLen && !brainRecOutWrite(t->out, outBlk, outLen)) t->writeFailed = true;
+    }
+    free(json);
+    free(blk);
+    return true;
+}
+
 static void btrTeeBind(BrainRecReader *r, BtrTee *t) {
-    r->ctx     = t;
-    r->read    = btrTeeRead;
-    r->skip    = btrTeeSkip;
-    r->version = 0;   /* the preamble walk sets the file's own */
+    r->ctx       = t;
+    r->read      = btrTeeRead;
+    r->skip      = btrTeeSkip;
+    r->version   = 0;   /* the preamble walk sets the file's own */
+    r->poolBlock = t->renderDir ? btrTeePoolBlock : NULL;
 }
 
 /* ---- Frame index -------------------------------------------------------- */
@@ -809,6 +855,9 @@ static void usage(void) {
         "  -out <dir>           where the parts go (default: beside the input)\n"
         "  -dry-run             report the split plan and write nothing\n"
         "  -companions-only     rewrite the parts' logs only; leave their .btr alone\n"
+        "  -render-pool <dir>   write each raw pool block as its panel JSON, built\n"
+        "                       by <dir>/pool_render.lua (a brain dir such as\n"
+        "                       brains/GoalHunter); -parts 1 converts a whole game\n"
         "\n"
         "Cuts only on frames that carry a full map keyframe, so every part\n"
         "replays the right terrain. The input is never modified.\n");
@@ -841,6 +890,7 @@ int BRAINREC_SPLIT_ENTRY(int argc, char **argv) {
     long framesPerPart = 0;
     bool dryRun = false;
     bool companionsOnly = false;
+    const char *renderDir = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-parts") == 0 && i + 1 < argc) {
@@ -853,6 +903,8 @@ int BRAINREC_SPLIT_ENTRY(int argc, char **argv) {
             dryRun = true;
         } else if (strcmp(argv[i], "-companions-only") == 0) {
             companionsOnly = true;
+        } else if (strcmp(argv[i], "-render-pool") == 0 && i + 1 < argc) {
+            renderDir = argv[++i];
         } else if (argv[i][0] == '-') {
             usage();
             return 2;
@@ -1070,6 +1122,7 @@ int BRAINREC_SPLIT_ENTRY(int argc, char **argv) {
             tee.in  = in;
             tee.out = out;
             tee.buf = copyBuf;
+            tee.renderDir = renderDir;
             BrainRecReader r;
             btrTeeBind(&r, &tee);
             /* The preamble was copied as bytes, not walked, so take the
@@ -1095,6 +1148,11 @@ int BRAINREC_SPLIT_ENTRY(int argc, char **argv) {
             printf("  part %d/%d: %llu frames, ticks %u..%u, keyframe start=%s, %.1f MB\n",
                    p + 1, parts, (unsigned long long)n, (unsigned)first, (unsigned)last,
                    firstKf ? "yes" : "NO", fileSize(partBtr[p]) / 1.0e6);
+            if (renderDir) {
+                printf("    pool blocks: %llu rendered from raw, %llu already JSON, %llu failed\n",
+                       tee.poolRendered, tee.poolKept, tee.poolFailed);
+                if (tee.poolFailed) ok = false;
+            }
             fflush(stdout);
         }
         brainRecInClose(in);

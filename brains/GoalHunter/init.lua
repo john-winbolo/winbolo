@@ -692,6 +692,18 @@ function Brain.viz_record_skip_csv()
   return viz.record_skip_idx_csv()
 end
 
+-- The recorded pool block: a cheap raw capture that pool_render.lua turns
+-- into the panel JSON later (in BrainTest, brainrec_split, or the brain).
+-- Returns the JSON when the capture cannot be packed (no string.buffer), and
+-- the same error JSON as below when the capture throws, so the reader can
+-- always tell the two forms apart by the first byte ('{' = JSON).
+function Brain.get_pool_breakdown_raw()
+  if not BRAIN_POOL_VIZ then return Brain.get_pool_breakdown_json() end
+  local ok, result = pcall(goals.get_pool_breakdown_raw, state)
+  if ok then return result end
+  return Brain.get_pool_breakdown_json()
+end
+
 function Brain.get_pool_breakdown_json()
   if not BRAIN_POOL_VIZ then
     return string.format(

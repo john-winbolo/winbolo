@@ -43,6 +43,11 @@ typedef struct {
      * preamble some other way) sets it itself. 0 counts as the version this
      * build writes. */
     uint32_t version;
+    /* Optional. When set, the walker calls it for each bot's pool block in
+     * place of reading the block's uint32 length and skipping its bytes:
+     * the callback consumes both itself (brainrec_split -render-pool uses
+     * it to write a changed block). NULL = the normal read and skip. */
+    bool   (*poolBlock)(void *ctx);
 } BrainRecReader;
 
 /* What a walked frame turned out to be. mapKeyframe is the split-safe

@@ -38,6 +38,7 @@
 #endif
 
 #include "global.h"
+#include "pool_render_host.h"  /* poolRenderDupBrainString */
 #include "bolo_map.h"
 #include "pillbox.h"
 #include "bases.h"
@@ -1702,8 +1703,12 @@ static void runBotThinkJob(int botIndex, void *userData) {
      * brain_record in stage 3. */
     if (j->poolJson) { free(j->poolJson); j->poolJson = NULL; }
     if (!j->wasKilled && brainRecordPoolCaptureWanted(sim, bot->playerNum)) {
+        uint64_t _tp0 = SDL_GetPerformanceCounter();
         j->poolJson = botManagerEvalLuaString(sim, bot->playerNum,
-                          "return brain.get_pool_breakdown_json()");
+                          brainRecordPoolExpr());
+        brainRecordAddPoolEvalMs(bot->playerNum,
+            (double)(SDL_GetPerformanceCounter() - _tp0) * 1000.0
+            / (double)SDL_GetPerformanceFrequency());
     }
 
     if (sim->botMgr.preThinkHook) sim->botMgr.preThinkHook(-1);
@@ -2841,12 +2846,12 @@ char *botBrainEvalLuaString(lua_State *L, const char *src) {
     }
     char *result = NULL;
     if (lua_isstring(L, -1)) {
-        const char *s = lua_tostring(L, -1);
-        if (s) {
-            size_t n = strlen(s);
-            result = (char *)malloc(n + 1);
-            if (result) memcpy(result, s, n + 1);
-        }
+        size_t len = 0;
+        const char *s = lua_tolstring(L, -1, &len);
+        /* A raw pool block holds NUL bytes; this escapes them so the C
+         * string keeps the whole block (see pool_render_host.h). Any other
+         * string is copied as before. */
+        if (s) result = poolRenderDupBrainString(s, len);
     }
     lua_pop(L, 1);
     return result;

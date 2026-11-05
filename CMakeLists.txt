@@ -3638,9 +3638,11 @@ endif()
 add_executable(brainrec_split
     src/tools/brainrec_split.c
     src/bolo/brain_record_walk.c
-    src/bolo/brain_record_io.c)
+    src/bolo/brain_record_io.c
+    src/bolo/pool_render_host.c)
 bolo_apply_include_rules(brainrec_split runtime_only)
-target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic libzstd_static)
+# lua_static: pool_render_host.c, for -render-pool (raw pool blocks to JSON).
+target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic libzstd_static lua_static)
 if(WIN32)
     target_link_libraries(brainrec_split PRIVATE psapi)
 endif()
@@ -4878,6 +4880,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The rule that keeps a dead tank off BrainTest's playback map.
     tests/unit/test_braintest_tank_dead.c
     src/braintest/braintest_tank_dead.c
+    tests/unit/test_pool_render_host.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -6644,6 +6647,8 @@ set(_unit_test_names
     btr_zstd_cut_file_reads_its_prefix
     btr_block_logs_compress
     brainrec_split_cuts_brain_logs_by_engine_tick
+    pool_render_raw_matches_old_json
+    pool_render_json_and_bad_blocks
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken

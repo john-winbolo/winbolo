@@ -180,6 +180,20 @@ typedef bool (*BrainRecordHostedFn)(BYTE slot, uint16_t *placeGen,
                                     char *hostName);
 void brainRecordSetHostedInfoFn(BrainRecordHostedFn fn);
 
+/* Pool block format (winbolods -bd-pool-format). RAW = the brain's cheap
+ * raw capture (brain.get_pool_breakdown_raw), rendered to JSON later by
+ * pool_render.lua; JSON = the finished panel JSON built on the tick.
+ * brainRecordPoolExpr() is the Lua expression for the current format. */
+#define BRAINREC_POOL_FORMAT_RAW  0
+#define BRAINREC_POOL_FORMAT_JSON 1
+void brainRecordSetPoolFormat(int format);
+int brainRecordGetPoolFormat(void);
+const char *brainRecordPoolExpr(void);
+
+/* Adds one bot's pool build time to braindbg_perf.log's pool_eval column.
+ * Safe from the bot workers: each bot has its own counter. */
+void brainRecordAddPoolEvalMs(BYTE slot, double ms);
+
 /* Pool-JSON prefetch protocol (parallelizes the capture): a bot's worker
  * thread asks CaptureWanted right after its think and, when true, builds
  * the JSON there (each bot owns its own Lua VM, so the builds fan out
