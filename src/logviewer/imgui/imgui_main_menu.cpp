@@ -222,6 +222,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
+    /* TEMPORARY TEST TOGGLE (lv_early_blast.h): off until turned on. */
+    lv_platform_config_get_string("LOGVIEWER", "Screen-True Own Shells", "No", val, sizeof(val));
+    lv_screenSetScreenTrueShells((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
     /* The lag display (lv_lag.h) is read in lvHostSetupCore, which every
        host runs before this. It has no menu item. */
 }
@@ -275,6 +278,8 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", LV_LAG_PREF_KEY,
                                   lv_screenGetLagFeature() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Screen-True Own Shells",
+                                  lv_screenGetScreenTrueShells() ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
@@ -815,6 +820,15 @@ int lv_imgui_main_menu_bar(void) {
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::SetTooltip("%s", langGetText(STR_LV_LAG_MENU_TIP));
+                }
+                /* TEMPORARY TEST TOGGLE (lv_early_blast.h): in the lag view,
+                 * the chosen player's own shells explode at once where they
+                 * end, and the server's later explosion of each is hidden. */
+                if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_SHELLS), NULL,
+                                    lv_screenGetScreenTrueShells() != 0)) {
+                    lv_screenSetScreenTrueShells(lv_screenGetScreenTrueShells() ? 0 : 1);
+                    lv_windowNeedRedraw();
+                    clicked = 1;
                 }
             }
 #ifndef __EMSCRIPTEN__

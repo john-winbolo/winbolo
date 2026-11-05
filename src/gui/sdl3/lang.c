@@ -1070,6 +1070,7 @@ static const LangEntry langTable[] = {
     {3118, "{string1}, {number} ms round trip"},
     {3119, "See What the Selected Player Saw"},
     {3120, "Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records"},
+    {3472, "Toggle Screen-True Own Shells"},
     {3121, "Lag: a bot, screen {number} ms behind"},
     /* The viewer's server timing (log_OverrunStats) in the Game Info panel. */
     {3130, "Server timing"},
