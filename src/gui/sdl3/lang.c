@@ -280,7 +280,6 @@ static const LangEntry langTable[] = {
     {552,  "Smooth Scrolling"},
     {553,  "Automatic Scrolling"},
     {554,  "Show Gunsight"},
-    {3473, "Early Own Shell Blast"},
     {555,  "Message Sender Names"},
     {556,  "Tank Labels"},
     {557,  "None"},

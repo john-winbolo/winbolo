@@ -1461,8 +1461,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* No impact drawn here: the owner already receives the authoritative
          * EVENT_EXPLOSION for this shell on the snapshot tail (drawn for every
          * client with no owner filter), so drawing one here would double up. */
-        /* The "Early Own Shell Blast" test option: where the server's shell
-         * ended, for the early blast of the same fireTick (early_blast.h). */
+        /* Where the server's shell ended, for the early own shell blast of
+         * the same fireTick (early_blast.h). */
         clientSimEarlyBlastServerEnd(cs, evt->u.shellDeath.fireTick,
                                      evt->u.shellDeath.impactWX,
                                      evt->u.shellDeath.impactWY);
