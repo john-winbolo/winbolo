@@ -264,7 +264,7 @@ local function get_formula_inner(e)
     -- Refuel-pad reach (goals.lua refuel_pad_pill_reach): the danger_val above
     -- is a PARKED read, not a driving one. Say which verdict produced it, with
     -- the two distances compared, and — when the pill layer was dropped — what
-    -- came off, so danger_val is still hand-derivable from H.threat_at().
+    -- came off, so danger_val is still hand-derivable from threat.at().
     local _pad_thresh = (C.PILL_FIRE_RANGE or 8) + (C.REFUEL_PAD_TANK_OFFSET or 0.7071)
     local _pad_token = ""
     if e._pad_safe ~= nil then
@@ -278,7 +278,7 @@ local function get_formula_inner(e)
       if e._pad_safe then
         _d_danger = _d_danger .. string.format(
           " -- PAD SAFE: %s, so the whole PILL layer (%.1f) was REMOVED from "
-          .. "H.threat_at() and danger_val is the TANK-layer remainder %.1f. "
+          .. "threat.at() and danger_val is the TANK-layer remainder %.1f. "
           .. "A pill fires on a tank at <= %.0f[PILL_FIRE_RANGE] tiles from its "
           .. "own tile centre (util.c utilIsItemInRange, PILLBOX_RANGE 2048wu), "
           .. "and a docked tank is at most %.4f[REFUEL_PAD_TANK_OFFSET] tiles "
@@ -975,7 +975,7 @@ local function get_formula_inner(e)
     if e._p3_mult then
       _cb_nb_chip = _cb_nb_chip .. string.format(" + nobuild_danger{%.1f}", e._p3_dang or 0)
       _cb_nb_det = _cb_nb_det .. string.format(
-        "|nobuild_danger:LOADED, BUILDER-LESS — H.threat_at(base)%.1f × DANGER_SCALE{%.3f} × CAPTURE_BASE_NO_LGM_DANGER_MULT{%d} = %.1f, ADDED. A base is a tile you have to sit on, and sitting on a covered one with an unplaceable stack aboard loses the whole load. At the keel value 0 this term does not exist, which is what pool 3 did before",
+        "|nobuild_danger:LOADED, BUILDER-LESS — threat.at(base)%.1f × DANGER_SCALE{%.3f} × CAPTURE_BASE_NO_LGM_DANGER_MULT{%d} = %.1f, ADDED. A base is a tile you have to sit on, and sitting on a covered one with an unplaceable stack aboard loses the whole load. At the keel value 0 this term does not exist, which is what pool 3 did before",
         e._p3_dv or 0, C.CAPTURE_PILL_DANGER_SCALE, e._p3_mult, e._p3_dang or 0)
     end
     f = string.format(
