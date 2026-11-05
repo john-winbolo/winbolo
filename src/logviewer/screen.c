@@ -1477,9 +1477,15 @@ void lv_screenUpdate(updateType value) {
     /* TEMPORARY TEST TOGGLE (lv_early_blast.h): each early blast of the
        chosen player hides its server explosion, one record per frame. */
     bool hideUsed[LV_EARLY_BLAST_MAX];
+    /* A frame's shells are in the reverse of the game's draw order (the
+       viewer's shell list is built front first), and lagShells draws in
+       the order items go in. So the kept shells go in from the end of the
+       frame, and the newest explosion is drawn on top, as in the game. */
+    bool keep[LV_LAG_SHELLS_MAX];
     memset(hideUsed, 0, sizeof(hideUsed));
     for (i = 0; i < lagFrame->shellCount; i++) {
       const LvLagShell *sh = &lagFrame->shells[i];
+      keep[i] = FALSE;
       if (!ownAtPresent || (int) sh->owner != s_lagViewSlot) {
         if (earlyBlast && lv_earlyBlastIsExplFrame(sh->frame)) {
           LvBlastPt e;
@@ -1499,10 +1505,16 @@ void lv_screenUpdate(updateType value) {
             continue;
           }
         }
+        keep[i] = TRUE;
+      }
+    }
+    for (i = lagFrame->shellCount - 1; i >= 0; i--) {
+      const LvLagShell *sh = &lagFrame->shells[i];
+      if (keep[i]) {
         lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
       }
     }
-    for (i = 0; i < now->shellCount && ownAtPresent; i++) {
+    for (i = now->shellCount - 1; i >= 0 && ownAtPresent; i--) {
       const LvLagShell *sh = &now->shells[i];
       if ((int) sh->owner == s_lagViewSlot) {
         lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
