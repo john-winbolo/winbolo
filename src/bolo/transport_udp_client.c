@@ -4382,10 +4382,20 @@ static bool udpClientTick(void *ctx) {
      *
      * Likewise during SPECTATING: the spectator seed and forward records stream
      * on CHANNEL_BULK, and this standalone frame carries the spectator's acks.
-     * Without it the server's seed transfer never completes. */
+     * Without it the server's seed transfer never completes.
+     *
+     * And during the JOINING that a lobby map change, or a return to the
+     * lobby after a round, puts an already-joined client back into. The
+     * server keeps a connected slot for it throughout and reads this frame
+     * as it does any other. Voice captured then is queued on CHANNEL_VOICE
+     * and only this frame carries it, so leaving JOINING out was a gap in
+     * voice for as long as the re-sent accept took to arrive. A fresh
+     * connection's JOINING (joinedOnce false) is left alone: the server has
+     * no slot for it yet and would drop the frame unread. */
     if (c->joinState == UDP_CLIENT_CONNECTED ||
         c->joinState == UDP_CLIENT_DOWNLOADING_MAP ||
-        c->joinState == UDP_CLIENT_SPECTATING) {
+        c->joinState == UDP_CLIENT_SPECTATING ||
+        (c->joinedOnce && c->joinState == UDP_CLIENT_JOINING)) {
         channelTick(&c->channelMux, c->localTick, c->pingMs);
         {
             uint8_t cbuf[UDP_MAX_PAYLOAD];
@@ -5746,7 +5756,16 @@ void transportUdpClientSendVoice(Transport *t, const uint8_t *opus,
 
     if (t == NULL || t->ctx == NULL) return;
     c = (TransportUdpClientCtx *)t->ctx;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    /* Voice goes out whenever the server has a slot for this connection:
+     * from the first accept, through the map download, and through the
+     * re-join and re-download a lobby map change or a return to the lobby
+     * puts a joined client through. Before the first accept there is no slot
+     * to carry it, and a spectator has none: the server looks a segment up
+     * by player slot. */
+    bool hasSlot = c->joinState == UDP_CLIENT_CONNECTED ||
+                   c->joinState == UDP_CLIENT_DOWNLOADING_MAP ||
+                   (c->joinedOnce && c->joinState == UDP_CLIENT_JOINING);
+    if (c->spectator || !hasSlot) return;
 
     /* The caller's flags byte goes out as it stands.  The only bit defined
      * is VOICE_FLAG_END_OF_UTTERANCE, which the sender sets on the frame

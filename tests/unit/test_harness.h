@@ -3207,6 +3207,19 @@ int run_voice_jitter_under_loss(void);
  * concurrent-talker cap never fires on them. */
 int run_voice_flood_cap_enforced(void);
 
+/* Voice across a lobby map change and a return to the lobby
+ * (test_voice_map_change.c): over the loopback transport, a talker and a
+ * listener already in the room keep every segment while the new map
+ * re-downloads, also when the re-sent accept is lost, also across a whole
+ * round and the return to the lobby after it; and a joiner hears the room
+ * before its own map has arrived. */
+int run_voice_map_change_talker_kept(void);
+int run_voice_map_change_during_redownload(void);
+int run_voice_map_change_listener_kept(void);
+int run_voice_map_change_accept_lost(void);
+int run_voice_joiner_hears_before_map(void);
+int run_voice_return_to_lobby_kept(void);
+
 /* Concurrent-talker selection (test_voice_talker_select.c): the per-recipient
  * cap keeps the most recently started talkers rather than the lowest-numbered
  * slots, breaks an onset tie on the newer sequence number across the 256 wrap,
