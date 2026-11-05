@@ -6977,12 +6977,18 @@ set(_unit_test_names
     bot_pool_wire_chunk_transport
     bot_pool_catalog_id
     voice_core_roundtrip
+    voice_core_reset_matches_fresh
+    voice_core_fade_apply
     voice_device_resolve
     voice_peak
     voice_segment_roundtrip
     voice_segment_rejects_malformed
     voice_jitter_ordering_and_plc
     voice_jitter_undecodable_run
+    voice_jitter_fade_in_on_prime
+    voice_jitter_fade_out_before_marker
+    voice_jitter_fade_out_on_give_up
+    voice_jitter_decoder_reset_on_unprime
     voice_jitter_under_loss
     voice_flood_cap_enforced
     voice_map_change_talker_kept

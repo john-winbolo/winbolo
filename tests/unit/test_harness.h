@@ -3160,6 +3160,12 @@ int run_scenario_host_popup_unsafe_unreachable(void);
  * its signal level, and conceals a dropped packet. */
 int run_voice_core_roundtrip(void);
 
+/* Codec reset and fade ramp (test_voice_core.c): a reset encoder writes the
+ * same bytes as a new one and a reset decoder the same samples, and the fade
+ * lands exactly on its end gains, touching only the samples it is given. */
+int run_voice_core_reset_matches_fresh(void);
+int run_voice_core_fade_apply(void);
+
 /* Saved audio device name matching (test_voice_device.c): a name that is
  * present resolves to its index wherever it sits in the list, and every way
  * of being absent - not there, empty, NULL, an empty list, a prefix rather
@@ -3191,6 +3197,15 @@ int run_voice_jitter_ordering_and_plc(void);
  * instead of concealing indefinitely, and the end-of-utterance flag is
  * honoured on a frame that failed to decode. */
 int run_voice_jitter_undecodable_run(void);
+
+/* Utterance edges in the jitter buffer (test_voice_jitter.c): the first frame
+ * after priming fades in, the frame before a held end-of-utterance marker and
+ * the last concealed frame before giving up fade out to zero, and an unprime
+ * resets the decoder so the next utterance decodes as on a new one. */
+int run_voice_jitter_fade_in_on_prime(void);
+int run_voice_jitter_fade_out_before_marker(void);
+int run_voice_jitter_fade_out_on_give_up(void);
+int run_voice_jitter_decoder_reset_on_unprime(void);
 
 /* Jitter buffer under adverse arrival (test_voice_jitter_loss.c): a generated
  * loss / reorder / burst-outage pattern is pushed a tick at a time, and the
