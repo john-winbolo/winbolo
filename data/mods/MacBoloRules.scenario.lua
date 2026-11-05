@@ -14,8 +14,8 @@
 --
 -- Pillbox shell cap. No more than pill_max_shells_at_tank pillbox shells
 -- are in the air at any one tank. A pillbox whose nearest target already
--- has that many coming loses its shot and reloads. The limit is twelve by
--- default.
+-- has that many coming loses its shot and reloads. This part sets the
+-- limit to twelve.
 --
 -- Tank clearance. Use the original direction-dependent tank boxes and
 -- pixel nudges against solid tiles, allowing close passes beside pills.
@@ -28,12 +28,39 @@
 -- removes the lead. Beyond that distance the same formula leads normally.
 -- This overrides the older pill_massage_range/cosine approximation.
 --
+-- Angry pillbox fire rate. A pillbox that is hit, or whose base is shot,
+-- halves the ticks between its shots. Mac Bolo floors that at 4 and fires
+-- one tick after the count runs out, so an angry pillbox's fastest is a
+-- shot every 5 ticks. WinBolo fires as the count runs out, and floors it
+-- at pill_attack_min_ticks, 6 by default. This part sets it to 5.
+--
+-- Pillbox shell range. A Mac Bolo pillbox's shell starts half a square
+-- out and flies 32 steps of about a quarter square, so it falls 2143 to
+-- 2175 world units (256 to a square) from the pillbox, by direction.
+-- WinBolo's starts 160 out and flies pill_fire_length, 8.5 by default,
+-- which ends it 2208 out, a quarter square further. This part sets
+-- pill_fire_length to 8.25, which ends it 2144 out.
+--
 -- Base defence. When a base is shot, every allied pillbox near it gets
 -- angry and fires faster. WinBolo has always counted "near" as a square:
 -- up to 9 map squares away on each axis, edge included, which reaches a
 -- pillbox 9 across and 9 down, about 12.7 squares off. Mac Bolo counts it
 -- as a circle of radius 7 with the edge left out, so a pillbox exactly 7
 -- away, or at 5 across and 5 down, stays calm.
+--
+-- Superbooms. A tank that dies carrying enough shells and mines goes up in
+-- a big explosion, which craters a 2 x 2 block and hurts any pillbox in
+-- it. WinBolo needs more than 20 shells and mines together; Mac Bolo needs
+-- more than 60, three quarters of the 80 a full tank holds. This part sets
+-- big_explosion_threshold to 60.
+--
+-- Parachute speed. A builder who dies parachutes back in, flying straight
+-- at his tank. Mac Bolo moves him every other tick by its trig table
+-- shifted down, so his speed depends on his heading: 1.41 to 2.5 world
+-- units a tick, 1.92 on average. WinBolo moves him lgm_helicopter_speed a
+-- tick, rounded on each axis: 2.83 to 3.61 at the default 3. This part
+-- sets 2, which is 1.41 to 2.24, 2.09 on average. The rule is a whole
+-- number, so 2 is the nearest it comes to Mac Bolo.
 --
 -- Starts. The engine tells on_choose_start which start the lobby put the
 -- seat on: the start its player picked by hand, else one on the team's
@@ -44,40 +71,46 @@
 -- the lobby has no start for is Mac Bolo's. Turn first_start_lobby off
 -- to give the opening tanks the Mac Bolo pick too.
 --
--- The Mac Bolo pick has two passes. Pass one looks for a start with
--- nothing near it at all: no other tank and no pillbox, whoever owns them.
--- If every start has something near it, pass two looks for a start with no
--- enemy tank and no enemy pillbox near it; friendly tanks and pills, and
--- neutral pills, are allowed. If both passes come up empty the engine
--- picks as it always does.
+-- The Mac Bolo pick (randstart) looks only at starts on deep sea with no
+-- mine, going round them from a random one. It takes the first with
+-- nothing near it at all: no tank and no pillbox, whoever owns them. If
+-- every start has something near it, it takes one with no enemy tank and no
+-- enemy pillbox near it. If none is free of enemies, it takes the first
+-- usable start it looked at, or the map's first start if none is usable.
+-- The engine then moves the tank off the start to the nearest clear
+-- square, as Mac Bolo does.
 --
--- "Near" is the round's own start_tank_range and start_pill_range rules,
--- measured the way the engine measures them: the larger of the two axis
--- distances, in map squares. Each pass starts at a random start and goes
--- round the list, so a map with several clear starts does not always hand
--- out the same one.
+-- "Near" is Mac Bolo's own distance: under 16 squares for a tank and under
+-- 9 for a pillbox, measured as a circle. A dead tank does not count. A dead
+-- pillbox does; one being carried does not.
 --
--- "Enemy" is read from lobby teams. Two seats on the same team are friends;
--- a seat on no team (team 0) is friends only with itself. An alliance made
--- during play is not seen here.
+-- "Enemy" is the game's own alliances, including those made and broken in
+-- play. A neutral pillbox counts as an enemy one. Mac Bolo judges every
+-- pillbox near a start by the owner of the first one (BOLO BUG 3), so a
+-- friendly pillbox there hides an enemy one; the mod judges each pillbox
+-- by its own owner.
 --
 -- Settings. The host turns each part on or off in the lobby's details
--- dialog, and sets the numbers a part plays with (scenario.settings below).
--- Every part is on by default, at the numbers above, so a host who changes
--- nothing plays the same game the mod always played.
+-- dialog (scenario.settings below). Every part is on by default, and plays
+-- at the numbers above, which the host cannot change. Every setting is a
+-- switch, which keeps the mod well under the 16 settings a script may
+-- have; with the five numbers kept, the parts would have reached that cap.
 --
---   pushback            Mac Bolo shell pushback (tank_slide_mac).
---   push_step           its push at full armour (tank_slide_step, 28).
---   push_armour_bonus   its extra push at zero armour
---                       (tank_slide_armour_bonus, 32).
---   push_decay_shift    its slide length (tank_bump_decay_shift, 2).
---   shell_cap           pillbox shell cap (pill_shell_cap).
---   shell_cap_count     shells in the air at one tank
---                       (pill_max_shells_at_tank, 12).
+--   pushback            Mac Bolo shell pushback (tank_slide_mac, with
+--                       tank_slide_step 28, tank_slide_armour_bonus 32
+--                       and tank_bump_decay_shift 2).
+--   shell_cap           pillbox shell cap (pill_shell_cap, with
+--                       pill_max_shells_at_tank 12).
 --   tank_boxes          tank clearance (tank_collision_mac).
 --   pill_aim            pillbox aiming and massage (pill_aim_mac).
---   base_defence        base defence circle (pill_base_defend_shape).
---   base_defence_radius its radius (pill_base_defend_range, 7).
+--   pill_anger          angry pillbox fire rate
+--                       (pill_attack_min_ticks, 5).
+--   pill_shell_range    pillbox shell range (pill_fire_length, 8.25).
+--   base_defence        base defence circle (pill_base_defend_shape, with
+--                       pill_base_defend_range 7).
+--   superboom           superboom threshold
+--                       (big_explosion_threshold, 60).
+--   parachute           parachute speed (lgm_helicopter_speed, 2).
 --   spawn_starts        the Mac Bolo start pick for spawns.
 --   first_start_lobby   "Override first start to what was chosen in lobby".
 --                       On (the default): a tank the lobby has a start
@@ -86,9 +119,9 @@
 --                       while spawn_starts is off.
 --
 -- A part that is off sets none of its rules: the round plays the classic
--- table there, or the value another script on the list sets. Its numbers
--- are then not read. With spawn_starts off, on_choose_start names no start
--- and the engine picks every start as it always does.
+-- table there, or the value another script on the list sets. With
+-- spawn_starts off, on_choose_start names no start and the engine picks
+-- every start as it always does.
 --
 -- The rules table is built from the settings when the file runs, so the
 -- rules are in force before the opening tanks are built and keep the list's
@@ -104,40 +137,28 @@
 scenario = {
   name = "Mac Bolo Rules",
   description = "Plays the Mac Bolo shell pushback, pillbox shell cap, " ..
-                "tank clearance, pillbox massage, base defence circle " ..
-                "and spawn starts. " ..
+                "tank clearance, pillbox massage, angry pillbox fire " ..
+                "rate, pillbox shell range, base defence circle, " ..
+                "superboom threshold, parachute speed and spawn " ..
+                "starts. " ..
                 "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-11-03T05:26Z",
+  updated = "2026-11-05T18:00Z",
   kind = "mod",
   bound = false,
 
   -- What the host sets in the lobby's details dialog, in the order of the
-  -- parts above. Every default is what the mod played before it had
-  -- settings. The rules table below is built from these.
+  -- parts above. The rules table below is built from these.
   settings = {
     -- Shell pushback: the Mac Bolo push, harder on a weakened tank.
     { id = "pushback", label = "Mac Bolo shell pushback", type = "bool",
       default = true },
-    -- The push at full armour, in world units per 40 ms.
-    { id = "push_step", label = "Pushback at full armour", type = "int",
-      min = 0, max = 63, step = 1, default = 28 },
-    -- The extra push at zero armour, scaled by the armour missing. The rule
-    -- allows 255; the max is capped by the dropdown's 100 entries.
-    { id = "push_armour_bonus", label = "Pushback extra at zero armour",
-      type = "int", min = 0, max = 96, step = 1, default = 32 },
-    -- The slide's length: a push travels step * 2^shift in all.
-    { id = "push_decay_shift", label = "Pushback slide length (shift)",
-      type = "int", min = 0, max = 31, step = 1, default = 2 },
 
     -- Pillbox shell cap: a pill loses its shot when its nearest target already
-    -- has this many pillbox shells coming.
+    -- has twelve pillbox shells coming.
     { id = "shell_cap", label = "Pillbox shell cap", type = "bool",
       default = true },
-    -- The rule allows 255; the max is capped by the dropdown's 100 entries.
-    { id = "shell_cap_count", label = "Pillbox shells in the air at one tank",
-      type = "int", min = 1, max = 100, step = 1, default = 12 },
 
     -- Tank clearance: the Mac Bolo tank boxes against solid squares.
     { id = "tank_boxes", label = "Mac Bolo tank collision boxes",
@@ -147,12 +168,26 @@ scenario = {
     { id = "pill_aim", label = "Mac Bolo pillbox aiming and massage",
       type = "bool", default = true },
 
-    -- Base defence: a circle round a shot base instead of a square.
+    -- Angry pillbox fire rate: Mac Bolo's fastest, a shot every 5 ticks.
+    { id = "pill_anger", label = "Mac Bolo angry pillbox fire rate",
+      type = "bool", default = true },
+
+    -- Pillbox shell range: Mac Bolo's, a quarter square short of WinBolo's.
+    { id = "pill_shell_range", label = "Mac Bolo pillbox shell range",
+      type = "bool", default = true },
+
+    -- Base defence: a circle of radius 7 round a shot base instead of a
+    -- square.
     { id = "base_defence", label = "Mac Bolo base defence circle",
       type = "bool", default = true },
-    -- Its radius in map squares, with the edge left out.
-    { id = "base_defence_radius", label = "Base defence circle radius",
-      type = "int", min = 1, max = 30, step = 1, default = 7 },
+
+    -- Superbooms: Mac Bolo's threshold, more than 60 shells and mines.
+    { id = "superboom", label = "Mac Bolo superboom threshold",
+      type = "bool", default = true },
+
+    -- Parachute speed: the nearest whole number to Mac Bolo's.
+    { id = "parachute", label = "Mac Bolo parachute speed",
+      type = "bool", default = true },
 
     -- Starts: the two-pass Mac Bolo pick for spawns.
     { id = "spawn_starts", label = "Mac Bolo spawn starts", type = "bool",
@@ -165,7 +200,7 @@ scenario = {
   },
 
   callbacks = {
-    on_choose_start = "Keeps the lobby's start for an opening tank; else picks a start with no tank or pill near, else none of the enemy's. Spawn starts off: engine picks.",
+    on_choose_start = "Keeps the lobby's start for an opening tank; else Mac Bolo's pick: a start with no tank or pill near, else none of the enemy's. Spawn starts off: engine picks.",
   },
 }
 
@@ -182,7 +217,11 @@ local PUSHBACK          = game.setting("pushback")
 local SHELL_CAP         = game.setting("shell_cap")
 local TANK_BOXES        = game.setting("tank_boxes")
 local PILL_AIM          = game.setting("pill_aim")
+local PILL_ANGER        = game.setting("pill_anger")
+local PILL_SHELL_RANGE  = game.setting("pill_shell_range")
 local BASE_DEFENCE      = game.setting("base_defence")
+local SUPERBOOM         = game.setting("superboom")
+local PARACHUTE         = game.setting("parachute")
 local SPAWN_STARTS      = game.setting("spawn_starts")
 local FIRST_START_LOBBY = game.setting("first_start_lobby")
 
@@ -194,19 +233,19 @@ local rules = {}
 if PUSHBACK then
   -- Turn the Mac Bolo push on; the classic table plays with it off.
   rules.tank_slide_mac = 1
-  -- The push at full armour, in world units per 40 ms (28 by default).
-  rules.tank_slide_step = game.setting("push_step")
-  -- 32 and 2 by default, the rules' own defaults, written here so the mod
-  -- says what it plays with rather than relying on them.
-  rules.tank_slide_armour_bonus = game.setting("push_armour_bonus")
-  rules.tank_bump_decay_shift = game.setting("push_decay_shift")
+  -- The push at full armour, in world units per 40 ms.
+  rules.tank_slide_step = 28
+  -- The rules' own defaults, written here so the mod says what it plays
+  -- with rather than relying on them.
+  rules.tank_slide_armour_bonus = 32
+  rules.tank_bump_decay_shift = 2
 end
 
 if SHELL_CAP then
-  -- Turn the cap on; the classic table plays with it off. Twelve by
-  -- default, the rule's own default, written here for the same reason.
+  -- Turn the cap on; the classic table plays with it off. Twelve is the
+  -- rule's own default, written here for the same reason.
   rules.pill_shell_cap = 1
-  rules.pill_max_shells_at_tank = game.setting("shell_cap_count")
+  rules.pill_max_shells_at_tank = 12
 end
 
 if TANK_BOXES then
@@ -219,59 +258,84 @@ if PILL_AIM then
   rules.pill_aim_mac = 1
 end
 
+if PILL_ANGER then
+  -- Mac Bolo's fastest angry pillbox: a shot every 5 ticks.
+  rules.pill_attack_min_ticks = 5
+end
+
+if PILL_SHELL_RANGE then
+  -- A pillbox shell falls 2144 world units out, as Mac Bolo's do, not 2208.
+  rules.pill_fire_length = 8.25
+end
+
 if BASE_DEFENCE then
   -- 1 is a circle, 0 the classic square.
   rules.pill_base_defend_shape = 1
-  -- A radius, with the edge left out (7 by default).
-  rules.pill_base_defend_range = game.setting("base_defence_radius")
+  -- A radius, with the edge left out.
+  rules.pill_base_defend_range = 7
+end
+
+if SUPERBOOM then
+  -- A dying tank superbooms with more than 60 shells and mines, not 20.
+  rules.big_explosion_threshold = 60
+end
+
+if PARACHUTE then
+  -- A parachuting builder flies 2 world units a tick, not 3.
+  rules.lgm_helicopter_speed = 2
 end
 
 scenario.rules = rules
 
 -- ---- Starts --------------------------------------------------------------
 
--- The seat's lobby team, or 0 when it has none.
-local function team_of(p)
-  local slot = game.lobby_slot(p)
-  return slot and slot.team or 0
+-- Mac Bolo's ranges, in map squares: a tank under 16 squares from a
+-- start, or a pillbox under 9, is near it.
+local TANK_NEAR = 16
+local PILL_NEAR = 9
+
+-- Whether a point dx, dy world units away is under squares map squares
+-- off, as a circle.
+local function within(dx, dy, squares)
+  local r = squares * 256
+  return dx * dx + dy * dy < r * r
 end
 
--- Whether seat q is on seat p's side: p itself, or a seat on p's team.
-local function is_friend(p, my_team, q)
-  if q == p then
-    return true
-  end
-  return my_team ~= 0 and team_of(q) == my_team
+-- A map square's middle in world units, where a tank put on it stands.
+local function square_middle(m)
+  return m * 256 + 128
 end
 
-local function distance(x1, y1, x2, y2)
-  return math.max(math.abs(x1 - x2), math.abs(y1 - y2))
+-- Whether seat q is on seat p's side, by the game's own alliances.
+local function is_friend(p, q)
+  return q == p or game.allied(p, q) == true
 end
 
 -- What is near start s for seat p: whether any tank or pill is, and whether
 -- an enemy tank or enemy pill is.
-local function survey(p, my_team, s, tank_range, pill_range)
+local function survey(p, s)
+  local sx, sy = square_middle(s.x), square_middle(s.y)
   local any, enemy = false, false
 
   for q = 0, game.max_tanks() - 1 do
     if q ~= p then
       local t = game.tank(q)
-      if t and distance(s.x, s.y, t.mx, t.my) <= tank_range then
+      if t and not t.dead and within(t.wx - sx, t.wy - sy, TANK_NEAR) then
         any = true
-        if not is_friend(p, my_team, q) then
+        if not is_friend(p, q) then
           enemy = true
         end
       end
     end
   end
 
-  -- A pill being carried or with no armour left is no danger.
+  -- A pillbox being carried is not on the map. A dead one still counts.
   for n = 1, game.num_pills() do
     local pill = game.pill(n)
-    if pill and not pill.in_tank and pill.armour > 0 and
-        distance(s.x, s.y, pill.x, pill.y) <= pill_range then
+    if pill and not pill.in_tank and
+        within(square_middle(pill.x) - sx, square_middle(pill.y) - sy, PILL_NEAR) then
       any = true
-      if pill.owner ~= game.NEUTRAL and not is_friend(p, my_team, pill.owner) then
+      if pill.owner == game.NEUTRAL or not is_friend(p, pill.owner) then
         enemy = true
       end
     end
@@ -308,25 +372,29 @@ function on_choose_start(p, lobby)
     return nil
   end
 
-  local tank_range = game.rule("start_tank_range")
-  local pill_range = game.rule("start_pill_range")
-  local my_team = team_of(p)
   local offset = math.random(count) - 1
   local no_enemy = nil
+  local first_usable = nil
 
   for i = 0, count - 1 do
     local n = (offset + i) % count + 1
     local s = game.start(n)
     if s and usable(s) then
-      local any, enemy = survey(p, my_team, s, tank_range, pill_range)
+      local any, enemy = survey(p, s)
       if not any then
-        return n                 -- pass one: nothing near at all
+        return n                 -- nothing near at all
       end
-      if not enemy and no_enemy == nil then
-        no_enemy = n             -- pass two's answer, kept in case pass one finds none
+      if not enemy then
+        no_enemy = n             -- no enemy near: Mac Bolo keeps the last
+      end
+      if first_usable == nil then
+        first_usable = n
       end
     end
   end
 
-  return no_enemy                -- nil leaves the pick to the engine
+  -- With none free of enemies, the first usable start looked at, else the
+  -- map's first start. The engine moves the tank to the nearest clear
+  -- square.
+  return no_enemy or first_usable or 1
 end
