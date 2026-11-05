@@ -3147,12 +3147,15 @@ int run_voice_flood_cap_enforced(void);
 
 /* Voice across a lobby map change (test_voice_map_change.c): over the loopback
  * transport, a talker and a listener already in the room keep every segment
- * while the new map re-downloads (downloadComplete false, hasHadMap true), and
- * a connected slot that has never finished a download still hears nothing. */
+ * while the new map re-downloads (downloadComplete false, hasHadMap true), a
+ * connected slot that has never finished a download still hears nothing, and
+ * a talker whose re-sent JOIN_ACCEPT is lost, so that it waits in JOINING for
+ * a retry interval, still has every frame carried tick by tick. */
 int run_voice_map_change_talker_kept(void);
 int run_voice_map_change_during_redownload(void);
 int run_voice_never_had_map_left_out(void);
 int run_voice_map_change_listener_kept(void);
+int run_voice_map_change_accept_lost(void);
 
 /* Concurrent-talker selection (test_voice_talker_select.c): the per-recipient
  * cap keeps the most recently started talkers rather than the lowest-numbered

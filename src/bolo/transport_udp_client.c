@@ -4382,10 +4382,23 @@ static bool udpClientTick(void *ctx) {
      *
      * Likewise during SPECTATING: the spectator seed and forward records stream
      * on CHANNEL_BULK, and this standalone frame carries the spectator's acks.
-     * Without it the server's seed transfer never completes. */
+     * Without it the server's seed transfer never completes.
+     *
+     * And during the JOINING a lobby map change puts an already-joined client
+     * back into. The server's re-sent JOIN_ACCEPT normally lands in the same
+     * tick as the map-change packet, so that JOINING is over before the next
+     * frame is due; but when that accept is lost the client sits in JOINING
+     * until its own JOIN draws another, and voice captured meanwhile would
+     * otherwise wait in the voice ring (which holds eight frames) and then
+     * leave in one burst the server's per-tick credit trims. The slot is
+     * still connected on the server, which reads this frame as it does any
+     * other, so the voice goes out tick by tick as it does while
+     * downloading. A fresh connection's JOINING (joinedOnce false) is left
+     * alone: nothing is queued for it and the server has no slot to read. */
     if (c->joinState == UDP_CLIENT_CONNECTED ||
         c->joinState == UDP_CLIENT_DOWNLOADING_MAP ||
-        c->joinState == UDP_CLIENT_SPECTATING) {
+        c->joinState == UDP_CLIENT_SPECTATING ||
+        (c->joinedOnce && c->joinState == UDP_CLIENT_JOINING)) {
         channelTick(&c->channelMux, c->localTick, c->pingMs);
         {
             uint8_t cbuf[UDP_MAX_PAYLOAD];
@@ -5748,9 +5761,10 @@ void transportUdpClientSendVoice(Transport *t, const uint8_t *opus,
     c = (TransportUdpClientCtx *)t->ctx;
     /* A lobby map change re-joins and re-downloads, but the player is still
      * in the room, and the server carries voice for any slot that has had a
-     * map. So a client re-joining after a map change keeps talking: the
-     * frames queued while it waits for the re-sent JOIN_ACCEPT sit in the
-     * voice ring until the download's per-tick channel frame carries them. */
+     * map. So a client re-joining after a map change keeps talking, and the
+     * per-tick channel frame in udpClientTick carries the frames in both of
+     * those states, so one queued while the re-sent JOIN_ACCEPT is awaited
+     * leaves on the next tick rather than waiting for the download. */
     bool rejoining = c->joinedOnce &&
                      (c->joinState == UDP_CLIENT_JOINING ||
                       c->joinState == UDP_CLIENT_DOWNLOADING_MAP);

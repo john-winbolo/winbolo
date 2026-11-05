@@ -19,13 +19,22 @@
  *      connected without a map, and hears none of the first client's voice.
  *   4. The listener side of case 1: with two clients in the room, the one
  *      listening is sent every frame the other says across the change.
+ *   5. The server's re-sent JOIN_ACCEPT is lost. Normally it lands in the
+ *      same tick as the map-change packet and the client is DOWNLOADING_MAP
+ *      before the next voice frame is due; without it the client sits in
+ *      JOINING until its own JOIN retry draws another, a whole retry interval
+ *      later. Voice captured in that window still leaves tick by tick: the
+ *      client's ring (eight frames) drops nothing, the server's per-tick
+ *      credit drops nothing, and segments are accepted while the client is
+ *      still joining.
  *
  * Real Opus frames are encoded up front (as test_voice_flood_cap.c does): the
  * server's parse rejects a segment with no payload.
  *
  * Both ends take part. The client keeps queueing voice while it re-joins
  * after the change (transportUdpClientSendVoice lets a client that has joined
- * once through in JOINING and DOWNLOADING_MAP), and the server keeps pumping
+ * once through in JOINING and DOWNLOADING_MAP), its per-tick channel frame
+ * carries that voice in both of those states, and the server keeps pumping
  * it while the slot re-downloads. So every frame offered must reach the wire
  * and be accepted.
  */
@@ -56,6 +65,14 @@
 #define CREDIT_PUMPS     12   /* fills the per-sender voice credit           */
 #define NO_MAP_PUMPS    100   /* pumps the mapless joiner is left waiting    */
 #define TALK_FRAMES      64   /* encoded up front, cycled through            */
+#define ACCEPTS_LOST      2   /* re-sent JOIN_ACCEPTs dropped in case 5: the
+                               * one the map change sends and the reply to
+                               * the client's first JOIN, so the second JOIN,
+                               * a retry interval later, is the one answered */
+#define MIN_JOINING_PUMPS 20  /* case 5 must hold the client in JOINING for at
+                               * least this many frames: well past the eight
+                               * the voice ring holds, so a client that only
+                               * queued them would have dropped some           */
 
 #define TONE_HZ        440.0
 #define TONE_AMPLITUDE 0.3
@@ -74,6 +91,9 @@ typedef struct {
     uint32_t dropNotInGame;      /* this talker's segments refused as mapless */
     uint32_t totalDropped;       /* every segment the pump refused            */
     uint32_t acceptedWhileRedl;  /* accepted while downloadComplete was false */
+    uint32_t joiningPumps;       /* pumps after the change the client began
+                                  * still in CLIENT_CONNECT_JOINING           */
+    uint32_t acceptedWhileJoining;/* accepted during those pumps              */
     uint32_t forwardedToListener;/* frames the pump sent the listener slot    */
     uint32_t heardByListener;    /* talker frames the listener client popped  */
     bool     completeAfterChange;/* downloadComplete straight after the change */
@@ -206,8 +226,14 @@ static bool streamAcrossMapChange(LoopbackHarness *h, struct ClientSim *talker,
      * talker's voice while it was false. */
     for (i = 1; i <= REDL_MAX; i++) {
         bool redl = !transportUdpServerTestDownloadComplete(talkerSlot);
+        bool joining = clientSimGetConnectState(talker) ==
+                       CLIENT_CONNECT_JOINING;
         uint32_t gained = talkOnePump(h, talker, talkerSlot, listener, frames, r);
         if (redl) r->acceptedWhileRedl += gained;
+        if (joining) {
+            r->joiningPumps++;
+            r->acceptedWhileJoining += gained;
+        }
         if (transportUdpServerTestDownloadComplete(talkerSlot) &&
             (listener == NULL ||
              transportUdpServerTestDownloadComplete(listenerSlot)) &&
@@ -260,13 +286,15 @@ static bool streamAcrossMapChange(LoopbackHarness *h, struct ClientSim *talker,
 
 static void printResult(const char *label, const StreamResult *r) {
     fprintf(stderr, "  voice map change (%s): offered %u, on the wire %u, "
-            "accepted %u (%u while re-downloading), not-in-game drops %u, "
-            "all drops %u, forwarded to listener %u, heard %u, re-download "
-            "done after %d pump(s)\n", label, (unsigned)r->offered,
+            "accepted %u (%u while re-downloading, %u while joining), "
+            "not-in-game drops %u, all drops %u, forwarded to listener %u, "
+            "heard %u, joining for %u pump(s), re-download done after %d "
+            "pump(s)\n", label, (unsigned)r->offered,
             (unsigned)r->wireSent, (unsigned)r->accepted,
-            (unsigned)r->acceptedWhileRedl, (unsigned)r->dropNotInGame,
-            (unsigned)r->totalDropped, (unsigned)r->forwardedToListener,
-            (unsigned)r->heardByListener, r->recompletedAt);
+            (unsigned)r->acceptedWhileRedl, (unsigned)r->acceptedWhileJoining,
+            (unsigned)r->dropNotInGame, (unsigned)r->totalDropped,
+            (unsigned)r->forwardedToListener, (unsigned)r->heardByListener,
+            (unsigned)r->joiningPumps, r->recompletedAt);
 }
 
 /* Bring up a lobby server with one connected client whose download the server
@@ -555,6 +583,84 @@ int run_voice_map_change_listener_kept(void) {
         UT_FAIL("listener client popped %u of the %u frames forwarded to it",
                 (unsigned)r.heardByListener,
                 (unsigned)r.forwardedToListener);
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* Case 5: the re-sent JOIN_ACCEPT is lost, so the client stays in JOINING for
+ * a retry interval, and the voice it captures meanwhile still goes out tick
+ * by tick rather than piling up in its ring. The server sends one accept with
+ * the map change and one for each JOIN the client sends; dropping the first
+ * ACCEPTS_LOST of them leaves the client's second JOIN, JOIN_RETRY_INTERVAL
+ * ticks after its first, as the one that gets through. */
+int run_voice_map_change_accept_lost(void) {
+    EncodedFrame frames[TALK_FRAMES];
+    LoopbackHarness h;
+    StreamResult r;
+    int slot;
+
+    UT_ASSERT_MSG(encodeFrames(frames, TALK_FRAMES), "opus encode failed");
+    if (!startOneReady(&h, "MapChgAcceptLost", NULL, 0x3A9C05u, false)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never connected with its download complete within %d "
+                "pumps", CONNECT_MAX);
+    }
+    slot = (int)clientSimGetMyPlayerNum(h.cs);
+
+    /* Armed before the change: no accept is sent to a connected client until
+     * the map change, so the first ones dropped are the change's own. */
+    loopbackHarnessDropNextToClient(&h, h.cs, PACKET_JOIN_ACCEPT, ACCEPTS_LOST);
+
+    if (!streamAcrossMapChange(&h, h.cs, slot, NULL, -1, frames, &r)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("re-download after the map change never finished within %d "
+                "pumps", REDL_MAX);
+    }
+    printResult("accept lost", &r);
+
+    if (loopbackHarnessDropNextLeft(&h, h.cs) != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("%d of the %d JOIN_ACCEPT drops never happened, so the client "
+                "was not held in JOINING",
+                loopbackHarnessDropNextLeft(&h, h.cs), ACCEPTS_LOST);
+    }
+    if (r.joiningPumps < MIN_JOINING_PUMPS) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client was in JOINING for only %u pump(s) after the change; "
+                "at least %d are needed to show voice flowing from there",
+                (unsigned)r.joiningPumps, MIN_JOINING_PUMPS);
+    }
+    if (r.ringDropped != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client's own voice ring dropped %u segments while it waited "
+                "in JOINING for the accept", (unsigned)r.ringDropped);
+    }
+    if (r.wireSent != r.offered) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("%u segments left the client for %u offered across the map "
+                "change", (unsigned)r.wireSent, (unsigned)r.offered);
+    }
+    if (r.dropNotInGame != 0 || r.totalDropped != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("segments refused across the map change: %u not in the game, "
+                "%u in all", (unsigned)r.dropNotInGame,
+                (unsigned)r.totalDropped);
+    }
+    if (r.accepted != r.wireSent) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("%u segments left the client but the pump accepted %u",
+                (unsigned)r.wireSent, (unsigned)r.accepted);
+    }
+    /* Flowing, not merely queued and released: segments were accepted in
+     * the pumps the client began in JOINING, and in most of them. */
+    if (r.acceptedWhileJoining < r.joiningPumps / 2) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("only %u segments were accepted during the %u pumps the client "
+                "spent in JOINING; voice was waiting for the accept, not "
+                "flowing", (unsigned)r.acceptedWhileJoining,
+                (unsigned)r.joiningPumps);
     }
 
     loopbackHarnessStop(&h);

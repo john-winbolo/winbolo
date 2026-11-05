@@ -1506,6 +1506,7 @@ static const UnitTestEntry s_tests[] = {
     { "voice_map_change_during_redownload",      run_voice_map_change_during_redownload      },
     { "voice_never_had_map_left_out",            run_voice_never_had_map_left_out            },
     { "voice_map_change_listener_kept",          run_voice_map_change_listener_kept          },
+    { "voice_map_change_accept_lost",            run_voice_map_change_accept_lost            },
     { "voice_talker_select_ranks_recent",        run_voice_talker_select_ranks_recent        },
     { "voice_talker_select_bounds",              run_voice_talker_select_bounds              },
     { "skin_source_dir_and_zip",                 run_skin_source_dir_and_zip                 },

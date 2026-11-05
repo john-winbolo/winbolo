@@ -6919,6 +6919,7 @@ set(_unit_test_names
     voice_map_change_during_redownload
     voice_never_had_map_left_out
     voice_map_change_listener_kept
+    voice_map_change_accept_lost
     voice_talker_select_ranks_recent
     voice_talker_select_bounds
     active_sim_armed_on_lobby_tick
