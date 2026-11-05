@@ -39,6 +39,7 @@
 #include "lv_save_name.h"   /* LvRosterRow */
 #include "lv_ping_view.h"   /* LvPingShown */
 #include "lv_lag.h"         /* LvPlayerLag */
+#include "lv_shell_owner.h" /* LvShellOwnerStats */
 #include "lv_overrun.h"     /* LvOverrunNow */
 
 /* Defines */
@@ -845,7 +846,7 @@ void lv_screenOverrunNow(LvOverrunNow *out);
 
 /* The lag view ("see what this player saw"): the map draws the other tanks,
  * the builders and the shells as far behind as slot's player's screen was,
- * and that player's own tank at the present. Set turns it on for slot, or
+ * and that player's own tank and own shells at the present. Set turns it on for slot, or
  * off for -1. Slot gives the chosen slot, -1 when off; a view whose player
  * is no longer in the slot is turned off. Status gives the chosen player's
  * name, the delay at the playhead, and whether the map draws the delayed
@@ -855,6 +856,11 @@ void lv_screenOverrunNow(LvOverrunNow *out);
 void lv_screenLagViewSet(int slot);
 int  lv_screenLagViewSlot(void);
 bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *drawn);
+
+/* What the lag view's shell owner matcher (lv_shell_owner.h) did since the
+ * viewer started: how many new shells it gave an owner and why the others
+ * have none. */
+void lv_screenLagShellOwnerStats(LvShellOwnerStats *out);
 
 void lv_screenCentreOnSelectedItem();
 
