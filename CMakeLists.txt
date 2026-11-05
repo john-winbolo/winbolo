@@ -4679,6 +4679,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/sdl3/sim_rules_phrase.c
     # pill_shell_cap and pill_max_shells_at_tank, driven through pillsUpdate.
     tests/unit/test_pill_shell_cap.c
+    # pill_aim_iterations: a budget past 255 ends, and a budget of 1 aims at
+    # the tank.
+    tests/unit/test_pill_aim_budget.c
     # The range behind each rule, against the validator that refuses on it.
     tests/unit/test_sim_rules_range.c
     # A description id per rule, and the range in words. The phrase file above
@@ -6548,6 +6551,8 @@ set(_unit_test_names
     pill_shell_cap_out_of_range_clears_just_seen
     pill_shell_cap_counts_same_update_shots
     pill_shell_cap_ignores_tank_shells
+    pill_aim_budget_past_a_byte_ends
+    pill_aim_budget_one_aims_at_tank
     sim_rules_tank_explosion_follows
     sim_rules_water_loss_follows
     sim_rules_pairs
