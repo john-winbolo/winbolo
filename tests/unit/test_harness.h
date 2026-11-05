@@ -1410,6 +1410,8 @@ int run_brainrec_host_merge_by_tick(void);
 int run_brainrec_host_merge_mid_block_move(void);
 int run_brainrec_host_merge_missing_block(void);
 int run_brainrec_host_path_checks(void);
+int run_brainrec_dir_lock_orders_merge_and_gzip(void);
+int run_brainrec_host_make_absolute(void);
 int run_brainrec_host_print2_gz(void);
 int run_brainrec_host_rec_codec(void);
 

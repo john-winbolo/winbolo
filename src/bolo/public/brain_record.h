@@ -221,8 +221,24 @@ void brainRecordRunDeferredLogCompress(void);
 void brainRecordFinishLogCompress(void);
 
 /* Compress one directory now, on this thread. Returns the number of files
- * compressed. For tests and tools. */
+ * compressed. For tests and tools. Waits while the directory is locked
+ * (brainRecordDirLock). */
 int brainRecordCompressLogsNow(const char *dir);
+
+/* One block folder at a time: the log compression and the Bot Host merge
+ * both lock the folder they work on, so they never act on the same folder
+ * at once. A folder is named by its last path part, so "debug_sessions/X"
+ * and "D:/run/debug_sessions/X" are the same lock. Lock waits while another
+ * thread holds the folder; it returns false only when it cannot work (no
+ * name, no mutex, too many folders locked). Thread-safe. */
+bool brainRecordDirLock(const char *dir);
+void brainRecordDirUnlock(const char *dir);
+
+/* True when the logs of dir are still to be compressed by the recorder: it
+ * is the open block, the block waiting for the next one to open, or a
+ * compression of it is running. Main thread only. A merge into a folder
+ * that is not pending compresses the merge's plain logs itself. */
+bool brainRecordLogCompressPending(const char *dir);
 
 #ifdef __cplusplus
 }

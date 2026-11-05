@@ -736,8 +736,95 @@ static SDL_EnumerationResult SDLCALL logEnumCb(void *ud, const char *dirname,
     return SDL_ENUM_CONTINUE;
 }
 
+/* ── Block folder locks (see brain_record.h) ─────────────────────────── */
+
+#define DIRLOCK_MAX 16
+static SDL_InitState  g_dirLockState;
+static SDL_Mutex     *g_dirLockMx = NULL;
+static SDL_Condition *g_dirLockCv = NULL;
+static char           g_dirLocked[DIRLOCK_MAX][128];
+
+static bool dirLockInit(void) {
+    if (SDL_ShouldInit(&g_dirLockState)) {
+        g_dirLockMx = SDL_CreateMutex();
+        g_dirLockCv = SDL_CreateCondition();
+        SDL_SetInitialized(&g_dirLockState, g_dirLockMx != NULL && g_dirLockCv != NULL);
+    }
+    return g_dirLockMx != NULL && g_dirLockCv != NULL;
+}
+
+/* The last path part of dir: the block folder's name. */
+static void dirKey(const char *dir, char *out, size_t sz) {
+    size_t n = strlen(dir), s, len;
+    while (n > 0 && (dir[n - 1] == '/' || dir[n - 1] == '\\')) n--;
+    s = n;
+    while (s > 0 && dir[s - 1] != '/' && dir[s - 1] != '\\') s--;
+    len = n - s;
+    if (len >= sz) len = sz - 1;
+    memcpy(out, dir + s, len);
+    out[len] = '\0';
+}
+
+static bool dirKeySame(const char *a, const char *b) {
+    char ka[128], kb[128];
+    if (!a || !a[0] || !b || !b[0]) return false;
+    dirKey(a, ka, sizeof ka);
+    dirKey(b, kb, sizeof kb);
+    return ka[0] != '\0' && SDL_strcasecmp(ka, kb) == 0;
+}
+
+static int dirLockFind(const char *key) {
+    for (int i = 0; i < DIRLOCK_MAX; i++) {
+        if (g_dirLocked[i][0] && SDL_strcasecmp(g_dirLocked[i], key) == 0) return i;
+    }
+    return -1;
+}
+
+bool brainRecordDirLock(const char *dir) {
+    char key[128];
+    if (!dir || !dir[0]) return false;
+    dirKey(dir, key, sizeof key);
+    if (!key[0] || !dirLockInit()) return false;
+    SDL_LockMutex(g_dirLockMx);
+    for (;;) {
+        if (dirLockFind(key) < 0) {
+            for (int i = 0; i < DIRLOCK_MAX; i++) {
+                if (!g_dirLocked[i][0]) {
+                    SDL_strlcpy(g_dirLocked[i], key, sizeof g_dirLocked[i]);
+                    SDL_UnlockMutex(g_dirLockMx);
+                    return true;
+                }
+            }
+        }
+        SDL_WaitCondition(g_dirLockCv, g_dirLockMx);
+    }
+}
+
+void brainRecordDirUnlock(const char *dir) {
+    char key[128];
+    int i;
+    if (!dir || !dir[0]) return;
+    dirKey(dir, key, sizeof key);
+    if (!key[0] || !dirLockInit()) return;
+    SDL_LockMutex(g_dirLockMx);
+    i = dirLockFind(key);
+    if (i >= 0) g_dirLocked[i][0] = '\0';
+    SDL_BroadcastCondition(g_dirLockCv);
+    SDL_UnlockMutex(g_dirLockMx);
+}
+
+static int compressLogsLocked(const char *dir);
+
 int brainRecordCompressLogsNow(const char *dir) {
     if (!dir || !dir[0]) return 0;
+    /* A Bot Host merge into this folder ends first. */
+    bool locked = brainRecordDirLock(dir);
+    int n = compressLogsLocked(dir);
+    if (locked) brainRecordDirUnlock(dir);
+    return n;
+}
+
+static int compressLogsLocked(const char *dir) {
     LogEnumCtx c;
     memset(&c, 0, sizeof c);
     SDL_EnumerateDirectory(dir, logEnumCb, &c);
@@ -755,8 +842,9 @@ int brainRecordCompressLogsNow(const char *dir) {
 
 #define LOGZ_MAX_JOBS 8
 typedef struct {
-    SDL_Thread *th;
-    char        dir[512];
+    SDL_Thread   *th;
+    SDL_AtomicInt done;   /* the thread has finished its folder */
+    char          dir[512];
 } LogZJob;
 static LogZJob g_logzJobs[LOGZ_MAX_JOBS];
 static char    g_logzDeferred[512];
@@ -765,7 +853,20 @@ static int SDLCALL logzThreadFn(void *arg) {
     LogZJob *j = (LogZJob *)arg;
     int n = brainRecordCompressLogsNow(j->dir);
     fprintf(stderr, "brain_record: compressed %d log file(s) in %s\n", n, j->dir);
+    SDL_SetAtomicInt(&j->done, 1);
     return 0;
+}
+
+bool brainRecordLogCompressPending(const char *dir) {
+    if (!dir || !dir[0]) return false;
+    if (dirKeySame(dir, g_sessionDir)) return true;    /* the open block */
+    if (dirKeySame(dir, g_logzDeferred)) return true;  /* waits for the next block */
+    for (int i = 0; i < LOGZ_MAX_JOBS; i++) {
+        if (g_logzJobs[i].th && SDL_GetAtomicInt(&g_logzJobs[i].done) == 0 &&
+            dirKeySame(dir, g_logzJobs[i].dir))
+            return true;
+    }
+    return false;
 }
 
 void brainRecordCompressLogsAsync(const char *dir) {
@@ -785,6 +886,7 @@ void brainRecordCompressLogsAsync(const char *dir) {
     }
     LogZJob *j = &g_logzJobs[slot];
     SDL_strlcpy(j->dir, dir, sizeof j->dir);
+    SDL_SetAtomicInt(&j->done, 0);
     j->th = SDL_CreateThread(logzThreadFn, "brainrec_logz", j);
     if (!j->th) {
         /* No thread: do it here rather than not at all. */

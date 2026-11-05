@@ -498,6 +498,114 @@ int run_brainrec_host_print2_gz(void) {
 }
 
 /* ================================================================
+ * The folder lock: a log compression of a folder waits while a merge
+ * holds it, and a merge waits while a compression holds it.
+ * ================================================================ */
+typedef struct {
+    const char   *dir;
+    SDL_AtomicInt started;
+    int           count;
+} TbrGz;
+
+static int SDLCALL tbrGzThread(void *arg) {
+    TbrGz *g = (TbrGz *)arg;
+    SDL_SetAtomicInt(&g->started, 1);
+    g->count = brainRecordCompressLogsNow(g->dir);
+    return 0;
+}
+
+static bool tbrExists(const char *path) {
+    SDL_PathInfo pi;
+    return SDL_GetPathInfo(path, &pi);
+}
+
+int run_brainrec_dir_lock_orders_merge_and_gzip(void) {
+    char sess[1024], other[1024], plain[1100], gz[1100];
+    TbrGz g;
+    SDL_Thread *th;
+    int i;
+
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "lockblock"));
+    UT_ASSERT(utScratchPath(other, sizeof(other), "lockother"));
+    UT_ASSERT(SDL_CreateDirectory(sess));
+    UT_ASSERT(SDL_CreateDirectory(other));
+    snprintf(plain, sizeof(plain), "%s/print2_bot0.log", sess);
+    snprintf(gz, sizeof(gz), "%s/print2_bot0.log.gz", sess);
+    (void)SDL_RemovePath(gz);
+    UT_ASSERT(tbrWriteText(plain, "===TICK 1===\nx\n", false));
+
+    /* A merge holds the folder (by another spelling of its path). */
+    {
+        char alias[1100];
+        snprintf(alias, sizeof(alias), "%s/../lockblock/", sess);
+        UT_ASSERT(brainRecordDirLock(alias));
+    }
+    /* Another folder is not held up. */
+    UT_ASSERT(brainRecordCompressLogsNow(other) == 0);
+
+    memset(&g, 0, sizeof(g));
+    g.dir = sess;
+    g.count = -1;
+    th = SDL_CreateThread(tbrGzThread, "tbr_gz", &g);
+    UT_ASSERT(th != NULL);
+    for (i = 0; i < 200 && SDL_GetAtomicInt(&g.started) == 0; i++) SDL_Delay(5);
+    SDL_Delay(300);
+    /* The compression waits: the plain log is still there, no .gz. */
+    UT_ASSERT(g.count == -1);
+    UT_ASSERT(tbrExists(plain));
+    UT_ASSERT(!tbrExists(gz));
+    brainRecordDirUnlock(sess);
+    SDL_WaitThread(th, NULL);
+    UT_ASSERT(g.count == 1);
+    UT_ASSERT(!tbrExists(plain));
+    UT_ASSERT(tbrExists(gz));
+
+    /* Pending: a block left for the next one to open is compressed by the
+     * recorder, so a merge leaves it alone. */
+    UT_ASSERT(!brainRecordLogCompressPending(sess));
+    brainRecordDeferLogCompress(sess);
+    UT_ASSERT(brainRecordLogCompressPending("debug_sessions/lockblock"));
+    brainRecordFinishLogCompress();
+    UT_ASSERT(!brainRecordLogCompressPending(sess));
+    return 0;
+}
+
+/* ================================================================
+ * A relative --cachedir becomes a full path.
+ * ================================================================ */
+int run_brainrec_host_make_absolute(void) {
+    char p[512];
+    char *cwd;
+
+    SDL_strlcpy(p, "D:\\a\\.\\b\\..\\c\\", sizeof(p));
+    UT_ASSERT(brainRecMakeAbsolute(p, sizeof(p)));
+    UT_ASSERT(strcmp(p, "D:/a/c") == 0);
+    SDL_strlcpy(p, "/x/y/..", sizeof(p));
+    UT_ASSERT(brainRecMakeAbsolute(p, sizeof(p)));
+    UT_ASSERT(strcmp(p, "/x") == 0);
+    SDL_strlcpy(p, "/..", sizeof(p));
+    UT_ASSERT(brainRecMakeAbsolute(p, sizeof(p)));
+    UT_ASSERT(strcmp(p, "/") == 0);
+
+    SDL_strlcpy(p, "./rec/cache", sizeof(p));
+    UT_ASSERT(brainRecMakeAbsolute(p, sizeof(p)));
+    cwd = SDL_GetCurrentDirectory();
+    UT_ASSERT(cwd != NULL);
+    {
+        char want[512];
+        char *c;
+        SDL_snprintf(want, sizeof(want), "%srec/cache", cwd);
+        for (c = want; *c != '\0'; c++) {
+            if (*c == '\\') *c = '/';
+        }
+        SDL_free(cwd);
+        UT_ASSERT(strcmp(p, want) == 0);
+    }
+    UT_ASSERT(!brainRecMakeAbsolute(p, 4));
+    return 0;
+}
+
+/* ================================================================
  * Names and paths a peer sends, and the delete that cleardebug and a sent
  * block use.
  * ================================================================ */

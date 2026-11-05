@@ -80,6 +80,7 @@
 #include "transport_udp_internal.h"
 #include "../gui/lang.h"
 #include "bothost_rec.h"
+#include "brain_record_host.h"   /* brainRecMakeAbsolute */
 #include "../gui/clientmutex.h"
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../common/sentry_integration.h"
@@ -1772,6 +1773,11 @@ static bool parseArgs(int argc, char **argv) {
             if (*c == '\\') *c = '/';
         }
         while (n > 1 && optCacheDir[n - 1] == '/') optCacheDir[--n] = '\0';
+    }
+    if (!brainRecMakeAbsolute(optCacheDir, sizeof(optCacheDir))) {
+        fprintf(stderr, "--cachedir %s: cannot make it a full path\n",
+                optCacheDir);
+        return false;
     }
     if (optName[0] == '\0') {
         const char *h = SDL_getenv("COMPUTERNAME");

@@ -629,9 +629,24 @@ static bool endsWith(const char *s, const char *suffix) {
     return n >= m && strcmp(s + n - m, suffix) == 0;
 }
 
+static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
+                           const char *hostName, BrainRecMergeStats *st,
+                           BrainRecMergeLogFn log, void *logCtx);
+
 bool brainRecMergeDir(const char *sessionDir, const char *hostDir,
                       const char *hostName, BrainRecMergeStats *st,
                       BrainRecMergeLogFn log, void *logCtx) {
+    /* The recorder's log compression of this folder ends first, and does
+     * not start until the merge is done. */
+    bool locked = brainRecordDirLock(sessionDir);
+    bool ok = mergeDirLocked(sessionDir, hostDir, hostName, st, log, logCtx);
+    if (locked) brainRecordDirUnlock(sessionDir);
+    return ok;
+}
+
+static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
+                           const char *hostName, BrainRecMergeStats *st,
+                           BrainRecMergeLogFn log, void *logCtx) {
     char **entries;
     int n = 0, e, nh = 0;
     char **hbr = NULL;
@@ -770,6 +785,62 @@ void brainRecSafeName(const char *in, char *out, size_t outSz, bool allowDot) {
     }
     out[j] = '\0';
     if (j == 0 && outSz > 1) { out[0] = '_'; out[1] = '\0'; }
+}
+
+static bool pathIsAbsolute(const char *p) {
+    if (p[0] == '/' || p[0] == '\\') return true;
+    return ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) &&
+           p[1] == ':' && (p[2] == '/' || p[2] == '\\');
+}
+
+bool brainRecMakeAbsolute(char *path, size_t sz) {
+    char tmp[1024], out[1024];
+    char *seg[128];
+    int nseg = 0, i;
+    size_t o = 0;
+    char *c, *s, *save = NULL;
+    if (path == NULL || path[0] == '\0') return false;
+    if (pathIsAbsolute(path)) {
+        if (SDL_strlcpy(tmp, path, sizeof tmp) >= sizeof tmp) return false;
+    } else {
+        char *cwd = SDL_GetCurrentDirectory();   /* ends with a separator */
+        int n;
+        if (cwd == NULL) return false;
+        n = snprintf(tmp, sizeof tmp, "%s%s", cwd, path);
+        SDL_free(cwd);
+        if (n < 0 || (size_t)n >= sizeof tmp) return false;
+    }
+    for (c = tmp; *c != '\0'; c++) {
+        if (*c == '\\') *c = '/';
+    }
+    /* The root: "X:" on Windows, "" for a POSIX path. */
+    s = tmp;
+    if (tmp[1] == ':') {
+        out[o++] = tmp[0];
+        out[o++] = ':';
+        s = tmp + 2;
+    }
+    for (c = SDL_strtok_r(s, "/", &save); c != NULL; c = SDL_strtok_r(NULL, "/", &save)) {
+        if (strcmp(c, ".") == 0) continue;
+        if (strcmp(c, "..") == 0) {
+            if (nseg > 0) nseg--;
+            continue;
+        }
+        if (nseg == (int)(sizeof seg / sizeof seg[0])) return false;
+        seg[nseg++] = c;
+    }
+    if (nseg == 0) out[o++] = '/';
+    for (i = 0; i < nseg; i++) {
+        size_t l = strlen(seg[i]);
+        if (o + 1 + l + 1 > sizeof out) return false;
+        out[o++] = '/';
+        memcpy(out + o, seg[i], l);
+        o += l;
+    }
+    out[o] = '\0';
+    if (o + 1 > sz) return false;
+    memcpy(path, out, o + 1);
+    return true;
 }
 
 bool brainRecNameOk(const char *s, bool allowDot) {

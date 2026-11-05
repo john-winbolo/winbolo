@@ -518,11 +518,20 @@ static void recMergeStart(int h) {
     recResetUpload(hc);
 }
 
+/* The merge's output follows the .gz rule: a folder the recorder still
+ * compresses later is left to it; any other gets its plain logs gzipped. */
+static void recMergeGzipLogs(const char *sessionDir) {
+    if (!brainRecordLogCompressPending(sessionDir)) {
+        brainRecordCompressLogsAsync(sessionDir);
+    }
+}
+
 static void recMergeFinish(void) {
     int h = s_job.h;
     BotHostConn *hc = &udpServer.botHosts[h];
     SDL_WaitThread(s_job.thread, NULL);
     s_job.thread = NULL;
+    recMergeGzipLogs(s_job.sessionDir);
     fprintf(stderr, "[bothost] merge of Bot Host \"%s\" into %s %s: %u "
                     "frames, %u hosted entries (%u filled, %u a few thinks "
                     "old, %u with no host data)\n", s_job.hostName,
@@ -722,6 +731,7 @@ bool transportUdpServerBrainMerge(const char *sessionDir, const char *hostDir,
     }
     ok = brainRecMergeDir(sessionDir, hostDir, recBase(hostDir), &st,
                           recMergeLog, NULL);
+    recMergeGzipLogs(sessionDir);
     snprintf(msg, msgLen, "brainmerge %s: %u frames, %u hosted entries (%u "
              "filled, %u a few thinks old, %u with no host data)%s",
              sessionDir, (unsigned)st.frames, (unsigned)st.markers,

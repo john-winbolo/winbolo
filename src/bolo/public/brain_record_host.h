@@ -194,6 +194,11 @@ bool brainRecMergePrint2(const char *a, const char *b, const char *outPath,
  * hostDir is removed when every step worked. log (may be NULL) gets one
  * line per notable step. */
 typedef void (*BrainRecMergeLogFn)(void *ctx, const char *line);
+/* Make path a full path: a relative one is joined to the current folder,
+ * '\\' becomes '/', and "." and ".." parts are folded. False when it
+ * does not fit. */
+bool brainRecMakeAbsolute(char *path, size_t sz);
+
 bool brainRecMergeDir(const char *sessionDir, const char *hostDir,
                       const char *hostName, BrainRecMergeStats *st,
                       BrainRecMergeLogFn log, void *logCtx);
