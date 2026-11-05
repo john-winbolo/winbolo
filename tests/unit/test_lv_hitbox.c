@@ -14,6 +14,9 @@
  *       open ground no more than that far from him, an explosion on a
  *       building, a half building, a pillbox or a base only on his own
  *       square, and nothing off the 3 by 3 squares round his.
+ *       It also checks the places the circles go round: the middle of the
+ *       art pixel a recording holds, with the builder's 1 and 2 put back,
+ *       and the offsets the game draws the tank and builder pictures at.
  */
 
 #include <stdbool.h>
@@ -81,6 +84,40 @@ int run_lv_hitbox_sums(void) {
     /* Off the 3 by 3 squares: never. */
     UT_ASSERT_MSG(!lvHitboxBuilderCaught(-300.0, 0.0, 0.0, 0.0, 0x1FFu, 128), "far left");
     UT_ASSERT_MSG(!lvHitboxBuilderCaught(0.0, 600.0, 0.0, 0.0, 0x1FFu, 128), "far down");
+
+    /* The places. A tank recorded in art pixel 0 is 0 to 15 units into
+       it; the middle is 7.5. */
+    UT_ASSERT_MSG(lvHitboxTankPlace(0) == 7.5, "tank, pixel 0");
+    UT_ASSERT_MSG(lvHitboxTankPlace(8) == 135.5, "tank, pixel 8");
+    UT_ASSERT_MSG(lvHitboxTankPlace(15) == 247.5, "tank, pixel 15");
+    /* The tank's picture: its top left 128 units before his place, so the
+       top left drawn at screen pixel p (his place less 128, to the pixel)
+       puts the circle 8 and a half pixels in: the middle of the 16. */
+    UT_ASSERT_MSG(LV_HITBOX_TANK_HALF == 128, "half the tank picture");
+    UT_ASSERT_MSG((lvHitboxTankPlace(0) + LV_HITBOX_TANK_HALF) / 16.0 == 8.46875,
+                  "the circle is in the middle of the picture");
+    /* A builder recorded in pixel 0 is 1 to 16 units in across, 2 to 17
+       down (lgmGetPX takes 1 off x, lgmGetPY 2 off y). */
+    UT_ASSERT_MSG(lvHitboxBuilderPlaceX(0) == 8.5, "builder x, pixel 0");
+    UT_ASSERT_MSG(lvHitboxBuilderPlaceY(0) == 9.5, "builder y, pixel 0");
+    UT_ASSERT_MSG(lvHitboxBuilderPlaceX(15) == 248.5, "builder x, pixel 15");
+    UT_ASSERT_MSG(lvHitboxBuilderPlaceY(15) == 249.5,
+                  "builder y, pixel 15: still in his own square");
+    /* The builder's picture, as spritePositionLgm puts it in Classic: 1.5
+       off, then rounded to a whole pixel, which is 1 on both axes. His
+       3 by 4 picture then covers the pixel his place is in. */
+    UT_ASSERT_MSG(LV_HITBOX_LGM_PICTURE_X == -1 && LV_HITBOX_LGM_PICTURE_Y == -1,
+                  "builder picture offset");
+    {
+        double left = (double)(5 + LV_HITBOX_LGM_PICTURE_X) * 16.0;
+        double top = (double)(5 + LV_HITBOX_LGM_PICTURE_Y) * 16.0;
+        UT_ASSERT_MSG(lvHitboxBuilderPlaceX(5) > left &&
+                      lvHitboxBuilderPlaceX(5) < left + 3.0 * 16.0,
+                      "his place is inside his picture, across");
+        UT_ASSERT_MSG(lvHitboxBuilderPlaceY(5) > top &&
+                      lvHitboxBuilderPlaceY(5) < top + 4.0 * 16.0,
+                      "his place is inside his picture, down");
+    }
 
     return 0;
 }
