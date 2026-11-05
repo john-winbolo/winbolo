@@ -128,12 +128,15 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
      * it somehow wasn't, leave the live settings untouched. */
     if (sim->originalLobbySettings.valid) {
         sim->sim.game            = sim->originalLobbySettings.gameType;
-        sim->sim.hiddenMines     = sim->originalLobbySettings.hiddenMines;
+        serverSimSetHiddenMines(sim, sim->originalLobbySettings.hiddenMines);
         sim->botAiType           = sim->originalLobbySettings.botAiType;
         sim->aiPolicy            = sim->originalLobbySettings.aiPolicy;
         sim->timeLimit           = sim->originalLobbySettings.timeLimit;
         sim->timeMinutes         = sim->originalLobbySettings.timeMinutes;
         sim->gameLength          = sim->originalLobbySettings.gameLength;
+        /* What every later round start resets to, so the operator's
+         * length must replace a host's choice here as well. */
+        sim->originalGameLength  = sim->originalLobbySettings.gameLength;
         sim->openHost            = sim->originalLobbySettings.openHost;
         sim->autoLockOnGameStart = sim->originalLobbySettings.autoLockOnGameStart;
         sim->ranked              = sim->originalLobbySettings.ranked;
