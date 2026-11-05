@@ -117,6 +117,11 @@ typedef struct {
 
 /* The file name of a seat's recording: "bot<slot>_g<placeGen>.hbr". */
 void hostRecFileName(char *out, size_t sz, uint8_t slot, uint16_t placeGen);
+/* Part 0 is the name above. A seat whose file is opened again in the same
+ * block (its brain was built again) writes "bot<slot>_g<placeGen>_p<part>.hbr"
+ * with part 1, 2, ...; the merge reads every part of a (slot, placeGen). */
+void hostRecPartFileName(char *out, size_t sz, uint8_t slot, uint16_t placeGen,
+                         unsigned part);
 
 typedef struct {
     BrainRecOut *file;
@@ -157,6 +162,7 @@ typedef struct {
     uint32_t missing;      /* left as markers: no host record */
     uint32_t hostRecords;  /* host records read */
     uint32_t hostFiles;    /* host files used */
+    uint32_t hostFilesSkipped; /* host files that could not be read */
 } BrainRecMergeStats;
 
 /* The input sequence distance a host record may lag the marker's last

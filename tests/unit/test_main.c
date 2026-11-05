@@ -734,6 +734,7 @@ static const UnitTestEntry s_tests[] = {
     { "brainrec_dij_danger_box",                 run_brainrec_dij_danger_box                 },
     { "brainrec_host_merge_by_tick", run_brainrec_host_merge_by_tick },
     { "brainrec_host_merge_mid_block_move", run_brainrec_host_merge_mid_block_move },
+    { "brainrec_host_merge_other_version_rebuilt_brain", run_brainrec_host_merge_other_version_rebuilt_brain },
     { "brainrec_host_merge_missing_block", run_brainrec_host_merge_missing_block },
     { "brainrec_host_path_checks", run_brainrec_host_path_checks },
     { "brainrec_dir_lock_orders_merge_and_gzip", run_brainrec_dir_lock_orders_merge_and_gzip },

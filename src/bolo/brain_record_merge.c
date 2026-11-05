@@ -253,6 +253,16 @@ static void hsReadPeek(HostStream *h, BrainRecMergeStats *st) {
     }
 }
 
+/* What a stream can give a marker whose last input is lpi (the stream
+ * moved forward to lpi + 1 first): 3 a record at or past lpi, 2 its first
+ * record one think ahead, 1 a record a few thinks old, 0 nothing. */
+static int hsClass(const HostStream *h, uint32_t lpi) {
+    if (h->haveCur && h->curSeq >= lpi) return 3;
+    if (!h->haveCur && h->havePeek && h->peekSeq <= lpi + 3u) return 2;
+    if (h->haveCur && lpi - h->curSeq <= BRAINREC_MERGE_STALE_MAX) return 1;
+    return 0;
+}
+
 /* Move cur forward to the latest record with seq <= target. */
 static void hsAdvance(HostStream *h, uint32_t target, BrainRecMergeStats *st) {
     while (h->havePeek && h->peekSeq <= target) {
@@ -311,7 +321,7 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
                         BrainRecMergeStats *st, char *err, size_t errSz) {
     BrainRecMergeStats local;
     HostStream *hs = NULL;
-    int byKey[MAX_TANKS][8];    /* small (slot, gen) lookup: index or -1 */
+    int byKey[MAX_TANKS][16];   /* the streams of each slot: index or -1 */
     BrainRecIn  *in = NULL;
     BrainRecOut *out = NULL;
     BrainRecHeader hdr;
@@ -352,16 +362,25 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
         if (!hostRecReaderOpen(&h->rd, hostFiles[i])) {
             fprintf(stderr, "brain_record_merge: skipped '%s' (not a readable "
                             "host recording)\n", hostFiles[i]);
+            st->hostFilesSkipped++;
             continue;
         }
-        if (h->rd.hdr.slot >= MAX_TANKS) { hostRecReaderClose(&h->rd); continue; }
-        for (k = 0; k < 8; k++) {
+        if (h->rd.hdr.slot >= MAX_TANKS) {
+            hostRecReaderClose(&h->rd);
+            st->hostFilesSkipped++;
+            continue;
+        }
+        for (k = 0; k < 16; k++) {
             if (byKey[h->rd.hdr.slot][k] < 0) {
                 byKey[h->rd.hdr.slot][k] = i;
                 break;
             }
         }
-        if (k == 8) { hostRecReaderClose(&h->rd); continue; }
+        if (k == 16) {
+            hostRecReaderClose(&h->rd);
+            st->hostFilesSkipped++;
+            continue;
+        }
         h->open = true;
         st->hostFiles++;
         brainRecBufInit(&h->cur);
@@ -426,26 +445,37 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
             if (!writeAll(out, &slot, 1)) goto writeFail;
             if (brainRecBodyIsHosted(bp, bl, &gen, &lpi, NULL)) {
                 HostStream *h = NULL;
-                int k;
+                int k, cls = 0;
                 st->markers++;
+                /* A (slot, gen) can have more than one stream: the host
+                 * writes a new part when the brain is built again. Each
+                 * part moves forward, and the one with the best record
+                 * fills the marker. */
                 if (slot < MAX_TANKS) {
-                    for (k = 0; k < 8 && byKey[slot][k] >= 0; k++) {
+                    for (k = 0; k < 16 && byKey[slot][k] >= 0; k++) {
                         HostStream *c = &hs[byKey[slot][k]];
-                        if (c->open && c->rd.hdr.placeGen == gen) { h = c; break; }
+                        int cc;
+                        if (!c->open || c->rd.hdr.placeGen != gen) continue;
+                        hsAdvance(c, lpi + 1, st);
+                        cc = hsClass(c, lpi);
+                        if (cc > cls ||
+                            (cc == cls && cc != 2 && cc > 0 &&
+                             c->curSeq > h->curSeq)) {
+                            h = c;
+                            cls = cc;
+                        }
                     }
                 }
                 if (h != NULL) {
-                    uint32_t target = lpi + 1;
                     const BrainRecBuf *use = NULL;
                     bool reused = false;
-                    hsAdvance(h, target, st);
-                    if (h->haveCur && h->curSeq >= lpi) {
+                    if (cls == 3) {
                         use = &h->cur; reused = h->curUsed; h->curUsed = true;
                         st->filled++;
-                    } else if (h->haveCur && lpi - h->curSeq <= BRAINREC_MERGE_STALE_MAX) {
+                    } else if (cls == 1) {
                         use = &h->cur; reused = h->curUsed; h->curUsed = true;
                         st->stale++;
-                    } else if (!h->haveCur && h->havePeek && h->peekSeq <= target + 2) {
+                    } else if (cls == 2) {
                         /* The first record is one think ahead. */
                         use = &h->peek; reused = h->peekUsed;
                         h->peekUsed = true;
@@ -724,6 +754,23 @@ static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
     SDL_free(entries);
 
     snprintf(btr, sizeof btr, "%s/%s", sessionDir, BRAINREC_FILENAME);
+    /* Name each host file and say why one cannot be used: it leaves its
+     * bot's entries empty, and the merged file does not say why. */
+    for (e = 0; e < nh; e++) {
+        HostRecReader t;
+        if (hostRecReaderOpen(&t, hbr[e])) {
+            logLine(log, logCtx, "brain_record_merge: %s: slot %u, gen %u, "
+                    "brainrec v%u", hbr[e], (unsigned)t.hdr.slot,
+                    (unsigned)t.hdr.placeGen, (unsigned)t.hdr.brainrecVersion);
+            hostRecReaderClose(&t);
+        } else {
+            logLine(log, logCtx, "brain_record_merge: %s is not a readable "
+                    "host recording (header: version %u, brainrec v%u; this "
+                    "server reads brainrec v%u and up)", hbr[e],
+                    (unsigned)t.hdr.version, (unsigned)t.hdr.brainrecVersion,
+                    (unsigned)BRAINREC_VERSION_MIN_READ);
+        }
+    }
     if (nh > 0) {
         bool merged = false;
         if (isFile(btr)) {
@@ -734,10 +781,12 @@ static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
                                    err, sizeof err) &&
                 replaceFile(tmp, btr)) {
                 merged = true;
-                logLine(log, logCtx, "brain_record_merge: %s: %u host files, "
-                        "%u frames, %u hosted entries (%u filled, %u a few "
-                        "thinks old, %u with no host record)", btr,
-                        (unsigned)st->hostFiles, (unsigned)st->frames,
+                logLine(log, logCtx, "brain_record_merge: %s: %u host files "
+                        "(%u skipped), %u frames, %u hosted entries (%u "
+                        "filled, %u a few thinks old, %u with no host "
+                        "record)", btr,
+                        (unsigned)st->hostFiles,
+                        (unsigned)st->hostFilesSkipped, (unsigned)st->frames,
                         (unsigned)st->markers, (unsigned)st->filled,
                         (unsigned)st->stale, (unsigned)st->missing);
             } else {

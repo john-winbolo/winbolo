@@ -373,6 +373,151 @@ int run_brainrec_host_merge_mid_block_move(void) {
 }
 
 /* ================================================================
+ * Andrew's first game with a Bot Host (Nov 4): the host was on another
+ * BRAINREC_VERSION than the server, and the merge read none of its files.
+ * Two bots on the host (gen 1: assigned in the lobby, built again before
+ * the round, no new gen), one on the server. Slot 0's brain is built
+ * again inside the block, so its records are in two parts.
+ * ================================================================ */
+
+/* tbrHostFile, with the header's brainrecVersion set to ver. */
+static bool tbrHostFileV(const char *path, uint8_t slot, uint16_t gen,
+                         uint32_t first, uint32_t last, uint32_t ver) {
+    HostRecWriter w;
+    HostRecHeader hdr;
+    BrainRecBuf b;
+    const char *legend = "{\"cats\":[\"host\"]}";
+    uint32_t ll = (uint32_t)strlen(legend);
+    uint32_t s;
+    bool ok;
+    BrainRecOut *f = brainRecOutOpen(path);
+    if (f == NULL) return false;
+    memset(&hdr, 0, sizeof(hdr));
+    memcpy(hdr.magic, HOSTREC_MAGIC, sizeof(HOSTREC_MAGIC));
+    hdr.version = HOSTREC_VERSION;
+    hdr.brainrecVersion = ver;
+    SDL_strlcpy(hdr.hostName, "testhost", sizeof(hdr.hostName));
+    SDL_strlcpy(hdr.block, "2026-11-04_212558", sizeof(hdr.block));
+    hdr.slot = slot;
+    hdr.placeGen = gen;
+    ok = tbrWrite(f, &hdr, sizeof(hdr)) && tbrWrite(f, &ll, 4) &&
+         tbrWrite(f, legend, ll);
+    memset(&w, 0, sizeof(w));
+    w.file = f;
+    brainRecBufInit(&b);
+    for (s = first; ok && s <= last; s += 2) {
+        brainRecBufReset(&b);
+        (void)brainRecBodyEncode(&b, (float)s, NULL, NULL, NULL,
+                                 (s % 4u) == 0 ? "{\"pool\":1}" : NULL);
+        ok = !b.failed && hostRecWriterAppend(&w, s, 1000u + s / 2u, b.data,
+                                              b.len);
+    }
+    brainRecBufFree(&b);
+    hostRecWriterClose(&w);
+    return ok;
+}
+
+int run_brainrec_host_merge_other_version_rebuilt_brain(void) {
+    char btr[1024], h0a[1024], h0b[1024], h0bad[1024], h1[1024], out[1024];
+    char name[64];
+    const char *files[4];
+    BrainRecOut *f;
+    BrainRecMergeStats st;
+    TbrOut o;
+    char err[256];
+    int i;
+
+    /* The part names the host writes when a brain is built again. */
+    hostRecPartFileName(name, sizeof(name), 0, 1, 0);
+    UT_ASSERT_MSG(strcmp(name, "bot0_g1.hbr") == 0, "part 0: %s", name);
+    hostRecPartFileName(name, sizeof(name), 0, 1, 1);
+    UT_ASSERT_MSG(strcmp(name, "bot0_g1_p1.hbr") == 0, "part 1: %s", name);
+    hostRecFileName(name, sizeof(name), 0, 1);
+    UT_ASSERT(strcmp(name, "bot0_g1.hbr") == 0);
+
+    UT_ASSERT(utScratchPath(btr, sizeof(btr), "brainrec.btr"));
+    UT_ASSERT(utScratchPath(h0a, sizeof(h0a), "bot0_g1.hbr"));
+    UT_ASSERT(utScratchPath(h0b, sizeof(h0b), "bot0_g1_p1.hbr"));
+    UT_ASSERT(utScratchPath(h0bad, sizeof(h0bad), "bot0_g1_p2.hbr"));
+    UT_ASSERT(utScratchPath(h1, sizeof(h1), "bot1_g1.hbr"));
+    UT_ASSERT(utScratchPath(out, sizeof(out), "merged.btr"));
+
+    /* 20 frames. Slots 0 and 1 are hosted markers of gen 1 whose last
+     * input goes 0, 2, ... 38; slot 2 runs on the server. */
+    f = tbrOpenBtr(btr);
+    UT_ASSERT(f != NULL);
+    for (i = 0; i < 20; i++) {
+        TbrBot bots[3];
+        memset(bots, 0, sizeof(bots));
+        bots[0].slot = 0;
+        bots[0].hosted = true;
+        bots[0].gen = 1;
+        bots[0].lpi = 2u * (uint32_t)i;
+        bots[1].slot = 1;
+        bots[1].hosted = true;
+        bots[1].gen = 1;
+        bots[1].lpi = 2u * (uint32_t)i;
+        bots[2].slot = 2;
+        bots[2].thinkMs = 3.0f;
+        UT_ASSERT(tbrFrame(f, 50u + 2u * (uint32_t)i, bots, 3));
+    }
+    UT_ASSERT(brainRecOutClose(f));
+
+    /* Slot 0: an older brainrec version than the server's. Its brain is
+     * built again after input 18; the new part starts at 22. Slot 1: a
+     * newer version. A file below BRAINREC_VERSION_MIN_READ is skipped. */
+    UT_ASSERT(tbrHostFileV(h0a, 0, 1, 0, 18, BRAINREC_VERSION - 1u));
+    UT_ASSERT(tbrHostFileV(h0b, 0, 1, 22, 38, BRAINREC_VERSION - 1u));
+    UT_ASSERT(tbrHostFileV(h1, 1, 1, 0, 38, BRAINREC_VERSION + 1u));
+    UT_ASSERT(tbrHostFileV(h0bad, 0, 1, 0, 38, BRAINREC_VERSION_MIN_READ - 1u));
+
+    /* The new part first: the order of the files does not matter. */
+    files[0] = h0b;
+    files[1] = h1;
+    files[2] = h0bad;
+    files[3] = h0a;
+    err[0] = '\0';
+    UT_ASSERT_MSG(brainRecMergeFiles(btr, files, 4, out, &st, err, sizeof(err)),
+                  "merge failed: %s", err);
+    UT_ASSERT(st.frames == 20);
+    UT_ASSERT(st.markers == 40);
+    UT_ASSERT_MSG(st.hostFiles == 3 && st.hostFilesSkipped == 1,
+                  "used %u skipped %u", (unsigned)st.hostFiles,
+                  (unsigned)st.hostFilesSkipped);
+    UT_ASSERT_MSG(st.filled == 40 && st.stale == 0 && st.missing == 0,
+                  "filled %u stale %u missing %u", (unsigned)st.filled,
+                  (unsigned)st.stale, (unsigned)st.missing);
+
+    UT_ASSERT(tbrRead(out, &o));
+    UT_ASSERT(o.frames == 20);
+    for (i = 0; i < 20; i++) {
+        uint32_t lpi = 2u * (uint32_t)i;
+        /* Input 20 has no record on slot 0: the new part's first record
+         * (22) is one think ahead and fills it. */
+        float want0 = (float)(lpi == 20u ? 22u : lpi);
+        UT_ASSERT(o.bots[i] == 3);
+        UT_ASSERT(o.slot[i][0] == 0 && o.slot[i][1] == 1 && o.slot[i][2] == 2);
+        UT_ASSERT_MSG(!o.hosted[i][0] && !o.hosted[i][1],
+                      "frame %d still a marker", i);
+        UT_ASSERT_MSG(o.thinkMs[i][0] == want0, "frame %d slot 0: %f want %f",
+                      i, (double)o.thinkMs[i][0], (double)want0);
+        UT_ASSERT_MSG(o.thinkMs[i][1] == (float)lpi, "frame %d slot 1: %f", i,
+                      (double)o.thinkMs[i][1]);
+        UT_ASSERT(!o.hosted[i][2] && o.thinkMs[i][2] == 3.0f);
+        /* The pool JSON of the host comes through (every second record
+         * has one). */
+        if ((lpi % 4u) == 0) {
+            UT_ASSERT_MSG(o.poolLen[i][1] > 0, "frame %d slot 1: no pool", i);
+            if (lpi != 20u) {
+                UT_ASSERT_MSG(o.poolLen[i][0] > 0, "frame %d slot 0: no pool",
+                              i);
+            }
+        }
+    }
+    return 0;
+}
+
+/* ================================================================
  * No host data: the markers stay and the file still walks.
  * ================================================================ */
 int run_brainrec_host_merge_missing_block(void) {

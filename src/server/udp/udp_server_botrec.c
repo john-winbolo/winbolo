@@ -471,15 +471,30 @@ void serverBotRecDrainBulk(int h) {
 
 /* ---- Merge ---------------------------------------------------------------- */
 
-static void recMergeLog(void *ctx, const char *line) {
-    (void)ctx;
+/* A merge line goes to the console, to the WINBOLO_LOG file, and to
+ * bothost_merge.log in the session folder (the folder BrainTest loads),
+ * so a block with empty host entries says why. */
+static void recMergeNote(const char *sessionDir, const char *line) {
+    char path[1100];
+    FILE *f;
     fprintf(stderr, "%s\n", line);
+    WB_LOG_INFO(WB_LOG_CAT_NET, "%s", line);
+    if (sessionDir == NULL || sessionDir[0] == '\0') return;
+    snprintf(path, sizeof(path), "%s/bothost_merge.log", sessionDir);
+    f = fopen(path, "ab");
+    if (f == NULL) return;
+    fprintf(f, "%s\n", line);
+    fclose(f);
+}
+
+static void recMergeLog(void *ctx, const char *line) {
+    recMergeNote((const char *)ctx, line);
 }
 
 static int SDLCALL recMergeThread(void *data) {
     RecMergeJob *j = (RecMergeJob *)data;
     j->ok = brainRecMergeDir(j->sessionDir, j->stage, j->hostName, &j->st,
-                             recMergeLog, NULL);
+                             recMergeLog, j->sessionDir);
     SDL_SetAtomicInt(&j->done, 1);
     return 0;
 }
@@ -502,9 +517,14 @@ static void recMergeStart(int h) {
      * open file cannot be replaced by its merged copy. Close them; the
      * writer opens them again at its next line. */
     brainCoreReleaseLogFiles();
-    fprintf(stderr, "[bothost] merging the recordings of Bot Host \"%s\" into "
-                    "%s (%u files, %.1f MB)\n", hc->name, s_job.sessionDir,
-            (unsigned)hc->recFiles, (double)hc->recBytes / (1024.0 * 1024.0));
+    {
+        char line[1400];
+        snprintf(line, sizeof(line), "[bothost] merging the recordings of Bot "
+                 "Host \"%s\" into %s (%u files, %.1f MB)", hc->name,
+                 s_job.sessionDir, (unsigned)hc->recFiles,
+                 (double)hc->recBytes / (1024.0 * 1024.0));
+        recMergeNote(s_job.sessionDir, line);
+    }
     s_job.thread = SDL_CreateThread(recMergeThread, "brainrec_merge", &s_job);
     if (s_job.thread == NULL) {
         fprintf(stderr, "[bothost] cannot start the merge thread (%s); the "
@@ -532,18 +552,20 @@ static void recMergeFinish(void) {
     SDL_WaitThread(s_job.thread, NULL);
     s_job.thread = NULL;
     recMergeGzipLogs(s_job.sessionDir);
-    fprintf(stderr, "[bothost] merge of Bot Host \"%s\" into %s %s: %u "
-                    "frames, %u hosted entries (%u filled, %u a few thinks "
-                    "old, %u with no host data)\n", s_job.hostName,
-            s_job.sessionDir, s_job.ok ? "done" : "done in part",
-            (unsigned)s_job.st.frames, (unsigned)s_job.st.markers,
-            (unsigned)s_job.st.filled, (unsigned)s_job.st.stale,
-            (unsigned)s_job.st.missing);
-    WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] merge %s into %s ok=%d frames=%u "
-                "filled=%u stale=%u missing=%u", s_job.hostName,
-                s_job.sessionDir, s_job.ok ? 1 : 0, (unsigned)s_job.st.frames,
-                (unsigned)s_job.st.filled, (unsigned)s_job.st.stale,
-                (unsigned)s_job.st.missing);
+    {
+        char line[1400];
+        snprintf(line, sizeof(line), "[bothost] merge of Bot Host \"%s\" into "
+                 "%s %s: %u host files used, %u skipped, %u frames, %u hosted "
+                 "entries (%u filled, %u a few thinks old, %u with no host "
+                 "data)", s_job.hostName, s_job.sessionDir,
+                 s_job.ok ? "done" : "done in part",
+                 (unsigned)s_job.st.hostFiles,
+                 (unsigned)s_job.st.hostFilesSkipped,
+                 (unsigned)s_job.st.frames, (unsigned)s_job.st.markers,
+                 (unsigned)s_job.st.filled, (unsigned)s_job.st.stale,
+                 (unsigned)s_job.st.missing);
+        recMergeNote(s_job.sessionDir, line);
+    }
     /* The files are on the server either way: merged, or kept beside the
      * session's own under bothost_<host>_ names. The host may delete its
      * copy. */

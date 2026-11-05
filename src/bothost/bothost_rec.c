@@ -271,6 +271,7 @@ static bool seatOpenFile(RecSeat *rs, RecSrv *sv) {
     char *legend = NULL;
     char *csv;
     int i;
+    unsigned part;
 
     snprintf(dir, sizeof(dir), "%s/%s", sv->root, sv->block);
     if (!recIsDir(dir) && !SDL_CreateDirectory(dir)) {
@@ -278,8 +279,14 @@ static bool seatOpenFile(RecSeat *rs, RecSrv *sv) {
                         "recorded\n", dir, SDL_GetError(), (int)rs->slot);
         return false;
     }
-    hostRecFileName(name, sizeof(name), rs->slot, rs->placeGen);
-    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    /* A file of this seat can be in the block already: the brain was built
+     * again (a new brain owed, a reload) and the file was closed. Opening
+     * that name again would empty it, so the next part takes a new name. */
+    for (part = 0; part < 1000u; part++) {
+        hostRecPartFileName(name, sizeof(name), rs->slot, rs->placeGen, part);
+        snprintf(path, sizeof(path), "%s/%s", dir, name);
+        if (!SDL_GetPathInfo(path, NULL)) break;
+    }
     memset(&hdr, 0, sizeof(hdr));
     SDL_strlcpy(hdr.hostName, s_hostName, sizeof(hdr.hostName));
     SDL_strlcpy(hdr.block, sv->block, sizeof(hdr.block));

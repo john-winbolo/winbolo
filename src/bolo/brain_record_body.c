@@ -221,8 +221,18 @@ size_t brainRecBodyDropPool(uint8_t *p, size_t len) {
 /* ---- .hbr files --------------------------------------------------------- */
 
 void hostRecFileName(char *out, size_t sz, uint8_t slot, uint16_t placeGen) {
-    snprintf(out, sz, "bot%u_g%u%s", (unsigned)slot, (unsigned)placeGen,
-             HOSTREC_EXT);
+    hostRecPartFileName(out, sz, slot, placeGen, 0);
+}
+
+void hostRecPartFileName(char *out, size_t sz, uint8_t slot, uint16_t placeGen,
+                         unsigned part) {
+    if (part == 0) {
+        snprintf(out, sz, "bot%u_g%u%s", (unsigned)slot, (unsigned)placeGen,
+                 HOSTREC_EXT);
+    } else {
+        snprintf(out, sz, "bot%u_g%u_p%u%s", (unsigned)slot,
+                 (unsigned)placeGen, part, HOSTREC_EXT);
+    }
 }
 
 bool hostRecReadExact(BrainRecIn *in, void *p, size_t n) {
@@ -288,7 +298,11 @@ bool hostRecReaderOpen(HostRecReader *r, const char *path) {
     if (!hostRecReadExact(f, &r->hdr, sizeof r->hdr) ||
         memcmp(r->hdr.magic, HOSTREC_MAGIC, sizeof(HOSTREC_MAGIC)) != 0 ||
         r->hdr.version != HOSTREC_VERSION ||
-        r->hdr.brainrecVersion != BRAINREC_VERSION ||
+        /* The host and the server can be on different BRAINREC_VERSIONs.
+         * The per-bot body has the same format from
+         * BRAINREC_VERSION_MIN_READ on (later versions changed only the
+         * frame tail), and hostRecReaderNext measures each body. */
+        r->hdr.brainrecVersion < BRAINREC_VERSION_MIN_READ ||
         !hostRecReadExact(f, &ll, 4) || ll > (16u << 20)) {
         brainRecInClose(f);
         return false;
