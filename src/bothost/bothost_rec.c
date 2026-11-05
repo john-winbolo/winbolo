@@ -410,7 +410,12 @@ void hostRecSeatThink(int idx, int srv, uint8_t slot, uint16_t placeGen,
         bool want = poolMode == 2 ||
                     (rrCount > 0 && (int)((seq / 2u) % (uint32_t)rrCount) == rrIndex);
         if (want) {
-            pj = botBrainEvalLuaString(L, "return brain.get_pool_breakdown_json()");
+            /* The same block the server records for its own bots: the raw
+             * capture by default, the panel JSON when the OPEN asks. */
+            pj = botBrainEvalLuaString(L, (flags & BOT_HOST_REC_F_POOL_JSON)
+                ? "return brain.get_pool_breakdown_json()"
+                : "return (brain.get_pool_breakdown_raw"
+                  " or brain.get_pool_breakdown_json)()");
         }
     }
     brainRecBufReset(&s_body);
