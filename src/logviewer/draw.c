@@ -156,20 +156,20 @@ static bool         s_pillNumbers = TRUE;
    over the blit, from places lv_drawTanks and lv_drawLGMs note in
    render-target pixels. */
 static bool         s_hitBoxes = FALSE;
-/* A tank's centre, as the viewer has it before it moves the picture two
-   pixels right and down (lv_drawTanks). That is the place shells are tested
-   against: the recorded centre. */
+/* A tank's place, the one shells are tested against (tankShellInHitZone):
+   the middle of the art pixel the recording holds. The game draws the
+   tank's picture centred on the same pixel (lv_drawTanks). */
 typedef struct {
     float cx, cy;                  /* render-target pixels */
     BYTE  slot;
 } LvHitTankPos;
 static LvHitTankPos s_hitTankPos[MAX_TANKS];
 static int          s_hitTankCount = 0;
-/* A builder out of his tank: his place (the top left of his picture, which
-   is his world place), the top left of his square, and the 3 by 3 squares
-   round his that stop the open-ground test (lvHitboxBuilderCaught). */
+/* A builder out of his tank: the art pixel his place was recorded in, the
+   top left of his square, and the 3 by 3 squares round his that stop the
+   open-ground test (lvHitboxBuilderCaught). */
 typedef struct {
-    float    x, y;                 /* render-target pixels */
+    BYTE     px, py;               /* art pixel in his square, 0 to 15 */
     float    sqX, sqY;             /* his square's top left, render-target pixels */
     unsigned solid;
 } LvHitLgmPos;
@@ -1622,9 +1622,10 @@ void lv_drawMarkRedraw(int mx, int my, int px, int py, int itemSize) {
 
 /* Mark every square a w by h pixel sprite drawn px, py pixels into square
  * mx, my covers. lv_drawMarkRedraw only reaches the next square over, which
- * is one short for a tank: it is drawn two pixels further in than its offset,
- * so at an offset of 15 it reaches one pixel into the square two along, and
- * that pixel was left behind when the tank moved on. A negative px or py is
+ * is one short for some sprites: the viewer once drew a tank two pixels
+ * further in than its offset, so at an offset of 15 it reached one pixel
+ * into the square two along, and that pixel was left behind when the tank
+ * moved on. A negative px or py is
  * a box that starts before the square's own edge, as a marker centred near
  * it gives: it is moved into the square it really starts in. */
 static void lv_drawMarkRedrawRect(int mx, int my, int px, int py, int w, int h) {
@@ -1750,17 +1751,27 @@ void lv_drawTanks(screenTanks *tks) {
     for (count = 1; count <= total; count++) {
         lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, playerName);
         if (s_hitTankCount < MAX_TANKS) {
-            /* px, py are the centre less 128 world units (8 art pixels),
-               lv_playersMakeScreenTanks; the picture then goes 2 pixels
-               right and down of that. The hit circle is round the centre. */
+            /* px, py are the recorded place less 128 world units (8 art
+               pixels), lv_playersMakeScreenTanks: the top left of the
+               picture, as the game draws it. The hit circle is round the
+               tank's place, the middle of the art pixel it was recorded in
+               (lvHitboxTankPlace). */
             s_hitTankPos[s_hitTankCount].cx =
-                (float)(zoomFactor * (mx * TILE_SIZE_X + px + TILE_SIZE_X / 2));
+                (float)zoomFactor * ((float)(mx * TILE_SIZE_X) +
+                    (float)(lvHitboxTankPlace(px) + LV_HITBOX_TANK_HALF) /
+                    (float)LV_HITBOX_WU_PER_PIXEL);
             s_hitTankPos[s_hitTankCount].cy =
-                (float)(zoomFactor * (my * TILE_SIZE_Y + py + TILE_SIZE_Y / 2));
+                (float)zoomFactor * ((float)(my * TILE_SIZE_Y) +
+                    (float)(lvHitboxTankPlace(py) + LV_HITBOX_TANK_HALF) /
+                    (float)LV_HITBOX_WU_PER_PIXEL);
             s_hitTankPos[s_hitTankCount].slot = lv_screenTanksGetSlot(tks, count);
             s_hitTankCount++;
         }
-        px += 2; py += 2;
+        /* The picture goes at px, py, as the game draws it
+           (mapViewDrawTanks): its middle is the tank's place. The viewer
+           drew it 2 art pixels right and down of that before, as the old
+           Win32 game did. The name keeps its place against the picture
+           (lvDrawRecordTankLabel). */
         x = mx * (zoomFactor * TILE_SIZE_X) + (zoomFactor * px);
         y = my * (zoomFactor * TILE_SIZE_Y) + (zoomFactor * py);
         if (s_tankBarCount < MAX_TANKS) {
@@ -1852,8 +1863,8 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE zf) {
     }
     h->sqX = (float)(zf * mx * TILE_SIZE_X);
     h->sqY = (float)(zf * my * TILE_SIZE_Y);
-    h->x = h->sqX + (float)(zf * px);
-    h->y = h->sqY + (float)(zf * py);
+    h->px = px;
+    h->py = py;
     h->solid = solid;
     s_hitLgmCount++;
 }
@@ -1867,20 +1878,34 @@ void lv_drawLGMs(screenLgm *lgms) {
     s_hitLgmCount = 0;
     
     for (count = 1; count <= total; count++) {
+        int picX, picY;            /* the picture's top left, art pixels into his square */
         lv_screenLgmGetItem(lgms, count, &mx, &my, &px, &py, &frame);
         /* A builder on his parachute is dead: lgmDeathCheckAtPosition tests
            no dead builder, so he has no hit area. */
         if (frame != LGM_HELICOPTER_FRAME && s_hitLgmCount < MAX_TANKS) {
             lvDrawNoteLgmHit(mx, my, px, py, zf);
         }
+        /* A walking builder's picture goes 1 art pixel left of and above his
+           recorded pixel, as the game draws it (spritePositionLgm), so it
+           sits round his place. The parachute is drawn from its own top
+           left, as in the game. */
+        picX = px;
+        picY = py;
         switch (frame) {
-        case LGM0: srcX = zf*LGM0_X; srcY = zf*LGM0_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; lv_drawMarkRedraw(mx,my,px,py,12); break;
-        case LGM1: srcX = zf*LGM1_X; srcY = zf*LGM1_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; lv_drawMarkRedraw(mx,my,px,py,12); break;
-        case LGM2: srcX = zf*LGM2_X; srcY = zf*LGM2_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; lv_drawMarkRedraw(mx,my,px,py,12); break;
-        default: srcX = zf*LGM_HELICOPTER_X; srcY = zf*LGM_HELICOPTER_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; lv_drawMarkRedraw(mx,my,px,py,1); break;
+        case LGM0: srcX = zf*LGM0_X; srcY = zf*LGM0_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; break;
+        case LGM1: srcX = zf*LGM1_X; srcY = zf*LGM1_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; break;
+        case LGM2: srcX = zf*LGM2_X; srcY = zf*LGM2_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; break;
+        default: srcX = zf*LGM_HELICOPTER_X; srcY = zf*LGM_HELICOPTER_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; break;
         }
-        x = (zf * mx * TILE_SIZE_X) + (zf * px);
-        y = (zf * my * TILE_SIZE_Y) + (zf * py);
+        if (frame == LGM0 || frame == LGM1 || frame == LGM2) {
+            picX += LV_HITBOX_LGM_PICTURE_X;
+            picY += LV_HITBOX_LGM_PICTURE_Y;
+            lv_drawMarkRedrawRect(mx, my, picX, picY, LGM_WIDTH, LGM_HEIGHT);
+        } else {
+            lv_drawMarkRedraw(mx,my,px,py,1);
+        }
+        x = (zf * mx * TILE_SIZE_X) + (zf * picX);
+        y = (zf * my * TILE_SIZE_Y) + (zf * picY);
         drawRenderTexture(textureTiles, srcX, srcY, srcW, srcH, x, y);
     }
 }
@@ -2561,12 +2586,11 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
             float ox = dst->x + (h->sqX - src->x) * scale;
             float oy = dst->y + (h->sqY - src->y) * scale;
             /* The recorded place is lgmGetPX / lgmGetPY's: his place less 1
-               world unit across and 2 down, to whole art pixels. Put the 1
-               and the 2 back. */
-            double bx = (double)((h->x - h->sqX) / (float)s_hitZoom) * LV_HITBOX_WU_PER_PIXEL +
-                        LV_HITBOX_LGM_OFFSET_X;
-            double by = (double)((h->y - h->sqY) / (float)s_hitZoom) * LV_HITBOX_WU_PER_PIXEL +
-                        LV_HITBOX_LGM_OFFSET_Y;
+               world unit across and 2 down, rounded down to an art pixel.
+               lvHitboxBuilderPlaceX/Y put the 1 and the 2 back and take the
+               middle of the pixel. */
+            double bx = lvHitboxBuilderPlaceX(h->px);
+            double by = lvHitboxBuilderPlaceY(h->py);
             lvDrawHitLgmArea(h, bx, by, builderReach, ox, oy, k, shift);
         }
     }
