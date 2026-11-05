@@ -225,9 +225,21 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
-    /* TEMPORARY TEST TOGGLE (lv_early_blast.h): off until turned on. */
-    lv_platform_config_get_string("LOGVIEWER", "Screen-True Own Shells", "No", val, sizeof(val));
-    lv_screenSetScreenTrueShells((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
+    /* Toggle Screen-True Own Shells (lv_shell_owner.h): on until turned off. */
+    lv_platform_config_get_string("LOGVIEWER", "Lag View Own Shells At Present", "Yes", val,
+                                  sizeof(val));
+    lv_screenSetScreenTrueShells(!(val[0] == 'N' || val[0] == 'n') ? 1 : 0);
+    /* TEMPORARY TEST TOGGLE (lv_early_blast.h): off until turned on. The
+       older key "Screen-True Own Shells" held this toggle's value, so it is
+       the default when the new key is not saved yet. */
+    {
+        char old[16];
+        lv_platform_config_get_string("LOGVIEWER", "Screen-True Own Shells", "No", old,
+                                      sizeof(old));
+        lv_platform_config_get_string("LOGVIEWER", "Screen-True Local Explosions", old, val,
+                                      sizeof(val));
+        lv_screenSetScreenTrueExplosions((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
+    }
     /* The lag display (lv_lag.h) is read in lvHostSetupCore, which every
        host runs before this. It has no menu item. */
 }
@@ -283,8 +295,10 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", LV_LAG_PREF_KEY,
                                   lv_screenGetLagFeature() ? "Yes" : "No");
-    lv_platform_config_set_string("LOGVIEWER", "Screen-True Own Shells",
+    lv_platform_config_set_string("LOGVIEWER", "Lag View Own Shells At Present",
                                   lv_screenGetScreenTrueShells() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Screen-True Local Explosions",
+                                  lv_screenGetScreenTrueExplosions() ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
@@ -837,14 +851,36 @@ int lv_imgui_main_menu_bar(void) {
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::SetTooltip("%s", langGetText(STR_LV_LAG_MENU_TIP));
                 }
-                /* TEMPORARY TEST TOGGLE (lv_early_blast.h): in the lag view,
-                 * the chosen player's own shells explode at once where they
-                 * end, and the server's later explosion of each is hidden. */
-                if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_SHELLS), NULL,
-                                    lv_screenGetScreenTrueShells() != 0)) {
-                    lv_screenSetScreenTrueShells(lv_screenGetScreenTrueShells() ? 0 : 1);
+                /* In the lag view, the chosen player's own shells come from
+                 * the present frame, as that player's own screen drew them
+                 * (lv_shell_owner.h). Off draws them at the old time. */
+                const bool ownShells = lv_screenGetScreenTrueShells() != 0;
+                if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_SHELLS), NULL, ownShells)) {
+                    lv_screenSetScreenTrueShells(ownShells ? 0 : 1);
                     lv_windowNeedRedraw();
                     clicked = 1;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", langGetText(STR_LV_SCREEN_TRUE_SHELLS_TIP));
+                }
+                /* TEMPORARY TEST TOGGLE (lv_early_blast.h): in the lag view,
+                 * the chosen player's own shells explode at once where they
+                 * end, and the server's later explosion of each is hidden.
+                 * It works only with Toggle Screen-True Own Shells on
+                 * (lv_earlyBlastOn), so the item is off and greyed until
+                 * that one is on. The saved choice is kept meanwhile. */
+                const bool explOn = lv_earlyBlastOn(lv_screenGetScreenTrueShells() != 0,
+                                                    lv_screenGetScreenTrueExplosions() != 0);
+                if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_EXPL), NULL, explOn,
+                                    lv_screenGetScreenTrueShells() != 0)) {
+                    lv_screenSetScreenTrueExplosions(explOn ? 0 : 1);
+                    lv_windowNeedRedraw();
+                    clicked = 1;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("%s", langGetText(lv_screenGetScreenTrueShells()
+                                                            ? STR_LV_SCREEN_TRUE_EXPL_TIP
+                                                            : STR_LV_SCREEN_TRUE_EXPL_OFF_TIP));
                 }
             }
 #ifndef __EMSCRIPTEN__

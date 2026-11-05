@@ -863,13 +863,22 @@ bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *dr
  * have none. */
 void lv_screenLagShellOwnerStats(LvShellOwnerStats *out);
 
-/* TEMPORARY TEST TOGGLE (lv_early_blast.h), "Toggle Screen-True Own Shells",
- * off by default: in the lag view each own shell of the chosen player
- * explodes at the present where it ended, and the server's later explosion
- * of that shell is hidden. Stats gives how many own shells ended and how
- * many server explosions were found for them. Hold the client mutex. */
+/* "Toggle Screen-True Own Shells" (lv_shell_owner.h), on by default: in the
+ * lag view the chosen player's own shells are drawn from the present frame,
+ * as that player's own screen drew them. Off draws them from the old frame,
+ * as every other shell is. Hold the client mutex. */
 void lv_screenSetScreenTrueShells(int enabled);
 int  lv_screenGetScreenTrueShells(void);
+
+/* TEMPORARY TEST TOGGLE (lv_early_blast.h), "Toggle Screen-True Local
+ * Explosions (Proposed Fix)", off by default: in the lag view each own shell
+ * of the chosen player explodes at the present where it ended, and the
+ * server's later explosion of that shell is hidden. It does something only
+ * while "Toggle Screen-True Own Shells" is on (lv_earlyBlastOn). Stats gives
+ * how many own shells ended and how many server explosions were found for
+ * them. Hold the client mutex. */
+void lv_screenSetScreenTrueExplosions(int enabled);
+int  lv_screenGetScreenTrueExplosions(void);
 void lv_screenEarlyBlastStats(LvEarlyBlastStats *out);
 
 void lv_screenCentreOnSelectedItem();

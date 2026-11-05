@@ -1362,8 +1362,15 @@
 #define STR_LV_LAG_MENU                     3119
 #define STR_LV_LAG_MENU_TIP                 3120
 #define STR_LV_LAG_LINE_BOT                 3121
-/* A temporary test toggle (src/logviewer/lv_early_blast.h). */
+/* The lag view's shell toggles in the Options menu. Toggle Screen-True Own
+   Shells (lv_shell_owner.h) and its tooltip. Toggle Screen-True Local
+   Explosions is a temporary test toggle (lv_early_blast.h): its name, its
+   tooltip, and the tooltip while it is off because the first toggle is off. */
 #define STR_LV_SCREEN_TRUE_SHELLS           3472
+#define STR_LV_SCREEN_TRUE_SHELLS_TIP       3474
+#define STR_LV_SCREEN_TRUE_EXPL             3475
+#define STR_LV_SCREEN_TRUE_EXPL_TIP         3476
+#define STR_LV_SCREEN_TRUE_EXPL_OFF_TIP     3477
 /* The viewer's server timing (log_OverrunStats) in the Game Info panel: the
    section's name, the line that says when the record shown was written
    (string1 the round time, m:ss), the record's lines (string1..3 times in ms

@@ -723,6 +723,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_early_blast_frames", run_lv_early_blast_frames },
     { "lv_early_blast_match", run_lv_early_blast_match },
     { "lv_early_blast_hide", run_lv_early_blast_hide },
+    { "lv_early_blast_needs_own_shells", run_lv_early_blast_needs_own_shells },
     { "lv_lag_view_rename", run_lv_lag_view_rename },
     { "lv_overrun_read", run_lv_overrun_read },
     { "log_roundtrip_ping",                      run_log_roundtrip_ping                      },
