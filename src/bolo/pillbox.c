@@ -1245,7 +1245,9 @@ TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD 
 TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed) {
   TURNTYPE returnValue; /* Value to return */
   TURNTYPE estimate;    /* Current Estimate */
-  BYTE count;           /* Looping Variable */
+  int count;            /* Looping Variable: an int, as pill_aim_iterations
+                           goes past what a BYTE holds and a BYTE counter
+                           wrapped, so the budget was never reached */
   bool found;           /* Finished looping */
   int tankAddX;         /* Tank add X */
   int tankAddY;         /* Tank add Y */
@@ -1266,13 +1268,14 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
   shellX = xValue;
   shellY = yValue;
 
-  returnValue = 0;
-
   /* Get tank Add amounts */
   utilCalcDistance(&tankAddX, &tankAddY, angle, speed);
-    
+
   /* Get initial estimate */
   estimate = utilCalcAngle(xValue, yValue, tankX,tankY);
+  /* A budget too small to run the loop fires at where the tank is now,
+     not at bearing 0 */
+  returnValue = estimate;
   /* Calculate distance */
   utilCalcDistance(&shellAddX, &shellAddY, estimate, sim->rules.shell_speed);
   shellX = (WORLD) (xValue + shellAddX);
@@ -1324,8 +1327,10 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
     
     estimate = utilCalcAngle(xValue, yValue, tankX,tankY);
     utilCalcDistance(&shellAddX, &shellAddY, estimate, sim->rules.shell_speed);    
-    shellX = (WORLD) (xValue + ((count+  5) * shellAddX));
-    shellY = (WORLD) (yValue + ((count +  5) * shellAddY));
+    /* The shell starts shell_start_add steps out (shellApplyStartOffset),
+       so that is where the count steps it has flown are counted from */
+    shellX = (WORLD) (xValue + ((count + sim->rules.shell_start_add) * shellAddX));
+    shellY = (WORLD) (yValue + ((count + sim->rules.shell_start_add) * shellAddY));
     /* Set it anyway */
     returnValue = estimate;
   }

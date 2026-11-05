@@ -3507,9 +3507,11 @@ endif()
 add_executable(brainrec_split
     src/tools/brainrec_split.c
     src/bolo/brain_record_walk.c
-    src/bolo/brain_record_io.c)
+    src/bolo/brain_record_io.c
+    src/bolo/pool_render_host.c)
 bolo_apply_include_rules(brainrec_split runtime_only)
-target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic libzstd_static)
+# lua_static: pool_render_host.c, for -render-pool (raw pool blocks to JSON).
+target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic libzstd_static lua_static)
 if(WIN32)
     target_link_libraries(brainrec_split PRIVATE psapi)
 endif()
@@ -4226,6 +4228,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_alliance_reset.c
     tests/unit/test_alliance_leave.c
     tests/unit/test_alliance_request.c
+    tests/unit/test_team_sides.c
     tests/unit/test_round_start_owners.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_lobby_bot_config_memory.c
@@ -4617,6 +4620,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_upload_busy.c
     tests/unit/test_upload_filename_safe.c
     tests/unit/test_lobby_time_minutes_valid.c
+    # Lobby settings the round then plays: the time limit and hidden mines.
+    tests/unit/test_lobby_round_settings.c
     tests/unit/test_lobby_bot_name.c
     tests/unit/test_lobby_map_list_chunked.c
     # The lobby's reload request: who may ask, when, and what a lobby with
@@ -4714,6 +4719,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_removed_items.c
     tests/unit/test_btr_container.c
     tests/unit/test_brainrec_split.c
+    tests/unit/test_pool_render_host.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -4738,6 +4744,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_tank_alliance_unfielded.c
     tests/unit/test_tank_death_state.c
     tests/unit/test_tank_knockback.c
+    tests/unit/test_tank_mine_sweep.c
     tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
@@ -4815,8 +4822,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     # test_stubs.c provides here, so it compiles in without lang.c.
     tests/unit/test_sim_rules_describe.c
     src/gui/sdl3/sim_rules_phrase.c
+    # shell_start_add in the pillbox aim solver's lead.
+    tests/unit/test_pill_aim_start_add.c
     # pill_shell_cap and pill_max_shells_at_tank, driven through pillsUpdate.
     tests/unit/test_pill_shell_cap.c
+    # pill_aim_iterations: a budget past 255 ends, and a budget of 1 aims at
+    # the tank.
+    tests/unit/test_pill_aim_budget.c
     # The range behind each rule, against the validator that refuses on it.
     tests/unit/test_sim_rules_range.c
     # A description id per rule, and the range in words. The phrase file above
@@ -5108,6 +5120,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tank_hit_sets_off_mines: whether a shell that hits a tank sets off the
     # mines on its square.
     tests/unit/test_tank_hit_mines.c
+    # man_dead_pill_terrain_speed: the builder's speed on the square of a
+    # dead pillbox.
+    tests/unit/test_man_dead_pill_speed.c
     tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
@@ -5829,6 +5844,7 @@ set(_unit_test_names
     mine_kill_publishes_event
     mine_kill_on_boat_publishes_event
     mine_kill_own_mine_names_self
+    mine_kill_explosion_size
     mine_blast_range
     awards_basic_winners
     awards_tiebreak
@@ -5851,6 +5867,7 @@ set(_unit_test_names
     round_stats_derive_equivalence
     highlights_cluster_wipe
     highlights_wipe_team_bonus
+    highlights_wipe_team_at_death
     highlights_objective_steal
     highlights_award_anchor
     highlights_selection
@@ -5858,6 +5875,8 @@ set(_unit_test_names
     highlights_empty
     territory_shift_basic
     territory_shift_bounded
+    round_stats_team_at
+    territory_shift_follows_team
     highlights_turning_point
     territory_recent_damage
     highlights_front_collapse
@@ -6315,6 +6334,40 @@ set(_unit_test_names
     alliance_request_refused_in_lobby
     alliance_request_cleared_at_round_start
     alliance_request_client_drops_departed_requester
+    team_sides_accept_merges_groups
+    team_sides_clear_moves_no_owner
+    team_sides_pill_fires_at_ex_ally
+    team_sides_base_refuels_ally_only
+    team_sides_allies_share_base_win
+    team_sides_client_takes_slot_in_game
+    team_sides_fold_at_return_to_lobby
+    team_sides_surrender_after_defection
+    team_sides_ping_after_leave
+    team_sides_track_identity_after_defection
+    team_sides_midgame_joiner_team
+    team_sides_set_team_keeps_player_alliance
+    team_sides_accept_moves_whole_team
+    team_sides_accept_from_no_team
+    team_sides_accept_same_side_says_nothing
+    team_sides_leave_takes_free_team
+    team_sides_leave_with_no_free_team
+    team_sides_free_team_rules
+    team_sides_team_chat_follows_sides
+    team_sides_panels_follow_team
+    team_sides_infection_puts_leaver_back
+    team_sides_rejoin_is_a_joiner
+    team_sides_joiner_slot_before_join
+    team_sides_lobby_joiner_keeps_rule
+    team_sides_lobby_drops_empty_teams
+    team_sides_soccer_puts_leaver_back
+    team_sides_round_log_teams
+    team_sides_held_seat_allied_in_round
+    team_sides_free_team_keeps_setup
+    team_sides_free_team_keeps_lobby_side
+    team_sides_accept_rebuilds_table
+    team_sides_leave_rebuilds_table
+    team_sides_bot_added_in_round_is_allied
+    team_sides_table_write_is_caught
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
@@ -6363,6 +6416,8 @@ set(_unit_test_names
     btr_zstd_cut_file_reads_its_prefix
     btr_block_logs_compress
     brainrec_split_cuts_brain_logs_by_engine_tick
+    pool_render_raw_matches_old_json
+    pool_render_json_and_bad_blocks
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken
@@ -6449,11 +6504,11 @@ set(_unit_test_names
     mod_lobby_starts_mac_bolo_keeps_opposite_sides
     mac_bolo_settings_defaults_play_old_rules
     mac_bolo_settings_each_part_off
-    mac_bolo_settings_numbers
     mac_bolo_first_start_lobby_off_uses_mac_pick
     mac_bolo_spawn_starts_off_engine_picks
     mac_bolo_setting_changed_after_attach
     mac_bolo_setting_changed_between_rounds
+    mac_bolo_spawn_pick_keeps_enemies_off
     choose_start_lobby_arg_hand_picked
     choose_start_lobby_arg_team_side
     choose_start_lobby_arg_nil_without_reservation
@@ -6489,6 +6544,7 @@ set(_unit_test_names
     tank_knockback_timing_drive
     tank_knockback_replaces_mines
     tank_knockback_rules_respawn
+    tank_mine_sweep_follows_heading
     tank_knockback_mac_off_ignores_bonus
     tank_status_wire_bits
     tank_status_wire_start_find_round_trip
@@ -6685,12 +6741,15 @@ set(_unit_test_names
     sim_rules_mac_halfway_heading
     sim_rules_tank_deep_sea_safe
     lgm_build_square_terrain_speed
+    pill_aim_lead_follows_shell_start_add
     pill_shell_cap_off_is_no_limit
     pill_shell_cap_does_not_retarget
     pill_shell_cap_loses_shot_and_reloads
     pill_shell_cap_out_of_range_clears_just_seen
     pill_shell_cap_counts_same_update_shots
     pill_shell_cap_ignores_tank_shells
+    pill_aim_budget_past_a_byte_ends
+    pill_aim_budget_one_aims_at_tank
     sim_rules_tank_explosion_follows
     sim_rules_water_loss_follows
     sim_rules_pairs
@@ -6745,6 +6804,13 @@ set(_unit_test_names
     tank_hit_mines_rule_on_sets_off
     tank_hit_mines_rule_off_spares
     tank_hit_mines_rule_off_ground
+    man_dead_pill_speed_road
+    man_dead_pill_speed_terrain_rule
+    man_dead_pill_speed_follows_road_rule
+    man_dead_pill_walk_ticks
+    man_dead_pill_walk_across_water
+    man_dead_pill_lifted_waits_for_tank
+    man_dead_pill_brain_walk
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
@@ -7043,6 +7109,12 @@ set(_unit_test_names
     md5_streaming_matches_oneshot
     net_impair
     lobby_time_minutes_valid
+    lobby_time_limit_reaches_round
+    lobby_time_limit_removed_reaches_round
+    lobby_time_limit_empty_reset
+    lobby_hidden_mines_client_follows
+    lobby_hidden_mines_in_place_start
+    lobby_hidden_mines_empty_reset
     control_overflow_defers_disconnect
     join_collision_verified_rejects_will_auth
     join_collision_verified_flag_irrelevant
@@ -7298,6 +7370,8 @@ set(_unit_test_names
     survival_lobby_round
     survival_lobby_round_full
     survival_lobby_round_ds_order
+    survival_lobby_round_late_joiner
+    survival_lobby_round_leaver_back
     loopback_unfield_tank
     loopback_fine_tank_position
     loopback_shell_drawn_cull

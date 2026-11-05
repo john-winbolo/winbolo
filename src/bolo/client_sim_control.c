@@ -597,6 +597,16 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * first display tick after the snapshot landed. */
         clientSimSetGameType(cs,       evt->u.lobbySettings.lobbyGameType);
         clientSimSetHiddenMines(cs,    evt->u.lobbySettings.lobbyHiddenMines);
+        /* The mines object is what decides which mines are drawn, and it
+         * was only built with this setting on the return to the lobby, so
+         * a client's first round, and a change made in the lobby after a
+         * return, played with the object's old value while the lobby
+         * showed the new one. The flag follows every event; what the
+         * object has already seen is kept. */
+        if (cs->sim.mns != NULL) {
+            minesSetAllowHiddenMines(&cs->sim.mns,
+                                     evt->u.lobbySettings.lobbyHiddenMines);
+        }
         clientSimSetAiType(cs,         (aiType)evt->u.lobbySettings.lobbyAiType);
         clientSimSetGmeStartDelay(cs,  evt->u.lobbySettings.lobbyStartDelay);
         clientSimSetGmeLength(cs,      evt->u.lobbySettings.lobbyTimeLimit);

@@ -1473,15 +1473,16 @@ dispatch_scenario() {
     # and the only thing that moves in the whole run is one square of the
     # plain turning to forest. treeGrowUpdate runs once per tank per world
     # update: it samples one map square and takes one off the TREEGROW_TIME
-    # countdown of 3000. The fast loop runs a server frame on its keys pass as
-    # well as its game pass, so two of those updates land on every tick the
-    # log counts and the countdown is 1500 ticks rather than 3000. The budget
-    # covers the growth, the tick after it where the terrain field is gone
-    # again, and a margin past that. The terrain flag is what makes the run
+    # countdown of 1150. One of those updates lands on every tick the log
+    # counts, and the countdown starts again at each better square found in
+    # the first few ticks, so the tree grows at tick 1167. The budget covers
+    # the growth, the tick after it where the terrain field is gone again, and
+    # a margin past that, short of the second tree a further 1150 ticks on.
+    # The terrain flag is what makes the run
     # legible: a grown tree is a map square and nothing else, and the forest
     # count beside it only says how many there are.
     grass_flat_growth)
-      run_changes "$name" "$GRASS_FLAT_MAP" "$BRAINS/idle.lua" open 3040 "" terrain ;;
+      run_changes "$name" "$GRASS_FLAT_MAP" "$BRAINS/idle.lua" open 1190 "" terrain ;;
 
     # The scenario beside Wave Defense.map, played to the end it writes for
     # itself. The lobby holds six seats for the raiders, the command stream

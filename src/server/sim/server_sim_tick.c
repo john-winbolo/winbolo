@@ -1360,6 +1360,11 @@ void serverSimTick(ServerSim *sim) {
          * events (the change callback is only installed for a running tick),
          * so there is nothing to apply on that branch. */
         serverSimShadowTick(sim);
+        /* The two records of sides agree at the end of every running tick
+           (#424): two connected seats are allied exactly when they are on
+           the same nonzero team. Every build checks. A break is logged
+           once, with the first pair, and the round goes on. */
+        serverSimSidesCheck(sim);
     } else {
         /* No map event is recorded on this branch, but the fill drain below
            reads the count as a bound, so it starts each tick at zero here as

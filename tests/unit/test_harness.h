@@ -308,6 +308,7 @@ int run_round_stats_leaver_clears_mines(void);
 int run_mine_kill_publishes_event(void);
 int run_mine_kill_on_boat_publishes_event(void);
 int run_mine_kill_own_mine_names_self(void);
+int run_mine_kill_explosion_size(void);
 int run_mine_blast_range(void);
 
 int run_awards_basic_winners(void);
@@ -331,6 +332,7 @@ int run_round_stats_track_cap(void);
 int run_round_stats_derive_equivalence(void);
 int run_highlights_cluster_wipe(void);
 int run_highlights_wipe_team_bonus(void);
+int run_highlights_wipe_team_at_death(void);
 int run_highlights_objective_steal(void);
 int run_highlights_award_anchor(void);
 int run_highlights_selection(void);
@@ -339,6 +341,8 @@ int run_highlights_empty(void);
 int run_territory_shift_basic(void);
 int run_highlights_turning_point(void);
 int run_territory_shift_bounded(void);
+int run_round_stats_team_at(void);
+int run_territory_shift_follows_team(void);
 int run_territory_recent_damage(void);
 int run_highlights_front_collapse(void);
 int run_highlights_award_anchor_density(void);
@@ -465,6 +469,12 @@ int run_upload_begin_without_trailer_refused(void);
 int run_upload_filename_safe(void);
 int run_upload_filename_safe_script(void);
 int run_lobby_time_minutes_valid(void);
+int run_lobby_time_limit_reaches_round(void);
+int run_lobby_time_limit_removed_reaches_round(void);
+int run_lobby_time_limit_empty_reset(void);
+int run_lobby_hidden_mines_client_follows(void);
+int run_lobby_hidden_mines_in_place_start(void);
+int run_lobby_hidden_mines_empty_reset(void);
 int run_lobby_bot_name_rejects_reserved_prefix(void);
 int run_lobby_bot_name_rejects_disallowed_char(void);
 int run_lobby_bot_name_rejects_collision(void);
@@ -1096,6 +1106,8 @@ int run_entity_record_seek_lands_on_the_right_liveness(void);
  * number, and the -brain-debug recording carries the same masks per frame. */
 int run_brain_removed_items_info_masks(void);
 int run_brain_removed_items_recording_masks(void);
+int run_pool_render_raw_matches_old_json(void);
+int run_pool_render_json_and_bad_blocks(void);
 
 /* The brainrec.btr container (test_btr_container.c): a zstd recording reads
  * back through the frame walker and the BrainTest walk, and so does a gzip
@@ -1279,11 +1291,11 @@ int run_starts_side_team_change_repicks_stale(void);
 int run_mod_lobby_starts_mac_bolo_keeps_opposite_sides(void);
 int run_mac_bolo_settings_defaults_play_old_rules(void);
 int run_mac_bolo_settings_each_part_off(void);
-int run_mac_bolo_settings_numbers(void);
 int run_mac_bolo_first_start_lobby_off_uses_mac_pick(void);
 int run_mac_bolo_spawn_starts_off_engine_picks(void);
 int run_mac_bolo_setting_changed_after_attach(void);
 int run_mac_bolo_setting_changed_between_rounds(void);
+int run_mac_bolo_spawn_pick_keeps_enemies_off(void);
 int run_choose_start_lobby_arg_hand_picked(void);
 int run_choose_start_lobby_arg_team_side(void);
 int run_choose_start_lobby_arg_nil_without_reservation(void);
@@ -1324,6 +1336,42 @@ int run_alliance_request_ranked_accept_refused(void);
 int run_alliance_request_refused_in_lobby(void);
 int run_alliance_request_cleared_at_round_start(void);
 int run_alliance_request_client_drops_departed_requester(void);
+
+/* Sides during a round (test_team_sides.c, #424). */
+int run_team_sides_accept_merges_groups(void);
+int run_team_sides_clear_moves_no_owner(void);
+int run_team_sides_pill_fires_at_ex_ally(void);
+int run_team_sides_base_refuels_ally_only(void);
+int run_team_sides_allies_share_base_win(void);
+int run_team_sides_client_takes_slot_in_game(void);
+int run_team_sides_fold_at_return_to_lobby(void);
+int run_team_sides_surrender_after_defection(void);
+int run_team_sides_ping_after_leave(void);
+int run_team_sides_track_identity_after_defection(void);
+int run_team_sides_midgame_joiner_team(void);
+int run_team_sides_set_team_keeps_player_alliance(void);
+int run_team_sides_accept_moves_whole_team(void);
+int run_team_sides_accept_from_no_team(void);
+int run_team_sides_accept_same_side_says_nothing(void);
+int run_team_sides_leave_takes_free_team(void);
+int run_team_sides_leave_with_no_free_team(void);
+int run_team_sides_free_team_rules(void);
+int run_team_sides_team_chat_follows_sides(void);
+int run_team_sides_panels_follow_team(void);
+int run_team_sides_infection_puts_leaver_back(void);
+int run_team_sides_rejoin_is_a_joiner(void);
+int run_team_sides_joiner_slot_before_join(void);
+int run_team_sides_lobby_joiner_keeps_rule(void);
+int run_team_sides_lobby_drops_empty_teams(void);
+int run_team_sides_soccer_puts_leaver_back(void);
+int run_team_sides_round_log_teams(void);
+int run_team_sides_held_seat_allied_in_round(void);
+int run_team_sides_free_team_keeps_setup(void);
+int run_team_sides_free_team_keeps_lobby_side(void);
+int run_team_sides_accept_rebuilds_table(void);
+int run_team_sides_leave_rebuilds_table(void);
+int run_team_sides_bot_added_in_round_is_allied(void);
+int run_team_sides_table_write_is_caught(void);
 
 /* Pillbox and base owners from the map file survive a round start
  * (test_round_start_owners.c, issue #422). */
@@ -1860,6 +1908,7 @@ int run_tank_knockback_armour_paths(void);
 int run_tank_knockback_timing_drive(void);
 int run_tank_knockback_replaces_mines(void);
 int run_tank_knockback_rules_respawn(void);
+int run_tank_mine_sweep_follows_heading(void);
 int run_tank_knockback_mac_off_ignores_bonus(void);
 
 /* The destroyed state on the wire (test_tank_status_wire.c): tankStatus
@@ -2495,6 +2544,8 @@ int run_sim_rules_tank_collision_mac(void);
 int run_sim_rules_mac_halfway_heading(void);
 int run_sim_rules_tank_deep_sea_safe(void);
 int run_lgm_build_square_terrain_speed(void);
+/* shell_start_add in pillsTargetTankMove (test_pill_aim_start_add.c). */
+int run_pill_aim_lead_follows_shell_start_add(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);
@@ -2503,6 +2554,9 @@ int run_pill_shell_cap_loses_shot_and_reloads(void);
 int run_pill_shell_cap_out_of_range_clears_just_seen(void);
 int run_pill_shell_cap_counts_same_update_shots(void);
 int run_pill_shell_cap_ignores_tank_shells(void);
+/* pill_aim_iterations through pillsTargetTankMove (test_pill_aim_budget.c). */
+int run_pill_aim_budget_past_a_byte_ends(void);
+int run_pill_aim_budget_one_aims_at_tank(void);
 int run_sim_rules_tank_explosion_follows(void);
 int run_sim_rules_water_loss_follows(void);
 int run_sim_rules_pairs(void);
@@ -3083,6 +3137,16 @@ int run_shell_blast_pill_hit_on_shooter_screen(void);
 int run_tank_hit_mines_rule_on_sets_off(void);
 int run_tank_hit_mines_rule_off_spares(void);
 int run_tank_hit_mines_rule_off_ground(void);
+/* man_dead_pill_terrain_speed: the square of a dead pillbox walks at road
+ * speed with the rule at 0 and at the terrain's speed with it at 1; a live
+ * pillbox and the tank are not changed (test_man_dead_pill_speed.c). */
+int run_man_dead_pill_speed_road(void);
+int run_man_dead_pill_speed_terrain_rule(void);
+int run_man_dead_pill_speed_follows_road_rule(void);
+int run_man_dead_pill_walk_ticks(void);
+int run_man_dead_pill_walk_across_water(void);
+int run_man_dead_pill_lifted_waits_for_tank(void);
+int run_man_dead_pill_brain_walk(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
@@ -3565,6 +3629,8 @@ int run_lobby_template_map_commit_seats(void);
 int run_survival_lobby_round(void);
 int run_survival_lobby_round_full(void);
 int run_survival_lobby_round_ds_order(void);
+int run_survival_lobby_round_late_joiner(void);
+int run_survival_lobby_round_leaver_back(void);
 int run_loopback_unfield_tank(void);
 int run_loopback_fine_tank_position(void);
 int run_loopback_shell_drawn_cull(void);

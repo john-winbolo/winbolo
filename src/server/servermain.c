@@ -973,6 +973,11 @@ void printArgs() {
   fprintf(stderr, "  -bd-noviz    - don't emit/record visualizer overlays (brainrec.btr stays\n");
   fprintf(stderr, "                 loadable, just without viz frames)\n");
   fprintf(stderr, "  -bd-nopool   - skip the pool-breakdown JSON capture entirely\n");
+  fprintf(stderr, "  -bd-pool-format raw|json - how each pool block is recorded. raw\n");
+  fprintf(stderr, "                 (default): the brain copies the values the panel needs,\n");
+  fprintf(stderr, "                 and BrainTest builds the panel text when it shows the\n");
+  fprintf(stderr, "                 recording (much less tick time). json: the brain builds\n");
+  fprintf(stderr, "                 the finished panel JSON on every tick, as before.\n");
   fprintf(stderr, "  -bd-pool-rr  - round-robin pool capture (ONE bot per tick) instead of the\n");
   fprintf(stderr, "                 default every-bot-every-tick. Same 50 Hz either way (the JSON\n");
   fprintf(stderr, "                 builds run on the bot workers); rr records ~1/botCount the\n");
@@ -3415,10 +3420,25 @@ int main(int argc, char **argv) {
           int poolMode = bdNoPool ? 0 : (bdPoolRR ? 1 : 2);
           luaBrainsSetDebugParts(!bdNoPrint2, !bdNoPool, !bdNoViz, !bdNoJsonl);
           brainRecordSetParts(!bdNoViz, poolMode);
-          fprintf(stderr, "-brain-debug streams: viz=%s pool=%s print2=%s jsonl=%s\n",
+          {
+            int fmtArg = findArg(argc, argv, "bd-pool-format");
+            if (fmtArg == ARG_NOT_FOUND) fmtArg = findArg(argc, argv, "-bd-pool-format");
+            int fmt = BRAINREC_POOL_FORMAT_RAW;
+            if (fmtArg != ARG_NOT_FOUND && fmtArg < argc && argv[fmtArg]) {
+              const char *v = (const char *)argv[fmtArg];
+              if (SDL_strcasecmp(v, "json") == 0) {
+                fmt = BRAINREC_POOL_FORMAT_JSON;
+              } else if (SDL_strcasecmp(v, "raw") != 0) {
+                fprintf(stderr, "-bd-pool-format: unknown value '%s' (use raw or json); using raw\n", v);
+              }
+            }
+            brainRecordSetPoolFormat(fmt);
+          }
+          fprintf(stderr, "-brain-debug streams: viz=%s pool=%s pool_format=%s print2=%s jsonl=%s\n",
                   bdNoViz ? "OFF" : "on",
                   bdNoPool ? "OFF" : (bdPoolRR ? "round-robin (1 bot/tick)"
                                                : "full (every bot every tick)"),
+                  (brainRecordGetPoolFormat() == BRAINREC_POOL_FORMAT_JSON) ? "json" : "raw",
                   bdNoPrint2 ? "OFF" : "on", bdNoJsonl ? "OFF" : "on");
         }
         /* print2 is stripped from the opt/ brain SOURCE, so running an opt/

@@ -1274,7 +1274,15 @@ void serverSimSetGameType(ServerSim *sim, gameType gt) {
 }
 
 void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines) {
-    if (sim) sim->sim.hiddenMines = hiddenMines;
+    if (sim == NULL) return;
+    sim->sim.hiddenMines = hiddenMines;
+    /* The mines object is built from sim.hiddenMines when the world is
+     * reset, and the start with no countdown never resets it, nor does a
+     * scenario fix applied after the reset. Keep the object in step so
+     * every start plays the setting the lobby shows. */
+    if (sim->sim.mns != NULL) {
+        minesSetAllowHiddenMines(&sim->sim.mns, hiddenMines);
+    }
 }
 
 /* Negative sense throughout — see the field in server_sim_internal.h.

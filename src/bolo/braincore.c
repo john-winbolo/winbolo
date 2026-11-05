@@ -2510,29 +2510,41 @@ static int l_cpf_set_man_speed(lua_State *L) {
   return 0;
 }
 
-/* cpf_set_lgm_blocked(tiles) — tiles is an array of { mx, my } pairs (each a
- * 2-element table). Clears the LGM-impassable overlay, then marks each tile so
- * the LGM travel sim treats it as a wall. The bot's brain map is PURE TERRAIN
- * (botUpdateBrainMap stamps no pills/bases), so the sim can't see them — the
- * brain stamps both live pills and enemy bases here each tick to match the
- * engine's mapGetManSpeed (see brain_pathfinder.c lgmGetBrainManSpeed). */
-static int l_cpf_set_lgm_blocked(lua_State *L) {
-  CPF_GET(L);
-  brainPathfinderClearLgmBlock(pf);
-  if (lua_istable(L, 1)) {
-    int n = (int)lua_rawlen(L, 1);
+/* Mark every { mx, my } pair in the table at stack index `idx` with `mark`,
+ * one of the brainPathfinderSetLgm* setters. Anything but a table is no
+ * tiles. */
+static void cpfStampLgmTiles(lua_State *L, BrainPathfinder *pf, int idx,
+                             void (*mark)(BrainPathfinder *, BYTE, BYTE)) {
+  if (lua_istable(L, idx)) {
+    int n = (int)lua_rawlen(L, idx);
     int i;
     for (i = 1; i <= n; i++) {
-      lua_rawgeti(L, 1, i);          /* push tiles[i] */
+      lua_rawgeti(L, idx, i);        /* push tiles[i] */
       if (lua_istable(L, -1)) {
         BYTE mx, my;
         lua_rawgeti(L, -1, 1); mx = (BYTE)luaL_checkinteger(L, -1); lua_pop(L, 1);
         lua_rawgeti(L, -1, 2); my = (BYTE)luaL_checkinteger(L, -1); lua_pop(L, 1);
-        brainPathfinderSetLgmBlock(pf, mx, my);
+        mark(pf, mx, my);
       }
       lua_pop(L, 1);                 /* pop tiles[i] */
     }
   }
+}
+
+/* cpf_set_lgm_blocked(tiles [, road_tiles]) — each is an array of { mx, my }
+ * pairs (each a 2-element table). Clears the LGM overlay, then marks each
+ * tile of `tiles` so the LGM travel sim treats it as a wall, and each tile of
+ * `road_tiles` so it walks at road speed whatever the terrain. The bot's
+ * brain map is PURE TERRAIN (botUpdateBrainMap stamps no pills/bases), so the
+ * sim can't see them — the brain stamps live pills and enemy bases as walls
+ * and dead pills as road here each tick to match the engine's mapGetManSpeed
+ * (see brain_pathfinder.c lgmGetBrainManSpeed). Walls are stamped first, and
+ * a road mark never replaces one. */
+static int l_cpf_set_lgm_blocked(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderClearLgmBlock(pf);
+  cpfStampLgmTiles(L, pf, 1, brainPathfinderSetLgmBlock);
+  cpfStampLgmTiles(L, pf, 2, brainPathfinderSetLgmRoad);
   return 0;
 }
 
