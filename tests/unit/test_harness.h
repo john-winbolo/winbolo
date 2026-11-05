@@ -1332,6 +1332,7 @@ int run_lv_early_blast_ended(void);
 int run_lv_early_blast_frames(void);
 int run_lv_early_blast_match(void);
 int run_lv_early_blast_hide(void);
+int run_lv_early_blast_needs_own_shells(void);
 int run_lv_lag_view_rename(void);
 /* The viewer reads log_OverrunStats records and gives the one at the playhead. */
 int run_lv_overrun_read(void);

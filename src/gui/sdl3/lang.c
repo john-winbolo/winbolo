@@ -1071,6 +1071,10 @@ static const LangEntry langTable[] = {
     {3119, "See What the Selected Player Saw"},
     {3120, "Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records"},
     {3472, "Toggle Screen-True Own Shells"},
+    {3474, "On: the selected player's own shells are drawn at the present, as their own screen drew them at once. Off: they are drawn at the old time, as every other shell is"},
+    {3475, "Toggle Screen-True Local Explosions (Proposed Fix)"},
+    {3476, "A test of a proposed fix: the selected player's own shells explode at once where they end, and the server's later explosion of each is hidden"},
+    {3477, "Turn on Toggle Screen-True Own Shells first"},
     {3121, "Lag: a bot, screen {number} ms behind"},
     /* The viewer's server timing (log_OverrunStats) in the Game Info panel. */
     {3130, "Server timing"},

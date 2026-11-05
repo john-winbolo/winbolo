@@ -230,19 +230,31 @@ static int32_t lv_lagWorld(BYTE m, BYTE p) {
   return (int32_t) m * 256 + (int32_t) p * 16;
 }
 
-/* TEMPORARY TEST TOGGLE, "Toggle Screen-True Own Shells" (lv_early_blast.h).
-   Off by default. Remove this block, its two calls (lv_lagFindShellOwners,
-   lv_screenUpdate), the menu item and the header when the test is done. */
-static bool              s_screenTrueShells = FALSE;
-static LvEarlyBlast      s_earlyBlasts[LV_EARLY_BLAST_MAX];
-static int               s_earlyBlastNext;
-static LvEarlyBlastStats s_earlyBlastStats;
+/* "Toggle Screen-True Own Shells" (lv_shell_owner.h). On by default: the
+   lag view draws the chosen player's own shells from the present frame. */
+static bool s_screenTrueShells = TRUE;
 
 void lv_screenSetScreenTrueShells(int enabled) {
   s_screenTrueShells = enabled ? TRUE : FALSE;
 }
 
 int lv_screenGetScreenTrueShells(void) { return s_screenTrueShells ? 1 : 0; }
+
+/* TEMPORARY TEST TOGGLE, "Toggle Screen-True Local Explosions (Proposed
+   Fix)" (lv_early_blast.h). Off by default, and drawn only while
+   "Toggle Screen-True Own Shells" is on too (lv_earlyBlastOn). Remove this
+   block, its two calls (lv_lagFindShellOwners, lv_screenUpdate), the menu
+   item and the header when the test is done. */
+static bool              s_screenTrueExpl = FALSE;
+static LvEarlyBlast      s_earlyBlasts[LV_EARLY_BLAST_MAX];
+static int               s_earlyBlastNext;
+static LvEarlyBlastStats s_earlyBlastStats;
+
+void lv_screenSetScreenTrueExplosions(int enabled) {
+  s_screenTrueExpl = enabled ? TRUE : FALSE;
+}
+
+int lv_screenGetScreenTrueExplosions(void) { return s_screenTrueExpl ? 1 : 0; }
 
 void lv_screenEarlyBlastStats(LvEarlyBlastStats *out) {
   if (out != NULL) {
@@ -319,9 +331,10 @@ static BYTE lv_lagPixelOf(int32_t w) {
 }
 
 /* Give the shells of the newest frame f their owners (lv_shell_owner.h),
-   from the frame of the entry before it, and note which tanks fired. The
-   lag view draws the chosen player's own shells at the present, as the
-   player's own client drew them, and every other shell at the old time. */
+   from the frame of the entry before it, and note which tanks fired. With
+   "Toggle Screen-True Own Shells" on, the lag view draws the chosen
+   player's own shells at the present, as the player's own client drew
+   them, and every other shell at the old time. */
 static void lv_lagFindShellOwners(LvLagFrame *f) {
   const LvLagFrame *prev = NULL;
   LvShellPt prevPts[LV_LAG_SHELLS_MAX];
@@ -1449,10 +1462,15 @@ void lv_screenUpdate(updateType value) {
   if (lagFrame != NULL) {
     /* The lag view: the other tanks, the builders and the shells where the
        chosen player's screen showed them. The player's own client drew
-       its own shells at once, from its own tank, so those come from the
-       present frame (lv_lagViewFrame has checked the newest frame is the
-       playhead's). A shell with no clear owner stays at the old time. */
+       its own shells at once, from its own tank, so with "Toggle
+       Screen-True Own Shells" on those come from the present frame
+       (lv_lagViewFrame has checked the newest frame is the playhead's).
+       With it off they stay at the old time too. A shell with no clear
+       owner stays at the old time. */
     const LvLagFrame *now = &s_lagRing.frames[s_lagRing.newest];
+    const bool ownAtPresent = s_screenTrueShells;
+    /* TEMPORARY TEST TOGGLE (lv_early_blast.h): the early blasts. */
+    const bool earlyBlast = lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl);
     int i;
     lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
     lagShells = lv_shellsCreate();
@@ -1462,8 +1480,8 @@ void lv_screenUpdate(updateType value) {
     memset(hideUsed, 0, sizeof(hideUsed));
     for (i = 0; i < lagFrame->shellCount; i++) {
       const LvLagShell *sh = &lagFrame->shells[i];
-      if ((int) sh->owner != s_lagViewSlot) {
-        if (s_screenTrueShells && lv_earlyBlastIsExplFrame(sh->frame)) {
+      if (!ownAtPresent || (int) sh->owner != s_lagViewSlot) {
+        if (earlyBlast && lv_earlyBlastIsExplFrame(sh->frame)) {
           LvBlastPt e;
           bool hide = FALSE;
           int k;
@@ -1484,13 +1502,13 @@ void lv_screenUpdate(updateType value) {
         lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
       }
     }
-    for (i = 0; i < now->shellCount; i++) {
+    for (i = 0; i < now->shellCount && ownAtPresent; i++) {
       const LvLagShell *sh = &now->shells[i];
       if ((int) sh->owner == s_lagViewSlot) {
         lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
       }
     }
-    if (s_screenTrueShells) {
+    if (earlyBlast) {
       /* The early blasts, at the present where the own shells ended. */
       for (i = 0; i < LV_EARLY_BLAST_MAX; i++) {
         const LvEarlyBlast *b = &s_earlyBlasts[i];

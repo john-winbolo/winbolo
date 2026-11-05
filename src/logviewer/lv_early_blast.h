@@ -7,16 +7,20 @@
  *Name:          Log Viewer early blast (TEMPORARY TEST TOGGLE)
  *Filename:      lv_early_blast.h
  *Purpose:
- *  A temporary test toggle, "Toggle Screen-True Own Shells",
- *  to see an idea before the game has it: when a player's own
- *  shell ends, that player's client draws the explosion at once
- *  where its own shell stopped, and hides the server's later
- *  explosion of that shell. Remove this file, its calls in
- *  screen.c and the menu item when the test is done.
+ *  A temporary test toggle, "Toggle Screen-True Local Explosions
+ *  (Proposed Fix)", off by default, to show the issue and an idea
+ *  before the game has it: when a player's own shell ends, that
+ *  player's client draws the explosion at once where its own
+ *  shell stopped, and hides the server's later explosion of that
+ *  shell. Remove this file, its calls in screen.c and the menu
+ *  item when the test is done.
  *
- *  In the lag view the chosen player's own shells come from the
- *  present frame (lv_shell_owner.h) and every other shell and
- *  explosion from the old frame. With the toggle on:
+ *  It works only while the other lag view toggle, "Toggle
+ *  Screen-True Own Shells" (on by default), is on: that one draws
+ *  the chosen player's own shells from the present frame
+ *  (lv_shell_owner.h), and every other shell and explosion comes
+ *  from the old frame. The early blast starts where those
+ *  present-frame own shells end (lv_earlyBlastOn). With both on:
  *
  *  - An owned shell of the entry before that no shell of this
  *    entry continues has ended. Its early blast starts at this
@@ -52,6 +56,14 @@
 #include <stdint.h>
 
 #include "lv_shell_owner.h"
+
+/* Whether the early blast is drawn: "Toggle Screen-True Local Explosions"
+   (screenTrueExpl) is on, and so is "Toggle Screen-True Own Shells"
+   (screenTrueShells), as the early blast starts where the own shells drawn
+   from the present frame end. */
+static inline bool lv_earlyBlastOn(bool screenTrueShells, bool screenTrueExpl) {
+  return screenTrueShells && screenTrueExpl;
+}
 
 /* The explosion's frames: it starts at 8 (EXPLOSION_START) and goes down
    one each 3 game ticks of 20 ms (EXPLOAD_UPDATE_TIME). */
