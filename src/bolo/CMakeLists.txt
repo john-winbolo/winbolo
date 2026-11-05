@@ -73,6 +73,7 @@ add_library(bolo_static STATIC
     obs_builder.c
     overview_map.c
     pillbox.c
+    pool_render_host.c
     ping_display.c
     playername_validate.c
     players.c

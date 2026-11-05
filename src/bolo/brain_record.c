@@ -78,6 +78,29 @@ void brainRecordSetParts(bool viz, int poolMode) {
     g_poolMode = poolMode;
 }
 
+/* Pool block format (winbolods -bd-pool-format raw|json). RAW (the default)
+ * asks the brain for its cheap raw capture (brain.get_pool_breakdown_raw):
+ * the panel text is built later, from the recording, by pool_render.lua.
+ * JSON asks for the finished panel JSON, built in the brain on the tick, as
+ * every recording did before. A brain with no get_pool_breakdown_raw gives
+ * its JSON either way, and BrainTest reads both forms (a raw block starts
+ * with "WBPR1:", a JSON block with '{'). */
+static int g_poolFormat = BRAINREC_POOL_FORMAT_RAW;
+
+void brainRecordSetPoolFormat(int format) {
+    g_poolFormat = (format == BRAINREC_POOL_FORMAT_JSON)
+                   ? BRAINREC_POOL_FORMAT_JSON : BRAINREC_POOL_FORMAT_RAW;
+}
+
+int brainRecordGetPoolFormat(void) { return g_poolFormat; }
+
+const char *brainRecordPoolExpr(void) {
+    return (g_poolFormat == BRAINREC_POOL_FORMAT_JSON)
+        ? "return brain.get_pool_breakdown_json()"
+        : "return (brain.get_pool_breakdown_raw"
+          " or brain.get_pool_breakdown_json)()";
+}
+
 /* Worker-prefetched pool JSON, one slot per bot. Workers build the JSON in
  * parallel right after their bot's think (bot_manager runBotThinkJob); the
  * producer moves each string here in Stage 3; brainRecordTick consumes it
@@ -131,6 +154,17 @@ static double   g_pfSnapMs = 0, g_pfMapMs = 0, g_pfOvlMs = 0, g_pfPoolMs = 0;
 static double   g_pfThinkMs = 0;   /* sum of per-bot lastThinkMs */
 static uint64_t g_pfOvlCmds = 0, g_pfPoolBytes = 0;
 static uint32_t g_pfTicks = 0;
+/* The brain's pool build (capture or JSON), per bot, timed where it runs:
+ * on the bot's worker (prefetch) or inline in brainRecordTick. One slot per
+ * bot, so the parallel workers never write the same counter. */
+static double   g_pfPoolEvalMs[MAX_TANKS];
+static uint32_t g_pfPoolEvals[MAX_TANKS];
+
+void brainRecordAddPoolEvalMs(BYTE slot, double ms) {
+    if (slot >= MAX_TANKS) return;
+    g_pfPoolEvalMs[slot] += ms;
+    g_pfPoolEvals[slot]++;
+}
 
 static double perf_ms(uint64_t t0, uint64_t t1) {
     return (double)(t1 - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
@@ -152,12 +186,25 @@ static void perf_dump(uint32_t tick) {
     if (!g_perf) return;
     double wallS = perf_ms(g_perfWallStart, SDL_GetPerformanceCounter()) / 1000.0;
     double n = (double)(g_pfTicks ? g_pfTicks : 1);
+    double evalMs = 0;
+    uint32_t evals = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        evalMs += g_pfPoolEvalMs[i];
+        evals  += g_pfPoolEvals[i];
+        g_pfPoolEvalMs[i] = 0;
+        g_pfPoolEvals[i]  = 0;
+    }
+    /* pool_eval = mean ms of ONE bot's pool build (the raw capture, or the
+     * JSON with -bd-pool-format json); pool_fmt says which. */
     fprintf(g_perf,
         "PERF t=%u wall_s=%.2f eff_hz=%.1f think_ms=%.2f rec_snap=%.3f "
-        "rec_map=%.3f rec_ovl=%.3f rec_pool=%.3f ovl_cmds=%.0f pool_B=%.0f\n",
+        "rec_map=%.3f rec_ovl=%.3f rec_pool=%.3f ovl_cmds=%.0f pool_B=%.0f "
+        "pool_eval=%.3f pool_evals=%u pool_fmt=%s\n",
         tick, wallS, (double)g_pfTicks / (wallS > 0 ? wallS : 1),
         g_pfThinkMs / n, g_pfSnapMs / n, g_pfMapMs / n, g_pfOvlMs / n,
-        g_pfPoolMs / n, (double)g_pfOvlCmds / n, (double)g_pfPoolBytes / n);
+        g_pfPoolMs / n, (double)g_pfOvlCmds / n, (double)g_pfPoolBytes / n,
+        evals ? evalMs / (double)evals : 0.0, evals,
+        (g_poolFormat == BRAINREC_POOL_FORMAT_JSON) ? "json" : "raw");
     fflush(g_perf);
     g_pfSnapMs = g_pfMapMs = g_pfOvlMs = g_pfPoolMs = g_pfThinkMs = 0;
     g_pfOvlCmds = g_pfPoolBytes = 0;
@@ -577,8 +624,10 @@ void brainRecordTick(ServerSim *sim) {
             char *pj = g_poolStash[slot];
             g_poolStash[slot] = NULL;
             if (!pj) {
-                pj = serverSimBotEvalLuaString(sim, slot,
-                         "return brain.get_pool_breakdown_json()");
+                uint64_t _te0 = SDL_GetPerformanceCounter();
+                pj = serverSimBotEvalLuaString(sim, slot, brainRecordPoolExpr());
+                brainRecordAddPoolEvalMs(slot,
+                    perf_ms(_te0, SDL_GetPerformanceCounter()));
             }
             uint32_t plen = pj ? (uint32_t)strlen(pj) : 0;
             wr_u32(plen);

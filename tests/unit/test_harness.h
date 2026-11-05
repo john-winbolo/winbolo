@@ -1142,6 +1142,8 @@ int run_entity_record_seek_lands_on_the_right_liveness(void);
  * number, and the -brain-debug recording carries the same masks per frame. */
 int run_brain_removed_items_info_masks(void);
 int run_brain_removed_items_recording_masks(void);
+int run_pool_render_raw_matches_old_json(void);
+int run_pool_render_json_and_bad_blocks(void);
 
 /* The entity-sync control event (test_entity_sync.c). CTRL_ENTITY_SYNC
  * carries three 16-bit masks, one per item list, saying which indices hold
