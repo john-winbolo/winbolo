@@ -17,9 +17,14 @@
  * it is overdue by VOICE_JITTER_LATE_MS. Every case that wants a gap
  * concealed has to move the clock past that deadline first, which is what
  * jtPopOverdue below does.
+ *
+ * The cases at the end are about the audio after all: the edges of an
+ * utterance are faded so it neither starts nor stops on a step, and an
+ * utterance ending resets the decoder so the next starts from nothing.
  */
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "voice_core.h"
@@ -40,11 +45,12 @@ typedef struct {
     int     len;
 } EncodedFrame;
 
-static int encodeFrames(EncodedFrame *frames, int count) {
+static int encodeTone(EncodedFrame *frames, int count, double hz,
+                      double amplitude) {
     VoiceEncoder *enc;
     int16_t pcm[VOICE_FRAME_SAMPLES];
     double phase = 0.0;
-    const double phaseStep = 2.0 * 3.14159265358979323846 * TONE_HZ /
+    const double phaseStep = 2.0 * 3.14159265358979323846 * hz /
                              (double)VOICE_SAMPLE_RATE;
     int f, i;
 
@@ -55,7 +61,7 @@ static int encodeFrames(EncodedFrame *frames, int count) {
 
     for (f = 0; f < count; f++) {
         for (i = 0; i < VOICE_FRAME_SAMPLES; i++) {
-            pcm[i] = (int16_t)(sin(phase) * TONE_AMPLITUDE * 32767.0);
+            pcm[i] = (int16_t)(sin(phase) * amplitude * 32767.0);
             phase += phaseStep;
         }
         frames[f].len = voiceEncoderEncode(enc, pcm, frames[f].data,
@@ -68,6 +74,10 @@ static int encodeFrames(EncodedFrame *frames, int count) {
 
     voiceEncoderDestroy(enc);
     return 1;
+}
+
+static int encodeFrames(EncodedFrame *frames, int count) {
+    return encodeTone(frames, count, TONE_HZ, TONE_AMPLITUDE);
 }
 
 /* One pop, then the clock moves on by the frame it was asked for. */
@@ -298,5 +308,259 @@ int run_voice_jitter_undecodable_run(void) {
 
     voiceSpeakerDestroy(sp);
 
+    return 0;
+}
+
+/* The fade cases below play packets from the middle of a long tone rather
+ * than its start.  A stream's first frames decode quiet whatever the
+ * receiver does - the encoder's lookahead - so a ramp tested on them would
+ * pass with no ramp at all. */
+#define FADE_STREAM_FRAMES 16
+#define FADE_FIRST         10   /* first packet of the stream that is used */
+#define FADE_SPAN           60  /* samples averaged at each end of a ramp  */
+
+/* A loud, low tone.  Opus concealment of the quieter tone above has decayed
+ * to nothing by the time the speaker gives up, which would leave nothing for
+ * the give-up fade to act on; this one is still audible there. */
+#define LOUD_TONE_HZ        150.0
+#define LOUD_TONE_AMPLITUDE 0.9
+
+static int encodeLoud(EncodedFrame *frames, int count) {
+    return encodeTone(frames, count, LOUD_TONE_HZ, LOUD_TONE_AMPLITUDE);
+}
+
+/* Mean absolute value of n samples starting at start. */
+static double jtMeanAbs(const int16_t *pcm, int start, int n) {
+    double total = 0.0;
+    int i;
+    for (i = 0; i < n; i++) {
+        total += fabs((double)pcm[start + i]);
+    }
+    return total / (double)n;
+}
+
+/* Push three frames from FADE_FIRST on at seq base.. so the speaker primes. */
+static void jtPushPrime(VoiceSpeaker *sp, const EncodedFrame *frames,
+                        uint8_t base) {
+    int i;
+    for (i = 0; i < VOICE_JITTER_TARGET; i++) {
+        voiceSpeakerPush(sp, (uint8_t)(base + i), 0,
+                         frames[FADE_FIRST + i].data,
+                         frames[FADE_FIRST + i].len);
+    }
+}
+
+int run_voice_jitter_fade_in_on_prime(void) {
+    EncodedFrame frames[FADE_STREAM_FRAMES];
+    VoiceSpeaker *sp;
+    VoiceDecoder *ref;
+    int16_t pcm[VOICE_FRAME_SAMPLES];
+    int16_t expect[VOICE_FRAME_SAMPLES];
+    int16_t faded[VOICE_FRAME_SAMPLES];
+    uint32_t now = 0;
+    double head;
+    double rampEnd;
+    int i;
+
+    UT_ASSERT(encodeLoud(frames, FADE_STREAM_FRAMES));
+
+    sp = voiceSpeakerCreate();
+    UT_ASSERT(sp != NULL);
+    /* The speaker's decoder is new, so a new one here decodes the same
+     * packets to the same samples - the audio as it would be unfaded. */
+    ref = voiceDecoderCreate();
+    UT_ASSERT(ref != NULL);
+
+    jtPushPrime(sp, frames, 0);
+    UT_ASSERT(jtPop(sp, pcm, &now));
+    UT_ASSERT(voiceDecoderDecode(ref, frames[FADE_FIRST].data,
+                                 frames[FADE_FIRST].len, expect) ==
+              VOICE_FRAME_SAMPLES);
+
+    head = jtMeanAbs(pcm, 0, FADE_SPAN);
+    rampEnd = jtMeanAbs(pcm, VOICE_FADE_SAMPLES - FADE_SPAN, FADE_SPAN);
+    UT_ASSERT_MSG(abs(pcm[0]) <= 1, "first sample is %d, not silence", pcm[0]);
+    UT_ASSERT_MSG(head < rampEnd / 2.0,
+                  "no ramp: head %.1f against ramp end %.1f", head, rampEnd);
+
+    /* A new decoder's first frame already starts quiet, so the two checks
+     * above hold with or without a fade.  What shows the fade is the frame
+     * matching the unfaded decode with the ramp applied, sample for sample,
+     * inside the window, and the unfaded decode itself after it. */
+    memcpy(faded, expect, sizeof(faded));
+    voiceFadeApply(faded, VOICE_FADE_SAMPLES, 0.0f, 1.0f);
+    for (i = 0; i < VOICE_FADE_SAMPLES; i++) {
+        UT_ASSERT_MSG(pcm[i] == faded[i],
+                      "sample %d in the ramp: %d, faded decode %d", i, pcm[i],
+                      faded[i]);
+    }
+    for (i = VOICE_FADE_SAMPLES; i < VOICE_FRAME_SAMPLES; i++) {
+        UT_ASSERT_MSG(pcm[i] == expect[i],
+                      "sample %d past the ramp: %d, unfaded decode %d", i,
+                      pcm[i], expect[i]);
+    }
+
+    /* Only the first frame of the utterance is faded. */
+    UT_ASSERT(jtPop(sp, pcm, &now));
+    UT_ASSERT(voiceDecoderDecode(ref, frames[FADE_FIRST + 1].data,
+                                 frames[FADE_FIRST + 1].len, expect) ==
+              VOICE_FRAME_SAMPLES);
+    for (i = 0; i < VOICE_FRAME_SAMPLES; i++) {
+        UT_ASSERT_MSG(pcm[i] == expect[i],
+                      "second frame sample %d: %d, unfaded decode %d", i,
+                      pcm[i], expect[i]);
+    }
+
+    voiceDecoderDestroy(ref);
+    voiceSpeakerDestroy(sp);
+    return 0;
+}
+
+int run_voice_jitter_fade_out_before_marker(void) {
+    EncodedFrame frames[FADE_STREAM_FRAMES];
+    VoiceSpeaker *sp;
+    int16_t pcm[VOICE_FRAME_SAMPLES];
+    uint32_t now = 0;
+    double tail;
+    double beforeRamp;
+    int i;
+
+    UT_ASSERT(encodeLoud(frames, FADE_STREAM_FRAMES));
+
+    sp = voiceSpeakerCreate();
+    UT_ASSERT(sp != NULL);
+
+    /* Seqs 0..3 are speech and 4 is the marker, all held before the first
+     * pop, so the marker is in the buffer when 3 is played. */
+    for (i = 0; i < 5; i++) {
+        voiceSpeakerPush(sp, (uint8_t)i,
+                         i == 4 ? VOICE_FLAG_END_OF_UTTERANCE : 0,
+                         frames[FADE_FIRST + i].data,
+                         frames[FADE_FIRST + i].len);
+    }
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(jtPop(sp, pcm, &now), "no audio for seq %d", i);
+    }
+
+    /* pcm is now seq 3, the frame in front of the marker. */
+    tail = jtMeanAbs(pcm, VOICE_FRAME_SAMPLES - FADE_SPAN, FADE_SPAN);
+    beforeRamp = jtMeanAbs(pcm,
+                           VOICE_FRAME_SAMPLES - VOICE_FADE_SAMPLES - FADE_SPAN,
+                           FADE_SPAN);
+    UT_ASSERT_MSG(pcm[VOICE_FRAME_SAMPLES - 1] == 0,
+                  "last sample before the marker is %d",
+                  pcm[VOICE_FRAME_SAMPLES - 1]);
+    UT_ASSERT_MSG(tail < beforeRamp / 2.0,
+                  "no ramp: tail %.1f against %.1f before it", tail,
+                  beforeRamp);
+
+    UT_ASSERT(jtPop(sp, pcm, &now));   /* 4, the marker, ends the utterance */
+    UT_ASSERT(!jtPop(sp, pcm, &now));
+    now += VOICE_JITTER_LATE_MS;
+    UT_ASSERT(!jtPop(sp, pcm, &now));  /* nothing concealed after it either */
+
+    voiceSpeakerDestroy(sp);
+    return 0;
+}
+
+int run_voice_jitter_fade_out_on_give_up(void) {
+    EncodedFrame frames[FADE_STREAM_FRAMES];
+    VoiceSpeaker *sp;
+    int16_t pcm[VOICE_FRAME_SAMPLES];
+    uint32_t now = 0;
+    int loudest;
+    int i;
+
+    UT_ASSERT(encodeLoud(frames, FADE_STREAM_FRAMES));
+
+    sp = voiceSpeakerCreate();
+    UT_ASSERT(sp != NULL);
+
+    /* A whole buffer of real frames first - the last VOICE_JITTER_SLOTS
+     * packets of the stream - so concealment has a running signal to extend
+     * rather than the quiet start of a new decoder. */
+    for (i = 0; i < VOICE_JITTER_SLOTS; i++) {
+        const EncodedFrame *f =
+            &frames[FADE_STREAM_FRAMES - VOICE_JITTER_SLOTS + i];
+        voiceSpeakerPush(sp, (uint8_t)i, 0, f->data, f->len);
+    }
+    for (i = 0; i < VOICE_JITTER_SLOTS; i++) {
+        UT_ASSERT(jtPop(sp, pcm, &now));
+    }
+
+    /* The talker has gone with no marker - the case of a lost one.  Each
+     * missing frame is concealed once overdue, and the last of the run is
+     * the last frame this speaker plays. */
+    for (i = 0; i < VOICE_JITTER_MAX_PLC; i++) {
+        UT_ASSERT_MSG(jtPopOverdue(sp, pcm, &now),
+                      "stopped after %d concealed", i);
+    }
+    /* Concealment is still audible ahead of the ramp, so the zero at the
+     * end is the fade's doing and not the decay having got there first. */
+    loudest = 0;
+    for (i = 0; i < VOICE_FRAME_SAMPLES - VOICE_FADE_SAMPLES; i++) {
+        if (abs(pcm[i]) > loudest) {
+            loudest = abs(pcm[i]);
+        }
+    }
+    UT_ASSERT_MSG(loudest > 100,
+                  "concealment had already decayed to %d before the ramp",
+                  loudest);
+    UT_ASSERT_MSG(pcm[VOICE_FRAME_SAMPLES - 1] == 0,
+                  "last concealed frame ends at %d",
+                  pcm[VOICE_FRAME_SAMPLES - 1]);
+    UT_ASSERT(!jtPop(sp, pcm, &now));
+    now += VOICE_JITTER_LATE_MS;
+    UT_ASSERT(!jtPop(sp, pcm, &now));
+
+    voiceSpeakerDestroy(sp);
+    return 0;
+}
+
+int run_voice_jitter_decoder_reset_on_unprime(void) {
+    EncodedFrame frames[FADE_STREAM_FRAMES];
+    VoiceSpeaker *sp;
+    VoiceDecoder *ref;
+    int16_t pcm[VOICE_FRAME_SAMPLES];
+    int16_t expect[VOICE_FRAME_SAMPLES];
+    uint32_t now = 0;
+    int i;
+
+    UT_ASSERT(encodeFrames(frames, FADE_STREAM_FRAMES));
+
+    sp = voiceSpeakerCreate();
+    UT_ASSERT(sp != NULL);
+
+    /* A first utterance leaves the decoder full of history, and ends on a
+     * marker. */
+    for (i = 0; i < 4; i++) {
+        voiceSpeakerPush(sp, (uint8_t)i,
+                         i == 3 ? VOICE_FLAG_END_OF_UTTERANCE : 0,
+                         frames[i].data, frames[i].len);
+    }
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT(jtPop(sp, pcm, &now));
+    }
+    UT_ASSERT(!jtPop(sp, pcm, &now));
+
+    /* The next utterance's first packet decodes as it would on a new
+     * decoder.  The fade-in window is left out of the comparison: it is
+     * shaped on purpose. */
+    jtPushPrime(sp, frames, 50);
+    UT_ASSERT(jtPop(sp, pcm, &now));
+
+    ref = voiceDecoderCreate();
+    UT_ASSERT(ref != NULL);
+    UT_ASSERT(voiceDecoderDecode(ref, frames[FADE_FIRST].data,
+                                 frames[FADE_FIRST].len, expect) ==
+              VOICE_FRAME_SAMPLES);
+    for (i = VOICE_FADE_SAMPLES; i < VOICE_FRAME_SAMPLES; i++) {
+        UT_ASSERT_MSG(pcm[i] == expect[i],
+                      "sample %d: %d after unprime, new decoder %d", i,
+                      pcm[i], expect[i]);
+    }
+
+    voiceDecoderDestroy(ref);
+    voiceSpeakerDestroy(sp);
     return 0;
 }
