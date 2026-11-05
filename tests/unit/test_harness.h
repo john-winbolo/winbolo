@@ -2485,6 +2485,8 @@ int run_sim_rules_tank_collision_mac(void);
 int run_sim_rules_mac_halfway_heading(void);
 int run_sim_rules_tank_deep_sea_safe(void);
 int run_lgm_build_square_terrain_speed(void);
+/* shell_start_add in pillsTargetTankMove (test_pill_aim_start_add.c). */
+int run_pill_aim_lead_follows_shell_start_add(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);
