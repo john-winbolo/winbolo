@@ -427,6 +427,9 @@ STR_DLGLOBBY_BOTHOST_CONNECTED=connected
 STR_DLGLOBBY_BOTHOST_SYNCING_FMT=syncing {number}%
 STR_DLGLOBBY_BOTHOST_READY=ready
 STR_DLGLOBBY_BOTHOST_LATE=too slow, not used this game
+STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT=uploading recordings {number}%, {number2} of {number3} bots
+STR_DLGLOBBY_BOTHOST_REC_LOWDISK=not recording: low disk
+STR_DLGLOBBY_BOTHOST_REC_MERGING=merging recordings
 
 # Why Ready is off while a Bot Host gets the server's brain files ({number} = %)
 STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT=Bot Host syncing {number}%

@@ -276,6 +276,33 @@ typedef struct {
     uint32_t fileOffset;
     uint32_t fileSize;
     uint8_t *fileData;
+
+    /* Brain recordings of the host's bots (udp_server_botrec.c). */
+    uint32_t recSentSeq;      /* the block state last told to the host */
+    uint32_t recClearSent;    /* the cleardebug count last told to it */
+    bool     recUploadOwed;   /* an UPLOAD is to be sent */
+    bool     recUploadPaced;
+    uint8_t  recState;        /* BOT_HOST_REC_STATE_* the host reported */
+    uint8_t  recPercent;
+    uint8_t  recBotsDone;     /* UPLOADING: bots whose files are sent */
+    uint8_t  recBots;         /* UPLOADING: bots with files to send */
+    bool     recLowDiskLogged;
+    bool     recMergeWant;    /* a finished upload waits for the merge */
+    BulkReceiver recRecv;
+    /* The block being received: its staging folder, and the file open. */
+    char     recBlock[BOT_HOST_REC_BLOCK_LEN];
+    char     recStage[600];
+    bool     recBeside;       /* staged beside the session folder: no merge */
+    bool     recBad;          /* a piece was refused: the upload fails */
+    FILE    *recFile;
+    char     recFileName[96];
+    uint32_t recFileOffset;
+    uint32_t recFiles;        /* files finished */
+    uint64_t recBytes;        /* bytes written */
+    bool     recDoneOwed;     /* the host's DONE came; the bytes may not have */
+    uint32_t recDoneFiles;
+    uint32_t recDoneBytes;
+    uint32_t recDoneTick;
 } BotHostConn;
 
 /* Where one bot seat's brain runs.
@@ -314,6 +341,10 @@ typedef struct {
      * once its map download is done, a column range per tick. */
     bool     mineSeedDone;
     uint16_t mineSeedColumn;
+    /* The gen of the assign that placed the seat on its host (the one with
+     * the token): the hosted marker in brainrec.btr names it, and the
+     * host's recording file of the seat carries it too. */
+    uint16_t placeGen;
 } BotHostSeat;
 
 /* Server-side global state */
@@ -770,6 +801,29 @@ void serverBotHostsReset(void);
  * calls it. */
 void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
                            void *deliverCtx);
+/* Queue one control event on Bot Host h's control channel. */
+bool serverBotHostSendEvent(int h, const ControlEvent *evt);
+
+/* Bot Host brain recordings (udp_server_botrec.c). */
+/* CTRL_BOT_HOST_REC from host h. */
+void serverBotRecOnControl(int h, const ControlEvent *evt);
+/* Drain host h's CHANNEL_BULK: its recording pieces. */
+void serverBotRecDrainBulk(int h);
+/* Per tick, under the tick mutex: tell the hosts the block state, run and
+ * finish merges. inLobby: the server is in its lobby now. */
+void serverBotRecService(struct ServerSim *sim, bool inLobby);
+/* The server went back to its lobby: hosts send their finished blocks. */
+void serverBotRecOnLobby(void);
+/* A game started: uploads go on slowly. */
+void serverBotRecOnGameStart(void);
+/* Host h connected (inLobby: the server is in its lobby) or is going. */
+void serverBotRecHostConnected(int h, bool inLobby);
+void serverBotRecHostGone(int h);
+/* The rec state and percent for host h's lobby row. */
+void serverBotRecRow(int h, uint8_t *state, uint8_t *percent,
+                     uint8_t *botsDone, uint8_t *bots);
+/* True while host h sends or waits for a merge: it is not released. */
+bool serverBotRecBusy(int h);
 void serverSendServerEnglishBroadcast(struct ServerSim *sim,
                                       const char *message);
 void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,

@@ -163,6 +163,23 @@ void luaBrainsSetDebugParts(int print2_on, int pool_on, int viz_on, int jsonl_on
     s_bd_jsonl  = jsonl_on  ? 1 : 0;
 }
 
+void luaBrainsGetDebugParts(int *print2_on, int *pool_on, int *viz_on,
+                            int *jsonl_on) {
+    if (print2_on) *print2_on = s_bd_print2;
+    if (pool_on)   *pool_on   = s_bd_pool;
+    if (viz_on)    *viz_on    = s_bd_viz;
+    if (jsonl_on)  *jsonl_on  = s_bd_jsonl;
+}
+
+/* A second folder the sandboxed brains may open files in, besides their own
+ * directory: the Bot Host's recordings folder, where their print2 logs go.
+ * Empty: none. */
+static char s_extra_write_root[LUA_BRAINS_PATH_MAX];
+
+void luaBrainsSetExtraWriteRoot(const char *dir) {
+    SDL_strlcpy(s_extra_write_root, dir ? dir : "", sizeof(s_extra_write_root));
+}
+
 /* Set by --instr-profile. Captured as the BRAIN_INSTR_PROFILE Lua global at
  * brain init; when set, GoalHunter arms its sampling profiler around think. */
 static int s_instr_profile = 0;
@@ -502,8 +519,20 @@ static bool brain_under_root(const char *canonRoot, const char *canonPath) {
  * `out` and returns true on success. For a not-yet-existing file (write
  * mode) the parent directory is canonicalized instead, so new files under
  * the root are allowed while escapes are still rejected. */
+static bool brain_resolve_in_one_root(const char *root, const char *path,
+                                      char *out, size_t outlen);
+
+/* brain_resolve_in_one_root against the brain root, then against the extra
+ * root the host set (luaBrainsSetExtraWriteRoot), if any. */
 static bool brain_resolve_in_root(const char *root, const char *path,
                                   char *out, size_t outlen) {
+  if (brain_resolve_in_one_root(root, path, out, outlen)) return true;
+  if (s_extra_write_root[0] == '\0') return false;
+  return brain_resolve_in_one_root(s_extra_write_root, path, out, outlen);
+}
+
+static bool brain_resolve_in_one_root(const char *root, const char *path,
+                                      char *out, size_t outlen) {
   if (!path || !path[0]) return false;
 #ifdef _WIN32
   char  rootCanon[LUA_BRAINS_PATH_MAX];

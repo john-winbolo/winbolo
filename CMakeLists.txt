@@ -3256,6 +3256,7 @@ set(BOTHOST_SOURCES
     src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/bothost/bothost_main.c src/headless/headless_frontend.c
+    src/bothost/bothost_rec.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 file(GLOB BOTHOST_BSD_SOURCES src/bsd/*.c)
@@ -3291,7 +3292,8 @@ bolo_apply_include_rules(WinBoloBotHost runtime_only)
 # file reads bot and transport internals, as transport_udp_client.c does.
 bolo_grant_internal_source_access(WinBoloBotHost
     src/bolo/transport_udp_client.c
-    src/bothost/bothost_main.c)
+    src/bothost/bothost_main.c
+    src/bothost/bothost_rec.c)
 
 if(WIN32)
     target_link_libraries(WinBoloBotHost PRIVATE ws2_32 winmm user32)
@@ -4680,7 +4682,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_entity_sync.c
     tests/unit/test_entity_record.c
     tests/unit/test_brain_removed_items.c
-    src/bolo/brain_record_walk.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -4811,6 +4812,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_replay_version_compat.c
     # The brain recorder's own version check.
     tests/unit/test_brainrec_version.c
+    tests/unit/test_brain_record_host.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
     tests/unit/loopback_harness.c
@@ -6133,6 +6135,11 @@ set(_unit_test_names
     replay_v2_pill_health_nibble
     replay_v1_pill_health_nibble
     brainrec_version_rejects_old
+    brainrec_host_merge_by_tick
+    brainrec_host_merge_mid_block_move
+    brainrec_host_merge_missing_block
+    brainrec_host_path_checks
+    brainrec_host_rec_codec
     lv_tank_stocks_from_snapshot
     lv_team_colours_from_snapshot
     lv_team_colours_events

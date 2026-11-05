@@ -135,6 +135,34 @@ bool brainRecordIsEnabled(void);
  * per frame — the winbolods -braindebug default; ~1/botCount the cost,
  * no spike ticks), 2 = full per-bot per-tick capture. */
 void brainRecordSetParts(bool viz, int poolMode);
+void brainRecordGetParts(bool *viz, int *poolMode);
+
+/* Bot Host seats. fn answers true for a bot whose brain runs on a Bot
+ * Host, with the gen of the assign that placed it there and the host's
+ * name (32 bytes). The recorder then writes the hosted marker for it
+ * (brain_record_host.h) in place of an empty entry. NULL: no hosted bots. */
+typedef bool (*BrainRecordHostedFn)(BYTE slot, uint16_t *placeGen,
+                                    char *hostName);
+void brainRecordSetHostedInfoFn(BrainRecordHostedFn fn);
+
+/* === Container ==========================================================
+ * The file container of brainrec.btr and of the Bot Host's .hbr files
+ * (brain_record_io.c). Every reader and writer of those files uses these
+ * calls and never the compression library, so a change of container is
+ * made in one place. A writer's file read back after a flush, or after the
+ * writer was killed, reads up to its last flush. */
+typedef struct BrainRecFile BrainRecFile;
+BrainRecFile *brainRecFileOpenWrite(const char *path);
+BrainRecFile *brainRecFileOpenRead(const char *path);
+bool brainRecFileWrite(BrainRecFile *f, const void *p, size_t n);
+/* Bytes read (0 at the end), -1 on an error. */
+long brainRecFileRead(BrainRecFile *f, void *p, size_t n);
+/* True when exactly n bytes were read. */
+bool brainRecFileReadExact(BrainRecFile *f, void *p, size_t n);
+/* Make what is written so far readable from the file on disk. */
+bool brainRecFileFlush(BrainRecFile *f);
+/* Close (NULL is a no-op). False when the last bytes did not reach disk. */
+bool brainRecFileClose(BrainRecFile *f);
 
 /* Pool-JSON prefetch protocol (parallelizes the capture): a bot's worker
  * thread asks CaptureWanted right after its think and, when true, builds

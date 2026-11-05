@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <zlib.h>
 
 #include <SDL3/SDL.h>   /* SDL_GetPerformanceCounter for the perf log */
 
@@ -20,6 +19,7 @@
 #include "players.h"     /* players / struct playersObj: per-player alliance bitmap */
 #include "pillbox.h"     /* pillSetInTank — the pill flags byte */
 #include "bases.h"       /* basesIsActive — the base on-map mask */
+#include "brain_record_host.h" /* the per-bot body encoder, the hosted marker */
 
 #define BRAINREC_MAP_TILES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
 
@@ -28,7 +28,7 @@
  * by gzwrite (no raw buffering, no compress-at-end). g_sinceFlush throttles
  * gzflush so a hard kill loses at most ~1-2s while keeping a good ratio. */
 static bool     g_enabled  = false;
-static gzFile   g_gz       = NULL;
+static BrainRecFile *g_gz  = NULL;   /* the open brainrec.btr */
 static uint32_t g_sinceFlush = 0;
 static bool     g_failed   = false;   /* gave up opening (no dir / gzopen err) */
 static uint32_t g_lastTick = 0xFFFFFFFFu;
@@ -77,6 +77,18 @@ void brainRecordSetParts(bool viz, int poolMode) {
     g_recViz   = viz;
     g_poolMode = poolMode;
 }
+
+void brainRecordGetParts(bool *viz, int *poolMode) {
+    if (viz) *viz = g_recViz;
+    if (poolMode) *poolMode = g_poolMode;
+}
+
+/* Bot Host seats (brain_record_host.h): the server answers which bot runs on
+ * a host. g_body is the per-bot body scratch, reused every entry. */
+static BrainRecordHostedFn g_hostedFn = NULL;
+static BrainRecBuf         g_body;
+
+void brainRecordSetHostedInfoFn(BrainRecordHostedFn fn) { g_hostedFn = fn; }
 
 /* Worker-prefetched pool JSON, one slot per bot. Workers build the JSON in
  * parallel right after their bot's think (bot_manager runBotThinkJob); the
@@ -167,28 +179,9 @@ static void perf_dump(uint32_t tick) {
 
 /* Small write helpers — native byte order (same build both ends), streamed
  * through gzip. */
-static void wr_u8 (uint8_t v)  { gzwrite(g_gz, &v, 1); }
-static void wr_u16(uint16_t v) { gzwrite(g_gz, &v, (unsigned)sizeof v); }
-static void wr_u32(uint32_t v) { gzwrite(g_gz, &v, (unsigned)sizeof v); }
-static void wr_f32(float v)    { gzwrite(g_gz, &v, (unsigned)sizeof v); }
-static void wr_buf(const void *p, size_t n) { if (n) gzwrite(g_gz, p, (unsigned)n); }
-
-/* Write one overlay command in packed form: fixed numeric fields + a
- * length-prefixed text string (0 bytes when the command has no label, which is
- * ~99% of them). Replaces the raw 160-byte struct memcpy — same data, no dead
- * text padding. */
-static void wr_overlay_packed(const OverlayCmd *c) {
-    wr_u8((uint8_t)c->type);
-    wr_f32(c->x1); wr_f32(c->y1); wr_f32(c->x2); wr_f32(c->y2);
-    wr_f32(c->radius);
-    wr_u8(c->r); wr_u8(c->g); wr_u8(c->b); wr_u8(c->a);
-    wr_u8(c->anchor);
-    wr_u8(c->viz_idx);
-    uint8_t tl = 0;
-    while (tl < OVERLAY_TEXT_MAX && c->text[tl] != '\0') tl++;
-    wr_u8(tl);
-    if (tl) wr_buf(c->text, tl);
-}
+static void wr_u8 (uint8_t v)  { (void)brainRecFileWrite(g_gz, &v, 1); }
+static void wr_u32(uint32_t v) { (void)brainRecFileWrite(g_gz, &v, sizeof v); }
+static void wr_buf(const void *p, size_t n) { if (n) (void)brainRecFileWrite(g_gz, p, n); }
 
 void brainRecordSetEnabled(bool enabled) { g_enabled = enabled; }
 bool brainRecordIsEnabled(void)          { return g_enabled; }
@@ -268,7 +261,7 @@ static bool ensureOpen(ServerSim *sim) {
     /* Streaming gzip. "wb1" = fastest deflate level — the data (zero-padded
      * structs, repetitive JSON) is highly compressible, so level 1 keeps most
      * of the ratio while minimising per-tick CPU on the sim thread. */
-    g_gz = gzopen(path, "wb1");
+    g_gz = brainRecFileOpenWrite(path);
     if (!g_gz) {
         g_failed = true;
         fprintf(stderr, "brain_record: could not open '%s' for writing\n", path);
@@ -281,7 +274,7 @@ static bool ensureOpen(ServerSim *sim) {
     hdr.version = BRAINREC_VERSION;
     const char *mn = serverSimGetMapName(sim);
     if (mn) { strncpy(hdr.mapName, mn, sizeof(hdr.mapName) - 1); }
-    gzwrite(g_gz, &hdr, (unsigned)sizeof hdr);
+    (void)brainRecFileWrite(g_gz, &hdr, sizeof hdr);
 
     /* One-time legend: overlay viz_idx -> category name, so the loader can
      * label/filter recorded overlays. The blob is ONE length-prefixed string
@@ -328,8 +321,8 @@ static bool ensureOpen(ServerSim *sim) {
         }
         for (int i = 0; i < MAX_TANKS; i++) if (slotLegend[i]) free(slotLegend[i]);
         uint32_t llen = combined ? (uint32_t)n : 0u;
-        gzwrite(g_gz, &llen, (unsigned)sizeof llen);
-        if (llen) gzwrite(g_gz, combined, llen);
+        (void)brainRecFileWrite(g_gz, &llen, sizeof llen);
+        if (llen) (void)brainRecFileWrite(g_gz, combined, llen);
         free(combined);
         g_legendBytes = llen;
     }
@@ -365,41 +358,6 @@ static bool ensureOpen(ServerSim *sim) {
                     "(viz legend %u bytes, %d skipped viz across slots)\n",
             path, (unsigned)g_legendBytes, nskip);
     return true;
-}
-
-/* Write the compact goal-info block for one bot. */
-static void writeGoalInfo(ServerSim *sim, BYTE slot) {
-    BrainGoalInfo gi;
-    bool ok = serverSimGetBotGoalInfo(sim, slot, &gi);
-    if (!ok) {
-        /* empty kind + 0 candidates */
-        char empty[32]; memset(empty, 0, sizeof empty);
-        wr_buf(empty, 32);                 /* kind */
-        wr_u32(0); wr_u32(0); wr_u32(0);   /* mx, my, target_id */
-        wr_buf(empty, 32);                 /* substate */
-        wr_u16(0);                         /* numCandidates */
-        return;
-    }
-    wr_buf(gi.kind, 32);
-    wr_u32((uint32_t)gi.mx);
-    wr_u32((uint32_t)gi.my);
-    wr_u32((uint32_t)gi.target_id);
-    wr_buf(gi.substate, 32);
-
-    int nc = gi.num_candidates;
-    if (nc < 0) nc = 0;
-    if (nc > BRAIN_GOAL_MAX_CANDIDATES) nc = BRAIN_GOAL_MAX_CANDIDATES;
-    wr_u16((uint16_t)nc);
-    for (int i = 0; i < nc; i++) {
-        BrainRecCandidate c;
-        memset(&c, 0, sizeof c);
-        memcpy(c.desc, gi.candidates[i].desc, sizeof c.desc);
-        c.desc[sizeof c.desc - 1] = '\0';
-        c.cost         = gi.candidates[i].cost;
-        c.winner       = gi.candidates[i].winner ? 1 : 0;
-        c.phase_weight = gi.candidates[i].phase_weight;
-        wr_buf(&c, sizeof c);
-    }
 }
 
 /* Write the terrain block: keyframe (full map) or delta (changed tiles only).
@@ -527,66 +485,72 @@ void brainRecordTick(ServerSim *sim) {
         BYTE slot = (BYTE)i;
 
         wr_u8(slot);
+
+        /* A bot whose brain runs on a Bot Host: no brain here, so write the
+         * hosted marker (brain_record_host.h). The host's own records
+         * replace it when its files are merged after the game. */
+        {
+            uint16_t placeGen = 0;
+            char hostName[32];
+            hostName[0] = 0;
+            if (g_hostedFn != NULL && g_hostedFn(slot, &placeGen, hostName)) {
+                brainRecBufReset(&g_body);
+                brainRecBodyEncodeHosted(&g_body, placeGen, hostName,
+                                         serverSimGetLastProcessedInput(sim, slot));
+                wr_buf(g_body.data, g_body.len);
+                free(g_poolStash[slot]);
+                g_poolStash[slot] = NULL;
+                continue;
+            }
+        }
+
         double thinkMs = serverSimGetBotLastThinkMs(sim, slot);
         g_pfThinkMs += thinkMs;
-        wr_f32((float)thinkMs);
 
-        writeGoalInfo(sim, slot);
+        BrainGoalInfo gi;
+        bool haveGoal = serverSimGetBotGoalInfo(sim, slot, &gi);
 
         /* Overlay (visualizer) commands the brain emitted this tick, written
          * packed (variable-length), minus the skip-listed categories
          * (label_overlays etc.) which are dropped from disk entirely.
          * -bd-noviz: write an empty block (the brain also stops emitting,
-         * so ocount is 0 anyway — this keeps the file valid regardless). */
+         * so ocount is 0 anyway -- this keeps the file valid regardless). */
         uint64_t _tb0 = SDL_GetPerformanceCounter();
-        if (!g_recViz) {
-            wr_u32(0);
-        } else {
-            OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(sim, slot);
-            uint32_t ocount = (ovl && ovl->count > 0) ? (uint32_t)ovl->count : 0;
-            uint32_t kept = ocount;
-            /* This slot's own skip set when it has one, else the fallback. */
-            const bool *skip = (slot < MAX_TANKS && g_haveSkipSlot[slot]) ? g_skipVizSlot[slot]
-                             : (g_haveSkip ? g_skipViz : NULL);
-            if (skip && ocount) {
-                kept = 0;
-                for (uint32_t k = 0; k < ocount; k++)
-                    if (!skip[ovl->cmds[k].viz_idx]) kept++;
-            }
-            wr_u32(kept);
-            for (uint32_t k = 0; k < ocount; k++) {
-                if (skip && skip[ovl->cmds[k].viz_idx]) continue;
-                wr_overlay_packed(&ovl->cmds[k]);
-            }
-            g_pfOvlCmds += kept;
-        }
+        OverlayCmdBuffer *ovl = g_recViz ? serverSimGetBotOverlayCmds(sim, slot) : NULL;
+        /* This slot's own skip set when it has one, else the fallback. */
+        const bool *skip = (slot < MAX_TANKS && g_haveSkipSlot[slot]) ? g_skipVizSlot[slot]
+                         : (g_haveSkip ? g_skipViz : NULL);
         uint64_t _tb1 = SDL_GetPerformanceCounter();
-        g_pfOvlMs += perf_ms(_tb0, _tb1);
 
         /* Pool-breakdown JSON (what the BrainTest Pool Info panel renders).
-         * -bd-nopool: skip the per-bot Lua JSON build entirely — it's the
+         * -bd-nopool: skip the per-bot Lua JSON build entirely -- it's the
          * eval itself (string building + GC) that costs, not the bytes.
          * Round-robin mode captures ONE bot per frame. The string normally
          * arrives PREFETCHED from the bot's own worker thread (built in
-         * parallel right after its think — see runBotThinkJob), so this
+         * parallel right after its think -- see runBotThinkJob), so this
          * serial section only writes; the inline eval is the fallback for
          * a budget-killed think or a bot that skipped its job. */
-        if (!brainRecordPoolCaptureWanted(sim, slot)) {
-            wr_u32(0);
-        } else {
-            char *pj = g_poolStash[slot];
+        char *pj = NULL;
+        if (brainRecordPoolCaptureWanted(sim, slot)) {
+            pj = g_poolStash[slot];
             g_poolStash[slot] = NULL;
             if (!pj) {
                 pj = serverSimBotEvalLuaString(sim, slot,
                          "return brain.get_pool_breakdown_json()");
             }
-            uint32_t plen = pj ? (uint32_t)strlen(pj) : 0;
-            wr_u32(plen);
-            if (plen) wr_buf(pj, plen);
-            if (pj) free(pj);
-            g_pfPoolBytes += plen;
+            g_pfPoolBytes += pj ? strlen(pj) : 0;
         }
-        g_pfPoolMs += perf_ms(_tb1, SDL_GetPerformanceCounter());
+
+        /* The body is built by the encoder the Bot Host uses too, so a
+         * hosted bot's merged entries are byte for byte what this writes. */
+        brainRecBufReset(&g_body);
+        g_pfOvlCmds += brainRecBodyEncode(&g_body, (float)thinkMs,
+                                          haveGoal ? &gi : NULL, ovl, skip, pj);
+        wr_buf(g_body.data, g_body.len);
+        if (pj) free(pj);
+        uint64_t _tb2 = SDL_GetPerformanceCounter();
+        g_pfOvlMs  += perf_ms(_tb0, _tb1);
+        g_pfPoolMs += perf_ms(_tb1, _tb2);
     }
 
     /* ── Per-player alliance bitmaps (v5) ── MAX_TANKS uint32s, written every
@@ -624,7 +588,7 @@ void brainRecordTick(ServerSim *sim) {
      * gzip valid (a hard kill loses at most ~1-2s) without the ratio hit of
      * flushing every frame. A clean shutdown gzcloses for the final bytes. */
     if (++g_sinceFlush >= 64) {
-        gzflush(g_gz, Z_SYNC_FLUSH);
+        (void)brainRecFileFlush(g_gz);
         g_sinceFlush = 0;
     }
 
@@ -638,7 +602,7 @@ void brainRecordEndGame(void) {
      * opens a clean file anchored at its own first tick. Keeps g_enabled
      * (armed) and g_sessionDir (the host overwrites the dir per game). */
     if (g_gz) {
-        gzclose(g_gz);
+        (void)brainRecFileClose(g_gz);
         g_gz = NULL;
     }
     g_sinceFlush   = 0;
@@ -662,7 +626,7 @@ void brainRecordEndGame(void) {
 
 void brainRecordShutdown(void) {
     if (g_gz) {
-        gzclose(g_gz);
+        (void)brainRecFileClose(g_gz);
         g_gz = NULL;
     }
     g_sinceFlush = 0;

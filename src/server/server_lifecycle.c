@@ -794,6 +794,7 @@ static unsigned long long serverLifecycleFreeDiskBytes(void) {
  * block. Stamps the block start time. */
 static void serverLifecycleOpenBraindbgBlock(ServerSim *sim) {
   brainRecordEndGame();   /* close the prior block's .btr + reset recorder state */
+  transportUdpServerRecClose();   /* Bot Hosts: the prior block is finished */
 
   char dir[FILENAME_MAX];
   /* Optional label is appended AFTER the block number so the leading
@@ -821,6 +822,8 @@ static void serverLifecycleOpenBraindbgBlock(ServerSim *sim) {
         "local ok,p=pcall(require,'print2'); if ok and p.reset_log then p.reset_log() end");
   }
   s_braindbgBlockStartMs = SDL_GetTicks();
+  /* Bot Hosts record their bots into a block of the same name. */
+  transportUdpServerRecOpen(dir, (uint32_t)serverSimGetTick(sim));
   fprintf(stderr, "brain_record: recording block -> %s\n", dir);
 }
 
@@ -874,6 +877,7 @@ static void lifecycleCloseBraindbgBlock(void) {
   if (s_braindbgSessionOpen) {
     brainRecordEndGame();
     brainRecordSetSessionDir(NULL);
+    transportUdpServerRecClose();
     s_braindbgSessionOpen = false;
   }
 }

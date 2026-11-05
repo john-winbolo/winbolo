@@ -403,6 +403,13 @@ void luaBrainsSetProfile(int profile, int profile_log, int pool_viz);
  * stays on. print2 → _PRINT2_ENABLED, pool → BRAIN_POOL_VIZ,
  * viz → _BT_VIZ_COLLECT="off", jsonl → BRAIN_LOG_JSON/_JSONL_LOGGER_ENABLED. */
 void luaBrainsSetDebugParts(int print2_on, int pool_on, int viz_on, int jsonl_on);
+void luaBrainsGetDebugParts(int *print2_on, int *pool_on, int *viz_on,
+                            int *jsonl_on);
+
+/* A folder sandboxed brains may also open files in (NULL or "" for none).
+ * The Bot Host sets its recordings folder so print2 logs can be written
+ * there; nothing else sets it. */
+void luaBrainsSetExtraWriteRoot(const char *dir);
 
 /* Drives the BRAIN_INSTR_PROFILE Lua global. When set, GoalHunter runs its
  * sampling profiler around each think and writes per-bot p<N>_profile.tsv.

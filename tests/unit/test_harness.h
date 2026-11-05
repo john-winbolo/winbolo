@@ -1387,6 +1387,12 @@ int run_replay_v1_pill_health_nibble(void);
  * the frames are raw snapshot structs and the structs changed size. The check
  * every reader shares has to refuse it rather than walk it. */
 int run_brainrec_version_rejects_old(void);
+/* Bot Host brain recordings (test_brain_record_host.c). */
+int run_brainrec_host_merge_by_tick(void);
+int run_brainrec_host_merge_mid_block_move(void);
+int run_brainrec_host_merge_missing_block(void);
+int run_brainrec_host_path_checks(void);
+int run_brainrec_host_rec_codec(void);
 
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /

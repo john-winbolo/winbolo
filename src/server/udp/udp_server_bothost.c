@@ -76,6 +76,7 @@
 #include "bulk_transfer.h"   /* bulkSenderInit, bulkSenderReset, bulkReceiverInit */
 #include "brain_sync.h"      /* brainSyncBuildManifest, the Bot Host brain sync */
 #include "bot_manager.h"     /* botManager*, BotRemoteHooks */
+#include "brain_record.h"    /* brainRecordSetHostedInfoFn */
 #include "../../common/wb_log.h" /* WB_LOG_* */
 
 /* Ticks without a datagram from a Bot Host before it is dropped. The host
@@ -448,11 +449,15 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
     bodyLen = unpackU16(msg + 1);
     if ((size_t)bodyLen + 3 > len) return;
     if (msg[0] != CTRL_BOT_HOST_FILE_REQ && msg[0] != CTRL_BOT_HOST_SYNC &&
-        msg[0] != CTRL_BOT_HOST_SLOTS) {
+        msg[0] != CTRL_BOT_HOST_SLOTS && msg[0] != CTRL_BOT_HOST_REC) {
         return;
     }
     dec = transportControlCodecBodyDecoder((ControlEventType)msg[0]);
     if (dec == NULL || !dec(msg + 3, bodyLen, &evt)) return;
+    if (evt.type == CTRL_BOT_HOST_REC) {
+        serverBotRecOnControl(h, &evt);
+        return;
+    }
     if (evt.type == CTRL_BOT_HOST_SLOTS) {
         uint8_t rs = evt.u.botHostSlots.refuseSeat;
         if (evt.u.botHostSlots.slots != hc->slots) {
@@ -522,6 +527,10 @@ static void botHostFillRow(int h, ControlEvent *evt) {
     evt->u.botHostStatus.slots = hc->slots;
     SDL_strlcpy(evt->u.botHostStatus.name, hc->name,
                 sizeof(evt->u.botHostStatus.name));
+    serverBotRecRow(h, &evt->u.botHostStatus.recState,
+                    &evt->u.botHostStatus.recPercent,
+                    &evt->u.botHostStatus.recBotsDone,
+                    &evt->u.botHostStatus.recBots);
     if (botHostSynced(h)) {
         evt->u.botHostStatus.state = BOT_HOST_SYNC_READY;
         evt->u.botHostStatus.percent = 100;
@@ -593,6 +602,11 @@ static bool botHostSendEvent(int h, const ControlEvent *evt) {
         return false;
     }
     return true;
+}
+
+bool serverBotHostSendEvent(int h, const ControlEvent *evt) {
+    if (h < 0 || h >= MAX_BOT_HOSTS) return false;
+    return botHostSendEvent(h, evt);
 }
 
 /* Send a whole table as one event per entry; an empty table is one event
@@ -700,6 +714,14 @@ static void botSeatCurrent(ServerSim *sim, int s, char *brain, size_t brainSz,
     }
 }
 
+static bool botHostTokenEmpty(const uint8_t *token) {
+    int i;
+    for (i = 0; i < BOT_HOST_TOKEN_LEN; i++) {
+        if (token[i] != 0) return false;
+    }
+    return true;
+}
+
 /* Send a seat's assign and then its init table. reload asks the host for a
  * new brain now. */
 static void botSeatSendAssign(ServerSim *sim, int s, bool reload) {
@@ -716,6 +738,10 @@ static void botSeatSendAssign(ServerSim *sim, int s, bool reload) {
     evt.u.botHostAssign.ai     = seat->ai;
     evt.u.botHostAssign.team   = seat->team;
     evt.u.botHostAssign.gen    = seat->gen;
+    if (!botHostTokenEmpty(seat->token)) {
+        /* The assign that places the seat on its host. */
+        seat->placeGen = seat->gen;
+    }
     evt.u.botHostAssign.startTick = (uint32_t)serverSimGetTick(sim);
     evt.u.botHostAssign.brainVersion =
         botHostBrainVersion(botManagerGetBrainPath(sim, (BYTE)s));
@@ -837,6 +863,7 @@ static void botHostDrop(ServerSim *sim, int h, const char *why) {
             botSeatFallBack(sim, s, why, false);
         }
     }
+    serverBotRecHostGone(h);
     fprintf(stderr, "[bothost] Bot Host \"%s\" at %s gone (%s)\n", hc->name,
             botHostAddrStr(&hc->addr, addr, sizeof(addr)), why);
     WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] Bot Host \"%s\" gone (%s)",
@@ -957,6 +984,8 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
     WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] Bot Host \"%s\" connected from %s "
                 "slots=%u", hostName, addr, (unsigned)slots);
     serverSendBotHostAccept(freeIdx, sim);
+    serverBotRecHostConnected(freeIdx,
+                              serverSimGetState(sim) == serverStateLobby);
     /* The brain files go out now: the list first, then each file the host
      * asks for. */
     botHostRefreshManifest(sim, "Bot Host connected");
@@ -1272,8 +1301,11 @@ bool serverBotHostHandleChannel(const uint8_t *buf, int len,
     outLen = sizeof(out);
     while (channelReceive(&hc->channelMux, CHANNEL_CONTROL, out, &outLen)) {
         botHostOnControl(h, out, outLen);
+        if (!hc->connected) return true;
         outLen = sizeof(out);
     }
+    /* Its brain recordings come on CHANNEL_BULK. */
+    serverBotRecDrainBulk(h);
     return true;
 }
 
@@ -1352,6 +1384,9 @@ static void botHookReleased(void *ctx, BYTE seat) {
     botSeatReset(seat, false);
 }
 
+static bool botHostRecHostedInfo(BYTE slot, uint16_t *placeGen,
+                                 char *hostName);
+
 /* Turn Bot Hosts on or off to match the key and the list. */
 static void botHostApplySettings(ServerSim *sim) {
     BotRemoteHooks hooks;
@@ -1362,6 +1397,7 @@ static void botHostApplySettings(ServerSim *sim) {
     if (!want) {
         udpServer.botHostEnabled = false;
         botManagerSetRemoteHooks(sim, NULL);
+        brainRecordSetHostedInfoFn(NULL);
         return;
     }
     if (udpServer.botHostEnabled) return;
@@ -1378,9 +1414,26 @@ static void botHostApplySettings(ServerSim *sim) {
     hooks.roundStart = botHookRoundStart;
     hooks.released   = botHookReleased;
     botManagerSetRemoteHooks(sim, &hooks);
+    brainRecordSetHostedInfoFn(botHostRecHostedInfo);
     fprintf(stderr, "[bothost] Bot Host connections enabled\n");
     botHostRefreshManifest(sim, "start");
     udpServer.botHostQueryWhy = "server start";
+}
+
+/* brainrec.btr asks this per bot: a bot whose brain runs on a host gets the
+ * hosted marker, with the gen of the assign that placed it there. */
+static bool botHostRecHostedInfo(BYTE slot, uint16_t *placeGen,
+                                 char *hostName) {
+    const BotHostSeat *seat;
+    if (slot >= MAX_TANKS || botHostSim == NULL) return false;
+    seat = &udpServer.botSeats[slot];
+    if (seat->state != BOT_SEAT_REMOTE || seat->host < 0 ||
+        !botManagerIsRemote(botHostSim, slot)) {
+        return false;
+    }
+    *placeGen = seat->placeGen;
+    SDL_strlcpy(hostName, udpServer.botHosts[seat->host].name, 32);
+    return true;
 }
 
 /* Say who may connect: the key and the list combine. */
@@ -1461,6 +1514,7 @@ void serverBotHostsReset(void) {
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         botHostFileReset(&udpServer.botHosts[h]);
         bulkSenderReset(&udpServer.botHosts[h].bulk);
+        serverBotRecHostGone(h);
     }
     memset(udpServer.botHosts, 0, sizeof(udpServer.botHosts));
     memset(botHostRowSent, 0, sizeof(botHostRowSent));
@@ -1579,6 +1633,14 @@ void serverServiceBotHosts(ServerSim *sim) {
             for (h = 0; h < MAX_BOT_HOSTS; h++) {
                 udpServer.botHosts[h].skipGame = false;
             }
+            /* The hosts send their recordings of it now, at full speed. */
+            if (udpServer.botHostLastState != -1) serverBotRecOnLobby();
+        }
+        if (st == serverStateRunning &&
+            (udpServer.botHostLastState == (int)serverStateLobby ||
+             udpServer.botHostLastState == (int)serverStateCountdown)) {
+            /* A game starts: a host still sending goes on slowly. */
+            serverBotRecOnGameStart();
         }
         if (udpServer.botHostEnabled &&
             (st == serverStateLobby || st == serverStateRunning)) {
@@ -1750,6 +1812,7 @@ void serverServiceBotHosts(ServerSim *sim) {
         }
         botHostServiceFiles(sim, h);
     }
+    serverBotRecService(sim, st == serverStateLobby);
     botHostBroadcastRows();
 
     /* Finding hosts: ask the listed ones for free slots when the first
@@ -1778,7 +1841,8 @@ void serverServiceBotHosts(ServerSim *sim) {
             for (h = 0; h < MAX_BOT_HOSTS; h++) {
                 uint8_t kbuf[PACKET_HEADER_SIZE];
                 if (!udpServer.botHosts[h].connected ||
-                    botHostUsedSlots(h) > 0) {
+                    botHostUsedSlots(h) > 0 || serverBotRecBusy(h)) {
+                    /* A host sending recordings stays until it is done. */
                     continue;
                 }
                 packHeader(kbuf, PACKET_KICKED, 0);

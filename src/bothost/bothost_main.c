@@ -79,6 +79,7 @@
 #include "transport_udp.h"
 #include "transport_udp_internal.h"
 #include "../gui/lang.h"
+#include "bothost_rec.h"
 #include "../gui/clientmutex.h"
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../common/sentry_integration.h"
@@ -165,6 +166,10 @@ typedef struct {
     BotJobCtx   job;
     ClientSimBrainRelay relay;
 
+    /* The gen of the assign that placed the seat here: its recording file
+     * is named after it, and the server's marker for the bot carries it. */
+    uint16_t    placeGen;
+
     /* The bot connection's own input tick counter: two half-steps a think. */
     uint32_t    inputTick;
     uint32_t    statsTick;
@@ -246,6 +251,8 @@ typedef struct {
     int        lastSlotsSent;
 
     HostSync   sync;
+    /* Server-bound bulk: the brain recordings this host sends. */
+    BulkSender recBulk;
 
     /* Announcing while idle. */
     bool       announceDue;
@@ -418,7 +425,9 @@ static void ctlPump(HostServer *sv) {
     int frames;
     if (sv->state != CTL_CONNECTED) return;
     channelTick(&sv->mux, sv->muxTick++, sv->rttMs);
-    for (frames = 0; frames < 4; frames++) {
+    bulkSenderPump(&sv->recBulk, &sv->mux);
+    for (frames = 0; frames < (bulkSenderBusy(&sv->recBulk) ? 16 : 4);
+         frames++) {
         uint8_t buf[UDP_MAX_PAYLOAD];
         int len = channelBuildFrame(&sv->mux, buf + PACKET_HEADER_SIZE,
                                     UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
@@ -442,6 +451,25 @@ static void ctlSendEvent(HostServer *sv, const ControlEvent *evt) {
         fprintf(stderr, "[bothost] control channel to %s full; a message is "
                         "lost\n", sv->label);
     }
+}
+
+/* The recorder's way to the servers. */
+static void recIoSendEvent(int srv, const ControlEvent *evt) {
+    if (srv < 0 || srv >= serverCount) return;
+    if (servers[srv].state != CTL_CONNECTED) return;
+    ctlSendEvent(&servers[srv], evt);
+}
+
+static bool recIoBulkIdle(int srv) {
+    if (srv < 0 || srv >= serverCount) return false;
+    return servers[srv].state == CTL_CONNECTED &&
+           !bulkSenderBusy(&servers[srv].recBulk);
+}
+
+static bool recIoBulkSend(int srv, const BulkStreamHeader *h,
+                          const uint8_t *blob, uint32_t len) {
+    if (!recIoBulkIdle(srv)) return false;
+    return bulkSenderBegin(&servers[srv].recBulk, h, blob, len);
 }
 
 /* Tell the server the slots it may use, and turn down an assign when
@@ -820,6 +848,7 @@ static void seatRelayPing(void *ctx, BYTE fromPlayer, uint8_t kind,
 }
 
 static void seatDestroyBrain(HostSeat *hs) {
+    hostRecSeatGone((int)(hs - seats));
     if (hs->bot.brain.L != NULL || hs->bot.brain.running) {
         luaBrainInstanceDestroy(&hs->bot.brain);
     }
@@ -940,6 +969,7 @@ static void seatBuildBrain(HostSeat *hs) {
     }
     botRunnerWireBrain(&hs->bot);
     hs->bot.builtInit = hs->bot.initTable;
+    hostRecSeatBuilt((int)(hs - seats), hs->srv, hs->bot.brain.L);
     fprintf(stderr, "[bothost] bot %d \"%s\" of %s runs brain \"%s\" (ai %d)\n",
             (int)hs->seat, hs->name, servers[hs->srv].label, hs->brainName,
             (int)hs->ai);
@@ -980,6 +1010,7 @@ static void onAssign(HostServer *sv, const ControlEvent *evt) {
         hs->srv = srv;
         hs->seat = s;
         memcpy(hs->token, evt->u.botHostAssign.token, JOIN_BOT_SLOT_TOKEN_LEN);
+        hs->placeGen = evt->u.botHostAssign.gen;
         hs->wantBuild = true;
         if (!wasUsed) seatPrintCount();
     } else if (evt->u.botHostAssign.reload) {
@@ -1110,6 +1141,9 @@ static void ctlHandleControl(HostServer *sv, const uint8_t *msg, uint16_t len) {
         case CTRL_BOT_INIT_TABLE:    onInitTable(sv, &evt); break;
         case CTRL_BOT_HINT:          onHint(sv, &evt);      break;
         case CTRL_BOT_TEAM_MSG:      onTeamMsg(sv, &evt);   break;
+        case CTRL_BOT_HOST_REC:
+            hostRecOnEvent(serverIndex(sv), &evt);
+            break;
         default: break;
     }
 }
@@ -1129,6 +1163,8 @@ static void ctlDrop(HostServer *sv, const char *why) {
     fprintf(stderr, "[bothost] connection to %s ended (%s)\n", sv->label, why);
     clearSeats(serverIndex(sv), "connection to the server ended");
     syncReset(&sv->sync);
+    bulkSenderReset(&sv->recBulk);
+    hostRecServerDown(serverIndex(sv));
     svGoIdle(sv);
 }
 
@@ -1163,6 +1199,8 @@ static void ctlReceive(HostServer *sv) {
                     sv->lastPingMs = 0;
                     sv->lastSlotsSent = -1;
                     syncReset(&sv->sync);
+                    bulkSenderInit(&sv->recBulk);
+                    hostRecServerUp(serverIndex(sv), sv->label);
                     fprintf(stderr, "[bothost] connected to %s as Bot Host "
                                     "\"%s\" (%d slots free)\n",
                             sv->label, optName, poolFree());
@@ -1582,6 +1620,30 @@ static void hostTick(void) {
         hs->pingCount = 0;
     }
 
+    /* The brain recordings: each seat that thought, in the order the
+     * server would capture pools (round robin among one server's seats). */
+    for (i = 0; i < active; i++) {
+        HostSeat *hs = &seats[jobIndices[i]];
+        int k, rrIndex = 0, rrCount = 0;
+        if (!hs->used || hs->bot.brain.L == NULL || hs->job.wasKilled ||
+            hs->job.needRemove) {
+            continue;
+        }
+        for (k = 0; k < active; k++) {
+            const HostSeat *o = &seats[jobIndices[k]];
+            if (!o->used || o->srv != hs->srv) continue;
+            if (k < i) rrIndex++;
+            rrCount++;
+        }
+        hostRecSeatThink(jobIndices[i], hs->srv, hs->seat, hs->placeGen,
+                         hs->inputTick, hs->startTick + hs->inputTick / 2u,
+                         (float)hs->bot.lastThinkMs, hs->bot.brain.L,
+                         &hs->bot.brain.overlay,
+                         servers[hs->srv].sync.man.debugMode, rrIndex,
+                         rrCount);
+    }
+    hostRecService(nowMs());
+
     for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
         HostSeat *hs = &seats[i];
         if (!hs->used || hs->cs == NULL || !hs->bot.brain.running) continue;
@@ -1622,9 +1684,14 @@ static void printUsage(const char *prog) {
             "  --key KEY       the servers' -bothostkey, when they have one\n"
             "  --name NAME     the name the server operators and players see\n"
             "  --cachedir DIR  where the servers' brain files are kept\n"
-            "                  (default: bothost_cache next to this program)\n",
+            "                  (default: bothost_cache next to this program)\n"
+            "  --record-min-free-gb N  record the bots of a -brain-debug\n"
+            "                  server only while the cache's disk has N GB\n"
+            "                  free (default 50)\n",
             prog, BOT_HOST_DEFAULT_SERVER_PORT, BOT_HOST_DEFAULT_LISTEN_PORT);
 }
+
+static double optRecordMinFreeGb = 50.0;
 
 static bool parseArgs(int argc, char **argv) {
     int i;
@@ -1677,6 +1744,9 @@ static bool parseArgs(int argc, char **argv) {
             SDL_strlcpy(optName, v, sizeof(optName));
         } else if (strcmp(a, "--cachedir") == 0) {
             SDL_strlcpy(optCacheDir, v, sizeof(optCacheDir));
+        } else if (strcmp(a, "--record-min-free-gb") == 0) {
+            optRecordMinFreeGb = atof(v);
+            if (optRecordMinFreeGb < 0.0) optRecordMinFreeGb = 0.0;
         } else {
             fprintf(stderr, "unknown option %s\n", a);
             printUsage(argv[0]);
@@ -1816,6 +1886,20 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "[bothost]   server %s\n", servers[i].label);
     }
     fprintf(stderr, "[bothost] brain cache: %s\n", optCacheDir);
+    {
+        /* Brain recordings for -brain-debug servers. print2 starts off and
+         * is turned on per block (its log goes into the block's folder);
+         * the jsonl log is not recorded here. */
+        static const HostRecIo io = { recIoSendEvent, recIoBulkIdle,
+                                      recIoBulkSend };
+        char recRoot[600];
+        SDL_snprintf(recRoot, sizeof(recRoot), "%s/recordings", optCacheDir);
+        luaBrainsSetDebugParts(0, 1, 1, 0);
+        hostRecInit(optCacheDir, optName, optRecordMinFreeGb, &io);
+        luaBrainsSetExtraWriteRoot(recRoot);
+        fprintf(stderr, "[bothost] brain recordings: %s (only while %.0f GB "
+                        "are free)\n", recRoot, optRecordMinFreeGb);
+    }
 
     nextTick = nowMs();
     while (!hostQuit) {
@@ -1846,7 +1930,9 @@ int main(int argc, char *argv[]) {
 
     fprintf(stderr, "[bothost] stopping\n");
     clearSeats(-1, "the host stops");
+    hostRecShutdown();
     for (i = 0; i < serverCount; i++) {
+        bulkSenderReset(&servers[i].recBulk);
         ctlSendQuit(&servers[i]);
         ctlCloseSocket(&servers[i]);
         syncReset(&servers[i].sync);

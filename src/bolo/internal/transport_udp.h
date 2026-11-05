@@ -852,6 +852,21 @@ bool transportUdpServerSetBotHostKey(struct ServerSim *sim, const char *key);
 bool transportUdpServerSetBotHostList(struct ServerSim *sim, const char *arg);
 void transportUdpServerPrintBotHosts(void);
 
+/* -brain-debug session blocks, for the Bot Hosts' recordings: RecOpen when
+ * a block opens (dir is "debug_sessions/<name>", tick the server tick),
+ * RecClose when it closes. The hosts record their bots into a folder of the
+ * same name and send it after the game; the server merges it into dir. */
+void transportUdpServerRecOpen(const char *dir, uint32_t tick);
+void transportUdpServerRecClose(void);
+/* Console: "cleardebug" deletes debug_sessions/ except the open block and
+ * tells every Bot Host, now and when it next connects, to delete its
+ * recordings of this server. "brainmerge <session dir> <host dir>" merges a
+ * host's recordings by hand. Each writes one line into msg; false on a
+ * refusal or failure. */
+bool transportUdpServerClearDebug(char *msg, size_t msgLen);
+bool transportUdpServerBrainMerge(const char *sessionDir, const char *hostDir,
+                                  char *msg, size_t msgLen);
+
 /* Refresh the server's compressed map data and re-prime each connected
  * client for download (resend JOIN_ACCEPT, reset chunk tracking).
  * Callers run this before publishing CTRL_LOBBY_MAP_CHANGE so the

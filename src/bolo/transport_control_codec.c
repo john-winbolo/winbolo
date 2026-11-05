@@ -3712,9 +3712,10 @@ static bool decodeBotTeamMsgBody(const uint8_t *buf, size_t len,
 
 /* CTRL_BOT_HOST_STATUS body:
  *   [idx 1][connected 1][state 1][percent 1][used 1][slots 1][seats 2]
- *   [name str]. seats has bit n set for player n placed on the host.
- * A row with connected 0 carries an empty name. */
-#define BOT_HOST_STATUS_FIXED_LEN 8
+ *   [recState 1][recPercent 1][recBotsDone 1][recBots 1][name str]. seats
+ * has bit n set for player n placed on the host. A row with connected 0
+ * carries an empty name. */
+#define BOT_HOST_STATUS_FIXED_LEN 12
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeBotHostStatusBody(const ControlEvent *evt,
@@ -3732,6 +3733,10 @@ static EncodeResult encodeBotHostStatusBody(const ControlEvent *evt,
     buf[pos++] = evt->u.botHostStatus.slots;
     packU16(buf + pos, evt->u.botHostStatus.seats);
     pos += 2;
+    buf[pos++] = evt->u.botHostStatus.recState;
+    buf[pos++] = evt->u.botHostStatus.recPercent;
+    buf[pos++] = evt->u.botHostStatus.recBotsDone;
+    buf[pos++] = evt->u.botHostStatus.recBots;
     if (!botHostPutStr(buf, bufCap, &pos, evt->u.botHostStatus.name,
                        sizeof(evt->u.botHostStatus.name))) {
         return ENCODE_OVERFLOW;
@@ -3755,6 +3760,17 @@ static bool decodeBotHostStatusBody(const uint8_t *buf, size_t len,
     outEvt->u.botHostStatus.slots     = buf[pos++];
     outEvt->u.botHostStatus.seats     = unpackU16(buf + pos);
     pos += 2;
+    outEvt->u.botHostStatus.recState   = buf[pos++];
+    outEvt->u.botHostStatus.recPercent = buf[pos++];
+    outEvt->u.botHostStatus.recBotsDone = buf[pos++];
+    outEvt->u.botHostStatus.recBots     = buf[pos++];
+    if (outEvt->u.botHostStatus.recState > BOT_HOST_REC_STATE_MERGING ||
+        outEvt->u.botHostStatus.recPercent > 100 ||
+        outEvt->u.botHostStatus.recBots > MAX_TANKS ||
+        outEvt->u.botHostStatus.recBotsDone >
+            outEvt->u.botHostStatus.recBots) {
+        return false;
+    }
     if (outEvt->u.botHostStatus.idx >= BOT_HOST_STATUS_ROWS) return false;
     if (outEvt->u.botHostStatus.state > BOT_HOST_SYNC_LATE) return false;
     if (outEvt->u.botHostStatus.percent > 100) return false;
@@ -3875,6 +3891,85 @@ static bool decodeBotHostSlotsBody(const uint8_t *buf, size_t len,
     outEvt->u.botHostSlots.refuseSeat = buf[1];
     outEvt->u.botHostSlots.refuseGen  = unpackU16(buf + 2);
     return true;
+}
+
+/* CTRL_BOT_HOST_REC body:
+ *   [op 1][flags 1][state 1][percent 1][botsDone 1][botsTotal 1][a 4][b 4]
+ *   [block str]. block holds only [A-Za-z0-9_-]; it is empty for HOLD,
+ * UPLOAD, CLEAR, CLEARED and STATE. */
+#define BOT_HOST_REC_FIXED_LEN 14
+
+/* True when s is a session folder name a peer may use as one path part. */
+static bool botHostRecBlockOk(const char *s) {
+    size_t i;
+    for (i = 0; s[i] != '\0'; i++) {
+        char c = s[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostRecBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (bufCap < BOT_HOST_REC_FIXED_LEN) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botHostRec.op;
+    buf[pos++] = evt->u.botHostRec.flags;
+    buf[pos++] = evt->u.botHostRec.state;
+    buf[pos++] = evt->u.botHostRec.percent;
+    buf[pos++] = evt->u.botHostRec.botsDone;
+    buf[pos++] = evt->u.botHostRec.botsTotal;
+    packU32(buf + pos, evt->u.botHostRec.a);
+    pos += 4;
+    packU32(buf + pos, evt->u.botHostRec.b);
+    pos += 4;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botHostRec.block,
+                       sizeof(evt->u.botHostRec.block))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostRecBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < BOT_HOST_REC_FIXED_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_REC;
+    outEvt->u.botHostRec.op        = buf[pos++];
+    outEvt->u.botHostRec.flags     = buf[pos++];
+    outEvt->u.botHostRec.state     = buf[pos++];
+    outEvt->u.botHostRec.percent   = buf[pos++];
+    outEvt->u.botHostRec.botsDone  = buf[pos++];
+    outEvt->u.botHostRec.botsTotal = buf[pos++];
+    outEvt->u.botHostRec.a = unpackU32(buf + pos);
+    pos += 4;
+    outEvt->u.botHostRec.b = unpackU32(buf + pos);
+    pos += 4;
+    if (outEvt->u.botHostRec.op == 0 ||
+        outEvt->u.botHostRec.op > BOT_HOST_REC_OP_MAX) {
+        return false;
+    }
+    if (outEvt->u.botHostRec.percent > 100) return false;
+    if (outEvt->u.botHostRec.botsDone > MAX_TANKS ||
+        outEvt->u.botHostRec.botsTotal > MAX_TANKS) {
+        return false;
+    }
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botHostRec.block,
+                       sizeof(outEvt->u.botHostRec.block))) {
+        return false;
+    }
+    if (!botHostRecBlockOk(outEvt->u.botHostRec.block)) return false;
+    return pos == len;
 }
 
 /* CTRL_SCN_MARKER body: [id 1][kind 1][x 1][y 1][slot 1][colour 1]. */
@@ -4406,6 +4501,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_FILE_REQ]     = encodeBotHostFileReqBody,
     [CTRL_BOT_HOST_SYNC]         = encodeBotHostSyncBody,
     [CTRL_BOT_HOST_SLOTS]        = encodeBotHostSlotsBody,
+    [CTRL_BOT_HOST_REC]          = encodeBotHostRecBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -4473,6 +4569,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_FILE_REQ]     = decodeBotHostFileReqBody,
     [CTRL_BOT_HOST_SYNC]         = decodeBotHostSyncBody,
     [CTRL_BOT_HOST_SLOTS]        = decodeBotHostSlotsBody,
+    [CTRL_BOT_HOST_REC]          = decodeBotHostRecBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -4604,6 +4701,7 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_FILE_REQ:      return "CTRL_BOT_HOST_FILE_REQ";
     case CTRL_BOT_HOST_SYNC:          return "CTRL_BOT_HOST_SYNC";
     case CTRL_BOT_HOST_SLOTS:         return "CTRL_BOT_HOST_SLOTS";
+    case CTRL_BOT_HOST_REC:           return "CTRL_BOT_HOST_REC";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }
