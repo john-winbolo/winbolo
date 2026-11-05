@@ -1251,6 +1251,7 @@ int run_mac_bolo_first_start_lobby_off_uses_mac_pick(void);
 int run_mac_bolo_spawn_starts_off_engine_picks(void);
 int run_mac_bolo_setting_changed_after_attach(void);
 int run_mac_bolo_setting_changed_between_rounds(void);
+int run_mac_bolo_spawn_pick_keeps_enemies_off(void);
 int run_choose_start_lobby_arg_hand_picked(void);
 int run_choose_start_lobby_arg_team_side(void);
 int run_choose_start_lobby_arg_nil_without_reservation(void);

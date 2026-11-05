@@ -43,6 +43,11 @@
  *   run_mac_bolo_setting_changed_between_rounds
  *       round 1 on the defaults, back to the lobby, shell_cap and superboom
  *       off: round 2 plays the new picks.
+ *   run_mac_bolo_spawn_pick_keeps_enemies_off
+ *       the pick's own idea of near: an enemy tank two squares from a
+ *       start keeps a spawn off it (the classic rule allowed it at one),
+ *       a dying tank does not, a neutral pillbox within nine squares does,
+ *       and so does a dead enemy pillbox.
  *
  * on_choose_start(p, lobby): the engine hands each script the start the
  * lobby reserved for the tank, and game.lobby_start / game.lobby_side read
@@ -98,6 +103,8 @@
 #include "server/sim/server_sim_shared.h" /* serverSimSetActive */
 #include "scenario_host.h"         /* scenarioHostAttachMod,
                                     * scenarioHostRegisterScenarioLister */
+#include "server_sim_scenario.h"   /* serverSimApplyScenarioOp: the ops that
+                                    * put a tank or a pillbox beside a start */
 #include "sim_rules.h"             /* SimRules, simRulesClassic */
 #include "threads.h"
 #include "test_harness.h"
@@ -693,6 +700,273 @@ int run_mac_bolo_setting_changed_between_rounds(void) {
                   "round 2 with superboom off: big_explosion_threshold %d, "
                   "wanted the classic %d", (int)r->big_explosion_threshold,
                   (int)classic.big_explosion_threshold);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── The Mac Bolo pick's idea of near ─────────────────────────────── */
+
+/* Asks the mod where seat 0 spawns: the start (0-based), or -1 when it
+ * names none. The round's first tick has run, so the pick is the mod's. */
+static int mlsAsk(GameSim *gs) {
+    BYTE named = MAX_STARTS;
+    if (!gameSimChooseStart(gs, 0, &named) ||
+        named >= startsGetNumStarts(&gs->ss)) {
+        return -1;
+    }
+    return (int)named;
+}
+
+/* Asks the pick starts at a random start, so a start it may name turns up
+ * within a few dozen asks and a start it may not never does. */
+#define MLS_ASKS 64
+
+/* Whether start s (0-based) is under squares map squares from the world
+ * point wx, wy, measured as the mod measures it: a circle from the middle
+ * of the start's square. */
+static bool mlsNear(const GameSim *gs, int s, double wx, double wy,
+                    int squares) {
+    double dx = (double)gs->ss->item[s].x * 256.0 + 128.0 - wx;
+    double dy = (double)gs->ss->item[s].y * 256.0 + 128.0 - wy;
+    double r  = (double)squares * 256.0;
+    return dx * dx + dy * dy < r * r;
+}
+
+/* The middle of map square m, in world units. */
+static double mlsMiddle(BYTE m) {
+    return (double)m * 256.0 + 128.0;
+}
+
+static ScnOpResult mlsOp(ServerSim *sim, ScenarioOp *op) {
+    return serverSimApplyScenarioOp(sim, op, NULL);
+}
+
+/* Hands every pillbox to seat 0, so no pillbox is an enemy of the seat the
+ * asks are for and only what a case puts beside a start can be one. */
+static int mlsOwnAllPills(ServerSim *sim) {
+    BYTE n = serverSimGetPillCount(sim);
+    BYTE i;
+    for (i = 0; i < n; i++) {
+        ScenarioOp op;
+        memset(&op, 0, sizeof(op));
+        op.type = SCN_OP_PILL_SET_OWNER;
+        op.u.pillSetOwner.pill  = i;
+        op.u.pillSetOwner.owner = 0;
+        UT_ASSERT_MSG(mlsOp(sim, &op) == SCN_OP_OK,
+                      "setup: pillbox %u could not be handed to seat 0",
+                      (unsigned)(i + 1));
+    }
+    return 0;
+}
+
+/* Puts seat 1's tank two squares from start t (0-based), on the first of a
+ * few squares round it the teleport takes. */
+static int mlsTankBeside(ServerSim *sim, int t) {
+    static const int off[][2] = { { 2, 0 }, { 0, 2 }, { -2, 0 }, { 0, -2 },
+                                  { 2, 2 }, { -2, -2 } };
+    GameSim *gs = &sim->sim;
+    int      sx = (int)gs->ss->item[t].x;
+    int      sy = (int)gs->ss->item[t].y;
+    size_t   k;
+
+    for (k = 0; k < sizeof(off) / sizeof(off[0]); k++) {
+        int        x = sx + off[k][0];
+        int        y = sy + off[k][1];
+        ScenarioOp op;
+        if (x < 1 || x > 254 || y < 1 || y > 254) {
+            continue;
+        }
+        memset(&op, 0, sizeof(op));
+        op.type                 = SCN_OP_TANK_TELEPORT;
+        op.u.tankTeleport.slot  = 1;
+        op.u.tankTeleport.mode  = SCN_TELEPORT_SQUARE;
+        op.u.tankTeleport.x     = (BYTE)x;
+        op.u.tankTeleport.y     = (BYTE)y;
+        op.u.tankTeleport.start = SCN_NONE;
+        op.u.tankTeleport.dir   = SCN_NONE;
+        if (mlsOp(sim, &op) == SCN_OP_OK) {
+            return 0;
+        }
+    }
+    UT_ASSERT_MSG(false, "setup: no square two off start %d takes seat 1's "
+                  "tank", t + 1);
+    return -1;
+}
+
+/* Moves pillbox 1 to a square under six squares from start t (0-based) that
+ * takes a pillbox, and gives it to owner. */
+static int mlsPillBeside(ServerSim *sim, int t, BYTE owner) {
+    GameSim   *gs = &sim->sim;
+    int        sx = (int)gs->ss->item[t].x;
+    int        sy = (int)gs->ss->item[t].y;
+    int        dx;
+    int        dy;
+    bool       placed = false;
+    ScenarioOp op;
+
+    for (dy = -5; dy <= 5 && !placed; dy++) {
+        for (dx = -5; dx <= 5 && !placed; dx++) {
+            int x = sx + dx;
+            int y = sy + dy;
+            if (dx * dx + dy * dy >= 36 || x < 1 || x > 254 || y < 1 ||
+                y > 254) {
+                continue;
+            }
+            memset(&op, 0, sizeof(op));
+            op.type           = SCN_OP_PILL_MOVE;
+            op.u.pillMove.pill = 0;
+            op.u.pillMove.x    = (BYTE)x;
+            op.u.pillMove.y    = (BYTE)y;
+            placed = mlsOp(sim, &op) == SCN_OP_OK;
+        }
+    }
+    UT_ASSERT_MSG(placed, "setup: no square within five of start %d takes "
+                  "a pillbox", t + 1);
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_PILL_SET_OWNER;
+    op.u.pillSetOwner.pill  = 0;
+    op.u.pillSetOwner.owner = owner;
+    UT_ASSERT_MSG(mlsOp(sim, &op) == SCN_OP_OK,
+                  "setup: pillbox 1 could not be given to %u",
+                  (unsigned)owner);
+    return 0;
+}
+
+/* The number of starts the mod named in the baseline asks that are not
+ * under squares map squares from wx, wy: the starts it can still turn to.
+ * A case that blocks one start needs at least one of these, or the pick
+ * falls through to the first usable start, which could be the blocked one,
+ * as it does in Mac Bolo. */
+static int mlsStartsBeyond(GameSim *gs, const bool *seen, double wx,
+                           double wy, int squares) {
+    int n = startsGetNumStarts(&gs->ss);
+    int i;
+    int far = 0;
+    for (i = 0; i < n; i++) {
+        if (seen[i] && !mlsNear(gs, i, wx, wy, squares)) {
+            far++;
+        }
+    }
+    return far;
+}
+
+int run_mac_bolo_spawn_pick_keeps_enemies_off(void) {
+    ServerSim        *sim = NULL;
+    ScenarioHost     *h   = NULL;
+    GameSim          *gs;
+    ServerSimPillInfo pill;
+    ScenarioOp        op;
+    bool              seen[MAX_STARTS];
+    WORLD             wx = 0;
+    WORLD             wy = 0;
+    BYTE              west = 0;
+    BYTE              east = 0;
+    int               n;
+    int               i;
+    int               t = -1;
+    int               ask;
+    int               hits;
+
+    UT_ASSERT(mlsLobby(NULL, 0, &sim, &h, &west, &east) == 0);
+    gs = &sim->sim;
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+    serverSimTick(sim);
+    n = startsGetNumStarts(&gs->ss);
+    UT_ASSERT(mlsOwnAllPills(sim) == 0);
+
+    /* The starts the mod names as the round stands, with seat 1's tank on
+     * its lobby start. The target is one of them with no pillbox within
+     * nine squares, so that with nothing beside it the mod names it again. */
+    memset(seen, 0, sizeof(seen));
+    for (ask = 0; ask < MLS_ASKS * 4; ask++) {
+        int s = mlsAsk(gs);
+        UT_ASSERT_MSG(s >= 0, "the mod named no start (ask %d)", ask + 1);
+        seen[s] = true;
+    }
+    for (i = 0; i < n && t < 0; i++) {
+        BYTE k;
+        bool clear = seen[i];
+        for (k = 1; clear && k <= serverSimGetPillCount(sim); k++) {
+            if (serverSimGetPillInfo(sim, k, &pill) && !pill.in_tank &&
+                mlsNear(gs, i, mlsMiddle(pill.x), mlsMiddle(pill.y), 9)) {
+                clear = false;
+            }
+        }
+        if (clear) {
+            t = i;
+        }
+    }
+    UT_ASSERT_MSG(t >= 0, "setup: no start the mod names is clear of "
+                  "pillboxes");
+
+    /* An enemy tank two squares off the start. The classic start_tank_range
+     * is one square, so the pick as it was would have let the spawn land
+     * there; Mac Bolo keeps it off any start under sixteen squares. */
+    UT_ASSERT(mlsTankBeside(sim, t) == 0);
+    tankGetWorld(&gs->tanks[1], &wx, &wy);
+    UT_ASSERT_MSG(mlsStartsBeyond(gs, seen, (double)wx, (double)wy, 16) > 0,
+                  "setup: every start the mod names is within sixteen "
+                  "squares of seat 1's tank beside start %d", t + 1);
+    for (ask = 0; ask < MLS_ASKS; ask++) {
+        int s = mlsAsk(gs);
+        UT_ASSERT_MSG(s != t,
+                      "with an enemy tank two squares off start %d the mod "
+                      "named it (ask %d)", t + 1, ask + 1);
+    }
+
+    /* The tank dies there. A dying tank is near nothing, so the start is
+     * open again. */
+    memset(&op, 0, sizeof(op));
+    op.type              = SCN_OP_TANK_KILL;
+    op.u.tankKill.slot   = 1;
+    op.u.tankKill.killer = SCN_NONE;
+    op.u.tankKill.cause  = LAST_DEATH_BY_SCRIPT;
+    UT_ASSERT(mlsOp(sim, &op) == SCN_OP_OK);
+    hits = 0;
+    for (ask = 0; ask < MLS_ASKS * 4 && hits == 0; ask++) {
+        if (mlsAsk(gs) == t) {
+            hits++;
+        }
+    }
+    UT_ASSERT_MSG(hits > 0,
+                  "with seat 1's tank dead two squares off start %d the mod "
+                  "never named it in %d asks", t + 1, MLS_ASKS * 4);
+
+    /* A neutral pillbox within nine squares is an enemy one. */
+    UT_ASSERT(mlsPillBeside(sim, t, NEUTRAL) == 0);
+    UT_ASSERT(serverSimGetPillInfo(sim, 1, &pill));
+    UT_ASSERT_MSG(mlsStartsBeyond(gs, seen, mlsMiddle(pill.x),
+                                  mlsMiddle(pill.y), 9) > 0,
+                  "setup: every start the mod names is within nine squares "
+                  "of the pillbox beside start %d", t + 1);
+    for (ask = 0; ask < MLS_ASKS; ask++) {
+        int s = mlsAsk(gs);
+        UT_ASSERT_MSG(s != t,
+                      "with a neutral pillbox beside start %d the mod named "
+                      "it (ask %d)", t + 1, ask + 1);
+    }
+
+    /* And a dead enemy pillbox still counts: only a carried one is off the
+     * map. */
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_PILL_SET_OWNER;
+    op.u.pillSetOwner.pill  = 0;
+    op.u.pillSetOwner.owner = 1;
+    UT_ASSERT(mlsOp(sim, &op) == SCN_OP_OK);
+    memset(&op, 0, sizeof(op));
+    op.type                  = SCN_OP_PILL_SET_ARMOUR;
+    op.u.pillSetArmour.pill  = 0;
+    op.u.pillSetArmour.armour = 0;
+    UT_ASSERT(mlsOp(sim, &op) == SCN_OP_OK);
+    for (ask = 0; ask < MLS_ASKS; ask++) {
+        int s = mlsAsk(gs);
+        UT_ASSERT_MSG(s != t,
+                      "with a dead enemy pillbox beside start %d the mod "
+                      "named it (ask %d)", t + 1, ask + 1);
+    }
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

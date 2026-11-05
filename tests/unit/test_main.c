@@ -1049,6 +1049,7 @@ static const UnitTestEntry s_tests[] = {
     { "mac_bolo_spawn_starts_off_engine_picks", run_mac_bolo_spawn_starts_off_engine_picks },
     { "mac_bolo_setting_changed_after_attach", run_mac_bolo_setting_changed_after_attach },
     { "mac_bolo_setting_changed_between_rounds", run_mac_bolo_setting_changed_between_rounds },
+    { "mac_bolo_spawn_pick_keeps_enemies_off", run_mac_bolo_spawn_pick_keeps_enemies_off },
     { "choose_start_lobby_arg_hand_picked", run_choose_start_lobby_arg_hand_picked },
     { "choose_start_lobby_arg_team_side", run_choose_start_lobby_arg_team_side },
     { "choose_start_lobby_arg_nil_without_reservation", run_choose_start_lobby_arg_nil_without_reservation },
