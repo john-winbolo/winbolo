@@ -1405,8 +1405,8 @@
 #define STR_LV_MSG_PILL_CAPTURED            2869
 #define STR_LV_MSG_PILL_STOLEN              2870
 /* Log viewer: the hit area round each tank and builder on the map (Options) */
-#define STR_LV_HIT_BOXES                    3438
-#define STR_LV_HIT_BOXES_TIP                3439
+#define STR_LV_HIT_BOXES                    3470
+#define STR_LV_HIT_BOXES_TIP                3471
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128
