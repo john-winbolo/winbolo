@@ -250,8 +250,7 @@ static void perf_dump(uint32_t tick) {
     fprintf(g_perf,
         "PERF t=%u wall_s=%.2f eff_hz=%.1f think_ms=%.2f rec_snap=%.3f "
         "rec_map=%.3f rec_ovl=%.3f rec_pool=%.3f ovl_cmds=%.0f pool_B=%.0f "
-        "rec_dij=%.3f dij_B=%.0f pool_eval=%.3f pool_evals=%u pool_fmt=%s
-",
+        "rec_dij=%.3f dij_B=%.0f pool_eval=%.3f pool_evals=%u pool_fmt=%s\n",
         tick, wallS, (double)g_pfTicks / (wallS > 0 ? wallS : 1),
         g_pfThinkMs / n, g_pfSnapMs / n, g_pfMapMs / n, g_pfOvlMs / n,
         g_pfPoolMs / n, (double)g_pfOvlCmds / n, (double)g_pfPoolBytes / n,
