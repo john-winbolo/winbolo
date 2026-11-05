@@ -153,6 +153,25 @@ bool transportUdpServerTestDownloadComplete(int slot) {
     return udpServer.mapDownload[slot].downloadComplete;
 }
 
+bool transportUdpServerTestHasHadMap(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return false;
+    return udpServer.mapDownload[slot].hasHadMap;
+}
+
+void transportUdpServerTestVoiceSlotStats(int slot, uint32_t *outAccepted,
+                                          uint32_t *outDropNotInGame,
+                                          uint32_t *outForwarded) {
+    if (slot < 0 || slot >= MAX_TANKS) {
+        if (outAccepted)      *outAccepted      = 0;
+        if (outDropNotInGame) *outDropNotInGame = 0;
+        if (outForwarded)     *outForwarded     = 0;
+        return;
+    }
+    if (outAccepted)      *outAccepted      = udpServer.voiceSlot[slot].accepted;
+    if (outDropNotInGame) *outDropNotInGame = udpServer.voiceSlot[slot].dropNotInGame;
+    if (outForwarded)     *outForwarded     = udpServer.voiceSlot[slot].forwarded;
+}
+
 uint32_t transportUdpServerGetMapEventDrops(int slot) {
     if (slot < 0 || slot >= MAX_TANKS) return 0;
     return udpServer.mapEventQueueDrops[slot];

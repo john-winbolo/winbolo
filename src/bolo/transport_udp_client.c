@@ -5746,7 +5746,15 @@ void transportUdpClientSendVoice(Transport *t, const uint8_t *opus,
 
     if (t == NULL || t->ctx == NULL) return;
     c = (TransportUdpClientCtx *)t->ctx;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    /* A lobby map change re-joins and re-downloads, but the player is still
+     * in the room, and the server carries voice for any slot that has had a
+     * map. So a client re-joining after a map change keeps talking: the
+     * frames queued while it waits for the re-sent JOIN_ACCEPT sit in the
+     * voice ring until the download's per-tick channel frame carries them. */
+    bool rejoining = c->joinedOnce &&
+                     (c->joinState == UDP_CLIENT_JOINING ||
+                      c->joinState == UDP_CLIENT_DOWNLOADING_MAP);
+    if (c->joinState != UDP_CLIENT_CONNECTED && !rejoining) return;
 
     /* The caller's flags byte goes out as it stands.  The only bit defined
      * is VOICE_FLAG_END_OF_UTTERANCE, which the sender sets on the frame

@@ -368,6 +368,7 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
             /* Ensure map download is considered complete so snapshots
              * are sent during the game even if a final chunk ack was lost. */
             udpServer.mapDownload[i].downloadComplete = TRUE;
+            udpServer.mapDownload[i].hasHadMap = true;
             /* This force-completes the download without serverInitMapDownload,
              * so clear any in-flight resync explicitly — otherwise the send
              * gate above would keep holding this slot's map events forever.

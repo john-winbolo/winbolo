@@ -219,6 +219,7 @@ static void serverCompleteMapTransferIfAcked(ServerSim *sim, int slot) {
 
     if (dl->xferKind == MAP_XFER_DOWNLOAD) {
         dl->downloadComplete = TRUE;
+        dl->hasHadMap = true;
         fprintf(stderr, "[UDP SERVER] Client %d map download complete\n", slot);
     } else { /* MAP_XFER_RESYNC */
         dl->resyncInProgress = FALSE;
@@ -316,6 +317,7 @@ void serverCleanupMapDownload(int slot) {
         dl->compressedMap = NULL;
     }
     dl->downloadComplete = FALSE;
+    dl->hasHadMap = false;
     dl->xferKind = MAP_XFER_NONE;
     dl->xferBegun = false;
     dl->readySeen = false;
