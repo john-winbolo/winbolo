@@ -2994,6 +2994,10 @@ it is played far.
   `shell_life` times `gunsight_min`, so the shortest shot still travels; and
   half of `shell_life` times `gunsight_max`, less `shell_start_add`, plus 1,
   at most 255, so the longest shot's life still fits its byte.
+- `shell_life` times `pill_fire_length`, with any fraction dropped, less
+  `shell_start_add`, plus 1, at most 255, so a pillbox's shot fits the same
+  byte. At the classic values that is a `shell_life` of at most 30, or a
+  `pill_fire_length` of at most 32.375.
 
 The detail a refusal carries names both sides with their numbers.
 

@@ -488,7 +488,9 @@ int run_sim_rules_validate_ranges(void) {
        start offset has to come down to what one tick of that shortest shot
        can pay for. At the high end the budget has to stay inside the BYTE
        the shell record keeps it in, which pins shell_life down as the
-       gunsight opens and pins the gunsight in as shell_life grows. */
+       gunsight opens and pins the gunsight in as shell_life grows. A
+       pillbox's shot fills the same BYTE, so shell_life at the top of its
+       range brings pill_fire_length down to its floor of half a square. */
     SR_RANGE_INT_WITH(gunsight_min, 1, 255,
                       t.shell_start_add = 0,
                       t.gunsight_max = 255; t.shell_life = 1);
@@ -497,7 +499,8 @@ int run_sim_rules_validate_ranges(void) {
                       t.shell_life = 1; t.shell_start_add = 0);
     SR_RANGE_INT_WITH(shell_life, 1, 255,
                       t.shell_start_add = 0,
-                      t.gunsight_max = 1; t.gunsight_min = 1);
+                      t.gunsight_max = 1; t.gunsight_min = 1;
+                      t.pill_fire_length = 0.5f);
     /* shell_start_add has no ceiling of its own — RULE_INT_MIN gives it only
        a floor — so the sweep uses the largest offset any legal table can
        carry, which is what the shortest-shot pair allows at the top of every
@@ -2069,10 +2072,35 @@ int run_sim_rules_pairs(void) {
     /* And at the longest shot the budget still has to fit the BYTE the shell
        record stores it in. At the classic gunsight_max of 14 the budget is
        7 per point of shell_life, so 37 lands on 255 exactly and 38 is one
-       past it. */
+       past it. A pillbox's 8.5 squares would wrap at 37, so its length
+       comes down to 7 for the case that passes: 1 + 37*7 - 5 is 255 too. */
     SR_PAIR_REFUSED(t.shell_life = 38, "shell_life", "gunsight_max");
-    SR_PAIR_OK(t.shell_life = 37,
+    SR_PAIR_OK(t.shell_life = 37; t.pill_fire_length = 7.0f,
                "the longest shot whose budget still fits a byte");
+
+    /* A pillbox's shot goes into the same BYTE, with pill_fire_length as its
+       length. At the classic 8.5 squares, shell_life 30 is 1 + 255 - 5 = 251
+       and 31 is 259; at the classic shell_life of 8, 32.375 squares lands on
+       255 exactly and 32.5 is 256. */
+    SR_PAIR_REFUSED(t.shell_life = 31, "shell_life", "pill_fire_length");
+    SR_PAIR_OK(t.shell_life = 30,
+               "a shell_life whose pillbox budget still fits a byte");
+    SR_PAIR_REFUSED(t.pill_fire_length = 32.5f, "shell_life",
+                    "pill_fire_length");
+    SR_PAIR_OK(t.pill_fire_length = 32.375f,
+               "the longest pillbox shot whose budget still fits a byte");
+    /* All three are asked together: a shorter pillbox shot, or a shell that
+       starts further out, makes room for a shell_life the classic table
+       refuses. */
+    SR_PAIR_OK(t.shell_life = 31; t.pill_fire_length = 8.0f,
+               "shell_life 31 with an 8-square pillbox shot");
+    SR_PAIR_OK(t.shell_life = 31; t.shell_start_add = 9,
+               "shell_life 31 with the shell starting 9 ticks out");
+    /* The product is truncated, as shellLifeTicks truncates it: 8 * 32.4 is
+       259.2, which counts as 259 and lands on 255, where rounding up would
+       have refused it. */
+    SR_PAIR_OK(t.pill_fire_length = 32.4f,
+               "a product truncated the way shellLifeTicks does it");
 
     /* A pair refuses a table; it never rewrites one. The classic values come
      * back unchanged from a call that passes and from one that does not. */
