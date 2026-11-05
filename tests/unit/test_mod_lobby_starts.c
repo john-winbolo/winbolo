@@ -843,13 +843,13 @@ static int mlsStartsBeyond(GameSim *gs, const bool *seen, double wx,
                            double wy, int squares) {
     int n = startsGetNumStarts(&gs->ss);
     int i;
-    int far = 0;
+    int beyond = 0;
     for (i = 0; i < n; i++) {
         if (seen[i] && !mlsNear(gs, i, wx, wy, squares)) {
-            far++;
+            beyond++;
         }
     }
-    return far;
+    return beyond;
 }
 
 int run_mac_bolo_spawn_pick_keeps_enemies_off(void) {
