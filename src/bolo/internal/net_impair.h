@@ -60,6 +60,9 @@ typedef struct {
     uint32_t lossPercent;   /* 0-100 */
     uint32_t burstLossLen;  /* consecutive drops per loss event; min 1 */
     uint32_t dupPercent;    /* 0-100; chance a queued packet is duplicated */
+    bool     lanOnly;       /* the caller impairs LAN peers only (see
+                             * netImpairAddrIsLan); the layer itself does
+                             * not read it */
 } NetImpairConfig;
 
 #define NET_IMPAIR_QUEUE_SIZE 512
@@ -85,10 +88,17 @@ typedef struct {
 /* Zero the layer and leave it disabled. */
 void netImpairInit(NetImpair *ni);
 
-/* Parse "delay=75,jitter=30,loss=2,burst=2,dup=5".  All keys optional;
- * defaults 0/0/0/1/0.  Unknown key or malformed value returns false (out
- * unspecified).  loss and dup clamp to 0-100; burst clamps to a minimum of 1. */
+/* Parse "delay=75,jitter=30,loss=2,burst=2,dup=5,lanonly=1".  All keys
+ * optional; defaults 0/0/0/1/0/0.  Unknown key or malformed value returns
+ * false (out unspecified).  loss and dup clamp to 0-100; burst clamps to a
+ * minimum of 1; lanonly must be 0 or 1. */
 bool netImpairParseConfig(const char *spec, NetImpairConfig *out);
+
+/* True when an IPv4 address (host byte order) is loopback (127.0.0.0/8)
+ * or private (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).  With lanonly=1
+ * the server impairs only peers for which this is true.  The transport is
+ * IPv4 only, so there is no IPv6 form. */
+bool netImpairAddrIsLan(uint32_t ipHostOrder);
 
 /* Enable with the given config (re-initialises queue state). */
 void netImpairEnable(NetImpair *ni, const NetImpairConfig *cfg);
