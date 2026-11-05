@@ -356,6 +356,9 @@ int run_sim_rules_classic_defaults(void) {
     /* Tank hit mines */
     SR_EQ(tank_hit_sets_off_mines, 0);
 
+    /* Dead pillbox builder speed */
+    SR_EQ(man_dead_pill_terrain_speed, 0);
+
     return 0;
 }
 

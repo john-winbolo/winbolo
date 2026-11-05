@@ -119,11 +119,13 @@ struct BrainPathfinder {
    * ocean. Computed once per map in brainPathfinderSetMap. */
   uint8_t  coastal_boat_mask[65536];
   const BYTE *coastal_mask_map;       /* map ptr the mask was computed for (recompute on change) */
-  /* LGM-impassable tiles (1 = blocked). Stamped by the brain each tick with
-   * enemy bases the LGM can't walk onto — the engine's mapGetManSpeed returns
-   * speed 0 there (basesCantDrive: non-ally, non-neutral, armour > capture),
-   * but the brain LGM sim only sees terrain type (refbase = walkable), so it
-   * would otherwise march the LGM straight into an enemy base. */
+  /* LGM overlay: 0 = the terrain decides, BRAIN_PF_LGM_BLOCKED = a wall,
+   * BRAIN_PF_LGM_ROAD = road speed (a dead pillbox). Stamped by the brain
+   * each tick with live pills and enemy bases the LGM can't walk onto —
+   * the engine's mapGetManSpeed returns speed 0 there (basesCantDrive:
+   * non-ally, non-neutral, armour > capture), but the brain LGM sim only
+   * sees terrain type (refbase = walkable), so it would otherwise march the
+   * LGM straight into an enemy base. */
   uint8_t  lgm_block[65536];
   /* The man's speed per terrain type (0..15) and on his blessed tile, for
    * the LGM walk sim. brainPathfinderCreate seeds them with the classic
@@ -626,10 +628,18 @@ int brainPathfinderLgmWalkPathMap(BrainPathfinder *pf,
                                    int maxTicks, int stuckTicks,
                                    WORLD *pathX, WORLD *pathY, int pathMax);
 
-/* LGM-impassable overlay: clear all, then mark (mx,my) tiles the LGM can't
- * cross (enemy bases). Brain stamps these each tick before LGM reach checks. */
+/* LGM overlay: clear all, then mark (mx,my) tiles the LGM can't cross
+ * (live pills, enemy bases) and tiles he crosses at road speed whatever the
+ * terrain (dead pills: mapGetManSpeed with man_dead_pill_terrain_speed 0).
+ * Brain stamps these each tick before LGM reach checks. A blocked mark is
+ * not overwritten by a road mark. */
+#define BRAIN_PF_LGM_BLOCKED 1
+#define BRAIN_PF_LGM_ROAD    2
+/* The brain map's terrain type for road: the lgm_man_speed index. */
+#define BRAIN_PF_TERRAIN_ROAD 4
 void brainPathfinderClearLgmBlock(BrainPathfinder *pf);
 void brainPathfinderSetLgmBlock(BrainPathfinder *pf, BYTE mx, BYTE my);
+void brainPathfinderSetLgmRoad(BrainPathfinder *pf, BYTE mx, BYTE my);
 
 /* The man's walk speed on terrain `type` (0..15), or on his blessed tile when
  * `type` is -1, for every LGM walk sim above. Speed is clamped to 0..255.

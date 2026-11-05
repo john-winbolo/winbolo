@@ -2838,6 +2838,7 @@ they are impassable by terrain type rather than by having no speed.
 | `man_speed_boat` | 16 | 0 to 63 | On a boat. |
 | `man_speed_deep_sea` | 0 | 0 to 63 | In deep sea. |
 | `man_speed_refuel_base` | 16 | 0 to 63 | On a refuelling base. Also the speed he walks at inside the boat boxes below, and on a square he is building on that would otherwise stop him. |
+| `man_dead_pill_terrain_speed` | 0 | 0 to 1 | Whether a builder on the square of a dead pillbox walks at the speed of the terrain under it. 0, the classic table, is the Mac Bolo way: the square of a dead pillbox walks at `man_speed_road`, whatever the pillbox stands on, so a dead pillbox on swamp, crater, rubble or forest is as fast to reach and cross as a road, and one on a river or deep sea can be walked onto. 1 is the way WinBolo 2.1 played: the square walks at the speed of the terrain under the pillbox. A live pillbox is not changed by either value, and the tank's speed is not changed. |
 
 **Shells.**
 
