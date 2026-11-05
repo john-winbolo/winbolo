@@ -34,6 +34,15 @@
  *   tablet layouts, iOS, the web canvas) the withheld map
  *   leaves the key with nothing to do.
  *
+ *   Outside a game windowOwnsFlag is not read, on purpose: that
+ *   is the key's behaviour from before this rule, unchanged on
+ *   every platform. There the flag is still worth toggling,
+ *   because it is the full screen choice the next game opens
+ *   with (and on the web canvas, the browser's full screen).
+ *   In a game whose map is withheld, the same toggle on those
+ *   platforms would only change that stored choice, with
+ *   nothing on screen to show for it, so the key does nothing.
+ *
  *   Logic only, no SDL, so it compiles into the unit test
  *   binary.
  *********************************************************/

@@ -1526,6 +1526,20 @@ static bool fullScreenFlagIsMapChoice(SDL_Window *win) {
 #endif
 }
 
+/* What a full screen request does right now (fullscreen_key.h): the map, the
+ * window, or nothing. Shared by Alt+Enter, the macOS Window menu and the
+ * in-game Settings tick, so all three follow one rule. */
+static FullScreenKeyAction fullScreenActionNow(ClientSim *cs) {
+#if BOLO_MOBILE
+    const bool windowOwnsFlag = false;
+#else
+    const bool windowOwnsFlag = !uiModeIsTablet() && !uiModeIsSteamDeck() &&
+                                !overviewLeavesWindowAlone(s_window);
+#endif
+    return fullScreenKeyAction(cs != nullptr && clientSimIsRunning(cs),
+                               overviewSuppressed(), windowOwnsFlag);
+}
+
 /* Turn the in-window overview on or off. The mode takes the main window
  * fullscreen so the map gets the whole screen; leaving drops the window back
  * to windowed only when the app full screen flag is off, because with it on
@@ -8028,7 +8042,11 @@ static void renderMenuBar(ClientSim *cs) {
             }
             if (noOverviewMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
-            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), "Alt+Enter",
+            /* No shortcut label while classic mode greys the item out:
+               Alt+Enter then toggles the window's full screen instead
+               (fullscreen_key.h), not this item. */
+            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW),
+                                noOverviewMenu ? nullptr : "Alt+Enter",
                                 sdl3DrawIsOverviewInWindow(),
                                 cs != nullptr && clientSimIsRunning(cs) && !noOverviewMenu)) {
                 overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
@@ -8052,7 +8070,10 @@ static void renderMenuBar(ClientSim *cs) {
             }
             if (overviewSuppressed() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
-            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), "Alt+Enter",
+            /* No shortcut label while classic mode greys the item out, as
+               on the desktop: the key does not open it then. */
+            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW),
+                                overviewSuppressed() ? nullptr : "Alt+Enter",
                                 sdl3DrawIsOverviewInWindow(),
                                 cs != nullptr && clientSimIsRunning(cs) && !overviewSuppressed())) {
                 overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
@@ -11166,7 +11187,8 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* Apply the deferred full screen change, after the frame for the same
        reason as the zoom above — the settings tab that asks for it renders
        mid-frame.  In a game this goes through the in-window map view, the one
-       path the File menu and the macOS menu bar use as well. */
+       path the File menu and the macOS menu bar use as well, or through the
+       window where the server withholds the map (fullScreenActionNow). */
     if (s_pendingFullScreen >= 0) {
         bool want = (s_pendingFullScreen != 0);
         s_pendingFullScreen = -1;
@@ -11176,6 +11198,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                turned off, a map that is up stays up, back in the square. */
             windowFullScreenChoose(want);
             if (want && s_overviewWasRunning) sdl3ImguiShowOverviewInWindow(true);
+        } else if (cs != nullptr && clientSimIsRunning(cs) &&
+                   fullScreenActionNow(cs) == FULLSCREEN_KEY_WINDOW) {
+            /* A game whose server withholds the map (classic mode): the
+               map would refuse to open, so the tick moves the window, the
+               same as Alt+Enter does here. */
+            windowFullScreenChoose(want);
         } else {
             sdl3ImguiShowOverviewInWindow(want);
         }
@@ -11421,14 +11449,7 @@ void sdl3ImguiShowOverviewInWindow(bool active) {
  * window full screen there, and the key must still be able to take it back
  * to windowed (fullscreen_key.h). */
 void sdl3ImguiToggleFullScreen(struct ClientSim *cs) {
-#if BOLO_MOBILE
-    const bool windowOwnsFlag = false;
-#else
-    const bool windowOwnsFlag = !uiModeIsTablet() && !uiModeIsSteamDeck() &&
-                                !overviewLeavesWindowAlone(s_window);
-#endif
-    switch (fullScreenKeyAction(cs != nullptr && clientSimIsRunning(cs),
-                                overviewSuppressed(), windowOwnsFlag)) {
+    switch (fullScreenActionNow(cs)) {
     case FULLSCREEN_KEY_MAP:
         sdl3ImguiShowOverviewInWindow(!sdl3ImguiIsOverviewInWindowOpen());
         break;
