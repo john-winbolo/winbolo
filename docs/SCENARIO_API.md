@@ -1338,7 +1338,7 @@ names the reason, as `-validate` does.
 | `on_lobby(p, scripted)` | A lobby seat changed. `p` is the seat. |
 | `on_player_join(p, scripted)` | Fires for a bot seat as it does for a person, and a bot a script seats reaches it with `scripted` true. A seat on the roster is not yet a tank on the field: that is `on_tank_spawned`. |
 | `on_player_leave(p, scripted)` | By the time the handler runs the seat is empty — `game.tank(p)`, `game.builder(p)` and `game.lobby_slot(p)` all answer `nil`. Whatever a handler needs to know about the player has to have been kept from an earlier hook. |
-| `on_team_changed(p, team, scripted)` | `team` is the seat's new team. |
+| `on_team_changed(p, team, scripted)` | `team` is the seat's new team. It also fires when players ally or split on their own during a round, with `scripted` false: an accept moves the new member, and everyone on its team, onto the accepter's team, and a leave moves the leaver onto a team of its own. A person who joins during a round is put on a team of its own before `on_player_join` runs. |
 | `on_chat(p, text, scripted)` | A player said something. |
 | `on_ping(p, kind, mx, my, scripted)` | Seat `p` put a smart ping on the map. `kind` is 0 standard, 1 caution, 2 assist, 3 attack, 4 on my way, 5 bot command; `mx`, `my` are the map square it landed on. A seated bot brain places its own pings through the same path, so this fires for a bot as it does for a person. The hook only watches: nothing it returns changes the marker, and there is no call that places one. |
 
@@ -1590,7 +1590,7 @@ far as the server is concerned.
 | `game.max_tanks()` | How many seats a game has. |
 | `game.num_players()` | How many seats are playing the round, bots included. |
 | `game.num_humans()` | How many of those are people. |
-| `game.team_size(t)` | How many seats sit on team `t`, playing the round or not. |
+| `game.team_size(t)` | How many seats sit on team `t`, playing the round or not. It follows the alliances players make and leave in play, as `lobby_slot(p).team` does. |
 | `game.game_type()` | `"open"`, `"tournament"` or `"strict"` — the game the round is being played by. It answers `scenario.game` when the table sets one of those three, and the game the round resolves to otherwise, so a table that named no game or a word the server has no behaviour for reads `"strict"`. It never answers `"scripted"`: that is what the lobby calls the round, not a set of rules anything plays by. |
 
 ### Three clocks
@@ -1688,10 +1688,10 @@ starts comes due after about twice the seconds it asked for.
 |---|---|
 | `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, sight, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `sight` is the gun sight, the range a shell flies before it bursts, in half squares from the rule `gunsight_min` to `gunsight_max` (2 to 14 classic); a bot's or a human's alike. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
 | `game.builder(p)` | `{ state, mx, my, wx, wy, job, trees, mines }`, or `nil` when the seat has none. `state` is `"in_tank"`, `"going"`, `"returning"`, `"parachuting"` or `"dead"`; `job` is an action word, or absent when he is on none. The square is tracked while he is out of the tank — in the tank he is wherever his tank is, which is why the state comes first. |
-| `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive, team_pool }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** `team_pool` is the label of the bot naming pool the seat's team draws bot names from, such as `"Famous Painters"`: the name the lobby shows in that team's pool dropdown. It is absent when the seat is on no team (0) or the team has no pool. A team has a pool once it is set up in the lobby; teams 1 and 2 start with the first pool, and a team the host never set up has none, so its seats read `nil` even when they hold bots. A dedicated server's `-bots` names its bots from one random pool without setting any team's pool, so there `team_pool` is the first pool's label, not the pool the bot names came from. The label comes from the server's own pools, so every client reads the same word. A script can label a team of bots only by it (see below). |
+| `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive, team_pool }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** `team` is the seat's live side: during a round it includes the alliances players made and left in play, and two seats are allied exactly when they are on the same team that is not 0. `team_pool` is the label of the bot naming pool the seat's team draws bot names from, such as `"Famous Painters"`: the name the lobby shows in that team's pool dropdown. It is absent when the seat is on no team (0) or the team has no pool. A team has a pool once it is set up in the lobby; teams 1 and 2 start with the first pool, and a team the host never set up has none, so its seats read `nil` even when they hold bots. A dedicated server's `-bots` names its bots from one random pool without setting any team's pool, so there `team_pool` is the first pool's label, not the pool the bot names came from. The label comes from the server's own pools, so every client reads the same word. A script can label a team of bots only by it (see below). |
 | `game.lobby_start(p)` | The start the lobby reserved for seat `p` and has not yet used, counted from 1 as `game.start` counts, or `nil`. The same number `on_choose_start` is handed as `lobby`, so it is `nil` once the seat's first tank of the round is built (see **The lobby's start** under Policies). |
 | `game.lobby_side(p)` | The side seat `p`'s lobby team chose to start on, as `"north"`, `"east"`, `"south"` or `"west"`, or `nil` for an empty seat, a seat on no team (0) and a team with no side. A side the lobby filled in for a team, opposite the one other team's choice, reads the same as one a player chose. |
-| `game.allied(a, b)` | Whether seats `a` and `b` are on the same side in the game: `true` or `false`, `true` for a seat and itself, and `nil` when either seat is empty. This is the alliance table every game rule reads — who a pillbox fires at, which bases refuel whom — including alliances players made and left in play. **It can differ from `game.lobby_slot(p).team`:** two teammates where one has left the alliance share a team but are not allied, and players on different teams who allied share a side but not a team. |
+| `game.allied(a, b)` | Whether seats `a` and `b` are on the same side in the game: `true` or `false`, `true` for a seat and itself, and `nil` when either seat is empty. This is the alliance table every game rule reads — who a pillbox fires at, which bases refuel whom — including alliances players made and left in play. Two seats are allied exactly when they are on the same team that is not 0, so this answers the same as comparing their `game.lobby_slot(p).team`. |
 
 A seat the lobby is holding for a bot reads as connected, a bot, on its team,
 and `fielded = false`. That is how Wave Defense finds its held seats:
@@ -1851,7 +1851,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 |---|---|
 | `game.spawn_bot(t)` | Puts a bot into the running round. Answers the seat and `"queued"` when the call named a seat, and `true, "queued"` when the server is choosing one. |
 | `game.remove_bot(p)` | Takes a bot out of the running round. A human seat is refused with `SCN_OP_IS_HUMAN`. |
-| `game.set_team(p, t)` | Moves a seat to another team mid-round. |
+| `game.set_team(p, t)` | Moves a seat to another team mid-round. Only `p`'s alliances change: `p` is allied with the seats on team `t`, and the alliances other players made stay. No pills or bases change owner. `set_team(p, 0)` takes `p` out of every alliance. Each of these, like an accept or a leave in play, sends every client the whole alliance table. |
 | `game.bot_init(p, t)` | Hands a bot a new init table. A seat that has been fielded takes one whether it is on the field now or not: a seat taken off keeps its brain, and the table is waiting in it when the seat is fielded again. A human seat is refused with `SCN_OP_IS_HUMAN`, an empty one with `SCN_OP_NO_SUCH_PLAYER`, and a held seat that has never been fielded — which has no brain yet to hold the table — with `SCN_OP_NO_RUNNER`. |
 | `game.lobby_add_bot(t)` | Seats a bot in the lobby and answers which seat it took. |
 | `game.lobby_remove_bot(p)` | Takes a bot out of the lobby. A human seat is refused. |
@@ -2136,7 +2136,7 @@ to escort a person stays where it is.
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
-| `game.tutorial_done(p)` | Says that seat `p`'s player has finished a tutorial. In a single-player game of a map in `data/maps/tutorials`, the main menu stops showing its Tutorial button. Anywhere else it changes nothing. See [Finishing a tutorial](#finishing-a-tutorial). |
+| `game.tutorial_done(p)` | Says that seat `p`'s player has finished a tutorial. In a single-player game of a map in the shipped `data/maps/tutorials` folder, the main menu stops showing its Tutorial button. Anywhere else it changes nothing. See [Finishing a tutorial](#finishing-a-tutorial). |
 
 `message` and `say` are two different voices, and the difference decides
 whether a bot hears the line at all.
@@ -2211,10 +2211,11 @@ Tutorial entry in Settings turns it back on.
 The server only marks the seat. Nothing is sent to any client and nothing
 goes in the replay. The one reader is a single-player client, whose server
 runs in the same process: once a frame it takes the mark for its own seat.
-It acts on the mark only when the running map's own script is in
-`data/maps/tutorials`. So the call does nothing on a hosted or dedicated
-server, nothing for any other seat, and nothing for a script outside that
-folder.
+It acts on the mark only when the running map's own script is directly in
+the shipped `data/maps/tutorials` folder: the one in the data folder beside
+the program (see [Popups](#popups)). So the call does nothing on a hosted or
+dedicated server, nothing for any other seat, and nothing for a script
+outside that folder.
 
 The call is refused with `SCN_OP_NO_SUCH_PLAYER` when `p` is not a seat or
 nobody is in it.
@@ -2238,7 +2239,7 @@ local function tr(p, key)
   return mine[key] or TEXT.en[key]
 end
 
-game.popup(tr(p, "hello"), p)
+game.announce(tr(p, "hello"), 6, p)
 ```
 
 Only a single-player game knows the player's language: there the server runs
@@ -2264,8 +2265,10 @@ language's word for "press".
 
 A popup wraps only at spaces. Chinese and Japanese text has no spaces, so put a
 single `\n` (read as a space) every 25 to 30 characters. A status line or
-announcement row too wide for the Scenario Text window is broken at its last space that fits,
-or before the first character that does not fit when the row has no space.
+announcement row too wide for the Scenario Text window is broken at its
+spaces, never inside a word. A single word too wide is drawn smaller instead,
+down to half the UI text height. A row of Chinese, Japanese or Korean with no
+space is broken before the first character that does not fit.
 
 The limits count bytes, and most languages take more bytes than English for
 the same line: Cyrillic and Greek take two a letter, Chinese, Japanese and
@@ -2317,7 +2320,7 @@ exist.
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
 | `game.announce(text[, seconds[, target[, position]]])` | A big line in the Scenario Text window for that many seconds. Left out, `position` centres the line across the window. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line further left or right; only the share across is used. Empty text takes the line away. |
-| `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. While it is up a local game is paused, as the tutorial pauses it. See [Popups](#popups). |
+| `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. Only the built-in tutorials (a map's own script in the shipped `data/maps/tutorials` folder) have this call. In every other scenario and in every mod, `game.popup` is nil. While the box is up, only the built-in tutorials pause the game: a single-player game, with its server in this process. See [Popups](#popups). |
 | `game.status(text[, countdown_to[, target]])` | The status line: one line in the top row of the Scenario Text window, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
@@ -2342,51 +2345,76 @@ it asked for.
 **The Scenario Text window.** The status line and the announcement are both
 drawn in one window of their own, the Scenario Text window, and not on the
 game view. A script cannot put text anywhere else on the screen. The window
-is built the same way as the scenario panel's window: it has no title bar, a
-see-through backing, a bar just above its text to move it, a gear that opens its
-settings (Pop out, then two opacity sliders), an X that closes it, and a grip
-in its bottom-right corner to resize it. Unlike the panel, it is a rectangle
-and it can take any shape. The window is hidden until a scenario shows a
-status line or an announcement. Turning it on in **Brains > Info Overlay >
-Scenario Text** does not show it by itself, and the pointer over its place
-does not show it. It shows while it has a line to draw, and for
-`SCN_TEXT_SHOW_SECONDS` (5) seconds after a line was last on screen in it, so
-the player can still move or resize it. Then it is hidden again. It also
-stays up while the player drags its bar or its grip, has its gear settings
-open, or has its close question open, and it goes when the player is done.
-While a popup (`game.popup` or a tutorial message) is open, the lines are not
-drawn, so after 5 seconds the window is hidden until the popup closes and the
-lines show again. A popped-out window follows the same rule.
+uses the same window frame as the scenario panel's window, from the same code:
+it has no title bar, a see-through backing, a bar just above its text to move
+it, a gear that opens its settings (Pop out, then two opacity sliders), an X
+that closes it, a grip in its bottom-right corner to resize it, and a faint
+edge round the text. Unlike the panel, it is a rectangle and it can take any
+shape, and at 0% background opacity its edge and grip show only while the
+pointer is on the window or a drag is on. Above 0% they show as the panel's
+do. Like the panel, it takes a click only on its bar and its grip: a click or
+the wheel on its text goes through to the game view under it. The window is
+hidden until a scenario shows a status line or an announcement. Turning it on
+in **Brains > Info Overlay > Scenario Text** does not show it by itself, and
+the pointer over its place does not show it. It shows while it has a line to
+draw, and for `SCN_TEXT_SHOW_SECONDS` (5) seconds after a line was last on
+screen in it, so the player can still move or resize it. Then it is hidden
+again. It also stays up while the player drags its bar or its grip, has its
+gear settings open, or has its close question open, and it goes when the
+player is done. While a popup (`game.popup` or a tutorial message) is open,
+the lines are not drawn, so after 5 seconds the window is hidden until the
+popup closes and the lines show again. A popped-out window follows the same
+rule.
 
 By default the window sits at the top middle of the game view, sized so the
 text is as large as announcements were before: 240 units times the game's
-zoom. Once the player moves or resizes it, it stays where they put it,
-and its place, size, opacities and whether it is shown are kept in the
-preferences file. A player who closes it opens it again from **Brains > Info
-Overlay > Scenario Text**. In tablet mode there is no window: the same
+zoom. When a scenario panel is shown at its own default place at the left of
+the game view, the window instead fills the room from the panel's right edge
+to the game view's right edge, 4 units in from each, with its top level with
+the panel's top and its bottom level with the panel's bottom. The lines are
+fitted into that area as large as its width and height allow, and centred in
+it both ways. It goes back to the top middle when that room is narrower than
+160 pixels, or when the player has moved the panel. Its background starts
+fully clear (0%), so the outlined lines stand on the map; the player can add a
+backing from its gear. Once the player moves or resizes it, it stays where
+they put it, and its place, size, opacities and whether it is shown are kept
+in the preferences file. A player who closes it opens it again from **Brains >
+Info Overlay > Scenario Text**. In tablet mode there is no window: the same
 layout is drawn in a fixed band at the top middle of tablet mode's game view.
 
-**How the text is scaled.** The window draws a fixed source rectangle, 240
-units wide, scaled to fit. Each line is 20 units of text with a 1 unit
-outline, so a row is 22 units, and a 2 unit gap goes around and between the
-rows. With one row the rectangle is 26 units high; with two it is 50. The
-rows are counted for the round: the status line takes the top row from the
-first time one is shown, and the announcement takes the row under it, or
-the top row when the round has shown no status line. So the text changes
-size at most when a new kind of line first appears in a round, and not each
-time a line comes or goes.
+**How the text is scaled.** The window draws a source rectangle scaled to
+fit. Each line is 20 units of text with a 1 unit outline, so a row is 22
+units, and a 2 unit gap goes around and between the rows. With one row the
+rectangle is 26 units high; with two it is 50. It is as wide as the widest
+row on screen, with the outline and the gap on each side. The script's rows
+are counted for the round: the status line takes the top row from the first
+time one is shown, and the announcement takes the row under it, or the top
+row when the round has shown no status line. The width, and any rows added
+by breaking a long line, are this frame's. So the text size follows the
+widest row on screen; it stays the same when a line comes or goes while the
+letter cap below holds it, which is the usual case.
 
-The source rectangle is scaled by one factor for both directions, the
-largest that fits the window, and centred in the window. The letters keep
-their shape at every window size. A window wider than the text's shape has
-empty space left and right; a taller one has empty space above and below.
-A line too wide for the 236 units between the gaps is made smaller by itself
-until it fits. The gear has two sliders. **Background opacity** is the alpha
-of the black backing: 100% is opaque black and 0% is no backing. It starts
-at 43%, the see-through backing the window has always had. **Text opacity**
-fades the text and its outline, and starts at 100%. A scenario panel's gear
-has the same two sliders, and there the text opacity fades everything the
-script draws in the panel.
+A row keeps the script's own breaks while it fits across the window at three
+quarters of the UI text height. A row that does not fit is broken at its
+spaces into rows of about the same width. A single word is never broken: a
+word too wide for the window is drawn smaller, down to half the UI text
+height, and a word too wide even then is centred and cut off at the window's
+sides. A row of Chinese, Japanese or Korean with no space is broken between
+its characters, but a Latin word or a number in it is kept whole.
+
+The source rectangle is scaled by one factor for both directions, the largest
+that fits the window up to letters 1.5 times the UI text height, and centred
+in the window. The letters keep their shape at every window size. A window
+wider than the text's shape has empty space left and right; a taller one has
+empty space above and below. An announcement's `position` share is across the
+whole window, so a line at share 0.1 sits near the window's left side, not
+near the left of the centred text. The gear has two sliders. **Background
+opacity** is the alpha of the black backing: 100% is opaque black and 0% is no
+backing. In the Scenario Text window it starts at 0%, with no backing.
+**Text opacity** fades the text and its outline, and starts at 100%. A
+scenario panel's gear has the same two sliders. There the background opacity
+starts at 43%, and the text opacity fades everything the script draws in the
+panel.
 
 `position` keeps only its share across. Give a table `{ x = across, y =
 down }`, each from 0 to 1, or one of two words:
@@ -2456,7 +2484,7 @@ client writes each one out as the name of the bound key on a keyboard, a word
 for the control on a controller, or the touch wording on a touch screen. The
 128-byte cap (125 with a position) applies to the text as sent, tokens and all.
 A row that is too wide for the Scenario Text window once its tokens are filled in is broken
-into two at its last space that fits.
+at its spaces into rows of about the same width.
 
 ```lua
 game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)
@@ -2472,7 +2500,9 @@ calls is the same target every other call takes: left out, or `"all"`, for
 everyone; a number for one seat; `{ team = t }` for one team. A late joiner is
 given whatever the panels hold at the moment it arrives, so a panel put up in
 the first tick of a round is still there for somebody who connects in the
-tenth minute.
+tenth minute. A `{ team = t }` target follows the alliances players make and
+leave in play: a seat that changes team during a round is sent what its new
+team's panels hold, as a joiner would be.
 
 `score` is the exception. Its target says *whose* score it is, not who sees
 it, so a score is shown to everyone. There is no everyone's score: a call with
@@ -2491,6 +2521,50 @@ is for a sentence or two the player has to read before going on, where
 `announce` would be gone too soon. A client queues up to four, and shows the
 next when one is closed. A popup is not kept: a player who joins after it
 was sent does not see it.
+
+Only the built-in tutorials have `game.popup`: the script beside a map
+directly in the shipped `data/maps/tutorials` folder. That is the
+`data` folder beside the program (beside `WinBolo` or `WinBoloDS`, or in the
+app bundle), the same folder the shipped mods are read from. The server
+makes both paths full and canonical first, so `..`, links, either slash and
+(on Windows and macOS) the case make no difference. A folder named
+`maps/tutorials` anywhere else does not count: one in your own maps folder,
+in a map pack, in an upload, or in the install folder outside `data`. A map
+in a folder below `data/maps/tutorials` does not count either. In every
+other scenario and in every mod the server leaves `popup` off the script's
+game table, so `game.popup` is nil there. A call stops the script with Lua's
+usual "attempt to call a nil value" error, and a `popup` trigger action does
+nothing (`-validate` says so). A script that runs in both places can test
+for it first:
+
+```lua
+if game.popup then
+  game.popup("Read this first.", p)
+else
+  game.announce("Read this first.", 6, p)
+end
+```
+
+`-validate` (and the map editor's check, and the check the server makes of
+an uploaded map's script) does not know whether a file is a map's script or
+a mod, so it reads every file as a map's own script, at the path it is
+given: run `-validate` with the path from the map's folder up (for example
+`data/maps/tutorials/Tutorial.scenario.lua`), not a bare file name from
+inside the folder. A mod in the tutorials folder passes the check with
+`game.popup` and is then refused by the server, because a mod never has the
+call. An uploaded map's script is checked at a temporary path, so one that
+calls `game.popup` at its top level is refused at upload.
+
+Under `-allow-unsafe-scripts` every script in a Lua state can reach every
+table in it (`debug.getregistry()`, `package.loaded._G`, `load`), so the
+server takes `popup` off the one real game table, not off a copy. If any
+script on the list may not have the call, no script on the list has it: a
+built-in tutorial played with a mod in that mode finds `game.popup` nil, as
+the mod does. A built-in tutorial on its own keeps the call there.
+
+This is one setting in the game (`TUTORIAL_MAPS_SCRIPT_POPUPS` in
+`src/bolo/public/tutorial_scripts.h`). A later build may give every scenario
+the call.
 
 A popup belongs to its round. When the round ends (`game.end_round`, the time
 limit, or a return to the lobby) the client closes a popup that is still up
@@ -2807,7 +2881,7 @@ tolerance at or above the step lands every one of them.
 | `pill_massage_cosine` | 0.5 | 0.0 to 1.0 | How straight at a close pillbox a tank has to be driving to be aimed at properly anyway, as the cosine of the angle between its heading and the line to the pillbox. One aims sloppily at every tank inside `pill_massage_range`, zero at none of them. Does nothing while that rule is zero or `pill_aim_mac` is 1. |
 | `pill_aim_mac` | 0 | 0 to 1 | Whether a pillbox aims the Mac Bolo way. 0, the classic table, is the WinBolo solver, or the massage approximation above inside `pill_massage_range`. 1 is Mac Bolo's integer distance and lead calculation: a moving, unobstructed tank inside about one square makes the unsigned lead wrap, so the pillbox aims roughly 32 squares along the tank's heading and misses; a stopped or blocked tank is aimed at directly; beyond that distance the same formula leads normally. `pill_massage_range`, `pill_massage_cosine` and `pill_aim_iterations` are not read while this is 1. |
 | `pill_shell_cap` | 0 | 0 or 1 | Whether pillboxes limit how many of their shells can be in the air at one tank, to `pill_max_shells_at_tank`. 0, the classic table, lets every pillbox fire at its nearest target however many shells are already on the way. |
-| `pill_max_shells_at_tank` | 12 | 1 to 255 | The most pillbox shells that can be in the air at one tank. A pillbox whose nearest target already has this many coming fires at the next nearest enemy in range instead, or holds its shot until one lands. Only read while `pill_shell_cap` is 1. |
+| `pill_max_shells_at_tank` | 12 | 1 to 255 | The most pillbox shells that can be in the air at one tank. A pillbox whose nearest target already has this many coming loses its shot and reloads. Only read while `pill_shell_cap` is 1. |
 
 **Base.**
 
@@ -2840,7 +2914,7 @@ tolerance at or above the step lands every one of them.
 | `grass_life` | 4 | 1 to 255 | Shell hits grass stands before it turns to swamp. |
 | `swamp_life` | 3 | 1 to 255 | Shell hits swamp stands before it turns to river. |
 | `mine_fuse_ticks` | 10 | 1 to 255 | Ticks between a mine being set off and it going up. |
-| `tank_hit_sets_off_mines` | 0 | 0 to 1 | Whether a shell that hits a tank sets off a mine on the square it bursts on. 0, the classic table, leaves the mines on that square alone. 1, the way WinBolo 2.1 played, sets one off there, the same as any other shell that ends on a mined square, so a shot at a tank can set off the mines it has just laid under or behind it. The Tank Hits Set Off Mines mod sets 1. A shell that hits a pillbox, a base or terrain, or that runs out, sets off a mine with either value, and a dying tank's explosion is not changed. Whether the shell hit, the damage, the sound and the explosion drawn do not change. |
+| `tank_hit_sets_off_mines` | 0 | 0 to 1 | Whether a shell that hits a tank sets off a mine on the square it bursts on. 0, the classic table, leaves the mines on that square alone. 1, the way WinBolo 2.1 played, sets one off there, the same as any other shell that ends on a mined square, so a shot at a tank can set off the mines it has just laid under or behind it. A shell that hits a pillbox, a base or terrain, or that runs out, sets off a mine with either value, and a dying tank's explosion is not changed. Whether the shell hit, the damage, the sound and the explosion drawn do not change. |
 | `big_explosion_threshold` | 20 | 0 to 510 | Shells and mines a dying tank has to be carrying to go up in a big explosion. |
 | `tank_explosion_damage` | 5 | 0 and up, at most `pill_max_armour` | The splash a dying tank deals a pillbox it goes up next to. 0 is a wreck that scorches nothing. |
 | `tank_explosion_length` | 40 | 1 to 255 | How many steps the wreck travels before it stops. |
@@ -2881,7 +2955,7 @@ it is played far.
 
 | Rule | Classic | Range | Description |
 |---|---|---|---|
-| `tree_grow_ticks` | 3000 | 1 and up | Ticks before the best square found so far grows its tree. |
+| `tree_grow_ticks` | 1150 | 1 and up | Ticks before the best square found so far grows its tree. |
 | `tree_grow_initial_ticks` | 30000 | 1 and up | Ticks before the first tree of a round grows. |
 | `tree_grow_initial_score` | -10000 | -32768 to 32767 | What the weighted draw below starts and resets from, so how long a map waits for its first tree. Negative by design, and it shares its window with the weights. |
 | `tree_weight_forest` | 100 | -32768 to 32767 | What forest counts for in a square's tree growing score. |
@@ -2920,6 +2994,10 @@ it is played far.
   `shell_life` times `gunsight_min`, so the shortest shot still travels; and
   half of `shell_life` times `gunsight_max`, less `shell_start_add`, plus 1,
   at most 255, so the longest shot's life still fits its byte.
+- `shell_life` times `pill_fire_length`, with any fraction dropped, less
+  `shell_start_add`, plus 1, at most 255, so a pillbox's shot fits the same
+  byte. At the classic values that is a `shell_life` of at most 30, or a
+  `pill_fire_length` of at most 32.375.
 
 The detail a refusal carries names both sides with their numbers.
 

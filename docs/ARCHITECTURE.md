@@ -22,7 +22,7 @@ document is the stable reference for the rules themselves.
 |---|---|---|
 | `src/bolo/` | T1 + T2 + T3 + T4 | Owns T2; contributes to all tiers. |
 | `src/bolo/scenario_api/` | T1 + T4 | A third header directory beside `public/` and `internal/`. Holds the scenario write funnel (`serverSimApplyScenarioOp`), the policy vtable and tick registrations, and the POD types those calls take. Read by the `scenario_host` profile (the scenario runtime), by `sim_owner` to implement the funnel, and by `unittests` to drive it; nothing else sees it. Not in `public/` because these are server-authoritative entry points on the same footing as the lifecycle start functions — a frontend that wants to change the world sends a command, and a scenario is the one caller whose intent is applied to the sim directly. See "Privileged exceptions". |
-| `src/scenario/` | T1 + T4 + `scenario_api/` | The scenario runtime, `scenario_static`, the one target built under the `scenario_host` profile. Finds the Lua file beside a map, boots the VM, parses the `scenario` table and the triggers in it — a trigger being data rather than code: a hook to run on, a list of tests and a list of actions — marshals `game.*` calls onto the funnel and T1 reads, queues bus events and drains them into hooks, runs those triggers through a router written in Lua, and checks a script for `-validate`. The router is `src/scenario/scenario_triggers.lua`, turned into `src/scenario/scenario_triggers.inc` by `tools/embed_lua.py`, which is run by hand and its output committed so the build needs no Python; the unit case `scenario_hooks_router_matches_source` is what holds the two together. It loads as a second chunk into the state the author's script has already run in rather than being concatenated on to it, so the author's file keeps its own line numbers in an error. The library also holds the function catalogue the editor is written from — one row per hook and per policy, with the parameters each takes. Sees `public/` plus `scenario_api/` and nothing in `internal/` or `src/server/`; a binding that needs sim state it cannot read gets a T1 accessor, never an include. Links `lua_static` PRIVATE. Frontends see only `scenario_host.h` (attach, detach, follow the map, is-active, name, description, script path, reload, last error, the scripts switch `scenarioHostSetEnabled` and the narrower `scenarioHostSetUploadScriptsEnabled` beside it, the unsafe-scripts switch `scenarioHostSetUnsafeScripts` and its reader `scenarioHostUnsafeScripts`, the map-has-script question `scenarioHostMapHasScript`, `scenarioHostRegisterMapScripted`, which hands that question to a sim so its map lister can ask it, `scenarioHostMapCarriesScript`, the same question less its scripts-on test — whether a script is beside the map or packed into it, whether or not this process would run it — which the menu's background game asks so it leaves scenario maps out however scripts are set, `scenarioHostRegisterScenarioLister`, which hands a sim the directory lister, the details reader and the accept callback for scripts players upload, the two reads of this computer's own Mods directory that need no sim at all, `scenarioHostListLocalScripts` and `scenarioHostLocalScriptPath`, which the lobby's Mods chooser uses to offer a file the server does not have, and the one write to it, `scenarioHostSaveLocalScript`, which puts a copy of a server's script there through a temporary file and never replaces a file already present, `scenarioHostWorkshopDir`, which names the Workshop directory beside Mods that the Workshop sync writes and the listings read, `scenarioHostMapPackageInfo`, which reads the name, description and Workshop id of the scenario packed into a map file without running it, and `scenarioHostPackLooseScript`, which packs a loose script in Mods into a `.scenario` for publishing, keeping a Workshop id the old package carried, and moves the `.lua` into `Mods/Sources`), which includes `server_sim.h` alone and names no `scenario_api/` type, so a `gui`-profile file can include it. Both of those are the rule a call added here has to satisfy, not just a description of the calls there now: `server_sim.h` and the C standard headers are the whole of what this header may include, and every parameter and return type has to be a plain type, `ServerSim` / `ScenarioHost`, or a type `server_sim.h` itself declares (the local listing fills `ServerScenarioEntry`, the same row the sim's own enumerate answers with). A call that would need a `scenario_api/` type in its signature belongs behind the funnel instead. Links `scenario_io_static` PUBLIC and holds no file format of its own: the container, `manifest.json` and the chunk written on to a map are that library's, and `scenario_pack.c` here is the half that has to validate a script first. Linked into every binary that hosts a `ServerSim` from a map file: WinBoloDS, WinBoloHeadless, WinBolo, WinBoloIOS, Android `main`, the web client `winbolo` (its practice game hosts a server in the page, and runs the mods in `data/mods` and the script beside a scripted map through it), and WinBoloUnitTests. Not gym, braintest or the log viewer. MapEditor links it too, and is the one binary that links it without hosting anything: the scenario panel calls ten things here — `scenarioValidateSource` to check the script in its pane, `scenarioLuaRows` for the `game.*` completion list and for the ops a trigger's actions are written against, `scenarioLuaOpIsScalar` and `scenarioLuaOpIsAction` to ask what one of those ops takes and whether it changes anything, `scenarioLuaFunctions` and `scenarioLuaFnFields` for the function catalogue and the payload fields each of its rows reaches, `scenarioLuaOpDecidesRound` and `scenarioLuaFnDecidesRound` to ask whether one op, or one function, is the kind that ends a round, `scenarioLuaRoundDeciderAt` to walk that same list of ops for the sentence the panel writes when a file says mod, and `scnScriptPath` for where a script sits beside a map — and nothing else in this library. It also expands `SCN_HOOK_LIST` and `SCN_POLICY_LIST` at compile time, which is a reach of a different kind and not a call: the editor's own description table is pasted out of those two lists, so a hook or a policy added to either without a line of its own does not compile. It creates no `ServerSim`, attaches no host and ticks nothing — the check loads a script's top level once in a Lua state of its own against a stub `game` table, and is handed a NULL sim, which leaves out the one check that reads a map. The rules are checked either way: with no sim they go to `scenarioCheckRulesFromClassic`, and a rule's bounds belong to the field it is declared in rather than to a round, so the answer an editor gets is the answer the server gives. The tags are the check that genuinely reads a map, because it asks how many pills, bases and starts this one carries. On MapEditor's link line it sits ahead of the server group for the same reason it does everywhere else. |
+| `src/scenario/` | T1 + T4 + `scenario_api/` | The scenario runtime, `scenario_static`, the one target built under the `scenario_host` profile. Finds the Lua file beside a map, boots the VM, parses the `scenario` table and the triggers in it — a trigger being data rather than code: a hook to run on, a list of tests and a list of actions — marshals `game.*` calls onto the funnel and T1 reads, queues bus events and drains them into hooks, runs those triggers through a router written in Lua, and checks a script for `-validate`. The router is `src/scenario/scenario_triggers.lua`, turned into `src/scenario/scenario_triggers.inc` by `tools/embed_lua.py`, which is run by hand and its output committed so the build needs no Python; the unit case `scenario_hooks_router_matches_source` is what holds the two together. It loads as a second chunk into the state the author's script has already run in rather than being concatenated on to it, so the author's file keeps its own line numbers in an error. The library also holds the function catalogue the editor is written from — one row per hook and per policy, with the parameters each takes. Sees `public/` plus `scenario_api/` and nothing in `internal/` or `src/server/`; a binding that needs sim state it cannot read gets a T1 accessor, never an include. Links `lua_static` PRIVATE. Frontends see only `scenario_host.h` (attach, detach, follow the map, is-active, name, description, script path, reload, last error, the scripts switch `scenarioHostSetEnabled` and the narrower `scenarioHostSetUploadScriptsEnabled` beside it, the unsafe-scripts switch `scenarioHostSetUnsafeScripts` and its reader `scenarioHostUnsafeScripts`, the data folder `scenarioHostSetDataRoot` and the one test for a shipped tutorial's script `scenarioHostScriptIsShippedTutorial` (a script directly in `<data folder>/maps/tutorials`, both paths made canonical; the rule it feeds, `TUTORIAL_MAPS_SCRIPT_POPUPS` and `tutorialMapsScriptHasPopup`, is in `src/bolo/public/tutorial_scripts.h`, which the client's `src/gui/sdl3/tutorial_maps.h` includes), the map-has-script question `scenarioHostMapHasScript`, `scenarioHostRegisterMapScripted`, which hands that question to a sim so its map lister can ask it, `scenarioHostMapCarriesScript`, the same question less its scripts-on test — whether a script is beside the map or packed into it, whether or not this process would run it — which the menu's background game asks so it leaves scenario maps out however scripts are set, `scenarioHostRegisterScenarioLister`, which hands a sim the directory lister, the details reader and the accept callback for scripts players upload, the two reads of this computer's own Mods directory that need no sim at all, `scenarioHostListLocalScripts` and `scenarioHostLocalScriptPath`, which the lobby's Mods chooser uses to offer a file the server does not have, and the one write to it, `scenarioHostSaveLocalScript`, which puts a copy of a server's script there through a temporary file and never replaces a file already present, `scenarioHostWorkshopDir`, which names the Workshop directory beside Mods that the Workshop sync writes and the listings read, `scenarioHostMapPackageInfo`, which reads the name, description and Workshop id of the scenario packed into a map file without running it, and `scenarioHostPackLooseScript`, which packs a loose script in Mods into a `.scenario` for publishing, keeping a Workshop id the old package carried, and moves the `.lua` into `Mods/Sources`), which includes `server_sim.h` alone and names no `scenario_api/` type, so a `gui`-profile file can include it. Both of those are the rule a call added here has to satisfy, not just a description of the calls there now: `server_sim.h` and the C standard headers are the whole of what this header may include, and every parameter and return type has to be a plain type, `ServerSim` / `ScenarioHost`, or a type `server_sim.h` itself declares (the local listing fills `ServerScenarioEntry`, the same row the sim's own enumerate answers with). A call that would need a `scenario_api/` type in its signature belongs behind the funnel instead. Links `scenario_io_static` PUBLIC and holds no file format of its own: the container, `manifest.json` and the chunk written on to a map are that library's, and `scenario_pack.c` here is the half that has to validate a script first. Linked into every binary that hosts a `ServerSim` from a map file: WinBoloDS, WinBoloHeadless, WinBolo, WinBoloIOS, Android `main`, the web client `winbolo` (its practice game hosts a server in the page, and runs the mods in `data/mods` and the script beside a scripted map through it), and WinBoloUnitTests. Not gym, braintest or the log viewer. MapEditor links it too, and is the one binary that links it without hosting anything: the scenario panel calls ten things here — `scenarioValidateSource` to check the script in its pane, `scenarioLuaRows` for the `game.*` completion list and for the ops a trigger's actions are written against, `scenarioLuaOpIsScalar` and `scenarioLuaOpIsAction` to ask what one of those ops takes and whether it changes anything, `scenarioLuaFunctions` and `scenarioLuaFnFields` for the function catalogue and the payload fields each of its rows reaches, `scenarioLuaOpDecidesRound` and `scenarioLuaFnDecidesRound` to ask whether one op, or one function, is the kind that ends a round, `scenarioLuaRoundDeciderAt` to walk that same list of ops for the sentence the panel writes when a file says mod, and `scnScriptPath` for where a script sits beside a map — and nothing else in this library. It also expands `SCN_HOOK_LIST` and `SCN_POLICY_LIST` at compile time, which is a reach of a different kind and not a call: the editor's own description table is pasted out of those two lists, so a hook or a policy added to either without a line of its own does not compile. It creates no `ServerSim`, attaches no host and ticks nothing — the check loads a script's top level once in a Lua state of its own against a stub `game` table, and is handed a NULL sim, which leaves out the one check that reads a map. The rules are checked either way: with no sim they go to `scenarioCheckRulesFromClassic`, and a rule's bounds belong to the field it is declared in rather than to a round, so the answer an editor gets is the answer the server gives. The tags are the check that genuinely reads a map, because it asks how many pills, bases and starts this one carries. On MapEditor's link line it sits ahead of the server group for the same reason it does everywhere else. |
 | `src/scenario_io/` | T1 only | A scenario's files, `scenario_io_static`, built under the `runtime_only` profile. Reads and writes the WBSC container a scenario ships in and the `manifest.json` inside it, from a byte buffer rather than a path, and writes that container on to a map file. It also writes the `scripts.json` text a round's recording carries (`scnRecordJsonWrite`), from a plain description the scenario host fills at round boot, so the host needs no cJSON of its own. Holds the shape the two halves share: `ScenarioManifest`, the two enums a trigger's values and operators are stored as — `ScnTrigValueKind`, which says whether a value is a number, a string, a bool or the name of a payload field read when the trigger fires, and `ScnTrigCompare`, the seven tests plus the unknown that a word matching none of them reads as — the one table of operator names both readers resolve a file's spelling through, `scnManifestTrigOpName` out of it and `scnManifestTrigOpFrom` into it, so the JSON decoder and the script reader cannot drift apart over which word means which test, and the issue list a check fills. `ScnManifestRegion` carries two fields beside its rectangle that are runtime only — `owner` and `bit` — which `manifest.json` neither reads nor writes: the round's composer and `game.define_region` fill them while a round runs, so a package is the same bytes on disk and on the wire whether or not the server that wrote it knew about them, and a manifest that was never composed carries a bit of zero throughout. They stay in the struct rather than moving to a runtime-side type. No Lua, no `scenario_api/`, no `internal/` — it sees `public/` and nothing else, and it reads no sim state, so nothing here can depend on a round being in progress. `scenario_static` links it PUBLIC, so the six binaries that host a `ServerSim` get it without naming it. The log viewer is expected to link it directly and nothing else from `src/scenario/`: it reads a scenario's files and never starts a round. The map editor reads and writes those files on the same footing, and also links `scenario_static` for the ten calls named in the row above — still without starting a round. |
 | `src/gui/` | T1 + T3 + T4 | The desktop renderer. Cannot reach into sim internals. |
 | `src/mapeditor/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — full T2 access for map-data editing. |
@@ -39,7 +39,7 @@ document is the stable reference for the rules themselves.
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host), WinBoloIOS (SP, LAN and Internet host), Android `main` (SP host, and host of games other players join). |
 | `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer, WinBoloIOS, Android `main`. |
-| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links seventeen leaf `src/gui/sdl3` files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources" for the list and the rule a file has to meet. |
+| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links twenty-two leaf `src/gui/sdl3` files and the one ImGui file `dialogs/imgui_nav_outline.cpp`, which keep public-only access rather than borrowing this row's — see "Linked GUI sources" for the list and the rule a file has to meet. |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
 **The enforced rule of thumb is two-tier**: outside `src/bolo/`, you get
@@ -1138,11 +1138,12 @@ only source of truth for "byte-identical".
 5. **Register it everywhere else.** Steps 1–4 make the event work;
    these make it debuggable, and each is easy to miss:
 
-   - `mpDiagCtrlName` in **both** `src/server/transport_udp_server.c`
-     and `src/bolo/transport_udp_client.c` — the name the MP diag log
-     prints. Without it the event logs as `<unknown>` on that side.
-   - `src/headless/headless_main.c` — the type name and, if the payload
-     is worth seeing, a case in the event logger.
+   - `controlEventTypeName` in `src/bolo/transport_control_codec.c` —
+     the one name table. The MP diag log on both sides and the headless
+     `--log-events` output read it. Without a case the event logs as
+     `<unknown>`, and the `control_event_names` unit test fails.
+   - `src/headless/headless_main.c` — if the payload is worth seeing,
+     a case in the event logger.
 
    The reliable way to find the rest is to sweep an existing event of a
    similar shape: `rg -n "CTRL_ALLIANCE_RESET" src` names every site one
@@ -2331,14 +2332,17 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Eighteen `src/gui/sdl3` files
+same target, and it is not a T2 grant. Twenty-two `src/gui/sdl3` files
 are compiled *into* `WinBoloUnitTests`, the only files from a
-renderer directory that are: `skin_source.c`, `tileloader.c`,
-`sdl_bmp.c`, `sound_variants.c`, `sound_mix.c`, `overview_camera.cpp`,
-`overview_fog.cpp`, `overview_hud_layout.cpp`, `sprite_positions.c`,
-`ring_band.c`, `dialogs/dialog_quit.cpp`, `workshop_sync.c`,
-`input_source.c`, `news_image_budget.cpp`, `dialogs/clip_gif_core.c`,
-`newswire_slide.c`, `gfx_settings.c` and `tutorial_tokens.c`.
+renderer directory that are, with the one ImGui file named below:
+`skin_source.c`, `tileloader.c`, `sdl_bmp.c`, `sound_variants.c`,
+`sound_mix.c`, `overview_camera.cpp`, `overview_fog.cpp`,
+`overview_hud_layout.cpp`, `sprite_positions.c`, `ring_band.c`,
+`map_colours.c`, `map_markers.c`, `dialogs/dialog_quit.cpp`,
+`workshop_sync.c`, `input_source.c`, `news_image_budget.cpp`,
+`dialogs/clip_gif_core.c`, `dialogs/wbn_browser_sort.c`,
+`newswire_slide.c`, `sim_rules_phrase.c`, `tutorial_tokens.c` and
+`gfx_settings.c`.
 Between them they hold skin lookup, the tile sheet
 builder, the BMP sheet reader, the sound variant naming, the
 effects mixer's step that scales one slot's samples by its left and
@@ -2351,9 +2355,23 @@ arithmetic on the times it is given, with no clock and no SDL.
 is and how solid after a given elapsed time — pure arithmetic, no
 renderer, and the one piece of the smart ping's arrival effect and
 the overview's respawn ring that a test can observe at all.
+`map_colours.c` is the colours a map square and its markers get when
+they are drawn too small for their sprites, with a skin's
+`[MapPalette]` entries over the built-in ones, and `map_markers.c`
+is the marker shapes themselves (the tank triangle, the pill disc and
+the base square), drawn with an `SDL_Renderer *` they are handed, as
+`sdl_bmp.c`'s upload calls are; `tests/unit/test_map_colours.c` and
+`test_map_markers.c` drive them.
+`sim_rules_phrase.c` is the words a player reads beside a sim rule's
+value, built from lang table strings; `tests/unit/test_sim_rules_desc.c`
+and `test_sim_rules_describe.c` drive it.
+`dialogs/wbn_browser_sort.c` is the sort rule of the WinBolo.net log
+browser's results table, plain C with no SDL, and
+`tests/unit/test_wbn_browser_sort.c` drives it.
 `dialogs/dialog_quit.cpp` is the odd one by directory and not by
-rule: it is one of the two files under `dialogs/` that hold no ImGui
-(the other is `dialogs/clip_gif_core.c`), and it is there so that
+rule: it is one of the files under `dialogs/` that hold no ImGui
+(`dialogs/clip_gif_core.c` and `dialogs/wbn_browser_sort.c` are two
+more on this list), and it is there so that
 `dialogQuitClassify` — what a quit means to
 whichever dialog is up — can be driven from a test with hand-built
 events instead of a window (see "Standalone ImGui dialogs" below).
@@ -2380,38 +2398,76 @@ worked out from URLs, byte counts and frame numbers. The cache itself,
 which downloads with libcurl and creates the textures, stays out;
 `tests/unit/test_news_image_budget.cpp` drives the rule.
 `dialogs/clip_gif_core.c` holds the recap clip GIF's length rules
-(whole 100 ms frames between 1 s and 15 s, held to the replay time
-left, and the seek bar position maths), the gallery's metadata JSON
-file with its write, read and newest-first folder scan, and the UTF-8
-safe text fill. It is plain C over SDL and cJSON, with no ImGui and no
-renderer, and `tests/unit/test_clip_gif_core.c` drives it.
-The first sixteen are each called directly by a test beside them;
-`gfx_settings.c` is here because `tileloader.c` calls it, and is the
-one file on the list no test drives on its own.
+(whole 100 ms frames between 1 s and 30 s, held to the replay time
+left, and the seek bar position maths), the crop choice (the player's
+frame or the centre of the view), the Preview clip state (where the
+clip starts and ends, and when the preview ends or lets go), the
+gallery's metadata JSON file with its fill, write, read and
+newest-first folder scan, and the UTF-8 safe text fill. It is plain C
+over SDL and cJSON, with no ImGui and no renderer, and
+`tests/unit/test_clip_gif_core.c` drives it. The game's replay
+(`dialogs/lobby/lobby_clip_gif.cpp`) and the Log Viewer
+(`src/logviewer/imgui/imgui_clip_gif.cpp`) make their GIFs with one
+shared ImGui file, `dialogs/clip_gif_capture.cpp`: the preview
+playback, the capture loop, the progress window and where the GIF goes
+on each platform. Each host gives it its replay as a table of calls
+(`ClipGifReplay`), so the shared file needs nothing of the lobby or of
+the viewer. A frame is not read straight off the viewer's render
+target, which is 1x pixel art: `dialogs/clip_gif_frame.h` draws the
+crop into a texture of its own at the scale the screen shows it
+(`clipGifFrameScale`, the zoom times the pixel density, held between 1
+and 2), asks the host to draw the tank names over it as its screen
+does (`lv_drawTankLabelsOver`, which the viewer's own blit and the
+reel's `lvEmbedDrawTankLabels` share), and reads that back, so a GIF
+shows the names at the size they appear rather than a 10 px face
+blown up with the tiles. The gallery's preview plays a GIF the way a
+browser does: `stbiGifStreamOpen` in `src/third_party/stb` reads one
+frame at a time as each is shown and rewinds at the end, so the
+preview holds the file's bytes and five frames' worth of pixels
+however long the clip is, rather than every decoded frame at once.
+All twenty-two are each called directly by a test beside them;
+`gfx_settings.c` is also here because `tileloader.c` calls it, and
+`test_fog_roads.c` drives it on its own.
 
 They do not borrow the target's T2 access. They keep the `gui`
 profile's public-only rule. That is the rule which qualifies a file
-for this list: **a leaf a test can call with no display attached —
-no ImGui, and no window, renderer or audio device of its own.**
-Nothing here creates or holds one. `sdl_bmp.c` marks where the
-boundary runs: its upload calls take an `SDL_Renderer *` they are
-handed, and the surface-level half the tests use needs none, so the
-file goes in while a file that opened a renderer would not. The
-drawing half of the overview (`overview_view.cpp`) does not qualify
-and stays out.
+for this list: **a leaf a test can call with no display attached — no
+ImGui, and no window, renderer or audio device of its own.** Nothing
+here creates or holds one. One file outside the twenty-two is the single
+named exception to the "no ImGui" part; see the paragraph after this
+one. `sdl_bmp.c` marks where the boundary runs: its upload calls take
+an `SDL_Renderer *` they are handed, and the surface-level half the
+tests use needs none, so the file goes in while a file that opened a
+renderer would not. The drawing half of the overview
+(`overview_view.cpp`) does not qualify and stays out.
+
+`dialogs/imgui_nav_outline.cpp` is that exception: it is the one
+source linked into `WinBoloUnitTests` that uses ImGui, and for it the
+test binary also links `imgui_backends`. It is the focus outline and
+its key rule: which key press only shows the outline and which press
+acts, read from and written to ImGui's own nav state and key owners.
+That rule cannot be tested without ImGui, because ImGui is what it
+acts on. `tests/unit/test_nav_outline.cpp` drives it in a headless
+ImGui context: the test creates a context, feeds it key and mouse
+events, and runs `NewFrame` and `Render` with no window, no renderer
+and no platform or renderer backend running. So the file still meets
+the aim of the rule, no display attached, and only the "no ImGui" part
+is set aside, for this file alone. A second ImGui file joins only on
+the same terms: it opens no window, renderer or device, and its test
+runs ImGui with no display.
 
 The alternative, for the geometry files, was moving the maths into
 `src/bolo/`, which would put pixel, zoom and panel-layout concerns
 onto the sim purely to buy testability. Keeping them in the renderer
 and linking the leaf files is the smaller distortion of the two.
 
-**Rests on** each of the eighteen still meeting that rule, so it is
+**Rests on** each of the twenty-two still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
-include, or that opens a renderer or a device of its own, has left
-the category, and the answer is to split the leaf back out — the
-link break is the signal, not a build problem to route around by
-widening the test binary. An eighteenth file joins only on the same
-test: callable with no display attached, or it does not go in.
+include, or that opens a renderer or a device of its own, has left the
+category, and the answer is to split the leaf back out — the link
+break is the signal, not a build problem to route around by widening
+the test binary. Another file joins only on the same test: callable
+with no display attached, or it does not go in.
 
 Six `src/mapeditor` files ride the same rule from a different
 directory and are not on that list: `mapeditor_scenario.c`,

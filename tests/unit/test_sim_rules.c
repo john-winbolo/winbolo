@@ -487,7 +487,9 @@ int run_sim_rules_validate_ranges(void) {
        start offset has to come down to what one tick of that shortest shot
        can pay for. At the high end the budget has to stay inside the BYTE
        the shell record keeps it in, which pins shell_life down as the
-       gunsight opens and pins the gunsight in as shell_life grows. */
+       gunsight opens and pins the gunsight in as shell_life grows. A
+       pillbox's shot fills the same BYTE, so shell_life at the top of its
+       range brings pill_fire_length down to its floor of half a square. */
     SR_RANGE_INT_WITH(gunsight_min, 1, 255,
                       t.shell_start_add = 0,
                       t.gunsight_max = 255; t.shell_life = 1);
@@ -496,7 +498,8 @@ int run_sim_rules_validate_ranges(void) {
                       t.shell_life = 1; t.shell_start_add = 0);
     SR_RANGE_INT_WITH(shell_life, 1, 255,
                       t.shell_start_add = 0,
-                      t.gunsight_max = 1; t.gunsight_min = 1);
+                      t.gunsight_max = 1; t.gunsight_min = 1;
+                      t.pill_fire_length = 0.5f);
     /* shell_start_add has no ceiling of its own — RULE_INT_MIN gives it only
        a floor — so the sweep uses the largest offset any legal table can
        carry, which is what the shortest-shot pair allows at the top of every
@@ -1195,7 +1198,9 @@ int run_sim_rules_tank_collision_mac(void) {
     /* Mac Bolo reference positions at speed 32: the 16-WU
      * displacement matches one WinBolo tick at speed 16. Obstruction and
      * aim use the actual 20/40 ms speed conversion, not that probe speed.
-     * In particular, row 3 must keep leading during a 15-WU wall slide. */
+     * In particular, row 3 must keep leading during a 15-WU wall slide.
+     * Headings exactly halfway between two sectors are left out: Mac rounds
+     * them up and WinBolo down (run_sim_rules_mac_halfway_heading). */
     static const struct {
         int x, y, heading, speed, endX, endY, blocked, shot;
     } cases[] = {
@@ -1206,8 +1211,6 @@ int run_sim_rules_tank_collision_mac(void) {
         {0,-225,128,16, 0,-225,1,1},
         {-210,-210,96,16, -209,-209,1,223},
         {-210,-210,0,0, -210,-210,0,223},
-        {-32,-240,72,16, -17,-234,0,79},
-        {-32,-240,248,16, -32,-256,0,251},
     };
     /* Mac's stationary-box probe, north of a pill, for all 16 sectors. */
     static const int boxY[16] = {
@@ -1305,6 +1308,106 @@ int run_sim_rules_tank_collision_mac(void) {
     tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
     UT_ASSERT(target->x == centre - 9 && target->y == centre - 240);
     UT_ASSERT(!target->obstructed);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Mac Bolo rounds a heading exactly halfway between two of the 16 sectors
+ * (8, 24, ... 248) up; WinBolo rounds it down, and so do the Mac rules. With
+ * tank_collision_mac and pill_aim_mac on, a tank on a halfway heading must
+ * be drawn, driven, boxed and led exactly as one on the sector below it.
+ * Rounding only the movement up once left a tank on 72 drawn facing east
+ * while it drove ESE. Each pair starts beside a pill so the box nudges and
+ * the lead both take part. */
+static void macHalfwayStep(GameSim *gs, struct tankObj *initial, pillbox *pill,
+                           bool *connected, int startX, int startY,
+                           TURNTYPE heading, int *outX, int *outY,
+                           bool *outBlocked, BYTE *outFrame,
+                           TURNTYPE *outShot) {
+    tank target = gs->tanks[0];
+    *target = *initial;
+    target->x = (WORLD)startX;
+    target->y = (WORLD)startY;
+    target->angle = heading;
+    target->speed = 16;
+    *outFrame = tankGetFrame(&gs->tanks[0]);
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    *outX = target->x;
+    *outY = target->y;
+    *outBlocked = target->obstructed;
+    shellsDestroy(&gs->shs);
+    pill->reload = pill->speed;
+    pill->justSeen = TRUE;
+    pillsUpdate(gs, gs->tanks, connected, MAX_TANKS);
+    *outShot = gs->shs != NULL ? gs->shs->angle : -1.0f;
+}
+
+int run_sim_rules_mac_halfway_heading(void) {
+    static const int starts[][2] = { {-32,-240}, {-210,-210}, {0,-225} };
+    ServerSim *sim = ut_make_running_sim("Mac halfway heading");
+    GameSim *gs;
+    tank target;
+    struct tankObj initial;
+    pillbox *pill;
+    bool connected[MAX_TANKS] = {false};
+    int x, y, k;
+    size_t i, s;
+    const int centre = 100 * 256 + 128;
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    target = gs->tanks[0];
+    UT_ASSERT(target != NULL && gs->pb->numPills > 0);
+    for (x = 98; x <= 102; x++) for (y = 98; y <= 102; y++) {
+        mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, ROAD, FALSE, FALSE);
+    }
+    for (i = 0; i < gs->pb->numPills; i++) gs->pb->active[i] = FALSE;
+    gs->pb->active[0] = TRUE;
+    pill = &gs->pb->item[0];
+    pill->x = pill->y = 100;
+    pill->owner = NEUTRAL;
+    pill->armour = 15;
+    pill->inTank = FALSE;
+    target->autoSlowdown = FALSE;
+    target->destroyed = FALSE;
+    target->onBoat = FALSE;
+    target->boatState = BoatState_NotOnBoat;
+    target->deathWait = 0;
+    initial = *target;
+    gs->rules.pill_aim_mac = 1;
+    gs->rules.tank_collision_mac = 1;
+    connected[0] = true;
+    for (s = 0; s < sizeof(starts) / sizeof(starts[0]); s++) {
+        for (k = 0; k < 16; k++) {
+            int lowX, lowY, halfX, halfY;
+            bool lowBlocked, halfBlocked;
+            BYTE lowFrame, halfFrame;
+            TURNTYPE lowShot, halfShot;
+            macHalfwayStep(gs, &initial, pill, connected,
+                           centre + starts[s][0], centre + starts[s][1],
+                           (TURNTYPE)(k * 16), &lowX, &lowY, &lowBlocked,
+                           &lowFrame, &lowShot);
+            macHalfwayStep(gs, &initial, pill, connected,
+                           centre + starts[s][0], centre + starts[s][1],
+                           (TURNTYPE)(k * 16 + 8), &halfX, &halfY,
+                           &halfBlocked, &halfFrame, &halfShot);
+            UT_ASSERT_MSG(halfFrame == k && lowFrame == k,
+                "start %u heading %d: drawn as %u, expected %d",
+                (unsigned)s, k * 16 + 8, (unsigned)halfFrame, k);
+            UT_ASSERT_MSG(halfX == lowX && halfY == lowY &&
+                          halfBlocked == lowBlocked,
+                "start %u heading %d: moved to (%d,%d) blocked=%d, heading "
+                "%d to (%d,%d) blocked=%d", (unsigned)s, k * 16 + 8,
+                halfX - centre, halfY - centre, halfBlocked, k * 16,
+                lowX - centre, lowY - centre, lowBlocked);
+            UT_ASSERT_MSG(lowShot >= 0.0f,
+                "start %u heading %d: the pill did not fire", (unsigned)s,
+                k * 16);
+            UT_ASSERT_MSG(halfShot == lowShot,
+                "start %u heading %d: pill shot %f, heading %d shot %f",
+                (unsigned)s, k * 16 + 8, (double)halfShot, k * 16,
+                (double)lowShot);
+        }
+    }
     serverSimDestroy(sim);
     return 0;
 }
@@ -1968,10 +2071,35 @@ int run_sim_rules_pairs(void) {
     /* And at the longest shot the budget still has to fit the BYTE the shell
        record stores it in. At the classic gunsight_max of 14 the budget is
        7 per point of shell_life, so 37 lands on 255 exactly and 38 is one
-       past it. */
+       past it. A pillbox's 8.5 squares would wrap at 37, so its length
+       comes down to 7 for the case that passes: 1 + 37*7 - 5 is 255 too. */
     SR_PAIR_REFUSED(t.shell_life = 38, "shell_life", "gunsight_max");
-    SR_PAIR_OK(t.shell_life = 37,
+    SR_PAIR_OK(t.shell_life = 37; t.pill_fire_length = 7.0f,
                "the longest shot whose budget still fits a byte");
+
+    /* A pillbox's shot goes into the same BYTE, with pill_fire_length as its
+       length. At the classic 8.5 squares, shell_life 30 is 1 + 255 - 5 = 251
+       and 31 is 259; at the classic shell_life of 8, 32.375 squares lands on
+       255 exactly and 32.5 is 256. */
+    SR_PAIR_REFUSED(t.shell_life = 31, "shell_life", "pill_fire_length");
+    SR_PAIR_OK(t.shell_life = 30,
+               "a shell_life whose pillbox budget still fits a byte");
+    SR_PAIR_REFUSED(t.pill_fire_length = 32.5f, "shell_life",
+                    "pill_fire_length");
+    SR_PAIR_OK(t.pill_fire_length = 32.375f,
+               "the longest pillbox shot whose budget still fits a byte");
+    /* All three are asked together: a shorter pillbox shot, or a shell that
+       starts further out, makes room for a shell_life the classic table
+       refuses. */
+    SR_PAIR_OK(t.shell_life = 31; t.pill_fire_length = 8.0f,
+               "shell_life 31 with an 8-square pillbox shot");
+    SR_PAIR_OK(t.shell_life = 31; t.shell_start_add = 9,
+               "shell_life 31 with the shell starting 9 ticks out");
+    /* The product is truncated, as shellLifeTicks truncates it: 8 * 32.4 is
+       259.2, which counts as 259 and lands on 255, where rounding up would
+       have refused it. */
+    SR_PAIR_OK(t.pill_fire_length = 32.4f,
+               "a product truncated the way shellLifeTicks does it");
 
     /* A pair refuses a table; it never rewrites one. The classic values come
      * back unchanged from a call that passes and from one that does not. */

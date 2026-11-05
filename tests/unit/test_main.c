@@ -2,7 +2,7 @@
  * WinBoloUnitTests entry point. Dispatches one named test per
  * invocation so each CTest entry maps to a single test case.
  *
- *   WinBoloUnitTests --test <name>      run a single test
+ *   WinBoloUnitTests --test <name>...   run the named tests in order
  *   WinBoloUnitTests --list             print test names
  *   WinBoloUnitTests                    run every test in sequence,
  *                                      bar the fixture writers
@@ -13,6 +13,7 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
+#include "bolo_rand.h"
 #include "test_harness.h"
 
 #include "everard_map.h"
@@ -230,6 +231,7 @@ static const UnitTestEntry s_tests[] = {
     { "mine_kill_publishes_event",                  run_mine_kill_publishes_event                  },
     { "mine_kill_on_boat_publishes_event",          run_mine_kill_on_boat_publishes_event          },
     { "mine_kill_own_mine_names_self",              run_mine_kill_own_mine_names_self              },
+    { "mine_kill_explosion_size",                   run_mine_kill_explosion_size                   },
     { "mine_blast_range",                           run_mine_blast_range                           },
     { "awards_basic_winners",                       run_awards_basic_winners                       },
     { "awards_tiebreak",                            run_awards_tiebreak                            },
@@ -252,6 +254,7 @@ static const UnitTestEntry s_tests[] = {
     { "round_stats_derive_equivalence",             run_round_stats_derive_equivalence             },
     { "highlights_cluster_wipe",                    run_highlights_cluster_wipe                    },
     { "highlights_wipe_team_bonus",                 run_highlights_wipe_team_bonus                 },
+    { "highlights_wipe_team_at_death",             run_highlights_wipe_team_at_death },
     { "highlights_objective_steal",                 run_highlights_objective_steal                 },
     { "highlights_award_anchor",                    run_highlights_award_anchor                    },
     { "highlights_selection",                       run_highlights_selection                       },
@@ -259,6 +262,8 @@ static const UnitTestEntry s_tests[] = {
     { "highlights_empty",                           run_highlights_empty                           },
     { "territory_shift_basic",                      run_territory_shift_basic                      },
     { "territory_shift_bounded",                    run_territory_shift_bounded                    },
+    { "round_stats_team_at",                       run_round_stats_team_at },
+    { "territory_shift_follows_team",              run_territory_shift_follows_team },
     { "highlights_turning_point",                   run_highlights_turning_point                   },
     { "territory_recent_damage",                    run_territory_recent_damage                    },
     { "highlights_front_collapse",                  run_highlights_front_collapse                  },
@@ -370,6 +375,12 @@ static const UnitTestEntry s_tests[] = {
     { "upload_filename_safe",                    run_upload_filename_safe                    },
     { "upload_filename_safe_script",             run_upload_filename_safe_script             },
     { "lobby_time_minutes_valid",                run_lobby_time_minutes_valid                },
+    { "lobby_time_limit_reaches_round",          run_lobby_time_limit_reaches_round          },
+    { "lobby_time_limit_removed_reaches_round",  run_lobby_time_limit_removed_reaches_round  },
+    { "lobby_time_limit_empty_reset",            run_lobby_time_limit_empty_reset            },
+    { "lobby_hidden_mines_client_follows",       run_lobby_hidden_mines_client_follows       },
+    { "lobby_hidden_mines_in_place_start",       run_lobby_hidden_mines_in_place_start       },
+    { "lobby_hidden_mines_empty_reset",          run_lobby_hidden_mines_empty_reset          },
     { "lobby_bot_name_rejects_reserved_prefix",  run_lobby_bot_name_rejects_reserved_prefix  },
     { "lobby_bot_name_rejects_disallowed_char",  run_lobby_bot_name_rejects_disallowed_char  },
     { "lobby_bot_name_rejects_collision",        run_lobby_bot_name_rejects_collision        },
@@ -713,6 +724,16 @@ static const UnitTestEntry s_tests[] = {
     { "lv_event_list_replay",                    run_lv_event_list_replay                    },
     { "lv_event_list_pinned",                    run_lv_event_list_pinned                    },
     { "wbn_browser_sort",                        run_wbn_browser_sort                        },
+    { "nav_outline_first_enter_shows", run_nav_outline_first_enter_shows },
+    { "nav_outline_first_space_shows", run_nav_outline_first_space_shows },
+    { "nav_outline_first_arrow_shows", run_nav_outline_first_arrow_shows },
+    { "nav_outline_code_focus_enter_acts", run_nav_outline_code_focus_enter_acts },
+    { "nav_outline_quiet_focus_hidden", run_nav_outline_quiet_focus_hidden },
+    { "nav_outline_ctrl_enter_not_claimed", run_nav_outline_ctrl_enter_not_claimed },
+    { "nav_outline_alt_arrow_not_claimed", run_nav_outline_alt_arrow_not_claimed },
+    { "nav_outline_first_home_end_shows", run_nav_outline_first_home_end_shows },
+    { "nav_outline_first_page_keys_shows", run_nav_outline_first_page_keys_shows },
+    { "nav_outline_destroyed_context_forgets_focus", run_nav_outline_destroyed_context_forgets_focus },
     { "browser_version_parse",                   run_browser_version_parse                   },
     { "version_protocol_bytes",                  run_version_protocol_bytes                  },
     { "clip_gif_len_sync",                       run_clip_gif_len_sync                       },
@@ -722,6 +743,28 @@ static const UnitTestEntry s_tests[] = {
     { "clip_gif_gallery_scan",                   run_clip_gif_gallery_scan                   },
     { "clip_gif_text_fill",                      run_clip_gif_text_fill                      },
     { "clip_gif_preview_cap",                    run_clip_gif_preview_cap                    },
+    { "clip_gif_current_game",                   run_clip_gif_current_game                   },
+    { "clip_gif_delete",                         run_clip_gif_delete                         },
+    { "clip_gif_frame_count",                    run_clip_gif_frame_count                    },
+    { "clip_gif_centre_crop",                    run_clip_gif_centre_crop                    },
+    { "clip_gif_names",                          run_clip_gif_names                          },
+    { "clip_gif_frame_box",                      run_clip_gif_frame_box                      },
+    { "clip_gif_frame_drag",                     run_clip_gif_frame_drag                     },
+    { "clip_gif_crop_from_frame",                run_clip_gif_crop_from_frame                },
+    { "clip_gif_blit_view",                      run_clip_gif_blit_view                      },
+    { "clip_gif_mode_state",                     run_clip_gif_mode_state                     },
+    { "clip_gif_preview_play",                   run_clip_gif_preview_play                   },
+    { "clip_gif_choose_crop",                    run_clip_gif_choose_crop                    },
+    { "clip_gif_default_frame",                  run_clip_gif_default_frame                  },
+    { "clip_gif_meta_begin",                     run_clip_gif_meta_begin                     },
+    { "clip_gif_span_place",                     run_clip_gif_span_place                     },
+    { "clip_gif_zoom_axis",                      run_clip_gif_zoom_axis                      },
+    { "clip_gif_span_drag",                      run_clip_gif_span_drag                      },
+    { "clip_gif_zoom_grow",                      run_clip_gif_zoom_grow                      },
+    { "clip_gif_window_place",                   run_clip_gif_window_place                   },
+    { "clip_gif_span_move",                      run_clip_gif_span_move                      },
+    { "clip_gif_grip_box",                       run_clip_gif_grip_box                       },
+    { "clip_gif_frame_scale",                    run_clip_gif_frame_scale                    },
     { "lv_snapshot_index_lookup",                run_lv_snapshot_index_lookup                },
     { "lv_snapshot_index_ten_days",              run_lv_snapshot_index_ten_days              },
     { "lv_load_walk_fixtures",                   run_lv_load_walk_fixtures                   },
@@ -789,11 +832,82 @@ static const UnitTestEntry s_tests[] = {
                                                  run_alliance_request_cleared_at_round_start },
     { "alliance_request_client_drops_departed_requester",
                                                  run_alliance_request_client_drops_departed_requester },
+    { "team_sides_accept_merges_groups",
+                                                 run_team_sides_accept_merges_groups },
+    { "team_sides_clear_moves_no_owner",
+                                                 run_team_sides_clear_moves_no_owner },
+    { "team_sides_pill_fires_at_ex_ally",
+                                                 run_team_sides_pill_fires_at_ex_ally },
+    { "team_sides_base_refuels_ally_only",
+                                                 run_team_sides_base_refuels_ally_only },
+    { "team_sides_allies_share_base_win",
+                                                 run_team_sides_allies_share_base_win },
+    { "team_sides_client_takes_slot_in_game",
+                                                 run_team_sides_client_takes_slot_in_game },
+    { "team_sides_fold_at_return_to_lobby",
+                                                 run_team_sides_fold_at_return_to_lobby },
+    { "team_sides_surrender_after_defection",
+                                                 run_team_sides_surrender_after_defection },
+    { "team_sides_ping_after_leave",
+                                                 run_team_sides_ping_after_leave },
+    { "team_sides_track_identity_after_defection",
+                                                 run_team_sides_track_identity_after_defection },
+    { "team_sides_midgame_joiner_team",
+                                                 run_team_sides_midgame_joiner_team },
+    { "team_sides_set_team_keeps_player_alliance",
+                                                 run_team_sides_set_team_keeps_player_alliance },
+    { "team_sides_accept_moves_whole_team",
+                                                 run_team_sides_accept_moves_whole_team },
+    { "team_sides_accept_from_no_team",
+                                                 run_team_sides_accept_from_no_team },
+    { "team_sides_accept_same_side_says_nothing",
+                                                 run_team_sides_accept_same_side_says_nothing },
+    { "team_sides_leave_takes_free_team",
+                                                 run_team_sides_leave_takes_free_team },
+    { "team_sides_leave_with_no_free_team",
+                                                 run_team_sides_leave_with_no_free_team },
+    { "team_sides_free_team_rules",
+                                                 run_team_sides_free_team_rules },
+    { "team_sides_team_chat_follows_sides",
+                                                 run_team_sides_team_chat_follows_sides },
+    { "team_sides_panels_follow_team",
+                                                 run_team_sides_panels_follow_team },
+    { "team_sides_infection_puts_leaver_back",
+                                                 run_team_sides_infection_puts_leaver_back },
+    { "team_sides_rejoin_is_a_joiner",
+                                                 run_team_sides_rejoin_is_a_joiner },
+    { "team_sides_joiner_slot_before_join",
+                                                 run_team_sides_joiner_slot_before_join },
+    { "team_sides_lobby_joiner_keeps_rule",
+                                                 run_team_sides_lobby_joiner_keeps_rule },
+    { "team_sides_lobby_drops_empty_teams",
+                                                 run_team_sides_lobby_drops_empty_teams },
+    { "team_sides_soccer_puts_leaver_back",
+                                                 run_team_sides_soccer_puts_leaver_back },
+    { "team_sides_round_log_teams",
+                                                 run_team_sides_round_log_teams },
+    { "team_sides_held_seat_allied_in_round",
+                                                 run_team_sides_held_seat_allied_in_round },
+    { "team_sides_free_team_keeps_setup",
+                                                 run_team_sides_free_team_keeps_setup },
+    { "team_sides_free_team_keeps_lobby_side",
+                                                 run_team_sides_free_team_keeps_lobby_side },
+    { "team_sides_accept_rebuilds_table",
+                                                 run_team_sides_accept_rebuilds_table },
+    { "team_sides_leave_rebuilds_table",
+                                                 run_team_sides_leave_rebuilds_table },
+    { "team_sides_bot_added_in_round_is_allied",
+                                                 run_team_sides_bot_added_in_round_is_allied },
+    { "team_sides_table_write_is_caught",
+                                                 run_team_sides_table_write_is_caught },
     { "round_start_owners_kept_with_lobby_team", run_round_start_owners_kept_with_lobby_team },
     { "round_start_owners_kept_after_manual_alliance",
                                                  run_round_start_owners_kept_after_manual_alliance },
     { "treegrow_never_plants_on_deep_sea",       run_treegrow_never_plants_on_deep_sea       },
     { "treegrow_reset_clears_stale_target",      run_treegrow_reset_clears_stale_target      },
+    { "treegrow_skips_square_man_is_building_on", run_treegrow_skips_square_man_is_building_on },
+    { "treegrow_still_grows_when_man_not_building_there",
+                                                 run_treegrow_still_grows_when_man_not_building_there },
     { "pill_repair_tops_up_from_arrival_armour", run_pill_repair_tops_up_from_arrival_armour },
     { "pill_repair_short_load_spends_what_it_has", run_pill_repair_short_load_spends_what_it_has },
     { "pill_repair_full_load_covers_a_dead_pill", run_pill_repair_full_load_covers_a_dead_pill },
@@ -931,12 +1045,11 @@ static const UnitTestEntry s_tests[] = {
     { "mod_lobby_starts_mac_bolo_keeps_opposite_sides", run_mod_lobby_starts_mac_bolo_keeps_opposite_sides },
     { "mac_bolo_settings_defaults_play_old_rules", run_mac_bolo_settings_defaults_play_old_rules },
     { "mac_bolo_settings_each_part_off", run_mac_bolo_settings_each_part_off },
-    { "mac_bolo_settings_numbers", run_mac_bolo_settings_numbers },
-    { "mac_bolo_tank_hit_mines_part_with_mines_mod", run_mac_bolo_tank_hit_mines_part_with_mines_mod },
     { "mac_bolo_first_start_lobby_off_uses_mac_pick", run_mac_bolo_first_start_lobby_off_uses_mac_pick },
     { "mac_bolo_spawn_starts_off_engine_picks", run_mac_bolo_spawn_starts_off_engine_picks },
     { "mac_bolo_setting_changed_after_attach", run_mac_bolo_setting_changed_after_attach },
     { "mac_bolo_setting_changed_between_rounds", run_mac_bolo_setting_changed_between_rounds },
+    { "mac_bolo_spawn_pick_keeps_enemies_off", run_mac_bolo_spawn_pick_keeps_enemies_off },
     { "choose_start_lobby_arg_hand_picked", run_choose_start_lobby_arg_hand_picked },
     { "choose_start_lobby_arg_team_side", run_choose_start_lobby_arg_team_side },
     { "choose_start_lobby_arg_nil_without_reservation", run_choose_start_lobby_arg_nil_without_reservation },
@@ -973,6 +1086,7 @@ static const UnitTestEntry s_tests[] = {
     { "tank_knockback_timing_drive",             run_tank_knockback_timing_drive             },
     { "tank_knockback_replaces_mines",           run_tank_knockback_replaces_mines           },
     { "tank_knockback_rules_respawn",            run_tank_knockback_rules_respawn            },
+    { "tank_mine_sweep_follows_heading",         run_tank_mine_sweep_follows_heading         },
     { "tank_knockback_mac_off_ignores_bonus",    run_tank_knockback_mac_off_ignores_bonus    },
     { "tank_status_wire_bits",                   run_tank_status_wire_bits                   },
     { "tank_status_wire_start_find_round_trip",  run_tank_status_wire_start_find_round_trip  },
@@ -1036,6 +1150,7 @@ static const UnitTestEntry s_tests[] = {
     { "view_cycle_pick_policy",                  run_view_cycle_pick_policy                  },
     { "view_cycle_pick_direction",               run_view_cycle_pick_direction               },
     { "view_target_codec",                       run_view_target_codec                       },
+    { "control_event_names",                     run_control_event_names                     },
     { "view_target_apply",                       run_view_target_apply                       },
     { "view_cycle_bases",                        run_view_cycle_bases                        },
     { "view_cycle_base_direction",               run_view_cycle_base_direction               },
@@ -1171,14 +1286,18 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_pill_massage_follows",       run_sim_rules_pill_massage_follows       },
     { "sim_rules_pill_aim_mac",               run_sim_rules_pill_aim_mac               },
     { "sim_rules_tank_collision_mac",         run_sim_rules_tank_collision_mac         },
+    { "sim_rules_mac_halfway_heading",        run_sim_rules_mac_halfway_heading        },
     { "sim_rules_tank_deep_sea_safe",         run_sim_rules_tank_deep_sea_safe         },
     { "lgm_build_square_terrain_speed",         run_lgm_build_square_terrain_speed         },
+    { "pill_aim_lead_follows_shell_start_add", run_pill_aim_lead_follows_shell_start_add },
     { "pill_shell_cap_off_is_no_limit", run_pill_shell_cap_off_is_no_limit },
-    { "pill_shell_cap_retargets_next_nearest", run_pill_shell_cap_retargets_next_nearest },
-    { "pill_shell_cap_holds_then_fires_when_freed", run_pill_shell_cap_holds_then_fires_when_freed },
+    { "pill_shell_cap_does_not_retarget", run_pill_shell_cap_does_not_retarget },
+    { "pill_shell_cap_loses_shot_and_reloads", run_pill_shell_cap_loses_shot_and_reloads },
     { "pill_shell_cap_out_of_range_clears_just_seen", run_pill_shell_cap_out_of_range_clears_just_seen },
     { "pill_shell_cap_counts_same_update_shots", run_pill_shell_cap_counts_same_update_shots },
     { "pill_shell_cap_ignores_tank_shells", run_pill_shell_cap_ignores_tank_shells },
+    { "pill_aim_budget_past_a_byte_ends", run_pill_aim_budget_past_a_byte_ends },
+    { "pill_aim_budget_one_aims_at_tank", run_pill_aim_budget_one_aims_at_tank },
     { "sim_rules_tank_explosion_follows", run_sim_rules_tank_explosion_follows },
     { "sim_rules_water_loss_follows", run_sim_rules_water_loss_follows },
     { "sim_rules_pairs",                         run_sim_rules_pairs                         },
@@ -1240,6 +1359,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_bot_pool_survives_bulk_rebase",  run_loopback_bot_pool_survives_bulk_rebase  },
     { "loopback_brain_docs_survives_bulk_rebase", run_loopback_brain_docs_survives_bulk_rebase },
     { "loopback_map_upload",                     run_loopback_map_upload                     },
+    { "loopback_map_change_busy_lifts",          run_loopback_map_change_busy_lifts          },
     { "loopback_map_upload_list_after_rejoin",   run_loopback_map_upload_list_after_rejoin   },
     { "upload_begin_golden",                     run_upload_begin_golden                     },
     { "script_upload_begin_refusals",            run_script_upload_begin_refusals            },
@@ -1455,6 +1575,13 @@ static const UnitTestEntry s_tests[] = {
     { "mapchooser_scenario_filter",              run_mapchooser_scenario_filter              },
     { "bg_map_pick_skips_tutorials",             run_bg_map_pick_skips_tutorials             },
     { "tutorial_maps_shipped_path",              run_tutorial_maps_shipped_path              },
+    { "tutorial_maps_popup_pauses",              run_tutorial_maps_popup_pauses              },
+    { "tutorial_maps_script_has_popup",          run_tutorial_maps_script_has_popup          },
+    { "scenario_host_popup_nil_outside_tutorials", run_scenario_host_popup_nil_outside_tutorials },
+    { "scenario_host_popup_in_tutorial",         run_scenario_host_popup_in_tutorial         },
+    { "scenario_validate_popup_tutorial_only",   run_scenario_validate_popup_tutorial_only   },
+    { "scenario_host_shipped_tutorial_rooted",   run_scenario_host_shipped_tutorial_rooted   },
+    { "scenario_host_popup_unsafe_unreachable",  run_scenario_host_popup_unsafe_unreachable  },
     { "voice_core_roundtrip",                    run_voice_core_roundtrip                    },
     { "voice_device_resolve",                    run_voice_device_resolve                    },
     { "voice_peak",                              run_voice_peak                              },
@@ -1721,6 +1848,10 @@ static const UnitTestEntry s_tests[] = {
     { "survival_lobby_round",                    run_survival_lobby_round                    },
     { "survival_lobby_round_full",               run_survival_lobby_round_full               },
     { "survival_lobby_round_ds_order",           run_survival_lobby_round_ds_order           },
+    { "survival_lobby_round_late_joiner",
+                                                 run_survival_lobby_round_late_joiner },
+    { "survival_lobby_round_leaver_back",
+                                                 run_survival_lobby_round_leaver_back },
     { "loopback_unfield_tank",                   run_loopback_unfield_tank                   },
     { "loopback_fine_tank_position",             run_loopback_fine_tank_position             },
     { "loopback_shell_drawn_cull",               run_loopback_shell_drawn_cull               },
@@ -2487,12 +2618,15 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_announce_remaining",                     run_scenario_announce_remaining                     },
     { "scenario_announce_position",                      run_scenario_announce_position                      },
     { "scenario_text_fit",                               run_scenario_text_fit                               },
+    { "scenario_text_layout",                            run_scenario_text_layout                            },
     { "scenario_text_tablet_band",                       run_scenario_text_tablet_band                       },
-    { "scenario_text_pointer_on_handle",                 run_scenario_text_pointer_on_handle                 },
     { "scenario_text_window_shown",                      run_scenario_text_window_shown                      },
     { "scenario_text_printed_recently",                  run_scenario_text_printed_recently                  },
-    { "scenario_text_edge_shown",                        run_scenario_text_edge_shown                        },
+    { "scenario_float_frame_shown",                      run_scenario_float_frame_shown                      },
+    { "scenario_float_pointer_on_handle",                run_scenario_float_pointer_on_handle                },
     { "scenario_text_save_place",                        run_scenario_text_save_place                        },
+    { "scenario_panel_default_place",                    run_scenario_panel_default_place                    },
+    { "scenario_text_beside_panel_place",                run_scenario_text_beside_panel_place                },
     { "scenario_status_line",                            run_scenario_status_line                            },
     { "scenario_panel_slot_rect",                        run_scenario_panel_slot_rect                        },
     { "lv_rule_names_and_panel_parse",                   run_lv_rule_names_and_panel_parse                   },
@@ -2587,6 +2721,9 @@ static const UnitTestEntry s_tests[] = {
     { "lv_event_overlay_no_sign",                        run_lv_event_overlay_no_sign                        },
     { "lv_event_overlay_live_rebuild",                   run_lv_event_overlay_live_rebuild                   },
     { "lv_panel_set_live",                               run_lv_panel_set_live                               },
+    { "lv_chat_view_fade",                               run_lv_chat_view_fade                               },
+    { "lv_chat_view_visible",                            run_lv_chat_view_visible                            },
+    { "lv_chat_view_parts",                              run_lv_chat_view_parts                              },
     { "lv_event_kinds_filter",                           run_lv_event_kinds_filter                           },
     { "lv_event_kinds_prefs",                            run_lv_event_kinds_prefs                            },
     { "lv_event_marker",                                 run_lv_event_marker                                 },
@@ -2620,6 +2757,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_controls_bottom_row",                          run_lv_controls_bottom_row                          },
     { "lv_controls_wheel_step",                          run_lv_controls_wheel_step                          },
     { "lv_controls_fine_drag",                           run_lv_controls_fine_drag                           },
+    { "lv_play_toggle",                                  run_lv_play_toggle                                  },
     { "lv_zoom_percent",                                 run_lv_zoom_percent                                 },
     { "lv_fullscreen_key",                               run_lv_fullscreen_key                               },
     { "lv_event_scan_returns_to_start",                  run_lv_event_scan_returns_to_start                  },
@@ -2756,6 +2894,21 @@ static int run_one(const char *name) {
     for (i = 0; i < NUM_TESTS; i++) {
         if (strcmp(s_tests[i].name, name) == 0) {
             fprintf(stderr, "RUN  %s\n", s_tests[i].name);
+            /* Each test starts with the harness as a process of its own
+             * would, which is how CTest runs it. The brain stub is
+             * process-wide and a test that arms it seldom disarms it (an
+             * assert that fails returns before any cleanup), so a test
+             * that needs a brain build to fail used to pass alone and fail
+             * in the bare run after any test that armed it. */
+            ut_brain_stub_arm(false);
+            /* The same for bolo_rand: a fresh process has its state all
+             * zero, and the loopback harness and others seed it and leave
+             * it seeded, so a test that drew from it unseeded saw different
+             * numbers in the bare run than alone. */
+            {
+                static const BoloRandState kFreshProcess = { { 0, 0, 0, 0 } };
+                bolo_rand_restore(&kFreshProcess);
+            }
             s_currentTest = s_tests[i].name;
             int rc = s_tests[i].fn();
             s_currentTest = "none";
@@ -2794,8 +2947,19 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    /* Several names run in that order in one process, which is how to
+     * reproduce a test that passes alone and fails in the full run: give it
+     * the tests that ran before it until the failure comes back. The exit
+     * code is the first nonzero one. */
     if (argc >= 3 && strcmp(argv[1], "--test") == 0) {
-        int rc = run_one(argv[2]);
+        int rc = 0;
+        int a;
+        for (a = 2; a < argc; a++) {
+            int one = run_one(argv[a]);
+            if (rc == 0) {
+                rc = one;
+            }
+        }
         SDL_Quit();
         return rc;
     }

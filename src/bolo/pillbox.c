@@ -729,7 +729,6 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       bestTank = NULL;
       bestTankNum = NEUTRAL;
       foundTarget = FALSE;
-      heldByCap = FALSE;
       bestTankX = 0;
       bestTankY = 0;
       bestTankDir = 0;
@@ -762,39 +761,22 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         }
 
         if ((utilIsItemInRange(x, y, tankX, tankY, (WORLD) sim->rules.pill_range, &amount)) == TRUE) {
-          /* A tank with as many pill shells coming as the rule allows is
-           * passed over for the next nearest. Checked only once the tank
-           * has passed every other test, so heldByCap means a target the
-           * pill could otherwise shoot: one that leaves range, hides or
-           * dies clears justSeen below the same as it always has. */
-          const bool capHeld = shellCapOn && t < MAX_TANKS &&
-              shellsAtTank[t] >= sim->rules.pill_max_shells_at_tank;
-
           /* can_target: the scenario may have this pill pass over this tank
            * as if it were not there. Asked last, of a tank that has passed
            * every other test, and only where the answer changes something:
-           * the tank is nearer than the best so far, or the shell cap would
-           * hold the pill for it. A refused tank sets neither the target nor
-           * heldByCap, so a pill with nobody else in range clears justSeen
+           * the tank is nearer than the best so far. A refused tank is not
+           * the target, so a pill with nobody else in range clears justSeen
            * the same as it does for an empty field. No scenario, no
            * question: the helper answers TRUE without a call. */
-          if ((capHeld || amount < bestDist) &&
+          if (amount < bestDist &&
               gameSimCanTarget(sim, count, t) == FALSE) {
-            continue;
-          }
-          if (capHeld) {
-            heldByCap = TRUE;
             continue;
           }
           if (amount < bestDist) {
             bestDist = amount;
             bestTankX = tankX;
             bestTankY = tankY;
-            /* Let the Mac solver round the original heading itself.
-             * WinBolo's travel-angle helper rounds half-sectors downward,
-             * so pre-rounding here changes Mac aim at 8, 24, ... 248. */
-            bestTankDir = sim->rules.pill_aim_mac ? tankGet256Dir(&tanks[t]) :
-                tankGetTravelAngel(&tanks[t]);
+            bestTankDir = tankGetTravelAngel(&tanks[t]);
             bestTankSpeed = tankGetSpeed(&tanks[t]);
             bestTank = &tanks[t];
             bestTankNum = t;
@@ -803,9 +785,19 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         }
       }
 
+      /* pill_shell_cap: the nearest tank already has as many pill shells
+       * coming as the rule allows. Mac Bolo's pill fires only from the
+       * nearest tank's own machine, out of the 12 slots it keeps for pill
+       * shells; with none free the shot is lost and the pill reloads. */
+      heldByCap = foundTarget && shellCapOn && bestTankNum < MAX_TANKS &&
+          shellsAtTank[bestTankNum] >= sim->rules.pill_max_shells_at_tank;
+
       if (foundTarget) {
-        /* Fire at closest enemy tank */
-        if ((*value)->item[count].justSeen == TRUE) {
+        if ((*value)->item[count].justSeen == TRUE && heldByCap) {
+          /* No shell free for the closest enemy tank: the shot is lost */
+          (*value)->item[count].reload = 0;
+        } else if ((*value)->item[count].justSeen == TRUE) {
+          /* Fire at closest enemy tank */
           dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank), tankIsObstructed(bestTank));
           shellsAddItem(sim, shs, x, y, dir, sim->rules.pill_fire_length, NEUTRAL, bestTankNum, count, FALSE);
           if (shellCapOn && bestTankNum < MAX_TANKS) {
@@ -818,11 +810,9 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
           (*value)->item[count].justSeen = TRUE;
           (*value)->item[count].reload = 0;
         }
-      } else if (heldByCap == FALSE) {
+      } else {
         (*value)->item[count].justSeen = FALSE;
       }
-      /* Held only by the cap: justSeen and the full reload are kept, so the
-       * pill fires on the first update a shell at its target comes free. */
     }
   }
 }
@@ -1147,7 +1137,9 @@ static TURNTYPE pillsMacAim(int32_t x, int32_t y) {
 static TURNTYPE pillsTargetTankMac(WORLD px, WORLD py, WORLD tx, WORLD ty,
                                   TURNTYPE heading, BYTE speed, bool obstructed) {
   int distance = pillsMacRange(px, py, tx, ty);
-  int direction = ((int)(heading + 8) & 255) & 240;
+  /* Mac Bolo rounds a heading exactly halfway between two sectors up; this
+   * rounds it down, the way the tank drives. */
+  int direction = utilGet16Dir(heading);
   /* WinBolo moves speed WU per 20 ms; Mac moves speed*127/256 WU
    * per 40 ms. Its road speed 64 corresponds to WinBolo's 16. Preserve
    * the Mac byte's range for scenarios with unusually high speeds. */
@@ -1253,7 +1245,9 @@ TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD 
 TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed) {
   TURNTYPE returnValue; /* Value to return */
   TURNTYPE estimate;    /* Current Estimate */
-  BYTE count;           /* Looping Variable */
+  int count;            /* Looping Variable: an int, as pill_aim_iterations
+                           goes past what a BYTE holds and a BYTE counter
+                           wrapped, so the budget was never reached */
   bool found;           /* Finished looping */
   int tankAddX;         /* Tank add X */
   int tankAddY;         /* Tank add Y */
@@ -1274,13 +1268,14 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
   shellX = xValue;
   shellY = yValue;
 
-  returnValue = 0;
-
   /* Get tank Add amounts */
   utilCalcDistance(&tankAddX, &tankAddY, angle, speed);
-    
+
   /* Get initial estimate */
   estimate = utilCalcAngle(xValue, yValue, tankX,tankY);
+  /* A budget too small to run the loop fires at where the tank is now,
+     not at bearing 0 */
+  returnValue = estimate;
   /* Calculate distance */
   utilCalcDistance(&shellAddX, &shellAddY, estimate, sim->rules.shell_speed);
   shellX = (WORLD) (xValue + shellAddX);
@@ -1332,8 +1327,10 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
     
     estimate = utilCalcAngle(xValue, yValue, tankX,tankY);
     utilCalcDistance(&shellAddX, &shellAddY, estimate, sim->rules.shell_speed);    
-    shellX = (WORLD) (xValue + ((count+  5) * shellAddX));
-    shellY = (WORLD) (yValue + ((count +  5) * shellAddY));
+    /* The shell starts shell_start_add steps out (shellApplyStartOffset),
+       so that is where the count steps it has flown are counted from */
+    shellX = (WORLD) (xValue + ((count + sim->rules.shell_start_add) * shellAddX));
+    shellY = (WORLD) (yValue + ((count + sim->rules.shell_start_add) * shellAddY));
     /* Set it anyway */
     returnValue = estimate;
   }

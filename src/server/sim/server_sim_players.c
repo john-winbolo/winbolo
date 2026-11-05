@@ -111,7 +111,9 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
      *   slot 1 (second joiner)    → team 2
      *   slot 2+ (subsequent)      → smallest existing team (load balance)
      * Bots take whichever team the bot-add path picks (existing logic).
-     * Players can self-reassign via the team picker after joining. */
+     * Players can self-reassign via the team picker after joining. A person
+     * who joins a running round is moved off this team onto a side of their
+     * own by serverSimPlaceJoiner, which the human join paths call next. */
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
     sim->lobbyPlayers[playerNum].startIdx = 0xFF;
@@ -241,8 +243,20 @@ void setClientTypeFlagsInternal(ServerSim *sim, BYTE playerNum,
     playersSetClientFlags(&sim->sim.plyrs, playerNum, clientFlags);
 }
 
+void serverSimPlaceJoiner(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (!sim->playerConnected[playerNum]) return;
+    if (sim->state != serverStateRunning) return;
+    /* The seat is connected already, so serverSimFreeTeam counts the team
+       addPlayerInternal gave it as held. Take that team off first. */
+    sim->lobbyPlayers[playerNum].teamNumber = 0;
+    sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
+    serverSimPublishLobbySlot(sim, playerNum);
+}
+
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
     addPlayerInternal(sim, playerNum, playerName, NULL, wantRejoin);
+    serverSimPlaceJoiner(sim, playerNum);
     fillAndPublishPlayerJoin(sim, playerNum);
 }
 
@@ -355,6 +369,7 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
 
     addPlayerInternal(sim, (BYTE)slot, validatedName, country, false);
     setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, clientFlags);
+    serverSimPlaceJoiner(sim, (BYTE)slot);
     fillAndPublishPlayerJoin(sim, (BYTE)slot);
     serverSimPromoteHostOnJoin(sim, (BYTE)slot);
 
@@ -826,12 +841,174 @@ void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready) {
     sim->lobbyPlayers[playerNum].ready = ready ? TRUE : FALSE;
 }
 
+/* ── Sides during a round (#424) ──────────────────────────────────────
+ *
+ * A seat's lobby team is the server's only record of its side. The alliance
+ * bitmap is written from it: an accept moves seats onto one team and then
+ * applies the same accept to the bitmap, a leave applies the leave and then
+ * gives the leaver a team of its own, and set_team rebuilds the bitmap from
+ * the teams. Clients still get the alliance events they always did, plus a
+ * lobby slot for every seat whose team changed. */
+
+static BYTE sidesTeamOf(const ServerSim *sim, BYTE slot) {
+    return sim->lobbyPlayers[slot].teamNumber;
+}
+
+/* The first pair of connected seats that breaks the rule, if there is one. */
+static bool sidesFirstMismatch(const ServerSim *sim, BYTE *outA, BYTE *outB) {
+    BYTE i, j;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        for (j = 0; j < MAX_TANKS; j++) {
+            bool allied, sameTeam;
+            if (i == j || !sim->playerConnected[j]) continue;
+            allied   = playersIsAllie((players *)&sim->sim.plyrs, i, j) == TRUE;
+            sameTeam = sidesTeamOf(sim, i) != 0 &&
+                       sidesTeamOf(sim, i) == sidesTeamOf(sim, j);
+            if (allied != sameTeam) {
+                *outA = i;
+                *outB = j;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool serverSimSidesAgree(const ServerSim *sim) {
+    BYTE a, b;
+    if (sim == NULL) return true;
+    return !sidesFirstMismatch(sim, &a, &b);
+}
+
+void serverSimSidesCheck(ServerSim *sim) {
+    BYTE a, b;
+    if (sim == NULL) return;
+    if (!sidesFirstMismatch(sim, &a, &b)) {
+        sim->sidesMismatchLogged = false;
+        return;
+    }
+    if (sim->sidesMismatchLogged) return;
+    sim->sidesMismatchLogged = true;
+    WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                "sides: player %u (team %u) and player %u (team %u) are "
+                "%sallied; the alliance table was written past the teams",
+                (unsigned)a, (unsigned)sidesTeamOf(sim, a),
+                (unsigned)b, (unsigned)sidesTeamOf(sim, b),
+                playersIsAllie(&sim->sim.plyrs, a, b) == TRUE ? "" : "not ");
+}
+
+/* The colour the fewest teams in use have, the lowest on a tie. The palette
+   is eight colours and clients wrap the index, so past eight teams two
+   share one. */
+static uint8_t sidesLeastUsedColour(const ServerSim *sim) {
+    int     uses[8] = {0};
+    uint8_t best = 0;
+    BYTE    t;
+    uint8_t c;
+    for (t = 1; t < MAX_TANKS; t++) {
+        if (sim->teams[t].in_use) {
+            uses[sim->teams[t].color & 7]++;
+        }
+    }
+    for (c = 1; c < 8; c++) {
+        if (uses[c] < uses[best]) best = c;
+    }
+    return best;
+}
+
+BYTE serverSimFreeTeam(ServerSim *sim) {
+    bool held[MAX_TANKS];
+    BYTE i, t;
+    if (sim == NULL) return 0;
+    memset(held, 0, sizeof(held));
+    for (i = 0; i < MAX_TANKS; i++) {
+        BYTE team;
+        if (!sim->playerConnected[i]) continue;
+        team = sidesTeamOf(sim, i);
+        if (team > 0 && team < MAX_TANKS) held[team] = true;
+    }
+    for (t = 1; t < MAX_TANKS; t++) {
+        if (held[t]) continue;
+        /* A team still in use keeps the name, colour and start side the
+           lobby (or the scenario) gave it: those belong to the team id,
+           not to the players who were on it. The seat takes over the team
+           as it was set up. Only an id not in use is set up here. */
+        if (!sim->teams[t].in_use) {
+            char name[LOBBY_TEAM_NAME_LEN];
+            int  len = snprintf(name, sizeof(name), "Team %u", (unsigned)t);
+            if (len < 0) len = 0;
+            if (len >= (int)sizeof(name)) len = (int)sizeof(name) - 1;
+            /* Pool 0 is a request: serverSimSetTeamMeta moves the team to
+               the lowest pool no other team holds. It publishes the team. */
+            serverSimSetTeamMeta(sim, t, sidesLeastUsedColour(sim), 0,
+                                 START_SIDE_ANY, (const uint8_t *)name,
+                                 (uint8_t)len);
+        }
+        return t;
+    }
+    /* Fifteen team ids and sixteen seats: when every id has somebody, the
+       seat is put on no team, which is allied with nobody. */
+    return 0;
+}
+
+void serverSimSeatTeamChanged(ServerSim *sim, BYTE slot, BYTE oldTeam) {
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    serverSimPublishLobbySlot(sim, slot);
+    if (sim->state == serverStateRunning) {
+        serverSimScenarioResendPanelsForSeat(sim, slot, oldTeam);
+    }
+}
+
 static void acceptAllianceAndPublish(ServerSim *sim, BYTE accepter,
                                      BYTE newMember, bool quiet) {
-    GameSim *gs;
     ControlEvent evt;
-    gs = serverSimGetGameSim(sim);
-    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, accepter, newMember, TRUE);
+    BYTE oldTeam[MAX_TANKS];
+    bool moved[MAX_TANKS];
+    BYTE teamA, teamN, i;
+
+    if (accepter >= MAX_TANKS || newMember >= MAX_TANKS ||
+        accepter == newMember) {
+        return;
+    }
+    memset(moved, 0, sizeof(moved));
+    memset(oldTeam, 0, sizeof(oldTeam));
+    teamA = sidesTeamOf(sim, accepter);
+    teamN = sidesTeamOf(sim, newMember);
+
+    /* Already one side: nothing changes and nothing is said. The table is
+       written from the teams, so two seats on one team are allied. */
+    if (teamA != 0 && teamA == teamN) {
+        return;
+    }
+    /* The accepter's team survives, and the new member's whole team moves
+       onto it. An accepter on no team is given a free one first. With no id
+       free, the accepter joins the new member's team, which is the same
+       side. */
+    if (teamA == 0) {
+        BYTE t = serverSimFreeTeam(sim);
+        if (t == 0) t = teamN;
+        oldTeam[accepter] = 0;
+        moved[accepter]   = true;
+        sim->lobbyPlayers[accepter].teamNumber = t;
+        teamA = t;
+    }
+    for (i = 0; i < MAX_TANKS; i++) {
+        bool inGroup = (i == newMember) ||
+                       (teamN != 0 && sim->playerConnected[i] &&
+                        sidesTeamOf(sim, i) == teamN);
+        if (!inGroup || sidesTeamOf(sim, i) == teamA) continue;
+        oldTeam[i] = sidesTeamOf(sim, i);
+        moved[i]   = true;
+        sim->lobbyPlayers[i].teamNumber = teamA;
+    }
+
+    /* The table is written from the teams the moves above made: the one
+       rebuild, which publishes the whole table as a reset. The two teams
+       were each one alliance group, so the result is the merge an accept
+       always made. Clients apply the reset and then the accept below, which
+       merges two groups that are already one. */
+    serverSimReapplyTeamAlliances(sim);
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ALLIANCE_ACCEPT;
     evt.u.allianceAccept.acceptedBy = accepter;
@@ -846,6 +1023,13 @@ static void acceptAllianceAndPublish(ServerSim *sim, BYTE accepter,
     winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE, accepter, newMember,
                        botManagerIsBot(sim, accepter), botManagerIsBot(sim, newMember));
     logAddEvent(log_AllyAccept, accepter, newMember, 0, 0, 0, NULL);
+
+    /* Each seat that moved, after the alliance it moved into. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (moved[i]) {
+            serverSimSeatTeamChanged(sim, i, oldTeam[i]);
+        }
+    }
 }
 
 void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
@@ -870,10 +1054,15 @@ void serverSimAcceptAllianceQuiet(ServerSim *sim, BYTE accepter,
 void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
     GameSim *gs;
     ControlEvent evt;
-    if (sim == NULL) {
+    BYTE oldTeam;
+    if (sim == NULL || playerNum >= MAX_TANKS) {
         return;
     }
     gs = serverSimGetGameSim(sim);
+    oldTeam = sidesTeamOf(sim, playerNum);
+    /* The leave's own effect on the world: what the leaver owns goes to the
+       first ally, as it always has, and clients do the same from the event.
+       The bits it clears are written again from the teams below. */
     playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, playerNum, TRUE);
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ALLIANCE_LEAVE;
@@ -887,6 +1076,29 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
                        playerNum, WINBOLO_NET_NO_PLAYER,
                        botManagerIsBot(sim, playerNum), FALSE);
     logAddEvent(log_AllyLeave, playerNum, 0, 0, 0, 0, NULL);
+
+    /* The leaver takes a side of its own: the lowest free team, or no team
+       when no id is free. A leaver already alone on its team keeps it, and
+       so does one on no team: neither had an ally to lose, so the table
+       stays as it was and nothing more is published. */
+    if (oldTeam != 0) {
+        bool shared = false;
+        BYTE i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (i != playerNum && sim->playerConnected[i] &&
+                sidesTeamOf(sim, i) == oldTeam) {
+                shared = true;
+                break;
+            }
+        }
+        if (shared) {
+            sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
+            /* The table is written from the teams: the one rebuild, which
+               publishes the whole table as a reset. */
+            serverSimReapplyTeamAlliances(sim);
+            serverSimSeatTeamChanged(sim, playerNum, oldTeam);
+        }
+    }
 }
 
 void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name) {

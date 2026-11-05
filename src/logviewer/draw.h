@@ -155,23 +155,6 @@ void lv_drawTanks(screenTanks *tks);
 void lv_drawLGMs(screenLgm *lgms);
 
 /*********************************************************
-*NAME:          lv_drawTankLabel
-*AUTHOR:        John Morrison
-*CREATION DATE: 2/2/98
-*LAST MODIFIED: 2/2/98
-*PURPOSE:
-*  Draws the tank label if required.
-*
-*ARGUMENTS:
-*  str - The string identifer of the tank
-*  mx  - Tank map X position
-*  my  - Tank map Y position
-*  px  - Tank pixel offset
-*  py  - Tank pixel offset
-*********************************************************/
-void lv_drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py);
-
-/*********************************************************
 *NAME:          lv_drawTankLabelCount / lv_drawTankLabelGet
 *PURPOSE:
 *  The tank names for the world in the render target, drawn
@@ -183,7 +166,7 @@ void lv_drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py);
 *  shadow), its top-left in target pixels and its pixel size;
 *  an out pointer may be NULL. A name keeps its texture across
 *  Count calls until it leaves the screen or the size changes.
-*  Both read 0 / FALSE while the names go into the target.
+*  Both work on the screen's names (LV_TANK_LABELS_SCREEN).
 *********************************************************/
 struct SDL_Texture;
 int  lv_drawTankLabelCount(float scale);
@@ -191,14 +174,28 @@ BYTE lv_drawTankLabelGet(int index, struct SDL_Texture **outTex, int *outX, int 
                          int *outW, int *outH);
 
 /*********************************************************
-*NAME:          lv_drawSetTankLabelsInTarget
+*NAME:          lv_drawTankLabelsOver
 *PURPOSE:
-*  TRUE draws the tank names into the render target, for a
-*  caller that reads the target back (the GIF export).
-*  FALSE, the default, leaves them for the drawer of the
-*  blit. Changing it repaints the whole target.
+*  Draws the names over an image of the render target on the
+*  current render target of the viewer's renderer: src is the
+*  part of the target the image holds, dst where it went,
+*  both in pixels of their textures. The names are rasterized
+*  at dst->w / src->w and drawn in the game's look, grey over
+*  a black shadow. The viewer's own blit draws its names with
+*  this, and so does a GIF export over the frame it has drawn
+*  the target into. The names are rasterized and kept per
+*  use: the screen's at its scale, an export's at the GIF's,
+*  so an export in the middle of a screen frame never flushes
+*  the screen's textures or reopens its font.
 *********************************************************/
-void lv_drawSetTankLabelsInTarget(BYTE inTarget);
+typedef enum {
+    LV_TANK_LABELS_SCREEN = 0,   /* the blit and the embedding host's image */
+    LV_TANK_LABELS_EXPORT,       /* a GIF export's frame */
+    LV_TANK_LABEL_USES
+} LvTankLabelUse;
+struct SDL_FRect;
+void lv_drawTankLabelsOver(LvTankLabelUse use, const struct SDL_FRect *src,
+                           const struct SDL_FRect *dst);
 
 void lv_drawDirtyScreen(void);
 
@@ -304,6 +301,20 @@ void lv_drawSetEmbedViewport(int w, int h);
 *  visible slice into texture UVs. Out-params are optional.
 *********************************************************/
 void lv_drawGetGameTargetSize(int *outW, int *outH);
+
+/*********************************************************
+*NAME:          lv_drawGetMapBlit
+*PURPOSE:
+*  The last blit of the map into the viewer's own window:
+*  the slice of the render target it took (src, x y w h in
+*  render-target pixels), where that slice went (dst, x y w
+*  h in framebuffer pixels), and the framebuffer pixels to
+*  each window point. The recording mode's crop frame is
+*  drawn on that view and a GIF is read from it. False in
+*  the game view, embedded, and before the first blit.
+*  Out-params are optional.
+*********************************************************/
+bool lv_drawGetMapBlit(float src[4], float dst[4], float *pxScale);
 
 /*********************************************************
 *NAME:          lv_drawGetTilesTexture / lv_drawGetSheetScale

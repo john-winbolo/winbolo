@@ -217,6 +217,9 @@
                                     * scenarioHostScriptCount: the
                                     * composite and how many scripts
                                     * went into it */
+#include "tutorial_scripts.h"      /* TUTORIAL_MAPS_SCRIPT_POPUPS and
+                                    * tutorialMapsScriptHasPopup: which
+                                    * scripts keep the popup row */
 #include "everard_map.h"
 #include "threads.h"
 #include "test_harness.h"
@@ -2553,11 +2556,19 @@ int run_scenario_compose_pairs_game_complete(void) {
     size_t      fields;
 
     /* What scenarioLuaInstall puts on game: a closure per row, a number per
-       constant, TERRAIN, and one table per word table. */
+       constant, TERRAIN, and one table per word table. The host then takes
+       the popup row back off every script that is not a shipped tutorial's
+       own map script (scnEnvDropPopup), and neither of these two is one:
+       the base is a map script in a test folder, and a mod never gets the
+       row while TUTORIAL_MAPS_SCRIPT_POPUPS is 0. */
     (void)scenarioLuaRows(&rows);
     (void)scenarioLuaConsts(&consts);
     (void)scenarioLuaWordTables(&words);
     fields = rows + consts + 1 + words;
+    if (!tutorialMapsScriptHasPopup(TUTORIAL_MAPS_SCRIPT_POPUPS != 0, true,
+                                    false)) {
+        fields--;
+    }
 
     UT_ASSERT(scMakeDir("pairs_game"));
     UT_ASSERT(scWrite("countmod.lua", kScCountMod));

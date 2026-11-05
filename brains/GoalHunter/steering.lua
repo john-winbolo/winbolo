@@ -327,7 +327,7 @@ end
 -- their steering module instance across instances.
 local _path_search_us    = 0  -- cpf.path_to(...) C call (dijkstra+astar)
 local _path_trace_us     = 0  -- cpf.trace_path / dijkstra_trace_path
-local _path_lookahead_us = 0  -- path_lookahead(state, info, nx, ny)
+local _path_lookahead_us = 0  -- path_lookahead(state, world, info, nx, ny)
 local _path_method       = "dij" -- cpf._last_method captured at search time
 
 -- ---------------------------------------------------------------------------
@@ -1071,7 +1071,54 @@ end
 --   In boat: stop at any water/land boundary.  Cutting diagonals through
 --            a river corridor can clip a land tile and lose the boat.
 --            Also stop at BOAT tiles on water (transition point).
-local function path_lookahead_inner(state, info, nx, ny)
+-- C.STUCK_COLLAPSE_NEEDS_CLIP: is one square in the way of the tank?  A
+-- building, half building or deep sea square, a live pillbox, or another
+-- tank standing on it.
+local function step_square_blocked(world, info, mx, my)
+  if not U.in_map(mx, my) then return true end
+  if IMPASSABLE[U.ttype(mx, my)] then return true end
+  local plist = world and world.pill_at and world.pill_at[my * 256 + mx]
+  if plist then
+    for i = 1, #plist do
+      local p = plist[i].pill
+      if p and (p.health or 0) > 0 then return true end
+    end
+  end
+  local ot = _G.OBJECT_TANK or 0
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == ot and ob.idnum ~= info.player_number
+       and bit.rshift(ob.x, 8) == mx and bit.rshift(ob.y, 8) == my then
+      return true
+    end
+  end
+  return false
+end
+
+-- C.STUCK_COLLAPSE_NEEDS_CLIP: is the step from the tank's square to the
+-- path's next square really blocked?  The square itself (above), a blocked
+-- corner square on a diagonal step, or the tank's off-centre body sweeping
+-- into a blocked side square.  An open step is not blocked, however slowly
+-- the tank is moving onto it.  A step between land and river is open: river
+-- is drivable, the path planner already prices it (RIVER_BASE_COST,
+-- RIVER_CONSECUTIVE_ADD, the ammo factor), and turning back at the bank
+-- makes the tank enter the river from a standstill, the slowest crossing
+-- and the one that loses the most ammo.  Deep sea stays blocked through
+-- IMPASSABLE.
+local function next_step_blocked(world, info, tmx, tmy, nx, ny)
+  if nx == tmx and ny == tmy then return true end   -- old behaviour
+  if step_square_blocked(world, info, nx, ny) then return true end
+  if nx ~= tmx and ny ~= tmy
+     and (step_square_blocked(world, info, nx, tmy)
+          or step_square_blocked(world, info, tmx, ny)) then
+    return true
+  end
+  -- U.bresenham leaves out both end squares, so a one-square step has no
+  -- squares to check: this test only acts on longer steps.
+  return (corridor_path_clipped(info, tmx, tmy, nx, ny))
+end
+M._next_step_blocked = next_step_blocked   -- unit tests (test_orders.lua)
+
+local function path_lookahead_inner(state, world, info, nx, ny)
   local pf = state.pf
   local chain = pf.path_chain
   if not chain or #chain < 4 then
@@ -1169,9 +1216,19 @@ local function path_lookahead_inner(state, info, nx, ny)
                            and not info.inboat and sp.acc_since)
                           or sp.since)
     if sp and (state.tick or 0) - since >= STUCK_LOOKAHEAD_COLLAPSE_TICKS then
-      sdbg("lookahead: STUCK collapse (%d ticks), return tank tile (%d,%d)",
-           (state.tick or 0) - since, tmx, tmy)
-      return tmx, tmy
+      -- C.STUCK_COLLAPSE_NEEDS_CLIP (keel false): only on a blocked step.
+      -- On an open step the tank goes on driving at it; the stuck recovery
+      -- at STUCK_TICKS still runs as before.
+      if C.STUCK_COLLAPSE_NEEDS_CLIP
+         and not next_step_blocked(world, info, tmx, tmy, nx, ny) then
+        sdbg("lookahead: STUCK collapse skipped (%d ticks), step (%d,%d) is open",
+             (state.tick or 0) - since, nx, ny)
+      else
+        sdbg("lookahead: STUCK collapse (%d ticks), return tank tile (%d,%d)",
+             (state.tick or 0) - since, tmx, tmy)
+        state._collapse_tick = state.tick   -- C.STUCK_COLLAPSE_BRAKE
+        return tmx, tmy
+      end
     end
   end
 
@@ -1339,8 +1396,8 @@ end
 -- tests/sea_pills_B it entered (139,126), 8.0 tiles from the hostile pill, on
 -- its way from one raft member to the next. The overlay stamp above steers the
 -- SEARCH away; this is the hard stop that keeps the STEERING out.
-local function path_lookahead(state, info, nx, ny)
-  local lx, ly = path_lookahead_inner(state, info, nx, ny)
+local function path_lookahead(state, world, info, nx, ny)
+  local lx, ly = path_lookahead_inner(state, world, info, nx, ny)
   local nogo = state._sea_nogo
   if not nogo or not lx then return lx, ly end
   if nogo[ly * 256 + lx] then
@@ -4526,7 +4583,7 @@ local function steer_core(state, world, info, goal)
       state._kill_lgm_engage_my = engage_my
       local nx, ny = cpf_path_to(state, info, engage_mx, engage_my)
       if nx then
-        local lx, ly = path_lookahead(state, info, nx, ny)
+        local lx, ly = path_lookahead(state, world, info, nx, ny)
         state._steer_lx = lx
         state._steer_ly = ly
         move_dir    = U.aim_at(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
@@ -4665,7 +4722,7 @@ local function steer_core(state, world, info, goal)
     end
     local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
     if nx then
-      local lx, ly = path_lookahead(state, info, nx, ny)
+      local lx, ly = path_lookahead(state, world, info, nx, ny)
       state._steer_lx = lx
       state._steer_ly = ly
       move_dir    = U.aim_at(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
@@ -4703,7 +4760,7 @@ local function steer_core(state, world, info, goal)
       local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
       if nx then
         local _t_la0 = BRAIN_PROFILE and clock_us() or 0
-        local lx, ly = path_lookahead(state, info, nx, ny)
+        local lx, ly = path_lookahead(state, world, info, nx, ny)
         if BRAIN_PROFILE then
           _path_lookahead_us = _path_lookahead_us + (clock_us() - _t_la0)
         end
@@ -4926,7 +4983,7 @@ local function steer_core(state, world, info, goal)
     if nx then
       -- Skip ahead on the path when the straight line is clear
       local _t_la0 = BRAIN_PROFILE and clock_us() or 0
-      local lx, ly = path_lookahead(state, info, nx, ny)
+      local lx, ly = path_lookahead(state, world, info, nx, ny)
       if BRAIN_PROFILE then
         _path_lookahead_us = _path_lookahead_us + (clock_us() - _t_la0)
       end
@@ -5886,6 +5943,21 @@ local function steer_core(state, world, info, goal)
       -- Init.lua's kill_lgm fire block handles the gunrange driver
       -- + fire trigger.
       if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+    elseif C.STUCK_COLLAPSE_BRAKE and state._collapse_tick ~= nil
+           and state._collapse_tick == state.tick
+           and state._steer_lx == bit.rshift(info.tankx, 8)
+           and state._steer_ly == bit.rshift(info.tanky, 8) then
+      -- C.STUCK_COLLAPSE_BRAKE (keel false): the lookahead collapsed to our
+      -- own square this think.  No plow-through, no cruise: slow to the
+      -- orbit brake's speed so the turn is tight enough to settle on the
+      -- square's centre, and start again from a standstill only when not
+      -- yet there.
+      _throttle_branch = "collapse_brake"
+      if info.speed > C.ORBIT_BRAKE_SPEED then
+        keys = bit.bor(keys, KEY_SLOWER)
+      elseif info.speed == 0 and target_dist > center_tol then
+        keys = bit.bor(keys, KEY_FASTER)
+      end
     elseif _approach_brake_active then
       -- Aligned fast-path: when we're aimed straight at the approach point we
       -- can skip the slow proportional creep and drive at full speed, braking
