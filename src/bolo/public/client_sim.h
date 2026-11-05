@@ -702,7 +702,7 @@ labelLen     clientSimGetLabelTankLabel(const ClientSim *cs);
 BYTE           clientSimGetMyPlayerNum(const ClientSim *cs);
 
 /* The "Early Own Shell Blast" test option (early_blast.h), for every human
- * client in the process; off by default. With it on, the local player's own
+ * client in the process; on by default. With it on, the local player's own
  * predicted shell explodes on this client at once where it ends, with its
  * sound, and the server's later explosion of that shell is not drawn. */
 void           clientSimSetEarlyOwnBlast(bool on);

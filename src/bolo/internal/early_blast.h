@@ -7,7 +7,7 @@
  *Name:          Early own shell blast (TEST OPTION)
  *Filename:      early_blast.h
  *Purpose:
- *  The client option "Early Own Shell Blast", off by default,
+ *  The client option "Early Own Shell Blast", on by default,
  *  for a play test. With it on, when the local player's own
  *  predicted shell ends on this client (it is blocked on this
  *  client's view, or it runs out), the client draws the shell

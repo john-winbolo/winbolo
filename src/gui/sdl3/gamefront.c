@@ -5256,9 +5256,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
    * keep whatever "Show Gunsight" they already saved in their INI. */
   prefsGetString("MENU", "Show Gunsight", gunsightDefault, buff, FILENAME_MAX);
   showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
-  /* The "Early Own Shell Blast" test option (early_blast.h): off until
-   * turned on. */
-  prefsGetString("MENU", "Early Own Shell Blast", "No", buff, FILENAME_MAX);
+  /* The "Early Own Shell Blast" test option (early_blast.h): on unless
+   * turned off. */
+  prefsGetString("MENU", "Early Own Shell Blast", "Yes", buff, FILENAME_MAX);
   clientSimSetEarlyOwnBlast(YESNO_TO_TRUEFALSE(buff[0]));
   prefsGetString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX);
   soundEffects = YESNO_TO_TRUEFALSE(buff[0]);
