@@ -394,6 +394,45 @@ int run_btr_zstd_skip_across_blocks(void) {
     return 0;
 }
 
+/* An old gzip .btr bigger than 2 GiB uncompressed: a skip past 2 GiB
+ * lands on the right bytes. gzseek fails there where z_off_t is 32 bits,
+ * so the skip reads instead. The data is zeros, so the file is small. */
+int run_btr_gzip_skip_past_2gib(void) {
+    char path[600];
+    static unsigned char zeros[1u << 20];
+    const unsigned char tail[8] = { 'W', 'B', 'E', 'N', 'D', '2', 'G', 'B' };
+    const uint64_t body = ((uint64_t)1 << 31) + ((uint64_t)1 << 20);
+    unsigned char got[8];
+    uint64_t left;
+    BrainRecIn *g;
+    gzFile gz;
+    bool ok = true;
+
+    UT_ASSERT_MSG(utScratchPath(path, sizeof(path), "big_old.btr"), "no scratch path");
+    gz = gzopen(path, "wb1");
+    UT_ASSERT_MSG(gz != NULL, "could not write %s", path);
+    gzbuffer(gz, 1u << 20);
+    for (left = body; left > 0 && ok; left -= sizeof zeros) {
+        ok = gzwrite(gz, zeros, (unsigned)sizeof zeros) == (int)sizeof zeros;
+    }
+    ok = ok && gzwrite(gz, tail, (unsigned)sizeof tail) == (int)sizeof tail;
+    ok = (gzclose(gz) == Z_OK) && ok;
+    UT_ASSERT_MSG(ok, "could not write %s", path);
+
+    g = brainRecInOpen(path);
+    UT_ASSERT(g != NULL);
+    UT_ASSERT(brainRecInFormat(g) == BRAINREC_FMT_GZIP);
+    ok = brainRecInSkip(g, body) && brainRecInTell(g) == body &&
+         brainRecInRead(g, got, sizeof got) == sizeof got &&
+         memcmp(got, tail, sizeof tail) == 0;
+    ok = ok && !brainRecInSkip(g, 1) && !brainRecInError(g);
+    brainRecInClose(g);
+    SDL_RemovePath(path);
+    UT_ASSERT_MSG(ok, "a skip of %llu bytes did not land on the last 8 bytes",
+                  (unsigned long long)body);
+    return 0;
+}
+
 int run_btr_zstd_cut_file_reads_its_prefix(void) {
     char path[600], cutPath[600];
     static unsigned char buf[64 * 1024];

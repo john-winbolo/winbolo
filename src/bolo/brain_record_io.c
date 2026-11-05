@@ -374,22 +374,22 @@ bool brainRecInSkip(BrainRecIn *in, uint64_t n) {
     if (!in || in->err) return false;
     if (n == 0) return true;
     if (in->fmt == BRAINREC_FMT_GZIP) {
-        /* Forward gzseek decodes and drops; same cost as reading. */
+        /* Skip by reading into a scratch buffer. A forward gzseek decodes
+         * and drops the same bytes, but gzseek returns -1 once the position
+         * is past 2 GiB where z_off_t is 32 bits (Windows), and a long old
+         * recording is bigger than that uncompressed. */
+        unsigned char scratch[64 * 1024];
         uint64_t left = n;
         while (left) {
-            long step = left > (1u << 30) ? (long)(1u << 30) : (long)left;
-            z_off_t r = gzseek(in->gz, step, SEEK_CUR);
+            unsigned want = left > sizeof scratch ? (unsigned)sizeof scratch
+                                                  : (unsigned)left;
+            int r = gzread(in->gz, scratch, want);
             if (r < 0) { in->err = true; return false; }
-            left -= (uint64_t)step;
+            if (r == 0) { in->eof = true; return false; }
+            in->pos += (uint64_t)r;
+            left -= (uint64_t)r;
         }
-        /* gzseek past the end does not fail; check that the bytes exist. */
-        in->pos += n;
-        if (gzeof(in->gz)) { in->eof = true; return false; }
-        unsigned char probe;
-        int r = gzread(in->gz, &probe, 1);
-        if (r == 1) { gzungetc(probe, in->gz); return true; }
-        in->eof = true;
-        return false;
+        return true;
     }
     uint64_t target  = in->pos + n;
     uint64_t horizon = in->pos + (in->oLen - in->oPos);
