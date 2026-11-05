@@ -178,6 +178,11 @@ static lua_State *slVm(ScnLuaCtx *ctx, ServerSim *sim, ScenarioManifest *m) {
     }
     luaL_openlibs(L);
     scenarioLuaTimersReset(&slTimers);
+    /* Zeroed first, so a field this does not name is not whatever the
+       caller's stack held: runningFile was left unset once, and
+       game.define_region hashed a string read through it, which crashed the
+       full run whenever the garbage pointed nowhere. */
+    memset(ctx, 0, sizeof(*ctx));
     ctx->sim       = sim;
     ctx->manifest  = m;
     /* One file and no host, so the file that is running is that same one.
@@ -187,6 +192,10 @@ static lua_State *slVm(ScnLuaCtx *ctx, ServerSim *sim, ScenarioManifest *m) {
        calling refuse there. Written here because the caller's context is a
        local. */
     ctx->running   = m;
+    /* No list behind this state, so no entry and no file, as the host's
+       own check state says it. */
+    ctx->runningOwner = SCN_OWNER_NONE;
+    ctx->runningFile  = NULL;
     ctx->timers    = &slTimers;
     /* Running the file, not checking it: the write rows apply. */
     ctx->checkOnly = false;
@@ -210,12 +219,16 @@ static lua_State *slCheckOnlyVm(ScnLuaCtx *ctx, ServerSim *sim,
         return NULL;
     }
     luaL_openlibs(L);
+    /* Zeroed first, for the reason slVm gives. */
+    memset(ctx, 0, sizeof(*ctx));
     ctx->sim       = sim;
     ctx->manifest  = m;
     /* The one file being checked, as in slVm above: what this case asks is
        what each row does while checkOnly is set, and a state with no caller
        would refuse the round-deciding rows before they reached that. */
     ctx->running   = m;
+    ctx->runningOwner = SCN_OWNER_NONE;
+    ctx->runningFile  = NULL;
     ctx->timers    = NULL;
     ctx->checkOnly = true;
     ctx->runningEnv = 0;
