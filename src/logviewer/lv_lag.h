@@ -171,6 +171,8 @@ typedef struct {
     bool    on;
     uint8_t mx, my, px, py, frame;
     bool    onBoat;
+    uint8_t shells;  /* its shell stock, as the recording states it */
+    bool    fired;   /* the stock went down at this entry */
 } LvLagTank;
 
 /* Where one builder was drawn at one entry. out is false when he was in
@@ -182,6 +184,7 @@ typedef struct {
 
 typedef struct {
     uint8_t mx, my, px, py, frame;
+    int8_t  owner;   /* the player who fired it, or LV_SHELL_OWNER_NONE */
 } LvLagShell;
 
 typedef struct {

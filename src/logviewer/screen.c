@@ -77,6 +77,7 @@
 #include "lv_first_view.h"       /* the box round everything that is not deep sea */
 #include "lv_pill_numbers.h"     /* the number of each pillbox on the map */
 #include "lv_lag.h"              /* each player's lag and the lag view's history */
+#include "lv_shell_owner.h"      /* which player fired each shell, for the lag view */
 
 /* The middle of the visible map from the start of the view (defined with
  * lv_screenSetViewInset). */
@@ -213,6 +214,82 @@ static void lv_lagRecordRead(uint32_t ms, const BYTE *b) {
   }
 }
 
+/* What the shell owner matcher did since the viewer started, for the
+   recording check in the unit tests. */
+static LvShellOwnerStats s_lagOwnerStats;
+
+void lv_screenLagShellOwnerStats(LvShellOwnerStats *out) {
+  if (out != NULL) {
+    *out = s_lagOwnerStats;
+  }
+}
+
+/* A shell or tank place in world units, as the matcher takes it. */
+static int32_t lv_lagWorld(BYTE m, BYTE p) {
+  return (int32_t) m * 256 + (int32_t) p * 16;
+}
+
+/* Give the shells of the newest frame f their owners (lv_shell_owner.h),
+   from the frame of the entry before it, and note which tanks fired. The
+   lag view draws the chosen player's own shells at the present, as the
+   player's own client drew them, and every other shell at the old time. */
+static void lv_lagFindShellOwners(LvLagFrame *f) {
+  const LvLagFrame *prev = NULL;
+  LvShellPt prevPts[LV_LAG_SHELLS_MAX];
+  int8_t prevOwners[LV_LAG_SHELLS_MAX];
+  LvShellPt curPts[LV_LAG_SHELLS_MAX];
+  int8_t curOwners[LV_LAG_SHELLS_MAX];
+  int curIdx[LV_LAG_SHELLS_MAX];
+  LvGunTank guns[LV_SHELL_OWNER_MAX_TANKS];
+  int nPrev = 0, nCur = 0, i;
+
+  if (s_lagRing.count >= 2) {
+    prev = &s_lagRing.frames[(s_lagRing.newest - 1 + LV_LAG_FRAMES) % LV_LAG_FRAMES];
+    if (prev->ms + LV_LAG_ENTRY_MS != f->ms) {
+      prev = NULL;
+    }
+  }
+  memset(guns, 0, sizeof(guns));
+  for (i = 0; i < LV_LAG_SLOTS && i < MAX_TANKS && i < LV_SHELL_OWNER_MAX_TANKS; i++) {
+    LvLagTank *t = &f->tank[i];
+    t->shells = g_lv->tankInv[i].shells;
+    if (prev != NULL) {
+      t->fired = (t->shells < prev->tank[i].shells);
+      /* The drop and the shell's first record are in the same entry; the
+         entry before is let in too, in case they are not. */
+      guns[i].on = t->on;
+      guns[i].wx = lv_lagWorld(t->mx, t->px);
+      guns[i].wy = lv_lagWorld(t->my, t->py);
+      guns[i].dir = (uint8_t) (t->frame & 15);
+      guns[i].fired = t->fired || prev->tank[i].fired;
+    }
+  }
+  for (i = 0; i < f->shellCount; i++) {
+    if (lv_shellOwnerIsShellFrame(f->shells[i].frame)) {
+      curPts[nCur].wx = lv_lagWorld(f->shells[i].mx, f->shells[i].px);
+      curPts[nCur].wy = lv_lagWorld(f->shells[i].my, f->shells[i].py);
+      curPts[nCur].dir = (uint8_t) (f->shells[i].frame - 9);
+      curIdx[nCur++] = i;
+    }
+  }
+  if (prev != NULL) {
+    for (i = 0; i < prev->shellCount; i++) {
+      if (lv_shellOwnerIsShellFrame(prev->shells[i].frame)) {
+        prevPts[nPrev].wx = lv_lagWorld(prev->shells[i].mx, prev->shells[i].px);
+        prevPts[nPrev].wy = lv_lagWorld(prev->shells[i].my, prev->shells[i].py);
+        prevPts[nPrev].dir = (uint8_t) (prev->shells[i].frame - 9);
+        prevOwners[nPrev++] = prev->shells[i].owner;
+      }
+    }
+  }
+  lv_shellOwnerLink(prevPts, prevOwners, nPrev, prev != NULL, curPts, nCur, guns,
+                    (prev != NULL) ? LV_SHELL_OWNER_MAX_TANKS : 0,
+                    lv_screenHasTankStock() != 0, curOwners, &s_lagOwnerStats);
+  for (i = 0; i < nCur; i++) {
+    f->shells[curIdx[i]].owner = curOwners[i];
+  }
+}
+
 /* Note where the map draws everything at this entry, as the history's
    newest frame. */
 static void lv_lagCaptureTick(void) {
@@ -227,7 +304,9 @@ static void lv_lagCaptureTick(void) {
     sh->px = q->px;
     sh->py = q->py;
     sh->frame = q->frame;
+    sh->owner = LV_SHELL_OWNER_NONE;
   }
+  lv_lagFindShellOwners(f);
 }
 
 /* TRUE while the chosen player is still the one in the slot. */
@@ -1284,13 +1363,25 @@ void lv_screenUpdate(updateType value) {
   lagFrame = lv_lagViewFrame(NULL);
   if (lagFrame != NULL) {
     /* The lag view: the other tanks, the builders and the shells where the
-       chosen player's screen showed them. */
+       chosen player's screen showed them. The player's own client drew
+       its own shells at once, from its own tank, so those come from the
+       present frame (lv_lagViewFrame has checked the newest frame is the
+       playhead's). A shell with no clear owner stays at the old time. */
+    const LvLagFrame *now = &s_lagRing.frames[s_lagRing.newest];
     int i;
     lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
     lagShells = lv_shellsCreate();
     for (i = 0; i < lagFrame->shellCount; i++) {
       const LvLagShell *sh = &lagFrame->shells[i];
-      lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
+      if ((int) sh->owner != s_lagViewSlot) {
+        lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
+      }
+    }
+    for (i = 0; i < now->shellCount; i++) {
+      const LvLagShell *sh = &now->shells[i];
+      if ((int) sh->owner == s_lagViewSlot) {
+        lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
+      }
     }
   }
   {
