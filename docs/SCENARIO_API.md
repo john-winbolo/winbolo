@@ -1652,10 +1652,11 @@ So `tank_death_ticks = 1500` keeps a dead tank waiting half a minute, and
 `tank_death_ticks = 150` — the value Wave Defense sets — is about three
 seconds.
 
-**Three `_ticks` rules count faster, because they are counted more than once
-a frame.** `tree_grow_ticks` and `tree_grow_initial_ticks` count down once a
-frame for every tank in the game, so with four tanks the classic 1150 is
-under six seconds rather than 23. `base_regen_ticks` is one timer for every
+**Three `_ticks` rules count once a frame for every player, so faster with
+more.** With one player they keep the fifty a second above. `tree_grow_ticks`
+and `tree_grow_initial_ticks` count down once a frame for every tank in the
+game, so with four tanks the classic 1150 is under six seconds rather than
+23. `base_regen_ticks` is one timer for every
 player, bots included, and each timer that comes due restocks every base, so
 with eight players the bases restock eight times as often as the number
 says.
@@ -2727,8 +2728,8 @@ block is checked as a whole and not one line at a time.
 **A rule whose name ends `_ticks` counts at about fifty to the second**, which
 is not the rate `game.tick()` moves at. 50 is a second, 255 is five, 1500 is
 half a minute. [Three clocks](#three-clocks) says why. The two tree growth
-waits and `base_regen_ticks` count faster than that, and go faster still
-with more players in the game; their rows say how.
+waits and `base_regen_ticks` count once a frame for every player, so faster
+with more; their rows say how.
 
 ### The catalogue
 
@@ -2755,7 +2756,7 @@ below the tables say which.
 | `water_loss_shells` | 1 | 0 to 255 | Shells a wading tank loses each `tank_water_ticks`. |
 | `water_loss_mines` | 1 | 0 to 255 | Mines a wading tank loses each `tank_water_ticks`. |
 | `just_fired_ticks` | 101 | 0 to 255 | Ticks a tank stays visible in the trees after firing. |
-| `tree_hide_distance` | 768 | 0 to 65535 | How near a pillbox has to be, in world units on both axes, to shoot at an enemy tank sitting in forest — the classic 768 is three squares. A tank that has just fired can be shot at from anywhere in range. 0 is a pillbox that never shoots at a tank in forest. It does not decide who can see a tank in forest: the server hides one from anybody 768 or more away on either axis, whatever this is set to. On a player's own screen it also hides another player's builder standing in forest beyond this distance, and since the server already hides one beyond 768, only a smaller value changes that. |
+| `tree_hide_distance` | 768 | 0 to 65535 | How near a pillbox has to be, in world units on both axes, to shoot at an enemy tank sitting in forest — the classic 768 is three squares. A tank that has just fired can be shot at from anywhere in range. 0 is a pillbox that never shoots at a tank in forest unless it has just fired. It does not decide who can see a tank in forest: the server hides one from anybody 768 or more away on either axis, whatever this is set to. On a player's own screen it also hides another player's builder standing in forest beyond this distance, and since the server already hides one beyond 768, only a smaller value changes that. |
 | `gunsight_min` | 2 | 1 to 255 | The shortest the gunsight range winds down to, in half map squares. |
 | `gunsight_max` | 14 | 1 to 255 | The longest the gunsight range winds out to, in half map squares, so the classic 14 is seven squares. |
 | `tank_accel_rate` | 0.25 | 0.01 to 16.0 | Speed a tank gains each tick while the accelerate key is held. |
@@ -2885,7 +2886,7 @@ tolerance at or above the step lands every one of them.
 | `pill_repair_amount` | 4 | 1 and up | Armour a pillbox gains from one unit of repair. |
 | `pill_range` | 2048 | 0 to 65535 | How far a pillbox looks for a tank to shoot at. |
 | `pill_shell_damage` | 1 | 1 and up, at most `pill_max_armour` | What one shell takes off a pillbox. Setting it to the cap is a pillbox killed by a single hit. |
-| `pill_angry_divisor` | 2 | 1 to 255 | What a pillbox divides its firing interval by each time it is angered, held at `pill_attack_min_ticks`. It applies again on every hit, so at the classic 2 each hit halves the interval again. 1 does not make a pillbox that never gets angry: a hit leaves the interval where it is, but the cooldown still eases it back a step, past `pill_attack_ticks`. A pillbox hit again and again at 1 fires slower and slower, until the interval wraps past 255 and it fires every frame. |
+| `pill_angry_divisor` | 2 | 1 to 255 | What a pillbox divides its firing interval by each time it is angered, held at `pill_attack_min_ticks`. It applies again on every hit, so at the classic 2 each hit halves the interval again. 1 does not make a pillbox that never gets angry: a hit leaves the interval where it is, but the cooldown still eases it back a step, past `pill_attack_ticks`. A pillbox hit again and again at 1 fires slower and slower. In principle the interval can wrap past 255 and leave it firing every frame, but that takes about 155 hits, each followed by a full cooldown, so a pillbox only gets there if it is repaired between hits or angered by fire on a nearby base. |
 | `pill_fire_length` | 8.5 | 0.5 to 127.0 | How far a pillbox's shell flies, in whole map squares, so the classic 8.5 is eight and a half. It is multiplied by `shell_life` to give the shell's life in ticks. |
 | `pill_base_defend_range` | 9 | 0 to 255 | How near a base being shot at has to be to anger an allied pillbox, in map squares. `pill_base_defend_shape` says how it is measured. |
 | `pill_base_defend_shape` | 0 | 0 to 1 | How `pill_base_defend_range` is measured. 0, the classic WinBolo table, is a square: a pillbox up to the range away on each axis is angered, so 0 range is a pillbox that answers only for a base on its own square. 1 is a circle, as Mac Bolo measures it: the range is a radius and a pillbox exactly that far off is not angered, so 0 range is a pillbox that never answers for a base. Mac Bolo plays it as a circle of 7. |
