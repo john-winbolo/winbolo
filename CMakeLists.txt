@@ -6075,6 +6075,10 @@ set(_unit_test_names
     team_sides_held_seat_allied_in_round
     team_sides_free_team_keeps_setup
     team_sides_free_team_keeps_lobby_side
+    team_sides_accept_rebuilds_table
+    team_sides_leave_rebuilds_table
+    team_sides_bot_added_in_round_is_allied
+    team_sides_table_write_is_caught
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea

@@ -19,6 +19,7 @@
 {"tick":108,"type":"CTRL_LOBBY_SLOT","playerNum":2,"slot":{"connected":true,"playerName":"HeadlessBot3","teamNumber":3,"ready":false,"isBot":false,"pingMs":0,"countryCode":"XX","clientFlags":0,"clientType":2}}
 {"tick":146,"type":"CTRL_PLAYER_JOIN","playerNum":2,"name":"HeadlessBot3","country":"XX","clientType":2,"clientFlags":0,"allies":[2]}
 {"tick":146,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot3 has joined."}
+{"tick":252,"type":"CTRL_ALLIANCE_RESET","allies":[5,2,5,0,0,0,0,0,0,0,0,0,0,0,0,0]}
 {"tick":252,"type":"CTRL_ALLIANCE_ACCEPT","acceptedBy":0,"newMember":2}
 {"tick":250,"type":"CTRL_LOBBY_SLOT","playerNum":2,"slot":{"connected":true,"playerName":"HeadlessBot3","teamNumber":1,"ready":false,"isBot":false,"pingMs":20,"countryCode":"XX","clientFlags":0,"clientType":2}}
 {"tick":1090,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot1 has left."}

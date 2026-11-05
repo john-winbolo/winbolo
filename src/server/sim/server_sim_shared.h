@@ -344,12 +344,21 @@ const BrainModes *serverSimBrainModesCached(BrainModesCache *cache,
  *
  *     playersIsAllie(i, j) == (team[i] != 0 && team[i] == team[j])
  *
- * Accept, leave, a join and set_team all write the team first and then the
- * bitmap. */
+ * Accept, leave, a join, set_team and a bot added to a round all write the
+ * team first. The bitmap is then written from the teams by
+ * serverSimReapplyTeamAlliances, which is the one server-side write of
+ * alliance bits during a round: nothing edits a pair at a time. The one
+ * other touch is the leave's handover of what the leaver owns to its first
+ * ally, which clears the leaver's bits on its way, and the rebuild follows
+ * it. */
 
-/* True if the rule above holds for every pair of connected seats. On a
- * break it logs the first pair that breaks it and returns false. */
+/* True if the rule above holds for every pair of connected seats. */
 bool serverSimSidesAgree(const ServerSim *sim);
+
+/* The check the running tick makes, in every build. When the rule breaks it
+ * logs the first pair once, and not again until the two agree and break
+ * again. It changes nothing. */
+void serverSimSidesCheck(ServerSim *sim);
 
 /* The lowest team id in 1..MAX_TANKS-1 that no connected seat is on, or 0
  * when every id has somebody. A team not in use is set up first: named

@@ -1851,7 +1851,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 |---|---|
 | `game.spawn_bot(t)` | Puts a bot into the running round. Answers the seat and `"queued"` when the call named a seat, and `true, "queued"` when the server is choosing one. |
 | `game.remove_bot(p)` | Takes a bot out of the running round. A human seat is refused with `SCN_OP_IS_HUMAN`. |
-| `game.set_team(p, t)` | Moves a seat to another team mid-round. Only `p`'s alliances change: `p` is allied with the seats on team `t`, and the alliances other players made stay. No pills or bases change owner. `set_team(p, 0)` takes `p` out of every alliance. |
+| `game.set_team(p, t)` | Moves a seat to another team mid-round. Only `p`'s alliances change: `p` is allied with the seats on team `t`, and the alliances other players made stay. No pills or bases change owner. `set_team(p, 0)` takes `p` out of every alliance. Each of these, like an accept or a leave in play, sends every client the whole alliance table. |
 | `game.bot_init(p, t)` | Hands a bot a new init table. A seat that has been fielded takes one whether it is on the field now or not: a seat taken off keeps its brain, and the table is waiting in it when the seat is fielded again. A human seat is refused with `SCN_OP_IS_HUMAN`, an empty one with `SCN_OP_NO_SUCH_PLAYER`, and a held seat that has never been fielded — which has no brain yet to hold the table — with `SCN_OP_NO_RUNNER`. |
 | `game.lobby_add_bot(t)` | Seats a bot in the lobby and answers which seat it took. |
 | `game.lobby_remove_bot(p)` | Takes a bot out of the lobby. A human seat is refused. |

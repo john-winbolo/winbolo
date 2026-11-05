@@ -73,6 +73,18 @@
  *   soccer_puts_leaver_back   — Soccer keeps a seat on its side
  *   round_log_teams           — the round log records each change of team
  *
+ * The fourth group holds that the table is written from the teams and
+ * nowhere else:
+ *
+ *   accept_rebuilds_table     — an accept writes the table from the teams
+ *                               as one reset, then says so
+ *   leave_rebuilds_table      — a leave does the same, and a leaver with
+ *                               no ally sends no reset
+ *   bot_added_in_round_is_allied — a bot added to a round is allied with
+ *                               its team as it is added
+ *   table_write_is_caught     — a write that skips the teams is logged, not
+ *                               fatal, and the rebuild mends it
+ *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
 
@@ -1339,6 +1351,207 @@ int run_team_sides_round_log_teams(void) {
         off += sz;
     }
     UT_ASSERT_MSG(nGot == nWant, "%d team records, not %d", nGot, nWant);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * The table is written from the teams, and nowhere else.
+ * ================================================================ */
+
+/* True if a reset event's matrix, self bits left out, is the server's table
+   for every seat. */
+static bool tsResetMatchesServer(ServerSim *sim, const ControlEvent *e) {
+    uint16_t srv[MAX_TANKS];
+    int i;
+    tsMatrix(&sim->sim.plyrs, MAX_TANKS, srv);
+    for (i = 0; i < MAX_TANKS; i++) {
+        uint16_t row = e->u.allianceReset.allies[i] & (uint16_t)~(1u << i);
+        if (row != srv[i]) return false;
+    }
+    return true;
+}
+
+/* Teams 1, 1, 2, 2. Seat 2 accepts seat 0. The server writes the table from
+   the teams: exactly one CTRL_ALLIANCE_RESET goes out, its matrix is the
+   server's, and the accept follows it. A client holding the world as it
+   stood and fed every event in order ends with the server's table. */
+int run_team_sides_accept_rebuilds_table(void) {
+    const BYTE teams[4] = { 1, 1, 2, 2 };
+    ServerSim *sim = tsRunningSim(teams, 4);
+    TsEvents *cap = (TsEvents *)calloc(1, sizeof(TsEvents));
+    SubscriberHandle h;
+    uint16_t srv[4], cli[4];
+    ClientSim *cs;
+    GameSim *cliGs;
+    int reset, acc, i;
+
+    UT_ASSERT(sim != NULL && cap != NULL);
+    h = serverSimRegisterSubscriber(sim, tsCaptureAll, cap);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    memset(cap, 0, sizeof(*cap));
+
+    serverSimAcceptAlliance(sim, 2, 0);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    reset = tsFind(cap, 0, CTRL_ALLIANCE_RESET);
+    acc   = tsFind(cap, 0, CTRL_ALLIANCE_ACCEPT);
+    UT_ASSERT_MSG(reset >= 0, "the accept published no reset");
+    UT_ASSERT_MSG(acc > reset, "the accept went out at %d, the reset at %d",
+                  acc, reset);
+    UT_ASSERT_MSG(tsFind(cap, reset + 1, CTRL_ALLIANCE_RESET) < 0,
+                  "the accept published more than one reset");
+    UT_ASSERT_MSG(tsResetMatchesServer(sim, &cap->evts[reset]),
+                  "the reset does not carry the server's table");
+    tsMatrix(&sim->sim.plyrs, 4, srv);
+
+    cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, 3);
+    cliGs = clientSimGetGameSim(cs);
+    for (i = 0; i < 4; i++) {
+        cliGs->plyrs->item[i].inUse = TRUE;
+    }
+    playersAcceptAlliance(cliGs, &cliGs->plyrs, 3, 0, 1, FALSE);
+    playersAcceptAlliance(cliGs, &cliGs->plyrs, 3, 2, 3, FALSE);
+    for (i = 0; i < cap->count && i < TS_MAX_EVENTS; i++) {
+        if (cap->evts[i].type == CTRL_ALLIANCE_RESET ||
+            cap->evts[i].type == CTRL_ALLIANCE_ACCEPT) {
+            clientSimApplyControl(cs, &cap->evts[i]);
+        }
+    }
+    tsMatrix(&cliGs->plyrs, 4, cli);
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(cli[i] == srv[i],
+                      "seat %d: the client has allies 0x%04x, the server "
+                      "0x%04x", i, (unsigned)cli[i], (unsigned)srv[i]);
+    }
+    clientSimDestroy(cs);
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    free(cap);
+    return 0;
+}
+
+/* Teams 1, 1, 2. Seat 1 leaves: the leave goes out, then the table written
+   from the teams as one reset with the server's matrix, then the slot. Seat
+   0, then alone on team 1, leaves too: a leave and no reset, because it had
+   no ally to lose and the table does not change. */
+int run_team_sides_leave_rebuilds_table(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    TsEvents *cap = (TsEvents *)calloc(1, sizeof(TsEvents));
+    SubscriberHandle h;
+    int leave, reset, slot;
+
+    UT_ASSERT(sim != NULL && cap != NULL);
+    h = serverSimRegisterSubscriber(sim, tsCaptureAll, cap);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    memset(cap, 0, sizeof(*cap));
+
+    serverSimLeaveAlliance(sim, 1);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    UT_ASSERT(!tsAllied(sim, 0, 1));
+    leave = tsFind(cap, 0, CTRL_ALLIANCE_LEAVE);
+    reset = tsFind(cap, 0, CTRL_ALLIANCE_RESET);
+    slot  = tsFindSlot(cap, 0, 1);
+    UT_ASSERT_MSG(leave >= 0 && reset > leave && slot > reset,
+                  "the leave, reset and slot went out at %d, %d and %d",
+                  leave, reset, slot);
+    UT_ASSERT_MSG(tsFind(cap, reset + 1, CTRL_ALLIANCE_RESET) < 0,
+                  "the leave published more than one reset");
+    UT_ASSERT_MSG(tsResetMatchesServer(sim, &cap->evts[reset]),
+                  "the reset does not carry the server's table");
+
+    memset(cap, 0, sizeof(*cap));
+    serverSimLeaveAlliance(sim, 0);
+    UT_ASSERT(tsFind(cap, 0, CTRL_ALLIANCE_LEAVE) >= 0);
+    UT_ASSERT_MSG(tsFind(cap, 0, CTRL_ALLIANCE_RESET) < 0,
+                  "a leaver with no ally published a reset");
+    UT_ASSERT(serverSimSidesAgree(sim));
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    free(cap);
+    return 0;
+}
+
+/* Teams 1 and 2, and a bot is added to the running round on team 1 through
+   the public add. It is allied with team 1 as it is added, its slot goes out
+   with its team, and the two records agree on the next tick. */
+int run_team_sides_bot_added_in_round_is_allied(void) {
+    const BYTE teams[2] = { 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 2);
+    TsEvents *cap = (TsEvents *)calloc(1, sizeof(TsEvents));
+    SubscriberHandle h;
+    ServerSimBotConfig cfg;
+    int slot;
+
+    UT_ASSERT(sim != NULL && cap != NULL);
+    h = serverSimRegisterSubscriber(sim, tsCaptureAll, cap);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    memset(cap, 0, sizeof(*cap));
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.brainPath   = "(test)";
+    cfg.brainName   = "Bot";
+    cfg.ai          = aiFull;
+    cfg.gameType    = gameOpen;
+    cfg.hiddenMines = false;
+    cfg.teamNumber  = 1;
+    UT_ASSERT_MSG(serverSimAddBot(sim, 2, &cfg), "the bot was refused");
+    UT_ASSERT(tsTeam(sim, 2) == 1);
+    UT_ASSERT_MSG(tsAllied(sim, 0, 2) && tsAllied(sim, 2, 0),
+                  "the bot added in the round is not allied with its team");
+    UT_ASSERT(!tsAllied(sim, 1, 2));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    slot = tsFindSlot(cap, 0, 2);
+    UT_ASSERT_MSG(slot >= 0, "the bot's slot was not published");
+    UT_ASSERT(cap->evts[slot].u.lobbySlot.slot.teamNumber == 1);
+    UT_ASSERT_MSG(tsFind(cap, 0, CTRL_ALLIANCE_RESET) >= 0,
+                  "the add published no reset");
+
+    serverSimTick(sim);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    free(cap);
+    return 0;
+}
+
+/* A write to the table that skips the teams is a bug, and every build
+   catches it: the running tick logs the first pair once and goes on, where
+   an abort would end the round. The rebuild puts the table right, and the
+   check is armed again. */
+int run_team_sides_table_write_is_caught(void) {
+    const BYTE teams[2] = { 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 2);
+    GameSim *gs;
+
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    serverSimTick(sim);
+    UT_ASSERT(!sim->sidesMismatchLogged);
+
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 1, TRUE);
+    UT_ASSERT(!serverSimSidesAgree(sim));
+    serverSimTick(sim);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round did not go on (state %d)",
+                  (int)serverSimGetState(sim));
+    UT_ASSERT_MSG(sim->sidesMismatchLogged, "the tick did not log the break");
+    serverSimTick(sim);
+    UT_ASSERT(sim->sidesMismatchLogged);
+
+    serverSimReapplyTeamAlliances(sim);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    UT_ASSERT_MSG(!tsAllied(sim, 0, 1),
+                  "the rebuild kept an alliance the teams do not hold");
+    serverSimTick(sim);
+    UT_ASSERT_MSG(!sim->sidesMismatchLogged,
+                  "the check was not armed again once the two agreed");
     serverSimDestroy(sim);
     return 0;
 }

@@ -1310,6 +1310,10 @@ int run_team_sides_round_log_teams(void);
 int run_team_sides_held_seat_allied_in_round(void);
 int run_team_sides_free_team_keeps_setup(void);
 int run_team_sides_free_team_keeps_lobby_side(void);
+int run_team_sides_accept_rebuilds_table(void);
+int run_team_sides_leave_rebuilds_table(void);
+int run_team_sides_bot_added_in_round_is_allied(void);
+int run_team_sides_table_write_is_caught(void);
 
 /* Pillbox and base owners from the map file survive a round start
  * (test_round_start_owners.c, issue #422). */

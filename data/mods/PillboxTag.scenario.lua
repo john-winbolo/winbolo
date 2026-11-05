@@ -2311,7 +2311,7 @@ end
 -- lobby team is kept first, to score for and to be put back at the end. A
 -- seat is only moved when it is not already there, because each set_team
 -- sends every client the whole alliance table again. An alliance a player
--- makes or leaves moves teams too, but sends only that one change.
+-- makes or leaves moves teams too, and sends the whole table the same way.
 local function sort_team(p)
   local slot = game.lobby_slot(p)
   if over or slot == nil then
