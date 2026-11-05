@@ -1360,6 +1360,8 @@
 #define STR_LV_LAG_MENU                     3119
 #define STR_LV_LAG_MENU_TIP                 3120
 #define STR_LV_LAG_LINE_BOT                 3121
+/* A temporary test toggle (src/logviewer/lv_early_blast.h). */
+#define STR_LV_SCREEN_TRUE_SHELLS           3472
 /* The viewer's server timing (log_OverrunStats) in the Game Info panel: the
    section's name, the line that says when the record shown was written
    (string1 the round time, m:ss), the record's lines (string1..3 times in ms

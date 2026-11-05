@@ -40,6 +40,7 @@
 #include "lv_ping_view.h"   /* LvPingShown */
 #include "lv_lag.h"         /* LvPlayerLag */
 #include "lv_shell_owner.h" /* LvShellOwnerStats */
+#include "lv_early_blast.h" /* LvEarlyBlastStats, a temporary test toggle */
 #include "lv_overrun.h"     /* LvOverrunNow */
 
 /* Defines */
@@ -861,6 +862,15 @@ bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *dr
  * viewer started: how many new shells it gave an owner and why the others
  * have none. */
 void lv_screenLagShellOwnerStats(LvShellOwnerStats *out);
+
+/* TEMPORARY TEST TOGGLE (lv_early_blast.h), "Toggle Screen-True Own Shells",
+ * off by default: in the lag view each own shell of the chosen player
+ * explodes at the present where it ended, and the server's later explosion
+ * of that shell is hidden. Stats gives how many own shells ended and how
+ * many server explosions were found for them. Hold the client mutex. */
+void lv_screenSetScreenTrueShells(int enabled);
+int  lv_screenGetScreenTrueShells(void);
+void lv_screenEarlyBlastStats(LvEarlyBlastStats *out);
 
 void lv_screenCentreOnSelectedItem();
 

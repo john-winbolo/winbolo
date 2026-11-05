@@ -1467,6 +1467,12 @@ int run_lv_shell_owner_rules(void);
 int run_lv_shell_owner_real_flight(void);
 int run_lv_shell_owner_start(void);
 int run_lv_shell_owner_link(void);
+/* The lag view's temporary early blast test toggle (test_lv_early_blast.c). */
+int run_lv_early_blast_rules(void);
+int run_lv_early_blast_ended(void);
+int run_lv_early_blast_frames(void);
+int run_lv_early_blast_match(void);
+int run_lv_early_blast_hide(void);
 int run_lv_lag_view_rename(void);
 /* The viewer reads log_OverrunStats records and gives the one at the playhead. */
 int run_lv_overrun_read(void);
