@@ -173,6 +173,11 @@ typedef struct {
 
     /* The bot connection's own input tick counter: two half-steps a think. */
     uint32_t    inputTick;
+    /* The packet tick minus inputTick of the last input sent. A seat placed
+     * mid-round has its packet ticks moved past the server's
+     * lastProcessedInput (clientBuildInputPacket), and the server's hosted
+     * marker carries that number, so the recording uses it too. */
+    uint32_t    recSeqOffset;
     uint32_t    statsTick;
     double      thinkMsSum;
     uint32_t    killCount;
@@ -912,6 +917,7 @@ static bool seatOpenConnection(HostSeat *hs) {
     hs->connectStartMs = nowMs();
     hs->lobbyNoted = false;
     hs->inputTick = 0;
+    hs->recSeqOffset = 0;
     return true;
 }
 
@@ -1605,6 +1611,7 @@ static void hostTick(void) {
             continue;
         }
         if (j->hasInput) {
+            hs->recSeqOffset = j->pkt1.tick - hs->inputTick;
             clientSimNetRecordInput(hs->cs, &j->pkt1);
             clientSimNetSendInput(hs->cs, &j->pkt2);
             for (q = 0; q < j->pendingCmdCount; q++) {
@@ -1637,7 +1644,8 @@ static void hostTick(void) {
             rrCount++;
         }
         hostRecSeatThink(jobIndices[i], hs->srv, hs->seat, hs->placeGen,
-                         hs->inputTick, hs->startTick + hs->inputTick / 2u,
+                         hs->inputTick + hs->recSeqOffset,
+                         hs->startTick + hs->inputTick / 2u,
                          (float)hs->bot.lastThinkMs, hs->bot.brain.L,
                          &hs->bot.brain.overlay,
                          servers[hs->srv].sync.man.debugMode, rrIndex,
