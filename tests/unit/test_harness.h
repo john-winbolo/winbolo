@@ -1079,6 +1079,8 @@ int run_brain_removed_items_recording_masks(void);
  * block's brain logs compress to .gz. */
 int run_btr_zstd_recording_reads_back(void);
 int run_btr_zstd_skip_across_blocks(void);
+/* A skip past 2 GiB in an old gzip .btr. */
+int run_btr_gzip_skip_past_2gib(void);
 int run_btr_zstd_cut_file_reads_its_prefix(void);
 int run_btr_block_logs_compress(void);
 /* Record frames of a running sim into dir with the -brain-debug recorder. */

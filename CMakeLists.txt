@@ -6212,6 +6212,7 @@ set(_unit_test_names
     brain_removed_items_recording_masks
     btr_zstd_recording_reads_back
     btr_zstd_skip_across_blocks
+    btr_gzip_skip_past_2gib
     btr_zstd_cut_file_reads_its_prefix
     btr_block_logs_compress
     brainrec_split_cuts_brain_logs_by_engine_tick
