@@ -92,7 +92,8 @@ static int parse_test(void) {
 
 /* ---- LAN address test (lanonly=1) ----------------------------------- */
 
-#define IP4(a, b, c, d) (((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | \n                         ((uint32_t)(c) << 8) | (uint32_t)(d))
+#define IP4(a, b, c, d) (((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | \
+                         ((uint32_t)(c) << 8) | (uint32_t)(d))
 
 static int lan_addr_test(void) {
     /* Loopback 127.0.0.0/8. */
