@@ -37,7 +37,7 @@
 struct GameSim;
 
 /* The time a tree exist before growing unless we find a better spot */
-#define TREEGROW_TIME 3000 /* 3700 */
+#define TREEGROW_TIME 1150 /* 1150 approximates (via empirical research) Mac Bolo growth */
 
 /* Initial time delay before we build a tree. This will be overwritten
    before it gets called */

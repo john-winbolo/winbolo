@@ -1051,8 +1051,8 @@ int run_pill_shadow_tracks_real(void) {
     /* Both pills belong to one alliance all three slots are in, so each of them
      * stands inside every slot's rects wherever it is moved and every slot's
      * record is expected to follow the live list. */
-    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 1, TRUE);
-    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 2, TRUE);
+    serverSimAcceptAlliance(sim, 0, 1);
+    serverSimAcceptAlliance(sim, 0, 2);
     ms_pill_owned_by_slot0(sim, 0);
     ms_pill_owned_by_slot0(sim, 1);
     UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 1) == TRUE &&
@@ -1147,7 +1147,7 @@ int run_pill_shadow_crc_matches(void) {
 
     /* Both slots are shown pill 0 wherever it goes, so their records stay on
      * the live square and the checksums are comparable. */
-    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 1, TRUE);
+    serverSimAcceptAlliance(sim, 0, 1);
     ms_pill_owned_by_slot0(sim, 0);
 
     /* A pill move and a frame of terrain changes, so both halves of the record
@@ -1228,7 +1228,7 @@ int run_pill_shadow_blob_identical(void) {
 
     /* Both slots are shown pill 0 wherever it goes, so their records stay on
      * the live square and the blobs are comparable. */
-    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 1, TRUE);
+    serverSimAcceptAlliance(sim, 0, 1);
     ms_pill_owned_by_slot0(sim, 0);
 
     /* 131,072 bytes is the headroom serverSimReloadMap allocates; two of them

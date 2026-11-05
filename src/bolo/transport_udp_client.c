@@ -131,6 +131,11 @@ typedef struct {
     uint32_t outCmdNextSeq;   /* next cmdSeq to assign on submit (init 1) */
     uint32_t outHeadSeq;      /* lowest unacked seq; advances on ACK */
     uint32_t outTailSeq;      /* exclusive tail; outTailSeq == outCmdNextSeq */
+    /* True once this connection has reached CONNECTED or SPECTATING. After
+     * that, a command submitted while a lobby map change has the client
+     * re-joining is queued rather than dropped; the drain holds it until the
+     * re-join is done and the per-tick resend then sends it. */
+    bool     joinedOnce;
 
     /* Input redundancy ring buffer */
     InputPacket inputRing[CLIENT_INPUT_RING_SIZE];
@@ -817,9 +822,19 @@ static void udpClientResendCommandHead(TransportUdpClientCtx *c) {
 void transportUdpClientSubmitCommand(Transport *t, const ClientCommand *cmd) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     /* SPECTATING is admitted alongside CONNECTED so a spectator's CMD_CHAT
-     * reaches the wire; the server rejects any non-chat spectator command. */
+     * reaches the wire; the server rejects any non-chat spectator command.
+     *
+     * So is the re-join a lobby map change sends a joined client on. It runs
+     * several round trips and a map download, and a host clicking a second
+     * map or Use This Map inside it had the command thrown away, with the
+     * chooser's own preview showing the map as picked. Queued, it waits for
+     * the drain, which sends nothing until the re-join is done, and the
+     * per-tick resend sends it then. */
+    bool rejoining = c->joinedOnce &&
+                     (c->joinState == UDP_CLIENT_JOINING ||
+                      c->joinState == UDP_CLIENT_DOWNLOADING_MAP);
     if (c->joinState != UDP_CLIENT_CONNECTED &&
-        c->joinState != UDP_CLIENT_SPECTATING) return;
+        c->joinState != UDP_CLIENT_SPECTATING && !rejoining) return;
     if (c->outTailSeq - c->outHeadSeq >= OUT_CMD_QUEUE_CAP) {
         SDL_assert(0 && "out command queue full");
         return;
@@ -1315,60 +1330,6 @@ void udpClientHandleLobbyMapSearchRsp(ClientSim *cs,
     }
 }
 
-/* Short name for a ControlEventType — diagnostic logging only. */
-static const char *mpDiagCtrlName(int type) {
-    switch (type) {
-    case CTRL_ALLIANCE_REQUEST: return "ALLIANCE_REQUEST";
-    case CTRL_ALLIANCE_ACCEPT:  return "ALLIANCE_ACCEPT";
-    case CTRL_ALLIANCE_LEAVE:   return "ALLIANCE_LEAVE";
-    case CTRL_ALLIANCE_RESET:   return "ALLIANCE_RESET";
-    case CTRL_PLAYER_JOIN:      return "PLAYER_JOIN";
-    case CTRL_PLAYER_NAME:      return "PLAYER_NAME";
-    case CTRL_LOBBY_SLOT:       return "LOBBY_SLOT";
-    case CTRL_LOBBY_SETTINGS:   return "LOBBY_SETTINGS";
-    case CTRL_LOBBY_MAP_CHANGE: return "LOBBY_MAP_CHANGE";
-    case CTRL_MAP_DOWNLOAD_COMPLETE: return "MAP_DOWNLOAD_COMPLETE";
-    case CTRL_BALANCE_PROPOSAL: return "BALANCE_PROPOSAL";
-    case CTRL_MAP_SKIP_STATE:   return "MAP_SKIP_STATE";
-    case CTRL_GAME_PHASE_LOBBY: return "GAME_PHASE_LOBBY";
-    case CTRL_GAME_PHASE_COUNTDOWN: return "GAME_PHASE_COUNTDOWN";
-    case CTRL_GAME_PHASE_RUNNING:   return "GAME_PHASE_RUNNING";
-    case CTRL_GAME_PHASE_GAME_OVER: return "GAME_PHASE_GAME_OVER";
-    case CTRL_GAME_OVER:        return "GAME_OVER";
-    case CTRL_SERVER_SHUTDOWN:  return "SERVER_SHUTDOWN";
-    case CTRL_CHAT:             return "CHAT";
-    case CTRL_PLAYER_LEAVE:     return "PLAYER_LEAVE";
-    case CTRL_LOBBY_TEAM_META:  return "LOBBY_TEAM_META";
-    case CTRL_LOBBY_BOT_CONFIG: return "LOBBY_BOT_CONFIG";
-    case CTRL_LOBBY_BOT_BRAIN:  return "LOBBY_BOT_BRAIN";
-    case CTRL_LOBBY_BRAIN_LIST: return "LOBBY_BRAIN_LIST";
-    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: return "LOBBY_BRAIN_DOCS_CHUNK";
-    case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
-    case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
-    case CTRL_COMMAND_REJECTED: return "COMMAND_REJECTED";
-    case CTRL_BALANCE_FAILED:   return "BALANCE_FAILED";
-    case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
-    case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
-    case CTRL_VOICE_TALKING:    return "VOICE_TALKING";
-    case CTRL_ENTITY_CHANGE:    return "ENTITY_CHANGE";
-    case CTRL_ENTITY_SYNC:      return "ENTITY_SYNC";
-    case CTRL_SIM_RULES:        return "SIM_RULES";
-    case CTRL_SCN_PANEL:        return "SCN_PANEL";
-    case CTRL_SCN_SCORE:        return "SCN_SCORE";
-    case CTRL_SCN_ANNOUNCE:     return "SCN_ANNOUNCE";
-    case CTRL_SCN_MARKER:       return "SCN_MARKER";
-    case CTRL_SCN_STATUS:       return "SCN_STATUS";
-    case CTRL_VOICE_EVERYONE:   return "VOICE_EVERYONE";
-    case CTRL_SCN_POPUP:        return "SCN_POPUP";
-    case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
-    case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
-    case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
-    case CTRL_LOBBY_BRAIN_ANNOUNCE: return "LOBBY_BRAIN_ANNOUNCE";
-    case CTRL_LOBBY_BOT_POOL_INFO:  return "LOBBY_BOT_POOL_INFO";
-    default:                    return "<unknown>";
-    }
-}
-
 /* Apply a CTRL_CHANNEL_RESET: lift the game (channel 0) and map (channel 1)
  * receive baselines to the server's new game-start floors, so a previous-game
  * straggler (seq below the baseline) dedup-drops instead of replaying in the
@@ -1607,7 +1568,7 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
                      (unsigned)evt->u.lobbySettings.lobbyServerLocks);
         }
         mpDiagLog("[cli] APPLY evSeq=%u type=%s%s inLobby=%d mapInstalled=%d",
-                  (unsigned)evSeq, mpDiagCtrlName((int)evt->type), extra,
+                  (unsigned)evSeq, controlEventDiagName(evt->type), extra,
                   (int)c->clientSim->inLobby, (int)c->mapInstalled);
     }
     if (evt->type == CTRL_GAME_PHASE_RUNNING) {
@@ -2476,6 +2437,7 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
             break;
         }
         c->joinState = UDP_CLIENT_CONNECTED;
+        c->joinedOnce = true;
         /* A map list request made while the join was not complete was never
          * sent, and a map change always re-joins. Let the chooser retry a
          * missing listing now that requests can go out, but keep a completed
@@ -2960,6 +2922,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     }
                 }
                 c->joinState = UDP_CLIENT_SPECTATING;
+                c->joinedOnce = true;
                 WB_LOG_INFO(WB_LOG_CAT_NET,
                     "spectator JOIN_ACCEPT: tankless connect, mapSize=%u",
                     (unsigned)specMapSize);
@@ -3347,7 +3310,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 dec = transportControlCodecBodyDecoder((ControlEventType)type);
                 if (dec == NULL || !dec(ctlBuf + 3, bodyLen, &evt)) {
                     mpDiagLog("[cli] ch2 control decode SKIP type=%s reason=%s",
-                              mpDiagCtrlName((int)type),
+                              controlEventDiagName((ControlEventType)type),
                               dec == NULL ? "no decoder" : "decode failed");
                     continue;
                 }
@@ -3583,7 +3546,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     dec = transportControlCodecBodyDecoder((ControlEventType)type);
                     if (dec == NULL || !dec(chanBuf + 3, bodyLen, &evt)) {
                         mpDiagLog("[cli] ch2 control decode SKIP type=%s reason=%s",
-                                  mpDiagCtrlName((int)type),
+                                  controlEventDiagName((ControlEventType)type),
                                   dec == NULL ? "no decoder" : "decode failed");
                         continue;
                     }
@@ -6543,6 +6506,56 @@ bool transportUdpClientStartLobbyScriptUpload(Transport *t,
                                /*useLocalLen=*/0);
     SDL_free(fileData);
     return ok;
+}
+
+/* Whether a lobby map change of this client's is still under way: a map
+ * command not yet acked, the re-join a map change sends the client on, or an
+ * upload not yet over. The
+ * map chooser reads it every frame and greys its picks while it holds, since
+ * an upload started then is refused and a commit or cancel sent then can
+ * land before the upload does.
+ *
+ * Nothing here is latched, so it cannot stay true by being forgotten. Each
+ * part ends by itself: the command with its ack or the connection, the
+ * re-join when the client is CONNECTED again or
+ * gives up (JOIN_MAX_RETRIES, the map download's restart cap), which ends
+ * the connection, and the upload with the server's answer or the upload
+ * watchdog (UPLOAD_ACK_TIMEOUT_MS, UPLOAD_STALL_TIMEOUT_MS). An upload that is
+ * over but not yet let go of (status 3 or 4) is not under way: the pump lets
+ * go of it on its next CONNECTED tick. */
+bool transportUdpClientMapChangeBusy(Transport *t) {
+    TransportUdpClientCtx *c;
+    uint8_t st;
+    uint32_t seq;
+
+    if (t == NULL || t->ctx == NULL) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinedOnce && (c->joinState == UDP_CLIENT_JOINING ||
+                          c->joinState == UDP_CLIENT_DOWNLOADING_MAP)) {
+        return true;
+    }
+    /* A map pick, random map, Use This Map or cancel the server has not yet
+       acked. An upload does not ride the command queue, so one started now
+       could reach the server ahead of the command, lost and being resent,
+       and the command then land over it. The server acks every command it
+       applies, refused or not, and applies a map change before it acks, so
+       this ends with the ack (the re-join above usually taking over first)
+       or with the connection: an unacked head is resent every 80 ms until
+       then. */
+    for (seq = c->outHeadSeq; seq != c->outTailSeq; seq++) {
+        switch (c->outCmdQueue[seq % OUT_CMD_QUEUE_CAP].cmd.type) {
+        case CMD_LOBBY_SET_MAP:
+        case CMD_LOBBY_PREVIEW_RANDOM:
+        case CMD_LOBBY_PREVIEW_COMMIT:
+        case CMD_LOBBY_PREVIEW_CANCEL:
+            return true;
+        default:
+            break;
+        }
+    }
+    if (!c->uploadActive || c->clientSim == NULL) return false;
+    st = c->clientSim->lobbyMapUploadStatus;
+    return st != 3 && st != 4;
 }
 
 uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t) {

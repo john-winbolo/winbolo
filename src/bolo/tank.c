@@ -268,7 +268,10 @@ static BumpInfo tankNudgeBuildingsMac(GameSim *sim, tank *value, int maxNudges) 
     {1,3,14,12}, {0,3,14,14}, {0,2,13,15}, {1,1,12,15},
     {3,1,12,14}, {3,1,14,15}, {2,2,15,15}, {1,3,15,14}
   };
-  const BYTE *box = boxes[((unsigned)(*value)->angle + 8) / 16 % 16];
+  /* Mac Bolo rounds a heading exactly halfway between two sectors up; this
+   * rounds it down, like the sprite and the movement, so a tank always
+   * collides with the box of the way it is facing and going. */
+  const BYTE *box = boxes[utilGetDir((*value)->angle)];
   BumpInfo bumptype = BumpInfo_None;
   WORLD x = (*value)->x, y = (*value)->y;
   int i;
@@ -1963,10 +1966,6 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   }
 
   ang = utilGet16Dir((*value)->angle);
-  if (sim->rules.tank_collision_mac) {
-    /* Mac rounds a half-sector upward (including 248 back to north). */
-    ang = (BYTE)(((unsigned)(*value)->angle + 8) & 0xF0);
-  }
 
   /* Step 1 — Tank-to-tank nudge */
   if (!sim->isPredicting) {
@@ -3166,9 +3165,9 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
       BYTE dyingPlayer = gameSimGetTankPlayer(sim, value);
       (*value)->pendingDeathCause = DEATH_CAUSE_MINE;
       if (((*value)->shells + (*value)->mines) > sim->rules.big_explosion_threshold) {
-        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_BIG, dyingPlayer);
+        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), TK_LARGE_EXPLOSION, dyingPlayer);
       } else {
-        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_SMALL, dyingPlayer);
+        tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), TK_SMALL_EXPLOSION, dyingPlayer);
       }
       (*value)->deathWait = (uint16_t) sim->rules.tank_death_ticks;
       /* owner is the slot that laid the mine, or NEUTRAL for a mine that came
@@ -3202,7 +3201,10 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
 *  sim   - Game simulation
 *  mx    - Map X Co-ordinate
 *  my    - Map Y Co-ordinate
-*  dir   - Tank facing direction (0-15)
+*  dir   - Tank facing angle in bradians (0-255). The
+*          top four bits pick one of the 16 directions.
+*          Callers snap it first (utilGet16Dir); a raw
+*          angle would round down, not to the nearest.
 *********************************************************/
 void tankNearMines(GameSim *sim, BYTE mx, BYTE my, BYTE dir) {
   map *mp = &sim->mp;
@@ -3255,8 +3257,10 @@ void tankNearMines(GameSim *sim, BYTE mx, BYTE my, BYTE dir) {
     }
   }
 
-  /* Check 3 forward cells */
-  BYTE d = dir & 0x0F;
+  /* Check 3 forward cells. The callers pass the tank's angle snapped
+   * to a multiple of 16, so the low four bits are always zero and
+   * the direction is in the high four. */
+  BYTE d = (BYTE)(dir >> 4);
   for (int i = 0; i < 3; i++) {
     BYTE fx = (BYTE)(mx + forwardDX[d][i]);
     BYTE fy = (BYTE)(my + forwardDY[d][i]);

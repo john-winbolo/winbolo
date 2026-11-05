@@ -38,7 +38,8 @@ int run_lv_panel_set_live(void) {
                   (live & LV_PANEL_SET_CONTROLS) && (live & LV_PANEL_SET_HUD) &&
                   (live & LV_PANEL_SET_OVERVIEW) && (live & LV_PANEL_SET_TANK) &&
                   (live & LV_PANEL_SET_GAME_INFO) && (live & LV_PANEL_SET_EVENTS) &&
-                  (live & LV_PANEL_SET_ITEM_INFO) && (live & LV_PANEL_SET_SCENARIO),
+                  (live & LV_PANEL_SET_ITEM_INFO) && (live & LV_PANEL_SET_SCENARIO) &&
+                  (live & LV_PANEL_SET_CHAT),
                   "a live feed is missing a panel: 0x%x", live);
 
     /* The sidebars: on only when the host allows them, in the overview, and

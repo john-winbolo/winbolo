@@ -14,9 +14,8 @@
 --
 -- Pillbox shell cap. No more than pill_max_shells_at_tank pillbox shells
 -- are in the air at any one tank. A pillbox whose nearest target already
--- has that many coming fires at the next nearest enemy in range instead;
--- with no other target it holds its shot and fires as soon as one of those
--- shells lands. This part sets the limit to twelve.
+-- has that many coming loses its shot and reloads. This part sets the
+-- limit to twelve.
 --
 -- Tank clearance. Use the original direction-dependent tank boxes and
 -- pixel nudges against solid tiles, allowing close passes beside pills.
@@ -48,16 +47,6 @@
 -- pillbox 9 across and 9 down, about 12.7 squares off. Mac Bolo counts it
 -- as a circle of radius 7 with the edge left out, so a pillbox exactly 7
 -- away, or at 5 across and 5 down, stays calm.
---
--- Tank hits and mines. In Mac Bolo a shell that hits a tank does not
--- touch the map square at all; only a shell that hits the ground or
--- terrain sets off a mine. tank_hit_sets_off_mines at 0 plays that way,
--- and 0 is now WinBolo's own default. In WinBolo 2.1 a shell that hit a
--- tank also set off any mine on the square where it burst, so a tank that
--- laid mines as it ran could have them set off by the shots of the tank
--- chasing it. The Tank Hits Set Off Mines mod sets 1 to play that way.
--- This part keeps the rule at 0, so it only changes the round when
--- another script on the list sets 1.
 --
 -- Superbooms. A tank that dies carrying enough shells and mines goes up in
 -- a big explosion, which craters a 2 x 2 block and hurts any pillbox in
@@ -118,9 +107,6 @@
 --   pill_shell_range    pillbox shell range (pill_fire_length, 8.25).
 --   base_defence        base defence circle (pill_base_defend_shape, with
 --                       pill_base_defend_range 7).
---   tank_hit_mines      tank hits do not set off mines
---                       (tank_hit_sets_off_mines). 0 is the default,
---                       and this part keeps it at 0.
 --   superboom           superboom threshold
 --                       (big_explosion_threshold, 60).
 --   parachute           parachute speed (lgm_helicopter_speed, 2).
@@ -152,12 +138,12 @@ scenario = {
   description = "Plays the Mac Bolo shell pushback, pillbox shell cap, " ..
                 "tank clearance, pillbox massage, angry pillbox fire " ..
                 "rate, pillbox shell range, base defence circle, " ..
-                "tank hits that do not set off mines, superboom " ..
-                "threshold, parachute speed and spawn starts. " ..
+                "superboom threshold, parachute speed and spawn " ..
+                "starts. " ..
                 "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-11-02T21:33Z",
+  updated = "2026-11-05T18:00Z",
   kind = "mod",
   bound = false,
 
@@ -168,7 +154,7 @@ scenario = {
     { id = "pushback", label = "Mac Bolo shell pushback", type = "bool",
       default = true },
 
-    -- Pillbox shell cap: a pill holds or retargets when its target already
+    -- Pillbox shell cap: a pill loses its shot when its nearest target already
     -- has twelve pillbox shells coming.
     { id = "shell_cap", label = "Pillbox shell cap", type = "bool",
       default = true },
@@ -192,12 +178,6 @@ scenario = {
     -- Base defence: a circle of radius 7 round a shot base instead of a
     -- square.
     { id = "base_defence", label = "Mac Bolo base defence circle",
-      type = "bool", default = true },
-
-    -- Tank hits and mines: a shell that hits a tank leaves the mines on
-    -- its square alone. That is the default; the part keeps it so when
-    -- another script sets the rule to 1.
-    { id = "tank_hit_mines", label = "Tank hits do not set off mines",
       type = "bool", default = true },
 
     -- Superbooms: Mac Bolo's threshold, more than 60 shells and mines.
@@ -239,7 +219,6 @@ local PILL_AIM          = game.setting("pill_aim")
 local PILL_ANGER        = game.setting("pill_anger")
 local PILL_SHELL_RANGE  = game.setting("pill_shell_range")
 local BASE_DEFENCE      = game.setting("base_defence")
-local TANK_HIT_MINES    = game.setting("tank_hit_mines")
 local SUPERBOOM         = game.setting("superboom")
 local PARACHUTE         = game.setting("parachute")
 local SPAWN_STARTS      = game.setting("spawn_starts")
@@ -293,12 +272,6 @@ if BASE_DEFENCE then
   rules.pill_base_defend_shape = 1
   -- A radius, with the edge left out.
   rules.pill_base_defend_range = 7
-end
-
-if TANK_HIT_MINES then
-  -- 0 leaves the mines under a tank that is hit alone. The classic table
-  -- plays with 0 too, so this only matters when another script sets 1.
-  rules.tank_hit_sets_off_mines = 0
 end
 
 if SUPERBOOM then

@@ -650,6 +650,43 @@ void serverSimTrackAppend(ServerSim *sim, const void *rec, size_t n) {
     sim->trackRecordCount++;
 }
 
+/* A seat's team, into the attribution track (v3+). Written for every seat at
+ * the round start and each time a running seat's published team differs from
+ * the last one written for it. No-op unless a round is running. */
+void serverSimTrackTeam(ServerSim *sim, BYTE slot) {
+    AttrTeamRecord r;
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    if (sim->state != serverStateRunning) return;
+    r.type = ATTR_REC_TEAM;
+    r.tick = sim->tick;
+    r.slot = slot;
+    r.team = sim->lobbyPlayers[slot].teamNumber;
+    sim->trackTeam[slot] = r.team;
+    serverSimTrackAppend(sim, &r, sizeof r);
+}
+
+/* The round's first ATTR_REC_TEAM records: each connected seat's team as the
+ * round starts. The header holds each seat's last team, so a reader needs
+ * these to know where every seat began (#424). */
+void serverSimTrackStartTeams(ServerSim *sim) {
+    BYTE i;
+    if (sim == NULL) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->playerConnected[i]) serverSimTrackTeam(sim, i);
+    }
+}
+
+/* A running seat's team, written when it is not the team last written for
+ * the seat. Called from every lobby slot publish, which is how each change of
+ * team is told to the clients. */
+void serverSimTrackTeamIfChanged(ServerSim *sim, BYTE slot) {
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    if (sim->state != serverStateRunning) return;
+    if (!sim->playerConnected[slot]) return;
+    if (sim->trackTeam[slot] == sim->lobbyPlayers[slot].teamNumber) return;
+    serverSimTrackTeam(sim, slot);
+}
+
 void serverSimCbRecordDamage(void *ctx, BYTE attacker, BYTE targetKind,
                              BYTE targetIndex, BYTE source,
                              uint16_t dealt, bool destroyed,

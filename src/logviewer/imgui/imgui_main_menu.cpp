@@ -12,6 +12,7 @@
 #include "imgui_scenario_panel.h"
 #include "imgui_dock.h"
 #include "imgui_dialogs.h"
+#include "imgui_clip_gif.h"
 #include "imgui_event_overlay.h"
 #include "imgui.h"
 #include "platform_config.h"
@@ -127,6 +128,7 @@ bool lv_g_show_scenario_panel_window = true;
 bool lv_g_show_hud_window = true;
 bool lv_g_show_overview_window = true;
 bool lv_g_show_tank_window = true;
+bool lv_g_show_chat_window = true;
 bool lv_g_reset_window_positions = false;
 /* Off until asked for: the outlines sit over the map a recording is watched
    for. */
@@ -190,6 +192,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
     lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Visible", "Yes", val, sizeof(val));
     lv_g_show_tank_window = (val[0] == 'Y' || val[0] == 'y');
+
+    lv_platform_config_get_string("LOGVIEWER", "Window.Chat.Visible", "Yes", val, sizeof(val));
+    lv_g_show_chat_window = (val[0] == 'Y' || val[0] == 'y');
 
     /* The panel's side in whole pixels. A value that is not a whole number
        keeps the default; the panel raises one under its smallest side and
@@ -255,6 +260,7 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.HUD.Visible", lv_g_show_hud_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Overview.Visible", lv_g_show_overview_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Visible", lv_g_show_tank_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Chat.Visible", lv_g_show_chat_window ? "Yes" : "No");
     {
         char side[16];
         snprintf(side, sizeof(side), "%d", lv_imgui_scenario_panel_side());
@@ -394,6 +400,9 @@ void lv_imgui_toggle_dns_lookups(void) {
 static void handle_keyboard_shortcuts(int *clicked) {
     /* Skip shortcuts when ImGui wants the keyboard (e.g., text input focused) */
     if (ImGui::GetIO().WantCaptureKeyboard) return;
+    /* None while a GIF is made: the view and the time are the GIF's until it
+     * ends. Esc in its progress window cancels it. */
+    if (lv_clip_gif_active()) return;
 
     ImGuiIO& io = ImGui::GetIO();
 
@@ -411,8 +420,17 @@ static void handle_keyboard_shortcuts(int *clicked) {
 
     /* Not with Super (Cmd on macOS) held: a Ctrl+Cmd key is a menu bar item
      * there (Ctrl+Cmd+F is Full Screen, Cmd+6/7/8 the sidebars), and the
-     * menu bar has acted on it already. */
+     * menu bar has acted on it already.
+     *
+     * On macOS ImGui swaps the two (io.ConfigMacOSXBehaviors, on by default
+     * there): io.KeyCtrl is the Cmd key and io.KeySuper is the Control key.
+     * Read them the other way round, or Cmd+8 would toggle a panel here and
+     * in the native menu bar, twice in all, and Control+8 would do nothing. */
+#ifdef __APPLE__
+    bool ctrl = io.KeySuper && !io.KeyCtrl;
+#else
     bool ctrl = io.KeyCtrl && !io.KeySuper;
+#endif
     if (!ctrl) return;
 
     /* A live game watched from the game (spectatorRun). Open, Stop and the
@@ -448,6 +466,9 @@ static void handle_keyboard_shortcuts(int *clicked) {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
         if (s_lv->isLoaded) { lv_windowRewind(); *clicked = 1; }
+    }
+    if (!live && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
+        if (lv_clip_gif_can_toggle_mode()) { lv_clip_gif_toggle_mode(); *clicked = 1; }
     }
 
     /* Options */
@@ -488,6 +509,15 @@ static void handle_keyboard_shortcuts(int *clicked) {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_8, false)) {
         lv_g_show_tank_window = !lv_g_show_tank_window;
+        *clicked = 1;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_9, false)) {
+        lv_g_show_chat_window = !lv_g_show_chat_window;
+        *clicked = 1;
+    }
+    if (lv_clip_gif_available() && !lv_clip_gif_active() &&
+        ImGui::IsKeyPressed(ImGuiKey_0, false)) {
+        lv_clip_gif_toggle_gallery();
         *clicked = 1;
     }
 }
@@ -586,6 +616,26 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::MenuItem(langGetText(STR_LV_REWIND), "Ctrl+R", false, s_lv->isLoaded != 0)) {
                 lv_windowRewind();
                 clicked = 1;
+            }
+            /* Recording mode (imgui_clip_gif.h): the GIF window, the GIF on
+             * the timeline and the crop frame on the map. The same as the
+             * movie camera on the Controls panel; checked while the GIF
+             * window is open. */
+            if (!live && lv_clip_gif_available()) {
+                ImGui::Separator();
+                if (ImGui::MenuItem(langGetText(STR_LV_RECORD_MODE), "Ctrl+G",
+                                    lv_clip_gif_tools_shown(),
+                                    lv_clip_gif_can_toggle_mode())) {
+                    lv_clip_gif_toggle_mode();
+                    clicked = 1;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                    ImGui::TextUnformatted(langGetText(STR_LV_RECORD_MODE_TIP));
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
             }
             ImGui::EndMenu();
         }
@@ -806,6 +856,18 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_TANK), "Ctrl+8", lv_g_show_tank_window)) {
                 lv_g_show_tank_window = !lv_g_show_tank_window;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_WIN_CHAT), "Ctrl+9", lv_g_show_chat_window)) {
+                lv_g_show_chat_window = !lv_g_show_chat_window;
+                clicked = 1;
+            }
+            /* The GIFs made here and in the game (imgui_clip_gif.h). */
+            if (lv_clip_gif_available() &&
+                ImGui::MenuItem(langGetText(STR_LV_WIN_CLIPS), "Ctrl+0",
+                                lv_clip_gif_gallery_is_open(),
+                                !lv_clip_gif_active())) {
+                lv_clip_gif_toggle_gallery();
                 clicked = 1;
             }
             if (ImGui::MenuItem(langGetText(STR_SCNPANEL_SETTINGS_TITLE), NULL, lv_g_show_scenario_panel_window)) {

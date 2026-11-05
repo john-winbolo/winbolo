@@ -75,7 +75,7 @@ typedef struct {
     const char *key;
 } LvDockClearPanel;
 
-#define LV_DOCK_CLEAR_PANELS 9
+#define LV_DOCK_CLEAR_PANELS 10
 
 static const LvDockClearPanel lvDockClearPanels[LV_DOCK_CLEAR_PANELS] = {
     { "###controls",   "Controls" },
@@ -87,6 +87,7 @@ static const LvDockClearPanel lvDockClearPanels[LV_DOCK_CLEAR_PANELS] = {
     { "###iteminfo",   "ItemInformation" },
     { "###events",     "Events" },
     { "###comments",   "Comments" },
+    { "###chat",       "Chat" },
 };
 
 /* The index of a panel by its ID, -1 for a window that is not a panel. */
