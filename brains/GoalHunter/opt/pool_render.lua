@@ -72,7 +72,7 @@ end
 
 -- Breakdown chip and detail line for one row. Empty when there is no term.
 -- src = "centre": d was measured to the nearest friendly centre (see
--- M.turtle_far), shown as d=..(centre).
+-- goals.turtle_far), shown as d=..(centre).
 function M.turtle_far_text(d, m, src)
   if d == nil then return "", "" end
   local lim = turtle_far_search_cap()
@@ -2993,7 +2993,11 @@ M.C_NAMES = {
   "SEA_TREES_RADIUS",
   "SHELLS_LOW",
   "SHELL_RESERVE",
+  "SPIKE_CARE_TICKS",
+  "SPIKE_PEN_SKIP_MAX_SHOTS",
   "SPIKE_PILL_DISCOUNT",
+  "SPIKE_REPAIR_LEASH",
+  "SPIKE_REPAIR_MIN_MISSING",
   "STALE_PENALTY_PER_TICK",
   "STALE_PENALTY_START",
   "STEAL_YIELD_BLOCK",
@@ -3003,6 +3007,9 @@ M.C_NAMES = {
   "TANK_COMBAT_MAX_RANGE",
   "TANK_COMBAT_MIN_SHELLS",
   "TANK_SHELL_DAMAGE",
+  "TURTLE_BASE_DOUBLE_TILES",
+  "TURTLE_BASE_D_REFRESH_TICKS",
+  "TURTLE_BASE_MULT_CAP",
   "WOUNDED_FINISH_DECAY_TICKS",
   "WOUNDED_FINISH_OTHER_PENALTY",
   "WOUNDED_FINISH_THRESHOLD",

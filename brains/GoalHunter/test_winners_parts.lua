@@ -38,7 +38,8 @@ local function check(name, cond, got)
 end
 
 do
-  local f = io.open("goals.lua", "r")
+  -- The WINNERS row text lives in pool_render.lua (goals.lua only captures).
+  local f = io.open("pool_render.lua", "r")
   local src = f and f:read("*a") or ""
   if f then f:close() end
   if not src:find("[priced t=", 1, true) then
