@@ -3374,9 +3374,11 @@ endif()
 # ---------------------------------------------------------------------------
 add_executable(brainrec_split
     src/tools/brainrec_split.c
-    src/bolo/brain_record_walk.c)
+    src/bolo/brain_record_walk.c
+    src/bolo/pool_render_host.c)
 bolo_apply_include_rules(brainrec_split runtime_only)
-target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic)
+# lua_static: pool_render_host.c, for --render-pool (raw pool blocks to JSON).
+target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic lua_static)
 if(WIN32)
     target_link_libraries(brainrec_split PRIVATE psapi)
 endif()
@@ -4575,6 +4577,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_entity_record.c
     tests/unit/test_brain_removed_items.c
     src/bolo/brain_record_walk.c
+    tests/unit/test_pool_render_host.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -6227,6 +6230,8 @@ set(_unit_test_names
     entity_record_seek_lands_on_the_right_liveness
     brain_removed_items_info_masks
     brain_removed_items_recording_masks
+    pool_render_raw_matches_old_json
+    pool_render_json_and_bad_blocks
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken

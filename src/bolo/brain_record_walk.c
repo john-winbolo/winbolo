@@ -126,9 +126,13 @@ BrainRecWalkStatus brainRecWalkFrame(BrainRecReader *r, BrainRecFrameInfo *out) 
             if (tl && !r->skip(r->ctx, tl)) return BRAINREC_WALK_BAD;
         }
 
-        uint32_t pl = 0;
-        if (!rdU32(r, &pl)) return BRAINREC_WALK_BAD;
-        if (pl && !r->skip(r->ctx, pl)) return BRAINREC_WALK_BAD;
+        if (r->poolBlock) {
+            if (!r->poolBlock(r->ctx)) return BRAINREC_WALK_BAD;
+        } else {
+            uint32_t pl = 0;
+            if (!rdU32(r, &pl)) return BRAINREC_WALK_BAD;
+            if (pl && !r->skip(r->ctx, pl)) return BRAINREC_WALK_BAD;
+        }
     }
 
     /* v5 tail: one alliance bitmap per player slot, written every frame. */

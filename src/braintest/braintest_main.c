@@ -85,6 +85,7 @@
 #include "server_sim_lifecycle.h"
 #include "bot_worker_pool.h"
 #include "bot_manager.h"
+#include "pool_render_host.h"
 #include "game_sim.h"
 #include "../server/server_lifecycle.h"
 #include "../server/threads.h"
@@ -2280,6 +2281,95 @@ static void slugifyPanelName(const char *in, char *out, size_t outLen) {
     out[j] = '\0';
 }
 
+/* The brain directory whose pool_render.lua builds the pool panel from a raw
+ * recorded pool block (see pool_render_host.h). Set at startup from the
+ * loaded brain; empty = not found yet (poolRenderDirFor looks again). */
+static char g_poolRenderDir[1024] = "";
+
+static bool dirHasPoolRender(const char *dir) {
+    char tryPath[1100];
+    SDL_snprintf(tryPath, sizeof(tryPath), "%s/pool_render.lua", dir);
+    SDL_IOStream *io = SDL_IOFromFile(tryPath, "r");
+    if (io) { SDL_CloseIO(io); return true; }
+    return false;
+}
+
+/* Picks the directory for pool_render.lua: the loaded brain's own directory
+ * first (brainScript is its init.lua path), then the usual GoalHunter
+ * places, so a recording made by GoalHunter still renders when BrainTest
+ * runs another brain. */
+static void poolRenderPickDir(const char *brainScript) {
+    g_poolRenderDir[0] = '\0';
+    if (brainScript && brainScript[0]) {
+        char dir[1024];
+        SDL_snprintf(dir, sizeof(dir), "%s", brainScript);
+        char *slash = NULL;
+        for (char *q = dir; *q; q++) if (*q == '/' || *q == '\\') slash = q;
+        if (slash) *slash = '\0'; else SDL_snprintf(dir, sizeof(dir), ".");
+        if (dirHasPoolRender(dir)) {
+            SDL_snprintf(g_poolRenderDir, sizeof(g_poolRenderDir), "%s", dir);
+            return;
+        }
+    }
+    const char *dirs[] = { "brains/GoalHunter", "Brains/GoalHunter",
+                           "../brains/GoalHunter", "data/Brains/GoalHunter" };
+    for (int i = 0; i < 4; i++) {
+        if (dirHasPoolRender(dirs[i])) {
+            SDL_snprintf(g_poolRenderDir, sizeof(g_poolRenderDir), "%s", dirs[i]);
+            return;
+        }
+    }
+}
+
+/* A recorded pool block as panel JSON. Old recordings hold the JSON itself
+ * (copied as is). New ones hold the brain's raw capture, which is rendered
+ * here, at view time, in a plain Lua state (pool_render_host.c). The last
+ * render per panel is kept, so a paused frame does not render again. */
+static char *panelRecordedJson(int panel_idx, const char *rec) {
+    if (!poolRenderIsRaw(rec)) {
+        size_t n = strlen(rec);
+        char *copy = (char *)malloc(n + 1);
+        if (copy) memcpy(copy, rec, n + 1);
+        return copy;
+    }
+    static char *lastRec[PANEL_REG_MAX];
+    static char *lastJson[PANEL_REG_MAX];
+    if (panel_idx >= 0 && panel_idx < PANEL_REG_MAX
+        && lastRec[panel_idx] && lastJson[panel_idx]
+        && strcmp(lastRec[panel_idx], rec) == 0) {
+        size_t n = strlen(lastJson[panel_idx]);
+        char *copy = (char *)malloc(n + 1);
+        if (copy) memcpy(copy, lastJson[panel_idx], n + 1);
+        return copy;
+    }
+    if (!g_poolRenderDir[0]) poolRenderPickDir(NULL);
+    char err[512];
+    char *json = poolRenderToJson(g_poolRenderDir[0] ? g_poolRenderDir
+                                                     : "brains/GoalHunter",
+                                  rec, err, sizeof(err));
+    if (err[0]) {
+        static bool warned = false;
+        if (!warned) { fprintf(stderr, "BrainTest: %s\n", err); warned = true; }
+    }
+    if (json && panel_idx >= 0 && panel_idx < PANEL_REG_MAX) {
+        size_t rn = strlen(rec), jn = strlen(json);
+        char *r = (char *)malloc(rn + 1);
+        char *j = (char *)malloc(jn + 1);
+        if (r && j) {
+            memcpy(r, rec, rn + 1);
+            memcpy(j, json, jn + 1);
+            free(lastRec[panel_idx]);
+            free(lastJson[panel_idx]);
+            lastRec[panel_idx] = r;
+            lastJson[panel_idx] = j;
+        } else {
+            free(r);
+            free(j);
+        }
+    }
+    return json;
+}
+
 static char *panelPollCallback(int panel_idx) {
     const PanelRegistryEntry *e = panelRegistryGet(panel_idx);
     if (!e || !e->lua_expr[0]) return NULL;
@@ -2303,12 +2393,7 @@ static char *panelPollCallback(int panel_idx) {
             rec = g_panelPollRecording->frames[g_panelPollFrame - back]
                   .recordedPanels[panel_idx];
         }
-        if (rec) {
-            size_t n = strlen(rec);
-            char *copy = (char *)malloc(n + 1);
-            if (copy) memcpy(copy, rec, n + 1);
-            return copy;
-        }
+        if (rec) return panelRecordedJson(panel_idx, rec);
         /* No recorded data for this frame. We USED to fall through and
          * poll the live brain, which silently showed today's state as
          * if it were historical — actively misleading. Return a clear
@@ -3595,8 +3680,15 @@ static void recordingCapture(BrainTestApp *app) {
     for (int pi = 0; pi < totalN && pi < PANEL_REG_MAX; pi++) {
         const PanelRegistryEntry *e = panelRegistryGet(pi);
         if (!e || !e->lua_expr[0]) continue;
+        /* The pool panel records the brain's cheap raw capture (rendered at
+         * view time, see panelRecordedJson); a brain without one gives its
+         * JSON. Other panels record their own expression. */
+        const char *expr = e->lua_expr;
+        if (strstr(expr, "get_pool_breakdown_json"))
+            expr = "return (brain.get_pool_breakdown_raw"
+                   " or brain.get_pool_breakdown_json)()";
         f->recordedPanels[pi] =
-            serverSimBotEvalLuaString(app->sim, e->bot_owner, e->lua_expr);
+            serverSimBotEvalLuaString(app->sim, e->bot_owner, expr);
     }
 
     /* ── Shot-sim POI poll snapshots ── eval every POI owned by the
@@ -6258,6 +6350,7 @@ int main(int argc, char *argv[]) {
 
     if (findBrainScript(optBrain, brainPath, sizeof(brainPath))) {
         fprintf(stderr, "  Brain script: %s\n", brainPath);
+        poolRenderPickDir(brainPath);
         /* Extract brain dir basename ("brains/GoalHunter" or
          * "brains/GoalHunter/init.lua" -> "GoalHunter") so the
          * panel-register callback can namespace types with it. */

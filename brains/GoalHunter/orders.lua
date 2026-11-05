@@ -39,6 +39,7 @@ local U          = require("util")
 local cpf        = require("cpathfinder")
 local ally_state = require("ally_state")
 local print2     = require("print2")
+local PR         = require("pool_render")   -- focus_label text
 local bit        = require('bitcompat')
 local CMDS       = require("commands")
 local GA         = require("decoy_getaway")
@@ -2767,8 +2768,7 @@ function M.focus_mult(state, kind)
 end
 -- The ONE breakdown string, so every panel spells it the same way.
 function M.focus_label(state)
-  return string.format("focus: x%.1f (%s)", C.FOCUS_OTHER_COST_MULT or 1.0,
-                       tostring(state and state._focus or "off"))
+  return PR.focus_label(state and state._focus)
 end
 
 -- REPOSITIONING with human allies.  `reposition on` / `off` overrides
