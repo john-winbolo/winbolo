@@ -5395,6 +5395,7 @@ target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     tests/unit/test_voice_jitter.c
     tests/unit/test_voice_jitter_loss.c
     tests/unit/test_voice_flood_cap.c
+    tests/unit/test_voice_map_change.c
     src/bolo/voice_segment.c
     tests/unit/test_voice_segment.c
     src/bolo/voice_talker_select.c
@@ -6984,6 +6985,12 @@ set(_unit_test_names
     voice_jitter_undecodable_run
     voice_jitter_under_loss
     voice_flood_cap_enforced
+    voice_map_change_talker_kept
+    voice_map_change_during_redownload
+    voice_map_change_listener_kept
+    voice_map_change_accept_lost
+    voice_joiner_hears_before_map
+    voice_return_to_lobby_kept
     voice_talker_select_ranks_recent
     voice_talker_select_bounds
     active_sim_armed_on_lobby_tick
