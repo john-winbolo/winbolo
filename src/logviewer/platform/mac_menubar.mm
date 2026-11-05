@@ -688,7 +688,9 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
      * item is there only while the "Player Lag View" setting is on, and is
      * enabled only for the selected tank at the playhead. The Tank panel's
      * check box turns the same view on and off, and it works with the
-     * native bar. */
+     * native bar. Its key, Cmd+L (and Control+L), is read by the in-window
+     * bar's key handler (handle_keyboard_shortcuts), which runs here too;
+     * no item of this bar may take Cmd+L. */
 
     /* Animate Rewind and Fast Forward, in the in-window menu's place. */
     NSMenuItem *jumpAnim = [[NSMenuItem alloc]

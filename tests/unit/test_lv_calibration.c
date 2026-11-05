@@ -1551,6 +1551,33 @@ int run_lv_lag_ring(void) {
 }
 
 /*
+ * One click on "See What the Selected Player Saw", or one press of Ctrl+L:
+ * on for the selected tank's player when that player has a record, off when
+ * it is on, and no change when the item is disabled.
+ */
+int run_lv_lag_view_toggle(void) {
+  /* Off, tank 3 selected with a record: on for 3. Pressed again: off. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, -1, true) == 3);
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, 3, true) == -1);
+  /* On for 3, and 3 has no record now: it can still be turned off. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, 3, false) == -1);
+  /* Off, and the selected player has no record: no change. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, -1, false) == LV_LAG_TOGGLE_NONE);
+  /* Off, and no tank selected: no change, whatever the record says. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, -1, -1, true) == LV_LAG_TOGGLE_NONE);
+  /* On for 5, tank 3 selected: the view moves to 3. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, 5, true) == 3);
+  /* On for 5, no tank selected: off. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, -1, 5, false) == -1);
+  /* The preference off, no recording open, or no lag records: no change. */
+  UT_ASSERT(lv_lagViewToggle(false, true, true, 3, -1, true) == LV_LAG_TOGGLE_NONE);
+  UT_ASSERT(lv_lagViewToggle(true, false, true, 3, -1, true) == LV_LAG_TOGGLE_NONE);
+  UT_ASSERT(lv_lagViewToggle(true, true, false, 3, -1, true) == LV_LAG_TOGGLE_NONE);
+  UT_ASSERT(lv_lagViewToggle(true, true, false, 3, 3, true) == LV_LAG_TOGGLE_NONE);
+  return 0;
+}
+
+/*
  * The lag display is off until the "Player Lag View" preference turns it on.
  * With it off the records are still read, but the panels are told there are
  * none and the lag view does not turn on for any player. Turned on, the

@@ -234,6 +234,38 @@ static inline const LvLagFrame *lv_lagRingFind(const LvLagRing *r, uint32_t ms) 
     return NULL;
 }
 
+/* The value lv_lagViewToggle gives when the view must stay as it is. */
+#define LV_LAG_TOGGLE_NONE (-2)
+
+/* The Options menu item "See What the Selected Player Saw" and its key, Ctrl+L
+   (Cmd+L on macOS), use this to find what one click or press does. It gives
+   the slot to give lv_screenLagViewSet: -1 turns the view off, a slot turns
+   it on for that player. It gives LV_LAG_TOGGLE_NONE when the item is not
+   there or is disabled, and then the view stays as it is.
+
+   feature      the lag display preference is on
+   loaded       a recording is open
+   recorded     the recording has lag records
+   sel          the selected tank's slot, or -1 for none
+   viewSlot     the slot the view is on for, or -1 when it is off
+   selHasRecord the selected player has a lag record at the playhead
+
+   The view can be turned on only when the selected player has a record; a
+   view that is on can always be turned off. When the view is on for the
+   selected player, it turns off. When it is on for another player, it
+   moves to the selected player, or turns off when no tank is selected. */
+static inline int lv_lagViewToggle(bool feature, bool loaded, bool recorded, int sel,
+                                   int viewSlot, bool selHasRecord) {
+    bool hasRecord = (sel >= 0) && selHasRecord;
+    if (!feature || !loaded || !recorded || !(hasRecord || viewSlot >= 0)) {
+        return LV_LAG_TOGGLE_NONE;
+    }
+    if (viewSlot >= 0 && viewSlot == sel) {
+        return -1;
+    }
+    return sel;
+}
+
 /* What the Tank panel shows of one player's lag. */
 typedef struct {
     bool  recorded;  /* the recording has lag records for some player */

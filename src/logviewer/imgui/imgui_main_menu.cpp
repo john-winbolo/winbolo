@@ -386,6 +386,37 @@ void lv_imgui_toggle_regions(void) {
     lv_windowNeedRedraw();
 }
 
+/* What a click on the Options menu's "See What the Selected Player Saw" or a
+ * press of its key would do now (lv_lagViewToggle): the slot to set, or
+ * LV_LAG_TOGGLE_NONE when the item is disabled. *on is TRUE while the view
+ * is on for the selected tank's player, which ticks the item. */
+static int lag_view_toggle_target(bool *on) {
+    int sel, viewSlot, target;
+    bool recorded, hasRecord;
+    lv_clientMutexWaitFor();
+    sel = lv_screenSelectedTank();
+    viewSlot = lv_screenLagViewSlot();
+    recorded = lv_screenLagRecorded();
+    hasRecord = (sel >= 0) && lv_screenPlayerLagNow(sel, NULL, NULL);
+    lv_clientMutexRelease();
+    target = lv_lagViewToggle(lv_screenGetLagFeature() != 0, s_lv->isLoaded != 0, recorded,
+                              sel, viewSlot, hasRecord);
+    if (on != NULL) {
+        *on = (viewSlot >= 0 && viewSlot == sel);
+    }
+    return target;
+}
+
+/* Sets the lag view to target and asks for the frame now, so the change
+ * shows at once, also while the replay is paused. */
+static void lag_view_apply(int target) {
+    lv_clientMutexWaitFor();
+    lv_screenLagViewSet(target);
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+}
+
 int lv_imgui_get_dns_lookups(void) { return s_dns_lookups ? 1 : 0; }
 
 void lv_imgui_toggle_dns_lookups(void) {
@@ -431,6 +462,25 @@ static void handle_keyboard_shortcuts(int *clicked) {
 #else
     bool ctrl = io.KeyCtrl && !io.KeySuper;
 #endif
+
+    /* Ctrl+L: Options > See What the Selected Player Saw, on for the
+     * selected tank's player or off, as a click on the item does. When the
+     * item is disabled the key does nothing. The item has no native twin
+     * on macOS (mac_menubar.mm), so there Cmd+L comes here as well as
+     * Control+L. Not with Shift or Alt. */
+#ifdef __APPLE__
+    bool lagMod = (io.KeyCtrl != io.KeySuper);
+#else
+    bool lagMod = ctrl;
+#endif
+    if (lagMod && !io.KeyShift && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_L, false)) {
+        int target = lag_view_toggle_target(NULL);
+        if (target != LV_LAG_TOGGLE_NONE) {
+            lag_view_apply(target);
+            *clicked = 1;
+        }
+    }
+
     if (!ctrl) return;
 
     /* A live game watched from the game (spectatorRun). Open, Stop and the
@@ -754,23 +804,13 @@ int lv_imgui_main_menu_bar(void) {
                  * the item is there only while the lag display is on. As
                  * with the Tank panel's check box, it can be turned on only
                  * when the selected player has a record at the playhead; a
-                 * view that is on can always be turned off. */
-                int sel, viewSlot;
-                bool recorded, hasRecord;
-                lv_clientMutexWaitFor();
-                sel = lv_screenSelectedTank();
-                viewSlot = lv_screenLagViewSlot();
-                recorded = lv_screenLagRecorded();
-                hasRecord = (sel >= 0) && lv_screenPlayerLagNow(sel, NULL, NULL);
-                lv_clientMutexRelease();
-                const bool on = (viewSlot >= 0 && viewSlot == sel);
-                if (ImGui::MenuItem(langGetText(STR_LV_LAG_MENU), NULL, on,
-                                    s_lv->isLoaded != 0 && recorded &&
-                                        (hasRecord || viewSlot >= 0))) {
-                    lv_clientMutexWaitFor();
-                    lv_screenLagViewSet(on ? -1 : sel);
-                    lv_clientMutexRelease();
-                    lv_windowNeedRedraw();
+                 * view that is on can always be turned off. Ctrl+L does
+                 * the same (handle_keyboard_shortcuts). */
+                bool on = false;
+                const int target = lag_view_toggle_target(&on);
+                if (ImGui::MenuItem(langGetText(STR_LV_LAG_MENU), "Ctrl+L", on,
+                                    target != LV_LAG_TOGGLE_NONE)) {
+                    lag_view_apply(target);
                     clicked = 1;
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {

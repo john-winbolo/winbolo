@@ -6373,6 +6373,7 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_view_toggle
     lv_lag_feature_default_off
     lv_lag_view_draw
     lv_lag_view_rename
