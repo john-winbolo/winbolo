@@ -2612,8 +2612,7 @@
  * states them: the line under the file name in the details dialog and the
  * tooltip on a chooser row's name. {string1} is the author, already cleaned
  * of control characters, and {string2} the time as "2026-10-03 20:47 UTC";
- * either is UNKNOWN where the manifest does not state it. A row from a
- * server too old to send the two shows neither line. */
+ * either is UNKNOWN where the manifest does not state it. */
 #define STR_DLGLOBBY_SCENARIO_BY_UPDATED    2771
 #define STR_DLGLOBBY_SCENARIO_UNKNOWN       2772
 /* The note under the round column's heading, which says what the order of

@@ -717,8 +717,8 @@ int run_scenario_settings_client_apply(void) {
     clientSimApplyControl(cs, &evt);
     UT_ASSERT(!clientSimGetLobbyScriptSetting(cs, "knobs.lua", "armour", &v));
 
-    /* The declaration rides beside the details. None known until the answer
-       carries one, as from an older server. */
+    /* The declaration rides beside the details. None known until it is put
+       after them. */
     UT_ASSERT(scnSettingsBlobAppend(blob, sizeof(blob), &blen, &a));
     clientSimLobbyScenarioDetailsPut(cs, "knobs.lua", true, NULL, 0);
     UT_ASSERT(!clientSimGetLobbyScenarioSettings(cs, "knobs.lua", &bytes, &got));
