@@ -659,6 +659,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_player_lag_read", run_lv_player_lag_read },
     { "lv_lag_track", run_lv_lag_track },
     { "lv_lag_ring", run_lv_lag_ring },
+    { "lv_lag_view_toggle", run_lv_lag_view_toggle },
     { "lv_lag_feature_default_off", run_lv_lag_feature_default_off },
     { "lv_lag_view_draw", run_lv_lag_view_draw },
     { "lv_lag_view_rename", run_lv_lag_view_rename },

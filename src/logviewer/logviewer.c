@@ -2845,9 +2845,14 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
                                         /* allowSeek */ TRUE)) {
                 continue;
             }
-            /* End / L jumps back to the live head and resumes following it. */
+            /* End / L jumps back to the live head and resumes following it.
+             * Not with Ctrl or Cmd held: Ctrl+L (Cmd+L on macOS) is the
+             * Options menu's "See What the Selected Player Saw", which
+             * the menu bar's key handler takes. */
             if (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
-                (sdlEvent.key.key == SDLK_END || sdlEvent.key.key == SDLK_L)) {
+                (sdlEvent.key.key == SDLK_END ||
+                 (sdlEvent.key.key == SDLK_L &&
+                  (sdlEvent.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) == 0))) {
                 lv_screenSpecJumpToLive();
                 continue;
             }
