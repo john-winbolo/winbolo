@@ -469,71 +469,18 @@ bool pillsDropCanLand(GameSim *sim, int mx, int my) {
 *  cy - Y map square to search round
 *********************************************************/
 void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy) {
-  s->cx = cx;
-  s->cy = cy;
-  s->x = cx;
-  s->y = cy;
+  utilSpiralStart(&s->cursor, cx, cy, UTIL_SPIRAL_NORTH);
   /* The farthest the minable area reaches from the centre along
      either axis. Every ring beyond it is off the area entirely. */
-  s->maxRing = s->cx - (MAP_MINE_EDGE_LEFT + 1);
-  if ((MAP_MINE_EDGE_RIGHT - 1) - s->cx > s->maxRing) {
-    s->maxRing = (MAP_MINE_EDGE_RIGHT - 1) - s->cx;
+  s->maxRing = cx - (MAP_MINE_EDGE_LEFT + 1);
+  if ((MAP_MINE_EDGE_RIGHT - 1) - cx > s->maxRing) {
+    s->maxRing = (MAP_MINE_EDGE_RIGHT - 1) - cx;
   }
-  if (s->cy - (MAP_MINE_EDGE_TOP + 1) > s->maxRing) {
-    s->maxRing = s->cy - (MAP_MINE_EDGE_TOP + 1);
+  if (cy - (MAP_MINE_EDGE_TOP + 1) > s->maxRing) {
+    s->maxRing = cy - (MAP_MINE_EDGE_TOP + 1);
   }
-  if ((MAP_MINE_EDGE_BOTTOM - 1) - s->cy > s->maxRing) {
-    s->maxRing = (MAP_MINE_EDGE_BOTTOM - 1) - s->cy;
-  }
-}
-
-/*********************************************************
-*NAME:          pillsDropSpiralRing
-*PURPOSE:
-*  Which ring of its spiral the cursor is on.
-*
-*ARGUMENTS:
-*  s - The search
-*********************************************************/
-static int pillsDropSpiralRing(const pillsDropSpiral *s) {
-  int dx = abs(s->x - s->cx);
-  int dy = abs(s->y - s->cy);
-  return dx > dy ? dx : dy;
-}
-
-/*********************************************************
-*NAME:          pillsDropSpiralStep
-*PURPOSE:
-*  Moves the cursor to the next square of the spiral. Mac
-*  Bolo's gen_scatter in int: from the centre to due north
-*  of it, along a ring clockwise, and from the square just
-*  west of due north round to due north of the next ring.
-*
-*ARGUMENTS:
-*  s - The search
-*********************************************************/
-static void pillsDropSpiralStep(pillsDropSpiral *s) {
-  int dx = s->x - s->cx;
-  int dy = s->y - s->cy;
-  int ring = pillsDropSpiralRing(s);
-
-  if (ring == 0) {
-    s->y--;
-  } else if (dy == -ring && dx < 0) {
-    /* East along the top, short of due north: the last stretch of a ring.
-       Reaching due north steps out to the start of the next one. */
-    s->x++;
-    if (s->x == s->cx) {
-      s->y--;
-    }
-  } else if (dx == -ring) {
-    s->y--;       /* North up the west side */
-  } else if (dy == ring) {
-    s->x--;       /* West along the bottom */
-  } else if (dx == ring) {
-    s->y++;       /* South down the east side */
-  } else {
-    s->x++;       /* East along the top, from due north */
+  if ((MAP_MINE_EDGE_BOTTOM - 1) - cy > s->maxRing) {
+    s->maxRing = (MAP_MINE_EDGE_BOTTOM - 1) - cy;
   }
 }
 
@@ -552,13 +499,13 @@ static void pillsDropSpiralStep(pillsDropSpiral *s) {
 *  my  - Receives the Y map square
 *********************************************************/
 bool pillsDropSpiralFind(GameSim *sim, pillsDropSpiral *s, BYTE *mx, BYTE *my) {
-  while (pillsDropSpiralRing(s) <= s->maxRing) {
-    if (pillsDropCanLand(sim, s->x, s->y)) {
-      *mx = (BYTE) s->x;
-      *my = (BYTE) s->y;
+  while (utilSpiralRing(&s->cursor) <= s->maxRing) {
+    if (pillsDropCanLand(sim, s->cursor.x, s->cursor.y)) {
+      *mx = (BYTE) s->cursor.x;
+      *my = (BYTE) s->cursor.y;
       return TRUE;
     }
-    pillsDropSpiralStep(s);
+    utilSpiralStep(&s->cursor);
   }
   return FALSE;
 }
