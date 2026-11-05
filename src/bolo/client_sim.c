@@ -1403,8 +1403,8 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
 }
 
 /* ---- The "Early Own Shell Blast" test option (early_blast.h) ----
- * Off by default, and then none of this runs. */
-static bool s_earlyOwnBlast = false;
+ * On by default for the play test; off, none of this runs. */
+static bool s_earlyOwnBlast = true;
 
 void clientSimSetEarlyOwnBlast(bool on) { s_earlyOwnBlast = on; }
 bool clientSimGetEarlyOwnBlast(void)    { return s_earlyOwnBlast; }
