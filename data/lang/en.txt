@@ -1323,6 +1323,10 @@ STR_LV_PILL_NUMBERS_LIST=Numbers: {string1}
 STR_LV_MSG_PILL_CAPTURED={player} captured Neutral Pillbox {number}
 STR_LV_MSG_PILL_STOLEN={player} just stole pillbox {number} from {other}
 
+# Log viewer: the hit area round each tank and builder on the map (Options)
+STR_LV_HIT_BOXES=Toggle Hit Boxes
+STR_LV_HIT_BOXES_TIP=Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him
+
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
 STR_LV_PLAYER_LBL=Player {number}:

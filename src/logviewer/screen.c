@@ -730,6 +730,11 @@ static void lv_rulesRefresh(void) {
       lv_screenRuleValueAt(SIM_RULE_base_full_armour, t), 0, 255);
   g_lv->rules.pillMaxArmour  = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_pill_max_armour, t), 1, 255);
+  /* The ranges sim_rules.c holds them to. */
+  g_lv->rules.tankHitRadius  = lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_tank_hit_radius, t), 1, 255);
+  g_lv->rules.pillRange      = lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_pill_range, t), 0, 65535);
 }
 
 int lv_screenGetRuleChanges(const LvRuleChange **out) {
@@ -5961,6 +5966,8 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   lv->rules.baseFullMines  = 90;
   lv->rules.baseFullArmour = 90;
   lv->rules.pillMaxArmour  = 15;
+  lv->rules.tankHitRadius  = 112;   /* TANK_HIT_RADIUS */
+  lv->rules.pillRange      = 2048;  /* PILLBOX_RANGE */
 
   lv->fromMainMenu = fromMainMenu;
   lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */

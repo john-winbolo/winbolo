@@ -2767,6 +2767,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_overview_neutral_row",                         run_lv_overview_neutral_row                         },
     { "lv_tank_status_sums",                             run_lv_tank_status_sums                             },
     { "lv_tank_bars_sums",                               run_lv_tank_bars_sums                               },
+    { "lv_hitbox_sums",                                  run_lv_hitbox_sums                                  },
     { "lv_tank_pick_sums",                               run_lv_tank_pick_sums                               },
     { "lv_marks_fade",                                   run_lv_marks_fade                                   },
     { "lv_window_size_parse",                            run_lv_window_size_parse                            },
