@@ -42,7 +42,8 @@
 
 #include "server_sim.h"    /* BrainGoalInfo */
 #include "brain_overlay.h" /* OverlayCmdBuffer */
-#include "brain_record.h"  /* BrainRecFile */
+#include "brain_record.h"
+#include "brain_record_io.h"  /* BrainRecOut / BrainRecIn: the .btr and .hbr container */
 
 #ifdef __cplusplus
 extern "C" {
@@ -118,11 +119,14 @@ typedef struct {
 void hostRecFileName(char *out, size_t sz, uint8_t slot, uint16_t placeGen);
 
 typedef struct {
-    BrainRecFile *file;
+    BrainRecOut *file;
     uint32_t sinceFlush;
     uint32_t records;
     uint64_t rawBytes;
 } HostRecWriter;
+
+/* True when exactly n bytes were read from the container. */
+bool hostRecReadExact(BrainRecIn *in, void *p, size_t n);
 
 bool hostRecWriterOpen(HostRecWriter *w, const char *path,
                        const HostRecHeader *hdr, const char *legend);
@@ -131,7 +135,7 @@ bool hostRecWriterAppend(HostRecWriter *w, uint32_t seq, uint32_t estTick,
 void hostRecWriterClose(HostRecWriter *w);
 
 typedef struct {
-    BrainRecFile *file;
+    BrainRecIn   *file;
     HostRecHeader hdr;
     char         *legend;      /* malloc'd, NUL-terminated, may be "" */
 } HostRecReader;
@@ -176,8 +180,10 @@ char *brainRecLegendAddSlot(const char *legend, int slot,
 
 /* Merge print2 logs: both files are runs of "===TICK n===" blocks (any
  * lines before the first block are kept at the top). The blocks of both
- * are written to outPath in tick order, a's first on equal ticks. */
-bool brainRecMergePrint2(const char *a, const char *b, const char *outPath);
+ * are written to outPath in tick order, a's first on equal ticks. Each
+ * input may be plain or gzip; gzOut makes outPath gzip. */
+bool brainRecMergePrint2(const char *a, const char *b, const char *outPath,
+                         bool gzOut);
 
 /* Merge one host's uploaded folder into a session folder:
  *   - its .hbr files into the session's brainrec.btr (checked, then

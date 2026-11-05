@@ -162,6 +162,18 @@ FetchContent_Declare(
     SYSTEM
     EXCLUDE_FROM_ALL
 )
+# zstd compresses brain-debug recordings (.btr). Static only, no programs,
+# no tests, no legacy formats, no worker threads (the recorder compresses on
+# the caller's thread; MT would also need pthreads on Emscripten).
+FetchContent_Declare(
+    zstd
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG        v1.5.7
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  build/cmake
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
 FetchContent_Declare(
     libmaxminddb
     GIT_REPOSITORY https://github.com/maxmind/libmaxminddb.git
@@ -611,6 +623,22 @@ else()
     set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(sdl3_ttf imgui zlib)
 endif()
+
+# zstd (static).  Same BUILD_SHARED_LIBS save/restore as above so the
+# shared library is never configured.
+set(_saved_build_shared_libs_zstd "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_PROGRAMS_LINK_SHARED OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(zstd)
+set(BUILD_SHARED_LIBS "${_saved_build_shared_libs_zstd}" CACHE BOOL "" FORCE)
+target_include_directories(libzstd_static SYSTEM INTERFACE "$<BUILD_INTERFACE:${zstd_SOURCE_DIR}/lib>")
 
 # MinGW debug builds: HarfBuzz's single-file amalgamation overflows COFF debug
 # section limits. Use -Wa,-mbig-obj so the assembler emits PE-COFF bigobj format.
@@ -1498,7 +1526,7 @@ target_sources(WinBoloIOS PRIVATE src/gui/ios/ios_netpath.m)
 set_source_files_properties(src/gui/ios/ios_netpath.m
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
-    nanosvg stb_image utf8proc zlibstatic minizip cjson
+    nanosvg stb_image utf8proc zlibstatic libzstd_static minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
     "-framework AVFoundation"
     "-framework GameController"
@@ -3470,16 +3498,18 @@ endif()
 # BrainTest can load one at a time. A long full-pool recording is gigabytes
 # on disk, and btLoadSession materialises every frame, so loading a whole
 # game can cost more RAM than the machine has; halving the frames halves it.
-# Links brain_record_walk.c (the shared brainrec.btr frame walker) rather
+# Links brain_record_walk.c (the shared brainrec.btr frame walker) and
+# brain_record_io.c (the .btr container) rather
 # than bolo_static, so the tool doesn't drag in the sim, Lua or SDL's
 # runtime — SDL3 is here for its filesystem calls and for the headers the
 # format structs live behind.
 # ---------------------------------------------------------------------------
 add_executable(brainrec_split
     src/tools/brainrec_split.c
-    src/bolo/brain_record_walk.c)
+    src/bolo/brain_record_walk.c
+    src/bolo/brain_record_io.c)
 bolo_apply_include_rules(brainrec_split runtime_only)
-target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic)
+target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic libzstd_static)
 if(WIN32)
     target_link_libraries(brainrec_split PRIVATE psapi)
 endif()
@@ -4682,6 +4712,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_entity_sync.c
     tests/unit/test_entity_record.c
     tests/unit/test_brain_removed_items.c
+    tests/unit/test_btr_container.c
+    tests/unit/test_brainrec_split.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -5610,7 +5642,8 @@ target_link_libraries(WinBoloUnitTests PRIVATE
     imgui_backends)
 
 if(WIN32)
-    target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
+    # psapi: test_brainrec_split.c compiles the brainrec_split tool.
+    target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32 psapi)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
     # 8 MB stack, matching the Linux default.
     #
@@ -6139,6 +6172,7 @@ set(_unit_test_names
     brainrec_host_merge_mid_block_move
     brainrec_host_merge_missing_block
     brainrec_host_path_checks
+    brainrec_host_print2_gz
     brainrec_host_rec_codec
     lv_tank_stocks_from_snapshot
     lv_team_colours_from_snapshot
@@ -6311,6 +6345,11 @@ set(_unit_test_names
     entity_record_seek_lands_on_the_right_liveness
     brain_removed_items_info_masks
     brain_removed_items_recording_masks
+    btr_zstd_recording_reads_back
+    btr_zstd_skip_across_blocks
+    btr_zstd_cut_file_reads_its_prefix
+    btr_block_logs_compress
+    brainrec_split_cuts_brain_logs_by_engine_tick
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken

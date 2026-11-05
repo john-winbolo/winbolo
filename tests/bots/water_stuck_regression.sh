@@ -39,19 +39,26 @@ set -u
 MAX_REPEAT=5     # same-pos escape_water stuck events per bot before failing
 MAX_TOTAL=15     # total escape_water stuck events per bot before failing
 
+# Print a brain log: <name>.gz (a finished block) then <name>, whichever exist.
+cat_log() {
+  if [ -f "$1.gz" ]; then gzip -dc "$1.gz"; fi
+  if [ -f "$1" ]; then cat "$1"; fi
+}
+
 analyze() {
   local session="$1"
   local fail=0
   local found_logs=0
   shopt -s nullglob
-  for f in "$session"/print2_bot*.log; do
+  local f
+  while IFS= read -r f; do
     found_logs=1
     local bot
     bot=$(basename "$f" .log)
     local total worst worst_pos
-    total=$(grep -c 'STUCK_BLOCK.*goal=escape_water' "$f" || true)
+    total=$(cat_log "$f" | grep -c 'STUCK_BLOCK.*goal=escape_water' || true)
     if [ "$total" -gt 0 ]; then
-      worst_line=$(grep 'STUCK_BLOCK' "$f" | grep 'goal=escape_water' \
+      worst_line=$(cat_log "$f" | grep 'STUCK_BLOCK' | grep 'goal=escape_water' \
         | sed -E 's/.*pos=\(([0-9]+,[0-9]+)\).*/\1/' \
         | sort | uniq -c | sort -rn | head -1)
       worst=$(echo "$worst_line" | awk '{print $1}')
@@ -64,7 +71,8 @@ analyze() {
       echo "  FAIL: bot pinned in water (worst_same_pos=$worst >= $MAX_REPEAT or total=$total >= $MAX_TOTAL)"
       fail=1
     fi
-  done
+  done < <(for g in "$session"/print2_bot*.log "$session"/print2_bot*.log.gz; do
+             echo "${g%.gz}"; done | sort -u)
   # A crashed brain idles too — count any crash report as a failure.
   for c in "$session"/brain_crash_*.log; do
     echo "FAIL: brain crash report present: $(basename "$c")"

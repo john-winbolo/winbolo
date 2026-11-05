@@ -120,6 +120,8 @@ static size_t      s_bytes    = 0;
 static int         s_shutdown = 0;
 static int         s_writing  = 0;   /* writer holds a batch that is not on
                                         disk yet */
+static int         s_release  = 0;   /* naOptLogReleaseFiles wants the cached
+                                        files closed */
 static gh_thread_t s_thread;
 static int         s_running  = 0;
 static char        s_main_path[2048] = "";
@@ -222,7 +224,7 @@ static void *writer_thread_fn(void *arg) {
         QEntry *batch, *e;
         int stop;
         gh_mutex_lock(&s_mutex);
-        while (!s_head && !s_shutdown)
+        while (!s_head && !s_shutdown && !s_release)
             gh_cond_wait(&s_cond, &s_mutex);
         batch     = s_head;
         s_head    = s_tail = NULL;
@@ -249,7 +251,18 @@ static void *writer_thread_fn(void *arg) {
 
         files_flush();
 
-        gh_mutex_lock(&s_mutex);
+        /* A release request closes the cached files after the batch that was
+         * queued before it. Only this thread touches s_files, so the close
+         * runs without the lock. */
+        {
+            int rel;
+            gh_mutex_lock(&s_mutex);
+            rel = s_release && !s_head;
+            gh_mutex_unlock(&s_mutex);
+            if (rel) files_close();
+            gh_mutex_lock(&s_mutex);
+            if (rel) s_release = 0;
+        }
         s_writing = 0;
         gh_cond_broadcast(&s_drained);   /* wake naOptLogFlushSync */
         gh_mutex_unlock(&s_mutex);
@@ -264,6 +277,11 @@ static void *writer_thread_fn(void *arg) {
     }
 
     files_close();
+    /* Nothing is cached any more: let a waiting release return. */
+    gh_mutex_lock(&s_mutex);
+    s_release = 0;
+    gh_cond_broadcast(&s_drained);
+    gh_mutex_unlock(&s_mutex);
 #ifdef _WIN32
     return 0;
 #else
@@ -275,6 +293,17 @@ void naOptLogFlushSync(void) {
     if (!s_running) return;
     gh_mutex_lock(&s_mutex);
     while (s_head || s_writing) {
+        gh_cond_signal(&s_cond);
+        gh_cond_wait(&s_drained, &s_mutex);
+    }
+    gh_mutex_unlock(&s_mutex);
+}
+
+void naOptLogReleaseFiles(void) {
+    if (!s_running) return;
+    gh_mutex_lock(&s_mutex);
+    s_release = 1;
+    while (s_head || s_writing || s_release) {
         gh_cond_signal(&s_cond);
         gh_cond_wait(&s_drained, &s_mutex);
     }
@@ -297,6 +326,7 @@ static int start_writer(const char *main_path) {
     s_head = s_tail = NULL;
     s_count = s_bytes = 0;
     s_writing = 0;
+    s_release = 0;
 
     gh_mutex_init(&s_mutex);
     gh_cond_init(&s_cond);

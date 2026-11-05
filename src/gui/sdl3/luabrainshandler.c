@@ -994,6 +994,9 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * brain crash report is written after the queued print2 output, not before
    * it. Idempotent — every brain instance installs the same function. */
   brainCoreSetLogFlushHook(naOptLogFlushSync);
+  /* And the entry point that closes the writer's open files, which the
+   * -brain-debug server calls before it compresses a finished block's logs. */
+  brainCoreSetLogReleaseHook(naOptLogReleaseFiles);
   naAttackRegister(L);
 
   /* Compute brain directory once at function scope so it can be reused for

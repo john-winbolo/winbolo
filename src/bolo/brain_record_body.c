@@ -225,9 +225,13 @@ void hostRecFileName(char *out, size_t sz, uint8_t slot, uint16_t placeGen) {
              HOSTREC_EXT);
 }
 
+bool hostRecReadExact(BrainRecIn *in, void *p, size_t n) {
+    return n == 0 || brainRecInRead(in, p, n) == n;
+}
+
 bool hostRecWriterOpen(HostRecWriter *w, const char *path,
                        const HostRecHeader *hdr, const char *legend) {
-    BrainRecFile *f;
+    BrainRecOut *f;
     HostRecHeader h = *hdr;
     uint32_t ll = legend ? (uint32_t)strlen(legend) : 0u;
 
@@ -235,15 +239,15 @@ bool hostRecWriterOpen(HostRecWriter *w, const char *path,
     memcpy(h.magic, HOSTREC_MAGIC, sizeof(HOSTREC_MAGIC));
     h.version = HOSTREC_VERSION;
     h.brainrecVersion = BRAINREC_VERSION;
-    f = brainRecFileOpenWrite(path);
+    f = brainRecOutOpen(path);
     if (f == NULL) return false;
-    if (!brainRecFileWrite(f, &h, sizeof h) ||
-        !brainRecFileWrite(f, &ll, 4) ||
-        (ll && !brainRecFileWrite(f, legend, ll))) {
-        (void)brainRecFileClose(f);
+    if (!brainRecOutWrite(f, &h, sizeof h) ||
+        !brainRecOutWrite(f, &ll, 4) ||
+        (ll && !brainRecOutWrite(f, legend, ll))) {
+        (void)brainRecOutClose(f);
         return false;
     }
-    (void)brainRecFileFlush(f);
+    (void)brainRecOutFlush(f);
     w->file = f;
     return true;
 }
@@ -251,51 +255,51 @@ bool hostRecWriterOpen(HostRecWriter *w, const char *path,
 bool hostRecWriterAppend(HostRecWriter *w, uint32_t seq, uint32_t estTick,
                          const uint8_t *body, size_t len) {
     uint32_t head[4];
-    BrainRecFile *f = w->file;
+    BrainRecOut *f = w->file;
     if (f == NULL) return false;
     head[0] = HOSTREC_RECORD_MAGIC;
     head[1] = seq;
     head[2] = estTick;
     head[3] = (uint32_t)len;
-    if (!brainRecFileWrite(f, head, sizeof head)) return false;
-    if (len && !brainRecFileWrite(f, body, len)) return false;
+    if (!brainRecOutWrite(f, head, sizeof head)) return false;
+    if (len && !brainRecOutWrite(f, body, len)) return false;
     w->records++;
     w->rawBytes += sizeof head + len;
     /* Same flush rhythm as the server's recorder: a killed host loses
      * about a second. */
     if (++w->sinceFlush >= 32) {
-        (void)brainRecFileFlush(f);
+        (void)brainRecOutFlush(f);
         w->sinceFlush = 0;
     }
     return true;
 }
 
 void hostRecWriterClose(HostRecWriter *w) {
-    (void)brainRecFileClose(w->file);
+    (void)brainRecOutClose(w->file);
     w->file = NULL;
 }
 
 bool hostRecReaderOpen(HostRecReader *r, const char *path) {
-    BrainRecFile *f;
+    BrainRecIn *f;
     uint32_t ll = 0;
     memset(r, 0, sizeof(*r));
-    f = brainRecFileOpenRead(path);
+    f = brainRecInOpen(path);
     if (f == NULL) return false;
-    if (!brainRecFileReadExact(f, &r->hdr, sizeof r->hdr) ||
+    if (!hostRecReadExact(f, &r->hdr, sizeof r->hdr) ||
         memcmp(r->hdr.magic, HOSTREC_MAGIC, sizeof(HOSTREC_MAGIC)) != 0 ||
         r->hdr.version != HOSTREC_VERSION ||
         r->hdr.brainrecVersion != BRAINREC_VERSION ||
-        !brainRecFileReadExact(f, &ll, 4) || ll > (16u << 20)) {
-        (void)brainRecFileClose(f);
+        !hostRecReadExact(f, &ll, 4) || ll > (16u << 20)) {
+        brainRecInClose(f);
         return false;
     }
     r->hdr.hostName[HOSTREC_HOST_LEN - 1] = '\0';
     r->hdr.block[HOSTREC_BLOCK_LEN - 1] = '\0';
     r->legend = (char *)malloc((size_t)ll + 1);
-    if (r->legend == NULL || (ll && !brainRecFileReadExact(f, r->legend, ll))) {
+    if (r->legend == NULL || (ll && !hostRecReadExact(f, r->legend, ll))) {
         free(r->legend);
         r->legend = NULL;
-        (void)brainRecFileClose(f);
+        brainRecInClose(f);
         return false;
     }
     r->legend[ll] = '\0';
@@ -306,10 +310,10 @@ bool hostRecReaderOpen(HostRecReader *r, const char *path) {
 int hostRecReaderNext(HostRecReader *r, uint32_t *seq, uint32_t *estTick,
                       BrainRecBuf *body) {
     uint32_t head[4];
-    BrainRecFile *f = r->file;
+    BrainRecIn *f = r->file;
     if (f == NULL) return 0;
     /* A short read, or a read error at a cut-short tail, is the end. */
-    if (!brainRecFileReadExact(f, head, sizeof head)) return 0;
+    if (!hostRecReadExact(f, head, sizeof head)) return 0;
     if (head[0] != HOSTREC_RECORD_MAGIC || head[3] > (64u << 20)) return -1;
     brainRecBufReset(body);
     if (head[3] > 0) {
@@ -319,7 +323,7 @@ int hostRecReaderNext(HostRecReader *r, uint32_t *seq, uint32_t *estTick,
             body->data = d;
             body->cap = head[3];
         }
-        if (!brainRecFileReadExact(f, body->data, head[3])) return 0;
+        if (!hostRecReadExact(f, body->data, head[3])) return 0;
     }
     body->len = head[3];
     if (brainRecBodyMeasure(body->data, body->len) != body->len) return -1;
@@ -329,7 +333,7 @@ int hostRecReaderNext(HostRecReader *r, uint32_t *seq, uint32_t *estTick,
 }
 
 void hostRecReaderClose(HostRecReader *r) {
-    (void)brainRecFileClose(r->file);
+    brainRecInClose(r->file);
     free(r->legend);
     memset(r, 0, sizeof(*r));
 }

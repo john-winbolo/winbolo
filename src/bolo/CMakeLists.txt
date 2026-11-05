@@ -167,6 +167,7 @@ target_link_libraries(bolo_static PUBLIC
     SDL3::SDL3
     lua_static
     zlibstatic
+    libzstd_static
     minizip
     utf8proc
 )

@@ -61,6 +61,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(HERE))
 
+from session_log_io import log_exists, read_log_text
 from take_cover_scan_check import (              # noqa: E402
     read_map, travel_costs, TERRAIN_NAME, TERRAIN_COST, MAP_W,
     T_BUILDING, T_RIVER, T_SWAMP, T_CRATER, T_ROAD, T_FOREST, T_RUBBLE,
@@ -205,7 +206,7 @@ DUMP_RE = re.compile(
 
 
 def parse_session(log_path, tick):
-    text = Path(log_path).read_text(errors="ignore")
+    text = read_log_text(log_path)
     # KWDIAG is emitted every 8 ticks; take the first at or after `tick`.
     kw = None
     for m in KWDIAG_RE.finditer(text):
@@ -275,7 +276,7 @@ def main():
     args = ap.parse_args()
 
     log = Path(args.session) / f"print2_bot{args.bot}.log"
-    if not log.exists():
+    if not log_exists(log):
         raise SystemExit(f"no {log}")
     st = parse_session(log, args.tick)
     t, mpills, mbases, _ = read_map(args.map)

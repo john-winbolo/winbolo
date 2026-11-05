@@ -26,6 +26,7 @@
 #include "bot_manager.h"       /* botBrainGetGoalInfo, botBrainEvalLuaString */
 #include "brain_record.h"
 #include "brain_record_host.h"
+#include "brain_lua_glue.h"     /* brainCoreReleaseLogFiles */
 
 #define REC_MAX_SERVERS    16
 #define REC_MAX_SEATS      MAX_TANKS
@@ -617,7 +618,58 @@ static SDL_EnumerationResult SDLCALL upListEntry(void *userdata,
     return SDL_ENUM_CONTINUE;
 }
 
-/* Start sending the next finished block; false when none is left. */
+/* ---- Log compression ------------------------------------------------------ */
+/* A finished block's logs (print2_bot*.log) are gzipped before they are
+ * sent, by the same rule the server uses for its own blocks. The work runs
+ * on a thread, so the bots of the other servers keep their think rate. */
+static SDL_Thread   *s_logzThread = NULL;
+static SDL_AtomicInt s_logzDone;
+static int           s_logzCount = 0;
+static char          s_logzDir[900];      /* the folder the thread works on */
+static char          s_logzDoneDir[900];  /* the last folder it finished */
+
+static int SDLCALL logzThreadFn(void *arg) {
+    (void)arg;
+    s_logzCount = brainRecordCompressLogsNow(s_logzDir);
+    SDL_SetAtomicInt(&s_logzDone, 1);
+    return 0;
+}
+
+static void logzJoin(void) {
+    if (s_logzThread == NULL) return;
+    SDL_WaitThread(s_logzThread, NULL);
+    s_logzThread = NULL;
+    SDL_strlcpy(s_logzDoneDir, s_logzDir, sizeof(s_logzDoneDir));
+    if (s_logzCount > 0) {
+        fprintf(stderr, "[bothost] gzipped %d log file(s) in %s\n",
+                s_logzCount, s_logzDir);
+    }
+}
+
+/* True when the logs of dir are gzipped (or that was tried). False while
+ * the thread works; ask again later. */
+static bool upLogsReady(const char *dir) {
+    if (s_logzThread != NULL) {
+        if (SDL_GetAtomicInt(&s_logzDone) == 0) return false;
+        logzJoin();
+    }
+    if (strcmp(s_logzDoneDir, dir) == 0) return true;
+    /* The brains' log writer keeps its files open: close them first. It
+     * opens them again at its next line. */
+    brainCoreReleaseLogFiles();
+    SDL_strlcpy(s_logzDir, dir, sizeof(s_logzDir));
+    SDL_SetAtomicInt(&s_logzDone, 0);
+    s_logzThread = SDL_CreateThread(logzThreadFn, "bothost_logz", NULL);
+    if (s_logzThread == NULL) {
+        /* No thread: send the logs as they are. */
+        SDL_strlcpy(s_logzDoneDir, dir, sizeof(s_logzDoneDir));
+        return true;
+    }
+    return false;
+}
+
+/* Start sending the next finished block; false when none is left. A block
+ * whose logs are being gzipped counts as started: the call comes again. */
 static bool upStart(int srv) {
     RecSrv *sv = &s_srv[srv];
     PickCtx pc;
@@ -631,6 +683,10 @@ static bool upStart(int srv) {
     memset(&lc, 0, sizeof(lc));
     lc.sv = sv;
     snprintf(lc.dir, sizeof(lc.dir), "%s/%s", sv->root, pc.found);
+    if (!upLogsReady(lc.dir)) {
+        sv->retryAtMs = (uint32_t)SDL_GetTicks() + REC_STATE_MS;
+        return true;
+    }
     (void)SDL_EnumerateDirectory(lc.dir, upListEntry, &lc);
     if (lc.failed) {
         upReset(sv);
@@ -978,6 +1034,7 @@ void hostRecShutdown(void) {
     if (!s_init) return;
     for (i = 0; i < REC_MAX_SEATS; i++) hostRecSeatGone(i);
     for (i = 0; i < REC_MAX_SERVERS; i++) upReset(&s_srv[i]);
+    logzJoin();
     brainRecBufFree(&s_body);
     s_init = false;
 }

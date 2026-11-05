@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <SDL3/SDL.h>
+#include <zlib.h>
 
 #include "global.h"
 #include "brain_record.h"
@@ -37,15 +38,15 @@ typedef struct {
     uint32_t lpi;        /* hosted marker: the last input the server took */
 } TbrBot;
 
-static bool tbrWrite(BrainRecFile *f, const void *p, size_t n) {
-    return n == 0 || brainRecFileWrite(f, p, n);
+static bool tbrWrite(BrainRecOut *f, const void *p, size_t n) {
+    return n == 0 || brainRecOutWrite(f, p, n);
 }
 
-static BrainRecFile *tbrOpenBtr(const char *path) {
+static BrainRecOut *tbrOpenBtr(const char *path) {
     BrainRecHeader hdr;
     const char *legend = "{\"cats\":[]}";
     uint32_t llen = (uint32_t)strlen(legend);
-    BrainRecFile *f = brainRecFileOpenWrite(path);
+    BrainRecOut *f = brainRecOutOpen(path);
     if (f == NULL) return NULL;
     memset(&hdr, 0, sizeof(hdr));
     memcpy(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN);
@@ -53,13 +54,13 @@ static BrainRecFile *tbrOpenBtr(const char *path) {
     memcpy(hdr.mapName, "Test", 4);
     if (!tbrWrite(f, &hdr, sizeof(hdr)) || !tbrWrite(f, &llen, 4) ||
         !tbrWrite(f, legend, llen)) {
-        (void)brainRecFileClose(f);
+        (void)brainRecOutClose(f);
         return NULL;
     }
     return f;
 }
 
-static bool tbrFrame(BrainRecFile *f, uint32_t tick, const TbrBot *bots,
+static bool tbrFrame(BrainRecOut *f, uint32_t tick, const TbrBot *bots,
                      int n) {
     uint32_t magic = BRAINREC_FRAME_MAGIC;
     uint8_t zero4[4] = {0, 0, 0, 0};
@@ -125,7 +126,7 @@ static bool tbrHostFile(const char *path, uint8_t slot, uint16_t gen,
 
 /* Reading a merged file back. */
 typedef struct {
-    BrainRecFile *f;
+    BrainRecIn   *f;
     BrainRecBuf  *buf;
 } TbrCap;
 
@@ -133,9 +134,9 @@ static size_t tbrCapRead(void *ctx, void *dst, size_t len) {
     TbrCap *c = (TbrCap *)ctx;
     size_t total = 0;
     while (total < len) {
-        long got = brainRecFileRead(c->f, (uint8_t *)dst + total, len - total);
-        if (got <= 0) break;
-        total += (size_t)got;
+        size_t got = brainRecInRead(c->f, (uint8_t *)dst + total, len - total);
+        if (got == 0) break;
+        total += got;
     }
     if (total > 0) brainRecBufPut(c->buf, dst, total);
     return total;
@@ -146,7 +147,7 @@ static bool tbrCapSkip(void *ctx, size_t len) {
     uint8_t tmp[4096];
     while (len > 0) {
         size_t n = len < sizeof(tmp) ? len : sizeof(tmp);
-        if (!brainRecFileReadExact(c->f, tmp, n)) return false;
+        if (!hostRecReadExact(c->f, tmp, n)) return false;
         brainRecBufPut(c->buf, tmp, n);
         len -= n;
     }
@@ -171,8 +172,13 @@ static bool tbrRead(const char *path, TbrOut *o) {
     BrainRecReader r;
     bool ok = true;
     memset(o, 0, sizeof(*o));
-    c.f = brainRecFileOpenRead(path);
+    c.f = brainRecInOpen(path);
     if (c.f == NULL) return false;
+    /* Every file here, the merged one too, is in the zstd container. */
+    if (brainRecInFormat(c.f) != BRAINREC_FMT_ZSTD) {
+        brainRecInClose(c.f);
+        return false;
+    }
     brainRecBufInit(&buf);
     c.buf = &buf;
     memset(&r, 0, sizeof(r));
@@ -226,7 +232,7 @@ static bool tbrRead(const char *path, TbrOut *o) {
         }
         o->frames++;
     }
-    (void)brainRecFileClose(c.f);
+    brainRecInClose(c.f);
     brainRecBufFree(&buf);
     return ok;
 }
@@ -237,7 +243,7 @@ static bool tbrRead(const char *path, TbrOut *o) {
 int run_brainrec_host_merge_by_tick(void) {
     char btr[1024], hbr[1024], out[1024];
     const char *files[1];
-    BrainRecFile *f;
+    BrainRecOut *f;
     BrainRecMergeStats st;
     TbrOut o;
     char err[256];
@@ -262,7 +268,7 @@ int run_brainrec_host_merge_by_tick(void) {
         bots[1].lpi = 10u + 2u * (uint32_t)i;
         UT_ASSERT(tbrFrame(f, 100u + 2u * (uint32_t)i, bots, 2));
     }
-    UT_ASSERT(brainRecFileClose(f));
+    UT_ASSERT(brainRecOutClose(f));
     /* The host thought from input 12 on (its first think came one think
      * after the server's first marker) and stopped at 44: the last two
      * frames lag by 2 and 4, inside the stale window. */
@@ -306,7 +312,7 @@ int run_brainrec_host_merge_by_tick(void) {
 int run_brainrec_host_merge_mid_block_move(void) {
     char btr[1024], h5[1024], h9[1024], out[1024];
     const char *files[2];
-    BrainRecFile *f;
+    BrainRecOut *f;
     BrainRecMergeStats st;
     TbrOut o;
     char err[256];
@@ -335,7 +341,7 @@ int run_brainrec_host_merge_mid_block_move(void) {
         }
         UT_ASSERT(tbrFrame(f, 200u + 2u * (uint32_t)i, &bot, 1));
     }
-    UT_ASSERT(brainRecFileClose(f));
+    UT_ASSERT(brainRecOutClose(f));
     UT_ASSERT(tbrHostFile(h5, 2, 5, 2, 10));
     UT_ASSERT(tbrHostFile(h9, 2, 9, 2, 10));
 
@@ -370,7 +376,7 @@ int run_brainrec_host_merge_mid_block_move(void) {
 int run_brainrec_host_merge_missing_block(void) {
     char btr[1024], hWrong[1024], out[1024];
     const char *files[2];
-    BrainRecFile *f;
+    BrainRecOut *f;
     BrainRecMergeStats st;
     TbrOut o;
     char err[256];
@@ -393,7 +399,7 @@ int run_brainrec_host_merge_missing_block(void) {
         bots[1].thinkMs = 2.0f;
         UT_ASSERT(tbrFrame(f, 300u + 2u * (uint32_t)i, bots, 2));
     }
-    UT_ASSERT(brainRecFileClose(f));
+    UT_ASSERT(brainRecOutClose(f));
 
     /* No files at all. */
     UT_ASSERT_MSG(brainRecMergeFiles(btr, NULL, 0, out, &st, err, sizeof(err)),
@@ -422,6 +428,72 @@ int run_brainrec_host_merge_missing_block(void) {
     UT_ASSERT_MSG(brainRecMergeFiles(btr, files, 1, out, &st, err, sizeof(err)),
                   "merge failed: %s", err);
     UT_ASSERT_MSG(st.missing == 6, "missing %u", (unsigned)st.missing);
+    return 0;
+}
+
+/* ================================================================
+ * A host's gzipped print2 log that has the name of the server's plain one
+ * is merged by tick into the server's file, which stays plain.
+ * ================================================================ */
+static bool tbrWriteText(const char *path, const char *text, bool gz) {
+    size_t n = strlen(text);
+    if (gz) {
+        gzFile g = gzopen(path, "wb6");
+        bool ok;
+        if (g == NULL) return false;
+        ok = gzwrite(g, text, (unsigned)n) == (int)n;
+        return gzclose(g) == Z_OK && ok;
+    } else {
+        FILE *f = fopen(path, "wb");
+        bool ok;
+        if (f == NULL) return false;
+        ok = fwrite(text, 1, n, f) == n;
+        return fclose(f) == 0 && ok;
+    }
+}
+
+static bool tbrReadText(const char *path, char *out, size_t sz) {
+    gzFile g = gzopen(path, "rb");
+    int n;
+    if (g == NULL) return false;
+    n = gzread(g, out, (unsigned)(sz - 1));
+    gzclose(g);
+    if (n < 0) return false;
+    out[n] = '\0';
+    return true;
+}
+
+int run_brainrec_host_print2_gz(void) {
+    char sess[1024], host[1024], a[1100], b[1100], other[1100], text[512];
+    SDL_PathInfo pi;
+
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "p2sess"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "p2host"));
+    UT_ASSERT(SDL_CreateDirectory(sess));
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(a, sizeof(a), "%s/print2_bot1.log", sess);
+    snprintf(b, sizeof(b), "%s/print2_bot1.log.gz", host);
+    snprintf(other, sizeof(other), "%s/print2_bot0.log.gz", host);
+    UT_ASSERT(tbrWriteText(a, "head s\n===TICK 10===\ns10\n===TICK 30===\ns30\n", false));
+    UT_ASSERT(tbrWriteText(b, "===TICK 20===\nh20\n===TICK 40===\nh40\n", true));
+    UT_ASSERT(tbrWriteText(other, "===TICK 5===\nh5\n", true));
+
+    UT_ASSERT(brainRecMergeDir(sess, host, "h", NULL, NULL, NULL));
+
+    /* The clash: one plain file, the ticks in order, no copy beside it. */
+    UT_ASSERT(tbrReadText(a, text, sizeof(text)));
+    UT_ASSERT(strcmp(text, "head s\n===TICK 10===\ns10\n===TICK 20===\nh20\n"
+                           "===TICK 30===\ns30\n===TICK 40===\nh40\n") == 0);
+    snprintf(b, sizeof(b), "%s/print2_bot1.log.gz", sess);
+    UT_ASSERT(!SDL_GetPathInfo(b, &pi));
+    snprintf(b, sizeof(b), "%s/bothost_h_print2_bot1.log.gz", sess);
+    UT_ASSERT(!SDL_GetPathInfo(b, &pi));
+    /* No clash: the .gz file moves in as it is. */
+    snprintf(other, sizeof(other), "%s/print2_bot0.log.gz", sess);
+    UT_ASSERT(tbrReadText(other, text, sizeof(text)));
+    UT_ASSERT(strcmp(text, "===TICK 5===\nh5\n") == 0);
+    /* The host folder is gone after a full merge. */
+    UT_ASSERT(!SDL_GetPathInfo(host, &pi));
     return 0;
 }
 

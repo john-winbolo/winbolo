@@ -76,6 +76,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from session_log_io import log_exists, read_log_text
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -615,11 +616,11 @@ def verify_tokens(mapfile, a_arg, b_arg, per_side, seed):
         for name, players, arg in (("A", A, a_arg), ("B", B, b_arg)):
             bot = players[0]
             p = sess / f"print2_bot{bot}.log"
-            if not p.exists():
+            if not log_exists(p):
                 print(f"  FAIL: no print2_bot{bot}.log for side {name}")
                 rc = 1
                 continue
-            text = p.read_text(encoding="utf-8", errors="replace")
+            text = read_log_text(p, errors="replace")
             lines = sorted(set(re.findall(r"\[(?:cfg|preset)\][^\n\"]*", text)))
             print(f"  side {name} (bot{bot}, init {arg!r}):")
             if not lines:

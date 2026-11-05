@@ -17,6 +17,10 @@
  *  portable encoding is attempted. Versioned via BRAINREC_VERSION;
  *  a reader accepts the versions brainRecVersionReadable names and
  *  refuses the rest.
+ *
+ *  The byte stream is stored in the container brain_record_io.h
+ *  describes (zstd for new files, gzip for old ones); open, write and
+ *  read it only through those functions.
  *********************************************************/
 #ifndef BRAIN_RECORD_H
 #define BRAIN_RECORD_H
@@ -145,25 +149,6 @@ typedef bool (*BrainRecordHostedFn)(BYTE slot, uint16_t *placeGen,
                                     char *hostName);
 void brainRecordSetHostedInfoFn(BrainRecordHostedFn fn);
 
-/* === Container ==========================================================
- * The file container of brainrec.btr and of the Bot Host's .hbr files
- * (brain_record_io.c). Every reader and writer of those files uses these
- * calls and never the compression library, so a change of container is
- * made in one place. A writer's file read back after a flush, or after the
- * writer was killed, reads up to its last flush. */
-typedef struct BrainRecFile BrainRecFile;
-BrainRecFile *brainRecFileOpenWrite(const char *path);
-BrainRecFile *brainRecFileOpenRead(const char *path);
-bool brainRecFileWrite(BrainRecFile *f, const void *p, size_t n);
-/* Bytes read (0 at the end), -1 on an error. */
-long brainRecFileRead(BrainRecFile *f, void *p, size_t n);
-/* True when exactly n bytes were read. */
-bool brainRecFileReadExact(BrainRecFile *f, void *p, size_t n);
-/* Make what is written so far readable from the file on disk. */
-bool brainRecFileFlush(BrainRecFile *f);
-/* Close (NULL is a no-op). False when the last bytes did not reach disk. */
-bool brainRecFileClose(BrainRecFile *f);
-
 /* Pool-JSON prefetch protocol (parallelizes the capture): a bot's worker
  * thread asks CaptureWanted right after its think and, when true, builds
  * the JSON there (each bot owns its own Lua VM, so the builds fan out
@@ -204,6 +189,40 @@ void brainRecordEndGame(void);
 
 /* Flush + close the output file. Call at server shutdown. */
 void brainRecordShutdown(void);
+
+/* === Block log compression ==============================================
+ * The brains' text logs in a finished -brain-debug block directory
+ * (print2_bot*.log, player*.jsonl, brain_p*.jsonl) are gzip-compressed in
+ * place: each file becomes <name>.gz and the plain file is removed. The
+ * block that is open stays plain, so a hard kill never leaves a log cut
+ * inside a gzip stream. Readers accept <name>, <name>.gz, or both (then the
+ * .gz holds the earlier lines and the plain file the later ones).
+ *
+ * A file is written to <name>.gz.tmp, renamed to <name>.gz, and only then
+ * is the plain file removed. If the remove fails (a writer still has the
+ * file open), the .gz is removed again and the plain file stays. A file
+ * that already has a .gz is left alone. */
+
+/* Start compressing dir's logs on a background thread. First closes the
+ * brain log writer's open files (brainCoreReleaseLogFiles), so call it
+ * after the bots write to a different directory. */
+void brainRecordCompressLogsAsync(const char *dir);
+
+/* Remember dir to compress later: at game over the bots can still write to
+ * the block until the next block opens. A dir already remembered is started
+ * first. */
+void brainRecordDeferLogCompress(const char *dir);
+
+/* Start the remembered dir, if any (brainRecordCompressLogsAsync). */
+void brainRecordRunDeferredLogCompress(void);
+
+/* Start the remembered dir and wait for every compression to end. Call at
+ * shutdown after the bots are destroyed. */
+void brainRecordFinishLogCompress(void);
+
+/* Compress one directory now, on this thread. Returns the number of files
+ * compressed. For tests and tools. */
+int brainRecordCompressLogsNow(const char *dir);
 
 #ifdef __cplusplus
 }

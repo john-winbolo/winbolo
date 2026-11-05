@@ -793,6 +793,13 @@ static unsigned long long serverLifecycleFreeDiskBytes(void) {
  * DEBUG_SESSION_DIR + resets print2 on every bot so their logs land in the new
  * block. Stamps the block start time. */
 static void serverLifecycleOpenBraindbgBlock(ServerSim *sim) {
+  /* The block being closed, if this is a 15-minute roll: its logs are
+   * compressed once the bots write to the new one. */
+  char oldDir[FILENAME_MAX];
+  oldDir[0] = '\0';
+  if (s_braindbgSessionOpen && brainRecordGetSessionDir() != NULL) {
+    SDL_strlcpy(oldDir, brainRecordGetSessionDir(), sizeof(oldDir));
+  }
   brainRecordEndGame();   /* close the prior block's .btr + reset recorder state */
   transportUdpServerRecClose();   /* Bot Hosts: the prior block is finished */
 
@@ -820,11 +827,21 @@ static void serverLifecycleOpenBraindbgBlock(ServerSim *sim) {
     serverSimBotExecLua(sim, (BYTE)i, setSession);
     serverSimBotExecLua(sim, (BYTE)i,
         "local ok,p=pcall(require,'print2'); if ok and p.reset_log then p.reset_log() end");
+    /* The brain's jsonl moves with it; without this it stayed in block 1. */
+    serverSimBotExecLua(sim, (BYTE)i,
+        "local ok,l=pcall(require,'logger'); "
+        "if ok and type(l)=='table' and l.reopen_in_session_dir then l.reopen_in_session_dir() end");
   }
   s_braindbgBlockStartMs = SDL_GetTicks();
   /* Bot Hosts record their bots into a block of the same name. */
   transportUdpServerRecOpen(dir, (uint32_t)serverSimGetTick(sim));
   fprintf(stderr, "brain_record: recording block -> %s\n", dir);
+  /* Every bot now writes to the new block: compress the finished one's logs
+   * (and a block a game over left behind) in the background. */
+  if (oldDir[0] != '\0' && strcmp(oldDir, dir) != 0) {
+    brainRecordCompressLogsAsync(oldDir);
+  }
+  brainRecordRunDeferredLogCompress();
 }
 
 /* Start a new game's recording at block 1: stamp the base timestamp (the game's
@@ -876,6 +893,9 @@ static void serverLifecycleStartBrainDebugSession(ServerSim *sim) {
 static void lifecycleCloseBraindbgBlock(void) {
   if (s_braindbgSessionOpen) {
     brainRecordEndGame();
+    /* The bots can still write here until the next block opens, so its logs
+     * are compressed then, or at shutdown. */
+    brainRecordDeferLogCompress(brainRecordGetSessionDir());
     brainRecordSetSessionDir(NULL);
     transportUdpServerRecClose();
     s_braindbgSessionOpen = false;
@@ -1303,6 +1323,13 @@ void serverInstanceShutdown(ServerSim *sim) {
     serverSimEmptyScriptSessionDir(sim);
   }
   botManagerDestroy(sim);
+  /* -brain-debug: the bots are gone, so nothing writes the open block's logs
+   * any more. Compress it with any block still waiting, and wait for all of
+   * it before the process ends. */
+  if (s_braindbgSessionOpen) {
+    brainRecordDeferLogCompress(brainRecordGetSessionDir());
+  }
+  brainRecordFinishLogCompress();
   instanceAcceptRemoteClients = FALSE;
   instanceUseWbn = FALSE;
   instanceUseTracker = FALSE;

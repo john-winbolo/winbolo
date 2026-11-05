@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include <SDL3/SDL.h>
+#include <zlib.h>   /* print2 logs: plain or .gz */
 
 #include "brain_record.h"
 #include "brain_record_host.h"
@@ -142,7 +143,7 @@ char *brainRecLegendAddSlot(const char *legend, int slot, const char *slotLegend
 /* ---- Frame copy ----------------------------------------------------------- */
 
 typedef struct {
-    BrainRecFile *file;
+    BrainRecIn   *file;
     BrainRecBuf  *frame;  /* every byte read or skipped is kept here */
 } CaptureCtx;
 
@@ -152,9 +153,9 @@ static size_t capRead(void *ctx, void *dst, size_t len) {
     size_t total = 0;
     /* Read until len bytes or the end: a container may return less. */
     while (total < len) {
-        long got = brainRecFileRead(c->file, d + total, len - total);
-        if (got <= 0) break;
-        total += (size_t)got;
+        size_t got = brainRecInRead(c->file, d + total, len - total);
+        if (got == 0) break;
+        total += got;
     }
     if (total > 0) brainRecBufPut(c->frame, dst, total);
     return total;
@@ -173,7 +174,7 @@ static bool capSkip(void *ctx, size_t len) {
         b->data = d;
         b->cap = cap;
     }
-    if (!brainRecFileReadExact(c->file, b->data + b->len, len)) return false;
+    if (!hostRecReadExact(c->file, b->data + b->len, len)) return false;
     b->len += len;
     return true;
 }
@@ -265,13 +266,13 @@ static void hsAdvance(HostStream *h, uint32_t target, BrainRecMergeStats *st) {
     }
 }
 
-static bool writeAll(BrainRecFile *f, const void *p, size_t n) {
-    return n == 0 || brainRecFileWrite(f, p, n);
+static bool writeAll(BrainRecOut *f, const void *p, size_t n) {
+    return n == 0 || brainRecOutWrite(f, p, n);
 }
 
 /* Count the frames of a .btr with the walker; -1 when its preamble is bad. */
 static long countFrames(const char *path) {
-    BrainRecFile *f = brainRecFileOpenRead(path);
+    BrainRecIn *f = brainRecInOpen(path);
     BrainRecBuf scratch;
     CaptureCtx c;
     BrainRecReader r;
@@ -286,7 +287,7 @@ static long countFrames(const char *path) {
     r.read = capRead;
     r.skip = capSkip;
     if (brainRecWalkPreamble(&r, NULL, NULL) != BRAINREC_WALK_OK) {
-        (void)brainRecFileClose(f);
+        brainRecInClose(f);
         brainRecBufFree(&scratch);
         return -1;
     }
@@ -300,7 +301,7 @@ static long countFrames(const char *path) {
         }
         n++;
     }
-    (void)brainRecFileClose(f);
+    brainRecInClose(f);
     brainRecBufFree(&scratch);
     return n;
 }
@@ -311,7 +312,8 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
     BrainRecMergeStats local;
     HostStream *hs = NULL;
     int byKey[MAX_TANKS][8];    /* small (slot, gen) lookup: index or -1 */
-    BrainRecFile *in = NULL, *out = NULL;
+    BrainRecIn  *in = NULL;
+    BrainRecOut *out = NULL;
     BrainRecHeader hdr;
     uint32_t llen = 0;
     char *legend = NULL;
@@ -327,16 +329,16 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
     brainRecBufInit(&body);
     memset(byKey, 0xff, sizeof byKey);
 
-    in = brainRecFileOpenRead(btrPath);
+    in = brainRecInOpen(btrPath);
     if (in == NULL) { setErr(err, errSz, "cannot open", btrPath); goto done; }
-    if (!brainRecFileReadExact(in, &hdr, sizeof hdr) ||
+    if (!hostRecReadExact(in, &hdr, sizeof hdr) ||
         !brainRecMagicMatches(&hdr) || !brainRecVersionReadable(&hdr) ||
-        !brainRecFileReadExact(in, &llen, 4) || llen > (16u << 20)) {
+        !hostRecReadExact(in, &llen, 4) || llen > (16u << 20)) {
         setErr(err, errSz, "not a readable brainrec.btr", btrPath);
         goto done;
     }
     legend = (char *)malloc((size_t)llen + 1);
-    if (legend == NULL || (llen && !brainRecFileReadExact(in, legend, llen))) {
+    if (legend == NULL || (llen && !hostRecReadExact(in, legend, llen))) {
         setErr(err, errSz, "legend cut short", btrPath);
         goto done;
     }
@@ -371,7 +373,7 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
         }
     }
 
-    out = brainRecFileOpenWrite(outPath);
+    out = brainRecOutOpen(outPath);
     if (out == NULL) { setErr(err, errSz, "cannot write", outPath); goto done; }
     llen = (uint32_t)strlen(legend);
     if (!writeAll(out, &hdr, sizeof hdr) || !writeAll(out, &llen, 4) ||
@@ -411,6 +413,9 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
             goto done;
         }
         st->frames++;
+        /* A new zstd block at each map keyframe, as the recorder and the
+         * splitter do, so the merged file has the same seek points. */
+        if (fi.mapKeyframe && !brainRecOutNewBlock(out)) goto writeFail;
         if (!writeAll(out, frame.data, lay.botsStart)) goto writeFail;
         for (b = 0; b < lay.bots; b++) {
             const uint8_t *bp = frame.data + lay.bodyOff[b];
@@ -471,7 +476,7 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
         }
     }
 
-    if (!brainRecFileClose(out)) { out = NULL; goto writeFail; }
+    if (!brainRecOutClose(out)) { out = NULL; goto writeFail; }
     out = NULL;
     {
         long n = countFrames(outPath);
@@ -486,8 +491,8 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
 writeFail:
     setErr(err, errSz, "write failed", outPath);
 done:
-    (void)brainRecFileClose(out);
-    (void)brainRecFileClose(in);
+    (void)brainRecOutClose(out);
+    brainRecInClose(in);
     if (!ok && outPath != NULL) (void)SDL_RemovePath(outPath);
     if (hs != NULL) {
         for (i = 0; i < hostCount; i++) {
@@ -507,7 +512,7 @@ done:
 /* ---- print2 logs ---------------------------------------------------------- */
 
 typedef struct {
-    FILE  *f;
+    gzFile f;            /* gzopen reads a plain file as it is */
     char  *line;
     size_t cap;
     size_t len;
@@ -525,7 +530,7 @@ static bool lineNext(LineIn *in) {
             in->line = d;
             in->cap = cap;
         }
-        if (fgets(in->line + in->len, (int)(in->cap - in->len), in->f) == NULL) {
+        if (gzgets(in->f, in->line + in->len, (int)(in->cap - in->len)) == NULL) {
             in->have = in->len > 0;
             return in->have;
         }
@@ -545,48 +550,62 @@ static bool isTickLine(const LineIn *in, long long *tick) {
     return true;
 }
 
+typedef struct {
+    FILE  *fp;
+    gzFile gz;
+} LineOut;
+
+static bool lineWrite(LineOut *out, const char *p, size_t n) {
+    if (out->gz != NULL) return n == 0 || gzwrite(out->gz, p, (unsigned)n) == (int)n;
+    return fwrite(p, 1, n, out->fp) == n;
+}
+
 /* Copy lines from in to out until the next tick line (left in in). */
-static bool copyUntilTick(LineIn *in, FILE *out, bool includeCurrent) {
+static bool copyUntilTick(LineIn *in, LineOut *out, bool includeCurrent) {
     long long t;
     if (includeCurrent && in->have) {
-        if (fwrite(in->line, 1, in->len, out) != in->len) return false;
+        if (!lineWrite(out, in->line, in->len)) return false;
         lineNext(in);
     }
     while (in->have && !isTickLine(in, &t)) {
-        if (fwrite(in->line, 1, in->len, out) != in->len) return false;
+        if (!lineWrite(out, in->line, in->len)) return false;
         lineNext(in);
     }
     return true;
 }
 
-bool brainRecMergePrint2(const char *a, const char *b, const char *outPath) {
+bool brainRecMergePrint2(const char *a, const char *b, const char *outPath,
+                         bool gzOut) {
     LineIn ia, ib;
-    FILE *out;
+    LineOut out;
     bool ok = true;
     memset(&ia, 0, sizeof ia);
     memset(&ib, 0, sizeof ib);
-    ia.f = fopen(a, "rb");
-    ib.f = fopen(b, "rb");
-    out = fopen(outPath, "wb");
-    if (ia.f == NULL || ib.f == NULL || out == NULL) {
+    memset(&out, 0, sizeof out);
+    ia.f = gzopen(a, "rb");
+    ib.f = gzopen(b, "rb");
+    if (gzOut) out.gz = gzopen(outPath, "wb6");
+    else out.fp = fopen(outPath, "wb");
+    if (ia.f == NULL || ib.f == NULL || (out.gz == NULL && out.fp == NULL)) {
         ok = false;
         goto done;
     }
     lineNext(&ia);
     lineNext(&ib);
     /* Lines before the first block: a's, then b's. */
-    ok = copyUntilTick(&ia, out, false) && copyUntilTick(&ib, out, false);
+    ok = copyUntilTick(&ia, &out, false) && copyUntilTick(&ib, &out, false);
     while (ok && (ia.have || ib.have)) {
         long long ta = 0, tb = 0;
         bool ha = isTickLine(&ia, &ta), hb = isTickLine(&ib, &tb);
-        if (ha && (!hb || ta <= tb)) ok = copyUntilTick(&ia, out, true);
-        else if (hb) ok = copyUntilTick(&ib, out, true);
+        if (ha && (!hb || ta <= tb)) ok = copyUntilTick(&ia, &out, true);
+        else if (hb) ok = copyUntilTick(&ib, &out, true);
         else break;
     }
 done:
-    if (ia.f) fclose(ia.f);
-    if (ib.f) fclose(ib.f);
-    if (out && fclose(out) != 0) ok = false;
+    if (ia.f) gzclose(ia.f);
+    if (ib.f) gzclose(ib.f);
+    if (out.gz && gzclose(out.gz) != Z_OK) ok = false;
+    if (out.fp && fclose(out.fp) != 0) ok = false;
     free(ia.line);
     free(ib.line);
     if (!ok) (void)SDL_RemovePath(outPath);
@@ -643,24 +662,40 @@ bool brainRecMergeDir(const char *sessionDir, const char *hostDir,
             if (hbr[nh]) { memcpy(hbr[nh], src, l); nh++; }
             continue;
         }
-        snprintf(dst, sizeof dst, "%s/%s", sessionDir, name);
-        if (!pathExists(dst)) {
-            if (!moveFile(src, dst)) {
-                logLine(log, logCtx, "brain_record_merge: cannot move %s", src);
-                allOk = false;
+        {
+            /* A log can come as <name> or <name>.gz (the host gzips its
+             * finished logs, the server gzips its own when the next block
+             * opens), so a name clash is checked in both forms. */
+            char plain[300];
+            bool gzName = endsWith(name, ".gz");
+            SDL_strlcpy(plain, name, sizeof plain);
+            if (gzName && strlen(plain) > 3) plain[strlen(plain) - 3] = '\0';
+            snprintf(dst, sizeof dst, "%s/%s", sessionDir, plain);
+            if (!pathExists(dst)) {
+                snprintf(dst, sizeof dst, "%s/%s.gz", sessionDir, plain);
             }
-            continue;
-        }
-        if (strncmp(name, "print2_bot", 10) == 0 && endsWith(name, ".log")) {
-            char tmp[1200];
-            snprintf(tmp, sizeof tmp, "%s.merge.tmp", dst);
-            if (brainRecMergePrint2(dst, src, tmp) && replaceFile(tmp, dst)) {
-                (void)SDL_RemovePath(src);
-                logLine(log, logCtx, "brain_record_merge: %s merged by tick", dst);
+            if (!pathExists(dst)) {
+                snprintf(dst, sizeof dst, "%s/%s", sessionDir, name);
+                if (!moveFile(src, dst)) {
+                    logLine(log, logCtx, "brain_record_merge: cannot move %s", src);
+                    allOk = false;
+                }
                 continue;
             }
-            logLine(log, logCtx, "brain_record_merge: %s could not be merged "
-                    "by tick; kept beside it", dst);
+            if (strncmp(plain, "print2_bot", 10) == 0 && endsWith(plain, ".log")) {
+                /* The merged log keeps the form of the server's file. */
+                char tmp[1200];
+                snprintf(tmp, sizeof tmp, "%s.merge.tmp", dst);
+                if (brainRecMergePrint2(dst, src, tmp, endsWith(dst, ".gz")) &&
+                    replaceFile(tmp, dst)) {
+                    (void)SDL_RemovePath(src);
+                    logLine(log, logCtx, "brain_record_merge: %s merged by tick", dst);
+                    continue;
+                }
+                (void)SDL_RemovePath(tmp);
+                logLine(log, logCtx, "brain_record_merge: %s could not be merged "
+                        "by tick; kept beside it", dst);
+            }
         }
         snprintf(dst, sizeof dst, "%s/bothost_%s_%s", sessionDir, hn, name);
         if (!moveFile(src, dst)) {

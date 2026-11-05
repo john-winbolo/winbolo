@@ -50,6 +50,7 @@
 #include "bulk_transfer.h"
 #include "brain_record.h"
 #include "brain_record_host.h"
+#include "brain_lua_glue.h"     /* brainCoreReleaseLogFiles */
 #include "../../gui/sdl3/luabrainshandler.h" /* luaBrainsGetDebugParts */
 #include "../../common/wb_log.h"
 
@@ -497,6 +498,10 @@ static void recMergeStart(int h) {
              hc->recBlock);
     SDL_strlcpy(s_job.stage, hc->recStage, sizeof(s_job.stage));
     SDL_SetAtomicInt(&s_job.done, 0);
+    /* The brains' log writer keeps the session's print2 logs open, and an
+     * open file cannot be replaced by its merged copy. Close them; the
+     * writer opens them again at its next line. */
+    brainCoreReleaseLogFiles();
     fprintf(stderr, "[bothost] merging the recordings of Bot Host \"%s\" into "
                     "%s (%u files, %.1f MB)\n", hc->name, s_job.sessionDir,
             (unsigned)hc->recFiles, (double)hc->recBytes / (1024.0 * 1024.0));

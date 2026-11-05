@@ -578,7 +578,8 @@ def main():
             # the .btr and the jsonl streams are gigabytes; the numbers we
             # need are already parsed out.  Keep the small logs.
             for f in sess.iterdir():
-                if f.suffix in (".btr", ".jsonl") or f.name.endswith("ticks.log"):
+                if (f.suffix in (".btr", ".jsonl") or f.name.endswith(".jsonl.gz")
+                        or f.name.endswith("ticks.log")):
                     f.unlink()
 
 
