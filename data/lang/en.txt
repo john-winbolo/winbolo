@@ -321,6 +321,7 @@ STR_MENU_REQUIRES=Requires {number}x{number2} - exceeds display
 STR_MENU_SMOOTH_SCROLLING=Smooth Scrolling
 STR_MENU_AUTO_SCROLLING=Automatic Scrolling
 STR_MENU_SHOW_GUNSIGHT=Show Gunsight
+STR_MENU_EARLY_OWN_BLAST=Early Own Shell Blast
 STR_MENU_LETTERBOX_GRAY=Gray letterbox bars
 STR_MENU_MSG_NAMES_SUB=Message Sender Names
 STR_MENU_TANK_LABELS_SUB=Tank Labels

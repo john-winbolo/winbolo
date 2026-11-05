@@ -361,6 +361,8 @@
 #define STR_MENU_SMOOTH_SCROLLING           552
 #define STR_MENU_AUTO_SCROLLING             553
 #define STR_MENU_SHOW_GUNSIGHT              554
+/* The "Early Own Shell Blast" test option (src/bolo/internal/early_blast.h). */
+#define STR_MENU_EARLY_OWN_BLAST            3473
 #define STR_MENU_LETTERBOX_GRAY             1493
 #define STR_MENU_MSG_NAMES_SUB              555
 #define STR_MENU_TANK_LABELS_SUB            556
