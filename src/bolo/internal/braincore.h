@@ -273,6 +273,27 @@ int brc_traceback_msgh(lua_State *L);
 void brainCoreSetLogFlushHook(void (*fn)(void));
 
 /*********************************************************
+ *NAME:          brainCoreSetLogReleaseHook
+ *PURPOSE:
+ *  Registers a callback that writes out everything a brain
+ *  log writer has queued and then closes the files it keeps
+ *  open. brainCoreReleaseLogFiles calls it. The -brain-debug
+ *  server calls that after it moves the bots' logs to a new
+ *  block directory, so the old block's logs are complete and
+ *  closed before they are compressed.
+ *
+ *  A hook for the same reason as the flush hook above.
+ *
+ *ARGUMENTS:
+ *  fn - release function, or NULL to clear. Must be safe to
+ *       call from any thread.
+ *********************************************************/
+void brainCoreSetLogReleaseHook(void (*fn)(void));
+
+/* Call the release hook, if one is set. */
+void brainCoreReleaseLogFiles(void);
+
+/*********************************************************
  *NAME:          brainCoreRegisterPathfinder
  *PURPOSE:
  *  Registers cpf_* Lua globals backed by a per-brain

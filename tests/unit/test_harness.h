@@ -1165,6 +1165,21 @@ int run_session_ticks_real_dirs(void);
  * alive flag for a tank in its respawn wait or destroyed. */
 int run_braintest_tank_status_dead(void);
 int run_braintest_tank_render_dead(void);
+/* The brainrec.btr container (test_btr_container.c): a zstd recording reads
+ * back through the frame walker and the BrainTest walk, and so does a gzip
+ * copy of it; skip across blocks; a cut file reads its prefix; a finished
+ * block's brain logs compress to .gz. */
+int run_btr_zstd_recording_reads_back(void);
+int run_btr_zstd_skip_across_blocks(void);
+int run_btr_zstd_cut_file_reads_its_prefix(void);
+int run_btr_block_logs_compress(void);
+/* Record frames of a running sim into dir with the -brain-debug recorder. */
+bool utBtrRecordSession(const char *dir, int frames, uint32_t *firstTick,
+                        uint32_t *lastTick);
+
+/* brainrec_split cuts the brain logs at the right brain tick
+ * (test_brainrec_split.c). */
+int run_brainrec_split_cuts_brain_logs_by_engine_tick(void);
 
 /* The entity-sync control event (test_entity_sync.c). CTRL_ENTITY_SYNC
  * carries three 16-bit masks, one per item list, saying which indices hold

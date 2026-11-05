@@ -29,6 +29,7 @@ add_library(bolo_static STATIC
     brain_record_dij.c
     brain_sync.c
     bot_host_link.c
+    brain_record_io.c
     brain_pathfinder.c
     brain_pathfinder_serial.c
     brain_worldsim.c
@@ -164,6 +165,7 @@ target_link_libraries(bolo_static PUBLIC
     SDL3::SDL3
     lua_static
     zlibstatic
+    libzstd_static
     minizip
     utf8proc
 )

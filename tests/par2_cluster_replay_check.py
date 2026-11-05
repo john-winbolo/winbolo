@@ -38,6 +38,7 @@ ticks of the incident.  Prints a table; exits 0 if it could parse everything.
 import re
 import sys
 from pathlib import Path
+from session_log_io import log_exists, read_log_text
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -281,11 +282,11 @@ def main():
         else:
             session = Path(args[i]); i += 1
     log = session / f"print2_bot{bot}.log"
-    if not log.exists():
+    if not log_exists(log):
         print(f"no such log: {log}")
         return 1
     print(f"session {session.name}, bot {bot}, ticks {ticks}")
-    text = log.read_text(errors="ignore")
+    text = read_log_text(log)
     data = parse(text, ticks)
     ok = True
     for t in ticks:

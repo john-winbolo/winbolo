@@ -63,6 +63,7 @@ import math
 import re
 import sys
 from pathlib import Path
+from session_log_io import log_exists, read_log_text
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -246,7 +247,7 @@ INFO_HOSTILE = 0x1
 
 def parse_tick(log_path, tick):
     """Pull the engine state at `tick` out of a print2 log."""
-    text = Path(log_path).read_text(errors="ignore")
+    text = read_log_text(log_path)
     dump = None
     for m in DUMP_RE.finditer(text):
         if int(m.group(1)) == tick:
@@ -658,7 +659,7 @@ def main():
     args = ap.parse_args()
 
     log = Path(args.session) / f"print2_bot{args.bot}.log"
-    if not log.exists():
+    if not log_exists(log):
         raise SystemExit(f"no such log: {log}")
     t, mpills, mbases, _ = read_map(args.map)
     st = parse_tick(log, args.tick)

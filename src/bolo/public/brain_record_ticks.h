@@ -4,9 +4,10 @@
  *PURPOSE:
  *  The tick-range note written beside a brainrec.btr. BrainTest's
  *  session list shows each recording's game length, which is the
- *  first and last frame tick of the .btr. Those ticks are inside a
- *  gzip stream, and the last one can only be found by reading the
- *  whole stream (about 5 s for a 450 MB part). So whoever closes a
+ *  first and last frame tick of the .btr. Those ticks are inside
+ *  compressed data (zstd, or gzip in older files), and the last one can
+ *  only be found by walking all of it (about 5 s for a 450 MB gzip
+ *  part). So whoever closes a
  *  .btr (the recorder, brainrec_split) writes the two ticks here, as
  *  a few lines of text:
  *
