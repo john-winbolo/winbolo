@@ -57,6 +57,7 @@ local touched = {}           -- seats that reached the ball this tick
 local last_kick = {}         -- the tick each seat last kicked
 local prev = {}              -- each tank's position last tick
 local ends_at, over = 0, false
+local side = {}              -- the team each seat plays for, RED or BLUE
 
 local function whole(n)
   return math.floor(n + 0.5)
@@ -98,7 +99,8 @@ local function line_up()
 end
 
 -- Everyone who turned up on no team is put on the thinner side, so a round
--- with four humans and nobody reading the lobby is still two a side.
+-- with four humans and nobody reading the lobby is still two a side. Each
+-- seat's side is kept, so on_team_changed can put it back there.
 local function pick_sides()
   for p = 0, game.max_tanks() - 1 do
     local slot = game.lobby_slot(p)
@@ -107,6 +109,11 @@ local function pick_sides()
       local red = game.team_size(RED)
       local blue = game.team_size(BLUE)
       game.set_team(p, (red <= blue) and RED or BLUE)
+      slot = game.lobby_slot(p)
+    end
+    if slot ~= nil and slot.connected and
+       (slot.team == RED or slot.team == BLUE) then
+      side[p] = slot.team
     end
   end
 end
@@ -368,6 +375,30 @@ function on_player_join(p, scripted)
   game.score({ team = BLUE }, goals[BLUE], "GOALS")
 end
 
+-- A player who leaves an alliance is moved onto a team of their own, and
+-- that is neither side. Every move this script does not make is put back, so
+-- a seat stays on the side it was given for the whole match.
+function on_team_changed(p, team, scripted)
+  if scripted then
+    if team == RED or team == BLUE then
+      side[p] = team
+    end
+    return
+  end
+  if over then
+    return
+  end
+  if side[p] ~= nil and team ~= side[p] then
+    game.set_team(p, side[p])
+  end
+end
+
+-- The seat is empty, so the next player in it is given a side of their own.
+function on_player_leave(p, scripted)
+  side[p] = nil
+  prev[p] = nil
+end
+
 finish = function()
   if over then
     return
@@ -463,6 +494,8 @@ scenario = {
     on_start = "Picks sides, puts the ball on the spot, lines teams up and starts the 5-minute clock.",
     on_tank_spawned = "Takes a new tank off its boat and puts it at its team's kick-off spot.",
     on_player_join = "Puts a new player on the smaller team and keeps the score showing.",
+    on_team_changed = "Puts a player who leaves an alliance back on their side.",
+    on_player_leave = "Forgets the side of a player who leaves, so the next one in the seat is given one.",
     on_end = "Stops the ball and the scoreboard.",
   },
 }
