@@ -1408,6 +1408,7 @@ int run_brainrec_version_rejects_old(void);
 /* Bot Host brain recordings (test_brain_record_host.c). */
 int run_brainrec_host_merge_by_tick(void);
 int run_brainrec_host_merge_mid_block_move(void);
+int run_brainrec_host_merge_other_version_rebuilt_brain(void);
 int run_brainrec_host_merge_missing_block(void);
 int run_brainrec_host_path_checks(void);
 int run_brainrec_dir_lock_orders_merge_and_gzip(void);
