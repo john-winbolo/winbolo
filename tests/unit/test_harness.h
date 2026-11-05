@@ -1171,6 +1171,8 @@ int run_braintest_tank_render_dead(void);
  * block's brain logs compress to .gz. */
 int run_btr_zstd_recording_reads_back(void);
 int run_btr_zstd_skip_across_blocks(void);
+/* A skip past 2 GiB in an old gzip .btr. */
+int run_btr_gzip_skip_past_2gib(void);
 int run_btr_zstd_cut_file_reads_its_prefix(void);
 int run_btr_block_logs_compress(void);
 /* Record frames of a running sim into dir with the -brain-debug recorder. */
@@ -1521,6 +1523,16 @@ int run_brainrec_dij_danger_box(void);
  * beside brainrec.btr reads back whole and loads with every base where the
  * recorded terrain has it, also for a map that is off centre. */
 int run_brainrec_session_map_roundtrip(void);
+
+/* Bot Host brain recordings (test_brain_record_host.c). */
+int run_brainrec_host_merge_by_tick(void);
+int run_brainrec_host_merge_mid_block_move(void);
+int run_brainrec_host_merge_missing_block(void);
+int run_brainrec_host_path_checks(void);
+int run_brainrec_dir_lock_orders_merge_and_gzip(void);
+int run_brainrec_host_make_absolute(void);
+int run_brainrec_host_print2_gz(void);
+int run_brainrec_host_rec_codec(void);
 
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /

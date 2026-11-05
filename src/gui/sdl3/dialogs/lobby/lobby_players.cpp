@@ -695,6 +695,26 @@ static void renderBotHostGroup(ClientSim *cs) {
                             sizeof(args.string2));
                 break;
         }
+        /* Its brain recordings, when it sends them or cannot record:
+         * "andrew-bsmt: uploading recordings 42%, 1 of 2 bots, ...". Ready
+         * stays as it is: the upload does not hold the game. */
+        if (r->recState == BOT_HOST_REC_STATE_UPLOADING) {
+            MessageArgs ua = {};
+            ua.number = r->recPercent;
+            ua.number2 = r->recBotsDone;
+            ua.number3 = r->recBots;
+            SDL_strlcpy(args.string2,
+                        langGetTextFmt(STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT, &ua),
+                        sizeof(args.string2));
+        } else if (r->recState == BOT_HOST_REC_STATE_MERGING) {
+            SDL_strlcpy(args.string2,
+                        langGetText(STR_DLGLOBBY_BOTHOST_REC_MERGING),
+                        sizeof(args.string2));
+        } else if (r->recState == BOT_HOST_REC_STATE_LOWDISK) {
+            SDL_strlcpy(args.string2,
+                        langGetText(STR_DLGLOBBY_BOTHOST_REC_LOWDISK),
+                        sizeof(args.string2));
+        }
         SDL_strlcpy(args.string1, r->name, sizeof(args.string1));
         args.number = r->used;
         args.number2 = r->slots;

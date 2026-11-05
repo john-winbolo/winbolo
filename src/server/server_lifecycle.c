@@ -801,6 +801,7 @@ static void serverLifecycleOpenBraindbgBlock(ServerSim *sim) {
     SDL_strlcpy(oldDir, brainRecordGetSessionDir(), sizeof(oldDir));
   }
   brainRecordEndGame();   /* close the prior block's .btr + reset recorder state */
+  transportUdpServerRecClose();   /* Bot Hosts: the prior block is finished */
 
   char dir[FILENAME_MAX];
   /* Optional label is appended AFTER the block number so the leading
@@ -832,6 +833,8 @@ static void serverLifecycleOpenBraindbgBlock(ServerSim *sim) {
         "if ok and type(l)=='table' and l.reopen_in_session_dir then l.reopen_in_session_dir() end");
   }
   s_braindbgBlockStartMs = SDL_GetTicks();
+  /* Bot Hosts record their bots into a block of the same name. */
+  transportUdpServerRecOpen(dir, (uint32_t)serverSimGetTick(sim));
   fprintf(stderr, "brain_record: recording block -> %s\n", dir);
   /* Every bot now writes to the new block: compress the finished one's logs
    * (and a block a game over left behind) in the background. */
@@ -894,6 +897,7 @@ static void lifecycleCloseBraindbgBlock(void) {
      * are compressed then, or at shutdown. */
     brainRecordDeferLogCompress(brainRecordGetSessionDir());
     brainRecordSetSessionDir(NULL);
+    transportUdpServerRecClose();
     s_braindbgSessionOpen = false;
   }
 }

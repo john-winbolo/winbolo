@@ -40,7 +40,7 @@ void strlower(char *s) {
 }
 
 void serverConsolePrintHelp(void) {
-  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n Reload - Re-reads the scenario file beside the map. Takes effect at the next round.\n Mem - Writes a memory report line: process memory, each bot's Lua heap, world list sizes.\n MemDeep - Mem plus the biggest Lua tables of each bot. Pauses the game while it walks. The walk allocates inside each bot's Lua state, so do not use it in seeded repro runs.\n Bot <n> difficulty <easy|medium|hard> - Sets bot n's difficulty, as the lobby's bot settings do.\n Bot <n> brain <index> - Gives bot n the brain at that index of the brain list.\n");
+  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n Reload - Re-reads the scenario file beside the map. Takes effect at the next round.\n Mem - Writes a memory report line: process memory, each bot's Lua heap, world list sizes.\n MemDeep - Mem plus the biggest Lua tables of each bot. Pauses the game while it walks. The walk allocates inside each bot's Lua state, so do not use it in seeded repro runs.\n Bot <n> difficulty <easy|medium|hard> - Sets bot n's difficulty, as the lobby's bot settings do.\n Bot <n> brain <index> - Gives bot n the brain at that index of the brain list.\n ClearDebug - Deletes the brain-debug recordings in debug_sessions (not the block recording now), and has each Bot Host delete its recordings of this server.\n BrainMerge <session dir> <host dir> - Merges a Bot Host's recording files into a session folder. Put a path with spaces in double quotes.\n");
 }
 
 /* savemap <file>: step over the command word and any whitespace, append
@@ -163,6 +163,17 @@ void serverConsoleDispatch(const ServerConsoleOps *ops, char *keyBuff,
     } else if (ops->botSet == NULL) {
       fprintf(stderr, "Bot settings are not available on this server\n");
     } else if (ops->botSet(player, what, value, msg, sizeof(msg))) {
+      printf("%s\n", msg);
+    } else {
+      fprintf(stderr, "%s\n", msg);
+    }
+  } else if (strncmp(keyBuff, "cleardebug", 10) == 0 ||
+             strncmp(keyBuff, "brainmerge", 10) == 0) {
+    char msg[SERVER_CONSOLE_LINE * 4];
+    msg[0] = '\0';
+    if (ops->debugCmd == NULL) {
+      fprintf(stderr, "Brain-debug commands are not available on this server\n");
+    } else if (ops->debugCmd(saveBuff, msg, sizeof(msg))) {
       printf("%s\n", msg);
     } else {
       fprintf(stderr, "%s\n", msg);

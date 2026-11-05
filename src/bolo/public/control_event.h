@@ -58,7 +58,35 @@
 /* CTRL_BOT_HOST_SLOTS refuseSeat when no assign is turned down. */
 #define BOT_HOST_SLOTS_NO_REFUSE  0xFFu
 
-/* BOT_HOST_SYNC_* (the brain sync states) are in client_sim.h. */
+/* BOT_HOST_SYNC_* (the brain sync states) and BOT_HOST_REC_STATE_* (the
+ * recording states) are in client_sim.h. */
+
+/* CTRL_BOT_HOST_REC ops. Server to host: */
+#define BOT_HOST_REC_OP_OPEN     1  /* a block opened: record into it */
+#define BOT_HOST_REC_OP_CLOSE    2  /* the block closed: finish its files */
+#define BOT_HOST_REC_OP_UPLOAD   3  /* send the finished blocks now */
+#define BOT_HOST_REC_OP_HOLD     4  /* a game runs: stop sending */
+#define BOT_HOST_REC_OP_CLEAR    5  /* delete this server's recordings */
+#define BOT_HOST_REC_OP_ACK      6  /* a block upload was taken (state) */
+/* Host to server: */
+#define BOT_HOST_REC_OP_STATE    16 /* the recording state and progress */
+#define BOT_HOST_REC_OP_DONE     17 /* every file of the block is sent */
+#define BOT_HOST_REC_OP_CLEARED  18 /* CLEAR done: a, b = bytes lo, hi */
+#define BOT_HOST_REC_OP_MAX      18
+/* OPEN flags: the debug parts the server records. */
+#define BOT_HOST_REC_F_VIZ       0x01u
+#define BOT_HOST_REC_F_PRINT2    0x02u
+#define BOT_HOST_REC_F_JSONL     0x04u
+#define BOT_HOST_REC_F_POOL      0x08u
+/* UPLOAD flag: send slowly, a game may start any time (map rotation). */
+#define BOT_HOST_REC_F_PACED     0x01u
+/* DONE and STATE flag: the host stopped recording for low disk. */
+#define BOT_HOST_REC_F_LOWDISK   0x10u
+/* ACK results, in state. */
+#define BOT_HOST_REC_ACK_MERGED  1  /* merged into the session folder */
+#define BOT_HOST_REC_ACK_SAVED   2  /* kept beside it: no such folder */
+#define BOT_HOST_REC_ACK_FAILED  3  /* not taken: send it again later */
+#define BOT_HOST_REC_BLOCK_LEN   64
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -483,6 +511,14 @@ typedef enum {
      * MAX_TANKS it also turns down the assign of that seat (refuseGen is the
      * assign's gen): its pool filled first, and the seat stays in-process. */
     CTRL_BOT_HOST_SLOTS,
+    /* CTRL_BOT_HOST_REC — brain recordings of the bots a Bot Host runs,
+     * both ways on the host's control connection. The server tells the
+     * host when a -brain-debug session block opens and closes, and when to
+     * upload; the host records each of its bots into a folder of the same
+     * name, uploads the finished blocks on CHANNEL_BULK in
+     * BULK_KIND_REC_CHUNK pieces, and reports its state. op is a
+     * BOT_HOST_REC_OP_* value. */
+    CTRL_BOT_HOST_REC,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1512,6 +1548,10 @@ typedef struct ControlEvent {
             /* The bots placed on the host, bit n for player n; the lobby
              * looks their names up in the roster. */
             uint16_t seats;
+            uint8_t recState;    /* BOT_HOST_REC_STATE_* */
+            uint8_t recPercent;  /* 0..100, while recState is UPLOADING */
+            uint8_t recBotsDone; /* UPLOADING: bots whose files are sent */
+            uint8_t recBots;     /* UPLOADING: bots with files to send */
             char    name[BOT_HOST_STATUS_NAME_LEN];
         } botHostStatus;
 
@@ -1536,6 +1576,19 @@ typedef struct ControlEvent {
             uint8_t  refuseSeat; /* BOT_HOST_SLOTS_NO_REFUSE: none */
             uint16_t refuseGen;
         } botHostSlots;
+
+        /* CTRL_BOT_HOST_REC — see the enum. */
+        struct {
+            uint8_t  op;         /* BOT_HOST_REC_OP_* */
+            uint8_t  flags;      /* BOT_HOST_REC_F_* */
+            uint8_t  state;      /* STATE: BOT_HOST_REC_STATE_*; ACK: result */
+            uint8_t  percent;    /* STATE: upload progress, 0..100 */
+            uint8_t  botsDone;   /* STATE: bots whose files are sent */
+            uint8_t  botsTotal;  /* STATE: bots with files to send */
+            uint32_t a;          /* OPEN: start tick; DONE: files; CLEARED: bytes lo */
+            uint32_t b;          /* DONE: bytes; CLEARED: bytes hi */
+            char     block[BOT_HOST_REC_BLOCK_LEN]; /* session folder name */
+        } botHostRec;
     } u;
 } ControlEvent;
 

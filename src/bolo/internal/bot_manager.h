@@ -1432,4 +1432,11 @@ const char *botManagerLastKillSite(struct lua_State *L);
 bool botManagerGetGoalInfo(const struct ServerSim *sim, BYTE playerNum,
                            BrainGoalInfo *out);
 
+/* The same three queries on a brain's own lua_State, for a brain that no
+ * ServerSim holds (the Bot Host's seats). botBrainEvalLuaString returns a
+ * malloc'd string the caller frees, or NULL. */
+bool  botBrainGetGoalInfo(struct lua_State *L, BrainGoalInfo *out);
+char *botBrainEvalLuaString(struct lua_State *L, const char *src);
+bool  botBrainExecLua(struct lua_State *L, const char *src);
+
 #endif /* BOT_MANAGER_H */

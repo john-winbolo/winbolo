@@ -122,6 +122,19 @@ enum {
     BOT_HOST_SYNC_READY   = 2,
     BOT_HOST_SYNC_LATE    = 3
 };
+/* A Bot Host's brain recording state (-brain-debug servers only).
+ *   NONE      - not recording, nothing to send.
+ *   RECORDING - recording its bots.
+ *   LOWDISK   - not recording: its disk is low.
+ *   UPLOADING - sending its recordings to the server.
+ *   MERGING   - sent; the server merges them. */
+enum {
+    BOT_HOST_REC_STATE_NONE      = 0,
+    BOT_HOST_REC_STATE_RECORDING = 1,
+    BOT_HOST_REC_STATE_LOWDISK   = 2,
+    BOT_HOST_REC_STATE_UPLOADING = 3,
+    BOT_HOST_REC_STATE_MERGING   = 4
+};
 #define CLIENT_BOT_HOST_NAME_LEN 32
 typedef struct {
     bool    connected;
@@ -130,6 +143,10 @@ typedef struct {
     uint8_t used;      /* bot seats it runs */
     uint8_t slots;     /* bot seats it offers */
     uint16_t seats;    /* its bots: bit n for player n */
+    uint8_t recState;  /* BOT_HOST_REC_STATE_* */
+    uint8_t recPercent; /* recording upload progress, 0..100 */
+    uint8_t recBotsDone; /* bots whose recordings are sent */
+    uint8_t recBots;     /* bots with recordings to send */
     char    name[CLIENT_BOT_HOST_NAME_LEN];
 } ClientBotHostRow;
 

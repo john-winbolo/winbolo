@@ -469,6 +469,12 @@
 #define STR_DLGLOBBY_BOTHOST_LATE           3433
 /* Why Ready is off while a Bot Host gets the brain files ({number} = %) */
 #define STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT 3434
+/* A Bot Host's brain recordings, in place of its state on its row:
+ * sending them ({number} = %, {number2} = bots sent, {number3} = bots to
+ * send), stopped for low disk, and the server merging them */
+#define STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT 3435
+#define STR_DLGLOBBY_BOTHOST_REC_LOWDISK    3436
+#define STR_DLGLOBBY_BOTHOST_REC_MERGING    3437
 /* Map-preview start-picker tooltips and the assign-to-someone menu */
 #define STR_STARTPICK_TIP_FREE_HOST         1512
 #define STR_STARTPICK_TIP_FREE              1513
@@ -3266,7 +3272,7 @@
 #define STR_RULE_DESC_tank_collision_mac         2712
 #define STR_RULE_DESC_tank_deep_sea_safe         2760
 #define STR_RULE_DESC_tank_hit_sets_off_mines    3042
-#define STR_RULE_DESC_man_dead_pill_terrain_speed 3428
+#define STR_RULE_DESC_man_dead_pill_terrain_speed 3438
 
 /* Rule range wording */
 

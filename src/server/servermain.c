@@ -348,6 +348,50 @@ static bool consoleOpBotSet(int player, const char *what, const char *value,
   return ok;
 }
 
+/* One argument of a console line: a word, or a "quoted" run. Returns the
+   rest of the line after it, or NULL when there is no argument. */
+static const char *consoleNextArg(const char *p, char *out, size_t outSz) {
+  size_t n = 0;
+  char end = ' ';
+  while (*p == ' ' || *p == '\t') p++;
+  if (*p == '\0' || *p == '\n' || *p == '\r') return NULL;
+  if (*p == '"') {
+    end = '"';
+    p++;
+  }
+  while (*p != '\0' && *p != '\n' && *p != '\r' && *p != end &&
+         (end == '"' || *p != '\t')) {
+    if (n + 1 < outSz) out[n++] = *p;
+    p++;
+  }
+  out[n] = '\0';
+  if (*p == '"') p++;
+  return p;
+}
+
+/* cleardebug / brainmerge <session dir> <host dir>. cleardebug runs under
+   the mutex (it reads the Bot Host table and tells the hosts); a merge only
+   reads and writes files, so it runs without it and the game goes on. */
+static bool consoleOpDebugCmd(const char *line, char *msg, size_t msgLen) {
+  bool ok;
+  if (SDL_strncasecmp(line, "cleardebug", 10) == 0) {
+    threadsWaitForMutex();
+    ok = transportUdpServerClearDebug(msg, msgLen);
+    threadsReleaseMutex();
+    return ok;
+  }
+  {
+    char sessionDir[FILENAME_MAX];
+    char hostDir[FILENAME_MAX];
+    const char *p = line + 10;   /* after "brainmerge" */
+    sessionDir[0] = '\0';
+    hostDir[0] = '\0';
+    p = consoleNextArg(p, sessionDir, sizeof(sessionDir));
+    if (p != NULL) (void)consoleNextArg(p, hostDir, sizeof(hostDir));
+    return transportUdpServerBrainMerge(sessionDir, hostDir, msg, msgLen);
+  }
+}
+
 /* Positional, and the struct's own comment says why the newest entry goes
    last rather than beside a relative. */
 static const ServerConsoleOps serverConsoleOps = {
@@ -361,7 +405,8 @@ static const ServerConsoleOps serverConsoleOps = {
   consoleOpSetHost,
   consoleOpReloadScenario,
   consoleOpMemReport,
-  consoleOpBotSet
+  consoleOpBotSet,
+  consoleOpDebugCmd
 };
 
 

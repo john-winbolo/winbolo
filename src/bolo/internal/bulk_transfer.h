@@ -123,7 +123,14 @@ enum {
      * its path is "<brain>/<file>/<offset>" in decimal. The blob is
      * brainSyncChunkPack's [rawLen 4][zlib stream], at most
      * BRAIN_SYNC_CHUNK_BYTES raw. A file of size 0 is one empty piece. */
-    BULK_KIND_BRAIN_CHUNK = 14
+    BULK_KIND_BRAIN_CHUNK = 14,
+    /* Bot Host->server, on the host's control connection: one piece of one
+     * brain recording file of a finished block (udp_server_botrec.c). The
+     * header's gen is the whole file size and its path is
+     * "<block>/<file>/<offset>" in decimal. The blob is the raw file
+     * bytes, at most 64 KB. Pieces of a file come in order; a file of size
+     * 0 is one empty piece. */
+    BULK_KIND_REC_CHUNK = 15
 };
 
 /* The status byte that opens a BULK_KIND_BOT_POOL blob. */

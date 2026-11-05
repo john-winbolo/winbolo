@@ -78,6 +78,12 @@ typedef struct {
    * not available. Last, for the reason given above. */
   bool (*botSet)(int player, const char *what, const char *value,
                  char *msg, size_t msgLen);
+  /* cleardebug / brainmerge <session dir> <host dir> — the brain-debug
+   * recordings. `line` is the whole line with the operator's
+   * capitalisation (the paths need it). Writes one line into msg either
+   * way. May be NULL, in which case the commands say they are not
+   * available. Last, for the reason given above. */
+  bool (*debugCmd)(const char *line, char *msg, size_t msgLen);
 } ServerConsoleOps;
 
 /* Lower-case `s` in place. */

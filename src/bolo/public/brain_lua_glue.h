@@ -94,6 +94,9 @@ void brainCoreSetLogFlushHook(void (*fn)(void));
 /* The same for the hook that closes the writer's open files (see
  * internal/braincore.h, brainCoreSetLogReleaseHook). */
 void brainCoreSetLogReleaseHook(void (*fn)(void));
+/* Close the writer's open files now (a no-op with no hook). The Bot Host
+ * calls it before it gzips a finished block's logs. */
+void brainCoreReleaseLogFiles(void);
 bool brainCoreCallThink(struct lua_State *L, BrainInfo *info, bool *out_killed);
 bool brainCoreCallMethod(struct lua_State *L, BrainInfo *info, const char *method);
 

@@ -2591,7 +2591,10 @@ bool botManagerExecLua(ServerSim *sim, BYTE playerNum, const char *src) {
         return false;
     }
     if (!sim->botMgr.bots[playerNum].brain.running) return false;
-    lua_State *L = sim->botMgr.bots[playerNum].brain.L;
+    return botBrainExecLua(sim->botMgr.bots[playerNum].brain.L, src);
+}
+
+bool botBrainExecLua(lua_State *L, const char *src) {
     if (!L || !src) return false;
     /* Compile + run a chunk of Lua in this bot's state. Used by
      * BrainTest to push viz toggle state into the brain's globals
@@ -2802,7 +2805,10 @@ char *botManagerEvalLuaString(ServerSim *sim, BYTE playerNum, const char *src) {
         return NULL;
     }
     if (!sim->botMgr.bots[playerNum].brain.running) return NULL;
-    lua_State *L = sim->botMgr.bots[playerNum].brain.L;
+    return botBrainEvalLuaString(sim->botMgr.bots[playerNum].brain.L, src);
+}
+
+char *botBrainEvalLuaString(lua_State *L, const char *src) {
     if (!L || !src) return NULL;
     /* Caller-owned heap copy of whatever string the chunk returns.
      * On any error path (compile fail, runtime fail, non-string
@@ -2816,8 +2822,8 @@ char *botManagerEvalLuaString(ServerSim *sim, BYTE playerNum, const char *src) {
     if (luaL_loadstring(L, src) != LUA_OK) {
         Uint64 now = SDL_GetTicks();
         if (now - sLastErrLogMs > 2000) {
-            WB_LOG_WARN(WB_LOG_CAT_LUA, "brain %d: panel eval compile error: %s",
-                    playerNum, lua_tostring(L, -1));
+            WB_LOG_WARN(WB_LOG_CAT_LUA, "brain: panel eval compile error: %s",
+                    lua_tostring(L, -1));
             sLastErrLogMs = now;
         }
         lua_pop(L, 1);
@@ -2826,8 +2832,8 @@ char *botManagerEvalLuaString(ServerSim *sim, BYTE playerNum, const char *src) {
     if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
         Uint64 now = SDL_GetTicks();
         if (now - sLastErrLogMs > 2000) {
-            WB_LOG_WARN(WB_LOG_CAT_LUA, "brain %d: panel eval runtime error: %s",
-                    playerNum, lua_tostring(L, -1));
+            WB_LOG_WARN(WB_LOG_CAT_LUA, "brain: panel eval runtime error: %s",
+                    lua_tostring(L, -1));
             sLastErrLogMs = now;
         }
         lua_pop(L, 1);
@@ -2876,11 +2882,13 @@ static int luaReadIntField(lua_State *L, int tblIdx, const char *key) {
 
 bool botManagerGetGoalInfo(const ServerSim *sim, BYTE playerNum,
                            BrainGoalInfo *out) {
-    lua_State *L;
     if (sim == NULL || playerNum >= MAX_TANKS) return false;
     if (!sim->botMgr.bots[playerNum].active) return false;
-    L = sim->botMgr.bots[playerNum].brain.L;
-    if (!L) return false;
+    return botBrainGetGoalInfo(sim->botMgr.bots[playerNum].brain.L, out);
+}
+
+bool botBrainGetGoalInfo(lua_State *L, BrainGoalInfo *out) {
+    if (!L || !out) return false;
 
     memset(out, 0, sizeof(BrainGoalInfo));
 
