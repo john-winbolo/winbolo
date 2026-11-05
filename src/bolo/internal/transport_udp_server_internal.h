@@ -116,6 +116,12 @@ typedef struct {
     bool     downloadComplete; /* True once the join download's bytes are acked
                                 * (ackedSeq >= xferEndSeq) or force-set at game
                                 * start. Gates snapshot send + map-event flush. */
+    bool     hasHadMap;        /* True once this slot has completed any map
+                                * download. Survives the re-arm a map change
+                                * makes (downloadComplete drops back to false
+                                * there, this does not); cleared on disconnect.
+                                * Decides whether the slot talks and listens on
+                                * voice. */
     bool     resyncInProgress; /* True while serving a client-requested live map
                                 * resync (map desync recovery). While set, the
                                 * snapshot builder holds this slot's map events
@@ -540,7 +546,7 @@ typedef struct UdpServerState {
      * "whose, and why", which is the question a player reporting that nobody
      * could hear them actually asks. The five reasons share one counter above
      * and mean five different things: a server with voice off, a sender past
-     * the per-tick cap, a sender still taking the map, a malformed segment,
+     * the per-tick cap, a sender that has never had a map, a malformed segment,
      * and a repack that failed — the last being the only one that means the
      * server itself is at fault. forwarded and capped count this slot as a
      * recipient rather than a sender. Cleared when the slot disconnects. */

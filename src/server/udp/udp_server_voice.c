@@ -255,9 +255,11 @@ void serverPumpVoice(ServerSim *sim) {
                 udpServer.voiceSlot[from].dropPerTickCap++;
                 continue;
             }
-            /* Not in the game yet: a client still taking the map is not a
-             * talker, and the same rule keeps it off the receiving end. */
-            if (!udpServer.mapDownload[from].downloadComplete) {
+            /* Not in the game yet: a slot that has never installed a map is
+             * not a talker, and the same rule keeps it off the receiving end.
+             * A slot taking the new map after a map change already had one,
+             * so it keeps talking and listening while that download runs. */
+            if (!udpServer.mapDownload[from].hasHadMap) {
                 udpServer.voiceSegsDropped++;
                 udpServer.voiceSlot[from].dropNotInGame++;
                 continue;
@@ -344,7 +346,9 @@ void serverPumpVoice(ServerSim *sim) {
 
         if (!udpServer.clients[to].connected) continue;
         if (udpServer.clients[to].botSlot) continue;
-        if (!udpServer.mapDownload[to].downloadComplete) continue;
+        /* The listener half of the rule above: never had a map, hears
+         * nothing; re-downloading after a map change, still hears. */
+        if (!udpServer.mapDownload[to].hasHadMap) continue;
 
         for (t = 0; t < talkerCount; t++) {
             int talker = talkers[t].slot;
