@@ -2296,6 +2296,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_MENU_DESKTOP", STR_MENU_DESKTOP },
     { "STR_MENU_DEVICE", STR_MENU_DEVICE },
     { "STR_MENU_DOUBLE", STR_MENU_DOUBLE },
+    { "STR_MENU_EARLY_OWN_BLAST", STR_MENU_EARLY_OWN_BLAST },
     { "STR_MENU_EDIT", STR_MENU_EDIT },
     { "STR_MENU_ENTER_FULL_SCREEN", STR_MENU_ENTER_FULL_SCREEN },
     { "STR_MENU_EXIT", STR_MENU_EXIT },
@@ -2714,4 +2715,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2701
+#define K_LANG_NAME_TABLE_SIZE  2702

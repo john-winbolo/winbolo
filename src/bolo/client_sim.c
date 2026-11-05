@@ -55,6 +55,7 @@
 #include "shells.h"
 #include "rubble.h"
 #include "explosions.h"
+#include "sounddist.h"   /* clientSoundDistLocal, for the early own shell blast */
 #include "messages.h"
 #include <SDL3/SDL.h>
 #include "grass.h"
@@ -1331,10 +1332,14 @@ static bool clientSimDrawnTankWorld(const ClientSim *cs, BYTE p, WORLD *wx,
  *  1-based; the conversion happens here so callers index the
  *  base arrays directly.) Callers with nothing to predict
  *  pass NULL.
+ *
+ *  squareHit, when non-NULL, is set true when the shell was
+ *  stopped by its square (a pillbox, terrain or a base) and
+ *  false when by a tank, for the early own shell blast.
  *********************************************************/
 static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
                                      uint8_t owner, bool onBoat,
-                                     BYTE *hitBaseIdx) {
+                                     BYTE *hitBaseIdx, bool *squareHit) {
   BYTE mapX = (BYTE)(newX >> TANK_SHIFT_MAPSIZE);
   BYTE mapY = (BYTE)(newY >> TANK_SHIFT_MAPSIZE);
   BYTE p;
@@ -1342,6 +1347,9 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
                        basesCanHit(&cs->sim, mapX, mapY, owner);
   if (hitBaseIdx != NULL) {
     *hitBaseIdx = BASE_NOT_FOUND;
+  }
+  if (squareHit != NULL) {
+    *squareHit = false;
   }
   if (pillsIsPillHit(&cs->sim.pb, mapX, mapY) ||
       (!mapIsPassable(&cs->sim.mp, mapX, mapY, onBoat) &&
@@ -1352,6 +1360,9 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
       if (num != BASE_NOT_FOUND && num != 0) {
         *hitBaseIdx = (BYTE)(num - 1);
       }
+    }
+    if (squareHit != NULL) {
+      *squareHit = true;
     }
     return true;
   }
@@ -1393,6 +1404,79 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
   return false;
 }
 
+/* ---- The "Early Own Shell Blast" test option (early_blast.h) ----
+ * Off by default, and then none of this runs. */
+static bool s_earlyOwnBlast = false;
+
+void clientSimSetEarlyOwnBlast(bool on) { s_earlyOwnBlast = on; }
+bool clientSimGetEarlyOwnBlast(void)    { return s_earlyOwnBlast; }
+
+/* A human client with the option on; a bot draws nothing. */
+static bool clientEarlyBlastOn(const ClientSim *cs) {
+  return s_earlyOwnBlast && !cs->isBot;
+}
+
+/* Draw the explosion of own shell ps at its middle (x, y) now, play the
+   sound, and note it so the server's explosion of the shell is not drawn. */
+static void clientEarlyBlastAt(ClientSim *cs, const PredictedShell *ps,
+                               int32_t x, int32_t y, uint8_t sound) {
+  BYTE mx, my, px, py;
+  earlyBlastExplosionPlace(x, y, &mx, &my, &px, &py);
+  explosionsAddItem(&cs->sim.expl, mx, my, px, py, EXPLOSION_START);
+  if (sound != EARLY_BLAST_SOUND_NONE) {
+    sndEffects sid = shotBuildingNear;
+    if (sound == EARLY_BLAST_SOUND_TREE) {
+      sid = shotTreeNear;
+    } else if (sound == EARLY_BLAST_SOUND_TANK) {
+      sid = hitTankNear;
+    }
+    clientSoundDistLocal(&cs->sim, sid, (BYTE)(x >> TANK_SHIFT_MAPSIZE),
+                         (BYTE)(y >> TANK_SHIFT_MAPSIZE));
+  }
+  earlyBlastAdd(&cs->earlyBlast, ps->fireTick, x, y, sound);
+}
+
+/* Own shell ps was stopped at (newX, newY) on this client's view. Placed as
+   the server places it (shellsCalcCollision): a square hit at the middle of
+   the square, a tank hit at the shell's own place. */
+static void clientEarlyBlastHit(ClientSim *cs, const PredictedShell *ps,
+                                WORLD newX, WORLD newY, bool squareHit) {
+  if (squareHit) {
+    BYTE mapX = (BYTE)(newX >> TANK_SHIFT_MAPSIZE);
+    BYTE mapY = (BYTE)(newY >> TANK_SHIFT_MAPSIZE);
+    BYTE terrain = mapGetPos(&cs->sim.mp, mapX, mapY);
+    if (terrain >= MINE_START && terrain <= MINE_END) {
+      terrain = (BYTE)(terrain - MINE_SUBTRACT);
+    }
+    clientEarlyBlastAt(cs, ps, (int32_t)mapX * 256 + MAP_SQUARE_MIDDLE,
+                       (int32_t)mapY * 256 + MAP_SQUARE_MIDDLE,
+                       (terrain == FOREST && !pillsIsPillHit(&cs->sim.pb, mapX, mapY))
+                           ? EARLY_BLAST_SOUND_TREE
+                           : EARLY_BLAST_SOUND_BUILDING);
+  } else {
+    clientEarlyBlastAt(cs, ps, (int32_t)newX, (int32_t)newY, EARLY_BLAST_SOUND_TANK);
+  }
+}
+
+/* The server's own shell fired at fireTick ended at (x, y): CTRL_SHELL_DEATH. */
+void clientSimEarlyBlastServerEnd(ClientSim *cs, uint32_t fireTick, uint16_t x, uint16_t y) {
+  if (cs != NULL && clientEarlyBlastOn(cs)) {
+    (void)earlyBlastServerEnd(&cs->earlyBlast, fireTick, (int32_t)x, (int32_t)y);
+  }
+}
+
+/* A server explosion came: true when it is an early blast's, so it is not
+   drawn. */
+bool clientSimEarlyBlastClaimExplosion(ClientSim *cs, BYTE mx, BYTE my, BYTE px, BYTE py) {
+  return cs != NULL && clientEarlyBlastOn(cs) &&
+         earlyBlastClaimExplosion(&cs->earlyBlast, mx, my, px, py);
+}
+
+/* A server shell hit sound came: true when an early blast already played it. */
+bool clientSimEarlyBlastClaimSound(ClientSim *cs) {
+  return cs != NULL && clientEarlyBlastOn(cs) && earlyBlastClaimSound(&cs->earlyBlast);
+}
+
 /*********************************************************
  *NAME:          clientSimAdvancePredictedShells
  *PURPOSE:
@@ -1417,12 +1501,21 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
  *********************************************************/
 void clientSimAdvancePredictedShells(ClientSim *cs) {
   int i;
+  const bool early = clientEarlyBlastOn(cs);
+  if (early) {
+    earlyBlastTick(&cs->earlyBlast);
+  }
   for (i = 0; i < cs->predictedShellCount; ) {
     PredictedShell *ps = &cs->predictedShells[i];
     WORLD newX, newY;
     BYTE hitBaseIdx;
+    bool squareHit = false;
     if (ps->length <= SHELL_DEATH) {
       /* Shell expired — remove by swapping with last */
+      if (early) {
+        /* Where the server's shell runs out too, with no sound. */
+        clientEarlyBlastAt(cs, ps, (int32_t)ps->x, (int32_t)ps->y, EARLY_BLAST_SOUND_NONE);
+      }
       cs->predictedShells[i] = cs->predictedShells[cs->predictedShellCount - 1];
       cs->predictedShellCount--;
       continue;
@@ -1434,7 +1527,7 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
     newY = (WORLD)(int)ps->fy;
 
     if (clientShellVisualBlocked(cs, newX, newY, ps->owner, ps->onBoat,
-                                 &hitBaseIdx)) {
+                                 &hitBaseIdx, &squareHit)) {
       if (hitBaseIdx < MAX_BASES && cs->sim.replayTick != 0) {
         int armour = (int)(*cs->sim.bs).item[hitBaseIdx].armour;
         /* Remember the landing whatever the armour read: if the mirror was
@@ -1447,6 +1540,9 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
                 cs->sim.rules.base_capture_armour) {
           cs->sim.basePredictedDeadTick[hitBaseIdx] = cs->sim.replayTick;
         }
+      }
+      if (early) {
+        clientEarlyBlastHit(cs, ps, newX, newY, squareHit);
       }
       cs->predictedShells[i] = cs->predictedShells[cs->predictedShellCount - 1];
       cs->predictedShellCount--;
@@ -1633,7 +1729,7 @@ void clientSimAdvanceProjectedShells(ClientSim *cs) {
     newY = (WORLD)(int)ps->fy;
 
     /* Other players' shells — NULL: nothing of ours to predict off them. */
-    if (clientShellVisualBlocked(cs, newX, newY, ps->owner, false, NULL)) {
+    if (clientShellVisualBlocked(cs, newX, newY, ps->owner, false, NULL, NULL)) {
       cs->projectedShells[i] = cs->projectedShells[cs->projectedShellCount - 1];
       cs->projectedShellCount--;
       continue;

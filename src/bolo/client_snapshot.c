@@ -561,6 +561,20 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
     }
   }
 
+  /* The "Early Own Shell Blast" test option (early_blast.h): the server
+   * explosions of this batch an early blast already drew are found first,
+   * so a shell hit sound that comes before its explosion in the batch is
+   * left unplayed too. Nothing is found while the option is off. */
+  bool earlyHidden[EARLY_BLAST_EVENTS_MAX];
+  if (events != NULL) {
+    for (i = 0; i < eventCount && i < EARLY_BLAST_EVENTS_MAX; i++) {
+      earlyHidden[i] = (events[i].type == EVENT_EXPLOSION) &&
+                       clientSimEarlyBlastClaimExplosion(csPtr,
+                           events[i].data[0], events[i].data[1],
+                           events[i].data[2], events[i].data[3]);
+    }
+  }
+
   /* Process game events (MAP_CHANGE, SOUND — all reliable) */
   if (events != NULL) {
     for (i = 0; i < eventCount; i++) {
@@ -586,6 +600,11 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         if (isHuman) {
           sndEffects sid = (sndEffects)events[i].data[0];
           bool selfOnly = (sid == bubbles || sid == tankSinkNear || sid == tankSinkFar);
+          if ((sid == shotBuildingNear || sid == shotBuildingFar ||
+               sid == shotTreeNear || sid == shotTreeFar) &&
+              clientSimEarlyBlastClaimSound(csPtr)) {
+            break;  /* an early blast played it (early_blast.h) */
+          }
           if (!selfOnly || events[i].data[3] == csPtr->myPlayerNum) {
             clientSoundDist(&csPtr->sim, sid, (int8_t)events[i].data[1], events[i].data[2]);
           }
@@ -602,6 +621,8 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         if (isHuman) {
           if (events[i].data[3] == csPtr->myPlayerNum) {
             frontEndPlaySound(csPtr, hitTankSelf);
+          } else if (clientSimEarlyBlastClaimSound(csPtr)) {
+            /* An early blast played it (early_blast.h). */
           } else {
             clientSoundDist(&csPtr->sim, hitTankNear, (int8_t)events[i].data[1], events[i].data[2]);
           }
@@ -609,6 +630,9 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         break;
       case EVENT_EXPLOSION:
         /* data: [mx, my, px, py] — create explosion locally */
+        if (i < EARLY_BLAST_EVENTS_MAX && earlyHidden[i]) {
+          break;  /* an early blast drew it (early_blast.h) */
+        }
         explosionsAddItem(&csPtr->sim.expl,
                            events[i].data[0], events[i].data[1],
                            events[i].data[2], events[i].data[3],

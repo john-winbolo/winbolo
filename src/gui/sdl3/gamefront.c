@@ -5256,6 +5256,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
    * keep whatever "Show Gunsight" they already saved in their INI. */
   prefsGetString("MENU", "Show Gunsight", gunsightDefault, buff, FILENAME_MAX);
   showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
+  /* The "Early Own Shell Blast" test option (early_blast.h): off until
+   * turned on. */
+  prefsGetString("MENU", "Early Own Shell Blast", "No", buff, FILENAME_MAX);
+  clientSimSetEarlyOwnBlast(YESNO_TO_TRUEFALSE(buff[0]));
   prefsGetString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX);
   soundEffects = YESNO_TO_TRUEFALSE(buff[0]);
 #if !defined(__EMSCRIPTEN__)
@@ -5836,6 +5840,7 @@ void gameFrontPutPrefs(keyItems *keys) {
    * is, so an older build still reads the value it wrote. */
   prefsSetString(FRAME_LIMIT_PREF_SECTION, FRAME_LIMIT_PREF_KEY, frameLimitPrefString(frameRate));
   prefsSetString("MENU", "Show Gunsight", TRUEFALSE_TO_STR(showGunsight));
+  prefsSetString("MENU", "Early Own Shell Blast", TRUEFALSE_TO_STR(clientSimGetEarlyOwnBlast()));
   prefsSetString("MENU", "Sound Effects", TRUEFALSE_TO_STR(soundEffects));
 #if !defined(__EMSCRIPTEN__)
   prefsSetString("MENU", "Positional Sound", TRUEFALSE_TO_STR(positionalSound));
