@@ -57,6 +57,19 @@ static int parse_test(void) {
     UT_ASSERT(cfg.jitterMs == 0);
     UT_ASSERT(cfg.lossPercent == 10);
     UT_ASSERT(cfg.burstLossLen == 1);
+    UT_ASSERT(!cfg.lanOnly);
+
+    /* lanonly is 0 or 1 and leaves the other keys alone. */
+    UT_ASSERT(netImpairParseConfig("delay=130,jitter=0,lanonly=1", &cfg));
+    UT_ASSERT(cfg.baseDelayMs == 130);
+    UT_ASSERT(cfg.jitterMs == 0);
+    UT_ASSERT(cfg.lanOnly);
+    UT_ASSERT(netImpairParseConfig("lanonly=0,delay=5", &cfg));
+    UT_ASSERT(!cfg.lanOnly);
+    UT_ASSERT(cfg.baseDelayMs == 5);
+    UT_ASSERT(!netImpairParseConfig("lanonly=2", &cfg));
+    UT_ASSERT(!netImpairParseConfig("lanonly=", &cfg));
+    UT_ASSERT(!netImpairParseConfig("lanonly=yes", &cfg));
 
     /* loss clamps to 100; burst clamps up to a minimum of 1. */
     UT_ASSERT(netImpairParseConfig("loss=250,burst=0", &cfg));
@@ -74,6 +87,37 @@ static int parse_test(void) {
     UT_ASSERT(!netImpairParseConfig("", &cfg));
     UT_ASSERT(!netImpairParseConfig(NULL, &cfg));
 
+    return 0;
+}
+
+/* ---- LAN address test (lanonly=1) ----------------------------------- */
+
+#define IP4(a, b, c, d) (((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | \n                         ((uint32_t)(c) << 8) | (uint32_t)(d))
+
+static int lan_addr_test(void) {
+    /* Loopback 127.0.0.0/8. */
+    UT_ASSERT(netImpairAddrIsLan(IP4(127, 0, 0, 1)));
+    UT_ASSERT(netImpairAddrIsLan(IP4(127, 255, 255, 255)));
+    /* 10.0.0.0/8. */
+    UT_ASSERT(netImpairAddrIsLan(IP4(10, 0, 0, 0)));
+    UT_ASSERT(netImpairAddrIsLan(IP4(10, 255, 255, 255)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(11, 0, 0, 1)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(9, 255, 255, 255)));
+    /* 172.16.0.0/12 is 172.16.0.0 to 172.31.255.255. */
+    UT_ASSERT(netImpairAddrIsLan(IP4(172, 16, 0, 0)));
+    UT_ASSERT(netImpairAddrIsLan(IP4(172, 31, 255, 255)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(172, 15, 255, 255)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(172, 32, 0, 0)));
+    /* 192.168.0.0/16, e.g. the LAN Bot Host. */
+    UT_ASSERT(netImpairAddrIsLan(IP4(192, 168, 0, 130)));
+    UT_ASSERT(netImpairAddrIsLan(IP4(192, 168, 255, 255)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(192, 169, 0, 1)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(192, 167, 255, 255)));
+    /* Internet peers. */
+    UT_ASSERT(!netImpairAddrIsLan(IP4(1, 1, 1, 1)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(203, 0, 113, 7)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(0, 0, 0, 0)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(255, 255, 255, 255)));
     return 0;
 }
 
@@ -315,6 +359,7 @@ static int burst_test(void) {
 int run_net_impair(void) {
     int rc;
     if ((rc = parse_test()) != 0) return rc;
+    if ((rc = lan_addr_test()) != 0) return rc;
     if ((rc = disabled_test()) != 0) return rc;
     if ((rc = due_time_test()) != 0) return rc;
     if ((rc = determinism_test()) != 0) return rc;

@@ -2955,7 +2955,7 @@ it is played far.
 
 | Rule | Classic | Range | Description |
 |---|---|---|---|
-| `tree_grow_ticks` | 3000 | 1 and up | Ticks before the best square found so far grows its tree. |
+| `tree_grow_ticks` | 1150 | 1 and up | Ticks before the best square found so far grows its tree. |
 | `tree_grow_initial_ticks` | 30000 | 1 and up | Ticks before the first tree of a round grows. |
 | `tree_grow_initial_score` | -10000 | -32768 to 32767 | What the weighted draw below starts and resets from, so how long a map waits for its first tree. Negative by design, and it shares its window with the weights. |
 | `tree_weight_forest` | 100 | -32768 to 32767 | What forest counts for in a square's tree growing score. |
