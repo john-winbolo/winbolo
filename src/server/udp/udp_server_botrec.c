@@ -617,6 +617,9 @@ static uint8_t recOpenFlags(int *poolMode) {
     if (p2) f |= BOT_HOST_REC_F_PRINT2;
     if (jsonl) f |= BOT_HOST_REC_F_JSONL;
     if (pool && *poolMode != 0) f |= BOT_HOST_REC_F_POOL;
+    if (brainRecordGetPoolFormat() == BRAINREC_POOL_FORMAT_JSON) {
+        f |= BOT_HOST_REC_F_POOL_JSON;
+    }
     return f;
 }
 

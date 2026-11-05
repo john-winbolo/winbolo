@@ -78,6 +78,10 @@
 #define BOT_HOST_REC_F_PRINT2    0x02u
 #define BOT_HOST_REC_F_JSONL     0x04u
 #define BOT_HOST_REC_F_POOL      0x08u
+/* OPEN flag: record the pool block as the finished panel JSON
+ * (winbolods -bd-pool-format json). Without it the host records the raw
+ * capture, the default. A host that does not know this flag records JSON. */
+#define BOT_HOST_REC_F_POOL_JSON 0x20u
 /* UPLOAD flag: send slowly, a game may start any time (map rotation). */
 #define BOT_HOST_REC_F_PACED     0x01u
 /* DONE and STATE flag: the host stopped recording for low disk. */
