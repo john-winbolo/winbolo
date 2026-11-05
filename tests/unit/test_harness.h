@@ -3076,6 +3076,16 @@ int run_shell_blast_pill_hit_on_shooter_screen(void);
 int run_tank_hit_mines_rule_on_sets_off(void);
 int run_tank_hit_mines_rule_off_spares(void);
 int run_tank_hit_mines_rule_off_ground(void);
+/* man_dead_pill_terrain_speed: the square of a dead pillbox walks at road
+ * speed with the rule at 0 and at the terrain's speed with it at 1; a live
+ * pillbox and the tank are not changed (test_man_dead_pill_speed.c). */
+int run_man_dead_pill_speed_road(void);
+int run_man_dead_pill_speed_terrain_rule(void);
+int run_man_dead_pill_speed_follows_road_rule(void);
+int run_man_dead_pill_walk_ticks(void);
+int run_man_dead_pill_walk_across_water(void);
+int run_man_dead_pill_lifted_waits_for_tank(void);
+int run_man_dead_pill_brain_walk(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
