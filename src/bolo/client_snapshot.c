@@ -561,10 +561,10 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
     }
   }
 
-  /* The "Early Own Shell Blast" test option (early_blast.h): the server
-   * explosions of this batch an early blast already drew are found first,
-   * so a shell hit sound that comes before its explosion in the batch is
-   * left unplayed too. Nothing is found while the option is off. */
+  /* The early own shell blast (early_blast.h): the server explosions of
+   * this batch an early blast already drew are found first, so a shell hit
+   * sound that comes before its explosion in the batch is left unplayed
+   * too. Nothing is found for a bot. */
   bool earlyHidden[EARLY_BLAST_EVENTS_MAX];
   if (events != NULL) {
     for (i = 0; i < eventCount && i < EARLY_BLAST_EVENTS_MAX; i++) {

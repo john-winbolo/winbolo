@@ -48,7 +48,7 @@
 #include "control_event.h" /* LOBBY_SCENARIO_*_LEN — the scenario mirror below */
 #include "scenario_details.h" /* SCN_DETAILS_MAX — the details cache below */
 #include "scenario_identity.h" /* SCN_AUTHOR_LEN — the scenario mirror below */
-#include "early_blast.h"    /* EarlyBlastSet — the "Early Own Shell Blast" test option */
+#include "early_blast.h"    /* EarlyBlastSet — the early own shell blast */
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -215,9 +215,9 @@ struct ClientSim {
     PredictedShell predictedShells[MAX_PREDICTED_SHELLS];
     int         predictedShellCount;
 
-    /* The "Early Own Shell Blast" test option (early_blast.h): the own
-     * shells this client has already drawn an explosion for, waiting for
-     * the server's explosion of each. Empty while the option is off. */
+    /* The early own shell blast (early_blast.h): the own shells this
+     * client has already drawn an explosion for, waiting for the server's
+     * explosion of each. Always empty for a bot. */
     EarlyBlastSet earlyBlast;
 
     /* Render-only forward-projected shells for human clients. Parallel to
@@ -1463,9 +1463,8 @@ void clientSimResetPlayerDisplayPing(ClientSim *cs, BYTE playerNum);
 void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
                       uint16_t worldX, uint16_t worldY, uint32_t nowMs);
 
-/* The "Early Own Shell Blast" test option (early_blast.h, client_sim.c).
- * Each does nothing, or answers false, while the option is off or for a
- * bot. ServerEnd takes CTRL_SHELL_DEATH's fireTick and place. ClaimExplosion
+/* The early own shell blast (early_blast.h, client_sim.c). Each does
+ * nothing, or answers false, for a bot. ServerEnd takes CTRL_SHELL_DEATH's fireTick and place. ClaimExplosion
  * is asked for each EVENT_EXPLOSION, ClaimSound for each shell hit sound:
  * true means an early blast already drew or played it. */
 void clientSimEarlyBlastServerEnd(ClientSim *cs, uint32_t fireTick, uint16_t x, uint16_t y);

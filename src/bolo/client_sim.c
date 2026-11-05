@@ -31,6 +31,7 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include <stdio.h>
 #include <SDL3/SDL.h>
 #include "client_sim.h"
 #include "client_command.h"   /* ViewStateKind — the viewport's view kinds */
@@ -1404,16 +1405,11 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
   return false;
 }
 
-/* ---- The "Early Own Shell Blast" test option (early_blast.h) ----
- * On by default for the play test; off, none of this runs. */
-static bool s_earlyOwnBlast = true;
+/* ---- The early own shell blast (early_blast.h) ---- */
 
-void clientSimSetEarlyOwnBlast(bool on) { s_earlyOwnBlast = on; }
-bool clientSimGetEarlyOwnBlast(void)    { return s_earlyOwnBlast; }
-
-/* A human client with the option on; a bot draws nothing. */
+/* A human client draws early blasts; a bot draws nothing. */
 static bool clientEarlyBlastOn(const ClientSim *cs) {
-  return s_earlyOwnBlast && !cs->isBot;
+  return !cs->isBot;
 }
 
 /* Draw the explosion of own shell ps at its middle (x, y) now, play the
@@ -2996,6 +2992,18 @@ void clientSimResetWorld(ClientSim *cs) {
    * alongside the per-player clear). */
   cs->serverShellCount = 0;
   cs->predictedShellCount = 0;
+  /* The early blasts of the round that ended: write their counts to the
+   * log, then clear them, as the fireTicks restart with the round. */
+  {
+    const EarlyBlastStats *st = &cs->earlyBlast.stats;
+    if (clientEarlyBlastOn(cs) && st->made > 0) {
+      fprintf(stderr, "[early blast] round end: made %u, hidden %u, "
+                      "far ends %u, timed out %u, sounds %u\n",
+              (unsigned)st->made, (unsigned)st->hidden, (unsigned)st->farEnds,
+              (unsigned)st->timedOut, (unsigned)st->sounds);
+    }
+  }
+  earlyBlastReset(&cs->earlyBlast);
   cs->projectedShellCount = 0;
   cs->projectionPingMs = 0;
   cs->inputTickOffset = 0;

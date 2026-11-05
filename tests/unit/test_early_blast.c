@@ -4,8 +4,8 @@
  */
 
 /*
- * The "Early Own Shell Blast" test option's matching (early_blast.h): how
- * the client finds the server's explosion and sound of an own shell it has
+ * The early own shell blast's matching (early_blast.h): how the client
+ * finds the server's explosion and sound of an own shell it has
  * already drawn an explosion for, and when it shows the server's too.
  */
 #include <stdint.h>
@@ -108,11 +108,21 @@ int run_early_blast_server_end(void) {
   UT_ASSERT(!earlyBlastClaimExplosion(&s, mx, my, px, py));
   ebServerPlace(30000 + 100, 30000, &mx, &my, &px, &py);
   UT_ASSERT(!earlyBlastClaimExplosion(&s, mx, my, px, py));
-  /* Exactly one map square away is still near. */
+  /* Exactly one map square away is another place: the server's
+     explosion there is drawn. */
   ebSet(&s);
   earlyBlastAdd(&s, 700, 30000, 30000, EARLY_BLAST_SOUND_NONE);
   b = earlyBlastServerEnd(&s, 700, 30000, 30000 + EARLY_BLAST_NEAR_WU);
-  UT_ASSERT(b != NULL && b->active);
+  UT_ASSERT(b != NULL && !b->active && s.stats.farEnds == 1);
+  ebServerPlace(30000, 30000 + EARLY_BLAST_NEAR_WU, &mx, &my, &px, &py);
+  UT_ASSERT(!earlyBlastClaimExplosion(&s, mx, my, px, py));
+  /* With no server end yet, an explosion one map square from the client's
+     place is not the early blast's either. */
+  ebSet(&s);
+  earlyBlastAdd(&s, 800, 30000, 30000, EARLY_BLAST_SOUND_NONE);
+  ebServerPlace(30000 + EARLY_BLAST_NEAR_WU, 30000, &mx, &my, &px, &py);
+  UT_ASSERT(!earlyBlastClaimExplosion(&s, mx, my, px, py));
+  UT_ASSERT(s.items[0].active);
   return 0;
 }
 
@@ -171,5 +181,16 @@ int run_early_blast_timeout(void) {
   }
   UT_ASSERT(s.items[0].fireTick == (uint32_t)EARLY_BLAST_MAX && s.next == 1);
   UT_ASSERT(EXPLOSION_START == 8);
+
+  /* A new round clears the set and its counts, so an early blast of the
+     last round hides no explosion of the new one. */
+  earlyBlastTick(&s);
+  earlyBlastReset(&s);
+  UT_ASSERT(s.next == 0 && s.tick == 0 && s.stats.made == 0);
+  for (t = 0; t < EARLY_BLAST_MAX; t++) {
+    UT_ASSERT(!s.items[t].active);
+  }
+  ebServerPlace(2000, 1000, &mx, &my, &px, &py);
+  UT_ASSERT(!earlyBlastClaimExplosion(&s, mx, my, px, py));
   return 0;
 }

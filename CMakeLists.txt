@@ -5287,7 +5287,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # plus the shell's offset from the rewound hit point, not at the shell,
     # which a lag-compensated test leaves behind the tank.
     tests/unit/test_tank_blast_at_tank.c
-    # The "Early Own Shell Blast" test option's matching (test_early_blast.c).
+    # How the early own shell blast matches the server's explosion and sound
+    # of the same shell (test_early_blast.c).
     tests/unit/test_early_blast.c
     # tank_hit_sets_off_mines: whether a shell that hits a tank sets off the
     # mines on its square.

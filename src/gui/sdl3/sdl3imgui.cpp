@@ -8205,10 +8205,6 @@ static void renderMenuBar(ClientSim *cs) {
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_AUTO_SCROLLING), KMOD_PRIMARY_LABEL "A", (bool)autoScrollingEnabled)) windowAutomaticScrolling_toggle(cs);
         if (ImGui::MenuItem(langGetText(STR_MENU_SHOW_GUNSIGHT),  KMOD_PRIMARY_LABEL "G", (bool)showGunsight))        windowShowGunsight_toggle(cs);
-        /* A test option (early_blast.h): own shells explode at once where
-         * this screen has them end. Saved with the other options on exit. */
-        if (ImGui::MenuItem(langGetText(STR_MENU_EARLY_OWN_BLAST), nullptr, clientSimGetEarlyOwnBlast()))
-            clientSimSetEarlyOwnBlast(!clientSimGetEarlyOwnBlast());
 
         if (ImGui::BeginMenu(langGetText(STR_MENU_MSG_NAMES_SUB))) {
             if (ImGui::MenuItem(langGetText(STR_SHORT), nullptr, labelMsg == lblShort)) windowSetMessageLabelLen(cs, lblShort);

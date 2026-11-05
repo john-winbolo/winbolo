@@ -4,11 +4,10 @@
  */
 
 /*********************************************************
- *Name:          Early own shell blast (TEST OPTION)
+ *Name:          Early own shell blast
  *Filename:      early_blast.h
  *Purpose:
- *  The client option "Early Own Shell Blast", on by default,
- *  for a play test. With it on, when the local player's own
+ *  For a human player (not a bot), when the local player's own
  *  predicted shell ends on this client (it is blocked on this
  *  client's view, or it runs out), the client draws the shell
  *  explosion there at once and plays its sound there at once.
@@ -24,14 +23,14 @@
  *  - CTRL_SHELL_DEATH carries the shell's fireTick and the place
  *    the server's shell ended. When it comes first, it gives the
  *    early blast with that fireTick the server place. A server
- *    place more than EARLY_BLAST_NEAR_WU from the client's place
- *    closes the early blast: the server's explosion is then drawn
- *    too, so the two places can be seen.
+ *    place EARLY_BLAST_NEAR_WU (one map square) or more from the
+ *    client's place closes the early blast: the server's explosion
+ *    is then drawn too, so the two places can be seen.
  *  - EVENT_EXPLOSION has no fireTick, only its place. It is the
  *    early blast's explosion when it is within
  *    EARLY_BLAST_SERVER_SLACK_WU of the server place, or, when the
- *    server place has not come yet, within EARLY_BLAST_NEAR_WU of
- *    the client's place. The nearest open early blast takes it,
+ *    server place has not come yet, less than EARLY_BLAST_NEAR_WU
+ *    from the client's place. The nearest open early blast takes it,
  *    and each early blast takes one explosion at most.
  *  - An early blast that played a sound lets the next shell hit
  *    sound (shot building, shot tree, or a tank hit on another
@@ -39,6 +38,9 @@
  *  - An early blast that has no server explosion within
  *    EARLY_BLAST_WAIT_TICKS closes: no later explosion is hidden
  *    for it.
+ *
+ *  The counts in EarlyBlastStats go to the client's log at the
+ *  end of each round, so wrong early blasts can be counted.
  *
  *  Places are in world units. An explosion's map and pixel place
  *  is its middle less 128 (TANK_SUBTRACT) on each axis, as
@@ -53,11 +55,13 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 /* The most early blasts held at once. The oldest is used again. */
 #define EARLY_BLAST_MAX 16
 
-/* A server place farther than this from the client's place is shown too. */
+/* A server place this far or farther from the client's place (one map
+   square) is shown too. */
 #define EARLY_BLAST_NEAR_WU 256
 
 /* How far an explosion can be from the server's shell end place: a place
@@ -95,6 +99,7 @@ typedef struct {
   int32_t  serverX, serverY; /* where the server's shell ended */
 } EarlyBlast;
 
+/* Counts for one round, written to the client's log at its end. */
 typedef struct {
   uint32_t made;      /* early blasts drawn */
   uint32_t hidden;    /* server explosions not drawn */
@@ -112,8 +117,8 @@ typedef struct {
   EarlyBlastStats stats;
 } EarlyBlastSet;
 
+/* Clear the set and its counts, for a new round. */
 static inline void earlyBlastReset(EarlyBlastSet *s) {
-  EarlyBlastStats keep = s->stats;
   int i;
   for (i = 0; i < EARLY_BLAST_MAX; i++) {
     s->items[i].active = false;
@@ -122,7 +127,7 @@ static inline void earlyBlastReset(EarlyBlastSet *s) {
   s->tick = 0;
   s->soundCredit = 0;
   s->soundCreditTick = 0;
-  s->stats = keep;
+  memset(&s->stats, 0, sizeof(s->stats));
 }
 
 /* The squared distance between two places. */
@@ -165,8 +170,8 @@ static inline void earlyBlastAdd(EarlyBlastSet *s, uint32_t fireTick, int32_t x,
 }
 
 /* The server's shell fired at fireTick ended at (x, y). Returns the early
-   blast it belongs to, or NULL. One whose server place is far closes, so
-   the server's explosion is drawn too. */
+   blast it belongs to, or NULL. One whose server place is one map square
+   or more away closes, so the server's explosion is drawn too. */
 static inline EarlyBlast *earlyBlastServerEnd(EarlyBlastSet *s, uint32_t fireTick,
                                               int32_t x, int32_t y) {
   int i;
@@ -176,7 +181,7 @@ static inline EarlyBlast *earlyBlastServerEnd(EarlyBlastSet *s, uint32_t fireTic
       b->serverKnown = true;
       b->serverX = x;
       b->serverY = y;
-      if (earlyBlastDist2(b->x, b->y, x, y) >
+      if (earlyBlastDist2(b->x, b->y, x, y) >=
           (int64_t)EARLY_BLAST_NEAR_WU * EARLY_BLAST_NEAR_WU) {
         b->active = false;
         s->stats.farEnds++;
@@ -221,14 +226,18 @@ static inline bool earlyBlastClaimExplosion(EarlyBlastSet *s, uint8_t mx, uint8_
     if (!b->active) {
       continue;
     }
+    bool match;
     if (b->serverKnown) {
       d2 = earlyBlastDist2(b->serverX, b->serverY, ex, ey);
       tol = (int64_t)EARLY_BLAST_SERVER_SLACK_WU * EARLY_BLAST_SERVER_SLACK_WU;
+      match = d2 <= tol;
     } else {
+      /* One map square or more from the client's place is another place. */
       d2 = earlyBlastDist2(b->x, b->y, ex, ey);
       tol = (int64_t)EARLY_BLAST_NEAR_WU * EARLY_BLAST_NEAR_WU;
+      match = d2 < tol;
     }
-    if (d2 <= tol && (best < 0 || d2 < bestD2)) {
+    if (match && (best < 0 || d2 < bestD2)) {
       best = i;
       bestD2 = d2;
     }

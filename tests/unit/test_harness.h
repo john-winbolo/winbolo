@@ -3234,7 +3234,8 @@ int run_tkexp_lgm_pairing(void);
 /* A shell that hits a tank explodes at its own place on its path, as the
  * server has it on the hit tick, rewound or not (test_tank_blast_at_tank.c). */
 int run_tank_blast_at_shell_place(void);
-/* The "Early Own Shell Blast" test option's matching (test_early_blast.c). */
+/* How the early own shell blast matches the server's explosion and sound
+ * of the same shell (test_early_blast.c). */
 int run_early_blast_place(void);
 int run_early_blast_claim_explosion(void);
 int run_early_blast_server_end(void);
