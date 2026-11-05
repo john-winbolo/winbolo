@@ -1367,6 +1367,7 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_mac_halfway_heading",        run_sim_rules_mac_halfway_heading        },
     { "sim_rules_tank_deep_sea_safe",         run_sim_rules_tank_deep_sea_safe         },
     { "lgm_build_square_terrain_speed",         run_lgm_build_square_terrain_speed         },
+    { "pill_aim_lead_follows_shell_start_add", run_pill_aim_lead_follows_shell_start_add },
     { "pill_shell_cap_off_is_no_limit", run_pill_shell_cap_off_is_no_limit },
     { "pill_shell_cap_does_not_retarget", run_pill_shell_cap_does_not_retarget },
     { "pill_shell_cap_loses_shot_and_reloads", run_pill_shell_cap_loses_shot_and_reloads },
