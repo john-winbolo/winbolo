@@ -5711,7 +5711,10 @@ target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     src/bolo/voice_segment.c
     tests/unit/test_voice_segment.c
     src/bolo/voice_talker_select.c
-    tests/unit/test_voice_talker_select.c)
+    tests/unit/test_voice_talker_select.c
+    # The Bot Host's recorder, for its upload and keep rules.
+    src/bothost/bothost_rec.c
+    tests/unit/test_bothost_rec.c)
 target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -5807,6 +5810,8 @@ target_include_directories(WinBoloUnitTests PRIVATE
     # mapeditor_scenario_*.c TUs compiled above; no other mapeditor source
     # is linked here.
     src/mapeditor
+    # bothost_rec.h for test_bothost_rec.c (bothost_rec.c compiled above).
+    src/bothost
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
@@ -6395,6 +6400,10 @@ set(_unit_test_names
     brainrec_host_merge_mid_block_move
     brainrec_host_merge_other_version_rebuilt_brain
     brainrec_host_merge_missing_block
+    brainrec_host_merge_dir_keeps_raw
+    brainrec_host_merge_verdict
+    bothost_rec_upload_keeps_files
+    bothost_rec_lowdisk_keeps_files
     brainrec_host_path_checks
     brainrec_dir_lock_orders_merge_and_gzip
     brainrec_host_make_absolute

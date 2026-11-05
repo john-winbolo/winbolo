@@ -9,10 +9,13 @@
  * <cache>/recordings/<server>/<block>/: one .hbr file per seat (the same
  * per-bot entries the server would write, keyed by the bot's input
  * sequence) and the bot's print2 log. When the server asks (back in its
- * lobby, or slowly during a game) the host sends each finished block over
- * the control connection's bulk channel, and deletes it once the server
- * says it has the files. Blocks not sent before a drop or a stop stay on
- * disk and go on the next connect to the same server.
+ * lobby, or slowly during a game) the host sends a copy of each finished
+ * block over the control connection's bulk channel. When the server
+ * answers MERGED the block gets an "uploaded" marker and is not sent
+ * again; when it answers FAILED (with the reason) the block is sent again
+ * later. The files stay here: only the server's cleardebug deletes them,
+ * and the free-disk floor only stops new recording. Blocks not sent before
+ * a drop or a stop go on the next connect to the same server.
  */
 #ifndef BOTHOST_REC_H
 #define BOTHOST_REC_H

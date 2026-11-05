@@ -639,6 +639,11 @@ int run_brainrec_host_print2_gz(void) {
     snprintf(other, sizeof(other), "%s/print2_bot0.log.gz", sess);
     UT_ASSERT(tbrReadText(other, text, sizeof(text)));
     UT_ASSERT(strcmp(text, "===TICK 5===\nh5\n") == 0);
+    /* The host's copy of the merged log is kept as it came. */
+    snprintf(b, sizeof(b), "%s/%s/h_print2_bot1.log.gz", sess,
+             BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(tbrReadText(b, text, sizeof(text)));
+    UT_ASSERT(strcmp(text, "===TICK 20===\nh20\n===TICK 40===\nh40\n") == 0);
     /* The host folder is gone after a full merge. */
     UT_ASSERT(!SDL_GetPathInfo(host, &pi));
     return 0;
@@ -908,5 +913,147 @@ int run_brainrec_host_rec_codec(void) {
     in.u.botHostStatus.recBotsDone = 3;
     UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
     UT_ASSERT(!dec(buf, len, &out));
+    return 0;
+}
+
+/* ================================================================
+ * The server keeps every file a host uploaded, as it came, in
+ * <session>/bothost_raw/, and answers MERGED only when every host file
+ * was read and filled entries.
+ * ================================================================ */
+
+/* A session folder whose brainrec.btr has 6 frames: slot 1 hosted (gen 5,
+ * inputs 20 to 30), slot 0 local. */
+static bool tbrSession(const char *dir) {
+    char btr[1100];
+    BrainRecOut *f;
+    int i;
+    if (!SDL_CreateDirectory(dir)) return false;
+    snprintf(btr, sizeof(btr), "%s/%s", dir, BRAINREC_FILENAME);
+    f = tbrOpenBtr(btr);
+    if (f == NULL) return false;
+    for (i = 0; i < 6; i++) {
+        TbrBot bots[2];
+        memset(bots, 0, sizeof(bots));
+        bots[0].slot = 1;
+        bots[0].hosted = true;
+        bots[0].gen = 5;
+        bots[0].lpi = 20u + 2u * (uint32_t)i;
+        bots[1].slot = 0;
+        bots[1].thinkMs = 1.0f;
+        if (!tbrFrame(f, 200u + 2u * (uint32_t)i, bots, 2)) {
+            (void)brainRecOutClose(f);
+            return false;
+        }
+    }
+    return brainRecOutClose(f);
+}
+
+int run_brainrec_host_merge_dir_keeps_raw(void) {
+    char sess[1024], host[1024], p[1200];
+    BrainRecMergeStats st;
+    HostRecReader r;
+    TbrOut o;
+    int i;
+
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "rawsess"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "rawhost"));
+    UT_ASSERT(tbrSession(sess));
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(p, sizeof(p), "%s/bot1_g5.hbr", host);
+    UT_ASSERT(tbrHostFile(p, 1, 5, 20, 30));
+    snprintf(p, sizeof(p), "%s/print2_bot1.log", sess);
+    UT_ASSERT(tbrWriteText(p, "===TICK 10===\ns10\n", false));
+    snprintf(p, sizeof(p), "%s/print2_bot1.log.gz", host);
+    UT_ASSERT(tbrWriteText(p, "===TICK 20===\nh20\n", true));
+
+    UT_ASSERT(brainRecMergeDir(sess, host, "h", &st, NULL, NULL));
+    UT_ASSERT_MSG(st.missing == 0 && st.hostFiles == 1, "missing %u files %u",
+                  (unsigned)st.missing, (unsigned)st.hostFiles);
+    UT_ASSERT(st.hostFilesUnused == 0 && st.btrMissing == 0);
+    UT_ASSERT(brainRecMergeVerdict(true, &st) == BOT_HOST_REC_FAIL_NONE);
+
+    /* The merge used the host file ... */
+    snprintf(p, sizeof(p), "%s/%s", sess, BRAINREC_FILENAME);
+    UT_ASSERT(tbrRead(p, &o));
+    UT_ASSERT(o.frames == 6);
+    for (i = 0; i < 6; i++) UT_ASSERT(!o.hosted[i][0]);
+    /* ... and kept it as it came, with the host's print2 log. */
+    snprintf(p, sizeof(p), "%s/%s/h_bot1_g5.hbr", sess, BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(hostRecReaderOpen(&r, p));
+    UT_ASSERT(r.hdr.slot == 1 && r.hdr.placeGen == 5);
+    hostRecReaderClose(&r);
+    snprintf(p, sizeof(p), "%s/%s/h_print2_bot1.log.gz", sess,
+             BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(tbrExists(p));
+    /* Not beside the session's files, and the staging folder is gone. */
+    snprintf(p, sizeof(p), "%s/bothost_h_bot1_g5.hbr", sess);
+    UT_ASSERT(!tbrExists(p));
+    UT_ASSERT(!tbrExists(host));
+    return 0;
+}
+
+int run_brainrec_host_merge_verdict(void) {
+    char sess[1024], host[1024], p[1200];
+    BrainRecMergeStats st;
+    uint8_t r;
+
+    /* A host file this server cannot read: UNREADABLE, still kept. */
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "vsessA"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "vhostA"));
+    UT_ASSERT(tbrSession(sess));
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(p, sizeof(p), "%s/bot1_g5.hbr", host);
+    UT_ASSERT(tbrHostFile(p, 1, 5, 20, 30));
+    snprintf(p, sizeof(p), "%s/bot2_g1.hbr", host);
+    UT_ASSERT(tbrHostFileV(p, 2, 1, 20, 30, BRAINREC_VERSION_MIN_READ - 1u));
+    UT_ASSERT(brainRecMergeDir(sess, host, "h", &st, NULL, NULL));
+    UT_ASSERT(st.hostFilesSkipped == 1);
+    r = brainRecMergeVerdict(true, &st);
+    UT_ASSERT_MSG(r == BOT_HOST_REC_FAIL_UNREADABLE, "reason %u", (unsigned)r);
+    snprintf(p, sizeof(p), "%s/%s/h_bot2_g1.hbr", sess, BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(tbrExists(p));
+
+    /* A host file of another placement fills nothing: NO_FILL. */
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "vsessB"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "vhostB"));
+    UT_ASSERT(tbrSession(sess));
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(p, sizeof(p), "%s/bot1_g4.hbr", host);
+    UT_ASSERT(tbrHostFile(p, 1, 4, 20, 30));
+    UT_ASSERT(brainRecMergeDir(sess, host, "h", &st, NULL, NULL));
+    UT_ASSERT(st.hostFiles == 1 && st.hostFilesUnused == 1);
+    UT_ASSERT(st.missing == 6);
+    r = brainRecMergeVerdict(true, &st);
+    UT_ASSERT_MSG(r == BOT_HOST_REC_FAIL_NO_FILL, "reason %u", (unsigned)r);
+    snprintf(p, sizeof(p), "%s/%s/h_bot1_g4.hbr", sess, BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(tbrExists(p));
+
+    /* A session with no brainrec.btr: NO_BTR, the host file kept. */
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "vsessC"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "vhostC"));
+    UT_ASSERT(SDL_CreateDirectory(sess));
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(p, sizeof(p), "%s/bot1_g5.hbr", host);
+    UT_ASSERT(tbrHostFile(p, 1, 5, 20, 30));
+    (void)brainRecMergeDir(sess, host, "h", &st, NULL, NULL);
+    UT_ASSERT(st.btrMissing == 1);
+    r = brainRecMergeVerdict(true, &st);
+    UT_ASSERT_MSG(r == BOT_HOST_REC_FAIL_NO_BTR, "reason %u", (unsigned)r);
+    snprintf(p, sizeof(p), "%s/%s/h_bot1_g5.hbr", sess, BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(tbrExists(p));
+
+    /* A merge that stopped is never MERGED. */
+    memset(&st, 0, sizeof(st));
+    UT_ASSERT(brainRecMergeVerdict(true, &st) == BOT_HOST_REC_FAIL_NONE);
+    UT_ASSERT(brainRecMergeVerdict(false, &st) == BOT_HOST_REC_FAIL_MERGE);
+    UT_ASSERT(brainRecMergeVerdict(true, NULL) == BOT_HOST_REC_FAIL_MERGE);
+    /* Each reason has its own text. */
+    for (r = BOT_HOST_REC_FAIL_NONE; r <= BOT_HOST_REC_FAIL_NO_FILL; r++) {
+        const char *t = brainRecMergeFailText(r);
+        UT_ASSERT(t != NULL && t[0] != '\0');
+        UT_ASSERT(strcmp(t, "unknown reason") != 0);
+    }
+    UT_ASSERT(strcmp(brainRecMergeFailText(99), "unknown reason") == 0);
     return 0;
 }

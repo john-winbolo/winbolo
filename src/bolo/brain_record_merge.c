@@ -16,6 +16,7 @@
 #include "brain_record.h"
 #include "brain_record_host.h"
 #include "brain_record_walk.h"
+#include "control_event.h"   /* BOT_HOST_REC_FAIL_* */
 #include "input_packet.h"
 
 /* ---- Small helpers ------------------------------------------------------ */
@@ -237,6 +238,7 @@ typedef struct {
     bool        haveCur, havePeek;
     bool        curUsed;
     bool        peekUsed; /* the first record, used one think early */
+    uint32_t    fills;    /* markers this stream filled */
 } HostStream;
 
 static void hsReadPeek(HostStream *h, BrainRecMergeStats *st) {
@@ -319,7 +321,7 @@ static long countFrames(const char *path) {
 bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
                         int hostCount, const char *outPath,
                         BrainRecMergeStats *st, char *err, size_t errSz) {
-    BrainRecMergeStats local;
+    BrainRecMergeStats localSt;
     HostStream *hs = NULL;
     int byKey[MAX_TANKS][16];   /* the streams of each slot: index or -1 */
     BrainRecIn  *in = NULL;
@@ -333,7 +335,7 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
     bool ok = false;
     int i;
 
-    if (st == NULL) st = &local;
+    if (st == NULL) st = &localSt;
     memset(st, 0, sizeof(*st));
     brainRecBufInit(&frame);
     brainRecBufInit(&body);
@@ -482,6 +484,7 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
                         st->filled++;
                     }
                     if (use != NULL) {
+                        h->fills++;
                         if (reused) {
                             /* One pool sample per think, as in-process. */
                             brainRecBufReset(&body);
@@ -506,6 +509,9 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
         }
     }
 
+    for (i = 0; i < hostCount; i++) {
+        if (hs[i].open && hs[i].fills == 0) st->hostFilesUnused++;
+    }
     if (!brainRecOutClose(out)) { out = NULL; goto writeFail; }
     out = NULL;
     {
@@ -659,6 +665,46 @@ static bool endsWith(const char *s, const char *suffix) {
     return n >= m && strcmp(s + n - m, suffix) == 0;
 }
 
+/* Keep an uploaded file as it came: move it to
+ * <session>/bothost_raw/<host>_<name>, replacing an older copy. */
+static bool keepRaw(const char *sessionDir, const char *hn, const char *src) {
+    char dir[1100], dst[1400];
+    const char *base = strrchr(src, '/');
+    base = base ? base + 1 : src;
+    snprintf(dir, sizeof dir, "%s/%s", sessionDir, BRAINREC_HOST_RAW_DIR);
+    if (!pathExists(dir) && !SDL_CreateDirectory(dir)) return false;
+    snprintf(dst, sizeof dst, "%s/%s_%s", dir, hn, base);
+    return moveFile(src, dst);
+}
+
+uint8_t brainRecMergeVerdict(bool ok, const BrainRecMergeStats *st) {
+    if (st == NULL) return BOT_HOST_REC_FAIL_MERGE;
+    if (st->btrMissing) return BOT_HOST_REC_FAIL_NO_BTR;
+    if (!ok) return BOT_HOST_REC_FAIL_MERGE;
+    if (st->hostFilesSkipped > 0) return BOT_HOST_REC_FAIL_UNREADABLE;
+    if (st->hostFilesUnused > 0) return BOT_HOST_REC_FAIL_NO_FILL;
+    return BOT_HOST_REC_FAIL_NONE;
+}
+
+const char *brainRecMergeFailText(uint8_t reason) {
+    switch (reason) {
+        case BOT_HOST_REC_FAIL_NONE:       return "merged";
+        case BOT_HOST_REC_FAIL_BROKEN:     return "the upload came in broken";
+        case BOT_HOST_REC_FAIL_NO_SESSION: return "the server has no such "
+                                                  "finished session folder";
+        case BOT_HOST_REC_FAIL_NO_THREAD:  return "the merge could not start";
+        case BOT_HOST_REC_FAIL_MERGE:      return "the merge stopped on an "
+                                                  "error";
+        case BOT_HOST_REC_FAIL_NO_BTR:     return "the session has no "
+                                                  "brainrec.btr";
+        case BOT_HOST_REC_FAIL_UNREADABLE: return "a host file could not be "
+                                                  "read";
+        case BOT_HOST_REC_FAIL_NO_FILL:    return "a host file filled no "
+                                                  "entry";
+        default:                           return "unknown reason";
+    }
+}
+
 static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
                            const char *hostName, BrainRecMergeStats *st,
                            BrainRecMergeLogFn log, void *logCtx);
@@ -682,10 +728,10 @@ static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
     char **hbr = NULL;
     bool allOk = true;
     char btr[1100];
-    BrainRecMergeStats local;
+    BrainRecMergeStats localSt;
     const char *hn = (hostName != NULL && hostName[0]) ? hostName : "host";
 
-    if (st == NULL) st = &local;
+    if (st == NULL) st = &localSt;
     memset(st, 0, sizeof(*st));
     entries = SDL_GlobDirectory(hostDir, "*", 0, &n);
     if (entries == NULL) {
@@ -733,7 +779,12 @@ static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
                 snprintf(tmp, sizeof tmp, "%s.merge.tmp", dst);
                 if (brainRecMergePrint2(dst, src, tmp, endsWith(dst, ".gz")) &&
                     replaceFile(tmp, dst)) {
-                    (void)SDL_RemovePath(src);
+                    if (!keepRaw(sessionDir, hn, src)) {
+                        logLine(log, logCtx, "brain_record_merge: cannot keep "
+                                "%s in %s/%s", src, sessionDir,
+                                BRAINREC_HOST_RAW_DIR);
+                        allOk = false;
+                    }
                     logLine(log, logCtx, "brain_record_merge: %s merged by tick", dst);
                     continue;
                 }
@@ -791,23 +842,23 @@ static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
                         (unsigned)st->stale, (unsigned)st->missing);
             } else {
                 logLine(log, logCtx, "brain_record_merge: %s not merged (%s); "
-                        "the host files are kept beside it", btr,
-                        err[0] ? err : "replace failed");
+                        "the host files are kept in %s/", btr,
+                        err[0] ? err : "replace failed", BRAINREC_HOST_RAW_DIR);
                 allOk = false;
             }
         } else {
+            st->btrMissing = 1;
             logLine(log, logCtx, "brain_record_merge: %s has no %s; the host "
-                    "files are kept as they are", sessionDir, BRAINREC_FILENAME);
+                    "files are kept in %s/", sessionDir, BRAINREC_FILENAME,
+                    BRAINREC_HOST_RAW_DIR);
         }
+        /* Merged or not, the host files stay as they came. */
+        (void)merged;
         for (e = 0; e < nh; e++) {
-            if (merged) {
-                (void)SDL_RemovePath(hbr[e]);
-            } else {
-                char dst[1200];
-                const char *base = strrchr(hbr[e], '/');
-                base = base ? base + 1 : hbr[e];
-                snprintf(dst, sizeof dst, "%s/bothost_%s_%s", sessionDir, hn, base);
-                if (!moveFile(hbr[e], dst)) allOk = false;
+            if (!keepRaw(sessionDir, hn, hbr[e])) {
+                logLine(log, logCtx, "brain_record_merge: cannot keep %s in "
+                        "%s/%s", hbr[e], sessionDir, BRAINREC_HOST_RAW_DIR);
+                allOk = false;
             }
         }
     }
