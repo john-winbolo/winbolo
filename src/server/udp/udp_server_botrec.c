@@ -23,10 +23,15 @@
  *    - the server stages the files in
  *      debug_sessions/<block>/bothost_<host>.upload/ and merges
  *      them into the block (brainRecMergeDir) on a thread, one
- *      merge at a time, then ACKs; the host then deletes its
- *      copy. A block the server does not have (or still
- *      records) is kept beside it, in
- *      debug_sessions/<block>_bothost_<host>/, with a log line.
+ *      merge at a time, then ACKs. MERGED only when every
+ *      host file was read and filled entries; else FAILED with
+ *      the reason, and the host sends the block again later.
+ *      The host keeps its copy either way, marked uploaded on
+ *      MERGED. The uploaded files are kept as they came in
+ *      debug_sessions/<block>/bothost_raw/. A block the server
+ *      does not have (or still records) is kept beside it, in
+ *      debug_sessions/<block>_bothost_<host>/, with a log line,
+ *      and FAILED.
  *
  *  cleardebug deletes debug_sessions/ except the open block
  *  and has every host delete its recordings of this server:
@@ -112,6 +117,27 @@ static void recSend(int h, uint8_t op, uint8_t flags, uint8_t state,
     evt.u.botHostRec.flags = flags;
     evt.u.botHostRec.state = state;
     evt.u.botHostRec.a = a;
+    if (block != NULL) {
+        SDL_strlcpy(evt.u.botHostRec.block, block,
+                    sizeof(evt.u.botHostRec.block));
+    }
+    (void)serverBotHostSendEvent(h, &evt);
+}
+
+/* ACK a block. reason: BOT_HOST_REC_FAIL_*; skipped, unused: the host
+ * files that could not be read, and that filled no entry. */
+static void recSendAck(int h, uint8_t reason, uint32_t skipped,
+                       uint32_t unused, const char *block) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_HOST_REC;
+    evt.u.botHostRec.op = BOT_HOST_REC_OP_ACK;
+    evt.u.botHostRec.state = reason == BOT_HOST_REC_FAIL_NONE
+                                 ? BOT_HOST_REC_ACK_MERGED
+                                 : BOT_HOST_REC_ACK_FAILED;
+    evt.u.botHostRec.percent = reason;
+    evt.u.botHostRec.botsDone = (uint8_t)(skipped > 255u ? 255u : skipped);
+    evt.u.botHostRec.botsTotal = (uint8_t)(unused > 255u ? 255u : unused);
     if (block != NULL) {
         SDL_strlcpy(evt.u.botHostRec.block, block,
                     sizeof(evt.u.botHostRec.block));
@@ -298,12 +324,11 @@ void serverBotRecOnControl(int h, const ControlEvent *evt) {
                  * has no bytes. */
                 recResetUpload(hc);
                 if (evt->u.botHostRec.b != 0) {
-                    recSend(h, BOT_HOST_REC_OP_ACK, 0, BOT_HOST_REC_ACK_FAILED,
-                            0, block);
+                    recSendAck(h, BOT_HOST_REC_FAIL_BROKEN, 0, 0, block);
                     return;
                 }
-                recSend(h, BOT_HOST_REC_OP_ACK, 0, BOT_HOST_REC_ACK_SAVED, 0,
-                        block);
+                /* No bytes: nothing to merge, nothing to send again. */
+                recSendAck(h, BOT_HOST_REC_FAIL_NONE, 0, 0, block);
                 return;
             }
             hc->recDoneOwed = true;
@@ -529,8 +554,7 @@ static void recMergeStart(int h) {
     if (s_job.thread == NULL) {
         fprintf(stderr, "[bothost] cannot start the merge thread (%s); the "
                         "files stay in %s\n", SDL_GetError(), s_job.stage);
-        recSend(h, BOT_HOST_REC_OP_ACK, 0, BOT_HOST_REC_ACK_SAVED, 0,
-                hc->recBlock);
+        recSendAck(h, BOT_HOST_REC_FAIL_NO_THREAD, 0, 0, hc->recBlock);
         recResetUpload(hc);
         return;
     }
@@ -549,30 +573,35 @@ static void recMergeGzipLogs(const char *sessionDir) {
 static void recMergeFinish(void) {
     int h = s_job.h;
     BotHostConn *hc = &udpServer.botHosts[h];
+    uint8_t reason;
     SDL_WaitThread(s_job.thread, NULL);
     s_job.thread = NULL;
     recMergeGzipLogs(s_job.sessionDir);
+    reason = brainRecMergeVerdict(s_job.ok, &s_job.st);
     {
         char line[1400];
         snprintf(line, sizeof(line), "[bothost] merge of Bot Host \"%s\" into "
-                 "%s %s: %u host files used, %u skipped, %u frames, %u hosted "
-                 "entries (%u filled, %u a few thinks old, %u with no host "
-                 "data)", s_job.hostName, s_job.sessionDir,
+                 "%s %s: %u host files used (%u filled no entry), %u "
+                 "skipped, %u frames, %u hosted entries (%u filled, %u a few "
+                 "thinks old, %u with no host data); answer: %s",
+                 s_job.hostName, s_job.sessionDir,
                  s_job.ok ? "done" : "done in part",
                  (unsigned)s_job.st.hostFiles,
+                 (unsigned)s_job.st.hostFilesUnused,
                  (unsigned)s_job.st.hostFilesSkipped,
                  (unsigned)s_job.st.frames, (unsigned)s_job.st.markers,
                  (unsigned)s_job.st.filled, (unsigned)s_job.st.stale,
-                 (unsigned)s_job.st.missing);
+                 (unsigned)s_job.st.missing,
+                 reason == BOT_HOST_REC_FAIL_NONE
+                     ? "merged" : brainRecMergeFailText(reason));
         recMergeNote(s_job.sessionDir, line);
     }
-    /* The files are on the server either way: merged, or kept beside the
-     * session's own under bothost_<host>_ names. The host may delete its
-     * copy. */
+    /* The uploaded files stay in the session's bothost_raw/ either way.
+     * MERGED marks the block uploaded on the host; FAILED has it send the
+     * block again. The host keeps its copy in both cases. */
     if (hc->connected && hc->connId == s_job.connId) {
-        recSend(h, BOT_HOST_REC_OP_ACK, 0,
-                s_job.ok ? BOT_HOST_REC_ACK_MERGED : BOT_HOST_REC_ACK_SAVED, 0,
-                s_job.block);
+        recSendAck(h, reason, s_job.st.hostFilesSkipped,
+                   s_job.st.hostFilesUnused, s_job.block);
     }
 }
 
@@ -637,8 +666,7 @@ void serverBotRecService(ServerSim *sim, bool inLobby) {
                         (unsigned)hc->recDoneFiles,
                         (unsigned long long)hc->recBytes,
                         (unsigned)hc->recDoneBytes);
-                recSend(h, BOT_HOST_REC_OP_ACK, 0, BOT_HOST_REC_ACK_FAILED, 0,
-                        hc->recBlock);
+                recSendAck(h, BOT_HOST_REC_FAIL_BROKEN, 0, 0, hc->recBlock);
                 recResetUpload(hc);
             } else if (whole) {
                 hc->recDoneOwed = false;
@@ -647,8 +675,8 @@ void serverBotRecService(ServerSim *sim, bool inLobby) {
                                     "\"%s\" for %s are kept in %s: the server "
                                     "has no such finished session folder\n",
                             hc->name, hc->recBlock, hc->recStage);
-                    recSend(h, BOT_HOST_REC_OP_ACK, 0, BOT_HOST_REC_ACK_SAVED,
-                            0, hc->recBlock);
+                    recSendAck(h, BOT_HOST_REC_FAIL_NO_SESSION, 0, 0,
+                               hc->recBlock);
                     recResetUpload(hc);
                 } else {
                     hc->recMergeWant = true;

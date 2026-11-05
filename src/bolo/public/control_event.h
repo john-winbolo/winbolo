@@ -82,10 +82,25 @@
 #define BOT_HOST_REC_F_PACED     0x01u
 /* DONE and STATE flag: the host stopped recording for low disk. */
 #define BOT_HOST_REC_F_LOWDISK   0x10u
-/* ACK results, in state. */
-#define BOT_HOST_REC_ACK_MERGED  1  /* merged into the session folder */
-#define BOT_HOST_REC_ACK_SAVED   2  /* kept beside it: no such folder */
-#define BOT_HOST_REC_ACK_FAILED  3  /* not taken: send it again later */
+/* ACK results, in state. The host keeps its files in every case; only
+ * CLEAR deletes them. */
+#define BOT_HOST_REC_ACK_MERGED  1  /* every host file was read and filled
+                                     * entries: the host marks the block
+                                     * uploaded */
+#define BOT_HOST_REC_ACK_SAVED   2  /* older servers: kept beside the session;
+                                     * the host marks the block uploaded */
+#define BOT_HOST_REC_ACK_FAILED  3  /* not merged: the host keeps the block
+                                     * not uploaded and sends it again */
+/* ACK FAILED: the reason in percent, the host files that could not be read
+ * in botsDone, the host files that filled no entry in botsTotal. */
+#define BOT_HOST_REC_FAIL_NONE       0
+#define BOT_HOST_REC_FAIL_BROKEN     1  /* the upload came in broken */
+#define BOT_HOST_REC_FAIL_NO_SESSION 2  /* no such finished session folder */
+#define BOT_HOST_REC_FAIL_NO_THREAD  3  /* the merge could not start */
+#define BOT_HOST_REC_FAIL_MERGE      4  /* the merge stopped on an error */
+#define BOT_HOST_REC_FAIL_NO_BTR     5  /* the session has no brainrec.btr */
+#define BOT_HOST_REC_FAIL_UNREADABLE 6  /* a host file could not be read */
+#define BOT_HOST_REC_FAIL_NO_FILL    7  /* a host file filled no entry */
 #define BOT_HOST_REC_BLOCK_LEN   64
 
 #ifndef LOBBY_TEAM_NAME_LEN

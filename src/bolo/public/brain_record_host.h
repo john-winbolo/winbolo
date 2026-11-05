@@ -163,7 +163,21 @@ typedef struct {
     uint32_t hostRecords;  /* host records read */
     uint32_t hostFiles;    /* host files used */
     uint32_t hostFilesSkipped; /* host files that could not be read */
+    uint32_t hostFilesUnused;  /* host files read that filled no entry */
+    uint32_t btrMissing;   /* 1: host files came, the session has no .btr */
 } BrainRecMergeStats;
+
+/* The ACK a merge earns: BOT_HOST_REC_FAIL_NONE (merged) only when the
+ * merge worked, every host file was read and each one filled entries;
+ * else the BOT_HOST_REC_FAIL_* reason. ok: what brainRecMergeDir gave. */
+uint8_t brainRecMergeVerdict(bool ok, const BrainRecMergeStats *st);
+/* A short English text for a BOT_HOST_REC_FAIL_* reason. */
+const char *brainRecMergeFailText(uint8_t reason);
+
+/* The session subfolder that keeps every file a host uploaded, as it came:
+ * <session>/bothost_raw/<host>_<name>. */
+#define BRAINREC_HOST_RAW_DIR "bothost_raw"
+
 
 /* The input sequence distance a host record may lag the marker's last
  * input and still fill it (8 thinks). */
@@ -193,10 +207,12 @@ bool brainRecMergePrint2(const char *a, const char *b, const char *outPath,
 
 /* Merge one host's uploaded folder into a session folder:
  *   - its .hbr files into the session's brainrec.btr (checked, then
- *     replaced); with no brainrec.btr they are kept as files;
+ *     replaced);
  *   - print2_bot*.log present on both sides by ticks;
  *   - any other file moved in, renamed "bothost_<host>_<name>" when the
  *     session has a file of that name.
+ * The .hbr files and the host's copies of the print2 logs it merged are
+ * kept as they came in <session>/BRAINREC_HOST_RAW_DIR/, merged or not.
  * hostDir is removed when every step worked. log (may be NULL) gets one
  * line per notable step. */
 typedef void (*BrainRecMergeLogFn)(void *ctx, const char *line);

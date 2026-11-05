@@ -40,8 +40,10 @@
 #define REC_PACED_MS       200u
 #define REC_STATE_MS       250u
 #define REC_MAX_FAILS      3
-/* Written into a block folder that was sent but could not be deleted yet
- * (a file in it was still open): it is not sent again. */
+/* Written into a block folder the server merged: it is not sent again.
+ * The files stay; only CLEAR deletes them. */
+#define REC_UPLOADED_MARKER "uploaded.marker"
+/* The same, from hosts that deleted a block after it was sent. */
 #define REC_SENT_MARKER    "sent.marker"
 /* Written into a block that stopped early for low disk. */
 #define REC_LOWDISK_MARKER "lowdisk.marker"
@@ -557,19 +559,11 @@ static SDL_EnumerationResult SDLCALL upPickEntry(void *userdata,
     if (upSkipped(c->sv, fname)) return SDL_ENUM_CONTINUE;
     snprintf(path, sizeof(path), "%s/%s", c->sv->root, fname);
     if (!recIsDir(path)) return SDL_ENUM_CONTINUE;
+    /* Uploaded already: kept here, not sent again. */
+    snprintf(marker, sizeof(marker), "%s/%s", path, REC_UPLOADED_MARKER);
+    if (recIsFile(marker)) return SDL_ENUM_CONTINUE;
     snprintf(marker, sizeof(marker), "%s/%s", path, REC_SENT_MARKER);
-    if (recIsFile(marker)) {
-        /* Sent and merged, but a file was still open when it was to be
-         * deleted (the brains' log writer keeps its print2 logs open until
-         * the host stops). Try again now; the next host run gets the rest. */
-        uint64_t bytes = 0;
-        uint32_t files = 0;
-        if (brainRecRemoveTree(s_recRoot, path, &bytes, &files)) {
-            fprintf(stderr, "[bothost] sent block %s deleted here (%.1f MB)\n",
-                    fname, (double)bytes / (1024.0 * 1024.0));
-        }
-        return SDL_ENUM_CONTINUE;
-    }
+    if (recIsFile(marker)) return SDL_ENUM_CONTINUE;
     /* The oldest name first: the names start with the date and time. */
     if (c->found[0] == '\0' || strcmp(fname, c->found) < 0) {
         SDL_strlcpy(c->found, fname, sizeof(c->found));
@@ -597,7 +591,10 @@ static SDL_EnumerationResult SDLCALL upListEntry(void *userdata,
         sv->upLowDisk = true;
         return SDL_ENUM_CONTINUE;
     }
-    if (strcmp(fname, REC_SENT_MARKER) == 0) return SDL_ENUM_CONTINUE;
+    if (strcmp(fname, REC_SENT_MARKER) == 0 ||
+        strcmp(fname, REC_UPLOADED_MARKER) == 0) {
+        return SDL_ENUM_CONTINUE;
+    }
     if (!brainRecNameOk(fname, true)) return SDL_ENUM_CONTINUE;
     snprintf(path, sizeof(path), "%s/%s", c->dir, fname);
     if (!SDL_GetPathInfo(path, &pi) || pi.type != SDL_PATHTYPE_FILE) {
@@ -707,22 +704,21 @@ static bool upStart(int srv) {
     return true;
 }
 
-/* Delete a sent block; if a file in it is still open, mark it sent and try
- * again later. */
-static void upDeleteBlock(RecSrv *sv, const char *block) {
+/* The server merged a block: mark it uploaded so it is not sent again.
+ * Its files stay here. */
+static void upMarkUploaded(RecSrv *sv, const char *block, uint64_t bytes) {
     char dir[900];
-    uint64_t bytes = 0;
-    uint32_t files = 0;
     snprintf(dir, sizeof(dir), "%s/%s", sv->root, block);
-    if (!brainRecRemoveTree(s_recRoot, dir, &bytes, &files)) {
-        if (recIsDir(dir)) recTouch(dir, REC_SENT_MARKER);
-        fprintf(stderr, "[bothost] %s was sent but not all of it could be "
-                        "deleted yet (a log is still open); it is not sent "
-                        "again, and is deleted later\n", dir);
-        return;
+    if (!recIsDir(dir)) return;
+    recTouch(dir, REC_UPLOADED_MARKER);
+    if (bytes > 0) {
+        fprintf(stderr, "[bothost] block %s copied to %s and kept here (%.1f "
+                        "MB in %s)\n", block, sv->key,
+                (double)bytes / (1024.0 * 1024.0), dir);
+    } else {
+        fprintf(stderr, "[bothost] block %s copied to %s and kept here (%s)\n",
+                block, sv->key, dir);
     }
-    fprintf(stderr, "[bothost] block %s sent to %s and deleted here (%.1f "
-                    "MB)\n", block, sv->key, (double)bytes / (1024.0 * 1024.0));
 }
 
 /* Send the next piece. */
@@ -809,20 +805,25 @@ static void srvAck(int srv, const ControlEvent *evt) {
         /* An answer to an upload of an earlier connection. */
         if ((res == BOT_HOST_REC_ACK_MERGED || res == BOT_HOST_REC_ACK_SAVED) &&
             !(sv->open && strcmp(block, sv->block) == 0)) {
-            upDeleteBlock(sv, block);
+            upMarkUploaded(sv, block, 0);
         }
         return;
     }
     if (res == BOT_HOST_REC_ACK_MERGED || res == BOT_HOST_REC_ACK_SAVED) {
+        uint64_t bytes = sv->total;
         fprintf(stderr, "[bothost] %s %s block %s\n", sv->key,
                 res == BOT_HOST_REC_ACK_MERGED ? "merged" : "kept", block);
         upReset(sv);
-        upDeleteBlock(sv, block);
+        upMarkUploaded(sv, block, bytes);
         sv->fails = 0;
         return;
     }
-    fprintf(stderr, "[bothost] %s did not take block %s; it is sent again "
-                    "later\n", sv->key, block);
+    fprintf(stderr, "[bothost] %s did not merge block %s: %s (%u host files "
+                    "could not be read, %u filled no entry); it stays here, "
+                    "not marked uploaded, and is sent again later\n", sv->key,
+            block, brainRecMergeFailText(evt->u.botHostRec.percent),
+            (unsigned)evt->u.botHostRec.botsDone,
+            (unsigned)evt->u.botHostRec.botsTotal);
     if (++sv->fails >= REC_MAX_FAILS) {
         if (sv->skipCount < 8) {
             SDL_strlcpy(sv->skipBlocks[sv->skipCount++], block,
