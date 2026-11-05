@@ -3201,7 +3201,10 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
 *  sim   - Game simulation
 *  mx    - Map X Co-ordinate
 *  my    - Map Y Co-ordinate
-*  dir   - Tank facing direction (0-15)
+*  dir   - Tank facing angle in bradians (0-255). The
+*          top four bits pick one of the 16 directions.
+*          Callers snap it first (utilGet16Dir); a raw
+*          angle would round down, not to the nearest.
 *********************************************************/
 void tankNearMines(GameSim *sim, BYTE mx, BYTE my, BYTE dir) {
   map *mp = &sim->mp;
@@ -3254,8 +3257,10 @@ void tankNearMines(GameSim *sim, BYTE mx, BYTE my, BYTE dir) {
     }
   }
 
-  /* Check 3 forward cells */
-  BYTE d = dir & 0x0F;
+  /* Check 3 forward cells. The callers pass the tank's angle snapped
+   * to a multiple of 16, so the low four bits are always zero and
+   * the direction is in the high four. */
+  BYTE d = (BYTE)(dir >> 4);
   for (int i = 0; i < 3; i++) {
     BYTE fx = (BYTE)(mx + forwardDX[d][i]);
     BYTE fy = (BYTE)(my + forwardDY[d][i]);
