@@ -226,7 +226,17 @@ int run_brain_gc_slack_heap_limits(void) {
     for (int i = 0; i < 2000 && !r.cycleEnd; i++) {
         brainGcAfterThink(L, 0, 0, &r);
         if (r.cycleEnd) break;
-        UT_CHECK(r.forced && !r.finished);
+        if (sawForced && !r.forced) {
+            /* The sweep took the heap back under the force line before the
+             * cycle ended: the rest of the cycle waits for free time. */
+            UT_CHECK_MSG(r.steps == 0 && r.heapBytes < forceAt,
+                         "think %d: not forced, %u steps, heap %zu force %zu",
+                         i, r.steps, r.heapBytes, forceAt);
+            break;
+        }
+        UT_CHECK_MSG(r.forced && !r.finished, "think %d: forced %d finished "
+                     "%d heap %zu force %zu", i, (int)r.forced,
+                     (int)r.finished, r.heapBytes, forceAt);
         UT_CHECK(r.steps > 0);
         /* One step past the line at most; a loaded test machine may be
          * slower, so the bound is loose. */
@@ -235,7 +245,8 @@ int run_brain_gc_slack_heap_limits(void) {
         sawForced = true;
     }
     UT_CHECK(sawForced);
-    UT_CHECK(r.cycleEnd);
+    UT_CHECK(lua_gc(L, LUA_GCISRUNNING, 0) == 0);
+    UT_CHECK(bgFinishCycle(L, &r));
     UT_CHECK(lua_gc(L, LUA_GCISRUNNING, 0) == 0);
 
     /* Past the finish line: one call ends the cycle whatever it costs. */
