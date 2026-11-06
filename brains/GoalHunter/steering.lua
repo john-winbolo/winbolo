@@ -230,7 +230,7 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
              blocked and 255 or 100, blocked and 50 or 255, 50,
              blocked and 180 or 80)
     -- Detail: full ordered sequence — accessible via D key click
-    if viz.detail_circle then
+    if viz.detail_live then
       local did = "shot_path"
       local hdr = string.format("Shot path: from=(%d,%d) to=(%d,%d) result=%s",
         origin_mx, origin_my, target_mx, target_my, blocked and "BLOCKED" or "CLEAR")
@@ -2252,17 +2252,23 @@ local function attack_pill_steer(state, world, info, goal)
     if BRAIN_DEBUG_MODE and viz.is_on("charge_stop_pred") then
       local _sx2, _sy2, _trace = cpf.predict_stop(info.tankx, info.tanky, ang_f, espeed, tcap, true)
       print2(string.format("STOPSIM_REG t=%d stop=(%d,%d) steps=%s", state.tick, _sx2, _sy2, _trace and #_trace or "nil"))
-      viz.detail_circle("stopsim_stop", _sx2 / 256, _sy2 / 256, 0.5, string.format("STOP %s", stop_hits and "HIT" or "SHORT"))
-      viz.detail_text("stopsim_stop", string.format("from=(%d,%d) ang=%.1f spd=%d cap=%d", info.tankx, info.tanky, ang_f, info.speed, tcap))
-      viz.detail_text("stopsim_stop", string.format("stop=(%d,%d)  tank_to_pill=%d  steps=%d", _sx2, _sy2, tank_to_pill, _trace and #_trace or 0))
+      -- Detail entries are read only by BrainTest (viz.detail_live).
+      local _dl = viz.detail_live
+      if _dl then
+        viz.detail_circle("stopsim_stop", _sx2 / 256, _sy2 / 256, 0.5, string.format("STOP %s", stop_hits and "HIT" or "SHORT"))
+        viz.detail_text("stopsim_stop", string.format("from=(%d,%d) ang=%.1f spd=%d cap=%d", info.tankx, info.tanky, ang_f, info.speed, tcap))
+        viz.detail_text("stopsim_stop", string.format("stop=(%d,%d)  tank_to_pill=%d  steps=%d", _sx2, _sy2, tank_to_pill, _trace and #_trace or 0))
+      end
       local _cum = 0
       if _trace then for _i, _s in ipairs(_trace) do
         _cum = _cum + _s.dist
-        local _line = string.format("[%2d] spd=%.2f -decel=%.2f-> %.2f  moved=%d resid=%d cum=%d", _i, _s.speed, _s.decel, _s.after, _s.dist, _s.resid, _cum)
-        viz.detail_text("stopsim_stop", _line)
-        -- one hoverable marker per step at its predicted position
-        viz.detail_circle("stopsim_" .. _i, _s.x / 256, _s.y / 256, 0.25, string.format("step %d  moved=%d", _i, _s.dist))
-        viz.detail_text("stopsim_" .. _i, _line)
+        if _dl then
+          local _line = string.format("[%2d] spd=%.2f -decel=%.2f-> %.2f  moved=%d resid=%d cum=%d", _i, _s.speed, _s.decel, _s.after, _s.dist, _s.resid, _cum)
+          viz.detail_text("stopsim_stop", _line)
+          -- one hoverable marker per step at its predicted position
+          viz.detail_circle("stopsim_" .. _i, _s.x / 256, _s.y / 256, 0.25, string.format("step %d  moved=%d", _i, _s.dist))
+          viz.detail_text("stopsim_" .. _i, _line)
+        end
         viz.rect("charge_stop_pred", _s.x / 256 - 0.12, _s.y / 256 - 0.12, _s.x / 256 + 0.12, _s.y / 256 + 0.12, 255, 200, 60, 200, true)
       end end
     end
