@@ -1615,6 +1615,12 @@ M.ANGRY_REFUEL_THRESHOLD   = 0.6   -- pill anger above which we flee the base
 -- Goal replan scheduling
 -- -------------------------------------------------------------------------
 M.GOAL_REPLAN_INTERVAL     = 50    -- ticks between goal decisions
+-- 2026-11-06: which tick of the GOAL_REPLAN_INTERVAL a bot replans on.
+-- "slot" = game tick phase slot * INTERVAL / 16 (rounded) from the bot's own
+-- player slot, so bots in different slots replan on different ticks.
+-- "random" (KEEL) = one math.random draw at Brain.open; on LuaJIT with no
+-- seed set every bot draws the same value, so all bots replan together.
+M.REPLAN_OFFSET_MODE       = "slot"
 M.WARMUP_CAPTURE_MAX_COST  = 150   -- warm-up exemption: a capture_pill (dead pill pickup) priced at or below this wins even before the pools are warm. ~13 tiles by sea cost 34; a cross-map pickup is far above this. (20260831_173448 bot3: respawned in a boat, cost-34 water pickup lost to the explore fallback, landed, pills unreachable thereafter.)
 M.WARMUP_MIN_REAL_GOALS    = 10   -- the rolling pool-eval warms up over ~14-49 ticks; until this many finite-cost (pickable) candidates exist across all pools the bot rides the explore fallback. Once reached: exit explore immediately (don't wait out GOAL_MIN_COMMIT) and stop showing the warmup reject row in the WINNERS panel.
 M.GOAL_POOL_COUNT          = 10    -- number of pool evaluators to spread across ticks
@@ -6280,6 +6286,9 @@ M.PRESETS = {
     CAPACITY_KILLED_CUT           = 3,
     CAPACITY_KILLED_AVOID         = 200,
     CAPACITY_KILL_STREAK_N        = 1,
+    --   2026-11-06: replan phase from the bot's player slot.  KEEL used the
+    --   math.random draw (the same value on every bot under LuaJIT).
+    REPLAN_OFFSET_MODE            = "random",
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and

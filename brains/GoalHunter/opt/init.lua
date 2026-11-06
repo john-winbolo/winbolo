@@ -1047,8 +1047,22 @@ function Brain.open(info)
   -- Bit-for-bit unchanged at tick_seed 0, i.e. for every bot created at game
   -- start; only a bot created mid-game (a Survival wave, a scenario spawn_bot)
   -- moves, and it moves back to what it did before the seeding.
-  state.replan_offset     = (math.random(0, C.GOAL_REPLAN_INTERVAL - 1)
-                             - state.tick_seed) % C.GOAL_REPLAN_INTERVAL
+  --
+  -- REPLAN_OFFSET_MODE (2026-11-06). "random" (KEEL) is the draw above. On
+  -- LuaJIT with no seed set, every brain starts math.random from the same
+  -- state, so every bot draws the same offset and all bots replan on the
+  -- same tick; that replan tick is where most budget kills land. "slot" puts
+  -- the replan on game time at slot * INTERVAL / 16 (rounded), so bots in
+  -- different player slots never replan on the same tick. The draw is made
+  -- in both modes, so every later math.random value is the same as before.
+  local replan_draw = math.random(0, C.GOAL_REPLAN_INTERVAL - 1)
+  if C.REPLAN_OFFSET_MODE == "slot" then
+    local slot = info.player_number or 0
+    state.replan_offset = math.floor(slot * C.GOAL_REPLAN_INTERVAL / 16 + 0.5)
+                          % C.GOAL_REPLAN_INTERVAL
+  else
+    state.replan_offset = (replan_draw - state.tick_seed) % C.GOAL_REPLAN_INTERVAL
+  end
   state.goal_set_tick     = state.tick  -- tick when current goal was chosen (for commitment hysteresis). Seeded to birth, not 0: `now - goal_set_tick` is "how long we've held this goal", so a raw 0 would read as "held it forever" on a mid-game bot's first tick and skip the commitment window entirely.
   state.goal_cooldowns    = {}   -- abandoned goals: { [key] = expiry_tick }
   state.goal_history      = {}   -- circular buffer of last N picked goals (oscillation detection)
