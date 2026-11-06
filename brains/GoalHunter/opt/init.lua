@@ -873,6 +873,17 @@ function Brain.open(info)
   else
     collectgarbage("generational", 10, 100)
   end
+  -- JIT trace cache size (C.JIT_MAXTRACE / C.JIT_MAXMCODE). The host set
+  -- maxmcode=4096 before the brain loaded; this replaces it for this bot's
+  -- lua_State only. LuaJIT reads both limits when it makes the next trace or
+  -- mcode area, so the traces made while the modules loaded are kept.
+  if jit and jit.opt and jit.opt.start then
+    jit.opt.start("maxtrace=" .. tostring(C.JIT_MAXTRACE),
+                  "maxmcode=" .. tostring(C.JIT_MAXMCODE))
+  end
+  -- Debug runs count trace cache flushes. JIT_FLUSH n= is the running count
+  -- for this bot; a flush on a tick that never reaches print2.flush (dead,
+  -- paused) loses its line, so read the largest n in the log.
   -- Register every viz_id with the host's V dialog. No-op when
   -- braintest_viz_register isn't bound (e.g. running under WinBolo
   -- client); the brain still emits overlay commands but they're
