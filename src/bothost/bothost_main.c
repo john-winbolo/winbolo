@@ -1502,6 +1502,13 @@ static void hostThinkJob(int index, void *userData) {
             hs->poolDoneExpr = hs->poolExpr;
         }
     }
+
+    /* Lua collection in the time left before the think deadline, as the
+     * server does it (bot_manager.c runBotThinkJob): after the think and the
+     * pool capture, outside lastThinkMs, ending 2 ms before the deadline. */
+    if (!hs->job.needRemove) {
+        botRunnerCollectGarbage(&hs->bot);
+    }
 }
 
 static void seatSendStats(HostSeat *hs) {
