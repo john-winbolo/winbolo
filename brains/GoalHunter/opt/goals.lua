@@ -7606,6 +7606,121 @@ local function tc_formula(t, travel, adj)
     t.n_enemy or 0, t.n_ally or 0)
 end
 
+do -- TCX and find_cover_tile share this block: the main chunk is at the
+   -- 200-local limit, so TCX must not stay in scope after it.
+-- TCX.scan_ctx / TCX.safety: the same scorer as tc_safety, split in two
+-- for the find_cover_tile scan. Everything that does not depend on the
+-- candidate tile (the pill list, the enemy tanks and their distance to us,
+-- the allied tank tiles, the weights) is read ONCE per scan into `ctx`;
+-- TCX.safety then prices one tile from it. The loops, the order of the
+-- sums and the order the fields go into `t` are the same as tc_safety, so
+-- the result is the same number for number. tc_safety stays the one copy
+-- for the other caller (the sticky re-score in eval_take_cover).
+local TCX = {}
+function TCX.scan_ctx(state, world, info, tmx, tmy)
+  local ctx = {}
+  local ids = state._tc_pill_ids or {}
+  local wp = world.pills or {}
+  local pmx, pmy, phot, pmul = {}, {}, {}, {}
+  local np = 0
+  for i = 1, #ids do
+    local p = wp[ids[i]]
+    if p then
+      np = np + 1
+      pmx[np], pmy[np] = p.mx, p.my
+      local hot = (p.anger or 0) >= C.HEATED_ANGER
+      phot[np] = hot
+      pmul[np] = hot and C.IMD_COVER_HEATED_MULT or 1
+    end
+  end
+  ctx.pn, ctx.pmx, ctx.pmy, ctx.phot, ctx.pmul = np, pmx, pmy, phot, pmul
+  ctx.cap = (C.IMD_COVER_MAX or 30) / (C.IMD_COVER_PER_UNIT or 10)
+
+  local emx, emy, edt = {}, {}, {}
+  local ne = 0
+  for _, et in ipairs((state.perc and state.perc.enemy_tanks) or {}) do
+    ne = ne + 1
+    emx[ne], emy[ne] = et.mx, et.my
+    edt[ne] = U.edist(tmx, tmy, et.mx, et.my)
+  end
+  ctx.en, ctx.emx, ctx.emy, ctx.edt = ne, emx, emy, edt
+
+  local amx, amy = {}, {}
+  local na = 0
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == OBJECT_TANK and bit.band(ob.info, OBJECT_HOSTILE) == 0 then
+      na = na + 1
+      amx[na], amy[na] = bit.rshift(ob.x, 8), bit.rshift(ob.y, 8)
+    end
+  end
+  ctx.an, ctx.amx, ctx.amy = na, amx, amy
+
+  ctx.w_cover = C.TAKE_COVER_W_COVER or 8
+  ctx.w_expo  = C.TAKE_COVER_W_EXPO  or 0.15
+  ctx.w_enemy = C.TAKE_COVER_W_ENEMY or 20
+  ctx.w_ally  = C.TAKE_COVER_W_ALLY  or 4
+  return ctx
+end
+
+function TCX.safety(ctx, mx, my)
+  local t = { mx = mx, my = my }
+  local cover_weight, odds_weight, edist = danger.cover_weight, danger.odds_weight, U.edist
+
+  local units, n_cover, n_hot = 0, 0, 0
+  local pmx, pmy, phot, pmul = ctx.pmx, ctx.pmy, ctx.phot, ctx.pmul
+  for i = 1, ctx.pn do
+    local w = cover_weight(edist(mx, my, pmx[i], pmy[i]))
+    if w > 0 then
+      units = units + w * pmul[i]
+      n_cover = n_cover + 1
+      if phot[i] then n_hot = n_hot + 1 end
+    end
+  end
+  local cap = ctx.cap
+  if units > cap then units = cap; t.cover_capped = cap end
+  t.cover = units
+  t.cover_n = n_cover
+  t.cover_hot = n_hot
+
+  t.expo = threat.pill_at(mx, my) or 0
+
+  local en, al, n_en, n_al = 0, 0, 0, 0
+  local closer = false
+  local emx, emy, edt = ctx.emx, ctx.emy, ctx.edt
+  for i = 1, ctx.en do
+    local d = edist(mx, my, emx[i], emy[i])
+    local w = odds_weight(d)
+    if w > 0 then en = en + w; n_en = n_en + 1 end
+    if d < edt[i] then closer = true end
+  end
+  local amx, amy = ctx.amx, ctx.amy
+  for i = 1, ctx.an do
+    local w = odds_weight(edist(mx, my, amx[i], amy[i]))
+    if w > 0 then al = al + w; n_al = n_al + 1 end
+  end
+  t.enemy = en; t.n_enemy = n_en
+  t.ally  = al; t.n_ally  = n_al
+  t.closer = closer
+
+  t.safety = ctx.w_cover * t.cover
+           - ctx.w_expo * t.expo
+           - ctx.w_enemy * t.enemy
+           + ctx.w_ally * t.ally
+  return t.safety, t
+end
+
+-- Ring offsets for find_cover_tile: radius x direction, in scan order. The
+-- same expression the scan used inline, worked out once at load.
+TCX.rings = {}
+for _, r in ipairs({ 3, 6, 9, 12 }) do
+  local src = "ring" .. r
+  for i = 0, 7 do
+    local ang = i * math.pi / 4
+    TCX.rings[#TCX.rings + 1] = { math.floor(r * math.sin(ang) + 0.5),
+                                math.floor(r * math.cos(ang) + 0.5), src }
+  end
+end
+
 -- M.find_cover_tile — the scan.  Rings 3/6/9/12 x 8 directions around the
 -- tank, plus the 8 neighbours of every own/allied deployed pill in range and
 -- every friendly base tile in range.  Returns:
@@ -7640,7 +7755,9 @@ function M.find_cover_tile(state, world, info, tmx, tmy)
   state._tc_pill_ids = ids
 
   local boat_flag = info.inboat and 1 or 0
-  local _, here = tc_safety(state, world, info, tmx, tmy, tmx, tmy)
+  local ctx = TCX.scan_ctx(state, world, info, tmx, tmy)
+  local tc_safety_ctx = TCX.safety
+  local _, here = tc_safety_ctx(ctx, tmx, tmy)
   here.here = true
 
   local seen  = {}
@@ -7666,7 +7783,7 @@ function M.find_cover_tile(state, world, info, tmx, tmy)
       cands[#cands + 1] = { mx = cx, my = cy, src = src, reject = "unreachable" }
       return
     end
-    local s, t = tc_safety(state, world, info, cx, cy, tmx, tmy)
+    local s, t = tc_safety_ctx(ctx, cx, cy)
     t.travel = trav
     t.src = src
     t.adj = s - (C.TAKE_COVER_W_TRAVEL or 0.6) * trav
@@ -7678,12 +7795,10 @@ function M.find_cover_tile(state, world, info, tmx, tmy)
   end
 
   -- Rings around the tank (fixed radius x direction order = deterministic).
-  for _, r in ipairs({ 3, 6, 9, 12 }) do
-    for i = 0, 7 do
-      local ang = i * math.pi / 4
-      consider(tmx + math.floor(r * math.sin(ang) + 0.5),
-               tmy - math.floor(r * math.cos(ang) + 0.5), "ring" .. r)
-    end
+  local rings = TCX.rings
+  for i = 1, #rings do
+    local o = rings[i]
+    consider(tmx + o[1], tmy - o[2], o[3])
   end
   -- The 8 neighbours of every own/allied deployed pill in range: standing
   -- beside our own pill is the cheapest cover on the map.
@@ -7692,10 +7807,11 @@ function M.find_cover_tile(state, world, info, tmx, tmy)
   for i = 1, #ids do
     local p = wp[ids[i]]
     if p and U.mdist(tmx, tmy, p.mx, p.my) <= pr then
+      local src = "pill" .. tostring(ids[i])
       for dy = -1, 1 do
         for dx = -1, 1 do
           if dx ~= 0 or dy ~= 0 then
-            consider(p.mx + dx, p.my + dy, "pill" .. tostring(ids[i]))
+            consider(p.mx + dx, p.my + dy, src)
           end
         end
       end
@@ -7749,6 +7865,7 @@ function M.find_cover_tile(state, world, info, tmx, tmy)
   }
   return here, best, best and best.travel or nil, cands, reject
 end
+end -- do (TCX)
 
 -- eval_take_cover — pool 14.  ALWAYS returns an entry (never nil).
 local function eval_take_cover(state, world, info, tmx, tmy, boat, ammo)
@@ -11934,13 +12051,50 @@ function M.build_eval_queue(state, world, info)
   -- candidates get a full eval within the per-tick step budget, so tie
   -- order is behaviour — make it a total order, immune to any upstream
   -- ordering perturbation (determinism hardening, 20260831).
-  table.sort(queue, function(a, b)
-    local da = (a.obj.mx - tmx)^2 + (a.obj.my - tmy)^2
-    local db = (b.obj.mx - tmx)^2 + (b.obj.my - tmy)^2
-    if da ~= db then return da < db end
-    if a.pool ~= b.pool then return a.pool < b.pool end
-    return (a.id or -1) < (b.id or -1)
-  end)
+  --
+  -- Fast path, same order: when every (distance, pool, id) fits in one
+  -- whole number (distance whole and below 2^18, pool 0..63, id -1..2^20-2)
+  -- and no two rows share a number, a plain number sort gives exactly the
+  -- order of the comparator below, without a Lua call per compare. If any
+  -- row does not fit, or two rows share a number, the comparator sort runs
+  -- as before.
+  local nq = #queue
+  local qkeys, qrow = nil, nil
+  if nq >= 2 then
+    qkeys, qrow = {}, {}
+    for i = 1, nq do
+      local item = queue[i]
+      local o = item.obj
+      local mx, my = o and o.mx, o and o.my
+      local pool, id = item.pool, item.id or -1
+      if type(mx) ~= "number" or type(my) ~= "number"
+         or type(pool) ~= "number" or type(id) ~= "number" then
+        qkeys = nil; break
+      end
+      local d = (mx - tmx)^2 + (my - tmy)^2
+      if d ~= d or d < 0 or d >= 262144 or d % 1 ~= 0
+         or pool < 0 or pool > 63 or pool % 1 ~= 0
+         or id < -1 or id > 1048574 or id % 1 ~= 0 then
+        qkeys = nil; break
+      end
+      local key = (d * 64 + pool) * 1048576 + (id + 1)
+      if qrow[key] then qkeys = nil; break end
+      qrow[key] = item
+      qkeys[i] = key
+    end
+  end
+  if qkeys then
+    table.sort(qkeys)
+    for i = 1, nq do queue[i] = qrow[qkeys[i]] end
+  else
+    table.sort(queue, function(a, b)
+      local da = (a.obj.mx - tmx)^2 + (a.obj.my - tmy)^2
+      local db = (b.obj.mx - tmx)^2 + (b.obj.my - tmy)^2
+      if da ~= db then return da < db end
+      if a.pool ~= b.pool then return a.pool < b.pool end
+      return (a.id or -1) < (b.id or -1)
+    end)
+  end
 
   -- Prioritize the current goal's target: move it to the front of the queue
   -- so step_eval_queue always refreshes its score first next cycle. This
