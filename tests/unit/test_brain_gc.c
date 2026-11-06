@@ -97,8 +97,12 @@ static bool bgGarbage(lua_State *L, int kb) {
     return true;
 }
 
-/* Call after "thinks" with a large deadline until a cycle ends. */
+/* Call after "thinks" with a large deadline until a cycle ends. `r` holds the
+ * result of the call before: when that call already ended the cycle, no new
+ * cycle is wanted (the heap sits at the base), so the loop would wait for
+ * nothing. Count that cycle and return. */
 static bool bgFinishCycle(lua_State *L, BrainGcResult *r) {
+    if (r->cycleEnd) return true;
     for (int i = 0; i < 1000; i++) {
         brainGcAfterThink(L, bgCounterIn(50.0), 0, r);
         if (r->cycleEnd) return true;
@@ -258,32 +262,40 @@ int run_brain_gc_slack_step_time(void) {
     lua_gc(L, LUA_GCSETSTEPMUL, 400);   /* GoalHunter's C.GC_STEPMUL */
     lua_gc(L, LUA_GCCOLLECT, 0);
     lua_gc(L, LUA_GCSTOP, 0);
-    UT_CHECK(bgGarbage(L, 8192));
-
-    /* Time each lua_gc(LUA_GCSTEP, BRAIN_GC_STEP_KB) through a whole cycle. */
-    for (;;) {
-        uint64_t t0 = SDL_GetPerformanceCounter();
-        int end = lua_gc(L, LUA_GCSTEP, BRAIN_GC_STEP_KB);
-        uint64_t t1 = SDL_GetPerformanceCounter();
-        if (n < (int)(sizeof(times) / sizeof(times[0]))) {
-            times[n++] = (double)(t1 - t0) * 1000.0 / freq;
+    /* Two cycles: a long step in both at the same place comes from the heap
+     * shape; one only in the first comes from first-touch costs. */
+    for (int cyc = 0; cyc < 2; cyc++) {
+        n = 0;
+        UT_CHECK(bgGarbage(L, 8192));
+        /* Time each lua_gc(LUA_GCSTEP, BRAIN_GC_STEP_KB) through a cycle. */
+        for (;;) {
+            uint64_t t0 = SDL_GetPerformanceCounter();
+            int end = lua_gc(L, LUA_GCSTEP, BRAIN_GC_STEP_KB);
+            uint64_t t1 = SDL_GetPerformanceCounter();
+            if (n < (int)(sizeof(times) / sizeof(times[0]))) {
+                times[n++] = (double)(t1 - t0) * 1000.0 / freq;
+            }
+            if (end) break;
         }
-        if (end) break;
-    }
-    lua_gc(L, LUA_GCSTOP, 0);
-    {
-        double sum = 0.0, mx = 0.0;
-        int over = 0;
-        for (int i = 0; i < n; i++) {
-            sum += times[i];
-            if (times[i] > mx) mx = times[i];
-            if (times[i] > 0.25) over++;
+        lua_gc(L, LUA_GCSTOP, 0);
+        {
+            double sum = 0.0, mx = 0.0;
+            int over = 0, mxAt = 0;
+            for (int i = 0; i < n; i++) {
+                sum += times[i];
+                if (times[i] > mx) { mx = times[i]; mxAt = i; }
+                if (times[i] > 0.25) over++;
+            }
+            /* mxAt says where the long step falls: early in the mark phase
+             * (one large table is marked in one go) or near the atomic
+             * phase. */
+            fprintf(stderr, "brain_gc_slack_step_time: cycle %d heap %zu KB, "
+                    "%d steps of %d KB, cycle %.2f ms, step mean %.4f ms max "
+                    "%.3f ms at step %d, %d over 0.25 ms\n", cyc + 1,
+                    bgHeap(L) / 1024u, n, BRAIN_GC_STEP_KB, sum, sum / n, mx,
+                    mxAt, over);
+            UT_CHECK_MSG(sum / n < 0.25, "mean step %.3f ms", sum / n);
         }
-        fprintf(stderr, "brain_gc_slack_step_time: heap %zu KB, %d steps of "
-                "%d KB, cycle %.2f ms, step mean %.4f ms max %.3f ms, "
-                "%d over 0.25 ms\n", bgHeap(L) / 1024u, n, BRAIN_GC_STEP_KB,
-                sum, sum / n, mx, over);
-        UT_CHECK_MSG(sum / n < 0.25, "mean step %.3f ms", sum / n);
     }
 done:
     lua_close(L);
