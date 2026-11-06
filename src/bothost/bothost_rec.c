@@ -368,30 +368,73 @@ void hostRecSeatGone(int idx) {
     memset(rs, 0, sizeof(*rs));
 }
 
+/* What srv's recording of a seat takes this tick: false when nothing
+ * records. recording: a block is open (else the -brain-debug ring before
+ * the OPEN). */
+static bool srvRecPlan(const RecSrv *sv, bool debug, bool *recording,
+                       uint8_t *flags, uint8_t *poolMode) {
+    *recording = sv->up && sv->open && !sv->lowDisk;
+    if (!*recording && !(sv->up && debug && !s_diskLow)) return false;
+    if (*recording) {
+        *flags = sv->flags;
+        *poolMode = sv->poolMode;
+    } else {
+        /* Before the OPEN: what -brain-debug records by default. */
+        *flags = BOT_HOST_REC_F_VIZ | BOT_HOST_REC_F_POOL;
+        *poolMode = 1;
+    }
+    return true;
+}
+
+/* The two pool expressions. Fixed pointers, so a caller can compare
+ * them (hostRecSeatThink checks which one the seat's worker used). */
+static const char *const kPoolExprJson =
+    "return brain.get_pool_breakdown_json()";
+static const char *const kPoolExprRaw =
+    "return (brain.get_pool_breakdown_raw"
+    " or brain.get_pool_breakdown_json)()";
+
 const char *hostRecPoolExpr(uint8_t flags) {
     /* The raw capture only when the server says it reads it; a brain
      * without the raw function gives JSON in that case too. */
-    if (flags & BOT_HOST_REC_F_POOL_RAW) {
-        return "return (brain.get_pool_breakdown_raw"
-               " or brain.get_pool_breakdown_json)()";
-    }
-    return "return brain.get_pool_breakdown_json()";
+    return (flags & BOT_HOST_REC_F_POOL_RAW) ? kPoolExprRaw : kPoolExprJson;
+}
+
+const char *hostRecSeatPoolPlan(int srv, bool debug, uint8_t *poolMode) {
+    const RecSrv *sv = recSrv(srv);
+    bool recording;
+    uint8_t flags = 0, mode = 0;
+    *poolMode = 0;
+    if (!s_init || sv == NULL) return NULL;
+    if (!srvRecPlan(sv, debug, &recording, &flags, &mode)) return NULL;
+    if (!(flags & BOT_HOST_REC_F_POOL) || mode == 0) return NULL;
+    *poolMode = mode;
+    return hostRecPoolExpr(flags);
+}
+
+bool hostRecPoolWanted(uint8_t poolMode, uint32_t seq, int rrIndex,
+                       int rrCount) {
+    if (poolMode == 0) return false;
+    return poolMode == 2 ||
+           (rrCount > 0 && (int)((seq / 2u) % (uint32_t)rrCount) == rrIndex);
 }
 
 void hostRecSeatThink(int idx, int srv, uint8_t slot, uint16_t placeGen,
                       uint32_t seq, uint32_t estTick, float thinkMs,
                       struct lua_State *L, const OverlayCmdBuffer *ovl,
-                      bool debug, int rrIndex, int rrCount) {
+                      bool debug, int rrIndex, int rrCount,
+                      char *poolPrefetched, const char *poolPrefetchExpr) {
     RecSeat *rs;
     RecSrv *sv = recSrv(srv);
     BrainGoalInfo gi;
     bool haveGoal;
     bool recording;
     char *pj = NULL;
-    uint8_t flags;
-    uint8_t poolMode;
+    uint8_t flags = 0;
+    uint8_t poolMode = 0;
 
     if (!s_init || sv == NULL || idx < 0 || idx >= REC_MAX_SEATS || L == NULL) {
+        free(poolPrefetched);
         return;
     }
     rs = &s_seat[idx];
@@ -406,31 +449,35 @@ void hostRecSeatThink(int idx, int srv, uint8_t slot, uint16_t placeGen,
         rs->slot = slot;
         rs->placeGen = placeGen;
     }
-    recording = sv->up && sv->open && !sv->lowDisk;
-    if (!recording && !(sv->up && debug && !s_diskLow)) {
+    if (!srvRecPlan(sv, debug, &recording, &flags, &poolMode)) {
+        free(poolPrefetched);
         if (rs->ringCount > 0) ringClear(rs);
         return;
     }
     if (recording && rs->fileOpen && strcmp(rs->fileBlock, sv->block) != 0) {
         seatCloseFile(rs);
     }
-    if (recording) {
-        flags = sv->flags;
-        poolMode = sv->poolMode;
-    } else {
-        /* Before the OPEN: what -brain-debug records by default. */
-        flags = BOT_HOST_REC_F_VIZ | BOT_HOST_REC_F_POOL;
-        poolMode = 1;
-    }
 
-    haveGoal = botBrainGetGoalInfo(L, &gi);
-    if ((flags & BOT_HOST_REC_F_POOL) && poolMode != 0) {
-        bool want = poolMode == 2 ||
-                    (rrCount > 0 && (int)((seq / 2u) % (uint32_t)rrCount) == rrIndex);
-        if (want) {
-            pj = botBrainEvalLuaString(L, hostRecPoolExpr(flags));
+    /* The pool capture normally arrives from the seat's own worker, made
+     * right after its think (bothost_main.c hostThinkJob), so this serial
+     * section only writes the bytes. The eval here is the fallback for a
+     * seat whose worker did not make it, or made it with another
+     * expression. Never two evals in one tick: a worker eval that gave
+     * NULL counts as done. The capture comes before the goal info, as on
+     * the server, in both paths. */
+    if ((flags & BOT_HOST_REC_F_POOL) &&
+        hostRecPoolWanted(poolMode, seq, rrIndex, rrCount)) {
+        const char *expr = hostRecPoolExpr(flags);
+        if (poolPrefetchExpr == expr) {
+            pj = poolPrefetched;
+        } else {
+            free(poolPrefetched);
+            pj = botBrainEvalLuaString(L, expr);
         }
+    } else {
+        free(poolPrefetched);
     }
+    haveGoal = botBrainGetGoalInfo(L, &gi);
     brainRecBufReset(&s_body);
     (void)brainRecBodyEncode(&s_body, thinkMs, haveGoal ? &gi : NULL,
                              (flags & BOT_HOST_REC_F_VIZ) ? ovl : NULL,
