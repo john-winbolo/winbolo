@@ -61,6 +61,7 @@
 #include "screenbrainmap.h"
 #include "input_packet.h"
 #include "bot_manager.h"
+#include "brain_gc.h"
 #include "bot_worker_pool.h"
 #include "brain_list.h"    /* brainListLoadModesForPath — the mode/level keys */
 #include "brain_worldsim.h"
@@ -1657,7 +1658,21 @@ static void runBotThinkJob(int botIndex, void *userData) {
                           "return brain.get_pool_breakdown_json()");
     }
 
+    botRunnerCollectGarbage(bot);
+
     if (sim->botMgr.preThinkHook) sim->botMgr.preThinkHook(-1);
+}
+
+void botRunnerCollectGarbage(BotContext *bot) {
+    /* Lua collection in the time this bot has left before its think
+     * deadline (brain_gc.c), for a brain that asked for it. After the think
+     * and after the pool capture, so it is never in lastThinkMs and never
+     * under the budget hook; it ends BRAIN_GC_MARGIN_MS before the deadline,
+     * so the bot's share of the tick is not made longer. */
+    if (bot->brain.L != NULL && bot->brain.running) {
+        brainGcAfterThink(bot->brain.L, bot->thinkDeadlineCounter,
+                          (int)bot->playerNum, NULL);
+    }
 }
 
 void botManagerTick(ServerSim *sim, aiType ai) {

@@ -23,6 +23,7 @@ add_library(bolo_static STATIC
     bot_mem_report.c
     bot_worker_pool.c
     brain_data.c
+    brain_gc.c
     brain_list.c
     brain_overlay.c
     brain_record.c

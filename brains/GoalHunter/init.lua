@@ -849,6 +849,12 @@ function Brain.open(info)
   -- the measured values), and keep the 5.4 generational request for a PUC-Lua
   -- host, where setpause/setstepmul would flip the collector back to
   -- incremental. `jit` is the standard "am I on LuaJIT" probe.
+  --
+  -- C.GC_MODE "slack": the host stops the collector after the first think and
+  -- runs it in the free time after each think (src/bolo/brain_gc.c). It reads
+  -- the choice from this global. setpause / setstepmul only store numbers;
+  -- they do not start the collector again, so they stay in both modes.
+  _G.BRAIN_GC_MODE = C.GC_MODE
   if jit then
     collectgarbage("setpause",   C.GC_PAUSE)
     collectgarbage("setstepmul", C.GC_STEPMUL)
@@ -1589,8 +1595,9 @@ function Brain.think(info)
   -- Capture wall clock at think entry; the matching exit-time
   -- snapshot at the bottom drives the top-left tick-info HUD.  Debug-only:
   -- the sole reader is inside `if BRAIN_DEBUG_MODE`, so in opt/ this was one
-  -- os.clock() per think feeding nothing.
-  local _think_t0 = BRAIN_DEBUG_MODE and os.clock() or 0
+  -- clock read per think feeding nothing. clock_us, not os.clock: os.clock is
+  -- CPU time, and on Linux that is the whole process (every brain thread).
+  local _think_t0 = BRAIN_DEBUG_MODE and clock_us() or 0
   state.tick = state.tick + 1
   state._last_info = info
   attack.walls_reset()   -- wall-pass flag never outlives a budget-killed think
@@ -10216,7 +10223,7 @@ function Brain.think(info)
   -- C-side already renders tick + think_ms; keep this line tight
   -- with the brain-only bits: replan countdown, phase, current goal.
   if BRAIN_DEBUG_MODE then do
-    local _think_ms = (os.clock() - _think_t0) * 1000.0  -- unused but cheap; kept in case someone wants it
+    local _think_ms = (clock_us() - _think_t0) / 1000.0  -- unused but cheap; kept in case someone wants it
     local replan_left = C.GOAL_REPLAN_INTERVAL
         - ((now + state.replan_offset) % C.GOAL_REPLAN_INTERVAL)
     if replan_left == C.GOAL_REPLAN_INTERVAL then replan_left = 0 end
@@ -11233,8 +11240,9 @@ function Brain.think(info)
   -- tick as can still be logged, and so the evidence lands in the buffer of
   -- the tick BEFORE a budget kill (a killed tick loses its whole buffer).
   --
-  -- Clock: print2.elapsed_ms() — the same os.clock origin behind every
-  -- "[x.xxms]" line prefix in this log, so TICK_COST lines up with them.
+  -- Clock: print2.elapsed_ms() — the same wall-clock origin (clock_us) behind
+  -- every "[x.xxms]" line prefix in this log, so TICK_COST lines up with them.
+  -- Debug output only: no decision reads it.
   --
   -- Happy path cost: one clock read + one string.format. NEAR_BUDGET's
   -- extra format only runs when the tick is already near its budget.

@@ -5045,6 +5045,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # panel reads: the process figures, each bot's Lua heap and the world
     # list counts of a hosted sim.
     tests/unit/test_memory_info.c
+    # Lua collection after the think, in the time left before the deadline
+    # (src/bolo/brain_gc.c), on bare lua_States.
+    tests/unit/test_brain_gc.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -7578,6 +7581,11 @@ set(_unit_test_names
     scenario_lua_popup
     scenario_lua_wall_shots
     scenario_lua_acting_rows_refuse_a_check
+    brain_gc_auto_leaves_collector
+    brain_gc_slack_steps_in_free_time
+    brain_gc_slack_no_free_time_no_steps
+    brain_gc_slack_heap_limits
+    brain_gc_slack_step_time
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
     scenario_sandbox_collectgarbage_stop_refused
