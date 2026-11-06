@@ -2581,9 +2581,26 @@ static void listenReceive(void) {
 /* The think loop                                                      */
 /* ------------------------------------------------------------------ */
 
+/* The per-bot budget. serialMsEwma is the serial work in each tick that
+ * runs before the brain workers and so delays them: the seats' network
+ * ticks and the think setup. The work after the workers (sending the
+ * inputs, the recorder, the stats) is not in it, and there is no reserve
+ * for a game sim: this host runs none. --budget-legacy on puts back the
+ * old formula: the work after the workers is in serialMsEwma, and the
+ * server's 6 ms sim reserve comes off the budget. */
 static double serialMsEwma = 0.0;
 static double lastTargetMs = 0.0;
+static bool   optBudgetLegacy = false;
 static int    jobIndices[BOT_HOST_MAX_SLOTS];
+
+/* The per-bot budget for `bots` bots, by the formula --budget-legacy
+ * picks. */
+static double hostTargetMs(int runners, int bots) {
+    if (optBudgetLegacy) {
+        return botRunnerTargetMs(serialMsEwma, runners, bots);
+    }
+    return botRunnerTargetMsReserve(serialMsEwma, 0.0, runners, bots);
+}
 
 static void hostThinkJob(int index, void *userData) {
     HostSeat *hs = &seats[index];
@@ -2644,8 +2661,9 @@ static void seatSendStats(HostSeat *hs) {
 
 /* Bot connections: keep them ticking, notice when they end, and build the
  * brains that are owed. */
-static void seatsService(void) {
+static bool seatsService(void) {
     int i;
+    bool built = false;
     for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
         HostSeat *hs = &seats[i];
         ClientConnectState st;
@@ -2685,18 +2703,21 @@ static void seatsService(void) {
         }
         if (hs->wantBuild && !hs->awaitTable) {
             seatBuildBrain(hs);
+            built = true;
         }
     }
+    return built;
 }
 
 static void hostTick(void) {
     int i, active = 0, runners;
     bool anyFirst = false;
+    bool built;
     Uint64 setupStart, brainStart, brainEnd, sendEnd;
     double freq = (double)SDL_GetPerformanceFrequency();
 
     setupStart = SDL_GetPerformanceCounter();
-    seatsService();
+    built = seatsService();
 
     for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
         HostSeat *hs = &seats[i];
@@ -2724,7 +2745,7 @@ static void hostTick(void) {
 
     runners = botWorkerPoolGetSize() + 1;
     if (optThreads > runners) runners = optThreads;
-    lastTargetMs = botRunnerTargetMs(serialMsEwma, runners, active);
+    lastTargetMs = hostTargetMs(runners, active);
     {
         /* The budget a new bot would get: one more than the bots this host
          * runs now. The brain picks its tier from this budget; the budget
@@ -2732,8 +2753,7 @@ static void hostTick(void) {
         uint64_t tickMs = SDL_GetTicks();
         if (hostCpuBudgetMilli == BOT_HOST_CPU_MILLI_UNKNOWN ||
             tickMs - hostCpuBudgetAtMs >= BOT_HOST_BUDGET_EVERY_MS) {
-            double newBotMs = botRunnerTargetMs(serialMsEwma, runners,
-                                                poolUsed() + 1);
+            double newBotMs = hostTargetMs(runners, poolUsed() + 1);
             hostCpuBudgetMilli = botHostCpuMilliBudget(
                 newBotMs, (double)BOT_HOST_TICK_MS,
                 SDL_GetNumLogicalCPUCores());
@@ -2879,9 +2899,15 @@ static void hostTick(void) {
     }
 
     sendEnd = SDL_GetPerformanceCounter();
-    {
-        double serialMs = ((double)(brainStart - setupStart) +
-                           (double)(sendEnd - brainEnd)) * 1000.0 / freq;
+    /* A tick that built a brain or ran a first think has one-time setup
+     * in it (the brain build, the recording's first file). Such a sample
+     * is not the normal serial work. As the first sample it would seed the
+     * average high and hold the budget at its 1 ms floor for many ticks,
+     * so those ticks are left out. */
+    if (!built && !anyFirst) {
+        double serialMs = (double)(brainStart - setupStart);
+        if (optBudgetLegacy) serialMs += (double)(sendEnd - brainEnd);
+        serialMs = serialMs * 1000.0 / freq;
         if (serialMsEwma <= 0.0) serialMsEwma = serialMs;
         else serialMsEwma = 0.1 * serialMs + 0.9 * serialMsEwma;
     }
@@ -2925,7 +2951,11 @@ static void printUsage(const char *prog) {
             "                  (default: bothost_cache next to this program)\n"
             "  --record-min-free-gb N  record the bots of a -brain-debug\n"
             "                  server only while the cache's disk has N GB\n"
-            "                  free (default 50)\n",
+            "                  free (default 50)\n"
+            "  --budget-legacy on|off  on: the old think budget (the\n"
+            "                  recorder's work and the server's 6 ms sim\n"
+            "                  reserve come off each bot's budget). Default\n"
+            "                  off\n",
             prog, BOT_HOST_DEFAULT_SERVER_PORT, BOT_HOST_DEFAULT_LISTEN_PORT,
             BOT_HOST_MAX_SLOTS, BOT_HOST_RAISE_RESERVE_PCT_DEFAULT);
 }
@@ -3000,6 +3030,15 @@ static bool parseArgs(int argc, char **argv) {
             SDL_strlcpy(optName, v, sizeof(optName));
         } else if (strcmp(a, "--cachedir") == 0) {
             SDL_strlcpy(optCacheDir, v, sizeof(optCacheDir));
+        } else if (strcmp(a, "--budget-legacy") == 0) {
+            if (strcmp(v, "on") == 0 || strcmp(v, "1") == 0) {
+                optBudgetLegacy = true;
+            } else if (strcmp(v, "off") == 0 || strcmp(v, "0") == 0) {
+                optBudgetLegacy = false;
+            } else {
+                fprintf(stderr, "--budget-legacy takes on or off\n");
+                return false;
+            }
         } else if (strcmp(a, "--record-min-free-gb") == 0) {
             optRecordMinFreeGb = atof(v);
             if (optRecordMinFreeGb < 0.0) optRecordMinFreeGb = 0.0;

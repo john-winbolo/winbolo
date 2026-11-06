@@ -186,7 +186,7 @@ static const double kTickMs = 1000.0 / 50.0;
  * The EWMA only measures the serial stages inside botManagerTick itself,
  * so this fills in for the rest of serverInstanceTick. Refine via direct
  * measurement from server_lifecycle.c if profiling shows a mismatch. */
-static const double kReservedSimMs = 6.0;
+static const double kReservedSimMs = BOT_RUNNER_SERVER_SIM_RESERVE_MS;
 /* Headroom subtracted from the per-tick budget. */
 static const double kSafetyMs = 2.0;
 
@@ -1655,13 +1655,19 @@ void botRunnerBeginTick(BotContext *bot, double targetMs) {
 }
 
 double botRunnerTargetMs(double serialMsEwma, int runners, int activeBots) {
+    return botRunnerTargetMsReserve(serialMsEwma, kReservedSimMs, runners,
+                                    activeBots);
+}
+
+double botRunnerTargetMsReserve(double serialMsEwma, double reservedSimMs,
+                                int runners, int activeBots) {
     if (s_slowMoDebug) {
         return BOT_SLOWMO_BUDGET_MS;
     }
     if (activeBots <= 0) {
         return kTickMs;
     }
-    double brainBudget = kTickMs - serialMsEwma - kReservedSimMs - kSafetyMs;
+    double brainBudget = kTickMs - serialMsEwma - reservedSimMs - kSafetyMs;
     if (brainBudget < 1.0) {
         brainBudget = 1.0;
     }
