@@ -1448,6 +1448,8 @@ local function draw_terms(viz, v)
       lines[#lines + 1] = tx
       y = y + DY
     end
+    if viz.detail_live ~= false then
+    end
   end
 end
 

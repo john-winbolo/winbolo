@@ -775,7 +775,7 @@ function M.draw_pill_eval_spots(spots, pmx, pmy, viz_id, mode, chosen_deg, alpha
         -- with its full score breakdown, so you can see WHY one spot beat another
         -- (lower total_score wins; ties broken in the bucket). The winner is the
         -- chosen_deg spot. No-LOS spots are omitted (already shown as red boxes).
-        if viz.detail_rect then
+        if viz.detail_live then
           local is_win = chosen_deg and s.deg == chosen_deg
           local did = string.format("%s_%d_%d", viz_id, s.mx or 0, s.my or 0)
           -- The human-decoy costs (C.HUMAN_DECOY_AWARE), when they touched

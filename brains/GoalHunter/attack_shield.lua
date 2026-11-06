@@ -1723,7 +1723,7 @@ function M.draw_overlay(scan, now_tick)
   -- (small circle at cx/cy), so a click on the marker still hit-tests
   -- to its entry — but even after fade, clicking the spot will land
   -- on the registered hit area.
-  if viz.detail_circle and scan.candidates then
+  if viz.detail_live and scan.candidates then
     -- Key the detail id on the SCAN's pill tile (not just the candidate index):
     -- when more than one pill's shield is scanned in the same tick, an
     -- index-only id ("shield_cand_2") collides, and vizDetailAppendBody

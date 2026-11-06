@@ -1508,9 +1508,11 @@ local function draw_terms(viz, v)
       viz.text(ID, x + 0.3, y, tx, "topleft", 200, 220, 255, 230)
       y = y + DY
     end
-    viz.detail(string.format("decoy_getaway_%d_%d", c.mx, c.my), "rect",
-               { c.mx, c.my, c.mx + 1, c.my + 1 },
-               string.format("GETAWAY #%d (%d,%d)", base + i, c.mx, c.my), lines)
+    if viz.detail_live ~= false then
+      viz.detail(string.format("decoy_getaway_%d_%d", c.mx, c.my), "rect",
+                 { c.mx, c.my, c.mx + 1, c.my + 1 },
+                 string.format("GETAWAY #%d (%d,%d)", base + i, c.mx, c.my), lines)
+    end
   end
 end
 
