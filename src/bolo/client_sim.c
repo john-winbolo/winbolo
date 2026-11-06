@@ -31,7 +31,6 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
-#include <stdio.h>
 #include <SDL3/SDL.h>
 #include "client_sim.h"
 #include "client_command.h"   /* ViewStateKind — the viewport's view kinds */
