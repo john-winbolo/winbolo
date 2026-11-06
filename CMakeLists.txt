@@ -7036,6 +7036,9 @@ set(_unit_test_names
     early_blast_claim_explosion
     early_blast_server_end
     early_blast_sound
+    early_blast_sound_type_place
+    early_blast_tank_in_forest
+    early_blast_boat_grass_silent
     early_blast_timeout
     tank_blast_kill_at_shell_place
     tank_blast_zero_rewind_unchanged

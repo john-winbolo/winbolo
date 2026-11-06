@@ -1464,11 +1464,13 @@ void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
                       uint16_t worldX, uint16_t worldY, uint32_t nowMs);
 
 /* The early own shell blast (early_blast.h, client_sim.c). Each does
- * nothing, or answers false, for a bot. ServerEnd takes CTRL_SHELL_DEATH's fireTick and place. ClaimExplosion
- * is asked for each EVENT_EXPLOSION, ClaimSound for each shell hit sound:
- * true means an early blast already drew or played it. */
+ * nothing, or answers false, for a bot. ServerEnd takes CTRL_SHELL_DEATH's
+ * fireTick and place. ClaimExplosion is asked for each EVENT_EXPLOSION,
+ * ClaimSound for each shell hit sound, with its type (EARLY_BLAST_SOUND_*)
+ * and the pan and dist the server sent: true means an early blast already
+ * drew or played it. */
 void clientSimEarlyBlastServerEnd(ClientSim *cs, uint32_t fireTick, uint16_t x, uint16_t y);
 bool clientSimEarlyBlastClaimExplosion(ClientSim *cs, BYTE mx, BYTE my, BYTE px, BYTE py);
-bool clientSimEarlyBlastClaimSound(ClientSim *cs);
+bool clientSimEarlyBlastClaimSound(ClientSim *cs, uint8_t sound, int8_t pan, BYTE dist);
 
 #endif /* CLIENT_SIM_INTERNAL_H */

@@ -600,9 +600,15 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         if (isHuman) {
           sndEffects sid = (sndEffects)events[i].data[0];
           bool selfOnly = (sid == bubbles || sid == tankSinkNear || sid == tankSinkFar);
-          if ((sid == shotBuildingNear || sid == shotBuildingFar ||
-               sid == shotTreeNear || sid == shotTreeFar) &&
-              clientSimEarlyBlastClaimSound(csPtr)) {
+          uint8_t early = EARLY_BLAST_SOUND_NONE;
+          if (sid == shotBuildingNear || sid == shotBuildingFar) {
+            early = EARLY_BLAST_SOUND_BUILDING;
+          } else if (sid == shotTreeNear || sid == shotTreeFar) {
+            early = EARLY_BLAST_SOUND_TREE;
+          }
+          if (early != EARLY_BLAST_SOUND_NONE &&
+              clientSimEarlyBlastClaimSound(csPtr, early, (int8_t)events[i].data[1],
+                                            events[i].data[2])) {
             break;  /* an early blast played it (early_blast.h) */
           }
           if (!selfOnly || events[i].data[3] == csPtr->myPlayerNum) {
@@ -621,7 +627,9 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         if (isHuman) {
           if (events[i].data[3] == csPtr->myPlayerNum) {
             frontEndPlaySound(csPtr, hitTankSelf);
-          } else if (clientSimEarlyBlastClaimSound(csPtr)) {
+          } else if (clientSimEarlyBlastClaimSound(csPtr, EARLY_BLAST_SOUND_TANK,
+                                                   (int8_t)events[i].data[1],
+                                                   events[i].data[2])) {
             /* An early blast played it (early_blast.h). */
           } else {
             clientSoundDist(&csPtr->sim, hitTankNear, (int8_t)events[i].data[1], events[i].data[2]);

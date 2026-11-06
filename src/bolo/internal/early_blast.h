@@ -32,15 +32,41 @@
  *    server place has not come yet, less than EARLY_BLAST_NEAR_WU
  *    from the client's place. The nearest open early blast takes it,
  *    and each early blast takes one explosion at most.
- *  - An early blast that played a sound lets the next shell hit
- *    sound (shot building, shot tree, or a tank hit on another
- *    player) of the next EARLY_BLAST_SOUND_TICKS go unplayed.
+ *  - A hidden explosion whose early blast played a sound gives a
+ *    sound credit. The credit holds the sound's type (building,
+ *    tree or tank hit) and the hidden explosion's map square. For
+ *    the next EARLY_BLAST_SOUND_TICKS, one server sound of the same
+ *    type whose pan and distance band fit that square goes
+ *    unplayed. The server sends a pan and a distance band measured
+ *    from its own place for this player's tank, not the square, so
+ *    the client works out the pan and band the square gives from
+ *    its own tank, and lets EARLY_BLAST_LISTENER_SLACK squares of
+ *    difference through, as the two tank places can differ a
+ *    little. With positional sound off only near or far is sent,
+ *    and only that is matched.
  *  - An early blast that has no server explosion within
  *    EARLY_BLAST_WAIT_TICKS closes: no later explosion is hidden
  *    for it.
  *
+ *  What is still approximate:
+ *  - The server sends this player only the nearest sound of each
+ *    type in a tick. When two shells of one type hit in the same
+ *    tick, one sound comes, and a credit can be left over. For up
+ *    to EARLY_BLAST_SOUND_TICKS it can then take a later sound of
+ *    that type from about the same place.
+ *  - The pan and distance band are coarse (two squares of pan,
+ *    five of distance), so a sound of the same type from a near
+ *    square in the same band can take the credit.
+ *  - A teammate's shell that hits the same square as yours (a
+ *    pillbox, a wall or a base, whose explosions are all at the
+ *    middle of the square) cannot be told apart by place. Then
+ *    the teammate's explosion may be hidden and yours drawn by
+ *    the server too. A fix needs a shell id in the explosion event
+ *    (a protocol change), and is left for later.
+ *
  *  The counts in EarlyBlastStats go to the client's log at the
- *  end of each round, so wrong early blasts can be counted.
+ *  end of each round when WINBOLO_LOG is set, so wrong early
+ *  blasts can be counted.
  *
  *  Places are in world units. An explosion's map and pixel place
  *  is its middle less 128 (TANK_SUBTRACT) on each axis, as
@@ -74,6 +100,19 @@
 /* How long a hidden explosion's sound may come after it: 0.5 s. */
 #define EARLY_BLAST_SOUND_TICKS 25
 
+/* How many squares the server's place for this player's tank may differ
+   from the client's when a sound's pan and band are matched to a credit. */
+#define EARLY_BLAST_LISTENER_SLACK 2
+
+/* The wire's pan and distance band (input_packet.h: SOUND_PAN_MAX,
+   SOUND_PAN_STEP, SOUND_DIST_BAND, SOUND_DIST_MAX) and the near range
+   (sounddist.h: SDIST_SOFT). client_sim.c checks they are the same. */
+#define EARLY_BLAST_PAN_MAX   8
+#define EARLY_BLAST_PAN_STEP  2
+#define EARLY_BLAST_DIST_BAND 5
+#define EARLY_BLAST_DIST_MAX  39
+#define EARLY_BLAST_DIST_SOFT 15
+
 /* The most events of one batch the client checks for early blasts; any
    past it are drawn and played as before. */
 #define EARLY_BLAST_EVENTS_MAX 256
@@ -81,10 +120,13 @@
 /* An explosion's map and pixel place is its middle less this. */
 #define EARLY_BLAST_EXPL_OFFSET 128
 
-/* The sound an early blast played. */
+/* The sound an early blast played: the one shellsCalcCollision plays. */
 enum {
-  EARLY_BLAST_SOUND_NONE = 0, /* it ran out: the server plays none either */
-  EARLY_BLAST_SOUND_BUILDING, /* a pillbox, a base or a wall */
+  EARLY_BLAST_SOUND_NONE = 0, /* it ran out, or a boat's shell hit grass,
+                                 swamp, rubble, a crater or a road that
+                                 stays: the server plays none either */
+  EARLY_BLAST_SOUND_BUILDING, /* a pillbox, a base, a building, a half
+                                 building, a boat, or a road shot away */
   EARLY_BLAST_SOUND_TREE,     /* a forest */
   EARLY_BLAST_SOUND_TANK      /* another player's tank */
 };
@@ -99,6 +141,14 @@ typedef struct {
   int32_t  serverX, serverY; /* where the server's shell ended */
 } EarlyBlast;
 
+/* A hidden explosion's sound still to come from the server. */
+typedef struct {
+  bool     active;
+  uint8_t  sound;    /* EARLY_BLAST_SOUND_*, never NONE */
+  uint8_t  mx, my;   /* the hidden explosion's map square */
+  uint32_t tick;     /* EarlyBlastSet.tick when it was given */
+} EarlyBlastSoundCredit;
+
 /* Counts for one round, written to the client's log at its end. */
 typedef struct {
   uint32_t made;      /* early blasts drawn */
@@ -112,8 +162,8 @@ typedef struct {
   EarlyBlast      items[EARLY_BLAST_MAX];
   int             next;
   uint32_t        tick;            /* game ticks this client has run */
-  uint8_t         soundCredit;     /* shell hit sounds still to leave unplayed */
-  uint32_t        soundCreditTick; /* tick the newest credit was given */
+  EarlyBlastSoundCredit credits[EARLY_BLAST_MAX]; /* the oldest is used again */
+  int             nextCredit;
   EarlyBlastStats stats;
 } EarlyBlastSet;
 
@@ -125,8 +175,10 @@ static inline void earlyBlastReset(EarlyBlastSet *s) {
   }
   s->next = 0;
   s->tick = 0;
-  s->soundCredit = 0;
-  s->soundCreditTick = 0;
+  for (i = 0; i < EARLY_BLAST_MAX; i++) {
+    s->credits[i].active = false;
+  }
+  s->nextCredit = 0;
   memset(&s->stats, 0, sizeof(s->stats));
 }
 
@@ -148,8 +200,11 @@ static inline void earlyBlastTick(EarlyBlastSet *s) {
       s->stats.timedOut++;
     }
   }
-  if (s->soundCredit > 0 && s->tick - s->soundCreditTick > EARLY_BLAST_SOUND_TICKS) {
-    s->soundCredit = 0;
+  for (i = 0; i < EARLY_BLAST_MAX; i++) {
+    EarlyBlastSoundCredit *c = &s->credits[i];
+    if (c->active && s->tick - c->tick > EARLY_BLAST_SOUND_TICKS) {
+      c->active = false;
+    }
   }
 }
 
@@ -248,23 +303,104 @@ static inline bool earlyBlastClaimExplosion(EarlyBlastSet *s, uint8_t mx, uint8_
   s->items[best].active = false;
   s->stats.hidden++;
   if (s->items[best].sound != EARLY_BLAST_SOUND_NONE) {
-    if (s->soundCredit < 255) {
-      s->soundCredit++;
-    }
-    s->soundCreditTick = s->tick;
+    EarlyBlastSoundCredit *c = &s->credits[s->nextCredit];
+    s->nextCredit = (s->nextCredit + 1) % EARLY_BLAST_MAX;
+    c->active = true;
+    c->sound = s->items[best].sound;
+    c->mx = (uint8_t)(((uint32_t)ex >> 8) & 0xFFu);
+    c->my = (uint8_t)(((uint32_t)ey >> 8) & 0xFFu);
+    c->tick = s->tick;
   }
   return true;
 }
 
-/* A server shell hit sound came. Returns true when a hidden explosion's
-   early blast already played it, so the client does not play it again. */
-static inline bool earlyBlastClaimSound(EarlyBlastSet *s) {
-  if (s->soundCredit == 0 || s->tick - s->soundCreditTick > EARLY_BLAST_SOUND_TICKS) {
+/* The east-west offsets, in squares, that a wire pan stands for. The
+   server clamps the offset to +-EARLY_BLAST_PAN_MAX and cuts it towards
+   zero to a multiple of EARLY_BLAST_PAN_STEP. */
+static inline void earlyBlastPanRange(int pan, int *lo, int *hi) {
+  if (pan >= EARLY_BLAST_PAN_MAX) {
+    *lo = EARLY_BLAST_PAN_MAX;
+    *hi = 255;
+  } else if (pan <= -EARLY_BLAST_PAN_MAX) {
+    *lo = -255;
+    *hi = -EARLY_BLAST_PAN_MAX;
+  } else if (pan > 0) {
+    *lo = pan;
+    *hi = pan + EARLY_BLAST_PAN_STEP - 1;
+  } else if (pan < 0) {
+    *lo = pan - EARLY_BLAST_PAN_STEP + 1;
+    *hi = pan;
+  } else {
+    *lo = -(EARLY_BLAST_PAN_STEP - 1);
+    *hi = EARLY_BLAST_PAN_STEP - 1;
+  }
+}
+
+/* The larger-axis distances, in squares, that a wire distance band top
+   stands for: 5 is 0 to 5, 10 is 6 to 10, ... 39 is 36 to 39. */
+static inline void earlyBlastDistRange(int dist, int *lo, int *hi) {
+  *lo = ((dist - 1) / EARLY_BLAST_DIST_BAND) * EARLY_BLAST_DIST_BAND + 1;
+  if (*lo <= 1) {
+    *lo = 0;
+  }
+  *hi = dist;
+}
+
+/* True when v is in lo .. hi, give or take EARLY_BLAST_LISTENER_SLACK. */
+static inline bool earlyBlastInRange(int v, int lo, int hi) {
+  return v >= lo - EARLY_BLAST_LISTENER_SLACK && v <= hi + EARLY_BLAST_LISTENER_SLACK;
+}
+
+/* True when a sound sent with pan and dist can come from square (mx, my)
+   for a listener at (listenerMX, listenerMY). */
+static inline bool earlyBlastSoundFits(uint8_t mx, uint8_t my, int8_t pan, uint8_t dist,
+                                       uint8_t listenerMX, uint8_t listenerMY,
+                                       bool positional) {
+  int dx = (int)mx - (int)listenerMX;
+  int dy = (int)my - (int)listenerMY;
+  int ax = dx < 0 ? -dx : dx;
+  int ay = dy < 0 ? -dy : dy;
+  int d = ax > ay ? ax : ay;
+  int lo, hi;
+  if (!positional) {
+    /* Only near (EARLY_BLAST_DIST_SOFT) or far is sent, centred. */
+    if (dist <= EARLY_BLAST_DIST_SOFT) {
+      return earlyBlastInRange(d, 0, EARLY_BLAST_DIST_SOFT);
+    }
+    return earlyBlastInRange(d, EARLY_BLAST_DIST_SOFT + 1, EARLY_BLAST_DIST_MAX);
+  }
+  earlyBlastPanRange((int)pan, &lo, &hi);
+  if (!earlyBlastInRange(dx, lo, hi)) {
     return false;
   }
-  s->soundCredit--;
-  s->stats.sounds++;
-  return true;
+  earlyBlastDistRange((int)dist, &lo, &hi);
+  return earlyBlastInRange(d, lo, hi);
+}
+
+/* A server shell hit sound of type sound (EARLY_BLAST_SOUND_*) came, sent
+   with pan and dist, while this player's tank is at (listenerMX,
+   listenerMY) on this client. Returns true when a hidden explosion's early
+   blast already played it, so the client does not play it again: a credit
+   of the same type whose square fits the pan and band is used. */
+static inline bool earlyBlastClaimSound(EarlyBlastSet *s, uint8_t sound, int8_t pan,
+                                        uint8_t dist, uint8_t listenerMX,
+                                        uint8_t listenerMY, bool positional) {
+  int i;
+  for (i = 0; i < EARLY_BLAST_MAX; i++) {
+    EarlyBlastSoundCredit *c = &s->credits[i];
+    if (!c->active || c->sound != sound ||
+        s->tick - c->tick > EARLY_BLAST_SOUND_TICKS) {
+      continue;
+    }
+    if (!earlyBlastSoundFits(c->mx, c->my, pan, dist, listenerMX, listenerMY,
+                             positional)) {
+      continue;
+    }
+    c->active = false;
+    s->stats.sounds++;
+    return true;
+  }
+  return false;
 }
 
 #endif /* EARLY_BLAST_H */
