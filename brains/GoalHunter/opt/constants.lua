@@ -4659,6 +4659,26 @@ M.BUILDER_POOL_PANEL_ROWS = 12   -- cap on side-quest rows rendered (always-show
 M.GC_PAUSE   = 200
 M.GC_STEPMUL = 400
 
+-- JIT_MAXTRACE / JIT_MAXMCODE -- size of the LuaJIT trace cache (LuaJIT
+-- hosts only). JIT_MAXTRACE is the most compiled traces one bot's lua_State
+-- keeps; JIT_MAXMCODE is the most machine code for them, in KB. When either
+-- is full, LuaJIT throws ALL traces away (a flush) and compiles the hot code
+-- again, inside the next thinks. Brain.open hands both to jit.opt.start.
+-- MEASURED (Nov 2026, DH-Oil Rig, 6 bots, -brain-debug, 12000 ticks, seeds
+-- 4242 and 777; flushes are all 6 bots together):
+--   maxtrace/maxmcode  mean think  replan  flushes  DS working set
+--   1000/4096  (old)   3.15-3.55   5.2-6.2   ~1030     ~277 MB
+--   2000/8192          2.60-2.61   4.7-4.8   ~245      ~283 MB
+--   4000/16384         2.33-2.40   4.4-4.5   ~77       ~322 MB
+--   8000/32768         2.39-2.41   4.4-4.6   ~25       ~390 MB
+--   16000/65536        2.37        4.4       ~6        ~507 MB
+-- 4000/16384 has the whole gain (mean think -25 to -34%); the larger sizes
+-- are no faster and cost far more memory. Cost: about 7.5 MB more per bot
+-- (about 120 MB for 16 bots). KEEL values: 1000 (the LuaJIT default) and
+-- 4096 (what luabrainshandler.c sets).
+M.JIT_MAXTRACE = 4000
+M.JIT_MAXMCODE = 16384
+
 -- ══════════════════════════════════════════════════════════════════════════
 -- LOADED, BUILDER-LESS — the state, and what the brain does about it
 -- ══════════════════════════════════════════════════════════════════════════
@@ -5695,6 +5715,9 @@ M.ORDER_HINT_ESCORT_TILES = 3
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-11-06: larger LuaJIT trace cache (JIT_MAXTRACE comment); the
+    -- old sizes, LuaJIT's 1000 traces and the host's 4096 KB of mcode.
+    JIT_MAXTRACE = 1000, JIT_MAXMCODE = 4096,
     -- 2026-10-10: man-only aim handicap (the Tutorial's Station 7 bot);
     -- 0 / 100 aim straight at the man as before.
     LGM_MISS_WU = 0, LGM_HIT_PCT = 100,

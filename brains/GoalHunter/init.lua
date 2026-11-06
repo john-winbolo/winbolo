@@ -855,6 +855,30 @@ function Brain.open(info)
   else
     collectgarbage("generational", 10, 100)
   end
+  -- JIT trace cache size (C.JIT_MAXTRACE / C.JIT_MAXMCODE). The host set
+  -- maxmcode=4096 before the brain loaded; this replaces it for this bot's
+  -- lua_State only. LuaJIT reads both limits when it makes the next trace or
+  -- mcode area, so the traces made while the modules loaded are kept.
+  if jit and jit.opt and jit.opt.start then
+    jit.opt.start("maxtrace=" .. tostring(C.JIT_MAXTRACE),
+                  "maxmcode=" .. tostring(C.JIT_MAXMCODE))
+  end
+  -- Debug runs count trace cache flushes. JIT_FLUSH n= is the running count
+  -- for this bot; a flush on a tick that never reaches print2.flush (dead,
+  -- paused) loses its line, so read the largest n in the log.
+  if BRAIN_DEBUG_MODE then
+    -- The count is a global so a second Brain.open in the same lua_State
+    -- (a new life) keeps counting; jit.attach replaces the old handler.
+    if jit and jit.attach then
+      _G._JIT_FLUSH_N = _G._JIT_FLUSH_N or 0
+      jit.attach(function(what)
+        if what == "flush" then
+          _G._JIT_FLUSH_N = _G._JIT_FLUSH_N + 1
+          print2(string.format("JIT_FLUSH n=%d", _G._JIT_FLUSH_N))
+        end
+      end, "trace")
+    end
+  end
   -- Register every viz_id with the host's V dialog. No-op when
   -- braintest_viz_register isn't bound (e.g. running under WinBolo
   -- client); the brain still emits overlay commands but they're
@@ -995,6 +1019,9 @@ function Brain.open(info)
     print2(string.format("BRAIN_OPEN t=%d engine_tick=%d life_seed=%d pn=%d name=%s",
                          state.tick, state.engine_tick0, state.tick_seed,
                          info.player_number or -1, state.player_name))
+    print2(string.format("JIT_OPT maxtrace=%s maxmcode=%s applied=%s",
+                         tostring(C.JIT_MAXTRACE), tostring(C.JIT_MAXMCODE),
+                         tostring(jit ~= nil and jit.opt ~= nil)))
     print2.flush()
   end
   print(string.format("%s BRAIN_OPEN t=%d engine_tick=%d life_seed=%d pn=%d",
