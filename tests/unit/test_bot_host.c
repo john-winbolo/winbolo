@@ -430,6 +430,16 @@ int run_bot_host_target_ms(void) {
     UT_ASSERT(bh_near(botRunnerTargetMs(2.0, 4, 8), 5.0));
     UT_ASSERT(bh_near(botRunnerTargetMs(2.0, 8, 4), 10.0));
     UT_ASSERT(bh_near(botRunnerTargetMs(30.0, 1, 2), 0.5));
+    /* The Bot Host's form: no 6 ms sim reserve. */
+    UT_ASSERT(bh_near(botRunnerTargetMsReserve(0.0, 0.0, 1, 0), 20.0));
+    UT_ASSERT(bh_near(botRunnerTargetMsReserve(0.5, 0.0, 1, 1), 17.5));
+    UT_ASSERT(bh_near(botRunnerTargetMsReserve(0.5, 0.0, 4, 8), 8.75));
+    UT_ASSERT(bh_near(botRunnerTargetMsReserve(0.5, 0.0, 8, 4), 17.5));
+    UT_ASSERT(bh_near(botRunnerTargetMsReserve(30.0, 0.0, 1, 2), 0.5));
+    /* With the server's reserve it is botRunnerTargetMs. */
+    UT_ASSERT(bh_near(botRunnerTargetMsReserve(2.0,
+                          BOT_RUNNER_SERVER_SIM_RESERVE_MS, 4, 8),
+                      botRunnerTargetMs(2.0, 4, 8)));
     return 0;
 }
 
