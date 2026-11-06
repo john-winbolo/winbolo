@@ -4152,6 +4152,13 @@ int run_scenario_lua_popup(void);
 int run_scenario_lua_wall_shots(void);
 int run_scenario_lua_acting_rows_refuse_a_check(void);
 
+/* Lua collection after the think (test_brain_gc.c). */
+int run_brain_gc_auto_leaves_collector(void);
+int run_brain_gc_slack_steps_in_free_time(void);
+int run_brain_gc_slack_no_free_time_no_steps(void);
+int run_brain_gc_slack_heap_limits(void);
+int run_brain_gc_slack_step_time(void);
+
 /* The state a scenario runs in (test_scenario_sandbox.c): the names the
  * whitelist takes and the ones it keeps, the precompiled chunk the loader
  * refuses, collectgarbage without "stop", print on the server console, the
