@@ -58,16 +58,31 @@ void hostRecOnEvent(int srv, const ControlEvent *evt);
 void hostRecSeatBuilt(int idx, int srv, struct lua_State *L);
 void hostRecSeatGone(int idx);
 
+/* Before the think, on the main thread: the Lua expression of the pool
+ * capture srv's recording takes this tick, or NULL when it takes none.
+ * *poolMode: 1 = round robin, 2 = every think (0 with NULL). Pass the
+ * pointer back to hostRecSeatThink unchanged. */
+const char *hostRecSeatPoolPlan(int srv, bool debug, uint8_t *poolMode);
+
+/* The capture rule: does a seat take its pool capture this think. Pure,
+ * so the seat's worker and hostRecSeatThink both call it. */
+bool hostRecPoolWanted(uint8_t poolMode, uint32_t seq, int rrIndex,
+                       int rrCount);
+
 /* After a seat's think, on the main thread. seq: the input sequence the
  * think sent (the server records the last one it took). estTick: the
  * server tick it is thought to be now. debug: the server runs its brains
  * in debug mode (its brain manifest says so). rrIndex / rrCount: the
  * seat's place among the seats of srv that thought this tick, for the
- * round-robin pool capture. */
+ * round-robin pool capture. poolPrefetchExpr: the expression the seat's
+ * worker evaluated after its think (NULL when it did not), and
+ * poolPrefetched its result (NULL when the eval gave nothing). This call
+ * always takes poolPrefetched and frees it. */
 void hostRecSeatThink(int idx, int srv, uint8_t slot, uint16_t placeGen,
                       uint32_t seq, uint32_t estTick, float thinkMs,
                       struct lua_State *L, const OverlayCmdBuffer *ovl,
-                      bool debug, int rrIndex, int rrCount);
+                      bool debug, int rrIndex, int rrCount,
+                      char *poolPrefetched, const char *poolPrefetchExpr);
 
 /* Once per host tick: the disk check, the uploads, the state reports. */
 void hostRecService(uint32_t nowMs);
