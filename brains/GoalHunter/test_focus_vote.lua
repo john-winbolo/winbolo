@@ -31,6 +31,9 @@ local PP     = require("pill_portfolio")
 local SP     = require("spike")
 local FV     = require("focus_vote")
 local G      = require("goals")
+-- The flows below call update on any tick and expect the plan at once:
+-- the "first" plan timer. "slot" has its own checks at the end.
+C.FOCUS_PLAN_OFFSET_MODE = "first"
 
 local pass, fail = 0, 0
 local function check(name, cond, got)
@@ -1210,6 +1213,47 @@ do
   check("skipped bot: the release wait stops",
     FV.pick_wait_paused({ claims = {} }, { player_number = 3, carried_pills = 1, man_status = C.LGM_INTANK }, { [2] = 4, [3] = 1 }) == true)
   C.FOCUS_SPIKE_SOLO_CARRIER = keep
+end
+print("plan timer (FOCUS_PLAN_OFFSET_MODE)")
+do
+  local keep = C.FOCUS_PLAN_OFFSET_MODE
+  local P = C.FOCUS_SPIKE_PLAN_INTERVAL
+  check("KEEL value first", C.PRESETS.keel.FOCUS_PLAN_OFFSET_MODE == "first", tostring(C.PRESETS.keel.FOCUS_PLAN_OFFSET_MODE))
+  C.FOCUS_PLAN_OFFSET_MODE = "first"
+  check("first: plan at once", FV.plan_due(nil, 1011, 5) == true)
+  check("first: not before INTERVAL", FV.plan_due(1011, 1011 + P - 1, 5) == false)
+  check("first: at INTERVAL", FV.plan_due(1011, 1011 + P, 5) == true)
+  C.FOCUS_PLAN_OFFSET_MODE = "slot"
+  -- Replan ticks (mod P) of every slot, as init.lua "slot" mode makes them.
+  local replan, plan = {}, {}
+  for s = 0, 15 do
+    local r = math.floor(s * P / 16 + 0.5) % P
+    replan[(P - r) % P] = s
+  end
+  local ok_own, ok_any, ok_one = true, true, true
+  for s = 0, 15 do
+    local r = math.floor(s * P / 16 + 0.5) % P
+    local due = {}
+    for t = 1000, 1000 + P - 1 do
+      if FV.plan_due(nil, t, s) then due[#due + 1] = t % P end
+    end
+    if #due ~= 1 then ok_one = false
+    else
+      if due[1] ~= ((P - r) % P + 1) % P then ok_own = false end
+      if replan[due[1]] ~= nil or plan[due[1]] ~= nil then ok_any = false end
+      plan[due[1]] = s
+    end
+  end
+  check("slot: one plan tick per INTERVAL", ok_one)
+  check("slot: plan one tick after own replan", ok_own)
+  check("slot: no plan tick on any replan tick or on another slot's plan tick", ok_any)
+  -- Slot 1: replan on t%50 == 47, plan on t%50 == 48.
+  check("slot: due on the plan tick", FV.plan_due(1048 - P, 1048, 1) == true)
+  check("slot: not due after a plan this period", FV.plan_due(1048, 1060, 1) == false)
+  check("slot: missed plan tick runs on the next think", FV.plan_due(1048 - P, 1050, 1) == true)
+  check("slot: after a late plan, the next is on the plan tick", FV.plan_due(1050, 1097, 1) == false
+    and FV.plan_due(1050, 1098, 1) == true)
+  C.FOCUS_PLAN_OFFSET_MODE = keep
 end
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
