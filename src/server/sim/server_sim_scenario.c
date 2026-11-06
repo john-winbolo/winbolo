@@ -2772,7 +2772,9 @@ bool serverSimScenarioHoldsNoBots(const ServerSim *sim) {
    writes one — and is played over whatever game the host set up, so a lobby
    running mods alone stays on the type the host picked and the host may go
    on changing it. keepsWinCondition is the composed list's answer, and it is
-   true only when every script in the list is a mod.
+   true only when every script in the list is a mod. A list of mods that
+   takes a scenario's place — a plain map picked with mods still on — gives
+   the lobby's own type back the way the last script going does.
 
    The game type and ranked are remembered and given back, so a lobby that
    was ranked with no bots is ranked with no bots again once the last script
@@ -2817,9 +2819,16 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
                 (was == gameScripted) ? gameStrictTournament : was;
             sim->preScenarioRanked   = serverSimGetRanked(sim);
         }
-        if (!sim->scenarioIdentity.keepsWinCondition &&
-            gameTypeGet(&sim->sim.game) != gameScripted) {
-            serverSimSetGameType(sim, gameScripted);
+        if (!sim->scenarioIdentity.keepsWinCondition) {
+            if (typeBefore != gameScripted) {
+                serverSimSetGameType(sim, gameScripted);
+            }
+        } else if (typeBefore == gameScripted) {
+            /* A list of mods alone in place of a scenario — a plain map
+               picked with mods still on. Mods leave the type the host's, so
+               the scenario's scripted type goes and the lobby's own comes
+               back, as it would if the last script had gone. */
+            serverSimSetGameType(sim, sim->preScenarioGameType);
         }
         if (serverSimGetRanked(sim)) {
             serverSimSetRanked(sim, false);
