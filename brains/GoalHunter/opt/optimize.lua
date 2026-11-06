@@ -26,7 +26,10 @@ local M = {}
 local buffer     = {}
 local tick       = 0
 local tick_start = 0
-local clock      = os.clock
+-- Wall clock in seconds (clock_us, braincore.c); os.clock is CPU time of the
+-- whole process on Linux. os.clock only for a host with no clock_us.
+local _clock_us  = clock_us
+local clock      = _clock_us and function() return _clock_us() * 1e-6 end or os.clock
 
 local file     = nil
 local file_dir = nil

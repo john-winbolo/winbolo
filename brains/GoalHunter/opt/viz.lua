@@ -97,7 +97,7 @@ M.IDS = {
   hud_resources      = { short = "HUD: resources",
                          long  = "Shells/Mines/Armour/Trees/Speed/Boat counters" },
   hud_tick_info      = { short = "HUD: tick info (think_ms / phase / goal / capacity tier)",
-                         long  = "Top-left lines under the big TICK box. Brain-side timing via os.clock; color codes the think_ms cell green<5/yellow<10/orange<20/red>=20. Also shows the execution capacity tier (\"capacity: tier N/10\"), color-shifted toward red as the tier drops (red<=3, orange<=5, yellow<=7) so you can filter/search for 'tier' to find it." },
+                         long  = "Top-left lines under the big TICK box. Brain-side timing via clock_us (wall clock); color codes the think_ms cell green<5/yellow<10/orange<20/red>=20. Also shows the execution capacity tier (\"capacity: tier N/10\"), color-shifted toward red as the tier drops (red<=3, orange<=5, yellow<=7) so you can filter/search for 'tier' to find it." },
   hud_replan         = { short = "HUD: replan + phase",
                          long  = "Replan countdown + phase + reason" },
   hud_goal           = { short = "HUD: current goal",
