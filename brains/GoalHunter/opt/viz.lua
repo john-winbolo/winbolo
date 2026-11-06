@@ -653,6 +653,11 @@ M.COLLECT_EXEMPT = {
 }
 local _collect_exempt = M.COLLECT_EXEMPT
 
+-- "_BT_VIZ_<ID>" global name per viz id, built once. refresh() runs every
+-- think over every id, and building the name each time (upper + concat) was
+-- a new string per id per think for the same result.
+local _gname = {}
+
 function M.refresh()
   -- Collection-mode override (set per-bot by BrainTest's V-window radio):
   --   "off" → this bot emits NOTHING (so a non-viewed tank isn't collected)
@@ -669,7 +674,9 @@ function M.refresh()
     elseif suppress_all and id ~= "hud_resources" then
       _on[id] = false
     else
-      local g = _G["_BT_VIZ_" .. id:upper()]
+      local gn = _gname[id]
+      if not gn then gn = "_BT_VIZ_" .. id:upper(); _gname[id] = gn end
+      local g = _G[gn]
       if g ~= nil then
         _on[id] = g
       else
@@ -729,9 +736,12 @@ end
 -- registry is wired (WinBolo client / headless winbolods). So we detect the
 -- headless case by the return value, not by the binding's presence, and
 -- self-assign indices then.
+-- M._headless is set on both self-assign paths: no host shows overlays live
+-- (winbolods, the Bot Host, the game client), so label() can skip its text.
 function M.register_all()
   if not braintest_viz_register then
     self_assign_ids()   -- binding truly absent
+    M._headless = true
     return
   end
   local host_assigned = false
@@ -750,7 +760,10 @@ function M.register_all()
   end
   -- Binding present but no host registry (returned -1 for everything):
   -- headless winbolods → self-assign so overlays carry a real viz_idx.
-  if not host_assigned then self_assign_ids() end
+  if not host_assigned then
+    self_assign_ids()
+    M._headless = true
+  end
 end
 
 -- idx -> viz_id legend (JSON object {"0":"id0",...}) for the brain recorder.
@@ -822,6 +835,11 @@ end
 -- overlay text size used elsewhere in the brain.
 local LABEL_SIZE = 0.25
 local function label(viz_id, x, y)
+  -- Headless host: nothing draws the label live, and the recorder drops
+  -- every label_overlays command (M.RECORD_SKIP) before it writes the
+  -- frame, so the text would be built only to be thrown away. Labels were
+  -- about half of all overlay commands a debug bot sent each think.
+  if M._headless then return end
   if viz_id == "label_overlays" then return end
   if not overlay_text then return end
   -- Don't emit the label when the parent viz is off — otherwise the
