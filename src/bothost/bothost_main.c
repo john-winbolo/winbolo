@@ -1466,6 +1466,18 @@ static void listenReceive(void) {
 static double serialMsEwma = 0.0;
 static double lastTargetMs = 0.0;
 static bool   optBudgetLegacy = false;
+
+/* Tick timing for the once-a-minute log line: ticks with bots, how many
+ * took longer than one tick, the longest, and the averages of the parts.
+ * startLateMax is how late the main loop started a tick (ms). */
+typedef struct {
+    uint32_t ticks, over;
+    double   sumTotal, sumBefore, sumBrain, sumAfter, sumTarget;
+    double   maxTotal, maxBrain, maxAfter;
+    uint32_t startLateMax;
+} HostTickStats;
+static HostTickStats tickStats;
+#define BOT_HOST_TICK_STATS_TICKS 3000   /* one line a minute */
 static int    jobIndices[BOT_HOST_MAX_SLOTS];
 
 static void hostThinkJob(int index, void *userData) {
@@ -1750,6 +1762,36 @@ static void hostTick(void) {
      * is not the normal serial work. As the first sample it would seed the
      * average high and hold the budget at its 1 ms floor for many ticks,
      * so those ticks are left out. */
+    if (active > 0) {
+        HostTickStats *ts = &tickStats;
+        double before = (double)(brainStart - setupStart) * 1000.0 / freq;
+        double brain = (double)(brainEnd - brainStart) * 1000.0 / freq;
+        double after = (double)(sendEnd - brainEnd) * 1000.0 / freq;
+        double total = before + brain + after;
+        ts->ticks++;
+        if (total > (double)BOT_HOST_TICK_MS) ts->over++;
+        ts->sumTotal += total;
+        ts->sumBefore += before;
+        ts->sumBrain += brain;
+        ts->sumAfter += after;
+        ts->sumTarget += lastTargetMs;
+        if (total > ts->maxTotal) ts->maxTotal = total;
+        if (brain > ts->maxBrain) ts->maxBrain = brain;
+        if (after > ts->maxAfter) ts->maxAfter = after;
+        if (ts->ticks >= BOT_HOST_TICK_STATS_TICKS) {
+            double n = (double)ts->ticks;
+            fprintf(stderr, "[bothost] ticks %u: %u over %d ms, longest "
+                            "%.1f ms, avg %.1f ms (before the brains %.2f, "
+                            "brains %.1f max %.1f, after %.2f max %.1f), "
+                            "target avg %.1f ms, latest start %u ms\n",
+                    (unsigned)ts->ticks, (unsigned)ts->over,
+                    BOT_HOST_TICK_MS, ts->maxTotal, ts->sumTotal / n,
+                    ts->sumBefore / n, ts->sumBrain / n, ts->maxBrain,
+                    ts->sumAfter / n, ts->maxAfter, ts->sumTarget / n,
+                    (unsigned)ts->startLateMax);
+            memset(ts, 0, sizeof(*ts));
+        }
+    }
     if (!built && !anyFirst) {
         double serialMs = (double)(brainStart - setupStart);
         if (optBudgetLegacy) serialMs += (double)(sendEnd - brainEnd);
@@ -2031,6 +2073,9 @@ int main(int argc, char *argv[]) {
         }
         t = nowMs();
         if ((int32_t)(t - nextTick) >= 0) {
+            if (t - nextTick > tickStats.startLateMax) {
+                tickStats.startLateMax = t - nextTick;
+            }
             hostTick();
             nextTick += BOT_HOST_TICK_MS;
             /* After a long stall, start counting again from now. */
