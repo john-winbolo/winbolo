@@ -187,6 +187,18 @@ typedef struct {
     /* Pings asked for during the think, sent after it (CMD_PING). */
     ClientCommand pings[BOT_PENDING_CMD_MAX];
     int           pingCount;
+
+    /* The pool capture, made on the seat's worker right after its think.
+     * The main thread sets the plan before the dispatch (poolExpr NULL:
+     * no capture this tick); the worker sets poolDoneExpr and poolBuf;
+     * the main thread reads them only after botWorkerPoolRun returns and
+     * hands poolBuf to hostRecSeatThink the same tick. */
+    const char   *poolExpr;
+    uint8_t       poolMode;
+    int           poolRrIndex;
+    int           poolRrCount;
+    const char   *poolDoneExpr;
+    char         *poolBuf;
 } HostSeat;
 
 /* The pool: one entry per slot, whichever server holds it. */
@@ -855,6 +867,9 @@ static void seatRelayPing(void *ctx, BYTE fromPlayer, uint8_t kind,
 
 static void seatDestroyBrain(HostSeat *hs) {
     hostRecSeatGone((int)(hs - seats));
+    free(hs->poolBuf);
+    hs->poolBuf = NULL;
+    hs->poolDoneExpr = NULL;
     if (hs->bot.brain.L != NULL || hs->bot.brain.running) {
         luaBrainInstanceDestroy(&hs->bot.brain);
     }
@@ -1457,6 +1472,28 @@ static void hostThinkJob(int index, void *userData) {
     }
     botRunnerPrepareThink(&hs->bot, gs, &mods);
     botRunnerThink(&hs->job, lastTargetMs, hs->inputTick);
+
+    /* The pool capture, here on the worker, as the server does it
+     * (bot_manager.c runBotThinkJob). botRunnerThink has measured
+     * lastThinkMs and taken off the budget hook before this, so the
+     * capture can neither be stopped by the budget nor count as think
+     * time. Skipped after a budget stop (the brain state is partial) and
+     * after a crash (the seat goes). The seq is the one the recorder
+     * uses: the think's own input packet sets the new offset. */
+    hs->poolDoneExpr = NULL;
+    free(hs->poolBuf);   /* NULL: the recorder takes it every tick */
+    hs->poolBuf = NULL;
+    if (hs->poolExpr != NULL && !hs->job.wasKilled && !hs->job.needRemove &&
+        hs->bot.brain.L != NULL) {
+        uint32_t seq = hs->job.hasInput ? hs->job.pkt1.tick
+                                        : hs->inputTick + hs->recSeqOffset;
+        if (hostRecPoolWanted(hs->poolMode, seq, hs->poolRrIndex,
+                              hs->poolRrCount)) {
+            hs->poolBuf = botBrainEvalLuaString(hs->bot.brain.L,
+                                                hs->poolExpr);
+            hs->poolDoneExpr = hs->poolExpr;
+        }
+    }
 }
 
 static void seatSendStats(HostSeat *hs) {
@@ -1565,8 +1602,23 @@ static void hostTick(void) {
     lastTargetMs = botRunnerTargetMs(serialMsEwma, runners, active);
     for (i = 0; i < active; i++) {
         HostSeat *hs = &seats[jobIndices[i]];
+        int k;
         botRunnerBeginTick(&hs->bot, lastTargetMs);
         if (hs->bot.brain.isFirst) anyFirst = true;
+        /* The pool capture plan for the worker: the recorder's state and
+         * the seat's round-robin place, the same count as the recorder's
+         * below. When a seat goes between the think and the recorder the
+         * count there can differ; then the recorder frees the capture or
+         * makes it itself. */
+        hs->poolExpr = hostRecSeatPoolPlan(
+            hs->srv, servers[hs->srv].sync.man.debugMode, &hs->poolMode);
+        hs->poolRrIndex = 0;
+        hs->poolRrCount = 0;
+        for (k = 0; k < active && hs->poolExpr != NULL; k++) {
+            if (seats[jobIndices[k]].srv != hs->srv) continue;
+            if (k < i) hs->poolRrIndex++;
+            hs->poolRrCount++;
+        }
     }
 
     brainStart = SDL_GetPerformanceCounter();
@@ -1633,8 +1685,13 @@ static void hostTick(void) {
     for (i = 0; i < active; i++) {
         HostSeat *hs = &seats[jobIndices[i]];
         int k, rrIndex = 0, rrCount = 0;
+        char *poolBuf = hs->poolBuf;
+        const char *poolDoneExpr = hs->poolDoneExpr;
+        hs->poolBuf = NULL;
+        hs->poolDoneExpr = NULL;
         if (!hs->used || hs->bot.brain.L == NULL || hs->job.wasKilled ||
             hs->job.needRemove) {
+            free(poolBuf);
             continue;
         }
         for (k = 0; k < active; k++) {
@@ -1649,7 +1706,7 @@ static void hostTick(void) {
                          (float)hs->bot.lastThinkMs, hs->bot.brain.L,
                          &hs->bot.brain.overlay,
                          servers[hs->srv].sync.man.debugMode, rrIndex,
-                         rrCount);
+                         rrCount, poolBuf, poolDoneExpr);
     }
     hostRecService(nowMs());
 
