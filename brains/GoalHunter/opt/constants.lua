@@ -2053,6 +2053,18 @@ M.FOCUS_SPIKE_STAND_CACHE_TICKS    = 250
 M.FOCUS_SPIKE_CLUSTER_GAP          = 9
 M.FOCUS_SPIKE_DENY_FRAC            = 0.5
 M.FOCUS_SPIKE_PLAN_INTERVAL        = 50       -- ticks between plans
+-- FOCUS_PLAN_OFFSET_MODE (2026-11-06): which tick of each
+-- FOCUS_SPIKE_PLAN_INTERVAL a bot makes its spike plan on.
+--   "first": the first tick the plan code runs, then every INTERVAL ticks
+--            after the last plan. Bots that join together all plan on the
+--            same tick (8-9 ms early in the game, most of the budget kills).
+--   "slot":  game time, by player slot: the plan tick is one tick after the
+--            slot's REPLAN_OFFSET_MODE="slot" replan tick, so no two slots
+--            plan on the same tick and no plan lands on any slot's replan tick.
+-- A plan tick that the bot misses (no think on that tick) runs on the next tick.
+-- Plans made for a vote ballot (focus_vote.ballot) do not change.
+-- KEEL "first" (today's behaviour).
+M.FOCUS_PLAN_OFFSET_MODE           = "slot"
 M.FOCUS_SPIKE_MAX_TILES            = 12       -- fits the 124-byte message
 M.FOCUS_SPIKE_VOTE_WINDOW_TICKS    = 25
 M.FOCUS_SPIKE_APPROVED_COST        = 80
@@ -6536,6 +6548,8 @@ M.PRESETS = {
     -- 2026-11-01: focused spike placement (enemy-base tiles, ebase/depth terms,
     -- long builder send). KEEL scores aggro tiles like any other tile.
     FOCUS_SPIKE_ENABLED         = false,
+    -- 2026-11-06: spike plan on the first tick the plan code runs (no slot phase).
+    FOCUS_PLAN_OFFSET_MODE      = "first",
     -- 2026-11-01: spike defend discount off (defend_pill costs as before).
     FOCUS_SPIKE_DEFEND_DISCOUNT = 0,
     -- 2026-11-01: neutral pills are not counted in the spike cluster plan.

@@ -3255,6 +3255,27 @@ local function wants_to_place(state, info)
          and state.goal.kind == "place_pill_strategic"
 end
 
+-- Is the periodic plan due on this tick? FOCUS_PLAN_OFFSET_MODE:
+--   "first" (KEEL): INTERVAL ticks after the last plan, and at once on the
+--     first call. Bots that start together all plan on the same tick.
+--   "slot": on game time. The replan of slot s ("slot" mode, init.lua) is
+--     on the ticks where (now + r) % INTERVAL == 0, r = round(s * INTERVAL
+--     / 16). The plan is one tick later: (now + r - 1) % INTERVAL == 0. The
+--     replan ticks of the 16 slots are 3 or 4 ticks apart, so a plan tick is
+--     never a replan tick of any slot, and no two slots share a plan tick.
+--     If the bot missed its plan tick, the plan runs on the first tick after
+--     it; the first plan of a life waits for the plan tick.
+function M.plan_due(last_t, now, slot)
+  local P = C.FOCUS_SPIKE_PLAN_INTERVAL
+  if C.FOCUS_PLAN_OFFSET_MODE ~= "slot" then
+    return not last_t or (now - last_t) >= P
+  end
+  local off = (math.floor(slot * P / 16 + 0.5) - 1) % P
+  local k = now - ((now + off) % P)   -- the last plan tick at or before now
+  if last_t then return last_t < k end
+  return now == k
+end
+
 function M.update(state, world, info, now, care_tag)
   if not on() then return end
   local F = st(state)
@@ -3273,7 +3294,7 @@ function M.update(state, world, info, now, care_tag)
   update_active(state, F, world, info, now, care_tag)
   if F.voting and (now - F.voting.t) > 2 * C.FOCUS_SPIKE_VOTE_WINDOW_TICKS then F.voting = nil end
   -- The plan, about once a second.
-  if F.last_plan_t and (now - F.last_plan_t) < C.FOCUS_SPIKE_PLAN_INTERVAL then return end
+  if not M.plan_due(F.last_plan_t, now, info.player_number or 0) then return end
   F.last_plan_t = now
   if F.active or F.open or F.voting or now < F.cool_until then return end
   local P = M.plan(state, world, info, now)
