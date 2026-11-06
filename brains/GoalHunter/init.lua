@@ -9380,7 +9380,7 @@ function Brain.think(info)
   -- progress, velocity, linear-extrapolation math).  Click any LGM
   -- tile with the D inspector open to see the panel.  Standalone in
   -- BRAIN_DEBUG_MODE — not gated on any specific viz toggle.
-  if BRAIN_DEBUG_MODE and viz.detail_circle and state.perc and state.perc.enemy_lgms then
+  if BRAIN_DEBUG_MODE and viz.detail_live and state.perc and state.perc.enemy_lgms then
     for _, elm in ipairs(state.perc.enemy_lgms) do
       local idtxt = tostring(elm.idnum or "?")
       local did = "kill_lgm_track_" .. idtxt
@@ -9551,7 +9551,7 @@ function Brain.think(info)
   -- gun) combo with its predicted crosshair-to-LGM euclidean distance.
   if BRAIN_DEBUG_MODE then
     local _ksrch = state._kill_lgm_search
-    if viz.detail_circle and _ksrch and _ksrch.cands then
+    if viz.detail_live and _ksrch and _ksrch.cands then
       local sorted = {}
       for i, c in ipairs(_ksrch.cands) do sorted[i] = c end
       table.sort(sorted, function(a, b) return a.score < b.score end)
