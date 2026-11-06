@@ -4657,6 +4657,24 @@ M.BUILDER_POOL_PANEL_ROWS = 12   -- cap on side-quest rows rendered (always-show
 M.GC_PAUSE   = 200
 M.GC_STEPMUL = 400
 
+-- GC_MODE -- who decides when the collector runs (LuaJIT hosts only).
+--   "auto"  -- the stock collector: LuaJIT collects while the brain
+--              allocates, so the work lands inside the think. MEASURED
+--              (Nov 2026, 5 bots, DH-Oil Rig): 57-70% of over-budget thinks
+--              finished a GC cycle inside the think, and a cycle end adds
+--              ~3 ms (4.7-5.8 ms on plan/replan ticks). KEEL value.
+--   "slack" -- the host stops the automatic collector for this bot and runs
+--              small collector steps AFTER each think, in the time left
+--              before the bot's think deadline less a 2 ms margin
+--              (src/bolo/brain_gc.c). A heavy tick with no time left runs no
+--              collection. If the heap grows past 1.5x its size after the
+--              last full cycle (+4 MB), steps run anyway, at most 1 ms per
+--              think; past 2x (+8 MB) the cycle is finished at once.
+-- Brain.open hands this to the host as the global BRAIN_GC_MODE. The host
+-- reads it once, after the first think. GC_PAUSE / GC_STEPMUL still apply in
+-- both modes (GC_STEPMUL sets how much work one step does).
+M.GC_MODE = "slack"
+
 -- ══════════════════════════════════════════════════════════════════════════
 -- LOADED, BUILDER-LESS — the state, and what the brain does about it
 -- ══════════════════════════════════════════════════════════════════════════
@@ -5693,6 +5711,9 @@ M.ORDER_HINT_ESCORT_TILES = 3
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-11-06: Lua collection after the think, in free time (GC_MODE
+    -- comment); "auto" = the stock collector inside the think, as before.
+    GC_MODE = "auto",
     -- 2026-10-10: man-only aim handicap (the Tutorial's Station 7 bot);
     -- 0 / 100 aim straight at the man as before.
     LGM_MISS_WU = 0, LGM_HIT_PCT = 100,

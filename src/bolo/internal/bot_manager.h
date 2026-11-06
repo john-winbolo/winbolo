@@ -648,6 +648,17 @@ bool botManagerSetBrainIdx(struct ServerSim *sim, BYTE playerNum,
                            uint8_t brainIdx);
 
 /*********************************************************
+ *NAME:          botRunnerCollectGarbage
+ *PURPOSE:
+ *  After a bot's think (and the pool capture), run Lua
+ *  collection in the time left before the bot's think
+ *  deadline, for a brain that set BRAIN_GC_MODE = "slack"
+ *  (brain_gc.h). Call on the thread that ran the think.
+ *  For any other brain it only samples the heap.
+ *********************************************************/
+void botRunnerCollectGarbage(BotContext *bot);
+
+/*********************************************************
  *NAME:          botManagerTick
  *PURPOSE:
  *  Called once per game tick. For each active bot:
