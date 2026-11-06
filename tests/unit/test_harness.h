@@ -1353,6 +1353,7 @@ int run_mac_bolo_first_start_lobby_off_uses_mac_pick(void);
 int run_mac_bolo_spawn_starts_off_engine_picks(void);
 int run_mac_bolo_setting_changed_after_attach(void);
 int run_mac_bolo_setting_changed_between_rounds(void);
+int run_mac_bolo_spawn_pick_keeps_enemies_off(void);
 int run_choose_start_lobby_arg_hand_picked(void);
 int run_choose_start_lobby_arg_team_side(void);
 int run_choose_start_lobby_arg_nil_without_reservation(void);
@@ -1425,6 +1426,10 @@ int run_team_sides_round_log_teams(void);
 int run_team_sides_held_seat_allied_in_round(void);
 int run_team_sides_free_team_keeps_setup(void);
 int run_team_sides_free_team_keeps_lobby_side(void);
+int run_team_sides_accept_rebuilds_table(void);
+int run_team_sides_leave_rebuilds_table(void);
+int run_team_sides_bot_added_in_round_is_allied(void);
+int run_team_sides_table_write_is_caught(void);
 
 /* Pillbox and base owners from the map file survive a round start
  * (test_round_start_owners.c, issue #422). */
@@ -3342,6 +3347,12 @@ int run_scenario_host_popup_unsafe_unreachable(void);
  * its signal level, and conceals a dropped packet. */
 int run_voice_core_roundtrip(void);
 
+/* Codec reset and fade ramp (test_voice_core.c): a reset encoder writes the
+ * same bytes as a new one and a reset decoder the same samples, and the fade
+ * lands exactly on its end gains, touching only the samples it is given. */
+int run_voice_core_reset_matches_fresh(void);
+int run_voice_core_fade_apply(void);
+
 /* Saved audio device name matching (test_voice_device.c): a name that is
  * present resolves to its index wherever it sits in the list, and every way
  * of being absent - not there, empty, NULL, an empty list, a prefix rather
@@ -3374,6 +3385,15 @@ int run_voice_jitter_ordering_and_plc(void);
  * honoured on a frame that failed to decode. */
 int run_voice_jitter_undecodable_run(void);
 
+/* Utterance edges in the jitter buffer (test_voice_jitter.c): the first frame
+ * after priming fades in, the frame before a held end-of-utterance marker and
+ * the last concealed frame before giving up fade out to zero, and an unprime
+ * resets the decoder so the next utterance decodes as on a new one. */
+int run_voice_jitter_fade_in_on_prime(void);
+int run_voice_jitter_fade_out_before_marker(void);
+int run_voice_jitter_fade_out_on_give_up(void);
+int run_voice_jitter_decoder_reset_on_unprime(void);
+
 /* Jitter buffer under adverse arrival (test_voice_jitter_loss.c): a generated
  * loss / reorder / burst-outage pattern is pushed a tick at a time, and the
  * per-speaker counters are used to check that concealment matches what was
@@ -3389,14 +3409,18 @@ int run_voice_jitter_under_loss(void);
  * concurrent-talker cap never fires on them. */
 int run_voice_flood_cap_enforced(void);
 
-/* Voice across a lobby map change (test_voice_map_change.c): over the loopback
- * transport, a talker and a listener already in the room keep every segment
- * while the new map re-downloads (downloadComplete false, hasHadMap true), and
- * a connected slot that has never finished a download still hears nothing. */
+/* Voice across a lobby map change and a return to the lobby
+ * (test_voice_map_change.c): over the loopback transport, a talker and a
+ * listener already in the room keep every segment while the new map
+ * re-downloads, also when the re-sent accept is lost, also across a whole
+ * round and the return to the lobby after it; and a joiner hears the room
+ * before its own map has arrived. */
 int run_voice_map_change_talker_kept(void);
 int run_voice_map_change_during_redownload(void);
-int run_voice_never_had_map_left_out(void);
 int run_voice_map_change_listener_kept(void);
+int run_voice_map_change_accept_lost(void);
+int run_voice_joiner_hears_before_map(void);
+int run_voice_return_to_lobby_kept(void);
 
 /* Concurrent-talker selection (test_voice_talker_select.c): the per-recipient
  * cap keeps the most recently started talkers rather than the lowest-numbered

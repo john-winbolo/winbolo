@@ -854,9 +854,9 @@ static BYTE sidesTeamOf(const ServerSim *sim, BYTE slot) {
     return sim->lobbyPlayers[slot].teamNumber;
 }
 
-bool serverSimSidesAgree(const ServerSim *sim) {
+/* The first pair of connected seats that breaks the rule, if there is one. */
+static bool sidesFirstMismatch(const ServerSim *sim, BYTE *outA, BYTE *outB) {
     BYTE i, j;
-    if (sim == NULL) return true;
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
         for (j = 0; j < MAX_TANKS; j++) {
@@ -866,17 +866,36 @@ bool serverSimSidesAgree(const ServerSim *sim) {
             sameTeam = sidesTeamOf(sim, i) != 0 &&
                        sidesTeamOf(sim, i) == sidesTeamOf(sim, j);
             if (allied != sameTeam) {
-                WB_LOG_INFO(WB_LOG_CAT_SERVER,
-                            "sides: player %u (team %u) and player %u "
-                            "(team %u) are %sallied",
-                            (unsigned)i, (unsigned)sidesTeamOf(sim, i),
-                            (unsigned)j, (unsigned)sidesTeamOf(sim, j),
-                            allied ? "" : "not ");
-                return false;
+                *outA = i;
+                *outB = j;
+                return true;
             }
         }
     }
-    return true;
+    return false;
+}
+
+bool serverSimSidesAgree(const ServerSim *sim) {
+    BYTE a, b;
+    if (sim == NULL) return true;
+    return !sidesFirstMismatch(sim, &a, &b);
+}
+
+void serverSimSidesCheck(ServerSim *sim) {
+    BYTE a, b;
+    if (sim == NULL) return;
+    if (!sidesFirstMismatch(sim, &a, &b)) {
+        sim->sidesMismatchLogged = false;
+        return;
+    }
+    if (sim->sidesMismatchLogged) return;
+    sim->sidesMismatchLogged = true;
+    WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                "sides: player %u (team %u) and player %u (team %u) are "
+                "%sallied; the alliance table was written past the teams",
+                (unsigned)a, (unsigned)sidesTeamOf(sim, a),
+                (unsigned)b, (unsigned)sidesTeamOf(sim, b),
+                playersIsAllie(&sim->sim.plyrs, a, b) == TRUE ? "" : "not ");
 }
 
 /* The colour the fewest teams in use have, the lowest on a tie. The palette
@@ -943,7 +962,6 @@ void serverSimSeatTeamChanged(ServerSim *sim, BYTE slot, BYTE oldTeam) {
 
 static void acceptAllianceAndPublish(ServerSim *sim, BYTE accepter,
                                      BYTE newMember, bool quiet) {
-    GameSim *gs;
     ControlEvent evt;
     BYTE oldTeam[MAX_TANKS];
     bool moved[MAX_TANKS];
@@ -953,49 +971,44 @@ static void acceptAllianceAndPublish(ServerSim *sim, BYTE accepter,
         accepter == newMember) {
         return;
     }
-    gs = serverSimGetGameSim(sim);
     memset(moved, 0, sizeof(moved));
     memset(oldTeam, 0, sizeof(oldTeam));
     teamA = sidesTeamOf(sim, accepter);
     teamN = sidesTeamOf(sim, newMember);
 
+    /* Already one side: nothing changes and nothing is said. The table is
+       written from the teams, so two seats on one team are allied. */
     if (teamA != 0 && teamA == teamN) {
-        /* Already one side. Nothing changes and nothing is said, unless the
-           bitmap has not caught up with the team yet: a seat put on its team
-           by the bot seating or a held seat is allied here, with no team
-           move. */
-        if (playersIsAllie(&gs->plyrs, accepter, newMember) &&
-            playersIsAllie(&gs->plyrs, newMember, accepter)) {
-            return;
-        }
-    } else {
-        /* The accepter's team survives, and the new member's whole team
-           moves onto it. An accepter on no team is given a free one first.
-           With no id free, the accepter joins the new member's team, which
-           is the same side. */
-        if (teamA == 0) {
-            BYTE t = serverSimFreeTeam(sim);
-            if (t == 0) t = teamN;
-            oldTeam[accepter] = 0;
-            moved[accepter]   = true;
-            sim->lobbyPlayers[accepter].teamNumber = t;
-            teamA = t;
-        }
-        for (i = 0; i < MAX_TANKS; i++) {
-            bool inGroup = (i == newMember) ||
-                           (teamN != 0 && sim->playerConnected[i] &&
-                            sidesTeamOf(sim, i) == teamN);
-            if (!inGroup || sidesTeamOf(sim, i) == teamA) continue;
-            oldTeam[i] = sidesTeamOf(sim, i);
-            moved[i]   = true;
-            sim->lobbyPlayers[i].teamNumber = teamA;
-        }
+        return;
+    }
+    /* The accepter's team survives, and the new member's whole team moves
+       onto it. An accepter on no team is given a free one first. With no id
+       free, the accepter joins the new member's team, which is the same
+       side. */
+    if (teamA == 0) {
+        BYTE t = serverSimFreeTeam(sim);
+        if (t == 0) t = teamN;
+        oldTeam[accepter] = 0;
+        moved[accepter]   = true;
+        sim->lobbyPlayers[accepter].teamNumber = t;
+        teamA = t;
+    }
+    for (i = 0; i < MAX_TANKS; i++) {
+        bool inGroup = (i == newMember) ||
+                       (teamN != 0 && sim->playerConnected[i] &&
+                        sidesTeamOf(sim, i) == teamN);
+        if (!inGroup || sidesTeamOf(sim, i) == teamA) continue;
+        oldTeam[i] = sidesTeamOf(sim, i);
+        moved[i]   = true;
+        sim->lobbyPlayers[i].teamNumber = teamA;
     }
 
-    /* The bitmap takes the same accept. playersAcceptAlliance merges the two
-       seats' whole groups, which are their two teams, so it ends with the
-       team the moves above made. Clients apply the same merge. */
-    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, accepter, newMember, TRUE);
+    /* The table is written from the teams the moves above made: the one
+       rebuild, which publishes the whole table as a reset. The two teams
+       were each one alliance group, so the result is the merge an accept
+       always made. Clients apply the reset and then the accept below, which
+       merges two groups that are already one. */
+    serverSimReapplyTeamAlliances(sim);
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ALLIANCE_ACCEPT;
     evt.u.allianceAccept.acceptedBy = accepter;
@@ -1047,6 +1060,9 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
     }
     gs = serverSimGetGameSim(sim);
     oldTeam = sidesTeamOf(sim, playerNum);
+    /* The leave's own effect on the world: what the leaver owns goes to the
+       first ally, as it always has, and clients do the same from the event.
+       The bits it clears are written again from the teams below. */
     playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, playerNum, TRUE);
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ALLIANCE_LEAVE;
@@ -1062,7 +1078,9 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
     logAddEvent(log_AllyLeave, playerNum, 0, 0, 0, 0, NULL);
 
     /* The leaver takes a side of its own: the lowest free team, or no team
-       when no id is free. A leaver already alone on its team keeps it. */
+       when no id is free. A leaver already alone on its team keeps it, and
+       so does one on no team: neither had an ally to lose, so the table
+       stays as it was and nothing more is published. */
     if (oldTeam != 0) {
         bool shared = false;
         BYTE i;
@@ -1075,6 +1093,9 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
         }
         if (shared) {
             sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
+            /* The table is written from the teams: the one rebuild, which
+               publishes the whole table as a reset. */
+            serverSimReapplyTeamAlliances(sim);
             serverSimSeatTeamChanged(sim, playerNum, oldTeam);
         }
     }

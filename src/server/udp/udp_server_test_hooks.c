@@ -153,23 +153,18 @@ bool transportUdpServerTestDownloadComplete(int slot) {
     return udpServer.mapDownload[slot].downloadComplete;
 }
 
-bool transportUdpServerTestHasHadMap(int slot) {
-    if (slot < 0 || slot >= MAX_TANKS) return false;
-    return udpServer.mapDownload[slot].hasHadMap;
-}
-
 void transportUdpServerTestVoiceSlotStats(int slot, uint32_t *outAccepted,
-                                          uint32_t *outDropNotInGame,
+                                          uint32_t *outDropPerTickCap,
                                           uint32_t *outForwarded) {
-    if (slot < 0 || slot >= MAX_TANKS) {
-        if (outAccepted)      *outAccepted      = 0;
-        if (outDropNotInGame) *outDropNotInGame = 0;
-        if (outForwarded)     *outForwarded     = 0;
-        return;
+    uint32_t accepted = 0, capDrops = 0, forwarded = 0;
+    if (slot >= 0 && slot < MAX_TANKS) {
+        accepted  = udpServer.voiceSlot[slot].accepted;
+        capDrops  = udpServer.voiceSlot[slot].dropPerTickCap;
+        forwarded = udpServer.voiceSlot[slot].forwarded;
     }
-    if (outAccepted)      *outAccepted      = udpServer.voiceSlot[slot].accepted;
-    if (outDropNotInGame) *outDropNotInGame = udpServer.voiceSlot[slot].dropNotInGame;
-    if (outForwarded)     *outForwarded     = udpServer.voiceSlot[slot].forwarded;
+    if (outAccepted)       *outAccepted       = accepted;
+    if (outDropPerTickCap) *outDropPerTickCap = capDrops;
+    if (outForwarded)      *outForwarded      = forwarded;
 }
 
 uint32_t transportUdpServerGetMapEventDrops(int slot) {

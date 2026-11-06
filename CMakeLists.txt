@@ -6600,6 +6600,10 @@ set(_unit_test_names
     team_sides_held_seat_allied_in_round
     team_sides_free_team_keeps_setup
     team_sides_free_team_keeps_lobby_side
+    team_sides_accept_rebuilds_table
+    team_sides_leave_rebuilds_table
+    team_sides_bot_added_in_round_is_allied
+    team_sides_table_write_is_caught
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
@@ -6740,6 +6744,7 @@ set(_unit_test_names
     mac_bolo_spawn_starts_off_engine_picks
     mac_bolo_setting_changed_after_attach
     mac_bolo_setting_changed_between_rounds
+    mac_bolo_spawn_pick_keeps_enemies_off
     choose_start_lobby_arg_hand_picked
     choose_start_lobby_arg_team_side
     choose_start_lobby_arg_nil_without_reservation
@@ -7413,18 +7418,26 @@ set(_unit_test_names
     bot_pool_wire_chunk_transport
     bot_pool_catalog_id
     voice_core_roundtrip
+    voice_core_reset_matches_fresh
+    voice_core_fade_apply
     voice_device_resolve
     voice_peak
     voice_segment_roundtrip
     voice_segment_rejects_malformed
     voice_jitter_ordering_and_plc
     voice_jitter_undecodable_run
+    voice_jitter_fade_in_on_prime
+    voice_jitter_fade_out_before_marker
+    voice_jitter_fade_out_on_give_up
+    voice_jitter_decoder_reset_on_unprime
     voice_jitter_under_loss
     voice_flood_cap_enforced
     voice_map_change_talker_kept
     voice_map_change_during_redownload
-    voice_never_had_map_left_out
     voice_map_change_listener_kept
+    voice_map_change_accept_lost
+    voice_joiner_hears_before_map
+    voice_return_to_lobby_kept
     voice_talker_select_ranks_recent
     voice_talker_select_bounds
     active_sim_armed_on_lobby_tick

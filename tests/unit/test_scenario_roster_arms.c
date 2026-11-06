@@ -24,9 +24,9 @@
  *                                       picks the slot's start
  * run_scenario_roster_spawn_allies_team
  *                                     — the bot is allied with its whole
- *                                       team, on one accept and no reset
+ *                                       team, on one reset and no accept
  * run_scenario_roster_spawn_ally_is_quiet
- *                                     — and that accept draws no line
+ *                                     — and nothing it sends draws a line
  * run_scenario_roster_spawn_no_team_allies_nothing
  *                                     — a spawn onto no team allies nothing
  * run_scenario_roster_spawn_loadout_named
@@ -1038,9 +1038,9 @@ int run_scenario_roster_spawn_loadout_not_next_life(void) {
 /* ── The team's alliance ─────────────────────────────────────────── */
 
 /* The two alliance events a spawn could publish, and who the last accept
- * named. A reset carries the whole matrix and is what the spawn must never
- * send: every receiver applies one by dropping all sixteen slots' alliances
- * and taking them back. */
+ * named. The table is written from the teams (#424), so a spawn onto a team
+ * sends one reset carrying the whole matrix, and never an accept: an accept
+ * is something a player did, and it draws a newswire line. */
 typedef struct {
     int  accepts;
     int  resets;
@@ -1097,19 +1097,15 @@ int run_scenario_roster_spawn_allies_team(void) {
     UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, first),
                   "the spawned bot in slot %u is not allied with the human on "
                   "its own team %u", (unsigned)first, (unsigned)team);
-    UT_ASSERT_MSG(ev.accepts == 1,
-                  "the spawn published %d alliance accepts, expected 1",
+    UT_ASSERT_MSG(ev.resets == 1,
+                  "the spawn published %d alliance resets, expected 1",
+                  ev.resets);
+    UT_ASSERT_MSG(ev.accepts == 0,
+                  "the spawn published %d alliance accepts, expected none",
                   ev.accepts);
-    UT_ASSERT_MSG(ev.lastAccepter == 0 && ev.lastNewMember == first,
-                  "the accept named %u and %u, expected 0 and %u",
-                  (unsigned)ev.lastAccepter, (unsigned)ev.lastNewMember,
-                  (unsigned)first);
-    UT_ASSERT_MSG(ev.resets == 0,
-                  "the spawn published %d alliance resets", ev.resets);
 
-    /* A second bot onto a team of two: still one accept, and all three read
-       as allied. The accept the spawn published names one member, and the
-       merge inside it brings the rest. */
+    /* A second bot onto a team of two: still one reset, and all three read
+       as allied. */
     memset(&ev, 0, sizeof(ev));
     raSpawnOp(&op, SCN_NONE, team, "Ally2", NULL);
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
@@ -1117,18 +1113,18 @@ int run_scenario_roster_spawn_allies_team(void) {
     second = raFirstBotSlot(sim, first, SCN_NONE);
     UT_ASSERT_MSG(second != SCN_NONE, "the second spawn never landed");
 
-    UT_ASSERT_MSG(ev.accepts == 1,
-                  "the second spawn published %d alliance accepts, expected 1",
-                  ev.accepts);
-    UT_ASSERT_MSG(ev.resets == 0,
-                  "the second spawn published %d alliance resets", ev.resets);
+    UT_ASSERT_MSG(ev.resets == 1,
+                  "the second spawn published %d alliance resets, expected 1",
+                  ev.resets);
+    UT_ASSERT_MSG(ev.accepts == 0,
+                  "the second spawn published %d alliance accepts", ev.accepts);
     UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, second),
                   "the second bot is not allied with the human");
     UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, first, second),
                   "the two bots on one team are not allied with each other");
 
     /* And a third onto a team of three, which is the one that would show a
-       per-member loop: one accept, and the new seat allied with all three. */
+       per-member loop: one reset, and the new seat allied with all three. */
     memset(&ev, 0, sizeof(ev));
     raSpawnOp(&op, SCN_NONE, team, "Ally3", NULL);
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
@@ -1136,11 +1132,11 @@ int run_scenario_roster_spawn_allies_team(void) {
     third = raFirstBotSlot(sim, first, second);
     UT_ASSERT_MSG(third != SCN_NONE, "the third spawn never landed");
 
-    UT_ASSERT_MSG(ev.accepts == 1,
+    UT_ASSERT_MSG(ev.resets == 1,
                   "a spawn onto a team of three published %d alliance "
-                  "accepts, expected 1", ev.accepts);
-    UT_ASSERT_MSG(ev.resets == 0,
-                  "the third spawn published %d alliance resets", ev.resets);
+                  "resets, expected 1", ev.resets);
+    UT_ASSERT_MSG(ev.accepts == 0,
+                  "the third spawn published %d alliance accepts", ev.accepts);
     UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, third),
                   "the third bot is not allied with the human");
     UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, first, third),
@@ -1154,10 +1150,10 @@ int run_scenario_roster_spawn_allies_team(void) {
     return 0;
 }
 
-/* The accept a spawn publishes draws no newswire line. Seating a bot on its
- * team is setup: the lobby path allies the same bots with a rebake, which
- * announces nothing, and a script with something to say has its own message
- * call. */
+/* A spawn draws no newswire line. Seating a bot on its team is setup: the
+ * table is written from the teams, as the lobby path does with its rebake,
+ * which announces nothing, and no accept, which would, goes out. A script
+ * with something to say has its own message call. */
 int run_scenario_roster_spawn_ally_is_quiet(void) {
     ServerSim *sim;
     ScenarioOp op;
@@ -1185,12 +1181,12 @@ int run_scenario_roster_spawn_ally_is_quiet(void) {
     slot = raFirstBotSlot(sim, SCN_NONE, SCN_NONE);
     UT_ASSERT_MSG(slot != SCN_NONE, "the spawn never landed");
 
-    UT_ASSERT_MSG(ev.accepts == 1,
-                  "the spawn published %d alliance accepts, expected 1",
-                  ev.accepts);
-    UT_ASSERT_MSG(ev.lastQuiet == 1,
-                  "the accept went out with quiet=%u, expected 1",
-                  (unsigned)ev.lastQuiet);
+    UT_ASSERT_MSG(ev.accepts == 0,
+                  "the spawn published %d alliance accepts, which draw a "
+                  "line; expected none", ev.accepts);
+    UT_ASSERT_MSG(ev.resets == 1,
+                  "the spawn published %d alliance resets, expected 1",
+                  ev.resets);
 
     serverSimUnregisterSubscriber(sim, h);
     serverSimDestroy(sim);

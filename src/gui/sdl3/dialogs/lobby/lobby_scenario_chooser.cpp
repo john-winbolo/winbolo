@@ -1658,9 +1658,8 @@ static void lobbyScenarioSettingText(const ScnSetting *st, int32_t v,
  * server refuses a change to it in any case.
  *
  * Nothing is drawn for a file that declares no setting, or while the
- * server's answer has not come. A server too old to send the declarations
- * sends none, so its scripts show no section. A server that sends them but
- * has never reported a value cannot take a change, and the host is told so
+ * server's answer has not come. A server that has never reported a value
+ * for a declared setting cannot take a change, and the host is told so
  * rather than given dropdowns that do nothing. */
 static void lobbyScenarioDetailsSettings(ClientSim *cs) {
     ScnSetting     rows[SCN_SETTINGS_MAX];

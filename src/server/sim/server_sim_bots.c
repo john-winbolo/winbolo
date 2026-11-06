@@ -104,8 +104,19 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
     sim->lobbyPlayers[playerNum].teamNumber = cfg->teamNumber;
     /* Re-pick the reservation now the bot's final team is known — the
      * earlier pick in addPlayerInternal ran while it still held the
-     * default team. The slot republishes on its next lobby change. */
+     * default team. In the lobby the slot republishes on its next lobby
+     * change. */
     serverSimAssignLobbyStartOnJoin(sim, playerNum);
+    /* During a round the seat's team is its side, so the alliance table is
+     * written from the teams now (#424), and the slot goes out with the
+     * team the bot is on, since nothing else in a round publishes it. The
+     * round start does both for a bot added in the lobby. */
+    if (sim->state == serverStateRunning) {
+        if (cfg->teamNumber > 0 && cfg->teamNumber < MAX_TANKS) {
+            serverSimReapplyTeamAlliances(sim);
+        }
+        serverSimPublishLobbySlot(sim, playerNum);
+    }
     return true;
 }
 
@@ -147,19 +158,12 @@ bool serverSimAddUnfieldedSeat(ServerSim *sim, BYTE playerNum,
         sim->sim.lgmen[playerNum] = NULL;
     }
     basesRemoveTimer(&sim->sim, (int)playerNum);
-    /* During a round the seat's team is its side, so the alliance bitmap
-       takes it too (#424): one quiet accept with the first teammate, which
-       merges the seat into that teammate's group and moves no team. Outside
-       a round the start's rebuild from the teams does it. */
+    /* During a round the seat's team is its side, so the alliance table is
+       written from the teams now (#424). Outside a round the round start
+       does it. */
     if (sim->state == serverStateRunning && teamNumber > 0 &&
         teamNumber < MAX_TANKS) {
-        BYTE i;
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (i == playerNum || !sim->playerConnected[i]) continue;
-            if (sim->lobbyPlayers[i].teamNumber != teamNumber) continue;
-            serverSimAcceptAllianceQuiet(sim, i, playerNum);
-            break;
-        }
+        serverSimReapplyTeamAlliances(sim);
     }
     serverSimPublishLobbySlot(sim, playerNum);
     /* And the seat's mode and difficulty, which the slot event does not

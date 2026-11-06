@@ -93,7 +93,8 @@
 -- Settings. The host turns each part on or off in the lobby's details
 -- dialog (scenario.settings below). Every part is on by default, and plays
 -- at the numbers above, which the host cannot change. Every setting is a
--- switch, so the parts fit in the 16 settings a script may have.
+-- switch, which keeps the mod well under the 16 settings a script may
+-- have; with the five numbers kept, the parts would have reached that cap.
 --
 --   pushback            Mac Bolo shell pushback (tank_slide_mac, with
 --                       tank_slide_step 28, tank_slide_armour_bonus 32
@@ -143,7 +144,7 @@ scenario = {
                 "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-11-03T05:26Z",
+  updated = "2026-11-05T18:00Z",
   kind = "mod",
   bound = false,
 

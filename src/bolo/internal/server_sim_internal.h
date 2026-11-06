@@ -1148,6 +1148,9 @@ struct ServerSim {
     AttrSlotIdentity trackIdentity[MAX_TANKS]; /* snapshot at game-over freeze */
     uint8_t          trackTeam[MAX_TANKS];     /* each seat's last ATTR_REC_TEAM
                                                   team; 0xFF before the first */
+    bool             sidesMismatchLogged;      /* the running tick's sides
+                                                  check has logged the break
+                                                  it is seeing (#424) */
 
     /* In-process control event subscribers (bot ClientSims, SP humanSim,
      * and live-lobby spectators). */

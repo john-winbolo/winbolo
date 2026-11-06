@@ -1061,16 +1061,12 @@ uint32_t transportUdpServerTestLastReceivedTick(int slot);
  * that drives the real game-event producer must wait on this, not just on the
  * client's connect state, or the producer skips the slot as still-downloading. */
 bool transportUdpServerTestDownloadComplete(int slot);
-/* Read a slot's has-had-a-map flag: set the first time any download to the
- * slot completes and kept across a map change's re-download, so it can read
- * true while the flag above reads false. It is what the voice pump checks. */
-bool transportUdpServerTestHasHadMap(int slot);
 /* Read a slot's own voice counters: segments it sent that the pump accepted,
- * segments it sent that were dropped because it has never had a map, and
- * frames forwarded to it as a recipient. Any out-param may be NULL; all read
- * 0 for an out-of-range slot. */
+ * segments it sent that the per-tick credit dropped, and frames forwarded to
+ * it as a recipient. Any out-param may be NULL; all read 0 for an
+ * out-of-range slot. */
 void transportUdpServerTestVoiceSlotStats(int slot, uint32_t *outAccepted,
-                                          uint32_t *outDropNotInGame,
+                                          uint32_t *outDropPerTickCap,
                                           uint32_t *outForwarded);
 /* Stage one terrain change for a slot as a real tick does: mutate the live
  * server map, write the tile into every slot's copy of the terrain (so the

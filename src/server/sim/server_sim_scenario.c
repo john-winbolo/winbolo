@@ -1892,16 +1892,12 @@ static ScnOpResult scenarioSpawnSeat(ServerSim *sim, BYTE asked, BYTE *out) {
  * near the reservations its team already holds; a team written after that
  * call has missed the pick, and the bot is placed as though it had no team.
  *
- * The alliance is the one thing the add does not carry, so a seat new to the
- * roster is allied with its team below. A seat that was already held is not:
- * it was allied when the round started and keeps that through every
- * unfielding, so accepting again would publish events for a state every
- * client already holds.
- *
- * One accept, and never a rebake of the whole matrix. The batched reset
- * exists so that rebaking every slot costs one event instead of N×(N-1)/2;
- * a reset here would make every receiver drop and rebuild all sixteen slots
- * to learn one pair. */
+ * The alliance comes with the add too: a seat new to the roster during a
+ * round is allied with its team by the one rebuild of the table from the
+ * teams (#424), inside serverSimAddBot, and its slot goes out from there with
+ * the team on it. A seat that was already held is not rebuilt: it was allied
+ * when it was seated and keeps that through every unfielding, and the
+ * fielding publishes its slot on its own. */
 static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
                                  const char *name, BYTE team,
                                  const ScnTable *init) {
@@ -1951,28 +1947,9 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
         botManagerForgetAddedInit(sim, slot);
     }
     transportUdpServerSetBotName(slot, name);
-    if (!wasHeld && team > 0 && team < MAX_TANKS) {
-        /* One accept, with the first member found. An accept merges the two
-           sides' groups, so the new seat joins everyone that member is allied
-           with. A team is always one alliance group (a leave moves the
-           leaver to a team of its own, and set_team writes the alliances
-           from the teams), so this one accept puts the seat on the whole
-           team.
-
-           Quiet: putting a bot on its team is seating, not something a
-           player did. The lobby does the same job with a rebake, which
-           announces nothing, and a script with something to say has its own
-           message call. */
-        BYTE i;
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (i == slot) continue;
-            if (!sim->playerConnected[i]) continue;
-            if (sim->lobbyPlayers[i].teamNumber != team) continue;
-            serverSimAcceptAllianceQuiet(sim, i, slot);
-            break;
-        }
-    }
-    serverSimPublishLobbySlot(sim, slot);
+    /* The add wrote the table from the teams and published the seat's slot
+       with the team it is on (#424): a bot added to a round takes the same
+       path whoever adds it, and nothing here is said twice. */
     return true;
 }
 
