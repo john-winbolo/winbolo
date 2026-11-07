@@ -187,7 +187,7 @@ typedef enum {
                                  * the classic behaviour, and classic mode
                                  * forces it off and refuses an edit while
                                  * it stays on. */
-    LST_SERVER_BOT_SLOTS  = 18  /* 1 byte, 0..16: how many bots the
+    LST_SERVER_BOT_SLOTS  = 18, /* 1 byte, 0..16: how many bots the
                                  * server runs in its own process (its
                                  * slots in the bot placement and its part
                                  * of the Add Bot limit). Above 16 is
@@ -199,6 +199,15 @@ typedef enum {
                                  * An older server drops it as unknown.
                                  * CTRL_SERVER_BOT_SLOTS carries the value
                                  * back. */
+    LST_BOT_HOST_SLOTS    = 19  /* 2 bytes: [row][value]: the slot
+                                 * override of Bot Host row `row`, 0 up
+                                 * to the slots the host reports, or 0xFF
+                                 * for none. It only lowers. Taken while a
+                                 * game runs too, and it leaves the ready
+                                 * marks alone, as LST_SERVER_BOT_SLOTS.
+                                 * Refused while -bothost-slots locks the
+                                 * row. CTRL_BOT_HOST_ROW_SLOTS carries the
+                                 * value back. */
 } LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

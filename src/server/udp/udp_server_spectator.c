@@ -214,6 +214,9 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
      * spectator sees that list too. */
     case CTRL_BOT_HOST_STATUS:
     case CTRL_BOT_HOST_CPU:
+    case CTRL_BOT_HOST_CPU_BOT:
+    case CTRL_BOT_HOST_LAG:
+    case CTRL_BOT_HOST_ROW_SLOTS:
     case CTRL_LOBBY_SYNC_COMPLETE:
     /* The live scoreboard is public — a viewer can already read captures and
      * kills off the map, and a spectator whose board never leaves zero looks

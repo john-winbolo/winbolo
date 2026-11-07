@@ -509,6 +509,17 @@
 #define STR_DLGLOBBY_SERVER_BOT_SLOTS_NONE 3902
 #define STR_DLGLOBBY_SERVER_BOT_SLOTS_MEASURING 3903
 #define STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP 3904
+/* A Bot Host row that gets 0 slots because it shares its computer with the
+ * server ({string1} the row's name) or with another host ({string2}); and
+ * the row's slot box: its label, the "no override" item ({number} the
+ * slots the host offers), the mouse-over while -bothost-slots locks it,
+ * and the mouse-over otherwise */
+#define STR_DLGLOBBY_BOTHOST_SAME_SERVER 3905
+#define STR_DLGLOBBY_BOTHOST_SAME_HOST 3906
+#define STR_DLGLOBBY_BOTHOST_SLOTS_LABEL 3907
+#define STR_DLGLOBBY_BOTHOST_SLOTS_ALL 3908
+#define STR_DLGLOBBY_BOTHOST_SLOTS_LOCKED 3909
+#define STR_DLGLOBBY_BOTHOST_SLOTS_TIP 3910
 /* The lobby's one-game opt-out from running the server's bots on this
  * computer, next to the line above, and its mouse-over text */
 #define STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT     3652

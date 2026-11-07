@@ -51,6 +51,7 @@ extern "C" {
 #include "client_net.h"      /* clientSimNetSend* — kick, host transfer, claim start */
 #include "bot_host_cpu.h"    /* BOT_HOST_CPU_* — the Bot Host rows' CPU estimate */
 #include "control_event.h"   /* BOT_HOST_CPU_OWNER_NONE, BOT_HOST_LAG_UNKNOWN */
+#include "bot_host_machine.h"  /* BOT_HOST_MACHINE_SERVER */
 #include "bolo_rand.h"       /* bolo_rand_below — random pool for a team's first bot */
 #include "lobby_bot_pools.h" /* lobbyBotPoolCount / Label / Pick */
 #include "start_sides.h"     /* START_SIDE_* / startSideBits / Accepts / Eligible / IsCentre — team start sides */
@@ -686,7 +687,75 @@ static void renderClientBotHostOptOut(ClientSim *cs) {
     }
 }
 
-static void renderBotHostGroup(ClientSim *cs) {
+/* The row's slot box: "Slots [All (4)]", 0 up to the slots the host offers.
+ * It only lowers, and it lasts for this lobby. Read-only for a player who
+ * may not change Server Settings, and for everyone when -bothost-slots on
+ * the server set it. */
+static void renderBotHostSlotsBox(ClientSim *cs, int idx,
+                                  const ClientBotHostRow *r, bool mayEdit) {
+    const bool editable = mayEdit && !r->slotLocked;
+    const bool none = r->slotOverride == BOT_HOST_SLOT_OVERRIDE_NONE;
+    char preview[64];
+    MessageArgs aa = {};
+    aa.number = r->slots;
+    char allText[64];
+    SDL_strlcpy(allText, langGetTextFmt(STR_DLGLOBBY_BOTHOST_SLOTS_ALL, &aa),
+                sizeof(allText));
+    if (none) {
+        SDL_strlcpy(preview, allText, sizeof(preview));
+    } else {
+        SDL_snprintf(preview, sizeof(preview), "%u", (unsigned)r->slotOverride);
+    }
+    const ImGuiStyle &st = ImGui::GetStyle();
+    const float comboW = ImMax(ImGui::CalcTextSize(allText).x,
+                               ImGui::CalcTextSize(preview).x)
+                       + st.FramePadding.x * 2.0f + ImGui::GetFrameHeight();
+    ImGui::PushID(idx);
+    ImGui::Indent(ImGui::GetTreeNodeToLabelSpacing());
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTHOST_SLOTS_LABEL));
+    ImGui::SameLine();
+    if (!editable) ImGui::BeginDisabled();
+    ImGui::SetNextItemWidth(comboW);
+    bool open = ImGui::BeginCombo("##bothostslots", preview);
+    if (!open && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s", langGetText(r->slotLocked
+                                    ? STR_DLGLOBBY_BOTHOST_SLOTS_LOCKED
+                                    : STR_DLGLOBBY_BOTHOST_SLOTS_TIP));
+    }
+    if (open) {
+        uint8_t msg[2];
+        msg[0] = (uint8_t)idx;
+        if (ImGui::Selectable(allText, none) && !none) {
+            msg[1] = (uint8_t)BOT_HOST_SLOT_OVERRIDE_NONE;
+            lobbySendSetting(cs, LST_BOT_HOST_SLOTS, msg, 2);
+        }
+        if (none) ImGui::SetItemDefaultFocus();
+        for (int v = 0; v <= (int)r->slots; v++) {
+            char item[8];
+            const bool sel = !none && v == (int)r->slotOverride;
+            SDL_snprintf(item, sizeof(item), "%d", v);
+            if (ImGui::Selectable(item, sel) && !sel) {
+                msg[1] = (uint8_t)v;
+                lobbySendSetting(cs, LST_BOT_HOST_SLOTS, msg, 2);
+            }
+            if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    if (!editable) ImGui::EndDisabled();
+    ImGui::Unindent(ImGui::GetTreeNodeToLabelSpacing());
+    ImGui::PopID();
+}
+
+static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
+    /* Who may change the row's slots: the players who may change Server
+     * Settings. */
+    const bool mayEdit = !clientSimIsSpectator(cs) &&
+        (lobbyIsHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
+         (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+          (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags &
+           PLAYER_FLAG_ADMIN)));
     int count = 0;
     bool serverRow = false;
     for (int idx = 0; ; idx++) {
@@ -769,13 +838,44 @@ static void renderBotHostGroup(ClientSim *cs) {
                              : r->name,
                     sizeof(args.string1));
         args.number = r->used;
-        args.number2 = r->slots;
+        /* The slots the server gives it: lowered by the row's override,
+         * and 0 when its computer's slots go to another. */
+        int effSlots = r->slots;
+        if (!isServer && r->rowSlotsHave) {
+            if (r->machineZero) {
+                effSlots = 0;
+            } else if (r->slotOverride != BOT_HOST_SLOT_OVERRIDE_NONE &&
+                       r->slotOverride < effSlots) {
+                effSlots = r->slotOverride;
+            }
+        }
+        args.number2 = effSlots;
 
         /* The row, then the host's bots in brackets by their roster names:
          * "Laptop: ready, 2 of 2 bots (ALF, Sonny Chiba)". */
         char line[512];
         SDL_strlcpy(line, langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &args),
                     sizeof(line));
+        if (!isServer && r->rowSlotsHave && r->machineZero) {
+            /* "Laptop: same computer as the server (0 bots)", or "as
+             * <other row's name>". */
+            MessageArgs ma = {};
+            SDL_strlcpy(ma.string1, r->name, sizeof(ma.string1));
+            const ClientBotHostRow *o =
+                r->machineOther != BOT_HOST_MACHINE_OTHER_NONE
+                    ? clientSimGetBotHostRow(cs, r->machineOther) : NULL;
+            if (r->machineKind == BOT_HOST_MACHINE_SERVER || o == NULL ||
+                !o->connected) {
+                SDL_strlcpy(line,
+                            langGetTextFmt(STR_DLGLOBBY_BOTHOST_SAME_SERVER, &ma),
+                            sizeof(line));
+            } else {
+                SDL_strlcpy(ma.string2, o->name, sizeof(ma.string2));
+                SDL_strlcpy(line,
+                            langGetTextFmt(STR_DLGLOBBY_BOTHOST_SAME_HOST, &ma),
+                            sizeof(line));
+            }
+        }
         bool first = true;
         for (int s = 0; s < MAX_TANKS; s++) {
             if ((r->seats & (1u << s)) == 0) continue;
@@ -894,6 +994,9 @@ static void renderBotHostGroup(ClientSim *cs) {
             ImGui::Unindent(indent);
         }
         if (dim) ImGui::PopStyleColor();
+        if (!isServer && r->rowSlotsHave) {
+            renderBotHostSlotsBox(cs, idx, r, mayEdit);
+        }
     }
 #ifndef WINBOLO_HIDE_CLIENT_BOT_HOST_MSG
     /* This computer's own Bot Host, under the rows. */
@@ -3024,7 +3127,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
     /* Connected spectators, listed below the teams + unassigned tray. */
     renderSpectatorGroup(cs, myPlayerNum, s);
     /* Connected Bot Hosts, below the spectators. */
-    renderBotHostGroup(cs);
+    renderBotHostGroup(cs, myPlayerNum);
 
     /* Deferred-open kick-confirm modal. OpenPopup must happen in the
      * same ID scope as BeginPopupModal, so we set a flag inside the

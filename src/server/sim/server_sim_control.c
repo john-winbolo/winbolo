@@ -304,7 +304,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyModsOff        = sim->modsOff;
     evt->u.lobbySettings.lobbyPositionalSound = sim->positionalSound;
     evt->u.lobbySettings.lobbyHostBotCapacity =
-        lobbyHostBotCapacityToWire(serverSimGetHostBotCapacity(sim));
+        lobbyHostBotCapacityToWire(serverSimGetGameBotLimit(sim));
     /* What the lobby's scenario is, straight off what whoever attached it
        told the sim. A lobby with none leaves the source at lobbyScenarioNone
        and the strings empty, which is what keeps those bytes off the wire. */

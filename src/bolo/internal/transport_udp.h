@@ -885,6 +885,23 @@ void transportUdpServerSetBotHostRecord(bool on);
 /* -bothost-nomove: no bot moves between places while a game runs; each bot
  * is placed once (BotHostNoMove in bot_host_link.h). Off by default. */
 void transportUdpServerSetBotHostNoMove(bool on);
+/* -bothost-slots name=N: the most slots Bot Host `name` (its listed name,
+ * or the player's name for a player's own host) is given, locked for the
+ * lobby. Once per host; several flags are allowed. False, with the reason
+ * in err, for bad input. */
+bool transportUdpServerAddBotHostSlots(const char *arg, char *err,
+                                       size_t errSz);
+/* The lobby's slot override of Bot Host row `row` (LST_BOT_HOST_SLOTS):
+ * value 0 up to the slots the host reports, or 0xFF for none; player is
+ * the player who set it. */
+enum {
+    BOT_HOST_SLOT_SET_OK = 0,
+    BOT_HOST_SLOT_SET_LOCKED,    /* -bothost-slots locks the row */
+    BOT_HOST_SLOT_SET_INVALID,   /* above the host's slots, or no such row */
+};
+struct ServerSim;
+int  serverBotHostSetSlotOverride(struct ServerSim *sim, int row, int value,
+                                  int player);
 void transportUdpServerPrintBotHosts(void);
 
 /* -brain-debug session blocks, for the Bot Hosts' recordings: RecOpen when

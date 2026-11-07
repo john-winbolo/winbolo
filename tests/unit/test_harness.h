@@ -944,6 +944,18 @@ int run_bot_host_cpu_bot_meter(void);
 int run_bot_host_cpu_bot_codec(void);
 int run_bot_host_cpu_bot_client_row(void);
 int run_bot_host_lag_codec(void);
+/* Bot Hosts on one computer, the game bot limit and the row slot override
+ * (test_bot_host_machine.c). */
+int run_bot_host_machine_addr(void);
+int run_machine_id_token(void);
+int run_machine_id_salt_repeat(void);
+int run_bot_host_machine_server_group(void);
+int run_bot_host_machine_client_group(void);
+int run_bot_host_machine_leader_leaves(void);
+int run_bot_host_game_bot_limit(void);
+int run_bot_host_slots_override(void);
+int run_bot_host_slots_arg_parse(void);
+int run_bot_host_machine_codec(void);
 /* The lobby's one-game opt-out from running bots on this computer
  * (test_bot_host_optout.c). */
 int run_bot_host_optout_slots_codec(void);

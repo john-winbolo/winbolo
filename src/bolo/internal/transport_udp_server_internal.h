@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <stdio.h>   /* FILENAME_MAX — uploadPersistDir */
 
+#include "bot_host_machine.h" /* BotHostSlotOverride, MACHINE_HASH_LEN */
 #include "global.h"         /* BYTE, MAX_TANKS, PlayerBitMap */
 #include "lang_message.h"   /* langid — the localized server->client sends */
 #include "platform_net.h"   /* SOCKET, struct sockaddr_in */
@@ -279,6 +280,16 @@ typedef struct {
     double   lagMs;
     bool     lagKnown;
     uint32_t lagConnTick;        /* tickCount the host joined */
+    /* Bot Hosts on one computer (bot_host_machine.h). joinSeq: the join
+     * order. machineHash: the host's answer to the salt round machineSeq
+     * (machineHave: it answered one). */
+    uint32_t joinSeq;
+    bool     machineHave;
+    uint32_t machineSeq;
+    uint8_t  machineHash[MACHINE_HASH_LEN];
+    /* The row's slot override: from the lobby, or locked by
+     * -bothost-slots. */
+    BotHostSlotOverride slotOvr;
     ChannelMux channelMux;
 
     /* Brain sync. The manifest and the file pieces go out on this

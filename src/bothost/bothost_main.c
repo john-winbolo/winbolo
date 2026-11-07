@@ -79,6 +79,7 @@
 #include "machine_cpu_free.h"
 #include "client_sim_internal.h"
 #include "transport_control_codec.h"
+#include "machine_id.h"   /* machineIdInit, machineIdAnswerSalt */
 #include "transport_udp.h"
 #include "transport_udp_internal.h"
 #include "../gui/lang.h"
@@ -1237,6 +1238,25 @@ static void onTeamMsg(HostServer *sv, const ControlEvent *evt) {
     hs->teamMsgsIn++;
 }
 
+/* The server's salt: the answer is SHA-256 of this computer's id and the
+ * salt, so the server can find its hosts on one computer. A salt this
+ * program answered before gets no answer. */
+static void onMachineSalt(HostServer *sv, const ControlEvent *evt) {
+    ControlEvent a;
+    memset(&a, 0, sizeof(a));
+    a.type = CTRL_BOT_HOST_MACHINE_ANSWER;
+    memcpy(a.u.botHostMachineAnswer.salt, evt->u.botHostMachineSalt.salt,
+           sizeof(a.u.botHostMachineAnswer.salt));
+    if (!machineIdAnswerSalt(evt->u.botHostMachineSalt.salt,
+                             a.u.botHostMachineAnswer.hash)) {
+        fprintf(stderr, "[bothost] %s: a same-computer salt this program "
+                        "answered before (or no machine id); no answer\n",
+                sv->label);
+        return;
+    }
+    ctlSendEvent(sv, &a);
+}
+
 static void ctlHandleControl(HostServer *sv, const uint8_t *msg, uint16_t len) {
     ControlEvent evt;
     ControlDecodeBodyFn dec;
@@ -1255,6 +1275,7 @@ static void ctlHandleControl(HostServer *sv, const uint8_t *msg, uint16_t len) {
         case CTRL_BOT_INIT_TABLE:    onInitTable(sv, &evt); break;
         case CTRL_BOT_HINT:          onHint(sv, &evt);      break;
         case CTRL_BOT_TEAM_MSG:      onTeamMsg(sv, &evt);   break;
+        case CTRL_BOT_HOST_MACHINE_SALT: onMachineSalt(sv, &evt); break;
         case CTRL_BOT_HOST_REC:
             hostRecOnEvent(serverIndex(sv), &evt);
             break;
@@ -2005,6 +2026,9 @@ int main(int argc, char *argv[]) {
     atexit(sentryClose);
 
     if (!parseArgs(argc, argv)) return 1;
+    /* This computer's id and the salts answered before, read now, so two
+     * programs on one computer both answer a new salt. */
+    (void)machineIdInit();
 
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
@@ -2253,6 +2277,8 @@ int botHostEmbedDefaultSlots(void) {
 }
 
 bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
+    /* As main() does: the id and the answered salts, read once. */
+    (void)machineIdInit();
     HostServer *sv;
     size_t n;
     char *c;

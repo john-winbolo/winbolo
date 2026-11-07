@@ -3970,6 +3970,102 @@ static bool decodeBotHostLagBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_BOT_HOST_MACHINE_SALT body: [salt 16]. Later bytes skipped. */
+static EncodeResult encodeBotHostMachineSaltBody(const ControlEvent *evt,
+                                                 const struct UdpServerClient *recipient,
+                                                 uint8_t *buf, size_t bufCap,
+                                                 size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_MACHINE_SALT_LEN) return ENCODE_OVERFLOW;
+    memcpy(buf, evt->u.botHostMachineSalt.salt, BOT_HOST_MACHINE_SALT_LEN);
+    *outLen = BOT_HOST_MACHINE_SALT_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostMachineSaltBody(const uint8_t *buf, size_t len,
+                                         ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_MACHINE_SALT_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_MACHINE_SALT;
+    memcpy(outEvt->u.botHostMachineSalt.salt, buf, BOT_HOST_MACHINE_SALT_LEN);
+    return true;
+}
+
+/* CTRL_BOT_HOST_MACHINE_ANSWER body: [salt 16][hash 32]. Later bytes
+ * skipped. */
+#define BOT_HOST_MACHINE_ANSWER_LEN \
+    (BOT_HOST_MACHINE_SALT_LEN + BOT_HOST_MACHINE_HASH_LEN)
+
+static EncodeResult encodeBotHostMachineAnswerBody(const ControlEvent *evt,
+                                                   const struct UdpServerClient *recipient,
+                                                   uint8_t *buf, size_t bufCap,
+                                                   size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_MACHINE_ANSWER_LEN) return ENCODE_OVERFLOW;
+    memcpy(buf, evt->u.botHostMachineAnswer.salt, BOT_HOST_MACHINE_SALT_LEN);
+    memcpy(buf + BOT_HOST_MACHINE_SALT_LEN, evt->u.botHostMachineAnswer.hash,
+           BOT_HOST_MACHINE_HASH_LEN);
+    *outLen = BOT_HOST_MACHINE_ANSWER_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostMachineAnswerBody(const uint8_t *buf, size_t len,
+                                           ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_MACHINE_ANSWER_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_MACHINE_ANSWER;
+    memcpy(outEvt->u.botHostMachineAnswer.salt, buf, BOT_HOST_MACHINE_SALT_LEN);
+    memcpy(outEvt->u.botHostMachineAnswer.hash, buf + BOT_HOST_MACHINE_SALT_LEN,
+           BOT_HOST_MACHINE_HASH_LEN);
+    return true;
+}
+
+/* CTRL_BOT_HOST_ROW_SLOTS body: [idx][machineKind][machineOther]
+ * [slotOverride][flags], flags bit 0 = locked, bit 1 = zero. Later bytes
+ * skipped. A row that is not a Bot Host row, or an override above 16 that
+ * is not "none", is refused. */
+#define BOT_HOST_ROW_SLOTS_LEN 5
+
+static EncodeResult encodeBotHostRowSlotsBody(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_ROW_SLOTS_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostRowSlots.idx;
+    buf[1] = evt->u.botHostRowSlots.machineKind;
+    buf[2] = evt->u.botHostRowSlots.machineOther;
+    buf[3] = evt->u.botHostRowSlots.slotOverride;
+    buf[4] = (uint8_t)((evt->u.botHostRowSlots.slotLocked ? 1u : 0u) |
+                       (evt->u.botHostRowSlots.zero ? 2u : 0u));
+    *outLen = BOT_HOST_ROW_SLOTS_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostRowSlotsBody(const uint8_t *buf, size_t len,
+                                      ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_ROW_SLOTS_LEN) {
+        return false;
+    }
+    if (buf[0] >= BOT_HOST_STATUS_ROWS - 1) return false;   /* not the server row */
+    if (buf[3] != BOT_HOST_SLOT_OVERRIDE_NONE && buf[3] > MAX_TANKS) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_ROW_SLOTS;
+    outEvt->u.botHostRowSlots.idx = buf[0];
+    outEvt->u.botHostRowSlots.machineKind = buf[1];
+    outEvt->u.botHostRowSlots.machineOther =
+        buf[2] < BOT_HOST_STATUS_ROWS - 1 ? buf[2]
+                                          : (uint8_t)BOT_HOST_MACHINE_OTHER_NONE;
+    outEvt->u.botHostRowSlots.slotOverride = buf[3];
+    outEvt->u.botHostRowSlots.slotLocked = (buf[4] & 1u) ? 1u : 0u;
+    outEvt->u.botHostRowSlots.zero = (buf[4] & 2u) ? 1u : 0u;
+    return true;
+}
+
 /* CTRL_BOT_HOST_FILE_REQ body: [gen 4][brain 1][file 2]. */
 #define BOT_HOST_FILE_REQ_LEN 7
 
@@ -4724,6 +4820,9 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_CPU_BOT]      = encodeBotHostCpuBotBody,
     [CTRL_BOT_HOST_LAG]          = encodeBotHostLagBody,
     [CTRL_SERVER_BOT_SLOTS]      = encodeServerBotSlotsBody,
+    [CTRL_BOT_HOST_MACHINE_SALT]   = encodeBotHostMachineSaltBody,
+    [CTRL_BOT_HOST_MACHINE_ANSWER] = encodeBotHostMachineAnswerBody,
+    [CTRL_BOT_HOST_ROW_SLOTS]      = encodeBotHostRowSlotsBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -4798,6 +4897,9 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_CPU_BOT]      = decodeBotHostCpuBotBody,
     [CTRL_BOT_HOST_LAG]          = decodeBotHostLagBody,
     [CTRL_SERVER_BOT_SLOTS]      = decodeServerBotSlotsBody,
+    [CTRL_BOT_HOST_MACHINE_SALT]   = decodeBotHostMachineSaltBody,
+    [CTRL_BOT_HOST_MACHINE_ANSWER] = decodeBotHostMachineAnswerBody,
+    [CTRL_BOT_HOST_ROW_SLOTS]      = decodeBotHostRowSlotsBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -4936,6 +5038,9 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_CPU_BOT:       return "CTRL_BOT_HOST_CPU_BOT";
     case CTRL_BOT_HOST_LAG:           return "CTRL_BOT_HOST_LAG";
     case CTRL_SERVER_BOT_SLOTS:       return "CTRL_SERVER_BOT_SLOTS";
+    case CTRL_BOT_HOST_MACHINE_SALT:  return "CTRL_BOT_HOST_MACHINE_SALT";
+    case CTRL_BOT_HOST_MACHINE_ANSWER: return "CTRL_BOT_HOST_MACHINE_ANSWER";
+    case CTRL_BOT_HOST_ROW_SLOTS:     return "CTRL_BOT_HOST_ROW_SLOTS";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

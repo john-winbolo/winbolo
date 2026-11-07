@@ -2394,6 +2394,16 @@ void          serverSimLockServerBotSlots(ServerSim *sim, int slots);
 /* The CTRL_SERVER_BOT_SLOTS event for the value now. */
 void          serverSimFillServerBotSlotsEvent(const ServerSim *sim,
                                                struct ControlEvent *evt);
+/* The game bot limit: the lobby's Add Bot limit and the number its button
+ * shows. With Bot Hosts it is the server's bot slots plus the slots of
+ * every Bot Host that runs bots (serverSimSetGameBotLimit, from the UDP
+ * server); without, the server's own (serverSimGetHostBotCapacity). Same
+ * form: 0..16, SERVER_HOST_BOT_CAPACITY_NONE, _MEASURING. -bots, scenario,
+ * sidecar and headless bots are not limited by it. */
+int           serverSimGetGameBotLimit(const ServerSim *sim);
+/* set false: follow the server's own again. Publishes the lobby settings
+ * when the value changes. */
+void          serverSimSetGameBotLimit(ServerSim *sim, int limit, bool set);
 /* Whether a lobby Add Bot fits under the host bot capacity: false while
  * the test runs, and false when lobbyBots (the bots in the lobby now) has
  * reached a capacity of 0..16. True when there is no cap. */

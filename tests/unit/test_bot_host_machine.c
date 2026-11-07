@@ -1,0 +1,315 @@
+/*
+ * Bot Hosts on one computer, the game bot limit and the slot override of a
+ * Bot Host row (bot_host_machine.h, machine_id.h).
+ *
+ *   1. bot_host_machine_addr: 127.x.x.x and the server's own addresses are
+ *      the server's computer; any other address (a shared public one too)
+ *      is not.
+ *   2. machine_id_token: SHA-256 gives the known "abc" digest; one id and
+ *      one salt give one hash; another id or another salt gives another.
+ *   3. machine_id_salt_repeat: a salt answered before gets no answer; the
+ *      memory keeps the newest 64, so the 65th salt pushes out the first.
+ *   4. bot_host_machine_server_group: a player's host on the server's
+ *      computer (by address, or by token) gets 0; a listed host there keeps
+ *      its slots; a host on another computer is alone.
+ *   5. bot_host_machine_client_group: two hosts with one token and no
+ *      server: the first-joined one leads and keeps its slots, the other
+ *      gets 0 and names the leader; a host that offers no slot does not
+ *      lead.
+ *   6. bot_host_machine_leader_leaves: when the leader goes, the next
+ *      first-joined host leads.
+ *   7. bot_host_game_bot_limit: the server's slots plus each counted host;
+ *      a group member, an opted-out host and a host in its CPU test count 0;
+ *      no server limit is no limit; the server's CPU test with no host
+ *      slots holds the limit.
+ *   8. bot_host_slots_override: the override only lowers; a lower report
+ *      wins; a value above the report is refused; a locked override
+ *      refuses a change; a new lobby clears a lobby override but not a
+ *      locked one; a rejoin resets it; the limit counts the override.
+ *   9. bot_host_slots_arg_parse: several flags, by listed name or player
+ *      name; bad input and a name given twice are refused with a reason.
+ */
+
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "bot_host_machine.h"
+#include "machine_id.h"
+#include "test_harness.h"
+
+static uint32_t ipOf(int a, int b, int c, int d) {
+    uint32_t ip;
+    uint8_t *p = (uint8_t *)&ip;
+    p[0] = (uint8_t)a; p[1] = (uint8_t)b; p[2] = (uint8_t)c; p[3] = (uint8_t)d;
+    return ip;
+}
+
+int run_bot_host_machine_addr(void) {
+    uint32_t own[2];
+    own[0] = ipOf(192, 168, 0, 10);
+    own[1] = ipOf(10, 0, 0, 5);
+    UT_ASSERT(botHostAddrIsServerMachine(ipOf(127, 0, 0, 1), own, 2));
+    UT_ASSERT(botHostAddrIsServerMachine(ipOf(127, 1, 2, 3), NULL, 0));
+    UT_ASSERT(botHostAddrIsServerMachine(ipOf(192, 168, 0, 10), own, 2));
+    UT_ASSERT(botHostAddrIsServerMachine(ipOf(10, 0, 0, 5), own, 2));
+    UT_ASSERT(!botHostAddrIsServerMachine(ipOf(192, 168, 0, 58), own, 2));
+    /* A public address the server shares with others behind one router is
+     * not one of its own interface addresses, so it is no proof. */
+    UT_ASSERT(!botHostAddrIsServerMachine(ipOf(203, 0, 113, 7), own, 2));
+    UT_ASSERT(!botHostAddrIsServerMachine(0, own, 2));
+    return 0;
+}
+
+int run_machine_id_token(void) {
+    static const uint8_t abc[32] = {
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40,
+        0xde, 0x5d, 0xae, 0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17,
+        0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad
+    };
+    uint8_t d[32], h1[32], h2[32], h3[32], h4[32];
+    uint8_t idA[MACHINE_ID_LEN], idB[MACHINE_ID_LEN];
+    uint8_t s1[MACHINE_SALT_LEN], s2[MACHINE_SALT_LEN];
+    uint8_t big[1000];
+    machineSha256("abc", 3, d);
+    UT_ASSERT(memcmp(d, abc, 32) == 0);
+    /* A message longer than one block works too (no crash, stable). */
+    memset(big, 'a', sizeof(big));
+    machineSha256(big, sizeof(big), h1);
+    machineSha256(big, sizeof(big), h2);
+    UT_ASSERT(memcmp(h1, h2, 32) == 0);
+
+    memset(idA, 0x11, sizeof(idA));
+    memset(idB, 0x11, sizeof(idB));
+    idB[31] = 0x12;
+    memset(s1, 0x21, sizeof(s1));
+    memset(s2, 0x21, sizeof(s2));
+    s2[0] = 0x22;
+    machineIdHashSalt(idA, s1, h1);
+    machineIdHashSalt(idA, s1, h2);
+    machineIdHashSalt(idB, s1, h3);
+    machineIdHashSalt(idA, s2, h4);
+    UT_ASSERT(memcmp(h1, h2, 32) == 0);   /* one computer: equal */
+    UT_ASSERT(memcmp(h1, h3, 32) != 0);   /* another computer */
+    UT_ASSERT(memcmp(h1, h4, 32) != 0);   /* another salt */
+    return 0;
+}
+
+int run_machine_id_salt_repeat(void) {
+    MachineSaltMemory m;
+    uint8_t id[MACHINE_ID_LEN], salt[MACHINE_SALT_LEN], h[32], first[32];
+    int i;
+    memset(&m, 0, sizeof(m));
+    memset(id, 0x42, sizeof(id));
+    memset(salt, 0, sizeof(salt));
+    salt[0] = 1;
+    UT_ASSERT(machineSaltAnswer(&m, id, salt, first));
+    /* The same salt again: no answer (no replay of an old answer). */
+    UT_ASSERT(!machineSaltAnswer(&m, id, salt, h));
+    /* 64 more salts push the first one out of the memory. */
+    for (i = 0; i < MACHINE_SALT_KEEP - 1; i++) {
+        salt[1] = (uint8_t)(i + 1);
+        UT_ASSERT(machineSaltAnswer(&m, id, salt, h));
+    }
+    UT_ASSERT(m.count == MACHINE_SALT_KEEP);
+    salt[1] = 0;
+    UT_ASSERT(machineSaltMemorySeen(&m, salt));
+    salt[1] = 0xEE;
+    UT_ASSERT(machineSaltAnswer(&m, id, salt, h));
+    salt[1] = 0;
+    UT_ASSERT(!machineSaltMemorySeen(&m, salt));
+    UT_ASSERT(machineSaltAnswer(&m, id, salt, h));
+    UT_ASSERT(memcmp(h, first, 32) == 0);
+    return 0;
+}
+
+static void hostIn(BotHostMachineIn *in, bool player, bool addrServer,
+                   int hashByte, uint32_t seq, int offered) {
+    memset(in, 0, sizeof(*in));
+    in->present = true;
+    in->playerHost = player;
+    in->addrServer = addrServer;
+    in->hashHave = hashByte >= 0;
+    if (hashByte >= 0) memset(in->hash, hashByte, sizeof(in->hash));
+    in->joinSeq = seq;
+    in->offered = offered;
+}
+
+int run_bot_host_machine_server_group(void) {
+    BotHostMachineIn in[4];
+    BotHostMachineOut out[4];
+    uint8_t server[MACHINE_HASH_LEN];
+    memset(server, 0xAA, sizeof(server));
+    hostIn(&in[0], true, true, -1, 1, 4);     /* player host, by address */
+    hostIn(&in[1], true, false, 0xAA, 2, 4);  /* player host, by token */
+    hostIn(&in[2], false, false, 0xAA, 3, 4); /* listed host, by token */
+    hostIn(&in[3], true, false, 0xBB, 4, 4);  /* another computer */
+    botHostMachineGroup(in, 4, server, out);
+    UT_ASSERT(out[0].kind == BOT_HOST_MACHINE_SERVER && out[0].zero &&
+              out[0].how == BOT_HOST_MACHINE_HOW_ADDRESS);
+    UT_ASSERT(out[1].kind == BOT_HOST_MACHINE_SERVER && out[1].zero &&
+              out[1].how == BOT_HOST_MACHINE_HOW_TOKEN);
+    UT_ASSERT(out[2].kind == BOT_HOST_MACHINE_SERVER && !out[2].zero);
+    UT_ASSERT(out[3].kind == BOT_HOST_MACHINE_ALONE && !out[3].zero &&
+              out[3].other == -1);
+    /* No server hash: only the address check finds the server's computer. */
+    botHostMachineGroup(in, 4, NULL, out);
+    UT_ASSERT(out[0].kind == BOT_HOST_MACHINE_SERVER && out[0].zero);
+    UT_ASSERT(out[1].kind == BOT_HOST_MACHINE_ALONE ||
+              out[1].kind == BOT_HOST_MACHINE_HOST);
+    return 0;
+}
+
+int run_bot_host_machine_client_group(void) {
+    BotHostMachineIn in[3];
+    BotHostMachineOut out[3];
+    hostIn(&in[0], true, false, 0x33, 5, 4);
+    hostIn(&in[1], true, false, 0x33, 2, 4);   /* joined first */
+    hostIn(&in[2], true, false, 0x44, 1, 4);   /* another computer */
+    botHostMachineGroup(in, 3, NULL, out);
+    UT_ASSERT(out[1].kind == BOT_HOST_MACHINE_ALONE && !out[1].zero &&
+              out[1].how == BOT_HOST_MACHINE_HOW_TOKEN);
+    UT_ASSERT(out[0].kind == BOT_HOST_MACHINE_HOST && out[0].zero &&
+              out[0].other == 1);
+    UT_ASSERT(out[2].kind == BOT_HOST_MACHINE_ALONE && !out[2].zero &&
+              out[2].how == BOT_HOST_MACHINE_HOW_NONE);
+    /* The first-joined host offers no slot (opted out): the next leads. */
+    in[1].offered = 0;
+    botHostMachineGroup(in, 3, NULL, out);
+    UT_ASSERT(!out[0].zero && out[1].zero && out[1].other == 0);
+    /* No answer: no proof, so a different computer. */
+    in[1].offered = 4;
+    in[0].hashHave = false;
+    botHostMachineGroup(in, 3, NULL, out);
+    UT_ASSERT(!out[0].zero && !out[1].zero);
+    return 0;
+}
+
+int run_bot_host_machine_leader_leaves(void) {
+    BotHostMachineIn in[3];
+    BotHostMachineOut out[3];
+    hostIn(&in[0], true, false, 0x55, 1, 4);
+    hostIn(&in[1], true, false, 0x55, 3, 4);
+    hostIn(&in[2], false, false, 0x55, 2, 4);
+    botHostMachineGroup(in, 3, NULL, out);
+    UT_ASSERT(!out[0].zero && out[1].zero && out[2].zero);
+    UT_ASSERT(out[1].other == 0 && out[2].other == 0);
+    in[0].present = false;   /* the leader goes */
+    botHostMachineGroup(in, 3, NULL, out);
+    UT_ASSERT(out[2].kind == BOT_HOST_MACHINE_ALONE && !out[2].zero);
+    UT_ASSERT(out[1].zero && out[1].other == 2);
+    in[2].present = false;   /* only one is left: alone */
+    botHostMachineGroup(in, 3, NULL, out);
+    UT_ASSERT(!out[1].zero && out[1].kind == BOT_HOST_MACHINE_ALONE);
+    return 0;
+}
+
+int run_bot_host_game_bot_limit(void) {
+    BotHostMachineIn in[4];
+    BotHostMachineOut out[4];
+    int counted[4], i;
+    bool takes[4] = { true, true, true, false };   /* 3: in its CPU test */
+    UT_ASSERT(botHostGameBotLimit(4, NULL, 0) == 4);
+    UT_ASSERT(botHostGameBotLimit(-1, NULL, 0) == -1);
+    UT_ASSERT(botHostGameBotLimit(-2, NULL, 0) == -2);
+    hostIn(&in[0], true, false, 0x66, 1, 3);
+    hostIn(&in[1], true, false, 0x66, 2, 3);   /* same computer as 0 */
+    hostIn(&in[2], true, false, 0x77, 3, 0);   /* opted out */
+    hostIn(&in[3], false, false, 0x88, 4, 5);
+    botHostMachineGroup(in, 4, NULL, out);
+    for (i = 0; i < 4; i++) {
+        counted[i] = (takes[i] && !out[i].zero) ? in[i].offered : 0;
+    }
+    UT_ASSERT_MSG(botHostGameBotLimit(4, counted, 4) == 7, "limit %d",
+                  botHostGameBotLimit(4, counted, 4));
+    /* The CPU test runs on the server: it counts 0, the hosts count. */
+    UT_ASSERT(botHostGameBotLimit(-2, counted, 4) == 3);
+    /* More than 16 is 16. */
+    counted[0] = 16;
+    UT_ASSERT(botHostGameBotLimit(4, counted, 4) == 16);
+    return 0;
+}
+
+int run_bot_host_slots_override(void) {
+    BotHostSlotFlags flags;
+    BotHostSlotOverride o;
+    char err[128];
+    int v, counted[2];
+    UT_ASSERT(botHostSlotsEffective(4, -1) == 4);
+    UT_ASSERT(botHostSlotsEffective(4, 2) == 2);
+    UT_ASSERT(botHostSlotsEffective(1, 2) == 1);   /* a lower report wins */
+    UT_ASSERT(botHostSlotsOverrideValid(4, 4, &v) && v == 4);
+    UT_ASSERT(botHostSlotsOverrideValid(4, 0, &v) && v == 0);
+    UT_ASSERT(botHostSlotsOverrideValid(4, 0xFF, &v) && v == -1);
+    UT_ASSERT(!botHostSlotsOverrideValid(4, 5, &v));   /* only lowers */
+
+    memset(&flags, 0, sizeof(flags));
+    UT_ASSERT(botHostSlotFlagsAdd(&flags, "basement=1", err, sizeof(err)));
+    /* A host no flag names: the lobby may set and clear it. */
+    botHostSlotOverrideJoin(&o, &flags, "attic", "Andrew");
+    UT_ASSERT(o.override == -1 && !o.locked);
+    UT_ASSERT(botHostSlotOverrideSet(&o, 4, 2) && o.override == 2);
+    UT_ASSERT(!botHostSlotOverrideSet(&o, 4, 6) && o.override == 2);
+    counted[0] = botHostSlotsEffective(4, o.override);
+    counted[1] = 3;
+    UT_ASSERT(botHostGameBotLimit(2, counted, 2) == 7);
+    botHostSlotOverrideNewLobby(&o);
+    UT_ASSERT(o.override == -1);
+    UT_ASSERT(botHostSlotOverrideSet(&o, 4, 1));
+    /* It joins again: the override resets. */
+    botHostSlotOverrideJoin(&o, &flags, "attic", "Andrew");
+    UT_ASSERT(o.override == -1 && !o.locked);
+
+    /* The flag's host: locked, the lobby cannot change it. */
+    botHostSlotOverrideJoin(&o, &flags, "Basement", NULL);
+    UT_ASSERT(o.locked && o.override == 1);
+    UT_ASSERT(!botHostSlotOverrideSet(&o, 4, 0) && o.override == 1);
+    UT_ASSERT(!botHostSlotOverrideSet(&o, 4, 0xFF) && o.override == 1);
+    botHostSlotOverrideNewLobby(&o);
+    UT_ASSERT(o.override == 1);
+    /* A locked value only lowers too. */
+    UT_ASSERT(botHostSlotsEffective(0, o.override) == 0);
+    return 0;
+}
+
+int run_bot_host_slots_arg_parse(void) {
+    BotHostSlotFlags flags;
+    char name[32], err[128];
+    int n;
+    UT_ASSERT(botHostSlotsArgParse("basement=2", name, sizeof(name), &n, err,
+                                   sizeof(err)));
+    UT_ASSERT(strcmp(name, "basement") == 0 && n == 2);
+    /* The last '=' splits: a name may hold one. */
+    UT_ASSERT(botHostSlotsArgParse("a=b=16", name, sizeof(name), &n, err,
+                                   sizeof(err)));
+    UT_ASSERT(strcmp(name, "a=b") == 0 && n == 16);
+    UT_ASSERT(!botHostSlotsArgParse("basement", name, sizeof(name), &n, err,
+                                    sizeof(err)) && err[0] != '\0');
+    UT_ASSERT(!botHostSlotsArgParse("=3", name, sizeof(name), &n, err,
+                                    sizeof(err)) && err[0] != '\0');
+    UT_ASSERT(!botHostSlotsArgParse("x=", name, sizeof(name), &n, err,
+                                    sizeof(err)) && err[0] != '\0');
+    UT_ASSERT(!botHostSlotsArgParse("x=17", name, sizeof(name), &n, err,
+                                    sizeof(err)) && err[0] != '\0');
+    UT_ASSERT(!botHostSlotsArgParse("x=-1", name, sizeof(name), &n, err,
+                                    sizeof(err)) && err[0] != '\0');
+    UT_ASSERT(!botHostSlotsArgParse("x=2a", name, sizeof(name), &n, err,
+                                    sizeof(err)) && err[0] != '\0');
+    UT_ASSERT(!botHostSlotsArgParse(
+                  "a_name_that_is_much_too_long_for_a_host=1", name,
+                  sizeof(name), &n, err, sizeof(err)) && err[0] != '\0');
+
+    memset(&flags, 0, sizeof(flags));
+    UT_ASSERT(botHostSlotFlagsAdd(&flags, "basement=2", err, sizeof(err)));
+    UT_ASSERT(botHostSlotFlagsAdd(&flags, "Andrew=0", err, sizeof(err)));
+    UT_ASSERT(flags.count == 2);
+    UT_ASSERT(!botHostSlotFlagsAdd(&flags, "BASEMENT=3", err, sizeof(err)) &&
+              err[0] != '\0');
+    UT_ASSERT(!botHostSlotFlagsAdd(&flags, "bad", err, sizeof(err)));
+    UT_ASSERT(flags.count == 2);
+    UT_ASSERT(botHostSlotFlagsFind(&flags, "basement", NULL) == 2);
+    /* A player's host by its player's name. */
+    UT_ASSERT(botHostSlotFlagsFind(&flags, "Andrew's host", "Andrew") == 0);
+    UT_ASSERT(botHostSlotFlagsFind(&flags, "attic", "Elvis") == -1);
+    return 0;
+}

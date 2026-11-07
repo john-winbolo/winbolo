@@ -534,6 +534,11 @@ struct ServerSim {
     int      serverBotSlots;       /* the lobby's Server bot slots: 0..16,
                                     * or -1 to follow hostBotCapacity */
     bool     serverBotSlotsLocked; /* -botcapacity set it: no change */
+    int      gameBotLimit;         /* the game bot limit (the server's bot
+                                    * slots plus each Bot Host's), when
+                                    * gameBotLimitSet; else the limit is
+                                    * the server's own */
+    bool     gameBotLimitSet;
     BYTE     maxSpectators;        /* 0 = spectating disabled */
     uint32_t specDelayTicks;       /* spectator view delay in ticks (50 ticks/s) */
     bool     worldPreLoaded;       /* TRUE while the world is fresh from

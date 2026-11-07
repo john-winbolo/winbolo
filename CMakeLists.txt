@@ -4788,6 +4788,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's CPU estimate per Bot Host row: the percent, the meter,
     # CTRL_BOT_HOST_CPU and the client's row.
     tests/unit/test_bot_host_cpu.c
+    tests/unit/test_bot_host_machine.c
     # The lobby's one-game opt-out from running bots on this computer: the
     # 0-slot report, the server giving the bots back, the client's state.
     tests/unit/test_bot_host_optout.c
@@ -6254,6 +6255,16 @@ set(_unit_test_names
     bot_host_cpu_bot_codec
     bot_host_cpu_bot_client_row
     bot_host_lag_codec
+    bot_host_machine_addr
+    machine_id_token
+    machine_id_salt_repeat
+    bot_host_machine_server_group
+    bot_host_machine_client_group
+    bot_host_machine_leader_leaves
+    bot_host_game_bot_limit
+    bot_host_slots_override
+    bot_host_slots_arg_parse
+    bot_host_machine_codec
     bot_host_optout_slots_codec
     bot_host_optout_give_back
     bot_host_optout_client_reset

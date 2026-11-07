@@ -168,6 +168,18 @@ typedef struct {
      * the row's ping. BOT_HOST_LAG_UNKNOWN until the server sends one (an
      * older server never does). */
     uint16_t lagMs;
+    /* CTRL_BOT_HOST_ROW_SLOTS: rowSlotsHave once the server sends one (an
+     * older server never does). machineKind is a BOT_HOST_MACHINE_* of
+     * bot_host_machine.h and machineOther the row of the host it shares a
+     * computer with (0xFF: none); machineZero: that gives it 0 slots.
+     * slotOverride: the row's override, 0..16 or 0xFF for none;
+     * slotLocked: -bothost-slots set it. */
+    bool    rowSlotsHave;
+    uint8_t machineKind;
+    uint8_t machineOther;
+    bool    machineZero;
+    uint8_t slotOverride;
+    bool    slotLocked;
     char    name[CLIENT_BOT_HOST_NAME_LEN];
 } ClientBotHostRow;
 

@@ -68,6 +68,12 @@
 /* CTRL_BOT_HOST_LAG: no lag measured yet. */
 #define BOT_HOST_LAG_UNKNOWN      0xFFFFu
 #define BOT_HOST_LAG_SEND_STEP_MS 5
+/* CTRL_BOT_HOST_MACHINE_*: the salt and the answer (machine_id.h). */
+#define BOT_HOST_MACHINE_SALT_LEN 16   /* == MACHINE_SALT_LEN */
+#define BOT_HOST_MACHINE_HASH_LEN 32   /* == MACHINE_HASH_LEN */
+/* CTRL_BOT_HOST_ROW_SLOTS: no override, and no other row. */
+#define BOT_HOST_SLOT_OVERRIDE_NONE 0xFFu
+#define BOT_HOST_MACHINE_OTHER_NONE 0xFFu
 
 /* BOT_HOST_SYNC_* (the brain sync states) and BOT_HOST_REC_STATE_* (the
  * recording states) are in client_sim.h. */
@@ -619,6 +625,25 @@ typedef enum {
      * join. A type of its own, so an older client skips it; a client with
      * none shows no Server bot slots row. */
     CTRL_SERVER_BOT_SLOTS,
+    /* CTRL_BOT_HOST_MACHINE_SALT — server to Bot Host: a new random salt.
+     * The host answers with CTRL_BOT_HOST_MACHINE_ANSWER, so the server can
+     * find hosts on one computer (bot_host_machine.h). A new salt goes out
+     * when a host joins, and for each lobby and each game. An older host
+     * skips it and gives no answer: it counts as another computer. */
+    CTRL_BOT_HOST_MACHINE_SALT,
+    /* CTRL_BOT_HOST_MACHINE_ANSWER — Bot Host to server: the salt and
+     * SHA-256(machine id || salt). The id never leaves the computer. A
+     * host answers each salt once only. */
+    CTRL_BOT_HOST_MACHINE_ANSWER,
+    /* CTRL_BOT_HOST_ROW_SLOTS — server to lobby players and spectators: for
+     * Bot Host row idx, what it shares its computer with (machineKind, a
+     * BOT_HOST_MACHINE_* of bot_host_machine.h, and machineOther, the row
+     * of the other host, or BOT_HOST_MACHINE_OTHER_NONE), whether that
+     * gives it 0 slots (zero), and the row's slot override (0..16, or
+     * BOT_HOST_SLOT_OVERRIDE_NONE) and whether -bothost-slots locks it.
+     * Sent when it changes and on join. A type of its own, so an older
+     * client skips it and shows the row as before. */
+    CTRL_BOT_HOST_ROW_SLOTS,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1693,6 +1718,27 @@ typedef struct ControlEvent {
             uint8_t  idx;    /* the row */
             uint16_t lagMs;  /* 1..65534, or BOT_HOST_LAG_UNKNOWN */
         } botHostLag;
+
+        /* CTRL_BOT_HOST_MACHINE_SALT — see the enum. */
+        struct {
+            uint8_t salt[BOT_HOST_MACHINE_SALT_LEN];
+        } botHostMachineSalt;
+
+        /* CTRL_BOT_HOST_MACHINE_ANSWER — see the enum. */
+        struct {
+            uint8_t salt[BOT_HOST_MACHINE_SALT_LEN];
+            uint8_t hash[BOT_HOST_MACHINE_HASH_LEN];
+        } botHostMachineAnswer;
+
+        /* CTRL_BOT_HOST_ROW_SLOTS — see the enum. */
+        struct {
+            uint8_t idx;           /* the row, 0..MAX_BOT_HOSTS - 1 */
+            uint8_t machineKind;
+            uint8_t machineOther;
+            uint8_t zero;
+            uint8_t slotOverride;
+            uint8_t slotLocked;
+        } botHostRowSlots;
 
         /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
         struct {

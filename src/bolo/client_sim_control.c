@@ -446,6 +446,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             uint32_t cpuBot = r->cpuBot;
             uint16_t lagMs = r->connected ? r->lagMs
                                           : (uint16_t)BOT_HOST_LAG_UNKNOWN;
+            /* The row's computer and override, as the CPU estimate. */
+            ClientBotHostRow keep = *r;
+            bool keepSlots = r->connected && r->rowSlotsHave;
             memset(r, 0, sizeof(*r));
             r->lagMs = (uint16_t)BOT_HOST_LAG_UNKNOWN;
             r->cpu = (uint8_t)BOT_HOST_CPU_UNKNOWN;
@@ -455,6 +458,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             if (r->connected) {
                 r->cpu     = cpu;
                 r->lagMs   = lagMs;
+                if (keepSlots) {
+                    r->rowSlotsHave = true;
+                    r->machineKind  = keep.machineKind;
+                    r->machineOther = keep.machineOther;
+                    r->machineZero  = keep.machineZero;
+                    r->slotOverride = keep.slotOverride;
+                    r->slotLocked   = keep.slotLocked;
+                }
                 if (cpuBotHave) {
                     r->cpuBotHave = true;
                     r->cpuBotOwner = cpuBotOwner;
@@ -489,6 +500,20 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->serverBotSlots.recommended =
             lobbyHostBotCapacityFromWire(evt->u.serverBotSlots.recommended);
         cs->serverBotSlots.locked = evt->u.serverBotSlots.locked != 0;
+        break;
+
+    case CTRL_BOT_HOST_ROW_SLOTS:
+        if (evt->u.botHostRowSlots.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostRowSlots.idx];
+            if (r->connected) {
+                r->rowSlotsHave = true;
+                r->machineKind  = evt->u.botHostRowSlots.machineKind;
+                r->machineOther = evt->u.botHostRowSlots.machineOther;
+                r->machineZero  = evt->u.botHostRowSlots.zero != 0;
+                r->slotOverride = evt->u.botHostRowSlots.slotOverride;
+                r->slotLocked   = evt->u.botHostRowSlots.slotLocked != 0;
+            }
+        }
         break;
 
     case CTRL_BOT_HOST_LAG:

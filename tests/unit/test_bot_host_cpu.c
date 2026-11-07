@@ -533,3 +533,98 @@ int run_bot_host_lag_codec(void) {
     clientSimDestroy(cs);
     return 0;
 }
+
+/* CTRL_BOT_HOST_MACHINE_SALT, _ANSWER and CTRL_BOT_HOST_ROW_SLOTS: round
+ * trips, short bodies refused, and the client's row keeps the row slots
+ * while the host stays. */
+int run_bot_host_machine_codec(void) {
+    ControlEncodeBodyFn enc;
+    ControlDecodeBodyFn dec;
+    ControlEvent in, out;
+    uint8_t buf[64];
+    size_t len = 0;
+    ClientSim *cs;
+    int i;
+
+    enc = transportControlCodecBodyEncoder(CTRL_BOT_HOST_MACHINE_SALT);
+    dec = transportControlCodecBodyDecoder(CTRL_BOT_HOST_MACHINE_SALT);
+    UT_ASSERT(enc != NULL && dec != NULL);
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_MACHINE_SALT;
+    for (i = 0; i < BOT_HOST_MACHINE_SALT_LEN; i++) {
+        in.u.botHostMachineSalt.salt[i] = (uint8_t)(i * 7 + 1);
+    }
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(len == BOT_HOST_MACHINE_SALT_LEN);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.type == CTRL_BOT_HOST_MACHINE_SALT);
+    UT_ASSERT(memcmp(out.u.botHostMachineSalt.salt, in.u.botHostMachineSalt.salt,
+                     BOT_HOST_MACHINE_SALT_LEN) == 0);
+    UT_ASSERT(!dec(buf, BOT_HOST_MACHINE_SALT_LEN - 1, &out));
+    UT_ASSERT(strcmp(controlEventTypeName(CTRL_BOT_HOST_MACHINE_SALT),
+                     "CTRL_BOT_HOST_MACHINE_SALT") == 0);
+
+    enc = transportControlCodecBodyEncoder(CTRL_BOT_HOST_MACHINE_ANSWER);
+    dec = transportControlCodecBodyDecoder(CTRL_BOT_HOST_MACHINE_ANSWER);
+    UT_ASSERT(enc != NULL && dec != NULL);
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_MACHINE_ANSWER;
+    for (i = 0; i < BOT_HOST_MACHINE_SALT_LEN; i++) {
+        in.u.botHostMachineAnswer.salt[i] = (uint8_t)(i + 3);
+    }
+    for (i = 0; i < BOT_HOST_MACHINE_HASH_LEN; i++) {
+        in.u.botHostMachineAnswer.hash[i] = (uint8_t)(200 - i);
+    }
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(len == BOT_HOST_MACHINE_SALT_LEN + BOT_HOST_MACHINE_HASH_LEN);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(memcmp(&out.u.botHostMachineAnswer, &in.u.botHostMachineAnswer,
+                     sizeof(in.u.botHostMachineAnswer)) == 0);
+    UT_ASSERT(!dec(buf, len - 1, &out));
+    UT_ASSERT(enc(&in, NULL, buf, 10, &len) != ENCODE_OK);
+
+    enc = transportControlCodecBodyEncoder(CTRL_BOT_HOST_ROW_SLOTS);
+    dec = transportControlCodecBodyDecoder(CTRL_BOT_HOST_ROW_SLOTS);
+    UT_ASSERT(enc != NULL && dec != NULL);
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_ROW_SLOTS;
+    in.u.botHostRowSlots.idx = 2;
+    in.u.botHostRowSlots.machineKind = 2;
+    in.u.botHostRowSlots.machineOther = 0;
+    in.u.botHostRowSlots.zero = 1;
+    in.u.botHostRowSlots.slotOverride = 3;
+    in.u.botHostRowSlots.slotLocked = 1;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(len == 5);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(memcmp(&out.u.botHostRowSlots, &in.u.botHostRowSlots,
+                     sizeof(in.u.botHostRowSlots)) == 0);
+    UT_ASSERT(!dec(buf, 4, &out));
+    buf[0] = BOT_HOST_STATUS_ROWS - 1;          /* the server row */
+    UT_ASSERT(!dec(buf, 5, &out));
+    buf[0] = 2; buf[3] = 17;                    /* above 16, not "none" */
+    UT_ASSERT(!dec(buf, 5, &out));
+    buf[3] = BOT_HOST_SLOT_OVERRIDE_NONE; buf[2] = 0x40;
+    UT_ASSERT(dec(buf, 5, &out));
+    UT_ASSERT(out.u.botHostRowSlots.slotOverride == BOT_HOST_SLOT_OVERRIDE_NONE);
+    UT_ASSERT(out.u.botHostRowSlots.machineOther == BOT_HOST_MACHINE_OTHER_NONE);
+
+    cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    applyStatus(cs, 0, true, "andrew-bsmt");
+    UT_ASSERT(!clientSimGetBotHostRow(cs, 0)->rowSlotsHave);
+    in.u.botHostRowSlots.idx = 0;
+    in.u.botHostRowSlots.slotLocked = 0;
+    clientSimApplyControl(cs, &in);
+    applyStatus(cs, 0, true, "andrew-bsmt");
+    UT_ASSERT(clientSimGetBotHostRow(cs, 0)->rowSlotsHave);
+    UT_ASSERT(clientSimGetBotHostRow(cs, 0)->slotOverride == 3);
+    UT_ASSERT(clientSimGetBotHostRow(cs, 0)->machineZero);
+    UT_ASSERT(!clientSimGetBotHostRow(cs, 0)->slotLocked);
+    applyStatus(cs, 0, false, "");
+    applyStatus(cs, 0, true, "Other");
+    UT_ASSERT(!clientSimGetBotHostRow(cs, 0)->rowSlotsHave);
+    clientSimDestroy(cs);
+    return 0;
+}
