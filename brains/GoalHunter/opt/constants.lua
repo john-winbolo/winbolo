@@ -2406,33 +2406,13 @@ M.CAPTURE_LGM_HUNT_FIRE_WU       = 100
 -- there kills a man within 128 wu, on that square or across its edge, and
 -- not a man in its far corner. Only a LIVE pill (pillsIsPillHit, armour > 0),
 -- a base or a building is solid (same-square-only kill). A shell that HITS a
--- pill or a wall is a hit on its square, the shot that kills the pill or
--- turns the wall to rubble included (shells.c outSquareHit): same-square-only,
--- as for any live pill. The brain reads the
+-- pill is a hit on its square, the shot that kills it included (shells.c
+-- outSquareHit): same-square-only, as for any live pill. The brain reads the
 -- pill's health from what the player sees (the pill sprite and the pill
 -- status panel both show a dead pill). true = a man on a dead pill is aimed
 -- at with the open-ground rule (init.lua lgm_on_solid). KEEL: false (any
 -- deployed pill, dead or alive, is solid -- the old engine rule).
 M.BLAST_DEAD_PILL_OPEN = true
--- SHELL_STOPS_ON_FOREST_BOAT (2026-11-07): the engine stops every shell on
--- the first forest or boat square on its line (mapIsPassable), and always
--- has. true = the brain's shell model does the same: the builder shell gate
--- stops a shell there (danger.lua shell_stops_on), and the capture shot at a
--- builder finds where its own shell stops (danger.lua capture_shot_end and
--- capture_man_killable). How that stop kills is BLAST_TERRAIN_SQUARE_HIT.
--- KEEL: false (the old brain: a shell flies on over a forest or a boat).
-M.SHELL_STOPS_ON_FOREST_BOAT = true
--- BLAST_TERRAIN_SQUARE_HIT (2026-11-07): the engine counts a shell's hit on a
--- forest or a boat as a hit on its square (shells.c outSquareHit), as Mac
--- Bolo does: the blast kills a man only on that square. true = where the
--- brain's model stops a shell on a forest or a boat (SHELL_STOPS_ON_FOREST_BOAT),
--- only a man on that square dies; false = the old engine rule, open ground:
--- a man within 128 wu of that square's middle dies. The square is the one
--- where the shell stops, not the man's own square. A boat's shell on the
--- shore or a bridge is a hit on its square too, but the brain cannot see
--- which shells a boat fired, so it does not model those.
--- KEEL: false (the open-ground rule).
-M.BLAST_TERRAIN_SQUARE_HIT = true
 -- REFIRE_MAX_MISSES: keep firing at the same man every reload-available tick,
 -- but give up after this many consecutive misses (a shot whose flight completed
 -- with the man still alive).  Counter resets on a kill or a target change, and
@@ -5791,8 +5771,6 @@ M.PRESETS = {
     CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 0,     -- no heading nudge (no-op value)
     CAPTURE_LGM_HUNT_FIRE_WU      = 64,         -- capture fire gate = the shared ½-tile gate (no wider shot)
     BLAST_DEAD_PILL_OPEN          = false,      -- 2026-11-06: a dead pill's square is solid for the builder blast, as the old engine had it
-    SHELL_STOPS_ON_FOREST_BOAT    = false,      -- 2026-11-07: the brain's shells fly on over a forest or a boat, as the old brain had it
-    BLAST_TERRAIN_SQUARE_HIT      = false,      -- 2026-11-07: a shell's stop on a forest or a boat is open ground (128 wu from its middle)
     CAPTURE_LGM_HUNT_REFIRE_MAX_MISSES = 0,     -- no capture-target refire (off)
     -- 2026-09-08: a hostile LGM within CAPTURE_LGM_PRIORITY_RADIUS tiles
     -- (Chebyshev) of the pill the capture flow is driving at now gets his

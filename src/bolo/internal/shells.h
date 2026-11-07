@@ -348,15 +348,10 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *  outSeenY - Y, as outSeenX
 *  outSquareHit - NULL-tolerant out-param; TRUE when the shell
 *             hit a pillbox (a live one, the shot that kills
-*             it included) or a wall (a building or a half
-*             building, the shot that turns it to rubble
-*             included), a forest, a boat, the shore a boat's
-*             shell stops on (grass, swamp, rubble) or a
-*             bridge (a mined one too), FALSE for any other hit (a road a boat's
-*             shell does not take away, a tank, a base) and for
-*             no hit. The builder test uses it: such a hit is a
-*             hit on its square, whatever the hit has left
-*             there.
+*             it included), FALSE for any other hit and for no
+*             hit. The builder test uses it: such a hit is a
+*             hit on its square, whatever armour the hit has
+*             left the pill.
 *********************************************************/
 bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY, bool *outSquareHit);
 
@@ -368,28 +363,27 @@ bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yV
 *PURPOSE:
 *  A shell has been fired from a boat and has hit a road.
 *  This function returns whether the road should be kept
-*  as road or destroyed and replaced as river, and plays
-*  the sound when it goes
+*  as road or destroyed and replaced as river
 *  
 *ARGUMENTS:
-*  sim      - The game sim
-*  mapX     - X position of the hit
-*  mapY     - Y position of the hit
-*  shotAway - shellsRoadShotAway's answer for this hit,
-*             worked out once by the caller
+*  mp    - Pointer to the Map Data structure
+*  pb    - Pointer to the pillbox structure
+*  bs    - Pointer to the bases structure
+*  mapX  - X position of the hit
+*  mapY  - Y position of the hit
+*  angle - The angle the shell is travelling
 *********************************************************/
-BYTE shellsCheckRoad(struct GameSim *sim, BYTE mapX, BYTE mapY, bool shotAway);
+BYTE shellsCheckRoad(struct GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir);
 
 /*********************************************************
 *NAME:          shellsRoadShotAway
 *PURPOSE:
 *  True when a shell from a boat, moving at dir, that hits
 *  the road at (mapX, mapY) shoots it away to river: the
-*  square past the road in that direction is not land. It
-*  makes no sound and no change. shellsCalcCollision works
-*  it out once per road hit and hands it to shellsCheckRoad
-*  and the builder test; the client asks it which sound the
-*  server plays (the early own shell blast, client_sim.c).
+*  square past the road in that direction is not land. This
+*  is the test shellsCheckRoad makes, with no sound and no
+*  change, so the client can tell which sound the server
+*  plays (the early own shell blast, client_sim.c).
 *********************************************************/
 bool shellsRoadShotAway(struct GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir);
 
