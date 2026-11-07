@@ -16,8 +16,8 @@
  */
 
 /* Gives the brain capacity code (brain_capacity.h) the CPU speed test
- * result stored for this version, so Brain.capacity sees coremark_1t and
- * coremark_all. Header only: the cpu_speed_test library does not link the
+ * result stored for this version, so Brain.capacity sees speed_1t and
+ * speed_all. Header only: the cpu_speed_test library does not link the
  * engine, and the engine (built for Android, the web and iOS as well) does
  * not link the speed test. Each program that has both calls this. */
 
@@ -41,7 +41,7 @@ static inline bool cpuSpeedApplyStoredToBrains(const char *version) {
   brainCapacitySetMachineFromTest(stored.result.cpuName,
                                   stored.result.logicalCores,
                                   stored.result.physicalCores,
-                                  stored.result.cm1, stored.result.cmAll);
+                                  stored.result.speed1t, stored.result.speedAll);
   return true;
 }
 

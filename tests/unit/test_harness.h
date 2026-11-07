@@ -231,6 +231,7 @@ int run_lobby_add_bot_rejects_non_host_sender(void);
 int run_lobby_bot_count_counts_only_connected_bots(void);
 int run_lobby_maxbots_cap_boundary(void);
 int run_lobby_add_bot_rejects_when_at_maxbots(void);
+int run_lobby_add_bot_rejects_at_host_capacity(void);
 int run_transfer_host_promotes_target(void);
 int run_transfer_host_rejects_non_host_sender(void);
 int run_transfer_host_openhost_does_not_grant(void);
@@ -4556,6 +4557,8 @@ int run_brain_capacity_c_brain(void);
 int run_brain_capacity_name_from_path(void);
 int run_brain_capacity_lua_fallback(void);
 int run_brain_capacity_add_state(void);
+int run_brain_capacity_parse_override(void);
+int run_host_bot_capacity(void);
 
 /* A script's details (test_scenario_callbacks.c): the manifest's callbacks
  * block kept, cut and warned about at load, the rules and callbacks packed

@@ -874,6 +874,22 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                     (int)serverSimGetLobbyBotCount(sim), (int)maxBots);
             return CMD_REJECT_BOT_LIMIT;
         }
+        /* And the number this server can run in its own process (the CPU
+         * speed test, or -botcapacity), which also holds every add while
+         * the test runs. The client greys its button on the same number,
+         * from the lobby settings; this is for a client that has not heard
+         * it yet. Scenario adds do not come through here. */
+        {
+            int hostCap = serverSimGetHostBotCapacity(sim);
+            int lobbyBots = (int)serverSimGetLobbyBotCount(sim);
+            if (!serverSimHostBotCapacityAllowsAdd(hostCap, lobbyBots)) {
+                fprintf(stderr, "ADD_BOT reject BOT_LIMIT: count=%d "
+                        "capacity=%d%s\n", lobbyBots, hostCap,
+                        hostCap == SERVER_HOST_BOT_CAPACITY_MEASURING
+                            ? " (CPU speed test running)" : "");
+                return CMD_REJECT_BOT_LIMIT;
+            }
+        }
         const CmdLobbyAddBot *p = &cmd->u.lobbyAddBot;
         char validatedName[PACKET_MAX_PLAYER_NAME];
         bool haveName = (p->nameLen > 0);

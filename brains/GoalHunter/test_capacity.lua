@@ -22,10 +22,10 @@ local function check(name, got, want)
   end
 end
 
-local function machine(physical, cm1)
+local function machine(physical, speed1t)
   return {
     cpu_name = "test", logical_cores = physical * 2, physical_cores = physical,
-    coremark_1t = cm1, coremark_all = cm1 * physical, scaling = physical,
+    speed_1t = speed1t, speed_all = speed1t * physical, scaling = physical,
     worker_threads = physical, on_battery = false, version = "test",
   }
 end

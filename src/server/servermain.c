@@ -81,6 +81,7 @@
 #include "cpu_speed_test.h"
 #include "cpu_speed_store.h"
 #include "cpu_speed_capacity.h"
+#include "server_bot_capacity.h" /* the host bot capacity - -botcapacity */
 #include "brain_capacity.h"
 #include "brain_list_internal.h" /* brainListScan - -cputest's brain answers */
 
@@ -639,6 +640,7 @@ static bool serverTickStep(void *ctx) {
   }
   serverInstanceTick(serverSim);
   serverMemReportPoll(serverSim);
+  serverBotCapacityPoll(serverSim);
   return true;
 }
 
@@ -701,6 +703,7 @@ static int SDLCALL serverAsapLoop(void *unused) {
     }
     serverInstanceTick(serverSim);
     serverMemReportPoll(serverSim);
+    serverBotCapacityPoll(serverSim);
     ticks++;
     SDL_UnlockMutex(g_serverTickLock);
     /* The command loops (processKeys / processCmdStdin) and the shutdown
@@ -826,10 +829,11 @@ void printArgs() {
   fprintf(stderr, "                message, and each warning (a missing author or updated\n");
   fprintf(stderr, "                time, say) as file: warning: key: message. Exits 0 when\n");
   fprintf(stderr, "                the script is playable, warnings or not, 1 when not.\n");
-  fprintf(stderr, "-cputest      - Run the 2 s CPU speed test (CoreMark on one thread, then\n");
-  fprintf(stderr, "                on every logical core), print one line to read and one\n");
-  fprintf(stderr, "                line of JSON, and exit without starting a server. Exits\n");
-  fprintf(stderr, "                0 when every CoreMark CRC matched, 1 when not.\n");
+  fprintf(stderr, "-cputest      - Run the 2 s CPU speed test (a fixed workload on one\n");
+  fprintf(stderr, "                thread, then on every logical core), print one line to\n");
+  fprintf(stderr, "                read and one line of JSON, and exit without starting a\n");
+  fprintf(stderr, "                server. Exits 0 when every check value matched, 1 when\n");
+  fprintf(stderr, "                not.\n");
   fprintf(stderr, "-pack <File>  - Write the scenario script beside a map into the map file\n");
   fprintf(stderr, "                itself and exit without starting a server. The manifest\n");
   fprintf(stderr, "                comes from the script's own scenario table, and a\n");
@@ -947,6 +951,13 @@ void printArgs() {
   fprintf(stderr, "-maxbots <N>  - Maximum number of AI bots that can be in the lobby\n");
   fprintf(stderr, "                (default: 0 = no limit). Caps lobby \"Add Bot\" requests\n");
   fprintf(stderr, "                and clamps -bots.\n");
+  fprintf(stderr, "-botcapacity <N> - The most bots this server runs in its own process\n");
+  fprintf(stderr, "                (0-16; 0 = none). Skips the CPU speed test. Without it\n");
+  fprintf(stderr, "                the server runs the 2 s test the first time its lobby\n");
+  fprintf(stderr, "                opens (once for each version; the result is stored, and\n");
+  fprintf(stderr, "                WINBOLO_CPU_SPEED_FILE names the file) and asks the bot\n");
+  fprintf(stderr, "                brain. Caps lobby \"Add Bot\" requests; -bots and\n");
+  fprintf(stderr, "                scenario bots are not capped.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots (default: the\n");
   fprintf(stderr, "                first of Brains/GoalHunter/init.lua,\n");
   fprintf(stderr, "                brains/GoalHunter/init.lua,\n");
@@ -1916,8 +1927,8 @@ static int cpuSpeedTestAndReport(void) {
       fprintf(stderr, "The result could not be stored\n");
     }
     brainCapacitySetMachineFromTest(result.cpuName, result.logicalCores,
-                                    result.physicalCores, result.cm1,
-                                    result.cmAll);
+                                    result.physicalCores, result.speed1t,
+                                    result.speedAll);
     cpuSpeedPrintBrainCapacities();
   }
   return (ran && result.crcOk) ? 0 : 1;
@@ -1956,9 +1967,10 @@ int main(int argc, char **argv) {
     return cpuSpeedTestAndReport();
   }
 
-  /* A result an earlier -cputest stored for this version gives
-     Brain.capacity its coremark_1t and coremark_all. A server never runs the
-     test by itself: with none stored they stay 0. */
+  /* A result an earlier -cputest (or an earlier lobby) stored for this
+     version gives Brain.capacity its speed_1t and speed_all. With none
+     stored they stay 0 until the server's own lobby test finishes
+     (server_bot_capacity.c). */
   (void)cpuSpeedApplyStoredToBrains(WINBOLO_VERSION);
 
   /* -validate <map> checks a map's scenario script and exits, and -pack <map>
@@ -2005,6 +2017,7 @@ int main(int argc, char **argv) {
   char debugFileName[2048];
   int maxPlayers;
   int maxBots;
+  int botCapacityOverride = -1; /* -botcapacity N, or -1 for none */
   int maxSpectators = 16;
   int specDelay = 90;
   char key[WINBOLONET_KEY_LEN]; /* WBN Key */
@@ -2085,6 +2098,26 @@ int main(int argc, char **argv) {
     maxBots = atoi((char *) argv[findArg(argc, argv, "maxbots")]);
     if (maxBots < 0 || maxBots > MAX_TANKS) {
       maxBots = 0;
+    }
+  }
+
+  /* -botcapacity N: the host bot capacity by hand, and no CPU speed test. */
+  if (argExist(argc, argv, "botcapacity") == TRUE) {
+    int capArg = findArg(argc, argv, "botcapacity");
+    bool capClamped = false;
+    botCapacityOverride = BRAIN_CAPACITY_UNKNOWN;
+    if (capArg != ARG_NOT_FOUND) {
+      botCapacityOverride =
+          brainCapacityParseOverride((char *) argv[capArg], &capClamped);
+    }
+    if (botCapacityOverride == BRAIN_CAPACITY_UNKNOWN) {
+      fprintf(stderr, "Error: -botcapacity needs a whole number from 0 to %d\n",
+              BRAIN_CAPACITY_MAX);
+      return 1;
+    }
+    if (capClamped) {
+      fprintf(stderr, "Note: -botcapacity is at most %d; using %d\n",
+              BRAIN_CAPACITY_MAX, BRAIN_CAPACITY_MAX);
     }
   }
 
@@ -3835,6 +3868,10 @@ int main(int argc, char **argv) {
     return 0;
   }
   serverMessageConsoleMessage(serverSim,"Type \"help\" for help, \"quit\" to exit.");
+  /* The host bot capacity: -botcapacity, or the stored or new CPU speed test
+     result, stepped from the tick. Needs the thread mutex, so after
+     threadsCreate. */
+  serverBotCapacityInit(serverSim, botCapacityOverride);
   /* Created before the timer starts so serverGameTimer always sees a valid
    * lock; serverQuiesceGameTimer drains the timer through it on shutdown. */
   g_serverTickLock = SDL_CreateMutex();
@@ -3863,6 +3900,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error: failed to open -cmd-stdin file '%s'\n",
                 (char *)argv[cmdArg]);
         serverQuiesceGameTimer();
+        serverBotCapacityShutdown();
         botWorkerPoolDestroy();
         threadsDestroy();
         serverInstanceShutdown(serverSim);
@@ -3887,6 +3925,7 @@ int main(int argc, char **argv) {
    * anything they touch is freed. Then tear the worker pool down before the
    * lua_States it dispatches into are closed (defence in depth). */
   serverQuiesceGameTimer();
+  serverBotCapacityShutdown();
 
   /* -finaljson: dump the final global game state once the game ended by
    * reaching a terminal game-over (what -ticks produces). Gated on the

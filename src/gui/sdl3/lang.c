@@ -3016,6 +3016,8 @@ static const LangEntry langTable[] = {
     {3478, "The area of open ground round an explosion that kills a builder. 0, \"Half-square circle\", is the WinBolo rule and the default: a circle of radius 128, half a square, edge included. 1, \"Mac Bolo box\", is the Mac Bolo rule: a box that reaches under 128 from the explosion on each axis, so it reaches further on a diagonal. 2, \"Mac Bolo equivalent area circle\", is a circle of radius 144, about the same area as the box. An explosion on a building, a half building, a pillbox or a base still kills only a builder on that square."},
     {3490, "Measuring this computer's speed. Bots can be added in a moment."},
     {3491, "This computer can run {number} of these bots at full strength."},
+    {3492, "The server is measuring its speed. Bots can be added in a moment."},
+    {3493, "The server can run {number} of these bots at full strength."},
     {2810, "Whether a pillbox may pick a tank as its target."},
     {2860, "+ {number} others"},
     {2861, "+ 1 other"},

@@ -18,10 +18,13 @@
 /* The CPU speed test and the CPU facts that go with it - see
  * cpu_speed_test.h.
  *
- * The CoreMark set-up below follows core_main.c's main step by step (the
- * data split, the three inits, the seed CRC and the known CRCs of the 2K
- * performance run), so a score here is the score CoreMark's own program
- * gives for the same iteration count. */
+ * The workload is EEMBC's CoreMark code, vendored in src/third_party/coremark
+ * (Apache 2.0; see THIRD_PARTY_NOTICES.md). The set-up below follows
+ * core_main.c's main step by step (the data split, the three inits, the seed
+ * CRC and the known CRCs of the 2K performance run). The CoreMark licence
+ * does not let a changed copy or its results carry the CoreMark name, so
+ * WinBolo calls its numbers the CPU speed score (speed_1t, speed_all), never
+ * a CoreMark score. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -232,7 +235,7 @@ static bool cmRunStep(CmContext *ctxs, int count, ee_u32 iterations,
 
 /* An iteration count for a step that aims at secs at a rate of perSec,
    kept between minIterations and what an ee_u32 holds. */
-static ee_u32 cmIterationsFor(double perSec, double secs,
+static ee_u32 speedIterationsFor(double perSec, double secs,
                               uint32_t minIterations) {
   double want = perSec * secs;
 
@@ -312,24 +315,24 @@ bool cpuSpeedTestRun(const CpuSpeedParams *params, CpuSpeedResult *result) {
   if (ok) {
     /* 2. One thread */
     result->oneIterations =
-        cmIterationsFor((double)result->warmIterations / result->warmSecs,
+        speedIterationsFor((double)result->warmIterations / result->warmSecs,
                         params->phaseSecs, params->minIterations);
     ok = cmRunStep(ctxs, 1, result->oneIterations, &result->oneSecs,
                    &result->crcOk);
-    result->cm1 = (double)result->oneIterations / result->oneSecs;
+    result->speed1t = (double)result->oneIterations / result->oneSecs;
     ok = ok && cmNotCancelled(params, result);
   }
   if (ok) {
     /* 3. Every thread at once. Each one aims a little under the 1-thread
        step's time, as a core shared with a second thread runs slower. */
     result->allIterationsPerThread =
-        cmIterationsFor(result->cm1, params->phaseSecs * params->allCoreFactor,
+        speedIterationsFor(result->speed1t, params->phaseSecs * params->allCoreFactor,
                         params->minIterations);
     ok = cmRunStep(ctxs, threads, result->allIterationsPerThread,
                    &result->allSecs, &result->crcOk);
-    result->cmAll = (double)threads *
+    result->speedAll = (double)threads *
                     (double)result->allIterationsPerThread / result->allSecs;
-    result->scaling = result->cm1 > 0.0 ? result->cmAll / result->cm1 : 0.0;
+    result->scaling = result->speed1t > 0.0 ? result->speedAll / result->speed1t : 0.0;
     ok = ok && cmNotCancelled(params, result);
   }
 
@@ -653,8 +656,8 @@ void cpuSpeedFormatLine(const CpuSpeedResult *result, char *out,
            "1 thread %.0f it/s; %d threads %.0f it/s (%.2f x); CRC %s; "
            "%.2f s",
            result->cpuName[0] != '\0' ? result->cpuName : "unknown CPU",
-           result->physicalCores, result->logicalCores, result->cm1,
-           result->threads, result->cmAll, result->scaling,
+           result->physicalCores, result->logicalCores, result->speed1t,
+           result->threads, result->speedAll, result->scaling,
            result->crcOk ? "ok" : "WRONG", result->totalSecs);
 }
 
@@ -686,14 +689,14 @@ void cpuSpeedFormatJson(const CpuSpeedResult *result, char *out,
   cpuSpeedJsonEscape(result->cpuName, name, sizeof(name));
   snprintf(out, outSize,
            "{\"cpu_name\": \"%s\", \"logical_cores\": %d, "
-           "\"physical_cores\": %d, \"threads\": %d, \"cm_1t\": %.1f, "
-           "\"cm_all\": %.1f, \"per_thread_all\": %.1f, "
+           "\"physical_cores\": %d, \"threads\": %d, \"speed_1t\": %.1f, "
+           "\"speed_all\": %.1f, \"per_thread_all\": %.1f, "
            "\"allcore_scaling\": %.3f, \"crc_ok\": %s, \"warm_it\": %u, "
            "\"warm_s\": %.3f, \"it1\": %u, \"t1_s\": %.3f, \"itn\": %u, "
            "\"tn_s\": %.3f, \"total_wall_s\": %.3f}",
            name, result->logicalCores, result->physicalCores, result->threads,
-           result->cm1, result->cmAll,
-           result->threads > 0 ? result->cmAll / result->threads : 0.0,
+           result->speed1t, result->speedAll,
+           result->threads > 0 ? result->speedAll / result->threads : 0.0,
            result->scaling, result->crcOk ? "true" : "false",
            (unsigned)result->warmIterations, result->warmSecs,
            (unsigned)result->oneIterations, result->oneSecs,

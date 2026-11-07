@@ -474,6 +474,10 @@ struct ClientSim {
                                      * lobby-settings event, false until the
                                      * first one lands, which plays every
                                      * sound centred */
+    int              lobbyHostBotCapacity; /* the server's host bot
+                                     * capacity from the lobby
+                                     * settings: 0..16, -1 no cap,
+                                     * -2 its CPU speed test runs */
     uint8_t          overviewWindow; /* OverviewWindow the server asked for */
     uint8_t          lineOfSight;     /* LineOfSightMode the server asked for */
     bool             lobbySmartPingsOff; /* the server refuses smart pings; raw

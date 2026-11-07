@@ -2524,6 +2524,7 @@ void botManagerGetPoolStats(const ServerSim *sim, BotPoolStats *out) {
     if (sim == NULL) {
         memset(out, 0, sizeof(*out));
         out->brainCapacity = -1;
+        out->hostBotCapacity = -1;
         return;
     }
 
@@ -2558,6 +2559,7 @@ void botManagerGetPoolStats(const ServerSim *sim, BotPoolStats *out) {
     out->totalOverruns    = totalOverruns;
     out->totalThinks      = totalThinks;
     out->brainCapacity    = capacity;
+    out->hostBotCapacity  = sim->hostBotCapacity;
 }
 
 int botManagerGetActiveBotCount(const ServerSim *sim) {

@@ -515,7 +515,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
  *   [classicMode 1] [alliesInTrees 1] [voiceMode 1]
  *   [overviewWindow 1] [lineOfSight 1] [smartPingsOff 1] [modsOff 1]
- *   [positionalSound 1]
+ *   [positionalSound 1] [hostBotCapacity 1]
  *
  * A new field goes where it belongs in the layout, and every field
  * after it moves; the sender and the receiver are built from the same
@@ -532,10 +532,11 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  * + hostSlot(1) + three view
  * policies(3) + three view decay seconds(6) + classicMode(1)
  * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1)
- * + smartPingsOff(1) + modsOff(1) + positionalSound(1). */
+ * + smartPingsOff(1) + modsOff(1) + positionalSound(1)
+ * + hostBotCapacity(1). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
     (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 1 + 1 + 4 + 1 + 3 + 6 + 1 + 1 + 1 \
-     + 1 + 1 + 1 + 1 + 1)
+     + 1 + 1 + 1 + 1 + 1 + 1)
 
 /* The scenario tail, written only when the lobby has one. A lobby with no
  * scenario writes exactly LOBBY_SETTINGS_WIRE_PAYLOAD bytes and nothing
@@ -549,7 +550,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  * so none of the offsets ahead of it move.
  *
  * Worst case measured: 1 + 1 + 64 + 128 + 256 + 1 + 1 + 1 + 1 + 1 = 455, on
- * top of LOBBY_SETTINGS_WIRE_PAYLOAD's 83, so 538 bytes against a 1021-byte
+ * top of LOBBY_SETTINGS_WIRE_PAYLOAD's 84, so 539 bytes against a 1021-byte
  * segment. The two asserts behind the encoder are what hold that. */
 #define LOBBY_SETTINGS_WIRE_SCENARIO_MAX                                   \
     (1 + 1 + (1 + (LOBBY_SCENARIO_NAME_LEN - 1))                           \
@@ -631,6 +632,8 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.lobbyModsOff ? 1 : 0;
     /* Plain sense: 1 means sounds carry a side and a banded distance. */
     buf[pos++] = evt->u.lobbySettings.lobbyPositionalSound ? 1 : 0;
+    /* The server's host bot capacity: 0..16, 0xFF no cap, 0xFE measuring. */
+    buf[pos++] = evt->u.lobbySettings.lobbyHostBotCapacity;
     /* Nothing past here for a lobby with no scenario. */
     if (hasScenario) {
         buf[pos++] = (uint8_t)evt->u.lobbySettings.scenarioSource;
@@ -2741,6 +2744,14 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
      * A short body leaves it false, which sends every sound centred. */
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyPositionalSound = buf[pos++] ? true : false;
+    }
+    /* The host bot capacity, the last byte of the fixed part. A short body
+     * reads as no cap, which the zero the memset left would not say: 0 is a
+     * server that runs no bots. */
+    outEvt->u.lobbySettings.lobbyHostBotCapacity =
+        LOBBY_HOST_BOT_CAPACITY_WIRE_NONE;
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyHostBotCapacity = buf[pos++];
     }
     /* The scenario tail. A body that stops here came from a lobby with no
      * scenario, and the memset above has already left every field of it

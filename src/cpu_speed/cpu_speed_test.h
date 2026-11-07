@@ -17,18 +17,20 @@
 
 /* A CPU speed test of about 2 s, and the CPU facts that go with it.
  *
- * The test runs CoreMark (src/third_party/coremark) in three steps:
+ * The test runs a fixed integer workload (EEMBC's CoreMark code, vendored in
+ * src/third_party/coremark; see THIRD_PARTY_NOTICES.md) in three steps:
  *   1. a short warm-up on one thread, which also finds how fast one
  *      iteration is;
  *   2. about 0.8 s on one thread;
  *   3. about 0.8 s on every logical core at once, each thread with its own
- *      CoreMark data.
- * Each step checks CoreMark's CRCs against the known values of the
+ *      workload data.
+ * Each step checks the workload's CRCs against the known values of the
  * performance run (seeds 0, 0, 0x66 and 2000 bytes of data).
  *
- * The scores are CoreMark iterations per second over a short run. They are
- * for comparing machines with each other; they are not certified CoreMark
- * results, which need a run of at least 10 s.
+ * The scores are the CPU speed score: workload iterations per second over a
+ * short run. They are for comparing machines with each other. They are not
+ * CoreMark scores and are never to be named as such: the CoreMark licence
+ * keeps that name for unchanged, certified runs.
  *
  * Nothing here is sent anywhere. The caller decides what to do with the
  * result. */
@@ -66,10 +68,10 @@ typedef struct {
 } CpuSpeedParams;
 
 typedef struct {
-  /* The scores, in CoreMark iterations per second */
-  double cm1;     /* On one thread */
-  double cmAll;   /* On all threads at once, the threads added together */
-  double scaling; /* cmAll / cm1 */
+  /* The CPU speed scores, in workload iterations per second */
+  double speed1t;     /* On one thread */
+  double speedAll;   /* On all threads at once, the threads added together */
+  double scaling; /* speedAll / speed1t */
 
   /* The machine */
   int threads;       /* Threads the all-core step ran */
@@ -113,7 +115,7 @@ void cpuSpeedFormatLine(const CpuSpeedResult *result, char *out,
                         size_t outSize);
 
 /* One line of JSON, with no newline at the end. The keys match the bench
-   script's (cm_1t, cm_all, allcore_scaling and the rest). */
+   script's (speed_1t, speed_all, allcore_scaling and the rest). */
 void cpuSpeedFormatJson(const CpuSpeedResult *result, char *out,
                         size_t outSize);
 

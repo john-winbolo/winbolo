@@ -1710,6 +1710,8 @@
    on this computer have reached the brain's capacity answer. */
 #define STR_DLGLOBBY_ADDBOT_MEASURING       3490
 #define STR_DLGLOBBY_ADDBOT_FULL            3491
+#define STR_DLGLOBBY_ADDBOT_SERVER_MEASURING 3492
+#define STR_DLGLOBBY_ADDBOT_SERVER_FULL     3493
 #define STR_DLGLOBBY_TOOLTIP_RMTEAM         1318
 #define STR_DLGLOBBY_TOOLTIP_DRAG           1319
 #define STR_DLGLOBBY_TAG_HOST               1320
