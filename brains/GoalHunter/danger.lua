@@ -605,6 +605,9 @@ end
 --     only a builder on that square; elsewhere (a dead pill's square too)
 --     one within MAP_SQUARE_MIDDLE (<=). C.BLAST_DEAD_PILL_OPEN false (KEEL,
 --     or unset) counts a dead pill as solid too, the old engine rule.
+--     A shell that hits a pill (1 below) is a hit on the pill's square
+--     whatever armour it leaves (shells.c outPillHit), so the shot that
+--     kills a pill uses the square rule too.
 --   * a tank's shell tests the builder where he was r ticks earlier
 --     (shellsBlastTestBuilder). A bot's shell rewinds 1; a human's rewinds
 --     his measured view age (up to LAG_COMP_MAX_TICKS 14) minus
@@ -686,10 +689,13 @@ local function blast_square_solid(world, mx, my)
   return false
 end
 
-local function blast_catches(world, lx, ly, ex, ey, kill2)
+-- pill_hit: the blast is a shell's hit on the pill on its square. That is
+-- the square rule whatever armour the hit leaves, the shot that kills the
+-- pill included (lgm.c lgmBlastCatches, pillHit).
+local function blast_catches(world, lx, ly, ex, ey, kill2, pill_hit)
   local emx = bit.rshift(math.floor(ex), 8)
   local emy = bit.rshift(math.floor(ey), 8)
-  if blast_square_solid(world, emx, emy) then
+  if pill_hit or blast_square_solid(world, emx, emy) then
     return bit.rshift(math.floor(lx), 8) == emx
        and bit.rshift(math.floor(ly), 8) == emy
   end
@@ -839,7 +845,7 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
       local function test(t, ex, ey, how)
         for r = r_lo, r_hi do
           local lx, ly = man_at_cd(nw, dwell, t - r, home_x, home_y)
-          if lx and blast_catches(world, lx, ly, ex, ey, KILL2) then
+          if lx and blast_catches(world, lx, ly, ex, ey, KILL2, how == "pill") then
             return { t = t, sx = ex, sy = ey, lx = lx, ly = ly, src = src,
                      how = how, solid = (how == "wall" or how == "pill"
                                          or how == "base"),
