@@ -3893,6 +3893,47 @@ static bool decodeBotHostSlotsBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_BOT_HOST_TICKET body: [player 1][ticket BOT_HOST_TICKET_LEN]
+ * [brain str]. */
+#define BOT_HOST_TICKET_FIXED_LEN (1 + BOT_HOST_TICKET_LEN)
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostTicketBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (bufCap < BOT_HOST_TICKET_FIXED_LEN) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botHostTicket.player;
+    memcpy(buf + pos, evt->u.botHostTicket.ticket, BOT_HOST_TICKET_LEN);
+    pos += BOT_HOST_TICKET_LEN;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botHostTicket.brain,
+                       sizeof(evt->u.botHostTicket.brain))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostTicketBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < BOT_HOST_TICKET_FIXED_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_TICKET;
+    outEvt->u.botHostTicket.player = buf[pos++];
+    if (outEvt->u.botHostTicket.player >= MAX_TANKS) return false;
+    memcpy(outEvt->u.botHostTicket.ticket, buf + pos, BOT_HOST_TICKET_LEN);
+    pos += BOT_HOST_TICKET_LEN;
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botHostTicket.brain,
+                       sizeof(outEvt->u.botHostTicket.brain))) {
+        return false;
+    }
+    return pos == len;
+}
+
 /* CTRL_BOT_HOST_REC body:
  *   [op 1][flags 1][state 1][percent 1][botsDone 1][botsTotal 1][a 4][b 4]
  *   [block str]. block holds only [A-Za-z0-9_-]; it is empty for HOLD,
@@ -4502,6 +4543,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_SYNC]         = encodeBotHostSyncBody,
     [CTRL_BOT_HOST_SLOTS]        = encodeBotHostSlotsBody,
     [CTRL_BOT_HOST_REC]          = encodeBotHostRecBody,
+    [CTRL_BOT_HOST_TICKET]       = encodeBotHostTicketBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -4570,6 +4612,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_SYNC]         = decodeBotHostSyncBody,
     [CTRL_BOT_HOST_SLOTS]        = decodeBotHostSlotsBody,
     [CTRL_BOT_HOST_REC]          = decodeBotHostRecBody,
+    [CTRL_BOT_HOST_TICKET]       = decodeBotHostTicketBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -4702,6 +4745,7 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_SYNC:          return "CTRL_BOT_HOST_SYNC";
     case CTRL_BOT_HOST_SLOTS:         return "CTRL_BOT_HOST_SLOTS";
     case CTRL_BOT_HOST_REC:           return "CTRL_BOT_HOST_REC";
+    case CTRL_BOT_HOST_TICKET:        return "CTRL_BOT_HOST_TICKET";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

@@ -431,6 +431,17 @@ STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT=uploading recordings {number}%, {number2} of
 STR_DLGLOBBY_BOTHOST_REC_LOWDISK=not recording: low disk
 STR_DLGLOBBY_BOTHOST_REC_MERGING=merging recordings
 
+# The Bot Host inside this client: the lobby line under the Bot Host rows
+# ({number} = bots it runs now, {number2} = bots it can run), and the
+# newswire line when the count changes ({number} = bots it runs now)
+STR_DLGLOBBY_CLIENT_BOTHOST_FMT=This computer runs {number} of the server's bots (room for {number2})
+STR_CLIENT_BOTHOST_NEWS_FMT=This computer now runs {number} of the server's bots for this game
+
+# The server's own row at the bottom of the lobby's Bot Host rows: its
+# name, and what it shows in place of the brain file state
+STR_DLGLOBBY_BOTHOST_SERVER_NAME=Server
+STR_DLGLOBBY_BOTHOST_SERVER_STATE=runs bots itself
+
 # Why Ready is off while a Bot Host gets the server's brain files ({number} = %)
 STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT=Bot Host syncing {number}%
 

@@ -209,7 +209,10 @@ void luaBrainsSetRunScript(const char *path) {
 
 /* Staged per-bot init arg from -bot-init's [..] suffix. Consumed (cleared)
  * by the next luaBrainInstanceCreate, which injects BRAIN_INIT_ARG. */
-static char s_next_init_arg[BRAIN_INIT_ARG_MAX] = "";
+/* Per thread: the Bot Host inside a client stages and creates its brains
+ * on its own thread while the program's other brains are staged and
+ * created on the main thread. Each pair runs on one thread. */
+static THREAD_LOCAL char s_next_init_arg[BRAIN_INIT_ARG_MAX] = "";
 
 void luaBrainsSetNextInitArg(const char *arg) {
     if (arg && arg[0])
@@ -226,7 +229,7 @@ const char *luaBrainsPeekNextInitArg(void) { return s_next_init_arg; }
  * of restarting at 0 every life. Consume-once like s_next_init_arg: a host
  * that never stages one (BrainTest's in-process create) gets 0, which is
  * exactly the game-start value, so the global is never nil. */
-static unsigned int s_next_start_engine_tick = 0;
+static THREAD_LOCAL unsigned int s_next_start_engine_tick = 0;
 
 void luaBrainsSetNextStartEngineTick(unsigned int tick) {
     s_next_start_engine_tick = tick;

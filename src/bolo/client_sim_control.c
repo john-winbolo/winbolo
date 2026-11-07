@@ -420,6 +420,20 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
 
+    case CTRL_BOT_HOST_TICKET:
+        /* Only a player's own connection gets one; a bot connection or a
+         * spectator has no use for it. */
+        if (!cs->isBot && !cs->isSpectator) {
+            cs->botHostTicketValid = true;
+            cs->botHostTicketPlayer = evt->u.botHostTicket.player;
+            memcpy(cs->botHostTicket, evt->u.botHostTicket.ticket,
+                   sizeof(cs->botHostTicket));
+            SDL_strlcpy(cs->botHostTicketBrain, evt->u.botHostTicket.brain,
+                        sizeof(cs->botHostTicketBrain));
+            cs->botHostTicketGen++;
+        }
+        break;
+
     case CTRL_BOT_HOST_STATUS:
         if (evt->u.botHostStatus.idx < CLIENT_BOT_HOST_ROWS) {
             ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostStatus.idx];
@@ -1042,7 +1056,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * arrives carrying inLobby=true, which only happens on hosts
          * with lobbyEnabled. */
         cs->inLobby = true;
-        frontEndAudioReturningToLobby(false);
+        if (!cs->noFrontEnd) frontEndAudioReturningToLobby(false);
         /* Clear the predicted-tank latch so the next round's first
          * snapshot takes clientApplySnapshot's first-snapshot init
          * branch (sets stocks, jump-cuts the camera via
@@ -1072,7 +1086,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* Round-only scope: the previous round's stats panel clears when
          * the next round's countdown starts. */
         cs->lastRoundStatsValid = false;
-        frontEndAudioReturningToLobby(false);
+        if (!cs->noFrontEnd) frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_RUNNING:
         cs->netStat = netRunning;
@@ -1141,7 +1155,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * snapshot doesn't register a spurious death or respawn edge against
          * the previous game's last value. */
         cs->lastServerDestroyed = FALSE;
-        frontEndAudioReturningToLobby(false);
+        if (!cs->noFrontEnd) frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_GAME_OVER:
         /* Reset countdown unconditionally — used to be gated on
@@ -1157,7 +1171,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* Silence in-flight playback so engine/shell/explosion
          * sounds don't keep draining behind the "Returning to
          * lobby" caption. Restored on the next phase event. */
-        frontEndAudioReturningToLobby(true);
+        if (!cs->noFrontEnd) frontEndAudioReturningToLobby(true);
         break;
 
     case CTRL_GAME_OVER: {

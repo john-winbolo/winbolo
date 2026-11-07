@@ -51,10 +51,14 @@
 #define BOT_HOST_TOKEN_LEN        16   /* == JOIN_BOT_SLOT_TOKEN_LEN */
 #define BOT_HOST_EVT_NAME_LEN     PACKET_MAX_PLAYER_NAME
 #define BOT_HOST_BRAIN_NAME_LEN   64
+/* The bytes of a CTRL_BOT_HOST_TICKET ticket. */
+#define BOT_HOST_TICKET_LEN       16
 #define BOT_HOST_INIT_ARG_LEN     128  /* == BRAIN_INIT_ARG_MAX */
 #define BOT_HOST_TEAM_MSG_LEN     (PACKET_MAX_CHAT_MESSAGE + 2) /* == BRAIN_INBOX_MSG_LEN */
 #define BOT_HOST_STATUS_NAME_LEN  CLIENT_BOT_HOST_NAME_LEN /* == JOIN_BOT_HOST_NAME_LEN */
-#define BOT_HOST_STATUS_ROWS      CLIENT_BOT_HOST_ROWS     /* == MAX_BOT_HOSTS */
+#define BOT_HOST_STATUS_ROWS      CLIENT_BOT_HOST_ROWS     /* == MAX_BOT_HOSTS + 1:
+                                                           * the last is the
+                                                           * server's own row */
 /* CTRL_BOT_HOST_SLOTS refuseSeat when no assign is turned down. */
 #define BOT_HOST_SLOTS_NO_REFUSE  0xFFu
 
@@ -534,6 +538,16 @@ typedef enum {
      * BULK_KIND_REC_CHUNK pieces, and reports its state. op is a
      * BOT_HOST_REC_OP_* value. */
     CTRL_BOT_HOST_REC,
+    /* CTRL_BOT_HOST_TICKET — server to one player, straight onto that
+     * player's CHANNEL_CONTROL and never through the control bus: the
+     * one-time ticket that lets the player's own computer run bots for the
+     * server. The player's client starts a Bot Host of its own inside the
+     * program and joins with it, giving the ticket and its player number;
+     * the server takes that host only while the player is connected, only
+     * from the player's address, and drops it when the player leaves.
+     * brain names the server's bot brain, for the client's capacity check.
+     * An older client has no decoder for the type and skips it. */
+    CTRL_BOT_HOST_TICKET,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1604,6 +1618,13 @@ typedef struct ControlEvent {
             uint32_t b;          /* DONE: bytes; CLEARED: bytes hi */
             char     block[BOT_HOST_REC_BLOCK_LEN]; /* session folder name */
         } botHostRec;
+
+        /* CTRL_BOT_HOST_TICKET — see the enum. */
+        struct {
+            uint8_t player;      /* the receiving player's number */
+            uint8_t ticket[BOT_HOST_TICKET_LEN];
+            char    brain[BOT_HOST_BRAIN_NAME_LEN];
+        } botHostTicket;
     } u;
 } ControlEvent;
 

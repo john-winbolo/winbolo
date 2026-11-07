@@ -476,6 +476,15 @@
 #define STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT 3435
 #define STR_DLGLOBBY_BOTHOST_REC_LOWDISK    3436
 #define STR_DLGLOBBY_BOTHOST_REC_MERGING    3437
+/* The Bot Host inside this client: the lobby line under the Bot Host rows
+ * ({number} = bots it runs now, {number2} = bots it can run), and the
+ * newswire line when the count changes ({number} = bots it runs now) */
+#define STR_DLGLOBBY_CLIENT_BOTHOST_FMT     3600
+#define STR_CLIENT_BOTHOST_NEWS_FMT         3601
+/* The server's own row at the bottom of the lobby's Bot Host rows: its
+ * name, and what it shows in place of the brain file state */
+#define STR_DLGLOBBY_BOTHOST_SERVER_NAME    3602
+#define STR_DLGLOBBY_BOTHOST_SERVER_STATE   3603
 /* Map-preview start-picker tooltips and the assign-to-someone menu */
 #define STR_STARTPICK_TIP_FREE_HOST         1512
 #define STR_STARTPICK_TIP_FREE              1513

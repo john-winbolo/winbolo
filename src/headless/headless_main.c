@@ -101,6 +101,7 @@
 #include "../winbolonet/winbolonet_core.h"
 #include "cmd_stdin.h"
 #include "../scenario/scenario_host.h"
+#include "../bothost/bothost_embed.h" /* this computer's own Bot Host */
 
 /* ------------------------------------------------------------------ */
 /* Globals needed by the game engine                                   */
@@ -152,6 +153,13 @@ static char optScriptUploads[16] = "";
 static ScriptUploadPolicy optScriptUploadPolicy = SCRIPT_UPLOAD_ALLOW;
 /* Run every scenario script with the full Lua library and no limits. */
 static bool optUnsafeScripts = false;
+/* This computer's own Bot Host (bothost_embed.h): off, a fixed slot count,
+ * its brain cache, and a test of a crash (the host and the player vanish
+ * at that tick with no word to the server). */
+static bool optNoBotHost = false;
+static int optBotHostSlots = 0;
+static char optBotHostCache[1024] = "";
+static int optVanishAtTick = 0;
 static bool optLogBinary = FALSE;
 static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
@@ -2147,6 +2155,15 @@ static void printUsage(const char *prog) {
     "                    is packed into the file or sits beside it; every other\n"
     "                    map is unaffected), allow keeps them for the session\n"
     "                    (default), persist keeps them for good\n"
+    "  --no-bothost      Do not run the server's bots on this computer\n"
+    "  --bothost-slots N Offer the server N bot slots (default: the brain's\n"
+    "                    own capacity answer for this computer)\n"
+    "  --bothost-cache DIR\n"
+    "                    Where this computer's Bot Host keeps the server's\n"
+    "                    brain files (default: bothost_cache beside the program)\n"
+    "  --vanish-at-tick N\n"
+    "                    A crash test: at game tick N the program ends at once,\n"
+    "                    with no quit to the server from the player or its Bot Host\n"
     "  --allow-unsafe-scripts\n"
     "                    Run scenario scripts with the full Lua standard\n"
     "                    library, no memory cap, no time limits and precompiled\n"
@@ -2313,6 +2330,14 @@ static bool parseArgs(int argc, char **argv) {
       optNoScenarios = true;
     } else if (strcmp(argv[i], "--scriptuploads") == 0 && i + 1 < argc) {
       strncpy(optScriptUploads, argv[++i], sizeof(optScriptUploads) - 1);
+    } else if (strcmp(argv[i], "--no-bothost") == 0) {
+      optNoBotHost = true;
+    } else if (strcmp(argv[i], "--bothost-slots") == 0 && i + 1 < argc) {
+      optBotHostSlots = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--bothost-cache") == 0 && i + 1 < argc) {
+      SDL_strlcpy(optBotHostCache, argv[++i], sizeof(optBotHostCache));
+    } else if (strcmp(argv[i], "--vanish-at-tick") == 0 && i + 1 < argc) {
+      optVanishAtTick = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--allow-unsafe-scripts") == 0 ||
                strcmp(argv[i], "-allow-unsafe-scripts") == 0) {
       optUnsafeScripts = true;
@@ -3028,6 +3053,24 @@ static int runNetworkMode(void) {
   /* Open state log */
   logStateOpen(optLogState);
 
+  /* This computer's own Bot Host: it starts when the server's ticket comes. */
+  {
+    BotHostEmbedSettings bh;
+    char cache[1024];
+    memset(&bh, 0, sizeof(bh));
+    bh.disabled = optNoBotHost;
+    bh.slots = optBotHostSlots;
+    if (optBotHostCache[0] != '\0') {
+      SDL_strlcpy(cache, optBotHostCache, sizeof(cache));
+    } else {
+      const char *base = SDL_GetBasePath();
+      SDL_snprintf(cache, sizeof(cache), "%sbothost_cache",
+                   base != NULL ? base : "");
+    }
+    bh.cacheDir = cache;
+    botHostEmbedSetSettings(&bh);
+  }
+
   /* Main game loop */
   oldTick = SDL_GetTicks();
 
@@ -3124,8 +3167,19 @@ static int runNetworkMode(void) {
       break;
     }
 
+    /* This computer's Bot Host: start, stop, the bot count. */
+    botHostEmbedService(humanSim);
+    if (optVanishAtTick > 0 && tickCount >= optVanishAtTick) {
+      fprintf(stderr, "Vanishing at tick %d (a crash test).\n", tickCount);
+      fflush(stderr);
+      fflush(stdout);
+      botHostEmbedStop(false);
+      _Exit(3);
+    }
+
     SDL_Delay(1); /* Don't busy-wait */
   }
+  botHostEmbedLeave("the player left the game");
 
   /* Cleanup */
   if (!optQuiet) {

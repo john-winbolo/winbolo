@@ -477,7 +477,9 @@ void clientSimOnAssignedSlot(ClientSim *cs, BYTE playerNum,
      * step on one side without breaking it on the other. */
     clientSimSetPlayerNum(cs, playerNum);
     clientSimSetupSelf(cs, playerNum, playerName, clientType, clientFlags);
-    frontEndApplyLocalTankPrefs(cs);
+    /* The player's own tank settings: not for a bot connection of the Bot
+     * Host inside the program. */
+    if (!cs->noFrontEnd) frontEndApplyLocalTankPrefs(cs);
 }
 
 /*********************************************************
@@ -2447,6 +2449,26 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
 const ClientBotHostRow *clientSimGetBotHostRow(const ClientSim *cs, uint8_t idx) {
   if (cs == NULL || idx >= CLIENT_BOT_HOST_ROWS) return NULL;
   return &cs->botHostRows[idx];
+}
+
+bool clientSimGetBotHostTicket(const ClientSim *cs, uint8_t *player,
+                               uint8_t *ticket, char *brain, uint32_t *gen) {
+  if (cs == NULL || !cs->botHostTicketValid) return false;
+  if (player != NULL) *player = cs->botHostTicketPlayer;
+  if (ticket != NULL) memcpy(ticket, cs->botHostTicket, BOT_HOST_TICKET_LEN);
+  if (brain != NULL) {
+    SDL_strlcpy(brain, cs->botHostTicketBrain, BOT_HOST_BRAIN_NAME_LEN);
+  }
+  if (gen != NULL) *gen = cs->botHostTicketGen;
+  return true;
+}
+
+void clientSimSetNoFrontEnd(ClientSim *cs, bool v) {
+  if (cs != NULL) cs->noFrontEnd = v;
+}
+
+bool clientSimGetNoFrontEnd(const ClientSim *cs) {
+  return cs != NULL && cs->noFrontEnd;
 }
 
 bool clientSimBotHostSyncing(const ClientSim *cs, int *percent) {
@@ -4864,6 +4886,12 @@ void clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown) {
 
 void clientSimNetStatusMessage(ClientSim *cs, char *messageStr) {
   clientMessageAdd(clientSimGetMessages(cs), networkStatus, (char *) "Network Status", messageStr);
+}
+
+void clientSimNewswireText(ClientSim *cs, const char *text) {
+  if (cs == NULL || text == NULL) return;
+  clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                   (char *) "WinBolo", (char *) text);
 }
 
 void clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY) {

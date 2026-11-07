@@ -1016,6 +1016,11 @@ void printArgs() {
   fprintf(stderr, "                asks them for free slots at start, after each game and when a\n");
   fprintf(stderr, "                player joins an empty lobby. With -bothostkey too, a listed host\n");
   fprintf(stderr, "                must also give the key; without it the list alone is the proof.\n");
+  fprintf(stderr, "-noplayerbothosts - do not let each player's client run this server's bots\n");
+  fprintf(stderr, "-bothost-small-slots <n> - a Bot Host with n slots or fewer fills a little later (default 2)\n");
+  fprintf(stderr, "-bothost-small-bias <f> - how many slots fewer such a host counts, 0 to 1 (default 0.25)\n");
+  fprintf(stderr, "                (on by default: a joining player's client offers the bots its\n");
+  fprintf(stderr, "                computer can run, and gives them back when the player leaves).\n");
   fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
   fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
@@ -3238,8 +3243,9 @@ int main(int argc, char **argv) {
 #endif
       return 0;
     }
-    /* Bot Hosts: other machines that run this server's bot brains. Off
-     * without a key and a list. */
+    /* Bot Hosts: other machines that run this server's bot brains (with a
+     * key or a list), and the players' own computers (unless
+     * -noplayerbothosts). */
     {
       int argNum = findArg(argc, argv, "bothostkey");
       if (argNum != ARG_NOT_FOUND) {
@@ -3251,6 +3257,23 @@ int main(int argc, char **argv) {
       if (argNum != ARG_NOT_FOUND) {
         if (!transportUdpServerSetBotHostList(serverSim, argv[argNum])) {
           fprintf(stderr, "Bot Host list not used\n");
+        }
+      }
+      transportUdpServerSetPlayerBotHosts(
+          serverSim, !argExist(argc, argv, "noplayerbothosts"));
+      {
+        int smallSlots = -1; /* -1: the default */
+        double bias = -1.0;
+        int smallArg = findArg(argc, argv, "bothost-small-slots");
+        int biasArg = findArg(argc, argv, "bothost-small-bias");
+        if (smallArg != ARG_NOT_FOUND && smallArg < argc) {
+          smallSlots = atoi(argv[smallArg]);
+        }
+        if (biasArg != ARG_NOT_FOUND && biasArg < argc) {
+          bias = atof(argv[biasArg]);
+        }
+        if (smallArg != ARG_NOT_FOUND || biasArg != ARG_NOT_FOUND) {
+          transportUdpServerSetBotHostPlacement(smallSlots, bias);
         }
       }
     }

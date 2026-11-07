@@ -182,6 +182,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, struct C
 *  isQuiting  - TRUE if we are quiting
 *********************************************************/
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting);
+/* Once a frame: runs the Bot Host inside this program while the player is
+ * in a game on a server, and stops it when not (bothost_embed.h). */
+void gameFrontBotHostService(struct ClientSim *cs);
 
 /*********************************************************
 *NAME:          gameFrontSaveTankPrefs

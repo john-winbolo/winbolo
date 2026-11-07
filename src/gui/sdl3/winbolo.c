@@ -842,6 +842,8 @@ int main(int argc, char *argv[]) {
         /* Voice encode/decode runs here, on the main thread, beside the
          * game tick — the codec state has no lock of its own. */
         voiceTick(cs);
+        /* This computer's Bot Host: started on the server's ticket. */
+        gameFrontBotHostService(cs);
 
         /* Detect game-over returning to lobby */
         if (clientFrontInLobbyPhase(cs)) {

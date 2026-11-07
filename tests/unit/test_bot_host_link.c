@@ -12,6 +12,11 @@
  *      address; an entry with a port allows only that port.
  *   4. bot_host_slots_codec: CTRL_BOT_HOST_SLOTS keeps slots and the refusal
  *      through the wire form; too many slots or a bad seat is refused.
+ *   5. bot_host_place_spread: bots added one at a time spread over the
+ *      hosts in proportion to their slots, a host of 1 or 2 slots filling a
+ *      little later; no host goes over its slots; a rebalance moves one bot
+ *      at a time toward the same spread and never moves a bot that may not
+ *      move.
  */
 
 #include <stdint.h>
@@ -223,5 +228,102 @@ int run_bot_host_slots_codec(void) {
     buf[1] = MAX_TANKS;
     UT_ASSERT(!dec(buf, len, &out));
     UT_ASSERT(enc(&in, NULL, buf, 2, &len) != ENCODE_OK);
+    return 0;
+}
+
+/* ================================================================
+ * 5. Placement: the proportional spread
+ * ================================================================ */
+
+/* Adds bots one at a time with botHostPlacePick and checks the spread
+ * after each against want (count rows of n values). Prints the table. */
+static int placeRun(const int *slots, int n, const int *want, int count,
+                    const char *label) {
+    BotHostPlaceHost h[8];
+    int k, i;
+    memset(h, 0, sizeof(h));
+    for (i = 0; i < n; i++) {
+        h[i].slots = slots[i];
+        h[i].open = true;
+    }
+    printf("  placement %s (small <= %d slots, bias %.2f):\n", label,
+           BOT_HOST_SMALL_SLOTS_DEFAULT, BOT_HOST_SMALL_BIAS_DEFAULT);
+    for (k = 1; k <= count; k++) {
+        int p = botHostPlacePick(h, n, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                 BOT_HOST_SMALL_BIAS_DEFAULT);
+        if (p >= 0) h[p].bots++;
+        printf("    %2d bots:", k);
+        for (i = 0; i < n; i++) printf(" %d/%d", h[i].bots, h[i].slots);
+        printf("%s\n", p < 0 ? "  (no room)" : "");
+        for (i = 0; i < n; i++) {
+            UT_ASSERT(h[i].bots <= h[i].slots);
+            UT_ASSERT(h[i].bots == want[(k - 1) * n + i]);
+        }
+    }
+    return 0;
+}
+
+int run_bot_host_place_spread(void) {
+    static const int s8421[] = { 8, 4, 2, 1 };
+    static const int w8421[] = {
+        1,0,0,0,  2,0,0,0,  2,1,0,0,  3,1,0,0,  4,1,0,0,
+        4,2,0,0,  4,2,1,0,  5,2,1,0,  6,2,1,0,  6,3,1,0,
+        7,3,1,0,  8,3,1,0,  8,4,1,0,  8,4,2,0,  8,4,2,1 };
+    static const int s22[] = { 2, 2 };
+    static const int w22[] = { 1,0,  1,1,  2,1,  2,2 };
+    static const int s1[] = { 1 };
+    static const int w1[] = { 1, 1 };
+    BotHostPlaceHost h[3];
+    int from = -1, to = -1, moves;
+
+    if (placeRun(s8421, 4, w8421, 15, "hosts 8,4,2,1") != 0) return 1;
+    if (placeRun(s22, 2, w22, 4, "hosts 2,2") != 0) return 1;
+    if (placeRun(s1, 1, w1, 2, "host 1 alone") != 0) return 1;
+
+    /* Effective slots: a small host counts the bias fewer. */
+    UT_ASSERT(botHostPlaceEffSlots(8, 2, 0.25) == 8.0);
+    UT_ASSERT(botHostPlaceEffSlots(2, 2, 0.25) == 1.75);
+    UT_ASSERT(botHostPlaceEffSlots(1, 2, 0.25) == 0.75);
+    UT_ASSERT(botHostPlaceEffSlots(1, 2, 5.0) == 0.05);
+    UT_ASSERT(botHostPlaceEffSlots(2, 0, 0.25) == 2.0);
+
+    /* Rebalance: a host of 4 joins a host of 8 that runs 4 bots. One move
+     * takes the spread to 3 and 1, where a new bot would put it, and then
+     * nothing moves. */
+    memset(h, 0, sizeof(h));
+    h[0].slots = 8; h[0].bots = 4; h[0].open = true; h[0].movable = true;
+    h[1].slots = 4; h[1].bots = 0; h[1].open = true; h[1].movable = true;
+    UT_ASSERT(botHostPlaceRebalance(h, 2, 2, 0.25, &from, &to));
+    UT_ASSERT(from == 0 && to == 1);
+    h[0].bots--; h[1].bots++;
+    UT_ASSERT(!botHostPlaceRebalance(h, 2, 2, 0.25, &from, &to));
+
+    /* The server itself (unlimited, capacity 3) runs 10 bots; a host of 4
+     * joins. Moves go one at a time until the host is full. */
+    memset(h, 0, sizeof(h));
+    h[0].slots = 3; h[0].bots = 10; h[0].open = true; h[0].unlimited = true;
+    h[0].movable = true;
+    h[1].slots = 4; h[1].open = true; h[1].movable = true;
+    moves = 0;
+    while (botHostPlaceRebalance(h, 2, 2, 0.25, &from, &to) && moves < 20) {
+        UT_ASSERT(from == 0 && to == 1);
+        h[from].bots--; h[to].bots++;
+        moves++;
+    }
+    UT_ASSERT(moves == 4 && h[0].bots == 6 && h[1].bots == 4);
+
+    /* A bot that may not move (a pill carried, the builder out) stays,
+     * even where it is crowded. */
+    memset(h, 0, sizeof(h));
+    h[0].slots = 8; h[0].bots = 8; h[0].open = true; h[0].movable = false;
+    h[1].slots = 8; h[1].open = true; h[1].movable = true;
+    UT_ASSERT(!botHostPlaceRebalance(h, 2, 2, 0.25, &from, &to));
+
+    /* A host that goes from 2 bots to 1 of 2 on its own is not refilled at
+     * once from a host of 8 at 2 of 8: 2/8 is less crowded than 2/1.75. */
+    memset(h, 0, sizeof(h));
+    h[0].slots = 8; h[0].bots = 2; h[0].open = true; h[0].movable = true;
+    h[1].slots = 2; h[1].bots = 1; h[1].open = true; h[1].movable = true;
+    UT_ASSERT(!botHostPlaceRebalance(h, 2, 2, 0.25, &from, &to));
     return 0;
 }

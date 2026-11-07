@@ -322,6 +322,12 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
                   (int)client->playerNum);
         return;
     }
+    if (evt->type == CTRL_BOT_HOST_TICKET &&
+        (client->botSlot ||
+         evt->u.botHostTicket.player != client->playerNum)) {
+        /* A player's Bot Host ticket is that player's alone. */
+        return;
+    }
     if (evt->type == CTRL_BALANCE_FAILED && client->playerNum != 0) {
         /* The balance flow is host-driven; only slot 0 needs the
          * failure pill. Skip the fan-out for everyone else. */

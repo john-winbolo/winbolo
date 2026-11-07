@@ -198,6 +198,11 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
      * clear the flag so the drain can't later tear down a fresh occupant that
      * reused the slot after this teardown frees it. */
     udpServer.pendingSimRemove[idx] = false;
+    if (!udpServer.clients[idx].botSlot) {
+        /* The Bot Host inside the leaving player's client goes with it. */
+        serverBotHostPlayerGone(sim, idx, graceful ? "its player left"
+                                                   : "its player timed out");
+    }
 
     {
         UdpServerClient *c = &udpServer.clients[idx];

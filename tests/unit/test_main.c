@@ -599,6 +599,7 @@ static const UnitTestEntry s_tests[] = {
     { "bot_host_link_addr_list", run_bot_host_link_addr_list },
     { "bot_host_link_allow", run_bot_host_link_allow },
     { "bot_host_slots_codec", run_bot_host_slots_codec },
+    { "bot_host_place_spread", run_bot_host_place_spread },
     { "internal_msg_reaches_allied_bot",         run_internal_msg_reaches_allied_bot         },
     { "internal_msg_skips_sender_self",          run_internal_msg_skips_sender_self          },
     { "internal_msg_skips_non_allied_bot",       run_internal_msg_skips_non_allied_bot       },

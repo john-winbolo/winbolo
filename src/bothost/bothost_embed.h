@@ -1,0 +1,84 @@
+/*
+ * The Bot Host inside a WinBolo client.
+ *
+ * Each player's client (the game and WinBoloHeadless) runs a Bot Host of
+ * its own while it is in a game on a dedicated server, so the server can
+ * move its bots' brains onto the players' computers. The host is the
+ * WinBoloBotHost program's code (bothost_main.c, built a second time by
+ * bothost_embed.c), run on a thread of its own inside the client. It serves
+ * the one server the player is on, opens no listen port, and joins with the
+ * ticket the server sent the player (CTRL_BOT_HOST_TICKET) in place of a key.
+ * The server takes it only while the player is connected and drops it, with
+ * every bot on it going back to the server, when the player leaves.
+ *
+ * botHostEmbedService (bothost_embed_service.c) is what the clients call
+ * once a frame: it starts the host when a ticket comes and stops it when
+ * the player leaves.
+ */
+#ifndef BOTHOST_EMBED_H
+#define BOTHOST_EMBED_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct ClientSim;
+
+typedef struct {
+    const char    *serverHost;   /* the server's address, as the player joined */
+    uint16_t       serverPort;
+    uint8_t        player;       /* the player's number */
+    const uint8_t *ticket;       /* BOT_HOST_TICKET_LEN bytes */
+    const char    *brain;        /* the server's bot brain, for its capacity */
+    const char    *name;         /* the host's name: the player's name */
+    const char    *cacheDir;     /* where the server's brain files are kept */
+    int            slots;        /* > 0: offer this many; 0: the capacity */
+    double         recordMinFreeGb; /* 0: the default (50) */
+} BotHostEmbedConfig;
+
+typedef struct {
+    bool running;    /* the host's thread runs */
+    bool connected;  /* the server took the host */
+    bool refused;    /* the server refused it */
+    int  slots;      /* the bots it offers to run */
+    int  bots;       /* the bots it runs now */
+} BotHostEmbedStatus;
+
+/* Start the host (a running one stops first). Main thread only. */
+bool botHostEmbedStart(const BotHostEmbedConfig *cfg);
+/* Stop the host and wait for its thread. tellServer: each bot connection
+ * and the host itself send their quit, so the server takes the bots back at
+ * once; false only for a program that ends next (a crash test). */
+void botHostEmbedStop(bool tellServer);
+bool botHostEmbedRunning(void);
+void botHostEmbedGetStatus(BotHostEmbedStatus *out);
+/* The slots offered before the brain's own answer is known. */
+int botHostEmbedDefaultSlots(void);
+
+/* ---- The clients' side (bothost_embed_service.c) ---------------------- */
+
+typedef struct {
+    bool        disabled;    /* never host (a test option) */
+    int         slots;       /* > 0: a fixed slot count (a test option) */
+    const char *cacheDir;    /* NULL: the default under the prefs folder */
+} BotHostEmbedSettings;
+
+void botHostEmbedSetSettings(const BotHostEmbedSettings *settings);
+
+/* Once a frame on the main thread, with the player's ClientSim of a
+ * network game, or NULL when there is none (the menu, a local game). It
+ * starts the host when the server's ticket comes and stops it when the
+ * player leaves the game, or when a new ticket replaces the old one. */
+void botHostEmbedService(struct ClientSim *cs);
+
+/* Stop at once: the player quits the game. */
+void botHostEmbedLeave(const char *why);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* BOTHOST_EMBED_H */

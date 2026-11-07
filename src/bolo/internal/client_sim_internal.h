@@ -420,6 +420,18 @@ struct ClientSim {
     ClientLobbySlot  lobbySlots[16];    /* MAX_TANKS */
     ClientSpectatorSlot spectatorSlots[MAX_SPECTATORS]; /* spectator roster mirror */
     ClientBotHostRow    botHostRows[CLIENT_BOT_HOST_ROWS]; /* Bot Host list mirror */
+    /* CTRL_BOT_HOST_TICKET: the server lets this player's computer run
+     * bots for it. botHostTicketGen rises with each ticket, so the Bot Host
+     * inside the program sees a new one. */
+    bool             botHostTicketValid;
+    uint8_t          botHostTicketPlayer;
+    uint8_t          botHostTicket[BOT_HOST_TICKET_LEN];
+    char             botHostTicketBrain[BOT_HOST_BRAIN_NAME_LEN];
+    uint32_t         botHostTicketGen;
+    /* A bot connection of the Bot Host inside the program. It runs on the
+     * host's own thread and must never reach the front end: the screen,
+     * the sound and the dialogs belong to the player's own ClientSim. */
+    bool             noFrontEnd;
     int              countdownSeconds;  /* 0 = not counting down */
     bool             mapDownloadComplete; /* Gate for ready button */
     bool             inLobby;           /* TRUE if server is lobby-enabled */
