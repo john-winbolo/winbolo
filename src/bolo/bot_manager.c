@@ -2523,6 +2523,7 @@ void botManagerGetPoolStats(const ServerSim *sim, BotPoolStats *out) {
     if (out == NULL) return;
     if (sim == NULL) {
         memset(out, 0, sizeof(*out));
+        out->brainCapacity = -1;
         return;
     }
 
@@ -2530,8 +2531,13 @@ void botManagerGetPoolStats(const ServerSim *sim, BotPoolStats *out) {
     uint32_t totalOverruns = 0;
     uint32_t totalThinks   = 0;
     double   maxThinkMs    = 0.0;
+    int      capacity      = -1;
     for (int i = 0; i < MAX_TANKS; i++) {
         if (sim->botMgr.bots[i].active) {
+            int c = sim->botMgr.bots[i].brain.capacity;
+            if (c >= 0 && (capacity < 0 || c < capacity)) {
+                capacity = c;
+            }
             active++;
             totalOverruns += sim->botMgr.bots[i].overrunCount;
             totalThinks   += sim->botMgr.bots[i].thinkCount;
@@ -2551,6 +2557,7 @@ void botManagerGetPoolStats(const ServerSim *sim, BotPoolStats *out) {
     out->maxThinkMs       = maxThinkMs;
     out->totalOverruns    = totalOverruns;
     out->totalThinks      = totalThinks;
+    out->brainCapacity    = capacity;
 }
 
 int botManagerGetActiveBotCount(const ServerSim *sim) {

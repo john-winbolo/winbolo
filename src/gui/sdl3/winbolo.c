@@ -50,6 +50,9 @@
 #endif
 
 #include "../../common/wb_log.h"
+#ifdef WINBOLO_CPU_SPEED_TEST
+#include "cpu_speed_capacity.h"  /* cpuSpeedApplyStoredToBrains */
+#endif
 #include "../../winbolonet/winbolonet_core.h"
 #include "bolo_rand.h"
 #include "platform_net.h"
@@ -504,6 +507,13 @@ int main(int argc, char *argv[]) {
 
   wb_log_init("WinBolo", "WinBolo", "winbolo.log");
   atexit(wb_log_shutdown);
+
+#ifdef WINBOLO_CPU_SPEED_TEST
+  /* Before any brain loads: a CPU speed test result stored for this version
+     gives Brain.capacity its coremark_1t and coremark_all. With none stored
+     they stay 0, and the first game lobby runs the test (lobby_commands). */
+  (void)cpuSpeedApplyStoredToBrains(WINBOLO_VERSION);
+#endif
 
   if (!serverSimBotPoolInit(0)) {
     fprintf(stderr, "serverSimBotPoolInit failed\n");
@@ -1009,6 +1019,12 @@ int main(int argc, char *argv[]) {
   steam_input_shutdown();
   steam_shutdown();
   serverSimBotPoolDestroy();
+#ifdef WINBOLO_CPU_SPEED_TEST
+  /* A lobby's CPU speed test is stopped when the lobby closes, but its
+     threads finish the step they are on. Let them end before SDL goes. */
+  cpuSpeedBackgroundCancel();
+  (void)cpuSpeedBackgroundWait(2000);
+#endif
   SDL_Quit();
   threadsDestroy();
   sentryClose();

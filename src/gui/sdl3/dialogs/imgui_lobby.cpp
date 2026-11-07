@@ -163,6 +163,10 @@ char *lobbyFrameChatInput(void) {
 static void lobbyFrameInitState(ClientSim *cs) {
     SDL_Window *window = sdl3DrawGetWindow();
 
+    /* A lobby is opened or joined: the CPU speed test starts in the
+     * background when no result is stored for this version. */
+    lobbyCpuSpeedOpen();
+
     int screenW = 1024, screenH = 768;
     if (window) {
         SDL_GetWindowSize(window, &screenW, &screenH);
@@ -232,6 +236,10 @@ static void lobbyFrameInitState(ClientSim *cs) {
 static void lobbyBotAnnounceReset(void);
 
 extern "C" void imguiLobbyFrameReset(void) {
+    /* The game starts or the player leaves: a CPU speed test still running
+     * stops and stores nothing. */
+    lobbyCpuSpeedClose();
+
     if (s_lf.mapPreviewTex) {
         SDL_DestroyTexture(s_lf.mapPreviewTex);
         s_lf.mapPreviewTex = NULL;
@@ -441,6 +449,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     /* Same place, same reason: a bot that has just joined your team says what
        its brain can do, once, in team chat. */
     lobbyBotAnnouncePoll(cs);
+
+    /* A CPU speed test that has ended gives its result to the brains. */
+    lobbyCpuSpeedPoll();
 
     SDL_Window   *window   = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -1257,12 +1268,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                 if (botsAllowed && hasTransport) {
                                     char btnId[64];
                                     SDL_snprintf(btnId, sizeof(btnId), "%s##%d", langGetText(STR_DLGLOBBY_ADDBOT), i);
-                                    bool pending = lobbyAddBotPending(cs);
+                                    const char *offReason = lobbyAddBotOffReason(cs);
+                                    bool pending = lobbyAddBotPending(cs) || offReason != NULL;
                                     if (pending) ImGui::BeginDisabled();
                                     if (ImGui::SmallButton(btnId)) {
                                         lobbySendAddBotDebounced(cs, -1, 0);
                                     }
                                     if (pending) ImGui::EndDisabled();
+                                    lobbyAddBotOffTooltip(offReason);
                                 }
                             }
                         }
@@ -2044,12 +2057,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         if (botsAllowed && hasTransport) {
                             char btnId[16];
                             SDL_snprintf(btnId, sizeof(btnId), "Add Bot##%d", i);
-                            bool pending = lobbyAddBotPending(cs);
+                            const char *offReason = lobbyAddBotOffReason(cs);
+                            bool pending = lobbyAddBotPending(cs) || offReason != NULL;
                             if (pending) ImGui::BeginDisabled();
                             if (ImGui::SmallButton(btnId)) {
                                 lobbySendAddBotDebounced(cs, -1, 0);
                             }
                             if (pending) ImGui::EndDisabled();
+                            lobbyAddBotOffTooltip(offReason);
                         }
                     }
                 }

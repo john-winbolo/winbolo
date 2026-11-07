@@ -470,6 +470,12 @@ typedef struct {
     uint32_t totalOverruns;     /* sum of overrunCount across bots (this game) */
     uint32_t totalThinks;       /* sum of thinkCount across bots this game
                                  * (overrun-rate denominator) */
+    int      brainCapacity;     /* the smallest capacity answer among the
+                                 * active bots' brains: how many bots this
+                                 * machine can run at full strength
+                                 * (brain_capacity.h). -1 when no active bot
+                                 * has an answer. Advice only; it does not
+                                 * change how many bots start. */
 } BotPoolStats;
 
 /* This process's own memory, in bytes, filled by serverSimReadProcessMemory.

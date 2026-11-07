@@ -22,6 +22,8 @@ add_library(bolo_static STATIC
     bot_manager.c
     bot_mem_report.c
     bot_worker_pool.c
+    brain_capacity.c
+    brain_capacity_lua.c
     brain_data.c
     brain_gc.c
     brain_list.c

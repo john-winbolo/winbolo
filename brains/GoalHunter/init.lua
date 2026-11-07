@@ -436,6 +436,11 @@ lgm_registry.init()
 
 local Brain = {}
 
+-- How many GoalHunter bots this machine can run (capacity.lua). The engine
+-- calls it once when the brain loads. Set here, not in Brain.think, which is
+-- at the 60-upvalue cap.
+Brain.capacity = require("capacity").capacity
+
 -- Manual control state (must be before Brain.think so it captures the upvalue)
 local manual_active = false
 local manual_keys = 0

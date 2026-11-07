@@ -1706,6 +1706,10 @@
 #define STR_DLGLOBBY_BOT_NAMING             1315
 #define STR_DLGLOBBY_ADDBOT_LBL             1316
 #define STR_DLGLOBBY_TOOLTIP_ADDBOT         1317
+/* Why Add Bot is off: the CPU speed test is running, or the bots that run
+   on this computer have reached the brain's capacity answer. */
+#define STR_DLGLOBBY_ADDBOT_MEASURING       3490
+#define STR_DLGLOBBY_ADDBOT_FULL            3491
 #define STR_DLGLOBBY_TOOLTIP_RMTEAM         1318
 #define STR_DLGLOBBY_TOOLTIP_DRAG           1319
 #define STR_DLGLOBBY_TAG_HOST               1320
