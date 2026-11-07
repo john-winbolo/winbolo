@@ -9,8 +9,9 @@
  *
  *   0 "Half-square circle" — the WinBolo rule and the default: a circle of
  *     radius 128 world units (half a square), edge included.
- *   1 "Mac Bolo box" — |dx| < 128 and |dy| < 128, as Mac Bolo's explode()
- *     tests it, centre to centre.
+ *   1 "Mac Bolo box" — |dx| < 128 and |dy| < 128, as Mac Bolo's
+ *     drawexplosion routine tests it (explode() in the Go port), centre to
+ *     centre.
  *   2 "Mac Bolo equivalent area circle" — a circle of radius 144, edge
  *     included, about the area of the box.
  *
@@ -21,7 +22,9 @@
  * grass and the explosion on grass. A last case checks that an explosion
  * on a building still kills only a builder on its own square, whatever the
  * shape. Another checks that shape 0 is the old test exactly, pill_range
- * limit included.
+ * limit included. The last checks that every shape stops at pill_range
+ * when pill_range is under its reach, in the shape test and on a running
+ * sim.
  */
 
 #include <stdbool.h>
@@ -271,7 +274,8 @@ int run_lgm_blast_shape_solid_square(void) {
  * distance utilIsItemInRange gives with the pill_range rule as its limit,
  * then at most MAP_SQUARE_MIDDLE. Checked at every offset up to 200 each way
  * for pill_range values under, at and over 128. A value outside the three
- * shapes plays the same. The other two shapes do not read pill_range. */
+ * shapes plays the same. run_lgm_blast_shape_pill_range checks the other
+ * two shapes against pill_range. */
 int run_lgm_blast_shape_classic_matches_old(void) {
     static const int32_t kRanges[] = { 0, 1, 64, 100, 127, 128, 129, 144,
                                        2048, 65535 };
@@ -305,13 +309,87 @@ int run_lgm_blast_shape_classic_matches_old(void) {
             }
         }
     }
-    /* pill_range 0 leaves the half-square circle nothing, and the other
-       two shapes their whole area. */
+    /* pill_range 0 leaves the half-square circle only its centre. */
     UT_ASSERT(lgmBlastOpenGroundCatches(LGM_BLAST_SHAPE_HALF_SQUARE, 0,
-                                        100, 0) == false);
-    UT_ASSERT(lgmBlastOpenGroundCatches(LGM_BLAST_SHAPE_MAC_BOX, 0,
-                                        100, 100) == true);
-    UT_ASSERT(lgmBlastOpenGroundCatches(LGM_BLAST_SHAPE_MAC_AREA, 0,
-                                        140, 0) == true);
+                                        0, 0) == true);
+    UT_ASSERT(lgmBlastOpenGroundCatches(LGM_BLAST_SHAPE_HALF_SQUARE, 0,
+                                        1, 0) == false);
+    return 0;
+}
+
+/* Every shape stops at pill_range when pill_range is under its reach: a
+ * builder further than pill_range from the explosion is safe, and inside
+ * pill_range the shape is unchanged. Checked in the shape test at every
+ * offset up to 200 each way for pill_range 0, 1, 64, 100 and 127, then on a
+ * running sim with pill_range 100: 100 straight across dies, 101 lives,
+ * (70,70) (99.0 off) dies and (71,71) (100.4 off) lives, for each shape. */
+int run_lgm_blast_shape_pill_range(void) {
+    static const int32_t kRanges[] = { 0, 1, 64, 100, 127 };
+    static const struct {
+        long dx, dy;
+        bool dies;
+    } kSimPoints[] = {
+        { 100, 0, true }, { 101, 0, false }, { 70, 70, true },
+        { 71, 71, false },
+    };
+    int shape, r, i;
+    long dx, dy;
+
+    for (shape = 0; shape < 3; shape++) {
+        for (r = 0; r < (int) (sizeof(kRanges) / sizeof(kRanges[0])); r++) {
+            long pr = (long) kRanges[r];
+            for (dy = -200; dy <= 200; dy++) {
+                for (dx = -200; dx <= 200; dx++) {
+                    bool area = lgmBlastOpenGroundCatches(shape, 0xFFFF,
+                                                          dx, dy);
+                    bool want = area && (dx * dx + dy * dy <= pr * pr);
+                    bool got = lgmBlastOpenGroundCatches(shape, (int32_t) pr,
+                                                         dx, dy);
+                    UT_ASSERT_MSG(got == want,
+                                  "shape %d (%s), pill_range %ld, at "
+                                  "(%ld,%ld): %s, wanted %s", shape,
+                                  kLbsShapeName[shape], pr, dx, dy,
+                                  got ? "kills" : "spares",
+                                  want ? "kills" : "spares");
+                }
+            }
+            /* The edge: pill_range straight across dies, one more lives. */
+            UT_ASSERT(lgmBlastOpenGroundCatches(shape, (int32_t) pr, pr,
+                                                0) == true);
+            UT_ASSERT(lgmBlastOpenGroundCatches(shape, (int32_t) pr, 0,
+                                                -(pr + 1)) == false);
+        }
+        /* pill_range under 0 catches no builder. */
+        UT_ASSERT(lgmBlastOpenGroundCatches(shape, -1, 0, 0) == false);
+    }
+
+    for (shape = 0; shape < 3; shape++) {
+        ServerSim *sim;
+        BYTE       cx = 0, cy = 0;
+        WORLD      lx, ly;
+
+        sim = lbsMakeSim(&cx, &cy);
+        UT_ASSERT_MSG(sim != NULL, "could not build a running sim");
+        sim->sim.rules.lgm_blast_shape = shape;
+        sim->sim.rules.pill_range = 100;
+        lx = (WORLD) (((WORLD) cx << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE);
+        ly = (WORLD) (((WORLD) cy << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE);
+        for (i = 0; i < (int) (sizeof(kSimPoints) / sizeof(kSimPoints[0]));
+             i++) {
+            bool got = lbsBlastKills(sim, lx, ly,
+                                     (WORLD) ((long) lx + kSimPoints[i].dx),
+                                     (WORLD) ((long) ly + kSimPoints[i].dy));
+            if (got != kSimPoints[i].dies) {
+                serverSimDestroy(sim);
+                UT_ASSERT_MSG(false,
+                              "shape %d (%s), pill_range 100: an explosion "
+                              "(%ld,%ld) from the builder %s him, wanted %s",
+                              shape, kLbsShapeName[shape], kSimPoints[i].dx,
+                              kSimPoints[i].dy, got ? "killed" : "spared",
+                              kSimPoints[i].dies ? "killed" : "spared");
+            }
+        }
+        serverSimDestroy(sim);
+    }
     return 0;
 }

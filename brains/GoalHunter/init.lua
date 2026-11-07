@@ -1597,8 +1597,6 @@ function Brain.think(info)
   -- Live rules -> physics constants, before anything reads C this think.
   -- Classic rules (or C.LIVE_PHYSICS false) change nothing.
   U.live_physics.apply(info)
-  -- The lgm_blast_shape rule, for every builder blast model this think.
-  U.lgm_blast_shape_update(info)
   local now  = state.tick
   -- Ticks since THIS brain instance opened. `now` is seeded from the engine
   -- clock (see Brain.open), so it is NOT the age of the bot: a Survival wave

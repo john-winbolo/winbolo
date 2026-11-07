@@ -1566,6 +1566,7 @@ static const UnitTestEntry s_tests[] = {
     { "lgm_blast_shape_mac_area",                run_lgm_blast_shape_mac_area                },
     { "lgm_blast_shape_solid_square",            run_lgm_blast_shape_solid_square            },
     { "lgm_blast_shape_classic_matches_old",     run_lgm_blast_shape_classic_matches_old     },
+    { "lgm_blast_shape_pill_range",              run_lgm_blast_shape_pill_range              },
     { "teleport_erases_tank_rewind_record",      run_teleport_erases_tank_rewind_record      },
     { "teleport_shell_hits_new_place",           run_teleport_shell_hits_new_place           },
     { "teleport_rewind_refills",                 run_teleport_rewind_refills                 },
