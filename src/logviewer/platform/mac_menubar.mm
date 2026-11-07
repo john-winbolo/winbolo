@@ -72,6 +72,7 @@ static NSMenuItem *s_lv_regionsItem        = nil;
 static NSMenuItem *s_lv_tankBarsItem       = nil;
 static NSMenuItem *s_lv_builderStatusItem  = nil;
 static NSMenuItem *s_lv_pillNumbersItem    = nil;
+static NSMenuItem *s_lv_hitBoxesItem       = nil;
 static NSMenuItem *s_lv_jumpAnimItem       = nil;
 static NSMenuItem *s_lv_soundEffectsItem   = nil;
 static NSMenu     *s_lv_volumeMenu         = nil;
@@ -132,6 +133,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleTankBars:(id)sender;
 - (void)onToggleBuilderStatus:(id)sender;
 - (void)onTogglePillNumbers:(id)sender;
+- (void)onToggleHitBoxes:(id)sender;
 - (void)onToggleJumpAnim:(id)sender;
 - (void)onToggleSoundEffects:(id)sender;
 - (void)onSetSoundVolume:(id)sender;
@@ -273,6 +275,11 @@ static void lv_push_sdl_quit(void) {
 - (void)onTogglePillNumbers:(id)sender {
     (void)sender;
     lv_drawSetPillNumbers(lv_drawGetPillNumbers() ? 0 : 1);
+    lv_windowNeedRedraw();
+}
+- (void)onToggleHitBoxes:(id)sender {
+    (void)sender;
+    lv_drawSetHitBoxes(lv_drawGetHitBoxes() ? 0 : 1);
     lv_windowNeedRedraw();
 }
 - (void)onToggleJumpAnim:(id)sender { (void)sender; lv_imgui_toggle_jump_anim(); }
@@ -682,6 +689,15 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:pillNumbers];
     s_lv_pillNumbersItem = pillNumbers;
 
+    NSMenuItem *hitBoxes = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_HIT_BOXES)
+        action:@selector(onToggleHitBoxes:)
+        keyEquivalent:@""];
+    [hitBoxes setTarget:s_lv_bridge];
+    [hitBoxes setToolTip:LANG_STR(STR_LV_HIT_BOXES_TIP)];
+    [optionsMenu addItem:hitBoxes];
+    s_lv_hitBoxesItem = hitBoxes;
+
     /* Exception to the both-bars rule (docs/ARCHITECTURE.md, "Contract -
      * both bars in lockstep"): the in-window View menu's player lag view
      * item (STR_LV_LAG_MENU, imgui_main_menu.cpp) has no native twin. The
@@ -1017,6 +1033,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_tankBarsItem = nil;
     s_lv_builderStatusItem = nil;
     s_lv_pillNumbersItem = nil;
+    s_lv_hitBoxesItem = nil;
     s_lv_jumpAnimItem = nil;
     s_lv_soundEffectsItem = nil;
     s_lv_volumeMenu = nil;
@@ -1123,6 +1140,7 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_tankBarsItem) [s_lv_tankBarsItem setState:(s->tankBars ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_builderStatusItem) [s_lv_builderStatusItem setState:(s->builderStatus ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_pillNumbersItem) [s_lv_pillNumbersItem setState:(s->pillNumbers ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_hitBoxesItem) [s_lv_hitBoxesItem setState:(s->hitBoxes ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_jumpAnimItem) [s_lv_jumpAnimItem setState:(lv_imgui_get_jump_anim() ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_soundEffectsItem) [s_lv_soundEffectsItem setState:(s->soundEffects ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_volumeMenu) {
