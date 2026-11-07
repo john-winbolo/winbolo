@@ -6474,6 +6474,7 @@ set(_unit_test_names
     bot_host_cpu_bot_format
     bot_host_cpu_bot_meter
     bot_host_cpu_bot_codec
+    bot_host_cpu_budget
     bot_host_cpu_bot_client_row
     bot_host_lag_codec
     bot_host_machine_addr
@@ -6896,6 +6897,7 @@ set(_unit_test_names
     lobby_default_sides_same_side_pick_kept
     lobby_ds_bot_team_naming_pools
     lobby_ds_bot_start_teams
+    lobby_bot_default_team_on_add
     starts_side_end_to_end_four_v_twelve
     starts_side_region_sweep
     starts_side_unsided_kept_off_chosen_side
