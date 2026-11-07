@@ -605,8 +605,9 @@ void lgmDeathCheckSquareHit(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy,
 *           DMG_NO_PILL
 *  tnk    - Pointer to the tank
 *  squareHit - TRUE when the explosion is a shell's hit on the
-*           pillbox on its square (shellsCalcCollision
-*           outSquareHit), the shot that kills the pill
+*           pillbox, the wall or the terrain on its square
+*           (shellsCalcCollision outSquareHit), the shot that
+*           kills the pill or turns the wall to rubble
 *           included: the builder dies only if he is on that
 *           square, as for a hit on a live pill. Also TRUE
 *           for a tank's explosion on a square whose pill

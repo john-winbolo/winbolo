@@ -1664,28 +1664,32 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *              DMG_NO_PILL
 *  tnk       - Pointer to the tank
 *  squareHit - TRUE when the explosion is a shell's hit on
-*              the pillbox on its square, the shot that
-*              kills it included: the square rule applies
+*              the thing on its square (a pillbox, a wall,
+*              a forest, a boat, the shore a boat's shell
+*              stops on or a bridge), the hit that kills the pill or
+*              turns the wall to rubble included: the square
+*              rule applies
 *********************************************************/
 /* Whether an explosion at (wx, wy) catches a man at (lgmWorldX, lgmWorldY):
    in the lgm_blast_shape rule's area round it on open ground (within half a
    square in the classic table, lgmBlastOpenGroundCatches), or on the very
    square when the explosion is on a wall, a live pillbox or a base, or is a
-   shell's hit on the pillbox on its square (squareHit). The one test every
-   builder death is decided by.
+   shell's hit on the pillbox, the wall or the terrain on its square
+   (squareHit). The one test every builder death is decided by.
 
    A tank's explosion that damages a live pillbox passes squareHit too
    (tkExplosionBigExplosion), for the same reason: the pill was live when
    the explosion went off, so the square is solid even when that damage
    took its armour to 0.
 
-   squareHit: the shell hit the pill on this square (shellsCalcCollision
-   outSquareHit). That is a hit on the square whatever armour it left the
-   pill, so the shot that kills a pill (its armour is already 0 here) kills
-   a builder anywhere on the square and nobody off it, as the hits before
-   it do. Mac Bolo does the same: a shell's hit on a pillbox explodes at
-   the pillbox's square, and the explosion kills the builder only on that
-   square.
+   squareHit: the shell hit the pill, the wall or the terrain on this
+   square (shellsCalcCollision outSquareHit). That is a hit on the square
+   whatever the hit left there, so the shot that kills a pill (its armour
+   is already 0 here) and the fifth shot on a wall (the square is already
+   rubble here) kill a builder anywhere on the square and nobody off it, as
+   the hits before them do. Mac Bolo does the same: a shell's hit on a
+   square explodes at that square, and the explosion kills the builder
+   only on that square.
 
    The square of a pill that was dead before the blast is open ground:
    shells fly over a dead pill, so a blast near the edge of its square (a
