@@ -2406,8 +2406,9 @@ M.CAPTURE_LGM_HUNT_FIRE_WU       = 100
 -- there kills a man within 128 wu, on that square or across its edge, and
 -- not a man in its far corner. Only a LIVE pill (pillsIsPillHit, armour > 0),
 -- a base or a building is solid (same-square-only kill). A shell that HITS a
--- pill is a hit on its square, the shot that kills it included (shells.c
--- outPillHit): same-square-only, as for any live pill. The brain reads the
+-- pill or a wall is a hit on its square, the shot that kills the pill or
+-- turns the wall to rubble included (shells.c outSquareHit): same-square-only,
+-- as for any live pill. The brain reads the
 -- pill's health from what the player sees (the pill sprite and the pill
 -- status panel both show a dead pill). true = a man on a dead pill is aimed
 -- at with the open-ground rule (init.lua lgm_on_solid). KEEL: false (any

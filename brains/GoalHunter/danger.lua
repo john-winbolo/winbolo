@@ -347,7 +347,10 @@ end
 --
 --   1. it reaches a solid tile -- a wall, or a LIVE pillbox. The engine
 --      recentres the explosion on that tile, so only a man standing ON that
---      tile dies. Stop tracking.
+--      tile dies. Every hit on a wall is a hit on its tile, the one that
+--      turns it to rubble included (shells.c outSquareHit), and the brain
+--      cannot see how many hits a wall has left, so a wall is always this
+--      case. Stop tracking.
 --   2. it reaches OUR TANK's hull (within TANK_HIT_RADIUS, tank.h:102 = 112 WU)
 --      and we did not fire it -- a shell never hits its own owner. It explodes
 --      where it is, over open ground, so the 128-WU rule applies. This is the
