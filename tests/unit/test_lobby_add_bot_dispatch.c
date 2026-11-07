@@ -169,3 +169,36 @@ int run_lobby_add_bot_rejects_when_at_maxbots(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* The host bot capacity (the server's CPU speed test, or -botcapacity)
+ * caps lobby adds as -maxbots does, and holds every add while the test
+ * runs. -maxbots stays off here, so the refusal is the capacity's own. */
+int run_lobby_add_bot_rejects_at_host_capacity(void) {
+    ServerSim *sim = make_addbot_ready_sim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(serverSimGetHostBotCapacity(sim) ==
+                      SERVER_HOST_BOT_CAPACITY_NONE,
+                  "a fresh sim must have no host bot capacity");
+
+    serverSimSetHostBotCapacity(sim, 2);
+    seed_lobby_bots(sim, 1, 2);                 /* slots 1,2 fill it */
+    UT_ASSERT_MSG(apply_add_bot(sim, 0) == CMD_REJECT_BOT_LIMIT,
+                  "add-bot at the host bot capacity must return "
+                  "CMD_REJECT_BOT_LIMIT");
+
+    /* 0 is a server that runs no bots of its own. */
+    serverSimSetHostBotCapacity(sim, 0);
+    UT_ASSERT_MSG(apply_add_bot(sim, 0) == CMD_REJECT_BOT_LIMIT,
+                  "a host bot capacity of 0 must refuse every add");
+    serverSimDestroy(sim);
+
+    /* While the test runs, no add, even into an empty lobby. */
+    sim = make_addbot_ready_sim();
+    UT_ASSERT(sim != NULL);
+    serverSimSetHostBotCapacity(sim, SERVER_HOST_BOT_CAPACITY_MEASURING);
+    UT_ASSERT_MSG(apply_add_bot(sim, 0) == CMD_REJECT_BOT_LIMIT,
+                  "add-bot while the CPU speed test runs must return "
+                  "CMD_REJECT_BOT_LIMIT");
+    serverSimDestroy(sim);
+    return 0;
+}

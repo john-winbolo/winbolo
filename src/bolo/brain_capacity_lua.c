@@ -44,10 +44,10 @@ static void push_capacity_machine(lua_State *L, const BrainMachineInfo *m) {
   lua_setfield(L, -2, "logical_cores");
   lua_pushinteger(L, (lua_Integer)m->physicalCores);
   lua_setfield(L, -2, "physical_cores");
-  lua_pushnumber(L, m->coremark1t);
-  lua_setfield(L, -2, "coremark_1t");
-  lua_pushnumber(L, m->coremarkAll);
-  lua_setfield(L, -2, "coremark_all");
+  lua_pushnumber(L, m->speed1t);
+  lua_setfield(L, -2, "speed_1t");
+  lua_pushnumber(L, m->speedAll);
+  lua_setfield(L, -2, "speed_all");
   lua_pushnumber(L, m->scaling);
   lua_setfield(L, -2, "scaling");
   lua_pushinteger(L, (lua_Integer)m->workerThreads);

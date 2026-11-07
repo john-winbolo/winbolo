@@ -2472,6 +2472,13 @@ target_link_libraries(WinBolo PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static CURL::libcurl
     nanosvg stb_image utf8proc cjson)
 
+# The CPU speed test runs in the background when a game lobby first opens
+# for each new version, and its stored result gives Brain.capacity its
+# machine facts. WINBOLO_CPU_SPEED_TEST turns that code on in the lobby
+# sources, which the Android, web and iOS targets also build without it.
+target_link_libraries(WinBolo PRIVATE cpu_speed_test)
+target_compile_definitions(WinBolo PRIVATE WINBOLO_CPU_SPEED_TEST=1)
+
 # Voice capture/playback (src/gui/sdl3/voice.c + src/client_frontend/voice_core.c).
 # WINBOLO_VOICE gates the settings-dialog controls, which also compile into
 # targets that do not build the voice sources.
@@ -2788,6 +2795,8 @@ set(SERVER_SOURCES
     # The -mod flags and -setting off the command line. Public headers
     # only, so it takes no grant below; the unit tests compile it too.
     src/server/server_args.c
+    # The host bot capacity: -botcapacity, or the lobby CPU speed test.
+    src/server/server_bot_capacity.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c

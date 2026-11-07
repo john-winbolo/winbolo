@@ -344,6 +344,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * sense, so the line has to say which way round "false" reads. */
     sim->modsOff        = FALSE;
     sim->maxPlayers          = MAX_TANKS;
+    sim->hostBotCapacity     = SERVER_HOST_BOT_CAPACITY_NONE;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;
     sim->specRosterEnum      = NULL;

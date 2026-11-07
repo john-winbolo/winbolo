@@ -1357,6 +1357,10 @@ bool        clientSimGetAlliesInTrees(const ClientSim *cs);
  * back false until the first event arrives, and false plays every sound
  * centred, which is the classic behaviour. */
 bool        clientSimGetPositionalSound(const ClientSim *cs);
+/* The server's host bot capacity from the lobby settings: how many bots it
+ * runs in its own process at full strength, 0..16; -1 for no cap (also
+ * before any settings arrive); -2 while its CPU speed test runs. */
+int         clientSimGetLobbyHostBotCapacity(const ClientSim *cs);
 
 /* What the server last asked the map overview for in the lobby-settings
  * event: which block of squares it keeps live around the player's own tank

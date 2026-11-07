@@ -5,9 +5,9 @@
 -- sets Brain.capacity to M.capacity. It lives in its own module so that
 -- Brain.think, which is at Lua's 60-upvalue cap, gains no upvalue.
 --
--- machine: cpu_name, logical_cores, physical_cores, coremark_1t,
---          coremark_all, scaling, worker_threads, on_battery, version.
---          coremark_1t is 0 when the CPU speed test has not run here yet.
+-- machine: cpu_name, logical_cores, physical_cores, speed_1t,
+--          speed_all, scaling, worker_threads, on_battery, version.
+--          speed_1t is 0 when the CPU speed test has not run here yet.
 -- measured: nil for now (think times per bot count, not measured yet).
 --
 -- The answer: physical cores, scaled by how fast one core is next to the
@@ -27,11 +27,11 @@ local CAPACITY_MAX = 16
 function M.capacity(machine, measured)
   if type(machine) ~= "table" then return nil end
   local physical = tonumber(machine.physical_cores) or 0
-  local cm1 = tonumber(machine.coremark_1t) or 0
+  local speed1t = tonumber(machine.speed_1t) or 0
   local ref = tonumber(C.CAPACITY_REF_1T) or 0
   local k = tonumber(C.CAPACITY_K) or 0
-  if physical <= 0 or cm1 <= 0 or ref <= 0 then return nil end
-  local n = math.floor(physical * (cm1 / ref) * k)
+  if physical <= 0 or speed1t <= 0 or ref <= 0 then return nil end
+  local n = math.floor(physical * (speed1t / ref) * k)
   if n < CAPACITY_MIN then n = CAPACITY_MIN end
   if n > CAPACITY_MAX then n = CAPACITY_MAX end
   return n

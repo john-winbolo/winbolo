@@ -129,9 +129,9 @@ function brain.capacity(machine, measured)
   -- machine.cpu_name        "AMD Ryzen 5 5600 6-Core Processor", or ""
   -- machine.logical_cores   12
   -- machine.physical_cores  6
-  -- machine.coremark_1t     CPU speed test, 1 thread (iterations/s); 0 = not measured
-  -- machine.coremark_all    CPU speed test, all cores at once; 0 = not measured
-  -- machine.scaling         coremark_all / coremark_1t; 0 = not measured
+  -- machine.speed_1t        CPU speed test, 1 thread (iterations/s); 0 = not measured
+  -- machine.speed_all       CPU speed test, all cores at once; 0 = not measured
+  -- machine.scaling         speed_all / speed_1t; 0 = not measured
   -- machine.worker_threads  the bot worker pool's threads; 0 when it is not running
   -- machine.on_battery      true on battery; false when not, or not known
   -- machine.version         the WinBolo version, "2.2.1"
@@ -150,13 +150,25 @@ end
   (nil included): the default, logical cores - 1, at least 1.
 - A number is rounded down and clamped to 0..16.
 - The answer is advice. It does not change how many bots start. The lobby
-  stops Add Bot once the bots that run on this machine reach the answer.
+  turns Add Bot off once the bots that run on this machine (single player,
+  or a game this client hosts) reach the answer for the brain it would add,
+  and while the lobby's CPU speed test runs. In a game on a dedicated
+  server, the server's own number (its host bot capacity, below) is the
+  cap, and the tooltip names the server. A server that sends no number
+  gives no cap.
 - The CPU speed test (`WinBoloDS -cputest`, or the client's first game
-  lobby for each new version) gives `coremark_1t` and `coremark_all`. It is
+  lobby for each new version) gives `speed_1t` and `speed_all`. It is
   stored per machine and version in `cpu_speed.json` with the other
   per-user files; the `WINBOLO_CPU_SPEED_FILE` environment variable puts it
   somewhere else. Until a result is stored, both are 0.
 - `WinBoloDS -cputest` prints each brain's answer after the test.
+  `WinBoloHeadless --cputest` runs and stores the same test, without the
+  answers.
+- In the client, the test runs in the background (low priority threads)
+  when a game lobby first opens after each new version. If the game starts
+  or the player leaves first, it stops and stores nothing, and the next
+  lobby runs it again. It writes a start line and a result line to the log
+  (the `client` category of `WINBOLO_LOG`).
 - A brain written in C gives the same answer through
   `brainCapacityRegisterC(name, fn)` with
   `int fn(const BrainMachineInfo *, const BrainMeasured *)`
@@ -165,8 +177,44 @@ end
 - `BotPoolStats.brainCapacity` (`serverSimGetBotPoolStats`) is the smallest
   answer among the running bots' brains, or -1.
 
+#### The dedicated server's host bot capacity
+
+WinBoloDS works out how many bots it can run in its own process: its host
+bot capacity.
+
+- The first time its lobby opens for each new version, it runs the same
+  2 s CPU speed test on low priority threads. The tick and the network do
+  not wait for it. A finished test is stored (context `"server"`), and
+  later starts read the stored result with no new test. If the game starts
+  first, the test stops, stores nothing, and the next lobby tries again.
+- It then asks its bot brain (`-brain`, or the default) for its
+  `capacity` answer, on a worker thread. A brain that does not load gives
+  the default answer.
+- `-botcapacity N` (0..16; 0 = no bots in this process) sets the number
+  and runs no test. A number above 16 gives 16, with a note. Anything that
+  is not a whole number is an error.
+- One log line on stderr gives the result:
+  `Bot capacity: 3 bots of GoalHunter (CPU speed test, stored result)`,
+  `... measured now`, or `Bot capacity: override 3 (-botcapacity)`.
+- A lobby Add Bot request past the number is refused with
+  `CMD_REJECT_BOT_LIMIT`, as `-maxbots` does. While the test runs, every
+  Add Bot request is refused. `-bots N` at start-up, scenario bots and
+  sidecar bots are not capped. The console has no add-bot command.
+- The number goes to clients as the last byte of the fixed part of the
+  lobby settings (`lobbyHostBotCapacity`: 0..16, 0xFF = no cap,
+  0xFE = the test runs). A body without the byte reads as no cap.
+  `clientSimGetLobbyHostBotCapacity` gives it (-1 no cap, -2 the test
+  runs).
+- In C: `serverSimGetHostBotCapacity` / `serverSimSetHostBotCapacity`
+  (-1 no cap, -2 the test runs, else 0..16), and
+  `BotPoolStats.hostBotCapacity`. Only WinBoloDS sets it. Every other sim
+  host (single player, a game a client hosts, Headless) leaves it at -1.
+- `tests/ds_bot_capacity_test.py [build_dir]` runs WinBoloDS three times
+  with a scratch `WINBOLO_CPU_SPEED_FILE`: with `-botcapacity 3`, with a
+  fresh store (the test runs and stores), and with the stored result.
+
 GoalHunter's answer (brains/GoalHunter/capacity.lua) is
-`floor(physical_cores * (coremark_1t / C.CAPACITY_REF_1T) * C.CAPACITY_K)`,
+`floor(physical_cores * (speed_1t / C.CAPACITY_REF_1T) * C.CAPACITY_K)`,
 clamped to 1..16, with `CAPACITY_REF_1T = 25000` and `CAPACITY_K = 1.0` in
 constants.lua. With no speed test result it returns nil (the default).
 

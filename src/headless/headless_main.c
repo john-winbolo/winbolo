@@ -97,6 +97,9 @@
 #include "../gui/gamefront.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
+#include "cpu_speed_test.h"
+#include "cpu_speed_store.h"
+#include "cpu_speed_capacity.h"
 #include "../common/prefs.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "cmd_stdin.h"
@@ -2110,6 +2113,7 @@ static void printUsage(const char *prog) {
     "  Fast mode:    %s --fast --map FILE [options]\n"
     "\n"
     "Common options:\n"
+    "  --cputest         Run the 2 s CPU speed test, print the result and exit\n"
     "  --name NAME       Player name (default: HeadlessBot)\n"
     "  --brain PATH      Path to the Lua brain this process's own player runs\n"
     "  --ticks N         Run for N game ticks then exit (0 = unlimited)\n"
@@ -3210,8 +3214,46 @@ static int runNetworkMode(void) {
 /* Main                                                                */
 /* ------------------------------------------------------------------ */
 
+/* --cputest (or -cputest): the 2 s CPU speed test, as WinBoloDS -cputest
+   gives it. The line to read and the JSON line go to stdout and the result
+   is stored for this version. WinBoloDS also prints each brain's capacity
+   answer; this does not. Returns 0 when every CRC matched, else 1. */
+static int headlessCpuSpeedTest(void) {
+  CpuSpeedResult result;
+  char line[1024];
+  bool ran;
+
+  if (!SDL_Init(0)) {
+    fprintf(stderr, "Error: SDL_Init failed: %s\n", SDL_GetError());
+    return 1;
+  }
+  ran = cpuSpeedTestRun(NULL, &result);
+  cpuSpeedFormatLine(&result, line, sizeof(line));
+  printf("%s\n", line);
+  cpuSpeedFormatJson(&result, line, sizeof(line));
+  printf("%s\n", line);
+  fflush(stdout);
+  if (ran && result.crcOk) {
+    char path[1024];
+    if (cpuSpeedStoreSave(WINBOLO_VERSION, CPU_SPEED_CONTEXT_CPUTEST,
+                          &result) &&
+        cpuSpeedStorePath(path, sizeof(path))) {
+      fprintf(stderr, "Stored in %s\n", path);
+    } else {
+      fprintf(stderr, "The result could not be stored\n");
+    }
+  }
+  return (ran && result.crcOk) ? 0 : 1;
+}
+
 int main(int argc, char *argv[]) {
   int result;
+
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--cputest") == 0 || strcmp(argv[i], "-cputest") == 0) {
+      return headlessCpuSpeedTest();
+    }
+  }
 
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
   sentryInit("WinBoloHeadless", argc, argv);
@@ -3236,6 +3278,9 @@ int main(int argc, char *argv[]) {
 
   wb_log_init("WinBolo", "WinBoloHeadless", "winbolo-headless.log");
   atexit(wb_log_shutdown);
+
+  /* A stored CPU speed test result gives Brain.capacity its machine facts. */
+  (void)cpuSpeedApplyStoredToBrains(WINBOLO_VERSION);
 
   if (!serverSimBotPoolInit(0)) {
     fprintf(stderr, "serverSimBotPoolInit failed\n");

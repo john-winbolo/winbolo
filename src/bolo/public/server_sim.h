@@ -476,6 +476,11 @@ typedef struct {
                                  * (brain_capacity.h). -1 when no active bot
                                  * has an answer. Advice only; it does not
                                  * change how many bots start. */
+    int      hostBotCapacity;   /* serverSimGetHostBotCapacity: how many bots
+                                 * this server runs in its own process, from
+                                 * its CPU speed test and its bot brain, or
+                                 * -botcapacity. 0..16; -1 no cap; -2 while
+                                 * the test runs. The lobby Add Bot limit. */
 } BotPoolStats;
 
 /* This process's own memory, in bytes, filled by serverSimReadProcessMemory.
@@ -2360,6 +2365,22 @@ bool          serverSimIsAcceptingJoins(const ServerSim *sim);
 BYTE          serverSimGetMaxPlayers(const ServerSim *sim);
 /* Cap on AI bots addable in the lobby; 0 = no cap. */
 BYTE          serverSimGetMaxBots(const ServerSim *sim);
+/* How many bots this server can run in its own process at full strength:
+ * the dedicated server's CPU speed test and its bot brain's capacity answer,
+ * or -botcapacity. 0..16 (BRAIN_CAPACITY_MIN..MAX); NONE when nothing set a
+ * value (no cap); MEASURING while the test runs, when the lobby takes no
+ * Add Bot. A lobby Add Bot past it is refused with CMD_REJECT_BOT_LIMIT.
+ * Bots a scenario adds are not limited by it, but they count. The lobby
+ * settings event carries it to clients. Setting a new value publishes the
+ * lobby settings. */
+#define SERVER_HOST_BOT_CAPACITY_NONE      (-1)
+#define SERVER_HOST_BOT_CAPACITY_MEASURING (-2)
+int           serverSimGetHostBotCapacity(const ServerSim *sim);
+void          serverSimSetHostBotCapacity(ServerSim *sim, int capacity);
+/* Whether a lobby Add Bot fits under the host bot capacity: false while
+ * the test runs, and false when lobbyBots (the bots in the lobby now) has
+ * reached a capacity of 0..16. True when there is no cap. */
+bool          serverSimHostBotCapacityAllowsAdd(int capacity, int lobbyBots);
 /* Cap on spectator connections; 0 = spectating disabled (no MAX_TANKS fallback). */
 BYTE          serverSimGetMaxSpectators(const ServerSim *sim);
 /* Set the spectator cap at runtime (0 disables spectating). */

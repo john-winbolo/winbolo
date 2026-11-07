@@ -118,9 +118,16 @@ void brainCapacityGetMachine(BrainMachineInfo *out) {
 }
 
 void brainCapacitySetMachineFromTest(const char *cpuName, int logicalCores,
-                                     int physicalCores, double coremark1t,
-                                     double coremarkAll) {
+                                     int physicalCores, double speed1t,
+                                     double speedAll) {
   BrainMachineInfo m;
+  BrainMachineInfo old;
+  bool hadMachine;
+
+  SDL_LockSpinlock(&s_lock);
+  hadMachine = s_haveMachine;
+  old = s_machine;
+  SDL_UnlockSpinlock(&s_lock);
 
   brainCapacitySetMachine(NULL);
   brainCapacityGetMachine(&m);
@@ -134,11 +141,46 @@ void brainCapacitySetMachineFromTest(const char *cpuName, int logicalCores,
   if (m.physicalCores > m.logicalCores) {
     m.physicalCores = m.logicalCores;
   }
-  m.coremark1t = coremark1t > 0.0 ? coremark1t : 0.0;
-  m.coremarkAll = coremarkAll > 0.0 ? coremarkAll : 0.0;
-  m.scaling = m.coremark1t > 0.0 ? m.coremarkAll / m.coremark1t : 0.0;
+  m.speed1t = speed1t > 0.0 ? speed1t : 0.0;
+  m.speedAll = speedAll > 0.0 ? speedAll : 0.0;
+  m.scaling = m.speed1t > 0.0 ? m.speedAll / m.speed1t : 0.0;
   brainCapacitySetMachine(&m);
-  brainCapacityClear();
+  /* The client gives the stored result at startup and again when a lobby
+     opens. The answers the bots already loaded with stay when nothing
+     changed. */
+  if (!hadMachine || strcmp(old.cpuName, m.cpuName) != 0 ||
+      old.logicalCores != m.logicalCores ||
+      old.physicalCores != m.physicalCores ||
+      old.speed1t != m.speed1t || old.speedAll != m.speedAll) {
+    brainCapacityClear();
+  }
+}
+
+int brainCapacityParseOverride(const char *text, bool *clamped) {
+  long value = 0;
+  const char *p = text;
+
+  if (clamped != NULL) {
+    *clamped = false;
+  }
+  if (p == NULL || *p == '\0') {
+    return BRAIN_CAPACITY_UNKNOWN;
+  }
+  for (; *p != '\0'; p++) {
+    if (*p < '0' || *p > '9') {
+      return BRAIN_CAPACITY_UNKNOWN;
+    }
+    if (value <= BRAIN_CAPACITY_MAX) {
+      value = value * 10 + (long)(*p - '0');
+    }
+  }
+  if (value > BRAIN_CAPACITY_MAX) {
+    if (clamped != NULL) {
+      *clamped = true;
+    }
+    return BRAIN_CAPACITY_MAX;
+  }
+  return (int)value;
 }
 
 int brainCapacityDefault(const BrainMachineInfo *machine) {
@@ -225,6 +267,27 @@ int brainCapacityLookup(const char *name, const char *version) {
   SDL_LockSpinlock(&s_lock);
   for (int i = 0; i < s_cacheCount; i++) {
     if (strcmp(s_cache[i].key, key) == 0) {
+      value = s_cache[i].value;
+      break;
+    }
+  }
+  SDL_UnlockSpinlock(&s_lock);
+  return value;
+}
+
+int brainCapacityLookupName(const char *name) {
+  int value = BRAIN_CAPACITY_UNKNOWN;
+  size_t len;
+
+  if (name == NULL || name[0] == '\0') {
+    return BRAIN_CAPACITY_UNKNOWN;
+  }
+  len = strlen(name);
+  SDL_LockSpinlock(&s_lock);
+  /* Newest first: a new answer for a name is added at the end. */
+  for (int i = s_cacheCount - 1; i >= 0; i--) {
+    if (strncmp(s_cache[i].key, name, len) == 0 &&
+        s_cache[i].key[len] == '@') {
       value = s_cache[i].value;
       break;
     }

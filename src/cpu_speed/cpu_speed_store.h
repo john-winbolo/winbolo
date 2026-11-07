@@ -43,6 +43,7 @@ extern "C" {
 /* Where the test ran, as stored in "context" */
 #define CPU_SPEED_CONTEXT_CPUTEST "cputest" /* -cputest, a quiet machine */
 #define CPU_SPEED_CONTEXT_LOBBY   "lobby"   /* the client, in a game lobby */
+#define CPU_SPEED_CONTEXT_SERVER  "server"  /* the dedicated server, in its lobby */
 
 typedef struct {
   CpuSpeedResult result;

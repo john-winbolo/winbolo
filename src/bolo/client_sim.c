@@ -241,6 +241,9 @@ bool clientSimCreate(ClientSim *cs) {
   cs->serverPort         = savedServerPort;
   cs->isLanOnly          = savedIsLanOnly;
   cs->pendingAllianceRequestFrom = 0xFF;
+  /* No cap until the server says one; the zero would read as a server that
+   * runs no bots. */
+  cs->lobbyHostBotCapacity = -1;
   /* The classic gameplay numbers. A zeroed table would make every rule 0, so
    * this runs before anything can read one. */
   simRulesClassic(&cs->sim.rules);
@@ -3295,6 +3298,10 @@ bool clientSimGetAlliesInTrees(const ClientSim *cs) {
 
 bool clientSimGetPositionalSound(const ClientSim *cs) {
   return cs ? cs->positionalSound : false;
+}
+
+int clientSimGetLobbyHostBotCapacity(const ClientSim *cs) {
+  return cs ? cs->lobbyHostBotCapacity : -1;
 }
 
 uint8_t clientSimGetOverviewWindow(const ClientSim *cs) {

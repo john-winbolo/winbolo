@@ -29,7 +29,7 @@ M.DIFFICULTY = "hard"
 
 -- How many GoalHunter bots this machine can run at full strength, the
 -- answer Brain.capacity gives the engine (capacity.lua):
---   floor(physical_cores * (coremark_1t / CAPACITY_REF_1T) * CAPACITY_K)
+--   floor(physical_cores * (speed_1t / CAPACITY_REF_1T) * CAPACITY_K)
 -- clamped to 1..16. CAPACITY_REF_1T is the 1-thread CPU speed test score of
 -- the reference machine (a 4-core i5-6600, about 25,000); CAPACITY_K scales
 -- the whole answer. Advice only: the lobby stops Add Bot at this count on

@@ -61,9 +61,9 @@ typedef struct {
   char cpuName[BRAIN_CAPACITY_CPU_NAME_LEN]; /* "" when not known */
   int logicalCores;
   int physicalCores;
-  double coremark1t;  /* CPU speed test, 1 thread; 0 when not measured */
-  double coremarkAll; /* CPU speed test, all cores; 0 when not measured */
-  double scaling;     /* coremarkAll / coremark1t; 0 when not measured */
+  double speed1t;  /* CPU speed test, 1 thread; 0 when not measured */
+  double speedAll; /* CPU speed test, all cores; 0 when not measured */
+  double scaling;     /* speedAll / speed1t; 0 when not measured */
   int workerThreads;  /* The bot worker pool's threads */
   bool onBattery;     /* False when not on battery or not known */
   char version[BRAIN_CAPACITY_VERSION_LEN]; /* WinBolo version */
@@ -100,14 +100,22 @@ void brainCapacityGetMachine(BrainMachineInfo *out);
 
 /* Gives the CPU speed test's result as the machine facts: the cheap facts
    (worker threads, power, version) are filled in as brainCapacityGetMachine
-   fills them. cpuName may be NULL. Forgets the answers kept so far, as they
-   were made from other facts. */
+   fills them. cpuName may be NULL. When these facts differ from the ones
+   given before (or none were), forgets the answers kept so far, as they
+   were made from other facts. Giving the same result again keeps them. */
 void brainCapacitySetMachineFromTest(const char *cpuName, int logicalCores,
-                                     int physicalCores, double coremark1t,
-                                     double coremarkAll);
+                                     int physicalCores, double speed1t,
+                                     double speedAll);
 
 /* logical cores - 1, at least 1, at most BRAIN_CAPACITY_MAX */
 int brainCapacityDefault(const BrainMachineInfo *machine);
+
+/* A bot count given by hand (the dedicated server's -botcapacity N): a
+   whole number, with nothing after it. 0 is allowed (no bots in this
+   process). A number above BRAIN_CAPACITY_MAX gives BRAIN_CAPACITY_MAX, and
+   *clamped (may be NULL) is set true. BRAIN_CAPACITY_UNKNOWN for NULL, "",
+   a negative number or text that is not a number. */
+int brainCapacityParseOverride(const char *text, bool *clamped);
 
 /* A brain's raw answer made safe. ok false (an error, or not a number) or
    a value that is not finite gives the default; any other value is rounded
@@ -124,6 +132,11 @@ void brainCapacityNameFromPath(const char *path, char *out, size_t outSize);
 /* The answer kept for name + version, or BRAIN_CAPACITY_UNKNOWN. version
    may be NULL or "" for a brain with no version. */
 int brainCapacityLookup(const char *name, const char *version);
+/* The newest answer kept for name with any version, or
+   BRAIN_CAPACITY_UNKNOWN. For a caller that knows the brain but not the
+   version its brain.version field gives (the lobby's brain list shows file
+   times, not brain.version). */
+int brainCapacityLookupName(const char *name);
 /* Keeps value (clamped) for name + version. Thread safe. */
 void brainCapacityStore(const char *name, const char *version, int value);
 /* Forgets every kept answer (tests, and a new speed test result). */

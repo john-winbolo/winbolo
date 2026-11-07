@@ -1257,7 +1257,10 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
              * the overlaid bot-cpu glyph cleanly. */
             bool addBtnClicked = false;
             ImVec2 addBtnPos = ImGui::GetCursorScreenPos();
-            bool addBtnPending = lobbyAddBotPending(cs);
+            /* Off, with the reason on mouse-over, while the CPU speed test
+             * runs or once this machine runs as many bots as it can. */
+            const char *addBtnOffReason = lobbyAddBotOffReason(cs);
+            bool addBtnPending = lobbyAddBotPending(cs) || addBtnOffReason != NULL;
             if (botsAllowed) {
                 char addId[24];
                 SDL_snprintf(addId, sizeof(addId), "##ab%d", teamId);
@@ -1317,7 +1320,9 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                 }
                 lobbySendAddBotDebounced(cs, effectivePool, (uint8_t)teamId);
             }
-            if (ImGui::IsItemHovered()) {
+            if (botsAllowed && addBtnOffReason) {
+                lobbyAddBotOffTooltip(addBtnOffReason);
+            } else if (ImGui::IsItemHovered()) {
                 MessageArgs args = {};
                 args.number = teamId;
                 ImGui::SetTooltip("%s", langGetTextFmt(STR_DLGLOBBY_TOOLTIP_ADDBOT, &args));
