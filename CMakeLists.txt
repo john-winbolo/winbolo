@@ -6546,6 +6546,7 @@ set(_unit_test_names
     lgm_blast_dead_pill_edge
     lgm_blast_dead_pill_far_corner
     lgm_blast_live_pill_unchanged
+    lgm_blast_pill_kill_shot
     lgm_start_offset
     braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
