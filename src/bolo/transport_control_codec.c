@@ -3839,6 +3839,36 @@ static bool decodeBotHostCpuBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_BOT_HOST_CPU_FREE body: [free 1]. Bytes after it are skipped, so
+ * the message can grow; a byte above 100 reads as unknown. */
+#define BOT_HOST_CPU_FREE_LEN 1
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostCpuFreeBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_CPU_FREE_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostCpuFree.free <= 100
+                 ? evt->u.botHostCpuFree.free
+                 : (uint8_t)BOT_HOST_CPU_UNKNOWN;
+    *outLen = BOT_HOST_CPU_FREE_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostCpuFreeBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_CPU_FREE_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_CPU_FREE;
+    outEvt->u.botHostCpuFree.free =
+        buf[0] <= 100 ? buf[0] : (uint8_t)BOT_HOST_CPU_UNKNOWN;
+    return true;
+}
+
 /* CTRL_BOT_HOST_FILE_REQ body: [gen 4][brain 1][file 2]. */
 #define BOT_HOST_FILE_REQ_LEN 7
 
@@ -4589,6 +4619,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_REC]          = encodeBotHostRecBody,
     [CTRL_BOT_HOST_TICKET]       = encodeBotHostTicketBody,
     [CTRL_BOT_HOST_CPU]          = encodeBotHostCpuBody,
+    [CTRL_BOT_HOST_CPU_FREE]     = encodeBotHostCpuFreeBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -4659,6 +4690,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_REC]          = decodeBotHostRecBody,
     [CTRL_BOT_HOST_TICKET]       = decodeBotHostTicketBody,
     [CTRL_BOT_HOST_CPU]          = decodeBotHostCpuBody,
+    [CTRL_BOT_HOST_CPU_FREE]     = decodeBotHostCpuFreeBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -4793,6 +4825,7 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_REC:           return "CTRL_BOT_HOST_REC";
     case CTRL_BOT_HOST_TICKET:        return "CTRL_BOT_HOST_TICKET";
     case CTRL_BOT_HOST_CPU:           return "CTRL_BOT_HOST_CPU";
+    case CTRL_BOT_HOST_CPU_FREE:      return "CTRL_BOT_HOST_CPU_FREE";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

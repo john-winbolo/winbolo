@@ -3076,6 +3076,43 @@ STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game
 # The replay's recording mode button, which shows the GIF controls
 STR_REEL_RECORD_MODE_TIP=Recording mode: shows the GIF controls
 
+# The Log Viewer's Bot Hosts window: title, no-data line, host names, graph lines, decisions, tooltip lines
+STR_LV_WIN_BOT_HOSTS=Bot Hosts
+STR_LV_BOTHOST_NONE=No bot host data in this replay (record with -record-bothost-data)
+STR_LV_BOTHOST_SERVER=Server
+STR_LV_BOTHOST_PLAYER={string1} (player {number})
+STR_LV_BOTHOST_LISTED={string1} (listed Bot Host)
+STR_LV_BOTHOST_UNNAMED=Bot Host {number}
+STR_LV_BOTHOST_RATE=Overrun rate (top of the graph: {string1}%)
+STR_LV_BOTHOST_FREE=Free CPU %
+STR_LV_BOTHOST_BOT_CPU=Bot CPU %
+STR_LV_BOTHOST_BOTS=Bots
+STR_LV_BOTHOST_LIMIT=Limit
+STR_LV_BOTHOST_DEC_TRIGGER=Overrun trigger
+STR_LV_BOTHOST_DEC_MOVE=Bot moved
+STR_LV_BOTHOST_DEC_CUT=Limit lowered
+STR_LV_BOTHOST_DEC_RAISE=Limit raised
+STR_LV_BOTHOST_DEC_RAISE_REFUSED=Raise refused
+STR_LV_BOTHOST_DEC_PLACE_REFUSED=Placement refused
+STR_LV_BOTHOST_DEC_OTHER=Decision {number}
+STR_LV_BOTHOST_TIP_TIME=At {string1}
+STR_LV_BOTHOST_TIP_REASON=Reason: {string1}
+STR_LV_BOTHOST_TIP_PREDICTED=Predicted free CPU: {string1}
+STR_LV_BOTHOST_TIP_COST=One-bot cost: {string1}
+STR_LV_BOTHOST_TIP_FREE_AVG=Free CPU average: {string1}
+STR_LV_BOTHOST_TIP_LOWEST_CLEAN=Lowest clean free CPU: {string1}
+STR_LV_BOTHOST_TIP_HIGHEST_BAD=Highest bad free CPU: {string1}
+STR_LV_BOTHOST_TIP_LIMIT=Limit: {string1} before, {string2} after
+STR_LV_BOTHOST_TIP_BAD_SHARE=Bad probes: {number} of {number2}
+STR_LV_BOTHOST_TIP_SEAT=Bot: player {number}
+STR_LV_BOTHOST_TIP_TO=To: {string1}
+STR_LV_BOTHOST_NOT_KNOWN=not known
+STR_LV_BOTHOST_NO_LIMIT=none
+STR_LV_BOTHOST_TIP_PROBE=Overrun rate: {string1}% ({number} of {number2} thinks)
+STR_LV_BOTHOST_TIP_BAD_PROBE=Bad probe
+STR_LV_BOTHOST_TIP_READING=Free CPU: {string1}, bot CPU: {string2}
+STR_LV_BOTHOST_TIP_BOTS=Bots: {number}, slots: {number2}, limit: {string1}
+
 # The Log Viewer's Chat panel: title, empty line, team and private notes
 STR_LV_WIN_CHAT=Chat
 STR_LV_CHAT_NONE=No chat messages yet.

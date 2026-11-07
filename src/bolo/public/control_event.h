@@ -581,6 +581,14 @@ typedef enum {
      * older peer has no decoder for this type and skips it; a row with no
      * CTRL_BOT_HOST_CPU shows no percent. */
     CTRL_BOT_HOST_CPU,
+    /* CTRL_BOT_HOST_CPU_FREE — Bot Host to server on the host's control
+     * connection, one reading each 5 s: the free (idle) CPU of the host's
+     * whole machine, all cores, 0..100, or BOT_HOST_CPU_UNKNOWN when it is
+     * not known (machine_cpu_free.h). Only the percent: no core count and
+     * no CPU name. The server's bot placement keeps a history of these
+     * (botHostOverrunProbe). A type of its own, as CTRL_BOT_HOST_CPU, so an
+     * older server skips it. */
+    CTRL_BOT_HOST_CPU_FREE,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1630,6 +1638,11 @@ typedef struct ControlEvent {
             uint8_t idx;   /* the row, or BOT_HOST_CPU_IDX_SELF from a host */
             uint8_t cpu;   /* 0..100, BOT_HOST_CPU_UNDER_ONE or _UNKNOWN */
         } botHostCpu;
+
+        /* CTRL_BOT_HOST_CPU_FREE — see the enum. */
+        struct {
+            uint8_t free;  /* 0..100 or BOT_HOST_CPU_UNKNOWN */
+        } botHostCpuFree;
 
         /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
         struct {

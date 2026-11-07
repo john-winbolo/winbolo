@@ -169,6 +169,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 70 | `log_MapName` | Pascal-form name of the map the round is played on. Written when the round starts. A log that opens in the lobby writes its header before the host chooses the map, so the header can name the previous round's map; a reader shows this name in its place |
 | 71 | `log_PlayerLag` | One player's network lag: RTT and the rewind the server used (below) |
 | 72 | `log_OverrunStats` | The server's tick timing and each bot's overruns, as the console's overrun lines print them (below) |
+| 73 | `log_BotHostData` | What the bot placement measured and chose for each host: probes, free CPU readings and decisions (below). Only with `-record-bothost-data` |
 
 ### `log_GameSettings` payload
 
@@ -751,6 +752,50 @@ record shorter than 44 bytes, or with version 0, is consumed and ignored. A
 viewer made before this record skips it by its framed length, the same as any
 other event it does not know. `tools/wbv_overruns.py` prints a file's records
 as text.
+
+### `log_BotHostData` payload
+
+What the server's bot placement measured and chose for each host
+(`botHostOvrProbeAll` in `src/server/udp/udp_server_bothost.c`, the rules
+in `botHostOverrunProbe` in `src/bolo/bot_host_link.c`). The payload is the
+whole framed length; `src/bolo/public/bothost_record.h` encodes and decodes
+it. Every multi-byte field is big-endian.
+
+| Offset | Field | Meaning |
+|-------:|-------|---------|
+| 0 | `version:u8` | 1 |
+| 1 | `kind:u8` | 1 HOST, 2 PROBE, 3 READING, 4 DECISION |
+| 2 | `host:u8` | 0 the server's own process, h + 1 Bot Host h |
+
+Then, by kind (0xFF in a byte field: none):
+
+- HOST: `player:u8` (the player whose own Bot Host it is, 0xFF for a listed
+  host and the server), then the name as a length byte and its bytes. Written
+  once per host per log, before its first probe.
+- PROBE, once a second per host: `bots:u8`, `slots:u8`, `limit:u8` (0xFF: no
+  lowered limit), `thinks:u16`, `overruns:u16`, `flags:u8` (bit 0: this
+  probe is bad), `badProbes:u8`, `probes:u8` (the bad probes in the window
+  and the probes in it).
+- READING, each free CPU sample per host (default every 5 s): `free:u8`
+  (0..100, 0xFF not known), `botCpu:u8` (the `CTRL_BOT_HOST_CPU` byte),
+  `bots:u8`, `flags:u8` (bit 0: the bots thought; bit 1: bad).
+- DECISION: `decision:u8` (1 trigger, 2 move, 3 cut, 4 raise, 5 raise
+  refused, 6 placement refused), `limitBefore:u8`, `limitAfter:u8`,
+  `badProbes:u8`, `probes:u8`, `flags:u8` (bit 0: the one-bot cost is
+  known; bit 1: the free CPU average is known), `predicted:s16` (the
+  predicted free CPU in tenths of a percent), `cost:u16` and `freeAvg:u16`
+  (tenths of a percent), `lowestClean:u8`, `highestBad:u8`, `seat:u8` (the
+  bot that moved), `toHost:u8` (where it went, as `host`), then the reason
+  as a length byte and its bytes.
+
+Written only when WinBoloDS runs with `-record-bothost-data`, or a client
+hosts with `Record Bot Host Data=Yes` in the `[SETTINGS]` section of its
+preferences file. Without it the log holds none and its bytes are the same
+as before this record. A reader takes the fields it knows and skips the rest
+by the framed length; a record shorter than its kind's fields, of version 0
+or of a kind it does not know is consumed and ignored. A reader made before
+this record skips it by its framed length. The Log Viewer shows the records
+in its Bot Hosts window.
 
 ## Snapshot body
 

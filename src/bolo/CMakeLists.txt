@@ -34,6 +34,7 @@ add_library(bolo_static STATIC
     brain_record_walk.c
     brain_sync.c
     bot_host_link.c
+    machine_cpu_free.c
     brain_pathfinder.c
     brain_pathfinder_serial.c
     brain_worldsim.c

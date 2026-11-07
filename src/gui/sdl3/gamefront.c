@@ -4463,6 +4463,15 @@ bool gameFrontSetupServer(void) {
       serverDedicatedLogSetServeMode(ROUND_LOG_SERVE_OFF);
     }
   }
+  {
+    /* The bot placement's numbers in the round log, for the Log Viewer's
+     * Bot Hosts window. Off unless the preferences file says Yes; the game
+     * has no menu item for it. */
+    char rec[16];
+    prefsGetString("SETTINGS", "Record Bot Host Data", "No", rec, sizeof(rec));
+    serverDedicatedLogSetBotHostData(gameFrontHostingLogging &&
+                                     YESNO_TO_TRUEFALSE(rec[0]));
+  }
   return TRUE;
 }
 

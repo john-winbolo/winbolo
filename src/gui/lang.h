@@ -3700,6 +3700,45 @@
 /* The replay's recording mode button, which shows the GIF controls */
 #define STR_REEL_RECORD_MODE_TIP                 3150
 
+/* The Log Viewer's Bot Hosts window (log_BotHostData): title, the line for a
+ * replay with no records, host names, the graph's lines, the decisions and
+ * the lines of a marker's tooltip */
+#define STR_LV_WIN_BOT_HOSTS                     3860
+#define STR_LV_BOTHOST_NONE                      3861
+#define STR_LV_BOTHOST_SERVER                    3862
+#define STR_LV_BOTHOST_PLAYER                    3863
+#define STR_LV_BOTHOST_LISTED                    3864
+#define STR_LV_BOTHOST_UNNAMED                   3865
+#define STR_LV_BOTHOST_RATE                      3866
+#define STR_LV_BOTHOST_FREE                      3867
+#define STR_LV_BOTHOST_BOT_CPU                   3868
+#define STR_LV_BOTHOST_BOTS                      3869
+#define STR_LV_BOTHOST_LIMIT                     3870
+#define STR_LV_BOTHOST_DEC_TRIGGER               3871
+#define STR_LV_BOTHOST_DEC_MOVE                  3872
+#define STR_LV_BOTHOST_DEC_CUT                   3873
+#define STR_LV_BOTHOST_DEC_RAISE                 3874
+#define STR_LV_BOTHOST_DEC_RAISE_REFUSED         3875
+#define STR_LV_BOTHOST_DEC_PLACE_REFUSED         3876
+#define STR_LV_BOTHOST_DEC_OTHER                 3877
+#define STR_LV_BOTHOST_TIP_TIME                  3878
+#define STR_LV_BOTHOST_TIP_REASON                3879
+#define STR_LV_BOTHOST_TIP_PREDICTED             3880
+#define STR_LV_BOTHOST_TIP_COST                  3881
+#define STR_LV_BOTHOST_TIP_FREE_AVG              3882
+#define STR_LV_BOTHOST_TIP_LOWEST_CLEAN          3883
+#define STR_LV_BOTHOST_TIP_HIGHEST_BAD           3884
+#define STR_LV_BOTHOST_TIP_LIMIT                 3885
+#define STR_LV_BOTHOST_TIP_BAD_SHARE             3886
+#define STR_LV_BOTHOST_TIP_SEAT                  3887
+#define STR_LV_BOTHOST_TIP_TO                    3888
+#define STR_LV_BOTHOST_NOT_KNOWN                 3889
+#define STR_LV_BOTHOST_NO_LIMIT                  3890
+#define STR_LV_BOTHOST_TIP_PROBE                 3891
+#define STR_LV_BOTHOST_TIP_BAD_PROBE             3892
+#define STR_LV_BOTHOST_TIP_READING               3893
+#define STR_LV_BOTHOST_TIP_BOTS                  3894
+
 /* The Log Viewer's Chat panel: title, empty line, team and private notes */
 #define STR_LV_WIN_CHAT                          3100
 #define STR_LV_CHAT_NONE                         3101

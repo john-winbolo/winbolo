@@ -38,6 +38,9 @@
 #include "server_sim_internal.h"  /* serverSimLagLogDue, playerPing, statLastRewindTicks */
 #include "server_lifecycle.h"      /* serverOverrunStatsDue */
 #include "overrun_record.h"         /* log_OverrunStats payload */
+#include "bothost_record.h"         /* log_BotHostData payload */
+#include "transport_udp.h"          /* transportUdpServerSetBotHostRecord */
+#include "transport_udp_server_internal.h" /* serverBotHostRecordPut */
 #include "game_sim.h"       /* GameSim.tanks — set the stocks a snapshot records */
 #include "tank.h"           /* tankSetShells / tankSetMines / ... */
 #include "unzip.h"
@@ -107,6 +110,7 @@ static int eventFixedBytesAfterCode(uint8_t code) {
         case log_MapName:          return -1;  /* 0 + pstr */
         case log_PlayerLag:        return 4;   /* player, RTT (BE u16), rewind */
         case log_OverrunStats:     return -3;  /* 44 + 13 a bot, checked below */
+        case log_BotHostData:      return -4;  /* by kind, checked below */
         default:                   return -2;  /* unknown */
     }
 }
@@ -318,6 +322,12 @@ static int walkLog(const uint8_t *buf, size_t len, size_t startPos,
                                 buf[payloadStart + OVERRUN_RECORD_HEAD_BYTES - 1] *
                                     OVERRUN_RECORD_BOT_BYTES) {
                         return -13;                    /* length disagrees */
+                    }
+                } else if (fixed == -4) {
+                    /* log_BotHostData: its kind's fields must be there. */
+                    BotHostRecord bhr;
+                    if (!botHostRecordDecode(buf + payloadStart, plen, &bhr)) {
+                        return -14;
                     }
                 } else if (fixed >= 0) {
                     if (plen != fixed) return -7;      /* length disagrees */
@@ -1791,5 +1801,222 @@ int run_log_roundtrip_tank_stock_record(void) {
     UT_ASSERT_MSG(stock.bytes[2] == 5,  "mines = %d", stock.bytes[2]);
     UT_ASSERT_MSG(stock.bytes[3] == 34, "armour = %d", stock.bytes[3]);
     UT_ASSERT_MSG(stock.bytes[4] == 7,  "trees = %d", stock.bytes[4]);
+    return 0;
+}
+
+/* ================================================================
+ * log_BotHostData (bothost_record.h): the bot placement's records.
+ * ================================================================ */
+
+/* Every log_BotHostData record in a log, in order. Returns the count, or -1
+ * when the stream does not walk. */
+static int collectBotHostRecords(const uint8_t *buf, size_t len, size_t pos,
+                                 BotHostRecord *out, int max) {
+    int n = 0;
+    while (pos < len) {
+        int code = buf[pos++];
+        if (code == LOG_QUIT) {
+            return n;
+        } else if (code == LOG_NOEVENTS) {
+            pos += 1;
+        } else if (code == LOG_NOEVENTS_LONG) {
+            pos += 2;
+        } else if (code == LOG_EVENT_SNAPSHOT) {
+            if (!skipSnapshot(buf, len, &pos)) return -1;
+        } else if (code == LOG_EVENT || code == LOG_EVENT_LONG) {
+            int count;
+            if (code == LOG_EVENT) {
+                if (pos + 1 > len) return -1;
+                count = buf[pos];
+                pos += 1;
+            } else {
+                if (pos + 2 > len) return -1;
+                count = (buf[pos + 1] << 8) | buf[pos];
+                pos += 2;
+            }
+            for (int i = 0; i < count; i++) {
+                if (pos + 3 > len) return -1;
+                int ev = buf[pos];
+                int plen = (buf[pos + 1] << 8) | buf[pos + 2];
+                pos += 3;
+                if (pos + (size_t)plen > len) return -1;
+                if (ev == log_BotHostData) {
+                    if (n < max && !botHostRecordDecode(buf + pos, plen, &out[n])) {
+                        return -1;
+                    }
+                    n++;
+                }
+                pos += (size_t)plen;
+            }
+        } else {
+            return -1;
+        }
+    }
+    return -1;
+}
+
+/* The four kinds the server writes, as it fills them. */
+static int bothostSampleRecords(BotHostRecord *r) {
+    memset(r, 0, 4 * sizeof(*r));
+    r[0].kind = BOTHOST_RECORD_HOST;
+    r[0].host = 1;
+    r[0].player = 3;
+    strcpy(r[0].name, "Bot Host A");
+    r[1].kind = BOTHOST_RECORD_PROBE;
+    r[1].host = 1;
+    r[1].bots = 4; r[1].slots = 6; r[1].limit = BOTHOST_RECORD_NONE;
+    r[1].thinks = 200; r[1].overruns = 9; r[1].flags = BOTHOST_RECORD_PROBE_BAD;
+    r[1].badProbes = 24; r[1].probes = 30;
+    r[2].kind = BOTHOST_RECORD_READING;
+    r[2].host = 0;
+    r[2].freePct = 35; r[2].botCpu = 22; r[2].bots = 3;
+    r[2].flags = BOTHOST_RECORD_READING_RAN;
+    r[3].kind = BOTHOST_RECORD_DECISION;
+    r[3].host = 1;
+    r[3].decision = BOTHOST_DECISION_CUT;
+    r[3].limitBefore = BOTHOST_RECORD_NONE; r[3].limitAfter = 3;
+    r[3].badProbes = 24; r[3].probes = 30;
+    r[3].flags = BOTHOST_RECORD_DEC_COST | BOTHOST_RECORD_DEC_FREE;
+    r[3].predictedTenths = -12; r[3].costTenths = 55; r[3].freeAvgTenths = 43;
+    r[3].lowestClean = 20; r[3].highestBad = 8;
+    r[3].seat = BOTHOST_RECORD_NONE; r[3].toHost = BOTHOST_RECORD_NONE;
+    strcpy(r[3].reason, "overruns");
+    for (int i = 0; i < 4; i++) r[i].version = BOTHOST_RECORD_VERSION;
+    return 4;
+}
+
+/* Each record kind goes into the round log and comes back with every
+ * field; the walk checks each framed length against its decode; the
+ * client's replay reader decodes the file with the records in it. */
+int run_log_roundtrip_bothost_data(void) {
+    char fname[64];
+    BotHostRecord rec[4], back[8];
+    uint8_t payload[BOTHOST_RECORD_MAX_BYTES];
+    int n = bothostSampleRecords(rec);
+
+    mkTempPath(fname, sizeof(fname), "bothostdata");
+    remove(fname);
+    ServerSim *sim = ut_make_running_sim("Tester");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim failed");
+    logSetStopHook(NULL);
+    logCreate();
+    UT_ASSERT_MSG(logStart(fname, sim, 0, MAX_TANKS, FALSE), "logStart failed");
+    for (int i = 0; i < n; i++) {
+        int len = botHostRecordEncode(&rec[i], payload, (int)sizeof(payload));
+        UT_ASSERT_MSG(len > 0, "record %d did not encode", i);
+        logAddEvent(log_BotHostData, 0, 0, 0, 0, (unsigned short)len,
+                    (char *)payload);
+    }
+    logWriteTick();
+    logStop();
+    logDestroy();
+    serverSimDestroy(sim);
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    UT_ASSERT_MSG(extractLogDat(fname, &buf, &blen), "extractLogDat failed");
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    UT_ASSERT_MSG(locateSnapshotMarker(buf, blen, &blockStart, &version),
+                  "header parse failed");
+    uint8_t got[64];
+    int     nGot = 0, nSnap = 0;
+    int rc = walkLog(buf, blen, blockStart, got, &nGot, (int)sizeof(got),
+                     &nSnap, NULL);
+    int nBack = collectBotHostRecords(buf, blen, blockStart, back, 8);
+    free(buf);
+    UT_ASSERT_MSG(rc == 0, "walkLog rc=%d", rc);
+    UT_ASSERT_MSG(nBack == n, "%d log_BotHostData records (want %d)", nBack, n);
+    for (int i = 0; i < n; i++) {
+        UT_ASSERT_MSG(memcmp(&back[i], &rec[i], sizeof(rec[i])) == 0,
+                      "record %d differs", i);
+    }
+
+    ReplayWorld    *world = (ReplayWorld *)malloc(sizeof(*world));
+    ReplayFileInfo  info;
+    UT_ASSERT_MSG(world != NULL, "out of memory");
+    bool decoded = replayHarnessDecodeFile(fname, world, &info);
+    free(world);
+    remove(fname);
+    UT_ASSERT_MSG(decoded, "the replay reader could not decode the file");
+    return 0;
+}
+
+/* One recorded round of `frames` frames. Each frame calls
+ * serverBotHostRecordPut `puts` times; *written counts the calls that
+ * wrote. Returns its log.dat (the caller frees *buf). */
+static bool recordBotHostRound(const char *tag, int puts, uint32_t frames,
+                               uint8_t **buf, size_t *blen, int *written) {
+    ReplayHarness h;
+    BotHostRecord rec[4];
+    bothostSampleRecords(rec);
+    memset(&h, 0, sizeof(h));
+    *buf = NULL;
+    *blen = 0;
+    *written = 0;
+    bolo_srand(0x0B0705u);
+    if (!replayHarnessPrepare(&h, tag, "Tester")) {
+        replayHarnessStop(&h);
+        return false;
+    }
+    h.sim->timeCreated = 1700000000u;
+    if (!replayHarnessBeginRecording(&h)) {
+        replayHarnessStop(&h);
+        return false;
+    }
+    logSetStopHook(NULL);
+    for (uint32_t frame = 1; frame <= frames; frame++) {
+        /* Before the tick: the tick writes the events added before it. */
+        for (int k = 0; k < puts; k++) {
+            if (serverBotHostRecordPut(&rec[k % 4])) (*written)++;
+        }
+        replayHarnessTick(&h, 2);
+    }
+    bool stopped = replayHarnessStopRecording(&h);
+    bool extracted = stopped && extractLogDat(h.path, buf, blen);
+    replayHarnessStop(&h);
+    remove(h.path);
+    return extracted;
+}
+
+/* With the option off the server writes no record, and the log is byte for
+ * byte the log of the same round with no record calls. With it on, every
+ * call writes one. */
+int run_bothost_record_off_writes_nothing(void) {
+    uint8_t *plain = NULL, *off = NULL, *on = NULL;
+    size_t   plainLen = 0, offLen = 0, onLen = 0;
+    int      written = 0;
+    BotHostRecord back[64];
+
+    transportUdpServerSetBotHostRecord(false);
+    UT_ASSERT(recordBotHostRound("bhrec_plain", 0, 120, &plain, &plainLen, &written));
+    UT_ASSERT(recordBotHostRound("bhrec_off", 3, 120, &off, &offLen, &written));
+    UT_ASSERT_MSG(written == 0, "%d records written with the option off", written);
+    UT_ASSERT_MSG(offLen == plainLen && memcmp(off, plain, plainLen) == 0,
+                  "the log with the option off differs (%u and %u bytes)",
+                  (unsigned)offLen, (unsigned)plainLen);
+    free(plain);
+    free(off);
+
+    /* Outside a recording the option on writes nothing either. */
+    transportUdpServerSetBotHostRecord(true);
+    {
+        BotHostRecord r[4];
+        bothostSampleRecords(r);
+        UT_ASSERT(!serverBotHostRecordPut(&r[0]));
+    }
+    bool ok = recordBotHostRound("bhrec_on", 1, 40, &on, &onLen, &written);
+    transportUdpServerSetBotHostRecord(false);
+    UT_ASSERT(ok);
+    UT_ASSERT_MSG(written == 40, "%d records written with the option on", written);
+    {
+        size_t  blockStart = 0;
+        uint8_t version    = 0;
+        int     n;
+        UT_ASSERT(locateSnapshotMarker(on, onLen, &blockStart, &version));
+        n = collectBotHostRecords(on, onLen, blockStart, back, 64);
+        free(on);
+        UT_ASSERT_MSG(n == 40, "%d log_BotHostData records in the log", n);
+    }
     return 0;
 }
