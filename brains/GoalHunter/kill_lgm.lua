@@ -821,7 +821,12 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
   if stalled then return nil end
   -- When does the shell go off?
   local T_x, s_x, how
-  local open_blast = false   -- the blast is on a dead pill's tile: open ground
+  -- open_blast: the shell flies over a dead pill and ends on its tile, so the
+  -- blast is on open ground.  Only that case: a shell that hits the pill
+  -- (a live pill, the shot that kills it included, or one he has repaired)
+  -- is a hit on its tile, and only a man on the tile dies (shells.c
+  -- outPillHit, lgm.c lgmBlastCatches pillHit).
+  local open_blast = false
   if pill.live then
     T_x, s_x, how = T_entry, s_entry, "live: collides entering the tile"
   elseif s_arrive and s_arrive <= s_full then

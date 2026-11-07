@@ -944,7 +944,30 @@ do
      end
     end
   end
+  -- The shot that kills a pill hits it: a live pill (health 1) is never an
+  -- open blast, and the verdict is the same-tile rule with the knob on or
+  -- off.
+  local lp = { id = 2, mx = pmx, my = pmy, cx = pcx, cy = pcy, live = true }
+  local live_bad, live_n = 0, 0
+  for west = 120, 400, 8 do
+    local tx, ty = pcx, pcy + 3 * 256
+    local lgm = { wx = pcx - west, wy = pcy }
+    C.BLAST_DEAD_PILL_OPEN = true
+    local h1 = {}
+    K.predict_dest_hold(tx, ty, lgm, h1, lp)
+    C.BLAST_DEAD_PILL_OPEN = false
+    local h2 = {}
+    K.predict_dest_hold(tx, ty, lgm, h2, lp)
+    local d1, d2 = h1.dest_timing, h2.dest_timing
+    if d1 and d2 then
+      live_n = live_n + 1
+      if d1.open_blast or d1.verdict ~= d2.verdict then live_bad = live_bad + 1 end
+    end
+  end
   C.BLAST_DEAD_PILL_OPEN = nil
+  check("a hit on a live pill (the killing shot too) keeps the same-tile rule",
+        live_n > 0 and live_bad == 0,
+        string.format("n=%d bad=%d", live_n, live_bad))
   check("dead pill open ground: every verdict follows the 128 wu rule",
         n > 0 and mism == 0, string.format("n=%d mismatches=%d", n, mism))
   check("dead pill open ground: a man just off the tile is shot",
