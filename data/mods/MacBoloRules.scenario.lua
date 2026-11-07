@@ -66,7 +66,7 @@
 -- builder near it. WinBolo counts "near" as a circle of radius 128 world
 -- units, half a square, edge included. Mac Bolo counts it as a box: under
 -- 128 from the explosion on each axis, so it reaches further on a
--- diagonal, about 181 at the corners. This part sets lgm_blast_shape to 1,
+-- diagonal, about 180 at the corners. This part sets lgm_blast_shape to 1,
 -- the box. An explosion on a building, a half building, a pillbox or a
 -- base still kills only a builder on that square, as before.
 --

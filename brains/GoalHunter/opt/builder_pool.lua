@@ -2396,10 +2396,19 @@ function M.draw_shell_gate(state, info)
     end
   end
   -- The kill area, at the impact point, in the engine's own units: the
-  -- lgm_blast_shape rule's circle, or its box.
+  -- lgm_blast_shape rule's circle, or its box, stopped at pill_range. A
+  -- circle cut to pill_range is a circle of that radius. The box is a box
+  -- while pill_range reaches its corners; with pill_range under its half
+  -- side it is the pill_range circle (reach gives that radius); between
+  -- the two it is the box and the pill_range circle together (the area is
+  -- inside both).
   local reach = U.lgm_open_blast_reach() / 256.0
-  if U.lgm_blast_shape() == 1 then
+  local half = C.LGM_BLAST_MAC_BOX_HALF_WU or 128
+  local pr = U.lgm_open_blast_limit()
+  if U.lgm_blast_shape() == 1 and not (pr and pr < half) then
     local x0, y0, x1, y1 = ix - reach, iy - reach, ix + reach, iy + reach
+    if pr and pr * pr < 2 * (half - 1) * (half - 1) then
+    end
   else
   end
 end

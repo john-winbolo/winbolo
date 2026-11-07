@@ -35,7 +35,9 @@
  *    The lgm_blast_shape rule changes the open-ground area: 0
  *    is that circle, 1 the Mac Bolo box (under 128 from him on
  *    each axis) and 2 a circle of radius 144. pill_range
- *    limits only 0 (lgmBlastOpenGroundCatches, lgm.h).
+ *    limits all three: a builder further than pill_range
+ *    from the explosion is safe (lgmBlastOpenGroundCatches,
+ *    lgm.h).
  *
  *  Sizes are in world units: 256 to a map square, 16 to a
  *  pixel of the map's art.
@@ -256,13 +258,15 @@ static inline int lvHitboxBuilderReach(int pillRange) {
     return pillRange < LV_HITBOX_BUILDER_REACH ? pillRange : LV_HITBOX_BUILDER_REACH;
 }
 
-/* The same for each lgm_blast_shape value: the circle above for 0, the box's
-   half side for 1 and the radius 144 for 2. pill_range limits only 0, as in
-   lgmBlastOpenGroundCatches. */
+/* The same along an axis for each lgm_blast_shape value: the circle above
+   for 0, the box's half side for 1 and the radius 144 for 2. pill_range
+   limits all three, as in lgmBlastOpenGroundCatches. */
 static inline int lvHitboxBuilderReachForShape(int shape, int pillRange) {
-    if (shape == LV_HITBOX_BUILDER_SHAPE_BOX) return LV_HITBOX_BUILDER_BOX_HALF;
-    if (shape == LV_HITBOX_BUILDER_SHAPE_AREA) return LV_HITBOX_BUILDER_AREA_REACH;
-    return lvHitboxBuilderReach(pillRange);
+    int reach = LV_HITBOX_BUILDER_REACH;
+    if (pillRange < 0) return 0;
+    if (shape == LV_HITBOX_BUILDER_SHAPE_BOX) reach = LV_HITBOX_BUILDER_BOX_HALF;
+    if (shape == LV_HITBOX_BUILDER_SHAPE_AREA) reach = LV_HITBOX_BUILDER_AREA_REACH;
+    return pillRange < reach ? pillRange : reach;
 }
 
 /* Whether a pillbox makes its square solid for the builder test: it is on
@@ -295,20 +299,24 @@ static inline bool lvHitboxSquareSolid(bool wall, bool hitNow) {
    by 256 (rounding down). solid is a mask of the 3 by 3 squares round the
    builder's: bit (row * 3 + col), with col and row 0, 1 or 2 and the
    builder's own square at col 1, row 1. A set bit is a building, a half
-   building, a live pillbox (lvHitboxPillSolid) or a base. reach is
-   lvHitboxBuilderReach's.
+   building, a live pillbox (lvHitboxPillSolid) or a base.
 
-   shape is the lgm_blast_shape rule: on open ground, a circle of radius
-   reach for 0 and 2, and for 1 (the Mac Bolo box) under reach from him on
-   each axis.
+   shape is the lgm_blast_shape rule and pillRange the pill_range rule, as
+   lgmBlastOpenGroundCatches takes them. On open ground the explosion must be
+   no further than pillRange from him (none catches when pillRange is under
+   0). Then shape 1 (the Mac Bolo box) asks for under 128 from him on each
+   axis, shape 2 for no further than 144, and any other value for no further
+   than 128.
 
    An explosion off the 3 by 3 squares is further than 144 from the builder
    on an axis, so no shape catches him: its square is not looked at. */
 static inline bool lvHitboxBuilderCaughtShape(double x, double y, double bx,
                                               double by, unsigned solid,
-                                              int reach, int shape) {
+                                              int shape, int pillRange) {
     double dx = x - bx;
     double dy = y - by;
+    double d2 = dx * dx + dy * dy;
+    double reach;
     int col, row;
     bool isSolid;
 
@@ -324,18 +332,25 @@ static inline bool lvHitboxBuilderCaughtShape(double x, double y, double bx,
     if (isSolid) {
         return col == 1 && row == 1;
     }
-    if (shape == LV_HITBOX_BUILDER_SHAPE_BOX) {
-        return dx < (double)reach && -dx < (double)reach &&
-               dy < (double)reach && -dy < (double)reach;
+    /* Every shape: within pill_range. */
+    if (pillRange < 0 || d2 > (double)pillRange * (double)pillRange) {
+        return false;
     }
-    return (dx * dx + dy * dy) <= (double)reach * (double)reach;
+    if (shape == LV_HITBOX_BUILDER_SHAPE_BOX) {
+        reach = (double)LV_HITBOX_BUILDER_BOX_HALF;
+        return dx < reach && -dx < reach && dy < reach && -dy < reach;
+    }
+    reach = (shape == LV_HITBOX_BUILDER_SHAPE_AREA) ?
+            (double)LV_HITBOX_BUILDER_AREA_REACH : (double)LV_HITBOX_BUILDER_REACH;
+    return d2 <= reach * reach;
 }
 
-/* The builder test for the classic shape, the half-square circle. */
+/* The builder test for the classic shape, the half-square circle. pillRange
+   is the pill_range rule; the circle's radius is lvHitboxBuilderReach's. */
 static inline bool lvHitboxBuilderCaught(double x, double y, double bx, double by,
-                                         unsigned solid, int reach) {
-    return lvHitboxBuilderCaughtShape(x, y, bx, by, solid, reach,
-                                      LV_HITBOX_BUILDER_SHAPE_CIRCLE);
+                                         unsigned solid, int pillRange) {
+    return lvHitboxBuilderCaughtShape(x, y, bx, by, solid,
+                                      LV_HITBOX_BUILDER_SHAPE_CIRCLE, pillRange);
 }
 
 #endif /* LV_HITBOX_H */

@@ -6,13 +6,18 @@
 --   ../../build/_deps/luajit_src-src/src/luajit.exe test_lgm_blast_shape.lua
 -- or with any lua on PATH.
 --
+-- The rules reach the model through live_physics.apply (group BLAST), as
+-- they do in Brain.think.
 -- 1. No rule sent, or lgm_blast_shape 0: the half-square circle, radius 128.
 -- 2. lgm_blast_shape 1: the Mac Bolo box, |dx| < 128 and |dy| < 128.
 -- 3. lgm_blast_shape 2: the circle of radius 144.
--- 4. LGM_BLAST_SHAPE_LIVE = false (KEEL): always the half-square circle.
+-- 4. LIVE_PHYSICS = false (KEEL) or LIVE_PHYSICS_BLAST = false: always the
+--    half-square circle.
 -- 5. The perp form and the reach follow the same shape.
 -- 6. danger.lgm_shell_gate, the builder pool's shell check, follows the
 --    shape: one shell that ends its life next to the man, on grass.
+-- 7. pill_range under a shape's reach stops every shape there, in the
+--    point test, the perp form, the reach and the shell check.
 -- Every shape is checked at 127/128/129 and 143/144/145 straight across and
 -- at 100 and 120 on the diagonal, the same points as the C unit test
 -- tests/unit/test_lgm_blast_shape.c.
@@ -37,6 +42,11 @@ end
 
 local C = require("constants")
 local U = require("util")
+
+-- Send these rules (nil: no rules table), as one think would.
+local function rules(r)
+  U.live_physics.apply(r and { rules = r } or {})
+end
 
 -- { dx, dy, { half, box, area } }
 local ROWS = {
@@ -67,40 +77,51 @@ local function check_shape(label, want_shape)
 end
 
 print("1. no rule / shape 0: half-square circle")
-U.lgm_blast_shape_update({})
+rules(nil)
 check("no rules table reads 0", U.lgm_blast_shape() == 0, U.lgm_blast_shape())
 check_shape("no rule", 0)
-U.lgm_blast_shape_update({ rules = { lgm_blast_shape = 0 } })
+rules({ lgm_blast_shape = 0 })
 check_shape("shape 0", 0)
 check("shape 0 reach 128", U.lgm_open_blast_reach() == 128, U.lgm_open_blast_reach())
+check("classic pill_range limit 2048", U.lgm_open_blast_limit() == 2048,
+      U.lgm_open_blast_limit())
 
 print("2. shape 1: Mac Bolo box")
-U.lgm_blast_shape_update({ rules = { lgm_blast_shape = 1 } })
+rules({ lgm_blast_shape = 1 })
 check("reads 1", U.lgm_blast_shape() == 1, U.lgm_blast_shape())
 check_shape("shape 1", 1)
 check("shape 1 reach 128", U.lgm_open_blast_reach() == 128, U.lgm_open_blast_reach())
 
 print("3. shape 2: Mac Bolo equivalent area circle")
-U.lgm_blast_shape_update({ rules = { lgm_blast_shape = 2 } })
+rules({ lgm_blast_shape = 2 })
 check("reads 2", U.lgm_blast_shape() == 2, U.lgm_blast_shape())
 check_shape("shape 2", 2)
 check("shape 2 reach 144", U.lgm_open_blast_reach() == 144, U.lgm_open_blast_reach())
 
-print("4. KEEL: LGM_BLAST_SHAPE_LIVE = false")
-C.LGM_BLAST_SHAPE_LIVE = false
-U.lgm_blast_shape_update({ rules = { lgm_blast_shape = 1 } })
+print("4. KEEL: LIVE_PHYSICS = false, and LIVE_PHYSICS_BLAST = false")
+C.LIVE_PHYSICS = false
+rules({ lgm_blast_shape = 1, pill_range = 100 })
 check("keel reads 0 under shape 1", U.lgm_blast_shape() == 0, U.lgm_blast_shape())
+check("keel keeps the 2048 limit", U.lgm_open_blast_limit() == 2048,
+      U.lgm_open_blast_limit())
 check_shape("keel under shape 1", 0)
-C.LGM_BLAST_SHAPE_LIVE = true
-U.lgm_blast_shape_update({ rules = { lgm_blast_shape = 7 } })
+C.LIVE_PHYSICS = true
+C.LIVE_PHYSICS_BLAST = false
+rules({ lgm_blast_shape = 1, pill_range = 100 })
+check("BLAST off reads 0 under shape 1", U.lgm_blast_shape() == 0, U.lgm_blast_shape())
+check("BLAST off keeps the 2048 limit", U.lgm_open_blast_limit() == 2048,
+      U.lgm_open_blast_limit())
+check_shape("BLAST off under shape 1", 0)
+C.LIVE_PHYSICS_BLAST = true
+rules({ lgm_blast_shape = 7 })
 check("an unknown value reads 0", U.lgm_blast_shape() == 0, U.lgm_blast_shape())
 
 print("5. perp form")
 -- A shell flying east (hx 1, hy 0): the side offset is along y.
-U.lgm_blast_shape_update({ rules = { lgm_blast_shape = 0 } })
+rules({ lgm_blast_shape = 0 })
 check("shape 0 perp 128 kills", U.lgm_open_blast_catches_perp(128, 1, 0) == true)
 check("shape 0 perp 129 spares", U.lgm_open_blast_catches_perp(129, 1, 0) == false)
-U.lgm_blast_shape_update({ rules = { lgm_blast_shape = 1 } })
+rules({ lgm_blast_shape = 1 })
 check("shape 1 perp 127 kills", U.lgm_open_blast_catches_perp(127, 1, 0) == true)
 check("shape 1 perp 128 spares", U.lgm_open_blast_catches_perp(128, 1, 0) == false)
 -- A shell flying on the diagonal: perp 160 is about 113 on each axis.
@@ -109,7 +130,7 @@ check("shape 1 diagonal perp 160 kills",
       U.lgm_open_blast_catches_perp(160, d, d) == true)
 check("shape 1 diagonal perp 182 spares",
       U.lgm_open_blast_catches_perp(182, d, d) == false)
-U.lgm_blast_shape_update({ rules = { lgm_blast_shape = 2 } })
+rules({ lgm_blast_shape = 2 })
 check("shape 2 perp 144 kills", U.lgm_open_blast_catches_perp(144, 1, 0) == true)
 check("shape 2 perp 145 spares", U.lgm_open_blast_catches_perp(145, 1, 0) == false)
 
@@ -147,17 +168,51 @@ local function check_gate(label, want_shape)
           got == row[3][want_shape + 1], got)
   end
 end
-U.lgm_blast_shape_update({})
+rules(nil)
 check_gate("no rule", 0)
 for shape = 0, 2 do
-  U.lgm_blast_shape_update({ rules = { lgm_blast_shape = shape } })
+  rules({ lgm_blast_shape = shape })
   check_gate("shape " .. shape, shape)
 end
-C.LGM_BLAST_SHAPE_LIVE = false
-U.lgm_blast_shape_update({ rules = { lgm_blast_shape = 1 } })
+C.LIVE_PHYSICS = false
+rules({ lgm_blast_shape = 1 })
 check_gate("keel under shape 1", 0)
-C.LGM_BLAST_SHAPE_LIVE = true
+C.LIVE_PHYSICS = true
 
-U.lgm_blast_shape_update({})
+print("7. pill_range under the reach")
+-- pill_range 100: every shape is the circle of radius 100. (100,0) and
+-- (70,70) (99.0 off) die; (101,0) and (71,71) (100.4 off) live.
+for shape = 0, 2 do
+  rules({ lgm_blast_shape = shape, pill_range = 100 })
+  local l = "shape " .. shape .. " pill_range 100"
+  check(l .. " limit 100", U.lgm_open_blast_limit() == 100, U.lgm_open_blast_limit())
+  check(l .. " (100,0) kills", U.lgm_open_blast_catches(100, 0) == true)
+  check(l .. " (0,-100) kills", U.lgm_open_blast_catches(0, -100) == true)
+  check(l .. " (101,0) spares", U.lgm_open_blast_catches(101, 0) == false)
+  check(l .. " (70,70) kills", U.lgm_open_blast_catches(70, 70) == true)
+  check(l .. " (71,71) spares", U.lgm_open_blast_catches(71, -71) == false)
+  check(l .. " perp 100 kills", U.lgm_open_blast_catches_perp(100, 1, 0) == true)
+  check(l .. " perp 101 spares", U.lgm_open_blast_catches_perp(101, 1, 0) == false)
+  check(l .. " diagonal perp 101 spares",
+        U.lgm_open_blast_catches_perp(101, d, d) == false)
+  check(l .. " reach 100", U.lgm_open_blast_reach() == 100, U.lgm_open_blast_reach())
+  check(l .. " gate (100,0) kills", gate_kills(100, 0) == true)
+  check(l .. " gate (110,0) spares", gate_kills(110, 0) == false)
+end
+-- pill_range 160: the half-square circle and the 144 circle are whole; the
+-- box loses its corners past 160.
+rules({ lgm_blast_shape = 1, pill_range = 160 })
+check("box pill_range 160 (110,110) kills (155.6 off)",
+      U.lgm_open_blast_catches(110, 110) == true)
+check("box pill_range 160 (120,120) spares (169.7 off)",
+      U.lgm_open_blast_catches(120, 120) == false)
+check("box pill_range 160 reach 128", U.lgm_open_blast_reach() == 128,
+      U.lgm_open_blast_reach())
+rules({ lgm_blast_shape = 2, pill_range = 160 })
+check_shape("shape 2 pill_range 160", 2)
+rules({ lgm_blast_shape = 0, pill_range = 160 })
+check_shape("shape 0 pill_range 160", 0)
+
+rules(nil)
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

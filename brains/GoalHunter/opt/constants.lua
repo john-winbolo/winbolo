@@ -307,6 +307,7 @@ M.LIVE_PHYSICS_TURN   = true  -- turn-time sizing (swerve turn, blitz ready time
 M.LIVE_PHYSICS_ACCEL  = true  -- brake / look-ahead distances and brake profiles follow our accel + brake rates
 M.LIVE_PHYSICS_SHELL  = true  -- shell speed, gunsight max
 M.LIVE_PHYSICS_WALL   = true  -- wall shots (WALL_HP_FULL / HALF, the getaway wall life, the C pathfinder's wall shells and cost) follow building_life
+M.LIVE_PHYSICS_BLAST  = true  -- the builder blast model follows the lgm_blast_shape and pill_range rules (LGM_BLAST_SHAPE, LGM_BLAST_PILL_RANGE_WU)
 -- Top-speed caps in info.speed units (engine speed x4): 64 = road top speed,
 -- 48 = the navigation cruise cap. Live rules scale them with the road speed
 -- rule and our speed modifier.
@@ -5295,12 +5296,19 @@ M.LGM_SHELL_KILL_RADIUS_WU = 128
 -- area). Engine facts, not tunables.
 M.LGM_BLAST_MAC_BOX_HALF_WU = 128
 M.LGM_BLAST_MAC_AREA_RADIUS_WU = 144
--- 2026-11-07: read the lgm_blast_shape rule from info.rules, so every
--- builder blast model (the shell gate, the kill-builder aim and the blast
--- check before a shot) uses the shape the game plays with. Under the
--- classic rule (0) nothing changes. false (KEEL) always models the
--- half-square circle.
-M.LGM_BLAST_SHAPE_LIVE = true
+-- 2026-11-07: the builder blast shape every builder blast model uses (the
+-- shell gate, the kill-builder aim and the blast check before a shot,
+-- through U.lgm_open_blast_catches): 0 the half-square circle, 1 the Mac
+-- Bolo box, 2 the Mac Bolo equivalent area circle. live_physics.lua group
+-- BLAST (LIVE_PHYSICS_BLAST) sets it from the lgm_blast_shape rule each
+-- think. Under the classic rule (0), or with LIVE_PHYSICS or
+-- LIVE_PHYSICS_BLAST off, it stays 0, the old model.
+M.LGM_BLAST_SHAPE = 0
+-- 2026-11-07: the engine stops every shape at the pill_range rule (lgm.h
+-- lgmBlastOpenGroundCatches): a builder further than this from the
+-- explosion is safe. Classic 2048, far past every shape, so it changes
+-- nothing. live_physics.lua group BLAST sets it from pill_range each think.
+M.LGM_BLAST_PILL_RANGE_WU = 2048
 -- The engine's shell-vs-tank hit zone, in world units: tank.h:102
 -- TANK_HIT_RADIUS = 112 ("one-tile mid-radius (128) - 16 wu"), tested as a
 -- CIRCLE by tankIsTankHitAtPosition. The shell gate uses it for one thing --
@@ -6758,9 +6766,6 @@ M.PRESETS = {
     LIVE_PHYSICS_WSIM_BUILD       = false,
     LIVE_PHYSICS_SHELL_LIFE       = false,
     LIVE_PHYSICS_PILL_RANGE_WU    = false,
-    -- 2026-11-07: the builder blast shape follows the lgm_blast_shape rule;
-    -- KEEL models the half-square circle whatever the game plays.
-    LGM_BLAST_SHAPE_LIVE          = false,
     -- 2026-10-01: attack_tank aim/fire knobs for Joust. All default off; KEEL
     -- pinned at the same old values.
     COMBAT_CLIFF_AIM_KEEP         = false,

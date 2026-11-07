@@ -2531,38 +2531,45 @@ BYTE lv_drawGetHitBoxes(void) {
    side and not on the other. The pieces are the circle's segments and the
    pixel-long pieces of the four square edges that cross the circle's 3 by 3
    squares, so the border is drawn wherever lgmBlastCatches changes its
-   answer. shape is the lgm_blast_shape rule: for the Mac Bolo box (1) the
-   pieces are the box's four sides, cut into pixel-long pieces, instead of
-   the circle's segments. ox, oy and k take a place in world units from the
-   top left of his square to the screen: x = ox + wx * k. */
-static void lvDrawHitLgmArea(const LvHitLgmPos *h, double bx, double by, int reach,
-                             int shape, float ox, float oy, float k, float shift) {
+   answer. shape is the lgm_blast_shape rule and pillRange the pill_range
+   rule: for the Mac Bolo box (1) the pieces are also the box's four sides,
+   cut into pixel-long pieces, and the circle is the pill_range one that cuts
+   the box's corners. ox, oy and k take a place in world units from the top
+   left of his square to the screen: x = ox + wx * k. */
+static void lvDrawHitLgmArea(const LvHitLgmPos *h, double bx, double by, int shape,
+                             int pillRange, float ox, float oy, float k, float shift) {
     int i;
+    /* The circle: radius pill_range for the box (past its corners, at
+       128 * sqrt(2), it cuts nothing), else the shape's own. */
+    const int reach = (shape == LV_HITBOX_BUILDER_SHAPE_BOX) ?
+                      (pillRange < 182 ? pillRange : 0) :
+                      lvHitboxBuilderReachForShape(shape, pillRange);
     const double r = (double)reach;
 
-    if (shape == LV_HITBOX_BUILDER_SHAPE_BOX && reach > 0) {
-        /* The four sides: x = bx - r, x = bx + r, y = by - r, y = by + r. */
+    if (shape == LV_HITBOX_BUILDER_SHAPE_BOX && pillRange > 0) {
+        const double half = (double)LV_HITBOX_BUILDER_BOX_HALF;
+        /* The four sides: x = bx - half, x = bx + half, y = by - half, y = by + half. */
         int side;
         for (side = 0; side < 4; side++) {
-            double fixed = ((side & 1) ? r : -r) + ((side < 2) ? bx : by);
+            double fixed = ((side & 1) ? half : -half) + ((side < 2) ? bx : by);
             double pos;
-            for (pos = -r; pos < r; pos += LV_HIT_EDGE_PIECE) {
-                double end = (pos + LV_HIT_EDGE_PIECE < r) ? pos + LV_HIT_EDGE_PIECE : r;
+            for (pos = -half; pos < half; pos += LV_HIT_EDGE_PIECE) {
+                double end = (pos + LV_HIT_EDGE_PIECE < half) ? pos + LV_HIT_EDGE_PIECE : half;
                 double m = (pos + end) * 0.5;
                 bool in, out;
                 double x0, y0, x1, y1;
                 double inward = (side & 1) ? -LV_HIT_SIDE : LV_HIT_SIDE;
                 if (side < 2) {
                     in = lvHitboxBuilderCaughtShape(fixed + inward, by + m, bx, by,
-                                                    h->solid, reach, shape);
+                                                    h->solid, shape, pillRange);
                     out = lvHitboxBuilderCaughtShape(fixed - inward, by + m, bx, by,
-                                                     h->solid, reach, shape);
+                                                     h->solid, shape, pillRange);
                     x0 = fixed; y0 = by + pos; x1 = fixed; y1 = by + end;
                 } else {
                     in = lvHitboxBuilderCaughtShape(bx + m, fixed + inward, bx, by,
-                                                    h->solid, reach, shape);
+                                                    h->solid, shape, pillRange);
                     out = lvHitboxBuilderCaughtShape(bx + m, fixed - inward, bx, by,
-                                                     h->solid, reach, shape);
+                                                     h->solid, shape, pillRange);
                     x0 = bx + pos; y0 = fixed; x1 = bx + end; y1 = fixed;
                 }
                 if (in == out) continue;
@@ -2572,18 +2579,17 @@ static void lvDrawHitLgmArea(const LvHitLgmPos *h, double bx, double by, int rea
             }
         }
     }
-    for (i = 0; i < LV_HIT_CIRCLE_SEGMENTS && reach > 0 &&
-                shape != LV_HITBOX_BUILDER_SHAPE_BOX; i++) {
+    for (i = 0; i < LV_HIT_CIRCLE_SEGMENTS && reach > 0; i++) {
         double a0 = (double)i * 2.0 * SDL_PI_D / LV_HIT_CIRCLE_SEGMENTS;
         double a1 = (double)(i + 1) * 2.0 * SDL_PI_D / LV_HIT_CIRCLE_SEGMENTS;
         double am = (a0 + a1) * 0.5;
         double cx = cos(am), cy = sin(am);
         bool in = lvHitboxBuilderCaughtShape(bx + cx * (r - LV_HIT_SIDE),
                                              by + cy * (r - LV_HIT_SIDE),
-                                             bx, by, h->solid, reach, shape);
+                                             bx, by, h->solid, shape, pillRange);
         bool out = lvHitboxBuilderCaughtShape(bx + cx * (r + LV_HIT_SIDE),
                                               by + cy * (r + LV_HIT_SIDE),
-                                              bx, by, h->solid, reach, shape);
+                                              bx, by, h->solid, shape, pillRange);
         if (in == out) continue;
         SDL_RenderLine(sdlRenderer,
                        ox + (float)(bx + cos(a0) * r) * k + shift,
@@ -2602,9 +2608,9 @@ static void lvDrawHitLgmArea(const LvHitLgmPos *h, double bx, double by, int rea
             double m = (double)t + LV_HIT_EDGE_PIECE * 0.5;
             /* Upright edge x = line. */
             if (lvHitboxBuilderCaughtShape(line - LV_HIT_SIDE, m, bx, by, h->solid,
-                                           reach, shape) !=
+                                           shape, pillRange) !=
                 lvHitboxBuilderCaughtShape(line + LV_HIT_SIDE, m, bx, by, h->solid,
-                                           reach, shape)) {
+                                           shape, pillRange)) {
                 SDL_RenderLine(sdlRenderer,
                                ox + (float)line * k + shift, oy + (float)t * k + shift,
                                ox + (float)line * k + shift,
@@ -2612,9 +2618,9 @@ static void lvDrawHitLgmArea(const LvHitLgmPos *h, double bx, double by, int rea
             }
             /* Level edge y = line. */
             if (lvHitboxBuilderCaughtShape(m, line - LV_HIT_SIDE, bx, by, h->solid,
-                                           reach, shape) !=
+                                           shape, pillRange) !=
                 lvHitboxBuilderCaughtShape(m, line + LV_HIT_SIDE, bx, by, h->solid,
-                                           reach, shape)) {
+                                           shape, pillRange)) {
                 SDL_RenderLine(sdlRenderer,
                                ox + (float)t * k + shift, oy + (float)line * k + shift,
                                ox + (float)(t + LV_HIT_EDGE_PIECE) * k + shift,
@@ -2637,7 +2643,7 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     Uint8 oldR, oldG, oldB, oldA;
     bool alive[MAX_TANKS];
-    int tankRadius, builderReach, builderShape;
+    int tankRadius, builderPillRange, builderShape;
 
     if (!s_hitBoxes || lv == NULL) return;
     if (s_hitTankCount == 0 && s_hitLgmCount == 0) return;
@@ -2649,7 +2655,7 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     }
     tankRadius = lv->rules.tankHitRadius;
     builderShape = lv->rules.lgmBlastShape;
-    builderReach = lvHitboxBuilderReachForShape(builderShape, lv->rules.pillRange);
+    builderPillRange = lv->rules.pillRange;
     lv_clientMutexRelease();
 
     scale = dst->w / src->w;
@@ -2703,7 +2709,7 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
             const LvHitLgmPos *h = &s_hitLgmPos[i];
             float ox = dst->x + (h->sqX - src->x) * scale;
             float oy = dst->y + (h->sqY - src->y) * scale;
-            lvDrawHitLgmArea(h, h->bx, h->by, builderReach, builderShape, ox, oy,
+            lvDrawHitLgmArea(h, h->bx, h->by, builderShape, builderPillRange, ox, oy,
                              k, shift);
         }
     }

@@ -3306,6 +3306,7 @@ int run_lgm_blast_shape_mac_box(void);
 int run_lgm_blast_shape_mac_area(void);
 int run_lgm_blast_shape_solid_square(void);
 int run_lgm_blast_shape_classic_matches_old(void);
+int run_lgm_blast_shape_pill_range(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);

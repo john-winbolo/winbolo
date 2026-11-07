@@ -128,10 +128,15 @@ struct GameSim;
    - LGM_BLAST_SHAPE_HALF_SQUARE: "Half-square circle". A circle of radius
      MAP_SQUARE_MIDDLE (128), edge included, the WinBolo rule.
    - LGM_BLAST_SHAPE_MAC_BOX: "Mac Bolo box". |dx| < 128 and |dy| < 128,
-     edge left out, as Mac Bolo's drawexplosion tests it.
+     edge left out, as Mac Bolo's drawexplosion routine tests it (the Go
+     port calls that routine explode()).
    - LGM_BLAST_SHAPE_MAC_AREA: "Mac Bolo equivalent area circle". A circle
      of radius LGM_BLAST_MAC_AREA_RADIUS, edge included: 256 / sqrt(pi) is
-     about 144.4, so it covers about the same area as the box. */
+     about 144.4, so it covers about the same area as the box.
+   Every shape also stops at the pill_range rule: a builder further than
+   pill_range from the explosion is safe. That limit is the old test's, and
+   it changes a shape only when pill_range is under the shape's reach (128,
+   about 180 and 144). */
 #define LGM_BLAST_SHAPE_HALF_SQUARE 0
 #define LGM_BLAST_SHAPE_MAC_BOX     1
 #define LGM_BLAST_SHAPE_MAC_AREA    2
@@ -152,8 +157,10 @@ struct GameSim;
 *  read its distance from utilIsItemInRange with the
 *  pill_range rule as the limit, and past that limit the
 *  distance never passes. So with pill_range under 128 the
-*  circle is pill_range across. The other two shapes are
-*  new and do not read pill_range.
+*  circle has radius pill_range. The other two shapes stop
+*  at pill_range the same way: a builder further than
+*  pill_range from the explosion is safe. A pill_range
+*  under 0 catches no builder.
 *
 *ARGUMENTS:
 *  shape     - The lgm_blast_shape rule
@@ -167,17 +174,19 @@ static inline bool lgmBlastOpenGroundCatches(int32_t shape, int32_t pillRange,
   long ay = dy < 0 ? -dy : dy;
   double d2 = (double) dx * dx + (double) dy * dy;
 
+  /* Every shape: within pill_range, the limit utilIsItemInRange measured
+     the old test against. */
+  if (pillRange < 0 || d2 > (double) pillRange * pillRange) {
+    return false;
+  }
   if (shape == LGM_BLAST_SHAPE_MAC_BOX) {
     return ax < LGM_BLAST_MAC_BOX_HALF && ay < LGM_BLAST_MAC_BOX_HALF;
   }
   if (shape == LGM_BLAST_SHAPE_MAC_AREA) {
     return d2 <= (double) LGM_BLAST_MAC_AREA_RADIUS * LGM_BLAST_MAC_AREA_RADIUS;
   }
-  /* The half-square circle: within MAP_SQUARE_MIDDLE, and within pill_range,
-     the limit utilIsItemInRange measured against. */
-  return pillRange >= 0 &&
-         d2 <= (double) MAP_SQUARE_MIDDLE * MAP_SQUARE_MIDDLE &&
-         d2 <= (double) pillRange * pillRange;
+  /* The half-square circle: within MAP_SQUARE_MIDDLE. */
+  return d2 <= (double) MAP_SQUARE_MIDDLE * MAP_SQUARE_MIDDLE;
 }
 
 typedef struct lgmObj *lgm;

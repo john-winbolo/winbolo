@@ -59,11 +59,14 @@ int run_lv_hitbox_sums(void) {
     UT_ASSERT_MSG(lvHitboxBuilderReach(0) == 0, "pill range 0");
 
     /* The lgm_blast_shape rule: 0 the circle above, 1 the Mac Bolo box,
-       2 a circle of 144. pill_range limits only 0. */
+       2 a circle of 144. pill_range limits all three. */
     UT_ASSERT_MSG(lvHitboxBuilderReachForShape(0, 2048) == 128, "shape 0 reach");
     UT_ASSERT_MSG(lvHitboxBuilderReachForShape(0, 100) == 100, "shape 0, short pill range");
-    UT_ASSERT_MSG(lvHitboxBuilderReachForShape(1, 100) == 128, "shape 1 reach");
-    UT_ASSERT_MSG(lvHitboxBuilderReachForShape(2, 100) == 144, "shape 2 reach");
+    UT_ASSERT_MSG(lvHitboxBuilderReachForShape(1, 2048) == 128, "shape 1 reach");
+    UT_ASSERT_MSG(lvHitboxBuilderReachForShape(1, 100) == 100, "shape 1, short pill range");
+    UT_ASSERT_MSG(lvHitboxBuilderReachForShape(2, 2048) == 144, "shape 2 reach");
+    UT_ASSERT_MSG(lvHitboxBuilderReachForShape(2, 100) == 100, "shape 2, short pill range");
+    UT_ASSERT_MSG(lvHitboxBuilderReachForShape(2, -1) == 0, "pill range under 0");
     {
         /* The builder in the middle of his square; the same points as
            test_lgm_blast_shape.c: across at 127/128/129 and 143/144/145,
@@ -80,14 +83,13 @@ int run_lv_hitbox_sums(void) {
         };
         int shape, i, q;
         for (shape = 0; shape < 3; shape++) {
-            int reach = lvHitboxBuilderReachForShape(shape, 2048);
             for (i = 0; i < (int)(sizeof(rows) / sizeof(rows[0])); i++) {
                 for (q = 0; q < 4; q++) {
                     double dx = rows[i].dx * ((q & 1) ? -1.0 : 1.0);
                     double dy = rows[i].dy * ((q & 2) ? -1.0 : 1.0);
                     bool got = lvHitboxBuilderCaughtShape(128.0 + dx, 128.0 + dy,
-                                                          128.0, 128.0, 0, reach,
-                                                          shape);
+                                                          128.0, 128.0, 0, shape,
+                                                          2048);
                     UT_ASSERT_MSG(got == rows[i].dies[shape],
                                   "shape %d at (%g,%g): %s, wanted %s", shape,
                                   dx, dy, got ? "caught" : "missed",
@@ -97,11 +99,27 @@ int run_lv_hitbox_sums(void) {
         }
         /* A solid square still catches only on his own square. */
         UT_ASSERT_MSG(!lvHitboxBuilderCaughtShape(256.0, 128.0, 200.0, 128.0,
-                                                  SQ(2, 1), 128, 1),
+                                                  SQ(2, 1), 1, 2048),
                       "shape 1: a building next door catches nobody");
         UT_ASSERT_MSG(lvHitboxBuilderCaughtShape(250.0, 250.0, 128.0, 128.0,
-                                                 SQ(1, 1), 128, 2),
+                                                 SQ(1, 1), 2, 2048),
                       "shape 2: a building on his square catches him");
+    }
+    {
+        /* pill_range limits every shape, as lgmBlastOpenGroundCatches: the
+           box at 150 loses its corners, shape 2 at 100 is a circle of 100. */
+        UT_ASSERT_MSG(lvHitboxBuilderCaughtShape(255.0, 128.0, 128.0, 128.0, 0, 1, 150),
+                      "box, pill range 150: 127 across");
+        UT_ASSERT_MSG(lvHitboxBuilderCaughtShape(228.0, 228.0, 128.0, 128.0, 0, 1, 150),
+                      "box, pill range 150: (100,100) is 141 away");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaughtShape(238.0, 238.0, 128.0, 128.0, 0, 1, 150),
+                      "box, pill range 150: (110,110) is 156 away");
+        UT_ASSERT_MSG(lvHitboxBuilderCaughtShape(228.0, 128.0, 128.0, 128.0, 0, 2, 100),
+                      "shape 2, pill range 100: 100 across");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaughtShape(229.0, 128.0, 128.0, 128.0, 0, 2, 100),
+                      "shape 2, pill range 100: 101 across");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaughtShape(128.0, 128.0, 128.0, 128.0, 0, 1, -1),
+                      "pill range under 0 catches nobody");
     }
 
     /* Open ground all round: a circle of 128, the edge itself caught. */

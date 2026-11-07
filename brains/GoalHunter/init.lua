@@ -1679,8 +1679,6 @@ function Brain.think(info)
   U.live_physics.apply(info)
   -- Shell rules for the base-on-the-line checks (U.base_stops_tank_shell).
   U.note_shell_rules(world, info)
-  -- The lgm_blast_shape rule, for every builder blast model this think.
-  U.lgm_blast_shape_update(info)
   local now  = state.tick
   -- Ticks since THIS brain instance opened. `now` is seeded from the engine
   -- clock (see Brain.open), so it is NOT the age of the bot: a Survival wave
