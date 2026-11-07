@@ -824,7 +824,7 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
   -- blast is on open ground.  Only that case: a shell that hits the pill
   -- (a live pill, the shot that kills it included, or one he has repaired)
   -- is a hit on its tile, and only a man on the tile dies (shells.c
-  -- outPillHit, lgm.c lgmBlastCatches pillHit).
+  -- outSquareHit, lgm.c lgmBlastCatches squareHit).
   local open_blast = false
   if pill.live then
     T_x, s_x, how = T_entry, s_entry, "live: collides entering the tile"
