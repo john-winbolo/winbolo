@@ -2297,6 +2297,12 @@ static int botHostServerSlots(ServerSim *sim) {
             knownFrom = "the brain's capacity answer";
         }
     }
+    if (serverSimGetServerBotSlots(sim) >= 0) {
+        /* The lobby's Server bot slots: a change counts at once. */
+        known = serverSimGetServerBotSlots(sim);
+        knownFrom = serverSimIsServerBotSlotsLocked(sim)
+                        ? "-botcapacity" : "the lobby's Server bot slots";
+    }
     {
         static int logged = -1;
         int slots = known;

@@ -192,7 +192,19 @@ bot capacity.
   the default answer.
 - `-botcapacity N` (0..16; 0 = no bots in this process) sets the number
   and runs no test. A number above 16 gives 16, with a note. Anything that
-  is not a whole number is an error.
+  is not a whole number is an error. It also locks the lobby's Server bot
+  slots at N: the row is read-only for every player (mouse-over "Set by
+  -botcapacity on the server"), and the server refuses a change with
+  `CMD_REJECT_LOCKED`.
+- The lobby's Server bot slots (Server Settings, 0..16, `LST_SERVER_BOT_SLOTS`)
+  sets how many bots the server runs in its own process: its slots in the
+  bot placement and its part of the Add Bot limit. The default is the
+  number above (the recommended value). A higher value is taken; the lobby
+  shows it greyer with a warning. Players who may change the other
+  settings may change it, in the lobby and while a game runs. During a
+  game a lower value moves only bots that may move, and none with
+  `-bothost-nomove`. `CTRL_SERVER_BOT_SLOTS` carries it to clients
+  (`clientSimGetServerBotSlots`); an older peer skips it.
 - One log line on stderr gives the result:
   `Bot capacity: 3 bots of GoalHunter (CPU speed test, stored result)`,
   `... measured now`, or `Bot capacity: override 3 (-botcapacity)`.

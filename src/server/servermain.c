@@ -957,7 +957,8 @@ void printArgs() {
   fprintf(stderr, "                opens (once for each version; the result is stored, and\n");
   fprintf(stderr, "                WINBOLO_CPU_SPEED_FILE names the file) and asks the bot\n");
   fprintf(stderr, "                brain. Caps lobby \"Add Bot\" requests; -bots and\n");
-  fprintf(stderr, "                scenario bots are not capped.\n");
+  fprintf(stderr, "                scenario bots are not capped. It locks the lobby's\n");
+  fprintf(stderr, "                Server bot slots at N: no player may change it.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots (default: the\n");
   fprintf(stderr, "                first of Brains/GoalHunter/init.lua,\n");
   fprintf(stderr, "                brains/GoalHunter/init.lua,\n");

@@ -2377,6 +2377,23 @@ BYTE          serverSimGetMaxBots(const ServerSim *sim);
 #define SERVER_HOST_BOT_CAPACITY_MEASURING (-2)
 int           serverSimGetHostBotCapacity(const ServerSim *sim);
 void          serverSimSetHostBotCapacity(ServerSim *sim, int capacity);
+/* The lobby's Server bot slots. serverSimGetHostBotCapacity above gives
+ * the value in use: the lobby's choice (0..16) when a player made one,
+ * else the host bot capacity. The host bot capacity itself (the CPU speed
+ * test, or -botcapacity) is the recommended value. */
+int           serverSimGetHostBotCapacityRecommended(const ServerSim *sim);
+/* The lobby's choice, 0..16, or -1 when there is none. */
+int           serverSimGetServerBotSlots(const ServerSim *sim);
+bool          serverSimIsServerBotSlotsLocked(const ServerSim *sim);
+/* Sets the choice (0..16; a value above the recommended one is taken).
+ * False, and no change, for a value out of range or while locked.
+ * Publishes the lobby settings and CTRL_SERVER_BOT_SLOTS. */
+bool          serverSimSetServerBotSlots(ServerSim *sim, int slots);
+/* -botcapacity N: the choice is N and no player may change it. */
+void          serverSimLockServerBotSlots(ServerSim *sim, int slots);
+/* The CTRL_SERVER_BOT_SLOTS event for the value now. */
+void          serverSimFillServerBotSlotsEvent(const ServerSim *sim,
+                                               struct ControlEvent *evt);
 /* Whether a lobby Add Bot fits under the host bot capacity: false while
  * the test runs, and false when lobbyBots (the bots in the lobby now) has
  * reached a capacity of 0..16. True when there is no cap. */

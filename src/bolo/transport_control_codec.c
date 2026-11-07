@@ -3907,6 +3907,37 @@ static bool decodeBotHostCpuBotBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_SERVER_BOT_SLOTS body: [value 1][recommended 1][flags 1], bit 0 of
+ * flags = locked. Later bytes skipped. */
+#define SERVER_BOT_SLOTS_LEN 3
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeServerBotSlotsBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)recipient;
+    if (bufCap < SERVER_BOT_SLOTS_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.serverBotSlots.value;
+    buf[1] = evt->u.serverBotSlots.recommended;
+    buf[2] = evt->u.serverBotSlots.locked ? 1u : 0u;
+    *outLen = SERVER_BOT_SLOTS_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeServerBotSlotsBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < SERVER_BOT_SLOTS_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SERVER_BOT_SLOTS;
+    outEvt->u.serverBotSlots.value = buf[0];
+    outEvt->u.serverBotSlots.recommended = buf[1];
+    outEvt->u.serverBotSlots.locked = (buf[2] & 1u) ? 1u : 0u;
+    return true;
+}
+
 /* CTRL_BOT_HOST_LAG body: [idx 1][lagMs 2]. Bytes after the three are
  * skipped, so the message can grow; a lag of 0 reads as unknown. */
 #define BOT_HOST_LAG_LEN 3
@@ -4692,6 +4723,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_CPU_FREE]     = encodeBotHostCpuFreeBody,
     [CTRL_BOT_HOST_CPU_BOT]      = encodeBotHostCpuBotBody,
     [CTRL_BOT_HOST_LAG]          = encodeBotHostLagBody,
+    [CTRL_SERVER_BOT_SLOTS]      = encodeServerBotSlotsBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -4765,6 +4797,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_CPU_FREE]     = decodeBotHostCpuFreeBody,
     [CTRL_BOT_HOST_CPU_BOT]      = decodeBotHostCpuBotBody,
     [CTRL_BOT_HOST_LAG]          = decodeBotHostLagBody,
+    [CTRL_SERVER_BOT_SLOTS]      = decodeServerBotSlotsBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -4902,6 +4935,7 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_CPU_FREE:      return "CTRL_BOT_HOST_CPU_FREE";
     case CTRL_BOT_HOST_CPU_BOT:       return "CTRL_BOT_HOST_CPU_BOT";
     case CTRL_BOT_HOST_LAG:           return "CTRL_BOT_HOST_LAG";
+    case CTRL_SERVER_BOT_SLOTS:       return "CTRL_SERVER_BOT_SLOTS";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

@@ -611,6 +611,14 @@ typedef enum {
      * own, as CTRL_BOT_HOST_CPU, so an older client skips it; a row with no
      * CTRL_BOT_HOST_LAG shows no ping. */
     CTRL_BOT_HOST_LAG,
+    /* CTRL_SERVER_BOT_SLOTS — server to lobby players and spectators: the
+     * lobby's Server bot slots. value is the number in use (0..16, or the
+     * LOBBY_HOST_BOT_CAPACITY_WIRE_* bytes), recommended the CPU test's
+     * (or -botcapacity's) number in the same form, locked non-zero when
+     * -botcapacity set it. Sent with every lobby settings event and on
+     * join. A type of its own, so an older client skips it; a client with
+     * none shows no Server bot slots row. */
+    CTRL_SERVER_BOT_SLOTS,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1672,6 +1680,13 @@ typedef struct ControlEvent {
             uint8_t  owner;  /* a player number, or BOT_HOST_CPU_OWNER_NONE */
             uint32_t milli;  /* 1..100000, or BOT_HOST_CPU_MILLI_UNKNOWN */
         } botHostCpuBot;
+
+        /* CTRL_SERVER_BOT_SLOTS — see the enum. */
+        struct {
+            uint8_t value;
+            uint8_t recommended;
+            uint8_t locked;
+        } serverBotSlots;
 
         /* CTRL_BOT_HOST_LAG — see the enum. */
         struct {

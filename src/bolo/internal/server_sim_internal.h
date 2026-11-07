@@ -528,7 +528,12 @@ struct ServerSim {
                                     * speed test, or -botcapacity): 0..16,
                                     * SERVER_HOST_BOT_CAPACITY_NONE for no
                                     * cap, _MEASURING while the test runs.
-                                    * Only the dedicated server sets it. */
+                                    * Only the dedicated server sets it.
+                                    * The recommended value for the
+                                    * lobby's Server bot slots. */
+    int      serverBotSlots;       /* the lobby's Server bot slots: 0..16,
+                                    * or -1 to follow hostBotCapacity */
+    bool     serverBotSlotsLocked; /* -botcapacity set it: no change */
     BYTE     maxSpectators;        /* 0 = spectating disabled */
     uint32_t specDelayTicks;       /* spectator view delay in ticks (50 ticks/s) */
     bool     worldPreLoaded;       /* TRUE while the world is fresh from

@@ -1375,6 +1375,18 @@ bool        clientSimGetAlliesInTrees(const ClientSim *cs);
  * back false until the first event arrives, and false plays every sound
  * centred, which is the classic behaviour. */
 bool        clientSimGetPositionalSound(const ClientSim *cs);
+/* The lobby's Server bot slots (CTRL_SERVER_BOT_SLOTS): value is the
+ * number in use and recommended the CPU test's, each 0..16, -1 for none
+ * (no cap) or -2 while the test runs; locked when -botcapacity set it.
+ * False, and *out untouched, until a server sends one (an older server
+ * never does). */
+typedef struct {
+    int  value;
+    int  recommended;
+    bool locked;
+} ClientServerBotSlots;
+bool        clientSimGetServerBotSlots(const ClientSim *cs,
+                                       ClientServerBotSlots *out);
 /* The server's host bot capacity from the lobby settings: how many bots it
  * runs in its own process at full strength, 0..16; -1 for no cap (also
  * before any settings arrive); -2 while its CPU speed test runs. */

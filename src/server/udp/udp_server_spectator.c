@@ -192,6 +192,7 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_GAME_PHASE_RUNNING:
     case CTRL_GAME_PHASE_GAME_OVER:
     case CTRL_LOBBY_SETTINGS:
+    case CTRL_SERVER_BOT_SLOTS:
     case CTRL_LOBBY_MAP_CHANGE:
     case CTRL_LOBBY_SLOT:
     case CTRL_LOBBY_TEAM_META:

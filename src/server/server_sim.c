@@ -345,6 +345,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->modsOff        = FALSE;
     sim->maxPlayers          = MAX_TANKS;
     sim->hostBotCapacity     = SERVER_HOST_BOT_CAPACITY_NONE;
+    sim->serverBotSlots      = -1;
+    sim->serverBotSlotsLocked = false;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;
     sim->specRosterEnum      = NULL;

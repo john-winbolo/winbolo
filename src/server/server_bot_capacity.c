@@ -136,6 +136,10 @@ void serverBotCapacityInit(ServerSim *sim, int override) {
     }
     fprintf(stderr, "Bot capacity: override %d (-botcapacity)\n", override);
     sbcSetSim(sim, override);
+    /* The lobby's Server bot slots show it, and no player may change it. */
+    threadsWaitForMutex();
+    serverSimLockServerBotSlots(sim, override);
+    threadsReleaseMutex();
     s_state = SBC_DONE;
   }
 }

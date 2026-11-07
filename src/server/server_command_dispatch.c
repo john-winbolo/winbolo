@@ -453,12 +453,37 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_LOBBY_SETTING: {
+        const CmdLobbySetting *p = &cmd->u.lobbySetting;
+        /* The Server bot slots: in the lobby and while a game runs, by the
+           players who may change the other settings. It is about the
+           server, so it leaves the ready marks alone. A lower value during
+           a game moves only bots that may move (and none with
+           -bothost-nomove): the placement reads the new value. */
+        if (p->settingType == LST_SERVER_BOT_SLOTS &&
+            serverSimIsLobbyEnabled(sim)) {
+            if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+            if (serverSimIsServerBotSlotsLocked(sim)) {
+                fprintf(stderr, "Server bot slots: change refused "
+                        "(set by -botcapacity)\n");
+                return CMD_REJECT_LOCKED;
+            }
+            if (p->valueLen != 1 || p->value[0] > MAX_TANKS) {
+                return CMD_REJECT_INVALID;
+            }
+            if (serverSimGetServerBotSlots(sim) != (int)p->value[0]) {
+                fprintf(stderr, "Server bot slots: %d (player %d; the CPU "
+                        "test recommends %d)\n", (int)p->value[0],
+                        (int)senderSlot + 1,
+                        serverSimGetHostBotCapacityRecommended(sim));
+            }
+            (void)serverSimSetServerBotSlots(sim, (int)p->value[0]);
+            return CMD_OK;
+        }
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {
             return CMD_REJECT_BAD_STATE;
         }
         if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
-        const CmdLobbySetting *p = &cmd->u.lobbySetting;
         if (p->valueLen > 32) return CMD_REJECT_INVALID;
         uint32_t lockBit = serverSimGetSettingLockBit(p->settingType);
         if (lockBit == 0xFFFFFFFFu) {

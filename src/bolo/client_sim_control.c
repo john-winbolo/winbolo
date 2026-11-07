@@ -482,6 +482,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
 
+    case CTRL_SERVER_BOT_SLOTS:
+        cs->serverBotSlotsHave = true;
+        cs->serverBotSlots.value =
+            lobbyHostBotCapacityFromWire(evt->u.serverBotSlots.value);
+        cs->serverBotSlots.recommended =
+            lobbyHostBotCapacityFromWire(evt->u.serverBotSlots.recommended);
+        cs->serverBotSlots.locked = evt->u.serverBotSlots.locked != 0;
+        break;
+
     case CTRL_BOT_HOST_LAG:
         if (evt->u.botHostLag.idx < CLIENT_BOT_HOST_ROWS) {
             ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostLag.idx];

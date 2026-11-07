@@ -498,6 +498,17 @@
 #define STR_DLGLOBBY_BOTHOST_CPU_BOT_SELF   3896
 #define STR_DLGLOBBY_BOTHOST_CPU_BOT_SERVER 3897
 #define STR_DLGLOBBY_BOTHOST_CPU_BOT_OTHER  3898
+/* The lobby's Server bot slots row (Server Settings): its label, the
+ * warning on a value above the CPU test's recommendation ({number}), the
+ * mouse-over while -botcapacity locks it, the box with no cap, the box
+ * while the CPU test runs, and the mouse-over with the recommendation
+ * ({number}) */
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS 3899
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_OVER 3900
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_LOCKED 3901
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_NONE 3902
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_MEASURING 3903
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP 3904
 /* The lobby's one-game opt-out from running the server's bots on this
  * computer, next to the line above, and its mouse-over text */
 #define STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT     3652

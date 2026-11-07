@@ -29,6 +29,11 @@
 #include "server_sim_lifecycle.h"  /* serverSimSetBotBrainPath/AiType,
                                     * serverSimSetLobbyEnabled */
 #include "threads.h"
+#include "control_event.h"
+#include "transport_control_codec.h"
+#include "client_sim.h"
+#include "wire_limits.h"
+#include "transport_udp_server_internal.h"
 #include "test_harness.h"
 
 /* Lobby-enabled ServerSim with all four CMD_LOBBY_ADD_BOT
@@ -199,6 +204,147 @@ int run_lobby_add_bot_rejects_at_host_capacity(void) {
     UT_ASSERT_MSG(apply_add_bot(sim, 0) == CMD_REJECT_BOT_LIMIT,
                   "add-bot while the CPU speed test runs must return "
                   "CMD_REJECT_BOT_LIMIT");
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * The lobby's Server bot slots (LST_SERVER_BOT_SLOTS)
+ * ================================================================ */
+static CmdResult apply_server_bot_slots(ServerSim *sim, int senderSlot,
+                                        const uint8_t *value, uint8_t len) {
+    ClientCommand cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = CMD_LOBBY_SETTING;
+    cmd.cmdSeq = 1;
+    cmd.u.lobbySetting.settingType = LST_SERVER_BOT_SLOTS;
+    cmd.u.lobbySetting.valueLen = len;
+    memcpy(cmd.u.lobbySetting.value, value, len);
+    threadsWaitForMutex();
+    CmdResult r = serverSimApplyCommand(sim, senderSlot, &cmd);
+    threadsReleaseMutex();
+    return r;
+}
+
+int run_server_bot_slots_codec(void) {
+    ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(CTRL_SERVER_BOT_SLOTS);
+    ControlDecodeBodyFn dec = transportControlCodecBodyDecoder(CTRL_SERVER_BOT_SLOTS);
+    ControlEvent in, out;
+    uint8_t buf[8];
+    size_t len = 0;
+    ServerSim *sim;
+    ClientSim *cs;
+    ClientServerBotSlots sb;
+
+    UT_ASSERT(enc != NULL && dec != NULL);
+    UT_ASSERT(strcmp(controlEventTypeName(CTRL_SERVER_BOT_SLOTS),
+                     "CTRL_SERVER_BOT_SLOTS") == 0);
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_SERVER_BOT_SLOTS;
+    in.u.serverBotSlots.value = 6;
+    in.u.serverBotSlots.recommended = 4;
+    in.u.serverBotSlots.locked = 1;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(len == 3);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.type == CTRL_SERVER_BOT_SLOTS);
+    UT_ASSERT(out.u.serverBotSlots.value == 6);
+    UT_ASSERT(out.u.serverBotSlots.recommended == 4);
+    UT_ASSERT(out.u.serverBotSlots.locked == 1);
+    buf[3] = 0x55;   /* later bytes skipped */
+    UT_ASSERT(dec(buf, 4, &out));
+    UT_ASSERT(!dec(buf, 2, &out));
+    UT_ASSERT(enc(&in, NULL, buf, 2, &len) != ENCODE_OK);
+
+    /* The sim's event: the test still runs, no choice yet. */
+    sim = make_addbot_ready_sim();
+    UT_ASSERT(sim != NULL);
+    serverSimSetHostBotCapacity(sim, SERVER_HOST_BOT_CAPACITY_MEASURING);
+    serverSimFillServerBotSlotsEvent(sim, &in);
+    UT_ASSERT(in.u.serverBotSlots.value == LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING);
+    UT_ASSERT(in.u.serverBotSlots.recommended ==
+              LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING);
+
+    /* A client: nothing until the event; then the values. */
+    cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    UT_ASSERT(!clientSimGetServerBotSlots(cs, &sb));
+    serverSimSetHostBotCapacity(sim, 3);
+    UT_ASSERT(serverSimSetServerBotSlots(sim, 5));
+    serverSimFillServerBotSlotsEvent(sim, &in);
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT(clientSimGetServerBotSlots(cs, &sb));
+    UT_ASSERT(sb.value == 5 && sb.recommended == 3 && !sb.locked);
+    clientSimDestroy(cs);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The value in use is the lobby's choice: above the recommended value is
+ * taken, past 16 is refused, and the server's placement slots follow at
+ * once. */
+int run_server_bot_slots_setting(void) {
+    ServerSim *sim = make_addbot_ready_sim();
+    uint8_t v;
+    UT_ASSERT(sim != NULL);
+    serverSimSetHostBotCapacity(sim, 3);
+    UT_ASSERT(serverSimGetHostBotCapacity(sim) == 3);
+    UT_ASSERT(serverSimGetServerBotSlots(sim) == -1);
+    UT_ASSERT(serverBotHostServerSlots(sim) == 3);
+
+    v = 5;   /* above the recommended 3 */
+    UT_ASSERT(apply_server_bot_slots(sim, 0, &v, 1) == CMD_OK);
+    UT_ASSERT(serverSimGetHostBotCapacity(sim) == 5);
+    UT_ASSERT(serverSimGetHostBotCapacityRecommended(sim) == 3);
+    UT_ASSERT_MSG(serverBotHostServerSlots(sim) == 5, "server slots %d",
+                  serverBotHostServerSlots(sim));
+
+    v = 17;
+    UT_ASSERT(apply_server_bot_slots(sim, 0, &v, 1) == CMD_REJECT_INVALID);
+    UT_ASSERT(serverSimGetHostBotCapacity(sim) == 5);
+    v = 200;
+    UT_ASSERT(apply_server_bot_slots(sim, 0, &v, 1) == CMD_REJECT_INVALID);
+    UT_ASSERT(!serverSimSetServerBotSlots(sim, 17));
+    UT_ASSERT(!serverSimSetServerBotSlots(sim, -1));
+    {
+        uint8_t two[2] = { 4, 0 };
+        UT_ASSERT(apply_server_bot_slots(sim, 0, two, 2) == CMD_REJECT_INVALID);
+    }
+    /* Not one who may change the settings. */
+    v = 1;   /* player 6: not the host, not an admin */
+    UT_ASSERT(apply_server_bot_slots(sim, 5, &v, 1) == CMD_REJECT_NOT_HOST);
+    UT_ASSERT(serverSimGetHostBotCapacity(sim) == 5);
+
+    /* Lower, and 0, take at once; the Add Bot limit is the value too. */
+    v = 2;
+    UT_ASSERT(apply_server_bot_slots(sim, 0, &v, 1) == CMD_OK);
+    UT_ASSERT(serverBotHostServerSlots(sim) == 2);
+    seed_lobby_bots(sim, 2, 2);
+    UT_ASSERT(apply_add_bot(sim, 0) == CMD_REJECT_BOT_LIMIT);
+    v = 0;
+    UT_ASSERT(apply_server_bot_slots(sim, 0, &v, 1) == CMD_OK);
+    UT_ASSERT(serverSimGetHostBotCapacity(sim) == 0);
+    UT_ASSERT(serverBotHostServerSlots(sim) == 0);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* -botcapacity N locks it: every change refused, the value stays N. */
+int run_server_bot_slots_locked(void) {
+    ServerSim *sim = make_addbot_ready_sim();
+    uint8_t v = 4;
+    ControlEvent evt;
+    UT_ASSERT(sim != NULL);
+    serverSimSetHostBotCapacity(sim, 2);
+    serverSimLockServerBotSlots(sim, 2);
+    UT_ASSERT(serverSimIsServerBotSlotsLocked(sim));
+    UT_ASSERT(apply_server_bot_slots(sim, 0, &v, 1) == CMD_REJECT_LOCKED);
+    UT_ASSERT(serverSimGetHostBotCapacity(sim) == 2);
+    UT_ASSERT(!serverSimSetServerBotSlots(sim, 1));
+    UT_ASSERT(serverSimGetServerBotSlots(sim) == 2);
+    serverSimFillServerBotSlotsEvent(sim, &evt);
+    UT_ASSERT(evt.u.serverBotSlots.value == 2 && evt.u.serverBotSlots.locked);
     serverSimDestroy(sim);
     return 0;
 }
