@@ -1665,25 +1665,31 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *  pill      - The pill index whose shell it was, or
 *              DMG_NO_PILL
 *  tnk       - Pointer to the tank
-*  pillHit   - TRUE when the explosion is a shell's hit on
-*              the pillbox on its square, the shot that
-*              kills it included: the square rule applies
+*  squareHit - TRUE when the explosion is a shell's hit on
+*              the solid thing on its square (a pillbox or
+*              a wall), the hit that kills the pill or
+*              turns the wall to rubble included: the square
+*              rule applies
 *********************************************************/
 /* Whether an explosion at (wx, wy) catches a man at (lgmWorldX, lgmWorldY):
    within half a square of it on open ground, or on the very square when the
-   explosion is on a wall, a live pillbox or a base, or is a shell's hit on a
-   pillbox (pillHit). The one test every builder death is decided by.
+   explosion is on a wall, a live pillbox or a base, or is a shell's hit on
+   the pillbox or the wall on its square (squareHit). The one test every
+   builder death is decided by.
 
-   pillHit: the shell hit the pill on this square. That is a hit on the
-   square whatever armour it left the pill, so the shot that kills a pill
-   (its armour is already 0 here) kills a builder anywhere on the square and
-   nobody off it, as any other hit on a live pill does.
+   squareHit: the shell hit the pill or the wall on this square. That is a
+   hit on the square whatever the hit left there, so the shot that kills a
+   pill (its armour is already 0 here) and the fifth shot on a wall (the
+   square is already rubble here) kill a builder anywhere on the square and
+   nobody off it, as the hits before them do. Mac Bolo does the same: a
+   shell's hit on a square explodes at that square (packet.go map_effect,
+   qhit_pill), and the explosion kills the man only on that square.
 
    A dead pill's square that was not hit is open ground: shells fly over a
    dead pill, so a blast near the edge of its square (a shell that ran out
    there or hit a tank there, a tank's or a mine's explosion) must reach a
    builder just across that edge, as it would on any open square. */
-static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, bool pillHit) {
+static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, bool squareHit) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
@@ -1708,7 +1714,7 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, (WORLD) sim->rules.pill_range, &distance);
   pos = mapGetPos(mp, mx, my);
   solid = FALSE;
-  if (pillHit == TRUE || pos == BUILDING || pos == HALFBUILDING || pillsIsPillHit(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
+  if (squareHit == TRUE || pos == BUILDING || pos == HALFBUILDING || pillsIsPillHit(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
     solid = TRUE;
   }
   if (solid == FALSE && distance <= MAP_SQUARE_MIDDLE) {
@@ -1719,13 +1725,13 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   return dead;
 }
 
-void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool pillHit) {
+void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit) {
   bool isServer = sim->isServer;
   bool dead;                        /* Are we dead */
 
 
   if (isServer == TRUE && (*lgman)->isDead == FALSE && (*lgman)->inTank == FALSE) {
-    dead = lgmBlastCatches(sim, lgmWorldX, lgmWorldY, wx, wy, pillHit);
+    dead = lgmBlastCatches(sim, lgmWorldX, lgmWorldY, wx, wy, squareHit);
 
     if (dead == TRUE) {
       /* The engine's own test says the blast caught him; the host has the
@@ -1971,13 +1977,13 @@ static bool lgmInTankCanBeKilled(GameSim *sim, lgm *lgman, tank *tnk);
 *  pill      - The pill index whose shell it was, or
 *              DMG_NO_PILL
 *  tnk       - Pointer to the tank
-*  pillHit   - As lgmDeathCheckAtPosition
+*  squareHit - As lgmDeathCheckAtPosition
 *********************************************************/
-void lgmDeathCheckSeenOut(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool pillHit) {
+void lgmDeathCheckSeenOut(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit) {
   if (*lgman == NULL) return;
   if ((*lgman)->isDead == TRUE || (*lgman)->inTank == FALSE) {
     lgmDeathCheckAtPosition(sim, lgman, lgmWorldX, lgmWorldY, wx, wy, owner,
-                            attacker, cause, pill, tnk, pillHit);
+                            attacker, cause, pill, tnk, squareHit);
     return;
   }
 
@@ -1985,7 +1991,7 @@ void lgmDeathCheckSeenOut(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWo
   if (lgmInTankCanBeKilled(sim, lgman, tnk) == FALSE) {
     return;
   }
-  if (lgmBlastCatches(sim, lgmWorldX, lgmWorldY, wx, wy, pillHit) == FALSE) {
+  if (lgmBlastCatches(sim, lgmWorldX, lgmWorldY, wx, wy, squareHit) == FALSE) {
     return;
   }
   /* The host has the last word, as it has in lgmDeathCheckAtPosition. Asked

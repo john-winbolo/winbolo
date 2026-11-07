@@ -346,14 +346,16 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *             builder test uses, and only that. The same as
 *             xValue. Untouched when no collision occurs.
 *  outSeenY - Y, as outSeenX
-*  outPillHit - NULL-tolerant out-param; TRUE when the shell
+*  outSquareHit - NULL-tolerant out-param; TRUE when the shell
 *             hit a pillbox (a live one, the shot that kills
-*             it included), FALSE for any other hit and for no
-*             hit. The builder test uses it: a hit on a
-*             pillbox is a hit on its square, whatever armour
-*             the hit has left it.
+*             it included) or a wall (a building or a half
+*             building, the shot that turns it to rubble
+*             included), FALSE for any other hit and for no
+*             hit. The builder test uses it: such a hit is a
+*             hit on its square, whatever the hit has left
+*             there.
 *********************************************************/
-bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY, bool *outPillHit);
+bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY, bool *outSquareHit);
 
 /*********************************************************
 *NAME:          shellsCheckRoad
