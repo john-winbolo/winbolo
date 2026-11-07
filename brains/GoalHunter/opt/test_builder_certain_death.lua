@@ -317,6 +317,31 @@ do
   check("shell ends on a wall he is not on -> nil", REAL(w, inf, 103, 100) == nil)
   TER[100 * 256 + 103] = nil
 
+  -- A dead pill on (102,100): a pill's shell with life 19 flies over it and
+  -- expires on tick 20 at x 26112, the west edge of that square. He is at
+  -- 25728 + 16*20 = 26048 then, on square 101, 64 away. With
+  -- C.BLAST_DEAD_PILL_OPEN the dead pill's square is open ground and the
+  -- blast kills him; without it the square is solid and he lives. A live
+  -- pill there stops the shell at the square's centre: he lives either way.
+  local function pill_on(health)
+    w.pill_at = { [100 * 256 + 102] = { { id = 1, pill = { health = health,
+                                                           in_tank = false } } } }
+  end
+  inf.objects = { shot(26752, WX, 192, 255, 19) }
+  pill_on(0)
+  C.BLAST_DEAD_PILL_OPEN = true
+  h = REAL(w, inf, 103, 100)
+  check("blast on a dead pill's edge, he is across it -> certain death",
+        h ~= nil and h.how == "expiry", h and h.how)
+  C.BLAST_DEAD_PILL_OPEN = false
+  check("  knob off: the dead pill's square is solid -> nil",
+        REAL(w, inf, 103, 100) == nil)
+  C.BLAST_DEAD_PILL_OPEN = true
+  pill_on(5)
+  check("  a live pill there stops the shell -> nil", REAL(w, inf, 103, 100) == nil)
+  C.BLAST_DEAD_PILL_OPEN = nil
+  w.pill_at = {}
+
   -- Our own builder back in the tank: a shell that lands on the tank square
   -- late (life 63 from far east, he is home by tick 2*48+20 = 116 > 63, so
   -- use a short errand: (101,100), 16 steps, home after tick 52).
