@@ -858,8 +858,9 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
   local blast_wx, blast_wy, man_wx, man_wy
   if open_blast then
     -- A dead pill's tile is open ground: the shell ends 128*sl along the
-    -- line to the pill centre, and he dies if he is within 128 wu of that
-    -- point then (he has not arrived yet, so the pill is still dead).
+    -- line to the pill centre, and he dies if he is in the lgm_blast_shape
+    -- rule's area round that point then (U.lgm_open_blast_catches; 0 is
+    -- within 128 wu). He has not arrived yet, so the pill is still dead.
     -- Not there = he is still on his way: hold.
     if D >= 1 then
       blast_wx = tank_wx - dx / D * 128 * sl
@@ -871,7 +872,7 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
                                            pill.cx, pill.cy, s_x,
                                            pill.mx, pill.my)
     local bdx, bdy = man_wx - blast_wx, man_wy - blast_wy
-    if bdx * bdx + bdy * bdy <= 128 * 128 then
+    if U.lgm_open_blast_catches(bdx, bdy) then
       verdict = "fire"
     else
       verdict = "early"

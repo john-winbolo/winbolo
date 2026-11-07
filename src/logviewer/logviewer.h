@@ -116,6 +116,9 @@ typedef struct {
      world units, for the hit areas (lv_hitbox.h). */
   int  tankHitRadius;
   int  pillRange;
+  /* lgm_blast_shape: the shape of the builder's open-ground area, 0 to 2
+     (LV_HITBOX_BUILDER_SHAPE_* in lv_hitbox.h). */
+  int  lgmBlastShape;
 } LvRules;
 
 /* Speed values. 1 is real time and 2 to 9 are faster, up to as fast as the

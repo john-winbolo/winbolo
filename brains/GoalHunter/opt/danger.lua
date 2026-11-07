@@ -714,16 +714,16 @@ end
 -- pill_hit: the blast is a shell's hit on the pill or the wall on its
 -- square. That is the square rule whatever the hit leaves there, the shot
 -- that kills the pill or turns the wall to rubble included (lgm.c
--- lgmBlastCatches, squareHit).
-local function blast_catches(world, lx, ly, ex, ey, kill2, pill_hit)
+-- lgmBlastCatches, squareHit). On open ground it is the lgm_blast_shape
+-- rule's area (U.lgm_open_blast_catches; 0 is the 128 WU circle).
+local function blast_catches(world, lx, ly, ex, ey, pill_hit)
   local emx = bit.rshift(math.floor(ex), 8)
   local emy = bit.rshift(math.floor(ey), 8)
   if pill_hit or blast_square_solid(world, emx, emy) then
     return bit.rshift(math.floor(lx), 8) == emx
        and bit.rshift(math.floor(ly), 8) == emy
   end
-  local dx, dy = ex - lx, ey - ly
-  return dx * dx + dy * dy <= kill2
+  return U.lgm_open_blast_catches(ex - lx, ey - ly)
 end
 
 -- Does the base on (mx, my) stop shell `ob` for sure? See the header.
@@ -820,8 +820,6 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
   if not any then return nil end
 
   local N = C.LGM_SHELL_PREDICT_TICKS or 63
-  local KILL = C.LGM_SHELL_KILL_RADIUS_WU or 128
-  local KILL2 = KILL * KILL
   local TANK_HIT2 = (C.TANK_HIT_RADIUS_WU or 112) ^ 2
   -- The walk starts where the engine puts him down (M.lgm_start_pos), in
   -- world units. A game built before cpf_lgm_walk_path_wu existed starts
@@ -868,7 +866,7 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
       local function test(t, ex, ey, how)
         for r = r_lo, r_hi do
           local lx, ly = man_at_cd(nw, dwell, t - r, home_x, home_y)
-          if lx and blast_catches(world, lx, ly, ex, ey, KILL2,
+          if lx and blast_catches(world, lx, ly, ex, ey,
                                   how == "pill" or how == "wall"
                                   or how == "terrain") then
             return { t = t, sx = ex, sy = ey, lx = lx, ly = ly, src = src,

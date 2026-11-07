@@ -56,6 +56,52 @@ int run_lv_hitbox_sums(void) {
     UT_ASSERT_MSG(lvHitboxBuilderReach(100) == 100, "a short pill range limits it");
     UT_ASSERT_MSG(lvHitboxBuilderReach(0) == 0, "pill range 0");
 
+    /* The lgm_blast_shape rule: 0 the circle above, 1 the Mac Bolo box,
+       2 a circle of 144. pill_range limits only 0. */
+    UT_ASSERT_MSG(lvHitboxBuilderReachForShape(0, 2048) == 128, "shape 0 reach");
+    UT_ASSERT_MSG(lvHitboxBuilderReachForShape(0, 100) == 100, "shape 0, short pill range");
+    UT_ASSERT_MSG(lvHitboxBuilderReachForShape(1, 100) == 128, "shape 1 reach");
+    UT_ASSERT_MSG(lvHitboxBuilderReachForShape(2, 100) == 144, "shape 2 reach");
+    {
+        /* The builder in the middle of his square; the same points as
+           test_lgm_blast_shape.c: across at 127/128/129 and 143/144/145,
+           and on the diagonal at 100 and 120. */
+        static const struct { double dx, dy; bool dies[3]; } rows[] = {
+            { 127.0,   0.0, { true,  true,  true  } },
+            { 128.0,   0.0, { true,  false, true  } },
+            { 129.0,   0.0, { false, false, true  } },
+            { 143.0,   0.0, { false, false, true  } },
+            { 144.0,   0.0, { false, false, true  } },
+            { 145.0,   0.0, { false, false, false } },
+            { 100.0, 100.0, { false, true,  true  } },
+            { 120.0, 120.0, { false, true,  false } },
+        };
+        int shape, i, q;
+        for (shape = 0; shape < 3; shape++) {
+            int reach = lvHitboxBuilderReachForShape(shape, 2048);
+            for (i = 0; i < (int)(sizeof(rows) / sizeof(rows[0])); i++) {
+                for (q = 0; q < 4; q++) {
+                    double dx = rows[i].dx * ((q & 1) ? -1.0 : 1.0);
+                    double dy = rows[i].dy * ((q & 2) ? -1.0 : 1.0);
+                    bool got = lvHitboxBuilderCaughtShape(128.0 + dx, 128.0 + dy,
+                                                          128.0, 128.0, 0, reach,
+                                                          shape);
+                    UT_ASSERT_MSG(got == rows[i].dies[shape],
+                                  "shape %d at (%g,%g): %s, wanted %s", shape,
+                                  dx, dy, got ? "caught" : "missed",
+                                  rows[i].dies[shape] ? "caught" : "missed");
+                }
+            }
+        }
+        /* A solid square still catches only on his own square. */
+        UT_ASSERT_MSG(!lvHitboxBuilderCaughtShape(256.0, 128.0, 200.0, 128.0,
+                                                  SQ(2, 1), 128, 1),
+                      "shape 1: a building next door catches nobody");
+        UT_ASSERT_MSG(lvHitboxBuilderCaughtShape(250.0, 250.0, 128.0, 128.0,
+                                                 SQ(1, 1), 128, 2),
+                      "shape 2: a building on his square catches him");
+    }
+
     /* Open ground all round: a circle of 128, the edge itself caught. */
     UT_ASSERT_MSG(lvHitboxBuilderCaught(128.0, 128.0, 128.0, 128.0, 0, 128), "on him");
     UT_ASSERT_MSG(lvHitboxBuilderCaught(256.0, 128.0, 128.0, 128.0, 0, 128), "128 away");

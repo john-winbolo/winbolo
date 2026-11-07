@@ -32,6 +32,10 @@
  *    his own square. The distance comes from utilIsItemInRange with
  *    the pill_range rule as its limit, so when pill_range is
  *    under 128 the circle is pill_range across, not 128.
+ *    The lgm_blast_shape rule changes the open-ground area: 0
+ *    is that circle, 1 the Mac Bolo box (under 128 from him on
+ *    each axis) and 2 a circle of radius 144. pill_range
+ *    limits only 0 (lgmBlastOpenGroundCatches, lgm.h).
  *
  *  Sizes are in world units: 256 to a map square, 16 to a
  *  pixel of the map's art.
@@ -52,6 +56,15 @@
 /* Half a square (MAP_SQUARE_MIDDLE): the builder's catch distance on
    open ground. */
 #define LV_HITBOX_BUILDER_REACH 128
+/* The lgm_blast_shape rule's values (LGM_BLAST_SHAPE_* in lgm.h). */
+#define LV_HITBOX_BUILDER_SHAPE_CIRCLE 0
+#define LV_HITBOX_BUILDER_SHAPE_BOX    1
+#define LV_HITBOX_BUILDER_SHAPE_AREA   2
+/* The box's half side and the radius of shape 2, in world units. */
+#define LV_HITBOX_BUILDER_BOX_HALF     128
+#define LV_HITBOX_BUILDER_AREA_REACH   144
+/* The furthest any shape reaches along an axis. */
+#define LV_HITBOX_BUILDER_REACH_MAX    144
 /* lgmGetMX / lgmGetPX (src/bolo/lgm.c) take 1 world unit off a walking
    builder's x and 2 off his y before they round his place down to an art
    pixel, which is the place a recording holds. */
@@ -224,6 +237,15 @@ static inline int lvHitboxBuilderReach(int pillRange) {
     return pillRange < LV_HITBOX_BUILDER_REACH ? pillRange : LV_HITBOX_BUILDER_REACH;
 }
 
+/* The same for each lgm_blast_shape value: the circle above for 0, the box's
+   half side for 1 and the radius 144 for 2. pill_range limits only 0, as in
+   lgmBlastOpenGroundCatches. */
+static inline int lvHitboxBuilderReachForShape(int shape, int pillRange) {
+    if (shape == LV_HITBOX_BUILDER_SHAPE_BOX) return LV_HITBOX_BUILDER_BOX_HALF;
+    if (shape == LV_HITBOX_BUILDER_SHAPE_AREA) return LV_HITBOX_BUILDER_AREA_REACH;
+    return lvHitboxBuilderReach(pillRange);
+}
+
 /* Whether a pillbox makes its square solid for the builder test: it is on
    the map, not in a tank, and alive (armour above 0), as pillsIsPillHit
    asks in lgmBlastCatches. A dead pillbox's square is open ground. armour is
@@ -257,10 +279,15 @@ static inline bool lvHitboxSquareSolid(bool wall, bool hitNow) {
    building, a live pillbox (lvHitboxPillSolid) or a base. reach is
    lvHitboxBuilderReach's.
 
-   An explosion off the 3 by 3 squares is further than 128 from the builder,
-   so it never catches him: its square is not looked at. */
-static inline bool lvHitboxBuilderCaught(double x, double y, double bx, double by,
-                                         unsigned solid, int reach) {
+   shape is the lgm_blast_shape rule: on open ground, a circle of radius
+   reach for 0 and 2, and for 1 (the Mac Bolo box) under reach from him on
+   each axis.
+
+   An explosion off the 3 by 3 squares is further than 144 from the builder
+   on an axis, so no shape catches him: its square is not looked at. */
+static inline bool lvHitboxBuilderCaughtShape(double x, double y, double bx,
+                                              double by, unsigned solid,
+                                              int reach, int shape) {
     double dx = x - bx;
     double dy = y - by;
     int col, row;
@@ -278,7 +305,18 @@ static inline bool lvHitboxBuilderCaught(double x, double y, double bx, double b
     if (isSolid) {
         return col == 1 && row == 1;
     }
+    if (shape == LV_HITBOX_BUILDER_SHAPE_BOX) {
+        return dx < (double)reach && -dx < (double)reach &&
+               dy < (double)reach && -dy < (double)reach;
+    }
     return (dx * dx + dy * dy) <= (double)reach * (double)reach;
+}
+
+/* The builder test for the classic shape, the half-square circle. */
+static inline bool lvHitboxBuilderCaught(double x, double y, double bx, double by,
+                                         unsigned solid, int reach) {
+    return lvHitboxBuilderCaughtShape(x, y, bx, by, solid, reach,
+                                      LV_HITBOX_BUILDER_SHAPE_CIRCLE);
 }
 
 #endif /* LV_HITBOX_H */
