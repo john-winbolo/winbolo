@@ -2083,6 +2083,86 @@ float brainPathfinderCostToEx(BrainPathfinder *pf,
  * The dynamic portion (danger, overlay, mine penalty, water drain,
  * resource minimums) still gets computed in the inner loop.
  */
+/* One entry of the grid: the static cost of stepping from (cx, cy) on layer
+ * boat_layer in direction d. Mirrors the static portion of compute_cost
+ * exactly. Reads only the map types of squares NEXT TO (cx, cy): the
+ * destination (cx+dx, cy+dy) and, for a diagonal, the two cardinal corners
+ * (cx+dx, cy) and (cx, cy+dy). It never reads the type of (cx, cy) itself.
+ * brainPathfinderSyncEdgeCosts depends on this: a changed square can only
+ * change the entries out of its 8 neighbours. */
+static inline float edge_cost_entry(const BrainPathfinder *pf,
+                                    int cx, int cy, int boat_layer, int d) {
+  const BYTE *map = pf->map;
+  int nx = cx + DX8[d];
+  int ny = cy + DY8[d];
+
+  if (nx < 0 || nx > 255 || ny < 0 || ny > 255) {
+    return COST_INF;
+  }
+
+  /* Diagonal corner blocking — must match brainPathfinderPathTo's
+   * rule (see the comment there): on foot a full-tile tank cannot
+   * squeeze diagonally past ANY solid corner tile, so block the
+   * diagonal if EITHER cardinal corner is impassable (speed 0 =
+   * building/halfbuild). This copy kept the old BOTH-corners rule
+   * long after the A* was fixed, so the nav Dijkstra planned
+   * diagonals the tank physically cannot drive (it ground a
+   * halfbuilding corner at full throttle for ~110 ticks —
+   * 20260713_233008_1 t=11467). Boats keep the both-zero rule
+   * plus the land-clip checks below. */
+  if (DX8[d] != 0 && DY8[d] != 0) {
+    int adj_x_type = map[(cy * MAP_SIZE) + (cx + DX8[d])] & 0x0F;
+    int adj_y_type = map[((cy + DY8[d]) * MAP_SIZE) + cx] & 0x0F;
+    float speed_x = pf->terrain_speed_table[adj_x_type];
+    float speed_y = pf->terrain_speed_table[adj_y_type];
+    if (!boat_layer) {
+      if (speed_x == 0.0f || speed_y == 0.0f) return COST_INF;
+    } else {
+      if (speed_x == 0.0f && speed_y == 0.0f) return COST_INF;
+    }
+    if (!boat_layer && (adj_x_type == TT_DEEPSEA || adj_y_type == TT_DEEPSEA)) {
+      return COST_INF;
+    }
+    if (boat_layer && (!is_water_tile(adj_x_type) && adj_x_type != TT_BOAT)) {
+      return COST_INF;
+    }
+    if (boat_layer && (!is_water_tile(adj_y_type) && adj_y_type != TT_BOAT)) {
+      return COST_INF;
+    }
+  }
+
+  /* Determine the boat state ON the destination tile (post-step) */
+  int n_type = map[ny * MAP_SIZE + nx] & 0x0F;
+  int next_boat = next_boat_state(boat_layer, n_type);
+  float base = next_boat ? pf->terrain_cost_boat_table[n_type]
+                         : pf->terrain_cost_table[n_type];
+  /* Walls (BUILDING / HALFBUILD): traversable only on foot via
+   * wall_shoot. Put the wall_shoot cost into the edge cost when
+   * we'd be on foot, so the Dijkstra plans through them. The
+   * shell-budget check (`shells_left >= wall_shoot_shells`) is
+   * skipped here — Dijkstra is for cost ranking, not path
+   * execution; the steering layer enforces the shell reserve
+   * when actually committing to the move. */
+  if (base >= WALL_THRESHOLD) {
+    if (!next_boat && (n_type == TT_BUILDING || n_type == TT_HALFBUILD)
+        && pf->wall_shoot_cost < WALL_NO_SHOOT_COST) {
+      return pf->wall_shoot_cost;
+    }
+    return COST_INF;
+  }
+  return base;
+}
+
+/* Rebuild every entry out of square (cx, cy): both layers, all 8 directions. */
+static void edge_cost_rebuild_square(BrainPathfinder *pf, int cx, int cy) {
+  for (int boat_layer = 0; boat_layer < 2; boat_layer++) {
+    float *row = pf->edge_cost + (size_t)node_idx(cx, cy, boat_layer) * 8;
+    for (int d = 0; d < 8; d++) {
+      row[d] = edge_cost_entry(pf, cx, cy, boat_layer, d);
+    }
+  }
+}
+
 void brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf) {
   if (!pf || !pf->map) return;
 
@@ -2091,84 +2171,84 @@ void brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf) {
     if (!pf->edge_cost) return;
   }
 
-  /* For each (cx, cy, cur_boat) and each direction d, store the cost of
-   * stepping to the neighbor. Mirrors the static portion of compute_cost
-   * exactly. */
-  for (int boat_layer = 0; boat_layer < 2; boat_layer++) {
-    for (int cy = 0; cy < MAP_SIZE; cy++) {
-      for (int cx = 0; cx < MAP_SIZE; cx++) {
-        int ci = node_idx(cx, cy, boat_layer);
-        for (int d = 0; d < 8; d++) {
-          int nx = cx + DX8[d];
-          int ny = cy + DY8[d];
-          float ec;
+  for (int cy = 0; cy < MAP_SIZE; cy++) {
+    for (int cx = 0; cx < MAP_SIZE; cx++) {
+      edge_cost_rebuild_square(pf, cx, cy);
+    }
+  }
+  /* Keep the bytes the grid was built from, for brainPathfinderSyncEdgeCosts. */
+  memcpy(pf->edge_cost_src, pf->map, sizeof(pf->edge_cost_src));
+  pf->edge_cost_valid = 1;
+  pf->edge_cost_map = pf->map;
+  pf->cache_dirty = 1;
+}
 
-          if (nx < 0 || nx > 255 || ny < 0 || ny > 255) {
-            pf->edge_cost[ci * 8 + d] = COST_INF;
-            continue;
-          }
+/* Above this many changed squares in one sync, a full rebuild is cheaper
+ * than the per-square path. A changed square rebuilds 8 squares x 2 layers x
+ * 8 directions = 128 entries; a full rebuild is 65536 x 16 = 1,048,576. At
+ * 2048 squares the per-square path is at most 262,144 entries, a quarter of
+ * a full rebuild. Many squares change at once when the bot first sees a
+ * large area, or on a new map or round. */
+#define BRAINPF_EDGE_SYNC_FULL_AT 2048
 
-          /* Diagonal corner blocking — must match brainPathfinderPathTo's
-           * rule (see the comment there): on foot a full-tile tank cannot
-           * squeeze diagonally past ANY solid corner tile, so block the
-           * diagonal if EITHER cardinal corner is impassable (speed 0 =
-           * building/halfbuild). This copy kept the old BOTH-corners rule
-           * long after the A* was fixed, so the nav Dijkstra planned
-           * diagonals the tank physically cannot drive (it ground a
-           * halfbuilding corner at full throttle for ~110 ticks —
-           * 20260713_233008_1 t=11467). Boats keep the both-zero rule
-           * plus the land-clip checks below. */
-          if (DX8[d] != 0 && DY8[d] != 0) {
-            int adj_x_type = pf->map[(cy * MAP_SIZE) + (cx + DX8[d])] & 0x0F;
-            int adj_y_type = pf->map[((cy + DY8[d]) * MAP_SIZE) + cx] & 0x0F;
-            float speed_x = pf->terrain_speed_table[adj_x_type];
-            float speed_y = pf->terrain_speed_table[adj_y_type];
-            if (!boat_layer) {
-              if (speed_x == 0.0f || speed_y == 0.0f) { pf->edge_cost[ci * 8 + d] = COST_INF; continue; }
-            } else {
-              if (speed_x == 0.0f && speed_y == 0.0f) { pf->edge_cost[ci * 8 + d] = COST_INF; continue; }
-            }
-            if (!boat_layer && (adj_x_type == TT_DEEPSEA || adj_y_type == TT_DEEPSEA)) {
-              pf->edge_cost[ci * 8 + d] = COST_INF; continue;
-            }
-            if (boat_layer && (!is_water_tile(adj_x_type) && adj_x_type != TT_BOAT)) {
-              pf->edge_cost[ci * 8 + d] = COST_INF; continue;
-            }
-            if (boat_layer && (!is_water_tile(adj_y_type) && adj_y_type != TT_BOAT)) {
-              pf->edge_cost[ci * 8 + d] = COST_INF; continue;
-            }
-          }
+/* Why: the grid was built once (Brain.open) and marked stale only when the
+ * map POINTER changed. The brain's map is one buffer updated in place, so
+ * squares the bot had not seen at Brain.open stayed priced as "unknown"
+ * (cost 3, no walls, no corner blocks) for the whole game. In
+ * 20261103_165532_1 player 2 ticks 6555-6762 the route took the diagonal
+ * (120,131)->(121,130) between a half wall and a building, and the tank
+ * pushed against the walls for about 120 ticks.
+ *
+ * Cost: one 64 KB memcmp when nothing changed (a few microseconds). When it
+ * differs, a word-by-word scan finds the changed bytes; only a change of
+ * the low 4 bits (terrain type) rebuilds entries. A change of the high bits
+ * alone (the mine bit) only updates the copy. */
+int brainPathfinderSyncEdgeCosts(BrainPathfinder *pf) {
+  if (!pf || !pf->map) return 0;
+  if (!pf->edge_cost || !pf->edge_cost_valid || pf->edge_cost_map != pf->map) {
+    brainPathfinderRebuildEdgeCosts(pf);
+    return -1;
+  }
 
-          /* Determine the boat state ON the destination tile (post-step) */
-          int n_type = pf->map[ny * MAP_SIZE + nx] & 0x0F;
-          int next_boat = next_boat_state(boat_layer, n_type);
-          float base = next_boat ? pf->terrain_cost_boat_table[n_type]
-                                 : pf->terrain_cost_table[n_type];
-          /* Walls (BUILDING / HALFBUILD): traversable only on foot via
-           * wall_shoot. Bake the wall_shoot cost into the edge cost when
-           * we'd be on foot, so the Dijkstra plans through them. The
-           * shell-budget gate (`shells_left >= wall_shoot_shells`) is
-           * skipped here — Dijkstra is for cost ranking, not path
-           * execution; the steering layer enforces the shell reserve
-           * when actually committing to the move. */
-          if (base >= WALL_THRESHOLD) {
-            if (!next_boat && (n_type == TT_BUILDING || n_type == TT_HALFBUILD)
-                && pf->wall_shoot_cost < WALL_NO_SHOOT_COST) {
-              ec = pf->wall_shoot_cost;
-            } else {
-              ec = COST_INF;
-            }
-          } else {
-            ec = base;
-          }
-          pf->edge_cost[ci * 8 + d] = ec;
+  const BYTE *map = pf->map;
+  BYTE *src = pf->edge_cost_src;
+  if (memcmp(map, src, sizeof(pf->edge_cost_src)) == 0) return 0;
+
+  int changed = 0;
+  for (int w = 0; w < (int)sizeof(pf->edge_cost_src); w += 8) {
+    uint64_t a, b;
+    memcpy(&a, map + w, 8);
+    memcpy(&b, src + w, 8);
+    if (a == b) continue;
+    for (int k = 0; k < 8; k++) {
+      int i = w + k;
+      BYTE m = map[i];
+      BYTE o = src[i];
+      if (m == o) continue;
+      src[i] = m;
+      if (((m ^ o) & 0x0F) == 0) continue;   /* terrain type unchanged */
+      if (++changed > BRAINPF_EDGE_SYNC_FULL_AT) {
+        brainPathfinderRebuildEdgeCosts(pf);
+        return -1;
+      }
+      /* Rebuild the entries out of the 8 neighbours. The square's own
+       * entries do not read its own type (see edge_cost_entry). */
+      int sx = i % MAP_SIZE;
+      int sy = i / MAP_SIZE;
+      for (int oy = -1; oy <= 1; oy++) {
+        int cy = sy + oy;
+        if (cy < 0 || cy >= MAP_SIZE) continue;
+        for (int ox = -1; ox <= 1; ox++) {
+          int cx = sx + ox;
+          if ((ox == 0 && oy == 0) || cx < 0 || cx >= MAP_SIZE) continue;
+          edge_cost_rebuild_square(pf, cx, cy);
         }
       }
     }
   }
-  pf->edge_cost_valid = 1;
-  pf->edge_cost_map = pf->map;
-  pf->cache_dirty = 1;
+  /* The slate inputs changed; match what a full rebuild does. */
+  if (changed > 0) pf->cache_dirty = 1;
+  return changed;
 }
 
 /* â”€â”€ Incremental Dijkstra â”€â”€
@@ -2245,10 +2325,10 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
 #endif
   DijkstraSlate *s = &pf->dij_slates[slate];
 
-  /* Lazy edge-cost rebuild */
-  if (!pf->edge_cost_valid || pf->edge_cost_map != pf->map) {
-    brainPathfinderRebuildEdgeCosts(pf);
-  }
+  /* Bring the edge-cost grid up to date: a full rebuild when it is not
+   * valid, otherwise only the entries next to squares whose terrain type
+   * changed since the last sync. */
+  brainPathfinderSyncEdgeCosts(pf);
 
   /* Lazy-allocate this slate's working arrays.
    * Per-slate: ~700 KB without exact, ~960 KB with. */
@@ -3845,11 +3925,16 @@ static const BYTE lgm_man_speed[16] = {
 };
 
 static BYTE lgmGetBrainManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my) {
+  uint8_t mark = pf->lgm_block[my * MAP_SIZE + mx];
   /* Enemy bases the brain stamped as impassable: the terrain type is "refbase"
    * (walkable) but the engine's mapGetManSpeed returns 0 there for a non-ally,
    * non-neutral base above capture armour. Mirror that so the LGM sim doesn't
    * march straight into an enemy base. */
-  if (pf->lgm_block[my * MAP_SIZE + mx]) return 0;
+  if (mark == BRAIN_PF_LGM_BLOCKED) return 0;
+  /* A dead pillbox: the engine's mapGetManSpeed gives its square the road
+   * speed whatever terrain is under it (man_dead_pill_terrain_speed 0, the
+   * classic table, as in Mac Bolo), water included. */
+  if (mark == BRAIN_PF_LGM_ROAD) return pf->man_speed[BRAIN_PF_TERRAIN_ROAD];
   uint8_t type = pf->map[my * MAP_SIZE + mx] & 0x0F;
   return pf->man_speed[type];
 }
@@ -3879,7 +3964,15 @@ void brainPathfinderClearLgmBlock(BrainPathfinder *pf) {
 
 void brainPathfinderSetLgmBlock(BrainPathfinder *pf, BYTE mx, BYTE my) {
   if (!pf) return;
-  pf->lgm_block[my * MAP_SIZE + mx] = 1;
+  pf->lgm_block[my * MAP_SIZE + mx] = BRAIN_PF_LGM_BLOCKED;
+}
+
+void brainPathfinderSetLgmRoad(BrainPathfinder *pf, BYTE mx, BYTE my) {
+  if (!pf) return;
+  /* A blocked mark wins: a square is never both, but if the brain stamps
+   * one twice the wall is the safer reading. */
+  if (pf->lgm_block[my * MAP_SIZE + mx] == BRAIN_PF_LGM_BLOCKED) return;
+  pf->lgm_block[my * MAP_SIZE + mx] = BRAIN_PF_LGM_ROAD;
 }
 
 /* The one LGM walk simulation. Everything below it is a wrapper.

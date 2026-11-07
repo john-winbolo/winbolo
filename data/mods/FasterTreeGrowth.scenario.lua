@@ -5,7 +5,7 @@
 -- square at random, once for each tank in the game, and scores it by what is
 -- around it: forest and grass count for it, road and buildings count against
 -- it. The best square found so far is held, and a wait of tree_grow_ticks
--- (3000) starts again each time a better one turns up. When the wait runs
+-- (1150) starts again each time a better one turns up. When the wait runs
 -- out with nothing better found, that square becomes forest and the search
 -- starts over. Until the search finds a square worth growing on, the wait is
 -- tree_grow_initial_ticks (30000) instead.
@@ -16,16 +16,16 @@
 -- a map with nothing to grow on waits the stock time for its first tree.
 --
 -- The wait counts down once a frame for every tank, fifty frames a second,
--- so the stock 3000 is a minute with one player and fifteen seconds with
--- four. That is the least time between two trees; a better square turning
+-- so the stock 1150 is 23 seconds with one player and under six seconds
+-- with four. That is the least time between two trees; a better square turning
 -- up late makes it longer.
 --
 -- This mod divides both waits by the multiplier the host picks in the lobby,
 -- rounded to the nearest tick:
 --
---   1x   3000 and 30000, the stock game unchanged
---   2x   1500 and 15000, the default
---   10x   300 and  3000
+--   1x   1150 and 30000, the stock game unchanged
+--   2x    575 and 15000, the default
+--   10x   115 and  3000
 --
 -- A shorter wait is also a shorter search, so the square that grows is a
 -- little less often the very best one on the map, and the speed-up is close

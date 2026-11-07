@@ -308,6 +308,7 @@ int run_round_stats_leaver_clears_mines(void);
 int run_mine_kill_publishes_event(void);
 int run_mine_kill_on_boat_publishes_event(void);
 int run_mine_kill_own_mine_names_self(void);
+int run_mine_kill_explosion_size(void);
 int run_mine_blast_range(void);
 
 int run_awards_basic_winners(void);
@@ -331,6 +332,7 @@ int run_round_stats_track_cap(void);
 int run_round_stats_derive_equivalence(void);
 int run_highlights_cluster_wipe(void);
 int run_highlights_wipe_team_bonus(void);
+int run_highlights_wipe_team_at_death(void);
 int run_highlights_objective_steal(void);
 int run_highlights_award_anchor(void);
 int run_highlights_selection(void);
@@ -339,6 +341,8 @@ int run_highlights_empty(void);
 int run_territory_shift_basic(void);
 int run_highlights_turning_point(void);
 int run_territory_shift_bounded(void);
+int run_round_stats_team_at(void);
+int run_territory_shift_follows_team(void);
 int run_territory_recent_damage(void);
 int run_highlights_front_collapse(void);
 int run_highlights_award_anchor_density(void);
@@ -465,6 +469,12 @@ int run_upload_begin_without_trailer_refused(void);
 int run_upload_filename_safe(void);
 int run_upload_filename_safe_script(void);
 int run_lobby_time_minutes_valid(void);
+int run_lobby_time_limit_reaches_round(void);
+int run_lobby_time_limit_removed_reaches_round(void);
+int run_lobby_time_limit_empty_reset(void);
+int run_lobby_hidden_mines_client_follows(void);
+int run_lobby_hidden_mines_in_place_start(void);
+int run_lobby_hidden_mines_empty_reset(void);
 int run_lobby_bot_name_rejects_reserved_prefix(void);
 int run_lobby_bot_name_rejects_disallowed_char(void);
 int run_lobby_bot_name_rejects_collision(void);
@@ -622,6 +632,13 @@ int run_bolo_rand_golden_sequence(void);
 int run_pf_dijkstra_no_solid_corner_cut(void);
 int run_pf_astar_no_solid_corner_cut(void);
 int run_pf_costto_no_solid_corner_cut(void);
+/* The Dijkstra edge cost grid follows squares that change on the brain's map
+ * after it was built (test_pf_edge_cost_sync.c). Regression for
+ * 20261103_165532_1 player 2 ticks 6555-6762: a diagonal between a half wall
+ * and a building stayed open because the grid still priced both as unknown. */
+int run_pf_edge_sync_blocks_new_corner(void);
+int run_pf_edge_sync_prices_new_wall(void);
+int run_pf_edge_sync_matches_full_rebuild(void);
 /* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
  * cost of decoy_getaway's blocker step on the decoy square. */
 int run_bench_decoy_step_first(void);
@@ -1279,11 +1296,11 @@ int run_starts_side_team_change_repicks_stale(void);
 int run_mod_lobby_starts_mac_bolo_keeps_opposite_sides(void);
 int run_mac_bolo_settings_defaults_play_old_rules(void);
 int run_mac_bolo_settings_each_part_off(void);
-int run_mac_bolo_settings_numbers(void);
 int run_mac_bolo_first_start_lobby_off_uses_mac_pick(void);
 int run_mac_bolo_spawn_starts_off_engine_picks(void);
 int run_mac_bolo_setting_changed_after_attach(void);
 int run_mac_bolo_setting_changed_between_rounds(void);
+int run_mac_bolo_spawn_pick_keeps_enemies_off(void);
 int run_choose_start_lobby_arg_hand_picked(void);
 int run_choose_start_lobby_arg_team_side(void);
 int run_choose_start_lobby_arg_nil_without_reservation(void);
@@ -1324,6 +1341,42 @@ int run_alliance_request_ranked_accept_refused(void);
 int run_alliance_request_refused_in_lobby(void);
 int run_alliance_request_cleared_at_round_start(void);
 int run_alliance_request_client_drops_departed_requester(void);
+
+/* Sides during a round (test_team_sides.c, #424). */
+int run_team_sides_accept_merges_groups(void);
+int run_team_sides_clear_moves_no_owner(void);
+int run_team_sides_pill_fires_at_ex_ally(void);
+int run_team_sides_base_refuels_ally_only(void);
+int run_team_sides_allies_share_base_win(void);
+int run_team_sides_client_takes_slot_in_game(void);
+int run_team_sides_fold_at_return_to_lobby(void);
+int run_team_sides_surrender_after_defection(void);
+int run_team_sides_ping_after_leave(void);
+int run_team_sides_track_identity_after_defection(void);
+int run_team_sides_midgame_joiner_team(void);
+int run_team_sides_set_team_keeps_player_alliance(void);
+int run_team_sides_accept_moves_whole_team(void);
+int run_team_sides_accept_from_no_team(void);
+int run_team_sides_accept_same_side_says_nothing(void);
+int run_team_sides_leave_takes_free_team(void);
+int run_team_sides_leave_with_no_free_team(void);
+int run_team_sides_free_team_rules(void);
+int run_team_sides_team_chat_follows_sides(void);
+int run_team_sides_panels_follow_team(void);
+int run_team_sides_infection_puts_leaver_back(void);
+int run_team_sides_rejoin_is_a_joiner(void);
+int run_team_sides_joiner_slot_before_join(void);
+int run_team_sides_lobby_joiner_keeps_rule(void);
+int run_team_sides_lobby_drops_empty_teams(void);
+int run_team_sides_soccer_puts_leaver_back(void);
+int run_team_sides_round_log_teams(void);
+int run_team_sides_held_seat_allied_in_round(void);
+int run_team_sides_free_team_keeps_setup(void);
+int run_team_sides_free_team_keeps_lobby_side(void);
+int run_team_sides_accept_rebuilds_table(void);
+int run_team_sides_leave_rebuilds_table(void);
+int run_team_sides_bot_added_in_round_is_allied(void);
+int run_team_sides_table_write_is_caught(void);
 
 /* Pillbox and base owners from the map file survive a round start
  * (test_round_start_owners.c, issue #422). */
@@ -1860,6 +1913,7 @@ int run_tank_knockback_armour_paths(void);
 int run_tank_knockback_timing_drive(void);
 int run_tank_knockback_replaces_mines(void);
 int run_tank_knockback_rules_respawn(void);
+int run_tank_mine_sweep_follows_heading(void);
 int run_tank_knockback_mac_off_ignores_bonus(void);
 
 /* The destroyed state on the wire (test_tank_status_wire.c): tankStatus
@@ -2062,6 +2116,8 @@ int run_pill_pos_current_snapshot_apply(void);
 int run_pill_pos_current_server_unchanged(void);
 int run_pill_pos_current_moved_state(void);
 int run_pill_pos_current_carry_cycle(void);
+/* A brain is not told about a pill at a square this client knows it has left. */
+int run_brain_pills_skip_moved_square(void);
 
 /* Pure viewport square calculator (test_viewport_calc.c):
  * viewportCalcSquarePure agrees with viewportCalcSquare on every map square,
@@ -2185,6 +2241,12 @@ int run_fog_style_setting(void);
  * FOG_EDGE_ALL_TERRAIN, 1 in this build. */
 int run_fog_road_edges(void);
 int run_fog_road_edge_masks(void);
+
+/* The full screen key (test_fullscreen_key.c): outside a game it toggles the
+ * app full screen flag, in a game the full screen map, and in a game whose
+ * server withholds the map it goes back to the app flag on the desktop and
+ * does nothing where the window does not own the flag. */
+int run_fullscreen_key_action(void);
 
 /* Line of sight (test_sight.c): the square the player stands on is seen even
  * when it is itself a building, a building across the line hides everything
@@ -2495,6 +2557,8 @@ int run_sim_rules_tank_collision_mac(void);
 int run_sim_rules_mac_halfway_heading(void);
 int run_sim_rules_tank_deep_sea_safe(void);
 int run_lgm_build_square_terrain_speed(void);
+/* shell_start_add in pillsTargetTankMove (test_pill_aim_start_add.c). */
+int run_pill_aim_lead_follows_shell_start_add(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);
@@ -2503,6 +2567,9 @@ int run_pill_shell_cap_loses_shot_and_reloads(void);
 int run_pill_shell_cap_out_of_range_clears_just_seen(void);
 int run_pill_shell_cap_counts_same_update_shots(void);
 int run_pill_shell_cap_ignores_tank_shells(void);
+/* pill_aim_iterations through pillsTargetTankMove (test_pill_aim_budget.c). */
+int run_pill_aim_budget_past_a_byte_ends(void);
+int run_pill_aim_budget_one_aims_at_tank(void);
 int run_sim_rules_tank_explosion_follows(void);
 int run_sim_rules_water_loss_follows(void);
 int run_sim_rules_pairs(void);
@@ -3066,6 +3133,16 @@ int run_tkexp_lgm_pairing(void);
 /* A shell that hits a tank explodes at its own place on its path, as the
  * server has it on the hit tick, rewound or not (test_tank_blast_at_tank.c). */
 int run_tank_blast_at_shell_place(void);
+/* How the early own shell blast matches the server's explosion and sound
+ * of the same shell (test_early_blast.c). */
+int run_early_blast_place(void);
+int run_early_blast_claim_explosion(void);
+int run_early_blast_server_end(void);
+int run_early_blast_sound(void);
+int run_early_blast_sound_type_place(void);
+int run_early_blast_tank_in_forest(void);
+int run_early_blast_boat_grass_silent(void);
+int run_early_blast_timeout(void);
 int run_tank_blast_kill_at_shell_place(void);
 int run_tank_blast_zero_rewind_unchanged(void);
 int run_tank_blast_hit_decision_unchanged(void);
@@ -3083,6 +3160,16 @@ int run_shell_blast_pill_hit_on_shooter_screen(void);
 int run_tank_hit_mines_rule_on_sets_off(void);
 int run_tank_hit_mines_rule_off_spares(void);
 int run_tank_hit_mines_rule_off_ground(void);
+/* man_dead_pill_terrain_speed: the square of a dead pillbox walks at road
+ * speed with the rule at 0 and at the terrain's speed with it at 1; a live
+ * pillbox and the tank are not changed (test_man_dead_pill_speed.c). */
+int run_man_dead_pill_speed_road(void);
+int run_man_dead_pill_speed_terrain_rule(void);
+int run_man_dead_pill_speed_follows_road_rule(void);
+int run_man_dead_pill_walk_ticks(void);
+int run_man_dead_pill_walk_across_water(void);
+int run_man_dead_pill_lifted_waits_for_tank(void);
+int run_man_dead_pill_brain_walk(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
@@ -3157,6 +3244,12 @@ int run_scenario_host_popup_unsafe_unreachable(void);
  * its signal level, and conceals a dropped packet. */
 int run_voice_core_roundtrip(void);
 
+/* Codec reset and fade ramp (test_voice_core.c): a reset encoder writes the
+ * same bytes as a new one and a reset decoder the same samples, and the fade
+ * lands exactly on its end gains, touching only the samples it is given. */
+int run_voice_core_reset_matches_fresh(void);
+int run_voice_core_fade_apply(void);
+
 /* Saved audio device name matching (test_voice_device.c): a name that is
  * present resolves to its index wherever it sits in the list, and every way
  * of being absent - not there, empty, NULL, an empty list, a prefix rather
@@ -3189,6 +3282,15 @@ int run_voice_jitter_ordering_and_plc(void);
  * honoured on a frame that failed to decode. */
 int run_voice_jitter_undecodable_run(void);
 
+/* Utterance edges in the jitter buffer (test_voice_jitter.c): the first frame
+ * after priming fades in, the frame before a held end-of-utterance marker and
+ * the last concealed frame before giving up fade out to zero, and an unprime
+ * resets the decoder so the next utterance decodes as on a new one. */
+int run_voice_jitter_fade_in_on_prime(void);
+int run_voice_jitter_fade_out_before_marker(void);
+int run_voice_jitter_fade_out_on_give_up(void);
+int run_voice_jitter_decoder_reset_on_unprime(void);
+
 /* Jitter buffer under adverse arrival (test_voice_jitter_loss.c): a generated
  * loss / reorder / burst-outage pattern is pushed a tick at a time, and the
  * per-speaker counters are used to check that concealment matches what was
@@ -3203,6 +3305,19 @@ int run_voice_jitter_under_loss(void);
  * while a steady one-frame-per-tick talker loses nothing and the separate
  * concurrent-talker cap never fires on them. */
 int run_voice_flood_cap_enforced(void);
+
+/* Voice across a lobby map change and a return to the lobby
+ * (test_voice_map_change.c): over the loopback transport, a talker and a
+ * listener already in the room keep every segment while the new map
+ * re-downloads, also when the re-sent accept is lost, also across a whole
+ * round and the return to the lobby after it; and a joiner hears the room
+ * before its own map has arrived. */
+int run_voice_map_change_talker_kept(void);
+int run_voice_map_change_during_redownload(void);
+int run_voice_map_change_listener_kept(void);
+int run_voice_map_change_accept_lost(void);
+int run_voice_joiner_hears_before_map(void);
+int run_voice_return_to_lobby_kept(void);
 
 /* Concurrent-talker selection (test_voice_talker_select.c): the per-recipient
  * cap keeps the most recently started talkers rather than the lowest-numbered
@@ -3379,6 +3494,8 @@ int run_tank_drop_pills_hostile_map(void);
 int run_tank_drop_pills_no_room(void);
 int run_lgm_drop_pill_spiral(void);
 int run_lgm_drop_pill_no_room(void);
+int run_util_spiral_north(void);
+int run_util_spiral_north_west(void);
 
 int run_scenario_lgm_dispatch(void);
 int run_scenario_lgm_recall(void);
@@ -3565,6 +3682,8 @@ int run_lobby_template_map_commit_seats(void);
 int run_survival_lobby_round(void);
 int run_survival_lobby_round_full(void);
 int run_survival_lobby_round_ds_order(void);
+int run_survival_lobby_round_late_joiner(void);
+int run_survival_lobby_round_leaver_back(void);
 int run_loopback_unfield_tank(void);
 int run_loopback_fine_tank_position(void);
 int run_loopback_shell_drawn_cull(void);
@@ -4304,15 +4423,17 @@ int run_scenario_details_reload_map_script(void);
 
 /* Who wrote a scenario script and when it last changed
  * (test_scenario_identity.c): the cleaner and the one updated form, both
- * manifest readers with their warnings, the blob, the scenario-list
- * trailer against the old wire and an older server, the V3 details reply
- * over the loopback transport, and every shipped script's pair. */
+ * manifest readers with their warnings, the blob, the identity in each
+ * scenario-list row, the details reply over the loopback transport, a
+ * details reply with bytes after its identity, and every shipped script's
+ * pair. */
 int run_scenario_identity_clean(void);
 int run_scenario_identity_lua(void);
 int run_scenario_identity_json(void);
 int run_scenario_identity_blob(void);
 int run_scenario_identity_list_wire(void);
 int run_scenario_identity_details_fetch(void);
+int run_scenario_identity_details_extra(void);
 int run_scenario_identity_shipped(void);
 
 /* A copy of one of the server's scripts (test_script_fetch.c): the request

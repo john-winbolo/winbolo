@@ -101,7 +101,7 @@ static void voiceStatsWrite(void) {
         fp = fopen("voicestats-server.csv", "w");
         if (fp != NULL) {
             fprintf(fp, "tick,slot,name,pingMs,accepted,dropVoiceOff,"
-                        "dropPerTickCap,dropNotInGame,dropUnpack,dropRepack,"
+                        "dropPerTickCap,dropUnpack,dropRepack,"
                         "forwarded,capped,sent,ringDropped,budgetSkipped\n");
         }
     }
@@ -116,13 +116,12 @@ static void voiceStatsWrite(void) {
         if (udpServer.clients[i].botSlot) continue;
         channelGetBestEffortStats(&udpServer.channelMux[i], CHANNEL_VOICE,
                                   &sent, &ringDropped, &budgetSkipped);
-        fprintf(fp, "%u,%d,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+        fprintf(fp, "%u,%d,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
                 udpServer.tickCount, i, udpServer.clients[i].playerName,
                 (unsigned)udpServer.clients[i].pingMs,
                 udpServer.voiceSlot[i].accepted,
                 udpServer.voiceSlot[i].dropVoiceOff,
                 udpServer.voiceSlot[i].dropPerTickCap,
-                udpServer.voiceSlot[i].dropNotInGame,
                 udpServer.voiceSlot[i].dropUnpack,
                 udpServer.voiceSlot[i].dropRepack,
                 udpServer.voiceSlot[i].forwarded,
@@ -255,13 +254,12 @@ void serverPumpVoice(ServerSim *sim) {
                 udpServer.voiceSlot[from].dropPerTickCap++;
                 continue;
             }
-            /* Not in the game yet: a client still taking the map is not a
-             * talker, and the same rule keeps it off the receiving end. */
-            if (!udpServer.mapDownload[from].downloadComplete) {
-                udpServer.voiceSegsDropped++;
-                udpServer.voiceSlot[from].dropNotInGame++;
-                continue;
-            }
+            /* No test on the slot's map download here, in either pass.
+             * Voice needs nothing a map provides, only the connected slot
+             * and its channel layer, which exist from the join accept on.
+             * The download is re-armed by every lobby map change and every
+             * return to the lobby, and tying voice to it cut everyone off
+             * for the length of each re-download. */
             if (!voiceSegmentUnpackUp(segBuf, (int)segLen, &seq, &flags,
                                       &opus, &opusLen)) {
                 udpServer.voiceSegsDropped++;
@@ -344,7 +342,6 @@ void serverPumpVoice(ServerSim *sim) {
 
         if (!udpServer.clients[to].connected) continue;
         if (udpServer.clients[to].botSlot) continue;
-        if (!udpServer.mapDownload[to].downloadComplete) continue;
 
         for (t = 0; t < talkerCount; t++) {
             int talker = talkers[t].slot;

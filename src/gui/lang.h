@@ -2629,8 +2629,7 @@
  * states them: the line under the file name in the details dialog and the
  * tooltip on a chooser row's name. {string1} is the author, already cleaned
  * of control characters, and {string2} the time as "2026-10-03 20:47 UTC";
- * either is UNKNOWN where the manifest does not state it. A row from a
- * server too old to send the two shows neither line. */
+ * either is UNKNOWN where the manifest does not state it. */
 #define STR_DLGLOBBY_SCENARIO_BY_UPDATED    2771
 #define STR_DLGLOBBY_SCENARIO_UNKNOWN       2772
 /* The note under the round column's heading, which says what the order of
@@ -3113,7 +3112,8 @@
  * shell push pair came after all of those and took the next free numbers,
  * at the end of the file, and tank_deep_sea_safe took the next free one
  * after those. tank_hit_sets_off_mines took the next free one at the end of
- * the file after that. The
+ * the file after that, and man_dead_pill_terrain_speed took the next free one
+ * at the end of the file after that. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3273,6 +3273,7 @@
 #define STR_RULE_DESC_tank_collision_mac         2712
 #define STR_RULE_DESC_tank_deep_sea_safe         2760
 #define STR_RULE_DESC_tank_hit_sets_off_mines    3042
+#define STR_RULE_DESC_man_dead_pill_terrain_speed 3428
 
 /* Rule range wording */
 

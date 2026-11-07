@@ -210,6 +210,15 @@ static bool wasCaptureWanted = false;
  * has already gone by the time transmission stops. */
 static bool wasSending = false;
 
+/* Frames still to be sent after the push-to-talk key was let go.  Releasing
+ * the key stops transmission wherever the waveform happens to be, so the
+ * listener would hear it cut off on a step; instead the next
+ * VOICE_RELEASE_FADE_FRAMES captured frames still go out, faded down to
+ * silence, and the end-of-utterance marker follows them.  Zero when no
+ * release is being played out. */
+#define VOICE_RELEASE_FADE_FRAMES 2
+static int releaseFramesLeft = 0;
+
 /* Ticks left before the recording device is asked for again after an open
  * that failed.  Only counts while the microphone is wanted but not running. */
 static int captureRetryTicks = 0;
@@ -650,6 +659,7 @@ void voiceReset(void) {
     serverVoiceIsOff = false;
     wasCaptureWanted = false;
     wasSending = false;
+    releaseFramesLeft = 0;
     captureRetryTicks = 0;
 
     /* The connection was one of the reasons the microphone was open, and it
@@ -2221,6 +2231,72 @@ static void micTestPlayTick(void) {
 }
 
 /*********************************************************
+*NAME:          stopIsPushToTalkRelease
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns whether the only thing keeping voiceIsTransmitting
+*  false is the push-to-talk key being up.  That is the one
+*  stop whose next frames may still go out to fade the
+*  utterance down: every other reason transmission ends - a
+*  self-mute, voice switched off, the mode changed, the
+*  server not carrying voice, the connection gone - says
+*  nothing more may go on the wire.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+static bool stopIsPushToTalkRelease(void) {
+    return isInitialised && voiceEnabled && connectionCarriesVoice &&
+           !selfMuteRequested && voiceMode == VOICE_MODE_PTT &&
+           !pushToTalkHeld;
+}
+
+/*********************************************************
+*NAME:          sendEndOfUtterance
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Tells the listeners the utterance has ended.  Without it
+*  they have nothing to separate a pause from a talker who
+*  has finished, and each utterance ends in
+*  VOICE_JITTER_MAX_PLC concealed frames before the buffer
+*  gives up.
+*
+*  The marker carries silence rather than a captured frame
+*  because transmission also stops when the player mutes
+*  themselves, and sending what was just captured would put
+*  20 ms of their audio on the wire after they muted.
+*
+*  It is a hint, not a guarantee.  Lost, evicted, or never
+*  sent at all - the connection went away, or capture
+*  stopped and the capture loop is not reached - and the
+*  receiver still tears itself down after its run of
+*  concealed frames, exactly as it did before.
+*
+*ARGUMENTS:
+*  cs - the connected client, or NULL
+*********************************************************/
+static void sendEndOfUtterance(struct ClientSim *cs) {
+    int16_t silence[VOICE_FRAME_SAMPLES];
+    uint8_t marker[VOICE_MAX_PACKET];
+    int markerLen;
+
+    memset(silence, 0, sizeof(silence));
+    markerLen = voiceEncoderEncode(encoder, silence, marker,
+                                   (int)sizeof(marker));
+    /* Silence encodes far under the segment limit, so a length past it
+     * means something is wrong with the encoder and the marker is not
+     * worth sending. */
+    if (markerLen > 0 && markerLen <= CLIENT_VOICE_MAX_FRAME_BYTES) {
+        clientSimNetSendVoice(cs, marker, markerLen,
+                              VOICE_FLAG_END_OF_UTTERANCE);
+    }
+}
+
+/*********************************************************
 *NAME:          voiceTick
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -2240,6 +2316,8 @@ void voiceTick(struct ClientSim *cs) {
     int16_t pcm[VOICE_FRAME_SAMPLES];
     uint8_t packet[VOICE_MAX_PACKET];
     bool sending;
+    bool transmit;
+    bool endAfterFrame;
     bool wanted;
     int frame;
     int i;
@@ -2343,6 +2421,16 @@ void voiceTick(struct ClientSim *cs) {
      * device is paused, so there is no backlog to drain here. */
     if (!wanted) {
         settingsWantsMic = false;
+        /* The microphone has stopped, so an utterance still open - or a
+         * release still fading out - has no more frames coming.  The marker
+         * goes now rather than being left owed: left set, wasSending would
+         * read as a fresh release the next time capture starts, and send two
+         * frames of whatever the microphone heard then. */
+        if (wasSending || releaseFramesLeft > 0) {
+            wasSending = false;
+            releaseFramesLeft = 0;
+            sendEndOfUtterance(cs);
+        }
         return;
     }
 
@@ -2448,42 +2536,54 @@ void voiceTick(struct ClientSim *cs) {
         if (gateOpen) VOICE_STAT_INC(statsMicOpen);
         if (sending) VOICE_STAT_INC(statsSending);
 
-        /* Transmission has just stopped, so tell the listeners the utterance
-         * ended.  Without it they have nothing to separate a pause from a
-         * talker who has finished, and each utterance ends in
-         * VOICE_JITTER_MAX_PLC concealed frames before the buffer gives up.
-         *
-         * The marker carries silence rather than the frame in hand because
-         * transmission also stops when the player mutes themselves, and
-         * sending what was just captured would put 20 ms of their audio on
-         * the wire after they muted.
-         *
-         * It is a hint, not a guarantee.  Lost, evicted, or never sent at
-         * all - the connection went away, or capture stopped and this loop
-         * is not reached - and the receiver still tears itself down after
-         * its run of concealed frames, exactly as it did before. */
-        if (!sending && wasSending) {
-            int16_t silence[VOICE_FRAME_SAMPLES];
-            uint8_t marker[VOICE_MAX_PACKET];
-            int markerLen;
-
-            memset(silence, 0, sizeof(silence));
-            markerLen = voiceEncoderEncode(encoder, silence, marker,
-                                           (int)sizeof(marker));
-            /* Silence encodes far under the segment limit, so a length past
-             * it means something is wrong with the encoder and the marker is
-             * not worth sending. */
-            if (markerLen > 0 && markerLen <= CLIENT_VOICE_MAX_FRAME_BYTES) {
-                clientSimNetSendVoice(cs, marker, markerLen,
-                                      VOICE_FLAG_END_OF_UTTERANCE);
+        /* transmit is whether this frame goes on the wire, which is sending
+         * plus the faded frames after a push-to-talk release. */
+        transmit = sending;
+        endAfterFrame = false;
+        if (sending) {
+            /* The start of an utterance.  The listener's decoder was reset
+             * when its buffer ended the last one, so the encoder starts from
+             * nothing too, rather than coding the first syllable against
+             * whatever it last heard.  A key pressed again while a release
+             * is still fading out is the same utterance carrying on - the
+             * listener has had no marker and has not reset - so the encoder
+             * is left alone then. */
+            if (!wasSending && releaseFramesLeft == 0) {
+                voiceEncoderReset(encoder);
             }
+            releaseFramesLeft = 0;
+        } else if ((wasSending || releaseFramesLeft > 0) &&
+                   stopIsPushToTalkRelease()) {
+            /* The key was let go, or was let go a frame ago and nothing has
+             * changed since.  This frame still goes out, faded; the marker
+             * follows the last of them. */
+            if (wasSending) {
+                releaseFramesLeft = VOICE_RELEASE_FADE_FRAMES;
+            }
+            if (releaseFramesLeft == VOICE_RELEASE_FADE_FRAMES) {
+                voiceFadeApply(pcm, VOICE_FRAME_SAMPLES, 1.0f, 0.5f);
+            } else {
+                voiceFadeApply(pcm, VOICE_FRAME_SAMPLES, 0.5f, 0.0f);
+            }
+            releaseFramesLeft--;
+            transmit = true;
+            endAfterFrame = (releaseFramesLeft == 0);
+        } else if (wasSending || releaseFramesLeft > 0) {
+            /* Transmission stopped for a reason other than the key - a mute,
+             * the mode or the server changing, open mic's hangover running
+             * out - or one of those cut a release short.  Nothing captured
+             * from here on may go on the wire, so the marker goes at once.
+             * Open mic needs no fade of its own: the hangover has already
+             * carried it through 300 ms of the room's quiet. */
+            releaseFramesLeft = 0;
+            sendEndOfUtterance(cs);
         }
         wasSending = sending;
 
         /* Between words in push-to-talk, and with the microphone test not
          * recording, the frame is only worth its level reading - which is
          * already taken.  Encoding it would be work nobody consumes. */
-        if (!sending && micTestState != VOICE_MICTEST_RECORDING
+        if (!transmit && micTestState != VOICE_MICTEST_RECORDING
 #if defined(WB_VOICEDEBUG)
             /* A recording encodes every captured frame, sent or not, so the
              * round-trip file and the encoded length in frames.csv cover the
@@ -2506,6 +2606,11 @@ void voiceTick(struct ClientSim *cs) {
                                  false, selfMuteRequested,
                                  connectionCarriesVoice);
 #endif
+            /* The faded frame is lost, but the marker after it is still
+             * owed. */
+            if (endAfterFrame) {
+                sendEndOfUtterance(cs);
+            }
             continue;
         }
 
@@ -2513,7 +2618,7 @@ void voiceTick(struct ClientSim *cs) {
         voiceDebugRoundtrip(packet, encodedLen);
 #endif
 
-        if (sending) {
+        if (transmit) {
             if (encodedLen > CLIENT_VOICE_MAX_FRAME_BYTES) {
                 /* Too big for one segment.  Sending a piece of it would
                  * decode to noise, so drop the frame. */
@@ -2530,6 +2635,11 @@ void voiceTick(struct ClientSim *cs) {
                 clientSimNetSendVoice(cs, packet, encodedLen, 0);
                 VOICE_STAT_INC(statsQueued);
                 voiceStatsRecordSent(packet, encodedLen);
+            }
+            /* The release has faded all the way out, so the utterance ends
+             * here, right behind its last frame. */
+            if (endAfterFrame) {
+                sendEndOfUtterance(cs);
             }
         }
 
