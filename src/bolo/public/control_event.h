@@ -785,8 +785,9 @@ typedef struct LobbyScriptEntry {
     F(turn_refuel_base)
 
 /* The optional tail after the fixed base body, one byte per rule: first the
- * CTRL_SIM_RULES_EXT_U8_FIELDS rules, then CTRL_SIM_RULES_EXT2_U8_FIELDS.
- * The two lists are one ordered tail on the wire. The encoder sends the tail
+ * CTRL_SIM_RULES_EXT_U8_FIELDS rules, then CTRL_SIM_RULES_EXT2_U8_FIELDS,
+ * then CTRL_SIM_RULES_EXT3_U8_FIELDS. The three lists are one ordered tail
+ * on the wire. The encoder sends the tail
  * only as far as its last rule that is not at its classic value, and the
  * rules in front of that one ride along whatever they hold. So a classic
  * game sends only the base body, and a game that turns on only the first
@@ -805,6 +806,11 @@ typedef struct LobbyScriptEntry {
     F(tank_collision_mac) F(tank_deep_sea_safe)
 #define CTRL_SIM_RULES_EXT2_U8_FIELDS(F) F(building_life)
 #define CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC 4
+/* The third list, after building_life on the wire. Its classic value is
+ * zero again: lgm_blast_shape is classic at LGM_BLAST_SHAPE_HALF_SQUARE (0).
+ * A bot's brain reads it from the client's table, so it models the builder
+ * blast the game it is in plays with. */
+#define CTRL_SIM_RULES_EXT3_U8_FIELDS(F) F(lgm_blast_shape)
 
 /* Every carried rule, whatever its width, for the callers that do not care
  * how wide one goes — the check for whether a changed rule is one this
@@ -815,7 +821,8 @@ typedef struct LobbyScriptEntry {
     CTRL_SIM_RULES_U32_FIELDS(F)                                             \
     CTRL_SIM_RULES_F32_FIELDS(F)                                             \
     CTRL_SIM_RULES_EXT_U8_FIELDS(F)                                          \
-    CTRL_SIM_RULES_EXT2_U8_FIELDS(F)
+    CTRL_SIM_RULES_EXT2_U8_FIELDS(F)                                         \
+    CTRL_SIM_RULES_EXT3_U8_FIELDS(F)
 
 /* The member each list entry becomes. Integer rules keep the int32_t
  * SimRules declares them as whatever width they travel in, so reading one
@@ -840,6 +847,10 @@ typedef struct LobbyScriptEntry {
 #define CTRL_SIM_RULES_EXT2_BODY_LEN                                         \
     (CTRL_SIM_RULES_BODY_LEN +                                              \
      (size_t)(0 CTRL_SIM_RULES_EXT2_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)))
+/* The base and the whole tail, all three lists: the longest body there is. */
+#define CTRL_SIM_RULES_EXT3_BODY_LEN                                         \
+    (CTRL_SIM_RULES_EXT2_BODY_LEN +                                         \
+     (size_t)(0 CTRL_SIM_RULES_EXT3_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)))
 
 /* `quiet` on the five variants that carry one is the announce policy's
  * answer, stamped by the server where it built the event: 0 to announce the
@@ -1363,6 +1374,7 @@ typedef struct ControlEvent {
             CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_FLT_MEMBER)
             CTRL_SIM_RULES_EXT_U8_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
             CTRL_SIM_RULES_EXT2_U8_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
+            CTRL_SIM_RULES_EXT3_U8_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
         } simRules;
 
         /* CTRL_SCN_PANEL — one panel's display list, replacing whatever

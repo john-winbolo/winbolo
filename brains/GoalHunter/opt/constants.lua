@@ -5251,7 +5251,22 @@ M.LGM_SHELL_PREDICT_TICKS = 63
 -- kills the man when the explosion is within MAP_SQUARE_MIDDLE of him (on a
 -- tile that is not solid). global.h MAP_SQUARE_MIDDLE = 128. Not a tunable --
 -- changing it makes the gate disagree with the engine.
+-- This is the radius of the classic lgm_blast_shape (0, "Half-square
+-- circle"); U.lgm_open_blast_catches picks the shape the game plays with.
 M.LGM_SHELL_KILL_RADIUS_WU = 128
+-- The other two lgm_blast_shape values (src/bolo/internal/lgm.h): 1, the
+-- "Mac Bolo box", is |dx| < LGM_BLAST_MAC_BOX_HALF_WU and |dy| < that;
+-- 2, the "Mac Bolo equivalent area circle", has the radius
+-- LGM_BLAST_MAC_AREA_RADIUS_WU (256 / sqrt(pi), about 144.4, the box's
+-- area). Engine facts, not tunables.
+M.LGM_BLAST_MAC_BOX_HALF_WU = 128
+M.LGM_BLAST_MAC_AREA_RADIUS_WU = 144
+-- 2026-11-07: read the lgm_blast_shape rule from info.rules, so every
+-- builder blast model (the shell gate, the kill-builder aim and the blast
+-- check before a shot) uses the shape the game plays with. Under the
+-- classic rule (0) nothing changes. false (KEEL) always models the
+-- half-square circle.
+M.LGM_BLAST_SHAPE_LIVE = true
 -- The engine's shell-vs-tank hit zone, in world units: tank.h:102
 -- TANK_HIT_RADIUS = 112 ("one-tile mid-radius (128) - 16 wu"), tested as a
 -- CIRCLE by tankIsTankHitAtPosition. The shell gate uses it for one thing --
@@ -6708,6 +6723,9 @@ M.PRESETS = {
     LIVE_PHYSICS_WSIM_BUILD       = false,
     LIVE_PHYSICS_SHELL_LIFE       = false,
     LIVE_PHYSICS_PILL_RANGE_WU    = false,
+    -- 2026-11-07: the builder blast shape follows the lgm_blast_shape rule;
+    -- KEEL models the half-square circle whatever the game plays.
+    LGM_BLAST_SHAPE_LIVE          = false,
     -- 2026-10-01: attack_tank aim/fire knobs for Joust. All default off; KEEL
     -- pinned at the same old values.
     COMBAT_CLIFF_AIM_KEEP         = false,

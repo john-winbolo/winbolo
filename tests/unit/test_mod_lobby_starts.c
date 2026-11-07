@@ -340,12 +340,14 @@ enum {
     MLS_PART_SUPERBOOM,
     MLS_PART_PILL_SHELL_RANGE,
     MLS_PART_PARACHUTE,
+    MLS_PART_BUILDER_BLAST,
     MLS_PART_COUNT
 };
 
 static const char *const kMlsPartSetting[MLS_PART_COUNT] = {
     "pushback", "shell_cap", "tank_boxes", "pill_aim", "base_defence",
     "pill_anger", "superboom", "pill_shell_range", "parachute",
+    "builder_blast",
 };
 
 /* Every rule the mod sets, the part that sets it, and the value its
@@ -380,6 +382,7 @@ static const MlsRule kMlsRules[] = {
     MLS_RULE(big_explosion_threshold,      MLS_PART_SUPERBOOM,    60),
     MLS_RULE_FLT(pill_fire_length,         MLS_PART_PILL_SHELL_RANGE, 8.25f),
     MLS_RULE(lgm_helicopter_speed,         MLS_PART_PARACHUTE,    2),
+    MLS_RULE(lgm_blast_shape,              MLS_PART_BUILDER_BLAST, 1),
 };
 
 #define MLS_RULE_COUNT ((int)(sizeof(kMlsRules) / sizeof(kMlsRules[0])))

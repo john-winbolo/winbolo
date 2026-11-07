@@ -356,6 +356,7 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   value->rules.man_speed_deep_sea    = gs->rules.man_speed_deep_sea;
   value->rules.man_speed_refuel_base = gs->rules.man_speed_refuel_base;
   value->rules.building_life         = gs->rules.building_life;
+  value->rules.lgm_blast_shape       = gs->rules.lgm_blast_shape;
 
   /* This tank's own modifiers, 0 ("classic") resolved to 100, and the
      reload interval the engine gives it. The owning client receives its
