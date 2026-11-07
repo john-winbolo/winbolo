@@ -608,6 +608,11 @@ end
 --     the shot that kills a pill and the shot that turns a wall to rubble
 --     use the square rule too. The brain cannot see how many hits a wall
 --     has left; it does not need to, as every hit on it is the square rule.
+--     With C.BLAST_TERRAIN_SQUARE_HIT (unset = off) a forest or a boat,
+--     which stop every shell, end it too (4 below), with the same square
+--     rule. A boat's shell on the shore or a bridge is a hit on its square
+--     as well, but the brain cannot see which shells a boat fired, so those
+--     fly on.
 --   * a tank's shell tests the builder where he was one tick earlier
 --     (shellsBlastTestBuilder: compensation 1 for a bot's shell; a human's
 --     lag rewind cannot be seen, so 1 is used for every tank's shell). With no
@@ -762,10 +767,11 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
       local function test(t, ex, ey, how)
         local lx, ly = man_at_cd(nw, dwell, t - rewind, home_x, home_y)
         if lx and blast_catches(world, lx, ly, ex, ey, KILL2,
-                                how == "pill" or how == "wall") then
+                                how == "pill" or how == "wall"
+                                or how == "terrain") then
           return { t = t, sx = ex, sy = ey, lx = lx, ly = ly, src = src,
                    how = how, solid = (how == "wall" or how == "pill"
-                                       or how == "base"),
+                                       or how == "base" or how == "terrain"),
                    walk_n = nw }
         end
         return nil
@@ -816,7 +822,9 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
           ended = true
           break
         end
-        -- (3) a base that stops it; (4) a wall (not on a base square).
+        -- (3) a base that stops it; (4) a wall, or with
+        -- C.BLAST_TERRAIN_SQUARE_HIT a forest or a boat (not on a base
+        -- square).
         local on_base = world and world.base_at and world.base_at[smy * 256 + smx]
         if on_base and base_stops_for_sure(world, info, ob, smx, smy) then
           local h = test(t, cx, cy, "base")
@@ -828,6 +836,12 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
           local tt = U.ttype(smx, smy)
           if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
             local h = test(t, cx, cy, "wall")
+            if h then return h end
+            ended = true
+            break
+          end
+          if (tt == C.T_FOREST or tt == C.T_BOAT) and C.BLAST_TERRAIN_SQUARE_HIT then
+            local h = test(t, cx, cy, "terrain")
             if h then return h end
             ended = true
             break
