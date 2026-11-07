@@ -6964,6 +6964,7 @@ set(_unit_test_names
     lgm_blast_dead_pill_edge
     lgm_blast_dead_pill_far_corner
     lgm_blast_live_pill_unchanged
+    lgm_blast_pill_kill_shot
     lgm_start_offset
     lgm_tree_grew_on_site
     lgm_tree_none_on_site

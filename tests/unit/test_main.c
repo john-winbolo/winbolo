@@ -1355,6 +1355,7 @@ static const UnitTestEntry s_tests[] = {
     { "lgm_blast_dead_pill_edge",                run_lgm_blast_dead_pill_edge                },
     { "lgm_blast_dead_pill_far_corner",          run_lgm_blast_dead_pill_far_corner          },
     { "lgm_blast_live_pill_unchanged",           run_lgm_blast_live_pill_unchanged           },
+    { "lgm_blast_pill_kill_shot",                run_lgm_blast_pill_kill_shot                },
     { "braindbg_second_round_new_dir",           run_braindbg_second_round_new_dir           },
     { "jitter_buffer_grow",                      run_jitter_buffer_grow                      },
     { "shell_projection",                        run_shell_projection                        },

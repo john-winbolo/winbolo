@@ -21,17 +21,32 @@
  *                                  in the far (north-west) corner of the
  *                                  pill's own square, more than 128 away: he
  *                                  lives. Before the fix he died. A blast on
- *                                  the square's middle (the place the shot
- *                                  that kills a pill explodes) also leaves
- *                                  him alive in that corner and kills him 16
- *                                  from the middle.
+ *                                  the square's middle that did not hit the
+ *                                  pill (a mine's or a tank's explosion
+ *                                  there) also leaves him alive in that
+ *                                  corner and kills him 16 from the middle.
+ *                                  The shot that kills the pill is a hit and
+ *                                  is tested in lgm_blast_pill_kill_shot.
  * lgm_blast_live_pill_unchanged  - a live pill, the same places: the builder
  *                                  across the edge lives and the builder in
  *                                  the far corner dies, as before.
+ * lgm_blast_pill_kill_shot       - the shot that kills a pill. A real shell
+ *                                  goes through shellsUpdate into pill 0 at
+ *                                  armour 1 and takes it to 0. That is a hit
+ *                                  on the pill's square, so the square rule
+ *                                  holds although the pill is dead when the
+ *                                  builder is tested: a builder in either
+ *                                  far corner of the square dies, and a
+ *                                  builder on the first world unit of the
+ *                                  east neighbour (128 from the blast, inside
+ *                                  the open-ground circle) lives. Once with
+ *                                  no rewind and once with a rewind, the two
+ *                                  ways shellsBlastTestBuilder tests him.
  *
- * Calls lgmDeathCheckAtPosition directly on ut_make_running_sim (slot 0)
- * with the builder out of his tank, so no tick runs. Pill 0 is moved onto a
- * free square whose east neighbour is free too, and both are made grass.
+ * The first three call lgmDeathCheckAtPosition directly, with no pill hit,
+ * on ut_make_running_sim (slot 0) with the builder out of his tank, so no
+ * tick runs. Pill 0 is moved onto a free square whose east neighbour is free
+ * too, and both are made grass.
  */
 
 #include <stdint.h>
@@ -49,6 +64,8 @@
 #include "pillbox.h"               /* pillsExistPos, pillsIsPillHit */
 #include "bases.h"                 /* basesExistPos */
 #include "mines.h"                 /* minesExistPos */
+#include "position_history.h"      /* posHistoryInit, posHistoryRecord */
+#include "shells.h"                /* shellsAddItem, shellsUpdate */
 #include "test_harness.h"
 
 #define LBD_SLOT 0
@@ -135,7 +152,8 @@ static bool lbd_blast_kills(LbdFix *f, WORLD lx, WORLD ly, WORLD wx, WORLD wy) {
     (*man)->x = lx;
     (*man)->y = ly;
     lgmDeathCheckAtPosition(gs, man, lx, ly, wx, wy, NEUTRAL, NEUTRAL,
-                            DMG_SRC_SHELL, DMG_NO_PILL, &gs->tanks[LBD_SLOT]);
+                            DMG_SRC_SHELL, DMG_NO_PILL, &gs->tanks[LBD_SLOT],
+                            FALSE);
     return (*man)->isDead == TRUE;
 }
 
@@ -214,5 +232,99 @@ int run_lgm_blast_live_pill_unchanged(void) {
     UT_ASSERT_MSG(corner,
                   "a blast on a live pill's square left a builder on that "
                   "square alive");
+    return 0;
+}
+
+/* Fire a real shell east into pill 0, which is at armour 1, from 20 inside
+ * the west edge of its square, with the builder out at (lx, ly). With comp
+ * above 0 the shell carries that rewind and the builder's history says he
+ * was at (lx, ly) on every frame. One shellsUpdate: the shell moves 32 and
+ * hits the pill. Reports whether the builder died; *pillDied says whether
+ * the shot took the pill's armour to 0. */
+static bool lbd_kill_shot_kills(LbdFix *f, WORLD lx, WORLD ly, uint8_t comp,
+                                bool *pillDied) {
+    GameSim  *gs = f->gs;
+    lgm      *man = &gs->lgmen[LBD_SLOT];
+    tank      tanks[MAX_TANKS];
+    lgm      *lgms[MAX_TANKS];
+    BYTE      n = 0;
+    BYTE      c;
+    shells    q;
+    int       k;
+
+    gs->pb->item[LBD_PILL].armour = 1;
+    /* The tank well away from the shell's path. */
+    gs->tanks[LBD_SLOT]->x = (WORLD)(f->left + MAP_SQUARE_MIDDLE);
+    gs->tanks[LBD_SLOT]->y = (WORLD)(f->top - 10 * 256);
+    (*man)->isDead = FALSE;
+    (*man)->inTank = FALSE;
+    (*man)->state = LGM_STATE_IDLE;
+    (*man)->x = lx;
+    (*man)->y = ly;
+    posHistoryInit(&f->sim->lgmPosHistory[LBD_SLOT]);
+    for (k = 0; k < POSITION_HISTORY_SIZE; k++) {
+        posHistoryRecord(&f->sim->lgmPosHistory[LBD_SLOT], lx, ly, true);
+    }
+
+    shellsAddItem(gs, &gs->shs, (WORLD)(f->left + 20), LBD_MID_Y(f),
+                  (TURNTYPE)BRADIANS_EAST, (TURNTYPE)7, NEUTRAL, NEUTRAL,
+                  DMG_NO_PILL, FALSE);
+    q = gs->shs;
+    q->x = (WORLD)(f->left + 20);
+    q->y = LBD_MID_Y(f);
+    q->xAcc = 0;
+    q->yAcc = 0;
+    q->compensationTicks = comp;
+
+    for (c = 0; c < MAX_TANKS; c++) {
+        if (f->sim->playerConnected[c] && gs->tanks[c] != NULL) {
+            tanks[n] = gs->tanks[c];
+            lgms[n]  = &gs->lgmen[c];
+            n++;
+        }
+    }
+    shellsUpdate(gs, tanks, n, lgms, &gs->ss);
+    *pillDied = (gs->pb->item[LBD_PILL].armour == 0);
+    return (*man)->isDead == TRUE;
+}
+
+int run_lgm_blast_pill_kill_shot(void) {
+    static const uint8_t comps[2] = { 0, 3 };
+    LbdFix f;
+    int    i;
+
+    for (i = 0; i < 2; i++) {
+        bool nw, se, across;
+        bool pillNw, pillSe, pillAcross;
+
+        if (lbd_open(&f, 1) != 0) {
+            lbd_close(&f);
+            return 1;
+        }
+        UT_ASSERT_MSG(f.sim->sim.lgmPosHistoryPtr != NULL,
+                      "the running sim keeps no builder history");
+        nw = lbd_kill_shot_kills(&f, LBD_CORNER_X(&f), LBD_CORNER_Y(&f),
+                                 comps[i], &pillNw);
+        se = lbd_kill_shot_kills(&f, (WORLD)(f.left + 253),
+                                 (WORLD)(f.top + 253), comps[i], &pillSe);
+        across = lbd_kill_shot_kills(&f, (WORLD)(f.left + 256), LBD_MID_Y(&f),
+                                     comps[i], &pillAcross);
+        lbd_close(&f);
+        UT_ASSERT_MSG(pillNw && pillSe && pillAcross,
+                      "rewind %u: the shell did not take the pill from "
+                      "armour 1 to 0", (unsigned)comps[i]);
+        UT_ASSERT_MSG(nw,
+                      "rewind %u: the shot that killed a pill left a builder "
+                      "in the north-west corner of its square alive",
+                      (unsigned)comps[i]);
+        UT_ASSERT_MSG(se,
+                      "rewind %u: the shot that killed a pill left a builder "
+                      "in the south-east corner of its square alive",
+                      (unsigned)comps[i]);
+        UT_ASSERT_MSG(!across,
+                      "rewind %u: the shot that killed a pill killed a "
+                      "builder on the next square, 128 from the blast",
+                      (unsigned)comps[i]);
+    }
     return 0;
 }

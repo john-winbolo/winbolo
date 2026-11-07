@@ -383,8 +383,16 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  *     that old yet (the start of a round, a player who has just joined): the
  *     shooter's screen is not known, so he is tested where he is now against
  *     (nowX, nowY). Both are the present. In his tank he is not out and
- *     lives. */
-static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank *tnk, WORLD nowX, WORLD nowY, WORLD seenX, WORLD seenY) {
+ *     lives.
+ *
+ * pillHit is TRUE when the shell hit a pillbox. The blast is then a hit on
+ * the pill's square, and the builder test uses the square rule: a builder
+ * anywhere on that square dies and one off it does not. This holds for the
+ * shot that kills the pill too, although that shot has already taken the
+ * pill's armour to 0 when the builder is tested. A blast on a dead pill's
+ * square that did not hit the pill (the shell ran out there, or hit a tank
+ * there) is FALSE and uses the open-ground rule (lgmBlastCatches). */
+static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank *tnk, WORLD nowX, WORLD nowY, WORLD seenX, WORLD seenY, bool pillHit) {
 	BYTE lgmOwner = (*lgman)->playerNum;
 	uint8_t rewindTicks;
 	WORLD lgmHitX = 0, lgmHitY = 0;
@@ -416,14 +424,16 @@ static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank 
 		                     seenX, seenY,
 		                     shell->owner, shell->owner,
 		                     DMG_SRC_SHELL, shell->pill,
-		                     tnk);
+		                     tnk, pillHit);
 	} else {
 		/* No rewind, or no record as old as the shooter's screen: where he
 		 * is now, against the blast where it is now. */
-		lgmDeathCheck(sim, lgman,
-		              nowX, nowY,
-		              shell->owner, shell->owner,
-		              DMG_SRC_SHELL, shell->pill, tnk);
+		lgmDeathCheckAtPosition(sim, lgman,
+		                        (*lgman)->x, (*lgman)->y,
+		                        nowX, nowY,
+		                        shell->owner, shell->owner,
+		                        DMG_SRC_SHELL, shell->pill, tnk,
+		                        pillHit);
 	}
 }
 
@@ -540,7 +550,10 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			 * only. The same point as newX, newY. */
 			WORLD seenX = newX;
 			WORLD seenY = newY;
-			if ((shellsCalcCollision(sim, tk, &newX, &newY, position, numTanks, &shellOutcome, &seenX, &seenY)) == TRUE)
+			/* The shell hit a pillbox: the builder test uses the square
+			 * rule, the shot that kills the pill included. */
+			bool pillHit = FALSE;
+			if ((shellsCalcCollision(sim, tk, &newX, &newY, position, numTanks, &shellOutcome, &seenX, &seenY, &pillHit)) == TRUE)
 			{
 				/* Get X and Y map co-ords. */
 				conv = newX;
@@ -601,7 +614,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 					if (lgms && lgms[count] != NULL && *lgms[count] != NULL) {
 						shellsBlastTestBuilder(sim, position, lgms[count],
 						                       &tk[count], newX, newY,
-						                       seenX, seenY);
+						                       seenX, seenY, pillHit);
 					}
 					count++;
 				}
@@ -658,7 +671,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				if (lgms && lgms[count] != NULL && *lgms[count] != NULL) {
 					shellsBlastTestBuilder(sim, position, lgms[count],
 					                       &tk[count], position->x, position->y,
-					                       position->x, position->y);
+					                       position->x, position->y, FALSE);
 				}
 				count++;
 			}
@@ -810,8 +823,11 @@ static bool shellsMayHit(GameSim *sim, shells shell, BYTE kind, BYTE index) {
 *             (shellsBlastTestBuilder). The same as xValue.
 *             May be NULL
 *  outSeenY - Y, as outSeenX
+*  outPillHit - TRUE when the shell hit a pillbox, the shot
+*             that kills it included; FALSE otherwise. For
+*             the builder test. May be NULL
 *********************************************************/
-bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY) {
+bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY, bool *outPillHit) {
 	map *mp = &sim->mp;
 	pillboxes *pb = &sim->pb;
 	bases *bs = &sim->bs;
@@ -840,6 +856,9 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 	if (outOutcome != NULL) {
 		*outOutcome = SHELL_OUTCOME_IMPACT;
 	}
+	if (outPillHit != NULL) {
+		*outPillHit = FALSE;
+	}
 	/* Convert the position to Map co-ords */
 	conv = *xValue;
 	conv >>= TANK_SHIFT_MAPSIZE;
@@ -854,6 +873,12 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 	pillHit = pillsHitSlot(pb, mapX, mapY);
 	if (pillHit != DMG_NO_PILL && shellsMayHit(sim, shell, HIT_KIND_PILL, pillHit) == TRUE) {
 		returnValue = TRUE;
+		/* A hit on the pill is a hit on its square for the builder test,
+		 * even when this shot kills it: the damage below can take its armour
+		 * to 0 before that test runs (shellsBlastTestBuilder). */
+		if (outPillHit != NULL) {
+			*outPillHit = TRUE;
+		}
 		*xValue = mapX;
 		*xValue <<= TANK_SHIFT_MAPSIZE;
 		*xValue += MAP_SQUARE_MIDDLE;
