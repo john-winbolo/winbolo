@@ -2305,9 +2305,11 @@ M.KILL_LGM_FIRE_WU    = 128   -- keel 64 (burst must land this close to the pred
 -- pill (he stands there for LGM_BUILD_TIME, 20 game ticks), and any predicted
 -- impact inside the pill tile snaps to the tile centre. A dead pill does not
 -- stop a shell (pillsIsPillHit needs armour > 0), so the shell must END its
--- life in that tile; the tile counts as SOLID for the builder death test
--- (pillsExistPos has no armour check), so the blast kills only a man on that
--- same tile -- the centre is the point with the most margin. When the man is
+-- life in that tile. With C.BLAST_DEAD_PILL_OPEN the dead pill's tile is open
+-- ground for the builder death test (lgm.c lgmBlastCatches): the blast kills
+-- a man within 128 wu of it, and the hold-fire timing tests that distance.
+-- Without it (KEEL) the tile counts as SOLID, so the blast kills only a man
+-- on that same tile. The centre is the point with the most margin. When the man is
 -- not walking a clean line (just out of the tank, stopped, turning, sliding
 -- along a wall, turned back, heading to his own tank) nothing is locked and
 -- the old predictor runs unchanged.
@@ -2327,8 +2329,8 @@ M.LGM_DEST_PERP_DEG       = 3     -- ... widened to along*tan(this) further out 
 -- 2026-09-25 (Andrew's review): he also walks to a LIVE hostile pill below
 -- full armour to repair it (lgm.c refuses a walk to a full pill). A live pill
 -- STOPS the shell: it goes off at the tile centre on the first tick it is in
--- the tile (shellsCalcCollision -> pillsIsPillHit). The tile is solid for the
--- builder death test either way, so only a man on the tile dies. Note: our
+-- the tile (shellsCalcCollision -> pillsIsPillHit). A live pill's tile is
+-- solid for the builder death test, so only a man on the tile dies. Note: our
 -- shell damages that pill, and a live pill in range shoots back; the pill-
 -- danger logic is unchanged.
 M.LGM_DEST_LIVE_PILLS     = true  -- live hostile pill with 0 < health < PILLS_MAX_HEALTH is a candidate too
