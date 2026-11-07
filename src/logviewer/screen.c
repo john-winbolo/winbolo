@@ -3195,6 +3195,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilGetNibbles(opt1, &onBoat, &frame);
       lv_utilGetNibbles(opt4, &px, &py);
       lv_playersUpdateLgm(onBoat, opt2, opt3, px, py, frame);
+      lv_playersLgmNoteTime(onBoat, g_lv->timeRunning);
       break;
     case log_MessageAll:
       logReadBytes(&opt1, 1);

@@ -17,10 +17,17 @@
  *       It also checks the places the circles go round: the middle of the
  *       art pixel a recording holds, with the builder's 1 and 2 put back,
  *       and the offsets the game draws the tank and builder pictures at.
+ *
+ *   lv_hitbox_lgm_fit — that the closer guess at a walking builder's place
+ *       (lvHitboxLgmFitRange) always holds his true place, is never wider
+ *       than his newest pixel, is that whole pixel for a builder standing
+ *       still, and is closer than the middle of the pixel on a walk. Also
+ *       a real walk, player 5's builder in a recording.
  */
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <math.h>
 
 #include "lv_hitbox.h"
 #include "test_harness.h"
@@ -117,6 +124,83 @@ int run_lv_hitbox_sums(void) {
         UT_ASSERT_MSG(lvHitboxBuilderPlaceY(5) > top &&
                       lvHitboxBuilderPlaceY(5) < top + 4.0 * 16.0,
                       "his place is inside his picture, down");
+    }
+
+    return 0;
+}
+
+int run_lv_hitbox_lgm_fit(void) {
+    int back[LV_HITBOX_LGM_FIT_MAX], pix[LV_HITBOX_LGM_FIT_MAX];
+    double lo, hi, sumFit = 0.0, sumMiddle = 0.0;
+    int i, v, x0, cases = 0;
+
+    for (i = 0; i < LV_HITBOX_LGM_FIT_MAX; i++) {
+        back[i] = i;
+    }
+
+    /* Every steady walk from -20 to 20 world units an entry, from each of
+       the 16 places in a pixel: the true place is always in the range, and
+       the range is always in the newest pixel. */
+    for (v = -20; v <= 20; v++) {
+        for (x0 = 4000; x0 < 4016; x0++) {
+            for (i = 0; i < LV_HITBOX_LGM_FIT_MAX; i++) {
+                int at = x0 - v * back[i];
+                pix[i] = at >= 0 ? at / 16 : -((-at + 15) / 16);
+            }
+            UT_ASSERT(lvHitboxLgmFitRange(back, pix, LV_HITBOX_LGM_FIT_MAX, &lo, &hi) >= 1);
+            UT_ASSERT_MSG(lo <= (double)x0 + 1e-6 && hi >= (double)x0 - 1e-6,
+                          "speed %d place %d: range %.3f to %.3f misses it", v, x0, lo, hi);
+            UT_ASSERT_MSG(lo >= (double)(pix[0] * 16) - 1e-6 &&
+                          hi <= (double)(pix[0] * 16 + 15) + 1e-6,
+                          "speed %d place %d: range %.3f to %.3f leaves the pixel", v, x0,
+                          lo, hi);
+            if (v == 0) {
+                UT_ASSERT_MSG(lo == (double)(pix[0] * 16) && hi == (double)(pix[0] * 16 + 15),
+                              "standing still: range %.3f to %.3f, want the pixel", lo, hi);
+            }
+            sumFit += fabs((lo + hi) * 0.5 - (double)x0);
+            sumMiddle += fabs((double)(pix[0] * 16) + 7.5 - (double)x0);
+            cases++;
+        }
+    }
+    UT_ASSERT_MSG(sumFit / cases < 2.0 && sumMiddle / cases == 4.0,
+                  "mean miss %.3f with the fit, %.3f with the middle of the pixel",
+                  sumFit / cases, sumMiddle / cases);
+
+    /* A walk that turns: 12 entries east at 10 an entry, then 12 still. Only
+       the still part is one line, so the range is the whole pixel. */
+    for (i = 0; i < LV_HITBOX_LGM_FIT_MAX; i++) {
+        int at = (i < 12) ? 5000 : 5000 - 10 * (i - 11);
+        pix[i] = at / 16;
+    }
+    UT_ASSERT(lvHitboxLgmFitRange(back, pix, LV_HITBOX_LGM_FIT_MAX, &lo, &hi) < LV_HITBOX_LGM_FIT_MAX);
+    UT_ASSERT_MSG(lo <= 5000.0 && hi >= 5000.0, "after the turn: %.3f to %.3f", lo, hi);
+
+    /* One pixel: that pixel. */
+    pix[0] = 300;
+    UT_ASSERT(lvHitboxLgmFitRange(back, pix, 1, &lo, &hi) == 1);
+    UT_ASSERT(lo == 4800.0 && hi == 4815.0);
+
+    /* Player 5's builder in 20261106t193730_BuzzSaw.wbv at tick 54330, the
+       place the server tested him at for player 3's shell, and the 17
+       entries before it, newest first. His art pixel across and down: */
+    {
+        static const int px[18] = {1972, 1973, 1974, 1975, 1976, 1977, 1978, 1979, 1979,
+                                   1980, 1981, 1982, 1983, 1984, 1985, 1986, 1986, 1987};
+        static const int py[18] = {2176, 2176, 2177, 2177, 2178, 2178, 2179, 2179, 2180,
+                                   2181, 2181, 2182, 2182, 2183, 2183, 2184, 2184, 2185};
+        double wx, wy;
+        UT_ASSERT(lvHitboxLgmFitRange(back, px, 18, &lo, &hi) == 18);
+        wx = (lo + hi) * 0.5 + LV_HITBOX_LGM_OFFSET_X;
+        UT_ASSERT_MSG(lo > 31562.0 && lo < 31563.0 && hi == 31567.0,
+                      "across: %.3f to %.3f", lo, hi);
+        UT_ASSERT(lvHitboxLgmFitRange(back, py, 18, &lo, &hi) == 18);
+        wy = (lo + hi) * 0.5 + LV_HITBOX_LGM_OFFSET_Y;
+        UT_ASSERT_MSG(lo == 34816.0 && hi > 34824.0 && hi < 34824.2,
+                      "down: %.3f to %.3f", lo, hi);
+        /* The middle of the pixel was 31560.5, 34825.5. */
+        UT_ASSERT_MSG(fabs(wx - 31565.85) < 0.1 && fabs(wy - 34822.03) < 0.1,
+                      "his place %.3f, %.3f", wx, wy);
     }
 
     return 0;

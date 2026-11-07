@@ -165,11 +165,11 @@ typedef struct {
 } LvHitTankPos;
 static LvHitTankPos s_hitTankPos[MAX_TANKS];
 static int          s_hitTankCount = 0;
-/* A builder out of his tank: the art pixel his place was recorded in, the
-   top left of his square, and the 3 by 3 squares round his that stop the
-   open-ground test (lvHitboxBuilderCaught). */
+/* A builder out of his tank: his place, the top left of his square, and the
+   3 by 3 squares round his that stop the open-ground test
+   (lvHitboxBuilderCaught). */
 typedef struct {
-    BYTE     px, py;               /* art pixel in his square, 0 to 15 */
+    double   bx, by;               /* his place, world units from his square's top left */
     float    sqX, sqY;             /* his square's top left, render-target pixels */
     unsigned solid;
 } LvHitLgmPos;
@@ -1866,7 +1866,7 @@ void lv_drawTanks(screenTanks *tks) {
    (lgmBlastCatches). mx, my are his square on the screen; the screen starts
    at the view's offset, as lv_playersMakeScreenLgm made the list. The
    squares are read now, as the map is drawn. */
-static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE zf) {
+static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE zf) {
     LogViewerState *lv = lv_screenGetState();
     LvHitLgmPos *h = &s_hitLgmPos[s_hitLgmCount];
     unsigned solid = 0;
@@ -1889,8 +1889,25 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE zf) {
     }
     h->sqX = (float)(zf * mx * TILE_SIZE_X);
     h->sqY = (float)(zf * my * TILE_SIZE_Y);
-    h->px = px;
-    h->py = py;
+    /* His place. A recording holds it to the art pixel, so the closest guess
+       is from the line his last recorded pixels walk along
+       (lv_playersLgmPlace). With no notes for that pixel it is the middle of
+       the pixel: the recorded place is lgmGetPX / lgmGetPY's, his place less
+       1 world unit across and 2 down, rounded down to an art pixel, and
+       lvHitboxBuilderPlaceX/Y put the 1 and the 2 back. */
+    {
+        int sqMx = (int)lv->xOffset + (int)mx;
+        int sqMy = (int)lv->yOffset + (int)my;
+        double wx, wy;
+        if (sqMx <= 255 && sqMy <= 255 &&
+            lv_playersLgmPlace(slot, (BYTE)sqMx, (BYTE)sqMy, px, py, &wx, &wy)) {
+            h->bx = wx - (double)(sqMx * LV_HITBOX_WU_PER_SQUARE);
+            h->by = wy - (double)(sqMy * LV_HITBOX_WU_PER_SQUARE);
+        } else {
+            h->bx = lvHitboxBuilderPlaceX(px);
+            h->by = lvHitboxBuilderPlaceY(py);
+        }
+    }
     h->solid = solid;
     s_hitLgmCount++;
 }
@@ -1909,7 +1926,7 @@ void lv_drawLGMs(screenLgm *lgms) {
         /* A builder on his parachute is dead: lgmDeathCheckAtPosition tests
            no dead builder, so he has no hit area. */
         if (frame != LGM_HELICOPTER_FRAME && s_hitLgmCount < MAX_TANKS) {
-            lvDrawNoteLgmHit(mx, my, px, py, zf);
+            lvDrawNoteLgmHit(mx, my, px, py, lv_screenLgmGetSlot(lgms, count), zf);
         }
         /* A walking builder's picture goes 1 art pixel left of and above his
            recorded pixel, as the game draws it (spritePositionLgm), so it
@@ -2611,13 +2628,7 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
             const LvHitLgmPos *h = &s_hitLgmPos[i];
             float ox = dst->x + (h->sqX - src->x) * scale;
             float oy = dst->y + (h->sqY - src->y) * scale;
-            /* The recorded place is lgmGetPX / lgmGetPY's: his place less 1
-               world unit across and 2 down, rounded down to an art pixel.
-               lvHitboxBuilderPlaceX/Y put the 1 and the 2 back and take the
-               middle of the pixel. */
-            double bx = lvHitboxBuilderPlaceX(h->px);
-            double by = lvHitboxBuilderPlaceY(h->py);
-            lvDrawHitLgmArea(h, bx, by, builderReach, ox, oy, k, shift);
+            lvDrawHitLgmArea(h, h->bx, h->by, builderReach, ox, oy, k, shift);
         }
     }
 
