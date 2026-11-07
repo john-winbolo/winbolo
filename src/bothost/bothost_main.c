@@ -89,6 +89,7 @@
 #include "../common/wb_log.h"
 #include "../common/prefs.h"
 #include "brain_capacity.h"
+#include "bot_host_cpu.h"   /* BotHostCpuMeter */
 #ifdef WINBOLO_BOTHOST_EMBED
 #include "bothost_embed.h"
 #endif
@@ -290,6 +291,8 @@ typedef struct {
     ChannelMux mux;
     /* The slot count last sent in CTRL_BOT_HOST_SLOTS, -1 for none. */
     int        lastSlotsSent;
+    /* The CPU byte last sent in CTRL_BOT_HOST_CPU, -1 for none. */
+    int        lastCpuSent;
 
     HostSync   sync;
     /* Server-bound bulk: the brain recordings this host sends. */
@@ -303,6 +306,13 @@ typedef struct {
 
 static HostServer servers[BOT_HOST_MAX_SERVERS];
 static int        serverCount;
+
+/* This host's estimate of the machine's CPU its bots use (bot_host_cpu.h):
+ * the think time of every brain think, sampled each think loop. Only the
+ * percent goes to the servers. */
+static double          hostThinkMsTotal;
+static BotHostCpuMeter hostCpuMeter;
+static uint8_t         hostCpuValue = (uint8_t)BOT_HOST_CPU_UNKNOWN;
 static SOCKET     listenSock = INVALID_SOCKET;
 
 static int serverIndex(const HostServer *sv) {
@@ -1276,6 +1286,7 @@ static void ctlReceive(HostServer *sv) {
                     sv->state = CTL_CONNECTED;
                     sv->lastPingMs = 0;
                     sv->lastSlotsSent = -1;
+                    sv->lastCpuSent = -1;
                     syncReset(&sv->sync);
                     bulkSenderInit(&sv->recBulk);
                     hostRecServerUp(serverIndex(sv), sv->label);
@@ -1381,6 +1392,15 @@ static void ctlService(HostServer *sv) {
             }
             if (poolSlotsFor(serverIndex(sv)) != sv->lastSlotsSent) {
                 ctlSendSlots(sv, BOT_HOST_SLOTS_NO_REFUSE, 0);
+            }
+            if ((int)hostCpuValue != sv->lastCpuSent) {
+                ControlEvent evt;
+                memset(&evt, 0, sizeof(evt));
+                evt.type = CTRL_BOT_HOST_CPU;
+                evt.u.botHostCpu.idx = (uint8_t)BOT_HOST_CPU_IDX_SELF;
+                evt.u.botHostCpu.cpu = hostCpuValue;
+                ctlSendEvent(sv, &evt);
+                sv->lastCpuSent = (int)hostCpuValue;
             }
             ctlPump(sv);
             break;
@@ -1663,6 +1683,10 @@ static void hostTick(void) {
         int q;
 
         if (hs->bot.thinkCount > 0) hs->thinkMsSum += hs->bot.lastThinkMs;
+        if (hs->bot.thinkCount != hs->bot.thinkCountSeen) {
+            hs->bot.thinkCountSeen = hs->bot.thinkCount;
+            hostThinkMsTotal += hs->bot.lastThinkMs;
+        }
 
         for (q = 0; q < j->pendingInternalMsgCount; q++) {
             ClientCommand cmd;
@@ -1742,6 +1766,11 @@ static void hostTick(void) {
             seatSendStats(hs);
         }
     }
+
+    hostCpuValue = botHostCpuMeterSample(&hostCpuMeter, SDL_GetTicksNS(),
+                                         hostThinkMsTotal,
+                                         SDL_GetNumLogicalCPUCores(),
+                                         poolUsed());
 
     sendEnd = SDL_GetPerformanceCounter();
     {
@@ -1934,6 +1963,7 @@ int main(int argc, char *argv[]) {
     wb_log_init("WinBolo", "WinBoloBotHost", "winbolo-bothost.log");
     atexit(wb_log_shutdown);
 
+    botHostCpuMeterInit(&hostCpuMeter);
     if (!serverSimBotPoolInit(optThreads)) {
         fprintf(stderr, "Error: cannot start %d brain threads\n", optThreads);
         return 1;
@@ -2182,6 +2212,9 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     listenSock = INVALID_SOCKET;
     serialMsEwma = 0.0;
     lastTargetMs = 0.0;
+    hostThinkMsTotal = 0.0;
+    botHostCpuMeterInit(&hostCpuMeter);
+    hostCpuValue = (uint8_t)BOT_HOST_CPU_UNKNOWN;
     embedPlayer = cfg->player;
     memcpy(embedTicket, cfg->ticket, sizeof(embedTicket));
     SDL_strlcpy(embedBrain, cfg->brain != NULL ? cfg->brain : "",

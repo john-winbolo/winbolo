@@ -247,6 +247,10 @@ typedef struct {
      * CTRL_BOT_HOST_SLOTS. A host shared with other servers lowers it as
      * they take its slots. */
     uint8_t  slots;
+    /* The host's estimate of its machine's CPU its bots use
+     * (CTRL_BOT_HOST_CPU, bot_host_cpu.h); BOT_HOST_CPU_UNKNOWN until it
+     * sends one, and always from an older host. */
+    uint8_t  cpu;
     /* A player's own Bot Host (the one inside that player's client): it
      * joined with the player's ticket, and it goes when that player's
      * connection (ownerConnId) goes. */

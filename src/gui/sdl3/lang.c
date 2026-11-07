@@ -2228,6 +2228,8 @@ static const LangEntry langTable[] = {
     {3601, "This computer now runs {number} of the server's bots for this game"},
     {3602, "Server"},
     {3603, "runs bots itself"},
+    {3650, "(Estimated {number}% of the machine's CPU)"},
+    {3651, "(Estimated <1% of the machine's CPU)"},
     {1866, "[Spectator] {string1}"},
     {1849, "Leave spectating?"},
     {1850, "Lobby"},

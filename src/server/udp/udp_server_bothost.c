@@ -97,6 +97,7 @@
 #include "tank.h"            /* tankGetNumCarriedPills */
 #include "lgm.h"             /* lgmIsOut */
 #include "brain_capacity.h"  /* brainCapacityDefault, brainCapacityGetMachine */
+#include "bot_host_cpu.h"    /* BotHostCpuMeter, the lobby's CPU estimates */
 
 /* Ticks without a datagram from a Bot Host before it is dropped. The host
  * pings every 500 ms. */
@@ -485,11 +486,17 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
     bodyLen = unpackU16(msg + 1);
     if ((size_t)bodyLen + 3 > len) return;
     if (msg[0] != CTRL_BOT_HOST_FILE_REQ && msg[0] != CTRL_BOT_HOST_SYNC &&
-        msg[0] != CTRL_BOT_HOST_SLOTS && msg[0] != CTRL_BOT_HOST_REC) {
+        msg[0] != CTRL_BOT_HOST_SLOTS && msg[0] != CTRL_BOT_HOST_REC &&
+        msg[0] != CTRL_BOT_HOST_CPU) {
         return;
     }
     dec = transportControlCodecBodyDecoder((ControlEventType)msg[0]);
     if (dec == NULL || !dec(msg + 3, bodyLen, &evt)) return;
+    if (evt.type == CTRL_BOT_HOST_CPU) {
+        /* Only the percent: the host never says what its machine is. */
+        hc->cpu = evt.u.botHostCpu.cpu;
+        return;
+    }
     if (evt.type == CTRL_BOT_HOST_REC) {
         serverBotRecOnControl(h, &evt);
         return;
@@ -589,6 +596,7 @@ static void botHostFillRow(int h, ControlEvent *evt) {
 /* The server's own row, below the hosts: the bots it runs itself against
  * its own capacity answer. Not a connection: it has no kick or move. */
 static int botHostServerSlotsRow(ServerSim *sim);
+static void botHostSampleServerCpu(ServerSim *sim, int bots);
 static void botHostFillServerRow(ControlEvent *evt) {
     ServerSim *sim = botHostSim;
     int s, n = 0, slots;
@@ -606,6 +614,7 @@ static void botHostFillServerRow(ControlEvent *evt) {
         evt->u.botHostStatus.seats |= (uint16_t)(1u << s);
         n++;
     }
+    botHostSampleServerCpu(sim, n);
     slots = botHostServerSlotsRow(sim);
     evt->u.botHostStatus.used = (uint8_t)n;
     evt->u.botHostStatus.slots = (uint8_t)(slots > MAX_TANKS ? MAX_TANKS : slots);
@@ -616,8 +625,73 @@ static void botHostFillServerRow(ControlEvent *evt) {
 /* The rows last sent to the lobby, so a row goes out only when it changes. */
 static ControlEvent botHostRowSent[MAX_BOT_HOSTS + 1];
 
+/* The server's own CPU estimate for the bots it runs itself, measured the
+ * way a Bot Host measures its own (bot_host_cpu.h). */
+static BotHostCpuMeter botHostServerCpu;
+static bool            botHostServerCpuInit;
+static uint8_t         botHostServerCpuValue = (uint8_t)BOT_HOST_CPU_UNKNOWN;
+
+static void botHostSampleServerCpu(ServerSim *sim, int bots) {
+    if (!botHostServerCpuInit) {
+        botHostCpuMeterInit(&botHostServerCpu);
+        botHostServerCpuInit = true;
+    }
+    botHostServerCpuValue = botHostCpuMeterSample(
+        &botHostServerCpu, SDL_GetTicksNS(), botManagerThinkMsTotal(sim),
+        SDL_GetNumLogicalCPUCores(), bots);
+}
+
+/* The CPU byte of row h (MAX_BOT_HOSTS: the server's own row). */
+static uint8_t botHostRowCpu(int h, const ControlEvent *row) {
+    if (!row->u.botHostStatus.connected) return (uint8_t)BOT_HOST_CPU_UNKNOWN;
+    if (h == MAX_BOT_HOSTS) return botHostServerCpuValue;
+    return udpServer.botHosts[h].cpu;
+}
+
+/* The CPU bytes last sent to the lobby, one per row. */
+static uint8_t botHostCpuSent[MAX_BOT_HOSTS + 1];
+static bool    botHostCpuSentInit;
+
+/* The log line for a row's CPU estimate: the first one, then a change at
+ * most each BOT_HOST_CPU_LOG_TICKS, so the log does not fill. */
+#define BOT_HOST_CPU_LOG_TICKS 500
+static uint32_t botHostCpuLogTick[MAX_BOT_HOSTS + 1];
+static bool     botHostCpuLogged[MAX_BOT_HOSTS + 1];
+
+static void botHostLogCpu(int h, const ControlEvent *row, uint8_t cpu) {
+    char pct[8];
+    if (cpu == BOT_HOST_CPU_UNKNOWN) return;
+    if (botHostCpuLogged[h] &&
+        udpServer.tickCount - botHostCpuLogTick[h] < BOT_HOST_CPU_LOG_TICKS) {
+        return;
+    }
+    botHostCpuLogged[h] = true;
+    botHostCpuLogTick[h] = udpServer.tickCount;
+    if (cpu == BOT_HOST_CPU_UNDER_ONE) {
+        SDL_strlcpy(pct, "<1%", sizeof(pct));
+    } else {
+        SDL_snprintf(pct, sizeof(pct), "%u%%", (unsigned)cpu);
+    }
+    fprintf(stderr, "[bothost] CPU estimate: %s \"%s\" %s of its machine's "
+                    "CPU, %u bots\n",
+            h == MAX_BOT_HOSTS ? "the server" : "Bot Host",
+            row->u.botHostStatus.name, pct,
+            (unsigned)row->u.botHostStatus.used);
+}
+
+static void botHostFillCpu(int h, uint8_t cpu, ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_CPU;
+    evt->u.botHostCpu.idx = (uint8_t)h;
+    evt->u.botHostCpu.cpu = cpu;
+}
+
 static void botHostBroadcastRows(void) {
     int h;
+    if (!botHostCpuSentInit) {
+        memset(botHostCpuSent, BOT_HOST_CPU_UNKNOWN, sizeof(botHostCpuSent));
+        botHostCpuSentInit = true;
+    }
     for (h = 0; h <= MAX_BOT_HOSTS; h++) {
         ControlEvent evt;
         if (h < MAX_BOT_HOSTS) {
@@ -626,11 +700,25 @@ static void botHostBroadcastRows(void) {
             botHostFillServerRow(&evt);
         }
         if (memcmp(&evt.u.botHostStatus, &botHostRowSent[h].u.botHostStatus,
-                   sizeof(evt.u.botHostStatus)) == 0) {
-            continue;
+                   sizeof(evt.u.botHostStatus)) != 0) {
+            botHostRowSent[h] = evt;
+            serverBroadcastLobbyControl(&evt);
         }
-        botHostRowSent[h] = evt;
-        serverBroadcastLobbyControl(&evt);
+        {
+            /* The CPU estimate after its row, when it changes. A client
+             * forgets it when the row goes, so a gone row's unknown is
+             * only noted here. */
+            uint8_t cpu = botHostRowCpu(h, &evt);
+            if (cpu != botHostCpuSent[h]) {
+                botHostCpuSent[h] = cpu;
+                if (evt.u.botHostStatus.connected) {
+                    ControlEvent ce;
+                    botHostFillCpu(h, cpu, &ce);
+                    serverBroadcastLobbyControl(&ce);
+                    botHostLogCpu(h, &evt, cpu);
+                }
+            }
+        }
     }
 }
 
@@ -642,11 +730,24 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
         if (!udpServer.botHosts[h].connected) continue;
         botHostFillRow(h, &evt);
         deliver(deliverCtx, &evt);
+        if (botHostRowCpu(h, &evt) != BOT_HOST_CPU_UNKNOWN) {
+            ControlEvent ce;
+            botHostFillCpu(h, botHostRowCpu(h, &evt), &ce);
+            deliver(deliverCtx, &ce);
+        }
     }
     {
         ControlEvent evt;
         botHostFillServerRow(&evt);
-        if (evt.u.botHostStatus.connected) deliver(deliverCtx, &evt);
+        if (evt.u.botHostStatus.connected) {
+            deliver(deliverCtx, &evt);
+            if (botHostRowCpu(MAX_BOT_HOSTS, &evt) != BOT_HOST_CPU_UNKNOWN) {
+                ControlEvent ce;
+                botHostFillCpu(MAX_BOT_HOSTS,
+                               botHostRowCpu(MAX_BOT_HOSTS, &evt), &ce);
+                deliver(deliverCtx, &ce);
+            }
+        }
     }
 }
 
@@ -1069,6 +1170,7 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
             hc->connId = serverNextConnId();
             SDL_strlcpy(hc->name, hostName, sizeof(hc->name));
             hc->slots = slots;
+            hc->cpu = (uint8_t)BOT_HOST_CPU_UNKNOWN;
             hc->playerHost = true;
             hc->ownerSlot = owner;
             hc->ownerConnId = oc->connId;
@@ -1150,6 +1252,7 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
         hc->connId = serverNextConnId();
         SDL_strlcpy(hc->name, hostName, sizeof(hc->name));
         hc->slots = slots;
+        hc->cpu = (uint8_t)BOT_HOST_CPU_UNKNOWN;
         hc->lastReceivedTick = udpServer.tickCount;
         hc->outSequence = 1;
         channelMuxInit(&hc->channelMux);
@@ -1808,6 +1911,11 @@ void serverBotHostsReset(void) {
     }
     memset(udpServer.botHosts, 0, sizeof(udpServer.botHosts));
     memset(botHostRowSent, 0, sizeof(botHostRowSent));
+    memset(botHostCpuSent, BOT_HOST_CPU_UNKNOWN, sizeof(botHostCpuSent));
+    botHostCpuSentInit = true;
+    memset(botHostCpuLogged, 0, sizeof(botHostCpuLogged));
+    botHostServerCpuInit = false;
+    botHostServerCpuValue = (uint8_t)BOT_HOST_CPU_UNKNOWN;
     for (s = 0; s < MAX_TANKS; s++) {
         memset(&udpServer.botSeats[s], 0, sizeof(udpServer.botSeats[s]));
         udpServer.botSeats[s].host = -1;

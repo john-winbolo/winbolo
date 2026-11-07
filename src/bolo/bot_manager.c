@@ -1818,6 +1818,16 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             j->poolJson = NULL;
         }
 
+        /* The think time for the lobby's CPU estimate: only a think that
+         * ran (a dead bot's worker returns before it). */
+        {
+            BotContext *tb = &sim->botMgr.bots[i];
+            if (tb->thinkCount != tb->thinkCountSeen) {
+                tb->thinkCountSeen = tb->thinkCount;
+                sim->botMgr.thinkMsTotal += tb->lastThinkMs;
+            }
+        }
+
         /* Fan out this bot's deferred internal (dest=0) messages into every
          * allied bot's inbox. Serial, on the producer thread, walking
          * jobIndices in ascending slot order — so both WHEN a message lands
@@ -2977,6 +2987,10 @@ void botManagerSetRemoteHooks(ServerSim *sim, const BotRemoteHooks *hooks) {
 
 uint32_t botManagerGameStarts(const ServerSim *sim) {
     return sim != NULL ? sim->botMgr.gameStarts : 0;
+}
+
+double botManagerThinkMsTotal(const ServerSim *sim) {
+    return sim != NULL ? sim->botMgr.thinkMsTotal : 0.0;
 }
 
 bool botManagerDefaultDebugMode(const ServerSim *sim) {

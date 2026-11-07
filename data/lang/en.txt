@@ -442,6 +442,12 @@ STR_CLIENT_BOTHOST_NEWS_FMT=This computer now runs {number} of the server's bots
 STR_DLGLOBBY_BOTHOST_SERVER_NAME=Server
 STR_DLGLOBBY_BOTHOST_SERVER_STATE=runs bots itself
 
+# After each Bot Host row: how much of its machine's CPU the row's bots use,
+# as that machine estimates it ({number} = percent), and the text for above
+# 0% and below 1%
+STR_DLGLOBBY_BOTHOST_CPU_FMT=(Estimated {number}% of the machine's CPU)
+STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE=(Estimated <1% of the machine's CPU)
+
 # Why Ready is off while a Bot Host gets the server's brain files ({number} = %)
 STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT=Bot Host syncing {number}%
 

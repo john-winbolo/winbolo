@@ -150,6 +150,11 @@ typedef struct {
     uint8_t recPercent; /* recording upload progress, 0..100 */
     uint8_t recBotsDone; /* bots whose recordings are sent */
     uint8_t recBots;     /* bots with recordings to send */
+    /* How much of its machine's CPU the row's bots use, as the machine
+     * estimates it (CTRL_BOT_HOST_CPU, bot_host_cpu.h): 0..100,
+     * BOT_HOST_CPU_UNDER_ONE, or BOT_HOST_CPU_UNKNOWN until the server
+     * sends one (an older server never does). */
+    uint8_t cpu;
     char    name[CLIENT_BOT_HOST_NAME_LEN];
 } ClientBotHostRow;
 

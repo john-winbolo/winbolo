@@ -908,6 +908,11 @@ int run_bot_host_link_addr_list(void);
 int run_bot_host_link_allow(void);
 int run_bot_host_slots_codec(void);
 int run_bot_host_place_spread(void);
+/* The lobby's CPU estimate per Bot Host row (test_bot_host_cpu.c). */
+int run_bot_host_cpu_percent(void);
+int run_bot_host_cpu_meter(void);
+int run_bot_host_cpu_codec(void);
+int run_bot_host_cpu_client_row(void);
 
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with
