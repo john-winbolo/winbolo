@@ -896,5 +896,63 @@ do
         tier2 == "dest_pill_lead" and h.dest_intercept ~= nil, tier2)
 end
 
+-- 43. BLAST_DEAD_PILL_OPEN: a dead pill's tile is open ground for the
+--     builder blast test (lgm.c lgmBlastCatches).  A shell that flies over the
+--     dead pill (he has not arrived when it ends) kills him only within 128 wu
+--     of where it ends, 128*sl along the line to the pill centre, on the tile
+--     or off it.  Sweep: man walking east toward the centre from 120..400 wu
+--     west of it, shooter south or south-west at 2..4 tiles.  Every verdict must match the
+--     distance rule; at least one man off the tile is shot and at least one
+--     man on the tile is held.  Knob off: the old same-tile rule.
+do
+  local pmx, pmy = 108, 100
+  local pcx, pcy = centre(pmx, pmy)
+  local p = { id = 1, mx = pmx, my = pmy, cx = pcx, cy = pcy, live = false }
+  local n, mism, off_fire, on_hold, keel_bad = 0, 0, 0, 0, 0
+  for west = 120, 400, 8 do
+    for dy = 2 * 256, 4 * 256, 12 do
+     for dxs = 0, 2 * 256, 128 do
+      local tx, ty = pcx - dxs, pcy + dy
+      local lgm = { wx = pcx - west, wy = pcy }
+      C.BLAST_DEAD_PILL_OPEN = true
+      local h = {}
+      K.predict_dest_hold(tx, ty, lgm, h, p)
+      local dt = h.dest_timing
+      if dt and dt.open_blast then
+        n = n + 1
+        local D = math.sqrt((pcx - tx) ^ 2 + (pcy - ty) ^ 2)
+        local bx = tx + (pcx - tx) / D * 128 * dt.sl
+        local by = ty + (pcy - ty) / D * 128 * dt.sl
+        local mx, my = K.sim_forward_to_dest(lgm.wx + 0.0, lgm.wy + 0.0, pcx, pcy,
+                                             dt.s_x, pmx, pmy)
+        local ddx, ddy = mx - bx, my - by
+        local want = (ddx * ddx + ddy * ddy <= 128 * 128) and "fire" or "early"
+        if dt.verdict ~= want then mism = mism + 1 end
+        local on_tile = math.floor(mx / 256) == pmx and math.floor(my / 256) == pmy
+        if want == "fire" and not on_tile then off_fire = off_fire + 1 end
+        if want == "early" and on_tile then on_hold = on_hold + 1 end
+      end
+      C.BLAST_DEAD_PILL_OPEN = false
+      local hk = {}
+      K.predict_dest_hold(tx, ty, lgm, hk, p)
+      local dk = hk.dest_timing
+      if dk and dk.open_blast then keel_bad = keel_bad + 1 end
+      if dk and dk.how == "dead: flies over, ends at range" then
+        local want = (dk.s_enter ~= nil and dk.s_x >= dk.s_enter) and "fire" or "early"
+        if dk.verdict ~= want then keel_bad = keel_bad + 1 end
+      end
+     end
+    end
+  end
+  C.BLAST_DEAD_PILL_OPEN = nil
+  check("dead pill open ground: every verdict follows the 128 wu rule",
+        n > 0 and mism == 0, string.format("n=%d mismatches=%d", n, mism))
+  check("dead pill open ground: a man just off the tile is shot",
+        off_fire > 0, off_fire)
+  check("dead pill open ground: a man on the tile out of reach is held",
+        on_hold > 0, on_hold)
+  check("knob off: the old same-tile rule", keel_bad == 0, keel_bad)
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

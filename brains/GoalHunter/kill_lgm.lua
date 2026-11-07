@@ -668,9 +668,13 @@ end
 --     pillbox.c:652): the shell flies on and ends its life at 128*sl.  The
 --     repair on his arrival makes it live at once, so a shell that is inside
 --     the tile at or after his arrival tick goes off then.
---   * the tile is solid for the builder death test either way (pillsExistPos
---     has no armour check, lgm.c:1504): the blast kills him only if he is ON
---     the pill tile.
+--   * a LIVE pill's tile is solid for the builder death test: the blast kills
+--     him only if he is ON the pill tile.  A DEAD pill's tile is open ground
+--     (lgm.c lgmBlastCatches tests pillsIsPillHit, armour > 0): the shell
+--     that flies over and ends at 128*sl kills him only within 128 wu of
+--     where it ends, on the tile or off it.  C.BLAST_DEAD_PILL_OPEN false
+--     (KEEL, or unset) keeps the old rule, where a dead pill's tile was
+--     solid too.
 --   * he stands on it for LGM_BUILD_TIME (20) game ticks after arriving:
 --     the arrival tick sets waitTime = 20 (lgm.c:843), the next 20 ticks
 --     only count it down (lgm.c:174-176), and the tick after that is his
@@ -817,6 +821,7 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
   if stalled then return nil end
   -- When does the shell go off?
   local T_x, s_x, how
+  local open_blast = false   -- the blast is on a dead pill's tile: open ground
   if pill.live then
     T_x, s_x, how = T_entry, s_entry, "live: collides entering the tile"
   elseif s_arrive and s_arrive <= s_full then
@@ -831,6 +836,7 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
     how = "dead: repaired before the shell leaves the tile"
   else
     T_x, s_x, how = T_full, s_full, "dead: flies over, ends at range"
+    open_blast = C.BLAST_DEAD_PILL_OPEN and true or false
   end
   -- The walk off the tile after the build (only needed once he arrives in
   -- the look-ahead: no arrival = no "late").
@@ -844,7 +850,28 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
     end
   end
   local verdict
-  if s_enter == nil or s_x < s_enter then
+  local blast_wx, blast_wy, man_wx, man_wy
+  if open_blast then
+    -- A dead pill's tile is open ground: the shell ends 128*sl along the
+    -- line to the pill centre, and he dies if he is within 128 wu of that
+    -- point then (he has not arrived yet, so the pill is still dead).
+    -- Not there = he is still on his way: hold.
+    if D >= 1 then
+      blast_wx = tank_wx - dx / D * 128 * sl
+      blast_wy = tank_wy - dy / D * 128 * sl
+    else
+      blast_wx, blast_wy = pill.cx + 0.0, pill.cy + 0.0
+    end
+    man_wx, man_wy = M.sim_forward_to_dest(lgm.wx + 0.0, lgm.wy + 0.0,
+                                           pill.cx, pill.cy, s_x,
+                                           pill.mx, pill.my)
+    local bdx, bdy = man_wx - blast_wx, man_wy - blast_wy
+    if bdx * bdx + bdy * bdy <= 128 * 128 then
+      verdict = "fire"
+    else
+      verdict = "early"
+    end
+  elseif s_enter == nil or s_x < s_enter then
     verdict = "early"
   elseif s_arrive and s_x > s_arrive + DWELL_STEPS + s_exit then
     verdict = "late"
@@ -853,6 +880,8 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
   end
   if h then
     h.dest_timing = { verdict = verdict, how = how, live = pill.live,
+                      open_blast = open_blast, blast_wx = blast_wx,
+                      blast_wy = blast_wy, man_wx = man_wx, man_wy = man_wy,
                       T_full = T_full, T_entry = T_entry, T_x = T_x,
                       s_full = s_full, s_entry = s_entry, s_x = s_x,
                       s_enter = s_enter, s_arrive = s_arrive,
@@ -1016,10 +1045,12 @@ function M.predict_aim(tank_wx, tank_wy, lgm, h)
 
   -- LGM_DEST_AIM: he is on the pill tile when the shell lands -> aim at the
   -- tile CENTRE.  The dead pill does not stop the shell (pillsIsPillHit needs
-  -- armour > 0), so it must end its life in this tile; the tile is SOLID for
-  -- lgmDeathCheckAtPosition (pillsExistPos ignores armour), so the blast kills
-  -- a man anywhere on this tile and nobody off it -- the centre has the most
-  -- margin.  Once he repairs it (armour > 0 on arrival) any shell entering
+  -- armour > 0), so it must end its life in this tile.  With
+  -- C.BLAST_DEAD_PILL_OPEN the dead pill's tile is open ground for the
+  -- builder blast test (lgmBlastCatches), so the blast kills a man within
+  -- 128 wu of it; without it (KEEL) the tile is solid and the blast kills a
+  -- man anywhere on this tile and nobody off it.  The centre has the most
+  -- margin either way.  Once he repairs it (armour > 0 on arrival) any shell entering
   -- the tile explodes at its centre anyway (shellsCalcCollision).  A LIVE
   -- damaged pill (LGM_DEST_LIVE_PILLS) stops the shell as it enters the tile,
   -- blast at the centre: the centre aim puts that blast on the tile too.
