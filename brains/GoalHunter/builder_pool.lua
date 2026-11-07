@@ -2701,7 +2701,9 @@ end
 --     the target and not the route he would eventually take -- only the first
 --     LGM_SHELL_PREDICT_TICKS of it, because that is all the gate looked at;
 --   * a red ring of LGM_SHELL_KILL_RADIUS_WU (128 WU = half a tile) at the
---     predicted IMPACT POINT, which is the engine's own blast radius, plus a
+--     predicted IMPACT POINT, which is the engine's own blast radius (the
+--     lgm_blast_shape rule's shape: a box for the Mac Bolo box, a 144 WU
+--     ring for the equivalent area circle), plus a
 --     line from it to where the man is predicted to be standing at that tick;
 --   * a label naming the shell's source and the tick offset, the same two
 --     facts the reject string carries.
@@ -2726,9 +2728,18 @@ function M.draw_shell_gate(state, info)
       px, py = nx, ny
     end
   end
-  -- The kill radius, at the impact point, in the engine's own units.
-  viz.circle("builder_pool_shell_gate", ix, iy,
-             (C.LGM_SHELL_KILL_RADIUS_WU or 128) / 256.0, 255, 70, 70, 230)
+  -- The kill area, at the impact point, in the engine's own units: the
+  -- lgm_blast_shape rule's circle, or its box.
+  local reach = U.lgm_open_blast_reach() / 256.0
+  if U.lgm_blast_shape() == 1 then
+    local x0, y0, x1, y1 = ix - reach, iy - reach, ix + reach, iy + reach
+    viz.line("builder_pool_shell_gate", x0, y0, x1, y0, 255, 70, 70, 230)
+    viz.line("builder_pool_shell_gate", x1, y0, x1, y1, 255, 70, 70, 230)
+    viz.line("builder_pool_shell_gate", x1, y1, x0, y1, 255, 70, 70, 230)
+    viz.line("builder_pool_shell_gate", x0, y1, x0, y0, 255, 70, 70, 230)
+  else
+    viz.circle("builder_pool_shell_gate", ix, iy, reach, 255, 70, 70, 230)
+  end
   viz.line("builder_pool_shell_gate", ix, iy, lx, ly, 255, 70, 70, 200)
   viz.text("builder_pool_shell_gate", ix, iy - 0.8,
     string.format("shell %s ends %s at +%dt -> kills the man", tostring(hit.src),

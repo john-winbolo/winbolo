@@ -4987,6 +4987,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # man_dead_pill_terrain_speed: the builder's speed on the square of a
     # dead pillbox.
     tests/unit/test_man_dead_pill_speed.c
+    # lgm_blast_shape: the open-ground area round an explosion that kills a
+    # builder.
+    tests/unit/test_lgm_blast_shape.c
     tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
@@ -6644,6 +6647,10 @@ set(_unit_test_names
     man_dead_pill_walk_across_water
     man_dead_pill_lifted_waits_for_tank
     man_dead_pill_brain_walk
+    lgm_blast_shape_half_square
+    lgm_blast_shape_mac_box
+    lgm_blast_shape_mac_area
+    lgm_blast_shape_solid_square
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
