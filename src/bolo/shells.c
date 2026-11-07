@@ -385,7 +385,8 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  *     (nowX, nowY). Both are the present. In his tank he is not out and
  *     lives.
  *
- * squareHit is TRUE when the shell hit a pillbox or a wall. The blast is
+ * squareHit is TRUE when the shell hit a pillbox, a wall, a forest, a boat,
+ * the shore a boat's shell stops on or a bridge. The blast is
  * then a hit on that square, and the builder test uses the square rule: a
  * builder anywhere on that square dies and one off it does not. This holds
  * for the shot that kills the pill too, although that shot has already
@@ -826,10 +827,11 @@ static bool shellsMayHit(GameSim *sim, shells shell, BYTE kind, BYTE index) {
 *             (shellsBlastTestBuilder). The same as xValue.
 *             May be NULL
 *  outSeenY - Y, as outSeenX
-*  outSquareHit - TRUE when the shell hit a pillbox or a
-*             wall, the shot that kills the pill or turns the
-*             wall to rubble included; FALSE otherwise. For
-*             the builder test. May be NULL
+*  outSquareHit - TRUE when the shell hit a pillbox, a
+*             wall, a forest, a boat, the shore a boat's shell
+*             stops on or a bridge, the shot that kills the
+*             pill or turns the wall to rubble included; FALSE
+*             otherwise. For the builder test. May be NULL
 *********************************************************/
 bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY, bool *outSquareHit) {
 	map *mp = &sim->mp;
@@ -1075,6 +1077,13 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mapX, mapY);
 					break;
 				case FOREST:
+					/* A hit on a forest, a boat or the shore a boat's shell
+					 * stops on is a hit on its square too, as in Mac Bolo
+					 * (shells.go shell_hit): the square rule, whatever the hit
+					 * leaves there. */
+					if (outSquareHit != NULL) {
+						*outSquareHit = TRUE;
+					}
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, GRASS+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
@@ -1092,10 +1101,19 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mapX, mapY);
 					break;
 				case BOAT:
+					if (outSquareHit != NULL) {
+						*outSquareHit = TRUE;
+					}
 					mapSetPos(sim, mp, mapX, mapY, RIVER, FALSE, FALSE);
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mapX, mapY);
 					break;
 				case GRASS:
+					/* Grass, swamp, rubble and road stop only a boat's shell
+					 * (mapIsPassable). Each such hit is a hit on the square,
+					 * the ones that change nothing yet included. */
+					if (outSquareHit != NULL) {
+						*outSquareHit = TRUE;
+					}
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, GRASS+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
@@ -1108,6 +1126,9 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					}
 					break;
 				case SWAMP:
+					if (outSquareHit != NULL) {
+						*outSquareHit = TRUE;
+					}
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, SWAMP+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
@@ -1120,6 +1141,9 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					}
 					break;
 				case RUBBLE:
+					if (outSquareHit != NULL) {
+						*outSquareHit = TRUE;
+					}
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, RUBBLE+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
@@ -1132,6 +1156,14 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					}
 					break;
 				case ROAD:
+					/* A bridge (water past the road on the shell's line, so
+					 * the shot takes it away: shellsRoadShotAway) is a hit on
+					 * its square. Any other road keeps the open-ground rule:
+					 * in Mac Bolo the shell falls there with no hit. */
+					if (outSquareHit != NULL &&
+					    shellsRoadShotAway(sim, mapX, mapY, angle) == TRUE) {
+						*outSquareHit = TRUE;
+					}
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, ROAD+MINE_SUBTRACT, FALSE, FALSE);
 					} else {

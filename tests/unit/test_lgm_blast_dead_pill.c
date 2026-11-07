@@ -42,21 +42,39 @@
  *                                  the open-ground circle) lives. Once with
  *                                  no rewind and once with a rewind, the two
  *                                  ways shellsBlastTestBuilder tests him.
- * lgm_blast_wall_rubble_shot     - five real shells into a wall (a building
- *                                  of BUILDING_LIFE). Hit 1 makes it a half
- *                                  building, hits 2 to 4 wear it down, hit 5
- *                                  makes it rubble. Every hit is a hit on
- *                                  the wall's square, so the square rule
- *                                  holds on all five, hit 5 included,
- *                                  although the square is rubble when the
- *                                  builder is tested: a builder in either
- *                                  far corner of the square dies on each
- *                                  hit, and a builder on the first world
- *                                  unit of the square to the right or below
- *                                  (128 from the blast) lives on each hit.
- *                                  Once with no rewind and once with a
+ * lgm_blast_wall_rubble_shot     - real shells into a wall until it is
+ *                                  rubble: building_life + 1 hits. Hit 1
+ *                                  makes it a half building, the hits after
+ *                                  it wear it down, the last one makes it
+ *                                  rubble. Every hit is a hit on the wall's
+ *                                  square, so the square rule holds on all
+ *                                  of them, the last one included, although
+ *                                  the square is rubble when the builder is
+ *                                  tested: a builder in either far corner
+ *                                  of the square dies on each hit, and a
+ *                                  builder on the first world unit of the
+ *                                  square to the right or below (128 from
+ *                                  the blast) lives on each hit. For
+ *                                  building_life 4 (the default), 1 and 7,
+ *                                  each once with no rewind and once with a
  *                                  rewind. As in Mac Bolo, where a shell's
  *                                  hit on a square explodes at that square.
+ * lgm_blast_forest_shot          - one land shell into a forest (it becomes
+ *                                  grass), the same four builder places and
+ *                                  the same answers: a hit on the square.
+ * lgm_blast_boat_shot            - the same into a boat (it becomes river).
+ * lgm_blast_shore_shot           - the same with a boat's shell into grass,
+ *                                  the shore it stops on.
+ * lgm_blast_bridge_shot          - the same with a boat's shell into a road
+ *                                  with river past it: a bridge, shot away
+ *                                  to river.
+ * lgm_blast_road_open_ground     - a boat's shell into a road with grass
+ *                                  past it. The road stays and the hit is
+ *                                  not a hit on the square: the blast on its
+ *                                  middle is open ground, so the builders in
+ *                                  the far corners live and the builders 128
+ *                                  away on the next squares die. In Mac Bolo
+ *                                  the shell falls there with no hit.
  *
  * The first three call lgmDeathCheckAtPosition directly, with no pill hit,
  * on ut_make_running_sim (slot 0) with the builder out of his tank, so no
@@ -251,11 +269,14 @@ int run_lgm_blast_live_pill_unchanged(void) {
 }
 
 /* Fire a real shell east into the square, from 20 inside its west edge,
- * with the builder out at (lx, ly). With comp above 0 the shell carries that
- * rewind and the builder's history says he was at (lx, ly) on every frame.
+ * with the builder out at (lx, ly). boat: the shell is a boat's (onBoat),
+ * which grass, swamp, rubble and road stop too. With comp above 0 the shell
+ * carries that rewind and the builder's history says he was at (lx, ly) on
+ * every frame.
  * One shellsUpdate: the shell moves 32 and hits what is on the square.
  * Reports whether the builder died. */
-static bool lbd_fire_east_kills(LbdFix *f, WORLD lx, WORLD ly, uint8_t comp) {
+static bool lbd_fire_east_kills(LbdFix *f, WORLD lx, WORLD ly, uint8_t comp,
+                                bool boat) {
     GameSim  *gs = f->gs;
     lgm      *man = &gs->lgmen[LBD_SLOT];
     tank      tanks[MAX_TANKS];
@@ -280,7 +301,7 @@ static bool lbd_fire_east_kills(LbdFix *f, WORLD lx, WORLD ly, uint8_t comp) {
 
     shellsAddItem(gs, &gs->shs, (WORLD)(f->left + 20), LBD_MID_Y(f),
                   (TURNTYPE)BRADIANS_EAST, (TURNTYPE)7, NEUTRAL, NEUTRAL,
-                  DMG_NO_PILL, FALSE);
+                  DMG_NO_PILL, boat ? TRUE : FALSE);
     q = gs->shs;
     q->x = (WORLD)(f->left + 20);
     q->y = LBD_MID_Y(f);
@@ -306,7 +327,7 @@ static bool lbd_kill_shot_kills(LbdFix *f, WORLD lx, WORLD ly, uint8_t comp,
     bool died;
 
     f->gs->pb->item[LBD_PILL].armour = 1;
-    died = lbd_fire_east_kills(f, lx, ly, comp);
+    died = lbd_fire_east_kills(f, lx, ly, comp, false);
     *pillDied = (f->gs->pb->item[LBD_PILL].armour == 0);
     return died;
 }
@@ -352,71 +373,173 @@ int run_lgm_blast_pill_kill_shot(void) {
     return 0;
 }
 
-/* The wall test's builder places: the two far corners of the wall's square,
- * and the first world unit of the square to the right and of the square
- * below, each 128 from the blast on the middle of the wall's square. */
-#define LBD_WALL_SPOTS 4
-#define LBD_WALL_HITS  5
+/* The builder places the wall test and the terrain tests use: the two far
+ * corners of the hit square, and the first world unit of the square to the
+ * right and of the square below, each 128 from the blast on the middle of
+ * the hit square. */
+#define LBD_SPOTS 4
+static const char *lbdSpotNames[LBD_SPOTS] = {
+    "in the north-west corner of the hit square",
+    "in the south-east corner of the hit square",
+    "on the square to the right, 128 from the blast",
+    "on the square below, 128 from the blast"
+};
+static const bool lbdSpotOnSquare[LBD_SPOTS] = { true, true, false, false };
+
+/* The builder's place for spot s. */
+static void lbd_spot(const LbdFix *f, int s, WORLD *lx, WORLD *ly) {
+    switch (s) {
+        case 0:  *lx = (WORLD)(f->left + 2);   *ly = (WORLD)(f->top + 2);   break;
+        case 1:  *lx = (WORLD)(f->left + 253); *ly = (WORLD)(f->top + 253); break;
+        case 2:  *lx = (WORLD)(f->left + 256); *ly = LBD_MID_Y(f);         break;
+        default: *lx = (WORLD)(f->left + MAP_SQUARE_MIDDLE);
+                 *ly = (WORLD)(f->top + 256);                               break;
+    }
+}
+
+/* A running game with pill 0 off its square (carried) and the square below
+ * free grass, so the terrain put on the square is all the shell can hit. */
+static int lbd_open_bare(LbdFix *f) {
+    bool belowFree;
+
+    if (lbd_open(f, 0) != 0) {
+        lbd_close(f);
+        return 1;
+    }
+    f->gs->pb->item[LBD_PILL].inTank = TRUE;
+    belowFree = lbd_square_free(f->gs, f->px, f->py + 1);
+    if (!belowFree) {
+        lbd_close(f);
+    }
+    UT_ASSERT_MSG(belowFree, "the square below the hit square is not free");
+    mapSetPos(f->gs, &f->gs->mp, f->px, (BYTE)(f->py + 1), GRASS, FALSE, FALSE);
+    return 0;
+}
+
+/* The most hits the wall test fires: building_life 7, plus one. */
+#define LBD_WALL_MAX_HITS 8
 
 int run_lgm_blast_wall_rubble_shot(void) {
     static const uint8_t comps[2] = { 0, 3 };
-    static const char *names[LBD_WALL_SPOTS] = {
-        "in the north-west corner of the wall's square",
-        "in the south-east corner of the wall's square",
-        "on the square to the right, 128 from the blast",
-        "on the square below, 128 from the blast"
-    };
-    static const bool onSquare[LBD_WALL_SPOTS] = { true, true, false, false };
+    /* 0 keeps the fixture's building_life, the default (4). */
+    static const int lives[3] = { 0, 1, 7 };
     LbdFix f;
-    int    i, s, h;
+    int    l, i, s, h;
 
-    for (i = 0; i < 2; i++) {
-        for (s = 0; s < LBD_WALL_SPOTS; s++) {
-            WORLD lx, ly;
-            BYTE  after[LBD_WALL_HITS];
-            bool  died[LBD_WALL_HITS];
-            bool  belowFree;
+    for (l = 0; l < 3; l++) {
+        for (i = 0; i < 2; i++) {
+            for (s = 0; s < LBD_SPOTS; s++) {
+                WORLD lx, ly;
+                BYTE  after[LBD_WALL_MAX_HITS];
+                bool  died[LBD_WALL_MAX_HITS];
+                int   life, hits;
 
-            if (lbd_open(&f, 0) != 0) {
+                if (lbd_open_bare(&f) != 0) {
+                    return 1;
+                }
+                if (lives[l] != 0) {
+                    f.gs->rules.building_life = lives[l];
+                }
+                life = (int)f.gs->rules.building_life;
+                /* A new wall takes building_life + 1 hits to rubble
+                 * (buildingAddItem). */
+                hits = life + 1;
+                if ((lives[l] == 0 && life != 4) || hits > LBD_WALL_MAX_HITS) {
+                    lbd_close(&f);
+                }
+                UT_ASSERT_MSG(lives[l] != 0 || life == 4,
+                              "the default building_life is %d, not 4", life);
+                UT_ASSERT_MSG(hits <= LBD_WALL_MAX_HITS,
+                              "building_life %d needs more than %d hits",
+                              life, LBD_WALL_MAX_HITS);
+                mapSetPos(f.gs, &f.gs->mp, f.px, f.py, BUILDING, FALSE, FALSE);
+
+                lbd_spot(&f, s, &lx, &ly);
+                for (h = 0; h < hits; h++) {
+                    died[h] = lbd_fire_east_kills(&f, lx, ly, comps[i], false);
+                    after[h] = mapGetPos(&f.gs->mp, f.px, f.py);
+                }
                 lbd_close(&f);
-                return 1;
-            }
-            /* Pill 0 off the square (carried), the square below free grass
-             * and the square a wall, so the wall is all the shell can hit. */
-            f.gs->pb->item[LBD_PILL].inTank = TRUE;
-            belowFree = lbd_square_free(f.gs, f.px, f.py + 1);
-            if (!belowFree) {
-                lbd_close(&f);
-            }
-            UT_ASSERT_MSG(belowFree, "the square below the wall is not free");
-            mapSetPos(f.gs, &f.gs->mp, f.px, (BYTE)(f.py + 1), GRASS, FALSE, FALSE);
-            mapSetPos(f.gs, &f.gs->mp, f.px, f.py, BUILDING, FALSE, FALSE);
 
-            switch (s) {
-                case 0:  lx = (WORLD)(f.left + 2);   ly = (WORLD)(f.top + 2);   break;
-                case 1:  lx = (WORLD)(f.left + 253); ly = (WORLD)(f.top + 253); break;
-                case 2:  lx = (WORLD)(f.left + 256); ly = LBD_MID_Y(&f);        break;
-                default: lx = (WORLD)(f.left + MAP_SQUARE_MIDDLE);
-                         ly = (WORLD)(f.top + 256);                              break;
-            }
-            for (h = 0; h < LBD_WALL_HITS; h++) {
-                died[h] = lbd_fire_east_kills(&f, lx, ly, comps[i]);
-                after[h] = mapGetPos(&f.gs->mp, f.px, f.py);
-            }
-            lbd_close(&f);
-
-            for (h = 0; h < LBD_WALL_HITS; h++) {
-                BYTE want = (h == LBD_WALL_HITS - 1) ? RUBBLE : HALFBUILDING;
-                UT_ASSERT_MSG(after[h] == want,
-                              "rewind %u: after hit %d the wall's square is "
-                              "terrain %u, not %u", (unsigned)comps[i], h + 1,
-                              (unsigned)after[h], (unsigned)want);
-                UT_ASSERT_MSG(died[h] == onSquare[s],
-                              "rewind %u: hit %d on a wall %s a builder %s",
-                              (unsigned)comps[i], h + 1,
-                              died[h] ? "killed" : "left alive", names[s]);
+                for (h = 0; h < hits; h++) {
+                    BYTE want = (h == hits - 1) ? RUBBLE : HALFBUILDING;
+                    UT_ASSERT_MSG(after[h] == want,
+                                  "building_life %d, rewind %u: after hit %d "
+                                  "the wall's square is terrain %u, not %u",
+                                  life, (unsigned)comps[i], h + 1,
+                                  (unsigned)after[h], (unsigned)want);
+                    UT_ASSERT_MSG(died[h] == lbdSpotOnSquare[s],
+                                  "building_life %d, rewind %u: hit %d on a "
+                                  "wall %s a builder %s",
+                                  life, (unsigned)comps[i], h + 1,
+                                  died[h] ? "killed" : "left alive",
+                                  lbdSpotNames[s]);
+                }
             }
         }
     }
     return 0;
+}
+
+/* One shell east into the square made `terrain`, with `east` on the square
+ * to its right, for each builder place, once with no rewind and once with a
+ * rewind. squareHit: the hit is a hit on the square, so only the builders on
+ * it die; otherwise the blast on its middle is open ground and only the
+ * builders 128 away die. The square is `want` after the hit. */
+static int lbd_terrain_shot(const char *what, BYTE terrain, BYTE east,
+                            bool boat, bool squareHit, BYTE want) {
+    static const uint8_t comps[2] = { 0, 3 };
+    LbdFix f;
+    int    i, s;
+
+    for (i = 0; i < 2; i++) {
+        for (s = 0; s < LBD_SPOTS; s++) {
+            WORLD lx, ly;
+            BYTE  after;
+            bool  died;
+
+            if (lbd_open_bare(&f) != 0) {
+                return 1;
+            }
+            mapSetPos(f.gs, &f.gs->mp, (BYTE)(f.px + 1), f.py, east, FALSE, FALSE);
+            mapSetPos(f.gs, &f.gs->mp, f.px, f.py, terrain, FALSE, FALSE);
+            lbd_spot(&f, s, &lx, &ly);
+            died = lbd_fire_east_kills(&f, lx, ly, comps[i], boat);
+            after = mapGetPos(&f.gs->mp, f.px, f.py);
+            lbd_close(&f);
+
+            UT_ASSERT_MSG(after == want,
+                          "rewind %u: after the hit on %s the square is "
+                          "terrain %u, not %u", (unsigned)comps[i], what,
+                          (unsigned)after, (unsigned)want);
+            UT_ASSERT_MSG(died == (lbdSpotOnSquare[s] == squareHit),
+                          "rewind %u: a hit on %s %s a builder %s",
+                          (unsigned)comps[i], what,
+                          died ? "killed" : "left alive", lbdSpotNames[s]);
+        }
+    }
+    return 0;
+}
+
+int run_lgm_blast_forest_shot(void) {
+    return lbd_terrain_shot("a forest", FOREST, GRASS, false, true, GRASS);
+}
+
+int run_lgm_blast_boat_shot(void) {
+    return lbd_terrain_shot("a boat", BOAT, GRASS, false, true, RIVER);
+}
+
+/* The first boat's shell on grass no shell has touched leaves it grass
+ * (grassAddItem): a hit that changes nothing yet, and still a hit on the
+ * square. */
+int run_lgm_blast_shore_shot(void) {
+    return lbd_terrain_shot("the shore", GRASS, GRASS, true, true, GRASS);
+}
+
+int run_lgm_blast_bridge_shot(void) {
+    return lbd_terrain_shot("a bridge", ROAD, RIVER, true, true, RIVER);
+}
+
+int run_lgm_blast_road_open_ground(void) {
+    return lbd_terrain_shot("a road", ROAD, GRASS, true, false, ROAD);
 }

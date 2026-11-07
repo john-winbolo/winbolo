@@ -8663,10 +8663,13 @@ function Brain.think(info)
     -- corpse we're sweeping is open ground: the 128-wu splash reaches a man on
     -- it.  C.BLAST_DEAD_PILL_OPEN false (KEEL) keeps the old engine rule, where
     -- ANY deployed pill was solid regardless of health.  world.lua indexes
-    -- pill_at only for a deployed (not-carried) pill.
+    -- pill_at only for a deployed (not-carried) pill.  A forest stops every
+    -- shell, and that hit is a hit on its square (shells.c outSquareHit), so
+    -- with C.BLAST_TERRAIN_SQUARE_HIT a man on a forest is solid too.
     local function lgm_on_solid(mx, my)
       local tt = U.ttype(mx, my)
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
+      if tt == C.T_FOREST and C.BLAST_TERRAIN_SQUARE_HIT then return true end
       local plst = world.pill_at and world.pill_at[my * 256 + mx]
       if plst then
         if not C.BLAST_DEAD_PILL_OPEN then return true end
