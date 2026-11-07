@@ -1568,6 +1568,9 @@ int run_lv_lag_view_toggle(void) {
   UT_ASSERT(lv_lagViewToggle(true, true, true, -1, -1, true) == LV_LAG_TOGGLE_NONE);
   /* On for 5, tank 3 selected: the view moves to 3. */
   UT_ASSERT(lv_lagViewToggle(true, true, true, 3, 5, true) == 3);
+  /* On for 5, tank 3 selected with no record yet: off, as the view cannot be
+     on for a player with no record. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, 5, false) == -1);
   /* On for 5, no tank selected: off. */
   UT_ASSERT(lv_lagViewToggle(true, true, true, -1, 5, false) == -1);
   /* The preference off, no recording open, or no lag records: no change. */
@@ -2129,6 +2132,116 @@ int run_lv_lag_view_own_shells(void) {
   UT_ASSERT_MSG(s_lagShellSeen.n == 1, "%d shells drawn at entry 78, want 1",
                 s_lagShellSeen.n);
   UT_ASSERT(lagShellSeenAt(lagShellPx(), lagShellPy(73)));
+
+  lv_screenLagViewSet(-1);
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * A shell whose owner is lost in flight is drawn once, from the old frame,
+ * in every entry. A's shell flies north next to a pillbox's shell one pixel
+ * east of it, and the two go on as one record:
+ *
+ *   entry 40          A's lag record, rewind 5 (100 ms)
+ *   entry 59          the pillbox's shell starts, one pixel east of A's line
+ *   entry 60          A fires: A's shell starts six steps north of A
+ *   entries 60..65    both move one step north each entry, side by side
+ *   entries 66..75    one shell record only, on the pillbox shell's line
+ *
+ * At entry 66 the one shell continues both, whose owners differ, so it has
+ * no owner, and A's shell loses A as owner in the entries before too. At
+ * entry 70 the view for A draws the old frame (entry 65) with both shells,
+ * and nothing from the present frame. Before the fix, A's shell was skipped
+ * in the old frame (A's own) and the present one was not A's: it was drawn
+ * in neither.
+ */
+static int32_t lagLostPx(void) { return lagShellAx() + 16; }
+
+int run_lv_lag_view_lost_owner(void) {
+  const char *path = "lv_lag_view_lost_owner.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  LvShellOwnerStats st;
+  uint32_t lostBefore, ownedBefore;
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 99; k++) {
+    bool aShell = (k >= LAG_SHELL_FIRST && k <= 65);
+    bool pShell = (k >= LAG_SHELL_FIRST - 1 && k <= LAG_SHELL_LAST);
+    int events = 2 + (k == 40 ? 1 : 0) + (aShell ? 1 : 0) + (pShell ? 1 : 0) +
+                 (k == LAG_SHELL_FIRST ? 1 : 0);
+    if (k == 39) {
+      putLagDrawSnapshot(&b, k);
+      continue;
+    }
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)events);
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+    if (k == LAG_SHELL_FIRST) {
+      putU8(&b, log_TankSetStock);
+      putU8(&b, 0); putU8(&b, 5);
+      putU8(&b, 0); putU8(&b, 39); putU8(&b, 0); putU8(&b, 40); putU8(&b, 0);
+    }
+    if (aShell) {
+      putLagShell(&b, lagShellAx(), lagShellAy(k));
+    }
+    if (pShell) {
+      putLagShell(&b, lagLostPx(), lagShellAy(k));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic lost owner log failed to build/load");
+
+  lv_screenLagShellOwnerStats(&st);
+  lostBefore = st.continuedLost;
+  ownedBefore = st.startOwned;
+  if (lagDrawPlayTo(lv, 64) != 0) return 1;
+  lv_screenLagShellOwnerStats(&st);
+  UT_ASSERT_MSG(st.startOwned - ownedBefore == 1, "%u new shells given an owner, want 1",
+                (unsigned)(st.startOwned - ownedBefore));
+
+  /* Entry 64, before the two go on as one: A's shell at the present, the
+     pillbox's at the old time (entry 59). */
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(s_lagShellSeen.n == 2, "%d shells drawn at entry 64, want 2",
+                s_lagShellSeen.n);
+  UT_ASSERT(lagShellSeenAt(lagShellAx(), lagShellAy(64)));
+  UT_ASSERT(lagShellSeenAt(lagLostPx(), lagShellAy(59)));
+
+  if (lagDrawPlayTo(lv, 70) != 0) return 1;
+  lv_screenLagShellOwnerStats(&st);
+  UT_ASSERT_MSG(st.continuedLost - lostBefore == 1, "%u shells lost their owner, want 1",
+                (unsigned)(st.continuedLost - lostBefore));
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(s_lagShellSeen.n == 2, "%d shells drawn at entry 70, want 2",
+                s_lagShellSeen.n);
+  UT_ASSERT_MSG(lagShellSeenAt(lagShellAx(), lagShellAy(65)),
+                "A's shell is not drawn at its entry-65 place");
+  UT_ASSERT_MSG(lagShellSeenAt(lagLostPx(), lagShellAy(65)),
+                "the pillbox's shell is not drawn at its entry-65 place");
+  UT_ASSERT_MSG(!lagShellSeenAt(lagLostPx(), lagShellAy(70)),
+                "the shell with no owner is drawn at the present");
 
   lv_screenLagViewSet(-1);
   lv_screenSetLagFeature(0);
