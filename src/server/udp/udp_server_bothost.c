@@ -1891,7 +1891,8 @@ static void botHostPump(int h) {
  * brains, or the last one known, or the default for this machine (logical
  * cores - 1). */
 static int botHostServerSlots(ServerSim *sim) {
-    static int known = 0;
+    static int known = -1;
+    static const char *knownFrom = "";
     static uint32_t lastTick = 0;
     static bool polled = false;
     if (!polled || udpServer.tickCount - lastTick >= BOT_HOST_CAP_POLL_TICKS) {
@@ -1900,13 +1901,22 @@ static int botHostServerSlots(ServerSim *sim) {
         lastTick = udpServer.tickCount;
         memset(&ps, 0, sizeof(ps));
         botManagerGetPoolStats(sim, &ps);
-        if (ps.brainCapacity > 0) known = ps.brainCapacity;
+        /* The host bot capacity (-botcapacity, or the CPU speed test with
+           the bot brain's answer) comes first. -1 (no cap) and -2 (the test
+           still runs) fall back to the active brains' answer. */
+        if (ps.hostBotCapacity >= 0) {
+            known = ps.hostBotCapacity;
+            knownFrom = "the server's host bot capacity";
+        } else if (ps.brainCapacity > 0) {
+            known = ps.brainCapacity;
+            knownFrom = "the brain's capacity answer";
+        }
     }
     {
         static int logged = -1;
         int slots = known;
-        const char *from = "the brain's measured capacity";
-        if (slots <= 0) {
+        const char *from = knownFrom;
+        if (slots < 0) {
             BrainMachineInfo machine;
             memset(&machine, 0, sizeof(machine));
             brainCapacityGetMachine(&machine);
@@ -1916,8 +1926,7 @@ static int botHostServerSlots(ServerSim *sim) {
         if (slots != logged) {
             logged = slots;
             fprintf(stderr, "[bothost] the server counts as a host with %d "
-                    "slots (%s)
-", slots, from);
+                    "slots (%s)\n", slots, from);
         }
         return slots;
     }
