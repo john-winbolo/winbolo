@@ -1165,9 +1165,49 @@ bool lv_screenPillHitNow(BYTE pill) {
   return s_pillHitAt[pill] != 0 && s_pillHitAt[pill] == g_lv->timeRunning + 1;
 }
 
+/* The squares whose wall a recorded map change turned to rubble, each with
+   the frame (timeRunning + 1) it did so on: the shell's fifth hit on the
+   wall. Read by the builder hit box through lv_screenWallHitNow. Stamps, as
+   for the pills; a frame holds few such hits, so a small ring is enough. */
+#define LV_WALL_HIT_SLOTS 64
+typedef struct {
+  BYTE     x, y;
+  uint32_t at;
+} LvWallHit;
+static LvWallHit s_wallHitAt[LV_WALL_HIT_SLOTS];
+static unsigned  s_wallHitNext = 0;
+
+/* A recorded map change: notes a wall turned to rubble, then sets the
+   square. */
+static void lv_screenMapChange(BYTE x, BYTE y, BYTE terrain) {
+  BYTE old = lv_mapGetPos(&g_lv->mp, x, y);
+  if ((old == BUILDING || old == HALFBUILDING) && terrain == RUBBLE) {
+    LvWallHit *w = &s_wallHitAt[s_wallHitNext];
+    w->x = x;
+    w->y = y;
+    w->at = g_lv->timeRunning + 1;
+    s_wallHitNext = (s_wallHitNext + 1) % LV_WALL_HIT_SLOTS;
+  }
+  lv_mapSetPos(&g_lv->mp, x, y, terrain);
+}
+
+bool lv_screenWallHitNow(BYTE x, BYTE y) {
+  unsigned i;
+  if (g_lv == NULL) return false;
+  for (i = 0; i < LV_WALL_HIT_SLOTS; i++) {
+    const LvWallHit *w = &s_wallHitAt[i];
+    if (w->at != 0 && w->at == g_lv->timeRunning + 1 && w->x == x && w->y == y) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void lv_screenSetup() {
   int a = 0;
   memset(s_pillHitAt, 0, sizeof(s_pillHitAt));
+  memset(s_wallHitAt, 0, sizeof(s_wallHitAt));
+  s_wallHitNext = 0;
   /* Every load path runs through here, so drop the previous log's recorded
      settings before the new one's walk can collect its own. */
   lv_screenStoreGameSettings(NULL, 0);
@@ -2798,7 +2838,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
-      lv_mapSetPos(&g_lv->mp, opt1, opt2, opt3);
+      lv_screenMapChange(opt1, opt2, opt3);
       break;
     case log_ChangeName:
       logReadBytes(&opt1, 1);

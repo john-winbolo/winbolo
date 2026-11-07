@@ -1872,7 +1872,8 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE
             BYTE pos;
             if (ax < 0 || ay < 0 || ax > 255 || ay > 255) continue;
             pos = lv_mapGetPos(&lv->mp, (BYTE)ax, (BYTE)ay);
-            if (pos == BUILDING || pos == HALFBUILDING ||
+            if (lvHitboxWallSolid(pos == BUILDING || pos == HALFBUILDING,
+                                  lv_screenWallHitNow((BYTE)ax, (BYTE)ay)) ||
                 lvDrawPillSolidAt(&lv->pb, (BYTE)ax, (BYTE)ay) ||
                 lv_basesExistPos(&lv->bs, (BYTE)ax, (BYTE)ay)) {
                 solid |= 1u << (row * 3 + col);
