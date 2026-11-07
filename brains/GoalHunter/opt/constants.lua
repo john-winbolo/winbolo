@@ -246,8 +246,20 @@ M.PILL_ANGER_DECAY = 3000
 M.PILL_ANGER_BUMP  = 0.3333
 
 -- Wall shielding: how much protection walls give against pill fire
-M.WALL_HP_FULL     = 5    -- shots to destroy a full wall (T_BUILDING)
-M.WALL_HP_HALF     = 2    -- shots to destroy a half wall (T_HALFBUILD)
+-- WALL_HP_FULL / WALL_HP_HALF follow the live building_life rule
+-- (info.rules, 1..255, classic 4): live_physics.lua group WALL rewrites them
+-- when the rules arrive. src/bolo/building.c buildingAddItem: a full wall
+-- falls on hit building_life + 1; a half wall has 1..building_life hits
+-- left, and the brain cannot see the exact count, so it counts the middle,
+-- rounded down: floor((building_life + 1) / 2). The values below are the
+-- classic (building_life 4) numbers.
+M.WALL_HP_FULL     = 5    -- shots to destroy a full wall (T_BUILDING): building_life + 1
+M.WALL_HP_HALF     = 2    -- shots to destroy a half wall (T_HALFBUILD): floor((building_life + 1) / 2)
+-- Shield cover in the shield scorers (attack_shield.lua, pill_cover.lua) is
+-- counted in units of this many shots per wall. It stays 5 so the Lua
+-- scorers match the C scorer (gh_shield_stamp.c WALL_SHOTS 5.0), which
+-- does not read building_life.
+M.SHIELD_WALL_COVER_SHOTS = 5
 M.WALL_SHIELD_TIME = 200  -- ticks of wall cover = full shielding (~4 seconds)
 
 -- River cost tuning ??? high base cost to discourage routing through water.
@@ -284,6 +296,7 @@ M.LIVE_PHYSICS_SPEED  = true  -- terrain speed caps / route costs (Lua and the C
 M.LIVE_PHYSICS_TURN   = true  -- turn-time sizing (swerve turn, blitz ready timeout) and turn-radius speed caps
 M.LIVE_PHYSICS_ACCEL  = true  -- brake / look-ahead distances and brake profiles follow our accel + brake rates
 M.LIVE_PHYSICS_SHELL  = true  -- shell speed, gunsight max
+M.LIVE_PHYSICS_WALL   = true  -- wall shots (WALL_HP_FULL / HALF, the getaway wall life, the C pathfinder's wall shells and cost) follow building_life
 -- Top-speed caps in info.speed units (engine speed x4): 64 = road top speed,
 -- 48 = the navigation cruise cap. Live rules scale them with the road speed
 -- rule and our speed modifier.
@@ -505,7 +518,10 @@ M.BASE_MIN_ARMOUR_CAPTURE = 0  -- engine reports 1 for all hostile bases (fog of
 M.TURN_COST_PER_45  = 2
 
 -- Wall-shooting pathfinding
-M.WALL_SHOOT_COST   = 30   -- A* cost to path through a wall (5 shots + rubble traverse)
+-- A* cost to path through a wall at the classic WALL_HP_FULL 5 shots (with
+-- the rubble traverse). The C pathfinder gets it scaled by WALL_HP_FULL / 5
+-- (live_physics.wall_shoot_cost, sent from steering.lua M.steer).
+M.WALL_SHOOT_COST   = 30
 M.SHELL_RESERVE     = 0    -- let tank use all shells to break walls
 
 -- Road-building pathfinding
@@ -855,8 +871,8 @@ M.BLOCKER_MIN_LANE_BRAD = 0.125
 -- not a square to build on. Dropped pills the plan has yet to place are
 -- unchanged (PPT_PILL_WALL_EQUIV each). No new value. KEEL false.
 M.PILL_COVER_BY_HEALTH = true
-M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = WALL_HP_FULL 5). 15 = one pill OR three walls. Independent of the blitz gate.
-M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / WALL_HP_FULL 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
+M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = SHIELD_WALL_COVER_SHOTS 5). 15 = one pill OR three walls. Independent of the blitz gate.
+M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / SHIELD_WALL_COVER_SHOTS 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
 -- BLOCKER_ORTHOGONAL_ONLY: a shield blocker (a wall or a dropped pillbox) only
 -- on one of the four squares orthogonally next to the target pill, never a
@@ -3069,7 +3085,7 @@ M.CAPTURE_LGM_PRIORITY_LOG_TICKS = 50 -- brain ticks between CAPTURE_LGM_PRIO
 M.TANK_COMBAT_LOS_EXTRA_RANGE       = 3    -- tiles beyond ENGAGE_RANGE that qualify for LOS fast-engage
 M.TANK_COMBAT_LOS_BASE_COST         = 5    -- very cheap base cost when enemy is in-range with clear LOS
 M.TANK_COMBAT_LOS_COST_PER_TILE     = 3    -- added cost per tile of separation in LOS engage
-M.TANK_COMBAT_WALL_PENALTY_PER_HP   = 20   -- cost penalty per wall HP above 1 block (WALL_HP_FULL=5)
+M.TANK_COMBAT_WALL_PENALTY_PER_HP   = 20   -- cost penalty per wall HP above 1 block (WALL_HP_FULL, 5 at building_life 4)
                                             -- 0-1 block: no penalty; 2 blocks: +100; 5 blocks: +400
 M.TANK_COMBAT_LOW_SHELLS_THRESHOLD  = 20   -- shells below this trigger a cost penalty
 
@@ -6054,12 +6070,13 @@ M.DECOY_GETAWAY_SHIELDED_CHAIN = true  -- keel false
 -- that pill, so the pill keeps shooting the bot, not the human.  A square
 -- that fails is not used.  false = humans are not looked at.
 M.DECOY_GETAWAY_STAY_CLOSEST = true    -- keel false
--- The engine rules the shots left are worked out from.  The brain cannot
--- read them, so these are the engine defaults: building_life
+-- The engine rules the shots left are worked out from: building_life
 -- (BUILDING_LIFE, src/bolo/internal/building.h) and pill_shell_damage
 -- (PILLBOX_SHELL_DAMAGE, src/bolo/internal/pillbox.h).  A full wall stops
 -- WALL_LIFE + 1 shells; a damaged wall's life left is hidden, so it counts
--- 1; a pill stops ceil(armour / PILL_SHELL_DAMAGE).
+-- 1; a pill stops ceil(armour / PILL_SHELL_DAMAGE).  WALL_LIFE is the
+-- classic 4 here; live_physics.lua (group WALL) sets it to the live
+-- info.rules.building_life when the rules arrive.
 M.DECOY_GETAWAY_WALL_LIFE     = 4     -- keel 4
 M.DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1 -- keel 1
 -- 2026-09-24 (Andrew): the diagonal step.  When the next chain square is

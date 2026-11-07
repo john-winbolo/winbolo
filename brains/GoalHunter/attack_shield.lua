@@ -497,7 +497,7 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, 
     local aim_score = 0
     if not blocked then
       -- Weight cover by shots-to-break (mirrors the C scorer): a friendly pill
-      -- blocker is worth PILLS_MAX_HEALTH (15) vs a wall's WALL_HP_FULL (5), so
+      -- blocker is worth PILLS_MAX_HEALTH (15) vs a wall's SHIELD_WALL_COVER_SHOTS (5), so
       -- one pill on the path covers as much as a three-wall shield.
       -- Knob PILL_COVER_BY_HEALTH: a friendly pill is worth floor(health / 5)
       -- walls instead (pill_cover.lua), so pill_walls sums those.
@@ -522,7 +522,7 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, 
       -- Cover satisfices at PPT_COVER_TARGET_SHOTS — one friendly pill (15) is a
       -- full shield, so extra blockers add nothing and built_bonus/fewer-builds
       -- break the tie toward the minimal subset (mirrors the C scorer).
-      local WALL_W, PILL_W = C.WALL_HP_FULL or 5, C.PILLS_MAX_HEALTH or 15
+      local WALL_W, PILL_W = C.SHIELD_WALL_COVER_SHOTS or 5, C.PILLS_MAX_HEALTH or 15
       -- Of the buildable (potential) slots, assume up to num_pill_blockers become
       -- dropped pillboxes worth pill_we walls each; the rest are plain walls.
       local _we = pill_we or 3.0

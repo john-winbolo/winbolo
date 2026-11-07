@@ -8,8 +8,10 @@
 --
 --   walls = floor(health / 5)      15 -> 3, 10-14 -> 2, 5-9 -> 1, 1-4 -> 0
 --
--- A wall takes 5 shots to break (C.WALL_HP_FULL), so a friendly pill with
--- health h is worth 5 * floor(h / 5) shots of cover. "Friendly" is the brain
+-- Cover is counted in C.SHIELD_WALL_COVER_SHOTS (5) shots per wall, the
+-- classic shots to break a wall, so a friendly pill with health h is worth
+-- 5 * floor(h / 5) shots of cover. It stays 5 whatever building_life is, to
+-- match gh_shield_stamp.c (WALL_SHOTS 5.0). "Friendly" is the brain
 -- API's owner string "friendly" (our own pill or an ally's, see world.lua
 -- classify_owner) or "allied". Enemy ("hostile") and "neutral" pills give
 -- no cover.
@@ -80,11 +82,12 @@ function M.slot_done(world, mx, my, tt)
 end
 
 -- Cover on this slot in shots: a friendly pill 5 * floor(health / 5), a wall
--- or half-built wall WALL_HP_FULL (5), anything else 0.
+-- or half-built wall SHIELD_WALL_COVER_SHOTS (5), anything else 0.
 function M.slot_cover_shots(world, mx, my, tt)
   local w = M.square_walls(world, mx, my)
-  if w > 0 then return (C.WALL_HP_FULL or 5) * w end
-  if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return C.WALL_HP_FULL or 5 end
+  local ws = C.SHIELD_WALL_COVER_SHOTS or 5
+  if w > 0 then return ws * w end
+  if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return ws end
   return 0
 end
 

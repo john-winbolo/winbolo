@@ -6803,11 +6803,23 @@ function M.steer(state, world, info, goal)
   -- never paths through a wall). Sent only when the answer changes. Default
   -- 0 never enters this block (unless a bot_init just set it back to 0, and
   -- then it puts the cost back once).
-  if C.WALL_SHOOT_LIFE_MAX > 0 or state._walls_unshootable then
+  -- The wall cost follows the live building_life too (C.WALL_HP_FULL from
+  -- live_physics.lua): sent once when WALL_HP_FULL leaves 5, and when it
+  -- changes. Classic rules with the knob at 0 never enter.
+  local wall_full = C.WALL_HP_FULL
+  if C.WALL_SHOOT_LIFE_MAX > 0 or state._walls_unshootable
+     or wall_full ~= 5 or state._wall_cost_sent then
     local no_walls = not U.wall_shootable(info)
-    if state._walls_unshootable ~= no_walls then
+    local cost = no_walls and 1e6 or U.live_physics.wall_shoot_cost()
+    if state._walls_unshootable ~= no_walls or state._wall_cost_sent ~= cost then
       state._walls_unshootable = no_walls
-      cpf.set_config("wall_shoot_cost", no_walls and 1e6 or C.WALL_SHOOT_COST)
+      state._wall_cost_sent = cost
+      cpf.set_config("wall_shoot_cost", cost)
+    end
+    -- The shells the C pathfinder spends on a wall (configure default 5).
+    if (state._wall_shells_sent or 5) ~= wall_full then
+      state._wall_shells_sent = wall_full
+      cpf.set_config("wall_shoot_shells", wall_full)
     end
   end
   -- C.EDGE_COST_REFRESH_THINKS: see constants.lua. Default 0 never enters.

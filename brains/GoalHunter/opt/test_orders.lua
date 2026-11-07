@@ -5848,15 +5848,17 @@ print("decoy_getaway.lua -- the decoy getaway")
   end
   local function lastb(hb) return hb.ga.blk and hb.ga.blk.list and hb.ga.blk.list[1] end
 
-  -- A FULL WALL, the last blocker: 5 - 0 = 5 shots, it holds.
+  -- A FULL WALL, the last blocker: building_life + 1 - 0 shots (the rule;
+  -- 5 - 0 = 5 at the classic 4), it holds.
+  local FULL = C.DECOY_GETAWAY_WALL_LIFE + 1
   local b, hb = on_sq1(200)
   check("blocker rig: parked on square 1 after the hit, trigger hit",
         held(hb) and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
   TMAP[K(W1)] = C.T_BUILDING
   lock(b, 205); lock(b, 206)
-  check("a full wall: 5 - 0 = 5 shots > 2, it holds",
-        held(hb) and hb.ga.blk and hb.ga.blk.shots == 5 and hb.ga.blk.id == 5 and hb.ga.blk.why == "last"
-        and #hb.ga.blk.list == 1 and lastb(hb).kind == "wall" and lastb(hb).start == 5 and lastb(hb).hits == 0,
+  check("a full wall: building_life + 1 = 5 shots, 5 - 0 = 5 > 2, it holds",
+        FULL == 5 and held(hb) and hb.ga.blk and hb.ga.blk.shots == FULL and hb.ga.blk.id == 5 and hb.ga.blk.why == "last"
+        and #hb.ga.blk.list == 1 and lastb(hb).kind == "wall" and lastb(hb).start == FULL and lastb(hb).hits == 0,
         tostring(hb.ga.blk and hb.ga.blk.shots))
   if drawn then
     local rb = { text = {} }
@@ -6007,14 +6009,20 @@ print("decoy_getaway.lua -- the decoy getaway")
         moved(hb, b) and hb.ga.blk.shots == 2, tostring(hb.ga.blk.shots))
   b.w.pills[8], b.w.pill_at = nil, nil
 
-  -- WALL_LIFE: a building_life of 1 makes a full wall 2 shots.
-  C.DECOY_GETAWAY_WALL_LIFE = 1
+  -- WALL_LIFE: a building_life of 1 (the live rule, through
+  -- live_physics.apply) makes a full wall 2 shots.
+  local LPW = require("live_physics")
+  LPW.apply({ rules = { building_life = 1 } })
+  check("WALL_LIFE from the rule: building_life 1 gives wall life 1", C.DECOY_GETAWAY_WALL_LIFE == 1,
+        tostring(C.DECOY_GETAWAY_WALL_LIFE))
   b, hb = on_sq1(540)
   TMAP[K(W1)] = C.T_BUILDING
   lock(b, 545)
   check("WALL_LIFE 1: a full wall is 2 shots, it moves", moved(hb, b) and hb.ga.blk.shots == 2,
         tostring(hb.ga.blk.shots))
-  C.DECOY_GETAWAY_WALL_LIFE = 4
+  LPW.apply({ rules = {} })
+  check("WALL_LIFE: no building_life sent falls back to 4", C.DECOY_GETAWAY_WALL_LIFE == 4,
+        tostring(C.DECOY_GETAWAY_WALL_LIFE))
 
   -- THE CLOSEST PILL ONLY.  A full wall on pill 5's line (d = 5.39, 5
   -- shots); pill 6 at (22,32) (d = 7, in range) has an open line.  Only pill
