@@ -2621,7 +2621,9 @@ M.panel_section = PR.bp_panel_section
 --     the target and not the route he would eventually take -- only the first
 --     LGM_SHELL_PREDICT_TICKS of it, because that is all the gate looked at;
 --   * a red ring of LGM_SHELL_KILL_RADIUS_WU (128 WU = half a tile) at the
---     predicted IMPACT POINT, which is the engine's own blast radius, plus a
+--     predicted IMPACT POINT, which is the engine's own blast radius (the
+--     lgm_blast_shape rule's shape: a box for the Mac Bolo box, a 144 WU
+--     ring for the equivalent area circle), plus a
 --     line from it to where the man is predicted to be standing at that tick;
 --   * a label naming the shell's source and the tick offset, the same two
 --     facts the reject string carries.

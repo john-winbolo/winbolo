@@ -632,11 +632,12 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  *
  * Where the danger is now: a hit bursts 80 to 111 from the centre of a still
  * tank on the shooter's side, and the builder dies within MAP_SQUARE_MIDDLE
- * of the burst. So a hit can kill him only while he is 48 or less out: his
- * first 2 ticks out on grass and his first 4 on forest, when the tank is
- * still or drives at the shooter. A tank that drives away from the shooter
- * on a road, a boat or a base keeps pace with him, and the danger lasts as
- * long as it does. */
+ * of the burst (the classic lgm_blast_shape; these figures are for it).
+ * So a hit can kill him only while he is 48 or less out: his first 2 ticks
+ * out on grass and his first 4 on forest, when the tank is still or drives
+ * at the shooter. A tank that drives away from the shooter on a road, a
+ * boat or a base keeps pace with him, and the danger lasts as long as it
+ * does. */
 #define LGM_START_OFFSET 16
 
 /*********************************************************
@@ -1673,10 +1674,11 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *              rule applies
 *********************************************************/
 /* Whether an explosion at (wx, wy) catches a man at (lgmWorldX, lgmWorldY):
-   within half a square of it on open ground, or on the very square when the
-   explosion is on a wall, a live pillbox or a base, or is a shell's hit on
-   the pillbox, the wall or the terrain on its square (squareHit). The one test every
-   builder death is decided by.
+   in the lgm_blast_shape rule's area round it on open ground (within half a
+   square in the classic table, lgmBlastOpenGroundCatches), or on the very
+   square when the explosion is on a wall, a live pillbox or a base, or is a
+   shell's hit on the pillbox, the wall or the terrain on its square
+   (squareHit). The one test every builder death is decided by.
 
    squareHit: the shell hit the pill, the wall or the terrain on this
    square (shellsCalcCollision outSquareHit). That is a

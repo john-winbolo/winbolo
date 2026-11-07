@@ -11,12 +11,18 @@
 -- 3. lgm_blast_shape 2: the circle of radius 144.
 -- 4. LGM_BLAST_SHAPE_LIVE = false (KEEL): always the half-square circle.
 -- 5. The perp form and the reach follow the same shape.
+-- 6. danger.lgm_shell_gate, the builder pool's shell check, follows the
+--    shape: one shell that ends its life next to the man, on grass.
 -- Every shape is checked at 127/128/129 and 143/144/145 straight across and
 -- at 100 and 120 on the diagonal, the same points as the C unit test
 -- tests/unit/test_lgm_blast_shape.c.
 -- =========================================================================
 
 package.path = "./?.lua;" .. package.path
+
+-- print2 stand-in, installed before any module loads (danger.lua needs it).
+package.loaded["print2"] = setmetatable({ set_tick = function() end },
+  { __call = function() end })
 
 local pass, fail = 0, 0
 local function check(name, cond, got)
@@ -106,6 +112,51 @@ check("shape 1 diagonal perp 182 spares",
 U.lgm_blast_shape_update({ rules = { lgm_blast_shape = 2 } })
 check("shape 2 perp 144 kills", U.lgm_open_blast_catches_perp(144, 1, 0) == true)
 check("shape 2 perp 145 spares", U.lgm_open_blast_catches_perp(145, 1, 0) == false)
+
+print("6. danger.lgm_shell_gate")
+-- The man stays on the tank's square (the walk stand-in takes no step), and
+-- one of our own shells (so our hull does not stop it) flies north and ends
+-- its life on its first tick, dx, dy from him, over grass.
+local danger = require("danger")
+_G.OBJECT_SHOT = _G.OBJECT_SHOT or 1
+_G.cpf_lgm_walk_path = function() return 0 end
+U.ttype = function() return C.T_GRASS end
+local TX, TY = 100 * 256 + 128, 100 * 256 + 128
+local function gate_kills(dx, dy)
+  local vy = -U.bcos_f(0) * C.SHELL_SPEED
+  local info = {
+    tankx = TX, tanky = TY, player_number = 0,
+    objects = { { type = OBJECT_SHOT, owner = 0, angle = 0, life = 1,
+                  x = TX + dx, y = TY + dy - vy } },
+  }
+  local hit = danger.lgm_shell_gate({}, info, 103, 100)
+  return hit ~= nil and hit.how == "expiry"
+end
+-- { dx, dy, { half, box, area } }
+local GATE_ROWS = {
+  { 127,   0, { true,  true,  true  } },
+  { 130,   0, { false, false, true  } },
+  { 100, 100, { false, true,  true  } },
+  { 110, 110, { false, true,  false } },
+  { 150,   0, { false, false, false } },
+}
+local function check_gate(label, want_shape)
+  for _, row in ipairs(GATE_ROWS) do
+    local got = gate_kills(row[1], row[2])
+    check(string.format("gate %s at (%d,%d)", label, row[1], row[2]),
+          got == row[3][want_shape + 1], got)
+  end
+end
+U.lgm_blast_shape_update({})
+check_gate("no rule", 0)
+for shape = 0, 2 do
+  U.lgm_blast_shape_update({ rules = { lgm_blast_shape = shape } })
+  check_gate("shape " .. shape, shape)
+end
+C.LGM_BLAST_SHAPE_LIVE = false
+U.lgm_blast_shape_update({ rules = { lgm_blast_shape = 1 } })
+check_gate("keel under shape 1", 0)
+C.LGM_BLAST_SHAPE_LIVE = true
 
 U.lgm_blast_shape_update({})
 print(string.format("\n%d passed, %d failed", pass, fail))
