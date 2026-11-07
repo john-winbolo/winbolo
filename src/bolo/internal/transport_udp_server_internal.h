@@ -260,6 +260,12 @@ typedef struct {
     uint32_t lastReceivedTick;
     uint32_t outSequence;
     uint16_t pingMs;
+    /* The lag the placement counts (botHostPlaceStep): the round trip to
+     * the player for a player's own host, else to the host, smoothed over
+     * about 10 s. lagKnown is false until a round trip is measured. */
+    double   lagMs;
+    bool     lagKnown;
+    uint32_t lagConnTick;        /* tickCount the host joined */
     ChannelMux channelMux;
 
     /* Brain sync. The manifest and the file pieces go out on this

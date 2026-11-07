@@ -332,3 +332,249 @@ int run_bot_host_place_spread(void) {
     UT_ASSERT(!botHostPlaceRebalance(h, 2, 2, 0.25, &from, &to));
     return 0;
 }
+
+/* ================================================================
+ * 6. Placement: lag
+ * ================================================================ */
+
+/* As placeRun, with a lag per host and the lag rules. want NULL: print
+ * only. */
+static int placeRunLag(const int *slots, const double *lags, int n,
+                       const BotHostPlaceLag *lag, const int *want, int count,
+                       const char *label) {
+    BotHostPlaceHost h[8];
+    int k, i;
+    memset(h, 0, sizeof(h));
+    for (i = 0; i < n; i++) {
+        h[i].slots = slots[i];
+        h[i].open = true;
+        h[i].lagMs = lags[i];
+    }
+    printf("  placement %s, R %.0f ms, L %.0f ms:\n", label, lag->refMs,
+           lag->maxMs);
+    for (k = 1; k <= count; k++) {
+        int p = botHostPlacePickLag(h, n, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                    BOT_HOST_SMALL_BIAS_DEFAULT, lag);
+        if (p >= 0) h[p].bots++;
+        printf("    %2d bots:", k);
+        for (i = 0; i < n; i++) printf(" %d/%d", h[i].bots, h[i].slots);
+        printf("%s\n", p < 0 ? "  (no room)" : "");
+        for (i = 0; i < n; i++) {
+            UT_ASSERT(h[i].bots <= h[i].slots);
+            if (want != NULL) UT_ASSERT(h[i].bots == want[(k - 1) * n + i]);
+        }
+    }
+    return 0;
+}
+
+/* Moves bots by botHostPlaceRebalanceLag until no move is left, as the
+ * server does. Returns the moves, or -1 when it does not end. */
+static int placeSettle(BotHostPlaceHost *h, int n, const BotHostPlaceLag *lag) {
+    int moves = 0, from = -1, to = -1;
+    while (botHostPlaceRebalanceLag(h, n, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                    BOT_HOST_SMALL_BIAS_DEFAULT, lag, &from,
+                                    &to)) {
+        h[from].bots--;
+        h[to].bots++;
+        if (++moves > 500) return -1;
+    }
+    return moves;
+}
+
+/* The server itself (4 slots, unlimited, lag 0) with all the bots, and
+ * hosts of 8, 4, 2 and 1 slots with lags 10, 50, 100 and 200 ms. */
+static void placeServerHosts(BotHostPlaceHost *h, int bots) {
+    static const int slots[5] = { 4, 8, 4, 2, 1 };
+    static const double lags[5] = { 0, 10, 50, 100, 200 };
+    int i;
+    memset(h, 0, 5 * sizeof(*h));
+    for (i = 0; i < 5; i++) {
+        h[i].slots = slots[i];
+        h[i].open = true;
+        h[i].movable = true;
+        h[i].lagMs = lags[i];
+    }
+    h[0].unlimited = true;
+    h[0].bots = bots;
+}
+
+/* A small fixed random sequence, the same on every machine. */
+static uint32_t placeRand(uint32_t *state) {
+    *state = *state * 1664525u + 1013904223u;
+    return *state >> 8;
+}
+
+int run_bot_host_place_lag(void) {
+    static const BotHostPlaceLag lagOn = { 100.0, 250.0, 0.20 };
+    static const BotHostPlaceLag lagOff = { 0.0, 250.0, 0.20 };
+    static const BotHostPlaceLag noCeiling = { 100.0, 0.0, 0.20 };
+    static const int s8421[] = { 8, 4, 2, 1 };
+    static const double l8421[] = { 10, 50, 100, 200 };
+    /* The table without lag (run_bot_host_place_spread). */
+    static const int w8421[] = {
+        1,0,0,0,  2,0,0,0,  2,1,0,0,  3,1,0,0,  4,1,0,0,
+        4,2,0,0,  4,2,1,0,  5,2,1,0,  6,2,1,0,  6,3,1,0,
+        7,3,1,0,  8,3,1,0,  8,4,1,0,  8,4,2,0,  8,4,2,1 };
+    static const int w8421lag[] = {
+        1,0,0,0,  2,0,0,0,  2,1,0,0,  3,1,0,0,  4,1,0,0,
+        5,1,0,0,  5,2,0,0,  6,2,0,0,  7,2,0,0,  8,2,0,0,
+        8,3,0,0,  8,3,1,0,  8,4,1,0,  8,4,2,0,  8,4,2,1 };
+    static const int s44[] = { 4, 4 };
+    static const double l44[] = { 20, 150 };
+    static const int w44[] = {
+        1,0,  2,0,  2,1,  3,1,  4,1,  4,2,  4,3,  4,4 };
+    static const int s444[] = { 4, 4, 4 };
+    static const double l444[] = { 20, 300, 50 };
+    static const int w444[] = {
+        1,0,0,  1,0,1,  2,0,1,  2,0,2,  3,0,2,  3,0,3,  4,0,3,  4,0,4,
+        4,1,4,  4,2,4,  4,3,4,  4,4,4 };
+    BotHostPlaceHost h[5];
+    int k, i, t, from = -1, to = -1;
+
+    /* R = 0: the table without lag, whatever the lags and the ceiling. */
+    if (placeRunLag(s8421, l8421, 4, &lagOff, w8421, 15,
+                    "hosts 8,4,2,1 lags 10/50/100/200 (lag off)") != 0) {
+        return 1;
+    }
+    /* The defaults: the hosts with less lag fill first. */
+    if (placeRunLag(s8421, l8421, 4, &lagOn, w8421lag, 15,
+                    "hosts 8,4,2,1 lags 10/50/100/200") != 0) {
+        return 1;
+    }
+    /* Equal slots, 20 ms and 150 ms: the 20 ms host fills first and runs
+     * more bots until it is full. */
+    if (placeRunLag(s44, l44, 2, &lagOn, w44, 8,
+                    "hosts 4,4 lags 20/150") != 0) {
+        return 1;
+    }
+    /* A 300 ms host (over the 250 ms ceiling) gets no bot while the
+     * others have room, then takes the rest. */
+    if (placeRunLag(s444, l444, 3, &lagOn, w444, 12,
+                    "hosts 4,4,4 lags 20/300/50") != 0) {
+        return 1;
+    }
+
+    /* A lag not known counts R (100 ms): a 50 ms host fills first. */
+    memset(h, 0, sizeof(h));
+    h[0].slots = 4; h[0].open = true; h[0].lagMs = -1.0;
+    h[1].slots = 4; h[1].open = true; h[1].lagMs = 50.0;
+    UT_ASSERT(botHostPlacePickLag(h, 2, 2, 0.25, &lagOn) == 1);
+
+    /* With no ceiling a 300 ms host competes on its score: 1/4 x 4 = 1.0
+     * against 4/4 x 1.2 = 1.2 for the 20 ms host with 3 bots, so it takes
+     * the bot. With the ceiling the 20 ms host takes it. When the 20 ms
+     * host is full, the 300 ms host takes the bot either way. */
+    memset(h, 0, sizeof(h));
+    h[0].slots = 4; h[0].open = true; h[0].lagMs = 20; h[0].bots = 3;
+    h[1].slots = 4; h[1].open = true; h[1].lagMs = 300;
+    UT_ASSERT(botHostPlacePickLag(h, 2, 2, 0.25, &noCeiling) == 1);
+    UT_ASSERT(botHostPlacePickLag(h, 2, 2, 0.25, &lagOn) == 0);
+    h[0].bots = 4;
+    UT_ASSERT(botHostPlacePickLag(h, 2, 2, 0.25, &noCeiling) == 1);
+    UT_ASSERT(botHostPlacePickLag(h, 2, 2, 0.25, &lagOn) == 1);
+
+    /* The server and four hosts, as the server places its bots: the end
+     * spread for 1..20 bots, with and without lag. */
+    printf("  settled spread: server 4 slots (0 ms), hosts 8,4,2,1 "
+           "(10/50/100/200 ms)\n");
+    printf("    bots  lag off      R 100 ms, L 250 ms\n");
+    for (k = 1; k <= 20; k++) {
+        BotHostPlaceHost off[5];
+        placeServerHosts(off, k);
+        placeServerHosts(h, k);
+        UT_ASSERT(placeSettle(off, 5, &lagOff) >= 0);
+        UT_ASSERT(placeSettle(h, 5, &lagOn) >= 0);
+        printf("    %2d   ", k);
+        for (i = 0; i < 5; i++) printf(" %d", off[i].bots);
+        printf("    ");
+        for (i = 0; i < 5; i++) printf(" %d", h[i].bots);
+        printf("\n");
+        if (k == 12) {
+            UT_ASSERT(off[0].bots == 3 && off[1].bots == 6 &&
+                      off[2].bots == 2 && off[3].bots == 1 &&
+                      off[4].bots == 0);
+            UT_ASSERT(h[0].bots == 4 && h[1].bots == 6 && h[2].bots == 2 &&
+                      h[3].bots == 0 && h[4].bots == 0);
+        }
+    }
+
+    /* Jitter: each host's round trip goes up and down by up to 30 ms, a
+     * new value each second, through the 10 s smoothing. In 10 minutes
+     * of ticks no bot moves with 12 bots; with any count of bots at most
+     * one bot moves (a spread that was at the edge) and none moves back. */
+    for (k = 1; k <= 20; k++) {
+        static const double base[5] = { 0, 10, 50, 100, 200 };
+        double raw[5];
+        bool known[5];
+        uint32_t seed = 12345u + (uint32_t)k;
+        int moves = 0, lastFrom = -1, lastTo = -1;
+        placeServerHosts(h, k);
+        UT_ASSERT(placeSettle(h, 5, &lagOn) >= 0);
+        for (i = 0; i < 5; i++) {
+            raw[i] = base[i];
+            known[i] = true;
+        }
+        for (t = 0; t < 50 * 600; t++) {
+            if (t % 50 == 0) {
+                for (i = 1; i < 5; i++) {
+                    double j = (double)(placeRand(&seed) % 6001u) / 100.0 -
+                               30.0;
+                    raw[i] = base[i] + j;
+                    if (raw[i] < 0.0) raw[i] = 0.0;
+                }
+            }
+            for (i = 1; i < 5; i++) {
+                botHostLagSmooth(&h[i].lagMs, &known[i], raw[i],
+                                 BOT_HOST_LAG_SMOOTH_TICKS);
+            }
+            if (botHostPlaceRebalanceLag(h, 5, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                         BOT_HOST_SMALL_BIAS_DEFAULT, &lagOn,
+                                         &from, &to)) {
+                UT_ASSERT(!(from == lastTo && to == lastFrom));
+                h[from].bots--;
+                h[to].bots++;
+                lastFrom = from;
+                lastTo = to;
+                moves++;
+            }
+        }
+        if (k == 12) UT_ASSERT(moves == 0);
+        UT_ASSERT(moves <= 1);
+    }
+
+    /* The hysteresis. 4 bots on a 20 ms host of 8 and 0 on a 40 ms host
+     * of 8: a move scores 1/8 x 1.4 = 0.175 against 4/8 x 1.2 = 0.60 now,
+     * so it moves. At 3 and 1: 2/8 x 1.4 = 0.35 against 3/8 x 1.2 = 0.45
+     * is 22% lower, a move. At 2 and 2: 3/8 x 1.2 = 0.45 against
+     * 2/8 x 1.4 = 0.35 is higher: no move. */
+    memset(h, 0, sizeof(h));
+    h[0].slots = 8; h[0].bots = 4; h[0].open = true; h[0].movable = true;
+    h[0].lagMs = 20;
+    h[1].slots = 8; h[1].bots = 0; h[1].open = true; h[1].movable = true;
+    h[1].lagMs = 40;
+    UT_ASSERT(placeSettle(h, 2, &lagOn) == 2);
+    UT_ASSERT(h[0].bots == 2 && h[1].bots == 2);
+    /* A gain under 20% moves no bot: 3 and 1 at 20 ms and 70 ms. A move
+     * scores 2/8 x 1.7 = 0.425 against 3/8 x 1.2 = 0.45, only 6% lower.
+     * Without lag it moves (2/8 against 3/8). */
+    h[0].bots = 3; h[1].bots = 1; h[1].lagMs = 70;
+    UT_ASSERT(!botHostPlaceRebalanceLag(h, 2, 2, 0.25, &lagOn, &from, &to));
+    UT_ASSERT(botHostPlaceRebalanceLag(h, 2, 2, 0.25, &lagOff, &from, &to));
+    UT_ASSERT(from == 0 && to == 1);
+
+    /* The smoothing: the first sample is taken as it is, then each tick
+     * moves 1/500 of the way; a sample below 0 changes nothing. */
+    {
+        double lagMs = 0.0;
+        bool known = false;
+        botHostLagSmooth(&lagMs, &known, 100.0, 500);
+        UT_ASSERT(known && lagMs == 100.0);
+        botHostLagSmooth(&lagMs, &known, 600.0, 500);
+        UT_ASSERT(lagMs > 100.99 && lagMs < 101.01);
+        botHostLagSmooth(&lagMs, &known, -1.0, 500);
+        UT_ASSERT(lagMs > 100.99 && lagMs < 101.01);
+        for (t = 0; t < 2500; t++) botHostLagSmooth(&lagMs, &known, 0.0, 500);
+        UT_ASSERT(lagMs < 1.0);
+    }
+    return 0;
+}

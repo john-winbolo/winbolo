@@ -44,7 +44,12 @@
  *  lowest (botHostPlacePick in bot_host_link.c): every host is
  *  about equally full, and a host of 1 or 2 slots (-bothost-
  *  small-slots) counts -bothost-small-bias fewer slots, so it
- *  fills a little later. No host goes over its slots. In the
+ *  fills a little later. No host goes over its slots. Lag
+ *  counts too (botHostPlaceRebalanceLag): the score is
+ *  multiplied by 1 + lag / R (-bothost-lag-ref-ms, 100 ms; the
+ *  server's lag is 0), a host over L (-bothost-lag-max-ms,
+ *  250 ms) gets no new bot while one at or under L has room,
+ *  and a bot moves only for a score at least 20% lower. In the
  *  lobby one bot moves each tick; in the game one bot moves at
  *  most each 3 s (each tick in the first 10 s of a game), and
  *  never a bot that carries a pill or has its builder out.
@@ -1171,6 +1176,8 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
             SDL_strlcpy(hc->name, hostName, sizeof(hc->name));
             hc->slots = slots;
             hc->cpu = (uint8_t)BOT_HOST_CPU_UNKNOWN;
+            hc->lagKnown = false;
+            hc->lagConnTick = udpServer.tickCount;
             hc->playerHost = true;
             hc->ownerSlot = owner;
             hc->ownerConnId = oc->connId;
@@ -1253,6 +1260,8 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
         SDL_strlcpy(hc->name, hostName, sizeof(hc->name));
         hc->slots = slots;
         hc->cpu = (uint8_t)BOT_HOST_CPU_UNKNOWN;
+        hc->lagKnown = false;
+        hc->lagConnTick = udpServer.tickCount;
         hc->lastReceivedTick = udpServer.tickCount;
         hc->outSequence = 1;
         channelMuxInit(&hc->channelMux);
@@ -1827,6 +1836,29 @@ void transportUdpServerSetPlayerBotHosts(ServerSim *sim, bool on) {
 
 static int botHostSmallSlots = BOT_HOST_SMALL_SLOTS_DEFAULT;
 static double botHostSmallBias = BOT_HOST_SMALL_BIAS_DEFAULT;
+static BotHostPlaceLag botHostLag = {
+    BOT_HOST_LAG_REF_MS_DEFAULT, BOT_HOST_LAG_MAX_MS_DEFAULT,
+    BOT_HOST_LAG_GAIN_DEFAULT
+};
+
+void transportUdpServerSetBotHostLag(int refMs, int maxMs) {
+    if (refMs < 0) refMs = BOT_HOST_LAG_REF_MS_DEFAULT;
+    if (maxMs < 0) maxMs = BOT_HOST_LAG_MAX_MS_DEFAULT;
+    if (refMs > 10000) refMs = 10000;
+    if (maxMs > 60000) maxMs = 60000;
+    botHostLag.refMs = (double)refMs;
+    botHostLag.maxMs = (double)maxMs;
+    if (refMs == 0) {
+        fprintf(stderr, "[bothost] placement: lag not counted\n");
+    } else if (maxMs == 0) {
+        fprintf(stderr, "[bothost] placement: lag counts 1 + lag / %d ms, "
+                        "no lag ceiling\n", refMs);
+    } else {
+        fprintf(stderr, "[bothost] placement: lag counts 1 + lag / %d ms; "
+                        "a host over %d ms gets no new bots while one at "
+                        "or under it has room\n", refMs, maxMs);
+    }
+}
 
 void transportUdpServerSetBotHostPlacement(int smallSlots, double bias) {
     if (smallSlots < 0) smallSlots = BOT_HOST_SMALL_SLOTS_DEFAULT;
@@ -2111,6 +2143,34 @@ static bool botSeatOffer(ServerSim *sim, int s, int h, const char *why) {
     return true;
 }
 
+/* Ticks after a join when a round trip of 0 ms still means "not measured
+ * yet". */
+#define BOT_HOST_LAG_WAIT_TICKS    250
+
+/* Brings the smoothed lag of host h up to date, once a tick. */
+static void botHostUpdateLag(int h) {
+    BotHostConn *hc = &udpServer.botHosts[h];
+    uint16_t raw;
+    if (hc->playerHost) {
+        const UdpServerClient *c;
+        if (hc->ownerSlot >= MAX_TANKS) return;
+        c = &udpServer.clients[hc->ownerSlot];
+        if (!c->connected) return;
+        raw = c->pingMs;
+    } else {
+        raw = hc->pingMs;
+    }
+    /* 0 is the value before the first pong: count it only once the host
+     * has been here long enough to have one (a LAN round trip can be
+     * under 1 ms). */
+    if (raw == 0 && udpServer.tickCount - hc->lagConnTick <
+                    BOT_HOST_LAG_WAIT_TICKS) {
+        return;
+    }
+    botHostLagSmooth(&hc->lagMs, &hc->lagKnown, (double)raw,
+                     BOT_HOST_LAG_SMOOTH_TICKS);
+}
+
 /* One placement move: index 0 of the host table is the server itself, index
  * h + 1 is Bot Host h. */
 static void botHostPlaceStep(ServerSim *sim, ServerState st) {
@@ -2136,6 +2196,8 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         hosts[h + 1].slots = hc->slots;
         hosts[h + 1].bots = botHostUsedSlots(h);
         hosts[h + 1].open = botHostTakesBots(sim, h);
+        botHostUpdateLag(h);
+        hosts[h + 1].lagMs = hc->lagKnown ? hc->lagMs : -1.0;
         if (hosts[h + 1].open) anyHost = true;
     }
     if (!anyHost) return;
@@ -2144,6 +2206,7 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     hosts[0].bots = serverBotHostServerBots(sim);
     hosts[0].open = true;
     hosts[0].unlimited = true;
+    hosts[0].lagMs = 0.0;  /* the server's own process */
     for (s = 0; s < MAX_TANKS; s++) {
         BotHostSeat *seat = &udpServer.botSeats[s];
         if (seat->state == BOT_SEAT_PENDING) anyPending = true;
@@ -2164,8 +2227,9 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         hosts[h + 1].movable = (hostSeat[h] >= 0) && !anyPending;
     }
 
-    if (!botHostPlaceRebalance(hosts, 1 + MAX_BOT_HOSTS, botHostSmallSlots,
-                               botHostSmallBias, &from, &to)) {
+    if (!botHostPlaceRebalanceLag(hosts, 1 + MAX_BOT_HOSTS,
+                                  botHostSmallSlots, botHostSmallBias,
+                                  &botHostLag, &from, &to)) {
         return;
     }
     if (running) {

@@ -601,6 +601,7 @@ static const UnitTestEntry s_tests[] = {
     { "bot_host_link_allow", run_bot_host_link_allow },
     { "bot_host_slots_codec", run_bot_host_slots_codec },
     { "bot_host_place_spread", run_bot_host_place_spread },
+    { "bot_host_place_lag", run_bot_host_place_lag },
     { "bot_host_cpu_percent", run_bot_host_cpu_percent },
     { "bot_host_cpu_meter", run_bot_host_cpu_meter },
     { "bot_host_cpu_codec", run_bot_host_cpu_codec },

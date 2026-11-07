@@ -218,6 +218,26 @@ GoalHunter's answer (brains/GoalHunter/capacity.lua) is
 clamped to 1..16, with `CAPACITY_REF_1T = 25000` and `CAPACITY_K = 1.0` in
 constants.lua. With no speed test result it returns nil (the default).
 
+#### Where the dedicated server places its bots (lag)
+
+WinBoloDS spreads its bots over its own process and the Bot Hosts so that
+each is about equally full (bot_host_link.c). The lag to each host also
+counts:
+
+- A host's score is (bots + 1) / effective slots x (1 + lag / R). A new
+  bot goes to the lowest score. The lag is the server's round trip to the
+  host's player (a player's own host) or to the host, smoothed over about
+  10 s. The server's own process has lag 0. A lag not known counts R.
+- A host with more lag than L takes no new bots while a host with lag L
+  or less has room.
+- A bot moves to another place only when its score there is at least 20%
+  lower than its score now, so small changes in lag move no bots.
+- `-bothost-lag-ref-ms <ms>` sets R (default 100). 0 turns all the lag
+  rules off: the placement is then the one without lag.
+- `-bothost-lag-max-ms <ms>` sets L (default 250). 0: no ceiling.
+- The unit test `bot_host_place_lag` prints the spread with and without
+  lag for hosts of 8, 4, 2 and 1 slots.
+
 ## Test Runner
 
 The test runner (`tests/run_test.py`) automates the full cycle: start a server, connect headless clients with brain scripts, wait for completion, and validate results.

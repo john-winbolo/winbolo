@@ -908,6 +908,7 @@ int run_bot_host_link_addr_list(void);
 int run_bot_host_link_allow(void);
 int run_bot_host_slots_codec(void);
 int run_bot_host_place_spread(void);
+int run_bot_host_place_lag(void);
 /* The lobby's CPU estimate per Bot Host row (test_bot_host_cpu.c). */
 int run_bot_host_cpu_percent(void);
 int run_bot_host_cpu_meter(void);
