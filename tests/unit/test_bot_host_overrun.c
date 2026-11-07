@@ -637,3 +637,33 @@ int run_bot_host_nomove_lobby_places(void) {
     UT_ASSERT(botHostNoMoveMayPlace(&nm, 0, true, 50, 500));
     return 0;
 }
+
+/* The Linux free CPU reading: steal (the 8th value) is busy, free is idle
+ * + iowait only, and an older kernel's shorter line reads steal as 0. */
+int run_machine_cpu_proc_stat_steal(void) {
+    uint64_t i0, t0, i1, t1;
+    /* user nice system idle iowait irq softirq steal guest guest_nice */
+    UT_ASSERT(machineCpuParseProcStat(
+        "cpu  1000 0 500 8000 200 0 0 300 0 0\n", &i0, &t0));
+    UT_ASSERT(i0 == 8200 && t0 == 10000);
+    /* 1000 ticks later: 200 user, 100 system, 300 idle, 100 iowait,
+     * 300 steal. Free = (300 + 100) / 1000 = 40%; without steal as busy it
+     * would read 400 / 700 = 57%. */
+    UT_ASSERT(machineCpuParseProcStat(
+        "cpu  1200 0 600 8300 300 0 0 600 0 0\n", &i1, &t1));
+    UT_ASSERT(i1 == 8600 && t1 == 11000);
+    UT_ASSERT_MSG(machineCpuFreePercent(i0, t0, i1, t1) == 40, "free %u",
+                  (unsigned)machineCpuFreePercent(i0, t0, i1, t1));
+
+    /* An older kernel: four values (no iowait, no steal). */
+    UT_ASSERT(machineCpuParseProcStat("cpu 100 0 100 800\n", &i0, &t0));
+    UT_ASSERT(i0 == 800 && t0 == 1000);
+    /* Seven values (no steal). */
+    UT_ASSERT(machineCpuParseProcStat("cpu 100 0 100 800 50 0 0\n", &i0, &t0));
+    UT_ASSERT(i0 == 850 && t0 == 1050);
+    /* Not a cpu line, or too short. */
+    UT_ASSERT(!machineCpuParseProcStat("intr 1 2 3 4\n", &i0, &t0));
+    UT_ASSERT(!machineCpuParseProcStat("cpu 1 2 3\n", &i0, &t0));
+    UT_ASSERT(!machineCpuParseProcStat(NULL, &i0, &t0));
+    return 0;
+}

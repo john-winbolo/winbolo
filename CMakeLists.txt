@@ -6239,6 +6239,7 @@ set(_unit_test_names
     bot_host_overrun_new_game_reset
     bot_host_overrun_may_take
     bot_host_cpu_free_codec
+    machine_cpu_proc_stat_steal
     bothost_record_roundtrip
     bot_host_nomove_no_move_running
     bot_host_nomove_fallback

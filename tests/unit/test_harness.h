@@ -923,6 +923,7 @@ int run_bot_host_overrun_no_raise_no_free_data(void);
 int run_bot_host_overrun_new_game_reset(void);
 int run_bot_host_overrun_may_take(void);
 int run_bot_host_cpu_free_codec(void);
+int run_machine_cpu_proc_stat_steal(void);
 int run_bothost_record_roundtrip(void);
 /* -bothost-nomove (test_bot_host_overrun.c; the record in
  * test_log_roundtrip.c). */
