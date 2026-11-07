@@ -20,7 +20,8 @@
  * through lgmDeathCheckAtPosition on a running sim, with the builder out on
  * grass and the explosion on grass. A last case checks that an explosion
  * on a building still kills only a builder on its own square, whatever the
- * shape.
+ * shape. Another checks that shape 0 is the old test exactly, pill_range
+ * limit included.
  */
 
 #include <stdbool.h>
@@ -37,6 +38,7 @@
 #include "bases.h"                 /* basesExistPos */
 #include "lgm.h"                   /* lgmDeathCheckAtPosition, LGM_BLAST_* */
 #include "sim_rules.h"             /* SimRules */
+#include "util.h"                  /* utilIsItemInRange */
 #include "test_harness.h"
 
 /* One distance under test and whether the shape kills there. */
@@ -262,5 +264,54 @@ int run_lgm_blast_shape_solid_square(void) {
         }
     }
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* Shape 0 is the test lgmBlastCatches made before the rule, exactly: the
+ * distance utilIsItemInRange gives with the pill_range rule as its limit,
+ * then at most MAP_SQUARE_MIDDLE. Checked at every offset up to 200 each way
+ * for pill_range values under, at and over 128. A value outside the three
+ * shapes plays the same. The other two shapes do not read pill_range. */
+int run_lgm_blast_shape_classic_matches_old(void) {
+    static const int32_t kRanges[] = { 0, 1, 64, 100, 127, 128, 129, 144,
+                                       2048, 65535 };
+    static const int32_t kShapes[] = { LGM_BLAST_SHAPE_HALF_SQUARE, 3, -1 };
+    const WORLD lx = 0x8000;
+    const WORLD ly = 0x8000;
+    int r, k;
+    long dx, dy;
+
+    for (r = 0; r < (int) (sizeof(kRanges) / sizeof(kRanges[0])); r++) {
+        for (dy = -200; dy <= 200; dy++) {
+            for (dx = -200; dx <= 200; dx++) {
+                double distance;
+                bool   old;
+
+                utilIsItemInRange(lx, ly, (WORLD) ((long) lx + dx),
+                                  (WORLD) ((long) ly + dy),
+                                  (WORLD) kRanges[r], &distance);
+                old = distance <= MAP_SQUARE_MIDDLE;
+                for (k = 0; k < (int) (sizeof(kShapes) / sizeof(kShapes[0]));
+                     k++) {
+                    bool now = lgmBlastOpenGroundCatches(kShapes[k],
+                                                         kRanges[r], dx, dy);
+                    UT_ASSERT_MSG(now == old,
+                                  "shape %d, pill_range %d, at (%ld,%ld): "
+                                  "%s, the old test %s", (int) kShapes[k],
+                                  (int) kRanges[r], dx, dy,
+                                  now ? "kills" : "spares",
+                                  old ? "kills" : "spares");
+                }
+            }
+        }
+    }
+    /* pill_range 0 leaves the half-square circle nothing, and the other
+       two shapes their whole area. */
+    UT_ASSERT(lgmBlastOpenGroundCatches(LGM_BLAST_SHAPE_HALF_SQUARE, 0,
+                                        100, 0) == false);
+    UT_ASSERT(lgmBlastOpenGroundCatches(LGM_BLAST_SHAPE_MAC_BOX, 0,
+                                        100, 100) == true);
+    UT_ASSERT(lgmBlastOpenGroundCatches(LGM_BLAST_SHAPE_MAC_AREA, 0,
+                                        140, 0) == true);
     return 0;
 }
