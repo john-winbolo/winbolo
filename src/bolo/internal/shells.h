@@ -350,8 +350,11 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *             hit a pillbox (a live one, the shot that kills
 *             it included) or a wall (a building or a half
 *             building, the shot that turns it to rubble
-*             included), FALSE for any other hit and for no
-*             hit. The builder test uses it: such a hit is a
+*             included), a forest, a boat, the shore a boat's
+*             shell stops on (grass, swamp, rubble) or a
+*             bridge, FALSE for any other hit (a road a boat's
+*             shell does not take away, a tank, a base) and for
+*             no hit. The builder test uses it: such a hit is a
 *             hit on its square, whatever the hit has left
 *             there.
 *********************************************************/

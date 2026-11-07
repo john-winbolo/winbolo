@@ -1663,18 +1663,20 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *              DMG_NO_PILL
 *  tnk       - Pointer to the tank
 *  squareHit - TRUE when the explosion is a shell's hit on
-*              the solid thing on its square (a pillbox or
-*              a wall), the hit that kills the pill or
+*              the thing on its square (a pillbox, a wall,
+*              a forest, a boat, the shore a boat's shell
+*              stops on or a bridge), the hit that kills the pill or
 *              turns the wall to rubble included: the square
 *              rule applies
 *********************************************************/
 /* Whether an explosion at (wx, wy) catches a man at (lgmWorldX, lgmWorldY):
    within half a square of it on open ground, or on the very square when the
    explosion is on a wall, a live pillbox or a base, or is a shell's hit on
-   the pillbox or the wall on its square (squareHit). The one test every
+   the pillbox, the wall or the terrain on its square (squareHit). The one test every
    builder death is decided by.
 
-   squareHit: the shell hit the pill or the wall on this square. That is a
+   squareHit: the shell hit the pill, the wall or the terrain on this
+   square (shellsCalcCollision outSquareHit). That is a
    hit on the square whatever the hit left there, so the shot that kills a
    pill (its armour is already 0 here) and the fifth shot on a wall (the
    square is already rubble here) kill a builder anywhere on the square and
