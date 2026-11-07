@@ -958,6 +958,7 @@ int run_bot_host_link_allow(void);
 int run_bot_host_slots_codec(void);
 int run_bot_host_place_spread(void);
 int run_bot_host_place_lag(void);
+int run_bot_host_place_server_cap(void);
 /* The overrun check of the bot placement, the free CPU percent and the
  * log_BotHostData payload (test_bot_host_overrun.c). */
 int run_bot_host_overrun_trigger_24_of_30(void);

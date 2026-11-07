@@ -6449,6 +6449,7 @@ set(_unit_test_names
     bot_host_slots_codec
     bot_host_place_spread
     bot_host_place_lag
+    bot_host_place_server_cap
     bot_host_overrun_trigger_24_of_30
     bot_host_overrun_no_trigger_23_of_30
     bot_host_overrun_short_spike

@@ -630,6 +630,7 @@ static const UnitTestEntry s_tests[] = {
     { "bot_host_slots_codec", run_bot_host_slots_codec },
     { "bot_host_place_spread", run_bot_host_place_spread },
     { "bot_host_place_lag", run_bot_host_place_lag },
+    { "bot_host_place_server_cap", run_bot_host_place_server_cap },
     { "bot_host_overrun_trigger_24_of_30", run_bot_host_overrun_trigger_24_of_30 },
     { "bot_host_overrun_no_trigger_23_of_30", run_bot_host_overrun_no_trigger_23_of_30 },
     { "bot_host_overrun_short_spike", run_bot_host_overrun_short_spike },

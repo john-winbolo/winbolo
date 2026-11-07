@@ -381,6 +381,25 @@ static bool placeTakes(const BotHostPlaceHost *h) {
     return h->unlimited || h->bots < h->slots;
 }
 
+/* True when a host other than skip and not unlimited has room for one more
+ * bot (bots below its slots). While one has, an unlimited host (the server
+ * itself) takes no bot past its slots and gives first when it is over
+ * them. */
+static bool placeRoomElsewhere(const BotHostPlaceHost *hosts, int n,
+                               int skip) {
+    int i;
+    for (i = 0; i < n; i++) {
+        if (i == skip || hosts[i].unlimited) continue;
+        if (placeTakes(&hosts[i])) return true;
+    }
+    return false;
+}
+
+/* An unlimited host at or over its slots while another host has room. */
+static bool placeUnlimitedFull(const BotHostPlaceHost *h, bool roomElsewhere) {
+    return h->unlimited && roomElsewhere && h->bots >= h->slots;
+}
+
 void botHostLagSmooth(double *lagMs, bool *known, double rawMs,
                       int smoothTicks) {
     if (lagMs == NULL || known == NULL || !(rawMs >= 0.0)) return;
@@ -444,6 +463,7 @@ static int placePickSkip(const BotHostPlaceHost *hosts, int n, int smallSlots,
     int i, best = -1;
     double bestScore = 0.0;
     bool lowRoom = false;
+    bool roomElsewhere = placeRoomElsewhere(hosts, n, skip);
     /* The ceiling: while a host under it has room (bots below its slots,
      * the server's own process too), no host over it takes a bot. */
     for (i = 0; i < n; i++) {
@@ -457,6 +477,7 @@ static int placePickSkip(const BotHostPlaceHost *hosts, int n, int smallSlots,
         double score;
         if (i == skip || !placeTakes(&hosts[i])) continue;
         if (lowRoom && !placeUnderCeiling(&hosts[i], lag)) continue;
+        if (placeUnlimitedFull(&hosts[i], roomElsewhere)) continue;
         score = (double)(hosts[i].bots + 1) /
                 botHostPlaceEffSlots(hosts[i].slots, smallSlots, bias) *
                 placeLagFactor(&hosts[i], lag);
@@ -506,15 +527,22 @@ bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
         double load;
         if (!hosts[i].movable || hosts[i].bots <= 0) continue;
         if (hosts[i].slots <= 0) {
-            /* No slots but bots (a limit lowered to 0): it gives first. */
-            if (hosts[i].unlimited) continue;
+            /* No slots but bots (a limit lowered to 0): it gives first.
+             * The server itself only while a host has room. */
+            if (hosts[i].unlimited && !placeRoomElsewhere(hosts, n, i)) {
+                continue;
+            }
             load = 1000.0 + (double)hosts[i].bots;
         } else {
             load = (double)hosts[i].bots /
                    botHostPlaceEffSlots(hosts[i].slots, smallSlots, bias) *
                    placeLagFactor(&hosts[i], lag);
-            if (hosts[i].bots > hosts[i].slots && !hosts[i].unlimited) {
-                load += 1000.0;  /* over its slots: it gives first */
+            if (hosts[i].bots > hosts[i].slots &&
+                (!hosts[i].unlimited ||
+                 placeRoomElsewhere(hosts, n, i))) {
+                /* Over its slots: it gives first. The server itself
+                 * too, while a host has room. */
+                load += 1000.0;
             }
         }
         if (src < 0 || load > srcLoad + BOT_HOST_PLACE_EPS) {
@@ -528,6 +556,13 @@ bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
         int dst = placePickSkip(hosts, n, smallSlots, bias, lag, src,
                                 &dstScore);
         if (dst < 0) return false;
+        if (hosts[dst].unlimited && hosts[dst].bots >= hosts[dst].slots &&
+            hosts[src].bots <= hosts[src].slots) {
+            /* The server itself goes past its slots only to take a bot
+             * from a host over its own slots, so a bot does not go back
+             * and forth between a full host and a full server. */
+            return false;
+        }
         if (placeLagOn(lag)) {
             /* With lag: only a gain of at least lag->gain, so a lag that
              * goes up and down a little moves no bot. */
