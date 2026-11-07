@@ -1845,33 +1845,18 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE
     LvHitLgmPos *h = &s_hitLgmPos[s_hitLgmCount];
     unsigned solid = 0;
     int col, row;
+    int sqMx, sqMy, scrMx, scrMy;
 
     if (lv == NULL) return;
-    for (row = 0; row < 3; row++) {
-        for (col = 0; col < 3; col++) {
-            int ax = (int)lv->xOffset + (int)mx + col - 1;
-            int ay = (int)lv->yOffset + (int)my + row - 1;
-            BYTE pos;
-            if (ax < 0 || ay < 0 || ax > 255 || ay > 255) continue;
-            pos = lv_mapGetPos(&lv->mp, (BYTE)ax, (BYTE)ay);
-            if (pos == BUILDING || pos == HALFBUILDING ||
-                lv_pillsExistPos(&lv->pb, (BYTE)ax, (BYTE)ay) ||
-                lv_basesExistPos(&lv->bs, (BYTE)ax, (BYTE)ay)) {
-                solid |= 1u << (row * 3 + col);
-            }
-        }
-    }
-    h->sqX = (float)(zf * mx * TILE_SIZE_X);
-    h->sqY = (float)(zf * my * TILE_SIZE_Y);
     /* His place. A recording holds it to the art pixel, so the closest guess
        is from the line his last recorded pixels walk along
        (lv_playersLgmPlace). With no notes for that pixel it is the middle of
        the pixel: the recorded place is lgmGetPX / lgmGetPY's, his place less
        1 world unit across and 2 down, rounded down to an art pixel, and
        lvHitboxBuilderPlaceX/Y put the 1 and the 2 back. */
+    sqMx = (int)lv->xOffset + (int)mx;
+    sqMy = (int)lv->yOffset + (int)my;
     {
-        int sqMx = (int)lv->xOffset + (int)mx;
-        int sqMy = (int)lv->yOffset + (int)my;
         double wx, wy;
         if (sqMx <= 255 && sqMy <= 255 &&
             lv_playersLgmPlace(slot, (BYTE)sqMx, (BYTE)sqMy, px, py, &wx, &wy)) {
@@ -1882,6 +1867,32 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE
             h->by = lvHitboxBuilderPlaceY(py);
         }
     }
+    /* His own square is the engine's: the one his place is in, which can be
+       the square after the recorded one (lvHitboxBuilderOwnSquare). */
+    scrMx = sqMx;
+    scrMy = sqMy;
+    if (sqMx <= 255 && sqMy <= 255) {
+        lvHitboxBuilderOwnSquare(&h->bx, &sqMx);
+        lvHitboxBuilderOwnSquare(&h->by, &sqMy);
+    }
+    scrMx = (int)mx + (sqMx - scrMx);
+    scrMy = (int)my + (sqMy - scrMy);
+    for (row = 0; row < 3; row++) {
+        for (col = 0; col < 3; col++) {
+            int ax = sqMx + col - 1;
+            int ay = sqMy + row - 1;
+            BYTE pos;
+            if (ax < 0 || ay < 0 || ax > 255 || ay > 255) continue;
+            pos = lv_mapGetPos(&lv->mp, (BYTE)ax, (BYTE)ay);
+            if (pos == BUILDING || pos == HALFBUILDING ||
+                lv_pillsExistPos(&lv->pb, (BYTE)ax, (BYTE)ay) ||
+                lv_basesExistPos(&lv->bs, (BYTE)ax, (BYTE)ay)) {
+                solid |= 1u << (row * 3 + col);
+            }
+        }
+    }
+    h->sqX = (float)(zf * scrMx * TILE_SIZE_X);
+    h->sqY = (float)(zf * scrMy * TILE_SIZE_Y);
     h->solid = solid;
     s_hitLgmCount++;
 }
@@ -1898,8 +1909,10 @@ void lv_drawLGMs(screenLgm *lgms) {
         int picX, picY;            /* the picture's top left, art pixels into his square */
         lv_screenLgmGetItem(lgms, count, &mx, &my, &px, &py, &frame);
         /* A builder on his parachute is dead: lgmDeathCheckAtPosition tests
-           no dead builder, so he has no hit area. */
-        if (frame != LGM_HELICOPTER_FRAME && s_hitLgmCount < MAX_TANKS) {
+           no dead builder, so he has no hit area. The area is noted only
+           while hit boxes are on; turning them on asks for a redraw, which
+           notes them again. */
+        if (s_hitBoxes && frame != LGM_HELICOPTER_FRAME && s_hitLgmCount < MAX_TANKS) {
             lvDrawNoteLgmHit(mx, my, px, py, lv_screenLgmGetSlot(lgms, count), zf);
         }
         /* A walking builder's picture goes 1 art pixel left of and above his

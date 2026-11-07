@@ -22,7 +22,9 @@
  *       (lvHitboxLgmFitRange) always holds his true place, is never wider
  *       than his newest pixel, is that whole pixel for a builder standing
  *       still, and is closer than the middle of the pixel on a walk. Also
- *       a real walk, player 5's builder in a recording.
+ *       a real walk, player 5's builder in a recording, and his own square
+ *       at a square's left and top edge (lvHitboxBuilderOwnSquare), which
+ *       is the engine's square from his true place.
  */
 
 #include <stdbool.h>
@@ -201,6 +203,69 @@ int run_lv_hitbox_lgm_fit(void) {
         /* The middle of the pixel was 31560.5, 34825.5. */
         UT_ASSERT_MSG(fabs(wx - 31565.85) < 0.1 && fabs(wy - 34822.03) < 0.1,
                       "his place %.3f, %.3f", wx, wy);
+    }
+
+    /* His own square at a square's left and top edge. The engine's square
+       is lgmWorldX >> 8; the recorded one is from his place less 1 across
+       and 2 down. A builder at x 1280 (square 5's left edge) and y 1281 is
+       recorded in square 4, pixel 15, on both axes, so his place from
+       square 4 is 256 and 257, and the square has to move along to 5. */
+    {
+        double b;
+        int sq;
+        b = 256.0; sq = 4;
+        lvHitboxBuilderOwnSquare(&b, &sq);
+        UT_ASSERT_MSG(sq == (1280 >> 8) && b == 0.0, "x at the left edge: square %d, %.3f", sq, b);
+        b = 257.0; sq = 4;
+        lvHitboxBuilderOwnSquare(&b, &sq);
+        UT_ASSERT_MSG(sq == (1281 >> 8) && b == 1.0, "y at the top edge: square %d, %.3f", sq, b);
+        b = 255.5; sq = 4;
+        lvHitboxBuilderOwnSquare(&b, &sq);
+        UT_ASSERT_MSG(sq == 4 && b == 255.5, "inside the square: no move");
+        b = -0.5; sq = 4;
+        lvHitboxBuilderOwnSquare(&b, &sq);
+        UT_ASSERT_MSG(sq == 3 && b == 255.5, "before the square: square %d, %.3f", sq, b);
+        b = 300.0; sq = 255;
+        lvHitboxBuilderOwnSquare(&b, &sq);
+        UT_ASSERT_MSG(sq == 255 && b == 300.0, "the map's last square stays");
+    }
+
+    /* Walks that end 0 to 3 units past square 5's left or top edge, east
+       or south at 4 to 16 units an entry. Recorded as the engine records
+       them (place less 1 across, 2 down, to the pixel), fitted, and then
+       given his own square: the square is always the one the guess is in,
+       the place is 0 to 255 into it, and some of the walks need the move. */
+    {
+        int axis, edge, moved = 0;
+        for (axis = 0; axis < 2; axis++) {
+            int off = axis == 0 ? LV_HITBOX_LGM_OFFSET_X : LV_HITBOX_LGM_OFFSET_Y;
+            for (v = 4; v <= 16; v++) {
+                for (edge = 0; edge < 4; edge++) {
+                    int truth = 5 * LV_HITBOX_WU_PER_SQUARE + edge;
+                    double guess, b;
+                    int sq, n;
+                    for (i = 0; i < LV_HITBOX_LGM_FIT_MAX; i++) {
+                        pix[i] = (truth - v * back[i] - off) / 16;
+                    }
+                    n = lvHitboxLgmFitRange(back, pix, LV_HITBOX_LGM_FIT_MAX, &lo, &hi);
+                    UT_ASSERT(n >= 2);
+                    guess = (lo + hi) * 0.5 + off;
+                    /* The recorded square. */
+                    sq = pix[0] / 16;
+                    b = guess - (double)(sq * LV_HITBOX_WU_PER_SQUARE);
+                    lvHitboxBuilderOwnSquare(&b, &sq);
+                    UT_ASSERT_MSG(sq == (int)floor(guess / LV_HITBOX_WU_PER_SQUARE) &&
+                                  b >= 0.0 && b < (double)LV_HITBOX_WU_PER_SQUARE,
+                                  "axis %d speed %d edge %d: guess %.3f, square %d, %.3f",
+                                  axis, v, edge, guess, sq, b);
+                    if (sq != pix[0] / 16) {
+                        moved++;
+                        UT_ASSERT_MSG(sq == truth >> 8, "moved to the engine's square");
+                    }
+                }
+            }
+        }
+        UT_ASSERT_MSG(moved > 0, "no walk needed the move");
     }
 
     return 0;

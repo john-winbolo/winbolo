@@ -7950,6 +7950,7 @@ set(_unit_test_names
     lv_tank_status_sums
     lv_tank_bars_sums
     lv_hitbox_sums
+    lv_hitbox_lgm_fit
     lv_tank_pick_sums
     lv_marks_fade
     lv_window_size_parse
