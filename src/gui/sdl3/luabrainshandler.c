@@ -106,6 +106,7 @@
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
+#include "brain_capacity.h"
 
 
 /* ------------------------------------------------------------------ */
@@ -749,15 +750,41 @@ static void brain_apply_sandbox(lua_State *L, const char *root) {
 }
 
 
+static bool brain_instance_create(LuaBrainInstance *inst, const char *path,
+                                  const char *name, ClientSim *cs,
+                                  aiType aiMode, bool debug_mode,
+                                  int player_num, const ScnTable *init,
+                                  bool capacityOnly);
+
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, ClientSim *cs,
                             aiType aiMode, bool debug_mode,
                             int player_num, const ScnTable *init) {
+  return brain_instance_create(inst, path, name, cs, aiMode, debug_mode,
+                               player_num, init, false);
+}
+
+int luaBrainQueryCapacity(const char *path, const char *name) {
+  LuaBrainInstance inst;
+
+  if (!brain_instance_create(&inst, path, name, NULL, aiNone, false, 0, NULL,
+                             true)) {
+    return BRAIN_CAPACITY_UNKNOWN;
+  }
+  return inst.capacity;
+}
+
+static bool brain_instance_create(LuaBrainInstance *inst, const char *path,
+                                  const char *name, ClientSim *cs,
+                                  aiType aiMode, bool debug_mode,
+                                  int player_num, const ScnTable *init,
+                                  bool capacityOnly) {
   lua_State *L;
 
   memset(inst, 0, sizeof(*inst));
   inst->cs = cs;
   inst->isFirst = true;
+  inst->capacity = BRAIN_CAPACITY_UNKNOWN;
 
   /* BrainInfo constant header fields */
   inst->bInfo.BoloVersion  = 0x0114;
@@ -1157,6 +1184,21 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     return false;
   }
   lua_setglobal(L, "brain");
+
+  /* How many bots of this brain the machine can run. Asked here, before
+   * brain.open, so the answer does not depend on the game. */
+  inst->capacity = brainCapacityResolveLua(L, path, name);
+  if (capacityOnly) {
+    /* Only the answer was wanted (-cputest): no game, no open. */
+    brainPathfinderDestroy(inst->pathfinder);
+    inst->pathfinder = NULL;
+    brainWorldSimDestroy(inst->worldsim);
+    inst->worldsim = NULL;
+    overlayCmdBufferDestroy(&inst->overlay);
+    inst->overlayPtr = NULL;
+    lua_close(L);
+    return true;
+  }
 
   /* Call brain.open(info) */
   brainDataMakeInfo(cs, &inst->bInfo, true, aiMode);

@@ -4338,6 +4338,20 @@ int run_scenario_dir_merges_shipped_mods(void);
 int run_scenario_dir_entry_roundtrip(void);
 int run_scenario_dir_chunk_not_in_flight(void);
 
+/* The CPU speed test, its stored result and the brain capacity answer
+ * (test_cpu_speed.c). */
+int run_cpu_speed_test_short(void);
+int run_cpu_speed_test_cancel(void);
+int run_cpu_speed_store_roundtrip(void);
+int run_cpu_speed_background(void);
+int run_cpu_speed_background_cancel(void);
+int run_brain_capacity_default_clamp(void);
+int run_brain_capacity_cache(void);
+int run_brain_capacity_c_brain(void);
+int run_brain_capacity_name_from_path(void);
+int run_brain_capacity_lua_fallback(void);
+int run_brain_capacity_add_state(void);
+
 /* A script's details (test_scenario_callbacks.c): the manifest's callbacks
  * block kept, cut and warned about at load, the rules and callbacks packed
  * into one blob per file, fetched by a client one file at a time over the

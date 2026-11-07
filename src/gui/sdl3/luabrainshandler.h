@@ -333,6 +333,10 @@ typedef struct {
      * path and the real-error remove-the-bot path. Reset to false at
      * the top of each tick. */
     bool wasKilled;
+    /* How many bots of this brain this machine can run at full strength:
+     * the brain's Brain.capacity answer, kept by brain name + version
+     * (brain_capacity.h). BRAIN_CAPACITY_UNKNOWN (-1) when not asked. */
+    int capacity;
 } LuaBrainInstance;
 
 /*********************************************************
@@ -354,6 +358,18 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
                             aiType aiMode, bool debug_mode,
                             int player_num, const ScnTable *init);
+
+/*********************************************************
+*NAME:          luaBrainQueryCapacity
+*PURPOSE:
+*  Loads the brain at path without a game (no brain.open)
+*  and returns its capacity answer: how many bots of it
+*  this machine can run (brain_capacity.h). The answer is
+*  kept, so a later load of the same brain name and
+*  version does not ask again. BRAIN_CAPACITY_UNKNOWN (-1)
+*  when the brain does not load. For -cputest.
+*********************************************************/
+int luaBrainQueryCapacity(const char *path, const char *name);
 
 /*********************************************************
 *NAME:          luaBrainsSetRunScript
