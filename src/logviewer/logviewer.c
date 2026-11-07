@@ -2183,6 +2183,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.tankBars         = lv_drawGetTankBars() ? true : false;
         lvms.builderStatus    = lv_drawGetBuilderStatus() ? true : false;
         lvms.pillNumbers      = lv_drawGetPillNumbers() ? true : false;
+        lvms.hitBoxes         = lv_drawGetHitBoxes() ? true : false;
         lvms.dockEnabled      = lv_imgui_dock_get_enabled() ? true : false;
         lvms.dockLeft         = lv_imgui_dock_get_side_enabled(LV_DOCK_LEFT) ? true : false;
         lvms.dockTop          = lv_imgui_dock_get_side_enabled(LV_DOCK_TOP) ? true : false;
