@@ -230,7 +230,7 @@ counts:
   10 s. The server's own process has lag 0. A lag not known counts R.
 - A host with more lag than L takes no new bots while a host with lag L
   or less has room.
-- A bot moves to another place only when its score there is at least 20%
+- A bot moves to another place only when its score there is at least 33%
   lower than its score now, so small changes in lag move no bots.
 - `-bothost-lag-ref-ms <ms>` sets R (default 100). 0 turns all the lag
   rules off: the placement is then the one without lag.

@@ -405,9 +405,12 @@ static uint32_t placeRand(uint32_t *state) {
 }
 
 int run_bot_host_place_lag(void) {
-    static const BotHostPlaceLag lagOn = { 100.0, 250.0, 0.20 };
-    static const BotHostPlaceLag lagOff = { 0.0, 250.0, 0.20 };
-    static const BotHostPlaceLag noCeiling = { 100.0, 0.0, 0.20 };
+    static const BotHostPlaceLag lagOn = { 100.0, 250.0,
+                                           BOT_HOST_LAG_GAIN_DEFAULT };
+    static const BotHostPlaceLag lagOff = { 0.0, 250.0,
+                                            BOT_HOST_LAG_GAIN_DEFAULT };
+    static const BotHostPlaceLag noCeiling = { 100.0, 0.0,
+                                               BOT_HOST_LAG_GAIN_DEFAULT };
     static const int s8421[] = { 8, 4, 2, 1 };
     static const double l8421[] = { 10, 50, 100, 200 };
     /* The table without lag (run_bot_host_place_spread). */
@@ -542,19 +545,19 @@ int run_bot_host_place_lag(void) {
         UT_ASSERT(moves <= 1);
     }
 
-    /* The hysteresis. 4 bots on a 20 ms host of 8 and 0 on a 40 ms host
-     * of 8: a move scores 1/8 x 1.4 = 0.175 against 4/8 x 1.2 = 0.60 now,
-     * so it moves. At 3 and 1: 2/8 x 1.4 = 0.35 against 3/8 x 1.2 = 0.45
-     * is 22% lower, a move. At 2 and 2: 3/8 x 1.2 = 0.45 against
-     * 2/8 x 1.4 = 0.35 is higher: no move. */
+    /* The hysteresis (a move needs a score 33% lower). 4 bots on a
+     * 20 ms host of 8 and 0 on a 40 ms host of 8: a move scores
+     * 1/8 x 1.4 = 0.175 against 4/8 x 1.2 = 0.60 now (71% lower), so it
+     * moves. At 3 and 1: 2/8 x 1.4 = 0.35 against 3/8 x 1.2 = 0.45 is
+     * only 22% lower: no move. */
     memset(h, 0, sizeof(h));
     h[0].slots = 8; h[0].bots = 4; h[0].open = true; h[0].movable = true;
     h[0].lagMs = 20;
     h[1].slots = 8; h[1].bots = 0; h[1].open = true; h[1].movable = true;
     h[1].lagMs = 40;
-    UT_ASSERT(placeSettle(h, 2, &lagOn) == 2);
-    UT_ASSERT(h[0].bots == 2 && h[1].bots == 2);
-    /* A gain under 20% moves no bot: 3 and 1 at 20 ms and 70 ms. A move
+    UT_ASSERT(placeSettle(h, 2, &lagOn) == 1);
+    UT_ASSERT(h[0].bots == 3 && h[1].bots == 1);
+    /* A gain under 33% moves no bot: 3 and 1 at 20 ms and 70 ms. A move
      * scores 2/8 x 1.7 = 0.425 against 3/8 x 1.2 = 0.45, only 6% lower.
      * Without lag it moves (2/8 against 3/8). */
     h[0].bots = 3; h[1].bots = 1; h[1].lagMs = 70;

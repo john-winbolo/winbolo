@@ -92,7 +92,8 @@ static int optoutSettle(BotHostPlaceHost *h, int n, const BotHostPlaceLag *lag,
 }
 
 int run_bot_host_optout_give_back(void) {
-    static const BotHostPlaceLag lag = { 100.0, 250.0, 0.20 };
+    static const BotHostPlaceLag lag = { 100.0, 250.0,
+                                         BOT_HOST_LAG_GAIN_DEFAULT };
     /* Seats 0..7: seats 1 and 4 on host 0, seats 2, 5 and 6 on host 1, the
      * others in-process. */
     int seatHost[8] = { -1, 0, 1, -1, 0, 1, 1, -1 };

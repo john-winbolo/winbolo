@@ -159,11 +159,11 @@ typedef struct {
  * with at most this lag has room (bots below its slots). 0: no ceiling.
  *
  * gain: a bot moves only when its score at the new place is at least this
- * part lower than its score now (0.20: 20% lower), so small changes in
+ * part lower than its score now (0.33: 33% lower), so small changes in
  * lag do not move bots back and forth. */
 #define BOT_HOST_LAG_REF_MS_DEFAULT 100
 #define BOT_HOST_LAG_MAX_MS_DEFAULT 250
-#define BOT_HOST_LAG_GAIN_DEFAULT   0.20
+#define BOT_HOST_LAG_GAIN_DEFAULT   0.33
 
 typedef struct {
     double refMs;
