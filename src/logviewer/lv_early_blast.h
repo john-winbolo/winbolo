@@ -4,16 +4,15 @@
  */
 
 /*********************************************************
- *Name:          Log Viewer early blast (TEMPORARY TEST TOGGLE)
+ *Name:          Log Viewer early blast
  *Filename:      lv_early_blast.h
  *Purpose:
- *  A temporary test toggle, "Toggle Screen-True Local Explosions
- *  (Proposed Fix)", off by default, to show the issue and an idea
- *  before the game has it: when a player's own shell ends, that
- *  player's client draws the explosion at once where its own
- *  shell stopped, and hides the server's later explosion of that
- *  shell. Remove this file, its calls in screen.c and the menu
- *  item when the test is done.
+ *  The lag view option "Toggle Screen-True Local Explosions",
+ *  off by default. It shows what the player would see if the
+ *  game did this: when a player's own shell ends, that player's
+ *  client draws the explosion at once where its own shell
+ *  stopped, and hides the server's later explosion of that
+ *  shell.
  *
  *  It works only while the other lag view toggle, "Toggle
  *  Screen-True Own Shells" (on by default), is on: that one draws

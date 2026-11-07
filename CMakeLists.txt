@@ -5140,7 +5140,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lag view's shell owner matcher against the game's shell code
     # (test_lv_shell_owner.c).
     tests/unit/test_lv_shell_owner.c
-    # The lag view's temporary early blast test toggle (test_lv_early_blast.c).
+    # The lag view's early blast toggle (test_lv_early_blast.c).
     tests/unit/test_lv_early_blast.c
     # Log viewer snapshot index: time lookups and a ten-day log's worth of
     # entries (test_lv_snapshot_index.c).

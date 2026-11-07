@@ -1346,8 +1346,8 @@
 #define STR_LV_LAG_LINE_BOT                 3121
 /* The lag view's shell toggles in the Options menu. Toggle Screen-True Own
    Shells (lv_shell_owner.h) and its tooltip. Toggle Screen-True Local
-   Explosions is a temporary test toggle (lv_early_blast.h): its name, its
-   tooltip, and the tooltip while it is off because the first toggle is off. */
+   Explosions (lv_early_blast.h): its name, its tooltip, and the tooltip
+   while it is off because the first toggle is off. */
 #define STR_LV_SCREEN_TRUE_SHELLS           3472
 #define STR_LV_SCREEN_TRUE_SHELLS_TIP       3474
 #define STR_LV_SCREEN_TRUE_EXPL             3475

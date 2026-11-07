@@ -226,9 +226,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     lv_platform_config_get_string("LOGVIEWER", "Lag View Own Shells At Present", "Yes", val,
                                   sizeof(val));
     lv_screenSetScreenTrueShells(!(val[0] == 'N' || val[0] == 'n') ? 1 : 0);
-    /* TEMPORARY TEST TOGGLE (lv_early_blast.h): off until turned on. The
-       older key "Screen-True Own Shells" held this toggle's value, so it is
-       the default when the new key is not saved yet. */
+    /* Toggle Screen-True Local Explosions (lv_early_blast.h): off until
+       turned on. The older key "Screen-True Own Shells" held this toggle's
+       value, so it is the default when the new key is not saved yet. */
     {
         char old[16];
         lv_platform_config_get_string("LOGVIEWER", "Screen-True Own Shells", "No", old,
@@ -847,9 +847,10 @@ int lv_imgui_main_menu_bar(void) {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("%s", langGetText(STR_LV_SCREEN_TRUE_SHELLS_TIP));
                 }
-                /* TEMPORARY TEST TOGGLE (lv_early_blast.h): in the lag view,
-                 * the chosen player's own shells explode at once where they
-                 * end, and the server's later explosion of each is hidden.
+                /* Toggle Screen-True Local Explosions (lv_early_blast.h): in
+                 * the lag view, the chosen player's own shells explode at once
+                 * where they end, and the server's later explosion of each
+                 * is hidden.
                  * It works only with Toggle Screen-True Own Shells on
                  * (lv_earlyBlastOn), so the item is off and greyed until
                  * that one is on. The saved choice is kept meanwhile. */
