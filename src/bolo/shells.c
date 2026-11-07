@@ -46,6 +46,7 @@
 #include "brain_data.h"
 #include "screenbullet.h"
 #include "shells.h"
+#include "shell_lgm_rewind.h"
 #include "sounddist.h"
 #include "swamp.h"
 #include "tank.h"
@@ -336,8 +337,10 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  * count from zero. It lasts until the client has applied two snapshots.
  *
  * A pill's shell is not rewound at all. It carries no rewind (owner NEUTRAL,
- * compensationTicks 0) and tests tanks and builders where they are now. */
-#define SHELL_LGM_REWIND_LESS 1
+ * compensationTicks 0) and tests tanks and builders where they are now.
+ *
+ * SHELL_LGM_REWIND_LESS and shellLgmRewind are in shell_lgm_rewind.h, so the
+ * Log Viewer's lag view draws builders at the same rewind. */
 
 /* Tests one builder against a shell that has just exploded, and kills him if
  * the blast caught him. Both places a shell explodes in shellsUpdate, a
@@ -368,7 +371,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  * not (shellsCalcCollision).
  *
  * What the shooter's screen showed of the builder is in the builder position
- * history, at the shell's rewind (SHELL_LGM_REWIND_LESS above):
+ * history, at the shell's rewind less SHELL_LGM_REWIND_LESS (shellLgmRewind):
  *   - the record of that frame says he was not out: no test, no kill;
  *   - the record of that frame has a position: he is tested at that position
  *     against (seenX, seenY). Both are the shooter's screen. A blast that
@@ -388,12 +391,9 @@ static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank 
 	PosHistoryLookup seen = POS_HISTORY_NO_RECORD;
 
 	if (shell->compensationTicks > 0) {
-		rewindTicks = shell->compensationTicks;
 		/* Any builder: the shooter's client draws builders from the newest
 		 * snapshot, one newer than the one the rewind was measured from. */
-		if (rewindTicks > SHELL_LGM_REWIND_LESS) {
-			rewindTicks -= SHELL_LGM_REWIND_LESS;
-		}
+		rewindTicks = (uint8_t)shellLgmRewind(shell->compensationTicks);
 	} else {
 		/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests the
 		 * builder where he is now. */

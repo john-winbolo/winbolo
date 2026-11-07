@@ -77,6 +77,7 @@
 #include "lv_first_view.h"       /* the box round everything that is not deep sea */
 #include "lv_pill_numbers.h"     /* the number of each pillbox on the map */
 #include "lv_lag.h"              /* each player's lag and the lag view's history */
+#include "shell_lgm_rewind.h"     /* the builders' shorter rewind */
 
 /* The middle of the visible map from the start of the view (defined with
  * lv_screenSetViewInset). */
@@ -257,13 +258,20 @@ static bool lv_lagViewPlayerHere(void) {
 
 /* The frame the lag view draws at the playhead, or NULL to draw the present:
    the view is off, its player has no record yet, or the history holds no
-   frame that old. */
-static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs) {
+   frame that old. lgmFrame, when not NULL, takes the frame the builders are
+   drawn from: the server tests builders one entry less far back than tanks
+   (shellLgmRewind), so that is a newer frame. It is NULL when the tanks'
+   frame is. */
+static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs, const LvLagFrame **lgmFrame) {
   const LvLagRecord *rec;
   uint32_t behind;
+  const LvLagFrame *f;
 
   if (behindMs != NULL) {
     *behindMs = 0;
+  }
+  if (lgmFrame != NULL) {
+    *lgmFrame = NULL;
   }
   if (g_lv == NULL || !s_lagFeature || !lv_lagViewPlayerHere()) {
     return NULL;
@@ -283,7 +291,16 @@ static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs) {
       behind > g_lv->timeRunning) {
     return NULL;
   }
-  return lv_lagRingFind(&s_lagRing, g_lv->timeRunning - behind);
+  f = lv_lagRingFind(&s_lagRing, g_lv->timeRunning - behind);
+  if (f != NULL && lgmFrame != NULL) {
+    /* Newer than f, so the ring has it whenever it has f. */
+    uint32_t lgmBehind = (uint32_t) shellLgmRewind(rec->rewind) * LV_LAG_ENTRY_MS;
+    *lgmFrame = lv_lagRingFind(&s_lagRing, g_lv->timeRunning - lgmBehind);
+    if (*lgmFrame == NULL) {
+      *lgmFrame = f;
+    }
+  }
+  return f;
 }
 
 bool lv_screenLagRecorded(void) {
@@ -395,7 +412,7 @@ bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *dr
   if (lv_screenLagViewSlot() < 0) {
     return FALSE;
   }
-  f = lv_lagViewFrame(&behind);
+  f = lv_lagViewFrame(&behind, NULL);
   if (name != NULL && nameSize > 0) {
     /* The name the player has now, so a rename shows at once. */
     name[0] = '\0';
@@ -1264,6 +1281,7 @@ void lv_screenUpdate(updateType value) {
   screenBullets sb;
   screenLgm sl;
   const LvLagFrame *lagFrame; /* the lag view's frame; NULL draws the present */
+  const LvLagFrame *lagLgmFrame; /* the frame its builders are drawn from */
   shells lagShells = NULL;
 
 
@@ -1276,12 +1294,14 @@ void lv_screenUpdate(updateType value) {
   }
 
   lv_screenUpdateView(value);
-  lagFrame = lv_lagViewFrame(NULL);
+  lagFrame = lv_lagViewFrame(NULL, &lagLgmFrame);
   if (lagFrame != NULL) {
     /* The lag view: the other tanks, the builders and the shells where the
-       chosen player's screen showed them. */
+       chosen player's screen showed them. The builders are one entry newer
+       than the tanks (shellLgmRewind), as the server tests them. */
     int i;
     lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
+    lv_playersSetLagLgmFrame(lagLgmFrame);
     lagShells = lv_shellsCreate();
     for (i = 0; i < lagFrame->shellCount; i++) {
       const LvLagShell *sh = &lagFrame->shells[i];
