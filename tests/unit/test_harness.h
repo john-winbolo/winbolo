@@ -948,6 +948,21 @@ int run_bot_host_link_allow(void);
 int run_bot_host_slots_codec(void);
 int run_bot_host_place_spread(void);
 int run_bot_host_place_lag(void);
+/* The overrun check of the bot placement, the free CPU percent and the
+ * log_BotHostData payload (test_bot_host_overrun.c). */
+int run_bot_host_overrun_trigger_24_of_30(void);
+int run_bot_host_overrun_no_trigger_23_of_30(void);
+int run_bot_host_overrun_short_spike(void);
+int run_bot_host_overrun_step_spacing(void);
+int run_bot_host_overrun_server_fallback(void);
+int run_bot_host_overrun_raise_clean_evidence(void);
+int run_bot_host_overrun_no_raise_clean_too_free(void);
+int run_bot_host_overrun_no_raise_bad_reading(void);
+int run_bot_host_overrun_no_raise_no_free_data(void);
+int run_bot_host_overrun_new_game_reset(void);
+int run_bot_host_overrun_may_take(void);
+int run_bot_host_cpu_free_codec(void);
+int run_bothost_record_roundtrip(void);
 /* The lobby's CPU estimate per Bot Host row (test_bot_host_cpu.c). */
 int run_bot_host_cpu_percent(void);
 int run_bot_host_cpu_meter(void);
@@ -1462,6 +1477,9 @@ int run_log_roundtrip_player_lag_recorded(void);
 /* log_OverrunStats: the record through the writer and back, and a recorded
  * round's records at 0:30, 1:00 and the round end. */
 int run_log_roundtrip_overrun_stats(void);
+/* log_BotHostData through the round log, and nothing with the option off. */
+int run_log_roundtrip_bothost_data(void);
+int run_bothost_record_off_writes_nothing(void);
 int run_log_roundtrip_overrun_stats_recorded(void);
 /* The same with two thinking bots: each record has each bot's thinks. */
 int run_log_roundtrip_overrun_stats_bots(void);
@@ -1503,6 +1521,8 @@ int run_lv_early_blast_watch_miss(void);
 int run_lv_lag_view_rename(void);
 /* The viewer reads log_OverrunStats records and gives the one at the playhead. */
 int run_lv_overrun_read(void);
+/* The viewer reads log_BotHostData records into its bot host track at load, every number of each probe, reading and decision, and adds none twice on playback. */
+int run_lv_bothost_read(void);
 /* log_Ping's six payload bytes: sender, kind, and two big-endian u16 WORLD
  * coordinates, byte for byte through the writer and back. */
 int run_log_roundtrip_ping(void);

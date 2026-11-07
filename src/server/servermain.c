@@ -1034,12 +1034,19 @@ void printArgs() {
   fprintf(stderr, "                player joins an empty lobby. With -bothostkey too, a listed host\n");
   fprintf(stderr, "                must also give the key; without it the list alone is the proof.\n");
   fprintf(stderr, "-noplayerbothosts - do not let each player's client run this server's bots\n");
+  fprintf(stderr, "                (on by default: a joining player's client offers the bots its\n");
+  fprintf(stderr, "                computer can run, and gives them back when the player leaves).\n");
   fprintf(stderr, "-bothost-small-slots <n> - a Bot Host with n slots or fewer fills a little later (default 2)\n");
   fprintf(stderr, "-bothost-small-bias <f> - how many slots fewer such a host counts, 0 to 1 (default 0.25)\n");
   fprintf(stderr, "-bothost-lag-ref-ms <ms> - lag counted in bot placement: a host scores 1 + lag / ms times more, 0 = lag not counted (default 100)\n");
   fprintf(stderr, "-bothost-lag-max-ms <ms> - a host with more lag gets no new bots while one with less has room, 0 = no ceiling (default 250)\n");
-  fprintf(stderr, "                (on by default: a joining player's client offers the bots its\n");
-  fprintf(stderr, "                computer can run, and gives them back when the player leaves).\n");
+  fprintf(stderr, "-bothost-overrun-pct <f> - a host's 1 s probe is bad when its bots' overruns are over f%% of their thinks, 0 = the check is off (default 1)\n");
+  fprintf(stderr, "-bothost-overrun-bad-share <n> - when n%% of the probes in the window are bad, one bot moves off that host and its limit drops by 1 for the game (default 80)\n");
+  fprintf(stderr, "-bothost-overrun-window-secs <s> - the probes counted for that share (default 30)\n");
+  fprintf(stderr, "-bothost-overrun-step-secs <s> - at most one move or raise per host in this time (default 30)\n");
+  fprintf(stderr, "-bothost-free-sample-secs <s> - how often the free CPU of each host machine is read (default 5)\n");
+  fprintf(stderr, "-bothost-free-history-secs <s> - how much free CPU history is kept for a raise (default 300)\n");
+  fprintf(stderr, "-record-bothost-data - write the bot placement probes, free CPU readings and decisions into the round log (.wbv)\n");
   fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
   fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
@@ -3340,6 +3347,34 @@ int main(int argc, char **argv) {
           transportUdpServerSetBotHostLag(refMs, maxMs);
         }
       }
+      {
+        /* The overrun check of the placement; -1: the default. */
+        double pct = -1.0;
+        int vals[5] = {-1, -1, -1, -1, -1};
+        static const char *const names[5] = {
+            "bothost-overrun-bad-share", "bothost-overrun-window-secs",
+            "bothost-overrun-step-secs", "bothost-free-sample-secs",
+            "bothost-free-history-secs"};
+        bool any = false;
+        int k, a = findArg(argc, argv, "bothost-overrun-pct");
+        if (a != ARG_NOT_FOUND && a < argc) {
+          pct = atof(argv[a]);
+          any = true;
+        }
+        for (k = 0; k < 5; k++) {
+          a = findArg(argc, argv, names[k]);
+          if (a != ARG_NOT_FOUND && a < argc) {
+            vals[k] = atoi(argv[a]);
+            any = true;
+          }
+        }
+        if (any) {
+          transportUdpServerSetBotHostOverrun(pct, vals[0], vals[1], vals[2],
+                                              vals[3], vals[4]);
+        }
+      }
+      transportUdpServerSetBotHostRecord(
+          argExist(argc, argv, "record-bothost-data"));
     }
     /* Say what the finder will show, after the sanitising, so an operator
      * sees a name that came out shorter or cleaner than typed. */

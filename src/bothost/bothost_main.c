@@ -76,6 +76,7 @@
 #include "bulk_transfer.h"
 #include "brain_sync.h"
 #include "bot_host_link.h"
+#include "machine_cpu_free.h"
 #include "client_sim_internal.h"
 #include "transport_control_codec.h"
 #include "transport_udp.h"
@@ -315,6 +316,9 @@ typedef struct {
     int        lastSlotsSent;
     /* The CPU byte last sent in CTRL_BOT_HOST_CPU, -1 for none. */
     int        lastCpuSent;
+    /* The free CPU reading last sent in CTRL_BOT_HOST_CPU_FREE (its
+     * hostFreeSeq), 0 for none. */
+    uint32_t   lastFreeSeqSent;
 
     HostSync   sync;
     /* Server-bound bulk: the brain recordings this host sends. */
@@ -335,6 +339,14 @@ static int        serverCount;
 static double          hostThinkMsTotal;
 static BotHostCpuMeter hostCpuMeter;
 static uint8_t         hostCpuValue = (uint8_t)BOT_HOST_CPU_UNKNOWN;
+/* The free CPU of this whole machine, read each BOT_HOST_FREE_MS
+ * (machine_cpu_free.h). Only the percent goes to the servers. hostFreeSeq
+ * counts the readings, so each one is sent once. */
+#define BOT_HOST_FREE_MS 5000u
+static MachineCpuFree  hostFreeMeter;
+static uint8_t         hostFreeValue = (uint8_t)MACHINE_CPU_FREE_UNKNOWN;
+static uint32_t        hostFreeSeq;
+static uint32_t        hostFreeAtMs;
 static SOCKET     listenSock = INVALID_SOCKET;
 
 static int serverIndex(const HostServer *sv) {
@@ -1315,6 +1327,7 @@ static void ctlReceive(HostServer *sv) {
                     sv->lastPingMs = 0;
                     sv->lastSlotsSent = -1;
                     sv->lastCpuSent = -1;
+                    sv->lastFreeSeqSent = 0;
                     syncReset(&sv->sync);
                     bulkSenderInit(&sv->recBulk);
                     hostRecServerUp(serverIndex(sv), sv->label);
@@ -1429,6 +1442,14 @@ static void ctlService(HostServer *sv) {
                 evt.u.botHostCpu.cpu = hostCpuValue;
                 ctlSendEvent(sv, &evt);
                 sv->lastCpuSent = (int)hostCpuValue;
+            }
+            if (hostFreeSeq != 0 && hostFreeSeq != sv->lastFreeSeqSent) {
+                ControlEvent evt;
+                memset(&evt, 0, sizeof(evt));
+                evt.type = CTRL_BOT_HOST_CPU_FREE;
+                evt.u.botHostCpuFree.free = hostFreeValue;
+                ctlSendEvent(sv, &evt);
+                sv->lastFreeSeqSent = hostFreeSeq;
             }
             ctlPump(sv);
             break;
@@ -1877,6 +1898,12 @@ static void hostTick(void) {
                                          hostThinkMsTotal,
                                          SDL_GetNumLogicalCPUCores(),
                                          poolUsed());
+    if (hostFreeSeq == 0 || nowMs() - hostFreeAtMs >= BOT_HOST_FREE_MS) {
+        hostFreeAtMs = nowMs();
+        hostFreeValue = machineCpuFreeSample(&hostFreeMeter);
+        hostFreeSeq++;
+        if (hostFreeSeq == 0) hostFreeSeq = 1;
+    }
 
     sendEnd = SDL_GetPerformanceCounter();
     /* A tick that built a brain or ran a first think has one-time setup
@@ -2119,6 +2146,7 @@ int main(int argc, char *argv[]) {
     atexit(wb_log_shutdown);
 
     botHostCpuMeterInit(&hostCpuMeter);
+    machineCpuFreeInit(&hostFreeMeter);
     if (!serverSimBotPoolInit(optThreads)) {
         fprintf(stderr, "Error: cannot start %d brain threads\n", optThreads);
         return 1;
@@ -2373,6 +2401,10 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     hostThinkMsTotal = 0.0;
     botHostCpuMeterInit(&hostCpuMeter);
     hostCpuValue = (uint8_t)BOT_HOST_CPU_UNKNOWN;
+    machineCpuFreeInit(&hostFreeMeter);
+    hostFreeValue = (uint8_t)MACHINE_CPU_FREE_UNKNOWN;
+    hostFreeSeq = 0;
+    hostFreeAtMs = 0;
     embedPlayer = cfg->player;
     memcpy(embedTicket, cfg->ticket, sizeof(embedTicket));
     SDL_strlcpy(embedBrain, cfg->brain != NULL ? cfg->brain : "",

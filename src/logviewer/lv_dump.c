@@ -180,6 +180,7 @@ static const char *dumpRecordName(BYTE code) {
     DUMP_REC(ScnAnnounce);      DUMP_REC(ScnMarker);       DUMP_REC(ScnHint);
     DUMP_REC(ServerTick);       DUMP_REC(ScnStatus);       DUMP_REC(VoiceEveryone);
     DUMP_REC(MapName);          DUMP_REC(PlayerLag);       DUMP_REC(OverrunStats);
+    DUMP_REC(BotHostData);
 #undef DUMP_REC
     default: return "Unknown";
   }
@@ -368,6 +369,44 @@ static void dumpRecordFields(DumpCtx *c, BYTE code, const BYTE *b, int len) {
             fprintf(out, " bot%u=%u/%u/%u/%u", bot->player, bot->last, bot->peak,
                     (unsigned)bot->overruns, (unsigned)bot->thinks);
           }
+        }
+      }
+      break;
+    }
+    /* One bot placement record (bothost_record.h). Percent fields in
+       tenths; 255 is none. */
+    case log_BotHostData: {
+      BotHostRecord rec;
+      if (botHostRecordDecode(b, len, &rec)) {
+        fprintf(out, " version=%u kind=%u host=%u", rec.version, rec.kind, rec.host);
+        switch (rec.kind) {
+        case BOTHOST_RECORD_HOST:
+          fprintf(out, " player=%u name=\"%s\"", rec.player, rec.name);
+          break;
+        case BOTHOST_RECORD_PROBE:
+          fprintf(out, " bots=%u slots=%u limit=%u thinks=%u overruns=%u bad=%u"
+                  " bad_probes=%u probes=%u", rec.bots, rec.slots, rec.limit,
+                  (unsigned)rec.thinks, (unsigned)rec.overruns,
+                  (rec.flags & BOTHOST_RECORD_PROBE_BAD) ? 1u : 0u,
+                  rec.badProbes, rec.probes);
+          break;
+        case BOTHOST_RECORD_READING:
+          fprintf(out, " free=%u bot_cpu=%u bots=%u ran=%u bad=%u", rec.freePct,
+                  rec.botCpu, rec.bots,
+                  (rec.flags & BOTHOST_RECORD_READING_RAN) ? 1u : 0u,
+                  (rec.flags & BOTHOST_RECORD_READING_BAD) ? 1u : 0u);
+          break;
+        case BOTHOST_RECORD_DECISION:
+          fprintf(out, " decision=%u limit_before=%u limit_after=%u bad_probes=%u"
+                  " probes=%u predicted_tenths=%d cost_tenths=%u free_avg_tenths=%u"
+                  " lowest_clean=%u highest_bad=%u seat=%u to_host=%u reason=\"%s\"",
+                  rec.decision, rec.limitBefore, rec.limitAfter, rec.badProbes,
+                  rec.probes, (int)rec.predictedTenths, (unsigned)rec.costTenths,
+                  (unsigned)rec.freeAvgTenths, rec.lowestClean, rec.highestBad,
+                  rec.seat, rec.toHost, rec.reason);
+          break;
+        default:
+          break;
         }
       }
       break;

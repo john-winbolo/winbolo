@@ -2330,6 +2330,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
     src/logviewer/imgui/imgui_chat.cpp
+    src/logviewer/imgui/imgui_bothosts.cpp
     src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
@@ -3008,6 +3009,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
     src/logviewer/imgui/imgui_chat.cpp
+    src/logviewer/imgui/imgui_bothosts.cpp
     src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
@@ -4932,6 +4934,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Bot Host link: the announce codec, the address lists and the allow
     # list a server and a Bot Host use to find each other.
     tests/unit/test_bot_host_link.c
+    # The overrun check of the bot placement, the free CPU percent and the
+    # log_BotHostData payload.
+    tests/unit/test_bot_host_overrun.c
     # The lobby's CPU estimate per Bot Host row: the percent, the meter,
     # CTRL_BOT_HOST_CPU and the client's row.
     tests/unit/test_bot_host_cpu.c
@@ -6436,6 +6441,19 @@ set(_unit_test_names
     bot_host_slots_codec
     bot_host_place_spread
     bot_host_place_lag
+    bot_host_overrun_trigger_24_of_30
+    bot_host_overrun_no_trigger_23_of_30
+    bot_host_overrun_short_spike
+    bot_host_overrun_step_spacing
+    bot_host_overrun_server_fallback
+    bot_host_overrun_raise_clean_evidence
+    bot_host_overrun_no_raise_clean_too_free
+    bot_host_overrun_no_raise_bad_reading
+    bot_host_overrun_no_raise_no_free_data
+    bot_host_overrun_new_game_reset
+    bot_host_overrun_may_take
+    bot_host_cpu_free_codec
+    bothost_record_roundtrip
     bot_host_cpu_percent
     bot_host_cpu_meter
     bot_host_cpu_codec
@@ -6492,6 +6510,8 @@ set(_unit_test_names
     log_roundtrip_player_lag
     log_roundtrip_player_lag_recorded
     log_roundtrip_overrun_stats
+    log_roundtrip_bothost_data
+    bothost_record_off_writes_nothing
     log_roundtrip_overrun_stats_recorded
     log_roundtrip_overrun_stats_bots
     log_roundtrip_overrun_stats_every_30s
@@ -6524,6 +6544,7 @@ set(_unit_test_names
     lv_early_blast_watch_miss
     lv_lag_view_rename
     lv_overrun_read
+    lv_bothost_read
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record

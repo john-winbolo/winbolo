@@ -37,6 +37,7 @@
 #include "bulk_transfer.h"  /* BulkSender, BulkReceiver */
 #include "brain_sync.h"     /* BrainSyncManifest — the Bot Host brain sync */
 #include "bot_host_link.h"  /* BotHostAllow, BotHostAnnounce — -bothosts */
+#include "bothost_record.h"  /* BotHostRecord — serverBotHostRecordPut */
 #include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy */
 #include "net_impair.h"     /* NetImpair */
 #include "../../winbolonet/winbolonet_core.h" /* WINBOLONET_KEY_LEN */
@@ -251,6 +252,12 @@ typedef struct {
      * (CTRL_BOT_HOST_CPU, bot_host_cpu.h); BOT_HOST_CPU_UNKNOWN until it
      * sends one, and always from an older host. */
     uint8_t  cpu;
+    /* The host machine's free CPU percent, all cores
+     * (CTRL_BOT_HOST_CPU_FREE, every 5 s), and the tick it came;
+     * BOT_HOST_FREE_UNKNOWN until one comes, and always from an older
+     * host. */
+    uint8_t  cpuFree;
+    uint32_t cpuFreeTick;
     /* A player's own Bot Host (the one inside that player's client): it
      * joined with the player's ticket, and it goes when that player's
      * connection (ownerConnId) goes. */
@@ -833,6 +840,10 @@ void serverBotSlotTeamMsg(struct ServerSim *sim, int slot, const char *text);
 void serverBotSlotStats(struct ServerSim *sim, int slot,
                         const CmdBotStats *st);
 bool serverBotSlotPingAllowed(struct ServerSim *sim, int slot);
+/* Adds one log_BotHostData record to the round log when the server runs
+ * with -record-bothost-data and the log records; else writes nothing.
+ * Returns true when it was written. */
+bool serverBotHostRecordPut(const BotHostRecord *rec);
 void serverServiceBotHosts(struct ServerSim *sim);
 void serverBotHostsReset(void);
 /* One CTRL_BOT_HOST_STATUS per connected Bot Host through deliver: the join

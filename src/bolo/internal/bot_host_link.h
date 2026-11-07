@@ -197,6 +197,155 @@ bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
                               int smallSlots, double bias,
                               const BotHostPlaceLag *lag, int *from, int *to);
 
+/* The best host for one more bot other than host skip, by the same rules
+ * as botHostPlacePickLag, or -1 when no other host may take it. */
+int  botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
+                           int smallSlots, double bias,
+                           const BotHostPlaceLag *lag, int skip);
+
+/* ---- Bot overruns on a host ------------------------------------------
+ *
+ * Each host (the server's own process too) is probed once a second. One
+ * probe is the host's overrun rate in that second: new overruns / new
+ * thinks over all its bots. A probe is bad when the rate is above pct; a
+ * probe with no thinks is not bad. When at least badShare percent of the
+ * probes in the last windowSecs are bad, one bot moves off the host and the
+ * host's limit becomes its bot count less 1 (never below 0). That happens
+ * at most once each stepSecs, and the probes are cleared after it, so the
+ * next step needs a full new window.
+ *
+ * The free CPU history: each freeSampleSecs the host's last reading of its
+ * machine's free CPU (all cores, 0..100, BOT_HOST_FREE_UNKNOWN when not
+ * known) is kept with the host's bot count and whether its overrun rate
+ * over those seconds was above pct (bad). freeHistorySecs of readings are
+ * kept.
+ *
+ * The limit goes up by 1 (at most once each stepSecs, never above the
+ * host's slots) only when all of these hold:
+ *   a. the trigger is not met over a full window since the last change;
+ *   b. one reading in the history ran bots with no overruns above pct and
+ *      had at most the predicted free CPU: the average free CPU of the
+ *      last windowSecs less the CPU of one bot (the host's bot CPU byte /
+ *      its bots; the last known value while it has no bots);
+ *   c. the predicted free CPU is above the highest free CPU of any bad
+ *      reading in the history (true when there is none).
+ * With no free CPU data or no one-bot cost the limit stays where it is
+ * until the game ends.
+ *
+ * The same free CPU evidence decides each new bot for a host
+ * (botHostOverrunMayTake), in the spread, at the start and in each
+ * rebalance: a host with no bots may take its first one; after each new
+ * bot it takes no more until a reading counts that bot (so the CPU of one
+ * bot is measured); then it takes one more only when the one-bot cost is
+ * known and, with a bad reading in the history, b and c above hold, or,
+ * with no bad reading, the predicted free CPU is at least one more
+ * one-bot cost or b holds. A host with no free CPU data takes bots by its
+ * slots only until its first step down.
+ *
+ * The limit is for one game: the server clears it, the probes and the
+ * step down at a new game and a new round (botHostOverrunNewGame), and
+ * all of the state when a host joins again (botHostOverrunReset). */
+#define BOT_HOST_OVR_PCT_DEFAULT           1.0
+#define BOT_HOST_OVR_BAD_SHARE_DEFAULT     80
+#define BOT_HOST_OVR_WINDOW_SECS_DEFAULT   30
+#define BOT_HOST_OVR_STEP_SECS_DEFAULT     30
+#define BOT_HOST_FREE_SAMPLE_SECS_DEFAULT  5
+#define BOT_HOST_FREE_HISTORY_SECS_DEFAULT 300
+/* The most probes a window and the most readings a history hold. */
+#define BOT_HOST_OVR_MAX_PROBES   600
+#define BOT_HOST_FREE_MAX_READINGS 600
+/* A free CPU reading that is not known. */
+#define BOT_HOST_FREE_UNKNOWN     0xFFu
+
+typedef struct {
+    double pct;            /* a probe is bad above this percent; 0: off */
+    int    badShare;       /* percent of a window's probes that trigger */
+    int    windowSecs;
+    int    stepSecs;
+    int    freeSampleSecs;
+    int    freeHistorySecs;
+} BotHostOverrunCfg;
+
+typedef struct {
+    uint8_t freePct;       /* 0..100 or BOT_HOST_FREE_UNKNOWN */
+    uint8_t bots;          /* the host's bots at the reading */
+    uint8_t botCpu;        /* its CTRL_BOT_HOST_CPU byte at the reading */
+    bool    ran;           /* its bots thought in those seconds */
+    bool    bad;           /* the overrun rate was above pct */
+} BotHostFreeReading;
+
+typedef struct {
+    int      limit;        /* the lowered limit, -1: none */
+    bool     cut;          /* a step down was made this game */
+    uint8_t  probe[BOT_HOST_OVR_MAX_PROBES];   /* 1: bad */
+    int      probeCount, probeNext;
+    int      sinceChange;  /* probes since the last step down or up */
+    int      sinceRefuse;  /* probes since the last refused raise */
+    uint32_t accOverruns, accThinks;
+    int      accProbes;
+    BotHostFreeReading reading[BOT_HOST_FREE_MAX_READINGS];
+    int      readingCount, readingNext;
+    double   oneBotCost;   /* the last known CPU percent of one bot */
+    bool     costKnown;
+} BotHostOverrunState;
+
+typedef struct {
+    uint32_t overruns;     /* new overruns in this second */
+    uint32_t thinks;       /* new thinks in this second */
+    int      bots;         /* bots on the host now */
+    int      slots;        /* the slots the host reports */
+    uint8_t  botCpu;       /* its CTRL_BOT_HOST_CPU byte */
+    uint8_t  freePct;      /* its last free CPU reading */
+    bool     canMove;      /* a bot may move off it now to another place */
+} BotHostOverrunProbe;
+
+typedef enum {
+    BOT_HOST_OVR_NONE = 0,
+    BOT_HOST_OVR_WAIT,     /* the trigger is met but no bot may move now */
+    BOT_HOST_OVR_LOWER,    /* move one bot off; the limit is lowered */
+    BOT_HOST_OVR_RAISE,    /* the limit goes up by 1 */
+    BOT_HOST_OVR_REFUSE    /* a raise was looked at and refused */
+} BotHostOverrunAction;
+
+typedef struct {
+    int    badProbes;      /* bad probes in the window */
+    int    probes;         /* probes in the window */
+    double ratePct;        /* this probe's overrun rate */
+    int    limitBefore;    /* the limit before this probe, -1: none */
+    int    newLimit;       /* the limit after this probe, -1: none */
+    bool   sampled;        /* this probe took a free CPU reading */
+    BotHostFreeReading sample;  /* that reading */
+    bool   freeKnown;      /* a free CPU average of the window is known */
+    double freeAvg;
+    bool   costKnown;
+    double oneBotCost;
+    double predicted;      /* freeAvg - oneBotCost */
+    int    lowestClean;    /* lowest free of a clean reading with bots, -1 */
+    int    highestBad;     /* highest free of a bad reading, -1 */
+    const char *why;       /* the reason, for the log */
+} BotHostOverrunReport;
+
+void botHostOverrunCfgDefaults(BotHostOverrunCfg *cfg);
+/* Clears the state: no limit, no probes, no history. */
+void botHostOverrunReset(BotHostOverrunState *st);
+/* A new game or round: no limit, no probes, no step down; the free CPU
+ * history and the one-bot cost stay. */
+void botHostOverrunNewGame(BotHostOverrunState *st);
+/* The host may take one more bot now by the free CPU evidence (it has
+ * bots now; latestFree is its last free CPU reading). Slots and the limit
+ * are checked by the placement, not here. rep (may be NULL) gets the
+ * numbers and the reason. */
+bool botHostOverrunMayTake(const BotHostOverrunState *st,
+                           const BotHostOverrunCfg *cfg, int bots,
+                           uint8_t latestFree, BotHostOverrunReport *rep);
+/* The slots placement counts for a host that reports slots. */
+int  botHostOverrunLimit(const BotHostOverrunState *st, int slots);
+/* One probe (one second). rep may be NULL. */
+BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
+                                         const BotHostOverrunCfg *cfg,
+                                         const BotHostOverrunProbe *in,
+                                         BotHostOverrunReport *rep);
+
 /* The seats a host gives back at once when it reports newSlots
  * (CTRL_BOT_HOST_SLOTS): every seat on host h when newSlots is 0, as when
  * the host leaves, and none otherwise (a host with fewer slots than bots

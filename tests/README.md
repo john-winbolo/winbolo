@@ -238,6 +238,53 @@ counts:
 - The unit test `bot_host_place_lag` prints the spread with and without
   lag for hosts of 8, 4, 2 and 1 slots.
 
+#### Bot overruns on a host
+
+The server also watches how often each host's bots overrun
+(`botHostOverrunProbe` in bot_host_link.c). The server's own process counts
+as a host too.
+
+- Once a second each host is probed: its bots' new overruns over their new
+  thinks. A probe is bad when that rate is over P%. A probe with no thinks
+  is not bad.
+- When at least S% of the probes in the last W seconds are bad, one bot
+  moves off that host to the best other place (the normal placement scores
+  choose). The host's limit becomes its bot count minus 1 for this game. A
+  bot with a pill or with its builder out does not move; the step waits.
+  At most one step per host each T seconds. The probes start again after
+  each step.
+- The server stays the last fall-back. A lowered server limit only moves
+  bots off when another host has room.
+- Each Bot Host reads the free CPU of its whole machine every 5 s and
+  sends only the percent (CTRL_BOT_HOST_CPU_FREE). The server reads its
+  own. The server keeps H seconds of readings per host: free %, bot count,
+  and clean or bad (bad: the overrun rate of those seconds is over P%).
+- A raise by 1 (at most each T seconds) needs all of these: the trigger is
+  not met; one bot's cost (the host's bot CPU / its bots) is known; a clean
+  reading had free CPU at or below the predicted free CPU (the 30 s free
+  average minus one bot's cost); and the predicted free CPU is above the
+  free CPU of every bad reading. With no free CPU data there is no raise.
+- Each new bot on a host also needs free CPU room: a host may take its
+  first bot; after that a new reading must count the newest bot before the
+  next one goes there. With no free CPU data only the slots count.
+- A lowered limit is for one game: a new game, the next round or a rejoin
+  clears it. The lobby's Add Bot limit does not change.
+- `-bothost-overrun-pct <f>` sets P (default 1; 0 turns the check off).
+- `-bothost-overrun-bad-share <n>` sets S (default 80).
+- `-bothost-overrun-window-secs <s>` sets W (default 30).
+- `-bothost-overrun-step-secs <s>` sets T (default 30).
+- `-bothost-free-sample-secs <s>` sets how often a reading is kept
+  (default 5).
+- `-bothost-free-history-secs <s>` sets H (default 300).
+- `-record-bothost-data` writes each probe, each reading and each decision
+  with its numbers into the round log (.wbv) as log_BotHostData records.
+  Off by default. A game hosted from the client uses the "Record Bot Host
+  Data" setting in the [SETTINGS] section of the preferences file. The Log
+  Viewer shows them in its Bot Hosts window.
+- The console shows each step with the host, the overrun rate, the new
+  limit and the free CPU numbers.
+- Unit tests: `bot_host_overrun_*` (`--test <name>`).
+
 ## Test Runner
 
 The test runner (`tests/run_test.py`) automates the full cycle: start a server, connect headless clients with brain scripts, wait for completion, and validate results.

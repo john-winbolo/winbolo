@@ -461,6 +461,13 @@ int botHostPlacePickLag(const BotHostPlaceHost *hosts, int n, int smallSlots,
     return placePickSkip(hosts, n, smallSlots, bias, lag, -1, NULL);
 }
 
+int botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
+                          int smallSlots, double bias,
+                          const BotHostPlaceLag *lag, int skip) {
+    if (hosts == NULL || n <= 0) return -1;
+    return placePickSkip(hosts, n, smallSlots, bias, lag, skip, NULL);
+}
+
 bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,
                            int smallSlots, double bias, int *from, int *to) {
     return botHostPlaceRebalanceLag(hosts, n, smallSlots, bias, NULL, from,
@@ -476,14 +483,18 @@ bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
     if (hosts == NULL || n <= 0 || from == NULL || to == NULL) return false;
     for (i = 0; i < n; i++) {
         double load;
-        if (!hosts[i].movable || hosts[i].bots <= 0 || hosts[i].slots <= 0) {
-            continue;
-        }
-        load = (double)hosts[i].bots /
-               botHostPlaceEffSlots(hosts[i].slots, smallSlots, bias) *
-               placeLagFactor(&hosts[i], lag);
-        if (hosts[i].bots > hosts[i].slots && !hosts[i].unlimited) {
-            load += 1000.0;  /* over its slots: it gives first */
+        if (!hosts[i].movable || hosts[i].bots <= 0) continue;
+        if (hosts[i].slots <= 0) {
+            /* No slots but bots (a limit lowered to 0): it gives first. */
+            if (hosts[i].unlimited) continue;
+            load = 1000.0 + (double)hosts[i].bots;
+        } else {
+            load = (double)hosts[i].bots /
+                   botHostPlaceEffSlots(hosts[i].slots, smallSlots, bias) *
+                   placeLagFactor(&hosts[i], lag);
+            if (hosts[i].bots > hosts[i].slots && !hosts[i].unlimited) {
+                load += 1000.0;  /* over its slots: it gives first */
+            }
         }
         if (src < 0 || load > srcLoad + BOT_HOST_PLACE_EPS) {
             src = i;
@@ -513,6 +524,324 @@ bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
         *to = dst;
         return true;
     }
+}
+
+/* ---- Bot overruns on a host --------------------------------------------- */
+
+void botHostOverrunCfgDefaults(BotHostOverrunCfg *cfg) {
+    if (cfg == NULL) return;
+    cfg->pct = BOT_HOST_OVR_PCT_DEFAULT;
+    cfg->badShare = BOT_HOST_OVR_BAD_SHARE_DEFAULT;
+    cfg->windowSecs = BOT_HOST_OVR_WINDOW_SECS_DEFAULT;
+    cfg->stepSecs = BOT_HOST_OVR_STEP_SECS_DEFAULT;
+    cfg->freeSampleSecs = BOT_HOST_FREE_SAMPLE_SECS_DEFAULT;
+    cfg->freeHistorySecs = BOT_HOST_FREE_HISTORY_SECS_DEFAULT;
+}
+
+/* A count that lets a new state step at once, as soon as its window shows
+ * it. */
+#define OVR_LONG_AGO (1 << 30)
+
+static void ovrClearProbes(BotHostOverrunState *st) {
+    memset(st->probe, 0, sizeof(st->probe));
+    st->probeCount = 0;
+    st->probeNext = 0;
+    /* The next free CPU reading starts again too: the probes so far ran
+     * with the bots before the step. */
+    st->accOverruns = 0;
+    st->accThinks = 0;
+    st->accProbes = 0;
+}
+
+void botHostOverrunReset(BotHostOverrunState *st) {
+    if (st == NULL) return;
+    memset(st, 0, sizeof(*st));
+    st->limit = -1;
+    st->sinceChange = OVR_LONG_AGO;
+    st->sinceRefuse = OVR_LONG_AGO;
+}
+
+void botHostOverrunNewGame(BotHostOverrunState *st) {
+    if (st == NULL) return;
+    st->limit = -1;
+    st->cut = false;
+    ovrClearProbes(st);
+    st->sinceChange = OVR_LONG_AGO;
+    st->sinceRefuse = OVR_LONG_AGO;
+}
+
+int botHostOverrunLimit(const BotHostOverrunState *st, int slots) {
+    if (st == NULL || st->limit < 0 || st->limit >= slots) return slots;
+    return st->limit;
+}
+
+static int ovrClamp(int v, int lo, int hi) {
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+static int ovrWindow(const BotHostOverrunCfg *cfg) {
+    return ovrClamp(cfg->windowSecs, 1, BOT_HOST_OVR_MAX_PROBES);
+}
+
+static int ovrSample(const BotHostOverrunCfg *cfg) {
+    return ovrClamp(cfg->freeSampleSecs, 1, BOT_HOST_OVR_MAX_PROBES);
+}
+
+static int ovrHistory(const BotHostOverrunCfg *cfg) {
+    return ovrClamp(cfg->freeHistorySecs / ovrSample(cfg), 1,
+                    BOT_HOST_FREE_MAX_READINGS);
+}
+
+/* The bad probes in the window. */
+static int ovrBadProbes(const BotHostOverrunState *st) {
+    int i, bad = 0;
+    for (i = 0; i < st->probeCount; i++) bad += st->probe[i];
+    return bad;
+}
+
+/* The reading k places back (0: the newest). */
+static const BotHostFreeReading *ovrReading(const BotHostOverrunState *st,
+                                            const BotHostOverrunCfg *cfg,
+                                            int k) {
+    int cap = ovrHistory(cfg);
+    return &st->reading[((st->readingNext - 1 - k) % cap + cap) % cap];
+}
+
+/* Fills the free CPU numbers of rep from the history. */
+static void ovrFreeNumbers(const BotHostOverrunState *st,
+                           const BotHostOverrunCfg *cfg,
+                           BotHostOverrunReport *rep) {
+    int k, recent, known = 0;
+    double sum = 0.0;
+    recent = (ovrWindow(cfg) + ovrSample(cfg) - 1) / ovrSample(cfg);
+    rep->freeKnown = false;
+    rep->freeAvg = 0.0;
+    rep->lowestClean = -1;
+    rep->highestBad = -1;
+    for (k = 0; k < st->readingCount; k++) {
+        const BotHostFreeReading *r = ovrReading(st, cfg, k);
+        if (r->freePct == BOT_HOST_FREE_UNKNOWN) continue;
+        if (k < recent) {
+            sum += r->freePct;
+            known++;
+        }
+        if (r->bad) {
+            if (r->freePct > rep->highestBad) rep->highestBad = r->freePct;
+        } else if (r->ran && r->bots > 0) {
+            /* Clean evidence only from readings where bots thought. */
+            if (rep->lowestClean < 0 || r->freePct < rep->lowestClean) {
+                rep->lowestClean = r->freePct;
+            }
+        }
+    }
+    if (known > 0) {
+        rep->freeKnown = true;
+        rep->freeAvg = sum / known;
+    }
+    rep->costKnown = st->costKnown;
+    rep->oneBotCost = st->oneBotCost;
+    rep->predicted = rep->freeAvg - rep->oneBotCost;
+}
+
+static void ovrReportInit(BotHostOverrunReport *rep) {
+    memset(rep, 0, sizeof(*rep));
+    rep->newLimit = -1;
+    rep->lowestClean = -1;
+    rep->highestBad = -1;
+    rep->why = "";
+}
+
+/* b and c of the raise rule. */
+static bool ovrCleanEvidence(const BotHostOverrunReport *rep) {
+    return rep->lowestClean >= 0 &&
+           (double)rep->lowestClean <= rep->predicted;
+}
+
+static bool ovrAboveBad(const BotHostOverrunReport *rep) {
+    return rep->highestBad < 0 || rep->predicted > (double)rep->highestBad;
+}
+
+BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
+                                         const BotHostOverrunCfg *cfg,
+                                         const BotHostOverrunProbe *in,
+                                         BotHostOverrunReport *rep) {
+    BotHostOverrunReport local;
+    int window, need;
+    bool bad, triggered, spaced;
+
+    if (rep == NULL) rep = &local;
+    ovrReportInit(rep);
+    if (st == NULL || cfg == NULL || in == NULL) return BOT_HOST_OVR_NONE;
+    if (!(cfg->pct > 0.0)) {
+        st->limit = -1;
+        return BOT_HOST_OVR_NONE;
+    }
+    window = ovrWindow(cfg);
+    if (st->sinceChange < OVR_LONG_AGO) st->sinceChange++;
+    if (st->sinceRefuse < OVR_LONG_AGO) st->sinceRefuse++;
+
+    /* This probe. */
+    rep->ratePct = in->thinks > 0
+        ? (double)in->overruns * 100.0 / (double)in->thinks : 0.0;
+    bad = in->thinks > 0 && rep->ratePct > cfg->pct;
+    if (st->probeNext >= window) st->probeNext = 0;
+    st->probe[st->probeNext] = bad ? 1 : 0;
+    st->probeNext = (st->probeNext + 1) % window;
+    if (st->probeCount < window) st->probeCount++;
+
+    /* One bot's CPU: the host's bot CPU over its bots, kept while it has
+     * none. */
+    if (in->bots > 0) {
+        if (in->botCpu <= 100) {
+            st->oneBotCost = (double)in->botCpu / (double)in->bots;
+            st->costKnown = true;
+        } else if (in->botCpu == 0xFEu) {  /* BOT_HOST_CPU_UNDER_ONE */
+            st->oneBotCost = 0.5 / (double)in->bots;
+            st->costKnown = true;
+        }
+    }
+
+    /* The free CPU reading, each freeSampleSecs, paired with the overrun
+     * rate over the same seconds. */
+    st->accOverruns += in->overruns;
+    st->accThinks += in->thinks;
+    if (++st->accProbes >= ovrSample(cfg)) {
+        int cap = ovrHistory(cfg);
+        BotHostFreeReading *r;
+        if (st->readingNext >= cap) st->readingNext = 0;
+        r = &st->reading[st->readingNext];
+        r->freePct = in->freePct <= 100 ? in->freePct
+                                        : (uint8_t)BOT_HOST_FREE_UNKNOWN;
+        r->bots = (uint8_t)ovrClamp(in->bots, 0, 255);
+        r->botCpu = in->botCpu;
+        r->ran = st->accThinks > 0;
+        r->bad = st->accThinks > 0 &&
+                 (double)st->accOverruns * 100.0 / (double)st->accThinks >
+                 cfg->pct;
+        st->readingNext = (st->readingNext + 1) % cap;
+        if (st->readingCount < cap) st->readingCount++;
+        st->accOverruns = 0;
+        st->accThinks = 0;
+        st->accProbes = 0;
+        rep->sampled = true;
+        rep->sample = *r;
+    }
+
+    /* A host that now reports no more slots than the limit needs none. */
+    if (st->limit >= 0 && st->limit >= in->slots) st->limit = -1;
+
+    rep->badProbes = ovrBadProbes(st);
+    rep->probes = st->probeCount;
+    ovrFreeNumbers(st, cfg, rep);
+    rep->limitBefore = st->limit;
+    rep->newLimit = st->limit;
+
+    need = ovrClamp(cfg->badShare, 1, 100);
+    triggered = (long)rep->badProbes * 100L >= (long)need * (long)window;
+    spaced = st->sinceChange >= cfg->stepSecs;
+
+    if (triggered) {
+        if (!spaced) return BOT_HOST_OVR_NONE;
+        if (!in->canMove || in->bots <= 0) {
+            rep->why = "no bot may move now";
+            return BOT_HOST_OVR_WAIT;
+        }
+        st->limit = in->bots - 1;
+        if (st->limit < 0) st->limit = 0;
+        st->cut = true;
+        rep->newLimit = st->limit;
+        ovrClearProbes(st);
+        st->sinceChange = 0;
+        rep->why = "overruns";
+        return BOT_HOST_OVR_LOWER;
+    }
+
+    /* A raise: only with a full window since the last change. */
+    if (st->limit < 0 || !spaced || st->probeCount < window) {
+        return BOT_HOST_OVR_NONE;
+    }
+    if (!rep->freeKnown) {
+        rep->why = "no free CPU data";
+    } else if (!rep->costKnown) {
+        rep->why = "the CPU of one bot is not known";
+    } else if (!ovrCleanEvidence(rep)) {
+        rep->why = "no clean reading with that little free CPU";
+    } else if (!ovrAboveBad(rep)) {
+        rep->why = "a bad reading had as much free CPU";
+    } else {
+        st->limit++;
+        if (st->limit >= in->slots) st->limit = -1;
+        rep->newLimit = st->limit;
+        ovrClearProbes(st);
+        st->sinceChange = 0;
+        rep->why = "free CPU";
+        return BOT_HOST_OVR_RAISE;
+    }
+    if (st->sinceRefuse < cfg->stepSecs) return BOT_HOST_OVR_NONE;
+    st->sinceRefuse = 0;
+    return BOT_HOST_OVR_REFUSE;
+}
+
+bool botHostOverrunMayTake(const BotHostOverrunState *st,
+                           const BotHostOverrunCfg *cfg, int bots,
+                           uint8_t latestFree, BotHostOverrunReport *rep) {
+    BotHostOverrunReport local;
+    const BotHostFreeReading *newest;
+
+    if (rep == NULL) rep = &local;
+    ovrReportInit(rep);
+    if (st == NULL || cfg == NULL || !(cfg->pct > 0.0)) return true;
+    ovrFreeNumbers(st, cfg, rep);
+    rep->limitBefore = st->limit;
+    rep->newLimit = st->limit;
+    if (bots <= 0) {
+        rep->why = "its first bot";
+        return true;
+    }
+    if (latestFree > 100 && !rep->freeKnown) {
+        /* No free CPU data: the slots (and a lowered limit) only. */
+        rep->why = "no free CPU data";
+        return true;
+    }
+    if (st->readingCount == 0) {
+        rep->why = "no reading yet";
+        return false;
+    }
+    newest = ovrReading(st, cfg, 0);
+    if ((int)newest->bots < bots || !newest->ran) {
+        rep->why = "no reading counts its newest bot yet";
+        return false;
+    }
+    if (!rep->costKnown) {
+        rep->why = "the CPU of one bot is not known";
+        return false;
+    }
+    if (!rep->freeKnown) {
+        rep->why = "no free CPU average";
+        return false;
+    }
+    if (rep->highestBad >= 0) {
+        if (!ovrCleanEvidence(rep)) {
+            rep->why = "no clean reading with that little free CPU";
+            return false;
+        }
+        if (!ovrAboveBad(rep)) {
+            rep->why = "a bad reading had as much free CPU";
+            return false;
+        }
+        rep->why = "clean evidence";
+        return true;
+    }
+    if (rep->predicted >= rep->oneBotCost) {
+        rep->why = "room for one more bot";
+        return true;
+    }
+    if (ovrCleanEvidence(rep)) {
+        rep->why = "clean evidence";
+        return true;
+    }
+    rep->why = "too little free CPU";
+    return false;
 }
 
 uint32_t botHostSeatsToGiveBack(const int *seatHost, int n, int h,
