@@ -328,13 +328,15 @@ end
 -- reached from shells.c only when a shell EXPLODES -- lines 368 and 452, the
 -- collision path and the end-of-life path). Given the explosion at (wx,wy):
 --
---   solid = the explosion tile is BUILDING / HALFBUILDING / has a pillbox /
---           has a base;
+--   solid = the explosion tile is BUILDING / HALFBUILDING / has a LIVE
+--           pillbox (pillsIsPillHit, armour > 0) / has a base. A dead pill's
+--           tile is open ground, so a shell that flies over a corpse and ends
+--           there is tested with the 128-WU rule, as case 3 below does;
 --   not solid -> the man dies if euclidean dist(man, explosion) <=
 --           MAP_SQUARE_MIDDLE (128 WU, half a tile);
 --   solid    -> he dies only if his TILE is the explosion tile (he can stand
---           on a base or on the pill he is working on; he can never stand in
---           a wall).
+--           on a base or on a live pill he is repairing; he can never stand
+--           in a wall).
 --
 -- A SHELL FLYING THROUGH THE MAN DOES NOT TOUCH HIM. That single fact is the
 -- shape of this whole function: the question is not "does the shell cross his
@@ -343,9 +345,16 @@ end
 -- So each shell is flown forward and its ENDING is what gets tested, and a
 -- shell has exactly three ways to end (shells.c shellsUpdate/shellsCalcCollision):
 --
---   1. it reaches a solid tile -- a wall, or a LIVE pillbox. The engine
---      recentres the explosion on that tile, so only a man standing ON that
---      tile dies. Stop tracking.
+--   1. it reaches a solid tile -- a wall, or a LIVE pillbox, and with
+--      C.BLAST_TERRAIN_SQUARE_HIT a forest or a boat. The engine recentres
+--      the explosion on that tile and counts it a hit on the tile
+--      (shells.c outSquareHit), so only a man standing ON that tile dies.
+--      A boat's shell stops on the shore and on a bridge too, with the same
+--      rule, but the brain cannot see which shells a boat fired, so those
+--      fly on here. Every hit on a wall is a hit on its tile, the one that
+--      turns it to rubble included (shells.c outSquareHit), and the brain
+--      cannot see how many hits a wall has left, so a wall is always this
+--      case. Stop tracking.
 --   2. it reaches OUR TANK's hull (within TANK_HIT_RADIUS, tank.h:102 = 112 WU)
 --      and we did not fire it -- a shell never hits its own owner. It explodes
 --      where it is, over open ground, so the 128-WU rule applies. This is the
@@ -434,7 +443,8 @@ end
 
 -- Is (mx,my) a tile a shell explodes ON, in the engine's sense? Two of
 -- shellsCalcCollision's three terrain-ish stoppers:
---   * impassable terrain -- BUILDING / HALFBUILDING (mapIsPassable);
+--   * impassable terrain -- BUILDING / HALFBUILDING (mapIsPassable), and
+--     with C.BLAST_TERRAIN_SQUARE_HIT FOREST / BOAT, which stop every shell;
 --   * a LIVE pillbox -- pillsIsPillHit requires armour > 0 and inTank == FALSE,
 --     so a CORPSE does not stop a shell (which is exactly the tile the man is
 --     usually walking to) and neither does one riding in somebody's tank.
@@ -444,6 +454,9 @@ end
 local function shell_stops_on(world, mx, my)
   local tt = U.ttype(mx, my)
   if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
+  if (tt == C.T_FOREST or tt == C.T_BOAT) and C.BLAST_TERRAIN_SQUARE_HIT then
+    return true
+  end
   local lst = world and world.pill_at and world.pill_at[my * 256 + mx]
   if lst then
     for i = 1, #lst do
@@ -462,7 +475,8 @@ end
 --        sx, sy  the shell's world position then (the impact point)
 --        lx, ly  the man's predicted world position then
 --        src     "p3" (a player) / "pill" (a NEUTRAL pillbox)
---        how     which of the three endings: "wall" (a wall or live pill),
+--        how     which of the three endings: "wall" (a wall, a live pill,
+--                or with C.BLAST_TERRAIN_SQUARE_HIT a forest or a boat),
 --                "tank" (our hull), "expiry" (out of life), or the
 --                should-not-happen "unknown_life"
 --        solid   true when it was the same-tile rule that fired ("wall")
