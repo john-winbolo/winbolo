@@ -23,9 +23,11 @@
  *    dead pillbox's square is open ground (pillsIsPillHit,
  *    armour above 0; lvHitboxPillSolid), except on the frame
  *    of the hit that killed it: that shot is a hit on the
- *    pill's square. A wall's square that the frame's shot
- *    turned to rubble is solid on that frame too
- *    (lvHitboxWallSolid): that shot was a hit on the wall. On
+ *    pill's square. A square that the frame's shot changed
+ *    (a wall to rubble, a forest to grass, a boat to river,
+ *    the shore or a bridge a boat's shell hit) is solid on
+ *    that frame too (lvHitboxSquareSolid): that shot was a
+ *    hit on the square. On
  *    one of those squares it catches him only when it is on
  *    his own square. The distance comes from utilIsItemInRange with
  *    the pill_range rule as its limit, so when pill_range is
@@ -234,14 +236,15 @@ static inline bool lvHitboxPillSolid(bool onMap, bool inTank, unsigned armour,
     return onMap && !inTank && (armour > 0 || hitNow);
 }
 
-/* Whether a wall makes its square solid for the builder test. wall: the
+/* Whether a square's terrain makes it solid for the builder test. wall: the
    square is a building or a half building as the recording has it.
-   rubbleNow: a shell turned the wall on this square to rubble on this frame
-   (the fifth hit). Every shell's hit on a wall is a hit on its square, that
-   one included (shells.c outSquareHit), so the square stays solid on that
-   frame although the recording already has it as rubble. */
-static inline bool lvHitboxWallSolid(bool wall, bool rubbleNow) {
-    return wall || rubbleNow;
+   hitNow: a shell's hit on this square changed it on this frame: a wall to
+   rubble (its last hit), a forest to grass, a boat to river, or a boat's
+   shell on the shore or a bridge. Each is a hit on the square (shells.c
+   outSquareHit), so the square is solid on that frame although the
+   recording already has it as open ground. */
+static inline bool lvHitboxSquareSolid(bool wall, bool hitNow) {
+    return wall || hitNow;
 }
 
 /* The builder test, as lgmBlastCatches makes it, for an explosion at (x, y)

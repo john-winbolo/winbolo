@@ -14,7 +14,8 @@
  *       open ground no more than that far from him, an explosion on a
  *       building, a half building, a live pillbox or a base only on his own
  *       square, and nothing off the 3 by 3 squares round his. A dead
- *       pillbox's square is open ground (lvHitboxPillSolid).
+ *       pillbox's square is open ground (lvHitboxPillSolid). A square a
+ *       shell's hit changed on this frame is solid (lvHitboxSquareSolid).
  *       It also checks the places the circles go round: the middle of the
  *       art pixel a recording holds, with the builder's 1 and 2 put back,
  *       and the offsets the game draws the tank and builder pictures at.
@@ -117,12 +118,15 @@ int run_lv_hitbox_sums(void) {
                       "a blast on a dead pill's square with no hit misses him there");
     }
 
-    /* Which walls make a square solid: a building or a half building, and
-       the rubble a shell made of a wall on this frame (its fifth hit). */
-    UT_ASSERT_MSG(lvHitboxWallSolid(true, false), "a wall is solid");
-    UT_ASSERT_MSG(lvHitboxWallSolid(false, true),
-                  "the frame of the hit that turned a wall to rubble: its square is solid");
-    UT_ASSERT_MSG(!lvHitboxWallSolid(false, false), "rubble with no hit this frame is open ground");
+    /* Which terrain makes a square solid: a building or a half building,
+       and a square a shell's hit changed on this frame (a wall to rubble on
+       its last hit, a forest to grass, a boat to river, the shore or a
+       bridge a boat's shell hit). */
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, false), "a wall is solid");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(false, true),
+                  "the frame of a shell's hit that changed the square: it is solid");
+    UT_ASSERT_MSG(!lvHitboxSquareSolid(false, false),
+                  "rubble, grass or river with no hit this frame is open ground");
 
     /* The shot that turns a wall to rubble, on the square to his left: the
        blast at that square's middle, 128 from him on the first world unit of
@@ -131,9 +135,9 @@ int run_lv_hitbox_sums(void) {
        does. And the same shot on his own square catches him in its far
        corner, 178 away. */
     {
-        unsigned leftHit   = lvHitboxWallSolid(false, true) ? SQ(0, 1) : 0;
-        unsigned leftOpen  = lvHitboxWallSolid(false, false) ? SQ(0, 1) : 0;
-        unsigned ownHit    = lvHitboxWallSolid(false, true) ? SQ(1, 1) : 0;
+        unsigned leftHit   = lvHitboxSquareSolid(false, true) ? SQ(0, 1) : 0;
+        unsigned leftOpen  = lvHitboxSquareSolid(false, false) ? SQ(0, 1) : 0;
+        unsigned ownHit    = lvHitboxSquareSolid(false, true) ? SQ(1, 1) : 0;
         UT_ASSERT_MSG(!lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftHit, 128),
                       "the rubble shot on the next square misses him 128 away");
         UT_ASSERT_MSG(lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftOpen, 128),
