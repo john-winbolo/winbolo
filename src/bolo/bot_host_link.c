@@ -363,3 +363,79 @@ int botHostLinkListCache(const char *root, BotHostLinkBrain *out, int max) {
     free(vers);
     return found;
 }
+
+/* ---- Where a server places its bots ------------------------------------ */
+
+#define BOT_HOST_PLACE_EPS 1e-9
+
+double botHostPlaceEffSlots(int slots, int smallSlots, double bias) {
+    double eff = (double)slots;
+    if (slots <= smallSlots) eff -= bias;
+    if (eff < 0.05) eff = 0.05;
+    return eff;
+}
+
+static bool placeTakes(const BotHostPlaceHost *h) {
+    if (!h->open || h->slots <= 0) return false;
+    return h->unlimited || h->bots < h->slots;
+}
+
+/* Index of the best host for one more bot, skipping skip (-1: none). */
+static int placePickSkip(const BotHostPlaceHost *hosts, int n, int smallSlots,
+                         double bias, int skip, double *scoreOut) {
+    int i, best = -1;
+    double bestScore = 0.0;
+    for (i = 0; i < n; i++) {
+        double score;
+        if (i == skip || !placeTakes(&hosts[i])) continue;
+        score = (double)(hosts[i].bots + 1) /
+                botHostPlaceEffSlots(hosts[i].slots, smallSlots, bias);
+        if (best < 0 || score < bestScore - BOT_HOST_PLACE_EPS ||
+            (score <= bestScore + BOT_HOST_PLACE_EPS &&
+             hosts[i].slots > hosts[best].slots)) {
+            best = i;
+            bestScore = score;
+        }
+    }
+    if (scoreOut != NULL) *scoreOut = bestScore;
+    return best;
+}
+
+int botHostPlacePick(const BotHostPlaceHost *hosts, int n, int smallSlots,
+                     double bias) {
+    if (hosts == NULL || n <= 0) return -1;
+    return placePickSkip(hosts, n, smallSlots, bias, -1, NULL);
+}
+
+bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,
+                           int smallSlots, double bias, int *from, int *to) {
+    int i, src = -1;
+    double srcLoad = 0.0;
+    if (hosts == NULL || n <= 0 || from == NULL || to == NULL) return false;
+    for (i = 0; i < n; i++) {
+        double load;
+        if (!hosts[i].movable || hosts[i].bots <= 0 || hosts[i].slots <= 0) {
+            continue;
+        }
+        load = (double)hosts[i].bots /
+               botHostPlaceEffSlots(hosts[i].slots, smallSlots, bias);
+        if (hosts[i].bots > hosts[i].slots && !hosts[i].unlimited) {
+            load += 1000.0;  /* over its slots: it gives first */
+        }
+        if (src < 0 || load > srcLoad + BOT_HOST_PLACE_EPS) {
+            src = i;
+            srcLoad = load;
+        }
+    }
+    if (src < 0) return false;
+    {
+        double dstScore = 0.0;
+        int dst = placePickSkip(hosts, n, smallSlots, bias, src, &dstScore);
+        /* Only a strict gain: a bot never moves between two places that
+         * are as crowded, so bots do not go back and forth. */
+        if (dst < 0 || dstScore >= srcLoad - BOT_HOST_PLACE_EPS) return false;
+        *from = src;
+        *to = dst;
+        return true;
+    }
+}

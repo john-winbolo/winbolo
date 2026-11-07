@@ -46,7 +46,9 @@
 #endif
 
 #include <SDL3/SDL.h>
+#ifndef WINBOLO_BOTHOST_EMBED
 #include <SDL3/SDL_main.h>
+#endif
 
 #include <signal.h>
 #include <stdio.h>
@@ -86,6 +88,10 @@
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
 #include "../common/prefs.h"
+#include "brain_capacity.h"
+#ifdef WINBOLO_BOTHOST_EMBED
+#include "bothost_embed.h"
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Settings                                                            */
@@ -113,6 +119,34 @@ static BotHostAddrList optServers;
 
 static volatile sig_atomic_t hostQuit = 0;
 
+/* The Bot Host inside a WinBolo client (bothost_embed.c builds this file
+ * with WINBOLO_BOTHOST_EMBED). It serves the one server the player is on,
+ * listens on no port and joins with the player's ticket, not a key. */
+#ifdef WINBOLO_BOTHOST_EMBED
+#define HOST_EMBED 1
+#else
+#define HOST_EMBED 0
+#endif
+static uint8_t  embedPlayer;
+static uint8_t  embedTicket[BOT_HOST_TICKET_LEN];
+static char     embedBrain[BOT_HOST_BRAIN_NAME_LEN];
+/* A fixed slot count (a test option); 0: the brain's capacity answer. */
+static int      embedSlotsFixed;
+/* The capacity answer was read for this manifest generation. */
+static uint32_t embedCapacityGen;
+/* The server refused the host: it does not try again. */
+static bool     embedRefused;
+
+/* One line on stderr, and in the log file for the Bot Host inside a
+ * client, which has no console of its own. */
+#define HOST_EVENT(...)                                                    \
+    do {                                                                   \
+        fprintf(stderr, __VA_ARGS__);                                      \
+        fputc('\n', stderr);                                               \
+        if (HOST_EMBED) WB_LOG_INFO(WB_LOG_CAT_NET, __VA_ARGS__);          \
+    } while (0)
+
+#ifndef WINBOLO_BOTHOST_EMBED
 static void signalHandler(int sig) {
     (void)sig;
     hostQuit = 1;
@@ -122,6 +156,7 @@ static void hostMessageHandler(const char *message, const char *title) {
     fprintf(stderr, "[bothost] [%s] %s\n", title ? title : "WinBolo",
             message ? message : "");
 }
+#endif
 
 static uint32_t nowMs(void) {
     return (uint32_t)SDL_GetTicks();
@@ -370,7 +405,8 @@ static bool svResolve(HostServer *sv) {
 static void ctlSendJoin(HostServer *sv) {
     uint8_t buf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 +
                 WBN_JOIN_KEY_WIRE_LEN + 1 + 2 + 2 + JOIN_COOKIE_LEN +
-                JOIN_BOT_HOST_KEY_LEN + 1 + JOIN_BOT_HOST_NAME_LEN + 2];
+                JOIN_BOT_HOST_KEY_LEN + 1 + JOIN_BOT_HOST_NAME_LEN + 2 +
+                JOIN_BOT_HOST_PLAYER_LEN];
     int pos = PACKET_HEADER_SIZE;
 
     memset(buf, 0, sizeof(buf));
@@ -397,6 +433,13 @@ static void ctlSendJoin(HostServer *sv) {
     pos += JOIN_BOT_HOST_NAME_LEN;
     packU16(buf + pos, optListenPort);
     pos += 2;
+    if (HOST_EMBED) {
+        /* The player's own host: its ticket stands in for the key. */
+        buf[pos++] = JOIN_BOT_HOST_PLAYER_MARK;
+        buf[pos++] = embedPlayer;
+        memcpy(buf + pos, embedTicket, BOT_HOST_TICKET_LEN);
+        pos += BOT_HOST_TICKET_LEN;
+    }
     udpSendTo(sv->sock, buf, pos, &sv->addr);
     sv->lastJoinMs = nowMs();
 }
@@ -594,6 +637,16 @@ static void syncReset(HostSync *hs) {
     hs->done = hs->total = 0;
 }
 
+#ifdef WINBOLO_BOTHOST_EMBED
+static int embedCapacityFor(const HostServer *sv);
+#else
+/* Only the Bot Host inside a client asks the brain (HOST_EMBED is 0). */
+static int embedCapacityFor(const HostServer *sv) {
+    (void)sv;
+    return optSlots;
+}
+#endif
+
 static void syncFinishIfDone(HostServer *sv) {
     HostSync *hs = &sv->sync;
     if (hs->ready || hs->gotCount < hs->needCount) return;
@@ -603,6 +656,19 @@ static void syncFinishIfDone(HostServer *sv) {
                     "bytes downloaded in %u ms\n",
             sv->label, (unsigned)hs->gen, (unsigned)hs->done,
             (unsigned)(nowMs() - hs->syncStartMs));
+    if (HOST_EMBED && embedSlotsFixed == 0 && embedCapacityGen != hs->gen) {
+        /* The slots this computer offers: the server's bot brain's own
+         * answer for this machine, now that its files are here. It is set
+         * before the ready report, so the server never places more. */
+        int cap = embedCapacityFor(sv);
+        embedCapacityGen = hs->gen;
+        if (cap != optSlots) {
+            HOST_EVENT("[bothost] Bot Host \"%s\": brain \"%s\" can run %d "
+                       "bots on this computer; slots %d -> %d", optName,
+                       embedBrain, cap, optSlots, cap);
+            optSlots = cap;
+        }
+    }
     syncSendProgress(sv);
 }
 
@@ -886,10 +952,10 @@ static void seatCloseConnection(HostSeat *hs) {
 
 static void seatClear(HostSeat *hs, const char *why) {
     if (!hs->used) return;
-    fprintf(stderr, "[bothost] bot %d \"%s\" of %s stopped (%s); team "
-                    "messages sent %u, received %u\n", (int)hs->seat, hs->name,
-            servers[hs->srv].label, why, (unsigned)hs->teamMsgsOut,
-            (unsigned)hs->teamMsgsIn);
+    HOST_EVENT("[bothost] bot %d \"%s\" of %s stopped (%s); team "
+               "messages sent %u, received %u", (int)hs->seat, hs->name,
+               servers[hs->srv].label, why, (unsigned)hs->teamMsgsOut,
+               (unsigned)hs->teamMsgsIn);
     seatCloseConnection(hs);
     memset(hs, 0, sizeof(*hs));
     seatPrintCount();
@@ -912,6 +978,9 @@ static bool seatOpenConnection(HostSeat *hs) {
     if (hs->cs == NULL) return false;
     clientSimCreate(hs->cs);
     clientSimSetIsBot(hs->cs, true);
+    /* In a client this connection runs on the host's thread: keep it away
+     * from the screen, the sound and the dialogs. */
+    clientSimSetNoFrontEnd(hs->cs, true);
     clientSimSetMyLastPlayerName(hs->cs, hs->name);
     clientSimSetChatSendFunc(hs->cs, seatChatSend);
     hs->relay.ctx = hs;
@@ -992,9 +1061,9 @@ static void seatBuildBrain(HostSeat *hs) {
     botRunnerWireBrain(&hs->bot);
     hs->bot.builtInit = hs->bot.initTable;
     hostRecSeatBuilt((int)(hs - seats), hs->srv, hs->bot.brain.L);
-    fprintf(stderr, "[bothost] bot %d \"%s\" of %s runs brain \"%s\" (ai %d)\n",
-            (int)hs->seat, hs->name, servers[hs->srv].label, hs->brainName,
-            (int)hs->ai);
+    HOST_EVENT("[bothost] bot %d \"%s\" of %s runs brain \"%s\" (ai %d) on "
+               "Bot Host \"%s\"", (int)hs->seat, hs->name,
+               servers[hs->srv].label, hs->brainName, (int)hs->ai, optName);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1174,6 +1243,8 @@ static void ctlHandleControl(HostServer *sv, const uint8_t *msg, uint16_t len) {
 static void svGoIdle(HostServer *sv) {
     ctlCloseSocket(sv);
     sv->state = CTL_IDLE;
+    /* The Bot Host inside a client has no listen port and gets no invite:
+     * ctlService joins again once announceAtMs is reached. */
     sv->announceDue = true;
     sv->announceAtMs = nowMs() + BOT_HOST_REANNOUNCE_WAIT_MS;
     sv->lastAnnouncedFree = poolFree();
@@ -1223,9 +1294,9 @@ static void ctlReceive(HostServer *sv) {
                     syncReset(&sv->sync);
                     bulkSenderInit(&sv->recBulk);
                     hostRecServerUp(serverIndex(sv), sv->label);
-                    fprintf(stderr, "[bothost] connected to %s as Bot Host "
-                                    "\"%s\" (%d slots free)\n",
-                            sv->label, optName, poolFree());
+                    HOST_EVENT("[bothost] connected to %s as Bot Host "
+                               "\"%s\" (%d slots free)",
+                               sv->label, optName, poolFree());
                     seatPrintCount();
                 }
                 break;
@@ -1240,6 +1311,7 @@ static void ctlReceive(HostServer *sv) {
                                     "no Bot Host); it is not tried again\n",
                             sv->label);
                     sv->refused = true;
+                    embedRefused = true;
                     ctlCloseSocket(sv);
                     sv->state = CTL_IDLE;
                     sv->announceDue = false;
@@ -1297,6 +1369,11 @@ static void ctlService(HostServer *sv) {
     uint32_t t = nowMs();
     switch (sv->state) {
         case CTL_IDLE:
+            if (HOST_EMBED && !sv->refused && sv->announceDue &&
+                (int32_t)(t - sv->announceAtMs) >= 0) {
+                sv->announceDue = false;
+                ctlStartJoin(sv);
+            }
             break;
         case CTL_JOINING:
             if (t - sv->joinStartMs >= BOT_HOST_JOIN_GIVE_UP_MS) {
@@ -1362,6 +1439,9 @@ static void announceSend(HostServer *sv, const struct sockaddr_in *to) {
 static void announceService(void) {
     int i, freeNow = poolFree();
     uint32_t t = nowMs();
+    /* The Bot Host inside a client announces nothing: it joins its one
+     * server with the player's ticket. */
+    if (HOST_EMBED) return;
     for (i = 0; i < serverCount; i++) {
         HostServer *sv = &servers[i];
         bool due;
@@ -1805,6 +1885,7 @@ static void hostTick(void) {
 /* Arguments                                                           */
 /* ------------------------------------------------------------------ */
 
+#ifndef WINBOLO_BOTHOST_EMBED
 static void printUsage(const char *prog) {
     fprintf(stderr,
             "Usage: %s --servers ADDR[:PORT],... [options]\n"
@@ -1938,10 +2019,13 @@ static bool parseArgs(int argc, char **argv) {
     return true;
 }
 
+#endif /* !WINBOLO_BOTHOST_EMBED */
+
 /* ------------------------------------------------------------------ */
 /* Main                                                                */
 /* ------------------------------------------------------------------ */
 
+#ifndef WINBOLO_BOTHOST_EMBED
 static bool openListenSocket(void) {
     struct sockaddr_in a;
     listenSock = createUdpSocket(true);
@@ -2104,3 +2188,255 @@ int main(int argc, char *argv[]) {
     SDL_Quit();
     return hostQuit ? 0 : 2;
 }
+#endif /* !WINBOLO_BOTHOST_EMBED */
+
+/* ------------------------------------------------------------------ */
+/* The Bot Host inside a client                                        */
+/* ------------------------------------------------------------------ */
+
+#ifdef WINBOLO_BOTHOST_EMBED
+
+static SDL_Thread   *embedThread;
+static SDL_AtomicInt embedStop;
+static SDL_AtomicInt embedAlive;      /* the thread runs its loop */
+static SDL_AtomicInt embedConnected;  /* the control connection is up */
+static SDL_AtomicInt embedSlotsNow;
+static SDL_AtomicInt embedUsedNow;
+static SDL_AtomicInt embedRefusedNow;
+static bool          embedSendQuit;
+static double        embedRecordMinFreeGb = 50.0;
+static int           embedSavedParts[4];
+
+static int embedCapacityFor(const HostServer *sv) {
+    BrainMachineInfo machine;
+    const BrainSyncBrain *br = NULL;
+    char path[512];
+    int cap = BRAIN_CAPACITY_UNKNOWN;
+
+    brainCapacityGetMachine(&machine);
+    if (sv->sync.haveManifest) {
+        br = brainSyncFindBrain(&sv->sync.man, embedBrain);
+        if (br == NULL && sv->sync.man.brainCount > 0) {
+            br = &sv->sync.man.brains[0];
+        }
+    }
+    if (br != NULL &&
+        brainSyncCacheFile(path, sizeof(path), optCacheDir, br->name,
+                           br->version, "init.lua")) {
+        /* The answer is kept by brain name and version, so the brain is
+         * asked once. */
+        cap = luaBrainQueryCapacity(path, br->name);
+    }
+    if (cap < 0) cap = brainCapacityDefault(&machine);
+    if (cap > BOT_HOST_MAX_SLOTS) cap = BOT_HOST_MAX_SLOTS;
+    if (cap < 0) cap = 0;
+    return cap;
+}
+
+static void embedPublish(void) {
+    int i, connected = 0;
+    for (i = 0; i < serverCount; i++) {
+        if (servers[i].state == CTL_CONNECTED) connected = 1;
+    }
+    SDL_SetAtomicInt(&embedConnected, connected);
+    SDL_SetAtomicInt(&embedSlotsNow, optSlots);
+    SDL_SetAtomicInt(&embedUsedNow, poolUsed());
+    SDL_SetAtomicInt(&embedRefusedNow, embedRefused ? 1 : 0);
+}
+
+static int SDLCALL embedThreadFn(void *arg) {
+    uint32_t nextTick = nowMs();
+    int i;
+    (void)arg;
+
+    for (i = 0; i < serverCount; i++) ctlStartJoin(&servers[i]);
+    while (!SDL_GetAtomicInt(&embedStop)) {
+        uint32_t t;
+        bool anyUsable = false;
+        for (i = 0; i < serverCount; i++) {
+            ctlReceive(&servers[i]);
+            ctlService(&servers[i]);
+            if (!servers[i].refused) anyUsable = true;
+        }
+        if (!anyUsable) {
+            HOST_EVENT("[bothost] Bot Host \"%s\": the server refused it",
+                       optName);
+            break;
+        }
+        t = nowMs();
+        if ((int32_t)(t - nextTick) >= 0) {
+            hostTick();
+            nextTick += BOT_HOST_TICK_MS;
+            if ((int32_t)(t - nextTick) > 10 * BOT_HOST_TICK_MS) {
+                nextTick = t + BOT_HOST_TICK_MS;
+            }
+        }
+        embedPublish();
+        SDL_Delay(1);
+    }
+
+    /* Stop: give every bot back at once. A normal stop tells the server
+     * (each bot connection's quit, then the host's); a vanish says
+     * nothing, as a crash would, and the server times the host out. */
+    if (embedSendQuit) {
+        clearSeats(-1, "the player left");
+    } else {
+        /* Only for a program that ends next: the bot connections are
+         * left as they are, so none sends its quit. */
+        for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+            if (seats[i].used) seatDestroyBrain(&seats[i]);
+        }
+    }
+    hostRecShutdown();
+    for (i = 0; i < serverCount; i++) {
+        bulkSenderReset(&servers[i].recBulk);
+        if (embedSendQuit) ctlSendQuit(&servers[i]);
+        ctlCloseSocket(&servers[i]);
+        syncReset(&servers[i].sync);
+    }
+    embedPublish();
+    SDL_SetAtomicInt(&embedConnected, 0);
+    SDL_SetAtomicInt(&embedUsedNow, 0);
+    SDL_SetAtomicInt(&embedAlive, 0);
+    return 0;
+}
+
+int botHostEmbedDefaultSlots(void) {
+    BrainMachineInfo machine;
+    int n;
+    brainCapacityGetMachine(&machine);
+    n = brainCapacityDefault(&machine);
+    if (n > BOT_HOST_MAX_SLOTS) n = BOT_HOST_MAX_SLOTS;
+    return n;
+}
+
+bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
+    HostServer *sv;
+    size_t n;
+    char *c;
+
+    if (cfg == NULL || cfg->serverHost == NULL || cfg->ticket == NULL) {
+        return false;
+    }
+    if (embedThread != NULL) botHostEmbedStop(true);
+
+    memset(seats, 0, sizeof(seats));
+    memset(servers, 0, sizeof(servers));
+    memset(optKey, 0, sizeof(optKey));
+    optListenPort = 0;
+    listenSock = INVALID_SOCKET;
+    serialMsEwma = 0.0;
+    lastTargetMs = 0.0;
+    embedPlayer = cfg->player;
+    memcpy(embedTicket, cfg->ticket, sizeof(embedTicket));
+    SDL_strlcpy(embedBrain, cfg->brain != NULL ? cfg->brain : "",
+                sizeof(embedBrain));
+    embedSlotsFixed = cfg->slots > 0 ? cfg->slots : 0;
+    if (embedSlotsFixed > BOT_HOST_MAX_SLOTS) embedSlotsFixed = BOT_HOST_MAX_SLOTS;
+    embedCapacityGen = 0;
+    embedRefused = false;
+    embedSendQuit = true;
+    if (cfg->recordMinFreeGb > 0.0) embedRecordMinFreeGb = cfg->recordMinFreeGb;
+    /* Until the brain's own answer comes with its files: the default. */
+    optSlots = embedSlotsFixed > 0 ? embedSlotsFixed : botHostEmbedDefaultSlots();
+    SDL_strlcpy(optName, (cfg->name != NULL && cfg->name[0] != '\0')
+                             ? cfg->name : "Player",
+                sizeof(optName));
+    SDL_strlcpy(optCacheDir, cfg->cacheDir != NULL ? cfg->cacheDir : "",
+                sizeof(optCacheDir));
+    for (c = optCacheDir; *c != '\0'; c++) {
+        if (*c == '\\') *c = '/';
+    }
+    n = strlen(optCacheDir);
+    while (n > 1 && optCacheDir[n - 1] == '/') optCacheDir[--n] = '\0';
+    if (optCacheDir[0] == '\0' ||
+        !brainRecMakeAbsolute(optCacheDir, sizeof(optCacheDir))) {
+        WB_LOG_ERROR(WB_LOG_CAT_NET, "[bothost] no brain cache folder");
+        return false;
+    }
+    (void)SDL_CreateDirectory(optCacheDir);
+
+    serverCount = 1;
+    sv = &servers[0];
+    SDL_strlcpy(sv->host, cfg->serverHost, sizeof(sv->host));
+    sv->port = cfg->serverPort != 0 ? cfg->serverPort
+                                    : BOT_HOST_DEFAULT_SERVER_PORT;
+    SDL_snprintf(sv->label, sizeof(sv->label), "%s:%u", sv->host,
+                 (unsigned)sv->port);
+    sv->sock = INVALID_SOCKET;
+    sv->state = CTL_IDLE;
+    sv->lastAnnouncedFree = -1;
+    sv->lastSlotsSent = -1;
+    bulkReceiverInit(&sv->sync.bulk);
+    if (!svResolve(sv)) {
+        WB_LOG_ERROR(WB_LOG_CAT_NET, "[bothost] cannot resolve %s", sv->label);
+        return false;
+    }
+
+    {
+        /* Brain recordings for a -brain-debug server, as the Bot Host
+         * program makes them: print2 per block, no jsonl log. The settings
+         * are the program's own, so they go back when the host stops. */
+        static const HostRecIo io = { recIoSendEvent, recIoBulkIdle,
+                                      recIoBulkSend };
+        char recRoot[600];
+        luaBrainsGetDebugParts(&embedSavedParts[0], &embedSavedParts[1],
+                               &embedSavedParts[2], &embedSavedParts[3]);
+        SDL_snprintf(recRoot, sizeof(recRoot), "%s/recordings", optCacheDir);
+        luaBrainsSetDebugParts(0, 1, 1, 0);
+        hostRecInit(optCacheDir, optName, embedRecordMinFreeGb, &io);
+        luaBrainsSetExtraWriteRoot(recRoot);
+    }
+
+    SDL_SetAtomicInt(&embedStop, 0);
+    SDL_SetAtomicInt(&embedAlive, 1);
+    SDL_SetAtomicInt(&embedConnected, 0);
+    SDL_SetAtomicInt(&embedSlotsNow, optSlots);
+    SDL_SetAtomicInt(&embedUsedNow, 0);
+    SDL_SetAtomicInt(&embedRefusedNow, 0);
+    HOST_EVENT("[bothost] Bot Host \"%s\" starts in this program for %s: "
+               "player %u, %d slots%s, brain cache %s", optName, sv->label,
+               (unsigned)embedPlayer, optSlots,
+               embedSlotsFixed > 0 ? " (fixed)" : "", optCacheDir);
+    embedThread = SDL_CreateThread(embedThreadFn, "bothost", NULL);
+    if (embedThread == NULL) {
+        SDL_SetAtomicInt(&embedAlive, 0);
+        hostRecShutdown();
+        luaBrainsSetExtraWriteRoot("");
+        luaBrainsSetDebugParts(embedSavedParts[0], embedSavedParts[1],
+                               embedSavedParts[2], embedSavedParts[3]);
+        WB_LOG_ERROR(WB_LOG_CAT_NET, "[bothost] cannot start its thread: %s",
+                     SDL_GetError());
+        return false;
+    }
+    return true;
+}
+
+void botHostEmbedStop(bool tellServer) {
+    if (embedThread == NULL) return;
+    embedSendQuit = tellServer;
+    SDL_SetAtomicInt(&embedStop, 1);
+    SDL_WaitThread(embedThread, NULL);
+    embedThread = NULL;
+    luaBrainsSetExtraWriteRoot("");
+    luaBrainsSetDebugParts(embedSavedParts[0], embedSavedParts[1],
+                           embedSavedParts[2], embedSavedParts[3]);
+    HOST_EVENT("[bothost] Bot Host \"%s\" stopped (%s)", optName,
+               tellServer ? "the server was told" : "without a word");
+}
+
+bool botHostEmbedRunning(void) {
+    return embedThread != NULL;
+}
+
+void botHostEmbedGetStatus(BotHostEmbedStatus *out) {
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+    out->running   = embedThread != NULL && SDL_GetAtomicInt(&embedAlive) != 0;
+    out->connected = SDL_GetAtomicInt(&embedConnected) != 0;
+    out->refused   = SDL_GetAtomicInt(&embedRefusedNow) != 0;
+    out->slots     = SDL_GetAtomicInt(&embedSlotsNow);
+    out->bots      = SDL_GetAtomicInt(&embedUsedNow);
+}
+
+#endif /* WINBOLO_BOTHOST_EMBED */

@@ -2159,6 +2159,9 @@ bolo_apply_include_rules(winbolonet_client runtime_only)
 set(CLIENT_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
+    # The Bot Host inside the client: bothost_main.c built a second time.
+    src/bothost/bothost_embed.c src/bothost/bothost_embed_service.c
+    src/bothost/bothost_rec.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/scn_panel_prefs.c
@@ -2420,10 +2423,17 @@ bolo_apply_include_rules(WinBolo gui)
 # at which point the grant deletes.
 bolo_grant_internal_source_access(WinBolo
     src/bolo/transport_udp_client.c
+    src/bothost/bothost_embed.c
+    src/bothost/bothost_rec.c
     src/gui/sdl3/bg_game.c
     src/mapeditor/mapeditor.c
     src/mapeditor/mapeditor_export.c
     src/mapeditor/mapeditor_validate.c)
+target_include_directories(WinBolo PRIVATE src/bothost src/headless)
+if(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG)
+    target_compile_definitions(WinBolo PRIVATE
+        WINBOLO_HIDE_CLIENT_BOT_HOST_MSG=1)
+endif()
 
 if(WIN32)
     target_sources(WinBolo PRIVATE
@@ -3347,6 +3357,9 @@ set(HEADLESS_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
     src/headless/cmd_stdin.c
+    # The Bot Host inside the client: bothost_main.c built a second time.
+    src/bothost/bothost_embed.c src/bothost/bothost_embed_service.c
+    src/bothost/bothost_rec.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -3384,7 +3397,14 @@ target_include_directories(WinBoloHeadless PRIVATE
 )
 bolo_apply_include_rules(WinBoloHeadless runtime_only)
 bolo_grant_internal_source_access(WinBoloHeadless
-    src/bolo/transport_udp_client.c)
+    src/bolo/transport_udp_client.c
+    src/bothost/bothost_embed.c
+    src/bothost/bothost_rec.c)
+target_include_directories(WinBoloHeadless PRIVATE src/bothost)
+if(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG)
+    target_compile_definitions(WinBoloHeadless PRIVATE
+        WINBOLO_HIDE_CLIENT_BOT_HOST_MSG=1)
+endif()
 
 if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)
@@ -3822,6 +3842,12 @@ add_custom_command(TARGET BrainTest POST_BUILD
 # runtime, which is all these terminal-launched tools need to notarize and run.
 # This makes a WinBolo-only build also build the tools; turn it off with
 # -DWINBOLO_BUNDLE_DEV_TOOLS=OFF for faster WinBolo iteration.
+# The lobby line and newswire message that say how many of the server's bots
+# this computer runs (the Bot Host inside each client, bothost_embed.h).
+# ON hides both; the host itself still runs.
+option(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG
+    "Hide the lobby line and newswire message of the client's own Bot Host" OFF)
+
 option(WINBOLO_BUNDLE_DEV_TOOLS
     "Bundle WinBoloDS, BrainTest, and WinBoloHeadless inside WinBolo.app (macOS)" ON)
 if(APPLE AND WINBOLO_BUNDLE_DEV_TOOLS)
@@ -6397,6 +6423,7 @@ set(_unit_test_names
     bot_host_link_addr_list
     bot_host_link_allow
     bot_host_slots_codec
+    bot_host_place_spread
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot
     internal_msg_skips_inactive_bot_slot

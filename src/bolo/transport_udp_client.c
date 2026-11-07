@@ -4953,6 +4953,15 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         }
     }
 
+    /* The server's address for whoever reads it from the ClientSim (the
+     * Bot Host inside the client joins the same server): a front end that
+     * set it already keeps its own. */
+    if (clientSim != NULL &&
+        clientSimGetServerAddress(clientSim).s_addr == 0) {
+        clientSimSetServerAddress(clientSim, c->serverAddr.sin_addr);
+        clientSimSetServerPort(clientSim, serverPort);
+    }
+
     /* Copy player name, password, and WBN credentials */
     memset(c->playerName, 0, PACKET_MAX_PLAYER_NAME);
     strncpy(c->playerName, playerName, PACKET_MAX_PLAYER_NAME - 1);

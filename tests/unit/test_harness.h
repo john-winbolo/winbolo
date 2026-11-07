@@ -946,6 +946,7 @@ int run_bot_host_link_announce_codec(void);
 int run_bot_host_link_addr_list(void);
 int run_bot_host_link_allow(void);
 int run_bot_host_slots_codec(void);
+int run_bot_host_place_spread(void);
 
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with

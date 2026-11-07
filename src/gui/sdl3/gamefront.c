@@ -129,6 +129,7 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 
 #if defined(WINBOLO_VOICE)
 #include "../voice.h"
+#include "../../bothost/bothost_embed.h" /* botHostEmbedService / Leave */
 
 /* Voice settings live in the voice module; these apply them with the same
    clamping the settings dialog uses, and read them back for the save.
@@ -1085,8 +1086,19 @@ void gameFrontSaveCurrentPrefs(void) {
 /* -------------------------------------------------------
  * gameFrontEnd — shutdown game subsystems
  * ------------------------------------------------------- */
+/* The Bot Host inside this program: it runs the server's bots while the
+ * player is in a game on a server (a UDP join), and stops when there is
+ * none. Once a frame, on the main thread. */
+void gameFrontBotHostService(ClientSim *cs) {
+  botHostEmbedService((udpTransportActive && cs != NULL && cs == humanSim)
+                          ? cs : NULL);
+}
+
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   steam_clear_rich_presence();
+  /* The player leaves: this computer's Bot Host stops first, so the
+   * server takes its bots back before the player's own quit. */
+  botHostEmbedLeave("the player left the game");
   clientMutexWaitFor();
   /* No tank-readback here. The keys dialog persists useAutoslow /
    * useAutohide directly to INI on OK (immediate-flush) and nothing

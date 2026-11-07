@@ -64,6 +64,7 @@ extern "C" {
 #include "../../map_preview_popup.h"  /* mapPreviewPopupFocusMapSquare */
 #include "../../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning */
 #if defined(WINBOLO_VOICE)
+#include "../../../../bothost/bothost_embed.h" /* botHostEmbedGetStatus — this computer's own Bot Host */
 #include "../../../voice.h"   /* voiceGetTalkingMap — lobby mic icons;
                                * the own-row voice sub-row's state */
 #endif
@@ -652,15 +653,24 @@ static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
 /* The Bot Hosts list, below the spectators: each machine that runs the
  * server's bots, with how many it runs, which bots they are, and whether
  * it holds the server's brain files yet. A Bot Host is not a player and has
- * no roster slot, so it appears only here. Nothing is drawn when no Bot Host is connected. */
+ * no roster slot, so it appears only here. The server's own row (the bots
+ * it runs itself, against its own capacity) is always the last; it is not a
+ * connection and has no controls. Nothing is drawn when the server sends no
+ * rows (a local game, or a server with Bot Hosts off). */
 static void renderBotHostGroup(ClientSim *cs) {
     int count = 0;
+    bool serverRow = false;
     for (int idx = 0; ; idx++) {
         const ClientBotHostRow *r = clientSimGetBotHostRow(cs, (uint8_t)idx);
         if (r == NULL) break;
-        if (r->connected) count++;
+        if (!r->connected) continue;
+        if (idx == CLIENT_BOT_HOST_SERVER_ROW) {
+            serverRow = true;
+        } else {
+            count++;
+        }
     }
-    if (count == 0) return;
+    if (count == 0 && !serverRow) return;
 
     {
         MessageArgs args = {};
@@ -673,7 +683,13 @@ static void renderBotHostGroup(ClientSim *cs) {
         if (!r->connected) continue;
 
         MessageArgs args = {};
-        switch (r->state) {
+        const bool isServer = (idx == CLIENT_BOT_HOST_SERVER_ROW);
+        switch (isServer ? 0xFF : r->state) {
+            case 0xFF:
+                SDL_strlcpy(args.string2,
+                            langGetText(STR_DLGLOBBY_BOTHOST_SERVER_STATE),
+                            sizeof(args.string2));
+                break;
             case BOT_HOST_SYNC_SYNCING: {
                 MessageArgs pa = {};
                 pa.number = r->percent;
@@ -715,7 +731,10 @@ static void renderBotHostGroup(ClientSim *cs) {
                         langGetText(STR_DLGLOBBY_BOTHOST_REC_LOWDISK),
                         sizeof(args.string2));
         }
-        SDL_strlcpy(args.string1, r->name, sizeof(args.string1));
+        SDL_strlcpy(args.string1,
+                    isServer ? langGetText(STR_DLGLOBBY_BOTHOST_SERVER_NAME)
+                             : r->name,
+                    sizeof(args.string1));
         args.number = r->used;
         args.number2 = r->slots;
 
@@ -746,6 +765,20 @@ static void renderBotHostGroup(ClientSim *cs) {
             ImGui::PopStyleColor();
         }
     }
+#ifndef WINBOLO_HIDE_CLIENT_BOT_HOST_MSG
+    /* This computer's own Bot Host, under the rows. */
+    {
+        BotHostEmbedStatus st;
+        botHostEmbedGetStatus(&st);
+        if (st.running && st.connected) {
+            MessageArgs args = {};
+            args.number = st.bots;
+            args.number2 = st.slots;
+            ImGui::TextDisabled("%s",
+                langGetTextFmt(STR_DLGLOBBY_CLIENT_BOTHOST_FMT, &args));
+        }
+    }
+#endif
 }
 
 /* True when the lobby's right panel is currently showing the replay reel

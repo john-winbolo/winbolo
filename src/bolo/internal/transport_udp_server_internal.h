@@ -247,6 +247,12 @@ typedef struct {
      * CTRL_BOT_HOST_SLOTS. A host shared with other servers lowers it as
      * they take its slots. */
     uint8_t  slots;
+    /* A player's own Bot Host (the one inside that player's client): it
+     * joined with the player's ticket, and it goes when that player's
+     * connection (ownerConnId) goes. */
+    bool     playerHost;
+    uint8_t  ownerSlot;
+    uint64_t ownerConnId;
     uint32_t lastReceivedTick;
     uint32_t outSequence;
     uint16_t pingMs;
@@ -592,6 +598,17 @@ typedef struct UdpServerState {
      * process. With a list only the listed hosts are heard; with a key a
      * host must give it; with both, both. */
     bool        botHostEnabled;
+    /* A key or a list is set: hosts other than the players' own may join.
+     * Without it the only hosts are the players' own. */
+    bool        botHostOpen;
+    /* -noplayerbothosts: the players are sent no ticket. */
+    bool        noPlayerBotHosts;
+    /* Each player's ticket, made for its connection (playerTicketConnId),
+     * and the tickCount and game start count it last went out at. */
+    uint8_t     playerTicket[MAX_TANKS][BOT_HOST_TICKET_LEN];
+    uint64_t    playerTicketConnId[MAX_TANKS];
+    uint32_t    playerTicketTick[MAX_TANKS];
+    uint32_t    playerTicketStarts[MAX_TANKS];
     char        botHostKey[JOIN_BOT_HOST_KEY_LEN + 1];
     int          botHostAllowCount;
     BotHostAllow botHostAllow[BOT_HOST_LINK_MAX_ADDRS];
@@ -795,6 +812,13 @@ void serverBotHostHandleAnnounce(struct ServerSim *sim, const uint8_t *buf,
                                  int len, const struct sockaddr_in *fromAddr);
 bool serverBotSlotOnInput(struct ServerSim *sim, int slot);
 void serverBotSlotLost(struct ServerSim *sim, int slot, const char *why);
+/* Player slot is leaving: the Bot Host inside its client is dropped and its
+ * bots come back in-process. */
+void serverBotHostPlayerGone(struct ServerSim *sim, int slot, const char *why);
+/* The server as one Bot Host: its slots (its own capacity answer) and the
+ * bots whose brains it runs itself now. */
+int serverBotHostServerSlots(struct ServerSim *sim);
+int serverBotHostServerBots(struct ServerSim *sim);
 void serverBotSlotTeamMsg(struct ServerSim *sim, int slot, const char *text);
 void serverBotSlotStats(struct ServerSim *sim, int slot,
                         const CmdBotStats *st);

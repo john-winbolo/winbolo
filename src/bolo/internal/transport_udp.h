@@ -86,6 +86,14 @@ typedef struct {
 #define JOIN_BOT_SLOT_TOKEN_LEN     16
 #define JOIN_BOT_HOST_KEY_LEN       64
 #define JOIN_BOT_HOST_NAME_LEN      32
+/* A player's own Bot Host (the one inside a WinBolo client) adds to the Bot
+ * Host join, after the listen port: JOIN_BOT_HOST_PLAYER_MARK (1 byte), its
+ * player number (1 byte) and the CTRL_BOT_HOST_TICKET ticket the server sent
+ * that player (BOT_HOST_TICKET_LEN bytes). The ticket stands in for the key
+ * and the list: the server takes the host only while that player is
+ * connected and only from the player's address. */
+#define JOIN_BOT_HOST_PLAYER_MARK   0x50
+#define JOIN_BOT_HOST_PLAYER_LEN    (1 + 1 + 16)
 /* Most bot connections one Bot Host may offer. */
 #define BOT_HOST_MAX_SLOTS          MAX_TANKS
 /* Most Bot Host control connections one server holds at once. */
@@ -850,6 +858,15 @@ bool transportUdpServerSetBotHostKey(struct ServerSim *sim, const char *key);
  * on as a key does. False when the list cannot be read or a host name does
  * not resolve. */
 bool transportUdpServerSetBotHostList(struct ServerSim *sim, const char *arg);
+/* The players' own Bot Hosts (on unless -noplayerbothosts): each player is
+ * sent a ticket, and the Bot Host inside that player's client joins with it
+ * in place of a key. Turns Bot Host connections on as a key does. */
+void transportUdpServerSetPlayerBotHosts(struct ServerSim *sim, bool on);
+/* Placement: a host of smallSlots slots or fewer counts bias slots fewer,
+ * so it fills a little later (-bothost-small-slots, -bothost-small-bias).
+ * A negative value keeps that default (BOT_HOST_SMALL_SLOTS_DEFAULT,
+ * BOT_HOST_SMALL_BIAS_DEFAULT in bot_host_link.h). */
+void transportUdpServerSetBotHostPlacement(int smallSlots, double bias);
 void transportUdpServerPrintBotHosts(void);
 
 /* -brain-debug session blocks, for the Bot Hosts' recordings: RecOpen when

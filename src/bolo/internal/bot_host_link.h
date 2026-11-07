@@ -125,4 +125,37 @@ bool botHostLinkParseVersion(const char *hex, uint64_t *out);
  * max of them. Returns how many were found. */
 int  botHostLinkListCache(const char *root, BotHostLinkBrain *out, int max);
 
+/* ---- Where a server places its bots ---------------------------------
+ *
+ * Each host, the server's own process among them, is filled in proportion
+ * to the bots it can run, so all are about equally full. A host with few
+ * slots (smallSlots or fewer: a weaker computer) counts bias slots fewer,
+ * so it fills a little later than the others. A new bot goes to the host
+ * with the lowest (bots + 1) / effective slots; ties go to the host with
+ * more slots, then to the one that came first in the list (the server's
+ * own process first, then the hosts in the order they joined). No host but
+ * an unlimited one takes more bots than its slots. */
+#define BOT_HOST_SMALL_SLOTS_DEFAULT 2
+#define BOT_HOST_SMALL_BIAS_DEFAULT  0.25
+
+typedef struct {
+    int  slots;      /* bots it can run */
+    int  bots;       /* bots on it now */
+    bool open;       /* it may take a bot now */
+    bool unlimited;  /* it takes bots past its slots (the server itself) */
+    bool movable;    /* one of its bots may be moved now */
+} BotHostPlaceHost;
+
+/* slots, less bias when slots is smallSlots or fewer; never under 0.05. */
+double botHostPlaceEffSlots(int slots, int smallSlots, double bias);
+/* The host a new bot goes to, or -1 when none may take it. */
+int  botHostPlacePick(const BotHostPlaceHost *hosts, int n, int smallSlots,
+                      double bias);
+/* One move toward the proportional spread: a bot of *from (a movable host)
+ * to *to, made only when the bot would be strictly less crowded there than
+ * it is now. The host most crowded now gives first. False when no move
+ * helps. */
+bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,
+                           int smallSlots, double bias, int *from, int *to);
+
 #endif /* BOT_HOST_LINK_H */

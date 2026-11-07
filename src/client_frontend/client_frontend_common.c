@@ -45,6 +45,9 @@
 static struct ClientSim *s_activeUiCs = NULL;
 
 bool clientFrontIsActiveUiSim(const struct ClientSim *cs) {
+  /* A bot connection of the Bot Host inside the program runs on the host's
+     thread, and is never the UI's sim, not even before one is registered. */
+  if (clientSimGetNoFrontEnd(cs)) return false;
   return s_activeUiCs == NULL || cs == s_activeUiCs;
 }
 

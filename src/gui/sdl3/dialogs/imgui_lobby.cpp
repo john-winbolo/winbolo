@@ -3075,6 +3075,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * does not reach the server until the game starts. */
         voiceTick(cs);
 #endif
+        /* This computer's Bot Host, as in the game loop. */
+        gameFrontBotHostService(cs);
 
 #if BOLO_RECAP_CLIP_GIF
         /* Lets the gallery free its preview when the recap that draws it is

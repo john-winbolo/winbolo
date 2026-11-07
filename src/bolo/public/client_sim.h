@@ -109,7 +109,10 @@ typedef struct {
  * (CTRL_BOT_HOST_STATUS). A Bot Host runs bot brains for the server on
  * another machine; it is not a player and has no roster slot. state is a
  * BOT_HOST_SYNC_* value (control_event.h). */
-#define CLIENT_BOT_HOST_ROWS     8
+/* One row per Bot Host (MAX_BOT_HOSTS), then the server's own row: the
+ * bots it runs itself, against its own capacity. */
+#define CLIENT_BOT_HOST_ROWS     9
+#define CLIENT_BOT_HOST_SERVER_ROW (CLIENT_BOT_HOST_ROWS - 1)
 /* A Bot Host's brain sync state, as CTRL_BOT_HOST_STATUS carries it.
  *   WAITING - connected, the manifest not yet answered.
  *   SYNCING - downloading brain files; the lobby holds Ready.
@@ -756,6 +759,18 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
 
 /* Bot Host list row mirror; out-of-range idx returns NULL. */
 const ClientBotHostRow *clientSimGetBotHostRow(const ClientSim *cs, uint8_t idx);
+
+/* The ticket of the last CTRL_BOT_HOST_TICKET: the server lets this
+ * player's computer run bots for it. False when none came on this
+ * connection. ticket takes BOT_HOST_TICKET_LEN bytes and brain
+ * BOT_HOST_BRAIN_NAME_LEN; either may be NULL. *gen rises with each ticket. */
+bool clientSimGetBotHostTicket(const ClientSim *cs, uint8_t *player,
+                               uint8_t *ticket, char *brain, uint32_t *gen);
+
+/* A bot connection of the Bot Host inside the program: it never reaches the
+ * front end (screen, sound, dialogs), as it runs on the host's thread. */
+void clientSimSetNoFrontEnd(ClientSim *cs, bool v);
+bool clientSimGetNoFrontEnd(const ClientSim *cs);
 
 /* True while a connected Bot Host is still downloading the server's brain
  * files and the lobby waits for it. *percent, when not NULL, is the lowest
@@ -1915,6 +1930,8 @@ const ClientScnMarker *overviewSnapshotScnMarkers(const OverviewSnapshot *s);
 
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);
+/* A newswire line from this program itself (top line "WinBolo"). */
+void         clientSimNewswireText(ClientSim *cs, const char *text);
 
 /* Submits a build request for the local LGM through InputPacket,
  * gated on tank armour and net status. */
