@@ -1432,12 +1432,6 @@ static const LangEntry langTable[] = {
 
     {3150, "Recording mode: shows the GIF controls"},
 
-    /* The Log Viewer's Chat panel */
-    {3100, "Chat"},
-    {3101, "No chat messages yet."},
-    {3102, "(team)"},
-    {3103, "(to {player})"},
-    {3104, "Spectator {number}"},
     {3153, "Show this file in its folder"},
     {3154, "The folder could not be opened."},
     {3155, "Delete"},

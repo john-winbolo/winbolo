@@ -6486,17 +6486,23 @@ set(_unit_test_names
     lv_lag_feature_default_off
     lv_lag_view_draw
     lv_lag_view_own_shells
+    lv_lag_view_lost_owner
     lv_shell_owner_recording
     lv_shell_owner_rules
     lv_shell_owner_real_flight
     lv_shell_owner_start
     lv_shell_owner_link
+    lv_shell_owner_one_line
+    lv_shell_owner_ids
     lv_early_blast_rules
     lv_early_blast_ended
     lv_early_blast_frames
     lv_early_blast_match
     lv_early_blast_hide
     lv_early_blast_needs_own_shells
+    lv_early_blast_same_place
+    lv_early_blast_many_players
+    lv_early_blast_watch_miss
     lv_lag_view_rename
     lv_overrun_read
     log_roundtrip_ping

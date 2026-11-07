@@ -246,9 +246,14 @@ int lv_screenGetScreenTrueShells(void) { return s_screenTrueShells ? 1 : 0; }
    (lv_earlyBlastOn). It is used from lv_lagFindShellOwners and
    lv_screenUpdate. */
 static bool              s_screenTrueExpl = FALSE;
-static LvEarlyBlast      s_earlyBlasts[LV_EARLY_BLAST_MAX];
-static int               s_earlyBlastNext;
-static LvEarlyBlastStats s_earlyBlastStats;
+/* Every player's early blasts, so the list is right at once when the view
+   moves to another player. */
+static LvEarlyBlastList  s_earlyBlastList;
+/* The list keeps each early blast for as long as the oldest frame the lag
+   view can draw needs it, for up to LV_EARLY_BLAST_TANKS players. */
+BOLO_STATIC_ASSERT(LV_LAG_HISTORY_MS <= LV_EARLY_BLAST_HISTORY_MS,
+                   lv_early_blast_keeps_lag_history);
+BOLO_STATIC_ASSERT(MAX_TANKS <= LV_EARLY_BLAST_TANKS, lv_early_blast_every_tank);
 
 void lv_screenSetScreenTrueExplosions(int enabled) {
   s_screenTrueExpl = enabled ? TRUE : FALSE;
@@ -258,7 +263,7 @@ int lv_screenGetScreenTrueExplosions(void) { return s_screenTrueExpl ? 1 : 0; }
 
 void lv_screenEarlyBlastStats(LvEarlyBlastStats *out) {
   if (out != NULL) {
-    *out = s_earlyBlastStats;
+    *out = s_earlyBlastList.stats;
   }
 }
 
@@ -271,19 +276,11 @@ static void lv_lagEarlyBlastTick(const LvLagFrame *f, const LvShellPt *prev,
                                  const int8_t *prevOwner, int nPrev,
                                  const LvShellPt *cur, int nCur) {
   LvBlastPt expl[LV_LAG_SHELLS_MAX];
-  bool taken[LV_LAG_SHELLS_MAX];
-  int nExpl = 0, i, k;
+  int nExpl = 0, i, missed;
+  uint32_t missMs = 0;
 
   if (s_lagRing.count <= 1) {
-    memset(s_earlyBlasts, 0, sizeof(s_earlyBlasts));
-    s_earlyBlastNext = 0;
-  }
-  for (i = 0; i < nPrev; i++) {
-    if (prevOwner[i] != LV_SHELL_OWNER_NONE && lv_earlyBlastShellEnded(&prev[i], cur, nCur)) {
-      lv_earlyBlastStart(&s_earlyBlasts[s_earlyBlastNext], prevOwner[i], f->ms, &prev[i]);
-      s_earlyBlastNext = (s_earlyBlastNext + 1) % LV_EARLY_BLAST_MAX;
-      s_earlyBlastStats.ended++;
-    }
+    lv_earlyBlastListClear(&s_earlyBlastList);
   }
   for (i = 0; i < f->shellCount; i++) {
     if (lv_earlyBlastIsExplFrame(f->shells[i].frame)) {
@@ -293,33 +290,16 @@ static void lv_lagEarlyBlastTick(const LvLagFrame *f, const LvShellPt *prev,
       nExpl++;
     }
   }
-  /* An explosion another early blast already has is not taken again. */
-  for (k = 0; k < nExpl; k++) {
-    taken[k] = FALSE;
-    for (i = 0; i < LV_EARLY_BLAST_MAX && !taken[k]; i++) {
-      taken[k] = lv_earlyBlastHides(&s_earlyBlasts[i], f->ms, &expl[k]);
-    }
-  }
-  for (i = 0; i < LV_EARLY_BLAST_MAX; i++) {
-    LvEarlyBlast *b = &s_earlyBlasts[i];
-    if (lv_earlyBlastLooking(b, f->ms)) {
-      k = lv_earlyBlastPick(b, expl, nExpl, taken);
-      if (k >= 0) {
-        lv_earlyBlastMatch(b, &expl[k], f->ms);
-        taken[k] = TRUE;
-        s_earlyBlastStats.matched++;
-      }
-    } else if (b->used && !b->matched && !b->missed && f->ms > b->endMs) {
-      b->missed = TRUE;
-      s_earlyBlastStats.missed++;
-      if (lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl)) {
-        fprintf(stderr,
-                "logviewer: early blast: no server explosion for player %d's shell at %u ms "
-                "(%u of %u own shells with none)\n",
-                (int) b->owner, (unsigned) b->endMs, (unsigned) s_earlyBlastStats.missed,
-                (unsigned) s_earlyBlastStats.ended);
-      }
-    }
+  /* Every player's, but only the viewed player's misses are printed, and
+     only while the view draws early blasts. */
+  missed = lv_earlyBlastListTick(&s_earlyBlastList, f->ms, prev, prevOwner, nPrev, cur, nCur,
+                                 expl, nExpl, s_lagViewSlot, &missMs);
+  if (missed > 0 && s_lagViewSlot >= 0 && lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl)) {
+    fprintf(stderr,
+            "logviewer: early blast: no server explosion for player %d's shell at %u ms "
+            "(%u of %u owned shells of all players with none)\n",
+            s_lagViewSlot, (unsigned) missMs, (unsigned) s_earlyBlastList.stats.missed,
+            (unsigned) s_earlyBlastList.stats.ended);
   }
 }
 
@@ -337,17 +317,58 @@ static BYTE lv_lagPixelOf(int32_t w) {
 BOLO_STATIC_ASSERT(LV_LAG_SHELLS_MAX <= LV_SHELL_OWNER_MAX_SHELLS,
                    lv_lag_shells_fit_owner_link);
 
-/* Give the shells of the newest frame f their owners (lv_shell_owner.h),
-   from the frame of the entry before it, and note which tanks fired. With
-   "Toggle Screen-True Own Shells" on, the lag view draws the chosen
-   player's own shells at the present, as the player's own client drew
-   them, and every other shell at the old time. */
+/* The id the next new shell is given (LvLagShell.id). */
+static uint16_t s_lagShellIdNext;
+
+/* Make what lv_shellOwnerLinkIds found about the shells before (ev) true
+   in every frame of the history but the newest, which has it already. A
+   shell is drawn from the present frame when its owner is the viewed
+   player and from the old frame otherwise, so its owner must be the same
+   in every frame: a shell whose owner is lost now has none in the old
+   frames too, and two shells that went on as one share one id. */
+static void lv_lagApplyShellIdEvents(const LvShellOwnerIdEvents *ev) {
+  int n, i, k;
+  if (ev->nMerge == 0 && ev->nLost == 0) {
+    return;
+  }
+  for (n = 1; n < s_lagRing.count; n++) {
+    LvLagFrame *g = &s_lagRing.frames[(s_lagRing.newest - n + LV_LAG_FRAMES) % LV_LAG_FRAMES];
+    for (i = 0; i < g->shellCount; i++) {
+      LvLagShell *sh = &g->shells[i];
+      for (k = 0; k < ev->nMerge; k++) {
+        if (sh->id == ev->mergeFrom[k]) {
+          sh->id = ev->mergeTo[k];
+        }
+      }
+      for (k = 0; k < ev->nLost; k++) {
+        if (sh->id == ev->lost[k]) {
+          sh->owner = LV_SHELL_OWNER_NONE;
+        }
+      }
+    }
+  }
+}
+
+/* Give the shells of the newest frame f their owners and ids
+   (lv_shell_owner.h), from the frame of the entry before it, and note
+   which tanks fired. With "Toggle Screen-True Own Shells" on, the lag view
+   draws the chosen player's own shells at the present, as the player's own
+   client drew them, and every other shell at the old time.
+
+   This runs at every entry while the lag display preference is on, also
+   with no view chosen: a shell's owner comes from its first record, so a
+   shell in flight when the view is turned on must have been followed from
+   its start. The matcher tests each shell only against the shells before
+   with its own direction, which keeps that cheap. */
 static void lv_lagFindShellOwners(LvLagFrame *f) {
   const LvLagFrame *prev = NULL;
+  static LvShellOwnerIdEvents ev;
   LvShellPt prevPts[LV_LAG_SHELLS_MAX];
   int8_t prevOwners[LV_LAG_SHELLS_MAX];
+  uint16_t prevIds[LV_LAG_SHELLS_MAX];
   LvShellPt curPts[LV_LAG_SHELLS_MAX];
   int8_t curOwners[LV_LAG_SHELLS_MAX];
+  uint16_t curIds[LV_LAG_SHELLS_MAX];
   int curIdx[LV_LAG_SHELLS_MAX];
   LvGunTank guns[LV_SHELL_OWNER_MAX_TANKS];
   int nPrev = 0, nCur = 0, i;
@@ -387,16 +408,20 @@ static void lv_lagFindShellOwners(LvLagFrame *f) {
         prevPts[nPrev].wx = lv_lagWorld(prev->shells[i].mx, prev->shells[i].px);
         prevPts[nPrev].wy = lv_lagWorld(prev->shells[i].my, prev->shells[i].py);
         prevPts[nPrev].dir = (uint8_t) (prev->shells[i].frame - 9);
+        prevIds[nPrev] = prev->shells[i].id;
         prevOwners[nPrev++] = prev->shells[i].owner;
       }
     }
   }
-  lv_shellOwnerLink(prevPts, prevOwners, nPrev, prev != NULL, curPts, nCur, guns,
-                    (prev != NULL) ? LV_SHELL_OWNER_MAX_TANKS : 0,
-                    lv_screenHasTankStock() != 0, curOwners, &s_lagOwnerStats);
+  lv_shellOwnerLinkIds(prevPts, prevOwners, prevIds, nPrev, prev != NULL, curPts, nCur, guns,
+                       (prev != NULL) ? LV_SHELL_OWNER_MAX_TANKS : 0,
+                       lv_screenHasTankStock() != 0, curOwners, curIds, &s_lagShellIdNext,
+                       &ev, &s_lagOwnerStats);
   for (i = 0; i < nCur; i++) {
     f->shells[curIdx[i]].owner = curOwners[i];
+    f->shells[curIdx[i]].id = curIds[i];
   }
+  lv_lagApplyShellIdEvents(&ev);
   lv_lagEarlyBlastTick(f, prevPts, prevOwners, nPrev, curPts, nCur);
 }
 
@@ -1601,38 +1626,39 @@ void lv_screenUpdate(updateType value) {
     lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
     lv_playersSetLagLgmFrame(lagLgmFrame);
     lagShells = lv_shellsCreate();
-    /* Toggle Screen-True Local Explosions (lv_early_blast.h): each early blast of the
-       chosen player hides its server explosion, one record per frame. */
-    bool hideUsed[LV_EARLY_BLAST_MAX];
     /* A frame's shells are in the reverse of the game's draw order (the
        viewer's shell list is built front first), and lagShells draws in
        the order items go in. So the kept shells go in from the end of the
        frame, and the newest explosion is drawn on top, as in the game. */
     bool keep[LV_LAG_SHELLS_MAX];
-    memset(hideUsed, 0, sizeof(hideUsed));
+    /* Toggle Screen-True Local Explosions (lv_early_blast.h): each early
+       blast of the chosen player hides its server explosion, one record
+       per frame. */
+    LvBlastPt explPts[LV_LAG_SHELLS_MAX];
+    int explIdx[LV_LAG_SHELLS_MAX];
+    bool hidden[LV_LAG_SHELLS_MAX];
+    int nExpl = 0;
     for (i = 0; i < lagFrame->shellCount; i++) {
       const LvLagShell *sh = &lagFrame->shells[i];
-      keep[i] = FALSE;
-      if (!ownAtPresent || (int) sh->owner != s_lagViewSlot) {
-        if (earlyBlast && lv_earlyBlastIsExplFrame(sh->frame)) {
-          LvBlastPt e;
-          bool hide = FALSE;
-          int k;
-          e.wx = lv_lagWorld(sh->mx, sh->px);
-          e.wy = lv_lagWorld(sh->my, sh->py);
-          e.frame = sh->frame;
-          for (k = 0; k < LV_EARLY_BLAST_MAX && !hide; k++) {
-            if (!hideUsed[k] && (int) s_earlyBlasts[k].owner == s_lagViewSlot &&
-                lv_earlyBlastHides(&s_earlyBlasts[k], lagFrame->ms, &e)) {
-              hideUsed[k] = TRUE;
-              hide = TRUE;
-            }
-          }
-          if (hide) {
-            continue;
-          }
+      /* The chosen player's own shells come from the present frame. A
+         shell has one owner in every frame (lv_lagApplyShellIdEvents), so
+         each one is drawn from one of the two. */
+      keep[i] = (!ownAtPresent || (int) sh->owner != s_lagViewSlot);
+      if (keep[i] && earlyBlast && lv_earlyBlastIsExplFrame(sh->frame)) {
+        explPts[nExpl].wx = lv_lagWorld(sh->mx, sh->px);
+        explPts[nExpl].wy = lv_lagWorld(sh->my, sh->py);
+        explPts[nExpl].frame = sh->frame;
+        explIdx[nExpl++] = i;
+      }
+    }
+    if (nExpl > 0) {
+      int k;
+      lv_earlyBlastHideRecords(&s_earlyBlastList, s_lagViewSlot, lagFrame->ms, explPts, nExpl,
+                               hidden);
+      for (k = 0; k < nExpl; k++) {
+        if (hidden[k]) {
+          keep[explIdx[k]] = FALSE;
         }
-        keep[i] = TRUE;
       }
     }
     for (i = lagFrame->shellCount - 1; i >= 0; i--) {
@@ -1650,7 +1676,7 @@ void lv_screenUpdate(updateType value) {
     if (earlyBlast) {
       /* The early blasts, at the present where the own shells ended. */
       for (i = 0; i < LV_EARLY_BLAST_MAX; i++) {
-        const LvEarlyBlast *b = &s_earlyBlasts[i];
+        const LvEarlyBlast *b = &s_earlyBlastList.b[i];
         BYTE frame;
         if ((int) b->owner != s_lagViewSlot) {
           continue;

@@ -185,6 +185,7 @@ typedef struct {
 typedef struct {
     uint8_t mx, my, px, py, frame;
     int8_t  owner;   /* the player who fired it, or LV_SHELL_OWNER_NONE */
+    uint16_t id;     /* the same for one shell in every frame (lv_shellOwnerLinkIds) */
 } LvLagShell;
 
 typedef struct {
@@ -253,17 +254,18 @@ static inline const LvLagFrame *lv_lagRingFind(const LvLagRing *r, uint32_t ms) 
    viewSlot     the slot the view is on for, or -1 when it is off
    selHasRecord the selected player has a lag record at the playhead
 
-   The view can be turned on only when the selected player has a record; a
+   The view can be turned on only for a selected player with a record; a
    view that is on can always be turned off. When the view is on for the
    selected player, it turns off. When it is on for another player, it
-   moves to the selected player, or turns off when no tank is selected. */
+   moves to the selected player when that player has a record, and turns
+   off otherwise (no tank selected, or one with no record). */
 static inline int lv_lagViewToggle(bool feature, bool loaded, bool recorded, int sel,
                                    int viewSlot, bool selHasRecord) {
     bool hasRecord = (sel >= 0) && selHasRecord;
     if (!feature || !loaded || !recorded || !(hasRecord || viewSlot >= 0)) {
         return LV_LAG_TOGGLE_NONE;
     }
-    if (viewSlot >= 0 && viewSlot == sel) {
+    if (!hasRecord || viewSlot == sel) {
         return -1;
     }
     return sel;
