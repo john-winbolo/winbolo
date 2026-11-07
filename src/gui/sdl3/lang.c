@@ -1454,6 +1454,7 @@ static const LangEntry langTable[] = {
     {3892, "Bad probe"},
     {3893, "Free CPU: {string1}, bot CPU: {string2}"},
     {3894, "Bots: {number}, slots: {number2}, limit: {string1}"},
+    {3895, "Would move (moves off)"},
     /* The Log Viewer's Chat panel */
     {3100, "Chat"},
     {3101, "No chat messages yet."},

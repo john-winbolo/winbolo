@@ -3738,6 +3738,8 @@
 #define STR_LV_BOTHOST_TIP_BAD_PROBE             3892
 #define STR_LV_BOTHOST_TIP_READING               3893
 #define STR_LV_BOTHOST_TIP_BOTS                  3894
+/* A decision marker: the bot would move, but -bothost-nomove keeps it */
+#define STR_LV_BOTHOST_DEC_WOULD_MOVE            3895
 
 /* The Log Viewer's Chat panel: title, empty line, team and private notes */
 #define STR_LV_WIN_CHAT                          3100

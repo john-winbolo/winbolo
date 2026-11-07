@@ -780,7 +780,8 @@ Then, by kind (0xFF in a byte field: none):
   (0..100, 0xFF not known), `botCpu:u8` (the `CTRL_BOT_HOST_CPU` byte),
   `bots:u8`, `flags:u8` (bit 0: the bots thought; bit 1: bad).
 - DECISION: `decision:u8` (1 trigger, 2 move, 3 cut, 4 raise, 5 raise
-  refused, 6 placement refused), `limitBefore:u8`, `limitAfter:u8`,
+  refused, 6 placement refused, 7 would move: the bot stays because of
+  `-bothost-nomove`), `limitBefore:u8`, `limitAfter:u8`,
   `badProbes:u8`, `probes:u8`, `flags:u8` (bit 0: the one-bot cost is
   known; bit 1: the free CPU average is known), `predicted:s16` (the
   predicted free CPU in tenths of a percent), `cost:u16` and `freeAvg:u16`

@@ -3112,6 +3112,7 @@ STR_LV_BOTHOST_TIP_PROBE=Overrun rate: {string1}% ({number} of {number2} thinks)
 STR_LV_BOTHOST_TIP_BAD_PROBE=Bad probe
 STR_LV_BOTHOST_TIP_READING=Free CPU: {string1}, bot CPU: {string2}
 STR_LV_BOTHOST_TIP_BOTS=Bots: {number}, slots: {number2}, limit: {string1}
+STR_LV_BOTHOST_DEC_WOULD_MOVE=Would move (moves off)
 
 # The Log Viewer's Chat panel: title, empty line, team and private notes
 STR_LV_WIN_CHAT=Chat

@@ -73,7 +73,9 @@ enum {
   BOTHOST_DECISION_CUT            = 3, /* the limit was lowered */
   BOTHOST_DECISION_RAISE          = 4, /* the limit went up by 1 */
   BOTHOST_DECISION_RAISE_REFUSED  = 5, /* a raise was looked at and refused */
-  BOTHOST_DECISION_PLACE_REFUSED  = 6  /* the host may not take a new bot */
+  BOTHOST_DECISION_PLACE_REFUSED  = 6, /* the host may not take a new bot */
+  BOTHOST_DECISION_WOULD_MOVE     = 7  /* a bot would move, but moves are
+                                        * off (-bothost-nomove) */
 };
 
 #define BOTHOST_RECORD_NONE        0xFFu

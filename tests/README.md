@@ -285,6 +285,29 @@ as a host too.
   limit and the free CPU numbers.
 - Unit tests: `bot_host_overrun_*` (`--test <name>`).
 
+#### No bot moves during a game (-bothost-nomove)
+
+For brain-debug games: each bot stays on one machine for the whole game.
+
+- At start the DS prints "Bot moves during the game are off
+  (-bothost-nomove)".
+- In the lobby the placement works as without the flag: the spread, the
+  free CPU check, listed Bot Hosts (-bothosts) and the players' hosts.
+- While the game runs, a bot is placed once. A bot there at the game start,
+  or one added during the game, may go from the server to a host only in
+  its first 10 s (BOT_HOST_START_PLACE_TICKS), and only when it was not on
+  a host before in this game. No bot moves after that: no spread move, no
+  lag move and no overrun move.
+- A fall-back still happens. A bot whose host leaves, times out, loses the
+  bot's connection, changes its brain files or offers fewer slots (0 for
+  the lobby's opt-out) goes back to the server and stays there.
+- The probes and the free CPU readings still run, and -record-bothost-data
+  still records them. When the overrun check would move a bot, the console
+  says "would move (moves off)" with the numbers, and the log gets a
+  decision 7 (would move) record. The Log Viewer shows it as a marker.
+- The next lobby (or the next round) places normally again.
+- Unit tests: `bot_host_nomove_*` (`--test <name>`).
+
 ## Test Runner
 
 The test runner (`tests/run_test.py`) automates the full cycle: start a server, connect headless clients with brain scripts, wait for completion, and validate results.

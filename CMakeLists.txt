@@ -6240,6 +6240,10 @@ set(_unit_test_names
     bot_host_overrun_may_take
     bot_host_cpu_free_codec
     bothost_record_roundtrip
+    bot_host_nomove_no_move_running
+    bot_host_nomove_fallback
+    bot_host_nomove_lobby_places
+    bot_host_nomove_would_move_record
     bot_host_cpu_percent
     bot_host_cpu_meter
     bot_host_cpu_codec

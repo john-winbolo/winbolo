@@ -356,4 +356,48 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
 uint32_t botHostSeatsToGiveBack(const int *seatHost, int n, int h,
                                 int newSlots);
 
+/* ---- No bot moves while a game runs (-bothost-nomove) ------------------ */
+
+/* With the option on, each bot stays where it was placed for the whole
+ * game. In the lobby the placement works as without it. While the game
+ * runs, a bot is placed once: a bot there at the game start, or one added
+ * during the game, may go from the server to a host only in its first
+ * placeTicks ticks, and only when it was not on a host before in this game.
+ * No bot moves from a host to another place (no spread, no lag move, no
+ * overrun move). A fall-back (the host leaves, times out, loses the bot's
+ * connection, changes its brain files or offers fewer slots) still sends
+ * the bot to the server, and the bot then stays there. */
+#define BOT_HOST_NOMOVE_SEATS 32
+
+typedef struct {
+    bool     on;
+    bool     seen[BOT_HOST_NOMOVE_SEATS];      /* a bot in this game */
+    bool     wasOnHost[BOT_HOST_NOMOVE_SEATS]; /* it was on a host */
+    uint32_t seenTick[BOT_HOST_NOMOVE_SEATS];  /* when it was first seen */
+} BotHostNoMove;
+
+void botHostNoMoveInit(BotHostNoMove *nm, bool on);
+/* A new game or round (the lobby or the game start): every seat starts
+ * again. */
+void botHostNoMoveNewGame(BotHostNoMove *nm);
+/* Seat s at tick now: isBot, and onHost when a host has it (bound or
+ * thinking there). Call it for each seat each placement step. */
+void botHostNoMoveSeat(BotHostNoMove *nm, int s, bool isBot, bool onHost,
+                       uint32_t now);
+/* The server may offer seat s to a host now. Always true with the option
+ * off or outside a running game. */
+bool botHostNoMoveMayPlace(const BotHostNoMove *nm, int s, bool running,
+                           uint32_t now, uint32_t placeTicks);
+/* A bot may move from where it is now (the spread, the lag rule and the
+ * overrun check). False only with the option on while the game runs. */
+bool botHostNoMoveMayMove(const BotHostNoMove *nm, bool running);
+/* What the overrun check records for a LOWER step: BOTHOST_DECISION_MOVE
+ * (2) when the bot may move, BOTHOST_DECISION_WOULD_MOVE (7) when it may
+ * not. */
+int  botHostNoMoveOverrunDecision(const BotHostNoMove *nm, bool running);
+/* With the option on while the game runs, a host with more bots than the
+ * slots it offers gives one back to the server (a fall-back, not a move). */
+bool botHostNoMoveGiveBack(const BotHostNoMove *nm, bool running, int bots,
+                           int slots);
+
 #endif /* BOT_HOST_LINK_H */

@@ -924,6 +924,12 @@ int run_bot_host_overrun_new_game_reset(void);
 int run_bot_host_overrun_may_take(void);
 int run_bot_host_cpu_free_codec(void);
 int run_bothost_record_roundtrip(void);
+/* -bothost-nomove (test_bot_host_overrun.c; the record in
+ * test_log_roundtrip.c). */
+int run_bot_host_nomove_no_move_running(void);
+int run_bot_host_nomove_fallback(void);
+int run_bot_host_nomove_lobby_places(void);
+int run_bot_host_nomove_would_move_record(void);
 /* The lobby's CPU estimate per Bot Host row (test_bot_host_cpu.c). */
 int run_bot_host_cpu_percent(void);
 int run_bot_host_cpu_meter(void);

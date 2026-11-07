@@ -1042,6 +1042,8 @@ void printArgs() {
   fprintf(stderr, "-bothost-free-sample-secs <s> - how often the free CPU of each host machine is read (default 5)\n");
   fprintf(stderr, "-bothost-free-history-secs <s> - how much free CPU history is kept for a raise (default 300)\n");
   fprintf(stderr, "-record-bothost-data - write the bot placement probes, free CPU readings and decisions into the round log (.wbv)\n");
+  fprintf(stderr, "-bothost-nomove - no bot moves between the server and the Bot Hosts while a game runs: each bot is placed\n");
+  fprintf(stderr, "                once and stays there (a fall-back to the server still happens). For brain-debug games.\n");
   fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
   fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
@@ -3366,6 +3368,8 @@ int main(int argc, char **argv) {
       }
       transportUdpServerSetBotHostRecord(
           argExist(argc, argv, "record-bothost-data"));
+      transportUdpServerSetBotHostNoMove(
+          argExist(argc, argv, "bothost-nomove"));
     }
     /* Say what the finder will show, after the sanitising, so an operator
      * sees a name that came out shorter or cleaner than typed. */

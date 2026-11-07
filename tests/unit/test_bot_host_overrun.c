@@ -542,3 +542,98 @@ int run_bothost_record_roundtrip(void) {
     UT_ASSERT(botHostRecordEncode(&r, buf, (int)sizeof(buf)) == 0);
     return 0;
 }
+
+/* ================================================================
+ * -bothost-nomove (BotHostNoMove in bot_host_link.h)
+ * ================================================================ */
+
+/* While the game runs with the flag, no bot moves: not from a host (the
+ * spread, the lag rule, the overrun check), and not from the server after
+ * its placement time. A bot there at the start, or one added later, is
+ * placed once in its first ticks. */
+int run_bot_host_nomove_no_move_running(void) {
+    BotHostNoMove nm, off;
+    uint32_t t0 = 1000;
+
+    botHostNoMoveInit(&nm, true);
+    botHostNoMoveInit(&off, false);
+    botHostNoMoveNewGame(&nm);
+    UT_ASSERT(nm.on);
+    /* No move from where a bot is, all game long. */
+    UT_ASSERT(!botHostNoMoveMayMove(&nm, true));
+    UT_ASSERT(botHostNoMoveMayMove(&off, true));
+    /* Player 0 on the server at the game start: it may go to a host in its
+     * first 500 ticks only. */
+    botHostNoMoveSeat(&nm, 0, true, false, t0);
+    UT_ASSERT(botHostNoMoveMayPlace(&nm, 0, true, t0 + 499, 500));
+    UT_ASSERT(!botHostNoMoveMayPlace(&nm, 0, true, t0 + 500, 500));
+    /* Player 1 on a host at the start: it never moves from there, and it is
+     * not offered again. */
+    botHostNoMoveSeat(&nm, 1, true, true, t0);
+    UT_ASSERT(!botHostNoMoveMayPlace(&nm, 1, true, t0 + 1, 500));
+    /* Player 2 added at t0 + 3000: it is placed once, in its own first 500
+     * ticks. */
+    botHostNoMoveSeat(&nm, 2, false, false, t0);
+    UT_ASSERT(!botHostNoMoveMayPlace(&nm, 2, true, t0, 500));
+    botHostNoMoveSeat(&nm, 2, true, false, t0 + 3000);
+    UT_ASSERT(botHostNoMoveMayPlace(&nm, 2, true, t0 + 3100, 500));
+    botHostNoMoveSeat(&nm, 2, true, true, t0 + 3200);   /* it went */
+    UT_ASSERT(!botHostNoMoveMayPlace(&nm, 2, true, t0 + 3300, 500));
+    /* The overrun check records "would move" in place of a move. */
+    UT_ASSERT(botHostNoMoveOverrunDecision(&nm, true) ==
+              BOTHOST_DECISION_WOULD_MOVE);
+    UT_ASSERT(botHostNoMoveOverrunDecision(&off, true) ==
+              BOTHOST_DECISION_MOVE);
+    /* Without the flag every seat may be offered at any time. */
+    botHostNoMoveSeat(&off, 0, true, true, t0);
+    UT_ASSERT(botHostNoMoveMayPlace(&off, 0, true, t0 + 100000, 500));
+    return 0;
+}
+
+/* The fall-backs still happen with the flag: a host that offers 0 slots
+ * (the opt-out) gives every bot back, a host with fewer slots than bots
+ * gives one back, and a bot that came back stays on the server. */
+int run_bot_host_nomove_fallback(void) {
+    BotHostNoMove nm;
+    int seatHost[8] = {-1, 1, 1, 0, -1, -1, -1, -1};
+    uint32_t mask;
+
+    botHostNoMoveInit(&nm, true);
+    botHostNoMoveNewGame(&nm);
+    mask = botHostSeatsToGiveBack(seatHost, 8, 1, 0);
+    UT_ASSERT_MSG(mask == ((1u << 1) | (1u << 2)), "mask 0x%x", (unsigned)mask);
+    /* Fewer slots than bots: one goes back while the game runs. */
+    UT_ASSERT(botHostNoMoveGiveBack(&nm, true, 3, 2));
+    UT_ASSERT(botHostNoMoveGiveBack(&nm, true, 1, 0));
+    UT_ASSERT(!botHostNoMoveGiveBack(&nm, true, 2, 2));
+    UT_ASSERT(!botHostNoMoveGiveBack(&nm, true, 0, 0));
+    /* Outside the game (or without the flag) the spread does it. */
+    UT_ASSERT(!botHostNoMoveGiveBack(&nm, false, 3, 2));
+    /* Player 1 was on host 1 and fell back: it stays on the server. */
+    botHostNoMoveSeat(&nm, 1, true, true, 100);
+    botHostNoMoveSeat(&nm, 1, true, false, 150);
+    UT_ASSERT(!botHostNoMoveMayPlace(&nm, 1, true, 160, 500));
+    return 0;
+}
+
+/* The lobby places as without the flag, and the next lobby or round starts
+ * every seat again. */
+int run_bot_host_nomove_lobby_places(void) {
+    BotHostNoMove nm;
+
+    botHostNoMoveInit(&nm, true);
+    UT_ASSERT(botHostNoMoveMayMove(&nm, false));
+    botHostNoMoveSeat(&nm, 0, true, true, 10);
+    botHostNoMoveSeat(&nm, 0, true, false, 20);
+    UT_ASSERT(botHostNoMoveMayPlace(&nm, 0, false, 100000, 500));
+    UT_ASSERT(botHostNoMoveOverrunDecision(&nm, false) ==
+              BOTHOST_DECISION_MOVE);
+    UT_ASSERT(!botHostNoMoveGiveBack(&nm, false, 4, 0));
+    /* The game ran and player 0 was on a host; the next game starts again. */
+    UT_ASSERT(!botHostNoMoveMayPlace(&nm, 0, true, 30, 500));
+    botHostNoMoveNewGame(&nm);
+    UT_ASSERT(nm.on);
+    botHostNoMoveSeat(&nm, 0, true, false, 40);
+    UT_ASSERT(botHostNoMoveMayPlace(&nm, 0, true, 50, 500));
+    return 0;
+}

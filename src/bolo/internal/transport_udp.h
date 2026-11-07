@@ -882,6 +882,9 @@ void transportUdpServerSetBotHostOverrun(double pct, int badShare,
 /* Writes what the placement measured and chose into the round log (.wbv)
  * as log_BotHostData records (bothost_record.h). Off by default. */
 void transportUdpServerSetBotHostRecord(bool on);
+/* -bothost-nomove: no bot moves between places while a game runs; each bot
+ * is placed once (BotHostNoMove in bot_host_link.h). Off by default. */
+void transportUdpServerSetBotHostNoMove(bool on);
 void transportUdpServerPrintBotHosts(void);
 
 /* -brain-debug session blocks, for the Bot Hosts' recordings: RecOpen when

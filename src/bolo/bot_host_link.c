@@ -18,6 +18,7 @@
 #include <SDL3/SDL.h>
 
 #include "bot_host_link.h"
+#include "bothost_record.h" /* BOTHOST_DECISION_* */
 #include "brain_sync.h"   /* brainSyncNameSafe */
 
 static void putU16(uint8_t *p, uint16_t v) {
@@ -854,4 +855,57 @@ uint32_t botHostSeatsToGiveBack(const int *seatHost, int n, int h,
         if (seatHost[s] == h) mask |= (uint32_t)1u << s;
     }
     return mask;
+}
+
+/* ---- No bot moves while a game runs (-bothost-nomove) ------------------ */
+
+void botHostNoMoveInit(BotHostNoMove *nm, bool on) {
+    if (nm == NULL) return;
+    memset(nm, 0, sizeof(*nm));
+    nm->on = on;
+}
+
+void botHostNoMoveNewGame(BotHostNoMove *nm) {
+    bool on;
+    if (nm == NULL) return;
+    on = nm->on;
+    botHostNoMoveInit(nm, on);
+}
+
+void botHostNoMoveSeat(BotHostNoMove *nm, int s, bool isBot, bool onHost,
+                       uint32_t now) {
+    if (nm == NULL || s < 0 || s >= BOT_HOST_NOMOVE_SEATS) return;
+    if (!isBot) {
+        nm->seen[s] = false;
+        nm->wasOnHost[s] = false;
+        return;
+    }
+    if (!nm->seen[s]) {
+        nm->seen[s] = true;
+        nm->seenTick[s] = now;
+    }
+    if (onHost) nm->wasOnHost[s] = true;
+}
+
+bool botHostNoMoveMayPlace(const BotHostNoMove *nm, int s, bool running,
+                           uint32_t now, uint32_t placeTicks) {
+    if (nm == NULL || !nm->on || !running) return true;
+    if (s < 0 || s >= BOT_HOST_NOMOVE_SEATS) return false;
+    if (!nm->seen[s] || nm->wasOnHost[s]) return false;
+    return now - nm->seenTick[s] < placeTicks;
+}
+
+bool botHostNoMoveMayMove(const BotHostNoMove *nm, bool running) {
+    return nm == NULL || !nm->on || !running;
+}
+
+int botHostNoMoveOverrunDecision(const BotHostNoMove *nm, bool running) {
+    return botHostNoMoveMayMove(nm, running) ? BOTHOST_DECISION_MOVE
+                                             : BOTHOST_DECISION_WOULD_MOVE;
+}
+
+bool botHostNoMoveGiveBack(const BotHostNoMove *nm, bool running, int bots,
+                           int slots) {
+    if (botHostNoMoveMayMove(nm, running)) return false;
+    return bots > 0 && bots > (slots < 0 ? 0 : slots);
 }
