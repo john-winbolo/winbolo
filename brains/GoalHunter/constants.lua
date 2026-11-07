@@ -2393,13 +2393,24 @@ M.CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 10
 -- when the predicted shell impact lands within this of the man's predicted
 -- position.  The engine's real LGM splash kill radius is 128 wu (a full tile,
 -- lgm.c), so 100 leaves a margin.  BUT a man standing on a SOLID square (a live
--- pill, a base, or a building) is killed by lgm.c's death check ONLY when the
+-- pill, a base, or a building -- a dead pill is open ground, see
+-- BLAST_DEAD_PILL_OPEN) is killed by lgm.c's death check ONLY when the
 -- shell lands in his EXACT tile (lgmDeathCheckAtPosition: solid square =>
 -- same-square-only, no splash); for those the shot requires impact-tile ==
 -- man-tile instead of this radius.  The SHARED kill_lgm evaluator's ½-tile
 -- (64 wu) gate is UNCHANGED -- only the capture-target man gets this wider gate.
 -- KEEL: 64 (equals the shared gate, so the wider shot can never fire beyond it).
 M.CAPTURE_LGM_HUNT_FIRE_WU       = 100
+-- BLAST_DEAD_PILL_OPEN (2026-11-06): the engine's builder blast test
+-- (lgm.c lgmBlastCatches) counts a DEAD pill's square as open ground: a blast
+-- there kills a man within 128 wu, on that square or across its edge, and
+-- not a man in its far corner. Only a LIVE pill (pillsIsPillHit, armour > 0),
+-- a base or a building is solid (same-square-only kill). The brain reads the
+-- pill's health from what the player sees (the pill sprite and the pill
+-- status panel both show a dead pill). true = a man on a dead pill is aimed
+-- at with the open-ground rule (init.lua lgm_on_solid). KEEL: false (any
+-- deployed pill, dead or alive, is solid -- the old engine rule).
+M.BLAST_DEAD_PILL_OPEN = true
 -- REFIRE_MAX_MISSES: keep firing at the same man every reload-available tick,
 -- but give up after this many consecutive misses (a shot whose flight completed
 -- with the man still alive).  Counter resets on a kill or a target change, and
@@ -5757,6 +5768,7 @@ M.PRESETS = {
     CAPTURE_LGM_HUNT_SWEEP_FOCUS_RADIUS = 2.5,  -- moot, feature keel-off
     CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 0,     -- no heading nudge (no-op value)
     CAPTURE_LGM_HUNT_FIRE_WU      = 64,         -- capture fire gate = the shared ½-tile gate (no wider shot)
+    BLAST_DEAD_PILL_OPEN          = false,      -- 2026-11-06: a dead pill's square is solid for the builder blast, as the old engine had it
     CAPTURE_LGM_HUNT_REFIRE_MAX_MISSES = 0,     -- no capture-target refire (off)
     -- 2026-09-08: a hostile LGM within CAPTURE_LGM_PRIORITY_RADIUS tiles
     -- (Chebyshev) of the pill the capture flow is driving at now gets his

@@ -7016,17 +7016,23 @@ function Brain.think(info)
       return key, 0                                                 -- >1 unit away: HELD
     end
     -- A man is "solid" to lgm.c's death check (in-tile-only kill, no splash) when
-    -- he stands on a building, a half-build, a base, OR ANY DEPLOYED PILL.  The
-    -- engine (pillbox.c pillsScanExistPos) tests DEPLOYMENT, not armour, and the
-    -- dead corpse we're sweeping is still a deployed pill -- so a man on it is
-    -- solid, and only an in-tile hit kills him.  world.lua indexes pill_at only for
-    -- a deployed (not-carried) pill, so ANY pill_at entry means solid regardless of
-    -- health.  (This is a DIFFERENT rule from the shell-collision LOS check, which
-    -- correctly keeps health>0 because shells only collide with LIVE pills.)
+    -- he stands on a building, a half-build, a base, or a LIVE pill.  The engine
+    -- (lgm.c lgmBlastCatches) tests pillsIsPillHit, armour > 0, so the dead
+    -- corpse we're sweeping is open ground: the 128-wu splash reaches a man on
+    -- it.  C.BLAST_DEAD_PILL_OPEN false (KEEL) keeps the old engine rule, where
+    -- ANY deployed pill was solid regardless of health.  world.lua indexes
+    -- pill_at only for a deployed (not-carried) pill.
     local function lgm_on_solid(mx, my)
       local tt = U.ttype(mx, my)
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
-      if world.pill_at and world.pill_at[my * 256 + mx] then return true end
+      local plst = world.pill_at and world.pill_at[my * 256 + mx]
+      if plst then
+        if not C.BLAST_DEAD_PILL_OPEN then return true end
+        for i = 1, #plst do
+          local p = plst[i].pill
+          if p and (p.health or 0) > 0 and not p.in_tank then return true end
+        end
+      end
       local bentry = world.base_at and world.base_at[my * 256 + mx]
       if bentry and bentry.base then return true end
       return false
@@ -7123,8 +7129,8 @@ function Brain.think(info)
             end
           end
         end
-        -- KILLABLE from this heading?  Open ground: within 128 wu of the ray
-        -- (splash reaches).  Solid square (live pill/base/building): the ray must
+        -- KILLABLE from this heading?  Open ground (a dead pill too): within 128
+        -- wu of the ray (splash reaches).  Solid square (live pill/base/building): the ray must
         -- actually cross his tile -- splash won't kill there, only an in-tile hit.
         -- Otherwise fall back to hovering the sight on the pill centre.
         local killable = false
