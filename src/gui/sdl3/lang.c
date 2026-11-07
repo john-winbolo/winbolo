@@ -2232,7 +2232,7 @@ static const LangEntry langTable[] = {
     {2126, "This server has voice turned off"},
     {1847, "Currently: {string1}"},
     {1848, "Spectators ({number}):"},
-    {3428, "Bot Hosts ({number}):"},
+    {3599, "Bot Hosts ({number}):"},
     {3429, "{string1}: {string2}, {number} of {number2} bots"},
     {3430, "connected"},
     {3431, "syncing {number}%"},
