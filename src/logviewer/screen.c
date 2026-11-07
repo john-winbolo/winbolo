@@ -79,6 +79,7 @@
 #include "lv_lag.h"              /* each player's lag and the lag view's history */
 #include "lv_shell_owner.h"      /* which player fired each shell, for the lag view */
 #include "lv_early_blast.h"      /* a temporary test toggle: own shells explode at once */
+#include "shell_lgm_rewind.h"     /* the builders' shorter rewind */
 
 /* The middle of the visible map from the start of the view (defined with
  * lv_screenSetViewInset). */
@@ -439,13 +440,20 @@ static bool lv_lagViewPlayerHere(void) {
 
 /* The frame the lag view draws at the playhead, or NULL to draw the present:
    the view is off, its player has no record yet, or the history holds no
-   frame that old. */
-static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs) {
+   frame that old. lgmFrame, when not NULL, takes the frame the builders are
+   drawn from: the server tests builders one entry less far back than tanks
+   (shellLgmRewind), so that is a newer frame. It is NULL when the tanks'
+   frame is. */
+static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs, const LvLagFrame **lgmFrame) {
   const LvLagRecord *rec;
   uint32_t behind;
+  const LvLagFrame *f;
 
   if (behindMs != NULL) {
     *behindMs = 0;
+  }
+  if (lgmFrame != NULL) {
+    *lgmFrame = NULL;
   }
   if (g_lv == NULL || !s_lagFeature || !lv_lagViewPlayerHere()) {
     return NULL;
@@ -465,7 +473,16 @@ static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs) {
       behind > g_lv->timeRunning) {
     return NULL;
   }
-  return lv_lagRingFind(&s_lagRing, g_lv->timeRunning - behind);
+  f = lv_lagRingFind(&s_lagRing, g_lv->timeRunning - behind);
+  if (f != NULL && lgmFrame != NULL) {
+    /* Newer than f, so the ring has it whenever it has f. */
+    uint32_t lgmBehind = (uint32_t) shellLgmRewind(rec->rewind) * LV_LAG_ENTRY_MS;
+    *lgmFrame = lv_lagRingFind(&s_lagRing, g_lv->timeRunning - lgmBehind);
+    if (*lgmFrame == NULL) {
+      *lgmFrame = f;
+    }
+  }
+  return f;
 }
 
 bool lv_screenLagRecorded(void) {
@@ -577,7 +594,7 @@ bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *dr
   if (lv_screenLagViewSlot() < 0) {
     return FALSE;
   }
-  f = lv_lagViewFrame(&behind);
+  f = lv_lagViewFrame(&behind, NULL);
   if (name != NULL && nameSize > 0) {
     /* The name the player has now, so a rename shows at once. */
     name[0] = '\0';
@@ -1451,6 +1468,7 @@ void lv_screenUpdate(updateType value) {
   screenBullets sb;
   screenLgm sl;
   const LvLagFrame *lagFrame; /* the lag view's frame; NULL draws the present */
+  const LvLagFrame *lagLgmFrame; /* the frame its builders are drawn from */
   shells lagShells = NULL;
 
 
@@ -1463,21 +1481,23 @@ void lv_screenUpdate(updateType value) {
   }
 
   lv_screenUpdateView(value);
-  lagFrame = lv_lagViewFrame(NULL);
+  lagFrame = lv_lagViewFrame(NULL, &lagLgmFrame);
   if (lagFrame != NULL) {
     /* The lag view: the other tanks, the builders and the shells where the
-       chosen player's screen showed them. The player's own client drew
-       its own shells at once, from its own tank, so with "Toggle
-       Screen-True Own Shells" on those come from the present frame
-       (lv_lagViewFrame has checked the newest frame is the playhead's).
-       With it off they stay at the old time too. A shell with no clear
-       owner stays at the old time. */
+       chosen player's screen showed them. The builders are one entry newer
+       than the tanks (shellLgmRewind), as the server tests them. The
+       player's own client drew its own shells at once, from its own tank,
+       so with "Toggle Screen-True Own Shells" on those come from the
+       present frame (lv_lagViewFrame has checked the newest frame is the
+       playhead's). With it off they stay at the old time too. A shell with
+       no clear owner stays at the old time. */
     const LvLagFrame *now = &s_lagRing.frames[s_lagRing.newest];
     const bool ownAtPresent = s_screenTrueShells;
     /* TEMPORARY TEST TOGGLE (lv_early_blast.h): the early blasts. */
     const bool earlyBlast = lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl);
     int i;
     lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
+    lv_playersSetLagLgmFrame(lagLgmFrame);
     lagShells = lv_shellsCreate();
     /* TEMPORARY TEST TOGGLE (lv_early_blast.h): each early blast of the
        chosen player hides its server explosion, one record per frame. */

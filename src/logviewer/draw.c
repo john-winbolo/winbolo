@@ -1188,6 +1188,14 @@ static void drawRenderTexture(SDL_Texture *texture, int srcX, int srcY, int srcW
     SDL_RenderTexture(sdlRenderer, texture, &srcRect, &dstRect);
 }
 
+/* drawRenderTexture with the place on the target as floats, for a picture
+   placed by a half art pixel, as a shell's tip offset can be. */
+static void drawRenderTextureF(SDL_Texture *texture, int srcX, int srcY, int srcW, int srcH, float dstX, float dstY) {
+    SDL_FRect srcRect = { (float)srcX, (float)srcY, (float)srcW, (float)srcH };
+    SDL_FRect dstRect = { dstX, dstY, (float)srcW, (float)srcH };
+    SDL_RenderTexture(sdlRenderer, texture, &srcRect, &dstRect);
+}
+
 /* The markers the followed player would see, into the overview's render
  * target, whose square (0, 0) is the viewport's top-left. A marker's square
  * and the one above it, where the pointer sits, are marked for redraw the
@@ -1649,8 +1657,16 @@ static void lv_drawMarkRedrawRect(int mx, int my, int px, int py, int w, int h) 
 
 int lv_drawGetFrameRate(void) { return (int)g_dwFrameTotal; }
 
+/* A shell's place is its front tip, the point the engine tests for hits.
+ * spritePositionShell (src/gui/sdl3/sprite_positions.c) is what the game
+ * draws a shell with: it puts the tip pixel of each direction's picture on
+ * that point, not the picture's top left. The viewer calls it too, in the
+ * Classic style the viewer draws in, so a shell is drawn where the game
+ * draws it and where the server tests it. An explosion frame gets no tip
+ * offset, as in the game. */
 void lv_drawShells(screenBullets *sBullets) {
-    int total, count, x, y, srcX, srcY, srcW, srcH;
+    int total, count, srcX, srcY, srcW, srcH;
+    float fx, fy;
     BYTE px, py, frame, mx, my, zf;
     
     total = lv_screenBulletsGetNumEntries(sBullets);
@@ -1658,8 +1674,8 @@ void lv_drawShells(screenBullets *sBullets) {
     
     for (count = 1; count <= total; count++) {
         lv_screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
-        x = (mx * zf * TILE_SIZE_X) + zf * px;
-        y = (my * zf * TILE_SIZE_Y) + zf * py;
+        spritePositionShell(0.0f, 0.0f, GFX_ANIM_CLASSIC, (float)zf, 1,
+                            mx, my, px, py, px << 4, py << 4, frame, &fx, &fy);
         
         switch (frame) {
         case SHELL_EXPLOSION8: srcX = zf*EXPLOSION8_X; srcY = zf*EXPLOSION8_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; break;
@@ -1688,9 +1704,19 @@ void lv_drawShells(screenBullets *sBullets) {
         default: srcX = zf*SHELL_15_X; srcY = zf*SHELL_15_Y; srcW = zf*SHELL_15_WIDTH; srcH = zf*SHELL_15_HEIGHT; break;
         }
         
-        if (frame >= SHELL_EXPLOSION8 && frame <= SHELL_EXPLOSION1) lv_drawMarkRedraw(mx, my, px, py, 0);
-        else lv_drawMarkRedraw(mx, my, px, py, 10);
-        drawRenderTexture(textureTiles, srcX, srcY, srcW, srcH, x, y);
+        if (frame >= SHELL_EXPLOSION8 && frame <= SHELL_EXPLOSION1) {
+            lv_drawMarkRedraw(mx, my, px, py, 0);
+        } else {
+            /* The tip offset moves the picture up to 4 art pixels left of
+               and above px, py, which can be in the square before: mark
+               every square the picture is on, one pixel more each way for
+               the half-pixel offsets. */
+            int left = (int)floorf(fx / (float)zf) - mx * TILE_SIZE_X;
+            int top  = (int)floorf(fy / (float)zf) - my * TILE_SIZE_Y;
+            lv_drawMarkRedrawRect(mx, my, left, top,
+                                  srcW / zf + 1, srcH / zf + 1);
+        }
+        drawRenderTextureF(textureTiles, srcX, srcY, srcW, srcH, fx, fy);
     }
 }
 
