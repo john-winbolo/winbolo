@@ -11,6 +11,7 @@
  * log_Shell record holds, so the windows are checked against what the
  * server writes.
  */
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -51,6 +52,16 @@ int run_lv_shell_owner_rules(void) {
   UT_ASSERT(lv_shellOwnerIsShellFrame(9) && lv_shellOwnerIsShellFrame(24));
   UT_ASSERT(!lv_shellOwnerIsShellFrame(8) && !lv_shellOwnerIsShellFrame(1) &&
             !lv_shellOwnerIsShellFrame(25));
+  /* The unit vector table is the cos and sin the matcher used to call. */
+  {
+    uint8_t d;
+    for (d = 0; d < 32; d++) {
+      double ux, uy;
+      double a = ((double)(d & 15) * 16.0 - 64.0) * (6.283185307179586 / 256.0);
+      lv_shellOwnerDirVector(d, &ux, &uy);
+      UT_ASSERT(fabs(ux - cos(a)) <= 1e-15 && fabs(uy - sin(a)) <= 1e-15);
+    }
+  }
   return 0;
 }
 

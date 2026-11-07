@@ -119,12 +119,33 @@ static inline bool lv_shellOwnerIsShellFrame(uint8_t frame) {
   return frame >= 9 && frame <= 24;
 }
 
-/* The unit vector of direction dir (0 north, then clockwise, 16 to the
-   turn), the way utilCalcDistance turns an angle into a move. */
+/* The unit vector of each direction (0 north, then clockwise, 16 to the
+   turn), the way utilCalcDistance turns an angle into a move. Each entry
+   is cos and sin of (dir * 16 - 64) * (2 pi / 256), as the C library gives
+   them, so the matcher does no trig call per test. */
+static const double lv_shellOwnerUnit[16][2] = {
+  {6.123233995736766e-17, -1.0}, /* 0 */
+  {0.38268343236508984, -0.9238795325112867}, /* 1 */
+  {0.7071067811865476, -0.7071067811865476}, /* 2 */
+  {0.9238795325112867, -0.3826834323650898}, /* 3 */
+  {1.0, 0.0}, /* 4 */
+  {0.9238795325112867, 0.3826834323650898}, /* 5 */
+  {0.7071067811865476, 0.7071067811865476}, /* 6 */
+  {0.38268343236508984, 0.9238795325112867}, /* 7 */
+  {6.123233995736766e-17, 1.0}, /* 8 */
+  {-0.3826834323650897, 0.9238795325112867}, /* 9 */
+  {-0.7071067811865475, 0.7071067811865476}, /* 10 */
+  {-0.9238795325112867, 0.3826834323650899}, /* 11 */
+  {-1.0, 1.2246467991473532e-16}, /* 12 */
+  {-0.9238795325112868, -0.38268343236508967}, /* 13 */
+  {-0.7071067811865477, -0.7071067811865475}, /* 14 */
+  {-0.38268343236509034, -0.9238795325112865}, /* 15 */
+};
+
+/* The unit vector of direction dir. */
 static inline void lv_shellOwnerDirVector(uint8_t dir, double *ux, double *uy) {
-  double a = ((double)(dir & 15) * 16.0 - 64.0) * (6.283185307179586 / 256.0);
-  *ux = cos(a);
-  *uy = sin(a);
+  *ux = lv_shellOwnerUnit[dir & 15][0];
+  *uy = lv_shellOwnerUnit[dir & 15][1];
 }
 
 /* How far (dx, dy) goes along direction dir, and how far across it. */

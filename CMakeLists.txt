@@ -6414,6 +6414,7 @@ set(_unit_test_names
     lv_early_blast_frames
     lv_early_blast_match
     lv_early_blast_hide
+    lv_early_blast_needs_own_shells
     lv_lag_view_rename
     lv_overrun_read
     log_roundtrip_ping
