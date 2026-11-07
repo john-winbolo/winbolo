@@ -2161,6 +2161,7 @@ set(CLIENT_SOURCES
     src/bolo/nat_portmap.c
     # The Bot Host inside the client: bothost_main.c built a second time.
     src/bothost/bothost_embed.c src/bothost/bothost_embed_service.c
+    src/bothost/bothost_optout.c
     src/bothost/bothost_rec.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
@@ -3228,6 +3229,7 @@ set(HEADLESS_SOURCES
     src/headless/cmd_stdin.c
     # The Bot Host inside the client: bothost_main.c built a second time.
     src/bothost/bothost_embed.c src/bothost/bothost_embed_service.c
+    src/bothost/bothost_optout.c
     src/bothost/bothost_rec.c
     src/third_party/tweetnacl/tweetnacl.c
 )
@@ -4781,6 +4783,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's CPU estimate per Bot Host row: the percent, the meter,
     # CTRL_BOT_HOST_CPU and the client's row.
     tests/unit/test_bot_host_cpu.c
+    # The lobby's one-game opt-out from running bots on this computer: the
+    # 0-slot report, the server giving the bots back, the client's state.
+    tests/unit/test_bot_host_optout.c
+    src/bothost/bothost_optout.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
@@ -6220,6 +6226,9 @@ set(_unit_test_names
     bot_host_cpu_meter
     bot_host_cpu_codec
     bot_host_cpu_client_row
+    bot_host_optout_slots_codec
+    bot_host_optout_give_back
+    bot_host_optout_client_reset
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot
     internal_msg_skips_inactive_bot_slot

@@ -37,11 +37,21 @@ CHECKS (one PASS/FAIL line each)
                  for the lobby's Bot Host rows) for P1's host, P2's host and
                  the server itself, and each is a percent ("N%" or "<1%").
 
+    7. optout:   a second run with its own DS (--case optout runs only
+                 it). P1 joins and at its tick OPTOUT_TICK turns on the
+                 lobby's "Don't run bots on this computer for this game"
+                 (--bothost-optout-at-tick). Its host offers 0 slots, every
+                 bot on it comes back to the server at once with the same
+                 state check as 2, and the host stays connected. No bot
+                 thinks on P1 while the opt-out is on. At OPTIN_TICK P1
+                 turns it off (--bothost-optin-at-tick): the host offers
+                 its slots again and takes bots again.
+
     Brain (Lua) state does not move with a bot: the bot gets a new brain on
     each move, as with any Bot Host fallback. The test does not check it.
 
 Usage: python tests/client_bot_hosts_test.py [--build DIR] [--port N]
-           [--out DIR] [--bots N] [--slots N]
+           [--out DIR] [--bots N] [--slots N] [--case all|hosts|optout]
 Exit 0 when every check passes. The logs stay in --out (default: a folder
 client_bot_hosts_<time> under the system temp folder).
 """
@@ -96,6 +106,14 @@ HOST_UP_RE = re.compile(r'\[bothost\] player (\d+) "([^"]*)" Bot Host connected 
 CPU_RE = re.compile(r'\[bothost\] CPU estimate: (Bot Host|the server) "([^"]*)" '
                     r"(\d+%|<1%) of its machine's CPU, (\d+) bots")
 HOST_GONE_RE = re.compile(r'\[bothost\] Bot Host "([^"]*)" at \S+ gone \((.*)\)')
+SLOTS_RE = re.compile(r'\[bothost\] Bot Host "([^"]*)" now offers this server '
+                      r'(\d+) slots')
+
+# The opt-out case: P1's own ticks at which it turns the opt-out on and off,
+# and when it ends.
+OPTOUT_TICK = 1500
+OPTIN_TICK = 2500
+OPTOUT_END_TICK = 3500
 
 
 def find_exe(build_dir, name):
@@ -196,7 +214,7 @@ def events(text):
     for line in text.splitlines():
         for kind, rx in (("offer", OFFER_RE), ("think", THINK_RE),
                          ("back", BACK_RE), ("up", HOST_UP_RE),
-                         ("gone", HOST_GONE_RE)):
+                         ("gone", HOST_GONE_RE), ("slots", SLOTS_RE)):
             m = rx.search(line)
             if m:
                 out.append((kind, m.groups()))
@@ -296,6 +314,83 @@ def check_moves(snaps, backs, label):
     return ok
 
 
+def run_optout(build_dir, out_dir, port, bots, slots, ds_exe, hl_exe, mapdir):
+    """7. optout: P1 turns its computer's bots off for this game, then on
+    again. Returns True when every part holds."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print("=== opt-out: %d bots, P1 offers %d slots, port %d" % (bots, slots, port))
+    print("    logs: %s" % out_dir)
+    run = Run(build_dir, out_dir, port, bots, slots)
+    ok = False
+    try:
+        run.start_ds(ds_exe, mapdir)
+        if not run.wait_for("the DS to start its bots",
+                            lambda: "[bothost]" in run.ds_text(), 20):
+            return False
+        run.start_player(hl_exe, "p1opt", "P1",
+                         ["--bothost-optout-at-tick", str(OPTOUT_TICK),
+                          "--bothost-optin-at-tick", str(OPTIN_TICK),
+                          "--ticks", str(OPTOUT_END_TICK)])
+        p1 = run.players[0][1]
+        try:
+            p1.wait(timeout=OPTOUT_END_TICK / 50 + 90)
+        except subprocess.TimeoutExpired:
+            print("  P1 did not end by itself")
+        time.sleep(3)
+        p1_log = run.players[0][3]
+        try:
+            p1_text = p1_log.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            p1_text = ""
+        ev = events(run.ds_text())
+
+        # Where the 0-slot report and the report of the slots again are.
+        i_zero = next((i for i, (k, g) in enumerate(ev)
+                       if k == "slots" and g[0] == "P1" and g[1] == "0"), -1)
+        i_again = next((i for i, (k, g) in enumerate(ev)
+                        if i > i_zero >= 0 and k == "slots" and g[0] == "P1"
+                        and g[1] != "0"), -1)
+        before = [g for k, g in ev[:max(i_zero, 0)]
+                  if k == "think" and g[2] == "P1"]
+        print("  P1 turned the opt-out on: %s; off again: %s" %
+              ("yes" if "Turning this computer's bots off" in p1_text else "no",
+               "yes" if "Turning this computer's bots on again" in p1_text else "no"))
+        print("  bots that thought on P1 before the opt-out: %d" % len(before))
+        print("  DS: P1 offers 0 slots: %s; offers slots again: %s" %
+              ("yes" if i_zero >= 0 else "no",
+               ("yes (%s)" % ev[i_again][1][1]) if i_again >= 0 else "no"))
+
+        # Every bot on P1 at the 0-slot report comes back at once, for that
+        # reason; the host stays connected until P1 itself ends.
+        on_p1 = set()
+        for k, g in ev[:max(i_zero, 0)]:
+            if k == "think" and g[2] == "P1":
+                on_p1.add(g[0])
+            elif k == "back" and g[2] == "P1":
+                on_p1.discard(g[0])
+        window = ev[i_zero + 1:i_again] if i_zero >= 0 and i_again >= 0 else []
+        backs = [g for k, g in ev[i_zero + 1:] if k == "back" and g[2] == "P1"
+                 and "offers 0 slots" in g[3]] if i_zero >= 0 else []
+        back_ids = {g[0] for g in backs}
+        gone_early = [g for k, g in window if k == "gone" and g[0] == "P1"]
+        thinks_in = [g for k, g in window if k == "think" and g[2] == "P1"]
+        offers_in = [g for k, g in window if k == "offer" and g[2] == "P1"]
+        after = [g for k, g in ev[i_again + 1:] if k == "think" and g[2] == "P1"]             if i_again >= 0 else []
+        print("  bots on P1 at the opt-out: %s; came back for it: %s" %
+              (sorted(on_p1), sorted(back_ids)))
+        print("  while it was on: host gone %d, offers to P1 %d, thinks on P1 %d" %
+              (len(gone_early), len(offers_in), len(thinks_in)))
+        print("  bots that thought on P1 after it was off again: %d" % len(after))
+        snaps = load_snaps(out_dir / "snap.jsonl")
+        moves_ok = check_moves(snaps, backs, "P1's opt-out")
+        ok = (i_zero >= 0 and i_again >= 0 and bool(before) and
+              bool(on_p1) and on_p1 <= back_ids and not gone_early and
+              not offers_in and not thinks_in and bool(after) and moves_ok)
+    finally:
+        run.quit_ds()
+    return ok
+
+
 def main():
     args = sys.argv[1:]
     build_dir = REPO / "build"
@@ -303,6 +398,7 @@ def main():
     bots = 6
     slots = 3
     out_dir = None
+    case = "all"
     i = 0
     while i < len(args):
         a = args[i]
@@ -316,6 +412,9 @@ def main():
             bots = int(args[i + 1]); i += 2
         elif a == "--slots" and i + 1 < len(args):
             slots = int(args[i + 1]); i += 2
+        elif a == "--case" and i + 1 < len(args) and \
+                args[i + 1] in ("all", "hosts", "optout"):
+            case = args[i + 1]; i += 2
         else:
             print("unknown argument %s" % a)
             return 2
@@ -336,6 +435,14 @@ def main():
     shutil.copyfile(SRC_MAP, mapdir / "client_bot_hosts.map")
     (mapdir / "client_bot_hosts.scenario.lua").write_text(SCRIPT % ROUND_TICKS,
                                                          encoding="utf-8")
+
+    if case == "optout":
+        ok = run_optout(build_dir, out_dir / "optout", port, bots, slots,
+                        ds_exe, hl_exe, mapdir)
+        print()
+        print("%s: optout" % ("PASS" if ok else "FAIL"))
+        print("logs: %s" % out_dir)
+        return 0 if ok else 1
 
     run = Run(build_dir, out_dir, port, bots, slots)
     results = []
@@ -469,13 +576,21 @@ def main():
     finally:
         run.quit_ds()
 
+    want = 6
+    if case == "all":
+        print()
+        results.append(("optout", run_optout(build_dir, out_dir / "optout",
+                                             port + 1, bots, slots, ds_exe,
+                                             hl_exe, mapdir)))
+        want = 7
+
     print()
     allok = True
     for name, ok in results:
         print("%s: %s" % ("PASS" if ok else "FAIL", name))
         allok = allok and ok
     print("logs: %s" % out_dir)
-    return 0 if allok and len(results) == 6 else 1
+    return 0 if allok and len(results) == want else 1
 
 
 if __name__ == "__main__":

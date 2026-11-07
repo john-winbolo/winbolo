@@ -120,6 +120,8 @@ static ServerSim *botHostSim = NULL;
 
 static void botSeatReset(int s, bool noReturn);
 static void botHostDrop(ServerSim *sim, int h, const char *why);
+static void botSeatFallBack(ServerSim *sim, int s, const char *why,
+                            bool tellHost);
 
 static bool botHostAddrEqual(const struct sockaddr_in *a,
                              const struct sockaddr_in *b) {
@@ -514,6 +516,29 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
                     (unsigned)evt.u.botHostSlots.slots);
         }
         hc->slots = evt.u.botHostSlots.slots;
+        {
+            /* 0 slots: the host gives every bot back at once, as when it
+             * leaves (a player turned off "run bots on this computer" for
+             * this game). The host stays connected, so it takes bots again
+             * when it offers slots again. */
+            int seatHost[MAX_TANKS], s2;
+            uint32_t back;
+            for (s2 = 0; s2 < MAX_TANKS; s2++) {
+                seatHost[s2] = udpServer.botSeats[s2].state != BOT_SEAT_LOCAL
+                                   ? udpServer.botSeats[s2].host : -1;
+            }
+            back = botHostSim == NULL ? 0
+                   : botHostSeatsToGiveBack(seatHost, MAX_TANKS, h,
+                                            evt.u.botHostSlots.slots);
+            for (s2 = 0; s2 < MAX_TANKS; s2++) {
+                if ((back & (1u << s2)) == 0) continue;
+                botSeatFallBack(botHostSim, s2, "its host offers 0 slots",
+                                true);
+                /* Not the seat's fault: it may go to another host at once,
+                 * or back to this one when it offers slots again. */
+                udpServer.botSeats[s2].noReturn = false;
+            }
+        }
         if (rs < MAX_TANKS) {
             BotHostSeat *seat = &udpServer.botSeats[rs];
             if (seat->state == BOT_SEAT_PENDING && seat->host == h &&

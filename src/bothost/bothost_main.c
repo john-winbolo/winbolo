@@ -137,6 +137,16 @@ static int      embedSlotsFixed;
 static uint32_t embedCapacityGen;
 /* The server refused the host: it does not try again. */
 static bool     embedRefused;
+/* The player turned off "run bots on this computer" for this game: the
+ * host offers the server 0 slots and takes no new seat, but stays
+ * connected, so it can offer its slots again. Set by the client's main
+ * thread (botHostEmbedSetWithhold), read by the host's thread. */
+static SDL_AtomicInt embedWithhold;
+
+/* The host offers no slots now (the Bot Host inside a client only). */
+static bool hostWithheld(void) {
+    return HOST_EMBED && SDL_GetAtomicInt(&embedWithhold) != 0;
+}
 
 /* One line on stderr, and in the log file for the Bot Host inside a
  * client, which has no console of its own. */
@@ -344,8 +354,10 @@ static int poolUsedFor(int srv) {
     return n;
 }
 
-/* The slots server srv may use now: its own seats and the free ones. */
+/* The slots server srv may use now: its own seats and the free ones;
+ * none while the player withholds this computer (hostWithheld). */
 static int poolSlotsFor(int srv) {
+    if (hostWithheld()) return 0;
     return poolUsedFor(srv) + poolFree();
 }
 
@@ -361,6 +373,7 @@ static HostSeat *seatFind(int srv, uint8_t seat) {
 
 static HostSeat *seatTakeFree(void) {
     int i;
+    if (hostWithheld()) return NULL;
     if (poolUsed() >= optSlots) return NULL;
     for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
         if (!seats[i].used) return &seats[i];
@@ -2315,6 +2328,17 @@ void botHostEmbedStop(bool tellServer) {
 
 bool botHostEmbedRunning(void) {
     return embedThread != NULL;
+}
+
+void botHostEmbedSetWithhold(bool on) {
+    int v = on ? 1 : 0;
+    if (SDL_GetAtomicInt(&embedWithhold) == v) return;
+    SDL_SetAtomicInt(&embedWithhold, v);
+    if (embedThread == NULL) return;
+    HOST_EVENT("[bothost] Bot Host \"%s\": %s", optName,
+               on ? "the player turned bots off on this computer for this "
+                    "game; it offers 0 slots"
+                  : "the player turned bots on again; it offers its slots");
 }
 
 void botHostEmbedGetStatus(BotHostEmbedStatus *out) {

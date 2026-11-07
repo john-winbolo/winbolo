@@ -163,6 +163,11 @@ static bool optNoBotHost = false;
 static int optBotHostSlots = 0;
 static char optBotHostCache[1024] = "";
 static int optVanishAtTick = 0;
+/* A test of the lobby's one-game opt-out: turn "Don't run bots on this
+ * computer for this game" on at one tick and off again at another (0:
+ * never). */
+static int optBotHostOptOutAtTick = 0;
+static int optBotHostOptInAtTick = 0;
 static bool optLogBinary = FALSE;
 static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
@@ -2168,6 +2173,13 @@ static void printUsage(const char *prog) {
     "  --vanish-at-tick N\n"
     "                    A crash test: at game tick N the program ends at once,\n"
     "                    with no quit to the server from the player or its Bot Host\n"
+    "  --bothost-optout-at-tick N\n"
+    "                    At game tick N, turn on the lobby's \"Don't run bots on\n"
+    "                    this computer for this game\": the server takes this\n"
+    "                    computer's bots back (a test)\n"
+    "  --bothost-optin-at-tick N\n"
+    "                    At game tick N, turn it off again: this computer offers\n"
+    "                    its slots again (a test)\n"
     "  --allow-unsafe-scripts\n"
     "                    Run scenario scripts with the full Lua standard\n"
     "                    library, no memory cap, no time limits and precompiled\n"
@@ -2342,6 +2354,10 @@ static bool parseArgs(int argc, char **argv) {
       SDL_strlcpy(optBotHostCache, argv[++i], sizeof(optBotHostCache));
     } else if (strcmp(argv[i], "--vanish-at-tick") == 0 && i + 1 < argc) {
       optVanishAtTick = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--bothost-optout-at-tick") == 0 && i + 1 < argc) {
+      optBotHostOptOutAtTick = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--bothost-optin-at-tick") == 0 && i + 1 < argc) {
+      optBotHostOptInAtTick = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--allow-unsafe-scripts") == 0 ||
                strcmp(argv[i], "-allow-unsafe-scripts") == 0) {
       optUnsafeScripts = true;
@@ -3171,6 +3187,17 @@ static int runNetworkMode(void) {
       break;
     }
 
+    /* The lobby's one-game opt-out, as the player would click it. */
+    if (optBotHostOptOutAtTick > 0 && tickCount == optBotHostOptOutAtTick) {
+      fprintf(stderr, "Turning this computer's bots off for this game at "
+                      "tick %d (a test).\n", tickCount);
+      botHostEmbedSetOptOut(humanSim, true);
+    }
+    if (optBotHostOptInAtTick > 0 && tickCount == optBotHostOptInAtTick) {
+      fprintf(stderr, "Turning this computer's bots on again at tick %d "
+                      "(a test).\n", tickCount);
+      botHostEmbedSetOptOut(humanSim, false);
+    }
     /* This computer's Bot Host: start, stop, the bot count. */
     botHostEmbedService(humanSim);
     if (optVanishAtTick > 0 && tickCount >= optVanishAtTick) {
