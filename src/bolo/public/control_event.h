@@ -63,6 +63,8 @@
 #define BOT_HOST_SLOTS_NO_REFUSE  0xFFu
 /* CTRL_BOT_HOST_CPU idx from a Bot Host: its own estimate. */
 #define BOT_HOST_CPU_IDX_SELF     0xFFu
+/* CTRL_BOT_HOST_CPU_BOT owner of a row that is not a player's own host. */
+#define BOT_HOST_CPU_OWNER_NONE   0xFFu
 
 /* BOT_HOST_SYNC_* (the brain sync states) and BOT_HOST_REC_STATE_* (the
  * recording states) are in client_sim.h. */
@@ -589,6 +591,15 @@ typedef enum {
      * (botHostOverrunProbe). A type of its own, as CTRL_BOT_HOST_CPU, so an
      * older server skips it. */
     CTRL_BOT_HOST_CPU_FREE,
+    /* CTRL_BOT_HOST_CPU_BOT — the part of its machine's CPU that one of a
+     * Bot Host's bots uses, in thousandths of a percent (bot_host_cpu.h), as
+     * a uint32. CTRL_BOT_HOST_CPU's whole percent is too coarse for one bot.
+     * Bot Host to server (idx BOT_HOST_CPU_IDX_SELF) when it changes; server
+     * to lobby players and spectators for row idx, with owner: the player
+     * whose own computer the host is, or BOT_HOST_CPU_OWNER_NONE. A type of
+     * its own, as CTRL_BOT_HOST_CPU, so an older peer skips it; a row with
+     * no CTRL_BOT_HOST_CPU_BOT shows the CTRL_BOT_HOST_CPU text. */
+    CTRL_BOT_HOST_CPU_BOT,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1643,6 +1654,13 @@ typedef struct ControlEvent {
         struct {
             uint8_t free;  /* 0..100 or BOT_HOST_CPU_UNKNOWN */
         } botHostCpuFree;
+
+        /* CTRL_BOT_HOST_CPU_BOT — see the enum. */
+        struct {
+            uint8_t  idx;    /* the row, or BOT_HOST_CPU_IDX_SELF from a host */
+            uint8_t  owner;  /* a player number, or BOT_HOST_CPU_OWNER_NONE */
+            uint32_t milli;  /* 1..100000, or BOT_HOST_CPU_MILLI_UNKNOWN */
+        } botHostCpuBot;
 
         /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
         struct {

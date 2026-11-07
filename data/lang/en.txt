@@ -447,6 +447,9 @@ STR_DLGLOBBY_BOTHOST_SERVER_STATE=runs bots itself
 # 0% and below 1%
 STR_DLGLOBBY_BOTHOST_CPU_FMT=(Estimated {number}% of the machine's CPU)
 STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE=(Estimated <1% of the machine's CPU)
+STR_DLGLOBBY_BOTHOST_CPU_BOT_SELF=(Estimated {string1}% per bot of this computer's CPU)
+STR_DLGLOBBY_BOTHOST_CPU_BOT_SERVER=(Estimated {string1}% per bot of the server's CPU)
+STR_DLGLOBBY_BOTHOST_CPU_BOT_OTHER=(Estimated {string1}% per bot of {string2}'s CPU)
 
 # The lobby's one-game opt-out from running the server's bots on this
 # computer, and its mouse-over text

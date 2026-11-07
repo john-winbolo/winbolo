@@ -490,6 +490,14 @@
  * text for above 0% and below 1% */
 #define STR_DLGLOBBY_BOTHOST_CPU_FMT        3650
 #define STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE  3651
+/* The same, per bot, from a newer server and host ({string1} = the percent
+ * without the % sign, "12", "3.4" or "0.035"): on the row of this
+ * computer's own host, on the server's row, and on another row
+ * ({string2} = the player's name for a player's own host, else the Bot
+ * Host's name) */
+#define STR_DLGLOBBY_BOTHOST_CPU_BOT_SELF   3896
+#define STR_DLGLOBBY_BOTHOST_CPU_BOT_SERVER 3897
+#define STR_DLGLOBBY_BOTHOST_CPU_BOT_OTHER  3898
 /* The lobby's one-game opt-out from running the server's bots on this
  * computer, next to the line above, and its mouse-over text */
 #define STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT     3652

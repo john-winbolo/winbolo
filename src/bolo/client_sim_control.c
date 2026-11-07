@@ -441,11 +441,21 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             /* The CPU estimate comes in its own event: a row that stays
              * connected keeps it, a new row has none yet. */
             uint8_t cpu = r->connected ? r->cpu : (uint8_t)BOT_HOST_CPU_UNKNOWN;
+            bool cpuBotHave = r->connected && r->cpuBotHave;
+            uint8_t cpuBotOwner = r->cpuBotOwner;
+            uint32_t cpuBot = r->cpuBot;
             memset(r, 0, sizeof(*r));
             r->cpu = (uint8_t)BOT_HOST_CPU_UNKNOWN;
+            r->cpuBot = BOT_HOST_CPU_MILLI_UNKNOWN;
+            r->cpuBotOwner = (uint8_t)BOT_HOST_CPU_OWNER_NONE;
             r->connected = evt->u.botHostStatus.connected != 0;
             if (r->connected) {
                 r->cpu     = cpu;
+                if (cpuBotHave) {
+                    r->cpuBotHave = true;
+                    r->cpuBotOwner = cpuBotOwner;
+                    r->cpuBot = cpuBot;
+                }
                 r->state   = evt->u.botHostStatus.state;
                 r->percent = evt->u.botHostStatus.percent;
                 r->used    = evt->u.botHostStatus.used;
@@ -465,6 +475,17 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         if (evt->u.botHostCpu.idx < CLIENT_BOT_HOST_ROWS) {
             ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostCpu.idx];
             if (r->connected) r->cpu = evt->u.botHostCpu.cpu;
+        }
+        break;
+
+    case CTRL_BOT_HOST_CPU_BOT:
+        if (evt->u.botHostCpuBot.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostCpuBot.idx];
+            if (r->connected) {
+                r->cpuBotHave = true;
+                r->cpuBotOwner = evt->u.botHostCpuBot.owner;
+                r->cpuBot = evt->u.botHostCpuBot.milli;
+            }
         }
         break;
 

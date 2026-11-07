@@ -155,6 +155,15 @@ typedef struct {
      * BOT_HOST_CPU_UNDER_ONE, or BOT_HOST_CPU_UNKNOWN until the server
      * sends one (an older server never does). */
     uint8_t cpu;
+    /* The part of its machine's CPU one of the row's bots uses, in
+     * thousandths of a percent (CTRL_BOT_HOST_CPU_BOT): cpuBotHave once the
+     * server sends one (an older server or host never does, and the row
+     * then shows cpu), cpuBot BOT_HOST_CPU_MILLI_UNKNOWN while there is no
+     * estimate yet, cpuBotOwner the player whose own computer the host is
+     * or BOT_HOST_CPU_OWNER_NONE. */
+    bool     cpuBotHave;
+    uint8_t  cpuBotOwner;
+    uint32_t cpuBot;
     char    name[CLIENT_BOT_HOST_NAME_LEN];
 } ClientBotHostRow;
 

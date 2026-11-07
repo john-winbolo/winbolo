@@ -292,3 +292,188 @@ int run_bot_host_cpu_client_row(void) {
     clientSimDestroy(cs);
     return 0;
 }
+
+/* ================================================================
+ * 5. The per-bot value (CTRL_BOT_HOST_CPU_BOT)
+ * ================================================================ */
+
+static int fmtIs(double pct, const char *want) {
+    char got[32];
+    botHostCpuFormatPct(pct, got, sizeof(got));
+    if (strcmp(got, want) != 0) {
+        fprintf(stderr, "  format %.6f: \"%s\", want \"%s\"\n", pct, got, want);
+        return 0;
+    }
+    return 1;
+}
+
+/* The lobby's text never says 0: whole numbers from 10, one decimal from
+ * 1, two significant digits under 1, and 0.001 at the least. */
+int run_bot_host_cpu_bot_format(void) {
+    char got[32];
+    UT_ASSERT(fmtIs(0.0, "0.001"));
+    UT_ASSERT(fmtIs(0.0004, "0.001"));
+    UT_ASSERT(fmtIs(0.035, "0.035"));
+    UT_ASSERT(fmtIs(0.42, "0.42"));
+    UT_ASSERT(fmtIs(3.4, "3.4"));
+    UT_ASSERT(fmtIs(12.0, "12"));
+    UT_ASSERT(fmtIs(100.0, "100"));
+    /* The edges between the three forms. */
+    UT_ASSERT(fmtIs(9.96, "10"));
+    UT_ASSERT(fmtIs(0.996, "1.0"));
+    UT_ASSERT(fmtIs(0.0996, "0.10"));
+    UT_ASSERT(fmtIs(0.0123, "0.012"));
+    UT_ASSERT(fmtIs(-1.0, "0.001"));
+    /* From the wire value. */
+    botHostCpuFormatMilli(BOT_HOST_CPU_MILLI_MIN, got, sizeof(got));
+    UT_ASSERT(strcmp(got, "0.001") == 0);
+    botHostCpuFormatMilli(3400, got, sizeof(got));
+    UT_ASSERT(strcmp(got, "3.4") == 0);
+    return 0;
+}
+
+/* The meter's per-bot value: think time over bot time, at least 0.001%,
+ * and kept while no bot thinks (the lobby after a game). */
+int run_bot_host_cpu_bot_meter(void) {
+    BotHostCpuMeter m;
+    uint64_t now = 5000000000ull;
+    double total = 0.0;
+    int i;
+
+    botHostCpuMeterInit(&m);
+    UT_ASSERT(m.perBotMilli == BOT_HOST_CPU_MILLI_UNKNOWN);
+    /* No bots in the lobby: no value yet. */
+    for (i = 0; i < 60; i++) {
+        now += 100000000ull;
+        botHostCpuMeterSample(&m, now, total, 4, 0);
+    }
+    UT_ASSERT(m.perBotMilli == BOT_HOST_CPU_MILLI_UNKNOWN);
+    /* 2 bots, 20 ms of think time each 100 ms, on 4 cores: 5% of the
+     * machine, 2.5% per bot. */
+    for (i = 0; i < 60; i++) {
+        now += 100000000ull;
+        total += 20.0;
+        botHostCpuMeterSample(&m, now, total, 4, 2);
+    }
+    UT_ASSERT_MSG(m.perBotMilli >= 2450 && m.perBotMilli <= 2550,
+                  "per bot %u", (unsigned)m.perBotMilli);
+    /* The game ends: no bots, no thinks. The value stays. */
+    for (i = 0; i < 100; i++) {
+        now += 100000000ull;
+        botHostCpuMeterSample(&m, now, total, 4, 0);
+    }
+    UT_ASSERT_MSG(m.perBotMilli >= 2450 && m.perBotMilli <= 2550,
+                  "kept %u", (unsigned)m.perBotMilli);
+    /* A tiny think time is never 0. */
+    UT_ASSERT(botHostCpuMilliPerBot(0.000001, 5000.0, 64) ==
+              BOT_HOST_CPU_MILLI_MIN);
+    UT_ASSERT(botHostCpuMilliPerBot(0.0, 5000.0, 4) ==
+              BOT_HOST_CPU_MILLI_UNKNOWN);
+    UT_ASSERT(botHostCpuMilliPerBot(10.0, 0.0, 4) ==
+              BOT_HOST_CPU_MILLI_UNKNOWN);
+    UT_ASSERT(botHostCpuMilliPerBot(1.0e9, 1.0, 1) == BOT_HOST_CPU_MILLI_MAX);
+    return 0;
+}
+
+int run_bot_host_cpu_bot_codec(void) {
+    ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(CTRL_BOT_HOST_CPU_BOT);
+    ControlDecodeBodyFn dec = transportControlCodecBodyDecoder(CTRL_BOT_HOST_CPU_BOT);
+    ControlEvent in, out;
+    uint8_t buf[16];
+    size_t len = 0;
+
+    UT_ASSERT(enc != NULL && dec != NULL);
+    UT_ASSERT(strcmp(controlEventTypeName(CTRL_BOT_HOST_CPU_BOT),
+                     "CTRL_BOT_HOST_CPU_BOT") == 0);
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_CPU_BOT;
+    in.u.botHostCpuBot.idx = 2;
+    in.u.botHostCpuBot.owner = 5;
+    in.u.botHostCpuBot.milli = 35;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(len == 6);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.type == CTRL_BOT_HOST_CPU_BOT);
+    UT_ASSERT(out.u.botHostCpuBot.idx == 2 && out.u.botHostCpuBot.owner == 5);
+    UT_ASSERT(out.u.botHostCpuBot.milli == 35);
+
+    /* From a host, unknown, no owner. */
+    in.u.botHostCpuBot.idx = BOT_HOST_CPU_IDX_SELF;
+    in.u.botHostCpuBot.owner = BOT_HOST_CPU_OWNER_NONE;
+    in.u.botHostCpuBot.milli = BOT_HOST_CPU_MILLI_UNKNOWN;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.u.botHostCpuBot.idx == BOT_HOST_CPU_IDX_SELF);
+    UT_ASSERT(out.u.botHostCpuBot.owner == BOT_HOST_CPU_OWNER_NONE);
+    UT_ASSERT(out.u.botHostCpuBot.milli == BOT_HOST_CPU_MILLI_UNKNOWN);
+
+    /* The largest value, and later bytes skipped. */
+    in.u.botHostCpuBot.idx = 0;
+    in.u.botHostCpuBot.milli = BOT_HOST_CPU_MILLI_MAX;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    buf[6] = 0xAB;
+    UT_ASSERT(dec(buf, 7, &out));
+    UT_ASSERT(out.u.botHostCpuBot.milli == BOT_HOST_CPU_MILLI_MAX);
+
+    /* 0 and past 100% read as unknown; a bad owner reads as none. */
+    buf[2] = 0; buf[3] = 0; buf[4] = 0; buf[5] = 0;
+    buf[1] = 200;
+    UT_ASSERT(dec(buf, 6, &out));
+    UT_ASSERT(out.u.botHostCpuBot.milli == BOT_HOST_CPU_MILLI_UNKNOWN);
+    UT_ASSERT(out.u.botHostCpuBot.owner == BOT_HOST_CPU_OWNER_NONE);
+    buf[2] = 0; buf[3] = 0x01; buf[4] = 0x86; buf[5] = 0xA1; /* 100001 */
+    UT_ASSERT(dec(buf, 6, &out));
+    UT_ASSERT(out.u.botHostCpuBot.milli == BOT_HOST_CPU_MILLI_UNKNOWN);
+
+    /* Too short, a row past the list, no room. */
+    UT_ASSERT(!dec(buf, 5, &out));
+    buf[0] = BOT_HOST_STATUS_ROWS;
+    UT_ASSERT(!dec(buf, 6, &out));
+    UT_ASSERT(enc(&in, NULL, buf, 5, &len) != ENCODE_OK);
+    return 0;
+}
+
+static void applyCpuBot(ClientSim *cs, uint8_t idx, uint8_t owner,
+                        uint32_t milli) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_HOST_CPU_BOT;
+    evt.u.botHostCpuBot.idx = idx;
+    evt.u.botHostCpuBot.owner = owner;
+    evt.u.botHostCpuBot.milli = milli;
+    clientSimApplyControl(cs, &evt);
+}
+
+/* A row with only the old byte keeps the old text; a row with the per-bot
+ * value keeps it while the host stays, and loses it when the host goes. */
+int run_bot_host_cpu_bot_client_row(void) {
+    ClientSim *cs = clientSimAlloc();
+    const ClientBotHostRow *r;
+
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    applyStatus(cs, 0, true, "andrew-bsmt");
+    applyCpu(cs, 0, 12);
+    r = clientSimGetBotHostRow(cs, 0);
+    UT_ASSERT(!r->cpuBotHave && r->cpu == 12);
+
+    applyCpuBot(cs, 0, BOT_HOST_CPU_OWNER_NONE, BOT_HOST_CPU_MILLI_UNKNOWN);
+    r = clientSimGetBotHostRow(cs, 0);
+    UT_ASSERT(r->cpuBotHave && r->cpuBot == BOT_HOST_CPU_MILLI_UNKNOWN);
+    applyCpuBot(cs, 0, 3, 3400);
+    applyStatus(cs, 0, true, "andrew-bsmt");
+    r = clientSimGetBotHostRow(cs, 0);
+    UT_ASSERT(r->cpuBotHave && r->cpuBot == 3400 && r->cpuBotOwner == 3);
+
+    applyStatus(cs, 0, false, "");
+    applyStatus(cs, 0, true, "Other");
+    r = clientSimGetBotHostRow(cs, 0);
+    UT_ASSERT(!r->cpuBotHave && r->cpuBot == BOT_HOST_CPU_MILLI_UNKNOWN);
+    UT_ASSERT(r->cpuBotOwner == BOT_HOST_CPU_OWNER_NONE);
+
+    /* No row there: not kept. */
+    applyCpuBot(cs, 5, BOT_HOST_CPU_OWNER_NONE, 100);
+    UT_ASSERT(!clientSimGetBotHostRow(cs, 5)->cpuBotHave);
+    clientSimDestroy(cs);
+    return 0;
+}

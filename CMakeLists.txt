@@ -6248,6 +6248,10 @@ set(_unit_test_names
     bot_host_cpu_meter
     bot_host_cpu_codec
     bot_host_cpu_client_row
+    bot_host_cpu_bot_format
+    bot_host_cpu_bot_meter
+    bot_host_cpu_bot_codec
+    bot_host_cpu_bot_client_row
     bot_host_optout_slots_codec
     bot_host_optout_give_back
     bot_host_optout_client_reset

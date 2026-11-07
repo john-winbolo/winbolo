@@ -252,6 +252,12 @@ typedef struct {
      * (CTRL_BOT_HOST_CPU, bot_host_cpu.h); BOT_HOST_CPU_UNKNOWN until it
      * sends one, and always from an older host. */
     uint8_t  cpu;
+    /* The part of its machine's CPU one of its bots uses, in thousandths of
+     * a percent (CTRL_BOT_HOST_CPU_BOT, bot_host_cpu.h). cpuBotHave: the
+     * host sent one (an older host never does); a later unknown keeps the
+     * value it had. */
+    uint32_t cpuBot;
+    bool     cpuBotHave;
     /* The host machine's free CPU percent, all cores
      * (CTRL_BOT_HOST_CPU_FREE, every 5 s), and the tick it came;
      * BOT_HOST_FREE_UNKNOWN until one comes, and always from an older

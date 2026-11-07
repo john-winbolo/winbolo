@@ -304,6 +304,9 @@ typedef struct {
     int        lastSlotsSent;
     /* The CPU byte last sent in CTRL_BOT_HOST_CPU, -1 for none. */
     int        lastCpuSent;
+    /* The per-bot value last sent in CTRL_BOT_HOST_CPU_BOT; 0 for none, so
+     * the first one (unknown too) goes out. */
+    uint32_t   lastCpuBotSent;
     /* The free CPU reading last sent in CTRL_BOT_HOST_CPU_FREE (its
      * hostFreeSeq), 0 for none. */
     uint32_t   lastFreeSeqSent;
@@ -1312,6 +1315,7 @@ static void ctlReceive(HostServer *sv) {
                     sv->lastPingMs = 0;
                     sv->lastSlotsSent = -1;
                     sv->lastCpuSent = -1;
+                    sv->lastCpuBotSent = 0;
                     sv->lastFreeSeqSent = 0;
                     syncReset(&sv->sync);
                     bulkSenderInit(&sv->recBulk);
@@ -1427,6 +1431,18 @@ static void ctlService(HostServer *sv) {
                 evt.u.botHostCpu.cpu = hostCpuValue;
                 ctlSendEvent(sv, &evt);
                 sv->lastCpuSent = (int)hostCpuValue;
+            }
+            if (hostCpuMeter.perBotMilli != sv->lastCpuBotSent) {
+                /* One bot's part, finer than the byte above. It stays at
+                 * the last game's value while no bot thinks. */
+                ControlEvent evt;
+                memset(&evt, 0, sizeof(evt));
+                evt.type = CTRL_BOT_HOST_CPU_BOT;
+                evt.u.botHostCpuBot.idx = (uint8_t)BOT_HOST_CPU_IDX_SELF;
+                evt.u.botHostCpuBot.owner = (uint8_t)BOT_HOST_CPU_OWNER_NONE;
+                evt.u.botHostCpuBot.milli = hostCpuMeter.perBotMilli;
+                ctlSendEvent(sv, &evt);
+                sv->lastCpuBotSent = hostCpuMeter.perBotMilli;
             }
             if (hostFreeSeq != 0 && hostFreeSeq != sv->lastFreeSeqSent) {
                 ControlEvent evt;

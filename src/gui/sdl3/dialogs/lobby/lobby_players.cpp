@@ -50,6 +50,7 @@ extern "C" {
 #include "client_sim.h"      /* ClientSim + lobby getters; MAX_TANKS, BrainList, PingBand */
 #include "client_net.h"      /* clientSimNetSend* — kick, host transfer, claim start */
 #include "bot_host_cpu.h"    /* BOT_HOST_CPU_* — the Bot Host rows' CPU estimate */
+#include "control_event.h"   /* BOT_HOST_CPU_OWNER_NONE, BOT_HOST_LAG_UNKNOWN */
 #include "bolo_rand.h"       /* bolo_rand_below — random pool for a team's first bot */
 #include "lobby_bot_pools.h" /* lobbyBotPoolCount / Label / Pick */
 #include "start_sides.h"     /* START_SIDE_* / startSideBits / Accepts / Eligible / IsCentre — team start sides */
@@ -785,11 +786,37 @@ static void renderBotHostGroup(ClientSim *cs) {
         }
         if (!first) SDL_strlcat(line, ")", sizeof(line));
 
-        /* How much of its machine's CPU the bots use, as that machine
-         * estimates it: "(Estimated 12% of the machine's CPU)". None when
-         * the row has no estimate (an older host or server). */
+        /* How much of its machine's CPU one bot uses, as that machine
+         * estimates it: "(Estimated 3.4% per bot of the server's CPU)". No
+         * percent while there is no estimate yet (no bot has thought on it
+         * in this server session). A row from an older server or host has
+         * only the whole percent of all its bots: "(Estimated 12% of the
+         * machine's CPU)". */
         char cpuText[160] = "";
-        if (r->cpu == BOT_HOST_CPU_UNDER_ONE) {
+        if (r->cpuBotHave) {
+            if (r->cpuBot != BOT_HOST_CPU_MILLI_UNKNOWN) {
+                MessageArgs ca = {};
+                int sid;
+                botHostCpuFormatMilli(r->cpuBot, ca.string1, sizeof(ca.string1));
+                if (isServer) {
+                    sid = STR_DLGLOBBY_BOTHOST_CPU_BOT_SERVER;
+                } else if (r->cpuBotOwner != BOT_HOST_CPU_OWNER_NONE &&
+                           r->cpuBotOwner == clientSimGetMyPlayerNum(cs)) {
+                    sid = STR_DLGLOBBY_BOTHOST_CPU_BOT_SELF;
+                } else {
+                    const ClientLobbySlot *os =
+                        r->cpuBotOwner < MAX_TANKS
+                            ? clientSimGetLobbySlot(cs, (BYTE)r->cpuBotOwner)
+                            : NULL;
+                    sid = STR_DLGLOBBY_BOTHOST_CPU_BOT_OTHER;
+                    SDL_strlcpy(ca.string2,
+                                (os != NULL && os->connected && os->playerName[0])
+                                    ? os->playerName : r->name,
+                                sizeof(ca.string2));
+                }
+                SDL_strlcpy(cpuText, langGetTextFmt(sid, &ca), sizeof(cpuText));
+            }
+        } else if (r->cpu == BOT_HOST_CPU_UNDER_ONE) {
             SDL_strlcpy(cpuText, langGetText(STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE),
                         sizeof(cpuText));
         } else if (r->cpu <= 100) {

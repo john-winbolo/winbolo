@@ -1455,6 +1455,9 @@ static const LangEntry langTable[] = {
     {3893, "Free CPU: {string1}, bot CPU: {string2}"},
     {3894, "Bots: {number}, slots: {number2}, limit: {string1}"},
     {3895, "Would move (moves off)"},
+    {3896, "(Estimated {string1}% per bot of this computer's CPU)"},
+    {3897, "(Estimated {string1}% per bot of the server's CPU)"},
+    {3898, "(Estimated {string1}% per bot of {string2}'s CPU)"},
     /* The Log Viewer's Chat panel */
     {3100, "Chat"},
     {3101, "No chat messages yet."},

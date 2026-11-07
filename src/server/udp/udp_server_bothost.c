@@ -560,7 +560,8 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
     if ((size_t)bodyLen + 3 > len) return;
     if (msg[0] != CTRL_BOT_HOST_FILE_REQ && msg[0] != CTRL_BOT_HOST_SYNC &&
         msg[0] != CTRL_BOT_HOST_SLOTS && msg[0] != CTRL_BOT_HOST_REC &&
-        msg[0] != CTRL_BOT_HOST_CPU && msg[0] != CTRL_BOT_HOST_CPU_FREE) {
+        msg[0] != CTRL_BOT_HOST_CPU && msg[0] != CTRL_BOT_HOST_CPU_FREE &&
+        msg[0] != CTRL_BOT_HOST_CPU_BOT) {
         return;
     }
     dec = transportControlCodecBodyDecoder((ControlEventType)msg[0]);
@@ -568,6 +569,15 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
     if (evt.type == CTRL_BOT_HOST_CPU) {
         /* Only the percent: the host never says what its machine is. */
         hc->cpu = evt.u.botHostCpu.cpu;
+        return;
+    }
+    if (evt.type == CTRL_BOT_HOST_CPU_BOT) {
+        /* One bot's part, only the number. An unknown keeps the last. */
+        if (!hc->cpuBotHave ||
+            evt.u.botHostCpuBot.milli != BOT_HOST_CPU_MILLI_UNKNOWN) {
+            hc->cpuBot = evt.u.botHostCpuBot.milli;
+        }
+        hc->cpuBotHave = true;
         return;
     }
     if (evt.type == CTRL_BOT_HOST_CPU_FREE) {
@@ -754,6 +764,39 @@ static uint8_t botHostRowCpu(int h, const ControlEvent *row) {
 static uint8_t botHostCpuSent[MAX_BOT_HOSTS + 1];
 static bool    botHostCpuSentInit;
 
+/* Row h's per-bot value and owner for CTRL_BOT_HOST_CPU_BOT. False for a
+ * row from an older host, which then shows the CTRL_BOT_HOST_CPU text. */
+static bool botHostRowCpuBot(int h, const ControlEvent *row, uint32_t *milli,
+                             uint8_t *owner) {
+    const BotHostConn *hc;
+    if (!row->u.botHostStatus.connected) return false;
+    *owner = (uint8_t)BOT_HOST_CPU_OWNER_NONE;
+    if (h == MAX_BOT_HOSTS) {
+        *milli = botHostServerCpuInit ? botHostServerCpu.perBotMilli
+                                      : BOT_HOST_CPU_MILLI_UNKNOWN;
+        return true;
+    }
+    hc = &udpServer.botHosts[h];
+    if (!hc->cpuBotHave) return false;
+    *milli = hc->cpuBot;
+    if (hc->playerHost && hc->ownerSlot < MAX_TANKS) *owner = hc->ownerSlot;
+    return true;
+}
+
+static void botHostFillCpuBot(int h, uint32_t milli, uint8_t owner,
+                              ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_CPU_BOT;
+    evt->u.botHostCpuBot.idx = (uint8_t)h;
+    evt->u.botHostCpuBot.owner = owner;
+    evt->u.botHostCpuBot.milli = milli;
+}
+
+/* The per-bot values last sent to the lobby, one per row. */
+static bool     botHostCpuBotSentHave[MAX_BOT_HOSTS + 1];
+static uint32_t botHostCpuBotSent[MAX_BOT_HOSTS + 1];
+static uint8_t  botHostCpuBotOwnerSent[MAX_BOT_HOSTS + 1];
+
 /* The log line for a row's CPU estimate: the first one, then a change at
  * most each BOT_HOST_CPU_LOG_TICKS, so the log does not fill. */
 #define BOT_HOST_CPU_LOG_TICKS 500
@@ -821,6 +864,23 @@ static void botHostBroadcastRows(void) {
                 }
             }
         }
+        {
+            /* One bot's part, after the byte above, when it changes. */
+            uint32_t milli = BOT_HOST_CPU_MILLI_UNKNOWN;
+            uint8_t owner = (uint8_t)BOT_HOST_CPU_OWNER_NONE;
+            if (!botHostRowCpuBot(h, &evt, &milli, &owner)) {
+                botHostCpuBotSentHave[h] = false;
+            } else if (!botHostCpuBotSentHave[h] ||
+                       milli != botHostCpuBotSent[h] ||
+                       owner != botHostCpuBotOwnerSent[h]) {
+                ControlEvent ce;
+                botHostCpuBotSentHave[h] = true;
+                botHostCpuBotSent[h] = milli;
+                botHostCpuBotOwnerSent[h] = owner;
+                botHostFillCpuBot(h, milli, owner, &ce);
+                serverBroadcastLobbyControl(&ce);
+            }
+        }
     }
 }
 
@@ -837,6 +897,15 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
             botHostFillCpu(h, botHostRowCpu(h, &evt), &ce);
             deliver(deliverCtx, &ce);
         }
+        {
+            uint32_t milli;
+            uint8_t owner;
+            if (botHostRowCpuBot(h, &evt, &milli, &owner)) {
+                ControlEvent ce;
+                botHostFillCpuBot(h, milli, owner, &ce);
+                deliver(deliverCtx, &ce);
+            }
+        }
     }
     {
         ControlEvent evt;
@@ -848,6 +917,15 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
                 botHostFillCpu(MAX_BOT_HOSTS,
                                botHostRowCpu(MAX_BOT_HOSTS, &evt), &ce);
                 deliver(deliverCtx, &ce);
+            }
+            {
+                uint32_t milli;
+                uint8_t owner;
+                if (botHostRowCpuBot(MAX_BOT_HOSTS, &evt, &milli, &owner)) {
+                    ControlEvent ce;
+                    botHostFillCpuBot(MAX_BOT_HOSTS, milli, owner, &ce);
+                    deliver(deliverCtx, &ce);
+                }
             }
         }
     }
@@ -2048,6 +2126,7 @@ void serverBotHostsReset(void) {
     memset(botHostCpuSent, BOT_HOST_CPU_UNKNOWN, sizeof(botHostCpuSent));
     botHostCpuSentInit = true;
     memset(botHostCpuLogged, 0, sizeof(botHostCpuLogged));
+    memset(botHostCpuBotSentHave, 0, sizeof(botHostCpuBotSentHave));
     botHostServerCpuInit = false;
     botHostServerCpuValue = (uint8_t)BOT_HOST_CPU_UNKNOWN;
     for (h = 0; h <= MAX_BOT_HOSTS; h++) botHostOvrResetHost(h);
