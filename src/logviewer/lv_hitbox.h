@@ -27,9 +27,11 @@
  *    dead pillbox's square is open ground (pillsIsPillHit,
  *    armour above 0; lvHitboxPillSolid), except on the frame
  *    of the hit that killed it: that shot is a hit on the
- *    pill's square. On one of
- *    those squares it catches him only when it is on his own
- *    square. The distance comes from utilIsItemInRange with
+ *    pill's square. A wall's square that the frame's shot
+ *    turned to rubble is solid on that frame too
+ *    (lvHitboxWallSolid): that shot was a hit on the wall. On
+ *    one of those squares it catches him only when it is on
+ *    his own square. The distance comes from utilIsItemInRange with
  *    the pill_range rule as its limit, so when pill_range is
  *    under 128 the circle is pill_range across, not 128.
  *
@@ -310,6 +312,16 @@ static inline int lvHitboxBuilderReach(int pillRange) {
 static inline bool lvHitboxPillSolid(bool onMap, bool inTank, unsigned armour,
                                      bool hitNow) {
     return onMap && !inTank && (armour > 0 || hitNow);
+}
+
+/* Whether a wall makes its square solid for the builder test. wall: the
+   square is a building or a half building as the recording has it.
+   rubbleNow: a shell turned the wall on this square to rubble on this frame
+   (the last hit). Every shell's hit on a wall is a hit on its square, that
+   one included (shells.c outSquareHit), so the square stays solid on that
+   frame although the recording already has it as rubble. */
+static inline bool lvHitboxWallSolid(bool wall, bool rubbleNow) {
+    return wall || rubbleNow;
 }
 
 /* The builder test, as lgmBlastCatches makes it, for an explosion at (x, y)

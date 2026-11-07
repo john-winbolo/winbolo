@@ -376,6 +376,12 @@ LogViewerState *lv_screenGetState(void);
    frame (lgmBlastCatches: the shot that kills a pill is a hit on its square). */
 bool lv_screenPillHitNow(BYTE pill);
 
+/* Whether a recorded map change on the frame now shown turned the wall on
+   square (x, y) (a building or a half building) to rubble. Only a shell's
+   hit does that, and it is a hit on the wall's square, so the builder hit
+   box draws the square as solid for this frame (lgmBlastCatches, squareHit). */
+bool lv_screenWallHitNow(BYTE x, BYTE y);
+
 /* Accessor functions for sounddist.c (replaces extern globals) */
 BYTE lv_screenGetXOffset(void);
 BYTE lv_screenGetYOffset(void);
