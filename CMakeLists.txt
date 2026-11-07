@@ -2757,6 +2757,8 @@ set(SERVER_SOURCES
     # The -mod flags and -setting off the command line. Public headers
     # only, so it takes no grant below; the unit tests compile it too.
     src/server/server_args.c
+    # The host bot capacity: -botcapacity, or the lobby CPU speed test.
+    src/server/server_bot_capacity.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c

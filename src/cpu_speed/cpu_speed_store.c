@@ -112,8 +112,8 @@ bool cpuSpeedStoreLoad(const char *version, CpuSpeedStored *out) {
   out->result.logicalCores = (int)jsonNumber(root, "logical_cores");
   out->result.physicalCores = (int)jsonNumber(root, "physical_cores");
   out->result.threads = (int)jsonNumber(root, "threads");
-  out->result.cm1 = jsonNumber(root, "cm_1t");
-  out->result.cmAll = jsonNumber(root, "cm_all");
+  out->result.speed1t = jsonNumber(root, "speed_1t");
+  out->result.speedAll = jsonNumber(root, "speed_all");
   out->result.scaling = jsonNumber(root, "allcore_scaling");
   out->result.totalSecs = jsonNumber(root, "total_wall_s");
   crc = cJSON_GetObjectItemCaseSensitive(root, "crc_ok");
@@ -127,7 +127,7 @@ bool cpuSpeedStoreLoad(const char *version, CpuSpeedStored *out) {
   ok = strcmp(out->version, version) == 0 &&
        strcmp(out->result.cpuName, name) == 0 &&
        out->result.logicalCores == cpuSpeedLogicalCores() &&
-       out->result.crcOk && out->result.cm1 > 0.0 && out->result.cmAll > 0.0;
+       out->result.crcOk && out->result.speed1t > 0.0 && out->result.speedAll > 0.0;
   if (ok == false) {
     memset(out, 0, sizeof(*out));
   }
@@ -144,7 +144,7 @@ bool cpuSpeedStoreSave(const char *version, const char *context,
   bool ok = false;
 
   if (version == NULL || result == NULL || result->crcOk == false ||
-      result->cancelled || result->cm1 <= 0.0 || result->cmAll <= 0.0) {
+      result->cancelled || result->speed1t <= 0.0 || result->speedAll <= 0.0) {
     return false;
   }
   if (cpuSpeedStorePath(path, sizeof(path)) == false) {
@@ -162,8 +162,8 @@ bool cpuSpeedStoreSave(const char *version, const char *context,
   cJSON_AddNumberToObject(root, "logical_cores", result->logicalCores);
   cJSON_AddNumberToObject(root, "physical_cores", result->physicalCores);
   cJSON_AddNumberToObject(root, "threads", result->threads);
-  cJSON_AddNumberToObject(root, "cm_1t", result->cm1);
-  cJSON_AddNumberToObject(root, "cm_all", result->cmAll);
+  cJSON_AddNumberToObject(root, "speed_1t", result->speed1t);
+  cJSON_AddNumberToObject(root, "speed_all", result->speedAll);
   cJSON_AddNumberToObject(root, "allcore_scaling", result->scaling);
   cJSON_AddBoolToObject(root, "crc_ok", result->crcOk);
   cJSON_AddNumberToObject(root, "total_wall_s", result->totalSecs);

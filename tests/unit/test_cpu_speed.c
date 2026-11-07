@@ -1,7 +1,7 @@
 /*
  * The CPU speed test, its stored result, and the brain capacity answer.
  *
- * run_cpu_speed_test_short            - a short run of the CoreMark test: every
+ * run_cpu_speed_test_short            - a short run of the CPU speed test: every
  *                                       CRC right, both scores above 0, and
  *                                       physical cores <= logical cores
  * run_cpu_speed_test_cancel           - a cancel flag that is already set
@@ -28,9 +28,16 @@
  * run_brain_capacity_add_state        - the lobby's Add Bot rule: measuring,
  *                                       full, room left, and bots that run on
  *                                       another machine
+ * run_brain_capacity_parse_override   - -botcapacity N: 0..16, the clamp, and
+ *                                       the text it refuses
+ * run_host_bot_capacity               - the server's host bot capacity: the
+ *                                       add rule, the clamp, the lobby
+ *                                       settings byte and the client's copy
  */
 
 #include <math.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 
@@ -42,6 +49,13 @@
 #include "cpu_speed_test.h"
 #include "cpu_speed_store.h"
 #include "brain_capacity.h"
+#include "global.h"
+#include "everard_map.h"
+#include "server_sim.h"
+#include "client_sim.h"
+#include "client_sim_control.h"     /* clientSimApplyControl */
+#include "control_event.h"
+#include "transport_control_codec.h"
 
 /* A run of a few tens of milliseconds: enough iterations for the CRCs,
    nowhere near the 2 s test. */
@@ -61,8 +75,8 @@ int run_cpu_speed_test_short(void) {
   UT_ASSERT(cpuSpeedTestRun(&p, &r));
   UT_ASSERT(r.crcOk);
   UT_ASSERT(r.cancelled == false);
-  UT_ASSERT_MSG(r.cm1 > 0.0, "cm1 %f", r.cm1);
-  UT_ASSERT_MSG(r.cmAll > 0.0, "cmAll %f", r.cmAll);
+  UT_ASSERT_MSG(r.speed1t > 0.0, "speed1t %f", r.speed1t);
+  UT_ASSERT_MSG(r.speedAll > 0.0, "speedAll %f", r.speedAll);
   UT_ASSERT(r.threads == 2);
   UT_ASSERT(r.logicalCores >= 1);
   UT_ASSERT(r.physicalCores >= 1);
@@ -76,8 +90,8 @@ int run_cpu_speed_test_short(void) {
   {
     char line[1024];
     cpuSpeedFormatJson(&r, line, sizeof(line));
-    UT_ASSERT(strstr(line, "\"crc_ok\":true") != NULL);
-    UT_ASSERT(strstr(line, "\"cm_1t\":") != NULL);
+    UT_ASSERT(strstr(line, "\"crc_ok\": true") != NULL);
+    UT_ASSERT(strstr(line, "\"speed_1t\": ") != NULL);
   }
   return 0;
 }
@@ -117,9 +131,9 @@ int run_cpu_speed_store_roundtrip(void) {
   r.logicalCores = cpuSpeedLogicalCores();
   r.physicalCores = cpuSpeedPhysicalCores();
   r.threads = r.logicalCores;
-  r.cm1 = 25000.0;
-  r.cmAll = 67000.0;
-  r.scaling = r.cmAll / r.cm1;
+  r.speed1t = 25000.0;
+  r.speedAll = 67000.0;
+  r.scaling = r.speedAll / r.speed1t;
   r.crcOk = true;
   r.totalSecs = 2.0;
 
@@ -136,8 +150,8 @@ int run_cpu_speed_store_roundtrip(void) {
   UT_ASSERT(cpuSpeedStoreLoad("9.9.9", &st));
   UT_ASSERT(strcmp(st.version, "9.9.9") == 0);
   UT_ASSERT(strcmp(st.context, CPU_SPEED_CONTEXT_LOBBY) == 0);
-  UT_ASSERT(st.result.cm1 == 25000.0);
-  UT_ASSERT(st.result.cmAll == 67000.0);
+  UT_ASSERT(st.result.speed1t == 25000.0);
+  UT_ASSERT(st.result.speedAll == 67000.0);
   UT_ASSERT(st.result.logicalCores == r.logicalCores);
   UT_ASSERT(st.result.physicalCores == r.physicalCores);
   UT_ASSERT(st.result.crcOk);
@@ -162,7 +176,7 @@ int run_cpu_speed_background(void) {
   UT_ASSERT(cpuSpeedBackgroundRunning() == false);
   UT_ASSERT(cpuSpeedStoreLoad("9.9.9", &st));
   UT_ASSERT(strcmp(st.context, CPU_SPEED_CONTEXT_LOBBY) == 0);
-  UT_ASSERT(st.result.cm1 > 0.0 && st.result.cmAll > 0.0);
+  UT_ASSERT(st.result.speed1t > 0.0 && st.result.speedAll > 0.0);
 
   /* Stored for this version: no second run. */
   UT_ASSERT(cpuSpeedBackgroundStart("9.9.9", CPU_SPEED_CONTEXT_LOBBY, NULL) ==
@@ -278,7 +292,7 @@ int run_brain_capacity_c_brain(void) {
   brainCapacitySetMachine(NULL);
   brainCapacityGetMachine(&m);
   UT_ASSERT(m.logicalCores >= 1);
-  UT_ASSERT(m.coremark1t == 0.0); /* no speed test given */
+  UT_ASSERT(m.speed1t == 0.0); /* no speed test given */
 
   UT_ASSERT(brainCapacityQueryC("UtCBrain", "") == BRAIN_CAPACITY_UNKNOWN);
   brainCapacityRegisterC("UtCBrain", cBrainFive);
@@ -296,7 +310,7 @@ int run_brain_capacity_c_brain(void) {
   brainCapacityGetMachine(&m);
   UT_ASSERT(strcmp(m.cpuName, "Ut CPU") == 0);
   UT_ASSERT(m.logicalCores == 8 && m.physicalCores == 4);
-  UT_ASSERT(m.coremark1t == 25000.0 && m.coremarkAll == 90000.0);
+  UT_ASSERT(m.speed1t == 25000.0 && m.speedAll == 90000.0);
   UT_ASSERT(fabs(m.scaling - 3.6) < 1e-9);
   UT_ASSERT(brainCapacityLookup("UtCBrain", "") == BRAIN_CAPACITY_UNKNOWN);
   /* The same result given again keeps them; a new one forgets them. */
@@ -366,7 +380,7 @@ int run_brain_capacity_lua_fallback(void) {
   UT_ASSERT(luaCapacity("return { capacity = function(m, meas) "
                         "assert(meas == nil); assert(m.cpu_name == 'Ut CPU'); "
                         "assert(m.scaling == 5); assert(m.on_battery ~= nil); "
-                        "return m.physical_cores * m.coremark_1t / 25000 end }",
+                        "return m.physical_cores * m.speed_1t / 25000 end }",
                         "UtLuaNum") == 7);
   /* An error, a string, nil and no function give the default. */
   UT_ASSERT(luaCapacity("return { capacity = function() error('boom') end }",
@@ -416,5 +430,152 @@ int run_brain_capacity_add_state(void) {
   UT_ASSERT(brainCapacityAddState(true, 9, 5, false) == BRAIN_CAPACITY_ADD_OK);
   UT_ASSERT(brainCapacityAddState(false, 9, 5, false) ==
             BRAIN_CAPACITY_ADD_OK);
+  return 0;
+}
+
+/* -botcapacity N: a whole number 0..16, the clamp above 16, and the text
+   it refuses. */
+int run_brain_capacity_parse_override(void) {
+  bool clamped = true;
+  UT_ASSERT(brainCapacityParseOverride("0", &clamped) == 0);
+  UT_ASSERT(!clamped);
+  UT_ASSERT(brainCapacityParseOverride("3", &clamped) == 3);
+  UT_ASSERT(!clamped);
+  UT_ASSERT(brainCapacityParseOverride("16", &clamped) == 16);
+  UT_ASSERT(!clamped);
+  UT_ASSERT(brainCapacityParseOverride("17", &clamped) == BRAIN_CAPACITY_MAX);
+  UT_ASSERT(clamped);
+  UT_ASSERT(brainCapacityParseOverride("99999999999999999999", &clamped) ==
+            BRAIN_CAPACITY_MAX);
+  UT_ASSERT(clamped);
+  UT_ASSERT(brainCapacityParseOverride("5", NULL) == 5);
+  UT_ASSERT(brainCapacityParseOverride(NULL, &clamped) ==
+            BRAIN_CAPACITY_UNKNOWN);
+  UT_ASSERT(!clamped);
+  UT_ASSERT(brainCapacityParseOverride("", NULL) == BRAIN_CAPACITY_UNKNOWN);
+  UT_ASSERT(brainCapacityParseOverride("-1", NULL) == BRAIN_CAPACITY_UNKNOWN);
+  UT_ASSERT(brainCapacityParseOverride("3x", NULL) == BRAIN_CAPACITY_UNKNOWN);
+  UT_ASSERT(brainCapacityParseOverride("x", NULL) == BRAIN_CAPACITY_UNKNOWN);
+  UT_ASSERT(brainCapacityParseOverride(" 3", NULL) == BRAIN_CAPACITY_UNKNOWN);
+  return 0;
+}
+
+/* The host bot capacity: the add rule, the setter's clamp, the lobby
+   settings byte out and back (a short body reads as no cap) and the
+   client's copy of it. */
+int run_host_bot_capacity(void) {
+  BYTE emap[6000] = E_MAP;
+  ServerSim *sim;
+  ControlEncodeBodyFn benc =
+      transportControlCodecBodyEncoder(CTRL_LOBBY_SETTINGS);
+  ControlDecodeBodyFn bdec =
+      transportControlCodecBodyDecoder(CTRL_LOBBY_SETTINGS);
+  uint8_t body[MAX_CONTROL_PACKET];
+  ControlEvent in, out;
+  size_t len = 0;
+  ClientSim *cs;
+
+  /* The add rule. */
+  UT_ASSERT(serverSimHostBotCapacityAllowsAdd(SERVER_HOST_BOT_CAPACITY_NONE,
+                                              15));
+  UT_ASSERT(!serverSimHostBotCapacityAllowsAdd(
+      SERVER_HOST_BOT_CAPACITY_MEASURING, 0));
+  UT_ASSERT(!serverSimHostBotCapacityAllowsAdd(0, 0));
+  UT_ASSERT(serverSimHostBotCapacityAllowsAdd(3, 2));
+  UT_ASSERT(!serverSimHostBotCapacityAllowsAdd(3, 3));
+  UT_ASSERT(!serverSimHostBotCapacityAllowsAdd(3, 4));
+
+  /* The setter's clamp, and what the lobby sends. */
+  UT_ASSERT(serverSimGetHostBotCapacity(NULL) == SERVER_HOST_BOT_CAPACITY_NONE);
+  sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
+                                  false, 0, -1);
+  UT_ASSERT(sim != NULL);
+  UT_ASSERT(serverSimGetHostBotCapacity(sim) == SERVER_HOST_BOT_CAPACITY_NONE);
+  serverSimSetHostBotCapacity(sim, 5);
+  UT_ASSERT(serverSimGetHostBotCapacity(sim) == 5);
+  serverSimSetHostBotCapacity(sim, 200);
+  UT_ASSERT_MSG(serverSimGetHostBotCapacity(sim) == MAX_TANKS,
+                "a capacity above MAX_TANKS must clamp to it, got %d",
+                serverSimGetHostBotCapacity(sim));
+  serverSimSetHostBotCapacity(sim, -7);
+  UT_ASSERT(serverSimGetHostBotCapacity(sim) == SERVER_HOST_BOT_CAPACITY_NONE);
+  serverSimSetHostBotCapacity(sim, SERVER_HOST_BOT_CAPACITY_MEASURING);
+  UT_ASSERT(serverSimGetHostBotCapacity(sim) ==
+            SERVER_HOST_BOT_CAPACITY_MEASURING);
+  memset(&in, 0, sizeof(in));
+  serverSimFillLobbySettingsEvent(sim, &in);
+  UT_ASSERT(in.u.lobbySettings.lobbyHostBotCapacity ==
+            LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING);
+  serverSimSetHostBotCapacity(sim, 0);
+  serverSimFillLobbySettingsEvent(sim, &in);
+  UT_ASSERT_MSG(in.u.lobbySettings.lobbyHostBotCapacity == 0,
+                "a capacity of 0 must go on the wire as 0");
+  serverSimDestroy(sim);
+
+  /* The wire byte both ways. */
+  UT_ASSERT(lobbyHostBotCapacityToWire(-1) == LOBBY_HOST_BOT_CAPACITY_WIRE_NONE);
+  UT_ASSERT(lobbyHostBotCapacityToWire(-2) ==
+            LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING);
+  UT_ASSERT(lobbyHostBotCapacityToWire(7) == 7);
+  UT_ASSERT(lobbyHostBotCapacityFromWire(LOBBY_HOST_BOT_CAPACITY_WIRE_NONE) ==
+            -1);
+  UT_ASSERT(lobbyHostBotCapacityFromWire(
+                LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING) == -2);
+  UT_ASSERT(lobbyHostBotCapacityFromWire(0) == 0);
+  UT_ASSERT(lobbyHostBotCapacityFromWire(200) == -1);
+
+  /* The codec. positionalSound ahead of it is on, so a read one place out
+     shows. */
+  UT_ASSERT(benc != NULL && bdec != NULL);
+  memset(&in, 0, sizeof(in));
+  in.type = CTRL_LOBBY_SETTINGS;
+  in.u.lobbySettings.lobbyPositionalSound = true;
+  in.u.lobbySettings.lobbyHostBotCapacity = 3;
+  UT_ASSERT(benc(&in, NULL, body, sizeof(body), &len) == ENCODE_OK);
+  memset(&out, 0, sizeof(out));
+  UT_ASSERT(bdec(body, len, &out));
+  UT_ASSERT_MSG(out.u.lobbySettings.lobbyHostBotCapacity == 3,
+                "the host bot capacity came back as %u",
+                (unsigned)out.u.lobbySettings.lobbyHostBotCapacity);
+  UT_ASSERT(out.u.lobbySettings.lobbyPositionalSound);
+  memset(&out, 0, sizeof(out));
+  UT_ASSERT(bdec(body, len - 1, &out));
+  UT_ASSERT_MSG(out.u.lobbySettings.lobbyHostBotCapacity ==
+                    LOBBY_HOST_BOT_CAPACITY_WIRE_NONE,
+                "a body with no host bot capacity byte must read as no cap");
+  UT_ASSERT(out.u.lobbySettings.lobbyPositionalSound);
+
+  /* A scenario tail behind it still decodes. */
+  in.u.lobbySettings.scenarioSource = lobbyScenarioMap;
+  snprintf(in.u.lobbySettings.scenarioName,
+           sizeof(in.u.lobbySettings.scenarioName), "%s", "Wave");
+  in.u.lobbySettings.lobbyHostBotCapacity = 0;
+  UT_ASSERT(benc(&in, NULL, body, sizeof(body), &len) == ENCODE_OK);
+  memset(&out, 0, sizeof(out));
+  UT_ASSERT(bdec(body, len, &out));
+  UT_ASSERT(out.u.lobbySettings.lobbyHostBotCapacity == 0);
+  UT_ASSERT(out.u.lobbySettings.scenarioSource == lobbyScenarioMap);
+  UT_ASSERT(strcmp(out.u.lobbySettings.scenarioName, "Wave") == 0);
+
+  /* The client: no cap before a settings event, then the server's. */
+  UT_ASSERT(clientSimGetLobbyHostBotCapacity(NULL) == -1);
+  cs = clientSimAlloc();
+  UT_ASSERT(cs != NULL);
+  clientSimCreate(cs);
+  UT_ASSERT_MSG(clientSimGetLobbyHostBotCapacity(cs) == -1,
+                "a client with no settings event must read no cap");
+  memset(&in, 0, sizeof(in));
+  in.type = CTRL_LOBBY_SETTINGS;
+  in.u.lobbySettings.lobbyHostBotCapacity = 4;
+  clientSimApplyControl(cs, &in);
+  UT_ASSERT(clientSimGetLobbyHostBotCapacity(cs) == 4);
+  in.u.lobbySettings.lobbyHostBotCapacity =
+      LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING;
+  clientSimApplyControl(cs, &in);
+  UT_ASSERT(clientSimGetLobbyHostBotCapacity(cs) == -2);
+  in.u.lobbySettings.lobbyHostBotCapacity = LOBBY_HOST_BOT_CAPACITY_WIRE_NONE;
+  clientSimApplyControl(cs, &in);
+  UT_ASSERT(clientSimGetLobbyHostBotCapacity(cs) == -1);
+  clientSimDestroy(cs);
   return 0;
 }

@@ -49,6 +49,26 @@
 #define LOBBY_TEAM_NAME_LEN 32
 #endif
 
+/* The lobby settings byte for the server's host bot capacity
+ * (serverSimGetHostBotCapacity). 0..16 is the number itself. */
+#define LOBBY_HOST_BOT_CAPACITY_WIRE_NONE      0xFF
+#define LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING 0xFE
+
+/* The sim's value (0..16, -1 no cap, -2 measuring) as the byte, and back.
+ * A byte this build does not know reads as no cap: the server checks every
+ * add itself, so a wrong read here only shows a button the server refuses. */
+static inline uint8_t lobbyHostBotCapacityToWire(int capacity) {
+    if (capacity == -2) return LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING;
+    if (capacity < 0) return LOBBY_HOST_BOT_CAPACITY_WIRE_NONE;
+    if (capacity > MAX_TANKS) return (uint8_t)MAX_TANKS;
+    return (uint8_t)capacity;
+}
+static inline int lobbyHostBotCapacityFromWire(uint8_t wire) {
+    if (wire == LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING) return -2;
+    if (wire > MAX_TANKS) return -1;
+    return (int)wire;
+}
+
 typedef enum {
     CTRL_ALLIANCE_REQUEST,
     CTRL_ALLIANCE_ACCEPT,
@@ -880,6 +900,14 @@ typedef struct ControlEvent {
                                             * byte follows modsOff in the fixed
                                             * part; a body without it reads as
                                             * off, every sound centred. */
+            uint8_t  lobbyHostBotCapacity; /* how many bots the server runs
+                                            * in its own process at full
+                                            * strength: 0..16, or
+                                            * LOBBY_HOST_BOT_CAPACITY_WIRE_NONE
+                                            * (no cap) or _MEASURING (its CPU
+                                            * speed test runs). The byte after
+                                            * positionalSound; a body without
+                                            * it reads as no cap. */
             /* The scenario this lobby is running, if any. scenarioSource
              * none means there is none and the five fields below are empty:
              * a lobby with no scenario writes none of these bytes, so a

@@ -759,11 +759,23 @@ BrainCapacityAddState lobbyAddBotState(ClientSim *cs, int *capacityOut) {
     if (!cs) return BRAIN_CAPACITY_ADD_OK;
     /* The in-process transport (single player, and the host's own client of
      * a game it hosts) means the server, and so every bot, runs on this
-     * machine. Over UDP the bots run on the server, or on a Bot Host: this
-     * machine's answer is not theirs, so there is no cap here. When that
-     * server sends its own capacity answer, it is the one to use here. */
+     * machine. Over UDP the bots run on the server: this machine's answer is
+     * not theirs, and the server's own answer (its host bot capacity, from
+     * the lobby settings) is the one to use. It checks every add itself as
+     * well. A server that says nothing (an older one, or a game a client
+     * hosts) gives no cap. */
     bool botsRunHere = !clientSimIsUdpTransport(cs);
-    if (!botsRunHere) return BRAIN_CAPACITY_ADD_OK;
+    if (!botsRunHere) {
+        int serverCap = clientSimGetLobbyHostBotCapacity(cs);
+        if (capacityOut) *capacityOut = serverCap;
+        if (serverCap == -2) return BRAIN_CAPACITY_ADD_MEASURING;
+        /* botsRunHere true: the numbers are the server's, about its own
+         * process, so the cap applies. */
+        return brainCapacityAddState(false, lobbyCountBots(cs),
+                                     serverCap >= 0 ? serverCap
+                                                    : BRAIN_CAPACITY_UNKNOWN,
+                                     true);
+    }
     bool measuring = false;
 #ifdef WINBOLO_CPU_SPEED_TEST
     measuring = cpuSpeedBackgroundRunning();
@@ -781,13 +793,17 @@ BrainCapacityAddState lobbyAddBotState(ClientSim *cs, int *capacityOut) {
 
 const char *lobbyAddBotOffReason(ClientSim *cs) {
     int capacity = BRAIN_CAPACITY_UNKNOWN;
+    /* Over UDP the answer is the server's, so the words name the server. */
+    bool server = cs && clientSimIsUdpTransport(cs);
     switch (lobbyAddBotState(cs, &capacity)) {
     case BRAIN_CAPACITY_ADD_MEASURING:
-        return langGetText(STR_DLGLOBBY_ADDBOT_MEASURING);
+        return langGetText(server ? STR_DLGLOBBY_ADDBOT_SERVER_MEASURING
+                                  : STR_DLGLOBBY_ADDBOT_MEASURING);
     case BRAIN_CAPACITY_ADD_FULL: {
         MessageArgs args = {};
         args.number = capacity;
-        return langGetTextFmt(STR_DLGLOBBY_ADDBOT_FULL, &args);
+        return langGetTextFmt(server ? STR_DLGLOBBY_ADDBOT_SERVER_FULL
+                                     : STR_DLGLOBBY_ADDBOT_FULL, &args);
     }
     case BRAIN_CAPACITY_ADD_OK:
     default:

@@ -499,7 +499,7 @@ int main(int argc, char *argv[]) {
 
 #ifdef WINBOLO_CPU_SPEED_TEST
   /* Before any brain loads: a CPU speed test result stored for this version
-     gives Brain.capacity its coremark_1t and coremark_all. With none stored
+     gives Brain.capacity its speed_1t and speed_all. With none stored
      they stay 0, and the first game lobby runs the test (lobby_commands). */
   (void)cpuSpeedApplyStoredToBrains(WINBOLO_VERSION);
 #endif

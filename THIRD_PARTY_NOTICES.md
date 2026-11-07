@@ -284,8 +284,9 @@ that can be combined with it, except the Steamworks SDK, which is covered by
   CoreMark name (src/third_party/coremark/LICENSE.md)
 - https://github.com/eembc/coremark
 - Author: EEMBC (Shay Gal-On)
-- The 2 s CPU speed test (-cputest, src/cpu_speed/). Its scores are for
-  comparing machines; they are not certified CoreMark results.
+- The 2 s CPU speed test (-cputest, src/cpu_speed/). Its numbers are for
+  comparing machines. WinBolo calls them the CPU speed score (speed_1t,
+  speed_all); they are not CoreMark scores and do not carry that name.
 - The upstream files are unmodified. WinBolo's own port files are in
   src/third_party/coremark/winbolo/ in place of CoreMark's port directories;
   see src/third_party/coremark/WINBOLO_CHANGES.txt.

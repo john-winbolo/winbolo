@@ -1359,6 +1359,30 @@ BYTE serverSimGetMaxBots(const ServerSim *sim) {
     return sim->maxBots;
 }
 
+int serverSimGetHostBotCapacity(const ServerSim *sim) {
+    if (sim == NULL) return SERVER_HOST_BOT_CAPACITY_NONE;
+    return sim->hostBotCapacity;
+}
+
+void serverSimSetHostBotCapacity(ServerSim *sim, int capacity) {
+    if (sim == NULL) return;
+    /* Anything else below 0 is no cap; above 16 is 16, the most seats. */
+    if (capacity < 0 && capacity != SERVER_HOST_BOT_CAPACITY_MEASURING) {
+        capacity = SERVER_HOST_BOT_CAPACITY_NONE;
+    } else if (capacity > MAX_TANKS) {
+        capacity = MAX_TANKS;
+    }
+    if (sim->hostBotCapacity == capacity) return;
+    sim->hostBotCapacity = capacity;
+    serverSimPublishLobbySettings(sim);
+}
+
+bool serverSimHostBotCapacityAllowsAdd(int capacity, int lobbyBots) {
+    if (capacity == SERVER_HOST_BOT_CAPACITY_MEASURING) return false;
+    if (capacity < 0) return true;
+    return lobbyBots < capacity;
+}
+
 BYTE serverSimGetMaxSpectators(const ServerSim *sim) {
     if (sim == NULL) return 0;
     return sim->maxSpectators;   /* 0 = disabled; no MAX_TANKS fallback */

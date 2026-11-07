@@ -61,9 +61,9 @@ typedef struct {
   char cpuName[BRAIN_CAPACITY_CPU_NAME_LEN]; /* "" when not known */
   int logicalCores;
   int physicalCores;
-  double coremark1t;  /* CPU speed test, 1 thread; 0 when not measured */
-  double coremarkAll; /* CPU speed test, all cores; 0 when not measured */
-  double scaling;     /* coremarkAll / coremark1t; 0 when not measured */
+  double speed1t;  /* CPU speed test, 1 thread; 0 when not measured */
+  double speedAll; /* CPU speed test, all cores; 0 when not measured */
+  double scaling;     /* speedAll / speed1t; 0 when not measured */
   int workerThreads;  /* The bot worker pool's threads */
   bool onBattery;     /* False when not on battery or not known */
   char version[BRAIN_CAPACITY_VERSION_LEN]; /* WinBolo version */
@@ -104,11 +104,18 @@ void brainCapacityGetMachine(BrainMachineInfo *out);
    given before (or none were), forgets the answers kept so far, as they
    were made from other facts. Giving the same result again keeps them. */
 void brainCapacitySetMachineFromTest(const char *cpuName, int logicalCores,
-                                     int physicalCores, double coremark1t,
-                                     double coremarkAll);
+                                     int physicalCores, double speed1t,
+                                     double speedAll);
 
 /* logical cores - 1, at least 1, at most BRAIN_CAPACITY_MAX */
 int brainCapacityDefault(const BrainMachineInfo *machine);
+
+/* A bot count given by hand (the dedicated server's -botcapacity N): a
+   whole number, with nothing after it. 0 is allowed (no bots in this
+   process). A number above BRAIN_CAPACITY_MAX gives BRAIN_CAPACITY_MAX, and
+   *clamped (may be NULL) is set true. BRAIN_CAPACITY_UNKNOWN for NULL, "",
+   a negative number or text that is not a number. */
+int brainCapacityParseOverride(const char *text, bool *clamped);
 
 /* A brain's raw answer made safe. ok false (an error, or not a number) or
    a value that is not finite gives the default; any other value is rounded
