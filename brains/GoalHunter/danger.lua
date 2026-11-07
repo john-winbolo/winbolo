@@ -601,9 +601,10 @@ end
 --     shell; a base that stops it (below) - the square's centre; a wall
 --     (building / half building) - the square's centre.
 --   * the builder test (lgm.c lgmBlastCatches) for every blast: a blast on a
---     building, a half building, a pill on the ground (alive or dead) or a
---     base kills only a builder on that square; elsewhere one within
---     MAP_SQUARE_MIDDLE (<=).
+--     building, a half building, a live pill on the ground or a base kills
+--     only a builder on that square; elsewhere (a dead pill's square too)
+--     one within MAP_SQUARE_MIDDLE (<=). C.BLAST_DEAD_PILL_OPEN false (KEEL,
+--     or unset) counts a dead pill as solid too, the old engine rule.
 --   * a tank's shell tests the builder where he was r ticks earlier
 --     (shellsBlastTestBuilder). A bot's shell rewinds 1; a human's rewinds
 --     his measured view age (up to LAG_COMP_MAX_TICKS 14) minus
@@ -662,17 +663,23 @@ local function man_at_cd(nw, dwell, t, home_x, home_y)
   return WALK[i * 2 - 1], WALK[i * 2]
 end
 
--- lgmBlastCatches's "solid" square: a building, a half building, a pill on
--- the ground (pillsExistPos: alive or dead, not in a tank) or a base.
+-- lgmBlastCatches's "solid" square: a building, a half building, a live pill
+-- on the ground (pillsIsPillHit: armour > 0, not in a tank) or a base. A dead
+-- pill's square is open ground. C.BLAST_DEAD_PILL_OPEN false (KEEL, or
+-- unset) keeps the old rule, where any pill on the ground (pillsExistPos,
+-- alive or dead) was solid.
 local function blast_square_solid(world, mx, my)
   local tt = U.ttype(mx, my)
   if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
   local k = my * 256 + mx
   local lst = world and world.pill_at and world.pill_at[k]
   if lst then
+    local dead_open = C.BLAST_DEAD_PILL_OPEN
     for i = 1, #lst do
       local p = lst[i].pill
-      if p and not p.in_tank then return true end
+      if p and not p.in_tank and (not dead_open or (p.health or 0) > 0) then
+        return true
+      end
     end
   end
   if world and world.base_at and world.base_at[k] then return true end
