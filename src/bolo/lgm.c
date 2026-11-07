@@ -1665,8 +1665,10 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *********************************************************/
 /* Whether an explosion at (wx, wy) catches a man at (lgmWorldX, lgmWorldY):
    within half a square of it on open ground, or on the very square when the
-   explosion is on a wall, a pillbox or a base. The one test every builder
-   death is decided by. */
+   explosion is on a wall, a live pillbox or a base. The one test every
+   builder death is decided by. A dead pill's square is open ground here:
+   shells fly over a dead pill, so a blast near the edge of its square must
+   reach a builder just across that edge, as it would on any open square. */
 static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
@@ -1692,7 +1694,7 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, (WORLD) sim->rules.pill_range, &distance);
   pos = mapGetPos(mp, mx, my);
   solid = FALSE;
-  if (pos == BUILDING || pos == HALFBUILDING || pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
+  if (pos == BUILDING || pos == HALFBUILDING || pillsIsPillHit(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
     solid = TRUE;
   }
   if (solid == FALSE && distance <= MAP_SQUARE_MIDDLE) {
