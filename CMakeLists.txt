@@ -8123,7 +8123,8 @@ set(_unit_test_names
 # must be in _unit_test_names, so CTest runs it. Left out on purpose: the
 # fixture writers above (test_main.c s_fixtureWriters) and the netdebug_*
 # tests, which the WB_NETDEBUG block further down registers. A test that is
-# missing stops the configure with its name.
+# missing stops the configure with its name. The match ends at the comma
+# after the name, so a registration wrapped onto two lines is read too.
 set(_unit_test_on_demand
     wire_corpus_capture
     spectator_seed_capture
@@ -8134,7 +8135,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
              "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_main.c")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_main.c"
      _unit_test_main_lines
-     REGEX "^[ \t]*{[ \t]*\"[^\"]+\"[ \t]*,[ \t]*run_")
+     REGEX "^[ \t]*{[ \t]*\"[^\"]+\"[ \t]*,")
 set(_unit_test_missing "")
 foreach(_line IN LISTS _unit_test_main_lines)
     string(REGEX REPLACE "^[ \t]*{[ \t]*\"([^\"]+)\".*$" "\\1"
