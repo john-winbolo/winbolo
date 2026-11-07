@@ -78,7 +78,7 @@
 #include "lv_pill_numbers.h"     /* the number of each pillbox on the map */
 #include "lv_lag.h"              /* each player's lag and the lag view's history */
 #include "lv_shell_owner.h"      /* which player fired each shell, for the lag view */
-#include "lv_early_blast.h"      /* a temporary test toggle: own shells explode at once */
+#include "lv_early_blast.h"      /* own shells explode at once, for the lag view */
 #include "shell_lgm_rewind.h"     /* the builders' shorter rewind */
 
 /* The middle of the visible map from the start of the view (defined with
@@ -241,11 +241,10 @@ void lv_screenSetScreenTrueShells(int enabled) {
 
 int lv_screenGetScreenTrueShells(void) { return s_screenTrueShells ? 1 : 0; }
 
-/* TEMPORARY TEST TOGGLE, "Toggle Screen-True Local Explosions (Proposed
-   Fix)" (lv_early_blast.h). Off by default, and drawn only while
-   "Toggle Screen-True Own Shells" is on too (lv_earlyBlastOn). Remove this
-   block, its two calls (lv_lagFindShellOwners, lv_screenUpdate), the menu
-   item and the header when the test is done. */
+/* "Toggle Screen-True Local Explosions" (lv_early_blast.h). Off by
+   default, and drawn only while "Toggle Screen-True Own Shells" is on too
+   (lv_earlyBlastOn). It is used from lv_lagFindShellOwners and
+   lv_screenUpdate. */
 static bool              s_screenTrueExpl = FALSE;
 static LvEarlyBlast      s_earlyBlasts[LV_EARLY_BLAST_MAX];
 static int               s_earlyBlastNext;
@@ -1589,13 +1588,13 @@ void lv_screenUpdate(updateType value) {
        no clear owner stays at the old time. */
     const LvLagFrame *now = &s_lagRing.frames[s_lagRing.newest];
     const bool ownAtPresent = s_screenTrueShells;
-    /* TEMPORARY TEST TOGGLE (lv_early_blast.h): the early blasts. */
+    /* Toggle Screen-True Local Explosions (lv_early_blast.h): the early blasts. */
     const bool earlyBlast = lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl);
     int i;
     lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
     lv_playersSetLagLgmFrame(lagLgmFrame);
     lagShells = lv_shellsCreate();
-    /* TEMPORARY TEST TOGGLE (lv_early_blast.h): each early blast of the
+    /* Toggle Screen-True Local Explosions (lv_early_blast.h): each early blast of the
        chosen player hides its server explosion, one record per frame. */
     bool hideUsed[LV_EARLY_BLAST_MAX];
     /* A frame's shells are in the reverse of the game's draw order (the

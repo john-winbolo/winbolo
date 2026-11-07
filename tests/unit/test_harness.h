@@ -1474,7 +1474,7 @@ int run_lv_shell_owner_rules(void);
 int run_lv_shell_owner_real_flight(void);
 int run_lv_shell_owner_start(void);
 int run_lv_shell_owner_link(void);
-/* The lag view's temporary early blast test toggle (test_lv_early_blast.c). */
+/* The lag view's early blast toggle (test_lv_early_blast.c). */
 int run_lv_early_blast_rules(void);
 int run_lv_early_blast_ended(void);
 int run_lv_early_blast_frames(void);

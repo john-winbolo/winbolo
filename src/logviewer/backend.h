@@ -40,7 +40,7 @@
 #include "lv_ping_view.h"   /* LvPingShown */
 #include "lv_lag.h"         /* LvPlayerLag */
 #include "lv_shell_owner.h" /* LvShellOwnerStats */
-#include "lv_early_blast.h" /* LvEarlyBlastStats, a temporary test toggle */
+#include "lv_early_blast.h" /* LvEarlyBlastStats */
 #include "lv_overrun.h"     /* LvOverrunNow */
 
 /* Defines */
@@ -870,9 +870,8 @@ void lv_screenLagShellOwnerStats(LvShellOwnerStats *out);
 void lv_screenSetScreenTrueShells(int enabled);
 int  lv_screenGetScreenTrueShells(void);
 
-/* TEMPORARY TEST TOGGLE (lv_early_blast.h), "Toggle Screen-True Local
- * Explosions (Proposed Fix)", off by default: in the lag view each own shell
- * of the chosen player explodes at the present where it ended, and the
+/* "Toggle Screen-True Local Explosions" (lv_early_blast.h), off by
+ * default: in the lag view each own shell of the chosen player explodes at the present where it ended, and the
  * server's later explosion of that shell is hidden. It does something only
  * while "Toggle Screen-True Own Shells" is on (lv_earlyBlastOn). Stats gives
  * how many own shells ended and how many server explosions were found for

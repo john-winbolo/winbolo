@@ -4,8 +4,8 @@
  */
 
 /*
- * The Log Viewer's temporary "Toggle Screen-True Local Explosions
- * (Proposed Fix)" test toggle (src/logviewer/lv_early_blast.h): when an own
+ * The Log Viewer's "Toggle Screen-True Local Explosions" option
+ * (src/logviewer/lv_early_blast.h): when an own
  * shell ends, its early blast, and the match that finds and hides the
  * server's explosion of that shell in the lag view. It works only while
  * "Toggle Screen-True Own Shells" is on.
