@@ -197,4 +197,14 @@ bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
                               int smallSlots, double bias,
                               const BotHostPlaceLag *lag, int *from, int *to);
 
+/* The seats a host gives back at once when it reports newSlots
+ * (CTRL_BOT_HOST_SLOTS): every seat on host h when newSlots is 0, as when
+ * the host leaves, and none otherwise (a host with fewer slots than bots
+ * gives them back one at a time through the rebalance). A player who
+ * turns off "run bots on this computer" for a game sends 0. seatHost[s]
+ * is the host that runs seat s, below 0 for a seat in-process; n seats,
+ * at most 32. Bit s of the answer is seat s. */
+uint32_t botHostSeatsToGiveBack(const int *seatHost, int n, int h,
+                                int newSlots);
+
 #endif /* BOT_HOST_LINK_H */

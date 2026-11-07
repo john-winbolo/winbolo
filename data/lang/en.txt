@@ -447,6 +447,11 @@ STR_DLGLOBBY_BOTHOST_SERVER_STATE=runs bots itself
 STR_DLGLOBBY_BOTHOST_CPU_FMT=(Estimated {number}% of the machine's CPU)
 STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE=(Estimated <1% of the machine's CPU)
 
+# The lobby's one-game opt-out from running the server's bots on this
+# computer, and its mouse-over text
+STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT=Don't run bots on this computer for this game
+STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT_TIP=The server can run some of its bots on the players' computers. Turn this on and this computer runs none of them: the server takes its bots back at once. It is for this game only and is not saved. Turn it off to offer this computer's room for bots again.
+
 # Why Ready is off while a Bot Host gets the server's brain files ({number} = %)
 STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT=Bot Host syncing {number}%
 

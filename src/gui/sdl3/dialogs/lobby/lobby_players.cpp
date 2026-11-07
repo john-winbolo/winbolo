@@ -658,6 +658,31 @@ static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
  * it runs itself, against its own capacity) is always the last; it is not a
  * connection and has no controls. Nothing is drawn when the server sends no
  * rows (a local game, or a server with Bot Hosts off). */
+/* The one-game opt-out: "Don't run bots on this computer for this game",
+ * for a player whose computer the server lets run its bots. On: this
+ * computer's Bot Host offers the server 0 slots and the server takes its
+ * bots back; off again: it offers its slots again. Never saved: it is off
+ * again in the next game (bothost_optout.h). Shown with the
+ * "this computer runs bots" line, and also in a build that hides that line
+ * (WINBOLO_HIDE_CLIENT_BOT_HOST_MSG). */
+static void renderClientBotHostOptOut(ClientSim *cs) {
+    if (!botHostEmbedOffered(cs)) return;
+    bool off = botHostEmbedOptOut(cs);
+    char label[256];
+    SDL_snprintf(label, sizeof(label), "%s##clientBotHostOptOut",
+                 langGetText(STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT));
+    if (ImGui::Checkbox(label, &off)) {
+        botHostEmbedSetOptOut(cs, off);
+    }
+    if (ImGui::IsItemHovered() && ImGui::BeginTooltip()) {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+        ImGui::TextUnformatted(
+            langGetText(STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT_TIP));
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+}
+
 static void renderBotHostGroup(ClientSim *cs) {
     int count = 0;
     bool serverRow = false;
@@ -671,7 +696,11 @@ static void renderBotHostGroup(ClientSim *cs) {
             count++;
         }
     }
-    if (count == 0 && !serverRow) return;
+    if (count == 0 && !serverRow) {
+        /* No rows yet: the opt-out still shows when the ticket is here. */
+        renderClientBotHostOptOut(cs);
+        return;
+    }
 
     {
         MessageArgs args = {};
@@ -810,6 +839,7 @@ static void renderBotHostGroup(ClientSim *cs) {
         }
     }
 #endif
+    renderClientBotHostOptOut(cs);
 }
 
 /* True when the lobby's right panel is currently showing the replay reel

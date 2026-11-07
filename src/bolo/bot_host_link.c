@@ -514,3 +514,15 @@ bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
         return true;
     }
 }
+
+uint32_t botHostSeatsToGiveBack(const int *seatHost, int n, int h,
+                                int newSlots) {
+    uint32_t mask = 0;
+    int s;
+    if (seatHost == NULL || h < 0 || newSlots > 0) return 0;
+    if (n > 32) n = 32;
+    for (s = 0; s < n; s++) {
+        if (seatHost[s] == h) mask |= (uint32_t)1u << s;
+    }
+    return mask;
+}

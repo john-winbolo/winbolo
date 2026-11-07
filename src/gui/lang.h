@@ -489,6 +489,10 @@
  * text for above 0% and below 1% */
 #define STR_DLGLOBBY_BOTHOST_CPU_FMT        3650
 #define STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE  3651
+/* The lobby's one-game opt-out from running the server's bots on this
+ * computer, next to the line above, and its mouse-over text */
+#define STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT     3652
+#define STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT_TIP 3653
 /* Map-preview start-picker tooltips and the assign-to-someone menu */
 #define STR_STARTPICK_TIP_FREE_HOST         1512
 #define STR_STARTPICK_TIP_FREE              1513

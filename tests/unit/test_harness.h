@@ -953,6 +953,11 @@ int run_bot_host_cpu_percent(void);
 int run_bot_host_cpu_meter(void);
 int run_bot_host_cpu_codec(void);
 int run_bot_host_cpu_client_row(void);
+/* The lobby's one-game opt-out from running bots on this computer
+ * (test_bot_host_optout.c). */
+int run_bot_host_optout_slots_codec(void);
+int run_bot_host_optout_give_back(void);
+int run_bot_host_optout_client_reset(void);
 
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with

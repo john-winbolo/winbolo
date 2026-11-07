@@ -2242,6 +2242,8 @@ static const LangEntry langTable[] = {
     {3603, "runs bots itself"},
     {3650, "(Estimated {number}% of the machine's CPU)"},
     {3651, "(Estimated <1% of the machine's CPU)"},
+    {3652, "Don't run bots on this computer for this game"},
+    {3653, "The server can run some of its bots on the players' computers. Turn this on and this computer runs none of them: the server takes its bots back at once. It is for this game only and is not saved. Turn it off to offer this computer's room for bots again."},
     {1866, "[Spectator] {string1}"},
     {1849, "Leave spectating?"},
     {1850, "Lobby"},
