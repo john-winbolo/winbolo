@@ -904,6 +904,13 @@ int run_brain_sync_path_check(void);
 int run_brain_sync_manifest_codec(void);
 int run_brain_sync_cache_plan(void);
 int run_brain_sync_chunk(void);
+/* Packed brain sync and session folders (test_brain_pack.c). */
+int run_brain_pack_manifest_v2(void);
+int run_brain_pack_all_equal(void);
+int run_brain_pack_one_changed(void);
+int run_brain_pack_bad_hash(void);
+int run_brain_pack_old_peer(void);
+int run_brain_pack_session(void);
 
 /* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
 int run_bot_host_link_announce_codec(void);
@@ -942,6 +949,7 @@ int run_bot_host_cpu_client_row(void);
 int run_bot_host_cpu_bot_format(void);
 int run_bot_host_cpu_bot_meter(void);
 int run_bot_host_cpu_bot_codec(void);
+int run_bot_host_cpu_budget(void);
 int run_bot_host_cpu_bot_client_row(void);
 int run_bot_host_lag_codec(void);
 /* Bot Hosts on one computer, the game bot limit and the row slot override
@@ -3754,6 +3762,7 @@ int run_lobby_template_reset_reseats(void);
 int run_lobby_template_preview_is_inert(void);
 int run_lobby_template_plain_map_clears(void);
 int run_lobby_template_map_commit_drops_prior_bots(void);
+int run_lobby_bot_default_team_on_add(void);
 int run_lobby_template_caps_humans_only(void);
 int run_lobby_template_cap_seats_human_above_bots(void);
 int run_lobby_template_cap_refuses_extra_human(void);

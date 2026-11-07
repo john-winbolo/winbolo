@@ -71,6 +71,9 @@
 /* CTRL_BOT_HOST_MACHINE_*: the salt and the answer (machine_id.h). */
 #define BOT_HOST_MACHINE_SALT_LEN 16   /* == MACHINE_SALT_LEN */
 #define BOT_HOST_MACHINE_HASH_LEN 32   /* == MACHINE_HASH_LEN */
+/* CTRL_BOT_HOST_PACK_REQ: one bit per brain file, BRAIN_SYNC_MAX_FILES
+ * of them (== BRAIN_PACK_BITMAP_BYTES of brain_pack.h). */
+#define BOT_HOST_PACK_BITMAP_BYTES 128
 /* CTRL_BOT_HOST_ROW_SLOTS: no override, and no other row. */
 #define BOT_HOST_SLOT_OVERRIDE_NONE 0xFFu
 #define BOT_HOST_MACHINE_OTHER_NONE 0xFFu
@@ -644,6 +647,28 @@ typedef enum {
      * Sent when it changes and on join. A type of its own, so an older
      * client skips it and shows the row as before. */
     CTRL_BOT_HOST_ROW_SLOTS,
+    /* CTRL_BOT_HOST_SYNC_CAPS — Bot Host to server, once it is connected:
+     * the brain sync ways it can take (BRAIN_PACK_CAP_* of brain_pack.h).
+     * With BRAIN_PACK_CAP_PACKED the server sends the v2 manifest and
+     * answers CTRL_BOT_HOST_PACK_REQ. A type of its own, so an older server
+     * skips it and keeps the old way; an older host sends none, and the
+     * server keeps the old way for it. */
+    CTRL_BOT_HOST_SYNC_CAPS,
+    /* CTRL_BOT_HOST_PACK_REQ — Bot Host to server, one per brain of a v2
+     * manifest: the files of brain the host needs (a bitmap of fileCount
+     * bits) and how many it has from its install and from its cache. The
+     * server sends the files set in the bitmap as one zstd stream in
+     * BULK_KIND_BRAIN_PACK pieces; none for an empty bitmap. */
+    CTRL_BOT_HOST_PACK_REQ,
+    /* CTRL_BOT_HOST_CPU_BUDGET — Bot Host to server: the full-budget
+     * estimate of one bot's part of its machine's CPU, in thousandths of a
+     * percent (bot_host_cpu.h): the think budget the host would give a new
+     * bot over the time between thinks, over its logical cores. Only the
+     * number; the core count stays on the machine. The server shows it
+     * while the host has no measured value, and uses it as the one-bot cost
+     * of the free CPU check. Sent on connect and when it changes. A type of
+     * its own, so an older server skips it. */
+    CTRL_BOT_HOST_CPU_BUDGET,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1704,6 +1729,9 @@ typedef struct ControlEvent {
             uint8_t  idx;    /* the row, or BOT_HOST_CPU_IDX_SELF from a host */
             uint8_t  owner;  /* a player number, or BOT_HOST_CPU_OWNER_NONE */
             uint32_t milli;  /* 1..100000, or BOT_HOST_CPU_MILLI_UNKNOWN */
+            uint8_t  source;  /* BOT_HOST_CPU_SRC_* (bot_host_cpu.h), server
+                               * to client; an older server sends none and
+                               * it reads as measured */
         } botHostCpuBot;
 
         /* CTRL_SERVER_BOT_SLOTS — see the enum. */
@@ -1739,6 +1767,26 @@ typedef struct ControlEvent {
             uint8_t slotOverride;
             uint8_t slotLocked;
         } botHostRowSlots;
+
+        /* CTRL_BOT_HOST_SYNC_CAPS — see the enum. */
+        struct {
+            uint8_t caps;        /* BRAIN_PACK_CAP_* bits */
+        } botHostSyncCaps;
+
+        /* CTRL_BOT_HOST_PACK_REQ — see the enum. */
+        struct {
+            uint32_t gen;        /* the manifest generation */
+            uint8_t  brain;      /* index into the manifest's brains */
+            uint16_t fileCount;  /* the brain's files: the bits that count */
+            uint16_t fromInstall;
+            uint16_t fromCache;
+            uint8_t  bits[BOT_HOST_PACK_BITMAP_BYTES];
+        } botHostPackReq;
+
+        /* CTRL_BOT_HOST_CPU_BUDGET — see the enum. */
+        struct {
+            uint32_t milli;      /* BOT_HOST_CPU_MILLI_* */
+        } botHostCpuBudget;
 
         /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
         struct {

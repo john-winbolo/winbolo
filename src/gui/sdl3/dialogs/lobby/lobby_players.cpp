@@ -889,36 +889,48 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         if (!first) SDL_strlcat(line, ")", sizeof(line));
 
         /* How much of its machine's CPU one bot uses, as that machine
-         * estimates it: "(Estimated 3.4% per bot of the server's CPU)". No
-         * percent while there is no estimate yet (no bot has thought on it
-         * in this server session). A row from an older server or host has
-         * only the whole percent of all its bots: "(Estimated 12% of the
-         * machine's CPU)". */
+         * estimates it: "(Estimated 3.4% per bot of the server's CPU)". The
+         * server sends the measured value, else the last one measured in
+         * this server session, else the full-budget estimate; with none of
+         * them the row says the CPU test is running. A row from an older
+         * server or host has only the whole percent of all its bots:
+         * "(Estimated 12% of the machine's CPU)", "<1%" for 0, and the CPU
+         * test text while it has none. The text is never blank and never
+         * 0. */
         char cpuText[160] = "";
         if (r->cpuBotHave) {
             if (r->cpuBot != BOT_HOST_CPU_MILLI_UNKNOWN) {
                 MessageArgs ca = {};
                 int sid;
+                /* The full-budget estimate is an upper limit: "At most". */
+                bool atMost = r->cpuBotSrc == BOT_HOST_CPU_SRC_BUDGET;
                 botHostCpuFormatMilli(r->cpuBot, ca.string1, sizeof(ca.string1));
                 if (isServer) {
-                    sid = STR_DLGLOBBY_BOTHOST_CPU_BOT_SERVER;
+                    sid = atMost ? STR_DLGLOBBY_BOTHOST_CPU_MAX_SERVER
+                                 : STR_DLGLOBBY_BOTHOST_CPU_BOT_SERVER;
                 } else if (r->cpuBotOwner != BOT_HOST_CPU_OWNER_NONE &&
                            r->cpuBotOwner == clientSimGetMyPlayerNum(cs)) {
-                    sid = STR_DLGLOBBY_BOTHOST_CPU_BOT_SELF;
+                    sid = atMost ? STR_DLGLOBBY_BOTHOST_CPU_MAX_SELF
+                                 : STR_DLGLOBBY_BOTHOST_CPU_BOT_SELF;
                 } else {
                     const ClientLobbySlot *os =
                         r->cpuBotOwner < MAX_TANKS
                             ? clientSimGetLobbySlot(cs, (BYTE)r->cpuBotOwner)
                             : NULL;
-                    sid = STR_DLGLOBBY_BOTHOST_CPU_BOT_OTHER;
+                    sid = atMost ? STR_DLGLOBBY_BOTHOST_CPU_MAX_OTHER
+                                 : STR_DLGLOBBY_BOTHOST_CPU_BOT_OTHER;
                     SDL_strlcpy(ca.string2,
                                 (os != NULL && os->connected && os->playerName[0])
                                     ? os->playerName : r->name,
                                 sizeof(ca.string2));
                 }
                 SDL_strlcpy(cpuText, langGetTextFmt(sid, &ca), sizeof(cpuText));
+            } else {
+                SDL_strlcpy(cpuText,
+                            langGetText(STR_DLGLOBBY_BOTHOST_CPU_TESTING),
+                            sizeof(cpuText));
             }
-        } else if (r->cpu == BOT_HOST_CPU_UNDER_ONE) {
+        } else if (r->cpu == BOT_HOST_CPU_UNDER_ONE || r->cpu == 0) {
             SDL_strlcpy(cpuText, langGetText(STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE),
                         sizeof(cpuText));
         } else if (r->cpu <= 100) {
@@ -926,15 +938,31 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
             ca.number = r->cpu;
             SDL_strlcpy(cpuText, langGetTextFmt(STR_DLGLOBBY_BOTHOST_CPU_FMT, &ca),
                         sizeof(cpuText));
+        } else {
+            SDL_strlcpy(cpuText, langGetText(STR_DLGLOBBY_BOTHOST_CPU_TESTING),
+                        sizeof(cpuText));
         }
 
-        /* The host's ping: the lag the server measures for the placement,
-         * smoothed over about 10 s, in the player list's form and colours
-         * ("45ms"). None on the server's own row, and none from an older
-         * server. */
+        /* The host's ping, in the player list's form and colours ("45ms").
+         * A player's own Bot Host shows that player's game ping, the player
+         * list's own value; the server sends the same for the row, and the
+         * player list's copy is used here once the row's owner is known
+         * (CTRL_BOT_HOST_CPU_BOT), so the two never differ. Else the lag
+         * the server measures for the placement, smoothed over about 10 s.
+         * None on the server's own row, and none from an older server. */
         char pingText[16] = "";
-        if (!isServer && r->lagMs != BOT_HOST_LAG_UNKNOWN) {
-            SDL_snprintf(pingText, sizeof(pingText), "%dms", (int)r->lagMs);
+        uint16_t rowPing = r->lagMs;
+        if (!isServer && r->cpuBotHave &&
+            r->cpuBotOwner != BOT_HOST_CPU_OWNER_NONE &&
+            r->cpuBotOwner < MAX_TANKS) {
+            const ClientLobbySlot *os =
+                clientSimGetLobbySlot(cs, (BYTE)r->cpuBotOwner);
+            if (os != NULL && os->connected && os->pingMs > 0) {
+                rowPing = (uint16_t)os->pingMs;
+            }
+        }
+        if (!isServer && rowPing != BOT_HOST_LAG_UNKNOWN) {
+            SDL_snprintf(pingText, sizeof(pingText), "%dms", (int)rowPing);
         }
 
         ImGui::Bullet();
@@ -955,7 +983,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
             if (!pingDrawn && ImGui::CalcTextSize(line).x + pingW <= rowAvail) {
                 ImGui::TextUnformatted(line);
                 ImGui::SameLine();
-                ImGui::TextColored(lobbyPingColor(r->lagMs), "%s", pingText);
+                ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
                 pingDrawn = true;
             } else {
                 ImGui::TextWrapped("%s", line);
@@ -970,7 +998,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
                 ImGui::TextUnformatted(full);
                 if (!pingDrawn) {
                     ImGui::SameLine();
-                    ImGui::TextColored(lobbyPingColor(r->lagMs), "%s", pingText);
+                    ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
                     pingDrawn = true;
                 }
             } else {
@@ -978,7 +1006,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
                     ImGui::CalcTextSize(line).x + pingW <= rowAvail) {
                     ImGui::TextUnformatted(line);
                     ImGui::SameLine();
-                    ImGui::TextColored(lobbyPingColor(r->lagMs), "%s", pingText);
+                    ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
                     pingDrawn = true;
                 } else {
                     ImGui::TextWrapped("%s", line);
@@ -990,7 +1018,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         }
         if (!pingDrawn) {
             ImGui::Indent(indent);
-            ImGui::TextColored(lobbyPingColor(r->lagMs), "%s", pingText);
+            ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
             ImGui::Unindent(indent);
         }
         if (dim) ImGui::PopStyleColor();

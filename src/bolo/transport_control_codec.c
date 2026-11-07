@@ -3869,10 +3869,12 @@ static bool decodeBotHostCpuFreeBody(const uint8_t *buf, size_t len,
     return true;
 }
 
-/* CTRL_BOT_HOST_CPU_BOT body: [idx 1][owner 1][milli 4]. Bytes after the
- * six are skipped, so the message can grow; a milli that is 0 or above
- * 100% reads as unknown. */
-#define BOT_HOST_CPU_BOT_LEN 6
+/* CTRL_BOT_HOST_CPU_BOT body: [idx 1][owner 1][milli 4][source 1]. Bytes
+ * after the seven are skipped, so the message can grow; a milli that is 0
+ * or above 100% reads as unknown. An older peer sends only the first six,
+ * and the value then reads as measured. */
+#define BOT_HOST_CPU_BOT_LEN     6
+#define BOT_HOST_CPU_BOT_LEN_SRC 7
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeBotHostCpuBotBody(const ControlEvent *evt,
@@ -3881,12 +3883,13 @@ static EncodeResult encodeBotHostCpuBotBody(const ControlEvent *evt,
                                             size_t *outLen) {
     uint32_t milli;
     (void)recipient;
-    if (bufCap < BOT_HOST_CPU_BOT_LEN) return ENCODE_OVERFLOW;
+    if (bufCap < BOT_HOST_CPU_BOT_LEN_SRC) return ENCODE_OVERFLOW;
     milli = botHostCpuMilliFromWire(evt->u.botHostCpuBot.milli);
     buf[0] = evt->u.botHostCpuBot.idx;
     buf[1] = evt->u.botHostCpuBot.owner;
     packU32(buf + 2, milli);
-    *outLen = BOT_HOST_CPU_BOT_LEN;
+    buf[6] = evt->u.botHostCpuBot.source;
+    *outLen = BOT_HOST_CPU_BOT_LEN_SRC;
     return ENCODE_OK;
 }
 
@@ -3904,6 +3907,9 @@ static bool decodeBotHostCpuBotBody(const uint8_t *buf, size_t len,
     outEvt->u.botHostCpuBot.owner =
         buf[1] < MAX_TANKS ? buf[1] : (uint8_t)BOT_HOST_CPU_OWNER_NONE;
     outEvt->u.botHostCpuBot.milli = botHostCpuMilliFromWire(unpackU32(buf + 2));
+    outEvt->u.botHostCpuBot.source =
+        len >= BOT_HOST_CPU_BOT_LEN_SRC && buf[6] <= BOT_HOST_CPU_SRC_BUDGET
+            ? buf[6] : (uint8_t)BOT_HOST_CPU_SRC_MEASURED;
     return true;
 }
 
@@ -4063,6 +4069,100 @@ static bool decodeBotHostRowSlotsBody(const uint8_t *buf, size_t len,
     outEvt->u.botHostRowSlots.slotOverride = buf[3];
     outEvt->u.botHostRowSlots.slotLocked = (buf[4] & 1u) ? 1u : 0u;
     outEvt->u.botHostRowSlots.zero = (buf[4] & 2u) ? 1u : 0u;
+    return true;
+}
+
+/* CTRL_BOT_HOST_SYNC_CAPS body: [caps 1]. Later bytes skipped. */
+static EncodeResult encodeBotHostSyncCapsBody(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 1) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostSyncCaps.caps;
+    *outLen = 1;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostSyncCapsBody(const uint8_t *buf, size_t len,
+                                      ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < 1) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_SYNC_CAPS;
+    outEvt->u.botHostSyncCaps.caps = buf[0];
+    return true;
+}
+
+/* CTRL_BOT_HOST_CPU_BUDGET body: [milli 4]. Later bytes skipped. */
+static EncodeResult encodeBotHostCpuBudgetBody(const ControlEvent *evt,
+                                               const struct UdpServerClient *recipient,
+                                               uint8_t *buf, size_t bufCap,
+                                               size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 4) return ENCODE_OVERFLOW;
+    packU32(buf, botHostCpuMilliFromWire(evt->u.botHostCpuBudget.milli));
+    *outLen = 4;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostCpuBudgetBody(const uint8_t *buf, size_t len,
+                                       ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < 4) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_CPU_BUDGET;
+    outEvt->u.botHostCpuBudget.milli = botHostCpuMilliFromWire(unpackU32(buf));
+    return true;
+}
+
+/* CTRL_BOT_HOST_PACK_REQ body: [gen 4][brain 1][fileCount 2]
+ * [fromInstall 2][fromCache 2][bits (fileCount + 7) / 8]. A fileCount of 0
+ * or above 8 * BOT_HOST_PACK_BITMAP_BYTES, or a body too short for its
+ * bits, is refused; later bytes are skipped. */
+#define BOT_HOST_PACK_REQ_HEAD 11
+
+static EncodeResult encodeBotHostPackReqBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    size_t nb;
+    uint16_t fc = evt->u.botHostPackReq.fileCount;
+    (void)recipient;
+    if (fc == 0 || fc > 8u * BOT_HOST_PACK_BITMAP_BYTES) return ENCODE_OVERFLOW;
+    nb = ((size_t)fc + 7u) / 8u;
+    if (bufCap < BOT_HOST_PACK_REQ_HEAD + nb) return ENCODE_OVERFLOW;
+    packU32(buf, evt->u.botHostPackReq.gen);
+    buf[4] = evt->u.botHostPackReq.brain;
+    packU16(buf + 5, fc);
+    packU16(buf + 7, evt->u.botHostPackReq.fromInstall);
+    packU16(buf + 9, evt->u.botHostPackReq.fromCache);
+    memcpy(buf + BOT_HOST_PACK_REQ_HEAD, evt->u.botHostPackReq.bits, nb);
+    *outLen = BOT_HOST_PACK_REQ_HEAD + nb;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostPackReqBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    uint16_t fc;
+    size_t nb;
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_PACK_REQ_HEAD) {
+        return false;
+    }
+    fc = unpackU16(buf + 5);
+    if (fc == 0 || fc > 8u * BOT_HOST_PACK_BITMAP_BYTES) return false;
+    nb = ((size_t)fc + 7u) / 8u;
+    if (len < BOT_HOST_PACK_REQ_HEAD + nb) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_PACK_REQ;
+    outEvt->u.botHostPackReq.gen = unpackU32(buf);
+    outEvt->u.botHostPackReq.brain = buf[4];
+    outEvt->u.botHostPackReq.fileCount = fc;
+    outEvt->u.botHostPackReq.fromInstall = unpackU16(buf + 7);
+    outEvt->u.botHostPackReq.fromCache = unpackU16(buf + 9);
+    memcpy(outEvt->u.botHostPackReq.bits, buf + BOT_HOST_PACK_REQ_HEAD, nb);
+    /* Bits past fileCount in the last byte are not files. */
+    if (fc % 8u != 0) {
+        outEvt->u.botHostPackReq.bits[nb - 1] &= (uint8_t)((1u << (fc % 8u)) - 1u);
+    }
     return true;
 }
 
@@ -4823,6 +4923,9 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_MACHINE_SALT]   = encodeBotHostMachineSaltBody,
     [CTRL_BOT_HOST_MACHINE_ANSWER] = encodeBotHostMachineAnswerBody,
     [CTRL_BOT_HOST_ROW_SLOTS]      = encodeBotHostRowSlotsBody,
+    [CTRL_BOT_HOST_SYNC_CAPS]      = encodeBotHostSyncCapsBody,
+    [CTRL_BOT_HOST_PACK_REQ]       = encodeBotHostPackReqBody,
+    [CTRL_BOT_HOST_CPU_BUDGET]     = encodeBotHostCpuBudgetBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -4900,6 +5003,9 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_MACHINE_SALT]   = decodeBotHostMachineSaltBody,
     [CTRL_BOT_HOST_MACHINE_ANSWER] = decodeBotHostMachineAnswerBody,
     [CTRL_BOT_HOST_ROW_SLOTS]      = decodeBotHostRowSlotsBody,
+    [CTRL_BOT_HOST_SYNC_CAPS]      = decodeBotHostSyncCapsBody,
+    [CTRL_BOT_HOST_PACK_REQ]       = decodeBotHostPackReqBody,
+    [CTRL_BOT_HOST_CPU_BUDGET]     = decodeBotHostCpuBudgetBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -5041,6 +5147,9 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_MACHINE_SALT:  return "CTRL_BOT_HOST_MACHINE_SALT";
     case CTRL_BOT_HOST_MACHINE_ANSWER: return "CTRL_BOT_HOST_MACHINE_ANSWER";
     case CTRL_BOT_HOST_ROW_SLOTS:     return "CTRL_BOT_HOST_ROW_SLOTS";
+    case CTRL_BOT_HOST_SYNC_CAPS:     return "CTRL_BOT_HOST_SYNC_CAPS";
+    case CTRL_BOT_HOST_PACK_REQ:      return "CTRL_BOT_HOST_PACK_REQ";
+    case CTRL_BOT_HOST_CPU_BUDGET:    return "CTRL_BOT_HOST_CPU_BUDGET";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

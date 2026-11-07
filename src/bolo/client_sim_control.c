@@ -444,6 +444,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             bool cpuBotHave = r->connected && r->cpuBotHave;
             uint8_t cpuBotOwner = r->cpuBotOwner;
             uint32_t cpuBot = r->cpuBot;
+            uint8_t cpuBotSrc = r->cpuBotSrc;
             uint16_t lagMs = r->connected ? r->lagMs
                                           : (uint16_t)BOT_HOST_LAG_UNKNOWN;
             /* The row's computer and override, as the CPU estimate. */
@@ -470,6 +471,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                     r->cpuBotHave = true;
                     r->cpuBotOwner = cpuBotOwner;
                     r->cpuBot = cpuBot;
+                    r->cpuBotSrc = cpuBotSrc;
                 }
                 r->state   = evt->u.botHostStatus.state;
                 r->percent = evt->u.botHostStatus.percent;
@@ -530,6 +532,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 r->cpuBotHave = true;
                 r->cpuBotOwner = evt->u.botHostCpuBot.owner;
                 r->cpuBot = evt->u.botHostCpuBot.milli;
+                r->cpuBotSrc = evt->u.botHostCpuBot.source;
             }
         }
         break;

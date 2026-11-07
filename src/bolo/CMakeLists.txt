@@ -33,6 +33,7 @@ add_library(bolo_static STATIC
     brain_record_merge.c
     brain_record_walk.c
     brain_sync.c
+    brain_pack.c
     bot_host_link.c
     machine_cpu_free.c
     machine_id.c

@@ -130,7 +130,14 @@ enum {
      * "<block>/<file>/<offset>" in decimal. The blob is the raw file
      * bytes, at most 64 KB. Pieces of a file come in order; a file of size
      * 0 is one empty piece. */
-    BULK_KIND_REC_CHUNK = 15
+    BULK_KIND_REC_CHUNK = 15,
+    /* Server->Bot Host, in answer to CTRL_BOT_HOST_PACK_REQ: one piece of
+     * the zstd stream of one brain's asked-for files (brain_pack.h). The
+     * header's gen is the manifest generation and its path is
+     * "<brain>/<seq>" in decimal, seq counting from 0. The blob is at most
+     * BRAIN_PACK_PIECE_MAX bytes of the stream. Only a host that sent
+     * BRAIN_PACK_CAP_PACKED is sent it. */
+    BULK_KIND_BRAIN_PACK = 16
 };
 
 /* The status byte that opens a BULK_KIND_BOT_POOL blob. */

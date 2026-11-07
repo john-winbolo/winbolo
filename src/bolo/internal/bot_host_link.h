@@ -189,6 +189,18 @@ bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,
  * to rawMs; the first sample (*known false) is taken as it is. */
 void botHostLagSmooth(double *lagMs, bool *known, double rawMs,
                       int smoothTicks);
+/* The round trip the lag smoothing takes each tick. A player's own Bot
+ * Host (playerHost) counts its player's game ping, ownerPingMs, the value
+ * the player list shows; with no player ping yet (ownerPingMs 0 or below)
+ * it, like every listed Bot Host, counts its own measured hostPingMs. */
+uint16_t botHostLagRaw(bool playerHost, int ownerPingMs, uint16_t hostPingMs);
+/* The ping a Bot Host row shows, in whole ms (at least 1), or 0xFFFF
+ * (BOT_HOST_LAG_UNKNOWN) when there is none. A player's own Bot Host shows
+ * its player's game ping (ownerPingMs above 0), the same value and so the
+ * same colour as the player list; else the smoothed lag (lagKnown,
+ * lagMs). */
+uint16_t botHostRowPing(bool playerHost, int ownerPingMs, bool lagKnown,
+                        double lagMs);
 /* The two above with the lag rules (BotHostPlaceLag; NULL: no lag). The
  * score of a host is (bots + 1) / effective slots x (1 + lagMs / refMs). */
 int  botHostPlacePickLag(const BotHostPlaceHost *hosts, int n, int smallSlots,
@@ -287,6 +299,12 @@ typedef struct {
     int      readingCount, readingNext;
     double   oneBotCost;   /* the last known CPU percent of one bot */
     bool     costKnown;
+    /* The one-bot cost the free CPU check uses while no measured cost is
+     * known: the host's full-budget estimate (botHostCpuMilliBudget, as a
+     * percent). The caller sets it before each check; the probe and the
+     * raise rule do not use it. */
+    double   costFallback;
+    bool     costFallbackKnown;
 } BotHostOverrunState;
 
 typedef struct {
@@ -318,6 +336,7 @@ typedef struct {
     bool   freeKnown;      /* a free CPU average of the window is known */
     double freeAvg;
     bool   costKnown;
+    bool   costFromBudget; /* oneBotCost is the full-budget fallback */
     double oneBotCost;
     double predicted;      /* freeAvg - oneBotCost */
     int    lowestClean;    /* lowest free of a clean reading with bots, -1 */

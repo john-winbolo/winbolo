@@ -37,6 +37,7 @@
 #include "client_command.h" /* CmdBotStats */
 #include "bulk_transfer.h"  /* BulkSender, BulkReceiver */
 #include "brain_sync.h"     /* BrainSyncManifest — the Bot Host brain sync */
+#include "brain_pack.h"     /* BrainPackWriter — the packed brain sync */
 #include "bot_host_link.h"  /* BotHostAllow, BotHostAnnounce — -bothosts */
 #include "bothost_record.h"  /* BotHostRecord — serverBotHostRecordPut */
 #include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy */
@@ -259,6 +260,11 @@ typedef struct {
      * value it had. */
     uint32_t cpuBot;
     bool     cpuBotHave;
+    /* The host's full-budget estimate of one bot's part
+     * (CTRL_BOT_HOST_CPU_BUDGET); cpuBudgetHave: one came (an older host
+     * never sends one). */
+    uint32_t cpuBudget;
+    bool     cpuBudgetHave;
     /* The host machine's free CPU percent, all cores
      * (CTRL_BOT_HOST_CPU_FREE, every 5 s), and the tick it came;
      * BOT_HOST_FREE_UNKNOWN until one comes, and always from an older
@@ -316,6 +322,40 @@ typedef struct {
     uint32_t fileOffset;
     uint32_t fileSize;
     uint8_t *fileData;
+
+    /* The packed sync (brain_pack.h). capsSeen: the host sent
+     * CTRL_BOT_HOST_SYNC_CAPS. joinTick: tickCount it was accepted, for
+     * the caps wait. manifestV2: the manifest it was sent is the v2 form. */
+    bool     capsSeen;
+    uint8_t  caps;
+    uint32_t joinTick;
+    bool     manifestV2;
+    /* Pack requests waiting, oldest first. */
+    int      packQueue;
+    uint8_t  packQBrain[BRAIN_SYNC_MAX_BRAINS];
+    uint8_t  packQBits[BRAIN_SYNC_MAX_BRAINS][BRAIN_PACK_BITMAP_BYTES];
+    /* The stream being sent: its brain, its bitmap, the next file to look
+     * at, the piece count, and the file being read into it. */
+    BrainPackWriter *packW;
+    int      packBrain;
+    uint8_t  packBits[BRAIN_PACK_BITMAP_BYTES];
+    int      packNext;
+    uint32_t packSeq;
+    bool     packFileOpen;
+    uint8_t *packData;
+    uint32_t packSize;
+    uint32_t packOff;
+    /* For the one log line of a generation: the requests in, the files of
+     * the manifest, how many were sent, and how many the host had. */
+    int      packReqs;
+    uint32_t packStartTick;
+    uint32_t packFilesAll;
+    uint32_t packFilesSent;
+    uint32_t packFromInstall;
+    uint32_t packFromCache;
+    uint64_t packRaw;
+    uint64_t packComp;
+    bool     packLogged;
 
     /* Brain recordings of the host's bots (udp_server_botrec.c). */
     uint32_t recSentSeq;      /* the block state last told to the host */
@@ -670,6 +710,9 @@ typedef struct UdpServerState {
     uint32_t    brainManifestGen;
     uint8_t    *brainManifestBlob;
     size_t      brainManifestBlobLen;
+    /* The same manifest in the v2 form, for hosts that take packed sync. */
+    uint8_t    *brainManifestBlob2;
+    size_t      brainManifestBlob2Len;
 } UdpServerState;
 
 extern UdpServerState udpServer;

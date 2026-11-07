@@ -520,6 +520,10 @@
 #define STR_DLGLOBBY_BOTHOST_SLOTS_ALL 3908
 #define STR_DLGLOBBY_BOTHOST_SLOTS_LOCKED 3909
 #define STR_DLGLOBBY_BOTHOST_SLOTS_TIP 3910
+#define STR_DLGLOBBY_BOTHOST_CPU_TESTING 3911
+#define STR_DLGLOBBY_BOTHOST_CPU_MAX_SELF 3912
+#define STR_DLGLOBBY_BOTHOST_CPU_MAX_SERVER 3913
+#define STR_DLGLOBBY_BOTHOST_CPU_MAX_OTHER 3914
 /* The lobby's one-game opt-out from running the server's bots on this
  * computer, next to the line above, and its mouse-over text */
 #define STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT     3652

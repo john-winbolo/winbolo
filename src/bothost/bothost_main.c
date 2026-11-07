@@ -75,6 +75,7 @@
 #include "channel_mux.h"
 #include "bulk_transfer.h"
 #include "brain_sync.h"
+#include "brain_pack.h"
 #include "bot_host_link.h"
 #include "machine_cpu_free.h"
 #include "client_sim_internal.h"
@@ -275,6 +276,25 @@ typedef struct {
     uint8_t          *fileBuf;
     uint32_t          syncStartMs;
     int               retries;     /* files asked for again this manifest */
+    /* Where this manifest's received files go: the cache, or the session
+     * folder of the Bot Host inside a client. */
+    char              root[600];
+    /* The packed sync (a v2 manifest, brain_pack.h). installRoot: the
+     * host's own brain folder, only read; "" when none. */
+    bool              packMode;
+    char              installRoot[600];
+    bool              inPlace[BRAIN_SYNC_MAX_BRAINS];
+    bool              staged[BRAIN_SYNC_MAX_BRAINS];
+    /* Per brain: the files asked for in the stream, and those that came
+     * in and passed their checks. */
+    uint8_t           packBits[BRAIN_SYNC_MAX_BRAINS][BRAIN_PACK_BITMAP_BYTES];
+    uint8_t           packGot[BRAIN_SYNC_MAX_BRAINS][BRAIN_PACK_BITMAP_BYTES];
+    BrainPackReader  *readers[BRAIN_SYNC_MAX_BRAINS];
+    uint32_t          packSeq[BRAIN_SYNC_MAX_BRAINS];
+    int               packPending;  /* streams not yet ended */
+    uint32_t          packWire;     /* compressed bytes received */
+    int               fromInstall;
+    int               fromCache;
 } HostSync;
 
 typedef struct {
@@ -308,6 +328,9 @@ typedef struct {
     /* The per-bot value last sent in CTRL_BOT_HOST_CPU_BOT; 0 for none, so
      * the first one (unknown too) goes out. */
     uint32_t   lastCpuBotSent;
+    /* The full-budget estimate last sent in CTRL_BOT_HOST_CPU_BUDGET; 0 for
+     * none. */
+    uint32_t   lastCpuBudgetSent;
     /* The free CPU reading last sent in CTRL_BOT_HOST_CPU_FREE (its
      * hostFreeSeq), 0 for none. */
     uint32_t   lastFreeSeqSent;
@@ -330,6 +353,13 @@ static int        serverCount;
  * percent goes to the servers. */
 static double          hostThinkMsTotal;
 static BotHostCpuMeter hostCpuMeter;
+/* The full-budget estimate of one bot's part of this machine's CPU
+ * (botHostCpuMilliBudget): the think budget a new bot would get here over
+ * the time between thinks, over the logical cores. Worked out in the tick
+ * loop every BOT_HOST_BUDGET_EVERY_MS. */
+static uint32_t hostCpuBudgetMilli = BOT_HOST_CPU_MILLI_UNKNOWN;
+static uint64_t hostCpuBudgetAtMs;
+#define BOT_HOST_BUDGET_EVERY_MS 2000u
 static uint8_t         hostCpuValue = (uint8_t)BOT_HOST_CPU_UNKNOWN;
 /* The free CPU of this whole machine, read each BOT_HOST_FREE_MS
  * (machine_cpu_free.h). Only the percent goes to the servers. hostFreeSeq
@@ -649,8 +679,21 @@ static void syncRetryFile(HostServer *sv, uint32_t id) {
     syncRequestFile(sv, id);
 }
 
+static void syncDropReaders(HostSync *hs) {
+    int b;
+    for (b = 0; b < BRAIN_SYNC_MAX_BRAINS; b++) {
+        brainPackReaderFree(hs->readers[b]);
+        hs->readers[b] = NULL;
+    }
+    hs->packPending = 0;
+}
+
 /* Forget the manifest and any transfer under way (connection lost). */
 static void syncReset(HostSync *hs) {
+    syncDropReaders(hs);
+    hs->packMode = false;
+    memset(hs->inPlace, 0, sizeof(hs->inPlace));
+    memset(hs->staged, 0, sizeof(hs->staged));
     if (hs->bulk.state == BULK_RECV_BODY) free(hs->bulk.dst);
     bulkReceiverInit(&hs->bulk);
     syncDropFile(hs);
@@ -662,6 +705,73 @@ static void syncReset(HostSync *hs) {
     hs->ready = false;
     hs->gen = 0;
     hs->done = hs->total = 0;
+}
+
+/* The session folder of the Bot Host inside a client: the brain files it
+ * receives from its server live there only while it is connected
+ * (brain_pack.h). Made when the first file list comes. */
+static BrainSession embedSession = { "", -1 };
+
+static void syncSessionEnd(void) {
+    if (!HOST_EMBED || embedSession.dir[0] == '\0') return;
+    if (!brainSessionEnd(optCacheDir, &embedSession)) {
+        fprintf(stderr, "[bothost] the brain session folder could not be "
+                        "removed; the next start tries again\n");
+    }
+}
+
+/* Where received brain files go: the per-version cache, or for the Bot
+ * Host inside a client its session folder. False when it cannot be made. */
+static bool syncRootFor(char *out, size_t sz) {
+    if (!HOST_EMBED) {
+        SDL_strlcpy(out, optCacheDir, sz);
+        return true;
+    }
+    if (embedSession.dir[0] == '\0' &&
+        !brainSessionCreate(optCacheDir, &embedSession)) {
+        return false;
+    }
+    SDL_strlcpy(out, embedSession.dir, sz);
+    return true;
+}
+
+/* The host's own brain folder, the release brains next to its program: a
+ * source of files only, never written. WINBOLO_BOTHOST_INSTALL_DIR names
+ * another one ("none": no install). "" when there is none. */
+static void syncInstallRoot(char *out, size_t sz) {
+    const char *env = SDL_getenv("WINBOLO_BOTHOST_INSTALL_DIR");
+    const char *base;
+    static const char *const names[] = { "Brains", "brains" };
+    int i;
+    out[0] = '\0';
+    if (env != NULL && env[0] != '\0') {
+        if (SDL_strcasecmp(env, "none") != 0) SDL_strlcpy(out, env, sz);
+        return;
+    }
+    base = SDL_GetBasePath();
+    if (base == NULL) return;
+    for (i = 0; i < 2; i++) {
+        SDL_PathInfo pi;
+        char dir[600];
+        SDL_snprintf(dir, sizeof(dir), "%s%s", base, names[i]);
+        if (SDL_GetPathInfo(dir, &pi) && pi.type == SDL_PATHTYPE_DIRECTORY) {
+            SDL_strlcpy(out, dir, sz);
+            return;
+        }
+    }
+}
+
+/* The init.lua a seat of brain br runs: in the install when the brain runs
+ * in place, else in the received files' folder. */
+static bool syncBrainInitPath(const HostSync *hs, const BrainSyncBrain *br,
+                              char *out, size_t sz) {
+    ptrdiff_t b = br - hs->man.brains;
+    if (b >= 0 && b < hs->man.brainCount && hs->inPlace[b]) {
+        return (size_t)SDL_snprintf(out, sz, "%s/%s/init.lua", hs->installRoot,
+                                    br->name) < sz;
+    }
+    return brainSyncCacheFile(out, sz, hs->root, br->name, br->version,
+                              "init.lua");
 }
 
 #ifdef WINBOLO_BOTHOST_EMBED
@@ -676,13 +786,36 @@ static int embedCapacityFor(const HostServer *sv) {
 
 static void syncFinishIfDone(HostServer *sv) {
     HostSync *hs = &sv->sync;
+    int b;
     if (hs->ready || hs->gotCount < hs->needCount) return;
+    if (hs->packPending > 0) return;
+    for (b = 0; b < hs->man.brainCount; b++) {
+        if (!hs->staged[b]) continue;
+        if (!brainSyncCommitStage(hs->root, &hs->man.brains[b])) {
+            fprintf(stderr, "[bothost] the files of brain \"%s\" could not be "
+                            "moved into place; this host waits for its next "
+                            "brain file list\n", hs->man.brains[b].name);
+            return;
+        }
+        hs->staged[b] = false;
+    }
     hs->ready = true;
     cacheListDirty = true;
-    fprintf(stderr, "[bothost] brain files from %s ready (generation %u): %u "
-                    "bytes downloaded in %u ms\n",
-            sv->label, (unsigned)hs->gen, (unsigned)hs->done,
-            (unsigned)(nowMs() - hs->syncStartMs));
+    if (hs->packMode) {
+        fprintf(stderr, "[bothost] brain files from %s ready (generation %u): "
+                        "%u bytes of files, %u bytes on the wire, %d from "
+                        "the install, %d from the cache, %d received, in %u "
+                        "ms\n",
+                sv->label, (unsigned)hs->gen, (unsigned)hs->done,
+                (unsigned)hs->packWire, hs->fromInstall, hs->fromCache,
+                hs->needCount, (unsigned)(nowMs() - hs->syncStartMs));
+    } else {
+        fprintf(stderr, "[bothost] brain files from %s ready (generation %u): "
+                        "%u bytes downloaded (%u bytes on the wire) in %u "
+                        "ms\n",
+                sv->label, (unsigned)hs->gen, (unsigned)hs->done,
+                (unsigned)hs->packWire, (unsigned)(nowMs() - hs->syncStartMs));
+    }
     if (HOST_EMBED && embedSlotsFixed == 0 && embedCapacityGen != hs->gen) {
         /* The slots this computer offers: the server's bot brain's own
          * answer for this machine, now that its files are here. It is set
@@ -725,21 +858,91 @@ static void syncOnManifest(HostServer *sv, const uint8_t *buf, uint32_t len,
     hs->total = 0;
     hs->syncStartMs = nowMs();
     hs->retries = 0;
+    syncDropReaders(hs);
+    hs->packWire = 0;
+    hs->packMode = hs->man.haveSha;
+    hs->fromInstall = hs->fromCache = 0;
+    memset(hs->inPlace, 0, sizeof(hs->inPlace));
+    memset(hs->staged, 0, sizeof(hs->staged));
     memset(&plan, 0, sizeof(plan));
-    if (!brainSyncPlanCache(&hs->man, optCacheDir, &plan)) {
+    if (!syncRootFor(hs->root, sizeof(hs->root))) {
+        fprintf(stderr, "[bothost] cannot make a brain session folder under "
+                        "\"%s\"\n", optCacheDir);
+        return;
+    }
+    if (hs->packMode) {
+        syncInstallRoot(hs->installRoot, sizeof(hs->installRoot));
+        if (!brainSyncPlanPacked(&hs->man, hs->root,
+                                 hs->installRoot[0] != '\0' ? hs->installRoot
+                                                            : NULL,
+                                 &plan)) {
+            fprintf(stderr, "[bothost] cannot check the brain cache at "
+                            "\"%s\"\n", hs->root);
+            free(plan.need);
+            return;
+        }
+    } else if (!brainSyncPlanCache(&hs->man, hs->root, &plan)) {
         fprintf(stderr, "[bothost] cannot check the brain cache at \"%s\"\n",
-                optCacheDir);
+                hs->root);
         free(plan.need);
         return;
     }
     hs->need = plan.need;
     hs->needCount = plan.needCount;
     hs->total = plan.needBytes;
-    fprintf(stderr, "[bothost] brain file list from %s, generation %u: %d "
-                    "brains; %d files held, %d copied from another version, "
-                    "%d to download (%u bytes)\n",
-            sv->label, (unsigned)gen, hs->man.brainCount, plan.haveCount,
-            plan.copyCount, plan.needCount, (unsigned)plan.needBytes);
+    fprintf(stderr, "[bothost] brain file list from %s, generation %u (%s): "
+                    "%d brains; %d files held, %d copied from another "
+                    "version, %d from the install, %d to download (%u "
+                    "bytes)\n",
+            sv->label, (unsigned)gen, hs->packMode ? "packed" : "one by one",
+            hs->man.brainCount, plan.haveCount, plan.copyCount,
+            plan.installCount, plan.needCount, (unsigned)plan.needBytes);
+    if (hs->packMode) {
+        hs->fromInstall = plan.installCount;
+        hs->fromCache = plan.haveCount + plan.copyCount;
+        for (b = 0; b < hs->man.brainCount; b++) {
+            const BrainSyncBrain *br = &hs->man.brains[b];
+            ControlEvent evt;
+            hs->inPlace[b] = plan.inPlace[b];
+            hs->staged[b] = plan.staged[b];
+            brainPackBitsFromPlan(&plan, b, hs->packBits[b]);
+            memset(hs->packGot[b], 0, sizeof(hs->packGot[b]));
+            hs->packSeq[b] = 0;
+            if (brainPackBitCount(hs->packBits[b], br->fileCount) > 0) {
+                hs->readers[b] = brainPackReaderNew(br, (uint8_t)b,
+                                                    hs->packBits[b]);
+                if (hs->readers[b] != NULL) hs->packPending++;
+            }
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_BOT_HOST_PACK_REQ;
+            evt.u.botHostPackReq.gen = gen;
+            evt.u.botHostPackReq.brain = (uint8_t)b;
+            evt.u.botHostPackReq.fileCount = (uint16_t)br->fileCount;
+            evt.u.botHostPackReq.fromInstall = (uint16_t)plan.installOf[b];
+            evt.u.botHostPackReq.fromCache = (uint16_t)plan.cacheOf[b];
+            /* A reader that could not be made: an empty bitmap, and the
+             * files come one at a time below. */
+            if (hs->readers[b] != NULL) {
+                memcpy(evt.u.botHostPackReq.bits, hs->packBits[b],
+                       sizeof(evt.u.botHostPackReq.bits));
+            }
+            ctlSendEvent(sv, &evt);
+        }
+        /* Every file is asked for in the streams; one that fails is asked
+         * for again the old way once every stream has ended. */
+        hs->nextReq = hs->needCount;
+        if (hs->packPending == 0) {
+            hs->nextReq = 0;
+        }
+        /* Nothing to keep: the brains run from the install. */
+        if (HOST_EMBED && hs->needCount == 0) {
+            bool anyStaged = false;
+            for (b = 0; b < hs->man.brainCount; b++) {
+                if (hs->staged[b] || !hs->inPlace[b]) anyStaged = true;
+            }
+            if (!anyStaged) syncSessionEnd();
+        }
+    }
     for (b = 0; b < hs->man.brainCount; b++) {
         char hex[17];
         brainSyncVersionHex(hs->man.brains[b].version, hex);
@@ -816,12 +1019,27 @@ static void syncOnChunk(HostServer *sv, const BulkStreamHeader *h,
     }
     hs->fileGot += (uint32_t)n;
     hs->done += (uint32_t)n;
+    hs->packWire += h->totalSize;
     if (hs->fileGot < f->size) {
         syncSendProgress(sv);
         return;
     }
-    if (brainSyncHash(BRAIN_SYNC_HASH_SEED, hs->fileBuf, f->size) != f->hash ||
-        !brainSyncCacheFile(path, sizeof(path), optCacheDir, br->name,
+    if (hs->packMode) {
+        char stage[1100];
+        if (!brainSyncDataIs(f, hs->fileBuf, f->size) ||
+            !brainSyncStageDir(stage, sizeof(stage), hs->root, br->name,
+                               br->version) ||
+            (size_t)SDL_snprintf(path, sizeof(path), "%s/%s", stage, f->path)
+                >= sizeof(path) ||
+            !brainSyncWriteFile(path, hs->fileBuf, f->size)) {
+            fprintf(stderr, "[bothost] brain file \"%s/%s\" failed its check "
+                            "or could not be written\n", br->name, f->path);
+            syncRetryFile(sv, id);
+            return;
+        }
+        hs->staged[bi] = true;
+    } else if (brainSyncHash(BRAIN_SYNC_HASH_SEED, hs->fileBuf, f->size) != f->hash ||
+        !brainSyncCacheFile(path, sizeof(path), hs->root, br->name,
                             br->version, f->path) ||
         !brainSyncWriteFile(path, hs->fileBuf, f->size)) {
         fprintf(stderr, "[bothost] brain file \"%s/%s\" failed its check or "
@@ -836,6 +1054,130 @@ static void syncOnChunk(HostServer *sv, const BulkStreamHeader *h,
     syncFinishIfDone(sv);
 }
 
+typedef struct {
+    HostServer *sv;
+    int         brain;
+} SyncPackCtx;
+
+/* One whole file of a packed stream: check it against the v2 manifest and
+ * write it into the brain's stage folder. A file that fails is left for
+ * the one-at-a-time way. */
+static bool syncPackFile(void *ctx, int file, const uint8_t *data,
+                         uint32_t size) {
+    SyncPackCtx *pc = (SyncPackCtx *)ctx;
+    HostSync *hs = &pc->sv->sync;
+    const BrainSyncBrain *br = &hs->man.brains[pc->brain];
+    const BrainSyncFile *f;
+    char stage[1100], path[1400];
+    if (file < 0 || file >= br->fileCount) return false;
+    f = &br->files[file];
+    if (!brainSyncDataIs(f, data, size)) {
+        fprintf(stderr, "[bothost] brain file \"%s/%s\" from %s failed its "
+                        "check; it is asked for again\n", br->name, f->path,
+                pc->sv->label);
+        return false;
+    }
+    if (!brainSyncStageDir(stage, sizeof(stage), hs->root, br->name,
+                           br->version) ||
+        (size_t)SDL_snprintf(path, sizeof(path), "%s/%s", stage, f->path)
+            >= sizeof(path) ||
+        !brainSyncWriteFile(path, data, size)) {
+        fprintf(stderr, "[bothost] brain file \"%s/%s\" could not be "
+                        "written\n", br->name, f->path);
+        return false;
+    }
+    brainPackBitSet(hs->packGot[pc->brain], file);
+    hs->staged[pc->brain] = true;
+    hs->gotCount++;
+    hs->done += size;
+    return true;
+}
+
+/* Every stream has ended: the files that did not come or failed their
+ * checks go to the end of need[] and are asked for one at a time. */
+static void syncPackFallback(HostServer *sv) {
+    HostSync *hs = &sv->sync;
+    int i, got = 0, missing;
+    uint32_t *order = (uint32_t *)malloc(sizeof(uint32_t) *
+                                         (size_t)(hs->needCount > 0 ? hs->needCount : 1));
+    if (order == NULL) return;
+    for (i = 0; i < hs->needCount; i++) {
+        uint32_t id = hs->need[i];
+        if (brainPackBitGet(hs->packGot[id >> 16], (int)(id & 0xffffu))) {
+            order[got++] = id;
+        }
+    }
+    missing = got;
+    for (i = 0; i < hs->needCount; i++) {
+        uint32_t id = hs->need[i];
+        if (!brainPackBitGet(hs->packGot[id >> 16], (int)(id & 0xffffu))) {
+            order[missing++] = id;
+        }
+    }
+    memcpy(hs->need, order, sizeof(uint32_t) * (size_t)hs->needCount);
+    free(order);
+    hs->gotCount = got;
+    hs->nextReq = got;
+    if (got < hs->needCount) {
+        fprintf(stderr, "[bothost] %d brain files from %s did not come in the "
+                        "packed stream; they are asked for one at a time\n",
+                hs->needCount - got, sv->label);
+        syncRequestMore(sv);
+    }
+}
+
+/* Parse "<brain>/<seq>". */
+static bool syncParsePackPath(const char *p, uint32_t *bi, uint32_t *seq) {
+    char *end = NULL;
+    if (*p < '0' || *p > '9') return false;
+    *bi = (uint32_t)strtoul(p, &end, 10);
+    if (end == p || *end != '/') return false;
+    p = end + 1;
+    if (*p < '0' || *p > '9') return false;
+    *seq = (uint32_t)strtoul(p, &end, 10);
+    return end != p && *end == '\0';
+}
+
+static void syncOnPack(HostServer *sv, const BulkStreamHeader *h,
+                       const uint8_t *buf) {
+    HostSync *hs = &sv->sync;
+    uint32_t bi, seq;
+    BrainPackStatus st;
+    SyncPackCtx pc;
+
+    if (!hs->haveManifest || !hs->packMode || h->gen != hs->gen ||
+        hs->ready) {
+        return;
+    }
+    if (!syncParsePackPath(h->path, &bi, &seq) ||
+        bi >= (uint32_t)hs->man.brainCount || hs->readers[bi] == NULL) {
+        return;
+    }
+    hs->packWire += h->totalSize;
+    pc.sv = sv;
+    pc.brain = (int)bi;
+    if (seq != hs->packSeq[bi]) {
+        st = BRAIN_PACK_BAD;
+    } else {
+        hs->packSeq[bi]++;
+        st = brainPackReaderFeed(hs->readers[bi], buf, h->totalSize,
+                                 syncPackFile, &pc);
+    }
+    if (st != BRAIN_PACK_MORE) {
+        if (st == BRAIN_PACK_BAD) {
+            fprintf(stderr, "[bothost] the packed files of brain \"%s\" from "
+                            "%s are damaged\n", hs->man.brains[bi].name,
+                    sv->label);
+        }
+        brainPackReaderFree(hs->readers[bi]);
+        hs->readers[bi] = NULL;
+        hs->packPending--;
+        if (hs->packPending == 0) syncPackFallback(sv);
+    }
+    syncSendProgress(sv);
+    syncFinishIfDone(sv);
+}
+
 static uint8_t *syncBulkBegin(void *ctx, const BulkStreamHeader *h) {
     (void)ctx;
     if (h->kind == BULK_KIND_BRAIN_MANIFEST) {
@@ -844,6 +1186,10 @@ static uint8_t *syncBulkBegin(void *ctx, const BulkStreamHeader *h) {
         }
     } else if (h->kind == BULK_KIND_BRAIN_CHUNK) {
         if (h->totalSize < 4 || h->totalSize > BOT_HOST_SYNC_CHUNK_WIRE_MAX) {
+            return NULL;
+        }
+    } else if (h->kind == BULK_KIND_BRAIN_PACK) {
+        if (h->totalSize == 0 || h->totalSize > BRAIN_PACK_PIECE_MAX) {
             return NULL;
         }
     } else {
@@ -859,6 +1205,8 @@ static void syncBulkComplete(void *ctx, const BulkStreamHeader *h,
         syncOnManifest(sv, buf, h->totalSize, h->gen);
     } else if (h->kind == BULK_KIND_BRAIN_CHUNK) {
         syncOnChunk(sv, h, buf);
+    } else if (h->kind == BULK_KIND_BRAIN_PACK) {
+        syncOnPack(sv, h, buf);
     }
     free(buf);
 }
@@ -1041,9 +1389,7 @@ static void seatBuildBrain(HostSeat *hs) {
      * host. */
     br = (sync->haveManifest && sync->ready)
              ? brainSyncFindBrain(&sync->man, hs->brainName) : NULL;
-    if (br == NULL ||
-        !brainSyncCacheFile(path, sizeof(path), optCacheDir, br->name,
-                            br->version, "init.lua")) {
+    if (br == NULL || !syncBrainInitPath(sync, br, path, sizeof(path))) {
         fprintf(stderr, "[bothost] bot %d: the brain \"%s\" of %s is not in "
                         "the cache; it goes back to the server\n",
                 (int)hs->seat, hs->brainName, servers[hs->srv].label);
@@ -1300,6 +1646,7 @@ static void ctlDrop(HostServer *sv, const char *why) {
     fprintf(stderr, "[bothost] connection to %s ended (%s)\n", sv->label, why);
     clearSeats(serverIndex(sv), "connection to the server ended");
     syncReset(&sv->sync);
+    syncSessionEnd();
     bulkSenderReset(&sv->recBulk);
     hostRecServerDown(serverIndex(sv));
     svGoIdle(sv);
@@ -1337,10 +1684,24 @@ static void ctlReceive(HostServer *sv) {
                     sv->lastSlotsSent = -1;
                     sv->lastCpuSent = -1;
                     sv->lastCpuBotSent = 0;
+                    sv->lastCpuBudgetSent = 0;
                     sv->lastFreeSeqSent = 0;
                     syncReset(&sv->sync);
                     bulkSenderInit(&sv->recBulk);
                     hostRecServerUp(serverIndex(sv), sv->label);
+                    {
+                        /* The packed brain sync; WINBOLO_BOTHOST_SYNC_V1=1
+                         * keeps the old way (the server waits a moment for
+                         * caps that never come, as from an older host). */
+                        const char *v1 = SDL_getenv("WINBOLO_BOTHOST_SYNC_V1");
+                        if (v1 == NULL || SDL_strcmp(v1, "1") != 0) {
+                            ControlEvent caps;
+                            memset(&caps, 0, sizeof(caps));
+                            caps.type = CTRL_BOT_HOST_SYNC_CAPS;
+                            caps.u.botHostSyncCaps.caps = BRAIN_PACK_CAP_PACKED;
+                            ctlSendEvent(sv, &caps);
+                        }
+                    }
                     HOST_EVENT("[bothost] connected to %s as Bot Host "
                                "\"%s\" (%d slots free)",
                                sv->label, optName, poolFree());
@@ -1464,6 +1825,17 @@ static void ctlService(HostServer *sv) {
                 evt.u.botHostCpuBot.milli = hostCpuMeter.perBotMilli;
                 ctlSendEvent(sv, &evt);
                 sv->lastCpuBotSent = hostCpuMeter.perBotMilli;
+            }
+            if (hostCpuBudgetMilli != BOT_HOST_CPU_MILLI_UNKNOWN &&
+                hostCpuBudgetMilli != sv->lastCpuBudgetSent) {
+                /* The full-budget estimate, which the server shows until a
+                 * measured value exists. Only the number goes out. */
+                ControlEvent evt;
+                memset(&evt, 0, sizeof(evt));
+                evt.type = CTRL_BOT_HOST_CPU_BUDGET;
+                evt.u.botHostCpuBudget.milli = hostCpuBudgetMilli;
+                ctlSendEvent(sv, &evt);
+                sv->lastCpuBudgetSent = hostCpuBudgetMilli;
             }
             if (hostFreeSeq != 0 && hostFreeSeq != sv->lastFreeSeqSent) {
                 ControlEvent evt;
@@ -1734,6 +2106,21 @@ static void hostTick(void) {
     runners = botWorkerPoolGetSize() + 1;
     if (optThreads > runners) runners = optThreads;
     lastTargetMs = botRunnerTargetMs(serialMsEwma, runners, active);
+    {
+        /* The budget a new bot would get: one more than the bots this host
+         * runs now. The brain picks its tier from this budget; the budget
+         * does not depend on the tier. */
+        uint64_t nowMs = SDL_GetTicks();
+        if (hostCpuBudgetMilli == BOT_HOST_CPU_MILLI_UNKNOWN ||
+            nowMs - hostCpuBudgetAtMs >= BOT_HOST_BUDGET_EVERY_MS) {
+            double newBotMs = botRunnerTargetMs(serialMsEwma, runners,
+                                                poolUsed() + 1);
+            hostCpuBudgetMilli = botHostCpuMilliBudget(
+                newBotMs, (double)BOT_HOST_TICK_MS,
+                SDL_GetNumLogicalCPUCores());
+            hostCpuBudgetAtMs = nowMs;
+        }
+    }
     for (i = 0; i < active; i++) {
         HostSeat *hs = &seats[jobIndices[i]];
         botRunnerBeginTick(&hs->bot, lastTargetMs);
@@ -2186,9 +2573,7 @@ static int embedCapacityFor(const HostServer *sv) {
             br = &sv->sync.man.brains[0];
         }
     }
-    if (br != NULL &&
-        brainSyncCacheFile(path, sizeof(path), optCacheDir, br->name,
-                           br->version, "init.lua")) {
+    if (br != NULL && syncBrainInitPath(&sv->sync, br, path, sizeof(path))) {
         /* The answer is kept by brain name and version, so the brain is
          * asked once. */
         cap = luaBrainQueryCapacity(path, br->name);
@@ -2260,6 +2645,7 @@ static int SDLCALL embedThreadFn(void *arg) {
         ctlCloseSocket(&servers[i]);
         syncReset(&servers[i].sync);
     }
+    syncSessionEnd();
     embedPublish();
     SDL_SetAtomicInt(&embedConnected, 0);
     SDL_SetAtomicInt(&embedUsedNow, 0);
@@ -2330,6 +2716,9 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
         return false;
     }
     (void)SDL_CreateDirectory(optCacheDir);
+    /* Session folders a crash left (their lock is free); one another
+     * running client holds is kept. */
+    (void)brainSessionSweep(optCacheDir);
 
     serverCount = 1;
     sv = &servers[0];
@@ -2402,6 +2791,16 @@ void botHostEmbedStop(bool tellServer) {
 
 bool botHostEmbedRunning(void) {
     return embedThread != NULL;
+}
+
+void botHostEmbedSweepSessions(const char *cacheDir) {
+    int n;
+    if (cacheDir == NULL || cacheDir[0] == '\0') return;
+    n = brainSessionSweep(cacheDir);
+    if (n > 0) {
+        HOST_EVENT("[bothost] removed %d brain session folders left from an "
+                   "earlier run", n);
+    }
 }
 
 void botHostEmbedSetWithhold(bool on) {

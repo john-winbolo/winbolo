@@ -533,6 +533,23 @@ int run_bothost_record_roundtrip(void) {
     UT_ASSERT(botHostRecordDecode(buf, 19, &b) && b.reason[0] == '\0');
     UT_ASSERT(!botHostRecordDecode(buf, 18, &b));
 
+    /* A CPU record: the shown value, its source and the full budget. */
+    memset(&r, 0, sizeof(r));
+    r.kind = BOTHOST_RECORD_CPU;
+    r.host = 2; r.shownMilli = 3412; r.source = 3;
+    r.budgetMilli = BOTHOST_RECORD_MILLI_NONE; r.botCpu = 0xFE; r.bots = 4;
+    r.overrunTenths = BOTHOST_RECORD_RATE_NONE; r.freePct = 61; r.slots = 5;
+    n = botHostRecordEncode(&r, buf, (int)sizeof(buf));
+    UT_ASSERT(n == 18);
+    UT_ASSERT(botHostRecordDecode(buf, n, &b));
+    UT_ASSERT(b.kind == BOTHOST_RECORD_CPU && b.host == 2);
+    UT_ASSERT(b.shownMilli == 3412 && b.source == 3);
+    UT_ASSERT(b.budgetMilli == BOTHOST_RECORD_MILLI_NONE);
+    UT_ASSERT(b.botCpu == 0xFE && b.bots == 4 && b.freePct == 61 &&
+              b.slots == 5);
+    UT_ASSERT(b.overrunTenths == BOTHOST_RECORD_RATE_NONE);
+    UT_ASSERT(!botHostRecordDecode(buf, 17, &b));
+
     /* An unknown kind or version 0. */
     buf[0] = 1; buf[1] = 99; buf[2] = 0;
     UT_ASSERT(!botHostRecordDecode(buf, 3, &b));

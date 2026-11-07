@@ -579,5 +579,20 @@ int run_bot_host_place_lag(void) {
         for (t = 0; t < 2500; t++) botHostLagSmooth(&lagMs, &known, 0.0, 500);
         UT_ASSERT(lagMs < 1.0);
     }
+
+    /* A player host's row ping is its player's game ping, whatever its own
+     * measured lag; with no player ping yet it is the measured lag. A
+     * listed Bot Host always shows its measured lag. */
+    UT_ASSERT(botHostRowPing(true, 47, true, 12.3) == 47);
+    UT_ASSERT(botHostRowPing(true, 47, false, 0.0) == 47);
+    UT_ASSERT(botHostRowPing(true, 0, true, 12.3) == 12);
+    UT_ASSERT(botHostRowPing(true, 0, false, 0.0) == 0xFFFFu);
+    UT_ASSERT(botHostRowPing(false, 47, true, 12.3) == 12);
+    UT_ASSERT(botHostRowPing(false, 0, true, 0.2) == 1);
+    /* The placement takes the same player ping, and the measured lag
+     * only without one. */
+    UT_ASSERT(botHostLagRaw(true, 47, 9) == 47);
+    UT_ASSERT(botHostLagRaw(true, 0, 9) == 9);
+    UT_ASSERT(botHostLagRaw(false, 47, 9) == 9);
     return 0;
 }

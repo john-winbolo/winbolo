@@ -963,13 +963,14 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
         }
         /* A lobby Add Bot carries no configuration: NULL init, so the
-         * brain sees an empty BRAIN_INIT. The team stays out of the add
-         * and is written below, which is where this arm has always put
-         * it. */
+         * brain sees an empty BRAIN_INIT. The add gives the bot the join
+         * rule's team, so a plain Add Bot (team 0 from the client) is on a
+         * team from the start; a team the client names is written below. */
         if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                               serverSimGetBotAiType(sim),
                               gameTypeGet(&serverSimGetGameSim(sim)->game),
-                              serverSimGetGameSim(sim)->hiddenMines, 0, NULL)) {
+                              serverSimGetGameSim(sim)->hiddenMines,
+                              SERVER_SIM_BOT_TEAM_DEFAULT, NULL)) {
             fprintf(stderr, "ADD_BOT reject INVALID: botManagerAddBot failed (slot=%d name='%s' brain='%s')\n",
                     (int)slot, botName, serverSimGetBotBrainPath(sim));
             return CMD_REJECT_INVALID;
@@ -977,8 +978,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         transportUdpServerSetBotName(slot, botName);
         /* The same question the team-set arm asks. The bot is already seated
            by here, so unlike that arm the refusal cannot be a return code:
-           it is the team write, and the bot lands unassigned where the
-           roster shows it. */
+           it is the team write, and the bot keeps its join-rule team. */
         if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS &&
             scenarioAllowsExtraTeams(sim, slot, p->teamNumber)) {
             serverSimSetTeam(sim, slot, p->teamNumber);

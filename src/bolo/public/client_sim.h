@@ -164,6 +164,9 @@ typedef struct {
     bool     cpuBotHave;
     uint8_t  cpuBotOwner;
     uint32_t cpuBot;
+    /* Where cpuBot comes from (BOT_HOST_CPU_SRC_*): the full budget shows
+     * as "At most", the others as "Estimated". */
+    uint8_t  cpuBotSrc;
     /* The lag the server measures to the host (CTRL_BOT_HOST_LAG), in ms:
      * the row's ping. BOT_HOST_LAG_UNKNOWN until the server sends one (an
      * older server never does). */
