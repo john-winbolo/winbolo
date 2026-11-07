@@ -227,16 +227,10 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
                                   sizeof(val));
     lv_screenSetScreenTrueShells(!(val[0] == 'N' || val[0] == 'n') ? 1 : 0);
     /* Toggle Screen-True Local Explosions (lv_early_blast.h): off until
-       turned on. The older key "Screen-True Own Shells" held this toggle's
-       value, so it is the default when the new key is not saved yet. */
-    {
-        char old[16];
-        lv_platform_config_get_string("LOGVIEWER", "Screen-True Own Shells", "No", old,
-                                      sizeof(old));
-        lv_platform_config_get_string("LOGVIEWER", "Screen-True Local Explosions", old, val,
-                                      sizeof(val));
-        lv_screenSetScreenTrueExplosions((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
-    }
+       turned on. */
+    lv_platform_config_get_string("LOGVIEWER", "Screen-True Local Explosions", "No", val,
+                                  sizeof(val));
+    lv_screenSetScreenTrueExplosions((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
     /* The lag display (lv_lag.h) is read in lvHostSetupCore, which every
        host runs before this. It has no menu item. */
 }

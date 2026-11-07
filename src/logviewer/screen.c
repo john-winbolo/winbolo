@@ -312,11 +312,13 @@ static void lv_lagEarlyBlastTick(const LvLagFrame *f, const LvShellPt *prev,
     } else if (b->used && !b->matched && !b->missed && f->ms > b->endMs) {
       b->missed = TRUE;
       s_earlyBlastStats.missed++;
-      fprintf(stderr,
-              "logviewer: early blast: no server explosion for player %d's shell at %u ms "
-              "(%u of %u own shells with none)\n",
-              (int) b->owner, (unsigned) b->endMs, (unsigned) s_earlyBlastStats.missed,
-              (unsigned) s_earlyBlastStats.ended);
+      if (lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl)) {
+        fprintf(stderr,
+                "logviewer: early blast: no server explosion for player %d's shell at %u ms "
+                "(%u of %u own shells with none)\n",
+                (int) b->owner, (unsigned) b->endMs, (unsigned) s_earlyBlastStats.missed,
+                (unsigned) s_earlyBlastStats.ended);
+      }
     }
   }
 }
@@ -329,6 +331,11 @@ static BYTE lv_lagMapOf(int32_t w) {
 static BYTE lv_lagPixelOf(int32_t w) {
   return (BYTE) (((w < 0 ? 0 : w) & 255) >> 4);
 }
+
+/* lv_shellOwnerLink sets curOwners only up to LV_SHELL_OWNER_MAX_SHELLS,
+   and the copy back below reads all nCur of them. */
+BOLO_STATIC_ASSERT(LV_LAG_SHELLS_MAX <= LV_SHELL_OWNER_MAX_SHELLS,
+                   lv_lag_shells_fit_owner_link);
 
 /* Give the shells of the newest frame f their owners (lv_shell_owner.h),
    from the frame of the entry before it, and note which tanks fired. With
