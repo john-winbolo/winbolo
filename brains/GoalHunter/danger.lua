@@ -330,8 +330,11 @@ end
 --
 --   solid = the explosion tile is BUILDING / HALFBUILDING / has a pillbox /
 --           has a base;
---   not solid -> the man dies if euclidean dist(man, explosion) <=
---           MAP_SQUARE_MIDDLE (128 WU, half a tile);
+--   not solid -> the man dies if the explosion is in the lgm_blast_shape
+--           rule's area round him (U.lgm_open_blast_catches): by default
+--           euclidean dist(man, explosion) <= MAP_SQUARE_MIDDLE (128 WU,
+--           half a tile); the Mac Bolo box (|dx|, |dy| < 128) or a 144 WU
+--           circle when the game plays with those;
 --   solid    -> he dies only if his TILE is the explosion tile (he can stand
 --           on a base or on the pill he is working on; he can never stand in
 --           a wall).
@@ -483,8 +486,6 @@ function M.lgm_shell_gate(world, info, dest_mx, dest_my)
   if not any then return nil end
 
   local N = C.LGM_SHELL_PREDICT_TICKS or 63
-  local KILL = C.LGM_SHELL_KILL_RADIUS_WU or 128
-  local KILL2 = KILL * KILL
   local TANK_HIT2 = (C.TANK_HIT_RADIUS_WU or 112) ^ 2
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
@@ -536,7 +537,9 @@ function M.lgm_shell_gate(world, info, dest_mx, dest_my)
         end
         local dx = sx - lx
         local dy = sy - ly
-        local near_man = (dx * dx + dy * dy) <= KILL2
+        -- The lgm_blast_shape rule's area (0: within
+        -- LGM_SHELL_KILL_RADIUS_WU, 128).
+        local near_man = U.lgm_open_blast_catches(dx, dy)
         -- (2) our own hull. A shell never hits the tank that fired it, so our
         -- own rounds fly straight through.
         if not ours then

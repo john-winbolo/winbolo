@@ -2552,7 +2552,13 @@ function M.draw_shell_gate(state, info)
       px, py = nx, ny
     end
   end
-  -- The kill radius, at the impact point, in the engine's own units.
+  -- The kill area, at the impact point, in the engine's own units: the
+  -- lgm_blast_shape rule's circle, or its box.
+  local reach = U.lgm_open_blast_reach() / 256.0
+  if U.lgm_blast_shape() == 1 then
+    local x0, y0, x1, y1 = ix - reach, iy - reach, ix + reach, iy + reach
+  else
+  end
 end
 
 -- -------------------------------------------------------------------------

@@ -1675,7 +1675,6 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   BYTE checkMapY;                   /* LGM Y Map co-ordinate (from check position) */
   bool solid;                       /* Is the map square the lgm on solid or not */
   bool dead;                        /* Are we dead */
-  double distance;
   BYTE pos;
   BYTE mx, my;
   WORLD conv;
@@ -1689,13 +1688,18 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   mx = (BYTE) (wx >> 8);
   my = (BYTE) (wy >> 8);
 
-  utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, (WORLD) sim->rules.pill_range, &distance);
   pos = mapGetPos(mp, mx, my);
   solid = FALSE;
   if (pos == BUILDING || pos == HALFBUILDING || pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
     solid = TRUE;
   }
-  if (solid == FALSE && distance <= MAP_SQUARE_MIDDLE) {
+  /* Open ground: the lgm_blast_shape rule's area round the explosion (a
+     circle of half a square in the classic table). */
+  if (solid == FALSE &&
+      lgmBlastOpenGroundCatches(sim->rules.lgm_blast_shape,
+                                sim->rules.pill_range,
+                                (long) wx - (long) lgmWorldX,
+                                (long) wy - (long) lgmWorldY)) {
     dead = TRUE;
   } else if (solid == TRUE && checkMapX == mx && checkMapY == my) {
     dead = TRUE;

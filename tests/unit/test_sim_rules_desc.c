@@ -61,8 +61,9 @@ static const langid srdDescIds[] = {
  * pill_base_defend_shape and then the Mac Bolo shell push pair took the next
  * free numbers after everything else, tank_deep_sea_safe took the next
  * free one after those, tank_hit_sets_off_mines took the next free one at
- * the end of the file after that, and man_dead_pill_terrain_speed took the
- * next free one at the end of the file after that. See the block comment
+ * the end of the file after that, man_dead_pill_terrain_speed took the
+ * next free one at the end of the file after that, and lgm_blast_shape the
+ * one after that. See the block comment
  * in lang.h. */
 #define SRD_FIRST_ID  2345u
 #define SRD_LAST_ID   2425u
@@ -77,7 +78,7 @@ static const langid srdDescIds[] = {
 #define SRD_FIRST_ID6 3042u
 #define SRD_LAST_ID6  3042u
 #define SRD_FIRST_ID7 3428u
-#define SRD_LAST_ID7  3428u
+#define SRD_LAST_ID7  3429u
 
 /* ── 1. A description id per rule ──────────────────────────────────────── */
 

@@ -1597,6 +1597,8 @@ function Brain.think(info)
   -- Live rules -> physics constants, before anything reads C this think.
   -- Classic rules (or C.LIVE_PHYSICS false) change nothing.
   U.live_physics.apply(info)
+  -- The lgm_blast_shape rule, for every builder blast model this think.
+  U.lgm_blast_shape_update(info)
   local now  = state.tick
   -- Ticks since THIS brain instance opened. `now` is seeded from the engine
   -- clock (see Brain.open), so it is NOT the age of the bot: a Survival wave
@@ -8566,7 +8568,8 @@ function Brain.think(info)
           if lgm_on_solid(cmx, cmy) then
             killable = ray_crosses_tile(info.tankx, info.tanky, hx, hy, cmx, cmy, MAX_ALONG)
           else
-            killable = (cand_perp <= 128)
+            -- The lgm_blast_shape rule's area; 0 is the old perp <= 128.
+            killable = U.lgm_open_blast_catches_perp(cand_perp, hx, hy)
           end
         end
 
@@ -8691,7 +8694,15 @@ function Brain.think(info)
                    and (bit.band(ob.info, OBJECT_HOSTILE)) == 0
                    and not (ob.type == OBJECT_TANK and ob.idnum == (info.player_number or -1)) then
                   local bdx, bdy = ob.x - ex_wx, ob.y - ex_wy
-                  if bdx * bdx + bdy * bdy <= 128 * 128 then
+                  -- A builder: the lgm_blast_shape rule's area. A tank keeps
+                  -- the 128 circle.
+                  local caught
+                  if ob.type == OBJECT_BUILDMAN then
+                    caught = U.lgm_open_blast_catches(bdx, bdy)
+                  else
+                    caught = bdx * bdx + bdy * bdy <= 128 * 128
+                  end
+                  if caught then
                     blast_ok = false
                     clh.lane_block = "friendly_blast"
                     break
@@ -8703,7 +8714,7 @@ function Brain.think(info)
                 local mmx, mmy = own_man_out_pos()
                 if mmx then
                   local bdx, bdy = mmx - ex_wx, mmy - ex_wy
-                  if bdx * bdx + bdy * bdy <= 128 * 128 then
+                  if U.lgm_open_blast_catches(bdx, bdy) then
                     blast_ok = false
                     clh.lane_block = "own_builder_blast"
                   end
