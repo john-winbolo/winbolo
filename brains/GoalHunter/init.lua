@@ -8670,52 +8670,21 @@ function Brain.think(info)
     -- corpse we're sweeping is open ground: the 128-wu splash reaches a man on
     -- it.  C.BLAST_DEAD_PILL_OPEN false (KEEL) keeps the old engine rule, where
     -- ANY deployed pill was solid regardless of health.  world.lua indexes
-    -- pill_at only for a deployed (not-carried) pill.  A forest stops every
-    -- shell, and that hit is a hit on its square (shells.c outSquareHit), so
-    -- with C.BLAST_TERRAIN_SQUARE_HIT a man on a forest is solid too.
+    -- pill_at only for a deployed (not-carried) pill, and W.pill_at gives the
+    -- live one there.  A forest is NOT tested here: the engine decides by the
+    -- square where the shell stops, not the man's square, so the forest and
+    -- boat rule is in danger.capture_man_killable / capture_shot_end, which
+    -- trace the shell's line.
     local function lgm_on_solid(mx, my)
       local tt = U.ttype(mx, my)
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
-      if tt == C.T_FOREST and C.BLAST_TERRAIN_SQUARE_HIT then return true end
-      local plst = world.pill_at and world.pill_at[my * 256 + mx]
-      if plst then
+      if world.pill_at and world.pill_at[my * 256 + mx] then
         if not C.BLAST_DEAD_PILL_OPEN then return true end
-        for i = 1, #plst do
-          local p = plst[i].pill
-          if p and (p.health or 0) > 0 and not p.in_tank then return true end
-        end
+        if W.pill_at(world, mx, my) then return true end
       end
       local bentry = world.base_at and world.base_at[my * 256 + mx]
       if bentry and bentry.base then return true end
       return false
-    end
-    -- Does the ray from (ox,oy) along unit (hx,hy), out to maxT wu, cross the
-    -- 256-wu tile box at (mx,my)?  Slab test.  Used for the solid-square kill gate:
-    -- on a solid square only an in-tile hit kills, so the man is a viable target
-    -- only if a shot along the current heading could actually enter his tile.
-    local function ray_crosses_tile(ox, oy, hx, hy, mx, my, maxT)
-      local x0, y0 = mx * 256, my * 256
-      local x1, y1 = x0 + 256, y0 + 256
-      local tmin, tmax = 0, maxT
-      if math.abs(hx) < 1e-9 then
-        if ox < x0 or ox > x1 then return false end
-      else
-        local ta, tb = (x0 - ox) / hx, (x1 - ox) / hx
-        if ta > tb then ta, tb = tb, ta end
-        if ta > tmin then tmin = ta end
-        if tb < tmax then tmax = tb end
-        if tmin > tmax then return false end
-      end
-      if math.abs(hy) < 1e-9 then
-        if oy < y0 or oy > y1 then return false end
-      else
-        local ta, tb = (y0 - oy) / hy, (y1 - oy) / hy
-        if ta > tb then ta, tb = tb, ta end
-        if ta > tmin then tmin = ta end
-        if tb < tmax then tmax = tb end
-        if tmin > tmax then return false end
-      end
-      return tmax >= tmin
     end
     -- Our OWN builder (LGM on foot) is NEVER in info.objects, but capture_pill sent
     -- him to this very pill, so he is the likeliest friendly-fire victim.  Returns
@@ -8784,17 +8753,18 @@ function Brain.think(info)
         -- KILLABLE from this heading?  Open ground (a dead pill too): within 128
         -- wu of the ray (splash reaches).  Solid square (live pill/base/building): the ray must
         -- actually cross his tile -- splash won't kill there, only an in-tile hit.
+        -- A forest or a boat on the line stops the shell there; with
+        -- C.BLAST_TERRAIN_SQUARE_HIT that stop kills only a man on that square
+        -- (danger.capture_man_killable).
         -- Otherwise fall back to hovering the sight on the pill centre.
         local killable = false
         local cmx, cmy
         if cand then
           cmx, cmy = cand.predicted_mx or cand.mx, cand.predicted_my or cand.my
-          if lgm_on_solid(cmx, cmy) then
-            killable = ray_crosses_tile(info.tankx, info.tanky, hx, hy, cmx, cmy, MAX_ALONG)
-          else
-            -- The lgm_blast_shape rule's area; 0 is the old perp <= 128.
-            killable = U.lgm_open_blast_catches_perp(cand_perp, hx, hy)
-          end
+          killable = danger.capture_man_killable(
+            info.tankx, info.tanky, hx, hy, MAX_ALONG, cmx, cmy,
+            cand.predicted_wx or cand.wx, cand.predicted_wy or cand.wy,
+            cand_perp, cand_along, lgm_on_solid(cmx, cmy))
         end
 
         -- ── STEP 4: sight drive (yield to any earlier range key this think) ─
@@ -8865,10 +8835,15 @@ function Brain.think(info)
           if bit.band(rk, KEY_MORERANGE) ~= 0 then sl_eff = cur_sl + 1
           elseif bit.band(rk, KEY_LESSRANGE) ~= 0 then sl_eff = cur_sl - 1 end
           if sl_eff < 2 then sl_eff = 2 elseif sl_eff > 14 then sl_eff = 14 end
-          local ex_wx = info.tankx + hx * 128 * sl_eff   -- predicted impact this tick
-          local ex_wy = info.tanky + hy * 128 * sl_eff
+          -- Predicted impact this tick: the end of the line, or the middle of
+          -- the first forest or boat square on it, where the shell stops.
+          -- sq_mx/sq_my: that stop is a hit on its square (the square rule).
+          local ex_wx, ex_wy, sq_mx, sq_my = danger.capture_shot_end(
+            info.tankx, info.tanky, hx, hy, 128 * sl_eff)
           local hit
-          if lgm_on_solid(cmx, cmy) then
+          if sq_mx then
+            hit = (sq_mx == cmx and sq_my == cmy)       -- the stop square only
+          elseif lgm_on_solid(cmx, cmy) then
             local imx = bit.rshift(math.floor(ex_wx + 0.5), 8)
             local imy = bit.rshift(math.floor(ex_wy + 0.5), 8)
             hit = (imx == cmx and imy == cmy)           -- exact-tile only

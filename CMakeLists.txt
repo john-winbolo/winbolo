@@ -7057,6 +7057,9 @@ set(_unit_test_names
     lgm_blast_shore_shot
     lgm_blast_bridge_shot
     lgm_blast_road_open_ground
+    lgm_blast_mined_bridge_shot
+    lgm_blast_shell_runs_out_dead_pill
+    lgm_blast_shell_hits_tank_dead_pill
     lgm_start_offset
     lgm_tree_grew_on_site
     lgm_tree_none_on_site

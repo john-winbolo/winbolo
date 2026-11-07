@@ -2596,6 +2596,9 @@ int run_lgm_blast_boat_shot(void);
 int run_lgm_blast_shore_shot(void);
 int run_lgm_blast_bridge_shot(void);
 int run_lgm_blast_road_open_ground(void);
+int run_lgm_blast_mined_bridge_shot(void);
+int run_lgm_blast_shell_runs_out_dead_pill(void);
+int run_lgm_blast_shell_hits_tank_dead_pill(void);
 
 /* A -braindebug server records each round into its own session dir
  * (test_braindbg_round_dir.c): the dir it named is cleared at game over, so
