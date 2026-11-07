@@ -12,8 +12,9 @@
  *       miss; that the builder's catch distance is 128, or pill_range when
  *       that is less; and that the builder test catches an explosion on
  *       open ground no more than that far from him, an explosion on a
- *       building, a half building, a pillbox or a base only on his own
- *       square, and nothing off the 3 by 3 squares round his.
+ *       building, a half building, a live pillbox or a base only on his own
+ *       square, and nothing off the 3 by 3 squares round his. A dead
+ *       pillbox's square is open ground (lvHitboxPillSolid).
  *       It also checks the places the circles go round: the middle of the
  *       art pixel a recording holds, with the builder's 1 and 2 put back,
  *       and the offsets the game draws the tank and builder pictures at.
@@ -81,6 +82,25 @@ int run_lv_hitbox_sums(void) {
                   "the open square above, inside the circle");
     UT_ASSERT_MSG(!lvHitboxBuilderCaught(128.0, -1.0, 128.0, 128.0, SQ(1, 1), 128),
                   "the open square above, outside the circle");
+
+    /* Which pillboxes make a square solid: only a live one on the map. */
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 15), "a live pill is solid");
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 1), "armour 1 is solid");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(true, false, 0), "a dead pill is open ground");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(true, true, 15), "a pill in a tank is not there");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(false, false, 15), "a removed pill is not there");
+
+    /* A dead pill to his right is open ground: an explosion just across the
+       edge, 10 from him, catches him; the same explosion with a live pill
+       there does not. */
+    {
+        unsigned deadMask = lvHitboxPillSolid(true, false, 0) ? SQ(2, 1) : 0;
+        unsigned liveMask = lvHitboxPillSolid(true, false, 15) ? SQ(2, 1) : 0;
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(260.0, 128.0, 250.0, 128.0, deadMask, 128),
+                      "a dead pill's square next to him catches across the edge");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(260.0, 128.0, 250.0, 128.0, liveMask, 128),
+                      "a live pill's square next to him does not");
+    }
 
     /* A short pill range. */
     UT_ASSERT_MSG(lvHitboxBuilderCaught(228.0, 128.0, 128.0, 128.0, 0, 100), "100 away");

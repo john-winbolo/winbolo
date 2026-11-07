@@ -18,8 +18,10 @@
  *
  *  - A builder: lgmBlastCatches (src/bolo/lgm.c). An
  *    explosion catches a builder when it is on a square that
- *    is not a building, a half building, a pillbox or a base,
- *    and no more than half a square (128) from him. On one of
+ *    is not a building, a half building, a live pillbox or a
+ *    base, and no more than half a square (128) from him. A
+ *    dead pillbox's square is open ground (pillsIsPillHit,
+ *    armour above 0; lvHitboxPillSolid). On one of
  *    those squares it catches him only when it is on his own
  *    square. The distance comes from utilIsItemInRange with
  *    the pill_range rule as its limit, so when pill_range is
@@ -216,6 +218,14 @@ static inline int lvHitboxBuilderReach(int pillRange) {
     return pillRange < LV_HITBOX_BUILDER_REACH ? pillRange : LV_HITBOX_BUILDER_REACH;
 }
 
+/* Whether a pillbox makes its square solid for the builder test: it is on
+   the map, not in a tank, and alive (armour above 0), as pillsIsPillHit
+   asks in lgmBlastCatches. A dead pillbox's square is open ground. armour is
+   the pill's armour as the recording has it. */
+static inline bool lvHitboxPillSolid(bool onMap, bool inTank, unsigned armour) {
+    return onMap && !inTank && armour > 0;
+}
+
 /* The builder test, as lgmBlastCatches makes it, for an explosion at (x, y)
    and a builder at (bx, by), both in world units measured from the top left
    corner of the square the builder is on. So the builder's square is the one
@@ -223,7 +233,8 @@ static inline int lvHitboxBuilderReach(int pillRange) {
    by 256 (rounding down). solid is a mask of the 3 by 3 squares round the
    builder's: bit (row * 3 + col), with col and row 0, 1 or 2 and the
    builder's own square at col 1, row 1. A set bit is a building, a half
-   building, a pillbox or a base. reach is lvHitboxBuilderReach's.
+   building, a live pillbox (lvHitboxPillSolid) or a base. reach is
+   lvHitboxBuilderReach's.
 
    An explosion off the 3 by 3 squares is further than 128 from the builder,
    so it never catches him: its square is not looked at. */
