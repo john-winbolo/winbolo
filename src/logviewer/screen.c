@@ -1143,8 +1143,31 @@ void lv_screenUpdateView(updateType value) {
 *ARGUMENTS:
 *
 *********************************************************/
+/* The frame (timeRunning + 1, 0 for none) on which a recorded health event
+   took each pill from above 0 armour to 0: the hit that killed it. Read by
+   the builder hit box through lv_screenPillHitNow. A stamp, not a flag, so a
+   seek or a rewind that does not read that frame again never shows it. */
+static uint32_t s_pillHitAt[MAX_PILLS];
+
+/* A recorded health event for pill `pill`: notes a hit that killed it, then
+   sets the armour. */
+static void lv_screenPillSetHealth(BYTE pill, BYTE health) {
+  if (pill < MAX_PILLS && g_lv->pb != NULL) {
+    if (g_lv->pb->item[pill].armour > 0 && health == 0) {
+      s_pillHitAt[pill] = g_lv->timeRunning + 1;
+    }
+  }
+  lv_pillsSetHealth(&g_lv->pb, pill, health);
+}
+
+bool lv_screenPillHitNow(BYTE pill) {
+  if (pill >= MAX_PILLS || g_lv == NULL) return false;
+  return s_pillHitAt[pill] != 0 && s_pillHitAt[pill] == g_lv->timeRunning + 1;
+}
+
 void lv_screenSetup() {
   int a = 0;
+  memset(s_pillHitAt, 0, sizeof(s_pillHitAt));
   /* Every load path runs through here, so drop the previous log's recorded
      settings before the new one's walk can collect its own. */
   lv_screenStoreGameSettings(NULL, 0);
@@ -3195,10 +3218,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       if (g_lv->loadedLogVersion >= LOG_VERSION_V3) {
         logReadBytes(&opt2, 1);
-        lv_pillsSetHealth(&g_lv->pb, opt1, opt2);
+        lv_screenPillSetHealth(opt1, opt2);
       } else {
         lv_utilGetNibbles(opt1, &opt2, &opt3);
-        lv_pillsSetHealth(&g_lv->pb, opt2, opt3);
+        lv_screenPillSetHealth(opt2, opt3);
       }
       break;
     case log_PillSetInTank:
