@@ -100,8 +100,9 @@ void brainCapacityGetMachine(BrainMachineInfo *out);
 
 /* Gives the CPU speed test's result as the machine facts: the cheap facts
    (worker threads, power, version) are filled in as brainCapacityGetMachine
-   fills them. cpuName may be NULL. Forgets the answers kept so far, as they
-   were made from other facts. */
+   fills them. cpuName may be NULL. When these facts differ from the ones
+   given before (or none were), forgets the answers kept so far, as they
+   were made from other facts. Giving the same result again keeps them. */
 void brainCapacitySetMachineFromTest(const char *cpuName, int logicalCores,
                                      int physicalCores, double coremark1t,
                                      double coremarkAll);
@@ -124,6 +125,11 @@ void brainCapacityNameFromPath(const char *path, char *out, size_t outSize);
 /* The answer kept for name + version, or BRAIN_CAPACITY_UNKNOWN. version
    may be NULL or "" for a brain with no version. */
 int brainCapacityLookup(const char *name, const char *version);
+/* The newest answer kept for name with any version, or
+   BRAIN_CAPACITY_UNKNOWN. For a caller that knows the brain but not the
+   version its brain.version field gives (the lobby's brain list shows file
+   times, not brain.version). */
+int brainCapacityLookupName(const char *name);
 /* Keeps value (clamped) for name + version. Thread safe. */
 void brainCapacityStore(const char *name, const char *version, int value);
 /* Forgets every kept answer (tests, and a new speed test result). */

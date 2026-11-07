@@ -54,6 +54,12 @@ extern "C" {
 #include "../../../sound.h"      /* soundPlayEffect — the local ready cue */
 #include "../../../gamefront.h"  /* gameFrontGetSinglePlayerServerSim */
 #include "../../../lang.h"       /* langGetText / langGetTextFmt / MessageArgs / STR_DLGLOBBY_* */
+#include "brain_capacity.h"   /* brainCapacityLookupName / AddState / NameFromPath */
+#include "../../../../common/wb_log.h"  /* WB_LOG_INFO — the CPU speed test's lines */
+#ifdef WINBOLO_CPU_SPEED_TEST
+#include "cpu_speed_store.h"     /* cpuSpeedBackground* — the lobby's speed test */
+#include "cpu_speed_capacity.h"  /* cpuSpeedApplyStoredToBrains */
+#endif
 }
 
 /* Lobby command-dispatch state: the per-slot bot-name override flags and
@@ -646,6 +652,9 @@ bool lobbyAddBotPending(ClientSim *cs) {
 void lobbySendAddBotDebounced(ClientSim *cs,
                                      int namingPool, uint8_t teamNumber) {
     if (!cs) return;
+    /* The buttons are off while this is so; a click queued before they went
+     * off is refused here too. */
+    if (lobbyAddBotState(cs, NULL) != BRAIN_CAPACITY_ADD_OK) return;
     /* Drop the call entirely if anything already added a bot this
      * frame — the visible button was probably stale-clicked. */
     if (s_commands.addBotFrame == ImGui::GetFrameCount()) return;
@@ -658,6 +667,138 @@ void lobbySendAddBotDebounced(ClientSim *cs,
     s_commands.addBotSentMs = SDL_GetTicks();
     s_commands.addBotExpectedConn = lobbyCountConnectedSlots(cs) + 1;
     lobbySendAddBot(cs, namingPool, teamNumber);
+}
+
+/* --- The CPU speed test, and Add Bot's capacity rule --- */
+
+#ifdef WINBOLO_CPU_SPEED_TEST
+/* The background run's start and result lines. Called on the test's own
+ * thread; SDL's log is safe to call from any thread. */
+static void lobbyCpuSpeedLog(const char *line) {
+    WB_LOG_INFO(WB_LOG_CAT_CLIENT, "%s", line);
+}
+
+/* A run this lobby started has not been seen to end yet. */
+static bool s_cpuSpeedWatching = false;
+#endif
+
+void lobbyCpuSpeedOpen(void) {
+#ifdef WINBOLO_CPU_SPEED_TEST
+    /* The run does not start when a result is stored for this version, so
+     * it runs in the first lobby after each new version, and again in the
+     * next lobby when one was stopped. Its threads run at low priority and
+     * this returns at once: the lobby and its network traffic go on. */
+    if (cpuSpeedBackgroundStart(WINBOLO_VERSION, CPU_SPEED_CONTEXT_LOBBY,
+                                lobbyCpuSpeedLog)) {
+        s_cpuSpeedWatching = true;
+    } else if (!cpuSpeedBackgroundRunning()) {
+        /* A result is stored, perhaps by a run that ended after the last
+         * lobby stopped watching. Giving the same result again keeps the
+         * answers the bots loaded with. */
+        (void)cpuSpeedApplyStoredToBrains(WINBOLO_VERSION);
+    }
+#endif
+}
+
+void lobbyCpuSpeedPoll(void) {
+#ifdef WINBOLO_CPU_SPEED_TEST
+    if (s_cpuSpeedWatching && !cpuSpeedBackgroundRunning()) {
+        s_cpuSpeedWatching = false;
+        /* A finished run stored its result: the brains that load from now
+         * on see it. A stopped run stored nothing and this does nothing. */
+        (void)cpuSpeedApplyStoredToBrains(WINBOLO_VERSION);
+    }
+#endif
+}
+
+void lobbyCpuSpeedClose(void) {
+#ifdef WINBOLO_CPU_SPEED_TEST
+    /* The game starts or the player leaves: stop the run. A stopped run
+     * stores nothing, so the next lobby runs it again. Does not wait. */
+    if (cpuSpeedBackgroundRunning()) {
+        cpuSpeedBackgroundCancel();
+    }
+    s_cpuSpeedWatching = false;
+#endif
+}
+
+/* The brain the next Add Bot adds, by the name its capacity answer is kept
+ * under (its directory, as the brain list shows it). "" when not known. */
+static void lobbyNextBotBrainName(ClientSim *cs, char *out, size_t outSz) {
+    out[0] = '\0';
+    if (!cs) return;
+    const BrainList *bl = clientSimGetLobbyBrainList(cs);
+    uint8_t idx = s_brains.lastChosenBrainIdx;
+    /* The same pick lobbySendAddBot makes on the first add. */
+    if (idx == 0xFF) {
+        int def = lobbyDefaultBrainIdx(bl);
+        if (def >= 0) idx = (uint8_t)def;
+    }
+    if (idx != 0xFF && bl && idx < bl->count) {
+        SDL_strlcpy(out, bl->entries[idx].name, outSz);
+        return;
+    }
+    if (clientSimIsSinglePlayer(cs)) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (sim) brainCapacityNameFromPath(serverSimGetBotBrainPath(sim), out, outSz);
+    }
+}
+
+/* Bots in the lobby's slots. */
+static int lobbyCountBots(ClientSim *cs) {
+    int n = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        const ClientLobbySlot *lp = clientSimGetLobbySlot(cs, (BYTE)i);
+        if (lp && lp->connected && lp->isBot) n++;
+    }
+    return n;
+}
+
+BrainCapacityAddState lobbyAddBotState(ClientSim *cs, int *capacityOut) {
+    if (capacityOut) *capacityOut = BRAIN_CAPACITY_UNKNOWN;
+    if (!cs) return BRAIN_CAPACITY_ADD_OK;
+    /* The in-process transport (single player, and the host's own client of
+     * a game it hosts) means the server, and so every bot, runs on this
+     * machine. Over UDP the bots run on the server, or on a Bot Host: this
+     * machine's answer is not theirs, so there is no cap here. When that
+     * server sends its own capacity answer, it is the one to use here. */
+    bool botsRunHere = !clientSimIsUdpTransport(cs);
+    if (!botsRunHere) return BRAIN_CAPACITY_ADD_OK;
+    bool measuring = false;
+#ifdef WINBOLO_CPU_SPEED_TEST
+    measuring = cpuSpeedBackgroundRunning();
+#endif
+    char name[BRAIN_LIST_NAME_LEN];
+    lobbyNextBotBrainName(cs, name, sizeof(name));
+    /* By name only: the brain list carries file times, not brain.version.
+     * Unknown (no bot of this brain has loaded since the speed test result
+     * was given) means no cap until one has. */
+    int capacity = brainCapacityLookupName(name);
+    if (capacityOut) *capacityOut = capacity;
+    return brainCapacityAddState(measuring, lobbyCountBots(cs), capacity,
+                                 botsRunHere);
+}
+
+const char *lobbyAddBotOffReason(ClientSim *cs) {
+    int capacity = BRAIN_CAPACITY_UNKNOWN;
+    switch (lobbyAddBotState(cs, &capacity)) {
+    case BRAIN_CAPACITY_ADD_MEASURING:
+        return langGetText(STR_DLGLOBBY_ADDBOT_MEASURING);
+    case BRAIN_CAPACITY_ADD_FULL: {
+        MessageArgs args = {};
+        args.number = capacity;
+        return langGetTextFmt(STR_DLGLOBBY_ADDBOT_FULL, &args);
+    }
+    case BRAIN_CAPACITY_ADD_OK:
+    default:
+        return NULL;
+    }
+}
+
+void lobbyAddBotOffTooltip(const char *reason) {
+    if (reason && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s", reason);
+    }
 }
 
 void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {

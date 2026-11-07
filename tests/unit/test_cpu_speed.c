@@ -17,7 +17,8 @@
  *                                       stores nothing
  * run_brain_capacity_default_clamp    - the default (logical - 1, at least 1)
  *                                       and the clamp of a raw answer to 0..16
- * run_brain_capacity_cache            - answers are kept by name + version
+ * run_brain_capacity_cache            - answers are kept by name + version,
+ *                                       and found by name alone
  * run_brain_capacity_c_brain          - a registered C brain's answer, and its
  *                                       "use the default"
  * run_brain_capacity_name_from_path   - the key name from a brain's path
@@ -244,7 +245,13 @@ int run_brain_capacity_cache(void) {
   UT_ASSERT(brainCapacityLookup("UtOther", "") == 16);
   brainCapacityStore("UtBrain", "", 2);
   UT_ASSERT(brainCapacityLookup("UtBrain", "") == 2);
+  /* By name alone: the newest one added ("2"), and no prefix match. */
+  UT_ASSERT(brainCapacityLookupName("UtBrain") == 7);
+  UT_ASSERT(brainCapacityLookupName("UtBra") == BRAIN_CAPACITY_UNKNOWN);
+  UT_ASSERT(brainCapacityLookupName("") == BRAIN_CAPACITY_UNKNOWN);
+  UT_ASSERT(brainCapacityLookupName(NULL) == BRAIN_CAPACITY_UNKNOWN);
   brainCapacityClear();
+  UT_ASSERT(brainCapacityLookupName("UtBrain") == BRAIN_CAPACITY_UNKNOWN);
   UT_ASSERT(brainCapacityLookup("UtBrain", "2") == BRAIN_CAPACITY_UNKNOWN);
   return 0;
 }
@@ -291,6 +298,12 @@ int run_brain_capacity_c_brain(void) {
   UT_ASSERT(m.logicalCores == 8 && m.physicalCores == 4);
   UT_ASSERT(m.coremark1t == 25000.0 && m.coremarkAll == 90000.0);
   UT_ASSERT(fabs(m.scaling - 3.6) < 1e-9);
+  UT_ASSERT(brainCapacityLookup("UtCBrain", "") == BRAIN_CAPACITY_UNKNOWN);
+  /* The same result given again keeps them; a new one forgets them. */
+  brainCapacityStore("UtCBrain", "", 3);
+  brainCapacitySetMachineFromTest("Ut CPU", 8, 4, 25000.0, 90000.0);
+  UT_ASSERT(brainCapacityLookup("UtCBrain", "") == 3);
+  brainCapacitySetMachineFromTest("Ut CPU", 8, 4, 26000.0, 90000.0);
   UT_ASSERT(brainCapacityLookup("UtCBrain", "") == BRAIN_CAPACITY_UNKNOWN);
 
   brainCapacitySetMachine(NULL);

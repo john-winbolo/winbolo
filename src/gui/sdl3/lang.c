@@ -2985,6 +2985,8 @@ static const LangEntry langTable[] = {
     {3426, "This game"},
     {3427, "Earlier games"},
     {3428, "Whether a builder on the square of a dead pillbox walks at the speed of the terrain under it. Off is the default, as in Mac Bolo: the square of a dead pillbox is as fast as a road, whatever the pillbox stands on, and a builder can walk onto it even on water. On, as in WinBolo 2.1, he walks at the speed of the terrain under the pillbox, so a dead pillbox on swamp, crater, rubble or forest is slow to reach, and one on water stops him unless it is the square he is going to."},
+    {3490, "Measuring this computer's speed. Bots can be added in a moment."},
+    {3491, "This computer can run {number} of these bots at full strength."},
     {2810, "Whether a pillbox may pick a tank as its target."},
     {2860, "+ {number} others"},
     {2861, "+ 1 other"},

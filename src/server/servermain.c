@@ -80,6 +80,7 @@
 #include "cJSON.h"
 #include "cpu_speed_test.h"
 #include "cpu_speed_store.h"
+#include "cpu_speed_capacity.h"
 #include "brain_capacity.h"
 #include "brain_list_internal.h" /* brainListScan - -cputest's brain answers */
 
@@ -1850,6 +1851,11 @@ int main(int argc, char **argv) {
   if (argExist(argc, argv, "cputest") == TRUE) {
     return cpuSpeedTestAndReport();
   }
+
+  /* A result an earlier -cputest stored for this version gives
+     Brain.capacity its coremark_1t and coremark_all. A server never runs the
+     test by itself: with none stored they stay 0. */
+  (void)cpuSpeedApplyStoredToBrains(WINBOLO_VERSION);
 
   /* -validate <map> checks a map's scenario script and exits, and -pack <map>
      writes that script into the map file and exits. Both are answered here,

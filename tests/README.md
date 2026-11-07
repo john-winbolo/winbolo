@@ -150,13 +150,23 @@ end
   (nil included): the default, logical cores - 1, at least 1.
 - A number is rounded down and clamped to 0..16.
 - The answer is advice. It does not change how many bots start. The lobby
-  stops Add Bot once the bots that run on this machine reach the answer.
+  turns Add Bot off once the bots that run on this machine (single player,
+  or a game this client hosts) reach the answer for the brain it would add,
+  and while the lobby's CPU speed test runs. A game on another server has
+  no cap here.
 - The CPU speed test (`WinBoloDS -cputest`, or the client's first game
   lobby for each new version) gives `coremark_1t` and `coremark_all`. It is
   stored per machine and version in `cpu_speed.json` with the other
   per-user files; the `WINBOLO_CPU_SPEED_FILE` environment variable puts it
   somewhere else. Until a result is stored, both are 0.
 - `WinBoloDS -cputest` prints each brain's answer after the test.
+  `WinBoloHeadless --cputest` runs and stores the same test, without the
+  answers.
+- In the client, the test runs in the background (low priority threads)
+  when a game lobby first opens after each new version. If the game starts
+  or the player leaves first, it stops and stores nothing, and the next
+  lobby runs it again. It writes a start line and a result line to the log
+  (the `client` category of `WINBOLO_LOG`).
 - A brain written in C gives the same answer through
   `brainCapacityRegisterC(name, fn)` with
   `int fn(const BrainMachineInfo *, const BrainMeasured *)`
