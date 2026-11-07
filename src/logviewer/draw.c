@@ -1813,9 +1813,25 @@ void lv_drawTanks(screenTanks *tks) {
     if (simple) SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
 }
 
+/* Whether a live pillbox is on square (x, y), for the builder hit box: the
+   pill's armour as recorded, through lvHitboxPillSolid. A dead pill's square
+   is open ground, as in lgmBlastCatches. */
+static bool lvDrawPillSolidAt(pillboxes *pb, BYTE x, BYTE y) {
+    BYTE count;
+    for (count = 0; count < (*pb)->numPills; count++) {
+        if ((*pb)->item[count].x == x && (*pb)->item[count].y == y &&
+            lvHitboxPillSolid((*pb)->active[count] != FALSE,
+                              (*pb)->item[count].inTank != FALSE,
+                              (*pb)->item[count].armour)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Note a builder's hit area: his place, his square, and which of the 3 by 3
-   squares round his are a building, a half building, a pillbox or a base
-   (lgmBlastCatches). mx, my are his square on the screen; the screen starts
+   squares round his are a building, a half building, a live pillbox or a
+   base (lgmBlastCatches). mx, my are his square on the screen; the screen starts
    at the view's offset, as lv_playersMakeScreenLgm made the list. The
    squares are read now, as the map is drawn. */
 static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE zf) {
@@ -1863,7 +1879,7 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE
             if (ax < 0 || ay < 0 || ax > 255 || ay > 255) continue;
             pos = lv_mapGetPos(&lv->mp, (BYTE)ax, (BYTE)ay);
             if (pos == BUILDING || pos == HALFBUILDING ||
-                lv_pillsExistPos(&lv->pb, (BYTE)ax, (BYTE)ay) ||
+                lvDrawPillSolidAt(&lv->pb, (BYTE)ax, (BYTE)ay) ||
                 lv_basesExistPos(&lv->bs, (BYTE)ax, (BYTE)ay)) {
                 solid |= 1u << (row * 3 + col);
             }
