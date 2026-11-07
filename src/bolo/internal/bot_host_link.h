@@ -134,7 +134,8 @@ int  botHostLinkListCache(const char *root, BotHostLinkBrain *out, int max);
  * with the lowest (bots + 1) / effective slots; ties go to the host with
  * more slots, then to the one that came first in the list (the server's
  * own process first, then the hosts in the order they joined). No host but
- * an unlimited one takes more bots than its slots. */
+ * an unlimited one takes more bots than its slots, and an unlimited one
+ * goes past its slots only when no other host has room. */
 #define BOT_HOST_SMALL_SLOTS_DEFAULT 2
 #define BOT_HOST_SMALL_BIAS_DEFAULT  0.25
 

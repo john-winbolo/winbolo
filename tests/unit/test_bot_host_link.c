@@ -333,6 +333,106 @@ int run_bot_host_place_spread(void) {
     return 0;
 }
 
+/* The server itself (8 slots, unlimited, lag 0) and one Bot Host of 2
+ * slots, as in the lobby: each new bot starts on the server and the spread
+ * then moves bots until no move is left. */
+static void placeServerAndHost2(BotHostPlaceHost *h, int serverBots,
+                                int hostBots, double hostLagMs) {
+    memset(h, 0, 2 * sizeof(*h));
+    h[0].slots = 8; h[0].bots = serverBots; h[0].open = true;
+    h[0].unlimited = true; h[0].movable = true; h[0].lagMs = 0.0;
+    h[1].slots = 2; h[1].bots = hostBots; h[1].open = true;
+    h[1].movable = true; h[1].lagMs = hostLagMs;
+}
+
+static int placeSettleLagOpt(BotHostPlaceHost *h, int n,
+                             const BotHostPlaceLag *lag) {
+    int moves = 0, from = -1, to = -1;
+    while (botHostPlaceRebalanceLag(h, n, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                    BOT_HOST_SMALL_BIAS_DEFAULT, lag, &from,
+                                    &to)) {
+        h[from].bots--;
+        h[to].bots++;
+        if (++moves > 500) return -1;
+    }
+    return moves;
+}
+
+int run_bot_host_place_server_cap(void) {
+    static const BotHostPlaceLag lagOn = { 100.0, 250.0,
+                                           BOT_HOST_LAG_GAIN_DEFAULT };
+    static const BotHostPlaceLag lagOff = { 0.0, 250.0,
+                                            BOT_HOST_LAG_GAIN_DEFAULT };
+    static const double lags[] = { 0.0, 2.0, 30.0, 120.0, 300.0 };
+    const BotHostPlaceLag *rules[2];
+    BotHostPlaceHost h[2];
+    int r, l, k, from = -1, to = -1;
+
+    rules[0] = &lagOn;
+    rules[1] = &lagOff;
+    for (r = 0; r < 2; r++) {
+        for (l = 0; l < (int)(sizeof(lags) / sizeof(lags[0])); l++) {
+            /* The report: 8 bots settled, then "+" twice to 10. Each new
+             * bot starts on the server; the end is 8 and 2. */
+            placeServerAndHost2(h, 8, 0, lags[l]);
+            UT_ASSERT(placeSettleLagOpt(h, 2, rules[r]) >= 0);
+            UT_ASSERT(h[0].bots <= 8 && h[1].bots <= 2);
+            for (k = 9; k <= 10; k++) {
+                h[0].bots++;
+                UT_ASSERT(placeSettleLagOpt(h, 2, rules[r]) >= 0);
+                printf("  server 8 + host 2 (lag %.0f ms, rules %s): "
+                       "%2d bots -> %d + %d\n",
+                       lags[l], r == 0 ? "on" : "off", k, h[0].bots,
+                       h[1].bots);
+                UT_ASSERT(h[0].bots <= 8 && h[1].bots <= 2);
+                UT_ASSERT(h[0].bots + h[1].bots == k);
+            }
+            UT_ASSERT(h[0].bots == 8 && h[1].bots == 2);
+
+            /* The state the report saw: 9 on the server, 1 on the host.
+             * One move puts it right. */
+            placeServerAndHost2(h, 9, 1, lags[l]);
+            UT_ASSERT(placeSettleLagOpt(h, 2, rules[r]) == 1);
+            UT_ASSERT(h[0].bots == 8 && h[1].bots == 2);
+
+            /* A new bot picked straight away goes to the host too. */
+            placeServerAndHost2(h, 8, 1, lags[l]);
+            UT_ASSERT(botHostPlacePickLag(h, 2, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                          BOT_HOST_SMALL_BIAS_DEFAULT,
+                                          rules[r]) == 1);
+
+            /* Full on both: no move either way, and an 11th bot stays on
+             * the server past its slots (no host has room). */
+            placeServerAndHost2(h, 8, 2, lags[l]);
+            UT_ASSERT(placeSettleLagOpt(h, 2, rules[r]) == 0);
+            UT_ASSERT(botHostPlacePickLag(h, 2, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                          BOT_HOST_SMALL_BIAS_DEFAULT,
+                                          rules[r]) == 0);
+            h[0].bots = 9;
+            UT_ASSERT(placeSettleLagOpt(h, 2, rules[r]) == 0);
+            UT_ASSERT(h[0].bots == 9 && h[1].bots == 2);
+        }
+    }
+
+    /* A host that takes no bot now (closed: the free CPU check) gives the
+     * server no cap: the server takes the bot past its slots. */
+    placeServerAndHost2(h, 8, 1, 2.0);
+    h[1].open = false;
+    UT_ASSERT(botHostPlacePickLag(h, 2, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                  BOT_HOST_SMALL_BIAS_DEFAULT, &lagOn) == 0);
+    h[0].bots = 9;
+    UT_ASSERT(!botHostPlaceRebalanceLag(h, 2, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                        BOT_HOST_SMALL_BIAS_DEFAULT, &lagOn,
+                                        &from, &to));
+
+    /* The server with no slots gives its bots to a host with room. */
+    placeServerAndHost2(h, 2, 0, 2.0);
+    h[0].slots = 0;
+    UT_ASSERT(placeSettleLagOpt(h, 2, &lagOn) == 2);
+    UT_ASSERT(h[0].bots == 0 && h[1].bots == 2);
+    return 0;
+}
+
 /* ================================================================
  * 6. Placement: lag
  * ================================================================ */
