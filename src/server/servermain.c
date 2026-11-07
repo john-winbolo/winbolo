@@ -1036,6 +1036,8 @@ void printArgs() {
   fprintf(stderr, "-noplayerbothosts - do not let each player's client run this server's bots\n");
   fprintf(stderr, "-bothost-small-slots <n> - a Bot Host with n slots or fewer fills a little later (default 2)\n");
   fprintf(stderr, "-bothost-small-bias <f> - how many slots fewer such a host counts, 0 to 1 (default 0.25)\n");
+  fprintf(stderr, "-bothost-lag-ref-ms <ms> - lag counted in bot placement: a host scores 1 + lag / ms times more, 0 = lag not counted (default 100)\n");
+  fprintf(stderr, "-bothost-lag-max-ms <ms> - a host with more lag gets no new bots while one with less has room, 0 = no ceiling (default 250)\n");
   fprintf(stderr, "                (on by default: a joining player's client offers the bots its\n");
   fprintf(stderr, "                computer can run, and gives them back when the player leaves).\n");
   fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
@@ -3322,6 +3324,20 @@ int main(int argc, char **argv) {
         }
         if (smallArg != ARG_NOT_FOUND || biasArg != ARG_NOT_FOUND) {
           transportUdpServerSetBotHostPlacement(smallSlots, bias);
+        }
+      }
+      {
+        int refMs = -1, maxMs = -1; /* -1: the default */
+        int refArg = findArg(argc, argv, "bothost-lag-ref-ms");
+        int maxArg = findArg(argc, argv, "bothost-lag-max-ms");
+        if (refArg != ARG_NOT_FOUND && refArg < argc) {
+          refMs = atoi(argv[refArg]);
+        }
+        if (maxArg != ARG_NOT_FOUND && maxArg < argc) {
+          maxMs = atoi(argv[maxArg]);
+        }
+        if (refArg != ARG_NOT_FOUND || maxArg != ARG_NOT_FOUND) {
+          transportUdpServerSetBotHostLag(refMs, maxMs);
         }
       }
     }

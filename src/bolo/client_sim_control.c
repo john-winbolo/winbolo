@@ -39,6 +39,7 @@
 #include "client_snapshot.h"  /* clientApplyEntityChange */
 #include "client_sim_internal.h"
 #include "client_sim.h"
+#include "bot_host_cpu.h"  /* BOT_HOST_CPU_UNKNOWN */
 #include "client_command.h"  /* VIEW_KIND_ALLY, VIEW_CYCLE_FROM_NONE */
 #include "bolo_map.h"    /* mapClampToRules — the re-clamp a new table needs */
 #include "sim_rules.h"   /* simRulesCheckCarried — the check before the keep */
@@ -437,9 +438,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     case CTRL_BOT_HOST_STATUS:
         if (evt->u.botHostStatus.idx < CLIENT_BOT_HOST_ROWS) {
             ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostStatus.idx];
+            /* The CPU estimate comes in its own event: a row that stays
+             * connected keeps it, a new row has none yet. */
+            uint8_t cpu = r->connected ? r->cpu : (uint8_t)BOT_HOST_CPU_UNKNOWN;
             memset(r, 0, sizeof(*r));
+            r->cpu = (uint8_t)BOT_HOST_CPU_UNKNOWN;
             r->connected = evt->u.botHostStatus.connected != 0;
             if (r->connected) {
+                r->cpu     = cpu;
                 r->state   = evt->u.botHostStatus.state;
                 r->percent = evt->u.botHostStatus.percent;
                 r->used    = evt->u.botHostStatus.used;
@@ -452,6 +458,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 SDL_strlcpy(r->name, evt->u.botHostStatus.name,
                             sizeof(r->name));
             }
+        }
+        break;
+
+    case CTRL_BOT_HOST_CPU:
+        if (evt->u.botHostCpu.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostCpu.idx];
+            if (r->connected) r->cpu = evt->u.botHostCpu.cpu;
         }
         break;
 

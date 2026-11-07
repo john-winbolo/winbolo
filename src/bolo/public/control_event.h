@@ -61,6 +61,8 @@
                                                            * server's own row */
 /* CTRL_BOT_HOST_SLOTS refuseSeat when no assign is turned down. */
 #define BOT_HOST_SLOTS_NO_REFUSE  0xFFu
+/* CTRL_BOT_HOST_CPU idx from a Bot Host: its own estimate. */
+#define BOT_HOST_CPU_IDX_SELF     0xFFu
 
 /* BOT_HOST_SYNC_* (the brain sync states) and BOT_HOST_REC_STATE_* (the
  * recording states) are in client_sim.h. */
@@ -572,6 +574,17 @@ typedef enum {
      * brain names the server's bot brain, for the client's capacity check.
      * An older client has no decoder for the type and skips it. */
     CTRL_BOT_HOST_TICKET,
+    /* CTRL_BOT_HOST_CPU — the estimate of how much of its machine's CPU a
+     * Bot Host's bots use (bot_host_cpu.h), one byte. Bot Host to server on
+     * the host's control connection (idx BOT_HOST_CPU_IDX_SELF), each time
+     * the byte changes; server to lobby players and spectators for row idx
+     * of the Bot Host list, after that row's CTRL_BOT_HOST_STATUS. It is a
+     * type of its own, not a byte added to CTRL_BOT_HOST_SLOTS or
+     * CTRL_BOT_HOST_STATUS, because those decoders take only their exact
+     * length: an older server or client would drop the whole message. An
+     * older peer has no decoder for this type and skips it; a row with no
+     * CTRL_BOT_HOST_CPU shows no percent. */
+    CTRL_BOT_HOST_CPU,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1627,6 +1640,12 @@ typedef struct ControlEvent {
             uint8_t recBots;     /* UPLOADING: bots with files to send */
             char    name[BOT_HOST_STATUS_NAME_LEN];
         } botHostStatus;
+
+        /* CTRL_BOT_HOST_CPU — see the enum. */
+        struct {
+            uint8_t idx;   /* the row, or BOT_HOST_CPU_IDX_SELF from a host */
+            uint8_t cpu;   /* 0..100, BOT_HOST_CPU_UNDER_ONE or _UNKNOWN */
+        } botHostCpu;
 
         /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
         struct {

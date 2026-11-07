@@ -33,6 +33,9 @@ CHECKS (one PASS/FAIL line each)
     5. round:    at the round end every host goes and every bot comes back
                  to the server; in the next round P1 joins again, its host
                  takes bots again, and each bot name is there once.
+    6. cpu:      the DS logs a CPU estimate (the percent each machine sends
+                 for the lobby's Bot Host rows) for P1's host, P2's host and
+                 the server itself, and each is a percent ("N%" or "<1%").
 
     Brain (Lua) state does not move with a bot: the bot gets a new brain on
     each move, as with any Bot Host fallback. The test does not check it.
@@ -90,6 +93,8 @@ BACK_RE = re.compile(r'\[bothost\] bot (\d+) "([^"]*)" back in-process from Bot 
                      r'Host "([^"]*)" \((.*), game tick (\d+)\)')
 HOST_UP_RE = re.compile(r'\[bothost\] player (\d+) "([^"]*)" Bot Host connected '
                         r'from \S+ with (\d+) slots')
+CPU_RE = re.compile(r'\[bothost\] CPU estimate: (Bot Host|the server) "([^"]*)" '
+                    r"(\d+%|<1%) of its machine's CPU, (\d+) bots")
 HOST_GONE_RE = re.compile(r'\[bothost\] Bot Host "([^"]*)" at \S+ gone \((.*)\)')
 
 
@@ -353,6 +358,17 @@ def main():
                                               len(thinks_on(t, "P2"))))
         results.append(("join", bool(ok)))
 
+        # 6. cpu: each host and the server send a percent for their rows
+        def cpu_rows():
+            return [m.groups() for m in CPU_RE.finditer(run.ds_text())]
+        ok = run.wait_for("a CPU estimate for P1, P2 and the server",
+                          lambda: {("Bot Host", "P1"), ("Bot Host", "P2")} <=
+                          {(g[0], g[1]) for g in cpu_rows()} and
+                          any(g[0] == "the server" for g in cpu_rows()), 20)
+        for g in cpu_rows():
+            print("  CPU estimate: %s \"%s\" %s (%s bots)" % g)
+        results.append(("cpu", bool(ok)))
+
         # 2. leave: P1 ends by itself after 1000 of its own ticks
         p1a = run.players[0][1]
         try:
@@ -459,7 +475,7 @@ def main():
         print("%s: %s" % ("PASS" if ok else "FAIL", name))
         allok = allok and ok
     print("logs: %s" % out_dir)
-    return 0 if allok and len(results) == 5 else 1
+    return 0 if allok and len(results) == 6 else 1
 
 
 if __name__ == "__main__":

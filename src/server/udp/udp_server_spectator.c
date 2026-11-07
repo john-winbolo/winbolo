@@ -212,6 +212,7 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     /* The lobby's Bot Host list sits where the spectators are listed, and a
      * spectator sees that list too. */
     case CTRL_BOT_HOST_STATUS:
+    case CTRL_BOT_HOST_CPU:
     case CTRL_LOBBY_SYNC_COMPLETE:
     /* The live scoreboard is public — a viewer can already read captures and
      * kills off the map, and a spectator whose board never leaves zero looks

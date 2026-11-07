@@ -144,7 +144,32 @@ typedef struct {
     bool open;       /* it may take a bot now */
     bool unlimited;  /* it takes bots past its slots (the server itself) */
     bool movable;    /* one of its bots may be moved now */
+    double lagMs;    /* the server's smoothed round trip to it, in ms;
+                      * below 0 when not known (the server itself: 0) */
 } BotHostPlaceHost;
+
+/* Lag in the placement (botHostPlacePickLag, botHostPlaceRebalanceLag).
+ *
+ * refMs: a host's score is multiplied by (1 + lagMs / refMs), so a host
+ * refMs away fills at half the rate of one with no lag. A host whose lag
+ * is not known counts refMs. 0 (or below) turns all lag rules off, and
+ * the placement is then exactly the one without lag.
+ *
+ * maxMs: a host with more lag than this takes no new bot while a host
+ * with at most this lag has room (bots below its slots). 0: no ceiling.
+ *
+ * gain: a bot moves only when its score at the new place is at least this
+ * part lower than its score now (0.20: 20% lower), so small changes in
+ * lag do not move bots back and forth. */
+#define BOT_HOST_LAG_REF_MS_DEFAULT 100
+#define BOT_HOST_LAG_MAX_MS_DEFAULT 250
+#define BOT_HOST_LAG_GAIN_DEFAULT   0.20
+
+typedef struct {
+    double refMs;
+    double maxMs;
+    double gain;
+} BotHostPlaceLag;
 
 /* slots, less bias when slots is smallSlots or fewer; never under 0.05. */
 double botHostPlaceEffSlots(int slots, int smallSlots, double bias);
@@ -157,5 +182,19 @@ int  botHostPlacePick(const BotHostPlaceHost *hosts, int n, int smallSlots,
  * helps. */
 bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,
                            int smallSlots, double bias, int *from, int *to);
+/* Ticks over which a host's lag is smoothed: about 10 s at 50 ticks a
+ * second. */
+#define BOT_HOST_LAG_SMOOTH_TICKS 500
+/* One tick of the lag smoothing: *lagMs moves 1 / smoothTicks of the way
+ * to rawMs; the first sample (*known false) is taken as it is. */
+void botHostLagSmooth(double *lagMs, bool *known, double rawMs,
+                      int smoothTicks);
+/* The two above with the lag rules (BotHostPlaceLag; NULL: no lag). The
+ * score of a host is (bots + 1) / effective slots x (1 + lagMs / refMs). */
+int  botHostPlacePickLag(const BotHostPlaceHost *hosts, int n, int smallSlots,
+                         double bias, const BotHostPlaceLag *lag);
+bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
+                              int smallSlots, double bias,
+                              const BotHostPlaceLag *lag, int *from, int *to);
 
 #endif /* BOT_HOST_LINK_H */

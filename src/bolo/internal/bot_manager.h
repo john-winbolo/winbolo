@@ -137,6 +137,11 @@ typedef struct {
      * spike-an-hour-ago. Written by the worker next to lastThinkMs; reset
      * with overrunCount/maxThinkMs at both of those points. */
     Uint32          thinkCount;
+    /* thinkCount when this think was last added to a running think time
+     * total (BotManager thinkMsTotal, the Bot Host's own): a dead bot's
+     * worker returns before the think and leaves lastThinkMs as it was,
+     * so a think is added only when thinkCount moved. */
+    Uint32          thinkCountSeen;
     /* High-water mark of lastThinkMs this game (ms). The magnitude behind
      * overrunCount: the count says how often, this says how bad. Written by
      * the worker next to lastThinkMs; reset alongside the other two. */
@@ -356,6 +361,9 @@ typedef struct BotManager {
      * for future refinements (e.g. computing the EWMA from the full
      * serverInstanceTick instead of approximating it via kReservedSimMs). */
     double       lastBrainPhaseMs;
+    /* The think time of every in-process brain think so far (ms), for the
+     * server's CPU estimate in the lobby (bot_host_cpu.h). Only grows. */
+    double       thinkMsTotal;
     /* EWMA of the brain-think stage cost (ms). Display-only — the budget
      * formula reads serialMsEwma, not this. */
     double       brainPhaseMsEwma;
@@ -434,6 +442,8 @@ void botManagerSetRemoteHooks(struct ServerSim *sim,
                               const BotRemoteHooks *hooks);
 bool botManagerIsRemote(const struct ServerSim *sim, BYTE playerNum);
 uint32_t botManagerGameStarts(const struct ServerSim *sim);
+/* The think time of every in-process brain think so far (ms). */
+double botManagerThinkMsTotal(const struct ServerSim *sim);
 /* True when brains are built in debug mode (they then load their source,
  * not opt/), which is what the Bot Host brain manifest lists. */
 bool botManagerDefaultDebugMode(const struct ServerSim *sim);

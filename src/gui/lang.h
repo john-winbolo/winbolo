@@ -484,6 +484,11 @@
  * name, and what it shows in place of the brain file state */
 #define STR_DLGLOBBY_BOTHOST_SERVER_NAME    3602
 #define STR_DLGLOBBY_BOTHOST_SERVER_STATE   3603
+/* After each Bot Host row: how much of its machine's CPU the row's bots
+ * use, as that machine estimates it ({number} = percent, 1..100), and the
+ * text for above 0% and below 1% */
+#define STR_DLGLOBBY_BOTHOST_CPU_FMT        3650
+#define STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE  3651
 /* Map-preview start-picker tooltips and the assign-to-someone menu */
 #define STR_STARTPICK_TIP_FREE_HOST         1512
 #define STR_STARTPICK_TIP_FREE              1513

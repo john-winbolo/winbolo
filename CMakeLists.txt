@@ -4930,6 +4930,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Bot Host link: the announce codec, the address lists and the allow
     # list a server and a Bot Host use to find each other.
     tests/unit/test_bot_host_link.c
+    # The lobby's CPU estimate per Bot Host row: the percent, the meter,
+    # CTRL_BOT_HOST_CPU and the client's row.
+    tests/unit/test_bot_host_cpu.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
@@ -6426,6 +6429,11 @@ set(_unit_test_names
     bot_host_link_allow
     bot_host_slots_codec
     bot_host_place_spread
+    bot_host_place_lag
+    bot_host_cpu_percent
+    bot_host_cpu_meter
+    bot_host_cpu_codec
+    bot_host_cpu_client_row
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot
     internal_msg_skips_inactive_bot_slot

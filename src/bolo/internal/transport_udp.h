@@ -867,6 +867,10 @@ void transportUdpServerSetPlayerBotHosts(struct ServerSim *sim, bool on);
  * A negative value keeps that default (BOT_HOST_SMALL_SLOTS_DEFAULT,
  * BOT_HOST_SMALL_BIAS_DEFAULT in bot_host_link.h). */
 void transportUdpServerSetBotHostPlacement(int smallSlots, double bias);
+/* The lag rules of the bot placement (BotHostPlaceLag in bot_host_link.h):
+ * refMs (0: lag not counted) and maxMs (0: no ceiling); below 0: the
+ * default. */
+void transportUdpServerSetBotHostLag(int refMs, int maxMs);
 void transportUdpServerPrintBotHosts(void);
 
 /* -brain-debug session blocks, for the Bot Hosts' recordings: RecOpen when

@@ -380,16 +380,65 @@ static bool placeTakes(const BotHostPlaceHost *h) {
     return h->unlimited || h->bots < h->slots;
 }
 
+void botHostLagSmooth(double *lagMs, bool *known, double rawMs,
+                      int smoothTicks) {
+    if (lagMs == NULL || known == NULL || !(rawMs >= 0.0)) return;
+    if (!*known || smoothTicks <= 1) {
+        *lagMs = rawMs;
+        *known = true;
+        return;
+    }
+    *lagMs += (rawMs - *lagMs) / (double)smoothTicks;
+}
+
+/* True when the lag rules are on. */
+static bool placeLagOn(const BotHostPlaceLag *lag) {
+    return lag != NULL && lag->refMs > 0.0;
+}
+
+/* The lag a host counts: a lag not known counts refMs. */
+static double placeLagOf(const BotHostPlaceHost *h,
+                         const BotHostPlaceLag *lag) {
+    return h->lagMs >= 0.0 ? h->lagMs : lag->refMs;
+}
+
+/* The factor a host's score is multiplied by: 1 with the lag rules off. */
+static double placeLagFactor(const BotHostPlaceHost *h,
+                             const BotHostPlaceLag *lag) {
+    if (!placeLagOn(lag)) return 1.0;
+    return 1.0 + placeLagOf(h, lag) / lag->refMs;
+}
+
+/* The host is under the lag ceiling (always, with no ceiling). */
+static bool placeUnderCeiling(const BotHostPlaceHost *h,
+                              const BotHostPlaceLag *lag) {
+    if (!placeLagOn(lag) || !(lag->maxMs > 0.0)) return true;
+    return placeLagOf(h, lag) <= lag->maxMs;
+}
+
 /* Index of the best host for one more bot, skipping skip (-1: none). */
 static int placePickSkip(const BotHostPlaceHost *hosts, int n, int smallSlots,
-                         double bias, int skip, double *scoreOut) {
+                         double bias, const BotHostPlaceLag *lag, int skip,
+                         double *scoreOut) {
     int i, best = -1;
     double bestScore = 0.0;
+    bool lowRoom = false;
+    /* The ceiling: while a host under it has room (bots below its slots,
+     * the server's own process too), no host over it takes a bot. */
+    for (i = 0; i < n; i++) {
+        if (i == skip || !placeTakes(&hosts[i])) continue;
+        if (hosts[i].bots < hosts[i].slots &&
+            placeUnderCeiling(&hosts[i], lag)) {
+            lowRoom = true;
+        }
+    }
     for (i = 0; i < n; i++) {
         double score;
         if (i == skip || !placeTakes(&hosts[i])) continue;
+        if (lowRoom && !placeUnderCeiling(&hosts[i], lag)) continue;
         score = (double)(hosts[i].bots + 1) /
-                botHostPlaceEffSlots(hosts[i].slots, smallSlots, bias);
+                botHostPlaceEffSlots(hosts[i].slots, smallSlots, bias) *
+                placeLagFactor(&hosts[i], lag);
         if (best < 0 || score < bestScore - BOT_HOST_PLACE_EPS ||
             (score <= bestScore + BOT_HOST_PLACE_EPS &&
              hosts[i].slots > hosts[best].slots)) {
@@ -403,12 +452,25 @@ static int placePickSkip(const BotHostPlaceHost *hosts, int n, int smallSlots,
 
 int botHostPlacePick(const BotHostPlaceHost *hosts, int n, int smallSlots,
                      double bias) {
+    return botHostPlacePickLag(hosts, n, smallSlots, bias, NULL);
+}
+
+int botHostPlacePickLag(const BotHostPlaceHost *hosts, int n, int smallSlots,
+                        double bias, const BotHostPlaceLag *lag) {
     if (hosts == NULL || n <= 0) return -1;
-    return placePickSkip(hosts, n, smallSlots, bias, -1, NULL);
+    return placePickSkip(hosts, n, smallSlots, bias, lag, -1, NULL);
 }
 
 bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,
                            int smallSlots, double bias, int *from, int *to) {
+    return botHostPlaceRebalanceLag(hosts, n, smallSlots, bias, NULL, from,
+                                    to);
+}
+
+bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
+                              int smallSlots, double bias,
+                              const BotHostPlaceLag *lag, int *from,
+                              int *to) {
     int i, src = -1;
     double srcLoad = 0.0;
     if (hosts == NULL || n <= 0 || from == NULL || to == NULL) return false;
@@ -418,7 +480,8 @@ bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,
             continue;
         }
         load = (double)hosts[i].bots /
-               botHostPlaceEffSlots(hosts[i].slots, smallSlots, bias);
+               botHostPlaceEffSlots(hosts[i].slots, smallSlots, bias) *
+               placeLagFactor(&hosts[i], lag);
         if (hosts[i].bots > hosts[i].slots && !hosts[i].unlimited) {
             load += 1000.0;  /* over its slots: it gives first */
         }
@@ -430,10 +493,22 @@ bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,
     if (src < 0) return false;
     {
         double dstScore = 0.0;
-        int dst = placePickSkip(hosts, n, smallSlots, bias, src, &dstScore);
-        /* Only a strict gain: a bot never moves between two places that
-         * are as crowded, so bots do not go back and forth. */
-        if (dst < 0 || dstScore >= srcLoad - BOT_HOST_PLACE_EPS) return false;
+        int dst = placePickSkip(hosts, n, smallSlots, bias, lag, src,
+                                &dstScore);
+        if (dst < 0) return false;
+        if (placeLagOn(lag)) {
+            /* With lag: only a gain of at least lag->gain, so a lag that
+             * goes up and down a little moves no bot. */
+            double gain = lag->gain > 0.0 ? lag->gain : 0.0;
+            if (dstScore > srcLoad * (1.0 - gain) + BOT_HOST_PLACE_EPS ||
+                dstScore >= srcLoad - BOT_HOST_PLACE_EPS) {
+                return false;
+            }
+        } else if (dstScore >= srcLoad - BOT_HOST_PLACE_EPS) {
+            /* Only a strict gain: a bot never moves between two places
+             * that are as crowded, so bots do not go back and forth. */
+            return false;
+        }
         *from = src;
         *to = dst;
         return true;

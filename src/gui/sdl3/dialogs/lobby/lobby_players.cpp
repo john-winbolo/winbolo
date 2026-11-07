@@ -49,6 +49,7 @@
 extern "C" {
 #include "client_sim.h"      /* ClientSim + lobby getters; MAX_TANKS, BrainList, PingBand */
 #include "client_net.h"      /* clientSimNetSend* — kick, host transfer, claim start */
+#include "bot_host_cpu.h"    /* BOT_HOST_CPU_* — the Bot Host rows' CPU estimate */
 #include "bolo_rand.h"       /* bolo_rand_below — random pool for a team's first bot */
 #include "lobby_bot_pools.h" /* lobbyBotPoolCount / Label / Pick */
 #include "start_sides.h"     /* START_SIDE_* / startSideBits / Accepts / Eligible / IsCentre — team start sides */
@@ -755,15 +756,45 @@ static void renderBotHostGroup(ClientSim *cs) {
         }
         if (!first) SDL_strlcat(line, ")", sizeof(line));
 
+        /* How much of its machine's CPU the bots use, as that machine
+         * estimates it: "(Estimated 12% of the machine's CPU)". None when
+         * the row has no estimate (an older host or server). */
+        char cpuText[160] = "";
+        if (r->cpu == BOT_HOST_CPU_UNDER_ONE) {
+            SDL_strlcpy(cpuText, langGetText(STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE),
+                        sizeof(cpuText));
+        } else if (r->cpu <= 100) {
+            MessageArgs ca = {};
+            ca.number = r->cpu;
+            SDL_strlcpy(cpuText, langGetTextFmt(STR_DLGLOBBY_BOTHOST_CPU_FMT, &ca),
+                        sizeof(cpuText));
+        }
+
         ImGui::Bullet();
-        if (r->state == BOT_HOST_SYNC_READY) {
-            ImGui::TextWrapped("%s", line);
-        } else {
+        const bool dim = (r->state != BOT_HOST_SYNC_READY);
+        if (dim) {
             ImGui::PushStyleColor(ImGuiCol_Text,
                                   ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-            ImGui::TextWrapped("%s", line);
-            ImGui::PopStyleColor();
         }
+        if (cpuText[0] == '\0') {
+            ImGui::TextWrapped("%s", line);
+        } else {
+            /* On the row's line when the whole text fits; else on a line of
+             * its own under the row, so the row itself does not wrap in the
+             * middle of the estimate. */
+            char full[700];
+            SDL_snprintf(full, sizeof(full), "%s %s", line, cpuText);
+            if (ImGui::CalcTextSize(full).x <= ImGui::GetContentRegionAvail().x) {
+                ImGui::TextUnformatted(full);
+            } else {
+                const float indent = ImGui::GetTreeNodeToLabelSpacing();
+                ImGui::TextWrapped("%s", line);
+                ImGui::Indent(indent);
+                ImGui::TextWrapped("%s", cpuText);
+                ImGui::Unindent(indent);
+            }
+        }
+        if (dim) ImGui::PopStyleColor();
     }
 #ifndef WINBOLO_HIDE_CLIENT_BOT_HOST_MSG
     /* This computer's own Bot Host, under the rows. */

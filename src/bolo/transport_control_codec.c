@@ -54,6 +54,7 @@
 #include "channel_mux.h"   /* CHANNEL_CONTROL_SEG — the scenario rules
                             * fragment is pinned against it below */
 #include "control_event.h"
+#include "bot_host_cpu.h"   /* botHostCpuFromWire */
 #include "netpacks.h"
 #include "player_flags.h"  /* CLIENT_TYPE_COUNT / CLIENT_TYPE_UNKNOWN */
 #include "transport_udp_internal.h"
@@ -3810,6 +3811,38 @@ static bool decodeBotHostStatusBody(const uint8_t *buf, size_t len,
     return pos == len;
 }
 
+/* CTRL_BOT_HOST_CPU body: [idx 1][cpu 1]. idx is a row below
+ * BOT_HOST_STATUS_ROWS, or BOT_HOST_CPU_IDX_SELF from a Bot Host. Bytes
+ * after the two are skipped, so the message can grow; a cpu byte that is
+ * not a percent or BOT_HOST_CPU_UNDER_ONE reads as unknown. */
+#define BOT_HOST_CPU_LEN 2
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostCpuBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_CPU_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostCpu.idx;
+    buf[1] = botHostCpuFromWire(evt->u.botHostCpu.cpu);
+    *outLen = BOT_HOST_CPU_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostCpuBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_CPU_LEN) return false;
+    if (buf[0] >= BOT_HOST_STATUS_ROWS && buf[0] != BOT_HOST_CPU_IDX_SELF) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_CPU;
+    outEvt->u.botHostCpu.idx = buf[0];
+    outEvt->u.botHostCpu.cpu = botHostCpuFromWire(buf[1]);
+    return true;
+}
+
 /* CTRL_BOT_HOST_FILE_REQ body: [gen 4][brain 1][file 2]. */
 #define BOT_HOST_FILE_REQ_LEN 7
 
@@ -4559,6 +4592,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_SLOTS]        = encodeBotHostSlotsBody,
     [CTRL_BOT_HOST_REC]          = encodeBotHostRecBody,
     [CTRL_BOT_HOST_TICKET]       = encodeBotHostTicketBody,
+    [CTRL_BOT_HOST_CPU]          = encodeBotHostCpuBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -4628,6 +4662,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_SLOTS]        = decodeBotHostSlotsBody,
     [CTRL_BOT_HOST_REC]          = decodeBotHostRecBody,
     [CTRL_BOT_HOST_TICKET]       = decodeBotHostTicketBody,
+    [CTRL_BOT_HOST_CPU]          = decodeBotHostCpuBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -4761,6 +4796,7 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_SLOTS:         return "CTRL_BOT_HOST_SLOTS";
     case CTRL_BOT_HOST_REC:           return "CTRL_BOT_HOST_REC";
     case CTRL_BOT_HOST_TICKET:        return "CTRL_BOT_HOST_TICKET";
+    case CTRL_BOT_HOST_CPU:           return "CTRL_BOT_HOST_CPU";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }
