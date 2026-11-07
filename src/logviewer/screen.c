@@ -71,6 +71,7 @@
 #include "cJSON.h"               /* scripts.json, read into g_lv->scripts */
 #include "../common/wb_log.h"      /* the warnings a full index or list gives */
 #include "sim_rules_names.h"     /* simRulesRuleIndex — a rule's name to its index */
+#include "lv_hitbox.h"          /* lvHitboxTankZoneFor */
 #include "lv_builder_status.h"   /* the times each builder was away */
 #include "lv_ping_view.h"        /* the pings of the log, kept by time */
 #include "lv_save_name.h"        /* the players of the whole log, the lobby's map */
@@ -735,6 +736,12 @@ static void lv_rulesRefresh(void) {
       lv_screenRuleValueAt(SIM_RULE_tank_hit_radius, t), 1, 255);
   g_lv->rules.pillRange      = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_pill_range, t), 0, 65535);
+  /* The tank's hit zone: the circle, or the square of games from before it
+     (1.91 and earlier), from the header's version and whether the file has
+     rule records. */
+  g_lv->rules.tankHitZone    = lvHitboxTankZoneFor(
+      g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision,
+      g_lv->ruleChangeCount > 0);
 }
 
 int lv_screenGetRuleChanges(const LvRuleChange **out) {

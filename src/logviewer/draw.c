@@ -156,15 +156,11 @@ static bool         s_pillNumbers = TRUE;
    over the blit, from places lv_drawTanks and lv_drawLGMs note in
    render-target pixels. */
 static bool         s_hitBoxes = FALSE;
-/* A tank's place, the one shells are tested against (tankShellInHitZone):
-   the middle of the art pixel the recording holds. The game draws the
-   tank's picture centred on the same pixel (lv_drawTanks). */
-typedef struct {
-    float cx, cy;                  /* render-target pixels */
-    BYTE  slot;
-} LvHitTankPos;
-static LvHitTankPos s_hitTankPos[MAX_TANKS];
-static int          s_hitTankCount = 0;
+/* A tank's hit area goes round his place, the one shells are tested against
+   (tankShellInHitZone): the middle of the art pixel the recording holds.
+   The game draws the tank's picture centred on the same pixel, so the
+   place is the picture's top left in s_tankBarPos and
+   lvHitboxTankCentreInPicture art pixels on each axis. */
 /* A builder out of his tank: his place, the top left of his square, and the
    3 by 3 squares round his that stop the open-ground test
    (lvHitboxBuilderCaught). */
@@ -1731,7 +1727,6 @@ void lv_drawTanks(screenTanks *tks) {
     zoomFactor = lv_windowGetZoomFactor();
     s_tankLabelCount = 0;
     s_tankBarCount = 0;
-    s_hitTankCount = 0;
     s_hitZoom = zoomFactor;
 
     /* The same answer the ground pass used this frame, so the tanks and the
@@ -1750,23 +1745,6 @@ void lv_drawTanks(screenTanks *tks) {
 
     for (count = 1; count <= total; count++) {
         lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, playerName);
-        if (s_hitTankCount < MAX_TANKS) {
-            /* px, py are the recorded place less 128 world units (8 art
-               pixels), lv_playersMakeScreenTanks: the top left of the
-               picture, as the game draws it. The hit circle is round the
-               tank's place, the middle of the art pixel it was recorded in
-               (lvHitboxTankPlace). */
-            s_hitTankPos[s_hitTankCount].cx =
-                (float)zoomFactor * ((float)(mx * TILE_SIZE_X) +
-                    (float)(lvHitboxTankPlace(px) + LV_HITBOX_TANK_HALF) /
-                    (float)LV_HITBOX_WU_PER_PIXEL);
-            s_hitTankPos[s_hitTankCount].cy =
-                (float)zoomFactor * ((float)(my * TILE_SIZE_Y) +
-                    (float)(lvHitboxTankPlace(py) + LV_HITBOX_TANK_HALF) /
-                    (float)LV_HITBOX_WU_PER_PIXEL);
-            s_hitTankPos[s_hitTankCount].slot = lv_screenTanksGetSlot(tks, count);
-            s_hitTankCount++;
-        }
         /* The picture goes at px, py, as the game draws it
            (mapViewDrawTanks): its middle is the tank's place. The viewer
            drew it 2 art pixels right and down of that before, as the old
@@ -2475,99 +2453,93 @@ BYTE lv_drawGetHitBoxes(void) {
     return s_hitBoxes ? TRUE : FALSE;
 }
 
-/* Segments in a hit circle, and the length of one piece of a square's edge
-   in world units (one art pixel). */
-#define LV_HIT_CIRCLE_SEGMENTS 48
-#define LV_HIT_EDGE_PIECE      16
-/* How far each side of a line the builder test is asked, in world units. */
-#define LV_HIT_SIDE            2.0
+static void lvDrawRingBand(float cx, float cy, float rIn, float rOut, SDL_FColor col);
 
-/* One builder's area: its border is every piece of line with the area on one
-   side and not on the other. The pieces are the circle's segments and the
-   pixel-long pieces of the four square edges that cross the circle's 3 by 3
-   squares, so the border is drawn wherever lgmBlastCatches changes its
-   answer. ox, oy and k take a place in world units from the top left of his
-   square to the screen: x = ox + wx * k. */
-static void lvDrawHitLgmArea(const LvHitLgmPos *h, double bx, double by, int reach,
-                             float ox, float oy, float k, float shift) {
-    int i;
-    const double r = (double)reach;
+/* Each builder's outline (lvHitboxBuilderOutline) on the screen, worked out
+   once each time the hit areas are drawn and then drawn twice, dark and in
+   its colour. */
+#define LV_HIT_SCREEN_PTS (MAX_TANKS * LV_HITBOX_OUTLINE_MAX_PTS)
+#define LV_HIT_SCREEN_RUNS (MAX_TANKS * LV_HITBOX_OUTLINE_MAX_RUNS)
+static SDL_FPoint s_hitPts[LV_HIT_SCREEN_PTS];
+static SDL_FPoint s_hitShadow[LV_HITBOX_OUTLINE_MAX_PTS];
+static int        s_hitRunStart[LV_HIT_SCREEN_RUNS + 1];
+static LvHitOutline s_hitOutline;
 
-    for (i = 0; i < LV_HIT_CIRCLE_SEGMENTS && reach > 0; i++) {
-        double a0 = (double)i * 2.0 * SDL_PI_D / LV_HIT_CIRCLE_SEGMENTS;
-        double a1 = (double)(i + 1) * 2.0 * SDL_PI_D / LV_HIT_CIRCLE_SEGMENTS;
-        double am = (a0 + a1) * 0.5;
-        double cx = cos(am), cy = sin(am);
-        bool in = lvHitboxBuilderCaught(bx + cx * (r - LV_HIT_SIDE), by + cy * (r - LV_HIT_SIDE),
-                                        bx, by, h->solid, reach);
-        bool out = lvHitboxBuilderCaught(bx + cx * (r + LV_HIT_SIDE), by + cy * (r + LV_HIT_SIDE),
-                                         bx, by, h->solid, reach);
-        if (in == out) continue;
-        SDL_RenderLine(sdlRenderer,
-                       ox + (float)(bx + cos(a0) * r) * k + shift,
-                       oy + (float)(by + sin(a0) * r) * k + shift,
-                       ox + (float)(bx + cos(a1) * r) * k + shift,
-                       oy + (float)(by + sin(a1) * r) * k + shift);
-    }
-    /* The edges at 0 and 256 on each axis, from half a square before his
-       square to half a square after it: all the circle can reach. */
-    for (i = 0; i < 2; i++) {
-        double line = (double)(i * LV_HITBOX_WU_PER_SQUARE);
-        int t;
-        for (t = -LV_HITBOX_BUILDER_REACH;
-             t < LV_HITBOX_WU_PER_SQUARE + LV_HITBOX_BUILDER_REACH;
-             t += LV_HIT_EDGE_PIECE) {
-            double m = (double)t + LV_HIT_EDGE_PIECE * 0.5;
-            /* Upright edge x = line. */
-            if (lvHitboxBuilderCaught(line - LV_HIT_SIDE, m, bx, by, h->solid, reach) !=
-                lvHitboxBuilderCaught(line + LV_HIT_SIDE, m, bx, by, h->solid, reach)) {
-                SDL_RenderLine(sdlRenderer,
-                               ox + (float)line * k + shift, oy + (float)t * k + shift,
-                               ox + (float)line * k + shift,
-                               oy + (float)(t + LV_HIT_EDGE_PIECE) * k + shift);
-            }
-            /* Level edge y = line. */
-            if (lvHitboxBuilderCaught(m, line - LV_HIT_SIDE, bx, by, h->solid, reach) !=
-                lvHitboxBuilderCaught(m, line + LV_HIT_SIDE, bx, by, h->solid, reach)) {
-                SDL_RenderLine(sdlRenderer,
-                               ox + (float)t * k + shift, oy + (float)line * k + shift,
-                               ox + (float)(t + LV_HIT_EDGE_PIECE) * k + shift,
-                               oy + (float)line * k + shift);
-            }
+/* Draw the runs of s_hitPts from run first to run last - 1, moved by shift
+   pixels on both axes. */
+static void lvDrawHitRuns(int first, int last, float shift) {
+    int run;
+    for (run = first; run < last; run++) {
+        int a = s_hitRunStart[run], n = s_hitRunStart[run + 1] - a, i;
+        if (n < 2) continue;
+        if (shift == 0.0f) {
+            SDL_RenderLines(sdlRenderer, &s_hitPts[a], n);
+            continue;
         }
+        for (i = 0; i < n && i < LV_HITBOX_OUTLINE_MAX_PTS; i++) {
+            s_hitShadow[i].x = s_hitPts[a + i].x + shift;
+            s_hitShadow[i].y = s_hitPts[a + i].y + shift;
+        }
+        SDL_RenderLines(sdlRenderer, s_hitShadow, i);
     }
 }
 
 /* The hit areas over the blit: src is the slice of the target it took, dst
    where it went. Each line is drawn twice, first dark and one pixel down and
    right, then in its colour, so it shows on every kind of ground. Tanks are
-   magenta, builders yellow. */
+   magenta, builders yellow. A tank's area is the zone the recording's game
+   used (lvHitboxTankZoneFor): the circle, the square of games before it, or
+   none when that cannot be known. */
 static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     LogViewerState *lv = lv_screenGetState();
-    float scale, k;
-    int i, pass;
+    float scale, k, tankCentre;
+    int i, pass, nRuns, nPts;
     SDL_Rect clip, oldClip;
     bool hadClip;
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     Uint8 oldR, oldG, oldB, oldA;
     bool alive[MAX_TANKS];
-    int tankRadius, builderReach;
+    int tankZone, tankSize, builderReach;
 
     if (!s_hitBoxes || lv == NULL) return;
-    if (s_hitTankCount == 0 && s_hitLgmCount == 0) return;
+    if (s_tankBarCount == 0 && s_hitLgmCount == 0) return;
     if (src->w <= 0.0f || src->h <= 0.0f) return;
     /* What playback writes, copied out under its mutex, as the bars do. */
     lv_clientMutexWaitFor();
     for (i = 0; i < MAX_TANKS; i++) {
         alive[i] = lv->gameViewHud[i].alive;
     }
-    tankRadius = lv->rules.tankHitRadius;
+    tankZone = lv->rules.tankHitZone;
+    tankSize = lvHitboxTankZoneSize(tankZone, lv->rules.tankHitRadius);
     builderReach = lvHitboxBuilderReach(lv->rules.pillRange);
     lv_clientMutexRelease();
 
     scale = dst->w / src->w;
     /* Screen pixels to one world unit. */
     k = (float)s_hitZoom * scale / (float)LV_HITBOX_WU_PER_PIXEL;
+    tankCentre = (float)s_hitZoom * (float)lvHitboxTankCentreInPicture();
+
+    /* The builders' outlines, once for both passes. */
+    nRuns = 0;
+    nPts = 0;
+    s_hitRunStart[0] = 0;
+    for (i = 0; i < s_hitLgmCount; i++) {
+        const LvHitLgmPos *h = &s_hitLgmPos[i];
+        float ox = dst->x + (h->sqX - src->x) * scale;
+        float oy = dst->y + (h->sqY - src->y) * scale;
+        int run, p;
+        lvHitboxBuilderOutline(h->bx, h->by, h->solid, builderReach, &s_hitOutline);
+        for (run = 0; run < s_hitOutline.nRuns && nRuns < LV_HIT_SCREEN_RUNS; run++) {
+            int a = s_hitOutline.runStart[run], b = s_hitOutline.runStart[run + 1];
+            if (nPts + (b - a) > LV_HIT_SCREEN_PTS) break;
+            for (p = a; p < b; p++) {
+                s_hitPts[nPts].x = ox + (float)s_hitOutline.pt[p].x * k;
+                s_hitPts[nPts].y = oy + (float)s_hitOutline.pt[p].y * k;
+                nPts++;
+            }
+            s_hitRunStart[++nRuns] = nPts;
+        }
+    }
 
     hadClip = SDL_RenderClipEnabled(sdlRenderer);
     SDL_GetRenderClipRect(sdlRenderer, &oldClip);
@@ -2583,40 +2555,42 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     for (pass = 0; pass < 2; pass++) {
         float shift = (pass == 0) ? 1.0f : 0.0f;
 
-        /* Tanks: the circle of tankShellInHitZone, round the centre. */
+        SDL_FColor tankCol;
+
+        /* Tanks: the zone of tankShellInHitZone, round the centre. */
         if (pass == 0) {
-            SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 200);
+            tankCol.r = 0.0f; tankCol.g = 0.0f; tankCol.b = 0.0f; tankCol.a = 200.0f / 255.0f;
         } else {
-            SDL_SetRenderDrawColor(sdlRenderer, 255, 64, 255, 255);
+            tankCol.r = 1.0f; tankCol.g = 64.0f / 255.0f; tankCol.b = 1.0f; tankCol.a = 1.0f;
         }
-        for (i = 0; i < s_hitTankCount; i++) {
-            const LvHitTankPos *t = &s_hitTankPos[i];
+        SDL_SetRenderDrawColorFloat(sdlRenderer, tankCol.r, tankCol.g, tankCol.b, tankCol.a);
+        for (i = 0; i < s_tankBarCount && tankSize > 0; i++) {
+            BYTE slot = s_tankBarPos[i].slot;
             float cx, cy, r;
-            int seg;
-            if (t->slot >= MAX_TANKS || !alive[t->slot]) continue;
-            cx = dst->x + (t->cx - src->x) * scale + shift;
-            cy = dst->y + (t->cy - src->y) * scale + shift;
-            r = (float)tankRadius * k;
-            for (seg = 0; seg < LV_HIT_CIRCLE_SEGMENTS; seg++) {
-                float a0 = (float)seg * 2.0f * SDL_PI_F / LV_HIT_CIRCLE_SEGMENTS;
-                float a1 = (float)(seg + 1) * 2.0f * SDL_PI_F / LV_HIT_CIRCLE_SEGMENTS;
-                SDL_RenderLine(sdlRenderer, cx + SDL_cosf(a0) * r, cy + SDL_sinf(a0) * r,
-                               cx + SDL_cosf(a1) * r, cy + SDL_sinf(a1) * r);
+            if (slot >= MAX_TANKS || !alive[slot]) continue;
+            cx = dst->x + ((float)s_tankBarPos[i].x + tankCentre - src->x) * scale + shift;
+            cy = dst->y + ((float)s_tankBarPos[i].y + tankCentre - src->y) * scale + shift;
+            r = (float)tankSize * k;
+            if (tankZone == LV_HITBOX_TANK_CIRCLE) {
+                lvDrawRingBand(cx, cy, r - 0.5f, r + 0.5f, tankCol);
+            } else {
+                SDL_FPoint sq[5];
+                sq[0].x = cx - r; sq[0].y = cy - r;
+                sq[1].x = cx + r; sq[1].y = cy - r;
+                sq[2].x = cx + r; sq[2].y = cy + r;
+                sq[3].x = cx - r; sq[3].y = cy + r;
+                sq[4] = sq[0];
+                SDL_RenderLines(sdlRenderer, sq, 5);
             }
         }
 
-        /* Builders: the area of lgmBlastCatches. */
+        /* Builders: the area of lgmBlastCatches, worked out above. */
         if (pass == 0) {
             SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 200);
         } else {
             SDL_SetRenderDrawColor(sdlRenderer, 255, 230, 0, 255);
         }
-        for (i = 0; i < s_hitLgmCount; i++) {
-            const LvHitLgmPos *h = &s_hitLgmPos[i];
-            float ox = dst->x + (h->sqX - src->x) * scale;
-            float oy = dst->y + (h->sqY - src->y) * scale;
-            lvDrawHitLgmArea(h, h->bx, h->by, builderReach, ox, oy, k, shift);
-        }
+        lvDrawHitRuns(0, nRuns, shift);
     }
 
     SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);

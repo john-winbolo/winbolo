@@ -5226,8 +5226,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # they are and their colours (lv_tank_bars.h, header only).
     tests/unit/test_lv_tank_bars.c
     # The hit areas the viewer draws round each tank and each builder: the
-    # engine's tests written again (lv_hitbox.h, header only).
+    # engine's own rules (lv_hitbox.h and hit_rules.h, header only).
     tests/unit/test_lv_hitbox.c
+    # The hit rules the engine and the log viewer share (hit_rules.h).
+    tests/unit/test_hit_rules.c
     # A click on a tank on the viewer's map: which tank a point is on and
     # the mark round the selected one (lv_tank_pick.h, header only).
     tests/unit/test_lv_tank_pick.c
@@ -7951,6 +7953,11 @@ set(_unit_test_names
     lv_tank_bars_sums
     lv_hitbox_sums
     lv_hitbox_lgm_fit
+    lv_hitbox_lgm_pick
+    lv_hitbox_outline
+    lv_hitbox_zone_from_version
+    hit_rules_builder_matches_engine
+    hit_rules_tank_matches_engine
     lv_tank_pick_sums
     lv_marks_fade
     lv_window_size_parse

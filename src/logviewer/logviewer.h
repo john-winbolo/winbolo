@@ -116,6 +116,9 @@ typedef struct {
      world units, for the hit areas (lv_hitbox.h). */
   int  tankHitRadius;
   int  pillRange;
+  /* The tank's hit zone, LV_HITBOX_TANK_* (lv_hitbox.h): the circle, the
+     square of games before it, or none when the file cannot tell. */
+  int  tankHitZone;
 } LvRules;
 
 /* Speed values. 1 is real time and 2 to 9 are faster, up to as fast as the

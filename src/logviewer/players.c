@@ -505,7 +505,13 @@ typedef struct {
   uint32_t ms[LV_HITBOX_LGM_FIT_MAX];
   int      ax[LV_HITBOX_LGM_FIT_MAX];   /* mx * 16 + px */
   int      ay[LV_HITBOX_LGM_FIT_MAX];
-  bool     cached;                      /* cx, cy are the guess at entry 0 */
+  /* The last guess made: cx, cy for the entry cacheAt, whose time was
+     cacheMs. The map is drawn again and again between entries, and the lag
+     view draws an older entry each time, so the guess is kept until a note
+     changes the entries. */
+  bool     cached;
+  int      cacheAt;
+  uint32_t cacheMs;
   double   cx, cy;
 } LgmFitTrack;
 static LgmFitTrack lgmFit[MAX_TANKS];
@@ -568,19 +574,16 @@ bool lv_playersLgmPlace(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py,
     return FALSE;
   }
   t = &lgmFit[playerNum];
-  /* The newest entry he was at this pixel in: the present, or for the lag
-     view the older entry its frame is of. */
-  for (at = 0; at < t->count; at++) {
-    if (t->ax[at] == ax && t->ay[at] == ay) {
-      break;
-    }
-  }
-  if (at >= t->count) {
+  /* The entry the drawing is of: the present (the newest note), or for the
+     lag view the newest note at or before its frame's time. The time picks
+     it, not the pixel, so a builder in one pixel for two entries, or back
+     in a pixel he walked through before, is fitted at the right entry. */
+  at = lvHitboxLgmPickEntry(t->ms, t->ax, t->ay, t->count,
+                            lagFrame != NULL ? lagFrame->ms : UINT32_MAX, ax, ay);
+  if (at < 0) {
     return FALSE;
   }
-  /* The map is drawn again and again between entries: the guess at the
-     newest entry is kept until the next note. */
-  if (at == 0 && t->cached) {
+  if (t->cached && t->cacheAt == at && t->cacheMs == t->ms[at]) {
     *wx = t->cx;
     *wy = t->cy;
     return TRUE;
@@ -597,11 +600,11 @@ bool lv_playersLgmPlace(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py,
   }
   lvHitboxLgmFitRange(back, pix, n, &lo, &hi);
   *wy = (lo + hi) * 0.5 + LV_HITBOX_LGM_OFFSET_Y;
-  if (at == 0) {
-    t->cached = TRUE;
-    t->cx = *wx;
-    t->cy = *wy;
-  }
+  t->cached = TRUE;
+  t->cacheAt = at;
+  t->cacheMs = t->ms[at];
+  t->cx = *wx;
+  t->cy = *wy;
   return TRUE;
 }
 

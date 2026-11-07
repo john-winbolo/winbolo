@@ -25,10 +25,22 @@
  *       a real walk, player 5's builder in a recording, and his own square
  *       at a square's left and top edge (lvHitboxBuilderOwnSquare), which
  *       is the engine's square from his true place.
+ *
+ *   lv_hitbox_lgm_pick - that the lag view fits a builder at the entry its
+ *       frame's time gives, not the newest entry in the same pixel.
+ *
+ *   lv_hitbox_outline - that every line of a builder's outline is on the
+ *       border of his area, and that the outline stops exactly where the
+ *       circle meets the edge of a building.
+ *
+ *   The tank test is also checked for the square of games before the
+ *   circle, and against the size the outline is drawn at.
  */
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <math.h>
 
 #include "lv_hitbox.h"
@@ -39,16 +51,59 @@
 
 int run_lv_hitbox_sums(void) {
     /* The tank: the classic radius, 112. */
-    UT_ASSERT_MSG(lvHitboxTankHit(0, 0, 112), "on the centre");
-    UT_ASSERT_MSG(lvHitboxTankHit(111, 0, 112), "just inside, right");
-    UT_ASSERT_MSG(lvHitboxTankHit(0, -111, 112), "just inside, up");
-    UT_ASSERT_MSG(!lvHitboxTankHit(112, 0, 112), "on the edge is a miss");
-    UT_ASSERT_MSG(!lvHitboxTankHit(-112, 0, 112), "on the edge, left");
-    UT_ASSERT_MSG(lvHitboxTankHit(79, 79, 112), "inside, on the slant");
-    UT_ASSERT_MSG(!lvHitboxTankHit(80, 80, 112), "outside, on the slant");
-    UT_ASSERT_MSG(!lvHitboxTankHit(111, 111, 112), "a corner of the box is a miss");
-    UT_ASSERT_MSG(lvHitboxTankHit(9, 0, 10) && !lvHitboxTankHit(10, 0, 10),
+    UT_ASSERT_MSG(lvHitboxTankHit(0, 0, LV_HITBOX_TANK_CIRCLE, 112), "on the centre");
+    UT_ASSERT_MSG(lvHitboxTankHit(111, 0, LV_HITBOX_TANK_CIRCLE, 112), "just inside, right");
+    UT_ASSERT_MSG(lvHitboxTankHit(0, -111, LV_HITBOX_TANK_CIRCLE, 112), "just inside, up");
+    UT_ASSERT_MSG(!lvHitboxTankHit(112, 0, LV_HITBOX_TANK_CIRCLE, 112), "on the edge is a miss");
+    UT_ASSERT_MSG(!lvHitboxTankHit(-112, 0, LV_HITBOX_TANK_CIRCLE, 112), "on the edge, left");
+    UT_ASSERT_MSG(lvHitboxTankHit(79, 79, LV_HITBOX_TANK_CIRCLE, 112), "inside, on the slant");
+    UT_ASSERT_MSG(!lvHitboxTankHit(80, 80, LV_HITBOX_TANK_CIRCLE, 112), "outside, on the slant");
+    UT_ASSERT_MSG(!lvHitboxTankHit(111, 111, LV_HITBOX_TANK_CIRCLE, 112), "a corner of the box is a miss");
+    UT_ASSERT_MSG(lvHitboxTankHit(9, 0, LV_HITBOX_TANK_CIRCLE, 10) && !lvHitboxTankHit(10, 0, LV_HITBOX_TANK_CIRCLE, 10),
                   "another radius");
+    /* The square of games before the circle: less than 128 on both axes,
+       the corners too, whatever the radius rule. */
+    UT_ASSERT_MSG(lvHitboxTankHit(127, -127, LV_HITBOX_TANK_SQUARE, 112), "a corner of the square");
+    UT_ASSERT_MSG(!lvHitboxTankHit(128, 0, LV_HITBOX_TANK_SQUARE, 112), "on the square's edge");
+    UT_ASSERT_MSG(!lvHitboxTankHit(0, 0, LV_HITBOX_TANK_NONE, 112), "no zone, no hit");
+
+    /* The drawn size is the line where the tested function starts to miss:
+       every place in a whole unit inside it hits, and every place on it or
+       past it misses. */
+    {
+        static const int zones[2] = {LV_HITBOX_TANK_CIRCLE, LV_HITBOX_TANK_SQUARE};
+        int z, dx, dy;
+        UT_ASSERT(lvHitboxTankZoneSize(LV_HITBOX_TANK_CIRCLE, 112) == 112);
+        UT_ASSERT(lvHitboxTankZoneSize(LV_HITBOX_TANK_SQUARE, 112) == 128);
+        UT_ASSERT(lvHitboxTankZoneSize(LV_HITBOX_TANK_NONE, 112) == 0);
+        for (z = 0; z < 2; z++) {
+            int size = lvHitboxTankZoneSize(zones[z], 112);
+            for (dy = -140; dy <= 140; dy++) {
+                for (dx = -140; dx <= 140; dx++) {
+                    bool hit = lvHitboxTankHit(dx, dy, zones[z], 112);
+                    double d = (zones[z] == LV_HITBOX_TANK_CIRCLE)
+                                   ? sqrt((double)(dx * dx + dy * dy))
+                                   : (double)((abs(dx) > abs(dy)) ? abs(dx) : abs(dy));
+                    if (d <= (double)size - 1.0) {
+                        UT_ASSERT_MSG(hit, "zone %d: %d,%d is inside the drawn line", zones[z],
+                                      dx, dy);
+                    }
+                    if (d >= (double)size) {
+                        UT_ASSERT_MSG(!hit, "zone %d: %d,%d is on or past the drawn line",
+                                      zones[z], dx, dy);
+                    }
+                }
+            }
+        }
+    }
+    /* The zone of each game. */
+#ifndef BOLO_LEGACY_SQUARE_COLLISION
+    UT_ASSERT(lvHitboxTankZoneFor(1, 9, 1, false) == LV_HITBOX_TANK_SQUARE);
+    UT_ASSERT(lvHitboxTankZoneFor(1, 9, 2, false) == LV_HITBOX_TANK_CIRCLE);
+    UT_ASSERT(lvHitboxTankZoneFor(2, 0, 0, false) == LV_HITBOX_TANK_CIRCLE);
+    UT_ASSERT(lvHitboxTankZoneFor(1, 9, 1, true) == LV_HITBOX_TANK_CIRCLE);
+#endif
+    UT_ASSERT(lvHitboxTankZoneFor(0, 0, 0, false) == LV_HITBOX_TANK_NONE);
 
     /* The builder's catch distance. */
     UT_ASSERT_MSG(lvHitboxBuilderReach(2048) == 128, "classic pill range: half a square");
@@ -105,6 +160,8 @@ int run_lv_hitbox_sums(void) {
     UT_ASSERT_MSG(LV_HITBOX_TANK_HALF == 128, "half the tank picture");
     UT_ASSERT_MSG((lvHitboxTankPlace(0) + LV_HITBOX_TANK_HALF) / 16.0 == 8.46875,
                   "the circle is in the middle of the picture");
+    UT_ASSERT_MSG(lvHitboxTankCentreInPicture() == 8.46875,
+                  "the drawing's centre is the same");
     /* A builder recorded in pixel 0 is 1 to 16 units in across, 2 to 17
        down (lgmGetPX takes 1 off x, lgmGetPY 2 off y). */
     UT_ASSERT_MSG(lvHitboxBuilderPlaceX(0) == 8.5, "builder x, pixel 0");
@@ -268,5 +325,126 @@ int run_lv_hitbox_lgm_fit(void) {
         UT_ASSERT_MSG(moved > 0, "no walk needed the move");
     }
 
+    return 0;
+}
+
+/* The entry the lag view fits a builder at is picked by the frame's time,
+   not by his pixel. He walks east one art pixel every two entries, then
+   back west through the pixels he came by. Newest note first. */
+int run_lv_hitbox_lgm_pick(void) {
+    /* Oldest to newest: 1000 and 1020 in pixel 10, 1040 and 1060 in 11,
+       1080 in 12, then back: 1100 in 11, 1120 in 10. */
+    static const uint32_t ms[7] = {1120, 1100, 1080, 1060, 1040, 1020, 1000};
+    static const int ax[7] = {10, 11, 12, 11, 11, 10, 10};
+    static const int ay[7] = {5, 5, 5, 5, 5, 5, 5};
+
+    /* A frame at 1020 shows him in pixel 10: the 1020 entry, not 1120 (the
+       newest in that pixel, on his walk back) and not 1000 (the other
+       entry in the same pixel). */
+    UT_ASSERT_MSG(lvHitboxLgmPickEntry(ms, ax, ay, 7, 1020, 10, 5) == 5,
+                  "the frame at 1020 took entry %d, want 5",
+                  lvHitboxLgmPickEntry(ms, ax, ay, 7, 1020, 10, 5));
+    UT_ASSERT(lvHitboxLgmPickEntry(ms, ax, ay, 7, 1000, 10, 5) == 6);
+    UT_ASSERT(lvHitboxLgmPickEntry(ms, ax, ay, 7, 1060, 11, 5) == 3);
+    UT_ASSERT(lvHitboxLgmPickEntry(ms, ax, ay, 7, 1100, 11, 5) == 1);
+    /* A frame between two notes shows the older one. */
+    UT_ASSERT(lvHitboxLgmPickEntry(ms, ax, ay, 7, 1050, 11, 5) == 4);
+    /* The present is the newest note. */
+    UT_ASSERT(lvHitboxLgmPickEntry(ms, ax, ay, 7, UINT32_MAX, 10, 5) == 0);
+    /* The frame's pixel is not the note's: no fit, the middle of the pixel. */
+    UT_ASSERT(lvHitboxLgmPickEntry(ms, ax, ay, 7, 1080, 11, 5) == -1);
+    /* Before every note. */
+    UT_ASSERT(lvHitboxLgmPickEntry(ms, ax, ay, 7, 900, 10, 5) == -1);
+    UT_ASSERT(lvHitboxLgmPickEntry(ms, ax, ay, 0, 1000, 10, 5) == -1);
+    return 0;
+}
+
+/* Every line of an outline has the area on one side and not on the other.
+   A circle segment is a chord, a little inside the circle, so it is tested
+   on the circle at its middle; an edge piece is tested across itself. */
+static int outlineBorderHolds(const LvHitOutline *o, double bx, double by, unsigned solid,
+                              int reach) {
+    int run, p;
+    for (run = 0; run < o->nRuns; run++) {
+        for (p = o->runStart[run]; p + 1 < o->runStart[run + 1]; p++) {
+            LvHitPt a = o->pt[p], b = o->pt[p + 1];
+            double mx = (a.x + b.x) * 0.5, my = (a.y + b.y) * 0.5;
+            double ux = b.x - a.x, uy = b.y - a.y, len = sqrt(ux * ux + uy * uy);
+            double nx, ny, rd = sqrt((mx - bx) * (mx - bx) + (my - by) * (my - by));
+            bool in, out;
+            UT_ASSERT_MSG(len > 0.0, "a line of no length in run %d", run);
+            if (reach > 0 && fabs(rd - (double)reach) < 1.0 && a.x != b.x && a.y != b.y) {
+                nx = (mx - bx) / rd;
+                ny = (my - by) / rd;
+                mx = bx + nx * (double)reach;
+                my = by + ny * (double)reach;
+            } else {
+                nx = -uy / len;
+                ny = ux / len;
+            }
+            in = lvHitboxBuilderCaught(mx - nx * 0.01, my - ny * 0.01, bx, by, solid, reach);
+            out = lvHitboxBuilderCaught(mx + nx * 0.01, my + ny * 0.01, bx, by, solid, reach);
+            UT_ASSERT_MSG(in != out, "the line %.3f,%.3f to %.3f,%.3f is not on the border",
+                          a.x, a.y, b.x, b.y);
+        }
+    }
+    return 0;
+}
+
+/* Whether the outline has a point at (x, y), to within 1e-6 world units. */
+static bool outlineHasPoint(const LvHitOutline *o, double x, double y) {
+    int p;
+    for (p = 0; p < o->nPts; p++) {
+        if (fabs(o->pt[p].x - x) < 1e-6 && fabs(o->pt[p].y - y) < 1e-6) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The builder's outline goes to the true edge of a building. He stands at
+   200, 128 with a building on the square to his right: the circle meets
+   its edge, x = 256, at y = 128 plus or minus h. Both the circle and the
+   edge stop there exactly, and nothing is drawn on the building. */
+int run_lv_hitbox_outline(void) {
+    static LvHitOutline o;
+    const double h = sqrt(128.0 * 128.0 - 56.0 * 56.0);
+    static const struct {
+        double bx, by;
+        unsigned solid;
+        int reach;
+    } more[] = {
+        {128.0, 128.0, 0, 128},
+        {20.0, 230.0, SQ(0, 1) | SQ(1, 2), 128},
+        {128.0, 128.0, SQ(1, 1), 128},          /* on a pillbox */
+        {240.0, 10.0, SQ(2, 0) | SQ(1, 0), 100},
+        {64.0, 64.0, 0x1FFu, 128},
+        {64.0, 64.0, SQ(1, 1), 0},
+    };
+    int p;
+    size_t c;
+
+    lvHitboxBuilderOutline(200.0, 128.0, SQ(2, 1), 128, &o);
+    UT_ASSERT(o.nRuns > 0 && o.nPts > 0);
+    for (p = 0; p < o.nPts; p++) {
+        UT_ASSERT_MSG(o.pt[p].x <= 256.0 + 1e-9, "point %d at %.3f,%.3f is on the building", p,
+                      o.pt[p].x, o.pt[p].y);
+    }
+    UT_ASSERT_MSG(outlineHasPoint(&o, 256.0, 128.0 - h) &&
+                  outlineHasPoint(&o, 256.0, 128.0 + h),
+                  "the outline does not stop where the circle meets the building");
+    if (outlineBorderHolds(&o, 200.0, 128.0, SQ(2, 1), 128) != 0) return 1;
+
+    for (c = 0; c < sizeof(more) / sizeof(more[0]); c++) {
+        lvHitboxBuilderOutline(more[c].bx, more[c].by, more[c].solid, more[c].reach, &o);
+        UT_ASSERT_MSG(o.nRuns > 0, "case %u has no outline", (unsigned)c);
+        if (outlineBorderHolds(&o, more[c].bx, more[c].by, more[c].solid, more[c].reach) != 0) {
+            return 1;
+        }
+    }
+    /* Open ground all round: one circle, in two runs at most (it starts and
+       ends at angle 0). */
+    lvHitboxBuilderOutline(128.0, 128.0, 0, 128, &o);
+    UT_ASSERT_MSG(o.nRuns <= 2, "%d runs for a plain circle", o.nRuns);
     return 0;
 }

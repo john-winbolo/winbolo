@@ -57,6 +57,7 @@
 #include "tank.h"
 #include "types.h"
 #include "util.h"
+#include "hit_rules.h"       /* hitRulesBuilderCaught */
 #include "../winbolonet/winbolonet_core.h"
 
 
@@ -1674,13 +1675,10 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   BYTE checkMapX;                   /* LGM X Map co-ordinate (from check position) */
   BYTE checkMapY;                   /* LGM Y Map co-ordinate (from check position) */
   bool solid;                       /* Is the map square the lgm on solid or not */
-  bool dead;                        /* Are we dead */
-  double distance;
   BYTE pos;
   BYTE mx, my;
   WORLD conv;
 
-  dead = FALSE;
   /* Map coords from check position — used for hit detection */
   conv = lgmWorldX;
   conv >>= 8;
@@ -1689,18 +1687,18 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   mx = (BYTE) (wx >> 8);
   my = (BYTE) (wy >> 8);
 
-  utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, (WORLD) sim->rules.pill_range, &distance);
   pos = mapGetPos(mp, mx, my);
   solid = FALSE;
   if (pos == BUILDING || pos == HALFBUILDING || pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
     solid = TRUE;
   }
-  if (solid == FALSE && distance <= MAP_SQUARE_MIDDLE) {
-    dead = TRUE;
-  } else if (solid == TRUE && checkMapX == mx && checkMapY == my) {
-    dead = TRUE;
-  }
-  return dead;
+  /* The rule (hit_rules.h), the one the Log Viewer draws its hit boxes
+     from: on a solid square only his own square, on open ground no more
+     than half a square away and within pill_range. */
+  return hitRulesBuilderCaught(solid, checkMapX == mx && checkMapY == my,
+                               (double) ((int) wx - (int) lgmWorldX),
+                               (double) ((int) wy - (int) lgmWorldY),
+                               (int) (WORLD) sim->rules.pill_range);
 }
 
 void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk) {
