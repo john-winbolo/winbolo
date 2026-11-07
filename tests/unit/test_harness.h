@@ -939,6 +939,7 @@ int run_bot_host_cpu_bot_format(void);
 int run_bot_host_cpu_bot_meter(void);
 int run_bot_host_cpu_bot_codec(void);
 int run_bot_host_cpu_bot_client_row(void);
+int run_bot_host_lag_codec(void);
 /* The lobby's one-game opt-out from running bots on this computer
  * (test_bot_host_optout.c). */
 int run_bot_host_optout_slots_codec(void);
@@ -2550,6 +2551,7 @@ int run_screen_bullets_build(void);
  * primitives — window-minimum tracking as samples slide out, EWMA constant
  * convergence, and a monotonic overshoot-free step response. */
 int run_ping_smoother(void);
+int run_lobby_ping_color(void);
 
 /* Client timing estimator (test_client_timing.c): min-over-window clock
  * offset / pipeline depth / RTT and inter-arrival jitter over synthetic clean

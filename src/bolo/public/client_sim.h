@@ -164,6 +164,10 @@ typedef struct {
     bool     cpuBotHave;
     uint8_t  cpuBotOwner;
     uint32_t cpuBot;
+    /* The lag the server measures to the host (CTRL_BOT_HOST_LAG), in ms:
+     * the row's ping. BOT_HOST_LAG_UNKNOWN until the server sends one (an
+     * older server never does). */
+    uint16_t lagMs;
     char    name[CLIENT_BOT_HOST_NAME_LEN];
 } ClientBotHostRow;
 

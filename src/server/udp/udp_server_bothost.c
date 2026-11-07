@@ -792,6 +792,37 @@ static void botHostFillCpuBot(int h, uint32_t milli, uint8_t owner,
     evt->u.botHostCpuBot.milli = milli;
 }
 
+/* Row h's lag for CTRL_BOT_HOST_LAG: the placement's smoothed lag in whole
+ * ms (at least 1), or BOT_HOST_LAG_UNKNOWN. */
+static uint16_t botHostRowLag(int h, const ControlEvent *row) {
+    const BotHostConn *hc;
+    double ms;
+    if (h >= MAX_BOT_HOSTS || !row->u.botHostStatus.connected) {
+        return (uint16_t)BOT_HOST_LAG_UNKNOWN;
+    }
+    hc = &udpServer.botHosts[h];
+    if (!hc->lagKnown || !(hc->lagMs >= 0.0)) {
+        return (uint16_t)BOT_HOST_LAG_UNKNOWN;
+    }
+    ms = hc->lagMs + 0.5;
+    if (ms < 1.0) ms = 1.0;
+    if (ms > 65534.0) ms = 65534.0;
+    return (uint16_t)ms;
+}
+
+/* The lags last sent to the lobby, one per Bot Host row, and when. */
+#define BOT_HOST_LAG_SEND_TICKS 50   /* at most once each second */
+static bool     botHostLagSentHave[MAX_BOT_HOSTS];
+static uint16_t botHostLagSent[MAX_BOT_HOSTS];
+static uint32_t botHostLagSentTick[MAX_BOT_HOSTS];
+
+static void botHostFillLag(int h, uint16_t lag, ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_LAG;
+    evt->u.botHostLag.idx = (uint8_t)h;
+    evt->u.botHostLag.lagMs = lag;
+}
+
 /* The per-bot values last sent to the lobby, one per row. */
 static bool     botHostCpuBotSentHave[MAX_BOT_HOSTS + 1];
 static uint32_t botHostCpuBotSent[MAX_BOT_HOSTS + 1];
@@ -881,6 +912,29 @@ static void botHostBroadcastRows(void) {
                 serverBroadcastLobbyControl(&ce);
             }
         }
+        if (h < MAX_BOT_HOSTS) {
+            /* The host's lag, the lobby's ping for the row: when it changes
+             * by BOT_HOST_LAG_SEND_STEP_MS or more, at most once a second. */
+            uint16_t lag = botHostRowLag(h, &evt);
+            if (!evt.u.botHostStatus.connected) {
+                botHostLagSentHave[h] = false;
+            } else if (lag == BOT_HOST_LAG_UNKNOWN && !botHostLagSentHave[h]) {
+                /* Nothing measured yet: the row shows no ping. */
+            } else if (!botHostLagSentHave[h] ||
+                       (udpServer.tickCount - botHostLagSentTick[h] >=
+                            BOT_HOST_LAG_SEND_TICKS &&
+                        ((lag == BOT_HOST_LAG_UNKNOWN) !=
+                             (botHostLagSent[h] == BOT_HOST_LAG_UNKNOWN) ||
+                         abs((int)lag - (int)botHostLagSent[h]) >=
+                             BOT_HOST_LAG_SEND_STEP_MS))) {
+                ControlEvent le;
+                botHostLagSentHave[h] = true;
+                botHostLagSent[h] = lag;
+                botHostLagSentTick[h] = udpServer.tickCount;
+                botHostFillLag(h, lag, &le);
+                serverBroadcastLobbyControl(&le);
+            }
+        }
     }
 }
 
@@ -905,6 +959,11 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
                 botHostFillCpuBot(h, milli, owner, &ce);
                 deliver(deliverCtx, &ce);
             }
+        }
+        if (botHostRowLag(h, &evt) != BOT_HOST_LAG_UNKNOWN) {
+            ControlEvent le;
+            botHostFillLag(h, botHostRowLag(h, &evt), &le);
+            deliver(deliverCtx, &le);
         }
     }
     {
@@ -2127,6 +2186,7 @@ void serverBotHostsReset(void) {
     botHostCpuSentInit = true;
     memset(botHostCpuLogged, 0, sizeof(botHostCpuLogged));
     memset(botHostCpuBotSentHave, 0, sizeof(botHostCpuBotSentHave));
+    memset(botHostLagSentHave, 0, sizeof(botHostLagSentHave));
     botHostServerCpuInit = false;
     botHostServerCpuValue = (uint8_t)BOT_HOST_CPU_UNKNOWN;
     for (h = 0; h <= MAX_BOT_HOSTS; h++) botHostOvrResetHost(h);

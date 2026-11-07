@@ -65,6 +65,9 @@
 #define BOT_HOST_CPU_IDX_SELF     0xFFu
 /* CTRL_BOT_HOST_CPU_BOT owner of a row that is not a player's own host. */
 #define BOT_HOST_CPU_OWNER_NONE   0xFFu
+/* CTRL_BOT_HOST_LAG: no lag measured yet. */
+#define BOT_HOST_LAG_UNKNOWN      0xFFFFu
+#define BOT_HOST_LAG_SEND_STEP_MS 5
 
 /* BOT_HOST_SYNC_* (the brain sync states) and BOT_HOST_REC_STATE_* (the
  * recording states) are in client_sim.h. */
@@ -600,6 +603,14 @@ typedef enum {
      * its own, as CTRL_BOT_HOST_CPU, so an older peer skips it; a row with
      * no CTRL_BOT_HOST_CPU_BOT shows the CTRL_BOT_HOST_CPU text. */
     CTRL_BOT_HOST_CPU_BOT,
+    /* CTRL_BOT_HOST_LAG — server to lobby players and spectators: the lag
+     * the server measures to Bot Host row idx for the bot placement (the
+     * round trip, smoothed over about 10 s), in ms, or BOT_HOST_LAG_UNKNOWN.
+     * Sent when it changes by BOT_HOST_LAG_SEND_STEP_MS or more, at most
+     * once each second. The lobby shows it as the row's ping. A type of its
+     * own, as CTRL_BOT_HOST_CPU, so an older client skips it; a row with no
+     * CTRL_BOT_HOST_LAG shows no ping. */
+    CTRL_BOT_HOST_LAG,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1661,6 +1672,12 @@ typedef struct ControlEvent {
             uint8_t  owner;  /* a player number, or BOT_HOST_CPU_OWNER_NONE */
             uint32_t milli;  /* 1..100000, or BOT_HOST_CPU_MILLI_UNKNOWN */
         } botHostCpuBot;
+
+        /* CTRL_BOT_HOST_LAG — see the enum. */
+        struct {
+            uint8_t  idx;    /* the row */
+            uint16_t lagMs;  /* 1..65534, or BOT_HOST_LAG_UNKNOWN */
+        } botHostLag;
 
         /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
         struct {

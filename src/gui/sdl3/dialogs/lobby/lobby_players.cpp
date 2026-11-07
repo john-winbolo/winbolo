@@ -71,6 +71,8 @@ extern "C" {
                                * the own-row voice sub-row's state */
 #endif
 }
+/* C++: lobbyPingColor returns an ImVec4. */
+#include "lobby_ping_color.h" /* lobbyPingColor — player and Bot Host pings */
 
 #if defined(WINBOLO_VOICE)
 extern "C" {
@@ -826,29 +828,70 @@ static void renderBotHostGroup(ClientSim *cs) {
                         sizeof(cpuText));
         }
 
+        /* The host's ping: the lag the server measures for the placement,
+         * smoothed over about 10 s, in the player list's form and colours
+         * ("45ms"). None on the server's own row, and none from an older
+         * server. */
+        char pingText[16] = "";
+        if (!isServer && r->lagMs != BOT_HOST_LAG_UNKNOWN) {
+            SDL_snprintf(pingText, sizeof(pingText), "%dms", (int)r->lagMs);
+        }
+
         ImGui::Bullet();
         const bool dim = (r->state != BOT_HOST_SYNC_READY);
         if (dim) {
             ImGui::PushStyleColor(ImGuiCol_Text,
                                   ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
         }
+        /* The ping goes at the end of the row's line when it fits there,
+         * else on a line of its own under the row. */
+        const float pingW = pingText[0] != '\0'
+            ? ImGui::CalcTextSize(pingText).x + ImGui::GetStyle().ItemSpacing.x
+            : 0.0f;
+        const float rowAvail = ImGui::GetContentRegionAvail().x;
+        const float indent = ImGui::GetTreeNodeToLabelSpacing();
+        bool pingDrawn = pingText[0] == '\0';
         if (cpuText[0] == '\0') {
-            ImGui::TextWrapped("%s", line);
+            if (!pingDrawn && ImGui::CalcTextSize(line).x + pingW <= rowAvail) {
+                ImGui::TextUnformatted(line);
+                ImGui::SameLine();
+                ImGui::TextColored(lobbyPingColor(r->lagMs), "%s", pingText);
+                pingDrawn = true;
+            } else {
+                ImGui::TextWrapped("%s", line);
+            }
         } else {
             /* On the row's line when the whole text fits; else on a line of
              * its own under the row, so the row itself does not wrap in the
              * middle of the estimate. */
             char full[700];
             SDL_snprintf(full, sizeof(full), "%s %s", line, cpuText);
-            if (ImGui::CalcTextSize(full).x <= ImGui::GetContentRegionAvail().x) {
+            if (ImGui::CalcTextSize(full).x + pingW <= rowAvail) {
                 ImGui::TextUnformatted(full);
+                if (!pingDrawn) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(lobbyPingColor(r->lagMs), "%s", pingText);
+                    pingDrawn = true;
+                }
             } else {
-                const float indent = ImGui::GetTreeNodeToLabelSpacing();
-                ImGui::TextWrapped("%s", line);
+                if (!pingDrawn &&
+                    ImGui::CalcTextSize(line).x + pingW <= rowAvail) {
+                    ImGui::TextUnformatted(line);
+                    ImGui::SameLine();
+                    ImGui::TextColored(lobbyPingColor(r->lagMs), "%s", pingText);
+                    pingDrawn = true;
+                } else {
+                    ImGui::TextWrapped("%s", line);
+                }
                 ImGui::Indent(indent);
                 ImGui::TextWrapped("%s", cpuText);
                 ImGui::Unindent(indent);
             }
+        }
+        if (!pingDrawn) {
+            ImGui::Indent(indent);
+            ImGui::TextColored(lobbyPingColor(r->lagMs), "%s", pingText);
+            ImGui::Unindent(indent);
         }
         if (dim) ImGui::PopStyleColor();
     }
@@ -2447,12 +2490,8 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                 if (showPingCol && !isBot) {
                     if (clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs > 0) {
                         cyTextAbs();
-                        ImVec4 pingColor;
-                        switch (pingBandClassify(clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs)) {
-                            case PING_BAND_GOOD: pingColor = wbThemeColor(g_theme->statusOnline); break;
-                            case PING_BAND_FAIR: pingColor = wbThemeColor(g_theme->statusHighPing); break;
-                            default:             pingColor = wbThemeColor(g_theme->statusDisconnected); break;
-                        }
+                        ImVec4 pingColor = lobbyPingColor(
+                            clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs);
                         ImGui::TextColored(pingColor, "%dms", (int)clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs);
                     }
                 } else if (showPingCol && isBot && effectiveHost && !showIconsCol) {

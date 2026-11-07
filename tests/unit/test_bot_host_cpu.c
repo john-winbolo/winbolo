@@ -477,3 +477,59 @@ int run_bot_host_cpu_bot_client_row(void) {
     clientSimDestroy(cs);
     return 0;
 }
+
+/* ================================================================
+ * 6. The Bot Host rows' ping (CTRL_BOT_HOST_LAG)
+ * ================================================================ */
+int run_bot_host_lag_codec(void) {
+    ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(CTRL_BOT_HOST_LAG);
+    ControlDecodeBodyFn dec = transportControlCodecBodyDecoder(CTRL_BOT_HOST_LAG);
+    ControlEvent in, out;
+    uint8_t buf[8];
+    size_t len = 0;
+    ClientSim *cs;
+
+    UT_ASSERT(enc != NULL && dec != NULL);
+    UT_ASSERT(strcmp(controlEventTypeName(CTRL_BOT_HOST_LAG),
+                     "CTRL_BOT_HOST_LAG") == 0);
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_LAG;
+    in.u.botHostLag.idx = 1;
+    in.u.botHostLag.lagMs = 45;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(len == 3);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.type == CTRL_BOT_HOST_LAG);
+    UT_ASSERT(out.u.botHostLag.idx == 1 && out.u.botHostLag.lagMs == 45);
+    in.u.botHostLag.lagMs = BOT_HOST_LAG_UNKNOWN;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.u.botHostLag.lagMs == BOT_HOST_LAG_UNKNOWN);
+    /* 0 reads as unknown; later bytes skipped; bad rows and short bodies
+     * refused. */
+    buf[1] = 0; buf[2] = 0; buf[3] = 0x77;
+    UT_ASSERT(dec(buf, 4, &out));
+    UT_ASSERT(out.u.botHostLag.lagMs == BOT_HOST_LAG_UNKNOWN);
+    UT_ASSERT(!dec(buf, 2, &out));
+    buf[0] = BOT_HOST_STATUS_ROWS;
+    UT_ASSERT(!dec(buf, 3, &out));
+    UT_ASSERT(enc(&in, NULL, buf, 2, &len) != ENCODE_OK);
+
+    /* The client's row keeps it while the host stays, and has none from
+     * an older server. */
+    cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    applyStatus(cs, 0, true, "andrew-bsmt");
+    UT_ASSERT(clientSimGetBotHostRow(cs, 0)->lagMs == BOT_HOST_LAG_UNKNOWN);
+    in.u.botHostLag.idx = 0;
+    in.u.botHostLag.lagMs = 45;
+    clientSimApplyControl(cs, &in);
+    applyStatus(cs, 0, true, "andrew-bsmt");
+    UT_ASSERT(clientSimGetBotHostRow(cs, 0)->lagMs == 45);
+    applyStatus(cs, 0, false, "");
+    applyStatus(cs, 0, true, "Other");
+    UT_ASSERT(clientSimGetBotHostRow(cs, 0)->lagMs == BOT_HOST_LAG_UNKNOWN);
+    clientSimDestroy(cs);
+    return 0;
+}

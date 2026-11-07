@@ -6252,6 +6252,7 @@ set(_unit_test_names
     bot_host_cpu_bot_meter
     bot_host_cpu_bot_codec
     bot_host_cpu_bot_client_row
+    bot_host_lag_codec
     bot_host_optout_slots_codec
     bot_host_optout_give_back
     bot_host_optout_client_reset
@@ -6919,6 +6920,7 @@ set(_unit_test_names
     sim_rules_desc_range_phrase
     screen_bullets_build
     ping_smoother
+    lobby_ping_color
     client_timing
     interp_render
     interp_respawn_no_death_flash
