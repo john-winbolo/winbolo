@@ -218,6 +218,25 @@ static inline int lvHitboxLgmFitRange(const int *back, const int *pix, int n,
     return good;
 }
 
+/* The builder's own square, as the engine finds it: from his true place
+   (lgmWorldX >> 8, lgmWorldY >> 8). A recording's square is from his place
+   less 1 across and 2 down (lgmGetMX / lgmGetMY), so when he stands less
+   than that past a square's left or top edge, the recorded square is the one
+   before, and his place from it is 256 or more. b is his place on one axis
+   in world units from the top left of square *sq; this moves *sq along and
+   takes 256 off b (or puts 256 on, for a place before the square) until b
+   is 0 to 255, so b and *sq are the engine's. *sq stays 0 to 255. */
+static inline void lvHitboxBuilderOwnSquare(double *b, int *sq) {
+    while (*b >= (double)LV_HITBOX_WU_PER_SQUARE && *sq < 255) {
+        *b -= (double)LV_HITBOX_WU_PER_SQUARE;
+        (*sq)++;
+    }
+    while (*b < 0.0 && *sq > 0) {
+        *b += (double)LV_HITBOX_WU_PER_SQUARE;
+        (*sq)--;
+    }
+}
+
 /* The tank test, as tankShellInHitZone makes it: the shell's centre less
    than radius from the tank's centre, on both axes and as a distance. dx and
    dy are the shell's place less the tank's, in world units. */
