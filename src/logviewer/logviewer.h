@@ -371,6 +371,12 @@ void lv_decoderDestroy(LogViewerState *lv);
 void lv_screenSetState(LogViewerState *lv);
 LogViewerState *lv_screenGetState(void);
 
+/* Whether pill `pill` (0 based) lost its last armour on the frame now shown:
+   a recorded health event took it from above 0 to 0 on this frame. That is a
+   hit on the pill, so the builder hit box draws its square as solid for this
+   frame (lgmBlastCatches: the shot that kills a pill is a hit on its square). */
+bool lv_screenPillHitNow(BYTE pill);
+
 /* Accessor functions for sounddist.c (replaces extern globals) */
 BYTE lv_screenGetXOffset(void);
 BYTE lv_screenGetYOffset(void);

@@ -1863,14 +1863,16 @@ void lv_drawTanks(screenTanks *tks) {
 
 /* Whether a live pillbox is on square (x, y), for the builder hit box: the
    pill's armour as recorded, through lvHitboxPillSolid. A dead pill's square
-   is open ground, as in lgmBlastCatches. */
+   is open ground, as in lgmBlastCatches, except on the frame of the hit that
+   killed it (lv_screenPillHitNow): that shot is a hit on its square. */
 static bool lvDrawPillSolidAt(pillboxes *pb, BYTE x, BYTE y) {
     BYTE count;
     for (count = 0; count < (*pb)->numPills; count++) {
         if ((*pb)->item[count].x == x && (*pb)->item[count].y == y &&
             lvHitboxPillSolid((*pb)->active[count] != FALSE,
                               (*pb)->item[count].inTank != FALSE,
-                              (*pb)->item[count].armour)) {
+                              (*pb)->item[count].armour,
+                              lv_screenPillHitNow(count))) {
             return true;
         }
     }
