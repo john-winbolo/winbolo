@@ -6553,6 +6553,9 @@ set(_unit_test_names
     lgm_blast_shore_shot
     lgm_blast_bridge_shot
     lgm_blast_road_open_ground
+    lgm_blast_mined_bridge_shot
+    lgm_blast_shell_runs_out_dead_pill
+    lgm_blast_shell_hits_tank_dead_pill
     lgm_start_offset
     braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
