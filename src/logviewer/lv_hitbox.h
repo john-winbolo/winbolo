@@ -25,7 +25,9 @@
  *    is not a building, a half building, a live pillbox or a
  *    base, and no more than half a square (128) from him. A
  *    dead pillbox's square is open ground (pillsIsPillHit,
- *    armour above 0; lvHitboxPillSolid). On one of
+ *    armour above 0; lvHitboxPillSolid), except on the frame
+ *    of the hit that killed it: that shot is a hit on the
+ *    pill's square. On one of
  *    those squares it catches him only when it is on his own
  *    square. The distance comes from utilIsItemInRange with
  *    the pill_range rule as its limit, so when pill_range is
@@ -301,9 +303,13 @@ static inline int lvHitboxBuilderReach(int pillRange) {
 /* Whether a pillbox makes its square solid for the builder test: it is on
    the map, not in a tank, and alive (armour above 0), as pillsIsPillHit
    asks in lgmBlastCatches. A dead pillbox's square is open ground. armour is
-   the pill's armour as the recording has it. */
-static inline bool lvHitboxPillSolid(bool onMap, bool inTank, unsigned armour) {
-    return onMap && !inTank && armour > 0;
+   the pill's armour as the recording has it. hitNow: the pill lost its last
+   armour on this frame. That was a hit on the pill, and a shell's hit on a
+   pill is a hit on its square whatever armour it leaves (shells.c
+   outSquareHit), so the square stays solid on that frame. */
+static inline bool lvHitboxPillSolid(bool onMap, bool inTank, unsigned armour,
+                                     bool hitNow) {
+    return onMap && !inTank && (armour > 0 || hitNow);
 }
 
 /* The builder test, as lgmBlastCatches makes it, for an explosion at (x, y)
