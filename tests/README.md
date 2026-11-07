@@ -115,6 +115,61 @@ Available key constants: `KEY_FASTER`, `KEY_SLOWER`, `KEY_TURNLEFT`, `KEY_TURNRI
 
 Available object type constants (for `info.objects`): `OBJECT_TANK`, `OBJECT_PILLBOX`, `OBJECT_BASE`, etc.
 
+### Brain capacity
+
+A brain may also give `brain.capacity(machine, measured)`: how many bots of
+this brain the machine can run at full strength. The engine calls it once,
+when the brain is first loaded, in a protected call, before `brain.open`.
+The answer is kept by brain name (the brain's directory) and `brain.version`
+(a string or number field on the table; "" when the brain has none), so
+later loads of the same brain and version do not call it again.
+
+```lua
+function brain.capacity(machine, measured)
+  -- machine.cpu_name        "AMD Ryzen 5 5600 6-Core Processor", or ""
+  -- machine.logical_cores   12
+  -- machine.physical_cores  6
+  -- machine.coremark_1t     CPU speed test, 1 thread (iterations/s); 0 = not measured
+  -- machine.coremark_all    CPU speed test, all cores at once; 0 = not measured
+  -- machine.scaling         coremark_all / coremark_1t; 0 = not measured
+  -- machine.worker_threads  the bot worker pool's threads; 0 when it is not running
+  -- machine.on_battery      true on battery; false when not, or not known
+  -- machine.version         the WinBolo version, "2.2.1"
+  --
+  -- measured is nil for now. Its shape, when the engine measures think
+  -- times: a table keyed by bot count N, each row
+  --   { think_ms_p50 = 1.2, think_ms_p95 = 3.4,
+  --     below_top_pct = 0.5, overrun_pct = 0.1 }
+  -- (think time median and 95th percentile in ms; the % of thinks that ran
+  -- below the brain's top level, and the % that ran over their budget).
+  return 5
+end
+```
+
+- No `capacity` function, an error, or an answer that is not a number
+  (nil included): the default, logical cores - 1, at least 1.
+- A number is rounded down and clamped to 0..16.
+- The answer is advice. It does not change how many bots start. The lobby
+  stops Add Bot once the bots that run on this machine reach the answer.
+- The CPU speed test (`WinBoloDS -cputest`, or the client's first game
+  lobby for each new version) gives `coremark_1t` and `coremark_all`. It is
+  stored per machine and version in `cpu_speed.json` with the other
+  per-user files; the `WINBOLO_CPU_SPEED_FILE` environment variable puts it
+  somewhere else. Until a result is stored, both are 0.
+- `WinBoloDS -cputest` prints each brain's answer after the test.
+- A brain written in C gives the same answer through
+  `brainCapacityRegisterC(name, fn)` with
+  `int fn(const BrainMachineInfo *, const BrainMeasured *)`
+  (src/bolo/public/brain_capacity.h); a negative return means "use the
+  default". It is asked only when the Lua table has no `capacity`.
+- `BotPoolStats.brainCapacity` (`serverSimGetBotPoolStats`) is the smallest
+  answer among the running bots' brains, or -1.
+
+GoalHunter's answer (brains/GoalHunter/capacity.lua) is
+`floor(physical_cores * (coremark_1t / C.CAPACITY_REF_1T) * C.CAPACITY_K)`,
+clamped to 1..16, with `CAPACITY_REF_1T = 25000` and `CAPACITY_K = 1.0` in
+constants.lua. With no speed test result it returns nil (the default).
+
 ## Test Runner
 
 The test runner (`tests/run_test.py`) automates the full cycle: start a server, connect headless clients with brain scripts, wait for completion, and validate results.

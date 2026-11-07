@@ -771,6 +771,47 @@ if(MSVC)
     target_compile_options(utf8proc PRIVATE /wd4244 /wd4267)
 endif()
 
+# CoreMark — EEMBC's CPU benchmark (vendored, Apache 2.0, upstream files
+# unmodified; see src/third_party/coremark/WINBOLO_CHANGES.txt). WinBolo's own
+# port in winbolo/ replaces CoreMark's port directories. It takes the same
+# Release flags as the rest of the build (the compile options above), which
+# the speed test's scores depend on. core_main.c is built for its iterate();
+# its main is renamed so it does not clash with the program's own.
+add_library(coremark STATIC
+    src/third_party/coremark/core_list_join.c
+    src/third_party/coremark/core_main.c
+    src/third_party/coremark/core_matrix.c
+    src/third_party/coremark/core_state.c
+    src/third_party/coremark/core_util.c
+    src/third_party/coremark/winbolo/core_portme.c)
+target_include_directories(coremark SYSTEM PUBLIC
+    src/third_party/coremark
+    src/third_party/coremark/winbolo)
+set_source_files_properties(src/third_party/coremark/core_main.c
+    PROPERTIES COMPILE_DEFINITIONS "main=coremark_main")
+set_target_properties(coremark PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(coremark PRIVATE SDL3::SDL3)
+if(MSVC)
+    target_compile_options(coremark PRIVATE /wd4244 /wd4267 /wd4204 /wd4206)
+else()
+    target_compile_options(coremark PRIVATE -w)
+endif()
+
+# The CPU speed test (-cputest) built on CoreMark, and the CPU facts that go
+# with it (name, logical and physical cores).
+# The stored result (cpu_speed.json, read with cJSON) and the background
+# run live here too.
+add_library(cpu_speed_test STATIC
+    src/cpu_speed/cpu_speed_test.c
+    src/cpu_speed/cpu_speed_store.c)
+target_include_directories(cpu_speed_test PUBLIC src/cpu_speed)
+target_include_directories(cpu_speed_test PRIVATE ${cjson_SOURCE_DIR})
+set_target_properties(cpu_speed_test PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(cpu_speed_test PUBLIC coremark PRIVATE SDL3::SDL3 cjson)
+if(WIN32)
+    target_link_libraries(cpu_speed_test PRIVATE advapi32)
+endif()
+
 # ImGui backends library for SDL3 + SDL Renderer
 add_library(imgui_backends STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -2802,7 +2843,7 @@ target_link_libraries(WinBoloDS PRIVATE
     winbolonet_core
     winbolonet_server
     winbolonet_client)
-target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
+target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc cpu_speed_test)
 
 # libplum NAT port mapping (optional). nat_portmap.c stays per-target
 # so its #ifdef BOLO_PORTMAP block compiles against this binary's view.
@@ -3227,7 +3268,7 @@ target_link_libraries(WinBoloHeadless PRIVATE
     winbolonet_server
     winbolonet_client)
 target_link_libraries(WinBoloHeadless PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc cpu_speed_test)
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBoloHeadless PRIVATE src/common/sentry_integration.c)
@@ -4304,6 +4345,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # against committed golden bytes and decoded back.
     tests/unit/test_scenario_dir.c
     tests/unit/test_scenario_callbacks.c
+    # The 2 s CPU speed test (a short run), its stored result, the
+    # background run and its cancel, and the brain capacity answer: the
+    # default, the clamp, the kept answers, a C brain, Brain.capacity through
+    # a real Lua state, and the lobby's Add Bot rule.
+    tests/unit/test_cpu_speed.c
     # Who wrote a script and when it last changed: both manifest readers,
     # the list trailer and the V3 details reply, and the shipped scripts.
     tests/unit/test_scenario_identity.c
@@ -5657,7 +5703,7 @@ bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
     bolo_static scenario_static ${SERVER_TEST_LINK_GROUP} bot_brains_static
-    SDL3::SDL3 minizip lua_static cjson utf8proc
+    SDL3::SDL3 minizip lua_static cjson utf8proc cpu_speed_test
     # tileloader.c reads SVG through nanosvg and PNG through stb_image.
     nanosvg stb_image
     # mdns is header-only; linked for its include dir so test_mdns_discovery.c
@@ -7921,6 +7967,17 @@ set(_unit_test_names
     scenario_dir_merges_shipped_mods
     scenario_dir_entry_roundtrip
     scenario_dir_chunk_not_in_flight
+    cpu_speed_test_short
+    cpu_speed_test_cancel
+    cpu_speed_store_roundtrip
+    cpu_speed_background
+    cpu_speed_background_cancel
+    brain_capacity_default_clamp
+    brain_capacity_cache
+    brain_capacity_c_brain
+    brain_capacity_name_from_path
+    brain_capacity_lua_fallback
+    brain_capacity_add_state
     scenario_callbacks_manifest
     scenario_callbacks_over_cap
     scenario_callbacks_json

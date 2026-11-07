@@ -277,6 +277,19 @@ that can be combined with it, except the Steamworks SDK, which is covered by
   asks for no credit; the entry is here so the file is not taken for WinBolo's
   own code.
 
+### CoreMark
+- Location: src/third_party/coremark/
+- Commit: 1f483d5b8316753a742cbf5590caf5bd0a4e4777 (eembc/coremark)
+- License: Apache 2.0, with the EEMBC Acceptable Use Agreement for the
+  CoreMark name (src/third_party/coremark/LICENSE.md)
+- https://github.com/eembc/coremark
+- Author: EEMBC (Shay Gal-On)
+- The 2 s CPU speed test (-cputest, src/cpu_speed/). Its scores are for
+  comparing machines; they are not certified CoreMark results.
+- The upstream files are unmodified. WinBolo's own port files are in
+  src/third_party/coremark/winbolo/ in place of CoreMark's port directories;
+  see src/third_party/coremark/WINBOLO_CHANGES.txt.
+
 ## Controller Glyphs
 
 ### Xelu's Free Controller & Key Prompts

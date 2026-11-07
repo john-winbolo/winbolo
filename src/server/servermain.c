@@ -78,6 +78,10 @@
 #include "../scenario_io/scenario_package.h"
 #include "../scenario/scenario_validate.h"
 #include "cJSON.h"
+#include "cpu_speed_test.h"
+#include "cpu_speed_store.h"
+#include "brain_capacity.h"
+#include "brain_list_internal.h" /* brainListScan - -cputest's brain answers */
 
 /* Constants previously from backend.h */
 #define GAME_TICK_LENGTH 10
@@ -821,6 +825,10 @@ void printArgs() {
   fprintf(stderr, "                message, and each warning (a missing author or updated\n");
   fprintf(stderr, "                time, say) as file: warning: key: message. Exits 0 when\n");
   fprintf(stderr, "                the script is playable, warnings or not, 1 when not.\n");
+  fprintf(stderr, "-cputest      - Run the 2 s CPU speed test (CoreMark on one thread, then\n");
+  fprintf(stderr, "                on every logical core), print one line to read and one\n");
+  fprintf(stderr, "                line of JSON, and exit without starting a server. Exits\n");
+  fprintf(stderr, "                0 when every CoreMark CRC matched, 1 when not.\n");
   fprintf(stderr, "-pack <File>  - Write the scenario script beside a map into the map file\n");
   fprintf(stderr, "                itself and exit without starting a server. The manifest\n");
   fprintf(stderr, "                comes from the script's own scenario table, and a\n");
@@ -1837,6 +1845,75 @@ static int packMapAndReport(char *mapPath) {
   return 0;
 }
 
+/* After the CPU speed test: each brain this server can run, with its
+   capacity answer (how many bots of it this machine can run at full
+   strength), one line each on stdout. The default answer comes first, for a
+   brain that gives none. */
+static void cpuSpeedPrintBrainCapacities(void) {
+  static BrainList list;
+  static char paths[BRAIN_LIST_MAX][BRAIN_LIST_PATH_LEN];
+  BrainMachineInfo machine;
+  int i;
+
+  brainCapacityGetMachine(&machine);
+  printf("Brain capacity: default (a brain with no capacity function) %d "
+         "bots\n", brainCapacityDefault(&machine));
+  brainListScan(&list, paths);
+  for (i = 0; i < list.count; i++) {
+    int cap = luaBrainQueryCapacity(paths[i], list.entries[i].name);
+    if (cap == BRAIN_CAPACITY_UNKNOWN) {
+      printf("Brain capacity: %s did not load\n", list.entries[i].name);
+    } else {
+      printf("Brain capacity: %s %d bots\n", list.entries[i].name, cap);
+    }
+  }
+  if (list.count == 0) {
+    printf("Brain capacity: no brains found\n");
+  }
+  fflush(stdout);
+}
+
+/* The CPU speed test, for -cputest: the line to read and the JSON line go to
+   stdout. Returns what the process exits with: 0 when every CRC matched, 1
+   when one did not or the test could not run. */
+static int cpuSpeedTestAndReport(void) {
+  CpuSpeedResult result;
+  char line[1024];
+  bool ran;
+
+#ifdef USING_SDL
+  /* The test makes its threads through SDL. Nothing here needs a subsystem. */
+  if (!SDL_Init(0)) {
+    fprintf(stderr, "Error starting SDL - %s\n", SDL_GetError());
+    return 1;
+  }
+#endif
+  ran = cpuSpeedTestRun(NULL, &result);
+  cpuSpeedFormatLine(&result, line, sizeof(line));
+  printf("%s\n", line);
+  cpuSpeedFormatJson(&result, line, sizeof(line));
+  printf("%s\n", line);
+  fflush(stdout);
+  if (ran == false) {
+    fprintf(stderr, "The CPU speed test could not run to the end\n");
+  }
+  if (ran && result.crcOk) {
+    char path[1024];
+    if (cpuSpeedStoreSave(WINBOLO_VERSION, CPU_SPEED_CONTEXT_CPUTEST,
+                          &result) &&
+        cpuSpeedStorePath(path, sizeof(path))) {
+      fprintf(stderr, "Stored in %s\n", path);
+    } else {
+      fprintf(stderr, "The result could not be stored\n");
+    }
+    brainCapacitySetMachineFromTest(result.cpuName, result.logicalCores,
+                                    result.physicalCores, result.cm1,
+                                    result.cmAll);
+    cpuSpeedPrintBrainCapacities();
+  }
+  return (ran && result.crcOk) ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
   {
@@ -1862,6 +1939,12 @@ int main(int argc, char **argv) {
             "in uploaded maps, now run with the full Lua library and no memory "
             "or time limits. Only run a server this way with content you "
             "trust.\n");
+  }
+
+  /* -cputest runs the CPU speed test and exits. Like -validate and -pack it
+     is answered ahead of everything a server start needs. */
+  if (argExist(argc, argv, "cputest") == TRUE) {
+    return cpuSpeedTestAndReport();
   }
 
   /* -validate <map> checks a map's scenario script and exits, and -pack <map>
