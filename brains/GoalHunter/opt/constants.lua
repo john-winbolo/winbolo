@@ -2414,6 +2414,17 @@ M.CAPTURE_LGM_HUNT_FIRE_WU       = 100
 -- at with the open-ground rule (init.lua lgm_on_solid). KEEL: false (any
 -- deployed pill, dead or alive, is solid -- the old engine rule).
 M.BLAST_DEAD_PILL_OPEN = true
+-- BLAST_TERRAIN_SQUARE_HIT (2026-11-07): the engine counts a shell's hit on a
+-- forest or a boat as a hit on its square (shells.c outSquareHit), as Mac
+-- Bolo does: the blast kills a man only on that square. A forest or a boat
+-- stops every shell. true = a man on a forest is aimed at with the square
+-- rule (init.lua lgm_on_solid), and the builder shell gate stops a shell on a
+-- forest or a boat and tests only a man on that square (danger.lua
+-- shell_stops_on). A boat's shell on the shore or a bridge is a hit on its
+-- square too, but the brain cannot see which shells a boat fired, so it does
+-- not model those. KEEL: false (a forest is open ground for the aim, and the
+-- gate flies a shell on over a forest or a boat).
+M.BLAST_TERRAIN_SQUARE_HIT = true
 -- REFIRE_MAX_MISSES: keep firing at the same man every reload-available tick,
 -- but give up after this many consecutive misses (a shot whose flight completed
 -- with the man still alive).  Counter resets on a kill or a target change, and
@@ -5772,6 +5783,7 @@ M.PRESETS = {
     CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 0,     -- no heading nudge (no-op value)
     CAPTURE_LGM_HUNT_FIRE_WU      = 64,         -- capture fire gate = the shared ½-tile gate (no wider shot)
     BLAST_DEAD_PILL_OPEN          = false,      -- 2026-11-06: a dead pill's square is solid for the builder blast, as the old engine had it
+    BLAST_TERRAIN_SQUARE_HIT      = false,      -- 2026-11-07: a forest is open ground for the aim; the shell gate flies over a forest or a boat
     CAPTURE_LGM_HUNT_REFIRE_MAX_MISSES = 0,     -- no capture-target refire (off)
     -- 2026-09-08: a hostile LGM within CAPTURE_LGM_PRIORITY_RADIUS tiles
     -- (Chebyshev) of the pill the capture flow is driving at now gets his
