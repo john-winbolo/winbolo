@@ -901,8 +901,9 @@ static void botSeatFallBack(ServerSim *sim, int s, const char *why,
     wasRemote = botManagerIsRemote(sim, (BYTE)s);
     if (tellHost) botSeatSendUnassign(s);
     fprintf(stderr, "[bothost] bot %d \"%s\" back in-process from Bot Host "
-                    "\"%s\" (%s)\n",
-            s, botSeatName(sim, s), hostName, why);
+                    "\"%s\" (%s, game tick %u)\n",
+            s, botSeatName(sim, s), hostName, why,
+            (unsigned)serverSimGetTick(sim));
     WB_LOG_INFO(WB_LOG_CAT_NET,
                 "[bothost] bot %d back in-process from Bot Host \"%s\" (%s)",
                 s, hostName, why);
@@ -1427,9 +1428,11 @@ bool serverBotSlotOnInput(ServerSim *sim, int slot) {
     seat->state = BOT_SEAT_REMOTE;
     seat->sinceTick = udpServer.tickCount;
     seat->lastPollTick = udpServer.tickCount;
-    fprintf(stderr, "[bothost] bot %d \"%s\" now thinks on Bot Host \"%s\"\n",
+    fprintf(stderr, "[bothost] bot %d \"%s\" now thinks on Bot Host \"%s\" "
+                    "(game tick %u)\n",
             slot, botSeatName(sim, slot),
-            seat->host >= 0 ? udpServer.botHosts[seat->host].name : "?");
+            seat->host >= 0 ? udpServer.botHosts[seat->host].name : "?",
+            (unsigned)serverSimGetTick(sim));
     return true;
 }
 
@@ -1899,13 +1902,25 @@ static int botHostServerSlots(ServerSim *sim) {
         botManagerGetPoolStats(sim, &ps);
         if (ps.brainCapacity > 0) known = ps.brainCapacity;
     }
-    if (known <= 0) {
-        BrainMachineInfo machine;
-        memset(&machine, 0, sizeof(machine));
-        brainCapacityGetMachine(&machine);
-        return brainCapacityDefault(&machine);
+    {
+        static int logged = -1;
+        int slots = known;
+        const char *from = "the brain's measured capacity";
+        if (slots <= 0) {
+            BrainMachineInfo machine;
+            memset(&machine, 0, sizeof(machine));
+            brainCapacityGetMachine(&machine);
+            slots = brainCapacityDefault(&machine);
+            from = "this machine's default capacity";
+        }
+        if (slots != logged) {
+            logged = slots;
+            fprintf(stderr, "[bothost] the server counts as a host with %d "
+                    "slots (%s)
+", slots, from);
+        }
+        return slots;
     }
-    return known;
 }
 
 static int botHostServerSlotsRow(ServerSim *sim) {

@@ -319,11 +319,16 @@ int run_bot_host_place_spread(void) {
     h[1].slots = 8; h[1].open = true; h[1].movable = true;
     UT_ASSERT(!botHostPlaceRebalance(h, 2, 2, 0.25, &from, &to));
 
-    /* A host that goes from 2 bots to 1 of 2 on its own is not refilled at
-     * once from a host of 8 at 2 of 8: 2/8 is less crowded than 2/1.75. */
+    /* A host of 2 with 1 bot beside a host of 8 with 2: the small host is
+     * the more crowded (1/1.75 against 2/8), and the host of 8 still has
+     * room at 3/8, so its bot moves: the spread a new bot would make (3
+     * bots on hosts 8 and 2 go 3 and 0). Then nothing moves. */
     memset(h, 0, sizeof(h));
     h[0].slots = 8; h[0].bots = 2; h[0].open = true; h[0].movable = true;
     h[1].slots = 2; h[1].bots = 1; h[1].open = true; h[1].movable = true;
+    UT_ASSERT(botHostPlaceRebalance(h, 2, 2, 0.25, &from, &to));
+    UT_ASSERT(from == 1 && to == 0);
+    h[1].bots--; h[0].bots++;
     UT_ASSERT(!botHostPlaceRebalance(h, 2, 2, 0.25, &from, &to));
     return 0;
 }
