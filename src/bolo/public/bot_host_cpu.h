@@ -38,14 +38,87 @@
 #ifndef WINBOLO_BOT_HOST_CPU_H
 #define WINBOLO_BOT_HOST_CPU_H
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 /* The byte on the wire (CTRL_BOT_HOST_CPU): 0..100 is a percent; these two
  * are the other values. Any other byte reads as unknown. */
 #define BOT_HOST_CPU_UNKNOWN    0xFFu   /* not measured (or an older peer) */
 #define BOT_HOST_CPU_UNDER_ONE  0xFEu   /* above 0% and below 1% */
+
+/* The per-bot value (CTRL_BOT_HOST_CPU_BOT): the part of its machine's CPU
+ * that one bot uses, in thousandths of a percent (1000 = 1%). It is the
+ * think time of the last BOT_HOST_CPU_BUCKETS seconds divided by the bot
+ * time of those seconds (the bots that ran, times the time they ran), so a
+ * change in the bot count does not make it wrong. A machine with no bots,
+ * or no thinks, keeps the last value it had (the last game's), and has
+ * BOT_HOST_CPU_MILLI_UNKNOWN until it has one. */
+#define BOT_HOST_CPU_MILLI_UNKNOWN 0xFFFFFFFFu
+#define BOT_HOST_CPU_MILLI_MIN     1u        /* 0.001%: never 0 */
+#define BOT_HOST_CPU_MILLI_MAX     100000u   /* 100% */
+
+/* The per-bot value for busyMs of think time in botMs of bot time (one bot
+ * for one ms is 1) on a machine with cores logical cores, or
+ * BOT_HOST_CPU_MILLI_UNKNOWN when there is no think time or no bot time. */
+static inline uint32_t botHostCpuMilliPerBot(double busyMs, double botMs,
+                                             int cores) {
+    double milli;
+    if (!(busyMs > 0.0) || !(botMs > 0.0) || cores <= 0) {
+        return BOT_HOST_CPU_MILLI_UNKNOWN;
+    }
+    milli = busyMs * 100.0 * 1000.0 / (botMs * (double)cores) + 0.5;
+    if (milli < (double)BOT_HOST_CPU_MILLI_MIN) return BOT_HOST_CPU_MILLI_MIN;
+    if (milli > (double)BOT_HOST_CPU_MILLI_MAX) return BOT_HOST_CPU_MILLI_MAX;
+    return (uint32_t)milli;
+}
+
+/* A per-bot value read off the wire: 0 and values past 100% read as
+ * unknown. */
+static inline uint32_t botHostCpuMilliFromWire(uint32_t v) {
+    if (v < BOT_HOST_CPU_MILLI_MIN || v > BOT_HOST_CPU_MILLI_MAX) {
+        return BOT_HOST_CPU_MILLI_UNKNOWN;
+    }
+    return v;
+}
+
+/* The lobby's text for a percent, never "0": 10 or more as a whole number
+ * ("12"), 1 to under 10 with one decimal ("3.4"), under 1 with two
+ * significant digits ("0.42", "0.035"). The smallest value shown is 0.001. */
+static inline void botHostCpuFormatPct(double pct, char *out, size_t cap) {
+    double r;
+    int dec;
+    if (out == NULL || cap == 0) return;
+    if (!(pct >= 0.001)) pct = 0.001;   /* also a NaN */
+    if (pct > 100.0) pct = 100.0;
+    r = floor(pct + 0.5);
+    if (r >= 10.0) {
+        snprintf(out, cap, "%.0f", r);
+        return;
+    }
+    r = floor(pct * 10.0 + 0.5) / 10.0;
+    if (r >= 1.0) {
+        if (r >= 10.0) snprintf(out, cap, "10");
+        else snprintf(out, cap, "%.1f", r);
+        return;
+    }
+    dec = pct >= 0.1 ? 2 : 3;
+    r = floor(pct * pow(10.0, dec) + 0.5) / pow(10.0, dec);
+    if (r >= 1.0) {
+        snprintf(out, cap, "1.0");
+        return;
+    }
+    if (dec == 3 && r >= 0.1) dec = 2;
+    if (r < 0.001) r = 0.001;
+    snprintf(out, cap, "%.*f", dec, r);
+}
+
+static inline void botHostCpuFormatMilli(uint32_t milli, char *out,
+                                         size_t cap) {
+    botHostCpuFormatPct((double)milli / 1000.0, out, cap);
+}
 
 #define BOT_HOST_CPU_BUCKET_NS  1000000000ull   /* one second */
 #define BOT_HOST_CPU_BUCKETS    5               /* the last 5 s */
@@ -79,14 +152,19 @@ typedef struct {
     double   bucketStartTotalMs;   /* totalThinkMs at the bucket's start */
     double   busyMs[BOT_HOST_CPU_BUCKETS];
     double   wallMs[BOT_HOST_CPU_BUCKETS];
+    double   botMs[BOT_HOST_CPU_BUCKETS];  /* bots x ms in the bucket */
+    double   bucketBotMs;          /* the same for the bucket now */
+    uint64_t lastNs;               /* the last sample */
     int      filled;               /* buckets that hold a value */
     int      next;                 /* the bucket written next */
     uint8_t  value;                /* the last estimate (the wire byte) */
+    uint32_t perBotMilli;          /* the per-bot value; kept with no bots */
 } BotHostCpuMeter;
 
 static inline void botHostCpuMeterInit(BotHostCpuMeter *m) {
     memset(m, 0, sizeof(*m));
     m->value = (uint8_t)BOT_HOST_CPU_UNKNOWN;
+    m->perBotMilli = BOT_HOST_CPU_MILLI_UNKNOWN;
 }
 
 /* Call it often (each tick). nowNs is a steady clock; totalThinkMs is the
@@ -101,26 +179,41 @@ static inline uint8_t botHostCpuMeterSample(BotHostCpuMeter *m,
         m->started = true;
         m->bucketStartNs = nowNs;
         m->bucketStartTotalMs = totalThinkMs;
-    } else if (nowNs < m->bucketStartNs) {
+        m->bucketBotMs = 0.0;
+    } else if (nowNs < m->bucketStartNs || nowNs < m->lastNs) {
         m->bucketStartNs = nowNs;
         m->bucketStartTotalMs = totalThinkMs;
-    } else if (nowNs - m->bucketStartNs >= BOT_HOST_CPU_BUCKET_NS) {
-        double busy = totalThinkMs - m->bucketStartTotalMs;
-        double sumBusy = 0.0, sumWall = 0.0;
-        int i;
-        if (!(busy > 0.0)) busy = 0.0;
-        m->busyMs[m->next] = busy;
-        m->wallMs[m->next] = (double)(nowNs - m->bucketStartNs) / 1.0e6;
-        m->next = (m->next + 1) % BOT_HOST_CPU_BUCKETS;
-        if (m->filled < BOT_HOST_CPU_BUCKETS) m->filled++;
-        for (i = 0; i < m->filled; i++) {
-            sumBusy += m->busyMs[i];
-            sumWall += m->wallMs[i];
+        m->bucketBotMs = 0.0;
+    } else {
+        /* The bots that ran since the last sample, for the per-bot value. */
+        if (bots > 0) {
+            m->bucketBotMs += (double)bots * (double)(nowNs - m->lastNs) / 1.0e6;
         }
-        m->value = botHostCpuPercent(sumBusy, sumWall, cores);
-        m->bucketStartNs = nowNs;
-        m->bucketStartTotalMs = totalThinkMs;
+        if (nowNs - m->bucketStartNs >= BOT_HOST_CPU_BUCKET_NS) {
+            double busy = totalThinkMs - m->bucketStartTotalMs;
+            double sumBusy = 0.0, sumWall = 0.0, sumBot = 0.0;
+            uint32_t perBot;
+            int i;
+            if (!(busy > 0.0)) busy = 0.0;
+            m->busyMs[m->next] = busy;
+            m->wallMs[m->next] = (double)(nowNs - m->bucketStartNs) / 1.0e6;
+            m->botMs[m->next] = m->bucketBotMs;
+            m->next = (m->next + 1) % BOT_HOST_CPU_BUCKETS;
+            if (m->filled < BOT_HOST_CPU_BUCKETS) m->filled++;
+            for (i = 0; i < m->filled; i++) {
+                sumBusy += m->busyMs[i];
+                sumWall += m->wallMs[i];
+                sumBot += m->botMs[i];
+            }
+            m->value = botHostCpuPercent(sumBusy, sumWall, cores);
+            perBot = botHostCpuMilliPerBot(sumBusy, sumBot, cores);
+            if (perBot != BOT_HOST_CPU_MILLI_UNKNOWN) m->perBotMilli = perBot;
+            m->bucketStartNs = nowNs;
+            m->bucketStartTotalMs = totalThinkMs;
+            m->bucketBotMs = 0.0;
+        }
     }
+    m->lastNs = nowNs;
     if (bots <= 0) return 0;
     return m->value;
 }

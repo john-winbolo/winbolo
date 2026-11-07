@@ -873,6 +873,10 @@ uint32_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_SMART_PINGS_OFF:   return LOBBY_LOCK_SMART_PINGS;
         case LST_MODS_OFF:          return LOBBY_LOCK_MODS;
         case LST_POSITIONAL_SOUND:  return LOBBY_LOCK_POSITIONAL_SOUND;
+        /* No lock bit: -botcapacity locks it (serverBotSlotsLocked). */
+        case LST_SERVER_BOT_SLOTS:  return 0u;
+        /* No lock bit: -bothost-slots locks a row. */
+        case LST_BOT_HOST_SLOTS:    return 0u;
         default:                    return 0xFFFFFFFFu;  /* unknown setting */
     }
 }
@@ -1364,7 +1368,56 @@ BYTE serverSimGetMaxBots(const ServerSim *sim) {
 
 int serverSimGetHostBotCapacity(const ServerSim *sim) {
     if (sim == NULL) return SERVER_HOST_BOT_CAPACITY_NONE;
+    if (sim->serverBotSlots >= 0) return sim->serverBotSlots;
     return sim->hostBotCapacity;
+}
+
+int serverSimGetHostBotCapacityRecommended(const ServerSim *sim) {
+    if (sim == NULL) return SERVER_HOST_BOT_CAPACITY_NONE;
+    return sim->hostBotCapacity;
+}
+
+int serverSimGetServerBotSlots(const ServerSim *sim) {
+    return sim ? sim->serverBotSlots : -1;
+}
+
+bool serverSimIsServerBotSlotsLocked(const ServerSim *sim) {
+    return sim ? sim->serverBotSlotsLocked : false;
+}
+
+bool serverSimSetServerBotSlots(ServerSim *sim, int slots) {
+    if (sim == NULL || sim->serverBotSlotsLocked) return false;
+    if (slots < 0 || slots > MAX_TANKS) return false;
+    if (sim->serverBotSlots != slots) {
+        sim->serverBotSlots = slots;
+        serverSimPublishLobbySettings(sim);
+    }
+    return true;
+}
+
+void serverSimLockServerBotSlots(ServerSim *sim, int slots) {
+    if (sim == NULL) return;
+    if (slots < 0) slots = 0;
+    if (slots > MAX_TANKS) slots = MAX_TANKS;
+    sim->serverBotSlots = slots;
+    sim->serverBotSlotsLocked = true;
+    serverSimPublishLobbySettings(sim);
+}
+
+void serverSimFillServerBotSlotsEvent(const ServerSim *sim,
+                                      ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SERVER_BOT_SLOTS;
+    if (sim == NULL) {
+        evt->u.serverBotSlots.value = LOBBY_HOST_BOT_CAPACITY_WIRE_NONE;
+        evt->u.serverBotSlots.recommended = LOBBY_HOST_BOT_CAPACITY_WIRE_NONE;
+        return;
+    }
+    evt->u.serverBotSlots.value =
+        lobbyHostBotCapacityToWire(serverSimGetHostBotCapacity(sim));
+    evt->u.serverBotSlots.recommended =
+        lobbyHostBotCapacityToWire(sim->hostBotCapacity);
+    evt->u.serverBotSlots.locked = sim->serverBotSlotsLocked ? 1 : 0;
 }
 
 void serverSimSetHostBotCapacity(ServerSim *sim, int capacity) {
@@ -1378,6 +1431,28 @@ void serverSimSetHostBotCapacity(ServerSim *sim, int capacity) {
     if (sim->hostBotCapacity == capacity) return;
     sim->hostBotCapacity = capacity;
     serverSimPublishLobbySettings(sim);
+}
+
+int serverSimGetGameBotLimit(const ServerSim *sim) {
+    if (sim == NULL) return SERVER_HOST_BOT_CAPACITY_NONE;
+    if (sim->gameBotLimitSet) return sim->gameBotLimit;
+    return serverSimGetHostBotCapacity(sim);
+}
+
+void serverSimSetGameBotLimit(ServerSim *sim, int limit, bool set) {
+    int before;
+    if (sim == NULL) return;
+    if (limit < 0 && limit != SERVER_HOST_BOT_CAPACITY_MEASURING) {
+        limit = SERVER_HOST_BOT_CAPACITY_NONE;
+    } else if (limit > MAX_TANKS) {
+        limit = MAX_TANKS;
+    }
+    before = serverSimGetGameBotLimit(sim);
+    sim->gameBotLimitSet = set;
+    sim->gameBotLimit = set ? limit : SERVER_HOST_BOT_CAPACITY_NONE;
+    if (serverSimGetGameBotLimit(sim) != before) {
+        serverSimPublishLobbySettings(sim);
+    }
 }
 
 bool serverSimHostBotCapacityAllowsAdd(int capacity, int lobbyBots) {

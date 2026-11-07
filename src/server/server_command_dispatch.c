@@ -453,12 +453,51 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_LOBBY_SETTING: {
+        const CmdLobbySetting *p = &cmd->u.lobbySetting;
+        /* The Server bot slots: in the lobby and while a game runs, by the
+           players who may change the other settings. It is about the
+           server, so it leaves the ready marks alone. A lower value during
+           a game moves only bots that may move (and none with
+           -bothost-nomove): the placement reads the new value. */
+        /* A Bot Host row's slot override: the same rules, by the same
+           players. */
+        if (p->settingType == LST_BOT_HOST_SLOTS &&
+            serverSimIsLobbyEnabled(sim)) {
+            if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+            if (p->valueLen != 2) return CMD_REJECT_INVALID;
+            switch (serverBotHostSetSlotOverride(sim, (int)p->value[0],
+                                                 (int)p->value[1],
+                                                 (int)senderSlot)) {
+            case BOT_HOST_SLOT_SET_OK:     return CMD_OK;
+            case BOT_HOST_SLOT_SET_LOCKED: return CMD_REJECT_LOCKED;
+            default:                       return CMD_REJECT_INVALID;
+            }
+        }
+        if (p->settingType == LST_SERVER_BOT_SLOTS &&
+            serverSimIsLobbyEnabled(sim)) {
+            if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+            if (serverSimIsServerBotSlotsLocked(sim)) {
+                fprintf(stderr, "Server bot slots: change refused "
+                        "(set by -botcapacity)\n");
+                return CMD_REJECT_LOCKED;
+            }
+            if (p->valueLen != 1 || p->value[0] > MAX_TANKS) {
+                return CMD_REJECT_INVALID;
+            }
+            if (serverSimGetServerBotSlots(sim) != (int)p->value[0]) {
+                fprintf(stderr, "Server bot slots: %d (player %d; the CPU "
+                        "test recommends %d)\n", (int)p->value[0],
+                        (int)senderSlot + 1,
+                        serverSimGetHostBotCapacityRecommended(sim));
+            }
+            (void)serverSimSetServerBotSlots(sim, (int)p->value[0]);
+            return CMD_OK;
+        }
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {
             return CMD_REJECT_BAD_STATE;
         }
         if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
-        const CmdLobbySetting *p = &cmd->u.lobbySetting;
         if (p->valueLen > 32) return CMD_REJECT_INVALID;
         uint32_t lockBit = serverSimGetSettingLockBit(p->settingType);
         if (lockBit == 0xFFFFFFFFu) {
@@ -874,13 +913,15 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                     (int)serverSimGetLobbyBotCount(sim), (int)maxBots);
             return CMD_REJECT_BOT_LIMIT;
         }
-        /* And the number this server can run in its own process (the CPU
-         * speed test, or -botcapacity), which also holds every add while
-         * the test runs. The client greys its button on the same number,
-         * from the lobby settings; this is for a client that has not heard
-         * it yet. Scenario adds do not come through here. */
+        /* And the game bot limit: the bots this server runs in its own
+         * process (the CPU speed test, -botcapacity or the lobby's Server
+         * bot slots) plus the slots of each Bot Host that runs bots. It
+         * holds every add while the test runs and no host has a slot. The
+         * client greys its button on the same number, from the lobby
+         * settings; this is for a client that has not heard it yet.
+         * Scenario adds do not come through here. */
         {
-            int hostCap = serverSimGetHostBotCapacity(sim);
+            int hostCap = serverSimGetGameBotLimit(sim);
             int lobbyBots = (int)serverSimGetLobbyBotCount(sim);
             if (!serverSimHostBotCapacityAllowsAdd(hostCap, lobbyBots)) {
                 fprintf(stderr, "ADD_BOT reject BOT_LIMIT: count=%d "

@@ -24,6 +24,28 @@
 #  endif
 #endif
 
+/* The first "cpu" line of /proc/stat: user nice system idle iowait irq
+ * softirq steal (guest and guest_nice are already in user and nice, so
+ * they are not added). Free is idle + iowait only. The total includes
+ * steal, so steal counts as busy: on a virtual machine it is the time
+ * this machine waited for a real core that the host gave to another
+ * machine, and a bot cannot think in that time either. An older kernel
+ * gives fewer values; a missing value (steal first) is 0. */
+bool machineCpuParseProcStat(const char *line, uint64_t *idle,
+                             uint64_t *total) {
+    unsigned long long v[8];
+    int n, j;
+    if (line == NULL || idle == NULL || total == NULL) return false;
+    memset(v, 0, sizeof(v));
+    n = sscanf(line, "cpu %llu %llu %llu %llu %llu %llu %llu %llu", &v[0],
+               &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]);
+    if (n < 4) return false;
+    *idle = v[3] + v[4];   /* idle + iowait */
+    *total = 0;
+    for (j = 0; j < 8; j++) *total += v[j];   /* steal (v[7]) is busy */
+    return true;
+}
+
 /* The machine's idle and total CPU time counters since it started. */
 static bool machineCpuCounters(uint64_t *idle, uint64_t *total) {
 #if defined(_WIN32)
@@ -39,18 +61,12 @@ static bool machineCpuCounters(uint64_t *idle, uint64_t *total) {
     return true;
 #elif defined(__linux__) && !defined(__ANDROID__)
     FILE *f = fopen("/proc/stat", "r");
-    unsigned long long v[8];
-    int n, j;
+    char line[512];
+    bool ok;
     if (f == NULL) return false;
-    memset(v, 0, sizeof(v));
-    n = fscanf(f, "cpu %llu %llu %llu %llu %llu %llu %llu %llu", &v[0], &v[1],
-               &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]);
+    ok = fgets(line, sizeof(line), f) != NULL;
     fclose(f);
-    if (n < 4) return false;
-    *idle = v[3] + v[4];   /* idle + iowait */
-    *total = 0;
-    for (j = 0; j < 8; j++) *total += v[j];
-    return true;
+    return ok && machineCpuParseProcStat(line, idle, total);
 #elif defined(MACHINE_CPU_FREE_MAC)
     host_cpu_load_info_data_t info;
     mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;

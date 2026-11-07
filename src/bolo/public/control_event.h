@@ -63,6 +63,17 @@
 #define BOT_HOST_SLOTS_NO_REFUSE  0xFFu
 /* CTRL_BOT_HOST_CPU idx from a Bot Host: its own estimate. */
 #define BOT_HOST_CPU_IDX_SELF     0xFFu
+/* CTRL_BOT_HOST_CPU_BOT owner of a row that is not a player's own host. */
+#define BOT_HOST_CPU_OWNER_NONE   0xFFu
+/* CTRL_BOT_HOST_LAG: no lag measured yet. */
+#define BOT_HOST_LAG_UNKNOWN      0xFFFFu
+#define BOT_HOST_LAG_SEND_STEP_MS 5
+/* CTRL_BOT_HOST_MACHINE_*: the salt and the answer (machine_id.h). */
+#define BOT_HOST_MACHINE_SALT_LEN 16   /* == MACHINE_SALT_LEN */
+#define BOT_HOST_MACHINE_HASH_LEN 32   /* == MACHINE_HASH_LEN */
+/* CTRL_BOT_HOST_ROW_SLOTS: no override, and no other row. */
+#define BOT_HOST_SLOT_OVERRIDE_NONE 0xFFu
+#define BOT_HOST_MACHINE_OTHER_NONE 0xFFu
 
 /* BOT_HOST_SYNC_* (the brain sync states) and BOT_HOST_REC_STATE_* (the
  * recording states) are in client_sim.h. */
@@ -593,6 +604,50 @@ typedef enum {
      * (botHostOverrunProbe). A type of its own, as CTRL_BOT_HOST_CPU, so an
      * older server skips it. */
     CTRL_BOT_HOST_CPU_FREE,
+    /* CTRL_BOT_HOST_CPU_BOT — the part of its machine's CPU that one of a
+     * Bot Host's bots uses, in thousandths of a percent (bot_host_cpu.h), as
+     * a uint32. CTRL_BOT_HOST_CPU's whole percent is too coarse for one bot.
+     * Bot Host to server (idx BOT_HOST_CPU_IDX_SELF) when it changes; server
+     * to lobby players and spectators for row idx, with owner: the player
+     * whose own computer the host is, or BOT_HOST_CPU_OWNER_NONE. A type of
+     * its own, as CTRL_BOT_HOST_CPU, so an older peer skips it; a row with
+     * no CTRL_BOT_HOST_CPU_BOT shows the CTRL_BOT_HOST_CPU text. */
+    CTRL_BOT_HOST_CPU_BOT,
+    /* CTRL_BOT_HOST_LAG — server to lobby players and spectators: the lag
+     * the server measures to Bot Host row idx for the bot placement (the
+     * round trip, smoothed over about 10 s), in ms, or BOT_HOST_LAG_UNKNOWN.
+     * Sent when it changes by BOT_HOST_LAG_SEND_STEP_MS or more, at most
+     * once each second. The lobby shows it as the row's ping. A type of its
+     * own, as CTRL_BOT_HOST_CPU, so an older client skips it; a row with no
+     * CTRL_BOT_HOST_LAG shows no ping. */
+    CTRL_BOT_HOST_LAG,
+    /* CTRL_SERVER_BOT_SLOTS — server to lobby players and spectators: the
+     * lobby's Server bot slots. value is the number in use (0..16, or the
+     * LOBBY_HOST_BOT_CAPACITY_WIRE_* bytes), recommended the CPU test's
+     * (or -botcapacity's) number in the same form, locked non-zero when
+     * -botcapacity set it. Sent with every lobby settings event and on
+     * join. A type of its own, so an older client skips it; a client with
+     * none shows no Server bot slots row. */
+    CTRL_SERVER_BOT_SLOTS,
+    /* CTRL_BOT_HOST_MACHINE_SALT — server to Bot Host: a new random salt.
+     * The host answers with CTRL_BOT_HOST_MACHINE_ANSWER, so the server can
+     * find hosts on one computer (bot_host_machine.h). A new salt goes out
+     * when a host joins, and for each lobby and each game. An older host
+     * skips it and gives no answer: it counts as another computer. */
+    CTRL_BOT_HOST_MACHINE_SALT,
+    /* CTRL_BOT_HOST_MACHINE_ANSWER — Bot Host to server: the salt and
+     * SHA-256(machine id || salt). The id never leaves the computer. A
+     * host answers each salt once only. */
+    CTRL_BOT_HOST_MACHINE_ANSWER,
+    /* CTRL_BOT_HOST_ROW_SLOTS — server to lobby players and spectators: for
+     * Bot Host row idx, what it shares its computer with (machineKind, a
+     * BOT_HOST_MACHINE_* of bot_host_machine.h, and machineOther, the row
+     * of the other host, or BOT_HOST_MACHINE_OTHER_NONE), whether that
+     * gives it 0 slots (zero), and the row's slot override (0..16, or
+     * BOT_HOST_SLOT_OVERRIDE_NONE) and whether -bothost-slots locks it.
+     * Sent when it changes and on join. A type of its own, so an older
+     * client skips it and shows the row as before. */
+    CTRL_BOT_HOST_ROW_SLOTS,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1659,6 +1714,47 @@ typedef struct ControlEvent {
         struct {
             uint8_t free;  /* 0..100 or BOT_HOST_CPU_UNKNOWN */
         } botHostCpuFree;
+
+        /* CTRL_BOT_HOST_CPU_BOT — see the enum. */
+        struct {
+            uint8_t  idx;    /* the row, or BOT_HOST_CPU_IDX_SELF from a host */
+            uint8_t  owner;  /* a player number, or BOT_HOST_CPU_OWNER_NONE */
+            uint32_t milli;  /* 1..100000, or BOT_HOST_CPU_MILLI_UNKNOWN */
+        } botHostCpuBot;
+
+        /* CTRL_SERVER_BOT_SLOTS — see the enum. */
+        struct {
+            uint8_t value;
+            uint8_t recommended;
+            uint8_t locked;
+        } serverBotSlots;
+
+        /* CTRL_BOT_HOST_LAG — see the enum. */
+        struct {
+            uint8_t  idx;    /* the row */
+            uint16_t lagMs;  /* 1..65534, or BOT_HOST_LAG_UNKNOWN */
+        } botHostLag;
+
+        /* CTRL_BOT_HOST_MACHINE_SALT — see the enum. */
+        struct {
+            uint8_t salt[BOT_HOST_MACHINE_SALT_LEN];
+        } botHostMachineSalt;
+
+        /* CTRL_BOT_HOST_MACHINE_ANSWER — see the enum. */
+        struct {
+            uint8_t salt[BOT_HOST_MACHINE_SALT_LEN];
+            uint8_t hash[BOT_HOST_MACHINE_HASH_LEN];
+        } botHostMachineAnswer;
+
+        /* CTRL_BOT_HOST_ROW_SLOTS — see the enum. */
+        struct {
+            uint8_t idx;           /* the row, 0..MAX_BOT_HOSTS - 1 */
+            uint8_t machineKind;
+            uint8_t machineOther;
+            uint8_t zero;
+            uint8_t slotOverride;
+            uint8_t slotLocked;
+        } botHostRowSlots;
 
         /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
         struct {

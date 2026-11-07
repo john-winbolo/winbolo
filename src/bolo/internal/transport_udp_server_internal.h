@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <stdio.h>   /* FILENAME_MAX — uploadPersistDir */
 
+#include "bot_host_machine.h" /* BotHostSlotOverride, MACHINE_HASH_LEN */
 #include "global.h"         /* BYTE, MAX_TANKS, PlayerBitMap */
 #include "lang_message.h"   /* langid — the localized server->client sends */
 #include "platform_net.h"   /* SOCKET, struct sockaddr_in */
@@ -252,6 +253,12 @@ typedef struct {
      * (CTRL_BOT_HOST_CPU, bot_host_cpu.h); BOT_HOST_CPU_UNKNOWN until it
      * sends one, and always from an older host. */
     uint8_t  cpu;
+    /* The part of its machine's CPU one of its bots uses, in thousandths of
+     * a percent (CTRL_BOT_HOST_CPU_BOT, bot_host_cpu.h). cpuBotHave: the
+     * host sent one (an older host never does); a later unknown keeps the
+     * value it had. */
+    uint32_t cpuBot;
+    bool     cpuBotHave;
     /* The host machine's free CPU percent, all cores
      * (CTRL_BOT_HOST_CPU_FREE, every 5 s), and the tick it came;
      * BOT_HOST_FREE_UNKNOWN until one comes, and always from an older
@@ -273,6 +280,16 @@ typedef struct {
     double   lagMs;
     bool     lagKnown;
     uint32_t lagConnTick;        /* tickCount the host joined */
+    /* Bot Hosts on one computer (bot_host_machine.h). joinSeq: the join
+     * order. machineHash: the host's answer to the salt round machineSeq
+     * (machineHave: it answered one). */
+    uint32_t joinSeq;
+    bool     machineHave;
+    uint32_t machineSeq;
+    uint8_t  machineHash[MACHINE_HASH_LEN];
+    /* The row's slot override: from the lobby, or locked by
+     * -bothost-slots. */
+    BotHostSlotOverride slotOvr;
     ChannelMux channelMux;
 
     /* Brain sync. The manifest and the file pieces go out on this

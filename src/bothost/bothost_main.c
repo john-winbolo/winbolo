@@ -79,6 +79,7 @@
 #include "machine_cpu_free.h"
 #include "client_sim_internal.h"
 #include "transport_control_codec.h"
+#include "machine_id.h"   /* machineIdInit, machineIdAnswerSalt */
 #include "transport_udp.h"
 #include "transport_udp_internal.h"
 #include "../gui/lang.h"
@@ -316,6 +317,9 @@ typedef struct {
     int        lastSlotsSent;
     /* The CPU byte last sent in CTRL_BOT_HOST_CPU, -1 for none. */
     int        lastCpuSent;
+    /* The per-bot value last sent in CTRL_BOT_HOST_CPU_BOT; 0 for none, so
+     * the first one (unknown too) goes out. */
+    uint32_t   lastCpuBotSent;
     /* The free CPU reading last sent in CTRL_BOT_HOST_CPU_FREE (its
      * hostFreeSeq), 0 for none. */
     uint32_t   lastFreeSeqSent;
@@ -1249,6 +1253,25 @@ static void onTeamMsg(HostServer *sv, const ControlEvent *evt) {
     hs->teamMsgsIn++;
 }
 
+/* The server's salt: the answer is SHA-256 of this computer's id and the
+ * salt, so the server can find its hosts on one computer. A salt this
+ * program answered before gets no answer. */
+static void onMachineSalt(HostServer *sv, const ControlEvent *evt) {
+    ControlEvent a;
+    memset(&a, 0, sizeof(a));
+    a.type = CTRL_BOT_HOST_MACHINE_ANSWER;
+    memcpy(a.u.botHostMachineAnswer.salt, evt->u.botHostMachineSalt.salt,
+           sizeof(a.u.botHostMachineAnswer.salt));
+    if (!machineIdAnswerSalt(evt->u.botHostMachineSalt.salt,
+                             a.u.botHostMachineAnswer.hash)) {
+        fprintf(stderr, "[bothost] %s: a same-computer salt this program "
+                        "answered before (or no machine id); no answer\n",
+                sv->label);
+        return;
+    }
+    ctlSendEvent(sv, &a);
+}
+
 static void ctlHandleControl(HostServer *sv, const uint8_t *msg, uint16_t len) {
     ControlEvent evt;
     ControlDecodeBodyFn dec;
@@ -1267,6 +1290,7 @@ static void ctlHandleControl(HostServer *sv, const uint8_t *msg, uint16_t len) {
         case CTRL_BOT_INIT_TABLE:    onInitTable(sv, &evt); break;
         case CTRL_BOT_HINT:          onHint(sv, &evt);      break;
         case CTRL_BOT_TEAM_MSG:      onTeamMsg(sv, &evt);   break;
+        case CTRL_BOT_HOST_MACHINE_SALT: onMachineSalt(sv, &evt); break;
         case CTRL_BOT_HOST_REC:
             hostRecOnEvent(serverIndex(sv), &evt);
             break;
@@ -1327,6 +1351,7 @@ static void ctlReceive(HostServer *sv) {
                     sv->lastPingMs = 0;
                     sv->lastSlotsSent = -1;
                     sv->lastCpuSent = -1;
+                    sv->lastCpuBotSent = 0;
                     sv->lastFreeSeqSent = 0;
                     syncReset(&sv->sync);
                     bulkSenderInit(&sv->recBulk);
@@ -1442,6 +1467,18 @@ static void ctlService(HostServer *sv) {
                 evt.u.botHostCpu.cpu = hostCpuValue;
                 ctlSendEvent(sv, &evt);
                 sv->lastCpuSent = (int)hostCpuValue;
+            }
+            if (hostCpuMeter.perBotMilli != sv->lastCpuBotSent) {
+                /* One bot's part, finer than the byte above. It stays at
+                 * the last game's value while no bot thinks. */
+                ControlEvent evt;
+                memset(&evt, 0, sizeof(evt));
+                evt.type = CTRL_BOT_HOST_CPU_BOT;
+                evt.u.botHostCpuBot.idx = (uint8_t)BOT_HOST_CPU_IDX_SELF;
+                evt.u.botHostCpuBot.owner = (uint8_t)BOT_HOST_CPU_OWNER_NONE;
+                evt.u.botHostCpuBot.milli = hostCpuMeter.perBotMilli;
+                ctlSendEvent(sv, &evt);
+                sv->lastCpuBotSent = hostCpuMeter.perBotMilli;
             }
             if (hostFreeSeq != 0 && hostFreeSeq != sv->lastFreeSeqSent) {
                 ControlEvent evt;
@@ -2131,6 +2168,9 @@ int main(int argc, char *argv[]) {
     atexit(sentryClose);
 
     if (!parseArgs(argc, argv)) return 1;
+    /* This computer's id and the salts answered before, read now, so two
+     * programs on one computer both answer a new salt. */
+    (void)machineIdInit();
 
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
@@ -2382,6 +2422,8 @@ int botHostEmbedDefaultSlots(void) {
 }
 
 bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
+    /* As main() does: the id and the answered salts, read once. */
+    (void)machineIdInit();
     HostServer *sv;
     size_t n;
     char *c;

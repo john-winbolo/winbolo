@@ -441,11 +441,36 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             /* The CPU estimate comes in its own event: a row that stays
              * connected keeps it, a new row has none yet. */
             uint8_t cpu = r->connected ? r->cpu : (uint8_t)BOT_HOST_CPU_UNKNOWN;
+            bool cpuBotHave = r->connected && r->cpuBotHave;
+            uint8_t cpuBotOwner = r->cpuBotOwner;
+            uint32_t cpuBot = r->cpuBot;
+            uint16_t lagMs = r->connected ? r->lagMs
+                                          : (uint16_t)BOT_HOST_LAG_UNKNOWN;
+            /* The row's computer and override, as the CPU estimate. */
+            ClientBotHostRow keep = *r;
+            bool keepSlots = r->connected && r->rowSlotsHave;
             memset(r, 0, sizeof(*r));
+            r->lagMs = (uint16_t)BOT_HOST_LAG_UNKNOWN;
             r->cpu = (uint8_t)BOT_HOST_CPU_UNKNOWN;
+            r->cpuBot = BOT_HOST_CPU_MILLI_UNKNOWN;
+            r->cpuBotOwner = (uint8_t)BOT_HOST_CPU_OWNER_NONE;
             r->connected = evt->u.botHostStatus.connected != 0;
             if (r->connected) {
                 r->cpu     = cpu;
+                r->lagMs   = lagMs;
+                if (keepSlots) {
+                    r->rowSlotsHave = true;
+                    r->machineKind  = keep.machineKind;
+                    r->machineOther = keep.machineOther;
+                    r->machineZero  = keep.machineZero;
+                    r->slotOverride = keep.slotOverride;
+                    r->slotLocked   = keep.slotLocked;
+                }
+                if (cpuBotHave) {
+                    r->cpuBotHave = true;
+                    r->cpuBotOwner = cpuBotOwner;
+                    r->cpuBot = cpuBot;
+                }
                 r->state   = evt->u.botHostStatus.state;
                 r->percent = evt->u.botHostStatus.percent;
                 r->used    = evt->u.botHostStatus.used;
@@ -465,6 +490,47 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         if (evt->u.botHostCpu.idx < CLIENT_BOT_HOST_ROWS) {
             ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostCpu.idx];
             if (r->connected) r->cpu = evt->u.botHostCpu.cpu;
+        }
+        break;
+
+    case CTRL_SERVER_BOT_SLOTS:
+        cs->serverBotSlotsHave = true;
+        cs->serverBotSlots.value =
+            lobbyHostBotCapacityFromWire(evt->u.serverBotSlots.value);
+        cs->serverBotSlots.recommended =
+            lobbyHostBotCapacityFromWire(evt->u.serverBotSlots.recommended);
+        cs->serverBotSlots.locked = evt->u.serverBotSlots.locked != 0;
+        break;
+
+    case CTRL_BOT_HOST_ROW_SLOTS:
+        if (evt->u.botHostRowSlots.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostRowSlots.idx];
+            if (r->connected) {
+                r->rowSlotsHave = true;
+                r->machineKind  = evt->u.botHostRowSlots.machineKind;
+                r->machineOther = evt->u.botHostRowSlots.machineOther;
+                r->machineZero  = evt->u.botHostRowSlots.zero != 0;
+                r->slotOverride = evt->u.botHostRowSlots.slotOverride;
+                r->slotLocked   = evt->u.botHostRowSlots.slotLocked != 0;
+            }
+        }
+        break;
+
+    case CTRL_BOT_HOST_LAG:
+        if (evt->u.botHostLag.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostLag.idx];
+            if (r->connected) r->lagMs = evt->u.botHostLag.lagMs;
+        }
+        break;
+
+    case CTRL_BOT_HOST_CPU_BOT:
+        if (evt->u.botHostCpuBot.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostCpuBot.idx];
+            if (r->connected) {
+                r->cpuBotHave = true;
+                r->cpuBotOwner = evt->u.botHostCpuBot.owner;
+                r->cpuBot = evt->u.botHostCpuBot.milli;
+            }
         }
         break;
 

@@ -106,6 +106,11 @@
 #include "machine_cpu_free.h" /* MachineCpuFree, the server's free CPU */
 #include "bothost_record.h" /* BotHostRecord, the log_BotHostData payload */
 #include "log.h"            /* logAddEvent, logIsRecording, log_BotHostData */
+#include "machine_id.h"     /* machineIdGet, the same-computer salt */
+#include "bot_host_machine.h" /* the same-computer groups, the slot override */
+#ifndef _WIN32
+#include <ifaddrs.h>        /* getifaddrs: the server's own addresses */
+#endif
 
 /* Ticks without a datagram from a Bot Host before it is dropped. The host
  * pings every 500 ms. */
@@ -148,6 +153,36 @@ static bool        botHostOvrWaitLogged[1 + MAX_BOT_HOSTS];
 static bool botHostRecordData;
 static bool botHostRecHostSent[1 + MAX_BOT_HOSTS];
 static bool botHostRecWasOn;
+/* -bothost-nomove: no bot moves while a game runs. */
+static BotHostNoMove botHostNoMove;
+
+/* Bot Hosts on one computer (bot_host_machine.h). The salt round now
+ * (botHostSaltSeq counts the rounds) and the server's own answer to it;
+ * each host's group; the server's own addresses, read again every
+ * BOT_HOST_OWN_IP_TICKS. */
+#define BOT_HOST_MACHINE_WAIT_TICKS 250   /* 5 s for the answers */
+#define BOT_HOST_OWN_IP_TICKS       500
+#define BOT_HOST_OWN_IP_MAX         16
+static uint8_t           botHostSalt[MACHINE_SALT_LEN];
+static bool              botHostSaltHave;
+static uint32_t          botHostSaltSeq;
+static uint32_t          botHostSaltTick;
+static uint8_t           botHostServerHash[MACHINE_HASH_LEN];
+static bool              botHostServerHashHave;
+static uint32_t          botHostJoinSeqNext = 1;
+static BotHostMachineOut botHostMachine[MAX_BOT_HOSTS];
+static char              botHostMachineLogged[1024];
+static uint32_t          botHostOwnIp[BOT_HOST_OWN_IP_MAX];
+static int               botHostOwnIpCount;
+static bool              botHostOwnIpHave;
+static uint32_t          botHostOwnIpTick;
+/* -bothost-slots. */
+static BotHostSlotFlags  botHostSlotFlags;
+/* The CTRL_BOT_HOST_ROW_SLOTS values last sent, one per Bot Host row. */
+static bool              botHostRowSlotsSentHave[MAX_BOT_HOSTS];
+static ControlEvent      botHostRowSlotsSent[MAX_BOT_HOSTS];
+/* The game bot limit last logged. */
+static int               botHostLimitLogged = -100;
 
 static void botHostOvrEnsure(void) {
     int i;
@@ -179,6 +214,7 @@ static void botHostOvrNewGame(void) {
         botHostRecHostSent[i] = false;
     }
     for (i = 0; i < MAX_TANKS; i++) botHostOvrSeat[i].owner = -1;
+    botHostNoMoveNewGame(&botHostNoMove);
 }
 
 static void botSeatReset(int s, bool noReturn);
@@ -397,6 +433,320 @@ static bool botHostTakesBots(ServerSim *sim, int h) {
     return true;
 }
 
+static bool botHostSendEvent(int h, const ControlEvent *evt);
+
+/* The slots host h may be given: what it offers, lowered by its row's
+ * override, and 0 when another host on its computer (or the server, for a
+ * player's host) has them. */
+static int botHostEffSlots(int h) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    if (!hc->connected) return 0;
+    if (botHostMachine[h].zero) return 0;
+    return botHostSlotsEffective((int)hc->slots, hc->slotOvr.override);
+}
+
+/* The server's own IPv4 addresses (network order), for the address check
+ * of the same-computer groups. */
+static void botHostOwnIpsRefresh(void) {
+    if (botHostOwnIpHave &&
+        udpServer.tickCount - botHostOwnIpTick < BOT_HOST_OWN_IP_TICKS) {
+        return;
+    }
+    botHostOwnIpHave = true;
+    botHostOwnIpTick = udpServer.tickCount;
+    botHostOwnIpCount = 0;
+#ifdef _WIN32
+    {
+        SOCKET sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock != INVALID_SOCKET) {
+            INTERFACE_INFO list[BOT_HOST_OWN_IP_MAX];
+            DWORD got = 0;
+            if (WSAIoctl(sock, SIO_GET_INTERFACE_LIST, NULL, 0, list,
+                         sizeof(list), &got, NULL, NULL) != SOCKET_ERROR) {
+                int n = (int)(got / sizeof(INTERFACE_INFO)), i;
+                for (i = 0; i < n && botHostOwnIpCount < BOT_HOST_OWN_IP_MAX;
+                     i++) {
+                    const struct sockaddr_in *a =
+                        (const struct sockaddr_in *)&list[i].iiAddress;
+                    if (a->sin_family != AF_INET) continue;
+                    botHostOwnIp[botHostOwnIpCount++] = a->sin_addr.s_addr;
+                }
+            }
+            closesocket(sock);
+        }
+    }
+#else
+    {
+        struct ifaddrs *ifap = NULL, *ifa;
+        if (getifaddrs(&ifap) == 0) {
+            for (ifa = ifap; ifa != NULL &&
+                             botHostOwnIpCount < BOT_HOST_OWN_IP_MAX;
+                 ifa = ifa->ifa_next) {
+                if (ifa->ifa_addr == NULL ||
+                    ifa->ifa_addr->sa_family != AF_INET) {
+                    continue;
+                }
+                botHostOwnIp[botHostOwnIpCount++] =
+                    ((const struct sockaddr_in *)ifa->ifa_addr)->sin_addr.s_addr;
+            }
+            freeifaddrs(ifap);
+        }
+    }
+#endif
+}
+
+/* A new salt round: every host is sent a new salt, and the server works
+ * out its own answer. A host keeps its group until the answers are in. */
+static void botHostMachineRound(const char *why) {
+    ControlEvent evt;
+    uint8_t id[MACHINE_ID_LEN];
+    int h, sent = 0;
+    if (!machineRandomBytes(botHostSalt, sizeof(botHostSalt))) {
+        botHostSaltHave = false;
+        return;
+    }
+    botHostSaltHave = true;
+    botHostSaltSeq++;
+    botHostSaltTick = udpServer.tickCount;
+    {
+        static bool dirLogged = false;
+        botHostServerHashHave = machineIdGet(id);
+        if (!dirLogged) {
+            dirLogged = true;
+            fprintf(stderr, "[bothost] same-computer check: machine id %s "
+                            "(folder \"%s\")\n",
+                    botHostServerHashHave ? "read" : "missing", machineIdDir());
+        }
+    }
+    if (botHostServerHashHave) {
+        machineIdHashSalt(id, botHostSalt, botHostServerHash);
+    }
+    memset(id, 0, sizeof(id));
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_HOST_MACHINE_SALT;
+    memcpy(evt.u.botHostMachineSalt.salt, botHostSalt, sizeof(botHostSalt));
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (!udpServer.botHosts[h].connected) continue;
+        (void)botHostSendEvent(h, &evt);
+        sent++;
+    }
+    if (sent > 0) {
+        WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] same-computer check: new salt "
+                    "for %d hosts (%s)", sent, why);
+    }
+}
+
+static void botHostMachineName(int h, char *out, size_t sz) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    if (hc->playerHost) {
+        SDL_snprintf(out, sz, "player %u's Bot Host \"%s\"",
+                     (unsigned)hc->ownerSlot, hc->name);
+    } else {
+        SDL_snprintf(out, sz, "Bot Host \"%s\"", hc->name);
+    }
+}
+
+static const char *botHostMachineHow(int h) {
+    return botHostMachine[h].how == BOT_HOST_MACHINE_HOW_ADDRESS
+               ? "by its address" : "by its machine token";
+}
+
+/* One console line per group, when the groups change. */
+static void botHostMachineLog(void) {
+    char text[sizeof(botHostMachineLogged)];
+    char nm[96], part[256];
+    int h, k;
+    text[0] = '\0';
+    {
+        bool any = false;
+        char line[700] = "[bothost] same computer as the server:";
+        for (h = 0; h < MAX_BOT_HOSTS; h++) {
+            if (!udpServer.botHosts[h].connected ||
+                botHostMachine[h].kind != BOT_HOST_MACHINE_SERVER) {
+                continue;
+            }
+            botHostMachineName(h, nm, sizeof(nm));
+            SDL_snprintf(part, sizeof(part), "%s %s (%s, %s)", any ? "," : "",
+                         nm, botHostMachineHow(h),
+                         botHostMachine[h].zero ? "0 bots"
+                                                : "a listed host keeps its slots");
+            SDL_strlcat(line, part, sizeof(line));
+            any = true;
+        }
+        if (any) {
+            SDL_strlcat(text, line, sizeof(text));
+            SDL_strlcat(text, "\n", sizeof(text));
+        }
+    }
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        bool any = false;
+        char line[700];
+        if (!udpServer.botHosts[h].connected ||
+            botHostMachine[h].kind != BOT_HOST_MACHINE_ALONE ||
+            botHostMachine[h].how != BOT_HOST_MACHINE_HOW_TOKEN) {
+            continue;
+        }
+        botHostMachineName(h, nm, sizeof(nm));
+        SDL_snprintf(line, sizeof(line), "[bothost] same computer: %s (by its "
+                     "machine token, keeps its slots)", nm);
+        for (k = 0; k < MAX_BOT_HOSTS; k++) {
+            if (!udpServer.botHosts[k].connected ||
+                botHostMachine[k].kind != BOT_HOST_MACHINE_HOST ||
+                botHostMachine[k].other != h) {
+                continue;
+            }
+            botHostMachineName(k, nm, sizeof(nm));
+            SDL_snprintf(part, sizeof(part), ", %s (%s, 0 bots)", nm,
+                         botHostMachineHow(k));
+            SDL_strlcat(line, part, sizeof(line));
+            any = true;
+        }
+        if (any) {
+            SDL_strlcat(text, line, sizeof(text));
+            SDL_strlcat(text, "\n", sizeof(text));
+        }
+    }
+    if (strcmp(text, botHostMachineLogged) == 0) return;
+    SDL_strlcpy(botHostMachineLogged, text, sizeof(botHostMachineLogged));
+    if (text[0] == '\0') {
+        fprintf(stderr, "[bothost] same computer: no Bot Hosts share a "
+                        "computer now\n");
+    } else {
+        fputs(text, stderr);
+    }
+}
+
+/* The groups of hosts on one computer, from the address check and the
+ * answers to the salt round. While answers are still to come (at most
+ * BOT_HOST_MACHINE_WAIT_TICKS) each host keeps its group; after that a
+ * host with no answer counts as another computer. */
+static void botHostMachineUpdate(void) {
+    BotHostMachineIn in[MAX_BOT_HOSTS];
+    bool all = true;
+    int h;
+    botHostOwnIpsRefresh();
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        const BotHostConn *hc = &udpServer.botHosts[h];
+        if (!hc->connected) continue;
+        if (!hc->machineHave || hc->machineSeq != botHostSaltSeq) all = false;
+    }
+    if (!all && botHostSaltHave &&
+        udpServer.tickCount - botHostSaltTick < BOT_HOST_MACHINE_WAIT_TICKS) {
+        return;
+    }
+    memset(in, 0, sizeof(in));
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        const BotHostConn *hc = &udpServer.botHosts[h];
+        if (!hc->connected) continue;
+        in[h].present = true;
+        in[h].playerHost = hc->playerHost;
+        in[h].addrServer = botHostAddrIsServerMachine(
+            hc->addr.sin_addr.s_addr, botHostOwnIp, botHostOwnIpCount);
+        in[h].hashHave = hc->machineHave && hc->machineSeq == botHostSaltSeq;
+        memcpy(in[h].hash, hc->machineHash, sizeof(in[h].hash));
+        in[h].joinSeq = hc->joinSeq;
+        in[h].offered = botHostSlotsEffective((int)hc->slots,
+                                              hc->slotOvr.override);
+    }
+    botHostMachineGroup(in, MAX_BOT_HOSTS,
+                        botHostServerHashHave ? botHostServerHash : NULL,
+                        botHostMachine);
+    botHostMachineLog();
+}
+
+/* The game bot limit: the server's bot slots plus each host that takes
+ * bots; a host on a computer another counts, an opted-out host and one
+ * still getting ready count 0. */
+static void botHostUpdateGameBotLimit(ServerSim *sim) {
+    int counted[MAX_BOT_HOSTS], h, limit, serverCap;
+    bool any = false;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        counted[h] = 0;
+        if (!udpServer.botHosts[h].connected) continue;
+        any = true;
+        if (botHostTakesBots(sim, h)) counted[h] = botHostEffSlots(h);
+    }
+    serverCap = serverSimGetHostBotCapacity(sim);
+    limit = botHostGameBotLimit(serverCap, counted, MAX_BOT_HOSTS);
+    serverSimSetGameBotLimit(sim, limit, any);
+    if (!any) limit = serverCap;
+    if (limit != botHostLimitLogged) {
+        char hosts[256] = "";
+        botHostLimitLogged = limit;
+        for (h = 0; h < MAX_BOT_HOSTS; h++) {
+            char part[64];
+            if (!udpServer.botHosts[h].connected) continue;
+            SDL_snprintf(part, sizeof(part), "%s\"%s\" %d", hosts[0] ? ", " : "",
+                         udpServer.botHosts[h].name, counted[h]);
+            SDL_strlcat(hosts, part, sizeof(hosts));
+        }
+        if (limit == SERVER_HOST_BOT_CAPACITY_NONE) {
+            fprintf(stderr, "[bothost] game bot limit: none (the server has no "
+                            "bot limit)\n");
+        } else if (limit == SERVER_HOST_BOT_CAPACITY_MEASURING) {
+            fprintf(stderr, "[bothost] game bot limit: held while the CPU test "
+                            "runs\n");
+        } else {
+            fprintf(stderr, "[bothost] game bot limit: %d (the server %d%s%s)\n",
+                    limit, serverCap < 0 ? 0 : serverCap,
+                    hosts[0] ? ", hosts: " : "", hosts);
+        }
+    }
+}
+
+static void botHostFillRowSlots(int h, ControlEvent *evt) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_ROW_SLOTS;
+    evt->u.botHostRowSlots.idx = (uint8_t)h;
+    evt->u.botHostRowSlots.machineKind = botHostMachine[h].kind;
+    evt->u.botHostRowSlots.machineOther =
+        botHostMachine[h].other >= 0 ? (uint8_t)botHostMachine[h].other
+                                     : (uint8_t)BOT_HOST_MACHINE_OTHER_NONE;
+    evt->u.botHostRowSlots.zero = botHostMachine[h].zero ? 1u : 0u;
+    evt->u.botHostRowSlots.slotOverride =
+        hc->slotOvr.override < 0 ? (uint8_t)BOT_HOST_SLOT_OVERRIDE_NONE
+                                 : (uint8_t)hc->slotOvr.override;
+    evt->u.botHostRowSlots.slotLocked = hc->slotOvr.locked ? 1u : 0u;
+}
+
+bool transportUdpServerAddBotHostSlots(const char *arg, char *err,
+                                       size_t errSz) {
+    return botHostSlotFlagsAdd(&botHostSlotFlags, arg, err, errSz);
+}
+
+int serverBotHostSetSlotOverride(ServerSim *sim, int row, int value,
+                                 int player) {
+    BotHostConn *hc;
+    (void)sim;
+    if (row < 0 || row >= MAX_BOT_HOSTS) return BOT_HOST_SLOT_SET_INVALID;
+    hc = &udpServer.botHosts[row];
+    if (!hc->connected) return BOT_HOST_SLOT_SET_INVALID;
+    if (hc->slotOvr.locked) {
+        fprintf(stderr, "[bothost] Bot Host \"%s\": slot change by player %d "
+                        "refused (set by -bothost-slots)\n",
+                hc->name, player);
+        return BOT_HOST_SLOT_SET_LOCKED;
+    }
+    if (!botHostSlotOverrideSet(&hc->slotOvr, (int)hc->slots, value)) {
+        fprintf(stderr, "[bothost] Bot Host \"%s\": slot change to %d by "
+                        "player %d refused (it offers %u)\n",
+                hc->name, value, player, (unsigned)hc->slots);
+        return BOT_HOST_SLOT_SET_INVALID;
+    }
+    if (hc->slotOvr.override < 0) {
+        fprintf(stderr, "[bothost] Bot Host \"%s\": player %d takes off its "
+                        "slot limit (it offers %u)\n",
+                hc->name, player, (unsigned)hc->slots);
+    } else {
+        fprintf(stderr, "[bothost] Bot Host \"%s\": player %d limits it to %d "
+                        "slots (it offers %u)\n",
+                hc->name, player, hc->slotOvr.override,
+                (unsigned)hc->slots);
+    }
+    return BOT_HOST_SLOT_SET_OK;
+}
+
 /* Make the brain manifest again from the brain folders. When it differs
  * from the one the hosts have, it gets the next generation and every
  * connected host is sent it. */
@@ -557,7 +907,9 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
     if ((size_t)bodyLen + 3 > len) return;
     if (msg[0] != CTRL_BOT_HOST_FILE_REQ && msg[0] != CTRL_BOT_HOST_SYNC &&
         msg[0] != CTRL_BOT_HOST_SLOTS && msg[0] != CTRL_BOT_HOST_REC &&
-        msg[0] != CTRL_BOT_HOST_CPU && msg[0] != CTRL_BOT_HOST_CPU_FREE) {
+        msg[0] != CTRL_BOT_HOST_CPU && msg[0] != CTRL_BOT_HOST_CPU_FREE &&
+        msg[0] != CTRL_BOT_HOST_CPU_BOT &&
+        msg[0] != CTRL_BOT_HOST_MACHINE_ANSWER) {
         return;
     }
     dec = transportControlCodecBodyDecoder((ControlEventType)msg[0]);
@@ -565,6 +917,27 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
     if (evt.type == CTRL_BOT_HOST_CPU) {
         /* Only the percent: the host never says what its machine is. */
         hc->cpu = evt.u.botHostCpu.cpu;
+        return;
+    }
+    if (evt.type == CTRL_BOT_HOST_CPU_BOT) {
+        /* One bot's part, only the number. An unknown keeps the last. */
+        if (!hc->cpuBotHave ||
+            evt.u.botHostCpuBot.milli != BOT_HOST_CPU_MILLI_UNKNOWN) {
+            hc->cpuBot = evt.u.botHostCpuBot.milli;
+        }
+        hc->cpuBotHave = true;
+        return;
+    }
+    if (evt.type == CTRL_BOT_HOST_MACHINE_ANSWER) {
+        /* Only an answer to the salt round now counts. */
+        if (botHostSaltHave &&
+            memcmp(evt.u.botHostMachineAnswer.salt, botHostSalt,
+                   sizeof(botHostSalt)) == 0) {
+            hc->machineHave = true;
+            hc->machineSeq = botHostSaltSeq;
+            memcpy(hc->machineHash, evt.u.botHostMachineAnswer.hash,
+                   sizeof(hc->machineHash));
+        }
         return;
     }
     if (evt.type == CTRL_BOT_HOST_CPU_FREE) {
@@ -751,6 +1124,70 @@ static uint8_t botHostRowCpu(int h, const ControlEvent *row) {
 static uint8_t botHostCpuSent[MAX_BOT_HOSTS + 1];
 static bool    botHostCpuSentInit;
 
+/* Row h's per-bot value and owner for CTRL_BOT_HOST_CPU_BOT. False for a
+ * row from an older host, which then shows the CTRL_BOT_HOST_CPU text. */
+static bool botHostRowCpuBot(int h, const ControlEvent *row, uint32_t *milli,
+                             uint8_t *owner) {
+    const BotHostConn *hc;
+    if (!row->u.botHostStatus.connected) return false;
+    *owner = (uint8_t)BOT_HOST_CPU_OWNER_NONE;
+    if (h == MAX_BOT_HOSTS) {
+        *milli = botHostServerCpuInit ? botHostServerCpu.perBotMilli
+                                      : BOT_HOST_CPU_MILLI_UNKNOWN;
+        return true;
+    }
+    hc = &udpServer.botHosts[h];
+    if (!hc->cpuBotHave) return false;
+    *milli = hc->cpuBot;
+    if (hc->playerHost && hc->ownerSlot < MAX_TANKS) *owner = hc->ownerSlot;
+    return true;
+}
+
+static void botHostFillCpuBot(int h, uint32_t milli, uint8_t owner,
+                              ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_CPU_BOT;
+    evt->u.botHostCpuBot.idx = (uint8_t)h;
+    evt->u.botHostCpuBot.owner = owner;
+    evt->u.botHostCpuBot.milli = milli;
+}
+
+/* Row h's lag for CTRL_BOT_HOST_LAG: the placement's smoothed lag in whole
+ * ms (at least 1), or BOT_HOST_LAG_UNKNOWN. */
+static uint16_t botHostRowLag(int h, const ControlEvent *row) {
+    const BotHostConn *hc;
+    double ms;
+    if (h >= MAX_BOT_HOSTS || !row->u.botHostStatus.connected) {
+        return (uint16_t)BOT_HOST_LAG_UNKNOWN;
+    }
+    hc = &udpServer.botHosts[h];
+    if (!hc->lagKnown || !(hc->lagMs >= 0.0)) {
+        return (uint16_t)BOT_HOST_LAG_UNKNOWN;
+    }
+    ms = hc->lagMs + 0.5;
+    if (ms < 1.0) ms = 1.0;
+    if (ms > 65534.0) ms = 65534.0;
+    return (uint16_t)ms;
+}
+
+/* The lags last sent to the lobby, one per Bot Host row, and when. */
+#define BOT_HOST_LAG_SEND_TICKS 50   /* at most once each second */
+static bool     botHostLagSentHave[MAX_BOT_HOSTS];
+static uint16_t botHostLagSent[MAX_BOT_HOSTS];
+static uint32_t botHostLagSentTick[MAX_BOT_HOSTS];
+
+static void botHostFillLag(int h, uint16_t lag, ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_LAG;
+    evt->u.botHostLag.idx = (uint8_t)h;
+    evt->u.botHostLag.lagMs = lag;
+}
+
+/* The per-bot values last sent to the lobby, one per row. */
+static bool     botHostCpuBotSentHave[MAX_BOT_HOSTS + 1];
+static uint32_t botHostCpuBotSent[MAX_BOT_HOSTS + 1];
+static uint8_t  botHostCpuBotOwnerSent[MAX_BOT_HOSTS + 1];
+
 /* The log line for a row's CPU estimate: the first one, then a change at
  * most each BOT_HOST_CPU_LOG_TICKS, so the log does not fill. */
 #define BOT_HOST_CPU_LOG_TICKS 500
@@ -818,6 +1255,63 @@ static void botHostBroadcastRows(void) {
                 }
             }
         }
+        {
+            /* One bot's part, after the byte above, when it changes. */
+            uint32_t milli = BOT_HOST_CPU_MILLI_UNKNOWN;
+            uint8_t owner = (uint8_t)BOT_HOST_CPU_OWNER_NONE;
+            if (!botHostRowCpuBot(h, &evt, &milli, &owner)) {
+                botHostCpuBotSentHave[h] = false;
+            } else if (!botHostCpuBotSentHave[h] ||
+                       milli != botHostCpuBotSent[h] ||
+                       owner != botHostCpuBotOwnerSent[h]) {
+                ControlEvent ce;
+                botHostCpuBotSentHave[h] = true;
+                botHostCpuBotSent[h] = milli;
+                botHostCpuBotOwnerSent[h] = owner;
+                botHostFillCpuBot(h, milli, owner, &ce);
+                serverBroadcastLobbyControl(&ce);
+            }
+        }
+        if (h < MAX_BOT_HOSTS) {
+            /* The row's computer and slot override, when they change. */
+            if (!evt.u.botHostStatus.connected) {
+                botHostRowSlotsSentHave[h] = false;
+            } else {
+                ControlEvent re;
+                botHostFillRowSlots(h, &re);
+                if (!botHostRowSlotsSentHave[h] ||
+                    memcmp(&re.u.botHostRowSlots,
+                           &botHostRowSlotsSent[h].u.botHostRowSlots,
+                           sizeof(re.u.botHostRowSlots)) != 0) {
+                    botHostRowSlotsSentHave[h] = true;
+                    botHostRowSlotsSent[h] = re;
+                    serverBroadcastLobbyControl(&re);
+                }
+            }
+        }
+        if (h < MAX_BOT_HOSTS) {
+            /* The host's lag, the lobby's ping for the row: when it changes
+             * by BOT_HOST_LAG_SEND_STEP_MS or more, at most once a second. */
+            uint16_t lag = botHostRowLag(h, &evt);
+            if (!evt.u.botHostStatus.connected) {
+                botHostLagSentHave[h] = false;
+            } else if (lag == BOT_HOST_LAG_UNKNOWN && !botHostLagSentHave[h]) {
+                /* Nothing measured yet: the row shows no ping. */
+            } else if (!botHostLagSentHave[h] ||
+                       (udpServer.tickCount - botHostLagSentTick[h] >=
+                            BOT_HOST_LAG_SEND_TICKS &&
+                        ((lag == BOT_HOST_LAG_UNKNOWN) !=
+                             (botHostLagSent[h] == BOT_HOST_LAG_UNKNOWN) ||
+                         abs((int)lag - (int)botHostLagSent[h]) >=
+                             BOT_HOST_LAG_SEND_STEP_MS))) {
+                ControlEvent le;
+                botHostLagSentHave[h] = true;
+                botHostLagSent[h] = lag;
+                botHostLagSentTick[h] = udpServer.tickCount;
+                botHostFillLag(h, lag, &le);
+                serverBroadcastLobbyControl(&le);
+            }
+        }
     }
 }
 
@@ -834,6 +1328,25 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
             botHostFillCpu(h, botHostRowCpu(h, &evt), &ce);
             deliver(deliverCtx, &ce);
         }
+        {
+            uint32_t milli;
+            uint8_t owner;
+            if (botHostRowCpuBot(h, &evt, &milli, &owner)) {
+                ControlEvent ce;
+                botHostFillCpuBot(h, milli, owner, &ce);
+                deliver(deliverCtx, &ce);
+            }
+        }
+        if (botHostRowLag(h, &evt) != BOT_HOST_LAG_UNKNOWN) {
+            ControlEvent le;
+            botHostFillLag(h, botHostRowLag(h, &evt), &le);
+            deliver(deliverCtx, &le);
+        }
+        {
+            ControlEvent re;
+            botHostFillRowSlots(h, &re);
+            deliver(deliverCtx, &re);
+        }
     }
     {
         ControlEvent evt;
@@ -845,6 +1358,15 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
                 botHostFillCpu(MAX_BOT_HOSTS,
                                botHostRowCpu(MAX_BOT_HOSTS, &evt), &ce);
                 deliver(deliverCtx, &ce);
+            }
+            {
+                uint32_t milli;
+                uint8_t owner;
+                if (botHostRowCpuBot(MAX_BOT_HOSTS, &evt, &milli, &owner)) {
+                    ControlEvent ce;
+                    botHostFillCpuBot(MAX_BOT_HOSTS, milli, owner, &ce);
+                    deliver(deliverCtx, &ce);
+                }
             }
         }
     }
@@ -1151,6 +1673,8 @@ static void botHostDrop(ServerSim *sim, int h, const char *why) {
     bulkSenderReset(&hc->bulk);
     memset(hc, 0, sizeof(*hc));
     botHostOvrResetHost(h + 1);
+    memset(&botHostMachine[h], 0, sizeof(botHostMachine[h]));
+    botHostMachine[h].other = -1;
 }
 
 void serverBotHostPlayerGone(ServerSim *sim, int slot, const char *why) {
@@ -1371,6 +1895,23 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
     WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] Bot Host \"%s\" connected from %s "
                 "slots=%u", hostName, addr, (unsigned)slots);
 accepted:
+    {
+        /* Its join order, its slot override (none, or -bothost-slots), and
+         * a new salt round for every host. */
+        BotHostConn *hc = &udpServer.botHosts[freeIdx];
+        const char *player = hc->playerHost
+            ? transportUdpServerGetPlayerName((BYTE)hc->ownerSlot) : NULL;
+        hc->joinSeq = botHostJoinSeqNext++;
+        botHostSlotOverrideJoin(&hc->slotOvr, &botHostSlotFlags, hc->name,
+                                player);
+        if (hc->slotOvr.locked) {
+            fprintf(stderr, "[bothost] Bot Host \"%s\": at most %d slots "
+                            "(-bothost-slots)\n",
+                    hc->name, hc->slotOvr.override);
+        }
+        memset(&botHostMachine[freeIdx], 0, sizeof(botHostMachine[freeIdx]));
+        botHostMachine[freeIdx].other = -1;
+    }
     serverSendBotHostAccept(freeIdx, sim);
     serverBotRecHostConnected(freeIdx,
                               serverSimGetState(sim) == serverStateLobby);
@@ -1382,6 +1923,7 @@ accepted:
         hc->manifestOwed = true;
         hc->syncSentTick = udpServer.tickCount;
     }
+    botHostMachineRound("a Bot Host joined");
 }
 
 /* "GoalHunter 1a2b3c4d5e6f7a8b (current), ..." for the announce log line. */
@@ -2045,6 +2587,14 @@ void serverBotHostsReset(void) {
     memset(botHostCpuSent, BOT_HOST_CPU_UNKNOWN, sizeof(botHostCpuSent));
     botHostCpuSentInit = true;
     memset(botHostCpuLogged, 0, sizeof(botHostCpuLogged));
+    memset(botHostCpuBotSentHave, 0, sizeof(botHostCpuBotSentHave));
+    memset(botHostLagSentHave, 0, sizeof(botHostLagSentHave));
+    memset(botHostRowSlotsSentHave, 0, sizeof(botHostRowSlotsSentHave));
+    memset(botHostMachine, 0, sizeof(botHostMachine));
+    for (h = 0; h < MAX_BOT_HOSTS; h++) botHostMachine[h].other = -1;
+    botHostMachineLogged[0] = '\0';
+    botHostSaltHave = false;
+    botHostLimitLogged = -100;
     botHostServerCpuInit = false;
     botHostServerCpuValue = (uint8_t)BOT_HOST_CPU_UNKNOWN;
     for (h = 0; h <= MAX_BOT_HOSTS; h++) botHostOvrResetHost(h);
@@ -2155,6 +2705,12 @@ static int botHostServerSlots(ServerSim *sim) {
             knownFrom = "the brain's capacity answer";
         }
     }
+    if (serverSimGetServerBotSlots(sim) >= 0) {
+        /* The lobby's Server bot slots: a change counts at once. */
+        known = serverSimGetServerBotSlots(sim);
+        knownFrom = serverSimIsServerBotSlotsLocked(sim)
+                        ? "-botcapacity" : "the lobby's Server bot slots";
+    }
     {
         static int logged = -1;
         int slots = known;
@@ -2242,7 +2798,7 @@ static bool botSeatOffer(ServerSim *sim, int s, int h, const char *why) {
     fprintf(stderr, "[bothost] bot %d \"%s\" offered to Bot Host \"%s\" "
                     "(%s, %d/%u slots used)\n",
             s, botSeatName(sim, s), udpServer.botHosts[h].name, why,
-            botHostUsedSlots(h), (unsigned)udpServer.botHosts[h].slots);
+            botHostUsedSlots(h), (unsigned)botHostEffSlots(h));
     return true;
 }
 
@@ -2474,7 +3030,8 @@ static void botHostOvrApply(BotHostPlaceHost *hosts, bool log) {
  * moved. */
 static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
                                const BotHostPlaceHost *applied,
-                               int localSeat, const int *hostSeat) {
+                               int localSeat, const int *hostSeat,
+                               bool running) {
     const BotHostOverrunCfg *cfg = botHostOvrConfig();
     uint32_t over[1 + MAX_BOT_HOSTS], thinks[1 + MAX_BOT_HOSTS];
     int bots[1 + MAX_BOT_HOSTS];
@@ -2630,6 +3187,20 @@ static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
                                "overruns");
             botHostRecDecision(i, BOTHOST_DECISION_CUT, &rep, -1, -1,
                                "overruns");
+            if (botHostNoMoveOverrunDecision(&botHostNoMove, running) ==
+                BOTHOST_DECISION_WOULD_MOVE) {
+                /* -bothost-nomove: the bot stays; the decision is kept. */
+                fprintf(stderr, "[bothost] overruns: bot %d \"%s\" would "
+                                "move (moves off) from %s\"%s\" to %s%s%s\n",
+                        seat, botSeatName(sim, seat), botHostOvrKind(i),
+                        botHostOvrName(i),
+                        dest == 0 ? "the server" : "Bot Host \"",
+                        dest == 0 ? "" : udpServer.botHosts[dest - 1].name,
+                        dest == 0 ? "" : "\"");
+                botHostRecDecision(i, BOTHOST_DECISION_WOULD_MOVE, &rep, seat,
+                                   dest, "would move (moves off)");
+                continue;
+            }
             fprintf(stderr, "[bothost] overruns: bot %d \"%s\" moves from "
                             "%s\"%s\" to %s%s%s\n",
                     seat, botSeatName(sim, seat), botHostOvrKind(i),
@@ -2711,6 +3282,14 @@ void transportUdpServerSetBotHostOverrun(double pct, int badShare,
             cfg->freeSampleSecs, cfg->freeHistorySecs);
 }
 
+void transportUdpServerSetBotHostNoMove(bool on) {
+    botHostNoMoveInit(&botHostNoMove, on);
+    if (on) {
+        fprintf(stderr, "Bot moves during the game are off "
+                        "(-bothost-nomove)\n");
+    }
+}
+
 void transportUdpServerSetBotHostRecord(bool on) {
     botHostRecordData = on;
     if (on) {
@@ -2728,8 +3307,9 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     static uint32_t lastProbeTick = 0;
     static bool probed = false;
     BotHostPlaceHost hosts[1 + MAX_BOT_HOSTS], raw[1 + MAX_BOT_HOSTS];
-    int localSeat = -1, hostSeat[MAX_BOT_HOSTS];
+    int localSeat = -1, localAny = -1, hostSeat[MAX_BOT_HOSTS];
     bool running = (st == serverStateRunning);
+    bool mayMove;
     bool anyPending = false, anyHost = false;
     int s, h, from = -1, to = -1;
 
@@ -2743,7 +3323,9 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         BotHostConn *hc = &udpServer.botHosts[h];
         hostSeat[h] = -1;
         if (!hc->connected) continue;
-        hosts[h + 1].slots = hc->slots;
+        /* Lowered by the row's override; 0 for a host on a computer
+         * another counts. */
+        hosts[h + 1].slots = (uint8_t)botHostEffSlots(h);
         hosts[h + 1].bots = botHostUsedSlots(h);
         hosts[h + 1].open = botHostTakesBots(sim, h);
         botHostUpdateLag(h);
@@ -2758,11 +3340,23 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     hosts[0].lagMs = 0.0;  /* the server's own process */
     for (s = 0; s < MAX_TANKS; s++) {
         BotHostSeat *seat = &udpServer.botSeats[s];
+        botHostNoMoveSeat(&botHostNoMove, s, serverSimIsBot(sim, (BYTE)s),
+                          seat->state == BOT_SEAT_BOUND ||
+                              seat->state == BOT_SEAT_REMOTE,
+                          udpServer.tickCount);
         if (seat->state == BOT_SEAT_PENDING) anyPending = true;
         if (seat->state == BOT_SEAT_LOCAL) {
-            if (localSeat < 0 && botSeatLocalOfferable(sim, s) &&
+            if (botSeatLocalOfferable(sim, s) &&
                 botSeatMayMove(sim, s, running)) {
-                localSeat = s;
+                /* The overrun check looks at any bot; the spread only at
+                 * one that may still be placed (-bothost-nomove). */
+                if (localAny < 0) localAny = s;
+                if (localSeat < 0 &&
+                    botHostNoMoveMayPlace(&botHostNoMove, s, running,
+                                          udpServer.tickCount,
+                                          BOT_HOST_START_PLACE_TICKS)) {
+                    localSeat = s;
+                }
             }
         } else if (seat->state == BOT_SEAT_REMOTE && seat->host >= 0 &&
                    seat->host < MAX_BOT_HOSTS && hostSeat[seat->host] < 0 &&
@@ -2770,10 +3364,12 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
             hostSeat[seat->host] = s;
         }
     }
+    mayMove = botHostNoMoveMayMove(&botHostNoMove, running);
     hosts[0].movable = (localSeat >= 0);
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
-        /* A host's bots stay put while any offer waits for its answer. */
-        hosts[h + 1].movable = (hostSeat[h] >= 0) && !anyPending;
+        /* A host's bots stay put while any offer waits for its answer, and
+         * all game long with -bothost-nomove. */
+        hosts[h + 1].movable = (hostSeat[h] >= 0) && !anyPending && mayMove;
     }
 
     /* The overrun check: a probe each second, then the lowered limits and
@@ -2785,12 +3381,39 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         probed = true;
         lastProbeTick = udpServer.tickCount;
         if (botHostOvrConfig()->pct > 0.0 &&
-            botHostOvrProbeAll(sim, raw, hosts, localSeat, hostSeat)) {
+            botHostOvrProbeAll(sim, raw, hosts, localAny, hostSeat,
+                               running)) {
             lastMoveTick = udpServer.tickCount;
             return;
         }
         memcpy(hosts, raw, sizeof(hosts));
         botHostOvrApply(hosts, false);
+        for (h = 0; h < MAX_BOT_HOSTS; h++) {
+            hosts[h + 1].movable = hosts[h + 1].movable && mayMove;
+        }
+    }
+    if (!mayMove) {
+        /* -bothost-nomove while the game runs: a host that offers fewer
+         * slots than it has bots gives one back to the server (a
+         * fall-back); no other bot leaves its place. */
+        for (h = 0; h < MAX_BOT_HOSTS; h++) {
+            if (hostSeat[h] < 0 || anyPending) continue;
+            if (!botHostNoMoveGiveBack(&botHostNoMove, running,
+                                       raw[h + 1].bots, raw[h + 1].slots)) {
+                continue;
+            }
+            if (udpServer.tickCount - lastMoveTick < BOT_HOST_MOVE_TICKS) {
+                break;
+            }
+            s = hostSeat[h];
+            fprintf(stderr, "[bothost] bot %d \"%s\" goes back to the server: "
+                            "Bot Host \"%s\" offers %d slots for %d bots\n",
+                    s, botSeatName(sim, s), udpServer.botHosts[h].name,
+                    raw[h + 1].slots, raw[h + 1].bots);
+            botSeatFallBack(sim, s, "its host offers fewer slots", true);
+            lastMoveTick = udpServer.tickCount;
+            return;
+        }
     }
     if (!anyHost) return;
 
@@ -2854,6 +3477,8 @@ void serverServiceBotHosts(ServerSim *sim) {
         }
     }
     botHostServiceTickets(sim);
+    botHostMachineUpdate();
+    botHostUpdateGameBotLimit(sim);
 
     /* A new round or the lobby: a seat that came back from a host may be
      * offered again, and a bound seat's host makes the round's brain. A map
@@ -2874,9 +3499,14 @@ void serverServiceBotHosts(ServerSim *sim) {
         }
         if (st == serverStateLobby &&
             udpServer.botHostLastState != (int)serverStateLobby) {
-            /* Back in the lobby: the game a late host sat out is over. */
+            /* Back in the lobby: the game a late host sat out is over, and
+             * a slot override from the last lobby goes (one from
+             * -bothost-slots stays). */
             for (h = 0; h < MAX_BOT_HOSTS; h++) {
                 udpServer.botHosts[h].skipGame = false;
+                if (udpServer.botHostLastState != -1) {
+                    botHostSlotOverrideNewLobby(&udpServer.botHosts[h].slotOvr);
+                }
             }
             /* The hosts send their recordings of it now, at full speed. */
             if (udpServer.botHostLastState != -1) serverBotRecOnLobby();
@@ -2896,6 +3526,11 @@ void serverServiceBotHosts(ServerSim *sim) {
             /* A new round or the lobby: the brain files may have changed. */
             botHostRefreshManifest(sim, st == serverStateLobby ? "lobby"
                                                                : "round start");
+        }
+        if ((st == serverStateLobby || st == serverStateRunning) &&
+            udpServer.botHostEnabled) {
+            /* A new salt for each lobby and each game. */
+            botHostMachineRound(st == serverStateLobby ? "lobby" : "game");
         }
         if (st == serverStateLobby || st == serverStateRunning) {
             for (s = 0; s < MAX_TANKS; s++) {
@@ -3083,9 +3718,9 @@ void transportUdpServerPrintBotHosts(void) {
             fprintf(stdout, "\nBot Hosts:\n");
             any = true;
         }
-        fprintf(stdout, "Bot Host \"%s\"%s: %d/%u slots used (Ping:%ums Addr:%s)\n",
+        fprintf(stdout, "Bot Host \"%s\"%s: %d/%d slots used (Ping:%ums Addr:%s)\n",
                 hc->name, hc->playerHost ? " (a player's own)" : "",
-                botHostUsedSlots(h), (unsigned)hc->slots,
+                botHostUsedSlots(h), botHostEffSlots(h),
                 (unsigned)hc->pingMs,
                 botHostAddrStr(&hc->addr, addr, sizeof(addr)));
         {

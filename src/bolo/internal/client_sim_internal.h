@@ -486,6 +486,8 @@ struct ClientSim {
                                      * lobby-settings event, false until the
                                      * first one lands, which plays every
                                      * sound centred */
+    bool             serverBotSlotsHave; /* CTRL_SERVER_BOT_SLOTS came */
+    ClientServerBotSlots serverBotSlots;
     int              lobbyHostBotCapacity; /* the server's host bot
                                      * capacity from the lobby
                                      * settings: 0..16, -1 no cap,

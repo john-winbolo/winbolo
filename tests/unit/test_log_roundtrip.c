@@ -39,6 +39,7 @@
 #include "server_lifecycle.h"      /* serverOverrunStatsDue */
 #include "overrun_record.h"         /* log_OverrunStats payload */
 #include "bothost_record.h"         /* log_BotHostData payload */
+#include "bot_host_link.h"           /* BotHostNoMove */
 #include "transport_udp.h"          /* transportUdpServerSetBotHostRecord */
 #include "transport_udp_server_internal.h" /* serverBotHostRecordPut */
 #include "game_sim.h"       /* GameSim.tanks — set the stocks a snapshot records */
@@ -2018,5 +2019,68 @@ int run_bothost_record_off_writes_nothing(void) {
         free(on);
         UT_ASSERT_MSG(n == 40, "%d log_BotHostData records in the log", n);
     }
+    return 0;
+}
+
+/* -bothost-nomove: the overrun check's "would move" decision goes into the
+ * round log as decision 7 with its seat, place and numbers. */
+int run_bot_host_nomove_would_move_record(void) {
+    ReplayHarness h;
+    BotHostRecord r, back[16];
+    BotHostNoMove nm;
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    int      written = 0, n, i, found = 0;
+
+    botHostNoMoveInit(&nm, true);
+    memset(&r, 0, sizeof(r));
+    r.version = BOTHOST_RECORD_VERSION;
+    r.kind = BOTHOST_RECORD_DECISION;
+    r.host = 1;
+    r.decision = (uint8_t)botHostNoMoveOverrunDecision(&nm, true);
+    UT_ASSERT(r.decision == BOTHOST_DECISION_WOULD_MOVE);
+    r.limitBefore = BOTHOST_RECORD_NONE; r.limitAfter = 3;
+    r.badProbes = 24; r.probes = 30;
+    r.flags = BOTHOST_RECORD_DEC_COST | BOTHOST_RECORD_DEC_FREE;
+    r.predictedTenths = 120; r.costTenths = 50; r.freeAvgTenths = 170;
+    r.lowestClean = 15; r.highestBad = 9;
+    r.seat = 4; r.toHost = 0;
+    strcpy(r.reason, "would move (moves off)");
+
+    memset(&h, 0, sizeof(h));
+    bolo_srand(0x0B0707u);
+    UT_ASSERT(replayHarnessPrepare(&h, "bhnomove", "Tester"));
+    h.sim->timeCreated = 1700000000u;
+    UT_ASSERT(replayHarnessBeginRecording(&h));
+    logSetStopHook(NULL);
+    transportUdpServerSetBotHostRecord(true);
+    for (i = 0; i < 10; i++) {
+        if (i == 3 && serverBotHostRecordPut(&r)) written++;
+        replayHarnessTick(&h, 2);
+    }
+    transportUdpServerSetBotHostRecord(false);
+    UT_ASSERT(replayHarnessStopRecording(&h));
+    UT_ASSERT(extractLogDat(h.path, &buf, &blen));
+    replayHarnessStop(&h);
+    remove(h.path);
+    UT_ASSERT_MSG(written == 1, "%d records written", written);
+    {
+        size_t  blockStart = 0;
+        uint8_t version    = 0;
+        UT_ASSERT(locateSnapshotMarker(buf, blen, &blockStart, &version));
+        n = collectBotHostRecords(buf, blen, blockStart, back, 16);
+    }
+    free(buf);
+    UT_ASSERT_MSG(n == 1, "%d log_BotHostData records", n);
+    for (i = 0; i < n; i++) {
+        if (back[i].kind == BOTHOST_RECORD_DECISION &&
+            back[i].decision == BOTHOST_DECISION_WOULD_MOVE &&
+            back[i].seat == 4 && back[i].toHost == 0 &&
+            back[i].predictedTenths == 120 &&
+            strcmp(back[i].reason, "would move (moves off)") == 0) {
+            found++;
+        }
+    }
+    UT_ASSERT(found == 1);
     return 0;
 }

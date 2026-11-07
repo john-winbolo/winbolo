@@ -489,6 +489,36 @@
  * text for above 0% and below 1% */
 #define STR_DLGLOBBY_BOTHOST_CPU_FMT        3650
 #define STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE  3651
+/* The same, per bot, from a newer server and host ({string1} = the percent
+ * without the % sign, "12", "3.4" or "0.035"): on the row of this
+ * computer's own host, on the server's row, and on another row
+ * ({string2} = the player's name for a player's own host, else the Bot
+ * Host's name) */
+#define STR_DLGLOBBY_BOTHOST_CPU_BOT_SELF   3896
+#define STR_DLGLOBBY_BOTHOST_CPU_BOT_SERVER 3897
+#define STR_DLGLOBBY_BOTHOST_CPU_BOT_OTHER  3898
+/* The lobby's Server bot slots row (Server Settings): its label, the
+ * warning on a value above the CPU test's recommendation ({number}), the
+ * mouse-over while -botcapacity locks it, the box with no cap, the box
+ * while the CPU test runs, and the mouse-over with the recommendation
+ * ({number}) */
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS 3899
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_OVER 3900
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_LOCKED 3901
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_NONE 3902
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_MEASURING 3903
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP 3904
+/* A Bot Host row that gets 0 slots because it shares its computer with the
+ * server ({string1} the row's name) or with another host ({string2}); and
+ * the row's slot box: its label, the "no override" item ({number} the
+ * slots the host offers), the mouse-over while -bothost-slots locks it,
+ * and the mouse-over otherwise */
+#define STR_DLGLOBBY_BOTHOST_SAME_SERVER 3905
+#define STR_DLGLOBBY_BOTHOST_SAME_HOST 3906
+#define STR_DLGLOBBY_BOTHOST_SLOTS_LABEL 3907
+#define STR_DLGLOBBY_BOTHOST_SLOTS_ALL 3908
+#define STR_DLGLOBBY_BOTHOST_SLOTS_LOCKED 3909
+#define STR_DLGLOBBY_BOTHOST_SLOTS_TIP 3910
 /* The lobby's one-game opt-out from running the server's bots on this
  * computer, next to the line above, and its mouse-over text */
 #define STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT     3652
@@ -3748,6 +3778,8 @@
 #define STR_LV_BOTHOST_TIP_BAD_PROBE             3892
 #define STR_LV_BOTHOST_TIP_READING               3893
 #define STR_LV_BOTHOST_TIP_BOTS                  3894
+/* A decision marker: the bot would move, but -bothost-nomove keeps it */
+#define STR_LV_BOTHOST_DEC_WOULD_MOVE            3895
 
 /* The Log Viewer's Chat panel: its title (and Windows menu item), the line
    it shows before any chat, the note for a line to the sender's team or to

@@ -957,7 +957,8 @@ void printArgs() {
   fprintf(stderr, "                opens (once for each version; the result is stored, and\n");
   fprintf(stderr, "                WINBOLO_CPU_SPEED_FILE names the file) and asks the bot\n");
   fprintf(stderr, "                brain. Caps lobby \"Add Bot\" requests; -bots and\n");
-  fprintf(stderr, "                scenario bots are not capped.\n");
+  fprintf(stderr, "                scenario bots are not capped. It locks the lobby's\n");
+  fprintf(stderr, "                Server bot slots at N: no player may change it.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots (default: the\n");
   fprintf(stderr, "                first of Brains/GoalHunter/init.lua,\n");
   fprintf(stderr, "                brains/GoalHunter/init.lua,\n");
@@ -1047,6 +1048,13 @@ void printArgs() {
   fprintf(stderr, "-bothost-free-sample-secs <s> - how often the free CPU of each host machine is read (default 5)\n");
   fprintf(stderr, "-bothost-free-history-secs <s> - how much free CPU history is kept for a raise (default 300)\n");
   fprintf(stderr, "-record-bothost-data - write the bot placement probes, free CPU readings and decisions into the round log (.wbv)\n");
+  fprintf(stderr, "-bothost-nomove - no bot moves between the server and the Bot Hosts while a game runs: each bot is placed\n");
+  fprintf(stderr, "                once and stays there (a fall-back to the server still happens). For brain-debug games.\n");
+  fprintf(stderr, "-bothost-slots <name>=<n> - give Bot Host <name> (its listed name, or the player's name for a\n");
+  fprintf(stderr, "                player's own host) at most n bots (0-16). It can only lower the slots the host offers,\n");
+  fprintf(stderr, "                and it locks that host's lobby slot box. Give each host once; several flags are allowed.\n");
+  fprintf(stderr, "                The game bot limit (lobby Add Bot) is the server's bot slots plus each Bot Host's;\n");
+  fprintf(stderr, "                a host on the same computer as the server or another counted host counts 0.\n");
   fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
   fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
@@ -3375,6 +3383,27 @@ int main(int argc, char **argv) {
       }
       transportUdpServerSetBotHostRecord(
           argExist(argc, argv, "record-bothost-data"));
+      transportUdpServerSetBotHostNoMove(
+          argExist(argc, argv, "bothost-nomove"));
+      {
+        /* -bothost-slots name=N, once per host; several allowed. */
+        int k;
+        for (k = 1; k < argc; k++) {
+          char err[160];
+          if (!argIsFlag(argv[k], "bothost-slots")) continue;
+          if (k + 1 >= argc) {
+            fprintf(stderr, "-bothost-slots: no name=N after it; ignored\n");
+            break;
+          }
+          if (!transportUdpServerAddBotHostSlots(argv[k + 1], err,
+                                                 sizeof(err))) {
+            fprintf(stderr, "-bothost-slots: %s; ignored\n", err);
+          } else {
+            fprintf(stderr, "-bothost-slots: %s\n", argv[k + 1]);
+          }
+          k++;
+        }
+      }
     }
     /* Say what the finder will show, after the sanitising, so an operator
      * sees a name that came out shorter or cleaner than typed. */

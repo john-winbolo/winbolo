@@ -5364,3 +5364,9 @@ bool clientSimGetStart(ClientSim *cs, BYTE i,
   if (dir) *dir = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
   return true;
 }
+
+bool clientSimGetServerBotSlots(const ClientSim *cs, ClientServerBotSlots *out) {
+  if (cs == NULL || !cs->serverBotSlotsHave) return false;
+  if (out != NULL) *out = cs->serverBotSlots;
+  return true;
+}

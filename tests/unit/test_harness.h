@@ -232,6 +232,9 @@ int run_lobby_bot_count_counts_only_connected_bots(void);
 int run_lobby_maxbots_cap_boundary(void);
 int run_lobby_add_bot_rejects_when_at_maxbots(void);
 int run_lobby_add_bot_rejects_at_host_capacity(void);
+int run_server_bot_slots_codec(void);
+int run_server_bot_slots_setting(void);
+int run_server_bot_slots_locked(void);
 int run_transfer_host_promotes_target(void);
 int run_transfer_host_rejects_non_host_sender(void);
 int run_transfer_host_openhost_does_not_grant(void);
@@ -962,12 +965,36 @@ int run_bot_host_overrun_no_raise_no_free_data(void);
 int run_bot_host_overrun_new_game_reset(void);
 int run_bot_host_overrun_may_take(void);
 int run_bot_host_cpu_free_codec(void);
+int run_machine_cpu_proc_stat_steal(void);
 int run_bothost_record_roundtrip(void);
+/* -bothost-nomove (test_bot_host_overrun.c; the record in
+ * test_log_roundtrip.c). */
+int run_bot_host_nomove_no_move_running(void);
+int run_bot_host_nomove_fallback(void);
+int run_bot_host_nomove_lobby_places(void);
+int run_bot_host_nomove_would_move_record(void);
 /* The lobby's CPU estimate per Bot Host row (test_bot_host_cpu.c). */
 int run_bot_host_cpu_percent(void);
 int run_bot_host_cpu_meter(void);
 int run_bot_host_cpu_codec(void);
 int run_bot_host_cpu_client_row(void);
+int run_bot_host_cpu_bot_format(void);
+int run_bot_host_cpu_bot_meter(void);
+int run_bot_host_cpu_bot_codec(void);
+int run_bot_host_cpu_bot_client_row(void);
+int run_bot_host_lag_codec(void);
+/* Bot Hosts on one computer, the game bot limit and the row slot override
+ * (test_bot_host_machine.c). */
+int run_bot_host_machine_addr(void);
+int run_machine_id_token(void);
+int run_machine_id_salt_repeat(void);
+int run_bot_host_machine_server_group(void);
+int run_bot_host_machine_client_group(void);
+int run_bot_host_machine_leader_leaves(void);
+int run_bot_host_game_bot_limit(void);
+int run_bot_host_slots_override(void);
+int run_bot_host_slots_arg_parse(void);
+int run_bot_host_machine_codec(void);
 /* The lobby's one-game opt-out from running bots on this computer
  * (test_bot_host_optout.c). */
 int run_bot_host_optout_slots_codec(void);
@@ -2663,6 +2690,7 @@ int run_screen_bullets_build(void);
  * primitives — window-minimum tracking as samples slide out, EWMA constant
  * convergence, and a monotonic overshoot-free step response. */
 int run_ping_smoother(void);
+int run_lobby_ping_color(void);
 
 /* Client timing estimator (test_client_timing.c): min-over-window clock
  * offset / pipeline depth / RTT and inter-arrival jitter over synthetic clean

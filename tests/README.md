@@ -192,7 +192,19 @@ bot capacity.
   the default answer.
 - `-botcapacity N` (0..16; 0 = no bots in this process) sets the number
   and runs no test. A number above 16 gives 16, with a note. Anything that
-  is not a whole number is an error.
+  is not a whole number is an error. It also locks the lobby's Server bot
+  slots at N: the row is read-only for every player (mouse-over "Set by
+  -botcapacity on the server"), and the server refuses a change with
+  `CMD_REJECT_LOCKED`.
+- The lobby's Server bot slots (Server Settings, 0..16, `LST_SERVER_BOT_SLOTS`)
+  sets how many bots the server runs in its own process: its slots in the
+  bot placement and its part of the Add Bot limit. The default is the
+  number above (the recommended value). A higher value is taken; the lobby
+  shows it greyer with a warning. Players who may change the other
+  settings may change it, in the lobby and while a game runs. During a
+  game a lower value moves only bots that may move, and none with
+  `-bothost-nomove`. `CTRL_SERVER_BOT_SLOTS` carries it to clients
+  (`clientSimGetServerBotSlots`); an older peer skips it.
 - One log line on stderr gives the result:
   `Bot capacity: 3 bots of GoalHunter (CPU speed test, stored result)`,
   `... measured now`, or `Bot capacity: override 3 (-botcapacity)`.
@@ -284,6 +296,87 @@ as a host too.
 - The console shows each step with the host, the overrun rate, the new
   limit and the free CPU numbers.
 - Unit tests: `bot_host_overrun_*` (`--test <name>`).
+
+#### No bot moves during a game (-bothost-nomove)
+
+For brain-debug games: each bot stays on one machine for the whole game.
+
+- At start the DS prints "Bot moves during the game are off
+  (-bothost-nomove)".
+- In the lobby the placement works as without the flag: the spread, the
+  free CPU check, listed Bot Hosts (-bothosts) and the players' hosts.
+- While the game runs, a bot is placed once. A bot there at the game start,
+  or one added during the game, may go from the server to a host only in
+  its first 10 s (BOT_HOST_START_PLACE_TICKS), and only when it was not on
+  a host before in this game. No bot moves after that: no spread move, no
+  lag move and no overrun move.
+- A fall-back still happens. A bot whose host leaves, times out, loses the
+  bot's connection, changes its brain files or offers fewer slots (0 for
+  the lobby's opt-out) goes back to the server and stays there.
+- The probes and the free CPU readings still run, and -record-bothost-data
+  still records them. When the overrun check would move a bot, the console
+  says "would move (moves off)" with the numbers, and the log gets a
+  decision 7 (would move) record. The Log Viewer shows it as a marker.
+- The next lobby (or the next round) places normally again.
+- Unit tests: `bot_host_nomove_*` (`--test <name>`).
+
+#### Game bot limit and Bot Hosts on one computer
+
+The lobby's Add Bot limit is the game bot limit: the server's bot slots
+plus the slots of each Bot Host that runs bots. A host that opted out, a
+host that still runs its CPU test, and a host on the same computer as the
+server or as another counted host count 0. -bots, scenario, sidecar and
+headless bots are not limited by it.
+
+- The DS finds hosts on one computer in two ways:
+  - The address: 127.0.0.1, or one of the DS's own interface addresses. A
+    shared public address is never proof.
+  - The machine token: each computer has a random 32-byte id file
+    (Windows `C:\ProgramData\WinBolo\machine_id`, macOS
+    `/Users/Shared/WinBolo`, Linux `/var/lib/winbolo` when writable, else
+    the user data folder; `WINBOLO_MACHINE_ID_DIR` sets another folder).
+    For each lobby, each game and each host join, the DS sends a new
+    16-byte salt (`CTRL_BOT_HOST_MACHINE_SALT`). Each host answers
+    SHA-256(id || salt) (`CTRL_BOT_HOST_MACHINE_ANSWER`). The id never
+    leaves the computer. A host answers each salt once only (it keeps the
+    last 64 in `machine_salts`). No answer in 5 s counts as another
+    computer.
+- A player's own host on the server's computer gets 0 slots. A listed host
+  there keeps its slots. Of hosts on one other computer, the first-joined
+  host that offers slots keeps them, and the others get 0. When it leaves,
+  the next one takes over.
+- The lobby row says "<name>: same computer as the server (0 bots)" or
+  "<name>: same computer as <other> (0 bots)" (`CTRL_BOT_HOST_ROW_SLOTS`).
+- The DS console prints one line per group, with each member and how it was
+  found, and a "game bot limit:" line when the limit changes.
+- To test: run a DS and two headless clients (each has its own Bot Host) on
+  one computer, with one `WINBOLO_MACHINE_ID_DIR` for all. The console
+  shows both player hosts in the server group and the limit equal to the
+  server's bot slots.
+
+#### Bot Host slot override (-bothost-slots)
+
+Each Bot Host row in the lobby (not the server row) has a "Slots" box: "All
+(N)", or 0 up to the N slots the host offers now. It only lowers. If the
+host later offers fewer slots, the lower number is used.
+
+- The players who may change Server Settings may change it. Others see it
+  read-only. It goes in the lobby setting `LST_BOT_HOST_SLOTS`
+  ([row][value or 0xFF]).
+- It lasts for this lobby: it goes back to "All" for the next lobby, and
+  when the host leaves and joins again.
+- `-bothost-slots <name>=N` on the DS (once per host; several flags are
+  allowed) sets it for the host with that listed name or player name. It
+  locks the row: read-only, with the mouse-over "Set by -bothost-slots on
+  the server", and the DS refuses a change. Bad input prints
+  "-bothost-slots: <reason>; ignored".
+- The placement, the free CPU check, the overrun check and the game bot
+  limit use the lower number. During a game a lower number moves only bots
+  that may move, and none with -bothost-nomove.
+- The Bot Host itself already has `--slots N` (standalone), and the
+  headless client has `--bothost-slots N`.
+- Unit tests: `bot_host_machine_*`, `machine_id_*`,
+  `bot_host_game_bot_limit`, `bot_host_slots_*` (`--test <name>`).
 
 ## Test Runner
 

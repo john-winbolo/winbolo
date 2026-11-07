@@ -155,6 +155,31 @@ typedef struct {
      * BOT_HOST_CPU_UNDER_ONE, or BOT_HOST_CPU_UNKNOWN until the server
      * sends one (an older server never does). */
     uint8_t cpu;
+    /* The part of its machine's CPU one of the row's bots uses, in
+     * thousandths of a percent (CTRL_BOT_HOST_CPU_BOT): cpuBotHave once the
+     * server sends one (an older server or host never does, and the row
+     * then shows cpu), cpuBot BOT_HOST_CPU_MILLI_UNKNOWN while there is no
+     * estimate yet, cpuBotOwner the player whose own computer the host is
+     * or BOT_HOST_CPU_OWNER_NONE. */
+    bool     cpuBotHave;
+    uint8_t  cpuBotOwner;
+    uint32_t cpuBot;
+    /* The lag the server measures to the host (CTRL_BOT_HOST_LAG), in ms:
+     * the row's ping. BOT_HOST_LAG_UNKNOWN until the server sends one (an
+     * older server never does). */
+    uint16_t lagMs;
+    /* CTRL_BOT_HOST_ROW_SLOTS: rowSlotsHave once the server sends one (an
+     * older server never does). machineKind is a BOT_HOST_MACHINE_* of
+     * bot_host_machine.h and machineOther the row of the host it shares a
+     * computer with (0xFF: none); machineZero: that gives it 0 slots.
+     * slotOverride: the row's override, 0..16 or 0xFF for none;
+     * slotLocked: -bothost-slots set it. */
+    bool    rowSlotsHave;
+    uint8_t machineKind;
+    uint8_t machineOther;
+    bool    machineZero;
+    uint8_t slotOverride;
+    bool    slotLocked;
     char    name[CLIENT_BOT_HOST_NAME_LEN];
 } ClientBotHostRow;
 
@@ -1362,6 +1387,18 @@ bool        clientSimGetAlliesInTrees(const ClientSim *cs);
  * back false until the first event arrives, and false plays every sound
  * centred, which is the classic behaviour. */
 bool        clientSimGetPositionalSound(const ClientSim *cs);
+/* The lobby's Server bot slots (CTRL_SERVER_BOT_SLOTS): value is the
+ * number in use and recommended the CPU test's, each 0..16, -1 for none
+ * (no cap) or -2 while the test runs; locked when -botcapacity set it.
+ * False, and *out untouched, until a server sends one (an older server
+ * never does). */
+typedef struct {
+    int  value;
+    int  recommended;
+    bool locked;
+} ClientServerBotSlots;
+bool        clientSimGetServerBotSlots(const ClientSim *cs,
+                                       ClientServerBotSlots *out);
 /* The server's host bot capacity from the lobby settings: how many bots it
  * runs in its own process at full strength, 0..16; -1 for no cap (also
  * before any settings arrive); -2 while its CPU speed test runs. */

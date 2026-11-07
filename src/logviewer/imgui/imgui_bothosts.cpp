@@ -187,6 +187,7 @@ static std::string decision_name(uint8_t d) {
     case BOTHOST_DECISION_RAISE:         return langGetText(STR_LV_BOTHOST_DEC_RAISE);
     case BOTHOST_DECISION_RAISE_REFUSED: return langGetText(STR_LV_BOTHOST_DEC_RAISE_REFUSED);
     case BOTHOST_DECISION_PLACE_REFUSED: return langGetText(STR_LV_BOTHOST_DEC_PLACE_REFUSED);
+    case BOTHOST_DECISION_WOULD_MOVE:    return langGetText(STR_LV_BOTHOST_DEC_WOULD_MOVE);
     default: {
         MessageArgs args = {};
         args.number = (int)d;
@@ -203,6 +204,7 @@ static ImU32 decision_colour(uint8_t d) {
     case BOTHOST_DECISION_RAISE:         return IM_COL32(60, 230, 120, 255);
     case BOTHOST_DECISION_RAISE_REFUSED: return IM_COL32(150, 150, 150, 255);
     case BOTHOST_DECISION_PLACE_REFUSED: return IM_COL32(90, 200, 230, 255);
+    case BOTHOST_DECISION_WOULD_MOVE:    return IM_COL32(240, 200, 60, 255);
     default:                             return IM_COL32(200, 200, 200, 255);
     }
 }

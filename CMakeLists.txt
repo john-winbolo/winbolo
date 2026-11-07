@@ -4940,6 +4940,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's CPU estimate per Bot Host row: the percent, the meter,
     # CTRL_BOT_HOST_CPU and the client's row.
     tests/unit/test_bot_host_cpu.c
+    tests/unit/test_bot_host_machine.c
     # The lobby's one-game opt-out from running bots on this computer: the
     # 0-slot report, the server giving the bots back, the client's state.
     tests/unit/test_bot_host_optout.c
@@ -6453,11 +6454,31 @@ set(_unit_test_names
     bot_host_overrun_new_game_reset
     bot_host_overrun_may_take
     bot_host_cpu_free_codec
+    machine_cpu_proc_stat_steal
     bothost_record_roundtrip
+    bot_host_nomove_no_move_running
+    bot_host_nomove_fallback
+    bot_host_nomove_lobby_places
+    bot_host_nomove_would_move_record
     bot_host_cpu_percent
     bot_host_cpu_meter
     bot_host_cpu_codec
     bot_host_cpu_client_row
+    bot_host_cpu_bot_format
+    bot_host_cpu_bot_meter
+    bot_host_cpu_bot_codec
+    bot_host_cpu_bot_client_row
+    bot_host_lag_codec
+    bot_host_machine_addr
+    machine_id_token
+    machine_id_salt_repeat
+    bot_host_machine_server_group
+    bot_host_machine_client_group
+    bot_host_machine_leader_leaves
+    bot_host_game_bot_limit
+    bot_host_slots_override
+    bot_host_slots_arg_parse
+    bot_host_machine_codec
     bot_host_optout_slots_codec
     bot_host_optout_give_back
     bot_host_optout_client_reset
@@ -7169,6 +7190,7 @@ set(_unit_test_names
     sim_rules_desc_range_phrase
     screen_bullets_build
     ping_smoother
+    lobby_ping_color
     client_timing
     interp_render
     interp_respawn_no_death_flash
@@ -7571,6 +7593,9 @@ set(_unit_test_names
     vote_back_to_lobby_blocked_without_lobby
     lobby_add_bot_rejects_when_at_maxbots
     lobby_add_bot_rejects_at_host_capacity
+    server_bot_slots_codec
+    server_bot_slots_setting
+    server_bot_slots_locked
     lobby_bot_count_counts_only_connected_bots
     lobby_maxbots_cap_boundary
     empty_return_to_lobby_removes_bots_and_unlocks
