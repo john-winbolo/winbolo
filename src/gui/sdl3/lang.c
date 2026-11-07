@@ -1474,6 +1474,10 @@ static const LangEntry langTable[] = {
     {3908, "All ({number})"},
     {3909, "Set by -bothost-slots on the server"},
     {3910, "The most bots this server gives this Bot Host, for this lobby only. It can only lower the slots the host offers."},
+    {3911, "(Estimated CPU per bot: CPU test running)"},
+    {3912, "(At most {string1}% per bot of this computer's CPU)"},
+    {3913, "(At most {string1}% per bot of the server's CPU)"},
+    {3914, "(At most {string1}% per bot of {string2}'s CPU)"},
     /* The Log Viewer's Chat panel */
     {3100, "Chat"},
     {3101, "No chat messages yet."},

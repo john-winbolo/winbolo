@@ -390,12 +390,22 @@ int run_bot_host_cpu_bot_codec(void) {
     in.u.botHostCpuBot.idx = 2;
     in.u.botHostCpuBot.owner = 5;
     in.u.botHostCpuBot.milli = 35;
+    in.u.botHostCpuBot.source = BOT_HOST_CPU_SRC_BUDGET;
     UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
-    UT_ASSERT(len == 6);
+    UT_ASSERT(len == 7);
     UT_ASSERT(dec(buf, len, &out));
     UT_ASSERT(out.type == CTRL_BOT_HOST_CPU_BOT);
     UT_ASSERT(out.u.botHostCpuBot.idx == 2 && out.u.botHostCpuBot.owner == 5);
     UT_ASSERT(out.u.botHostCpuBot.milli == 35);
+    UT_ASSERT(out.u.botHostCpuBot.source == BOT_HOST_CPU_SRC_BUDGET);
+    /* An older peer's six bytes: the value reads as measured. */
+    UT_ASSERT(dec(buf, 6, &out));
+    UT_ASSERT(out.u.botHostCpuBot.source == BOT_HOST_CPU_SRC_MEASURED);
+    /* A source this build does not know reads as measured. */
+    buf[6] = 0x77;
+    UT_ASSERT(dec(buf, 7, &out));
+    UT_ASSERT(out.u.botHostCpuBot.source == BOT_HOST_CPU_SRC_MEASURED);
+    in.u.botHostCpuBot.source = BOT_HOST_CPU_SRC_MEASURED;
 
     /* From a host, unknown, no owner. */
     in.u.botHostCpuBot.idx = BOT_HOST_CPU_IDX_SELF;
@@ -411,8 +421,8 @@ int run_bot_host_cpu_bot_codec(void) {
     in.u.botHostCpuBot.idx = 0;
     in.u.botHostCpuBot.milli = BOT_HOST_CPU_MILLI_MAX;
     UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
-    buf[6] = 0xAB;
-    UT_ASSERT(dec(buf, 7, &out));
+    buf[7] = 0xAB;
+    UT_ASSERT(dec(buf, 8, &out));
     UT_ASSERT(out.u.botHostCpuBot.milli == BOT_HOST_CPU_MILLI_MAX);
 
     /* 0 and past 100% read as unknown; a bad owner reads as none. */
@@ -429,7 +439,40 @@ int run_bot_host_cpu_bot_codec(void) {
     UT_ASSERT(!dec(buf, 5, &out));
     buf[0] = BOT_HOST_STATUS_ROWS;
     UT_ASSERT(!dec(buf, 6, &out));
-    UT_ASSERT(enc(&in, NULL, buf, 5, &len) != ENCODE_OK);
+    UT_ASSERT(enc(&in, NULL, buf, 6, &len) != ENCODE_OK);
+    return 0;
+}
+
+/* CTRL_BOT_HOST_CPU_BUDGET round trip, and the full-budget formula: a
+ * 12 ms budget every 20 ms on 12 logical cores is 5% (5000 milli). */
+int run_bot_host_cpu_budget(void) {
+    ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(CTRL_BOT_HOST_CPU_BUDGET);
+    ControlDecodeBodyFn dec = transportControlCodecBodyDecoder(CTRL_BOT_HOST_CPU_BUDGET);
+    ControlEvent in, out;
+    uint8_t buf[8];
+    size_t len = 0;
+
+    UT_ASSERT(botHostCpuMilliBudget(12.0, 20.0, 12) == 5000u);
+    UT_ASSERT(botHostCpuMilliBudget(12.0, 20.0, 1) == 60000u);
+    UT_ASSERT(botHostCpuMilliBudget(0.0, 20.0, 12) == BOT_HOST_CPU_MILLI_UNKNOWN);
+    UT_ASSERT(botHostCpuMilliBudget(12.0, 20.0, 0) == BOT_HOST_CPU_MILLI_UNKNOWN);
+
+    UT_ASSERT(enc != NULL && dec != NULL);
+    UT_ASSERT(strcmp(controlEventTypeName(CTRL_BOT_HOST_CPU_BUDGET),
+                     "CTRL_BOT_HOST_CPU_BUDGET") == 0);
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_CPU_BUDGET;
+    in.u.botHostCpuBudget.milli = 5000;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(len == 4);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.type == CTRL_BOT_HOST_CPU_BUDGET);
+    UT_ASSERT(out.u.botHostCpuBudget.milli == 5000);
+    UT_ASSERT(!dec(buf, 3, &out));
+    in.u.botHostCpuBudget.milli = 0;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.u.botHostCpuBudget.milli == BOT_HOST_CPU_MILLI_UNKNOWN);
     return 0;
 }
 

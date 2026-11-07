@@ -75,6 +75,27 @@ static inline uint32_t botHostCpuMilliPerBot(double busyMs, double botMs,
     return (uint32_t)milli;
 }
 
+/* The full-budget estimate of one bot's part of its machine's CPU, in the
+ * same thousandths of a percent: a bot that uses its whole think budget
+ * (budgetMs, the bot runners' per-bot target) once every everyMs (the time
+ * between thinks) holds budgetMs / everyMs of one core, and the machine has
+ * cores logical cores. The most a bot can use while the runners keep to
+ * their budget, so a measured value is at or below it. Unknown when any
+ * input is missing. */
+static inline uint32_t botHostCpuMilliBudget(double budgetMs, double everyMs,
+                                             int cores) {
+    return botHostCpuMilliPerBot(budgetMs, everyMs, cores);
+}
+
+/* Where a per-bot value the lobby shows comes from, in this order: the
+ * value measured from the bots thinking now; the last value measured for
+ * that host in this server session; the full-budget estimate; none (the
+ * lobby then says the CPU test is running). The round log records it. */
+#define BOT_HOST_CPU_SRC_NONE      0u
+#define BOT_HOST_CPU_SRC_MEASURED  1u
+#define BOT_HOST_CPU_SRC_LAST      2u
+#define BOT_HOST_CPU_SRC_BUDGET    3u
+
 /* A per-bot value read off the wire: 0 and values past 100% read as
  * unknown. */
 static inline uint32_t botHostCpuMilliFromWire(uint32_t v) {

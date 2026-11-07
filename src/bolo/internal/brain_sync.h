@@ -36,7 +36,10 @@
  *  The hashes are 64-bit FNV-1a. They find changed and
  *  damaged files; they are not a defence against a server
  *  that lies, which the host trusts anyway since it runs the
- *  server's code.
+ *  server's code. The second form of the manifest (v2) also
+ *  carries each file's SHA-256, so a host can take a file
+ *  from its own install of the brain, or from any version
+ *  folder, only when it is the same file to the byte.
  *********************************************************/
 
 #ifndef BRAIN_SYNC_H
@@ -59,10 +62,13 @@
  * its own, so the server never compresses a whole large file in one tick. */
 #define BRAIN_SYNC_CHUNK_BYTES     (128u * 1024u)
 
+#define BRAIN_SYNC_SHA_LEN 32
+
 typedef struct {
     char     path[BRAIN_SYNC_PATH_MAX];  /* relative, '/' separated */
     uint32_t size;
     uint64_t hash;
+    uint8_t  sha[BRAIN_SYNC_SHA_LEN];    /* SHA-256; zero from a v1 list */
     int64_t  mtime;    /* local only: lets a rescan skip a file it hashed */
 } BrainSyncFile;
 
@@ -78,6 +84,7 @@ typedef struct {
 typedef struct {
     int            brainCount;
     bool           debugMode;  /* the server loads brains in debug mode */
+    bool           haveSha;    /* each file's sha is set (not a v1 list) */
     uint64_t       version;    /* hash over every brain's name and version */
     BrainSyncBrain brains[BRAIN_SYNC_MAX_BRAINS];
 } BrainSyncManifest;
@@ -135,10 +142,19 @@ const BrainSyncBrain *brainSyncFindBrain(const BrainSyncManifest *m,
  *     per file: [pathLen 1][path][size 4][hash 8] */
 uint8_t *brainSyncManifestEncode(const BrainSyncManifest *m, size_t *outLen);
 
-/* Decode a manifest. Every name and path must pass the checks above, the
- * counts and sizes must be in range, the files of a brain must be in
- * strictly rising path order, and each version must match the one worked
- * out from the lists. On false *out is left empty. */
+/* The v2 form, for a host that sent CTRL_BOT_HOST_SYNC_CAPS: 'B' 'S' 2,
+ * then the same fields with [sha 32] after each file's hash, then a
+ * trailer [shaCheck 8], the FNV-1a hash of every sha in order, so a
+ * changed sha byte is found as a changed hash byte is. An older host
+ * refuses this form (it takes only 'B' 'S' 1) and is never sent it. The
+ * versions are the same as in the v1 form: the sha is not part of them. */
+uint8_t *brainSyncManifestEncodeV2(const BrainSyncManifest *m, size_t *outLen);
+
+/* Decode a manifest of either form. Every name and path must pass the
+ * checks above, the counts and sizes must be in range, the files of a
+ * brain must be in strictly rising path order, and each version must
+ * match the one worked out from the lists. out->haveSha tells the v2 form.
+ * On false *out is left empty. */
 bool brainSyncManifestDecode(const uint8_t *buf, size_t len,
                              BrainSyncManifest *out);
 
@@ -157,6 +173,14 @@ bool brainSyncCacheFile(char *out, size_t outSz, const char *root,
 /* True when the file at path has this size and hash. */
 bool brainSyncFileMatches(const char *path, uint32_t size, uint64_t hash);
 
+/* True when the file at path is f: its size and hash, and its sha too
+ * when useSha. */
+bool brainSyncFileIs(const char *path, const BrainSyncFile *f, bool useSha);
+
+/* True when data is f: its size, hash and sha. The check on every file a
+ * host takes from a packed stream. */
+bool brainSyncDataIs(const BrainSyncFile *f, const void *data, size_t len);
+
 /* Write len bytes to path through a ".part" file and a rename, making the
  * folders on the way. The caller has checked the path. */
 bool brainSyncWriteFile(const char *path, const void *data, size_t len);
@@ -169,6 +193,18 @@ typedef struct {
     uint32_t needBytes;     /* their raw size */
     /* need[i] = (brain << 16) | file, for i < needCount. */
     uint32_t *need;
+    /* brainSyncPlanPacked only. */
+    int      installCount;  /* files the install has: read there or copied */
+    /* The brain runs from the install folder as it is: no file of it is
+     * copied or sent. */
+    bool     inPlace[BRAIN_SYNC_MAX_BRAINS];
+    /* The brain's stage folder holds files: brainSyncCommitStage it once
+     * the files it needs are in. */
+    bool     staged[BRAIN_SYNC_MAX_BRAINS];
+    /* Per brain: files the install has, and files the cache has (held or
+     * copied from another version folder). */
+    int      installOf[BRAIN_SYNC_MAX_BRAINS];
+    int      cacheOf[BRAIN_SYNC_MAX_BRAINS];
 } BrainSyncPlan;
 
 /* Check every file of every brain in m against the cache under root. A file
@@ -178,6 +214,38 @@ typedef struct {
  * or memory runs out. The caller frees plan->need. */
 bool brainSyncPlanCache(const BrainSyncManifest *m, const char *root,
                         BrainSyncPlan *plan);
+
+/* "<root>/<brain>/<version hex>.tmp", the stage folder of a version: files
+ * are put together there and become the version folder only when every
+ * one is in and checked. The cache list skips it (it is not 16 hex). */
+bool brainSyncStageDir(char *out, size_t outSz, const char *root,
+                       const char *brain, uint64_t version);
+
+/* The plan for a v2 manifest (m->haveSha). installRoot, when not NULL, is
+ * the host's own brain folder (the release brains next to its program):
+ * it is only read, never written.
+ *
+ * For each brain: when the manifest is not in debug mode and the brain in
+ * installRoot gives the same file list (every path, size, hash and sha),
+ * the brain runs from there (inPlace) and nothing is copied. Else each file
+ * is held when its version folder has it; or it is copied into the stage
+ * folder from another version folder of the brain or from installRoot,
+ * when the sha matches; or it is listed to download. A leftover stage
+ * folder is removed first. False only when a path is refused or memory
+ * runs out. The caller frees plan->need. */
+bool brainSyncPlanPacked(const BrainSyncManifest *m, const char *root,
+                         const char *installRoot, BrainSyncPlan *plan);
+
+/* Move a brain's stage folder into its version folder: a rename of the
+ * whole folder when there is no version folder yet, else a move of each
+ * file the stage holds, then the stage folder is removed. True when there
+ * was no stage folder. */
+bool brainSyncCommitStage(const char *root, const BrainSyncBrain *br);
+
+/* Remove a folder and everything in it. A link or junction inside is not
+ * followed (and stays, so the folder stays too). True when the path is gone
+ * or was never there. */
+bool brainSyncRemoveTree(const char *path);
 
 /* Compress one chunk for the wire: [rawLen 4 BE][zlib stream]. Returns a
  * malloc'd buffer the caller frees, or NULL. */

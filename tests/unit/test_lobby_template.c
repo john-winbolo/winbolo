@@ -1740,3 +1740,62 @@ int run_lobby_template_add_bot_takes_template(void) {
     ltDropBrainFile();
     return 0;
 }
+
+/* ── A bot added with SERVER_SIM_BOT_TEAM_DEFAULT is on a team ─────── */
+
+/* The -bots and plain Add Bot paths ask the add for the join rule's team,
+ * so the bot is on a team from the moment it is created, whether it runs at
+ * once or waits for a Bot Host slot. An explicit team 0 stays team 0. */
+int run_lobby_bot_default_team_on_add(void) {
+    ServerSim *sim;
+    int        slot;
+
+    UT_ASSERT(ltMakeBrainFile("bot_default_team"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(sim->lobbyPlayers[0].teamNumber == 1,
+                  "the human in player 0 is on team %d, expected 1",
+                  (int)sim->lobbyPlayers[0].teamNumber);
+
+    for (slot = 1; slot <= 3; slot++) {
+        ServerSimBotConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.brainPath  = ltBrainPath;
+        cfg.brainName  = "Bot";
+        cfg.ai         = aiFull;
+        cfg.gameType   = gameOpen;
+        cfg.teamNumber = SERVER_SIM_BOT_TEAM_DEFAULT;
+        UT_ASSERT(serverSimAddBot(sim, (BYTE)slot, &cfg));
+        UT_ASSERT_MSG(sim->lobbyPlayers[slot].teamNumber > 0 &&
+                      sim->lobbyPlayers[slot].teamNumber < MAX_TANKS,
+                      "bot in player %d is on team %d after the add", slot,
+                      (int)sim->lobbyPlayers[slot].teamNumber);
+    }
+    /* The join rule: player 1 on team 2, then the smallest team in use. */
+    UT_ASSERT_MSG(sim->lobbyPlayers[1].teamNumber == 2,
+                  "player 1 on team %d, expected 2",
+                  (int)sim->lobbyPlayers[1].teamNumber);
+    UT_ASSERT_MSG(sim->lobbyPlayers[2].teamNumber !=
+                  sim->lobbyPlayers[3].teamNumber,
+                  "players 2 and 3 both on team %d; the join rule balances",
+                  (int)sim->lobbyPlayers[2].teamNumber);
+
+    {
+        ServerSimBotConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.brainPath  = ltBrainPath;
+        cfg.brainName  = "Loner";
+        cfg.ai         = aiFull;
+        cfg.gameType   = gameOpen;
+        cfg.teamNumber = 0;
+        UT_ASSERT(serverSimAddBot(sim, 4, &cfg));
+        UT_ASSERT_MSG(sim->lobbyPlayers[4].teamNumber == 0,
+                      "an explicit team 0 became team %d",
+                      (int)sim->lobbyPlayers[4].teamNumber);
+    }
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}

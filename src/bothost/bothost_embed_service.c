@@ -135,6 +135,16 @@ void botHostEmbedService(struct ClientSim *cs) {
         return;
     }
     if (embedSettings.disabled) return;
+    {
+        /* Once a run: session folders a crash left. */
+        static bool swept = false;
+        if (!swept) {
+            char cache[1024];
+            swept = true;
+            embedCacheDir(cache, sizeof(cache));
+            botHostEmbedSweepSessions(cache);
+        }
+    }
 
     haveTicket = clientSimGetBotHostTicket(cs, &player, ticket, brain, NULL);
     /* Before a start too, so a host started with the opt-out on joins

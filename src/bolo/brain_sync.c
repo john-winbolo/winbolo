@@ -21,6 +21,14 @@
 
 #include "brain_sync.h"
 #include "brain_list_internal.h"   /* brainListScan, BRAIN_LIST_PATH_LEN */
+#include "machine_id.h"            /* machineSha256 */
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
 
 /* ── Hash and checks ───────────────────────────────────────────────────── */
 
@@ -249,6 +257,7 @@ static void addFile(Collect *c, const char *full, const char *rel,
     if (old != NULL && old->size == f->size && old->mtime == f->mtime &&
         f->mtime != 0) {
         f->hash = old->hash;
+        memcpy(f->sha, old->sha, sizeof(f->sha));
     } else {
         size_t sz = 0;
         void *data = SDL_LoadFile(full, &sz);
@@ -259,6 +268,7 @@ static void addFile(Collect *c, const char *full, const char *rel,
         }
         f->size = (uint32_t)sz;
         f->hash = brainSyncHash(BRAIN_SYNC_HASH_SEED, data, sz);
+        machineSha256(data != NULL ? data : (const void *)"", sz, f->sha);
         SDL_free(data);
     }
     b->fileCount++;
@@ -386,6 +396,7 @@ void brainSyncBuildManifest(BrainSyncManifest *out, bool debugMode,
 
     memset(out, 0, sizeof(*out));
     out->debugMode = debugMode;
+    out->haveSha = true;
     paths = (char (*)[BRAIN_LIST_PATH_LEN])calloc(BRAIN_LIST_MAX,
                                                   BRAIN_LIST_PATH_LEN);
     if (paths == NULL) return;
@@ -434,8 +445,22 @@ static uint64_t getU64(const uint8_t *p) {
 }
 
 
-uint8_t *brainSyncManifestEncode(const BrainSyncManifest *m, size_t *outLen) {
+/* The FNV-1a hash of every file's sha, the v2 trailer. */
+static uint64_t shaCheckOf(const BrainSyncManifest *m) {
+    uint64_t h = BRAIN_SYNC_HASH_SEED;
+    int b, i;
+    for (b = 0; b < m->brainCount; b++) {
+        for (i = 0; i < m->brains[b].fileCount; i++) {
+            h = brainSyncHash(h, m->brains[b].files[i].sha, BRAIN_SYNC_SHA_LEN);
+        }
+    }
+    return h;
+}
+
+static uint8_t *manifestEncodeAs(const BrainSyncManifest *m, size_t *outLen,
+                                 int form) {
     size_t len = 3 + 1 + 1 + 8, pos = 0;
+    size_t shaLen = form == 2 ? BRAIN_SYNC_SHA_LEN : 0;
     uint8_t *buf;
     int b, i;
 
@@ -444,15 +469,16 @@ uint8_t *brainSyncManifestEncode(const BrainSyncManifest *m, size_t *outLen) {
         const BrainSyncBrain *br = &m->brains[b];
         len += 1 + strlen(br->name) + 8 + 2;
         for (i = 0; i < br->fileCount; i++) {
-            len += 1 + strlen(br->files[i].path) + 4 + 8;
+            len += 1 + strlen(br->files[i].path) + 4 + 8 + shaLen;
         }
     }
+    if (form == 2) len += 8;
     if (len > BRAIN_SYNC_MANIFEST_MAX) return NULL;
     buf = (uint8_t *)malloc(len);
     if (buf == NULL) return NULL;
     buf[pos++] = 'B';
     buf[pos++] = 'S';
-    buf[pos++] = 1;
+    buf[pos++] = (uint8_t)form;
     buf[pos++] = m->debugMode ? 1 : 0;
     buf[pos++] = (uint8_t)m->brainCount;
     putU64(buf + pos, m->version);
@@ -477,24 +503,48 @@ uint8_t *brainSyncManifestEncode(const BrainSyncManifest *m, size_t *outLen) {
             pos += 4;
             putU64(buf + pos, f->hash);
             pos += 8;
+            if (shaLen > 0) {
+                memcpy(buf + pos, f->sha, shaLen);
+                pos += shaLen;
+            }
         }
+    }
+    if (form == 2) {
+        putU64(buf + pos, shaCheckOf(m));
+        pos += 8;
     }
     *outLen = pos;
     return buf;
 }
 
+uint8_t *brainSyncManifestEncode(const BrainSyncManifest *m, size_t *outLen) {
+    return manifestEncodeAs(m, outLen, 1);
+}
+
+uint8_t *brainSyncManifestEncodeV2(const BrainSyncManifest *m, size_t *outLen) {
+    return manifestEncodeAs(m, outLen, 2);
+}
+
 bool brainSyncManifestDecode(const uint8_t *buf, size_t len,
                              BrainSyncManifest *out) {
-    size_t pos = 0;
+    size_t pos = 0, shaLen, end;
     uint64_t wantVersion, total = 0;
     int b, i, count;
 
     if (out == NULL) return false;
     memset(out, 0, sizeof(*out));
     if (buf == NULL || len < 13 || len > BRAIN_SYNC_MANIFEST_MAX) return false;
-    if (buf[0] != 'B' || buf[1] != 'S' || buf[2] != 1) return false;
+    if (buf[0] != 'B' || buf[1] != 'S' || (buf[2] != 1 && buf[2] != 2)) {
+        return false;
+    }
     if (buf[3] & ~1u) return false;
+    shaLen = buf[2] == 2 ? BRAIN_SYNC_SHA_LEN : 0;
+    /* The v2 trailer is not part of the brain list. */
+    if (buf[2] == 2 && len < 13 + 8) return false;
+    end = buf[2] == 2 ? len - 8 : len;
+    len = end;
     out->debugMode = (buf[3] & 1) != 0;
+    out->haveSha = buf[2] == 2;
     count = buf[4];
     if (count > BRAIN_SYNC_MAX_BRAINS) return false;
     wantVersion = getU64(buf + 5);
@@ -528,7 +578,9 @@ bool brainSyncManifestDecode(const uint8_t *buf, size_t len,
             size_t pl;
             if (pos + 1 > len) goto bad;
             pl = buf[pos++];
-            if (pl == 0 || pl >= sizeof(f->path) || pos + pl + 12 > len) goto bad;
+            if (pl == 0 || pl >= sizeof(f->path) || pos + pl + 12 + shaLen > len) {
+                goto bad;
+            }
             memcpy(f->path, buf + pos, pl);
             f->path[pl] = '\0';
             pos += pl;
@@ -538,6 +590,10 @@ bool brainSyncManifestDecode(const uint8_t *buf, size_t len,
             pos += 4;
             f->hash = getU64(buf + pos);
             pos += 8;
+            if (shaLen > 0) {
+                memcpy(f->sha, buf + pos, shaLen);
+                pos += shaLen;
+            }
             if (f->size > BRAIN_SYNC_FILE_MAX_BYTES) goto bad;
             total += f->size;
             if (total > BRAIN_SYNC_TOTAL_MAX_BYTES) goto bad;
@@ -548,6 +604,7 @@ bool brainSyncManifestDecode(const uint8_t *buf, size_t len,
     if (pos != len) goto bad;
     brainSyncComputeVersions(out);
     if (out->version != wantVersion) goto bad;
+    if (out->haveSha && getU64(buf + end) != shaCheckOf(out)) goto bad;
     return true;
 
 bad:
@@ -589,6 +646,31 @@ bool brainSyncFileMatches(const char *path, uint32_t size, uint64_t hash) {
     return ok;
 }
 
+bool brainSyncDataIs(const BrainSyncFile *f, const void *data, size_t len) {
+    uint8_t sha[BRAIN_SYNC_SHA_LEN];
+    if (f == NULL || len != f->size || (data == NULL && len != 0)) return false;
+    if (brainSyncHash(BRAIN_SYNC_HASH_SEED, data, len) != f->hash) return false;
+    machineSha256(data != NULL ? data : (const void *)"", len, sha);
+    return memcmp(sha, f->sha, sizeof(sha)) == 0;
+}
+
+bool brainSyncFileIs(const char *path, const BrainSyncFile *f, bool useSha) {
+    SDL_PathInfo info;
+    size_t sz = 0;
+    void *data;
+    bool ok;
+    if (!useSha) return brainSyncFileMatches(path, f->size, f->hash);
+    if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE ||
+        info.size != f->size) {
+        return false;
+    }
+    data = SDL_LoadFile(path, &sz);
+    if (data == NULL && f->size != 0) return false;
+    ok = brainSyncDataIs(f, data, sz);
+    SDL_free(data);
+    return ok;
+}
+
 bool brainSyncWriteFile(const char *path, const void *data, size_t len) {
     char dir[1024];
     char part[1100];
@@ -616,10 +698,29 @@ bool brainSyncWriteFile(const char *path, const void *data, size_t len) {
     return ok;
 }
 
+/* Copy the file at src to target when it is f. src is only read. */
+static bool copyIfSame(const char *src, const BrainSyncFile *f, bool useSha,
+                       const char *target) {
+    size_t sz = 0;
+    void *data;
+    bool done;
+    if (!brainSyncFileIs(src, f, useSha)) return false;
+    data = SDL_LoadFile(src, &sz);
+    if (data == NULL && f->size != 0) return false;
+    /* Checked again on the bytes read, in case the file changed between. */
+    done = (useSha ? brainSyncDataIs(f, data, sz)
+                   : (sz == f->size &&
+                      brainSyncHash(BRAIN_SYNC_HASH_SEED, data, sz) == f->hash)) &&
+           brainSyncWriteFile(target, data != NULL ? data : "", sz);
+    SDL_free(data);
+    return done;
+}
+
 /* Look through the other version folders of a brain for a copy of rel with
- * this size and hash, and copy it in to target. */
-static bool copyFromSibling(const char *root, const BrainSyncBrain *br,
-                            const BrainSyncFile *f, const char *target) {
+ * this size and hash (and sha when useSha), and copy it in to target. */
+static bool copyFromSiblingAs(const char *root, const BrainSyncBrain *br,
+                              const BrainSyncFile *f, const char *target,
+                              bool useSha) {
     DirNames *dn;
     char brainDir[1024], hex[17];
     bool done = false;
@@ -638,22 +739,23 @@ static bool copyFromSibling(const char *root, const BrainSyncBrain *br,
     brainSyncVersionHex(br->version, hex);
     for (i = 0; i < dn->count && !done; i++) {
         char cand[1400];
-        size_t sz = 0;
-        void *data;
         if (strcmp(dn->names[i], hex) == 0) continue;
         if (!brainSyncNameSafe(dn->names[i])) continue;
+        /* Only version folders: not a stage folder ("<hex>.tmp"). */
+        if (strlen(dn->names[i]) != 16) continue;
         if ((size_t)SDL_snprintf(cand, sizeof(cand), "%s/%s/%s", brainDir,
                                  dn->names[i], f->path) >= sizeof(cand)) {
             continue;
         }
-        if (!brainSyncFileMatches(cand, f->size, f->hash)) continue;
-        data = SDL_LoadFile(cand, &sz);
-        if (data == NULL && f->size != 0) continue;
-        done = brainSyncWriteFile(target, data, sz);
-        SDL_free(data);
+        done = copyIfSame(cand, f, useSha, target);
     }
     free(dn);
     return done;
+}
+
+static bool copyFromSibling(const char *root, const BrainSyncBrain *br,
+                            const BrainSyncFile *f, const char *target) {
+    return copyFromSiblingAs(root, br, f, target, false);
 }
 
 bool brainSyncPlanCache(const BrainSyncManifest *m, const char *root,
@@ -687,6 +789,197 @@ bool brainSyncPlanCache(const BrainSyncManifest *m, const char *root,
         }
     }
     return true;
+}
+
+/* ── Packed plan and the stage folder ──────────────────────────────────── */
+
+bool brainSyncStageDir(char *out, size_t outSz, const char *root,
+                       const char *brain, uint64_t version) {
+    char dir[1024];
+    if (!brainSyncCacheDir(dir, sizeof(dir), root, brain, version)) return false;
+    return (size_t)SDL_snprintf(out, outSz, "%s.tmp", dir) < outSz;
+}
+
+/* True when a path is a link or junction, which a tree removal must not
+ * go through. */
+static bool pathIsLink(const char *path) {
+#ifdef _WIN32
+    wchar_t w[1100];
+    DWORD a;
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, w,
+                            (int)(sizeof(w) / sizeof(w[0]))) == 0) {
+        return true;   /* not a path it can check: leave it */
+    }
+    a = GetFileAttributesW(w);
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT);
+#else
+    struct stat st;
+    return lstat(path, &st) == 0 && S_ISLNK(st.st_mode);
+#endif
+}
+
+typedef struct {
+    const char *dir;
+    bool        ok;
+} RemoveCtx;
+
+static SDL_EnumerationResult SDLCALL removeEntry(void *userdata,
+                                                 const char *dirname,
+                                                 const char *fname) {
+    RemoveCtx *r = (RemoveCtx *)userdata;
+    char path[1400];
+    (void)dirname;
+    if (strcmp(fname, ".") == 0 || strcmp(fname, "..") == 0) {
+        return SDL_ENUM_CONTINUE;
+    }
+    if ((size_t)SDL_snprintf(path, sizeof(path), "%s/%s", r->dir, fname)
+        >= sizeof(path)) {
+        r->ok = false;
+        return SDL_ENUM_CONTINUE;
+    }
+    if (!brainSyncRemoveTree(path)) r->ok = false;
+    return SDL_ENUM_CONTINUE;
+}
+
+bool brainSyncRemoveTree(const char *path) {
+    SDL_PathInfo pi;
+    RemoveCtx r;
+    if (path == NULL || path[0] == '\0') return false;
+    if (!SDL_GetPathInfo(path, &pi)) return true;   /* nothing there */
+    if (pathIsLink(path)) return false;
+    if (pi.type != SDL_PATHTYPE_DIRECTORY) return SDL_RemovePath(path);
+    r.dir = path;
+    r.ok = true;
+    if (!SDL_EnumerateDirectory(path, removeEntry, &r)) r.ok = false;
+    if (!r.ok) return false;
+    return SDL_RemovePath(path);
+}
+
+/* True when the install folder's copy of br is br, file for file. */
+static bool installIsSame(const char *installRoot, const BrainSyncBrain *br) {
+    BrainSyncBrain local;
+    char dir[1024];
+    bool same;
+    int i;
+    if ((size_t)SDL_snprintf(dir, sizeof(dir), "%s/%s", installRoot, br->name)
+        >= sizeof(dir)) {
+        return false;
+    }
+    if (!brainSyncCollectBrain(&local, br->name, dir, false, NULL)) return false;
+    same = local.version == br->version && local.fileCount == br->fileCount;
+    for (i = 0; same && i < br->fileCount; i++) {
+        same = memcmp(local.files[i].sha, br->files[i].sha,
+                      BRAIN_SYNC_SHA_LEN) == 0;
+    }
+    free(local.files);
+    return same;
+}
+
+bool brainSyncPlanPacked(const BrainSyncManifest *m, const char *root,
+                         const char *installRoot, BrainSyncPlan *plan) {
+    int b, i, total = 0;
+
+    memset(plan, 0, sizeof(*plan));
+    for (b = 0; b < m->brainCount; b++) total += m->brains[b].fileCount;
+    plan->need = (uint32_t *)calloc((size_t)(total > 0 ? total : 1),
+                                    sizeof(uint32_t));
+    if (plan->need == NULL) return false;
+    for (b = 0; b < m->brainCount; b++) {
+        const BrainSyncBrain *br = &m->brains[b];
+        char stage[1100];
+        int need0 = plan->needCount, staged = 0;
+
+        /* Run in place only outside debug mode: a debug brain may write
+         * files into its own folder, and the install is never written. */
+        if (installRoot != NULL && m->haveSha && !m->debugMode &&
+            installIsSame(installRoot, br)) {
+            plan->inPlace[b] = true;
+            plan->installCount += br->fileCount;
+            plan->installOf[b] = br->fileCount;
+            continue;
+        }
+        if (!brainSyncStageDir(stage, sizeof(stage), root, br->name,
+                               br->version)) {
+            goto refused;
+        }
+        (void)brainSyncRemoveTree(stage);
+        for (i = 0; i < br->fileCount; i++) {
+            const BrainSyncFile *f = &br->files[i];
+            char target[1400], staging[1400], inst[1400];
+            if (!brainSyncCacheFile(target, sizeof(target), root, br->name,
+                                    br->version, f->path) ||
+                (size_t)SDL_snprintf(staging, sizeof(staging), "%s/%s", stage,
+                                     f->path) >= sizeof(staging)) {
+                goto refused;
+            }
+            if (brainSyncFileIs(target, f, m->haveSha)) {
+                plan->haveCount++;
+                plan->cacheOf[b]++;
+            } else if (copyFromSiblingAs(root, br, f, staging, m->haveSha)) {
+                plan->copyCount++;
+                plan->cacheOf[b]++;
+                staged++;
+            } else if (installRoot != NULL && m->haveSha &&
+                       (size_t)SDL_snprintf(inst, sizeof(inst), "%s/%s/%s",
+                                            installRoot, br->name, f->path)
+                           < sizeof(inst) &&
+                       copyIfSame(inst, f, true, staging)) {
+                plan->installCount++;
+                plan->installOf[b]++;
+                staged++;
+            } else {
+                plan->need[plan->needCount++] = ((uint32_t)b << 16) | (uint32_t)i;
+                plan->needBytes += f->size;
+            }
+        }
+        plan->staged[b] = staged > 0 || plan->needCount > need0;
+    }
+    return true;
+
+refused:
+    free(plan->need);
+    memset(plan, 0, sizeof(*plan));
+    return false;
+}
+
+bool brainSyncCommitStage(const char *root, const BrainSyncBrain *br) {
+    char stage[1100], ver[1100];
+    SDL_PathInfo pi;
+    bool ok = true;
+    int i;
+
+    if (!brainSyncStageDir(stage, sizeof(stage), root, br->name, br->version) ||
+        !brainSyncCacheDir(ver, sizeof(ver), root, br->name, br->version)) {
+        return false;
+    }
+    if (!SDL_GetPathInfo(stage, &pi)) return true;
+    if (!SDL_GetPathInfo(ver, &pi)) {
+        /* No version folder yet: the whole folder at once. */
+        if (SDL_RenamePath(stage, ver)) return true;
+    }
+    for (i = 0; i < br->fileCount; i++) {
+        char from[1400], to[1400], dir[1400];
+        size_t n;
+        if ((size_t)SDL_snprintf(from, sizeof(from), "%s/%s", stage,
+                                 br->files[i].path) >= sizeof(from) ||
+            (size_t)SDL_snprintf(to, sizeof(to), "%s/%s", ver,
+                                 br->files[i].path) >= sizeof(to)) {
+            ok = false;
+            continue;
+        }
+        if (!SDL_GetPathInfo(from, &pi)) continue;
+        SDL_strlcpy(dir, to, sizeof(dir));
+        n = strlen(dir);
+        while (n > 0 && dir[n - 1] != '/') n--;
+        if (n > 0) {
+            dir[n - 1] = '\0';
+            (void)SDL_CreateDirectory(dir);
+        }
+        (void)SDL_RemovePath(to);
+        if (!SDL_RenamePath(from, to)) ok = false;
+    }
+    if (!brainSyncRemoveTree(stage)) ok = false;
+    return ok;
 }
 
 /* ── Chunks ────────────────────────────────────────────────────────────── */

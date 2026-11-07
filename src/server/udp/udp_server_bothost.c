@@ -405,7 +405,8 @@ static int botHostUsedSlots(int h) {
  * there reaches the hosts before the game starts. */
 #define BOT_HOST_MANIFEST_POLL_TICKS 250
 
-/* Drop the file being sent and the files asked for. */
+/* Drop the file being sent, the files asked for, and the packed stream
+ * and its requests. */
 static void botHostFileReset(BotHostConn *hc) {
     SDL_free(hc->fileData);
     hc->fileData = NULL;
@@ -413,6 +414,17 @@ static void botHostFileReset(BotHostConn *hc) {
     hc->fileOffset = 0;
     hc->fileSize = 0;
     hc->fileReqCount = 0;
+    brainPackWriterFree(hc->packW);
+    hc->packW = NULL;
+    SDL_free(hc->packData);
+    hc->packData = NULL;
+    hc->packFileOpen = false;
+    hc->packQueue = 0;
+    hc->packReqs = 0;
+    hc->packFilesAll = hc->packFilesSent = 0;
+    hc->packFromInstall = hc->packFromCache = 0;
+    hc->packRaw = hc->packComp = 0;
+    hc->packLogged = false;
 }
 
 /* The host holds every file of the current manifest. */
@@ -622,7 +634,7 @@ static void botHostMachineLog(void) {
  * host with no answer counts as another computer. */
 static void botHostMachineUpdate(void) {
     BotHostMachineIn in[MAX_BOT_HOSTS];
-    bool all = true;
+    bool all = true, otherComputer;
     int h;
     botHostOwnIpsRefresh();
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
@@ -635,12 +647,16 @@ static void botHostMachineUpdate(void) {
         return;
     }
     memset(in, 0, sizeof(in));
+    /* Tests only: WINBOLO_BOTHOST_TEST_OTHER_COMPUTER=1 makes every host
+     * count as another computer than the server's, so one desktop can play
+     * a server with a remote player host. */
+    otherComputer = SDL_getenv("WINBOLO_BOTHOST_TEST_OTHER_COMPUTER") != NULL;
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         const BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
         in[h].present = true;
         in[h].playerHost = hc->playerHost;
-        in[h].addrServer = botHostAddrIsServerMachine(
+        in[h].addrServer = !otherComputer && botHostAddrIsServerMachine(
             hc->addr.sin_addr.s_addr, botHostOwnIp, botHostOwnIpCount);
         in[h].hashHave = hc->machineHave && hc->machineSeq == botHostSaltSeq;
         memcpy(in[h].hash, hc->machineHash, sizeof(in[h].hash));
@@ -649,7 +665,8 @@ static void botHostMachineUpdate(void) {
                                               hc->slotOvr.override);
     }
     botHostMachineGroup(in, MAX_BOT_HOSTS,
-                        botHostServerHashHave ? botHostServerHash : NULL,
+                        botHostServerHashHave && !otherComputer
+                            ? botHostServerHash : NULL,
                         botHostMachine);
     botHostMachineLog();
 }
@@ -752,8 +769,8 @@ int serverBotHostSetSlotOverride(ServerSim *sim, int row, int value,
  * connected host is sent it. */
 static void botHostRefreshManifest(ServerSim *sim, const char *why) {
     BrainSyncManifest next;
-    uint8_t *blob;
-    size_t blobLen = 0;
+    uint8_t *blob, *blob2;
+    size_t blobLen = 0, blob2Len = 0;
     uint32_t files = 0, bytes = 0;
     char hex[17];
     int b, h;
@@ -768,9 +785,12 @@ static void botHostRefreshManifest(ServerSim *sim, const char *why) {
         return;
     }
     blob = brainSyncManifestEncode(&next, &blobLen);
-    if (blob == NULL) {
+    blob2 = brainSyncManifestEncodeV2(&next, &blob2Len);
+    if (blob == NULL || blob2 == NULL) {
         fprintf(stderr, "[bothost] the brain file list is too large to send; "
                         "Bot Hosts keep the last one\n");
+        free(blob);
+        free(blob2);
         brainSyncFree(&next);
         return;
     }
@@ -779,6 +799,9 @@ static void botHostRefreshManifest(ServerSim *sim, const char *why) {
     free(udpServer.brainManifestBlob);
     udpServer.brainManifestBlob = blob;
     udpServer.brainManifestBlobLen = blobLen;
+    free(udpServer.brainManifestBlob2);
+    udpServer.brainManifestBlob2 = blob2;
+    udpServer.brainManifestBlob2Len = blob2Len;
     udpServer.brainManifestGen++;
     if (udpServer.brainManifestGen == 0) udpServer.brainManifestGen = 1;
     for (b = 0; b < next.brainCount; b++) {
@@ -809,28 +832,225 @@ static void botHostRefreshManifest(ServerSim *sim, const char *why) {
     }
 }
 
+/* "1.42 MB" or "812.0 KB" (1 MB = 1,000,000 bytes). */
+static void botHostBytesText(uint64_t n, char *out, size_t sz) {
+    if (n >= 1000000u) {
+        SDL_snprintf(out, sz, "%.2f MB", (double)n / 1e6);
+    } else {
+        SDL_snprintf(out, sz, "%.1f KB", (double)n / 1e3);
+    }
+}
+
+/* The one DS line per host and generation, once every brain's request is
+ * in and every stream has gone to the sender. */
+static void botHostPackLog(int h) {
+    BotHostConn *hc = &udpServer.botHosts[h];
+    if (hc->packLogged || hc->packW != NULL || hc->packQueue > 0) return;
+    if (hc->packReqs < udpServer.brainManifest.brainCount) return;
+    hc->packLogged = true;
+    if (hc->packFilesSent == 0) {
+        if (hc->packFromInstall == hc->packFilesAll) {
+            fprintf(stderr, "[bothost] brain files for \"%s\": 0 of %u files "
+                            "sent (all match its install)\n",
+                    hc->name, (unsigned)hc->packFilesAll);
+        } else if (hc->packFromCache == hc->packFilesAll) {
+            fprintf(stderr, "[bothost] brain files for \"%s\": 0 of %u files "
+                            "sent (all in its cache)\n",
+                    hc->name, (unsigned)hc->packFilesAll);
+        } else {
+            fprintf(stderr, "[bothost] brain files for \"%s\": 0 of %u files "
+                            "sent (%u match its install, %u in its cache)\n",
+                    hc->name, (unsigned)hc->packFilesAll,
+                    (unsigned)hc->packFromInstall,
+                    (unsigned)hc->packFromCache);
+        }
+        return;
+    }
+    {
+        char comp[32], raw[32];
+        botHostBytesText(hc->packComp, comp, sizeof(comp));
+        botHostBytesText(hc->packRaw, raw, sizeof(raw));
+        fprintf(stderr, "[bothost] brain files for \"%s\": %u of %u files, "
+                        "%s compressed (%s raw; %llu and %llu bytes), %u "
+                        "match its install, %u in its cache, %.1f s\n",
+                hc->name, (unsigned)hc->packFilesSent,
+                (unsigned)hc->packFilesAll, comp, raw,
+                (unsigned long long)hc->packComp,
+                (unsigned long long)hc->packRaw,
+                (unsigned)hc->packFromInstall, (unsigned)hc->packFromCache,
+                (double)(udpServer.tickCount - hc->packStartTick) / 50.0);
+    }
+}
+
+/* The packed stream: start the next one asked for, feed it files for up to
+ * about 2 ms, and send a piece when one is full or the stream has ended.
+ * True when it used the bulk sender or still has work (so the per-file
+ * requests wait). */
+#define BOT_HOST_PACK_FEED_NS   (2u * 1000u * 1000u)
+#define BOT_HOST_PACK_STEP      (64u * 1024u)
+static bool botHostServicePack(ServerSim *sim, int h) {
+    BotHostConn *hc = &udpServer.botHosts[h];
+    const BrainSyncManifest *man = &udpServer.brainManifest;
+    const BrainSyncBrain *br;
+    BulkStreamHeader hdr;
+    uint64_t t0 = SDL_GetTicksNS();
+
+    while (hc->packW == NULL) {
+        int count;
+        if (hc->packQueue == 0) {
+            botHostPackLog(h);
+            return false;
+        }
+        hc->packBrain = hc->packQBrain[0];
+        memcpy(hc->packBits, hc->packQBits[0], sizeof(hc->packBits));
+        hc->packQueue--;
+        memmove(hc->packQBrain, hc->packQBrain + 1, (size_t)hc->packQueue);
+        memmove(hc->packQBits, hc->packQBits + 1,
+                sizeof(hc->packQBits[0]) * (size_t)hc->packQueue);
+        if (hc->packBrain >= man->brainCount) continue;
+        count = brainPackBitCount(hc->packBits,
+                                  man->brains[hc->packBrain].fileCount);
+        if (count == 0) continue;
+        hc->packW = brainPackWriterNew(BRAIN_PACK_LEVEL, (uint8_t)hc->packBrain,
+                                       (uint16_t)count);
+        if (hc->packW == NULL) return false;
+        hc->packNext = 0;
+        hc->packSeq = 0;
+        hc->packFileOpen = false;
+    }
+    br = &man->brains[hc->packBrain];
+    while (!brainPackWriterFinished(hc->packW) &&
+           brainPackWriterPending(hc->packW) < BRAIN_PACK_PIECE_MAX) {
+        bool finished = false;
+        if (!hc->packFileOpen) {
+            int i;
+            for (i = hc->packNext; i < br->fileCount; i++) {
+                if (brainPackBitGet(hc->packBits, i)) break;
+            }
+            if (i >= br->fileCount) {
+                if (!brainPackWriterFinish(hc->packW)) goto failed;
+                finished = true;
+            } else {
+                const BrainSyncFile *f = &br->files[i];
+                char path[1024];
+                size_t sz = 0;
+                void *data;
+                SDL_snprintf(path, sizeof(path), "%s/%s", br->dir, f->path);
+                data = SDL_LoadFile(path, &sz);
+                if ((data == NULL && f->size != 0) || sz != f->size ||
+                    brainSyncHash(BRAIN_SYNC_HASH_SEED, data, sz) != f->hash) {
+                    SDL_free(data);
+                    fprintf(stderr, "[bothost] brain file \"%s\" changed since "
+                                    "the list was made\n", path);
+                    botHostRefreshManifest(sim, "a brain file changed");
+                    return true;
+                }
+                if (!brainPackWriterBeginFile(hc->packW, (uint16_t)i,
+                                              (uint32_t)sz)) {
+                    SDL_free(data);
+                    goto failed;
+                }
+                hc->packData = (uint8_t *)data;
+                hc->packSize = (uint32_t)sz;
+                hc->packOff = 0;
+                hc->packNext = i + 1;
+                hc->packFileOpen = true;
+                hc->packFilesSent++;
+                hc->packRaw += sz;
+            }
+        }
+        if (!finished && hc->packFileOpen) {
+            uint32_t n = hc->packSize - hc->packOff;
+            if (n > BOT_HOST_PACK_STEP) n = BOT_HOST_PACK_STEP;
+            if (n > 0 &&
+                !brainPackWriterPut(hc->packW, hc->packData + hc->packOff, n)) {
+                goto failed;
+            }
+            hc->packOff += n;
+            if (hc->packOff >= hc->packSize) {
+                SDL_free(hc->packData);
+                hc->packData = NULL;
+                hc->packFileOpen = false;
+            }
+        }
+        if (finished) break;
+        if (SDL_GetTicksNS() - t0 > BOT_HOST_PACK_FEED_NS) break;
+    }
+    if (bulkSenderBusy(&hc->bulk)) return true;
+    /* A full piece, or the last bytes once the stream has ended. */
+    if (brainPackWriterPending(hc->packW) > 0 &&
+        (brainPackWriterPending(hc->packW) >= BRAIN_PACK_PIECE_MAX ||
+         brainPackWriterFinished(hc->packW))) {
+        static uint8_t piece[BRAIN_PACK_PIECE_MAX];
+        size_t n = brainPackWriterTake(hc->packW, piece, sizeof(piece));
+        memset(&hdr, 0, sizeof(hdr));
+        hdr.kind = BULK_KIND_BRAIN_PACK;
+        hdr.gen = udpServer.brainManifestGen;
+        hdr.totalSize = (uint32_t)n;
+        hdr.pathLen = (uint8_t)SDL_snprintf(hdr.path, sizeof(hdr.path), "%d/%u",
+                                            hc->packBrain,
+                                            (unsigned)hc->packSeq);
+        if (!bulkSenderBegin(&hc->bulk, &hdr, piece, (uint32_t)n)) goto failed;
+        hc->packSeq++;
+    }
+    if (brainPackWriterDone(hc->packW)) {
+        hc->packComp += brainPackWriterOutBytes(hc->packW);
+        brainPackWriterFree(hc->packW);
+        hc->packW = NULL;
+        botHostPackLog(h);
+    }
+    return true;
+
+failed:
+    fprintf(stderr, "[bothost] the packed brain files for \"%s\" could not "
+                    "be made; it asks for them one at a time\n", hc->name);
+    brainPackWriterFree(hc->packW);
+    hc->packW = NULL;
+    SDL_free(hc->packData);
+    hc->packData = NULL;
+    hc->packFileOpen = false;
+    return false;
+}
+
 /* Start the next bulk transfer for a host: the manifest when it is owed,
- * else the next piece of the file being sent, else the next file asked
- * for. One transfer at a time, so a piece is compressed only when the last
- * one has gone. */
+ * else the next piece of the packed stream, else the next piece of the
+ * file being sent, else the next file asked for. One transfer at a time,
+ * so a piece is compressed only when the last one has gone. */
 static void botHostServiceFiles(ServerSim *sim, int h) {
     BotHostConn *hc = &udpServer.botHosts[h];
     BulkStreamHeader hdr;
     uint8_t *blob;
     uint32_t blobLen = 0, n;
 
-    if (bulkSenderBusy(&hc->bulk)) return;
-    memset(&hdr, 0, sizeof(hdr));
     if (hc->manifestOwed) {
+        BrainPackManifestChoice ch;
+        if (bulkSenderBusy(&hc->bulk)) return;
+        ch = brainPackManifestChoice(hc->capsSeen, hc->caps,
+                                     udpServer.tickCount - hc->joinTick);
+        if (ch == BRAIN_PACK_MANIFEST_WAIT) return;
+        memset(&hdr, 0, sizeof(hdr));
         hdr.kind = BULK_KIND_BRAIN_MANIFEST;
         hdr.gen = udpServer.brainManifestGen;
-        hdr.totalSize = (uint32_t)udpServer.brainManifestBlobLen;
-        if (bulkSenderBegin(&hc->bulk, &hdr, udpServer.brainManifestBlob,
-                            (uint32_t)udpServer.brainManifestBlobLen)) {
-            hc->manifestOwed = false;
+        if (ch == BRAIN_PACK_MANIFEST_V2) {
+            hdr.totalSize = (uint32_t)udpServer.brainManifestBlob2Len;
+            if (bulkSenderBegin(&hc->bulk, &hdr, udpServer.brainManifestBlob2,
+                                (uint32_t)udpServer.brainManifestBlob2Len)) {
+                hc->manifestOwed = false;
+                hc->manifestV2 = true;
+            }
+        } else {
+            hdr.totalSize = (uint32_t)udpServer.brainManifestBlobLen;
+            if (bulkSenderBegin(&hc->bulk, &hdr, udpServer.brainManifestBlob,
+                                (uint32_t)udpServer.brainManifestBlobLen)) {
+                hc->manifestOwed = false;
+                hc->manifestV2 = false;
+            }
         }
         return;
     }
+    if (botHostServicePack(sim, h)) return;
+    if (bulkSenderBusy(&hc->bulk)) return;
+    memset(&hdr, 0, sizeof(hdr));
     if (!hc->fileSending) {
         const BrainSyncBrain *br;
         const BrainSyncFile *f;
@@ -896,6 +1116,42 @@ static void botHostServiceFiles(ServerSim *sim, int h) {
 }
 
 /* A control event from a Bot Host: a file request or a sync report. */
+/* The last measured per-bot value of each host by name, for this server
+ * session: a host that leaves and comes back shows it until it measures
+ * again. */
+#define BOT_HOST_CPU_LAST_MAX (MAX_BOT_HOSTS * 2)
+static struct {
+    char     name[JOIN_BOT_HOST_NAME_LEN];
+    uint32_t milli;
+} botHostCpuLast[BOT_HOST_CPU_LAST_MAX];
+static int botHostCpuLastNext;
+
+static void botHostCpuLastPut(const char *name, uint32_t milli) {
+    int i;
+    if (name == NULL || name[0] == '\0') return;
+    for (i = 0; i < BOT_HOST_CPU_LAST_MAX; i++) {
+        if (strcmp(botHostCpuLast[i].name, name) == 0) {
+            botHostCpuLast[i].milli = milli;
+            return;
+        }
+    }
+    i = botHostCpuLastNext;
+    botHostCpuLastNext = (botHostCpuLastNext + 1) % BOT_HOST_CPU_LAST_MAX;
+    SDL_strlcpy(botHostCpuLast[i].name, name, sizeof(botHostCpuLast[i].name));
+    botHostCpuLast[i].milli = milli;
+}
+
+static uint32_t botHostCpuLastGet(const char *name) {
+    int i;
+    if (name == NULL || name[0] == '\0') return BOT_HOST_CPU_MILLI_UNKNOWN;
+    for (i = 0; i < BOT_HOST_CPU_LAST_MAX; i++) {
+        if (strcmp(botHostCpuLast[i].name, name) == 0) {
+            return botHostCpuLast[i].milli;
+        }
+    }
+    return BOT_HOST_CPU_MILLI_UNKNOWN;
+}
+
 static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
     BotHostConn *hc = &udpServer.botHosts[h];
     ControlDecodeBodyFn dec;
@@ -909,7 +1165,9 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
         msg[0] != CTRL_BOT_HOST_SLOTS && msg[0] != CTRL_BOT_HOST_REC &&
         msg[0] != CTRL_BOT_HOST_CPU && msg[0] != CTRL_BOT_HOST_CPU_FREE &&
         msg[0] != CTRL_BOT_HOST_CPU_BOT &&
-        msg[0] != CTRL_BOT_HOST_MACHINE_ANSWER) {
+        msg[0] != CTRL_BOT_HOST_CPU_BUDGET &&
+        msg[0] != CTRL_BOT_HOST_MACHINE_ANSWER &&
+        msg[0] != CTRL_BOT_HOST_SYNC_CAPS && msg[0] != CTRL_BOT_HOST_PACK_REQ) {
         return;
     }
     dec = transportControlCodecBodyDecoder((ControlEventType)msg[0]);
@@ -926,6 +1184,17 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
             hc->cpuBot = evt.u.botHostCpuBot.milli;
         }
         hc->cpuBotHave = true;
+        if (hc->cpuBot != BOT_HOST_CPU_MILLI_UNKNOWN) {
+            botHostCpuLastPut(hc->name, hc->cpuBot);
+        }
+        return;
+    }
+    if (evt.type == CTRL_BOT_HOST_CPU_BUDGET) {
+        /* The full-budget estimate, only the number. */
+        if (evt.u.botHostCpuBudget.milli != BOT_HOST_CPU_MILLI_UNKNOWN) {
+            hc->cpuBudget = evt.u.botHostCpuBudget.milli;
+            hc->cpuBudgetHave = true;
+        }
         return;
     }
     if (evt.type == CTRL_BOT_HOST_MACHINE_ANSWER) {
@@ -938,6 +1207,39 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
             memcpy(hc->machineHash, evt.u.botHostMachineAnswer.hash,
                    sizeof(hc->machineHash));
         }
+        return;
+    }
+    if (evt.type == CTRL_BOT_HOST_SYNC_CAPS) {
+        bool late = !hc->capsSeen && !hc->manifestOwed && !hc->manifestV2;
+        hc->capsSeen = true;
+        hc->caps = evt.u.botHostSyncCaps.caps;
+        if (late && (hc->caps & BRAIN_PACK_CAP_PACKED) &&
+            udpServer.brainManifestGen != 0) {
+            /* The v1 list went out before the caps came: send the v2 list
+             * of the same generation, and the host starts again with it. */
+            botHostFileReset(hc);
+            hc->manifestOwed = true;
+        }
+        return;
+    }
+    if (evt.type == CTRL_BOT_HOST_PACK_REQ) {
+        const BrainSyncManifest *man = &udpServer.brainManifest;
+        int b = evt.u.botHostPackReq.brain;
+        if (!hc->manifestV2 || evt.u.botHostPackReq.gen != udpServer.brainManifestGen ||
+            b >= man->brainCount ||
+            evt.u.botHostPackReq.fileCount != (uint16_t)man->brains[b].fileCount ||
+            hc->packQueue >= BRAIN_SYNC_MAX_BRAINS) {
+            return;
+        }
+        if (hc->packReqs == 0) hc->packStartTick = udpServer.tickCount;
+        hc->packReqs++;
+        hc->packFilesAll += evt.u.botHostPackReq.fileCount;
+        hc->packFromInstall += evt.u.botHostPackReq.fromInstall;
+        hc->packFromCache += evt.u.botHostPackReq.fromCache;
+        hc->packQBrain[hc->packQueue] = (uint8_t)b;
+        memcpy(hc->packQBits[hc->packQueue], evt.u.botHostPackReq.bits,
+               sizeof(hc->packQBits[0]));
+        hc->packQueue++;
         return;
     }
     if (evt.type == CTRL_BOT_HOST_CPU_FREE) {
@@ -1103,6 +1405,17 @@ static BotHostCpuMeter botHostServerCpu;
 static bool            botHostServerCpuInit;
 static uint8_t         botHostServerCpuValue = (uint8_t)BOT_HOST_CPU_UNKNOWN;
 
+/* The server's full-budget estimate for one more bot of its own
+ * (botHostCpuMilliBudget): the think budget the bot runners would give it
+ * (botManagerComputePerBotTargetMs with one more bot) over the 20 ms
+ * between thinks, over the logical cores. Worked out every
+ * BOT_HOST_SERVER_BUDGET_TICKS so the lobby row does not change each tick. */
+#define BOT_HOST_SERVER_BUDGET_TICKS 100u   /* 2 s */
+#define BOT_HOST_THINK_EVERY_MS      20.0   /* one think per tick */
+static uint32_t botHostServerBudgetMilli = BOT_HOST_CPU_MILLI_UNKNOWN;
+static uint32_t botHostServerBudgetTick;
+static int      botHostServerBotsNow;
+
 static void botHostSampleServerCpu(ServerSim *sim, int bots) {
     if (!botHostServerCpuInit) {
         botHostCpuMeterInit(&botHostServerCpu);
@@ -1111,6 +1424,54 @@ static void botHostSampleServerCpu(ServerSim *sim, int bots) {
     botHostServerCpuValue = botHostCpuMeterSample(
         &botHostServerCpu, SDL_GetTicksNS(), botManagerThinkMsTotal(sim),
         SDL_GetNumLogicalCPUCores(), bots);
+    botHostServerBotsNow = bots;
+    if (botHostServerBudgetMilli == BOT_HOST_CPU_MILLI_UNKNOWN ||
+        udpServer.tickCount - botHostServerBudgetTick >=
+            BOT_HOST_SERVER_BUDGET_TICKS) {
+        botHostServerBudgetMilli = botHostCpuMilliBudget(
+            botManagerComputePerBotTargetMs(sim, bots + 1),
+            BOT_HOST_THINK_EVERY_MS, SDL_GetNumLogicalCPUCores());
+        botHostServerBudgetTick = udpServer.tickCount;
+    }
+}
+
+/* The per-bot value the lobby shows for row h (MAX_BOT_HOSTS: the server's
+ * own row) and where it comes from (BOT_HOST_CPU_SRC_*): the measured
+ * value while its bots think in a game; the last measured value of that
+ * host in this server session; the full-budget estimate; else none, with
+ * *milli BOT_HOST_CPU_MILLI_UNKNOWN. *budget (may be NULL) gets the
+ * full-budget estimate, or BOT_HOST_CPU_MILLI_UNKNOWN. */
+static uint8_t botHostCpuShown(int h, uint32_t *milli, uint32_t *budget) {
+    uint32_t meas, bud;
+    int bots;
+    bool running = botHostSim != NULL &&
+                   serverSimGetState(botHostSim) == serverStateRunning;
+    if (h == MAX_BOT_HOSTS) {
+        meas = botHostServerCpuInit ? botHostServerCpu.perBotMilli
+                                    : BOT_HOST_CPU_MILLI_UNKNOWN;
+        bud = botHostServerBudgetMilli;
+        bots = botHostServerBotsNow;
+    } else {
+        const BotHostConn *hc = &udpServer.botHosts[h];
+        meas = hc->cpuBotHave ? hc->cpuBot : BOT_HOST_CPU_MILLI_UNKNOWN;
+        if (meas == BOT_HOST_CPU_MILLI_UNKNOWN) {
+            meas = botHostCpuLastGet(hc->name);
+        }
+        bud = hc->cpuBudgetHave ? hc->cpuBudget : BOT_HOST_CPU_MILLI_UNKNOWN;
+        bots = botHostUsedSlots(h);
+    }
+    if (budget != NULL) *budget = bud;
+    if (meas != BOT_HOST_CPU_MILLI_UNKNOWN) {
+        *milli = meas;
+        return (running && bots > 0) ? (uint8_t)BOT_HOST_CPU_SRC_MEASURED
+                                     : (uint8_t)BOT_HOST_CPU_SRC_LAST;
+    }
+    if (bud != BOT_HOST_CPU_MILLI_UNKNOWN) {
+        *milli = bud;
+        return (uint8_t)BOT_HOST_CPU_SRC_BUDGET;
+    }
+    *milli = BOT_HOST_CPU_MILLI_UNKNOWN;
+    return (uint8_t)BOT_HOST_CPU_SRC_NONE;
 }
 
 /* The CPU byte of row h (MAX_BOT_HOSTS: the server's own row). */
@@ -1127,47 +1488,52 @@ static bool    botHostCpuSentInit;
 /* Row h's per-bot value and owner for CTRL_BOT_HOST_CPU_BOT. False for a
  * row from an older host, which then shows the CTRL_BOT_HOST_CPU text. */
 static bool botHostRowCpuBot(int h, const ControlEvent *row, uint32_t *milli,
-                             uint8_t *owner) {
+                             uint8_t *owner, uint8_t *source) {
     const BotHostConn *hc;
     if (!row->u.botHostStatus.connected) return false;
     *owner = (uint8_t)BOT_HOST_CPU_OWNER_NONE;
     if (h == MAX_BOT_HOSTS) {
-        *milli = botHostServerCpuInit ? botHostServerCpu.perBotMilli
-                                      : BOT_HOST_CPU_MILLI_UNKNOWN;
+        *source = botHostCpuShown(h, milli, NULL);
         return true;
     }
     hc = &udpServer.botHosts[h];
-    if (!hc->cpuBotHave) return false;
-    *milli = hc->cpuBot;
+    /* An older host sends neither value; its row shows the byte. */
+    if (!hc->cpuBotHave && !hc->cpuBudgetHave) return false;
+    *source = botHostCpuShown(h, milli, NULL);
     if (hc->playerHost && hc->ownerSlot < MAX_TANKS) *owner = hc->ownerSlot;
     return true;
 }
 
 static void botHostFillCpuBot(int h, uint32_t milli, uint8_t owner,
-                              ControlEvent *evt) {
+                              uint8_t source, ControlEvent *evt) {
     memset(evt, 0, sizeof(*evt));
     evt->type = CTRL_BOT_HOST_CPU_BOT;
     evt->u.botHostCpuBot.idx = (uint8_t)h;
     evt->u.botHostCpuBot.owner = owner;
     evt->u.botHostCpuBot.milli = milli;
+    evt->u.botHostCpuBot.source = source;
 }
 
-/* Row h's lag for CTRL_BOT_HOST_LAG: the placement's smoothed lag in whole
- * ms (at least 1), or BOT_HOST_LAG_UNKNOWN. */
+/* The game ping of a player host's player (the player list's value), or
+ * 0 when there is none yet or the host is not a player's own. */
+static int botHostOwnerPing(const BotHostConn *hc) {
+    const UdpServerClient *c;
+    if (!hc->playerHost || hc->ownerSlot >= MAX_TANKS) return 0;
+    c = &udpServer.clients[hc->ownerSlot];
+    return c->connected ? (int)c->pingMs : 0;
+}
+
+/* Row h's lag for CTRL_BOT_HOST_LAG (botHostRowPing): a player host's
+ * player's game ping, else the placement's smoothed lag in whole ms (at
+ * least 1), or BOT_HOST_LAG_UNKNOWN. */
 static uint16_t botHostRowLag(int h, const ControlEvent *row) {
     const BotHostConn *hc;
-    double ms;
     if (h >= MAX_BOT_HOSTS || !row->u.botHostStatus.connected) {
         return (uint16_t)BOT_HOST_LAG_UNKNOWN;
     }
     hc = &udpServer.botHosts[h];
-    if (!hc->lagKnown || !(hc->lagMs >= 0.0)) {
-        return (uint16_t)BOT_HOST_LAG_UNKNOWN;
-    }
-    ms = hc->lagMs + 0.5;
-    if (ms < 1.0) ms = 1.0;
-    if (ms > 65534.0) ms = 65534.0;
-    return (uint16_t)ms;
+    return botHostRowPing(hc->playerHost, botHostOwnerPing(hc), hc->lagKnown,
+                          hc->lagMs);
 }
 
 /* The lags last sent to the lobby, one per Bot Host row, and when. */
@@ -1187,6 +1553,7 @@ static void botHostFillLag(int h, uint16_t lag, ControlEvent *evt) {
 static bool     botHostCpuBotSentHave[MAX_BOT_HOSTS + 1];
 static uint32_t botHostCpuBotSent[MAX_BOT_HOSTS + 1];
 static uint8_t  botHostCpuBotOwnerSent[MAX_BOT_HOSTS + 1];
+static uint8_t  botHostCpuBotSrcSent[MAX_BOT_HOSTS + 1];
 
 /* The log line for a row's CPU estimate: the first one, then a change at
  * most each BOT_HOST_CPU_LOG_TICKS, so the log does not fill. */
@@ -1259,16 +1626,19 @@ static void botHostBroadcastRows(void) {
             /* One bot's part, after the byte above, when it changes. */
             uint32_t milli = BOT_HOST_CPU_MILLI_UNKNOWN;
             uint8_t owner = (uint8_t)BOT_HOST_CPU_OWNER_NONE;
-            if (!botHostRowCpuBot(h, &evt, &milli, &owner)) {
+            uint8_t source = (uint8_t)BOT_HOST_CPU_SRC_NONE;
+            if (!botHostRowCpuBot(h, &evt, &milli, &owner, &source)) {
                 botHostCpuBotSentHave[h] = false;
             } else if (!botHostCpuBotSentHave[h] ||
                        milli != botHostCpuBotSent[h] ||
-                       owner != botHostCpuBotOwnerSent[h]) {
+                       owner != botHostCpuBotOwnerSent[h] ||
+                       source != botHostCpuBotSrcSent[h]) {
                 ControlEvent ce;
                 botHostCpuBotSentHave[h] = true;
                 botHostCpuBotSent[h] = milli;
                 botHostCpuBotOwnerSent[h] = owner;
-                botHostFillCpuBot(h, milli, owner, &ce);
+                botHostCpuBotSrcSent[h] = source;
+                botHostFillCpuBot(h, milli, owner, source, &ce);
                 serverBroadcastLobbyControl(&ce);
             }
         }
@@ -1330,10 +1700,10 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
         }
         {
             uint32_t milli;
-            uint8_t owner;
-            if (botHostRowCpuBot(h, &evt, &milli, &owner)) {
+            uint8_t owner, source;
+            if (botHostRowCpuBot(h, &evt, &milli, &owner, &source)) {
                 ControlEvent ce;
-                botHostFillCpuBot(h, milli, owner, &ce);
+                botHostFillCpuBot(h, milli, owner, source, &ce);
                 deliver(deliverCtx, &ce);
             }
         }
@@ -1361,10 +1731,11 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
             }
             {
                 uint32_t milli;
-                uint8_t owner;
-                if (botHostRowCpuBot(MAX_BOT_HOSTS, &evt, &milli, &owner)) {
+                uint8_t owner, source;
+                if (botHostRowCpuBot(MAX_BOT_HOSTS, &evt, &milli, &owner,
+                                     &source)) {
                     ControlEvent ce;
-                    botHostFillCpuBot(MAX_BOT_HOSTS, milli, owner, &ce);
+                    botHostFillCpuBot(MAX_BOT_HOSTS, milli, owner, source, &ce);
                     deliver(deliverCtx, &ce);
                 }
             }
@@ -1922,6 +2293,9 @@ accepted:
         BotHostConn *hc = &udpServer.botHosts[freeIdx];
         hc->manifestOwed = true;
         hc->syncSentTick = udpServer.tickCount;
+        /* A new host sends its caps at once; the list waits for them a
+         * little (BRAIN_PACK_CAPS_WAIT_TICKS). */
+        hc->joinTick = udpServer.tickCount;
     }
     botHostMachineRound("a Bot Host joined");
 }
@@ -2809,16 +3183,11 @@ static bool botSeatOffer(ServerSim *sim, int s, int h, const char *why) {
 /* Brings the smoothed lag of host h up to date, once a tick. */
 static void botHostUpdateLag(int h) {
     BotHostConn *hc = &udpServer.botHosts[h];
-    uint16_t raw;
-    if (hc->playerHost) {
-        const UdpServerClient *c;
-        if (hc->ownerSlot >= MAX_TANKS) return;
-        c = &udpServer.clients[hc->ownerSlot];
-        if (!c->connected) return;
-        raw = c->pingMs;
-    } else {
-        raw = hc->pingMs;
-    }
+    /* A player host counts its player's game ping, which is not smoothed
+     * (one round trip per pong), so the smoothing below stays; with no
+     * player ping yet it counts its own measured lag. */
+    uint16_t raw = botHostLagRaw(hc->playerHost, botHostOwnerPing(hc),
+                                 hc->pingMs);
     /* 0 is the value before the first pong: count it only once the host
      * has been here long enough to have one (a LAN round trip can be
      * under 1 ms). */
@@ -2887,7 +3256,8 @@ static void botHostOvrNumbers(const BotHostOverrunReport *rep, char *out,
         SDL_strlcpy(avg, "unknown", sizeof(avg));
     }
     if (rep->costKnown) {
-        SDL_snprintf(cost, sizeof(cost), "%.2f%%", rep->oneBotCost);
+        SDL_snprintf(cost, sizeof(cost), "%.2f%%%s", rep->oneBotCost,
+                     rep->costFromBudget ? " (full budget)" : "");
     } else {
         SDL_strlcpy(cost, "unknown", sizeof(cost));
     }
@@ -2973,7 +3343,9 @@ static void botHostRecDecision(int i, uint8_t decision,
     r.badProbes = botHostRecordByte(rep->badProbes);
     r.probes = botHostRecordByte(rep->probes);
     r.flags = (uint8_t)((rep->costKnown ? BOTHOST_RECORD_DEC_COST : 0u) |
-                        (rep->freeKnown ? BOTHOST_RECORD_DEC_FREE : 0u));
+                        (rep->freeKnown ? BOTHOST_RECORD_DEC_FREE : 0u) |
+                        (rep->costFromBudget ? BOTHOST_RECORD_DEC_BUDGET
+                                             : 0u));
     r.predictedTenths = botHostRecordTenthsS(rep->predicted);
     r.costTenths = botHostRecordTenthsU(rep->oneBotCost);
     r.freeAvgTenths = botHostRecordTenthsU(rep->freeAvg);
@@ -2983,6 +3355,33 @@ static void botHostRecDecision(int i, uint8_t decision,
     r.toHost = botHostRecordByte(toHost);
     SDL_strlcpy(r.reason, reason != NULL ? reason : "", sizeof(r.reason));
     botHostRecPut(&r);
+}
+
+/* The full-budget estimate of host i (0: the server) as the free CPU
+ * check's one-bot cost while no measured cost is known. */
+static void botHostOvrSetFallback(int i) {
+    uint32_t milli, budget;
+    (void)botHostCpuShown(i == 0 ? MAX_BOT_HOSTS : i - 1, &milli, &budget);
+    botHostOvr[i].costFallbackKnown = budget != BOT_HOST_CPU_MILLI_UNKNOWN;
+    botHostOvr[i].costFallback =
+        botHostOvr[i].costFallbackKnown ? (double)budget / 1000.0 : 0.0;
+}
+
+/* A spread decision (BOTHOST_DECISION_PLACE or _SPREAD_MOVE) for the round
+ * log, with the free CPU check of the host the bot goes to (to: 0 the
+ * server, h + 1 Bot Host h), so the record holds the predicted free CPU the
+ * move was made against. */
+static void botHostRecSpread(uint8_t decision, int from, int to, int seat,
+                             int bots) {
+    const BotHostOverrunCfg *cfg = botHostOvrConfig();
+    BotHostOverrunReport rep;
+    if (!botHostRecOn() || to < 0 || to > MAX_BOT_HOSTS) return;
+    botHostOvrEnsure();
+    botHostOvrSetFallback(to);
+    memset(&rep, 0, sizeof(rep));
+    (void)botHostOverrunMayTake(&botHostOvr[to], cfg, bots,
+                                botHostOvrFree(to), &rep);
+    botHostRecDecision(from, decision, &rep, seat, to, "the spread");
 }
 
 /* The lowered limits and the free CPU check, as part of the placement: a
@@ -3005,6 +3404,7 @@ static void botHostOvrApply(BotHostPlaceHost *hosts, bool log) {
         }
         if (!hosts[i].open) continue;
         if (hosts[i].bots >= hosts[i].slots && !hosts[i].unlimited) continue;
+        botHostOvrSetFallback(i);
         if (botHostOverrunMayTake(&botHostOvr[i], cfg, hosts[i].bots,
                                   botHostOvrFree(i), &rep)) {
             if (log) botHostOvrRefuseWhy[i] = NULL;
@@ -3028,6 +3428,10 @@ static void botHostOvrApply(BotHostPlaceHost *hosts, bool log) {
 /* One probe of every host. raw is the host table before the limits, applied
  * the table after them (where a bot moves to). Returns true when a bot
  * moved. */
+/* The overruns and thinks of each host since its last CPU record. */
+static uint32_t botHostOvrAccOver[1 + MAX_BOT_HOSTS];
+static uint32_t botHostOvrAccThinks[1 + MAX_BOT_HOSTS];
+
 static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
                                const BotHostPlaceHost *applied,
                                int localSeat, const int *hostSeat,
@@ -3144,7 +3548,31 @@ static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
             r.badProbes = botHostRecordByte(rep.badProbes);
             r.probes = botHostRecordByte(rep.probes);
             botHostRecPut(&r);
+            botHostOvrAccOver[i] += in.overruns;
+            botHostOvrAccThinks[i] += in.thinks;
             if (rep.sampled) {
+                uint32_t shown, budget;
+                uint8_t src = botHostCpuShown(i == 0 ? MAX_BOT_HOSTS : i - 1,
+                                              &shown, &budget);
+                memset(&r, 0, sizeof(r));
+                r.kind = BOTHOST_RECORD_CPU;
+                r.host = (uint8_t)i;
+                r.shownMilli = shown;
+                r.source = src;
+                r.budgetMilli = budget;
+                r.botCpu = in.botCpu;
+                r.bots = botHostRecordByte(in.bots);
+                r.overrunTenths =
+                    botHostOvrAccThinks[i] > 0
+                        ? botHostRecordU16((uint32_t)(
+                              (double)botHostOvrAccOver[i] * 1000.0 /
+                                  (double)botHostOvrAccThinks[i] + 0.5))
+                        : (uint16_t)BOTHOST_RECORD_RATE_NONE;
+                r.freePct = in.freePct;
+                r.slots = botHostRecordByte(in.slots);
+                botHostRecPut(&r);
+                botHostOvrAccOver[i] = 0;
+                botHostOvrAccThinks[i] = 0;
                 memset(&r, 0, sizeof(r));
                 r.kind = BOTHOST_RECORD_READING;
                 r.host = (uint8_t)i;
@@ -3373,11 +3801,15 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     }
 
     /* The overrun check: a probe each second, then the lowered limits and
-     * the free CPU check on the table the spread uses. */
+     * the free CPU check on the table the spread uses. Only while the game
+     * runs: in the lobby no bot thinks, so there is no reading to judge, and
+     * the lobby fills each host up to its slots (the CPU test, the
+     * override, the same-computer groups and the opt-out already set
+     * those). */
     memcpy(raw, hosts, sizeof(raw));
-    botHostOvrApply(hosts, true);
-    if (!probed || udpServer.tickCount - lastProbeTick >=
-                       BOT_HOST_OVR_PROBE_TICKS) {
+    if (running) botHostOvrApply(hosts, true);
+    if (running && (!probed || udpServer.tickCount - lastProbeTick >=
+                                   BOT_HOST_OVR_PROBE_TICKS)) {
         probed = true;
         lastProbeTick = udpServer.tickCount;
         if (botHostOvrConfig()->pct > 0.0 &&
@@ -3432,6 +3864,8 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         if (to <= 0) return;
         if (botSeatOffer(sim, localSeat, to - 1, "the spread")) {
             lastMoveTick = udpServer.tickCount;
+            botHostRecSpread(BOTHOST_DECISION_PLACE, 0, to, localSeat,
+                             raw[to].bots);
         }
         return;
     }
@@ -3442,6 +3876,7 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
             to == 0 ? "the server" : "Bot Host \"",
             to == 0 ? "" : udpServer.botHosts[to - 1].name,
             to == 0 ? "" : "\"");
+    botHostRecSpread(BOTHOST_DECISION_SPREAD_MOVE, from, to, s, raw[to].bots);
     botSeatFallBack(sim, s, "the spread", true);
     udpServer.botSeats[s].noReturn = false;
     lastMoveTick = udpServer.tickCount;

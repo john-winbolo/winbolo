@@ -764,7 +764,7 @@ it. Every multi-byte field is big-endian.
 | Offset | Field | Meaning |
 |-------:|-------|---------|
 | 0 | `version:u8` | 1 |
-| 1 | `kind:u8` | 1 HOST, 2 PROBE, 3 READING, 4 DECISION |
+| 1 | `kind:u8` | 1 HOST, 2 PROBE, 3 READING, 4 DECISION, 5 CPU |
 | 2 | `host:u8` | 0 the server's own process, h + 1 Bot Host h |
 
 Then, by kind (0xFF in a byte field: none):
@@ -781,13 +781,24 @@ Then, by kind (0xFF in a byte field: none):
   `bots:u8`, `flags:u8` (bit 0: the bots thought; bit 1: bad).
 - DECISION: `decision:u8` (1 trigger, 2 move, 3 cut, 4 raise, 5 raise
   refused, 6 placement refused, 7 would move: the bot stays because of
-  `-bothost-nomove`), `limitBefore:u8`, `limitAfter:u8`,
+  `-bothost-nomove`, 8 the spread offered a server bot to a Bot Host,
+  9 the spread moved a bot off a Bot Host), `limitBefore:u8`, `limitAfter:u8`,
   `badProbes:u8`, `probes:u8`, `flags:u8` (bit 0: the one-bot cost is
-  known; bit 1: the free CPU average is known), `predicted:s16` (the
+  known; bit 1: the free CPU average is known; bit 2: the one-bot cost
+  is the full-budget estimate), `predicted:s16` (the
   predicted free CPU in tenths of a percent), `cost:u16` and `freeAvg:u16`
   (tenths of a percent), `lowestClean:u8`, `highestBad:u8`, `seat:u8` (the
   bot that moved), `toHost:u8` (where it went, as `host`), then the reason
-  as a length byte and its bytes.
+  as a length byte and its bytes. Decisions 8 and 9 carry the free CPU
+  check of the host the bot goes to (`toHost`); the others carry that of
+  `host`.
+- CPU, each free CPU sample per host while the game runs: `shown:u32` (the
+  per-bot CPU the lobby and the game show, in thousandths of a percent of
+  that machine's CPU, 0xFFFFFFFF none), `source:u8` (0 none, 1 measured,
+  2 last measured, 3 full budget), `budget:u32` (the full-budget estimate,
+  same unit), `botCpu:u8`, `bots:u8`, `overrunTenths:u16` (the overrun rate
+  since the last CPU record in tenths of a percent, 0xFFFF no thinks),
+  `free:u8` and `slots:u8` (the host's effective slots).
 
 Written only when WinBoloDS runs with `-record-bothost-data`, or a client
 hosts with `Record Bot Host Data=Yes` in the `[SETTINGS]` section of its

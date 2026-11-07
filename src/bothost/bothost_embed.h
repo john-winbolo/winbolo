@@ -54,6 +54,9 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg);
  * once; false only for a program that ends next (a crash test). */
 void botHostEmbedStop(bool tellServer);
 bool botHostEmbedRunning(void);
+/* Remove the brain session folders under cacheDir that an earlier run left
+ * (marked, and no running client holds their lock). */
+void botHostEmbedSweepSessions(const char *cacheDir);
 void botHostEmbedGetStatus(BotHostEmbedStatus *out);
 /* on: the host offers the server 0 slots (CTRL_BOT_HOST_SLOTS), so the
  * server takes its bots back, and it takes no new seat; it stays connected.

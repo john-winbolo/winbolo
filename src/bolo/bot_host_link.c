@@ -392,6 +392,26 @@ void botHostLagSmooth(double *lagMs, bool *known, double rawMs,
     *lagMs += (rawMs - *lagMs) / (double)smoothTicks;
 }
 
+uint16_t botHostLagRaw(bool playerHost, int ownerPingMs, uint16_t hostPingMs) {
+    if (playerHost && ownerPingMs > 0) {
+        return (uint16_t)(ownerPingMs > 65534 ? 65534 : ownerPingMs);
+    }
+    return hostPingMs;
+}
+
+uint16_t botHostRowPing(bool playerHost, int ownerPingMs, bool lagKnown,
+                        double lagMs) {
+    double ms;
+    if (playerHost && ownerPingMs > 0) {
+        return (uint16_t)(ownerPingMs > 65534 ? 65534 : ownerPingMs);
+    }
+    if (!lagKnown || !(lagMs >= 0.0)) return 0xFFFFu;
+    ms = lagMs + 0.5;
+    if (ms < 1.0) ms = 1.0;
+    if (ms > 65534.0) ms = 65534.0;
+    return (uint16_t)ms;
+}
+
 /* True when the lag rules are on. */
 static bool placeLagOn(const BotHostPlaceLag *lag) {
     return lag != NULL && lag->refMs > 0.0;
@@ -793,6 +813,14 @@ bool botHostOverrunMayTake(const BotHostOverrunState *st,
     ovrReportInit(rep);
     if (st == NULL || cfg == NULL || !(cfg->pct > 0.0)) return true;
     ovrFreeNumbers(st, cfg, rep);
+    if (!rep->costKnown && st->costFallbackKnown) {
+        /* No measured one-bot cost yet: the full-budget estimate, the most
+         * one bot can use while the runners keep to their budget. */
+        rep->costKnown = true;
+        rep->costFromBudget = true;
+        rep->oneBotCost = st->costFallback;
+        rep->predicted = rep->freeAvg - rep->oneBotCost;
+    }
     rep->limitBefore = st->limit;
     rep->newLimit = st->limit;
     if (bots <= 0) {

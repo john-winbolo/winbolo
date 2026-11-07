@@ -101,7 +101,11 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
 
     sim->lobbyPlayers[playerNum].isBot      = true;
     sim->lobbyPlayers[playerNum].ready      = true;
-    sim->lobbyPlayers[playerNum].teamNumber = cfg->teamNumber;
+    /* SERVER_SIM_BOT_TEAM_DEFAULT keeps the team addPlayerInternal just
+     * gave the seat by the join rule. */
+    if (cfg->teamNumber != SERVER_SIM_BOT_TEAM_DEFAULT) {
+        sim->lobbyPlayers[playerNum].teamNumber = cfg->teamNumber;
+    }
     /* Re-pick the reservation now the bot's final team is known — the
      * earlier pick in addPlayerInternal ran while it still held the
      * default team. In the lobby the slot republishes on its next lobby
@@ -112,7 +116,8 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
      * team the bot is on, since nothing else in a round publishes it. The
      * round start does both for a bot added in the lobby. */
     if (sim->state == serverStateRunning) {
-        if (cfg->teamNumber > 0 && cfg->teamNumber < MAX_TANKS) {
+        BYTE team = sim->lobbyPlayers[playerNum].teamNumber;
+        if (team > 0 && team < MAX_TANKS) {
             serverSimReapplyTeamAlliances(sim);
         }
         serverSimPublishLobbySlot(sim, playerNum);

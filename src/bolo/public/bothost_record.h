@@ -38,7 +38,28 @@
  *             predicted is a signed tenth of a percent; cost
  *             and freeAvg are tenths of a percent. 0xFF in a
  *             byte field: none. flags bit 0: the one-bot cost
- *             is known; bit 1: the free average is known.
+ *             is known; bit 1: the free average is known;
+ *             bit 2: the one-bot cost is the full-budget
+ *             estimate (no measured cost yet).
+ *             PLACE and SPREAD_MOVE carry the free CPU check
+ *             of the host the bot goes to (toHost); the
+ *             others carry that of host.
+ *    CPU      [shown 4][source 1][budget 4][botCpu 1][bots 1]
+ *             [overrunTenths 2][free 1][slots 1]
+ *             one per host each free CPU sample (5 s), while
+ *             the game runs. shown is the per-bot value the
+ *             lobby and the game show, in thousandths of a
+ *             percent of the machine's CPU (0xFFFFFFFF: none),
+ *             and source where it comes from
+ *             (BOT_HOST_CPU_SRC_* of bot_host_cpu.h: 0 none,
+ *             1 measured, 2 last measured, 3 full budget).
+ *             budget is the full-budget estimate in the same
+ *             unit (0xFFFFFFFF: none). botCpu is the
+ *             CTRL_BOT_HOST_CPU byte, bots the bots on the
+ *             host, overrunTenths the overrun rate of the same
+ *             seconds in tenths of a percent (0xFFFF: no
+ *             thinks), free the machine's free CPU (0xFF: not
+ *             known) and slots the host's effective slots.
  *
  *  Every multi-byte field is big-endian. A reader takes the
  *  fields it knows and skips the rest by the framed length, so
@@ -63,7 +84,8 @@ enum {
   BOTHOST_RECORD_HOST     = 1,
   BOTHOST_RECORD_PROBE    = 2,
   BOTHOST_RECORD_READING  = 3,
-  BOTHOST_RECORD_DECISION = 4
+  BOTHOST_RECORD_DECISION = 4,
+  BOTHOST_RECORD_CPU      = 5
 };
 
 /* DECISION kinds. */
@@ -74,8 +96,12 @@ enum {
   BOTHOST_DECISION_RAISE          = 4, /* the limit went up by 1 */
   BOTHOST_DECISION_RAISE_REFUSED  = 5, /* a raise was looked at and refused */
   BOTHOST_DECISION_PLACE_REFUSED  = 6, /* the host may not take a new bot */
-  BOTHOST_DECISION_WOULD_MOVE     = 7  /* a bot would move, but moves are
+  BOTHOST_DECISION_WOULD_MOVE     = 7, /* a bot would move, but moves are
                                         * off (-bothost-nomove) */
+  BOTHOST_DECISION_PLACE          = 8, /* the spread offered a server bot
+                                        * to a Bot Host */
+  BOTHOST_DECISION_SPREAD_MOVE    = 9  /* the spread moved a bot off a Bot
+                                        * Host */
 };
 
 #define BOTHOST_RECORD_NONE        0xFFu
@@ -86,6 +112,9 @@ enum {
 #define BOTHOST_RECORD_READING_BAD 0x02u
 #define BOTHOST_RECORD_DEC_COST    0x01u
 #define BOTHOST_RECORD_DEC_FREE    0x02u
+#define BOTHOST_RECORD_DEC_BUDGET  0x04u
+#define BOTHOST_RECORD_MILLI_NONE  0xFFFFFFFFu
+#define BOTHOST_RECORD_RATE_NONE   0xFFFFu
 /* The longest payload: a DECISION with the longest reason. */
 #define BOTHOST_RECORD_MAX_BYTES   (3 + 16 + BOTHOST_RECORD_REASON_LEN)
 
@@ -120,6 +149,11 @@ typedef struct {
   uint8_t  seat;
   uint8_t  toHost;
   char     reason[BOTHOST_RECORD_REASON_LEN];
+  /* CPU (bots, botCpu, freePct and slots above too) */
+  uint32_t shownMilli;
+  uint8_t  source;
+  uint32_t budgetMilli;
+  uint16_t overrunTenths;
 } BotHostRecord;
 
 static inline void botHostRecordPut16(uint8_t *p, uint16_t v) {
@@ -129,6 +163,16 @@ static inline void botHostRecordPut16(uint8_t *p, uint16_t v) {
 
 static inline uint16_t botHostRecordGet16(const uint8_t *p) {
   return (uint16_t) (((unsigned) p[0] << 8) | (unsigned) p[1]);
+}
+
+static inline void botHostRecordPut32(uint8_t *p, uint32_t v) {
+  botHostRecordPut16(p, (uint16_t) (v >> 16));
+  botHostRecordPut16(p + 2, (uint16_t) (v & 0xFFFFu));
+}
+
+static inline uint32_t botHostRecordGet32(const uint8_t *p) {
+  return ((uint32_t) botHostRecordGet16(p) << 16) |
+         (uint32_t) botHostRecordGet16(p + 2);
 }
 
 /* A count held to what a u16 holds. */
@@ -215,6 +259,16 @@ static inline int botHostRecordEncode(const BotHostRecord *rec, uint8_t *out, in
     *p++ = rec->toHost;
     p += botHostRecordPutStr(p, rec->reason, BOTHOST_RECORD_REASON_LEN);
     break;
+  case BOTHOST_RECORD_CPU:
+    botHostRecordPut32(p, rec->shownMilli);      p += 4;
+    *p++ = rec->source;
+    botHostRecordPut32(p, rec->budgetMilli);     p += 4;
+    *p++ = rec->botCpu;
+    *p++ = rec->bots;
+    botHostRecordPut16(p, rec->overrunTenths);   p += 2;
+    *p++ = rec->freePct;
+    *p++ = rec->slots;
+    break;
   default:
     return 0;
   }
@@ -291,6 +345,17 @@ static inline bool botHostRecordDecode(const uint8_t *in, int len, BotHostRecord
     if (pos < len) {
       (void) botHostRecordGetStr(in, len, &pos, rec->reason, BOTHOST_RECORD_REASON_LEN);
     }
+    return true;
+  case BOTHOST_RECORD_CPU:
+    if (len < pos + 15) return false;
+    rec->shownMilli    = botHostRecordGet32(in + pos); pos += 4;
+    rec->source        = in[pos++];
+    rec->budgetMilli   = botHostRecordGet32(in + pos); pos += 4;
+    rec->botCpu        = in[pos++];
+    rec->bots          = in[pos++];
+    rec->overrunTenths = botHostRecordGet16(in + pos); pos += 2;
+    rec->freePct       = in[pos++];
+    rec->slots         = in[pos++];
     return true;
   default:
     return false;

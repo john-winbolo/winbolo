@@ -3902,10 +3902,14 @@ int main(int argc, char **argv) {
          * the mode= / difficulty= tokens it appends to the staged arg. */
         serverSimSetBotConfig(serverSim, (BYTE)i, botMode, botDifficulty,
                               0 /* personality: normal */, NULL);
-        /* No team in the add: -allybots and -teams place these bots through
+        /* The add gives each bot the join rule's team, so a bot with no
+         * -teams or -allybots team (or one past the -teams total) is on a
+         * team from the start, whether it runs here or waits for a Bot Host
+         * slot. -allybots and -teams then place their bots through
          * serverSimSetTeamBatch below, once the whole set is in. */
         if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game,
-                              hiddenMines, 0, &botInit[i].init)) {
+                              hiddenMines, SERVER_SIM_BOT_TEAM_DEFAULT,
+                              &botInit[i].init)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round
@@ -3921,7 +3925,8 @@ int main(int argc, char **argv) {
       } else if (numTeamSizes > 0) {
         /* Explicit per-team sizes: contiguous blocks. First teamSizes[0] bots
          * -> team 1, next teamSizes[1] -> team 2, etc. Bots past the listed
-         * total stay on team 0 (FFA); botTeam[] holds 0 for them. */
+         * total keep the join rule's team from the add; botTeam[] holds 0
+         * for them. */
         for (i = 0; i < numBots; i++) {
           if (botTeam[i] > 0) {
             serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)botTeam[i]);
@@ -3945,10 +3950,12 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Added %d bot(s) with brain '%s' (allied on team %d)\n",
                 numBots, brainPath, allyTeam);
       } else {
-        fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
+        serverSimReapplyTeamAlliances(serverSim);
+        fprintf(stderr, "Added %d bot(s) with brain '%s' (teams by the join rule)\n",
+                numBots, brainPath);
       }
-      /* Each bot reserved a lobby start as it was added, on team 0 and so
-       * with no side; -allybots and -teams then moved it with the batch
+      /* Each bot reserved a lobby start as it was added, on its join-rule
+       * team; -allybots and -teams then moved it with the batch
        * setter, which leaves that reservation where it was. Pick again for
        * the teams the bots are on now, or a team with a side starts a bot
        * on the other team's. Only a lobby server has reservations: a

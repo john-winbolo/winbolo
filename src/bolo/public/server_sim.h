@@ -407,8 +407,16 @@ typedef struct ServerSimBotConfig {
     aiType      ai;
     gameType    gameType;
     bool        hiddenMines;
-    BYTE        teamNumber;  /* 0 = no team */
+    BYTE        teamNumber;  /* 0 = no team; SERVER_SIM_BOT_TEAM_DEFAULT = the
+                                join rule's team (see below) */
 } ServerSimBotConfig;
+
+/* teamNumber value that asks serverSimAddBot for the team the join rule
+ * gives any new player (player 0 on team 1, player 1 on team 2, then the
+ * smallest team in use), so a -bots bot or a plain lobby Add Bot is on a
+ * team from the moment it is created, whether it runs at once or waits for
+ * a Bot Host slot. */
+#define SERVER_SIM_BOT_TEAM_DEFAULT ((BYTE)0xFF)
 
 /*********************************************************
  *NAME:          serverSimAddBot
