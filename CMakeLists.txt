@@ -7046,6 +7046,7 @@ set(_unit_test_names
     vote_surrender_blocked_without_lobby
     vote_back_to_lobby_blocked_without_lobby
     lobby_add_bot_rejects_when_at_maxbots
+    lobby_add_bot_rejects_at_host_capacity
     lobby_bot_count_counts_only_connected_bots
     lobby_maxbots_cap_boundary
     empty_return_to_lobby_removes_bots_and_unlocks
@@ -7799,6 +7800,8 @@ set(_unit_test_names
     brain_capacity_name_from_path
     brain_capacity_lua_fallback
     brain_capacity_add_state
+    brain_capacity_parse_override
+    host_bot_capacity
     scenario_callbacks_manifest
     scenario_callbacks_over_cap
     scenario_callbacks_json
