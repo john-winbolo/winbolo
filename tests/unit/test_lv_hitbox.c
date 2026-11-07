@@ -174,6 +174,31 @@ int run_lv_hitbox_sums(void) {
                       "a blast on a dead pill's square with no hit misses him there");
     }
 
+    /* Which walls make a square solid: a building or a half building, and
+       the rubble a shell made of a wall on this frame (its last hit). */
+    UT_ASSERT_MSG(lvHitboxWallSolid(true, false), "a wall is solid");
+    UT_ASSERT_MSG(lvHitboxWallSolid(false, true),
+                  "the frame of the hit that turned a wall to rubble: its square is solid");
+    UT_ASSERT_MSG(!lvHitboxWallSolid(false, false), "rubble with no hit this frame is open ground");
+
+    /* The shot that turns a wall to rubble, on the square to his left: the
+       blast at that square's middle, 128 from him on the first world unit of
+       his own square, does not catch him, as
+       for any hit on a wall. The same blast on rubble with no hit this frame
+       does. And the same shot on his own square catches him in its far
+       corner, 178 away. */
+    {
+        unsigned leftHit   = lvHitboxWallSolid(false, true) ? SQ(0, 1) : 0;
+        unsigned leftOpen  = lvHitboxWallSolid(false, false) ? SQ(0, 1) : 0;
+        unsigned ownHit    = lvHitboxWallSolid(false, true) ? SQ(1, 1) : 0;
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftHit, 128),
+                      "the rubble shot on the next square misses him 128 away");
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftOpen, 128),
+                      "a blast on rubble with no hit catches him 128 away");
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(128.0, 128.0, 2.0, 2.0, ownHit, 128),
+                      "the rubble shot catches him in the far corner of its square");
+    }
+
     /* A short pill range. */
     UT_ASSERT_MSG(lvHitboxBuilderCaught(228.0, 128.0, 128.0, 128.0, 0, 100), "100 away");
     UT_ASSERT_MSG(!lvHitboxBuilderCaught(229.0, 128.0, 128.0, 128.0, 0, 100), "101 away");
