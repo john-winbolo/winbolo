@@ -2616,7 +2616,7 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
       local cost
 
       -- Wall obstruction: count HP of blocks on the direct line.
-      -- 0-1 full block (wall_hp <= WALL_HP_FULL=5): no penalty.
+      -- 0-1 full block (wall_hp <= WALL_HP_FULL, 5 at building_life 4): no penalty.
       -- Each HP above that costs TANK_COMBAT_WALL_PENALTY_PER_HP (20).
       -- 2 blocks → +100, 5 blocks → +400, discouraging wasted-ammo fights.
       local wall_hp = PF.wall_hp_between(tmx, tmy, et.mx, et.my)

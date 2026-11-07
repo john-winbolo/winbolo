@@ -812,9 +812,10 @@ end
 --                  it, so the SMALLEST value is used: 1 (move sooner).
 --   pill           its armour, pill_shell_damage (1) off per shell:
 --                  ceil(armour / pill_shell_damage).
--- building_life and pill_shell_damage are rules the brain cannot read, so
--- they are the engine defaults: DECOY_GETAWAY_WALL_LIFE (BUILDING_LIFE 4)
--- and DECOY_GETAWAY_PILL_SHELL_DAMAGE (PILLBOX_SHELL_DAMAGE 1).  A wall's
+-- building_life is DECOY_GETAWAY_WALL_LIFE: the classic BUILDING_LIFE 4
+-- in constants.lua, set to the live info.rules.building_life by
+-- live_physics.lua (group WALL).  pill_shell_damage is
+-- DECOY_GETAWAY_PILL_SHELL_DAMAGE (PILLBOX_SHELL_DAMAGE 1).  A wall's
 -- count after that is THE HIT LEDGER's (below M.blockers).
 function M.shots_left(kind, pill)
   if kind == "wall" then return (C.DECOY_GETAWAY_WALL_LIFE or 4) + 1 end

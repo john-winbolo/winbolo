@@ -7728,7 +7728,7 @@ local function update_attack_substate_body(goal, state, world, info)
     end
 
     -- Cover-sufficient: a friendly pill on a slot is worth floor(health / 5)
-    -- walls of WALL_HP_FULL (5) shots each (pill_cover.slot_cover_shots), so a
+    -- walls of SHIELD_WALL_COVER_SHOTS (5) shots each (pill_cover.slot_cover_shots), so a
     -- 15-health pill is 15 shots, a 10-health pill 10 and a 4-health pill 0.
     -- Sum the current cover among the slots in shots and stop the build the
     -- moment it reaches PPT_COVER_TARGET_SHOTS — so one full-health
