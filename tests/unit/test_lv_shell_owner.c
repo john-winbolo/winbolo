@@ -187,8 +187,8 @@ int run_lv_shell_owner_link(void) {
   UT_ASSERT_MSG(out[0] == 3 && out[1] == 5, "crossing shells got %d and %d", out[0], out[1]);
   UT_ASSERT(st.continued == 2 && st.started == 0);
 
-  /* Two shells side by side the same way, 16 apart: either could be either.
-     Their owners differ, so neither is clear. */
+  /* Two shells side by side the same way, 16 apart: either could continue
+     either, and each goes on as the one nearest its own next place. */
   memset(&st, 0, sizeof(st));
   prev[0].wx = 1000; prev[0].wy = 2000; prev[0].dir = 4; prevOwner[0] = 3;
   prev[1].wx = 1000; prev[1].wy = 2016; prev[1].dir = 4; prevOwner[1] = 5;
@@ -196,15 +196,24 @@ int run_lv_shell_owner_link(void) {
   cur[1].wx = 1032;  cur[1].wy = 2016;  cur[1].dir = 4;
   lv_shellOwnerLink(prev, prevOwner, 2, true, cur, 2, tanks, LV_SHELL_OWNER_MAX_TANKS, true,
                     out, &st);
-  UT_ASSERT_MSG(out[0] == LV_SHELL_OWNER_NONE && out[1] == LV_SHELL_OWNER_NONE,
-                "side by side shells got %d and %d", out[0], out[1]);
-  UT_ASSERT(st.continuedLost == 2);
+  UT_ASSERT_MSG(out[0] == 3 && out[1] == 5, "side by side shells got %d and %d", out[0],
+                out[1]);
+  UT_ASSERT(st.continued == 2 && st.continuedLost == 0);
+  /* The two go on as one shell between them: their owners differ, so it
+     has none. */
+  memset(&st, 0, sizeof(st));
+  cur[0].wx = 1032;  cur[0].wy = 2008;  cur[0].dir = 4;
+  lv_shellOwnerLink(prev, prevOwner, 2, true, cur, 1, tanks, LV_SHELL_OWNER_MAX_TANKS, true,
+                    out, &st);
+  UT_ASSERT_MSG(out[0] == LV_SHELL_OWNER_NONE, "the one shell got %d", out[0]);
+  UT_ASSERT(st.continuedLost == 1);
   /* The same owner for both: kept. */
   memset(&st, 0, sizeof(st));
   prevOwner[1] = 3;
-  lv_shellOwnerLink(prev, prevOwner, 2, true, cur, 2, tanks, LV_SHELL_OWNER_MAX_TANKS, true,
+  lv_shellOwnerLink(prev, prevOwner, 2, true, cur, 1, tanks, LV_SHELL_OWNER_MAX_TANKS, true,
                     out, &st);
-  UT_ASSERT(out[0] == 3 && out[1] == 3 && st.continuedShared == 2);
+  UT_ASSERT(out[0] == 3 && st.continuedShared == 1);
+  cur[0].wy = 2000;
 
   /* Two shells far apart the same way: one to one. */
   memset(&st, 0, sizeof(st));
@@ -241,5 +250,101 @@ int run_lv_shell_owner_link(void) {
   lv_shellOwnerLink(prev, prevOwner, 0, false, cur, 1, tanks, LV_SHELL_OWNER_MAX_TANKS, true,
                     out, &st);
   UT_ASSERT(out[0] == LV_SHELL_OWNER_NONE && st.notTracked == 1 && st.started == 0);
+  return 0;
+}
+
+/* Tank 6 fires east along the line of tank 3's shell, and its first record
+   is just ahead of where tank 3's shell moves to: both shells now continue
+   tank 3's shell of the entry before. The one nearest that shell's next
+   place keeps tank 3; the other is new, and its owner comes from the guns. */
+int run_lv_shell_owner_one_line(void) {
+  LvShellPt prev[1], cur[2];
+  int8_t prevOwner[1] = {3}, out[2];
+  LvGunTank tanks[LV_SHELL_OWNER_MAX_TANKS];
+  LvShellOwnerStats st;
+
+  memset(tanks, 0, sizeof(tanks));
+  memset(&st, 0, sizeof(st));
+  prev[0].wx = 1000; prev[0].wy = 2000; prev[0].dir = 4;
+  /* B's shell first, so the nearest, not the first, is what counts. */
+  cur[0].wx = 1050;  cur[0].wy = 2000;  cur[0].dir = 4;
+  cur[1].wx = 1032;  cur[1].wy = 2000;  cur[1].dir = 4;
+  UT_ASSERT(lv_shellOwnerContinues(&prev[0], &cur[0]) &&
+            lv_shellOwnerContinues(&prev[0], &cur[1]));
+  tanks[6].on = true; tanks[6].wx = 1050 - 6 * 32; tanks[6].wy = 2000; tanks[6].dir = 4;
+  tanks[6].fired = true;
+  lv_shellOwnerLink(prev, prevOwner, 1, true, cur, 2, tanks, LV_SHELL_OWNER_MAX_TANKS, true,
+                    out, &st);
+  UT_ASSERT_MSG(out[1] == 3 && out[0] == 6, "the shells got %d (want 3) and %d (want 6)",
+                out[1], out[0]);
+  UT_ASSERT(st.continued == 1 && st.started == 1 && st.startOwned == 1);
+
+  /* With no tank that fired there, the new one has no owner: it is never
+     given tank 3's. */
+  memset(&st, 0, sizeof(st));
+  tanks[6].fired = false;
+  lv_shellOwnerLink(prev, prevOwner, 1, true, cur, 2, tanks, LV_SHELL_OWNER_MAX_TANKS, true,
+                    out, &st);
+  UT_ASSERT(out[1] == 3 && out[0] == LV_SHELL_OWNER_NONE);
+  UT_ASSERT(st.startNoTank == 1);
+  return 0;
+}
+
+/* Shell ids: a shell keeps its id while it flies, a new shell takes the
+   next one, and two shells that go on as one give the events that keep a
+   shell's owner the same in every entry. */
+int run_lv_shell_owner_ids(void) {
+  LvShellPt prev[3], cur[3];
+  int8_t prevOwner[3], out[3];
+  uint16_t prevId[3], outId[3], next = 100;
+  LvGunTank tanks[LV_SHELL_OWNER_MAX_TANKS];
+  LvShellOwnerIdEvents ev;
+  LvShellOwnerStats st;
+
+  memset(tanks, 0, sizeof(tanks));
+  memset(&st, 0, sizeof(st));
+
+  /* No entry before: each shell a new id. */
+  cur[0].wx = 1000; cur[0].wy = 2000; cur[0].dir = 4;
+  cur[1].wx = 1000; cur[1].wy = 2016; cur[1].dir = 4;
+  lv_shellOwnerLinkIds(prev, prevOwner, prevId, 0, false, cur, 2, tanks, 0, true, out, outId,
+                       &next, &ev, &st);
+  UT_ASSERT(outId[0] == 100 && outId[1] == 101 && next == 102);
+  UT_ASSERT(ev.nMerge == 0 && ev.nLost == 0);
+
+  /* One entry on: each keeps its id, and a new shell far away takes 102. */
+  prev[0] = cur[0]; prev[1] = cur[1];
+  prevId[0] = 100; prevId[1] = 101;
+  prevOwner[0] = 3; prevOwner[1] = LV_SHELL_OWNER_NONE;
+  cur[0].wx = 1032;
+  cur[1].wx = 1032;
+  cur[2].wx = 9000; cur[2].wy = 9000; cur[2].dir = 0;
+  lv_shellOwnerLinkIds(prev, prevOwner, prevId, 2, true, cur, 3, tanks, 0, true, out, outId,
+                       &next, &ev, &st);
+  UT_ASSERT_MSG(outId[0] == 100 && outId[1] == 101 && outId[2] == 102 && next == 103,
+                "ids %u %u %u next %u", outId[0], outId[1], outId[2], next);
+  UT_ASSERT(out[0] == 3 && out[1] == LV_SHELL_OWNER_NONE);
+  UT_ASSERT(ev.nMerge == 0 && ev.nLost == 0);
+
+  /* Tank 3's shell and the pillbox's go on as one: it has no owner, and
+     tank 3's shell loses its owner in the entries before too (its id is
+     lost). The pillbox's had none to lose. */
+  prev[0] = cur[0]; prev[1] = cur[1];
+  prevId[0] = 100; prevId[1] = 101;
+  cur[0].wx = 1064; cur[0].wy = 2016; cur[0].dir = 4;
+  lv_shellOwnerLinkIds(prev, prevOwner, prevId, 2, true, cur, 1, tanks, 0, true, out, outId,
+                       &next, &ev, &st);
+  UT_ASSERT(out[0] == LV_SHELL_OWNER_NONE && outId[0] == 100 && next == 103);
+  UT_ASSERT_MSG(ev.nLost == 1 && ev.lost[0] == 100 && ev.nMerge == 0,
+                "lost %d (first %u), merged %d", ev.nLost, ev.lost[0], ev.nMerge);
+  UT_ASSERT(st.continuedLost == 1);
+
+  /* Two shells of tank 3 go on as one: it keeps tank 3, and the second id
+     is merged into the first. */
+  prevOwner[1] = 3;
+  lv_shellOwnerLinkIds(prev, prevOwner, prevId, 2, true, cur, 1, tanks, 0, true, out, outId,
+                       &next, &ev, &st);
+  UT_ASSERT(out[0] == 3 && outId[0] == 100);
+  UT_ASSERT(ev.nLost == 0 && ev.nMerge == 1 && ev.mergeFrom[0] == 101 && ev.mergeTo[0] == 100);
   return 0;
 }

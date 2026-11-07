@@ -39,8 +39,14 @@
  *
  *  A shell that continues one of the entry before keeps that
  *  shell's owner: same frame, moved about one step along its
- *  direction. When two shells could be the one before, the
- *  owner is kept only when they have the same owner.
+ *  direction. A shell before goes on as one shell at most: the
+ *  one nearest the place it moves to. Another shell that also
+ *  continues it is new and goes through the gun match (a tank
+ *  that fired along the same line). When two shells before go
+ *  on as one shell, the owner is kept only when they have the
+ *  same owner; otherwise the shell has no owner, and the viewer
+ *  takes the owner off both shells for their whole flight
+ *  (LvShellOwnerIdEvents), so a shell is drawn from one frame.
  *
  *  The windows are for the default shell rules. A mod with
  *  other shell speeds finds no match, and its shells have no
@@ -208,72 +214,156 @@ static inline int lv_shellOwnerStartMatch(const LvShellPt *s, const LvGunTank *t
   return count == 1 ? found : LV_SHELL_OWNER_NONE;
 }
 
-/* Give each shell of one entry its owner (outOwner[i] for cur[i]).
+/* What lv_shellOwnerLinkIds found that changes shells of the entries
+   before, by shell id. The caller makes these changes in the frames it
+   holds, so that a shell has one owner for its whole flight.
+
+   merge   two shells of the entry before went on as one shell with one
+           owner: each mergeFrom id is now mergeTo.
+   lost    shells of the entry before went on as one shell whose owner is
+           not clear (stats->continuedLost): each lost id now has no owner,
+           in every entry. */
+typedef struct {
+  int      nMerge;
+  uint16_t mergeFrom[LV_SHELL_OWNER_MAX_SHELLS];
+  uint16_t mergeTo[LV_SHELL_OWNER_MAX_SHELLS];
+  int      nLost;
+  uint16_t lost[LV_SHELL_OWNER_MAX_SHELLS];
+} LvShellOwnerIdEvents;
+
+/* How far cur is from the place prev moves to in one entry, squared. */
+static inline double lv_shellOwnerMissBy(const LvShellPt *prev, const LvShellPt *cur) {
+  double ux, uy, dx, dy;
+  lv_shellOwnerDirVector(prev->dir, &ux, &uy);
+  dx = (double)cur->wx - ((double)prev->wx + ux * LV_SHELL_OWNER_STEP);
+  dy = (double)cur->wy - ((double)prev->wy + uy * LV_SHELL_OWNER_STEP);
+  return dx * dx + dy * dy;
+}
+
+/* Give each shell of one entry its owner (outOwner[i] for cur[i]), and,
+   when the id arguments are not NULL, its id.
 
    prev and prevOwner are the entry before; prevValid is false when there
    is none (the first entry after a seek), and then every shell stays with
    no owner, since a shell that was already flying cannot be matched to a
-   gun. tanks is indexed by player slot. stats may be NULL. */
-static inline void lv_shellOwnerLink(const LvShellPt *prev, const int8_t *prevOwner, int nPrev,
-                                     bool prevValid, const LvShellPt *cur, int nCur,
-                                     const LvGunTank *tanks, int nTanks, bool needFired,
-                                     int8_t *outOwner, LvShellOwnerStats *stats) {
-  int16_t claims[LV_SHELL_OWNER_MAX_SHELLS];   /* cur shells that could be each prev */
-  int16_t match[LV_SHELL_OWNER_MAX_SHELLS];    /* the one prev of each cur, -1 none, -2 more */
-  int16_t gunUse[LV_SHELL_OWNER_MAX_TANKS];    /* new shells each tank was matched to */
-  int i, j;
+   gun. tanks is indexed by player slot. stats may be NULL.
 
+   Each shell before goes on as at most one shell now: of the shells now
+   that continue it, the one nearest the place it moves to. Any other one
+   that continues it is a new shell, and goes through the gun match. A
+   shell now that more than one shell before goes on as keeps the owner
+   only when they all have the same one.
+
+   prevId, outId, idNext and ev are NULL, or all set. A shell now that
+   continues one before takes its id (the first one's, when there are
+   more), and a new shell takes *idNext, which then goes up by one. ev gets
+   what changes the shells before (LvShellOwnerIdEvents). */
+static inline void lv_shellOwnerLinkIds(const LvShellPt *prev, const int8_t *prevOwner,
+                                        const uint16_t *prevId, int nPrev, bool prevValid,
+                                        const LvShellPt *cur, int nCur,
+                                        const LvGunTank *tanks, int nTanks, bool needFired,
+                                        int8_t *outOwner, uint16_t *outId, uint16_t *idNext,
+                                        LvShellOwnerIdEvents *ev, LvShellOwnerStats *stats) {
+  int16_t win[LV_SHELL_OWNER_MAX_SHELLS];      /* the cur shell each prev goes on as, -1 none */
+  double winD2[LV_SHELL_OWNER_MAX_SHELLS];
+  int16_t nFrom[LV_SHELL_OWNER_MAX_SHELLS];    /* prev shells each cur goes on from */
+  int16_t gunUse[LV_SHELL_OWNER_MAX_TANKS];    /* new shells each tank was matched to */
+  /* The prev shells by direction, as a shell only continues one with its
+     own direction: byDir[dirStart[d] .. dirStart[d + 1]) are direction d's.
+     So each cur shell is tested against about a sixteenth of them. */
+  int16_t byDir[LV_SHELL_OWNER_MAX_SHELLS];
+  int dirStart[17];
+  int fill[16];
+  int i, j, k, d;
+  const bool ids = (prevId != NULL && outId != NULL && idNext != NULL);
+
+  if (ev != NULL) {
+    ev->nMerge = 0;
+    ev->nLost = 0;
+  }
   if (nPrev > LV_SHELL_OWNER_MAX_SHELLS) nPrev = LV_SHELL_OWNER_MAX_SHELLS;
   if (nCur > LV_SHELL_OWNER_MAX_SHELLS) nCur = LV_SHELL_OWNER_MAX_SHELLS;
   if (nTanks > LV_SHELL_OWNER_MAX_TANKS) nTanks = LV_SHELL_OWNER_MAX_TANKS;
   for (i = 0; i < nCur; i++) {
     outOwner[i] = LV_SHELL_OWNER_NONE;
+    nFrom[i] = 0;
   }
   if (!prevValid) {
+    if (ids) {
+      for (i = 0; i < nCur; i++) outId[i] = (*idNext)++;
+    }
     if (stats != NULL) stats->notTracked += (uint32_t)nCur;
     return;
   }
-  for (j = 0; j < nPrev; j++) claims[j] = 0;
   for (j = 0; j < nTanks; j++) gunUse[j] = 0;
 
-  /* Continuation: which shells of the entry before each one could be. */
+  /* The prev shells sorted by direction (a counting sort). */
+  for (d = 0; d <= 16; d++) dirStart[d] = 0;
+  for (j = 0; j < nPrev; j++) dirStart[(prev[j].dir & 15) + 1]++;
+  for (d = 0; d < 16; d++) dirStart[d + 1] += dirStart[d];
+  for (d = 0; d < 16; d++) fill[d] = dirStart[d];
+  for (j = 0; j < nPrev; j++) byDir[fill[prev[j].dir & 15]++] = (int16_t)j;
+
+  /* Each prev shell goes on as the nearest cur shell that continues it. */
+  for (j = 0; j < nPrev; j++) win[j] = -1;
   for (i = 0; i < nCur; i++) {
-    match[i] = -1;
-    for (j = 0; j < nPrev; j++) {
-      if (lv_shellOwnerContinues(&prev[j], &cur[i])) {
-        claims[j]++;
-        match[i] = (match[i] == -1) ? (int16_t)j : (int16_t)-2;
+    d = cur[i].dir & 15;
+    for (k = dirStart[d]; k < dirStart[d + 1]; k++) {
+      double d2;
+      j = byDir[k];
+      if (!lv_shellOwnerContinues(&prev[j], &cur[i])) continue;
+      d2 = lv_shellOwnerMissBy(&prev[j], &cur[i]);
+      if (win[j] < 0 || d2 < winD2[j]) {
+        win[j] = (int16_t)i;
+        winD2[j] = d2;
       }
     }
   }
+  for (j = 0; j < nPrev; j++) {
+    if (win[j] >= 0) nFrom[win[j]]++;
+  }
+
+  /* Each continued cur shell's owner (and id) from the prev shells it goes
+     on from, in the order of prev. */
   for (i = 0; i < nCur; i++) {
-    if (match[i] >= 0 && claims[match[i]] == 1) {
-      outOwner[i] = prevOwner[match[i]];
-      if (stats != NULL) stats->continued++;
-    } else if (match[i] != -1) {
-      /* More than one shell before could be this one, or one before could
-         be more than one now. The owner is kept only when all of them
-         have the same one. */
-      int8_t common = 0;
-      bool first = true, same = true;
-      for (j = 0; j < nPrev; j++) {
-        if (!lv_shellOwnerContinues(&prev[j], &cur[i])) continue;
-        if (first) { common = prevOwner[j]; first = false; }
-        else if (prevOwner[j] != common) same = false;
+    int8_t common = 0;
+    bool same = true, first = true;
+    if (nFrom[i] == 0) continue;
+    for (j = 0; j < nPrev; j++) {
+      if (win[j] != i) continue;
+      if (first) {
+        common = prevOwner[j];
+        if (ids) outId[i] = prevId[j];
+        first = false;
+      } else if (prevOwner[j] != common) {
+        same = false;
       }
-      outOwner[i] = same ? common : (int8_t)LV_SHELL_OWNER_NONE;
-      if (stats != NULL) {
-        if (same && common != LV_SHELL_OWNER_NONE) stats->continuedShared++;
-        else if (!same) stats->continuedLost++;
-        else stats->continued++;
+    }
+    outOwner[i] = same ? common : (int8_t)LV_SHELL_OWNER_NONE;
+    if (stats != NULL) {
+      if (nFrom[i] == 1) stats->continued++;
+      else if (!same) stats->continuedLost++;
+      else if (common != LV_SHELL_OWNER_NONE) stats->continuedShared++;
+      else stats->continued++;
+    }
+    if (ids && ev != NULL && nFrom[i] > 1) {
+      for (j = 0; j < nPrev; j++) {
+        if (win[j] != i) continue;
+        if (!same) {
+          if (prevOwner[j] != LV_SHELL_OWNER_NONE) ev->lost[ev->nLost++] = prevId[j];
+        } else if (prevId[j] != outId[i]) {
+          ev->mergeFrom[ev->nMerge] = prevId[j];
+          ev->mergeTo[ev->nMerge++] = outId[i];
+        }
       }
     }
   }
 
-  /* New shells: the gun each came from. */
+  /* New shells: a new id, and the gun each came from. */
   for (i = 0; i < nCur; i++) {
     int fits = 0, slot;
-    if (match[i] != -1) continue;
+    if (nFrom[i] != 0) continue;
+    if (ids) outId[i] = (*idNext)++;
     if (stats != NULL) stats->started++;
     slot = lv_shellOwnerStartMatch(&cur[i], tanks, nTanks, needFired, &fits);
     outOwner[i] = (int8_t)slot;
@@ -286,7 +376,7 @@ static inline void lv_shellOwnerLink(const LvShellPt *prev, const int8_t *prevOw
   /* A tank that fits two new shells at one entry fired one of them at
      most; the other is a pillbox's or another tank's. Neither is clear. */
   for (i = 0; i < nCur; i++) {
-    if (match[i] != -1 || outOwner[i] < 0) continue;
+    if (nFrom[i] != 0 || outOwner[i] < 0) continue;
     if (gunUse[outOwner[i]] > 1) {
       outOwner[i] = LV_SHELL_OWNER_NONE;
       if (stats != NULL) stats->startSharedTank++;
@@ -294,6 +384,15 @@ static inline void lv_shellOwnerLink(const LvShellPt *prev, const int8_t *prevOw
       stats->startOwned++;
     }
   }
+}
+
+/* lv_shellOwnerLinkIds with no shell ids. */
+static inline void lv_shellOwnerLink(const LvShellPt *prev, const int8_t *prevOwner, int nPrev,
+                                     bool prevValid, const LvShellPt *cur, int nCur,
+                                     const LvGunTank *tanks, int nTanks, bool needFired,
+                                     int8_t *outOwner, LvShellOwnerStats *stats) {
+  lv_shellOwnerLinkIds(prev, prevOwner, NULL, nPrev, prevValid, cur, nCur, tanks, nTanks,
+                       needFired, outOwner, NULL, NULL, NULL, stats);
 }
 
 #endif /* LV_SHELL_OWNER_H */
