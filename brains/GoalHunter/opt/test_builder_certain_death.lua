@@ -332,6 +332,39 @@ do
   check("shell ends on a wall he is not on -> nil", REAL(w, inf, 103, 100) == nil)
   TER[100 * 256 + 103] = nil
 
+  -- A forest or a boat stops every shell, and with
+  -- C.BLAST_TERRAIN_SQUARE_HIT that hit is the square rule. On (102,100), a
+  -- pill's shell with life 19 enters it on tick 13 (x 26336) while he is at
+  -- 25936 on square 101: he lives. Without the knob it flies on and expires
+  -- on tick 20 at 26112, 64 from him: certain death.
+  local old_tsh = C.BLAST_TERRAIN_SQUARE_HIT
+  for _, tt in ipairs({ { C.T_FOREST, "forest" }, { C.T_BOAT, "boat" } }) do
+    TER[100 * 256 + 102] = tt[1]
+    inf.objects = { shot(26752, WX, 192, 255, 19) }
+    C.BLAST_TERRAIN_SQUARE_HIT = true
+    check("shell ends on a " .. tt[2] .. " he is not on -> nil",
+          REAL(w, inf, 103, 100) == nil)
+    C.BLAST_TERRAIN_SQUARE_HIT = nil
+    h = REAL(w, inf, 103, 100)
+    check("knob unset: it flies over the " .. tt[2] .. " -> certain death",
+          h ~= nil and h.how == "expiry", h and h.how)
+    TER[100 * 256 + 102] = nil
+  end
+  -- A forest on (101,100), his square: a pill's shell with life 30 enters it
+  -- on tick 21 (x 26080) while he is at 26064 on it: the square rule kills
+  -- him. Without the knob it flies on and ends on our tank on tick 29, 368
+  -- from him.
+  TER[100 * 256 + 101] = C.T_FOREST
+  inf.objects = { shot(26752, WX, 192, 255, 30) }
+  C.BLAST_TERRAIN_SQUARE_HIT = true
+  h = REAL(w, inf, 103, 100)
+  check("shell ends on the forest he is on -> certain death",
+        h ~= nil and h.how == "terrain" and h.solid, h and h.how)
+  C.BLAST_TERRAIN_SQUARE_HIT = nil
+  check("knob unset: it flies over his forest -> nil", REAL(w, inf, 103, 100) == nil)
+  TER[100 * 256 + 101] = nil
+  C.BLAST_TERRAIN_SQUARE_HIT = old_tsh
+
   -- A dead pill on (102,100): a pill's shell with life 19 flies over it and
   -- expires on tick 20 at x 26112, the west edge of that square. He is at
   -- 25728 + 16*20 = 26048 then, on square 101, 64 away. With
