@@ -339,6 +339,24 @@ do
   C.BLAST_DEAD_PILL_OPEN = true
   pill_on(5)
   check("  a live pill there stops the shell -> nil", REAL(w, inf, 103, 100) == nil)
+
+  -- The shot that kills a pill: health 1 on (102,100). A pill's shell from
+  -- x 27620 going west enters that square on tick 40 (27620 - 32*40 =
+  -- 26340) and hits the pill; the blast is at the square's centre, 26240.
+  -- He is at 25728 + 16*40 = 26368 then: the first world unit of square
+  -- 103, 128 from the centre, inside the open-ground circle. A hit on a pill
+  -- is a hit on its square, the killing shot too, so he lives. With the
+  -- shell 10 ticks closer the hit is on tick 30 and he is at 26208, on the
+  -- pill's square: certain death, on the square rule.
+  pill_on(1)
+  inf.objects = { shot(27620, WX, 192, 255, 50) }
+  check("  the shot that kills a pill: he is just off its square -> nil",
+        REAL(w, inf, 103, 100) == nil)
+  inf.objects = { shot(27300, WX, 192, 255, 50) }
+  h = REAL(w, inf, 103, 100)
+  check("  the shot that kills a pill: he is on its square -> certain death",
+        h ~= nil and h.how == "pill" and h.solid == true and h.t == 30,
+        h and (h.how .. " t=" .. tostring(h.t)))
   C.BLAST_DEAD_PILL_OPEN = nil
   w.pill_at = {}
 
