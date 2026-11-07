@@ -71,10 +71,19 @@ static int selectedTank = -1;
  * player's screen showed them. NULL draws the present. */
 static const LvLagFrame *lagFrame = NULL;
 static int lagLiveSlot = -1;
+/* The frame the lag view's builders are drawn from: the server rewinds
+ * builders less far than tanks (shellLgmRewind), so it can be a newer one
+ * than lagFrame. lv_playersSetLagFrame sets it to lagFrame. */
+static const LvLagFrame *lagLgmFrame = NULL;
 
 void lv_playersSetLagFrame(const LvLagFrame *frame, int liveSlot) {
   lagFrame = frame;
+  lagLgmFrame = frame;
   lagLiveSlot = liveSlot;
+}
+
+void lv_playersSetLagLgmFrame(const LvLagFrame *frame) {
+  lagLgmFrame = (lagFrame != NULL && frame != NULL) ? frame : lagFrame;
 }
 
 /* Note where each tank and each builder is drawn now, into one frame of the
@@ -840,12 +849,12 @@ void lv_playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE
   WORLD wy;
   BYTE count;                    /* Looping variable */
 
-  if (lagFrame != NULL) {
+  if (lagLgmFrame != NULL) {
     /* The lag view: every builder at the place the frame holds, the chosen
        player's own one too, since his place comes from the server as the
        others' do. The frame made the tests below when it was noted. */
     for (count = 0; count < MAX_TANKS && count < LV_LAG_SLOTS; count++) {
-      const LvLagLgm *l = &lagFrame->lgm[count];
+      const LvLagLgm *l = &lagLgmFrame->lgm[count];
       if (plrs.item[count].inUse == TRUE && l->out &&
           l->mx >= leftPos && l->mx <= rightPos && l->my >= top && l->my <= bottom) {
         wx = l->mx << TANK_SHIFT_MAPSIZE;

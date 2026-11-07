@@ -1709,6 +1709,19 @@ static void putLagDrawLocation(LogBuf *b, int slot, int k) {
   putU8(b, 0);
 }
 
+/* One log_LgmLocation event for slot's builder, in a LOG_EVENT frame opened
+ * by the caller: the slot and frame nibbles, mx, my, then the pixel nibbles.
+ * The builder is at his tank's entry-k place, one row lower. */
+static void putLagDrawLgm(LogBuf *b, int slot, int k) {
+  unsigned place = lagDrawPlace(slot, k);
+  putU8(b, log_LgmLocation);
+  putU8(b, 0); putU8(b, 4);
+  putU8(b, (uint8_t)(slot << 4));             /* slot, frame LGM0 */
+  putU8(b, (uint8_t)(place / 16));
+  putU8(b, LAG_DRAW_ROW + 1);
+  putU8(b, (uint8_t)((place % 16) << 4));
+}
+
 /* What the stub's draw hook saw on its last call. */
 typedef struct {
   bool     called;
@@ -1717,6 +1730,8 @@ typedef struct {
   int      items;         /* tanks in the draw list */
   int      itemMx[2];     /* each slot's column in the draw list, -1 for none */
   int      itemPx[2];
+  int      lgmItems;      /* builders in the draw list */
+  int      lgmMx, lgmPx;  /* the first one's column and pixel */
 } LagDrawSeen;
 static LagDrawSeen s_lagDrawSeen;
 
@@ -1726,7 +1741,7 @@ extern void (*g_testLvDrawMainScreenHook)(screenTanks *tks, screenBullets *sBull
 static void lagDrawHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgms) {
   BYTE n, i;
   int s;
-  (void)sBullet; (void)lgms;
+  (void)sBullet;
 
   memset(&s_lagDrawSeen, 0, sizeof(s_lagDrawSeen));
   s_lagDrawSeen.called = true;
@@ -1751,6 +1766,15 @@ static void lagDrawHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgm
       s_lagDrawSeen.itemMx[slot] = mx;
       s_lagDrawSeen.itemPx[slot] = px;
     }
+  }
+  s_lagDrawSeen.lgmItems = lv_screenLgmGetNumEntries(lgms);
+  s_lagDrawSeen.lgmMx = -1;
+  s_lagDrawSeen.lgmPx = -1;
+  if (s_lagDrawSeen.lgmItems > 0) {
+    BYTE mx, my, px, py, frame;
+    lv_screenLgmGetItem(lgms, 1, &mx, &my, &px, &py, &frame);
+    s_lagDrawSeen.lgmMx = mx;
+    s_lagDrawSeen.lgmPx = px;
   }
 }
 
@@ -1803,8 +1827,11 @@ static void lagDrawOnce(void) {
  *   entry 40  (800 ms)    A's lag record: 150 ms round trip, rewind 5
  *                         (5 x 20 = 100 ms)
  *
+ * B's builder is out every entry, a row below B's tank at the same column.
+ *
  * At entry 80, with the view on for A: B is drawn at its entry-75 place,
- * A at its entry-80 place. A seek back to entry 42 (840 ms) without the
+ * A at its entry-80 place, and B's builder at his entry-76 place, one entry
+ * newer, as the server tests builders. A seek back to entry 42 (840 ms) without the
  * early start would restore the entry-39 snapshot, which leaves frames only
  * for entries 40 to 42 and none for entry 37. The early start decodes from
  * the opening snapshot instead, so B is drawn at its entry-37 place.
@@ -1829,9 +1856,10 @@ int run_lv_lag_view_draw(void) {
       continue;
     }
     putU8(&b, LOG_EVENT);
-    putU8(&b, (uint8_t)(k == 40 ? 3 : 2));
+    putU8(&b, (uint8_t)(k == 40 ? 4 : 3));
     putLagDrawLocation(&b, 0, k);
     putLagDrawLocation(&b, 1, k);
+    putLagDrawLgm(&b, 1, k);
     if (k == 40) {
       putU8(&b, log_PlayerLag);
       putU8(&b, 0); putU8(&b, 4);
@@ -1883,6 +1911,16 @@ int run_lv_lag_view_draw(void) {
   UT_ASSERT_MSG(s_lagDrawSeen.itemMx[1] == 19 && s_lagDrawSeen.itemPx[1] == 3,
                 "B's draw list place %d/%d, want 19/3", s_lagDrawSeen.itemMx[1],
                 s_lagDrawSeen.itemPx[1]);
+  /* B's builder one entry newer than his tank, as the server tests builders
+     (shellLgmRewind): entry 76, 1120 + 76 = 1196, column 74 pixel 12, so
+     column 19 on screen. */
+  UT_ASSERT_MSG(s_lagDrawSeen.lgmItems == 1, "%d builders in the draw list, want 1",
+                s_lagDrawSeen.lgmItems);
+  UT_ASSERT_MSG(s_lagDrawSeen.lgmMx == (int)(lagDrawPlace(1, 76) / 16) - 55 &&
+                    s_lagDrawSeen.lgmPx == (int)(lagDrawPlace(1, 76) % 16),
+                "B's builder drawn at %d/%d, want %d/%d (entry 76)", s_lagDrawSeen.lgmMx,
+                s_lagDrawSeen.lgmPx, (int)(lagDrawPlace(1, 76) / 16) - 55,
+                (int)(lagDrawPlace(1, 76) % 16));
 
   /* Seek back to entry 42: the frames are there at once. */
   lv_screenSeekToTimeMs(lagDrawMs(42));
