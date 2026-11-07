@@ -1365,8 +1365,27 @@ int run_server_overrun_stats_due(void);
 int run_lv_player_lag_read(void);
 int run_lv_lag_track(void);
 int run_lv_lag_ring(void);
+int run_lv_lag_view_toggle(void);
 int run_lv_lag_feature_default_off(void);
 int run_lv_lag_view_draw(void);
+/* The lag view draws the chosen player's own shells at the present
+ * (test_lv_calibration.c), and the shell owner matcher on a recording, on
+ * ask only (WB_LV_OWNER_WBV). */
+int run_lv_lag_view_own_shells(void);
+int run_lv_shell_owner_recording(void);
+/* The shell owner matcher (lv_shell_owner.h), against the game's shell code
+ * (test_lv_shell_owner.c). */
+int run_lv_shell_owner_rules(void);
+int run_lv_shell_owner_real_flight(void);
+int run_lv_shell_owner_start(void);
+int run_lv_shell_owner_link(void);
+/* The lag view's early blast toggle (test_lv_early_blast.c). */
+int run_lv_early_blast_rules(void);
+int run_lv_early_blast_ended(void);
+int run_lv_early_blast_frames(void);
+int run_lv_early_blast_match(void);
+int run_lv_early_blast_hide(void);
+int run_lv_early_blast_needs_own_shells(void);
 int run_lv_lag_view_rename(void);
 /* The viewer reads log_OverrunStats records and gives the one at the playhead. */
 int run_lv_overrun_read(void);

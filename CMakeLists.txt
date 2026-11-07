@@ -5137,6 +5137,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
     tests/unit/test_lv_calibration.c
+    # The lag view's shell owner matcher against the game's shell code
+    # (test_lv_shell_owner.c).
+    tests/unit/test_lv_shell_owner.c
+    # The lag view's early blast toggle (test_lv_early_blast.c).
+    tests/unit/test_lv_early_blast.c
     # Log viewer snapshot index: time lookups and a ten-day log's worth of
     # entries (test_lv_snapshot_index.c).
     tests/unit/test_lv_snapshot_index.c
@@ -6021,8 +6026,21 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_view_toggle
     lv_lag_feature_default_off
     lv_lag_view_draw
+    lv_lag_view_own_shells
+    lv_shell_owner_recording
+    lv_shell_owner_rules
+    lv_shell_owner_real_flight
+    lv_shell_owner_start
+    lv_shell_owner_link
+    lv_early_blast_rules
+    lv_early_blast_ended
+    lv_early_blast_frames
+    lv_early_blast_match
+    lv_early_blast_hide
+    lv_early_blast_needs_own_shells
     lv_lag_view_rename
     lv_overrun_read
     log_roundtrip_ping

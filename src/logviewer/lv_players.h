@@ -435,6 +435,10 @@ void lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my, BYTE *px, B
  * FALSE when no tank is drawn. */
 void lv_playersLagCapture(LvLagFrame *frame);
 void lv_playersSetLagFrame(const LvLagFrame *frame, int liveSlot);
+/* The frame the lag view draws the builders from, which the server rewinds
+ * less far than tanks. Call it after lv_playersSetLagFrame, which sets it to
+ * the tanks' frame; NULL keeps the tanks' frame. */
+void lv_playersSetLagLgmFrame(const LvLagFrame *frame);
 bool lv_playersGetDrawnTankDetails(BYTE slot, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat);
 
 
