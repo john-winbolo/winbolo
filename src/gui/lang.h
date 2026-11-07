@@ -462,7 +462,7 @@
 /* Lobby list of the Bot Hosts that run the server's bots: header ({number}
  * = hosts), a row ({string1} = host name, {string2} = its state, {number} =
  * bots it runs, {number2} = bots it can run), and the states */
-#define STR_DLGLOBBY_BOTHOSTS_FMT           3428
+#define STR_DLGLOBBY_BOTHOSTS_FMT           3599
 #define STR_DLGLOBBY_BOTHOST_ROW_FMT        3429
 #define STR_DLGLOBBY_BOTHOST_CONNECTED      3430
 #define STR_DLGLOBBY_BOTHOST_SYNCING_FMT    3431
