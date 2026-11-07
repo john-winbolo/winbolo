@@ -632,11 +632,12 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  *
  * Where the danger is now: a hit bursts 80 to 111 from the centre of a still
  * tank on the shooter's side, and the builder dies within MAP_SQUARE_MIDDLE
- * of the burst (the classic lgm_blast_shape; these figures are for it). So a hit can kill him only while he is 48 or less out: his
- * first 2 ticks out on grass and his first 4 on forest, when the tank is
- * still or drives at the shooter. A tank that drives away from the shooter
- * on a road, a boat or a base keeps pace with him, and the danger lasts as
- * long as it does. */
+ * of the burst (the classic lgm_blast_shape; these figures are for it).
+ * So a hit can kill him only while he is 48 or less out: his first 2 ticks
+ * out on grass and his first 4 on forest, when the tank is still or drives
+ * at the shooter. A tank that drives away from the shooter on a road, a
+ * boat or a base keeps pace with him, and the danger lasts as long as it
+ * does. */
 #define LGM_START_OFFSET 16
 
 /*********************************************************
