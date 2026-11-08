@@ -1091,7 +1091,6 @@ static const LangEntry langTable[] = {
     {3142, "Last ms"},
     {3143, "Peak ms"},
     {3144, "Overruns"},
-    {3147, "Host"},
     {3145, "No record yet. The server writes the first one at 0:30 of the round"},
     {3146, "Player {number}"},
     /* Log viewer Controls panel: what each button does, for its tooltip. {string1} of the two jumps is a number of seconds ("2.5", "12"); KEY_FMT puts a button's shortcut key after its name. */
@@ -1273,24 +1272,9 @@ static const LangEntry langTable[] = {
     {1236, "Simulation"},
     {1237, "Bot prep"},
     {1238, "Brain overruns"},
-
-    /* System Info panel — this computer's own Bot Host */
-    {3169, "Bot Host: {string1}"},
-    {3170, "running"},
-    {3171, "syncing brains {number}%"},
-    {3172, "stopped: same computer as the server"},
-    {3173, "off"},
-    {3174, "connecting"},
-    {3175, "{number} of {number2} slots"},
-    {3176, "Overruns in the last {number} s: {string1}%"},
-    {3177, "Overruns in the last {number} s: not known yet"},
-    {3178, "CPU per bot: {string1}% of this computer"},
-    {3179, "CPU per bot: at most {string1}% of this computer"},
-    {3180, "CPU per bot: not known yet"},
-    {3181, "Free CPU on this computer: {number}%"},
-    {3182, "Free CPU on this computer: not known yet"},
-    {3183, "Bot pool: {number} workers, target {string1} ms a bot"},
-    {3184, "Bot pool: single thread, target {string1} ms a bot"},
+    /* The header over each host's bot rows */
+    {3185, "Server:"},
+    {3186, "Bot Host {string1}:"},
 
     /* System Info panel — the Memory block */
     {2779, "Memory"},

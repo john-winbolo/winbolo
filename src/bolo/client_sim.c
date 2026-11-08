@@ -2446,6 +2446,16 @@ const ClientBotHostRow *clientSimGetBotHostRow(const ClientSim *cs, uint8_t idx)
   return &cs->botHostRows[idx];
 }
 
+bool clientSimGetBotTiming(const ClientSim *cs, OverrunRecord *out) {
+  uint8_t bytes[OVERRUN_RECORD_MAX_BYTES];
+  uint16_t len;
+  if (cs == NULL || out == NULL) return false;
+  len = cs->botTimingLen;
+  if (len == 0 || len > sizeof(bytes)) return false;
+  memcpy(bytes, cs->botTimingBytes, len);
+  return overrunRecordDecode(bytes, (int)len, out);
+}
+
 bool clientSimGetBotHostTicket(const ClientSim *cs, uint8_t *player,
                                uint8_t *ticket, char *brain, uint32_t *gen) {
   if (cs == NULL || !cs->botHostTicketValid) return false;

@@ -31,7 +31,6 @@
 #include "control_event.h"
 #include "transport_control_codec.h"
 #include "bot_host_cpu.h"
-#include "../../src/bothost/bothost_embed.h" /* the System Info block's helpers */
 #include "test_harness.h"
 
 #define NS_PER_S 1000000000ull
@@ -673,32 +672,136 @@ int run_bot_host_machine_codec(void) {
     return 0;
 }
 
-/* The System Info block of this computer's own Bot Host: its state from
- * what the host knows (the checks in order), the brain sync percent, and
- * the CPU per bot it shows (measured, else "at most" the full budget). */
-int run_bot_host_embed_info_helpers(void) {
-    bool atMost = true;
+/* ================================================================
+ * System Info's bot rows for a joined client (CTRL_BOT_TIMING)
+ * ================================================================ */
+static void botTimingTestRecord(OverrunRecord *rec) {
+    memset(rec, 0, sizeof(*rec));
+    rec->version = OVERRUN_RECORD_VERSION;
+    rec->flags = OVERRUN_RECORD_FLAG_BOTS;
+    rec->botCount = 3;
+    for (int i = 0; i < 3; i++) {
+        rec->bots[i].player = (uint8_t)(i + 2);
+        rec->bots[i].last = (uint16_t)(30 + i);
+        rec->bots[i].peak = (uint16_t)(300 + i);
+        rec->bots[i].overruns = (uint32_t)(5 + i);
+        rec->bots[i].thinks = 2000u + (uint32_t)i;
+    }
+    rec->bots[0].host = (uint8_t)OVERRUN_RECORD_HOST_SERVER;
+    rec->bots[1].host = overrunRecordHostPlace(rec, "andrew-bsmt");
+    rec->bots[2].host = overrunRecordHostPlace(rec, "laptop");
+}
 
-    UT_ASSERT(botHostEmbedStateOf(true, true, true, true) == BOT_HOST_EMBED_STATE_SAME_SERVER);
-    UT_ASSERT(botHostEmbedStateOf(false, true, true, true) == BOT_HOST_EMBED_STATE_OFF);
-    UT_ASSERT(botHostEmbedStateOf(false, false, false, true) == BOT_HOST_EMBED_STATE_CONNECTING);
-    UT_ASSERT(botHostEmbedStateOf(false, false, true, false) == BOT_HOST_EMBED_STATE_SYNCING);
-    UT_ASSERT(botHostEmbedStateOf(false, false, true, true) == BOT_HOST_EMBED_STATE_RUNNING);
+int run_bot_timing_codec(void) {
+    ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(CTRL_BOT_TIMING);
+    ControlDecodeBodyFn dec = transportControlCodecBodyDecoder(CTRL_BOT_TIMING);
+    static ControlEvent in, out;
+    static uint8_t buf[OVERRUN_RECORD_MAX_BYTES + 8];
+    OverrunRecord rec, back;
+    size_t len = 0;
+    int recLen;
+    int v1Len;
 
-    UT_ASSERT(botHostEmbedSyncPercent(0, 0) == 0);
-    UT_ASSERT(botHostEmbedSyncPercent(0, 1000) == 0);
-    UT_ASSERT(botHostEmbedSyncPercent(505, 1000) == 50);
-    UT_ASSERT(botHostEmbedSyncPercent(999, 1000) == 99);
-    UT_ASSERT(botHostEmbedSyncPercent(1000, 1000) == 99);
-    UT_ASSERT(botHostEmbedSyncPercent(0xFFFFFFFFu, 0xFFFFFFFFu) == 99);
-    UT_ASSERT(botHostEmbedSyncPercent(3000000000u, 4000000000u) == 75);
+    UT_ASSERT(enc != NULL && dec != NULL);
+    UT_ASSERT(strcmp(controlEventTypeName(CTRL_BOT_TIMING), "CTRL_BOT_TIMING") == 0);
 
-    UT_ASSERT(botHostEmbedCpuPick(1234u, 5000u, &atMost) == 1234u && !atMost);
-    UT_ASSERT(botHostEmbedCpuPick(0u, 5000u, &atMost) == 0u && !atMost);
-    UT_ASSERT(botHostEmbedCpuPick(BOT_HOST_CPU_MILLI_UNKNOWN, 5000u, &atMost) == 5000u &&
-              atMost);
-    UT_ASSERT(botHostEmbedCpuPick(BOT_HOST_CPU_MILLI_UNKNOWN, BOT_HOST_CPU_MILLI_UNKNOWN,
-                                  &atMost) == BOT_HOST_CPU_MILLI_UNKNOWN && !atMost);
-    UT_ASSERT(botHostEmbedCpuPick(BOT_HOST_CPU_MILLI_UNKNOWN, 7u, NULL) == 7u);
+    botTimingTestRecord(&rec);
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_TIMING;
+    recLen = overrunRecordEncode(&rec, in.u.botTiming.bytes,
+                                 (int)sizeof(in.u.botTiming.bytes));
+    UT_ASSERT(recLen > OVERRUN_RECORD_HEAD_BYTES);
+    in.u.botTiming.len = (uint16_t)recLen;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT((int)len == recLen);
+    UT_ASSERT(memcmp(buf, in.u.botTiming.bytes, len) == 0);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.type == CTRL_BOT_TIMING && out.u.botTiming.len == recLen);
+    UT_ASSERT(overrunRecordDecode(out.u.botTiming.bytes, out.u.botTiming.len, &back));
+    UT_ASSERT(memcmp(&back, &rec, sizeof(rec)) == 0);
+
+    /* Too small a buffer, an empty body and a body over the array. */
+    UT_ASSERT(enc(&in, NULL, buf, len - 1, &len) == ENCODE_OVERFLOW);
+    in.u.botTiming.len = 0;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OVERFLOW);
+    in.u.botTiming.len = OVERRUN_RECORD_HEAD_BYTES - 1;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OVERFLOW);
+    in.u.botTiming.len = (uint16_t)(sizeof(in.u.botTiming.bytes) + 1);
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OVERFLOW);
+
+    /* A short body and a version 0 body are refused. */
+    recLen = overrunRecordEncode(&rec, buf, (int)sizeof(buf));
+    UT_ASSERT(!dec(buf, OVERRUN_RECORD_HEAD_BYTES - 1, &out));
+    UT_ASSERT(!dec(buf, 0, &out));
+    buf[0] = 0;
+    UT_ASSERT(!dec(buf, (size_t)recLen, &out));
+
+    /* A version 1 record: the bots, no hosts, so one plain list. */
+    buf[0] = 1;
+    v1Len = OVERRUN_RECORD_HEAD_BYTES + 3 * OVERRUN_RECORD_BOT_BYTES;
+    UT_ASSERT(dec(buf, (size_t)v1Len, &out));
+    UT_ASSERT(out.u.botTiming.len == v1Len);
+    UT_ASSERT(overrunRecordDecode(out.u.botTiming.bytes, out.u.botTiming.len, &back));
+    UT_ASSERT(back.version == 1 && back.botCount == 3 && back.hostCount == 0);
+    {
+        uint8_t keys[OVERRUN_RECORD_MAX_SECTIONS];
+        UT_ASSERT(overrunRecordSections(&back, keys, OVERRUN_RECORD_MAX_SECTIONS) == 0);
+    }
+
+    /* Bytes past the array are cut, and the record still reads. */
+    buf[0] = OVERRUN_RECORD_VERSION;
+    memset(buf + recLen, 0xAB, sizeof(buf) - (size_t)recLen);
+    UT_ASSERT(dec(buf, sizeof(buf), &out));
+    UT_ASSERT(out.u.botTiming.len == sizeof(out.u.botTiming.bytes));
+
+    /* The record with no bots, sent once when the last bot goes. */
+    memset(&rec, 0, sizeof(rec));
+    recLen = overrunRecordEncode(&rec, in.u.botTiming.bytes,
+                                 (int)sizeof(in.u.botTiming.bytes));
+    UT_ASSERT(recLen == OVERRUN_RECORD_HEAD_BYTES + 1);
+    in.u.botTiming.len = (uint16_t)recLen;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(dec(buf, len, &out));
+    return 0;
+}
+
+/* The client keeps the last record; a new one takes its place. */
+int run_bot_timing_client_copy(void) {
+    ClientSim *cs = clientSimAlloc();
+    static ControlEvent evt;
+    OverrunRecord rec, back;
+    int recLen;
+
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    /* An older server sends nothing: no rows. */
+    UT_ASSERT(!clientSimGetBotTiming(cs, &back));
+    UT_ASSERT(!clientSimGetBotTiming(NULL, &back));
+    UT_ASSERT(!clientSimGetBotTiming(cs, NULL));
+
+    botTimingTestRecord(&rec);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_TIMING;
+    recLen = overrunRecordEncode(&rec, evt.u.botTiming.bytes,
+                                 (int)sizeof(evt.u.botTiming.bytes));
+    UT_ASSERT(recLen > 0);
+    evt.u.botTiming.len = (uint16_t)recLen;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetBotTiming(cs, &back));
+    UT_ASSERT(memcmp(&back, &rec, sizeof(rec)) == 0);
+
+    /* The last bot went: the empty record replaces the rows. */
+    memset(&rec, 0, sizeof(rec));
+    recLen = overrunRecordEncode(&rec, evt.u.botTiming.bytes,
+                                 (int)sizeof(evt.u.botTiming.bytes));
+    evt.u.botTiming.len = (uint16_t)recLen;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetBotTiming(cs, &back));
+    UT_ASSERT(back.botCount == 0);
+
+    /* A new map load: no rows until the server sends again. */
+    clientSimCreate(cs);
+    UT_ASSERT(!clientSimGetBotTiming(cs, &back));
+    clientSimDestroy(cs);
     return 0;
 }

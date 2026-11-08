@@ -1000,9 +1000,9 @@ int run_bot_host_cpu_bot_meter(void);
 int run_bot_host_cpu_bot_codec(void);
 int run_bot_host_cpu_budget(void);
 int run_bot_host_cpu_bot_client_row(void);
-/* The System Info Bot Host block's helpers (bothost_embed.h). */
-int run_bot_host_embed_info_helpers(void);
 int run_bot_host_lag_codec(void);
+int run_bot_timing_codec(void);
+int run_bot_timing_client_copy(void);
 /* Bot Hosts on one computer, the game bot limit and the row slot override
  * (test_bot_host_machine.c). */
 int run_bot_host_machine_addr(void);
@@ -1533,6 +1533,7 @@ int run_log_roundtrip_overrun_stats(void);
 int run_overrun_record_hosts(void);
 int run_overrun_record_v1_hosts(void);
 int run_overrun_record_host_place(void);
+int run_overrun_record_sections(void);
 /* log_BotHostData through the round log, and nothing with the option off. */
 int run_log_roundtrip_bothost_data(void);
 int run_bothost_record_off_writes_nothing(void);

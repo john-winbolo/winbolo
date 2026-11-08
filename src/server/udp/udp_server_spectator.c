@@ -216,6 +216,8 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_BOT_HOST_CPU:
     case CTRL_BOT_HOST_CPU_BOT:
     case CTRL_BOT_HOST_LAG:
+    /* Every bot's think timing, for a viewer's System Info. */
+    case CTRL_BOT_TIMING:
     case CTRL_BOT_HOST_ROW_SLOTS:
     case CTRL_LOBBY_SYNC_COMPLETE:
     /* The live scoreboard is public — a viewer can already read captures and

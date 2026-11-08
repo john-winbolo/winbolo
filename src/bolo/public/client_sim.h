@@ -43,6 +43,7 @@
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
 #include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
+#include "overrun_record.h" /* OverrunRecord — clientSimGetBotTiming */
 #include "upload_policy.h" /* UploadPolicy, ScriptUploadPolicy — upload-policy getters */
 #include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
@@ -792,6 +793,11 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
 
 /* Bot Host list row mirror; out-of-range idx returns NULL. */
 const ClientBotHostRow *clientSimGetBotHostRow(const ClientSim *cs, uint8_t idx);
+
+/* The bots' think timing from the server's last CTRL_BOT_TIMING (sent once
+ * a second while the game has bots), read into out. False when none came
+ * (an older server, or a game with no bots yet). */
+bool clientSimGetBotTiming(const ClientSim *cs, OverrunRecord *out);
 
 /* The ticket of the last CTRL_BOT_HOST_TICKET: the server lets this
  * player's computer run bots for it. False when none came on this

@@ -365,4 +365,70 @@ static inline bool overrunRecordDecode(const uint8_t *in, int len, OverrunRecord
   return true;
 }
 
+/* The most sections overrunRecordSections gives: the server, each host in
+   the table, and the bots whose host is not known. */
+#define OVERRUN_RECORD_MAX_SECTIONS (OVERRUN_RECORD_MAX_HOSTS + 2)
+
+/* The sections a display groups rec's bots into, one header for each host
+   that has a bot: the server's own process first, then each Bot Host in the
+   host table's order, then the bots whose host is not known. keys gets each
+   section's host byte (OVERRUN_RECORD_HOST_SERVER, a place in the table, or
+   OVERRUN_RECORD_HOST_NONE), at most cap of them. A bot is in the section
+   whose key equals its host byte, or in the not known section when its byte
+   is past the table. Returns the number of sections, or 0 when no bot has a
+   known host (a version 1 record): the display then shows one list with no
+   headers. */
+static inline int overrunRecordSections(const OverrunRecord *rec, uint8_t *keys, int cap) {
+  bool used[OVERRUN_RECORD_MAX_HOSTS + 1];
+  bool none = false;
+  bool known = false;
+  int count;
+  int hosts;
+  int n = 0;
+  int i;
+
+  if (rec == NULL || keys == NULL || cap <= 0) {
+    return 0;
+  }
+  memset(used, 0, sizeof(used));
+  count = rec->botCount > OVERRUN_RECORD_MAX_BOTS ? OVERRUN_RECORD_MAX_BOTS : rec->botCount;
+  hosts = rec->hostCount > OVERRUN_RECORD_MAX_HOSTS ? OVERRUN_RECORD_MAX_HOSTS : rec->hostCount;
+  for (i = 0; i < count; i++) {
+    uint8_t h = rec->bots[i].host;
+    if (h == OVERRUN_RECORD_HOST_SERVER || (h != OVERRUN_RECORD_HOST_NONE && h <= hosts)) {
+      used[h] = true;
+      known = true;
+    } else {
+      none = true;
+    }
+  }
+  if (!known) {
+    return 0;
+  }
+  for (i = 0; i <= hosts && n < cap; i++) {
+    if (used[i]) {
+      keys[n++] = (uint8_t) i;
+    }
+  }
+  if (none && n < cap) {
+    keys[n++] = OVERRUN_RECORD_HOST_NONE;
+  }
+  return n;
+}
+
+/* TRUE when bot b goes under the section with host byte key
+   (overrunRecordSections). */
+static inline bool overrunRecordBotInSection(const OverrunRecord *rec,
+                                             const OverrunRecordBot *b, uint8_t key) {
+  uint8_t h;
+  if (rec == NULL || b == NULL) {
+    return false;
+  }
+  h = b->host;
+  if (h != OVERRUN_RECORD_HOST_SERVER && h > rec->hostCount) {
+    h = OVERRUN_RECORD_HOST_NONE;
+  }
+  return h == key;
+}
+
 #endif /* OVERRUN_RECORD_H */

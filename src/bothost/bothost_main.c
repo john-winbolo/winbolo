@@ -252,11 +252,6 @@ typedef struct {
     uint32_t    killCount;
     uint32_t    teamMsgsOut;   /* CMD_BOT_TEAM_MSG sent */
     uint32_t    teamMsgsIn;    /* CTRL_BOT_TEAM_MSG received */
-    /* The think and overrun counts the last overrun probe saw
-     * (hostOvrProbe); ovrSeen is false until it has seen the seat. */
-    bool        ovrSeen;
-    uint32_t    ovrThinks;
-    uint32_t    ovrOverruns;
 
     /* Pings asked for during the think, sent after it (CMD_PING). */
     ClientCommand pings[BOT_PENDING_CMD_MAX];
@@ -406,14 +401,6 @@ static MachineCpuFree  hostFreeMeter;
 static uint8_t         hostFreeValue = (uint8_t)MACHINE_CPU_FREE_UNKNOWN;
 static uint32_t        hostFreeSeq;
 static uint32_t        hostFreeAtMs;
-/* The overrun rate over the last 30 s by the server's own rule
- * (botHostOverrunProbe, bot_host_link.h): one probe a second of this
- * host's new thinks and overruns. The System Info of the Bot Host inside a
- * client shows it; nothing is sent. */
-static BotHostOverrunCfg   hostOvrCfg;
-static BotHostOverrunState hostOvr;
-static bool                hostOvrStarted;
-static uint32_t            hostOvrAtMs;
 static SOCKET     listenSock = INVALID_SOCKET;
 
 static int serverIndex(const HostServer *sv) {
@@ -2199,37 +2186,6 @@ static bool seatsService(void) {
     return built;
 }
 
-/* One overrun probe a second: each seat's new thinks and overruns since the
- * last probe. A seat seen for the first time, or whose counts went back,
- * starts again from its counts now, as the server's probe does. */
-static void hostOvrProbe(void) {
-    BotHostOverrunProbe in;
-    uint32_t t = nowMs();
-    int i;
-
-    if (hostOvrStarted && t - hostOvrAtMs < 1000u) return;
-    hostOvrStarted = true;
-    hostOvrAtMs = t;
-    memset(&in, 0, sizeof(in));
-    for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
-        HostSeat *hs = &seats[i];
-        if (!hs->used) continue;
-        in.bots++;
-        if (hs->ovrSeen && hs->bot.thinkCount >= hs->ovrThinks &&
-            hs->bot.overrunCount >= hs->ovrOverruns) {
-            in.thinks += hs->bot.thinkCount - hs->ovrThinks;
-            in.overruns += hs->bot.overrunCount - hs->ovrOverruns;
-        }
-        hs->ovrSeen = true;
-        hs->ovrThinks = hs->bot.thinkCount;
-        hs->ovrOverruns = hs->bot.overrunCount;
-    }
-    in.slots = optSlots;
-    in.botCpu = hostCpuValue;
-    in.freePct = hostFreeValue;
-    (void)botHostOverrunProbe(&hostOvr, &hostOvrCfg, &in, NULL);
-}
-
 static void hostTick(void) {
     int i, active = 0, runners;
     bool anyFirst = false;
@@ -2426,7 +2382,6 @@ static void hostTick(void) {
             hostFreeSeq++;
             if (hostFreeSeq == 0) hostFreeSeq = 1;
         }
-        if (HOST_EMBED) hostOvrProbe();
     }
 
     sendEnd = SDL_GetPerformanceCounter();
@@ -2802,11 +2757,6 @@ static SDL_AtomicInt embedSlotsNow;
 static SDL_AtomicInt embedUsedNow;
 static SDL_AtomicInt embedRefusedNow;
 static bool          embedSendQuit;
-/* The copy of the host's numbers System Info reads (botHostEmbedGetInfo).
- * The host's thread writes it under embedInfoLock after each tick; the
- * lock is made at the first start and kept. */
-static SDL_Mutex       *embedInfoLock;
-static BotHostEmbedInfo embedInfoNow;
 static double        embedRecordMinFreeGb = 50.0;
 static int           embedSavedParts[4];
 
@@ -2845,46 +2795,6 @@ static void embedPublish(void) {
     SDL_SetAtomicInt(&embedRefusedNow, embedRefused ? 1 : 0);
 }
 
-/* The host's numbers into the copy System Info reads. Host thread. */
-static void embedPublishInfo(void) {
-    BotHostEmbedInfo info;
-    const HostServer *sv = &servers[0];
-    int i;
-
-    memset(&info, 0, sizeof(info));
-    info.running = true;
-    info.state = botHostEmbedStateOf(hostStopped(),
-                                     SDL_GetAtomicInt(&embedWithhold) != 0,
-                                     serverCount > 0 &&
-                                         sv->state == CTL_CONNECTED,
-                                     sv->sync.ready);
-    info.syncPercent = botHostEmbedSyncPercent(sv->sync.done, sv->sync.total);
-    info.bots = poolUsed();
-    info.slots = poolSlotsFor(0);
-    info.windowSecs = hostOvrCfg.windowSecs;
-    info.rateKnown = botHostOverrunRate(&hostOvr, &hostOvrCfg, &info.ratePct);
-    info.cpuBotMilli = botHostEmbedCpuPick(hostCpuMeter.perBotMilli,
-                                           hostCpuBudgetMilli, &info.cpuAtMost);
-    info.freePct = hostFreeValue;
-    info.workers = botWorkerPoolGetSize();
-    info.targetMs = lastTargetMs;
-    for (i = 0; i < BOT_HOST_MAX_SLOTS &&
-                info.botCount < BOT_HOST_EMBED_INFO_BOTS; i++) {
-        const HostSeat *hs = &seats[i];
-        BotHostEmbedBotInfo *b;
-        if (!hs->used) continue;
-        b = &info.bot[info.botCount++];
-        SDL_strlcpy(b->name, hs->name, sizeof(b->name));
-        b->lastMs = hs->bot.lastThinkMs;
-        b->peakMs = hs->bot.maxThinkMs;
-        b->overruns = hs->bot.overrunCount;
-        b->thinks = hs->bot.thinkCount;
-    }
-    SDL_LockMutex(embedInfoLock);
-    embedInfoNow = info;
-    SDL_UnlockMutex(embedInfoLock);
-}
-
 static int SDLCALL embedThreadFn(void *arg) {
     uint32_t nextTick = nowMs();
     int i;
@@ -2907,7 +2817,6 @@ static int SDLCALL embedThreadFn(void *arg) {
         t = nowMs();
         if ((int32_t)(t - nextTick) >= 0) {
             hostTick();
-            embedPublishInfo();
             nextTick += BOT_HOST_TICK_MS;
             if ((int32_t)(t - nextTick) > 10 * BOT_HOST_TICK_MS) {
                 nextTick = t + BOT_HOST_TICK_MS;
@@ -2940,9 +2849,6 @@ static int SDLCALL embedThreadFn(void *arg) {
     embedPublish();
     SDL_SetAtomicInt(&embedConnected, 0);
     SDL_SetAtomicInt(&embedUsedNow, 0);
-    SDL_LockMutex(embedInfoLock);
-    memset(&embedInfoNow, 0, sizeof(embedInfoNow));
-    SDL_UnlockMutex(embedInfoLock);
     SDL_SetAtomicInt(&embedAlive, 0);
     return 0;
 }
@@ -2982,19 +2888,6 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     hostFreeValue = (uint8_t)MACHINE_CPU_FREE_UNKNOWN;
     hostFreeSeq = 0;
     hostFreeAtMs = 0;
-    botHostOverrunCfgDefaults(&hostOvrCfg);
-    botHostOverrunReset(&hostOvr);
-    hostOvrStarted = false;
-    hostOvrAtMs = 0;
-    if (embedInfoLock == NULL) {
-        embedInfoLock = SDL_CreateMutex();
-        if (embedInfoLock == NULL) {
-            WB_LOG_ERROR(WB_LOG_CAT_NET, "[bothost] cannot make its lock: %s",
-                         SDL_GetError());
-            return false;
-        }
-    }
-    memset(&embedInfoNow, 0, sizeof(embedInfoNow));
     embedPlayer = cfg->player;
     memcpy(embedTicket, cfg->ticket, sizeof(embedTicket));
     SDL_strlcpy(embedBrain, cfg->brain != NULL ? cfg->brain : "",
@@ -3122,18 +3015,6 @@ void botHostEmbedSetWithhold(bool on) {
                on ? "the player turned bots off on this computer for this "
                     "game; it offers 0 slots"
                   : "the player turned bots on again; it offers its slots");
-}
-
-void botHostEmbedGetInfo(BotHostEmbedInfo *out) {
-    if (out == NULL) return;
-    memset(out, 0, sizeof(*out));
-    if (embedThread == NULL || embedInfoLock == NULL ||
-        SDL_GetAtomicInt(&embedAlive) == 0) {
-        return;
-    }
-    SDL_LockMutex(embedInfoLock);
-    *out = embedInfoNow;
-    SDL_UnlockMutex(embedInfoLock);
 }
 
 void botHostEmbedGetStatus(BotHostEmbedStatus *out) {

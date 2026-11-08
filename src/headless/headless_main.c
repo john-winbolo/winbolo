@@ -373,6 +373,10 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
   if (evt->type == CTRL_LOBBY_BOT_POOL_INFO) return;
   if (evt->type == CTRL_LOBBY_BOT_POOL_CHUNK) return;
 
+  /* The bots' think timing for System Info: wall-clock numbers that differ
+   * on each run, so never part of a baseline. */
+  if (evt->type == CTRL_BOT_TIMING) return;
+
   /* Same story for the per-brain announce lines: they are lobby display
    * data whose count depends on which brains exist on the machine the
    * baseline runs on. The retired docs chunk is dropped too, in case a

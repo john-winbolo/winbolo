@@ -6485,8 +6485,9 @@ set(_unit_test_names
     bot_host_cpu_bot_codec
     bot_host_cpu_budget
     bot_host_cpu_bot_client_row
-    bot_host_embed_info_helpers
     bot_host_lag_codec
+    bot_timing_codec
+    bot_timing_client_copy
     bot_host_machine_addr
     machine_id_token
     machine_id_salt_repeat
@@ -6555,6 +6556,7 @@ set(_unit_test_names
     overrun_record_hosts
     overrun_record_v1_hosts
     overrun_record_host_place
+    overrun_record_sections
     log_roundtrip_bothost_data
     bothost_record_off_writes_nothing
     log_roundtrip_overrun_stats_recorded

@@ -525,6 +525,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
 
+    case CTRL_BOT_TIMING:
+        if (evt->u.botTiming.len <= sizeof(cs->botTimingBytes)) {
+            memcpy(cs->botTimingBytes, evt->u.botTiming.bytes,
+                   evt->u.botTiming.len);
+            cs->botTimingLen = evt->u.botTiming.len;
+        }
+        break;
+
     case CTRL_BOT_HOST_CPU_BOT:
         if (evt->u.botHostCpuBot.idx < CLIENT_BOT_HOST_ROWS) {
             ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostCpuBot.idx];

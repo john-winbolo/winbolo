@@ -95,12 +95,9 @@ extern "C" {
  * shapes the lobby does. At file scope: it pulls in imgui.h, whose
  * templates do not compile with C linkage. */
 #include "dialogs/lobby/lobby_internal.h"
-/* This computer's own Bot Host, for its System Info block. */
-#include "../../bothost/bothost_embed.h"
 
 extern "C" {
 #include "client_net.h"
-#include "bot_host_cpu.h"   /* botHostCpuFormatMilli, botHostCpuFormatPct */
 #include "../clientmutex.h" /* the overview's render reads sim state */
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
@@ -1714,6 +1711,28 @@ static bool     s_sysMemValid    = false;  /* s_sysMem holds a read */
 static bool     s_sysMemHosting  = false;  /* the read came from a hosted sim */
 static uint32_t s_sysMemLastTick = 0;
 
+/* System Info's bot rows: every bot in the game, grouped under one header
+ * for each host its brain runs on (the server's process, then each Bot
+ * Host). A copy is taken once a second and drawn between copies: from the
+ * local server sim when this process hosts the game, else from the
+ * server's CTRL_BOT_TIMING, which also comes once a second. */
+struct SysBotRow {
+    int      slot;
+    uint8_t  host;        /* the record's host byte */
+    char     brain[64];
+    char     player[PACKET_MAX_PLAYER_NAME];
+    double   lastMs;
+    double   peakMs;
+    uint32_t overruns;
+    uint32_t thinks;
+};
+
+static OverrunRecord s_sysBotRec;          /* the hosts and the sections */
+static SysBotRow     s_sysBotRows[OVERRUN_RECORD_MAX_BOTS];
+static int           s_sysBotRowCount = 0;
+static bool          s_sysBotHave = false;
+static uint32_t      s_sysBotAtMs = 0;
+
 static void sysInfoGraphReset(void) {
     memset(s_tickHistory, 0, sizeof(s_tickHistory));
     memset(s_brainHistory, 0, sizeof(s_brainHistory));
@@ -1724,6 +1743,8 @@ static void sysInfoGraphReset(void) {
     s_sysMemValid    = false;
     s_sysMemHosting  = false;
     s_sysMemLastTick = 0;
+    s_sysBotHave     = false;
+    s_sysBotRowCount = 0;
 }
 
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
@@ -1820,152 +1841,107 @@ static void sysInfoGraphSample(double tickMs, double brainPhaseMs) {
     if (s_sysHistoryCount < SYS_GRAPH_SIZE) s_sysHistoryCount++;
 }
 
-/* The bot table of System Info: Bot, Host, Last, Peak, Overruns. withHost
- * false (the Bot Host block's own bots) leaves the Host column out. */
-static bool s_sysBotTableOpen = false;
-static bool s_sysBotTableHost = false;
+static void sysInfoBotsRefresh(ServerSim *spSim, ClientSim *cs) {
+    uint32_t now = (uint32_t)SDL_GetTicks();
+    OverrunRecord rec = {};
+    BotInfo infos[OVERRUN_RECORD_MAX_BOTS] = {};
+    bool have;
 
-static void sysInfoBotTableBegin(const char *id, bool withHost = true) {
-    int cols = withHost ? 5 : 4;
-    s_sysBotTableHost = withHost;
-    s_sysBotTableOpen = ImGui::BeginTable(id, cols,
-        ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
-        ImGuiTableFlags_SizingFixedFit);
-    if (!s_sysBotTableOpen) return;
-    ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_BOT),
-                            ImGuiTableColumnFlags_WidthStretch);
-    if (withHost) {
-        ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_HOST),
-                                ImGuiTableColumnFlags_WidthStretch);
-    }
-    ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_LAST));
-    ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_PEAK));
-    ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_OVERRUNS));
-    ImGui::TableHeadersRow();
-}
-
-static void sysInfoBotTableRow(const char *who, const char *host,
-                               double lastMs, double peakMs,
-                               uint32_t overruns, uint32_t thinks) {
-    if (!s_sysBotTableOpen) return;
-    double rate = thinks > 0 ? (double)overruns * 100.0 / (double)thinks : 0.0;
-    ImGui::TableNextRow();
-    ImGui::TableNextColumn();
-    ImGui::TextUnformatted(who);
-    if (s_sysBotTableHost) {
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(host != NULL ? host : "");
-    }
-    ImGui::TableNextColumn();
-    ImGui::Text("%.2f ms", lastMs);
-    ImGui::TableNextColumn();
-    ImGui::Text("%.2f ms", peakMs);
-    ImGui::TableNextColumn();
-    ImGui::Text("%u/%u (%.2f%%)", overruns, thinks, rate);
-}
-
-static void sysInfoBotTableEnd(void) {
-    if (s_sysBotTableOpen) ImGui::EndTable();
-    s_sysBotTableOpen = false;
-}
-
-/* This computer's own Bot Host, when it runs: its state, its slots, its
- * overrun rate over the last 30 s, one bot's part of the CPU, the free CPU,
- * its bot pool and one row per bot. The numbers are the host's own (a copy
- * taken under the host's lock); the server sends nothing for them. */
-static void renderSysInfoBotHost(void) {
-    BotHostEmbedInfo info;
-    char buf[32];
-
-    botHostEmbedGetInfo(&info);
-    if (!info.running) return;
-
-    ImGui::Separator();
-    {
-        MessageArgs args = {};
-        const char *state;
-        switch (info.state) {
-        case BOT_HOST_EMBED_STATE_RUNNING:
-            state = langGetText(STR_DLGSYSINFO_BOTHOST_RUNNING);
-            break;
-        case BOT_HOST_EMBED_STATE_SYNCING: {
-            MessageArgs sync = {};
-            sync.number = info.syncPercent;
-            state = langGetTextFmt(STR_DLGSYSINFO_BOTHOST_SYNCING_FMT, &sync);
-            break;
+    if (s_sysBotHave && now - s_sysBotAtMs < 1000u) return;
+    s_sysBotAtMs = now;
+    if (spSim != NULL) {
+        threadsWaitForMutex();
+        serverSimFillOverrunRecord(spSim, 0, false, &rec);
+        for (int i = 0; i < rec.botCount && i < OVERRUN_RECORD_MAX_BOTS; i++) {
+            (void)serverSimGetBotInfo(spSim, rec.bots[i].player, &infos[i]);
         }
-        case BOT_HOST_EMBED_STATE_SAME_SERVER:
-            state = langGetText(STR_DLGSYSINFO_BOTHOST_SAME_SERVER);
-            break;
-        case BOT_HOST_EMBED_STATE_OFF:
-            state = langGetText(STR_DLGSYSINFO_BOTHOST_OFF);
-            break;
-        default:
-            state = langGetText(STR_DLGSYSINFO_BOTHOST_CONNECTING);
-            break;
-        }
-        SDL_strlcpy(args.string1, state, sizeof(args.string1));
-        ImGui::TextUnformatted(langGetTextFmt(STR_DLGSYSINFO_BOTHOST_FMT, &args));
+        threadsReleaseMutex();
+        have = true;
+    } else {
+        have = cs != NULL && clientSimGetBotTiming(cs, &rec);
     }
-    {
-        MessageArgs args = {};
-        args.number = info.bots;
-        args.number2 = info.slots;
-        ImGui::Text("  %s", langGetTextFmt(STR_DLGSYSINFO_BOTHOST_SLOTS_FMT, &args));
-    }
-    {
-        MessageArgs args = {};
-        args.number = info.windowSecs;
-        if (info.rateKnown) {
-            snprintf(args.string1, sizeof(args.string1), "%.2f", info.ratePct);
-            ImGui::Text("  %s", langGetTextFmt(STR_DLGSYSINFO_BOTHOST_RATE_FMT, &args));
+    s_sysBotHave = have;
+    s_sysBotRowCount = 0;
+    if (!have) return;
+    s_sysBotRec = rec;
+    for (int i = 0; i < rec.botCount && i < OVERRUN_RECORD_MAX_BOTS; i++) {
+        const OverrunRecordBot *b = &rec.bots[i];
+        SysBotRow *r = &s_sysBotRows[s_sysBotRowCount++];
+        memset(r, 0, sizeof(*r));
+        r->slot = b->player;
+        r->host = b->host;
+        if (spSim != NULL) {
+            /* The server's own numbers, as main's rows show them. */
+            SDL_strlcpy(r->brain, infos[i].brainName, sizeof(r->brain));
+            r->lastMs = infos[i].lastThinkMs;
+            r->peakMs = infos[i].maxThinkMs;
+            r->overruns = infos[i].overrunCount;
+            r->thinks = infos[i].thinkCount;
         } else {
-            ImGui::Text("  %s", langGetTextFmt(STR_DLGSYSINFO_BOTHOST_RATE_NONE, &args));
+            /* The record's tenths of a ms; the brain from the lobby's
+             * brain list (none for the server's default brain). */
+            uint8_t idx = cs != NULL ? clientSimGetLobbyBotBrain(cs, b->player) : 0xFF;
+            const BrainList *bl = cs != NULL ? clientSimGetLobbyBrainList(cs) : NULL;
+            if (bl != NULL && idx != 0xFF && idx < bl->count) {
+                SDL_strlcpy(r->brain, bl->entries[idx].name, sizeof(r->brain));
+            }
+            r->lastMs = b->last / 10.0;
+            r->peakMs = b->peak / 10.0;
+            r->overruns = b->overruns;
+            r->thinks = b->thinks;
         }
-    }
-    {
-        MessageArgs args = {};
-        if (info.cpuBotMilli == BOT_HOST_CPU_MILLI_UNKNOWN) {
-            ImGui::Text("  %s", langGetText(STR_DLGSYSINFO_BOTHOST_CPU_NONE));
-        } else {
-            botHostCpuFormatMilli(info.cpuBotMilli, buf, sizeof(buf));
-            SDL_strlcpy(args.string1, buf, sizeof(args.string1));
-            ImGui::Text("  %s", langGetTextFmt(info.cpuAtMost
-                                                   ? STR_DLGSYSINFO_BOTHOST_CPU_MAX_FMT
-                                                   : STR_DLGSYSINFO_BOTHOST_CPU_FMT,
-                                               &args));
+        if (cs != NULL && b->player < MAX_TANKS) {
+            const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, b->player);
+            if (ls != NULL) SDL_strlcpy(r->player, ls->playerName, sizeof(r->player));
         }
-    }
-    {
-        MessageArgs args = {};
-        if (info.freePct > 100) {
-            ImGui::Text("  %s", langGetText(STR_DLGSYSINFO_BOTHOST_FREE_NONE));
-        } else {
-            args.number = info.freePct;
-            ImGui::Text("  %s", langGetTextFmt(STR_DLGSYSINFO_BOTHOST_FREE_FMT, &args));
-        }
-    }
-    {
-        MessageArgs args = {};
-        args.number = info.workers;
-        snprintf(args.string1, sizeof(args.string1), "%.1f", info.targetMs);
-        ImGui::Text("  %s", langGetTextFmt(info.workers > 0
-                                               ? STR_DLGSYSINFO_BOTHOST_POOL_FMT
-                                               : STR_DLGSYSINFO_BOTHOST_POOL_SINGLE_FMT,
-                                           &args));
-    }
-    if (info.botCount > 0) {
-        sysInfoBotTableBegin("##bothostbots", false);
-        for (int i = 0; i < info.botCount; i++) {
-            const BotHostEmbedBotInfo *b = &info.bot[i];
-            sysInfoBotTableRow(b->name, NULL, b->lastMs, b->peakMs,
-                               b->overruns, b->thinks);
-        }
-        sysInfoBotTableEnd();
     }
 }
 
-static void renderSysInfoContent(void) {
+/* One bot row: main's text with the bot's player name after its brain. */
+static void sysInfoBotRow(const SysBotRow *r) {
+    char who[160];
+    double rate = r->thinks > 0 ? (double)r->overruns * 100.0 / (double)r->thinks : 0.0;
+    snprintf(who, sizeof(who), "bot[%d]%s%s%s%s%s", r->slot,
+             r->brain[0] ? " " : "", r->brain,
+             r->player[0] ? " (" : "", r->player, r->player[0] ? ")" : "");
+    ImGui::Text("  %s: last=%.2fms peak=%.2fms, %u/%u (%.2f%%)",
+                who, r->lastMs, r->peakMs, r->overruns, r->thinks, rate);
+}
+
+/* The rows of the last copy, under a header for each host. A record with
+ * no host known for any bot (an older server's) shows one list. */
+static void renderSysInfoBots(void) {
+    uint8_t keys[OVERRUN_RECORD_MAX_SECTIONS];
+    int sections;
+
+    if (!s_sysBotHave || s_sysBotRowCount == 0) return;
+    sections = overrunRecordSections(&s_sysBotRec, keys, OVERRUN_RECORD_MAX_SECTIONS);
+    if (sections == 0) {
+        for (int i = 0; i < s_sysBotRowCount; i++) sysInfoBotRow(&s_sysBotRows[i]);
+        return;
+    }
+    for (int s = 0; s < sections; s++) {
+        if (keys[s] == OVERRUN_RECORD_HOST_SERVER) {
+            ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_HOST_SERVER));
+        } else {
+            MessageArgs args = {};
+            const char *name = keys[s] != OVERRUN_RECORD_HOST_NONE &&
+                                       keys[s] <= s_sysBotRec.hostCount
+                                   ? s_sysBotRec.hostNames[keys[s] - 1] : "?";
+            SDL_strlcpy(args.string1, name[0] ? name : "?", sizeof(args.string1));
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGSYSINFO_HOST_BOTHOST_FMT, &args));
+        }
+        for (int i = 0; i < s_sysBotRowCount; i++) {
+            OverrunRecordBot b = {};
+            b.host = s_sysBotRows[i].host;
+            if (overrunRecordBotInSection(&s_sysBotRec, &b, keys[s])) {
+                sysInfoBotRow(&s_sysBotRows[i]);
+            }
+        }
+    }
+}
+
+static void renderSysInfoContent(ClientSim *cs) {
     float drawPct  = (windowGetDrawTime() / 1000.0f) * 100.0f;
     float simPct   = (windowGetSimTime()  / 1000.0f) * 100.0f;
     float netPct   = (windowGetNetTime()  / 1000.0f) * 100.0f;
@@ -1996,8 +1972,6 @@ static void renderSysInfoContent(void) {
      * server sim is ticking (single-player or local listen-server). */
     if (spSim != NULL) {
         BotPoolStats ps = {};
-        BotInfo  botInfos[MAX_TANKS] = {};
-        bool     botInfoValid[MAX_TANKS] = {};
         double tickLast = 0.0, tickEwma = 0.0;
         double simLast  = 0.0, simEwma  = 0.0;
         bool   hasBots  = false;
@@ -2008,9 +1982,6 @@ static void renderSysInfoContent(void) {
         threadsWaitForMutex();
         hasBots = serverSimHasAnyBot(spSim);
         serverSimGetBotPoolStats(spSim, &ps);
-        for (int i = 0; i < MAX_TANKS; i++) {
-            botInfoValid[i] = serverSimGetBotInfo(spSim, (BYTE)i, &botInfos[i]);
-        }
         serverLifecycleGetTickStats(&tickLast, &tickEwma);
         serverLifecycleGetSimStats(&simLast, &simEwma);
         threadsReleaseMutex();
@@ -2082,29 +2053,13 @@ static void renderSysInfoContent(void) {
             ImGui::Text("%s: %u (%.2f%%), peak think=%.2fms",
                         langGetText(STR_DLGSYSINFO_BRAIN_OVERRUNS),
                         ps.totalOverruns, poolRate, ps.maxThinkMs);
-            /* One row per thinking bot: where its brain runs (Host: the
-             * server, or the Bot Host's name as the lobby shows it), the
+            /* One row per bot, under the host its brain runs on: the
              * last think's wall-clock, the peak this game, and its
-             * overruns against its thinks. A bot on a Bot Host shows the
-             * numbers its host reports (CMD_BOT_STATS). The budget hook
-             * stops a think at the target, so a bot that overruns every
-             * tick reads as "last" at the target rather than above it. */
-            sysInfoBotTableBegin("##sysbots");
-            for (int i = 0; i < MAX_TANKS; i++) {
-                if (!botInfoValid[i] || !botInfos[i].hasBrain) continue;
-                char who[64];
-                snprintf(who, sizeof(who), "bot[%d] %s", i,
-                         botInfos[i].brainName);
-                sysInfoBotTableRow(who,
-                                   botInfos[i].remote
-                                       ? botInfos[i].hostName
-                                       : langGetText(STR_DLGLOBBY_BOTHOST_SERVER_NAME),
-                                   botInfos[i].lastThinkMs,
-                                   botInfos[i].maxThinkMs,
-                                   botInfos[i].overrunCount,
-                                   botInfos[i].thinkCount);
-            }
-            sysInfoBotTableEnd();
+             * overruns against its thinks. The budget hook stops a think
+             * at the target, so a bot that overruns every tick reads as
+             * "last" at the target rather than above it. */
+            sysInfoBotsRefresh(spSim, cs);
+            renderSysInfoBots();
         }
 
         /* Text-only stats for the remaining metrics. simLast > 0
@@ -2120,9 +2075,15 @@ static void renderSysInfoContent(void) {
                         langGetText(STR_DLGSYSINFO_BOTPREP),
                         ps.lastSerialMs, ps.ewmaSerialMs);
         }
+    } else {
+        /* A game joined on another server: the bot rows the server sends
+         * (CTRL_BOT_TIMING), none from an older server. */
+        sysInfoBotsRefresh(NULL, cs);
+        if (s_sysBotHave && s_sysBotRowCount > 0) {
+            ImGui::Separator();
+            renderSysInfoBots();
+        }
     }
-
-    renderSysInfoBotHost();
 }
 
 /* Size and place one of the in-window Session Info panels. On iOS the panel
@@ -2154,7 +2115,7 @@ static void infoPanelSizeNext(float w, float h) {
                                         ImVec2(FLT_MAX, FLT_MAX));
 }
 
-static void renderSysInfoPanel(void) {
+static void renderSysInfoPanel(ClientSim *cs) {
     if (!s_showSysInfo || s_popSysInfo.open) return;
 
     infoPanelSizeNext(440 * s_uiScale, 600 * s_uiScale);
@@ -2164,7 +2125,7 @@ static void renderSysInfoPanel(void) {
         ImGui::End();
         return;
     }
-    renderSysInfoContent();
+    renderSysInfoContent(cs);
     ImGui::End();
 }
 
@@ -8208,7 +8169,8 @@ static void renderMenuBar(ClientSim *cs) {
                 if (overviewInWindow) {
                     if (!s_showSysInfo) sysInfoGraphReset();
                     s_showSysInfo = !s_showSysInfo;
-                } else togglePopOut(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600, 0);
+                } else togglePopOut(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600,
+                                    SDL_WINDOW_RESIZABLE);
             }
             if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE), nullptr,
                                 overviewInWindow ? s_showNetInfo : s_popNetInfo.open)) {
@@ -11143,7 +11105,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderSettingsPanel(cs);
 
     /* Info panels — standard ImGui windows in the main context */
-    renderSysInfoPanel();
+    renderSysInfoPanel(cs);
     renderNetInfoPanel(cs);
     renderGameInfoPanel(cs);
 #ifdef __EMSCRIPTEN__
@@ -11247,7 +11209,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
         if (popOutBeginFrame(&s_popSysInfo)) {
             popOutBeginContent();
-            renderSysInfoContent();
+            renderSysInfoContent(cs);
             popOutEndContent(&s_popSysInfo);
             popOutEndFrame(&s_popSysInfo);
         }
@@ -11449,7 +11411,8 @@ void sdl3ImguiShowSysInfo(bool open) {
         if (open) {
             if (!s_popSysInfo.open) {
                 sysInfoGraphReset();
-                popOutCreate(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600, 0);
+                popOutCreate(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600,
+                             SDL_WINDOW_RESIZABLE);
             }
         } else {
             if (s_popSysInfo.open) popOutHide(&s_popSysInfo);

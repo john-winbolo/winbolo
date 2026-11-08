@@ -46,6 +46,7 @@
                              * row cap, taken from the rule list itself */
 
 #include "scenario_table.h" /* SCN_TABLE_KEY_LEN for the Bot Host table events */
+#include "overrun_record.h" /* OVERRUN_RECORD_MAX_BYTES for CTRL_BOT_TIMING */
 
 /* Field sizes of the Bot Host events. */
 #define BOT_HOST_TOKEN_LEN        16   /* == JOIN_BOT_SLOT_TOKEN_LEN */
@@ -681,6 +682,16 @@ typedef enum {
      * its row. A type of its own, so an older host skips it and only gets
      * 0 slots, as before. */
     CTRL_BOT_HOST_SAME_SERVER,
+    /* CTRL_BOT_TIMING — server to every player and spectator, once a
+     * second while the game has bots, and once with no bots when the last
+     * bot goes: each bot's think timing for System Info. The body is a
+     * log_OverrunStats record (overrun_record.h, docs/replay-format.md), so
+     * it holds each bot's player slot, last and peak think, overruns and
+     * thinks, the host its brain runs on, and the host name table, at most
+     * OVERRUN_RECORD_MAX_BYTES (781). A type of its own, so an older client
+     * has no decoder for it and skips it; a client of an older server gets
+     * none and shows no bot rows when it does not host the game. */
+    CTRL_BOT_TIMING,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1816,6 +1827,13 @@ typedef struct ControlEvent {
         struct {
             uint8_t kind;        /* BOT_HOST_MACHINE_SERVER */
         } botHostSameServer;
+
+        /* CTRL_BOT_TIMING — see the enum. The record as overrunRecordEncode
+         * wrote it; overrunRecordDecode reads it. */
+        struct {
+            uint16_t len;
+            uint8_t  bytes[OVERRUN_RECORD_MAX_BYTES];
+        } botTiming;
 
         /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
         struct {

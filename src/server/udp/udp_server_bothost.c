@@ -1732,6 +1732,41 @@ static void botHostBroadcastRows(void) {
     }
 }
 
+/* CTRL_BOT_TIMING: every bot's think timing, the bots in the server's
+ * process and the bots on each Bot Host, for the System Info of every
+ * player and spectator. Once a second while the game has bots, then once
+ * with no bots when the last bot goes, so a client stops showing them. */
+#define BOT_TIMING_SEND_TICKS 50   /* once a second */
+static bool     botTimingSentHave;
+static bool     botTimingSentBots;
+static uint32_t botTimingSentTick;
+
+void serverServiceBotTiming(ServerSim *sim) {
+    OverrunRecord rec;
+    ControlEvent evt;
+    bool bots;
+    int len;
+
+    if (sim == NULL) return;
+    bots = serverSimHasAnyBot(sim);
+    if (!bots && !botTimingSentBots) return;
+    if (bots && botTimingSentHave && botTimingSentBots &&
+        udpServer.tickCount - botTimingSentTick < BOT_TIMING_SEND_TICKS) {
+        return;
+    }
+    serverSimFillOverrunRecord(sim, 0, false, &rec);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_TIMING;
+    len = overrunRecordEncode(&rec, evt.u.botTiming.bytes,
+                              (int)sizeof(evt.u.botTiming.bytes));
+    if (len <= 0) return;
+    evt.u.botTiming.len = (uint16_t)len;
+    serverBroadcastLobbyControl(&evt);
+    botTimingSentHave = true;
+    botTimingSentBots = bots;
+    botTimingSentTick = udpServer.tickCount;
+}
+
 void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
                            void *deliverCtx) {
     int h;

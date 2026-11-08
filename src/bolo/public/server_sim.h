@@ -43,6 +43,7 @@
 #include "upload_policy.h"     /* ScriptUploadPolicy — script-upload accessors below */
 #include "spec_delay.h"        /* HOSTING_SPEC_DELAY_* — hostingSpecDelayResolve below */
 #include "scenario_identity.h" /* SCN_AUTHOR_LEN — a scenario row's author below */
+#include "overrun_record.h"    /* OverrunRecord — serverSimFillOverrunRecord below */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -1456,6 +1457,26 @@ void serverSimPrintOverrunStats(ServerSim *sim, uint32_t roundSeconds);
  *                closes, FALSE for a timed one
  *********************************************************/
 void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEnd);
+
+/*********************************************************
+ *NAME:          serverSimFillOverrunRecord
+ *PURPOSE:
+ *  Fills out with the numbers serverSimLogOverrunStats
+ *  writes: the server's timing, the bot pool's, and each
+ *  bot in the game with the host its brain runs on. The
+ *  round log and the clients' System Info (CTRL_BOT_TIMING)
+ *  both use it. Resets no counter. A NULL sim gives a
+ *  record with no bots.
+ *
+ *ARGUMENTS:
+ *  sim         - Pointer to the ServerSim
+ *  roundFrames - Running 20 ms server frames of the round so far
+ *  roundEnd    - TRUE for the record written as the round's log
+ *                closes, FALSE otherwise
+ *  out         - The record
+ *********************************************************/
+void serverSimFillOverrunRecord(ServerSim *sim, uint32_t roundFrames, bool roundEnd,
+                                OverrunRecord *out);
 
 /*********************************************************
  *NAME:          serverSimSaveMap
