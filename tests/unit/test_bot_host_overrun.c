@@ -78,6 +78,7 @@ static BotHostOvrHost ovrHost(double ratePct, int bots) {
 
 static BotHostOvrBot ovrBot(int seat, int moves, double staySecs) {
     BotHostOvrBot b;
+    memset(&b, 0, sizeof(b));
     b.seat = seat;
     b.moves = moves;
     b.staySecs = staySecs;

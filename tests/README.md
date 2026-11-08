@@ -230,11 +230,45 @@ GoalHunter's answer (brains/GoalHunter/capacity.lua) is
 clamped to 1..16, with `CAPACITY_REF_1T = 25000` and `CAPACITY_K = 1.0` in
 constants.lua. With no speed test result it returns nil (the default).
 
-#### Where the dedicated server places its bots (lag)
+#### Where the dedicated server places its bots
 
-WinBoloDS spreads its bots over its own process and the Bot Hosts so that
-each is about equally full (bot_host_link.c). The lag to each host also
-counts:
+By default a bot stays where it runs well (`botHostPlaceRebalanceKeep` in
+bot_host_link.c). A layout that is lopsided but good stays as it is:
+
+- A place is good while its window overrun rate is below P% (or not known
+  yet) and its free CPU passes the free CPU check for the bots it has (or
+  is not known yet). In the lobby every place counts as good.
+- New bots start on the server and stay there while the server is good
+  and has slots. Only the bots it cannot take go to Bot Hosts.
+- A bot moves only when its place must give it:
+  - over its slots (forced): a host with more bots than its slots gives
+    one; the server itself does so only while a Bot Host has room;
+  - bad: its overrun rate is P% or more, or its free CPU is too low. It
+    gives one bot to a good place, at most one each T seconds (the step
+    time of the overrun move), since its numbers need that time to show
+    the move.
+- The place a bot goes to: the server first, while it is good and below
+  its slots; else the Bot Host with the best score below.
+- Forced fall-backs (a host gone, changed brain files) and the overrun
+  move work as before.
+- No quick way back: a bot that left a place by a placement decision (a
+  place, a spread move or an overrun move) does not go back there for Y
+  seconds (`-bothost-overrun-stay-secs`). Of the bots that may move, the
+  first that did not just come from the target goes. A forced move takes
+  that bot only when no other one can go. The overrun move keeps this rule
+  too, except by its emergency rule.
+- The DECISION records and the console give the reason: "over its slots",
+  "overrun rate", "low free CPU", or "the spread" (the even spread).
+- `-bothost-spread-even` brings back the old even spread: bots also move
+  between good places so that each is about equally full, with the lag
+  rules below. The stay rule still holds.
+- Unit tests: `bot_host_place_keep_*` (`--test <name>`).
+
+#### The even spread and lag (-bothost-spread-even)
+
+With `-bothost-spread-even` WinBoloDS spreads its bots over its own process
+and the Bot Hosts so that each is about equally full (bot_host_link.c). The
+lag to each host also counts:
 
 - A host's score is (bots + 1) / effective slots x (1 + lag / R). A new
   bot goes to the lowest score. The lag is the server's round trip to the

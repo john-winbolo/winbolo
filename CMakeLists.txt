@@ -4783,6 +4783,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Bot Host link: the announce codec, the address lists and the allow
     # list a server and a Bot Host use to find each other.
     tests/unit/test_bot_host_link.c
+    tests/unit/test_bot_host_keep.c
     # The overrun check of the bot placement, the free CPU percent and the
     # log_BotHostData payload.
     tests/unit/test_bot_host_overrun.c
@@ -6237,6 +6238,11 @@ set(_unit_test_names
     bot_host_place_spread
     bot_host_place_lag
     bot_host_place_server_cap
+    bot_host_place_keep_server_first
+    bot_host_place_keep_lopsided
+    bot_host_place_keep_bad_source
+    bot_host_place_keep_no_return
+    bot_host_place_keep_oil_rig
     bot_host_overrun_window_rate
     bot_host_overrun_step_spacing
     bot_host_overrun_steady_moves_one

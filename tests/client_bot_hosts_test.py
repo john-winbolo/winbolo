@@ -150,6 +150,9 @@ class Run:
                "-bots", str(self.bots), "-ai", "yes", "-seed", "11",
                "-notracker", "-nowinbolonet", "-threads", "12",
                "-noemptyreset",
+               # The test needs bots on the players' hosts: the even spread
+               # puts them there even while the server has room.
+               "-bothost-spread-even",
                "-snapjson", str(self.out / "snap.jsonl"),
                "-snapinterval", str(SNAP_INTERVAL),
                "-log", str(logdir)]

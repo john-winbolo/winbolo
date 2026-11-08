@@ -459,7 +459,7 @@ static bool placeUnderCeiling(const BotHostPlaceHost *h,
 /* Index of the best host for one more bot, skipping skip (-1: none). */
 static int placePickSkip(const BotHostPlaceHost *hosts, int n, int smallSlots,
                          double bias, const BotHostPlaceLag *lag, int skip,
-                         double *scoreOut) {
+                         bool skipBad, double *scoreOut) {
     int i, best = -1;
     double bestScore = 0.0;
     bool lowRoom = false;
@@ -476,6 +476,7 @@ static int placePickSkip(const BotHostPlaceHost *hosts, int n, int smallSlots,
     for (i = 0; i < n; i++) {
         double score;
         if (i == skip || !placeTakes(&hosts[i])) continue;
+        if (skipBad && hosts[i].bad) continue;
         if (lowRoom && !placeUnderCeiling(&hosts[i], lag)) continue;
         if (placeUnlimitedFull(&hosts[i], roomElsewhere)) continue;
         score = (double)(hosts[i].bots + 1) /
@@ -500,14 +501,16 @@ int botHostPlacePick(const BotHostPlaceHost *hosts, int n, int smallSlots,
 int botHostPlacePickLag(const BotHostPlaceHost *hosts, int n, int smallSlots,
                         double bias, const BotHostPlaceLag *lag) {
     if (hosts == NULL || n <= 0) return -1;
-    return placePickSkip(hosts, n, smallSlots, bias, lag, -1, NULL);
+    return placePickSkip(hosts, n, smallSlots, bias, lag, -1, false,
+                         NULL);
 }
 
 int botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
                           int smallSlots, double bias,
                           const BotHostPlaceLag *lag, int skip) {
     if (hosts == NULL || n <= 0) return -1;
-    return placePickSkip(hosts, n, smallSlots, bias, lag, skip, NULL);
+    return placePickSkip(hosts, n, smallSlots, bias, lag, skip, false,
+                         NULL);
 }
 
 bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,
@@ -553,7 +556,7 @@ bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
     if (src < 0) return false;
     {
         double dstScore = 0.0;
-        int dst = placePickSkip(hosts, n, smallSlots, bias, lag, src,
+        int dst = placePickSkip(hosts, n, smallSlots, bias, lag, src, false,
                                 &dstScore);
         if (dst < 0) return false;
         if (hosts[dst].unlimited && hosts[dst].bots >= hosts[dst].slots &&
@@ -580,6 +583,151 @@ bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
         *to = dst;
         return true;
     }
+}
+
+/* ---- Keep bots where they run well ------------------------------------- */
+
+/* Host i is over its slots as rule 1 counts it. */
+static bool keepOverSlots(const BotHostPlaceHost *hosts, int n, int i) {
+    const BotHostPlaceHost *h = &hosts[i];
+    if (h->bots <= 0) return false;
+    if (h->slots > 0 && h->bots <= h->slots) return false;
+    /* The server itself only while another host has room. */
+    return !h->unlimited || placeRoomElsewhere(hosts, n, i);
+}
+
+/* The server itself (an unlimited place other than src) while it is open,
+ * not bad and below its slots, or -1. */
+static int keepServerFirst(const BotHostPlaceHost *hosts, int n, int src) {
+    int i;
+    for (i = 0; i < n; i++) {
+        const BotHostPlaceHost *h = &hosts[i];
+        if (i == src || !h->unlimited) continue;
+        if (h->open && !h->bad && h->slots > 0 && h->bots < h->slots) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Where a bot of src goes, or -1. anyHost: a bad host may take it when no
+ * good one can (rule 1). */
+static int keepTarget(const BotHostPlaceHost *hosts, int n, int smallSlots,
+                      double bias, const BotHostPlaceLag *lag, int src,
+                      bool anyHost) {
+    int dst = keepServerFirst(hosts, n, src);
+    if (dst >= 0) return dst;
+    dst = placePickSkip(hosts, n, smallSlots, bias, lag, src, true, NULL);
+    if (dst < 0 && anyHost) {
+        dst = placePickSkip(hosts, n, smallSlots, bias, lag, src, false, NULL);
+    }
+    if (dst < 0) return -1;
+    if (hosts[dst].unlimited && hosts[dst].bots >= hosts[dst].slots &&
+        hosts[src].slots > 0 && hosts[src].bots <= hosts[src].slots) {
+        /* The server itself goes past its slots only to take a bot from a
+         * host over its own slots. */
+        return -1;
+    }
+    return dst;
+}
+
+bool botHostPlaceRebalanceKeep(const BotHostPlaceHost *hosts, int n,
+                               int smallSlots, double bias,
+                               const BotHostPlaceLag *lag, bool even,
+                               int *from, int *to, BotHostSpreadWhy *why) {
+    BotHostSpreadWhy local;
+    int i, best = -1, excess = 0, dst;
+    if (why == NULL) why = &local;
+    *why = BOT_HOST_SPREAD_NONE;
+    if (hosts == NULL || n <= 0 || from == NULL || to == NULL) return false;
+    if (even) {
+        if (!botHostPlaceRebalanceLag(hosts, n, smallSlots, bias, lag, from,
+                                      to)) {
+            return false;
+        }
+        *why = keepOverSlots(hosts, n, *from) ? BOT_HOST_SPREAD_OVER_SLOTS
+                                              : BOT_HOST_SPREAD_EVEN;
+        return true;
+    }
+    /* 1. Over its slots: the most over first, then the first in the
+     * table. */
+    for (i = 0; i < n; i++) {
+        int e;
+        if (!hosts[i].movable || !keepOverSlots(hosts, n, i)) continue;
+        e = hosts[i].slots > 0 ? hosts[i].bots - hosts[i].slots
+                               : 1000 + hosts[i].bots;
+        if (best < 0 || e > excess) {
+            best = i;
+            excess = e;
+        }
+    }
+    if (best >= 0) {
+        dst = keepTarget(hosts, n, smallSlots, bias, lag, best, true);
+        if (dst >= 0) {
+            *from = best;
+            *to = dst;
+            *why = BOT_HOST_SPREAD_OVER_SLOTS;
+            return true;
+        }
+    }
+    /* 2. Bad: the first in the table that has a good place to go. */
+    for (i = 0; i < n; i++) {
+        if (!hosts[i].movable || !hosts[i].bad || hosts[i].badHold ||
+            hosts[i].bots <= 0) {
+            continue;
+        }
+        dst = keepTarget(hosts, n, smallSlots, bias, lag, i, false);
+        if (dst < 0 || hosts[dst].bad) continue;
+        *from = i;
+        *to = dst;
+        *why = BOT_HOST_SPREAD_BAD;
+        return true;
+    }
+    return false;
+}
+
+/* ---- No quick way back ------------------------------------------------- */
+
+void botHostTrailReset(BotHostTrail *t) {
+    int s;
+    if (t == NULL) return;
+    for (s = 0; s < BOT_HOST_TRAIL_SEATS; s++) {
+        t->leftPlace[s] = -1;
+        t->leftTick[s] = 0;
+    }
+}
+
+void botHostTrailClear(BotHostTrail *t, int s) {
+    if (t == NULL || s < 0 || s >= BOT_HOST_TRAIL_SEATS) return;
+    t->leftPlace[s] = -1;
+    t->leftTick[s] = 0;
+}
+
+void botHostTrailNote(BotHostTrail *t, int s, int fromPlace, uint32_t now) {
+    if (t == NULL || s < 0 || s >= BOT_HOST_TRAIL_SEATS) return;
+    t->leftPlace[s] = fromPlace;
+    t->leftTick[s] = now;
+}
+
+int botHostTrailBackTo(const BotHostTrail *t, int s, uint32_t now,
+                       uint32_t stayTicks) {
+    if (t == NULL || s < 0 || s >= BOT_HOST_TRAIL_SEATS) return -1;
+    if (t->leftPlace[s] < 0 || stayTicks == 0) return -1;
+    if ((uint32_t)(now - t->leftTick[s]) >= stayTicks) return -1;
+    return t->leftPlace[s];
+}
+
+int botHostTrailPickSeat(const BotHostTrail *t, const int *seats,
+                         int nSeats, int toPlace, uint32_t now,
+                         uint32_t stayTicks, bool forced) {
+    int k;
+    if (seats == NULL || nSeats <= 0) return -1;
+    for (k = 0; k < nSeats; k++) {
+        if (botHostTrailBackTo(t, seats[k], now, stayTicks) != toPlace) {
+            return seats[k];
+        }
+    }
+    return forced ? seats[0] : -1;
 }
 
 /* ---- Bot overruns on a host --------------------------------------------- */
@@ -868,6 +1016,12 @@ void botHostOverrunHeld(BotHostOverrunState *st) {
     st->sinceChange = 0;
 }
 
+/* The free CPU check's reasons that rest on known numbers. */
+static const char OVR_WHY_NO_CLEAN[] =
+    "no clean reading with that little free CPU";
+static const char OVR_WHY_BAD_AS_MUCH[] = "a bad reading had as much free CPU";
+static const char OVR_WHY_TOO_LITTLE[] = "too little free CPU";
+
 bool botHostOverrunMayTake(const BotHostOverrunState *st,
                            const BotHostOverrunCfg *cfg, int bots,
                            uint8_t latestFree, BotHostOverrunReport *rep) {
@@ -916,11 +1070,11 @@ bool botHostOverrunMayTake(const BotHostOverrunState *st,
     }
     if (rep->highestBad >= 0) {
         if (!ovrCleanEvidence(rep)) {
-            rep->why = "no clean reading with that little free CPU";
+            rep->why = OVR_WHY_NO_CLEAN;
             return false;
         }
         if (!ovrAboveBad(rep)) {
-            rep->why = "a bad reading had as much free CPU";
+            rep->why = OVR_WHY_BAD_AS_MUCH;
             return false;
         }
         rep->why = "clean evidence";
@@ -934,8 +1088,24 @@ bool botHostOverrunMayTake(const BotHostOverrunState *st,
         rep->why = "clean evidence";
         return true;
     }
-    rep->why = "too little free CPU";
+    rep->why = OVR_WHY_TOO_LITTLE;
     return false;
+}
+
+bool botHostOverrunFreeLow(const BotHostOverrunState *st,
+                           const BotHostOverrunCfg *cfg, int bots,
+                           uint8_t latestFree, BotHostOverrunReport *rep) {
+    BotHostOverrunReport local;
+    if (rep == NULL) rep = &local;
+    if (bots <= 0) {
+        ovrReportInit(rep);
+        return false;
+    }
+    if (botHostOverrunMayTake(st, cfg, bots - 1, latestFree, rep)) {
+        return false;
+    }
+    return rep->why == OVR_WHY_NO_CLEAN || rep->why == OVR_WHY_BAD_AS_MUCH ||
+           rep->why == OVR_WHY_TOO_LITTLE;
 }
 
 /* ---- The overrun move -------------------------------------------------- */
@@ -1105,6 +1275,11 @@ bool botHostOvrPickMove(const BotHostOverrunCfg *cfg,
             rule = botHostOvrMoveRule(cfg, srcPct, &hosts[i], bot->moves,
                                       bot->staySecs, NULL);
             if (rule == BOT_HOST_OVR_RULE_NONE) continue;
+            if (bot->back && i == bot->backTo &&
+                rule != BOT_HOST_OVR_RULE_EMERGENCY) {
+                /* It left that place within the stay time. */
+                continue;
+            }
             if (best < 0 || ovrBetter(hosts, i, best, lag)) {
                 best = i;
                 bestRule = rule;

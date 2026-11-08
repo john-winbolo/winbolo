@@ -147,6 +147,14 @@ typedef struct {
     bool movable;    /* one of its bots may be moved now */
     double lagMs;    /* the server's smoothed round trip to it, in ms;
                       * below 0 when not known (the server itself: 0) */
+    bool bad;        /* its bots run badly now: its window overrun rate is
+                      * at or above the target rate, or its free CPU fails
+                      * the free CPU check for the bots it has. Read only
+                      * by botHostPlaceRebalanceKeep. */
+    bool badHold;    /* bad, but it gave a bot for that within the step
+                      * time (-bothost-overrun-step-secs): it gives no bot
+                      * for being bad now, since its numbers do not show
+                      * that move yet */
 } BotHostPlaceHost;
 
 /* Lag in the placement (botHostPlacePickLag, botHostPlaceRebalanceLag).
@@ -215,6 +223,75 @@ bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
 int  botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
                            int smallSlots, double bias,
                            const BotHostPlaceLag *lag, int skip);
+
+/* ---- Keep bots where they run well (the default placement) -----------
+ *
+ * A bot moves only when its place must give it or runs its bots badly; a
+ * layout that is lopsided but good stays as it is. In this order:
+ *   1. Over its slots (forced): a host with more bots than its slots, or
+ *      with bots and no slots, gives one. The server itself (unlimited)
+ *      does so only while another host has room. The most over gives
+ *      first.
+ *   2. Bad (bad: see BotHostPlaceHost): a host that runs its bots badly
+ *      gives one, to a place that is not bad, unless badHold is set. The
+ *      server itself takes no bot past its slots in this case.
+ * The place a bot goes to: the server itself first, while it is open, not
+ * bad and below its slots; else the best host by the scores of
+ * botHostPlacePickLag (a host that is not bad first, for rule 1 any host
+ * after that). So new bots, which start on the server, stay there while
+ * it has slots and is good, and only the bots it cannot take go to Bot
+ * Hosts.
+ *
+ * even true: the old proportional spread (botHostPlaceRebalanceLag),
+ * which also moves bots between good hosts to even out their counts and
+ * lag (-bothost-spread-even). */
+typedef enum {
+    BOT_HOST_SPREAD_NONE = 0,
+    BOT_HOST_SPREAD_OVER_SLOTS,  /* rule 1: the source is over its slots */
+    BOT_HOST_SPREAD_BAD,         /* rule 2: the source runs its bots badly */
+    BOT_HOST_SPREAD_EVEN         /* the old even spread */
+} BotHostSpreadWhy;
+
+/* One move by the rules above: a bot of *from to *to, and why. False when
+ * no bot needs to move. With even, *why is BOT_HOST_SPREAD_OVER_SLOTS when
+ * the source is over its slots as rule 1 counts it, else
+ * BOT_HOST_SPREAD_EVEN. why may be NULL. */
+bool botHostPlaceRebalanceKeep(const BotHostPlaceHost *hosts, int n,
+                               int smallSlots, double bias,
+                               const BotHostPlaceLag *lag, bool even,
+                               int *from, int *to, BotHostSpreadWhy *why);
+
+/* ---- No quick way back (the stay rule of the placement) --------------
+ *
+ * Each seat keeps the place its bot last left by a placement decision (a
+ * place, a spread move or an overrun move; index as in the host table)
+ * and when. For staySecs (-bothost-overrun-stay-secs) after that, the bot
+ * does not go back there, so a bot cannot go A to B and back to A in that
+ * time. A forced move (a place over its slots) may still send it back
+ * when no other bot can go. A fall-back (a host gone, changed brain
+ * files) is not counted here. */
+#define BOT_HOST_TRAIL_SEATS 32
+
+typedef struct {
+    int      leftPlace[BOT_HOST_TRAIL_SEATS];  /* -1: none */
+    uint32_t leftTick[BOT_HOST_TRAIL_SEATS];
+} BotHostTrail;
+
+/* Every seat: none. Call it in the lobby too (a new game). */
+void botHostTrailReset(BotHostTrail *t);
+/* Seat s has no bot now: it starts again. */
+void botHostTrailClear(BotHostTrail *t, int s);
+/* The bot of seat s left place fromPlace at tick now. */
+void botHostTrailNote(BotHostTrail *t, int s, int fromPlace, uint32_t now);
+/* The place seat s may not go back to at tick now, or -1. stayTicks 0:
+ * none. */
+int  botHostTrailBackTo(const BotHostTrail *t, int s, uint32_t now,
+                        uint32_t stayTicks);
+/* The seat of seats[0..nSeats) that goes to toPlace: the first that may
+ * go there now; with none, seats[0] when forced, else -1. */
+int  botHostTrailPickSeat(const BotHostTrail *t, const int *seats,
+                          int nSeats, int toPlace, uint32_t now,
+                          uint32_t stayTicks, bool forced);
 
 /* ---- Bot overruns on a host ------------------------------------------
  *
@@ -398,6 +475,15 @@ void botHostOverrunNewGame(BotHostOverrunState *st);
 bool botHostOverrunMayTake(const BotHostOverrunState *st,
                            const BotHostOverrunCfg *cfg, int bots,
                            uint8_t latestFree, BotHostOverrunReport *rep);
+/* The host's free CPU is too low for the bots it has: the free CPU check
+ * of botHostOverrunMayTake, made for its newest bot (bots - 1 bots before
+ * it), fails on known numbers (too little free CPU, or the clean and bad
+ * readings say no). Numbers not known yet (no reading, no one-bot cost)
+ * count as good, as does a host with no bots or the check off. rep may be
+ * NULL. */
+bool botHostOverrunFreeLow(const BotHostOverrunState *st,
+                           const BotHostOverrunCfg *cfg, int bots,
+                           uint8_t latestFree, BotHostOverrunReport *rep);
 /* The slots placement counts for a host that reports slots. */
 int  botHostOverrunLimit(const BotHostOverrunState *st, int slots);
 /* One probe (one second). rep may be NULL. */
@@ -432,6 +518,10 @@ typedef struct {
     int    seat;
     int    moves;      /* m: its voluntary moves in this game */
     double staySecs;   /* since its last voluntary move */
+    bool   back;       /* it left place backTo within the stay time
+                        * (BotHostTrail): it does not go back there now,
+                        * except by the emergency rule */
+    int    backTo;
 } BotHostOvrBot;
 
 typedef enum {
@@ -468,7 +558,8 @@ BotHostOvrRule botHostOvrMoveRule(const BotHostOverrunCfg *cfg, double srcPct,
 /* The overrun move off host src: of its movable bots (fewest moves first,
  * then the longest stay, then the lowest seat) the first that has a
  * target that passes, to the best such target. lag gives the lag of each
- * host (NULL or off: lag does not count). False, with out->why, when no
+ * host (NULL or off: lag does not count). A bot with back set does not go
+ * to backTo, except by the emergency rule. False, with out->why, when no
  * bot may move. */
 bool botHostOvrPickMove(const BotHostOverrunCfg *cfg,
                         const BotHostOvrHost *hosts, int n, int src,

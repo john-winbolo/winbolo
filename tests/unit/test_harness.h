@@ -922,6 +922,12 @@ int run_bot_host_slots_codec(void);
 int run_bot_host_place_spread(void);
 int run_bot_host_place_lag(void);
 int run_bot_host_place_server_cap(void);
+/* Keep bots where they run well (test_bot_host_keep.c). */
+int run_bot_host_place_keep_server_first(void);
+int run_bot_host_place_keep_lopsided(void);
+int run_bot_host_place_keep_bad_source(void);
+int run_bot_host_place_keep_no_return(void);
+int run_bot_host_place_keep_oil_rig(void);
 /* The overrun check of the bot placement, the free CPU percent and the
  * log_BotHostData payload (test_bot_host_overrun.c). */
 int run_bot_host_overrun_window_rate(void);
