@@ -1474,6 +1474,15 @@ static const LangEntry langTable[] = {
     {3912, "(At most {string1}% per bot of this computer's CPU)"},
     {3913, "(At most {string1}% per bot of the server's CPU)"},
     {3914, "(At most {string1}% per bot of {string2}'s CPU)"},
+    /* The Log Viewer's Bot Hosts window: the overrun move */
+    {3915, "No better host"},
+    {3916, "Rate over the window: {string1}"},
+    {3917, "Source rate: {string1}, target rate: {string2}"},
+    {3918, "Rule: {string1}, moves so far (m): {number}"},
+    {3919, "Stay: {string1}, needs: {string2}"},
+    {3920, "normal"},
+    {3921, "emergency"},
+    {3922, "trial"},
     /* The Log Viewer's Chat panel */
     {3100, "Chat"},
     {3101, "No chat messages yet."},

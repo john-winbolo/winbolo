@@ -389,6 +389,9 @@ static void dumpRecordFields(DumpCtx *c, BYTE code, const BYTE *b, int len) {
                   (unsigned)rec.thinks, (unsigned)rec.overruns,
                   (rec.flags & BOTHOST_RECORD_PROBE_BAD) ? 1u : 0u,
                   rec.badProbes, rec.probes);
+          if (rec.version >= 2) {
+            fprintf(out, " window_rate=%u", (unsigned)rec.windowRate);
+          }
           break;
         case BOTHOST_RECORD_READING:
           fprintf(out, " free=%u bot_cpu=%u bots=%u ran=%u bad=%u", rec.freePct,
@@ -404,6 +407,13 @@ static void dumpRecordFields(DumpCtx *c, BYTE code, const BYTE *b, int len) {
                   rec.probes, (int)rec.predictedTenths, (unsigned)rec.costTenths,
                   (unsigned)rec.freeAvgTenths, rec.lowestClean, rec.highestBad,
                   rec.seat, rec.toHost, rec.reason);
+          if (rec.version >= 2) {
+            fprintf(out, " src_rate=%u dst_rate=%u moves=%u rule=%u"
+                    " stay_secs=%u need_stay_secs=%u",
+                    (unsigned)rec.srcRate, (unsigned)rec.dstRate, rec.moves,
+                    rec.rule, (unsigned)rec.staySecs,
+                    (unsigned)rec.needStaySecs);
+          }
           break;
         default:
           break;

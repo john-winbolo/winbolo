@@ -6236,10 +6236,17 @@ set(_unit_test_names
     bot_host_place_spread
     bot_host_place_lag
     bot_host_place_server_cap
-    bot_host_overrun_trigger_24_of_30
-    bot_host_overrun_no_trigger_23_of_30
-    bot_host_overrun_short_spike
+    bot_host_overrun_window_rate
     bot_host_overrun_step_spacing
+    bot_host_overrun_steady_moves_one
+    bot_host_overrun_all_same_no_move
+    bot_host_overrun_target_not_below
+    bot_host_overrun_gain_per_move
+    bot_host_overrun_stay_times
+    bot_host_overrun_emergency
+    bot_host_overrun_target_order
+    bot_host_overrun_forced_no_m
+    bot_host_overrun_nomove_blocks
     bot_host_overrun_server_fallback
     bot_host_overrun_raise_clean_evidence
     bot_host_overrun_no_raise_clean_too_free

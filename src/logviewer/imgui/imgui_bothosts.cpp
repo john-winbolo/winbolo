@@ -188,6 +188,7 @@ static std::string decision_name(uint8_t d) {
     case BOTHOST_DECISION_RAISE_REFUSED: return langGetText(STR_LV_BOTHOST_DEC_RAISE_REFUSED);
     case BOTHOST_DECISION_PLACE_REFUSED: return langGetText(STR_LV_BOTHOST_DEC_PLACE_REFUSED);
     case BOTHOST_DECISION_WOULD_MOVE:    return langGetText(STR_LV_BOTHOST_DEC_WOULD_MOVE);
+    case BOTHOST_DECISION_NO_BETTER:     return langGetText(STR_LV_BOTHOST_DEC_NO_BETTER);
     default: {
         MessageArgs args = {};
         args.number = (int)d;
@@ -205,6 +206,7 @@ static ImU32 decision_colour(uint8_t d) {
     case BOTHOST_DECISION_RAISE_REFUSED: return IM_COL32(150, 150, 150, 255);
     case BOTHOST_DECISION_PLACE_REFUSED: return IM_COL32(90, 200, 230, 255);
     case BOTHOST_DECISION_WOULD_MOVE:    return IM_COL32(240, 200, 60, 255);
+    case BOTHOST_DECISION_NO_BETTER:     return IM_COL32(255, 160, 120, 255);
     default:                             return IM_COL32(200, 200, 200, 255);
     }
 }
@@ -224,6 +226,33 @@ static void limit_text(uint8_t v, char *buf, size_t len) {
         snprintf(buf, len, "%s", langGetText(STR_LV_BOTHOST_NO_LIMIT));
     } else {
         snprintf(buf, len, "%u", (unsigned)v);
+    }
+}
+
+/* A rate in hundredths of a percent as text, or "not known" for none. */
+static void rate_text(uint16_t v, char *buf, size_t len) {
+    if (v == (uint16_t)BOTHOST_RECORD_RATE_NONE) {
+        snprintf(buf, len, "%s", langGetText(STR_LV_BOTHOST_NOT_KNOWN));
+    } else {
+        snprintf(buf, len, "%.2f%%", (double)v / 100.0);
+    }
+}
+
+/* A time in seconds as text, or "not known" for none. */
+static void secs_text(uint16_t v, char *buf, size_t len) {
+    if (v == (uint16_t)BOTHOST_RECORD_SECS_NONE) {
+        snprintf(buf, len, "%s", langGetText(STR_LV_BOTHOST_NOT_KNOWN));
+    } else {
+        snprintf(buf, len, "%u s", (unsigned)v);
+    }
+}
+
+static const char *rule_name(uint8_t rule) {
+    switch (rule) {
+    case BOTHOST_RULE_NORMAL:    return langGetText(STR_LV_BOTHOST_RULE_NORMAL);
+    case BOTHOST_RULE_EMERGENCY: return langGetText(STR_LV_BOTHOST_RULE_EMERGENCY);
+    case BOTHOST_RULE_TRIAL:     return langGetText(STR_LV_BOTHOST_RULE_TRIAL);
+    default:                     return langGetText(STR_LV_BOTHOST_NOT_KNOWN);
     }
 }
 
@@ -276,10 +305,30 @@ static void decision_tooltip(const LvBotHostEntry &e) {
     snprintf(args.string2, sizeof(args.string2), "%s", b);
     ImGui::TextUnformatted(fmt_text(STR_LV_BOTHOST_TIP_LIMIT, args).c_str());
 
-    args = MessageArgs{};
-    args.number = (int)r.badProbes;
-    args.number2 = (int)r.probes;
-    ImGui::TextUnformatted(fmt_text(STR_LV_BOTHOST_TIP_BAD_SHARE, args).c_str());
+    if (r.version < 2) {
+        args = MessageArgs{};
+        args.number = (int)r.badProbes;
+        args.number2 = (int)r.probes;
+        ImGui::TextUnformatted(fmt_text(STR_LV_BOTHOST_TIP_BAD_SHARE, args).c_str());
+    } else {
+        /* Version 2: the overrun move's rates, rule, m and stay. */
+        if (r.srcRate != (uint16_t)BOTHOST_RECORD_RATE_NONE) {
+            args = MessageArgs{};
+            rate_text(r.srcRate, args.string1, sizeof(args.string1));
+            rate_text(r.dstRate, args.string2, sizeof(args.string2));
+            ImGui::TextUnformatted(fmt_text(STR_LV_BOTHOST_TIP_RATES, args).c_str());
+        }
+        if (r.rule != BOTHOST_RULE_NONE) {
+            args = MessageArgs{};
+            snprintf(args.string1, sizeof(args.string1), "%s", rule_name(r.rule));
+            args.number = r.moves == BOTHOST_RECORD_NONE ? 0 : (int)r.moves;
+            ImGui::TextUnformatted(fmt_text(STR_LV_BOTHOST_TIP_MOVE_RULE, args).c_str());
+            args = MessageArgs{};
+            secs_text(r.staySecs, args.string1, sizeof(args.string1));
+            secs_text(r.needStaySecs, args.string2, sizeof(args.string2));
+            ImGui::TextUnformatted(fmt_text(STR_LV_BOTHOST_TIP_STAY, args).c_str());
+        }
+    }
 
     const bool costKnown = (r.flags & BOTHOST_RECORD_DEC_COST) != 0;
     const bool freeKnown = (r.flags & BOTHOST_RECORD_DEC_FREE) != 0;
@@ -363,9 +412,14 @@ static void point_tooltip(const BotHostView &v, uint32_t ms) {
                                langGetText(STR_LV_BOTHOST_TIP_BAD_PROBE));
         }
         args = MessageArgs{};
-        args.number = (int)r.badProbes;
-        args.number2 = (int)r.probes;
-        ImGui::TextUnformatted(fmt_text(STR_LV_BOTHOST_TIP_BAD_SHARE, args).c_str());
+        if (r.version < 2) {
+            args.number = (int)r.badProbes;
+            args.number2 = (int)r.probes;
+            ImGui::TextUnformatted(fmt_text(STR_LV_BOTHOST_TIP_BAD_SHARE, args).c_str());
+        } else {
+            rate_text(r.windowRate, args.string1, sizeof(args.string1));
+            ImGui::TextUnformatted(fmt_text(STR_LV_BOTHOST_TIP_WINDOW_RATE, args).c_str());
+        }
         args = MessageArgs{};
         args.number = (int)r.bots;
         args.number2 = (int)r.slots;

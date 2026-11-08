@@ -22,10 +22,15 @@
  *             player: the player whose own Bot Host it is, or
  *             0xFF (a listed host, or the server).
  *    PROBE    [bots 1][slots 1][limit 1][thinks 2][overruns 2]
- *             [flags 1][badProbes 1][probes 1]
+ *             [flags 1][badProbes 1][probes 1][windowRate 2]
  *             one per host each second. limit 0xFF: none.
- *             flags bit 0: this probe is bad. badProbes of the
- *             probes in the window are bad.
+ *             flags bit 0: this second's rate is above the
+ *             target rate. probes: the probes in the window.
+ *             badProbes: version 1 only (the bad probes in the
+ *             window); 0xFF from version 2. windowRate (version
+ *             2): the host's rate over the window, overruns /
+ *             thinks, in hundredths of a percent (0xFFFF: not
+ *             known).
  *    READING  [free 1][botCpu 1][bots 1][flags 1]
  *             one per host each free CPU sample. free 0xFF:
  *             not known; botCpu is the CTRL_BOT_HOST_CPU byte.
@@ -35,6 +40,8 @@
  *             [oneBotCost 2][freeAvg 2][lowestClean 1]
  *             [highestBad 1][seat 1][toHost 1][reasonLen 1]
  *             [reason]
+ *             then from version 2: [srcRate 2][dstRate 2]
+ *             [moves 1][rule 1][stay 2][needStay 2]
  *             predicted is a signed tenth of a percent; cost
  *             and freeAvg are tenths of a percent. 0xFF in a
  *             byte field: none. flags bit 0: the one-bot cost
@@ -44,6 +51,15 @@
  *             PLACE and SPREAD_MOVE carry the free CPU check
  *             of the host the bot goes to (toHost); the
  *             others carry that of host.
+ *             srcRate and dstRate: the window rates of host and
+ *             toHost in hundredths of a percent (0xFFFF: none;
+ *             dstRate none on a trial: the target had no bots).
+ *             moves: the bot's voluntary moves before this one
+ *             (m). rule: 0 none, 1 normal, 2 emergency, 3 trial.
+ *             stay: whole seconds since the bot's last voluntary
+ *             move, needStay: the stay the rule asked for (0:
+ *             none); 0xFFFF in both: none. MOVE, WOULD_MOVE and
+ *             NO_BETTER carry them; the others have none.
  *    CPU      [shown 4][source 1][budget 4][botCpu 1][bots 1]
  *             [overrunTenths 2][free 1][slots 1]
  *             one per host each free CPU sample (5 s), while
@@ -78,7 +94,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#define BOTHOST_RECORD_VERSION 1
+#define BOTHOST_RECORD_VERSION 2
 
 enum {
   BOTHOST_RECORD_HOST     = 1,
@@ -90,8 +106,10 @@ enum {
 
 /* DECISION kinds. */
 enum {
-  BOTHOST_DECISION_TRIGGER        = 1, /* the bad probe share was met */
-  BOTHOST_DECISION_MOVE           = 2, /* a bot moved off the host */
+  BOTHOST_DECISION_TRIGGER        = 1, /* version 1: the bad probe share
+                                        * was met */
+  BOTHOST_DECISION_MOVE           = 2, /* a bot moved off the host (the
+                                        * overrun move) */
   BOTHOST_DECISION_CUT            = 3, /* the limit was lowered */
   BOTHOST_DECISION_RAISE          = 4, /* the limit went up by 1 */
   BOTHOST_DECISION_RAISE_REFUSED  = 5, /* a raise was looked at and refused */
@@ -100,8 +118,19 @@ enum {
                                         * off (-bothost-nomove) */
   BOTHOST_DECISION_PLACE          = 8, /* the spread offered a server bot
                                         * to a Bot Host */
-  BOTHOST_DECISION_SPREAD_MOVE    = 9  /* the spread moved a bot off a Bot
+  BOTHOST_DECISION_SPREAD_MOVE    = 9, /* the spread moved a bot off a Bot
                                         * Host */
+  BOTHOST_DECISION_NO_BETTER      = 10 /* the host is over the target rate,
+                                        * but no bot may move to a better
+                                        * host */
+};
+
+/* The rule of a move (DECISION rule). */
+enum {
+  BOTHOST_RULE_NONE      = 0,
+  BOTHOST_RULE_NORMAL    = 1,
+  BOTHOST_RULE_EMERGENCY = 2,
+  BOTHOST_RULE_TRIAL     = 3
 };
 
 #define BOTHOST_RECORD_NONE        0xFFu
@@ -115,8 +144,9 @@ enum {
 #define BOTHOST_RECORD_DEC_BUDGET  0x04u
 #define BOTHOST_RECORD_MILLI_NONE  0xFFFFFFFFu
 #define BOTHOST_RECORD_RATE_NONE   0xFFFFu
+#define BOTHOST_RECORD_SECS_NONE   0xFFFFu
 /* The longest payload: a DECISION with the longest reason. */
-#define BOTHOST_RECORD_MAX_BYTES   (3 + 16 + BOTHOST_RECORD_REASON_LEN)
+#define BOTHOST_RECORD_MAX_BYTES   (3 + 16 + BOTHOST_RECORD_REASON_LEN + 10)
 
 typedef struct {
   uint8_t  version;
@@ -132,8 +162,9 @@ typedef struct {
   uint16_t thinks;
   uint16_t overruns;
   uint8_t  flags;      /* PROBE, READING and DECISION flags */
-  uint8_t  badProbes;  /* PROBE and DECISION */
+  uint8_t  badProbes;  /* PROBE and DECISION (version 1) */
   uint8_t  probes;     /* PROBE and DECISION */
+  uint16_t windowRate; /* PROBE: hundredths of a percent */
   /* READING */
   uint8_t  freePct;
   uint8_t  botCpu;
@@ -149,6 +180,12 @@ typedef struct {
   uint8_t  seat;
   uint8_t  toHost;
   char     reason[BOTHOST_RECORD_REASON_LEN];
+  uint16_t srcRate;    /* hundredths of a percent */
+  uint16_t dstRate;
+  uint8_t  moves;
+  uint8_t  rule;       /* BOTHOST_RULE_* */
+  uint16_t staySecs;
+  uint16_t needStaySecs;
   /* CPU (bots, botCpu, freePct and slots above too) */
   uint32_t shownMilli;
   uint8_t  source;
@@ -201,6 +238,22 @@ static inline uint16_t botHostRecordTenthsU(double pct) {
   return (uint16_t) t;
 }
 
+/* A rate as hundredths of a percent, held below BOTHOST_RECORD_RATE_NONE. */
+static inline uint16_t botHostRecordHundredthsU(double pct) {
+  double t = pct * 100.0 + 0.5;
+  if (!(t > 0.0)) return 0;
+  if (t > 65534.0) return 65534u;
+  return (uint16_t) t;
+}
+
+/* Whole seconds, held below BOTHOST_RECORD_SECS_NONE. */
+static inline uint16_t botHostRecordSecs(double secs) {
+  double t = secs + 0.5;
+  if (!(t > 0.0)) return 0;
+  if (t > 65534.0) return 65534u;
+  return (uint16_t) t;
+}
+
 /* A string field: up to cap - 1 bytes, as a length byte and the bytes. */
 static inline int botHostRecordPutStr(uint8_t *p, const char *s, int cap) {
   int n = (int) strnlen(s, (size_t) cap);
@@ -236,6 +289,7 @@ static inline int botHostRecordEncode(const BotHostRecord *rec, uint8_t *out, in
     *p++ = rec->flags;
     *p++ = rec->badProbes;
     *p++ = rec->probes;
+    botHostRecordPut16(p, rec->windowRate); p += 2;
     break;
   case BOTHOST_RECORD_READING:
     *p++ = rec->freePct;
@@ -258,6 +312,12 @@ static inline int botHostRecordEncode(const BotHostRecord *rec, uint8_t *out, in
     *p++ = rec->seat;
     *p++ = rec->toHost;
     p += botHostRecordPutStr(p, rec->reason, BOTHOST_RECORD_REASON_LEN);
+    botHostRecordPut16(p, rec->srcRate);      p += 2;
+    botHostRecordPut16(p, rec->dstRate);      p += 2;
+    *p++ = rec->moves;
+    *p++ = rec->rule;
+    botHostRecordPut16(p, rec->staySecs);     p += 2;
+    botHostRecordPut16(p, rec->needStaySecs); p += 2;
     break;
   case BOTHOST_RECORD_CPU:
     botHostRecordPut32(p, rec->shownMilli);      p += 4;
@@ -319,6 +379,8 @@ static inline bool botHostRecordDecode(const uint8_t *in, int len, BotHostRecord
     rec->flags     = in[pos++];
     rec->badProbes = in[pos++];
     rec->probes    = in[pos++];
+    rec->windowRate = (uint16_t) BOTHOST_RECORD_RATE_NONE;
+    if (len >= pos + 2) rec->windowRate = botHostRecordGet16(in + pos);
     return true;
   case BOTHOST_RECORD_READING:
     if (len < pos + 4) return false;
@@ -342,8 +404,21 @@ static inline bool botHostRecordDecode(const uint8_t *in, int len, BotHostRecord
     rec->highestBad      = in[pos++];
     rec->seat            = in[pos++];
     rec->toHost          = in[pos++];
-    if (pos < len) {
-      (void) botHostRecordGetStr(in, len, &pos, rec->reason, BOTHOST_RECORD_REASON_LEN);
+    rec->srcRate = (uint16_t) BOTHOST_RECORD_RATE_NONE;
+    rec->dstRate = (uint16_t) BOTHOST_RECORD_RATE_NONE;
+    rec->moves = (uint8_t) BOTHOST_RECORD_NONE;
+    rec->rule = (uint8_t) BOTHOST_RULE_NONE;
+    rec->staySecs = (uint16_t) BOTHOST_RECORD_SECS_NONE;
+    rec->needStaySecs = (uint16_t) BOTHOST_RECORD_SECS_NONE;
+    if (pos < len &&
+        botHostRecordGetStr(in, len, &pos, rec->reason, BOTHOST_RECORD_REASON_LEN) &&
+        len >= pos + 10) {
+      rec->srcRate      = botHostRecordGet16(in + pos); pos += 2;
+      rec->dstRate      = botHostRecordGet16(in + pos); pos += 2;
+      rec->moves        = in[pos++];
+      rec->rule         = in[pos++];
+      rec->staySecs     = botHostRecordGet16(in + pos); pos += 2;
+      rec->needStaySecs = botHostRecordGet16(in + pos); pos += 2;
     }
     return true;
   case BOTHOST_RECORD_CPU:

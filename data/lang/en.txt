@@ -3132,6 +3132,14 @@ STR_LV_BOTHOST_TIP_BAD_PROBE=Bad probe
 STR_LV_BOTHOST_TIP_READING=Free CPU: {string1}, bot CPU: {string2}
 STR_LV_BOTHOST_TIP_BOTS=Bots: {number}, slots: {number2}, limit: {string1}
 STR_LV_BOTHOST_DEC_WOULD_MOVE=Would move (moves off)
+STR_LV_BOTHOST_DEC_NO_BETTER=No better host
+STR_LV_BOTHOST_TIP_WINDOW_RATE=Rate over the window: {string1}
+STR_LV_BOTHOST_TIP_RATES=Source rate: {string1}, target rate: {string2}
+STR_LV_BOTHOST_TIP_MOVE_RULE=Rule: {string1}, moves so far (m): {number}
+STR_LV_BOTHOST_TIP_STAY=Stay: {string1}, needs: {string2}
+STR_LV_BOTHOST_RULE_NORMAL=normal
+STR_LV_BOTHOST_RULE_EMERGENCY=emergency
+STR_LV_BOTHOST_RULE_TRIAL=trial
 
 # The Log Viewer's Chat panel: title, empty line, team and private notes
 STR_LV_WIN_CHAT=Chat

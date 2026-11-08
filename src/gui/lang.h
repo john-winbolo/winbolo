@@ -3774,6 +3774,16 @@
 #define STR_LV_BOTHOST_TIP_BOTS                  3894
 /* A decision marker: the bot would move, but -bothost-nomove keeps it */
 #define STR_LV_BOTHOST_DEC_WOULD_MOVE            3895
+/* The overrun move (bothost record version 2): the decision, the window
+ * rate, the rates, rule, m and stay of a move, and the rule names */
+#define STR_LV_BOTHOST_DEC_NO_BETTER             3915
+#define STR_LV_BOTHOST_TIP_WINDOW_RATE           3916
+#define STR_LV_BOTHOST_TIP_RATES                 3917
+#define STR_LV_BOTHOST_TIP_MOVE_RULE             3918
+#define STR_LV_BOTHOST_TIP_STAY                  3919
+#define STR_LV_BOTHOST_RULE_NORMAL               3920
+#define STR_LV_BOTHOST_RULE_EMERGENCY            3921
+#define STR_LV_BOTHOST_RULE_TRIAL                3922
 
 /* The Log Viewer's Chat panel: title, empty line, team and private notes */
 #define STR_LV_WIN_CHAT                          3100
