@@ -218,14 +218,37 @@ int  botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
 
 /* ---- Bot overruns on a host ------------------------------------------
  *
- * Each host (the server's own process too) is probed once a second. One
- * probe is the host's overrun rate in that second: new overruns / new
- * thinks over all its bots. A probe is bad when the rate is above pct; a
- * probe with no thinks is not bad. When at least badShare percent of the
- * probes in the last windowSecs are bad, one bot moves off the host and the
- * host's limit becomes its bot count less 1 (never below 0). That happens
- * at most once each stepSecs, and the probes are cleared after it, so the
- * next step needs a full new window.
+ * Each host (the server's own process too) is probed once a second: its
+ * bots' new thinks and new overruns in that second. The host's rate is
+ * the sum of its overruns over the sum of its thinks in the last
+ * windowSecs probes. The rate is known only when the host had bots in
+ * each of those probes and they thought; a host with no bots has no rate.
+ *
+ * The overrun move (botHostOvrPickMove). A host whose rate is above pct
+ * (the target) may give one bot to a better host, at most once each
+ * stepSecs. Each extra bot on a host is taken to run at that host's rate
+ * while the free CPU check passes. For a bot with m voluntary moves in
+ * this game, a normal move needs all of these:
+ *   a. the source rate is above pct;
+ *   b. the target's rate is below pct, or the target has no bots (a
+ *      trial: its rate is known 30 s later);
+ *   c. the target's rate is at most the source rate x gain^(m + 1);
+ *   d. the bot stayed at least staySecs x stayFactor^(m - 1) since its
+ *      last voluntary move (no stay rule while m is 0);
+ *   e. the target passes the free CPU check and has slot room.
+ * With the source rate at or above emergencyPct, c and d do not apply;
+ * the target must then be below pct, or have at most half the source
+ * rate, or have no bots, and e still holds. Lag only breaks ties: the
+ * lag gain and the lag ceiling of the spread do not stop this move. Of
+ * the targets that pass, the lowest rate goes first (a trial after every
+ * host with a rate), then the lowest lag, then more slots, then the first
+ * in the table. After the move the source's limit becomes its bots less 1
+ * for this game, so the spread does not take the bot back, and its probes
+ * start again.
+ *
+ * Forced moves (a host leaves, times out or loses the bot, a fall-back,
+ * changed brain files, fewer slots, a host on the server's computer) do
+ * not count in m. m starts at 0 again in the lobby (BotHostOvrMoves).
  *
  * The free CPU history: each freeSampleSecs the host's last reading of its
  * machine's free CPU (all cores, 0..100, BOT_HOST_FREE_UNKNOWN when not
@@ -235,7 +258,7 @@ int  botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
  *
  * The limit goes up by 1 (at most once each stepSecs, never above the
  * host's slots) only when all of these hold:
- *   a. the trigger is not met over a full window since the last change;
+ *   a. the rate is not above pct over a full window since the last change;
  *   b. one reading in the history ran bots with no overruns above pct and
  *      had at most the predicted free CPU: the average free CPU of the
  *      last windowSecs less the CPU of one bot (the host's bot CPU byte /
@@ -246,24 +269,33 @@ int  botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
  * until the game ends.
  *
  * The same free CPU evidence decides each new bot for a host
- * (botHostOverrunMayTake), in the spread, at the start and in each
- * rebalance: a host with no bots may take its first one; after each new
- * bot it takes no more until a reading counts that bot (so the CPU of one
- * bot is measured); then it takes one more only when the one-bot cost is
- * known and, with a bad reading in the history, b and c above hold, or,
- * with no bad reading, the predicted free CPU is at least one more
- * one-bot cost or b holds. A host with no free CPU data takes bots by its
- * slots only until its first step down.
+ * (botHostOverrunMayTake), in the spread, at the start, in each
+ * rebalance and for the overrun move: a host with no bots may take its
+ * first one; after each new bot it takes no more until a reading counts
+ * that bot (so the CPU of one bot is measured); then it takes one more
+ * only when the one-bot cost is known and, with a bad reading in the
+ * history, b and c above hold, or, with no bad reading, the predicted
+ * free CPU is at least one more one-bot cost or b holds. A host with no
+ * free CPU data takes bots by its slots only until its first step down.
  *
  * The limit is for one game: the server clears it, the probes and the
  * step down at a new game and a new round (botHostOverrunNewGame), and
  * all of the state when a host joins again (botHostOverrunReset). */
 #define BOT_HOST_OVR_PCT_DEFAULT           1.0
-#define BOT_HOST_OVR_BAD_SHARE_DEFAULT     80
+#define BOT_HOST_OVR_EMERGENCY_PCT_DEFAULT 5.0
+#define BOT_HOST_OVR_GAIN_DEFAULT          0.5
+#define BOT_HOST_OVR_STAY_SECS_DEFAULT     30
+#define BOT_HOST_OVR_STAY_FACTOR_DEFAULT   2.0
 #define BOT_HOST_OVR_WINDOW_SECS_DEFAULT   30
 #define BOT_HOST_OVR_STEP_SECS_DEFAULT     30
 #define BOT_HOST_FREE_SAMPLE_SECS_DEFAULT  5
 #define BOT_HOST_FREE_HISTORY_SECS_DEFAULT 300
+/* In an emergency the target may have at most this part of the source
+ * rate (when it is not below pct). */
+#define BOT_HOST_OVR_EMERGENCY_SHARE 0.5
+/* Two rates closer than this (in percent points) are the same rate when
+ * the targets are put in order, so the lag decides between them. */
+#define BOT_HOST_OVR_RATE_TIE_PCT    0.1
 /* The most probes a window and the most readings a history hold. */
 #define BOT_HOST_OVR_MAX_PROBES   600
 #define BOT_HOST_FREE_MAX_READINGS 600
@@ -271,10 +303,13 @@ int  botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
 #define BOT_HOST_FREE_UNKNOWN     0xFFu
 
 typedef struct {
-    double pct;            /* a probe is bad above this percent; 0: off */
-    int    badShare;       /* percent of a window's probes that trigger */
-    int    windowSecs;
-    int    stepSecs;
+    double pct;            /* the target rate in percent; 0: the check is off */
+    double emergencyPct;   /* at or above it: the emergency rule; 0: none */
+    double gain;           /* rule c: the target at most rate x gain^(m+1) */
+    int    staySecs;       /* rule d: the stay after the first move */
+    double stayFactor;     /* rule d: each later move multiplies the stay */
+    int    windowSecs;     /* the probes a rate sums */
+    int    stepSecs;       /* at most one move or raise per host in this */
     int    freeSampleSecs;
     int    freeHistorySecs;
 } BotHostOverrunCfg;
@@ -290,9 +325,13 @@ typedef struct {
 typedef struct {
     int      limit;        /* the lowered limit, -1: none */
     bool     cut;          /* a step down was made this game */
-    uint8_t  probe[BOT_HOST_OVR_MAX_PROBES];   /* 1: bad */
+    /* The window: each probe's thinks and overruns, and whether the host
+     * had bots in it. */
+    uint32_t probeThinks[BOT_HOST_OVR_MAX_PROBES];
+    uint32_t probeOverruns[BOT_HOST_OVR_MAX_PROBES];
+    bool     probeBots[BOT_HOST_OVR_MAX_PROBES];
     int      probeCount, probeNext;
-    int      sinceChange;  /* probes since the last step down or up */
+    int      sinceChange;  /* probes since the last move, step down or up */
     int      sinceRefuse;  /* probes since the last refused raise */
     uint32_t accOverruns, accThinks;
     int      accProbes;
@@ -315,21 +354,22 @@ typedef struct {
     int      slots;        /* the slots the host reports */
     uint8_t  botCpu;       /* its CTRL_BOT_HOST_CPU byte */
     uint8_t  freePct;      /* its last free CPU reading */
-    bool     canMove;      /* a bot may move off it now to another place */
 } BotHostOverrunProbe;
 
 typedef enum {
     BOT_HOST_OVR_NONE = 0,
-    BOT_HOST_OVR_WAIT,     /* the trigger is met but no bot may move now */
-    BOT_HOST_OVR_LOWER,    /* move one bot off; the limit is lowered */
+    BOT_HOST_OVR_OVER,     /* the rate is above pct and a move may come
+                            * now: the caller looks for one
+                            * (botHostOvrPickMove) */
     BOT_HOST_OVR_RAISE,    /* the limit goes up by 1 */
     BOT_HOST_OVR_REFUSE    /* a raise was looked at and refused */
 } BotHostOverrunAction;
 
 typedef struct {
-    int    badProbes;      /* bad probes in the window */
+    double ratePct;        /* this probe's (one second's) overrun rate */
+    bool   windowKnown;    /* the window rate is known */
+    double windowPct;      /* the window rate */
     int    probes;         /* probes in the window */
-    double ratePct;        /* this probe's overrun rate */
     int    limitBefore;    /* the limit before this probe, -1: none */
     int    newLimit;       /* the limit after this probe, -1: none */
     bool   sampled;        /* this probe took a free CPU reading */
@@ -365,6 +405,105 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
                                          const BotHostOverrunCfg *cfg,
                                          const BotHostOverrunProbe *in,
                                          BotHostOverrunReport *rep);
+/* The host's window rate in percent (*pct), when it is known. */
+bool botHostOverrunRate(const BotHostOverrunState *st,
+                        const BotHostOverrunCfg *cfg, double *pct);
+/* A bot moved off the host by the overrun move; bots is its count before
+ * the move. The limit becomes bots - 1 (never below 0) for this game, the
+ * probes start again and the next move or raise waits stepSecs. Returns
+ * the new limit. */
+int  botHostOverrunMoved(BotHostOverrunState *st, int bots);
+/* A move was found but not made (-bothost-nomove): the next one waits
+ * stepSecs; the limit and the probes stay. */
+void botHostOverrunHeld(BotHostOverrunState *st);
+
+/* What the overrun move knows of one place in the host table. */
+typedef struct {
+    bool   rateKnown;
+    double ratePct;
+    int    bots;
+    bool   mayTake;    /* the free CPU check passes and it has slot room */
+    double lagMs;      /* below 0: not known */
+    int    slots;
+} BotHostOvrHost;
+
+/* A bot the overrun move may move off its host. */
+typedef struct {
+    int    seat;
+    int    moves;      /* m: its voluntary moves in this game */
+    double staySecs;   /* since its last voluntary move */
+} BotHostOvrBot;
+
+typedef enum {
+    BOT_HOST_OVR_RULE_NONE = 0,
+    BOT_HOST_OVR_RULE_NORMAL,     /* rules a to e */
+    BOT_HOST_OVR_RULE_EMERGENCY,  /* the source at or above emergencyPct */
+    BOT_HOST_OVR_RULE_TRIAL       /* a normal move to a host with no bots */
+} BotHostOvrRule;
+
+typedef struct {
+    int    seat;           /* -1: no move */
+    int    to;             /* the target's place in the table, -1: none */
+    int    moves;          /* the bot's m the rules used */
+    double staySecs;
+    double needStaySecs;   /* the stay rule d asked for (0: none) */
+    double srcPct;
+    bool   dstKnown;       /* the target has a rate (not a trial) */
+    double dstPct;
+    BotHostOvrRule rule;
+    const char *why;       /* why no move, for the log */
+} BotHostOvrMove;
+
+/* "normal", "emergency", "trial" or "none". */
+const char *botHostOvrRuleName(BotHostOvrRule rule);
+/* The stay rule d asks of a bot with moves voluntary moves: 0 for 0,
+ * else staySecs x stayFactor^(moves - 1). */
+double botHostOvrStayNeed(const BotHostOverrunCfg *cfg, int moves);
+/* The rule that lets a bot with moves voluntary moves and staySecs since
+ * the last one go from a host at srcPct to dst, or BOT_HOST_OVR_RULE_NONE
+ * with the reason in *why (may be NULL). */
+BotHostOvrRule botHostOvrMoveRule(const BotHostOverrunCfg *cfg, double srcPct,
+                                  const BotHostOvrHost *dst, int moves,
+                                  double staySecs, const char **why);
+/* The overrun move off host src: of its movable bots (fewest moves first,
+ * then the longest stay, then the lowest seat) the first that has a
+ * target that passes, to the best such target. lag gives the lag of each
+ * host (NULL or off: lag does not count). False, with out->why, when no
+ * bot may move. */
+bool botHostOvrPickMove(const BotHostOverrunCfg *cfg,
+                        const BotHostOvrHost *hosts, int n, int src,
+                        const BotHostOvrBot *bots, int nBots,
+                        const BotHostPlaceLag *lag, BotHostOvrMove *out);
+
+/* Each seat's voluntary moves (m) and the tick of its last one. */
+#define BOT_HOST_OVR_SEATS 32
+
+typedef enum {
+    BOT_HOST_MOVE_VOLUNTARY = 0,  /* the overrun move */
+    BOT_HOST_MOVE_FORCED          /* a fall-back: no penalty, m stays */
+} BotHostMoveKind;
+
+typedef struct {
+    int      moves[BOT_HOST_OVR_SEATS];
+    uint32_t lastTick[BOT_HOST_OVR_SEATS];
+    uint32_t startTick[BOT_HOST_OVR_SEATS]; /* when the seat was first seen */
+    bool     seen[BOT_HOST_OVR_SEATS];
+} BotHostOvrMoves;
+
+/* The lobby (the game ended): every m is 0. */
+void botHostOvrMovesReset(BotHostOvrMoves *mv);
+/* Seat s at tick now: a seat with no bot starts again. */
+void botHostOvrMovesSeat(BotHostOvrMoves *mv, int s, bool isBot,
+                         uint32_t now);
+/* Seat s moved at tick now. Only a voluntary move counts in m and starts
+ * its stay again. */
+void botHostOvrMovesNote(BotHostOvrMoves *mv, int s, BotHostMoveKind kind,
+                         uint32_t now);
+int  botHostOvrMovesCount(const BotHostOvrMoves *mv, int s);
+/* The seconds since seat s's last voluntary move (since it was first seen
+ * while it has none), at ticksPerSec ticks a second. */
+double botHostOvrMovesStay(const BotHostOvrMoves *mv, int s, uint32_t now,
+                           int ticksPerSec);
 
 /* The seats a host gives back at once when it reports newSlots
  * (CTRL_BOT_HOST_SLOTS): every seat on host h when newSlots is 0, as when

@@ -587,7 +587,10 @@ bool botHostPlaceRebalanceLag(const BotHostPlaceHost *hosts, int n,
 void botHostOverrunCfgDefaults(BotHostOverrunCfg *cfg) {
     if (cfg == NULL) return;
     cfg->pct = BOT_HOST_OVR_PCT_DEFAULT;
-    cfg->badShare = BOT_HOST_OVR_BAD_SHARE_DEFAULT;
+    cfg->emergencyPct = BOT_HOST_OVR_EMERGENCY_PCT_DEFAULT;
+    cfg->gain = BOT_HOST_OVR_GAIN_DEFAULT;
+    cfg->staySecs = BOT_HOST_OVR_STAY_SECS_DEFAULT;
+    cfg->stayFactor = BOT_HOST_OVR_STAY_FACTOR_DEFAULT;
     cfg->windowSecs = BOT_HOST_OVR_WINDOW_SECS_DEFAULT;
     cfg->stepSecs = BOT_HOST_OVR_STEP_SECS_DEFAULT;
     cfg->freeSampleSecs = BOT_HOST_FREE_SAMPLE_SECS_DEFAULT;
@@ -599,7 +602,9 @@ void botHostOverrunCfgDefaults(BotHostOverrunCfg *cfg) {
 #define OVR_LONG_AGO (1 << 30)
 
 static void ovrClearProbes(BotHostOverrunState *st) {
-    memset(st->probe, 0, sizeof(st->probe));
+    memset(st->probeThinks, 0, sizeof(st->probeThinks));
+    memset(st->probeOverruns, 0, sizeof(st->probeOverruns));
+    memset(st->probeBots, 0, sizeof(st->probeBots));
     st->probeCount = 0;
     st->probeNext = 0;
     /* The next free CPU reading starts again too: the probes so far ran
@@ -648,11 +653,31 @@ static int ovrHistory(const BotHostOverrunCfg *cfg) {
                     BOT_HOST_FREE_MAX_READINGS);
 }
 
-/* The bad probes in the window. */
-static int ovrBadProbes(const BotHostOverrunState *st) {
-    int i, bad = 0;
-    for (i = 0; i < st->probeCount; i++) bad += st->probe[i];
-    return bad;
+/* The window's sums. True when the rate is known: a full window, bots in
+ * each of its probes, and thinks. */
+static bool ovrWindowRate(const BotHostOverrunState *st,
+                          const BotHostOverrunCfg *cfg, double *pct) {
+    int i, window = ovrWindow(cfg);
+    uint64_t thinks = 0, overruns = 0;
+    *pct = 0.0;
+    if (st->probeCount < window) return false;
+    for (i = 0; i < st->probeCount && i < BOT_HOST_OVR_MAX_PROBES; i++) {
+        if (!st->probeBots[i]) return false;
+        thinks += st->probeThinks[i];
+        overruns += st->probeOverruns[i];
+    }
+    if (thinks == 0) return false;
+    *pct = (double)overruns * 100.0 / (double)thinks;
+    return true;
+}
+
+bool botHostOverrunRate(const BotHostOverrunState *st,
+                        const BotHostOverrunCfg *cfg, double *pct) {
+    double local;
+    if (pct == NULL) pct = &local;
+    *pct = 0.0;
+    if (st == NULL || cfg == NULL) return false;
+    return ovrWindowRate(st, cfg, pct);
 }
 
 /* The reading k places back (0: the newest). */
@@ -722,8 +747,8 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
                                          const BotHostOverrunProbe *in,
                                          BotHostOverrunReport *rep) {
     BotHostOverrunReport local;
-    int window, need;
-    bool bad, triggered, spaced;
+    int window;
+    bool over, spaced;
 
     if (rep == NULL) rep = &local;
     ovrReportInit(rep);
@@ -736,12 +761,13 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
     if (st->sinceChange < OVR_LONG_AGO) st->sinceChange++;
     if (st->sinceRefuse < OVR_LONG_AGO) st->sinceRefuse++;
 
-    /* This probe. */
+    /* This probe, into the window. */
     rep->ratePct = in->thinks > 0
         ? (double)in->overruns * 100.0 / (double)in->thinks : 0.0;
-    bad = in->thinks > 0 && rep->ratePct > cfg->pct;
     if (st->probeNext >= window) st->probeNext = 0;
-    st->probe[st->probeNext] = bad ? 1 : 0;
+    st->probeThinks[st->probeNext] = in->thinks;
+    st->probeOverruns[st->probeNext] = in->overruns;
+    st->probeBots[st->probeNext] = in->bots > 0;
     st->probeNext = (st->probeNext + 1) % window;
     if (st->probeCount < window) st->probeCount++;
 
@@ -786,30 +812,19 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
     /* A host that now reports no more slots than the limit needs none. */
     if (st->limit >= 0 && st->limit >= in->slots) st->limit = -1;
 
-    rep->badProbes = ovrBadProbes(st);
     rep->probes = st->probeCount;
+    rep->windowKnown = ovrWindowRate(st, cfg, &rep->windowPct);
     ovrFreeNumbers(st, cfg, rep);
     rep->limitBefore = st->limit;
     rep->newLimit = st->limit;
 
-    need = ovrClamp(cfg->badShare, 1, 100);
-    triggered = (long)rep->badProbes * 100L >= (long)need * (long)window;
+    over = rep->windowKnown && rep->windowPct > cfg->pct;
     spaced = st->sinceChange >= cfg->stepSecs;
 
-    if (triggered) {
+    if (over) {
         if (!spaced) return BOT_HOST_OVR_NONE;
-        if (!in->canMove || in->bots <= 0) {
-            rep->why = "no bot may move now";
-            return BOT_HOST_OVR_WAIT;
-        }
-        st->limit = in->bots - 1;
-        if (st->limit < 0) st->limit = 0;
-        st->cut = true;
-        rep->newLimit = st->limit;
-        ovrClearProbes(st);
-        st->sinceChange = 0;
         rep->why = "overruns";
-        return BOT_HOST_OVR_LOWER;
+        return BOT_HOST_OVR_OVER;
     }
 
     /* A raise: only with a full window since the last change. */
@@ -836,6 +851,21 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
     if (st->sinceRefuse < cfg->stepSecs) return BOT_HOST_OVR_NONE;
     st->sinceRefuse = 0;
     return BOT_HOST_OVR_REFUSE;
+}
+
+int botHostOverrunMoved(BotHostOverrunState *st, int bots) {
+    if (st == NULL) return -1;
+    st->limit = bots - 1;
+    if (st->limit < 0) st->limit = 0;
+    st->cut = true;
+    ovrClearProbes(st);
+    st->sinceChange = 0;
+    return st->limit;
+}
+
+void botHostOverrunHeld(BotHostOverrunState *st) {
+    if (st == NULL) return;
+    st->sinceChange = 0;
 }
 
 bool botHostOverrunMayTake(const BotHostOverrunState *st,
@@ -906,6 +936,239 @@ bool botHostOverrunMayTake(const BotHostOverrunState *st,
     }
     rep->why = "too little free CPU";
     return false;
+}
+
+/* ---- The overrun move -------------------------------------------------- */
+
+const char *botHostOvrRuleName(BotHostOvrRule rule) {
+    switch (rule) {
+    case BOT_HOST_OVR_RULE_NORMAL:    return "normal";
+    case BOT_HOST_OVR_RULE_EMERGENCY: return "emergency";
+    case BOT_HOST_OVR_RULE_TRIAL:     return "trial";
+    default:                          return "none";
+    }
+}
+
+double botHostOvrStayNeed(const BotHostOverrunCfg *cfg, int moves) {
+    double need;
+    int k;
+    if (cfg == NULL || moves <= 0) return 0.0;
+    need = cfg->staySecs > 0 ? (double)cfg->staySecs : 0.0;
+    /* Held at about a day, so many moves give a large number, not an
+     * infinity. */
+    for (k = 1; k < moves && need < 86400.0; k++) need *= cfg->stayFactor;
+    return need > 86400.0 ? 86400.0 : need;
+}
+
+/* gain^(moves + 1): the part of the source rate rule c allows. */
+static double ovrGainPow(const BotHostOverrunCfg *cfg, int moves) {
+    double f = 1.0;
+    int k;
+    for (k = 0; k <= moves && k < 64; k++) f *= cfg->gain;
+    return f;
+}
+
+BotHostOvrRule botHostOvrMoveRule(const BotHostOverrunCfg *cfg, double srcPct,
+                                  const BotHostOvrHost *dst, int moves,
+                                  double staySecs, const char **why) {
+    const char *local;
+    bool trial, emergency;
+    if (why == NULL) why = &local;
+    *why = "";
+    if (cfg == NULL || dst == NULL || !(cfg->pct > 0.0)) {
+        *why = "the check is off";
+        return BOT_HOST_OVR_RULE_NONE;
+    }
+    if (!(srcPct > cfg->pct)) {           /* a */
+        *why = "the source is not over the target rate";
+        return BOT_HOST_OVR_RULE_NONE;
+    }
+    if (!dst->mayTake) {                  /* e */
+        *why = "the target may not take a bot";
+        return BOT_HOST_OVR_RULE_NONE;
+    }
+    trial = dst->bots <= 0;
+    if (!trial && !dst->rateKnown) {
+        *why = "the target's rate is not known yet";
+        return BOT_HOST_OVR_RULE_NONE;
+    }
+    emergency = cfg->emergencyPct > 0.0 && srcPct >= cfg->emergencyPct;
+    if (emergency) {
+        if (!trial && !(dst->ratePct < cfg->pct) &&
+            dst->ratePct > srcPct * BOT_HOST_OVR_EMERGENCY_SHARE +
+                               BOT_HOST_PLACE_EPS) {
+            *why = "the target is not below the target rate or half the "
+                   "source rate";
+            return BOT_HOST_OVR_RULE_NONE;
+        }
+        return BOT_HOST_OVR_RULE_EMERGENCY;
+    }
+    if (!trial && !(dst->ratePct < cfg->pct)) {          /* b */
+        *why = "the target is not below the target rate";
+        return BOT_HOST_OVR_RULE_NONE;
+    }
+    if (!trial && dst->ratePct > srcPct * ovrGainPow(cfg, moves) +
+                                     BOT_HOST_PLACE_EPS) {  /* c */
+        *why = "the target is not low enough for this bot's moves";
+        return BOT_HOST_OVR_RULE_NONE;
+    }
+    if (moves > 0 &&
+        staySecs + BOT_HOST_PLACE_EPS < botHostOvrStayNeed(cfg, moves)) {
+        *why = "the bot has not stayed long enough";     /* d */
+        return BOT_HOST_OVR_RULE_NONE;
+    }
+    return trial ? BOT_HOST_OVR_RULE_TRIAL : BOT_HOST_OVR_RULE_NORMAL;
+}
+
+/* The lag of a target for the order: lag off counts all as 0; a lag not
+ * known counts refMs, as in the spread. */
+static double ovrLagOf(const BotHostOvrHost *h, const BotHostPlaceLag *lag) {
+    if (!placeLagOn(lag)) return 0.0;
+    return h->lagMs >= 0.0 ? h->lagMs : lag->refMs;
+}
+
+/* True when target a goes before target b (rule 10). */
+static bool ovrBetter(const BotHostOvrHost *hosts, int a, int b,
+                      const BotHostPlaceLag *lag) {
+    const BotHostOvrHost *ha = &hosts[a], *hb = &hosts[b];
+    bool ta = ha->bots <= 0, tb = hb->bots <= 0;
+    double la, lb;
+    if (ta != tb) return tb;              /* a host with a rate first */
+    if (!ta) {
+        if (ha->ratePct < hb->ratePct - BOT_HOST_OVR_RATE_TIE_PCT) return true;
+        if (ha->ratePct > hb->ratePct + BOT_HOST_OVR_RATE_TIE_PCT) {
+            return false;
+        }
+    }
+    la = ovrLagOf(ha, lag);
+    lb = ovrLagOf(hb, lag);
+    if (la < lb - BOT_HOST_PLACE_EPS) return true;
+    if (la > lb + BOT_HOST_PLACE_EPS) return false;
+    if (ha->slots != hb->slots) return ha->slots > hb->slots;
+    return a < b;
+}
+
+bool botHostOvrPickMove(const BotHostOverrunCfg *cfg,
+                        const BotHostOvrHost *hosts, int n, int src,
+                        const BotHostOvrBot *bots, int nBots,
+                        const BotHostPlaceLag *lag, BotHostOvrMove *out) {
+    BotHostOvrMove local;
+    int order[BOT_HOST_OVR_SEATS];
+    int i, j, k, count = 0;
+    double srcPct;
+
+    if (out == NULL) out = &local;
+    memset(out, 0, sizeof(*out));
+    out->seat = -1;
+    out->to = -1;
+    out->why = "";
+    if (cfg == NULL || hosts == NULL || src < 0 || src >= n) {
+        out->why = "no host";
+        return false;
+    }
+    srcPct = hosts[src].ratePct;
+    out->srcPct = srcPct;
+    if (!(cfg->pct > 0.0) || !hosts[src].rateKnown || !(srcPct > cfg->pct)) {
+        out->why = "the source is not over the target rate";
+        return false;
+    }
+    if (bots == NULL || nBots <= 0) {
+        out->why = "no bot may move now";
+        return false;
+    }
+    /* The bots in order: fewest moves, then the longest stay, then the
+     * lowest seat. */
+    for (i = 0; i < nBots && count < BOT_HOST_OVR_SEATS; i++) {
+        order[count++] = i;
+    }
+    for (i = 1; i < count; i++) {
+        int v = order[i];
+        for (j = i; j > 0; j--) {
+            const BotHostOvrBot *a = &bots[v], *b = &bots[order[j - 1]];
+            bool before = a->moves < b->moves ||
+                          (a->moves == b->moves &&
+                           (a->staySecs > b->staySecs ||
+                            (a->staySecs == b->staySecs && a->seat < b->seat)));
+            if (!before) break;
+            order[j] = order[j - 1];
+        }
+        order[j] = v;
+    }
+    out->why = "no better host";
+    for (k = 0; k < count; k++) {
+        const BotHostOvrBot *bot = &bots[order[k]];
+        int best = -1;
+        BotHostOvrRule bestRule = BOT_HOST_OVR_RULE_NONE;
+        for (i = 0; i < n; i++) {
+            BotHostOvrRule rule;
+            if (i == src) continue;
+            rule = botHostOvrMoveRule(cfg, srcPct, &hosts[i], bot->moves,
+                                      bot->staySecs, NULL);
+            if (rule == BOT_HOST_OVR_RULE_NONE) continue;
+            if (best < 0 || ovrBetter(hosts, i, best, lag)) {
+                best = i;
+                bestRule = rule;
+            }
+        }
+        if (best < 0) continue;
+        out->seat = bot->seat;
+        out->to = best;
+        out->moves = bot->moves;
+        out->staySecs = bot->staySecs;
+        out->needStaySecs = bestRule == BOT_HOST_OVR_RULE_EMERGENCY
+                                ? 0.0 : botHostOvrStayNeed(cfg, bot->moves);
+        out->dstKnown = hosts[best].bots > 0;
+        out->dstPct = out->dstKnown ? hosts[best].ratePct : 0.0;
+        out->rule = bestRule;
+        out->why = "";
+        return true;
+    }
+    return false;
+}
+
+void botHostOvrMovesReset(BotHostOvrMoves *mv) {
+    if (mv == NULL) return;
+    memset(mv, 0, sizeof(*mv));
+}
+
+void botHostOvrMovesSeat(BotHostOvrMoves *mv, int s, bool isBot,
+                         uint32_t now) {
+    if (mv == NULL || s < 0 || s >= BOT_HOST_OVR_SEATS) return;
+    if (!isBot) {
+        mv->moves[s] = 0;
+        mv->lastTick[s] = 0;
+        mv->seen[s] = false;
+        return;
+    }
+    if (!mv->seen[s]) {
+        mv->seen[s] = true;
+        mv->startTick[s] = now;
+    }
+}
+
+void botHostOvrMovesNote(BotHostOvrMoves *mv, int s, BotHostMoveKind kind,
+                         uint32_t now) {
+    if (mv == NULL || s < 0 || s >= BOT_HOST_OVR_SEATS) return;
+    /* A forced move has no penalty: m and the stay stay as they are. */
+    if (kind != BOT_HOST_MOVE_VOLUNTARY) return;
+    mv->moves[s]++;
+    mv->lastTick[s] = now;
+}
+
+int botHostOvrMovesCount(const BotHostOvrMoves *mv, int s) {
+    if (mv == NULL || s < 0 || s >= BOT_HOST_OVR_SEATS) return 0;
+    return mv->moves[s];
+}
+
+double botHostOvrMovesStay(const BotHostOvrMoves *mv, int s, uint32_t now,
+                           int ticksPerSec) {
+    uint32_t from;
+    if (mv == NULL || s < 0 || s >= BOT_HOST_OVR_SEATS || ticksPerSec <= 0) {
+        return 0.0;
+    }
+    from = mv->moves[s] > 0 ? mv->lastTick[s]
+                            : (mv->seen[s] ? mv->startTick[s] : now);
+    return (double)(uint32_t)(now - from) / (double)ticksPerSec;
 }
 
 uint32_t botHostSeatsToGiveBack(const int *seatHost, int n, int h,

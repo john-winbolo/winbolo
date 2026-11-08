@@ -256,23 +256,38 @@ The server also watches how often each host's bots overrun
 (`botHostOverrunProbe` in bot_host_link.c). The server's own process counts
 as a host too.
 
-- Once a second each host is probed: its bots' new overruns over their new
-  thinks. A probe is bad when that rate is over P%. A probe with no thinks
-  is not bad.
-- When at least S% of the probes in the last W seconds are bad, one bot
-  moves off that host to the best other place (the normal placement scores
-  choose). The host's limit becomes its bot count minus 1 for this game. A
-  bot with a pill or with its builder out does not move; the step waits.
-  At most one step per host each T seconds. The probes start again after
-  each step.
+- Once a second each host is probed: its bots' new overruns and new thinks.
+  The host's rate is the sum of its overruns over the sum of its thinks in
+  the last W seconds. The rate is known only when the host had bots in each
+  second of a full window. A host with no bots has no rate.
+- When a host's rate is over P%, one bot may move to a better host. For a
+  bot with m overrun moves in this game, a normal move needs all of these:
+  the target's rate is below P% (or the target has no bots: a trial); the
+  target's rate is at most the source rate x G^(m+1); the bot stayed at
+  least Y x F^(m-1) seconds since its last overrun move (no stay rule
+  while m = 0); and the target passes its free CPU check and has room.
+- At a rate of E% or more the emergency rule applies: the target must be
+  below P%, or at most half the source rate, or have no bots. The gain and
+  stay rules do not apply. The free CPU check and room still do.
+- The target is the one with the lowest rate, then the lowest lag, then the
+  most slots. A target with no bots comes after every target with a rate.
+  Lag only breaks ties: the lag ceiling does not stop an overrun move.
+- A move adds 1 to m. A forced fall-back (a Bot Host left or failed) does
+  not. m starts again at 0 in the lobby.
+- After a move the source host's limit becomes its bot count minus 1 for
+  this game. A bot with a pill or with its builder out does not move. At
+  most one move per host each T seconds. The probes start again after each
+  move.
+- When every other host is about as bad, no bot moves. The console says
+  "no better host" at most once each T seconds per host.
 - The server stays the last fall-back. A lowered server limit only moves
   bots off when another host has room.
 - Each Bot Host reads the free CPU of its whole machine every 5 s and
   sends only the percent (CTRL_BOT_HOST_CPU_FREE). The server reads its
   own. The server keeps H seconds of readings per host: free %, bot count,
   and clean or bad (bad: the overrun rate of those seconds is over P%).
-- A raise by 1 (at most each T seconds) needs all of these: the trigger is
-  not met; one bot's cost (the host's bot CPU / its bots) is known; a clean
+- A raise by 1 (at most each T seconds) needs all of these: the rate is
+  not over P%; one bot's cost (the host's bot CPU / its bots) is known; a clean
   reading had free CPU at or below the predicted free CPU (the 30 s free
   average minus one bot's cost); and the predicted free CPU is above the
   free CPU of every bad reading. With no free CPU data there is no raise.
@@ -282,7 +297,11 @@ as a host too.
 - A lowered limit is for one game: a new game, the next round or a rejoin
   clears it. The lobby's Add Bot limit does not change.
 - `-bothost-overrun-pct <f>` sets P (default 1; 0 turns the check off).
-- `-bothost-overrun-bad-share <n>` sets S (default 80).
+- `-bothost-overrun-emergency-pct <f>` sets E (default 5; 0: no emergency
+  rule).
+- `-bothost-overrun-gain <f>` sets G (default 0.5).
+- `-bothost-overrun-stay-secs <s>` sets Y (default 30).
+- `-bothost-overrun-stay-factor <f>` sets F (default 2).
 - `-bothost-overrun-window-secs <s>` sets W (default 30).
 - `-bothost-overrun-step-secs <s>` sets T (default 30).
 - `-bothost-free-sample-secs <s>` sets how often a reading is kept

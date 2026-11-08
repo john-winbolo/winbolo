@@ -1041,9 +1041,12 @@ void printArgs() {
   fprintf(stderr, "-bothost-small-bias <f> - how many slots fewer such a host counts, 0 to 1 (default 0.25)\n");
   fprintf(stderr, "-bothost-lag-ref-ms <ms> - lag counted in bot placement: a host scores 1 + lag / ms times more, 0 = lag not counted (default 100)\n");
   fprintf(stderr, "-bothost-lag-max-ms <ms> - a host with more lag gets no new bots while one with less has room, 0 = no ceiling (default 250)\n");
-  fprintf(stderr, "-bothost-overrun-pct <f> - a host's 1 s probe is bad when its bots' overruns are over f%% of their thinks, 0 = the check is off (default 1)\n");
-  fprintf(stderr, "-bothost-overrun-bad-share <n> - when n%% of the probes in the window are bad, one bot moves off that host and its limit drops by 1 for the game (default 80)\n");
-  fprintf(stderr, "-bothost-overrun-window-secs <s> - the probes counted for that share (default 30)\n");
+  fprintf(stderr, "-bothost-overrun-pct <f> - the target rate: a host whose bots' overruns are over f%% of their thinks in the window gives one bot to a better host, and its limit drops to its bots - 1 for the game; 0 = the check is off (default 1)\n");
+  fprintf(stderr, "-bothost-overrun-emergency-pct <f> - at f%% or more, a bot may move to any host below the target rate or at half the source rate, with no stay time; 0 = no emergency rule (default 5)\n");
+  fprintf(stderr, "-bothost-overrun-gain <f> - a bot with m moves needs a target at most f^(m+1) x the source rate (default 0.5)\n");
+  fprintf(stderr, "-bothost-overrun-stay-secs <s> - after its first move a bot stays s seconds before the next (default 30)\n");
+  fprintf(stderr, "-bothost-overrun-stay-factor <f> - each further move multiplies that stay time by f (default 2)\n");
+  fprintf(stderr, "-bothost-overrun-window-secs <s> - the rate is the overruns over the thinks of the last s seconds (default 30)\n");
   fprintf(stderr, "-bothost-overrun-step-secs <s> - at most one move or raise per host in this time (default 30)\n");
   fprintf(stderr, "-bothost-free-sample-secs <s> - how often the free CPU of each host machine is read (default 5)\n");
   fprintf(stderr, "-bothost-free-history-secs <s> - how much free CPU history is kept for a raise (default 300)\n");
@@ -3356,30 +3359,46 @@ int main(int argc, char **argv) {
         }
       }
       {
-        /* The overrun check of the placement; -1: the default. */
-        double pct = -1.0;
-        int vals[5] = {-1, -1, -1, -1, -1};
-        static const char *const names[5] = {
-            "bothost-overrun-bad-share", "bothost-overrun-window-secs",
+        /* The overrun move of the placement; -1: the default. */
+        BotHostOverrunFlags f;
+        static const char *const dnames[4] = {
+            "bothost-overrun-pct", "bothost-overrun-emergency-pct",
+            "bothost-overrun-gain", "bothost-overrun-stay-factor"};
+        static const char *const inames[5] = {
+            "bothost-overrun-stay-secs", "bothost-overrun-window-secs",
             "bothost-overrun-step-secs", "bothost-free-sample-secs",
             "bothost-free-history-secs"};
+        double *dvals[4];
+        int *ivals[5];
         bool any = false;
-        int k, a = findArg(argc, argv, "bothost-overrun-pct");
-        if (a != ARG_NOT_FOUND && a < argc) {
-          pct = atof(argv[a]);
-          any = true;
-        }
-        for (k = 0; k < 5; k++) {
-          a = findArg(argc, argv, names[k]);
+        int k, a;
+        f.pct = f.emergencyPct = f.gain = f.stayFactor = -1.0;
+        f.staySecs = f.windowSecs = f.stepSecs = -1;
+        f.freeSampleSecs = f.freeHistorySecs = -1;
+        dvals[0] = &f.pct;
+        dvals[1] = &f.emergencyPct;
+        dvals[2] = &f.gain;
+        dvals[3] = &f.stayFactor;
+        ivals[0] = &f.staySecs;
+        ivals[1] = &f.windowSecs;
+        ivals[2] = &f.stepSecs;
+        ivals[3] = &f.freeSampleSecs;
+        ivals[4] = &f.freeHistorySecs;
+        for (k = 0; k < 4; k++) {
+          a = findArg(argc, argv, dnames[k]);
           if (a != ARG_NOT_FOUND && a < argc) {
-            vals[k] = atoi(argv[a]);
+            *dvals[k] = atof(argv[a]);
             any = true;
           }
         }
-        if (any) {
-          transportUdpServerSetBotHostOverrun(pct, vals[0], vals[1], vals[2],
-                                              vals[3], vals[4]);
+        for (k = 0; k < 5; k++) {
+          a = findArg(argc, argv, inames[k]);
+          if (a != ARG_NOT_FOUND && a < argc) {
+            *ivals[k] = atoi(argv[a]);
+            any = true;
+          }
         }
+        if (any) transportUdpServerSetBotHostOverrun(&f);
       }
       transportUdpServerSetBotHostRecord(
           argExist(argc, argv, "record-bothost-data"));

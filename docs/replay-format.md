@@ -763,7 +763,7 @@ it. Every multi-byte field is big-endian.
 
 | Offset | Field | Meaning |
 |-------:|-------|---------|
-| 0 | `version:u8` | 1 |
+| 0 | `version:u8` | 2 (1 in logs made before the overrun move by rate) |
 | 1 | `kind:u8` | 1 HOST, 2 PROBE, 3 READING, 4 DECISION, 5 CPU |
 | 2 | `host:u8` | 0 the server's own process, h + 1 Bot Host h |
 
@@ -775,14 +775,18 @@ Then, by kind (0xFF in a byte field: none):
 - PROBE, once a second per host: `bots:u8`, `slots:u8`, `limit:u8` (0xFF: no
   lowered limit), `thinks:u16`, `overruns:u16`, `flags:u8` (bit 0: this
   probe is bad), `badProbes:u8`, `probes:u8` (the bad probes in the window
-  and the probes in it).
+  and the probes in it; from version 2 `badProbes` is 0xFF), then from
+  version 2 `windowRate:u16` (the host's rate, its overruns over its thinks
+  in the window, in hundredths of a percent; 0xFFFF while not known).
 - READING, each free CPU sample per host (default every 5 s): `free:u8`
   (0..100, 0xFF not known), `botCpu:u8` (the `CTRL_BOT_HOST_CPU` byte),
   `bots:u8`, `flags:u8` (bit 0: the bots thought; bit 1: bad).
-- DECISION: `decision:u8` (1 trigger, 2 move, 3 cut, 4 raise, 5 raise
-  refused, 6 placement refused, 7 would move: the bot stays because of
-  `-bothost-nomove`, 8 the spread offered a server bot to a Bot Host,
-  9 the spread moved a bot off a Bot Host), `limitBefore:u8`, `limitAfter:u8`,
+- DECISION: `decision:u8` (1 trigger (version 1 only), 2 move, 3 cut,
+  4 raise, 5 raise refused, 6 placement refused, 7 would move: the bot stays
+  because of `-bothost-nomove`, 8 the spread offered a server bot to a Bot
+  Host, 9 the spread moved a bot off a Bot Host, 10 no better host: the host
+  is over the target rate but no bot may move), `limitBefore:u8`,
+  `limitAfter:u8`,
   `badProbes:u8`, `probes:u8`, `flags:u8` (bit 0: the one-bot cost is
   known; bit 1: the free CPU average is known; bit 2: the one-bot cost
   is the full-budget estimate), `predicted:s16` (the
@@ -791,7 +795,15 @@ Then, by kind (0xFF in a byte field: none):
   bot that moved), `toHost:u8` (where it went, as `host`), then the reason
   as a length byte and its bytes. Decisions 8 and 9 carry the free CPU
   check of the host the bot goes to (`toHost`); the others carry that of
-  `host`.
+  `host`. From version 2 the reason is followed by `srcRate:u16` and
+  `dstRate:u16` (the window rates of `host` and `toHost` in hundredths of a
+  percent, 0xFFFF none: a target with no bots has no rate), `moves:u8` (m,
+  the bot's overrun moves in this game before this one), `rule:u8` (0 none,
+  1 normal, 2 emergency, 3 trial), `staySecs:u16` (the seconds since the
+  bot's last overrun move, or since it was first seen) and
+  `needStaySecs:u16` (the stay the rule needed, 0 for the emergency rule),
+  0xFFFF none. Decisions 2 and 7 of the overrun move fill all of them;
+  decision 10 fills `srcRate` only; the others have none.
 - CPU, each free CPU sample per host while the game runs: `shown:u32` (the
   per-bot CPU the lobby and the game show, in thousandths of a percent of
   that machine's CPU, 0xFFFFFFFF none), `source:u8` (0 none, 1 measured,

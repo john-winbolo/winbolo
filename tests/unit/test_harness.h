@@ -961,10 +961,17 @@ int run_bot_host_place_lag(void);
 int run_bot_host_place_server_cap(void);
 /* The overrun check of the bot placement, the free CPU percent and the
  * log_BotHostData payload (test_bot_host_overrun.c). */
-int run_bot_host_overrun_trigger_24_of_30(void);
-int run_bot_host_overrun_no_trigger_23_of_30(void);
-int run_bot_host_overrun_short_spike(void);
+int run_bot_host_overrun_window_rate(void);
 int run_bot_host_overrun_step_spacing(void);
+int run_bot_host_overrun_steady_moves_one(void);
+int run_bot_host_overrun_all_same_no_move(void);
+int run_bot_host_overrun_target_not_below(void);
+int run_bot_host_overrun_gain_per_move(void);
+int run_bot_host_overrun_stay_times(void);
+int run_bot_host_overrun_emergency(void);
+int run_bot_host_overrun_target_order(void);
+int run_bot_host_overrun_forced_no_m(void);
+int run_bot_host_overrun_nomove_blocks(void);
 int run_bot_host_overrun_server_fallback(void);
 int run_bot_host_overrun_raise_clean_evidence(void);
 int run_bot_host_overrun_no_raise_clean_too_free(void);

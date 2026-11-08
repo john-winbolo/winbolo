@@ -871,14 +871,20 @@ void transportUdpServerSetBotHostPlacement(int smallSlots, double bias);
  * refMs (0: lag not counted) and maxMs (0: no ceiling); below 0: the
  * default. */
 void transportUdpServerSetBotHostLag(int refMs, int maxMs);
-/* The overrun check of the bot placement (BotHostOverrunCfg in
- * bot_host_link.h): the bad probe percent (0: the check is off), the bad
- * share of the window, the window, the time between steps, and the free
- * CPU sample time and history, in seconds. Below 0: the default. */
-void transportUdpServerSetBotHostOverrun(double pct, int badShare,
-                                         int windowSecs, int stepSecs,
-                                         int freeSampleSecs,
-                                         int freeHistorySecs);
+/* The overrun move of the bot placement (BotHostOverrunCfg in
+ * bot_host_link.h). Each value below 0 keeps its default. */
+typedef struct {
+    double pct;          /* the target rate in percent; 0: the check is off */
+    double emergencyPct; /* the emergency rate in percent; 0: no emergency */
+    double gain;         /* the target rate part for each move of a bot */
+    double stayFactor;   /* the stay time grows by this for each move */
+    int staySecs;        /* the stay time after the first move */
+    int windowSecs;      /* the time the rate is counted over */
+    int stepSecs;        /* at most one move per host in this time */
+    int freeSampleSecs;  /* the free CPU sample time */
+    int freeHistorySecs; /* the free CPU history kept */
+} BotHostOverrunFlags;
+void transportUdpServerSetBotHostOverrun(const BotHostOverrunFlags *f);
 /* Writes what the placement measured and chose into the round log (.wbv)
  * as log_BotHostData records (bothost_record.h). Off by default. */
 void transportUdpServerSetBotHostRecord(bool on);
