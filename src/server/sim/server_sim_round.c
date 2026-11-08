@@ -281,7 +281,7 @@ static void serverSimPrintBotTiming(const BotInfo *bi) {
     if (bi->hasBrain) {
         if (bi->overrunCount == 0) {
             fprintf(stdout,
-                    "    [BOT] brain=%s host=server last=%.1fms peak=%.1fms target=%.1fms\n",
+                    "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms\n",
                     bi->brainName, bi->lastThinkMs, bi->maxThinkMs,
                     bi->targetMs);
         } else {
@@ -289,7 +289,7 @@ static void serverSimPrintBotTiming(const BotInfo *bi) {
                 ? (double)bi->overrunCount * 100.0 / (double)bi->thinkCount
                 : 0.0;
             fprintf(stdout,
-                    "    [BOT] brain=%s host=server last=%.1fms peak=%.1fms target=%.1fms overruns=%u/%u (%.2f%%)\n",
+                    "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms overruns=%u/%u (%.2f%%)\n",
                     bi->brainName, bi->lastThinkMs, bi->maxThinkMs,
                     bi->targetMs, bi->overrunCount, bi->thinkCount, rate);
         }
@@ -520,23 +520,26 @@ void serverSimPrintOverrunStats(ServerSim *sim, uint32_t roundSeconds) {
     fflush(stdout);
 }
 
-void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEnd) {
+void serverSimFillOverrunRecord(ServerSim *sim, uint32_t roundFrames, bool roundEnd,
+                                OverrunRecord *out) {
     OverrunRecord rec;
-    BYTE payload[OVERRUN_RECORD_MAX_BYTES];
-    int len;
     BYTE count;
     double tickLast = 0.0, tickEwma = 0.0;
     double simLast = 0.0, simEwma = 0.0;
     double tickPeak = 0.0;
     unsigned int tickOverBudget = 0;
 
-    if (sim == NULL || !logIsRecording()) {
+    if (out == NULL) {
         return;
     }
     memset(&rec, 0, sizeof(rec));
     rec.version = OVERRUN_RECORD_VERSION;
     rec.flags = roundEnd ? OVERRUN_RECORD_FLAG_ROUND_END : 0;
     rec.roundFrames = roundFrames;
+    if (sim == NULL) {
+        *out = rec;
+        return;
+    }
 
     /* The same reads serverSimPrintTiming makes. */
     serverLifecycleGetTickStats(&tickLast, &tickEwma);
@@ -587,7 +590,18 @@ void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEn
             b->thinks = bi.thinkCount;
         }
     }
+    *out = rec;
+}
 
+void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEnd) {
+    OverrunRecord rec;
+    BYTE payload[OVERRUN_RECORD_MAX_BYTES];
+    int len;
+
+    if (sim == NULL || !logIsRecording()) {
+        return;
+    }
+    serverSimFillOverrunRecord(sim, roundFrames, roundEnd, &rec);
     len = overrunRecordEncode(&rec, payload, (int) sizeof(payload));
     if (len > 0) {
         logAddEvent(log_OverrunStats, 0, 0, 0, 0, (unsigned short) len, (char *) payload);

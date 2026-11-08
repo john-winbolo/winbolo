@@ -4135,6 +4135,44 @@ static bool decodeBotHostSameServerBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_BOT_TIMING body: a log_OverrunStats record (overrun_record.h), as
+ * overrunRecordEncode wrote it. The decoder takes a body that
+ * overrunRecordDecode reads, so a later record version, with more bytes
+ * after the ones this build knows, passes through whole. */
+BOLO_STATIC_ASSERT(OVERRUN_RECORD_MAX_BYTES <= CONTROL_BODY_MAX,
+                   bot_timing_worst_case_fits_control_segment);
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotTimingBody(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    size_t n = evt->u.botTiming.len;
+    (void)recipient;
+    if (n < OVERRUN_RECORD_HEAD_BYTES || n > sizeof(evt->u.botTiming.bytes)) {
+        return ENCODE_OVERFLOW;
+    }
+    if (bufCap < n) return ENCODE_OVERFLOW;
+    memcpy(buf, evt->u.botTiming.bytes, n);
+    *outLen = n;
+    return ENCODE_OK;
+}
+
+static bool decodeBotTimingBody(const uint8_t *buf, size_t len,
+                                ControlEvent *outEvt) {
+    OverrunRecord rec;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len > sizeof(outEvt->u.botTiming.bytes)) {
+        len = sizeof(outEvt->u.botTiming.bytes);
+    }
+    if (!overrunRecordDecode(buf, (int)len, &rec)) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_TIMING;
+    outEvt->u.botTiming.len = (uint16_t)len;
+    memcpy(outEvt->u.botTiming.bytes, buf, len);
+    return true;
+}
+
 /* CTRL_BOT_HOST_PACK_REQ body: [gen 4][brain 1][fileCount 2]
  * [fromInstall 2][fromCache 2][bits (fileCount + 7) / 8]. A fileCount of 0
  * or above 8 * BOT_HOST_PACK_BITMAP_BYTES, or a body too short for its
@@ -4948,6 +4986,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_PACK_REQ]       = encodeBotHostPackReqBody,
     [CTRL_BOT_HOST_CPU_BUDGET]     = encodeBotHostCpuBudgetBody,
     [CTRL_BOT_HOST_SAME_SERVER]    = encodeBotHostSameServerBody,
+    [CTRL_BOT_TIMING]              = encodeBotTimingBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -5029,6 +5068,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_PACK_REQ]       = decodeBotHostPackReqBody,
     [CTRL_BOT_HOST_CPU_BUDGET]     = decodeBotHostCpuBudgetBody,
     [CTRL_BOT_HOST_SAME_SERVER]    = decodeBotHostSameServerBody,
+    [CTRL_BOT_TIMING]              = decodeBotTimingBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -5174,6 +5214,7 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_PACK_REQ:      return "CTRL_BOT_HOST_PACK_REQ";
     case CTRL_BOT_HOST_CPU_BUDGET:    return "CTRL_BOT_HOST_CPU_BUDGET";
     case CTRL_BOT_HOST_SAME_SERVER:   return "CTRL_BOT_HOST_SAME_SERVER";
+    case CTRL_BOT_TIMING:             return "CTRL_BOT_TIMING";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

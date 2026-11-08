@@ -732,9 +732,20 @@ So a version 2 record is 45 bytes with no bots, 44 + 14 x bots + 1 with
 every bot in the server's process, and at most 781 bytes (16 bots on 16
 hosts with 31-byte names). A version 1 record is 44 bytes with no bots and
 252 bytes with 16. A reader of a version 1 record, or of a version 2 record
-whose host bytes or host table are cut short, has every host not known; the
-Log Viewer then leaves the Host column blank. A host byte past the table
-reads as not known too.
+whose host bytes or host table are cut short, has every host not known. A
+host byte past the table reads as not known too.
+
+The Log Viewer's Server timing table puts the bots of a version 2 record
+under a header for each host: "Server:" for the bots in the server's process
+first, then "Bot Host <name>:" for each host in the table's order, then
+"Bot Host ?:" for bots whose host is not known. A record with no host known
+for any bot (version 1) shows one list with no headers.
+
+The same bytes, version 2 and on, are the body of the `CTRL_BOT_TIMING`
+control event (`control_event.h`), which the server sends to every player and
+spectator once a second while the game has bots, and once with no bots when
+the last bot goes. Its roundFrames is 0 and its flags have no round end bit.
+The client's System Info groups its bot rows the same way.
 
 The counts and the peaks start again at each round start; the EWMA and last
 values are the server's running ones. Writing a record resets nothing, so the

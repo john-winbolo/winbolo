@@ -745,17 +745,13 @@ static void game_info_draw_timing(void) {
         return;
     }
 
-    /* Each bot: where its brain ran, its last and worst think, and its
-     * overruns against its thinks, the numbers of its [BOT] line on the
-     * console. A record from before the host was recorded leaves Host
-     * blank. */
-    if (!ImGui::BeginTable("##gi_timing_bots", 5,
+    /* Each bot: its last and worst think, and its overruns against its
+     * thinks, the numbers of its [BOT] line on the console. */
+    if (!ImGui::BeginTable("##gi_timing_bots", 4,
                            ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
         return;
     }
     ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_BOT),
-                            ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_HOST),
                             ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_LAST),
                             ImGuiTableColumnFlags_WidthFixed);
@@ -764,46 +760,64 @@ static void game_info_draw_timing(void) {
     ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_OVERRUNS),
                             ImGuiTableColumnFlags_WidthFixed);
     ImGui::TableHeadersRow();
-    for (int i = 0; i < (int)r.botCount; i++) {
-        const OverrunRecordBot &b = r.bots[i];
-        /* The name the slot plays under now, else the one the recording gave
-         * it, else its player number. */
-        char name[64] = "";
-        if (lv_playersIsInUse(b.player)) {
-            lv_screenGetPlayerName(name, b.player, sizeof(name));
-        } else {
-            lv_screenGetLoggedPlayerName(b.player, name, sizeof(name));
-        }
-        if (name[0] == '\0') {
-            MessageArgs args = {};
-            args.number = (int)b.player;
-            snprintf(name, sizeof(name), "%s",
-                     langGetTextFmt(STR_LV_TIMING_PLAYER, &args));
-        }
-        char last[16];
-        char peak[16];
-        char rate[16];
-        game_info_tenths(b.last, last, sizeof(last));
-        game_info_tenths(b.peak, peak, sizeof(peak));
-        game_info_rate(b.overruns, b.thinks, rate, sizeof(rate));
-
-        ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-        ImGui::TextUnformatted(name);
-        ImGui::TableSetColumnIndex(1);
-        {
-            const char *host = overrunRecordBotHostName(&r, &b);
-            if (overrunRecordBotOnServer(&b)) {
-                host = langGetText(STR_DLGLOBBY_BOTHOST_SERVER_NAME);
+    /* A version 2 record groups the bots under a header for each host their
+     * brains ran on: the server's process, then each Bot Host by the name
+     * the lobby rows showed. A version 1 record has no hosts, so one list. */
+    uint8_t keys[OVERRUN_RECORD_MAX_SECTIONS];
+    int sections = overrunRecordSections(&r, keys, OVERRUN_RECORD_MAX_SECTIONS);
+    for (int s = 0; s < (sections > 0 ? sections : 1); s++) {
+        if (sections > 0) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            if (keys[s] == OVERRUN_RECORD_HOST_SERVER) {
+                ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_HOST_SERVER));
+            } else {
+                MessageArgs args = {};
+                const char *host = keys[s] != OVERRUN_RECORD_HOST_NONE &&
+                                           keys[s] <= r.hostCount
+                                       ? r.hostNames[keys[s] - 1] : "?";
+                snprintf(args.string1, sizeof(args.string1), "%s",
+                         host[0] != '\0' ? host : "?");
+                ImGui::TextUnformatted(
+                    langGetTextFmt(STR_DLGSYSINFO_HOST_BOTHOST_FMT, &args));
             }
-            ImGui::TextUnformatted(host != NULL ? host : "");
         }
-        ImGui::TableSetColumnIndex(2);
-        ImGui::TextUnformatted(last);
-        ImGui::TableSetColumnIndex(3);
-        ImGui::TextUnformatted(peak);
-        ImGui::TableSetColumnIndex(4);
-        ImGui::Text("%u/%u (%s%%)", (unsigned)b.overruns, (unsigned)b.thinks, rate);
+        for (int i = 0; i < (int)r.botCount; i++) {
+            const OverrunRecordBot &b = r.bots[i];
+            if (sections > 0 && !overrunRecordBotInSection(&r, &b, keys[s])) {
+                continue;
+            }
+            /* The name the slot plays under now, else the one the recording gave
+             * it, else its player number. */
+            char name[64] = "";
+            if (lv_playersIsInUse(b.player)) {
+                lv_screenGetPlayerName(name, b.player, sizeof(name));
+            } else {
+                lv_screenGetLoggedPlayerName(b.player, name, sizeof(name));
+            }
+            if (name[0] == '\0') {
+                MessageArgs args = {};
+                args.number = (int)b.player;
+                snprintf(name, sizeof(name), "%s",
+                         langGetTextFmt(STR_LV_TIMING_PLAYER, &args));
+            }
+            char last[16];
+            char peak[16];
+            char rate[16];
+            game_info_tenths(b.last, last, sizeof(last));
+            game_info_tenths(b.peak, peak, sizeof(peak));
+            game_info_rate(b.overruns, b.thinks, rate, sizeof(rate));
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(name);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(last);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(peak);
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%u/%u (%s%%)", (unsigned)b.overruns, (unsigned)b.thinks, rate);
+        }
     }
     ImGui::EndTable();
 }

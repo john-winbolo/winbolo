@@ -2244,3 +2244,68 @@ int run_overrun_record_host_place(void) {
     UT_ASSERT(rec.hostCount == OVERRUN_RECORD_MAX_HOSTS);
     return 0;
 }
+
+/* System Info and the Log Viewer group the bots by host: the server first,
+ * then the host table in order, then the bots whose host is not known. */
+int run_overrun_record_sections(void) {
+    OverrunRecord rec;
+    OverrunRecord back;
+    uint8_t payload[OVERRUN_RECORD_MAX_BYTES];
+    uint8_t keys[OVERRUN_RECORD_MAX_SECTIONS];
+    int len;
+    int n;
+
+    overrunHostTestRecord(&rec);   /* hosts 0, Alice, Bob, Alice */
+    n = overrunRecordSections(&rec, keys, OVERRUN_RECORD_MAX_SECTIONS);
+    UT_ASSERT_MSG(n == 3, "%d sections", n);
+    UT_ASSERT(keys[0] == OVERRUN_RECORD_HOST_SERVER && keys[1] == 1 && keys[2] == 2);
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[0], OVERRUN_RECORD_HOST_SERVER));
+    UT_ASSERT(!overrunRecordBotInSection(&rec, &rec.bots[0], 1));
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[1], 1));
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[3], 1));
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[2], 2));
+    UT_ASSERT(!overrunRecordBotInSection(&rec, &rec.bots[2], 1));
+    UT_ASSERT(!overrunRecordBotInSection(NULL, &rec.bots[0], 0));
+    UT_ASSERT(!overrunRecordBotInSection(&rec, NULL, 0));
+
+    /* The cap is kept. */
+    UT_ASSERT(overrunRecordSections(&rec, keys, 2) == 2);
+    UT_ASSERT(keys[0] == OVERRUN_RECORD_HOST_SERVER && keys[1] == 1);
+    UT_ASSERT(overrunRecordSections(&rec, keys, 0) == 0);
+    UT_ASSERT(overrunRecordSections(NULL, keys, 4) == 0);
+    UT_ASSERT(overrunRecordSections(&rec, NULL, 4) == 0);
+
+    /* No bot on the server: the hosts only, in table order. */
+    rec.bots[0].host = 2;
+    n = overrunRecordSections(&rec, keys, OVERRUN_RECORD_MAX_SECTIONS);
+    UT_ASSERT(n == 2 && keys[0] == 1 && keys[1] == 2);
+
+    /* Unknown hosts and bytes past the table go last, in one section. */
+    rec.bots[0].host = OVERRUN_RECORD_HOST_SERVER;
+    rec.bots[2].host = OVERRUN_RECORD_HOST_NONE;
+    rec.bots[3].host = 9;
+    n = overrunRecordSections(&rec, keys, OVERRUN_RECORD_MAX_SECTIONS);
+    UT_ASSERT_MSG(n == 3, "%d sections", n);
+    UT_ASSERT(keys[0] == OVERRUN_RECORD_HOST_SERVER && keys[1] == 1);
+    UT_ASSERT(keys[2] == OVERRUN_RECORD_HOST_NONE);
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[2], OVERRUN_RECORD_HOST_NONE));
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[3], OVERRUN_RECORD_HOST_NONE));
+    UT_ASSERT(!overrunRecordBotInSection(&rec, &rec.bots[3], 9));
+
+    /* No host known for any bot: one plain list. */
+    for (int i = 0; i < 4; i++) rec.bots[i].host = OVERRUN_RECORD_HOST_NONE;
+    UT_ASSERT(overrunRecordSections(&rec, keys, OVERRUN_RECORD_MAX_SECTIONS) == 0);
+    rec.botCount = 0;
+    UT_ASSERT(overrunRecordSections(&rec, keys, OVERRUN_RECORD_MAX_SECTIONS) == 0);
+
+    /* A version 1 record has no hosts: one plain list. */
+    overrunHostTestRecord(&rec);
+    len = overrunRecordEncode(&rec, payload, (int)sizeof(payload));
+    UT_ASSERT(len > 0);
+    payload[0] = 1;
+    UT_ASSERT(overrunRecordDecode(payload,
+                                  OVERRUN_RECORD_HEAD_BYTES + 4 * OVERRUN_RECORD_BOT_BYTES,
+                                  &back));
+    UT_ASSERT(overrunRecordSections(&back, keys, OVERRUN_RECORD_MAX_SECTIONS) == 0);
+    return 0;
+}

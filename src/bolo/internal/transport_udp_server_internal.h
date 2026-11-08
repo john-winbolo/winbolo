@@ -904,6 +904,10 @@ bool serverBotSlotPingAllowed(struct ServerSim *sim, int slot);
  * Returns true when it was written. */
 bool serverBotHostRecordPut(const BotHostRecord *rec);
 void serverServiceBotHosts(struct ServerSim *sim);
+/* CTRL_BOT_TIMING to every player and spectator: once a second while the
+ * game has bots, then once with no bots when the last bot goes. Each
+ * server tick. */
+void serverServiceBotTiming(struct ServerSim *sim);
 void serverBotHostsReset(void);
 /* One CTRL_BOT_HOST_STATUS per connected Bot Host through deliver: the join
  * replay's part of the lobby's Bot Host list. serverEnumSpectatorRoster

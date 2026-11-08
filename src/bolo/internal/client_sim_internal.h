@@ -420,6 +420,10 @@ struct ClientSim {
     ClientLobbySlot  lobbySlots[16];    /* MAX_TANKS */
     ClientSpectatorSlot spectatorSlots[MAX_SPECTATORS]; /* spectator roster mirror */
     ClientBotHostRow    botHostRows[CLIENT_BOT_HOST_ROWS]; /* Bot Host list mirror */
+    /* The last CTRL_BOT_TIMING: every bot's think timing for System Info,
+     * as the record's bytes (overrun_record.h). botTimingLen 0: none yet. */
+    uint16_t         botTimingLen;
+    uint8_t          botTimingBytes[OVERRUN_RECORD_MAX_BYTES];
     /* CTRL_BOT_HOST_TICKET: the server lets this player's computer run
      * bots for it. botHostTicketGen rises with each ticket, so the Bot Host
      * inside the program sees a new one. */

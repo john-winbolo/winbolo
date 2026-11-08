@@ -1060,6 +1060,8 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
 
     /* Bot Host connections, bot seat placement and the hosts' channels. */
     serverServiceBotHosts(sim);
+    /* Every bot's think timing for the clients' System Info. */
+    serverServiceBotTiming(sim);
 }
 
 
