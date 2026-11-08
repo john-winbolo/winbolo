@@ -669,6 +669,14 @@ typedef enum {
      * of the free CPU check. Sent on connect and when it changes. A type of
      * its own, so an older server skips it. */
     CTRL_BOT_HOST_CPU_BUDGET,
+    /* CTRL_BOT_HOST_SAME_SERVER — server to a player's own Bot Host (the
+     * one inside a client), once a connection: the host is on the server's
+     * computer (kind, BOT_HOST_MACHINE_SERVER of bot_host_machine.h), so it
+     * gets 0 slots. The host stops for this join: no brain files, no CPU
+     * readings, 0 slots, no bots. It stays connected, so the lobby keeps
+     * its row. A type of its own, so an older host skips it and only gets
+     * 0 slots, as before. */
+    CTRL_BOT_HOST_SAME_SERVER,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1787,6 +1795,11 @@ typedef struct ControlEvent {
         struct {
             uint32_t milli;      /* BOT_HOST_CPU_MILLI_* */
         } botHostCpuBudget;
+
+        /* CTRL_BOT_HOST_SAME_SERVER — see the enum. */
+        struct {
+            uint8_t kind;        /* BOT_HOST_MACHINE_SERVER */
+        } botHostSameServer;
 
         /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
         struct {

@@ -852,12 +852,16 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         args.number2 = effSlots;
 
         /* The row, then the host's bots in brackets by their roster names:
-         * "Laptop: ready, 2 of 2 bots (ALF, Sonny Chiba)". */
+         * "Laptop: ready, 2 of 2 slots (ALF, Sonny Chiba)". */
         char line[512];
         SDL_strlcpy(line, langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &args),
                     sizeof(line));
-        if (!isServer && r->rowSlotsHave && r->machineZero) {
-            /* "Laptop: same computer as the server (0 bots)", or "as
+        /* A host that shares its computer: the line ends at "(0 slots)",
+         * with no bot names, no CPU text and no ping. */
+        const bool sameComputer =
+            !isServer && r->rowSlotsHave && r->machineZero;
+        if (sameComputer) {
+            /* "Laptop: same computer as the server (0 slots)", or "as
              * <other row's name>". */
             MessageArgs ma = {};
             SDL_strlcpy(ma.string1, r->name, sizeof(ma.string1));
@@ -877,7 +881,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
             }
         }
         bool first = true;
-        for (int s = 0; s < MAX_TANKS; s++) {
+        for (int s = 0; s < MAX_TANKS && !sameComputer; s++) {
             if ((r->seats & (1u << s)) == 0) continue;
             const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)s);
             const char *nm = (ls != NULL && ls->connected && ls->playerName[0])
@@ -898,7 +902,9 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
          * test text while it has none. The text is never blank and never
          * 0. */
         char cpuText[160] = "";
-        if (r->cpuBotHave) {
+        if (sameComputer) {
+            /* No CPU text after "(0 slots)". */
+        } else if (r->cpuBotHave) {
             if (r->cpuBot != BOT_HOST_CPU_MILLI_UNKNOWN) {
                 MessageArgs ca = {};
                 int sid;
@@ -961,7 +967,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
                 rowPing = (uint16_t)os->pingMs;
             }
         }
-        if (!isServer && rowPing != BOT_HOST_LAG_UNKNOWN) {
+        if (!isServer && !sameComputer && rowPing != BOT_HOST_LAG_UNKNOWN) {
             SDL_snprintf(pingText, sizeof(pingText), "%dms", (int)rowPing);
         }
 
@@ -1034,7 +1040,9 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
     {
         BotHostEmbedStatus st;
         botHostEmbedGetStatus(&st);
-        if (st.running && st.connected) {
+        /* None while the host is stopped: the server is on this computer,
+         * and its row says so. */
+        if (st.running && st.connected && !st.sameServer) {
             MessageArgs args = {};
             args.number = st.bots;
             args.number2 = st.slots;

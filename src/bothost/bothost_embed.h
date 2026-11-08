@@ -45,6 +45,8 @@ typedef struct {
     bool refused;    /* the server refused it */
     int  slots;      /* the bots it offers to run */
     int  bots;       /* the bots it runs now */
+    bool sameServer; /* the server is on this computer: the host is
+                      * stopped for this join (CTRL_BOT_HOST_SAME_SERVER) */
 } BotHostEmbedStatus;
 
 /* Start the host (a running one stops first). Main thread only. */
@@ -92,8 +94,9 @@ void botHostEmbedLeave(const char *why);
  * game at all. botHostEmbedService sends it to the host each frame. */
 
 /* True while the server lets this computer run bots in the game of cs
- * (its ticket came, hosting is not off, and the server did not refuse
- * the host): the lobby shows the opt-out only then. */
+ * (its ticket came, hosting is not off, the server did not refuse the
+ * host, and the server is not on this computer): the lobby shows the
+ * opt-out only then. */
 bool botHostEmbedOffered(struct ClientSim *cs);
 /* Turn the opt-out on or off for the game of cs. */
 void botHostEmbedSetOptOut(struct ClientSim *cs, bool on);

@@ -4114,6 +4114,27 @@ static bool decodeBotHostCpuBudgetBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_BOT_HOST_SAME_SERVER body: [kind 1]. Later bytes skipped. */
+static EncodeResult encodeBotHostSameServerBody(const ControlEvent *evt,
+                                                const struct UdpServerClient *recipient,
+                                                uint8_t *buf, size_t bufCap,
+                                                size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 1) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostSameServer.kind;
+    *outLen = 1;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostSameServerBody(const uint8_t *buf, size_t len,
+                                        ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < 1) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_SAME_SERVER;
+    outEvt->u.botHostSameServer.kind = buf[0];
+    return true;
+}
+
 /* CTRL_BOT_HOST_PACK_REQ body: [gen 4][brain 1][fileCount 2]
  * [fromInstall 2][fromCache 2][bits (fileCount + 7) / 8]. A fileCount of 0
  * or above 8 * BOT_HOST_PACK_BITMAP_BYTES, or a body too short for its
@@ -4926,6 +4947,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_SYNC_CAPS]      = encodeBotHostSyncCapsBody,
     [CTRL_BOT_HOST_PACK_REQ]       = encodeBotHostPackReqBody,
     [CTRL_BOT_HOST_CPU_BUDGET]     = encodeBotHostCpuBudgetBody,
+    [CTRL_BOT_HOST_SAME_SERVER]    = encodeBotHostSameServerBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -5006,6 +5028,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_SYNC_CAPS]      = decodeBotHostSyncCapsBody,
     [CTRL_BOT_HOST_PACK_REQ]       = decodeBotHostPackReqBody,
     [CTRL_BOT_HOST_CPU_BUDGET]     = decodeBotHostCpuBudgetBody,
+    [CTRL_BOT_HOST_SAME_SERVER]    = decodeBotHostSameServerBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -5150,6 +5173,7 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_SYNC_CAPS:     return "CTRL_BOT_HOST_SYNC_CAPS";
     case CTRL_BOT_HOST_PACK_REQ:      return "CTRL_BOT_HOST_PACK_REQ";
     case CTRL_BOT_HOST_CPU_BUDGET:    return "CTRL_BOT_HOST_CPU_BUDGET";
+    case CTRL_BOT_HOST_SAME_SERVER:   return "CTRL_BOT_HOST_SAME_SERVER";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

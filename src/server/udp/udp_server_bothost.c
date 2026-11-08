@@ -171,6 +171,9 @@ static uint8_t           botHostServerHash[MACHINE_HASH_LEN];
 static bool              botHostServerHashHave;
 static uint32_t          botHostJoinSeqNext = 1;
 static BotHostMachineOut botHostMachine[MAX_BOT_HOSTS];
+/* The host's group is decided. Until it is, the host gets no bot: a
+ * player's host on the server's computer must never take one. */
+static bool              botHostMachineKnown[MAX_BOT_HOSTS];
 static char              botHostMachineLogged[1024];
 static uint32_t          botHostOwnIp[BOT_HOST_OWN_IP_MAX];
 static int               botHostOwnIpCount;
@@ -453,8 +456,9 @@ static bool botHostSendEvent(int h, const ControlEvent *evt);
 static int botHostEffSlots(int h) {
     const BotHostConn *hc = &udpServer.botHosts[h];
     if (!hc->connected) return 0;
-    if (botHostMachine[h].zero) return 0;
-    return botHostSlotsEffective((int)hc->slots, hc->slotOvr.override);
+    return botHostMachineSlots(botHostMachineKnown[h], &botHostMachine[h],
+                               botHostSlotsEffective((int)hc->slots,
+                                                     hc->slotOvr.override));
 }
 
 /* The server's own IPv4 addresses (network order), for the address check
@@ -630,11 +634,13 @@ static void botHostMachineLog(void) {
 
 /* The groups of hosts on one computer, from the address check and the
  * answers to the salt round. While answers are still to come (at most
- * BOT_HOST_MACHINE_WAIT_TICKS) each host keeps its group; after that a
- * host with no answer counts as another computer. */
+ * BOT_HOST_MACHINE_WAIT_TICKS) each known host keeps its group, and a new
+ * host is decided at once only when it is on the server's computer; a new
+ * host not decided gets no bot. After the wait a host with no answer
+ * counts as another computer. */
 static void botHostMachineUpdate(void) {
     BotHostMachineIn in[MAX_BOT_HOSTS];
-    bool all = true, otherComputer;
+    bool all = true, otherComputer, waiting;
     int h;
     botHostOwnIpsRefresh();
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
@@ -642,10 +648,9 @@ static void botHostMachineUpdate(void) {
         if (!hc->connected) continue;
         if (!hc->machineHave || hc->machineSeq != botHostSaltSeq) all = false;
     }
-    if (!all && botHostSaltHave &&
-        udpServer.tickCount - botHostSaltTick < BOT_HOST_MACHINE_WAIT_TICKS) {
-        return;
-    }
+    waiting = !all && botHostSaltHave &&
+              udpServer.tickCount - botHostSaltTick <
+                  BOT_HOST_MACHINE_WAIT_TICKS;
     memset(in, 0, sizeof(in));
     /* Tests only: WINBOLO_BOTHOST_TEST_OTHER_COMPUTER=1 makes every host
      * count as another computer than the server's, so one desktop can play
@@ -664,11 +669,41 @@ static void botHostMachineUpdate(void) {
         in[h].offered = botHostSlotsEffective((int)hc->slots,
                                               hc->slotOvr.override);
     }
-    botHostMachineGroup(in, MAX_BOT_HOSTS,
-                        botHostServerHashHave && !otherComputer
-                            ? botHostServerHash : NULL,
-                        botHostMachine);
-    botHostMachineLog();
+    botHostMachineStep(in, MAX_BOT_HOSTS,
+                       botHostServerHashHave && !otherComputer
+                           ? botHostServerHash : NULL,
+                       waiting, botHostMachine, botHostMachineKnown);
+    if (!waiting) botHostMachineLog();
+}
+
+/* A player's host found on the server's computer is told so, once a
+ * connection (CTRL_BOT_HOST_SAME_SERVER): it stops for this join, and the
+ * server sends it no more brain files. */
+static void botHostTellSameServer(void) {
+    int h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        BotHostConn *hc = &udpServer.botHosts[h];
+        ControlEvent evt;
+        if (!hc->connected || !hc->playerHost) continue;
+        if (!botHostMachineTellSameServer(botHostMachineKnown[h],
+                                          &botHostMachine[h],
+                                          hc->sameServerSent)) {
+            continue;
+        }
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_BOT_HOST_SAME_SERVER;
+        evt.u.botHostSameServer.kind = BOT_HOST_MACHINE_SERVER;
+        if (!botHostSendEvent(h, &evt)) continue;   /* again next tick */
+        hc->sameServerSent = true;
+        botHostFileReset(hc);
+        hc->manifestOwed = false;
+        fprintf(stderr, "[bothost] player %u's Bot Host \"%s\" is on the "
+                        "server's computer (%s): it was told to stop for "
+                        "this join\n",
+                (unsigned)hc->ownerSlot, hc->name,
+                botHostMachine[h].how == BOT_HOST_MACHINE_HOW_ADDRESS
+                    ? "by its address" : "by its machine token");
+    }
 }
 
 /* The game bot limit: the server's bot slots plus each host that takes
@@ -1022,6 +1057,8 @@ static void botHostServiceFiles(ServerSim *sim, int h) {
     uint8_t *blob;
     uint32_t blobLen = 0, n;
 
+    /* A player's host on the server's computer is stopped: no files. */
+    if (hc->sameServerSent) return;
     if (hc->manifestOwed) {
         BrainPackManifestChoice ch;
         if (bulkSenderBusy(&hc->bulk)) return;
@@ -1351,6 +1388,12 @@ static void botHostFillRow(int h, ControlEvent *evt) {
     if (botHostSynced(h)) {
         evt->u.botHostStatus.state = BOT_HOST_SYNC_READY;
         evt->u.botHostStatus.percent = 100;
+        return;
+    }
+    if (hc->sameServerSent) {
+        /* Stopped on the server's computer: never "syncing", so the
+         * lobby's Ready does not wait for it. */
+        evt->u.botHostStatus.state = BOT_HOST_SYNC_WAITING;
         return;
     }
     if (hc->syncLate) {
@@ -2046,6 +2089,7 @@ static void botHostDrop(ServerSim *sim, int h, const char *why) {
     botHostOvrResetHost(h + 1);
     memset(&botHostMachine[h], 0, sizeof(botHostMachine[h]));
     botHostMachine[h].other = -1;
+    botHostMachineKnown[h] = false;
 }
 
 void serverBotHostPlayerGone(ServerSim *sim, int slot, const char *why) {
@@ -2282,6 +2326,8 @@ accepted:
         }
         memset(&botHostMachine[freeIdx], 0, sizeof(botHostMachine[freeIdx]));
         botHostMachine[freeIdx].other = -1;
+        /* No bot until its group is known (botHostMachineUpdate). */
+        botHostMachineKnown[freeIdx] = false;
     }
     serverSendBotHostAccept(freeIdx, sim);
     serverBotRecHostConnected(freeIdx,
@@ -2966,6 +3012,7 @@ void serverBotHostsReset(void) {
     memset(botHostRowSlotsSentHave, 0, sizeof(botHostRowSlotsSentHave));
     memset(botHostMachine, 0, sizeof(botHostMachine));
     for (h = 0; h < MAX_BOT_HOSTS; h++) botHostMachine[h].other = -1;
+    memset(botHostMachineKnown, 0, sizeof(botHostMachineKnown));
     botHostMachineLogged[0] = '\0';
     botHostSaltHave = false;
     botHostLimitLogged = -100;
@@ -3160,6 +3207,11 @@ static bool botSeatLocalOfferable(ServerSim *sim, int s) {
 /* Offers in-process seat s to host h. */
 static bool botSeatOffer(ServerSim *sim, int s, int h, const char *why) {
     BotHostSeat *seat = &udpServer.botSeats[s];
+    if (h < 0 || h >= MAX_BOT_HOSTS || botHostEffSlots(h) <= 0) {
+        /* A host with 0 slots (on the server's computer, its group not
+         * known yet, or set to 0) never gets a bot, by any path. */
+        return false;
+    }
     if (!serverFillRandomBytes(seat->token, sizeof(seat->token))) {
         WB_LOG_ERROR(WB_LOG_CAT_NET, "[bothost] no random bytes for a token");
         return false;
@@ -3913,6 +3965,7 @@ void serverServiceBotHosts(ServerSim *sim) {
     }
     botHostServiceTickets(sim);
     botHostMachineUpdate();
+    botHostTellSameServer();
     botHostUpdateGameBotLimit(sim);
 
     /* A new round or the lobby: a seat that came back from a host may be
@@ -4078,7 +4131,7 @@ void serverServiceBotHosts(ServerSim *sim) {
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
-        if (!botHostSynced(h) && !hc->syncLate &&
+        if (!botHostSynced(h) && !hc->syncLate && !hc->sameServerSent &&
             udpServer.tickCount - hc->syncSentTick > BOT_HOST_SYNC_LIMIT_TICKS) {
             hc->syncLate = true;
             hc->skipGame = true;

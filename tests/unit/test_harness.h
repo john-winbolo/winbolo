@@ -965,6 +965,9 @@ int run_bot_host_game_bot_limit(void);
 int run_bot_host_slots_override(void);
 int run_bot_host_slots_arg_parse(void);
 int run_bot_host_machine_codec(void);
+int run_bot_host_machine_join_wait(void);
+int run_bot_host_same_server_codec(void);
+int run_bot_host_same_server_stop(void);
 /* The lobby's one-game opt-out from running bots on this computer
  * (test_bot_host_optout.c). */
 int run_bot_host_optout_slots_codec(void);

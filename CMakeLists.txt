@@ -6274,6 +6274,9 @@ set(_unit_test_names
     bot_host_slots_override
     bot_host_slots_arg_parse
     bot_host_machine_codec
+    bot_host_machine_join_wait
+    bot_host_same_server_codec
+    bot_host_same_server_stop
     bot_host_optout_slots_codec
     bot_host_optout_give_back
     bot_host_optout_client_reset

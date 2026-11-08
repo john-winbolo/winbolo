@@ -31,3 +31,24 @@ bool botHostOptOutCheck(BotHostOptOut *o, const void *game,
     }
     return true;
 }
+
+void botHostRunJoin(BotHostRun *r) {
+    if (r == NULL) return;
+    memset(r, 0, sizeof(*r));
+}
+
+bool botHostRunSameServer(BotHostRun *r, uint8_t kind) {
+    if (r == NULL || kind != BOT_HOST_RUN_SAME_SERVER_KIND) return false;
+    if (r->sameServer) return false;
+    r->sameServer = true;
+    return true;
+}
+
+bool botHostRunStopped(const BotHostRun *r) {
+    return r != NULL && r->sameServer;
+}
+
+int botHostRunSlots(const BotHostRun *r, int slots) {
+    if (botHostRunStopped(r) || slots < 0) return 0;
+    return slots;
+}

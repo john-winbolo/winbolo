@@ -28,6 +28,12 @@
  *      locked one; a rejoin resets it; the limit counts the override.
  *   9. bot_host_slots_arg_parse: several flags, by listed name or player
  *      name; bad input and a name given twice are refused with a reason.
+ *  10. bot_host_machine_join_wait: a player's host that joins from the
+ *      server's computer gets 0 slots on every tick, also while the salt
+ *      answers are still to come (the bug: it had its full slots for up to
+ *      5 s, and the lobby put a bot on it). A host on another computer
+ *      gets no slot until its group is known; a known host keeps its
+ *      group while a new round waits.
  */
 
 #include <stdint.h>
@@ -311,5 +317,64 @@ int run_bot_host_slots_arg_parse(void) {
     /* A player's host by its player's name. */
     UT_ASSERT(botHostSlotFlagsFind(&flags, "Andrew's host", "Andrew") == 0);
     UT_ASSERT(botHostSlotFlagsFind(&flags, "attic", "Elvis") == -1);
+    return 0;
+}
+
+int run_bot_host_machine_join_wait(void) {
+    BotHostMachineIn in[3];
+    BotHostMachineOut out[3];
+    bool known[3];
+    uint8_t server[MACHINE_HASH_LEN];
+    memset(server, 0xAA, sizeof(server));
+    memset(out, 0, sizeof(out));
+    memset(known, 0, sizeof(known));
+    out[0].other = out[1].other = out[2].other = -1;
+    /* A listed host on another computer, known from an earlier round. */
+    hostIn(&in[0], false, false, 0x11, 1, 3);
+    botHostMachineStep(in, 1, server, false, out, known);
+    UT_ASSERT(known[0] && botHostMachineSlots(known[0], &out[0], 3) == 3);
+    /* The player Canuck's host joins from 127.0.0.1 with 4 slots. Its
+     * group is cleared (as at a join), and the salt answers are still to
+     * come. It has 0 slots at once, before any answer. */
+    hostIn(&in[1], true, true, -1, 2, 4);
+    in[0].hashHave = false;     /* a new round: no answer yet */
+    memset(&out[1], 0, sizeof(out[1]));
+    out[1].other = -1;
+    known[1] = false;
+    UT_ASSERT(botHostMachineSlots(known[1], &out[1], 4) == 0);
+    botHostMachineStep(in, 2, server, true, out, known);
+    UT_ASSERT(known[1]);
+    UT_ASSERT(out[1].kind == BOT_HOST_MACHINE_SERVER && out[1].zero &&
+              out[1].how == BOT_HOST_MACHINE_HOW_ADDRESS);
+    UT_ASSERT(botHostMachineSlots(known[1], &out[1], 4) == 0);
+    /* The known host keeps its group and its slots while the round waits. */
+    UT_ASSERT(known[0] && botHostMachineSlots(known[0], &out[0], 3) == 3);
+    /* The same by token: the address is a LAN one the server does not
+     * hold, but the answer matches the server's hash. */
+    hostIn(&in[2], true, false, 0xAA, 3, 4);
+    memset(&out[2], 0, sizeof(out[2]));
+    out[2].other = -1;
+    known[2] = false;
+    botHostMachineStep(in, 3, server, true, out, known);
+    UT_ASSERT(known[2] && out[2].zero &&
+              out[2].how == BOT_HOST_MACHINE_HOW_TOKEN);
+    UT_ASSERT(botHostMachineSlots(known[2], &out[2], 4) == 0);
+    /* A host on another computer with no answer yet: 0 slots while the
+     * round waits, its slots once the wait is over. */
+    hostIn(&in[2], true, false, -1, 3, 4);
+    memset(&out[2], 0, sizeof(out[2]));
+    out[2].other = -1;
+    known[2] = false;
+    botHostMachineStep(in, 3, server, true, out, known);
+    UT_ASSERT(!known[2] && botHostMachineSlots(known[2], &out[2], 4) == 0);
+    botHostMachineStep(in, 3, server, false, out, known);
+    UT_ASSERT(known[2] && out[2].kind == BOT_HOST_MACHINE_ALONE);
+    UT_ASSERT(botHostMachineSlots(known[2], &out[2], 4) == 4);
+    /* After the wait, Canuck's host still has 0 slots. */
+    UT_ASSERT(known[1] && botHostMachineSlots(known[1], &out[1], 4) == 0);
+    /* A host that goes is not known. */
+    in[2].present = false;
+    botHostMachineStep(in, 3, server, true, out, known);
+    UT_ASSERT(!known[2]);
     return 0;
 }

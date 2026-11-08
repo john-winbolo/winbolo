@@ -200,6 +200,7 @@ void botHostEmbedLeave(const char *why) {
 
 bool botHostEmbedOffered(struct ClientSim *cs) {
     uint8_t ticket[BOT_HOST_TICKET_LEN];
+    BotHostEmbedStatus st;
     if (cs == NULL || embedSettings.disabled) return false;
     if (!clientSimGetBotHostTicket(cs, NULL, ticket, NULL, NULL)) return false;
     /* Refused, or a game the player left: no host runs on it. */
@@ -207,6 +208,10 @@ bool botHostEmbedOffered(struct ClientSim *cs) {
         memcmp(ticket, embedBlocked, sizeof(ticket)) == 0) {
         return false;
     }
+    /* The server is on this computer: the host is stopped for this join,
+     * so there is nothing to opt out of. The opt-out itself is kept. */
+    botHostEmbedGetStatus(&st);
+    if (st.running && st.sameServer && cs == embedCs) return false;
     return true;
 }
 

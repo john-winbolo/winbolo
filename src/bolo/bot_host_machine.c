@@ -27,6 +27,22 @@ bool botHostAddrIsServerMachine(uint32_t ip, const uint32_t *own, int n) {
     return false;
 }
 
+/* True when host in is on the server's computer: by its address, or by
+ * its answer and the server's hash. *how says which. */
+static bool machineOnServer(const BotHostMachineIn *in,
+                            const uint8_t *serverHash, uint8_t *how) {
+    if (in->addrServer) {
+        *how = BOT_HOST_MACHINE_HOW_ADDRESS;
+        return true;
+    }
+    if (serverHash != NULL && in->hashHave &&
+        memcmp(in->hash, serverHash, MACHINE_HASH_LEN) == 0) {
+        *how = BOT_HOST_MACHINE_HOW_TOKEN;
+        return true;
+    }
+    return false;
+}
+
 void botHostMachineGroup(const BotHostMachineIn *in, int n,
                          const uint8_t *serverHash, BotHostMachineOut *out) {
     bool done[64];
@@ -44,15 +60,10 @@ void botHostMachineGroup(const BotHostMachineIn *in, int n,
     }
     /* The server's computer. */
     for (i = 0; i < n; i++) {
+        uint8_t how = BOT_HOST_MACHINE_HOW_NONE;
         if (done[i]) continue;
-        if (in[i].addrServer) {
-            out[i].how = BOT_HOST_MACHINE_HOW_ADDRESS;
-        } else if (serverHash != NULL && in[i].hashHave &&
-                   memcmp(in[i].hash, serverHash, MACHINE_HASH_LEN) == 0) {
-            out[i].how = BOT_HOST_MACHINE_HOW_TOKEN;
-        } else {
-            continue;
-        }
+        if (!machineOnServer(&in[i], serverHash, &how)) continue;
+        out[i].how = how;
         out[i].kind = BOT_HOST_MACHINE_SERVER;
         out[i].zero = in[i].playerHost;
         done[i] = true;
@@ -92,6 +103,45 @@ void botHostMachineGroup(const BotHostMachineIn *in, int n,
             out[m].zero = true;
         }
     }
+}
+
+void botHostMachineStep(const BotHostMachineIn *in, int n,
+                        const uint8_t *serverHash, bool waiting,
+                        BotHostMachineOut *out, bool *known) {
+    int i;
+    if (in == NULL || out == NULL || known == NULL || n <= 0) return;
+    if (!waiting) {
+        botHostMachineGroup(in, n, serverHash, out);
+        for (i = 0; i < n; i++) known[i] = in[i].present;
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        uint8_t how = BOT_HOST_MACHINE_HOW_NONE;
+        if (!in[i].present) {
+            known[i] = false;
+            continue;
+        }
+        if (known[i]) continue;
+        /* The server's computer needs no other host's answer, so it is
+         * decided now. A group of hosts only waits for the answers. */
+        if (!machineOnServer(&in[i], serverHash, &how)) continue;
+        out[i].kind = BOT_HOST_MACHINE_SERVER;
+        out[i].other = -1;
+        out[i].how = how;
+        out[i].zero = in[i].playerHost;
+        known[i] = true;
+    }
+}
+
+int botHostMachineSlots(bool known, const BotHostMachineOut *m, int offered) {
+    if (!known || m == NULL || m->zero) return 0;
+    return offered > 0 ? offered : 0;
+}
+
+bool botHostMachineTellSameServer(bool known, const BotHostMachineOut *m,
+                                  bool sent) {
+    if (!known || m == NULL || sent) return false;
+    return m->kind == BOT_HOST_MACHINE_SERVER && m->zero;
 }
 
 int botHostGameBotLimit(int serverCap, const int *counted, int n) {
