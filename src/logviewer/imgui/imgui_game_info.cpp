@@ -745,13 +745,17 @@ static void game_info_draw_timing(void) {
         return;
     }
 
-    /* Each bot: its last and worst think, and its overruns against its
-     * thinks, the numbers of its [BOT] line on the console. */
-    if (!ImGui::BeginTable("##gi_timing_bots", 4,
+    /* Each bot: where its brain ran, its last and worst think, and its
+     * overruns against its thinks, the numbers of its [BOT] line on the
+     * console. A record from before the host was recorded leaves Host
+     * blank. */
+    if (!ImGui::BeginTable("##gi_timing_bots", 5,
                            ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
         return;
     }
     ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_BOT),
+                            ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_HOST),
                             ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableSetupColumn(langGetText(STR_LV_TIMING_COL_LAST),
                             ImGuiTableColumnFlags_WidthFixed);
@@ -787,10 +791,18 @@ static void game_info_draw_timing(void) {
         ImGui::TableSetColumnIndex(0);
         ImGui::TextUnformatted(name);
         ImGui::TableSetColumnIndex(1);
-        ImGui::TextUnformatted(last);
+        {
+            const char *host = overrunRecordBotHostName(&r, &b);
+            if (overrunRecordBotOnServer(&b)) {
+                host = langGetText(STR_DLGLOBBY_BOTHOST_SERVER_NAME);
+            }
+            ImGui::TextUnformatted(host != NULL ? host : "");
+        }
         ImGui::TableSetColumnIndex(2);
-        ImGui::TextUnformatted(peak);
+        ImGui::TextUnformatted(last);
         ImGui::TableSetColumnIndex(3);
+        ImGui::TextUnformatted(peak);
+        ImGui::TableSetColumnIndex(4);
         ImGui::Text("%u/%u (%s%%)", (unsigned)b.overruns, (unsigned)b.thinks, rate);
     }
     ImGui::EndTable();

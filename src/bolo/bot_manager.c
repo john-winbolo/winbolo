@@ -2485,6 +2485,16 @@ bool botManagerGetBotInfo(const ServerSim *sim, BYTE playerNum, BotInfo *out) {
             out->overrunCount = 0;
             out->thinkCount   = 0;
         }
+        /* The host's name as the lobby's rows show it, from the server's
+         * own table, so a seat has it before the host's first report. */
+        if (sim->botMgr.remoteHooks.hostName != NULL) {
+            char name[sizeof(out->hostName)];
+            if (sim->botMgr.remoteHooks.hostName(sim->botMgr.remoteHooks.ctx,
+                                                 playerNum, name,
+                                                 sizeof(name))) {
+                SDL_strlcpy(out->hostName, name, sizeof(out->hostName));
+            }
+        }
     }
 
     /* Brain identity: basename of the brain script path (multiple bots

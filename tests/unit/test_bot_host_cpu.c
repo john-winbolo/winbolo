@@ -31,6 +31,7 @@
 #include "control_event.h"
 #include "transport_control_codec.h"
 #include "bot_host_cpu.h"
+#include "../../src/bothost/bothost_embed.h" /* the System Info block's helpers */
 #include "test_harness.h"
 
 #define NS_PER_S 1000000000ull
@@ -669,5 +670,35 @@ int run_bot_host_machine_codec(void) {
     applyStatus(cs, 0, true, "Other");
     UT_ASSERT(!clientSimGetBotHostRow(cs, 0)->rowSlotsHave);
     clientSimDestroy(cs);
+    return 0;
+}
+
+/* The System Info block of this computer's own Bot Host: its state from
+ * what the host knows (the checks in order), the brain sync percent, and
+ * the CPU per bot it shows (measured, else "at most" the full budget). */
+int run_bot_host_embed_info_helpers(void) {
+    bool atMost = true;
+
+    UT_ASSERT(botHostEmbedStateOf(true, true, true, true) == BOT_HOST_EMBED_STATE_SAME_SERVER);
+    UT_ASSERT(botHostEmbedStateOf(false, true, true, true) == BOT_HOST_EMBED_STATE_OFF);
+    UT_ASSERT(botHostEmbedStateOf(false, false, false, true) == BOT_HOST_EMBED_STATE_CONNECTING);
+    UT_ASSERT(botHostEmbedStateOf(false, false, true, false) == BOT_HOST_EMBED_STATE_SYNCING);
+    UT_ASSERT(botHostEmbedStateOf(false, false, true, true) == BOT_HOST_EMBED_STATE_RUNNING);
+
+    UT_ASSERT(botHostEmbedSyncPercent(0, 0) == 0);
+    UT_ASSERT(botHostEmbedSyncPercent(0, 1000) == 0);
+    UT_ASSERT(botHostEmbedSyncPercent(505, 1000) == 50);
+    UT_ASSERT(botHostEmbedSyncPercent(999, 1000) == 99);
+    UT_ASSERT(botHostEmbedSyncPercent(1000, 1000) == 99);
+    UT_ASSERT(botHostEmbedSyncPercent(0xFFFFFFFFu, 0xFFFFFFFFu) == 99);
+    UT_ASSERT(botHostEmbedSyncPercent(3000000000u, 4000000000u) == 75);
+
+    UT_ASSERT(botHostEmbedCpuPick(1234u, 5000u, &atMost) == 1234u && !atMost);
+    UT_ASSERT(botHostEmbedCpuPick(0u, 5000u, &atMost) == 0u && !atMost);
+    UT_ASSERT(botHostEmbedCpuPick(BOT_HOST_CPU_MILLI_UNKNOWN, 5000u, &atMost) == 5000u &&
+              atMost);
+    UT_ASSERT(botHostEmbedCpuPick(BOT_HOST_CPU_MILLI_UNKNOWN, BOT_HOST_CPU_MILLI_UNKNOWN,
+                                  &atMost) == BOT_HOST_CPU_MILLI_UNKNOWN && !atMost);
+    UT_ASSERT(botHostEmbedCpuPick(BOT_HOST_CPU_MILLI_UNKNOWN, 7u, NULL) == 7u);
     return 0;
 }

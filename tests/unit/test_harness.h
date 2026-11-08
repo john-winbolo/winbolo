@@ -935,6 +935,8 @@ int run_bot_host_commands_codec(void);
 int run_bot_host_team_msg_fanout(void);
 int run_bot_host_ping_gap(void);
 int run_bot_host_remote_seat_stays_bot(void);
+/* A Bot Host seat's info names its host as the lobby rows do. */
+int run_bot_host_info_host_name(void);
 int run_bot_host_target_ms(void);
 int run_bot_host_sync_codec(void);
 
@@ -998,6 +1000,8 @@ int run_bot_host_cpu_bot_meter(void);
 int run_bot_host_cpu_bot_codec(void);
 int run_bot_host_cpu_budget(void);
 int run_bot_host_cpu_bot_client_row(void);
+/* The System Info Bot Host block's helpers (bothost_embed.h). */
+int run_bot_host_embed_info_helpers(void);
 int run_bot_host_lag_codec(void);
 /* Bot Hosts on one computer, the game bot limit and the row slot override
  * (test_bot_host_machine.c). */
@@ -1523,6 +1527,12 @@ int run_log_roundtrip_player_lag_recorded(void);
 /* log_OverrunStats: the record through the writer and back, and a recorded
  * round's records at 0:30, 1:00 and the round end. */
 int run_log_roundtrip_overrun_stats(void);
+/* log_OverrunStats version 2: each bot's host and the host table; a
+ * version 1 record reads with every host not known; the host table's
+ * places. */
+int run_overrun_record_hosts(void);
+int run_overrun_record_v1_hosts(void);
+int run_overrun_record_host_place(void);
 /* log_BotHostData through the round log, and nothing with the option off. */
 int run_log_roundtrip_bothost_data(void);
 int run_bothost_record_off_writes_nothing(void);

@@ -281,7 +281,7 @@ static void serverSimPrintBotTiming(const BotInfo *bi) {
     if (bi->hasBrain) {
         if (bi->overrunCount == 0) {
             fprintf(stdout,
-                    "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms\n",
+                    "    [BOT] brain=%s host=server last=%.1fms peak=%.1fms target=%.1fms\n",
                     bi->brainName, bi->lastThinkMs, bi->maxThinkMs,
                     bi->targetMs);
         } else {
@@ -289,7 +289,7 @@ static void serverSimPrintBotTiming(const BotInfo *bi) {
                 ? (double)bi->overrunCount * 100.0 / (double)bi->thinkCount
                 : 0.0;
             fprintf(stdout,
-                    "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms overruns=%u/%u (%.2f%%)\n",
+                    "    [BOT] brain=%s host=server last=%.1fms peak=%.1fms target=%.1fms overruns=%u/%u (%.2f%%)\n",
                     bi->brainName, bi->lastThinkMs, bi->maxThinkMs,
                     bi->targetMs, bi->overrunCount, bi->thinkCount, rate);
         }
@@ -576,6 +576,10 @@ void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEn
         }
         b = &rec.bots[rec.botCount++];
         b->player = count;
+        /* Where the brain ran: the server's own process, or a Bot Host by
+           the name the lobby's rows show. */
+        b->host = bi.remote ? overrunRecordHostPlace(&rec, bi.hostName)
+                            : (uint8_t) OVERRUN_RECORD_HOST_SERVER;
         if (bi.hasBrain) {
             b->last = overrunRecordTenths(bi.lastThinkMs);
             b->peak = overrunRecordTenths(bi.maxThinkMs);

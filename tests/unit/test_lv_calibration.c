@@ -2548,10 +2548,11 @@ int run_lv_overrun_read(void) {
   zeroVersion[0] = 0;
   lastLen = overrunTestPayload(last, (int)sizeof(last), 3100u,
                                OVERRUN_RECORD_FLAG_BOTS | OVERRUN_RECORD_FLAG_ROUND_END, 77);
-  UT_ASSERT(firstLen == OVERRUN_RECORD_HEAD_BYTES + 2 * OVERRUN_RECORD_BOT_BYTES);
+  /* Version 2: the bots, a host byte each and an empty host table. */
+  UT_ASSERT(firstLen == OVERRUN_RECORD_HEAD_BYTES + 2 * OVERRUN_RECORD_BOT_BYTES + 2 + 1);
   UT_ASSERT(zeroLen == firstLen && lastLen == firstLen);
   /* A later version: its own version byte and four bytes after the bots. */
-  last[0] = 2;
+  last[0] = OVERRUN_RECORD_VERSION + 1;
   memset(last + lastLen, 0xEE, 4);
   lastLen += 4;
 
@@ -2605,7 +2606,10 @@ int run_lv_overrun_read(void) {
   UT_ASSERT_MSG(now.has && now.rec.roundFrames == 3100u && now.rec.tickLast == 77,
                 "after the last record: frames %u tick %u (want 3100, 77)",
                 (unsigned)now.rec.roundFrames, (unsigned)now.rec.tickLast);
-  UT_ASSERT(now.rec.version == 2);
+  UT_ASSERT(now.rec.version == OVERRUN_RECORD_VERSION + 1);
+  /* A later version still reads the version 2 hosts before its own bytes. */
+  UT_ASSERT(overrunRecordBotOnServer(&now.rec.bots[0]) &&
+            overrunRecordBotOnServer(&now.rec.bots[1]));
   UT_ASSERT(now.rec.flags & OVERRUN_RECORD_FLAG_ROUND_END);
   UT_ASSERT(now.rec.botCount == 2 && now.rec.bots[1].peak == 160);
 

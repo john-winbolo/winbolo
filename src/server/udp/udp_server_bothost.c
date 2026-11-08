@@ -2758,6 +2758,20 @@ static void botHookReleased(void *ctx, BYTE seat) {
 static bool botHostRecHostedInfo(BYTE slot, uint16_t *placeGen,
                                  char *hostName);
 
+/* The name of the host a seat's brain runs on: the lobby row's name. */
+static bool botHookHostName(void *ctx, BYTE seat, char *out, size_t cap) {
+    const BotHostSeat *bs;
+    (void)ctx;
+    if (seat >= MAX_TANKS || out == NULL || cap == 0) return false;
+    bs = &udpServer.botSeats[seat];
+    if (bs->state == BOT_SEAT_LOCAL || bs->host < 0 ||
+        bs->host >= MAX_BOT_HOSTS || !udpServer.botHosts[bs->host].connected) {
+        return false;
+    }
+    SDL_strlcpy(out, udpServer.botHosts[bs->host].name, cap);
+    return out[0] != '\0';
+}
+
 /* Turn Bot Hosts on or off to match the key and the list. */
 static void botHostApplySettings(ServerSim *sim) {
     BotRemoteHooks hooks;
@@ -2785,6 +2799,7 @@ static void botHostApplySettings(ServerSim *sim) {
     hooks.initTable  = botHookInitTable;
     hooks.roundStart = botHookRoundStart;
     hooks.released   = botHookReleased;
+    hooks.hostName   = botHookHostName;
     botManagerSetRemoteHooks(sim, &hooks);
     brainRecordSetHostedInfoFn(botHostRecHostedInfo);
     fprintf(stderr, "[bothost] Bot Host connections enabled\n");

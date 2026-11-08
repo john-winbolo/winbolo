@@ -295,7 +295,10 @@ typedef struct {
  *   roundStart - a round starts; true when the host takes the reload, false
  *                when the seat must be rebuilt in-process
  *   released   - the seat is leaving the field or the game; the host must
- *                let it go and its bot connection is released */
+ *                let it go and its bot connection is released
+ *   hostName   - the name of the Bot Host the seat's brain runs on, as the
+ *                lobby's Bot Host rows show it, into out (cap bytes); false
+ *                when the seat has no connected host */
 typedef struct BotRemoteHooks {
     void  *ctx;
     void (*teamMsg)(void *ctx, BYTE seat, BYTE fromPlayer, const char *msg);
@@ -303,6 +306,7 @@ typedef struct BotRemoteHooks {
     void (*initTable)(void *ctx, BYTE seat);
     bool (*roundStart)(void *ctx, BYTE seat);
     void (*released)(void *ctx, BYTE seat);
+    bool (*hostName)(void *ctx, BYTE seat, char *out, size_t cap);
 } BotRemoteHooks;
 
 typedef struct BotManager {
