@@ -293,6 +293,10 @@ typedef struct {
     bool     machineHave;
     uint32_t machineSeq;
     uint8_t  machineHash[MACHINE_HASH_LEN];
+    /* CTRL_BOT_HOST_SAME_SERVER went to this player's host: it is on the
+     * server's computer and stopped for this connection, so it is sent no
+     * brain files and is not waited for. */
+    bool     sameServerSent;
     /* The row's slot override: from the lobby, or locked by
      * -bothost-slots. */
     BotHostSlotOverride slotOvr;

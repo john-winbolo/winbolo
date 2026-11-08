@@ -17,6 +17,13 @@
  *      ticket (a new connection), another ClientSim or no game turns it
  *      off, and it stays off; turning it off and on again in the same game
  *      works.
+ *   4. bot_host_same_server_codec: CTRL_BOT_HOST_SAME_SERVER is one byte,
+ *      the kind; an empty body is refused; later bytes are skipped.
+ *   5. bot_host_same_server_stop: the server tells a player's host on its
+ *      own computer once a connection, and never a listed host there or a
+ *      host that shares another computer. The client's built-in host
+ *      stops on it (0 slots), only for the server's kind; a new join runs
+ *      it again; the opt-out is not changed.
  */
 
 #include <stdint.h>
@@ -26,6 +33,7 @@
 #include <SDL3/SDL.h>
 
 #include "bot_host_link.h"
+#include "bot_host_machine.h"
 #include "control_event.h"
 #include "transport_control_codec.h"
 #include "../../src/bothost/bothost_optout.h"
@@ -228,5 +236,106 @@ int run_bot_host_optout_client_reset(void) {
     botHostOptOutInit(NULL);
     botHostOptOutSet(NULL, true, &gameA, t1);
     UT_ASSERT(!botHostOptOutCheck(NULL, &gameA, t1));
+    return 0;
+}
+
+/* ================================================================
+ * 4. CTRL_BOT_HOST_SAME_SERVER on the wire
+ * ================================================================ */
+int run_bot_host_same_server_codec(void) {
+    ControlEncodeBodyFn enc =
+        transportControlCodecBodyEncoder(CTRL_BOT_HOST_SAME_SERVER);
+    ControlDecodeBodyFn dec =
+        transportControlCodecBodyDecoder(CTRL_BOT_HOST_SAME_SERVER);
+    ControlEvent in, out;
+    uint8_t buf[16];
+    size_t len = 0;
+    UT_ASSERT(enc != NULL && dec != NULL);
+    UT_ASSERT(strcmp(controlEventTypeName(CTRL_BOT_HOST_SAME_SERVER),
+                     "CTRL_BOT_HOST_SAME_SERVER") == 0);
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_SAME_SERVER;
+    in.u.botHostSameServer.kind = BOT_HOST_MACHINE_SERVER;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(len == 1 && buf[0] == BOT_HOST_MACHINE_SERVER);
+    UT_ASSERT(enc(&in, NULL, buf, 0, &len) != ENCODE_OK);
+    memset(&out, 0xEE, sizeof(out));
+    UT_ASSERT(dec(buf, 1, &out));
+    UT_ASSERT(out.type == CTRL_BOT_HOST_SAME_SERVER);
+    UT_ASSERT(out.u.botHostSameServer.kind == BOT_HOST_MACHINE_SERVER);
+    UT_ASSERT(!dec(buf, 0, &out));
+    /* A later field from a newer server is skipped. */
+    buf[1] = 0x7F;
+    UT_ASSERT(dec(buf, 2, &out));
+    UT_ASSERT(out.u.botHostSameServer.kind == BOT_HOST_MACHINE_SERVER);
+    return 0;
+}
+
+/* ================================================================
+ * 5. The server tells; the client's host stops for this join
+ * ================================================================ */
+int run_bot_host_same_server_stop(void) {
+    BotHostMachineIn in[4];
+    BotHostMachineOut out[4];
+    bool known[4] = { false, false, false, false };
+    BotHostRun run;
+    BotHostOptOut opt;
+    uint8_t ticket[BOT_HOST_OPTOUT_TICKET_LEN];
+    int game = 0, i;
+
+    UT_ASSERT(BOT_HOST_RUN_SAME_SERVER_KIND == BOT_HOST_MACHINE_SERVER);
+    memset(in, 0, sizeof(in));
+    memset(out, 0, sizeof(out));
+    /* 0: a player's host from 127.0.0.1; 1: a listed host on the server's
+     * computer; 2 and 3: two players' hosts on one other computer. */
+    in[0].present = true; in[0].playerHost = true; in[0].addrServer = true;
+    in[0].joinSeq = 1; in[0].offered = 4;
+    in[1].present = true; in[1].addrServer = true;
+    in[1].joinSeq = 2; in[1].offered = 4;
+    for (i = 2; i < 4; i++) {
+        in[i].present = true;
+        in[i].playerHost = true;
+        in[i].hashHave = true;
+        memset(in[i].hash, 0x33, sizeof(in[i].hash));
+        in[i].joinSeq = (uint32_t)(i + 1);
+        in[i].offered = 4;
+    }
+    /* Not known yet: nobody is told. */
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT(!botHostMachineTellSameServer(known[i], &out[i], false));
+    }
+    botHostMachineStep(in, 4, NULL, false, out, known);
+    UT_ASSERT(botHostMachineTellSameServer(known[0], &out[0], false));
+    /* Once a connection. */
+    UT_ASSERT(!botHostMachineTellSameServer(known[0], &out[0], true));
+    /* A listed host there keeps its slots and is not told. */
+    UT_ASSERT(!out[1].zero);
+    UT_ASSERT(!botHostMachineTellSameServer(known[1], &out[1], false));
+    /* Two clients on one computer: one of them gets 0, neither is told. */
+    UT_ASSERT(out[2].zero != out[3].zero);
+    UT_ASSERT(!botHostMachineTellSameServer(known[2], &out[2], false));
+    UT_ASSERT(!botHostMachineTellSameServer(known[3], &out[3], false));
+
+    /* The client's host: runs at the join, stops on the event. */
+    botHostRunJoin(&run);
+    UT_ASSERT(!botHostRunStopped(&run) && botHostRunSlots(&run, 4) == 4);
+    /* Another kind is not the server's computer: it keeps running. */
+    UT_ASSERT(!botHostRunSameServer(&run, BOT_HOST_MACHINE_HOST));
+    UT_ASSERT(!botHostRunStopped(&run));
+    UT_ASSERT(botHostRunSameServer(&run, BOT_HOST_MACHINE_SERVER));
+    UT_ASSERT(botHostRunStopped(&run) && botHostRunSlots(&run, 4) == 0);
+    /* A second event changes nothing. */
+    UT_ASSERT(!botHostRunSameServer(&run, BOT_HOST_MACHINE_SERVER));
+    UT_ASSERT(botHostRunStopped(&run));
+    /* The player's opt-out is its own: the stop does not change it. */
+    memset(ticket, 0x5A, sizeof(ticket));
+    botHostOptOutInit(&opt);
+    UT_ASSERT(!botHostOptOutCheck(&opt, &game, ticket));
+    botHostOptOutSet(&opt, true, &game, ticket);
+    UT_ASSERT(botHostRunStopped(&run));
+    UT_ASSERT(botHostOptOutCheck(&opt, &game, ticket));
+    /* The next join: it runs as normal again. */
+    botHostRunJoin(&run);
+    UT_ASSERT(!botHostRunStopped(&run) && botHostRunSlots(&run, 4) == 4);
     return 0;
 }

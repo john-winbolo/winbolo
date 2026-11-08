@@ -419,9 +419,9 @@ STR_DLGLOBBY_SPECTATORS_FMT=Spectators ({number}):
 
 # Lobby list of the Bot Hosts that run the server's bots. Header ({number} =
 # hosts); a row ({string1} = host name, {string2} = its state, {number} = bots
-# it runs, {number2} = bots it can run); the states
+# it runs, {number2} = the slots it has); the states
 STR_DLGLOBBY_BOTHOSTS_FMT=Bot Hosts ({number}):
-STR_DLGLOBBY_BOTHOST_ROW_FMT={string1}: {string2}, {number} of {number2} bots
+STR_DLGLOBBY_BOTHOST_ROW_FMT={string1}: {string2}, {number} of {number2} slots
 STR_DLGLOBBY_BOTHOST_CONNECTED=connected
 STR_DLGLOBBY_BOTHOST_SYNCING_FMT=syncing {number}%
 STR_DLGLOBBY_BOTHOST_READY=ready
@@ -454,17 +454,17 @@ STR_DLGLOBBY_BOTHOST_CPU_MAX_SELF=(At most {string1}% per bot of this computer's
 STR_DLGLOBBY_BOTHOST_CPU_MAX_SERVER=(At most {string1}% per bot of the server's CPU)
 STR_DLGLOBBY_BOTHOST_CPU_MAX_OTHER=(At most {string1}% per bot of {string2}'s CPU)
 STR_DLGLOBBY_SERVER_BOT_SLOTS=Server bot slots
-STR_DLGLOBBY_SERVER_BOT_SLOTS_OVER=More than the {number} bots this server's CPU test recommends. Bots on the server may think slower and play worse.
+STR_DLGLOBBY_SERVER_BOT_SLOTS_OVER=More than the {number} slots this server's CPU test recommends. Bots on the server may think slower and play worse.
 STR_DLGLOBBY_SERVER_BOT_SLOTS_LOCKED=Set by -botcapacity on the server
 STR_DLGLOBBY_SERVER_BOT_SLOTS_NONE=No limit
 STR_DLGLOBBY_SERVER_BOT_SLOTS_MEASURING=CPU test running
 STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP=How many bots the server runs in its own process. Its CPU test recommends {number}.
-STR_DLGLOBBY_BOTHOST_SAME_SERVER={string1}: same computer as the server (0 bots)
-STR_DLGLOBBY_BOTHOST_SAME_HOST={string1}: same computer as {string2} (0 bots)
+STR_DLGLOBBY_BOTHOST_SAME_SERVER={string1}: same computer as the server (0 slots)
+STR_DLGLOBBY_BOTHOST_SAME_HOST={string1}: same computer as {string2} (0 slots)
 STR_DLGLOBBY_BOTHOST_SLOTS_LABEL=Slots
 STR_DLGLOBBY_BOTHOST_SLOTS_ALL=All ({number})
 STR_DLGLOBBY_BOTHOST_SLOTS_LOCKED=Set by -bothost-slots on the server
-STR_DLGLOBBY_BOTHOST_SLOTS_TIP=The most bots this server gives this Bot Host, for this lobby only. It can only lower the slots the host offers.
+STR_DLGLOBBY_BOTHOST_SLOTS_TIP=The most slots this server gives this Bot Host, for this lobby only. It can only lower the slots the host offers.
 
 # The lobby's one-game opt-out from running the server's bots on this
 # computer, and its mouse-over text

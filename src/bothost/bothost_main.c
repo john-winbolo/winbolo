@@ -95,6 +95,7 @@
 #include "bot_host_cpu.h"   /* BotHostCpuMeter */
 #ifdef WINBOLO_BOTHOST_EMBED
 #include "bothost_embed.h"
+#include "bothost_optout.h"   /* BotHostRun */
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -146,9 +147,28 @@ static bool     embedRefused;
  * thread (botHostEmbedSetWithhold), read by the host's thread. */
 static SDL_AtomicInt embedWithhold;
 
+#ifdef WINBOLO_BOTHOST_EMBED
+/* The server is on this computer (CTRL_BOT_HOST_SAME_SERVER): the host
+ * stops for this join (bothost_optout.h). The host's thread sets it;
+ * botHostEmbedStart clears it. embedSameServerNow is the copy the client's
+ * main thread reads (botHostEmbedGetStatus). */
+static BotHostRun    embedRun;
+static SDL_AtomicInt embedSameServerNow;
+#endif
+
+/* The host is stopped for this join: the server is on this computer. */
+static bool hostStopped(void) {
+#ifdef WINBOLO_BOTHOST_EMBED
+    return botHostRunStopped(&embedRun);
+#else
+    return false;
+#endif
+}
+
 /* The host offers no slots now (the Bot Host inside a client only). */
 static bool hostWithheld(void) {
-    return HOST_EMBED && SDL_GetAtomicInt(&embedWithhold) != 0;
+    return HOST_EMBED &&
+           (SDL_GetAtomicInt(&embedWithhold) != 0 || hostStopped());
 }
 
 /* One line on stderr, and in the log file for the Bot Host inside a
@@ -1192,6 +1212,8 @@ static void syncOnPack(HostServer *sv, const BulkStreamHeader *h,
 
 static uint8_t *syncBulkBegin(void *ctx, const BulkStreamHeader *h) {
     (void)ctx;
+    /* Stopped for this join: no brain files. */
+    if (hostStopped()) return NULL;
     if (h->kind == BULK_KIND_BRAIN_MANIFEST) {
         if (h->totalSize == 0 || h->totalSize > BRAIN_SYNC_MANIFEST_MAX) {
             return NULL;
@@ -1213,6 +1235,10 @@ static uint8_t *syncBulkBegin(void *ctx, const BulkStreamHeader *h) {
 static void syncBulkComplete(void *ctx, const BulkStreamHeader *h,
                              uint8_t *buf) {
     HostServer *sv = (HostServer *)ctx;
+    if (hostStopped()) {
+        free(buf);
+        return;
+    }
     if (h->kind == BULK_KIND_BRAIN_MANIFEST) {
         syncOnManifest(sv, buf, h->totalSize, h->gen);
     } else if (h->kind == BULK_KIND_BRAIN_CHUNK) {
@@ -1618,6 +1644,28 @@ static void onMachineSalt(HostServer *sv, const ControlEvent *evt) {
     ctlSendEvent(sv, &a);
 }
 
+/* The server is on this computer: the host stops for this join. Its bots
+ * (none should be here) go back, the brain files on the way are dropped
+ * and the session folder goes; 0 slots go out on the next service
+ * (poolSlotsFor). The connection stays, so the lobby keeps the row. */
+static void onSameServer(HostServer *sv, const ControlEvent *evt) {
+#ifdef WINBOLO_BOTHOST_EMBED
+    if (!botHostRunSameServer(&embedRun, evt->u.botHostSameServer.kind)) {
+        return;
+    }
+    HOST_EVENT("[bothost] Bot Host \"%s\": the server %s is on this "
+               "computer; this Bot Host stops for this join (no brain files, "
+               "no CPU readings, 0 slots)", optName, sv->label);
+    clearSeats(serverIndex(sv), "same computer as the server");
+    syncReset(&sv->sync);
+    syncSessionEnd();
+    SDL_SetAtomicInt(&embedSameServerNow, 1);
+#else
+    (void)sv;
+    (void)evt;
+#endif
+}
+
 static void ctlHandleControl(HostServer *sv, const uint8_t *msg, uint16_t len) {
     ControlEvent evt;
     ControlDecodeBodyFn dec;
@@ -1637,6 +1685,7 @@ static void ctlHandleControl(HostServer *sv, const uint8_t *msg, uint16_t len) {
         case CTRL_BOT_HINT:          onHint(sv, &evt);      break;
         case CTRL_BOT_TEAM_MSG:      onTeamMsg(sv, &evt);   break;
         case CTRL_BOT_HOST_MACHINE_SALT: onMachineSalt(sv, &evt); break;
+        case CTRL_BOT_HOST_SAME_SERVER:  onSameServer(sv, &evt);  break;
         case CTRL_BOT_HOST_REC:
             hostRecOnEvent(serverIndex(sv), &evt);
             break;
@@ -2321,15 +2370,18 @@ static void hostTick(void) {
         }
     }
 
-    hostCpuValue = botHostCpuMeterSample(&hostCpuMeter, SDL_GetTicksNS(),
-                                         hostThinkMsTotal,
-                                         SDL_GetNumLogicalCPUCores(),
-                                         poolUsed());
-    if (hostFreeSeq == 0 || nowMs() - hostFreeAtMs >= BOT_HOST_FREE_MS) {
-        hostFreeAtMs = nowMs();
-        hostFreeValue = machineCpuFreeSample(&hostFreeMeter);
-        hostFreeSeq++;
-        if (hostFreeSeq == 0) hostFreeSeq = 1;
+    /* Stopped for this join: no CPU readings. */
+    if (!hostStopped()) {
+        hostCpuValue = botHostCpuMeterSample(&hostCpuMeter, SDL_GetTicksNS(),
+                                             hostThinkMsTotal,
+                                             SDL_GetNumLogicalCPUCores(),
+                                             poolUsed());
+        if (hostFreeSeq == 0 || nowMs() - hostFreeAtMs >= BOT_HOST_FREE_MS) {
+            hostFreeAtMs = nowMs();
+            hostFreeValue = machineCpuFreeSample(&hostFreeMeter);
+            hostFreeSeq++;
+            if (hostFreeSeq == 0) hostFreeSeq = 1;
+        }
     }
 
     sendEnd = SDL_GetPerformanceCounter();
@@ -2844,6 +2896,9 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     if (embedSlotsFixed > BOT_HOST_MAX_SLOTS) embedSlotsFixed = BOT_HOST_MAX_SLOTS;
     embedCapacityGen = 0;
     embedRefused = false;
+    /* A new join: the host runs as normal, and the server checks again. */
+    botHostRunJoin(&embedRun);
+    SDL_SetAtomicInt(&embedSameServerNow, 0);
     embedSendQuit = true;
     if (cfg->recordMinFreeGb > 0.0) embedRecordMinFreeGb = cfg->recordMinFreeGb;
     /* Until the brain's own answer comes with its files: the default. */
@@ -2970,6 +3025,7 @@ void botHostEmbedGetStatus(BotHostEmbedStatus *out) {
     out->refused   = SDL_GetAtomicInt(&embedRefusedNow) != 0;
     out->slots     = SDL_GetAtomicInt(&embedSlotsNow);
     out->bots      = SDL_GetAtomicInt(&embedUsedNow);
+    out->sameServer = SDL_GetAtomicInt(&embedSameServerNow) != 0;
 }
 
 #endif /* WINBOLO_BOTHOST_EMBED */

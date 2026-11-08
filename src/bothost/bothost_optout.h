@@ -47,6 +47,29 @@ void botHostOptOutSet(BotHostOptOut *o, bool on, const void *game,
 bool botHostOptOutCheck(BotHostOptOut *o, const void *game,
                         const uint8_t *ticket);
 
+/* The built-in Bot Host on the server's own computer. When the server
+ * finds that this computer is its own (CTRL_BOT_HOST_SAME_SERVER), the
+ * host stops for this join: it takes no brain files (and drops the ones on
+ * the way), reads no CPU, offers 0 slots and takes no bot. It stays
+ * connected, so the lobby keeps its row. The next join (a new start of the
+ * host) clears it, and the server checks again. It is not the opt-out
+ * above and does not change it. */
+#define BOT_HOST_RUN_SAME_SERVER_KIND 1   /* == BOT_HOST_MACHINE_SERVER */
+
+typedef struct {
+    bool sameServer;   /* stopped for this join */
+} BotHostRun;
+
+/* A new join: the host runs as normal. */
+void botHostRunJoin(BotHostRun *r);
+/* The server's CTRL_BOT_HOST_SAME_SERVER with its kind. True when the host
+ * stops now (only for the server's computer, and only the first time). */
+bool botHostRunSameServer(BotHostRun *r, uint8_t kind);
+/* The host is stopped for this join. */
+bool botHostRunStopped(const BotHostRun *r);
+/* The slots the host offers: 0 while it is stopped. */
+int  botHostRunSlots(const BotHostRun *r, int slots);
+
 #ifdef __cplusplus
 }
 #endif

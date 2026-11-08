@@ -76,6 +76,32 @@ bool botHostAddrIsServerMachine(uint32_t ip, const uint32_t *own, int n);
 void botHostMachineGroup(const BotHostMachineIn *in, int n,
                          const uint8_t *serverHash, BotHostMachineOut *out);
 
+/* One step of the same-computer check, once a tick. known[i] is true when
+ * host i's group is decided; the server sets it false when the host joins.
+ * waiting: answers to the current salt are still to come and the wait
+ * limit has not passed.
+ *   - Not waiting: every group is worked out again (botHostMachineGroup)
+ *     and each present host is known.
+ *   - Waiting: a known host keeps its group. A host not yet known is
+ *     decided at once when its address or the server's hash shows the
+ *     server's computer; else it stays not known.
+ * A host not present is not known. out and known have n entries. */
+void botHostMachineStep(const BotHostMachineIn *in, int n,
+                        const uint8_t *serverHash, bool waiting,
+                        BotHostMachineOut *out, bool *known);
+
+/* The slots a host may be given: 0 while its group is not known, 0 when
+ * its group gives it 0, else offered (after the override). */
+int botHostMachineSlots(bool known, const BotHostMachineOut *m, int offered);
+
+/* True when the server tells a host it is on the server's computer
+ * (CTRL_BOT_HOST_SAME_SERVER): its group is known, it is a player's host
+ * there (kind SERVER and 0 slots), and it was not told on this connection
+ * (sent). A listed host there, and hosts that share another computer, are
+ * never told. */
+bool botHostMachineTellSameServer(bool known, const BotHostMachineOut *m,
+                                  bool sent);
+
 /* The game bot limit: the server's bot slots (serverCap: -1 no limit, -2
  * the CPU test runs, which counts 0) plus counted[i] for each host (the
  * slots of a host that takes bots and is not zeroed; 0 otherwise).

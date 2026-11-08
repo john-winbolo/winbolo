@@ -345,8 +345,11 @@ headless bots are not limited by it.
   there keeps its slots. Of hosts on one other computer, the first-joined
   host that offers slots keeps them, and the others get 0. When it leaves,
   the next one takes over.
-- The lobby row says "<name>: same computer as the server (0 bots)" or
-  "<name>: same computer as <other> (0 bots)" (`CTRL_BOT_HOST_ROW_SLOTS`).
+- A host that joins gets no bot until its group is known: at once when its
+  address or token shows the server's computer, else when all hosts answer
+  or the 5 s wait ends (`bot_host_machine_join_wait`).
+- The lobby row says "<name>: same computer as the server (0 slots)" or
+  "<name>: same computer as <other> (0 slots)" (`CTRL_BOT_HOST_ROW_SLOTS`).
 - The DS console prints one line per group, with each member and how it was
   found, and a "game bot limit:" line when the limit changes.
 - To test: run a DS and two headless clients (each has its own Bot Host) on
