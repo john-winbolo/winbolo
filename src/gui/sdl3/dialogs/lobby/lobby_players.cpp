@@ -1022,7 +1022,10 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
             ImGui::Unindent(indent);
         }
         if (dim) ImGui::PopStyleColor();
-        if (!isServer && r->rowSlotsHave) {
+        /* No slot box when the host has no slots to give: it offers 0, or
+         * its computer's slots go to the server or another row. A slot box
+         * lowered to 0 stays, so it can be raised again. */
+        if (!isServer && r->rowSlotsHave && !r->machineZero && r->slots > 0) {
             renderBotHostSlotsBox(cs, idx, r, mayEdit);
         }
     }
