@@ -828,7 +828,12 @@ Then, by kind (0xFF in a byte field: none):
   bot that moved), `toHost:u8` (where it went, as `host`), then the reason
   as a length byte and its bytes. Decisions 8 and 9 carry the free CPU
   check of the host the bot goes to (`toHost`); the others carry that of
-  `host`. From version 2 the reason is followed by `srcRate:u16` and
+  `host`. Their reason is why the bot moved: "over its slots" (`host` had
+  more bots than its slots), "overrun rate" (the window rate of `host` was
+  at or above the target rate), "low free CPU" (`host` failed the free CPU
+  check for the bots it had), or "the spread" (the even spread of
+  `-bothost-spread-even`, and every decision 8 and 9 in logs made before
+  these reasons). From version 2 the reason is followed by `srcRate:u16` and
   `dstRate:u16` (the window rates of `host` and `toHost` in hundredths of a
   percent, 0xFFFF none: a target with no bots has no rate), `moves:u8` (m,
   the bot's overrun moves in this game before this one), `rule:u8` (0 none,

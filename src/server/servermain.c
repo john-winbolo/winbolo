@@ -1041,6 +1041,9 @@ void printArgs() {
   fprintf(stderr, "-bothost-small-bias <f> - how many slots fewer such a host counts, 0 to 1 (default 0.25)\n");
   fprintf(stderr, "-bothost-lag-ref-ms <ms> - lag counted in bot placement: a host scores 1 + lag / ms times more, 0 = lag not counted (default 100)\n");
   fprintf(stderr, "-bothost-lag-max-ms <ms> - a host with more lag gets no new bots while one with less has room, 0 = no ceiling (default 250)\n");
+  fprintf(stderr, "-bothost-spread-even - the old even spread: bots also move between hosts that run them well, to even out\n");
+  fprintf(stderr, "                their counts and lag. Without it a bot stays where it runs well: on the server while it\n");
+  fprintf(stderr, "                has slots and its overruns and free CPU are good, and only the rest go to Bot Hosts.\n");
   fprintf(stderr, "-bothost-overrun-pct <f> - the target rate: a host whose bots' overruns are over f%% of their thinks in the window gives one bot to a better host, and its limit drops to its bots - 1 for the game; 0 = the check is off (default 1)\n");
   fprintf(stderr, "-bothost-overrun-emergency-pct <f> - at f%% or more, a bot may move to any host below the target rate or at half the source rate, with no stay time; 0 = no emergency rule (default 5)\n");
   fprintf(stderr, "-bothost-overrun-gain <f> - a bot with m moves needs a target at most f^(m+1) x the source rate (default 0.5)\n");
@@ -3404,6 +3407,8 @@ int main(int argc, char **argv) {
           argExist(argc, argv, "record-bothost-data"));
       transportUdpServerSetBotHostNoMove(
           argExist(argc, argv, "bothost-nomove"));
+      transportUdpServerSetBotHostSpreadEven(
+          argExist(argc, argv, "bothost-spread-even"));
       {
         /* -bothost-slots name=N, once per host; several allowed. */
         int k;

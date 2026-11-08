@@ -159,6 +159,17 @@ static bool botHostRecHostSent[1 + MAX_BOT_HOSTS];
 static bool botHostRecWasOn;
 /* -bothost-nomove: no bot moves while a game runs. */
 static BotHostNoMove botHostNoMove;
+/* The place each seat last left by a placement decision, so a bot does
+ * not go back there within the stay time (BotHostTrail). */
+static BotHostTrail botHostTrail;
+static bool botHostTrailReady;
+/* -bothost-spread-even: the old proportional spread, which also moves bots
+ * between good hosts to even them out. Off: bots stay where they run
+ * well (botHostPlaceRebalanceKeep). */
+static bool botHostSpreadEven;
+/* The tick each place last gave a bot for being bad (the spread). */
+static uint32_t botHostBadGaveTick[1 + MAX_BOT_HOSTS];
+static bool botHostBadGave[1 + MAX_BOT_HOSTS];
 
 /* Bot Hosts on one computer (bot_host_machine.h). The salt round now
  * (botHostSaltSeq counts the rounds) and the server's own answer to it;
@@ -3499,9 +3510,9 @@ static void botHostOvrSetFallback(int i) {
 /* A spread decision (BOTHOST_DECISION_PLACE or _SPREAD_MOVE) for the round
  * log, with the free CPU check of the host the bot goes to (to: 0 the
  * server, h + 1 Bot Host h), so the record holds the predicted free CPU the
- * move was made against. */
+ * move was made against. reason: why the bot moved (botHostSpreadReason). */
 static void botHostRecSpread(uint8_t decision, int from, int to, int seat,
-                             int bots) {
+                             int bots, const char *reason) {
     const BotHostOverrunCfg *cfg = botHostOvrConfig();
     BotHostOverrunReport rep;
     if (!botHostRecOn() || to < 0 || to > MAX_BOT_HOSTS) return;
@@ -3510,8 +3521,66 @@ static void botHostRecSpread(uint8_t decision, int from, int to, int seat,
     memset(&rep, 0, sizeof(rep));
     (void)botHostOverrunMayTake(&botHostOvr[to], cfg, bots,
                                 botHostOvrFree(to), &rep);
-    botHostRecDecision(from, decision, &rep, seat, to, "the spread",
-                       NULL);
+    botHostRecDecision(from, decision, &rep, seat, to, reason, NULL);
+}
+
+/* The stay time of the placement in ticks (-bothost-overrun-stay-secs),
+ * 0: none. */
+static uint32_t botHostStayTicks(void) {
+    const BotHostOverrunCfg *cfg = botHostOvrConfig();
+    return cfg->staySecs > 0 ? (uint32_t)cfg->staySecs * 50u : 0u;
+}
+
+static void botHostTrailEnsure(void) {
+    if (botHostTrailReady) return;
+    botHostTrailReset(&botHostTrail);
+    botHostTrailReady = true;
+}
+
+/* Marks each place whose bots run badly now (BotHostPlaceHost.bad): its
+ * window overrun rate at or above the target rate, or its free CPU too
+ * low for the bots it has (botHostOverrunFreeLow). A rate or free CPU not
+ * known yet counts as good. why[i] gets the reason for the log. A place
+ * that gave a bot for being bad within the step time is held (badHold).
+ * Only while the game runs, with the overrun check on. */
+static void botHostPlaceMarkBad(BotHostPlaceHost *hosts, const char **why) {
+    const BotHostOverrunCfg *cfg = botHostOvrConfig();
+    uint32_t step = (uint32_t)(cfg->stepSecs > 0 ? cfg->stepSecs : 1) * 50u;
+    int i;
+    for (i = 0; i <= MAX_BOT_HOSTS; i++) why[i] = NULL;
+    if (!(cfg->pct > 0.0)) return;
+    botHostOvrEnsure();
+    for (i = 0; i <= MAX_BOT_HOSTS; i++) {
+        double pct = 0.0;
+        if (i > 0 && !udpServer.botHosts[i - 1].connected) continue;
+        if (hosts[i].bots <= 0) continue;
+        if (botHostOverrunRate(&botHostOvr[i], cfg, &pct) &&
+            pct >= cfg->pct) {
+            why[i] = "overrun rate";
+        } else {
+            botHostOvrSetFallback(i);
+            if (botHostOverrunFreeLow(&botHostOvr[i], cfg, hosts[i].bots,
+                                      botHostOvrFree(i), NULL)) {
+                why[i] = "low free CPU";
+            }
+        }
+        if (why[i] == NULL) continue;
+        hosts[i].bad = true;
+        hosts[i].badHold = botHostBadGave[i] &&
+                           udpServer.tickCount - botHostBadGaveTick[i] < step;
+    }
+}
+
+/* The reason a spread decision records and the console shows. */
+static const char *botHostSpreadReason(BotHostSpreadWhy why, int from,
+                                       const char *const *badWhy) {
+    switch (why) {
+    case BOT_HOST_SPREAD_OVER_SLOTS: return "over its slots";
+    case BOT_HOST_SPREAD_BAD:
+        return from >= 0 && from <= MAX_BOT_HOSTS && badWhy[from] != NULL
+                   ? badWhy[from] : "overrun rate";
+    default: return "the spread";
+    }
 }
 
 /* The lowered limits and the free CPU check, as part of the placement: a
@@ -3660,6 +3729,10 @@ static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
             b->moves = botHostOvrMovesCount(&botHostOvrMv, s);
             b->staySecs = botHostOvrMovesStay(&botHostOvrMv, s,
                                               udpServer.tickCount, 50);
+            b->backTo = botHostTrailBackTo(&botHostTrail, s,
+                                           udpServer.tickCount,
+                                           botHostStayTicks());
+            b->back = b->backTo >= 0;
         }
     }
 
@@ -3868,6 +3941,7 @@ static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
         }
         botHostOvrMovesNote(&botHostOvrMv, seat, BOT_HOST_MOVE_VOLUNTARY,
                             udpServer.tickCount);
+        botHostTrailNote(&botHostTrail, seat, i, udpServer.tickCount);
         /* The target took a bot: it takes no other in this pass (its free
          * CPU check waits for a reading with that bot). */
         oh[dest].bots++;
@@ -3931,6 +4005,15 @@ void transportUdpServerSetBotHostOverrun(const BotHostOverrunFlags *f) {
             cfg->freeSampleSecs, cfg->freeHistorySecs);
 }
 
+void transportUdpServerSetBotHostSpreadEven(bool on) {
+    botHostSpreadEven = on;
+    if (on) {
+        fprintf(stderr, "[bothost] placement: the even spread "
+                        "(-bothost-spread-even): bots also move between "
+                        "good hosts to even out their counts and lag\n");
+    }
+}
+
 void transportUdpServerSetBotHostNoMove(bool on) {
     botHostNoMoveInit(&botHostNoMove, on);
     if (on) {
@@ -3956,11 +4039,22 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     static uint32_t lastProbeTick = 0;
     static bool probed = false;
     BotHostPlaceHost hosts[1 + MAX_BOT_HOSTS], raw[1 + MAX_BOT_HOSTS];
-    int localSeat = -1, hostSeat[MAX_BOT_HOSTS];
+    /* The bots that may move off each place now, in seat order: the
+     * server's own first, then each host's. */
+    int localSeats[MAX_TANKS], localCount = 0;
+    int hostSeats[MAX_BOT_HOSTS][MAX_TANKS], hostCount[MAX_BOT_HOSTS];
+    const char *badWhy[1 + MAX_BOT_HOSTS];
+    const int *cand;
+    int candCount;
+    BotHostSpreadWhy why = BOT_HOST_SPREAD_NONE;
+    const char *reason;
     bool running = (st == serverStateRunning);
     bool mayMove;
     bool anyPending = false, anyHost = false;
     int s, h, from = -1, to = -1;
+
+    botHostTrailEnsure();
+    for (h = 0; h <= MAX_BOT_HOSTS; h++) badWhy[h] = NULL;
 
     if (running && lastSt != serverStateRunning) {
         runStartTick = udpServer.tickCount;
@@ -3970,7 +4064,7 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     memset(hosts, 0, sizeof(hosts));
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         BotHostConn *hc = &udpServer.botHosts[h];
-        hostSeat[h] = -1;
+        hostCount[h] = 0;
         if (!hc->connected) continue;
         /* Lowered by the row's override; 0 for a host on a computer
          * another counts. */
@@ -3995,31 +4089,30 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
                           udpServer.tickCount);
         botHostOvrMovesSeat(&botHostOvrMv, s, serverSimIsBot(sim, (BYTE)s),
                             udpServer.tickCount);
+        if (!serverSimIsBot(sim, (BYTE)s)) botHostTrailClear(&botHostTrail, s);
         if (seat->state == BOT_SEAT_PENDING) anyPending = true;
         if (seat->state == BOT_SEAT_LOCAL) {
+            /* The spread looks only at a bot that may still be placed
+             * (-bothost-nomove). */
             if (botSeatLocalOfferable(sim, s) &&
-                botSeatMayMove(sim, s, running)) {
-                /* The spread looks only at a bot that may still be placed
-                 * (-bothost-nomove). */
-                if (localSeat < 0 &&
-                    botHostNoMoveMayPlace(&botHostNoMove, s, running,
-                                          udpServer.tickCount,
-                                          BOT_HOST_START_PLACE_TICKS)) {
-                    localSeat = s;
-                }
+                botSeatMayMove(sim, s, running) &&
+                botHostNoMoveMayPlace(&botHostNoMove, s, running,
+                                      udpServer.tickCount,
+                                      BOT_HOST_START_PLACE_TICKS)) {
+                localSeats[localCount++] = s;
             }
         } else if (seat->state == BOT_SEAT_REMOTE && seat->host >= 0 &&
-                   seat->host < MAX_BOT_HOSTS && hostSeat[seat->host] < 0 &&
+                   seat->host < MAX_BOT_HOSTS &&
                    botSeatMayMove(sim, s, running)) {
-            hostSeat[seat->host] = s;
+            hostSeats[seat->host][hostCount[seat->host]++] = s;
         }
     }
     mayMove = botHostNoMoveMayMove(&botHostNoMove, running);
-    hosts[0].movable = (localSeat >= 0);
+    hosts[0].movable = (localCount > 0);
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         /* A host's bots stay put while any offer waits for its answer, and
          * all game long with -bothost-nomove. */
-        hosts[h + 1].movable = (hostSeat[h] >= 0) && !anyPending && mayMove;
+        hosts[h + 1].movable = (hostCount[h] > 0) && !anyPending && mayMove;
     }
 
     /* The overrun check: a probe each second, then the lowered limits and
@@ -4050,7 +4143,7 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
          * slots than it has bots gives one back to the server (a
          * fall-back); no other bot leaves its place. */
         for (h = 0; h < MAX_BOT_HOSTS; h++) {
-            if (hostSeat[h] < 0 || anyPending) continue;
+            if (hostCount[h] <= 0 || anyPending) continue;
             if (!botHostNoMoveGiveBack(&botHostNoMove, running,
                                        raw[h + 1].bots, raw[h + 1].slots)) {
                 continue;
@@ -4058,7 +4151,7 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
             if (udpServer.tickCount - lastMoveTick < BOT_HOST_MOVE_TICKS) {
                 break;
             }
-            s = hostSeat[h];
+            s = hostSeats[h][0];
             fprintf(stderr, "[bothost] bot %d \"%s\" goes back to the server: "
                             "Bot Host \"%s\" offers %d slots for %d bots\n",
                     s, botSeatName(sim, s), udpServer.botHosts[h].name,
@@ -4070,9 +4163,13 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     }
     if (!anyHost) return;
 
-    if (!botHostPlaceRebalanceLag(hosts, 1 + MAX_BOT_HOSTS,
-                                  botHostSmallSlots, botHostSmallBias,
-                                  &botHostLag, &from, &to)) {
+    /* While the game runs, which places run their bots badly. In the lobby
+     * no bot thinks, so every place counts as good there. */
+    if (running) botHostPlaceMarkBad(hosts, badWhy);
+    if (!botHostPlaceRebalanceKeep(hosts, 1 + MAX_BOT_HOSTS,
+                                   botHostSmallSlots, botHostSmallBias,
+                                   &botHostLag, botHostSpreadEven, &from,
+                                   &to, &why)) {
         return;
     }
     if (running) {
@@ -4081,28 +4178,53 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         bool spaced = udpServer.tickCount - lastMoveTick >= BOT_HOST_MOVE_TICKS;
         if (!spaced && !(early && from == 0)) return;
     }
+    /* Which bot: the first that did not leave the target place within the
+     * stay time. A move off a place over its slots is forced: with no
+     * other bot, that one goes. */
+    if (from == 0) {
+        cand = localSeats;
+        candCount = localCount;
+    } else {
+        cand = hostSeats[from - 1];
+        candCount = hostCount[from - 1];
+    }
+    s = botHostTrailPickSeat(&botHostTrail, cand, candCount, to,
+                             udpServer.tickCount, botHostStayTicks(),
+                             why == BOT_HOST_SPREAD_OVER_SLOTS);
+    if (s < 0) return;
+    reason = botHostSpreadReason(why, from, badWhy);
     if (from == 0) {
         if (to <= 0) return;
-        if (botSeatOffer(sim, localSeat, to - 1, "the spread")) {
+        if (botSeatOffer(sim, s, to - 1, reason)) {
             lastMoveTick = udpServer.tickCount;
-            botHostRecSpread(BOTHOST_DECISION_PLACE, 0, to, localSeat,
-                             raw[to].bots);
+            botHostTrailNote(&botHostTrail, s, 0, udpServer.tickCount);
+            if (why == BOT_HOST_SPREAD_BAD) {
+                botHostBadGave[0] = true;
+                botHostBadGaveTick[0] = udpServer.tickCount;
+            }
+            botHostRecSpread(BOTHOST_DECISION_PLACE, 0, to, s, raw[to].bots,
+                             reason);
         }
         return;
     }
-    s = hostSeat[from - 1];
     fprintf(stderr, "[bothost] bot %d \"%s\" moves from Bot Host \"%s\" to "
-                    "%s%s%s (the spread)\n",
+                    "%s%s%s (%s)\n",
             s, botSeatName(sim, s), udpServer.botHosts[from - 1].name,
             to == 0 ? "the server" : "Bot Host \"",
             to == 0 ? "" : udpServer.botHosts[to - 1].name,
-            to == 0 ? "" : "\"");
-    botHostRecSpread(BOTHOST_DECISION_SPREAD_MOVE, from, to, s, raw[to].bots);
-    botSeatFallBack(sim, s, "the spread", true);
+            to == 0 ? "" : "\"", reason);
+    botHostRecSpread(BOTHOST_DECISION_SPREAD_MOVE, from, to, s, raw[to].bots,
+                     reason);
+    botSeatFallBack(sim, s, reason, true);
     udpServer.botSeats[s].noReturn = false;
     lastMoveTick = udpServer.tickCount;
+    botHostTrailNote(&botHostTrail, s, from, udpServer.tickCount);
+    if (why == BOT_HOST_SPREAD_BAD) {
+        botHostBadGave[from] = true;
+        botHostBadGaveTick[from] = udpServer.tickCount;
+    }
     if (to > 0 && botSeatLocalOfferable(sim, s)) {
-        (void)botSeatOffer(sim, s, to - 1, "the spread");
+        (void)botSeatOffer(sim, s, to - 1, reason);
     }
 }
 
@@ -4197,7 +4319,12 @@ void serverServiceBotHosts(ServerSim *sim) {
             botHostOvrNewGame();
             /* Each bot's voluntary moves start at 0 again when the game
              * ends. */
-            if (st == serverStateLobby) botHostOvrMovesReset(&botHostOvrMv);
+            if (st == serverStateLobby) {
+                botHostOvrMovesReset(&botHostOvrMv);
+                botHostTrailReset(&botHostTrail);
+                botHostTrailReady = true;
+                memset(botHostBadGave, 0, sizeof(botHostBadGave));
+            }
         }
         if (st == serverStateRunning) {
             for (s = 0; s < MAX_TANKS; s++) {
