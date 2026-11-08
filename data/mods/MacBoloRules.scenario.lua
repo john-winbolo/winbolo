@@ -36,10 +36,11 @@
 --
 -- Pillbox shell range. A Mac Bolo pillbox's shell starts half a square
 -- out and flies 32 steps of about a quarter square, so it falls 2143 to
--- 2175 world units (256 to a square) from the pillbox, by direction.
--- WinBolo's starts 160 out and flies pill_fire_length, 8.5 by default,
--- which ends it 2208 out, a quarter square further. This part sets
--- pill_fire_length to 8.25, which ends it 2144 out.
+-- 2192 world units (256 to a square) from the pillbox by direction, 2166
+-- on average. WinBolo's starts 160 out and flies pill_fire_length, 8.5 by
+-- default, which ends it 2208 out, past Mac Bolo's in every direction.
+-- This part sets pill_fire_length to 8.375, which ends it 2176 out, the
+-- nearest WinBolo can get to Mac Bolo's average.
 --
 -- Base defence. When a base is shot, every allied pillbox near it gets
 -- angry and fires faster. WinBolo has always counted "near" as a square:
@@ -105,7 +106,7 @@
 --   pill_aim            pillbox aiming and massage (pill_aim_mac).
 --   pill_anger          angry pillbox fire rate
 --                       (pill_attack_min_ticks, 5).
---   pill_shell_range    pillbox shell range (pill_fire_length, 8.25).
+--   pill_shell_range    pillbox shell range (pill_fire_length, 8.375).
 --   base_defence        base defence circle (pill_base_defend_shape, with
 --                       pill_base_defend_range 7).
 --   superboom           superboom threshold
@@ -172,7 +173,8 @@ scenario = {
     { id = "pill_anger", label = "Mac Bolo angry pillbox fire rate",
       type = "bool", default = true },
 
-    -- Pillbox shell range: Mac Bolo's, a quarter square short of WinBolo's.
+    -- Pillbox shell range: close to Mac Bolo's, an eighth of a square short
+    -- of WinBolo's.
     { id = "pill_shell_range", label = "Mac Bolo pillbox shell range",
       type = "bool", default = true },
 
@@ -264,8 +266,9 @@ if PILL_ANGER then
 end
 
 if PILL_SHELL_RANGE then
-  -- A pillbox shell falls 2144 world units out, as Mac Bolo's do, not 2208.
-  rules.pill_fire_length = 8.25
+  -- A pillbox shell falls 2176 world units out, near Mac Bolo's average of
+  -- 2166, not 2208.
+  rules.pill_fire_length = 8.375
 end
 
 if BASE_DEFENCE then
