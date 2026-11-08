@@ -346,7 +346,8 @@ static void dumpRecordFields(DumpCtx *c, BYTE code, const BYTE *b, int len) {
                 ((unsigned)b[1] << 8) | b[2], b[3], (unsigned)b[3] * 20u);
       }
       break;
-    /* Times in tenths of a ms. Each bot is botN=last/peak/overruns/thinks. */
+    /* Times in tenths of a ms. Each bot is botN=last/peak/overruns/thinks,
+       then botN_host=server or botN_host="name" when the record holds it. */
     case log_OverrunStats: {
       OverrunRecord rec;
       if (overrunRecordDecode(b, len, &rec)) {
@@ -366,8 +367,15 @@ static void dumpRecordFields(DumpCtx *c, BYTE code, const BYTE *b, int len) {
           int i;
           for (i = 0; i < (int)rec.botCount; i++) {
             const OverrunRecordBot *bot = &rec.bots[i];
+            const char *host = overrunRecordBotHostName(&rec, bot);
             fprintf(out, " bot%u=%u/%u/%u/%u", bot->player, bot->last, bot->peak,
                     (unsigned)bot->overruns, (unsigned)bot->thinks);
+            /* Version 2: where the brain ran; nothing when not known. */
+            if (overrunRecordBotOnServer(bot)) {
+              fprintf(out, " bot%u_host=server", bot->player);
+            } else if (host != NULL) {
+              fprintf(out, " bot%u_host=\"%s\"", bot->player, host);
+            }
           }
         }
       }

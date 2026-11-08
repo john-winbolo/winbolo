@@ -6217,6 +6217,7 @@ set(_unit_test_names
     bot_host_team_msg_fanout
     bot_host_ping_gap
     bot_host_remote_seat_stays_bot
+    bot_host_info_host_name
     bot_host_target_ms
     bot_host_sync_codec
     brain_sync_path_check
@@ -6270,6 +6271,7 @@ set(_unit_test_names
     bot_host_cpu_bot_codec
     bot_host_cpu_budget
     bot_host_cpu_bot_client_row
+    bot_host_embed_info_helpers
     bot_host_lag_codec
     bot_host_machine_addr
     machine_id_token
@@ -6336,6 +6338,9 @@ set(_unit_test_names
     log_roundtrip_player_lag
     log_roundtrip_player_lag_recorded
     log_roundtrip_overrun_stats
+    overrun_record_hosts
+    overrun_record_v1_hosts
+    overrun_record_host_place
     log_roundtrip_bothost_data
     bothost_record_off_writes_nothing
     log_roundtrip_overrun_stats_recorded

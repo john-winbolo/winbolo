@@ -1416,7 +1416,8 @@
 /* The viewer's server timing (log_OverrunStats) in the Game Info panel: the
    section's name, the line that says when the record shown was written
    (string1 the round time, m:ss), the record's lines (string1..3 times in ms
-   with one decimal; number and number2 counts), the bot table's column names,
+   with one decimal; number and number2 counts), the bot table's column names
+   (COL_HOST: where the bot's brain ran),
    the line for a time before the round's first record, and a bot's name when
    the slot has none (number the player). */
 #define STR_LV_TIMING_HEADER                3130
@@ -1434,6 +1435,7 @@
 #define STR_LV_TIMING_COL_LAST              3142
 #define STR_LV_TIMING_COL_PEAK              3143
 #define STR_LV_TIMING_COL_OVERRUNS          3144
+#define STR_LV_TIMING_COL_HOST              3147
 #define STR_LV_TIMING_NONE_YET              3145
 #define STR_LV_TIMING_PLAYER                3146
 /* Log viewer Controls panel: what each button does, for its tooltip. {string1} of the two jumps is a number of seconds ("2.5", "12"); KEY_FMT puts a button's shortcut key after its name. */
@@ -1630,6 +1632,29 @@
 #define STR_DLGSYSINFO_SIMULATION           1236
 #define STR_DLGSYSINFO_BOTPREP              1237
 #define STR_DLGSYSINFO_BRAIN_OVERRUNS       1238
+/* System Info: this computer's own Bot Host (bothost_embed.h). BOTHOST_FMT
+   is the block's first line, string1 the state (RUNNING, SYNCING_FMT with
+   number the percent, SAME_SERVER, OFF, CONNECTING). SLOTS_FMT: number bots
+   running of number2 slots offered. RATE: the overrun rate over the last
+   number seconds, string1 the percent. CPU: one bot's part of this
+   computer's CPU, measured or at most the full budget. POOL: number
+   workers, string1 the target in ms. */
+#define STR_DLGSYSINFO_BOTHOST_FMT          3169
+#define STR_DLGSYSINFO_BOTHOST_RUNNING      3170
+#define STR_DLGSYSINFO_BOTHOST_SYNCING_FMT  3171
+#define STR_DLGSYSINFO_BOTHOST_SAME_SERVER  3172
+#define STR_DLGSYSINFO_BOTHOST_OFF          3173
+#define STR_DLGSYSINFO_BOTHOST_CONNECTING   3174
+#define STR_DLGSYSINFO_BOTHOST_SLOTS_FMT    3175
+#define STR_DLGSYSINFO_BOTHOST_RATE_FMT     3176
+#define STR_DLGSYSINFO_BOTHOST_RATE_NONE    3177
+#define STR_DLGSYSINFO_BOTHOST_CPU_FMT      3178
+#define STR_DLGSYSINFO_BOTHOST_CPU_MAX_FMT  3179
+#define STR_DLGSYSINFO_BOTHOST_CPU_NONE     3180
+#define STR_DLGSYSINFO_BOTHOST_FREE_FMT     3181
+#define STR_DLGSYSINFO_BOTHOST_FREE_NONE    3182
+#define STR_DLGSYSINFO_BOTHOST_POOL_FMT     3183
+#define STR_DLGSYSINFO_BOTHOST_POOL_SINGLE_FMT 3184
 
 /* macOS native menu — App / File / Window menu items mirrored by
  * src/gui/sdl3/platform/mac_menubar.mm. Not used by the in-window menu. */

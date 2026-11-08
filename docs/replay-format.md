@@ -679,7 +679,7 @@ A 44-byte fixed part:
 
 | Bytes | Field | Notes |
 |---|---|---|
-| 0 | Version | `u8`, 1. A later version adds its fields after the ones below |
+| 0 | Version | `u8`, 2 (1 before the bots' hosts were added). A later version adds its fields after the ones below |
 | 1 | Flags | Bit 0: round end, written as the round's log closed. Bit 1: the round had bots, so bytes 21–42 hold values |
 | 2–5 | Round frames | `u32`, running 20 ms server frames of the round so far. 1500 is 0:30, 3000 is 1:00 |
 | 6–7 | Tick last | `u16` tenths of a ms. The server loop's last frame |
@@ -711,8 +711,30 @@ Then 13 bytes for each bot:
 | 5–8 | Overruns | `u32`. Its thinks over the target this round |
 | 9–12 | Thinks | `u32`. Its thinks this round |
 
-A bot that has no brain has zeros in its part. So a record is 44 bytes with no
-bots and 252 bytes with 16.
+A bot that has no brain has zeros in its part.
+
+Version 2 then adds where each bot's brain ran. First one byte for each bot,
+in the order of the bot parts:
+
+| Value | Meaning |
+|---|---|
+| 0 | The server's own process |
+| 1 to the host count | A Bot Host: its place in the host table below, from 1 |
+| 255 | Not known (a Bot Host whose name the server did not have) |
+
+Then the host table: a `u8` host count, 0 to 16, and for each host a `u8`
+name length, 0 to 31, and that many bytes of the name, with no terminator.
+The name is the one the lobby's Bot Host rows show; for the Bot Host inside
+a player's client it is the player's name. Each host is in the table once,
+in the order its first bot comes.
+
+So a version 2 record is 45 bytes with no bots, 44 + 14 x bots + 1 with
+every bot in the server's process, and at most 781 bytes (16 bots on 16
+hosts with 31-byte names). A version 1 record is 44 bytes with no bots and
+252 bytes with 16. A reader of a version 1 record, or of a version 2 record
+whose host bytes or host table are cut short, has every host not known; the
+Log Viewer then leaves the Host column blank. A host byte past the table
+reads as not known too.
 
 The counts and the peaks start again at each round start; the EWMA and last
 values are the server's running ones. Writing a record resets nothing, so the

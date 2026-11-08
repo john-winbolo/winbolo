@@ -414,6 +414,80 @@ int run_bot_host_remote_seat_stays_bot(void) {
     return 0;
 }
 
+/* A Bot Host seat's info names its host as the lobby's rows do, from the
+ * server's hook, before and after the host's first CMD_BOT_STATS report;
+ * with no name from the hook it keeps the report's name. */
+typedef struct {
+    int  calls;
+    BYTE seat;
+    bool answer;
+} BhHostNameLog;
+
+static bool bh_hook_host_name(void *ctx, BYTE seat, char *out, size_t cap) {
+    BhHostNameLog *log = (BhHostNameLog *)ctx;
+    log->calls++;
+    log->seat = seat;
+    if (!log->answer) return false;
+    SDL_strlcpy(out, "Lobby Row", cap);
+    return true;
+}
+
+int run_bot_host_info_host_name(void) {
+    BhFixture f;
+    BhHostNameLog log;
+    BotRemoteHooks hooks;
+    BotInfo info;
+    CmdBotStats st;
+
+    if (bh_fixture_setup(&f) != 0) {
+        bh_fixture_teardown(&f);
+        return 1;
+    }
+    UT_ASSERT(botManagerSetRemote(f.sim, 3));
+
+    /* No hook, no report: no name. */
+    UT_ASSERT(botManagerGetBotInfo(f.sim, 3, &info));
+    UT_ASSERT(info.remote && info.hostName[0] == '\0');
+
+    memset(&log, 0, sizeof(log));
+    memset(&hooks, 0, sizeof(hooks));
+    hooks.ctx = &log;
+    hooks.hostName = bh_hook_host_name;
+    botManagerSetRemoteHooks(f.sim, &hooks);
+
+    log.answer = true;
+    UT_ASSERT(botManagerGetBotInfo(f.sim, 3, &info));
+    UT_ASSERT(log.calls == 1 && log.seat == 3);
+    UT_ASSERT_MSG(strcmp(info.hostName, "Lobby Row") == 0,
+                  "before a report the name is \"%s\"", info.hostName);
+
+    memset(&st, 0, sizeof(st));
+    st.thinkCount = 40;
+    st.overrunCount = 2;
+    SDL_strlcpy(st.hostName, "Own Report", sizeof(st.hostName));
+    botManagerSetRemoteStats(f.sim, 3, &st);
+    UT_ASSERT(botManagerGetBotInfo(f.sim, 3, &info));
+    UT_ASSERT(info.thinkCount == 40 && info.overrunCount == 2);
+    UT_ASSERT_MSG(strcmp(info.hostName, "Lobby Row") == 0,
+                  "after a report the name is \"%s\"", info.hostName);
+
+    log.answer = false;
+    UT_ASSERT(botManagerGetBotInfo(f.sim, 3, &info));
+    UT_ASSERT(strcmp(info.hostName, "Own Report") == 0);
+
+    /* A seat the server runs asks nothing. */
+    log.calls = 0;
+    (void)botManagerGetBotInfo(f.sim, 1, &info);
+    UT_ASSERT(log.calls == 0);
+
+    f.sim->botMgr.bots[3].cs = NULL;
+    f.sim->botMgr.bots[3].brainPath[0] = '\0';
+    (void)botManagerClearRemote(f.sim, 3);
+    f.sim->botMgr.bots[3].held = false;
+    bh_fixture_teardown(&f);
+    return 0;
+}
+
 /* ================================================================
  * 9. The think budget: 20 ms less the serial part, 6 ms for the sim and
  *    2 ms of margin, shared across the runners, never more than the
