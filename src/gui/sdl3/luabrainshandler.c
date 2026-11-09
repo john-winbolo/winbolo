@@ -464,7 +464,10 @@ static int l_brain_log_print(lua_State *L) {
 
 
 /* The brain Lua sandbox is in src/bolo/brain_sandbox.c (brainSandboxApply,
- * brainSandboxLoadInitFile), where the unit tests can reach it. */
+ * brainSandboxRestrictJit, brainSandboxLoadInitFile), where the unit tests
+ * can reach it. Its path buffers are sized by its own constant. */
+BOLO_STATIC_ASSERT(LUA_BRAINS_PATH_MAX == BRAIN_SANDBOX_PATH_MAX,
+                   brain_path_max_matches_sandbox);
 
 
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
@@ -811,6 +814,11 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * Fewer, larger areas make that path rare on every platform. */
   (void)luaL_dostring(L,
     "if jit and jit.opt then jit.opt.start('sizemcode=256','maxmcode=4096') end\n");
+
+  /* Sandboxed: hide jit.opt and the rest now the host is done with them. */
+  if (!s_allow_unsafe) {
+    brainSandboxRestrictJit(L);
+  }
 #endif
 
   /* Load and execute the brain script.

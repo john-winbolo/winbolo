@@ -11,7 +11,9 @@
  *      require("ffi"), "string.buffer", "jit.util" and "jit.profile" all
  *      fail, also when the host had loaded ffi before the sandbox;
  *      package.preload and the registry's _PRELOAD are empty; jit.attach
- *      is gone and jit.off and jit.opt are kept
+ *      is gone and jit.off and jit.opt are kept; after
+ *      brainSandboxRestrictJit only jit.on / off / status and the version
+ *      fields are left, and require("jit.opt") fails
  * run_brain_sandbox_hostile_bytecode_init
  *      an init.lua that is precompiled bytecode is refused when sandboxed,
  *      and loads when not (so the file is good bytecode)
@@ -174,6 +176,23 @@ int run_brain_sandbox_hostile_native_preloads(void) {
         "  assert(jit.attach == nil, 'jit.attach is still there')\n"
         "  assert(type(jit.off) == 'function', 'jit.off was removed')\n"
         "  assert(type(jit.opt) == 'table', 'jit.opt was removed')\n"
+        "end\n");
+
+    /* The host makes its own jit.opt calls after the sandbox, then cuts the
+     * table down to what a brain may use. */
+    brainSandboxRestrictJit(vm.L);
+    BSH_RUN_OK(vm.L,
+        "if jit then\n"
+        "  for _, name in ipairs({'opt', 'flush', 'attach', 'util', 'profile'}) do\n"
+        "    assert(jit[name] == nil, 'jit.' .. name .. ' is still there')\n"
+        "  end\n"
+        "  for _, name in ipairs({'on', 'off', 'status'}) do\n"
+        "    assert(type(jit[name]) == 'function', 'jit.' .. name .. ' was removed')\n"
+        "  end\n"
+        "  assert(type(jit.version) == 'string', 'jit.version was removed')\n"
+        "  assert(require('jit') == jit, 'require(\"jit\") is another table')\n"
+        "  assert(not pcall(require, 'jit.opt'), 'require(\"jit.opt\") loaded')\n"
+        "  jit.off() jit.on()\n"
         "end\n");
 
     /* The registry's own copy, which the brain cannot reach but which must

@@ -110,6 +110,11 @@ say("has_require", type(require) == "function")
 say("has_loadfile", type(loadfile) == "function")
 if jit then
   say("has_jit_off", type(jit.off) == "function")
+  say("has_jit_on", type(jit.on) == "function")
+  say("has_jit_status", type(jit.status) == "function")
+  say("no_jit_opt", jit.opt == nil and not pcall(require, "jit.opt"))
+  say("no_jit_flush", jit.flush == nil)
+  say("no_jit_attach", jit.attach == nil)
   say("has_bit", pcall(require, "bit"))
 end
 
@@ -261,6 +266,9 @@ def main():
                         help="ticks GoalHunter plays")
     parser.add_argument("--build", type=Path, default=REPO / "build")
     args = parser.parse_args()
+    # The hosts are started from another folder, so a relative path would
+    # no longer name them.
+    args.build = args.build.resolve()
 
     headless = find_headless(args.build)
     if headless is None:
