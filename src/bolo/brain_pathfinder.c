@@ -1151,6 +1151,13 @@ void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int 
   if (!pf || !pf->map) return;
   memset(pf->expand_grid, 0, sizeof(pf->expand_grid));
   if (radius <= 0 || start <= 0) return;
+  /* tail_pass indexes its buckets with the distance plus a step. A negative
+   * step would index before them, and past TAIL_MAXD a step reaches nothing
+   * more, so nothing a working step does changes here. */
+  if (neutral_step < 0) neutral_step = 0;
+  if (neutral_step > TAIL_MAXD + 1) neutral_step = TAIL_MAXD + 1;
+  if (water_step < 0) water_step = 0;
+  if (water_step > TAIL_MAXD + 1) water_step = TAIL_MAXD + 1;
   if (deep_margin > 0) {
     if (deep_margin > 254) deep_margin = 254;
     /* Rebuilt every time rather than cached: pf->map is the brain's own fogged
@@ -3253,6 +3260,7 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
   if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
   if (out_next_x) *out_next_x = -1;
   if (out_next_y) *out_next_y = -1;
+  if (sx < 0 || sx > 255 || sy < 0 || sy > 255) return 0;
 
   int order[DIJKSTRA_NUM_SLATES];
   int n = slate_indices_by_recency(pf, kind, order);

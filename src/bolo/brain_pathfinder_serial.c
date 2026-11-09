@@ -379,7 +379,10 @@ int brainPathfinderDeserialize(BrainPathfinder *pf,
         sl->version = sh.version;
         sl->started_tick = sh.started_tick;
         sl->completed_tick = sh.completed_tick;
-        sl->open_count = sh.open_count;
+        /* The heap is not serialized, so nothing is open whatever the blob
+         * says. A blob is a Lua string a brain can edit, and this count is
+         * what slate_heap_pop walks the heap by. */
+        sl->open_count = 0;
 
         uint32_t hasData;
         if (!curReadU32(&c, &hasData)) return 0;

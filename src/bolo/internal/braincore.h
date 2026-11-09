@@ -294,6 +294,27 @@ void brainCoreSetLogReleaseHook(void (*fn)(void));
 void brainCoreReleaseLogFiles(void);
 
 /*********************************************************
+ *NAME:          brainCoreSetHostDebugMode
+ *PURPOSE:
+ *  Says whether the host runs this brain in debug mode,
+ *  which alone lets a crash write files. It is kept where
+ *  the brain cannot write it, unlike its BRAIN_DEBUG_MODE
+ *  and DEBUG_SESSION_DIR globals, which the crash writer
+ *  does not trust on their own.
+ *
+ *ARGUMENTS:
+ *  L  - Lua state
+ *  on - True for a debug host
+ *********************************************************/
+void brainCoreSetHostDebugMode(lua_State *L, bool on);
+
+/* Read or write a global without running a metatable the brain set on _G. Get
+ * pushes the value; Set pops it. For host code outside any lua_pcall, where an
+ * error from such a metatable would end the program. */
+void brainCoreGetGlobalRaw(lua_State *L, const char *name);
+void brainCoreSetGlobalRaw(lua_State *L, const char *name);
+
+/*********************************************************
  *NAME:          brainCoreRegisterPathfinder
  *PURPOSE:
  *  Registers cpf_* Lua globals backed by a per-brain

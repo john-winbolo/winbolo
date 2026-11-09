@@ -362,8 +362,14 @@ static int do_disk_load(const char *path) {
     for (size_t i = 0; i < n; i++) {
         for (int a = 0; a < STAMP_N_AIMS; a++) {
             decode_path(&buf[i].aim[a]);
+            if (buf[i].aim[a].n_tiles > STAMP_MAX_TILES) {
+                free(buf); return 0;
+            }
         }
         decode_path(&buf[i].pill_to_tank);
+        if (buf[i].pill_to_tank.n_tiles > STAMP_MAX_TILES) {
+            free(buf); return 0;
+        }
     }
 
     s_entries    = buf;
@@ -1084,6 +1090,11 @@ static int l_scan_c(lua_State *L) {
     int   app_mx     = (int)luaL_checkinteger(L, 10);
     int   app_my     = (int)luaL_checkinteger(L, 11);
     int   no_builder = lua_toboolean(L, 12);
+    /* The pill's tile is the origin of every stamp read: off the map there
+     * is no pill to scan for, the same answer as no stamps loaded. */
+    if (pmx < 0 || pmx > 255 || pmy < 0 || pmy > 255) {
+        lua_pushnil(L); return 1;
+    }
 
     /* Per-call HP-dependent neighbor-bonus tunables (args 13..19).
      * Stack-local so concurrent scans on different brains don't trample
