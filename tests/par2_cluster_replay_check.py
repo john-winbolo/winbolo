@@ -38,6 +38,9 @@ ticks of the incident.  Prints a table; exits 0 if it could parse everything.
 import re
 import sys
 from pathlib import Path
+# session_log_io.py sits beside this file; find it from any folder and
+# under python -I, which leaves the script's folder off sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from session_log_io import log_exists, read_log_text
 
 HERE = Path(__file__).resolve().parent

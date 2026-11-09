@@ -2159,15 +2159,15 @@ static void hostTick(void) {
         /* The budget a new bot would get: one more than the bots this host
          * runs now. The brain picks its tier from this budget; the budget
          * does not depend on the tier. */
-        uint64_t nowMs = SDL_GetTicks();
+        uint64_t tickMs = SDL_GetTicks();
         if (hostCpuBudgetMilli == BOT_HOST_CPU_MILLI_UNKNOWN ||
-            nowMs - hostCpuBudgetAtMs >= BOT_HOST_BUDGET_EVERY_MS) {
+            tickMs - hostCpuBudgetAtMs >= BOT_HOST_BUDGET_EVERY_MS) {
             double newBotMs = botRunnerTargetMs(serialMsEwma, runners,
                                                 poolUsed() + 1);
             hostCpuBudgetMilli = botHostCpuMilliBudget(
                 newBotMs, (double)BOT_HOST_TICK_MS,
                 SDL_GetNumLogicalCPUCores());
-            hostCpuBudgetAtMs = nowMs;
+            hostCpuBudgetAtMs = tickMs;
         }
     }
     for (i = 0; i < active; i++) {
@@ -2318,6 +2318,7 @@ static void printUsage(const char *prog) {
             "  --threads N     brain threads (default: one per CPU core)\n"
             "  --key KEY       the servers' -bothostkey, when they have one\n"
             "  --name NAME     the name the server operators and players see\n"
+            "                  (default: Bot Host)\n"
             "  --cachedir DIR  where the servers' brain files are kept\n"
             "                  (default: bothost_cache next to this program)\n"
             "  --record-min-free-gb N  record the bots of a -brain-debug\n"
@@ -2414,10 +2415,9 @@ static bool parseArgs(int argc, char **argv) {
         return false;
     }
     if (optName[0] == '\0') {
-        const char *h = SDL_getenv("COMPUTERNAME");
-        if (h == NULL || h[0] == '\0') h = SDL_getenv("HOSTNAME");
-        SDL_strlcpy(optName, (h != NULL && h[0] != '\0') ? h : "Bot Host",
-                    sizeof(optName));
+        /* Every player sees the name, so the computer's own name is used
+         * only when the owner gives it with --name. */
+        SDL_strlcpy(optName, "Bot Host", sizeof(optName));
     }
     return true;
 }
@@ -2795,7 +2795,12 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     {
         /* Brain recordings for a -brain-debug server, as the Bot Host
          * program makes them: print2 per block, no jsonl log. The settings
-         * are the program's own, so they go back when the host stops. */
+         * are the program's own, so they go back when the host stops.
+         * Note: these luaBrains settings are for the whole process, not
+         * for this host alone. While the host runs they also apply to any
+         * other bots the client runs in its own process. The client runs
+         * one Bot Host at a time; if other bots must ever record in
+         * another way at the same time, these need per-host options. */
         static const HostRecIo io = { recIoSendEvent, recIoBulkIdle,
                                       recIoBulkSend };
         char recRoot[600];

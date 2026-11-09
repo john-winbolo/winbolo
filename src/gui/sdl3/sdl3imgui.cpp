@@ -11375,8 +11375,9 @@ void sdl3ImguiShowSysInfo(bool open) {
         if (open) {
             if (!s_popSysInfo.open) {
                 sysInfoGraphReset();
-                popOutCreate(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600,
-                             SDL_WINDOW_RESIZABLE);
+                popOutCreate(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE),
+                             SYSINFO_PANEL_W, 600, SDL_WINDOW_RESIZABLE);
+                popOutFixWidth(&s_popSysInfo);
             }
         } else {
             if (s_popSysInfo.open) popOutHide(&s_popSysInfo);

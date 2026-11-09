@@ -297,6 +297,9 @@ static bool readerTake(BrainPackReader *r, const uint8_t *p, size_t n,
             r->have += (uint32_t)k;
             pos += k;
             if (r->have < r->size) continue;
+            /* A refused file (false) is left out and the stream goes on:
+             * the host asks for each file it still needs one at a time
+             * (brain_pack_bad_hash). */
             if (fn != NULL) (void)fn(ctx, r->file, r->body, r->size);
             free(r->body);
             r->body = NULL;

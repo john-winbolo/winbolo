@@ -76,6 +76,9 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+# session_log_io.py sits beside this file; find it from any folder and
+# under python -I, which leaves the script's folder off sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from session_log_io import log_exists, read_log_text
 
 try:

@@ -874,6 +874,16 @@ void brainRecordCompressLogsAsync(const char *dir) {
     /* The print2 writer keeps its files open; close them first. */
     brainCoreReleaseLogFiles();
     int slot = -1;
+    /* A finished thread gives back its slot first. Without this every slot
+     * stays taken after eight folders, and each new folder then waits on
+     * the tick thread for slot 0's gzip, which can be the newest one. */
+    for (int i = 0; i < LOGZ_MAX_JOBS; i++) {
+        if (g_logzJobs[i].th != NULL &&
+            SDL_GetAtomicInt(&g_logzJobs[i].done) != 0) {
+            SDL_WaitThread(g_logzJobs[i].th, NULL);
+            g_logzJobs[i].th = NULL;
+        }
+    }
     for (int i = 0; i < LOGZ_MAX_JOBS; i++) {
         if (g_logzJobs[i].th == NULL) { slot = i; break; }
     }
