@@ -6252,6 +6252,11 @@ set(_unit_test_names
     bot_host_place_keep_bad_source
     bot_host_place_keep_no_return
     bot_host_place_keep_oil_rig
+    bot_host_place_keep_scaled_wait
+    bot_host_place_keep_step_min_old
+    bot_host_place_keep_free_batch
+    bot_host_place_keep_batch_no_target
+    bot_host_place_keep_batch_off
     bot_host_overrun_window_rate
     bot_host_overrun_step_spacing
     bot_host_overrun_steady_moves_one
