@@ -263,8 +263,10 @@ turning scripts off altogether:
   one above: Off, Allow this session or Allow and keep. Greyed while scripts
   are off altogether.
 
-All three default to allow, which the desktop calls Allow this session. Off
-refuses every script a player sends, and
+All three default to off, because a script a player sends runs on the server's
+computer: turn it on only for players you trust. A desktop preferences file
+saved before this default changed keeps the value it holds. Off refuses every
+script a player sends, and
 strips the script from an uploaded map: a map whose file sits in the server's
 map uploads directory attaches neither a packed scenario nor a loose script
 beside it, the console names the upload that was turned down, and the map
@@ -576,8 +578,8 @@ happens to it:
 
 | Policy | A script a player sends | An uploaded map's own script |
 |---|---|---|
-| off | Refused before any bytes are sent. | Not run. |
-| allow (the default) | Kept for the session, in the Session directory. | Run. |
+| off (the default) | Refused before any bytes are sent. | Not run. |
+| allow | Kept for the session, in the Session directory. | Run. |
 | persist | Kept for good, in the Scripts directory. | Run. |
 
 It is a policy of its own, apart from the one for map uploads.
