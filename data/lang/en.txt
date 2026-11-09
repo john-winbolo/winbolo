@@ -3143,6 +3143,11 @@ STR_LV_BOTHOST_RULE_NORMAL=normal
 STR_LV_BOTHOST_RULE_EMERGENCY=emergency
 STR_LV_BOTHOST_RULE_TRIAL=trial
 
+# The dedicated server's newswire lines for a bot held because neither the
+# server nor a Bot Host has a slot for it (-bothost-enforce-server-limit)
+STR_BOTHOST_BOT_PAUSED={player} is paused: no room to run its bot
+STR_BOTHOST_BOT_RUNS_AGAIN={player} runs again
+
 # The Log Viewer's Chat panel: title, empty line, team and private notes
 STR_LV_WIN_CHAT=Chat
 STR_LV_CHAT_NONE=No chat messages yet.

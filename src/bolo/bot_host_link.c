@@ -378,7 +378,7 @@ double botHostPlaceEffSlots(int slots, int smallSlots, double bias) {
 
 static bool placeTakes(const BotHostPlaceHost *h) {
     if (!h->open || h->slots <= 0) return false;
-    return h->unlimited || h->bots < h->slots;
+    return (h->unlimited && !h->capped) || h->bots < h->slots;
 }
 
 /* True when a host other than skip and not unlimited has room for one more
@@ -511,6 +511,37 @@ int botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
     if (hosts == NULL || n <= 0) return -1;
     return placePickSkip(hosts, n, smallSlots, bias, lag, skip, false,
                          NULL);
+}
+
+bool botHostServerFallBackHolds(bool enforce, int serverBots,
+                                int serverSlots) {
+    return enforce && serverBots >= serverSlots;
+}
+
+int botHostPlaceHeldTarget(const BotHostPlaceHost *hosts, int n,
+                           int smallSlots, double bias,
+                           const BotHostPlaceLag *lag) {
+    if (hosts == NULL || n <= 0) return -1;
+    if (hosts[0].slots > 0 && hosts[0].bots < hosts[0].slots) return 0;
+    if (n < 2) return -1;
+    return placePickSkip(hosts, n, smallSlots, bias, lag, 0, true, NULL);
+}
+
+int botHostHeldOldest(const bool *held, const uint32_t *since, int n,
+                      uint32_t now) {
+    int i, best = -1;
+    uint32_t bestAge = 0;
+    if (held == NULL || since == NULL) return -1;
+    for (i = 0; i < n; i++) {
+        uint32_t age;
+        if (!held[i]) continue;
+        age = now - since[i];
+        if (best < 0 || age > bestAge) {
+            best = i;
+            bestAge = age;
+        }
+    }
+    return best;
 }
 
 bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,

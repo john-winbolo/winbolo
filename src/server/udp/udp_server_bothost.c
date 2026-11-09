@@ -167,6 +167,15 @@ static bool botHostTrailReady;
  * between good hosts to even them out. Off: bots stay where they run
  * well (botHostPlaceRebalanceKeep). */
 static bool botHostSpreadEven;
+/* -bothost-enforce-server-limit (on by default): the server runs no more
+ * in-process bots than its own slots. A bot with no slot there and none on
+ * a good Bot Host is held (botManagerHoldNoRoom) until a place has one.
+ * botHostHeldSince: the tick each held bot was held, so the one held
+ * longest runs again first. botHostHeldTold: the players were told the
+ * bot is paused, so they are told when it runs again. */
+static bool botHostEnforceServerLimit = true;
+static uint32_t botHostHeldSince[MAX_TANKS];
+static bool botHostHeldTold[MAX_TANKS];
 /* The tick each place last gave a bot for being bad (the spread). */
 static uint32_t botHostBadGaveTick[1 + MAX_BOT_HOSTS];
 static bool botHostBadGave[1 + MAX_BOT_HOSTS];
@@ -2074,12 +2083,17 @@ static void botSeatReset(int s, bool noReturn) {
     seat->noReturn = noReturn;
 }
 
+static int botHostServerSlots(ServerSim *sim);
+static void botHostHoldSeat(ServerSim *sim, int s, int from,
+                            const char *why);
+
 /* A seat leaves its host and its brain comes back in-process. */
 static void botSeatFallBack(ServerSim *sim, int s, const char *why,
                             bool tellHost) {
     BotHostSeat *seat = &udpServer.botSeats[s];
     bool wasRemote;
     const char *hostName = "?";
+    int fromPlace = seat->host >= 0 ? seat->host + 1 : -1;
 
     if (seat->state == BOT_SEAT_LOCAL) return;
     if (seat->host >= 0) hostName = udpServer.botHosts[seat->host].name;
@@ -2098,6 +2112,19 @@ static void botSeatFallBack(ServerSim *sim, int s, const char *why,
      * counts itself as voluntary after this). */
     botHostOvrMovesNote(&botHostOvrMv, s, BOT_HOST_MOVE_FORCED,
                         udpServer.tickCount);
+    if (wasRemote &&
+        botHostServerFallBackHolds(botHostEnforceServerLimit,
+                                   serverBotHostServerBots(sim),
+                                   botHostServerSlots(sim))) {
+        /* -bothost-enforce-server-limit: the server has no slot for it. It
+         * is held until a place has one (botHostHeldStep). */
+        char why2[96];
+        snprintf(why2, sizeof(why2), "back from Bot Host \"%s\" (%s), and "
+                 "the server's %d slots are full", hostName, why,
+                 botHostServerSlots(sim));
+        botHostHoldSeat(sim, s, fromPlace, why2);
+        return;
+    }
     if (wasRemote && !botManagerClearRemote(sim, (BYTE)s)) {
         fprintf(stderr, "[bothost] bot %d held: its brain could not be "
                         "built in-process\n", s);
@@ -2644,22 +2671,28 @@ void serverBindBotSlot(ServerSim *sim, const struct sockaddr_in *fromAddr,
     WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] bot %d bound from %s", s, addr);
 }
 
+static void botHostHeldRunsAgain(ServerSim *sim, int s);
+
 bool serverBotSlotOnInput(ServerSim *sim, int slot) {
     BotHostSeat *seat = &udpServer.botSeats[slot];
     if (seat->state == BOT_SEAT_REMOTE) return true;
     if (seat->state != BOT_SEAT_BOUND) return false;
-    if (!botManagerSetRemote(sim, (BYTE)slot)) {
-        botSeatFallBack(sim, slot, "seat cannot move", true);
-        return false;
+    {
+        bool wasHeld = botManagerIsHeldNoRoom(sim, (BYTE)slot);
+        if (!botManagerSetRemote(sim, (BYTE)slot)) {
+            botSeatFallBack(sim, slot, "seat cannot move", true);
+            return false;
+        }
+        seat->state = BOT_SEAT_REMOTE;
+        seat->sinceTick = udpServer.tickCount;
+        seat->lastPollTick = udpServer.tickCount;
+        fprintf(stderr, "[bothost] bot %d \"%s\" now thinks on Bot Host "
+                        "\"%s\" (game tick %u)\n",
+                slot, botSeatName(sim, slot),
+                seat->host >= 0 ? udpServer.botHosts[seat->host].name : "?",
+                (unsigned)serverSimGetTick(sim));
+        if (wasHeld) botHostHeldRunsAgain(sim, slot);
     }
-    seat->state = BOT_SEAT_REMOTE;
-    seat->sinceTick = udpServer.tickCount;
-    seat->lastPollTick = udpServer.tickCount;
-    fprintf(stderr, "[bothost] bot %d \"%s\" now thinks on Bot Host \"%s\" "
-                    "(game tick %u)\n",
-            slot, botSeatName(sim, slot),
-            seat->host >= 0 ? udpServer.botHosts[seat->host].name : "?",
-            (unsigned)serverSimGetTick(sim));
     return true;
 }
 
@@ -3238,6 +3271,8 @@ int serverBotHostServerBots(ServerSim *sim) {
         if (udpServer.botSeats[s].state != BOT_SEAT_LOCAL) continue;
         if (!botManagerIsBot(sim, (BYTE)s)) continue;
         if (botManagerIsRemote(sim, (BYTE)s)) continue;
+        /* A bot held for no room runs nowhere. */
+        if (botManagerIsHeldNoRoom(sim, (BYTE)s)) continue;
         n++;
     }
     return n;
@@ -3634,7 +3669,10 @@ static void botHostOvrApply(BotHostPlaceHost *hosts, bool log) {
             if (i == 0) hosts[0].unlimited = false;
         }
         if (!hosts[i].open) continue;
-        if (hosts[i].bots >= hosts[i].slots && !hosts[i].unlimited) continue;
+        if (hosts[i].bots >= hosts[i].slots &&
+            (!hosts[i].unlimited || hosts[i].capped)) {
+            continue;
+        }
         botHostOvrSetFallback(i);
         if (botHostOverrunMayTake(&botHostOvr[i], cfg, hosts[i].bots,
                                   botHostOvrFree(i), &rep)) {
@@ -3886,7 +3924,8 @@ static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
                                              &oh[i].ratePct);
         oh[i].bots = bots[i];
         oh[i].mayTake = a->open && a->slots > 0 &&
-                        (a->unlimited || a->bots < a->slots);
+                        ((a->unlimited && !a->capped) ||
+                         a->bots < a->slots);
         oh[i].lagMs = a->lagMs;
         oh[i].slots = a->slots;
     }
@@ -4065,6 +4104,16 @@ void transportUdpServerSetBotHostSpreadEven(bool on) {
     }
 }
 
+void transportUdpServerSetBotHostEnforceServerLimit(bool on) {
+    botHostEnforceServerLimit = on;
+    fprintf(stderr, "[bothost] placement: the server's bot limit "
+                    "(-bothost-enforce-server-limit %d): %s\n", on ? 1 : 0,
+            on ? "the server runs no more bots than its own slots; a bot "
+                 "with no slot there or on a good Bot Host is held"
+               : "a bot back from a Bot Host runs on the server past its "
+                 "slots");
+}
+
 void transportUdpServerSetBotHostNoMove(bool on) {
     botHostNoMoveInit(&botHostNoMove, on);
     if (on) {
@@ -4214,6 +4263,179 @@ static void botHostPlaceGiveBatch(ServerSim *sim,
             cfg->stepSecs);
 }
 
+/* A hold or a resume (BOTHOST_DECISION_HOLD or _RESUME) for the round log.
+ * host: where the bot was (a hold) or where it goes (a resume), as
+ * botHostRecDecision counts it; toHost: where it goes, -1 for a hold. The
+ * record carries the free CPU check of the server for a hold (the place
+ * with no slot) and of toHost for a resume. */
+static void botHostRecHeld(uint8_t decision, int host, int toHost, int seat,
+                           int bots, const char *reason) {
+    const BotHostOverrunCfg *cfg = botHostOvrConfig();
+    BotHostOverrunReport rep;
+    int check = toHost >= 0 ? toHost : 0;
+    if (!botHostRecOn() || check > MAX_BOT_HOSTS) return;
+    botHostOvrEnsure();
+    botHostOvrSetFallback(check);
+    memset(&rep, 0, sizeof(rep));
+    (void)botHostOverrunMayTake(&botHostOvr[check], cfg, bots,
+                                botHostOvrFree(check), &rep);
+    botHostRecDecision(host < 0 ? 0 : host, decision, &rep, seat, toHost,
+                       reason, NULL);
+}
+
+/* The players and the spectators are told, and the round log gets the
+ * line as a server message. */
+static void botHostHeldTell(ServerSim *sim, int s, langid id,
+                            const char *english) {
+    const char *args[1];
+    char text[128];
+    char pstr[256];
+    size_t len;
+    args[0] = botSeatName(sim, s);
+    serverSendServerMessage(sim, id, 1, args);
+    if (!logIsRecording()) return;
+    snprintf(text, sizeof(text), english, botSeatName(sim, s));
+    len = strlen(text);
+    if (len > 255) len = 255;
+    pstr[0] = (char)(unsigned char)len;
+    memcpy(pstr + 1, text, len);
+    logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
+}
+
+/* Holds bot s: no place has a slot for it. from is the place it ran on
+ * (0 the server, h + 1 Bot Host h). */
+static void botHostHoldSeat(ServerSim *sim, int s, int from,
+                            const char *why) {
+    if (!botManagerHoldNoRoom(sim, (BYTE)s)) return;
+    botHostHeldSince[s] = udpServer.tickCount;
+    botHostHeldTold[s] = false;
+    fprintf(stderr, "[bothost] bot %d \"%s\" held: %s; its brain does not "
+                    "run and its tank stands still until a place has a "
+                    "slot (game tick %u)\n",
+            s, botSeatName(sim, s), why, (unsigned)serverSimGetTick(sim));
+    WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] bot %d held (%s)", s, why);
+    botHostRecHeld(BOTHOST_DECISION_HOLD, from, -1, s,
+                   serverBotHostServerBots(sim), "no room");
+}
+
+/* A held bot runs again (on the server, or a Bot Host took it). */
+static void botHostHeldRunsAgain(ServerSim *sim, int s) {
+    if (botHostHeldTold[s]) {
+        botHostHeldTell(sim, s, STR_BOTHOST_BOT_RUNS_AGAIN, "%s runs again");
+    }
+    botHostHeldTold[s] = false;
+}
+
+/* -bothost-enforce-server-limit, each placement step: a server over its
+ * own slots with no good Bot Host to take a bot holds one; else the bot
+ * held longest runs again when a place has a slot (the server first, then
+ * the good Bot Hosts), one bot a step. raw: the slots as the places offer
+ * them; hosts: the table the spread uses (the lowered limits, the bad
+ * places). True when it held or placed a bot. */
+static bool botHostHeldStep(ServerSim *sim, const BotHostPlaceHost *raw,
+                            const BotHostPlaceHost *hosts, bool running,
+                            bool anyPending) {
+    bool held[MAX_TANKS], any = false;
+    int s, tgt, n = 1 + MAX_BOT_HOSTS;
+
+    for (s = 0; s < MAX_TANKS; s++) {
+        held[s] = udpServer.botSeats[s].state == BOT_SEAT_LOCAL &&
+                  botManagerIsHeldNoRoom(sim, (BYTE)s);
+        if (held[s]) {
+            /* A held seat did not come back from a host by a decision: it
+             * may go to one at once. */
+            udpServer.botSeats[s].noReturn = false;
+            any = true;
+        }
+    }
+
+    tgt = botHostPlaceHeldTarget(hosts, n, botHostSmallSlots,
+                                 botHostSmallBias, &botHostLag);
+    if (raw[0].bots > raw[0].slots) {
+        /* Over its slots (they went down, or a bot was added). While a good
+         * Bot Host can take a bot, or an offer waits for its answer, the
+         * spread moves one there. Else the last bot that may move is held,
+         * else the last one. */
+        int pick = -1;
+        if (tgt >= 1 || anyPending) return false;
+        for (s = MAX_TANKS - 1; s >= 0; s--) {
+            if (udpServer.botSeats[s].state != BOT_SEAT_LOCAL) continue;
+            if (!botManagerIsBot(sim, (BYTE)s)) continue;
+            if (botManagerIsRemote(sim, (BYTE)s) || held[s]) continue;
+            if (udpServer.clients[s].connected) continue;
+            if (botSeatMayMove(sim, s, running)) {
+                pick = s;
+                break;
+            }
+            if (pick < 0) pick = s;
+        }
+        if (pick >= 0) {
+            char why[96];
+            snprintf(why, sizeof(why), "the server runs %d bots for its %d "
+                     "slots and no Bot Host has a slot",
+                     raw[0].bots, raw[0].slots);
+            botHostHoldSeat(sim, pick, 0, why);
+            return true;
+        }
+        return false;
+    }
+    if (!any) return false;
+
+    if (tgt >= 1 && anyPending) {
+        /* One offer at a time: the host's answer first. */
+        return false;
+    }
+    if (tgt >= 0) {
+        /* A Bot Host runs only brains whose files it was sent. */
+        for (s = 0; s < MAX_TANKS; s++) {
+            if (held[s] && tgt >= 1 && !botSeatLocalOfferable(sim, s)) {
+                held[s] = false;
+            }
+        }
+        s = botHostHeldOldest(held, botHostHeldSince, MAX_TANKS,
+                              udpServer.tickCount);
+        if (s >= 0) {
+            uint32_t secs = (udpServer.tickCount - botHostHeldSince[s]) / 50u;
+            if (tgt == 0) {
+                fprintf(stderr, "[bothost] bot %d \"%s\" resumed on the "
+                                "server: it has a slot (%d/%d slots used, "
+                                "held %u s)\n",
+                        s, botSeatName(sim, s), hosts[0].bots,
+                        hosts[0].slots, (unsigned)secs);
+                botHostRecHeld(BOTHOST_DECISION_RESUME, 0, 0, s,
+                               hosts[0].bots, "room on the server");
+                if (botManagerResumeHeld(sim, (BYTE)s)) {
+                    botHostHeldRunsAgain(sim, s);
+                } else {
+                    fprintf(stderr, "[bothost] bot %d held: its brain could "
+                                    "not be built in-process\n", s);
+                }
+                return true;
+            }
+            fprintf(stderr, "[bothost] bot %d \"%s\" resumed: Bot Host "
+                            "\"%s\" has a slot (held %u s)\n",
+                    s, botSeatName(sim, s), udpServer.botHosts[tgt - 1].name,
+                    (unsigned)secs);
+            botHostRecHeld(BOTHOST_DECISION_RESUME, tgt, tgt, s,
+                           hosts[tgt].bots, "room on a Bot Host");
+            if (botSeatOffer(sim, s, tgt - 1, "a held bot")) return true;
+        }
+    }
+    /* No place has a slot: the players are told once. */
+    for (s = 0; s < MAX_TANKS; s++) {
+        if (udpServer.botSeats[s].state != BOT_SEAT_LOCAL) continue;
+        if (!botManagerIsHeldNoRoom(sim, (BYTE)s) || botHostHeldTold[s]) {
+            continue;
+        }
+        botHostHeldTold[s] = true;
+        fprintf(stderr, "[bothost] bot %d \"%s\" is paused: no room to "
+                        "run its bot\n", s, botSeatName(sim, s));
+        botHostHeldTell(sim, s, STR_BOTHOST_BOT_PAUSED,
+                        "%s is paused: no room to run its bot");
+    }
+    return false;
+}
+
 /* One placement move: index 0 of the host table is the server itself, index
  * h + 1 is Bot Host h. */
 static void botHostPlaceStep(ServerSim *sim, ServerState st) {
@@ -4270,6 +4492,8 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     hosts[0].bots = serverBotHostServerBots(sim);
     hosts[0].open = true;
     hosts[0].unlimited = true;
+    /* -bothost-enforce-server-limit: no bot past its slots after all. */
+    hosts[0].capped = botHostEnforceServerLimit;
     hosts[0].lagMs = 0.0;  /* the server's own process */
     for (s = 0; s < MAX_TANKS; s++) {
         BotHostSeat *seat = &udpServer.botSeats[s];
@@ -4283,8 +4507,10 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         if (seat->state == BOT_SEAT_PENDING) anyPending = true;
         if (seat->state == BOT_SEAT_LOCAL) {
             /* The spread looks only at a bot that may still be placed
-             * (-bothost-nomove). */
+             * (-bothost-nomove). A held bot runs nowhere: the held step
+             * finds it a place. */
             if (botSeatLocalOfferable(sim, s) &&
+                !botManagerIsHeldNoRoom(sim, (BYTE)s) &&
                 botSeatMayMove(sim, s, running) &&
                 botHostNoMoveMayPlace(&botHostNoMove, s, running,
                                       udpServer.tickCount,
@@ -4351,11 +4577,15 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
             return;
         }
     }
-    if (!anyHost) return;
 
     /* While the game runs, which places run their bots badly. In the lobby
      * no bot thinks, so every place counts as good there. */
     if (running) botHostPlaceMarkBad(hosts, badWhy, badShort, badRate);
+    if (botHostEnforceServerLimit &&
+        botHostHeldStep(sim, raw, hosts, running, anyPending)) {
+        return;
+    }
+    if (!anyHost) return;
     if (!botHostPlaceRebalanceKeep(hosts, 1 + MAX_BOT_HOSTS,
                                    botHostSmallSlots, botHostSmallBias,
                                    &botHostLag, botHostSpreadEven, &from,

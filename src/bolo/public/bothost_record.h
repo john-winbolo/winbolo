@@ -120,9 +120,14 @@ enum {
                                         * to a Bot Host */
   BOTHOST_DECISION_SPREAD_MOVE    = 9, /* the spread moved a bot off a Bot
                                         * Host */
-  BOTHOST_DECISION_NO_BETTER      = 10 /* the host is over the target rate,
-                                        * but no bot may move to a better
-                                        * host */
+  BOTHOST_DECISION_NO_BETTER      = 10, /* the host is over the target
+                                         * rate, but no bot may move to a
+                                         * better host */
+  BOTHOST_DECISION_HOLD           = 11, /* a bot was held: no place has a
+                                         * slot for it
+                                         * (-bothost-enforce-server-limit) */
+  BOTHOST_DECISION_RESUME         = 12  /* a held bot runs again where a
+                                         * place has a slot */
 };
 
 /* The rule of a move (DECISION rule). */

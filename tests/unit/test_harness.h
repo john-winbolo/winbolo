@@ -937,6 +937,10 @@ int run_bot_host_place_keep_batch_server_room(void);
 int run_bot_host_place_keep_batch_no_reading(void);
 int run_bot_host_place_keep_batch_slot_limit(void);
 int run_bot_host_place_keep_batch_cpu_limit(void);
+int run_bot_host_enforce_fall_back_holds(void);
+int run_bot_host_enforce_host_resumes(void);
+int run_bot_host_enforce_leave_resumes(void);
+int run_bot_host_enforce_off_keeps_fall_back(void);
 /* The overrun check of the bot placement, the free CPU percent and the
  * log_BotHostData payload (test_bot_host_overrun.c). */
 int run_bot_host_overrun_window_rate(void);

@@ -3791,6 +3791,11 @@
 #define STR_LV_BOTHOST_RULE_EMERGENCY            3921
 #define STR_LV_BOTHOST_RULE_TRIAL                3922
 
+/* The dedicated server's newswire lines for a bot held because neither the
+ * server nor a Bot Host has a slot for it (-bothost-enforce-server-limit) */
+#define STR_BOTHOST_BOT_PAUSED                   3923
+#define STR_BOTHOST_BOT_RUNS_AGAIN               3924
+
 /* The Log Viewer's Chat panel: title, empty line, team and private notes */
 #define STR_LV_WIN_CHAT                          3100
 #define STR_LV_CHAT_NONE                         3101

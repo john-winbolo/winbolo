@@ -286,6 +286,30 @@ bot_host_link.c). A layout that is lopsided but good stays as it is:
 - `-bothost-spread-even` brings back the old even spread: bots also move
   between good places so that each is about equally full, with the lag
   rules below. The stay rule still holds.
+- The server's own bot limit (`-bothost-enforce-server-limit <0|1>`, 1 by
+  default; the value before this change is 0): the server runs no more
+  in-process bots than its own slots. A bot that comes back from a Bot
+  Host (a fall-back: its host gone, the brain files changed, a host that
+  offers fewer slots) to a server whose slots are full is held, and so is
+  a bot of a server over its slots (they went down, or a bot was added)
+  while no good Bot Host has a slot. A held bot keeps its seat, its tank,
+  its stats, its pills and its bases; its brain does not run and its tank
+  stands still. It stays held at a round start and a map rotation. Each
+  placement step the bot held longest runs again where a place has a
+  slot: the server first (below its slots; its free CPU and its bad flag
+  are not counted), then the good Bot Hosts by the usual rule, one bot a
+  step. The players and the spectators see "<bot> is paused: no room to
+  run its bot" when no place has a slot for it, and "<bot> runs again"
+  after that. The console says which bot was held or resumed and why. The
+  round log gets the two lines as `log_MessageServer`, and with
+  `-record-bothost-data` the DECISION records 11 (hold) and 12 (resume).
+  0 gives the old fall-back: the bot runs on the server past its slots.
+  The limit works only while the server takes Bot Hosts (the placement
+  runs only then). The lobby's Add Bot limit stays as it is: an add past
+  the server's slots plus the Bot Hosts' slots is refused.
+- Unit tests: `bot_host_enforce_fall_back_holds`,
+  `bot_host_enforce_host_resumes`, `bot_host_enforce_leave_resumes` and
+  `bot_host_enforce_off_keeps_fall_back` (`--test <name>`).
 - Unit tests: `bot_host_place_keep_*` (`--test <name>`), among them
   `bot_host_place_keep_scaled_wait`, `bot_host_place_keep_step_min_old`,
   `bot_host_place_keep_free_batch`, `bot_host_place_keep_batch_no_target`,

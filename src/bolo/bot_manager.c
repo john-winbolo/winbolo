@@ -864,9 +864,11 @@ bool botManagerSetBrainIdx(ServerSim *sim, BYTE playerNum,
     if (SDL_strcasecmp(sim->botMgr.bots[playerNum].brainPath, brainPath) == 0) {
         return true;
     }
-    if (sim->botMgr.bots[playerNum].remote) {
-        /* The brain is on a Bot Host. The path is the seat's record; the
-           Bot Host side sees it change and has the host rebuild. */
+    if (sim->botMgr.bots[playerNum].remote ||
+        sim->botMgr.bots[playerNum].heldNoRoom) {
+        /* The brain is on a Bot Host, or held for no room. The path is the
+           seat's record; the Bot Host side sees it change and has the host
+           rebuild, or builds it when the seat resumes. */
         SDL_strlcpy(sim->botMgr.bots[playerNum].brainPath, brainPath,
                     sizeof(sim->botMgr.bots[playerNum].brainPath));
         return true;
@@ -2015,6 +2017,9 @@ void botManagerOnGameStart(ServerSim *sim) {
             bot->brain.isFirst = true;
             continue;
         }
+        /* A seat held because no place has a slot for it stays held: it
+         * gets its brain when the Bot Host side finds it room. */
+        if (bot->heldNoRoom) continue;
         /* A seat on a Bot Host gets its fresh brain there. The hook sends
          * the host the reload; false means the seat is no longer on a host
          * and is rebuilt here like any other. */
@@ -2236,6 +2241,7 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
         bot->remoteStatsValid = false;
     }
     bot->held = false;
+    bot->heldNoRoom = false;
 
     /* Deactivate FIRST: serverSimRemovePlayer below publishes and can
      * re-enter walkers (all-ready checks, scenario hooks) that iterate
@@ -2270,6 +2276,10 @@ void botManagerRemoveBotKeepSeat(ServerSim *sim, BYTE playerNum) {
     }
     if (bot->remote) {
         (void)botManagerClearRemote(sim, playerNum);
+    } else if (bot->heldNoRoom) {
+        /* A seat held for no room parks with a brain too: a parked runner
+         * thinks nothing, and the next fielding counts it again. */
+        (void)botManagerResumeHeld(sim, playerNum);
     }
 
     /* Deactivate first, for the same reason botManagerRemoveBot does:
@@ -3019,6 +3029,12 @@ bool botManagerIsHeld(const ServerSim *sim, BYTE playerNum) {
            sim->botMgr.bots[playerNum].held;
 }
 
+bool botManagerIsHeldNoRoom(const ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    return sim->botMgr.bots[playerNum].active &&
+           sim->botMgr.bots[playerNum].heldNoRoom;
+}
+
 const char *botManagerGetBrainPath(const ServerSim *sim, BYTE playerNum) {
     if (sim == NULL || playerNum >= MAX_TANKS) return NULL;
     if (!sim->botMgr.bots[playerNum].active) return NULL;
@@ -3050,6 +3066,7 @@ bool botManagerSetRemote(ServerSim *sim, BYTE playerNum) {
     bot->consecutiveCrashes   = 0;
     bot->remote               = true;
     bot->held                 = false;
+    bot->heldNoRoom           = false;
     bot->remoteStatsValid     = false;
     memset(&bot->remoteStats, 0, sizeof(bot->remoteStats));
     {
@@ -3066,6 +3083,9 @@ bool botManagerSetRemote(ServerSim *sim, BYTE playerNum) {
     return true;
 }
 
+static bool botManagerBuildHere(ServerSim *sim, BotContext *bot,
+                                BYTE playerNum, const char *from);
+
 bool botManagerClearRemote(ServerSim *sim, BYTE playerNum) {
     BotContext *bot;
 
@@ -3075,9 +3095,17 @@ bool botManagerClearRemote(ServerSim *sim, BYTE playerNum) {
 
     bot->remote           = false;
     bot->remoteStatsValid = false;
+    return botManagerBuildHere(sim, bot, playerNum, "back from its Bot Host");
+}
 
-    /* The ClientSim pulled no snapshots while the host had the seat, so its
-       world is as old as the hand-over. Bring it back the way a resumed
+/* Builds the brain of a seat that had none here (it ran on a Bot Host, or
+ * was held for no room). False leaves the seat held until the next round
+ * start. */
+static bool botManagerBuildHere(ServerSim *sim, BotContext *bot,
+                                BYTE playerNum, const char *from) {
+    bot->heldNoRoom = false;
+    /* The ClientSim pulled no snapshots while the seat had no brain here, so
+       its world is as old as the hand-over. Bring it back the way a resumed
        runner comes back: the map, the own tank and the prediction state. */
     if (bot->cs != NULL && botLoadMapFromServer(bot, sim)) {
         GameSim *bgs = clientSimGetGameSim(bot->cs);
@@ -3099,9 +3127,9 @@ bool botManagerClearRemote(ServerSim *sim, BYTE playerNum) {
            score, and is built again at the next round start. */
         bot->held = true;
         WB_LOG_WARN(WB_LOG_CAT_SIM,
-                    "[bothost] bot %d back from its Bot Host but its brain "
-                    "could not be built here; seat held",
-                    (int)playerNum);
+                    "[bothost] bot %d %s but its brain could not be built "
+                    "here; seat held",
+                    (int)playerNum, from);
         return false;
     }
     bot->held = false;
@@ -3109,6 +3137,58 @@ bool botManagerClearRemote(ServerSim *sim, BYTE playerNum) {
     WB_LOG_INFO(WB_LOG_CAT_SIM, "[bothost] bot %d back in-process",
                 (int)playerNum);
     return true;
+}
+
+bool botManagerHoldNoRoom(ServerSim *sim, BYTE playerNum) {
+    BotContext *bot;
+
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    bot = &sim->botMgr.bots[playerNum];
+    if (!bot->active || bot->parked || bot->heldNoRoom) return false;
+
+    /* The brain goes, as for a seat that moves to a Bot Host; the seat
+       stays. A seat that was on a host has no brain here already. */
+    if (bot->brain.L != NULL || bot->brain.running) {
+        luaBrainInstanceDestroy(&bot->brain);
+    }
+    SDL_SetAtomicInt(&bot->abort_flag, 0);
+    bot->thinkDeadlineCounter = 0;
+    bot->killSite[0]          = '\0';
+    bot->wasKilled            = false;
+    bot->consecutiveCrashes   = 0;
+    bot->remote               = false;
+    bot->remoteStatsValid     = false;
+    memset(&bot->remoteStats, 0, sizeof(bot->remoteStats));
+    bot->held                 = true;
+    bot->heldNoRoom           = true;
+    {
+        BotJobCtx *j = &sim->botMgr.jobs[playerNum];
+        j->pendingCmdCount = 0;
+        j->pendingInternalMsgCount = 0;
+        if (j->poolJson != NULL) {
+            free(j->poolJson);
+            j->poolJson = NULL;
+        }
+    }
+    /* The tank stops: with no input the server goes on with the last
+       buttons it had, so those go, and so does any input still queued. */
+    sim->inputQueueTail[playerNum]            = sim->inputQueueHead[playerNum];
+    sim->lastInputButtons[playerNum]          = 0;
+    sim->pendingHarvestActions[playerNum]     = 0;
+    sim->pendingHarvestBuildAction[playerNum] = 0;
+    WB_LOG_INFO(WB_LOG_CAT_SIM,
+                "[bothost] bot %d held: no place has a slot for its brain",
+                (int)playerNum);
+    return true;
+}
+
+bool botManagerResumeHeld(ServerSim *sim, BYTE playerNum) {
+    BotContext *bot;
+
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    bot = &sim->botMgr.bots[playerNum];
+    if (!bot->active || !bot->heldNoRoom) return false;
+    return botManagerBuildHere(sim, bot, playerNum, "resumed");
 }
 
 bool botManagerRemotePingAllowed(ServerSim *sim, BYTE playerNum) {

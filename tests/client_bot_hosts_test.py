@@ -153,6 +153,9 @@ class Run:
                # The test needs bots on the players' hosts: the even spread
                # puts them there even while the server has room.
                "-bothost-spread-even",
+               # Every bot of a host that goes comes back to the server,
+               # past its slots (checks 2, 4, 5 and 7): the old fall-back.
+               "-bothost-enforce-server-limit", "0",
                "-snapjson", str(self.out / "snap.jsonl"),
                "-snapinterval", str(SNAP_INTERVAL),
                "-log", str(logdir)]
