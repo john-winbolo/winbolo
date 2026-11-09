@@ -1359,6 +1359,17 @@ static void popOutEndFrame(PopOutWindow *pw) {
     s_popOutRenderer = nullptr;
 }
 
+/* Keeps an open pop-out at its present width: the player can change only
+ * its height. A max height of 0 is no limit. */
+static void popOutFixWidth(PopOutWindow *pw) {
+    int w = 0, h = 0;
+    if (!pw->open || !pw->window) return;
+    SDL_GetWindowSize(pw->window, &w, &h);
+    if (w <= 0) return;
+    SDL_SetWindowMinimumSize(pw->window, w, 200);
+    SDL_SetWindowMaximumSize(pw->window, w, 0);
+}
+
 static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h, Uint32 flags) {
     if (pw->open) {
         popOutHide(pw);
@@ -2054,11 +2065,16 @@ static void renderSysInfoContent(ClientSim *cs) {
     }
 }
 
+/* System Info's width, in and out of the main window. Only its height can
+ * be changed. */
+#define SYSINFO_PANEL_W 660
+
 /* Size and place one of the in-window Session Info panels. On iOS the panel
  * opens centred and no bigger than nine tenths of the screen each way, so it
  * fits a phone held in landscape and scrolls inside; elsewhere it opens at
- * the given size on first use and is left where the player puts it. */
-static void infoPanelSizeNext(float w, float h) {
+ * the given size on first use and is left where the player puts it.
+ * fixedWidth keeps the width at w: the player can change only the height. */
+static void infoPanelSizeNext(float w, float h, bool fixedWidth) {
 #if BOLO_MOBILE
     if (uiModeIsTablet()) {
         ImGuiViewport *vp = ImGui::GetMainViewport();
@@ -2070,6 +2086,7 @@ static void infoPanelSizeNext(float w, float h) {
         if (h > maxH) h = maxH;
         if (minW > maxW) minW = maxW;
         if (minH > maxH) minH = maxH;
+        if (fixedWidth) minW = maxW = w;
         ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f,
                                        vp->Pos.y + vp->Size.y * 0.5f),
                                 ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -2079,14 +2096,15 @@ static void infoPanelSizeNext(float w, float h) {
     }
 #endif
     ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
-                                        ImVec2(FLT_MAX, FLT_MAX));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(fixedWidth ? w : 280 * s_uiScale,
+                                               200 * s_uiScale),
+                                        ImVec2(fixedWidth ? w : FLT_MAX, FLT_MAX));
 }
 
 static void renderSysInfoPanel(ClientSim *cs) {
     if (!s_showSysInfo || s_popSysInfo.open) return;
 
-    infoPanelSizeNext(440 * s_uiScale, 600 * s_uiScale);
+    infoPanelSizeNext(SYSINFO_PANEL_W * s_uiScale, 600 * s_uiScale, true);
     char title[128];
     snprintf(title, sizeof(title), "%s###sysinfo", langGetText(STR_DLGSYSINFO_TITLE));
     if (!ImGui::Begin(title, &s_showSysInfo)) {
@@ -2312,7 +2330,7 @@ static void renderNetInfoContent(ClientSim *cs) {
 static void renderNetInfoPanel(ClientSim *cs) {
     if (!s_showNetInfo || s_popNetInfo.open) return;
 
-    infoPanelSizeNext(360 * s_uiScale, 420 * s_uiScale);
+    infoPanelSizeNext(360 * s_uiScale, 420 * s_uiScale, false);
     char title[128];
     snprintf(title, sizeof(title), "%s###netinfo", langGetText(STR_DLGNETINFO_TITLE));
     if (!ImGui::Begin(title, &s_showNetInfo)) {
@@ -2429,7 +2447,7 @@ static void renderGameInfoContent(ClientSim *cs) {
 static void renderGameInfoPanel(ClientSim *cs) {
     if (!s_showGameInfo || s_popGameInfo.open) return;
 
-    infoPanelSizeNext(320 * s_uiScale, 200 * s_uiScale);
+    infoPanelSizeNext(320 * s_uiScale, 200 * s_uiScale, false);
     char title[128];
     snprintf(title, sizeof(title), "%s###gameinfo", langGetText(STR_DLGGAMEINFO_TITLE));
     if (!ImGui::Begin(title, &s_showGameInfo)) {
@@ -8136,8 +8154,11 @@ static void renderMenuBar(ClientSim *cs) {
                 if (overviewInWindow) {
                     if (!s_showSysInfo) sysInfoGraphReset();
                     s_showSysInfo = !s_showSysInfo;
-                } else togglePopOut(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600,
-                                    SDL_WINDOW_RESIZABLE);
+                } else {
+                    togglePopOut(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE),
+                                 SYSINFO_PANEL_W, 600, SDL_WINDOW_RESIZABLE);
+                    popOutFixWidth(&s_popSysInfo);
+                }
             }
             if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE), nullptr,
                                 overviewInWindow ? s_showNetInfo : s_popNetInfo.open)) {
