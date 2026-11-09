@@ -1025,6 +1025,11 @@ static int l_scan_c(lua_State *L) {
     int   app_mx     = (int)luaL_checkinteger(L, 10);
     int   app_my     = (int)luaL_checkinteger(L, 11);
     int   no_builder = lua_toboolean(L, 12);
+    /* The pill's tile is the origin of every stamp read: off the map there
+     * is no pill to scan for, the same answer as no stamps loaded. */
+    if (pmx < 0 || pmx > 255 || pmy < 0 || pmy > 255) {
+        lua_pushnil(L); return 1;
+    }
 
     /* Per-call HP-dependent neighbor-bonus tunables (args 13..19).
      * Stack-local so concurrent scans on different brains don't trample

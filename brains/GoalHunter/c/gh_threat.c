@@ -807,10 +807,11 @@ float *naThreatGetCovGrid(lua_State *L) {
 int naThreatRawTT(lua_State *L, int mx, int my) {
     NaThreatCtx *ctx = getCtx(L);
     /* Callers add a stamp's offset to a pill's tile, so this can be off the
-     * map. Only an index outside the map's memory is refused: one that wraps
-     * to the next row reads as it always has. */
+     * map. Only an index outside the map's memory is answered here, as the
+     * deep sea every map is ringed with: one that wraps to the next row
+     * reads as it always has. */
     int64_t idx = (int64_t)my * MAP_W + mx;
-    if (idx < 0 || idx >= (int64_t)MAP_W * MAP_W) return 0;
+    if (idx < 0 || idx >= (int64_t)MAP_W * MAP_W) return ctx->t_deepsea;
     return raw_tt(ctx, mx, my);
 }
 

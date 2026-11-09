@@ -33,8 +33,9 @@
 /*     os.setlocale, load / loadstring / dofile / string.dump,          */
 /*     getfenv / setfenv / newproxy, package.loadlib, package.searchpath */
 /*     and the native package loaders, every preloaded library (LuaJIT's */
-/*     ffi and jit.util among them), cpf_astar_log_enable, and all of    */
-/*     the debug library but traceback and getinfo are removed outright. */
+/*     ffi, string.buffer, jit.util and jit.profile among them),        */
+/*     jit.attach, cpf_astar_log_enable, and all of the debug library   */
+/*     but traceback and getinfo are removed outright.                 */
 /*   - brainSandboxLoadInitFile loads the init file as source text     */
 /*     only, never bytecode.                                           */
 /* The shipped GoalHunter brain needs no changes: its loadfile() of    */
@@ -325,6 +326,12 @@ void brainSandboxApply(lua_State *L, const char *root) {
   static const char *kill_base[]  = { "load", "loadstring", "dofile",
                                       "getfenv", "setfenv", "newproxy", NULL };
   static const char *const keep_debug[] = { "traceback", "getinfo", NULL };
+  /* The libraries LuaJIT preloads that reach native code or raw memory:
+   * ffi calls any C function, string.buffer's ref and reserve hand out raw
+   * pointers, jit.util gives machine-code and IR addresses, and jit.profile
+   * runs brain callbacks from a timer. */
+  static const char *const native_libs[] = { "ffi", "string.buffer",
+                                             "jit.util", "jit.profile", NULL };
   int i;
 
   /* io: jail io.open, drop the arbitrary-path / shell members. */
@@ -382,6 +389,17 @@ void brainSandboxApply(lua_State *L, const char *root) {
   }
   lua_pop(L, 1);
 
+  /* jit.attach hooks the trace compiler's events with brain callbacks that
+   * get raw trace and machine-code data. jit.on / off / flush / status / opt
+   * stay: GoalHunter calls jit.off, and the host calls jit.opt.start after
+   * this. Nothing to do on PUC-Lua, which has no jit table. */
+  lua_getglobal(L, "jit");
+  if (lua_istable(L, -1)) {
+    lua_pushnil(L);
+    lua_setfield(L, -2, "attach");
+  }
+  lua_pop(L, 1);
+
   /* package: no native code. Drop loadlib + cpath and the two C loader
    * searchers (slots 3 and 4 of the freshly-opened searchers table). The
    * Lua + SDL source searchers remain, so require() of brain modules works. */
@@ -398,6 +416,16 @@ void brainSandboxApply(lua_State *L, const char *root) {
       brain_clear_table_except(L, NULL);
     }
     lua_pop(L, 1);
+    /* A native library the host required before this would sit loaded,
+     * where require hands it out without a searcher. */
+    lua_getfield(L, -1, "loaded");
+    if (lua_istable(L, -1)) {
+      for (i = 0; native_libs[i]; i++) {
+        lua_pushnil(L);
+        lua_setfield(L, -2, native_libs[i]);
+      }
+    }
+    lua_pop(L, 1);
     lua_getfield(L, -1, "searchers");
     if (!lua_istable(L, -1)) { lua_pop(L, 1); lua_getfield(L, -1, "loaders"); } /* LuaJIT/5.1 name */
     if (lua_istable(L, -1)) {
@@ -405,6 +433,15 @@ void brainSandboxApply(lua_State *L, const char *root) {
       lua_pushnil(L); lua_rawseti(L, -2, 3);
     }
     lua_pop(L, 1);
+  }
+  lua_pop(L, 1);
+
+  /* The registry's _PRELOAD is the table package.preload pointed at when
+   * the libraries were opened. Cleared by that name too, so no loader is
+   * left behind if the package table was not where it should be. */
+  lua_getfield(L, LUA_REGISTRYINDEX, "_PRELOAD");
+  if (lua_istable(L, -1)) {
+    brain_clear_table_except(L, NULL);
   }
   lua_pop(L, 1);
 

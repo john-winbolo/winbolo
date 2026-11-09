@@ -4516,6 +4516,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_binding_bounds.c
+    tests/unit/test_brain_sandbox_hostile.c
     tests/unit/test_brain_push_rules.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
@@ -5919,6 +5920,12 @@ set(_unit_test_names
     brain_bounds_stamps_bad_tables
     brain_bounds_threat_range
     brain_crash_log_ignores_brain_globals
+    brain_sandbox_hostile_native_preloads
+    brain_sandbox_hostile_bytecode_init
+    brain_sandbox_hostile_loaders_removed
+    brain_sandbox_hostile_astar_log_removed
+    brain_sandbox_hostile_file_jail
+    brain_sandbox_hostile_off_map_terrain
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
