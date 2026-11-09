@@ -382,6 +382,7 @@ typedef struct {
     char     recFileName[96];
     uint32_t recFileOffset;
     uint32_t recFiles;        /* files finished */
+    uint32_t recFilesOpened;  /* files opened: the file cap counts these */
     uint64_t recBytes;        /* bytes written */
     bool     recDoneOwed;     /* the host's DONE came; the bytes may not have */
     uint32_t recDoneFiles;

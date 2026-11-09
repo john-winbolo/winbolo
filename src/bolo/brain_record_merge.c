@@ -678,6 +678,13 @@ static bool endsWith(const char *s, const char *suffix) {
     return n >= m && strcmp(s + n - m, suffix) == 0;
 }
 
+/* The uploaded names a session folder takes besides the .hbr files: a
+ * host's print2_bot*.log, plain or gzipped. */
+static bool hostLogNameOk(const char *name) {
+    return strncmp(name, "print2_bot", 10) == 0 &&
+           (endsWith(name, ".log") || endsWith(name, ".log.gz"));
+}
+
 /* Keep an uploaded file as it came: move it to
  * <session>/bothost_raw/<host>_<name>, replacing an older copy. */
 static bool keepRaw(const char *sessionDir, const char *hn, const char *src) {
@@ -764,6 +771,19 @@ static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
             size_t l = strlen(src) + 1;
             hbr[nh] = (char *)malloc(l);
             if (hbr[nh]) { memcpy(hbr[nh], src, l); nh++; }
+            continue;
+        }
+        if (!hostLogNameOk(name)) {
+            /* Any other name could put a file the session reads (such as
+             * a brainrec.btr) into the session folder. Keep it only as a
+             * raw copy, named after the host, which the session never
+             * reads (GoalHunter's optimize.log, astar.log, *.jsonl). */
+            if (!keepRaw(sessionDir, hn, src)) {
+                logLine(log, logCtx, "brain_record_merge: %s is not a host "
+                        "recording or a print2_bot log, and cannot be kept "
+                        "in %s", src, BRAINREC_HOST_RAW_DIR);
+                (void)SDL_RemovePath(src);
+            }
             continue;
         }
         {

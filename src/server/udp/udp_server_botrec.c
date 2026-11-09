@@ -61,6 +61,7 @@
 #include "brain_lua_glue.h"     /* brainCoreReleaseLogFiles */
 #include "../../gui/sdl3/luabrainshandler.h" /* luaBrainsGetDebugParts */
 #include "../../common/wb_log.h"
+#include "../threads.h"          /* threadsWaitForMutex, threadsReleaseMutex */
 
 #define REC_ROOT            "debug_sessions"
 /* The largest recording piece a host may send. */
@@ -177,6 +178,7 @@ static void recResetUpload(BotHostConn *hc) {
     hc->recNoSession = false;
     hc->recBad = false;
     hc->recFiles = 0;
+    hc->recFilesOpened = 0;
     hc->recBytes = 0;
     hc->recDoneOwed = false;
     hc->recDoneFiles = 0;
@@ -451,8 +453,8 @@ static void recPiece(BotHostConn *hc, const BulkStreamHeader *hd,
     }
     if (strcmp(block, hc->recBlock) != 0) recStartBlock(hc, block);
     if (hc->recBad || hc->recNoSession) return;
-    if (size > REC_UPLOAD_MAX_BYTES ||
-        hc->recBytes + hd->totalSize > REC_UPLOAD_MAX_BYTES) {
+    /* size is 32 bits, so the one file alone never passes the cap. */
+    if (hc->recBytes + hd->totalSize > REC_UPLOAD_MAX_BYTES) {
         fprintf(stderr, "[bothost] the recordings of Bot Host \"%s\" for %s "
                         "are larger than %llu bytes; refused\n", hc->name,
                 hc->recBlock, (unsigned long long)REC_UPLOAD_MAX_BYTES);
@@ -468,7 +470,9 @@ static void recPiece(BotHostConn *hc, const BulkStreamHeader *hd,
             hc->recBad = true;
             return;
         }
-        if (hc->recFiles >= REC_UPLOAD_MAX_FILES) {
+        /* Count each file when it opens: a file that never completes
+         * still made a file in the staging folder. */
+        if (hc->recFilesOpened >= REC_UPLOAD_MAX_FILES) {
             fprintf(stderr, "[bothost] the recordings of Bot Host \"%s\" for "
                             "%s have more than %u files; refused\n", hc->name,
                     hc->recBlock, (unsigned)REC_UPLOAD_MAX_FILES);
@@ -486,6 +490,7 @@ static void recPiece(BotHostConn *hc, const BulkStreamHeader *hd,
             hc->recBad = true;
             return;
         }
+        hc->recFilesOpened++;
         SDL_strlcpy(hc->recFileName, file, sizeof(hc->recFileName));
         hc->recFileOffset = 0;
     }
@@ -817,6 +822,8 @@ bool transportUdpServerBrainMerge(const char *sessionDir, const char *hostDir,
                                   char *msg, size_t msgLen) {
     BrainRecMergeStats st;
     bool ok;
+    bool busy;
+    bool pending;
     if (sessionDir == NULL || hostDir == NULL || sessionDir[0] == '\0' ||
         hostDir[0] == '\0') {
         snprintf(msg, msgLen, "Usage: brainmerge <session dir> <host dir>");
@@ -827,20 +834,29 @@ bool transportUdpServerBrainMerge(const char *sessionDir, const char *hostDir,
                  sessionDir, hostDir);
         return false;
     }
-    if (s_open && strcmp(recBase(sessionDir), s_block) == 0) {
+    /* This runs on the console's thread. s_open, s_block and the
+     * recorder's state belong to the tick thread, so read them under the
+     * server mutex. The merge and the gzip only work on files (the folder
+     * lock keeps them apart from the recorder's own gzip), so they run
+     * without the mutex and the game goes on. */
+    threadsWaitForMutex();
+    busy = s_open && strcmp(recBase(sessionDir), s_block) == 0;
+    threadsReleaseMutex();
+    if (busy) {
         snprintf(msg, msgLen, "brainmerge refused: %s is recording now",
                  sessionDir);
         return false;
     }
     ok = brainRecMergeDir(sessionDir, hostDir, recBase(hostDir), &st,
                           recMergeLog, NULL);
-    /* The .gz rule, as for an upload. This runs on the console's thread,
-     * which waits for the merge anyway, so the gzip runs here too and the
-     * recorder's table of gzip threads is not changed from this thread. */
-    if (!brainRecordLogCompressPending(sessionDir)) {
-        brainCoreReleaseLogFiles();
-        brainRecordCompressLogsNow(sessionDir);
-    }
+    /* The .gz rule, as for an upload. The console's thread waits for the
+     * merge anyway, so the gzip runs here too, in line, and the recorder's
+     * table of gzip threads is not changed from this thread. */
+    threadsWaitForMutex();
+    pending = brainRecordLogCompressPending(sessionDir);
+    if (!pending) brainCoreReleaseLogFiles();
+    threadsReleaseMutex();
+    if (!pending) brainRecordCompressLogsNow(sessionDir);
     snprintf(msg, msgLen, "brainmerge %s: %u frames, %u hosted entries (%u "
              "filled, %u a few thinks old, %u with no host data)%s",
              sessionDir, (unsigned)st.frames, (unsigned)st.markers,

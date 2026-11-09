@@ -161,6 +161,12 @@ static bool botHostRecWasOn;
  * as another computer than the server's, so one desktop can play a server
  * with a remote player host. Read once in serverBotHostsReset. */
 static bool botHostTestOtherComputer;
+/* With no list, the last announce the server answered (at most one in
+ * each half second), and whether the placement rule was printed. File
+ * statics, so serverBotHostsReset clears them. */
+static uint32_t botHostOpenAnnounceTick;
+static bool     botHostOpenAnnounceAny;
+static bool     botHostRuleShown;
 
 /* The state of the server's own slots and of the placement steps. They
  * are file statics, not function statics, so serverBotHostsReset clears
@@ -2511,11 +2517,12 @@ void serverBotHostHandleAnnounce(ServerSim *sim, const uint8_t *buf, int len,
     } else {
         /* No list: anyone may announce, so the server answers at most one
          * announce in each half second. */
-        static uint32_t lastOpenTick = 0;
-        static bool any = false;
-        if (any && udpServer.tickCount - lastOpenTick < 25) return;
-        any = true;
-        lastOpenTick = udpServer.tickCount;
+        if (botHostOpenAnnounceAny &&
+            udpServer.tickCount - botHostOpenAnnounceTick < 25) {
+            return;
+        }
+        botHostOpenAnnounceAny = true;
+        botHostOpenAnnounceTick = udpServer.tickCount;
     }
     if (changed) {
         char cached[512];
@@ -3152,6 +3159,9 @@ void serverBotHostsReset(void) {
     botHostServerFreeHave = false;
     botHostServerFreeValue = (uint8_t)BOT_HOST_FREE_UNKNOWN;
     botHostRecWasOn = false;
+    botHostOpenAnnounceTick = 0;
+    botHostOpenAnnounceAny = false;
+    botHostRuleShown = false;
     botHostTestOtherComputer =
         SDL_getenv("WINBOLO_BOTHOST_TEST_OTHER_COMPUTER") != NULL;
     botHostPlaceStateReset();
@@ -4681,12 +4691,9 @@ void serverServiceBotHosts(ServerSim *sim) {
 
     if (sim == NULL) return;
     st = serverSimGetState(sim);
-    {
-        static bool ruleShown = false;
-        if (udpServer.botHostEnabled && !ruleShown) {
-            ruleShown = true;
-            botHostPrintRule();
-        }
+    if (udpServer.botHostEnabled && !botHostRuleShown) {
+        botHostRuleShown = true;
+        botHostPrintRule();
     }
 
     for (h = 0; h < MAX_BOT_HOSTS; h++) {

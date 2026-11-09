@@ -209,8 +209,11 @@ bool brainRecMergePrint2(const char *a, const char *b, const char *outPath,
  *   - its .hbr files into the session's brainrec.btr (checked, then
  *     replaced);
  *   - print2_bot*.log present on both sides by ticks;
- *   - any other file moved in, renamed "bothost_<host>_<name>" when the
- *     session has a file of that name.
+ *   - any other print2_bot*.log or print2_bot*.log.gz moved in, renamed
+ *     "bothost_<host>_<name>" when the session has a file of that name;
+ *   - every other file kept only as a raw copy in
+ *     <session>/BRAINREC_HOST_RAW_DIR/<host>_<name>, never in the session
+ *     folder itself; deleted, with a log line, when it cannot be kept.
  * The .hbr files and the host's copies of the print2 logs it merged are
  * kept as they came in <session>/BRAINREC_HOST_RAW_DIR/, merged or not.
  * hostDir is removed when every step worked. log (may be NULL) gets one

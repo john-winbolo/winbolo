@@ -118,6 +118,10 @@ static int      optSlots       = 4;
 static int      optThreads     = 0;
 static char     optKey[JOIN_BOT_HOST_KEY_LEN + 1];
 static char     optName[JOIN_BOT_HOST_NAME_LEN];
+/* The name the bot stats carry. Empty for a player's own host when the
+ * player has no name: each client then shows its own text for it, as the
+ * lobby's Bot Host rows do. */
+static char     optStatsName[JOIN_BOT_HOST_NAME_LEN];
 /* The brain cache: the servers' brain files, one folder per version. */
 static char     optCacheDir[512];
 static BotHostAddrList optServers;
@@ -2067,7 +2071,7 @@ static void seatSendStats(HostSeat *hs) {
     cmd.u.botStats.overrunCount = hs->bot.overrunCount;
     cmd.u.botStats.killCount    = hs->killCount;
     cmd.u.botStats.tier         = 0;
-    SDL_strlcpy(cmd.u.botStats.hostName, optName,
+    SDL_strlcpy(cmd.u.botStats.hostName, optStatsName,
                 sizeof(cmd.u.botStats.hostName));
     clientSimSubmitCommand(hs->cs, &cmd);
 }
@@ -2419,6 +2423,7 @@ static bool parseArgs(int argc, char **argv) {
          * only when the owner gives it with --name. */
         SDL_strlcpy(optName, "Bot Host", sizeof(optName));
     }
+    SDL_strlcpy(optStatsName, optName, sizeof(optStatsName));
     return true;
 }
 
@@ -2758,6 +2763,8 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     SDL_strlcpy(optName, (cfg->name != NULL && cfg->name[0] != '\0')
                              ? cfg->name : "Player",
                 sizeof(optName));
+    SDL_strlcpy(optStatsName, cfg->name != NULL ? cfg->name : "",
+                sizeof(optStatsName));
     SDL_strlcpy(optCacheDir, cfg->cacheDir != NULL ? cfg->cacheDir : "",
                 sizeof(optCacheDir));
     for (c = optCacheDir; *c != '\0'; c++) {

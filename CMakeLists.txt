@@ -6416,6 +6416,8 @@ set(_unit_test_names
     brainrec_host_rec_codec
     brainrec_host_legend_unclosed
     brainrec_host_upload_no_session
+    brainrec_host_merge_dir_other_names
+    brainrec_host_upload_file_cap
     lv_tank_stocks_from_snapshot
     lv_team_colours_from_snapshot
     lv_team_colours_events

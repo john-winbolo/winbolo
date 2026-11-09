@@ -28,6 +28,14 @@
 #include "brain_record_host.h"
 #include "brain_lua_glue.h"     /* brainCoreReleaseLogFiles */
 
+/* Files up to 4 GiB are sent, and long is 32 bits on Windows. */
+#if defined(_WIN32)
+#define rec_fseek _fseeki64
+#else
+#include <sys/types.h>
+#define rec_fseek fseeko
+#endif
+
 #define REC_MAX_SERVERS    16
 #define REC_MAX_SEATS      MAX_TANKS
 /* Records kept per seat before the server's OPEN arrives: the first thinks
@@ -777,7 +785,7 @@ static void upPiece(int srv) {
     if (s_io.bulkSend == NULL || !s_io.bulkSend(srv, &h, buf, want)) {
         /* Not taken now: the same piece goes next time. */
         free(buf);
-        if (fseek(sv->fp, (long)sv->fileOff, SEEK_SET) != 0) {
+        if (rec_fseek(sv->fp, (int64_t)sv->fileOff, SEEK_SET) != 0) {
             upReset(sv);
         }
         return;
