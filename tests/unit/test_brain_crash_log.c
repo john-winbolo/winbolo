@@ -110,6 +110,7 @@ static lua_State *new_lua_state_with_globals(int bot_index, int tick,
      * file and the count assertions see 0. */
     lua_pushboolean(L, 1);
     lua_setglobal(L, "BRAIN_DEBUG_MODE");
+    brainCoreSetHostDebugMode(L, true);
 
     /* state = { bot_index = N, tick = T } */
     lua_newtable(L);
@@ -231,6 +232,32 @@ int run_brain_crash_log_writes_file(void) {
     lua_close(L);
     cleanup_tempdir(TEMPDIR);
     return rc;
+}
+
+/* The brain's own globals say debug mode and name a folder. The host has not
+ * said debug mode, so nothing is written: a brain cannot steer a file with
+ * them. */
+int run_brain_crash_log_ignores_brain_globals(void) {
+    static const char *TEMPDIR = "test_brain_crash_tmp_globals";
+    cleanup_tempdir(TEMPDIR);
+    UT_ASSERT_MSG(SDL_CreateDirectory(TEMPDIR),
+                  "failed to create tempdir: %s", SDL_GetError());
+
+    lua_State *L = new_lua_state_with_globals(7, 12345, TEMPDIR);
+    UT_ASSERT(L != NULL);
+    brainCoreSetHostDebugMode(L, false);
+
+    brc_write_crash_log(L, "think", "TEST_BRAIN_CRASH_MARKER");
+
+    CrashFileCollector c;
+    memset(&c, 0, sizeof(c));
+    SDL_EnumerateDirectory(TEMPDIR, collect_crash_files, &c);
+    UT_ASSERT_MSG(c.count == 0,
+                  "a brain's globals alone wrote %d crash files", c.count);
+
+    lua_close(L);
+    cleanup_tempdir(TEMPDIR);
+    return 0;
 }
 
 int run_brain_crash_log_falls_back_to_luaptr(void) {

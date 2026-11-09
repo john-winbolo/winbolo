@@ -474,9 +474,11 @@ static int l_brain_log_print(lua_State *L) {
 /*     confine every path to the brain directory (read AND write).     */
 /*   - io.popen / io.lines / io.input / io.output / io.tmpfile,        */
 /*     os.execute / os.exit / os.rename / os.getenv / os.tmpname /      */
-/*     os.setlocale, load / dofile, package.loadlib and the native      */
-/*     package loaders, and the debug-library introspection set are     */
-/*     removed outright.                                               */
+/*     os.setlocale, load / loadstring / dofile / string.dump,          */
+/*     getfenv / setfenv / newproxy, package.loadlib, package.searchpath */
+/*     and the native package loaders, every preloaded library (LuaJIT's */
+/*     ffi and jit.util among them), cpf_astar_log_enable, and all of    */
+/*     the debug library but traceback and getinfo are removed outright. */
 /* The shipped GoalHunter brain needs no changes: its loadfile() of    */
 /* los_stamp_cache.lua and its io.open() cache paths all resolve under  */
 /* the brain directory, and everything it actually removes is dev-only */
@@ -638,6 +640,7 @@ static int l_jailed_path_arg1(lua_State *L) {
     return 2;
   }
   n = lua_gettop(L);
+  luaL_checkstack(L, n + 2, "too many arguments");
   lua_pushvalue(L, lua_upvalueindex(1));        /* original function */
   lua_pushstring(L, resolved);                  /* sanitized arg 1 */
   for (i = 2; i <= n; i++) lua_pushvalue(L, i); /* original args 2..n */
@@ -664,6 +667,29 @@ static void brain_jail_table_method(lua_State *L, const char *tbl,
   lua_pop(L, 1);
 }
 
+/* Clear every field of the table on the stack top but those named in keep
+ * (NULL-terminated, or NULL for none). Setting a field that exists to nil is
+ * allowed during a traversal. */
+static void brain_clear_table_except(lua_State *L, const char *const *keep) {
+  lua_pushnil(L);
+  while (lua_next(L, -2) != 0) {
+    bool kept = false;
+    lua_pop(L, 1); /* the value; the key stays for the next lua_next */
+    if (keep != NULL && lua_type(L, -1) == LUA_TSTRING) {
+      const char *key = lua_tostring(L, -1);
+      int i;
+      for (i = 0; keep[i] != NULL; i++) {
+        if (SDL_strcmp(key, keep[i]) == 0) kept = true;
+      }
+    }
+    if (!kept) {
+      lua_pushvalue(L, -1);
+      lua_pushnil(L);
+      lua_rawset(L, -4);
+    }
+  }
+}
+
 /* Lock down the standard libraries of a freshly-opened brain VM. `root`
  * is the brain's own directory: the only place file access is permitted. */
 static void brain_apply_sandbox(lua_State *L, const char *root) {
@@ -671,10 +697,12 @@ static void brain_apply_sandbox(lua_State *L, const char *root) {
                                       "tmpfile", NULL };
   static const char *kill_os[]    = { "execute", "exit", "rename", "getenv",
                                       "tmpname", "setlocale", NULL };
-  static const char *kill_debug[] = { "sethook", "gethook", "getupvalue",
-                                      "setupvalue", "upvalueid", "upvaluejoin",
-                                      "getlocal", "setlocal", "getregistry",
-                                      "setmetatable", "debug", NULL };
+  /* load and loadstring take bytecode, which Lua does not verify. LuaJIT's
+   * loadstring is a separate global from load. The others reach a function's
+   * environment or make an object with a finalizer, and no brain needs them. */
+  static const char *kill_base[]  = { "load", "loadstring", "dofile",
+                                      "getfenv", "setfenv", "newproxy", NULL };
+  static const char *const keep_debug[] = { "traceback", "getinfo", NULL };
   int i;
 
   /* io: jail io.open, drop the arbitrary-path / shell members. */
@@ -695,8 +723,18 @@ static void brain_apply_sandbox(lua_State *L, const char *root) {
   lua_pushstring(L, root);
   lua_pushcclosure(L, l_jailed_loadfile, 1);
   lua_setglobal(L, "loadfile");
-  lua_pushnil(L); lua_setglobal(L, "load");
-  lua_pushnil(L); lua_setglobal(L, "dofile");
+  for (i = 0; kill_base[i]; i++) {
+    lua_pushnil(L);
+    lua_setglobal(L, kill_base[i]);
+  }
+
+  /* string.dump: the other half of building bytecode. */
+  lua_getglobal(L, "string");
+  if (lua_istable(L, -1)) {
+    lua_pushnil(L);
+    lua_setfield(L, -2, "dump");
+  }
+  lua_pop(L, 1);
 
   /* os: jail os.remove, drop process/env mutators; keep time/clock/date. */
   lua_getglobal(L, "os");
@@ -715,10 +753,7 @@ static void brain_apply_sandbox(lua_State *L, const char *root) {
    * could reach the originals we just replaced or hook the VM. */
   lua_getglobal(L, "debug");
   if (lua_istable(L, -1)) {
-    for (i = 0; kill_debug[i]; i++) {
-      lua_pushnil(L);
-      lua_setfield(L, -2, kill_debug[i]);
-    }
+    brain_clear_table_except(L, keep_debug);
   }
   lua_pop(L, 1);
 
@@ -729,6 +764,15 @@ static void brain_apply_sandbox(lua_State *L, const char *root) {
   if (lua_istable(L, -1)) {
     lua_pushnil(L); lua_setfield(L, -2, "loadlib");
     lua_pushnil(L); lua_setfield(L, -2, "cpath");
+    lua_pushnil(L); lua_setfield(L, -2, "searchpath");
+    /* The preload searcher stays in the list, so what it can find has to go:
+     * luaL_openlibs on LuaJIT leaves ffi there, which calls native code, and
+     * jit.util and jit.profile. No brain preloads anything of its own. */
+    lua_getfield(L, -1, "preload");
+    if (lua_istable(L, -1)) {
+      brain_clear_table_except(L, NULL);
+    }
+    lua_pop(L, 1);
     lua_getfield(L, -1, "searchers");
     if (!lua_istable(L, -1)) { lua_pop(L, 1); lua_getfield(L, -1, "loaders"); } /* LuaJIT/5.1 name */
     if (lua_istable(L, -1)) {
@@ -746,6 +790,13 @@ static void brain_apply_sandbox(lua_State *L, const char *root) {
   brain_jail_table_method(L, "gh_opt_log", "open",   root);
   brain_jail_table_method(L, "gh_opt_log", "append", root);
   brain_jail_table_method(L, "gh_shield",  "load",   root);
+
+  /* A second way to fopen a brain-supplied path, for debug sessions, whose
+   * folder is outside the brain directory anyway. Its one log file is shared
+   * by every bot in the process, so closing it here could also pull it out
+   * from under another bot's thread. cpathfinder.lua checks it exists. */
+  lua_pushnil(L);
+  lua_setglobal(L, "cpf_astar_log_enable");
 }
 
 
@@ -793,6 +844,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * output and overlay calls when running in production. */
   lua_pushboolean(L, debug_mode);
   lua_setglobal(L, "BRAIN_DEBUG_MODE");
+  brainCoreSetHostDebugMode(L, debug_mode);
 
   /* print2 mirrors BRAIN_DEBUG_MODE: writes the per-tick log only in
    * debug mode. The Lua side gates every print2 call on this so opt
@@ -1119,7 +1171,10 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 
     src = sdl_load_file(resolvedPath, &srcLen);
     if (src) {
-      int loadErr = luaL_loadbuffer(L, src, srcLen, resolvedPath);
+      /* Sandboxed: text only, as the searcher and loadfile above. A brain's
+       * own init.lua must not be a way to load bytecode. */
+      int loadErr = luaL_loadbufferx(L, src, srcLen, resolvedPath,
+                                     s_allow_unsafe ? NULL : "t");
       SDL_free(src);
       if (loadErr != LUA_OK) {
         const char *e = lua_tostring(L, -1);
@@ -1130,7 +1185,8 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
         lua_close(L);
         return false;
       }
-    } else if (luaL_loadfile(L, resolvedPath) != LUA_OK) {
+    } else if (luaL_loadfilex(L, resolvedPath,
+                              s_allow_unsafe ? NULL : "t") != LUA_OK) {
       const char *e = lua_tostring(L, -1);
       WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to load '%s': %s",
               resolvedPath, e);
@@ -1371,6 +1427,7 @@ void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
   if (!inst || !inst->L) return;
   lua_pushboolean(inst->L, enabled);
   lua_setglobal(inst->L, "BRAIN_DEBUG_MODE");
+  brainCoreSetHostDebugMode(inst->L, enabled);
   /* Keep print2 gate in sync — flipping debug mode mid-run should
    * also start/stop the per-tick log file. */
   lua_pushboolean(inst->L, enabled);

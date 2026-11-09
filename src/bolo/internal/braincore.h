@@ -273,6 +273,21 @@ int brc_traceback_msgh(lua_State *L);
 void brainCoreSetLogFlushHook(void (*fn)(void));
 
 /*********************************************************
+ *NAME:          brainCoreSetHostDebugMode
+ *PURPOSE:
+ *  Says whether the host runs this brain in debug mode,
+ *  which alone lets a crash write files. It is kept where
+ *  the brain cannot write it, unlike its BRAIN_DEBUG_MODE
+ *  and DEBUG_SESSION_DIR globals, which the crash writer
+ *  does not trust on their own.
+ *
+ *ARGUMENTS:
+ *  L  - Lua state
+ *  on - True for a debug host
+ *********************************************************/
+void brainCoreSetHostDebugMode(lua_State *L, bool on);
+
+/*********************************************************
  *NAME:          brainCoreRegisterPathfinder
  *PURPOSE:
  *  Registers cpf_* Lua globals backed by a per-brain

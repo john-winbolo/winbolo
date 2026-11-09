@@ -1130,12 +1130,16 @@ static int brc_read_state_int(lua_State *L, const char *field) {
   return v;
 }
 
+static bool brc_debug_mode(lua_State *L);
+
 /* Best-effort copy of _G.DEBUG_SESSION_DIR into out (NUL-terminated).
- * Returns true if set & non-empty. */
+ * Returns true if set & non-empty. A brain can write that global, so it counts
+ * only on a host that runs the brain in debug mode. */
 static bool brc_read_session_dir(lua_State *L, char *out, size_t outsz) {
   int top = lua_gettop(L);
   bool ok = false;
   out[0] = '\0';
+  if (!brc_debug_mode(L)) return false;
   lua_getglobal(L, "DEBUG_SESSION_DIR");
   if (lua_isstring(L, -1)) {
     const char *s = lua_tostring(L, -1);
@@ -1149,13 +1153,21 @@ static bool brc_read_session_dir(lua_State *L, char *out, size_t outsz) {
   return ok;
 }
 
-/* Best-effort read of _G.BRAIN_DEBUG_MODE. Returns true only when the
- * global is explicitly truthy. Production hosts (WinBolo / WinBoloDS)
- * set it false at brain creation, so brains there write NO crash/error
- * files to disk — stderr surfacing still fires regardless. */
+/* The host's word on debug mode, in the registry where a brain cannot write
+ * it, unlike its BRAIN_DEBUG_MODE global. */
+static const char brc_host_debug_key = 0;
+
+void brainCoreSetHostDebugMode(lua_State *L, bool on) {
+  lua_pushboolean(L, on);
+  lua_rawsetp(L, LUA_REGISTRYINDEX, &brc_host_debug_key);
+}
+
+/* Production hosts (WinBolo / WinBoloDS) say no at brain creation, so brains
+ * there write NO crash/error files to disk — stderr surfacing still fires
+ * regardless. */
 static bool brc_debug_mode(lua_State *L) {
   int top = lua_gettop(L);
-  lua_getglobal(L, "BRAIN_DEBUG_MODE");
+  lua_rawgetp(L, LUA_REGISTRYINDEX, &brc_host_debug_key);
   bool on = lua_toboolean(L, -1) != 0;
   lua_settop(L, top);
   return on;
