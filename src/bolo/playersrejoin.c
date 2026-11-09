@@ -117,7 +117,7 @@ void playersRejoinUpdate() {
 *ARGUMENTS:
 *
 *********************************************************/
-void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap bases) {
+void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap bases, BYTE team) {
   BYTE count;    /* Looping variable */
   BYTE best;     /* Best position to add */
   int timeBest;  /* Best time to beat - If we can't find a free spot */
@@ -127,6 +127,16 @@ void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap b
   done = FALSE;
   best = 0;
   timeBest = MAX_REJOIN_TIME;
+  /* A record already kept under this name is replaced, so a player who
+     leaves twice has one record, the newest. */
+  while (count < MAX_TANKS && done == FALSE) {
+    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
+      done = TRUE;
+      best = count;
+    }
+    count++;
+  }
+  count = 0;
   while (count < MAX_TANKS && done == FALSE) {
     if (rejoin.item[count].inUse == FALSE) {
       done = TRUE;
@@ -143,6 +153,7 @@ void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap b
   strcpy(rejoin.item[best].playerName, playerName);
   rejoin.item[best].pills = pills;
   rejoin.item[best].bases = bases;
+  rejoin.item[best].team = team;
   rejoin.item[best].timeOut = 0;
 }
 
@@ -206,3 +217,28 @@ void playersRejoinRequest(GameSim *sim, char *playerName, BYTE playerNum, pillbo
   }
 }
 
+/*********************************************************
+*NAME:          playersRejoinGetTeam
+*PURPOSE:
+* Returns the team a rejoining player was on when he left,
+* or 0 when there is no record for that name. Leaves the
+* record in place: playersRejoinRequest clears it.
+*
+*ARGUMENTS:
+*  playerName - The player name requesting the rejoin
+*********************************************************/
+BYTE playersRejoinGetTeam(const char *playerName) {
+  BYTE count; /* Looping variable */
+
+  if (playerName == NULL) {
+    return 0;
+  }
+  count = 0;
+  while (count < MAX_TANKS) {
+    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
+      return rejoin.item[count].team;
+    }
+    count++;
+  }
+  return 0;
+}
