@@ -589,6 +589,7 @@ int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_push_rules_written_on_change(void);
 int run_brain_bounds_tail_bad_steps(void);
 int run_brain_bounds_tail_bad_neutral(void);
+int run_brain_bounds_think_errors(void);
 int run_brain_bounds_deserialize_open(void);
 int run_brain_bounds_next_step_bad_start(void);
 int run_brain_bounds_shells_at_bad_tile(void);

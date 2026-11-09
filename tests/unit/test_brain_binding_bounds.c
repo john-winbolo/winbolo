@@ -19,6 +19,9 @@
  *                                        where it wants tables
  * run_brain_bounds_threat_range        - a PILL_RANGE_MAP out of range acts like
  *                                        the nearest range the arrays hold
+ * run_brain_bounds_think_errors        - a metamethod that raises in the host's
+ *                                        own reads and writes is a failed think,
+ *                                        not the end of the program
  */
 
 #include <limits.h>
@@ -334,6 +337,68 @@ int run_brain_bounds_threat_range(void) {
     UT_ASSERT_MSG(lua_toboolean(L, -3), "the pill stamped nothing to compare");
     UT_ASSERT_MSG(lua_toboolean(L, -2), "a huge range did not act like range 15");
     UT_ASSERT_MSG(lua_toboolean(L, -1), "a negative range did not act like range 0");
+    lua_close(L);
+    return 0;
+}
+
+/* A fresh VM for each case: a table one case poisons would otherwise fail the
+ * next case's push, and that case would never reach what it is there to test. */
+static lua_State *bbStateWith(const char *chunk) {
+    lua_State *L = bbNewState();
+    if (L != NULL && luaL_dostring(L, chunk) != 0) {
+        lua_close(L);
+        return NULL;
+    }
+    return L;
+}
+
+static bool bbThink(lua_State *L, BrainInfo *info) {
+    bool killed = false;
+    return brainCoreCallThink(L, info, &killed);
+}
+
+int run_brain_bounds_think_errors(void) {
+    static BrainInfo info;
+    lua_State *L;
+
+    memset(&info, 0, sizeof(info));
+
+    /* The info table the host writes through on the next push. */
+    L = bbStateWith(
+        "brain = { think = function(info)\n"
+        "  info.mods = setmetatable({}, { __newindex = function() error('mods') end })\n"
+        "  return {}\n"
+        "end }\n");
+    UT_ASSERT(L != NULL);
+    UT_ASSERT_MSG(bbThink(L, &info), "the first think failed");
+    UT_ASSERT_MSG(!bbThink(L, &info), "a push into a raising table succeeded");
+    lua_close(L);
+
+    /* The table the think returned, which the host reads. */
+    L = bbStateWith(
+        "brain = { think = function(info)\n"
+        "  return setmetatable({}, { __index = function() error('output') end })\n"
+        "end }\n");
+    UT_ASSERT(L != NULL);
+    UT_ASSERT_MSG(!bbThink(L, &info), "reading a raising output table succeeded");
+    lua_close(L);
+
+    /* The lookups before the think. */
+    L = bbStateWith(
+        "brain = setmetatable({}, { __index = function() error('brain') end })\n");
+    UT_ASSERT(L != NULL);
+    UT_ASSERT_MSG(!bbThink(L, &info), "a raising brain table gave a think");
+    UT_ASSERT_MSG(!brainCoreCallMethod(L, &info, "open"),
+                  "a raising brain table gave a method");
+    lua_close(L);
+
+    L = bbStateWith(
+        "brain = nil\n"
+        "setmetatable(_G, { __index = function() error('global') end })\n");
+    UT_ASSERT(L != NULL);
+    UT_ASSERT_MSG(!bbThink(L, &info), "a raising global table gave a think");
+    UT_ASSERT_MSG(!brainCoreCallMethod(L, &info, "open"),
+                  "a raising global table gave a method");
     lua_close(L);
     return 0;
 }

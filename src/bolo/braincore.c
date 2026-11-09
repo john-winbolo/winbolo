@@ -1380,7 +1380,7 @@ void brc_write_crash_log(lua_State *L,
 /* Brain method invocation                                             */
 /* ------------------------------------------------------------------ */
 
-bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
+static bool brc_call_think(lua_State *L, BrainInfo *info, bool *out_killed) {
   int top = lua_gettop(L);
 
   if (out_killed) *out_killed = false;
@@ -1489,7 +1489,7 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
   return true;
 }
 
-bool brainCoreCallMethod(lua_State *L, BrainInfo *info, const char *method) {
+static bool brc_call_method(lua_State *L, BrainInfo *info, const char *method) {
   int top = lua_gettop(L);
 
   lua_getglobal(L, "brain");
@@ -1521,6 +1521,72 @@ bool brainCoreCallMethod(lua_State *L, BrainInfo *info, const char *method) {
 
   lua_settop(L, top);
   return true;
+}
+
+/* The brain holds tables these two read and write outside its own pcall: its
+ * globals, the brain table, the info tree and what think returned. A metamethod
+ * it set on one of them can raise there, and an error with no pcall to catch it
+ * ends the whole program, every other game on a server included. So the whole
+ * call runs protected, and such an error is a failed call like any other. */
+typedef struct {
+  BrainInfo  *info;
+  bool       *outKilled;
+  const char *method;
+  bool        result;
+} BrcCallArgs;
+
+static int brc_protected_think(lua_State *L) {
+  BrcCallArgs *a = (BrcCallArgs *)lua_touserdata(L, 1);
+  a->result = brc_call_think(L, a->info, a->outKilled);
+  return 0;
+}
+
+static int brc_protected_method(lua_State *L) {
+  BrcCallArgs *a = (BrcCallArgs *)lua_touserdata(L, 1);
+  a->result = brc_call_method(L, a->info, a->method);
+  return 0;
+}
+
+static bool brc_run_protected(lua_State *L, lua_CFunction fn, BrcCallArgs *a) {
+  int top = lua_gettop(L);
+  bool result = false;
+  lua_pushcfunction(L, fn);
+  lua_pushlightuserdata(L, a);
+  if (lua_pcall(L, 1, 0, 0) == LUA_OK) {
+    result = a->result;
+  } else {
+    const char *err = lua_tostring(L, -1);
+    if (a->outKilled != NULL && err != NULL &&
+        strstr(err, BRC_BUDGET_KILL_TEXT) != NULL) {
+      /* The budget hook fired in a metamethod. As in brc_call_think, it is
+       * still armed, so no more Lua runs under it. */
+      *a->outKilled = true;
+      lua_sethook(L, NULL, 0, 0);
+    } else {
+      fprintf(stderr, "brainCore: brain.%s failed: %s\n", a->method,
+              err != NULL ? err : "(an error that is not text)");
+    }
+  }
+  lua_settop(L, top);
+  return result;
+}
+
+bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
+  BrcCallArgs a;
+  a.info = info;
+  a.outKilled = out_killed;
+  a.method = "think";
+  a.result = false;
+  return brc_run_protected(L, brc_protected_think, &a);
+}
+
+bool brainCoreCallMethod(lua_State *L, BrainInfo *info, const char *method) {
+  BrcCallArgs a;
+  a.info = info;
+  a.outKilled = NULL;
+  a.method = method;
+  a.result = false;
+  return brc_run_protected(L, brc_protected_method, &a);
 }
 
 /* ------------------------------------------------------------------ */
