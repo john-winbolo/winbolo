@@ -264,13 +264,16 @@ bool botHostPlaceRebalanceKeep(const BotHostPlaceHost *hosts, int n,
 /* The free CPU batch: bad place src gives up to want bots in one step.
  * Each goes where rule 2 of botHostPlaceRebalanceKeep sends a bad place's
  * bot (the server first while it is good and below its slots, then the
- * best good host); a place takes at most one bot of the batch, since its
- * free CPU check waits for a reading with that bot. It stops when no good
- * place is left. hosts is changed as the bots go (bots, and open false at
- * each target). to[0..) gets each bot's target; returns the bots given. */
+ * best good host). Each target takes the least of its free slots, room[i]
+ * (the bots its free CPU has room for, botHostOverrunFreeRoom; below 1, or
+ * room NULL: 1) and the bots left of the batch; then it takes no more of
+ * this batch, since its free CPU check waits for a reading with those
+ * bots. No target goes past its slots. It stops when no good place is
+ * left. hosts is changed as the bots go (bots, and open false at each
+ * target). to[0..) gets each bot's target; returns the bots given. */
 int  botHostPlaceBadBatch(BotHostPlaceHost *hosts, int n, int smallSlots,
                           double bias, const BotHostPlaceLag *lag, int src,
-                          int want, int *to);
+                          int want, const int *room, int *to);
 
 /* ---- No quick way back (the stay rule of the placement) --------------
  *
@@ -529,6 +532,17 @@ int  botHostOverrunFreeShort(const BotHostOverrunState *st,
  * the usual rule. */
 int  botHostOverrunBatchSize(const BotHostOverrunCfg *cfg, int shortBy,
                              bool fresh);
+/* The bots a target of the free CPU batch may take in one step, at most
+ * max: 0 when the free CPU check refuses its next bot now; 1 when it has
+ * no free CPU reading or no one-bot cost (the numbers cannot count); else
+ * the most bots m for which the check passes for each bot in turn, each
+ * bot taken costing the one-bot cost of its free CPU average (the count of
+ * botHostOverrunFreeShort, the other way round): for the k-th bot after
+ * the first (k = 1 to m - 1) the check is made with free CPU average
+ * freeAvg - k x oneBotCost. Its slots are not counted here. */
+int  botHostOverrunFreeRoom(const BotHostOverrunState *st,
+                            const BotHostOverrunCfg *cfg, int bots,
+                            uint8_t latestFree, int max);
 /* The wait in seconds before a host at ratePct may give a bot: stepSecs /
  * (ratePct / pct), never below stepMinSecs and never above stepSecs. A
  * rate not over pct waits stepSecs. */

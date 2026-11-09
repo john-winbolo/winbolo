@@ -688,16 +688,26 @@ bool botHostPlaceRebalanceKeep(const BotHostPlaceHost *hosts, int n,
 
 int botHostPlaceBadBatch(BotHostPlaceHost *hosts, int n, int smallSlots,
                          double bias, const BotHostPlaceLag *lag, int src,
-                         int want, int *to) {
+                         int want, const int *room, int *to) {
     int given = 0;
     if (hosts == NULL || to == NULL || src < 0 || src >= n) return 0;
     while (given < want && hosts[src].bots > 0) {
         int dst = keepTarget(hosts, n, smallSlots, bias, lag, src, false);
+        int take, freeSlots;
         if (dst < 0 || hosts[dst].bad) break;
-        to[given++] = dst;
-        hosts[src].bots--;
-        hosts[dst].bots++;
+        take = room != NULL && room[dst] > 1 ? room[dst] : 1;
+        freeSlots = hosts[dst].slots - hosts[dst].bots;
+        if (take > freeSlots) take = freeSlots;
+        if (take > want - given) take = want - given;
+        if (take > hosts[src].bots) take = hosts[src].bots;
+        /* It takes no more of this batch: its free CPU check waits for a
+         * reading with these bots. */
         hosts[dst].open = false;
+        while (take-- > 0) {
+            to[given++] = dst;
+            hosts[src].bots--;
+            hosts[dst].bots++;
+        }
     }
     return given;
 }
@@ -1183,6 +1193,29 @@ int botHostOverrunBatchSize(const BotHostOverrunCfg *cfg, int shortBy,
                             bool fresh) {
     if (cfg == NULL || !cfg->freeBatch || !fresh || shortBy <= 0) return 0;
     return shortBy;
+}
+
+int botHostOverrunFreeRoom(const BotHostOverrunState *st,
+                           const BotHostOverrunCfg *cfg, int bots,
+                           uint8_t latestFree, int max) {
+    BotHostOverrunReport rep;
+    int room;
+    if (max <= 0) return 0;
+    if (!botHostOverrunMayTake(st, cfg, bots, latestFree, &rep)) return 0;
+    if (st == NULL || cfg == NULL || !(cfg->pct > 0.0) ||
+        st->readingCount == 0 || !rep.freeKnown || !rep.costKnown ||
+        !(rep.oneBotCost > 0.0)) {
+        return 1;
+    }
+    /* The first bot passed the check above; each bot after it takes the
+     * one-bot cost off the free CPU average. */
+    for (room = 1; room < max; room++) {
+        BotHostOverrunReport r = rep;
+        r.freeAvg = rep.freeAvg - (double)room * rep.oneBotCost;
+        r.predicted = r.freeAvg - r.oneBotCost;
+        if (!ovrFreeRule(&r)) break;
+    }
+    return room;
 }
 
 int botHostOverrunFreeShort(const BotHostOverrunState *st,

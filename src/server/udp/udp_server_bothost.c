@@ -4117,9 +4117,11 @@ static const char BOT_HOST_BATCH_REASON[] = "low free CPU, batch";
 /* The free CPU batch (-bothost-free-batch): bad place from, whose free CPU
  * is short by want bots, gives up to want bots in this one step, each to
  * the place botHostPlaceBadBatch picks (the server first, then the best
- * good host; each place takes at most one). It stops when no good place
- * is left or no bot may go. Its limit then becomes its bots less the bots
- * given, for this game, and its probes start again. */
+ * good host). Each place takes as many as its free slots and its free CPU
+ * room (botHostOverrunFreeRoom) let it, then no more of this batch. It
+ * stops when no good place is left or no bot may go. Its limit then
+ * becomes its bots less the bots given, for this game, and its probes
+ * start again. */
 static void botHostPlaceGiveBatch(ServerSim *sim,
                                   const BotHostPlaceHost *hosts,
                                   const BotHostPlaceHost *raw, int from,
@@ -4128,9 +4130,11 @@ static void botHostPlaceGiveBatch(ServerSim *sim,
     BotHostPlaceHost tbl[1 + MAX_BOT_HOSTS];
     BotHostOverrunReport rep;
     int dests[MAX_TANKS], left[MAX_TANKS];
+    int room[1 + MAX_BOT_HOSTS], took[1 + MAX_BOT_HOSTS];
     bool used[MAX_TANKS];
     int planned, given = 0, k, j, nLeft, botsBefore, lack, newLimit;
-    char place[64], before[32], after[32], nums[200];
+    char place[64], before[32], after[32], nums[200], each[400];
+    size_t eachLen = 0;
 
     if (want > MAX_TANKS) want = MAX_TANKS;
     memcpy(tbl, hosts, sizeof(tbl));
@@ -4139,9 +4143,19 @@ static void botHostPlaceGiveBatch(ServerSim *sim,
     memset(&rep, 0, sizeof(rep));
     lack = botHostOverrunFreeShort(&botHostOvr[from], cfg, botsBefore,
                                    botHostOvrFree(from), &rep);
+    /* The bots each place's free CPU has room for now. */
+    for (k = 0; k <= MAX_BOT_HOSTS; k++) {
+        took[k] = 0;
+        room[k] = 0;
+        if (k == from || !hosts[k].open) continue;
+        if (k > 0 && !udpServer.botHosts[k - 1].connected) continue;
+        botHostOvrSetFallback(k);
+        room[k] = botHostOverrunFreeRoom(&botHostOvr[k], cfg, hosts[k].bots,
+                                         botHostOvrFree(k), want);
+    }
     planned = botHostPlaceBadBatch(tbl, 1 + MAX_BOT_HOSTS, botHostSmallSlots,
                                    botHostSmallBias, &botHostLag, from, want,
-                                   dests);
+                                   room, dests);
     memset(used, 0, sizeof(used));
     for (k = 0; k < planned; k++) {
         int s;
@@ -4156,13 +4170,30 @@ static void botHostPlaceGiveBatch(ServerSim *sim,
         for (j = 0; j < candCount; j++) {
             if (cand[j] == s) used[j] = true;
         }
-        if (!botHostPlaceGive(sim, from, dests[k], s, raw[dests[k]].bots,
+        if (!botHostPlaceGive(sim, from, dests[k], s,
+                              raw[dests[k]].bots + took[dests[k]],
                               BOT_HOST_BATCH_REASON)) {
             continue;
         }
+        took[dests[k]]++;
         given++;
     }
     if (given <= 0) return;
+    /* How many each place took, in the order of the batch. */
+    each[0] = '\0';
+    for (k = 0; k < planned; k++) {
+        int d = dests[k];
+        char name[64];
+        if (took[d] <= 0) continue;
+        for (j = 0; j < k; j++) {
+            if (dests[j] == d) break;
+        }
+        if (j < k) continue;
+        botHostOvrPlaceText(d, name, sizeof(name));
+        SDL_snprintf(each + eachLen, sizeof(each) - eachLen, "%s%s took %d",
+                     eachLen > 0 ? ", " : "", name, took[d]);
+        eachLen = SDL_strlen(each);
+    }
     botHostBadGave[from] = true;
     botHostBadGaveTick[from] = udpServer.tickCount;
     rep.limitBefore = botHostOvr[from].limit;
@@ -4176,10 +4207,11 @@ static void botHostPlaceGiveBatch(ServerSim *sim,
     botHostOvrLimitText(newLimit, raw[from].slots, after, sizeof(after));
     botHostOvrNumbers(&rep, nums, sizeof(nums));
     fprintf(stderr, "[bothost] bad place: %s free CPU is short by %d bots "
-                    "(%s): gave %d of %d bots in one step; limit goes from "
-                    "%s to %s for this game; wait %d s before it gives "
+                    "(%s): gave %d of %d bots in one step (%s); limit goes "
+                    "from %s to %s for this game; wait %d s before it gives "
                     "another\n",
-            place, lack, nums, given, want, before, after, cfg->stepSecs);
+            place, lack, nums, given, want, each, before, after,
+            cfg->stepSecs);
 }
 
 /* One placement move: index 0 of the host table is the server itself, index

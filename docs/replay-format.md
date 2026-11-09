@@ -837,11 +837,14 @@ Then, by kind (0xFF in a byte field: none):
   check for the bots it had), "low free CPU, batch" (one bot of a free CPU
   batch: `host` was short by several bots and gave them in one step; one
   decision 8 or 9 per bot, then a decision 3 with the same reason and the
-  lowered limit), or "the spread" (the even spread of
-  `-bothost-spread-even`, and every decision 8 and 9 in logs made before
-  these reasons). From version 2 the reason is followed by `srcRate:u16` and
-  `dstRate:u16` (the window rates of `host` and `toHost` in hundredths of a
-  percent, 0xFFFF none: a target with no bots has no rate), `moves:u8` (m,
+  lowered limit; one target may take several bots of a batch, as many as
+  its free slots and its free CPU room let it, and the free CPU check of
+  each of its records counts the bots it took before that one), or "the
+  spread" (the even spread of `-bothost-spread-even`, and every decision 8
+  and 9 in logs made before these reasons). From version 2 the reason is
+  followed by `srcRate:u16` and `dstRate:u16` (the window rates of `host`
+  and `toHost` in hundredths of a percent, 0xFFFF none: a target with no
+  bots has no rate), `moves:u8` (m,
   the bot's overrun moves in this game before this one), `rule:u8` (0 none,
   1 normal, 2 emergency, 3 trial), `staySecs:u16` (the seconds since the
   bot's last overrun move, or since it was first seen) and
