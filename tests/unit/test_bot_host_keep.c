@@ -35,11 +35,20 @@
  *      old fixed 30 s step and the full window after each move.
  *   8. bot_host_place_keep_free_batch: a place whose free CPU is short by
  *      3 bots gives 3 bots in one step, the server first; its limit drops
- *      to its bots - 3.
+ *      to its bots - 3. With no room numbers each target takes one.
  *   9. bot_host_place_keep_batch_no_target: the batch stops when no good
  *      place is left.
  *  10. bot_host_place_keep_batch_off: -bothost-free-batch 0 (and stale
  *      free CPU numbers) give one bot by the usual rule.
+ *  11. bot_host_place_keep_batch_server_room: the server, with free CPU
+ *      room for 3 bots, takes 3 of a batch of 4; the 4th goes to a good
+ *      Bot Host.
+ *  12. bot_host_place_keep_batch_no_reading: a target with no free CPU
+ *      reading (or no one-bot cost) takes 1.
+ *  13. bot_host_place_keep_batch_slot_limit: a target takes no more than
+ *      its free slots, however much free CPU room it has.
+ *  14. bot_host_place_keep_batch_cpu_limit: a Bot Host target takes no
+ *      more than its free CPU room; the full server takes none.
  */
 
 #include <stdint.h>
@@ -685,7 +694,7 @@ int run_bot_host_place_keep_free_batch(void) {
     UT_ASSERT(from == 3 && dst == 0 && why == BOT_HOST_SPREAD_BAD);
     given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
                                  BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3, n,
-                                 to);
+                                 NULL, to);
     UT_ASSERT_MSG(given == 3, "given %d", given);
     /* The server first, then the emptier host, then the other. */
     UT_ASSERT_MSG(to[0] == 0 && to[1] == 1 && to[2] == 2,
@@ -718,7 +727,7 @@ int run_bot_host_place_keep_batch_no_target(void) {
         h[2].bad = true;
         given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
                                      BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3,
-                                     3, to);
+                                     3, NULL, to);
         UT_ASSERT_MSG(given == 1 && to[0] == 1, "given %d to %d", given,
                       to[0]);
         UT_ASSERT(h[3].bots == 4 && h[1].bots == 1);
@@ -730,7 +739,7 @@ int run_bot_host_place_keep_batch_no_target(void) {
         h[3].bad = true;
         given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
                                      BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3,
-                                     3, to);
+                                     3, NULL, to);
         UT_ASSERT(given == 0 && h[3].bots == 5);
     }
     /* A good place that may not take a bot now (its free CPU check): not
@@ -742,7 +751,7 @@ int run_bot_host_place_keep_batch_no_target(void) {
         h[1].open = false;
         given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
                                      BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3,
-                                     3, to);
+                                     3, NULL, to);
         UT_ASSERT_MSG(given == 1 && to[0] == 2, "given %d to %d", given,
                       to[0]);
     }
@@ -781,5 +790,173 @@ int run_bot_host_place_keep_batch_off(void) {
         for (k = 0; k < 30; k++) keepFeedFree(&st, &cfg, 5, 5, 5, 100);
         UT_ASSERT(botHostOverrunFreeShort(&st, &cfg, 5, 5, NULL) == 1);
     }
+    return 0;
+}
+
+/* ================================================================
+ * 11 to 14. How many bots each target of a batch takes
+ * ================================================================ */
+
+/* A target with bots bots that has run 30 s clean at freePct free, each
+ * bot using cost% of the CPU. With no bad reading and the lowest clean
+ * reading at freePct, the check for the k-th bot after the first passes
+ * while freePct - k cost - cost >= cost, so the room is
+ * floor(freePct / cost) - 1. */
+static void keepTargetFree(BotHostOverrunState *st,
+                           const BotHostOverrunCfg *cfg, int bots,
+                           uint8_t freePct, int cost) {
+    int k;
+    botHostOverrunReset(st);
+    for (k = 0; k < 30; k++) {
+        keepFeedFree(st, cfg, bots, 0, freePct, (uint8_t)(cost * bots));
+    }
+}
+
+int run_bot_host_place_keep_batch_server_room(void) {
+    static const int slots[3] = { 4, 4, 8 };
+    int bots[3] = { 0, 1, 5 };
+    BotHostPlaceHost h[4];
+    BotHostOverrunCfg cfg;
+    BotHostOverrunState srv;
+    int room[4] = { 0, 1, 1, 0 };
+    int to[8], given;
+
+    botHostOverrunCfgDefaults(&cfg);
+    /* The server with 1 bot at 80% free, 20% a bot: 80 / 20 - 1 = 3. */
+    keepTargetFree(&srv, &cfg, 1, 80, 20);
+    room[0] = botHostOverrunFreeRoom(&srv, &cfg, 1, 80, 4);
+    UT_ASSERT_MSG(room[0] == 3, "room %d", room[0]);
+    /* At most max. */
+    UT_ASSERT(botHostOverrunFreeRoom(&srv, &cfg, 1, 80, 2) == 2);
+
+    keepTable(h, 4, 8, 1, slots, bots, 2.0);
+    h[3].bad = true;
+    given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                 BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3, 4,
+                                 room, to);
+    UT_ASSERT_MSG(given == 4, "given %d", given);
+    UT_ASSERT_MSG(to[0] == 0 && to[1] == 0 && to[2] == 0 && to[3] == 1,
+                  "to %d %d %d %d", to[0], to[1], to[2], to[3]);
+    UT_ASSERT(h[0].bots == 4 && h[1].bots == 1 && h[2].bots == 1 &&
+              h[3].bots == 1);
+    return 0;
+}
+
+int run_bot_host_place_keep_batch_no_reading(void) {
+    static const int slots[3] = { 4, 4, 8 };
+    int bots[3] = { 0, 1, 5 };
+    BotHostPlaceHost h[4];
+    BotHostOverrunCfg cfg;
+    BotHostOverrunState st;
+    int room[4], to[8], given, k;
+
+    botHostOverrunCfgDefaults(&cfg);
+    /* No reading at all, no bots: its first bot, 1. */
+    botHostOverrunReset(&st);
+    UT_ASSERT(botHostOverrunFreeRoom(&st, &cfg, 0, 80, 4) == 1);
+    /* Bots but no free CPU data from the host: 1. */
+    UT_ASSERT(botHostOverrunFreeRoom(&st, &cfg, 2, 0xFF, 4) == 1);
+    /* Readings of 80% free with no bots, so no one-bot cost: 1. */
+    for (k = 0; k < 30; k++) keepFeedFree(&st, &cfg, 0, 0, 80, 0);
+    UT_ASSERT(!st.costKnown);
+    UT_ASSERT(botHostOverrunFreeRoom(&st, &cfg, 0, 80, 4) == 1);
+
+    /* In a batch: room 1 at each target, one bot each, as before. */
+    room[0] = room[1] = room[2] = 1;
+    room[3] = 0;
+    keepTable(h, 4, 8, 2, slots, bots, 2.0);
+    h[3].bad = true;
+    given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                 BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3, 3,
+                                 room, to);
+    UT_ASSERT_MSG(given == 3 && to[0] == 0 && to[1] == 1 && to[2] == 2,
+                  "given %d to %d %d %d", given, to[0], to[1], to[2]);
+    /* A room of 0 (the check refuses now) on a place still open: 1. */
+    room[0] = 0;
+    keepTable(h, 4, 8, 2, slots, bots, 2.0);
+    h[3].bad = true;
+    given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                 BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3, 3,
+                                 room, to);
+    UT_ASSERT(given == 3 && to[0] == 0 && h[0].bots == 3);
+    return 0;
+}
+
+int run_bot_host_place_keep_batch_slot_limit(void) {
+    static const int slots[3] = { 4, 4, 8 };
+    int bots[3] = { 0, 1, 5 };
+    BotHostPlaceHost h[4];
+    BotHostOverrunCfg cfg;
+    BotHostOverrunState srv;
+    int room[4] = { 0, 1, 1, 0 };
+    int to[8], given;
+
+    botHostOverrunCfgDefaults(&cfg);
+    /* The server with 6 bots at 90% free, 5% a bot: room 17, at most 4. */
+    keepTargetFree(&srv, &cfg, 6, 90, 5);
+    room[0] = botHostOverrunFreeRoom(&srv, &cfg, 6, 90, 4);
+    UT_ASSERT_MSG(room[0] == 4, "room %d", room[0]);
+
+    /* Its 8 slots leave room for 2: the other 2 go to the hosts. */
+    keepTable(h, 4, 8, 6, slots, bots, 2.0);
+    h[3].bad = true;
+    given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                 BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3, 4,
+                                 room, to);
+    UT_ASSERT_MSG(given == 4, "given %d", given);
+    UT_ASSERT_MSG(to[0] == 0 && to[1] == 0 && to[2] == 1 && to[3] == 2,
+                  "to %d %d %d %d", to[0], to[1], to[2], to[3]);
+    UT_ASSERT(h[0].bots == 8 && h[1].bots == 1 && h[2].bots == 2);
+
+    /* A Bot Host with 3 of 4 slots used and room 4 takes 1. */
+    {
+        static const int slots2[3] = { 4, 4, 8 };
+        int bots2[3] = { 3, 4, 5 };
+        int room2[4] = { 0, 4, 4, 0 };
+        keepTable(h, 4, 8, 8, slots2, bots2, 2.0);
+        h[3].bad = true;
+        given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                     BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3,
+                                     4, room2, to);
+        UT_ASSERT_MSG(given == 1 && to[0] == 1, "given %d to %d", given,
+                      to[0]);
+        UT_ASSERT(h[0].bots == 8 && h[1].bots == 4);
+    }
+    return 0;
+}
+
+int run_bot_host_place_keep_batch_cpu_limit(void) {
+    static const int slots[3] = { 8, 4, 8 };
+    int bots[3] = { 1, 0, 5 };
+    BotHostPlaceHost h[4];
+    BotHostOverrunCfg cfg;
+    BotHostOverrunState host;
+    int room[4] = { 4, 0, 1, 0 };
+    int to[8], given;
+
+    botHostOverrunCfgDefaults(&cfg);
+    /* Bot Host 1 with 1 bot at 60% free, 20% a bot: 60 / 20 - 1 = 2. */
+    keepTargetFree(&host, &cfg, 1, 60, 20);
+    room[1] = botHostOverrunFreeRoom(&host, &cfg, 1, 60, 4);
+    UT_ASSERT_MSG(room[1] == 2, "room %d", room[1]);
+    /* The room comes from its free CPU, not from the bots it has: 2 bots
+     * at 60% free also give 2, and 40% free gives 1. */
+    keepTargetFree(&host, &cfg, 2, 60, 20);
+    UT_ASSERT(botHostOverrunFreeRoom(&host, &cfg, 2, 60, 4) == 2);
+    keepTargetFree(&host, &cfg, 2, 40, 20);
+    UT_ASSERT(botHostOverrunFreeRoom(&host, &cfg, 2, 40, 4) == 1);
+
+    /* The server full (8 of 8): host 1 takes its 2, host 2 its 1, and the
+     * server takes none past its slots. */
+    keepTable(h, 4, 8, 8, slots, bots, 2.0);
+    h[3].bad = true;
+    given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                 BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3, 4,
+                                 room, to);
+    UT_ASSERT_MSG(given == 3, "given %d", given);
+    UT_ASSERT_MSG(to[0] == 1 && to[1] == 1 && to[2] == 2,
+                  "to %d %d %d", to[0], to[1], to[2]);
+    UT_ASSERT(h[0].bots == 8 && h[1].bots == 3 && h[2].bots == 1 &&
+              h[3].bots == 2);
     return 0;
 }

@@ -252,14 +252,21 @@ bot_host_link.c). A layout that is lopsided but good stays as it is:
   - free CPU batch (`-bothost-free-batch 1`, the default): when the free
     CPU numbers show the place is short by n bots (each bot that leaves
     adds one bot's cost to its free CPU average, until the free CPU check
-    passes for the bots left), it gives up to n bots in one step. Each goes
-    by the rule below (the server first, then the best good host); a place
-    takes at most one bot of a batch, and the batch stops when no good
-    place is left. The place's limit then drops to its bots less the bots
-    given, for this game. A batch needs free CPU numbers that show the
-    last bot that left (no bot left within T seconds). A bad reading with
-    no clean reading at all cannot count the bots: one bot. 0 gives one
-    bot a step, as before.
+    passes for the bots left), it gives up to n bots in one step. They go
+    by the rule below (the server first, then the good Bot Hosts in the
+    order of their score). Each target takes the least of its free slots,
+    the bots its free CPU has room for and the bots left of the batch, then
+    no more of that batch. The room is the same count turned round: with
+    its free CPU average F and one bot's cost c, the k-th bot after the
+    first is checked with F - k c, and the room is the bots that pass in
+    turn (with no bad reading and the lowest clean reading at F, that is
+    floor(F / c) - 1). A target with no free CPU reading or no one-bot cost
+    takes 1. No target goes past its slots, the server neither. The batch
+    stops when no good place is left. The place's limit then drops to its
+    bots less the bots given, for this game. A batch needs free CPU
+    numbers that show the last bot that left (no bot left within T
+    seconds). A bad reading with no clean reading at all cannot count the
+    bots: one bot. 0 gives one bot a step, as before.
 - The place a bot goes to: the server first, while it is good and below
   its slots; else the Bot Host with the best score below.
 - Forced fall-backs (a host gone, changed brain files) and the overrun
@@ -274,14 +281,18 @@ bot_host_link.c). A layout that is lopsided but good stays as it is:
   "overrun rate", "low free CPU", "low free CPU, batch" (a bot of a free
   CPU batch, and the cut that follows it), or "the spread" (the even
   spread). The console says the severity (rate / P) and the wait for a
-  bad rate, and the shortage and the bots given for a batch.
+  bad rate, and the shortage, the bots given and how many each target
+  took for a batch.
 - `-bothost-spread-even` brings back the old even spread: bots also move
   between good places so that each is about equally full, with the lag
   rules below. The stay rule still holds.
 - Unit tests: `bot_host_place_keep_*` (`--test <name>`), among them
   `bot_host_place_keep_scaled_wait`, `bot_host_place_keep_step_min_old`,
-  `bot_host_place_keep_free_batch`, `bot_host_place_keep_batch_no_target`
-  and `bot_host_place_keep_batch_off`.
+  `bot_host_place_keep_free_batch`, `bot_host_place_keep_batch_no_target`,
+  `bot_host_place_keep_batch_off`, `bot_host_place_keep_batch_server_room`,
+  `bot_host_place_keep_batch_no_reading`,
+  `bot_host_place_keep_batch_slot_limit` and
+  `bot_host_place_keep_batch_cpu_limit`.
 
 #### The even spread and lag (-bothost-spread-even)
 
