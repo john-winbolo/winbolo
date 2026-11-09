@@ -94,6 +94,12 @@ that can be combined with it, except the Steamworks SDK, which is covered by
 - License: Zlib
 - https://github.com/madler/zlib
 
+### Zstandard (zstd)
+- Version: 1.5.7
+- License: BSD 3-Clause (zstd is dual-licensed BSD 3-Clause or GPLv2; WinBolo uses it under BSD 3-Clause)
+- https://github.com/facebook/zstd
+- Compresses the brain recordings and the Bot Host brain packs. Built as a static library from its build/cmake folder.
+
 ### cJSON
 - Version: 1.7.18
 - License: MIT
