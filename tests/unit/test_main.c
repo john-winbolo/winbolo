@@ -478,6 +478,7 @@ static const UnitTestEntry s_tests[] = {
     { "brain_bounds_wrapper_called_from_lua", run_brain_bounds_wrapper_called_from_lua },
     { "brain_bounds_kill_outside_think", run_brain_bounds_kill_outside_think },
     { "brain_bounds_host_globals_raw", run_brain_bounds_host_globals_raw },
+    { "brain_bounds_on_init_metatable", run_brain_bounds_on_init_metatable },
     { "brain_crash_log_outside_think", run_brain_crash_log_outside_think },
     { "brain_bounds_deserialize_open", run_brain_bounds_deserialize_open },
     { "brain_bounds_next_step_bad_start", run_brain_bounds_next_step_bad_start },

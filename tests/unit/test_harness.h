@@ -593,6 +593,7 @@ int run_brain_bounds_think_errors(void);
 int run_brain_bounds_wrapper_called_from_lua(void);
 int run_brain_bounds_kill_outside_think(void);
 int run_brain_bounds_host_globals_raw(void);
+int run_brain_bounds_on_init_metatable(void);
 int run_brain_crash_log_outside_think(void);
 int run_brain_bounds_deserialize_open(void);
 int run_brain_bounds_next_step_bad_start(void);

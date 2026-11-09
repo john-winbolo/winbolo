@@ -60,8 +60,27 @@ for _ in pairs(package.preload) do preloaded = preloaded + 1 end
 say("preload_empty", preloaded == 0)
 say("no_func_from_getinfo", debug.getinfo(1, "f").func == nil
                             and debug.getinfo(1).func == nil
-                            and debug.getinfo(print).func == nil
-                            and debug.getinfo(1, "S").source ~= nil)
+                            and debug.getinfo(print).func == nil)
+-- The levels still mean what they mean in plain Lua.
+local here = debug.getinfo(1, "Sl")
+say("getinfo_level_1_is_caller", here.source:find("init.lua", 1, true) ~= nil
+                                 and here.currentline > 0)
+local function callee() return debug.getinfo(2, "Sl").currentline end
+local line_before = debug.getinfo(1, "l").currentline
+say("getinfo_level_2_is_callers_caller", callee() == line_before + 1)
+say("getinfo_function_form", debug.getinfo(callee, "S").what == "Lua")
+say("getinfo_needs_a_level", not pcall(debug.getinfo))
+do
+  local co = coroutine.create(function()
+    local inner = debug.getinfo(coroutine.running(), 1, "S")
+    coroutine.yield(inner and inner.source or "")
+  end)
+  local _, source = coroutine.resume(co)
+  say("getinfo_this_thread_form", type(source) == "string"
+                                  and source:find("init.lua", 1, true) ~= nil)
+  local other = debug.getinfo(co, 0, "S")
+  say("getinfo_other_thread_form", other ~= nil and other.func == nil)
+end
 
 -- The jail: a file beside the brain's folder cannot be opened.
 local outside = io.open("@OUTSIDE@", "w")
@@ -101,9 +120,10 @@ return { think = function() return {} end }
 """
 
 
-# A brain whose tables raise on every metamethod the host could trigger. It runs
-# on the server's own bot path, where the host writes to the brain's table every
-# tick. It counts its thinks, so a server that dies or never thinks reads as FAIL.
+# A brain whose table raises on __newindex and whose _G raises on every miss. It
+# runs on the server's own bot path, where the host writes to the brain's table
+# every tick. It counts its thinks, so a server that dies or never thinks reads
+# as FAIL.
 HOSTILE_METATABLE = r"""
 local open, rawset, setmetatable, error = io.open, rawset, setmetatable, error
 local thinks = 0

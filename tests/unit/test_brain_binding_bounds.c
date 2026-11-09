@@ -434,7 +434,9 @@ int run_brain_bounds_wrapper_called_from_lua(void) {
         "end\n"
         "local function poke(flag)\n"
         "  local f = deepest()\n"
-        "  if type(f) == 'function' then rawset(_G, flag, true) end\n"
+        "  if type(f) == 'function' and debug.getinfo(f, 'S').what == 'C' then\n"
+        "    rawset(_G, flag, true)\n"
+        "  end\n"
         "  pcall(f)\n"
         "  pcall(f, 5)\n"
         "  pcall(f, io.stdout)\n"
@@ -454,8 +456,14 @@ int run_brain_bounds_wrapper_called_from_lua(void) {
     return 0;
 }
 
-/* A budget kill raised outside the brain's own pcall is still a kill, and its
- * log lines are still flushed. */
+static void bbNoHook(lua_State *L, lua_Debug *ar) {
+    (void)L;
+    (void)ar;
+}
+
+/* A budget kill raised outside the brain's own pcall is still a kill, its log
+ * lines are still flushed, and the armed budget hook is taken off before they
+ * are. */
 int run_brain_bounds_kill_outside_think(void) {
     static BrainInfo info;
     bool killed = false;
@@ -468,9 +476,11 @@ int run_brain_bounds_kill_outside_think(void) {
 
     UT_ASSERT(L != NULL);
     memset(&info, 0, sizeof(info));
+    lua_sethook(L, bbNoHook, LUA_MASKCOUNT, 1000000);
     UT_ASSERT_MSG(!brainCoreCallThink(L, &info, &killed), "the think succeeded");
     UT_ASSERT_MSG(killed, "the kill was not reported");
     UT_ASSERT_MSG(bbFlagSet(L, "flushed"), "the killed tick's logs were not flushed");
+    UT_ASSERT_MSG(lua_gethook(L) == NULL, "the budget hook is still armed");
     lua_close(L);
     return 0;
 }
@@ -497,6 +507,35 @@ int run_brain_bounds_host_globals_raw(void) {
     UT_ASSERT_MSG(brainCoreCallScenarioHint(L, &table, why, sizeof(why)) ==
                   BRAIN_HINT_NO_HANDLER, "a hint with no handler was delivered");
     UT_ASSERT_MSG(!bbFlagSet(L, "raised"), "host code ran the metatable on _G");
+    lua_close(L);
+    return 0;
+}
+
+/* on_init through a metatable: one a brain inherits is still found and called,
+ * and an __index that raises only fails the update. */
+int run_brain_bounds_on_init_metatable(void) {
+    ScnTable table;
+    char why[128];
+    lua_State *L = bbStateWith(
+        "brain = setmetatable({}, { __index = {\n"
+        "  on_init = function() called = true end } })\n");
+
+    UT_ASSERT(L != NULL);
+    memset(&table, 0, sizeof(table));
+    UT_ASSERT_MSG(brainCoreUpdateInitTable(L, &table, why, sizeof(why)),
+                  "an inherited on_init was not called");
+    UT_ASSERT_MSG(bbFlagSet(L, "called"), "an inherited on_init did not run");
+    lua_close(L);
+
+    L = bbStateWith(
+        "brain = setmetatable({}, { __index = function()\n"
+        "  raised = true; error('on_init lookup') end })\n");
+    UT_ASSERT(L != NULL);
+    UT_ASSERT_MSG(!brainCoreUpdateInitTable(L, &table, why, sizeof(why)),
+                  "an on_init lookup that raised succeeded");
+    UT_ASSERT_MSG(bbFlagSet(L, "raised"), "the lookup did not reach the metamethod");
+    UT_ASSERT_MSG(strstr(why, "on_init lookup") != NULL,
+                  "the reason was not passed on: %s", why);
     lua_close(L);
     return 0;
 }

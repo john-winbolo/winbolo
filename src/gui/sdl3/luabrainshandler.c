@@ -669,12 +669,17 @@ static void brain_jail_table_method(lua_State *L, const char *tbl,
 
 /* debug.getinfo([thread,] f [, what]) with the 'f' option taken out. Function
  * objects are the one thing here a brain could use: a level below its think is
- * host C code, which was never written to be called from Lua. */
+ * host C code, which was never written to be called from Lua.
+ *
+ * The real getinfo runs one frame deeper than the caller thinks, so a level on
+ * this thread moves up by one to name the frame the caller meant. */
 static int l_getinfo_no_func(lua_State *L) {
   int arg = lua_isthread(L, 1) ? 1 : 0;
   const char *what = luaL_optstring(L, arg + 2, "Slnu");
   char kept[16];
   size_t n = 0;
+
+  luaL_checkany(L, arg + 1);
 
   for (; *what != '\0' && n + 1 < sizeof(kept); what++) {
     if (*what != 'f') kept[n++] = *what;
@@ -682,7 +687,12 @@ static int l_getinfo_no_func(lua_State *L) {
   kept[n] = '\0';
   lua_pushvalue(L, lua_upvalueindex(1));
   if (arg) lua_pushvalue(L, 1);
-  lua_pushvalue(L, arg + 1);
+  if (lua_type(L, arg + 1) == LUA_TNUMBER &&
+      (arg == 0 || lua_tothread(L, 1) == L)) {
+    lua_pushinteger(L, lua_tointeger(L, arg + 1) + 1);
+  } else {
+    lua_pushvalue(L, arg + 1);
+  }
   lua_pushstring(L, kept);
   lua_call(L, arg + 2, 1);
   return 1;
@@ -1484,7 +1494,7 @@ LuaBrainSetting *luaBrainInstanceGetSettings(LuaBrainInstance *inst,
 
   top = lua_gettop(L);
 
-  lua_getglobal(L, "brain");
+  brainCoreGetGlobalRaw(L, "brain");
   if (!lua_istable(L, -1)) {
     lua_settop(L, top);
     return NULL;
@@ -1594,7 +1604,7 @@ void luaBrainInstanceSetSetting(LuaBrainInstance *inst,
 
   top = lua_gettop(L);
 
-  lua_getglobal(L, "brain");
+  brainCoreGetGlobalRaw(L, "brain");
   if (!lua_istable(L, -1)) {
     lua_settop(L, top);
     return;

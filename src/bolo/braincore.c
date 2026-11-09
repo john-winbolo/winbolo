@@ -136,6 +136,15 @@ static void brc_raw_field(lua_State *L, const char *key) {
   lua_rawget(L, -2);
 }
 
+/* t[key] for arguments t and key, under a lua_pcall, so a brain that inherits a
+ * method through __index still gets it and one whose __index raises only fails
+ * this call. */
+static int brc_protected_field(lua_State *L) {
+  luaL_checktype(L, 1, LUA_TTABLE);
+  lua_getfield(L, 1, luaL_checkstring(L, 2));
+  return 1;
+}
+
 void brainCoreSetInitTable(lua_State *L, const ScnTable *init) {
   int n = (init != NULL) ? (int)init->count : 0;
   int i;
@@ -186,7 +195,17 @@ bool brainCoreUpdateInitTable(lua_State *L, const ScnTable *init,
     lua_settop(L, top);
     return false;
   }
-  brc_raw_field(L, "on_init");
+  lua_pushcfunction(L, brc_protected_field);
+  lua_pushvalue(L, -2);
+  lua_pushstring(L, "on_init");
+  if (lua_pcall(L, 2, 1, 0) != LUA_OK) {
+    if (why != NULL && whyLen > 0) {
+      const char *msg = lua_tostring(L, -1);
+      snprintf(why, whyLen, "%s", msg != NULL ? msg : "unknown error");
+    }
+    lua_settop(L, top);
+    return false;
+  }
   if (!lua_isfunction(L, -1)) {
     lua_settop(L, top);
     return false;
@@ -1566,8 +1585,9 @@ static bool brc_call_method(lua_State *L, BrainInfo *info, const char *method) {
  * These two are on the Lua stack below the brain's think, so a VM with the full
  * debug library can get them from debug.getinfo and call them with anything.
  * The sandbox hides function objects from getinfo, and each still checks its
- * argument: no Lua code can make a light userdata, and any other value would be
- * read here as a BrcCallArgs. */
+ * argument, since any other value would be read here as a BrcCallArgs. A
+ * sandboxed brain cannot make a light userdata. With --allow-unsafe-brains the
+ * full debug library can, but a brain run that way can already do anything. */
 typedef struct {
   BrainInfo  *info;
   bool       *outKilled;
