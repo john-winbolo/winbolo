@@ -2099,7 +2099,7 @@ static void renderSysInfoContent(ClientSim *cs) {
 
 /* System Info's width, in and out of the main window. Only its height can
  * be changed. */
-#define SYSINFO_PANEL_W 660
+#define SYSINFO_PANEL_W 600
 
 /* Size and place one of the in-window Session Info panels. On iOS the panel
  * opens centred and no bigger than nine tenths of the screen each way, so it
