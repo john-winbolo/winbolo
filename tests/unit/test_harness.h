@@ -913,6 +913,13 @@ int run_brain_pack_one_changed(void);
 int run_brain_pack_bad_hash(void);
 int run_brain_pack_old_peer(void);
 int run_brain_pack_session(void);
+/* The guards on the Bot Host inside a client (test_bot_host_security.c). */
+int run_bot_host_official_no_files(void);
+int run_bot_host_token_allow_list(void);
+int run_bot_host_unculled_not_player(void);
+int run_bot_host_rec_upload_asked(void);
+int run_bot_host_salt_limit(void);
+int run_brain_capacity_throwing_index(void);
 
 /* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
 int run_bot_host_link_announce_codec(void);

@@ -1195,6 +1195,8 @@ int run_brainrec_host_upload_file_cap(void) {
     saved = *hc;
     memset(hc, 0, sizeof(*hc));
     SDL_strlcpy(hc->name, "ut652host", sizeof(hc->name));
+    /* The server asked this host for the block (an OPEN). */
+    serverBotRecNoteAsked(block, hc->name, hc->playerHost);
     memset(data, 0x5A, sizeof(data));
 
     /* Three files, each 4 bytes long, each sent no further than byte 0. */

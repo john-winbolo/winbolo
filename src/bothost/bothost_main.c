@@ -93,6 +93,7 @@
 #include "../common/prefs.h"
 #include "brain_capacity.h"
 #include "bot_host_cpu.h"   /* BotHostCpuMeter */
+#include "bot_host_guard.h" /* the init token list, the salt limit */
 #ifdef WINBOLO_BOTHOST_EMBED
 #include "bothost_embed.h"
 #include "bothost_optout.h"   /* BotHostRun */
@@ -150,6 +151,28 @@ static bool     embedRefused;
  * connected, so it can offer its slots again. Set by the client's main
  * thread (botHostEmbedSetWithhold), read by the host's thread. */
 static SDL_AtomicInt embedWithhold;
+/* WINBOLO_BOTHOST_OFFICIAL_ONLY (a CMake option, on by default): the Bot
+ * Host inside a client runs only the brains of its own install, checked
+ * file by file with SHA-256. No brain file is taken from a server; a brain
+ * that differs from the install is not run, and the host offers 0 slots.
+ * The Bot Host program is never built with it: its operator chose to run
+ * it, and a server's -bothost-code tells it what it may take. */
+#if HOST_EMBED && defined(WINBOLO_BOTHOST_OFFICIAL_ONLY)
+#define HOST_OFFICIAL_ONLY 1
+#else
+#define HOST_OFFICIAL_ONLY 0
+#endif
+/* The player's answer, for this join, to "this server wants to send its
+ * own bot code" (BOT_HOST_EMBED_CONSENT_*): asked only by a client built
+ * without WINBOLO_BOTHOST_OFFICIAL_ONLY, when a server in custom mode
+ * sends brain files that differ from the install. Set by the client's main
+ * thread (botHostEmbedConsentAnswer), read by the host's thread;
+ * botHostEmbedStart clears it. */
+static SDL_AtomicInt embedConsent;
+/* The player started WinBolo with -bothost-record: the host inside the
+ * client may record its bots' brains for a -brain-debug server. Off by
+ * default. Set before the host starts (botHostEmbedSetRecord). */
+static bool embedRecord;
 
 #ifdef WINBOLO_BOTHOST_EMBED
 /* The server is on this computer (CTRL_BOT_HOST_SAME_SERVER): the host
@@ -319,7 +342,25 @@ typedef struct {
     uint32_t          packWire;     /* compressed bytes received */
     int               fromInstall;
     int               fromCache;
+    /* installOnly: this manifest's brains run only from the install
+     * (the server's -bothost-code official, or HOST_OFFICIAL_ONLY); no file
+     * is asked for. refused: the manifest cannot be run that way (a v1 or
+     * debug-mode list): no bot runs here. */
+    bool              installOnly;
+    bool              refused;
+    /* The last manifest as it came, kept while it waits: for the player's
+     * answer (embedConsent) or for the player to turn bots on again
+     * (hostWithheld). pending: it waits now. */
+    uint8_t          *lastBuf;
+    uint32_t          lastLen;
+    uint32_t          lastGen;
+    bool              pending;
+    int               pendWhy;     /* SYNC_PEND_* */
 } HostSync;
+
+/* Why a manifest waits (HostSync.pending). */
+#define SYNC_PEND_WITHHELD 1   /* the player turned bots off on this computer */
+#define SYNC_PEND_CONSENT  2   /* the player's answer to the server's code */
 
 typedef struct {
     char       host[BOT_HOST_LINK_HOST_LEN];
@@ -360,6 +401,9 @@ typedef struct {
     uint32_t   lastFreeSeqSent;
 
     HostSync   sync;
+    /* The same-computer salts answered on this connection (a server may
+     * not collect hashes; bot_host_guard.h). */
+    BotHostSaltLimit saltLimit;
     /* Server-bound bulk: the brain recordings this host sends. */
     BulkSender recBulk;
 
@@ -424,10 +468,39 @@ static int poolUsedFor(int srv) {
     return n;
 }
 
+/* The index of brain name in the manifest of hs, or -1. */
+static int syncBrainIndex(const HostSync *hs, const char *name) {
+    int b;
+    if (!hs->haveManifest || name == NULL) return -1;
+    for (b = 0; b < hs->man.brainCount; b++) {
+        if (strcmp(hs->man.brains[b].name, name) == 0) return b;
+    }
+    return -1;
+}
+
+/* The Bot Host inside a client offers this server no slot now: its brain
+ * list was refused, it waits for the player's answer or for bots to be
+ * turned on again, or (official brains only) its install does not hold
+ * the server's bot brain. */
+static bool syncOffersNone(const HostSync *hs) {
+    int b;
+    if (!HOST_EMBED) return false;
+    if (hs->refused || hs->pending) return true;
+    if (hs->haveManifest && hs->installOnly) {
+        b = syncBrainIndex(hs, embedBrain);
+        if (b < 0 || !hs->inPlace[b]) return true;
+    }
+    return false;
+}
+
 /* The slots server srv may use now: its own seats and the free ones;
- * none while the player withholds this computer (hostWithheld). */
+ * none while the player withholds this computer (hostWithheld), or while
+ * the host may run none of the server's bots (syncOffersNone). */
 static int poolSlotsFor(int srv) {
     if (hostWithheld()) return 0;
+    if (srv >= 0 && srv < serverCount && syncOffersNone(&servers[srv].sync)) {
+        return 0;
+    }
     return poolUsedFor(srv) + poolFree();
 }
 
@@ -645,6 +718,13 @@ static BotHostLinkBrain cacheBrains[BOT_HOST_LINK_MAX_BRAINS];
 static int              cacheBrainCount;
 static bool             cacheListDirty = true;
 
+/* The CTRL_BOT_HOST_SYNC_CAPS bits this host sends. */
+static uint8_t hostSyncCaps(void) {
+    uint8_t caps = BRAIN_PACK_CAP_PACKED;
+    if (HOST_OFFICIAL_ONLY) caps |= BRAIN_PACK_CAP_OFFICIAL_ONLY;
+    return caps;
+}
+
 static void syncSendProgress(HostServer *sv) {
     ControlEvent evt;
     memset(&evt, 0, sizeof(evt));
@@ -714,6 +794,12 @@ static void syncDropReaders(HostSync *hs) {
 
 /* Forget the manifest and any transfer under way (connection lost). */
 static void syncReset(HostSync *hs) {
+    free(hs->lastBuf);
+    hs->lastBuf = NULL;
+    hs->lastLen = hs->lastGen = 0;
+    hs->pending = false;
+    hs->installOnly = false;
+    hs->refused = false;
     syncDropReaders(hs);
     hs->packMode = false;
     memset(hs->inPlace, 0, sizeof(hs->inPlace));
@@ -808,6 +894,27 @@ static int embedCapacityFor(const HostServer *sv) {
 }
 #endif
 
+/* The slots this computer offers: the server's bot brain's own answer for
+ * this machine, once its files are here. It is set before the ready
+ * report, so the server never places more. Not while the player has
+ * turned bots off on this computer, nor while the host may run none of the
+ * server's bots: the brain's code does not run then. */
+static void syncCapacityIfOwed(HostServer *sv) {
+    HostSync *hs = &sv->sync;
+    int cap;
+    if (!HOST_EMBED || embedSlotsFixed != 0 || !hs->ready) return;
+    if (embedCapacityGen == hs->gen) return;
+    if (hostWithheld() || syncOffersNone(hs)) return;
+    cap = embedCapacityFor(sv);
+    embedCapacityGen = hs->gen;
+    if (cap != optSlots) {
+        HOST_EVENT("[bothost] Bot Host \"%s\": brain \"%s\" can run %d "
+                   "bots on this computer; slots %d -> %d", optName,
+                   embedBrain, cap, optSlots, cap);
+        optSlots = cap;
+    }
+}
+
 static void syncFinishIfDone(HostServer *sv) {
     HostSync *hs = &sv->sync;
     int b;
@@ -840,38 +947,24 @@ static void syncFinishIfDone(HostServer *sv) {
                 sv->label, (unsigned)hs->gen, (unsigned)hs->done,
                 (unsigned)hs->packWire, (unsigned)(nowMs() - hs->syncStartMs));
     }
-    if (HOST_EMBED && embedSlotsFixed == 0 && embedCapacityGen != hs->gen) {
-        /* The slots this computer offers: the server's bot brain's own
-         * answer for this machine, now that its files are here. It is set
-         * before the ready report, so the server never places more. */
-        int cap = embedCapacityFor(sv);
-        embedCapacityGen = hs->gen;
-        if (cap != optSlots) {
-            HOST_EVENT("[bothost] Bot Host \"%s\": brain \"%s\" can run %d "
-                       "bots on this computer; slots %d -> %d", optName,
-                       embedBrain, cap, optSlots, cap);
-            optSlots = cap;
-        }
-    }
+    syncCapacityIfOwed(sv);
     syncSendProgress(sv);
 }
 
-static void syncOnManifest(HostServer *sv, const uint8_t *buf, uint32_t len,
-                           uint32_t gen) {
+/* Take a new manifest m (its brains and files become hs->man) and start
+ * its download, as the host always did. */
+static void syncProcessManifest(HostServer *sv, BrainSyncManifest m,
+                                uint32_t gen) {
     HostSync *hs = &sv->sync;
-    BrainSyncManifest m;
     BrainSyncPlan plan;
     int b;
 
-    if (!brainSyncManifestDecode(buf, len, &m)) {
-        fprintf(stderr, "[bothost] the brain file list from %s is damaged; "
-                        "ignored\n", sv->label);
-        return;
-    }
     syncDropFile(hs);
     brainSyncFree(&hs->man);
     free(hs->need);
     hs->need = NULL;
+    hs->installOnly = false;
+    hs->refused = false;
     hs->man = m;
     hs->gen = gen;
     hs->haveManifest = true;
@@ -980,6 +1073,204 @@ static void syncOnManifest(HostServer *sv, const uint8_t *buf, uint32_t len,
         return;
     }
     syncRequestMore(sv);
+}
+
+/* Forget the current manifest and its transfer, but not the bulk
+ * receiver (this may run inside its callback). */
+static void syncDropManifest(HostServer *sv) {
+    HostSync *hs = &sv->sync;
+    syncDropReaders(hs);
+    syncDropFile(hs);
+    brainSyncFree(&hs->man);
+    free(hs->need);
+    hs->need = NULL;
+    hs->needCount = hs->nextReq = hs->gotCount = 0;
+    hs->haveManifest = false;
+    hs->ready = false;
+    hs->installOnly = false;
+    hs->refused = false;
+    hs->done = hs->total = 0;
+    memset(hs->inPlace, 0, sizeof(hs->inPlace));
+    memset(hs->staged, 0, sizeof(hs->staged));
+}
+
+/* A manifest of the official brains only (the server's -bothost-code
+ * official, or HOST_OFFICIAL_ONLY): no file is asked for. Each brain runs
+ * from the install when the install holds it file for file (SHA-256), else
+ * not at all. A v1 list (no SHA-256) or a debug-mode one (a debug brain
+ * writes into its own folder) is refused: no bot runs here for it. */
+static void syncInstallOnlyManifest(HostServer *sv, BrainSyncManifest m,
+                                    uint32_t gen) {
+    HostSync *hs = &sv->sync;
+    int b, held = 0;
+
+    syncDropManifest(sv);
+    hs->man = m;
+    hs->gen = gen;
+    hs->haveManifest = true;
+    hs->installOnly = true;
+    hs->packMode = true;
+    hs->syncStartMs = nowMs();
+    hs->retries = 0;
+    hs->packWire = 0;
+    hs->fromInstall = hs->fromCache = 0;
+    if (!m.haveSha || m.debugMode) {
+        hs->refused = true;
+        HOST_EVENT("[bothost] Bot Host \"%s\": the brain file list from %s "
+                   "is %s; this host runs only the brains of its own install, "
+                   "so it runs no bot for this server", optName, sv->label,
+                   !m.haveSha ? "the old form (no SHA-256)"
+                              : "for a -brain-debug server");
+        syncSendProgress(sv);
+        return;
+    }
+    syncInstallRoot(hs->installRoot, sizeof(hs->installRoot));
+    for (b = 0; b < hs->man.brainCount; b++) {
+        const BrainSyncBrain *br = &hs->man.brains[b];
+        ControlEvent evt;
+        hs->inPlace[b] = hs->installRoot[0] != '\0' &&
+                         brainSyncInstallMatches(hs->installRoot, br);
+        if (hs->inPlace[b]) {
+            held++;
+            hs->fromInstall += br->fileCount;
+        }
+        /* No file is asked for: an empty bitmap. Every file from the
+         * install tells the server this brain runs here. */
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_BOT_HOST_PACK_REQ;
+        evt.u.botHostPackReq.gen = gen;
+        evt.u.botHostPackReq.brain = (uint8_t)b;
+        evt.u.botHostPackReq.fileCount = (uint16_t)br->fileCount;
+        evt.u.botHostPackReq.fromInstall =
+            hs->inPlace[b] ? (uint16_t)br->fileCount : 0;
+        ctlSendEvent(sv, &evt);
+        fprintf(stderr, "[bothost]   brain \"%s\": %s\n", br->name,
+                hs->inPlace[b] ? "the same as this install; it runs from there"
+                               : "not the same as this install; not run here");
+    }
+    HOST_EVENT("[bothost] Bot Host \"%s\": official brains only; %d of the "
+               "%d brains of %s (generation %u) are the same as this install; "
+               "no file is downloaded", optName, held, hs->man.brainCount,
+               sv->label, (unsigned)gen);
+    syncFinishIfDone(sv);
+}
+
+#ifdef WINBOLO_BOTHOST_EMBED
+/* True when running manifest m means running code that is not the
+ * install's: a v1 list, or a brain whose files differ from the install. */
+static bool syncNeedsConsent(const BrainSyncManifest *m) {
+    char root[600];
+    int b;
+    if (!m->haveSha) return true;
+    syncInstallRoot(root, sizeof(root));
+    if (root[0] == '\0') return m->brainCount > 0;
+    for (b = 0; b < m->brainCount; b++) {
+        if (!brainSyncInstallMatches(root, &m->brains[b])) return true;
+    }
+    return false;
+}
+#endif
+
+/* Keep manifest m waiting (why: SYNC_PEND_*): no file is asked for and no
+ * brain code runs; the host offers 0 slots (syncOffersNone). */
+static void syncPend(HostServer *sv, BrainSyncManifest *m, uint32_t gen,
+                     int why) {
+    HostSync *hs = &sv->sync;
+    syncDropManifest(sv);
+    brainSyncFree(m);
+    hs->gen = gen;
+    hs->pending = true;
+    hs->pendWhy = why;
+    syncSendProgress(sv);
+}
+
+static void syncOnManifest(HostServer *sv, const uint8_t *buf, uint32_t len,
+                           uint32_t gen) {
+    HostSync *hs = &sv->sync;
+    BrainSyncManifest m;
+
+    if (!brainSyncManifestDecode(buf, len, &m)) {
+        fprintf(stderr, "[bothost] the brain file list from %s is damaged; "
+                        "ignored\n", sv->label);
+        return;
+    }
+    if (HOST_EMBED && buf != hs->lastBuf) {
+        /* Kept, so it can wait for the player. */
+        uint8_t *copy = (uint8_t *)malloc(len > 0 ? len : 1);
+        if (copy != NULL) memcpy(copy, buf, len);
+        free(hs->lastBuf);
+        hs->lastBuf = copy;
+        hs->lastLen = copy != NULL ? len : 0;
+        hs->lastGen = gen;
+    }
+    hs->pending = false;
+    hs->pendWhy = 0;
+    if (HOST_OFFICIAL_ONLY || m.noCode) {
+        syncInstallOnlyManifest(sv, m, gen);
+        return;
+    }
+    if (HOST_EMBED && hostWithheld()) {
+        /* Bots are off on this computer: nothing is downloaded. */
+        HOST_EVENT("[bothost] Bot Host \"%s\": bots are off on this "
+                   "computer; the brain files of %s are not downloaded",
+                   optName, sv->label);
+        syncPend(sv, &m, gen, SYNC_PEND_WITHHELD);
+        return;
+    }
+#ifdef WINBOLO_BOTHOST_EMBED
+    if (syncNeedsConsent(&m)) {
+        int c = SDL_GetAtomicInt(&embedConsent);
+        if (c != BOT_HOST_EMBED_CONSENT_YES) {
+            if (c == BOT_HOST_EMBED_CONSENT_NONE) {
+                SDL_SetAtomicInt(&embedConsent, BOT_HOST_EMBED_CONSENT_ASKING);
+                HOST_EVENT("[bothost] Bot Host \"%s\": %s wants to send its "
+                           "own bot code; the player is asked first", optName,
+                           sv->label);
+            }
+            syncPend(sv, &m, gen, SYNC_PEND_CONSENT);
+            return;
+        }
+    }
+#endif
+    syncProcessManifest(sv, m, gen);
+}
+
+/* The Bot Host inside a client: a manifest that waits goes on once its
+ * reason is gone, and a download stops when the player turns bots off. */
+static void syncServicePending(HostServer *sv) {
+#ifdef WINBOLO_BOTHOST_EMBED
+    HostSync *hs = &sv->sync;
+    if (hs->pending && hs->lastBuf != NULL) {
+        bool go = false;
+        if (hs->pendWhy == SYNC_PEND_WITHHELD) go = !hostWithheld();
+        if (hs->pendWhy == SYNC_PEND_CONSENT) {
+            go = !hostWithheld() && SDL_GetAtomicInt(&embedConsent) ==
+                                        BOT_HOST_EMBED_CONSENT_YES;
+        }
+        if (go) {
+            syncOnManifest(sv, hs->lastBuf, hs->lastLen, hs->lastGen);
+        }
+        return;
+    }
+    if (hostWithheld() && hs->haveManifest && !hs->ready &&
+        !hs->installOnly && hs->lastBuf != NULL) {
+        ControlEvent caps;
+        HOST_EVENT("[bothost] Bot Host \"%s\": bots are off on this "
+                   "computer; the brain file download from %s stops",
+                   optName, sv->label);
+        syncDropManifest(sv);
+        hs->pending = true;
+        hs->pendWhy = SYNC_PEND_WITHHELD;
+        memset(&caps, 0, sizeof(caps));
+        caps.type = CTRL_BOT_HOST_SYNC_CAPS;
+        caps.u.botHostSyncCaps.caps =
+            (uint8_t)(hostSyncCaps() | BRAIN_PACK_CAP_RESET);
+        ctlSendEvent(sv, &caps);
+        syncSendProgress(sv);
+    }
+#else
+    (void)sv;
+#endif
 }
 
 /* Parse "<brain>/<file>/<offset>". */
@@ -1426,6 +1717,30 @@ static void seatBuildBrain(HostSeat *hs) {
         hs->buildFailed = true;
         return;
     }
+    if (sync->installOnly && !sync->inPlace[br - sync->man.brains]) {
+        HOST_EVENT("[bothost] bot %d: brain \"%s\" of %s is not the same as "
+                   "this install; it goes back to the server", (int)hs->seat,
+                   hs->brainName, servers[hs->srv].label);
+        hs->buildFailed = true;
+        return;
+    }
+    if (HOST_EMBED && (aiType)hs->ai != aiYes) {
+        /* A bot that sees the whole map never runs on a player's
+         * computer: the player could read what it sees. */
+        HOST_EVENT("[bothost] bot %d: its AI level sees the whole map; it "
+                   "goes back to the server", (int)hs->seat);
+        hs->buildFailed = true;
+        return;
+    }
+    if (HOST_EMBED && sync->installOnly &&
+        (!botHostInitArgAllowed(hs->initArg) ||
+         !botHostInitTableAllowed(&hs->bot.initTable))) {
+        HOST_EVENT("[bothost] bot %d: its init tokens are not on the list "
+                   "this host takes; it goes back to the server",
+                   (int)hs->seat);
+        hs->buildFailed = true;
+        return;
+    }
 
     hs->bot.sim = NULL;
     hs->bot.cs = hs->cs;
@@ -1447,10 +1762,17 @@ static void seatBuildBrain(HostSeat *hs) {
     luaBrainsSetNextInitArg(hs->initArg);
     fprintf(stderr, "Bot %d: brain init arg '%s'\n", (int)hs->seat,
             hs->initArg);
-    if (!luaBrainInstanceCreate(&hs->bot.brain, path, hs->brainName, hs->cs,
-                                (aiType)hs->ai, sync->man.debugMode,
-                                (int)hs->seat,
-                                &hs->bot.initTable)) {
+    if (!(HOST_EMBED
+              /* A player's computer: never --allow-unsafe-brains, and a
+               * debug brain only with -bothost-record. */
+              ? luaBrainInstanceCreateSandboxed(
+                    &hs->bot.brain, path, hs->brainName, hs->cs,
+                    (aiType)hs->ai, sync->man.debugMode && embedRecord,
+                    (int)hs->seat, &hs->bot.initTable)
+              : luaBrainInstanceCreate(&hs->bot.brain, path, hs->brainName,
+                                       hs->cs, (aiType)hs->ai,
+                                       sync->man.debugMode, (int)hs->seat,
+                                       &hs->bot.initTable))) {
         fprintf(stderr, "[bothost] bot %d: brain \"%s\" failed to load; it "
                         "goes back to the server\n", (int)hs->seat,
                 hs->brainName);
@@ -1484,6 +1806,14 @@ static void onAssign(HostServer *sv, const ControlEvent *evt) {
     if (!newPlacement && hs == NULL) return;    /* an update for a seat gone */
     if (newPlacement && hs != NULL) {
         seatCloseConnection(hs);
+    }
+    if (newPlacement && syncOffersNone(&sv->sync)) {
+        /* This host may run none of the server's bots now. */
+        fprintf(stderr, "[bothost] bot %d of %s turned down: this host "
+                        "offers no slot now\n", (int)s, sv->label);
+        if (hs != NULL) seatClear(hs, "this host offers no slot now");
+        ctlSendSlots(sv, s, evt->u.botHostAssign.gen);
+        return;
     }
     if (newPlacement) {
         bool wasUsed = hs != NULL;
@@ -1565,6 +1895,18 @@ static void onInitTable(HostServer *sv, const ControlEvent *evt) {
     char why[256];
     if (hs == NULL) return;
     if (!tableTake(&hs->tableIn, evt)) return;
+    if (HOST_EMBED && servers[serverIndex(sv)].sync.installOnly &&
+        !botHostInitTableAllowed(&hs->tableIn)) {
+        /* Tokens off the list this host takes (bot_host_guard.h): the
+         * brain does not read them; the bot goes back to the server. */
+        HOST_EVENT("[bothost] bot %d \"%s\": its init table holds tokens "
+                   "this host does not take; it goes back to the server",
+                   (int)s, hs->name);
+        scnTableClear(&hs->tableIn);
+        hs->awaitTable = false;
+        hs->buildFailed = true;
+        return;
+    }
     hs->bot.initTable = hs->tableIn;
     fprintf(stderr, "[bothost] bot %d \"%s\": init table with %d entries%s\n",
             (int)s, hs->name, evt->u.botTableEntry.count,
@@ -1619,6 +1961,13 @@ static void onTeamMsg(HostServer *sv, const ControlEvent *evt) {
  * program answered before gets no answer. */
 static void onMachineSalt(HostServer *sv, const ControlEvent *evt) {
     ControlEvent a;
+    if (!botHostSaltLimitTake(&sv->saltLimit, nowMs())) {
+        /* Too many, or too soon after the last: a server gets few hashes
+         * of this computer (bot_host_guard.h). */
+        fprintf(stderr, "[bothost] %s: a same-computer salt over the limit "
+                        "for this connection; no answer\n", sv->label);
+        return;
+    }
     memset(&a, 0, sizeof(a));
     a.type = CTRL_BOT_HOST_MACHINE_ANSWER;
     memcpy(a.u.botHostMachineAnswer.salt, evt->u.botHostMachineSalt.salt,
@@ -1740,6 +2089,7 @@ static void ctlReceive(HostServer *sv) {
                     sv->lastCpuBudgetSent = 0;
                     sv->lastFreeSeqSent = 0;
                     syncReset(&sv->sync);
+                    botHostSaltLimitInit(&sv->saltLimit);
                     bulkSenderInit(&sv->recBulk);
                     hostRecServerUp(serverIndex(sv), sv->label);
                     {
@@ -1751,7 +2101,7 @@ static void ctlReceive(HostServer *sv) {
                             ControlEvent caps;
                             memset(&caps, 0, sizeof(caps));
                             caps.type = CTRL_BOT_HOST_SYNC_CAPS;
-                            caps.u.botHostSyncCaps.caps = BRAIN_PACK_CAP_PACKED;
+                            caps.u.botHostSyncCaps.caps = hostSyncCaps();
                             ctlSendEvent(sv, &caps);
                         }
                     }
@@ -1855,6 +2205,8 @@ static void ctlService(HostServer *sv) {
             if (sv->lastPingMs == 0 || t - sv->lastPingMs >= BOT_HOST_PING_MS) {
                 ctlSendPing(sv);
             }
+            syncServicePending(sv);
+            syncCapacityIfOwed(sv);
             if (poolSlotsFor(serverIndex(sv)) != sv->lastSlotsSent) {
                 ctlSendSlots(sv, BOT_HOST_SLOTS_NO_REFUSE, 0);
             }
@@ -2615,7 +2967,16 @@ static SDL_AtomicInt embedUsedNow;
 static SDL_AtomicInt embedRefusedNow;
 static bool          embedSendQuit;
 static double        embedRecordMinFreeGb = 50.0;
+/* embedRecord as it was when this host started: it set the recording up. */
+static bool          embedRecordOn;
 static int           embedSavedParts[4];
+
+/* The longest a brain's chunk run and capacity() may take together when
+ * this host asks a brain how many bots it can run. It runs on the host's
+ * thread, not the game's, and a stop of the host ends it at once
+ * (embedStop), so the limit is generous: a slow computer must not lose a
+ * stock brain's answer. */
+#define BOT_HOST_CAPACITY_BUDGET_MS 10000u
 
 static int embedCapacityFor(const HostServer *sv) {
     BrainMachineInfo machine;
@@ -2633,7 +2994,9 @@ static int embedCapacityFor(const HostServer *sv) {
     if (br != NULL && syncBrainInitPath(&sv->sync, br, path, sizeof(path))) {
         /* The answer is kept by brain name and version, so the brain is
          * asked once. */
-        cap = luaBrainQueryCapacity(path, br->name);
+        cap = luaBrainQueryCapacityLimited(path, br->name,
+                                           BOT_HOST_CAPACITY_BUDGET_MS,
+                                           &embedStop);
     }
     if (cap < 0) cap = brainCapacityDefault(&machine);
     if (cap > BOT_HOST_MAX_SLOTS) cap = BOT_HOST_MAX_SLOTS;
@@ -2753,6 +3116,8 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     if (embedSlotsFixed > BOT_HOST_MAX_SLOTS) embedSlotsFixed = BOT_HOST_MAX_SLOTS;
     embedCapacityGen = 0;
     embedRefused = false;
+    /* A new join: the player is asked again if the server sends code. */
+    SDL_SetAtomicInt(&embedConsent, BOT_HOST_EMBED_CONSENT_NONE);
     /* A new join: the host runs as normal, and the server checks again. */
     botHostRunJoin(&embedRun);
     SDL_SetAtomicInt(&embedSameServerNow, 0);
@@ -2813,10 +3178,16 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
         char recRoot[600];
         luaBrainsGetDebugParts(&embedSavedParts[0], &embedSavedParts[1],
                                &embedSavedParts[2], &embedSavedParts[3]);
-        SDL_snprintf(recRoot, sizeof(recRoot), "%s/recordings", optCacheDir);
-        luaBrainsSetDebugParts(0, 1, 1, 0);
-        hostRecInit(optCacheDir, optName, embedRecordMinFreeGb, &io);
-        luaBrainsSetExtraWriteRoot(recRoot);
+        embedRecordOn = embedRecord;
+        if (embedRecordOn) {
+            /* Only with -bothost-record: a player's computer records
+             * nothing by default. */
+            SDL_snprintf(recRoot, sizeof(recRoot), "%s/recordings",
+                         optCacheDir);
+            luaBrainsSetDebugParts(0, 1, 1, 0);
+            hostRecInit(optCacheDir, optName, embedRecordMinFreeGb, &io);
+            luaBrainsSetExtraWriteRoot(recRoot);
+        }
     }
 
     SDL_SetAtomicInt(&embedStop, 0);
@@ -2833,9 +3204,11 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     if (embedThread == NULL) {
         SDL_SetAtomicInt(&embedAlive, 0);
         hostRecShutdown();
-        luaBrainsSetExtraWriteRoot("");
-        luaBrainsSetDebugParts(embedSavedParts[0], embedSavedParts[1],
-                               embedSavedParts[2], embedSavedParts[3]);
+        if (embedRecordOn) {
+            luaBrainsSetExtraWriteRoot("");
+            luaBrainsSetDebugParts(embedSavedParts[0], embedSavedParts[1],
+                                   embedSavedParts[2], embedSavedParts[3]);
+        }
         WB_LOG_ERROR(WB_LOG_CAT_NET, "[bothost] cannot start its thread: %s",
                      SDL_GetError());
         return false;
@@ -2849,9 +3222,11 @@ void botHostEmbedStop(bool tellServer) {
     SDL_SetAtomicInt(&embedStop, 1);
     SDL_WaitThread(embedThread, NULL);
     embedThread = NULL;
-    luaBrainsSetExtraWriteRoot("");
-    luaBrainsSetDebugParts(embedSavedParts[0], embedSavedParts[1],
-                           embedSavedParts[2], embedSavedParts[3]);
+    if (embedRecordOn) {
+        luaBrainsSetExtraWriteRoot("");
+        luaBrainsSetDebugParts(embedSavedParts[0], embedSavedParts[1],
+                               embedSavedParts[2], embedSavedParts[3]);
+    }
     HOST_EVENT("[bothost] Bot Host \"%s\" stopped (%s)", optName,
                tellServer ? "the server was told" : "without a word");
 }
@@ -2890,6 +3265,27 @@ void botHostEmbedGetStatus(BotHostEmbedStatus *out) {
     out->slots     = SDL_GetAtomicInt(&embedSlotsNow);
     out->bots      = SDL_GetAtomicInt(&embedUsedNow);
     out->sameServer = SDL_GetAtomicInt(&embedSameServerNow) != 0;
+    out->consentAsking = SDL_GetAtomicInt(&embedConsent) ==
+                         BOT_HOST_EMBED_CONSENT_ASKING;
+}
+
+void botHostEmbedConsentAnswer(bool yes) {
+    if (SDL_GetAtomicInt(&embedConsent) != BOT_HOST_EMBED_CONSENT_ASKING) {
+        return;
+    }
+    SDL_SetAtomicInt(&embedConsent, yes ? BOT_HOST_EMBED_CONSENT_YES
+                                        : BOT_HOST_EMBED_CONSENT_NO);
+    HOST_EVENT("[bothost] Bot Host \"%s\": the player said %s to the "
+               "server's own bot code for this join", optName,
+               yes ? "yes" : "no");
+}
+
+void botHostEmbedSetRecord(bool on) {
+    embedRecord = on;
+}
+
+bool botHostEmbedOfficialOnly(void) {
+    return HOST_OFFICIAL_ONLY != 0;
 }
 
 #endif /* WINBOLO_BOTHOST_EMBED */

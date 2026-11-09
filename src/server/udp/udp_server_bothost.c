@@ -108,6 +108,7 @@
 #include "log.h"            /* logAddEvent, logIsRecording, log_BotHostData */
 #include "machine_id.h"     /* machineIdGet, the same-computer salt */
 #include "bot_host_machine.h" /* the same-computer groups, the slot override */
+#include "bot_host_guard.h" /* what a Bot Host may run: official brains, tokens */
 #ifndef _WIN32
 #include <ifaddrs.h>        /* getifaddrs: the server's own addresses */
 #endif
@@ -213,6 +214,14 @@ static bool botHostSpreadEven;
  * longest runs again first. botHostHeldTold: the players were told the
  * bot is paused, so they are told when it runs again. */
 static bool botHostEnforceServerLimit = true;
+/* -bothost-code official|custom. Official (the default): the server sends
+ * no brain file to any Bot Host, and places a bot only on a host whose own
+ * install holds the bot's brain, file for file. Custom: hosts download the
+ * server's brain files, as before (a player's built-in host built with
+ * WINBOLO_BOTHOST_OFFICIAL_ONLY still takes none). */
+static bool botHostCodeCustom;
+/* The tick each remote seat was last checked against its host's rules. */
+static uint32_t botSeatFitTick[MAX_TANKS];
 static uint32_t botHostHeldSince[MAX_TANKS];
 static bool botHostHeldTold[MAX_TANKS];
 /* The tick each place last gave a bot for being bad (the spread). */
@@ -491,6 +500,7 @@ static void botHostFileReset(BotHostConn *hc) {
     hc->packFromInstall = hc->packFromCache = 0;
     hc->packRaw = hc->packComp = 0;
     hc->packLogged = false;
+    memset(hc->brainInPlace, 0, sizeof(hc->brainInPlace));
 }
 
 /* The host holds every file of the current manifest. */
@@ -872,6 +882,7 @@ static void botHostRefreshManifest(ServerSim *sim, const char *why) {
 
     brainSyncBuildManifest(&next, botManagerDefaultDebugMode(sim),
                            &udpServer.brainManifest);
+    next.noCode = !botHostCodeCustom;
     if (udpServer.brainManifestGen != 0 &&
         next.version == udpServer.brainManifest.version) {
         /* Same files. Keep the new list for its change times. */
@@ -1308,8 +1319,22 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
     }
     if (evt.type == CTRL_BOT_HOST_SYNC_CAPS) {
         bool late = !hc->capsSeen && !hc->manifestOwed && !hc->manifestV2;
+        uint8_t caps = evt.u.botHostSyncCaps.caps;
+        if (caps & BRAIN_PACK_CAP_RESET) {
+            /* The host dropped its download (its player turned off "run
+             * bots on this computer"): stop sending, keep the caps it
+             * had. It asks again when it wants the files. */
+            botHostFileReset(hc);
+            if (hc->syncGen == udpServer.brainManifestGen) {
+                hc->syncReady = false;
+            }
+            caps = (uint8_t)(caps & ~BRAIN_PACK_CAP_RESET);
+            hc->caps = caps;
+            hc->capsSeen = true;
+            return;
+        }
         hc->capsSeen = true;
-        hc->caps = evt.u.botHostSyncCaps.caps;
+        hc->caps = caps;
         if (late && (hc->caps & BRAIN_PACK_CAP_PACKED) &&
             udpServer.brainManifestGen != 0) {
             /* The v1 list went out before the caps came: send the v2 list
@@ -1328,11 +1353,19 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
             hc->packQueue >= BRAIN_SYNC_MAX_BRAINS) {
             return;
         }
+        hc->brainInPlace[b] = botHostPackReqAllInstall(
+            evt.u.botHostPackReq.bits, sizeof(evt.u.botHostPackReq.bits),
+            evt.u.botHostPackReq.fileCount, evt.u.botHostPackReq.fromInstall);
         if (hc->packReqs == 0) hc->packStartTick = udpServer.tickCount;
         hc->packReqs++;
         hc->packFilesAll += evt.u.botHostPackReq.fileCount;
         hc->packFromInstall += evt.u.botHostPackReq.fromInstall;
         hc->packFromCache += evt.u.botHostPackReq.fromCache;
+        if (!botHostCodeCustom) {
+            /* -bothost-code official: no brain file goes to a host. The
+             * host runs the brain from its install, or not at all. */
+            return;
+        }
         hc->packQBrain[hc->packQueue] = (uint8_t)b;
         memcpy(hc->packQBits[hc->packQueue], evt.u.botHostPackReq.bits,
                sizeof(hc->packQBits[0]));
@@ -1397,6 +1430,8 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
     }
     if (evt.type == CTRL_BOT_HOST_FILE_REQ) {
         if (evt.u.botHostFileReq.gen != udpServer.brainManifestGen) return;
+        /* -bothost-code official: no brain file goes to a host. */
+        if (!botHostCodeCustom) return;
         if (hc->fileReqCount >= (int)(sizeof(hc->fileReq) / sizeof(hc->fileReq[0]))) {
             return;
         }
@@ -2015,6 +2050,75 @@ static void botSeatCurrent(ServerSim *sim, int s, char *brain, size_t brainSz,
     if (path != NULL) {
         botManagerBuildInitArg(sim, (BYTE)s, path, NULL, initArg, argSz);
     }
+}
+
+/* The index of brain in the current manifest, or -1. */
+static int botHostManifestIndex(const char *brain) {
+    const BrainSyncManifest *man = &udpServer.brainManifest;
+    int b;
+    if (brain == NULL || brain[0] == '\0') return -1;
+    for (b = 0; b < man->brainCount; b++) {
+        if (strcmp(man->brains[b].name, brain) == 0) return b;
+    }
+    return -1;
+}
+
+/* What decides where a seat may run (bot_host_guard.h), worked out once:
+ * its brain's index in the manifest, whether its view is culled, and
+ * whether its init arg and table are on the list a player's official-only
+ * host takes. */
+typedef struct {
+    int  brain;
+    bool culled;
+    bool tokensAllowed;
+} BotSeatFitInfo;
+
+static void botSeatFitInfo(ServerSim *sim, int s, BotSeatFitInfo *out) {
+    char brain[BOT_HOST_BRAIN_NAME_LEN];
+    char initArg[BOT_HOST_INIT_ARG_LEN];
+    uint8_t ai = 0, team = 0;
+    botSeatCurrent(sim, s, brain, sizeof(brain), &ai, &team, initArg,
+                   sizeof(initArg));
+    out->brain = botHostManifestIndex(brain);
+    out->culled = ai == (uint8_t)aiYes;
+    out->tokensAllowed =
+        botHostInitArgAllowed(initArg) &&
+        botHostInitTableAllowed(botManagerGetBotInitTable(sim, (BYTE)s));
+}
+
+/* True when a host runs only official brains: the server sends none
+ * (-bothost-code official), or the host said so (a player's built-in host
+ * built with WINBOLO_BOTHOST_OFFICIAL_ONLY). */
+static bool botHostOfficialOnly(int h) {
+    return !botHostCodeCustom ||
+           (udpServer.botHosts[h].caps & BRAIN_PACK_CAP_OFFICIAL_ONLY) != 0;
+}
+
+/* True when a seat with info may run on Bot Host h: a bot with an unculled
+ * view never runs on a player's computer; a host that runs only official
+ * brains takes a bot only when its install holds the bot's brain; and a
+ * player's official-only host takes only the init tokens on the list. */
+static bool botSeatFitsHost(const BotSeatFitInfo *info, int h) {
+    const BotHostConn *hc;
+    BotHostSeatFit fit;
+    if (h < 0 || h >= MAX_BOT_HOSTS) return false;
+    hc = &udpServer.botHosts[h];
+    memset(&fit, 0, sizeof(fit));
+    fit.playerHost = hc->playerHost;
+    fit.officialOnly = botHostOfficialOnly(h);
+    fit.culled = info->culled;
+    fit.brainInPlace = info->brain >= 0 && info->brain < BRAIN_SYNC_MAX_BRAINS &&
+                       hc->brainInPlace[info->brain];
+    fit.tokensAllowed = info->tokensAllowed;
+    return botHostSeatMayRunOn(&fit);
+}
+
+/* True when seat s may run on Bot Host h now. */
+static bool botSeatHostMayRun(ServerSim *sim, int s, int h) {
+    BotSeatFitInfo info;
+    if (sim == NULL || h < 0 || h >= MAX_BOT_HOSTS) return false;
+    botSeatFitInfo(sim, s, &info);
+    return botSeatFitsHost(&info, h);
 }
 
 static bool botHostTokenEmpty(const uint8_t *token) {
@@ -2834,6 +2938,15 @@ static void botHookInitTable(void *ctx, BYTE seat) {
     if (seat >= MAX_TANKS) return;
     bs = &udpServer.botSeats[seat];
     if (bs->state == BOT_SEAT_LOCAL || bs->host < 0) return;
+    if (!botSeatHostMayRun(sim, (int)seat, bs->host)) {
+        /* The new table holds tokens its host may not take (a player's
+         * official-only host, bot_host_guard.h): the bot comes back to the
+         * server and reads the table there. */
+        botSeatFallBack(sim, (int)seat, "its new init table is not for its "
+                        "host", true);
+        udpServer.botSeats[seat].noReturn = false;
+        return;
+    }
     botHostSendTable(bs->host, CTRL_BOT_INIT_TABLE, seat,
                      botManagerGetBotInitTable(sim, seat));
 }
@@ -3352,6 +3465,10 @@ static bool botSeatOffer(ServerSim *sim, int s, int h, const char *why) {
     if (h < 0 || h >= MAX_BOT_HOSTS || botHostEffSlots(h) <= 0) {
         /* A host with 0 slots (on the server's computer, its group not
          * known yet, or set to 0) never gets a bot, by any path. */
+        return false;
+    }
+    if (!botSeatHostMayRun(sim, s, h)) {
+        /* Not this bot on this host (bot_host_guard.h), by any path. */
         return false;
     }
     if (!serverFillRandomBytes(seat->token, sizeof(seat->token))) {
@@ -4152,6 +4269,18 @@ void transportUdpServerSetBotHostEnforceServerLimit(bool on) {
                  "slots");
 }
 
+void transportUdpServerSetBotHostCode(bool custom) {
+    botHostCodeCustom = custom;
+    fprintf(stderr, "[bothost] brain code (-bothost-code %s): %s\n",
+            custom ? "custom" : "official",
+            custom ? "Bot Hosts download this server's brain files; a "
+                     "player's built-in host built to run only official "
+                     "brains still takes none"
+                   : "no brain file goes to a Bot Host; a bot runs on a "
+                     "host only when the host's install holds its brain, "
+                     "file for file");
+}
+
 void transportUdpServerSetBotHostNoMove(bool on) {
     botHostNoMoveInit(&botHostNoMove, on);
     if (on) {
@@ -4174,6 +4303,8 @@ void transportUdpServerSetBotHostRecord(bool on) {
  * bot was not made. */
 static bool botHostPlaceGive(ServerSim *sim, int from, int to, int s,
                              int toBots, const char *reason) {
+    /* Not a bot the target host may run (bot_host_guard.h): no move. */
+    if (to > 0 && !botSeatHostMayRun(sim, s, to - 1)) return false;
     if (from == 0) {
         if (to <= 0) return false;
         if (!botSeatOffer(sim, s, to - 1, reason)) return false;
@@ -4429,7 +4560,9 @@ static bool botHostHeldStep(ServerSim *sim, const BotHostPlaceHost *raw,
     if (tgt >= 0) {
         /* A Bot Host runs only brains whose files it was sent. */
         for (s = 0; s < MAX_TANKS; s++) {
-            if (held[s] && tgt >= 1 && !botSeatLocalOfferable(sim, s)) {
+            if (held[s] && tgt >= 1 &&
+                (!botSeatLocalOfferable(sim, s) ||
+                 !botSeatHostMayRun(sim, s, tgt - 1))) {
                 held[s] = false;
             }
         }
@@ -4489,6 +4622,7 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     double badRate[1 + MAX_BOT_HOSTS];
     const int *cand;
     int candCount;
+    int candTo[MAX_TANKS], candToCount = 0;
     BotHostSpreadWhy why = BOT_HOST_SPREAD_NONE;
     const char *reason;
     bool running = (st == serverStateRunning);
@@ -4556,6 +4690,28 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
                    seat->host < MAX_BOT_HOSTS &&
                    botSeatMayMove(sim, s, running)) {
             hostSeats[seat->host][hostCount[seat->host]++] = s;
+        }
+    }
+    /* A host that may run none of the bots (bot_host_guard.h: its install
+     * lacks their brains, or it is a player's host and they see the whole
+     * map or carry tokens off the list) takes none. */
+    {
+        BotSeatFitInfo fitInfo[MAX_TANKS];
+        bool fitHave[MAX_TANKS];
+        for (s = 0; s < MAX_TANKS; s++) {
+            fitHave[s] = serverSimIsBot(sim, (BYTE)s) &&
+                         !udpServer.clients[s].connected;
+            if (fitHave[s]) botSeatFitInfo(sim, s, &fitInfo[s]);
+        }
+        anyHost = false;
+        for (h = 0; h < MAX_BOT_HOSTS; h++) {
+            bool fits = false;
+            if (!hosts[h + 1].open) continue;
+            for (s = 0; s < MAX_TANKS && !fits; s++) {
+                fits = fitHave[s] && botSeatFitsHost(&fitInfo[s], h);
+            }
+            hosts[h + 1].open = fits;
+            if (fits) anyHost = true;
         }
     }
     mayMove = botHostNoMoveMayMove(&botHostNoMove, running);
@@ -4651,6 +4807,18 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
                               candCount);
         botHostPlace.lastMoveTick = udpServer.tickCount;
         return;
+    }
+    if (to > 0) {
+        /* Only the bots that may run on the target host. */
+        int k;
+        candToCount = 0;
+        for (k = 0; k < candCount; k++) {
+            if (botSeatHostMayRun(sim, cand[k], to - 1)) {
+                candTo[candToCount++] = cand[k];
+            }
+        }
+        cand = candTo;
+        candCount = candToCount;
     }
     s = botHostTrailPickSeat(&botHostTrail, cand, candCount, to,
                              udpServer.tickCount, botHostStayTicks(),
@@ -4829,6 +4997,18 @@ void serverServiceBotHosts(ServerSim *sim) {
         if (!udpServer.clients[s].connected || !udpServer.clients[s].botSlot) {
             botSeatFallBack(sim, s, "bot connection gone", true);
             continue;
+        }
+        if (seat->reloadOwed ||
+            udpServer.tickCount - botSeatFitTick[s] >= BOT_SEAT_POLL_TICKS) {
+            /* The bot's brain, AI level or tokens changed so that its host
+             * may not run it (bot_host_guard.h): it comes back. */
+            botSeatFitTick[s] = udpServer.tickCount;
+            if (!botSeatHostMayRun(sim, s, seat->host)) {
+                botSeatFallBack(sim, s, "its host may not run this bot now",
+                                true);
+                udpServer.botSeats[s].noReturn = false;
+                continue;
+            }
         }
         if (st != serverStateRunning) continue;
         if (!udpServer.mapDownload[s].downloadComplete) continue;

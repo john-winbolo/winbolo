@@ -372,6 +372,36 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 int luaBrainQueryCapacity(const char *path, const char *name);
 
 /*********************************************************
+*NAME:          luaBrainInstanceCreateSandboxed
+*PURPOSE:
+*  luaBrainInstanceCreate, but the VM is sandboxed even
+*  when --allow-unsafe-brains is on. For the Bot Host
+*  inside a client: brains a server placed on a player's
+*  computer never get the unsafe libraries.
+*********************************************************/
+bool luaBrainInstanceCreateSandboxed(LuaBrainInstance *inst, const char *path,
+                                     const char *name, struct ClientSim *cs,
+                                     aiType aiMode, bool debug_mode,
+                                     int player_num, const ScnTable *init);
+
+/*********************************************************
+*NAME:          luaBrainQueryCapacityLimited
+*PURPOSE:
+*  luaBrainQueryCapacity for the Bot Host inside a client:
+*  the VM is sandboxed, runs without the LuaJIT compiler,
+*  and the brain's chunk and capacity code together stop
+*  with an error after budgetMs (0: no time limit) or once
+*  *abortFlag is not 0 (NULL: none). A brain that errors,
+*  loops, or throws from an __index cannot crash or freeze
+*  the caller; the answer is then BRAIN_CAPACITY_UNKNOWN or
+*  the default.
+*********************************************************/
+struct SDL_AtomicInt;
+int luaBrainQueryCapacityLimited(const char *path, const char *name,
+                                 unsigned budgetMs,
+                                 struct SDL_AtomicInt *abortFlag);
+
+/*********************************************************
 *NAME:          luaBrainsSetRunScript
 *PURPOSE:
 *  Sets a Lua script path for --run-script mode.

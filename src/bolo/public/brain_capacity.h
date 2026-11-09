@@ -160,6 +160,29 @@ struct lua_State;
 int brainCapacityResolveLua(struct lua_State *L, const char *path,
                             const char *givenName);
 
+/* The most time a brain's capacity code may take: brain.version, an
+   __index on "brain", and Brain.capacity together. */
+#define BRAIN_CAPACITY_LUA_BUDGET_MS 2000u
+
+/* brainCapacityResolveLua with its own limit: every Lua step runs in a
+   protected call under a count hook that stops it once budgetMs pass (0:
+   no time limit) or *abortFlag is not 0 (NULL: none). A brain that errors
+   or runs too long gives the default. The hook and limit in force before
+   the call come back after it. brainCapacityResolveLua is this with
+   BRAIN_CAPACITY_LUA_BUDGET_MS and no abort flag. */
+struct SDL_AtomicInt;
+int brainCapacityResolveLuaEx(struct lua_State *L, const char *path,
+                              const char *givenName, unsigned budgetMs,
+                              struct SDL_AtomicInt *abortFlag);
+
+/* Put L under the same limit (a count hook) until brainCapacityLimitClear:
+   for a brain's chunk run before its capacity question. Note: the hook
+   does not run inside LuaJIT compiled code, so turn the JIT off for such a
+   VM first. */
+void brainCapacityLimitSet(struct lua_State *L, unsigned budgetMs,
+                           struct SDL_AtomicInt *abortFlag);
+void brainCapacityLimitClear(struct lua_State *L);
+
 /* --- The lobby's Add Bot rule --- */
 
 typedef enum {

@@ -1010,6 +1010,16 @@ endif()
 # When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
 option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
 
+# The Bot Host inside each client (bothost_embed.h) runs only the stock
+# brains installed with the game. ON: it never takes brain code from a
+# server. It runs a server's bot only when the server's brain is the same,
+# file for file, as this install, and only with the init tokens on the
+# list in bot_host_guard.h. OFF: a server may send its own brain code, and
+# the player is asked on each join before any of it runs. The standalone
+# WinBoloBotHost is not changed by this option.
+option(WINBOLO_BOTHOST_OFFICIAL_ONLY
+    "Client Bot Host runs only the brains installed with the game" ON)
+
 # Fetches libplum and sets HAVE_LIBPLUM. A macro so the fetched variables and
 # HAVE_LIBPLUM land in the caller's scope. Called from both branches below
 # rather than here: the desktop branch adds compile options first (the fuzz
@@ -2435,6 +2445,10 @@ bolo_grant_internal_source_access(WinBolo
     src/mapeditor/mapeditor_export.c
     src/mapeditor/mapeditor_validate.c)
 target_include_directories(WinBolo PRIVATE src/bothost)
+if(WINBOLO_BOTHOST_OFFICIAL_ONLY)
+    target_compile_definitions(WinBolo PRIVATE
+        WINBOLO_BOTHOST_OFFICIAL_ONLY=1)
+endif()
 if(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG)
     target_compile_definitions(WinBolo PRIVATE
         WINBOLO_HIDE_CLIENT_BOT_HOST_MSG=1)
@@ -3281,6 +3295,10 @@ bolo_grant_internal_source_access(WinBoloHeadless
     src/bothost/bothost_embed.c
     src/bothost/bothost_rec.c)
 target_include_directories(WinBoloHeadless PRIVATE src/bothost)
+if(WINBOLO_BOTHOST_OFFICIAL_ONLY)
+    target_compile_definitions(WinBoloHeadless PRIVATE
+        WINBOLO_BOTHOST_OFFICIAL_ONLY=1)
+endif()
 if(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG)
     target_compile_definitions(WinBoloHeadless PRIVATE
         WINBOLO_HIDE_CLIENT_BOT_HOST_MSG=1)
@@ -4792,6 +4810,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # cache plan (held, copied from another version, to download).
     tests/unit/test_brain_sync.c
     tests/unit/test_brain_pack.c
+    # The guards on the Bot Host inside a client: no brain code in official
+    # mode, the init token list, unculled bots, asked uploads, salts and the
+    # limited capacity question.
+    tests/unit/test_bot_host_security.c
     # Bot Host link: the announce codec, the address lists and the allow
     # list a server and a Bot Host use to find each other.
     tests/unit/test_bot_host_link.c
@@ -6243,6 +6265,12 @@ set(_unit_test_names
     brain_pack_bad_hash
     brain_pack_old_peer
     brain_pack_session
+    bot_host_official_no_files
+    bot_host_token_allow_list
+    bot_host_unculled_not_player
+    bot_host_rec_upload_asked
+    bot_host_salt_limit
+    brain_capacity_throwing_index
     bot_host_link_announce_codec
     bot_host_link_addr_list
     bot_host_link_allow

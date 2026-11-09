@@ -338,6 +338,11 @@ typedef struct {
     int      packQueue;
     uint8_t  packQBrain[BRAIN_SYNC_MAX_BRAINS];
     uint8_t  packQBits[BRAIN_SYNC_MAX_BRAINS][BRAIN_PACK_BITMAP_BYTES];
+    /* Brain b of the current manifest runs from the host's install: its
+     * pack request asked for no file and took every file from there. A
+     * host that runs only official brains (-bothost-code official, or
+     * BRAIN_PACK_CAP_OFFICIAL_ONLY) is given only such brains' bots. */
+    bool     brainInPlace[BRAIN_SYNC_MAX_BRAINS];
     /* The stream being sent: its brain, its bitmap, the next file to look
      * at, the piece count, and the file being read into it. */
     BrainPackWriter *packW;
@@ -942,6 +947,11 @@ bool serverBotRecBusy(int h);
  * calls it; the unit tests call it straight. */
 void serverBotRecPiece(int h, const BulkStreamHeader *hd,
                        const uint8_t *data);
+/* Note that this server asked host (by name and kind) to record block, as
+ * an OPEN does: an upload is taken only for such a block. For the unit
+ * tests, which send pieces with no OPEN. */
+void serverBotRecNoteAsked(const char *block, const char *host,
+                           bool playerHost);
 void serverSendServerEnglishBroadcast(struct ServerSim *sim,
                                       const char *message);
 void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
