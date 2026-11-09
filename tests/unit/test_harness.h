@@ -586,6 +586,17 @@ int run_wbn_map_parse(void);
 int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
+int run_brain_crash_log_ignores_brain_globals(void);
+/* Hostile brains (test_brain_sandbox_hostile.c): one case per hole the
+ * security review on PR #652 found in the brain sandbox and bindings. */
+int run_brain_sandbox_hostile_native_preloads(void);
+int run_brain_sandbox_hostile_bytecode_init(void);
+int run_brain_sandbox_hostile_loaders_removed(void);
+int run_brain_sandbox_hostile_astar_log_jail(void);
+int run_brain_sandbox_hostile_bad_binding_args(void);
+int run_brain_sandbox_hostile_forged_blob(void);
+int run_brain_sandbox_hostile_pooled_info(void);
+int run_brain_sandbox_hostile_shield_file(void);
 int run_brain_push_rules_written_on_change(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
 int run_brain_msgh_real_error_keeps_traceback(void);

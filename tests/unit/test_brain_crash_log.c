@@ -16,6 +16,10 @@
  *   - brain_crash_log_falls_back_to_luaptr:
  *       no state.bot_index; verifies the fallback filename pattern
  *       brain_crash_*_L0x*.log is used instead.
+ *   - brain_crash_log_ignores_brain_globals:
+ *       the brain writes DEBUG_SESSION_DIR and BRAIN_DEBUG_MODE itself.
+ *       The logger takes the folder and the switch from the host's
+ *       registry copy only, so the brain's folder gets no file.
  *
  * And two for the message handler brainCoreCallThink installs,
  * brc_traceback_msgh, run through a lua_pcall of their own:
@@ -95,8 +99,9 @@ static void cleanup_tempdir(const char *dir) {
     SDL_RemovePath(dir);
 }
 
-/* Build a minimal lua_State with the globals brc_write_crash_log
- * reads (state.bot_index, state.tick, DEBUG_SESSION_DIR). bot_index < 0
+/* Build a minimal lua_State with what brc_write_crash_log reads: the
+ * state.bot_index and state.tick globals, and the host's session dir and
+ * debug switch in the registry. bot_index < 0
  * means "leave it unset" so the fallback path is exercised. */
 static lua_State *new_lua_state_with_globals(int bot_index, int tick,
                                               const char *session_dir) {
@@ -108,8 +113,7 @@ static lua_State *new_lua_state_with_globals(int bot_index, int tick,
      * write none — only the stderr surface fires). These tests exercise the
      * file writer, so turn it on; without it brc_write_crash_log writes no
      * file and the count assertions see 0. */
-    lua_pushboolean(L, 1);
-    lua_setglobal(L, "BRAIN_DEBUG_MODE");
+    brainCoreSetDebugMode(L, true);
 
     /* state = { bot_index = N, tick = T } */
     lua_newtable(L);
@@ -122,10 +126,16 @@ static lua_State *new_lua_state_with_globals(int bot_index, int tick,
     lua_setglobal(L, "state");
 
     if (session_dir != NULL) {
-        lua_pushstring(L, session_dir);
-        lua_setglobal(L, "DEBUG_SESSION_DIR");
+        brainCoreSetSessionDir(L, session_dir);
     }
     return L;
+}
+
+static int count_crash_files(const char *dir) {
+    CrashFileCollector c;
+    memset(&c, 0, sizeof(c));
+    SDL_EnumerateDirectory(dir, collect_crash_files, &c);
+    return c.count;
 }
 
 /* Slurp small files (<=1MB) into a heap buffer for substring asserts.
@@ -340,5 +350,52 @@ int run_brain_msgh_real_error_keeps_traceback(void) {
     UT_ASSERT_MSG(status != LUA_OK, "the raise should fail the pcall");
     UT_ASSERT_MSG(strstr(out, "stack traceback") != NULL,
                   "unhooked error has no traceback: %s", out);
+    return 0;
+}
+
+/* A sandboxed brain can write any global. It must not be able to point
+ * the crash logger at a folder of its choosing, nor turn file writes on
+ * in a production host. */
+int run_brain_crash_log_ignores_brain_globals(void) {
+    static const char *HOSTDIR  = "test_brain_crash_tmp_hostdir";
+    static const char *BRAINDIR = "test_brain_crash_tmp_braindir";
+    cleanup_tempdir(HOSTDIR);
+    cleanup_tempdir(BRAINDIR);
+    UT_ASSERT(SDL_CreateDirectory(HOSTDIR));
+    UT_ASSERT(SDL_CreateDirectory(BRAINDIR));
+
+    /* Debug host, folder HOSTDIR; the brain rewrites the global. */
+    lua_State *L = new_lua_state_with_globals(3, 10, HOSTDIR);
+    UT_ASSERT(L != NULL);
+    lua_pushstring(L, BRAINDIR);
+    lua_setglobal(L, "DEBUG_SESSION_DIR");
+    brc_write_crash_log(L, "think", "TEST_GLOBALS_MARKER_1");
+    lua_close(L);
+    UT_ASSERT_MSG(count_crash_files(HOSTDIR) == 1,
+                  "host folder should hold the crash file, has %d",
+                  count_crash_files(HOSTDIR));
+    UT_ASSERT_MSG(count_crash_files(BRAINDIR) == 0,
+                  "brain's folder must stay empty, has %d",
+                  count_crash_files(BRAINDIR));
+
+    /* Production host: debug off, no folder. The brain sets both
+     * globals to ask for a file in its folder. */
+    L = luaL_newstate();
+    UT_ASSERT(L != NULL);
+    luaL_openlibs(L);
+    brainCoreSetDebugMode(L, false);
+    lua_pushboolean(L, 1);
+    lua_setglobal(L, "BRAIN_DEBUG_MODE");
+    lua_pushstring(L, BRAINDIR);
+    lua_setglobal(L, "DEBUG_SESSION_DIR");
+    UT_ASSERT(!brainCoreGetDebugMode(L));
+    brc_write_crash_log(L, "think", "TEST_GLOBALS_MARKER_2");
+    lua_close(L);
+    UT_ASSERT_MSG(count_crash_files(BRAINDIR) == 0,
+                  "production host wrote %d file(s) where the brain asked",
+                  count_crash_files(BRAINDIR));
+
+    cleanup_tempdir(HOSTDIR);
+    cleanup_tempdir(BRAINDIR);
     return 0;
 }
