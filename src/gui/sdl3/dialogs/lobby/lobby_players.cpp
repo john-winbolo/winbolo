@@ -687,6 +687,10 @@ static void renderClientBotHostOptOut(ClientSim *cs) {
     }
 }
 
+/* WINBOLO_HIDE_LOBBY_BOT_HOSTS hides the whole Bot Hosts list below (rows,
+ * slot boxes and the "this computer runs bots" line). Only the opt-out box
+ * stays. System Info still shows every bot's host. */
+#ifndef WINBOLO_HIDE_LOBBY_BOT_HOSTS
 /* The row's slot box: "Slots [All (4)]", 0 up to the slots the host offers.
  * It only lowers, and it lasts for this lobby. Read-only for a player who
  * may not change Server Settings, and for everyone when -bothost-slots on
@@ -1053,6 +1057,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
 #endif
     renderClientBotHostOptOut(cs);
 }
+#endif /* !WINBOLO_HIDE_LOBBY_BOT_HOSTS */
 
 /* True when the lobby's right panel is currently showing the replay reel
  * rather than the map. Defined below, next to the recap view statics it
@@ -3166,7 +3171,11 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
     /* Connected spectators, listed below the teams + unassigned tray. */
     renderSpectatorGroup(cs, myPlayerNum, s);
     /* Connected Bot Hosts, below the spectators. */
+#ifdef WINBOLO_HIDE_LOBBY_BOT_HOSTS
+    renderClientBotHostOptOut(cs);
+#else
     renderBotHostGroup(cs, myPlayerNum);
+#endif
 
     /* Deferred-open kick-confirm modal. OpenPopup must happen in the
      * same ID scope as BeginPopupModal, so we set a flag inside the

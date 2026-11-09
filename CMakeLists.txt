@@ -2436,6 +2436,10 @@ if(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG)
     target_compile_definitions(WinBolo PRIVATE
         WINBOLO_HIDE_CLIENT_BOT_HOST_MSG=1)
 endif()
+if(WINBOLO_HIDE_LOBBY_BOT_HOSTS)
+    target_compile_definitions(WinBolo PRIVATE
+        WINBOLO_HIDE_LOBBY_BOT_HOSTS=1)
+endif()
 
 if(WIN32)
     target_sources(WinBolo PRIVATE
@@ -3851,6 +3855,11 @@ add_custom_command(TARGET BrainTest POST_BUILD
 # ON hides both; the host itself still runs.
 option(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG
     "Hide the lobby line and newswire message of the client's own Bot Host" OFF)
+# The whole Bot Hosts list in the lobby: every host's row, its slot box and
+# this computer's "runs bots" line. ON hides it; the opt-out box stays, and
+# System Info still shows each bot's host.
+option(WINBOLO_HIDE_LOBBY_BOT_HOSTS
+    "Hide the Bot Hosts list in the lobby (System Info keeps it)" OFF)
 
 option(WINBOLO_BUNDLE_DEV_TOOLS
     "Bundle WinBoloDS, BrainTest, and WinBoloHeadless inside WinBolo.app (macOS)" ON)

@@ -57,8 +57,18 @@ static BotHostOverrunAction ovrFeed(BotHostOverrunState *st,
                     rep);
 }
 
-static void ovrStart(BotHostOverrunState *st, BotHostOverrunCfg *cfg) {
+/* The values these tests were written for: a 1% target rate, a fixed
+ * 30 s step (no scaled wait) and one bot a step for low free CPU. The
+ * scaled wait and the batch have their own tests (test_bot_host_keep.c). */
+static void ovrCfgOld(BotHostOverrunCfg *cfg) {
     botHostOverrunCfgDefaults(cfg);
+    cfg->pct = 1.0;
+    cfg->stepMinSecs = 30;
+    cfg->freeBatch = false;
+}
+
+static void ovrStart(BotHostOverrunState *st, BotHostOverrunCfg *cfg) {
+    ovrCfgOld(cfg);
     botHostOverrunReset(st);
 }
 
@@ -229,7 +239,7 @@ int run_bot_host_overrun_all_same_no_move(void) {
     BotHostOvrBot b[2];
     BotHostOvrMove mv;
 
-    botHostOverrunCfgDefaults(&cfg);
+    ovrCfgOld(&cfg);
     h[0] = ovrHost(2.0, 2);
     h[1] = ovrHost(2.0, 2);
     h[2] = ovrHost(2.0, 2);
@@ -253,7 +263,7 @@ int run_bot_host_overrun_target_not_below(void) {
     BotHostOvrMove mv;
     const char *why = NULL;
 
-    botHostOverrunCfgDefaults(&cfg);
+    ovrCfgOld(&cfg);
     h[0] = ovrHost(3.0, 2);
     h[1] = ovrHost(1.6, 2);
     b[0] = ovrBot(1, 0, 100.0);
@@ -277,7 +287,7 @@ int run_bot_host_overrun_gain_per_move(void) {
     BotHostOvrHost t;
     const char *why = NULL;
 
-    botHostOverrunCfgDefaults(&cfg);
+    ovrCfgOld(&cfg);
     t = ovrHost(0.6, 2);
     UT_ASSERT(botHostOvrMoveRule(&cfg, 2.0, &t, 1, 60.0, &why) ==
               BOT_HOST_OVR_RULE_NONE);
@@ -316,7 +326,7 @@ int run_bot_host_overrun_stay_times(void) {
     BotHostOvrHost t;
     const char *why = NULL;
 
-    botHostOverrunCfgDefaults(&cfg);
+    ovrCfgOld(&cfg);
     UT_ASSERT(ovrNear(botHostOvrStayNeed(&cfg, 0), 0.0));
     UT_ASSERT(ovrNear(botHostOvrStayNeed(&cfg, 1), 30.0));
     UT_ASSERT(ovrNear(botHostOvrStayNeed(&cfg, 2), 60.0));
@@ -341,7 +351,7 @@ int run_bot_host_overrun_emergency(void) {
     BotHostOvrBot b[1];
     BotHostOvrMove mv;
 
-    botHostOverrunCfgDefaults(&cfg);
+    ovrCfgOld(&cfg);
     h[0] = ovrHost(6.0, 3);
     h[1] = ovrHost(2.9, 2);
     h[2] = ovrHost(6.0, 2);
@@ -376,7 +386,7 @@ int run_bot_host_overrun_target_order(void) {
     BotHostOvrBot b[2];
     BotHostOvrMove mv;
 
-    botHostOverrunCfgDefaults(&cfg);
+    ovrCfgOld(&cfg);
     memset(&lag, 0, sizeof(lag));
     lag.refMs = 100.0;
     lag.maxMs = 250.0;
