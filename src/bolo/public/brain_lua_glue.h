@@ -65,6 +65,11 @@ void           brainWorldSimSetMap(BrainWorldSim *sim, const BYTE *map);
  * CallThink / CallMethod run the brain's think / named function and
  * marshal BrainInfo in/out. */
 void brainCoreRegisterConstants(struct lua_State *L);
+/* The crash logger's folder and debug switch, kept in the registry where
+ * the brain cannot write them (see braincore.h). */
+void brainCoreSetSessionDir(struct lua_State *L, const char *dir);
+void brainCoreSetDebugMode(struct lua_State *L, bool enabled);
+bool brainCoreGetDebugMode(struct lua_State *L);
 void brainCoreSetInitTable(struct lua_State *L, const ScnTable *init);
 bool brainCoreUpdateInitTable(struct lua_State *L, const ScnTable *init,
                               char *why, size_t whyLen);

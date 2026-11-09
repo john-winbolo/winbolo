@@ -352,6 +352,17 @@ static int do_disk_load(const char *path) {
     }
     fclose(f);
     for (size_t i = 0; i < n; i++) {
+        /* n_tiles counts entries in tiles[STAMP_MAX_TILES]. The file sits
+         * in the brain folder, where a brain can write; refuse a file
+         * that claims more, which every reader would walk past the end. */
+        for (int a = 0; a < STAMP_N_AIMS; a++) {
+            if (buf[i].aim[a].n_tiles > STAMP_MAX_TILES) {
+                free(buf); return 0;
+            }
+        }
+        if (buf[i].pill_to_tank.n_tiles > STAMP_MAX_TILES) {
+            free(buf); return 0;
+        }
         for (int a = 0; a < STAMP_N_AIMS; a++) {
             decode_path(&buf[i].aim[a]);
         }
@@ -1015,6 +1026,11 @@ static int l_scan_c(lua_State *L) {
     float standoff_cx = (float)luaL_checknumber(L, 6);
     float standoff_cy = (float)luaL_checknumber(L, 7);
     float R           = (float)luaL_checknumber(L, 8);
+    /* The pill tile is the origin of every stamp read. Off the map there
+     * is no pill to scan for. */
+    if (pmx < 0 || pmx > 255 || pmy < 0 || pmy > 255) {
+        lua_pushnil(L); return 1;
+    }
     /* arg 9 = pill_table */
     int   app_mx     = (int)luaL_checkinteger(L, 10);
     int   app_my     = (int)luaL_checkinteger(L, 11);

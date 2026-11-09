@@ -2526,6 +2526,11 @@ bool botManagerSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
      * global would silently stay unset. */
     lua_pushstring(L, value);
     lua_setglobal(L, name);
+    /* The crash logger takes its folder from the registry copy, never
+     * from the global, which the brain can rewrite. */
+    if (strcmp(name, "DEBUG_SESSION_DIR") == 0) {
+        brainCoreSetSessionDir(L, value);
+    }
     return true;
 }
 

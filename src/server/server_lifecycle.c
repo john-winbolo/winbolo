@@ -812,11 +812,11 @@ static void serverLifecycleOpenBraindbgBlock(ServerSim *sim) {
   }
   brainRecordSetSessionDir(dir);
 
-  char setSession[FILENAME_MAX + 32];
-  snprintf(setSession, sizeof(setSession), "_G.DEBUG_SESSION_DIR=\"%s\"", dir);
   for (int i = 0; i < MAX_TANKS; i++) {
     if (!serverSimIsBot(sim, (BYTE)i)) continue;
-    serverSimBotExecLua(sim, (BYTE)i, setSession);
+    /* Through the setter, not a pasted chunk: it also gives the crash
+     * logger its registry copy of the folder. */
+    serverSimBotSetLuaGlobalString(sim, (BYTE)i, "DEBUG_SESSION_DIR", dir);
     serverSimBotExecLua(sim, (BYTE)i,
         "local ok,p=pcall(require,'print2'); if ok and p.reset_log then p.reset_log() end");
   }

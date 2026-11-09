@@ -346,6 +346,11 @@ static int l_naThreatConfigure(lua_State *L) {
         lua_pop(L, 1);
 
     READ_INT("PILL_RANGE_MAP",           ctx->pill_range_map);
+    /* build_disk and apply_occlusion_all both size their slot arrays by
+     * MAX_DISK_R. build_disk clamped its own copy, but apply_occlusion_all
+     * used the raw value and indexed past those arrays. */
+    if (ctx->pill_range_map < 0) ctx->pill_range_map = 0;
+    if (ctx->pill_range_map > MAX_DISK_R) ctx->pill_range_map = MAX_DISK_R;
     READ_INT("MIN_TREEHIDE_DIST_MAP",    ctx->min_treehide_dist);
     READ_NUM("PILL_DANGER_EDGE_FALLOFF", ctx->pill_danger_edge_falloff);
     READ_NUM("PILL_DANGER_BASE",         ctx->pill_danger_base);
@@ -802,6 +807,12 @@ float *naThreatGetCovGrid(lua_State *L) {
 
 int naThreatRawTT(lua_State *L, int mx, int my) {
     NaThreatCtx *ctx = getCtx(L);
+    /* Callers pass a tile plus a stamp offset, which can step off the map.
+     * One step off a side edge still lands inside the map array (the row
+     * before or after), and those reads are kept as they were. Only an
+     * index outside the array is answered here, as deep sea. */
+    long idx = (long)my * MAP_W + (long)mx;
+    if (idx < 0 || idx >= (long)MAP_W * MAP_W) return ctx->t_deepsea;
     return raw_tt(ctx, mx, my);
 }
 

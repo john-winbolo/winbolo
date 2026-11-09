@@ -1054,7 +1054,7 @@ static void tail_pass(BrainPathfinder *pf, int sign, int seed_min, int radius,
         step = (type == TT_RIVER || type == TT_BOAT) ? water_step : 1;
         if (pf->neutral_zone[ni] && neutral_step > step) step = neutral_step;
         nd = d + step;
-        if (nd > maxd || nd >= pf->tail_dist[ni]) continue;
+        if (nd < 0 || nd > maxd || nd >= pf->tail_dist[ni]) continue;
         if (used >= TAIL_POOL) return;         /* pool full: degrade, never overrun */
         pf->tail_dist[ni] = (uint8_t)nd;
         pool_idx[used] = ni; pool_next[used] = head[nd]; head[nd] = used; used++;
@@ -1085,6 +1085,14 @@ void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int 
   if (!pf || !pf->map) return;
   memset(pf->expand_grid, 0, sizeof(pf->expand_grid));
   if (radius <= 0 || start <= 0) return;
+  /* A step indexes head[d + step] in tail_pass. A negative step wrote
+   * below the start of that stack array; a step past TAIL_MAXD + 1 acts
+   * the same as TAIL_MAXD + 1 (the tile is out of reach), and clamping it
+   * keeps d + step from overflowing. */
+  if (neutral_step < 0) neutral_step = 0;
+  if (water_step < 0) water_step = 0;
+  if (neutral_step > TAIL_MAXD + 1) neutral_step = TAIL_MAXD + 1;
+  if (water_step > TAIL_MAXD + 1) water_step = TAIL_MAXD + 1;
   if (deep_margin > 0) {
     if (deep_margin > 254) deep_margin = 254;
     /* Rebuilt every time rather than cached: pf->map is the brain's own fogged
@@ -1746,6 +1754,11 @@ static FILE *astar_log = NULL;
 static int astar_log_enabled = 0;
 static int astar_log_tick = 0;  /* current tick prefix for ASTAR log lines */
 static char astar_log_caller[2048] = "";  /* Lua call context for next cost_to */
+/* Guards astar_log. Bots think on worker threads, and one bot's
+ * cpf_astar_log_enable used to fclose the handle while another bot's
+ * cost_to was still writing to it. Taken only while the log is open, so
+ * the normal (log off) path never touches it. */
+static SDL_SpinLock astar_log_lock = 0;
 
 /* Separate log for the incremental Dijkstra. NOT enabled together with
  * the cost_to log because the per-tick STEP entries are high-frequency
@@ -1769,6 +1782,7 @@ void brainPathfinderSetLogCaller(const char *caller) {
 }
 
 void brainPathfinderEnableLogPath(const char *path) {
+  SDL_LockSpinlock(&astar_log_lock);
   if (astar_log) {
     fflush(astar_log);
     fclose(astar_log);
@@ -1790,6 +1804,7 @@ void brainPathfinderEnableLogPath(const char *path) {
   } else {
     astar_log_enabled = 0;
   }
+  SDL_UnlockSpinlock(&astar_log_lock);
 }
 
 int brainPathfinderIsLogEnabled(void) {
@@ -1797,6 +1812,7 @@ int brainPathfinderIsLogEnabled(void) {
 }
 
 void brainPathfinderEnableLog(int enable) {
+  SDL_LockSpinlock(&astar_log_lock);
   astar_log_enabled = enable;
   if (enable && !astar_log) {
     astar_log = fopen("astar_costto.log", "w");
@@ -1807,6 +1823,7 @@ void brainPathfinderEnableLog(int enable) {
     fclose(astar_log);
     astar_log = NULL;
   }
+  SDL_UnlockSpinlock(&astar_log_lock);
 }
 
 void brainPathfinderEnableDijkstraLog(int enable) {
@@ -1830,14 +1847,15 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
                                   budget, 1 /*allow_boat*/);
 }
 
-float brainPathfinderCostToEx(BrainPathfinder *pf,
-                               int sx, int sy, int dx, int dy,
-                               int in_boat, int shells, int trees,
-                               int mines, int armour, int budget,
-                               int allow_boat) {
+/* The body of brainPathfinderCostToEx. alog is the open log, or NULL;
+ * the caller holds astar_log_lock whenever alog is not NULL. */
+static float cost_to_ex_impl(BrainPathfinder *pf,
+                             int sx, int sy, int dx, int dy,
+                             int in_boat, int shells, int trees,
+                             int mines, int armour, int budget,
+                             int allow_boat, FILE *alog) {
   int src_ni, dest_tile, expanded;
   float result;
-  FILE *alog = astar_log;
 
   /* â”€â”€ Performance counters (always tallied; only printed if alog) â”€â”€ */
   int n_pops = 0;          /* heap_pop calls */
@@ -2064,6 +2082,27 @@ float brainPathfinderCostToEx(BrainPathfinder *pf,
    * (Windows MSVCRT treats _IOLBF as _IOFBF for files). */
   if (alog) fflush(alog);
 
+  return result;
+}
+
+float brainPathfinderCostToEx(BrainPathfinder *pf,
+                               int sx, int sy, int dx, int dy,
+                               int in_boat, int shells, int trees,
+                               int mines, int armour, int budget,
+                               int allow_boat) {
+  float result;
+  /* Fast path: no log open, no lock. A log opened between this read and
+   * the search only misses this one call's lines. */
+  if (astar_log == NULL) {
+    return cost_to_ex_impl(pf, sx, sy, dx, dy, in_boat, shells, trees,
+                           mines, armour, budget, allow_boat, NULL);
+  }
+  /* Log open: hold the lock for the whole search, so no other thread can
+   * close the handle while this one writes to it. */
+  SDL_LockSpinlock(&astar_log_lock);
+  result = cost_to_ex_impl(pf, sx, sy, dx, dy, in_boat, shells, trees,
+                           mines, armour, budget, allow_boat, astar_log);
+  SDL_UnlockSpinlock(&astar_log_lock);
   return result;
 }
 
@@ -3037,6 +3076,9 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                                      int *out_next_x, int *out_next_y) {
   if (!pf) return 0;
   if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
+  /* The fallback below reads g_cost at (sx,sy): a start off the map read
+   * outside the slate's arrays. */
+  if (sx < 0 || sx > 255 || sy < 0 || sy > 255) return 0;
   if (out_next_x) *out_next_x = -1;
   if (out_next_y) *out_next_y = -1;
 

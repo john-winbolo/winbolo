@@ -336,7 +336,10 @@ static int l_init_stamps(lua_State *L) {
     for (int deg = 0, ai = 0; deg < 360; deg += 5, ai++) {
         if (ai >= GH_ATK_MAX_ANGLES) break;
         lua_rawgeti(L, 1, deg);  /* try integer key first */
-        if (lua_isnil(L, -1)) { lua_pop(L, 1); continue; }
+        /* rawgeti and rawlen below take a table on trust: a number or
+         * string here read memory as if it were one. Skip anything else,
+         * as a missing stamp is skipped. */
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
 
         LosStamp *ls = &ctx->los[ai];
 
@@ -346,6 +349,10 @@ static int l_init_stamps(lua_State *L) {
         ls->spot_dy = (int8_t)lua_tointeger(L, -1); lua_pop(L, 1);
 
         lua_getfield(L, -1, "aims");
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 2); /* aims value + stamp table */
+            continue;
+        }
         for (int aim = 0; aim < GH_ATK_LOS_MAX_AIMS; aim++) {
             lua_rawgeti(L, -1, aim + 1);
             if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
@@ -371,7 +378,7 @@ static int l_init_stamps(lua_State *L) {
     for (int deg = 0, ai = 0; deg < 360; deg += 5, ai++) {
         if (ai >= GH_ATK_MAX_ANGLES) break;
         lua_rawgeti(L, 2, deg);
-        if (lua_isnil(L, -1)) { lua_pop(L, 1); continue; }
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
 
         EllStamp *es = &ctx->ell[ai];
         int tlen = (int)lua_rawlen(L, -1);

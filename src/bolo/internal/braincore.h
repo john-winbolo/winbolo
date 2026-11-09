@@ -212,10 +212,23 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed);
 bool brainCoreCallMethod(lua_State *L, BrainInfo *info, const char *method);
 
 /*********************************************************
+ *NAME:          brainCoreSetSessionDir / brainCoreSetDebugMode
+ *PURPOSE:
+ *  Tell the crash logger which folder to write into and whether to
+ *  write files at all. Both live in the registry, out of the brain's
+ *  reach: the DEBUG_SESSION_DIR and BRAIN_DEBUG_MODE globals are for
+ *  the brain to read and are never trusted for a file path.
+ *  A NULL or empty dir clears it (files then go to the working folder).
+ *********************************************************/
+void brainCoreSetSessionDir(lua_State *L, const char *dir);
+void brainCoreSetDebugMode(lua_State *L, bool enabled);
+bool brainCoreGetDebugMode(lua_State *L);
+
+/*********************************************************
  *NAME:          brc_write_crash_log
  *PURPOSE:
  *  Writes a unique-per-crash brain_crash_<UTC>_pid<PID>_bot<N>.log
- *  inside DEBUG_SESSION_DIR (read from the Lua global) or CWD when
+ *  inside the host-set session dir (registry, not the Lua global) or CWD when
  *  no session dir is set. Internally called from brainCoreCallThink /
  *  brainCoreCallMethod on Lua pcall failure. Exposed (non-static) so
  *  tests/unit/test_brain_crash_log.c can verify the file format
@@ -223,7 +236,8 @@ bool brainCoreCallMethod(lua_State *L, BrainInfo *info, const char *method);
  *
  *ARGUMENTS:
  *  L                 - Lua state (used to read state.bot_index,
- *                      state.tick, _G.DEBUG_SESSION_DIR — all
+ *                      state.tick, and the session dir the host
+ *                      set with brainCoreSetSessionDir — all
  *                      best-effort, missing/wrong-type fields are
  *                      tolerated)
  *  method            - "think" / "init" / etc., used in the banner

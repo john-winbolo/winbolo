@@ -379,7 +379,13 @@ int brainPathfinderDeserialize(BrainPathfinder *pf,
         sl->version = sh.version;
         sl->started_tick = sh.started_tick;
         sl->completed_tick = sh.completed_tick;
-        sl->open_count = sh.open_count;
+        /* The heap is not serialized, so the open count in the blob means
+         * nothing here. Taken as is, a blob could set it past the heap
+         * this slate holds and cpf_dijkstra_step would pop entries that
+         * are not there. Valid blobs always carry 0 when there is no data,
+         * and the hasData branch below zeroes it too. */
+        (void)sh.open_count;
+        sl->open_count = 0;
 
         uint32_t hasData;
         if (!curReadU32(&c, &hasData)) return 0;

@@ -583,13 +583,59 @@ BOLO_STATIC_ASSERT(sizeof(BrainRules) ==
                    brain_rules_has_no_padding);
 #undef BRC_RULE_SIZE
 
+/* True if the value at idx is a table with no metatable. PushInfo writes
+ * into the pooled tables with lua_rawlen / lua_rawseti, which take a table
+ * on trust, and with lua_setfield, which runs a __newindex. PushInfo runs
+ * outside any pcall, so an error raised there ends the process. */
+static bool brc_plain_table(lua_State *L, int idx) {
+  if (lua_type(L, idx) != LUA_TTABLE) return false;
+  if (lua_getmetatable(L, idx)) {
+    lua_pop(L, 1);
+    return false;
+  }
+  return true;
+}
+
+/* The brain gets T.info, its subtables, T.base and T.message back every
+ * think, and can replace a subtable with a number or give one a
+ * metatable. Check each is still a plain table before writing into it.
+ * T itself lives only in the registry. Reads use lua_rawget, so no
+ * brain code runs here. */
+static bool brc_pool_sound(lua_State *L, int t_idx) {
+  static const char *info_subs[] = { "player_names", "gameinfo", "objects",
+                                     "messages", "events", "rules", "mods",
+                                     NULL };
+  static const char *t_subs[] = { "info", "base", "message", NULL };
+  bool ok = true;
+  int  k;
+  for (k = 0; ok && t_subs[k]; k++) {
+    lua_pushstring(L, t_subs[k]);
+    lua_rawget(L, t_idx);
+    ok = brc_plain_table(L, -1);
+    lua_pop(L, 1);
+  }
+  if (!ok) return false;
+  lua_pushstring(L, "info");
+  lua_rawget(L, t_idx);
+  for (k = 0; ok && info_subs[k]; k++) {
+    lua_pushstring(L, info_subs[k]);
+    lua_rawget(L, -2);
+    ok = brc_plain_table(L, -1);
+    lua_pop(L, 1);
+  }
+  lua_pop(L, 1);
+  return ok;
+}
+
 void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   int i;
   int t_idx;
 
-  /* Fetch (or lazily build) this State's scratch pool, leaving T on top. */
+  /* Fetch (or lazily build) this State's scratch pool, leaving T on top.
+   * The brain holds the pooled tables between thinks and can change them.
+   * A pool the brain broke is dropped and built again: see brc_pool_sound. */
   lua_rawgetp(L, LUA_REGISTRYINDEX, (void *)&brc_info_pool_key);
-  if (!lua_istable(L, -1)) {
+  if (!lua_istable(L, -1) || !brc_pool_sound(L, lua_gettop(L))) {
     lua_pop(L, 1);
     lua_newtable(L);                                  /* T */
     lua_newtable(L);                                  /* T.info */
@@ -736,7 +782,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
     old_n = (int)lua_rawlen(L, -1);
     for (i = 0; i < n; i++) {
       lua_rawgeti(L, -1, i + 1);
-      if (!lua_istable(L, -1)) {
+      if (!brc_plain_table(L, -1)) {
         lua_pop(L, 1);
         lua_newtable(L);
         lua_pushvalue(L, -1);
@@ -794,7 +840,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
     for (i = 0; i < n; i++) {
       const MessageInfo *m = &info->messages[i];
       lua_rawgeti(L, -1, i + 1);
-      if (!lua_istable(L, -1)) {
+      if (!brc_plain_table(L, -1)) {
         lua_pop(L, 1);
         lua_newtable(L);
         lua_pushvalue(L, -1);
@@ -922,7 +968,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
     for (i = 0; i < n; i++) {
       int dlen, old_d, j;
       lua_rawgeti(L, -1, i + 1);
-      if (!lua_istable(L, -1)) {
+      if (!brc_plain_table(L, -1)) {
         lua_pop(L, 1);
         lua_newtable(L);                    /* event table */
         lua_newtable(L);                    /* its data array */
@@ -933,6 +979,12 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
       lua_pushinteger(L, info->events[i].type);
       lua_setfield(L, -2, "type");
       lua_getfield(L, -1, "data");
+      if (!brc_plain_table(L, -1)) {        /* the brain replaced it */
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, -3, "data");
+      }
       dlen  = gameEventDataSize(info->events[i].type);
       old_d = (int)lua_rawlen(L, -1);
       for (j = 0; j < dlen; j++) {
@@ -1130,14 +1182,42 @@ static int brc_read_state_int(lua_State *L, const char *field) {
   return v;
 }
 
-/* Best-effort copy of _G.DEBUG_SESSION_DIR into out (NUL-terminated).
+/* The crash-log folder and the debug switch live in the registry, set
+ * by the host through brainCoreSetSessionDir and brainCoreSetDebugMode.
+ * They used to be read from the DEBUG_SESSION_DIR and BRAIN_DEBUG_MODE
+ * globals, which the brain itself can write: a sandboxed brain could set
+ * both and have the crash logger write a file into any folder. The
+ * globals are still set for the brain to read, but C never trusts them. */
+static char kBrcSessionDirKey;  /* not const: two const zero bytes may share one address */
+static char kBrcDebugModeKey;
+
+void brainCoreSetSessionDir(lua_State *L, const char *dir) {
+  if (L == NULL) return;
+  lua_pushlightuserdata(L, (void *)&kBrcSessionDirKey);
+  if (dir != NULL && dir[0] != '\0') {
+    lua_pushstring(L, dir);
+  } else {
+    lua_pushnil(L);
+  }
+  lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+void brainCoreSetDebugMode(lua_State *L, bool enabled) {
+  if (L == NULL) return;
+  lua_pushlightuserdata(L, (void *)&kBrcDebugModeKey);
+  lua_pushboolean(L, enabled ? 1 : 0);
+  lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+/* Copy of the host-set session dir into out (NUL-terminated).
  * Returns true if set & non-empty. */
 static bool brc_read_session_dir(lua_State *L, char *out, size_t outsz) {
   int top = lua_gettop(L);
   bool ok = false;
   out[0] = '\0';
-  lua_getglobal(L, "DEBUG_SESSION_DIR");
-  if (lua_isstring(L, -1)) {
+  lua_pushlightuserdata(L, (void *)&kBrcSessionDirKey);
+  lua_rawget(L, LUA_REGISTRYINDEX);
+  if (lua_type(L, -1) == LUA_TSTRING) {
     const char *s = lua_tostring(L, -1);
     if (s && s[0]) {
       strncpy(out, s, outsz - 1);
@@ -1149,16 +1229,21 @@ static bool brc_read_session_dir(lua_State *L, char *out, size_t outsz) {
   return ok;
 }
 
-/* Best-effort read of _G.BRAIN_DEBUG_MODE. Returns true only when the
- * global is explicitly truthy. Production hosts (WinBolo / WinBoloDS)
- * set it false at brain creation, so brains there write NO crash/error
- * files to disk — stderr surfacing still fires regardless. */
-static bool brc_debug_mode(lua_State *L) {
+/* The host-set debug switch. Returns true only when the host turned it
+ * on. Production hosts (WinBolo / WinBoloDS) leave it off, so brains
+ * there write NO crash/error files to disk; stderr reporting still
+ * fires regardless. */
+bool brainCoreGetDebugMode(lua_State *L) {
   int top = lua_gettop(L);
-  lua_getglobal(L, "BRAIN_DEBUG_MODE");
+  lua_pushlightuserdata(L, (void *)&kBrcDebugModeKey);
+  lua_rawget(L, LUA_REGISTRYINDEX);
   bool on = lua_toboolean(L, -1) != 0;
   lua_settop(L, top);
   return on;
+}
+
+static bool brc_debug_mode(lua_State *L) {
+  return brainCoreGetDebugMode(L);
 }
 
 /* Rate-limit key in the Lua registry: stores the last UNIX timestamp
@@ -1725,6 +1810,10 @@ static int l_cpf_stamp_neutral_zone(lua_State *L) {
 
 static int l_cpf_rebuild_influence_tail(lua_State *L) {
   CPF_GET(L);
+  /* neutral_step and water_step are path costs: a negative one is a
+   * mistake in the brain, refused here rather than clamped quietly. */
+  luaL_argcheck(L, luaL_checkinteger(L, 4) >= 0, 4, "neutral_step must be >= 0");
+  luaL_argcheck(L, luaL_checkinteger(L, 5) >= 0, 5, "water_step must be >= 0");
   brainPathfinderRebuildInfluenceTail(pf, (int)luaL_checkinteger(L, 1),
                                       (int)luaL_checkinteger(L, 2),
                                       (int)luaL_checkinteger(L, 3),
@@ -2582,6 +2671,9 @@ static int l_cpf_dijkstra_shells_at(lua_State *L) {
   int kind  = (int)luaL_checkinteger(L, 1);
   int x     = (int)luaL_checkinteger(L, 2);
   int y     = (int)luaL_checkinteger(L, 3);
+  /* node indexes arrays of one map's nodes: a tile off the map read past
+   * their ends. */
+  if (x < 0 || x > 255 || y < 0 || y > 255) { lua_pushnil(L); return 1; }
   int best  = brainPathfinderDijkstraFindBest(pf, kind);
   if (best < 0) { lua_pushnil(L); return 1; }
   DijkstraSlate *s = &pf->dij_slates[best];
@@ -2600,6 +2692,7 @@ static int l_cpf_astar_shells_at(lua_State *L) {
   CPF_GET(L);
   int x = (int)luaL_checkinteger(L, 1);
   int y = (int)luaL_checkinteger(L, 2);
+  if (x < 0 || x > 255 || y < 0 || y > 255) { lua_pushnil(L); return 1; }
   int node = y * 256 + x;  /* land node */
   lua_pushinteger(L, (lua_Integer)pf->shells_at[node]);
   return 1;
