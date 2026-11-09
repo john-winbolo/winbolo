@@ -102,7 +102,12 @@ char *brainRecLegendAddSlot(const char *legend, int slot, const char *slotLegend
     char *out;
     size_t cap;
 
-    if (slotLegend == NULL || slotLegend[0] != '{') return dupStr(base);
+    /* The slot legend comes from an uploaded file: refuse one that is not
+     * a closed object, so the copies below never run past the text. */
+    if (slotLegend == NULL || slotLegend[0] != '{' ||
+        strrchr(slotLegend, '}') == NULL) {
+        return dupStr(base);
+    }
     snprintf(key, sizeof key, "\"%d\":{", slot);
     cap = strlen(base) + strlen(slotLegend) * 2 + 64;
     out = (char *)malloc(cap);
@@ -126,6 +131,10 @@ char *brainRecLegendAddSlot(const char *legend, int slot, const char *slotLegend
     if (jsonObjectEmpty(base)) {
         size_t sl;
         last = strrchr(slotLegend, '}');
+        if (last == NULL) {
+            free(out);
+            return dupStr(base);
+        }
         sl = (size_t)(last - slotLegend);
         memcpy(out, slotLegend, sl);
         snprintf(out + sl, cap - sl, "%s\"slots\":{\"%d\":%s}}",
@@ -133,6 +142,10 @@ char *brainRecLegendAddSlot(const char *legend, int slot, const char *slotLegend
         return out;
     }
     last = strrchr(base, '}');
+    if (last == NULL) {
+        free(out);
+        return dupStr(base);
+    }
     {
         size_t bl = (size_t)(last - base);
         memcpy(out, base, bl);
