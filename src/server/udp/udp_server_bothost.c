@@ -220,6 +220,10 @@ static bool botHostEnforceServerLimit = true;
  * server's brain files, as before (a player's built-in host built with
  * WINBOLO_BOTHOST_OFFICIAL_ONLY still takes none). */
 static bool botHostCodeCustom;
+/* The most files a host may ask for again in one list, past one request
+ * for each file (the host's own limit is 3: BOT_HOST_SYNC_MAX_RETRIES in
+ * bothost_main.c). */
+#define BOT_HOST_FILE_REQ_EXTRA 4
 /* The tick each remote seat was last checked against its host's rules. */
 static uint32_t botSeatFitTick[MAX_TANKS];
 static uint32_t botHostHeldSince[MAX_TANKS];
@@ -489,6 +493,7 @@ static void botHostFileReset(BotHostConn *hc) {
     hc->fileOffset = 0;
     hc->fileSize = 0;
     hc->fileReqCount = 0;
+    hc->fileReqTaken = 0;
     brainPackWriterFree(hc->packW);
     hc->packW = NULL;
     SDL_free(hc->packData);
@@ -496,6 +501,7 @@ static void botHostFileReset(BotHostConn *hc) {
     hc->packFileOpen = false;
     hc->packQueue = 0;
     hc->packReqs = 0;
+    memset(hc->packReqSeen, 0, sizeof(hc->packReqSeen));
     hc->packFilesAll = hc->packFilesSent = 0;
     hc->packFromInstall = hc->packFromCache = 0;
     hc->packRaw = hc->packComp = 0;
@@ -1353,6 +1359,11 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
             hc->packQueue >= BRAIN_SYNC_MAX_BRAINS) {
             return;
         }
+        /* One request a brain for each list the host is sent: a repeat
+         * would load and hash the brain's files again on the tick thread.
+         * botHostFileReset clears it with each new list. */
+        if (hc->packReqSeen[b]) return;
+        hc->packReqSeen[b] = true;
         hc->brainInPlace[b] = botHostPackReqAllInstall(
             evt.u.botHostPackReq.bits, sizeof(evt.u.botHostPackReq.bits),
             evt.u.botHostPackReq.fileCount, evt.u.botHostPackReq.fromInstall);
@@ -1434,6 +1445,17 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
         if (!botHostCodeCustom) return;
         if (hc->fileReqCount >= (int)(sizeof(hc->fileReq) / sizeof(hc->fileReq[0]))) {
             return;
+        }
+        /* At most each file of the list once, and a few asked again (the
+         * host itself asks again at most 3 times a list):
+         * each request loads and hashes a file on the tick thread. */
+        {
+            int files = 0, b;
+            for (b = 0; b < udpServer.brainManifest.brainCount; b++) {
+                files += udpServer.brainManifest.brains[b].fileCount;
+            }
+            if (hc->fileReqTaken >= files + BOT_HOST_FILE_REQ_EXTRA) return;
+            hc->fileReqTaken++;
         }
         hc->fileReq[hc->fileReqCount++] =
             ((uint32_t)evt.u.botHostFileReq.brain << 16) |
@@ -3278,6 +3300,12 @@ void serverBotHostsReset(void) {
     botHostTestOtherComputer =
         SDL_getenv("WINBOLO_BOTHOST_TEST_OTHER_COMPUTER") != NULL;
     botHostPlaceStateReset();
+    /* The per-seat placement bookkeeping starts again with the seats. */
+    memset(botSeatFitTick, 0, sizeof(botSeatFitTick));
+    memset(botHostHeldSince, 0, sizeof(botHostHeldSince));
+    memset(botHostHeldTold, 0, sizeof(botHostHeldTold));
+    memset(botHostBadGaveTick, 0, sizeof(botHostBadGaveTick));
+    memset(botHostBadGave, 0, sizeof(botHostBadGave));
     for (s = 0; s < MAX_TANKS; s++) {
         memset(&udpServer.botSeats[s], 0, sizeof(udpServer.botSeats[s]));
         udpServer.botSeats[s].host = -1;

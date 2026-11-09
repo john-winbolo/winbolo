@@ -320,6 +320,8 @@ typedef struct {
     /* Files asked for, as (brain << 16) | file, oldest first. */
     uint32_t fileReq[32];
     int      fileReqCount;
+    /* FILE_REQs taken for the current list (a limit on repeats). */
+    int      fileReqTaken;
     /* The file being sent, a piece per bulk transfer. */
     bool     fileSending;
     uint32_t fileId;
@@ -343,6 +345,9 @@ typedef struct {
      * host that runs only official brains (-bothost-code official, or
      * BRAIN_PACK_CAP_OFFICIAL_ONLY) is given only such brains' bots. */
     bool     brainInPlace[BRAIN_SYNC_MAX_BRAINS];
+    /* Brain b's PACK_REQ was taken for the current list: a repeat is
+     * dropped. */
+    bool     packReqSeen[BRAIN_SYNC_MAX_BRAINS];
     /* The stream being sent: its brain, its bitmap, the next file to look
      * at, the piece count, and the file being read into it. */
     BrainPackWriter *packW;
