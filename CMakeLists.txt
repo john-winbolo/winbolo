@@ -5905,6 +5905,7 @@ set(_unit_test_names
     brain_crash_log_falls_back_to_luaptr
     brain_push_rules_written_on_change
     brain_bounds_tail_bad_steps
+    brain_bounds_tail_bad_neutral
     brain_bounds_deserialize_open
     brain_bounds_next_step_bad_start
     brain_bounds_shells_at_bad_tile

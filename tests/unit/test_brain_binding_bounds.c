@@ -6,8 +6,9 @@
  * not reach memory outside their arrays. The cases that index past an array do
  * not always fail in a plain build; the ASan build is what shows them.
  *
- * run_brain_bounds_tail_bad_steps      - a negative or huge influence tail step
- *                                        acts like the nearest step that works
+ * run_brain_bounds_tail_bad_steps      - a negative or huge water step acts like
+ *                                        the nearest step that works
+ * run_brain_bounds_tail_bad_neutral    - the same for the neutral zone step
  * run_brain_bounds_deserialize_open    - a blob's open_count never reaches the
  *                                        heap, which is not in a blob
  * run_brain_bounds_next_step_bad_start - a start off the map is no step
@@ -92,9 +93,6 @@ int run_brain_bounds_tail_bad_steps(void) {
         brainPathfinderRebuildInfluenceTail(pf, 20, 10, 15, 3, low[i], 0, 1);
         UT_ASSERT_MSG(memcmp(zero, pf->expand_grid, sizeof(pf->expand_grid)) == 0,
                       "water step %d did not act like step 0", low[i]);
-        brainPathfinderRebuildInfluenceTail(pf, 20, 10, 15, low[i], 0, 0, 1);
-        UT_ASSERT_MSG(memcmp(zero, pf->expand_grid, sizeof(pf->expand_grid)) != 0 ||
-                      low[i] != 0, "neutral step changed nothing unexpected");
     }
 
     /* A step past the longest reach crosses nothing, however large. */
@@ -105,10 +103,55 @@ int run_brain_bounds_tail_bad_steps(void) {
         UT_ASSERT_MSG(memcmp(one, pf->expand_grid, sizeof(pf->expand_grid)) == 0,
                       "water step %d did not act like a step past the reach",
                       high[i]);
-        brainPathfinderRebuildInfluenceTail(pf, 20, 10, 15, high[i], high[i], 0, 1);
     }
     free(zero);
     free(one);
+    brainPathfinderDestroy(pf);
+    return 0;
+}
+
+int run_brain_bounds_tail_bad_neutral(void) {
+    BrainPathfinder *pf = bbFreshPathfinder();
+    int16_t *zero, *past, *working;
+    static const int low[] = { -1, -500, INT_MIN };
+    static const int high[] = { 65, 5000, INT_MAX };
+    size_t i;
+
+    UT_ASSERT(pf != NULL);
+    pf->influence_grid[100 * BB_MAPSZ + 100] = 40;
+    /* A live neutral pill beside the core, so this step has ground to act on. */
+    brainPathfinderStampNeutralZone(pf, 104, 100, 8);
+    zero = (int16_t *)malloc(sizeof(pf->expand_grid));
+    past = (int16_t *)malloc(sizeof(pf->expand_grid));
+    working = (int16_t *)malloc(sizeof(pf->expand_grid));
+    UT_ASSERT(zero != NULL && past != NULL && working != NULL);
+
+    brainPathfinderRebuildInfluenceTail(pf, 20, 10, 15, 0, 2, 0, 1);
+    memcpy(zero, pf->expand_grid, sizeof(pf->expand_grid));
+    brainPathfinderRebuildInfluenceTail(pf, 20, 10, 15, 3, 2, 0, 1);
+    memcpy(working, pf->expand_grid, sizeof(pf->expand_grid));
+    brainPathfinderRebuildInfluenceTail(pf, 20, 10, 15, 64, 2, 0, 1);
+    memcpy(past, pf->expand_grid, sizeof(pf->expand_grid));
+    /* If the zone did nothing, the comparisons below would prove nothing. */
+    UT_ASSERT_MSG(memcmp(zero, working, sizeof(pf->expand_grid)) != 0,
+                  "neutral step 3 acted like step 0, so the zone has no effect");
+    UT_ASSERT_MSG(memcmp(past, working, sizeof(pf->expand_grid)) != 0,
+                  "neutral step 64 acted like step 3, so the zone has no effect");
+
+    for (i = 0; i < sizeof(low) / sizeof(low[0]); i++) {
+        brainPathfinderRebuildInfluenceTail(pf, 20, 10, 15, low[i], 2, 0, 1);
+        UT_ASSERT_MSG(memcmp(zero, pf->expand_grid, sizeof(pf->expand_grid)) == 0,
+                      "neutral step %d did not act like step 0", low[i]);
+    }
+    for (i = 0; i < sizeof(high) / sizeof(high[0]); i++) {
+        brainPathfinderRebuildInfluenceTail(pf, 20, 10, 15, high[i], 2, 0, 1);
+        UT_ASSERT_MSG(memcmp(past, pf->expand_grid, sizeof(pf->expand_grid)) == 0,
+                      "neutral step %d did not act like a step past the reach",
+                      high[i]);
+    }
+    free(zero);
+    free(past);
+    free(working);
     brainPathfinderDestroy(pf);
     return 0;
 }

@@ -26,6 +26,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 MAP = REPO / "data" / "maps" / "Everard Island.map"
+# A brain that does not load is a warning: the host plays on without it.
+EXIT_BRAIN_REFUSED = 0
 
 PROBE = r"""
 local results = {}
@@ -112,7 +114,7 @@ def run_brain(headless, brain, ticks, cwd):
          "--brain", str(brain), "--ticks", str(ticks)],
         cwd=str(cwd), env=env, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, timeout=300)
-    return done.stdout.decode("utf-8", "replace")
+    return done.returncode, done.stdout.decode("utf-8", "replace")
 
 
 def check_probe(headless, tmp):
@@ -123,10 +125,12 @@ def check_probe(headless, tmp):
     source = PROBE.replace("@OUTSIDE@", outside.as_posix())
     source = source.replace("@BRAIN@", brain_dir.as_posix())
     (brain_dir / "init.lua").write_text(source, encoding="utf-8")
-    log = run_brain(headless, brain_dir / "init.lua", 2, tmp)
+    code, log = run_brain(headless, brain_dir / "init.lua", 2, tmp)
+    if code != 0:
+        failures.append("the probe's host exited with %d; its log:\n%s" % (code, log[-1500:]))
     results = brain_dir / "results.txt"
     if not results.exists():
-        return ["the probe wrote no results; its log:\n" + log[-1500:]]
+        return failures + ["the probe wrote no results; its log:\n" + log[-1500:]]
     for line in results.read_text(encoding="utf-8").splitlines():
         print("  " + line)
         if line.endswith("=BAD"):
@@ -141,7 +145,10 @@ def check_bytecode_refused(headless, tmp):
     brain_dir.mkdir()
     # What LuaJIT and PUC-Lua bytecode starts with, and nothing a VM could run.
     (brain_dir / "init.lua").write_bytes(b"\x1bLJ\x02\x00\x00\x00\x00")
-    log = run_brain(headless, brain_dir / "init.lua", 2, tmp)
+    code, log = run_brain(headless, brain_dir / "init.lua", 2, tmp)
+    if code != EXIT_BRAIN_REFUSED:
+        return ["the host of a bytecode init.lua exited with %d; its log:\n%s"
+                % (code, log[-1500:])]
     wanted = ("wrong mode", "mode is 't'")
     if any(word in log for word in wanted):
         print("  bytecode init.lua refused by mode")
@@ -153,7 +160,9 @@ def check_goalhunter(headless, tmp, ticks):
     failures = []
     # Outside debug mode the loader takes opt/init.lua when it exists.
     brain = REPO / "brains" / "GoalHunter" / "init.lua"
-    log = run_brain(headless, brain, ticks, tmp)
+    code, log = run_brain(headless, brain, ticks, tmp)
+    if code != 0:
+        failures.append("GoalHunter's host exited with %d; its log:\n%s" % (code, log[-1500:]))
     for marker in ("BRAIN_CRASH", "failed to load", "error running",
                    "did not return a table"):
         if marker in log:
