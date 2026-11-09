@@ -70,6 +70,7 @@ local line_before = debug.getinfo(1, "l").currentline
 say("getinfo_level_2_is_callers_caller", callee() == line_before + 1)
 say("getinfo_function_form", debug.getinfo(callee, "S").what == "Lua")
 say("getinfo_needs_a_level", not pcall(debug.getinfo))
+say("getinfo_negative_level", debug.getinfo(-1) == nil)
 do
   local co = coroutine.create(function()
     local inner = debug.getinfo(coroutine.running(), 1, "S")

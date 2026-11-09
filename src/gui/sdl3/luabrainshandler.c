@@ -672,7 +672,8 @@ static void brain_jail_table_method(lua_State *L, const char *tbl,
  * host C code, which was never written to be called from Lua.
  *
  * The real getinfo runs one frame deeper than the caller thinks, so a level on
- * this thread moves up by one to name the frame the caller meant. */
+ * this thread moves up by one to name the frame the caller meant. A negative
+ * level names no frame, so it goes through as it is. */
 static int l_getinfo_no_func(lua_State *L) {
   int arg = lua_isthread(L, 1) ? 1 : 0;
   const char *what = luaL_optstring(L, arg + 2, "Slnu");
@@ -687,7 +688,7 @@ static int l_getinfo_no_func(lua_State *L) {
   kept[n] = '\0';
   lua_pushvalue(L, lua_upvalueindex(1));
   if (arg) lua_pushvalue(L, 1);
-  if (lua_type(L, arg + 1) == LUA_TNUMBER &&
+  if (lua_type(L, arg + 1) == LUA_TNUMBER && lua_tointeger(L, arg + 1) >= 0 &&
       (arg == 0 || lua_tothread(L, 1) == L)) {
     lua_pushinteger(L, lua_tointeger(L, arg + 1) + 1);
   } else {
