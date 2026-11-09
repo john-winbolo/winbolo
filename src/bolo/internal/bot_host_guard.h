@@ -141,6 +141,25 @@ void botHostSaltLimitInit(BotHostSaltLimit *l);
 /* True (and counted) when a salt at nowMs may be answered. */
 bool botHostSaltLimitTake(BotHostSaltLimit *l, uint32_t nowMs);
 
+/* ---- Download resets -------------------------------------------------- */
+
+/* A host may reset its download (BRAIN_PACK_CAP_RESET) when its player
+ * turns off "run bots on this computer". The reset clears the requests the
+ * server took for the current list, so the host can ask again. Each
+ * request loads files on the tick thread, so only the first few resets of
+ * one list clear them. A new list clears the count. */
+#define BOT_HOST_RESET_MAX_PER_LIST 4
+
+typedef struct {
+    int resets;   /* resets of the current list */
+} BotHostResetLimit;
+
+/* A new list went out: the count starts again. */
+void botHostResetLimitInit(BotHostResetLimit *l);
+/* Count one reset. True when it may clear the requests taken for the
+ * list; false past BOT_HOST_RESET_MAX_PER_LIST resets of one list. */
+bool botHostResetLimitTake(BotHostResetLimit *l);
+
 /* ---- Recording uploads ------------------------------------------------- */
 
 /* The blocks the server opened to its hosts, by host name and kind. Kept

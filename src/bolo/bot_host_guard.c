@@ -228,6 +228,20 @@ bool botHostSaltLimitTake(BotHostSaltLimit *l, uint32_t nowMs) {
     return true;
 }
 
+/* ---- Download resets -------------------------------------------------- */
+
+void botHostResetLimitInit(BotHostResetLimit *l) {
+    if (l == NULL) return;
+    l->resets = 0;
+}
+
+bool botHostResetLimitTake(BotHostResetLimit *l) {
+    if (l == NULL) return false;
+    if (l->resets >= BOT_HOST_RESET_MAX_PER_LIST) return false;
+    l->resets++;
+    return true;
+}
+
 /* ---- Recording uploads ------------------------------------------------- */
 
 void botHostRecAskedInit(BotHostRecAsked *a) {

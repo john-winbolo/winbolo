@@ -1151,6 +1151,7 @@ static void botHostServiceFiles(ServerSim *sim, int h) {
                                 (uint32_t)udpServer.brainManifestBlob2Len)) {
                 hc->manifestOwed = false;
                 hc->manifestV2 = true;
+                botHostResetLimitInit(&hc->resetLimit);
             }
         } else {
             hdr.totalSize = (uint32_t)udpServer.brainManifestBlobLen;
@@ -1158,6 +1159,7 @@ static void botHostServiceFiles(ServerSim *sim, int h) {
                                 (uint32_t)udpServer.brainManifestBlobLen)) {
                 hc->manifestOwed = false;
                 hc->manifestV2 = false;
+                botHostResetLimitInit(&hc->resetLimit);
             }
         }
         return;
@@ -1329,8 +1331,19 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
         if (caps & BRAIN_PACK_CAP_RESET) {
             /* The host dropped its download (its player turned off "run
              * bots on this computer"): stop sending, keep the caps it
-             * had. It asks again when it wants the files. */
+             * had. It asks again when it wants the files. Past a few
+             * resets of one list, the requests it already made stay
+             * counted, so a reset loop cannot make the tick thread load
+             * the brain files again and again. A new list clears all. */
+            bool clearReqs = botHostResetLimitTake(&hc->resetLimit);
+            int keepTaken = hc->fileReqTaken;
+            bool keepSeen[BRAIN_SYNC_MAX_BRAINS];
+            memcpy(keepSeen, hc->packReqSeen, sizeof(keepSeen));
             botHostFileReset(hc);
+            if (!clearReqs) {
+                hc->fileReqTaken = keepTaken;
+                memcpy(hc->packReqSeen, keepSeen, sizeof(keepSeen));
+            }
             if (hc->syncGen == udpServer.brainManifestGen) {
                 hc->syncReady = false;
             }

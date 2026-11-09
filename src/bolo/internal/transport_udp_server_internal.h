@@ -39,6 +39,7 @@
 #include "brain_sync.h"     /* BrainSyncManifest — the Bot Host brain sync */
 #include "brain_pack.h"     /* BrainPackWriter — the packed brain sync */
 #include "bot_host_link.h"  /* BotHostAllow, BotHostAnnounce — -bothosts */
+#include "bot_host_guard.h" /* BotHostResetLimit */
 #include "bothost_record.h"  /* BotHostRecord — serverBotHostRecordPut */
 #include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy */
 #include "net_impair.h"     /* NetImpair */
@@ -322,6 +323,9 @@ typedef struct {
     int      fileReqCount;
     /* FILE_REQs taken for the current list (a limit on repeats). */
     int      fileReqTaken;
+    /* Download resets (BRAIN_PACK_CAP_RESET) of the current list: past a
+     * few, a reset leaves fileReqTaken and packReqSeen as they are. */
+    BotHostResetLimit resetLimit;
     /* The file being sent, a piece per bulk transfer. */
     bool     fileSending;
     uint32_t fileId;

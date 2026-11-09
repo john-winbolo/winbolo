@@ -6273,6 +6273,7 @@ set(_unit_test_names
     brain_capacity_throwing_index
     bot_host_refused_takes_no_file
     brain_capacity_memory_limit
+    bot_host_reset_limit
     bot_host_link_announce_codec
     bot_host_link_addr_list
     bot_host_link_allow

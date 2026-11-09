@@ -27,6 +27,8 @@
  *   8. brain_capacity_memory_limit: the capacity VM's memory limit stops a
  *      very large string.rep at once, only while armed, and gives the VM
  *      its own allocator back.
+ *   9. bot_host_reset_limit: only the first few download resets of one
+ *      list clear the requests taken; a new list starts the count again.
  */
 
 #include <stdint.h>
@@ -284,6 +286,32 @@ int run_bot_host_salt_limit(void) {
     botHostSaltLimitInit(&l);
     UT_ASSERT(botHostSaltLimitTake(&l, t));
     UT_ASSERT(!botHostSaltLimitTake(NULL, t));
+    return 0;
+}
+
+/* ================================================================
+ * 9. bot_host_reset_limit
+ * ================================================================ */
+
+int run_bot_host_reset_limit(void) {
+    BotHostResetLimit l;
+    int i, cleared = 0;
+
+    botHostResetLimitInit(&l);
+    for (i = 0; i < BOT_HOST_RESET_MAX_PER_LIST * 3; i++) {
+        bool clear = botHostResetLimitTake(&l);
+        /* The first resets clear; every reset after them does not. */
+        UT_ASSERT_MSG(clear == (i < BOT_HOST_RESET_MAX_PER_LIST),
+                      "reset %d: clear %d", i, (int)clear);
+        if (clear) cleared++;
+    }
+    UT_ASSERT_MSG(cleared == BOT_HOST_RESET_MAX_PER_LIST,
+                  "cleared %d", cleared);
+    UT_ASSERT(BOT_HOST_RESET_MAX_PER_LIST == 4);
+    /* A new list starts the count again. */
+    botHostResetLimitInit(&l);
+    UT_ASSERT(botHostResetLimitTake(&l));
+    UT_ASSERT(!botHostResetLimitTake(NULL));
     return 0;
 }
 
