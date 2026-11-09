@@ -157,6 +157,39 @@ static BotHostOvrMoves botHostOvrMv;
 static bool botHostRecordData;
 static bool botHostRecHostSent[1 + MAX_BOT_HOSTS];
 static bool botHostRecWasOn;
+/* Tests only: WINBOLO_BOTHOST_TEST_OTHER_COMPUTER=1 makes every host count
+ * as another computer than the server's, so one desktop can play a server
+ * with a remote player host. Read once in serverBotHostsReset. */
+static bool botHostTestOtherComputer;
+
+/* The state of the server's own slots and of the placement steps. They
+ * are file statics, not function statics, so serverBotHostsReset clears
+ * them for the next server in the same process. */
+static struct {
+    int         known;       /* the slots last known, -1 for none */
+    const char *knownFrom;   /* where they came from, for the log */
+    uint32_t    lastTick;    /* the tick of the last capacity look */
+    bool        polled;
+    int         logged;      /* the slots last logged, -1 for none */
+} botHostSrvSlots = { -1, "", 0, false, -1 };
+static struct {
+    uint32_t    lastMoveTick;
+    uint32_t    runStartTick;
+    ServerState lastSt;
+    uint32_t    lastProbeTick;
+    bool        probed;
+} botHostPlace = { 0, 0, serverStateLobby, 0, false };
+
+static void botHostPlaceStateReset(void) {
+    botHostSrvSlots.known = -1;
+    botHostSrvSlots.knownFrom = "";
+    botHostSrvSlots.lastTick = 0;
+    botHostSrvSlots.polled = false;
+    botHostSrvSlots.logged = -1;
+    memset(&botHostPlace, 0, sizeof(botHostPlace));
+    botHostPlace.lastSt = serverStateLobby;
+}
+
 /* -bothost-nomove: no bot moves while a game runs. */
 static BotHostNoMove botHostNoMove;
 /* The place each seat last left by a placement decision, so a bot does
@@ -676,10 +709,7 @@ static void botHostMachineUpdate(void) {
               udpServer.tickCount - botHostSaltTick <
                   BOT_HOST_MACHINE_WAIT_TICKS;
     memset(in, 0, sizeof(in));
-    /* Tests only: WINBOLO_BOTHOST_TEST_OTHER_COMPUTER=1 makes every host
-     * count as another computer than the server's, so one desktop can play
-     * a server with a remote player host. */
-    otherComputer = SDL_getenv("WINBOLO_BOTHOST_TEST_OTHER_COMPUTER") != NULL;
+    otherComputer = botHostTestOtherComputer;
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         const BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
@@ -2263,12 +2293,10 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
         }
         slots = extra[JOIN_BOT_HOST_KEY_LEN];
         if (slots > BOT_HOST_MAX_SLOTS) slots = BOT_HOST_MAX_SLOTS;
-        /* Shown in the lobby's Bot Host rows: the player's name. */
+        /* Shown in the lobby's Bot Host rows: the player's name. A player
+         * with no name sends an empty one, and each client shows its own
+         * text for the row. */
         SDL_strlcpy(hostName, oc->playerName, sizeof(hostName));
-        if (hostName[0] == '\0') {
-            SDL_snprintf(hostName, sizeof(hostName), "player %u",
-                         (unsigned)owner);
-        }
         for (h = 0; h < MAX_BOT_HOSTS; h++) {
             if (!udpServer.botHosts[h].connected) {
                 freeIdx = h;
@@ -3124,6 +3152,9 @@ void serverBotHostsReset(void) {
     botHostServerFreeHave = false;
     botHostServerFreeValue = (uint8_t)BOT_HOST_FREE_UNKNOWN;
     botHostRecWasOn = false;
+    botHostTestOtherComputer =
+        SDL_getenv("WINBOLO_BOTHOST_TEST_OTHER_COMPUTER") != NULL;
+    botHostPlaceStateReset();
     for (s = 0; s < MAX_TANKS; s++) {
         memset(&udpServer.botSeats[s], 0, sizeof(udpServer.botSeats[s]));
         udpServer.botSeats[s].host = -1;
@@ -3207,37 +3238,34 @@ static void botHostPump(int h) {
  * brains, or the last one known, or the default for this machine (logical
  * cores - 1). */
 static int botHostServerSlots(ServerSim *sim) {
-    static int known = -1;
-    static const char *knownFrom = "";
-    static uint32_t lastTick = 0;
-    static bool polled = false;
-    if (!polled || udpServer.tickCount - lastTick >= BOT_HOST_CAP_POLL_TICKS) {
+    if (!botHostSrvSlots.polled ||
+        udpServer.tickCount - botHostSrvSlots.lastTick >=
+            BOT_HOST_CAP_POLL_TICKS) {
         BotPoolStats ps;
-        polled = true;
-        lastTick = udpServer.tickCount;
+        botHostSrvSlots.polled = true;
+        botHostSrvSlots.lastTick = udpServer.tickCount;
         memset(&ps, 0, sizeof(ps));
         botManagerGetPoolStats(sim, &ps);
         /* The host bot capacity (-botcapacity, or the CPU speed test with
            the bot brain's answer) comes first. -1 (no cap) and -2 (the test
            still runs) fall back to the active brains' answer. */
         if (ps.hostBotCapacity >= 0) {
-            known = ps.hostBotCapacity;
-            knownFrom = "the server's host bot capacity";
+            botHostSrvSlots.known = ps.hostBotCapacity;
+            botHostSrvSlots.knownFrom = "the server's host bot capacity";
         } else if (ps.brainCapacity > 0) {
-            known = ps.brainCapacity;
-            knownFrom = "the brain's capacity answer";
+            botHostSrvSlots.known = ps.brainCapacity;
+            botHostSrvSlots.knownFrom = "the brain's capacity answer";
         }
     }
     if (serverSimGetServerBotSlots(sim) >= 0) {
         /* The lobby's Server bot slots: a change counts at once. */
-        known = serverSimGetServerBotSlots(sim);
-        knownFrom = serverSimIsServerBotSlotsLocked(sim)
+        botHostSrvSlots.known = serverSimGetServerBotSlots(sim);
+        botHostSrvSlots.knownFrom = serverSimIsServerBotSlotsLocked(sim)
                         ? "-botcapacity" : "the lobby's Server bot slots";
     }
     {
-        static int logged = -1;
-        int slots = known;
-        const char *from = knownFrom;
+        int slots = botHostSrvSlots.known;
+        const char *from = botHostSrvSlots.knownFrom;
         if (slots < 0) {
             BrainMachineInfo machine;
             memset(&machine, 0, sizeof(machine));
@@ -3245,8 +3273,8 @@ static int botHostServerSlots(ServerSim *sim) {
             slots = brainCapacityDefault(&machine);
             from = "this machine's default capacity";
         }
-        if (slots != logged) {
-            logged = slots;
+        if (slots != botHostSrvSlots.logged) {
+            botHostSrvSlots.logged = slots;
             fprintf(stderr, "[bothost] the server counts as a host with %d "
                     "slots (%s)\n", slots, from);
         }
@@ -4284,17 +4312,20 @@ static void botHostRecHeld(uint8_t decision, int host, int toHost, int seat,
 }
 
 /* The players and the spectators are told, and the round log gets the
- * line as a server message. */
-static void botHostHeldTell(ServerSim *sim, int s, langid id,
-                            const char *english) {
+ * line as a server message, made from the same string id. */
+static void botHostHeldTell(ServerSim *sim, int s, langid id) {
     const char *args[1];
-    char text[128];
+    MessageArgs fmt;
+    const char *text;
     char pstr[256];
     size_t len;
     args[0] = botSeatName(sim, s);
     serverSendServerMessage(sim, id, 1, args);
     if (!logIsRecording()) return;
-    snprintf(text, sizeof(text), english, botSeatName(sim, s));
+    memset(&fmt, 0, sizeof(fmt));
+    SDL_strlcpy(fmt.playerName, botSeatName(sim, s), sizeof(fmt.playerName));
+    text = langGetTextFmt(id, &fmt);
+    if (text == NULL) return;
     len = strlen(text);
     if (len > 255) len = 255;
     pstr[0] = (char)(unsigned char)len;
@@ -4321,7 +4352,7 @@ static void botHostHoldSeat(ServerSim *sim, int s, int from,
 /* A held bot runs again (on the server, or a Bot Host took it). */
 static void botHostHeldRunsAgain(ServerSim *sim, int s) {
     if (botHostHeldTold[s]) {
-        botHostHeldTell(sim, s, STR_BOTHOST_BOT_RUNS_AGAIN, "%s runs again");
+        botHostHeldTell(sim, s, STR_BOTHOST_BOT_RUNS_AGAIN);
     }
     botHostHeldTold[s] = false;
 }
@@ -4430,8 +4461,7 @@ static bool botHostHeldStep(ServerSim *sim, const BotHostPlaceHost *raw,
         botHostHeldTold[s] = true;
         fprintf(stderr, "[bothost] bot %d \"%s\" is paused: no room to "
                         "run its bot\n", s, botSeatName(sim, s));
-        botHostHeldTell(sim, s, STR_BOTHOST_BOT_PAUSED,
-                        "%s is paused: no room to run its bot");
+        botHostHeldTell(sim, s, STR_BOTHOST_BOT_PAUSED);
     }
     return false;
 }
@@ -4439,11 +4469,6 @@ static bool botHostHeldStep(ServerSim *sim, const BotHostPlaceHost *raw,
 /* One placement move: index 0 of the host table is the server itself, index
  * h + 1 is Bot Host h. */
 static void botHostPlaceStep(ServerSim *sim, ServerState st) {
-    static uint32_t lastMoveTick = 0;
-    static uint32_t runStartTick = 0;
-    static ServerState lastSt = serverStateLobby;
-    static uint32_t lastProbeTick = 0;
-    static bool probed = false;
     BotHostPlaceHost hosts[1 + MAX_BOT_HOSTS], raw[1 + MAX_BOT_HOSTS];
     /* The bots that may move off each place now, in seat order: the
      * server's own first, then each host's. */
@@ -4468,10 +4493,10 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         badRate[h] = -1.0;
     }
 
-    if (running && lastSt != serverStateRunning) {
-        runStartTick = udpServer.tickCount;
+    if (running && botHostPlace.lastSt != serverStateRunning) {
+        botHostPlace.runStartTick = udpServer.tickCount;
     }
-    lastSt = st;
+    botHostPlace.lastSt = st;
 
     memset(hosts, 0, sizeof(hosts));
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
@@ -4539,13 +4564,14 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
      * those). */
     memcpy(raw, hosts, sizeof(raw));
     if (running) botHostOvrApply(hosts, true);
-    if (running && (!probed || udpServer.tickCount - lastProbeTick >=
-                                   BOT_HOST_OVR_PROBE_TICKS)) {
-        probed = true;
-        lastProbeTick = udpServer.tickCount;
+    if (running && (!botHostPlace.probed ||
+                    udpServer.tickCount - botHostPlace.lastProbeTick >=
+                        BOT_HOST_OVR_PROBE_TICKS)) {
+        botHostPlace.probed = true;
+        botHostPlace.lastProbeTick = udpServer.tickCount;
         if (botHostOvrConfig()->pct > 0.0 &&
             botHostOvrProbeAll(sim, raw, hosts, running)) {
-            lastMoveTick = udpServer.tickCount;
+            botHostPlace.lastMoveTick = udpServer.tickCount;
             return;
         }
         memcpy(hosts, raw, sizeof(hosts));
@@ -4564,7 +4590,8 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
                                        raw[h + 1].bots, raw[h + 1].slots)) {
                 continue;
             }
-            if (udpServer.tickCount - lastMoveTick < BOT_HOST_MOVE_TICKS) {
+            if (udpServer.tickCount - botHostPlace.lastMoveTick <
+                BOT_HOST_MOVE_TICKS) {
                 break;
             }
             s = hostSeats[h][0];
@@ -4573,7 +4600,7 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
                     s, botSeatName(sim, s), udpServer.botHosts[h].name,
                     raw[h + 1].slots, raw[h + 1].bots);
             botSeatFallBack(sim, s, "its host offers fewer slots", true);
-            lastMoveTick = udpServer.tickCount;
+            botHostPlace.lastMoveTick = udpServer.tickCount;
             return;
         }
     }
@@ -4593,9 +4620,10 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         return;
     }
     if (running) {
-        bool early = udpServer.tickCount - runStartTick <
+        bool early = udpServer.tickCount - botHostPlace.runStartTick <
                      BOT_HOST_START_PLACE_TICKS;
-        bool spaced = udpServer.tickCount - lastMoveTick >= BOT_HOST_MOVE_TICKS;
+        bool spaced = udpServer.tickCount - botHostPlace.lastMoveTick >=
+                      BOT_HOST_MOVE_TICKS;
         if (!spaced && !(early && from == 0)) return;
     }
     /* Which bot: the first that did not leave the target place within the
@@ -4611,7 +4639,7 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     if (why == BOT_HOST_SPREAD_BAD && badShort[from] > 0) {
         botHostPlaceGiveBatch(sim, hosts, raw, from, badShort[from], cand,
                               candCount);
-        lastMoveTick = udpServer.tickCount;
+        botHostPlace.lastMoveTick = udpServer.tickCount;
         return;
     }
     s = botHostTrailPickSeat(&botHostTrail, cand, candCount, to,
@@ -4620,7 +4648,7 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     if (s < 0) return;
     reason = botHostSpreadReason(why, from, badWhy);
     if (!botHostPlaceGive(sim, from, to, s, raw[to].bots, reason)) return;
-    lastMoveTick = udpServer.tickCount;
+    botHostPlace.lastMoveTick = udpServer.tickCount;
     if (why != BOT_HOST_SPREAD_BAD) return;
     botHostBadGave[from] = true;
     botHostBadGaveTick[from] = udpServer.tickCount;

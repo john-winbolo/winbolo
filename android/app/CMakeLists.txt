@@ -116,6 +116,27 @@ set(ENABLE_CJSON_UNINSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui zlib libmaxminddb cjson)
 
+# zstd: bolo_static links libzstd_static (brain_record_io.c and brain_pack.c
+# include zstd.h). The same release and switches as the root CMakeLists.txt:
+# static only, no programs, no tests, no legacy formats, no worker threads.
+FetchContent_Declare(
+    zstd
+    URL      https://github.com/facebook/zstd/archive/refs/tags/v1.5.7.tar.gz
+    SOURCE_SUBDIR build/cmake
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_PROGRAMS_LINK_SHARED OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(zstd)
+target_include_directories(libzstd_static SYSTEM INTERFACE "$<BUILD_INTERFACE:${zstd_SOURCE_DIR}/lib>")
+
 # ---------------------------------------------------------------------------
 # LuaJIT, for the bot brains, as the desktop builds run them: the commit the
 # root CMakeLists.txt pins, cross-compiled for this ABI by LuaJIT's own make
@@ -483,6 +504,9 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/flags.c
     ${PROJ_ROOT}/src/gui/sdl3/dns_lookups.c
     ${PROJ_ROOT}/src/gui/sdl3/gamefront.c
+    # The lobby and gamefront.c call the Bot Host inside the client; Android
+    # runs no bots, so it takes the stubs (bothost_embed.h).
+    ${PROJ_ROOT}/src/bothost/bothost_embed_stub.c
     # The shared sim-driving cores every client platform calls: the
     # keys/game tick step, the join wait, the guarded frontEnd* bodies with
     # the tutorial sequencer, and the single-player lobby seeding.

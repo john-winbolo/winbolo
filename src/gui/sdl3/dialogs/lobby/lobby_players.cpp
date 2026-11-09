@@ -66,8 +66,8 @@ extern "C" {
 #include "../../flags.h"         /* flagsGetTexture / FLAG_HEIGHT */
 #include "../../map_preview_popup.h"  /* mapPreviewPopupFocusMapSquare */
 #include "../../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning */
-#if defined(WINBOLO_VOICE)
 #include "../../../../bothost/bothost_embed.h" /* botHostEmbedGetStatus — this computer's own Bot Host */
+#if defined(WINBOLO_VOICE)
 #include "../../../voice.h"   /* voiceGetTalkingMap — lobby mic icons;
                                * the own-row voice sub-row's state */
 #endif
@@ -752,6 +752,20 @@ static void renderBotHostSlotsBox(ClientSim *cs, int idx,
     ImGui::PopID();
 }
 
+/* A Bot Host row's name. The server sends an empty name for a player's
+ * computer when the player has no name: the row then says "Player N" when
+ * it knows the player's number, else "Bot Host". */
+static const char *botHostRowName(const ClientBotHostRow *r) {
+    if (r->name[0] != '\0') return r->name;
+    if (r->cpuBotHave && r->cpuBotOwner != BOT_HOST_CPU_OWNER_NONE &&
+        r->cpuBotOwner < MAX_TANKS) {
+        MessageArgs na = {};
+        na.number = (int)r->cpuBotOwner;
+        return langGetTextFmt(STR_DLGLOBBY_BOTHOST_PLAYER_NAME, &na);
+    }
+    return langGetText(STR_DLGLOBBY_BOTHOST_NO_NAME);
+}
+
 static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
     /* Who may change the row's slots: the players who may change Server
      * Settings. */
@@ -839,7 +853,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         }
         SDL_strlcpy(args.string1,
                     isServer ? langGetText(STR_DLGLOBBY_BOTHOST_SERVER_NAME)
-                             : r->name,
+                             : botHostRowName(r),
                     sizeof(args.string1));
         args.number = r->used;
         /* The slots the server gives it: lowered by the row's override,
@@ -868,7 +882,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
             /* "Laptop: same computer as the server (0 slots)", or "as
              * <other row's name>". */
             MessageArgs ma = {};
-            SDL_strlcpy(ma.string1, r->name, sizeof(ma.string1));
+            SDL_strlcpy(ma.string1, botHostRowName(r), sizeof(ma.string1));
             const ClientBotHostRow *o =
                 r->machineOther != BOT_HOST_MACHINE_OTHER_NONE
                     ? clientSimGetBotHostRow(cs, r->machineOther) : NULL;
@@ -878,7 +892,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
                             langGetTextFmt(STR_DLGLOBBY_BOTHOST_SAME_SERVER, &ma),
                             sizeof(line));
             } else {
-                SDL_strlcpy(ma.string2, o->name, sizeof(ma.string2));
+                SDL_strlcpy(ma.string2, botHostRowName(o), sizeof(ma.string2));
                 SDL_strlcpy(line,
                             langGetTextFmt(STR_DLGLOBBY_BOTHOST_SAME_HOST, &ma),
                             sizeof(line));
@@ -931,7 +945,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
                                  : STR_DLGLOBBY_BOTHOST_CPU_BOT_OTHER;
                     SDL_strlcpy(ca.string2,
                                 (os != NULL && os->connected && os->playerName[0])
-                                    ? os->playerName : r->name,
+                                    ? os->playerName : botHostRowName(r),
                                 sizeof(ca.string2));
                 }
                 SDL_strlcpy(cpuText, langGetTextFmt(sid, &ca), sizeof(cpuText));

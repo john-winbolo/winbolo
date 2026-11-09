@@ -127,9 +127,10 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 #include "dialogs/imgui_onboarding.h"
 #include "dialogs/imgui_lobby.h"
 
+#include "../../bothost/bothost_embed.h" /* botHostEmbedService / Leave */
+
 #if defined(WINBOLO_VOICE)
 #include "../voice.h"
-#include "../../bothost/bothost_embed.h" /* botHostEmbedService / Leave */
 
 /* Voice settings live in the voice module; these apply them with the same
    clamping the settings dialog uses, and read them back for the save.
