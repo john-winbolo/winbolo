@@ -322,6 +322,11 @@ static inline bool overrunRecordDecode(const uint8_t *in, int len, OverrunRecord
     b->overruns = overrunRecordGet32(p); p += 4;
     b->thinks   = overrunRecordGet32(p); p += 4;
     b->host     = OVERRUN_RECORD_HOST_NONE;
+    /* The player number indexes per-player tables (MAX_TANKS). */
+    if (b->player >= OVERRUN_RECORD_MAX_BOTS) {
+      memset(rec, 0, sizeof(*rec));
+      return false;
+    }
   }
   /* Version 2's hosts. */
   if (rec->version >= 2 && count == in[OVERRUN_RECORD_HEAD_BYTES - 1]) {

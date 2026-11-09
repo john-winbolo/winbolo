@@ -1243,7 +1243,15 @@ int BRAINREC_SPLIT_ENTRY(int argc, char **argv) {
                         char other[SPLIT_PATH_MAX];
                         if (gzOut) SDL_snprintf(other, sizeof other, "%s/%s", partDir[p], name);
                         else       SDL_snprintf(other, sizeof other, "%s/%s.gz", partDir[p], name);
-                        SDL_RemovePath(other);
+                        if (pathIsFile(other)) {
+                            if (SDL_RemovePath(other)) {
+                                printf("  removed %s (left by an earlier run)\n",
+                                       other);
+                            } else {
+                                fprintf(stderr, "brainrec_split: cannot remove %s "
+                                        "(%s)\n", other, SDL_GetError());
+                            }
+                        }
                     }
                 }
 

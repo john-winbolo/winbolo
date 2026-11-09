@@ -3806,6 +3806,11 @@
 #define STR_BOTHOST_BOT_PAUSED                   3923
 #define STR_BOTHOST_BOT_RUNS_AGAIN               3924
 
+/* The lobby's Bot Host row of a player's computer when the server sent no
+ * name: the player's number, or, when that is not known, a plain name */
+#define STR_DLGLOBBY_BOTHOST_PLAYER_NAME         3925
+#define STR_DLGLOBBY_BOTHOST_NO_NAME             3926
+
 /* The Log Viewer's Chat panel: its title (and Windows menu item), the line
    it shows before any chat, the note for a line to the sender's team or to
    one player, and the name of a spectator who chatted. */

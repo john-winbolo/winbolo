@@ -376,8 +376,9 @@ static const char *consoleNextArg(const char *p, char *out, size_t outSz) {
 }
 
 /* cleardebug / brainmerge <session dir> <host dir>. cleardebug runs under
-   the mutex (it reads the Bot Host table and tells the hosts); a merge only
-   reads and writes files, so it runs without it and the game goes on. */
+   the mutex (it reads the Bot Host table and tells the hosts). A merge
+   takes the mutex only for its short reads of the recorder's state; the
+   merge and the gzip run without it, so the game goes on. */
 static bool consoleOpDebugCmd(const char *line, char *msg, size_t msgLen) {
   bool ok;
   if (SDL_strncasecmp(line, "cleardebug", 10) == 0) {

@@ -21,6 +21,11 @@ volatile ee_s32 seed5_volatile = 0;
 
 ee_u32 default_num_contexts = 1;
 
+/* Note: one pair for the whole process. Only core_main.c's own main
+   (coremark_main) uses start_time, stop_time and get_time, and it runs
+   one benchmark at a time. The speed test's threads (cpu_speed_test.c)
+   call iterate() only and time each step themselves, so they never
+   touch these. */
 static CORE_TICKS startTicks;
 static CORE_TICKS stopTicks;
 

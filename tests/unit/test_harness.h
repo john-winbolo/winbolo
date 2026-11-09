@@ -1685,6 +1685,10 @@ int run_brainrec_dir_lock_orders_merge_and_gzip(void);
 int run_brainrec_host_make_absolute(void);
 int run_brainrec_host_print2_gz(void);
 int run_brainrec_host_rec_codec(void);
+int run_brainrec_host_legend_unclosed(void);
+int run_brainrec_host_upload_no_session(void);
+int run_brainrec_host_merge_dir_other_names(void);
+int run_brainrec_host_upload_file_cap(void);
 
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /

@@ -5269,12 +5269,7 @@ void transportUdpClientChannelTestStats(Transport *t, uint8_t ch,
     if (framesRx)    *framesRx    = c->channelFramesRx;
 }
 
-/* Test-only: begin a real map resync now, without waiting for a checksum
- * mismatch. Drives the genuine machinery — a fresh monotonic generation, the
- * resync request to the server, then (as the harness pumps) the server accept,
- * blob download, and install that advances installedMapGen. Lets the loopback
- * test exercise the generation gate through the real request/accept/install
- * path. Returns false if a resync is already outstanding. */
+/* A Bot Host bot connection: see transport_udp.h. */
 bool transportUdpClientSetBotSlotToken(Transport *t, const uint8_t *token) {
     TransportUdpClientCtx *c;
     if (t == NULL || t->ctx == NULL || token == NULL) return false;
@@ -5284,6 +5279,12 @@ bool transportUdpClientSetBotSlotToken(Transport *t, const uint8_t *token) {
     return true;
 }
 
+/* Test-only: begin a real map resync now, without waiting for a checksum
+ * mismatch. Drives the genuine machinery — a fresh monotonic generation, the
+ * resync request to the server, then (as the harness pumps) the server accept,
+ * blob download, and install that advances installedMapGen. Lets the loopback
+ * test exercise the generation gate through the real request/accept/install
+ * path. Returns false if a resync is already outstanding. */
 bool transportUdpClientTestBeginResync(Transport *t) {
     TransportUdpClientCtx *c;
     if (t == NULL || t->ctx == NULL) return false;

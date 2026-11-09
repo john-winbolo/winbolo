@@ -21,17 +21,20 @@
  *    - a host sends each file of a block in
  *      BULK_KIND_REC_CHUNK pieces and then DONE;
  *    - the server stages the files in
- *      debug_sessions/<block>/bothost_<host>.upload/ and merges
+ *      debug_sessions/<block>/bothost_<host>_<n>.upload/ (n: the
+ *      host's connection number, as two hosts can have one name)
+ *      and merges
  *      them into the block (brainRecMergeDir) on a thread, one
  *      merge at a time, then ACKs. MERGED only when every
  *      host file was read and filled entries; else FAILED with
  *      the reason, and the host sends the block again later.
  *      The host keeps its copy either way, marked uploaded on
  *      MERGED. The uploaded files are kept as they came in
- *      debug_sessions/<block>/bothost_raw/. A block the server
- *      does not have (or still records) is kept beside it, in
- *      debug_sessions/<block>_bothost_<host>/, with a log line,
- *      and FAILED.
+ *      debug_sessions/<block>/bothost_raw/. The pieces of a
+ *      block the server does not have (or still records) are
+ *      not written: the block is FAILED with a log line. An
+ *      upload larger than REC_UPLOAD_MAX_BYTES or
+ *      REC_UPLOAD_MAX_FILES is refused.
  *
  *  cleardebug deletes debug_sessions/ except the open block
  *  and has every host delete its recordings of this server:
@@ -58,12 +61,17 @@
 #include "brain_lua_glue.h"     /* brainCoreReleaseLogFiles */
 #include "../../gui/sdl3/luabrainshandler.h" /* luaBrainsGetDebugParts */
 #include "../../common/wb_log.h"
+#include "../threads.h"          /* threadsWaitForMutex, threadsReleaseMutex */
 
 #define REC_ROOT            "debug_sessions"
 /* The largest recording piece a host may send. */
 #define REC_PIECE_MAX       (64u * 1024u)
 /* Ticks the bytes of a block may come after its DONE (30 s). */
 #define REC_DONE_WAIT_TICKS 1500u
+/* The most one upload (one host, one block) may write. DONE carries the
+ * byte count in 32 bits, so a larger upload could never be whole. */
+#define REC_UPLOAD_MAX_BYTES 0xFFFFFFFFull
+#define REC_UPLOAD_MAX_FILES 4096u
 
 /* The block open now: its name, its folder and the tick it opened. s_seq
  * rises with each open or close, so each host is told each change once. */
@@ -86,6 +94,7 @@ typedef struct {
     char         sessionDir[FILENAME_MAX];
     char         stage[600];
     bool         ok;
+    bool         gzipLogs;   /* the thread gzips the plain logs after */
     BrainRecMergeStats st;
 } RecMergeJob;
 static RecMergeJob s_job;
@@ -105,6 +114,13 @@ static bool recIsDir(const char *p) {
 }
 
 static void recHostSafe(const BotHostConn *hc, char *out, size_t sz) {
+    char name[JOIN_BOT_HOST_NAME_LEN];
+    if (hc->name[0] == '\0' && hc->playerHost) {
+        /* A player with no name: the folder takes the player's number. */
+        snprintf(name, sizeof(name), "player%u", (unsigned)hc->ownerSlot);
+        brainRecSafeName(name, out, sz, false);
+        return;
+    }
     brainRecSafeName(hc->name, out, sz, false);
 }
 
@@ -159,9 +175,10 @@ static void recResetUpload(BotHostConn *hc) {
     recCloseFile(hc);
     hc->recBlock[0] = '\0';
     hc->recStage[0] = '\0';
-    hc->recBeside = false;
+    hc->recNoSession = false;
     hc->recBad = false;
     hc->recFiles = 0;
+    hc->recFilesOpened = 0;
     hc->recBytes = 0;
     hc->recDoneOwed = false;
     hc->recDoneFiles = 0;
@@ -204,8 +221,15 @@ void transportUdpServerRecClose(void) {
     }
 }
 
+/* True when this server recorded, or has session folders from before:
+ * only then is a host asked for its recordings. */
+static bool recHasSessions(void) {
+    return s_seq != 0 || recIsDir(REC_ROOT);
+}
+
 void serverBotRecOnLobby(void) {
     int h;
+    if (!recHasSessions()) return;
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
@@ -230,8 +254,8 @@ void serverBotRecHostConnected(int h, bool inLobby) {
     hc->recSentSeq = 0;
     hc->recClearSent = 0;
     /* A host may hold blocks from before (the server or the host was
-     * stopped): it sends them now. */
-    hc->recUploadOwed = true;
+     * stopped): it sends them now, when this server has sessions. */
+    hc->recUploadOwed = recHasSessions();
     hc->recUploadPaced = !inLobby;
 }
 
@@ -383,23 +407,29 @@ static bool recParsePath(const char *p, char *block, size_t blockSz,
     return brainRecNameOk(block, false) && brainRecNameOk(file, true);
 }
 
-/* The first piece of a block: choose and make its staging folder. */
+/* The first piece of a block: make its staging folder in the session
+ * folder. A block with no finished session folder here writes nothing. */
 static void recStartBlock(BotHostConn *hc, const char *block) {
     char safe[JOIN_BOT_HOST_NAME_LEN];
     char session[FILENAME_MAX];
+    int n;
     recResetUpload(hc);
     SDL_strlcpy(hc->recBlock, block, sizeof(hc->recBlock));
     recHostSafe(hc, safe, sizeof(safe));
-    snprintf(session, sizeof(session), REC_ROOT "/%s", block);
-    (void)SDL_CreateDirectory(REC_ROOT);
-    if (recIsDir(session) && !(s_open && strcmp(block, s_block) == 0)) {
-        snprintf(hc->recStage, sizeof(hc->recStage), "%s/bothost_%s.upload",
-                 session, safe);
-        hc->recBeside = false;
-    } else {
-        snprintf(hc->recStage, sizeof(hc->recStage), REC_ROOT "/%s_bothost_%s",
-                 block, safe);
-        hc->recBeside = true;
+    n = snprintf(session, sizeof(session), REC_ROOT "/%s", block);
+    if (n < 0 || (size_t)n >= sizeof(session) || !recIsDir(session) ||
+        (s_open && strcmp(block, s_block) == 0)) {
+        hc->recNoSession = true;
+        return;
+    }
+    /* The connection number keeps two hosts with one name (each named
+     * "Bot Host" when no --name is given) out of one staging folder. */
+    n = snprintf(hc->recStage, sizeof(hc->recStage), "%s/bothost_%s_%d.upload",
+                 session, safe, (int)(hc - udpServer.botHosts));
+    if (n < 0 || (size_t)n >= sizeof(hc->recStage)) {
+        hc->recStage[0] = '\0';
+        hc->recBad = true;
+        return;
     }
     if (!SDL_CreateDirectory(hc->recStage)) {
         fprintf(stderr, "[bothost] cannot make %s (%s); the recordings of Bot "
@@ -422,21 +452,45 @@ static void recPiece(BotHostConn *hc, const BulkStreamHeader *hd,
         return;
     }
     if (strcmp(block, hc->recBlock) != 0) recStartBlock(hc, block);
-    if (hc->recBad) return;
+    if (hc->recBad || hc->recNoSession) return;
+    /* size is 32 bits, so the one file alone never passes the cap. */
+    if (hc->recBytes + hd->totalSize > REC_UPLOAD_MAX_BYTES) {
+        fprintf(stderr, "[bothost] the recordings of Bot Host \"%s\" for %s "
+                        "are larger than %llu bytes; refused\n", hc->name,
+                hc->recBlock, (unsigned long long)REC_UPLOAD_MAX_BYTES);
+        hc->recBad = true;
+        recCloseFile(hc);
+        return;
+    }
     if (offset == 0 || strcmp(file, hc->recFileName) != 0) {
         char path[800];
+        int n;
         recCloseFile(hc);
         if (offset != 0) {   /* a file must start at its first byte */
             hc->recBad = true;
             return;
         }
-        snprintf(path, sizeof(path), "%s/%s", hc->recStage, file);
+        /* Count each file when it opens: a file that never completes
+         * still made a file in the staging folder. */
+        if (hc->recFilesOpened >= REC_UPLOAD_MAX_FILES) {
+            fprintf(stderr, "[bothost] the recordings of Bot Host \"%s\" for "
+                            "%s have more than %u files; refused\n", hc->name,
+                    hc->recBlock, (unsigned)REC_UPLOAD_MAX_FILES);
+            hc->recBad = true;
+            return;
+        }
+        n = snprintf(path, sizeof(path), "%s/%s", hc->recStage, file);
+        if (n < 0 || (size_t)n >= sizeof(path)) {
+            hc->recBad = true;
+            return;
+        }
         hc->recFile = fopen(path, "wb");
         if (hc->recFile == NULL) {
             fprintf(stderr, "[bothost] cannot write %s\n", path);
             hc->recBad = true;
             return;
         }
+        hc->recFilesOpened++;
         SDL_strlcpy(hc->recFileName, file, sizeof(hc->recFileName));
         hc->recFileOffset = 0;
     }
@@ -460,6 +514,12 @@ static void recPiece(BotHostConn *hc, const BulkStreamHeader *hd,
     }
 }
 
+void serverBotRecPiece(int h, const BulkStreamHeader *hd,
+                       const uint8_t *data) {
+    if (h < 0 || h >= MAX_BOT_HOSTS || hd == NULL) return;
+    recPiece(&udpServer.botHosts[h], hd, data);
+}
+
 typedef struct {
     int h;
 } RecSinkCtx;
@@ -474,7 +534,7 @@ static uint8_t *recBulkBegin(void *ctx, const BulkStreamHeader *hd) {
 static void recBulkComplete(void *ctx, const BulkStreamHeader *hd,
                             uint8_t *buf) {
     RecSinkCtx *c = (RecSinkCtx *)ctx;
-    recPiece(&udpServer.botHosts[c->h], hd, buf);
+    serverBotRecPiece(c->h, hd, buf);
     free(buf);
 }
 
@@ -520,6 +580,11 @@ static int SDLCALL recMergeThread(void *data) {
     RecMergeJob *j = (RecMergeJob *)data;
     j->ok = brainRecMergeDir(j->sessionDir, j->stage, j->hostName, &j->st,
                              recMergeLog, j->sessionDir);
+    /* The gzip of the merged logs runs here too, so the tick thread never
+     * waits for it. brainRecordCompressLogsNow takes the folder's lock. */
+    if (j->gzipLogs) {
+        brainRecordCompressLogsNow(j->sessionDir);
+    }
     SDL_SetAtomicInt(&j->done, 1);
     return 0;
 }
@@ -542,6 +607,11 @@ static void recMergeStart(int h) {
      * open file cannot be replaced by its merged copy. Close them; the
      * writer opens them again at its next line. */
     brainCoreReleaseLogFiles();
+    /* The merge's output follows the .gz rule: a folder the recorder still
+     * compresses later is left to it; any other gets its plain logs gzipped
+     * on the merge thread. Asked here, on the tick thread, as the recorder's
+     * own state is the tick thread's. */
+    s_job.gzipLogs = !brainRecordLogCompressPending(s_job.sessionDir);
     {
         char line[1400];
         snprintf(line, sizeof(line), "[bothost] merging the recordings of Bot "
@@ -562,21 +632,12 @@ static void recMergeStart(int h) {
     recResetUpload(hc);
 }
 
-/* The merge's output follows the .gz rule: a folder the recorder still
- * compresses later is left to it; any other gets its plain logs gzipped. */
-static void recMergeGzipLogs(const char *sessionDir) {
-    if (!brainRecordLogCompressPending(sessionDir)) {
-        brainRecordCompressLogsAsync(sessionDir);
-    }
-}
-
 static void recMergeFinish(void) {
     int h = s_job.h;
     BotHostConn *hc = &udpServer.botHosts[h];
     uint8_t reason;
     SDL_WaitThread(s_job.thread, NULL);
     s_job.thread = NULL;
-    recMergeGzipLogs(s_job.sessionDir);
     reason = brainRecMergeVerdict(s_job.ok, &s_job.st);
     {
         char line[1400];
@@ -656,7 +717,14 @@ void serverBotRecService(ServerSim *sim, bool inLobby) {
             recSend(h, BOT_HOST_REC_OP_UPLOAD,
                     hc->recUploadPaced ? BOT_HOST_REC_F_PACED : 0, 0, 0, NULL);
         }
-        if (hc->recDoneOwed) {
+        if (hc->recDoneOwed && hc->recNoSession) {
+            /* Nothing of it was written. */
+            fprintf(stderr, "[bothost] the recordings of Bot Host \"%s\" for "
+                            "%s are refused: the server has no such finished "
+                            "session folder\n", hc->name, hc->recBlock);
+            recSendAck(h, BOT_HOST_REC_FAIL_NO_SESSION, 0, 0, hc->recBlock);
+            recResetUpload(hc);
+        } else if (hc->recDoneOwed) {
             bool whole = hc->recBytes == hc->recDoneBytes &&
                          hc->recFiles == hc->recDoneFiles &&
                          hc->recFile == NULL;
@@ -673,17 +741,7 @@ void serverBotRecService(ServerSim *sim, bool inLobby) {
                 recResetUpload(hc);
             } else if (whole) {
                 hc->recDoneOwed = false;
-                if (hc->recBeside) {
-                    fprintf(stderr, "[bothost] the recordings of Bot Host "
-                                    "\"%s\" for %s are kept in %s: the server "
-                                    "has no such finished session folder\n",
-                            hc->name, hc->recBlock, hc->recStage);
-                    recSendAck(h, BOT_HOST_REC_FAIL_NO_SESSION, 0, 0,
-                               hc->recBlock);
-                    recResetUpload(hc);
-                } else {
-                    hc->recMergeWant = true;
-                }
+                hc->recMergeWant = true;
             }
         }
     }
@@ -767,6 +825,8 @@ bool transportUdpServerBrainMerge(const char *sessionDir, const char *hostDir,
                                   char *msg, size_t msgLen) {
     BrainRecMergeStats st;
     bool ok;
+    bool busy;
+    bool pending;
     if (sessionDir == NULL || hostDir == NULL || sessionDir[0] == '\0' ||
         hostDir[0] == '\0') {
         snprintf(msg, msgLen, "Usage: brainmerge <session dir> <host dir>");
@@ -777,14 +837,29 @@ bool transportUdpServerBrainMerge(const char *sessionDir, const char *hostDir,
                  sessionDir, hostDir);
         return false;
     }
-    if (s_open && strcmp(recBase(sessionDir), s_block) == 0) {
+    /* This runs on the console's thread. s_open, s_block and the
+     * recorder's state belong to the tick thread, so read them under the
+     * server mutex. The merge and the gzip only work on files (the folder
+     * lock keeps them apart from the recorder's own gzip), so they run
+     * without the mutex and the game goes on. */
+    threadsWaitForMutex();
+    busy = s_open && strcmp(recBase(sessionDir), s_block) == 0;
+    threadsReleaseMutex();
+    if (busy) {
         snprintf(msg, msgLen, "brainmerge refused: %s is recording now",
                  sessionDir);
         return false;
     }
     ok = brainRecMergeDir(sessionDir, hostDir, recBase(hostDir), &st,
                           recMergeLog, NULL);
-    recMergeGzipLogs(sessionDir);
+    /* The .gz rule, as for an upload. The console's thread waits for the
+     * merge anyway, so the gzip runs here too, in line, and the recorder's
+     * table of gzip threads is not changed from this thread. */
+    threadsWaitForMutex();
+    pending = brainRecordLogCompressPending(sessionDir);
+    if (!pending) brainCoreReleaseLogFiles();
+    threadsReleaseMutex();
+    if (!pending) brainRecordCompressLogsNow(sessionDir);
     snprintf(msg, msgLen, "brainmerge %s: %u frames, %u hosted entries (%u "
              "filled, %u a few thinks old, %u with no host data)%s",
              sessionDir, (unsigned)st.frames, (unsigned)st.markers,

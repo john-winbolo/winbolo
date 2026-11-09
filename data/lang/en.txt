@@ -3153,6 +3153,10 @@ STR_LV_BOTHOST_RULE_TRIAL=trial
 # server nor a Bot Host has a slot for it (-bothost-enforce-server-limit)
 STR_BOTHOST_BOT_PAUSED={player} is paused: no room to run its bot
 STR_BOTHOST_BOT_RUNS_AGAIN={player} runs again
+# The lobby's Bot Host row of a player's computer when the server sent no
+# name: the player's number, or a plain name when that is not known
+STR_DLGLOBBY_BOTHOST_PLAYER_NAME=Player {number}
+STR_DLGLOBBY_BOTHOST_NO_NAME=Bot Host
 
 # The Log Viewer's Chat panel: title, empty line, team and private notes
 STR_LV_WIN_CHAT=Chat

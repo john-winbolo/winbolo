@@ -102,7 +102,12 @@ char *brainRecLegendAddSlot(const char *legend, int slot, const char *slotLegend
     char *out;
     size_t cap;
 
-    if (slotLegend == NULL || slotLegend[0] != '{') return dupStr(base);
+    /* The slot legend comes from an uploaded file: refuse one that is not
+     * a closed object, so the copies below never run past the text. */
+    if (slotLegend == NULL || slotLegend[0] != '{' ||
+        strrchr(slotLegend, '}') == NULL) {
+        return dupStr(base);
+    }
     snprintf(key, sizeof key, "\"%d\":{", slot);
     cap = strlen(base) + strlen(slotLegend) * 2 + 64;
     out = (char *)malloc(cap);
@@ -126,6 +131,10 @@ char *brainRecLegendAddSlot(const char *legend, int slot, const char *slotLegend
     if (jsonObjectEmpty(base)) {
         size_t sl;
         last = strrchr(slotLegend, '}');
+        if (last == NULL) {
+            free(out);
+            return dupStr(base);
+        }
         sl = (size_t)(last - slotLegend);
         memcpy(out, slotLegend, sl);
         snprintf(out + sl, cap - sl, "%s\"slots\":{\"%d\":%s}}",
@@ -133,6 +142,10 @@ char *brainRecLegendAddSlot(const char *legend, int slot, const char *slotLegend
         return out;
     }
     last = strrchr(base, '}');
+    if (last == NULL) {
+        free(out);
+        return dupStr(base);
+    }
     {
         size_t bl = (size_t)(last - base);
         memcpy(out, base, bl);
@@ -665,6 +678,13 @@ static bool endsWith(const char *s, const char *suffix) {
     return n >= m && strcmp(s + n - m, suffix) == 0;
 }
 
+/* The uploaded names a session folder takes besides the .hbr files: a
+ * host's print2_bot*.log, plain or gzipped. */
+static bool hostLogNameOk(const char *name) {
+    return strncmp(name, "print2_bot", 10) == 0 &&
+           (endsWith(name, ".log") || endsWith(name, ".log.gz"));
+}
+
 /* Keep an uploaded file as it came: move it to
  * <session>/bothost_raw/<host>_<name>, replacing an older copy. */
 static bool keepRaw(const char *sessionDir, const char *hn, const char *src) {
@@ -751,6 +771,19 @@ static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
             size_t l = strlen(src) + 1;
             hbr[nh] = (char *)malloc(l);
             if (hbr[nh]) { memcpy(hbr[nh], src, l); nh++; }
+            continue;
+        }
+        if (!hostLogNameOk(name)) {
+            /* Any other name could put a file the session reads (such as
+             * a brainrec.btr) into the session folder. Keep it only as a
+             * raw copy, named after the host, which the session never
+             * reads (GoalHunter's optimize.log, astar.log, *.jsonl). */
+            if (!keepRaw(sessionDir, hn, src)) {
+                logLine(log, logCtx, "brain_record_merge: %s is not a host "
+                        "recording or a print2_bot log, and cannot be kept "
+                        "in %s", src, BRAINREC_HOST_RAW_DIR);
+                (void)SDL_RemovePath(src);
+            }
             continue;
         }
         {

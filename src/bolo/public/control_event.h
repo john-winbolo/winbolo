@@ -553,8 +553,8 @@ typedef enum {
      * gone. The server sends it to lobby players and spectators when a row
      * changes, and in the join replay, so the lobby can show the hosts
      * where it lists spectators, with the bots placed on each host. A Bot
- * Host is never a player: it has no
-     * roster row and no join or leave line. connected 0 clears the row. */
+     * Host is never a player: it has no roster row and no join or leave
+     * line. connected 0 clears the row. */
     CTRL_BOT_HOST_STATUS,
     /* CTRL_BOT_HOST_FILE_REQ — Bot Host to server, on the host's control
      * connection: send this file of the brain manifest. The server answers

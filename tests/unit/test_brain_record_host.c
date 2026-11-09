@@ -16,6 +16,7 @@
  */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 #include <zlib.h>
@@ -27,6 +28,8 @@
 #include "client_sim.h"
 #include "control_event.h"
 #include "transport_control_codec.h"
+#include "bulk_transfer.h"
+#include "transport_udp_server_internal.h" /* serverBotRecPiece, udpServer */
 #include "test_harness.h"
 
 /* One bot entry of a hand-made frame. */
@@ -1055,5 +1058,190 @@ int run_brainrec_host_merge_verdict(void) {
         UT_ASSERT(strcmp(t, "unknown reason") != 0);
     }
     UT_ASSERT(strcmp(brainRecMergeFailText(99), "unknown reason") == 0);
+    return 0;
+}
+
+/* A slot legend from an uploaded file that is not a closed object (no '}')
+ * leaves the global legend as it was; a good one still goes in. */
+int run_brainrec_host_legend_unclosed(void) {
+    char *r;
+
+    r = brainRecLegendAddSlot("{}", 2, "{\"a\":1");
+    UT_ASSERT(r != NULL);
+    UT_ASSERT_MSG(strcmp(r, "{}") == 0, "got %s", r);
+    free(r);
+
+    r = brainRecLegendAddSlot("{\"x\":1}", 2, "{");
+    UT_ASSERT(r != NULL);
+    UT_ASSERT_MSG(strcmp(r, "{\"x\":1}") == 0, "got %s", r);
+    free(r);
+
+    /* A global legend with no closing '}' is kept as it is. */
+    r = brainRecLegendAddSlot("{\"x\":1", 2, "{\"a\":1}");
+    UT_ASSERT(r != NULL);
+    UT_ASSERT_MSG(strcmp(r, "{\"x\":1") == 0, "got %s", r);
+    free(r);
+
+    r = brainRecLegendAddSlot("{}", 2, "{\"a\":1}");
+    UT_ASSERT(r != NULL);
+    UT_ASSERT_MSG(strcmp(r, "{\"a\":1,\"slots\":{\"2\":{\"a\":1}}}") == 0, "got %s", r);
+    free(r);
+    return 0;
+}
+
+/* A host's recording piece for a block this server has no finished
+ * session folder for writes nothing: no staging folder beside it, no
+ * file, no bytes counted. Its DONE is answered NO_SESSION. */
+int run_brainrec_host_upload_no_session(void) {
+    static BotHostConn saved;
+    BotHostConn *hc = &udpServer.botHosts[0];
+    BulkStreamHeader hd;
+    uint8_t data[16];
+    bool noSession, wrote;
+    uint64_t bytes;
+
+    saved = *hc;
+    memset(hc, 0, sizeof(*hc));
+    SDL_strlcpy(hc->name, "ut652host", sizeof(hc->name));
+
+    memset(&hd, 0, sizeof(hd));
+    memset(data, 0x5A, sizeof(data));
+    hd.kind = BULK_KIND_REC_CHUNK;
+    hd.gen = sizeof(data);
+    hd.totalSize = sizeof(data);
+    SDL_strlcpy(hd.path, "ut652_no_such_block/bot1_g1.hbr/0", sizeof(hd.path));
+    hd.pathLen = (uint8_t)strlen(hd.path);
+    serverBotRecPiece(0, &hd, data);
+
+    noSession = hc->recNoSession;
+    wrote = hc->recFile != NULL || hc->recStage[0] != '\0';
+    bytes = hc->recBytes;
+    if (hc->recFile != NULL) fclose(hc->recFile);
+    *hc = saved;
+
+    UT_ASSERT(noSession);
+    UT_ASSERT(!wrote);
+    UT_ASSERT(bytes == 0);
+    UT_ASSERT(!tbrExists("debug_sessions/ut652_no_such_block_bothost_ut652host"));
+    UT_ASSERT(!tbrExists("debug_sessions/ut652_no_such_block"));
+    return 0;
+}
+
+/* An uploaded file that is not a .hbr and not a print2_bot log is not
+ * taken into the session folder: a brainrec.btr the session lacks stays
+ * out, as does any other name. Each is kept as a raw copy in bothost_raw/
+ * instead. The print2_bot logs still move in, and the staging folder is
+ * gone after the merge. */
+int run_brainrec_host_merge_dir_other_names(void) {
+    char sess[1024], host[1024], p[1200];
+    BrainRecMergeStats st;
+
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "othersess"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "otherhost"));
+    UT_ASSERT(SDL_CreateDirectory(sess));
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(p, sizeof(p), "%s/print2_bot2.log", host);
+    UT_ASSERT(tbrWriteText(p, "===TICK 7===\nh7\n", false));
+    snprintf(p, sizeof(p), "%s/print2_bot3.log.gz", host);
+    UT_ASSERT(tbrWriteText(p, "===TICK 8===\nh8\n", true));
+    snprintf(p, sizeof(p), "%s/%s", host, BRAINREC_FILENAME);
+    UT_ASSERT(tbrWriteText(p, "not a recording\n", false));
+    snprintf(p, sizeof(p), "%s/optimize.log", host);
+    UT_ASSERT(tbrWriteText(p, "x\n", false));
+    snprintf(p, sizeof(p), "%s/print2_bot4.txt", host);
+    UT_ASSERT(tbrWriteText(p, "x\n", false));
+
+    UT_ASSERT(brainRecMergeDir(sess, host, "h", &st, NULL, NULL));
+
+    snprintf(p, sizeof(p), "%s/print2_bot2.log", sess);
+    UT_ASSERT(tbrExists(p));
+    snprintf(p, sizeof(p), "%s/print2_bot3.log.gz", sess);
+    UT_ASSERT(tbrExists(p));
+    snprintf(p, sizeof(p), "%s/%s", sess, BRAINREC_FILENAME);
+    UT_ASSERT(!tbrExists(p));
+    snprintf(p, sizeof(p), "%s/bothost_h_%s", sess, BRAINREC_FILENAME);
+    UT_ASSERT(!tbrExists(p));
+    snprintf(p, sizeof(p), "%s/optimize.log", sess);
+    UT_ASSERT(!tbrExists(p));
+    snprintf(p, sizeof(p), "%s/print2_bot4.txt", sess);
+    UT_ASSERT(!tbrExists(p));
+    /* Each is kept as it came, by the host's name, in bothost_raw/. */
+    snprintf(p, sizeof(p), "%s/%s/h_%s", sess, BRAINREC_HOST_RAW_DIR,
+             BRAINREC_FILENAME);
+    UT_ASSERT(tbrExists(p));
+    snprintf(p, sizeof(p), "%s/%s/h_optimize.log", sess, BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(tbrExists(p));
+    snprintf(p, sizeof(p), "%s/%s/h_print2_bot4.txt", sess,
+             BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(tbrExists(p));
+    UT_ASSERT(!tbrExists(host));
+    return 0;
+}
+
+/* The upload's file cap counts a file when it opens. Pieces that each
+ * open a new file and never finish it still count; at the cap the next
+ * new file is refused and not made. */
+int run_brainrec_host_upload_file_cap(void) {
+    static BotHostConn saved;
+    static const char *block = "ut652_cap_block";
+    BotHostConn *hc = &udpServer.botHosts[0];
+    BulkStreamHeader hd;
+    char sess[256], stage[512], p[700];
+    uint8_t data[4];
+    uint32_t opened, finished, openedAtCap;
+    bool bad, madeAtCap, sessMade;
+    int i;
+
+    snprintf(sess, sizeof(sess), "debug_sessions/%s", block);
+    sessMade = SDL_CreateDirectory(sess);
+    saved = *hc;
+    memset(hc, 0, sizeof(*hc));
+    SDL_strlcpy(hc->name, "ut652host", sizeof(hc->name));
+    memset(data, 0x5A, sizeof(data));
+
+    /* Three files, each 4 bytes long, each sent no further than byte 0. */
+    for (i = 0; i < 3; i++) {
+        memset(&hd, 0, sizeof(hd));
+        hd.kind = BULK_KIND_REC_CHUNK;
+        hd.gen = sizeof(data);
+        hd.totalSize = 0;
+        snprintf(hd.path, sizeof(hd.path), "%s/print2_bot%d.log/0", block, i);
+        hd.pathLen = (uint8_t)strlen(hd.path);
+        serverBotRecPiece(0, &hd, data);
+    }
+    opened = hc->recFilesOpened;
+    finished = hc->recFiles;
+    SDL_strlcpy(stage, hc->recStage, sizeof(stage));
+
+    /* At the cap: the next new file is refused. */
+    hc->recFilesOpened = 4096u;
+    memset(&hd, 0, sizeof(hd));
+    hd.kind = BULK_KIND_REC_CHUNK;
+    hd.gen = sizeof(data);
+    hd.totalSize = sizeof(data);
+    snprintf(hd.path, sizeof(hd.path), "%s/print2_bot9.log/0", block);
+    hd.pathLen = (uint8_t)strlen(hd.path);
+    serverBotRecPiece(0, &hd, data);
+    bad = hc->recBad;
+    openedAtCap = hc->recFilesOpened;
+    snprintf(p, sizeof(p), "%s/print2_bot9.log", stage);
+    madeAtCap = tbrExists(p);
+
+    if (hc->recFile != NULL) fclose(hc->recFile);
+    *hc = saved;
+    for (i = 0; i < 10; i++) {
+        snprintf(p, sizeof(p), "%s/print2_bot%d.log", stage, i);
+        (void)SDL_RemovePath(p);
+    }
+    if (stage[0] != '\0') (void)SDL_RemovePath(stage);
+    (void)SDL_RemovePath(sess);
+
+    UT_ASSERT(sessMade);
+    UT_ASSERT(stage[0] != '\0');
+    UT_ASSERT_MSG(opened == 3, "opened %u", (unsigned)opened);
+    UT_ASSERT_MSG(finished == 0, "finished %u", (unsigned)finished);
+    UT_ASSERT(bad);
+    UT_ASSERT(openedAtCap == 4096u);
+    UT_ASSERT(!madeAtCap);
     return 0;
 }

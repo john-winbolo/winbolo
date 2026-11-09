@@ -316,10 +316,16 @@ static void walk(Collect *c, const char *dir, const char *relDir,
                 fprintf(stderr, "[brainsync] path too long under \"%s\"\n", full);
                 continue;
             }
-        } else {
-            SDL_strlcpy(rel, name, sizeof(rel));
+        } else if (SDL_strlcpy(rel, name, sizeof(rel)) >= sizeof(rel)) {
+            fprintf(stderr, "[brainsync] path too long under \"%s\"\n", full);
+            continue;
         }
-        SDL_snprintf(path, sizeof(path), "%s/%s", dir, rel);
+        /* A cut path names some other file: leave it out. */
+        if ((size_t)SDL_snprintf(path, sizeof(path), "%s/%s", dir, rel)
+            >= sizeof(path)) {
+            fprintf(stderr, "[brainsync] path too long under \"%s\"\n", full);
+            continue;
+        }
         if (!SDL_GetPathInfo(path, &info)) continue;
         if (!brainSyncPathSafe(rel)) {
             fprintf(stderr, "[brainsync] brain \"%s\": \"%s\" left out (its "
@@ -335,8 +341,9 @@ static void walk(Collect *c, const char *dir, const char *relDir,
         if (skipOptLua && nl > 4 && SDL_strcasecmp(name + nl - 4, ".lua") == 0) {
             char optPath[1024];
             SDL_PathInfo oi;
-            SDL_snprintf(optPath, sizeof(optPath), "%s/opt/%s", dir, name);
-            if (SDL_GetPathInfo(optPath, &oi) && oi.type == SDL_PATHTYPE_FILE) {
+            if ((size_t)SDL_snprintf(optPath, sizeof(optPath), "%s/opt/%s",
+                                     dir, name) < sizeof(optPath) &&
+                SDL_GetPathInfo(optPath, &oi) && oi.type == SDL_PATHTYPE_FILE) {
                 continue;
             }
         }

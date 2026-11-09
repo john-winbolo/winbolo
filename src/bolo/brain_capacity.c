@@ -88,22 +88,11 @@ void brainCapacitySetMachine(const BrainMachineInfo *machine) {
   SDL_UnlockSpinlock(&s_lock);
 }
 
-void brainCapacityGetMachine(BrainMachineInfo *out) {
-  bool have;
+/* The cheap facts. No speed test: its scores stay 0. */
+static void brainCapacityCheapFacts(BrainMachineInfo *out) {
   int seconds = -1;
   int percent = -1;
 
-  SDL_LockSpinlock(&s_lock);
-  have = s_haveMachine;
-  if (have) {
-    *out = s_machine;
-  }
-  SDL_UnlockSpinlock(&s_lock);
-  if (have) {
-    return;
-  }
-
-  /* The cheap facts. No speed test: its scores stay 0. */
   memset(out, 0, sizeof(*out));
   out->logicalCores = SDL_GetNumLogicalCPUCores();
   if (out->logicalCores < 1) {
@@ -115,6 +104,20 @@ void brainCapacityGetMachine(BrainMachineInfo *out) {
 #ifdef WINBOLO_VERSION
   SDL_strlcpy(out->version, WINBOLO_VERSION, sizeof(out->version));
 #endif
+}
+
+void brainCapacityGetMachine(BrainMachineInfo *out) {
+  bool have;
+
+  SDL_LockSpinlock(&s_lock);
+  have = s_haveMachine;
+  if (have) {
+    *out = s_machine;
+  }
+  SDL_UnlockSpinlock(&s_lock);
+  if (!have) {
+    brainCapacityCheapFacts(out);
+  }
 }
 
 void brainCapacitySetMachineFromTest(const char *cpuName, int logicalCores,
@@ -129,8 +132,10 @@ void brainCapacitySetMachineFromTest(const char *cpuName, int logicalCores,
   old = s_machine;
   SDL_UnlockSpinlock(&s_lock);
 
-  brainCapacitySetMachine(NULL);
-  brainCapacityGetMachine(&m);
+  /* Start from the cheap facts, never from a cleared machine: another
+     thread that reads the machine meanwhile sees the old facts or the new
+     ones, and never caches a capacity made from the cheap facts alone. */
+  brainCapacityCheapFacts(&m);
   if (cpuName != NULL) {
     SDL_strlcpy(m.cpuName, cpuName, sizeof(m.cpuName));
   }
