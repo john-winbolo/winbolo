@@ -24,7 +24,9 @@
  *      takes only the init tokens on a short list. cfg=
  *      (any GoalHunter constant) is never on it.
  *    Placement: a bot with an unculled view (any AI level
- *      but aiYes) never runs on a player's computer.
+ *      but aiYes) runs on a player's computer only when
+ *      that host said it takes one (BRAIN_PACK_CAP_FULL_MAP,
+ *      sent by a build with WINBOLO_BOTHOST_ALLOW_FULL_MAP).
  *    Salts: a host answers few same-computer salts per
  *      connection, so a server cannot collect hashes.
  *    Recordings: a server takes a recording upload only
@@ -87,6 +89,8 @@ typedef struct {
     bool culled;        /* the seat's AI level is aiYes: it sees only what a
                          * player at its place sees */
     bool tokensAllowed; /* the seat's init arg and table pass the list */
+    bool fullMapOk;     /* the host said it takes bots that see the whole
+                         * map (BRAIN_PACK_CAP_FULL_MAP) */
 } BotHostSeatFit;
 
 /* True when the seat may run on the host. */
