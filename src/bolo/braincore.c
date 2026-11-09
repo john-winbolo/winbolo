@@ -583,6 +583,22 @@ BOLO_STATIC_ASSERT(sizeof(BrainRules) ==
                    brain_rules_has_no_padding);
 #undef BRC_RULE_SIZE
 
+/* Leave info.<key> on the stack top, with the info table on top on entry. The
+ * brain holds this table between thinks and can put anything in it, and the
+ * raw writes below would treat a non-table as a table, so one it replaced is
+ * made again. Raw access: a metatable it set runs nothing here. */
+static void brc_info_subtable(lua_State *L, const char *key) {
+  lua_pushstring(L, key);
+  lua_rawget(L, -2);
+  if (!lua_istable(L, -1)) {
+    lua_pop(L, 1);
+    lua_newtable(L);
+    lua_pushstring(L, key);
+    lua_pushvalue(L, -2);
+    lua_rawset(L, -4);
+  }
+}
+
 void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   int i;
   int t_idx;
@@ -629,7 +645,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
    * left by a previous, larger roster (max_players is stable in practice). */
   {
     int old_n, count = 0;
-    lua_getfield(L, -1, "player_names");
+    brc_info_subtable(L, "player_names");
     old_n = (int)lua_rawlen(L, -1);
     if (info->playernames != NULL) {
       const u_char *base = (const u_char *)info->playernames;
@@ -732,7 +748,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
    * grows; nil any slots beyond this tick's count. */
   {
     int old_n, n = info->num_objects;
-    lua_getfield(L, -1, "objects");
+    brc_info_subtable(L, "objects");
     old_n = (int)lua_rawlen(L, -1);
     for (i = 0; i < n; i++) {
       lua_rawgeti(L, -1, i + 1);
@@ -789,7 +805,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   {
     char msgBuf[256];
     int old_n, n = (int)info->num_messages;
-    lua_getfield(L, -1, "messages");
+    brc_info_subtable(L, "messages");
     old_n = (int)lua_rawlen(L, -1);
     for (i = 0; i < n; i++) {
       const MessageInfo *m = &info->messages[i];
@@ -843,7 +859,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
 
   /* Game info — persistent table, overwrite its fields. */
   {
-    lua_getfield(L, -1, "gameinfo");
+    brc_info_subtable(L, "gameinfo");
     lua_pushstring(L, (const char *)info->gameinfo.mapname.c);
     lua_setfield(L, -2, "mapname");
     lua_pushinteger(L, info->gameinfo.gametype);          lua_setfield(L, -2, "gametype");
@@ -886,7 +902,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
     rc = (BrcRulesCache *)lua_touserdata(L, -1);
     lua_pop(L, 1);  /* still anchored in T */
     if (rc == NULL || !rc->valid || memcmp(&rc->rules, r, sizeof(*r)) != 0) {
-      lua_getfield(L, -1, "rules");
+      brc_info_subtable(L, "rules");
 #define BRC_RULE_I(f) lua_pushinteger(L, r->f); lua_setfield(L, -2, #f);
 #define BRC_RULE_F(f) lua_pushnumber(L, r->f);  lua_setfield(L, -2, #f);
       BRC_RULES_FIELDS(BRC_RULE_I, BRC_RULE_F)
@@ -899,7 +915,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
       }
     }
 
-    lua_getfield(L, -1, "mods");
+    brc_info_subtable(L, "mods");
     lua_pushinteger(L, info->mods.speed);  lua_setfield(L, -2, "speed");
     lua_pushinteger(L, info->mods.accel);  lua_setfield(L, -2, "accel");
     lua_pushinteger(L, info->mods.turn);   lua_setfield(L, -2, "turn");
@@ -917,7 +933,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
    * (dlen varies by event type) and the events tail. */
   {
     int old_n, n = info->num_events;
-    lua_getfield(L, -1, "events");
+    brc_info_subtable(L, "events");
     old_n = (int)lua_rawlen(L, -1);
     for (i = 0; i < n; i++) {
       int dlen, old_d, j;
@@ -932,7 +948,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
       }
       lua_pushinteger(L, info->events[i].type);
       lua_setfield(L, -2, "type");
-      lua_getfield(L, -1, "data");
+      brc_info_subtable(L, "data");
       dlen  = gameEventDataSize(info->events[i].type);
       old_d = (int)lua_rawlen(L, -1);
       for (j = 0; j < dlen; j++) {
@@ -2598,6 +2614,7 @@ static int l_cpf_dijkstra_shells_at(lua_State *L) {
   if (best < 0) { lua_pushnil(L); return 1; }
   DijkstraSlate *s = &pf->dij_slates[best];
   if (!s->shells_at) { lua_pushnil(L); return 1; }
+  if (x < 0 || x > 255 || y < 0 || y > 255) { lua_pushnil(L); return 1; }
   int node = y * 256 + x;  /* land node (boat=0) */
   float g = s->g_cost ? s->g_cost[node] : 1e30f;
   if (g >= 1e29f) { lua_pushnil(L); return 1; }  /* slate hasn't reached tile */
@@ -2612,6 +2629,7 @@ static int l_cpf_astar_shells_at(lua_State *L) {
   CPF_GET(L);
   int x = (int)luaL_checkinteger(L, 1);
   int y = (int)luaL_checkinteger(L, 2);
+  if (x < 0 || x > 255 || y < 0 || y > 255) { lua_pushnil(L); return 1; }
   int node = y * 256 + x;  /* land node */
   lua_pushinteger(L, (lua_Integer)pf->shells_at[node]);
   return 1;

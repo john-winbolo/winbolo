@@ -354,8 +354,14 @@ static int do_disk_load(const char *path) {
     for (size_t i = 0; i < n; i++) {
         for (int a = 0; a < STAMP_N_AIMS; a++) {
             decode_path(&buf[i].aim[a]);
+            if (buf[i].aim[a].n_tiles > STAMP_MAX_TILES) {
+                free(buf); return 0;
+            }
         }
         decode_path(&buf[i].pill_to_tank);
+        if (buf[i].pill_to_tank.n_tiles > STAMP_MAX_TILES) {
+            free(buf); return 0;
+        }
     }
 
     s_entries    = buf;

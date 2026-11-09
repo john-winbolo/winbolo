@@ -4515,6 +4515,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map.c
     tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
+    tests/unit/test_brain_binding_bounds.c
     tests/unit/test_brain_push_rules.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
@@ -5903,6 +5904,13 @@ set(_unit_test_names
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_push_rules_written_on_change
+    brain_bounds_tail_bad_steps
+    brain_bounds_deserialize_open
+    brain_bounds_next_step_bad_start
+    brain_bounds_shells_at_bad_tile
+    brain_bounds_push_replaced_info
+    brain_bounds_stamps_bad_tables
+    brain_bounds_threat_range
     brain_crash_log_ignores_brain_globals
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
