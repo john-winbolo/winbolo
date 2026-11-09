@@ -11,9 +11,11 @@
  *   2. bot_host_token_allow_list: cfg= and other tokens off the list are
  *      refused; the stock difficulty, mode and preset tokens pass, in an
  *      init arg and in an init table.
- *   3. bot_host_unculled_not_player: a bot that sees the whole map never
- *      goes to a player's host; it may go to a standalone host; an
- *      official-only host needs the brain in place.
+ *   3. bot_host_unculled_not_player: a bot that sees the whole map goes to
+ *      a player's host only when that host said yes (BRAIN_PACK_CAP_
+ *      FULL_MAP); a host that said no, or an older host, never gets one;
+ *      it may go to a standalone host; an official-only host needs the
+ *      brain in place.
  *   4. bot_host_rec_upload_asked: a recording upload is taken only for a
  *      block the server asked that host for.
  *   5. bot_host_salt_limit: a connection gets few same-computer salts, and
@@ -198,15 +200,35 @@ int run_bot_host_unculled_not_player(void) {
     f.brainInPlace = true;
     f.tokensAllowed = true;
 
-    /* A player's host. */
+    /* A player's host that did not say it takes full-map bots (it said
+     * no, or it is an older host that sends no such bit): never. */
     f.playerHost = true;
     f.culled = false;
     f.officialOnly = false;
+    f.fullMapOk = false;
     UT_ASSERT(!botHostSeatMayRunOn(&f));
     f.officialOnly = true;
     UT_ASSERT(!botHostSeatMayRunOn(&f));
     f.culled = true;
     UT_ASSERT(botHostSeatMayRunOn(&f));
+
+    /* A player's host that said yes (BRAIN_PACK_CAP_FULL_MAP): it may
+     * take a full-map bot, with the official-only rules still in place. */
+    f.fullMapOk = true;
+    f.culled = false;
+    f.officialOnly = false;
+    UT_ASSERT(botHostSeatMayRunOn(&f));
+    f.officialOnly = true;
+    UT_ASSERT(botHostSeatMayRunOn(&f));
+    f.brainInPlace = false;
+    UT_ASSERT(!botHostSeatMayRunOn(&f));
+    f.brainInPlace = true;
+    f.tokensAllowed = false;
+    UT_ASSERT(!botHostSeatMayRunOn(&f));
+    f.tokensAllowed = true;
+    f.culled = true;
+    UT_ASSERT(botHostSeatMayRunOn(&f));
+    f.fullMapOk = false;
     /* Official only: the brain must be in place, the tokens on the list. */
     f.brainInPlace = false;
     UT_ASSERT(!botHostSeatMayRunOn(&f));

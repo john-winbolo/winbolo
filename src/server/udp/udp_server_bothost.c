@@ -2130,7 +2130,9 @@ static bool botHostOfficialOnly(int h) {
 }
 
 /* True when a seat with info may run on Bot Host h: a bot with an unculled
- * view never runs on a player's computer; a host that runs only official
+ * view runs on a player's computer only when that host said it takes one
+ * (BRAIN_PACK_CAP_FULL_MAP; a host that has not sent its caps yet, or an
+ * older host, has not); a host that runs only official
  * brains takes a bot only when its install holds the bot's brain; and a
  * player's official-only host takes only the init tokens on the list. */
 static bool botSeatFitsHost(const BotSeatFitInfo *info, int h) {
@@ -2145,6 +2147,7 @@ static bool botSeatFitsHost(const BotSeatFitInfo *info, int h) {
     fit.brainInPlace = info->brain >= 0 && info->brain < BRAIN_SYNC_MAX_BRAINS &&
                        hc->brainInPlace[info->brain];
     fit.tokensAllowed = info->tokensAllowed;
+    fit.fullMapOk = (hc->caps & BRAIN_PACK_CAP_FULL_MAP) != 0;
     return botHostSeatMayRunOn(&fit);
 }
 

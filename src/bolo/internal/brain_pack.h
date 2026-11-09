@@ -63,6 +63,12 @@
  * player turned off "run bots on this computer"): the server drops the
  * files it was sending that host and the pack requests it holds. */
 #define BRAIN_PACK_CAP_RESET    0x04u
+/* The host takes bots that see the whole map (an AI level other than
+ * aiYes): sent when it is built with WINBOLO_BOTHOST_ALLOW_FULL_MAP. A
+ * player's built-in host gets such a bot only with this bit; a host that
+ * does not send it (an older one, or one built with the option OFF) never
+ * gets one. */
+#define BRAIN_PACK_CAP_FULL_MAP 0x08u
 /* Ticks (50 a second) the server waits for a new host's caps before it
  * sends the v1 manifest, so an older host is not kept waiting long. */
 #define BRAIN_PACK_CAPS_WAIT_TICKS 100

@@ -1020,6 +1020,16 @@ option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
 option(WINBOLO_BOTHOST_OFFICIAL_ONLY
     "Client Bot Host runs only the brains installed with the game" ON)
 
+# ON (the default): a Bot Host tells the server it takes bots that see the
+# whole map (an AI level other than aiYes), and a player's built-in host
+# runs them. The player's computer then receives the whole map for those
+# bots, so a modified client could read it. OFF: the old rule; a bot that
+# sees the whole map never runs on a player's computer. The server places
+# such a bot on a player's host only when the host said yes, so a host
+# built before this option (or with it OFF) never gets one.
+option(WINBOLO_BOTHOST_ALLOW_FULL_MAP
+    "Bot Hosts (also a player's built-in host) take bots that see the whole map" ON)
+
 # Fetches libplum and sets HAVE_LIBPLUM. A macro so the fetched variables and
 # HAVE_LIBPLUM land in the caller's scope. Called from both branches below
 # rather than here: the desktop branch adds compile options first (the fuzz
@@ -2449,6 +2459,10 @@ if(WINBOLO_BOTHOST_OFFICIAL_ONLY)
     target_compile_definitions(WinBolo PRIVATE
         WINBOLO_BOTHOST_OFFICIAL_ONLY=1)
 endif()
+if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
+    target_compile_definitions(WinBolo PRIVATE
+        WINBOLO_BOTHOST_ALLOW_FULL_MAP=1)
+endif()
 if(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG)
     target_compile_definitions(WinBolo PRIVATE
         WINBOLO_HIDE_CLIENT_BOT_HOST_MSG=1)
@@ -3299,6 +3313,10 @@ if(WINBOLO_BOTHOST_OFFICIAL_ONLY)
     target_compile_definitions(WinBoloHeadless PRIVATE
         WINBOLO_BOTHOST_OFFICIAL_ONLY=1)
 endif()
+if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
+    target_compile_definitions(WinBoloHeadless PRIVATE
+        WINBOLO_BOTHOST_ALLOW_FULL_MAP=1)
+endif()
 if(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG)
     target_compile_definitions(WinBoloHeadless PRIVATE
         WINBOLO_HIDE_CLIENT_BOT_HOST_MSG=1)
@@ -3396,6 +3414,10 @@ endif()
 
 add_executable(WinBoloBotHost ${BOTHOST_SOURCES})
 target_sources(WinBoloBotHost PRIVATE src/steam/steam_wrapper_stub.c)
+if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
+    target_compile_definitions(WinBoloBotHost PRIVATE
+        WINBOLO_BOTHOST_ALLOW_FULL_MAP=1)
+endif()
 target_compile_definitions(WinBoloBotHost PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"

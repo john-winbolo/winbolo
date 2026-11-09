@@ -162,6 +162,15 @@ static SDL_AtomicInt embedWithhold;
 #else
 #define HOST_OFFICIAL_ONLY 0
 #endif
+/* WINBOLO_BOTHOST_ALLOW_FULL_MAP (a CMake option, on by default): this host
+ * tells the server it takes bots that see the whole map
+ * (BRAIN_PACK_CAP_FULL_MAP), and the host inside a client runs them. OFF:
+ * the host inside a client sends such a bot back to the server. */
+#if defined(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
+#define HOST_ALLOW_FULL_MAP 1
+#else
+#define HOST_ALLOW_FULL_MAP 0
+#endif
 /* The player's answer, for this join, to "this server wants to send its
  * own bot code" (BOT_HOST_EMBED_CONSENT_*): asked only by a client built
  * without WINBOLO_BOTHOST_OFFICIAL_ONLY, when a server in custom mode
@@ -722,6 +731,7 @@ static bool             cacheListDirty = true;
 static uint8_t hostSyncCaps(void) {
     uint8_t caps = BRAIN_PACK_CAP_PACKED;
     if (HOST_OFFICIAL_ONLY) caps |= BRAIN_PACK_CAP_OFFICIAL_ONLY;
+    if (HOST_ALLOW_FULL_MAP) caps |= BRAIN_PACK_CAP_FULL_MAP;
     return caps;
 }
 
@@ -1746,9 +1756,10 @@ static void seatBuildBrain(HostSeat *hs) {
         hs->buildFailed = true;
         return;
     }
-    if (HOST_EMBED && (aiType)hs->ai != aiYes) {
-        /* A bot that sees the whole map never runs on a player's
-         * computer: the player could read what it sees. */
+    if (HOST_EMBED && !HOST_ALLOW_FULL_MAP && (aiType)hs->ai != aiYes) {
+        /* Built with WINBOLO_BOTHOST_ALLOW_FULL_MAP OFF: a bot that sees
+         * the whole map never runs on a player's computer, because the
+         * player could read what it sees. */
         HOST_EVENT("[bothost] bot %d: its AI level sees the whole map; it "
                    "goes back to the server", (int)hs->seat);
         hs->buildFailed = true;
