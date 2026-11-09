@@ -45,6 +45,7 @@
 #include "../../common/md5.h"       /* the BMAPBOLO map hash WinBolo.net matches against */
 #include "../../common/wb_log.h"    /* WB_LOG_INFO — the lobby-reset trace */
 #include "log.h"                    /* logAddEvent, logIsRecording — the overrun record */
+#include "playersrejoin.h"          /* playersRejoinCreate — the rejoin records end with the round */
 #include "overrun_record.h"         /* OverrunRecord — that record's payload */
 
 /* The picks whose file is in the session directory, taken off the list with
@@ -1463,6 +1464,11 @@ void serverSimResetGameWorld(ServerSim *sim) {
     /* A request belongs to the round it was made in. This runs at round
      * start and at the return to the lobby. */
     memset(sim->allianceAskedBy, 0, sizeof(sim->allianceAskedBy));
+    /* So does every rejoin record. Its team, pill and base numbers name
+     * this round's teams, pills and bases, which mean other things in the
+     * next round. The records count down only while a round runs, so
+     * without this one could be used in a later round. */
+    playersRejoinCreate();
 
     /* 11. Reset player connection state and per-slot round/world state.
      * Connection identity (name, country, clientType, clientFlags, bot/WBN

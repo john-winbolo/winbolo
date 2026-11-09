@@ -39,8 +39,8 @@ void fillAndPublishPlayerJoin(ServerSim *sim, BYTE slot);
  * lowest team id nobody is on (serverSimFreeTeam), or no team when every id
  * has somebody (#424, D3). A rejoin is a join and takes the same path; only
  * the pills and bases that are neutral now come back. A rejoiner whose old
- * team still has a player is the one difference: he is left on no team here,
- * and serverSimRestoreRejoinTeam puts him back on that team. The seat's lobby slot
+ * team still has a player is the one difference: the player is left on no
+ * team here, and serverSimRestoreRejoinTeam puts them back on that team. The seat's lobby slot
  * goes out here, ahead of its CTRL_PLAYER_JOIN, so a script's on_player_join
  * sees the team before it places the seat. In the lobby the smallest-team
  * pick addPlayerInternal makes stays, and nothing is published. Call it from
@@ -49,7 +49,7 @@ void fillAndPublishPlayerJoin(ServerSim *sim, BYTE slot);
  * server_sim_players.c. */
 void serverSimPlaceJoiner(ServerSim *sim, BYTE slot);
 
-/* Puts a rejoining person back on the team he was on when he left, when
+/* Puts a rejoining person back on the team they were on when leaving, when
  * that team still has a player (human or bot) and the rejoin record had not
  * timed out. It takes the alliance accept path (serverSimAcceptAlliance),
  * so the alliance table, every client and the round log see the move. Any

@@ -1519,6 +1519,7 @@ int run_team_sides_rejoin_keeps_team(void);
 int run_team_sides_rejoin_keeps_team_no_pills(void);
 int run_team_sides_rejoin_empty_team_is_new(void);
 int run_team_sides_join_without_rejoin_is_new(void);
+int run_team_sides_rejoin_next_round_is_new(void);
 int run_team_sides_joiner_slot_before_join(void);
 int run_team_sides_lobby_joiner_keeps_rule(void);
 int run_team_sides_lobby_drops_empty_teams(void);
