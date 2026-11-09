@@ -39,6 +39,7 @@
 #include "brain_sync.h"     /* BrainSyncManifest — the Bot Host brain sync */
 #include "brain_pack.h"     /* BrainPackWriter — the packed brain sync */
 #include "bot_host_link.h"  /* BotHostAllow, BotHostAnnounce — -bothosts */
+#include "bot_host_guard.h" /* BotHostResetLimit */
 #include "bothost_record.h"  /* BotHostRecord — serverBotHostRecordPut */
 #include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy */
 #include "net_impair.h"     /* NetImpair */
@@ -320,6 +321,11 @@ typedef struct {
     /* Files asked for, as (brain << 16) | file, oldest first. */
     uint32_t fileReq[32];
     int      fileReqCount;
+    /* FILE_REQs taken for the current list (a limit on repeats). */
+    int      fileReqTaken;
+    /* Download resets (BRAIN_PACK_CAP_RESET) of the current list: past a
+     * few, a reset leaves fileReqTaken and packReqSeen as they are. */
+    BotHostResetLimit resetLimit;
     /* The file being sent, a piece per bulk transfer. */
     bool     fileSending;
     uint32_t fileId;
@@ -338,6 +344,14 @@ typedef struct {
     int      packQueue;
     uint8_t  packQBrain[BRAIN_SYNC_MAX_BRAINS];
     uint8_t  packQBits[BRAIN_SYNC_MAX_BRAINS][BRAIN_PACK_BITMAP_BYTES];
+    /* Brain b of the current manifest runs from the host's install: its
+     * pack request asked for no file and took every file from there. A
+     * host that runs only official brains (-bothost-code official, or
+     * BRAIN_PACK_CAP_OFFICIAL_ONLY) is given only such brains' bots. */
+    bool     brainInPlace[BRAIN_SYNC_MAX_BRAINS];
+    /* Brain b's PACK_REQ was taken for the current list: a repeat is
+     * dropped. */
+    bool     packReqSeen[BRAIN_SYNC_MAX_BRAINS];
     /* The stream being sent: its brain, its bitmap, the next file to look
      * at, the piece count, and the file being read into it. */
     BrainPackWriter *packW;
@@ -947,6 +961,11 @@ bool serverBotRecBusy(int h);
  * calls it; the unit tests call it straight. */
 void serverBotRecPiece(int h, const BulkStreamHeader *hd,
                        const uint8_t *data);
+/* Note that this server asked host (by name and kind) to record block, as
+ * an OPEN does: an upload is taken only for such a block. For the unit
+ * tests, which send pieces with no OPEN. */
+void serverBotRecNoteAsked(const char *block, const char *host,
+                           bool playerHost);
 void serverSendServerEnglishBroadcast(struct ServerSim *sim,
                                       const char *message);
 void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,

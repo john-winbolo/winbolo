@@ -1061,6 +1061,10 @@ void printArgs() {
   fprintf(stderr, "                no slot there or on a good Bot Host is held (it keeps its tank and its stats, its tank\n");
   fprintf(stderr, "                stands still) until a place has one. 0: a bot back from a Bot Host runs on the server\n");
   fprintf(stderr, "                past its slots, as before (default 1)\n");
+  fprintf(stderr, "-bothost-code <official|custom> - official: no brain file goes to a Bot Host; a bot runs on a\n");
+  fprintf(stderr, "                host only when the host's own install holds its brain, file for file. custom: hosts\n");
+  fprintf(stderr, "                download this server's brain files (a player's built-in host built to run only\n");
+  fprintf(stderr, "                official brains still takes none) (default official)\n");
   fprintf(stderr, "-bothost-nomove - no bot moves between the server and the Bot Hosts while a game runs: each bot is placed\n");
   fprintf(stderr, "                once and stays there (a fall-back to the server still happens). For brain-debug games.\n");
   fprintf(stderr, "-bothost-slots <name>=<n> - give Bot Host <name> (its listed name, or the player's name for a\n");
@@ -3420,6 +3424,20 @@ int main(int argc, char **argv) {
           argExist(argc, argv, "bothost-nomove"));
       transportUdpServerSetBotHostSpreadEven(
           argExist(argc, argv, "bothost-spread-even"));
+      {
+        /* -bothost-code official|custom, official by default. */
+        int a = findArg(argc, argv, "bothost-code");
+        bool custom = false;
+        if (a != ARG_NOT_FOUND && a < argc) {
+          if (SDL_strcasecmp(argv[a], "custom") == 0) {
+            custom = true;
+          } else if (SDL_strcasecmp(argv[a], "official") != 0) {
+            fprintf(stderr, "-bothost-code: \"%s\" is not official or "
+                            "custom; official is used\n", argv[a]);
+          }
+        }
+        transportUdpServerSetBotHostCode(custom);
+      }
       {
         /* -bothost-enforce-server-limit <0|1>, 1 by default. */
         int a = findArg(argc, argv, "bothost-enforce-server-limit");

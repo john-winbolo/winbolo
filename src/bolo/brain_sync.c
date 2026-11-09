@@ -486,7 +486,7 @@ static uint8_t *manifestEncodeAs(const BrainSyncManifest *m, size_t *outLen,
     buf[pos++] = 'B';
     buf[pos++] = 'S';
     buf[pos++] = (uint8_t)form;
-    buf[pos++] = m->debugMode ? 1 : 0;
+    buf[pos++] = (uint8_t)((m->debugMode ? 1 : 0) | (m->noCode ? 2 : 0));
     buf[pos++] = (uint8_t)m->brainCount;
     putU64(buf + pos, m->version);
     pos += 8;
@@ -544,13 +544,14 @@ bool brainSyncManifestDecode(const uint8_t *buf, size_t len,
     if (buf[0] != 'B' || buf[1] != 'S' || (buf[2] != 1 && buf[2] != 2)) {
         return false;
     }
-    if (buf[3] & ~1u) return false;
+    if (buf[3] & ~3u) return false;
     shaLen = buf[2] == 2 ? BRAIN_SYNC_SHA_LEN : 0;
     /* The v2 trailer is not part of the brain list. */
     if (buf[2] == 2 && len < 13 + 8) return false;
     end = buf[2] == 2 ? len - 8 : len;
     len = end;
     out->debugMode = (buf[3] & 1) != 0;
+    out->noCode = (buf[3] & 2) != 0;
     out->haveSha = buf[2] == 2;
     count = buf[4];
     if (count > BRAIN_SYNC_MAX_BRAINS) return false;
@@ -880,6 +881,12 @@ static bool installIsSame(const char *installRoot, const BrainSyncBrain *br) {
     }
     free(local.files);
     return same;
+}
+
+bool brainSyncInstallMatches(const char *installRoot,
+                             const BrainSyncBrain *br) {
+    if (installRoot == NULL || br == NULL || br->fileCount <= 0) return false;
+    return installIsSame(installRoot, br);
 }
 
 bool brainSyncPlanPacked(const BrainSyncManifest *m, const char *root,

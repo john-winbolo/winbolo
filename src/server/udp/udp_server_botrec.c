@@ -62,6 +62,7 @@
 #include "../../gui/sdl3/luabrainshandler.h" /* luaBrainsGetDebugParts */
 #include "../../common/wb_log.h"
 #include "../threads.h"          /* threadsWaitForMutex, threadsReleaseMutex */
+#include "bot_host_guard.h"      /* BotHostRecAsked: the blocks asked for */
 
 #define REC_ROOT            "debug_sessions"
 /* The largest recording piece a host may send. */
@@ -82,6 +83,14 @@ static uint32_t s_startTick;
 static uint32_t s_seq;
 /* cleardebug runs; each host is told once. */
 static uint32_t s_clearGen;
+/* The blocks opened to each host (by name and kind): a host may upload
+ * only those. */
+static BotHostRecAsked s_asked;
+
+void serverBotRecNoteAsked(const char *block, const char *host,
+                           bool playerHost) {
+    botHostRecAskedNote(&s_asked, block, host, playerHost);
+}
 
 /* The merge thread: one merge at a time. */
 typedef struct {
@@ -422,6 +431,14 @@ static void recStartBlock(BotHostConn *hc, const char *block) {
         hc->recNoSession = true;
         return;
     }
+    if (!botHostRecAskedHas(&s_asked, block, hc->name, hc->playerHost)) {
+        /* This server never opened that block to a host of this name. */
+        fprintf(stderr, "[bothost] Bot Host \"%s\" sent recordings for %s, "
+                        "a block it was not asked to record; refused\n",
+                hc->name, block);
+        hc->recNoSession = true;
+        return;
+    }
     /* The connection number keeps two hosts with one name (each named
      * "Bot Host" when no --name is given) out of one staging folder. */
     n = snprintf(hc->recStage, sizeof(hc->recStage), "%s/bothost_%s_%d.upload",
@@ -708,6 +725,8 @@ void serverBotRecService(ServerSim *sim, bool inLobby) {
                 uint8_t f = recOpenFlags(&poolMode);
                 recSend(h, BOT_HOST_REC_OP_OPEN, f, (uint8_t)poolMode,
                         s_startTick, s_block);
+                botHostRecAskedNote(&s_asked, s_block, hc->name,
+                                    hc->playerHost);
             } else {
                 recSend(h, BOT_HOST_REC_OP_CLOSE, 0, 0, 0, NULL);
             }

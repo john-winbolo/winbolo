@@ -85,6 +85,10 @@ typedef struct {
     int            brainCount;
     bool           debugMode;  /* the server loads brains in debug mode */
     bool           haveSha;    /* each file's sha is set (not a v1 list) */
+    bool           noCode;     /* the server sends no brain file: a host
+                                * runs only the brains of its install
+                                * that match (-bothost-code official).
+                                * Not part of the version hash. */
     uint64_t       version;    /* hash over every brain's name and version */
     BrainSyncBrain brains[BRAIN_SYNC_MAX_BRAINS];
 } BrainSyncManifest;
@@ -235,6 +239,12 @@ bool brainSyncStageDir(char *out, size_t outSz, const char *root,
  * runs out. The caller frees plan->need. */
 bool brainSyncPlanPacked(const BrainSyncManifest *m, const char *root,
                          const char *installRoot, BrainSyncPlan *plan);
+
+/* True when the brain br in the install folder installRoot (the release
+ * brains next to the program, only read) gives the same file list as br:
+ * every path, size, hash and SHA-256. br must come from a v2 manifest. */
+bool brainSyncInstallMatches(const char *installRoot,
+                             const BrainSyncBrain *br);
 
 /* Move a brain's stage folder into its version folder: a rename of the
  * whole folder when there is no version folder yet, else a move of each

@@ -99,6 +99,7 @@
 #include "dialogs/imgui_tutorial_overlay.h"
 #include "tutorial_text.h"
 #include "../../common/sentry_integration.h"
+#include "../../bothost/bothost_embed.h" /* botHostEmbedSetRecord */
 #include "../../common/crash_handler.h"
 #ifdef _WIN32
 #include "../../logviewer/lv_utf8_path.h"
@@ -410,6 +411,14 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[i], "--allow-unsafe-brains") == 0 ||
         strcmp(argv[i], "-allow-unsafe-brains") == 0) {
       luaBrainsSetAllowUnsafe(1);
+      continue;
+    }
+    /* This computer's own Bot Host records the bots it runs (brain debug
+     * files a server can fetch) only with this switch. Without it nothing
+     * is recorded on this computer. */
+    if (strcmp(argv[i], "-bothost-record") == 0 ||
+        strcmp(argv[i], "--bothost-record") == 0) {
+      botHostEmbedSetRecord(true);
       continue;
     }
     /* The same opt-out for the scenario scripts a game this client hosts

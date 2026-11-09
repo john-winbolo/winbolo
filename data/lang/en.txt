@@ -471,6 +471,13 @@ STR_DLGLOBBY_BOTHOST_SLOTS_TIP=The most slots this server gives this Bot Host, f
 STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT=Don't run bots on this computer for this game
 STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT_TIP=The server can run some of its bots on the players' computers. Turn this on and this computer runs none of them: the server takes its bots back at once. It is for this game only and is not saved. Turn it off to offer this computer's room for bots again.
 
+# The question this computer's Bot Host asks before it runs bot code a
+# server sent: its title, text and two buttons
+STR_DLGLOBBY_BOTHOST_CONSENT_TITLE=Run this server's own bot code?
+STR_DLGLOBBY_BOTHOST_CONSENT_TEXT=This server wants to send its own bot code to this computer and run some of its bots here. This code is not the code installed with WinBolo. It runs in a sandbox, but the sandbox cannot stop every attack. Click Yes only if you trust this server. If you click No, this computer runs none of the server's bots and you play as usual. You are asked again each time you join this server.
+STR_DLGLOBBY_BOTHOST_CONSENT_YES=Yes, run its code
+STR_DLGLOBBY_BOTHOST_CONSENT_NO=No
+
 # Why Ready is off while a Bot Host gets the server's brain files ({number} = %)
 STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT=Bot Host syncing {number}%
 

@@ -900,6 +900,11 @@ void transportUdpServerSetBotHostSpreadEven(bool on);
  * on a good Bot Host is held until a place has one; 0, a bot back from a
  * Bot Host runs on the server past its slots, as before. */
 void transportUdpServerSetBotHostEnforceServerLimit(bool on);
+/* -bothost-code official|custom. Official (false, the default): the
+ * server sends no brain file to any Bot Host and places a bot only on a host
+ * whose install holds its brain, file for file. Custom (true): hosts
+ * download the server's brain files, as before. */
+void transportUdpServerSetBotHostCode(bool custom);
 /* -bothost-nomove: no bot moves between places while a game runs; each bot
  * is placed once (BotHostNoMove in bot_host_link.h). Off by default. */
 void transportUdpServerSetBotHostNoMove(bool on);

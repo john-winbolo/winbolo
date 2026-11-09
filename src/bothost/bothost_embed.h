@@ -47,7 +47,20 @@ typedef struct {
     int  bots;       /* the bots it runs now */
     bool sameServer; /* the server is on this computer: the host is
                       * stopped for this join (CTRL_BOT_HOST_SAME_SERVER) */
+    bool consentAsking; /* the server wants to send its own bot code and
+                         * waits for the player's answer
+                         * (botHostEmbedConsentAnswer) */
 } BotHostEmbedStatus;
+
+/* The player's answer, for one join, to a server that wants to send its
+ * own bot code (brain files that differ from the install). Asked only by a
+ * client built without WINBOLO_BOTHOST_OFFICIAL_ONLY. Until the player
+ * says yes, nothing is downloaded, no brain code runs and the host offers
+ * 0 slots. */
+#define BOT_HOST_EMBED_CONSENT_NONE   0
+#define BOT_HOST_EMBED_CONSENT_ASKING 1
+#define BOT_HOST_EMBED_CONSENT_YES    2
+#define BOT_HOST_EMBED_CONSENT_NO     3
 
 /* Start the host (a running one stops first). Main thread only. */
 bool botHostEmbedStart(const BotHostEmbedConfig *cfg);
@@ -66,6 +79,16 @@ void botHostEmbedGetStatus(BotHostEmbedStatus *out);
  * clients' side (botHostEmbedService) sets it each frame from the lobby's
  * one-game opt-out. Main thread only. */
 void botHostEmbedSetWithhold(bool on);
+/* The player's answer while BotHostEmbedStatus.consentAsking: yes, the
+ * host takes the server's code for this join; no, it offers 0 slots for
+ * this join. Main thread. */
+void botHostEmbedConsentAnswer(bool yes);
+/* on (-bothost-record): the host may record its bots' brains for a
+ * -brain-debug server. Off by default. Read when the host starts. */
+void botHostEmbedSetRecord(bool on);
+/* True when this client was built with WINBOLO_BOTHOST_OFFICIAL_ONLY: its
+ * host runs only the brains of its own install. */
+bool botHostEmbedOfficialOnly(void);
 /* The slots offered before the brain's own answer is known. */
 int botHostEmbedDefaultSlots(void);
 

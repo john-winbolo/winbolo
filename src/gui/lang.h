@@ -527,6 +527,12 @@
  * computer, next to the line above, and its mouse-over text */
 #define STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT     3652
 #define STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT_TIP 3653
+/* The question this computer's Bot Host asks before it runs bot code a
+ * server sent (a client built with WINBOLO_BOTHOST_OFFICIAL_ONLY off) */
+#define STR_DLGLOBBY_BOTHOST_CONSENT_TITLE 3927
+#define STR_DLGLOBBY_BOTHOST_CONSENT_TEXT 3928
+#define STR_DLGLOBBY_BOTHOST_CONSENT_YES 3929
+#define STR_DLGLOBBY_BOTHOST_CONSENT_NO 3930
 /* Map-preview start-picker tooltips and the assign-to-someone menu */
 #define STR_STARTPICK_TIP_FREE_HOST         1512
 #define STR_STARTPICK_TIP_FREE              1513

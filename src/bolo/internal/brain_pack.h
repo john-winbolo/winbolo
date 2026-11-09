@@ -55,6 +55,14 @@
 
 /* CTRL_BOT_HOST_SYNC_CAPS bits. */
 #define BRAIN_PACK_CAP_PACKED   0x01u
+/* The host runs only the brains of its own install (a player's built-in
+ * host built with WINBOLO_BOTHOST_OFFICIAL_ONLY): the server places a bot
+ * there only when the host's pack request for its brain asked for no file. */
+#define BRAIN_PACK_CAP_OFFICIAL_ONLY 0x02u
+/* Sent again with the other bits when the host drops a download (its
+ * player turned off "run bots on this computer"): the server drops the
+ * files it was sending that host and the pack requests it holds. */
+#define BRAIN_PACK_CAP_RESET    0x04u
 /* Ticks (50 a second) the server waits for a new host's caps before it
  * sends the v1 manifest, so an older host is not kept waiting long. */
 #define BRAIN_PACK_CAPS_WAIT_TICKS 100

@@ -2174,6 +2174,8 @@ static void printUsage(const char *prog) {
     "  --bothost-cache DIR\n"
     "                    Where this computer's Bot Host keeps the server's\n"
     "                    brain files (default: bothost_cache beside the program)\n"
+    "  --bothost-record  Let this computer's Bot Host record the bots it runs\n"
+    "                    when the server asks (default: it records nothing)\n"
     "  --vanish-at-tick N\n"
     "                    A crash test: at game tick N the program ends at once,\n"
     "                    with no quit to the server from the player or its Bot Host\n"
@@ -2356,6 +2358,9 @@ static bool parseArgs(int argc, char **argv) {
       optBotHostSlots = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--bothost-cache") == 0 && i + 1 < argc) {
       SDL_strlcpy(optBotHostCache, argv[++i], sizeof(optBotHostCache));
+    } else if (strcmp(argv[i], "--bothost-record") == 0 ||
+               strcmp(argv[i], "-bothost-record") == 0) {
+      botHostEmbedSetRecord(true);
     } else if (strcmp(argv[i], "--vanish-at-tick") == 0 && i + 1 < argc) {
       optVanishAtTick = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--bothost-optout-at-tick") == 0 && i + 1 < argc) {

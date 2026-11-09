@@ -3247,6 +3247,47 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
         }
         ImGui::EndPopup();
     }
+
+    /* This computer's own Bot Host asks the player before it runs bot code
+     * the server sent (only in a build with WINBOLO_BOTHOST_OFFICIAL_ONLY
+     * off; bothost_embed.h). Until the player clicks Yes the host takes no
+     * file and runs nothing, and it offers the server no slot. No closes
+     * the question for this join. */
+    {
+        BotHostEmbedStatus st;
+        botHostEmbedGetStatus(&st);
+        const bool asking = st.running && st.consentAsking;
+        if (asking && !ImGui::IsPopupOpen("##botHostConsent")) {
+            ImGui::OpenPopup("##botHostConsent");
+        }
+        if (ImGui::BeginPopupModal("##botHostConsent", NULL,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (!asking) {
+                /* The host stopped, or the question was answered. */
+                ImGui::CloseCurrentPopup();
+            } else {
+                ImGui::TextUnformatted(
+                    langGetText(STR_DLGLOBBY_BOTHOST_CONSENT_TITLE));
+                ImGui::Spacing();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                ImGui::TextUnformatted(
+                    langGetText(STR_DLGLOBBY_BOTHOST_CONSENT_TEXT));
+                ImGui::PopTextWrapPos();
+                ImGui::Spacing();
+                if (ImGui::Button(langGetText(STR_DLGLOBBY_BOTHOST_CONSENT_YES))) {
+                    botHostEmbedConsentAnswer(true);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(langGetText(STR_DLGLOBBY_BOTHOST_CONSENT_NO),
+                                  ImVec2(80.0f * s, 0))) {
+                    botHostEmbedConsentAnswer(false);
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::EndPopup();
+        }
+    }
 }
 
 /* ── Layout A — bot AiConfig sub-row ──────────────────────────────

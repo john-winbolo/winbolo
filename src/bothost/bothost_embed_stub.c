@@ -40,6 +40,18 @@ void botHostEmbedSetWithhold(bool on) {
     (void)on;
 }
 
+void botHostEmbedConsentAnswer(bool yes) {
+    (void)yes;
+}
+
+void botHostEmbedSetRecord(bool on) {
+    (void)on;
+}
+
+bool botHostEmbedOfficialOnly(void) {
+    return true;
+}
+
 int botHostEmbedDefaultSlots(void) {
     return 0;
 }

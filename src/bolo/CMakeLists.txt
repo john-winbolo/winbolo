@@ -37,6 +37,7 @@ add_library(bolo_static STATIC
     brain_sync.c
     brain_pack.c
     bot_host_link.c
+    bot_host_guard.c
     machine_cpu_free.c
     machine_id.c
     bot_host_machine.c
