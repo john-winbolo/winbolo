@@ -163,6 +163,11 @@ static bool optNoBotHost = false;
 static int optBotHostSlots = 0;
 static char optBotHostCache[1024] = "";
 static int optVanishAtTick = 0;
+/* Where this computer's Bot Host runs: a child process (the default) or a
+ * thread of this program, and the child's limits (-1: the default). */
+static bool optBotHostInProcess = false;
+static int optBotHostMemMb = -1;
+static int optBotHostCpuPct = -1;
 /* A test of the lobby's one-game opt-out: turn "Don't run bots on this
  * computer for this game" on at one tick and off again at another (0:
  * never). */
@@ -2176,6 +2181,14 @@ static void printUsage(const char *prog) {
     "                    brain files (default: bothost_cache beside the program)\n"
     "  --bothost-record  Let this computer's Bot Host record the bots it runs\n"
     "                    when the server asks (default: it records nothing)\n"
+    "  --bothost-inproc  Run this computer's Bot Host on a thread of this\n"
+    "                    program, not as a WinBoloBotHost child process\n"
+    "  --bothost-mem-mb N\n"
+    "                    The Bot Host child's memory limit in MiB (default\n"
+    "                    4096; 0: none)\n"
+    "  --bothost-cpu-pct N\n"
+    "                    The Bot Host child's CPU cap, as a percent of the\n"
+    "                    whole machine (default 75; 0: none; Windows only)\n"
     "  --vanish-at-tick N\n"
     "                    A crash test: at game tick N the program ends at once,\n"
     "                    with no quit to the server from the player or its Bot Host\n"
@@ -2361,6 +2374,12 @@ static bool parseArgs(int argc, char **argv) {
     } else if (strcmp(argv[i], "--bothost-record") == 0 ||
                strcmp(argv[i], "-bothost-record") == 0) {
       botHostEmbedSetRecord(true);
+    } else if (strcmp(argv[i], "--bothost-inproc") == 0) {
+      optBotHostInProcess = true;
+    } else if (strcmp(argv[i], "--bothost-mem-mb") == 0 && i + 1 < argc) {
+      optBotHostMemMb = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--bothost-cpu-pct") == 0 && i + 1 < argc) {
+      optBotHostCpuPct = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--vanish-at-tick") == 0 && i + 1 < argc) {
       optVanishAtTick = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--bothost-optout-at-tick") == 0 && i + 1 < argc) {
@@ -3086,9 +3105,12 @@ static int runNetworkMode(void) {
   {
     BotHostEmbedSettings bh;
     char cache[1024];
-    memset(&bh, 0, sizeof(bh));
+    botHostEmbedSettingsDefaults(&bh);
     bh.disabled = optNoBotHost;
     bh.slots = optBotHostSlots;
+    bh.inProcess = optBotHostInProcess;
+    bh.childMemMb = optBotHostMemMb;
+    bh.childCpuPct = optBotHostCpuPct;
     if (optBotHostCache[0] != '\0') {
       SDL_strlcpy(cache, optBotHostCache, sizeof(cache));
     } else {

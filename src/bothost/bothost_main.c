@@ -97,6 +97,8 @@
 #ifdef WINBOLO_BOTHOST_EMBED
 #include "bothost_embed.h"
 #include "bothost_optout.h"   /* BotHostRun */
+#else
+#include "../bothost_child/bothost_child.h" /* the --embed-child mode */
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -158,10 +160,17 @@ static SDL_AtomicInt embedWithhold;
  * The Bot Host program is never built with it: its operator chose to run
  * it, and a server's -bothost-code tells it what it may take. */
 #if HOST_EMBED && defined(WINBOLO_BOTHOST_OFFICIAL_ONLY)
-#define HOST_OFFICIAL_ONLY 1
+#define HOST_OFFICIAL_ONLY_BUILD 1
 #else
-#define HOST_OFFICIAL_ONLY 0
+#define HOST_OFFICIAL_ONLY_BUILD 0
 #endif
+/* The Bot Host child (WinBoloBotHost --embed-child --official-only) runs
+ * this embed copy too: the game that starts it passes its own rule, so the
+ * child keeps the same rule as the game's in-process host. Set before the
+ * host starts (botHostInprocSetOfficialOnly); it can only add the rule. */
+static bool embedOfficialOnlyRun;
+#define HOST_OFFICIAL_ONLY \
+    (HOST_EMBED && (HOST_OFFICIAL_ONLY_BUILD || embedOfficialOnlyRun))
 /* The player's answer, for this join, to "this server wants to send its
  * own bot code" (BOT_HOST_EMBED_CONSENT_*): asked only by a client built
  * without WINBOLO_BOTHOST_OFFICIAL_ONLY, when a server in custom mode
@@ -2842,6 +2851,9 @@ int main(int argc, char *argv[]) {
     uint32_t nextTick;
     int i;
 
+    /* The game's built-in Bot Host as a child process (bothost_child.h). */
+    if (botHostChildWanted(argc, argv)) return botHostChildMain(argc, argv);
+
     bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
     sentryInit("WinBoloBotHost", argc, argv);
     atexit(sentryClose);
@@ -3106,7 +3118,7 @@ int botHostEmbedDefaultSlots(void) {
     return n;
 }
 
-bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
+bool botHostInprocStart(const BotHostEmbedConfig *cfg) {
     /* As main() does: the id and the answered salts, read once. */
     (void)machineIdInit();
     HostServer *sv;
@@ -3116,7 +3128,7 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     if (cfg == NULL || cfg->serverHost == NULL || cfg->ticket == NULL) {
         return false;
     }
-    if (embedThread != NULL) botHostEmbedStop(true);
+    if (embedThread != NULL) botHostInprocStop(true);
 
     memset(seats, 0, sizeof(seats));
     memset(servers, 0, sizeof(servers));
@@ -3240,7 +3252,7 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     return true;
 }
 
-void botHostEmbedStop(bool tellServer) {
+void botHostInprocStop(bool tellServer) {
     if (embedThread == NULL) return;
     embedSendQuit = tellServer;
     SDL_SetAtomicInt(&embedStop, 1);
@@ -3255,7 +3267,7 @@ void botHostEmbedStop(bool tellServer) {
                tellServer ? "the server was told" : "without a word");
 }
 
-bool botHostEmbedRunning(void) {
+bool botHostInprocRunning(void) {
     return embedThread != NULL;
 }
 
@@ -3269,7 +3281,7 @@ void botHostEmbedSweepSessions(const char *cacheDir) {
     }
 }
 
-void botHostEmbedSetWithhold(bool on) {
+void botHostInprocSetWithhold(bool on) {
     int v = on ? 1 : 0;
     if (SDL_GetAtomicInt(&embedWithhold) == v) return;
     SDL_SetAtomicInt(&embedWithhold, v);
@@ -3280,7 +3292,7 @@ void botHostEmbedSetWithhold(bool on) {
                   : "the player turned bots on again; it offers its slots");
 }
 
-void botHostEmbedGetStatus(BotHostEmbedStatus *out) {
+void botHostInprocGetStatus(BotHostEmbedStatus *out) {
     if (out == NULL) return;
     memset(out, 0, sizeof(*out));
     out->running   = embedThread != NULL && SDL_GetAtomicInt(&embedAlive) != 0;
@@ -3293,7 +3305,7 @@ void botHostEmbedGetStatus(BotHostEmbedStatus *out) {
                          BOT_HOST_EMBED_CONSENT_ASKING;
 }
 
-void botHostEmbedConsentAnswer(bool yes) {
+void botHostInprocConsentAnswer(bool yes) {
     if (SDL_GetAtomicInt(&embedConsent) != BOT_HOST_EMBED_CONSENT_ASKING) {
         return;
     }
@@ -3304,8 +3316,12 @@ void botHostEmbedConsentAnswer(bool yes) {
                yes ? "yes" : "no");
 }
 
-void botHostEmbedSetRecord(bool on) {
+void botHostInprocSetRecord(bool on) {
     embedRecord = on;
+}
+
+void botHostInprocSetOfficialOnly(bool on) {
+    if (on) embedOfficialOnlyRun = true;
 }
 
 bool botHostEmbedOfficialOnly(void) {

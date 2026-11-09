@@ -857,6 +857,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
    * before each join, at shutdown and when the app goes to the background
    * (gameFrontPrefsLifecycleWatch). */
   prefsSetAutosaveDebounce(15000);
+  /* This computer's Bot Host: a child process or a thread, and the child's
+   * limits ([BOT HOST] in WinBolo.json, bothost_embed.h). */
+  botHostEmbedLoadPrefs();
   {
     static bool s_prefsWatchAdded = false;
     if (!s_prefsWatchAdded) {

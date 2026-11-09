@@ -14,6 +14,17 @@
  * It also keeps the lobby's one-game opt-out (bothost_optout.h): while it
  * is on, the host offers the server 0 slots, and the server takes its bots
  * back. It is not saved, and it goes off for the next game.
+ *
+ * The host runs as a child process (WinBoloBotHost --embed-child,
+ * src/bothost_child/bothost_child.h) unless the settings say "in this
+ * program", or the child cannot start: then it runs on a thread here, as
+ * before, and one line in the log says so. The child gets the settings the
+ * thread would use (official-only, the slots, -bothost-record, the brain
+ * cache, the stored CPU speed). A child that ends by itself during a game
+ * is started again at most BOT_HOST_CHILD_MAX_RESTARTS times for that
+ * game; nothing is shown to the player. Meanwhile the server times the
+ * lost host out and takes its bots back (botHostDrop, "timed out"), and a
+ * host that joins again with the same ticket takes the old one's place.
  */
 #include <stdio.h>
 #include <string.h>
@@ -22,12 +33,17 @@
 
 #include "bothost_embed.h"
 #include "bothost_optout.h"
+#include "../bothost_child/bothost_child.h"
+#include "../common/prefs.h"  /* botHostEmbedLoadPrefs */
+#include "cpu_speed_store.h"  /* cpuSpeedStorePath, for the child */
 #include "client_sim.h"     /* clientSimGetBotHostTicket, the server address */
 #include "control_event.h"  /* BOT_HOST_TICKET_LEN, BOT_HOST_BRAIN_NAME_LEN */
 #include "platform_types.h" /* BOLO_STATIC_ASSERT */
 #include "../gui/lang.h"    /* langGetTextFmt, STR_CLIENT_BOTHOST_NEWS_FMT */
 
-static BotHostEmbedSettings embedSettings;
+static BotHostEmbedSettings embedSettings = {
+    false, 0, NULL, false, -1, -1
+};
 static char embedSettingsCache[1024];
 
 /* The ticket the running host joined with, and the ClientSim it came on. */
@@ -42,11 +58,35 @@ static int embedLastBots = 0;
 /* The lobby's "Don't run bots on this computer for this game". */
 static BotHostOptOut embedOptOut;
 
+/* Where the running host is: a child process or a thread here. */
+enum { EMBED_NONE, EMBED_THREAD, EMBED_CHILD };
+static int embedWhere = EMBED_NONE;
+/* The child could not run in this run (no program, a failed start, a
+ * child that does not match): the host runs on a thread from now on. */
+static bool embedChildOff = false;
+/* A child of this run said hello once: a later child that ends before its
+ * hello crashed; it is not a missing or old program. */
+static bool embedChildHelloOnce = false;
+/* The restarts of a child that ended by itself, for one ticket (a game). */
+static BotHostChildRestart embedRestart;
+static uint8_t embedRestartTicket[BOT_HOST_TICKET_LEN];
+static bool embedHaveRestartTicket = false;
+/* What the host is told, kept for a child started later. */
+static bool embedWithholdNow = false;
+static bool embedRecordNow = false;
+
 BOLO_STATIC_ASSERT(BOT_HOST_OPTOUT_TICKET_LEN == BOT_HOST_TICKET_LEN,
                    optout_keeps_a_whole_ticket);
 
+void botHostEmbedSettingsDefaults(BotHostEmbedSettings *settings) {
+    if (settings == NULL) return;
+    memset(settings, 0, sizeof(*settings));
+    settings->childMemMb = -1;
+    settings->childCpuPct = -1;
+}
+
 void botHostEmbedSetSettings(const BotHostEmbedSettings *settings) {
-    memset(&embedSettings, 0, sizeof(embedSettings));
+    botHostEmbedSettingsDefaults(&embedSettings);
     embedSettingsCache[0] = '\0';
     if (settings == NULL) return;
     embedSettings = *settings;
@@ -55,6 +95,146 @@ void botHostEmbedSetSettings(const BotHostEmbedSettings *settings) {
                     sizeof(embedSettingsCache));
         embedSettings.cacheDir = embedSettingsCache;
     }
+}
+
+static int prefsInt(const char *key, int def, int maxValue) {
+    char buf[32], defText[32];
+    long v;
+    char *end = NULL;
+    SDL_snprintf(defText, sizeof(defText), "%d", def);
+    prefsGetString("BOT HOST", key, defText, buf, sizeof(buf));
+    v = SDL_strtol(buf, &end, 10);
+    if (end == buf || v < 0) return def;
+    if (v > maxValue) v = maxValue;
+    return (int)v;
+}
+
+void botHostEmbedLoadPrefs(void) {
+    char buf[16];
+    prefsGetString("BOT HOST", "Run As Child Process", "Yes", buf,
+                   sizeof(buf));
+    embedSettings.inProcess = SDL_strcasecmp(buf, "No") == 0 ||
+                              SDL_strcmp(buf, "0") == 0;
+    embedSettings.childMemMb =
+        prefsInt("Child Memory Limit MiB", BOT_HOST_CHILD_DEFAULT_MEM_MB,
+                 1024 * 1024);
+    embedSettings.childCpuPct =
+        prefsInt("Child CPU Limit Percent", BOT_HOST_CHILD_DEFAULT_CPU_PCT,
+                 100);
+    fprintf(stderr, "[bothost] this computer's Bot Host runs %s (memory "
+                    "limit %d MiB, CPU cap %d%%)\n",
+            embedSettings.inProcess ? "in this program"
+                                    : "as a child process",
+            embedSettings.childMemMb, embedSettings.childCpuPct);
+}
+
+/* ---- Where the host runs: a child process or a thread here ----------- */
+
+static void embedChildLimits(BotHostChildLimits *lim) {
+    lim->memMb = embedSettings.childMemMb < 0 ? BOT_HOST_CHILD_DEFAULT_MEM_MB
+                                              : embedSettings.childMemMb;
+    lim->cpuPct = embedSettings.childCpuPct < 0
+                      ? BOT_HOST_CHILD_DEFAULT_CPU_PCT
+                      : embedSettings.childCpuPct;
+}
+
+static bool embedStartChild(const BotHostEmbedConfig *cfg) {
+    BotHostChildParams p;
+    BotHostChildLimits lim;
+    char speedFile[1024];
+
+    memset(&p, 0, sizeof(p));
+    p.serverHost = cfg->serverHost;
+    p.serverPort = cfg->serverPort;
+    p.player = cfg->player;
+    p.brain = cfg->brain;
+    p.name = cfg->name;
+    p.cacheDir = cfg->cacheDir;
+    p.slots = cfg->slots;
+    p.record = embedRecordNow;
+    p.recordMinFreeGb = cfg->recordMinFreeGb;
+    p.officialOnly = botHostEmbedOfficialOnly();
+    if (cpuSpeedStorePath(speedFile, sizeof(speedFile))) {
+        p.cpuSpeedFile = speedFile;
+    }
+    embedChildLimits(&lim);
+    return botHostChildClientStart(&p, cfg->ticket, BOT_HOST_TICKET_LEN,
+                                   &lim, embedWithholdNow);
+}
+
+bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
+    if (cfg == NULL || cfg->ticket == NULL) return false;
+    if (embedWhere != EMBED_NONE) botHostEmbedStop(true);
+    if (!embedSettings.inProcess && !embedChildOff) {
+        if (embedStartChild(cfg)) {
+            embedWhere = EMBED_CHILD;
+            return true;
+        }
+        /* botHostChildClientStart said why, in one line. */
+        embedChildOff = true;
+    }
+    if (!botHostInprocStart(cfg)) return false;
+    embedWhere = EMBED_THREAD;
+    return true;
+}
+
+void botHostEmbedStop(bool tellServer) {
+    if (embedWhere == EMBED_CHILD) {
+        botHostChildClientStop(tellServer);
+    } else if (embedWhere == EMBED_THREAD) {
+        botHostInprocStop(tellServer);
+    }
+    embedWhere = EMBED_NONE;
+}
+
+bool botHostEmbedRunning(void) {
+    if (embedWhere == EMBED_CHILD) return botHostChildClientActive();
+    if (embedWhere == EMBED_THREAD) return botHostInprocRunning();
+    return false;
+}
+
+void botHostEmbedGetStatus(BotHostEmbedStatus *out) {
+    BotHostChildStatus cst;
+    if (out == NULL) return;
+    if (embedWhere != EMBED_CHILD) {
+        botHostInprocGetStatus(out);
+        return;
+    }
+    botHostChildClientPoll();
+    if (botHostChildClientHello()) embedChildHelloOnce = true;
+    botHostChildClientStatus(&cst);
+    memset(out, 0, sizeof(*out));
+    out->running = cst.running;
+    out->connected = cst.connected;
+    out->refused = cst.refused;
+    out->slots = cst.slots;
+    out->bots = cst.bots;
+    out->sameServer = cst.sameServer;
+    out->consentAsking = cst.consentAsking;
+}
+
+void botHostEmbedSetWithhold(bool on) {
+    embedWithholdNow = on;
+    botHostInprocSetWithhold(on);
+    if (embedWhere == EMBED_CHILD) botHostChildClientSetWithhold(on);
+}
+
+void botHostEmbedConsentAnswer(bool yes) {
+    if (embedWhere == EMBED_CHILD) {
+        BotHostEmbedStatus st;
+        botHostEmbedGetStatus(&st);
+        if (!st.consentAsking) return;
+        fprintf(stderr, "[bothost] the player said %s to the server's own "
+                        "bot code for this join\n", yes ? "yes" : "no");
+        botHostChildClientConsent(yes);
+    } else {
+        botHostInprocConsentAnswer(yes);
+    }
+}
+
+void botHostEmbedSetRecord(bool on) {
+    embedRecordNow = on;
+    botHostInprocSetRecord(on);
 }
 
 static void embedStopNow(bool tellServer, const char *why) {
@@ -112,11 +292,56 @@ static void embedStartFor(struct ClientSim *cs, uint8_t player,
     memcpy(embedTicketNow, ticket, sizeof(embedTicketNow));
     embedHaveTicket = true;
     embedLastBots = 0;
+    if (!embedHaveRestartTicket ||
+        memcmp(ticket, embedRestartTicket, sizeof(embedRestartTicket)) != 0) {
+        /* A new game: its own restarts. */
+        botHostChildRestartInit(&embedRestart);
+        memcpy(embedRestartTicket, ticket, sizeof(embedRestartTicket));
+        embedHaveRestartTicket = true;
+    }
     if (!botHostEmbedStart(&cfg)) {
         fprintf(stderr, "[bothost] this computer's Bot Host did not start\n");
         embedBlock(ticket);
         embedHaveTicket = false;
     }
+}
+
+/* The child ended by itself (its status says it does not run). True when
+ * this took care of it; false for a refusal, which the caller handles as
+ * it does for the thread. */
+static bool embedChildEnded(struct ClientSim *cs, uint8_t player,
+                            const uint8_t *ticket, const char *brain) {
+    BotHostChildEnd end = botHostChildClientEnd();
+    if (end == BOT_HOST_CHILD_RUNS || end == BOT_HOST_CHILD_ENDED_REFUSED) {
+        return false;
+    }
+    if (end == BOT_HOST_CHILD_ENDED_MISMATCH ||
+        (end == BOT_HOST_CHILD_ENDED_EARLY && !embedChildHelloOnce)) {
+        /* Not a crash: the child program cannot do this job. The host
+         * runs on a thread here from now on. */
+        fprintf(stderr, "[bothost] this computer's Bot Host child could not "
+                        "run: the Bot Host runs in this program\n");
+        embedStopNow(false, "the child could not run");
+        embedChildOff = true;
+        embedStartFor(cs, player, ticket, brain);
+        return true;
+    }
+    /* A crash, a brain the limits stopped, or a kill. */
+    embedStopNow(false, "the child ended by itself");
+    embedHaveTicket = false;
+    if (botHostChildRestartAfterExit(&embedRestart,
+                                     (uint32_t)SDL_GetTicks())) {
+        fprintf(stderr, "[bothost] this computer's Bot Host child ended by "
+                        "itself; it starts again in %u ms\n",
+                (unsigned)BOT_HOST_CHILD_RESTART_WAIT_MS);
+    } else {
+        fprintf(stderr, "[bothost] this computer's Bot Host child ended by "
+                        "itself after %d restarts: no Bot Host on this "
+                        "computer for the rest of this game\n",
+                BOT_HOST_CHILD_MAX_RESTARTS);
+        embedBlock(embedTicketNow);
+    }
+    return true;
 }
 
 void botHostEmbedService(struct ClientSim *cs) {
@@ -128,6 +353,7 @@ void botHostEmbedService(struct ClientSim *cs) {
 
     if (cs == NULL) {
         embedStopNow(true, "the player left the game");
+        embedRestart.waiting = false;
         embedHaveTicket = false;
         embedCs = NULL;
         botHostOptOutInit(&embedOptOut);
@@ -159,6 +385,10 @@ void botHostEmbedService(struct ClientSim *cs) {
             embedHaveTicket = false;
         } else {
             botHostEmbedGetStatus(&st);
+            if (!st.running && embedWhere == EMBED_CHILD &&
+                embedChildEnded(cs, player, ticket, brain)) {
+                return;
+            }
             if (!st.running) {
                 /* The thread ended by itself: the server refused it. */
                 embedStopNow(true, "the server refused it");
@@ -181,15 +411,38 @@ void botHostEmbedService(struct ClientSim *cs) {
             return;
         }
     }
-    if (!haveTicket) return;
+    if (!haveTicket) {
+        embedRestart.waiting = false;
+        return;
+    }
     if (embedHaveBlocked &&
         memcmp(ticket, embedBlocked, sizeof(ticket)) == 0) {
         return;
+    }
+    if (embedRestart.waiting) {
+        /* A child that ended by itself starts again after a short wait,
+         * for the same game only. */
+        if (cs != embedCs || !embedHaveRestartTicket ||
+            memcmp(ticket, embedRestartTicket, sizeof(ticket)) != 0) {
+            embedRestart.waiting = false;
+        } else if (!botHostChildRestartDue(&embedRestart,
+                                           (uint32_t)SDL_GetTicks())) {
+            return;
+        } else {
+            fprintf(stderr, "[bothost] this computer's Bot Host child starts "
+                            "again (restart %d of %d for this game)\n",
+                    embedRestart.restarts, BOT_HOST_CHILD_MAX_RESTARTS);
+        }
     }
     embedStartFor(cs, player, ticket, brain);
 }
 
 void botHostEmbedLeave(const char *why) {
+    if (embedRestart.waiting && embedHaveRestartTicket) {
+        /* The player left while a child waited to start again. */
+        embedBlock(embedRestartTicket);
+    }
+    embedRestart.waiting = false;
     if (embedHaveTicket) embedBlock(embedTicketNow);
     embedStopNow(true, why != NULL ? why : "the player left the game");
     embedHaveTicket = false;

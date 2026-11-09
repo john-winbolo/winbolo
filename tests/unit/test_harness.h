@@ -924,6 +924,13 @@ int run_bot_host_refused_takes_no_file(void);
 int run_brain_capacity_memory_limit(void);
 int run_bot_host_reset_limit(void);
 
+/* The built-in Bot Host as a child process (test_bothost_child.c). */
+int run_bothost_child_args(void);
+int run_bothost_child_quote(void);
+int run_bothost_child_codec(void);
+int run_bothost_child_restart(void);
+int run_bothost_child_job_limits(void);
+
 /* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
 int run_bot_host_link_announce_codec(void);
 int run_bot_host_link_addr_list(void);

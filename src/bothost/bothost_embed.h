@@ -92,15 +92,50 @@ bool botHostEmbedOfficialOnly(void);
 /* The slots offered before the brain's own answer is known. */
 int botHostEmbedDefaultSlots(void);
 
+/* ---- The host on a thread of this program (bothost_main.c) ------------
+ *
+ * The functions above that start, stop, read or tell the host choose
+ * between a child process (WinBoloBotHost --embed-child, see
+ * src/bothost_child/bothost_child.h) and the host on a thread of this
+ * program. These are the thread's. The child runs them too, in its own
+ * process. */
+bool botHostInprocStart(const BotHostEmbedConfig *cfg);
+void botHostInprocStop(bool tellServer);
+bool botHostInprocRunning(void);
+void botHostInprocGetStatus(BotHostEmbedStatus *out);
+void botHostInprocSetWithhold(bool on);
+void botHostInprocConsentAnswer(bool yes);
+void botHostInprocSetRecord(bool on);
+/* on: run only the install's brains, as a client built with
+ * WINBOLO_BOTHOST_OFFICIAL_ONLY does (the child's --official-only). It can
+ * only add the rule. Before the host starts. */
+void botHostInprocSetOfficialOnly(bool on);
+
 /* ---- The clients' side (bothost_embed_service.c) ---------------------- */
 
 typedef struct {
     bool        disabled;    /* never host (a test option) */
     int         slots;       /* > 0: a fixed slot count (a test option) */
     const char *cacheDir;    /* NULL: the default under the prefs folder */
+    /* Run the host on a thread of this program, not as a child process
+     * (WinBoloBotHost --embed-child). Off by default: the child runs, and
+     * the thread is used only when the child cannot start. */
+    bool        inProcess;
+    /* The child's limits (bothost_child.h): < 0 the default, 0 off. */
+    int         childMemMb;
+    int         childCpuPct; /* Windows only */
 } BotHostEmbedSettings;
 
+/* Settings with every default: hosting on, as a child, default limits. */
+void botHostEmbedSettingsDefaults(BotHostEmbedSettings *settings);
 void botHostEmbedSetSettings(const BotHostEmbedSettings *settings);
+/* The game's config file keys (section "BOT HOST"):
+ *   "Run As Child Process"     Yes (default) / No
+ *   "Child Memory Limit MiB"   4096 (default); 0 off
+ *   "Child CPU Limit Percent"  75 (default), a part of the whole machine,
+ *                              Windows only; 0 off
+ * Read once, after the prefs file is open. */
+void botHostEmbedLoadPrefs(void);
 
 /* Once a frame on the main thread, with the player's ClientSim of a
  * network game, or NULL when there is none (the menu, a local game). It

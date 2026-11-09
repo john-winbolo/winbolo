@@ -2176,6 +2176,9 @@ set(CLIENT_SOURCES
     src/bothost/bothost_embed.c src/bothost/bothost_embed_service.c
     src/bothost/bothost_optout.c
     src/bothost/bothost_rec.c
+    # The built-in Bot Host as a child process (bothost_child.h).
+    src/bothost_child/bothost_child.c src/bothost_child/bothost_child_client.c
+    src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/scn_panel_prefs.c
@@ -3254,6 +3257,9 @@ set(HEADLESS_SOURCES
     src/bothost/bothost_embed.c src/bothost/bothost_embed_service.c
     src/bothost/bothost_optout.c
     src/bothost/bothost_rec.c
+    # The built-in Bot Host as a child process (bothost_child.h).
+    src/bothost_child/bothost_child.c src/bothost_child/bothost_child_client.c
+    src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -3384,6 +3390,11 @@ set(BOTHOST_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/bothost/bothost_main.c src/headless/headless_frontend.c
     src/bothost/bothost_rec.c
+    # --embed-child: the game's built-in Bot Host as a child process. It
+    # runs the embed copy of bothost_main.c, as the game does
+    # (bothost_child.h).
+    src/bothost/bothost_embed.c src/bothost/bothost_optout.c
+    src/bothost_child/bothost_child.c src/bothost_child/bothost_child_main.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 file(GLOB BOTHOST_BSD_SOURCES src/bsd/*.c)
@@ -3420,6 +3431,7 @@ bolo_apply_include_rules(WinBoloBotHost runtime_only)
 bolo_grant_internal_source_access(WinBoloBotHost
     src/bolo/transport_udp_client.c
     src/bothost/bothost_main.c
+    src/bothost/bothost_embed.c
     src/bothost/bothost_rec.c)
 
 if(WIN32)
@@ -3442,7 +3454,7 @@ target_link_libraries(WinBoloBotHost PRIVATE
     winbolonet_server
     winbolonet_client)
 target_link_libraries(WinBoloBotHost PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc cpu_speed_test)
 
 target_sources(WinBoloBotHost PRIVATE src/common/sentry_integration.c)
 if(HAVE_SENTRY)
@@ -4829,6 +4841,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # 0-slot report, the server giving the bots back, the client's state.
     tests/unit/test_bot_host_optout.c
     src/bothost/bothost_optout.c
+    # The built-in Bot Host as a child process: arguments, the line codec,
+    # the restart counter, and on Windows the job's limits.
+    tests/unit/test_bothost_child.c
+    src/bothost_child/bothost_child.c
+    src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
@@ -6274,6 +6291,11 @@ set(_unit_test_names
     bot_host_refused_takes_no_file
     brain_capacity_memory_limit
     bot_host_reset_limit
+    bothost_child_args
+    bothost_child_quote
+    bothost_child_codec
+    bothost_child_restart
+    bothost_child_job_limits
     bot_host_link_announce_codec
     bot_host_link_addr_list
     bot_host_link_allow
