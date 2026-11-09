@@ -1056,6 +1056,10 @@ void printArgs() {
   fprintf(stderr, "-bothost-free-sample-secs <s> - how often the free CPU of each host machine is read (default 5)\n");
   fprintf(stderr, "-bothost-free-history-secs <s> - how much free CPU history is kept for a raise (default 300)\n");
   fprintf(stderr, "-record-bothost-data - write the bot placement probes, free CPU readings and decisions into the round log (.wbv)\n");
+  fprintf(stderr, "-bothost-enforce-server-limit <0|1> - 1: the server runs no more bots than its own slots; a bot with\n");
+  fprintf(stderr, "                no slot there or on a good Bot Host is held (it keeps its tank and its stats, its tank\n");
+  fprintf(stderr, "                stands still) until a place has one. 0: a bot back from a Bot Host runs on the server\n");
+  fprintf(stderr, "                past its slots, as before (default 1)\n");
   fprintf(stderr, "-bothost-nomove - no bot moves between the server and the Bot Hosts while a game runs: each bot is placed\n");
   fprintf(stderr, "                once and stays there (a fall-back to the server still happens). For brain-debug games.\n");
   fprintf(stderr, "-bothost-slots <name>=<n> - give Bot Host <name> (its listed name, or the player's name for a\n");
@@ -3415,6 +3419,12 @@ int main(int argc, char **argv) {
           argExist(argc, argv, "bothost-nomove"));
       transportUdpServerSetBotHostSpreadEven(
           argExist(argc, argv, "bothost-spread-even"));
+      {
+        /* -bothost-enforce-server-limit <0|1>, 1 by default. */
+        int a = findArg(argc, argv, "bothost-enforce-server-limit");
+        transportUdpServerSetBotHostEnforceServerLimit(
+            a == ARG_NOT_FOUND || a >= argc || atoi(argv[a]) != 0);
+      }
       {
         /* -bothost-slots name=N, once per host; several allowed. */
         int k;

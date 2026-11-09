@@ -895,6 +895,11 @@ void transportUdpServerSetBotHostRecord(bool on);
  * lag. Off by default: a bot stays where it runs well
  * (botHostPlaceRebalanceKeep in bot_host_link.h). */
 void transportUdpServerSetBotHostSpreadEven(bool on);
+/* -bothost-enforce-server-limit <0|1>: 1 (the default), the server runs no
+ * more in-process bots than its own slots, and a bot with no slot there or
+ * on a good Bot Host is held until a place has one; 0, a bot back from a
+ * Bot Host runs on the server past its slots, as before. */
+void transportUdpServerSetBotHostEnforceServerLimit(bool on);
 /* -bothost-nomove: no bot moves between places while a game runs; each bot
  * is placed once (BotHostNoMove in bot_host_link.h). Off by default. */
 void transportUdpServerSetBotHostNoMove(bool on);

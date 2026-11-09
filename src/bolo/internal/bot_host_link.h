@@ -144,6 +144,8 @@ typedef struct {
     int  bots;       /* bots on it now */
     bool open;       /* it may take a bot now */
     bool unlimited;  /* it takes bots past its slots (the server itself) */
+    bool capped;     /* with unlimited: it takes no bot past its slots after
+                      * all (-bothost-enforce-server-limit) */
     bool movable;    /* one of its bots may be moved now */
     double lagMs;    /* the server's smoothed round trip to it, in ms;
                       * below 0 when not known (the server itself: 0) */
@@ -722,5 +724,30 @@ int  botHostNoMoveOverrunDecision(const BotHostNoMove *nm, bool running);
  * slots it offers gives one back to the server (a fall-back, not a move). */
 bool botHostNoMoveGiveBack(const BotHostNoMove *nm, bool running, int bots,
                            int slots);
+
+/* ---- The server's own bot limit (-bothost-enforce-server-limit) ----------
+ * With the option on, the server runs no more in-process bots than its own
+ * slots. A bot with no slot on the server and none on a good Bot Host is
+ * held: it keeps its seat, its tank and its stats, its brain does not run
+ * and its tank stands still. It runs again when a place has a slot.
+ *
+ * FallBackHolds: a bot that comes back from a Bot Host to a server that
+ *   runs serverBots in-process bots of serverSlots is held, not run there.
+ *   Always false with the option off (the server goes past its slots, as
+ *   before). */
+bool botHostServerFallBackHolds(bool enforce, int serverBots,
+                                int serverSlots);
+/* Where a held bot runs again, or -1 (it stays held). Index 0 is the
+ * server: it comes first while its bots are below its slots (its free CPU
+ * and its bad flag are not counted). Else the best good Bot Host by the
+ * usual rule (botHostPlacePickOther, no bad host). */
+int  botHostPlaceHeldTarget(const BotHostPlaceHost *hosts, int n,
+                            int smallSlots, double bias,
+                            const BotHostPlaceLag *lag);
+/* The held bot that runs again first: the one held longest (the lowest
+ * since, counted back from now); ties go to the lower seat. held[i] marks
+ * seat i held. -1 when none is. */
+int  botHostHeldOldest(const bool *held, const uint32_t *since, int n,
+                       uint32_t now);
 
 #endif /* BOT_HOST_LINK_H */

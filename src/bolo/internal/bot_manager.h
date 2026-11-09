@@ -202,9 +202,15 @@ typedef struct {
      * held is true when the seat came back from a Bot Host and the
      * in-process build failed: the seat keeps its tank, its name and its
      * stats, thinks nothing, and is built again at the next round start.
+     * heldNoRoom is true (with held) when the seat is held because neither
+     * the server nor a Bot Host has a slot for its brain
+     * (-bothost-enforce-server-limit): it is not built at a round start,
+     * only when the Bot Host side finds it room (botManagerResumeHeld) or
+     * hands it to a host.
      * remoteStats is the last CMD_BOT_STATS the host sent for the seat. */
     bool            remote;
     bool            held;
+    bool            heldNoRoom;
     bool            remoteStatsValid;
     CmdBotStats     remoteStats;
 } BotContext;
@@ -441,6 +447,13 @@ void botManagerBuildInitArg(struct ServerSim *sim, BYTE playerNum,
  *   is destroyed; the player, tank, ClientSim and subscription stay.
  * ClearRemote: the seat comes back in-process. False when the brain could
  *   not be built here; the seat is then held until the next round start.
+ * HoldNoRoom: no place has a slot for the seat's brain. The brain (here or
+ *   on a host) is gone and the tank stops; the player, tank, stats, pills,
+ *   bases and ClientSim stay. The seat is held until ResumeHeld or a host
+ *   takes it (SetRemote).
+ * ResumeHeld: a seat held by HoldNoRoom gets its brain in-process again.
+ *   False when it was not held so, or the brain could not be built (it is
+ *   then held until the next round start, as ClearRemote does).
  * SetRemoteStats: the host's latest CMD_BOT_STATS for the seat. */
 void botManagerSetRemoteHooks(struct ServerSim *sim,
                               const BotRemoteHooks *hooks);
@@ -454,6 +467,9 @@ bool botManagerDefaultDebugMode(const struct ServerSim *sim);
 bool botManagerIsHeld(const struct ServerSim *sim, BYTE playerNum);
 bool botManagerSetRemote(struct ServerSim *sim, BYTE playerNum);
 bool botManagerClearRemote(struct ServerSim *sim, BYTE playerNum);
+bool botManagerHoldNoRoom(struct ServerSim *sim, BYTE playerNum);
+bool botManagerResumeHeld(struct ServerSim *sim, BYTE playerNum);
+bool botManagerIsHeldNoRoom(const struct ServerSim *sim, BYTE playerNum);
 void botManagerSetRemoteStats(struct ServerSim *sim, BYTE playerNum,
                               const CmdBotStats *st);
 const char *botManagerGetBrainPath(const struct ServerSim *sim,

@@ -6475,6 +6475,10 @@ set(_unit_test_names
     bot_host_place_keep_batch_no_reading
     bot_host_place_keep_batch_slot_limit
     bot_host_place_keep_batch_cpu_limit
+    bot_host_enforce_fall_back_holds
+    bot_host_enforce_host_resumes
+    bot_host_enforce_leave_resumes
+    bot_host_enforce_off_keeps_fall_back
     bot_host_overrun_window_rate
     bot_host_overrun_step_spacing
     bot_host_overrun_steady_moves_one

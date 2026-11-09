@@ -140,7 +140,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 5 | `log_MapChange` | cell x, y, terrain type |
 | 6 | `log_Shell` | shell  (position, direction, owner) |
 | 7–17 | `log_Sound*` | sound x/y for each of 11 sound events |
-| 18–20 | `log_Message*` | server / all-players / specific-players chat |
+| 18–20 | `log_Message*` | server / all-players / specific-players chat. A dedicated server with `-bothost-enforce-server-limit` writes a `log_MessageServer` line when it holds a bot ("<bot> is paused: no room to run its bot") and when that bot runs again ("<bot> runs again") |
 | 21 | `log_ChangeName` | player + Pascal name |
 | 22–24 | `log_Ally*` | alliance request / accept / leave |
 | 25–26 | `log_BaseSet*` | base owner / stock (shells, mines, armour) |
@@ -821,8 +821,13 @@ Then, by kind (0xFF in a byte field: none):
   4 raise, 5 raise refused, 6 placement refused, 7 would move: the bot stays
   because of `-bothost-nomove`, 8 the spread offered a server bot to a Bot
   Host, 9 the spread moved a bot off a Bot Host, 10 no better host: the host
-  is over the target rate but no bot may move), `limitBefore:u8`,
-  `limitAfter:u8`,
+  is over the target rate but no bot may move, 11 hold: no place has a slot
+  for the bot `seat`, so it is held (`-bothost-enforce-server-limit`;
+  `host` is where it ran, `toHost` is 0xFF, the reason is "no room" and the
+  free CPU check is that of the server), 12 resume: the held bot `seat`
+  runs again on `toHost`, which has a slot (`host` is `toHost`, the reason
+  is "room on the server" or "room on a Bot Host" and the free CPU check is
+  that of `toHost`)), `limitBefore:u8`, `limitAfter:u8`,
   `badProbes:u8`, `probes:u8`, `flags:u8` (bit 0: the one-bot cost is
   known; bit 1: the free CPU average is known; bit 2: the one-bot cost
   is the full-budget estimate), `predicted:s16` (the

@@ -1490,6 +1490,8 @@ static const LangEntry langTable[] = {
     {3920, "normal"},
     {3921, "emergency"},
     {3922, "trial"},
+    {3923, "{player} is paused: no room to run its bot"},
+    {3924, "{player} runs again"},
     /* The Log Viewer's Chat panel */
     {3100, "Chat"},
     {3101, "No chat messages yet."},
