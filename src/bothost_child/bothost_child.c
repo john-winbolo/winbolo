@@ -6,14 +6,18 @@
 /*
  * The built-in Bot Host as a child process: the parts with no process in
  * them (bothost_child.h). The child's arguments, the Windows command line
- * quoting, the status and hello lines, the ticket in hex, and the restart
- * counter. The unit tests run all of it.
+ * quoting, the status and hello lines, the ticket in hex, the machine id
+ * lines, the relay frames and the restart counter. The unit tests run all
+ * of it.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include <SDL3/SDL.h>
+
 #include "bothost_child.h"
+#include "machine_id.h"
 
 /* ---- Arguments ------------------------------------------------------- */
 
@@ -170,14 +174,33 @@ bool botHostChildParseStatus(const char *line, BotHostChildStatus *out) {
     return true;
 }
 
+void botHostChildFormatHello(int protocol, bool officialOnly, bool fullMap,
+                             char *out, size_t outSize) {
+    snprintf(out, outSize, "hello %d official=%d fullmap=%d", protocol,
+             officialOnly ? 1 : 0, fullMap ? 1 : 0);
+}
+
 bool botHostChildParseHello(const char *line, int *protocol,
-                            bool *officialOnly) {
-    int proto, off;
+                            bool *officialOnly, bool *fullMap) {
+    int proto, off, full = 0, got;
     if (line == NULL) return false;
-    if (sscanf(line, "hello %d official=%d", &proto, &off) != 2) return false;
+    got = sscanf(line, "hello %d official=%d fullmap=%d", &proto, &off,
+                 &full);
+    if (got < 2) return false;
+    /* Protocol 1 had no fullmap=; the caller refuses that protocol. */
+    if (got < 3) full = -1;
     if (protocol != NULL) *protocol = proto;
     if (officialOnly != NULL) *officialOnly = off != 0;
+    if (fullMap != NULL) *fullMap = full == 1;
     return true;
+}
+
+bool botHostChildBuildFullMap(void) {
+#if defined(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
+    return true;
+#else
+    return false;
+#endif
 }
 
 void botHostChildTicketHex(const uint8_t *ticket, size_t len, char *out,
@@ -215,6 +238,115 @@ bool botHostChildTicketParse(const char *hex, uint8_t *ticket, size_t len) {
     return true;
 }
 
+int botHostChildMachineLines(char lines[][BOT_HOST_CHILD_LINE_MAX],
+                             int maxLines) {
+    uint8_t id[MACHINE_ID_LEN];
+    static MachineSaltMemory salts; /* large: not on the stack */
+    char hex[2 * MACHINE_ID_LEN + 1];
+    int n = 0, i;
+    if (lines == NULL || maxLines < 1 || !machineIdGet(id)) return 0;
+    botHostChildTicketHex(id, sizeof(id), hex, sizeof(hex));
+    snprintf(lines[n++], BOT_HOST_CHILD_LINE_MAX, "machineid %s", hex);
+    memset(id, 0, sizeof(id));
+    machineIdSaltSnapshot(&salts);
+    for (i = 0; i < salts.count && n < maxLines;) {
+        size_t len = (size_t)snprintf(lines[n], BOT_HOST_CHILD_LINE_MAX,
+                                      "salts");
+        int k;
+        for (k = 0; k < BOT_HOST_CHILD_SALTS_PER_LINE && i < salts.count;
+             k++, i++) {
+            char sh[2 * MACHINE_SALT_LEN + 1];
+            botHostChildTicketHex(salts.salt[i], MACHINE_SALT_LEN, sh,
+                                  sizeof(sh));
+            len += (size_t)snprintf(lines[n] + len,
+                                    BOT_HOST_CHILD_LINE_MAX - len, " %s",
+                                    sh);
+        }
+        n++;
+    }
+    return n;
+}
+
+/* ---- The relay codec ------------------------------------------------- */
+
+size_t botHostRelayEncode(uint8_t type, uint8_t sock, uint32_t ipNet,
+                          uint16_t portNet, const uint8_t *data, size_t len,
+                          uint8_t *out, size_t outSize) {
+    size_t body = 0;
+    if (out == NULL || sock >= BOT_HOST_RELAY_MAX_SOCKS) return 0;
+    if (type == BOT_HOST_RELAY_SEND || type == BOT_HOST_RELAY_RECV) {
+        if (len > BOT_HOST_RELAY_MAX_DATAGRAM || (len > 0 && data == NULL)) {
+            return 0;
+        }
+        body = BOT_HOST_RELAY_ADDR + len;
+    } else if (type != BOT_HOST_RELAY_OPEN && type != BOT_HOST_RELAY_CLOSE) {
+        return 0;
+    }
+    if (outSize < BOT_HOST_RELAY_HDR + body) return 0;
+    out[0] = type;
+    out[1] = sock;
+    out[2] = (uint8_t)(body & 0xFF);
+    out[3] = (uint8_t)(body >> 8);
+    if (body > 0) {
+        /* Both already in network order: copied as they are in memory. */
+        memcpy(out + BOT_HOST_RELAY_HDR, &ipNet, 4);
+        memcpy(out + BOT_HOST_RELAY_HDR + 4, &portNet, 2);
+        if (len > 0) {
+            memcpy(out + BOT_HOST_RELAY_HDR + BOT_HOST_RELAY_ADDR, data, len);
+        }
+    }
+    return BOT_HOST_RELAY_HDR + body;
+}
+
+bool botHostRelayParseHeader(const uint8_t *hdr, uint8_t *type,
+                             uint8_t *sock, uint16_t *bodyLen) {
+    uint16_t len;
+    if (hdr == NULL) return false;
+    len = (uint16_t)(hdr[2] | (hdr[3] << 8));
+    if (hdr[1] >= BOT_HOST_RELAY_MAX_SOCKS) return false;
+    switch (hdr[0]) {
+    case BOT_HOST_RELAY_OPEN:
+    case BOT_HOST_RELAY_CLOSE:
+        if (len != 0) return false;
+        break;
+    case BOT_HOST_RELAY_SEND:
+    case BOT_HOST_RELAY_RECV:
+        if (len < BOT_HOST_RELAY_ADDR ||
+            len > BOT_HOST_RELAY_ADDR + BOT_HOST_RELAY_MAX_DATAGRAM) {
+            return false;
+        }
+        break;
+    default:
+        return false;
+    }
+    if (type != NULL) *type = hdr[0];
+    if (sock != NULL) *sock = hdr[1];
+    if (bodyLen != NULL) *bodyLen = len;
+    return true;
+}
+
+bool botHostRelayParseBody(const uint8_t *body, uint16_t bodyLen,
+                           uint32_t *ipNet, uint16_t *portNet,
+                           const uint8_t **data, size_t *len) {
+    if (body == NULL || bodyLen < BOT_HOST_RELAY_ADDR) return false;
+    if (ipNet != NULL) memcpy(ipNet, body, 4);
+    if (portNet != NULL) memcpy(portNet, body + 4, 2);
+    if (data != NULL) *data = body + BOT_HOST_RELAY_ADDR;
+    if (len != NULL) *len = (size_t)bodyLen - BOT_HOST_RELAY_ADDR;
+    return true;
+}
+
+/* ---- The sandbox's paths --------------------------------------------- */
+
+bool botHostChildSandboxAdd(const char **list, int *count, const char *path) {
+    if (list == NULL || count == NULL || path == NULL || path[0] == '\0') {
+        return false;
+    }
+    if (*count >= BOT_HOST_SANDBOX_MAX_PATHS) return false;
+    list[(*count)++] = path;
+    return true;
+}
+
 /* ---- The restart counter --------------------------------------------- */
 
 void botHostChildRestartInit(BotHostChildRestart *r) {
@@ -239,4 +371,76 @@ bool botHostChildRestartDue(BotHostChildRestart *r, uint32_t nowMs) {
     if ((int32_t)(nowMs - r->waitUntilMs) < 0) return false;
     r->waiting = false;
     return true;
+}
+
+/* ---- A copy of the install's files ----------------------------------- */
+
+typedef struct {
+    const char *src;
+    const char *dst;
+    bool        recurse;
+    bool        ok;
+} CopyTree;
+
+static bool copyFile(const char *from, const char *to) {
+    SDL_IOStream *in = SDL_IOFromFile(from, "rb");
+    SDL_IOStream *out;
+    char buf[65536];
+    bool ok = true;
+    if (in == NULL) return false;
+    out = SDL_IOFromFile(to, "wb");
+    if (out == NULL) {
+        SDL_CloseIO(in);
+        return false;
+    }
+    for (;;) {
+        size_t n = SDL_ReadIO(in, buf, sizeof(buf));
+        if (n == 0) break;
+        if (SDL_WriteIO(out, buf, n) != n) {
+            ok = false;
+            break;
+        }
+    }
+    SDL_CloseIO(in);
+    if (!SDL_CloseIO(out)) ok = false;
+    return ok;
+}
+
+static SDL_EnumerationResult SDLCALL copyOne(void *ud, const char *dir,
+                                             const char *name) {
+    CopyTree *ct = (CopyTree *)ud;
+    char from[1024], to[1024];
+    SDL_PathInfo si, di;
+    (void)dir;
+    if (SDL_strcmp(name, ".") == 0 || SDL_strcmp(name, "..") == 0) {
+        return SDL_ENUM_CONTINUE;
+    }
+    SDL_snprintf(from, sizeof(from), "%s/%s", ct->src, name);
+    SDL_snprintf(to, sizeof(to), "%s/%s", ct->dst, name);
+    if (!SDL_GetPathInfo(from, &si)) return SDL_ENUM_CONTINUE;
+    if (si.type == SDL_PATHTYPE_DIRECTORY) {
+        if (ct->recurse && !botHostChildCopyTree(from, to, true)) {
+            ct->ok = false;
+        }
+        return SDL_ENUM_CONTINUE;
+    }
+    if (si.type != SDL_PATHTYPE_FILE) return SDL_ENUM_CONTINUE;
+    if (SDL_GetPathInfo(to, &di) && di.type == SDL_PATHTYPE_FILE &&
+        di.size == si.size && di.modify_time >= si.modify_time) {
+        return SDL_ENUM_CONTINUE;
+    }
+    if (!copyFile(from, to)) ct->ok = false;
+    return SDL_ENUM_CONTINUE;
+}
+
+bool botHostChildCopyTree(const char *src, const char *dst, bool recurse) {
+    CopyTree ct;
+    if (src == NULL || dst == NULL) return false;
+    if (!SDL_CreateDirectory(dst)) return false;
+    ct.src = src;
+    ct.dst = dst;
+    ct.recurse = recurse;
+    ct.ok = true;
+    if (!SDL_EnumerateDirectory(src, copyOne, &ct)) return false;
+    return ct.ok;
 }

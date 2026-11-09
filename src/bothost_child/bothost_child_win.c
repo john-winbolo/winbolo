@@ -16,7 +16,18 @@
  *     Windows error dialog that would keep it alive;
  *   - a CPU rate hard cap, as a part of the whole machine.
  * The child starts at BELOW_NORMAL priority with no console window. Only
- * its stdin, stdout and log file handles are given to it.
+ * its stdin, stdout and log file handles are given to it (and the two
+ * relay pipes in the sandbox).
+ *
+ * The file sandbox: the child runs in an AppContainer with no
+ * capabilities, so it has no network (not even loopback) and reaches only
+ * what its container SID was granted, the system's own files (which allow
+ * ALL APPLICATION PACKAGES) and the handles it was given. The profile is
+ * one per install ("WinBolo.BotHost." and a hash of the program's
+ * folder), made once and used again. botHostChildSandboxPrepare grants
+ * the SID read on the program's folder and full use of the cache folder
+ * with inherited ACL entries, once: a folder that already has the entry
+ * is not changed again.
  */
 #ifdef _WIN32
 
@@ -24,6 +35,9 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <aclapi.h>
+#include <sddl.h>
+#include <userenv.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,11 +45,27 @@
 
 #include "bothost_child.h"
 
+#ifdef _MSC_VER
+#pragma comment(lib, "userenv.lib")
+#pragma comment(lib, "advapi32.lib")
+#endif
+
+/* The relay pipes' size: a few hundred datagrams. */
+#define RELAY_PIPE_BYTES (256u * 1024u)
+
+/* Read: list, read and run. Write: that, change and delete too, but not
+ * the ACL or the owner. */
+#define GRANT_READ  (FILE_GENERIC_READ | FILE_GENERIC_EXECUTE)
+#define GRANT_WRITE (FILE_GENERIC_READ | FILE_GENERIC_WRITE |               \
+                     FILE_GENERIC_EXECUTE | DELETE | FILE_DELETE_CHILD)
+
 struct BotHostChildProc {
     HANDLE process;
     HANDLE job;      /* NULL when the job could not be made */
     HANDLE stdinW;   /* the game's end of the child's stdin */
     HANDLE stdoutR;  /* the game's end of the child's stdout */
+    HANDLE relayW;   /* the game's end of the relay to the child; or NULL */
+    HANDLE relayR;   /* the game's end of the relay from the child */
     DWORD  pid;
 };
 
@@ -58,6 +88,158 @@ static wchar_t *utf8ToWide(const char *s) {
     }
     return w;
 }
+
+/* ---- The AppContainer ------------------------------------------------ */
+
+void botHostChildContainerName(char *out, size_t outSize) {
+    wchar_t path[MAX_PATH * 2];
+    DWORD n = GetModuleFileNameW(NULL, path, (DWORD)(sizeof(path) /
+                                                     sizeof(path[0])));
+    uint64_t h = 1469598103934665603ull; /* FNV-1a */
+    DWORD i, cut = 0;
+    if (n == 0 || n >= sizeof(path) / sizeof(path[0])) n = 0;
+    for (i = 0; i < n; i++) {
+        if (path[i] == L'\\' || path[i] == L'/') cut = i;
+    }
+    for (i = 0; i < cut; i++) {
+        wchar_t c = path[i];
+        if (c >= L'A' && c <= L'Z') c = (wchar_t)(c - L'A' + L'a');
+        if (c == L'/') c = L'\\';
+        h ^= (uint64_t)(c & 0xFF);
+        h *= 1099511628211ull;
+        h ^= (uint64_t)((c >> 8) & 0xFF);
+        h *= 1099511628211ull;
+    }
+    snprintf(out, outSize, "WinBolo.BotHost.%016llx", (unsigned long long)h);
+}
+
+/* The container's SID, the profile made when it is not there yet. Free it
+ * with FreeSid. */
+static PSID containerSid(char *why, size_t whySize) {
+    char name[64];
+    wchar_t wname[64];
+    PSID sid = NULL;
+    HRESULT hr;
+    botHostChildContainerName(name, sizeof(name));
+    if (MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 64) <= 0) {
+        return NULL;
+    }
+    hr = CreateAppContainerProfile(wname, L"WinBolo Bot Host",
+                                   L"The WinBolo Bot Host child's sandbox",
+                                   NULL, 0, &sid);
+    if (hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)) {
+        sid = NULL;
+        hr = DeriveAppContainerSidFromAppContainerName(wname, &sid);
+    }
+    if (FAILED(hr) || sid == NULL) {
+        if (why != NULL && whySize > 0) {
+            snprintf(why, whySize, "the AppContainer profile %s failed "
+                                   "(0x%08lx)", name, (unsigned long)hr);
+        }
+        return NULL;
+    }
+    return sid;
+}
+
+/* True when acl allows sid all of rights in one entry. */
+static bool aclHasGrant(PACL acl, PSID sid, DWORD rights) {
+    DWORD i;
+    if (acl == NULL) return false;
+    for (i = 0; i < acl->AceCount; i++) {
+        ACCESS_ALLOWED_ACE *ace = NULL;
+        if (!GetAce(acl, i, (LPVOID *)&ace) || ace == NULL) continue;
+        if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE) continue;
+        if ((ace->Mask & rights) != rights) continue;
+        if (EqualSid((PSID)&ace->SidStart, sid)) return true;
+    }
+    return false;
+}
+
+static wchar_t *utf8ToWide(const char *s);
+
+/* Grants sid rights on path (inherited by all in it for a folder).
+ * ERROR_SUCCESS when it has them now. */
+static DWORD grantPath(const char *path, PSID sid, DWORD rights, bool dir) {
+    wchar_t *wpath = utf8ToWide(path);
+    PACL oldAcl = NULL, newAcl = NULL;
+    PSECURITY_DESCRIPTOR sd = NULL;
+    EXPLICIT_ACCESS_W ea;
+    DWORD rc;
+    if (wpath == NULL) return ERROR_INVALID_PARAMETER;
+    rc = GetNamedSecurityInfoW(wpath, SE_FILE_OBJECT,
+                               DACL_SECURITY_INFORMATION, NULL, NULL,
+                               &oldAcl, NULL, &sd);
+    if (rc == ERROR_SUCCESS && !aclHasGrant(oldAcl, sid, rights)) {
+        memset(&ea, 0, sizeof(ea));
+        ea.grfAccessPermissions = rights;
+        ea.grfAccessMode = GRANT_ACCESS;
+        ea.grfInheritance = dir ? SUB_CONTAINERS_AND_OBJECTS_INHERIT
+                                : NO_INHERITANCE;
+        ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+        ea.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+        ea.Trustee.ptstrName = (LPWSTR)sid;
+        rc = SetEntriesInAclW(1, &ea, oldAcl, &newAcl);
+        if (rc == ERROR_SUCCESS) {
+            rc = SetNamedSecurityInfoW(wpath, SE_FILE_OBJECT,
+                                       DACL_SECURITY_INFORMATION, NULL, NULL,
+                                       newAcl, NULL);
+        }
+    }
+    if (newAcl != NULL) LocalFree(newAcl);
+    if (sd != NULL) LocalFree(sd);
+    free(wpath);
+    return rc;
+}
+
+bool botHostChildSandboxAvailable(char *why, size_t whySize) {
+    PSID sid = containerSid(why, whySize);
+    if (sid == NULL) return false;
+    FreeSid(sid);
+    return true;
+}
+
+int botHostChildLandlockAbi(void) {
+    return -1;
+}
+
+bool botHostChildSandboxPrepare(const BotHostChildSandbox *sb,
+                                unsigned *readFailed, char *why,
+                                size_t whySize) {
+    PSID sid;
+    int i;
+    DWORD rc;
+    if (readFailed != NULL) *readFailed = 0;
+    if (sb == NULL || !sb->on) return true;
+    sid = containerSid(why, whySize);
+    if (sid == NULL) return false;
+    for (i = 0; i < sb->readDirCount; i++) {
+        rc = grantPath(sb->readDirs[i], sid, GRANT_READ, true);
+        if (rc != ERROR_SUCCESS && readFailed != NULL) {
+            *readFailed |= 1u << i;
+        }
+    }
+    for (i = 0; i < sb->readFileCount; i++) {
+        /* A file that cannot be granted is only not read (the CPU speed
+         * result: the child measures again). */
+        (void)grantPath(sb->readFiles[i], sid, GRANT_READ, false);
+    }
+    for (i = 0; i < sb->writeDirCount; i++) {
+        rc = grantPath(sb->writeDirs[i], sid, GRANT_WRITE, true);
+        if (rc != ERROR_SUCCESS) {
+            if (why != NULL && whySize > 0) {
+                snprintf(why, whySize, "the sandbox cannot write in %s "
+                                       "(error %lu)", sb->writeDirs[i],
+                         (unsigned long)rc);
+            }
+            FreeSid(sid);
+            return false;
+        }
+    }
+    FreeSid(sid);
+    return true;
+}
+
+/* ---- The job --------------------------------------------------------- */
 
 static HANDLE makeJob(const BotHostChildLimits *lim, char *err,
                       size_t errSize) {
@@ -93,7 +275,10 @@ static HANDLE makeJob(const BotHostChildLimits *lim, char *err,
         cpu.CpuRate = (DWORD)lim->cpuPct * 100u;
         if (!SetInformationJobObject(job, JobObjectCpuRateControlInformation,
                                      &cpu, sizeof(cpu))) {
-            /* The memory limit and the rest still hold. */
+            /* The memory limit and the rest still hold. Note: Windows
+             * refuses a CPU rate in some nested jobs (a game started in a
+             * job of its own, as some launchers do); the child then has
+             * only its lower priority, as on Linux and macOS. */
             fprintf(stderr, "[bothost] the child's CPU cap was refused "
                             "(error %lu); it runs without it\n",
                     (unsigned long)GetLastError());
@@ -102,30 +287,102 @@ static HANDLE makeJob(const BotHostChildLimits *lim, char *err,
     return job;
 }
 
+/* The sandbox's arguments after argv, with the relay's handles. */
+static bool addSandboxArgs(char *cmd, size_t cmdSize, size_t *cmdLen,
+                           const BotHostChildSandbox *sb, HANDLE relayIn,
+                           HANDLE relayOut) {
+    char num[2][32];
+    const char *extra[3 + 2 * 3 * BOT_HOST_SANDBOX_MAX_PATHS + 3];
+    int n = 0, i;
+    extra[n++] = "--sandbox";
+    for (i = 0; i < sb->readDirCount; i++) {
+        extra[n++] = "--sandbox-read";
+        extra[n++] = sb->readDirs[i];
+    }
+    for (i = 0; i < sb->readFileCount; i++) {
+        extra[n++] = "--sandbox-file";
+        extra[n++] = sb->readFiles[i];
+    }
+    for (i = 0; i < sb->writeDirCount; i++) {
+        extra[n++] = "--sandbox-write";
+        extra[n++] = sb->writeDirs[i];
+    }
+    snprintf(num[0], sizeof(num[0]), "%llu",
+             (unsigned long long)(uintptr_t)relayIn);
+    snprintf(num[1], sizeof(num[1]), "%llu",
+             (unsigned long long)(uintptr_t)relayOut);
+    extra[n++] = "--relay";
+    extra[n++] = num[0];
+    extra[n++] = num[1];
+    for (i = 0; i < n; i++) {
+        if (*cmdLen + 2 >= cmdSize) return false;
+        cmd[(*cmdLen)++] = ' ';
+        cmd[*cmdLen] = '\0';
+        if (!botHostChildQuoteWinArg(extra[i], cmd, cmdSize, cmdLen)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void closeIf(HANDLE *h) {
+    if (*h != NULL && *h != INVALID_HANDLE_VALUE) CloseHandle(*h);
+    *h = NULL;
+}
+
 BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
                                     const BotHostChildLimits *lim,
+                                    const BotHostChildSandbox *sb,
                                     const char *logPath, char *err,
-                                    size_t errSize) {
+                                    size_t errSize, bool *sandboxFailed) {
     SECURITY_ATTRIBUTES sa;
     HANDLE inR = NULL, inW = NULL, outR = NULL, outW = NULL, logH = NULL;
-    HANDLE handles[3];
+    HANDLE rinR = NULL, rinW = NULL, routR = NULL, routW = NULL;
+    HANDLE handles[5];
+    DWORD handleCount = 3;
     STARTUPINFOEXW si;
     PROCESS_INFORMATION pi;
+    SECURITY_CAPABILITIES caps;
     LPPROC_THREAD_ATTRIBUTE_LIST attrs = NULL;
+    bool attrsInited = false;
     SIZE_T attrSize = 0;
+    DWORD attrCount;
     char *cmd = NULL;
     size_t cmdSize = 32768, cmdLen = 0;
-    wchar_t *wexe = NULL, *wcmd = NULL;
+    wchar_t *wexe = NULL, *wcmd = NULL, *wdir = NULL;
     BotHostChildProc *p = NULL;
     HANDLE job = NULL;
+    PSID sid = NULL;
+    bool sandbox = sb != NULL && sb->on;
     int i;
     bool ok = false;
 
     if (err != NULL && errSize > 0) err[0] = '\0';
+    if (sandboxFailed != NULL) *sandboxFailed = false;
     memset(&pi, 0, sizeof(pi));
     if (exe == NULL || argv == NULL || argv[0] == NULL) {
         setErr(err, errSize, "no program");
         return NULL;
+    }
+
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = NULL;
+    sa.bInheritHandle = TRUE;
+    if (!CreatePipe(&inR, &inW, &sa, 0) || !CreatePipe(&outR, &outW, &sa, 0)) {
+        setErr(err, errSize, "CreatePipe failed");
+        goto done;
+    }
+    /* The game's ends stay in the game. */
+    SetHandleInformation(inW, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(outR, HANDLE_FLAG_INHERIT, 0);
+    if (sandbox) {
+        if (!CreatePipe(&rinR, &rinW, &sa, RELAY_PIPE_BYTES) ||
+            !CreatePipe(&routR, &routW, &sa, RELAY_PIPE_BYTES)) {
+            setErr(err, errSize, "CreatePipe failed (the relay)");
+            goto done;
+        }
+        SetHandleInformation(rinW, HANDLE_FLAG_INHERIT, 0);
+        SetHandleInformation(routR, HANDLE_FLAG_INHERIT, 0);
     }
 
     /* The command line, quoted as the child's C runtime reads it. */
@@ -143,23 +400,33 @@ BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
             goto done;
         }
     }
+    if (sandbox && !addSandboxArgs(cmd, cmdSize, &cmdLen, sb, rinR, routW)) {
+        setErr(err, errSize, "the command line is too long");
+        goto done;
+    }
     wexe = utf8ToWide(exe);
     wcmd = utf8ToWide(cmd);
     if (wexe == NULL || wcmd == NULL) {
         setErr(err, errSize, "bad program name");
         goto done;
     }
-
-    sa.nLength = sizeof(sa);
-    sa.lpSecurityDescriptor = NULL;
-    sa.bInheritHandle = TRUE;
-    if (!CreatePipe(&inR, &inW, &sa, 0) || !CreatePipe(&outR, &outW, &sa, 0)) {
-        setErr(err, errSize, "CreatePipe failed");
-        goto done;
+    {
+        /* The child starts in its own folder: the game's folder may be
+         * one the container cannot open. */
+        size_t n = wcslen(wexe);
+        wdir = (wchar_t *)malloc((n + 1) * sizeof(wchar_t));
+        if (wdir != NULL) {
+            memcpy(wdir, wexe, (n + 1) * sizeof(wchar_t));
+            while (n > 0 && wdir[n - 1] != L'\\' && wdir[n - 1] != L'/') n--;
+            if (n > 1) {
+                wdir[n - 1] = L'\0';
+            } else {
+                free(wdir);
+                wdir = NULL;
+            }
+        }
     }
-    /* The game's ends stay in the game. */
-    SetHandleInformation(inW, HANDLE_FLAG_INHERIT, 0);
-    SetHandleInformation(outR, HANDLE_FLAG_INHERIT, 0);
+
     if (logPath != NULL && logPath[0] != '\0') {
         wchar_t *wlog = utf8ToWide(logPath);
         if (wlog != NULL) {
@@ -181,23 +448,52 @@ BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
         }
     }
 
-    /* Only these three handles go to the child. */
+    if (sandbox) {
+        char why[200];
+        why[0] = '\0';
+        sid = containerSid(why, sizeof(why));
+        if (sid == NULL) {
+            if (err != NULL && errSize > 0) snprintf(err, errSize, "%s", why);
+            if (sandboxFailed != NULL) *sandboxFailed = true;
+            goto done;
+        }
+    }
+
+    /* Only these handles go to the child. */
     handles[0] = inR;
     handles[1] = outW;
     handles[2] = logH;
-    (void)InitializeProcThreadAttributeList(NULL, 1, 0, &attrSize);
+    if (sandbox) {
+        handles[3] = rinR;
+        handles[4] = routW;
+        handleCount = 5;
+    }
+    attrCount = sandbox ? 2 : 1;
+    (void)InitializeProcThreadAttributeList(NULL, attrCount, 0, &attrSize);
     attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(attrSize);
     if (attrs == NULL ||
-        !InitializeProcThreadAttributeList(attrs, 1, 0, &attrSize) ||
-        !UpdateProcThreadAttribute(attrs, 0,
-                                   PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                                   handles, sizeof(handles), NULL, NULL)) {
+        !InitializeProcThreadAttributeList(attrs, attrCount, 0, &attrSize)) {
         setErr(err, errSize, "the handle list failed");
-        if (attrs != NULL) {
-            free(attrs);
-            attrs = NULL;
-        }
         goto done;
+    }
+    attrsInited = true;
+    if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                   handles, handleCount * sizeof(HANDLE),
+                                   NULL, NULL)) {
+        setErr(err, errSize, "the handle list failed");
+        goto done;
+    }
+    if (sandbox) {
+        /* No capabilities: no network of any kind, no user folders. */
+        memset(&caps, 0, sizeof(caps));
+        caps.AppContainerSid = sid;
+        if (!UpdateProcThreadAttribute(
+                attrs, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &caps,
+                sizeof(caps), NULL, NULL)) {
+            setErr(err, errSize, "the AppContainer attribute failed");
+            if (sandboxFailed != NULL) *sandboxFailed = true;
+            goto done;
+        }
     }
 
     memset(&si, 0, sizeof(si));
@@ -212,8 +508,13 @@ BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
                         CREATE_SUSPENDED | CREATE_NO_WINDOW |
                             BELOW_NORMAL_PRIORITY_CLASS |
                             EXTENDED_STARTUPINFO_PRESENT,
-                        NULL, NULL, &si.StartupInfo, &pi)) {
-        setErr(err, errSize, "CreateProcess failed");
+                        NULL, sandbox ? wdir : NULL, &si.StartupInfo, &pi)) {
+        setErr(err, errSize, sandbox ? "CreateProcess in the AppContainer "
+                                       "failed"
+                                     : "CreateProcess failed");
+        /* In the sandbox the program's folder may not be readable by the
+         * container: that is the sandbox's failure. */
+        if (sandbox && sandboxFailed != NULL) *sandboxFailed = true;
         goto done;
     }
 
@@ -256,25 +557,68 @@ BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
     p->pid = pi.dwProcessId;
     p->stdinW = inW;
     p->stdoutR = outR;
+    p->relayW = rinW;
+    p->relayR = routR;
     inW = NULL;
     outR = NULL;
+    rinW = NULL;
+    routR = NULL;
     ok = true;
 
 done:
+    /* On every path: a list that was made is deleted before its free. */
     if (attrs != NULL) {
-        DeleteProcThreadAttributeList(attrs);
+        if (attrsInited) DeleteProcThreadAttributeList(attrs);
         free(attrs);
     }
+    if (sid != NULL) FreeSid(sid);
     /* The child's ends: the child has its own copies now. */
-    if (inR != NULL) CloseHandle(inR);
-    if (outW != NULL) CloseHandle(outW);
-    if (logH != NULL) CloseHandle(logH);
-    if (inW != NULL) CloseHandle(inW);
-    if (outR != NULL) CloseHandle(outR);
+    closeIf(&inR);
+    closeIf(&outW);
+    closeIf(&logH);
+    closeIf(&inW);
+    closeIf(&outR);
+    closeIf(&rinR);
+    closeIf(&rinW);
+    closeIf(&routR);
+    closeIf(&routW);
     free(cmd);
     free(wexe);
     free(wcmd);
+    free(wdir);
     return ok ? p : NULL;
+}
+
+bool botHostChildHasRelay(const BotHostChildProc *p) {
+    return p != NULL && p->relayR != NULL && p->relayW != NULL;
+}
+
+bool botHostChildRelayRead(BotHostChildProc *p, void *buf, size_t n) {
+    uint8_t *b = (uint8_t *)buf;
+    if (p == NULL || p->relayR == NULL) return false;
+    while (n > 0) {
+        DWORD got = 0;
+        if (!ReadFile(p->relayR, b, (DWORD)n, &got, NULL) || got == 0) {
+            return false;
+        }
+        b += got;
+        n -= got;
+    }
+    return true;
+}
+
+bool botHostChildRelayWrite(BotHostChildProc *p, const void *buf, size_t n) {
+    const uint8_t *b = (const uint8_t *)buf;
+    if (p == NULL || p->relayW == NULL) return false;
+    while (n > 0) {
+        DWORD wrote = 0;
+        if (!WriteFile(p->relayW, b, (DWORD)n, &wrote, NULL) || wrote == 0) {
+            return false;
+        }
+        b += wrote;
+        n -= wrote;
+    }
+    return true;
 }
 
 bool botHostChildWriteLine(BotHostChildProc *p, const char *line) {
@@ -344,6 +688,8 @@ void botHostChildFree(BotHostChildProc *p) {
     botHostChildKill(p);
     if (p->stdinW != NULL) CloseHandle(p->stdinW);
     if (p->stdoutR != NULL) CloseHandle(p->stdoutR);
+    if (p->relayW != NULL) CloseHandle(p->relayW);
+    if (p->relayR != NULL) CloseHandle(p->relayR);
     if (p->job != NULL) CloseHandle(p->job);
     if (p->process != NULL) CloseHandle(p->process);
     free(p);

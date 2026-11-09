@@ -548,7 +548,7 @@ static HostSeat *seatTakeFree(void) {
 
 static void ctlCloseSocket(HostServer *sv) {
     if (sv->sock != INVALID_SOCKET) {
-        closesocket(sv->sock);
+        udpCloseSocket(sv->sock);
         sv->sock = INVALID_SOCKET;
     }
 }

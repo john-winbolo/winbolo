@@ -124,6 +124,10 @@ typedef struct {
     /* The child's limits (bothost_child.h): < 0 the default, 0 off. */
     int         childMemMb;
     int         childCpuPct; /* Windows only */
+    /* Run the child with no file sandbox and with its own network (the
+     * config's "Child File Sandbox" = No, --bothost-no-sandbox). Off by
+     * default: in the sandbox, and with no sandbox no bots. */
+    bool        childNoSandbox;
 } BotHostEmbedSettings;
 
 /* Settings with every default: hosting on, as a child, default limits. */
@@ -133,7 +137,9 @@ void botHostEmbedSetSettings(const BotHostEmbedSettings *settings);
  *   "Run As Child Process"     Yes (default) / No
  *   "Child Memory Limit MiB"   4096 (default); 0 off
  *   "Child CPU Limit Percent"  75 (default), a part of the whole machine,
- *                              Windows only; 0 off
+ *                              Windows only; 0 or 100 off
+ *   "Child File Sandbox"       Yes (default) / No: the child's OS file
+ *                              sandbox and no network (bothost_child.h)
  * Read once, after the prefs file is open. */
 void botHostEmbedLoadPrefs(void);
 

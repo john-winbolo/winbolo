@@ -930,6 +930,13 @@ int run_bothost_child_quote(void);
 int run_bothost_child_codec(void);
 int run_bothost_child_restart(void);
 int run_bothost_child_job_limits(void);
+int run_bothost_child_relay_codec(void);
+int run_bothost_child_sandbox_files(void);
+int run_bothost_child_sandbox_net(void);
+int run_bothost_child_relay(void);
+int run_bothost_child_machine_id(void);
+int run_bothost_child_no_unsafe(void);
+int run_bothost_child_copy_tree(void);
 
 /* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
 int run_bot_host_link_announce_codec(void);

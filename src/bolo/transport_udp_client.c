@@ -575,7 +575,7 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
 #endif
     c->packetsSentThisSec++;
     c->bytesSentThisSec += len;
-    if (!udpClientLoggedLocalPort) {
+    if (!udpClientLoggedLocalPort && !udpSocketHooksOn()) {
         /* NB: don't name this `local` — brain.h does `#define local static`
          * for its Lua-flavoured pseudo-keyword and that macro is in scope
          * through the include chain.  `local sockaddr_in foo;` then
@@ -4212,8 +4212,7 @@ static void udpClientSendPunchRequest(TransportUdpClientCtx *c) {
     dest.sin_family = AF_INET;
     dest.sin_addr = trackerIp;
     dest.sin_port = htons(c->trackerPort);
-    sendto(c->sock, (const char *)buf, sizeof(buf), 0,
-           (const struct sockaddr *)&dest, sizeof(dest));
+    udpSendTo(c->sock, buf, (int)sizeof(buf), &dest);
 }
 
 /* One datagram off the socket, or <= 0 when it is empty. In the test build a
@@ -5104,7 +5103,7 @@ void transportUdpClientDestroy(Transport *t) {
             udpClientSendTo(c, qbuf, PACKET_HEADER_SIZE);
             WB_LOG_DEBUG(WB_LOG_CAT_NET, "client sent PACKET_QUIT to server");
         }
-        closesocket(c->sock);
+        udpCloseSocket(c->sock);
     }
     if (c->mapDownloadBuf != NULL) {
         free(c->mapDownloadBuf);

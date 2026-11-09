@@ -317,6 +317,16 @@ int spliceGameEventsBeforeTail(GameEvent *events, int tailStart, int tailCount,
  *   server already held on 127.0.0.1. Datagrams to 127.0.0.1:port then
  *   went to that server, the more specific bind, and the client never
  *   heard its own server's replies. */
+static const UdpSocketHooks *udpHooks;
+
+void udpSetSocketHooks(const UdpSocketHooks *hooks) {
+    udpHooks = hooks;
+}
+
+bool udpSocketHooksOn(void) {
+    return udpHooks != NULL;
+}
+
 SOCKET createUdpSocket(bool exclusive) {
     SOCKET sock;
     unsigned long nonBlock = 1;
@@ -324,6 +334,10 @@ SOCKET createUdpSocket(bool exclusive) {
     int reuse = 1;
 #endif
 
+    if (udpHooks != NULL) {
+        /* No socket can listen through the hooks. */
+        return exclusive ? INVALID_SOCKET : udpHooks->create();
+    }
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) {
         return INVALID_SOCKET;
@@ -343,6 +357,10 @@ SOCKET createUdpSocket(bool exclusive) {
 /* Send a buffer via UDP to a specific address */
 void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr) {
+    if (udpHooks != NULL) {
+        udpHooks->send(sock, buf, len, addr);
+        return;
+    }
     sendto(sock, (const char *)buf, len, 0,
            (const struct sockaddr *)addr, sizeof(*addr));
 }
@@ -353,10 +371,20 @@ int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen,
     socklen_t addrLen = sizeof(*fromAddr);
     int ret;
 
+    if (udpHooks != NULL) return udpHooks->recv(sock, buf, maxLen, fromAddr);
     ret = recvfrom(sock, (char *)buf, maxLen, 0,
                    (struct sockaddr *)fromAddr, &addrLen);
     if (ret == SOCKET_ERROR) {
         return -1;
     }
     return ret;
+}
+
+void udpCloseSocket(SOCKET sock) {
+    if (sock == INVALID_SOCKET) return;
+    if (udpHooks != NULL) {
+        udpHooks->close(sock);
+        return;
+    }
+    closesocket(sock);
 }

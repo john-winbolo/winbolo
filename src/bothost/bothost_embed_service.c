@@ -74,6 +74,8 @@ static bool embedHaveRestartTicket = false;
 /* What the host is told, kept for a child started later. */
 static bool embedWithholdNow = false;
 static bool embedRecordNow = false;
+/* The last start found no sandbox: it said so in its own line. */
+static bool embedStartNoBots = false;
 
 BOLO_STATIC_ASSERT(BOT_HOST_OPTOUT_TICKET_LEN == BOT_HOST_TICKET_LEN,
                    optout_keeps_a_whole_ticket);
@@ -121,11 +123,15 @@ void botHostEmbedLoadPrefs(void) {
     embedSettings.childCpuPct =
         prefsInt("Child CPU Limit Percent", BOT_HOST_CHILD_DEFAULT_CPU_PCT,
                  100);
+    prefsGetString("BOT HOST", "Child File Sandbox", "Yes", buf, sizeof(buf));
+    embedSettings.childNoSandbox = SDL_strcasecmp(buf, "No") == 0 ||
+                                   SDL_strcmp(buf, "0") == 0;
     fprintf(stderr, "[bothost] this computer's Bot Host runs %s (memory "
-                    "limit %d MiB, CPU cap %d%%)\n",
+                    "limit %d MiB, CPU cap %d%%, file sandbox %s)\n",
             embedSettings.inProcess ? "in this program"
                                     : "as a child process",
-            embedSettings.childMemMb, embedSettings.childCpuPct);
+            embedSettings.childMemMb, embedSettings.childCpuPct,
+            embedSettings.childNoSandbox ? "off" : "on");
 }
 
 /* ---- Where the host runs: a child process or a thread here ----------- */
@@ -138,7 +144,7 @@ static void embedChildLimits(BotHostChildLimits *lim) {
                       : embedSettings.childCpuPct;
 }
 
-static bool embedStartChild(const BotHostEmbedConfig *cfg) {
+static BotHostChildStart embedStartChild(const BotHostEmbedConfig *cfg) {
     BotHostChildParams p;
     BotHostChildLimits lim;
     char speedFile[1024];
@@ -159,16 +165,26 @@ static bool embedStartChild(const BotHostEmbedConfig *cfg) {
     }
     embedChildLimits(&lim);
     return botHostChildClientStart(&p, cfg->ticket, BOT_HOST_TICKET_LEN,
-                                   &lim, embedWithholdNow);
+                                   &lim, embedWithholdNow,
+                                   !embedSettings.childNoSandbox);
 }
 
 bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     if (cfg == NULL || cfg->ticket == NULL) return false;
     if (embedWhere != EMBED_NONE) botHostEmbedStop(true);
+    embedStartNoBots = false;
     if (!embedSettings.inProcess && !embedChildOff) {
-        if (embedStartChild(cfg)) {
+        BotHostChildStart how = embedStartChild(cfg);
+        if (how == BOT_HOST_CHILD_STARTED) {
             embedWhere = EMBED_CHILD;
             return true;
+        }
+        if (how == BOT_HOST_CHILD_START_NO_BOTS) {
+            /* No sandbox: no bots for this game, and no thread here in
+             * its place (that would run the brains with no OS sandbox).
+             * botHostChildClientStart said why, in one line. */
+            embedStartNoBots = true;
+            return false;
         }
         /* botHostChildClientStart said why, in one line. */
         embedChildOff = true;
@@ -300,7 +316,10 @@ static void embedStartFor(struct ClientSim *cs, uint8_t player,
         embedHaveRestartTicket = true;
     }
     if (!botHostEmbedStart(&cfg)) {
-        fprintf(stderr, "[bothost] this computer's Bot Host did not start\n");
+        if (!embedStartNoBots) {
+            fprintf(stderr, "[bothost] this computer's Bot Host did not "
+                            "start\n");
+        }
         embedBlock(ticket);
         embedHaveTicket = false;
     }
@@ -314,6 +333,14 @@ static bool embedChildEnded(struct ClientSim *cs, uint8_t player,
     BotHostChildEnd end = botHostChildClientEnd();
     if (end == BOT_HOST_CHILD_RUNS || end == BOT_HOST_CHILD_ENDED_REFUSED) {
         return false;
+    }
+    if (end == BOT_HOST_CHILD_ENDED_SANDBOX) {
+        /* The child said why in its log; the game said it in one line. No
+         * restart and no thread here: no bots for this game. */
+        embedStopNow(false, "the child could not run in its sandbox");
+        embedBlock(embedTicketNow);
+        embedHaveTicket = false;
+        return true;
     }
     if (end == BOT_HOST_CHILD_ENDED_MISMATCH ||
         (end == BOT_HOST_CHILD_ENDED_EARLY && !embedChildHelloOnce)) {

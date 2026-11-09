@@ -168,6 +168,8 @@ static int optVanishAtTick = 0;
 static bool optBotHostInProcess = false;
 static int optBotHostMemMb = -1;
 static int optBotHostCpuPct = -1;
+/* The child with no file sandbox and its own network (--bothost-no-sandbox). */
+static bool optBotHostNoSandbox = false;
 /* A test of the lobby's one-game opt-out: turn "Don't run bots on this
  * computer for this game" on at one tick and off again at another (0:
  * never). */
@@ -2188,7 +2190,12 @@ static void printUsage(const char *prog) {
     "                    4096; 0: none)\n"
     "  --bothost-cpu-pct N\n"
     "                    The Bot Host child's CPU cap, as a percent of the\n"
-    "                    whole machine (default 75; 0: none; Windows only)\n"
+    "                    whole machine, 0 to 100 (default 75; 0 or 100: none;\n"
+    "                    Windows only)\n"
+    "  --bothost-no-sandbox\n"
+    "                    Run the Bot Host child with no file sandbox and with\n"
+    "                    its own network (default: in the sandbox, and with no\n"
+    "                    sandbox no bots from this computer)\n"
     "  --vanish-at-tick N\n"
     "                    A crash test: at game tick N the program ends at once,\n"
     "                    with no quit to the server from the player or its Bot Host\n"
@@ -2380,6 +2387,11 @@ static bool parseArgs(int argc, char **argv) {
       optBotHostMemMb = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--bothost-cpu-pct") == 0 && i + 1 < argc) {
       optBotHostCpuPct = atoi(argv[++i]);
+      /* As the config clamps it: 100 and 0 are no cap. */
+      if (optBotHostCpuPct < 0) optBotHostCpuPct = 0;
+      if (optBotHostCpuPct > 100) optBotHostCpuPct = 100;
+    } else if (strcmp(argv[i], "--bothost-no-sandbox") == 0) {
+      optBotHostNoSandbox = true;
     } else if (strcmp(argv[i], "--vanish-at-tick") == 0 && i + 1 < argc) {
       optVanishAtTick = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--bothost-optout-at-tick") == 0 && i + 1 < argc) {
@@ -3111,6 +3123,7 @@ static int runNetworkMode(void) {
     bh.inProcess = optBotHostInProcess;
     bh.childMemMb = optBotHostMemMb;
     bh.childCpuPct = optBotHostCpuPct;
+    bh.childNoSandbox = optBotHostNoSandbox;
     if (optBotHostCache[0] != '\0') {
       SDL_strlcpy(cache, optBotHostCache, sizeof(cache));
     } else {

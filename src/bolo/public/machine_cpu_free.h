@@ -42,4 +42,15 @@ bool machineCpuParseProcStat(const char *line, uint64_t *idle,
 uint8_t machineCpuFreePercent(uint64_t idle0, uint64_t total0,
                               uint64_t idle1, uint64_t total1);
 
+/* The machine's idle and total CPU counters now. False when this program
+ * cannot read them (a sandbox). */
+bool machineCpuFreeCounters(uint64_t *idle, uint64_t *total);
+/* True when this program can read the counters itself. */
+bool machineCpuFreeCanRead(void);
+/* For a program that cannot read the counters (the Bot Host child in its
+ * sandbox): machineCpuFreeSample asks fn when its own read fails. The
+ * game sends the child its own readings (bothost_child.h). NULL: none. */
+typedef bool (*MachineCpuCounterSource)(uint64_t *idle, uint64_t *total);
+void machineCpuFreeSetFallback(MachineCpuCounterSource fn);
+
 #endif /* WINBOLO_MACHINE_CPU_FREE_H */

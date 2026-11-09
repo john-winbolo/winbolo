@@ -87,6 +87,22 @@ static bool machineCpuCounters(uint64_t *idle, uint64_t *total) {
 #endif
 }
 
+static MachineCpuCounterSource s_counterSource;
+
+void machineCpuFreeSetFallback(MachineCpuCounterSource fn) {
+    s_counterSource = fn;
+}
+
+bool machineCpuFreeCounters(uint64_t *idle, uint64_t *total) {
+    if (idle == NULL || total == NULL) return false;
+    return machineCpuCounters(idle, total);
+}
+
+bool machineCpuFreeCanRead(void) {
+    uint64_t idle, total;
+    return machineCpuCounters(&idle, &total);
+}
+
 void machineCpuFreeInit(MachineCpuFree *m) {
     if (m != NULL) memset(m, 0, sizeof(*m));
 }
@@ -107,7 +123,8 @@ uint8_t machineCpuFreeSample(MachineCpuFree *m) {
     uint64_t idle, total;
     uint8_t pct;
     if (m == NULL) return MACHINE_CPU_FREE_UNKNOWN;
-    if (!machineCpuCounters(&idle, &total)) {
+    if (!machineCpuCounters(&idle, &total) &&
+        (s_counterSource == NULL || !s_counterSource(&idle, &total))) {
         m->have = false;
         return MACHINE_CPU_FREE_UNKNOWN;
     }

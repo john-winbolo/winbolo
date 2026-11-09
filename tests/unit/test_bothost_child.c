@@ -15,13 +15,37 @@
  *      a WinBoloBotHost child in its job cannot take memory past the limit;
  *      the job carries the memory limit, the CPU cap, one process and
  *      KILL_ON_JOB_CLOSE; closing the job ends the child.
+ *   6. bothost_child_relay_codec: the relay frames and the hello with its
+ *      fullmap field go through and back; bad frames are refused.
+ *   7. bothost_child_sandbox_files: a WinBoloBotHost child in its file
+ *      sandbox reads a file in its read folder, cannot read or write a file
+ *      outside, and writes in its cache folder.
+ *   8. bothost_child_sandbox_net: the sandboxed child's own datagram never
+ *      arrives; the same child with no sandbox (the control) sends it.
+ *   9. bothost_child_relay: the sandboxed child reaches a server through
+ *      the relay and back; its datagram to another port is refused.
+ *  10. bothost_child_machine_id: the sandboxed child, given the game's
+ *      machine id and salts, answers a salt with the game's own answer,
+ *      does not answer a salt the game answered, and tells the game each
+ *      salt it answers.
+ *  11. bothost_child_no_unsafe: the child refuses --allow-unsafe-brains and
+ *      -allow-unsafe-brains (two layers: the Lua sandbox inside the OS
+ *      sandbox).
+ *  12. bothost_child_copy_tree: the copy the game runs when the program's
+ *      folder keeps its ACL copies new and changed files only.
+ * Tests 7 to 10 need the sandbox: where this computer has none (Linux with
+ * no Landlock, other systems) they pass with a note. WINBOLO_TEST_TMP names
+ * the folder for their files (default: TEMP, or /tmp).
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <SDL3/SDL.h>
 
 #include "../../src/bothost_child/bothost_child.h"
+#include "machine_id.h"
+#include "platform_net.h"
 #include "test_harness.h"
 
 static int argIndex(const char *const *argv, int argc, const char *a) {
@@ -35,7 +59,7 @@ static int argIndex(const char *const *argv, int argc, const char *a) {
 int run_bothost_child_args(void) {
     BotHostChildParams p;
     const char *argv[BOT_HOST_CHILD_MAX_ARGS];
-    char buf[4096], small[64], hex[64];
+    char buf[4096], tooSmall[64], hex[64];
     uint8_t ticket[16], back[16];
     int argc, i;
 
@@ -100,8 +124,8 @@ int run_bothost_child_args(void) {
     UT_ASSERT(i > 0 && argv[i + 1][0] == '\0');
 
     /* Too small: refused, not cut short. */
-    UT_ASSERT(botHostChildBuildArgs(&p, "WinBoloBotHost", small,
-                                    sizeof(small), argv,
+    UT_ASSERT(botHostChildBuildArgs(&p, "WinBoloBotHost", tooSmall,
+                                    sizeof(tooSmall), argv,
                                     BOT_HOST_CHILD_MAX_ARGS) == -1);
     UT_ASSERT(botHostChildBuildArgs(&p, "WinBoloBotHost", buf, sizeof(buf),
                                     argv, 4) == -1);
@@ -157,7 +181,7 @@ int run_bothost_child_codec(void) {
     BotHostChildStatus a, b;
     char line[160];
     int proto = 0;
-    bool official = false;
+    bool official = false, fullMap = true;
 
     memset(&a, 0, sizeof(a));
     a.running = true;
@@ -186,12 +210,14 @@ int run_bothost_child_codec(void) {
     UT_ASSERT(!botHostChildParseStatus("status 1 1 0 -1 0 0 0", &b));
     UT_ASSERT(!botHostChildParseStatus(NULL, &b));
 
-    UT_ASSERT(botHostChildParseHello("hello 1 official=1", &proto, &official));
-    UT_ASSERT(proto == 1 && official);
-    UT_ASSERT(botHostChildParseHello("hello 1 official=0", &proto, &official));
-    UT_ASSERT(!official);
+    UT_ASSERT(botHostChildParseHello("hello 1 official=1", &proto, &official,
+                                     &fullMap));
+    UT_ASSERT(proto == 1 && official && !fullMap);
+    UT_ASSERT(botHostChildParseHello("hello 2 official=0 fullmap=1", &proto,
+                                     &official, &fullMap));
+    UT_ASSERT(proto == 2 && !official && fullMap);
     UT_ASSERT(!botHostChildParseHello("status 1 1 0 4 0 0 0", &proto,
-                                      &official));
+                                      &official, &fullMap));
     return 0;
 }
 
@@ -230,7 +256,6 @@ int run_bothost_child_restart(void) {
     return 0;
 }
 
-#ifdef _WIN32
 /* Reads the child's stdout until it ends or waitMs passes. */
 static bool readUntilEnd(BotHostChildProc *p, char *out, size_t outSize,
                          uint32_t waitMs, int *code) {
@@ -260,7 +285,6 @@ static bool readUntilEnd(BotHostChildProc *p, char *out, size_t outSize,
         SDL_Delay(10);
     }
 }
-#endif
 
 int run_bothost_child_job_limits(void) {
 #ifndef _WIN32
@@ -290,7 +314,8 @@ int run_bothost_child_job_limits(void) {
     argv[1] = "--test-alloc-mb";
     argv[2] = "1024";
     argv[3] = NULL;
-    p = botHostChildSpawn(exe, argv, &lim, NULL, err, sizeof(err));
+    p = botHostChildSpawn(exe, argv, &lim, NULL, NULL, err, sizeof(err),
+                          NULL);
     UT_ASSERT_MSG(p != NULL, "spawn: %s", err);
     UT_ASSERT(readUntilEnd(p, out, sizeof(out), 30000, &code));
     botHostChildFree(p);
@@ -307,7 +332,8 @@ int run_bothost_child_job_limits(void) {
     /* 2. Under the limit: the same child is fine. */
     argv[2] = "64";
     code = 99;
-    p = botHostChildSpawn(exe, argv, &lim, NULL, err, sizeof(err));
+    p = botHostChildSpawn(exe, argv, &lim, NULL, NULL, err, sizeof(err),
+                          NULL);
     UT_ASSERT_MSG(p != NULL, "spawn: %s", err);
     UT_ASSERT(readUntilEnd(p, out, sizeof(out), 30000, &code));
     botHostChildFree(p);
@@ -320,7 +346,8 @@ int run_bothost_child_job_limits(void) {
     lim.cpuPct = BOT_HOST_CHILD_DEFAULT_CPU_PCT;
     argv[1] = "--test-sleep-ms";
     argv[2] = "60000";
-    p = botHostChildSpawn(exe, argv, &lim, NULL, err, sizeof(err));
+    p = botHostChildSpawn(exe, argv, &lim, NULL, NULL, err, sizeof(err),
+                          NULL);
     UT_ASSERT_MSG(p != NULL, "spawn: %s", err);
     UT_ASSERT(botHostChildAlive(p, NULL));
     UT_ASSERT(botHostChildQueryJobForTest(p, &memMb, &cpuPct, &active,
@@ -337,4 +364,646 @@ int run_bothost_child_job_limits(void) {
     botHostChildFree(p);
     return 0;
 #endif
+}
+
+/* ---- The relay codec -------------------------------------------------- */
+
+int run_bothost_child_relay_codec(void) {
+    uint8_t frame[BOT_HOST_RELAY_MAX_FRAME], big[BOT_HOST_RELAY_MAX_DATAGRAM + 1];
+    uint8_t type = 0, sock = 0;
+    uint16_t len = 0, port = 0;
+    uint32_t ip = 0;
+    const uint8_t *data = NULL;
+    size_t n, dlen = 0;
+    char line[BOT_HOST_CHILD_LINE_MAX];
+    int proto = 0;
+    bool official = true, fullMap = false;
+
+    /* SEND with data. */
+    n = botHostRelayEncode(BOT_HOST_RELAY_SEND, 5, 0x0100007Fu, 0x3412u,
+                           (const uint8_t *)"hello", 5, frame, sizeof(frame));
+    UT_ASSERT(n == BOT_HOST_RELAY_HDR + BOT_HOST_RELAY_ADDR + 5);
+    UT_ASSERT(botHostRelayParseHeader(frame, &type, &sock, &len));
+    UT_ASSERT(type == BOT_HOST_RELAY_SEND && sock == 5 &&
+              len == BOT_HOST_RELAY_ADDR + 5);
+    UT_ASSERT(botHostRelayParseBody(frame + BOT_HOST_RELAY_HDR, len, &ip,
+                                    &port, &data, &dlen));
+    UT_ASSERT(ip == 0x0100007Fu && port == 0x3412u && dlen == 5 &&
+              memcmp(data, "hello", 5) == 0);
+    /* OPEN and CLOSE have no body. */
+    n = botHostRelayEncode(BOT_HOST_RELAY_OPEN, 63, 0, 0, NULL, 0, frame,
+                           sizeof(frame));
+    UT_ASSERT(n == BOT_HOST_RELAY_HDR);
+    UT_ASSERT(botHostRelayParseHeader(frame, &type, &sock, &len));
+    UT_ASSERT(type == BOT_HOST_RELAY_OPEN && sock == 63 && len == 0);
+    /* An empty datagram is valid. */
+    n = botHostRelayEncode(BOT_HOST_RELAY_RECV, 0, 1, 2, NULL, 0, frame,
+                           sizeof(frame));
+    UT_ASSERT(n == BOT_HOST_RELAY_HDR + BOT_HOST_RELAY_ADDR);
+    /* Refused: a socket past the limit, a datagram too long, a buffer too
+     * small, an unknown type. */
+    UT_ASSERT(botHostRelayEncode(BOT_HOST_RELAY_OPEN, BOT_HOST_RELAY_MAX_SOCKS,
+                                 0, 0, NULL, 0, frame, sizeof(frame)) == 0);
+    memset(big, 0, sizeof(big));
+    UT_ASSERT(botHostRelayEncode(BOT_HOST_RELAY_SEND, 1, 0, 0, big,
+                                 sizeof(big), frame, sizeof(frame)) == 0);
+    UT_ASSERT(botHostRelayEncode(BOT_HOST_RELAY_SEND, 1, 0, 0, big, 8, frame,
+                                 8) == 0);
+    UT_ASSERT(botHostRelayEncode(9, 1, 0, 0, NULL, 0, frame,
+                                 sizeof(frame)) == 0);
+    /* Bad headers. */
+    {
+        uint8_t h[4] = { BOT_HOST_RELAY_OPEN, 1, 1, 0 }; /* OPEN with a body */
+        UT_ASSERT(!botHostRelayParseHeader(h, &type, &sock, &len));
+        h[0] = BOT_HOST_RELAY_SEND;
+        h[2] = 5; /* shorter than the address */
+        UT_ASSERT(!botHostRelayParseHeader(h, &type, &sock, &len));
+        h[2] = 0xFF;
+        h[3] = 0xFF; /* longer than a datagram */
+        UT_ASSERT(!botHostRelayParseHeader(h, &type, &sock, &len));
+        h[2] = 6;
+        h[3] = 0;
+        h[1] = BOT_HOST_RELAY_MAX_SOCKS;
+        UT_ASSERT(!botHostRelayParseHeader(h, &type, &sock, &len));
+        h[1] = 0;
+        h[0] = 0;
+        UT_ASSERT(!botHostRelayParseHeader(h, &type, &sock, &len));
+    }
+    UT_ASSERT(!botHostRelayParseBody(frame, 5, &ip, &port, &data, &dlen));
+
+    /* The hello carries fullmap. */
+    botHostChildFormatHello(BOT_HOST_CHILD_PROTOCOL, false, true, line,
+                            sizeof(line));
+    UT_ASSERT(botHostChildParseHello(line, &proto, &official, &fullMap));
+    UT_ASSERT(proto == BOT_HOST_CHILD_PROTOCOL && !official && fullMap);
+    botHostChildFormatHello(BOT_HOST_CHILD_PROTOCOL, true, false, line,
+                            sizeof(line));
+    UT_ASSERT(botHostChildParseHello(line, &proto, &official, &fullMap));
+    UT_ASSERT(official && !fullMap);
+    return 0;
+}
+
+/* ---- Sandbox helpers ---------------------------------------------------- */
+
+static void setEnv(const char *name, const char *value) {
+#ifdef _WIN32
+    _putenv_s(name, value != NULL ? value : "");
+#else
+    if (value != NULL) {
+        setenv(name, value, 1);
+    } else {
+        unsetenv(name);
+    }
+#endif
+}
+
+static bool childExePath(char *out, size_t outSize) {
+    const char *base = SDL_GetBasePath();
+    SDL_PathInfo pi;
+    if (base == NULL) return false;
+#ifdef _WIN32
+    SDL_snprintf(out, outSize, "%sWinBoloBotHost.exe", base);
+#else
+    SDL_snprintf(out, outSize, "%sWinBoloBotHost", base);
+#endif
+    return SDL_GetPathInfo(out, &pi) && pi.type == SDL_PATHTYPE_FILE;
+}
+
+/* The program's folder, with no separator at the end. */
+static void exeDirOf(const char *exe, char *out, size_t outSize) {
+    size_t n;
+    SDL_strlcpy(out, exe, outSize);
+    n = strlen(out);
+    while (n > 0 && out[n - 1] != '/' && out[n - 1] != '\\') n--;
+    if (n > 1) n--;
+    out[n] = '\0';
+}
+
+/* A new folder for one test: <tmp>/wbsb_<name>_<ticks>. */
+static bool makeTestDir(const char *name, char *out, size_t outSize) {
+    const char *tmp = SDL_getenv("WINBOLO_TEST_TMP");
+#ifdef _WIN32
+    if (tmp == NULL || tmp[0] == '\0') tmp = SDL_getenv("TEMP");
+    if (tmp == NULL || tmp[0] == '\0') tmp = SDL_getenv("TMP");
+#endif
+    if (tmp == NULL || tmp[0] == '\0') tmp = "/tmp";
+    SDL_snprintf(out, outSize, "%s/wbsb_%s_%llu", tmp, name,
+                 (unsigned long long)SDL_GetTicksNS());
+    return SDL_CreateDirectory(out);
+}
+
+static bool writeFile(const char *path, const char *text) {
+    FILE *f = fopen(path, "wb");
+    if (f == NULL) return false;
+    fputs(text, f);
+    return fclose(f) == 0;
+}
+
+/* Removes a test folder and what is in it (one level of folders). */
+static SDL_EnumerationResult SDLCALL rmOne(void *ud, const char *dir,
+                                          const char *name) {
+    char path[1200];
+    SDL_PathInfo pi;
+    (void)ud;
+    SDL_snprintf(path, sizeof(path), "%s%s", dir, name);
+    if (SDL_GetPathInfo(path, &pi) && pi.type == SDL_PATHTYPE_DIRECTORY) {
+        (void)SDL_EnumerateDirectory(path, rmOne, NULL);
+    }
+    (void)SDL_RemovePath(path);
+    return SDL_ENUM_CONTINUE;
+}
+
+static void removeTestDir(const char *dir) {
+    (void)SDL_EnumerateDirectory(dir, rmOne, NULL);
+    (void)SDL_RemovePath(dir);
+}
+
+/* False (with a note) when this computer has no sandbox: the test passes. */
+static bool sandboxHere(void) {
+    char why[256];
+    why[0] = '\0';
+    if (!botHostChildSandboxAvailable(why, sizeof(why))) {
+        printf("    (no sandbox here: %s; Landlock ABI %d)\n", why,
+               botHostChildLandlockAbi());
+        return false;
+    }
+#if defined(__APPLE__)
+    printf("    (the macOS sandbox is not tested here)\n");
+    return false;
+#else
+    printf("    (Landlock ABI %d; -1: not Linux)\n", botHostChildLandlockAbi());
+    return true;
+#endif
+}
+
+/* The sandbox the game would give: the program's folder read, the read
+ * folder, the cache written. The strings stay in the caller's buffers. */
+static bool prepareSandbox(BotHostChildSandbox *sb, const char *exeDir,
+                           const char *readDir, const char *cacheDir) {
+    unsigned readFailed = 0;
+    char why[512];
+    memset(sb, 0, sizeof(*sb));
+    sb->on = true;
+    (void)botHostChildSandboxAdd(sb->readDirs, &sb->readDirCount, exeDir);
+    if (readDir != NULL) {
+        (void)botHostChildSandboxAdd(sb->readDirs, &sb->readDirCount,
+                                     readDir);
+    }
+    if (cacheDir != NULL) {
+        (void)botHostChildSandboxAdd(sb->writeDirs, &sb->writeDirCount,
+                                     cacheDir);
+    }
+    why[0] = '\0';
+    if (!botHostChildSandboxPrepare(sb, &readFailed, why, sizeof(why))) {
+        fprintf(stderr, "    prepare failed: %s\n", why);
+        return false;
+    }
+    if (readFailed != 0) {
+        fprintf(stderr, "    a read folder could not be granted (%#x)\n",
+                readFailed);
+        return false;
+    }
+    return true;
+}
+
+/* Runs the child at exe with one test mode; its output in out. */
+static BotHostChildProc *spawnTest(const char *exe, const char *const *args,
+                                   const BotHostChildSandbox *sb,
+                                   const char *log) {
+    const char *argv[16];
+    BotHostChildLimits lim;
+    char err[256];
+    int i, n = 0;
+    BotHostChildProc *p;
+    bool sbFailed = false;
+    argv[n++] = exe;
+    for (i = 0; args[i] != NULL && n < 15; i++) argv[n++] = args[i];
+    argv[n] = NULL;
+    lim.memMb = 0;
+    lim.cpuPct = 0;
+    err[0] = '\0';
+    p = botHostChildSpawn(exe, argv, &lim, sb, log, err, sizeof(err),
+                          &sbFailed);
+    if (p == NULL) {
+        fprintf(stderr, "    spawn failed (%s, sandbox %d)\n", err,
+                (int)sbFailed);
+    }
+    return p;
+}
+
+static bool runTest(const char *exe, const char *const *args,
+                    const BotHostChildSandbox *sb, const char *log,
+                    char *out, size_t outSize, int *code) {
+    BotHostChildProc *p = spawnTest(exe, args, sb, log);
+    bool ended;
+    if (p == NULL) return false;
+    ended = readUntilEnd(p, out, outSize, 30000, code);
+    botHostChildFree(p);
+    return ended;
+}
+
+int run_bothost_child_sandbox_files(void) {
+    char exe[1024], exeDir[1024], root[1024], readDir[1100], cache[1100];
+    char outside[1100], inFile[1200], outFile[1200], cacheFile[1200];
+    char outWrite[1200], log[1200], out[512];
+    BotHostChildSandbox sb;
+    int code = 99;
+    SDL_PathInfo pi;
+
+    UT_ASSERT_MSG(childExePath(exe, sizeof(exe)),
+                  "no WinBoloBotHost: build it first");
+    if (!sandboxHere()) return 0;
+    exeDirOf(exe, exeDir, sizeof(exeDir));
+    UT_ASSERT(makeTestDir("files", root, sizeof(root)));
+    SDL_snprintf(readDir, sizeof(readDir), "%s/read", root);
+    SDL_snprintf(cache, sizeof(cache), "%s/cache", root);
+    SDL_snprintf(outside, sizeof(outside), "%s/outside", root);
+    UT_ASSERT(SDL_CreateDirectory(readDir) && SDL_CreateDirectory(cache) &&
+              SDL_CreateDirectory(outside));
+    SDL_snprintf(inFile, sizeof(inFile), "%s/allowed.txt", readDir);
+    SDL_snprintf(outFile, sizeof(outFile), "%s/secret.txt", outside);
+    SDL_snprintf(cacheFile, sizeof(cacheFile), "%s/written.txt", cache);
+    SDL_snprintf(outWrite, sizeof(outWrite), "%s/planted.txt", outside);
+    SDL_snprintf(log, sizeof(log), "%s/child.log", root);
+    UT_ASSERT(writeFile(inFile, "allowed\n") &&
+              writeFile(outFile, "secret\n"));
+    UT_ASSERT(prepareSandbox(&sb, exeDir, readDir, cache));
+
+    {
+        const char *a[] = { "--test-read", inFile, NULL };
+        UT_ASSERT(runTest(exe, a, &sb, log, out, sizeof(out), &code));
+        printf("    read in the read folder: exit %d, %s", code, out);
+        UT_ASSERT_MSG(code == 0 && strstr(out, "read ok") != NULL,
+                      "exit %d [%s]", code, out);
+    }
+    {
+        const char *a[] = { "--test-read", outFile, NULL };
+        UT_ASSERT(runTest(exe, a, &sb, log, out, sizeof(out), &code));
+        printf("    read outside: exit %d, %s", code, out);
+        UT_ASSERT_MSG(code == BOT_HOST_CHILD_EXIT_DENIED &&
+                          strstr(out, "read denied") != NULL,
+                      "exit %d [%s]", code, out);
+    }
+    {
+        const char *a[] = { "--test-write", outWrite, NULL };
+        UT_ASSERT(runTest(exe, a, &sb, log, out, sizeof(out), &code));
+        printf("    write outside: exit %d, %s", code, out);
+        UT_ASSERT_MSG(code == BOT_HOST_CHILD_EXIT_DENIED &&
+                          strstr(out, "write denied") != NULL,
+                      "exit %d [%s]", code, out);
+        UT_ASSERT_MSG(!SDL_GetPathInfo(outWrite, &pi),
+                      "the child made %s", outWrite);
+    }
+    {
+        const char *a[] = { "--test-write", inFile, NULL };
+        UT_ASSERT(runTest(exe, a, &sb, log, out, sizeof(out), &code));
+        printf("    write in the read folder: exit %d, %s", code, out);
+        UT_ASSERT_MSG(code == BOT_HOST_CHILD_EXIT_DENIED,
+                      "exit %d [%s]", code, out);
+    }
+    {
+        const char *a[] = { "--test-write", cacheFile, NULL };
+        UT_ASSERT(runTest(exe, a, &sb, log, out, sizeof(out), &code));
+        printf("    write in the cache: exit %d, %s", code, out);
+        UT_ASSERT_MSG(code == 0 && strstr(out, "write ok") != NULL,
+                      "exit %d [%s]", code, out);
+        UT_ASSERT(SDL_GetPathInfo(cacheFile, &pi) &&
+                  pi.type == SDL_PATHTYPE_FILE);
+    }
+    {
+        /* The control: with no sandbox the same read works. */
+        const char *a[] = { "--test-read", outFile, NULL };
+        UT_ASSERT(runTest(exe, a, NULL, log, out, sizeof(out), &code));
+        UT_ASSERT_MSG(code == 0, "control: exit %d [%s]", code, out);
+    }
+    removeTestDir(root);
+    return 0;
+}
+
+/* A UDP socket on 127.0.0.1 at a port the system picks. */
+static bolo_socket_t openLoopback(uint16_t *port) {
+    struct sockaddr_in a;
+    socklen_t al = sizeof(a);
+    bolo_socket_t s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == BOLO_INVALID_SOCKET) return s;
+    memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = 0;
+    if (bind(s, (struct sockaddr *)&a, sizeof(a)) != 0 ||
+        getsockname(s, (struct sockaddr *)&a, &al) != 0) {
+        closesocket(s);
+        return BOLO_INVALID_SOCKET;
+    }
+    *port = ntohs(a.sin_port);
+    return s;
+}
+
+/* One datagram within waitMs, or -1. */
+static int recvWait(bolo_socket_t s, char *buf, int size, uint32_t waitMs,
+                    struct sockaddr_in *from) {
+    fd_set rd;
+    struct timeval tv;
+    socklen_t fl = sizeof(*from);
+    FD_ZERO(&rd);
+    FD_SET(s, &rd);
+    tv.tv_sec = (long)(waitMs / 1000u);
+    tv.tv_usec = (long)((waitMs % 1000u) * 1000u);
+    if (select((int)s + 1, &rd, NULL, NULL, &tv) <= 0) return -1;
+    return (int)recvfrom(s, buf, size, 0, (struct sockaddr *)from, &fl);
+}
+
+int run_bothost_child_sandbox_net(void) {
+    char exe[1024], exeDir[1024], root[1024], log[1200], out[512];
+    char portText[16], buf[64];
+    BotHostChildSandbox sb;
+    struct sockaddr_in from;
+    bolo_socket_t s;
+    uint16_t port = 0;
+    int code = 99, got;
+
+    UT_ASSERT_MSG(childExePath(exe, sizeof(exe)),
+                  "no WinBoloBotHost: build it first");
+    if (!sandboxHere()) return 0;
+    UT_ASSERT(bolo_net_init() == 0);
+    exeDirOf(exe, exeDir, sizeof(exeDir));
+    UT_ASSERT(makeTestDir("net", root, sizeof(root)));
+    SDL_snprintf(log, sizeof(log), "%s/child.log", root);
+    UT_ASSERT(prepareSandbox(&sb, exeDir, NULL, NULL));
+    s = openLoopback(&port);
+    UT_ASSERT(s != BOLO_INVALID_SOCKET);
+    SDL_snprintf(portText, sizeof(portText), "%u", (unsigned)port);
+    {
+        const char *a[] = { "--test-net", "127.0.0.1", portText, NULL };
+        UT_ASSERT(runTest(exe, a, &sb, log, out, sizeof(out), &code));
+        got = recvWait(s, buf, sizeof(buf), 1000, &from);
+        printf("    sandboxed: exit %d, %s    datagram arrived: %s\n", code,
+               out, got > 0 ? "yes" : "no");
+        /* The child's line may be "net sent" where the system drops the
+         * datagram later (an AppContainer with no network capability):
+         * what counts is that nothing arrives. */
+        UT_ASSERT_MSG(got <= 0, "the sandboxed child's datagram arrived");
+    }
+    {
+        const char *a[] = { "--test-net", "127.0.0.1", portText, NULL };
+        UT_ASSERT(runTest(exe, a, NULL, log, out, sizeof(out), &code));
+        got = recvWait(s, buf, sizeof(buf), 3000, &from);
+        printf("    control (no sandbox): exit %d, %s    datagram arrived: "
+               "%s\n", code, out, got > 0 ? "yes" : "no");
+        UT_ASSERT_MSG(code == 0 && got == 7 && memcmp(buf, "sandbox", 7) == 0,
+                      "control: exit %d, got %d", code, got);
+    }
+    closesocket(s);
+    removeTestDir(root);
+    return 0;
+}
+
+int run_bothost_child_relay(void) {
+    char exe[1024], exeDir[1024], root[1024], log[1200], out[512];
+    char portText[16], buf[64];
+    BotHostChildSandbox sb;
+    BotHostChildProc *p;
+    BotHostRelay *r;
+    bolo_socket_t server, other;
+    uint16_t port = 0, otherPort = 0;
+    unsigned long toServer = 0, fromServer = 0, refused = 0;
+    int code = 99, pings = 0, strays = 0;
+    uint32_t start;
+    size_t used = 0;
+
+    UT_ASSERT_MSG(childExePath(exe, sizeof(exe)),
+                  "no WinBoloBotHost: build it first");
+    if (!sandboxHere()) return 0;
+    UT_ASSERT(bolo_net_init() == 0);
+    exeDirOf(exe, exeDir, sizeof(exeDir));
+    UT_ASSERT(makeTestDir("relay", root, sizeof(root)));
+    SDL_snprintf(log, sizeof(log), "%s/child.log", root);
+    UT_ASSERT(prepareSandbox(&sb, exeDir, NULL, NULL));
+    /* The server and the port after it (the child's stray datagram goes
+     * there, and the relay must refuse it). */
+    server = BOLO_INVALID_SOCKET;
+    other = BOLO_INVALID_SOCKET;
+    for (int tries = 0; tries < 20 && other == BOLO_INVALID_SOCKET; tries++) {
+        struct sockaddr_in a;
+        if (server != BOLO_INVALID_SOCKET) closesocket(server);
+        server = openLoopback(&port);
+        UT_ASSERT(server != BOLO_INVALID_SOCKET);
+        other = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        memset(&a, 0, sizeof(a));
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        a.sin_port = htons((uint16_t)(port + 1));
+        if (bind(other, (struct sockaddr *)&a, sizeof(a)) != 0) {
+            closesocket(other);
+            other = BOLO_INVALID_SOCKET;
+        } else {
+            otherPort = (uint16_t)(port + 1);
+        }
+    }
+    UT_ASSERT(other != BOLO_INVALID_SOCKET && otherPort == port + 1);
+    SDL_snprintf(portText, sizeof(portText), "%u", (unsigned)port);
+    {
+        const char *a[] = { "--test-relay", "127.0.0.1", portText, NULL };
+        p = spawnTest(exe, a, &sb, log);
+        UT_ASSERT(p != NULL);
+    }
+    r = botHostRelayStart(p, "127.0.0.1", port);
+    UT_ASSERT(r != NULL);
+    out[0] = '\0';
+    start = (uint32_t)SDL_GetTicks();
+    while ((uint32_t)SDL_GetTicks() - start < 10000u) {
+        struct sockaddr_in from;
+        int n = recvWait(server, buf, sizeof(buf), 20, &from);
+        if (n == 4 && memcmp(buf, "ping", 4) == 0) {
+            pings++;
+            (void)sendto(server, "pong", 4, 0, (struct sockaddr *)&from,
+                         sizeof(from));
+        }
+        if (recvWait(other, buf, sizeof(buf), 0, &from) > 0) strays++;
+        if (used + 1 < sizeof(out)) {
+            int m = botHostChildRead(p, out + used, sizeof(out) - used - 1);
+            if (m > 0) {
+                used += (size_t)m;
+                out[used] = '\0';
+            }
+        }
+        if (!botHostChildAlive(p, &code)) break;
+    }
+    UT_ASSERT(readUntilEnd(p, out + used, sizeof(out) - used, 5000, &code));
+    botHostChildKill(p);
+    botHostRelayCounts(r, &toServer, &fromServer, &refused);
+    botHostRelayStop(r);
+    botHostChildFree(p);
+    printf("    child: exit %d, %s    pings %d, to the server %lu, from it "
+           "%lu, refused %lu, stray datagrams %d\n", code, out, pings,
+           toServer, fromServer, refused, strays);
+    UT_ASSERT_MSG(code == 0 && strstr(out, "relay ok") != NULL,
+                  "exit %d [%s]", code, out);
+    UT_ASSERT(pings >= 1 && toServer >= 1 && fromServer >= 1);
+    UT_ASSERT_MSG(refused >= 1, "the stray datagram was not refused");
+    UT_ASSERT_MSG(strays == 0, "a stray datagram arrived");
+    closesocket(server);
+    closesocket(other);
+    removeTestDir(root);
+    return 0;
+}
+
+int run_bothost_child_machine_id(void) {
+    char exe[1024], exeDir[1024], root[1024], idDir[1100], log[1200];
+    char out[2048], line[BOT_HOST_CHILD_LINE_MAX], hex[80], want[80];
+    static char lines[BOT_HOST_CHILD_MACHINE_LINES][BOT_HOST_CHILD_LINE_MAX];
+    uint8_t id[MACHINE_ID_LEN], s1[MACHINE_SALT_LEN], s2[MACHINE_SALT_LEN];
+    uint8_t hash[MACHINE_HASH_LEN];
+    char s1hex[40], s2hex[40];
+    BotHostChildSandbox sb;
+    BotHostChildProc *p;
+    int code = 99, n, i;
+
+    UT_ASSERT_MSG(childExePath(exe, sizeof(exe)),
+                  "no WinBoloBotHost: build it first");
+    if (!sandboxHere()) return 0;
+    exeDirOf(exe, exeDir, sizeof(exeDir));
+    UT_ASSERT(makeTestDir("machine", root, sizeof(root)));
+    SDL_snprintf(idDir, sizeof(idDir), "%s/id", root);
+    SDL_snprintf(log, sizeof(log), "%s/child.log", root);
+    UT_ASSERT(SDL_CreateDirectory(idDir));
+    /* The child inherits this too: it must not need it (it cannot read
+     * it in the sandbox). */
+    setEnv("WINBOLO_MACHINE_ID_DIR", idDir);
+    UT_ASSERT(machineIdInit());
+    UT_ASSERT(machineIdGet(id));
+    UT_ASSERT(machineRandomBytes(s1, sizeof(s1)) &&
+              machineRandomBytes(s2, sizeof(s2)));
+    /* The game answered s2 before: the child must not answer it again. */
+    UT_ASSERT(machineIdAnswerSalt(s2, hash));
+    botHostChildTicketHex(s1, sizeof(s1), s1hex, sizeof(s1hex));
+    botHostChildTicketHex(s2, sizeof(s2), s2hex, sizeof(s2hex));
+    machineIdHashSalt(id, s1, hash);
+    botHostChildTicketHex(hash, sizeof(hash), want, sizeof(want));
+
+    UT_ASSERT(prepareSandbox(&sb, exeDir, NULL, NULL));
+    {
+        const char *a[] = { "--test-salt", NULL };
+        p = spawnTest(exe, a, &sb, log);
+        UT_ASSERT(p != NULL);
+    }
+    n = botHostChildMachineLines(lines, BOT_HOST_CHILD_MACHINE_LINES);
+    UT_ASSERT_MSG(n >= 2, "%d machine lines", n);
+    for (i = 0; i < n; i++) UT_ASSERT(botHostChildWriteLine(p, lines[i]));
+    SDL_snprintf(line, sizeof(line), "ask %s", s1hex);
+    UT_ASSERT(botHostChildWriteLine(p, line));
+    SDL_snprintf(line, sizeof(line), "ask %s", s2hex);
+    UT_ASSERT(botHostChildWriteLine(p, line));
+    UT_ASSERT(botHostChildWriteLine(p, "end"));
+    UT_ASSERT(readUntilEnd(p, out, sizeof(out), 30000, &code));
+    botHostChildFree(p);
+    printf("    child: exit %d\n%s", code, out);
+    UT_ASSERT_MSG(code == 0, "exit %d", code);
+    SDL_snprintf(hex, sizeof(hex), "answer %s", want);
+    /* The same answer as the game: the server sees one computer. */
+    UT_ASSERT_MSG(strstr(out, hex) != NULL, "want [%s]", hex);
+    UT_ASSERT(strstr(out, "answer none") != NULL);
+    SDL_snprintf(line, sizeof(line), "salt %s", s1hex);
+    UT_ASSERT_MSG(strstr(out, line) != NULL, "no [%s]", line);
+    SDL_snprintf(line, sizeof(line), "salt %s", s2hex);
+    UT_ASSERT(strstr(out, line) == NULL);
+    /* The game keeps the salt the child answered. */
+    machineIdNoteSalt(s1);
+    UT_ASSERT(!machineIdAnswerSalt(s1, hash));
+    setEnv("WINBOLO_MACHINE_ID_DIR", NULL);
+    removeTestDir(root);
+    return 0;
+}
+
+int run_bothost_child_no_unsafe(void) {
+    char exe[1024], root[1024], log[1200], out[512];
+    char logText[2048];
+    int code = 99;
+    size_t n;
+    FILE *f;
+    static const char *const flags[] = { "--allow-unsafe-brains",
+                                         "-allow-unsafe-brains" };
+    size_t k;
+
+    UT_ASSERT_MSG(childExePath(exe, sizeof(exe)),
+                  "no WinBoloBotHost: build it first");
+    UT_ASSERT(makeTestDir("unsafe", root, sizeof(root)));
+    SDL_snprintf(log, sizeof(log), "%s/child.log", root);
+    for (k = 0; k < sizeof(flags) / sizeof(flags[0]); k++) {
+        /* As the game's child, and in a test mode: refused before both. */
+        const char *a1[] = { "--embed-child", "--server", "127.0.0.1",
+                             "--player", "1", "--cachedir", root, flags[k],
+                             NULL };
+        const char *a2[] = { "--test-sleep-ms", "10", flags[k], NULL };
+        UT_ASSERT(runTest(exe, a1, NULL, log, out, sizeof(out), &code));
+        UT_ASSERT_MSG(code == BOT_HOST_CHILD_EXIT_ARGS, "%s: exit %d",
+                      flags[k], code);
+        f = fopen(log, "rb");
+        UT_ASSERT(f != NULL);
+        n = fread(logText, 1, sizeof(logText) - 1, f);
+        fclose(f);
+        logText[n] = '\0';
+        UT_ASSERT_MSG(strstr(logText, "refuses --allow-unsafe-brains") !=
+                          NULL,
+                      "log [%s]", logText);
+        UT_ASSERT(runTest(exe, a2, NULL, log, out, sizeof(out), &code));
+        UT_ASSERT_MSG(code == BOT_HOST_CHILD_EXIT_ARGS, "%s test mode: exit %d",
+                      flags[k], code);
+        printf("    %s: refused (exit %d)\n", flags[k], code);
+    }
+    {
+        /* The control: the test mode alone runs. */
+        const char *a[] = { "--test-sleep-ms", "10", NULL };
+        UT_ASSERT(runTest(exe, a, NULL, log, out, sizeof(out), &code));
+        UT_ASSERT_MSG(code == 0, "control: exit %d", code);
+    }
+    removeTestDir(root);
+    return 0;
+}
+
+static bool fileIs(const char *path, const char *text) {
+    char buf[64];
+    size_t n;
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) return false;
+    n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    return strcmp(buf, text) == 0;
+}
+
+int run_bothost_child_copy_tree(void) {
+    char root[1024], src[1100], sub[1100], dst[1100], path[1200];
+    SDL_PathInfo pi;
+
+    UT_ASSERT(makeTestDir("copy", root, sizeof(root)));
+    SDL_snprintf(src, sizeof(src), "%s/src", root);
+    SDL_snprintf(sub, sizeof(sub), "%s/src/brains", root);
+    SDL_snprintf(dst, sizeof(dst), "%s/dst", root);
+    UT_ASSERT(SDL_CreateDirectory(sub));
+    SDL_snprintf(path, sizeof(path), "%s/a.dll", src);
+    UT_ASSERT(writeFile(path, "one"));
+    SDL_snprintf(path, sizeof(path), "%s/init.lua", sub);
+    UT_ASSERT(writeFile(path, "brain"));
+
+    /* The top files only. */
+    UT_ASSERT(botHostChildCopyTree(src, dst, false));
+    SDL_snprintf(path, sizeof(path), "%s/a.dll", dst);
+    UT_ASSERT(fileIs(path, "one"));
+    SDL_snprintf(path, sizeof(path), "%s/brains/init.lua", dst);
+    UT_ASSERT(!SDL_GetPathInfo(path, &pi));
+    /* With the folders. */
+    UT_ASSERT(botHostChildCopyTree(src, dst, true));
+    UT_ASSERT(fileIs(path, "brain"));
+    /* A changed file (another size) is copied again. */
+    SDL_snprintf(path, sizeof(path), "%s/a.dll", src);
+    UT_ASSERT(writeFile(path, "three"));
+    UT_ASSERT(botHostChildCopyTree(src, dst, false));
+    SDL_snprintf(path, sizeof(path), "%s/a.dll", dst);
+    UT_ASSERT(fileIs(path, "three"));
+    /* A missing source is refused. */
+    SDL_snprintf(path, sizeof(path), "%s/none", root);
+    UT_ASSERT(!botHostChildCopyTree(path, dst, true));
+    removeTestDir(root);
+    return 0;
 }

@@ -2189,6 +2189,7 @@ set(CLIENT_SOURCES
     # The built-in Bot Host as a child process (bothost_child.h).
     src/bothost_child/bothost_child.c src/bothost_child/bothost_child_client.c
     src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
+    src/bothost_child/bothost_child_relay.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/scn_panel_prefs.c
@@ -3274,6 +3275,7 @@ set(HEADLESS_SOURCES
     # The built-in Bot Host as a child process (bothost_child.h).
     src/bothost_child/bothost_child.c src/bothost_child/bothost_child_client.c
     src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
+    src/bothost_child/bothost_child_relay.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -3779,6 +3781,27 @@ option(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG
 # System Info still shows each bot's host.
 option(WINBOLO_HIDE_LOBBY_BOT_HOSTS
     "Hide the Bot Hosts list in the lobby (System Info keeps it)" OFF)
+
+# The game's built-in Bot Host runs WinBoloBotHost as a child process
+# (src/bothost_child). The game looks for it next to its own program: in
+# the build folder on Windows and Linux, and in WinBolo.app/Contents/MacOS
+# on macOS, for every build (not only with WINBOLO_BUNDLE_DEV_TOOLS).
+# Web, Android and iOS have no built-in Bot Host (bothost_embed_stub.c), so
+# none of this applies there.
+if(TARGET WinBoloBotHost AND TARGET WinBolo)
+    add_dependencies(WinBolo WinBoloBotHost)
+endif()
+if(TARGET WinBoloBotHost AND TARGET WinBoloHeadless)
+    add_dependencies(WinBoloHeadless WinBoloBotHost)
+endif()
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND TARGET WinBolo
+   AND TARGET WinBoloBotHost)
+    add_custom_command(TARGET WinBolo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:WinBoloBotHost>" "$<TARGET_FILE_DIR:WinBolo>"
+        COMMENT "Bundling WinBoloBotHost into WinBolo.app/Contents/MacOS"
+    )
+endif()
 
 option(WINBOLO_BUNDLE_DEV_TOOLS
     "Bundle WinBoloDS, BrainTest, and WinBoloHeadless inside WinBolo.app (macOS)" ON)
@@ -4864,10 +4887,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bot_host_optout.c
     src/bothost/bothost_optout.c
     # The built-in Bot Host as a child process: arguments, the line codec,
-    # the restart counter, and on Windows the job's limits.
+    # the restart counter, on Windows the job's limits, and the file
+    # sandbox, the relay and the machine id lines.
     tests/unit/test_bothost_child.c
     src/bothost_child/bothost_child.c
     src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
+    src/bothost_child/bothost_child_relay.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
@@ -5706,6 +5731,10 @@ if(WB_NETDEBUG)
 endif()
 
 add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
+# The bothost_child_* tests start WinBoloBotHost from the tests' folder.
+if(TARGET WinBoloBotHost)
+    add_dependencies(WinBoloUnitTests WinBoloBotHost)
+endif()
 target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     src/bolo/lobby_bot_pools_json.c
     tests/unit/test_bot_name_pools.c
@@ -6318,6 +6347,13 @@ set(_unit_test_names
     bothost_child_codec
     bothost_child_restart
     bothost_child_job_limits
+    bothost_child_relay_codec
+    bothost_child_sandbox_files
+    bothost_child_sandbox_net
+    bothost_child_relay
+    bothost_child_machine_id
+    bothost_child_no_unsafe
+    bothost_child_copy_tree
     bot_host_link_announce_codec
     bot_host_link_addr_list
     bot_host_link_allow
