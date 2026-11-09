@@ -70,6 +70,8 @@
  *   rejoin_empty_team_is_new  — a rejoin whose old team emptied gets a
  *                               free team
  *   join_without_rejoin_is_new — a join not asking to rejoin is unchanged
+ *   rejoin_next_round_is_new  — a rejoin record does not last into the
+ *                               next round
  *   joiner_slot_before_join   — a joiner's team goes out before its join
  *   lobby_joiner_keeps_rule   — the lobby keeps the smallest-team pick
  *   lobby_drops_empty_teams   — the next lobby does not list a team the
@@ -1244,6 +1246,36 @@ int run_team_sides_join_without_rejoin_is_new(void) {
     serverSimAddPlayer(sim, 1, "P1", false);
     UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the joiner is on team %u",
                   (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(!tsAllied(sim, 0, 1) && !tsAllied(sim, 1, 2));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Players 0 and 1 on team 1, player 2 on team 2. Player 1 drops in round
+   1. The round ends and round 2 starts, where team 1 still has player 0.
+   Player 1 rejoins in round 2: the record from round 1 is gone, so player 1
+   gets a free team, not team 1. */
+int run_team_sides_rejoin_next_round_is_new(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+
+    UT_ASSERT(sim != NULL);
+    serverSimRemovePlayer(sim, 1);
+    serverSimEnterGameOver(sim);
+    serverSimReturnToLobby(sim);
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "round 2 did not start (state %d)", (int)sim->state);
+    UT_ASSERT(serverSimIsPlayerConnected(sim, 0));
+    UT_ASSERT(serverSimIsPlayerConnected(sim, 2));
+    UT_ASSERT_MSG(tsTeam(sim, 0) == 1 && tsTeam(sim, 2) == 2,
+                  "round 2 has teams %u and %u",
+                  (unsigned)tsTeam(sim, 0), (unsigned)tsTeam(sim, 2));
+
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) != 1 && tsTeam(sim, 1) != 0,
+                  "the rejoiner is on team %u", (unsigned)tsTeam(sim, 1));
     UT_ASSERT(!tsAllied(sim, 0, 1) && !tsAllied(sim, 1, 2));
     UT_ASSERT(serverSimSidesAgree(sim));
     serverSimDestroy(sim);

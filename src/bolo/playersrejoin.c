@@ -220,7 +220,7 @@ void playersRejoinRequest(GameSim *sim, char *playerName, BYTE playerNum, pillbo
 /*********************************************************
 *NAME:          playersRejoinGetTeam
 *PURPOSE:
-* Returns the team a rejoining player was on when he left,
+* Returns the team a rejoining player was on when leaving,
 * or 0 when there is no record for that name. Leaves the
 * record in place: playersRejoinRequest clears it.
 *

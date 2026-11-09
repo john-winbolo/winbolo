@@ -887,6 +887,8 @@ static const UnitTestEntry s_tests[] = {
                                                  run_team_sides_rejoin_empty_team_is_new },
     { "team_sides_join_without_rejoin_is_new",
                                                  run_team_sides_join_without_rejoin_is_new },
+    { "team_sides_rejoin_next_round_is_new",
+                                                 run_team_sides_rejoin_next_round_is_new },
     { "team_sides_joiner_slot_before_join",
                                                  run_team_sides_joiner_slot_before_join },
     { "team_sides_lobby_joiner_keeps_rule",

@@ -248,7 +248,7 @@ void setClientTypeFlagsInternal(ServerSim *sim, BYTE playerNum,
 }
 
 /* A connected seat other than playerNum that is on the team the rejoiner
-   was on when he left, human or bot, or NEUTRAL when there is none: the
+   was on when leaving, human or bot, or NEUTRAL when there is none: the
    team is gone, or no team was kept. */
 static BYTE rejoinTeammate(const ServerSim *sim, BYTE playerNum) {
     BYTE team = sim->rejoinTeam[playerNum];
@@ -269,8 +269,8 @@ void serverSimPlaceJoiner(ServerSim *sim, BYTE playerNum) {
        addPlayerInternal gave it as held. Take that team off first. */
     sim->lobbyPlayers[playerNum].teamNumber = 0;
     /* A rejoiner whose old team still has a player goes back onto it, by
-       serverSimRestoreRejoinTeam once his join is out. Until then he is on
-       no team, so no new team is set up for him only to be left empty. */
+       serverSimRestoreRejoinTeam once their join is out. Until then they
+       are on no team, so no new team is set up only to be left empty. */
     if (rejoinTeammate(sim, playerNum) == NEUTRAL) {
         sim->rejoinTeam[playerNum] = 0;
         sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
@@ -293,7 +293,7 @@ void serverSimRestoreRejoinTeam(ServerSim *sim, BYTE playerNum) {
     mate = rejoinTeammate(sim, playerNum);
     sim->rejoinTeam[playerNum] = 0;
     if (mate == NEUTRAL) {
-        /* The team lost its last player in the meantime: a side of his
+        /* The team lost its last player in the meantime: a side of their
            own, as any other joiner gets. */
         sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
         serverSimPublishLobbySlot(sim, playerNum);
@@ -598,7 +598,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
 
     /* Record ownership and team for rejoin before migration changes it. A
      * person who leaves a running round is always recorded, so one who owns
-     * no pill or base still gets his team back. Bots never rejoin. */
+     * no pill or base still gets their team back. Bots never rejoin. */
     {
         char pName[PLAYER_NAME_LEN];
         PlayerBitMap pillBits = 0, baseBits = 0;
