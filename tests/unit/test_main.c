@@ -819,6 +819,8 @@ static const UnitTestEntry s_tests[] = {
     { "brainrec_host_make_absolute", run_brainrec_host_make_absolute },
     { "brainrec_host_print2_gz", run_brainrec_host_print2_gz },
     { "brainrec_host_rec_codec", run_brainrec_host_rec_codec },
+    { "brainrec_host_legend_unclosed", run_brainrec_host_legend_unclosed },
+    { "brainrec_host_upload_no_session", run_brainrec_host_upload_no_session },
     { "lv_tank_stocks_from_snapshot",            run_lv_tank_stocks_from_snapshot            },
     { "lv_team_colours_from_snapshot",           run_lv_team_colours_from_snapshot           },
     { "lv_team_colours_events",                  run_lv_team_colours_events                  },

@@ -1277,6 +1277,9 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/sdl3/cursor.c
     src/gui/ios/imgui_ios.cpp
     src/gui/sdl3/gamefront.c
+    # The lobby and gamefront.c call the Bot Host inside the client; iOS
+    # runs no bots, so it takes the stubs (bothost_embed.h).
+    src/bothost/bothost_embed_stub.c
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
@@ -2431,7 +2434,7 @@ bolo_grant_internal_source_access(WinBolo
     src/mapeditor/mapeditor.c
     src/mapeditor/mapeditor_export.c
     src/mapeditor/mapeditor_validate.c)
-target_include_directories(WinBolo PRIVATE src/bothost src/headless)
+target_include_directories(WinBolo PRIVATE src/bothost)
 if(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG)
     target_compile_definitions(WinBolo PRIVATE
         WINBOLO_HIDE_CLIENT_BOT_HOST_MSG=1)
@@ -6411,6 +6414,8 @@ set(_unit_test_names
     brainrec_host_make_absolute
     brainrec_host_print2_gz
     brainrec_host_rec_codec
+    brainrec_host_legend_unclosed
+    brainrec_host_upload_no_session
     lv_tank_stocks_from_snapshot
     lv_team_colours_from_snapshot
     lv_team_colours_events

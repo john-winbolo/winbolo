@@ -16,6 +16,7 @@
  */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 #include <zlib.h>
@@ -27,6 +28,8 @@
 #include "client_sim.h"
 #include "control_event.h"
 #include "transport_control_codec.h"
+#include "bulk_transfer.h"
+#include "transport_udp_server_internal.h" /* serverBotRecPiece, udpServer */
 #include "test_harness.h"
 
 /* One bot entry of a hand-made frame. */
@@ -1053,5 +1056,71 @@ int run_brainrec_host_merge_verdict(void) {
         UT_ASSERT(strcmp(t, "unknown reason") != 0);
     }
     UT_ASSERT(strcmp(brainRecMergeFailText(99), "unknown reason") == 0);
+    return 0;
+}
+
+/* A slot legend from an uploaded file that is not a closed object (no '}')
+ * leaves the global legend as it was; a good one still goes in. */
+int run_brainrec_host_legend_unclosed(void) {
+    char *r;
+
+    r = brainRecLegendAddSlot("{}", 2, "{\"a\":1");
+    UT_ASSERT(r != NULL);
+    UT_ASSERT_MSG(strcmp(r, "{}") == 0, "got %s", r);
+    free(r);
+
+    r = brainRecLegendAddSlot("{\"x\":1}", 2, "{");
+    UT_ASSERT(r != NULL);
+    UT_ASSERT_MSG(strcmp(r, "{\"x\":1}") == 0, "got %s", r);
+    free(r);
+
+    /* A global legend with no closing '}' is kept as it is. */
+    r = brainRecLegendAddSlot("{\"x\":1", 2, "{\"a\":1}");
+    UT_ASSERT(r != NULL);
+    UT_ASSERT_MSG(strcmp(r, "{\"x\":1") == 0, "got %s", r);
+    free(r);
+
+    r = brainRecLegendAddSlot("{}", 2, "{\"a\":1}");
+    UT_ASSERT(r != NULL);
+    UT_ASSERT_MSG(strcmp(r, "{\"a\":1,\"slots\":{\"2\":{\"a\":1}}}") == 0, "got %s", r);
+    free(r);
+    return 0;
+}
+
+/* A host's recording piece for a block this server has no finished
+ * session folder for writes nothing: no staging folder beside it, no
+ * file, no bytes counted. Its DONE is answered NO_SESSION. */
+int run_brainrec_host_upload_no_session(void) {
+    static BotHostConn saved;
+    BotHostConn *hc = &udpServer.botHosts[0];
+    BulkStreamHeader hd;
+    uint8_t data[16];
+    bool noSession, wrote;
+    uint64_t bytes;
+
+    saved = *hc;
+    memset(hc, 0, sizeof(*hc));
+    SDL_strlcpy(hc->name, "ut652host", sizeof(hc->name));
+
+    memset(&hd, 0, sizeof(hd));
+    memset(data, 0x5A, sizeof(data));
+    hd.kind = BULK_KIND_REC_CHUNK;
+    hd.gen = sizeof(data);
+    hd.totalSize = sizeof(data);
+    SDL_strlcpy(hd.path, "ut652_no_such_block/bot1_g1.hbr/0", sizeof(hd.path));
+    hd.pathLen = (uint8_t)strlen(hd.path);
+    serverBotRecPiece(0, &hd, data);
+
+    noSession = hc->recNoSession;
+    wrote = hc->recFile != NULL || hc->recStage[0] != '\0';
+    bytes = hc->recBytes;
+    if (hc->recFile != NULL) fclose(hc->recFile);
+    *hc = saved;
+
+    UT_ASSERT(noSession);
+    UT_ASSERT(!wrote);
+    UT_ASSERT(bytes == 0);
+    UT_ASSERT(!tbrExists("debug_sessions/ut652_no_such_block_bothost_ut652host"));
+    UT_ASSERT(!tbrExists("debug_sessions/ut652_no_such_block"));
     return 0;
 }

@@ -376,7 +376,7 @@ typedef struct {
     /* The block being received: its staging folder, and the file open. */
     char     recBlock[BOT_HOST_REC_BLOCK_LEN];
     char     recStage[600];
-    bool     recBeside;       /* staged beside the session folder: no merge */
+    bool     recNoSession;    /* no finished session folder: nothing written */
     bool     recBad;          /* a piece was refused: the upload fails */
     FILE    *recFile;
     char     recFileName[96];
@@ -937,6 +937,10 @@ void serverBotRecRow(int h, uint8_t *state, uint8_t *percent,
                      uint8_t *botsDone, uint8_t *bots);
 /* True while host h sends or waits for a merge: it is not released. */
 bool serverBotRecBusy(int h);
+/* One recording piece (BULK_KIND_REC_CHUNK) from host h. The bulk sink
+ * calls it; the unit tests call it straight. */
+void serverBotRecPiece(int h, const BulkStreamHeader *hd,
+                       const uint8_t *data);
 void serverSendServerEnglishBroadcast(struct ServerSim *sim,
                                       const char *message);
 void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
