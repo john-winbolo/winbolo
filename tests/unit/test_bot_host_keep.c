@@ -26,6 +26,20 @@
  *      sent the same bot back 2.2 s later when a new bot put the server
  *      over its slots. Now neither move happens, and a forced move takes
  *      another bot.
+ *   6. bot_host_place_keep_scaled_wait: the wait between two moves off a
+ *      host is stepSecs / (rate / pct), never below stepMinSecs: 30 s at
+ *      0.5%, 15 s at 1%, 6 s at 2.5%, 5 s at 3% and more. After a move the
+ *      rate comes from the probes since the move, once they hold 250
+ *      thinks.
+ *   7. bot_host_place_keep_step_min_old: stepMinSecs = stepSecs gives the
+ *      old fixed 30 s step and the full window after each move.
+ *   8. bot_host_place_keep_free_batch: a place whose free CPU is short by
+ *      3 bots gives 3 bots in one step, the server first; its limit drops
+ *      to its bots - 3.
+ *   9. bot_host_place_keep_batch_no_target: the batch stops when no good
+ *      place is left.
+ *  10. bot_host_place_keep_batch_off: -bothost-free-batch 0 (and stale
+ *      free CPU numbers) give one bot by the usual rule.
  */
 
 #include <stdint.h>
@@ -202,6 +216,15 @@ int run_bot_host_place_keep_lopsided(void) {
  * 3. A bad source gives
  * ================================================================ */
 
+/* The values the tests before the scaled wait were written for: a 1%
+ * target rate, a fixed 30 s step and one bot a step for low free CPU. */
+static void keepCfgOld(BotHostOverrunCfg *cfg) {
+    botHostOverrunCfgDefaults(cfg);
+    cfg->pct = 1.0;
+    cfg->stepMinSecs = 30;
+    cfg->freeBatch = false;
+}
+
 /* One probe of 100 thinks and no overruns. */
 static void keepFeed(BotHostOverrunState *st, const BotHostOverrunCfg *cfg,
                      int bots, uint8_t freePct, uint8_t botCpu) {
@@ -258,7 +281,7 @@ int run_bot_host_place_keep_bad_source(void) {
     }
 
     /* The free CPU of a place's own bots. Unknown numbers count as good. */
-    botHostOverrunCfgDefaults(&cfg);
+    keepCfgOld(&cfg);
     botHostOverrunReset(&st);
     UT_ASSERT(!botHostOverrunFreeLow(&st, &cfg, 0, 60, &rep));
     UT_ASSERT(!botHostOverrunFreeLow(&st, &cfg, 1, 60, &rep));
@@ -336,7 +359,7 @@ int run_bot_host_place_keep_no_return(void) {
 
     /* The overrun move: the server at 3%, host 1 at 0.2% (where the bot
      * came from), host 2 at 0.5%. Without the rule host 1 is best. */
-    botHostOverrunCfgDefaults(&cfg);
+    keepCfgOld(&cfg);
     oh[0] = keepOvrHost(3.0, 4);
     oh[1] = keepOvrHost(0.2, 1);
     oh[2] = keepOvrHost(0.5, 1);
@@ -435,6 +458,328 @@ int run_bot_host_place_keep_oil_rig(void) {
             keepOilRig(h, serverBots[k], 2, 40.0);
             UT_ASSERT(keepSettle(h, 3, false) == 0);
         }
+    }
+    return 0;
+}
+
+/* ================================================================
+ * 6. The scaled wait
+ * ================================================================ */
+
+static bool keepNear(double a, double b) {
+    return a > b - 0.0001 && a < b + 0.0001;
+}
+
+/* One probe of thinks thinks and overruns overruns on a host with bots
+ * bots (8 slots, 40% free, 20% bot CPU). */
+static BotHostOverrunAction keepProbe(BotHostOverrunState *st,
+                                      const BotHostOverrunCfg *cfg,
+                                      uint32_t thinks, uint32_t overruns,
+                                      int bots, BotHostOverrunReport *rep) {
+    BotHostOverrunProbe in;
+    memset(&in, 0, sizeof(in));
+    in.thinks = thinks;
+    in.overruns = overruns;
+    in.bots = bots;
+    in.slots = 8;
+    in.freePct = 40;
+    in.botCpu = 20;
+    return botHostOverrunProbe(st, cfg, &in, rep);
+}
+
+/* Probes at a steady rate from a fresh state; after the first move the
+ * probes since it count. Returns the probe of the second move after the
+ * first (0: none in 120 probes); *first gets the first move's probe. */
+static int keepSecondMove(const BotHostOverrunCfg *cfg, uint32_t thinks,
+                          uint32_t overruns, int *first,
+                          BotHostOverrunReport *firstRep) {
+    BotHostOverrunState st;
+    BotHostOverrunReport rep;
+    int k, bots = 6;
+    botHostOverrunReset(&st);
+    *first = 0;
+    for (k = 1; k <= 120; k++) {
+        if (keepProbe(&st, cfg, thinks, overruns, bots, &rep) !=
+            BOT_HOST_OVR_OVER) {
+            continue;
+        }
+        if (*first == 0) {
+            *first = k;
+            if (firstRep != NULL) *firstRep = rep;
+            (void)botHostOverrunMoved(&st, bots);
+            bots--;
+            continue;
+        }
+        return k - *first;
+    }
+    return 0;
+}
+
+int run_bot_host_place_keep_scaled_wait(void) {
+    BotHostOverrunCfg cfg;
+    BotHostOverrunReport rep;
+    int first, gap;
+
+    botHostOverrunCfgDefaults(&cfg);
+    UT_ASSERT(keepNear(cfg.pct, 0.5));
+    UT_ASSERT(cfg.stepSecs == 30 && cfg.stepMinSecs == 5 && cfg.freeBatch);
+    UT_ASSERT(botHostOverrunScaled(&cfg));
+    /* The wait at each rate (severity = rate / 0.5%). */
+    UT_ASSERT(keepNear(botHostOverrunWaitSecs(&cfg, 0.5), 30.0));
+    UT_ASSERT(keepNear(botHostOverrunWaitSecs(&cfg, 1.0), 15.0));
+    UT_ASSERT(keepNear(botHostOverrunWaitSecs(&cfg, 2.5), 6.0));
+    UT_ASSERT(keepNear(botHostOverrunWaitSecs(&cfg, 3.0), 5.0));
+    /* The 5 s floor. */
+    UT_ASSERT(keepNear(botHostOverrunWaitSecs(&cfg, 6.0), 5.0));
+    UT_ASSERT(keepNear(botHostOverrunWaitSecs(&cfg, 50.0), 5.0));
+    /* A rate not over the target waits the step time. */
+    UT_ASSERT(keepNear(botHostOverrunWaitSecs(&cfg, 0.2), 30.0));
+    printf("  wait: 0.5%% %.1f s, 1%% %.1f s, 2.5%% %.1f s, 3%% %.1f s, "
+           "6%% %.1f s\n",
+           botHostOverrunWaitSecs(&cfg, 0.5), botHostOverrunWaitSecs(&cfg, 1.0),
+           botHostOverrunWaitSecs(&cfg, 2.5), botHostOverrunWaitSecs(&cfg, 3.0),
+           botHostOverrunWaitSecs(&cfg, 6.0));
+
+    /* The probes: the first move needs a full window (30 s) at the game
+     * start; the next comes after the wait of the rate since the move. */
+    gap = keepSecondMove(&cfg, 100, 1, &first, &rep);       /* 1% */
+    UT_ASSERT_MSG(first == 30 && gap == 15, "1%%: %d then +%d", first, gap);
+    UT_ASSERT(keepNear(rep.severity, 2.0) && keepNear(rep.waitSecs, 15.0));
+    gap = keepSecondMove(&cfg, 200, 5, &first, &rep);       /* 2.5% */
+    UT_ASSERT_MSG(first == 30 && gap == 6, "2.5%%: %d then +%d", first, gap);
+    UT_ASSERT(keepNear(rep.severity, 5.0) && keepNear(rep.waitSecs, 6.0));
+    gap = keepSecondMove(&cfg, 100, 3, &first, &rep);       /* 3% */
+    UT_ASSERT_MSG(first == 30 && gap == 5, "3%%: %d then +%d", first, gap);
+    UT_ASSERT(keepNear(rep.waitSecs, 5.0));
+    gap = keepSecondMove(&cfg, 100, 10, &first, &rep);      /* 10% */
+    UT_ASSERT_MSG(first == 30 && gap == 5, "10%%: %d then +%d", first, gap);
+    /* 0.75%: 20 s. */
+    gap = keepSecondMove(&cfg, 400, 3, &first, &rep);
+    UT_ASSERT_MSG(first == 30 && gap == 20, "0.75%%: %d then +%d", first,
+                  gap);
+    /* The thinks floor: 20 thinks a second at 5% (wait 5 s) has 250 thinks
+     * only after 13 probes. */
+    gap = keepSecondMove(&cfg, 20, 1, &first, &rep);
+    UT_ASSERT_MSG(first == 30 && gap == 13, "floor: %d then +%d", first, gap);
+    /* At the target rate: never over it, no move. */
+    gap = keepSecondMove(&cfg, 200, 1, &first, &rep);
+    UT_ASSERT(first == 0 && gap == 0);
+    return 0;
+}
+
+/* ================================================================
+ * 7. stepMinSecs = stepSecs: the old step
+ * ================================================================ */
+
+int run_bot_host_place_keep_step_min_old(void) {
+    BotHostOverrunCfg cfg;
+    BotHostOverrunState st;
+    BotHostOverrunReport rep;
+    double pct;
+    int first, gap, k;
+
+    botHostOverrunCfgDefaults(&cfg);
+    cfg.stepMinSecs = 30;
+    UT_ASSERT(!botHostOverrunScaled(&cfg));
+    UT_ASSERT(keepNear(botHostOverrunWaitSecs(&cfg, 1.0), 30.0));
+    UT_ASSERT(keepNear(botHostOverrunWaitSecs(&cfg, 3.0), 30.0));
+    UT_ASSERT(keepNear(botHostOverrunWaitSecs(&cfg, 50.0), 30.0));
+    /* Above the step time: the same. */
+    cfg.stepMinSecs = 60;
+    UT_ASSERT(!botHostOverrunScaled(&cfg));
+    UT_ASSERT(keepNear(botHostOverrunWaitSecs(&cfg, 3.0), 30.0));
+    cfg.stepMinSecs = 30;
+    /* Each move 30 s after the last, at any rate. */
+    gap = keepSecondMove(&cfg, 100, 1, &first, &rep);
+    UT_ASSERT_MSG(first == 30 && gap == 30, "1%%: %d then +%d", first, gap);
+    gap = keepSecondMove(&cfg, 100, 10, &first, &rep);
+    UT_ASSERT_MSG(first == 30 && gap == 30, "10%%: %d then +%d", first, gap);
+    /* After a move no rate until a full window. */
+    botHostOverrunReset(&st);
+    for (k = 1; k <= 30; k++) (void)keepProbe(&st, &cfg, 100, 3, 4, &rep);
+    (void)botHostOverrunMoved(&st, 4);
+    for (k = 1; k < 30; k++) {
+        (void)keepProbe(&st, &cfg, 100, 3, 3, &rep);
+        UT_ASSERT(!botHostOverrunRate(&st, &cfg, &pct));
+    }
+    (void)keepProbe(&st, &cfg, 100, 3, 3, &rep);
+    UT_ASSERT(botHostOverrunRate(&st, &cfg, &pct) && keepNear(pct, 3.0));
+    /* With the scaled wait the rate since the move is known after 5. */
+    cfg.stepMinSecs = 5;
+    botHostOverrunReset(&st);
+    for (k = 1; k <= 30; k++) (void)keepProbe(&st, &cfg, 100, 3, 4, &rep);
+    (void)botHostOverrunMoved(&st, 4);
+    for (k = 1; k < 5; k++) {
+        (void)keepProbe(&st, &cfg, 100, 3, 3, &rep);
+        UT_ASSERT(!botHostOverrunRate(&st, &cfg, &pct));
+    }
+    (void)keepProbe(&st, &cfg, 100, 3, 3, &rep);
+    UT_ASSERT(botHostOverrunRate(&st, &cfg, &pct) && keepNear(pct, 3.0));
+    /* A new game starts again with the full window. */
+    botHostOverrunNewGame(&st);
+    for (k = 1; k < 30; k++) {
+        (void)keepProbe(&st, &cfg, 100, 3, 3, &rep);
+        UT_ASSERT(!botHostOverrunRate(&st, &cfg, &pct));
+    }
+    return 0;
+}
+
+/* ================================================================
+ * 8 to 10. The free CPU batch
+ * ================================================================ */
+
+/* One probe with the given numbers (100 thinks, 8 slots). */
+static void keepFeedFree(BotHostOverrunState *st, const BotHostOverrunCfg *cfg,
+                         int bots, uint32_t overruns, uint8_t freePct,
+                         uint8_t botCpu) {
+    BotHostOverrunProbe in;
+    memset(&in, 0, sizeof(in));
+    in.thinks = 100;
+    in.overruns = overruns;
+    in.bots = bots;
+    in.slots = 8;
+    in.freePct = freePct;
+    in.botCpu = botCpu;
+    (void)botHostOverrunProbe(st, cfg, &in, NULL);
+}
+
+/* A place with 5 bots whose free CPU is short by 3: 30 s clean with 3 bots
+ * at 40% free, then 30 s bad with 5 bots at 5% free and 100% bot CPU (20%
+ * a bot). The check needs a predicted free CPU of at least 40% (the
+ * lowest clean reading): 5 + 20 k - 20 >= 40, so k = 3. */
+static void keepShortBy3(BotHostOverrunState *st,
+                         const BotHostOverrunCfg *cfg) {
+    int k;
+    botHostOverrunReset(st);
+    for (k = 0; k < 30; k++) keepFeedFree(st, cfg, 3, 0, 40, 60);
+    for (k = 0; k < 30; k++) keepFeedFree(st, cfg, 5, 5, 5, 100);
+}
+
+int run_bot_host_place_keep_free_batch(void) {
+    static const int slots[3] = { 4, 4, 8 };
+    int bots[3] = { 0, 1, 5 };
+    BotHostPlaceHost h[4];
+    BotHostOverrunCfg cfg;
+    BotHostOverrunState st;
+    BotHostOverrunReport rep;
+    BotHostSpreadWhy why;
+    int to[8], n, given, from = -1, dst = -1;
+
+    botHostOverrunCfgDefaults(&cfg);
+    keepShortBy3(&st, &cfg);
+    UT_ASSERT(botHostOverrunFreeLow(&st, &cfg, 5, 5, &rep));
+    n = botHostOverrunFreeShort(&st, &cfg, 5, 5, &rep);
+    printf("  batch: short by %d (free %.1f%%, one-bot cost %.1f%%, lowest "
+           "clean %d%%, highest bad %d%%)\n", n, rep.freeAvg,
+           rep.oneBotCost, rep.lowestClean, rep.highestBad);
+    UT_ASSERT_MSG(n == 3, "short by %d", n);
+    /* The batch is on and the numbers are fresh: 3 bots. */
+    UT_ASSERT(botHostOverrunBatchSize(&cfg, n, true) == 3);
+
+    /* The server (8 slots, 2 bots), hosts of 4 slots with 0 and 1 bots,
+     * and the bad place (8 slots, 5 bots). */
+    keepTable(h, 4, 8, 2, slots, bots, 2.0);
+    h[3].bad = true;
+    /* Rule 2 of the rebalance picks the same place and first target. */
+    UT_ASSERT(keepStep(h, 4, false, &from, &dst, &why));
+    UT_ASSERT(from == 3 && dst == 0 && why == BOT_HOST_SPREAD_BAD);
+    given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                 BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3, n,
+                                 to);
+    UT_ASSERT_MSG(given == 3, "given %d", given);
+    /* The server first, then the emptier host, then the other. */
+    UT_ASSERT_MSG(to[0] == 0 && to[1] == 1 && to[2] == 2,
+                  "to %d %d %d", to[0], to[1], to[2]);
+    UT_ASSERT(h[3].bots == 2 && h[0].bots == 3 && h[1].bots == 1 &&
+              h[2].bots == 2);
+    /* The limit drops to bots - 3. */
+    UT_ASSERT(botHostOverrunMovedN(&st, 5, given) == 2);
+    UT_ASSERT(botHostOverrunLimit(&st, 8) == 2);
+    UT_ASSERT(st.probeCount == 0 && st.sinceChange == 0);
+
+    /* The count is at most bots - 1: with 2 bots it is 1 (its first bot
+     * alone always passes). With 1 bot it is not short at all. */
+    keepShortBy3(&st, &cfg);
+    UT_ASSERT(botHostOverrunFreeShort(&st, &cfg, 2, 5, &rep) == 1);
+    UT_ASSERT(botHostOverrunFreeShort(&st, &cfg, 1, 5, &rep) == 0);
+    return 0;
+}
+
+int run_bot_host_place_keep_batch_no_target(void) {
+    static const int slots[3] = { 4, 4, 8 };
+    BotHostPlaceHost h[4];
+    int to[8], given;
+
+    /* The server full and one host bad: only the other host is good. */
+    {
+        int bots[3] = { 0, 1, 5 };
+        keepTable(h, 4, 8, 8, slots, bots, 2.0);
+        h[3].bad = true;
+        h[2].bad = true;
+        given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                     BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3,
+                                     3, to);
+        UT_ASSERT_MSG(given == 1 && to[0] == 1, "given %d to %d", given,
+                      to[0]);
+        UT_ASSERT(h[3].bots == 4 && h[1].bots == 1);
+    }
+    /* No good place at all: none. */
+    {
+        int bots[3] = { 4, 4, 5 };
+        keepTable(h, 4, 8, 8, slots, bots, 2.0);
+        h[3].bad = true;
+        given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                     BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3,
+                                     3, to);
+        UT_ASSERT(given == 0 && h[3].bots == 5);
+    }
+    /* A good place that may not take a bot now (its free CPU check): not
+     * a target. */
+    {
+        int bots[3] = { 0, 1, 5 };
+        keepTable(h, 4, 8, 8, slots, bots, 2.0);
+        h[3].bad = true;
+        h[1].open = false;
+        given = botHostPlaceBadBatch(h, 4, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                     BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag, 3,
+                                     3, to);
+        UT_ASSERT_MSG(given == 1 && to[0] == 2, "given %d to %d", given,
+                      to[0]);
+    }
+    return 0;
+}
+
+int run_bot_host_place_keep_batch_off(void) {
+    static const int slots[3] = { 4, 4, 8 };
+    int bots[3] = { 0, 1, 5 };
+    BotHostPlaceHost h[4];
+    BotHostOverrunCfg cfg;
+    BotHostOverrunState st;
+    BotHostSpreadWhy why;
+    int n, from = -1, to = -1;
+
+    botHostOverrunCfgDefaults(&cfg);
+    cfg.freeBatch = false;
+    keepShortBy3(&st, &cfg);
+    n = botHostOverrunFreeShort(&st, &cfg, 5, 5, NULL);
+    UT_ASSERT(n == 3);
+    /* Off: no batch, so the usual rule gives one bot. */
+    UT_ASSERT(botHostOverrunBatchSize(&cfg, n, true) == 0);
+    keepTable(h, 4, 8, 2, slots, bots, 2.0);
+    h[3].bad = true;
+    UT_ASSERT(keepStep(h, 4, false, &from, &to, &why));
+    UT_ASSERT(from == 3 && to == 0 && why == BOT_HOST_SPREAD_BAD);
+    /* On, but a bot left within the step time (stale numbers): none. */
+    cfg.freeBatch = true;
+    UT_ASSERT(botHostOverrunBatchSize(&cfg, n, false) == 0);
+    /* On with no shortage: none. */
+    UT_ASSERT(botHostOverrunBatchSize(&cfg, 0, true) == 0);
+    /* A bad reading and no clean one: the numbers cannot count, 1. */
+    {
+        int k;
+        botHostOverrunReset(&st);
+        for (k = 0; k < 30; k++) keepFeedFree(&st, &cfg, 5, 5, 5, 100);
+        UT_ASSERT(botHostOverrunFreeShort(&st, &cfg, 5, 5, NULL) == 1);
     }
     return 0;
 }

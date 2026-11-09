@@ -3541,33 +3541,65 @@ static void botHostTrailEnsure(void) {
  * window overrun rate at or above the target rate, or its free CPU too
  * low for the bots it has (botHostOverrunFreeLow). A rate or free CPU not
  * known yet counts as good. why[i] gets the reason for the log. A place
- * that gave a bot for being bad within the step time is held (badHold).
- * Only while the game runs, with the overrun check on. */
-static void botHostPlaceMarkBad(BotHostPlaceHost *hosts, const char **why) {
+ * that gave a bot for being bad within its wait is held (badHold): for a
+ * bad rate the wait of that rate (botHostOverrunWaitSecs, also counted
+ * from the last overrun move or raise while the wait scales), for low free
+ * CPU the step time. short[i] gets the bots its free CPU is short by when
+ * the free CPU batch may give them now (-bothost-free-batch, and no bot
+ * given within the step time, so the free CPU numbers show the last one),
+ * else 0. ratePct[i] gets its rate, below 0 when not known. Only while the
+ * game runs, with the overrun check on. */
+static void botHostPlaceMarkBad(BotHostPlaceHost *hosts, const char **why,
+                                int *shortBy, double *ratePct) {
     const BotHostOverrunCfg *cfg = botHostOvrConfig();
     uint32_t step = (uint32_t)(cfg->stepSecs > 0 ? cfg->stepSecs : 1) * 50u;
     int i;
-    for (i = 0; i <= MAX_BOT_HOSTS; i++) why[i] = NULL;
+    for (i = 0; i <= MAX_BOT_HOSTS; i++) {
+        why[i] = NULL;
+        shortBy[i] = 0;
+        ratePct[i] = -1.0;
+    }
     if (!(cfg->pct > 0.0)) return;
     botHostOvrEnsure();
     for (i = 0; i <= MAX_BOT_HOSTS; i++) {
-        double pct = 0.0;
+        double pct = 0.0, wait;
+        bool rateBad, freshFree;
+        int lack;
+        uint32_t since, hold;
         if (i > 0 && !udpServer.botHosts[i - 1].connected) continue;
         if (hosts[i].bots <= 0) continue;
-        if (botHostOverrunRate(&botHostOvr[i], cfg, &pct) &&
-            pct >= cfg->pct) {
+        rateBad = false;
+        if (botHostOverrunRate(&botHostOvr[i], cfg, &pct)) {
+            ratePct[i] = pct;
+            rateBad = pct >= cfg->pct;
+        }
+        botHostOvrSetFallback(i);
+        lack = botHostOverrunFreeShort(&botHostOvr[i], cfg, hosts[i].bots,
+                                       botHostOvrFree(i), NULL);
+        if (rateBad) {
             why[i] = "overrun rate";
-        } else {
-            botHostOvrSetFallback(i);
-            if (botHostOverrunFreeLow(&botHostOvr[i], cfg, hosts[i].bots,
-                                      botHostOvrFree(i), NULL)) {
-                why[i] = "low free CPU";
-            }
+        } else if (lack > 0) {
+            why[i] = "low free CPU";
         }
         if (why[i] == NULL) continue;
         hosts[i].bad = true;
-        hosts[i].badHold = botHostBadGave[i] &&
-                           udpServer.tickCount - botHostBadGaveTick[i] < step;
+        since = udpServer.tickCount - botHostBadGaveTick[i];
+        wait = rateBad ? botHostOverrunWaitSecs(cfg, pct)
+                       : (double)(cfg->stepSecs > 0 ? cfg->stepSecs : 1);
+        hold = (uint32_t)(wait * 50.0 + 0.5);
+        hosts[i].badHold = botHostBadGave[i] && since < hold;
+        if (rateBad && botHostOverrunScaled(cfg) &&
+            (double)botHostOvr[i].sinceChange < wait) {
+            /* An overrun move or a raise within the wait: the probes since
+             * then are all the rate knows. */
+            hosts[i].badHold = true;
+        }
+        /* The free CPU average covers the last window: after a bot left
+         * (by this placement or by the overrun move) it needs the step
+         * time to show that. */
+        freshFree = (!botHostBadGave[i] || since >= step) &&
+                    botHostOvr[i].sinceChange >= cfg->stepSecs;
+        shortBy[i] = botHostOverrunBatchSize(cfg, lack, freshFree);
     }
 }
 
@@ -3919,12 +3951,13 @@ static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
                             sizeof(before));
         botHostOvrLimitText(newLimit, raw[i].slots, after, sizeof(after));
         fprintf(stderr, "[bothost] overruns: bot %d \"%s\" moves from %s to "
-                        "%s: source %s, target %s, m=%d, %s (stay %.0f s, "
-                        "needs %.0f s; limit of %s goes from %s to %s for "
-                        "this game; %s)\n",
+                        "%s: source %s, target %s, m=%d, %s (severity %.1f, "
+                        "wait %.0f s; stay %.0f s, needs %.0f s; limit of %s "
+                        "goes from %s to %s for this game; %s)\n",
                 seat, botSeatName(sim, seat), from, to, srcRate, dstRate,
-                mv.moves, botHostOvrRuleName(mv.rule), mv.staySecs,
-                mv.needStaySecs, from, before, after, nums);
+                mv.moves, botHostOvrRuleName(mv.rule), rep->severity,
+                rep->waitSecs, mv.staySecs, mv.needStaySecs, from, before,
+                after, nums);
         botHostRecDecision(i, BOTHOST_DECISION_MOVE, rep, seat, dest,
                            "overruns", &mv);
         botHostRecDecision(i, BOTHOST_DECISION_CUT, rep, -1, -1, "overruns",
@@ -3979,6 +4012,11 @@ void transportUdpServerSetBotHostOverrun(const BotHostOverrunFlags *f) {
         cfg->stepSecs = f->stepSecs < 1 ? 1
                       : f->stepSecs > 3600 ? 3600 : f->stepSecs;
     }
+    if (f->stepMinSecs >= 0) {
+        cfg->stepMinSecs = f->stepMinSecs < 1 ? 1
+                         : f->stepMinSecs > 3600 ? 3600 : f->stepMinSecs;
+    }
+    if (f->freeBatch >= 0) cfg->freeBatch = f->freeBatch != 0;
     if (f->freeSampleSecs >= 0) {
         cfg->freeSampleSecs = f->freeSampleSecs < 1 ? 1
                             : f->freeSampleSecs > 60 ? 60 : f->freeSampleSecs;
@@ -3995,14 +4033,27 @@ void transportUdpServerSetBotHostOverrun(const BotHostOverrunFlags *f) {
         fprintf(stderr, "[bothost] overruns: the check is off\n");
         return;
     }
-    fprintf(stderr, "[bothost] overruns: a host over %.2f%% overruns in %d s "
-                    "gives one bot to a better host, at most one each %d s; "
-                    "the target at most %.2f x the source rate for each "
-                    "move so far; stay %d s x %.2f per move; at %.2f%% the "
-                    "emergency rule; free CPU each %d s, %d s kept\n",
-            cfg->pct, cfg->windowSecs, cfg->stepSecs, cfg->gain,
-            cfg->staySecs, cfg->stayFactor, cfg->emergencyPct,
-            cfg->freeSampleSecs, cfg->freeHistorySecs);
+    {
+        char wait[96];
+        if (botHostOverrunScaled(cfg)) {
+            SDL_snprintf(wait, sizeof(wait),
+                         "each %d s / (rate / %.2f%%), never below %d s",
+                         cfg->stepSecs, cfg->pct, cfg->stepMinSecs);
+        } else {
+            SDL_snprintf(wait, sizeof(wait), "each %d s", cfg->stepSecs);
+        }
+        fprintf(stderr, "[bothost] overruns: a host over %.2f%% overruns in "
+                        "%d s gives one bot to a better host, at most one "
+                        "%s; the target at most %.2f x the source rate for "
+                        "each move so far; stay %d s x %.2f per move; at "
+                        "%.2f%% the emergency rule; free CPU each %d s, %d s "
+                        "kept; low free CPU gives %s\n",
+                cfg->pct, cfg->windowSecs, wait, cfg->gain, cfg->staySecs,
+                cfg->stayFactor, cfg->emergencyPct, cfg->freeSampleSecs,
+                cfg->freeHistorySecs,
+                cfg->freeBatch ? "the bots it is short by in one step"
+                               : "one bot a step");
+    }
 }
 
 void transportUdpServerSetBotHostSpreadEven(bool on) {
@@ -4030,6 +4081,107 @@ void transportUdpServerSetBotHostRecord(bool on) {
     }
 }
 
+/* Moves bot s from place from to place to by the placement (0 the server,
+ * h + 1 Bot Host h), with its record and console line. toBots: the bots
+ * of to before the move, for the record. False when the offer of a server
+ * bot was not made. */
+static bool botHostPlaceGive(ServerSim *sim, int from, int to, int s,
+                             int toBots, const char *reason) {
+    if (from == 0) {
+        if (to <= 0) return false;
+        if (!botSeatOffer(sim, s, to - 1, reason)) return false;
+        botHostTrailNote(&botHostTrail, s, 0, udpServer.tickCount);
+        botHostRecSpread(BOTHOST_DECISION_PLACE, 0, to, s, toBots, reason);
+        return true;
+    }
+    fprintf(stderr, "[bothost] bot %d \"%s\" moves from Bot Host \"%s\" to "
+                    "%s%s%s (%s)\n",
+            s, botSeatName(sim, s), udpServer.botHosts[from - 1].name,
+            to == 0 ? "the server" : "Bot Host \"",
+            to == 0 ? "" : udpServer.botHosts[to - 1].name,
+            to == 0 ? "" : "\"", reason);
+    botHostRecSpread(BOTHOST_DECISION_SPREAD_MOVE, from, to, s, toBots,
+                     reason);
+    botSeatFallBack(sim, s, reason, true);
+    udpServer.botSeats[s].noReturn = false;
+    botHostTrailNote(&botHostTrail, s, from, udpServer.tickCount);
+    if (to > 0 && botSeatLocalOfferable(sim, s)) {
+        (void)botSeatOffer(sim, s, to - 1, reason);
+    }
+    return true;
+}
+
+/* The reason each bot of a free CPU batch records. */
+static const char BOT_HOST_BATCH_REASON[] = "low free CPU, batch";
+
+/* The free CPU batch (-bothost-free-batch): bad place from, whose free CPU
+ * is short by want bots, gives up to want bots in this one step, each to
+ * the place botHostPlaceBadBatch picks (the server first, then the best
+ * good host; each place takes at most one). It stops when no good place
+ * is left or no bot may go. Its limit then becomes its bots less the bots
+ * given, for this game, and its probes start again. */
+static void botHostPlaceGiveBatch(ServerSim *sim,
+                                  const BotHostPlaceHost *hosts,
+                                  const BotHostPlaceHost *raw, int from,
+                                  int want, const int *cand, int candCount) {
+    const BotHostOverrunCfg *cfg = botHostOvrConfig();
+    BotHostPlaceHost tbl[1 + MAX_BOT_HOSTS];
+    BotHostOverrunReport rep;
+    int dests[MAX_TANKS], left[MAX_TANKS];
+    bool used[MAX_TANKS];
+    int planned, given = 0, k, j, nLeft, botsBefore, lack, newLimit;
+    char place[64], before[32], after[32], nums[200];
+
+    if (want > MAX_TANKS) want = MAX_TANKS;
+    memcpy(tbl, hosts, sizeof(tbl));
+    botsBefore = hosts[from].bots;
+    botHostOvrSetFallback(from);
+    memset(&rep, 0, sizeof(rep));
+    lack = botHostOverrunFreeShort(&botHostOvr[from], cfg, botsBefore,
+                                   botHostOvrFree(from), &rep);
+    planned = botHostPlaceBadBatch(tbl, 1 + MAX_BOT_HOSTS, botHostSmallSlots,
+                                   botHostSmallBias, &botHostLag, from, want,
+                                   dests);
+    memset(used, 0, sizeof(used));
+    for (k = 0; k < planned; k++) {
+        int s;
+        nLeft = 0;
+        for (j = 0; j < candCount; j++) {
+            if (!used[j]) left[nLeft++] = cand[j];
+        }
+        s = botHostTrailPickSeat(&botHostTrail, left, nLeft, dests[k],
+                                 udpServer.tickCount, botHostStayTicks(),
+                                 false);
+        if (s < 0) continue;
+        for (j = 0; j < candCount; j++) {
+            if (cand[j] == s) used[j] = true;
+        }
+        if (!botHostPlaceGive(sim, from, dests[k], s, raw[dests[k]].bots,
+                              BOT_HOST_BATCH_REASON)) {
+            continue;
+        }
+        given++;
+    }
+    if (given <= 0) return;
+    botHostBadGave[from] = true;
+    botHostBadGaveTick[from] = udpServer.tickCount;
+    rep.limitBefore = botHostOvr[from].limit;
+    newLimit = botHostOverrunMovedN(&botHostOvr[from], botsBefore, given);
+    rep.newLimit = newLimit;
+    botHostRecDecision(from, BOTHOST_DECISION_CUT, &rep, -1, -1,
+                       BOT_HOST_BATCH_REASON, NULL);
+    botHostOvrPlaceText(from, place, sizeof(place));
+    botHostOvrLimitText(rep.limitBefore, raw[from].slots, before,
+                        sizeof(before));
+    botHostOvrLimitText(newLimit, raw[from].slots, after, sizeof(after));
+    botHostOvrNumbers(&rep, nums, sizeof(nums));
+    fprintf(stderr, "[bothost] bad place: %s free CPU is short by %d bots "
+                    "(%s): gave %d of %d bots in one step; limit goes from "
+                    "%s to %s for this game; wait %d s before it gives "
+                    "another\n",
+            place, lack, nums, given, want, before, after, cfg->stepSecs);
+}
+
 /* One placement move: index 0 of the host table is the server itself, index
  * h + 1 is Bot Host h. */
 static void botHostPlaceStep(ServerSim *sim, ServerState st) {
@@ -4044,6 +4196,8 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     int localSeats[MAX_TANKS], localCount = 0;
     int hostSeats[MAX_BOT_HOSTS][MAX_TANKS], hostCount[MAX_BOT_HOSTS];
     const char *badWhy[1 + MAX_BOT_HOSTS];
+    int badShort[1 + MAX_BOT_HOSTS];
+    double badRate[1 + MAX_BOT_HOSTS];
     const int *cand;
     int candCount;
     BotHostSpreadWhy why = BOT_HOST_SPREAD_NONE;
@@ -4054,7 +4208,11 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     int s, h, from = -1, to = -1;
 
     botHostTrailEnsure();
-    for (h = 0; h <= MAX_BOT_HOSTS; h++) badWhy[h] = NULL;
+    for (h = 0; h <= MAX_BOT_HOSTS; h++) {
+        badWhy[h] = NULL;
+        badShort[h] = 0;
+        badRate[h] = -1.0;
+    }
 
     if (running && lastSt != serverStateRunning) {
         runStartTick = udpServer.tickCount;
@@ -4165,7 +4323,7 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
 
     /* While the game runs, which places run their bots badly. In the lobby
      * no bot thinks, so every place counts as good there. */
-    if (running) botHostPlaceMarkBad(hosts, badWhy);
+    if (running) botHostPlaceMarkBad(hosts, badWhy, badShort, badRate);
     if (!botHostPlaceRebalanceKeep(hosts, 1 + MAX_BOT_HOSTS,
                                    botHostSmallSlots, botHostSmallBias,
                                    &botHostLag, botHostSpreadEven, &from,
@@ -4188,43 +4346,42 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         cand = hostSeats[from - 1];
         candCount = hostCount[from - 1];
     }
+    if (why == BOT_HOST_SPREAD_BAD && badShort[from] > 0) {
+        botHostPlaceGiveBatch(sim, hosts, raw, from, badShort[from], cand,
+                              candCount);
+        lastMoveTick = udpServer.tickCount;
+        return;
+    }
     s = botHostTrailPickSeat(&botHostTrail, cand, candCount, to,
                              udpServer.tickCount, botHostStayTicks(),
                              why == BOT_HOST_SPREAD_OVER_SLOTS);
     if (s < 0) return;
     reason = botHostSpreadReason(why, from, badWhy);
-    if (from == 0) {
-        if (to <= 0) return;
-        if (botSeatOffer(sim, s, to - 1, reason)) {
-            lastMoveTick = udpServer.tickCount;
-            botHostTrailNote(&botHostTrail, s, 0, udpServer.tickCount);
-            if (why == BOT_HOST_SPREAD_BAD) {
-                botHostBadGave[0] = true;
-                botHostBadGaveTick[0] = udpServer.tickCount;
-            }
-            botHostRecSpread(BOTHOST_DECISION_PLACE, 0, to, s, raw[to].bots,
-                             reason);
-        }
-        return;
-    }
-    fprintf(stderr, "[bothost] bot %d \"%s\" moves from Bot Host \"%s\" to "
-                    "%s%s%s (%s)\n",
-            s, botSeatName(sim, s), udpServer.botHosts[from - 1].name,
-            to == 0 ? "the server" : "Bot Host \"",
-            to == 0 ? "" : udpServer.botHosts[to - 1].name,
-            to == 0 ? "" : "\"", reason);
-    botHostRecSpread(BOTHOST_DECISION_SPREAD_MOVE, from, to, s, raw[to].bots,
-                     reason);
-    botSeatFallBack(sim, s, reason, true);
-    udpServer.botSeats[s].noReturn = false;
+    if (!botHostPlaceGive(sim, from, to, s, raw[to].bots, reason)) return;
     lastMoveTick = udpServer.tickCount;
-    botHostTrailNote(&botHostTrail, s, from, udpServer.tickCount);
-    if (why == BOT_HOST_SPREAD_BAD) {
-        botHostBadGave[from] = true;
-        botHostBadGaveTick[from] = udpServer.tickCount;
-    }
-    if (to > 0 && botSeatLocalOfferable(sim, s)) {
-        (void)botSeatOffer(sim, s, to - 1, reason);
+    if (why != BOT_HOST_SPREAD_BAD) return;
+    botHostBadGave[from] = true;
+    botHostBadGaveTick[from] = udpServer.tickCount;
+    {
+        const BotHostOverrunCfg *cfg = botHostOvrConfig();
+        char place[64];
+        botHostOvrPlaceText(from, place, sizeof(place));
+        if (badRate[from] >= cfg->pct) {
+            /* Its next rate is measured from the thinks since this bot
+             * left, so a short wait judges on a short window. */
+            if (botHostOverrunScaled(cfg)) {
+                botHostOverrunGave(&botHostOvr[from]);
+            }
+            fprintf(stderr, "[bothost] bad place: %s gave bot %d: rate "
+                            "%.2f%% is severity %.1f (target %.2f%%); wait "
+                            "%.0f s before it gives another\n",
+                    place, s, badRate[from], badRate[from] / cfg->pct,
+                    cfg->pct, botHostOverrunWaitSecs(cfg, badRate[from]));
+        } else {
+            fprintf(stderr, "[bothost] bad place: %s gave bot %d: %s; wait "
+                            "%d s before it gives another\n",
+                    place, s, reason, cfg->stepSecs);
+        }
     }
 }
 

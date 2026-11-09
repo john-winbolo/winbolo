@@ -881,6 +881,8 @@ typedef struct {
     int staySecs;        /* the stay time after the first move */
     int windowSecs;      /* the time the rate is counted over */
     int stepSecs;        /* at most one move per host in this time */
+    int stepMinSecs;     /* the shortest wait, for a rate far over */
+    int freeBatch;       /* 1: low free CPU gives up to n bots a step */
     int freeSampleSecs;  /* the free CPU sample time */
     int freeHistorySecs; /* the free CPU history kept */
 } BotHostOverrunFlags;

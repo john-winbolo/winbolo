@@ -1039,13 +1039,15 @@ void printArgs() {
   fprintf(stderr, "-bothost-spread-even - the old even spread: bots also move between hosts that run them well, to even out\n");
   fprintf(stderr, "                their counts and lag. Without it a bot stays where it runs well: on the server while it\n");
   fprintf(stderr, "                has slots and its overruns and free CPU are good, and only the rest go to Bot Hosts.\n");
-  fprintf(stderr, "-bothost-overrun-pct <f> - the target rate: a host whose bots' overruns are over f%% of their thinks in the window gives one bot to a better host, and its limit drops to its bots - 1 for the game; 0 = the check is off (default 1)\n");
+  fprintf(stderr, "-bothost-overrun-pct <f> - the target rate: a host whose bots' overruns are over f%% of their thinks in the window gives one bot to a better host, and its limit drops to its bots - 1 for the game; 0 = the check is off (default 0.5)\n");
   fprintf(stderr, "-bothost-overrun-emergency-pct <f> - at f%% or more, a bot may move to any host below the target rate or at half the source rate, with no stay time; 0 = no emergency rule (default 5)\n");
   fprintf(stderr, "-bothost-overrun-gain <f> - a bot with m moves needs a target at most f^(m+1) x the source rate (default 0.5)\n");
   fprintf(stderr, "-bothost-overrun-stay-secs <s> - after its first move a bot stays s seconds before the next (default 30)\n");
   fprintf(stderr, "-bothost-overrun-stay-factor <f> - each further move multiplies that stay time by f (default 2)\n");
   fprintf(stderr, "-bothost-overrun-window-secs <s> - the rate is the overruns over the thinks of the last s seconds (default 30)\n");
-  fprintf(stderr, "-bothost-overrun-step-secs <s> - at most one move or raise per host in this time (default 30)\n");
+  fprintf(stderr, "-bothost-overrun-step-secs <s> - at most one move or raise per host in this time; a host over the target rate waits s / (rate / target) between moves (default 30)\n");
+  fprintf(stderr, "-bothost-overrun-step-min-secs <s> - the shortest wait between two moves off one host; s at or above the step time gives the fixed step time (default 5)\n");
+  fprintf(stderr, "-bothost-free-batch <0|1> - 1: a host whose free CPU is short by n bots gives up to n bots in one step; 0: one bot a step (default 1)\n");
   fprintf(stderr, "-bothost-free-sample-secs <s> - how often the free CPU of each host machine is read (default 5)\n");
   fprintf(stderr, "-bothost-free-history-secs <s> - how much free CPU history is kept for a raise (default 300)\n");
   fprintf(stderr, "-record-bothost-data - write the bot placement probes, free CPU readings and decisions into the round log (.wbv)\n");
@@ -3358,17 +3360,19 @@ int main(int argc, char **argv) {
         static const char *const dnames[4] = {
             "bothost-overrun-pct", "bothost-overrun-emergency-pct",
             "bothost-overrun-gain", "bothost-overrun-stay-factor"};
-        static const char *const inames[5] = {
+        static const char *const inames[7] = {
             "bothost-overrun-stay-secs", "bothost-overrun-window-secs",
             "bothost-overrun-step-secs", "bothost-free-sample-secs",
-            "bothost-free-history-secs"};
+            "bothost-free-history-secs", "bothost-overrun-step-min-secs",
+            "bothost-free-batch"};
         double *dvals[4];
-        int *ivals[5];
+        int *ivals[7];
         bool any = false;
         int k, a;
         f.pct = f.emergencyPct = f.gain = f.stayFactor = -1.0;
         f.staySecs = f.windowSecs = f.stepSecs = -1;
         f.freeSampleSecs = f.freeHistorySecs = -1;
+        f.stepMinSecs = f.freeBatch = -1;
         dvals[0] = &f.pct;
         dvals[1] = &f.emergencyPct;
         dvals[2] = &f.gain;
@@ -3378,6 +3382,8 @@ int main(int argc, char **argv) {
         ivals[2] = &f.stepSecs;
         ivals[3] = &f.freeSampleSecs;
         ivals[4] = &f.freeHistorySecs;
+        ivals[5] = &f.stepMinSecs;
+        ivals[6] = &f.freeBatch;
         for (k = 0; k < 4; k++) {
           a = findArg(argc, argv, dnames[k]);
           if (a != ARG_NOT_FOUND && a < argc) {
@@ -3385,7 +3391,7 @@ int main(int argc, char **argv) {
             any = true;
           }
         }
-        for (k = 0; k < 5; k++) {
+        for (k = 0; k < 7; k++) {
           a = findArg(argc, argv, inames[k]);
           if (a != ARG_NOT_FOUND && a < argc) {
             *ivals[k] = atoi(argv[a]);

@@ -244,9 +244,22 @@ bot_host_link.c). A layout that is lopsided but good stays as it is:
   - over its slots (forced): a host with more bots than its slots gives
     one; the server itself does so only while a Bot Host has room;
   - bad: its overrun rate is P% or more, or its free CPU is too low. It
-    gives one bot to a good place, at most one each T seconds (the step
-    time of the overrun move), since its numbers need that time to show
-    the move.
+    gives one bot to a good place, then waits before the next, since its
+    numbers need time to show the move. For a bad rate the wait is
+    T / (rate / P) seconds, never below S (see the overrun move below);
+    after the bot leaves, the rate is measured from the thinks since then.
+    For low free CPU the wait is T seconds.
+  - free CPU batch (`-bothost-free-batch 1`, the default): when the free
+    CPU numbers show the place is short by n bots (each bot that leaves
+    adds one bot's cost to its free CPU average, until the free CPU check
+    passes for the bots left), it gives up to n bots in one step. Each goes
+    by the rule below (the server first, then the best good host); a place
+    takes at most one bot of a batch, and the batch stops when no good
+    place is left. The place's limit then drops to its bots less the bots
+    given, for this game. A batch needs free CPU numbers that show the
+    last bot that left (no bot left within T seconds). A bad reading with
+    no clean reading at all cannot count the bots: one bot. 0 gives one
+    bot a step, as before.
 - The place a bot goes to: the server first, while it is good and below
   its slots; else the Bot Host with the best score below.
 - Forced fall-backs (a host gone, changed brain files) and the overrun
@@ -258,11 +271,17 @@ bot_host_link.c). A layout that is lopsided but good stays as it is:
   that bot only when no other one can go. The overrun move keeps this rule
   too, except by its emergency rule.
 - The DECISION records and the console give the reason: "over its slots",
-  "overrun rate", "low free CPU", or "the spread" (the even spread).
+  "overrun rate", "low free CPU", "low free CPU, batch" (a bot of a free
+  CPU batch, and the cut that follows it), or "the spread" (the even
+  spread). The console says the severity (rate / P) and the wait for a
+  bad rate, and the shortage and the bots given for a batch.
 - `-bothost-spread-even` brings back the old even spread: bots also move
   between good places so that each is about equally full, with the lag
   rules below. The stay rule still holds.
-- Unit tests: `bot_host_place_keep_*` (`--test <name>`).
+- Unit tests: `bot_host_place_keep_*` (`--test <name>`), among them
+  `bot_host_place_keep_scaled_wait`, `bot_host_place_keep_step_min_old`,
+  `bot_host_place_keep_free_batch`, `bot_host_place_keep_batch_no_target`
+  and `bot_host_place_keep_batch_off`.
 
 #### The even spread and lag (-bothost-spread-even)
 
@@ -309,9 +328,17 @@ as a host too.
 - A move adds 1 to m. A forced fall-back (a Bot Host left or failed) does
   not. m starts again at 0 in the lobby.
 - After a move the source host's limit becomes its bot count minus 1 for
-  this game. A bot with a pill or with its builder out does not move. At
-  most one move per host each T seconds. The probes start again after each
-  move.
+  this game. A bot with a pill or with its builder out does not move. The
+  probes start again after each move.
+- The wait between two moves off one host scales with how far its rate is
+  over P: the severity is rate / P, and the wait is T / severity, never
+  below S and never above T. With T = 30, S = 5 and P = 0.5: 0.5% waits
+  30 s, 1% 15 s, 2.5% 6 s, 3% or more 5 s. After a move (or a raise) the
+  rate is known from the probes since that change once there are S of
+  them with at least 250 thinks (5 s of one bot), so a short wait judges
+  on a short window. At a game start the first rate still needs a full
+  window. S at or above T gives the old fixed step of T seconds and a full
+  window after each move. A raise keeps its step of T seconds.
 - When every other host is about as bad, no bot moves. The console says
   "no better host" at most once each T seconds per host.
 - The server stays the last fall-back. A lowered server limit only moves
@@ -330,7 +357,8 @@ as a host too.
   next one goes there. With no free CPU data only the slots count.
 - A lowered limit is for one game: a new game, the next round or a rejoin
   clears it. The lobby's Add Bot limit does not change.
-- `-bothost-overrun-pct <f>` sets P (default 1; 0 turns the check off).
+- `-bothost-overrun-pct <f>` sets P (default 0.5; 0 turns the check
+  off).
 - `-bothost-overrun-emergency-pct <f>` sets E (default 5; 0: no emergency
   rule).
 - `-bothost-overrun-gain <f>` sets G (default 0.5).
@@ -338,6 +366,12 @@ as a host too.
 - `-bothost-overrun-stay-factor <f>` sets F (default 2).
 - `-bothost-overrun-window-secs <s>` sets W (default 30).
 - `-bothost-overrun-step-secs <s>` sets T (default 30).
+- `-bothost-overrun-step-min-secs <s>` sets S (default 5; 30, or T, gives
+  the old fixed step).
+- `-bothost-free-batch <0|1>` turns the free CPU batch on or off (default
+  1; 0 gives one bot a step).
+- The values before these changes: `-bothost-overrun-pct 1
+  -bothost-overrun-step-min-secs 30 -bothost-free-batch 0`.
 - `-bothost-free-sample-secs <s>` sets how often a reading is kept
   (default 5).
 - `-bothost-free-history-secs <s>` sets H (default 300).

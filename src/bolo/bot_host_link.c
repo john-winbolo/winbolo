@@ -686,6 +686,22 @@ bool botHostPlaceRebalanceKeep(const BotHostPlaceHost *hosts, int n,
     return false;
 }
 
+int botHostPlaceBadBatch(BotHostPlaceHost *hosts, int n, int smallSlots,
+                         double bias, const BotHostPlaceLag *lag, int src,
+                         int want, int *to) {
+    int given = 0;
+    if (hosts == NULL || to == NULL || src < 0 || src >= n) return 0;
+    while (given < want && hosts[src].bots > 0) {
+        int dst = keepTarget(hosts, n, smallSlots, bias, lag, src, false);
+        if (dst < 0 || hosts[dst].bad) break;
+        to[given++] = dst;
+        hosts[src].bots--;
+        hosts[dst].bots++;
+        hosts[dst].open = false;
+    }
+    return given;
+}
+
 /* ---- No quick way back ------------------------------------------------- */
 
 void botHostTrailReset(BotHostTrail *t) {
@@ -741,6 +757,8 @@ void botHostOverrunCfgDefaults(BotHostOverrunCfg *cfg) {
     cfg->stayFactor = BOT_HOST_OVR_STAY_FACTOR_DEFAULT;
     cfg->windowSecs = BOT_HOST_OVR_WINDOW_SECS_DEFAULT;
     cfg->stepSecs = BOT_HOST_OVR_STEP_SECS_DEFAULT;
+    cfg->stepMinSecs = BOT_HOST_OVR_STEP_MIN_SECS_DEFAULT;
+    cfg->freeBatch = BOT_HOST_FREE_BATCH_DEFAULT;
     cfg->freeSampleSecs = BOT_HOST_FREE_SAMPLE_SECS_DEFAULT;
     cfg->freeHistorySecs = BOT_HOST_FREE_HISTORY_SECS_DEFAULT;
 }
@@ -788,6 +806,28 @@ static int ovrClamp(int v, int lo, int hi) {
     return v < lo ? lo : v > hi ? hi : v;
 }
 
+static int ovrStep(const BotHostOverrunCfg *cfg) {
+    return cfg->stepSecs > 0 ? cfg->stepSecs : 1;
+}
+
+bool botHostOverrunScaled(const BotHostOverrunCfg *cfg) {
+    return cfg != NULL && cfg->stepMinSecs < ovrStep(cfg);
+}
+
+double botHostOverrunWaitSecs(const BotHostOverrunCfg *cfg, double ratePct) {
+    double step, lo, wait;
+    if (cfg == NULL) return (double)BOT_HOST_OVR_STEP_SECS_DEFAULT;
+    step = (double)ovrStep(cfg);
+    if (!botHostOverrunScaled(cfg) || !(cfg->pct > 0.0) ||
+        !(ratePct > cfg->pct)) {
+        return step;
+    }
+    lo = cfg->stepMinSecs > 1 ? (double)cfg->stepMinSecs : 1.0;
+    /* stepSecs / severity, severity = ratePct / pct. */
+    wait = step * cfg->pct / ratePct;
+    return wait < lo ? lo : wait > step ? step : wait;
+}
+
 static int ovrWindow(const BotHostOverrunCfg *cfg) {
     return ovrClamp(cfg->windowSecs, 1, BOT_HOST_OVR_MAX_PROBES);
 }
@@ -802,19 +842,29 @@ static int ovrHistory(const BotHostOverrunCfg *cfg) {
 }
 
 /* The window's sums. True when the rate is known: a full window, bots in
- * each of its probes, and thinks. */
+ * each of its probes, and thinks. With the scaled wait, after a move or a
+ * raise (the probes started again) the probes since that change count
+ * too, once there are stepMinSecs of them and at least
+ * BOT_HOST_OVR_SHORT_MIN_THINKS thinks. */
 static bool ovrWindowRate(const BotHostOverrunState *st,
                           const BotHostOverrunCfg *cfg, double *pct) {
     int i, window = ovrWindow(cfg);
     uint64_t thinks = 0, overruns = 0;
+    bool part = st->probeCount < window;
     *pct = 0.0;
-    if (st->probeCount < window) return false;
+    if (part && (!botHostOverrunScaled(cfg) ||
+                 st->sinceChange >= OVR_LONG_AGO ||
+                 st->probeCount < (cfg->stepMinSecs > 1 ? cfg->stepMinSecs
+                                                        : 1))) {
+        return false;
+    }
     for (i = 0; i < st->probeCount && i < BOT_HOST_OVR_MAX_PROBES; i++) {
         if (!st->probeBots[i]) return false;
         thinks += st->probeThinks[i];
         overruns += st->probeOverruns[i];
     }
     if (thinks == 0) return false;
+    if (part && thinks < BOT_HOST_OVR_SHORT_MIN_THINKS) return false;
     *pct = (double)overruns * 100.0 / (double)thinks;
     return true;
 }
@@ -970,7 +1020,10 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
     spaced = st->sinceChange >= cfg->stepSecs;
 
     if (over) {
-        if (!spaced) return BOT_HOST_OVR_NONE;
+        /* One move each wait: shorter the further the rate is over. */
+        rep->severity = rep->windowPct / cfg->pct;
+        rep->waitSecs = botHostOverrunWaitSecs(cfg, rep->windowPct);
+        if ((double)st->sinceChange < rep->waitSecs) return BOT_HOST_OVR_NONE;
         rep->why = "overruns";
         return BOT_HOST_OVR_OVER;
     }
@@ -1002,13 +1055,23 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
 }
 
 int botHostOverrunMoved(BotHostOverrunState *st, int bots) {
+    return botHostOverrunMovedN(st, bots, 1);
+}
+
+int botHostOverrunMovedN(BotHostOverrunState *st, int bots, int n) {
     if (st == NULL) return -1;
-    st->limit = bots - 1;
+    st->limit = bots - (n > 1 ? n : 1);
     if (st->limit < 0) st->limit = 0;
     st->cut = true;
     ovrClearProbes(st);
     st->sinceChange = 0;
     return st->limit;
+}
+
+void botHostOverrunGave(BotHostOverrunState *st) {
+    if (st == NULL) return;
+    ovrClearProbes(st);
+    st->sinceChange = 0;
 }
 
 void botHostOverrunHeld(BotHostOverrunState *st) {
@@ -1021,6 +1084,8 @@ static const char OVR_WHY_NO_CLEAN[] =
     "no clean reading with that little free CPU";
 static const char OVR_WHY_BAD_AS_MUCH[] = "a bad reading had as much free CPU";
 static const char OVR_WHY_TOO_LITTLE[] = "too little free CPU";
+
+static bool ovrFreeRule(BotHostOverrunReport *rep);
 
 bool botHostOverrunMayTake(const BotHostOverrunState *st,
                            const BotHostOverrunCfg *cfg, int bots,
@@ -1068,6 +1133,12 @@ bool botHostOverrunMayTake(const BotHostOverrunState *st,
         rep->why = "no free CPU average";
         return false;
     }
+    return ovrFreeRule(rep);
+}
+
+/* The free CPU check's rules on known numbers (rep's predicted free CPU,
+ * one-bot cost and readings), with the reason in rep->why. */
+static bool ovrFreeRule(BotHostOverrunReport *rep) {
     if (rep->highestBad >= 0) {
         if (!ovrCleanEvidence(rep)) {
             rep->why = OVR_WHY_NO_CLEAN;
@@ -1106,6 +1177,33 @@ bool botHostOverrunFreeLow(const BotHostOverrunState *st,
     }
     return rep->why == OVR_WHY_NO_CLEAN || rep->why == OVR_WHY_BAD_AS_MUCH ||
            rep->why == OVR_WHY_TOO_LITTLE;
+}
+
+int botHostOverrunBatchSize(const BotHostOverrunCfg *cfg, int shortBy,
+                            bool fresh) {
+    if (cfg == NULL || !cfg->freeBatch || !fresh || shortBy <= 0) return 0;
+    return shortBy;
+}
+
+int botHostOverrunFreeShort(const BotHostOverrunState *st,
+                            const BotHostOverrunCfg *cfg, int bots,
+                            uint8_t latestFree, BotHostOverrunReport *rep) {
+    BotHostOverrunReport local;
+    int k;
+    if (rep == NULL) rep = &local;
+    if (!botHostOverrunFreeLow(st, cfg, bots, latestFree, rep)) return 0;
+    /* A bad reading and no clean one: no free CPU level is known to be
+     * enough, so the numbers cannot count the bots. */
+    if (rep->highestBad >= 0 && rep->lowestClean < 0) return 1;
+    for (k = 1; k < bots; k++) {
+        BotHostOverrunReport r = *rep;
+        /* The newest of the bots - k left is the one the check is for. */
+        if (bots - k - 1 <= 0) return k;
+        r.freeAvg = rep->freeAvg + (double)k * rep->oneBotCost;
+        r.predicted = r.freeAvg - r.oneBotCost;
+        if (ovrFreeRule(&r)) return k;
+    }
+    return bots > 1 ? bots - 1 : 1;
 }
 
 /* ---- The overrun move -------------------------------------------------- */

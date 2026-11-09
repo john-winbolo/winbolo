@@ -810,7 +810,10 @@ Then, by kind (0xFF in a byte field: none):
   probe is bad), `badProbes:u8`, `probes:u8` (the bad probes in the window
   and the probes in it; from version 2 `badProbes` is 0xFF), then from
   version 2 `windowRate:u16` (the host's rate, its overruns over its thinks
-  in the window, in hundredths of a percent; 0xFFFF while not known).
+  in the window, in hundredths of a percent; 0xFFFF while not known). With
+  the scaled wait (`-bothost-overrun-step-min-secs` below the step time),
+  after a move or a raise the window is the probes since that change, so
+  `windowRate` can be known with `probes` below the full window.
 - READING, each free CPU sample per host (default every 5 s): `free:u8`
   (0..100, 0xFF not known), `botCpu:u8` (the `CTRL_BOT_HOST_CPU` byte),
   `bots:u8`, `flags:u8` (bit 0: the bots thought; bit 1: bad).
@@ -831,7 +834,10 @@ Then, by kind (0xFF in a byte field: none):
   `host`. Their reason is why the bot moved: "over its slots" (`host` had
   more bots than its slots), "overrun rate" (the window rate of `host` was
   at or above the target rate), "low free CPU" (`host` failed the free CPU
-  check for the bots it had), or "the spread" (the even spread of
+  check for the bots it had), "low free CPU, batch" (one bot of a free CPU
+  batch: `host` was short by several bots and gave them in one step; one
+  decision 8 or 9 per bot, then a decision 3 with the same reason and the
+  lowered limit), or "the spread" (the even spread of
   `-bothost-spread-even`, and every decision 8 and 9 in logs made before
   these reasons). From version 2 the reason is followed by `srcRate:u16` and
   `dstRate:u16` (the window rates of `host` and `toHost` in hundredths of a
