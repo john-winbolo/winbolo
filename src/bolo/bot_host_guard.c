@@ -183,7 +183,7 @@ bool botHostInitTableAllowed(const ScnTable *t) {
 
 bool botHostSeatMayRunOn(const BotHostSeatFit *f) {
     if (f == NULL) return false;
-    if (f->playerHost && !f->culled) return false;
+    if (f->playerHost && !f->culled && !f->fullMapOk) return false;
     if (f->officialOnly && !f->brainInPlace) return false;
     if (f->playerHost && f->officialOnly && !f->tokensAllowed) return false;
     return true;
