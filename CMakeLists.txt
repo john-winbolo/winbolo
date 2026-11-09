@@ -6271,6 +6271,8 @@ set(_unit_test_names
     bot_host_rec_upload_asked
     bot_host_salt_limit
     brain_capacity_throwing_index
+    bot_host_refused_takes_no_file
+    brain_capacity_memory_limit
     bot_host_link_announce_codec
     bot_host_link_addr_list
     bot_host_link_allow

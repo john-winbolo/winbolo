@@ -920,6 +920,8 @@ int run_bot_host_unculled_not_player(void);
 int run_bot_host_rec_upload_asked(void);
 int run_bot_host_salt_limit(void);
 int run_brain_capacity_throwing_index(void);
+int run_bot_host_refused_takes_no_file(void);
+int run_brain_capacity_memory_limit(void);
 
 /* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
 int run_bot_host_link_announce_codec(void);

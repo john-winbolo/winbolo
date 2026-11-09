@@ -199,6 +199,16 @@ bool botHostPackReqAllInstall(const uint8_t *bits, size_t bitsLen,
     return fromInstall == fileCount;
 }
 
+/* ---- Brain files from a server ----------------------------------------- */
+
+bool botHostSyncTakesData(const BotHostSyncTake *s, int kind, uint32_t gen) {
+    if (s == NULL) return false;
+    if (s->officialOnly || s->installOnly || s->refused) return false;
+    if (!s->haveManifest || s->ready || gen != s->gen) return false;
+    if (kind == BOT_HOST_SYNC_DATA_PACK) return s->packMode;
+    return kind == BOT_HOST_SYNC_DATA_CHUNK;
+}
+
 /* ---- Same-computer salts ----------------------------------------------- */
 
 void botHostSaltLimitInit(BotHostSaltLimit *l) {

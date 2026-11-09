@@ -98,6 +98,32 @@ bool botHostSeatMayRunOn(const BotHostSeatFit *f);
 bool botHostPackReqAllInstall(const uint8_t *bits, size_t bitsLen,
                               uint16_t fileCount, uint16_t fromInstall);
 
+/* ---- Brain files from a server ----------------------------------------- */
+
+/* The kinds of brain file data a server sends a host. */
+#define BOT_HOST_SYNC_DATA_CHUNK 1  /* a piece of one file (one at a time) */
+#define BOT_HOST_SYNC_DATA_PACK  2  /* a piece of a packed stream */
+
+/* A Bot Host's brain sync state, as far as taking a server's file goes. */
+typedef struct {
+    bool     officialOnly; /* a player's host built with
+                            * WINBOLO_BOTHOST_OFFICIAL_ONLY: it never takes
+                            * a brain file from a server */
+    bool     installOnly;  /* this manifest's brains run only from the
+                            * install (official-only, or noCode) */
+    bool     refused;      /* this manifest was refused (v1 or debug mode) */
+    bool     haveManifest; /* a manifest is being downloaded */
+    bool     ready;        /* every file of it is in place */
+    bool     packMode;     /* its files come in packed streams */
+    uint32_t gen;          /* its generation */
+} BotHostSyncTake;
+
+/* True when the host may take (check and write into its stage or cache
+ * folder) brain file data of kind (BOT_HOST_SYNC_DATA_*) for manifest
+ * generation gen. Never on an official-only host, nor for an install-only
+ * or refused manifest: those hosts write no byte a server sends. */
+bool botHostSyncTakesData(const BotHostSyncTake *s, int kind, uint32_t gen);
+
 /* ---- Same-computer salts ----------------------------------------------- */
 
 /* The most salts one connection is answered, and the least time between

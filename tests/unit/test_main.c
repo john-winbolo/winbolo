@@ -612,6 +612,8 @@ static const UnitTestEntry s_tests[] = {
     { "bot_host_rec_upload_asked", run_bot_host_rec_upload_asked },
     { "bot_host_salt_limit", run_bot_host_salt_limit },
     { "brain_capacity_throwing_index", run_brain_capacity_throwing_index },
+    { "bot_host_refused_takes_no_file", run_bot_host_refused_takes_no_file },
+    { "brain_capacity_memory_limit", run_brain_capacity_memory_limit },
     { "bot_host_link_announce_codec", run_bot_host_link_announce_codec },
     { "bot_host_link_addr_list", run_bot_host_link_addr_list },
     { "bot_host_link_allow", run_bot_host_link_allow },

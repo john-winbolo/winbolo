@@ -1114,8 +1114,13 @@ static void syncInstallOnlyManifest(HostServer *sv, BrainSyncManifest m,
     hs->retries = 0;
     hs->packWire = 0;
     hs->fromInstall = hs->fromCache = 0;
+    /* No server byte is written in this mode: no folder to write into. */
+    hs->root[0] = '\0';
     if (!m.haveSha || m.debugMode) {
+        /* Refused: nothing of this manifest is taken, not even the files a
+         * server sends unasked (syncTakesData). */
         hs->refused = true;
+        hs->packMode = false;
         HOST_EVENT("[bothost] Bot Host \"%s\": the brain file list from %s "
                    "is %s; this host runs only the brains of its own install, "
                    "so it runs no bot for this server", optName, sv->label,
@@ -1296,6 +1301,24 @@ static bool syncParseChunkPath(const char *p, uint32_t *bi, uint32_t *fi,
     return true;
 }
 
+/* True when the host may take brain file data of kind
+ * (BOT_HOST_SYNC_DATA_*) for generation gen from sv: never on a host that
+ * runs only its install's brains (HOST_OFFICIAL_ONLY, or an install-only
+ * or refused manifest). Checked before a piece is taken in and again
+ * before it is written. */
+static bool syncTakesData(const HostServer *sv, int kind, uint32_t gen) {
+    const HostSync *hs = &sv->sync;
+    BotHostSyncTake t;
+    t.officialOnly = HOST_OFFICIAL_ONLY != 0;
+    t.installOnly = hs->installOnly;
+    t.refused = hs->refused;
+    t.haveManifest = hs->haveManifest;
+    t.ready = hs->ready;
+    t.packMode = hs->packMode;
+    t.gen = hs->gen;
+    return botHostSyncTakesData(&t, kind, gen);
+}
+
 static void syncOnChunk(HostServer *sv, const BulkStreamHeader *h,
                         const uint8_t *buf) {
     HostSync *hs = &sv->sync;
@@ -1305,7 +1328,7 @@ static void syncOnChunk(HostServer *sv, const BulkStreamHeader *h,
     int64_t n;
     char path[1024];
 
-    if (!hs->haveManifest || h->gen != hs->gen || hs->ready) return;
+    if (!syncTakesData(sv, BOT_HOST_SYNC_DATA_CHUNK, h->gen)) return;
     if (hs->retries > BOT_HOST_SYNC_MAX_RETRIES) return;
     if (!syncParseChunkPath(h->path, &bi, &fi, &off)) return;
     if (bi >= (uint32_t)hs->man.brainCount) return;
@@ -1460,10 +1483,7 @@ static void syncOnPack(HostServer *sv, const BulkStreamHeader *h,
     BrainPackStatus st;
     SyncPackCtx pc;
 
-    if (!hs->haveManifest || !hs->packMode || h->gen != hs->gen ||
-        hs->ready) {
-        return;
-    }
+    if (!syncTakesData(sv, BOT_HOST_SYNC_DATA_PACK, h->gen)) return;
     if (!syncParsePackPath(h->path, &bi, &seq) ||
         bi >= (uint32_t)hs->man.brainCount || hs->readers[bi] == NULL) {
         return;
@@ -1494,7 +1514,7 @@ static void syncOnPack(HostServer *sv, const BulkStreamHeader *h,
 }
 
 static uint8_t *syncBulkBegin(void *ctx, const BulkStreamHeader *h) {
-    (void)ctx;
+    const HostServer *sv = (const HostServer *)ctx;
     /* Stopped for this join: no brain files. */
     if (hostStopped()) return NULL;
     if (h->kind == BULK_KIND_BRAIN_MANIFEST) {
@@ -1502,11 +1522,13 @@ static uint8_t *syncBulkBegin(void *ctx, const BulkStreamHeader *h) {
             return NULL;
         }
     } else if (h->kind == BULK_KIND_BRAIN_CHUNK) {
-        if (h->totalSize < 4 || h->totalSize > BOT_HOST_SYNC_CHUNK_WIRE_MAX) {
+        if (h->totalSize < 4 || h->totalSize > BOT_HOST_SYNC_CHUNK_WIRE_MAX ||
+            !syncTakesData(sv, BOT_HOST_SYNC_DATA_CHUNK, h->gen)) {
             return NULL;
         }
     } else if (h->kind == BULK_KIND_BRAIN_PACK) {
-        if (h->totalSize == 0 || h->totalSize > BRAIN_PACK_PIECE_MAX) {
+        if (h->totalSize == 0 || h->totalSize > BRAIN_PACK_PIECE_MAX ||
+            !syncTakesData(sv, BOT_HOST_SYNC_DATA_PACK, h->gen)) {
             return NULL;
         }
     } else {
@@ -1758,6 +1780,9 @@ static void seatBuildBrain(HostSeat *hs) {
     hs->killCount = 0;
     *clientSimGetAllowComputerTanks(hs->cs) = (aiType)hs->ai;
 
+    /* Both slots are per thread (THREAD_LOCAL in luabrainshandler.c): the
+     * game thread's own bots stage theirs on that thread, so the two never
+     * meet. The create below takes them on this thread. */
     luaBrainsSetNextStartEngineTick((unsigned int)hs->startTick);
     luaBrainsSetNextInitArg(hs->initArg);
     fprintf(stderr, "Bot %d: brain init arg '%s'\n", (int)hs->seat,
@@ -2986,10 +3011,9 @@ static int embedCapacityFor(const HostServer *sv) {
 
     brainCapacityGetMachine(&machine);
     if (sv->sync.haveManifest) {
+        /* Only the ticket's own brain: one not in the list gives the
+         * default answer. */
         br = brainSyncFindBrain(&sv->sync.man, embedBrain);
-        if (br == NULL && sv->sync.man.brainCount > 0) {
-            br = &sv->sync.man.brains[0];
-        }
     }
     if (br != NULL && syncBrainInitPath(&sv->sync, br, path, sizeof(path))) {
         /* The answer is kept by brain name and version, so the brain is

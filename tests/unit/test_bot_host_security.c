@@ -21,6 +21,12 @@
  *   6. brain_capacity_throwing_index: a brain whose "brain" table throws
  *      from __index, or whose capacity() loops, gives the default and leaves
  *      the stack and the caller's hook as they were.
+ *   7. bot_host_refused_takes_no_file: with the official-only option on,
+ *      after a refused (debug-mode) list, an unasked chunk and pack piece
+ *      are not taken: nothing reaches the stage or cache folder.
+ *   8. brain_capacity_memory_limit: the capacity VM's memory limit stops a
+ *      very large string.rep at once, only while armed, and gives the VM
+ *      its own allocator back.
  */
 
 #include <stdint.h>
@@ -365,6 +371,186 @@ int run_brain_capacity_throwing_index(void) {
         "return { version = 2, capacity = function(m) return 3 end }",
         "secgood", 500, NULL, &kept) == 3);
     UT_ASSERT(kept);
+    brainCapacityClear();
+    return 0;
+}
+
+/* ================================================================
+ * 7. A refused list takes no brain file from the server
+ * ================================================================ */
+
+/* What the host does with one file a server sends (bothost_main.c
+ * syncOnChunk and syncPackFile): take it only when botHostSyncTakesData
+ * says so, check it against the list, and write it into the stage folder;
+ * then move the stage into the cache (syncFinishIfDone). */
+static void sec_host_takes(const BotHostSyncTake *t, int kind, uint32_t gen,
+                           const char *cacheRoot, const BrainSyncBrain *br,
+                           const char *data, size_t len) {
+    char stage[1100], path[1400];
+    if (!botHostSyncTakesData(t, kind, gen)) return;
+    if (!brainSyncDataIs(&br->files[0], data, len)) return;
+    if (!brainSyncStageDir(stage, sizeof(stage), cacheRoot, br->name,
+                           br->version)) {
+        return;
+    }
+    SDL_snprintf(path, sizeof(path), "%s/%s", stage, br->files[0].path);
+    if (!brainSyncWriteFile(path, data, len)) return;
+    (void)brainSyncCommitStage(cacheRoot, br);
+}
+
+static bool sec_dir_exists(const char *path) {
+    SDL_PathInfo info;
+    return SDL_GetPathInfo(path, &info) &&
+           info.type == SDL_PATHTYPE_DIRECTORY;
+}
+
+int run_bot_host_refused_takes_no_file(void) {
+    BrainSyncManifest m;
+    BotHostSyncTake t;
+    char serverDir[1024], cacheRoot[1024], brainDir[1200];
+    const char *initText = "return { version = 'refused' }\n";
+    const uint32_t gen = 7;
+
+    UT_ASSERT(utScratchPath(serverDir, sizeof(serverDir), "refserver"));
+    UT_ASSERT(utScratchPath(cacheRoot, sizeof(cacheRoot), "refcache"));
+    UT_ASSERT(sec_write(serverDir, "init.lua", initText));
+
+    /* A debug-mode v2 list: an official-only host refuses it. */
+    memset(&m, 0, sizeof(m));
+    m.haveSha = true;
+    m.debugMode = true;
+    UT_ASSERT(brainSyncCollectBrain(&m.brains[0], "RefBrain", serverDir,
+                                    true, NULL));
+    m.brainCount = 1;
+    brainSyncComputeVersions(&m);
+    UT_ASSERT(m.brains[0].fileCount == 1);
+    UT_ASSERT(brainSyncDataIs(&m.brains[0].files[0], initText,
+                              strlen(initText)));
+    SDL_snprintf(brainDir, sizeof(brainDir), "%s/RefBrain", cacheRoot);
+
+    /* The state syncInstallOnlyManifest leaves after the refused list,
+     * with the option on. */
+    memset(&t, 0, sizeof(t));
+    t.officialOnly = true;
+    t.installOnly = true;
+    t.refused = true;
+    t.haveManifest = true;
+    t.ready = false;
+    t.packMode = false;
+    t.gen = gen;
+
+    /* An unasked chunk and an unasked pack piece of that generation, with
+     * bytes that pass the list's own check: nothing is written. */
+    sec_host_takes(&t, BOT_HOST_SYNC_DATA_CHUNK, gen, cacheRoot,
+                   &m.brains[0], initText, strlen(initText));
+    sec_host_takes(&t, BOT_HOST_SYNC_DATA_PACK, gen, cacheRoot,
+                   &m.brains[0], initText, strlen(initText));
+    UT_ASSERT(!botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_CHUNK, gen));
+    UT_ASSERT(!botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_PACK, gen));
+    UT_ASSERT_MSG(!sec_dir_exists(brainDir),
+                  "a file was written under %s", brainDir);
+
+    /* Each part alone also says no. */
+    t.refused = false;
+    UT_ASSERT(!botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_CHUNK, gen));
+    t.installOnly = false;   /* the option on: before any list */
+    UT_ASSERT(!botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_CHUNK, gen));
+    UT_ASSERT(!botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_PACK, gen));
+    t.officialOnly = false;
+    t.installOnly = true;    /* a noCode list (-bothost-code official) */
+    UT_ASSERT(!botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_CHUNK, gen));
+    t.installOnly = false;
+    t.refused = true;
+    UT_ASSERT(!botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_PACK, gen));
+    sec_host_takes(&t, BOT_HOST_SYNC_DATA_CHUNK, gen, cacheRoot,
+                   &m.brains[0], initText, strlen(initText));
+    UT_ASSERT(!sec_dir_exists(brainDir));
+    UT_ASSERT(!botHostSyncTakesData(NULL, BOT_HOST_SYNC_DATA_CHUNK, gen));
+
+    /* The custom download it is there for: the option off, a list being
+     * downloaded. Only its own generation, only until it is ready. */
+    memset(&t, 0, sizeof(t));
+    t.haveManifest = true;
+    t.packMode = true;
+    t.gen = gen;
+    UT_ASSERT(botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_CHUNK, gen));
+    UT_ASSERT(botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_PACK, gen));
+    UT_ASSERT(!botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_CHUNK, gen + 1));
+    UT_ASSERT(!botHostSyncTakesData(&t, 99, gen));
+    t.packMode = false;
+    UT_ASSERT(!botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_PACK, gen));
+    t.ready = true;
+    UT_ASSERT(!botHostSyncTakesData(&t, BOT_HOST_SYNC_DATA_CHUNK, gen));
+    t.ready = false;
+    /* And then the file does reach the cache, so the folder check above
+     * looks at the right place. */
+    sec_host_takes(&t, BOT_HOST_SYNC_DATA_CHUNK, gen, cacheRoot,
+                   &m.brains[0], initText, strlen(initText));
+    UT_ASSERT(sec_dir_exists(brainDir));
+    brainSyncFree(&m);
+    return 0;
+}
+
+/* ================================================================
+ * 8. A memory limit on the capacity VM
+ * ================================================================ */
+int run_brain_capacity_memory_limit(void) {
+    BrainCapacityMem mem;
+    BrainMachineInfo mi;
+    lua_State *L;
+    lua_Alloc f0, f1;
+    void *ud0 = NULL, *ud1 = NULL;
+    int err, def;
+    Uint64 t0;
+
+    brainCapacityClear();
+    brainCapacitySetMachineFromTest("Ut CPU", 6, 6, 30000.0, 150000.0);
+    brainCapacityGetMachine(&mi);
+    def = brainCapacityDefault(&mi);
+
+    L = luaL_newstate();
+    UT_ASSERT(L != NULL);
+    luaL_openlibs(L);
+    f0 = lua_getallocf(L, &ud0);
+    brainCapacityMemLimitSet(L, &mem, (size_t)8 * 1024 * 1024);
+    /* Not armed yet: the VM's own allocator. */
+    f1 = lua_getallocf(L, &ud1);
+    UT_ASSERT(f1 == f0 && ud1 == ud0);
+
+    /* Armed: a small string is fine, a 64 MiB one fails at once. */
+    brainCapacityMemArm(L, true);
+    UT_ASSERT(luaL_loadstring(L, "local s = string.rep('x', 1000) "
+                                 "return #s") == 0);
+    err = lua_pcall(L, 0, 1, 0);
+    UT_ASSERT(err == 0 && lua_tointeger(L, -1) == 1000);
+    lua_pop(L, 1);
+    UT_ASSERT(luaL_loadstring(L, "local s = string.rep('x', 64 * 1024 * "
+                                 "1024) return #s") == 0);
+    t0 = SDL_GetTicks();
+    err = lua_pcall(L, 0, 1, 0);
+    UT_ASSERT_MSG(err == LUA_ERRMEM, "pcall gave %d", err);
+    UT_ASSERT(SDL_GetTicks() - t0 < 2000);
+    lua_pop(L, 1);
+    UT_ASSERT(mem.peak <= mem.limit);
+    brainCapacityMemArm(L, false);
+    /* Disarmed: the VM's own allocator again, and no limit. */
+    f1 = lua_getallocf(L, &ud1);
+    UT_ASSERT(f1 == f0 && ud1 == ud0);
+    UT_ASSERT(luaL_dostring(L, "local s = string.rep('x', 16 * 1024 * 1024) "
+                               "assert(#s == 16 * 1024 * 1024)") == 0);
+
+    /* The capacity question arms it: a capacity() that asks for a very
+     * large string gives the default, at once, and the stack is kept. */
+    UT_ASSERT(luaL_dostring(L, "brain = { version = 'mem', capacity = "
+                               "function() local s = string.rep('x', "
+                               "1024 * 1024 * 1024) return #s end }") == 0);
+    t0 = SDL_GetTicks();
+    UT_ASSERT(brainCapacityResolveLuaEx(L, NULL, "secmem", 5000, NULL) == def);
+    UT_ASSERT(SDL_GetTicks() - t0 < 4000);
+    UT_ASSERT(lua_gettop(L) == 0);
+    f1 = lua_getallocf(L, &ud1);
+    UT_ASSERT(f1 == f0 && ud1 == ud0);
+    lua_close(L);
     brainCapacityClear();
     return 0;
 }
