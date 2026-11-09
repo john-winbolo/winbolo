@@ -856,6 +856,10 @@ static bool brain_instance_create(LuaBrainInstance *inst, const char *path,
   const bool limited = capacityOnly && lim != NULL &&
                        (lim->budgetMs > 0 || lim->abortFlag != NULL);
   Uint64 limitStart = 0;
+  /* limited: the VM's memory limit (brain_capacity.h). The VM never
+   * leaves this function then, so it may live on this stack. */
+  BrainCapacityMem capMem;
+  int runErr;
 
   memset(inst, 0, sizeof(*inst));
   inst->cs = cs;
@@ -874,6 +878,7 @@ static bool brain_instance_create(LuaBrainInstance *inst, const char *path,
     WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to create Lua state for '%s'", name);
     return false;
   }
+  if (limited) brainCapacityMemLimitSet(L, &capMem, BRAIN_CAPACITY_MEM_LIMIT);
 
   /* Zero the BotContext* slot before any C binding can run. Lua does not
    * zero-init extraspace, and brain.open() below can reach botFromLua via
@@ -1259,8 +1264,11 @@ static bool brain_instance_create(LuaBrainInstance *inst, const char *path,
 #endif
     limitStart = SDL_GetTicks();
     brainCapacityLimitSet(L, lim->budgetMs, lim->abortFlag);
+    brainCapacityMemArm(L, true);
   }
-  if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
+  runErr = lua_pcall(L, 0, 1, 0);
+  if (limited) brainCapacityMemArm(L, false);
+  if (runErr != LUA_OK) {
     const char *e = lua_tostring(L, -1);
     if (limited) brainCapacityLimitClear(L);
     WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: error running '%s': %s",

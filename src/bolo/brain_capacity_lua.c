@@ -105,6 +105,64 @@ void brainCapacityLimitClear(struct lua_State *L) {
   lua_rawset(L, LUA_REGISTRYINDEX);
 }
 
+/* ---- The memory limit on a capacity-only VM ----------------------------- */
+
+/* The registry key of the BrainCapacityMem of a VM. */
+static const char capMemKey = 0;
+
+static void *cap_alloc(void *ud, void *ptr, size_t osize, size_t nsize) {
+  BrainCapacityMem *m = (BrainCapacityMem *)ud;
+  /* A new block: osize is not a size (Lua 5.4 passes the type there). */
+  size_t old = ptr != NULL ? osize : 0;
+  void *p;
+  if (nsize > old &&
+      (nsize - old > m->limit || m->used > m->limit - (nsize - old))) {
+    return NULL;
+  }
+  p = m->allocf(m->allocd, ptr, osize, nsize);
+  if (nsize != 0 && p == NULL) return NULL;
+  m->used = m->used > old ? m->used - old : 0;
+  m->used += nsize;
+  if (m->used > m->peak) m->peak = m->used;
+  return p;
+}
+
+void brainCapacityMemLimitSet(struct lua_State *L, BrainCapacityMem *m,
+                              size_t limit) {
+  m->allocf = NULL;
+  m->allocd = NULL;
+  m->used = 0;
+  m->peak = 0;
+  m->limit = limit;
+  lua_pushlightuserdata(L, (void *)&capMemKey);
+  lua_pushlightuserdata(L, m);
+  lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+void brainCapacityMemArm(struct lua_State *L, bool on) {
+  BrainCapacityMem *m;
+  void *ud = NULL;
+  lua_Alloc f;
+  /* No allocation here: a light userdata key and a raw read. */
+  lua_pushlightuserdata(L, (void *)&capMemKey);
+  lua_rawget(L, LUA_REGISTRYINDEX);
+  m = (BrainCapacityMem *)lua_touserdata(L, -1);
+  lua_pop(L, 1);
+  if (m == NULL) return;
+  f = lua_getallocf(L, &ud);
+  if (on) {
+    if (f == cap_alloc) return;
+    m->allocf = f;
+    m->allocd = ud;
+    m->used = (size_t)lua_gc(L, LUA_GCCOUNT, 0) * 1024u +
+              (size_t)lua_gc(L, LUA_GCCOUNTB, 0);
+    if (m->used > m->peak) m->peak = m->used;
+    lua_setallocf(L, cap_alloc, m);
+  } else if (f == cap_alloc && ud == m) {
+    lua_setallocf(L, m->allocf, m->allocd);
+  }
+}
+
 /* ---- The protected steps -------------------------------------------------- */
 
 /* Pushes brain.version (a string, or nil) and true when "brain" is a
@@ -166,7 +224,7 @@ int brainCapacityResolveLuaEx(struct lua_State *L, const char *path,
   char name[BRAIN_CAPACITY_VERSION_LEN * 2];
   BrainMachineInfo machine;
   int top = lua_gettop(L);
-  int value;
+  int value, pcallErr;
   bool ok = false, haveFn = false, isTable = false, limited;
   double raw = 0.0;
   lua_Hook oldHook = lua_gethook(L);
@@ -190,7 +248,10 @@ int brainCapacityResolveLuaEx(struct lua_State *L, const char *path,
   }
 
   lua_pushcfunction(L, cap_read_version);
-  if (lua_pcall(L, 0, 2, 0) != LUA_OK) {
+  brainCapacityMemArm(L, true);
+  pcallErr = lua_pcall(L, 0, 2, 0);
+  brainCapacityMemArm(L, false);
+  if (pcallErr != LUA_OK) {
     const char *e = lua_tostring(L, -1);
     WB_LOG_WARN(WB_LOG_CAT_LUA,
                 "brain '%s': reading brain.version failed: %s",
@@ -214,7 +275,10 @@ int brainCapacityResolveLuaEx(struct lua_State *L, const char *path,
   brainCapacityGetMachine(&machine);
   lua_pushlightuserdata(L, &machine);
   lua_pushcclosure(L, cap_call, 1);
-  if (lua_pcall(L, 0, 2, 0) == LUA_OK) {
+  brainCapacityMemArm(L, true);
+  pcallErr = lua_pcall(L, 0, 2, 0);
+  brainCapacityMemArm(L, false);
+  if (pcallErr == LUA_OK) {
     haveFn = lua_toboolean(L, -2) != 0;
     if (haveFn) {
       if (lua_type(L, -1) == LUA_TNUMBER) {

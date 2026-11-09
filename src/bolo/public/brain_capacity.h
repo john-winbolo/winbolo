@@ -183,6 +183,30 @@ void brainCapacityLimitSet(struct lua_State *L, unsigned budgetMs,
                            struct SDL_AtomicInt *abortFlag);
 void brainCapacityLimitClear(struct lua_State *L);
 
+/* A memory limit on a VM that only answers the capacity question. While
+   it is armed, an allocation that would take the VM past limit bytes
+   fails, so the call raises "not enough memory" (string.rep with a very
+   large count fails at once instead of holding the thread). It is armed
+   only inside the protected calls that run the brain's code
+   (brainCapacityMemArm): an allocation of the host's own C code between
+   them never fails, so no error is raised outside a protected call.
+   Armed, the VM's allocator is wrapped; disarmed, the VM has its own
+   allocator back (LuaJIT frees its memory pool at lua_close only when it
+   sees its own allocator). m must outlive the VM. */
+#define BRAIN_CAPACITY_MEM_LIMIT ((size_t)256 * 1024 * 1024)
+typedef struct {
+  void *(*allocf)(void *ud, void *ptr, size_t osize, size_t nsize);
+  void  *allocd;
+  size_t used;    /* bytes the VM holds now (from the VM's own count) */
+  size_t limit;
+  size_t peak;
+} BrainCapacityMem;
+/* Note m as L's limit (not armed yet). */
+void brainCapacityMemLimitSet(struct lua_State *L, BrainCapacityMem *m,
+                              size_t limit);
+/* Arm or disarm L's limit; nothing when L has none. */
+void brainCapacityMemArm(struct lua_State *L, bool on);
+
 /* --- The lobby's Add Bot rule --- */
 
 typedef enum {
