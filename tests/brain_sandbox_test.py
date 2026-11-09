@@ -58,6 +58,10 @@ end
 local preloaded = 0
 for _ in pairs(package.preload) do preloaded = preloaded + 1 end
 say("preload_empty", preloaded == 0)
+say("no_func_from_getinfo", debug.getinfo(1, "f").func == nil
+                            and debug.getinfo(1).func == nil
+                            and debug.getinfo(print).func == nil
+                            and debug.getinfo(1, "S").source ~= nil)
 
 -- The jail: a file beside the brain's folder cannot be opened.
 local outside = io.open("@OUTSIDE@", "w")
@@ -94,6 +98,29 @@ out:write(table.concat(results, "\n"), "\n")
 out:close()
 
 return { think = function() return {} end }
+"""
+
+
+# A brain whose tables raise on every metamethod the host could trigger. It runs
+# on the server's own bot path, where the host writes to the brain's table every
+# tick. It counts its thinks, so a server that dies or never thinks reads as FAIL.
+HOSTILE_METATABLE = r"""
+local open, rawset, setmetatable, error = io.open, rawset, setmetatable, error
+local thinks = 0
+local brain_table = setmetatable({
+  think = function()
+    thinks = thinks + 1
+    local out = open("@BRAIN@/thinks.txt", "w")
+    out:write(tostring(thinks))
+    out:close()
+    return {}
+  end,
+}, {
+  __newindex = function() error("brain __newindex") end,
+})
+local function hit() error("global metamethod") end
+setmetatable(_G, { __index = hit, __newindex = hit })
+return brain_table
 """
 
 
@@ -156,6 +183,40 @@ def check_bytecode_refused(headless, tmp):
     return ["a bytecode init.lua was not refused by mode; its log:\n" + log[-1500:]]
 
 
+def check_hostile_metatable(build_dir, tmp):
+    ds = None
+    for candidate in (build_dir / "WinBoloDS.exe", build_dir / "WinBoloDS",
+                      build_dir / "Release" / "WinBoloDS.exe"):
+        if candidate.exists():
+            ds = candidate
+            break
+    if ds is None:
+        return ["WinBoloDS not found under %s" % build_dir]
+    brain_dir = tmp / "Hostile"
+    brain_dir.mkdir()
+    source = HOSTILE_METATABLE.replace("@BRAIN@", brain_dir.as_posix())
+    (brain_dir / "init.lua").write_text(source, encoding="utf-8")
+    done = subprocess.run(
+        [str(ds), "-nocrashreporting", "-map", str(MAP), "-port", "50077",
+         "-nolobby", "-gametype", "open", "-ai", "yes", "-limit", "20",
+         "-bots", "1", "-brain", str(brain_dir / "init.lua"),
+         "-ticks", "200", "-seed", "42", "-nowinbolonet", "-quiet",
+         "-threads", "1", "-asap"],
+        cwd=str(tmp), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        timeout=300)
+    log = done.stdout.decode("utf-8", "replace")
+    if done.returncode != 0:
+        return ["the server exited with %d; its log:\n%s" % (done.returncode, log[-1500:])]
+    thinks = brain_dir / "thinks.txt"
+    if not thinks.exists():
+        return ["the hostile brain never thought; the server's log:\n" + log[-1500:]]
+    count = int(thinks.read_text(encoding="utf-8"))
+    if count < 3:
+        return ["the hostile brain thought only %d times" % count]
+    print("  server survived, and the brain thought %d times" % count)
+    return []
+
+
 def check_goalhunter(headless, tmp, ticks):
     failures = []
     # Outside debug mode the loader takes opt/init.lua when it exists.
@@ -192,6 +253,8 @@ def main():
         failures += check_probe(headless, tmp)
         print("Bytecode init.lua:")
         failures += check_bytecode_refused(headless, tmp)
+        print("Hostile metatables on a server:")
+        failures += check_hostile_metatable(args.build, tmp)
         print("GoalHunter:")
         failures += check_goalhunter(headless, tmp, args.ticks)
     finally:

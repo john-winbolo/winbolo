@@ -287,6 +287,12 @@ void brainCoreSetLogFlushHook(void (*fn)(void));
  *********************************************************/
 void brainCoreSetHostDebugMode(lua_State *L, bool on);
 
+/* Read or write a global without running a metatable the brain set on _G. Get
+ * pushes the value; Set pops it. For host code outside any lua_pcall, where an
+ * error from such a metatable would end the program. */
+void brainCoreGetGlobalRaw(lua_State *L, const char *name);
+void brainCoreSetGlobalRaw(lua_State *L, const char *name);
+
 /*********************************************************
  *NAME:          brainCoreRegisterPathfinder
  *PURPOSE:

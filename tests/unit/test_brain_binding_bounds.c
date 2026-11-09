@@ -22,6 +22,10 @@
  * run_brain_bounds_think_errors        - a metamethod that raises in the host's
  *                                        own reads and writes is a failed think,
  *                                        not the end of the program
+ * run_brain_bounds_wrapper_called_from_lua - the host wrappers refuse a call from
+ *                                        Lua with anything but their own argument
+ * run_brain_bounds_kill_outside_think  - a kill outside think is still a kill
+ * run_brain_bounds_host_globals_raw    - host global access runs no metatable
  */
 
 #include <limits.h>
@@ -357,48 +361,142 @@ static bool bbThink(lua_State *L, BrainInfo *info) {
     return brainCoreCallThink(L, info, &killed);
 }
 
+/* Whether the global a chunk's metamethod sets was set, read past any metatable
+ * on _G. Tells a call that failed because of the raise from one that fails
+ * anyway, since both answer false. */
+static bool bbFlagSet(lua_State *L, const char *name) {
+    bool set;
+    brainCoreGetGlobalRaw(L, name);
+    set = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    return set;
+}
+
 int run_brain_bounds_think_errors(void) {
     static BrainInfo info;
     lua_State *L;
+    int top;
 
     memset(&info, 0, sizeof(info));
 
     /* The info table the host writes through on the next push. */
     L = bbStateWith(
         "brain = { think = function(info)\n"
-        "  info.mods = setmetatable({}, { __newindex = function() error('mods') end })\n"
+        "  info.mods = setmetatable({}, { __newindex = function()\n"
+        "    raised = true; error('mods') end })\n"
         "  return {}\n"
         "end }\n");
     UT_ASSERT(L != NULL);
     UT_ASSERT_MSG(bbThink(L, &info), "the first think failed");
+    top = lua_gettop(L);
     UT_ASSERT_MSG(!bbThink(L, &info), "a push into a raising table succeeded");
+    UT_ASSERT_MSG(bbFlagSet(L, "raised"), "the push did not reach the metamethod");
+    UT_ASSERT_MSG(lua_gettop(L) == top, "a failed think left the stack changed");
     lua_close(L);
 
     /* The table the think returned, which the host reads. */
     L = bbStateWith(
         "brain = { think = function(info)\n"
-        "  return setmetatable({}, { __index = function() error('output') end })\n"
+        "  return setmetatable({}, { __index = function()\n"
+        "    raised = true; error('output') end })\n"
         "end }\n");
     UT_ASSERT(L != NULL);
     UT_ASSERT_MSG(!bbThink(L, &info), "reading a raising output table succeeded");
+    UT_ASSERT_MSG(bbFlagSet(L, "raised"), "the read did not reach the metamethod");
     lua_close(L);
 
-    /* The lookups before the think. */
+    /* The lookup of a method on the brain's own table. */
     L = bbStateWith(
-        "brain = setmetatable({}, { __index = function() error('brain') end })\n");
+        "brain = setmetatable({}, { __index = function()\n"
+        "  raised = true; error('brain') end })\n");
     UT_ASSERT(L != NULL);
     UT_ASSERT_MSG(!bbThink(L, &info), "a raising brain table gave a think");
+    UT_ASSERT_MSG(bbFlagSet(L, "raised"), "the lookup did not reach the metamethod");
     UT_ASSERT_MSG(!brainCoreCallMethod(L, &info, "open"),
                   "a raising brain table gave a method");
     lua_close(L);
+    return 0;
+}
 
-    L = bbStateWith(
-        "brain = nil\n"
-        "setmetatable(_G, { __index = function() error('global') end })\n");
+/* The wrappers are on the stack below think. Without the sandbox, getinfo gives
+ * a brain the deepest one, and it calls it with what would be read as the host's
+ * arguments. */
+int run_brain_bounds_wrapper_called_from_lua(void) {
+    static BrainInfo info;
+    lua_State *L = bbStateWith(
+        "local function deepest()\n"
+        "  local f, i = nil, 1\n"
+        "  while true do\n"
+        "    local ar = debug.getinfo(i, 'f')\n"
+        "    if not ar then return f end\n"
+        "    f = ar.func; i = i + 1\n"
+        "  end\n"
+        "end\n"
+        "local function poke(flag)\n"
+        "  local f = deepest()\n"
+        "  if type(f) == 'function' then rawset(_G, flag, true) end\n"
+        "  pcall(f)\n"
+        "  pcall(f, 5)\n"
+        "  pcall(f, io.stdout)\n"
+        "end\n"
+        "brain = {\n"
+        "  think = function() poke('found_think'); return {} end,\n"
+        "  open = function() poke('found_open') end,\n"
+        "}\n");
+
     UT_ASSERT(L != NULL);
-    UT_ASSERT_MSG(!bbThink(L, &info), "a raising global table gave a think");
-    UT_ASSERT_MSG(!brainCoreCallMethod(L, &info, "open"),
-                  "a raising global table gave a method");
+    memset(&info, 0, sizeof(info));
+    UT_ASSERT_MSG(bbThink(L, &info), "the think failed");
+    UT_ASSERT_MSG(bbFlagSet(L, "found_think"), "think did not find a wrapper");
+    UT_ASSERT_MSG(brainCoreCallMethod(L, &info, "open"), "the open failed");
+    UT_ASSERT_MSG(bbFlagSet(L, "found_open"), "open did not find a wrapper");
+    lua_close(L);
+    return 0;
+}
+
+/* A budget kill raised outside the brain's own pcall is still a kill, and its
+ * log lines are still flushed. */
+int run_brain_bounds_kill_outside_think(void) {
+    static BrainInfo info;
+    bool killed = false;
+    lua_State *L = bbStateWith(
+        "function brain_flush_killed() flushed = true end\n"
+        "brain = { think = function()\n"
+        "  return setmetatable({}, { __index = function()\n"
+        "    error('tick_budget_exceeded') end })\n"
+        "end }\n");
+
+    UT_ASSERT(L != NULL);
+    memset(&info, 0, sizeof(info));
+    UT_ASSERT_MSG(!brainCoreCallThink(L, &info, &killed), "the think succeeded");
+    UT_ASSERT_MSG(killed, "the kill was not reported");
+    UT_ASSERT_MSG(bbFlagSet(L, "flushed"), "the killed tick's logs were not flushed");
+    lua_close(L);
+    return 0;
+}
+
+/* Host code that reads and writes globals outside any pcall, with a _G whose
+ * metatable raises on everything. Reaching the end at all is most of the test. */
+int run_brain_bounds_host_globals_raw(void) {
+    static BrainInfo info;
+    ScnTable table;
+    char why[128];
+    lua_State *L = bbStateWith(
+        "brain = nil\n"
+        "local function hit() rawset(_G, 'raised', true); error('global') end\n"
+        "setmetatable(_G, { __index = hit, __newindex = hit })\n");
+
+    UT_ASSERT(L != NULL);
+    memset(&info, 0, sizeof(info));
+    memset(&table, 0, sizeof(table));
+    UT_ASSERT_MSG(!bbThink(L, &info), "a think with no brain succeeded");
+    UT_ASSERT_MSG(!brainCoreCallMethod(L, &info, "open"), "a method with no brain succeeded");
+    brainCoreSetInitTable(L, &table);
+    UT_ASSERT_MSG(!brainCoreUpdateInitTable(L, &table, why, sizeof(why)),
+                  "an init update with no brain succeeded");
+    UT_ASSERT_MSG(brainCoreCallScenarioHint(L, &table, why, sizeof(why)) ==
+                  BRAIN_HINT_NO_HANDLER, "a hint with no handler was delivered");
+    UT_ASSERT_MSG(!bbFlagSet(L, "raised"), "host code ran the metatable on _G");
     lua_close(L);
     return 0;
 }

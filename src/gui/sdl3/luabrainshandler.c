@@ -667,6 +667,27 @@ static void brain_jail_table_method(lua_State *L, const char *tbl,
   lua_pop(L, 1);
 }
 
+/* debug.getinfo([thread,] f [, what]) with the 'f' option taken out. Function
+ * objects are the one thing here a brain could use: a level below its think is
+ * host C code, which was never written to be called from Lua. */
+static int l_getinfo_no_func(lua_State *L) {
+  int arg = lua_isthread(L, 1) ? 1 : 0;
+  const char *what = luaL_optstring(L, arg + 2, "Slnu");
+  char kept[16];
+  size_t n = 0;
+
+  for (; *what != '\0' && n + 1 < sizeof(kept); what++) {
+    if (*what != 'f') kept[n++] = *what;
+  }
+  kept[n] = '\0';
+  lua_pushvalue(L, lua_upvalueindex(1));
+  if (arg) lua_pushvalue(L, 1);
+  lua_pushvalue(L, arg + 1);
+  lua_pushstring(L, kept);
+  lua_call(L, arg + 2, 1);
+  return 1;
+}
+
 /* Clear every field of the table on the stack top but those named in keep
  * (NULL-terminated, or NULL for none). Setting a field that exists to nil is
  * allowed during a traversal. */
@@ -754,6 +775,9 @@ static void brain_apply_sandbox(lua_State *L, const char *root) {
   lua_getglobal(L, "debug");
   if (lua_istable(L, -1)) {
     brain_clear_table_except(L, keep_debug);
+    lua_getfield(L, -1, "getinfo");
+    lua_pushcclosure(L, l_getinfo_no_func, 1);
+    lua_setfield(L, -2, "getinfo");
   }
   lua_pop(L, 1);
 
@@ -1212,7 +1236,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     lua_close(L);
     return false;
   }
-  lua_setglobal(L, "brain");
+  brainCoreSetGlobalRaw(L, "brain");
 
   /* Call brain.open(info) */
   brainDataMakeInfo(cs, &inst->bInfo, true, aiMode);
@@ -1337,20 +1361,25 @@ void luaBrainSetTickInputs(LuaBrainInstance *inst,
      * botManagerTick, which knows the previous value. */
     if (tierOverride >= 1 && tierOverride <= 10) {
         lua_pushinteger(L, tierOverride);
-        lua_setglobal(L, "_BT_TIER_OVERRIDE");
+        brainCoreSetGlobalRaw(L, "_BT_TIER_OVERRIDE");
     }
 
-    lua_getglobal(L, "brain");
+    brainCoreGetGlobalRaw(L, "brain");
     if (!lua_istable(L, -1)) {
         lua_settop(L, top);
         return;
     }
+    /* Raw: this runs outside any lua_pcall, on every tick, and a metatable on
+     * the brain's table must not get to raise here. */
+    lua_pushstring(L, "lastThinkMs");
     lua_pushnumber(L, lastThinkMs);
-    lua_setfield(L, -2, "lastThinkMs");
+    lua_rawset(L, -3);
+    lua_pushstring(L, "targetMs");
     lua_pushnumber(L, targetMs);
-    lua_setfield(L, -2, "targetMs");
+    lua_rawset(L, -3);
+    lua_pushstring(L, "wasKilled");
     lua_pushboolean(L, wasKilled ? 1 : 0);
-    lua_setfield(L, -2, "wasKilled");
+    lua_rawset(L, -3);
     lua_settop(L, top);
 }
 
@@ -1379,9 +1408,10 @@ static void seedRandomOnState(lua_State *L, long seed) {
      * replan_offset staggers a bot's entire replan cadence off one draw. The
      * caller combines a fixed seed with the player number so bots still differ
      * from one another while being identical across runs. */
-    lua_getglobal(L, "math");
+    brainCoreGetGlobalRaw(L, "math");
     if (lua_istable(L, -1)) {
-        lua_getfield(L, -1, "randomseed");
+        lua_pushstring(L, "randomseed");
+        lua_rawget(L, -2);
         if (lua_isfunction(L, -1)) {
             lua_pushinteger(L, (lua_Integer)seed);
             if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
@@ -1426,17 +1456,17 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
 void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
   if (!inst || !inst->L) return;
   lua_pushboolean(inst->L, enabled);
-  lua_setglobal(inst->L, "BRAIN_DEBUG_MODE");
+  brainCoreSetGlobalRaw(inst->L, "BRAIN_DEBUG_MODE");
   brainCoreSetHostDebugMode(inst->L, enabled);
   /* Keep print2 gate in sync — flipping debug mode mid-run should
    * also start/stop the per-tick log file. */
   lua_pushboolean(inst->L, enabled);
-  lua_setglobal(inst->L, "_PRINT2_ENABLED");
+  brainCoreSetGlobalRaw(inst->L, "_PRINT2_ENABLED");
   /* Per-category gates follow the master debug flag for the signal-rich
    * categories; chatty ones (SCORES/SWERVE) stay off unless user toggles
    * them in their Lua state separately. */
-  lua_pushboolean(inst->L, enabled); lua_setglobal(inst->L, "BRAIN_LOG_GOALS");
-  lua_pushboolean(inst->L, enabled); lua_setglobal(inst->L, "BRAIN_LOG_BUILDER");
+  lua_pushboolean(inst->L, enabled); brainCoreSetGlobalRaw(inst->L, "BRAIN_LOG_GOALS");
+  lua_pushboolean(inst->L, enabled); brainCoreSetGlobalRaw(inst->L, "BRAIN_LOG_BUILDER");
 }
 
 LuaBrainSetting *luaBrainInstanceGetSettings(LuaBrainInstance *inst,

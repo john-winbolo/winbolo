@@ -5907,6 +5907,10 @@ set(_unit_test_names
     brain_bounds_tail_bad_steps
     brain_bounds_tail_bad_neutral
     brain_bounds_think_errors
+    brain_bounds_wrapper_called_from_lua
+    brain_bounds_kill_outside_think
+    brain_bounds_host_globals_raw
+    brain_crash_log_outside_think
     brain_bounds_deserialize_open
     brain_bounds_next_step_bad_start
     brain_bounds_shells_at_bad_tile

@@ -107,6 +107,35 @@ static int l_get_terrain_upvalue(lua_State *L) {
 /* Per-brain init table                                                */
 /* ------------------------------------------------------------------ */
 
+void brainCoreGetGlobalRaw(lua_State *L, const char *name) {
+#ifdef WINBOLO_LUAJIT
+  lua_pushvalue(L, LUA_GLOBALSINDEX);
+#else
+  lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
+#endif
+  lua_pushstring(L, name);
+  lua_rawget(L, -2);
+  lua_remove(L, -2);
+}
+
+void brainCoreSetGlobalRaw(lua_State *L, const char *name) {
+#ifdef WINBOLO_LUAJIT
+  lua_pushvalue(L, LUA_GLOBALSINDEX);
+#else
+  lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
+#endif
+  lua_pushstring(L, name);
+  lua_pushvalue(L, -3);
+  lua_rawset(L, -3);
+  lua_pop(L, 2);
+}
+
+/* Push t[key] for the table on the stack top, with no metamethod. */
+static void brc_raw_field(lua_State *L, const char *key) {
+  lua_pushstring(L, key);
+  lua_rawget(L, -2);
+}
+
 void brainCoreSetInitTable(lua_State *L, const ScnTable *init) {
   int n = (init != NULL) ? (int)init->count : 0;
   int i;
@@ -118,7 +147,7 @@ void brainCoreSetInitTable(lua_State *L, const ScnTable *init) {
     lua_pushstring(L, init->kv[i].value);
     lua_setfield(L, -2, init->kv[i].key);
   }
-  lua_setglobal(L, "BRAIN_INIT");
+  brainCoreSetGlobalRaw(L, "BRAIN_INIT");
 }
 
 /* The same table, handed to a brain that is already running.
@@ -152,12 +181,12 @@ bool brainCoreUpdateInitTable(lua_State *L, const ScnTable *init,
      reads think off. A brain file usually calls its own table Brain; that
      name is a local of the file and is not here. */
   top = lua_gettop(L);
-  lua_getglobal(L, "brain");
+  brainCoreGetGlobalRaw(L, "brain");
   if (!lua_istable(L, -1)) {
     lua_settop(L, top);
     return false;
   }
-  lua_getfield(L, -1, "on_init");
+  brc_raw_field(L, "on_init");
   if (!lua_isfunction(L, -1)) {
     lua_settop(L, top);
     return false;
@@ -165,7 +194,7 @@ bool brainCoreUpdateInitTable(lua_State *L, const ScnTable *init,
   /* The argument is the global just written rather than a second build of the
      same pairs, so what the brain is handed and what it reads back off
      BRAIN_INIT are one table. */
-  lua_getglobal(L, "BRAIN_INIT");
+  brainCoreGetGlobalRaw(L, "BRAIN_INIT");
   if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
     if (why != NULL && whyLen > 0) {
       const char *msg = lua_tostring(L, -1);
@@ -191,7 +220,7 @@ BrainHintResult brainCoreCallScenarioHint(lua_State *L, const ScnTable *hint,
   if (L == NULL) return BRAIN_HINT_NO_HANDLER;
   if (n > SCN_TABLE_MAX) n = SCN_TABLE_MAX;
 
-  lua_getglobal(L, "on_scenario_hint");
+  brainCoreGetGlobalRaw(L, "on_scenario_hint");
   if (!lua_isfunction(L, -1)) {
     /* A brain that does not take hints. The scenario named a seat, not a
        brain, and it cannot know which brains a server runs, so this is
@@ -432,7 +461,7 @@ void brainCoreInstallAllocCounter(lua_State *L) {
   lua_setallocf(L, brc_counting_alloc, ctx);
   lua_pushlightuserdata(L, ctx);
   lua_pushcclosure(L, brc_alloc_stats, 1);
-  lua_setglobal(L, "brain_alloc_stats");
+  brainCoreSetGlobalRaw(L, "brain_alloc_stats");
 }
 
 void brainCoreUninstallAllocCounter(lua_State *L) {
@@ -1121,9 +1150,9 @@ int brc_traceback_msgh(lua_State *L) {
 static int brc_read_bot_index(lua_State *L) {
   int top = lua_gettop(L);
   int idx = -1;
-  lua_getglobal(L, "state");
+  brainCoreGetGlobalRaw(L, "state");
   if (lua_istable(L, -1)) {
-    lua_getfield(L, -1, "bot_index");
+    brc_raw_field(L, "bot_index");
     if (lua_isnumber(L, -1)) {
       idx = (int)lua_tointeger(L, -1);
     }
@@ -1137,9 +1166,9 @@ static int brc_read_bot_index(lua_State *L) {
 static int brc_read_state_int(lua_State *L, const char *field) {
   int top = lua_gettop(L);
   int v = -1;
-  lua_getglobal(L, "state");
+  brainCoreGetGlobalRaw(L, "state");
   if (lua_istable(L, -1)) {
-    lua_getfield(L, -1, field);
+    brc_raw_field(L, field);
     if (lua_isnumber(L, -1)) v = (int)lua_tointeger(L, -1);
   }
   lua_settop(L, top);
@@ -1156,7 +1185,7 @@ static bool brc_read_session_dir(lua_State *L, char *out, size_t outsz) {
   bool ok = false;
   out[0] = '\0';
   if (!brc_debug_mode(L)) return false;
-  lua_getglobal(L, "DEBUG_SESSION_DIR");
+  brainCoreGetGlobalRaw(L, "DEBUG_SESSION_DIR");
   if (lua_isstring(L, -1)) {
     const char *s = lua_tostring(L, -1);
     if (s && s[0]) {
@@ -1380,6 +1409,37 @@ void brc_write_crash_log(lua_State *L,
 /* Brain method invocation                                             */
 /* ------------------------------------------------------------------ */
 
+/* What a budget kill needs afterwards, wherever it was caught.
+ *
+ * The budget hook is STILL ARMED here: bot_manager.c's runBotThinkJob()
+ * uninstalls it only after brainCoreCallThink returns (its "single uninstall
+ * point" sits after runBotThinkJobImpl). Running any more Lua with a hook whose
+ * deadline is already in the past would re-fire and kill us mid-flush, so disarm
+ * first. The wrapper's own lua_sethook(L, NULL, 0, 0) then runs as a harmless
+ * idempotent repeat, and states without a hook (BrainTest's singleton brain) are
+ * unaffected.
+ *
+ * Then flush the killed tick's buffered print2 lines. Without this the whole
+ * tick's log -- exactly the lines needed to see WHY it blew the budget -- is
+ * discarded by the next tick's print2.set_tick(). The brain publishes
+ * _G.brain_flush_killed in Brain.open; it's a no-op when the buffer is empty, so
+ * opt/ and non-debug runs cost one global lookup. Errors here are swallowed: a
+ * broken flush must never turn a recoverable budget kill into a crash. */
+static void brc_finish_kill(lua_State *L, int top) {
+  lua_sethook(L, NULL, 0, 0);
+  lua_settop(L, top);
+  brainCoreGetGlobalRaw(L, "brain_flush_killed");
+  if (lua_isfunction(L, -1)) {
+    lua_pushstring(L, botManagerLastKillSite(L));
+    if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+      lua_pop(L, 1); /* discard the error object */
+    }
+  } else {
+    lua_pop(L, 1);
+  }
+  lua_settop(L, top);
+}
+
 static bool brc_call_think(lua_State *L, BrainInfo *info, bool *out_killed) {
   int top = lua_gettop(L);
 
@@ -1397,7 +1457,7 @@ static bool brc_call_think(lua_State *L, BrainInfo *info, bool *out_killed) {
     }
   }
 
-  lua_getglobal(L, "brain");
+  brainCoreGetGlobalRaw(L, "brain");
   if (!lua_istable(L, -1)) {
     fprintf(stderr, "brainCore: 'brain' global is not a table\n");
     if (brc_debug_mode(L)) { FILE *ef = fopen("brain_error.log", "a"); if (ef) { fprintf(ef, "brain global is not a table (type=%d)\n", lua_type(L, -1)); fclose(ef); } }
@@ -1437,33 +1497,7 @@ static bool brc_call_think(lua_State *L, BrainInfo *info, bool *out_killed) {
                    strstr(errMsg, BRC_BUDGET_KILL_TEXT) != NULL);
     if (killed) {
       *out_killed = true;
-      /* The budget hook is STILL ARMED here: bot_manager.c's
-       * runBotThinkJob() uninstalls it only after this function returns
-       * (its "single uninstall point" sits after runBotThinkJobImpl).
-       * Running any more Lua with a hook whose deadline is already in the
-       * past would re-fire and kill us mid-flush, so disarm first. The
-       * wrapper's own lua_sethook(L, NULL, 0, 0) then runs as a harmless
-       * idempotent repeat, and states without a hook (BrainTest's
-       * singleton brain) are unaffected. */
-      lua_sethook(L, NULL, 0, 0);
-      lua_settop(L, top);
-      /* Flush the killed tick's buffered print2 lines. Without this the
-       * whole tick's log — exactly the lines needed to see WHY it blew
-       * the budget — is discarded by the next tick's print2.set_tick().
-       * The brain publishes _G.brain_flush_killed in Brain.open; it's a
-       * no-op when the buffer is empty, so opt/ and non-debug runs cost
-       * one global lookup. Errors here are swallowed: a broken flush must
-       * never turn a recoverable budget kill into a crash. */
-      lua_getglobal(L, "brain_flush_killed");
-      if (lua_isfunction(L, -1)) {
-        lua_pushstring(L, botManagerLastKillSite(L));
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-          lua_pop(L, 1); /* discard the error object */
-        }
-      } else {
-        lua_pop(L, 1);
-      }
-      lua_settop(L, top);
+      brc_finish_kill(L, top);
       return false;
     }
     /* Full crash report: timestamped per-bot file with traceback + a
@@ -1472,7 +1506,7 @@ static bool brc_call_think(lua_State *L, BrainInfo *info, bool *out_killed) {
     brc_write_crash_log(L, "think", errMsg);
     /* Route error through Lua print() so BrainTest Print Output captures it.
      * Wrap in pcall so a busted print() can't re-enter this same path. */
-    lua_getglobal(L, "print");
+    brainCoreGetGlobalRaw(L, "print");
     if (lua_isfunction(L, -1)) {
       lua_pushfstring(L, "[BRAIN_CRASH] brain.think() error: %s",
                       errMsg ? errMsg : "(unknown)");
@@ -1492,7 +1526,7 @@ static bool brc_call_think(lua_State *L, BrainInfo *info, bool *out_killed) {
 static bool brc_call_method(lua_State *L, BrainInfo *info, const char *method) {
   int top = lua_gettop(L);
 
-  lua_getglobal(L, "brain");
+  brainCoreGetGlobalRaw(L, "brain");
   if (!lua_istable(L, -1)) {
     lua_settop(L, top);
     return false;
@@ -1527,7 +1561,13 @@ static bool brc_call_method(lua_State *L, BrainInfo *info, const char *method) {
  * globals, the brain table, the info tree and what think returned. A metamethod
  * it set on one of them can raise there, and an error with no pcall to catch it
  * ends the whole program, every other game on a server included. So the whole
- * call runs protected, and such an error is a failed call like any other. */
+ * call runs protected, and such an error is a failed call like any other.
+ *
+ * These two are on the Lua stack below the brain's think, so a VM with the full
+ * debug library can get them from debug.getinfo and call them with anything.
+ * The sandbox hides function objects from getinfo, and each still checks its
+ * argument: no Lua code can make a light userdata, and any other value would be
+ * read here as a BrcCallArgs. */
 typedef struct {
   BrainInfo  *info;
   bool       *outKilled;
@@ -1536,13 +1576,17 @@ typedef struct {
 } BrcCallArgs;
 
 static int brc_protected_think(lua_State *L) {
-  BrcCallArgs *a = (BrcCallArgs *)lua_touserdata(L, 1);
+  BrcCallArgs *a;
+  if (!lua_islightuserdata(L, 1)) return 0;
+  a = (BrcCallArgs *)lua_touserdata(L, 1);
   a->result = brc_call_think(L, a->info, a->outKilled);
   return 0;
 }
 
 static int brc_protected_method(lua_State *L) {
-  BrcCallArgs *a = (BrcCallArgs *)lua_touserdata(L, 1);
+  BrcCallArgs *a;
+  if (!lua_islightuserdata(L, 1)) return 0;
+  a = (BrcCallArgs *)lua_touserdata(L, 1);
   a->result = brc_call_method(L, a->info, a->method);
   return 0;
 }
@@ -1550,21 +1594,22 @@ static int brc_protected_method(lua_State *L) {
 static bool brc_run_protected(lua_State *L, lua_CFunction fn, BrcCallArgs *a) {
   int top = lua_gettop(L);
   bool result = false;
+  int msgh;
+  lua_pushcfunction(L, brc_traceback_msgh);
+  msgh = lua_gettop(L);
   lua_pushcfunction(L, fn);
   lua_pushlightuserdata(L, a);
-  if (lua_pcall(L, 1, 0, 0) == LUA_OK) {
+  if (lua_pcall(L, 1, 0, msgh) == LUA_OK) {
     result = a->result;
   } else {
     const char *err = lua_tostring(L, -1);
     if (a->outKilled != NULL && err != NULL &&
         strstr(err, BRC_BUDGET_KILL_TEXT) != NULL) {
-      /* The budget hook fired in a metamethod. As in brc_call_think, it is
-       * still armed, so no more Lua runs under it. */
+      /* The budget hook fired in a metamethod. */
       *a->outKilled = true;
-      lua_sethook(L, NULL, 0, 0);
+      brc_finish_kill(L, top);
     } else {
-      fprintf(stderr, "brainCore: brain.%s failed: %s\n", a->method,
-              err != NULL ? err : "(an error that is not text)");
+      brc_write_crash_log(L, a->method, err);
     }
   }
   lua_settop(L, top);
