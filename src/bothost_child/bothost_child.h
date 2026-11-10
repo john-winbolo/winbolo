@@ -40,7 +40,14 @@
  *   macOS:   sandbox_init_with_parameters with a profile of the same
  *            folders and no network, at the start of the child's main.
  * When the sandbox cannot be set up, the game runs no bots for that game:
- * no brain runs in a child without its sandbox.
+ * no brain runs in a child without its sandbox. The same holds for every
+ * other failure of a sandboxed child (no WinBoloBotHost, a failed start
+ * at any step, a hello that does not match, no hello in time, the restart
+ * limit): this computer then takes no bots, and the host never runs in
+ * the game's own process in its place (botHostChildFailRule). Only the
+ * user's switches (the config's "Run As Child Process" = No or "Child
+ * File Sandbox" = No, --bothost-inproc, --bothost-no-sandbox) and the
+ * builds with no child (Web, Android) run brains with no OS sandbox.
  *
  * The game and the child talk in lines of text:
  *   game to child (stdin):  "ticket <hex>", "withhold 0|1", "consent 0|1",
@@ -117,6 +124,13 @@ extern "C" {
 #define BOT_HOST_CHILD_EXIT_DENIED   6  /* a --test-* access was refused */
 
 #define BOT_HOST_CHILD_MAX_ARGS 64
+
+/* A child that has not said hello this long after its start is ended
+ * (in the sandbox: no bots for this game). */
+#define BOT_HOST_CHILD_HELLO_WAIT_MS 15000u
+/* The "salt" lines one child may send; more are not kept (a child
+ * answers one salt for each round of the server's same-computer check). */
+#define BOT_HOST_CHILD_MAX_SALT_LINES 16
 
 /* The longest line either way, with its newline. */
 #define BOT_HOST_CHILD_LINE_MAX 200
@@ -280,6 +294,20 @@ void botHostChildContainerName(char *out, size_t outSize);
  * size or newer), into folders too when recurse. False when a file could
  * not be copied. */
 bool botHostChildCopyTree(const char *src, const char *dst, bool recurse);
+/* The same for the top folder of the program only: exeName and the DLLs
+ * (botHostChildCopyWanted), no other file and no folder. */
+bool botHostChildCopyProgramFiles(const char *src, const char *dst,
+                                  const char *exeName);
+/* True for a file of the program's folder that the child needs: exeName
+ * itself or a .dll (any case). */
+bool botHostChildCopyWanted(const char *name, const char *exeName);
+
+/* True for an environment entry ("NAME=value") that a sandboxed child
+ * keeps: the system's own names (SystemRoot, windir, the processor's),
+ * the locale (LANG, LC_*, TZ) and WINBOLO_*. Every other name is left
+ * out, so no token in the game's environment reaches the child. PATH,
+ * TEMP, TMP and TMPDIR are not kept: the spawn sets its own. */
+bool botHostChildEnvKeep(const char *entry);
 
 /* Starts exe with argv in the limits, stdin and stdout as pipes to this
  * program, stderr into logPath (NULL: discarded). With sb->on also in the
@@ -350,12 +378,33 @@ void botHostChildLogPath(char *out, size_t outSize);
 
 typedef enum {
     BOT_HOST_CHILD_STARTED = 0,
-    /* No program, or the spawn failed: the caller runs the host here. */
+    /* With no sandbox (the user's switch) only: no program, or the spawn
+     * failed: the caller runs the host here. */
     BOT_HOST_CHILD_START_INPROC,
-    /* The sandbox could not be set up: no bots on this computer for this
+    /* In the sandbox, any failure: no bots on this computer for this
      * game. */
-    BOT_HOST_CHILD_START_NO_BOTS
+    BOT_HOST_CHILD_START_NO_BOTS,
+    /* The sandbox's folders are still made ready (the grants, and on
+     * Windows the copy of the program) on a thread: ask again later. */
+    BOT_HOST_CHILD_START_WAIT
 } BotHostChildStart;
+
+/* The ways a child can fail. */
+typedef enum {
+    BOT_HOST_CHILD_FAIL_NO_EXE = 0,   /* no WinBoloBotHost next to the game */
+    BOT_HOST_CHILD_FAIL_ARGS,         /* the arguments did not fit */
+    BOT_HOST_CHILD_FAIL_SANDBOX,      /* the sandbox could not be set up */
+    BOT_HOST_CHILD_FAIL_SPAWN,        /* the start failed, at any step */
+    BOT_HOST_CHILD_FAIL_RELAY,        /* the relay did not start */
+    BOT_HOST_CHILD_FAIL_NO_HELLO,     /* no hello in time, or it ended first */
+    BOT_HOST_CHILD_FAIL_MISMATCH,     /* its hello does not match the game */
+    BOT_HOST_CHILD_FAIL_RESTART_LIMIT /* it ended by itself too many times */
+} BotHostChildFail;
+
+/* What the game does after a failure of its child, in the sandbox or not:
+ * in the sandbox always BOT_HOST_CHILD_START_NO_BOTS; with no sandbox
+ * BOT_HOST_CHILD_START_INPROC, but NO_BOTS after the restart limit. */
+BotHostChildStart botHostChildFailRule(BotHostChildFail f, bool sandbox);
 
 /* Starts the child for one join; sandbox: in the file sandbox. */
 BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
@@ -391,6 +440,8 @@ typedef enum {
 BotHostChildEnd botHostChildClientEnd(void);
 /* The running child said its hello. */
 bool botHostChildClientHello(void);
+/* The last child started was in the file sandbox. */
+bool botHostChildClientSandboxed(void);
 
 /* ---- The child's side (bothost_child_main.c, in WinBoloBotHost) ------ */
 

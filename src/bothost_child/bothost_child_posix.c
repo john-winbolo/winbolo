@@ -215,29 +215,115 @@ typedef struct {
     int                 readFileCount;
     const char         *writeDirs[BOT_HOST_SANDBOX_MAX_PATHS];
     int                 writeDirCount;
-    struct sock_filter  filter[32];
+    struct sock_filter  filter[80];
     unsigned short      filterLen;
 } ChildSandbox;
 
-/* The seccomp filter; pidSlot is the index of the instruction that holds
- * the child's pid, which only the child knows. */
+/* The seccomp filter: a deny-list. An allow-list would be shorter to
+ * read, but LuaJIT, SDL and the C library need a long list of calls that
+ * changes with their versions, and no computer here has a kernel with
+ * Landlock to test one on (the filter goes on only with Landlock). So the
+ * filter refuses the calls a brain that got out of the Lua sandbox could
+ * use against the game or the kernel, and allows the rest:
+ *   - EPERM: socket; ptrace and the calls that read or write another
+ *     program's memory (process_vm_readv/writev, pidfd_getfd, pidfd_open,
+ *     process_madvise); tkill; new namespaces (unshare, setns); the
+ *     mount family; bpf, perf_event_open, userfaultfd; the key calls
+ *     (keyctl, add_key, request_key); io_uring; the module, kexec, swap,
+ *     reboot, chroot and pivot_root calls;
+ *   - ENOSYS: clone3, whose flags are in memory the filter cannot read;
+ *     the C library then uses clone;
+ *   - clone with a CLONE_NEW* flag: EPERM;
+ *   - kill, tgkill, rt_sigqueueinfo and rt_tgsigqueueinfo: only to the
+ *     child itself or to 0 (its own process group: the child is the
+ *     leader of a group of its own, setpgid in childExec); EPERM else.
+ * pidSlot is the index of the instruction that holds the child's pid,
+ * which only the child knows. */
+#ifndef __NR_io_uring_setup
+#define __NR_io_uring_setup 425
+#endif
+#ifndef __NR_io_uring_enter
+#define __NR_io_uring_enter 426
+#endif
+#ifndef __NR_io_uring_register
+#define __NR_io_uring_register 427
+#endif
+#ifndef __NR_open_tree
+#define __NR_open_tree 428
+#endif
+#ifndef __NR_move_mount
+#define __NR_move_mount 429
+#endif
+#ifndef __NR_fsopen
+#define __NR_fsopen 430
+#endif
+#ifndef __NR_fsconfig
+#define __NR_fsconfig 431
+#endif
+#ifndef __NR_fsmount
+#define __NR_fsmount 432
+#endif
+#ifndef __NR_fspick
+#define __NR_fspick 433
+#endif
+#ifndef __NR_pidfd_open
+#define __NR_pidfd_open 434
+#endif
+#ifndef __NR_clone3
+#define __NR_clone3 435
+#endif
+#ifndef __NR_pidfd_getfd
+#define __NR_pidfd_getfd 438
+#endif
+#ifndef __NR_process_madvise
+#define __NR_process_madvise 440
+#endif
+#ifndef __NR_mount_setattr
+#define __NR_mount_setattr 442
+#endif
+/* All the CLONE_NEW* flags of clone's first argument (CLONE_NEWTIME is
+ * only for clone3, which is refused). */
+#define CHILD_CLONE_NS_FLAGS                                               \
+    (0x00020000u /* NEWNS */ | 0x02000000u /* NEWCGROUP */ |               \
+     0x04000000u /* NEWUTS */ | 0x08000000u /* NEWIPC */ |                 \
+     0x10000000u /* NEWUSER */ | 0x20000000u /* NEWPID */ |                \
+     0x40000000u /* NEWNET */)
+
 static void buildFilter(ChildSandbox *cs, int *pidSlot) {
     static const unsigned blocked[] = {
-        __NR_socket, __NR_io_uring_setup, __NR_pidfd_open, __NR_ptrace,
-        __NR_tkill,
+        __NR_socket, __NR_ptrace, __NR_tkill,
+        __NR_process_vm_readv, __NR_process_vm_writev, __NR_pidfd_getfd,
+        __NR_pidfd_open, __NR_process_madvise,
+        __NR_unshare, __NR_setns,
+        __NR_mount, __NR_umount2, __NR_open_tree, __NR_move_mount,
+        __NR_fsopen, __NR_fsconfig, __NR_fsmount, __NR_fspick,
+        __NR_mount_setattr, __NR_pivot_root, __NR_chroot,
+        __NR_bpf, __NR_perf_event_open, __NR_userfaultfd,
+        __NR_keyctl, __NR_add_key, __NR_request_key,
+        __NR_io_uring_setup, __NR_io_uring_enter, __NR_io_uring_register,
+        __NR_init_module, __NR_finit_module, __NR_delete_module,
+        __NR_kexec_load, __NR_swapon, __NR_swapoff, __NR_reboot,
+    };
+    static const unsigned pidChecked[] = {
+        __NR_kill, __NR_tgkill, __NR_rt_sigqueueinfo, __NR_rt_tgsigqueueinfo,
     };
     const int nb = (int)(sizeof(blocked) / sizeof(blocked[0]));
+    const int np = (int)(sizeof(pidChecked) / sizeof(pidChecked[0]));
     struct sock_filter *f = cs->filter;
-    int n = 0, i, base, chk, err, allowEnd;
+    int n = 0, i, chk, cloneChk, err, nosys, allowEnd;
 #if defined(__x86_64__)
     const int x32 = 1;
 #else
     const int x32 = 0;
 #endif
-    base = 4 + x32;
-    chk = base + nb + 3;
-    err = chk + 3;
-    allowEnd = chk + 4;
+    /* The layout: the arch check (3), the nr load (1), x32 (0 or 1), the
+     * blocked list, clone3, clone, the pid list, allow; then chk (4),
+     * cloneChk (3), err, nosys, allowEnd. */
+    chk = 4 + x32 + nb + 2 + np + 1;
+    cloneChk = chk + 4;
+    err = cloneChk + 3;
+    nosys = err + 1;
+    allowEnd = nosys + 1;
 
 #define AT(i_) ((unsigned char)((i_) - n - 1))
     f[n] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
@@ -263,12 +349,17 @@ static void buildFilter(ChildSandbox *cs, int *pidSlot) {
                                             blocked[i], AT(err), 0);
         n++;
     }
-    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_kill,
-                                        AT(chk), 0);
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        __NR_clone3, AT(nosys), 0);
     n++;
     f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-                                        __NR_tgkill, AT(chk), 0);
+                                        __NR_clone, AT(cloneChk), 0);
     n++;
+    for (i = 0; i < np; i++) {
+        f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                            pidChecked[i], AT(chk), 0);
+        n++;
+    }
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
     n++;
     /* chk: the first argument (the low half, little-endian) is the child
@@ -286,6 +377,24 @@ static void buildFilter(ChildSandbox *cs, int *pidSlot) {
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
                                         SECCOMP_RET_ERRNO | (EPERM & 0xFFFF));
     n++;
+    /* cloneChk: clone's flags (the first argument, its low half). */
+    f[n] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+                                        offsetof(struct seccomp_data, args));
+    n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K,
+                                        CHILD_CLONE_NS_FLAGS, AT(err), 0);
+    n++;
+    f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
+    n++;
+    /* err */
+    f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                        SECCOMP_RET_ERRNO | (EPERM & 0xFFFF));
+    n++;
+    /* nosys */
+    f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                        SECCOMP_RET_ERRNO | (ENOSYS & 0xFFFF));
+    n++;
+    /* allowEnd */
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
     n++;
 #undef AT
@@ -361,7 +470,8 @@ static int enterChildSandbox(ChildSandbox *cs) {
         llAdd(rs, cs->readFiles[k], fileRead & LL_FILE_RIGHTS);
     }
     for (k = 0; k < cs->writeDirCount; k++) {
-        llAdd(rs, cs->writeDirs[k], handled);
+        /* All but execute: no program written there can start. */
+        llAdd(rs, cs->writeDirs[k], handled & ~LL_EXECUTE);
     }
     if (syscall(LL_SYS_RESTRICT_SELF, rs, 0) != 0) {
         (void)close(rs);
@@ -445,6 +555,7 @@ typedef struct {
     rlim_t memBytes;
     pid_t  parent;
     long   maxFd;
+    char *const *envp;          /* the child's environment */
 #if CHILD_LINUX_SANDBOX
     ChildSandbox *sandbox;
 #endif
@@ -544,8 +655,34 @@ static void childExec(const char *exe, char *const *argv, ChildSetup *c) {
     }
 #endif
 
-    execv(exe, argv);
+    execve(exe, argv, c->envp);
     childFail(c, 20);
+}
+
+extern char **environ;
+
+/* The sandboxed child's environment (botHostChildEnvKeep), PATH and
+ * TMPDIR (the cache folder), built before the fork. One spawn at a time:
+ * the main thread. */
+#define CHILD_ENV_MAX 64
+static char *childEnv[CHILD_ENV_MAX + 3];
+static char  childEnvTmp[1200];
+
+static char *const *childEnvBuild(const BotHostChildSandbox *sb) {
+    static char envPath[] = "PATH=/usr/bin:/bin";
+    char **e;
+    int n = 0;
+    for (e = environ; e != NULL && *e != NULL && n < CHILD_ENV_MAX; e++) {
+        if (botHostChildEnvKeep(*e)) childEnv[n++] = *e;
+    }
+    childEnv[n++] = envPath;
+    if (sb->writeDirCount > 0) {
+        snprintf(childEnvTmp, sizeof(childEnvTmp), "TMPDIR=%s",
+                 sb->writeDirs[0]);
+        childEnv[n++] = childEnvTmp;
+    }
+    childEnv[n] = NULL;
+    return childEnv;
 }
 
 /* argv and the sandbox's arguments, in buf. NULL when it does not fit. */
@@ -606,6 +743,7 @@ BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
     memset(&c, 0, sizeof(c));
     c.relayIn = c.relayOut = c.statusW = -1;
     c.parent = getpid();
+    c.envp = sandbox ? childEnvBuild(sb) : environ;
     c.maxFd = sysconf(_SC_OPEN_MAX);
     if (c.maxFd < 0 || c.maxFd > 65536) c.maxFd = 65536;
     if (lim != NULL && lim->memMb > 0) {

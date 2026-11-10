@@ -19,6 +19,12 @@
  * The reader ends when the child's end of the pipe closes (the child
  * ended or was killed); the poller ends when told to, or when a write to
  * the child fails.
+ *
+ * A frame that fails its checks ends the reader on purpose: only a broken
+ * or compromised child sends one. The child then blocks on its next pipe
+ * write and the server times its bots out, and the counts at the stop say
+ * so. Do not change this to skip the frame: after a bad header the rest
+ * of the stream cannot be framed again.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +34,10 @@
 
 #include "bothost_child.h"
 #include "platform_net.h"
+
+#ifndef _WIN32
+#include <poll.h>
+#endif
 
 #ifdef _WIN32
 #include <mstcpip.h>
@@ -55,7 +65,7 @@ struct BotHostRelay {
     SDL_AtomicInt     toServer;
     SDL_AtomicInt     fromServer;
     SDL_AtomicInt     refused;
-    bool              refusedSaid;
+    SDL_AtomicInt     refusedSaid;  /* the one log line was written */
 };
 
 static bolo_socket_t relayOpenSocket(void) {
@@ -90,8 +100,8 @@ static bolo_socket_t relayOpenSocket(void) {
 
 static void relayRefused(BotHostRelay *r, const char *what) {
     SDL_AddAtomicInt(&r->refused, 1);
-    if (!r->refusedSaid) {
-        r->refusedSaid = true;
+    /* Both threads come here: only the first writes the line. */
+    if (SDL_CompareAndSwapAtomicInt(&r->refusedSaid, 0, 1)) {
         fprintf(stderr, "[bothost] the relay refused the child's %s (not the "
                         "game's server); it says this once\n", what);
     }
@@ -124,14 +134,18 @@ static int SDLCALL relayReaderFn(void *arg) {
                 SDL_Delay(1);
                 waited++;
             }
-            s = relayOpenSocket();
             SDL_LockMutex(r->lock);
             if (r->slots[id].state != SLOT_FREE) {
-                /* Opened twice, or still closing: the old one goes. */
-                if (r->slots[id].sock != BOLO_INVALID_SOCKET) {
-                    closesocket(r->slots[id].sock);
-                }
+                /* Opened twice, or still closing: refused. Only the
+                 * poller closes a socket, so none closes while the poller
+                 * waits on it. */
+                SDL_UnlockMutex(r->lock);
+                relayRefused(r, "second open of one socket");
+                continue;
             }
+            SDL_UnlockMutex(r->lock);
+            s = relayOpenSocket();
+            SDL_LockMutex(r->lock);
             r->slots[id].sock = s;
             r->slots[id].state = s != BOLO_INVALID_SOCKET ? SLOT_OPEN
                                                            : SLOT_FREE;
@@ -180,14 +194,23 @@ static int SDLCALL relayPollerFn(void *arg) {
     static uint8_t buf[BOT_HOST_RELAY_MAX_DATAGRAM];
     static uint8_t frame[BOT_HOST_RELAY_MAX_FRAME];
     while (!SDL_GetAtomicInt(&r->stop)) {
+#ifdef _WIN32
+        /* Windows' fd_set is a list of sockets, so any socket fits. */
         fd_set rd;
         struct timeval tv;
+        bolo_socket_t maxFd = 0;
+#else
+        /* poll, not select: a descriptor at FD_SETSIZE or above is not
+         * valid in an fd_set. */
+        struct pollfd pfd[BOT_HOST_RELAY_MAX_SOCKS];
+#endif
         bolo_socket_t socks[BOT_HOST_RELAY_MAX_SOCKS];
         int ids[BOT_HOST_RELAY_MAX_SOCKS];
         int n = 0, i, ready;
-        bolo_socket_t maxFd = 0;
 
+#ifdef _WIN32
         FD_ZERO(&rd);
+#endif
         SDL_LockMutex(r->lock);
         for (i = 0; i < BOT_HOST_RELAY_MAX_SOCKS; i++) {
             if (r->slots[i].state == SLOT_CLOSING) {
@@ -197,8 +220,14 @@ static int SDLCALL relayPollerFn(void *arg) {
             } else if (r->slots[i].state == SLOT_OPEN) {
                 socks[n] = r->slots[i].sock;
                 ids[n] = i;
+#ifdef _WIN32
                 FD_SET(socks[n], &rd);
                 if (socks[n] > maxFd) maxFd = socks[n];
+#else
+                pfd[n].fd = socks[n];
+                pfd[n].events = POLLIN;
+                pfd[n].revents = 0;
+#endif
                 n++;
             }
         }
@@ -207,12 +236,22 @@ static int SDLCALL relayPollerFn(void *arg) {
             SDL_Delay(5);
             continue;
         }
+#ifdef _WIN32
         tv.tv_sec = 0;
         tv.tv_usec = 5000;
         ready = select((int)maxFd + 1, &rd, NULL, NULL, &tv);
+#else
+        ready = poll(pfd, (nfds_t)n, 5);
+#endif
         if (ready <= 0) continue;
         for (i = 0; i < n; i++) {
+#ifdef _WIN32
             if (!FD_ISSET(socks[i], &rd)) continue;
+#else
+            if ((pfd[i].revents & (POLLIN | POLLERR | POLLHUP)) == 0) {
+                continue;
+            }
+#endif
             for (;;) {
                 struct sockaddr_in from;
                 socklen_t fl = sizeof(from);

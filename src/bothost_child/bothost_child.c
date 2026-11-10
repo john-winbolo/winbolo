@@ -379,8 +379,17 @@ typedef struct {
     const char *src;
     const char *dst;
     bool        recurse;
+    const char *exeName;  /* not NULL: only it and the DLLs */
     bool        ok;
 } CopyTree;
+
+bool botHostChildCopyWanted(const char *name, const char *exeName) {
+    size_t n;
+    if (name == NULL) return false;
+    if (exeName != NULL && SDL_strcasecmp(name, exeName) == 0) return true;
+    n = strlen(name);
+    return n > 4 && SDL_strcasecmp(name + n - 4, ".dll") == 0;
+}
 
 static bool copyFile(const char *from, const char *to) {
     SDL_IOStream *in = SDL_IOFromFile(from, "rb");
@@ -419,12 +428,16 @@ static SDL_EnumerationResult SDLCALL copyOne(void *ud, const char *dir,
     SDL_snprintf(to, sizeof(to), "%s/%s", ct->dst, name);
     if (!SDL_GetPathInfo(from, &si)) return SDL_ENUM_CONTINUE;
     if (si.type == SDL_PATHTYPE_DIRECTORY) {
-        if (ct->recurse && !botHostChildCopyTree(from, to, true)) {
+        if (ct->exeName == NULL && ct->recurse &&
+            !botHostChildCopyTree(from, to, true)) {
             ct->ok = false;
         }
         return SDL_ENUM_CONTINUE;
     }
     if (si.type != SDL_PATHTYPE_FILE) return SDL_ENUM_CONTINUE;
+    if (ct->exeName != NULL && !botHostChildCopyWanted(name, ct->exeName)) {
+        return SDL_ENUM_CONTINUE;
+    }
     if (SDL_GetPathInfo(to, &di) && di.type == SDL_PATHTYPE_FILE &&
         di.size == si.size && di.modify_time >= si.modify_time) {
         return SDL_ENUM_CONTINUE;
@@ -440,7 +453,57 @@ bool botHostChildCopyTree(const char *src, const char *dst, bool recurse) {
     ct.src = src;
     ct.dst = dst;
     ct.recurse = recurse;
+    ct.exeName = NULL;
     ct.ok = true;
     if (!SDL_EnumerateDirectory(src, copyOne, &ct)) return false;
     return ct.ok;
+}
+
+bool botHostChildCopyProgramFiles(const char *src, const char *dst,
+                                  const char *exeName) {
+    CopyTree ct;
+    if (src == NULL || dst == NULL || exeName == NULL) return false;
+    if (!SDL_CreateDirectory(dst)) return false;
+    ct.src = src;
+    ct.dst = dst;
+    ct.recurse = false;
+    ct.exeName = exeName;
+    ct.ok = true;
+    if (!SDL_EnumerateDirectory(src, copyOne, &ct)) return false;
+    return ct.ok;
+}
+
+/* ---- The failure rule and the environment ---------------------------- */
+
+BotHostChildStart botHostChildFailRule(BotHostChildFail f, bool sandbox) {
+    /* No brain runs without the OS sandbox unless the user switched the
+     * sandbox off: so in the sandbox, every failure means no bots. */
+    if (sandbox) return BOT_HOST_CHILD_START_NO_BOTS;
+    if (f == BOT_HOST_CHILD_FAIL_RESTART_LIMIT) {
+        return BOT_HOST_CHILD_START_NO_BOTS;
+    }
+    return BOT_HOST_CHILD_START_INPROC;
+}
+
+bool botHostChildEnvKeep(const char *entry) {
+    static const char *const names[] = {
+        "SystemRoot", "windir", "SystemDrive", "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "PROCESSOR_LEVEL",
+        "PROCESSOR_REVISION", "LANG", "LANGUAGE", "TZ",
+    };
+    const char *eq;
+    size_t n, i;
+    if (entry == NULL) return false;
+    eq = strchr(entry, '=');
+    /* Windows keeps "=C:=C:\..." entries (the drives' folders): no name. */
+    if (eq == NULL || eq == entry) return false;
+    n = (size_t)(eq - entry);
+    for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        if (strlen(names[i]) == n && SDL_strncasecmp(entry, names[i], n) == 0) {
+            return true;
+        }
+    }
+    if (n > 3 && SDL_strncasecmp(entry, "LC_", 3) == 0) return true;
+    if (n > 8 && SDL_strncasecmp(entry, "WINBOLO_", 8) == 0) return true;
+    return false;
 }

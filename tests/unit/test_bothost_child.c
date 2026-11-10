@@ -1007,3 +1007,100 @@ int run_bothost_child_copy_tree(void) {
     removeTestDir(root);
     return 0;
 }
+
+/* Each failure of the child, with the sandbox on, means no bots from this
+ * computer; with the sandbox off (Web, Android, the knob) the host runs in
+ * the game, except after the restart limit. */
+int run_bothost_child_fail_rule(void) {
+    static const BotHostChildFail all[] = {
+        BOT_HOST_CHILD_FAIL_NO_EXE,   BOT_HOST_CHILD_FAIL_ARGS,
+        BOT_HOST_CHILD_FAIL_SANDBOX,  BOT_HOST_CHILD_FAIL_SPAWN,
+        BOT_HOST_CHILD_FAIL_RELAY,    BOT_HOST_CHILD_FAIL_NO_HELLO,
+        BOT_HOST_CHILD_FAIL_MISMATCH, BOT_HOST_CHILD_FAIL_RESTART_LIMIT,
+    };
+    size_t i;
+    for (i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+        UT_ASSERT(botHostChildFailRule(all[i], true) ==
+                  BOT_HOST_CHILD_START_NO_BOTS);
+        if (all[i] == BOT_HOST_CHILD_FAIL_RESTART_LIMIT) {
+            UT_ASSERT(botHostChildFailRule(all[i], false) ==
+                      BOT_HOST_CHILD_START_NO_BOTS);
+        } else {
+            UT_ASSERT(botHostChildFailRule(all[i], false) ==
+                      BOT_HOST_CHILD_START_INPROC);
+        }
+    }
+    return 0;
+}
+
+/* The copy of the program takes the exe and the DLLs only. */
+int run_bothost_child_copy_wanted(void) {
+    char root[1024], src[1100], sub[1100], dst[1100], path[1200];
+    SDL_PathInfo pi;
+
+    UT_ASSERT(botHostChildCopyWanted("WinBoloBotHost.exe",
+                                     "WinBoloBotHost.exe"));
+    UT_ASSERT(botHostChildCopyWanted("winbolobothost.EXE",
+                                     "WinBoloBotHost.exe"));
+    UT_ASSERT(botHostChildCopyWanted("SDL3.dll", "WinBoloBotHost.exe"));
+    UT_ASSERT(botHostChildCopyWanted("lua51.DLL", "WinBoloBotHost.exe"));
+    UT_ASSERT(!botHostChildCopyWanted("WinBolo.exe", "WinBoloBotHost.exe"));
+    UT_ASSERT(!botHostChildCopyWanted("save.wbv", "WinBoloBotHost.exe"));
+    UT_ASSERT(!botHostChildCopyWanted("a.dll.txt", "WinBoloBotHost.exe"));
+    UT_ASSERT(!botHostChildCopyWanted("dll", "WinBoloBotHost.exe"));
+
+    UT_ASSERT(makeTestDir("copywant", root, sizeof(root)));
+    SDL_snprintf(src, sizeof(src), "%s/src", root);
+    SDL_snprintf(sub, sizeof(sub), "%s/src/maps", root);
+    SDL_snprintf(dst, sizeof(dst), "%s/dst", root);
+    UT_ASSERT(SDL_CreateDirectory(sub));
+    SDL_snprintf(path, sizeof(path), "%s/host.exe", src);
+    UT_ASSERT(writeFile(path, "exe"));
+    SDL_snprintf(path, sizeof(path), "%s/a.dll", src);
+    UT_ASSERT(writeFile(path, "dll"));
+    SDL_snprintf(path, sizeof(path), "%s/other.exe", src);
+    UT_ASSERT(writeFile(path, "no"));
+    SDL_snprintf(path, sizeof(path), "%s/notes.txt", src);
+    UT_ASSERT(writeFile(path, "no"));
+    SDL_snprintf(path, sizeof(path), "%s/x.map", sub);
+    UT_ASSERT(writeFile(path, "no"));
+
+    UT_ASSERT(botHostChildCopyProgramFiles(src, dst, "host.exe"));
+    SDL_snprintf(path, sizeof(path), "%s/host.exe", dst);
+    UT_ASSERT(fileIs(path, "exe"));
+    SDL_snprintf(path, sizeof(path), "%s/a.dll", dst);
+    UT_ASSERT(fileIs(path, "dll"));
+    SDL_snprintf(path, sizeof(path), "%s/other.exe", dst);
+    UT_ASSERT(!SDL_GetPathInfo(path, &pi));
+    SDL_snprintf(path, sizeof(path), "%s/notes.txt", dst);
+    UT_ASSERT(!SDL_GetPathInfo(path, &pi));
+    SDL_snprintf(path, sizeof(path), "%s/maps", dst);
+    UT_ASSERT(!SDL_GetPathInfo(path, &pi));
+    removeTestDir(root);
+    return 0;
+}
+
+/* The sandboxed child's environment: the system's names, the locale and
+ * WINBOLO_*; nothing else. */
+int run_bothost_child_env_keep(void) {
+    UT_ASSERT(botHostChildEnvKeep("SystemRoot=C:/Windows"));
+    UT_ASSERT(botHostChildEnvKeep("SYSTEMROOT=C:/Windows"));
+    UT_ASSERT(botHostChildEnvKeep("windir=C:/Windows"));
+    UT_ASSERT(botHostChildEnvKeep("NUMBER_OF_PROCESSORS=12"));
+    UT_ASSERT(botHostChildEnvKeep("PROCESSOR_ARCHITECTURE=AMD64"));
+    UT_ASSERT(botHostChildEnvKeep("LANG=en_CA.UTF-8"));
+    UT_ASSERT(botHostChildEnvKeep("LC_ALL=C"));
+    UT_ASSERT(botHostChildEnvKeep("TZ=UTC"));
+    UT_ASSERT(botHostChildEnvKeep("WINBOLO_BRAINDBG_LABEL=x"));
+    UT_ASSERT(!botHostChildEnvKeep("PATH=C:/Windows"));
+    UT_ASSERT(!botHostChildEnvKeep("TEMP=C:/Temp"));
+    UT_ASSERT(!botHostChildEnvKeep("TMPDIR=/tmp"));
+    UT_ASSERT(!botHostChildEnvKeep("HOME=/home/a"));
+    UT_ASSERT(!botHostChildEnvKeep("USERPROFILE=C:/Users/a"));
+    UT_ASSERT(!botHostChildEnvKeep("GH_TOKEN=secret"));
+    UT_ASSERT(!botHostChildEnvKeep("=C:=C:/"));
+    UT_ASSERT(!botHostChildEnvKeep("LANG"));
+    UT_ASSERT(!botHostChildEnvKeep("WINBOLO"));
+    UT_ASSERT(!botHostChildEnvKeep(""));
+    return 0;
+}

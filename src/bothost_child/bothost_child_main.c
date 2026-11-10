@@ -267,7 +267,10 @@ extern void sandbox_free_error(char *errorbuf);
 
 /* Untested: no Mac to run it on yet. Deny by default; read the system's
  * libraries and the given folders; read and write the cache; no network;
- * signals to itself only. */
+ * signals to itself only; the few mach services the C library, the
+ * notify system and the system log need at start (a guess until it runs
+ * on a Mac: a child that fails here exits with code 5, and the player
+ * gets no bots). */
 static bool enterMacSandbox(void) {
     char profile[4096];
     static char real[3 * BOT_HOST_SANDBOX_MAX_PATHS][PATH_MAX];
@@ -283,6 +286,14 @@ static bool enterMacSandbox(void) {
         "(allow file-read-metadata)\n"
         "(allow sysctl-read)\n"
         "(allow signal (target self))\n"
+        "(allow mach-lookup\n"
+        "  (global-name \"com.apple.system.notification_center\")\n"
+        "  (global-name \"com.apple.system.logger\")\n"
+        "  (global-name \"com.apple.system.opendirectoryd.libinfo\")\n"
+        "  (global-name \"com.apple.logd\")\n"
+        "  (global-name \"com.apple.diagnosticd\"))\n"
+        "(allow ipc-posix-shm-read-data\n"
+        "  (ipc-posix-name \"apple.shm.notification_center\"))\n"
         "(allow file-read* (subpath \"/usr/lib\") (subpath \"/usr/share\")\n"
         "  (subpath \"/System\") (subpath \"/Library/Apple\")\n"
         "  (subpath \"/private/var/db/timezone\")\n"
@@ -476,7 +487,9 @@ static void relaySendFrame(uint8_t type, int id, const struct sockaddr_in *to,
                            const uint8_t *data, size_t len) {
     static uint8_t frame[BOT_HOST_RELAY_MAX_FRAME];
     size_t n;
-    /* The frame buffer is shared: one sender at a time. */
+    /* The frame buffer is shared: one sender at a time. relayPipeWrite
+     * takes the same lock again; SDL mutexes are recursive, so this is
+     * valid, and the frame goes out whole. */
     SDL_LockMutex(relaySendLock);
     n = botHostRelayEncode(type, (uint8_t)id,
                            to != NULL ? to->sin_addr.s_addr : 0,

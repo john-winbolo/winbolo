@@ -76,6 +76,9 @@ static bool embedWithholdNow = false;
 static bool embedRecordNow = false;
 /* The last start found no sandbox: it said so in its own line. */
 static bool embedStartNoBots = false;
+/* The last start waits for the sandbox's folders: it tries again on a
+ * later frame. */
+static bool embedStartWait = false;
 
 BOLO_STATIC_ASSERT(BOT_HOST_OPTOUT_TICKET_LEN == BOT_HOST_TICKET_LEN,
                    optout_keeps_a_whole_ticket);
@@ -173,11 +176,17 @@ bool botHostEmbedStart(const BotHostEmbedConfig *cfg) {
     if (cfg == NULL || cfg->ticket == NULL) return false;
     if (embedWhere != EMBED_NONE) botHostEmbedStop(true);
     embedStartNoBots = false;
+    embedStartWait = false;
     if (!embedSettings.inProcess && !embedChildOff) {
         BotHostChildStart how = embedStartChild(cfg);
         if (how == BOT_HOST_CHILD_STARTED) {
             embedWhere = EMBED_CHILD;
             return true;
+        }
+        if (how == BOT_HOST_CHILD_START_WAIT) {
+            /* The sandbox's folders are made ready on a thread. */
+            embedStartWait = true;
+            return false;
         }
         if (how == BOT_HOST_CHILD_START_NO_BOTS) {
             /* No sandbox: no bots for this game, and no thread here in
@@ -316,6 +325,11 @@ static void embedStartFor(struct ClientSim *cs, uint8_t player,
         embedHaveRestartTicket = true;
     }
     if (!botHostEmbedStart(&cfg)) {
+        if (embedStartWait) {
+            /* Not blocked: the next frame asks again. */
+            embedHaveTicket = false;
+            return;
+        }
         if (!embedStartNoBots) {
             fprintf(stderr, "[bothost] this computer's Bot Host did not "
                             "start\n");
@@ -334,7 +348,14 @@ static bool embedChildEnded(struct ClientSim *cs, uint8_t player,
     if (end == BOT_HOST_CHILD_RUNS || end == BOT_HOST_CHILD_ENDED_REFUSED) {
         return false;
     }
-    if (end == BOT_HOST_CHILD_ENDED_SANDBOX) {
+    if (end == BOT_HOST_CHILD_ENDED_SANDBOX ||
+        ((end == BOT_HOST_CHILD_ENDED_MISMATCH ||
+          (end == BOT_HOST_CHILD_ENDED_EARLY && !embedChildHelloOnce)) &&
+         botHostChildFailRule(end == BOT_HOST_CHILD_ENDED_MISMATCH
+                                  ? BOT_HOST_CHILD_FAIL_MISMATCH
+                                  : BOT_HOST_CHILD_FAIL_NO_HELLO,
+                              botHostChildClientSandboxed()) ==
+             BOT_HOST_CHILD_START_NO_BOTS)) {
         /* The child said why in its log; the game said it in one line. No
          * restart and no thread here: no bots for this game. */
         embedStopNow(false, "the child could not run in its sandbox");

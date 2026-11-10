@@ -15,9 +15,12 @@
  * In the file sandbox (the default) it also gives the child the machine
  * id, the salts and the CPU counters (which the child may not read), keeps
  * the salts the child answers, and runs the relay for its datagrams. When
- * the sandbox cannot be set up, no bots run for that game: the host does
- * not run in this program in its place, because that would run the brains
- * with no OS sandbox at all.
+ * the sandbox cannot be set up, or a sandboxed child fails in any other
+ * way, no bots run for that game: the host does not run in this program
+ * in its place, because that would run the brains with no OS sandbox at
+ * all (botHostChildFailRule). The sandbox's folders (the grants and, on
+ * Windows, the copy of the program) are made ready on a thread, so the
+ * game's frame does not wait for them.
  */
 #include <stdio.h>
 #include <string.h>
@@ -59,6 +62,9 @@ static size_t             childLineLen;
 static bool               childSandboxed;
 static BotHostRelay      *childRelay;
 static uint32_t           childCpuSentMs;
+static uint32_t           childStartMs;
+static int                childSaltLines;
+static bool               childLastSandboxed;
 
 bool botHostChildFindExe(char *out, size_t outSize) {
 #ifdef _WIN32
@@ -161,8 +167,9 @@ static bool childCopyProgram(const char *exeDir, const char *exe,
     size_t i;
     while (*name == '/' || *name == '\\') name++;
     if (!SDL_CreateDirectory(runDir)) return false;
-    /* Only the top folder's files: the exe and the DLLs. */
-    if (!botHostChildCopyTree(exeDir, runDir, false)) return false;
+    /* Only what the child needs from the top folder: its exe and the
+     * DLLs; then the brains. Not the game's data (maps, sounds, skins). */
+    if (!botHostChildCopyProgramFiles(exeDir, runDir, name)) return false;
     for (i = 0; i < sizeof(brainDirs) / sizeof(brainDirs[0]); i++) {
         SDL_PathInfo pi;
         SDL_snprintf(src, sizeof(src), "%s\\%s", exeDir, brainDirs[i]);
@@ -187,6 +194,8 @@ static void childReset(void) {
     childLineLen = 0;
     childSandboxed = false;
     childCpuSentMs = 0;
+    childStartMs = 0;
+    childSaltLines = 0;
 }
 
 /* The machine id and the salts, before the ticket. */
@@ -255,11 +264,199 @@ static void childSandboxPaths(const BotHostChildParams *p, const char *exe,
     }
 }
 
-/* No bots for this game: one line, why. */
-static BotHostChildStart childNoBots(const char *why) {
-    CHILD_EVENT("[bothost] the Bot Host child's sandbox cannot be set up "
-                "(%s): no bots from this computer in this game", why);
-    return BOT_HOST_CHILD_START_NO_BOTS;
+/* After a failure: one line, why, and what the game does
+ * (botHostChildFailRule). In the sandbox that is always no bots. */
+static BotHostChildStart childFail(BotHostChildFail f, bool sandbox,
+                                   const char *why) {
+    BotHostChildStart how = botHostChildFailRule(f, sandbox);
+    if (how == BOT_HOST_CHILD_START_NO_BOTS) {
+        CHILD_EVENT("[bothost] the Bot Host child cannot run in its sandbox "
+                    "(%s): no bots from this computer in this game", why);
+    } else {
+        CHILD_EVENT("[bothost] the Bot Host child cannot run (%s): the Bot "
+                    "Host runs in this program (no sandbox)", why);
+    }
+    return how;
+}
+
+/* The sandbox's folders made ready on a thread: the grants (the first
+ * grant on a folder goes through all of it) and, on Windows, the copy of
+ * the program when its folder keeps its ACL. Done once for each set of
+ * paths in a run; a later game with the same paths uses the result at
+ * once. */
+typedef struct {
+    SDL_Thread       *thread;
+    SDL_AtomicInt     done;
+    bool              have;       /* a job ran or runs for these inputs */
+    /* The inputs. */
+    char              exe[1024];
+    char              cacheDir[1100];
+    char              speed[1100];
+    char              install[1100];
+    /* The results, valid once done. */
+    bool              ok;
+    char              why[512];
+    char              note[1200]; /* a line for the log, or empty */
+    char              runExe[1024];
+    ChildSandboxPaths paths;
+} ChildPrep;
+
+static ChildPrep childPrep;
+
+/* The sandbox of job: from its inputs (fromPaths false: the paths are
+ * filled in), or from the paths the job left (the exe folder may be the
+ * copy's). */
+static void childPrepSandbox(const ChildPrep *job, BotHostChildSandbox *sb,
+                             ChildSandboxPaths *paths, bool fromPaths) {
+    BotHostChildParams q;
+    if (!fromPaths) {
+        memset(&q, 0, sizeof(q));
+        q.cacheDir = job->cacheDir;
+        q.cpuSpeedFile = job->speed[0] != '\0' ? job->speed : NULL;
+        childSandboxPaths(&q, job->exe, paths, sb);
+        return;
+    }
+    SDL_memset(sb, 0, sizeof(*sb));
+    sb->on = true;
+    (void)botHostChildSandboxAdd(sb->readDirs, &sb->readDirCount,
+                                 paths->exeDir);
+#ifdef __APPLE__
+    {
+        static char contents[1100];
+        childDirOf(paths->exeDir, contents, sizeof(contents));
+        (void)botHostChildSandboxAdd(sb->readDirs, &sb->readDirCount,
+                                     contents);
+    }
+#endif
+    if (paths->install[0] != '\0') {
+        (void)botHostChildSandboxAdd(sb->readDirs, &sb->readDirCount,
+                                     paths->install);
+    }
+    (void)botHostChildSandboxAdd(sb->writeDirs, &sb->writeDirCount,
+                                 paths->cache);
+    if (paths->speed[0] != '\0') {
+        (void)botHostChildSandboxAdd(sb->readFiles, &sb->readFileCount,
+                                     paths->speed);
+    }
+}
+
+static int SDLCALL childPrepThread(void *arg) {
+    ChildPrep *job = (ChildPrep *)arg;
+    BotHostChildSandbox sb;
+    unsigned readFailed = 0;
+
+    job->ok = false;
+    job->why[0] = '\0';
+    job->note[0] = '\0';
+    SDL_strlcpy(job->runExe, job->exe, sizeof(job->runExe));
+    SDL_memset(&job->paths, 0, sizeof(job->paths));
+    /* The cache must be there before its grant. */
+    (void)SDL_CreateDirectory(job->cacheDir);
+    childPrepSandbox(job, &sb, &job->paths, false);
+    if (!botHostChildSandboxPrepare(&sb, &readFailed, job->why,
+                                    sizeof(job->why))) {
+        SDL_SetAtomicInt(&job->done, 1);
+        return 0;
+    }
+#ifdef _WIN32
+    if (readFailed & 1u) {
+        /* The program's folder keeps its ACL (Program Files, Steam): run a
+         * copy that the sandbox may read. */
+        char runDir[1024], copyExe[1024];
+        unsigned again = 0;
+        if (!childRunDir(runDir, sizeof(runDir)) ||
+            !childCopyProgram(job->paths.exeDir, job->exe, runDir, copyExe,
+                              sizeof(copyExe))) {
+            SDL_strlcpy(job->why, "the program could not be copied to a "
+                                  "folder the sandbox may read",
+                        sizeof(job->why));
+            SDL_SetAtomicInt(&job->done, 1);
+            return 0;
+        }
+        SDL_snprintf(job->note, sizeof(job->note),
+                     "[bothost] the sandbox cannot read %s: the Bot Host "
+                     "child runs from a copy in %s (only files that changed "
+                     "are copied again)", job->paths.exeDir, runDir);
+        SDL_strlcpy(job->runExe, copyExe, sizeof(job->runExe));
+        SDL_strlcpy(job->paths.exeDir, runDir, sizeof(job->paths.exeDir));
+        childPrepSandbox(job, &sb, &job->paths, true);
+        if (!botHostChildSandboxPrepare(&sb, &again, job->why,
+                                        sizeof(job->why))) {
+            SDL_SetAtomicInt(&job->done, 1);
+            return 0;
+        }
+        readFailed = again;
+    }
+#endif
+    if (readFailed != 0) {
+        SDL_strlcpy(job->why, "a folder the child reads cannot be granted",
+                    sizeof(job->why));
+    } else {
+        job->ok = true;
+    }
+    SDL_SetAtomicInt(&job->done, 1);
+    return 0;
+}
+
+/* START_WAIT while the job runs; STARTED (here: ready) when it is done
+ * and ok; NO_BOTS, with its line, when it failed. */
+static BotHostChildStart childPrepReady(const BotHostChildParams *p,
+                                        const char *exe) {
+    const char *inst = SDL_getenv("WINBOLO_BOTHOST_INSTALL_DIR");
+    char install[1100], speed[1100];
+    install[0] = '\0';
+    if (inst != NULL && inst[0] != '\0' && SDL_strcasecmp(inst, "none") != 0) {
+        SDL_strlcpy(install, inst, sizeof(install));
+    }
+    speed[0] = '\0';
+    if (p->cpuSpeedFile != NULL) {
+        SDL_strlcpy(speed, p->cpuSpeedFile, sizeof(speed));
+    }
+    if (childPrep.have &&
+        (strcmp(childPrep.exe, exe) != 0 ||
+         strcmp(childPrep.cacheDir, p->cacheDir) != 0 ||
+         strcmp(childPrep.speed, speed) != 0 ||
+         strcmp(childPrep.install, install) != 0)) {
+        /* Other paths: a new job, once the old one ended. */
+        if (!SDL_GetAtomicInt(&childPrep.done)) {
+            return BOT_HOST_CHILD_START_WAIT;
+        }
+        if (childPrep.thread != NULL) SDL_WaitThread(childPrep.thread, NULL);
+        childPrep.thread = NULL;
+        childPrep.have = false;
+    }
+    if (!childPrep.have) {
+        SDL_strlcpy(childPrep.exe, exe, sizeof(childPrep.exe));
+        SDL_strlcpy(childPrep.cacheDir, p->cacheDir,
+                    sizeof(childPrep.cacheDir));
+        SDL_strlcpy(childPrep.speed, speed, sizeof(childPrep.speed));
+        SDL_strlcpy(childPrep.install, install, sizeof(childPrep.install));
+        SDL_SetAtomicInt(&childPrep.done, 0);
+        childPrep.have = true;
+        childPrep.thread = SDL_CreateThread(childPrepThread,
+                                            "bothost-prepare", &childPrep);
+        if (childPrep.thread == NULL) {
+            /* No thread: the work is done here, once. */
+            (void)childPrepThread(&childPrep);
+        }
+    }
+    if (!SDL_GetAtomicInt(&childPrep.done)) return BOT_HOST_CHILD_START_WAIT;
+    if (childPrep.thread != NULL) {
+        SDL_WaitThread(childPrep.thread, NULL);
+        childPrep.thread = NULL;
+    }
+    if (childPrep.note[0] != '\0') {
+        CHILD_EVENT("%s", childPrep.note);
+        childPrep.note[0] = '\0';
+    }
+    if (!childPrep.ok) {
+        BotHostChildStart how = childFail(BOT_HOST_CHILD_FAIL_SANDBOX, true,
+                                          childPrep.why);
+        /* The next game tries again. */
+        childPrep.have = false;
+        return how;
+    }
+    return BOT_HOST_CHILD_STARTED;
 }
 
 BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
@@ -270,76 +467,46 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
     char exe[1024], log[1024], err[256], why[512];
     char argBuf[4096], hex[128], line[160];
     const char *argv[BOT_HOST_CHILD_MAX_ARGS];
-    static ChildSandboxPaths sbPaths;
     BotHostChildSandbox sb;
-    bool sandboxFailed = false;
 
     if (childProc != NULL) botHostChildClientStop(true);
     childReset();
     if (!botHostChildFindExe(exe, sizeof(exe))) {
-        CHILD_EVENT("[bothost] no WinBoloBotHost next to this program: the "
-                    "Bot Host runs in this program");
-        return BOT_HOST_CHILD_START_INPROC;
+        return childFail(BOT_HOST_CHILD_FAIL_NO_EXE, sandbox,
+                         "no WinBoloBotHost next to this program");
     }
     SDL_memset(&sb, 0, sizeof(sb));
     if (sandbox) {
-        unsigned readFailed = 0;
+        BotHostChildStart ready;
         why[0] = '\0';
         if (!botHostChildSandboxAvailable(why, sizeof(why))) {
-            return childNoBots(why);
+            return childFail(BOT_HOST_CHILD_FAIL_SANDBOX, true, why);
         }
-        /* The cache must be there before its grant. */
-        (void)SDL_CreateDirectory(p->cacheDir);
-        childSandboxPaths(p, exe, &sbPaths, &sb);
-        if (!botHostChildSandboxPrepare(&sb, &readFailed, why, sizeof(why))) {
-            return childNoBots(why);
-        }
-#ifdef _WIN32
-        if (readFailed & 1u) {
-            /* The program's folder keeps its ACL (Program Files, Steam):
-             * run a copy that the sandbox may read. */
-            char runDir[1024], copyExe[1024];
-            unsigned again = 0;
-            if (!childRunDir(runDir, sizeof(runDir)) ||
-                !childCopyProgram(sbPaths.exeDir, exe, runDir, copyExe,
-                                  sizeof(copyExe))) {
-                return childNoBots("the program could not be copied to a "
-                                   "folder the sandbox may read");
-            }
-            CHILD_EVENT("[bothost] the sandbox cannot read %s: the Bot Host "
-                        "child runs from a copy in %s", sbPaths.exeDir,
-                        runDir);
-            SDL_strlcpy(exe, copyExe, sizeof(exe));
-            SDL_strlcpy(sbPaths.exeDir, runDir, sizeof(sbPaths.exeDir));
-            if (!botHostChildSandboxPrepare(&sb, &again, why, sizeof(why))) {
-                return childNoBots(why);
-            }
-            readFailed = again;
-        }
-#endif
-        if (readFailed != 0) {
-            return childNoBots("a folder the child reads cannot be granted");
-        }
+        ready = childPrepReady(p, exe);
+        if (ready != BOT_HOST_CHILD_STARTED) return ready;
+        SDL_strlcpy(exe, childPrep.runExe, sizeof(exe));
+        childPrepSandbox(&childPrep, &sb, &childPrep.paths, true);
     }
     if (botHostChildBuildArgs(p, exe, argBuf, sizeof(argBuf), argv,
                               BOT_HOST_CHILD_MAX_ARGS) < 0) {
-        if (sandbox) return childNoBots("the arguments are too long");
-        CHILD_EVENT("[bothost] the Bot Host child's arguments are too long: "
-                    "the Bot Host runs in this program");
-        return BOT_HOST_CHILD_START_INPROC;
+        return childFail(BOT_HOST_CHILD_FAIL_ARGS, sandbox,
+                         "the arguments are too long");
     }
     botHostChildLogPath(log, sizeof(log));
     childRotateLogs(log);
 
+    /* The spawn's sandboxFailed is not needed: in the sandbox a failure
+     * at any step means no bots. */
+    err[0] = '\0';
     childProc = botHostChildSpawn(exe, argv, lim, sandbox ? &sb : NULL, log,
-                                  err, sizeof(err), &sandboxFailed);
+                                  err, sizeof(err), NULL);
     if (childProc == NULL) {
-        if (sandbox && sandboxFailed) return childNoBots(err);
-        CHILD_EVENT("[bothost] the Bot Host child did not start (%s): the "
-                    "Bot Host runs in this program", err);
-        return BOT_HOST_CHILD_START_INPROC;
+        return childFail(BOT_HOST_CHILD_FAIL_SPAWN, sandbox,
+                         err[0] != '\0' ? err : "the start failed");
     }
     childSandboxed = sandbox;
+    childLastSandboxed = sandbox;
+    childStartMs = (uint32_t)SDL_GetTicks();
     if (sandbox) {
         childRelay = botHostRelayStart(childProc, p->serverHost,
                                        p->serverPort);
@@ -348,7 +515,8 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
             botHostChildFree(childProc);
             childProc = NULL;
             childReset();
-            return childNoBots("the relay to the server did not start");
+            return childFail(BOT_HOST_CHILD_FAIL_RELAY, true,
+                             "the relay to the server did not start");
         }
         childSendMachine();
         childSendCpu();
@@ -383,8 +551,12 @@ static void childTakeLine(const char *line) {
     if (strncmp(line, "salt ", 5) == 0) {
         /* The child answered a salt: this program keeps the salt file. */
         uint8_t salt[MACHINE_SALT_LEN];
+        /* At most BOT_HOST_CHILD_MAX_SALT_LINES for one child: a child
+         * that sends more cannot fill the salt file. */
         if (childSandboxed &&
+            childSaltLines < BOT_HOST_CHILD_MAX_SALT_LINES &&
             botHostChildTicketParse(line + 5, salt, sizeof(salt))) {
+            childSaltLines++;
             machineIdNoteSalt(salt);
         }
         return;
@@ -435,6 +607,17 @@ void botHostChildClientPoll(void) {
                 childLine[childLineLen++] = c;
             }
         }
+    }
+    if (!childHello && childEnd == BOT_HOST_CHILD_RUNS &&
+        (uint32_t)SDL_GetTicks() - childStartMs >=
+            BOT_HOST_CHILD_HELLO_WAIT_MS) {
+        /* No hello in time: it is ended, and counts as a start failure
+         * (in the sandbox: no bots for this game). */
+        CHILD_EVENT("[bothost] the Bot Host child said no hello in %u ms: "
+                    "it is ended", (unsigned)BOT_HOST_CHILD_HELLO_WAIT_MS);
+        childEnd = childSandboxed ? BOT_HOST_CHILD_ENDED_SANDBOX
+                                  : BOT_HOST_CHILD_ENDED_EARLY;
+        botHostChildKill(childProc);
     }
     if (!botHostChildAlive(childProc, &childExitCode)) {
         childEnded = true;
@@ -541,4 +724,8 @@ BotHostChildEnd botHostChildClientEnd(void) {
 
 bool botHostChildClientHello(void) {
     return childProc != NULL && childHello;
+}
+
+bool botHostChildClientSandboxed(void) {
+    return childLastSandboxed;
 }

@@ -937,6 +937,9 @@ int run_bothost_child_relay(void);
 int run_bothost_child_machine_id(void);
 int run_bothost_child_no_unsafe(void);
 int run_bothost_child_copy_tree(void);
+int run_bothost_child_fail_rule(void);
+int run_bothost_child_copy_wanted(void);
+int run_bothost_child_env_keep(void);
 
 /* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
 int run_bot_host_link_announce_codec(void);

@@ -6354,6 +6354,9 @@ set(_unit_test_names
     bothost_child_machine_id
     bothost_child_no_unsafe
     bothost_child_copy_tree
+    bothost_child_fail_rule
+    bothost_child_copy_wanted
+    bothost_child_env_keep
     bot_host_link_announce_codec
     bot_host_link_addr_list
     bot_host_link_allow

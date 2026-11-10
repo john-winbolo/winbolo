@@ -53,11 +53,17 @@
 /* The relay pipes' size: a few hundred datagrams. */
 #define RELAY_PIPE_BYTES (256u * 1024u)
 
-/* Read: list, read and run. Write: that, change and delete too, but not
- * the ACL or the owner. */
+/* Read: list, read and run. Write: list, read, change and delete, but not
+ * run (no program written there can start), and not the ACL or the owner.
+ *
+ * Note: the grants stay after the game ends, and so does the container's
+ * profile; the next run uses them again. The container's SID can do
+ * nothing outside the granted folders, so a grant left behind gives no
+ * other program any right. A later switch could remove them
+ * (DeleteAppContainerProfile and the ACEs). */
 #define GRANT_READ  (FILE_GENERIC_READ | FILE_GENERIC_EXECUTE)
-#define GRANT_WRITE (FILE_GENERIC_READ | FILE_GENERIC_WRITE |               \
-                     FILE_GENERIC_EXECUTE | DELETE | FILE_DELETE_CHILD)
+#define GRANT_WRITE (FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE |      \
+                     FILE_DELETE_CHILD)
 
 struct BotHostChildProc {
     HANDLE process;
@@ -141,16 +147,23 @@ static PSID containerSid(char *why, size_t whySize) {
     return sid;
 }
 
-/* True when acl allows sid all of rights in one entry. */
-static bool aclHasGrant(PACL acl, PSID sid, DWORD rights) {
+/* True when acl has the one entry this grant makes: sid, exactly rights
+ * (no more, so a wider grant from an older version is replaced), set on
+ * this object (not inherited) and, for a folder, inherited by all in it. */
+static bool aclHasGrant(PACL acl, PSID sid, DWORD rights, bool dir) {
+    const BYTE want = dir ? (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) : 0;
+    const BYTE flags = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE |
+                       INHERIT_ONLY_ACE | INHERITED_ACE;
     DWORD i;
     if (acl == NULL) return false;
     for (i = 0; i < acl->AceCount; i++) {
         ACCESS_ALLOWED_ACE *ace = NULL;
         if (!GetAce(acl, i, (LPVOID *)&ace) || ace == NULL) continue;
         if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE) continue;
-        if ((ace->Mask & rights) != rights) continue;
-        if (EqualSid((PSID)&ace->SidStart, sid)) return true;
+        if (!EqualSid((PSID)&ace->SidStart, sid)) continue;
+        if (ace->Mask == rights && (ace->Header.AceFlags & flags) == want) {
+            return true;
+        }
     }
     return false;
 }
@@ -169,10 +182,12 @@ static DWORD grantPath(const char *path, PSID sid, DWORD rights, bool dir) {
     rc = GetNamedSecurityInfoW(wpath, SE_FILE_OBJECT,
                                DACL_SECURITY_INFORMATION, NULL, NULL,
                                &oldAcl, NULL, &sd);
-    if (rc == ERROR_SUCCESS && !aclHasGrant(oldAcl, sid, rights)) {
+    if (rc == ERROR_SUCCESS && !aclHasGrant(oldAcl, sid, rights, dir)) {
         memset(&ea, 0, sizeof(ea));
         ea.grfAccessPermissions = rights;
-        ea.grfAccessMode = GRANT_ACCESS;
+        /* SET_ACCESS: this one entry replaces any other entry this SID
+         * has on the object, so the grant is only what is asked. */
+        ea.grfAccessMode = SET_ACCESS;
         ea.grfInheritance = dir ? SUB_CONTAINERS_AND_OBJECTS_INHERIT
                                 : NO_INHERITANCE;
         ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
@@ -330,12 +345,98 @@ static void closeIf(HANDLE *h) {
     *h = NULL;
 }
 
+/* Appends s (n wide chars) and a zero to the block at *len; false when it
+ * is full. */
+static bool envPut(wchar_t *out, size_t cap, size_t *len, const wchar_t *s,
+                   size_t n) {
+    if (*len + n + 2 > cap) return false;
+    memcpy(out + *len, s, n * sizeof(wchar_t));
+    *len += n;
+    out[(*len)++] = L'\0';
+    return true;
+}
+
+/* The user's folder names. CreateProcess for an AppContainer reads them
+ * from the new block (it puts the container's own folders in their place)
+ * and fails with error 203 when they are missing. They hold paths only. */
+static bool childEnvKeepWin(const char *entry) {
+    static const char *const names[] = {
+        "USERPROFILE", "LOCALAPPDATA",
+    };
+    const char *eq = strchr(entry, '=');
+    size_t n, i;
+    if (eq == NULL || eq == entry) return false;
+    n = (size_t)(eq - entry);
+    for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        if (strlen(names[i]) == n && _strnicmp(entry, names[i], n) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The sandboxed child's environment block: the names botHostChildEnvKeep
+ * keeps, PATH = the child's folder and System32, TEMP and TMP = the cache
+ * folder. NULL on failure (the caller then fails the start). */
+static wchar_t *childEnvBlock(const wchar_t *wdir, const char *cache) {
+    const size_t cap = 32768;
+    wchar_t *out = (wchar_t *)malloc(cap * sizeof(wchar_t));
+    wchar_t *env, *e, *wcache = NULL;
+    wchar_t sysRoot[MAX_PATH], line[2 * MAX_PATH + 64];
+    size_t len = 0;
+    bool ok = out != NULL;
+    if (out == NULL) return NULL;
+    env = GetEnvironmentStringsW();
+    for (e = env; ok && e != NULL && *e != L'\0'; e += wcslen(e) + 1) {
+        char u8[1024];
+        int n = WideCharToMultiByte(CP_UTF8, 0, e, -1, u8, sizeof(u8), NULL,
+                                    NULL);
+        if (n <= 0 || (!botHostChildEnvKeep(u8) && !childEnvKeepWin(u8))) {
+            continue;
+        }
+        ok = envPut(out, cap, &len, e, wcslen(e));
+    }
+    if (env != NULL) FreeEnvironmentStringsW(env);
+    if (GetEnvironmentVariableW(L"SystemRoot", sysRoot, MAX_PATH) == 0) {
+        wcscpy(sysRoot, L"C:\\Windows");
+    }
+    if (ok) {
+        _snwprintf(line, sizeof(line) / sizeof(line[0]) - 1,
+                   L"PATH=%ls;%ls\\System32", wdir != NULL ? wdir : L"",
+                   sysRoot);
+        line[sizeof(line) / sizeof(line[0]) - 1] = L'\0';
+        ok = envPut(out, cap, &len, line, wcslen(line));
+    }
+    if (ok && cache != NULL && cache[0] != '\0' &&
+        (wcache = utf8ToWide(cache)) != NULL) {
+        size_t n = wcslen(wcache);
+        wchar_t *t = (wchar_t *)malloc((n + 8) * sizeof(wchar_t));
+        if (t != NULL) {
+            wcscpy(t, L"TEMP=");
+            wcscat(t, wcache);
+            ok = envPut(out, cap, &len, t, wcslen(t));
+            wcscpy(t, L"TMP=");
+            wcscat(t, wcache);
+            if (ok) ok = envPut(out, cap, &len, t, wcslen(t));
+            free(t);
+        }
+        free(wcache);
+    }
+    if (!ok || len + 1 > cap) {
+        free(out);
+        return NULL;
+    }
+    out[len] = L'\0';  /* the block ends with an empty entry */
+    return out;
+}
+
 BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
                                     const BotHostChildLimits *lim,
                                     const BotHostChildSandbox *sb,
                                     const char *logPath, char *err,
                                     size_t errSize, bool *sandboxFailed) {
     SECURITY_ATTRIBUTES sa;
+    wchar_t *wenv = NULL;
     HANDLE inR = NULL, inW = NULL, outR = NULL, outW = NULL, logH = NULL;
     HANDLE rinR = NULL, rinW = NULL, routR = NULL, routW = NULL;
     HANDLE handles[5];
@@ -504,11 +605,22 @@ BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
     si.StartupInfo.hStdError = logH;
     si.lpAttributeList = attrs;
 
+    if (sandbox) {
+        /* A minimal environment: no token in the game's reaches the
+         * child. */
+        wenv = childEnvBlock(wdir, sb->writeDirCount > 0 ? sb->writeDirs[0]
+                                                         : NULL);
+        if (wenv == NULL) {
+            setErr(err, errSize, "the child's environment failed");
+            goto done;
+        }
+    }
     if (!CreateProcessW(wexe, wcmd, NULL, NULL, TRUE,
                         CREATE_SUSPENDED | CREATE_NO_WINDOW |
                             BELOW_NORMAL_PRIORITY_CLASS |
-                            EXTENDED_STARTUPINFO_PRESENT,
-                        NULL, sandbox ? wdir : NULL, &si.StartupInfo, &pi)) {
+                            EXTENDED_STARTUPINFO_PRESENT |
+                            (wenv != NULL ? CREATE_UNICODE_ENVIRONMENT : 0),
+                        wenv, sandbox ? wdir : NULL, &si.StartupInfo, &pi)) {
         setErr(err, errSize, sandbox ? "CreateProcess in the AppContainer "
                                        "failed"
                                      : "CreateProcess failed");
@@ -586,6 +698,7 @@ done:
     free(wexe);
     free(wcmd);
     free(wdir);
+    free(wenv);
     return ok ? p : NULL;
 }
 
