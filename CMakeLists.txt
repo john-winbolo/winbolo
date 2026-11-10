@@ -6385,6 +6385,8 @@ set(_unit_test_names
     brain_sync_shipped_match
     brain_sync_shipped_edited
     brain_sync_shipped_missing
+    brain_sync_crlf_hash
+    brain_sync_crlf_table_agrees
     brain_pack_manifest_v2
     brain_pack_all_equal
     brain_pack_one_changed

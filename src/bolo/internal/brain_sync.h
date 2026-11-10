@@ -33,6 +33,14 @@
  *  drive letter, "..", a backslash, and the Windows device
  *  names.
  *
+ *  A text brain file (.lua, .txt, .json) is read with each
+ *  CR that comes just before a LF taken out, so a copy with
+ *  CRLF line endings (a Windows checkout) is the same file
+ *  as one with LF. Every size, hash and SHA-256 of a brain
+ *  file is of these bytes (brainSyncLoadFile), and they are
+ *  the bytes a server sends. A lone CR stays. Other files,
+ *  such as a .map, are read as they are.
+ *
  *  The hashes are 64-bit FNV-1a. They find changed and
  *  damaged files; they are not a defence against a server
  *  that lies, which the host trusts anyway since it runs the
@@ -70,6 +78,7 @@ typedef struct {
     uint64_t hash;
     uint8_t  sha[BRAIN_SYNC_SHA_LEN];    /* SHA-256; zero from a v1 list */
     int64_t  mtime;    /* local only: lets a rescan skip a file it hashed */
+    uint64_t rawSize;  /* local only: the size on disk, for the same skip */
 } BrainSyncFile;
 
 typedef struct {
@@ -97,6 +106,24 @@ typedef struct {
  * BRAIN_SYNC_HASH_SEED). */
 #define BRAIN_SYNC_HASH_SEED 0xcbf29ce484222325ull
 uint64_t brainSyncHash(uint64_t h, const void *data, size_t len);
+
+/* True when path names a text brain file: its name ends in .lua, .txt or
+ * .json (any case). Its line endings are made LF before it is hashed or
+ * sent. */
+bool brainSyncIsTextPath(const char *path);
+
+/* Make the line endings of len bytes LF, in place: every run of CRs that a
+ * LF comes after is taken out, so CR LF (and CR CR LF) become LF. A CR with
+ * no LF after it stays. Returns the new length. A second pass changes
+ * nothing, so a file the host stored with these bytes reads back as the
+ * same file. */
+size_t brainSyncNormalizeText(void *data, size_t len);
+
+/* SDL_LoadFile, with the line endings made LF when brainSyncIsTextPath(path).
+ * *len gets the length after that. The caller frees the result with
+ * SDL_free. Every brain file that is hashed, checked or sent is read with
+ * this. */
+void *brainSyncLoadFile(const char *path, size_t *len);
 
 /* True when rel is a safe relative path: 1..BRAIN_SYNC_PATH_MAX-1 bytes of
  * printable ASCII, '/' separated, no empty, "." or ".." part, no part that
