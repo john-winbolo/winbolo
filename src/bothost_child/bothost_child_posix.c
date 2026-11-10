@@ -215,7 +215,7 @@ typedef struct {
     int                 readFileCount;
     const char         *writeDirs[BOT_HOST_SANDBOX_MAX_PATHS];
     int                 writeDirCount;
-    struct sock_filter  filter[80];
+    struct sock_filter  filter[128];
     unsigned short      filterLen;
 } ChildSandbox;
 
@@ -231,14 +231,26 @@ typedef struct {
  *     mount family; bpf, perf_event_open, userfaultfd; the key calls
  *     (keyctl, add_key, request_key); io_uring; the module, kexec, swap,
  *     reboot, chroot and pivot_root calls;
+ *   - EPERM: fork and vfork (where the architecture has them). The child
+ *     starts no program of its own: a second process would have its own
+ *     memory limit and could keep the game's pipes open;
  *   - ENOSYS: clone3, whose flags are in memory the filter cannot read;
  *     the C library then uses clone;
- *   - clone with a CLONE_NEW* flag: EPERM;
+ *   - clone: only with CLONE_THREAD (a new thread, as pthread_create
+ *     makes) and no CLONE_NEW* flag; EPERM else;
  *   - kill, tgkill, rt_sigqueueinfo and rt_tgsigqueueinfo: only to the
  *     child itself or to 0 (its own process group: the child is the
- *     leader of a group of its own, setpgid in childExec); EPERM else.
- * pidSlot is the index of the instruction that holds the child's pid,
- * which only the child knows. */
+ *     leader of a group of its own, setpgid in childExec); EPERM else;
+ *   - prlimit64, sched_setaffinity, sched_setscheduler, sched_setparam,
+ *     sched_setattr, migrate_pages and move_pages: only on the child
+ *     itself or 0 (self); EPERM else;
+ *   - setpriority and ioprio_set: only "which" = one process, and "who"
+ *     the child itself or 0 (self); EPERM else.
+ * Note: a thread's own id is not the child's pid, so a call that names a
+ * thread by its id (SDL's thread priority on Linux) fails with EPERM. The
+ * thread then keeps the child's priority (nice +10).
+ * The pid slots are the instructions that hold the child's pid, which
+ * only the child knows. */
 #ifndef __NR_io_uring_setup
 #define __NR_io_uring_setup 425
 #endif
@@ -281,6 +293,10 @@ typedef struct {
 #ifndef __NR_mount_setattr
 #define __NR_mount_setattr 442
 #endif
+#define CHILD_CLONE_THREAD 0x00010000u
+#define CHILD_PRIO_PROCESS 0u          /* setpriority: PRIO_PROCESS */
+#define CHILD_IOPRIO_WHO_PROCESS 1u    /* ioprio_set: IOPRIO_WHO_PROCESS */
+#define CHILD_PID_SLOTS 3
 /* All the CLONE_NEW* flags of clone's first argument (CLONE_NEWTIME is
  * only for clone3, which is refused). */
 #define CHILD_CLONE_NS_FLAGS                                               \
@@ -289,7 +305,7 @@ typedef struct {
      0x10000000u /* NEWUSER */ | 0x20000000u /* NEWPID */ |                \
      0x40000000u /* NEWNET */)
 
-static void buildFilter(ChildSandbox *cs, int *pidSlot) {
+static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
     static const unsigned blocked[] = {
         __NR_socket, __NR_ptrace, __NR_tkill,
         __NR_process_vm_readv, __NR_process_vm_writev, __NR_pidfd_getfd,
@@ -303,25 +319,38 @@ static void buildFilter(ChildSandbox *cs, int *pidSlot) {
         __NR_io_uring_setup, __NR_io_uring_enter, __NR_io_uring_register,
         __NR_init_module, __NR_finit_module, __NR_delete_module,
         __NR_kexec_load, __NR_swapon, __NR_swapoff, __NR_reboot,
+#ifdef __NR_fork
+        __NR_fork,
+#endif
+#ifdef __NR_vfork
+        __NR_vfork,
+#endif
     };
+    /* The first argument is a pid: the child itself or 0 only. */
     static const unsigned pidChecked[] = {
         __NR_kill, __NR_tgkill, __NR_rt_sigqueueinfo, __NR_rt_tgsigqueueinfo,
+        __NR_prlimit64, __NR_sched_setaffinity, __NR_sched_setscheduler,
+        __NR_sched_setparam, __NR_sched_setattr, __NR_migrate_pages,
+        __NR_move_pages,
     };
     const int nb = (int)(sizeof(blocked) / sizeof(blocked[0]));
     const int np = (int)(sizeof(pidChecked) / sizeof(pidChecked[0]));
     struct sock_filter *f = cs->filter;
-    int n = 0, i, chk, cloneChk, err, nosys, allowEnd;
+    int n = 0, i, chk, cloneChk, prioChk, ioChk, err, nosys, allowEnd;
 #if defined(__x86_64__)
     const int x32 = 1;
 #else
     const int x32 = 0;
 #endif
     /* The layout: the arch check (3), the nr load (1), x32 (0 or 1), the
-     * blocked list, clone3, clone, the pid list, allow; then chk (4),
-     * cloneChk (3), err, nosys, allowEnd. */
-    chk = 4 + x32 + nb + 2 + np + 1;
+     * blocked list, clone3, clone, the pid list, setpriority, ioprio_set,
+     * allow; then chk (4), cloneChk (4), prioChk (6), ioChk (6), err,
+     * nosys, allowEnd. */
+    chk = 4 + x32 + nb + 2 + np + 2 + 1;
     cloneChk = chk + 4;
-    err = cloneChk + 3;
+    prioChk = cloneChk + 4;
+    ioChk = prioChk + 6;
+    err = ioChk + 6;
     nosys = err + 1;
     allowEnd = nosys + 1;
 
@@ -360,6 +389,12 @@ static void buildFilter(ChildSandbox *cs, int *pidSlot) {
                                             pidChecked[i], AT(chk), 0);
         n++;
     }
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        __NR_setpriority, AT(prioChk), 0);
+    n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        __NR_ioprio_set, AT(ioChk), 0);
+    n++;
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
     n++;
     /* chk: the first argument (the low half, little-endian) is the child
@@ -367,7 +402,7 @@ static void buildFilter(ChildSandbox *cs, int *pidSlot) {
     f[n] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
                                         offsetof(struct seccomp_data, args));
     n++;
-    *pidSlot = n;
+    pidSlot[0] = n;
     f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0,
                                         AT(allowEnd), 0);
     n++;
@@ -377,15 +412,47 @@ static void buildFilter(ChildSandbox *cs, int *pidSlot) {
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
                                         SECCOMP_RET_ERRNO | (EPERM & 0xFFFF));
     n++;
-    /* cloneChk: clone's flags (the first argument, its low half). */
+    /* cloneChk: clone's flags (the first argument, its low half): no
+     * CLONE_NEW* flag, and CLONE_THREAD set (a thread, not a process). */
     f[n] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
                                         offsetof(struct seccomp_data, args));
     n++;
     f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K,
                                         CHILD_CLONE_NS_FLAGS, AT(err), 0);
     n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K,
+                                        CHILD_CLONE_THREAD, 0, AT(err));
+    n++;
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
     n++;
+    /* prioChk and ioChk: "which" (the first argument) is one process, and
+     * "who" (the second, its low half) is the child itself or 0. */
+    for (i = 0; i < 2; i++) {
+        f[n] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+                                            offsetof(struct seccomp_data,
+                                                     args));
+        n++;
+        f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                            i == 0 ? CHILD_PRIO_PROCESS
+                                                   : CHILD_IOPRIO_WHO_PROCESS,
+                                            0, AT(err));
+        n++;
+        f[n] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+                                            offsetof(struct seccomp_data,
+                                                     args) + 8);
+        n++;
+        f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0,
+                                            AT(allowEnd), 0);
+        n++;
+        pidSlot[1 + i] = n;
+        f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0,
+                                            AT(allowEnd), 0);
+        n++;
+        f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                            SECCOMP_RET_ERRNO |
+                                                (EPERM & 0xFFFF));
+        n++;
+    }
     /* err */
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
                                         SECCOMP_RET_ERRNO | (EPERM & 0xFFFF));
@@ -401,7 +468,15 @@ static void buildFilter(ChildSandbox *cs, int *pidSlot) {
     cs->filterLen = (unsigned short)n;
 }
 
-static int filterPidSlot;
+static int filterPidSlot[CHILD_PID_SLOTS];
+
+/* Unit tests only (bothost_child_seccomp): with no Landlock, a sandbox
+ * request gets the seccomp filter alone, so a kernel before 5.13 can test
+ * the filter. The game never sets it: there, no Landlock means no sandbox
+ * and so no bots. */
+static bool testSeccompOnly;
+
+void botHostChildTestSeccompOnly(bool on) { testSeccompOnly = on; }
 
 static bool prepareChildSandbox(ChildSandbox *cs,
                                 const BotHostChildSandbox *sb, char *err,
@@ -409,7 +484,7 @@ static bool prepareChildSandbox(ChildSandbox *cs,
     memset(cs, 0, sizeof(*cs));
     if (sb == NULL || !sb->on) return true;
     cs->abi = botHostChildLandlockAbi();
-    if (cs->abi < 1) {
+    if (cs->abi < 1 && !testSeccompOnly) {
         if (err != NULL && errSize > 0) {
             snprintf(err, errSize, "this kernel has no Landlock");
         }
@@ -422,7 +497,7 @@ static bool prepareChildSandbox(ChildSandbox *cs,
     cs->readFileCount = sb->readFileCount;
     memcpy(cs->writeDirs, sb->writeDirs, sizeof(cs->writeDirs));
     cs->writeDirCount = sb->writeDirCount;
-    buildFilter(cs, &filterPidSlot);
+    buildFilter(cs, filterPidSlot);
     return true;
 }
 
@@ -446,6 +521,7 @@ static int enterChildSandbox(ChildSandbox *cs) {
     int rs, k;
 
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) return 1;
+    if (cs->abi < 1) goto filterOnly;  /* testSeccompOnly */
 
     handled = (1ull << 13) - 1;              /* ABI 1 */
     if (cs->abi >= 2) handled |= LL_REFER;
@@ -479,7 +555,10 @@ static int enterChildSandbox(ChildSandbox *cs) {
     }
     (void)close(rs);
 
-    cs->filter[filterPidSlot].k = (uint32_t)getpid();
+filterOnly:
+    for (k = 0; k < CHILD_PID_SLOTS; k++) {
+        cs->filter[filterPidSlot[k]].k = (uint32_t)getpid();
+    }
     prog.len = cs->filterLen;
     prog.filter = cs->filter;
     if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog, 0, 0) != 0) {
@@ -507,6 +586,8 @@ bool botHostChildSandboxAvailable(char *why, size_t whySize) {
 }
 
 #else /* !CHILD_LINUX_SANDBOX */
+
+void botHostChildTestSeccompOnly(bool on) { (void)on; }
 
 int botHostChildLandlockAbi(void) {
 #if defined(__linux__)
@@ -592,7 +673,8 @@ static void childExec(const char *exe, char *const *argv, ChildSetup *c) {
     (void)prctl(PR_SET_PDEATHSIG, SIGKILL);
     if (getppid() != c->parent) _exit(127);
 #endif
-    (void)setpgid(0, 0);
+    /* The filter's kill(0) rule needs the child to lead its own group. */
+    if (setpgid(0, 0) != 0) _exit(127);
 
     /* Every fd that goes on is first moved above 9, so no dup2 below
      * overwrites another one. */
@@ -821,6 +903,10 @@ BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
         goto fail;
     }
     if (pid == 0) childExec(exe, (char *const *)useArgv, &c);
+    /* The child sets its group itself; this closes the time before it
+     * does, so botHostChildKill always reaches the group. EACCES after the
+     * child's exec is fine. */
+    (void)setpgid(pid, pid);
     close(inPipe[0]);
     inPipe[0] = -1;
     close(outPipe[1]);
@@ -981,6 +1067,10 @@ bool botHostChildWait(BotHostChildProc *p, uint32_t waitMs, int *exitCode) {
 void botHostChildKill(BotHostChildProc *p) {
     int status;
     if (p == NULL || p->reaped) return;
+    /* The child's group first: a process it started (the filter refuses
+     * fork, but no filter runs without the sandbox) ends with it. The pid
+     * is not reaped yet, so the group id is still the child's own. */
+    (void)kill(-p->pid, SIGKILL);
     if (!botHostChildAlive(p, NULL)) return;
     /* Only the child this program started, by its own pid. */
     (void)kill(p->pid, SIGKILL);

@@ -6375,6 +6375,7 @@ set(_unit_test_names
     bothost_child_env_keep
     bothost_ds_child_where
     bot_host_lockstep
+    bothost_child_seccomp
     bot_host_link_announce_codec
     bot_host_link_addr_list
     bot_host_link_allow

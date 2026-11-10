@@ -632,6 +632,7 @@ static const UnitTestEntry s_tests[] = {
     { "bothost_child_env_keep", run_bothost_child_env_keep },
     { "bothost_ds_child_where", run_bothost_ds_child_where },
     { "bot_host_lockstep", run_bot_host_lockstep },
+    { "bothost_child_seccomp", run_bothost_child_seccomp },
     { "bot_host_link_announce_codec", run_bot_host_link_announce_codec },
     { "bot_host_link_addr_list", run_bot_host_link_addr_list },
     { "bot_host_link_allow", run_bot_host_link_allow },
