@@ -890,8 +890,12 @@ static void botHostRefreshManifest(ServerSim *sim, const char *why) {
                            &udpServer.brainManifest);
     next.noCode = !botHostCodeCustom;
     if (udpServer.brainManifestGen != 0 &&
-        next.version == udpServer.brainManifest.version) {
-        /* Same files. Keep the new list for its change times. */
+        next.version == udpServer.brainManifest.version &&
+        next.noCode == udpServer.brainManifest.noCode) {
+        /* Same files and the same -bothost-code. Keep the new list for its
+         * change times. The first manifest is made at server start, before
+         * -bothost-code is read, so a custom server gets a new generation
+         * here. */
         brainSyncFree(&udpServer.brainManifest);
         udpServer.brainManifest = next;
         return;
