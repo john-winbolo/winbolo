@@ -1329,7 +1329,7 @@ int run_team_sides_rejoin_empty_team_is_new(void);
 int run_team_sides_join_without_rejoin_is_new(void);
 int run_team_sides_rejoin_next_round_is_new(void);
 int run_team_sides_rejoin_can_ally_refused(void);
-int run_team_sides_rejoin_ranked_is_new(void);
+int run_team_sides_rejoin_ranked_keeps_team(void);
 int run_team_sides_rejoin_full_table_drops_oldest(void);
 int run_team_sides_joiner_slot_before_join(void);
 int run_team_sides_lobby_joiner_keeps_rule(void);

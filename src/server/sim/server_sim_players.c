@@ -262,12 +262,11 @@ static BYTE rejoinTeammate(const ServerSim *sim, BYTE playerNum) {
 }
 
 /* Whether the rules let a rejoiner back onto their old team: the same two
-   checks a player's own alliance accept makes (server_command_dispatch.c).
-   A ranked round has no alliances, and the script's can_ally is asked with
-   the new member first, as the accept asks it. */
+   check a player's own alliance accept makes (server_command_dispatch.c):
+   the script's can_ally is asked with the new member first, as the accept
+   asks it. */
 static bool rejoinMayAlly(ServerSim *sim, BYTE playerNum, BYTE mate) {
     bool allow;
-    if (serverSimGetRanked(sim)) return FALSE;
     if (sim->scenarioPolicy == NULL || sim->scenarioPolicy->canAlly == NULL) {
         return TRUE;
     }

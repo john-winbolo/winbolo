@@ -55,9 +55,9 @@ void serverSimPlaceJoiner(ServerSim *sim, BYTE slot);
  * that team still has a player (human or bot) and the rejoin record had not
  * timed out. It takes the alliance accept path (serverSimAcceptAlliance),
  * so the alliance table, every client and the round log see the move. The
- * accept obeys the rules a player's own accept obeys: in a ranked round, or
- * when the script's can_ally refuses, the rejoiner gets a team of their own,
- * as any other joiner does. Any other join is left as serverSimPlaceJoiner
+ * accept obeys the script's can_ally, as a player's own accept does: when
+ * it refuses, the rejoiner gets a team of their own, as any other joiner
+ * does. Any other join is left as serverSimPlaceJoiner
  * put it. Call it from a human join path right after
  * fillAndPublishPlayerJoin, so clients know the seat before its alliance
  * arrives. Defined in server_sim_players.c. */

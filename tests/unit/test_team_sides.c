@@ -1330,9 +1330,9 @@ int run_team_sides_rejoin_can_ally_refused(void) {
     return 0;
 }
 
-/* The same in a ranked round, which has no alliances: the rejoiner gets
-   the lowest free team, team 3, and no ally. */
-int run_team_sides_rejoin_ranked_is_new(void) {
+/* The same in a ranked round: the rejoiner goes back to the side the
+   lobby gave them, team 1, allied with P0, as in any other round. */
+int run_team_sides_rejoin_ranked_keeps_team(void) {
     const BYTE teams[3] = { 1, 1, 2 };
     ServerSim *sim = tsRunningSim(teams, 3);
 
@@ -1340,9 +1340,10 @@ int run_team_sides_rejoin_ranked_is_new(void) {
     serverSimSetRanked(sim, true);
     serverSimRemovePlayer(sim, 1);
     serverSimAddPlayer(sim, 1, "P1", true);
-    UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the rejoiner is on team %u",
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 1, "the rejoiner is on team %u",
                   (unsigned)tsTeam(sim, 1));
-    UT_ASSERT(!tsAllied(sim, 0, 1) && !tsAllied(sim, 1, 2));
+    UT_ASSERT(tsAllied(sim, 0, 1) && tsAllied(sim, 1, 0));
+    UT_ASSERT(!tsAllied(sim, 1, 2));
     UT_ASSERT(serverSimSidesAgree(sim));
     serverSimDestroy(sim);
     return 0;
