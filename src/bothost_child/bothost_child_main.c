@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-/* prlimit and the CPU_* set calls of the --test-seccomp mode. */
-#if defined(__linux__) && !defined(_GNU_SOURCE)
-#define _GNU_SOURCE
-#endif
-
 /*
  * The built-in Bot Host as a child process: the child's side, in
  * WinBoloBotHost (bothost_child.h).
@@ -917,8 +912,11 @@ static int testSeccomp(void) {
     int i, started = 0, r;
     lua_State *L;
     pid_t parent = getppid(), f;
-    struct rlimit rl;
-    cpu_set_t cpus;
+    /* Raw calls: the C library declares prlimit and the CPU_* sets only
+     * with _GNU_SOURCE, which the forced include comes before. */
+    unsigned long long rl[2];
+    unsigned long cpus[16];
+    long cpuBytes;
 
     for (i = 0; i < 4; i++) {
         t[i] = SDL_CreateThread(seccompThread, "seccomp-test", &out[i]);
@@ -959,10 +957,10 @@ static int testSeccomp(void) {
     childOut(r != 0 && errno == EPERM ? "kill parent denied"
                                       : "kill parent allowed");
     errno = 0;
-    r = prlimit(parent, RLIMIT_NOFILE, NULL, &rl);
+    r = (int)syscall(SYS_prlimit64, parent, RLIMIT_NOFILE, NULL, rl);
     childOut(r != 0 && errno == EPERM ? "prlimit parent denied"
                                       : "prlimit parent allowed");
-    r = prlimit(0, RLIMIT_NOFILE, NULL, &rl);
+    r = (int)syscall(SYS_prlimit64, 0, RLIMIT_NOFILE, NULL, rl);
     childOut(r == 0 ? "prlimit self ok" : "prlimit self failed");
     errno = 0;
     /* The parent's own value, so no run changes the game's priority. */
@@ -978,13 +976,16 @@ static int testSeccomp(void) {
                                       : "setpriority group allowed");
     r = setpriority(PRIO_PROCESS, 0, 10);
     childOut(r == 0 ? "setpriority self ok" : "setpriority self failed");
-    CPU_ZERO(&cpus);
-    if (sched_getaffinity(0, sizeof(cpus), &cpus) == 0) {
+    memset(cpus, 0, sizeof(cpus));
+    /* The raw call gives the bytes it wrote. */
+    cpuBytes = syscall(SYS_sched_getaffinity, 0, sizeof(cpus), cpus);
+    if (cpuBytes > 0) {
         errno = 0;
-        r = sched_setaffinity(parent, sizeof(cpus), &cpus);
+        r = (int)syscall(SYS_sched_setaffinity, parent, (size_t)cpuBytes,
+                         cpus);
         childOut(r != 0 && errno == EPERM ? "affinity parent denied"
                                           : "affinity parent allowed");
-        r = sched_setaffinity(0, sizeof(cpus), &cpus);
+        r = (int)syscall(SYS_sched_setaffinity, 0, (size_t)cpuBytes, cpus);
         childOut(r == 0 ? "affinity self ok" : "affinity self failed");
     }
     childOut("seccomp done");
