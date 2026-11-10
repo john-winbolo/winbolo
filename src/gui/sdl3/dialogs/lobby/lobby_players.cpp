@@ -898,9 +898,13 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
                             sizeof(line));
             }
         }
+        /* The server's row also lists the lobby bot seats with no bot
+         * running yet (a scenario's seats held for a later wave), by name
+         * like its bots. They are not in its count. */
+        const unsigned listed = r->seats | (isServer ? r->held : 0u);
         bool first = true;
         for (int s = 0; s < MAX_TANKS && !sameComputer; s++) {
-            if ((r->seats & (1u << s)) == 0) continue;
+            if ((listed & (1u << s)) == 0) continue;
             const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)s);
             const char *nm = (ls != NULL && ls->connected && ls->playerName[0])
                                  ? ls->playerName : "?";

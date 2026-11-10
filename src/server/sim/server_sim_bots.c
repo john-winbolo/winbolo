@@ -436,6 +436,18 @@ bool serverSimIsBot(ServerSim *sim, BYTE playerNum) {
     return sim->playerConnected[playerNum] && sim->lobbyPlayers[playerNum].isBot;
 }
 
+uint16_t serverSimHeldBotSeats(ServerSim *sim) {
+    uint16_t held = 0;
+    int s;
+    if (sim == NULL) return 0;
+    for (s = 0; s < MAX_TANKS; s++) {
+        if (!sim->playerConnected[s] || !sim->lobbyPlayers[s].isBot) continue;
+        if (botManagerIsBot(sim, (BYTE)s)) continue;
+        held |= (uint16_t)(1u << s);
+    }
+    return held;
+}
+
 double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum) {
     return botManagerGetLastThinkMs(sim, playerNum);
 }

@@ -1576,6 +1576,27 @@ static void botHostFillServerRow(ControlEvent *evt) {
 /* The rows last sent to the lobby, so a row goes out only when it changes. */
 static ControlEvent botHostRowSent[MAX_BOT_HOSTS + 1];
 
+/* The server row's held seats (CTRL_BOT_HOST_HELD): the lobby bot seats
+ * with no bot running anywhere, less any seat a Bot Host has. Only for the
+ * lobby's list: the row's used count and the placement leave them out. */
+static void botHostFillServerHeld(ControlEvent *evt) {
+    uint16_t held = serverSimHeldBotSeats(botHostSim);
+    int s;
+    for (s = 0; s < MAX_TANKS; s++) {
+        if (udpServer.botSeats[s].state != BOT_SEAT_LOCAL) {
+            held &= (uint16_t)~(1u << s);
+        }
+    }
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_HELD;
+    evt->u.botHostHeld.idx = (uint8_t)MAX_BOT_HOSTS;
+    evt->u.botHostHeld.held = held;
+}
+
+/* The held seats last sent, and whether any were since the row came. */
+static uint16_t botHostHeldSent;
+static bool     botHostHeldSentHave;
+
 /* The server's own CPU estimate for the bots it runs itself, measured the
  * way a Bot Host measures its own (bot_host_cpu.h). */
 static BotHostCpuMeter botHostServerCpu;
@@ -1784,6 +1805,23 @@ static void botHostBroadcastRows(void) {
             botHostRowSent[h] = evt;
             serverBroadcastLobbyControl(&evt);
         }
+        if (h == MAX_BOT_HOSTS) {
+            /* The held seats after the server's row, when they change. A
+             * client forgets them when the row goes, so they go again when
+             * it comes back. */
+            if (!evt.u.botHostStatus.connected) {
+                botHostHeldSentHave = false;
+            } else {
+                ControlEvent he;
+                botHostFillServerHeld(&he);
+                if (!botHostHeldSentHave ||
+                    he.u.botHostHeld.held != botHostHeldSent) {
+                    botHostHeldSentHave = true;
+                    botHostHeldSent = he.u.botHostHeld.held;
+                    serverBroadcastLobbyControl(&he);
+                }
+            }
+        }
         {
             /* The CPU estimate after its row, when it changes. A client
              * forgets it when the row goes, so a gone row's unknown is
@@ -1950,6 +1988,11 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
                     botHostFillCpuBot(MAX_BOT_HOSTS, milli, owner, source, &ce);
                     deliver(deliverCtx, &ce);
                 }
+            }
+            {
+                ControlEvent he;
+                botHostFillServerHeld(&he);
+                if (he.u.botHostHeld.held != 0) deliver(deliverCtx, &he);
             }
         }
     }
@@ -3827,6 +3870,7 @@ static const char *botHostSpreadReason(BotHostSpreadWhy why, int from,
                                        const char *const *badWhy) {
     switch (why) {
     case BOT_HOST_SPREAD_OVER_SLOTS: return "over its slots";
+    case BOT_HOST_SPREAD_LAG: return "lower lag";
     case BOT_HOST_SPREAD_BAD:
         return from >= 0 && from <= MAX_BOT_HOSTS && badWhy[from] != NULL
                    ? badWhy[from] : "overrun rate";
@@ -4723,13 +4767,17 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     }
     /* A host that may run none of the bots (bot_host_guard.h: its install
      * lacks their brains, or it is a player's host and they see the whole
-     * map or carry tokens off the list) takes none. */
+     * map or carry tokens off the list) takes none. The bots already on a
+     * Bot Host count too (their slot holds the bot connection, not a
+     * player): a host that joins while every bot runs on other hosts may
+     * take them by the lag rule. */
     {
         BotSeatFitInfo fitInfo[MAX_TANKS];
         bool fitHave[MAX_TANKS];
         for (s = 0; s < MAX_TANKS; s++) {
             fitHave[s] = serverSimIsBot(sim, (BYTE)s) &&
-                         !udpServer.clients[s].connected;
+                         (!udpServer.clients[s].connected ||
+                          udpServer.clients[s].botSlot);
             if (fitHave[s]) botSeatFitInfo(sim, s, &fitInfo[s]);
         }
         anyHost = false;

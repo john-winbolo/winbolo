@@ -447,6 +447,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             uint8_t cpuBotSrc = r->cpuBotSrc;
             uint16_t lagMs = r->connected ? r->lagMs
                                           : (uint16_t)BOT_HOST_LAG_UNKNOWN;
+            /* The held seats come in their own event too. */
+            uint16_t held = r->connected ? r->held : 0;
             /* The row's computer and override, as the CPU estimate. */
             ClientBotHostRow keep = *r;
             bool keepSlots = r->connected && r->rowSlotsHave;
@@ -459,6 +461,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             if (r->connected) {
                 r->cpu     = cpu;
                 r->lagMs   = lagMs;
+                r->held    = held;
                 if (keepSlots) {
                     r->rowSlotsHave = true;
                     r->machineKind  = keep.machineKind;
@@ -522,6 +525,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         if (evt->u.botHostLag.idx < CLIENT_BOT_HOST_ROWS) {
             ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostLag.idx];
             if (r->connected) r->lagMs = evt->u.botHostLag.lagMs;
+        }
+        break;
+
+    case CTRL_BOT_HOST_HELD:
+        if (evt->u.botHostHeld.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostHeld.idx];
+            if (r->connected) r->held = evt->u.botHostHeld.held;
         }
         break;
 

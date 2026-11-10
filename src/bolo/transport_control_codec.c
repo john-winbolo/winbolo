@@ -4177,6 +4177,34 @@ static bool decodeBotTimingBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_BOT_HOST_HELD body: [idx 1][held 2]. Bytes after the three are
+ * skipped, so the message can grow. */
+#define BOT_HOST_HELD_LEN 3
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostHeldBody(const ControlEvent *evt,
+                                          const struct UdpServerClient *recipient,
+                                          uint8_t *buf, size_t bufCap,
+                                          size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_HELD_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostHeld.idx;
+    packU16(buf + 1, evt->u.botHostHeld.held);
+    *outLen = BOT_HOST_HELD_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostHeldBody(const uint8_t *buf, size_t len,
+                                  ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_HELD_LEN) return false;
+    if (buf[0] >= BOT_HOST_STATUS_ROWS) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_HELD;
+    outEvt->u.botHostHeld.idx = buf[0];
+    outEvt->u.botHostHeld.held = unpackU16(buf + 1);
+    return true;
+}
+
 /* CTRL_BOT_HOST_PACK_REQ body: [gen 4][brain 1][fileCount 2]
  * [fromInstall 2][fromCache 2][bits (fileCount + 7) / 8]. A fileCount of 0
  * or above 8 * BOT_HOST_PACK_BITMAP_BYTES, or a body too short for its
@@ -4991,6 +5019,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_CPU_BUDGET]     = encodeBotHostCpuBudgetBody,
     [CTRL_BOT_HOST_SAME_SERVER]    = encodeBotHostSameServerBody,
     [CTRL_BOT_TIMING]              = encodeBotTimingBody,
+    [CTRL_BOT_HOST_HELD]           = encodeBotHostHeldBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -5073,6 +5102,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_CPU_BUDGET]     = decodeBotHostCpuBudgetBody,
     [CTRL_BOT_HOST_SAME_SERVER]    = decodeBotHostSameServerBody,
     [CTRL_BOT_TIMING]              = decodeBotTimingBody,
+    [CTRL_BOT_HOST_HELD]           = decodeBotHostHeldBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -5219,6 +5249,7 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_CPU_BUDGET:    return "CTRL_BOT_HOST_CPU_BUDGET";
     case CTRL_BOT_HOST_SAME_SERVER:   return "CTRL_BOT_HOST_SAME_SERVER";
     case CTRL_BOT_TIMING:             return "CTRL_BOT_TIMING";
+    case CTRL_BOT_HOST_HELD:          return "CTRL_BOT_HOST_HELD";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

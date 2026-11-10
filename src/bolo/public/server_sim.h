@@ -645,6 +645,11 @@ void serverSimBotTick(ServerSim *sim, aiType ai);
 BYTE   serverSimGetNumBots(ServerSim *sim);
 bool   serverSimHasAnyBot(ServerSim *sim);
 bool   serverSimIsBot(ServerSim *sim, BYTE playerNum);
+/* The bot seats with no bot manager entry, bit n for player n: a seat held
+ * for a bot that is not on the field yet. The lobby lists them by name
+ * under the server's Bot Host row (CTRL_BOT_HOST_HELD); nothing counts or
+ * places them. */
+uint16_t serverSimHeldBotSeats(ServerSim *sim);
 /* Mark a slot whose in-process consumer reads the map square a sound was
  * raised at — the gym agent, the headless brain harness. A human client is
  * sent a near/far tier and a bearing in place of the square; a bot-manager
