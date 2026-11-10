@@ -513,7 +513,10 @@ static bool syncOffersNone(const HostSync *hs) {
     int b;
     if (!HOST_EMBED) return false;
     if (hs->refused || hs->pending) return true;
-    if (hs->haveManifest && hs->installOnly) {
+    /* The server's own child takes each brain the server finds in place
+     * (seat by seat): its -brain is only the default brain, and -bot-init
+     * may give the bots others. */
+    if (hs->haveManifest && hs->installOnly && !embedDsChild) {
         b = syncBrainIndex(hs, embedBrain);
         if (b < 0 || !hs->inPlace[b]) return true;
     }

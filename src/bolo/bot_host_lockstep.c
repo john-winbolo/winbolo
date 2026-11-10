@@ -90,3 +90,9 @@ BotHostLockstepStep botHostLockstepStep(int missing, int wanted,
     }
     return BOT_HOST_LOCKSTEP_WAIT;
 }
+
+bool botHostPendingExpired(uint32_t nowTick, uint32_t sinceTick,
+                           uint64_t nowMs, uint64_t sinceMs) {
+    return (uint32_t)(nowTick - sinceTick) > BOT_HOST_PENDING_TICKS &&
+           nowMs - sinceMs > BOT_HOST_PENDING_MS;
+}

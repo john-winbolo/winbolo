@@ -65,4 +65,14 @@ int botHostLockstepMissing(const BotHostLockstep *ls,
 BotHostLockstepStep botHostLockstepStep(int missing, int wanted,
                                         double waitedMs, int timeoutMs);
 
+/* An assign to a Bot Host that the host has not connected (a pending
+ * seat) times out after BOT_HOST_PENDING_TICKS ticks AND
+ * BOT_HOST_PENDING_MS of wall time. With -asap the ticks run faster than
+ * 20 ms, and a host that loads its brains one by one needs the wall time.
+ * Both counts wrap safely (unsigned differences). */
+#define BOT_HOST_PENDING_TICKS 500u
+#define BOT_HOST_PENDING_MS    10000u
+bool botHostPendingExpired(uint32_t nowTick, uint32_t sinceTick,
+                           uint64_t nowMs, uint64_t sinceMs);
+
 #endif

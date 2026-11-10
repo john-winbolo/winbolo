@@ -429,6 +429,7 @@ typedef struct {
     uint8_t  token[JOIN_BOT_SLOT_TOKEN_LEN];
     uint16_t gen;                /* rises with every assign for the seat */
     uint32_t sinceTick;          /* tickCount the state was entered */
+    uint64_t sinceMs;            /* SDL_GetTicks() when PENDING began */
     uint32_t lastPollTick;       /* tickCount of the last settings check */
     /* The settings the host was last sent, compared by the settings check. */
     char     brain[BOT_HOST_BRAIN_NAME_LEN];

@@ -118,7 +118,7 @@
  * pings every 500 ms. */
 #define BOT_HOST_TIMEOUT_TICKS   250
 /* Ticks a seat waits for its bot connection after the assign. */
-#define BOT_SEAT_PENDING_TICKS   500
+/* The pending timeout: botHostPendingExpired (bot_host_lockstep.h). */
 /* Ticks between checks of a remote seat's brain, AI level, team and init
  * argument against what its host was last sent. */
 #define BOT_SEAT_POLL_TICKS      50
@@ -2282,6 +2282,20 @@ static int botHostServerSlots(ServerSim *sim);
 static void botHostHoldSeat(ServerSim *sim, int s, int from,
                             const char *why);
 
+/* True while the server's own child Bot Host is linked. Then no bot is held
+ * for no room: a bot the child does not run thinks in the server's process
+ * (the DS rule), never with its tank standing still. */
+static bool botHostDsChildLinked(void) {
+    int h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (udpServer.botHosts[h].connected &&
+            udpServer.botHosts[h].localChild) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* A seat leaves its host and its brain comes back in-process. */
 static void botSeatFallBack(ServerSim *sim, int s, const char *why,
                             bool tellHost) {
@@ -2308,7 +2322,8 @@ static void botSeatFallBack(ServerSim *sim, int s, const char *why,
     botHostOvrMovesNote(&botHostOvrMv, s, BOT_HOST_MOVE_FORCED,
                         udpServer.tickCount);
     if (wasRemote &&
-        botHostServerFallBackHolds(botHostEnforceServerLimit,
+        botHostServerFallBackHolds(botHostEnforceServerLimit &&
+                                       !botHostDsChildLinked(),
                                    serverBotHostServerBots(sim),
                                    botHostServerSlots(sim))) {
         /* -bothost-enforce-server-limit: the server has no slot for it. It
@@ -2933,6 +2948,20 @@ void serverBindBotSlot(ServerSim *sim, const struct sockaddr_in *fromAddr,
 
     seat->state = BOT_SEAT_BOUND;
     seat->sinceTick = udpServer.tickCount;
+    {
+        /* The host connects its bots one by one (each brain loads first).
+         * A bind is progress: the host's other pending seats wait again
+         * from now, so a long queue does not time out behind it. */
+        int o;
+        for (o = 0; o < MAX_TANKS; o++) {
+            BotHostSeat *other = &udpServer.botSeats[o];
+            if (o != s && other->state == BOT_SEAT_PENDING &&
+                other->host == seat->host) {
+                other->sinceTick = udpServer.tickCount;
+                other->sinceMs = SDL_GetTicks();
+            }
+        }
+    }
     seat->mineSeedDone = false;
     seat->mineSeedColumn = 0;
     fprintf(stderr, "[bothost] bot %d \"%s\" bound to Bot Host \"%s\" from %s\n",
@@ -3740,6 +3769,7 @@ static bool botSeatOffer(ServerSim *sim, int s, int h, const char *why) {
     seat->state = BOT_SEAT_PENDING;
     seat->host = (int8_t)h;
     seat->sinceTick = udpServer.tickCount;
+    seat->sinceMs = SDL_GetTicks();
     seat->reloadOwed = false;
     botSeatSendAssign(sim, s, false);
     fprintf(stderr, "[bothost] bot %d \"%s\" offered to Bot Host \"%s\" "
@@ -4791,7 +4821,11 @@ static bool botHostHeldStep(ServerSim *sim, const BotHostPlaceHost *raw,
 
     tgt = botHostPlaceHeldTarget(hosts, n, botHostSmallSlots,
                                  botHostSmallBias, &botHostLag);
-    if (raw[0].bots > raw[0].slots) {
+    if (botHostDsChildLinked()) {
+        /* The server's own child: nothing is held, and a bot held before
+         * the child linked runs again in the server's process. */
+        tgt = 0;
+    } else if (raw[0].bots > raw[0].slots) {
         /* Over its slots (they went down, or a bot was added). While a good
          * Bot Host can take a bot, or an offer waits for its answer, the
          * spread moves one there. Else the last bot that may move is held,
@@ -4938,8 +4972,11 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     hosts[0].bots = serverBotHostServerBots(sim);
     hosts[0].open = true;
     hosts[0].unlimited = true;
-    /* -bothost-enforce-server-limit: no bot past its slots after all. */
-    hosts[0].capped = botHostEnforceServerLimit;
+    /* -bothost-enforce-server-limit: no bot past its slots after all. Not
+     * with the server's own child: the child has the server's slots, and a
+     * bot the child cannot take now runs in the server's process (the DS
+     * rule), never held with its tank standing still. */
+    hosts[0].capped = botHostEnforceServerLimit && !botHostDsChildLinked();
     hosts[0].lagMs = 0.0;  /* the server's own process */
     for (s = 0; s < MAX_TANKS; s++) {
         BotHostSeat *seat = &udpServer.botSeats[s];
@@ -5262,7 +5299,12 @@ void serverServiceBotHosts(ServerSim *sim) {
             continue;
         }
         if (seat->state == BOT_SEAT_PENDING) {
-            if (udpServer.tickCount - seat->sinceTick > BOT_SEAT_PENDING_TICKS) {
+            /* The server's own child has no pending timeout: it loads its
+             * brains one by one at low priority, and the link timeout
+             * ("gone") covers a child that hangs. */
+            if (!udpServer.botHosts[seat->host].localChild &&
+                botHostPendingExpired(udpServer.tickCount, seat->sinceTick,
+                                      SDL_GetTicks(), seat->sinceMs)) {
                 fprintf(stderr, "[bothost] bot %d: Bot Host \"%s\" did not "
                                 "connect it; it stays in-process\n",
                         s, udpServer.botHosts[seat->host].name);

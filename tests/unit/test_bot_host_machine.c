@@ -501,5 +501,22 @@ int run_bot_host_lockstep(void) {
     UT_ASSERT(botHostLockstepMissing(NULL, cnt, 4) == 0);
     botHostLockstepArm(NULL, on, cnt, 4);
     botHostLockstepReset(NULL);
+
+    /* The pending timeout needs both the ticks and the wall time. */
+    UT_ASSERT(!botHostPendingExpired(100, 100, 5000, 5000));
+    /* -asap: 501 ticks in 2 s is not a timeout. */
+    UT_ASSERT(!botHostPendingExpired(601, 100, 7000, 5000));
+    /* A slow server: 10.001 s with 400 ticks is not a timeout. */
+    UT_ASSERT(!botHostPendingExpired(500, 100, 15001, 5000));
+    /* Exactly at the limits: not yet. */
+    UT_ASSERT(!botHostPendingExpired(600, 100, 15000, 5000));
+    UT_ASSERT(!botHostPendingExpired(601, 100, 15000, 5000));
+    UT_ASSERT(!botHostPendingExpired(600, 100, 15001, 5000));
+    /* Both past: a timeout. */
+    UT_ASSERT(botHostPendingExpired(601, 100, 15001, 5000));
+    UT_ASSERT(botHostPendingExpired(100000, 100, 900000, 5000));
+    /* The tick count wraps. */
+    UT_ASSERT(botHostPendingExpired(400, 0xFFFFFF00u, 15001, 5000));
+    UT_ASSERT(!botHostPendingExpired(10, 0xFFFFFF00u, 15001, 5000));
     return 0;
 }
