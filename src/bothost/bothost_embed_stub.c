@@ -52,6 +52,10 @@ bool botHostEmbedOfficialOnly(void) {
     return true;
 }
 
+bool botHostEmbedShippedTable(void) {
+    return false;
+}
+
 int botHostEmbedDefaultSlots(void) {
     return 0;
 }

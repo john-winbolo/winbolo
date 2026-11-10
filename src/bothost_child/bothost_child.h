@@ -150,6 +150,7 @@ typedef struct {
     bool        record;           /* -bothost-record */
     double      recordMinFreeGb;  /* 0: the default */
     bool        officialOnly;     /* the game's WINBOLO_BOTHOST_OFFICIAL_ONLY */
+    bool        shippedTable;     /* the game has the shipped-brain table */
     const char *cpuSpeedFile;     /* the stored CPU speed result; NULL: none */
     /* The dedicated server's own child (ds_bot_child.h); all off for a
      * player's child. */
@@ -192,11 +193,21 @@ typedef struct {
 void botHostChildFormatStatus(const BotHostChildStatus *st, char *out,
                               size_t outSize);
 bool botHostChildParseStatus(const char *line, BotHostChildStatus *out);
-/* "hello <protocol> official=0|1 fullmap=0|1". */
+/* "hello <protocol> official=0|1 fullmap=0|1 table=0|1". table: the
+ * child has the shipped-brain table compiled in. A hello with no table=
+ * reads as table 0. shippedTable may be NULL. */
 void botHostChildFormatHello(int protocol, bool officialOnly, bool fullMap,
-                             char *out, size_t outSize);
+                             bool shippedTable, char *out, size_t outSize);
 bool botHostChildParseHello(const char *line, int *protocol,
-                            bool *officialOnly, bool *fullMap);
+                            bool *officialOnly, bool *fullMap,
+                            bool *shippedTable);
+/* True when the child's hello matches the game: the same protocol, the
+ * same official-only rule, this program's fullmap; and, when the game is
+ * official-only and has the shipped-brain table itself, the child has it
+ * too (else the child could run install files the table would refuse). */
+bool botHostChildHelloMatches(int protocol, bool officialOnly, bool fullMap,
+                              bool shippedTable, bool wantOfficial,
+                              bool wantTable);
 /* This program's WINBOLO_BOTHOST_ALLOW_FULL_MAP. */
 bool botHostChildBuildFullMap(void);
 

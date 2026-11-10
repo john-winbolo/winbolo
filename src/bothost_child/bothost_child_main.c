@@ -61,8 +61,11 @@
  *                       lines until "end": "answer <hash>" or "answer
  *                       none" for each
  *   --test-seccomp      Linux: start threads and a LuaJIT state, then try
- *                       fork, a clone with no CLONE_THREAD, and the pid
- *                       calls on the game (its parent) and on itself. One
+ *                       fork, a clone with no CLONE_THREAD, the pid
+ *                       calls on the game (its parent) and on itself,
+ *                       setpgid into the game's group, pidfd_send_signal,
+ *                       and the fcntl and ioctl calls that set an fd's
+ *                       owner (and two that do not). One
  *                       line for each ("threads ok 4", "lua ok", "fork
  *                       denied" or "fork allowed", ...), then "seccomp
  *                       done" (exit 0). Elsewhere "seccomp none" (exit 0)
@@ -82,6 +85,7 @@
 #include <signal.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #endif
@@ -939,6 +943,73 @@ static int SDLCALL seccompThread(void *arg) {
     return 0;
 }
 
+#ifdef __linux__
+/* "<what> denied" when the call failed with EPERM, else "<what> allowed". */
+static void seccompDenied(const char *what, long r) {
+    childOut("%s %s", what, r != 0 && errno == EPERM ? "denied" : "allowed");
+}
+
+/* --test-seccomp, part 2: the calls that could reach the game through its
+ * process group or an fd's owner. Raw calls with the kernel's numbers, as
+ * above (F_SETSIG and F_SETOWN_EX need _GNU_SOURCE). Each one names the
+ * child itself, so with no filter (the control) nothing reaches the game. */
+static void testSeccompOwners(pid_t parent) {
+    struct {
+        int type; /* F_OWNER_PID */
+        int pid;
+    } owner;
+    int sv[2], me = (int)getpid(), avail = 0;
+    long r, pg;
+
+    /* setpgid into the game's group; with no filter the child goes back
+     * to a group of its own at once. */
+    pg = syscall(SYS_getpgid, parent);
+    errno = 0;
+    r = pg > 0 ? syscall(SYS_setpgid, 0, (pid_t)pg) : -1;
+    seccompDenied("setpgid parent", r);
+    if (r == 0) (void)syscall(SYS_setpgid, 0, 0);
+
+    /* An fd that is not open: EPERM under the filter, EBADF with none. */
+#ifdef SYS_pidfd_send_signal
+    errno = 0;
+    r = syscall(SYS_pidfd_send_signal, -1, 0, NULL, 0u);
+#else
+    errno = 0;
+    r = syscall(424, -1, 0, NULL, 0u);
+#endif
+    seccompDenied("pidfd_send_signal", r);
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        childOut("socketpair failed (errno %d)", errno);
+        return;
+    }
+    errno = 0;
+    seccompDenied("fcntl setown", syscall(SYS_fcntl, sv[0], 8 /* F_SETOWN */,
+                                          me));
+    errno = 0;
+    seccompDenied("fcntl setsig", syscall(SYS_fcntl, sv[0], 10 /* F_SETSIG */,
+                                          0));
+    owner.type = 1;
+    owner.pid = me;
+    errno = 0;
+    seccompDenied("fcntl setown_ex",
+                  syscall(SYS_fcntl, sv[0], 15 /* F_SETOWN_EX */, &owner));
+    errno = 0;
+    seccompDenied("ioctl fiosetown",
+                  syscall(SYS_ioctl, sv[0], 0x8901 /* FIOSETOWN */, &me));
+    errno = 0;
+    seccompDenied("ioctl siocspgrp",
+                  syscall(SYS_ioctl, sv[0], 0x8902 /* SIOCSPGRP */, &me));
+    /* The other commands still work. */
+    r = syscall(SYS_fcntl, sv[0], 3 /* F_GETFL */);
+    childOut(r >= 0 ? "fcntl getfl ok" : "fcntl getfl failed");
+    r = syscall(SYS_ioctl, sv[0], 0x541B /* FIONREAD */, &avail);
+    childOut(r == 0 ? "ioctl fionread ok" : "ioctl fionread failed");
+    (void)close(sv[0]);
+    (void)close(sv[1]);
+}
+#endif
+
 /* --test-seccomp: what the child may and may not do under its filter.
  * The unit test reads the lines; with no filter (its control) the denied
  * lines read "allowed". */
@@ -1025,6 +1096,7 @@ static int testSeccomp(void) {
         r = (int)syscall(SYS_sched_setaffinity, 0, (size_t)cpuBytes, cpus);
         childOut(r == 0 ? "affinity self ok" : "affinity self failed");
     }
+    testSeccompOwners(parent);
     childOut("seccomp done");
 #else
     childOut("seccomp none");
@@ -1271,7 +1343,8 @@ int botHostChildMain(int argc, char **argv) {
     }
     botHostChildFormatHello(BOT_HOST_CHILD_PROTOCOL,
                             botHostEmbedOfficialOnly(),
-                            botHostChildBuildFullMap(), line, sizeof(line));
+                            botHostChildBuildFullMap(),
+                            botHostEmbedShippedTable(), line, sizeof(line));
     childOut("%s", line);
     fprintf(stderr, "[bothost] Bot Host child for player %d at %s:%d "
                     "(official-only %d, record %d, sandbox %d)\n",

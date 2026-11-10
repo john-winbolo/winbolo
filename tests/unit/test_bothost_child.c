@@ -189,7 +189,7 @@ int run_bothost_child_codec(void) {
     BotHostChildStatus a, b;
     char line[160];
     int proto = 0;
-    bool official = false, fullMap = true;
+    bool official = false, fullMap = true, table = true;
 
     memset(&a, 0, sizeof(a));
     a.running = true;
@@ -219,13 +219,36 @@ int run_bothost_child_codec(void) {
     UT_ASSERT(!botHostChildParseStatus(NULL, &b));
 
     UT_ASSERT(botHostChildParseHello("hello 1 official=1", &proto, &official,
-                                     &fullMap));
-    UT_ASSERT(proto == 1 && official && !fullMap);
+                                     &fullMap, &table));
+    UT_ASSERT(proto == 1 && official && !fullMap && !table);
     UT_ASSERT(botHostChildParseHello("hello 2 official=0 fullmap=1", &proto,
-                                     &official, &fullMap));
-    UT_ASSERT(proto == 2 && !official && fullMap);
+                                     &official, &fullMap, &table));
+    UT_ASSERT(proto == 2 && !official && fullMap && !table);
+    UT_ASSERT(botHostChildParseHello("hello 2 official=1 fullmap=0 table=1",
+                                     &proto, &official, &fullMap, &table));
+    UT_ASSERT(proto == 2 && official && !fullMap && table);
     UT_ASSERT(!botHostChildParseHello("status 1 1 0 4 0 0 0", &proto,
-                                      &official, &fullMap));
+                                      &official, &fullMap, &table));
+
+    /* The match rule. fm is this program's fullmap. */
+    {
+        const bool fm = botHostChildBuildFullMap();
+        const int pr = BOT_HOST_CHILD_PROTOCOL;
+        UT_ASSERT(botHostChildHelloMatches(pr, false, fm, false, false, false));
+        UT_ASSERT(botHostChildHelloMatches(pr, true, fm, true, true, true));
+        /* An official-only game with the table: a child with no table is
+         * refused, like a protocol mismatch. */
+        UT_ASSERT(!botHostChildHelloMatches(pr, true, fm, false, true, true));
+        /* An official-only game with no table of its own (a run-time
+         * --official-only on a build with no table) asks for none. */
+        UT_ASSERT(botHostChildHelloMatches(pr, true, fm, false, true, false));
+        /* A game that is not official-only does not need the table. */
+        UT_ASSERT(botHostChildHelloMatches(pr, false, fm, false, false, true));
+        UT_ASSERT(!botHostChildHelloMatches(pr, false, fm, true, true, true));
+        UT_ASSERT(!botHostChildHelloMatches(pr + 1, true, fm, true, true,
+                                            true));
+        UT_ASSERT(!botHostChildHelloMatches(pr, true, !fm, true, true, true));
+    }
     return 0;
 }
 
@@ -385,7 +408,7 @@ int run_bothost_child_relay_codec(void) {
     size_t n, dlen = 0;
     char line[BOT_HOST_CHILD_LINE_MAX];
     int proto = 0;
-    bool official = true, fullMap = false;
+    bool official = true, fullMap = false, table = false;
 
     /* SEND with data. */
     n = botHostRelayEncode(BOT_HOST_RELAY_SEND, 5, 0x0100007Fu, 0x3412u,
@@ -439,15 +462,18 @@ int run_bothost_child_relay_codec(void) {
     }
     UT_ASSERT(!botHostRelayParseBody(frame, 5, &ip, &port, &data, &dlen));
 
-    /* The hello carries fullmap. */
-    botHostChildFormatHello(BOT_HOST_CHILD_PROTOCOL, false, true, line,
+    /* The hello carries fullmap and the table flag. */
+    botHostChildFormatHello(BOT_HOST_CHILD_PROTOCOL, false, true, false, line,
                             sizeof(line));
-    UT_ASSERT(botHostChildParseHello(line, &proto, &official, &fullMap));
-    UT_ASSERT(proto == BOT_HOST_CHILD_PROTOCOL && !official && fullMap);
-    botHostChildFormatHello(BOT_HOST_CHILD_PROTOCOL, true, false, line,
+    UT_ASSERT(botHostChildParseHello(line, &proto, &official, &fullMap,
+                                     &table));
+    UT_ASSERT(proto == BOT_HOST_CHILD_PROTOCOL && !official && fullMap &&
+              !table);
+    botHostChildFormatHello(BOT_HOST_CHILD_PROTOCOL, true, false, true, line,
                             sizeof(line));
-    UT_ASSERT(botHostChildParseHello(line, &proto, &official, &fullMap));
-    UT_ASSERT(official && !fullMap);
+    UT_ASSERT(botHostChildParseHello(line, &proto, &official, &fullMap,
+                                     &table));
+    UT_ASSERT(official && !fullMap && table);
     return 0;
 }
 
@@ -1278,15 +1304,24 @@ int run_bothost_child_seccomp(void) {
         "fork denied", "clone denied", "kill parent denied",
         "prlimit parent denied", "setpriority parent denied",
         "setpriority group denied", "affinity parent denied",
+        "setpgid parent denied", "pidfd_send_signal denied",
+        "fcntl setown denied", "fcntl setsig denied",
+        "fcntl setown_ex denied", "ioctl fiosetown denied",
+        "ioctl siocspgrp denied",
     };
+    /* With no filter these must work; prlimit, setpriority, affinity and
+     * pidfd_send_signal may still fail for other reasons, so they are not
+     * checked there. */
     static const char *const allowed[] = {
         "fork allowed", "clone allowed", "kill parent allowed",
-        "prlimit parent allowed", "setpriority parent allowed",
-        "setpriority group allowed", "affinity parent allowed",
+        "setpgid parent allowed", "fcntl setown allowed",
+        "fcntl setsig allowed", "fcntl setown_ex allowed",
+        "ioctl fiosetown allowed", "ioctl siocspgrp allowed",
     };
     static const char *const works[] = {
         "threads ok 4", "lua ok", "prlimit self ok", "setpriority self ok",
-        "affinity self ok", "seccomp done",
+        "affinity self ok", "fcntl getfl ok", "ioctl fionread ok",
+        "seccomp done",
     };
     BotHostChildSandbox sb;
     int code = 99;
@@ -1327,13 +1362,12 @@ int run_bothost_child_seccomp(void) {
     printf("    control (no filter): exit %d\n%s", code, out);
     UT_ASSERT_MSG(code == 0, "control: exit %d [%s]", code, out);
     for (i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
-        /* kill(parent, 0) and the others work on a process of the same
-         * user; prlimit, setpriority and affinity may still fail for
-         * other reasons, so only fork, clone and kill must work. */
-        if (i < 3) {
-            UT_ASSERT_MSG(hasLine(out, allowed[i]), "control: no \"%s\" [%s]",
-                          allowed[i], out);
-        }
+        UT_ASSERT_MSG(hasLine(out, allowed[i]), "control: no \"%s\" [%s]",
+                      allowed[i], out);
+    }
+    for (i = 0; i < sizeof(works) / sizeof(works[0]); i++) {
+        UT_ASSERT_MSG(hasLine(out, works[i]), "control: no \"%s\" [%s]",
+                      works[i], out);
     }
     removeTestDir(root);
     return 0;

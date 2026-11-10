@@ -56,6 +56,7 @@ static bool               childEnded;
 static int                childExitCode;
 static BotHostChildEnd    childEnd;
 static bool               childOfficialWanted;
+static bool               childTableWanted;
 static bool               childWithhold;
 static char               childLine[512];
 static size_t             childLineLen;
@@ -539,6 +540,7 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
         childCpuSentMs = (uint32_t)SDL_GetTicks();
     }
     childOfficialWanted = p->officialOnly;
+    childTableWanted = p->shippedTable;
     childWithhold = withhold;
     /* Until its first line: it runs, with no slots yet. */
     childStatus.running = true;
@@ -563,7 +565,7 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
 static void childTakeLine(const char *line) {
     BotHostChildStatus st;
     int proto;
-    bool official, fullMap;
+    bool official, fullMap, table;
     if (strncmp(line, "salt ", 5) == 0) {
         /* The child answered a salt: this program keeps the salt file. */
         uint8_t salt[MACHINE_SALT_LEN];
@@ -577,14 +579,15 @@ static void childTakeLine(const char *line) {
         }
         return;
     }
-    if (botHostChildParseHello(line, &proto, &official, &fullMap)) {
+    if (botHostChildParseHello(line, &proto, &official, &fullMap, &table)) {
         childHello = true;
-        if (proto != BOT_HOST_CHILD_PROTOCOL ||
-            official != childOfficialWanted ||
-            fullMap != botHostChildBuildFullMap()) {
+        if (!botHostChildHelloMatches(proto, official, fullMap, table,
+                                      childOfficialWanted,
+                                      childTableWanted)) {
             CHILD_EVENT("[bothost] the Bot Host child does not match this "
                         "program (protocol %d, official-only %d, full map "
-                        "%d): it stops", proto, (int)official, (int)fullMap);
+                        "%d, brain table %d): it stops", proto,
+                        (int)official, (int)fullMap, (int)table);
             childEnd = BOT_HOST_CHILD_ENDED_MISMATCH;
             botHostChildKill(childProc);
         }
