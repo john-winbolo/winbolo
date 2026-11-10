@@ -117,6 +117,7 @@
 #include "scenario_panel.h"
 #include "threads.h"
 #include "players.h"
+#include "playersrejoin.h"
 #include "pillbox.h"
 #include "bases.h"
 #include "tank.h"
@@ -1279,6 +1280,107 @@ int run_team_sides_rejoin_next_round_is_new(void) {
     UT_ASSERT(!tsAllied(sim, 0, 1) && !tsAllied(sim, 1, 2));
     UT_ASSERT(serverSimSidesAgree(sim));
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* A policy whose can_ally always says no, and what it was last asked. */
+typedef struct {
+    int  asks;
+    BYTE player;
+    BYTE other;
+} TsAllyNo;
+
+static bool tsCanAllyNo(void *ctx, BYTE player, BYTE other) {
+    TsAllyNo *c = (TsAllyNo *)ctx;
+    c->asks++;
+    c->player = player;
+    c->other  = other;
+    return false;
+}
+
+/* Players 0 and 1 on team 1, player 2 on team 2. Player 1 drops and
+   rejoins, but the scenario's can_ally refuses: the restore asks it as a
+   player's own accept does, with the rejoiner first, and on the no the
+   rejoiner gets the lowest free team, team 3, with no ally. */
+int run_team_sides_rejoin_can_ally_refused(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    ScenarioPolicy pol;
+    TsAllyNo ctx;
+
+    UT_ASSERT(sim != NULL);
+    serverSimRemovePlayer(sim, 1);
+    memset(&pol, 0, sizeof(pol));
+    memset(&ctx, 0, sizeof(ctx));
+    pol.canAlly = tsCanAllyNo;
+    pol.ctx     = &ctx;
+    serverSimSetScenarioPolicy(sim, &pol);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    serverSimSetScenarioPolicy(sim, NULL);
+
+    UT_ASSERT_MSG(ctx.asks >= 1, "can_ally was not asked");
+    UT_ASSERT_MSG(ctx.player == 1 && ctx.other == 0,
+                  "can_ally was asked with %u and %u",
+                  (unsigned)ctx.player, (unsigned)ctx.other);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(!tsAllied(sim, 0, 1) && !tsAllied(sim, 1, 2));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The same in a ranked round: the rejoiner goes back to the side the
+   lobby gave them, team 1, allied with P0, as in any other round. */
+int run_team_sides_rejoin_ranked_keeps_team(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+
+    UT_ASSERT(sim != NULL);
+    serverSimSetRanked(sim, true);
+    serverSimRemovePlayer(sim, 1);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 1, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAllied(sim, 0, 1) && tsAllied(sim, 1, 0));
+    UT_ASSERT(!tsAllied(sim, 1, 2));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The rejoin table holds MAX_TANKS records. With every record in use, a
+   new leaver replaces the oldest record, not the one in the first entry.
+   R0 is added first and so is the oldest; it leaves again, which renews
+   its record in the first entry and makes R1 the oldest. The new leaver
+   must then replace R1 and keep R0. */
+int run_team_sides_rejoin_full_table_drops_oldest(void) {
+    char name[PLAYER_NAME_LEN];
+    int i;
+
+    playersRejoinCreate();
+    for (i = 0; i < MAX_TANKS; i++) {
+        snprintf(name, sizeof(name), "R%d", i);
+        playersRejoinAddPlayer(name, 0, 0, (BYTE)((i % 15) + 1));
+        playersRejoinUpdate();
+    }
+    playersRejoinAddPlayer("R0", 0, 0, 1);
+    playersRejoinUpdate();
+    playersRejoinAddPlayer("New", 0, 0, 7);
+
+    UT_ASSERT_MSG(playersRejoinGetTeam("New") == 7,
+                  "the new record has team %u",
+                  (unsigned)playersRejoinGetTeam("New"));
+    UT_ASSERT_MSG(playersRejoinGetTeam("R1") == 0,
+                  "the oldest record, R1, is still kept");
+    UT_ASSERT_MSG(playersRejoinGetTeam("R0") == 1,
+                  "the renewed record, R0, was replaced");
+    for (i = 2; i < MAX_TANKS; i++) {
+        snprintf(name, sizeof(name), "R%d", i);
+        UT_ASSERT_MSG(playersRejoinGetTeam(name) == (BYTE)((i % 15) + 1),
+                      "record %s was lost", name);
+    }
+    playersRejoinCreate();
     return 0;
 }
 

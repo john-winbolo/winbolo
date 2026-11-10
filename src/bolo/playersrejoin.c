@@ -126,7 +126,9 @@ void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap b
   count = 0;
   done = FALSE;
   best = 0;
-  timeBest = MAX_REJOIN_TIME;
+  /* With every record in use, the oldest one (the largest timeOut) is
+     the one replaced. */
+  timeBest = -1;
   /* A record already kept under this name is replaced, so a player who
      leaves twice has one record, the newest. */
   while (count < MAX_TANKS && done == FALSE) {

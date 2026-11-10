@@ -40,22 +40,27 @@ void fillAndPublishPlayerJoin(ServerSim *sim, BYTE slot);
  * has somebody (#424, D3). A rejoin is a join and takes the same path; only
  * the pills and bases that are neutral now come back. A rejoiner whose old
  * team still has a player is the one difference: the player is left on no
- * team here, and serverSimRestoreRejoinTeam puts them back on that team. The seat's lobby slot
- * goes out here, ahead of its CTRL_PLAYER_JOIN, so a script's on_player_join
- * sees the team before it places the seat. In the lobby the smallest-team
- * pick addPlayerInternal makes stays, and nothing is published. Call it from
- * a human join path between addPlayerInternal and fillAndPublishPlayerJoin.
- * Bots keep the team their own add path gives them. Defined in
- * server_sim_players.c. */
+ * team here, and serverSimRestoreRejoinTeam puts them back on that team.
+ * The seat's lobby slot goes out here, ahead of its CTRL_PLAYER_JOIN, so a
+ * script's on_player_join sees the team before it places the seat. For such
+ * a rejoiner that team is 0: on_player_join sees team 0, and the seat moves
+ * onto the old team only after the hook returns. In the lobby the
+ * smallest-team pick addPlayerInternal makes stays, and nothing is
+ * published. Call it from a human join path between addPlayerInternal and
+ * fillAndPublishPlayerJoin. Bots keep the team their own add path gives
+ * them. Defined in server_sim_players.c. */
 void serverSimPlaceJoiner(ServerSim *sim, BYTE slot);
 
 /* Puts a rejoining person back on the team they were on when leaving, when
  * that team still has a player (human or bot) and the rejoin record had not
  * timed out. It takes the alliance accept path (serverSimAcceptAlliance),
- * so the alliance table, every client and the round log see the move. Any
- * other join is left as serverSimPlaceJoiner put it. Call it from a human
- * join path right after fillAndPublishPlayerJoin, so clients know the seat
- * before its alliance arrives. Defined in server_sim_players.c. */
+ * so the alliance table, every client and the round log see the move. The
+ * accept obeys the script's can_ally, as a player's own accept does: when
+ * it refuses, the rejoiner gets a team of their own, as any other joiner
+ * does. Any other join is left as serverSimPlaceJoiner
+ * put it. Call it from a human join path right after
+ * fillAndPublishPlayerJoin, so clients know the seat before its alliance
+ * arrives. Defined in server_sim_players.c. */
 void serverSimRestoreRejoinTeam(ServerSim *sim, BYTE slot);
 
 /* Gives the lobby host role to a person who has just joined, when
