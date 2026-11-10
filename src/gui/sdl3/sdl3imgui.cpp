@@ -1920,6 +1920,52 @@ static void renderSysInfoBots(void) {
     }
 }
 
+/* The connected Bot Hosts that run no bot now, below the bot rows: the
+ * rows above come from the bots, so a host that joined a game in progress
+ * (or lost its bots) would not be listed at all. Each gets its header and
+ * its lobby line ("andrew-lenovo: ready, 0 of 16 slots"). True when it
+ * drew any. */
+static bool renderSysInfoEmptyHosts(const ClientSim *cs) {
+    uint8_t idx[CLIENT_BOT_HOST_ROWS];
+    int n = clientSimBotHostRowsNoBots(cs, idx, CLIENT_BOT_HOST_ROWS);
+    for (int k = 0; k < n; k++) {
+        const ClientBotHostRow *r = clientSimGetBotHostRow(cs, idx[k]);
+        if (r == NULL) continue;
+        const char *name = r->name[0] ? r->name : "?";
+        MessageArgs head = {};
+        SDL_strlcpy(head.string1, name, sizeof(head.string1));
+        ImGui::TextUnformatted(langGetTextFmt(STR_DLGSYSINFO_HOST_BOTHOST_FMT, &head));
+        MessageArgs row = {};
+        SDL_strlcpy(row.string1, name, sizeof(row.string1));
+        switch (r->state) {
+            case BOT_HOST_SYNC_SYNCING: {
+                MessageArgs pa = {};
+                pa.number = r->percent;
+                SDL_strlcpy(row.string2,
+                            langGetTextFmt(STR_DLGLOBBY_BOTHOST_SYNCING_FMT, &pa),
+                            sizeof(row.string2));
+                break;
+            }
+            case BOT_HOST_SYNC_READY:
+                SDL_strlcpy(row.string2, langGetText(STR_DLGLOBBY_BOTHOST_READY),
+                            sizeof(row.string2));
+                break;
+            case BOT_HOST_SYNC_LATE:
+                SDL_strlcpy(row.string2, langGetText(STR_DLGLOBBY_BOTHOST_LATE),
+                            sizeof(row.string2));
+                break;
+            default:
+                SDL_strlcpy(row.string2, langGetText(STR_DLGLOBBY_BOTHOST_CONNECTED),
+                            sizeof(row.string2));
+                break;
+        }
+        row.number = r->used;
+        row.number2 = r->slots;
+        ImGui::Text("  %s", langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &row));
+    }
+    return n > 0;
+}
+
 static void renderSysInfoContent(ClientSim *cs) {
     float drawPct  = (windowGetDrawTime() / 1000.0f) * 100.0f;
     float simPct   = (windowGetSimTime()  / 1000.0f) * 100.0f;
@@ -2040,6 +2086,7 @@ static void renderSysInfoContent(ClientSim *cs) {
             sysInfoBotsRefresh(spSim, cs);
             renderSysInfoBots();
         }
+        if (cs != NULL) (void)renderSysInfoEmptyHosts(cs);
 
         /* Text-only stats for the remaining metrics. simLast > 0
          * means at least one running-state tick has happened —
@@ -2058,9 +2105,15 @@ static void renderSysInfoContent(ClientSim *cs) {
         /* A game joined on another server: the bot rows the server sends
          * (CTRL_BOT_TIMING), none from an older server. */
         sysInfoBotsRefresh(NULL, cs);
-        if (s_sysBotHave && s_sysBotRowCount > 0) {
+        const bool botRows = s_sysBotHave && s_sysBotRowCount > 0;
+        if (botRows) {
             ImGui::Separator();
             renderSysInfoBots();
+        }
+        uint8_t anyEmpty[1];
+        if (cs != NULL && clientSimBotHostRowsNoBots(cs, anyEmpty, 1) > 0) {
+            if (!botRows) ImGui::Separator();
+            (void)renderSysInfoEmptyHosts(cs);
         }
     }
 }

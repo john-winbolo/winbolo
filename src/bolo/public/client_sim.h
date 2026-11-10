@@ -794,6 +794,13 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
 /* Bot Host list row mirror; out-of-range idx returns NULL. */
 const ClientBotHostRow *clientSimGetBotHostRow(const ClientSim *cs, uint8_t idx);
 
+/* The connected Bot Host rows (not the server's own row) that run no bot
+ * now, in row order: up to cap row numbers into idx. Returns how many.
+ * System Info lists the hosts by their bots (CTRL_BOT_TIMING), so it shows
+ * these below that list; without them a host that joins a game in progress
+ * is not seen there until it gets a bot. */
+int clientSimBotHostRowsNoBots(const ClientSim *cs, uint8_t *idx, int cap);
+
 /* The bots' think timing from the server's last CTRL_BOT_TIMING (sent once
  * a second while the game has bots), read into out. False when none came
  * (an older server, or a game with no bots yet). */

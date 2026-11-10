@@ -4885,6 +4885,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # list a server and a Bot Host use to find each other.
     tests/unit/test_bot_host_link.c
     tests/unit/test_bot_host_keep.c
+    # A Bot Host that joins a game in progress: the lag rule of the keep
+    # placement and System Info's hosts with no bot.
+    tests/unit/test_bot_host_midgame.c
     # The overrun check of the bot placement, the free CPU percent and the
     # log_BotHostData payload.
     tests/unit/test_bot_host_overrun.c
@@ -6359,6 +6362,8 @@ set(_unit_test_names
     bot_host_place_keep_bad_source
     bot_host_place_keep_no_return
     bot_host_place_keep_oil_rig
+    bot_host_place_keep_lag_join
+    bot_host_sysinfo_empty_hosts
     bot_host_place_keep_scaled_wait
     bot_host_place_keep_step_min_old
     bot_host_place_keep_free_batch

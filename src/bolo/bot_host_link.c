@@ -662,6 +662,48 @@ static int keepTarget(const BotHostPlaceHost *hosts, int n, int smallSlots,
     return dst;
 }
 
+/* The most places rule 3 looks at (the server and 8 Bot Hosts use 9). */
+#define KEEP_LAG_MAX_PLACES 32
+
+/* Rule 3: where a bot of Bot Host src goes for its lag, or -1. Only a
+ * Bot Host with a known lag whose lag factor is at most (1 - gain) x the
+ * source's counts as a target; of those the best by placePickSkip. The
+ * move needs the same score gain as the even spread's lag rule. */
+static int keepLagTarget(const BotHostPlaceHost *hosts, int n, int smallSlots,
+                         double bias, const BotHostPlaceLag *lag, int src) {
+    BotHostPlaceHost masked[KEEP_LAG_MAX_PLACES];
+    const BotHostPlaceHost *s = &hosts[src];
+    double gain, srcFactor, srcLoad, dstScore = 0.0;
+    int i, dst;
+    if (!placeLagOn(lag) || n > KEEP_LAG_MAX_PLACES) return -1;
+    if (s->unlimited || !s->movable || s->bad || s->bots <= 0 ||
+        s->slots <= 0 || !(s->lagMs >= 0.0)) {
+        return -1;
+    }
+    gain = lag->gain > 0.0 ? lag->gain : 0.0;
+    srcFactor = placeLagFactor(s, lag);
+    srcLoad = (double)s->bots /
+              botHostPlaceEffSlots(s->slots, smallSlots, bias) * srcFactor;
+    memcpy(masked, hosts, (size_t)n * sizeof(*hosts));
+    for (i = 0; i < n; i++) {
+        const BotHostPlaceHost *h = &hosts[i];
+        if (i == src) continue;
+        if (h->unlimited || !(h->lagMs >= 0.0) ||
+            placeLagFactor(h, lag) >
+                srcFactor * (1.0 - gain) + BOT_HOST_PLACE_EPS) {
+            masked[i].open = false;
+        }
+    }
+    dst = placePickSkip(masked, n, smallSlots, bias, lag, src, true,
+                        &dstScore);
+    if (dst < 0) return -1;
+    if (dstScore > srcLoad * (1.0 - gain) + BOT_HOST_PLACE_EPS ||
+        dstScore >= srcLoad - BOT_HOST_PLACE_EPS) {
+        return -1;
+    }
+    return dst;
+}
+
 bool botHostPlaceRebalanceKeep(const BotHostPlaceHost *hosts, int n,
                                int smallSlots, double bias,
                                const BotHostPlaceLag *lag, bool even,
@@ -712,6 +754,15 @@ bool botHostPlaceRebalanceKeep(const BotHostPlaceHost *hosts, int n,
         *from = i;
         *to = dst;
         *why = BOT_HOST_SPREAD_BAD;
+        return true;
+    }
+    /* 3. Lag: the first Bot Host in the table with a much better one. */
+    for (i = 0; i < n; i++) {
+        dst = keepLagTarget(hosts, n, smallSlots, bias, lag, i);
+        if (dst < 0) continue;
+        *from = i;
+        *to = dst;
+        *why = BOT_HOST_SPREAD_LAG;
         return true;
     }
     return false;

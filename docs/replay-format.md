@@ -844,7 +844,8 @@ Then, by kind (0xFF in a byte field: none):
   decision 8 or 9 per bot, then a decision 3 with the same reason and the
   lowered limit; one target may take several bots of a batch, as many as
   its free slots and its free CPU room let it, and the free CPU check of
-  each of its records counts the bots it took before that one), or "the
+  each of its records counts the bots it took before that one), "lower
+  lag" (`toHost`, another Bot Host, has much less lag than `host`), or "the
   spread" (the even spread of `-bothost-spread-even`, and every decision 8
   and 9 in logs made before these reasons). From version 2 the reason is
   followed by `srcRate:u16` and `dstRate:u16` (the window rates of `host`

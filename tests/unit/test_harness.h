@@ -957,6 +957,9 @@ int run_bot_host_enforce_fall_back_holds(void);
 int run_bot_host_enforce_host_resumes(void);
 int run_bot_host_enforce_leave_resumes(void);
 int run_bot_host_enforce_off_keeps_fall_back(void);
+/* A Bot Host that joins a game in progress (test_bot_host_midgame.c). */
+int run_bot_host_place_keep_lag_join(void);
+int run_bot_host_sysinfo_empty_hosts(void);
 /* The overrun check of the bot placement, the free CPU percent and the
  * log_BotHostData payload (test_bot_host_overrun.c). */
 int run_bot_host_overrun_window_rate(void);

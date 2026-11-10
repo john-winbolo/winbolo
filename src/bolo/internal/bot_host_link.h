@@ -238,10 +238,19 @@ int  botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
  *   2. Bad (bad: see BotHostPlaceHost): a host that runs its bots badly
  *      gives one, to a place that is not bad, unless badHold is set. The
  *      server itself takes no bot past its slots in this case.
- * The place a bot goes to: the server itself first, while it is open, not
- * bad and below its slots; else the best host by the scores of
- * botHostPlacePickLag (a host that is not bad first, for rule 1 any host
- * after that). So new bots, which start on the server, stay there while
+ *   3. Lag (with the lag rules on): a Bot Host gives one to another Bot
+ *      Host when both lags are known, the target is not bad and has room,
+ *      the target's lag factor (1 + lag / refMs) is at most (1 - gain) x
+ *      the source's, and the target's score for one more bot is at most
+ *      (1 - gain) x the source's score now. So a host that joins a game
+ *      in progress (or comes back) with much less lag takes bots from a
+ *      host with much more lag. Only lag moves a bot by this rule, never
+ *      the counts alone; the server itself is never the source or the
+ *      target here, so no bot moves between the server and a host by lag.
+ * The place a bot goes to (rules 1 and 2): the server itself first, while
+ * it is open, not bad and below its slots; else the best host by the
+ * scores of botHostPlacePickLag (a host that is not bad first, for rule 1
+ * any host after that). So new bots, which start on the server, stay there while
  * it has slots and is good, and only the bots it cannot take go to Bot
  * Hosts.
  *
@@ -252,7 +261,8 @@ typedef enum {
     BOT_HOST_SPREAD_NONE = 0,
     BOT_HOST_SPREAD_OVER_SLOTS,  /* rule 1: the source is over its slots */
     BOT_HOST_SPREAD_BAD,         /* rule 2: the source runs its bots badly */
-    BOT_HOST_SPREAD_EVEN         /* the old even spread */
+    BOT_HOST_SPREAD_EVEN,        /* the old even spread */
+    BOT_HOST_SPREAD_LAG          /* rule 3: a Bot Host with much less lag */
 } BotHostSpreadWhy;
 
 /* One move by the rules above: a bot of *from to *to, and why. False when

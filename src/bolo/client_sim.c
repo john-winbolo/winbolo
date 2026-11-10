@@ -2454,6 +2454,18 @@ const ClientBotHostRow *clientSimGetBotHostRow(const ClientSim *cs, uint8_t idx)
   return &cs->botHostRows[idx];
 }
 
+int clientSimBotHostRowsNoBots(const ClientSim *cs, uint8_t *idx, int cap) {
+  int i, n = 0;
+  if (cs == NULL || idx == NULL) return 0;
+  for (i = 0; i < CLIENT_BOT_HOST_ROWS && n < cap; i++) {
+    const ClientBotHostRow *r = &cs->botHostRows[i];
+    if (i == CLIENT_BOT_HOST_SERVER_ROW || !r->connected) continue;
+    if (r->seats != 0 || r->used != 0) continue;
+    idx[n++] = (uint8_t)i;
+  }
+  return n;
+}
+
 bool clientSimGetBotTiming(const ClientSim *cs, OverrunRecord *out) {
   uint8_t bytes[OVERRUN_RECORD_MAX_BYTES];
   uint16_t len;

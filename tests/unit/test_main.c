@@ -633,6 +633,8 @@ static const UnitTestEntry s_tests[] = {
     { "bot_host_place_keep_bad_source", run_bot_host_place_keep_bad_source },
     { "bot_host_place_keep_no_return", run_bot_host_place_keep_no_return },
     { "bot_host_place_keep_oil_rig", run_bot_host_place_keep_oil_rig },
+    { "bot_host_place_keep_lag_join", run_bot_host_place_keep_lag_join },
+    { "bot_host_sysinfo_empty_hosts", run_bot_host_sysinfo_empty_hosts },
     { "bot_host_place_keep_scaled_wait", run_bot_host_place_keep_scaled_wait },
     { "bot_host_place_keep_step_min_old",
       run_bot_host_place_keep_step_min_old },

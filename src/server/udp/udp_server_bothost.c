@@ -3827,6 +3827,7 @@ static const char *botHostSpreadReason(BotHostSpreadWhy why, int from,
                                        const char *const *badWhy) {
     switch (why) {
     case BOT_HOST_SPREAD_OVER_SLOTS: return "over its slots";
+    case BOT_HOST_SPREAD_LAG: return "lower lag";
     case BOT_HOST_SPREAD_BAD:
         return from >= 0 && from <= MAX_BOT_HOSTS && badWhy[from] != NULL
                    ? badWhy[from] : "overrun rate";
@@ -4723,13 +4724,17 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     }
     /* A host that may run none of the bots (bot_host_guard.h: its install
      * lacks their brains, or it is a player's host and they see the whole
-     * map or carry tokens off the list) takes none. */
+     * map or carry tokens off the list) takes none. The bots already on a
+     * Bot Host count too (their slot holds the bot connection, not a
+     * player): a host that joins while every bot runs on other hosts may
+     * take them by the lag rule. */
     {
         BotSeatFitInfo fitInfo[MAX_TANKS];
         bool fitHave[MAX_TANKS];
         for (s = 0; s < MAX_TANKS; s++) {
             fitHave[s] = serverSimIsBot(sim, (BYTE)s) &&
-                         !udpServer.clients[s].connected;
+                         (!udpServer.clients[s].connected ||
+                          udpServer.clients[s].botSlot);
             if (fitHave[s]) botSeatFitInfo(sim, s, &fitInfo[s]);
         }
         anyHost = false;
