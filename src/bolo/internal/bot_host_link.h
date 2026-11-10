@@ -174,7 +174,7 @@ typedef struct {
  * part lower than its score now (0.33: 33% lower), so small changes in
  * lag do not move bots back and forth. */
 #define BOT_HOST_LAG_REF_MS_DEFAULT 100
-#define BOT_HOST_LAG_MAX_MS_DEFAULT 250
+#define BOT_HOST_LAG_MAX_MS_DEFAULT 300
 #define BOT_HOST_LAG_GAIN_DEFAULT   0.33
 
 typedef struct {

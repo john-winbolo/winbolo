@@ -48,7 +48,7 @@
  *  counts too (botHostPlaceRebalanceLag): the score is
  *  multiplied by 1 + lag / R (-bothost-lag-ref-ms, 100 ms; the
  *  server's lag is 0), a host over L (-bothost-lag-max-ms,
- *  250 ms) gets no new bot while one at or under L has room,
+ *  300 ms) gets no new bot while one at or under L has room,
  *  and a bot moves only for a score at least 33% lower. In the
  *  lobby one bot moves each tick; in the game one bot moves at
  *  most each 3 s (each tick in the first 10 s of a game), and
