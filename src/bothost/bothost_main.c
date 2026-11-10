@@ -162,6 +162,16 @@ static SDL_AtomicInt embedWithhold;
 #else
 #define HOST_OFFICIAL_ONLY 0
 #endif
+/* The build's own table of the brain files it shipped, with the SHA-256 of
+ * each (cmake/brain_shipped_table.cmake writes it). Only an official-only
+ * client has it: its host runs a brain only when the install's files are
+ * the shipped ones (syncShippedSame). */
+#if HOST_EMBED && defined(WINBOLO_BOTHOST_OFFICIAL_ONLY)
+#include "brain_shipped_table.h"
+#define HOST_SHIPPED_TABLE 1
+#else
+#define HOST_SHIPPED_TABLE 0
+#endif
 /* WINBOLO_BOTHOST_ALLOW_FULL_MAP (a CMake option, on by default): this host
  * tells the server it takes bots that see the whole map
  * (BRAIN_PACK_CAP_FULL_MAP), and the host inside a client runs them. OFF:
@@ -1104,6 +1114,35 @@ static void syncDropManifest(HostServer *sv) {
     memset(hs->staged, 0, sizeof(hs->staged));
 }
 
+/* True when brain name in the install folder root is, file for file, the
+ * one this build shipped (brainShippedTable). Else one line names the file
+ * and the brain is not run here, as for a brain that differs from the
+ * server's. A build without the table (not official-only) takes any. */
+static bool syncShippedSame(const char *root, const char *name) {
+#if HOST_SHIPPED_TABLE
+    char file[BRAIN_SYNC_PATH_MAX];
+    BrainSyncShippedResult r = brainSyncShippedCheck(
+        brainShippedTable, brainShippedCount, root, name, file, sizeof(file));
+    if (r == BRAIN_SYNC_SHIPPED_OK) return true;
+    if (file[0] != '\0') {
+        HOST_EVENT("[bothost] Bot Host \"%s\": brain \"%s\" is not run: "
+                   "file \"%s\" is %s; this client runs only the brain "
+                   "files it shipped with", optName, name, file,
+                   brainSyncShippedResultText(r));
+    } else {
+        HOST_EVENT("[bothost] Bot Host \"%s\": brain \"%s\" is not run: "
+                   "the brain is %s; this client runs only the brain files "
+                   "it shipped with", optName, name,
+                   brainSyncShippedResultText(r));
+    }
+    return false;
+#else
+    (void)root;
+    (void)name;
+    return true;
+#endif
+}
+
 /* A manifest of the official brains only (the server's -bothost-code
  * official, or HOST_OFFICIAL_ONLY): no file is asked for. Each brain runs
  * from the install when the install holds it file for file (SHA-256), else
@@ -1144,7 +1183,9 @@ static void syncInstallOnlyManifest(HostServer *sv, BrainSyncManifest m,
         const BrainSyncBrain *br = &hs->man.brains[b];
         ControlEvent evt;
         hs->inPlace[b] = hs->installRoot[0] != '\0' &&
-                         brainSyncInstallMatches(hs->installRoot, br);
+                         brainSyncInstallMatches(hs->installRoot, br) &&
+                         (!HOST_OFFICIAL_ONLY ||
+                          syncShippedSame(hs->installRoot, br->name));
         if (hs->inPlace[b]) {
             held++;
             hs->fromInstall += br->fileCount;

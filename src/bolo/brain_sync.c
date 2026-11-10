@@ -889,6 +889,140 @@ bool brainSyncInstallMatches(const char *installRoot,
     return installIsSame(installRoot, br);
 }
 
+/* ── The files a build shipped ─────────────────────────────────────────── */
+
+/* The entry of table for brain-relative path rel of brain name, or NULL. */
+static const BrainSyncShippedFile *shippedFind(
+    const BrainSyncShippedFile *table, int count, const char *name,
+    size_t nameLen, const char *rel) {
+    int i;
+    for (i = 0; i < count; i++) {
+        const char *p = table[i].path;
+        if (p != NULL && strncmp(p, name, nameLen) == 0 && p[nameLen] == '/' &&
+            strcmp(p + nameLen + 1, rel) == 0) {
+            return &table[i];
+        }
+    }
+    return NULL;
+}
+
+/* True when the shipped file rel is one that brainSyncCollectBrain lists:
+ * the same rule as walk(). useOpt: the table has opt/init.lua. */
+static bool shippedListed(const BrainSyncShippedFile *table, int count,
+                          const char *name, size_t nameLen, const char *rel,
+                          bool useOpt) {
+    char opt[BRAIN_SYNC_PATH_MAX + 8];
+    size_t n = strlen(rel);
+    if (!brainSyncPathSafe(rel)) return false;
+    if (!useOpt) return true;
+    if (strncmp(rel, "opt/", 4) == 0) return true;
+    if (strchr(rel, '/') != NULL) return false;   /* another sub-folder */
+    if (n > 4 && SDL_strcasecmp(rel + n - 4, ".lua") == 0) {
+        SDL_snprintf(opt, sizeof(opt), "opt/%s", rel);
+        if (shippedFind(table, count, name, nameLen, opt) != NULL) {
+            return false;   /* opt/ has its own copy */
+        }
+    }
+    return true;
+}
+
+static void shaHex(const uint8_t sha[BRAIN_SYNC_SHA_LEN], char out[65]) {
+    static const char digits[] = "0123456789abcdef";
+    int i;
+    for (i = 0; i < BRAIN_SYNC_SHA_LEN; i++) {
+        out[i * 2] = digits[sha[i] >> 4];
+        out[i * 2 + 1] = digits[sha[i] & 0x0f];
+    }
+    out[64] = '\0';
+}
+
+BrainSyncShippedResult brainSyncShippedCheck(const BrainSyncShippedFile *table,
+                                             int count,
+                                             const char *installRoot,
+                                             const char *name,
+                                             char *file, size_t fileSz) {
+    BrainSyncBrain local;
+    BrainSyncShippedResult r = BRAIN_SYNC_SHIPPED_OK;
+    char dir[1024];
+    size_t nameLen;
+    bool useOpt, any = false;
+    int i;
+
+    if (file != NULL && fileSz > 0) file[0] = '\0';
+    if (table == NULL || count <= 0 || name == NULL || name[0] == '\0') {
+        return BRAIN_SYNC_SHIPPED_NOT_SHIPPED;
+    }
+    nameLen = strlen(name);
+    for (i = 0; i < count && !any; i++) {
+        any = table[i].path != NULL &&
+              strncmp(table[i].path, name, nameLen) == 0 &&
+              table[i].path[nameLen] == '/';
+    }
+    if (!any) return BRAIN_SYNC_SHIPPED_NOT_SHIPPED;
+    useOpt = shippedFind(table, count, name, nameLen, "opt/init.lua") != NULL;
+
+    if (installRoot == NULL ||
+        (size_t)SDL_snprintf(dir, sizeof(dir), "%s/%s", installRoot, name)
+        >= sizeof(dir) ||
+        !brainSyncCollectBrain(&local, name, dir, false, NULL)) {
+        return BRAIN_SYNC_SHIPPED_UNREADABLE;
+    }
+
+    /* Every file on disk was shipped, with the same bytes. */
+    for (i = 0; i < local.fileCount && r == BRAIN_SYNC_SHIPPED_OK; i++) {
+        const BrainSyncFile *f = &local.files[i];
+        const BrainSyncShippedFile *s =
+            shippedFind(table, count, name, nameLen, f->path);
+        if (s == NULL ||
+            !shippedListed(table, count, name, nameLen, f->path, useOpt)) {
+            r = BRAIN_SYNC_SHIPPED_EXTRA;
+        } else {
+            char hex[65];
+            shaHex(f->sha, hex);
+            if (s->sha256 == NULL || SDL_strcasecmp(hex, s->sha256) != 0) {
+                r = BRAIN_SYNC_SHIPPED_CHANGED;
+            }
+        }
+        if (r != BRAIN_SYNC_SHIPPED_OK && file != NULL) {
+            SDL_strlcpy(file, f->path, fileSz);
+        }
+    }
+
+    /* Every shipped file the brain runs is on disk. */
+    for (i = 0; i < count && r == BRAIN_SYNC_SHIPPED_OK; i++) {
+        const char *p = table[i].path;
+        const char *rel;
+        int j;
+        bool found = false;
+        if (p == NULL || strncmp(p, name, nameLen) != 0 || p[nameLen] != '/') {
+            continue;
+        }
+        rel = p + nameLen + 1;
+        if (!shippedListed(table, count, name, nameLen, rel, useOpt)) continue;
+        for (j = 0; j < local.fileCount && !found; j++) {
+            found = strcmp(local.files[j].path, rel) == 0;
+        }
+        if (!found) {
+            r = BRAIN_SYNC_SHIPPED_MISSING;
+            if (file != NULL) SDL_strlcpy(file, rel, fileSz);
+        }
+    }
+    free(local.files);
+    return r;
+}
+
+const char *brainSyncShippedResultText(BrainSyncShippedResult r) {
+    switch (r) {
+    case BRAIN_SYNC_SHIPPED_OK:          return "the same as shipped";
+    case BRAIN_SYNC_SHIPPED_NOT_SHIPPED: return "not a brain this build shipped";
+    case BRAIN_SYNC_SHIPPED_UNREADABLE:  return "not readable";
+    case BRAIN_SYNC_SHIPPED_MISSING:     return "missing";
+    case BRAIN_SYNC_SHIPPED_CHANGED:     return "changed since it shipped";
+    case BRAIN_SYNC_SHIPPED_EXTRA:       return "a file this build did not ship";
+    }
+    return "?";
+}
+
 bool brainSyncPlanPacked(const BrainSyncManifest *m, const char *root,
                          const char *installRoot, BrainSyncPlan *plan) {
     int b, i, total = 0;
