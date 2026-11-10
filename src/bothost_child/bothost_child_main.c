@@ -65,7 +65,12 @@
  *                       calls on the game (its parent) and on itself,
  *                       setpgid into the game's group, pidfd_send_signal,
  *                       and the fcntl and ioctl calls that set an fd's
- *                       owner (and two that do not). One
+ *                       owner (and two that do not), the calls that
+ *                       change a file's mode, owner, times or extended
+ *                       attributes, truncate by path (and ftruncate,
+ *                       which stays allowed), the System V IPC calls and
+ *                       prctl PR_SET_PDEATHSIG (and PR_GET_PDEATHSIG,
+ *                       which stays allowed). One
  *                       line for each ("threads ok 4", "lua ok", "fork
  *                       denied" or "fork allowed", ...), then "seccomp
  *                       done" (exit 0). Elsewhere "seccomp none" (exit 0)
@@ -81,6 +86,7 @@
 #include <limits.h>
 #include <unistd.h>
 #ifdef __linux__
+#include <fcntl.h>
 #include <sched.h>
 #include <signal.h>
 #include <sys/prctl.h>
@@ -1010,6 +1016,104 @@ static void testSeccompOwners(pid_t parent) {
 }
 #endif
 
+/* --test-seccomp, part 3: the calls that change a file's mode, owner,
+ * times or extended attributes, truncate by path, System V IPC and prctl
+ * PR_SET_PDEATHSIG. Raw calls with a path that is not there, an fd that
+ * is not open or an IPC key or id that does not exist: EPERM under the
+ * filter, another error (ENOENT, EBADF, EINVAL, ENOSYS on an older
+ * kernel) with none. So the control changes nothing. */
+#ifdef __linux__
+#define CHILD_TEST_NOWHERE "/nonexistent-winbolo-seccomp-test"
+#define CHILD_TEST_AT_FDCWD (-100)
+#define CHILD_TEST_IPC_KEY 0x57b01070L /* no IPC_CREAT: never made */
+static void testSeccompFiles(void) {
+    const char *nowhere = CHILD_TEST_NOWHERE;
+    struct timespec ts[2];
+    int sig = 0, fd;
+    long r;
+
+#define TRY(what_, call_)                                                  \
+    do {                                                                   \
+        errno = 0;                                                         \
+        seccompDenied(what_, (call_));                                     \
+    } while (0)
+#ifdef SYS_chmod
+    TRY("chmod", syscall(SYS_chmod, nowhere, 0644));
+#endif
+    TRY("fchmod", syscall(SYS_fchmod, -1, 0644));
+    TRY("fchmodat", syscall(SYS_fchmodat, CHILD_TEST_AT_FDCWD, nowhere,
+                            0644));
+    TRY("fchmodat2", syscall(452, CHILD_TEST_AT_FDCWD, nowhere, 0644, 0));
+#ifdef SYS_chown
+    TRY("chown", syscall(SYS_chown, nowhere, -1, -1));
+#endif
+#ifdef SYS_lchown
+    TRY("lchown", syscall(SYS_lchown, nowhere, -1, -1));
+#endif
+    TRY("fchown", syscall(SYS_fchown, -1, -1, -1));
+    TRY("fchownat", syscall(SYS_fchownat, CHILD_TEST_AT_FDCWD, nowhere, -1,
+                            -1, 0));
+    memset(ts, 0, sizeof(ts));
+    TRY("utimensat", syscall(SYS_utimensat, CHILD_TEST_AT_FDCWD, nowhere, ts,
+                             0));
+#ifdef SYS_utimes
+    TRY("utimes", syscall(SYS_utimes, nowhere, NULL));
+#endif
+#ifdef SYS_utime
+    TRY("utime", syscall(SYS_utime, nowhere, NULL));
+#endif
+#ifdef SYS_futimesat
+    TRY("futimesat", syscall(SYS_futimesat, CHILD_TEST_AT_FDCWD, nowhere,
+                             NULL));
+#endif
+    TRY("setxattr", syscall(SYS_setxattr, nowhere, "user.winbolo", "1", 1,
+                            0));
+    TRY("lsetxattr", syscall(SYS_lsetxattr, nowhere, "user.winbolo", "1", 1,
+                             0));
+    TRY("fsetxattr", syscall(SYS_fsetxattr, -1, "user.winbolo", "1", 1, 0));
+    TRY("removexattr", syscall(SYS_removexattr, nowhere, "user.winbolo"));
+    TRY("lremovexattr", syscall(SYS_lremovexattr, nowhere, "user.winbolo"));
+    TRY("fremovexattr", syscall(SYS_fremovexattr, -1, "user.winbolo"));
+    TRY("setxattrat", syscall(463, CHILD_TEST_AT_FDCWD, nowhere, 0, NULL,
+                              0));
+    TRY("removexattrat", syscall(466, CHILD_TEST_AT_FDCWD, nowhere, 0,
+                                 "user.winbolo"));
+    TRY("truncate", syscall(SYS_truncate, nowhere, 0));
+    /* ftruncate stays allowed: /dev/null is open for writing in the
+     * sandbox, and gives EINVAL. */
+    fd = open("/dev/null", O_WRONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        TRY("ftruncate", syscall(SYS_ftruncate, fd, 0));
+        (void)close(fd);
+    } else {
+        childOut("ftruncate untested (no /dev/null)");
+    }
+
+    TRY("shmget", syscall(SYS_shmget, CHILD_TEST_IPC_KEY, 0, 0));
+    TRY("shmat", syscall(SYS_shmat, -1, NULL, 0));
+    TRY("shmctl", syscall(SYS_shmctl, -1, 2 /* IPC_STAT */, NULL));
+    TRY("msgget", syscall(SYS_msgget, CHILD_TEST_IPC_KEY, 0));
+    TRY("msgsnd", syscall(SYS_msgsnd, -1, NULL, 0, 0));
+    TRY("msgrcv", syscall(SYS_msgrcv, -1, NULL, 0, 0, 0));
+    TRY("msgctl", syscall(SYS_msgctl, -1, 2 /* IPC_STAT */, NULL));
+    TRY("semget", syscall(SYS_semget, CHILD_TEST_IPC_KEY, 0, 0));
+    TRY("semop", syscall(SYS_semop, -1, NULL, 0));
+    TRY("semctl", syscall(SYS_semctl, -1, 0, 2 /* IPC_STAT */, NULL));
+    TRY("semtimedop", syscall(SYS_semtimedop, -1, NULL, 0, NULL));
+#ifdef SYS_ipc
+    TRY("ipc", syscall(SYS_ipc, 0, 0, 0, 0, NULL, 0));
+#endif
+
+    /* The game set SIGKILL before the exec; the same value again, so the
+     * control changes nothing. */
+    TRY("prctl pdeathsig", syscall(SYS_prctl, PR_SET_PDEATHSIG, SIGKILL, 0,
+                                   0, 0));
+    r = syscall(SYS_prctl, PR_GET_PDEATHSIG, &sig, 0, 0, 0);
+    childOut(r == 0 ? "prctl get ok" : "prctl get failed");
+#undef TRY
+}
+#endif
+
 /* --test-seccomp: what the child may and may not do under its filter.
  * The unit test reads the lines; with no filter (its control) the denied
  * lines read "allowed". */
@@ -1097,6 +1201,7 @@ static int testSeccomp(void) {
         childOut(r == 0 ? "affinity self ok" : "affinity self failed");
     }
     testSeccompOwners(parent);
+    testSeccompFiles();
     childOut("seccomp done");
 #else
     childOut("seccomp none");

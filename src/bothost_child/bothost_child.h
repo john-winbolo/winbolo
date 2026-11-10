@@ -350,7 +350,9 @@ BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
                                     const BotHostChildSandbox *sb,
                                     const char *logPath, char *err,
                                     size_t errSize, bool *sandboxFailed);
-/* Writes one line (a newline is added). False when the pipe is closed. */
+/* Writes one line (a newline is added). It never waits: the pipe does
+ * not block. False when the pipe is closed, or full (a child that does not
+ * read its stdin), or the line does not fit at once. */
 bool botHostChildWriteLine(BotHostChildProc *p, const char *line);
 /* Closes the child's stdin: the child stops (--exit-on-stdin-close). */
 void botHostChildCloseStdin(BotHostChildProc *p);

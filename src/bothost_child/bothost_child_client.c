@@ -203,6 +203,24 @@ static void childReset(void) {
     childSaltLines = 0;
 }
 
+/* One line to the child. The write never waits; when it fails and the
+ * child still runs, the child does not read its stdin: it is stuck. It is
+ * ended, and counts as a crash (so the restart rule applies), unless the
+ * game already gave it another end. A child that already ended is left
+ * to botHostChildClientPoll, which reads its exit code. */
+static void childWrite(const char *line) {
+    int code = 0;
+    if (childProc == NULL || childEnded) return;
+    if (botHostChildWriteLine(childProc, line)) return;
+    if (!botHostChildAlive(childProc, &code)) return;
+    if (childEnd == BOT_HOST_CHILD_RUNS) {
+        CHILD_EVENT("[bothost] the Bot Host child does not read its input "
+                    "(the pipe is full): it is ended");
+        childEnd = BOT_HOST_CHILD_ENDED_CRASH;
+    }
+    botHostChildKill(childProc);
+}
+
 /* The machine id and the salts, before the ticket. */
 static void childSendMachine(void) {
     static char lines[BOT_HOST_CHILD_MACHINE_LINES][BOT_HOST_CHILD_LINE_MAX];
@@ -212,7 +230,7 @@ static void childSendMachine(void) {
         CHILD_EVENT("[bothost] no machine id to give the Bot Host child");
     }
     for (i = 0; i < n; i++) {
-        (void)botHostChildWriteLine(childProc, lines[i]);
+        childWrite(lines[i]);
     }
     SDL_memset(lines, 0, sizeof(lines));
 }
@@ -223,7 +241,7 @@ static void childSendCpu(void) {
     if (!machineCpuFreeCounters(&idle, &total)) return;
     SDL_snprintf(line, sizeof(line), "cpu %llu %llu",
                  (unsigned long long)idle, (unsigned long long)total);
-    (void)botHostChildWriteLine(childProc, line);
+    childWrite(line);
 }
 
 /* The sandbox's paths for the child at exe: its folder and the env's
@@ -546,9 +564,8 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
     childStatus.running = true;
     botHostChildTicketHex(ticket, ticketLen, hex, sizeof(hex));
     SDL_snprintf(line, sizeof(line), "ticket %s", hex);
-    (void)botHostChildWriteLine(childProc, line);
-    (void)botHostChildWriteLine(childProc, withhold ? "withhold 1"
-                                                    : "withhold 0");
+    childWrite(line);
+    childWrite(withhold ? "withhold 1" : "withhold 0");
 #ifdef _WIN32
     const char *cpuNote = "";
 #else
@@ -682,7 +699,7 @@ void botHostChildClientStop(bool tellServer) {
     if (childProc == NULL) return;
     if (!childEnded) {
         if (tellServer) {
-            (void)botHostChildWriteLine(childProc, "quit");
+            childWrite("quit");
             botHostChildCloseStdin(childProc);
             if (botHostChildWait(childProc, CHILD_STOP_WAIT_MS, &code)) {
                 CHILD_EVENT("[bothost] Bot Host child stopped (exit code %d)",
@@ -726,12 +743,12 @@ void botHostChildClientStatus(BotHostChildStatus *out) {
 void botHostChildClientSetWithhold(bool on) {
     if (childProc == NULL || childEnded || on == childWithhold) return;
     childWithhold = on;
-    (void)botHostChildWriteLine(childProc, on ? "withhold 1" : "withhold 0");
+    childWrite(on ? "withhold 1" : "withhold 0");
 }
 
 void botHostChildClientConsent(bool yes) {
     if (childProc == NULL || childEnded) return;
-    (void)botHostChildWriteLine(childProc, yes ? "consent 1" : "consent 0");
+    childWrite(yes ? "consent 1" : "consent 0");
     /* The question is answered: no prompt until the child asks again. */
     childStatus.consentAsking = false;
 }

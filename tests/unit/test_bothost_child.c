@@ -40,7 +40,13 @@
  *      CLONE_THREAD and the pid calls on the game are refused; the same
  *      calls on itself work. With no Landlock it uses the filter alone
  *      (botHostChildTestSeccompOnly). The control, with no filter, shows
- *      the same calls are allowed there.
+ *      the same calls are allowed there. The calls that change a file's
+ *      mode, owner, times or extended attributes, truncate by path, System
+ *      V IPC and prctl PR_SET_PDEATHSIG are refused; ftruncate and
+ *      PR_GET_PDEATHSIG work.
+ *  17. bothost_child_stdin_full: a child that does not read its stdin
+ *      fills the pipe; the game's write then fails at once and does not
+ *      wait, and the child still runs.
  * Tests 7 to 10 need the sandbox: where this computer has none (Linux with
  * no Landlock, other systems) they pass with a note. WINBOLO_TEST_TMP names
  * the folder for their files (default: TEMP, or /tmp).
@@ -1298,7 +1304,7 @@ int run_bothost_child_seccomp(void) {
     printf("    (the seccomp filter is Linux only: nothing to test here)\n");
     return 0;
 #else
-    char exe[1024], exeDir[1024], root[1024], log[1200], out[2048];
+    char exe[1024], exeDir[1024], root[1024], log[1200], out[8192];
     const char *a[] = { "--test-seccomp", NULL };
     static const char *const denied[] = {
         "fork denied", "clone denied", "kill parent denied",
@@ -1308,6 +1314,19 @@ int run_bothost_child_seccomp(void) {
         "fcntl setown denied", "fcntl setsig denied",
         "fcntl setown_ex denied", "ioctl fiosetown denied",
         "ioctl siocspgrp denied",
+        "fchmod denied", "fchmodat denied", "fchmodat2 denied",
+        "fchown denied", "fchownat denied", "utimensat denied",
+        "setxattr denied", "lsetxattr denied", "fsetxattr denied",
+        "setxattrat denied", "removexattr denied", "lremovexattr denied",
+        "fremovexattr denied", "removexattrat denied", "truncate denied",
+        "shmget denied", "shmat denied", "shmctl denied", "msgget denied",
+        "msgsnd denied", "msgrcv denied", "msgctl denied", "semget denied",
+        "semop denied", "semctl denied", "semtimedop denied",
+        "prctl pdeathsig denied",
+#if defined(__x86_64__)
+        "chmod denied", "chown denied", "lchown denied", "utimes denied",
+        "utime denied", "futimesat denied",
+#endif
     };
     /* With no filter these must work; prlimit, setpriority, affinity and
      * pidfd_send_signal may still fail for other reasons, so they are not
@@ -1317,11 +1336,14 @@ int run_bothost_child_seccomp(void) {
         "setpgid parent allowed", "fcntl setown allowed",
         "fcntl setsig allowed", "fcntl setown_ex allowed",
         "ioctl fiosetown allowed", "ioctl siocspgrp allowed",
+        "fchmodat allowed", "fchownat allowed", "utimensat allowed",
+        "setxattr allowed", "truncate allowed", "shmget allowed",
+        "msgget allowed", "semget allowed", "prctl pdeathsig allowed",
     };
     static const char *const works[] = {
         "threads ok 4", "lua ok", "prlimit self ok", "setpriority self ok",
         "affinity self ok", "fcntl getfl ok", "ioctl fionread ok",
-        "seccomp done",
+        "ftruncate allowed", "prctl get ok", "seccomp done",
     };
     BotHostChildSandbox sb;
     int code = 99;
@@ -1396,5 +1418,58 @@ int run_bothost_child_env_keep(void) {
     UT_ASSERT(!botHostChildEnvKeep("LANG"));
     UT_ASSERT(!botHostChildEnvKeep("WINBOLO"));
     UT_ASSERT(!botHostChildEnvKeep(""));
+    return 0;
+}
+
+/* A child that does not read its stdin (--test-sleep-ms) fills the pipe.
+ * The game's write must then fail at once, not wait for the child: the
+ * client ends such a child as a crash (childWrite). */
+int run_bothost_child_stdin_full(void) {
+    char exe[1024], root[1024], log[1200], line[560];
+    const char *a[] = { "--test-sleep-ms", "30000", NULL };
+    BotHostChildProc *p;
+    uint32_t start, took;
+    int code = 99, lines = 0;
+    bool full = false;
+
+    UT_ASSERT_MSG(childExePath(exe, sizeof(exe)),
+                  "no WinBoloBotHost: build it first");
+    UT_ASSERT(makeTestDir("stdinfull", root, sizeof(root)));
+    SDL_snprintf(log, sizeof(log), "%s/child.log", root);
+    memset(line, 'x', sizeof(line) - 1);
+    line[sizeof(line) - 1] = '\0';
+    p = spawnTest(exe, a, NULL, log);
+    UT_ASSERT(p != NULL);
+    start = (uint32_t)SDL_GetTicks();
+    /* 64 KiB of pipe is about 115 lines; 2000 lines is 1.1 MiB. */
+    while (lines < 2000) {
+        if (!botHostChildWriteLine(p, line)) {
+            full = true;
+            break;
+        }
+        lines++;
+    }
+    took = (uint32_t)SDL_GetTicks() - start;
+    printf("    %d lines fit, then the write failed after %u ms\n", lines,
+           (unsigned)took);
+    UT_ASSERT_MSG(full, "2000 lines went into a pipe no one reads");
+    UT_ASSERT_MSG(lines > 0, "the first line did not fit");
+    UT_ASSERT_MSG(took < 5000, "the writes took %u ms", (unsigned)took);
+    /* Short lines may still fill the last of the pipe's space; then they
+     * fail at once too. */
+    start = (uint32_t)SDL_GetTicks();
+    full = false;
+    for (lines = 0; lines < 1000; lines++) {
+        if (!botHostChildWriteLine(p, "cpu 1 2")) {
+            full = true;
+            break;
+        }
+    }
+    UT_ASSERT_MSG(full, "1000 short lines went into a full pipe");
+    UT_ASSERT((uint32_t)SDL_GetTicks() - start < 1000);
+    UT_ASSERT_MSG(botHostChildAlive(p, &code), "the child ended (%d)", code);
+    botHostChildKill(p);
+    botHostChildFree(p);
+    removeTestDir(root);
     return 0;
 }

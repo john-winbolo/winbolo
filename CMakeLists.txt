@@ -6436,6 +6436,7 @@ set(_unit_test_names
     bothost_ds_child_where
     bot_host_lockstep
     bothost_child_seccomp
+    bothost_child_stdin_full
     bot_host_brain_name_opt
     bot_host_link_announce_codec
     bot_host_link_addr_list

@@ -949,6 +949,7 @@ int run_bothost_child_env_keep(void);
 int run_bothost_ds_child_where(void);
 int run_bot_host_lockstep(void);
 int run_bothost_child_seccomp(void);
+int run_bothost_child_stdin_full(void);
 
 /* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
 int run_bot_host_link_announce_codec(void);
