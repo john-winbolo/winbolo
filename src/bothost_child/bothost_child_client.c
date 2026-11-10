@@ -471,6 +471,11 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
 
     if (childProc != NULL) botHostChildClientStop(true);
     childReset();
+    /* While the prepare thread copies, the game asks again each frame:
+     * no stat of the exe and no container profile call until it ends. */
+    if (sandbox && childPrep.have && !SDL_GetAtomicInt(&childPrep.done)) {
+        return BOT_HOST_CHILD_START_WAIT;
+    }
     if (!botHostChildFindExe(exe, sizeof(exe))) {
         return childFail(BOT_HOST_CHILD_FAIL_NO_EXE, sandbox,
                          "no WinBoloBotHost next to this program");

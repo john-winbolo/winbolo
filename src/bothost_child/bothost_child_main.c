@@ -49,6 +49,12 @@
  *   --test-salt         read the machine id lines, then "ask <salt>"
  *                       lines until "end": "answer <hash>" or "answer
  *                       none" for each
+ *   --test-seccomp      Linux: start threads and a LuaJIT state, then try
+ *                       fork, a clone with no CLONE_THREAD, and the pid
+ *                       calls on the game (its parent) and on itself. One
+ *                       line for each ("threads ok 4", "lua ok", "fork
+ *                       denied" or "fork allowed", ...), then "seccomp
+ *                       done" (exit 0). Elsewhere "seccomp none" (exit 0)
  * (each refusal exits BOT_HOST_CHILD_EXIT_DENIED).
  */
 #ifdef _WIN32
@@ -61,7 +67,12 @@
 #include <limits.h>
 #include <unistd.h>
 #ifdef __linux__
+#include <sched.h>
+#include <signal.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
 #endif
 #endif
 
@@ -88,6 +99,9 @@
 #include "../gui/lang.h"
 #include "../gui/clientmutex.h"
 #include "../common/wb_log.h"
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
 
 /* ---- Options --------------------------------------------------------- */
 
@@ -123,10 +137,11 @@ static int    coTestNetPort;
 static const char *coTestRelayIp;
 static int    coTestRelayPort;
 static bool   coTestSalt;
+static bool   coTestSeccomp;
 
 static const char *const childTestModes[] = {
     "--test-alloc-mb", "--test-sleep-ms", "--test-read", "--test-write",
-    "--test-net", "--test-relay", "--test-salt",
+    "--test-net", "--test-relay", "--test-salt", "--test-seccomp",
 };
 
 bool botHostChildWanted(int argc, char **argv) {
@@ -169,6 +184,10 @@ static bool parseChildArgs(int argc, char **argv) {
         }
         if (strcmp(a, "--test-salt") == 0) {
             coTestSalt = true;
+            continue;
+        }
+        if (strcmp(a, "--test-seccomp") == 0) {
+            coTestSeccomp = true;
             continue;
         }
         if (strcmp(a, "--allow-unsafe-brains") == 0 ||
@@ -875,6 +894,101 @@ static int testSalt(void) {
     return asked > 0 ? BOT_HOST_CHILD_EXIT_OK : BOT_HOST_CHILD_EXIT_ARGS;
 }
 
+static int SDLCALL seccompThread(void *arg) {
+    volatile unsigned long sum = 0;
+    unsigned long i;
+    for (i = 0; i < 1000000ul; i++) sum += i;
+    *(unsigned long *)arg = sum;
+    return 0;
+}
+
+/* --test-seccomp: what the child may and may not do under its filter.
+ * The unit test reads the lines; with no filter (its control) the denied
+ * lines read "allowed". */
+static int testSeccomp(void) {
+#ifdef __linux__
+    SDL_Thread *t[4];
+    unsigned long out[4];
+    int i, started = 0, r;
+    lua_State *L;
+    pid_t parent = getppid(), f;
+    struct rlimit rl;
+    cpu_set_t cpus;
+
+    for (i = 0; i < 4; i++) {
+        t[i] = SDL_CreateThread(seccompThread, "seccomp-test", &out[i]);
+        if (t[i] != NULL) started++;
+    }
+    for (i = 0; i < 4; i++) {
+        if (t[i] != NULL) SDL_WaitThread(t[i], NULL);
+    }
+    childOut("threads ok %d", started);
+
+    L = luaL_newstate();
+    if (L != NULL) {
+        luaL_openlibs(L);
+        /* A loop long enough for LuaJIT to compile a trace. */
+        r = luaL_dostring(L, "local s = 0 for i = 1, 2000000 do "
+                             "s = s + i % 7 end return s");
+        childOut(r == 0 ? "lua ok" : "lua failed (%s)",
+                 r == 0 ? "" : lua_tostring(L, -1));
+        lua_close(L);
+    } else {
+        childOut("lua failed (no state)");
+    }
+
+    f = fork();
+    if (f == 0) _exit(0);
+    if (f > 0) (void)waitpid(f, NULL, 0);
+    childOut(f < 0 ? "fork denied (errno %d)" : "fork allowed", errno);
+
+    /* clone with SIGCHLD only: a new process, as fork makes. */
+    f = (pid_t)syscall(SYS_clone, (unsigned long)SIGCHLD, 0ul, 0ul, 0ul,
+                       0ul);
+    if (f == 0) _exit(0);
+    if (f > 0) (void)waitpid(f, NULL, 0);
+    childOut(f < 0 ? "clone denied (errno %d)" : "clone allowed", errno);
+
+    errno = 0;
+    r = kill(parent, 0);
+    childOut(r != 0 && errno == EPERM ? "kill parent denied"
+                                      : "kill parent allowed");
+    errno = 0;
+    r = prlimit(parent, RLIMIT_NOFILE, NULL, &rl);
+    childOut(r != 0 && errno == EPERM ? "prlimit parent denied"
+                                      : "prlimit parent allowed");
+    r = prlimit(0, RLIMIT_NOFILE, NULL, &rl);
+    childOut(r == 0 ? "prlimit self ok" : "prlimit self failed");
+    errno = 0;
+    /* The parent's own value, so no run changes the game's priority. */
+    errno = 0;
+    r = getpriority(PRIO_PROCESS, (id_t)parent);
+    errno = 0;
+    r = setpriority(PRIO_PROCESS, (id_t)parent, r);
+    childOut(r != 0 && errno == EPERM ? "setpriority parent denied"
+                                      : "setpriority parent allowed");
+    errno = 0;
+    r = setpriority(PRIO_PGRP, 0, 10);
+    childOut(r != 0 && errno == EPERM ? "setpriority group denied"
+                                      : "setpriority group allowed");
+    r = setpriority(PRIO_PROCESS, 0, 10);
+    childOut(r == 0 ? "setpriority self ok" : "setpriority self failed");
+    CPU_ZERO(&cpus);
+    if (sched_getaffinity(0, sizeof(cpus), &cpus) == 0) {
+        errno = 0;
+        r = sched_setaffinity(parent, sizeof(cpus), &cpus);
+        childOut(r != 0 && errno == EPERM ? "affinity parent denied"
+                                          : "affinity parent allowed");
+        r = sched_setaffinity(0, sizeof(cpus), &cpus);
+        childOut(r == 0 ? "affinity self ok" : "affinity self failed");
+    }
+    childOut("seccomp done");
+#else
+    childOut("seccomp none");
+#endif
+    return BOT_HOST_CHILD_EXIT_OK;
+}
+
 /* The test modes; -1 when none was asked for. */
 static int runTestMode(void) {
     if (coTestAllocMb >= 0) return testAlloc(coTestAllocMb);
@@ -889,6 +1003,7 @@ static int runTestMode(void) {
         return testRelay(coTestRelayIp, coTestRelayPort);
     }
     if (coTestSalt) return testSalt();
+    if (coTestSeccomp) return testSeccomp();
     return -1;
 }
 

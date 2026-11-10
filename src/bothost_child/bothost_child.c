@@ -16,6 +16,17 @@
 
 #include <SDL3/SDL.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <process.h>
+#define childGetPid() ((unsigned)_getpid())
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#define childGetPid() ((unsigned)getpid())
+#endif
+
 #include "bothost_child.h"
 #include "machine_id.h"
 
@@ -391,13 +402,59 @@ bool botHostChildCopyWanted(const char *name, const char *exeName) {
     return n > 4 && SDL_strcasecmp(name + n - 4, ".dll") == 0;
 }
 
-static bool copyFile(const char *from, const char *to) {
+/* Sets a file's modify time (SDL_Time, ns since 1970). */
+static bool setModifyTime(const char *path, SDL_Time t) {
+#ifdef _WIN32
+    wchar_t wpath[1100];
+    HANDLE h;
+    ULARGE_INTEGER u;
+    FILETIME ft;
+    BOOL ok;
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath,
+                            (int)(sizeof(wpath) / sizeof(wpath[0]))) == 0) {
+        return false;
+    }
+    h = CreateFileW(wpath, FILE_WRITE_ATTRIBUTES,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    /* FILETIME: 100 ns since 1601. */
+    u.QuadPart = (ULONGLONG)(t / 100) + 116444736000000000ull;
+    ft.dwLowDateTime = u.LowPart;
+    ft.dwHighDateTime = u.HighPart;
+    ok = SetFileTime(h, NULL, NULL, &ft);
+    CloseHandle(h);
+    return ok != 0;
+#else
+    struct timespec ts[2];
+    ts[0].tv_sec = 0;
+    ts[0].tv_nsec = UTIME_OMIT;
+    ts[1].tv_sec = (time_t)(t / 1000000000);
+    ts[1].tv_nsec = (long)(t % 1000000000);
+    return utimensat(AT_FDCWD, path, ts, 0) == 0;
+#endif
+}
+
+/* True when the copy at to is the source file si describes: the same
+ * size and the same modify time (the copy takes the source's time). */
+static bool copyIsCurrent(const char *to, const SDL_PathInfo *si) {
+    SDL_PathInfo di;
+    return SDL_GetPathInfo(to, &di) && di.type == SDL_PATHTYPE_FILE &&
+           di.size == si->size && di.modify_time == si->modify_time;
+}
+
+/* Copies from to to through a temporary file of this process, then a
+ * rename, so no child of another game starts a half-written file. The
+ * copy takes the source's modify time. */
+static bool copyFile(const char *from, const char *to,
+                     const SDL_PathInfo *si) {
     SDL_IOStream *in = SDL_IOFromFile(from, "rb");
     SDL_IOStream *out;
-    char buf[65536];
+    char buf[65536], tmp[1100];
     bool ok = true;
     if (in == NULL) return false;
-    out = SDL_IOFromFile(to, "wb");
+    SDL_snprintf(tmp, sizeof(tmp), "%s.%u.tmp", to, childGetPid());
+    out = SDL_IOFromFile(tmp, "wb");
     if (out == NULL) {
         SDL_CloseIO(in);
         return false;
@@ -412,14 +469,88 @@ static bool copyFile(const char *from, const char *to) {
     }
     SDL_CloseIO(in);
     if (!SDL_CloseIO(out)) ok = false;
+    if (ok && !setModifyTime(tmp, si->modify_time)) ok = false;
+    if (ok && !SDL_RenamePath(tmp, to)) {
+        /* Another game may have put the same file there first (or runs
+         * the old one): that copy counts when it is current. */
+        ok = copyIsCurrent(to, si);
+    }
+    (void)SDL_RemovePath(tmp);
     return ok;
+}
+
+/* Removes path and, for a folder, all in it. */
+static bool removeTree(const char *path);
+
+typedef struct {
+    const char *base;
+    bool        ok;
+} RemoveTree;
+
+static SDL_EnumerationResult SDLCALL removeOne(void *ud, const char *dir,
+                                               const char *name) {
+    RemoveTree *rt = (RemoveTree *)ud;
+    char p[1100];
+    (void)dir;
+    if (SDL_strcmp(name, ".") == 0 || SDL_strcmp(name, "..") == 0) {
+        return SDL_ENUM_CONTINUE;
+    }
+    SDL_snprintf(p, sizeof(p), "%s/%s", rt->base, name);
+    if (!removeTree(p)) rt->ok = false;
+    return SDL_ENUM_CONTINUE;
+}
+
+static bool removeTree(const char *path) {
+    SDL_PathInfo pi;
+    RemoveTree rt;
+    if (!SDL_GetPathInfo(path, &pi)) return true;
+    rt.base = path;
+    rt.ok = true;
+    if (pi.type == SDL_PATHTYPE_DIRECTORY) {
+        (void)SDL_EnumerateDirectory(path, removeOne, &rt);
+    }
+    if (!SDL_RemovePath(path)) rt.ok = false;
+    return rt.ok;
+}
+
+typedef struct {
+    const char *src;
+    const char *dst;
+    bool        ok;
+} PruneTree;
+
+/* An entry of the copy with no source entry of the same name and kind is
+ * removed: a brain file taken out of the install leaves the copy too. */
+static SDL_EnumerationResult SDLCALL pruneOne(void *ud, const char *dir,
+                                              const char *name) {
+    PruneTree *pt = (PruneTree *)ud;
+    char from[1100], to[1100];
+    SDL_PathInfo si, di;
+    size_t n;
+    (void)dir;
+    if (SDL_strcmp(name, ".") == 0 || SDL_strcmp(name, "..") == 0) {
+        return SDL_ENUM_CONTINUE;
+    }
+    /* Another game's temporary file: not this copy's to remove. */
+    n = strlen(name);
+    if (n > 4 && SDL_strcmp(name + n - 4, ".tmp") == 0) {
+        return SDL_ENUM_CONTINUE;
+    }
+    SDL_snprintf(from, sizeof(from), "%s/%s", pt->src, name);
+    SDL_snprintf(to, sizeof(to), "%s/%s", pt->dst, name);
+    if (!SDL_GetPathInfo(to, &di)) return SDL_ENUM_CONTINUE;
+    if (SDL_GetPathInfo(from, &si) && si.type == di.type) {
+        return SDL_ENUM_CONTINUE;
+    }
+    if (!removeTree(to)) pt->ok = false;
+    return SDL_ENUM_CONTINUE;
 }
 
 static SDL_EnumerationResult SDLCALL copyOne(void *ud, const char *dir,
                                              const char *name) {
     CopyTree *ct = (CopyTree *)ud;
     char from[1024], to[1024];
-    SDL_PathInfo si, di;
+    SDL_PathInfo si;
     (void)dir;
     if (SDL_strcmp(name, ".") == 0 || SDL_strcmp(name, "..") == 0) {
         return SDL_ENUM_CONTINUE;
@@ -438,23 +569,33 @@ static SDL_EnumerationResult SDLCALL copyOne(void *ud, const char *dir,
     if (ct->exeName != NULL && !botHostChildCopyWanted(name, ct->exeName)) {
         return SDL_ENUM_CONTINUE;
     }
-    if (SDL_GetPathInfo(to, &di) && di.type == SDL_PATHTYPE_FILE &&
-        di.size == si.size && di.modify_time >= si.modify_time) {
-        return SDL_ENUM_CONTINUE;
-    }
-    if (!copyFile(from, to)) ct->ok = false;
+    /* Reused only when it is the same file: the same size and the same
+     * time (an installer may put back a file of the same size with an
+     * older time). */
+    if (copyIsCurrent(to, &si)) return SDL_ENUM_CONTINUE;
+    if (!copyFile(from, to, &si)) ct->ok = false;
     return SDL_ENUM_CONTINUE;
 }
 
 bool botHostChildCopyTree(const char *src, const char *dst, bool recurse) {
     CopyTree ct;
+    PruneTree pt;
+    SDL_PathInfo si;
     if (src == NULL || dst == NULL) return false;
+    if (!SDL_GetPathInfo(src, &si) || si.type != SDL_PATHTYPE_DIRECTORY) {
+        return false;
+    }
     if (!SDL_CreateDirectory(dst)) return false;
+    /* First what the source no longer has, then the copy. */
+    pt.src = src;
+    pt.dst = dst;
+    pt.ok = true;
+    (void)SDL_EnumerateDirectory(dst, pruneOne, &pt);
     ct.src = src;
     ct.dst = dst;
     ct.recurse = recurse;
     ct.exeName = NULL;
-    ct.ok = true;
+    ct.ok = pt.ok;
     if (!SDL_EnumerateDirectory(src, copyOne, &ct)) return false;
     return ct.ok;
 }

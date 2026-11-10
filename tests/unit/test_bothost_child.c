@@ -32,7 +32,15 @@
  *      -allow-unsafe-brains (two layers: the Lua sandbox inside the OS
  *      sandbox).
  *  12. bothost_child_copy_tree: the copy the game runs when the program's
- *      folder keeps its ACL copies new and changed files only.
+ *      folder keeps its ACL copies new and changed files (a change of the
+ *      same size too), removes what the source no longer has, and leaves
+ *      no temporary file.
+ *  16. bothost_child_seccomp (Linux): under the seccomp filter the child
+ *      starts threads and a LuaJIT state; fork, a clone with no
+ *      CLONE_THREAD and the pid calls on the game are refused; the same
+ *      calls on itself work. With no Landlock it uses the filter alone
+ *      (botHostChildTestSeccompOnly). The control, with no filter, shows
+ *      the same calls are allowed there.
  * Tests 7 to 10 need the sandbox: where this computer has none (Linux with
  * no Landlock, other systems) they pass with a note. WINBOLO_TEST_TMP names
  * the folder for their files (default: TEMP, or /tmp).
@@ -972,6 +980,21 @@ static bool fileIs(const char *path, const char *text) {
     return strcmp(buf, text) == 0;
 }
 
+static SDL_EnumerationResult SDLCALL countTmpOne(void *ud, const char *dir,
+                                                 const char *name) {
+    size_t n = strlen(name);
+    (void)dir;
+    if (n > 4 && strcmp(name + n - 4, ".tmp") == 0) (*(int *)ud)++;
+    return SDL_ENUM_CONTINUE;
+}
+
+/* The .tmp files in a folder (not in its folders). */
+static int countTmp(const char *dir) {
+    int n = 0;
+    (void)SDL_EnumerateDirectory(dir, countTmpOne, &n);
+    return n;
+}
+
 int run_bothost_child_copy_tree(void) {
     char root[1024], src[1100], sub[1100], dst[1100], path[1200];
     SDL_PathInfo pi;
@@ -1001,6 +1024,31 @@ int run_bothost_child_copy_tree(void) {
     UT_ASSERT(botHostChildCopyTree(src, dst, false));
     SDL_snprintf(path, sizeof(path), "%s/a.dll", dst);
     UT_ASSERT(fileIs(path, "three"));
+    UT_ASSERT(!fileIs(path, "thr3e"));
+    /* The same size, other bytes and another time: copied again. The
+     * file systems here keep the time to 1 s or better. */
+    SDL_Delay(1100);
+    SDL_snprintf(path, sizeof(path), "%s/a.dll", src);
+    UT_ASSERT(writeFile(path, "thr3e"));
+    UT_ASSERT(botHostChildCopyTree(src, dst, true));
+    SDL_snprintf(path, sizeof(path), "%s/a.dll", dst);
+    UT_ASSERT(fileIs(path, "thr3e"));
+    /* A file and a folder taken out of the source leave the copy. */
+    SDL_snprintf(path, sizeof(path), "%s/init.lua", sub);
+    UT_ASSERT(SDL_RemovePath(path));
+    SDL_snprintf(path, sizeof(path), "%s/gone", sub);
+    UT_ASSERT(SDL_CreateDirectory(path));
+    UT_ASSERT(botHostChildCopyTree(src, dst, true));
+    SDL_snprintf(path, sizeof(path), "%s/brains/gone", dst);
+    UT_ASSERT(SDL_GetPathInfo(path, &pi));
+    SDL_snprintf(path, sizeof(path), "%s/gone", sub);
+    UT_ASSERT(SDL_RemovePath(path));
+    UT_ASSERT(botHostChildCopyTree(src, dst, true));
+    SDL_snprintf(path, sizeof(path), "%s/brains/init.lua", dst);
+    UT_ASSERT(!SDL_GetPathInfo(path, &pi));
+    SDL_snprintf(path, sizeof(path), "%s/brains/gone", dst);
+    UT_ASSERT(!SDL_GetPathInfo(path, &pi));
+    UT_ASSERT(countTmp(dst) == 0);
     /* A missing source is refused. */
     SDL_snprintf(path, sizeof(path), "%s/none", root);
     UT_ASSERT(!botHostChildCopyTree(path, dst, true));
@@ -1078,6 +1126,83 @@ int run_bothost_child_copy_wanted(void) {
     UT_ASSERT(!SDL_GetPathInfo(path, &pi));
     removeTestDir(root);
     return 0;
+}
+
+static bool hasLine(const char *out, const char *line) {
+    return strstr(out, line) != NULL;
+}
+
+int run_bothost_child_seccomp(void) {
+#ifndef __linux__
+    printf("    (the seccomp filter is Linux only: nothing to test here)\n");
+    return 0;
+#else
+    char exe[1024], exeDir[1024], root[1024], log[1200], out[2048];
+    const char *a[] = { "--test-seccomp", NULL };
+    static const char *const denied[] = {
+        "fork denied", "clone denied", "kill parent denied",
+        "prlimit parent denied", "setpriority parent denied",
+        "setpriority group denied", "affinity parent denied",
+    };
+    static const char *const allowed[] = {
+        "fork allowed", "clone allowed", "kill parent allowed",
+        "prlimit parent allowed", "setpriority parent allowed",
+        "setpriority group allowed", "affinity parent allowed",
+    };
+    static const char *const works[] = {
+        "threads ok 4", "lua ok", "prlimit self ok", "setpriority self ok",
+        "affinity self ok", "seccomp done",
+    };
+    BotHostChildSandbox sb;
+    int code = 99;
+    size_t i;
+    bool filterOnly = botHostChildLandlockAbi() < 1;
+
+    UT_ASSERT_MSG(childExePath(exe, sizeof(exe)),
+                  "no WinBoloBotHost: build it first");
+    exeDirOf(exe, exeDir, sizeof(exeDir));
+    UT_ASSERT(makeTestDir("seccomp", root, sizeof(root)));
+    SDL_snprintf(log, sizeof(log), "%s/child.log", root);
+    memset(&sb, 0, sizeof(sb));
+    sb.on = true;
+    (void)botHostChildSandboxAdd(sb.readDirs, &sb.readDirCount, exeDir);
+    (void)botHostChildSandboxAdd(sb.writeDirs, &sb.writeDirCount, root);
+    if (filterOnly) {
+        printf("    (no Landlock here: the seccomp filter alone)\n");
+        botHostChildTestSeccompOnly(true);
+    }
+    {
+        bool ran = runTest(exe, a, &sb, log, out, sizeof(out), &code);
+        botHostChildTestSeccompOnly(false);
+        UT_ASSERT_MSG(ran, "the child did not end");
+    }
+    printf("    filter on: exit %d\n%s", code, out);
+    UT_ASSERT_MSG(code == 0, "exit %d [%s]", code, out);
+    for (i = 0; i < sizeof(works) / sizeof(works[0]); i++) {
+        UT_ASSERT_MSG(hasLine(out, works[i]), "no \"%s\" [%s]", works[i],
+                      out);
+    }
+    for (i = 0; i < sizeof(denied) / sizeof(denied[0]); i++) {
+        UT_ASSERT_MSG(hasLine(out, denied[i]), "no \"%s\" [%s]",
+                      denied[i], out);
+    }
+
+    /* The control: no filter, the same calls work. */
+    UT_ASSERT(runTest(exe, a, NULL, log, out, sizeof(out), &code));
+    printf("    control (no filter): exit %d\n%s", code, out);
+    UT_ASSERT_MSG(code == 0, "control: exit %d [%s]", code, out);
+    for (i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
+        /* kill(parent, 0) and the others work on a process of the same
+         * user; prlimit, setpriority and affinity may still fail for
+         * other reasons, so only fork, clone and kill must work. */
+        if (i < 3) {
+            UT_ASSERT_MSG(hasLine(out, allowed[i]), "control: no \"%s\" [%s]",
+                          allowed[i], out);
+        }
+    }
+    removeTestDir(root);
+    return 0;
+#endif
 }
 
 /* The sandboxed child's environment: the system's names, the locale and

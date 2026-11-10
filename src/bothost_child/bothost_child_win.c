@@ -217,6 +217,8 @@ int botHostChildLandlockAbi(void) {
     return -1;
 }
 
+void botHostChildTestSeccompOnly(bool on) { (void)on; }
+
 bool botHostChildSandboxPrepare(const BotHostChildSandbox *sb,
                                 unsigned *readFailed, char *why,
                                 size_t whySize) {

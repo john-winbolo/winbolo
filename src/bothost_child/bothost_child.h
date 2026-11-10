@@ -278,6 +278,10 @@ bool botHostChildSandboxAvailable(char *why, size_t whySize);
 /* The Landlock ABI of this kernel (Linux): 0 when there is none, -1 on
  * other systems. */
 int botHostChildLandlockAbi(void);
+/* Unit tests only: on Linux with no Landlock, a sandbox request gets the
+ * seccomp filter alone (no file sandbox), so a kernel before 5.13 can test
+ * the filter. The game never calls it. Elsewhere it does nothing. */
+void botHostChildTestSeccompOnly(bool on);
 
 /* Windows: makes the container profile and grants its SID read on each
  * readDir and readFile and full access on each writeDir. A readDir whose
@@ -290,12 +294,16 @@ bool botHostChildSandboxPrepare(const BotHostChildSandbox *sb,
                                 size_t whySize);
 /* Windows: the container profile's name for this install. */
 void botHostChildContainerName(char *out, size_t outSize);
-/* Copies the files of src into dst (only files that are new, of another
- * size or newer), into folders too when recurse. False when a file could
- * not be copied. */
+/* Copies the files of src into dst, into folders too when recurse. A copy
+ * is kept only when its size and modify time equal the source's (each
+ * copy takes the source's time); an entry of dst that src does not have
+ * is removed. Each file goes through a temporary file of this process and
+ * a rename, so two games can copy at once. False when src is not a folder
+ * or a file could not be copied. */
 bool botHostChildCopyTree(const char *src, const char *dst, bool recurse);
 /* The same for the top folder of the program only: exeName and the DLLs
- * (botHostChildCopyWanted), no other file and no folder. */
+ * (botHostChildCopyWanted), no other file and no folder, and nothing is
+ * removed (the run folder also holds the brains copy). */
 bool botHostChildCopyProgramFiles(const char *src, const char *dst,
                                   const char *exeName);
 /* True for a file of the program's folder that the child needs: exeName
