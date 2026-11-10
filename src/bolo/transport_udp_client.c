@@ -5481,6 +5481,11 @@ void transportUdpClientReportMapChecksum(Transport *t, bool matched) {
         (unsigned)c->activeResyncGen, (unsigned)c->resyncAttempts);
 }
 
+uint32_t transportUdpClientGetNewestSnapshotTick(Transport *t) {
+    if (t == NULL || t->ctx == NULL) return 0;
+    return ((TransportUdpClientCtx *)t->ctx)->lastSnapshotServerTick;
+}
+
 uint32_t transportUdpClientGetMapInvalidateCount(Transport *t) {
     if (t == NULL || t->ctx == NULL) return 0;
     return ((TransportUdpClientCtx *)t->ctx)->mapInvalidateCount;

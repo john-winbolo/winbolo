@@ -82,6 +82,7 @@
 #include "cpu_speed_store.h"
 #include "cpu_speed_capacity.h"
 #include "server_bot_capacity.h" /* the host bot capacity - -botcapacity */
+#include "ds_bot_child.h"   /* the bots in a sandboxed child Bot Host */
 #include "brain_capacity.h"
 #include "brain_list_internal.h" /* brainListScan - -cputest's brain answers */
 
@@ -1067,6 +1068,15 @@ void printArgs() {
   fprintf(stderr, "                and it locks that host's lobby slot box. Give each host once; several flags are allowed.\n");
   fprintf(stderr, "                The game bot limit (lobby Add Bot) is the server's bot slots plus each Bot Host's;\n");
   fprintf(stderr, "                a host on the same computer as the server or another counted host counts 0.\n");
+  fprintf(stderr, "-bots-in-process - run this server's bots in its own process, as before. By default they run in\n");
+  fprintf(stderr, "                a sandboxed child WinBoloBotHost next to WinBoloDS (no network, no files past its folder\n");
+  fprintf(stderr, "                and its cache). The server falls back to its own process when the child cannot run.\n");
+  fprintf(stderr, "                -brain-debug and -allow-unsafe-brains also keep the bots in the server's process.\n");
+  fprintf(stderr, "-bothost-child-wait-ms <ms> - each tick the server waits at most ms for the moves of its child's\n");
+  fprintf(stderr, "                bots; a later move takes the late-input rule. 0 = no wait (default %d)\n",
+          TRANSPORT_UDP_LOCKSTEP_WAIT_MS_DEFAULT);
+  fprintf(stderr, "-bothost-child-cache <dir> - the child's cache folder (default bothost_ds_cache in the WinBolo\n");
+  fprintf(stderr, "                per-user folder); its log is bothost-ds-child.log in it\n");
   fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
   fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
@@ -4036,6 +4046,46 @@ int main(int argc, char **argv) {
 #endif
   }
 
+  /* The server's bots in a sandboxed child Bot Host (ds_bot_child.h), on
+   * a thread of its own. */
+  {
+    DsBotChildConfig dcfg;
+    int a;
+    memset(&dcfg, 0, sizeof(dcfg));
+    dcfg.inProcess = argExist(argc, argv, "bots-in-process") == TRUE;
+    dcfg.brainDebug = argExist(argc, argv, "brain-debug") == TRUE ||
+                      argExist(argc, argv, "-brain-debug") == TRUE ||
+                      argExist(argc, argv, "braindebug") == TRUE ||
+                      argExist(argc, argv, "-braindebug") == TRUE;
+    dcfg.allowUnsafe = argExist(argc, argv, "allow-unsafe-brains") == TRUE ||
+                       argExist(argc, argv, "-allow-unsafe-brains") == TRUE ||
+                       argExist(argc, argv, "brain-profile-log") == TRUE ||
+                       argExist(argc, argv, "-brain-profile-log") == TRUE ||
+                       argExist(argc, argv, "profile-log") == TRUE ||
+                       argExist(argc, argv, "-profile-log") == TRUE;
+    dcfg.brainPath = brainPath;
+    a = findArg(argc, argv, "threads");
+    if (a != ARG_NOT_FOUND) dcfg.threads = atoi((char *)argv[a]);
+    a = findArg(argc, argv, "brain-lua-seed");
+    if (a != ARG_NOT_FOUND) {
+      dcfg.haveLuaSeed = true;
+      dcfg.luaSeed = strtol((char *)argv[a], NULL, 0);
+    }
+    dcfg.noBudgetKill = argExist(argc, argv, "brain-no-budget-kill") == TRUE;
+    a = findArg(argc, argv, "brain-tier");
+    if (a != ARG_NOT_FOUND) dcfg.brainTier = atoi((char *)argv[a]);
+    dcfg.slots = botCapacityOverride > 0 ? botCapacityOverride : 0;
+    a = findArg(argc, argv, "bothost-child-cache");
+    if (a != ARG_NOT_FOUND) dcfg.cacheDir = (char *)argv[a];
+    a = findArg(argc, argv, "bothost-child-wait-ms");
+    if (a != ARG_NOT_FOUND) {
+      transportUdpServerSetLockstepWaitMs(atoi((char *)argv[a]));
+    }
+    dcfg.serverAddr = useAddr;
+    dcfg.serverPort = port;
+    dsBotChildStart(serverSim, &dcfg);
+  }
+
   {
     CmdStdin *cmdStream = NULL;
     int cmdArg = findArg(argc, argv, "cmd-stdin");
@@ -4069,6 +4119,8 @@ int main(int argc, char **argv) {
    * (or can be) running, so the brain-think workers are provably idle before
    * anything they touch is freed. Then tear the worker pool down before the
    * lua_States it dispatches into are closed (defence in depth). */
+  /* The child first: it tells the server it goes, while the tick runs. */
+  dsBotChildStop();
   serverQuiesceGameTimer();
   serverBotCapacityShutdown();
 

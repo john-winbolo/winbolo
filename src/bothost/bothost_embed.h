@@ -110,6 +110,20 @@ void botHostInprocSetRecord(bool on);
  * WINBOLO_BOTHOST_OFFICIAL_ONLY does (the child's --official-only). It can
  * only add the rule. Before the host starts. */
 void botHostInprocSetOfficialOnly(bool on);
+/* on (--ds-child): the dedicated server's own child. It joins with the
+ * server's secret (JOIN_BOT_HOST_DS_CHILD_MARK; the ticket bytes), takes
+ * the server's brain code with no question, and has no player's limits
+ * (the init token list, the full-map rule). Before the host starts. */
+void botHostInprocSetDsChild(bool on);
+/* on (--lockstep): the brains think once for each new snapshot from the
+ * server, so the server can wait for their moves each tick. Off: a think
+ * every 20 ms by the clock. Before the host starts. */
+void botHostInprocSetLockstep(bool on);
+/* The server's own brain options, passed on to its child: the brain
+ * threads (0: the default), the Lua seed, no budget kill (the 1000 ms
+ * budget) and the tier pin (0: none). Before the brain threads start. */
+void botHostInprocSetBrainOptions(int threads, bool haveLuaSeed, long luaSeed,
+                                  bool noBudgetKill, int brainTier);
 
 /* ---- The clients' side (bothost_embed_service.c) ---------------------- */
 

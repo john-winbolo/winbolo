@@ -240,22 +240,16 @@ static void srvDrainImpair(ServerSim *sim) {
 #endif
 }
 
-/* Receive all pending packets from clients (polled fallback) */
-void transportUdpServerRecv(ServerSim *sim) {
+/* The packets alone, with no new tick: the socket (polled fallback) or the
+ * recv thread's queue. transportUdpServerRecv and
+ * transportUdpServerDrainRecvQueue start a tick and then call these; the
+ * lockstep wait (transportUdpServerLockstepWait) calls them inside a tick,
+ * so the tick count, the cooldowns and the per-tick input count stay as
+ * they are. */
+static void srvRecvPackets(ServerSim *sim) {
     uint8_t buf[UDP_MAX_PAYLOAD];
     struct sockaddr_in fromAddr;
     int len;
-    int c;
-
-    if (!udpServer.running) return;
-
-    udpServerTickPerClientCooldowns();
-
-    for (c = 0; c < MAX_TANKS; c++) {
-        udpServer.clients[c].inputsThisTick = 0;
-    }
-
-    udpServer.tickCount++;
 
     while ((len = udpRecvFrom(udpServer.sock, buf, sizeof(buf), &fromAddr)) > 0) {
         if (netImpairEnabled(&srvImpairIn)) {
@@ -268,20 +262,8 @@ void transportUdpServerRecv(ServerSim *sim) {
     srvDrainImpair(sim);
 }
 
-/* Drain the recv thread's packet queue (called from timer callback) */
-void transportUdpServerDrainRecvQueue(ServerSim *sim) {
-    int c;
+static void srvDrainQueuePackets(ServerSim *sim) {
     int head, tail;
-
-    if (!udpServer.running) return;
-
-    udpServerTickPerClientCooldowns();
-
-    for (c = 0; c < MAX_TANKS; c++) {
-        udpServer.clients[c].inputsThisTick = 0;
-    }
-
-    udpServer.tickCount++;
 
     tail = SDL_GetAtomicInt(&recvQueueTail);
     head = SDL_GetAtomicInt(&recvQueueHead);
@@ -300,6 +282,49 @@ void transportUdpServerDrainRecvQueue(ServerSim *sim) {
         head = SDL_GetAtomicInt(&recvQueueHead);
     }
     srvDrainImpair(sim);
+}
+
+void transportUdpServerRecvPacketsOnly(ServerSim *sim) {
+    if (!udpServer.running) return;
+    if (recvThread != NULL) {
+        srvDrainQueuePackets(sim);
+    } else {
+        srvRecvPackets(sim);
+    }
+}
+
+/* Receive all pending packets from clients (polled fallback) */
+void transportUdpServerRecv(ServerSim *sim) {
+    int c;
+
+    if (!udpServer.running) return;
+
+    udpServerTickPerClientCooldowns();
+
+    for (c = 0; c < MAX_TANKS; c++) {
+        udpServer.clients[c].inputsThisTick = 0;
+    }
+
+    udpServer.tickCount++;
+
+    srvRecvPackets(sim);
+}
+
+/* Drain the recv thread's packet queue (called from timer callback) */
+void transportUdpServerDrainRecvQueue(ServerSim *sim) {
+    int c;
+
+    if (!udpServer.running) return;
+
+    udpServerTickPerClientCooldowns();
+
+    for (c = 0; c < MAX_TANKS; c++) {
+        udpServer.clients[c].inputsThisTick = 0;
+    }
+
+    udpServer.tickCount++;
+
+    srvDrainQueuePackets(sim);
 }
 
 /* Returns true if a dedicated recv thread is running */

@@ -2842,6 +2842,11 @@ set(SERVER_SOURCES
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
     src/third_party/tweetnacl/tweetnacl.c
+    # The server's bots in a sandboxed child Bot Host (ds_bot_child.h).
+    src/server/ds_bot_child.c
+    src/bothost_child/bothost_child.c src/bothost_child/bothost_child_client.c
+    src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
+    src/bothost_child/bothost_child_relay.c
 )
 
 
@@ -2868,7 +2873,13 @@ bolo_apply_include_rules(WinBoloDS runtime_only)
 bolo_grant_internal_source_access(WinBoloDS
     src/bolo/transport_udp_client.c
     src/server/servermain.c
-    src/server/server_frontend_stubs.c)
+    src/server/server_frontend_stubs.c
+    src/server/ds_bot_child.c)
+if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
+    # The child's hello says the same (botHostChildBuildFullMap).
+    target_compile_definitions(WinBoloDS PRIVATE
+        WINBOLO_BOTHOST_ALLOW_FULL_MAP=1)
+endif()
 
 if(WIN32)
     target_sources(WinBoloDS PRIVATE
@@ -3793,6 +3804,11 @@ if(TARGET WinBoloBotHost AND TARGET WinBolo)
 endif()
 if(TARGET WinBoloBotHost AND TARGET WinBoloHeadless)
     add_dependencies(WinBoloHeadless WinBoloBotHost)
+endif()
+# WinBoloDS runs its own bots in a WinBoloBotHost child next to it
+# (src/server/ds_bot_child.h).
+if(TARGET WinBoloBotHost AND TARGET WinBoloDS)
+    add_dependencies(WinBoloDS WinBoloBotHost)
 endif()
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND TARGET WinBolo
    AND TARGET WinBoloBotHost)
@@ -6357,6 +6373,8 @@ set(_unit_test_names
     bothost_child_fail_rule
     bothost_child_copy_wanted
     bothost_child_env_keep
+    bothost_ds_child_where
+    bot_host_lockstep
     bot_host_link_announce_codec
     bot_host_link_addr_list
     bot_host_link_allow

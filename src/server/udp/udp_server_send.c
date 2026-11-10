@@ -71,6 +71,8 @@ void serverHandleInput(const uint8_t *buf, int len,
     uint8_t inputCount;
     uint64_t connId = 0;
     bool rehome = false;
+    uint32_t packetNewest = 0;
+    bool gotInput = false;
     int i;
 
     /* Match the session by connId first so a client whose NAT mapping rebound
@@ -125,6 +127,9 @@ void serverHandleInput(const uint8_t *buf, int len,
         unpackInputPacket(buf + pos, &pkt);
         pos += INPUT_PACKET_WIRE_SIZE;
 
+        if (!gotInput || pkt.tick > packetNewest) packetNewest = pkt.tick;
+        gotInput = true;
+
         /* Override playerNum to prevent spoofing */
         pkt.playerNum = (uint8_t)clientIdx;
 
@@ -150,6 +155,18 @@ void serverHandleInput(const uint8_t *buf, int len,
             serverSimApplyInput(sim, &pkt);
             udpServer.clients[clientIdx].inputsThisTick++;
         }
+    }
+
+    /* The lockstep wait for the server's own Bot Host child
+     * (transportUdpServerLockstepWait) counts each packet whose newest
+     * input tick differs from the packet before: a new move, not a resend.
+     * "Differs", not "is newer", so a new round's lower ticks count too. */
+    if (gotInput &&
+        (!udpServer.clients[clientIdx].inputNewestHave ||
+         packetNewest != udpServer.clients[clientIdx].inputNewestTick)) {
+        udpServer.clients[clientIdx].inputNewestTick = packetNewest;
+        udpServer.clients[clientIdx].inputNewestHave = true;
+        udpServer.clients[clientIdx].inputNewCount++;
     }
 
     /* Anything past the inputs is the parallel channel layer's trailer. */

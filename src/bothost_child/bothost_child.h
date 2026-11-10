@@ -102,8 +102,9 @@ extern "C" {
 #endif
 
 /* The line protocol's version, in the child's hello. 2: fullmap= in the
- * hello, the sandbox lines and the relay. */
-#define BOT_HOST_CHILD_PROTOCOL 2
+ * hello, the sandbox lines and the relay. 3: the dedicated server's child
+ * (--ds-child, --lockstep and the brain options). */
+#define BOT_HOST_CHILD_PROTOCOL 3
 
 /* The limits' defaults. 0 turns a limit off. Values to confirm. */
 #define BOT_HOST_CHILD_DEFAULT_MEM_MB   4096
@@ -150,6 +151,16 @@ typedef struct {
     double      recordMinFreeGb;  /* 0: the default */
     bool        officialOnly;     /* the game's WINBOLO_BOTHOST_OFFICIAL_ONLY */
     const char *cpuSpeedFile;     /* the stored CPU speed result; NULL: none */
+    /* The dedicated server's own child (ds_bot_child.h); all off for a
+     * player's child. */
+    bool        dsChild;          /* --ds-child: join with the server's
+                                   * secret (JOIN_BOT_HOST_DS_CHILD_MARK) */
+    bool        lockstep;         /* --lockstep: think once per snapshot */
+    int         threads;          /* --threads N; 0: the default */
+    bool        haveLuaSeed;      /* --brain-lua-seed luaSeed */
+    long        luaSeed;
+    bool        noBudgetKill;     /* --brain-no-budget-kill */
+    int         brainTier;        /* --brain-tier N; 0: none */
 } BotHostChildParams;
 
 /* Builds the child's argv (argv[0] = exe, NULL at the end) with its strings
@@ -406,6 +417,33 @@ typedef enum {
  * BOT_HOST_CHILD_START_INPROC, but NO_BOTS after the restart limit. */
 BotHostChildStart botHostChildFailRule(BotHostChildFail f, bool sandbox);
 
+/* ---- The dedicated server's choice (ds_bot_child.c) ------------------
+ *
+ * WinBoloDS runs its own bots in a sandboxed child too, by default. It
+ * differs from a player's game in one rule: when the child cannot run,
+ * the server runs its bots in its own process (as before this child
+ * existed), because the server's operator chose the brains. A player's
+ * game runs no bots then (botHostChildFailRule). */
+typedef enum {
+    BOT_HOST_DS_CHILD = 0, /* start (or keep) the child */
+    BOT_HOST_DS_WAIT,      /* the sandbox's folders are made ready: later */
+    BOT_HOST_DS_INPROC     /* the bots run in the server's process */
+} BotHostDsWhere;
+
+typedef struct {
+    bool              inProcessAsked; /* -bots-in-process */
+    bool              brainDebug;     /* -brain-debug (records the brains) */
+    bool              allowUnsafe;    /* -allow-unsafe-brains */
+    bool              restartLimit;   /* it ended by itself too often */
+    bool              tried;          /* start is the last start's answer */
+    BotHostChildStart start;
+} BotHostDsChildIn;
+
+/* Where the server's bots run; *why (never NULL for INPROC) says why
+ * they run in the server's process. */
+BotHostDsWhere botHostDsChildWhere(const BotHostDsChildIn *in,
+                                   const char **why);
+
 /* Starts the child for one join; sandbox: in the file sandbox. */
 BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
                                           const uint8_t *ticket,
@@ -438,6 +476,9 @@ typedef enum {
                                      * sandbox: no bots for this game */
 } BotHostChildEnd;
 BotHostChildEnd botHostChildClientEnd(void);
+/* For the server's own child (dsChild): why the last start failed, or ""
+ * when it did not fail. The server prints it in its one line. */
+const char *botHostChildClientFailWhy(void);
 /* The running child said its hello. */
 bool botHostChildClientHello(void);
 /* The last child started was in the file sandbox. */

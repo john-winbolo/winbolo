@@ -95,6 +95,13 @@ int botHostChildBuildArgs(const BotHostChildParams *p, const char *exe,
         argAdd(&b, "--cpu-speed-file");
         argAdd(&b, p->cpuSpeedFile);
     }
+    /* The dedicated server's own child (ds_bot_child.h). */
+    if (p->dsChild) argAdd(&b, "--ds-child");
+    if (p->lockstep) argAdd(&b, "--lockstep");
+    if (p->threads > 0) argAddInt(&b, "--threads", (long)p->threads);
+    if (p->haveLuaSeed) argAddInt(&b, "--brain-lua-seed", p->luaSeed);
+    if (p->noBudgetKill) argAdd(&b, "--brain-no-budget-kill");
+    if (p->brainTier > 0) argAddInt(&b, "--brain-tier", (long)p->brainTier);
     if (!b.ok) return -1;
     argv[b.argc] = NULL;
     return b.argc;
@@ -506,4 +513,44 @@ bool botHostChildEnvKeep(const char *entry) {
     if (n > 3 && SDL_strncasecmp(entry, "LC_", 3) == 0) return true;
     if (n > 8 && SDL_strncasecmp(entry, "WINBOLO_", 8) == 0) return true;
     return false;
+}
+
+BotHostDsWhere botHostDsChildWhere(const BotHostDsChildIn *in,
+                                   const char **why) {
+    const char *w = NULL;
+    BotHostDsWhere where = BOT_HOST_DS_CHILD;
+    if (in == NULL) {
+        w = "no settings";
+        where = BOT_HOST_DS_INPROC;
+    } else if (in->inProcessAsked) {
+        w = "-bots-in-process";
+        where = BOT_HOST_DS_INPROC;
+    } else if (in->brainDebug) {
+        w = "-brain-debug records the brains in the server's process";
+        where = BOT_HOST_DS_INPROC;
+    } else if (in->allowUnsafe) {
+        w = "-allow-unsafe-brains: the child runs its brains only in the "
+            "Lua sandbox";
+        where = BOT_HOST_DS_INPROC;
+    } else if (in->restartLimit) {
+        w = "the child ended by itself too many times";
+        where = BOT_HOST_DS_INPROC;
+    } else if (in->tried) {
+        switch (in->start) {
+        case BOT_HOST_CHILD_STARTED:
+            where = BOT_HOST_DS_CHILD;
+            break;
+        case BOT_HOST_CHILD_START_WAIT:
+            where = BOT_HOST_DS_WAIT;
+            break;
+        case BOT_HOST_CHILD_START_INPROC:
+        case BOT_HOST_CHILD_START_NO_BOTS:
+        default:
+            w = "the child or its sandbox cannot start";
+            where = BOT_HOST_DS_INPROC;
+            break;
+        }
+    }
+    if (why != NULL) *why = w;
+    return where;
 }

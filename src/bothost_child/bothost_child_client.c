@@ -65,6 +65,10 @@ static uint32_t           childCpuSentMs;
 static uint32_t           childStartMs;
 static int                childSaltLines;
 static bool               childLastSandboxed;
+/* The dedicated server's own child (BotHostChildParams.dsChild): a
+ * failure line says the server runs its bots itself, not "no bots". */
+static bool               childForServer;
+static char               childFailWhy[256];
 
 bool botHostChildFindExe(char *out, size_t outSize) {
 #ifdef _WIN32
@@ -269,7 +273,12 @@ static void childSandboxPaths(const BotHostChildParams *p, const char *exe,
 static BotHostChildStart childFail(BotHostChildFail f, bool sandbox,
                                    const char *why) {
     BotHostChildStart how = botHostChildFailRule(f, sandbox);
-    if (how == BOT_HOST_CHILD_START_NO_BOTS) {
+    if (childForServer) {
+        /* No line here: the server's one line (ds_bot_child.c) gives this
+         * why and what it does. */
+        SDL_strlcpy(childFailWhy, why != NULL ? why : "",
+                    sizeof(childFailWhy));
+    } else if (how == BOT_HOST_CHILD_START_NO_BOTS) {
         CHILD_EVENT("[bothost] the Bot Host child cannot run in its sandbox "
                     "(%s): no bots from this computer in this game", why);
     } else {
@@ -471,6 +480,8 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
 
     if (childProc != NULL) botHostChildClientStop(true);
     childReset();
+    childForServer = p->dsChild;
+    childFailWhy[0] = '\0';
     if (!botHostChildFindExe(exe, sizeof(exe))) {
         return childFail(BOT_HOST_CHILD_FAIL_NO_EXE, sandbox,
                          "no WinBoloBotHost next to this program");
@@ -715,6 +726,10 @@ void botHostChildClientConsent(bool yes) {
     (void)botHostChildWriteLine(childProc, yes ? "consent 1" : "consent 0");
     /* The question is answered: no prompt until the child asks again. */
     childStatus.consentAsking = false;
+}
+
+const char *botHostChildClientFailWhy(void) {
+    return childFailWhy;
 }
 
 BotHostChildEnd botHostChildClientEnd(void) {

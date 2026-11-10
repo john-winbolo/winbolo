@@ -688,6 +688,10 @@ bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
  * new one lands — so an observer polling clientSimGetServerMapData for NULL
  * can step over the whole window and see nothing. */
 uint32_t     clientSimGetMapInvalidateCount(const ClientSim *cs);
+/* The serverTick of the newest snapshot the UDP transport took (0: none,
+ * or not UDP). It moves as soon as a snapshot comes, before the sim syncs
+ * from it; the Bot Host's lockstep (--lockstep) waits on it. */
+uint32_t     clientSimGetNewestSnapshotTick(const ClientSim *cs);
 /* Map-download progress as 0..100. Returns 100 for the local transport
  * (no download needed) and 0 when no transport is bound. UDP path reads
  * mapDownloadReceived/Total from the transport. */

@@ -191,6 +191,11 @@ static SDL_AtomicInt embedConsent;
  * client may record its bots' brains for a -brain-debug server. Off by
  * default. Set before the host starts (botHostEmbedSetRecord). */
 static bool embedRecord;
+/* --ds-child (botHostInprocSetDsChild): the dedicated server's own child.
+ * --lockstep (botHostInprocSetLockstep): a think for each new snapshot.
+ * Both set before the host starts; false in WinBoloBotHost itself. */
+static bool embedDsChild;
+static bool embedLockstep;
 
 #ifdef WINBOLO_BOTHOST_EMBED
 /* The server is on this computer (CTRL_BOT_HOST_SAME_SERVER): the host
@@ -301,6 +306,10 @@ typedef struct {
     /* Pings asked for during the think, sent after it (CMD_PING). */
     ClientCommand pings[BOT_PENDING_CMD_MAX];
     int           pingCount;
+
+    /* --lockstep: the newest snapshot's serverTick when the brains last
+     * thought. */
+    uint32_t    lockTick;
 } HostSeat;
 
 /* The pool: one entry per slot, whichever server holds it. */
@@ -606,8 +615,10 @@ static void ctlSendJoin(HostServer *sv) {
     packU16(buf + pos, optListenPort);
     pos += 2;
     if (HOST_EMBED) {
-        /* The player's own host: its ticket stands in for the key. */
-        buf[pos++] = JOIN_BOT_HOST_PLAYER_MARK;
+        /* The player's own host: its ticket stands in for the key. The
+         * server's own child sends the server's secret the same way. */
+        buf[pos++] = embedDsChild ? JOIN_BOT_HOST_DS_CHILD_MARK
+                                  : JOIN_BOT_HOST_PLAYER_MARK;
         buf[pos++] = embedPlayer;
         memcpy(buf + pos, embedTicket, BOT_HOST_TICKET_LEN);
         pos += BOT_HOST_TICKET_LEN;
@@ -1765,7 +1776,8 @@ static void seatBuildBrain(HostSeat *hs) {
         hs->buildFailed = true;
         return;
     }
-    if (HOST_EMBED && !HOST_ALLOW_FULL_MAP && (aiType)hs->ai != aiYes) {
+    if (HOST_EMBED && !embedDsChild && !HOST_ALLOW_FULL_MAP &&
+        (aiType)hs->ai != aiYes) {
         /* Built with WINBOLO_BOTHOST_ALLOW_FULL_MAP OFF: a bot that sees
          * the whole map never runs on a player's computer, because the
          * player could read what it sees. */
@@ -1774,7 +1786,7 @@ static void seatBuildBrain(HostSeat *hs) {
         hs->buildFailed = true;
         return;
     }
-    if (HOST_EMBED && sync->installOnly &&
+    if (HOST_EMBED && !embedDsChild && sync->installOnly &&
         (!botHostInitArgAllowed(hs->initArg) ||
          !botHostInitTableAllowed(&hs->bot.initTable))) {
         HOST_EVENT("[bothost] bot %d: its init tokens are not on the list "
@@ -1940,7 +1952,8 @@ static void onInitTable(HostServer *sv, const ControlEvent *evt) {
     char why[256];
     if (hs == NULL) return;
     if (!tableTake(&hs->tableIn, evt)) return;
-    if (HOST_EMBED && servers[serverIndex(sv)].sync.installOnly &&
+    if (HOST_EMBED && !embedDsChild &&
+        servers[serverIndex(sv)].sync.installOnly &&
         !botHostInitTableAllowed(&hs->tableIn)) {
         /* Tokens off the list this host takes (bot_host_guard.h): the
          * brain does not read them; the bot goes back to the server. */
@@ -2528,6 +2541,13 @@ static void hostTick(void) {
 
     setupStart = SDL_GetPerformanceCounter();
     seatsService();
+    if (embedLockstep) {
+        for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+            if (seats[i].used && seats[i].cs != NULL) {
+                seats[i].lockTick = clientSimGetNewestSnapshotTick(seats[i].cs);
+            }
+        }
+    }
 
     for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
         HostSeat *hs = &seats[i];
@@ -3062,8 +3082,41 @@ static void embedPublish(void) {
     SDL_SetAtomicInt(&embedRefusedNow, embedRefused ? 1 : 0);
 }
 
+/* --lockstep: the brains think when every seat in a game has a snapshot
+ * newer than the one they last thought on, so each server tick gets one
+ * think. With no seat in a game, or when a snapshot is late (a seat
+ * joins, the server waits in its lobby), the 20 ms clock rules: at most
+ * LOCKSTEP_MAX_WAIT_MS after the last think. The sockets are drained
+ * here only (clientSimNetDrainSnapshots); the transport's own tick still
+ * runs once a think, in seatsService. */
+#define LOCKSTEP_MAX_WAIT_MS (2 * BOT_HOST_TICK_MS)
+static bool lockstepDue(uint32_t sinceLastMs) {
+    int i, fresh = 0, stale = 0;
+    for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
+        HostSeat *hs = &seats[i];
+        netStatus ns;
+        if (!hs->used || hs->cs == NULL) continue;
+        if (clientSimGetConnectState(hs->cs) != CLIENT_CONNECT_CONNECTED) {
+            continue;
+        }
+        ns = clientSimGetNetStatus(hs->cs);
+        if (ns == netLobby || ns == netLobbyCountdown) continue;
+        if (clientSimIsInLobby(hs->cs)) continue;
+        clientSimNetDrainSnapshots(hs->cs);
+        if (clientSimGetNewestSnapshotTick(hs->cs) != hs->lockTick) {
+            fresh++;
+        } else {
+            stale++;
+        }
+    }
+    if (fresh > 0 && stale == 0) return true;
+    if (fresh + stale == 0) return sinceLastMs >= BOT_HOST_TICK_MS;
+    return sinceLastMs >= LOCKSTEP_MAX_WAIT_MS;
+}
+
 static int SDLCALL embedThreadFn(void *arg) {
     uint32_t nextTick = nowMs();
+    uint32_t lastTickMs = nextTick;
     int i;
     (void)arg;
 
@@ -3082,7 +3135,12 @@ static int SDLCALL embedThreadFn(void *arg) {
             break;
         }
         t = nowMs();
-        if ((int32_t)(t - nextTick) >= 0) {
+        if (embedLockstep) {
+            if (lockstepDue(t - lastTickMs)) {
+                hostTick();
+                lastTickMs = t;
+            }
+        } else if ((int32_t)(t - nextTick) >= 0) {
             hostTick();
             nextTick += BOT_HOST_TICK_MS;
             if ((int32_t)(t - nextTick) > 10 * BOT_HOST_TICK_MS) {
@@ -3163,8 +3221,12 @@ bool botHostInprocStart(const BotHostEmbedConfig *cfg) {
     if (embedSlotsFixed > BOT_HOST_MAX_SLOTS) embedSlotsFixed = BOT_HOST_MAX_SLOTS;
     embedCapacityGen = 0;
     embedRefused = false;
-    /* A new join: the player is asked again if the server sends code. */
-    SDL_SetAtomicInt(&embedConsent, BOT_HOST_EMBED_CONSENT_NONE);
+    /* A new join: the player is asked again if the server sends code.
+     * The server's own child takes the server's code: its operator chose
+     * it. */
+    SDL_SetAtomicInt(&embedConsent, embedDsChild
+                                        ? BOT_HOST_EMBED_CONSENT_YES
+                                        : BOT_HOST_EMBED_CONSENT_NONE);
     /* A new join: the host runs as normal, and the server checks again. */
     botHostRunJoin(&embedRun);
     SDL_SetAtomicInt(&embedSameServerNow, 0);
@@ -3333,6 +3395,24 @@ void botHostInprocSetRecord(bool on) {
 
 void botHostInprocSetOfficialOnly(bool on) {
     if (on) embedOfficialOnlyRun = true;
+}
+
+void botHostInprocSetDsChild(bool on) {
+    embedDsChild = on;
+}
+
+void botHostInprocSetLockstep(bool on) {
+    embedLockstep = on;
+}
+
+void botHostInprocSetBrainOptions(int threads, bool haveLuaSeed, long luaSeed,
+                                  bool noBudgetKill, int brainTier) {
+    if (threads > 0) optThreads = threads;
+    if (haveLuaSeed) botManagerSetBrainLuaSeed(luaSeed);
+    if (noBudgetKill) botManagerSetSlowMoDebug(1);
+    if (brainTier >= 1 && brainTier <= 10) {
+        botManagerSetBrainTierOverride(brainTier);
+    }
 }
 
 bool botHostEmbedOfficialOnly(void) {

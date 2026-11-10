@@ -451,6 +451,91 @@ uint32_t serverTickCatchUp(uint32_t nowMs, uint32_t *oldTick, uint32_t *ticks,
   return ran;
 }
 
+/* WINBOLO_DS_TICK_STATS=1: the time of each running tick and of the wait
+ * for the server's own Bot Host child, printed at the end (mean, p95,
+ * max). A test aid: it compares the child with -bots-in-process. */
+#define TICK_STATS_MAX 131072
+static float *s_tickStatsAll;
+static float *s_tickStatsWait;
+static int s_tickStatsCount;
+static int s_tickStatsOn = -1;
+
+static void serverLifecycleTickStatsAdd(double tickMs, double waitMs) {
+  if (s_tickStatsOn < 0) {
+    const char *e = getenv("WINBOLO_DS_TICK_STATS");
+    s_tickStatsOn = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+    if (s_tickStatsOn) {
+      s_tickStatsAll = (float *)calloc(TICK_STATS_MAX, sizeof(float));
+      s_tickStatsWait = (float *)calloc(TICK_STATS_MAX, sizeof(float));
+      if (s_tickStatsAll == NULL || s_tickStatsWait == NULL) {
+        s_tickStatsOn = 0;
+      }
+    }
+  }
+  if (!s_tickStatsOn || s_tickStatsCount >= TICK_STATS_MAX) return;
+  s_tickStatsAll[s_tickStatsCount] = (float)tickMs;
+  s_tickStatsWait[s_tickStatsCount] = (float)waitMs;
+  s_tickStatsCount++;
+}
+
+static int tickStatsCmp(const void *a, const void *b) {
+  float x = *(const float *)a, y = *(const float *)b;
+  return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+static void tickStatsLine(const char *what, float *v, int n) {
+  double sum = 0.0;
+  int i;
+  if (n <= 0) return;
+  for (i = 0; i < n; i++) sum += v[i];
+  qsort(v, (size_t)n, sizeof(float), tickStatsCmp);
+  fprintf(stderr, "[tickstats] %s: mean %.3f ms, p95 %.3f ms, max %.3f ms\n",
+          what, sum / n, (double)v[(int)((n - 1) * 0.95)], (double)v[n - 1]);
+}
+
+static void serverLifecycleTickStatsPrint(void) {
+  float *without;
+  int i, n = s_tickStatsCount;
+  uint32_t armed = 0, met = 0, late = 0;
+  double waitMs = 0.0;
+  if (s_tickStatsOn != 1 || n <= 0) return;
+  without = (float *)calloc((size_t)n, sizeof(float));
+  if (without == NULL) return;
+  for (i = 0; i < n; i++) {
+    float w = s_tickStatsAll[i] - s_tickStatsWait[i];
+    without[i] = w > 0.0f ? w : 0.0f;
+  }
+  transportUdpServerLockstepStats(&armed, &met, &late, &waitMs);
+  fprintf(stderr, "[tickstats] %d running ticks; child waits %u (met %u, "
+          "late %u, %.1f ms in all)\n", n, (unsigned)armed, (unsigned)met,
+          (unsigned)late, waitMs);
+  {
+    /* The 3 slowest ticks, with their running tick number (0 = first). */
+    int top[3] = {-1, -1, -1};
+    int k, j;
+    for (i = 0; i < n; i++) {
+      for (k = 0; k < 3; k++) {
+        if (top[k] < 0 || s_tickStatsAll[i] > s_tickStatsAll[top[k]]) {
+          for (j = 2; j > k; j--) top[j] = top[j - 1];
+          top[k] = i;
+          break;
+        }
+      }
+    }
+    fprintf(stderr, "[tickstats] slowest ticks:");
+    for (k = 0; k < 3 && top[k] >= 0; k++) {
+      fprintf(stderr, " #%d %.1f ms (wait %.1f)", top[k],
+              (double)s_tickStatsAll[top[k]],
+              (double)s_tickStatsWait[top[k]]);
+    }
+    fprintf(stderr, "\n");
+  }
+  tickStatsLine("tick", s_tickStatsAll, n);
+  tickStatsLine("tick without the child wait", without, n);
+  tickStatsLine("child wait", s_tickStatsWait, n);
+  free(without);
+}
+
 static void serverLifecycleRecordSimMs(double ms) {
   s_lastSimMs = ms;
   if (s_simMsEwma <= 0.0) {
@@ -977,6 +1062,12 @@ void serverInstanceTick(ServerSim *sim) {
   } else {
     transportUdpServerRecv(sim);
   }
+  /* The server's own Bot Host child: wait (a short time at most) for the
+   * moves of its bots to the snapshot the last tick sent. */
+  double lockWaitMs = 0.0;
+  if (instanceAcceptRemoteClients) {
+    lockWaitMs = transportUdpServerLockstepWait(sim);
+  }
 
   /* Run deferred removals for slots force-disconnected mid-publish (control
    * queue overflow). Done here, after recv processing and outside any
@@ -1073,6 +1164,7 @@ void serverInstanceTick(ServerSim *sim) {
     if (sim->state == serverStateRunning) {
       if (instanceAcceptRemoteClients) {
         transportUdpServerSend(sim);
+        transportUdpServerLockstepArm(sim);
       }
     }
   } else {
@@ -1287,6 +1379,9 @@ void serverInstanceTick(ServerSim *sim) {
   double freq = (double)SDL_GetPerformanceFrequency();
   double tickMs = (double)(tickEnd - tickStart) * 1000.0 / freq;
   serverLifecycleRecordTickMs(tickMs);
+  if (preTickState == serverStateRunning) {
+    serverLifecycleTickStatsAdd(tickMs, lockWaitMs);
+  }
 
   /* The overrun lines on the console, once a minute into the round and then
    * every five minutes, and the overrun record in the round log, every 30
@@ -1303,6 +1398,7 @@ void serverInstanceTick(ServerSim *sim) {
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
+  serverLifecycleTickStatsPrint();
   /* Unregister + free the live ring first, so nothing taps it during the rest
    * of teardown. NULL-safe — a no-op for a sim that never had a ring. */
   serverInstanceDestroySpectatorRing();

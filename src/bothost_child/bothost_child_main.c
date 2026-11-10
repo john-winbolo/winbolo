@@ -11,6 +11,9 @@
  *                  --brain NAME --name NAME --cachedir DIR --slots N
  *                  [--official-only] [--record] [--record-min-free-gb N]
  *                  [--cpu-speed-file PATH] [--exit-on-stdin-close]
+ *                  [--ds-child] [--lockstep] [--threads N]
+ *                  [--brain-lua-seed N] [--brain-no-budget-kill]
+ *                  [--brain-tier N]
  *                  [--sandbox [--sandbox-read DIR]... [--sandbox-file F]...
  *                   [--sandbox-write DIR]... --relay IN OUT]
  *
@@ -32,6 +35,14 @@
  * the relay pipes (--relay: the handles on Windows, fds 3 and 4
  * elsewhere), and it takes the machine id and the CPU counters from the
  * game.
+ *
+ * --ds-child: the dedicated server's own child (ds_bot_child.h). It joins
+ * with the server's secret in place of a player's ticket, takes the
+ * server's brain code with no question, and has no player's limits on
+ * init tokens or the full map. Its brains still run in both sandboxes.
+ * --lockstep: the brains think once for each new snapshot, not on a
+ * 20 ms timer. --threads, --brain-lua-seed, --brain-no-budget-kill and
+ * --brain-tier are the server's own options, passed on.
  *
  * Test modes for the unit tests, with no host at all:
  *   --test-alloc-mb N   take N MiB of memory in pieces, writing each into
@@ -123,6 +134,13 @@ static int    coTestNetPort;
 static const char *coTestRelayIp;
 static int    coTestRelayPort;
 static bool   coTestSalt;
+static bool   coDsChild;
+static bool   coLockstep;
+static int    coThreads;
+static bool   coHaveLuaSeed;
+static long   coLuaSeed;
+static bool   coNoBudgetKill;
+static int    coBrainTier;
 
 static const char *const childTestModes[] = {
     "--test-alloc-mb", "--test-sleep-ms", "--test-read", "--test-write",
@@ -171,6 +189,18 @@ static bool parseChildArgs(int argc, char **argv) {
             coTestSalt = true;
             continue;
         }
+        if (strcmp(a, "--ds-child") == 0) {
+            coDsChild = true;
+            continue;
+        }
+        if (strcmp(a, "--lockstep") == 0) {
+            coLockstep = true;
+            continue;
+        }
+        if (strcmp(a, "--brain-no-budget-kill") == 0) {
+            coNoBudgetKill = true;
+            continue;
+        }
         if (strcmp(a, "--allow-unsafe-brains") == 0 ||
             strcmp(a, "-allow-unsafe-brains") == 0) {
             /* Refused in main, with its own line. */
@@ -199,6 +229,13 @@ static bool parseChildArgs(int argc, char **argv) {
             coRecordMinFreeGb = atof(v);
         } else if (strcmp(a, "--cpu-speed-file") == 0) {
             SDL_strlcpy(coCpuSpeedFile, v, sizeof(coCpuSpeedFile));
+        } else if (strcmp(a, "--threads") == 0) {
+            coThreads = atoi(v);
+        } else if (strcmp(a, "--brain-lua-seed") == 0) {
+            coHaveLuaSeed = true;
+            coLuaSeed = strtol(v, NULL, 0);
+        } else if (strcmp(a, "--brain-tier") == 0) {
+            coBrainTier = atoi(v);
         } else if (strcmp(a, "--test-alloc-mb") == 0) {
             coTestAllocMb = atol(v);
         } else if (strcmp(a, "--test-sleep-ms") == 0) {
@@ -1038,7 +1075,10 @@ int botHostChildMain(int argc, char **argv) {
     }
     if (coCpuSpeedFile[0] != '\0') cpuSpeedStoreSetPath(coCpuSpeedFile);
     (void)cpuSpeedApplyStoredToBrains(WINBOLO_VERSION);
-    if (!serverSimBotPoolInit(0)) {
+    /* The server's own options, before the brain threads start. */
+    botHostInprocSetBrainOptions(coThreads, coHaveLuaSeed, coLuaSeed,
+                                 coNoBudgetKill, coBrainTier);
+    if (!serverSimBotPoolInit(coThreads > 0 ? coThreads : 0)) {
         fprintf(stderr, "[bothost] cannot start the brain threads\n");
         return BOT_HOST_CHILD_EXIT_START;
     }
@@ -1092,6 +1132,8 @@ int botHostChildMain(int argc, char **argv) {
     if (coSandbox) useGameMachineId();
     botHostInprocSetOfficialOnly(coOfficialOnly);
     botHostInprocSetRecord(coRecord);
+    botHostInprocSetDsChild(coDsChild);
+    botHostInprocSetLockstep(coLockstep);
     memset(&cfg, 0, sizeof(cfg));
     cfg.serverHost = coServer;
     cfg.serverPort = (uint16_t)coPort;

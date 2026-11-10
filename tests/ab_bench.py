@@ -67,6 +67,7 @@ Usage:
 Run from the repo root.
 """
 import argparse
+import shlex
 import json
 import re
 import shutil
@@ -109,6 +110,9 @@ SNAP_INTERVAL = 6000            # one snapshot row per game-minute
 TICKS_PER_MINUTE = 6000
 MIN15_TICK = 15 * TICKS_PER_MINUTE   # the short bench's measuring point
 MAX_THREADS = 12                # the machine has 12 logical CPUs
+# --ds-args: more WinBoloDS switches for every game, such as
+# "-bots-in-process" or "-bothost-child-cache DIR".
+EXTRA_DS_ARGS = []
 PORT_BASE = 50400
 PORT_TOP = 50460
 # The bench runs -brain-no-budget-kill, so a slow tick is never a kill; the
@@ -195,6 +199,7 @@ def game_cmd(mapfile, seed, port, ticks, snap, final, a_arg, b_arg, per_side,
         cmd += ["-snapjson", str(snap), "-snapinterval", str(SNAP_INTERVAL)]
     if debug:
         cmd += ["-brain-debug"]
+    cmd += EXTRA_DS_ARGS
     return cmd
 
 
@@ -676,6 +681,9 @@ def main():
     ap.add_argument("--per-side", type=int, default=DEFAULT_PER_SIDE,
                     help="tanks per side (2 = 2v2, 6 = 6v6)")
     ap.add_argument("--label", default=None, help="cache directory name")
+    ap.add_argument("--ds-args", default="",
+                    help="more WinBoloDS switches for every game, one string "
+                         "(e.g. \"-bots-in-process\")")
     ap.add_argument("--force", action="store_true", help="replay cached seeds")
     ap.add_argument("--remeasure", action="store_true",
                     help="re-score every cached seed of this label from its kept "
@@ -686,7 +694,8 @@ def main():
                     help="300-tick -brain-debug run: show the [preset]/[cfg] "
                          "lines each side got, then delete the session")
     args = ap.parse_args()
-    global BRAIN_A, BRAIN_B
+    global BRAIN_A, BRAIN_B, EXTRA_DS_ARGS
+    EXTRA_DS_ARGS = shlex.split(args.ds_args) if args.ds_args else []
     BRAIN_A, BRAIN_B = args.brain_a, args.brain_b
     PORT_BASE = args.port_base
     PORT_TOP = PORT_BASE + 60   # games take base+slot; the verify run uses the top port

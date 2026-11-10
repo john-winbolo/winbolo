@@ -1033,6 +1033,134 @@ int run_bothost_child_fail_rule(void) {
     return 0;
 }
 
+/* The dedicated server's choice (botHostDsChildWhere): the user's
+ * switches first, then the restart limit, then the start's answer. Every
+ * failure runs the bots in the server's process (a player's game runs
+ * none then: botHostChildFailRule). */
+int run_bothost_ds_child_where(void) {
+    BotHostDsChildIn in;
+    const char *why;
+
+    UT_ASSERT(botHostDsChildWhere(NULL, &why) == BOT_HOST_DS_INPROC);
+    UT_ASSERT(why != NULL);
+
+    /* Nothing asked, nothing tried: start the child. */
+    memset(&in, 0, sizeof(in));
+    why = "x";
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_CHILD);
+
+    /* Each switch keeps the bots in the server's process, with its why. */
+    memset(&in, 0, sizeof(in));
+    in.inProcessAsked = true;
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
+    UT_ASSERT(why != NULL && strstr(why, "-bots-in-process") != NULL);
+    memset(&in, 0, sizeof(in));
+    in.brainDebug = true;
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
+    UT_ASSERT(why != NULL && strstr(why, "-brain-debug") != NULL);
+    memset(&in, 0, sizeof(in));
+    in.allowUnsafe = true;
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
+    UT_ASSERT(why != NULL && strstr(why, "-allow-unsafe-brains") != NULL);
+
+    /* A switch wins over a start that worked. */
+    memset(&in, 0, sizeof(in));
+    in.brainDebug = true;
+    in.tried = true;
+    in.start = BOT_HOST_CHILD_STARTED;
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
+
+    /* The start's answers. */
+    memset(&in, 0, sizeof(in));
+    in.tried = true;
+    in.start = BOT_HOST_CHILD_STARTED;
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_CHILD);
+    in.start = BOT_HOST_CHILD_START_WAIT;
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_WAIT);
+    /* NO_BOTS is the player's rule; the server runs its bots itself. */
+    in.start = BOT_HOST_CHILD_START_NO_BOTS;
+    why = NULL;
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
+    UT_ASSERT(why != NULL && strstr(why, "cannot start") != NULL);
+    in.start = BOT_HOST_CHILD_START_INPROC;
+    why = NULL;
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
+    UT_ASSERT(why != NULL);
+
+    /* The restart limit: in the server's process, even after a start that
+     * worked. */
+    memset(&in, 0, sizeof(in));
+    in.restartLimit = true;
+    in.tried = true;
+    in.start = BOT_HOST_CHILD_STARTED;
+    why = NULL;
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
+    UT_ASSERT(why != NULL && strstr(why, "too many") != NULL);
+
+    /* The child's arguments carry the server's options. */
+    {
+        BotHostChildParams p;
+        char buf[4096];
+        const char *argv[BOT_HOST_CHILD_MAX_ARGS];
+        int argc, i;
+        bool ds = false, lock = false, thr = false, seed = false,
+             nokill = false, tier = false;
+        memset(&p, 0, sizeof(p));
+        p.serverHost = "127.0.0.1";
+        p.serverPort = 27500;
+        p.brain = "GoalHunter";
+        p.name = "server child";
+        p.cacheDir = "cache";
+        p.dsChild = true;
+        p.lockstep = true;
+        p.threads = 12;
+        p.haveLuaSeed = true;
+        p.luaSeed = 1234;
+        p.noBudgetKill = true;
+        p.brainTier = 7;
+        argc = botHostChildBuildArgs(&p, "WinBoloBotHost", buf, sizeof(buf),
+                                     argv, BOT_HOST_CHILD_MAX_ARGS);
+        UT_ASSERT(argc > 0);
+        for (i = 0; i < argc; i++) {
+            if (strcmp(argv[i], "--ds-child") == 0) ds = true;
+            if (strcmp(argv[i], "--lockstep") == 0) lock = true;
+            if (strcmp(argv[i], "--brain-no-budget-kill") == 0) nokill = true;
+            if (i + 1 < argc && strcmp(argv[i], "--threads") == 0 &&
+                strcmp(argv[i + 1], "12") == 0) {
+                thr = true;
+            }
+            if (i + 1 < argc && strcmp(argv[i], "--brain-lua-seed") == 0 &&
+                strcmp(argv[i + 1], "1234") == 0) {
+                seed = true;
+            }
+            if (i + 1 < argc && strcmp(argv[i], "--brain-tier") == 0 &&
+                strcmp(argv[i + 1], "7") == 0) {
+                tier = true;
+            }
+        }
+        UT_ASSERT(ds && lock && thr && seed && nokill && tier);
+        /* A player's child gets none of them. */
+        memset(&p, 0, sizeof(p));
+        p.serverHost = "127.0.0.1";
+        p.serverPort = 27500;
+        p.brain = "GoalHunter";
+        p.name = "player";
+        p.cacheDir = "cache";
+        argc = botHostChildBuildArgs(&p, "WinBoloBotHost", buf, sizeof(buf),
+                                     argv, BOT_HOST_CHILD_MAX_ARGS);
+        UT_ASSERT(argc > 0);
+        for (i = 0; i < argc; i++) {
+            UT_ASSERT(strcmp(argv[i], "--ds-child") != 0);
+            UT_ASSERT(strcmp(argv[i], "--lockstep") != 0);
+            UT_ASSERT(strcmp(argv[i], "--threads") != 0);
+            UT_ASSERT(strcmp(argv[i], "--brain-lua-seed") != 0);
+            UT_ASSERT(strcmp(argv[i], "--brain-no-budget-kill") != 0);
+            UT_ASSERT(strcmp(argv[i], "--brain-tier") != 0);
+        }
+    }
+    return 0;
+}
+
 /* The copy of the program takes the exe and the DLLs only. */
 int run_bothost_child_copy_wanted(void) {
     char root[1024], src[1100], sub[1100], dst[1100], path[1200];
