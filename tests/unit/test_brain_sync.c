@@ -20,6 +20,12 @@
  *      runs is refused and named; a file it does not run may change.
  *   7. brain_sync_shipped_missing: a shipped file gone from the install is
  *      refused and named.
+ *   8. brain_sync_crlf_hash: the CRLF and LF copies of a text brain file
+ *      give the same size, hash and SHA-256; a lone CR is kept; a .map
+ *      file is hashed as it is.
+ *   9. brain_sync_crlf_table_agrees: the C hash of a CRLF file is the one
+ *      the build's table gives it (the same values as
+ *      tests/cmake/brain_shipped_table_test.cmake).
  */
 
 #include <stdint.h>
@@ -454,5 +460,200 @@ int run_brain_sync_shipped_missing(void) {
     SDL_snprintf(path, sizeof(path), "%s/Shipped/opt/init.lua", root);
     UT_ASSERT(SDL_RemovePath(path));
     UT_ASSERT(bs_check(root, file, sizeof(file)) != BRAIN_SYNC_SHIPPED_OK);
+    return 0;
+}
+
+/* ================================================================
+ * 8-9. Line endings: a CRLF copy of a text brain file is the same file
+ * ================================================================ */
+
+/* Write len bytes (NULs and CRs kept) to dir/rel. */
+static bool bs_write_bytes(const char *dir, const char *rel, const char *data,
+                           size_t len) {
+    char path[1024];
+    SDL_snprintf(path, sizeof(path), "%s/%s", dir, rel);
+    return brainSyncWriteFile(path, data, len);
+}
+
+static const BrainSyncFile *bs_file(const BrainSyncBrain *b, const char *rel) {
+    int i;
+    for (i = 0; i < b->fileCount; i++) {
+        if (strcmp(b->files[i].path, rel) == 0) return &b->files[i];
+    }
+    return NULL;
+}
+
+/* 8. The CRLF and LF copies of one text file give the same size, hash and
+ *    SHA-256, so a Windows checkout and a Linux one list the same brain. A
+ *    lone CR is kept, and a .map file is not changed. */
+int run_brain_sync_crlf_hash(void) {
+    static const char lf[] = "-- brain\nreturn 1\n";
+    static const char crlf[] = "-- brain\r\nreturn 1\r\n";
+    static const char mapLf[] = "MAP\n\0\n";
+    static const char mapCrlf[] = "MAP\r\n\0\r\n";
+    char dirLf[1024], dirCr[1024], path[1200];
+    BrainSyncBrain a, b;
+    const BrainSyncFile *fa, *fb;
+    size_t n;
+
+    /* The rule on bytes. */
+    {
+        char t1[] = "a\r\nb\r\r\nc\rd\r";
+        char t2[] = "x\r\n";
+        n = brainSyncNormalizeText(t1, sizeof(t1) - 1);
+        UT_ASSERT_MSG(n == 8 && memcmp(t1, "a\nb\nc\rd\r", 8) == 0,
+                      "got %u bytes", (unsigned)n);
+        /* A second pass changes nothing. */
+        UT_ASSERT(brainSyncNormalizeText(t1, n) == n);
+        UT_ASSERT(memcmp(t1, "a\nb\nc\rd\r", 8) == 0);
+        UT_ASSERT(brainSyncNormalizeText(t2, 3) == 2 && t2[1] == '\n');
+        UT_ASSERT(brainSyncNormalizeText(t2, 0) == 0);
+    }
+    UT_ASSERT(brainSyncIsTextPath("init.lua"));
+    UT_ASSERT(brainSyncIsTextPath("opt/Modes.TXT"));
+    UT_ASSERT(brainSyncIsTextPath("C:\\b\\x.json"));
+    UT_ASSERT(!brainSyncIsTextPath("Lead Arena.map"));
+    UT_ASSERT(!brainSyncIsTextPath("shield_stamp_cache.bin"));
+    UT_ASSERT(!brainSyncIsTextPath("lua.d/noext"));
+    UT_ASSERT(!brainSyncIsTextPath("a.lua.bak"));
+
+    /* Two brain folders, LF and CRLF, otherwise the same. */
+    UT_ASSERT(utScratchPath(dirLf, sizeof(dirLf), "crlf_lf"));
+    UT_ASSERT(utScratchPath(dirCr, sizeof(dirCr), "crlf_cr"));
+    UT_ASSERT(bs_write_bytes(dirLf, "init.lua", lf, sizeof(lf) - 1));
+    UT_ASSERT(bs_write_bytes(dirCr, "init.lua", crlf, sizeof(crlf) - 1));
+    UT_ASSERT(bs_write_bytes(dirLf, "data.json", "{}\n", 3));
+    UT_ASSERT(bs_write_bytes(dirCr, "data.json", "{}\r\n", 4));
+    UT_ASSERT(bs_write_bytes(dirLf, "lone.txt", "a\rb\n", 4));
+    UT_ASSERT(bs_write_bytes(dirCr, "lone.txt", "a\rb\r\n", 5));
+    UT_ASSERT(bs_write_bytes(dirLf, "arena.map", mapLf, sizeof(mapLf) - 1));
+    UT_ASSERT(bs_write_bytes(dirCr, "arena.map", mapLf, sizeof(mapLf) - 1));
+
+    UT_ASSERT(brainSyncCollectBrain(&a, "Crlf", dirLf, true, NULL));
+    UT_ASSERT(brainSyncCollectBrain(&b, "Crlf", dirCr, true, NULL));
+    UT_ASSERT(a.fileCount == 4 && b.fileCount == 4);
+    UT_ASSERT_MSG(a.version == b.version, "the CRLF copy is another version");
+    UT_ASSERT_MSG(a.totalBytes == b.totalBytes, "%u and %u bytes",
+                  (unsigned)a.totalBytes, (unsigned)b.totalBytes);
+    fa = bs_file(&a, "init.lua");
+    fb = bs_file(&b, "init.lua");
+    UT_ASSERT(fa != NULL && fb != NULL);
+    UT_ASSERT(fb->size == sizeof(lf) - 1);   /* the LF size is the one sent */
+    UT_ASSERT(fa->hash == fb->hash);
+    UT_ASSERT(memcmp(fa->sha, fb->sha, BRAIN_SYNC_SHA_LEN) == 0);
+    /* The lone CR stays: 4 bytes, not 3. */
+    fb = bs_file(&b, "lone.txt");
+    UT_ASSERT(fb != NULL && fb->size == 4);
+
+    /* The CRLF file on disk is the LF file of the list: every check that
+     * reads a file from disk agrees. */
+    SDL_snprintf(path, sizeof(path), "%s/init.lua", dirCr);
+    fa = bs_file(&a, "init.lua");
+    UT_ASSERT(brainSyncFileMatches(path, fa->size, fa->hash));
+    UT_ASSERT(brainSyncFileIs(path, fa, true));
+    {
+        /* The bytes a server sends: the LF form, which is what the host
+         * checks a download against. */
+        size_t sz = 0;
+        void *data = brainSyncLoadFile(path, &sz);
+        UT_ASSERT(data != NULL);
+        UT_ASSERT(sz == sizeof(lf) - 1 && memcmp(data, lf, sz) == 0);
+        UT_ASSERT(brainSyncDataIs(fa, data, sz));
+        SDL_free(data);
+    }
+
+    /* A rescan that reuses the last hashes keeps the LF size. */
+    {
+        BrainSyncBrain again;
+        UT_ASSERT(brainSyncCollectBrain(&again, "Crlf", dirCr, true, &b));
+        UT_ASSERT(again.version == a.version);
+        UT_ASSERT(again.totalBytes == a.totalBytes);
+        free(again.files);
+    }
+
+    /* A .map is binary: a CRLF in it is a change. */
+    UT_ASSERT(bs_write_bytes(dirCr, "arena.map", mapCrlf, sizeof(mapCrlf) - 1));
+    free(b.files);
+    UT_ASSERT(brainSyncCollectBrain(&b, "Crlf", dirCr, true, NULL));
+    UT_ASSERT(b.version != a.version);
+    fb = bs_file(&b, "arena.map");
+    UT_ASSERT(fb != NULL && fb->size == sizeof(mapCrlf) - 1);
+    SDL_snprintf(path, sizeof(path), "%s/arena.map", dirCr);
+    fa = bs_file(&a, "arena.map");
+    UT_ASSERT(!brainSyncFileMatches(path, fa->size, fa->hash));
+    UT_ASSERT(!brainSyncFileIs(path, fa, true));
+
+    /* A lone CR is a change too. */
+    UT_ASSERT(bs_write_bytes(dirCr, "arena.map", mapLf, sizeof(mapLf) - 1));
+    UT_ASSERT(bs_write_bytes(dirCr, "lone.txt", "ab\r\n", 4));
+    SDL_snprintf(path, sizeof(path), "%s/lone.txt", dirCr);
+    fa = bs_file(&a, "lone.txt");
+    UT_ASSERT(!brainSyncFileIs(path, fa, true));
+
+    free(a.files);
+    free(b.files);
+    return 0;
+}
+
+/* 9. The build's table (cmake/brain_shipped_table.cmake) and the C check
+ *    hash a CRLF file the same way. tests/cmake/brain_shipped_table_test.cmake
+ *    writes these two files with CRLF line endings and expects the table to
+ *    hold these SHA-256 values; here the C side must give the same ones,
+ *    and an install with CRLF copies must pass the shipped check and the
+ *    install check against a manifest made from LF copies. */
+#define BS_AGREE_INIT_SHA \
+    "1c1f55e2fc4951e7280ddd6616c35b83bf12d6be4a1746e61b1f4d8c02872f02"
+#define BS_AGREE_LONE_SHA \
+    "a967fb5d8c56bc9c1bbb0421958e552f286bcfc32f3df79269d98a34a53da730"
+int run_brain_sync_crlf_table_agrees(void) {
+    static const char initCrlf[] = "return 'crlf'\r\nlocal x = 1\r\n";
+    static const char loneCrlf[] = "lone\rcr\r\nend\r\n";
+    static const BrainSyncShippedFile table[] = {
+        { "Agree/init.lua", BS_AGREE_INIT_SHA },
+        { "Agree/lone.txt", BS_AGREE_LONE_SHA },
+    };
+    char root[1024], dir[1100], lfRoot[1024], lfDir[1100], file[160];
+    BrainSyncBrain local, lfBrain;
+    const BrainSyncFile *f;
+    static const char digits[] = "0123456789abcdef";
+    char hex[65];
+    int i;
+
+    UT_ASSERT(utScratchPath(root, sizeof(root), "crlf_agree"));
+    SDL_snprintf(dir, sizeof(dir), "%s/Agree", root);
+    UT_ASSERT(bs_write_bytes(dir, "init.lua", initCrlf, sizeof(initCrlf) - 1));
+    UT_ASSERT(bs_write_bytes(dir, "lone.txt", loneCrlf, sizeof(loneCrlf) - 1));
+
+    UT_ASSERT(brainSyncCollectBrain(&local, "Agree", dir, false, NULL));
+    f = bs_file(&local, "init.lua");
+    UT_ASSERT(f != NULL);
+    for (i = 0; i < BRAIN_SYNC_SHA_LEN; i++) {
+        hex[i * 2] = digits[f->sha[i] >> 4];
+        hex[i * 2 + 1] = digits[f->sha[i] & 0x0f];
+    }
+    hex[64] = '\0';
+    UT_ASSERT_MSG(strcmp(hex, BS_AGREE_INIT_SHA) == 0, "init.lua is %s", hex);
+    f = bs_file(&local, "lone.txt");
+    UT_ASSERT(f != NULL);
+    for (i = 0; i < BRAIN_SYNC_SHA_LEN; i++) {
+        hex[i * 2] = digits[f->sha[i] >> 4];
+        hex[i * 2 + 1] = digits[f->sha[i] & 0x0f];
+    }
+    UT_ASSERT_MSG(strcmp(hex, BS_AGREE_LONE_SHA) == 0, "lone.txt is %s", hex);
+
+    UT_ASSERT(brainSyncShippedCheck(table, 2, root, "Agree", file,
+                                    sizeof(file)) == BRAIN_SYNC_SHIPPED_OK);
+
+    /* A server with LF copies: the CRLF install runs as it is. */
+    UT_ASSERT(utScratchPath(lfRoot, sizeof(lfRoot), "crlf_agree_lf"));
+    SDL_snprintf(lfDir, sizeof(lfDir), "%s/Agree", lfRoot);
+    UT_ASSERT(bs_write(lfDir, "init.lua", "return 'crlf'\nlocal x = 1\n"));
+    UT_ASSERT(bs_write(lfDir, "lone.txt", "lone\rcr\nend\n"));
+    UT_ASSERT(brainSyncCollectBrain(&lfBrain, "Agree", lfDir, false, NULL));
+    UT_ASSERT(lfBrain.version == local.version);
+    UT_ASSERT(brainSyncInstallMatches(root, &lfBrain));
+
+    free(local.files);
+    free(lfBrain.files);
     return 0;
 }
