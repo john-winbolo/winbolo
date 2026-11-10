@@ -334,7 +334,7 @@ lag to each host also counts:
   lower than its score now, so small changes in lag move no bots.
 - `-bothost-lag-ref-ms <ms>` sets R (default 100). 0 turns all the lag
   rules off: the placement is then the one without lag.
-- `-bothost-lag-max-ms <ms>` sets L (default 250). 0: no ceiling.
+- `-bothost-lag-max-ms <ms>` sets L (default 300). 0: no ceiling.
 - The unit test `bot_host_place_lag` prints the spread with and without
   lag for hosts of 8, 4, 2 and 1 slots.
 

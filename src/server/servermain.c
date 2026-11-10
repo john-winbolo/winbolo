@@ -1041,7 +1041,7 @@ void printArgs() {
   fprintf(stderr, "-bothost-small-slots <n> - a Bot Host with n slots or fewer fills a little later (default 2)\n");
   fprintf(stderr, "-bothost-small-bias <f> - how many slots fewer such a host counts, 0 to 1 (default 0.25)\n");
   fprintf(stderr, "-bothost-lag-ref-ms <ms> - lag counted in bot placement: a host scores 1 + lag / ms times more, 0 = lag not counted (default 100)\n");
-  fprintf(stderr, "-bothost-lag-max-ms <ms> - a host with more lag gets no new bots while one with less has room, 0 = no ceiling (default 250)\n");
+  fprintf(stderr, "-bothost-lag-max-ms <ms> - a host with more lag gets no new bots while one with less has room, 0 = no ceiling (default 300)\n");
   fprintf(stderr, "-bothost-spread-even - the old even spread: bots also move between hosts that run them well, to even out\n");
   fprintf(stderr, "                their counts and lag. Without it a bot stays where it runs well: on the server while it\n");
   fprintf(stderr, "                has slots and its overruns and free CPU are good, and only the rest go to Bot Hosts.\n");

@@ -48,7 +48,7 @@
  *  counts too (botHostPlaceRebalanceLag): the score is
  *  multiplied by 1 + lag / R (-bothost-lag-ref-ms, 100 ms; the
  *  server's lag is 0), a host over L (-bothost-lag-max-ms,
- *  250 ms) gets no new bot while one at or under L has room,
+ *  300 ms) gets no new bot while one at or under L has room,
  *  and a bot moves only for a score at least 33% lower. In the
  *  lobby one bot moves each tick; in the game one bot moves at
  *  most each 3 s (each tick in the first 10 s of a game), and
@@ -890,8 +890,12 @@ static void botHostRefreshManifest(ServerSim *sim, const char *why) {
                            &udpServer.brainManifest);
     next.noCode = !botHostCodeCustom;
     if (udpServer.brainManifestGen != 0 &&
-        next.version == udpServer.brainManifest.version) {
-        /* Same files. Keep the new list for its change times. */
+        next.version == udpServer.brainManifest.version &&
+        next.noCode == udpServer.brainManifest.noCode) {
+        /* Same files and the same -bothost-code. Keep the new list for its
+         * change times. The first manifest is made at server start, before
+         * -bothost-code is read, so a custom server gets a new generation
+         * here. */
         brainSyncFree(&udpServer.brainManifest);
         udpServer.brainManifest = next;
         return;
