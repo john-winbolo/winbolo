@@ -261,6 +261,23 @@ static BYTE rejoinTeammate(const ServerSim *sim, BYTE playerNum) {
     return NEUTRAL;
 }
 
+/* Whether the rules let a rejoiner back onto their old team: the same two
+   checks a player's own alliance accept makes (server_command_dispatch.c).
+   A ranked round has no alliances, and the script's can_ally is asked with
+   the new member first, as the accept asks it. */
+static bool rejoinMayAlly(ServerSim *sim, BYTE playerNum, BYTE mate) {
+    bool allow;
+    if (serverSimGetRanked(sim)) return FALSE;
+    if (sim->scenarioPolicy == NULL || sim->scenarioPolicy->canAlly == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    allow = sim->scenarioPolicy->canAlly(sim->scenarioPolicy->ctx, playerNum,
+                                         mate);
+    serverSimScenarioPolicyLeave(sim);
+    return allow;
+}
+
 void serverSimPlaceJoiner(ServerSim *sim, BYTE playerNum) {
     if (sim == NULL || playerNum >= MAX_TANKS) return;
     if (!sim->playerConnected[playerNum]) return;
@@ -292,9 +309,13 @@ void serverSimRestoreRejoinTeam(ServerSim *sim, BYTE playerNum) {
     }
     mate = rejoinTeammate(sim, playerNum);
     sim->rejoinTeam[playerNum] = 0;
+    if (mate != NEUTRAL && !rejoinMayAlly(sim, playerNum, mate)) {
+        mate = NEUTRAL;
+    }
     if (mate == NEUTRAL) {
-        /* The team lost its last player in the meantime: a side of their
-           own, as any other joiner gets. */
+        /* The team lost its last player in the meantime, or the rules
+           refuse the alliance: a side of their own, as any other joiner
+           gets. */
         sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
         serverSimPublishLobbySlot(sim, playerNum);
         return;
