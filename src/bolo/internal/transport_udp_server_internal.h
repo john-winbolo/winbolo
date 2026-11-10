@@ -910,6 +910,10 @@ void serverBotHostPlayerGone(struct ServerSim *sim, int slot, const char *why);
  * bots whose brains it runs itself now. */
 int serverBotHostServerSlots(struct ServerSim *sim);
 int serverBotHostServerBots(struct ServerSim *sim);
+/* The brain name a bot's brain path gives, as the Bot Hosts know it: the
+ * folder that holds its init.lua, with opt/ read as its parent folder
+ * ("brains/GoalHunter/opt/init.lua" gives "GoalHunter"). */
+void serverBotHostBrainName(const char *path, char *out, size_t sz);
 void serverBotSlotTeamMsg(struct ServerSim *sim, int slot, const char *text);
 void serverBotSlotStats(struct ServerSim *sim, int slot,
                         const CmdBotStats *st);
