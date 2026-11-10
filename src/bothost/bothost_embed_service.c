@@ -163,6 +163,7 @@ static BotHostChildStart embedStartChild(const BotHostEmbedConfig *cfg) {
     p.record = embedRecordNow;
     p.recordMinFreeGb = cfg->recordMinFreeGb;
     p.officialOnly = botHostEmbedOfficialOnly();
+    p.shippedTable = botHostEmbedShippedTable();
     if (cpuSpeedStorePath(speedFile, sizeof(speedFile))) {
         p.cpuSpeedFile = speedFile;
     }

@@ -186,23 +186,38 @@ bool botHostChildParseStatus(const char *line, BotHostChildStatus *out) {
 }
 
 void botHostChildFormatHello(int protocol, bool officialOnly, bool fullMap,
-                             char *out, size_t outSize) {
-    snprintf(out, outSize, "hello %d official=%d fullmap=%d", protocol,
-             officialOnly ? 1 : 0, fullMap ? 1 : 0);
+                             bool shippedTable, char *out, size_t outSize) {
+    snprintf(out, outSize, "hello %d official=%d fullmap=%d table=%d",
+             protocol, officialOnly ? 1 : 0, fullMap ? 1 : 0,
+             shippedTable ? 1 : 0);
 }
 
 bool botHostChildParseHello(const char *line, int *protocol,
-                            bool *officialOnly, bool *fullMap) {
-    int proto, off, full = 0, got;
+                            bool *officialOnly, bool *fullMap,
+                            bool *shippedTable) {
+    int proto, off, full = 0, table = 0, got;
     if (line == NULL) return false;
-    got = sscanf(line, "hello %d official=%d fullmap=%d", &proto, &off,
-                 &full);
+    got = sscanf(line, "hello %d official=%d fullmap=%d table=%d", &proto,
+                 &off, &full, &table);
     if (got < 2) return false;
     /* Protocol 1 had no fullmap=; the caller refuses that protocol. */
     if (got < 3) full = -1;
+    /* No table=: a child with no table. */
+    if (got < 4) table = 0;
     if (protocol != NULL) *protocol = proto;
     if (officialOnly != NULL) *officialOnly = off != 0;
     if (fullMap != NULL) *fullMap = full == 1;
+    if (shippedTable != NULL) *shippedTable = table == 1;
+    return true;
+}
+
+bool botHostChildHelloMatches(int protocol, bool officialOnly, bool fullMap,
+                              bool shippedTable, bool wantOfficial,
+                              bool wantTable) {
+    if (protocol != BOT_HOST_CHILD_PROTOCOL) return false;
+    if (officialOnly != wantOfficial) return false;
+    if (fullMap != botHostChildBuildFullMap()) return false;
+    if (wantOfficial && wantTable && !shippedTable) return false;
     return true;
 }
 

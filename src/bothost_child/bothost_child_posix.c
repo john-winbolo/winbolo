@@ -30,9 +30,10 @@
  *     files of /etc, /proc and /sys and /dev; read and write the cache
  *     folder; nothing else. No Landlock (a kernel before 5.13, or Landlock
  *     off) means no sandbox, and so no bots;
- *   - seccomp: socket(), io_uring_setup, pidfd_open, ptrace and tkill fail
- *     with EPERM; kill and tgkill only to the child itself; another
- *     architecture's system calls end the child.
+ *   - seccomp: socket(), io_uring_setup, pidfd_open, pidfd_send_signal,
+ *     setpgid, ptrace and tkill fail with EPERM; kill and tgkill only to
+ *     the child itself; fcntl and ioctl may not set an fd's owner or
+ *     signal; another architecture's system calls end the child.
  * A failure there is sent back over a status pipe before the child ends,
  * so the game knows the sandbox failed. On macOS the child sets its own
  * sandbox at the start of its main (bothost_child_main.c).
@@ -166,6 +167,9 @@ struct llPathBeneath {
 #ifndef __NR_pidfd_open
 #define __NR_pidfd_open 434
 #endif
+#ifndef __NR_pidfd_send_signal
+#define __NR_pidfd_send_signal 424
+#endif
 #ifndef SECCOMP_RET_KILL_PROCESS
 #define SECCOMP_RET_KILL_PROCESS SECCOMP_RET_KILL
 #endif
@@ -227,8 +231,10 @@ typedef struct {
  * use against the game or the kernel, and allows the rest:
  *   - EPERM: socket; ptrace and the calls that read or write another
  *     program's memory (process_vm_readv/writev, pidfd_getfd, pidfd_open,
- *     process_madvise); tkill; new namespaces (unshare, setns); the
- *     mount family; bpf, perf_event_open, userfaultfd; the key calls
+ *     process_madvise); tkill and pidfd_send_signal; setpgid (the child
+ *     sets its own group before the filter goes on; later it could join
+ *     the game's group, and kill(0) would then reach the game); new
+ *     namespaces (unshare, setns); the mount family; bpf, perf_event_open, userfaultfd; the key calls
  *     (keyctl, add_key, request_key); io_uring; the module, kexec, swap,
  *     reboot, chroot and pivot_root calls;
  *   - EPERM: fork and vfork (where the architecture has them). The child
@@ -245,7 +251,11 @@ typedef struct {
  *     sched_setattr, migrate_pages and move_pages: only on the child
  *     itself or 0 (self); EPERM else;
  *   - setpriority and ioprio_set: only "which" = one process, and "who"
- *     the child itself or 0 (self); EPERM else.
+ *     the child itself or 0 (self); EPERM else;
+ *   - fcntl F_SETOWN, F_SETSIG and F_SETOWN_EX, and ioctl FIOSETOWN and
+ *     SIOCSPGRP: EPERM. They set the process that gets a signal when an
+ *     fd is ready, so they could signal the game; the other commands are
+ *     allowed.
  * Note: a thread's own id is not the child's pid, so a call that names a
  * thread by its id (SDL's thread priority on Linux) fails with EPERM. The
  * thread then keeps the child's priority (nice +10).
@@ -297,6 +307,14 @@ typedef struct {
 #define CHILD_PRIO_PROCESS 0u          /* setpriority: PRIO_PROCESS */
 #define CHILD_IOPRIO_WHO_PROCESS 1u    /* ioprio_set: IOPRIO_WHO_PROCESS */
 #define CHILD_PID_SLOTS 3
+/* fcntl and ioctl commands that set an fd's owner or its signal: the
+ * kernel then signals that owner (any process of the same user) when the
+ * fd is ready. The values are the same on x86_64 and aarch64. */
+#define CHILD_F_SETOWN 8u
+#define CHILD_F_SETSIG 10u
+#define CHILD_F_SETOWN_EX 15u
+#define CHILD_FIOSETOWN 0x8901u
+#define CHILD_SIOCSPGRP 0x8902u
 /* All the CLONE_NEW* flags of clone's first argument (CLONE_NEWTIME is
  * only for clone3, which is refused). */
 #define CHILD_CLONE_NS_FLAGS                                               \
@@ -309,8 +327,8 @@ static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
     static const unsigned blocked[] = {
         __NR_socket, __NR_ptrace, __NR_tkill,
         __NR_process_vm_readv, __NR_process_vm_writev, __NR_pidfd_getfd,
-        __NR_pidfd_open, __NR_process_madvise,
-        __NR_unshare, __NR_setns,
+        __NR_pidfd_open, __NR_pidfd_send_signal, __NR_process_madvise,
+        __NR_setpgid, __NR_unshare, __NR_setns,
         __NR_mount, __NR_umount2, __NR_open_tree, __NR_move_mount,
         __NR_fsopen, __NR_fsconfig, __NR_fsmount, __NR_fspick,
         __NR_mount_setattr, __NR_pivot_root, __NR_chroot,
@@ -336,7 +354,8 @@ static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
     const int nb = (int)(sizeof(blocked) / sizeof(blocked[0]));
     const int np = (int)(sizeof(pidChecked) / sizeof(pidChecked[0]));
     struct sock_filter *f = cs->filter;
-    int n = 0, i, chk, cloneChk, prioChk, ioChk, err, nosys, allowEnd;
+    int n = 0, i, chk, cloneChk, prioChk, ioChk, fcntlChk, ioctlChk, err,
+        nosys, allowEnd;
 #if defined(__x86_64__)
     const int x32 = 1;
 #else
@@ -344,13 +363,15 @@ static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
 #endif
     /* The layout: the arch check (3), the nr load (1), x32 (0 or 1), the
      * blocked list, clone3, clone, the pid list, setpriority, ioprio_set,
-     * allow; then chk (4), cloneChk (4), prioChk (6), ioChk (6), err,
-     * nosys, allowEnd. */
-    chk = 4 + x32 + nb + 2 + np + 2 + 1;
+     * fcntl, ioctl, allow; then chk (4), cloneChk (4), prioChk (6),
+     * ioChk (6), fcntlChk (5), ioctlChk (4), err, nosys, allowEnd. */
+    chk = 4 + x32 + nb + 2 + np + 4 + 1;
     cloneChk = chk + 4;
     prioChk = cloneChk + 4;
     ioChk = prioChk + 6;
-    err = ioChk + 6;
+    fcntlChk = ioChk + 6;
+    ioctlChk = fcntlChk + 5;
+    err = ioctlChk + 4;
     nosys = err + 1;
     allowEnd = nosys + 1;
 
@@ -394,6 +415,12 @@ static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
     n++;
     f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
                                         __NR_ioprio_set, AT(ioChk), 0);
+    n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        __NR_fcntl, AT(fcntlChk), 0);
+    n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        __NR_ioctl, AT(ioctlChk), 0);
     n++;
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
     n++;
@@ -453,6 +480,36 @@ static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
                                                 (EPERM & 0xFFFF));
         n++;
     }
+    /* fcntlChk: the command (the second argument; the kernel reads only
+     * its low half) sets no owner and no signal. */
+    f[n] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+                                        offsetof(struct seccomp_data, args) +
+                                            8);
+    n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        CHILD_F_SETOWN, AT(err), 0);
+    n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        CHILD_F_SETSIG, AT(err), 0);
+    n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        CHILD_F_SETOWN_EX, AT(err), 0);
+    n++;
+    f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
+    n++;
+    /* ioctlChk: the same for ioctl's request (the second argument). */
+    f[n] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+                                        offsetof(struct seccomp_data, args) +
+                                            8);
+    n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        CHILD_FIOSETOWN, AT(err), 0);
+    n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        CHILD_SIOCSPGRP, AT(err), 0);
+    n++;
+    f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
+    n++;
     /* err */
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
                                         SECCOMP_RET_ERRNO | (EPERM & 0xFFFF));

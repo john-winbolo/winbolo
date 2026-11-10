@@ -89,6 +89,9 @@ void botHostEmbedSetRecord(bool on);
 /* True when this client was built with WINBOLO_BOTHOST_OFFICIAL_ONLY: its
  * host runs only the brains of its own install. */
 bool botHostEmbedOfficialOnly(void);
+/* True when this program has the shipped-brain table compiled in
+ * (WINBOLO_BRAIN_SHIPPED_TABLE: an official-only build). */
+bool botHostEmbedShippedTable(void);
 /* The slots offered before the brain's own answer is known. */
 int botHostEmbedDefaultSlots(void);
 

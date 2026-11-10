@@ -3382,4 +3382,8 @@ bool botHostEmbedOfficialOnly(void) {
     return HOST_OFFICIAL_ONLY != 0;
 }
 
+bool botHostEmbedShippedTable(void) {
+    return HOST_SHIPPED_TABLE != 0;
+}
+
 #endif /* WINBOLO_BOTHOST_EMBED */
