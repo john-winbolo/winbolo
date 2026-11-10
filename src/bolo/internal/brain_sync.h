@@ -246,6 +246,43 @@ bool brainSyncPlanPacked(const BrainSyncManifest *m, const char *root,
 bool brainSyncInstallMatches(const char *installRoot,
                              const BrainSyncBrain *br);
 
+/* One brain file a build shipped: "<brain>/<relative path>" and the
+ * SHA-256 of its bytes as 64 lower-case hex digits. The build writes the
+ * table (cmake/brain_shipped_table.cmake) with every shipped file of every
+ * brain folder, *.md and dot files left out. */
+typedef struct {
+    const char *path;
+    const char *sha256;
+} BrainSyncShippedFile;
+
+/* What brainSyncShippedCheck found. */
+typedef enum {
+    BRAIN_SYNC_SHIPPED_OK = 0,
+    BRAIN_SYNC_SHIPPED_NOT_SHIPPED,  /* the table has no file of the brain */
+    BRAIN_SYNC_SHIPPED_UNREADABLE,   /* the install's brain folder cannot be
+                                      * listed */
+    BRAIN_SYNC_SHIPPED_MISSING,      /* a shipped file is not on disk */
+    BRAIN_SYNC_SHIPPED_CHANGED,      /* a file differs from the shipped one */
+    BRAIN_SYNC_SHIPPED_EXTRA         /* a file on disk was not shipped */
+} BrainSyncShippedResult;
+
+/* Check the brain `name` in the install folder installRoot against the
+ * table of shipped files (count entries). The files on disk are listed as
+ * brainSyncCollectBrain lists them outside debug mode; the shipped files
+ * are chosen from the table by the same rule (opt/ and the top-level files
+ * that opt/ does not replace, when the table has opt/init.lua). Every file
+ * must be on both lists with the same SHA-256. On a result other than OK,
+ * file (when not NULL) gets the brain-relative path of the first file that
+ * differs, or "" when no one file is to blame. */
+BrainSyncShippedResult brainSyncShippedCheck(const BrainSyncShippedFile *table,
+                                             int count,
+                                             const char *installRoot,
+                                             const char *name,
+                                             char *file, size_t fileSz);
+
+/* A short English phrase for a result ("changed since it shipped"). */
+const char *brainSyncShippedResultText(BrainSyncShippedResult r);
+
 /* Move a brain's stage folder into its version folder: a rename of the
  * whole folder when there is no version folder yet, else a move of each
  * file the stage holds, then the stage folder is removed. True when there

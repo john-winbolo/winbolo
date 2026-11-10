@@ -31,6 +31,10 @@
  *      its own allocator back.
  *   9. bot_host_reset_limit: only the first few download resets of one
  *      list clear the requests taken; a new list starts the count again.
+ *  10. bot_host_brain_name_opt: the server names a bot's brain by the folder
+ *      that holds its init.lua, and the production copy in opt/ by its
+ *      parent, so a bot that runs brains/GoalHunter/opt/init.lua is a
+ *      GoalHunter bot to the Bot Hosts, not an "opt" one.
  */
 
 #include <stdint.h>
@@ -49,6 +53,7 @@
 #include "brain_pack.h"
 #include "brain_sync.h"
 #include "scenario_table.h"
+#include "transport_udp_server_internal.h" /* serverBotHostBrainName */
 #include "test_harness.h"
 
 static bool sec_write(const char *dir, const char *rel, const char *text) {
@@ -602,5 +607,36 @@ int run_brain_capacity_memory_limit(void) {
     UT_ASSERT(f1 == f0 && ud1 == ud0);
     lua_close(L);
     brainCapacityClear();
+    return 0;
+}
+
+/* ================================================================
+ * 10. The brain name of an opt/ path
+ * ================================================================ */
+int run_bot_host_brain_name_opt(void) {
+    char n[64];
+
+    serverBotHostBrainName("brains/GoalHunter/opt/init.lua", n, sizeof(n));
+    UT_ASSERT_MSG(strcmp(n, "GoalHunter") == 0, "gave \"%s\"", n);
+    serverBotHostBrainName("C:\\Games\\Brains\\GoalHunter\\opt\\init.lua", n,
+                           sizeof(n));
+    UT_ASSERT_MSG(strcmp(n, "GoalHunter") == 0, "gave \"%s\"", n);
+    serverBotHostBrainName("Brains/GoalHunter/init.lua", n, sizeof(n));
+    UT_ASSERT_MSG(strcmp(n, "GoalHunter") == 0, "gave \"%s\"", n);
+    serverBotHostBrainName("idle.lua", n, sizeof(n));
+    UT_ASSERT_MSG(strcmp(n, "idle") == 0, "gave \"%s\"", n);
+    /* A brain folder that is itself called opt, with no parent, keeps it. */
+    serverBotHostBrainName("opt/init.lua", n, sizeof(n));
+    UT_ASSERT_MSG(strcmp(n, "opt") == 0, "gave \"%s\"", n);
+    serverBotHostBrainName(NULL, n, sizeof(n));
+    UT_ASSERT(n[0] == '\0');
+    /* The same name the capacity cache keys answers under. */
+    {
+        char c[64];
+        brainCapacityNameFromPath("brains/GoalHunter/opt/init.lua", c,
+                                  sizeof(c));
+        serverBotHostBrainName("brains/GoalHunter/opt/init.lua", n, sizeof(n));
+        UT_ASSERT(strcmp(n, c) == 0);
+    }
     return 0;
 }
