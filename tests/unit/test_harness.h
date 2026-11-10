@@ -906,6 +906,9 @@ int run_brain_sync_path_check(void);
 int run_brain_sync_manifest_codec(void);
 int run_brain_sync_cache_plan(void);
 int run_brain_sync_chunk(void);
+int run_brain_sync_shipped_match(void);
+int run_brain_sync_shipped_edited(void);
+int run_brain_sync_shipped_missing(void);
 /* Packed brain sync and session folders (test_brain_pack.c). */
 int run_brain_pack_manifest_v2(void);
 int run_brain_pack_all_equal(void);
@@ -923,6 +926,7 @@ int run_brain_capacity_throwing_index(void);
 int run_bot_host_refused_takes_no_file(void);
 int run_brain_capacity_memory_limit(void);
 int run_bot_host_reset_limit(void);
+int run_bot_host_brain_name_opt(void);
 
 /* The built-in Bot Host as a child process (test_bothost_child.c). */
 int run_bothost_child_args(void);

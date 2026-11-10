@@ -2027,35 +2027,15 @@ static void botHostSendTable(int h, ControlEventType type, BYTE seat,
 }
 
 /* The brain's name from its path: the folder that holds its init.lua
- * ("Brains/GoalHunter/init.lua" gives "GoalHunter"). The host finds the
- * brain by that name in its own brain folders (brainListResolve), as a
- * scenario names a brain. A path with no folder gives its file name
- * without ".lua". */
-static void botHostBrainName(const char *path, char *out, size_t sz) {
-    const char *last = NULL, *prev = NULL, *p;
-    const char *start, *stop;
-    size_t n;
-
-    out[0] = '\0';
-    if (path == NULL || sz == 0) return;
-    for (p = path; *p != '\0'; p++) {
-        if (*p == '/' || *p == '\\') {
-            prev = last;
-            last = p;
-        }
-    }
-    if (last != NULL) {
-        start = (prev != NULL) ? prev + 1 : path;
-        stop = last;
-    } else {
-        start = path;
-        stop = path + strlen(path);
-        if (stop - start > 4 && SDL_strcasecmp(stop - 4, ".lua") == 0) stop -= 4;
-    }
-    n = (size_t)(stop - start);
-    if (n >= sz) n = sz - 1;
-    memcpy(out, start, n);
-    out[n] = '\0';
+ * ("Brains/GoalHunter/init.lua" gives "GoalHunter"). The production copy in
+ * opt/ gives its parent's name ("Brains/GoalHunter/opt/init.lua" gives
+ * "GoalHunter", not "opt"). The host finds the brain by that name in its
+ * own brain folders (brainListResolve), as a scenario names a brain. A
+ * path with no folder gives its file name without ".lua". The same rule as
+ * the capacity cache's brain name (brainCapacityNameFromPath). */
+void serverBotHostBrainName(const char *path, char *out, size_t sz) {
+    if (out == NULL || sz == 0) return;
+    brainCapacityNameFromPath(path, out, sz);
 }
 
 /* The brain file's version stamp: a CRC-32 of its bytes, 0 when it cannot
@@ -2095,7 +2075,7 @@ static void botSeatCurrent(ServerSim *sim, int s, char *brain, size_t brainSz,
                            char *initArg, size_t argSz) {
     const char *path = botManagerGetBrainPath(sim, (BYTE)s);
     const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, (BYTE)s);
-    botHostBrainName(path, brain, brainSz);
+    serverBotHostBrainName(path, brain, brainSz);
     *ai = (uint8_t)botManagerGetBotAi(sim, (BYTE)s);
     *team = (lp != NULL) ? lp->teamNumber : 0;
     initArg[0] = '\0';
@@ -3489,7 +3469,7 @@ static void botHostServiceTickets(ServerSim *sim) {
         if (!botManagerIsBot(sim, (BYTE)s)) continue;
         path = botManagerGetBrainPath(sim, (BYTE)s);
         if (path == NULL || path[0] == '\0') continue;
-        botHostBrainName(path, brain, sizeof(brain));
+        serverBotHostBrainName(path, brain, sizeof(brain));
         break;
     }
     for (s = 0; s < MAX_TANKS; s++) {
@@ -3746,7 +3726,7 @@ static bool botSeatLocalOfferable(ServerSim *sim, int s) {
     path = botManagerGetBrainPath(sim, (BYTE)s);
     if (path == NULL || path[0] == '\0') return false;
     /* A host runs only brains whose files it was sent. */
-    botHostBrainName(path, brainName, sizeof(brainName));
+    serverBotHostBrainName(path, brainName, sizeof(brainName));
     return brainSyncFindBrain(&udpServer.brainManifest, brainName) != NULL;
 }
 

@@ -1030,6 +1030,67 @@ option(WINBOLO_BOTHOST_OFFICIAL_ONLY
 option(WINBOLO_BOTHOST_ALLOW_FULL_MAP
     "Bot Hosts (also a player's built-in host) take bots that see the whole map" ON)
 
+# The brains this build ships: every folder under brains/ with an init.lua
+# or an opt/init.lua (cmake/brain_folders.cmake). No list names them, so a
+# brain folder that a merge adds ships with the next build: the copy steps
+# (winbolo_copy_brains) and the table below find it on their own. The
+# CONFIGURE_DEPENDS glob makes a new or removed brain file configure again.
+include(cmake/brain_folders.cmake)
+file(GLOB_RECURSE WINBOLO_SHIPPED_BRAIN_FILES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/brains/*/*")
+list(FILTER WINBOLO_SHIPPED_BRAIN_FILES EXCLUDE REGEX "\\.md$")
+
+# Copy every shipped brain folder into dest (a Brains/ folder) after tgt is
+# built, without the *.md notes.
+function(winbolo_copy_brains tgt dest)
+    add_custom_command(TARGET ${tgt} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${dest}"
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains
+            -DDEST_DIR=${dest}
+            -DALL_BRAINS=ON
+            -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
+        COMMENT "Copying the brains for ${tgt} into its Brains/ directory (excludes *.md)"
+        VERBATIM)
+endfunction()
+
+# The table of the brain files this build ships, with the SHA-256 of each,
+# for a client built with WINBOLO_BOTHOST_OFFICIAL_ONLY: its Bot Host runs
+# a brain only when the files in its Brains folder are these
+# (brainSyncShippedCheck). Written again at build time when a brain file
+# changes; the header changes only when a hash or a file name does.
+set(WINBOLO_BRAIN_SHIPPED_DIR "${CMAKE_BINARY_DIR}/generated/brain_shipped")
+add_custom_command(
+    OUTPUT "${WINBOLO_BRAIN_SHIPPED_DIR}/brain_shipped_table.stamp"
+    BYPRODUCTS "${WINBOLO_BRAIN_SHIPPED_DIR}/brain_shipped_table.h"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_BRAIN_SHIPPED_DIR}"
+    COMMAND ${CMAKE_COMMAND}
+        -DBRAINS_DIR=${CMAKE_SOURCE_DIR}/brains
+        -DOUT=${WINBOLO_BRAIN_SHIPPED_DIR}/brain_shipped_table.h
+        -DSTAMP=${WINBOLO_BRAIN_SHIPPED_DIR}/brain_shipped_table.stamp
+        -P ${CMAKE_SOURCE_DIR}/cmake/brain_shipped_table.cmake
+    DEPENDS ${WINBOLO_SHIPPED_BRAIN_FILES}
+        ${CMAKE_SOURCE_DIR}/cmake/brain_shipped_table.cmake
+        ${CMAKE_SOURCE_DIR}/cmake/brain_folders.cmake
+    COMMENT "Hashing the shipped brain files into brain_shipped_table.h"
+    VERBATIM)
+add_custom_target(winbolo_brain_shipped_table
+    DEPENDS "${WINBOLO_BRAIN_SHIPPED_DIR}/brain_shipped_table.stamp")
+
+# tgt compiles bothost_embed.c in an official-only build: the game and
+# WinBoloHeadless, and WinBoloBotHost for the Bot Host child that the game
+# starts with --official-only. bothost_embed.c then includes the table
+# (WINBOLO_BRAIN_SHIPPED_TABLE), so the table is written before tgt
+# compiles. The define is set on bothost_embed.c only.
+function(winbolo_use_brain_shipped_table tgt)
+    add_dependencies(${tgt} winbolo_brain_shipped_table)
+    target_include_directories(${tgt} PRIVATE "${WINBOLO_BRAIN_SHIPPED_DIR}")
+    set_source_files_properties(src/bothost/bothost_embed.c
+        DIRECTORY ${CMAKE_SOURCE_DIR}
+        TARGET_DIRECTORY ${tgt}
+        PROPERTIES COMPILE_DEFINITIONS WINBOLO_BRAIN_SHIPPED_TABLE=1)
+endfunction()
+
 # Fetches libplum and sets HAVE_LIBPLUM. A macro so the fetched variables and
 # HAVE_LIBPLUM land in the caller's scope. Called from both branches below
 # rather than here: the desktop branch adds compile options first (the fuzz
@@ -2462,6 +2523,7 @@ target_include_directories(WinBolo PRIVATE src/bothost)
 if(WINBOLO_BOTHOST_OFFICIAL_ONLY)
     target_compile_definitions(WinBolo PRIVATE
         WINBOLO_BOTHOST_OFFICIAL_ONLY=1)
+    winbolo_use_brain_shipped_table(WinBolo)
 endif()
 if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
     target_compile_definitions(WinBolo PRIVATE
@@ -2708,14 +2770,7 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMENT "Copying About-box markdown docs and the licence to data/"
 )
 
-add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter"
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
-        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter
-        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMENT "Copying brain scripts (GoalHunter) to output Brains/ directory (excludes *.md)"
-)
+winbolo_copy_brains(WinBolo "${WINBOLO_DATA_DIR}/Brains")
 
 # Steam Input action manifest + per-controller binding files — Steam reads
 # them from <install dir>/controller_config/ at runtime. Copy the whole
@@ -2997,13 +3052,7 @@ if(HAVE_SENTRY AND TARGET crashpad_handler)
     )
 endif()
 # Copy Lua brain scripts to output Brains/ directory (server)
-add_custom_command(TARGET WinBoloDS POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/Brains"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter"
-    COMMENT "Copying brain scripts to WinBoloDS output Brains/ directory"
-)
+winbolo_copy_brains(WinBoloDS "$<TARGET_FILE_DIR:WinBoloDS>/Brains")
 
 # ---------------------------------------------------------------------------
 # LogViewer (cross-platform: Windows, Linux, macOS)
@@ -3331,6 +3380,7 @@ target_include_directories(WinBoloHeadless PRIVATE src/bothost)
 if(WINBOLO_BOTHOST_OFFICIAL_ONLY)
     target_compile_definitions(WinBoloHeadless PRIVATE
         WINBOLO_BOTHOST_OFFICIAL_ONLY=1)
+    winbolo_use_brain_shipped_table(WinBoloHeadless)
 endif()
 if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
     target_compile_definitions(WinBoloHeadless PRIVATE
@@ -3388,13 +3438,7 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMENT "Copying SDL3 shared library to WinBoloHeadless output directory"
 )
 winbolo_stage_onnxruntime(WinBoloHeadless)
-add_custom_command(TARGET WinBoloHeadless POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter"
-    COMMENT "Copying brain scripts to WinBoloHeadless output directory"
-)
+winbolo_copy_brains(WinBoloHeadless "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains")
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:WinBoloHeadless>/data/lang"
@@ -3438,6 +3482,9 @@ endif()
 
 add_executable(WinBoloBotHost ${BOTHOST_SOURCES})
 target_sources(WinBoloBotHost PRIVATE src/steam/steam_wrapper_stub.c)
+if(WINBOLO_BOTHOST_OFFICIAL_ONLY)
+    winbolo_use_brain_shipped_table(WinBoloBotHost)
+endif()
 if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
     target_compile_definitions(WinBoloBotHost PRIVATE
         WINBOLO_BOTHOST_ALLOW_FULL_MAP=1)
@@ -3505,14 +3552,11 @@ add_custom_command(TARGET WinBoloBotHost POST_BUILD
     COMMENT "Copying SDL3 shared library to WinBoloBotHost output directory"
 )
 winbolo_stage_onnxruntime(WinBoloBotHost)
+winbolo_copy_brains(WinBoloBotHost "$<TARGET_FILE_DIR:WinBoloBotHost>/Brains")
 add_custom_command(TARGET WinBoloBotHost POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloBotHost>/Brains"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
-        "$<TARGET_FILE_DIR:WinBoloBotHost>/Brains/GoalHunter"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:WinBoloBotHost>/data/lang"
-    COMMENT "Copying brain scripts and lang files to WinBoloBotHost output directory"
+    COMMENT "Copying lang files to WinBoloBotHost output directory"
 )
 if(HAVE_SENTRY AND TARGET crashpad_handler)
     add_custom_command(TARGET WinBoloBotHost POST_BUILD
@@ -4173,10 +4217,11 @@ add_custom_target(dist
     ${DIST_ORT_NOTICES_CMD}
 
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
-        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains
+        -DDEST_DIR=${DIST_DIR}/Brains
+        -DALL_BRAINS=ON
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
 
     # Strip debug info from the staged Linux binaries (no-op on Win/macOS)
@@ -4259,6 +4304,16 @@ add_test(NAME warmup.ds        COMMAND $<TARGET_FILE:WinBoloDS> -nocrashreportin
 add_test(NAME warmup.unittests COMMAND $<TARGET_FILE:WinBoloUnitTests> --list)
 set_tests_properties(warmup.headless warmup.ds warmup.unittests
                      PROPERTIES FIXTURES_SETUP warm_binaries TIMEOUT 60)
+
+# The brains a build ships are found with no list to edit: a brain folder
+# added to brains/ is in the table of shipped files and in the copy step on
+# the next run (cmake/brain_folders.cmake). A CMake script, no binary.
+add_test(NAME brain_shipped_table_glob
+         COMMAND ${CMAKE_COMMAND}
+             -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+             -DWORK_DIR=${CMAKE_BINARY_DIR}/brain_shipped_table_test
+             -P ${CMAKE_SOURCE_DIR}/tests/cmake/brain_shipped_table_test.cmake)
+set_tests_properties(brain_shipped_table_glob PROPERTIES TIMEOUT 60)
 
 # Per-scenario CTest entries. Scenario names must stay in sync with the
 # dispatch_scenario case in tests/baseline/run.sh. --fast scenarios have
@@ -6343,6 +6398,9 @@ set(_unit_test_names
     brain_sync_manifest_codec
     brain_sync_cache_plan
     brain_sync_chunk
+    brain_sync_shipped_match
+    brain_sync_shipped_edited
+    brain_sync_shipped_missing
     brain_pack_manifest_v2
     brain_pack_all_equal
     brain_pack_one_changed
@@ -6376,6 +6434,7 @@ set(_unit_test_names
     bothost_ds_child_where
     bot_host_lockstep
     bothost_child_seccomp
+    bot_host_brain_name_opt
     bot_host_link_announce_codec
     bot_host_link_addr_list
     bot_host_link_allow
