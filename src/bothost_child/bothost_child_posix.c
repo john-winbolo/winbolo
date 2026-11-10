@@ -219,7 +219,7 @@ typedef struct {
     int                 readFileCount;
     const char         *writeDirs[BOT_HOST_SANDBOX_MAX_PATHS];
     int                 writeDirCount;
-    struct sock_filter  filter[128];
+    struct sock_filter  filter[192];
     unsigned short      filterLen;
 } ChildSandbox;
 
@@ -237,6 +237,17 @@ typedef struct {
  *     namespaces (unshare, setns); the mount family; bpf, perf_event_open, userfaultfd; the key calls
  *     (keyctl, add_key, request_key); io_uring; the module, kexec, swap,
  *     reboot, chroot and pivot_root calls;
+ *   - EPERM: the calls that change a file's mode, owner, times or extended
+ *     attributes (the chmod, chown and utime families, setxattr,
+ *     removexattr and their l, f and at forms), and truncate by path. A
+ *     file the game later runs or reads could be changed through them;
+ *     Landlock before ABI 3 does not cover truncate, and no ABI covers
+ *     the others. ftruncate on an fd the child opened stays allowed;
+ *   - EPERM: System V shared memory, message queues and semaphores (and
+ *     ipc, where the architecture has it). They outlive the child and are
+ *     open to every program of the same user;
+ *   - prctl PR_SET_PDEATHSIG: EPERM. The game sets it before the exec, so
+ *     the child ends with the game; the other options are allowed;
  *   - EPERM: fork and vfork (where the architecture has them). The child
  *     starts no program of its own: a second process would have its own
  *     memory limit and could keep the game's pipes open;
@@ -303,7 +314,18 @@ typedef struct {
 #ifndef __NR_mount_setattr
 #define __NR_mount_setattr 442
 #endif
+/* The same number on every architecture (since Linux 5.1). */
+#ifndef __NR_fchmodat2
+#define __NR_fchmodat2 452
+#endif
+#ifndef __NR_setxattrat
+#define __NR_setxattrat 463
+#endif
+#ifndef __NR_removexattrat
+#define __NR_removexattrat 466
+#endif
 #define CHILD_CLONE_THREAD 0x00010000u
+#define CHILD_PR_SET_PDEATHSIG 1u      /* prctl's first argument */
 #define CHILD_PRIO_PROCESS 0u          /* setpriority: PRIO_PROCESS */
 #define CHILD_IOPRIO_WHO_PROCESS 1u    /* ioprio_set: IOPRIO_WHO_PROCESS */
 #define CHILD_PID_SLOTS 3
@@ -337,6 +359,37 @@ static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
         __NR_io_uring_setup, __NR_io_uring_enter, __NR_io_uring_register,
         __NR_init_module, __NR_finit_module, __NR_delete_module,
         __NR_kexec_load, __NR_swapon, __NR_swapoff, __NR_reboot,
+        /* A file's mode, owner, times and extended attributes. */
+        __NR_fchmod, __NR_fchmodat, __NR_fchmodat2,
+        __NR_fchown, __NR_fchownat, __NR_utimensat,
+        __NR_setxattr, __NR_lsetxattr, __NR_fsetxattr, __NR_setxattrat,
+        __NR_removexattr, __NR_lremovexattr, __NR_fremovexattr,
+        __NR_removexattrat, __NR_truncate,
+#ifdef __NR_chmod
+        __NR_chmod,
+#endif
+#ifdef __NR_chown
+        __NR_chown,
+#endif
+#ifdef __NR_lchown
+        __NR_lchown,
+#endif
+#ifdef __NR_utime
+        __NR_utime,
+#endif
+#ifdef __NR_utimes
+        __NR_utimes,
+#endif
+#ifdef __NR_futimesat
+        __NR_futimesat,
+#endif
+        /* System V IPC. */
+        __NR_shmget, __NR_shmat, __NR_shmctl,
+        __NR_msgget, __NR_msgsnd, __NR_msgrcv, __NR_msgctl,
+        __NR_semget, __NR_semop, __NR_semctl, __NR_semtimedop,
+#ifdef __NR_ipc
+        __NR_ipc,
+#endif
 #ifdef __NR_fork
         __NR_fork,
 #endif
@@ -354,8 +407,8 @@ static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
     const int nb = (int)(sizeof(blocked) / sizeof(blocked[0]));
     const int np = (int)(sizeof(pidChecked) / sizeof(pidChecked[0]));
     struct sock_filter *f = cs->filter;
-    int n = 0, i, chk, cloneChk, prioChk, ioChk, fcntlChk, ioctlChk, err,
-        nosys, allowEnd;
+    int n = 0, i, chk, cloneChk, prioChk, ioChk, fcntlChk, ioctlChk,
+        prctlChk, err, nosys, allowEnd;
 #if defined(__x86_64__)
     const int x32 = 1;
 #else
@@ -363,15 +416,17 @@ static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
 #endif
     /* The layout: the arch check (3), the nr load (1), x32 (0 or 1), the
      * blocked list, clone3, clone, the pid list, setpriority, ioprio_set,
-     * fcntl, ioctl, allow; then chk (4), cloneChk (4), prioChk (6),
-     * ioChk (6), fcntlChk (5), ioctlChk (4), err, nosys, allowEnd. */
-    chk = 4 + x32 + nb + 2 + np + 4 + 1;
+     * fcntl, ioctl, prctl, allow; then chk (4), cloneChk (4), prioChk (6),
+     * ioChk (6), fcntlChk (5), ioctlChk (4), prctlChk (3), err, nosys,
+     * allowEnd. */
+    chk = 4 + x32 + nb + 2 + np + 5 + 1;
     cloneChk = chk + 4;
     prioChk = cloneChk + 4;
     ioChk = prioChk + 6;
     fcntlChk = ioChk + 6;
     ioctlChk = fcntlChk + 5;
-    err = ioctlChk + 4;
+    prctlChk = ioctlChk + 4;
+    err = prctlChk + 3;
     nosys = err + 1;
     allowEnd = nosys + 1;
 
@@ -421,6 +476,9 @@ static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
     n++;
     f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
                                         __NR_ioctl, AT(ioctlChk), 0);
+    n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        __NR_prctl, AT(prctlChk), 0);
     n++;
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
     n++;
@@ -510,6 +568,15 @@ static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
     n++;
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
     n++;
+    /* prctlChk: the option (the first argument) is not PR_SET_PDEATHSIG. */
+    f[n] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+                                        offsetof(struct seccomp_data, args));
+    n++;
+    f[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                        CHILD_PR_SET_PDEATHSIG, AT(err), 0);
+    n++;
+    f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
+    n++;
     /* err */
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
                                         SECCOMP_RET_ERRNO | (EPERM & 0xFFFF));
@@ -522,6 +589,10 @@ static void buildFilter(ChildSandbox *cs, int pidSlot[CHILD_PID_SLOTS]) {
     f[n] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
     n++;
 #undef AT
+    if (n != allowEnd + 1 ||
+        n > (int)(sizeof(cs->filter) / sizeof(cs->filter[0]))) {
+        abort();
+    }
     cs->filterLen = (unsigned short)n;
 }
 
@@ -926,6 +997,14 @@ BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
         goto fail;
     }
     (void)fcntl(outPipe[0], F_SETFL, fcntl(outPipe[0], F_GETFL) | O_NONBLOCK);
+    /* The game's end of the child's stdin does not block either: a child
+     * that stops reading must not stop the game (botHostChildWriteLine).
+     * The child's end stays blocking. */
+    if (fcntl(inPipe[1], F_SETFL, fcntl(inPipe[1], F_GETFL) | O_NONBLOCK) !=
+        0) {
+        setErr(err, errSize, "fcntl failed (stdin)");
+        goto fail;
+    }
     noSigpipe(inPipe[1]);
     if (sandbox) {
         if (pipeCloexec(rin) != 0 || pipeCloexec(rout) != 0 ||
@@ -1055,6 +1134,8 @@ bool botHostChildRelayWrite(BotHostChildProc *p, const void *buf, size_t n) {
     return true;
 }
 
+/* The pipe is non-blocking, and a line is shorter than PIPE_BUF, so the
+ * write is all or nothing: a full pipe (EAGAIN) gives false at once. */
 bool botHostChildWriteLine(BotHostChildProc *p, const char *line) {
     char buf[600];
     int n;

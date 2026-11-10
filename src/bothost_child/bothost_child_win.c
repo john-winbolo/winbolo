@@ -52,6 +52,10 @@
 
 /* The relay pipes' size: a few hundred datagrams. */
 #define RELAY_PIPE_BYTES (256u * 1024u)
+/* The child's stdin: room for the lines the game writes before the child
+ * starts to read (the machine id, the ticket), and for the CPU lines of a
+ * child that is slow for a while. */
+#define STDIN_PIPE_BYTES (64u * 1024u)
 
 /* Read: list, read and run. Write: list, read, change and delete, but not
  * run (no program written there can start), and not the ACL or the owner.
@@ -471,9 +475,19 @@ BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
     sa.nLength = sizeof(sa);
     sa.lpSecurityDescriptor = NULL;
     sa.bInheritHandle = TRUE;
-    if (!CreatePipe(&inR, &inW, &sa, 0) || !CreatePipe(&outR, &outW, &sa, 0)) {
+    if (!CreatePipe(&inR, &inW, &sa, STDIN_PIPE_BYTES) ||
+        !CreatePipe(&outR, &outW, &sa, 0)) {
         setErr(err, errSize, "CreatePipe failed");
         goto done;
+    }
+    {
+        /* The game's end does not wait for the child: a write that does
+         * not fit writes less, or nothing (botHostChildWriteLine). */
+        DWORD mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
+        if (!SetNamedPipeHandleState(inW, &mode, NULL, NULL)) {
+            setErr(err, errSize, "SetNamedPipeHandleState failed (stdin)");
+            goto done;
+        }
     }
     /* The game's ends stay in the game. */
     SetHandleInformation(inW, HANDLE_FLAG_INHERIT, 0);
@@ -736,6 +750,8 @@ bool botHostChildRelayWrite(BotHostChildProc *p, const void *buf, size_t n) {
     return true;
 }
 
+/* The pipe does not wait (PIPE_NOWAIT): a full pipe gives a short write
+ * or none, and so false at once. */
 bool botHostChildWriteLine(BotHostChildProc *p, const char *line) {
     char buf[600];
     DWORD wrote = 0;

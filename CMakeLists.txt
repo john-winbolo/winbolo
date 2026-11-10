@@ -6418,6 +6418,7 @@ set(_unit_test_names
     bothost_child_copy_wanted
     bothost_child_env_keep
     bothost_child_seccomp
+    bothost_child_stdin_full
     bot_host_brain_name_opt
     bot_host_link_announce_codec
     bot_host_link_addr_list
