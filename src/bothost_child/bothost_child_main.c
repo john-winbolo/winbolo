@@ -3,6 +3,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+/* prlimit and the CPU_* set calls of the --test-seccomp mode. */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
 /*
  * The built-in Bot Host as a child process: the child's side, in
  * WinBoloBotHost (bothost_child.h).
