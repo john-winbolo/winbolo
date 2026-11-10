@@ -669,6 +669,10 @@ BotHostDsWhere botHostDsChildWhere(const BotHostDsChildIn *in,
     } else if (in->brainDebug) {
         w = "-brain-debug records the brains in the server's process";
         where = BOT_HOST_DS_INPROC;
+    } else if (in->repeatable) {
+        w = "-seed, -brain-lua-seed and -brain-no-budget-kill ask for a "
+            "repeatable game, and a game with the child is not repeatable";
+        where = BOT_HOST_DS_INPROC;
     } else if (in->allowUnsafe) {
         w = "-allow-unsafe-brains: the child runs its brains only in the "
             "Lua sandbox";

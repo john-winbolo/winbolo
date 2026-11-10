@@ -4064,6 +4064,7 @@ int main(int argc, char **argv) {
                        argExist(argc, argv, "profile-log") == TRUE ||
                        argExist(argc, argv, "-profile-log") == TRUE;
     dcfg.brainPath = brainPath;
+    dcfg.haveSeed = findArg(argc, argv, "seed") != ARG_NOT_FOUND;
     a = findArg(argc, argv, "threads");
     if (a != ARG_NOT_FOUND) dcfg.threads = atoi((char *)argv[a]);
     a = findArg(argc, argv, "brain-lua-seed");

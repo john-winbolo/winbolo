@@ -263,6 +263,7 @@ void dsBotChildStart(ServerSim *sim, const DsBotChildConfig *cfg) {
     memset(&in, 0, sizeof(in));
     in.inProcessAsked = cfg->inProcess;
     in.brainDebug = cfg->brainDebug;
+    in.repeatable = cfg->haveSeed && cfg->haveLuaSeed && cfg->noBudgetKill;
     in.allowUnsafe = cfg->allowUnsafe;
     if (botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC) {
         dsInProcess(why);

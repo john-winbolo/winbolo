@@ -441,6 +441,10 @@ typedef enum {
 typedef struct {
     bool              inProcessAsked; /* -bots-in-process */
     bool              brainDebug;     /* -brain-debug (records the brains) */
+    /* -seed, -brain-lua-seed and -brain-no-budget-kill, all three: a
+     * repeatable game. A game with the child is not repeatable (the bots
+     * move to it at a tick that changes from run to run). */
+    bool              repeatable;
     bool              allowUnsafe;    /* -allow-unsafe-brains */
     bool              restartLimit;   /* it ended by itself too often */
     bool              tried;          /* start is the last start's answer */

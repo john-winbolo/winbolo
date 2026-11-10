@@ -23,6 +23,10 @@
  * as before the child existed, and logs one line why:
  *   - -bots-in-process;
  *   - -brain-debug (the recording runs in the server's process);
+ *   - -seed, -brain-lua-seed and -brain-no-budget-kill together (the
+ *     recipe for a repeatable game: a game with the child is not
+ *     repeatable, because the bots move to it at a tick that changes from
+ *     run to run);
  *   - -allow-unsafe-brains (the child runs brains only in the Lua sandbox);
  *   - the child or its sandbox cannot start (no WinBoloBotHost, no
  *     Landlock on Linux, a failed start, a hello that does not match, the
@@ -51,6 +55,7 @@ extern "C" {
 typedef struct {
     bool        inProcess;     /* -bots-in-process */
     bool        brainDebug;    /* -brain-debug */
+    bool        haveSeed;      /* -seed */
     bool        allowUnsafe;   /* -allow-unsafe-brains, -brain-profile-log */
     const char *brainPath;     /* -brain (a path to init.lua, or a folder) */
     int         threads;       /* -threads; 0: the default */

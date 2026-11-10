@@ -1107,6 +1107,10 @@ int run_bothost_ds_child_where(void) {
     UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
     UT_ASSERT(why != NULL && strstr(why, "-brain-debug") != NULL);
     memset(&in, 0, sizeof(in));
+    in.repeatable = true;
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
+    UT_ASSERT(why != NULL && strstr(why, "repeatable") != NULL);
+    memset(&in, 0, sizeof(in));
     in.allowUnsafe = true;
     UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
     UT_ASSERT(why != NULL && strstr(why, "-allow-unsafe-brains") != NULL);
@@ -1116,6 +1120,9 @@ int run_bothost_ds_child_where(void) {
     in.brainDebug = true;
     in.tried = true;
     in.start = BOT_HOST_CHILD_STARTED;
+    UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
+    in.brainDebug = false;
+    in.repeatable = true;
     UT_ASSERT(botHostDsChildWhere(&in, &why) == BOT_HOST_DS_INPROC);
 
     /* The start's answers. */
