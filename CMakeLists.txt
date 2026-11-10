@@ -4300,6 +4300,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # commit, reconciling them when a round comes back, re-seating them when
     # an emptied lobby resets, and leaving a preview and a plain map alone.
     tests/unit/test_lobby_template.c
+    # Lobby bots on a scenario team held with fielded = false.
+    tests/unit/test_lobby_held_team_bots.c
     # A lobby map change keeping the bots and the host's script list.
     tests/unit/test_lobby_map_keeps_bots.c
     tests/unit/test_survival_lobby_round.c
@@ -7243,6 +7245,9 @@ set(_unit_test_names
     lobby_template_no_mode_leaves_config
     lobby_template_seat_new_seat_base
     lobby_template_add_bot_takes_template
+    lobby_held_add_bot_seats_held
+    lobby_held_move_on_and_off
+    lobby_held_all_fielded_unchanged
     lobby_map_keeps_bots_plain
     lobby_map_keeps_bots_scenario
     lobby_map_keeps_bots_map_own_row
