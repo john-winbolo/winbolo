@@ -120,6 +120,15 @@ const char *transportUdpServerGetClientCountryCode(BYTE playerNum) { (void)playe
 uint8_t transportUdpServerGetClientType(BYTE playerNum) { (void)playerNum; return 0; /* CLIENT_TYPE_UNKNOWN */ }
 bool transportUdpServerHasAnyClient(void) { return false; }
 void transportUdpServerPrintBotHosts(void) { }
+/* server_command_dispatch.c calls this for the slot-override command. The
+ * real one lives in udp/udp_server_bothost.c (server_static). With no Bot
+ * Hosts here, every row is "no such row": 2 is BOT_HOST_SLOT_SET_INVALID
+ * in transport_udp.h. */
+int serverBotHostSetSlotOverride(struct ServerSim *sim, int row, int value,
+                                 int player) {
+  (void)sim; (void)row; (void)value; (void)player;
+  return 2;
+}
 bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen) {
   (void)playerNum; (void)out; (void)outLen; return false;
 }

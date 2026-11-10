@@ -14,6 +14,12 @@
  *      that one.
  *   4. brain_sync_chunk: a packed chunk unpacks to the same bytes, and a
  *      damaged or too large one is refused.
+ *   5. brain_sync_shipped_match: an install whose brain files are the ones
+ *      in the build's table passes; a brain the table lacks does not.
+ *   6. brain_sync_shipped_edited: an edited or added file that the brain
+ *      runs is refused and named; a file it does not run may change.
+ *   7. brain_sync_shipped_missing: a shipped file gone from the install is
+ *      refused and named.
  */
 
 #include <stdint.h>
@@ -24,6 +30,7 @@
 #include <SDL3/SDL.h>
 
 #include "brain_sync.h"
+#include "machine_id.h"   /* machineSha256 */
 #include "test_harness.h"
 
 /* ================================================================
@@ -316,5 +323,136 @@ int run_brain_sync_chunk(void) {
     free(packed);
     free(raw);
     free(out);
+    return 0;
+}
+
+/* ================================================================
+ * 5-7. The brain files a build shipped (brainSyncShippedCheck)
+ * ================================================================ */
+
+/* A table as cmake/brain_shipped_table.cmake writes it: every file of the
+ * brain folder, with its SHA-256 in lower-case hex. */
+#define BS_SHIP_MAX 16
+static char bsShipPath[BS_SHIP_MAX][96];
+static char bsShipSha[BS_SHIP_MAX][65];
+static BrainSyncShippedFile bsShip[BS_SHIP_MAX];
+static int bsShipCount;
+
+static void bs_ship_row(const char *path, const char *text) {
+    static const char digits[] = "0123456789abcdef";
+    uint8_t sha[MACHINE_HASH_LEN];
+    int i, n = bsShipCount++;
+    machineSha256(text, strlen(text), sha);
+    for (i = 0; i < MACHINE_HASH_LEN; i++) {
+        bsShipSha[n][i * 2] = digits[sha[i] >> 4];
+        bsShipSha[n][i * 2 + 1] = digits[sha[i] & 0x0f];
+    }
+    bsShipSha[n][64] = '\0';
+    SDL_strlcpy(bsShipPath[n], path, sizeof(bsShipPath[n]));
+    bsShip[n].path = bsShipPath[n];
+    bsShip[n].sha256 = bsShipSha[n];
+}
+
+/* Write file rel of brain "Shipped" under root and put it in the table. */
+static bool bs_ship(const char *root, const char *rel, const char *text) {
+    char dir[1024], path[160];
+    SDL_snprintf(dir, sizeof(dir), "%s/Shipped", root);
+    SDL_snprintf(path, sizeof(path), "Shipped/%s", rel);
+    bs_ship_row(path, text);
+    return bs_write(dir, rel, text);
+}
+
+/* An install root at <scratch>/<leaf> with the brain "Shipped" as a build
+ * ships it: an opt/ copy, a top-level init.lua that opt/ replaces, a
+ * top-level file opt/ does not have, and a sub-folder an opt brain does
+ * not run. The table also holds a second brain's file. */
+static int bs_make_shipped(const char *leaf, char *root, size_t rootSz) {
+    bsShipCount = 0;
+    if (!utScratchPath(root, rootSz, leaf)) return -1;
+    if (!bs_ship(root, "opt/init.lua", "require('lib')\n")) return -2;
+    if (!bs_ship(root, "opt/lib.lua", "return { fast = true }\n")) return -3;
+    if (!bs_ship(root, "init.lua", "print('full source')\n")) return -4;
+    if (!bs_ship(root, "modes.txt", "default\n")) return -5;
+    if (!bs_ship(root, "util.lua", "return 7\n")) return -6;
+    if (!bs_ship(root, "src/deep.lua", "return 'not run'\n")) return -7;
+    bs_ship_row("Other/init.lua", "print('other')\n");
+    return 0;
+}
+
+static BrainSyncShippedResult bs_check(const char *root, char *file,
+                                       size_t fileSz) {
+    return brainSyncShippedCheck(bsShip, bsShipCount, root, "Shipped", file,
+                                 fileSz);
+}
+
+/* 5. The files on disk are the shipped ones. */
+int run_brain_sync_shipped_match(void) {
+    char root[1024], file[BRAIN_SYNC_PATH_MAX];
+    int r = bs_make_shipped("ship_match", root, sizeof(root));
+    UT_ASSERT_MSG(r == 0, "fixture failed (%d)", r);
+
+    UT_ASSERT(bs_check(root, file, sizeof(file)) == BRAIN_SYNC_SHIPPED_OK);
+    UT_ASSERT(file[0] == '\0');
+    /* A brain the table does not have is not run, nor is one with no
+     * folder in the install. */
+    UT_ASSERT(brainSyncShippedCheck(bsShip, bsShipCount, root, "NewBrain",
+                                    file, sizeof(file)) ==
+              BRAIN_SYNC_SHIPPED_NOT_SHIPPED);
+    UT_ASSERT(brainSyncShippedCheck(bsShip, bsShipCount, root, "Other",
+                                    file, sizeof(file)) ==
+              BRAIN_SYNC_SHIPPED_UNREADABLE);
+    UT_ASSERT(brainSyncShippedCheck(NULL, 0, root, "Shipped", file,
+                                    sizeof(file)) ==
+              BRAIN_SYNC_SHIPPED_NOT_SHIPPED);
+    return 0;
+}
+
+/* 6. A file that was edited after it shipped, or added, is refused and
+ *    named; a file the brain does not run may change. */
+int run_brain_sync_shipped_edited(void) {
+    char root[1024], dir[1100], file[BRAIN_SYNC_PATH_MAX];
+    int r = bs_make_shipped("ship_edited", root, sizeof(root));
+    UT_ASSERT_MSG(r == 0, "fixture failed (%d)", r);
+    SDL_snprintf(dir, sizeof(dir), "%s/Shipped", root);
+
+    /* The full-source init.lua and src/ are not what an opt brain runs. */
+    UT_ASSERT(bs_write(dir, "init.lua", "print('edited, not run')\n"));
+    UT_ASSERT(bs_write(dir, "src/deep.lua", "return 'edited'\n"));
+    UT_ASSERT(bs_check(root, file, sizeof(file)) == BRAIN_SYNC_SHIPPED_OK);
+
+    /* An edit to a file it runs. */
+    UT_ASSERT(bs_write(dir, "opt/lib.lua", "return { fast = false }\n"));
+    UT_ASSERT(bs_check(root, file, sizeof(file)) ==
+              BRAIN_SYNC_SHIPPED_CHANGED);
+    UT_ASSERT_MSG(strcmp(file, "opt/lib.lua") == 0, "named \"%s\"", file);
+    UT_ASSERT(strcmp(brainSyncShippedResultText(BRAIN_SYNC_SHIPPED_CHANGED),
+                     "changed since it shipped") == 0);
+
+    /* Put back, it runs again; a file added beside it is refused. */
+    UT_ASSERT(bs_write(dir, "opt/lib.lua", "return { fast = true }\n"));
+    UT_ASSERT(bs_check(root, file, sizeof(file)) == BRAIN_SYNC_SHIPPED_OK);
+    UT_ASSERT(bs_write(dir, "opt/extra.lua", "os.exit()\n"));
+    UT_ASSERT(bs_check(root, file, sizeof(file)) == BRAIN_SYNC_SHIPPED_EXTRA);
+    UT_ASSERT_MSG(strcmp(file, "opt/extra.lua") == 0, "named \"%s\"", file);
+    return 0;
+}
+
+/* 7. A shipped file that is gone from the install is refused and named. */
+int run_brain_sync_shipped_missing(void) {
+    char root[1024], path[1200], file[BRAIN_SYNC_PATH_MAX];
+    int r = bs_make_shipped("ship_missing", root, sizeof(root));
+    UT_ASSERT_MSG(r == 0, "fixture failed (%d)", r);
+
+    SDL_snprintf(path, sizeof(path), "%s/Shipped/util.lua", root);
+    UT_ASSERT(SDL_RemovePath(path));
+    UT_ASSERT(bs_check(root, file, sizeof(file)) ==
+              BRAIN_SYNC_SHIPPED_MISSING);
+    UT_ASSERT_MSG(strcmp(file, "util.lua") == 0, "named \"%s\"", file);
+
+    /* Without opt/init.lua the folder lists as a full-source brain, which
+     * is not the brain that shipped. */
+    SDL_snprintf(path, sizeof(path), "%s/Shipped/opt/init.lua", root);
+    UT_ASSERT(SDL_RemovePath(path));
+    UT_ASSERT(bs_check(root, file, sizeof(file)) != BRAIN_SYNC_SHIPPED_OK);
     return 0;
 }
