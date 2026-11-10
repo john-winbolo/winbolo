@@ -3888,6 +3888,7 @@ int run_unfielded_seat_unfield_is_quiet(void);
 int run_unfielded_seat_unfield_keeps_sync(void);
 int run_unfielded_seat_spawn_keeps_alliances(void);
 int run_unfielded_seat_on_the_wire(void);
+int run_unfielded_seat_server_row_lists_held(void);
 
 /* What a wave costs (test_scenario_wave_cost.c): the brain, the ClientSim and
  * the control subscription behind a held seat, built across the countdown

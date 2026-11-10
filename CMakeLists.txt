@@ -7810,6 +7810,7 @@ set(_unit_test_names
     unfielded_seat_unfield_keeps_sync
     unfielded_seat_spawn_keeps_alliances
     unfielded_seat_on_the_wire
+    unfielded_seat_server_row_lists_held
     scenario_wave_cost_refield_resumes
     scenario_wave_cost_seats_swap_counts
     scenario_wave_cost_other_brain_rebuilds

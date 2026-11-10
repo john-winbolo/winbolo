@@ -1576,6 +1576,27 @@ static void botHostFillServerRow(ControlEvent *evt) {
 /* The rows last sent to the lobby, so a row goes out only when it changes. */
 static ControlEvent botHostRowSent[MAX_BOT_HOSTS + 1];
 
+/* The server row's held seats (CTRL_BOT_HOST_HELD): the lobby bot seats
+ * with no bot running anywhere, less any seat a Bot Host has. Only for the
+ * lobby's list: the row's used count and the placement leave them out. */
+static void botHostFillServerHeld(ControlEvent *evt) {
+    uint16_t held = serverSimHeldBotSeats(botHostSim);
+    int s;
+    for (s = 0; s < MAX_TANKS; s++) {
+        if (udpServer.botSeats[s].state != BOT_SEAT_LOCAL) {
+            held &= (uint16_t)~(1u << s);
+        }
+    }
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_HELD;
+    evt->u.botHostHeld.idx = (uint8_t)MAX_BOT_HOSTS;
+    evt->u.botHostHeld.held = held;
+}
+
+/* The held seats last sent, and whether any were since the row came. */
+static uint16_t botHostHeldSent;
+static bool     botHostHeldSentHave;
+
 /* The server's own CPU estimate for the bots it runs itself, measured the
  * way a Bot Host measures its own (bot_host_cpu.h). */
 static BotHostCpuMeter botHostServerCpu;
@@ -1784,6 +1805,23 @@ static void botHostBroadcastRows(void) {
             botHostRowSent[h] = evt;
             serverBroadcastLobbyControl(&evt);
         }
+        if (h == MAX_BOT_HOSTS) {
+            /* The held seats after the server's row, when they change. A
+             * client forgets them when the row goes, so they go again when
+             * it comes back. */
+            if (!evt.u.botHostStatus.connected) {
+                botHostHeldSentHave = false;
+            } else {
+                ControlEvent he;
+                botHostFillServerHeld(&he);
+                if (!botHostHeldSentHave ||
+                    he.u.botHostHeld.held != botHostHeldSent) {
+                    botHostHeldSentHave = true;
+                    botHostHeldSent = he.u.botHostHeld.held;
+                    serverBroadcastLobbyControl(&he);
+                }
+            }
+        }
         {
             /* The CPU estimate after its row, when it changes. A client
              * forgets it when the row goes, so a gone row's unknown is
@@ -1950,6 +1988,11 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
                     botHostFillCpuBot(MAX_BOT_HOSTS, milli, owner, source, &ce);
                     deliver(deliverCtx, &ce);
                 }
+            }
+            {
+                ControlEvent he;
+                botHostFillServerHeld(&he);
+                if (he.u.botHostHeld.held != 0) deliver(deliverCtx, &he);
             }
         }
     }

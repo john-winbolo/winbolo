@@ -216,6 +216,7 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_BOT_HOST_CPU:
     case CTRL_BOT_HOST_CPU_BOT:
     case CTRL_BOT_HOST_LAG:
+    case CTRL_BOT_HOST_HELD:
     /* Every bot's think timing, for a viewer's System Info. */
     case CTRL_BOT_TIMING:
     case CTRL_BOT_HOST_ROW_SLOTS:

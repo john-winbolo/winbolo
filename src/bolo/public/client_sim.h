@@ -147,6 +147,10 @@ typedef struct {
     uint8_t used;      /* bot seats it runs */
     uint8_t slots;     /* bot seats it offers */
     uint16_t seats;    /* its bots: bit n for player n */
+    /* The server's row only (CTRL_BOT_HOST_HELD): the lobby bot seats with
+     * no bot running yet, bit n for player n. Listed with the row's bots by
+     * name, and not in used or seats. 0 from an older server. */
+    uint16_t held;
     uint8_t recState;  /* BOT_HOST_REC_STATE_* */
     uint8_t recPercent; /* recording upload progress, 0..100 */
     uint8_t recBotsDone; /* bots whose recordings are sent */

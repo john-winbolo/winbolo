@@ -688,6 +688,17 @@ typedef enum {
      * has no decoder for it and skips it; a client of an older server gets
      * none and shows no bot rows when it does not host the game. */
     CTRL_BOT_TIMING,
+    /* CTRL_BOT_HOST_HELD — server to lobby players and spectators: for the
+     * server's own row of the Bot Host list (idx MAX_BOT_HOSTS), the lobby
+     * bot seats with no bot running anywhere yet, such as a scenario's
+     * seats held for a later wave, bit n for player n. The lobby lists
+     * them under that row by name, with the server's bots. They are not
+     * in the row's used count or its seats, and the bot placement does not
+     * read them. Sent when the bits change and on join. A type of its own,
+     * not a field added to CTRL_BOT_HOST_STATUS, because that decoder takes
+     * only its exact length: an older client skips this type and lists
+     * the row as before. */
+    CTRL_BOT_HOST_HELD,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1818,6 +1829,12 @@ typedef struct ControlEvent {
             uint16_t len;
             uint8_t  bytes[OVERRUN_RECORD_MAX_BYTES];
         } botTiming;
+
+        /* CTRL_BOT_HOST_HELD — see the enum. */
+        struct {
+            uint8_t  idx;    /* the row, MAX_BOT_HOSTS for the server's */
+            uint16_t held;   /* bit n for player n */
+        } botHostHeld;
 
         /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
         struct {
