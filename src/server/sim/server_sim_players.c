@@ -261,7 +261,7 @@ static BYTE rejoinTeammate(const ServerSim *sim, BYTE playerNum) {
     return NEUTRAL;
 }
 
-/* Whether the rules let a rejoiner back onto their old team: the same two
+/* Whether the rules let a rejoiner back onto their old team: the same
    check a player's own alliance accept makes (server_command_dispatch.c):
    the script's can_ally is asked with the new member first, as the accept
    asks it. */
