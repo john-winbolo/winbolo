@@ -42,6 +42,60 @@ uint64_t brainSyncHash(uint64_t h, const void *data, size_t len) {
     return h;
 }
 
+bool brainSyncIsTextPath(const char *path) {
+    static const char *const exts[] = { ".lua", ".txt", ".json" };
+    const char *dot, *slash, *back;
+    size_t i;
+    if (path == NULL) return false;
+    dot = strrchr(path, '.');
+    slash = strrchr(path, '/');
+    back = strrchr(path, '\\');
+    if (back != NULL && (slash == NULL || back > slash)) slash = back;
+    if (dot == NULL || (slash != NULL && dot < slash)) return false;
+    for (i = 0; i < sizeof(exts) / sizeof(exts[0]); i++) {
+        if (SDL_strcasecmp(dot, exts[i]) == 0) return true;
+    }
+    return false;
+}
+
+size_t brainSyncNormalizeText(void *data, size_t len) {
+    uint8_t *p = (uint8_t *)data;
+    size_t in = 0, out = 0;
+    if (p == NULL) return 0;
+    while (in < len) {
+        if (p[in] == '\r') {
+            size_t run = in;
+            while (run < len && p[run] == '\r') run++;
+            if (run < len && p[run] == '\n') {
+                in = run;                          /* CRs before a LF go */
+            } else {
+                while (in < run) p[out++] = p[in++];   /* lone CRs stay */
+            }
+            continue;
+        }
+        p[out++] = p[in++];
+    }
+    return out;
+}
+
+void *brainSyncLoadFile(const char *path, size_t *len) {
+    size_t sz = 0;
+    void *data = SDL_LoadFile(path, &sz);
+    if (data != NULL && brainSyncIsTextPath(path)) {
+        sz = brainSyncNormalizeText(data, sz);
+        ((uint8_t *)data)[sz] = 0;   /* SDL_LoadFile leaves room for a NUL */
+    }
+    if (len != NULL) *len = data != NULL ? sz : 0;
+    return data;
+}
+
+/* True when a file of onDisk bytes at path may read as size bytes: the same
+ * size, or no smaller for a text file, whose CRs before a LF are taken out. */
+static bool diskSizeFits(const char *path, uint64_t onDisk, uint32_t size) {
+    if (brainSyncIsTextPath(path)) return onDisk >= size;
+    return onDisk == size;
+}
+
 static uint64_t hashU32(uint64_t h, uint32_t v) {
     uint8_t b[4];
     b[0] = (uint8_t)(v >> 24); b[1] = (uint8_t)(v >> 16);
@@ -233,12 +287,6 @@ static void addFile(Collect *c, const char *full, const char *rel,
         c->failed = true;
         return;
     }
-    c->total += info->size;
-    if (c->total > BRAIN_SYNC_TOTAL_MAX_BYTES) {
-        fprintf(stderr, "[brainsync] brain \"%s\" is too large\n", b->name);
-        c->failed = true;
-        return;
-    }
     if (b->fileCount >= c->cap) {
         int ncap = c->cap ? c->cap * 2 : 64;
         BrainSyncFile *nf;
@@ -252,15 +300,17 @@ static void addFile(Collect *c, const char *full, const char *rel,
     memset(f, 0, sizeof(*f));
     SDL_strlcpy(f->path, rel, sizeof(f->path));
     f->size = (uint32_t)info->size;
+    f->rawSize = info->size;
     f->mtime = (int64_t)info->modify_time;
     old = prevFile(c->prev, rel);
-    if (old != NULL && old->size == f->size && old->mtime == f->mtime &&
+    if (old != NULL && old->rawSize == f->rawSize && old->mtime == f->mtime &&
         f->mtime != 0) {
+        f->size = old->size;
         f->hash = old->hash;
         memcpy(f->sha, old->sha, sizeof(f->sha));
     } else {
         size_t sz = 0;
-        void *data = SDL_LoadFile(full, &sz);
+        void *data = brainSyncLoadFile(full, &sz);
         if (data == NULL && f->size != 0) {
             fprintf(stderr, "[brainsync] cannot read \"%s\"\n", full);
             c->failed = true;
@@ -270,6 +320,13 @@ static void addFile(Collect *c, const char *full, const char *rel,
         f->hash = brainSyncHash(BRAIN_SYNC_HASH_SEED, data, sz);
         machineSha256(data != NULL ? data : (const void *)"", sz, f->sha);
         SDL_free(data);
+    }
+    /* The brain's bytes: a text file counts with its CRs taken out. */
+    c->total += f->size;
+    if (c->total > BRAIN_SYNC_TOTAL_MAX_BYTES) {
+        fprintf(stderr, "[brainsync] brain \"%s\" is too large\n", b->name);
+        c->failed = true;
+        return;
     }
     b->fileCount++;
 }
@@ -644,10 +701,10 @@ bool brainSyncFileMatches(const char *path, uint32_t size, uint64_t hash) {
     void *data;
     bool ok;
     if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE ||
-        info.size != size) {
+        !diskSizeFits(path, info.size, size)) {
         return false;
     }
-    data = SDL_LoadFile(path, &sz);
+    data = brainSyncLoadFile(path, &sz);
     if (data == NULL) return size == 0 && sz == 0 && info.size == 0;
     ok = (sz == size) && brainSyncHash(BRAIN_SYNC_HASH_SEED, data, sz) == hash;
     SDL_free(data);
@@ -669,10 +726,10 @@ bool brainSyncFileIs(const char *path, const BrainSyncFile *f, bool useSha) {
     bool ok;
     if (!useSha) return brainSyncFileMatches(path, f->size, f->hash);
     if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE ||
-        info.size != f->size) {
+        !diskSizeFits(path, info.size, f->size)) {
         return false;
     }
-    data = SDL_LoadFile(path, &sz);
+    data = brainSyncLoadFile(path, &sz);
     if (data == NULL && f->size != 0) return false;
     ok = brainSyncDataIs(f, data, sz);
     SDL_free(data);
@@ -713,7 +770,8 @@ static bool copyIfSame(const char *src, const BrainSyncFile *f, bool useSha,
     void *data;
     bool done;
     if (!brainSyncFileIs(src, f, useSha)) return false;
-    data = SDL_LoadFile(src, &sz);
+    /* The copy holds the LF bytes that the hashes are of. */
+    data = brainSyncLoadFile(src, &sz);
     if (data == NULL && f->size != 0) return false;
     /* Checked again on the bytes read, in case the file changed between. */
     done = (useSha ? brainSyncDataIs(f, data, sz)

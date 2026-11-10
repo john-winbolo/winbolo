@@ -1048,7 +1048,7 @@ static bool botHostServicePack(ServerSim *sim, int h) {
                 size_t sz = 0;
                 void *data;
                 SDL_snprintf(path, sizeof(path), "%s/%s", br->dir, f->path);
-                data = SDL_LoadFile(path, &sz);
+                data = brainSyncLoadFile(path, &sz);
                 if ((data == NULL && f->size != 0) || sz != f->size ||
                     brainSyncHash(BRAIN_SYNC_HASH_SEED, data, sz) != f->hash) {
                     SDL_free(data);
@@ -1187,7 +1187,7 @@ static void botHostServiceFiles(ServerSim *sim, int h) {
         if (fi >= (uint32_t)br->fileCount) return;
         f = &br->files[fi];
         SDL_snprintf(path, sizeof(path), "%s/%s", br->dir, f->path);
-        data = SDL_LoadFile(path, &sz);
+        data = brainSyncLoadFile(path, &sz);
         if ((data == NULL && f->size != 0) || sz != f->size ||
             brainSyncHash(BRAIN_SYNC_HASH_SEED, data, sz) != f->hash) {
             SDL_free(data);
@@ -2021,14 +2021,15 @@ void serverBotHostBrainName(const char *path, char *out, size_t sz) {
     brainCapacityNameFromPath(path, out, sz);
 }
 
-/* The brain file's version stamp: a CRC-32 of its bytes, 0 when it cannot
- * be read. The host warns when its copy differs. */
+/* The brain file's version stamp: a CRC-32 of its bytes as brainSyncLoadFile
+ * reads them (LF line endings), 0 when it cannot be read. The host warns
+ * when its copy differs. */
 static uint32_t botHostBrainVersion(const char *path) {
     size_t size = 0;
     void *data;
     uint32_t crc;
     if (path == NULL || path[0] == '\0') return 0;
-    data = SDL_LoadFile(path, &size);
+    data = brainSyncLoadFile(path, &size);
     if (data == NULL) return 0;
     crc = SDL_crc32(0, data, size);
     SDL_free(data);

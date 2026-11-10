@@ -38,9 +38,17 @@ function(_run_table)
     endif()
 endfunction()
 
+# A text file's row holds the hash of its LF form. file(WRITE) writes each
+# "\n" as CRLF on Windows and as LF elsewhere, and a plain file(READ) of
+# such a file gives the LF text on both, so that is what is hashed here.
 function(_expect_row rel)
     file(READ "${_out}" _t)
-    file(SHA256 "${_brains}/${rel}" _sha)
+    if(rel MATCHES "\\.(lua|txt|json)$")
+        file(READ "${_brains}/${rel}" _text)
+        string(SHA256 _sha "${_text}")
+    else()
+        file(SHA256 "${_brains}/${rel}" _sha)
+    endif()
     string(TOLOWER "${_sha}" _sha)
     string(FIND "${_t}" "{ \"${rel}\", \"${_sha}\" }" _at)
     if(_at EQUAL -1)
@@ -90,7 +98,36 @@ file(WRITE "${_brains}/Alpha/init.lua" "return 'alpha, edited'\n")
 _run_table()
 _expect_row("Alpha/init.lua")
 
-# 4. The copy step ships every brain folder, Gamma too, without the notes.
+# 4. Line endings: a text file with CRLF gets the hash of its LF form, the
+#    same value tests/unit/test_brain_sync.c (brain_sync_crlf_table_agrees)
+#    pins for the C hash; a lone CR stays; a .map is hashed as it is. The
+#    pinned values are the SHA-256 of "return 'crlf'\nlocal x = 1\n" and of
+#    "lone\rcr\nend\n".
+file(WRITE "${_brains}/Agree/init.lua" "return 'crlf'\r\nlocal x = 1\r\n")
+file(WRITE "${_brains}/Agree/lone.txt" "lone\rcr\r\nend\r\n")
+file(WRITE "${_brains}/Agree/arena.map" "MAP\r\n")
+# On Windows file(WRITE) makes each "\r\n" CR CR LF, which is LF too.
+file(READ "${_brains}/Agree/init.lua" _hex HEX)
+string(FIND "${_hex}" "0d0a" _at)
+if(_at EQUAL -1)
+    message(FATAL_ERROR "file(WRITE) wrote no CR (${_hex})")
+endif()
+_run_table()
+function(_expect_sha rel sha)
+    file(READ "${_out}" _t)
+    string(FIND "${_t}" "{ \"${rel}\", \"${sha}\" }" _at)
+    if(_at EQUAL -1)
+        message(FATAL_ERROR "the table does not give ${rel} the SHA-256 ${sha}")
+    endif()
+endfunction()
+_expect_sha("Agree/init.lua"
+    "1c1f55e2fc4951e7280ddd6616c35b83bf12d6be4a1746e61b1f4d8c02872f02")
+_expect_sha("Agree/lone.txt"
+    "a967fb5d8c56bc9c1bbb0421958e552f286bcfc32f3df79269d98a34a53da730")
+_expect_row("Agree/arena.map")
+file(REMOVE_RECURSE "${_brains}/Agree")
+
+# 5. The copy step ships every brain folder, Gamma too, without the notes.
 execute_process(
     COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${_brains} -DDEST_DIR=${_dest}
             -DALL_BRAINS=ON -P ${SOURCE_DIR}/cmake/copy_brains.cmake

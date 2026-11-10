@@ -969,6 +969,8 @@ int run_brain_sync_chunk(void);
 int run_brain_sync_shipped_match(void);
 int run_brain_sync_shipped_edited(void);
 int run_brain_sync_shipped_missing(void);
+int run_brain_sync_crlf_hash(void);
+int run_brain_sync_crlf_table_agrees(void);
 /* Packed brain sync and session folders (test_brain_pack.c). */
 int run_brain_pack_manifest_v2(void);
 int run_brain_pack_all_equal(void);
