@@ -21,6 +21,10 @@
 #include <string.h>
 
 #include "platform_net.h"     /* sockets / htons / inet_addr / bolo_net_init */
+#ifndef _WIN32
+#include <net/if.h>           /* if_nametoindex */
+#endif
+#include "bolo_addr.h"        /* BoloAddr, boloAddrParse */
 #include "mdns.h"             /* mdns_query_answer_unicast / mdns_query_recv */
 #include "mdns_records.h"     /* MdnsServerInfo + mdnsAdvertiseBuildRecords */
 #include "discovery.h"        /* DiscoveryServer */
@@ -112,6 +116,286 @@ static int recvServer(bolo_socket_t browser, DiscoveryServer *out) {
   return -1;
 }
 
+/* Runs one received answer datagram through the browser's record callback
+ * as if it had arrived from `from`, which a loopback socket cannot supply
+ * for a scoped IPv6 source. Returns 0 when the header and questions parse. */
+static int parseWithSource(const uint32_t *buf, size_t len,
+                           const struct sockaddr *from, size_t fromLen,
+                           DiscoveryMdnsResolved *acc) {
+  const uint16_t *hdr = (const uint16_t *)buf;
+  uint16_t queryId, questions, answers, authority, additional, q;
+  size_t offset = 12;
+
+  if (len < 12) {
+    return -1;
+  }
+  queryId    = mdns_ntohs(hdr);
+  questions  = mdns_ntohs(hdr + 2);
+  answers    = mdns_ntohs(hdr + 3);
+  authority  = mdns_ntohs(hdr + 4);
+  additional = mdns_ntohs(hdr + 5);
+  for (q = 0; q < questions; q++) {
+    if (!mdns_string_skip(buf, len, &offset) || offset + 4 > len) {
+      return -1;
+    }
+    offset += 4; /* type and class */
+  }
+  mdns_records_parse(-1, from, fromLen, buf, len, &offset, MDNS_ENTRYTYPE_ANSWER,
+                     queryId, answers, discoveryMdnsAccumulate, acc);
+  mdns_records_parse(-1, from, fromLen, buf, len, &offset, MDNS_ENTRYTYPE_AUTHORITY,
+                     queryId, authority, discoveryMdnsAccumulate, acc);
+  mdns_records_parse(-1, from, fromLen, buf, len, &offset, MDNS_ENTRYTYPE_ADDITIONAL,
+                     queryId, additional, discoveryMdnsAccumulate, acc);
+  return 0;
+}
+
+/* The index of this machine's loopback interface and its name, so that a
+ * link-local address scoped to it formats as "%<name>" and parses back. 0
+ * when neither "lo0" nor "lo" exists, and always on Windows, where
+ * if_nametoindex is in the IP Helper library the tests do not link. */
+static unsigned int loopbackScope(const char **nameOut) {
+#ifndef _WIN32
+  unsigned int idx = if_nametoindex("lo0");
+  if (idx != 0) {
+    *nameOut = "lo0";
+    return idx;
+  }
+  idx = if_nametoindex("lo");
+  if (idx != 0) {
+    *nameOut = "lo";
+    return idx;
+  }
+#endif
+  *nameOut = "";
+  return 0;
+}
+
+/* The fields the address cases check besides the address. */
+static void fillBasicInfo(MdnsServerInfo *info, unsigned short port) {
+  memset(info, 0, sizeof(*info));
+  info->port = port;
+  strncpy(info->mapName, "Everard Island", sizeof(info->mapName) - 1);
+  info->versionMajor = 1;
+  info->versionMinor = 2;
+  info->versionRevision = 3;
+  info->numPlayers = 4;
+  info->numBases = 5;
+  info->numPills = 6;
+  info->lobby = true;
+  info->maxPlayers = 12;
+}
+
+/* Counts the A and AAAA records in a built answer set. */
+static void countAddressRecords(const mdns_record_t *records, size_t n,
+                                int *aCount, int *aaaaCount) {
+  size_t i;
+  *aCount = 0;
+  *aaaaCount = 0;
+  for (i = 0; i < n; i++) {
+    if (records[i].type == MDNS_RECORDTYPE_A) {
+      (*aCount)++;
+    } else if (records[i].type == MDNS_RECORDTYPE_AAAA) {
+      (*aaaaCount)++;
+    }
+  }
+}
+
+/* A browser and a responder socket on 127.0.0.1, with the browser's address
+ * in *browserAddr. Returns 0 on success. */
+static int openLoopbackPair(bolo_socket_t *browser, bolo_socket_t *responder,
+                            struct sockaddr_in *browserAddr) {
+  unsigned short browserPort = 0, responderPort = 0;
+  *browser = makeUdpSocket(&browserPort);
+  *responder = makeUdpSocket(&responderPort);
+  if (*browser == BOLO_INVALID_SOCKET || *responder == BOLO_INVALID_SOCKET) {
+    return -1;
+  }
+  memset(browserAddr, 0, sizeof(*browserAddr));
+  browserAddr->sin_family = AF_INET;
+  browserAddr->sin_addr.s_addr = inet_addr("127.0.0.1");
+  browserAddr->sin_port = htons(browserPort);
+  return 0;
+}
+
+/* A host with only an IPv6 address: no A record, an AAAA record, the
+ * WinBolo-v6- instance name, and the browser lists it at that address. */
+int run_mdns_discovery_aaaa_only(void) {
+  bolo_socket_t browser, responder;
+  struct sockaddr_in browserAddr;
+  MdnsServerInfo info;
+  mdns_record_t records[MDNS_WINBOLO_RECORD_COUNT];
+  char recScratch[512];
+  char instance[96];
+  const char *keys[MDNS_WINBOLO_TXT_COUNT];
+  const char *values[MDNS_WINBOLO_TXT_COUNT];
+  char scratch[512];
+  size_t n;
+  int aCount, aaaaCount;
+  DiscoveryServer s;
+
+  bolo_net_init();
+  UT_ASSERT(openLoopbackPair(&browser, &responder, &browserAddr) == 0);
+
+  fillBasicInfo(&info, 27520);
+  UT_ASSERT(boloAddrParse("2001:db8::20", 0, &info.addr6));
+
+  n = mdnsAdvertiseBuildRecords(&info, records, MDNS_WINBOLO_RECORD_COUNT,
+                                recScratch, sizeof(recScratch));
+  UT_ASSERT_MSG(n == MDNS_WINBOLO_RECORD_COUNT - 1, "records=%u", (unsigned)n);
+  countAddressRecords(records, n, &aCount, &aaaaCount);
+  UT_ASSERT_MSG(aCount == 0, "A records=%d", aCount);
+  UT_ASSERT_MSG(aaaaCount == 1, "AAAA records=%d", aaaaCount);
+
+  UT_ASSERT(mdnsAdvertiseTxtPairs(&info, instance, sizeof(instance), keys, values,
+                                  MDNS_WINBOLO_TXT_COUNT, scratch,
+                                  sizeof(scratch)) == MDNS_WINBOLO_TXT_COUNT);
+  UT_ASSERT_MSG(strcmp(instance, "WinBolo-v6-00000020-27520") == 0,
+                "instance='%s'", instance);
+
+  UT_ASSERT(sendServerAnswer(responder, &browserAddr, &info) == 0);
+  memset(&s, 0, sizeof(s));
+  UT_ASSERT(recvServer(browser, &s) == 0);
+  UT_ASSERT_MSG(strcmp(s.address, "2001:db8::20") == 0, "addr='%s'", s.address);
+  UT_ASSERT_MSG(s.port == 27520, "port=%u", (unsigned)s.port);
+  UT_ASSERT_MSG(strcmp(s.mapName, "Everard Island") == 0, "map='%s'", s.mapName);
+  UT_ASSERT(s.versionMajor == 1 && s.versionMinor == 2 && s.versionRevision == 3);
+  UT_ASSERT(s.numPlayers == 4 && s.numBases == 5 && s.numPills == 6);
+  UT_ASSERT(s.inLobby == true);
+  UT_ASSERT_MSG(s.maxPlayers == 12, "max=%u", (unsigned)s.maxPlayers);
+
+  closesocket(browser);
+  closesocket(responder);
+  bolo_net_cleanup();
+  return 0;
+}
+
+/* A host with both addresses: A and AAAA records, the IPv4 instance name,
+ * and the browser lists it at the IPv4 address. */
+int run_mdns_discovery_both_prefers_v4(void) {
+  bolo_socket_t browser, responder;
+  struct sockaddr_in browserAddr;
+  MdnsServerInfo info;
+  mdns_record_t records[MDNS_WINBOLO_RECORD_COUNT];
+  char recScratch[512];
+  char instance[96];
+  const char *keys[MDNS_WINBOLO_TXT_COUNT];
+  const char *values[MDNS_WINBOLO_TXT_COUNT];
+  char scratch[512];
+  size_t n;
+  int aCount, aaaaCount;
+  DiscoveryServer s;
+
+  bolo_net_init();
+  UT_ASSERT(openLoopbackPair(&browser, &responder, &browserAddr) == 0);
+
+  fillBasicInfo(&info, 27521);
+  UT_ASSERT(boloAddrParse("192.168.1.20", 0, &info.addr4));
+  UT_ASSERT(boloAddrParse("2001:db8::20", 0, &info.addr6));
+
+  n = mdnsAdvertiseBuildRecords(&info, records, MDNS_WINBOLO_RECORD_COUNT,
+                                recScratch, sizeof(recScratch));
+  UT_ASSERT_MSG(n == MDNS_WINBOLO_RECORD_COUNT, "records=%u", (unsigned)n);
+  countAddressRecords(records, n, &aCount, &aaaaCount);
+  UT_ASSERT_MSG(aCount == 1, "A records=%d", aCount);
+  UT_ASSERT_MSG(aaaaCount == 1, "AAAA records=%d", aaaaCount);
+
+  UT_ASSERT(mdnsAdvertiseTxtPairs(&info, instance, sizeof(instance), keys, values,
+                                  MDNS_WINBOLO_TXT_COUNT, scratch,
+                                  sizeof(scratch)) == MDNS_WINBOLO_TXT_COUNT);
+  UT_ASSERT_MSG(strcmp(instance, "WinBolo-192-168-1-20-27521") == 0,
+                "instance='%s'", instance);
+
+  /* The answer comes from 127.0.0.1, so 192.168.1.20 can only be the A
+   * record's address. */
+  UT_ASSERT(sendServerAnswer(responder, &browserAddr, &info) == 0);
+  memset(&s, 0, sizeof(s));
+  UT_ASSERT(recvServer(browser, &s) == 0);
+  UT_ASSERT_MSG(strcmp(s.address, "192.168.1.20") == 0, "addr='%s'", s.address);
+  UT_ASSERT_MSG(s.port == 27521, "port=%u", (unsigned)s.port);
+
+  closesocket(browser);
+  closesocket(responder);
+  bolo_net_cleanup();
+  return 0;
+}
+
+/* A link-local AAAA takes its scope from the IPv6 source of the datagram,
+ * and is ignored when the source is IPv4. */
+int run_mdns_discovery_link_local_scope(void) {
+  bolo_socket_t browser, responder;
+  struct sockaddr_in browserAddr;
+  MdnsServerInfo info;
+  uint32_t recvbuf[512];
+  int got;
+  struct sockaddr_in6 src6;
+  struct sockaddr_in src4;
+  DiscoveryMdnsResolved acc;
+  DiscoveryServer s;
+  BoloAddr parsed;
+  const char *loName = "";
+  unsigned int scope = loopbackScope(&loName);
+
+  if (scope == 0) {
+    fprintf(stderr, "  mdns_discovery_link_local_scope: skipped — no lo0 or lo "
+                    "interface to scope a link-local address to\n");
+    return 0;
+  }
+
+  bolo_net_init();
+  UT_ASSERT(openLoopbackPair(&browser, &responder, &browserAddr) == 0);
+
+  fillBasicInfo(&info, 27522);
+  UT_ASSERT(boloAddrParse("fe80::20", 0, &info.addr6));
+  UT_ASSERT(sendServerAnswer(responder, &browserAddr, &info) == 0);
+  got = (int)recv(browser, (char *)recvbuf, (int)sizeof(recvbuf), 0);
+  UT_ASSERT_MSG(got > 0, "recv=%d", got);
+
+  /* From an IPv6 source on the loopback interface: the address carries
+   * that interface as its scope. */
+  memset(&src6, 0, sizeof(src6));
+  src6.sin6_family = AF_INET6;
+#ifdef __APPLE__
+  src6.sin6_len = sizeof(src6);
+#endif
+  UT_ASSERT(inet_pton(AF_INET6, "fe80::20", &src6.sin6_addr) == 1);
+  src6.sin6_port = htons(5353);
+  src6.sin6_scope_id = scope;
+  memset(&acc, 0, sizeof(acc));
+  UT_ASSERT(parseWithSource(recvbuf, (size_t)got, (const struct sockaddr *)&src6,
+                            sizeof(src6), &acc) == 0);
+  UT_ASSERT(acc.haveSrv);
+  UT_ASSERT(boloAddrFamily(&acc.addr6) == AF_INET6);
+  memset(&s, 0, sizeof(s));
+  UT_ASSERT(discoveryMdnsFillServer(&acc, &s));
+  UT_ASSERT_MSG(s.port == 27522, "port=%u", (unsigned)s.port);
+  UT_ASSERT_MSG(boloAddrParse(s.address, 0, &parsed), "addr='%s'", s.address);
+  UT_ASSERT_MSG(boloAddrIsLinkLocal(&parsed), "addr='%s'", s.address);
+  UT_ASSERT_MSG(((const struct sockaddr_in6 *)&parsed.ss)->sin6_scope_id == scope,
+                "addr='%s' scope=%lu, %s is %u", s.address,
+                (unsigned long)((const struct sockaddr_in6 *)&parsed.ss)->sin6_scope_id,
+                loName, scope);
+
+  /* The same answer from an IPv4 source: no scope to give the link-local
+   * AAAA, so it is ignored and the sender's address is used. */
+  memset(&src4, 0, sizeof(src4));
+  src4.sin_family = AF_INET;
+  UT_ASSERT(inet_pton(AF_INET, "192.0.2.7", &src4.sin_addr) == 1);
+  src4.sin_port = htons(5353);
+  memset(&acc, 0, sizeof(acc));
+  UT_ASSERT(parseWithSource(recvbuf, (size_t)got, (const struct sockaddr *)&src4,
+                            sizeof(src4), &acc) == 0);
+  UT_ASSERT(acc.haveSrv);
+  UT_ASSERT(boloAddrFamily(&acc.addr6) == 0);
+  memset(&s, 0, sizeof(s));
+  UT_ASSERT(discoveryMdnsFillServer(&acc, &s));
+  UT_ASSERT_MSG(strcmp(s.address, "192.0.2.7") == 0, "addr='%s'", s.address);
+
+  closesocket(browser);
+  closesocket(responder);
+  bolo_net_cleanup();
+  return 0;
+}
+
 int run_mdns_discovery(void) {
   bolo_socket_t browser, responder;
   unsigned short browserPort = 0, responderPort = 0;
@@ -134,7 +418,7 @@ int run_mdns_discovery(void) {
   /* ---- single-server round-trip: every field through the real codecs ---- */
   memset(&info, 0, sizeof(info));
   info.port = 27510; /* non-default game port */
-  info.addr.s_addr = inet_addr("127.0.0.1");
+  UT_ASSERT(boloAddrParse("127.0.0.1", 0, &info.addr4));
   strncpy(info.mapName, "Everard Island", sizeof(info.mapName) - 1);
   info.versionMajor = 1;
   info.versionMinor = 2;
@@ -315,9 +599,11 @@ int run_mdns_platform_pairs(void) {
   size_t count, recCount, i, pair = 0;
   DiscoveryServer s;
 
+  /* Windows reads an IPv6 literal with getaddrinfo, which needs Winsock. */
+  bolo_net_init();
   memset(&info, 0, sizeof(info));
   info.port = 27510;
-  info.addr.s_addr = inet_addr("192.168.1.20");
+  UT_ASSERT(boloAddrParse("192.168.1.20", 0, &info.addr4));
   strncpy(info.mapName, "Everard Island", sizeof(info.mapName) - 1);
   info.versionMajor = 1;
   info.versionMinor = 2;
@@ -348,7 +634,9 @@ int run_mdns_platform_pairs(void) {
    * raw-socket advertiser sends. */
   recCount = mdnsAdvertiseBuildRecords(&info, records, MDNS_WINBOLO_RECORD_COUNT,
                                        recScratch, sizeof(recScratch));
-  UT_ASSERT(recCount == MDNS_WINBOLO_RECORD_COUNT);
+  /* The info has no IPv6 address, so no AAAA record is built: one fewer
+   * than the most an answer holds. */
+  UT_ASSERT(recCount == MDNS_WINBOLO_RECORD_COUNT - 1);
   for (i = 0; i < recCount; i++) {
     if (records[i].type != MDNS_RECORDTYPE_TXT) {
       continue;
@@ -381,6 +669,37 @@ int run_mdns_platform_pairs(void) {
   UT_ASSERT(s.hasViewInfo == true && s.pillView == viewPolicyKey &&
             s.overviewWindow == (uint8_t)overviewWindowClassic);
 
+  /* An IPv6 literal reads back unchanged. */
+  memset(&s, 0, sizeof(s));
+  UT_ASSERT(discoveryServerFromMdns("2001:db8::20", 27510, keys, values, count, &s));
+  UT_ASSERT_MSG(strcmp(s.address, "2001:db8::20") == 0, "address='%s'", s.address);
+  UT_ASSERT(s.port == 27510);
+
+  /* A link-local literal keeps its %scope. */
+  {
+    const char *loName = "";
+    unsigned int scope = loopbackScope(&loName);
+    if (scope == 0) {
+      fprintf(stderr, "  mdns_platform_pairs: scoped literal skipped — no lo0 "
+                      "or lo interface\n");
+    } else {
+      char scoped[64];
+      BoloAddr parsed;
+      snprintf(scoped, sizeof(scoped), "fe80::1%%%s", loName);
+      memset(&s, 0, sizeof(s));
+      UT_ASSERT_MSG(discoveryServerFromMdns(scoped, 27510, keys, values, count, &s),
+                    "'%s' was refused", scoped);
+      UT_ASSERT_MSG(boloAddrParse(s.address, 0, &parsed), "address='%s'", s.address);
+      UT_ASSERT_MSG(boloAddrIsLinkLocal(&parsed), "address='%s'", s.address);
+      UT_ASSERT_MSG(((const struct sockaddr_in6 *)&parsed.ss)->sin6_scope_id == scope,
+                    "address='%s', %s is %u", s.address, loName, scope);
+    }
+  }
+
+  /* A name is not an address. */
+  memset(&s, 0, sizeof(s));
+  UT_ASSERT(!discoveryServerFromMdns("winbolo.local", 27510, keys, values, count, &s));
+
   /* Too little room for the pairs is a failure, not a short list. */
   UT_ASSERT(mdnsAdvertiseTxtPairs(&info, instance, sizeof(instance), keys, values,
                                   MDNS_WINBOLO_TXT_COUNT - 1, scratch,
@@ -388,5 +707,6 @@ int run_mdns_platform_pairs(void) {
   UT_ASSERT(mdnsAdvertiseTxtPairs(&info, instance, 8, keys, values,
                                   MDNS_WINBOLO_TXT_COUNT, scratch,
                                   sizeof(scratch)) == 0);
+  bolo_net_cleanup();
   return 0;
 }

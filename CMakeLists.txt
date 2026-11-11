@@ -6902,6 +6902,9 @@ set(_unit_test_names
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree
     mdns_discovery
+    mdns_discovery_aaaa_only
+    mdns_discovery_both_prefers_v4
+    mdns_discovery_link_local_scope
     mdns_platform_pairs
     mdns_view_txt_roundtrip
     client_type_matches_platform

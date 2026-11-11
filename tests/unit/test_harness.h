@@ -3044,6 +3044,15 @@ int run_bot_difficulty_names(void);
  * inLobby/locked flags, every TXT field, and two-instance resolution. */
 int run_mdns_discovery(void);
 
+/* mDNS IPv6 records (test_mdns_discovery.c): a host with only an IPv6
+ * address answers with an AAAA record, no A record and the WinBolo-v6-
+ * instance name; a host with both is listed at its IPv4 address; a
+ * link-local AAAA takes the scope of the datagram's IPv6 source and is
+ * ignored when the source is IPv4. */
+int run_mdns_discovery_aaaa_only(void);
+int run_mdns_discovery_both_prefers_v4(void);
+int run_mdns_discovery_link_local_scope(void);
+
 /* The platform advertiser's strings (test_mdns_discovery.c): the instance
  * label and TXT pairs iOS registers with Bonjour match the raw-socket
  * advertiser's records and read back to the same server. */

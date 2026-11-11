@@ -39,9 +39,11 @@
  * this header stays compatible with server_sim.h under C99. */
 struct ServerSim;
 
-/* Open the IPv4 mDNS socket (join 224.0.0.251 on MDNS_PORT) and remember
- * gamePort for the SRV record. No-op safe to leave un-called; if the open
- * fails the poll/stop hooks below simply do nothing. */
+/* Open the IPv4 mDNS socket (join 224.0.0.251 on MDNS_PORT) when the host
+ * has an IPv4 LAN address and the IPv6 one (join ff02::fb on MDNS_PORT)
+ * when it has an IPv6 address, and remember gamePort for the SRV record.
+ * No-op safe to leave un-called; if neither opens the poll/stop hooks below
+ * simply do nothing. */
 void transportUdpServerStartMdnsAdvertiser(unsigned short gamePort);
 
 /* Non-blocking drain of incoming _winbolo._udp.local queries, answering
@@ -49,7 +51,7 @@ void transportUdpServerStartMdnsAdvertiser(unsigned short gamePort);
  * the advertiser was never started. Call once per server tick. */
 void transportUdpServerPollMdnsAdvertiser(struct ServerSim *sim);
 
-/* Close the mDNS socket and clear state. Safe to call when never started
+/* Close the mDNS sockets and clear state. Safe to call when never started
  * or already stopped. */
 void transportUdpServerStopMdnsAdvertiser(void);
 

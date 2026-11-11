@@ -20,7 +20,7 @@
  *Filename:      mdns_records.h
  *Purpose:
  *  Socket-free builder for the _winbolo._udp.local mDNS
- *  answer record set (PTR / SRV / A / TXT). Split out from
+ *  answer record set (PTR / SRV / A / AAAA / TXT). Split out from
  *  the socket-owning advertiser so it can be unit-tested
  *  directly: given a snapshot of server info it fills an
  *  mdns_record_t array with no I/O.
@@ -32,7 +32,8 @@
 #include "global.h"        /* BYTE / MAP_STR_SIZE / bool */
 #include "gametype.h"      /* gameType */
 #include "client_enums.h"  /* aiType */
-#include "mdns.h"          /* mdns_record_t and friends (header-only) */
+#include "bolo_addr.h"     /* BoloAddr */
+#include "mdns.h"         /* mdns_record_t and friends (header-only) */
 
 /* DNS-SD service the host advertises on the LAN. RFC 6763 service type
  * under .local; the trailing dot is part of the wire name. */
@@ -47,17 +48,23 @@
  *   md5=<32 hex chars|empty> newp=<0|1> spingoff=<0|1> spec=<0|1>
  *   nspec=<n> ranked=<0|1> rnd=<0|1> tlim=<game length, 0 if none>
  *   humans=<n> bots=<n> max=<n> view=<4 hex chars>
- * Count is fixed at MDNS_WINBOLO_TXT_COUNT; with PTR + SRV + A that is
- * MDNS_WINBOLO_RECORD_COUNT records total. */
+ * The TXT count is fixed at MDNS_WINBOLO_TXT_COUNT. The address records
+ * are not: an A record is written only when the host has an IPv4 address
+ * and an AAAA record only when it has an IPv6 one. MDNS_WINBOLO_RECORD_COUNT
+ * is the most records one answer holds (PTR + SRV + A + AAAA + the TXT
+ * records); a host with one address family gets one fewer. */
 #define MDNS_WINBOLO_TXT_COUNT 23
-#define MDNS_WINBOLO_RECORD_COUNT (3 + MDNS_WINBOLO_TXT_COUNT)
+#define MDNS_WINBOLO_RECORD_COUNT (4 + MDNS_WINBOLO_TXT_COUNT)
 
 /* Plain-data snapshot of the server state advertised in one answer. The
  * advertiser fills this from live server getters; the builder reads only
  * this POD (no sim / transport access), which is what keeps it testable. */
 typedef struct {
   unsigned short port;     /* bound game port — goes in the SRV record */
-  struct in_addr addr;     /* server LAN address — goes in the A record */
+  BoloAddr       addr4;    /* IPv4 LAN address for the A record; empty
+                              when the host has none */
+  BoloAddr       addr6;    /* IPv6 address for the AAAA record; empty when
+                              the host has none */
   char           mapName[MAP_STR_SIZE];
   BYTE           versionMajor;
   BYTE           versionMinor;
@@ -93,10 +100,16 @@ typedef struct {
   BYTE           viewPolicies2;   /* infoPacketPackViewPolicies2 output */
 } MdnsServerInfo;
 
-/* Fill records[] with the PTR / SRV / A / TXT answer set for info and
- * return the number of records written (0 on insufficient capacity).
- * records[0] is the PTR answer; records[1..] are the SRV, A and TXT
- * records, suitable as the "additional" array of an mDNS answer.
+/* Fill records[] with the PTR / SRV / A / AAAA / TXT answer set for info
+ * and return the number of records written (0 when capacity is below
+ * MDNS_WINBOLO_RECORD_COUNT or the scratch is too small). records[0] is the
+ * PTR answer; records[1..] are the SRV, the A (only when info->addr4 is
+ * set), the AAAA (only when info->addr6 is set) and the TXT records,
+ * suitable as the "additional" array of an mDNS answer.
+ *
+ * The instance name is "WinBolo-<a>-<b>-<c>-<d>-<port>" from the IPv4
+ * address when there is one, and "WinBolo-v6-<last 8 hex digits of the
+ * IPv6 address, lower case>-<port>" when there is only an IPv6 address.
  *
  * The TXT record values point into txtScratch, so that buffer must stay
  * alive for as long as the returned records are used (i.e. until the
@@ -107,7 +120,8 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
 
 /* The same answer as plain strings, for a platform advertiser that
  * registers the service itself (see mdnsAdvertiseSetPlatform): the instance
- * label alone, without the service suffix ("WinBolo-<a>-<b>-<c>-<d>-<port>"),
+ * label alone, without the service suffix ("WinBolo-<a>-<b>-<c>-<d>-<port>"
+ * or "WinBolo-v6-<8 hex digits>-<port>"),
  * written to instanceOut, and the TXT pairs as NUL-terminated keys and
  * values. Taken from mdnsAdvertiseBuildRecords' own records, so both
  * advertisers send one key schema. The values point into scratch, which
