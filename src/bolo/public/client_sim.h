@@ -188,6 +188,15 @@ typedef struct {
     bool    machineZero;
     uint8_t slotOverride;
     bool    slotLocked;
+    /* CTRL_BOT_HOST_ROW_LIMITS: rowLimitsHave once the server sends one
+     * (an older server never does). limitCeiling: the row's Max slots;
+     * limitReserve: the free CPU percent it tries to keep; limitFits: the
+     * slots its CPU estimate says fit while it keeps that free, 0xFF
+     * before the first reading. */
+    bool    rowLimitsHave;
+    uint8_t limitCeiling;
+    uint8_t limitReserve;
+    uint8_t limitFits;
     char    name[CLIENT_BOT_HOST_NAME_LEN];
 } ClientBotHostRow;
 

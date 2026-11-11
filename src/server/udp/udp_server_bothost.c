@@ -262,6 +262,27 @@ static bool              botHostRowSlotsSentHave[MAX_BOT_HOSTS];
 static ControlEvent      botHostRowSlotsSent[MAX_BOT_HOSTS];
 /* The game bot limit last logged. */
 static int               botHostLimitLogged = -100;
+/* Dynamic bot slots (bot_host_link.h; the flags in
+ * transportUdpServerSetBotHostDynamic). botHostDynServerMax: the server's
+ * ceiling, -1 for this machine's default (botHostDynMachineMax, read
+ * once). botHostDynClientStart: a player's computer's start, 0 for its
+ * slots. The reserves are percent. botHostDynServerCeil: the server's
+ * ceiling at the last placement step. */
+static int               botHostDynServerMax = -1;
+static int               botHostDynMachineMax = -1;
+static int               botHostDynClientStart = BOT_HOST_CLIENT_START_DEFAULT;
+static int               botHostDynRaiseReserve =
+                             BOT_HOST_RAISE_RESERVE_PCT_DEFAULT;
+static int               botHostDynClientReserve =
+                             BOT_HOST_CLIENT_RESERVE_PCT_DEFAULT;
+static int               botHostDynServerCeil;
+/* The CTRL_BOT_HOST_ROW_LIMITS values last sent, one per Bot Host row. */
+static bool              botHostRowLimitsSentHave[MAX_BOT_HOSTS];
+static ControlEvent      botHostRowLimitsSent[MAX_BOT_HOSTS];
+/* The why of a player's computer under half its CPU reserve
+ * (botHostPlaceMarkBad). */
+static const char        BOT_HOST_WHY_HALF_RESERVE[] =
+                             "under half its CPU reserve";
 
 static void botHostOvrEnsure(void) {
     int i;
@@ -283,11 +304,33 @@ static void botHostOvrResetHost(int i) {
 
 /* A new game, the lobby or the next round: the lowered limits go. The free
  * CPU history and the one-bot cost stay (botHostOverrunNewGame). */
+static void botHostRecDecision(int i, uint8_t decision,
+                               const BotHostOverrunReport *rep, int seat,
+                               int toHost, const char *reason,
+                               const BotHostOvrMove *mv);
+static const BotHostOverrunCfg *botHostOvrConfig(void);
 static void botHostOvrNewGame(void) {
     int i;
     botHostOvrEnsure();
     for (i = 0; i <= MAX_BOT_HOSTS; i++) {
-        botHostOverrunNewGame(&botHostOvr[i]);
+        int kind = botHostOverrunNewGame(&botHostOvr[i], botHostOvrConfig());
+        if (kind != 0 && (i == 0 || udpServer.botHosts[i - 1].connected)) {
+            /* Dynamic slots: the limit the game starts at. */
+            BotHostOverrunReport rep;
+            memset(&rep, 0, sizeof(rep));
+            rep.limitBefore = rep.newLimit = botHostOvr[i].limit;
+            rep.lowestClean = rep.highestBad = -1;
+            fprintf(stderr, "[bothost] dynamic slots: %s starts the game "
+                            "at %d bots (%s)\n",
+                    i == 0 ? "the server" : udpServer.botHosts[i - 1].name,
+                    botHostOvr[i].limit,
+                    kind == BOTHOST_DECISION_LIMIT_CARRY
+                        ? "the limit of the last game" : "its start");
+            botHostRecDecision(i, (uint8_t)kind, &rep, -1, -1,
+                               kind == BOTHOST_DECISION_LIMIT_CARRY
+                                   ? "the limit of the last game"
+                                   : "its start", NULL);
+        }
         botHostOvrRefuseWhy[i] = NULL;
         botHostOvrNoBetterHave[i] = false;
         botHostRecHostSent[i] = false;
@@ -786,15 +829,29 @@ static void botHostTellSameServer(void) {
  * bots; a host on a computer another counts, an opted-out host and one
  * still getting ready count 0. */
 static void botHostUpdateGameBotLimit(ServerSim *sim) {
+    const BotHostOverrunCfg *cfg = botHostOvrConfig();
     int counted[MAX_BOT_HOSTS], h, limit, serverCap;
     bool any = false;
+    botHostOvrEnsure();
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         counted[h] = 0;
         if (!udpServer.botHosts[h].connected) continue;
         any = true;
-        if (botHostTakesBots(sim, h)) counted[h] = botHostEffSlots(h);
+        if (botHostTakesBots(sim, h)) {
+            /* Dynamic slots: the live limit, not the ceiling. */
+            counted[h] = botHostEffSlots(h);
+            if (botHostOverrunDynamic(&botHostOvr[h + 1], cfg)) {
+                counted[h] = botHostOverrunLimit(&botHostOvr[h + 1],
+                                                 counted[h]);
+            }
+        }
     }
     serverCap = serverSimGetHostBotCapacity(sim);
+    if (serverCap >= 0 && botHostOverrunDynamic(&botHostOvr[0], cfg) &&
+        botHostOvr[0].limit > serverCap) {
+        /* The server's live limit went above its slots. */
+        serverCap = botHostOvr[0].limit;
+    }
     limit = botHostGameBotLimit(serverCap, counted, MAX_BOT_HOSTS);
     serverSimSetGameBotLimit(sim, limit, any);
     if (!any) limit = serverCap;
@@ -850,6 +907,15 @@ int serverBotHostSetSlotOverride(ServerSim *sim, int row, int value,
     if (row < 0 || row >= MAX_BOT_HOSTS) return BOT_HOST_SLOT_SET_INVALID;
     hc = &udpServer.botHosts[row];
     if (!hc->connected) return BOT_HOST_SLOT_SET_INVALID;
+    if (!botHostSlotSetAllowed(hc->playerHost, (int)hc->ownerSlot, player)) {
+        /* A dedicated host's Max slots is its own; a player's computer is
+         * changed only by that player. */
+        fprintf(stderr, "[bothost] Bot Host \"%s\": slot change by player "
+                        "%d refused (%s)\n",
+                hc->name, player,
+                hc->playerHost ? "not the owner" : "a dedicated Bot Host");
+        return BOT_HOST_SLOT_SET_NOT_OWNER;
+    }
     if (hc->slotOvr.locked) {
         fprintf(stderr, "[bothost] Bot Host \"%s\": slot change by player %d "
                         "refused (set by -bothost-slots)\n",
@@ -1287,7 +1353,8 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
         msg[0] != CTRL_BOT_HOST_CPU_BOT &&
         msg[0] != CTRL_BOT_HOST_CPU_BUDGET &&
         msg[0] != CTRL_BOT_HOST_MACHINE_ANSWER &&
-        msg[0] != CTRL_BOT_HOST_SYNC_CAPS && msg[0] != CTRL_BOT_HOST_PACK_REQ) {
+        msg[0] != CTRL_BOT_HOST_SYNC_CAPS && msg[0] != CTRL_BOT_HOST_PACK_REQ &&
+        msg[0] != CTRL_BOT_HOST_LIMITS) {
         return;
     }
     dec = transportControlCodecBodyDecoder((ControlEventType)msg[0]);
@@ -1400,6 +1467,35 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
         hc->packQueue++;
         return;
     }
+    if (evt.type == CTRL_BOT_HOST_LIMITS) {
+        /* Dynamic slots: the host's start, ceiling and reserve. */
+        if (!hc->limHave || hc->limStart != evt.u.botHostLimits.start ||
+            hc->limCeil != evt.u.botHostLimits.ceiling ||
+            hc->limReserve != evt.u.botHostLimits.reserve) {
+            char start[16], reserve[24];
+            if (evt.u.botHostLimits.start == BOT_HOST_LIMIT_NONE) {
+                SDL_strlcpy(start, "the server's", sizeof(start));
+            } else {
+                SDL_snprintf(start, sizeof(start), "%u",
+                             (unsigned)evt.u.botHostLimits.start);
+            }
+            if (evt.u.botHostLimits.reserve == BOT_HOST_LIMIT_NONE) {
+                SDL_strlcpy(reserve, "the server's", sizeof(reserve));
+            } else {
+                SDL_snprintf(reserve, sizeof(reserve), "%u%%",
+                             (unsigned)evt.u.botHostLimits.reserve);
+            }
+            fprintf(stderr, "[bothost] Bot Host \"%s\": dynamic slots, start "
+                            "%s, ceiling %u, CPU reserve %s\n",
+                    hc->name, start, (unsigned)evt.u.botHostLimits.ceiling,
+                    reserve);
+        }
+        hc->limHave = true;
+        hc->limStart = evt.u.botHostLimits.start;
+        hc->limCeil = evt.u.botHostLimits.ceiling;
+        hc->limReserve = evt.u.botHostLimits.reserve;
+        return;
+    }
     if (evt.type == CTRL_BOT_HOST_CPU_FREE) {
         /* The whole machine's free CPU, only the percent. */
         hc->cpuFree = evt.u.botHostCpuFree.free;
@@ -1420,9 +1516,10 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
         hc->slots = evt.u.botHostSlots.slots;
         {
             /* 0 slots: the host gives every bot back at once, as when it
-             * leaves (a player turned off "run bots on this computer" for
-             * this game). The host stays connected, so it takes bots again
-             * when it offers slots again. */
+             * leaves (a player set Max slots 0 on their own Bot Host row).
+             * The host stays connected, so it takes bots again when it
+             * offers slots again. A lower Max above 0 moves the bots over
+             * it by the spread, to a place with room. */
             int seatHost[MAX_TANKS], s2;
             uint32_t back;
             for (s2 = 0; s2 < MAX_TANKS; s2++) {
@@ -1787,6 +1884,39 @@ static void botHostFillCpu(int h, uint8_t cpu, ControlEvent *evt) {
     evt->u.botHostCpu.cpu = cpu;
 }
 
+/* The free CPU percent place i (0: the server, h + 1: Bot Host h) tries
+ * to keep: a player's computer -bothost-client-reserve-pct, a Bot Host
+ * program its --cpu-reserve, else -bothost-raise-reserve-pct. */
+static int botHostDynReserve(int i) {
+    const BotHostConn *hc;
+    if (i <= 0) return botHostDynRaiseReserve;
+    hc = &udpServer.botHosts[i - 1];
+    if (hc->playerHost) return botHostDynClientReserve;
+    if (hc->limHave && hc->limReserve != BOT_HOST_LIMIT_NONE) {
+        return hc->limReserve;
+    }
+    return botHostDynRaiseReserve;
+}
+
+/* CTRL_BOT_HOST_ROW_LIMITS of Bot Host h: its Max slots (what it offers),
+ * its reserve, and the slots its CPU estimate says fit. */
+static void botHostFillRowLimits(int h, ControlEvent *evt) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    int fits;
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_ROW_LIMITS;
+    evt->u.botHostRowLimits.idx = (uint8_t)h;
+    evt->u.botHostRowLimits.ceiling =
+        (uint8_t)(hc->slots > MAX_TANKS ? MAX_TANKS : hc->slots);
+    evt->u.botHostRowLimits.reserve = (uint8_t)botHostDynReserve(h + 1);
+    botHostOvrEnsure();
+    fits = botHostOverrunFits(&botHostOvr[h + 1], botHostOvrConfig(),
+                              botHostUsedSlots(h));
+    evt->u.botHostRowLimits.fits =
+        fits < 0 ? (uint8_t)BOT_HOST_LIMIT_NONE
+                 : (uint8_t)(fits > MAX_TANKS ? MAX_TANKS : fits);
+}
+
 static void botHostBroadcastRows(void) {
     int h;
     if (!botHostCpuSentInit) {
@@ -1871,6 +2001,23 @@ static void botHostBroadcastRows(void) {
                     botHostRowSlotsSentHave[h] = true;
                     botHostRowSlotsSent[h] = re;
                     serverBroadcastLobbyControl(&re);
+                }
+            }
+        }
+        if (h < MAX_BOT_HOSTS) {
+            /* The row's Max slots, reserve and fit, when they change. */
+            if (!evt.u.botHostStatus.connected) {
+                botHostRowLimitsSentHave[h] = false;
+            } else {
+                ControlEvent le;
+                botHostFillRowLimits(h, &le);
+                if (!botHostRowLimitsSentHave[h] ||
+                    memcmp(&le.u.botHostRowLimits,
+                           &botHostRowLimitsSent[h].u.botHostRowLimits,
+                           sizeof(le.u.botHostRowLimits)) != 0) {
+                    botHostRowLimitsSentHave[h] = true;
+                    botHostRowLimitsSent[h] = le;
+                    serverBroadcastLobbyControl(&le);
                 }
             }
         }
@@ -1966,6 +2113,11 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
             ControlEvent re;
             botHostFillRowSlots(h, &re);
             deliver(deliverCtx, &re);
+        }
+        {
+            ControlEvent le;
+            botHostFillRowLimits(h, &le);
+            deliver(deliverCtx, &le);
         }
     }
     {
@@ -2615,6 +2767,16 @@ accepted:
         botHostMachineKnown[freeIdx] = false;
     }
     serverSendBotHostAccept(freeIdx, sim);
+    if (botHostOvrConfig()->dynamic) {
+        /* Dynamic slots: the host may offer its ceiling. */
+        ControlEvent le;
+        memset(&le, 0, sizeof(le));
+        le.type = CTRL_BOT_HOST_LIMITS;
+        le.u.botHostLimits.start = (uint8_t)BOT_HOST_LIMIT_NONE;
+        le.u.botHostLimits.ceiling = (uint8_t)BOT_HOST_LIMIT_NONE;
+        le.u.botHostLimits.reserve = (uint8_t)BOT_HOST_LIMIT_NONE;
+        (void)botHostSendEvent(freeIdx, &le);
+    }
     serverBotRecHostConnected(freeIdx,
                               serverSimGetState(sim) == serverStateLobby);
     /* The brain files go out now: the list first, then each file the host
@@ -3326,6 +3488,7 @@ void serverBotHostsReset(void) {
     memset(botHostCpuBotSentHave, 0, sizeof(botHostCpuBotSentHave));
     memset(botHostLagSentHave, 0, sizeof(botHostLagSentHave));
     memset(botHostRowSlotsSentHave, 0, sizeof(botHostRowSlotsSentHave));
+    memset(botHostRowLimitsSentHave, 0, sizeof(botHostRowLimitsSentHave));
     memset(botHostMachine, 0, sizeof(botHostMachine));
     for (h = 0; h < MAX_BOT_HOSTS; h++) botHostMachine[h].other = -1;
     memset(botHostMachineKnown, 0, sizeof(botHostMachineKnown));
@@ -3842,6 +4005,13 @@ static void botHostPlaceMarkBad(BotHostPlaceHost *hosts, const char **why,
             why[i] = "overrun rate";
         } else if (lack > 0) {
             why[i] = "low free CPU";
+        } else if (i > 0 && udpServer.botHosts[i - 1].playerHost &&
+                   botHostOverrunUnderHalfReserve(&botHostOvr[i], cfg,
+                                                  hosts[i].bots)) {
+            /* A player's computer under half its reserve gives bots to a
+             * place with room, one each step time; with no room they stay
+             * (the spread finds no target). */
+            why[i] = BOT_HOST_WHY_HALF_RESERVE;
         }
         if (why[i] == NULL) continue;
         hosts[i].bad = true;
@@ -3882,10 +4052,78 @@ static const char *botHostSpreadReason(BotHostSpreadWhy why, int from,
  * host at its lowered limit has no room, and a host whose free CPU does not
  * show room for one more bot takes none. The server stays the last
  * fall-back: this only changes where the spread puts bots. */
+/* Dynamic slots: each place with a live limit has at most that many slots
+ * in the table the spread uses. The lobby fills each place up to it. */
+static void botHostDynApply(BotHostPlaceHost *hosts) {
+    const BotHostOverrunCfg *cfg = botHostOvrConfig();
+    int i, lim;
+    botHostOvrEnsure();
+    for (i = 0; i <= MAX_BOT_HOSTS; i++) {
+        if (i > 0 && !udpServer.botHosts[i - 1].connected) continue;
+        if (!botHostOverrunDynamic(&botHostOvr[i], cfg)) continue;
+        lim = botHostOverrunLimit(&botHostOvr[i], hosts[i].slots);
+        if (lim < hosts[i].slots) {
+            hosts[i].slots = lim;
+            if (i == 0) hosts[0].unlimited = false;
+        }
+    }
+}
+
+/* Dynamic slots: each place's start, ceiling and reserve. The server
+ * starts at its slots (cap) and goes up to -botcapacity-max; its table
+ * slots become its live limit when that is above cap. A Bot Host that
+ * sent CTRL_BOT_HOST_LIMITS starts at its start (a player's computer at
+ * -bothost-client-start) and goes up to what it offers; one that sent
+ * none keeps fixed slots. */
+static void botHostDynSetup(BotHostPlaceHost *hosts) {
+    const BotHostOverrunCfg *cfg = botHostOvrConfig();
+    int h, cap = hosts[0].slots, ceil;
+    botHostOvrEnsure();
+    ceil = botHostDynServerMax;
+    if (ceil < 0) {
+        if (botHostDynMachineMax < 0) {
+            BrainMachineInfo machine;
+            memset(&machine, 0, sizeof(machine));
+            brainCapacityGetMachine(&machine);
+            botHostDynMachineMax = brainCapacityDefault(&machine);
+            if (botHostDynMachineMax < 0) botHostDynMachineMax = 0;
+        }
+        ceil = botHostDynMachineMax;
+    }
+    if (ceil > MAX_TANKS) ceil = MAX_TANKS;
+    if (ceil < cap) ceil = cap;
+    botHostDynServerCeil = ceil;
+    botHostOverrunSetStart(&botHostOvr[0], cfg->dynamic ? cap : -1, ceil,
+                           (double)botHostDynReserve(0), false);
+    if (botHostOverrunDynamic(&botHostOvr[0], cfg) &&
+        botHostOvr[0].limit > cap) {
+        hosts[0].slots = botHostOvr[0].limit;
+    }
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        const BotHostConn *hc = &udpServer.botHosts[h];
+        int start = -1, ceiling = hosts[h + 1].slots;
+        if (!hc->connected) continue;
+        if (cfg->dynamic && hc->limHave) {
+            if (hc->limStart != BOT_HOST_LIMIT_NONE) {
+                start = hc->limStart;
+            } else if (hc->playerHost && botHostDynClientStart > 0) {
+                start = botHostDynClientStart;
+            } else {
+                start = ceiling;
+            }
+        }
+        botHostOverrunSetStart(&botHostOvr[h + 1], start, ceiling,
+                               (double)botHostDynReserve(h + 1), true);
+    }
+}
+
 static void botHostOvrApply(BotHostPlaceHost *hosts, bool log) {
     const BotHostOverrunCfg *cfg = botHostOvrConfig();
     int i;
-    if (!(cfg->pct > 0.0)) return;
+    if (!(cfg->pct > 0.0)) {
+        botHostDynApply(hosts);
+        return;
+    }
     botHostOvrEnsure();
     for (i = 0; i <= MAX_BOT_HOSTS; i++) {
         BotHostOverrunReport rep;
@@ -4057,9 +4295,20 @@ static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
         in.thinks = thinks[i];
         in.bots = bots[i];
         in.slots = raw[i].slots;
+        if (i == 0 && botHostOverrunDynamic(&botHostOvr[0], cfg)) {
+            /* The server's live limit may go up to its ceiling. */
+            in.slots = botHostDynServerCeil;
+        }
         in.botCpu = i == 0 ? botHostServerCpuValue
                            : udpServer.botHosts[i - 1].cpu;
         in.freePct = botHostOvrFree(i);
+        in.running = running;
+        if (i == 0) {
+            in.lagMs = 0.0;   /* the server's own process */
+        } else {
+            in.lagMs = udpServer.botHosts[i - 1].lagKnown
+                           ? udpServer.botHosts[i - 1].lagMs : -1.0;
+        }
 
         act = botHostOverrunProbe(&botHostOvr[i], cfg, &in, rep);
         acts[i] = act;
@@ -4081,6 +4330,13 @@ static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
             r.windowRate = rep->windowKnown
                                ? botHostRecordHundredthsU(rep->windowPct)
                                : (uint16_t)BOTHOST_RECORD_RATE_NONE;
+            if (botHostOverrunDynamic(&botHostOvr[i], cfg)) {
+                r.ceiling = botHostRecordByte(in.slots);
+                r.start = botHostRecordByte(botHostOvr[i].start);
+            } else {
+                r.ceiling = (uint8_t)BOTHOST_RECORD_NONE;
+                r.start = (uint8_t)BOTHOST_RECORD_NONE;
+            }
             botHostRecPut(&r);
             botHostOvrAccOver[i] += in.overruns;
             botHostOvrAccThinks[i] += in.thinks;
@@ -4124,7 +4380,17 @@ static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
         botHostOvrNumbers(rep, nums, sizeof(nums));
         botHostOvrLimitText(rep->limitBefore, in.slots, before, sizeof(before));
         botHostOvrLimitText(rep->newLimit, in.slots, after, sizeof(after));
-        if (act == BOT_HOST_OVR_RAISE) {
+        if (act == BOT_HOST_OVR_RAISE &&
+            botHostOverrunDynamic(&botHostOvr[i], cfg)) {
+            fprintf(stderr, "[bothost] dynamic slots: %s\"%s\" limit goes "
+                            "from %s to %s of %d (rate %.2f%% over %d s; "
+                            "CPU reserve %.0f%%; %s)\n",
+                    botHostOvrKind(i), botHostOvrName(i), before, after,
+                    in.slots, rep->windowPct, rep->probes,
+                    botHostOvr[i].reservePct, nums);
+            botHostRecDecision(i, BOTHOST_DECISION_LIMIT_RAISE, rep, -1, -1,
+                               rep->why, NULL);
+        } else if (act == BOT_HOST_OVR_RAISE) {
             fprintf(stderr, "[bothost] overruns: %s\"%s\" limit goes from %s "
                             "to %s (rate %.2f%% over %d s; %s)\n",
                     botHostOvrKind(i), botHostOvrName(i), before, after,
@@ -4320,6 +4586,74 @@ void transportUdpServerSetBotHostOverrun(const BotHostOverrunFlags *f) {
                 cfg->freeHistorySecs,
                 cfg->freeBatch ? "the bots it is short by in one step"
                                : "one bot a step");
+    }
+}
+
+void transportUdpServerSetBotHostDynamic(const BotHostDynamicFlags *f) {
+    BotHostOverrunCfg *cfg = &botHostOvrCfg;
+    (void)botHostOvrConfig();
+    if (f == NULL) return;
+    if (f->dynamic >= 0) cfg->dynamic = f->dynamic != 0;
+    if (f->serverMax >= 0) {
+        botHostDynServerMax = f->serverMax > MAX_TANKS ? MAX_TANKS
+                                                       : f->serverMax;
+    }
+    if (f->clientStart >= 0) {
+        botHostDynClientStart = f->clientStart > MAX_TANKS ? MAX_TANKS
+                                                           : f->clientStart;
+    }
+    if (f->raiseReservePct >= 0) {
+        botHostDynRaiseReserve = f->raiseReservePct > 100 ? 100
+                                                          : f->raiseReservePct;
+    }
+    if (f->clientReservePct >= 0) {
+        botHostDynClientReserve = f->clientReservePct > 100
+                                      ? 100 : f->clientReservePct;
+    }
+    if (f->raiseLagMaxMs >= 0) cfg->raiseLagMaxMs = f->raiseLagMaxMs;
+    if (f->raiseStep >= 0) {
+        cfg->raiseStep = f->raiseStep < 1 ? 1
+                       : f->raiseStep > MAX_TANKS ? MAX_TANKS : f->raiseStep;
+    }
+    if (f->raiseAfterCutSecs >= 0) {
+        cfg->raiseAfterCutSecs = f->raiseAfterCutSecs > 3600
+                                     ? 3600 : f->raiseAfterCutSecs;
+    }
+    if (f->carryLimit >= 0) cfg->carryLimit = f->carryLimit != 0;
+    if (!cfg->dynamic) {
+        fprintf(stderr, "[bothost] dynamic slots: off (fixed slots); the "
+                        "server and each Bot Host program try to keep %d%% "
+                        "CPU free, a player's computer %d%%\n",
+                botHostDynRaiseReserve, botHostDynClientReserve);
+        return;
+    }
+    {
+        char ceil[32], lag[32], start[32];
+        if (botHostDynServerMax < 0) {
+            SDL_strlcpy(ceil, "logical CPUs - 1", sizeof(ceil));
+        } else {
+            SDL_snprintf(ceil, sizeof(ceil), "%d", botHostDynServerMax);
+        }
+        if (cfg->raiseLagMaxMs > 0) {
+            SDL_snprintf(lag, sizeof(lag), "%d ms", cfg->raiseLagMaxMs);
+        } else {
+            SDL_strlcpy(lag, "no limit", sizeof(lag));
+        }
+        if (botHostDynClientStart > 0) {
+            SDL_snprintf(start, sizeof(start), "%d", botHostDynClientStart);
+        } else {
+            SDL_strlcpy(start, "its slots", sizeof(start));
+        }
+        fprintf(stderr, "[bothost] dynamic slots: the server's ceiling %s, a "
+                        "player's computer starts at %s; a limit goes up by "
+                        "at most %d each %d s while it keeps its CPU reserve "
+                        "free (the server and Bot Host programs %d%%, a "
+                        "player's computer %d%%), lag at most %s, %d s after "
+                        "a step down; the limit %s into the next game\n",
+                ceil, start, cfg->raiseStep, cfg->stepSecs,
+                botHostDynRaiseReserve, botHostDynClientReserve, lag,
+                cfg->raiseAfterCutSecs,
+                cfg->carryLimit ? "carries" : "does not carry");
     }
 }
 
@@ -4737,6 +5071,8 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     /* -bothost-enforce-server-limit: no bot past its slots after all. */
     hosts[0].capped = botHostEnforceServerLimit;
     hosts[0].lagMs = 0.0;  /* the server's own process */
+    /* Dynamic slots: each place's start, ceiling and reserve. */
+    botHostDynSetup(hosts);
     for (s = 0; s < MAX_TANKS; s++) {
         BotHostSeat *seat = &udpServer.botSeats[s];
         botHostNoMoveSeat(&botHostNoMove, s, serverSimIsBot(sim, (BYTE)s),
@@ -4803,10 +5139,14 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
      * the free CPU check on the table the spread uses. Only while the game
      * runs: in the lobby no bot thinks, so there is no reading to judge, and
      * the lobby fills each host up to its slots (the CPU test, the
-     * override, the same-computer groups and the opt-out already set
+     * override, the same-computer groups and Max slots already set
      * those). */
     memcpy(raw, hosts, sizeof(raw));
-    if (running) botHostOvrApply(hosts, true);
+    if (running) {
+        botHostOvrApply(hosts, true);
+    } else {
+        botHostDynApply(hosts);
+    }
     if (running && (!botHostPlace.probed ||
                     udpServer.tickCount - botHostPlace.lastProbeTick >=
                         BOT_HOST_OVR_PROBE_TICKS)) {
@@ -4907,6 +5247,23 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     if (why != BOT_HOST_SPREAD_BAD) return;
     botHostBadGave[from] = true;
     botHostBadGaveTick[from] = udpServer.tickCount;
+    if (badWhy[from] == BOT_HOST_WHY_HALF_RESERVE &&
+        botHostOverrunDynamic(&botHostOvr[from], botHostOvrConfig())) {
+        /* Under half its reserve counts as a step down of its limit. */
+        BotHostOverrunReport rep;
+        memset(&rep, 0, sizeof(rep));
+        rep.lowestClean = rep.highestBad = -1;
+        rep.limitBefore = botHostOvr[from].limit;
+        rep.newLimit = botHostOverrunMovedN(&botHostOvr[from],
+                                            raw[from].bots, 1);
+        fprintf(stderr, "[bothost] dynamic slots: \"%s\" limit goes from %d "
+                        "to %d: %s\n",
+                botHostOvrName(from), rep.limitBefore, rep.newLimit,
+                BOT_HOST_WHY_HALF_RESERVE);
+        botHostRecDecision(from, BOTHOST_DECISION_CUT, &rep, -1, -1,
+                           BOT_HOST_WHY_HALF_RESERVE, NULL);
+        return;
+    }
     {
         const BotHostOverrunCfg *cfg = botHostOvrConfig();
         char place[64];
