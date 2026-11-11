@@ -49,7 +49,6 @@
 extern "C" {
 #include "client_sim.h"      /* ClientSim + lobby getters; MAX_TANKS, BrainList, PingBand */
 #include "client_net.h"      /* clientSimNetSend* — kick, host transfer, claim start */
-#include "bot_host_cpu.h"    /* BOT_HOST_CPU_* — the Bot Host rows' CPU estimate */
 #include "control_event.h"   /* BOT_HOST_CPU_OWNER_NONE, BOT_HOST_LAG_UNKNOWN */
 #include "bot_host_machine.h"  /* BOT_HOST_MACHINE_SERVER */
 #include "bolo_rand.h"       /* bolo_rand_below — random pool for a team's first bot */
@@ -875,7 +874,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         SDL_strlcpy(line, langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &args),
                     sizeof(line));
         /* A host that shares its computer: the line ends at "(0 slots)",
-         * with no bot names, no CPU text and no ping. */
+         * with no bot names and no ping. */
         const bool sameComputer =
             !isServer && r->rowSlotsHave && r->machineZero;
         if (sameComputer) {
@@ -914,63 +913,6 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         }
         if (!first) SDL_strlcat(line, ")", sizeof(line));
 
-        /* How much of its machine's CPU one bot uses, as that machine
-         * estimates it: "(Estimated 3.4% per bot of the server's CPU)". The
-         * server sends the measured value, else the last one measured in
-         * this server session, else the full-budget estimate; with none of
-         * them the row says the CPU test is running. A row from an older
-         * server or host has only the whole percent of all its bots:
-         * "(Estimated 12% of the machine's CPU)", "<1%" for 0, and the CPU
-         * test text while it has none. The text is never blank and never
-         * 0. */
-        char cpuText[160] = "";
-        if (sameComputer) {
-            /* No CPU text after "(0 slots)". */
-        } else if (r->cpuBotHave) {
-            if (r->cpuBot != BOT_HOST_CPU_MILLI_UNKNOWN) {
-                MessageArgs ca = {};
-                int sid;
-                /* The full-budget estimate is an upper limit: "At most". */
-                bool atMost = r->cpuBotSrc == BOT_HOST_CPU_SRC_BUDGET;
-                botHostCpuFormatMilli(r->cpuBot, ca.string1, sizeof(ca.string1));
-                if (isServer) {
-                    sid = atMost ? STR_DLGLOBBY_BOTHOST_CPU_MAX_SERVER
-                                 : STR_DLGLOBBY_BOTHOST_CPU_BOT_SERVER;
-                } else if (r->cpuBotOwner != BOT_HOST_CPU_OWNER_NONE &&
-                           r->cpuBotOwner == clientSimGetMyPlayerNum(cs)) {
-                    sid = atMost ? STR_DLGLOBBY_BOTHOST_CPU_MAX_SELF
-                                 : STR_DLGLOBBY_BOTHOST_CPU_BOT_SELF;
-                } else {
-                    const ClientLobbySlot *os =
-                        r->cpuBotOwner < MAX_TANKS
-                            ? clientSimGetLobbySlot(cs, (BYTE)r->cpuBotOwner)
-                            : NULL;
-                    sid = atMost ? STR_DLGLOBBY_BOTHOST_CPU_MAX_OTHER
-                                 : STR_DLGLOBBY_BOTHOST_CPU_BOT_OTHER;
-                    SDL_strlcpy(ca.string2,
-                                (os != NULL && os->connected && os->playerName[0])
-                                    ? os->playerName : botHostRowName(r),
-                                sizeof(ca.string2));
-                }
-                SDL_strlcpy(cpuText, langGetTextFmt(sid, &ca), sizeof(cpuText));
-            } else {
-                SDL_strlcpy(cpuText,
-                            langGetText(STR_DLGLOBBY_BOTHOST_CPU_TESTING),
-                            sizeof(cpuText));
-            }
-        } else if (r->cpu == BOT_HOST_CPU_UNDER_ONE || r->cpu == 0) {
-            SDL_strlcpy(cpuText, langGetText(STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE),
-                        sizeof(cpuText));
-        } else if (r->cpu <= 100) {
-            MessageArgs ca = {};
-            ca.number = r->cpu;
-            SDL_strlcpy(cpuText, langGetTextFmt(STR_DLGLOBBY_BOTHOST_CPU_FMT, &ca),
-                        sizeof(cpuText));
-        } else {
-            SDL_strlcpy(cpuText, langGetText(STR_DLGLOBBY_BOTHOST_CPU_TESTING),
-                        sizeof(cpuText));
-        }
-
         /* The host's ping, in the player list's form and colours ("45ms").
          * A player's own Bot Host shows that player's game ping, the player
          * list's own value; the server sends the same for the row, and the
@@ -1007,42 +949,13 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         const float rowAvail = ImGui::GetContentRegionAvail().x;
         const float indent = ImGui::GetTreeNodeToLabelSpacing();
         bool pingDrawn = pingText[0] == '\0';
-        if (cpuText[0] == '\0') {
-            if (!pingDrawn && ImGui::CalcTextSize(line).x + pingW <= rowAvail) {
-                ImGui::TextUnformatted(line);
-                ImGui::SameLine();
-                ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
-                pingDrawn = true;
-            } else {
-                ImGui::TextWrapped("%s", line);
-            }
+        if (!pingDrawn && ImGui::CalcTextSize(line).x + pingW <= rowAvail) {
+            ImGui::TextUnformatted(line);
+            ImGui::SameLine();
+            ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
+            pingDrawn = true;
         } else {
-            /* On the row's line when the whole text fits; else on a line of
-             * its own under the row, so the row itself does not wrap in the
-             * middle of the estimate. */
-            char full[700];
-            SDL_snprintf(full, sizeof(full), "%s %s", line, cpuText);
-            if (ImGui::CalcTextSize(full).x + pingW <= rowAvail) {
-                ImGui::TextUnformatted(full);
-                if (!pingDrawn) {
-                    ImGui::SameLine();
-                    ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
-                    pingDrawn = true;
-                }
-            } else {
-                if (!pingDrawn &&
-                    ImGui::CalcTextSize(line).x + pingW <= rowAvail) {
-                    ImGui::TextUnformatted(line);
-                    ImGui::SameLine();
-                    ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
-                    pingDrawn = true;
-                } else {
-                    ImGui::TextWrapped("%s", line);
-                }
-                ImGui::Indent(indent);
-                ImGui::TextWrapped("%s", cpuText);
-                ImGui::Unindent(indent);
-            }
+            ImGui::TextWrapped("%s", line);
         }
         if (!pingDrawn) {
             ImGui::Indent(indent);

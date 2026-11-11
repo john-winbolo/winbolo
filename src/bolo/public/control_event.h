@@ -593,8 +593,7 @@ typedef enum {
      * type of its own, not a byte added to CTRL_BOT_HOST_SLOTS or
      * CTRL_BOT_HOST_STATUS, because those decoders take only their exact
      * length: an older server or client would drop the whole message. An
-     * older peer has no decoder for this type and skips it; a row with no
-     * CTRL_BOT_HOST_CPU shows no percent. */
+     * older peer has no decoder for this type and skips it. */
     CTRL_BOT_HOST_CPU,
     /* CTRL_BOT_HOST_CPU_FREE — Bot Host to server on the host's control
      * connection, one reading each 5 s: the free (idle) CPU of the host's
@@ -610,8 +609,7 @@ typedef enum {
      * Bot Host to server (idx BOT_HOST_CPU_IDX_SELF) when it changes; server
      * to lobby players and spectators for row idx, with owner: the player
      * whose own computer the host is, or BOT_HOST_CPU_OWNER_NONE. A type of
-     * its own, as CTRL_BOT_HOST_CPU, so an older peer skips it; a row with
-     * no CTRL_BOT_HOST_CPU_BOT shows the CTRL_BOT_HOST_CPU text. */
+     * its own, as CTRL_BOT_HOST_CPU, so an older peer skips it. */
     CTRL_BOT_HOST_CPU_BOT,
     /* CTRL_BOT_HOST_LAG — server to lobby players and spectators: the lag
      * the server measures to Bot Host row idx for the bot placement (the
