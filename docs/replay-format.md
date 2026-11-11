@@ -796,7 +796,7 @@ it. Every multi-byte field is big-endian.
 
 | Offset | Field | Meaning |
 |-------:|-------|---------|
-| 0 | `version:u8` | 2 (1 in logs made before the overrun move by rate) |
+| 0 | `version:u8` | 3 (2 in logs made before dynamic slots, 1 before the overrun move by rate) |
 | 1 | `kind:u8` | 1 HOST, 2 PROBE, 3 READING, 4 DECISION, 5 CPU |
 | 2 | `host:u8` | 0 the server's own process, h + 1 Bot Host h |
 
@@ -813,7 +813,11 @@ Then, by kind (0xFF in a byte field: none):
   in the window, in hundredths of a percent; 0xFFFF while not known). With
   the scaled wait (`-bothost-overrun-step-min-secs` below the step time),
   after a move or a raise the window is the probes since that change, so
-  `windowRate` can be known with `probes` below the full window.
+  `windowRate` can be known with `probes` below the full window. From
+  version 3 `ceiling:u8` and `start:u8` follow: the host's dynamic slots
+  (`-bothost-dynamic-slots`), the most its live limit may reach and the limit
+  a game starts at, 0xFF in both for a host with no dynamic slots. For a
+  host with dynamic slots `slots` is its ceiling and `limit` its live limit.
 - READING, each free CPU sample per host (default every 5 s): `free:u8`
   (0..100, 0xFF not known), `botCpu:u8` (the `CTRL_BOT_HOST_CPU` byte),
   `bots:u8`, `flags:u8` (bit 0: the bots thought; bit 1: bad).
@@ -827,7 +831,12 @@ Then, by kind (0xFF in a byte field: none):
   free CPU check is that of the server), 12 resume: the held bot `seat`
   runs again on `toHost`, which has a slot (`host` is `toHost`, the reason
   is "room on the server" or "room on a Bot Host" and the free CPU check is
-  that of `toHost`)), `limitBefore:u8`, `limitAfter:u8`,
+  that of `toHost`), 13 dynamic raise: the live limit went up by up to
+  `-bothost-raise-step` bots (the reason is "free CPU above the reserve"),
+  14 start: a game starts at the host's start, 15 carry: a game starts at
+  the limit the last game ended with (`-bothost-carry-limit`); 13 to 15 are
+  version 3 only, and carry the change in `limitBefore` and `limitAfter`),
+  `limitBefore:u8`, `limitAfter:u8`,
   `badProbes:u8`, `probes:u8`, `flags:u8` (bit 0: the one-bot cost is
   known; bit 1: the free CPU average is known; bit 2: the one-bot cost
   is the full-budget estimate), `predicted:s16` (the

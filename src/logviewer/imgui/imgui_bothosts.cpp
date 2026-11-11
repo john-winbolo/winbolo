@@ -189,6 +189,9 @@ static std::string decision_name(uint8_t d) {
     case BOTHOST_DECISION_PLACE_REFUSED: return langGetText(STR_LV_BOTHOST_DEC_PLACE_REFUSED);
     case BOTHOST_DECISION_WOULD_MOVE:    return langGetText(STR_LV_BOTHOST_DEC_WOULD_MOVE);
     case BOTHOST_DECISION_NO_BETTER:     return langGetText(STR_LV_BOTHOST_DEC_NO_BETTER);
+    case BOTHOST_DECISION_LIMIT_RAISE:   return langGetText(STR_LV_BOTHOST_DEC_LIMIT_RAISE);
+    case BOTHOST_DECISION_LIMIT_START:   return langGetText(STR_LV_BOTHOST_DEC_LIMIT_START);
+    case BOTHOST_DECISION_LIMIT_CARRY:   return langGetText(STR_LV_BOTHOST_DEC_LIMIT_CARRY);
     default: {
         MessageArgs args = {};
         args.number = (int)d;
@@ -207,6 +210,9 @@ static ImU32 decision_colour(uint8_t d) {
     case BOTHOST_DECISION_PLACE_REFUSED: return IM_COL32(90, 200, 230, 255);
     case BOTHOST_DECISION_WOULD_MOVE:    return IM_COL32(240, 200, 60, 255);
     case BOTHOST_DECISION_NO_BETTER:     return IM_COL32(255, 160, 120, 255);
+    case BOTHOST_DECISION_LIMIT_RAISE:   return IM_COL32(40, 170, 90, 255);
+    case BOTHOST_DECISION_LIMIT_START:   return IM_COL32(120, 160, 255, 255);
+    case BOTHOST_DECISION_LIMIT_CARRY:   return IM_COL32(170, 140, 255, 255);
     default:                             return IM_COL32(200, 200, 200, 255);
     }
 }
@@ -425,6 +431,13 @@ static void point_tooltip(const BotHostView &v, uint32_t ms) {
         args.number2 = (int)r.slots;
         limit_text(r.limit, args.string1, sizeof(args.string1));
         ImGui::TextUnformatted(fmt_text(STR_LV_BOTHOST_TIP_BOTS, args).c_str());
+        /* Version 3: the host's dynamic slots. */
+        if (r.ceiling != (uint8_t)BOTHOST_RECORD_NONE) {
+            args = MessageArgs{};
+            limit_text(r.start, args.string1, sizeof(args.string1));
+            args.number = (int)r.ceiling;
+            ImGui::TextUnformatted(fmt_text(STR_LV_BOTHOST_TIP_DYNAMIC, args).c_str());
+        }
     }
     if (q >= 0) {
         const LvBotHostEntry &e = s_items[(size_t)q];

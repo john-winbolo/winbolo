@@ -453,15 +453,13 @@ STR_DLGLOBBY_SERVER_BOT_SLOTS_MEASURING=CPU test running
 STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP=How many bots the server runs in its own process. Its CPU test recommends {number}.
 STR_DLGLOBBY_BOTHOST_SAME_SERVER={string1}: same computer as the server (0 slots)
 STR_DLGLOBBY_BOTHOST_SAME_HOST={string1}: same computer as {string2} (0 slots)
-STR_DLGLOBBY_BOTHOST_SLOTS_LABEL=Slots
-STR_DLGLOBBY_BOTHOST_SLOTS_ALL=All ({number})
-STR_DLGLOBBY_BOTHOST_SLOTS_LOCKED=Set by -bothost-slots on the server
-STR_DLGLOBBY_BOTHOST_SLOTS_TIP=The most slots this server gives this Bot Host, for this lobby only. It can only lower the slots the host offers.
-
-# The lobby's one-game opt-out from running the server's bots on this
-# computer, and its mouse-over text
-STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT=Don't run bots on this computer for this game
-STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT_TIP=The server can run some of its bots on the players' computers. Turn this on and this computer runs none of them: the server takes its bots back at once. It is for this game only and is not saved. Turn it off to offer this computer's room for bots again.
+STR_DLGLOBBY_BOTHOSTS_NOTE=Bots move between hosts by lag and free CPU.
+STR_DLGLOBBY_BOTHOST_RESERVE_FMT={string1} — tries to keep {number}% CPU free.
+STR_DLGLOBBY_BOTHOST_MAX_LABEL=Max slots
+STR_DLGLOBBY_BOTHOST_MAX_OVER=More than the {number} slots this computer's CPU estimate says fit. Its bots may think slower and play worse.
+STR_DLGLOBBY_BOTHOST_MAX_OWN_TIP=The most of the server's bots this computer runs. The server starts it lower and adds bots while the computer has free CPU. Saved on this computer for later games. 0 runs no bot here.
+STR_DLGLOBBY_BOTHOST_MAX_PLAYER_TIP=The most bots this player's computer runs. Only that player can change it.
+STR_DLGLOBBY_BOTHOST_MAX_DEDICATED_TIP=The most bots this Bot Host runs. Set by --slots-max on the Bot Host.
 
 # The question this computer's Bot Host asks before it runs bot code a
 # server sent: its title, text and two buttons
@@ -3134,6 +3132,10 @@ STR_LV_BOTHOST_TIP_BOTS=Bots: {number}, slots: {number2}, limit: {string1}
 STR_LV_BOTHOST_DEC_WOULD_MOVE=Would move (moves off)
 STR_LV_BOTHOST_DEC_NO_BETTER=No better host
 STR_LV_BOTHOST_TIP_WINDOW_RATE=Rate over the window: {string1}
+STR_LV_BOTHOST_DEC_LIMIT_RAISE=Dynamic raise
+STR_LV_BOTHOST_DEC_LIMIT_START=Game starts at the start
+STR_LV_BOTHOST_DEC_LIMIT_CARRY=Game keeps the last limit
+STR_LV_BOTHOST_TIP_DYNAMIC=Dynamic slots: start {string1}, ceiling {number}
 STR_LV_BOTHOST_TIP_RATES=Source rate: {string1}, target rate: {string2}
 STR_LV_BOTHOST_TIP_MOVE_RULE=Rule: {string1}, moves so far (m): {number}
 STR_LV_BOTHOST_TIP_STAY=Stay: {string1}, needs: {string2}

@@ -549,6 +549,16 @@ void lobbySendSetting(ClientSim *cs,
                       uint8_t settingType,
                       const uint8_t *value, uint8_t valueLen);
 
+/* A bot slots box, 0 to MAX_TANKS: the Server bot slots row and the Max
+ * slots box of each Bot Host row. Values above recommended (-1: none yet)
+ * show greyer, in the list and on the closed box, with overTip on mouse-
+ * over; they stay selectable. tip shows on the closed box otherwise, or
+ * first when tipFirst; NULL for none. Read-only when !editable. Returns the
+ * value picked, or -1. */
+int lobbyBotSlotsCombo(const char *id, int value, const char *preview,
+                       int recommended, bool editable, const char *tip,
+                       bool tipFirst, const char *overTip);
+
 /* chooser */
 void lobbyChooserReset(void);
 void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer);

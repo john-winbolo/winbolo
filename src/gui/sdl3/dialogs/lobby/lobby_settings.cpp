@@ -1347,13 +1347,63 @@ void lobbyRenderGameSettingsPanel(ClientSim *cs,
  * player who may not change the other Server Settings, and for everyone
  * when -botcapacity set it. No row from a server that does not send the
  * value. */
+int lobbyBotSlotsCombo(const char *id, int value, const char *preview,
+                       int recommended, bool editable, const char *tip,
+                       bool tipFirst, const char *overTip) {
+    const ImGuiStyle &st = ImGui::GetStyle();
+    const bool haveRec = recommended >= 0;
+    const bool over = haveRec && value > recommended;
+    const float comboW = ImMax(ImGui::CalcTextSize("00").x,
+                               ImGui::CalcTextSize(preview).x)
+                       + st.FramePadding.x * 2.0f + ImGui::GetFrameHeight();
+    int picked = -1;
+    if (!editable) ImGui::BeginDisabled();
+    if (over) {
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    }
+    ImGui::SetNextItemWidth(comboW);
+    bool open = ImGui::BeginCombo(id, preview);
+    if (over) ImGui::PopStyleColor();
+    if (!open && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (tip != NULL && tipFirst) {
+            ImGui::SetTooltip("%s", tip);
+        } else if (over && overTip != NULL) {
+            ImGui::SetTooltip("%s", overTip);
+        } else if (tip != NULL) {
+            ImGui::SetTooltip("%s", tip);
+        }
+    }
+    if (open) {
+        for (int v = 0; v <= MAX_TANKS; v++) {
+            const bool grey = haveRec && v > recommended;
+            char item[8];
+            SDL_snprintf(item, sizeof(item), "%d", v);
+            if (grey) {
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                                      ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            }
+            if (ImGui::Selectable(item, v == value) && v != value) picked = v;
+            if (grey) {
+                ImGui::PopStyleColor();
+                if (overTip != NULL && ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", overTip);
+                }
+            }
+            if (v == value) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    if (!editable) ImGui::EndDisabled();
+    return picked;
+}
+
 static void lobbyRenderServerBotSlotsRow(ClientSim *cs, bool mayEdit) {
     ClientServerBotSlots sb;
     if (!clientSimGetServerBotSlots(cs, &sb)) return;
     const ImGuiStyle &st = ImGui::GetStyle();
     const bool haveRec = sb.recommended >= 0;
     const bool editable = mayEdit && !sb.locked;
-    const bool over = haveRec && sb.value > sb.recommended;
     char preview[64];
     if (sb.value >= 0) {
         SDL_snprintf(preview, sizeof(preview), "%d", sb.value);
@@ -1370,6 +1420,15 @@ static void lobbyRenderServerBotSlotsRow(ClientSim *cs, bool mayEdit) {
     SDL_strlcpy(overTip, langGetTextFmt(STR_DLGLOBBY_SERVER_BOT_SLOTS_OVER, &ma),
                 sizeof(overTip));
 
+    char tip[256] = "";
+    if (sb.locked) {
+        SDL_strlcpy(tip, langGetText(STR_DLGLOBBY_SERVER_BOT_SLOTS_LOCKED),
+                    sizeof(tip));
+    } else if (haveRec) {
+        SDL_strlcpy(tip, langGetTextFmt(STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP, &ma),
+                    sizeof(tip));
+    }
+
     const char *label = langGetText(STR_DLGLOBBY_SERVER_BOT_SLOTS);
     float comboW = ImMax(ImGui::CalcTextSize("00").x,
                          ImGui::CalcTextSize(preview).x)
@@ -1381,45 +1440,14 @@ static void lobbyRenderServerBotSlotsRow(ClientSim *cs, bool mayEdit) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label);
     if (oneLine) ImGui::SameLine();
-    if (!editable) ImGui::BeginDisabled();
-    if (over) {
-        ImGui::PushStyleColor(ImGuiCol_Text,
-                              ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    int v = lobbyBotSlotsCombo("##serverbotslots", sb.value, preview,
+                               sb.recommended, editable,
+                               tip[0] != '\0' ? tip : NULL, sb.locked,
+                               overTip);
+    if (v >= 0) {
+        uint8_t b = (uint8_t)v;
+        lobbySendSetting(cs, LST_SERVER_BOT_SLOTS, &b, 1);
     }
-    ImGui::SetNextItemWidth(comboW);
-    bool open = ImGui::BeginCombo("##serverbotslots", preview);
-    if (over) ImGui::PopStyleColor();
-    if (!open && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        if (sb.locked) {
-            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_SERVER_BOT_SLOTS_LOCKED));
-        } else if (over) {
-            ImGui::SetTooltip("%s", overTip);
-        } else if (haveRec) {
-            ImGui::SetTooltip("%s", langGetTextFmt(STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP, &ma));
-        }
-    }
-    if (open) {
-        for (int v = 0; v <= MAX_TANKS; v++) {
-            const bool grey = haveRec && v > sb.recommended;
-            char item[8];
-            SDL_snprintf(item, sizeof(item), "%d", v);
-            if (grey) {
-                ImGui::PushStyleColor(ImGuiCol_Text,
-                                      ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-            }
-            if (ImGui::Selectable(item, v == sb.value) && v != sb.value) {
-                uint8_t b = (uint8_t)v;
-                lobbySendSetting(cs, LST_SERVER_BOT_SLOTS, &b, 1);
-            }
-            if (grey) {
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", overTip);
-            }
-            if (v == sb.value) ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
-    }
-    if (!editable) ImGui::EndDisabled();
 }
 
 /* The password box. Named because the Server Settings column has to be
