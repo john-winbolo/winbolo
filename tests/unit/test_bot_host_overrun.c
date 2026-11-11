@@ -655,7 +655,7 @@ int run_bot_host_overrun_new_game_reset(void) {
     readings = st.readingCount;
     UT_ASSERT(readings > 0 && st.costKnown);
 
-    botHostOverrunNewGame(&st);
+    (void)botHostOverrunNewGame(&st, &cfg);
     UT_ASSERT(botHostOverrunLimit(&st, 8) == 8);
     UT_ASSERT(!st.cut && st.probeCount == 0);
     UT_ASSERT(st.readingCount == readings && st.costKnown);
@@ -942,7 +942,7 @@ int run_bot_host_nomove_no_move_running(void) {
 }
 
 /* The fall-backs still happen with the flag: a host that offers 0 slots
- * (the opt-out) gives every bot back, a host with fewer slots than bots
+ * (Max 0) gives every bot back, a host with fewer slots than bots
  * gives one back, and a bot that came back stays on the server. */
 int run_bot_host_nomove_fallback(void) {
     BotHostNoMove nm;

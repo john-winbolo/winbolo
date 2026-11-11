@@ -1077,11 +1077,18 @@ int run_bot_host_machine_codec(void);
 int run_bot_host_machine_join_wait(void);
 int run_bot_host_same_server_codec(void);
 int run_bot_host_same_server_stop(void);
-/* The lobby's one-game opt-out from running bots on this computer
+/* A Bot Host's slots: Max slots and the dynamic slots
  * (test_bot_host_optout.c). */
 int run_bot_host_optout_slots_codec(void);
 int run_bot_host_optout_give_back(void);
-int run_bot_host_optout_client_reset(void);
+int run_bot_host_max_saved(void);
+int run_bot_host_dyn_raise_rule(void);
+int run_bot_host_dyn_half_reserve(void);
+int run_bot_host_dyn_carry(void);
+int run_bot_host_dyn_keel(void);
+int run_bot_host_dyn_determinism(void);
+int run_bot_host_limits_codec(void);
+int run_bot_host_slot_owner_only(void);
 
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with

@@ -470,6 +470,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                     r->slotOverride = keep.slotOverride;
                     r->slotLocked   = keep.slotLocked;
                 }
+                if (keep.connected && keep.rowLimitsHave) {
+                    r->rowLimitsHave = true;
+                    r->limitCeiling  = keep.limitCeiling;
+                    r->limitReserve  = keep.limitReserve;
+                    r->limitFits     = keep.limitFits;
+                }
                 if (cpuBotHave) {
                     r->cpuBotHave = true;
                     r->cpuBotOwner = cpuBotOwner;
@@ -517,6 +523,18 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 r->machineZero  = evt->u.botHostRowSlots.zero != 0;
                 r->slotOverride = evt->u.botHostRowSlots.slotOverride;
                 r->slotLocked   = evt->u.botHostRowSlots.slotLocked != 0;
+            }
+        }
+        break;
+
+    case CTRL_BOT_HOST_ROW_LIMITS:
+        if (evt->u.botHostRowLimits.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostRowLimits.idx];
+            if (r->connected) {
+                r->rowLimitsHave = true;
+                r->limitCeiling = evt->u.botHostRowLimits.ceiling;
+                r->limitReserve = evt->u.botHostRowLimits.reserve;
+                r->limitFits    = evt->u.botHostRowLimits.fits;
             }
         }
         break;

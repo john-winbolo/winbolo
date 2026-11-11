@@ -1,35 +1,52 @@
 /*
- * The lobby's one-game opt-out from running bots on this computer
+ * A Bot Host's slots: Max slots, the offer, and the same-computer stop
  * (bothost_optout.h).
  */
+#include <stdio.h>
 #include <string.h>
 
 #include "bothost_optout.h"
 
-void botHostOptOutInit(BotHostOptOut *o) {
-    if (o == NULL) return;
-    memset(o, 0, sizeof(*o));
-}
-
-void botHostOptOutSet(BotHostOptOut *o, bool on, const void *game,
-                      const uint8_t *ticket) {
-    if (o == NULL) return;
-    botHostOptOutInit(o);
-    if (!on || game == NULL || ticket == NULL) return;
-    o->on = true;
-    o->game = game;
-    memcpy(o->ticket, ticket, sizeof(o->ticket));
-}
-
-bool botHostOptOutCheck(BotHostOptOut *o, const void *game,
-                        const uint8_t *ticket) {
-    if (o == NULL || !o->on) return false;
-    if (game == NULL || game != o->game || ticket == NULL ||
-        memcmp(ticket, o->ticket, sizeof(o->ticket)) != 0) {
-        botHostOptOutInit(o);
-        return false;
+int botHostMaxParse(const char *text) {
+    long v = 0;
+    const char *p = text;
+    if (p == NULL || *p == '\0') return BOT_HOST_MAX_AUTO;
+    while (*p >= '0' && *p <= '9') {
+        if (v < 1000) v = v * 10 + (*p - '0');
+        p++;
     }
-    return true;
+    if (p == text || *p != '\0') return BOT_HOST_MAX_AUTO;
+    return v > BOT_HOST_MAX_TOP ? BOT_HOST_MAX_TOP : (int)v;
+}
+
+void botHostMaxFormat(int max, char *out, size_t outSize) {
+    if (out == NULL || outSize == 0) return;
+    if (max < 0) {
+        snprintf(out, outSize, "Auto");
+    } else {
+        snprintf(out, outSize, "%d", max > BOT_HOST_MAX_TOP ? BOT_HOST_MAX_TOP
+                                                            : max);
+    }
+}
+
+int botHostMaxCeiling(int max, int capacity) {
+    int c = max >= 0 ? max : capacity;
+    if (c < 0) c = 0;
+    return c > BOT_HOST_MAX_TOP ? BOT_HOST_MAX_TOP : c;
+}
+
+int botHostSlotsMaxDefault(int slotsMax, int slots, int cpus, bool keel) {
+    int v = slotsMax;
+    if (v <= 0) v = keel ? slots : (cpus - 1 > slots ? cpus - 1 : slots);
+    if (v > BOT_HOST_MAX_TOP) v = BOT_HOST_MAX_TOP;
+    return v < 0 ? 0 : v;
+}
+
+int botHostMaxOffer(int ceiling, int start, bool hello) {
+    if (ceiling < 0) ceiling = 0;
+    if (hello) return ceiling;
+    if (start < 0) start = 0;
+    return start < ceiling ? start : ceiling;
 }
 
 void botHostRunJoin(BotHostRun *r) {

@@ -60,8 +60,8 @@
  * there only when the host's pack request for its brain asked for no file. */
 #define BRAIN_PACK_CAP_OFFICIAL_ONLY 0x02u
 /* Sent again with the other bits when the host drops a download (its
- * player turned off "run bots on this computer"): the server drops the
- * files it was sending that host and the pack requests it holds. */
+ * player set Max slots 0): the server drops the files it was sending
+ * that host and the pack requests it holds. */
 #define BRAIN_PACK_CAP_RESET    0x04u
 /* The host takes bots that see the whole map (an AI level other than
  * aiYes): sent when it is built with WINBOLO_BOTHOST_ALLOW_FULL_MAP. A

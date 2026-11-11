@@ -154,6 +154,40 @@ void botHostSlotOverrideJoin(BotHostSlotOverride *o, const BotHostSlotFlags *f,
 bool botHostSlotOverrideSet(BotHostSlotOverride *o, int reported, int value);
 /* A new lobby: an override from the lobby goes; a locked one stays. */
 void botHostSlotOverrideNewLobby(BotHostSlotOverride *o);
+/* Who may change a row's slots (LST_BOT_HOST_SLOTS): only the player at a
+ * player's computer (playerHost, its owner's player number), on their own
+ * row. A Bot Host program's slots are its own (--slots-max). */
+bool botHostSlotSetAllowed(bool playerHost, int owner, int player);
+
+/* -bothost-dynamic-slots for one run: 0 in a determinism run (-seed with
+ * -brain-lua-seed and -brain-no-budget-kill), whose one canonical game must
+ * not follow the machine's free CPU; else dynamic as given (below 0: the
+ * default). */
+int  botHostDynamicForRun(int dynamic, bool seed, bool luaSeed,
+                          bool noBudgetKill);
+
+/* A percent from text: "0" to "100". False for any other text. */
+bool botHostParsePercent(const char *text, int *out);
+
+/* Dynamic bot slots (bot_host_link.h): each place has a start, a ceiling
+ * and a live limit between them that goes up while the place has free CPU
+ * and down by the overrun rules. Each value below 0 keeps its default. */
+typedef struct {
+    int dynamic;           /* -bothost-dynamic-slots <0|1> */
+    int serverMax;         /* -botcapacity-max: the server's ceiling */
+    int clientStart;       /* -bothost-client-start: 0 = the host's slots */
+    int raiseReservePct;   /* -bothost-raise-reserve-pct */
+    int clientReservePct;  /* -bothost-client-reserve-pct */
+    int raiseLagMaxMs;     /* -bothost-raise-lag-max-ms, 0: no lag check */
+    int raiseStep;         /* -bothost-raise-step */
+    int raiseAfterCutSecs; /* -bothost-raise-after-cut-secs */
+    int carryLimit;        /* -bothost-carry-limit <0|1> */
+} BotHostDynamicFlags;
+/* Every value at its default (-1). */
+void botHostDynamicFlagsInit(BotHostDynamicFlags *f);
+/* The KEEL values (-bothost-keel): fixed slots as before dynamic slots,
+ * no reserve. serverMax 0 makes the server's ceiling its start. */
+void botHostDynamicFlagsKeel(BotHostDynamicFlags *f);
 
 #ifdef __cplusplus
 }

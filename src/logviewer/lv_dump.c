@@ -392,6 +392,9 @@ static void dumpRecordFields(DumpCtx *c, BYTE code, const BYTE *b, int len) {
           if (rec.version >= 2) {
             fprintf(out, " window_rate=%u", (unsigned)rec.windowRate);
           }
+          if (rec.version >= 3) {
+            fprintf(out, " ceiling=%u start=%u", rec.ceiling, rec.start);
+          }
           break;
         case BOTHOST_RECORD_READING:
           fprintf(out, " free=%u bot_cpu=%u bots=%u ran=%u bad=%u", rec.freePct,

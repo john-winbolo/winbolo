@@ -853,6 +853,11 @@ void botHostOverrunCfgDefaults(BotHostOverrunCfg *cfg) {
     cfg->freeBatch = BOT_HOST_FREE_BATCH_DEFAULT;
     cfg->freeSampleSecs = BOT_HOST_FREE_SAMPLE_SECS_DEFAULT;
     cfg->freeHistorySecs = BOT_HOST_FREE_HISTORY_SECS_DEFAULT;
+    cfg->dynamic = BOT_HOST_DYN_SLOTS_DEFAULT;
+    cfg->raiseStep = BOT_HOST_RAISE_STEP_DEFAULT;
+    cfg->raiseLagMaxMs = BOT_HOST_RAISE_LAG_MAX_MS_DEFAULT;
+    cfg->raiseAfterCutSecs = BOT_HOST_RAISE_AFTER_CUT_DEFAULT;
+    cfg->carryLimit = BOT_HOST_CARRY_LIMIT_DEFAULT;
 }
 
 /* A count that lets a new state step at once, as soon as its window shows
@@ -878,15 +883,53 @@ void botHostOverrunReset(BotHostOverrunState *st) {
     st->limit = -1;
     st->sinceChange = OVR_LONG_AGO;
     st->sinceRefuse = OVR_LONG_AGO;
+    st->start = -1;
+    st->sinceCut = OVR_LONG_AGO;
 }
 
-void botHostOverrunNewGame(BotHostOverrunState *st) {
-    if (st == NULL) return;
-    st->limit = -1;
+bool botHostOverrunDynamic(const BotHostOverrunState *st,
+                           const BotHostOverrunCfg *cfg) {
+    return st != NULL && cfg != NULL && cfg->dynamic && st->start >= 0;
+}
+
+int botHostOverrunNewGame(BotHostOverrunState *st,
+                          const BotHostOverrunCfg *cfg) {
+    int kind = 0;
+    if (st == NULL) return 0;
+    if (botHostOverrunDynamic(st, cfg)) {
+        /* The live limit: the one the last game ended with, or the
+         * start. */
+        if (cfg->carryLimit && st->limit >= 0) {
+            kind = BOTHOST_DECISION_LIMIT_CARRY;
+        } else {
+            st->limit = st->start;
+            kind = BOTHOST_DECISION_LIMIT_START;
+        }
+    } else {
+        st->limit = -1;
+    }
     st->cut = false;
     ovrClearProbes(st);
     st->sinceChange = OVR_LONG_AGO;
     st->sinceRefuse = OVR_LONG_AGO;
+    return kind;
+}
+
+void botHostOverrunSetStart(BotHostOverrunState *st, int start, int ceiling,
+                            double reservePct, bool reserveNew) {
+    if (st == NULL) return;
+    if (ceiling < 0) ceiling = 0;
+    if (start > ceiling) start = ceiling;
+    st->reservePct = reservePct > 0.0 ? reservePct : 0.0;
+    st->reserveNew = reserveNew;
+    if (start < 0) {
+        if (st->start >= 0) st->limit = -1;   /* no live limit any more */
+        st->start = -1;
+        return;
+    }
+    if (start != st->start || st->limit < 0) st->limit = start;
+    st->start = start;
+    if (st->limit > ceiling) st->limit = ceiling;
 }
 
 int botHostOverrunLimit(const BotHostOverrunState *st, int slots) {
@@ -1032,6 +1075,89 @@ static bool ovrAboveBad(const BotHostOverrunReport *rep) {
     return rep->highestBad < 0 || rep->predicted > (double)rep->highestBad;
 }
 
+/* The one-bot cost a free CPU count uses: the measured one, else the
+ * full-budget estimate. False when neither is known. */
+static bool ovrCountCost(const BotHostOverrunState *st, double *cost) {
+    if (st->costKnown && st->oneBotCost > 0.0) {
+        *cost = st->oneBotCost;
+        return true;
+    }
+    if (st->costFallbackKnown && st->costFallback > 0.0) {
+        *cost = st->costFallback;
+        return true;
+    }
+    return false;
+}
+
+/* The free CPU after n more bots is above the place's reserve. */
+static bool ovrKeepsReserve(const BotHostOverrunState *st, double freeAvg,
+                            double cost, int n) {
+    return freeAvg - (double)n * cost > st->reservePct;
+}
+
+/* The dynamic raise (a to e of the rule in bot_host_link.h): the limit
+ * goes up by the most bots, up to raiseStep, that keep the reserve
+ * free. */
+static BotHostOverrunAction ovrDynamicRaise(BotHostOverrunState *st,
+                                            const BotHostOverrunCfg *cfg,
+                                            const BotHostOverrunProbe *in,
+                                            BotHostOverrunReport *rep,
+                                            bool spaced, int window) {
+    int i, n, step, room;
+    uint64_t thinks = 0, overruns = 0;
+    double cost = 0.0;
+
+    if (!in->running || st->limit >= in->slots || in->bots < st->limit ||
+        !spaced) {
+        return BOT_HOST_OVR_NONE;
+    }
+    if (st->probeCount < window) {
+        rep->why = "no full window since the last change";
+    } else {
+        for (i = 0; i < st->probeCount && i < BOT_HOST_OVR_MAX_PROBES; i++) {
+            thinks += st->probeThinks[i];
+            overruns += st->probeOverruns[i];
+        }
+        if (thinks > 0 &&
+            (double)overruns * 100.0 / (double)thinks > cfg->pct) {
+            rep->why = "overruns in the window";
+        } else if (!rep->freeKnown) {
+            rep->why = "no free CPU data";
+        } else if (!ovrCountCost(st, &cost)) {
+            rep->why = "the CPU of one bot is not known";
+        } else if (!ovrKeepsReserve(st, rep->freeAvg, cost, 1)) {
+            rep->why = "the CPU reserve";
+        } else if (cfg->raiseLagMaxMs > 0 &&
+                   (!(in->lagMs >= 0.0) ||
+                    in->lagMs > (double)cfg->raiseLagMaxMs)) {
+            rep->why = "lag";
+        } else if (st->sinceCut < cfg->raiseAfterCutSecs) {
+            rep->why = "a step down came too short a time ago";
+        } else {
+            step = cfg->raiseStep > 0 ? cfg->raiseStep : 1;
+            room = in->slots - st->limit;
+            for (n = 1; n < step && n < room; n++) {
+                if (!ovrKeepsReserve(st, rep->freeAvg, cost, n + 1)) break;
+            }
+            st->limit += n;
+            rep->newLimit = st->limit;
+            if (!rep->costKnown) {
+                rep->costKnown = true;
+                rep->costFromBudget = true;
+                rep->oneBotCost = cost;
+            }
+            rep->predicted = rep->freeAvg - (double)n * cost;
+            ovrClearProbes(st);
+            st->sinceChange = 0;
+            rep->why = "free CPU above the reserve";
+            return BOT_HOST_OVR_RAISE;
+        }
+    }
+    if (st->sinceRefuse < cfg->stepSecs) return BOT_HOST_OVR_NONE;
+    st->sinceRefuse = 0;
+    return BOT_HOST_OVR_REFUSE;
+}
+
 BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
                                          const BotHostOverrunCfg *cfg,
                                          const BotHostOverrunProbe *in,
@@ -1044,7 +1170,8 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
     ovrReportInit(rep);
     if (st == NULL || cfg == NULL || in == NULL) return BOT_HOST_OVR_NONE;
     if (!(cfg->pct > 0.0)) {
-        st->limit = -1;
+        /* No overrun check: a live limit stays where it is. */
+        if (!botHostOverrunDynamic(st, cfg)) st->limit = -1;
         return BOT_HOST_OVR_NONE;
     }
     window = ovrWindow(cfg);
@@ -1099,8 +1226,14 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
         rep->sample = *r;
     }
 
-    /* A host that now reports no more slots than the limit needs none. */
-    if (st->limit >= 0 && st->limit >= in->slots) st->limit = -1;
+    if (st->sinceCut < OVR_LONG_AGO) st->sinceCut++;
+    /* A host that now reports no more slots than the limit needs none; a
+     * live limit stays, at most the slots. */
+    if (st->start >= 0 && cfg->dynamic) {
+        if (st->limit > in->slots) st->limit = in->slots > 0 ? in->slots : 0;
+    } else if (st->limit >= 0 && st->limit >= in->slots) {
+        st->limit = -1;
+    }
 
     rep->probes = st->probeCount;
     rep->windowKnown = ovrWindowRate(st, cfg, &rep->windowPct);
@@ -1118,6 +1251,10 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
         if ((double)st->sinceChange < rep->waitSecs) return BOT_HOST_OVR_NONE;
         rep->why = "overruns";
         return BOT_HOST_OVR_OVER;
+    }
+
+    if (st->start >= 0 && cfg->dynamic) {
+        return ovrDynamicRaise(st, cfg, in, rep, spaced, window);
     }
 
     /* A raise: only with a full window since the last change. */
@@ -1155,6 +1292,7 @@ int botHostOverrunMovedN(BotHostOverrunState *st, int bots, int n) {
     st->limit = bots - (n > 1 ? n : 1);
     if (st->limit < 0) st->limit = 0;
     st->cut = true;
+    st->sinceCut = 0;
     ovrClearProbes(st);
     st->sinceChange = 0;
     return st->limit;
@@ -1176,8 +1314,24 @@ static const char OVR_WHY_NO_CLEAN[] =
     "no clean reading with that little free CPU";
 static const char OVR_WHY_BAD_AS_MUCH[] = "a bad reading had as much free CPU";
 static const char OVR_WHY_TOO_LITTLE[] = "too little free CPU";
+/* Not one of them: the reserve only refuses new bots. */
+static const char OVR_WHY_RESERVE[] = "it tries to keep its CPU reserve free";
 
 static bool ovrFreeRule(BotHostOverrunReport *rep);
+
+/* The reserve check of a new bot: with reserveNew, the predicted free CPU
+ * with one more bot must stay above the reserve when the numbers are
+ * known. */
+static bool ovrReserveRefuses(const BotHostOverrunState *st,
+                              BotHostOverrunReport *rep) {
+    if (!st->reserveNew || !(st->reservePct > 0.0) || !rep->freeKnown ||
+        !rep->costKnown) {
+        return false;
+    }
+    if (ovrKeepsReserve(st, rep->freeAvg, rep->oneBotCost, 1)) return false;
+    rep->why = OVR_WHY_RESERVE;
+    return true;
+}
 
 bool botHostOverrunMayTake(const BotHostOverrunState *st,
                            const BotHostOverrunCfg *cfg, int bots,
@@ -1200,6 +1354,7 @@ bool botHostOverrunMayTake(const BotHostOverrunState *st,
     rep->limitBefore = st->limit;
     rep->newLimit = st->limit;
     if (bots <= 0) {
+        if (ovrReserveRefuses(st, rep)) return false;
         rep->why = "its first bot";
         return true;
     }
@@ -1225,7 +1380,8 @@ bool botHostOverrunMayTake(const BotHostOverrunState *st,
         rep->why = "no free CPU average";
         return false;
     }
-    return ovrFreeRule(rep);
+    if (!ovrFreeRule(rep)) return false;
+    return !ovrReserveRefuses(st, rep);
 }
 
 /* The free CPU check's rules on known numbers (rep's predicted free CPU,
@@ -1295,9 +1451,34 @@ int botHostOverrunFreeRoom(const BotHostOverrunState *st,
         BotHostOverrunReport r = rep;
         r.freeAvg = rep.freeAvg - (double)room * rep.oneBotCost;
         r.predicted = r.freeAvg - r.oneBotCost;
-        if (!ovrFreeRule(&r)) break;
+        if (!ovrFreeRule(&r) || ovrReserveRefuses(st, &r)) break;
     }
     return room;
+}
+
+bool botHostOverrunUnderHalfReserve(const BotHostOverrunState *st,
+                                    const BotHostOverrunCfg *cfg, int bots) {
+    BotHostOverrunReport rep;
+    if (st == NULL || cfg == NULL || bots <= 0 || !(st->reservePct > 0.0)) {
+        return false;
+    }
+    ovrReportInit(&rep);
+    ovrFreeNumbers(st, cfg, &rep);
+    return rep.freeKnown && rep.freeAvg < st->reservePct / 2.0;
+}
+
+int botHostOverrunFits(const BotHostOverrunState *st,
+                       const BotHostOverrunCfg *cfg, int bots) {
+    BotHostOverrunReport rep;
+    double cost, n;
+    if (st == NULL || cfg == NULL) return -1;
+    ovrReportInit(&rep);
+    ovrFreeNumbers(st, cfg, &rep);
+    if (!rep.freeKnown || !ovrCountCost(st, &cost)) return -1;
+    n = (rep.freeAvg + (double)(bots > 0 ? bots : 0) * cost -
+         st->reservePct) / cost;
+    if (!(n > 0.0)) return 0;
+    return n > 255.0 ? 255 : (int)n;
 }
 
 int botHostOverrunFreeShort(const BotHostOverrunState *st,

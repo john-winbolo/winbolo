@@ -3569,6 +3569,7 @@ set(BOTHOST_SOURCES
     src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/bothost/bothost_main.c src/headless/headless_frontend.c
+    src/bothost/bothost_optout.c
     src/bothost/bothost_rec.c
     src/third_party/tweetnacl/tweetnacl.c
 )
@@ -5049,8 +5050,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # CTRL_BOT_HOST_CPU and the client's row.
     tests/unit/test_bot_host_cpu.c
     tests/unit/test_bot_host_machine.c
-    # The lobby's one-game opt-out from running bots on this computer: the
-    # 0-slot report, the server giving the bots back, the client's state.
+    # A Bot Host's slots: Max slots (0 runs no bot on this computer) and its
+    # saved value, the 0-slot report, the server giving the bots back, and
+    # the dynamic slots (the raise rule, the reserve, carry, KEEL, the
+    # limits on the wire, the owner-only change).
     tests/unit/test_bot_host_optout.c
     src/bothost/bothost_optout.c
     tests/unit/test_subscriber_arm_orphans.c
@@ -6666,7 +6669,14 @@ set(_unit_test_names
     bot_host_same_server_stop
     bot_host_optout_slots_codec
     bot_host_optout_give_back
-    bot_host_optout_client_reset
+    bot_host_max_saved
+    bot_host_dyn_raise_rule
+    bot_host_dyn_half_reserve
+    bot_host_dyn_carry
+    bot_host_dyn_keel
+    bot_host_dyn_determinism
+    bot_host_limits_codec
+    bot_host_slot_owner_only
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot
     internal_msg_skips_inactive_bot_slot

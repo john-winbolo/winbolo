@@ -459,18 +459,18 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
            server, so it leaves the ready marks alone. A lower value during
            a game moves only bots that may move (and none with
            -bothost-nomove): the placement reads the new value. */
-        /* A Bot Host row's slot override: the same rules, by the same
-           players. */
+        /* A Bot Host row's slot override: only a player's own host, by
+           that player (serverBotHostSetSlotOverride). */
         if (p->settingType == LST_BOT_HOST_SLOTS &&
             serverSimIsLobbyEnabled(sim)) {
-            if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
             if (p->valueLen != 2) return CMD_REJECT_INVALID;
             switch (serverBotHostSetSlotOverride(sim, (int)p->value[0],
                                                  (int)p->value[1],
                                                  (int)senderSlot)) {
-            case BOT_HOST_SLOT_SET_OK:     return CMD_OK;
-            case BOT_HOST_SLOT_SET_LOCKED: return CMD_REJECT_LOCKED;
-            default:                       return CMD_REJECT_INVALID;
+            case BOT_HOST_SLOT_SET_OK:        return CMD_OK;
+            case BOT_HOST_SLOT_SET_LOCKED:    return CMD_REJECT_LOCKED;
+            case BOT_HOST_SLOT_SET_NOT_OWNER: return CMD_REJECT_NOT_HOST;
+            default:                          return CMD_REJECT_INVALID;
             }
         }
         if (p->settingType == LST_SERVER_BOT_SLOTS &&

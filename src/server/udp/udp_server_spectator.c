@@ -220,6 +220,7 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     /* Every bot's think timing, for a viewer's System Info. */
     case CTRL_BOT_TIMING:
     case CTRL_BOT_HOST_ROW_SLOTS:
+    case CTRL_BOT_HOST_ROW_LIMITS:
     case CTRL_LOBBY_SYNC_COMPLETE:
     /* The live scoreboard is public — a viewer can already read captures and
      * kills off the map, and a spectator whose board never leaves zero looks

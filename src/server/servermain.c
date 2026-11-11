@@ -55,6 +55,7 @@
 #include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"
+#include "bot_host_machine.h"   /* botHostDynamicForRun, the flags */
 #include "transport_udp_server_internal.h"  /* infoReplyServerDescRoom */
 #include "net_impair.h"   /* WB_ENABLE_NETIMPAIR master switch */
 #include "bot_manager.h"
@@ -1056,6 +1057,25 @@ void printArgs() {
   fprintf(stderr, "-bothost-free-batch <0|1> - 1: a host whose free CPU is short by n bots gives up to n bots in one step; 0: one bot a step (default 1)\n");
   fprintf(stderr, "-bothost-free-sample-secs <s> - how often the free CPU of each host machine is read (default 5)\n");
   fprintf(stderr, "-bothost-free-history-secs <s> - how much free CPU history is kept for a raise (default 300)\n");
+  fprintf(stderr, "-bothost-dynamic-slots <0|1> - 1: each place (the server, each Bot Host) has a live bot limit between its\n");
+  fprintf(stderr, "                start and its ceiling; it goes up while the place has free CPU, low lag and no overruns,\n");
+  fprintf(stderr, "                and down by the overrun rules. 0: fixed slots. Off in a determinism run (-seed with\n");
+  fprintf(stderr, "                -brain-lua-seed and -brain-no-budget-kill) (default 1)\n");
+  fprintf(stderr, "-botcapacity-max <N> - the server's ceiling for its own bots with dynamic slots (default -botcapacity\n");
+  fprintf(stderr, "                when given, else logical CPUs - 1)\n");
+  fprintf(stderr, "-bothost-client-start <N> - the bots a player's computer starts a game with; 0 = its Max slots (default 2)\n");
+  fprintf(stderr, "-bothost-raise-reserve-pct <p> - the server and each Bot Host program try to keep p%% CPU free: no raise\n");
+  fprintf(stderr, "                and no new bot that would take the free CPU under it. A Bot Host's --cpu-reserve is used\n");
+  fprintf(stderr, "                for that host. The bots may push the CPU past it when no other place has room (default 25)\n");
+  fprintf(stderr, "-bothost-client-reserve-pct <p> - a player's computer tries to keep p%% CPU free; under half of it, its\n");
+  fprintf(stderr, "                bots go to a place with room (default 25)\n");
+  fprintf(stderr, "-bothost-raise-lag-max-ms <ms> - no raise for a host with more lag; 0 = no lag check (default 200)\n");
+  fprintf(stderr, "-bothost-raise-step <N> - the most bots one raise adds (default 2)\n");
+  fprintf(stderr, "-bothost-raise-after-cut-secs <s> - no raise within s seconds of a step down (default 120)\n");
+  fprintf(stderr, "-bothost-carry-limit <0|1> - 1: a place's limit carries into the next game; 0: each game starts at\n");
+  fprintf(stderr, "                the start (default 1)\n");
+  fprintf(stderr, "-bothost-keel - the KEEL values of all the dynamic slot flags above (fixed slots, no reserve); a flag\n");
+  fprintf(stderr, "                given as well still counts\n");
   fprintf(stderr, "-record-bothost-data - write the bot placement probes, free CPU readings and decisions into the round log (.wbv)\n");
   fprintf(stderr, "-bothost-enforce-server-limit <0|1> - 1: the server runs no more bots than its own slots; a bot with\n");
   fprintf(stderr, "                no slot there or on a good Bot Host is held (it keeps its tank and its stats, its tank\n");
@@ -3417,6 +3437,57 @@ int main(int argc, char **argv) {
           }
         }
         if (any) transportUdpServerSetBotHostOverrun(&f);
+      }
+      {
+        /* Dynamic bot slots; -1: the default. -bothost-keel gives the
+         * KEEL value of each (today's fixed slots), and a flag given as
+         * well still counts. */
+        BotHostDynamicFlags d;
+        static const char *const names[9] = {
+            "bothost-dynamic-slots", "botcapacity-max",
+            "bothost-client-start", "bothost-raise-reserve-pct",
+            "bothost-client-reserve-pct", "bothost-raise-lag-max-ms",
+            "bothost-raise-step", "bothost-raise-after-cut-secs",
+            "bothost-carry-limit"};
+        int *vals[9];
+        int k, a;
+        botHostDynamicFlagsInit(&d);
+        if (argExist(argc, argv, "bothost-keel") == TRUE) {
+          botHostDynamicFlagsKeel(&d);
+        }
+        /* -botcapacity is the server's ceiling too, unless
+         * -botcapacity-max is given. */
+        if (botCapacityOverride >= 0 && d.serverMax < 0) {
+          d.serverMax = botCapacityOverride;
+        }
+        vals[0] = &d.dynamic;
+        vals[1] = &d.serverMax;
+        vals[2] = &d.clientStart;
+        vals[3] = &d.raiseReservePct;
+        vals[4] = &d.clientReservePct;
+        vals[5] = &d.raiseLagMaxMs;
+        vals[6] = &d.raiseStep;
+        vals[7] = &d.raiseAfterCutSecs;
+        vals[8] = &d.carryLimit;
+        for (k = 0; k < 9; k++) {
+          a = findArg(argc, argv, names[k]);
+          if (a != ARG_NOT_FOUND && a < argc) *vals[k] = atoi(argv[a]);
+        }
+        /* A determinism run (-seed with -brain-lua-seed and
+         * -brain-no-budget-kill) gives one canonical game: its slots must
+         * not follow the machine's free CPU. */
+        {
+          int run = botHostDynamicForRun(
+              d.dynamic, argExist(argc, argv, "seed") == TRUE,
+              argExist(argc, argv, "brain-lua-seed") == TRUE,
+              argExist(argc, argv, "brain-no-budget-kill") == TRUE);
+          if (run == 0 && d.dynamic != 0) {
+            fprintf(stderr, "[bothost] dynamic slots are off in a "
+                            "determinism run\n");
+          }
+          d.dynamic = run;
+        }
+        transportUdpServerSetBotHostDynamic(&d);
       }
       transportUdpServerSetBotHostRecord(
           argExist(argc, argv, "record-bothost-data"));

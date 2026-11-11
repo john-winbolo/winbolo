@@ -496,20 +496,22 @@
 #define STR_DLGLOBBY_SERVER_BOT_SLOTS_MEASURING 3903
 #define STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP 3904
 /* A Bot Host row that gets 0 slots because it shares its computer with the
- * server ({string1} the row's name) or with another host ({string2}); and
- * the row's slot box: its label, the "no override" item ({number} the
- * slots the host offers), the mouse-over while -bothost-slots locks it,
- * and the mouse-over otherwise */
+ * server ({string1} the row's name) or with another host ({string2}) */
 #define STR_DLGLOBBY_BOTHOST_SAME_SERVER 3905
 #define STR_DLGLOBBY_BOTHOST_SAME_HOST 3906
-#define STR_DLGLOBBY_BOTHOST_SLOTS_LABEL 3907
-#define STR_DLGLOBBY_BOTHOST_SLOTS_ALL 3908
-#define STR_DLGLOBBY_BOTHOST_SLOTS_LOCKED 3909
-#define STR_DLGLOBBY_BOTHOST_SLOTS_TIP 3910
-/* The lobby's one-game opt-out from running the server's bots on this
- * computer, next to the line above, and its mouse-over text */
-#define STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT     3652
-#define STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT_TIP 3653
+/* Dynamic bot slots in the lobby's Bot Host rows: the note under the
+ * heading; a row ({string1} the row's name, {number} the free CPU percent
+ * it tries to keep); its Max slots box: the label, the mouse-over on a
+ * value above the slots its CPU estimate says fit ({number}), and the
+ * mouse-over on the player's own row, another player's row and a Bot Host
+ * program's row */
+#define STR_DLGLOBBY_BOTHOSTS_NOTE 3931
+#define STR_DLGLOBBY_BOTHOST_RESERVE_FMT 3932
+#define STR_DLGLOBBY_BOTHOST_MAX_LABEL 3933
+#define STR_DLGLOBBY_BOTHOST_MAX_OVER 3934
+#define STR_DLGLOBBY_BOTHOST_MAX_OWN_TIP 3935
+#define STR_DLGLOBBY_BOTHOST_MAX_PLAYER_TIP 3936
+#define STR_DLGLOBBY_BOTHOST_MAX_DEDICATED_TIP 3937
 /* The question this computer's Bot Host asks before it runs bot code a
  * server sent (a client built with WINBOLO_BOTHOST_OFFICIAL_ONLY off) */
 #define STR_DLGLOBBY_BOTHOST_CONSENT_TITLE 3927
@@ -3789,6 +3791,13 @@
 #define STR_LV_BOTHOST_RULE_NORMAL               3920
 #define STR_LV_BOTHOST_RULE_EMERGENCY            3921
 #define STR_LV_BOTHOST_RULE_TRIAL                3922
+/* Dynamic slots (bothost record version 3): the decisions (a raise, a game
+ * at the start, a game at the last game's limit) and a probe's start
+ * ({string1}) and ceiling ({number}) */
+#define STR_LV_BOTHOST_DEC_LIMIT_RAISE           3938
+#define STR_LV_BOTHOST_DEC_LIMIT_START           3939
+#define STR_LV_BOTHOST_DEC_LIMIT_CARRY           3940
+#define STR_LV_BOTHOST_TIP_DYNAMIC               3941
 
 /* The dedicated server's newswire lines for a bot held because neither the
  * server nor a Bot Host has a slot for it (-bothost-enforce-server-limit) */

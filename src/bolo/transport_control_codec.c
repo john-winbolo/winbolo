@@ -4205,6 +4205,80 @@ static bool decodeBotHostHeldBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_BOT_HOST_LIMITS body: [start 1][ceiling 1][reserve 1]. Later bytes
+ * skipped. A ceiling above 16 that is not "none", or a
+ * reserve above 100 that is not "none", is refused. */
+#define BOT_HOST_LIMITS_LEN 3
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostLimitsBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_LIMITS_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostLimits.start;
+    buf[1] = evt->u.botHostLimits.ceiling;
+    buf[2] = evt->u.botHostLimits.reserve;
+    *outLen = BOT_HOST_LIMITS_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostLimitsBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_LIMITS_LEN) {
+        return false;
+    }
+    if (buf[1] != BOT_HOST_LIMIT_NONE && buf[1] > MAX_TANKS) {
+        return false;
+    }
+    if (buf[2] != BOT_HOST_LIMIT_NONE && buf[2] > 100) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_LIMITS;
+    outEvt->u.botHostLimits.start =
+        buf[0] != BOT_HOST_LIMIT_NONE && buf[0] > MAX_TANKS
+            ? (uint8_t)MAX_TANKS : buf[0];
+    outEvt->u.botHostLimits.ceiling = buf[1];
+    outEvt->u.botHostLimits.reserve = buf[2];
+    return true;
+}
+
+/* CTRL_BOT_HOST_ROW_LIMITS body: [idx 1][ceiling 1][reserve 1][fits 1].
+ * Later bytes skipped. A row that is not a Bot Host row, a ceiling above
+ * 16 or a reserve above 100 is refused. */
+#define BOT_HOST_ROW_LIMITS_LEN 4
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostRowLimitsBody(const ControlEvent *evt,
+                                               const struct UdpServerClient *recipient,
+                                               uint8_t *buf, size_t bufCap,
+                                               size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_ROW_LIMITS_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostRowLimits.idx;
+    buf[1] = evt->u.botHostRowLimits.ceiling;
+    buf[2] = evt->u.botHostRowLimits.reserve;
+    buf[3] = evt->u.botHostRowLimits.fits;
+    *outLen = BOT_HOST_ROW_LIMITS_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostRowLimitsBody(const uint8_t *buf, size_t len,
+                                       ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_ROW_LIMITS_LEN) {
+        return false;
+    }
+    if (buf[0] >= BOT_HOST_STATUS_ROWS - 1) return false;   /* not the server row */
+    if (buf[1] > MAX_TANKS || buf[2] > 100) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_ROW_LIMITS;
+    outEvt->u.botHostRowLimits.idx = buf[0];
+    outEvt->u.botHostRowLimits.ceiling = buf[1];
+    outEvt->u.botHostRowLimits.reserve = buf[2];
+    outEvt->u.botHostRowLimits.fits = buf[3];
+    return true;
+}
+
 /* CTRL_BOT_HOST_PACK_REQ body: [gen 4][brain 1][fileCount 2]
  * [fromInstall 2][fromCache 2][bits (fileCount + 7) / 8]. A fileCount of 0
  * or above 8 * BOT_HOST_PACK_BITMAP_BYTES, or a body too short for its
@@ -5020,6 +5094,8 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_SAME_SERVER]    = encodeBotHostSameServerBody,
     [CTRL_BOT_TIMING]              = encodeBotTimingBody,
     [CTRL_BOT_HOST_HELD]           = encodeBotHostHeldBody,
+    [CTRL_BOT_HOST_LIMITS]         = encodeBotHostLimitsBody,
+    [CTRL_BOT_HOST_ROW_LIMITS]     = encodeBotHostRowLimitsBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -5103,6 +5179,8 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_SAME_SERVER]    = decodeBotHostSameServerBody,
     [CTRL_BOT_TIMING]              = decodeBotTimingBody,
     [CTRL_BOT_HOST_HELD]           = decodeBotHostHeldBody,
+    [CTRL_BOT_HOST_LIMITS]         = decodeBotHostLimitsBody,
+    [CTRL_BOT_HOST_ROW_LIMITS]     = decodeBotHostRowLimitsBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -5250,6 +5328,8 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_SAME_SERVER:   return "CTRL_BOT_HOST_SAME_SERVER";
     case CTRL_BOT_TIMING:             return "CTRL_BOT_TIMING";
     case CTRL_BOT_HOST_HELD:          return "CTRL_BOT_HOST_HELD";
+    case CTRL_BOT_HOST_LIMITS:        return "CTRL_BOT_HOST_LIMITS";
+    case CTRL_BOT_HOST_ROW_LIMITS:    return "CTRL_BOT_HOST_ROW_LIMITS";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }
