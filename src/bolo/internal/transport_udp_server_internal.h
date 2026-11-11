@@ -665,7 +665,9 @@ bool udpServerScriptUploadFitsCaps(const char *dir, const char *name,
  * count and the final flag, and leaves *next at the first entry it did not
  * write — equal to count when this was the last chunk. Returns the chunk's
  * length in bytes, or 0 for a buffer too small to hold even an empty chunk.
- * A count of 0 is a whole answer: one chunk, final set, no entries.
+ * A count of 0 is a whole answer: one chunk, final set, no entries. The
+ * request handler passes UDP_MAX_SEND as bufLen, not the size of its buffer,
+ * so a chunk never passes the send cap.
  *
  * Non-static, and takes a buffer rather than a socket, so the unit tests can
  * hold what the server would send against committed golden bytes and feed the

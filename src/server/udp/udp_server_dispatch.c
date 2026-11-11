@@ -29,6 +29,7 @@
 #include "transport_udp_internal.h"        /* packHeader, packU32, unpackU16,
                                             * unpackU32, getPacketType,
                                             * PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD,
+                                            * UDP_MAX_SEND,
                                             * and SDL3/SDL.h for SDL_strlen /
                                             * SDL_strlcpy / SDL_strcasecmp /
                                             * SDL_snprintf */
@@ -580,7 +581,7 @@ static void handleLobbyMapListReq(ServerSim *sim, uint8_t *buf, int len,
     }
     if (got < 0) got = 0;
 
-    /* Chunked send: each frame fits in UDP_MAX_PAYLOAD and
+    /* Chunked send: each frame fits in UDP_MAX_SEND and
      * carries [header][pathLen][path][final][count][entries],
      * each entry [nameLen 1][name M][isFolder 1][modTime 8 BE]
      * [scripted 1]. Last chunk sets final=1; empty result is a
@@ -605,7 +606,7 @@ static void handleLobbyMapListReq(ServerSim *sim, uint8_t *buf, int len,
         for (; i < got; i++) {
             int nameLen = (int)SDL_strlen(entries[i].name);
             if (nameLen > 127) nameLen = 127;
-            if (rpos + 1 + nameLen + 1 + 8 + 1 > (int)sizeof(rsp)) break;
+            if (rpos + 1 + nameLen + 1 + 8 + 1 > UDP_MAX_SEND) break;
             rsp[rpos++] = (uint8_t)nameLen;
             memcpy(rsp + rpos, entries[i].name, nameLen);
             rpos += nameLen;
@@ -736,14 +737,14 @@ static void handleLobbyScenarioListReq(ServerSim *sim, uint8_t *buf, int len,
         if (got < 0) got = 0;
         do {
             int nextIdx = i;
-            int rlen = udpServerPackScenarioListChunk(rsp, (int)sizeof(rsp),
+            int rlen = udpServerPackScenarioListChunk(rsp, UDP_MAX_SEND,
                                                       entries, got, i,
                                                       &nextIdx);
             if (rlen <= 0) break;
             srvSendTo(rsp, rlen, fromAddr);
             /* An entry that fits in no chunk would spin this loop. One cannot
                — the widest is 527 bytes (row, tag and identity blob) against
-               UDP_MAX_PAYLOAD — so this is the check that says so rather than a case that happens. */
+               UDP_MAX_SEND — so this is the check that says so rather than a case that happens. */
             if (nextIdx == i) break;
             i = nextIdx;
         } while (i < got);
@@ -1187,7 +1188,7 @@ static void handleLobbyMapSearchReq(ServerSim *sim, uint8_t *buf, int len,
         for (; i < got; i++) {
             int nameLen = (int)SDL_strlen(entries[i].name);
             if (nameLen > 127) nameLen = 127;
-            if (wpos + 1 + nameLen + 1 + 8 > (int)sizeof(rsp)) break;
+            if (wpos + 1 + nameLen + 1 + 8 > UDP_MAX_SEND) break;
             rsp[wpos++] = (uint8_t)nameLen;
             memcpy(rsp + wpos, entries[i].name, nameLen);
             wpos += nameLen;

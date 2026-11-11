@@ -2616,6 +2616,10 @@ int run_loopback_join_accept_lost_ready(void);
  * transportUdpServerSend has to put every one of them on the wire — the
  * snapshot plus at most SNAPSHOT_EXTRA_CHANNEL_FRAMES standalone frames. */
 int run_send_drains_channels_multi_frame(void);
+/* Nothing on the wire passes the send cap (test_send_cap.c): over a join, the
+ * map download and a minute of game time of play on the loopback harness, the
+ * largest datagram either end hands udpSendTo is at most UDP_MAX_SEND. */
+int run_send_cap_join_download_play(void);
 /* A burst of best-effort traffic survives the tick it was raised on
  * (test_best_effort_burst.c): effect events and a voice frame queued on one
  * tick, with the snapshot trailer already filled by reliable traffic, all reach

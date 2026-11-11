@@ -25,6 +25,7 @@
 
 #include "channel_mux.h"
 #include "bolo_rand.h"
+#include "transport_udp_internal.h"  /* UDP_MAX_SEND, PACKET_HEADER_SIZE */
 #include "test_harness.h"
 
 #define FRAME_BUDGET 1400
@@ -1040,8 +1041,8 @@ done:
 /* The largest control event (a full BRAIN_LIST is ~900 B as a channel
  * message) must be accepted, build as a single segment within the datagram
  * budget, and round-trip byte-identical — proving CHANNEL_CONTROL_SEG leaves
- * room under UDP_MAX_PAYLOAD once the packet header and channel-frame overhead
- * are charged. */
+ * room under the send cap UDP_MAX_SEND once the packet header and
+ * channel-frame overhead are charged. */
 static int t_control_max_event_fits_wire(void) {
     ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
     ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
@@ -1050,9 +1051,9 @@ static int t_control_max_event_fits_wire(void) {
     uint8_t *msg = (uint8_t *)malloc(CHANNEL_MAX_SEG);
     int rc = 1;
     /* The 8-byte packet header wraps the channel frame on the wire, so the
-     * frame itself must fit UDP_MAX_PAYLOAD (1400) minus that header. */
-    const int kPacketHeader = 8;
-    const int kWireBudget = 1400 - kPacketHeader;
+     * frame itself must fit UDP_MAX_SEND (1232) minus that header. */
+    const int kPacketHeader = PACKET_HEADER_SIZE;
+    const int kWireBudget = UDP_MAX_SEND - kPacketHeader;
     const uint16_t worstCase = 900; /* full BRAIN_LIST channel message */
     if (!a || !b || !msg) {
         goto done;
@@ -1077,7 +1078,7 @@ static int t_control_max_event_fits_wire(void) {
     if (parseSegCount(frame, la) != 1) {
         goto done; /* one event, one segment, one datagram */
     }
-    if (la + kPacketHeader > 1400) {
+    if (la + kPacketHeader > UDP_MAX_SEND) {
         goto done; /* frame plus packet header must fit a UDP datagram */
     }
     /* ... and round-trips byte-identical. */

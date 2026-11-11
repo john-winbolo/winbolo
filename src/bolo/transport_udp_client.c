@@ -680,7 +680,7 @@ static int buildInputPacket(TransportUdpClientCtx *c, uint8_t *buf) {
      * server recovers it as the bytes past the last input.  channelTick runs
      * once per tick in udpClientTick, so only build the frame here. */
     {
-        int budget = UDP_MAX_PAYLOAD - offset;
+        int budget = UDP_MAX_SEND - offset;
         if (budget >= 2) {
             offset += channelBuildFrame(&c->channelMux, buf + offset, budget);
         }
@@ -767,7 +767,15 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
 }
 
 /* Pack every entry in [outHeadSeq, outTailSeq) into a single
- * PACKET_COMMAND_TICK and send. Updates each entry's lastSentMs. */
+ * PACKET_COMMAND_TICK and send. Updates each entry's lastSentMs.
+ *
+ * The datagram is held to UDP_MAX_SEND, not to the size of buf. An entry that
+ * does not fit behind the ones already packed waits for the next tick. One
+ * alone at the front always fits: no command encodes to more than
+ * COMMAND_MAX_SEND_BYTES, which is UDP_MAX_SEND less this packet's header,
+ * count byte and length (the script list's encoder refuses a list that would,
+ * and every other command is far smaller), so an entry the queue holds never
+ * waits for good. */
 static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
     if (c->outHeadSeq == c->outTailSeq) return;
     /* A tankless spectator may originate CMD_CHAT; its command carrier runs in
@@ -775,7 +783,7 @@ static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
      * branch is the gate that rejects anything but chat. */
     if (c->joinState != UDP_CLIENT_CONNECTED &&
         c->joinState != UDP_CLIENT_SPECTATING) return;
-    uint8_t buf[1400];
+    uint8_t buf[UDP_MAX_PAYLOAD];
     packHeader(buf, PACKET_COMMAND_TICK, c->outSequence++);
     size_t pos = PACKET_HEADER_SIZE + 1;  /* +1 for count placeholder */
     uint8_t count = 0;
@@ -787,7 +795,7 @@ static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
         if (!commandCodecEncode(&e->cmd, entry, sizeof(entry), &entryLen)) {
             continue;
         }
-        if (pos + 2 + entryLen > sizeof(buf)) break;
+        if (pos + 2 + entryLen > (size_t)UDP_MAX_SEND) break;
         packU16(buf + pos, (uint16_t)entryLen);
         pos += 2;
         memcpy(buf + pos, entry, entryLen);
@@ -4350,7 +4358,7 @@ static bool udpClientTick(void *ctx) {
             uint8_t cbuf[UDP_MAX_PAYLOAD];
             int frameLen = channelBuildFrame(&c->channelMux,
                                              cbuf + PACKET_HEADER_SIZE,
-                                             UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                                             UDP_MAX_SEND - PACKET_HEADER_SIZE);
             if (frameLen > 2) {
                 packHeader(cbuf, PACKET_CHANNEL, c->outSequence++);
                 udpClientSendTo(c, cbuf, PACKET_HEADER_SIZE + frameLen);

@@ -4739,6 +4739,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # given more reliable game events than one channel frame holds, and every
     # one of them has to leave in that send.
     tests/unit/test_send_multi_frame.c
+    # No datagram either end sends over a join, the map download and a minute
+    # of play is larger than the send cap, UDP_MAX_SEND.
+    tests/unit/test_send_cap.c
     # The same tick from the client's side: a burst of best-effort effect
     # events and a voice frame have to be applied at a real client, and a
     # quitting player's ownership burst has to reach the peer.
@@ -6681,6 +6684,7 @@ set(_unit_test_names
     loopback_quit_keeps_peer
     loopback_join_accept_lost_ready
     send_drains_channels_multi_frame
+    send_cap_join_download_play
     best_effort_not_dropped
     effect_burst_not_starved_by_reliable
     post_game_segment_applied

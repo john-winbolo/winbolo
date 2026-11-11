@@ -154,7 +154,9 @@ static void voiceStatsWrite(void) {
 #define VOICE_CREDIT_BURST     6
 
 /* Most talkers forwarded to any one recipient at once. Not an MTU limit —
- * four ~64 B frames on top of a snapshot sit far inside UDP_MAX_PAYLOAD — but
+ * four ~64 B frames on top of a snapshot sit far inside the UDP_MAX_SEND
+ * cap, and what the snapshot trailer has no room for rides the standalone
+ * frames after it — but
  * an intelligibility one: nobody can follow more than three or four voices at
  * the same time, so a crowded channel is kept to the four worth hearing. */
 #define VOICE_MAX_FORWARDED_TALKERS 4

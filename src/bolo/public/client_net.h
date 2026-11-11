@@ -203,7 +203,11 @@ void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath);
  * entry: a list half applied is one the host never asked for.
  *
  * A no-op here, sending nothing, when count is outside 0..CMD_SCRIPT_LIST_MAX
- * or a name is empty or too long for the field to carry.
+ * or a name is empty or too long for the field to carry. Also a no-op, with
+ * nothing queued, when the names together are too long for the command to
+ * fit one datagram: ten names may hold 1198 bytes between them, not
+ * the 1270 the fields allow. A command that can never be sent would stay at
+ * the head of the outbound queue and hold every later command behind it.
  *
  * The result comes back as the lobby settings event and the script list
  * event together, which is what the clientSimGetLobbyScript* accessors

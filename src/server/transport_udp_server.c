@@ -974,7 +974,7 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
                 uint8_t cbuf[UDP_MAX_PAYLOAD];
                 int frameLen = channelBuildFrame(
                     &udpServer.channelMux[i], cbuf + PACKET_HEADER_SIZE,
-                    UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                    UDP_MAX_SEND - PACKET_HEADER_SIZE);
                 if (frameLen <= 2) break;   /* nothing (more) to carry this tick */
                 packHeader(cbuf, PACKET_CHANNEL,
                            udpServer.clients[i].outSequence++);

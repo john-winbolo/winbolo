@@ -82,8 +82,10 @@ typedef bool (*ControlDecodeBodyFn)(const uint8_t *buf, size_t len,
                                     ControlEvent *outEvt);
 
 /* Stack-allocation upper bound for any single ControlEvent's wire
- * encoding. Matches UDP_MAX_PAYLOAD (1400) so every control packet
- * fits in a single datagram below the typical 1500-byte MTU. The
+ * encoding, and the size decoders are handed. Matches the receive buffer
+ * size UDP_MAX_PAYLOAD (1400). It is not a send budget: a control event
+ * reaches the wire as one CHANNEL_CONTROL segment, and the datagram that
+ * carries it is held to UDP_MAX_SEND by the channel frame's budget. The
  * largest variant is the brain-list worst case
  *   8 hdr + 1 count + BRAIN_LIST_MAX (16) * (2 length bytes +
  *     BRAIN_LIST_NAME_LEN-1 (31) + BRAIN_LIST_VER_LEN-1 (23))

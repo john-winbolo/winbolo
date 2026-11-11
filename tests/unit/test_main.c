@@ -1346,6 +1346,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_quit_keeps_peer",                run_loopback_quit_keeps_peer                },
     { "loopback_join_accept_lost_ready",         run_loopback_join_accept_lost_ready         },
     { "send_drains_channels_multi_frame",        run_send_drains_channels_multi_frame        },
+    { "send_cap_join_download_play",             run_send_cap_join_download_play             },
     { "best_effort_not_dropped",                 run_best_effort_not_dropped                 },
     { "effect_burst_not_starved_by_reliable",    run_effect_burst_not_starved_by_reliable    },
     { "post_game_segment_applied",               run_post_game_segment_applied               },

@@ -21,22 +21,22 @@
  *
  * The filler is the point of the arithmetic. Every segment here is an
  * EVENT_PING: 7 bytes of event behind CHANNEL_SEG_HEADER_SIZE (7), so 14 bytes
- * on the wire. The snapshot trailer gets UDP_MAX_PAYLOAD minus the snapshot, so
+ * on the wire. The snapshot trailer gets UDP_MAX_SEND minus the snapshot, so
  * its absolute ceiling — with nothing in the snapshot but its own header and
- * one tank entry — is (1400 - 8 - 17 - 2) / 14 = 98 segments, and against the
+ * one tank entry — is (1232 - 8 - 17 - 2) / 14 = 86 segments, and against the
  * snapshot this fixture actually builds (one tank, no shells, Everard's bases
- * and pills) it is about 82. The effect ring is 64 deep, so the largest burst
+ * and pills) it is about 70. The effect ring is 64 deep, so the largest burst
  * that can be queued without the ring dropping its own oldest entry is 64 —
  * fewer than one frame holds. Without the filler the whole burst would ride the
  * trailer, the extra frames would carry nothing, and the case would pass with
- * the send loop reverted. BE_FILLER is 112, above the 98 ceiling, so the
+ * the send loop reverted. BE_FILLER is 112, above the 86 ceiling, so the
  * trailer fills with reliable traffic (reliable channels are framed ahead of
  * best-effort in channelBuildFrame) and the effect burst has to ride an extra
  * frame.
  *
  * What that costs against the tick's budget: 112 + 48 + 1 = 161 segments,
  * 112*14 + 48*14 + 18 = 2482 bytes. One extra frame holds
- * (1400 - 8 - 2 - 36 acks) / 14 = 96 segments, so the whole burst needs the
+ * (1232 - 8 - 2 - 36 acks) / 14 = 84 segments, so the whole burst needs the
  * trailer plus two extra frames at worst, against the four the tick has
  * (trailer + SNAPSHOT_EXTRA_CHANNEL_FRAMES). Nothing here sits near a frame
  * boundary.
@@ -98,9 +98,9 @@
  *
  * The client's per-snapshot drain is capped at MAX_SNAPSHOT_EVENTS (128) across
  * the reliable and best-effort channels together, reliable first. Drain one
- * takes the trailer's share of the filler (~96 here) and no effects, since none
+ * takes the trailer's share of the filler (~70 here) and no effects, since none
  * have been ingested; drain two takes the filler the trailer could not hold
- * (~16) plus the whole 48-event burst, ~64 against the 128. The cap only starts
+ * (~42) plus the whole 48-event burst, ~90 against the 128. The cap only starts
  * to bite if the trailer's share falls to about 32, which needs a snapshot four
  * times the size of this fixture's.
  *
@@ -171,7 +171,7 @@
 #define BE_DELIVER_MAX  60
 
 /* Reliable game events queued to fill the snapshot trailer, so the effect burst
- * cannot ride it. Must stay above the trailer's 98-segment ceiling. */
+ * cannot ride it. Must stay above the trailer's 86-segment ceiling. */
 #define BE_FILLER       112
 
 /* Effect events in the burst. Below CHANNEL_GAME_EFFECT_WINDOW (64) with room
@@ -204,7 +204,7 @@
  * drain takes at most MAX_SNAPSHOT_EVENTS (128) reliable events per
  * snapshot, and this is well past that, so a drain that shared one cap
  * across both channels had nothing left for the effect channel. The server
- * frames all of these across the tick's four frames (about 96 each), so
+ * frames all of these across the tick's four frames (about 84 each), so
  * they are all at the client by the drain that follows. */
 #define BE_CAP_FILLER   240
 

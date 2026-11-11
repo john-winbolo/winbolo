@@ -28,7 +28,7 @@
 
 #include "transport_udp_internal.h"        /* packHeader, packU16, packU32,
                                             * PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD,
-                                            * SDL_assert */
+                                            * UDP_MAX_SEND, SDL_assert */
 #include "transport_udp_server_internal.h" /* udpServer, SpectatorConn, srvSendTo,
                                             * udpClientDeliverControl,
                                             * serverSendJoinReject, serverNextConnId,
@@ -1065,7 +1065,7 @@ void serverServiceSpectators(ServerSim *sim) {
                 uint8_t cbuf[UDP_MAX_PAYLOAD];
                 int frameLen = channelBuildFrame(
                     &sp->channelMux, cbuf + PACKET_HEADER_SIZE,
-                    UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                    UDP_MAX_SEND - PACKET_HEADER_SIZE);
                 if (frameLen <= 2) break;   /* nothing (more) to carry this tick */
                 packHeader(cbuf, PACKET_CHANNEL, sp->outSequence++);
                 srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &sp->addr);

@@ -75,7 +75,8 @@
 #include "server/sim/server_sim_shared.h" /* serverSimSetActive, which is what
                                            * the console routes through */
 #include "transport_udp.h"              /* udpClientHandleLobbyScenarioListRsp */
-#include "transport_udp_internal.h"     /* PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD */
+#include "transport_udp_internal.h"     /* PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD,
+                                         * UDP_MAX_SEND */
 #include "transport_udp_server_internal.h" /* udpServerPackScenarioListChunk */
 #include "scenario_defs.h"              /* ScnDirEntry */
 #include "scenario_dir.h"
@@ -844,7 +845,7 @@ int run_scenario_dir_entry_roundtrip(void) {
 
     /* ── The golden bytes ─────────────────────────────────────────── */
     memset(buf, 0, sizeof(buf));
-    len = udpServerPackScenarioListChunk(buf, (int)sizeof(buf), entries, 2, 0,
+    len = udpServerPackScenarioListChunk(buf, UDP_MAX_SEND,entries, 2, 0,
                                          &next);
     UT_ASSERT_MSG(len == PACKET_HEADER_SIZE + (int)sizeof(kSdGolden),
                   "the chunk is %d bytes, expected %d", len,
@@ -940,7 +941,7 @@ int run_scenario_dir_entry_roundtrip(void) {
 
     memset(buf, 0, sizeof(buf));
     next = 0;
-    len = udpServerPackScenarioListChunk(buf, (int)sizeof(buf), &entries[2], 1,
+    len = udpServerPackScenarioListChunk(buf, UDP_MAX_SEND,&entries[2], 1,
                                          0, &next);
     UT_ASSERT(next == 1);
     UT_ASSERT_MSG(buf[PACKET_HEADER_SIZE + 1] == 1,
@@ -963,7 +964,7 @@ int run_scenario_dir_entry_roundtrip(void) {
     /* ── An empty list is one chunk that says so ──────────────────── */
     memset(buf, 0, sizeof(buf));
     next = -1;
-    len = udpServerPackScenarioListChunk(buf, (int)sizeof(buf), entries, 0, 0,
+    len = udpServerPackScenarioListChunk(buf, UDP_MAX_SEND,entries, 0, 0,
                                          &next);
     UT_ASSERT_MSG(len == PACKET_HEADER_SIZE + 2,
                   "an empty chunk is %d bytes, expected %d", len,
@@ -987,7 +988,7 @@ int run_scenario_dir_entry_roundtrip(void) {
     /* ── A chunk cut short keeps the entry out ────────────────────── */
     memset(buf, 0, sizeof(buf));
     next = 0;
-    len = udpServerPackScenarioListChunk(buf, (int)sizeof(buf), entries, 2, 0,
+    len = udpServerPackScenarioListChunk(buf, UDP_MAX_SEND,entries, 2, 0,
                                          &next);
     cs = sdFreshClientSim();
     UT_ASSERT(cs != NULL);
@@ -1021,7 +1022,7 @@ int run_scenario_dir_chunk_not_in_flight(void) {
     sdFill(&entries[1], SD_E1_FILE, SD_E1_NAME, SD_E1_DESC, 0, 0, true, false);
 
     memset(buf, 0, sizeof(buf));
-    len = udpServerPackScenarioListChunk(buf, (int)sizeof(buf), entries, 2, 0,
+    len = udpServerPackScenarioListChunk(buf, UDP_MAX_SEND,entries, 2, 0,
                                          &next);
     UT_ASSERT(next == 2);
 
@@ -1079,7 +1080,7 @@ int run_scenario_dir_chunk_not_in_flight(void) {
 
     memset(buf, 0, sizeof(buf));
     next = 0;
-    len = udpServerPackScenarioListChunk(buf, (int)sizeof(buf), entries, 1, 0,
+    len = udpServerPackScenarioListChunk(buf, UDP_MAX_SEND,entries, 1, 0,
                                          &next);
     UT_ASSERT(next == 1);
     udpClientHandleLobbyScenarioListRsp(cs, buf, len);

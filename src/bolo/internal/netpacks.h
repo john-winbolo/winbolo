@@ -899,7 +899,7 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               states neither. An entry cut short
                                               is a malformed chunk.
                                               Entries are packed until the next
-                                              will not fit in UDP_MAX_PAYLOAD;
+                                              will not fit in UDP_MAX_SEND;
                                               the last chunk sets final, and an
                                               empty directory is one chunk with
                                               count 0 and final 1. A string
@@ -922,11 +922,16 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               a splice. count 0 clears the
                                               list, and a one-row list picks
                                               a single script.
-                                              Worst case on the wire is
+                                              The fields allow
                                               8 + 4 + 1 + 10 * (1 + 127)
-                                              = 1293 bytes, which is why
-                                              COMMAND_MAX_WIRE_BYTES is
-                                              1400. */
+                                              = 1293 bytes, which
+                                              COMMAND_MAX_WIRE_BYTES (1400)
+                                              holds for decoding. A sender
+                                              may put at most
+                                              COMMAND_MAX_SEND_BYTES (1221)
+                                              on the wire, so the encoder
+                                              and the client refuse a list
+                                              longer than that. */
 
 #define PACKET_LOBBY_SCENARIO_DETAILS_REQ 227 /* client -> server
                                               { fileLen 1, file N }

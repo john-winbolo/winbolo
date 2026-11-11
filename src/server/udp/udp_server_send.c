@@ -29,6 +29,7 @@
                                             * packBaseSnapshot, packPillSnapshot,
                                             * packGameEvent, ClientEventQueue,
                                             * PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD,
+                                            * UDP_MAX_SEND,
                                             * INPUT_PACKET_WIRE_SIZE,
                                             * SNAPSHOT_HEADER_WIRE_SIZE,
                                             * RELIABLE_EVENT_BUFFER_SIZE */
@@ -247,6 +248,14 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
      * returnToLobbyTicks — the header bytes after the two u32s above. */
     pos += SNAPSHOT_HEADER_WIRE_SIZE - 8;
 
+    /* Every entry below is packed only while it fits UDP_MAX_SEND, not the
+     * size of buf, so the snapshot itself never passes the send cap. The
+     * largest snapshot the tables allow, 16 full tanks, 64 shells, 16 tank
+     * explosions, 16 bases and 16 pills behind both headers, is 1369 bytes;
+     * on a tick that would build one, the entries that do not fit (pills
+     * first, then bases) are left out of this snapshot by the tests below,
+     * and the counts written into the header say how many went. */
+
     /* Pack tank snapshots — variable length: a stub is 1 byte; a full entry is
      * a presence-mask-driven run of at most TANK_SNAPSHOT_WIRE_SIZE bytes
      * (packTankSnapshot returns the actual size, usually far smaller because
@@ -254,7 +263,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     for (i = 0; i < hdr.tankCount; i++) {
         bool isStub = (tankSnaps[i].playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) != 0;
         int needed = isStub ? 1 : TANK_SNAPSHOT_WIRE_SIZE;
-        if (pos + needed > (int)sizeof(buf)) {
+        if (pos + needed > UDP_MAX_SEND) {
             hdr.tankCount = (uint8_t)i;
             break;
         }
@@ -263,7 +272,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
 
     /* Pack shell snapshots */
     for (i = 0; i < hdr.shellCount; i++) {
-        if (pos + SHELL_SNAPSHOT_WIRE_SIZE > (int)sizeof(buf)) {
+        if (pos + SHELL_SNAPSHOT_WIRE_SIZE > UDP_MAX_SEND) {
             hdr.shellCount = (uint8_t)i;
             break;
         }
@@ -272,7 +281,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
 
     /* Pack tank explosion snapshots */
     for (i = 0; i < hdr.tkExplosionCount; i++) {
-        if (pos + TK_EXPLOSION_SNAPSHOT_WIRE_SIZE > (int)sizeof(buf)) {
+        if (pos + TK_EXPLOSION_SNAPSHOT_WIRE_SIZE > UDP_MAX_SEND) {
             hdr.tkExplosionCount = (uint8_t)i;
             break;
         }
@@ -281,7 +290,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
 
     /* Pack base snapshots */
     for (i = 0; i < hdr.baseCount; i++) {
-        if (pos + BASE_SNAPSHOT_WIRE_SIZE > (int)sizeof(buf)) {
+        if (pos + BASE_SNAPSHOT_WIRE_SIZE > UDP_MAX_SEND) {
             hdr.baseCount = (uint8_t)i;
             break;
         }
@@ -290,7 +299,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
 
     /* Pack pill snapshots */
     for (i = 0; i < hdr.pillCount; i++) {
-        if (pos + PILL_SNAPSHOT_WIRE_SIZE > (int)sizeof(buf)) {
+        if (pos + PILL_SNAPSHOT_WIRE_SIZE > UDP_MAX_SEND) {
             hdr.pillCount = (uint8_t)i;
             break;
         }
@@ -358,7 +367,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
 
     /* Parallel channel layer rides as a trailer on the snapshot: tick the
      * mux on this client's clock+RTT, then append one channel frame after
-     * the event tails, keeping the datagram within UDP_MAX_PAYLOAD.  The
+     * the event tails, keeping the datagram within UDP_MAX_SEND.  The
      * client recovers it as the bytes past the snapshot's parsed end.
      * Anything the trailer had no room for goes out in the standalone frames
      * after the send below. */
@@ -366,7 +375,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     channelTick(&udpServer.channelMux[clientIdx], udpServer.tickCount,
                 client->pingMs);
     {
-        int budget = UDP_MAX_PAYLOAD - pos;
+        int budget = UDP_MAX_SEND - pos;
         if (budget >= 2) {
             pos += channelBuildFrame(&udpServer.channelMux[clientIdx],
                                      buf + pos, budget);
@@ -389,7 +398,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
             uint8_t cbuf[UDP_MAX_PAYLOAD];
             int frameLen = channelBuildFrame(
                 &udpServer.channelMux[clientIdx], cbuf + PACKET_HEADER_SIZE,
-                UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                UDP_MAX_SEND - PACKET_HEADER_SIZE);
             if (frameLen <= 2) break;   /* nothing left to carry this tick */
             packHeader(cbuf, PACKET_CHANNEL, client->outSequence++);
             srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &client->addr);
@@ -444,7 +453,7 @@ void transportUdpServerSend(ServerSim *sim) {
                 uint8_t cbuf[UDP_MAX_PAYLOAD];
                 int frameLen = channelBuildFrame(
                     &udpServer.channelMux[i], cbuf + PACKET_HEADER_SIZE,
-                    UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                    UDP_MAX_SEND - PACKET_HEADER_SIZE);
                 if (frameLen <= 2) break;   /* nothing left to carry this tick */
                 packHeader(cbuf, PACKET_CHANNEL,
                            udpServer.clients[i].outSequence++);

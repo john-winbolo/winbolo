@@ -85,8 +85,9 @@ enum {
                                      * type(1) + bodyLen(2) + body(897) = 900)
                                      * yet stay budget-safe: a segment plus the
                                      * channel-frame overhead and packet header
-                                     * must fit UDP_MAX_PAYLOAD with room for
-                                     * coalesced acks. 1024 clears both.        */
+                                     * must fit the send cap UDP_MAX_SEND with
+                                     * room for coalesced acks. 1024 clears
+                                     * both; channel_mux.c asserts the second. */
 #define CHANNEL_BULK_WINDOW     96  /* provisional: bandwidth-delay product set
                                      * when bulk transfer moves here           */
 #define CHANNEL_BULK_SEG       256  /* stream segments                         */

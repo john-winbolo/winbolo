@@ -21,8 +21,9 @@
  *       longest-possible entries against the control segment it has to ride
  *       in, which is the ceiling delivery applies.
  *   script_list_command_codec  — the whole list up the wire: a round trip
- *       through the production encoder and decoder, the worst case measured
- *       against COMMAND_MAX_WIRE_BYTES, a count past the cap refused on
+ *       through the production encoder and decoder, ten 100-character names
+ *       encoded and ten 127-character names refused for passing
+ *       COMMAND_MAX_SEND_BYTES, the exact edge, a count past the cap refused on
  *       both sides, and the three bodies the decoder has to refuse — one cut
  *       a byte short, one with a byte left over, one with a fileLen past the
  *       field it is copied into.
@@ -52,8 +53,8 @@
  * The segment and not MAX_CONTROL_PACKET is the ceiling that matters for the
  * chunk: one control event is one channel segment, and the encoder is handed
  * CHANNEL_CONTROL_SEG less the channel frame's type(1) and bodyLen(2). A
- * chunk measured against the 1400-byte datagram instead would pass here and
- * be dropped at delivery with nothing visible to the client.
+ * chunk measured against MAX_CONTROL_PACKET's 1400 bytes instead would pass
+ * here and be dropped at delivery with nothing visible to the client.
  *
  * Reads the ClientSim struct directly; the unittests profile permits it.
  */
@@ -382,24 +383,51 @@ int run_script_list_command_codec(void) {
     UT_ASSERT(commandCodecDecode(buf, len, &back));
     UT_ASSERT(back.u.setScriptList.count == 0);
 
-    /* The worst case, which is what COMMAND_MAX_WIRE_BYTES is sized by: a
-       full list of names one short of the field. */
+    /* A full list of 100-character names: 13 + 10 * 101 = 1023 bytes, inside
+       COMMAND_MAX_SEND_BYTES, so it encodes and comes back whole. */
     memset(&cmd.u.setScriptList, 0, sizeof(cmd.u.setScriptList));
     cmd.u.setScriptList.count = CMD_SCRIPT_LIST_MAX;
     for (i = 0; i < CMD_SCRIPT_LIST_MAX; i++) {
-        memset(cmd.u.setScriptList.files[i], 'f', CMD_SCRIPT_LIST_FILE_LEN - 1);
+        memset(cmd.u.setScriptList.files[i], 'f', 100);
     }
-    UT_ASSERT(commandCodecEncode(&cmd, buf, sizeof(buf), &len));
-    UT_ASSERT_MSG(len == 13 + (size_t)CMD_SCRIPT_LIST_MAX *
-                               (size_t)CMD_SCRIPT_LIST_FILE_LEN,
-                  "the worst case measured %d bytes, the sizing in "
-                  "transport_command_codec.h says %d", (int)len,
-                  (int)(13 + CMD_SCRIPT_LIST_MAX * CMD_SCRIPT_LIST_FILE_LEN));
-    UT_ASSERT_MSG(len <= (size_t)COMMAND_MAX_WIRE_BYTES,
-                  "the worst case is %d bytes and the stack bound is %d",
-                  (int)len, (int)COMMAND_MAX_WIRE_BYTES);
+    UT_ASSERT_MSG(commandCodecEncode(&cmd, buf, sizeof(buf), &len),
+                  "ten 100-character names were refused, though they fit "
+                  "one command datagram");
+    UT_ASSERT_MSG(len == 13 + (size_t)CMD_SCRIPT_LIST_MAX * 101,
+                  "ten 100-character names measured %d bytes, expected %d",
+                  (int)len, 13 + CMD_SCRIPT_LIST_MAX * 101);
+    UT_ASSERT(len <= (size_t)COMMAND_MAX_SEND_BYTES);
     UT_ASSERT(commandCodecDecode(buf, len, &back));
     UT_ASSERT(back.u.setScriptList.count == CMD_SCRIPT_LIST_MAX);
+    UT_ASSERT(strlen(back.u.setScriptList.files[CMD_SCRIPT_LIST_MAX - 1])
+              == 100);
+
+    /* The largest list the fields allow: ten names one short of the field,
+       13 + 10 * 128 = 1293 bytes. That passes COMMAND_MAX_SEND_BYTES, so one
+       PACKET_COMMAND_TICK under UDP_MAX_SEND cannot carry it and the encoder
+       refuses it, though the buffer it was handed would hold it. */
+    for (i = 0; i < CMD_SCRIPT_LIST_MAX; i++) {
+        memset(cmd.u.setScriptList.files[i], 'f', CMD_SCRIPT_LIST_FILE_LEN - 1);
+    }
+    UT_ASSERT_MSG(!commandCodecEncode(&cmd, buf, sizeof(buf), &len),
+                  "ten 127-character names encoded, %d bytes against a send "
+                  "limit of %d", (int)len, (int)COMMAND_MAX_SEND_BYTES);
+
+    /* The edge itself: nine 127-character names and one of 55 come to
+       exactly COMMAND_MAX_SEND_BYTES (13 + 9 * 128 + 56 = 1221) and encode;
+       one more character in the last name is refused. */
+    memset(cmd.u.setScriptList.files[CMD_SCRIPT_LIST_MAX - 1], 0,
+           CMD_SCRIPT_LIST_FILE_LEN);
+    memset(cmd.u.setScriptList.files[CMD_SCRIPT_LIST_MAX - 1], 'f', 55);
+    UT_ASSERT_MSG(commandCodecEncode(&cmd, buf, sizeof(buf), &len),
+                  "a list of exactly %d bytes was refused",
+                  (int)COMMAND_MAX_SEND_BYTES);
+    UT_ASSERT(len == (size_t)COMMAND_MAX_SEND_BYTES);
+    UT_ASSERT(commandCodecDecode(buf, len, &back));
+    cmd.u.setScriptList.files[CMD_SCRIPT_LIST_MAX - 1][55] = 'f';
+    UT_ASSERT_MSG(!commandCodecEncode(&cmd, buf, sizeof(buf), &len),
+                  "a list one byte past %d encoded",
+                  (int)COMMAND_MAX_SEND_BYTES);
 
     /* A count past the cap is refused rather than trimmed, on both sides. */
     cmd.u.setScriptList.count = CMD_SCRIPT_LIST_MAX + 1;

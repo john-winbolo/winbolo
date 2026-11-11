@@ -21,7 +21,7 @@
 #include <stddef.h>  /* size_t — the encoder's bodyLen */
 
 #include "transport_udp_internal.h"        /* packHeader, packU16,
-                                            * UDP_MAX_PAYLOAD */
+                                            * UDP_MAX_PAYLOAD, UDP_MAX_SEND */
 #include "transport_udp_server_internal.h" /* udpServer, UdpServerClient, srvSendTo,
                                             * transportUdpServerFlushChannel,
                                             * udpClientDeliverControl */
@@ -119,7 +119,7 @@ void transportUdpServerFlushChannel(int clientIdx) {
                 client->pingMs);
     frameLen = channelBuildFrame(&udpServer.channelMux[clientIdx],
                                  cbuf + PACKET_HEADER_SIZE,
-                                 UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                                 UDP_MAX_SEND - PACKET_HEADER_SIZE);
     if (frameLen > 2) {
         packHeader(cbuf, PACKET_CHANNEL, client->outSequence++);
         srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &client->addr);

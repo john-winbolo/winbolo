@@ -335,9 +335,33 @@ SOCKET createUdpSocket(bool exclusive) {
     return sock;
 }
 
+#if WB_ENABLE_NETIMPAIR
+/* Largest length handed to udpSendTo since the last reset. Atomic because the
+ * client and the server transports in one test process both send through
+ * here. */
+static SDL_AtomicInt s_udpLargestSend;
+
+int udpTestLargestSend(void) {
+    return SDL_GetAtomicInt(&s_udpLargestSend);
+}
+
+void udpTestResetLargestSend(void) {
+    SDL_SetAtomicInt(&s_udpLargestSend, 0);
+}
+#endif
+
 /* Send a buffer via UDP to a specific address */
 void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr) {
+#if WB_ENABLE_NETIMPAIR
+    {
+        int seen = SDL_GetAtomicInt(&s_udpLargestSend);
+        while (len > seen &&
+               !SDL_CompareAndSwapAtomicInt(&s_udpLargestSend, seen, len)) {
+            seen = SDL_GetAtomicInt(&s_udpLargestSend);
+        }
+    }
+#endif
     sendto(sock, (const char *)buf, len, 0,
            (const struct sockaddr *)addr, sizeof(*addr));
 }

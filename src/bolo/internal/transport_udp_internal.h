@@ -44,11 +44,21 @@
 #include "input_packet.h"
 #include "gametype.h"
 #include "control_event.h"
+#include "net_impair.h"   /* WB_ENABLE_NETIMPAIR, for the send-size counter */
 
-/* Maximum UDP datagram payload we'll send.
- * Sits under the standard 1500-byte Ethernet MTU minus IPv4 (20) + UDP (8)
- * headers (= 1472 cap), with headroom for IPv4 options or minor encapsulation
- * overhead. Avoids fragmentation on typical internet paths. */
+/* Two sizes for one datagram, one for each direction.
+ *
+ * UDP_MAX_SEND is the most a sender may put in one datagram, to any peer.
+ * IPv6 routers never fragment, and 1280 bytes is the smallest MTU every IPv6
+ * path has to carry; less the IPv6 header (40) and the UDP header (8) that
+ * leaves 1232 bytes of payload. The same cap is used for IPv4 peers so there
+ * is one send path. Every budget a sender builds a datagram against is this
+ * constant, not the size of the buffer it builds in.
+ *
+ * UDP_MAX_PAYLOAD is the size of every receive buffer. It stays at 1400, the
+ * cap senders were held to before UDP_MAX_SEND, so a datagram from a peer
+ * built with that cap is still read whole rather than cut short. */
+#define UDP_MAX_SEND    1232
 #define UDP_MAX_PAYLOAD 1400
 
 /* Input packet ring buffer size for client redundancy */
@@ -221,5 +231,13 @@ void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr);
 int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen,
                 struct sockaddr_in *fromAddr);
+
+#if WB_ENABLE_NETIMPAIR
+/* The largest length any caller has handed udpSendTo since the last reset,
+ * client and server alike, so a test can check that nothing it drove put a
+ * datagram over UDP_MAX_SEND on the wire. Test builds only. */
+int  udpTestLargestSend(void);
+void udpTestResetLargestSend(void);
+#endif
 
 #endif /* TRANSPORT_UDP_INTERNAL_H */

@@ -284,7 +284,11 @@ static size_t buildInfoScripts(ServerSim *sim, uint8_t *out) {
  * Replies to the requester with the current server advertisement: the
  * INFO_PACKET, then the script bytes buildInfoScriptTail writes. Only this
  * reply carries them; the tracker update in udp_server_tracker.c sends the
- * INFO_PACKET alone and stays sizeof(INFO_PACKET) bytes. */
+ * INFO_PACKET alone and stays sizeof(INFO_PACKET) bytes. The whole reply is
+ * held to MAX_UDPPACKET_SIZE, the game finder's receive buffer, which is
+ * inside the send cap. */
+BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) + INFO_REPLY_TAIL_CAP <= UDP_MAX_SEND,
+                   info_reply_fits_one_send);
 void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
                              ServerSim *sim) {
     uint8_t buf[sizeof(INFO_PACKET) + INFO_REPLY_TAIL_CAP];
