@@ -15,6 +15,7 @@
  */
 
 #include <string.h>
+#include <SDL3/SDL.h>
 
 #include "bolo_addr.h"
 #include "test_harness.h"
@@ -483,6 +484,239 @@ int run_boloaddr_resolve_literals(void) {
     int rc;
     bolo_net_init();
     rc = resolveBody();
+    bolo_net_cleanup();
+    return rc;
+}
+
+/* "localhost" with the game's hint resolves to a loopback address, and to
+ * an IPv4 one whenever this machine's localhost has an IPv4 address, so a
+ * server that listens on IPv4 only is reached by name. */
+static int resolvePreferBody(void) {
+    BoloAddr a;
+    BoloAddr v4;
+    if (bolo_resolve_addr("localhost", 27500, BOLO_RESOLVE_PREFER, &a) != 0) {
+        UT_FAIL("resolve \"localhost\" failed");
+    }
+    if (!boloAddrIsLoopback(&a) || boloAddrPort(&a) != 27500) {
+        UT_FAIL("\"localhost\" did not give a loopback address on 27500");
+    }
+    if (bolo_resolve_addr("localhost", 27500, AF_INET, &v4) == 0 &&
+        boloAddrIsV4(&v4)) {
+        if (!boloAddrIsV4(&a)) {
+            UT_FAIL("\"localhost\" has an IPv4 address but resolved to IPv6");
+        }
+    } else {
+        SDL_Log("  boloaddr_resolve_prefer_v4: localhost has no IPv4 address "
+                "here; only the loopback check ran");
+    }
+    return 0;
+}
+
+int run_boloaddr_resolve_prefer_v4(void) {
+    int rc;
+    bolo_net_init();
+    rc = resolvePreferBody();
+    bolo_net_cleanup();
+    return rc;
+}
+
+/* boloAddrToFamily: AF_INET6 maps IPv4 and copies IPv6; AF_INET copies IPv4,
+ * unmaps a mapped address and refuses any other IPv6; in and out may be the
+ * same object. */
+static int toFamilyBody(void) {
+    BoloAddr v4, v6, mapped, out;
+    char buf[BOLO_ADDR_STR_LEN];
+    const uint8_t *b;
+    static const uint8_t wantMapped[16] = { 0, 0, 0, 0, 0, 0, 0, 0,
+                                            0, 0, 0xff, 0xff, 1, 2, 3, 4 };
+
+    if (!boloAddrParse("1.2.3.4:27500", 0, &v4) ||
+        !boloAddrParse("[2001:db8::1]:27501", 0, &v6) ||
+        !boloAddrParse("[::ffff:5.6.7.8]:27502", 0, &mapped)) {
+        UT_FAIL("parse of the test addresses failed");
+    }
+
+    /* IPv4 on an IPv6 socket: ::ffff:1.2.3.4, same port, same host. */
+    if (!boloAddrToFamily(&v4, AF_INET6, &out)) {
+        UT_FAIL("IPv4 -> AF_INET6 refused");
+    }
+    b = boloAddrV6Bytes(&out);
+    if (boloAddrFamily(&out) != AF_INET6 || b == NULL ||
+        memcmp(b, wantMapped, 16) != 0) {
+        UT_FAIL("IPv4 -> AF_INET6 is not ::ffff:1.2.3.4");
+    }
+    if (boloAddrPort(&out) != 27500 || !boloAddrEqual(&out, &v4) ||
+        out.len != (socklen_t)sizeof(struct sockaddr_in6)) {
+        UT_FAIL("IPv4 -> AF_INET6 lost the port, the host or the length");
+    }
+    if (!boloAddrFormat(&out, buf, sizeof(buf)) ||
+        strcmp(buf, "1.2.3.4:27500") != 0) {
+        UT_FAIL("mapped form printed as \"%s\"", buf);
+    }
+
+    /* IPv6 on an IPv6 socket: copied. */
+    if (!boloAddrToFamily(&v6, AF_INET6, &out) ||
+        boloAddrFamily(&out) != AF_INET6 || !boloAddrEqual(&out, &v6)) {
+        UT_FAIL("IPv6 -> AF_INET6 was not a copy");
+    }
+
+    /* IPv4 on an IPv4 socket: copied. */
+    if (!boloAddrToFamily(&v4, AF_INET, &out) ||
+        boloAddrFamily(&out) != AF_INET || !boloAddrEqual(&out, &v4)) {
+        UT_FAIL("IPv4 -> AF_INET was not a copy");
+    }
+
+    /* Mapped on an IPv4 socket: plain AF_INET 5.6.7.8, same port. */
+    if (!boloAddrToFamily(&mapped, AF_INET, &out) ||
+        boloAddrFamily(&out) != AF_INET ||
+        out.len != (socklen_t)sizeof(struct sockaddr_in) ||
+        boloAddrPort(&out) != 27502 || !boloAddrEqual(&out, &mapped)) {
+        UT_FAIL("mapped -> AF_INET did not give plain 5.6.7.8:27502");
+    }
+
+    /* Plain IPv6 on an IPv4 socket: refused, output cleared. */
+    out = v4;
+    if (boloAddrToFamily(&v6, AF_INET, &out)) {
+        UT_FAIL("IPv6 -> AF_INET was accepted");
+    }
+    if (boloAddrFamily(&out) != 0) {
+        UT_FAIL("a refused conversion left an address in the output");
+    }
+
+    /* An empty address and an unknown family are refused. */
+    boloAddrClear(&out);
+    if (boloAddrToFamily(&out, AF_INET6, &out)) {
+        UT_FAIL("an empty address converted");
+    }
+    if (boloAddrToFamily(&v4, AF_UNSPEC, &out)) {
+        UT_FAIL("AF_UNSPEC accepted as a socket family");
+    }
+
+    /* In place: in and out the same object. */
+    out = v4;
+    if (!boloAddrToFamily(&out, AF_INET6, &out) ||
+        boloAddrFamily(&out) != AF_INET6 || !boloAddrEqual(&out, &v4)) {
+        UT_FAIL("in-place IPv4 -> AF_INET6 failed");
+    }
+    if (!boloAddrToFamily(&out, AF_INET, &out) ||
+        boloAddrFamily(&out) != AF_INET || !boloAddrEqual(&out, &v4)) {
+        UT_FAIL("in-place mapped -> AF_INET failed");
+    }
+    return 0;
+}
+
+int run_boloaddr_to_family(void) {
+    int rc;
+    bolo_net_init();
+    rc = toFamilyBody();
+    bolo_net_cleanup();
+    return rc;
+}
+
+/* boloAddrAny: the all-zero address of each family with the port, and an
+ * empty address for any other family. */
+static int anyBody(void) {
+    BoloAddr a;
+    char buf[BOLO_ADDR_STR_LEN];
+
+    boloAddrAny(AF_INET6, 27500, &a);
+    if (boloAddrFamily(&a) != AF_INET6 || boloAddrPort(&a) != 27500 ||
+        !boloAddrIsUnspecified(&a) || boloAddrIsV4(&a) ||
+        a.len != (socklen_t)sizeof(struct sockaddr_in6)) {
+        UT_FAIL("AF_INET6 any is not [::]:27500");
+    }
+    if (!boloAddrFormat(&a, buf, sizeof(buf)) ||
+        strcmp(buf, "[::]:27500") != 0) {
+        UT_FAIL("AF_INET6 any printed as \"%s\"", buf);
+    }
+
+    boloAddrAny(AF_INET, 0, &a);
+    if (boloAddrFamily(&a) != AF_INET || boloAddrPort(&a) != 0 ||
+        !boloAddrIsUnspecified(&a) ||
+        a.len != (socklen_t)sizeof(struct sockaddr_in)) {
+        UT_FAIL("AF_INET any is not 0.0.0.0:0");
+    }
+    if (!boloAddrFormat(&a, buf, sizeof(buf)) ||
+        strcmp(buf, "0.0.0.0:0") != 0) {
+        UT_FAIL("AF_INET any printed as \"%s\"", buf);
+    }
+
+    boloAddrAny(AF_UNSPEC, 27500, &a);
+    if (boloAddrFamily(&a) != 0) {
+        UT_FAIL("AF_UNSPEC any is not empty");
+    }
+    return 0;
+}
+
+int run_boloaddr_any(void) {
+    int rc;
+    bolo_net_init();
+    rc = anyBody();
+    bolo_net_cleanup();
+    return rc;
+}
+
+/* boloAddrV4: the 4 bytes of a plain or mapped IPv4 address; 0 and a zeroed
+ * output for IPv6 and for an empty address. */
+static int v4Body(void) {
+    BoloAddr a;
+    struct in_addr out;
+    static const uint8_t want[4] = { 10, 20, 30, 40 };
+    static const uint8_t zero[4] = { 0, 0, 0, 0 };
+
+    if (!boloAddrParse("10.20.30.40:1", 0, &a) || !boloAddrV4(&a, &out) ||
+        memcmp(&out, want, 4) != 0) {
+        UT_FAIL("plain IPv4 did not give 10.20.30.40");
+    }
+    if (!boloAddrParse("::ffff:10.20.30.40", 1, &a) || !boloAddrV4(&a, &out) ||
+        memcmp(&out, want, 4) != 0) {
+        UT_FAIL("mapped IPv4 did not give 10.20.30.40");
+    }
+    memset(&out, 0xff, sizeof(out));
+    if (!boloAddrParse("2001:db8::1", 1, &a) || boloAddrV4(&a, &out) ||
+        memcmp(&out, zero, 4) != 0) {
+        UT_FAIL("IPv6 gave an IPv4 address or left the output set");
+    }
+    memset(&out, 0xff, sizeof(out));
+    boloAddrClear(&a);
+    if (boloAddrV4(&a, &out) || memcmp(&out, zero, 4) != 0) {
+        UT_FAIL("an empty address gave an IPv4 address");
+    }
+    return 0;
+}
+
+int run_boloaddr_v4(void) {
+    int rc;
+    bolo_net_init();
+    rc = v4Body();
+    bolo_net_cleanup();
+    return rc;
+}
+
+/* boloAddrFromV4: an AF_INET address with the 4 bytes and the port, equal
+ * to the parsed text form. */
+static int fromV4Body(void) {
+    BoloAddr a, text;
+    struct in_addr v4;
+    static const uint8_t bytes[4] = { 192, 0, 2, 7 };
+
+    memcpy(&v4, bytes, 4);
+    boloAddrFromV4(v4, 40000, &a);
+    if (boloAddrFamily(&a) != AF_INET || boloAddrPort(&a) != 40000 ||
+        a.len != (socklen_t)sizeof(struct sockaddr_in)) {
+        UT_FAIL("FromV4 did not give an AF_INET address on port 40000");
+    }
+    if (!boloAddrParse("192.0.2.7:40000", 0, &text) ||
+        !boloAddrEqual(&a, &text)) {
+        UT_FAIL("FromV4 differs from \"192.0.2.7:40000\"");
+    }
+    return 0;
+}
+
+int run_boloaddr_from_v4(void) {
+    int rc;
+    bolo_net_init();
+    rc = fromV4Body();
     bolo_net_cleanup();
     return rc;
 }

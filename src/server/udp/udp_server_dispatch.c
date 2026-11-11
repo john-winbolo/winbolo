@@ -48,9 +48,9 @@
                                             * serverRebaseBulkAndRearmDownload,
                                             * lobbyClientMayEdit, the five entry
                                             * points transport_udp_server.c still
-                                            * owns, and via platform_net.h the
-                                            * sockaddr_in / inet_ntoa / htons /
-                                            * ntohs the punch and quit paths use */
+                                            * owns, and via bolo_addr.h the
+                                            * BoloAddr helpers the punch and
+                                            * quit paths use */
 #include "transport_udp.h"   /* UdpServerClient, RoundLogReadResult,
                               * ROUND_LOG_READ_OK, ROUND_LOG_READ_TOO_LARGE,
                               * lobbyAnyOtherUploadActive, uploadFilenameIsSafe */
@@ -128,7 +128,7 @@
 #define MAP_REASK_MIN_TICKS 25  /* 0.5s at 50 Hz, between re-asks */
 
 static void handlePing(ServerSim *sim, uint8_t *buf, int len,
-                       struct sockaddr_in *fromAddr) {
+                       BoloAddr *fromAddr) {
     serverHandlePing(buf, len, fromAddr);
     /* Spectators aren't in clients[]; refresh their liveness too. */
     {
@@ -140,7 +140,7 @@ static void handlePing(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleChannel(ServerSim *sim, uint8_t *buf, int len,
-                          struct sockaddr_in *fromAddr) {
+                          BoloAddr *fromAddr) {
     /* Standalone channel frame (client → server, sent when no input
      * rides this tick).  Body is one frame directly after the header. */
     int clientIdx = serverFindClient(fromAddr);
@@ -167,7 +167,7 @@ static void handleChannel(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleCommandTick(ServerSim *sim, uint8_t *buf, int len,
-                              struct sockaddr_in *fromAddr) {
+                              BoloAddr *fromAddr) {
     int clientIdx = serverFindClient(fromAddr);
     if (clientIdx < 0) {
         /* A tankless spectator may send CMD_CHAT — and nothing else,
@@ -245,13 +245,13 @@ static void handleCommandTick(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleQuit(ServerSim *sim, uint8_t *buf, int len,
-                       struct sockaddr_in *fromAddr) {
+                       BoloAddr *fromAddr) {
     int clientIdx = serverFindClient(fromAddr);
+    char fromText[BOLO_ADDR_STR_LEN];
+    boloAddrFormat(fromAddr, fromText, sizeof(fromText));
     WB_LOG_INFO(WB_LOG_CAT_NET,
-        "PACKET_QUIT from %s:%u clientIdx=%d",
-        inet_ntoa(fromAddr->sin_addr),
-        (unsigned)ntohs(fromAddr->sin_port),
-        clientIdx);
+        "PACKET_QUIT from %s clientIdx=%d",
+        fromText, clientIdx);
     if (clientIdx >= 0) {
         serverCleanupMapDownload(clientIdx);
         serverDisconnectClient(sim, clientIdx, TRUE);
@@ -265,7 +265,7 @@ static void handleQuit(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleMapDlReady(ServerSim *sim, uint8_t *buf, int len,
-                             struct sockaddr_in *fromAddr) {
+                             BoloAddr *fromAddr) {
     /* Client's join-download buffers are armed (its JOIN_ACCEPT
      * landed). Body: [connId u64]. First ask for an armed-but-unbegun
      * download simply releases it (serverBeginMapTransferIfReady).
@@ -346,7 +346,7 @@ static void handleMapDlReady(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleMapResyncRequest(ServerSim *sim, uint8_t *buf, int len,
-                                   struct sockaddr_in *fromAddr) {
+                                   BoloAddr *fromAddr) {
     /* Client detected its terrain diverged (a dropped EVENT_MAP_CHANGE)
      * and asks for a fresh copy of the live map. Body: [resyncGen u32].
      * Only an established slot may ask — this is a data re-send the
@@ -534,7 +534,7 @@ static void handleMapResyncRequest(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleLobbyMapListReq(ServerSim *sim, uint8_t *buf, int len,
-                                  struct sockaddr_in *fromAddr) {
+                                  BoloAddr *fromAddr) {
     /* [header 8] [pathLen 1] [path N] — any lobby client may
      * ask. Response is sent back to the requester only
      * (wire-only handshake per ARCHITECTURE.md §"Load-bearing
@@ -710,7 +710,7 @@ int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
 }
 
 static void handleLobbyScenarioListReq(ServerSim *sim, uint8_t *buf, int len,
-                                       struct sockaddr_in *fromAddr) {
+                                       BoloAddr *fromAddr) {
     /* [header 8] and nothing else — the scenarios directory is flat, so there
      * is no path to ask about. Any lobby client may ask, and the response goes
      * back to the requester only (wire-only handshake per ARCHITECTURE.md
@@ -752,7 +752,7 @@ static void handleLobbyScenarioListReq(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleLobbyMapUseLocal(ServerSim *sim, uint8_t *buf, int len,
-                                   struct sockaddr_in *fromAddr) {
+                                   BoloAddr *fromAddr) {
     /* [header 8] [totalLen 4] [nameLen 1] [name N]
      *           [relPathLen 1] [relPath M] [md5 32]
      *
@@ -934,7 +934,7 @@ static bool lobbyScriptNameTaken(ServerSim *sim, const char *name) {
 }
 
 static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
-                                      struct sockaddr_in *fromAddr) {
+                                      BoloAddr *fromAddr) {
     /* [header 8] [kind 1] [totalLen 4] [nameLen 1] [name N]
      * [bulkStartSeq 4]
      * Only host
@@ -1126,7 +1126,7 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleLobbyMapSearchReq(ServerSim *sim, uint8_t *buf, int len,
-                                    struct sockaddr_in *fromAddr) {
+                                    BoloAddr *fromAddr) {
     /* [header 8] [pathLen 1] [path N] [queryLen 1] [query M].
      * Recursive search of data/maps/<path> for .map files
      * whose basename contains <query>. Read-only, any
@@ -1206,7 +1206,7 @@ static void handleLobbyMapSearchReq(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleLobbyMapPreviewReq(ServerSim *sim, uint8_t *buf, int len,
-                                     struct sockaddr_in *fromAddr) {
+                                     BoloAddr *fromAddr) {
     /* [header 8] [pathLen 1] [path N]. Reads data/maps/<path>
      * from the server's filesystem and streams the bytes back
      * over CHANNEL_BULK behind a stream header. Client rasterises
@@ -1291,7 +1291,7 @@ static void handleLobbyMapPreviewReq(ServerSim *sim, uint8_t *buf, int len,
 
 static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
                                           int len,
-                                          struct sockaddr_in *fromAddr) {
+                                          BoloAddr *fromAddr) {
     /* [header 8] [fileLen 1] [file N]. One script file's details, for the
      * lobby's details dialog, streamed back over CHANNEL_BULK behind a
      * BULK_KIND_SCENARIO_DETAILS stream header: the committed map's own
@@ -1367,7 +1367,7 @@ static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
 }
 
 static void handleLobbyBrainDocsReq(ServerSim *sim, uint8_t *buf, int len,
-                                    struct sockaddr_in *fromAddr) {
+                                    BoloAddr *fromAddr) {
     /* [header 8] [brainIdx 1]. One brain's commands.txt, for the lobby's
      * docs dialog, streamed back compressed over CHANNEL_BULK behind a
      * BULK_KIND_BRAIN_DOCS stream header, or a not-found answer the client
@@ -1428,7 +1428,7 @@ static void handleLobbyBrainDocsReq(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleLobbyBotPoolReq(ServerSim *sim, uint8_t *buf, int len,
-                                  struct sockaddr_in *fromAddr) {
+                                  BoloAddr *fromAddr) {
     /* [header 8]. The server's bot-name catalogue, streamed back over
      * CHANNEL_BULK behind a BULK_KIND_BOT_POOL stream header, or an answer
      * that says there is none. Players only: a spectator adds no bots.
@@ -1503,7 +1503,7 @@ static void serverSendScriptPackage(int clientIdx, uint32_t reqSeq,
 }
 
 static void handleLobbyScriptFetchReq(ServerSim *sim, uint8_t *buf, int len,
-                                      struct sockaddr_in *fromAddr) {
+                                      BoloAddr *fromAddr) {
     /* [header 8] [reqSeq 4 BE] [fileLen 1] [file N]. A copy of one of the
      * server's script files, for a player to keep, streamed back over
      * CHANNEL_BULK behind a BULK_KIND_SCRIPT_PACKAGE stream header. Every
@@ -1603,7 +1603,7 @@ static void handleLobbyScriptFetchReq(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleRoundLogReq(ServerSim *sim, uint8_t *buf, int len,
-                              struct sockaddr_in *fromAddr) {
+                              BoloAddr *fromAddr) {
     /* [header 8] [reqSeq 4 BE]. Hands back the last completed round's
      * .wbv over CHANNEL_BULK behind a BULK_KIND_ROUND_LOG stream
      * header, so a client that joined after the round can replay what
@@ -1726,7 +1726,7 @@ static void handleRoundLogReq(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handleWbnReauth(ServerSim *sim, uint8_t *buf, int len,
-                            struct sockaddr_in *fromAddr) {
+                            BoloAddr *fromAddr) {
     /* Wire: [header 8] [wbnJoinKey 65]. */
     int clientIdx = serverFindClient(fromAddr);
     if (clientIdx < 0) return;
@@ -1736,7 +1736,7 @@ static void handleWbnReauth(ServerSim *sim, uint8_t *buf, int len,
 }
 
 static void handlePunchNotify(ServerSim *sim, uint8_t *buf, int len,
-                              struct sockaddr_in *fromAddr) {
+                              BoloAddr *fromAddr) {
     /* Wire: [header 8] [joiner reflexive IP 4 BE] [joiner port 2 BE].
      * Total 14 bytes. Tracker pushed this through our keepalive's NAT
      * mapping; the body tells us where to fire punch packets. */
@@ -1746,38 +1746,38 @@ static void handlePunchNotify(ServerSim *sim, uint8_t *buf, int len,
         if (punchQueue[slot].packetsRemaining == 0) break;
     }
     if (slot >= PUNCH_QUEUE_SIZE) return;
-    memset(&punchQueue[slot].addr, 0, sizeof(punchQueue[slot].addr));
-    punchQueue[slot].addr.sin_family = AF_INET;
-    memcpy(&punchQueue[slot].addr.sin_addr, buf + PACKET_HEADER_SIZE, 4);
-    punchQueue[slot].addr.sin_port =
-        htons(unpackU16(buf + PACKET_HEADER_SIZE + 4));
+    {
+        struct in_addr joinerIp;
+        memcpy(&joinerIp, buf + PACKET_HEADER_SIZE, 4);
+        boloAddrFromV4(joinerIp, unpackU16(buf + PACKET_HEADER_SIZE + 4),
+                       &punchQueue[slot].addr);
+    }
     punchQueue[slot].packetsRemaining = PUNCH_BURST_PACKETS;
     punchQueue[slot].ticksUntilNext   = 0;
 }
 
 static void handlePunchProbeReply(ServerSim *sim, uint8_t *buf, int len,
-                                  struct sockaddr_in *fromAddr) {
+                                  BoloAddr *fromAddr) {
     /* Wire: [header 8] [reflexive IP 4 bytes network order]
      *       [reflexive port 2 bytes BE]. Total 14 bytes. */
     if (len < PACKET_HEADER_SIZE + 6) return;
     char reflexiveIp[64];
     uint16_t reflexivePort;
     struct in_addr addr;
-    memcpy(&addr.s_addr, buf + PACKET_HEADER_SIZE, 4);
-    {
-        const char *s = inet_ntoa(addr);
-        if (s == NULL) return;
-        strncpy(reflexiveIp, s, sizeof(reflexiveIp) - 1);
-        reflexiveIp[sizeof(reflexiveIp) - 1] = '\0';
-    }
+    BoloAddr reflexive;
+    memcpy(&addr, buf + PACKET_HEADER_SIZE, 4);
     reflexivePort = unpackU16(buf + PACKET_HEADER_SIZE + 4);
+    boloAddrFromV4(addr, reflexivePort, &reflexive);
+    if (!boloAddrFormatHost(&reflexive, reflexiveIp, sizeof(reflexiveIp))) {
+        return;
+    }
     serverInstanceRecordProbeReply(reflexiveIp, reflexivePort);
 }
 
 /* Process a single received packet — extracted from the recv loop so both
  * the polled fallback and the recv-thread drain path can share it. */
 void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
-                         struct sockaddr_in *fromAddr) {
+                         BoloAddr *fromAddr) {
     uint8_t pktType;
 
     /* Check for old-protocol info request before new-protocol handling */

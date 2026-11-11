@@ -43,6 +43,7 @@
 #include "util.h"
 #include "discovery.h"
 #include "server_text.h"   /* serverTextSanitize, SERVER_NAME_MAX / SERVER_DESC_MAX */
+#include "transport_udp_internal.h" /* createUdpSocket, udpSendTo, udpRecvFrom */
 #include "../common/wb_log.h"
 
 /* Used to stop socket blocking */
@@ -455,13 +456,14 @@ bool discoveryFindBroadcastGamesAsync(DiscoveryServerCallback callback, void *us
 }
 
 bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPingResult *out) {
-  struct sockaddr_in dest;
-  struct sockaddr_in from;
-  socklen_t fromlen;
+  BoloAddr dest;
+  BoloAddr sendable;
+  BoloAddr from;
   SOCKET sock;
+  int family = AF_INET;
+  unsigned long blocking = 0;
   BYTE buff[MAX_UDPPACKET_SIZE] = INFOREQUESTHEADER;
   uint32_t sendTime;
-  int sent;
   int len;
 
   if (out == NULL) {
@@ -500,20 +502,28 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
     return FALSE;
   }
 
-  memset(&dest, 0, sizeof(dest));
-  dest.sin_family = AF_INET;
-  dest.sin_port = htons(port);
-  dest.sin_addr.s_addr = inet_addr(address);
-  if (dest.sin_addr.s_addr == INADDR_NONE) {
-    if (bolo_resolve_ipv4(address, &dest.sin_addr) != 0) {
-      WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Ping DNS lookup failed for %s", address);
-      bolo_net_cleanup();
-      return FALSE;
-    }
-  }
-
-  sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  /* Dual stack where the platform allows it, so an IPv4 and an IPv6 server
+   * are both reachable from one socket. createUdpSocket makes the socket
+   * non-blocking; this ping waits for its one reply under SO_RCVTIMEO, so it
+   * is switched back to blocking. */
+  sock = createUdpSocket(false, &family);
   if (sock == INVALID_SOCKET) {
+    bolo_net_cleanup();
+    return FALSE;
+  }
+  ioctlsocket(sock, FIONBIO, &blocking);
+
+  if (bolo_resolve_addr(address, port, BOLO_RESOLVE_PREFER, &dest) != 0) {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Ping DNS lookup failed for %s", address);
+    closesocket(sock);
+    bolo_net_cleanup();
+    return FALSE;
+  }
+  /* An IPv6 server cannot be reached from the IPv4 fallback socket; fail now
+   * rather than wait out the receive timeout for a send udpSendTo refuses. */
+  if (!boloAddrToFamily(&dest, family, &sendable)) {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Ping of %s needs IPv6, which this machine has no socket for", address);
+    closesocket(sock);
     bolo_net_cleanup();
     return FALSE;
   }
@@ -533,20 +543,12 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
 #endif
 
   sendTime = (uint32_t)SDL_GetTicks();
-  sent = sendto(sock, (const char *)buff, BOLOPACKET_REQUEST_SIZE, 0,
-                (struct sockaddr *)&dest, sizeof(dest));
-  WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: sent %d bytes to %s:%u (expected %d)",
-               sent, address, port, BOLOPACKET_REQUEST_SIZE);
-  if (sent != BOLOPACKET_REQUEST_SIZE) {
-    WB_LOG_WARN(WB_LOG_CAT_NET, "ping: sendto failed for %s:%u", address, port);
-    closesocket(sock);
-    bolo_net_cleanup();
-    return FALSE;
-  }
+  udpSendTo(sock, family, (const uint8_t *)buff, BOLOPACKET_REQUEST_SIZE,
+            &sendable);
+  WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: sent %d bytes to %s:%u",
+               BOLOPACKET_REQUEST_SIZE, address, port);
 
-  fromlen = sizeof(from);
-  len = recvfrom(sock, (char *)buff, MAX_UDPPACKET_SIZE, 0,
-                 (struct sockaddr *)&from, &fromlen);
+  len = udpRecvFrom(sock, (uint8_t *)buff, MAX_UDPPACKET_SIZE, &from);
   closesocket(sock);
   bolo_net_cleanup();
 

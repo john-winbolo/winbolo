@@ -45,11 +45,14 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"            /* MAP_STR_SIZE */
-#include "platform_net.h"      /* sockets, select, struct sockaddr_in */
+#include "platform_net.h"      /* sockets, select */
+#include "bolo_addr.h"         /* BoloAddr */
 #include "wire_limits.h"       /* PACKET_MAX_PLAYER_NAME */
 #include "netpacks.h"          /* PACKET_* types, PACKET_HEADER_SIZE, BOLO_VERSION_* */
 #include "transport_udp.h"     /* WBN_JOIN_KEY_WIRE_LEN, JOIN_FLAG_* */
 #include "transport_udp_internal.h" /* packHeader, getPacketType */
+#include "transport_udp_server_internal.h" /* udpServer.joinRate,
+                                            * serverJoinRateLimitAllow */
 #include "test_harness.h"
 #include "loopback_harness.h"
 
@@ -118,15 +121,13 @@ static int jrlBuildJoin(uint8_t *buf, const char *name) {
  * loopback IP. Returns INVALID_SOCKET if the bind isn't possible (e.g. a
  * non-127.0.0.1 loopback alias on platforms without the full 127/8 range). */
 static SOCKET jrlOpenSocketOnIp(const char *ip) {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     unsigned long nonblock = 1;
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+    SOCKET s;
+    if (!boloAddrParse(ip, 0, &addr)) return INVALID_SOCKET;
+    s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(ip);
-    addr.sin_port        = 0;
-    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    if (bind(s, (const struct sockaddr *)&addr.ss, addr.len) != 0) {
         closesocket(s);
         return INVALID_SOCKET;
     }
@@ -138,7 +139,7 @@ static SOCKET jrlOpenSocketOnIp(const char *ip) {
 
 int run_join_rate_limit(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     SOCKET socks[JRL_NUM_SOCKETS];
     uint8_t joinBuf[JRL_NUM_SOCKETS][1024];
     int joinLen[JRL_NUM_SOCKETS];
@@ -160,10 +161,10 @@ int run_join_rate_limit(void) {
                                        /*impairSpec*/ NULL, /*seed*/ 1u),
                   "harness start failed");
 
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family      = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddr.sin_port        = htons(h.port);
+    if (!boloAddrParse("127.0.0.1", h.port, &serverAddr)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("could not build the server address");
+    }
 
     /* ---- (A) Cooldown fires: burst from distinct 127.0.0.1 ports ---- */
     for (i = 0; i < JRL_NUM_SOCKETS; i++) {
@@ -195,8 +196,8 @@ int run_join_rate_limit(void) {
             for (i = 0; i < JRL_NUM_SOCKETS; i++) {
                 if (!challenged[i]) {
                     sendto(socks[i], (const char *)joinBuf[i], joinLen[i], 0,
-                           (const struct sockaddr *)&serverAddr,
-                           sizeof(serverAddr));
+                           (const struct sockaddr *)&serverAddr.ss,
+                           serverAddr.len);
                 }
             }
         }
@@ -268,8 +269,8 @@ int run_join_rate_limit(void) {
                 int n;
                 if (pump % 8 == 0) {
                     sendto(altSock, (const char *)altJoin, altLen, 0,
-                           (const struct sockaddr *)&serverAddr,
-                           sizeof(serverAddr));
+                           (const struct sockaddr *)&serverAddr.ss,
+                           serverAddr.len);
                 }
                 loopbackHarnessPump(&h);
                 while ((n = loopbackRecvFromServer(altSock, in, sizeof(in),
@@ -292,5 +293,72 @@ int run_join_rate_limit(void) {
     }
 
     loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* ---- IPv6 sources: one bucket per /64 ----
+ *
+ * The loopback interface has one IPv6 address, so these two cases drive the
+ * limiter directly rather than over the wire. Each starts and ends with an
+ * empty table. A bucket refills one token every JRL_REFILL_MS; a run held off
+ * the CPU that long can earn one back, and the assertion that depends on the
+ * bucket being empty is skipped (with a log line) when that much time has
+ * passed. */
+
+static bool jrlV6Addr(const char *text, uint16_t port, BoloAddr *out) {
+    return boloAddrParse(text, port, out) != 0;
+}
+
+int run_join_rate_limit_v6_same_prefix(void) {
+    BoloAddr a, b;
+    uint64_t startMs;
+    int i;
+
+    UT_ASSERT(jrlV6Addr("2001:db8:1:2::1", 40001, &a));
+    UT_ASSERT(jrlV6Addr("2001:db8:1:2:aaaa:bbbb:cccc:dddd", 40002, &b));
+
+    memset(udpServer.joinRate, 0, sizeof(udpServer.joinRate));
+    startMs = SDL_GetTicks();
+    for (i = 0; i < JRL_BURST; i++) {
+        if (!serverJoinRateLimitAllow(&a)) {
+            memset(udpServer.joinRate, 0, sizeof(udpServer.joinRate));
+            UT_FAIL("token %d of a fresh bucket was refused", i + 1);
+        }
+    }
+    /* b is another address in the same /64, so it draws from a's bucket,
+     * which the burst above emptied. */
+    if (serverJoinRateLimitAllow(&b)) {
+        uint64_t elapsed = SDL_GetTicks() - startMs;
+        memset(udpServer.joinRate, 0, sizeof(udpServer.joinRate));
+        if (elapsed >= JRL_REFILL_MS) {
+            SDL_Log("  join rate limit v6: %llu ms elapsed, a token refilled; "
+                    "skipping the shared-bucket check",
+                    (unsigned long long)elapsed);
+            return 0;
+        }
+        UT_FAIL("a second address in the same /64 got a fresh bucket");
+    }
+    memset(udpServer.joinRate, 0, sizeof(udpServer.joinRate));
+    return 0;
+}
+
+int run_join_rate_limit_v6_other_prefix(void) {
+    BoloAddr a, c;
+    int i;
+
+    UT_ASSERT(jrlV6Addr("2001:db8:1:2::1", 40001, &a));
+    UT_ASSERT(jrlV6Addr("2001:db8:1:3::1", 40001, &c));
+
+    memset(udpServer.joinRate, 0, sizeof(udpServer.joinRate));
+    for (i = 0; i < JRL_BURST; i++) {
+        (void)serverJoinRateLimitAllow(&a);
+    }
+    /* c is in the next /64, so it has a bucket of its own and its first JOIN
+     * is allowed whatever state a's bucket is in. */
+    if (!serverJoinRateLimitAllow(&c)) {
+        memset(udpServer.joinRate, 0, sizeof(udpServer.joinRate));
+        UT_FAIL("an address in a different /64 shared the first /64's bucket");
+    }
+    memset(udpServer.joinRate, 0, sizeof(udpServer.joinRate));
     return 0;
 }

@@ -358,11 +358,8 @@ bool transportUdpServerTestPeekChannelReset(int slot, uint32_t *ch0Baseline,
  * warm-up JOIN below and transportUdpServerFuzzProcessPacket share this exact
  * (addr,port) so serverFindClient resolves a fuzz datagram to the pre-connected
  * slot — change one without the other and the post-JOIN handlers go dark. */
-static void fuzzServerPeerAddr(struct sockaddr_in *from) {
-    memset(from, 0, sizeof(*from));
-    from->sin_family = AF_INET;
-    from->sin_addr.s_addr = htonl(0x7f000001u); /* 127.0.0.1 */
-    from->sin_port = htons((unsigned short)40000);
+static void fuzzServerPeerAddr(BoloAddr *from) {
+    boloAddrParse("127.0.0.1", (uint16_t)40000, from);
 }
 
 /* Drive one real JOIN to completion so the dispatcher starts with a connected
@@ -385,7 +382,7 @@ static bool fuzzServerWarmJoin(ServerSim *sim) {
     uint8_t pkt[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 +
                 WBN_JOIN_KEY_WIRE_LEN + 1 /*flags*/ + 2 /*type,hints*/ +
                 2 /*country*/ + JOIN_COOKIE_LEN];
-    struct sockaddr_in from;
+    BoloAddr from;
     size_t pos;
 
     fuzzServerPeerAddr(&from);
@@ -452,6 +449,7 @@ void transportUdpServerFuzzInit(ServerSim *sim) {
     memset(&udpServer, 0, sizeof(udpServer));
     memset(punchQueue, 0, sizeof(punchQueue));
     udpServer.sock = INVALID_SOCKET;
+    udpServer.sockFamily = AF_INET;
     udpServer.running = true;
     udpServer.tickCount = 0;
     /* The pending re-auth table is a static of its own, so the memset above
@@ -494,7 +492,7 @@ void transportUdpServerFuzzInit(ServerSim *sim) {
 void transportUdpServerFuzzProcessPacket(ServerSim *sim,
                                          const uint8_t *data, size_t size) {
     uint8_t *buf;
-    struct sockaddr_in from;
+    BoloAddr from;
     if (size == 0 || size > 65535) return;
     fuzzServerPeerAddr(&from); /* same peer the warm-up JOIN registered */
 

@@ -176,6 +176,116 @@ static inline int boloAddrIsV4(const BoloAddr *a) {
     return boloAddrV4Bytes(a, v4);
 }
 
+/* Writes the IPv4 address of a plain or mapped IPv4 address to *out and
+ * returns 1; returns 0 with *out zeroed for any other address. For the 4-byte
+ * address fields on the wire and in the brain API. */
+static inline int boloAddrV4(const BoloAddr *a, struct in_addr *out) {
+    uint8_t v4[4];
+    if (out == NULL) {
+        return 0;
+    }
+    memset(out, 0, sizeof(*out));
+    if (!boloAddrV4Bytes(a, v4)) {
+        return 0;
+    }
+    memcpy(out, v4, 4);
+    return 1;
+}
+
+/* Builds an AF_INET address from a 4-byte IPv4 address (network order) and a
+ * port (host order), as the 4-byte address fields from the tracker carry. */
+static inline void boloAddrFromV4(struct in_addr v4, uint16_t port,
+                                  BoloAddr *out) {
+    struct sockaddr_in sin;
+    if (out == NULL) {
+        return;
+    }
+    memset(&sin, 0, sizeof(sin));
+    sin.sin_family = AF_INET;
+    sin.sin_addr = v4;
+    sin.sin_port = htons(port);
+    boloAddrClear(out);
+    memcpy(&out->ss, &sin, sizeof(sin));
+    out->len = (socklen_t)sizeof(sin);
+}
+
+/* Converts an address for sending on a socket of `family`. For AF_INET6 an
+ * AF_INET address becomes the mapped form ::ffff:a.b.c.d with the same port,
+ * and an AF_INET6 address is copied. For AF_INET an AF_INET address is copied
+ * and a mapped IPv6 address becomes plain AF_INET; any other IPv6 address
+ * cannot be sent on that socket and gives 0. Returns 1 on success, 0 on
+ * failure (an empty address or another family included) with *out cleared.
+ * in and out may be the same object. */
+static inline int boloAddrToFamily(const BoloAddr *in, int family,
+                                   BoloAddr *out) {
+    BoloAddr tmp;
+    uint8_t v4[4];
+    int have;
+    if (out == NULL) {
+        return 0;
+    }
+    boloAddrClear(&tmp);
+    have = boloAddrFamily(in);
+    if (have == 0) {
+        boloAddrClear(out);
+        return 0;
+    }
+    if (family == AF_INET6) {
+        if (have == AF_INET6) {
+            tmp = *in;
+        } else {
+            struct sockaddr_in6 sin6;
+            uint8_t *b = (uint8_t *)&sin6.sin6_addr;
+            memset(&sin6, 0, sizeof(sin6));
+            sin6.sin6_family = AF_INET6;
+            sin6.sin6_port = htons(boloAddrPort(in));
+            memcpy(v4, &((const struct sockaddr_in *)&in->ss)->sin_addr, 4);
+            b[10] = 0xff;
+            b[11] = 0xff;
+            memcpy(b + 12, v4, 4);
+            memcpy(&tmp.ss, &sin6, sizeof(sin6));
+            tmp.len = (socklen_t)sizeof(sin6);
+        }
+    } else if (family == AF_INET) {
+        if (have == AF_INET) {
+            tmp = *in;
+        } else if (boloAddrIsMappedV4(in)) {
+            struct in_addr in4;
+            memcpy(&in4, boloAddrV6Bytes(in) + 12, 4);
+            boloAddrFromV4(in4, boloAddrPort(in), &tmp);
+        } else {
+            boloAddrClear(out);
+            return 0;
+        }
+    } else {
+        boloAddrClear(out);
+        return 0;
+    }
+    *out = tmp;
+    return 1;
+}
+
+/* The any address of `family` (:: for AF_INET6, 0.0.0.0 for AF_INET) with
+ * `port` (host order). Any other family leaves *out empty. */
+static inline void boloAddrAny(int family, uint16_t port, BoloAddr *out) {
+    if (out == NULL) {
+        return;
+    }
+    boloAddrClear(out);
+    if (family == AF_INET6) {
+        struct sockaddr_in6 sin6;
+        memset(&sin6, 0, sizeof(sin6));
+        sin6.sin6_family = AF_INET6;
+        sin6.sin6_port = htons(port);
+        memcpy(&out->ss, &sin6, sizeof(sin6));
+        out->len = (socklen_t)sizeof(sin6);
+    } else if (family == AF_INET) {
+        struct in_addr any;
+        memset(&any, 0, sizeof(any));
+        boloAddrFromV4(any, port, out);
+    }
+}
+
 /* True for an empty address, 0.0.0.0, :: and ::ffff:0.0.0.0. */
 static inline int boloAddrIsUnspecified(const BoloAddr *a) {
     static const uint8_t zero[16] = { 0 };
@@ -505,6 +615,14 @@ static inline const struct addrinfo *boloAddrPickFamily(const struct addrinfo *r
     }
     return NULL;
 }
+
+/* The familyHint every game lookup passes to bolo_resolve_addr. Names
+ * resolve IPv4-first because every server released before IPv6 support
+ * listens on IPv4 only, so a name with both record types must reach it. The
+ * resolver falls back to the name's IPv6 address when it has no IPv4 one,
+ * which is the case on an IPv6-only network. A numeric address is used as
+ * written whatever the hint. */
+#define BOLO_RESOLVE_PREFER AF_INET
 
 /*
  * bolo_resolve_addr() — The one place a host string becomes a BoloAddr.

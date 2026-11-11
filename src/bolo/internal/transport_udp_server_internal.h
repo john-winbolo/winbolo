@@ -26,7 +26,8 @@
 
 #include "global.h"         /* BYTE, MAX_TANKS, PlayerBitMap */
 #include "lang_message.h"   /* langid — the localized server->client sends */
-#include "platform_net.h"   /* SOCKET, struct sockaddr_in */
+#include "platform_net.h"   /* SOCKET */
+#include "bolo_addr.h"      /* BoloAddr — every stored and passed peer address */
 #include "netpacks.h"       /* MAP_DOWNLOAD_MAX_SIZE, PACKET_MAX_PLAYER_NAME */
 #include "scenario_defs.h"  /* ScnDirEntry — the scenario list chunk's input */
 #include "transport_udp.h"  /* UdpServerClient, MAX_SPECTATORS, SubscriberHandle */
@@ -92,7 +93,7 @@
 typedef struct {
     uint8_t data[UDP_MAX_PAYLOAD];
     int     len;
-    struct sockaddr_in fromAddr;
+    BoloAddr fromAddr;
 } RecvQueueEntry;
 
 /* Map transfer flavor armed on a slot's bulk channel. */
@@ -137,10 +138,14 @@ typedef struct {
 
 #define UPLOAD_MAX_BYTES (64u * 1024u)
 
-#define JOIN_RL_MAX_SOURCES 64    /* LRU of recent source IPs */
+#define JOIN_RL_MAX_SOURCES 64    /* LRU of recent sources */
 
+/* One source's bucket. The key is boloAddrPrefixKey of the source: an IPv4
+ * address (plain or mapped) is its own bucket, and every IPv6 address in one
+ * /64 shares one, since one home connection holds a whole /64. */
 typedef struct {
-    uint32_t srcAddr;  /* network-order sin_addr.s_addr; 0 = empty entry */
+    bool     inUse;    /* false = empty entry */
+    uint8_t  key[BOLO_ADDR_KEY_LEN];
     uint32_t tokens;   /* tokens remaining */
     uint64_t lastMs;   /* SDL_GetTicks() at last touch */
 } JoinRateEntry;
@@ -151,7 +156,7 @@ typedef struct {
  * own ChannelMux (forward events + acks) and BulkSender (seed keyframe). No
  * map-event queue / upload receiver / subscriber handle. */
 typedef struct {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     bool     connected;
     uint64_t connId;
     char     playerName[PACKET_MAX_PLAYER_NAME];
@@ -219,7 +224,7 @@ typedef struct {
 } SpectatorConn;
 
 typedef struct {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     int packetsRemaining;   /* 0 = slot empty */
     int ticksUntilNext;
 } PunchQueueEntry;
@@ -231,6 +236,9 @@ typedef struct {
 /* Server-side global state */
 typedef struct UdpServerState {
     SOCKET sock;
+    /* The family createUdpSocket opened: AF_INET6 (dual stack, IPv4 peers
+     * arrive mapped) or AF_INET (the fallback). Every send passes it. */
+    int    sockFamily;
     /* The port bind() actually gave us, read back with getsockname(). Equal
      * to the requested port in the normal case; with a requested port of 0
      * it is the one the OS picked, which is the only place the real port
@@ -388,8 +396,8 @@ typedef struct UdpServerState {
     uint8_t      scriptUploadMaxFiles;
     uint32_t     scriptUploadMaxStorageBytes;
 
-    /* LRU token buckets for the per-source-IP JOIN rate limit. A zeroed
-     * table reads as all-empty (srcAddr 0), so the existing
+    /* LRU token buckets for the per-source JOIN rate limit. A zeroed
+     * table reads as all-empty (inUse false), so the existing
      * memset(&udpServer, 0, …) is the only reset needed. */
     JoinRateEntry joinRate[JOIN_RL_MAX_SOURCES];
 
@@ -476,13 +484,13 @@ extern UdpServerState udpServer;
  * per-packet handler; src/server/transport_udp_server.c calls it from both the
  * polled fallback and the recv-thread drain path. */
 void serverProcessPacket(struct ServerSim *sim, uint8_t *buf, int len,
-                         struct sockaddr_in *fromAddr);
+                         BoloAddr *fromAddr);
 
 /* Outbound datagram wrapper every server->peer send routes through, so the
  * outbound impairment layer can delay/drop/reorder it. Owned by
  * src/server/transport_udp_server.c, which holds the impairment state it
  * reads. */
-void srvSendTo(const uint8_t *buf, int len, const struct sockaddr_in *addr);
+void srvSendTo(const uint8_t *buf, int len, const BoloAddr *addr);
 
 /* The server transport's clock: SDL_GetTicks, or in the test build of the
  * library the clock a caller set with transportUdpServerSetClock. The ping
@@ -498,10 +506,10 @@ uint64_t srvNow(void);
  * src/server/udp/udp_server_dispatch.c calls both from the packet-type switch.
  * The rest of the file is public API and is declared in transport_udp.h. */
 void serverHandleInput(const uint8_t *buf, int len,
-                       const struct sockaddr_in *fromAddr,
+                       const BoloAddr *fromAddr,
                        struct ServerSim *sim);
 void serverHandlePing(const uint8_t *buf, int len,
-                      const struct sockaddr_in *fromAddr);
+                      const BoloAddr *fromAddr);
 
 /* The server-info query protocol: the INFO_PACKET filled from the current sim
  * state, the reply built from it, the old-protocol form of the request, and
@@ -525,7 +533,7 @@ size_t buildInfoScriptTail(struct ServerSim *sim, uint8_t *out, size_t cap);
  * INFO_SERVER_DESC_MAX. The dedicated server prints a note when the
  * description is longer than this. */
 size_t infoReplyServerDescRoom(struct ServerSim *sim);
-void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
+void serverHandleInfoRequest(const BoloAddr *fromAddr,
                              struct ServerSim *sim);
 bool isOldProtocolInfoRequest(const uint8_t *buf, int len);
 
@@ -572,13 +580,13 @@ void serverPumpVoice(struct ServerSim *sim);
  * The seven value-only decision helpers this file's join path also uses
  * (wbnJoinArm and friends) are declared in transport_udp.h, as is
  * transportUdpServerFindByConnId. */
-int      serverFindClient(const struct sockaddr_in *addr);
+int      serverFindClient(const BoloAddr *addr);
 void     serverHandleJoinRequest(const uint8_t *buf, int len,
-                                 const struct sockaddr_in *fromAddr,
+                                 const BoloAddr *fromAddr,
                                  struct ServerSim *sim);
 void     serverSendJoinAccept(int slot, struct ServerSim *sim,
-                              const struct sockaddr_in *addr);
-void     serverSendJoinReject(const struct sockaddr_in *addr, langid id,
+                              const BoloAddr *addr);
+void     serverSendJoinReject(const BoloAddr *addr, langid id,
                               int argCount, const char *const args[]);
 bool     packLocalizedPayload(uint8_t *buf, int *pos, int bufSize,
                               langid id, int argCount,
@@ -587,8 +595,14 @@ void     packConnId(uint8_t *buf, uint64_t connId);
 uint64_t unpackConnId(const uint8_t *buf);
 uint64_t serverNextConnId(void);
 uint64_t serverCookieCurrentWindow(void);
-bool     serverCookieCompute(const struct sockaddr_in *addr, uint64_t window,
+bool     serverCookieCompute(const BoloAddr *addr, uint64_t window,
                              uint8_t out[JOIN_COOKIE_LEN]);
+/* The join rate limiter's token bucket for fromAddr's boloAddrPrefixKey:
+ * true and one token consumed when the source may be challenged, false when
+ * it is over-rate. The join path calls it for a JOIN with no valid cookie;
+ * test_join_rate_limit.c drives it directly with IPv6 sources the loopback
+ * interface cannot bind. */
+bool     serverJoinRateLimitAllow(const BoloAddr *fromAddr);
 void     serverPreemptRename(struct ServerSim *sim, int victimSlot,
                              const char *chosenName,
                              const char *incomingName,
@@ -686,7 +700,7 @@ int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
  * serverEnumSpectatorRoster is not called directly, it is handed to
  * serverSimSetSpectatorRosterEnumerator in transportUdpServerCreate. */
 void serverAcceptSpectator(struct ServerSim *sim,
-                           const struct sockaddr_in *fromAddr,
+                           const BoloAddr *fromAddr,
                            const char *name,
                            uint8_t clientType, uint8_t clientHints,
                            const char *spectatorKey, uint8_t wbnFlags,
@@ -696,9 +710,9 @@ void serverDisconnectSpectator(struct ServerSim *sim, int s, bool graceful);
 void serverEnumSpectatorRoster(void *enumCtx,
                                void (*deliver)(void *, const ControlEvent *),
                                void *deliverCtx);
-int  serverFindSpectator(const struct sockaddr_in *addr);
+int  serverFindSpectator(const BoloAddr *addr);
 void serverSendSpectatorAccept(int s, struct ServerSim *sim,
-                               const struct sockaddr_in *addr);
+                               const BoloAddr *addr);
 void serverServiceSpectators(struct ServerSim *sim);
 
 /* The server's WinBolo.net-facing work: the session rekey sent to one client
@@ -721,7 +735,7 @@ void serverServiceSpectators(struct ServerSim *sim);
 extern RoundLogSource s_roundLogSource;
 extern bool           s_roundLogSourceSet;
 void serverSendRoundLogErr(uint32_t reqSeq, uint8_t code,
-                           const struct sockaddr_in *toAddr);
+                           const BoloAddr *toAddr);
 void transportUdpServerSendWbnRekey(UdpServerClient *c);
 void udpServerResetRoundLogLimits(int idx);
 

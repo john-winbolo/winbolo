@@ -187,6 +187,11 @@ void clientSimBrainTextsClear(ClientSim *cs);
 /* Free the struct and every docs text in it. clientSimDestroy calls it. */
 void clientSimBrainTextsFree(ClientSim *cs);
 
+/* Store the server address the UDP transport resolved at connect. The
+ * transport is the only writer; frontends read it back through
+ * clientSimGetServerAddr. A NULL addr clears it. */
+void clientSimSetServerAddr(ClientSim *cs, const BoloAddr *addr);
+
 struct ClientSim {
     GameSim     sim;    /* MUST be first member */
     BYTE        myPlayerNum; /* Server-assigned player number; tanks[myPlayerNum] is our tank */
@@ -399,8 +404,9 @@ struct ClientSim {
     NetAllianceLeaveFunc    allianceLeaveFunc;
     NetLockToggleSendFunc   lockToggleSendFunc;
 
-    /* Server address info (for brain info, replaces netClientGetServerAddress) */
-    struct in_addr serverAddress;
+    /* The server address the UDP transport resolved at connect, IPv4 or IPv6
+     * (empty until then). Read by brain info and the UI. */
+    BoloAddr       serverAddr;
     unsigned short serverPort;
 
     /* Reverse-DNS of the server address for the lobby / net-info UI only —

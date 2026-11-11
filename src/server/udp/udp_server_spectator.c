@@ -72,12 +72,11 @@
 
 /* Find a connected spectator by source address. Returns the spectators[]
  * index or -1. Mirrors serverFindClient over the parallel array. */
-int serverFindSpectator(const struct sockaddr_in *addr) {
+int serverFindSpectator(const BoloAddr *addr) {
     int i;
     for (i = 0; i < MAX_SPECTATORS; i++) {
         if (udpServer.spectators[i].connected &&
-            udpServer.spectators[i].addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
-            udpServer.spectators[i].addr.sin_port == addr->sin_port) {
+            boloAddrEqual(&udpServer.spectators[i].addr, addr)) {
             return i;
         }
     }
@@ -90,7 +89,7 @@ int serverFindSpectator(const struct sockaddr_in *addr) {
  * size in lobby/countdown (the live-lobby map streams for the preview) and 0
  * while running (the game-time map rides the ring seed instead). */
 void serverSendSpectatorAccept(int s, ServerSim *sim,
-                               const struct sockaddr_in *addr) {
+                               const BoloAddr *addr) {
     uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8 + 1];
     ServerState st;
     int pos;
@@ -486,7 +485,7 @@ static void serverSetSpectatorCountry(int s, const char *country) {
  * (cookie, version, name, password). country is the resolved GeoIP-or-fallback
  * ISO code stored for the roster broadcast ("" when unknown). */
 void serverAcceptSpectator(ServerSim *sim,
-                           const struct sockaddr_in *fromAddr,
+                           const BoloAddr *fromAddr,
                            const char *name,
                            uint8_t clientType, uint8_t clientHints,
                            const char *spectatorKey, uint8_t wbnFlags,

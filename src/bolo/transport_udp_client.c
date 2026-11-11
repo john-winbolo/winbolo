@@ -103,7 +103,8 @@ typedef struct {
 
 typedef struct {
     SOCKET sock;
-    struct sockaddr_in serverAddr;
+    int sockFamily;               /* AF_INET6 (dual stack) or AF_INET */
+    BoloAddr serverAddr;
     BYTE playerNum;
     UdpClientJoinState joinState;
     char playerName[PACKET_MAX_PLAYER_NAME];
@@ -327,6 +328,9 @@ typedef struct {
     char           trackerAddr[FILENAME_MAX];
     unsigned short trackerPort;
     struct in_addr targetIp;       /* host IP (network order) for PUNCH_REQUEST body */
+    bool           targetIsV4;     /* the host address is IPv4 (plain or mapped);
+                                    * the 4-byte PUNCH_REQUEST body can carry no
+                                    * other, so no punch request is sent without it */
     unsigned short targetPort;     /* host port (host order) for PUNCH_REQUEST body */
     bool           punchSent;      /* sent at least one PUNCH_REQUEST */
 
@@ -563,7 +567,7 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
         c->bytesSentThisSec += len;
         return;
     }
-    udpSendTo(c->sock, buf, len, &c->serverAddr);
+    udpSendTo(c->sock, c->sockFamily, buf, len, &c->serverAddr);
 #if WB_ENABLE_NETIMPAIR
     c->test_wire_sent++;
 #endif
@@ -572,20 +576,24 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
     if (!udpClientLoggedLocalPort) {
         /* NB: don't name this `local` — brain.h does `#define local static`
          * for its Lua-flavoured pseudo-keyword and that macro is in scope
-         * through the include chain.  `local sockaddr_in foo;` then
-         * preprocesses to `static sockaddr_in foo;` which MSVC parses as
+         * through the include chain.  `local sockaddr_storage foo;` then
+         * preprocesses to `static sockaddr_storage foo;` which MSVC parses as
          * a bare type declaration with no variable name (C4091/C2059). */
-        struct sockaddr_in localAddr;
+        struct sockaddr_storage localSs;
+        BoloAddr localAddr;
         socklen_t locLen;
-        memset(&localAddr, 0, sizeof(localAddr));
-        locLen = (socklen_t)sizeof(localAddr);
-        if (getsockname(c->sock, (struct sockaddr *)&localAddr, &locLen) == 0
-            && localAddr.sin_port != 0) {
-            mpDiagLog("[cli] local socket bound at %s:%u (kernel-assigned ephemeral) -> server %s:%u",
-                      inet_ntoa(localAddr.sin_addr),
-                      (unsigned)ntohs(localAddr.sin_port),
-                      inet_ntoa(c->serverAddr.sin_addr),
-                      (unsigned)ntohs(c->serverAddr.sin_port));
+        memset(&localSs, 0, sizeof(localSs));
+        locLen = (socklen_t)sizeof(localSs);
+        if (getsockname(c->sock, (struct sockaddr *)&localSs, &locLen) == 0
+            && boloAddrFromSockaddr((const struct sockaddr *)&localSs, locLen,
+                                    &localAddr)
+            && boloAddrPort(&localAddr) != 0) {
+            char localText[BOLO_ADDR_STR_LEN];
+            char serverText[BOLO_ADDR_STR_LEN];
+            boloAddrFormat(&localAddr, localText, sizeof(localText));
+            boloAddrFormat(&c->serverAddr, serverText, sizeof(serverText));
+            mpDiagLog("[cli] local socket bound at %s (kernel-assigned ephemeral) -> server %s",
+                      localText, serverText);
             udpClientLoggedLocalPort = 1;
         }
     }
@@ -4198,24 +4206,25 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
  * same mapping the host's punch packet will land on. Wire body is the
  * host (target) IP+port the tracker should forward to. */
 static void udpClientSendPunchRequest(TransportUdpClientCtx *c) {
-    struct sockaddr_in dest;
-    struct in_addr trackerIp;
+    BoloAddr dest;
     uint8_t buf[PACKET_HEADER_SIZE + 6];
 
     if (c->sock == INVALID_SOCKET) return;
     if (c->trackerAddr[0] == '\0') return;
-    if (bolo_resolve_ipv4(c->trackerAddr, &trackerIp) != 0) return;
+    if (!c->targetIsV4) {
+        /* The request body has room for an IPv4 host address only. */
+        WB_LOG_DEBUG(WB_LOG_CAT_NET,
+            "punch request skipped: the server address is not IPv4");
+        return;
+    }
+    if (bolo_resolve_addr(c->trackerAddr, c->trackerPort, BOLO_RESOLVE_PREFER,
+                          &dest) != 0) return;
 
     packHeader(buf, PACKET_PUNCH_REQUEST, c->outSequence++);
-    memcpy(buf + PACKET_HEADER_SIZE, &c->targetIp.s_addr, 4);
+    memcpy(buf + PACKET_HEADER_SIZE, &c->targetIp, 4);
     packU16(buf + PACKET_HEADER_SIZE + 4, c->targetPort);
 
-    memset(&dest, 0, sizeof(dest));
-    dest.sin_family = AF_INET;
-    dest.sin_addr = trackerIp;
-    dest.sin_port = htons(c->trackerPort);
-    sendto(c->sock, (const char *)buf, sizeof(buf), 0,
-           (const struct sockaddr *)&dest, sizeof(dest));
+    udpSendTo(c->sock, c->sockFamily, buf, (int)sizeof(buf), &dest);
 }
 
 /* One datagram off the socket, or <= 0 when it is empty. In the test build a
@@ -4230,7 +4239,7 @@ static void udpClientSendPunchRequest(TransportUdpClientCtx *c) {
 #define UDP_CLIENT_TEST_RX_WAIT_MS 1000
 #endif
 static int udpClientRecvFrom(TransportUdpClientCtx *c, uint8_t *buf, int cap,
-                             struct sockaddr_in *fromAddr) {
+                             BoloAddr *fromAddr) {
     int len = udpRecvFrom(c->sock, buf, cap, fromAddr);
 #if WB_ENABLE_NETIMPAIR
     if (len <= 0 && c->test_rx_count < c->test_rx_expect) {
@@ -4264,7 +4273,7 @@ static int udpClientRecvFrom(TransportUdpClientCtx *c, uint8_t *buf, int cap,
  * it from the pump. */
 static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
     uint8_t buf[UDP_MAX_PAYLOAD];
-    struct sockaddr_in fromAddr;
+    BoloAddr fromAddr;
     int len;
 
     /* Receive all pending packets from the wire */
@@ -4282,7 +4291,7 @@ static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
      * release is a send and stays on the per-tick path in udpClientTick.) */
     {
         uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
-        struct sockaddr_in paddr;
+        BoloAddr paddr;
         uint64_t now = udpClientVirtualNow();
         int plen;
         while ((plen = netImpairPop(&c->impairIn, pbuf, sizeof(pbuf),
@@ -4380,12 +4389,12 @@ static bool udpClientTick(void *ctx) {
      * no-op while the outbound impairment layer is disabled. */
     {
         uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
-        struct sockaddr_in paddr;
+        BoloAddr paddr;
         uint64_t now = udpClientVirtualNow();
         int plen;
         while ((plen = netImpairPop(&c->impairOut, pbuf, sizeof(pbuf),
                                     &paddr, now)) > 0) {
-            udpSendTo(c->sock, pbuf, plen, &paddr);
+            udpSendTo(c->sock, c->sockFamily, pbuf, plen, &paddr);
 #if WB_ENABLE_NETIMPAIR
             c->test_wire_sent++;
 #endif
@@ -4594,12 +4603,14 @@ static bool udpClientTick(void *ctx) {
                 joffset += JOIN_COOKIE_LEN;
                 /* Join requests bypass delay — they're control plane */
                 udpClientSendTo(c, jbuf, joffset);
-                WB_LOG_DEBUG(WB_LOG_CAT_NET,
-                    "join request sent: attempt=%d/%d to=%s:%u name='%s'",
-                    (int)(c->joinAttempts + 1), (int)JOIN_MAX_RETRIES,
-                    inet_ntoa(c->serverAddr.sin_addr),
-                    (unsigned)ntohs(c->serverAddr.sin_port),
-                    c->playerName);
+                {
+                    char toText[BOLO_ADDR_STR_LEN];
+                    boloAddrFormat(&c->serverAddr, toText, sizeof(toText));
+                    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                        "join request sent: attempt=%d/%d to=%s name='%s'",
+                        (int)(c->joinAttempts + 1), (int)JOIN_MAX_RETRIES,
+                        toText, c->playerName);
+                }
                 c->joinAttempts++;
                 c->ticksSinceJoinSent = 0;
 
@@ -4910,7 +4921,8 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     bolo_net_init();
 
-    c->sock = createUdpSocket(false);
+    c->sockFamily = AF_INET;
+    c->sock = createUdpSocket(false, &c->sockFamily);
     if (c->sock == INVALID_SOCKET) {
         WB_LOG_ERROR(WB_LOG_CAT_NET, "client connect: createUdpSocket failed");
         c->joinState = UDP_CLIENT_ERROR;
@@ -4923,30 +4935,34 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         return t;
     }
 
-    /* Resolve server address */
-    memset(&c->serverAddr, 0, sizeof(c->serverAddr));
-    c->serverAddr.sin_family = AF_INET;
-    c->serverAddr.sin_port = htons(serverPort);
-    c->serverAddr.sin_addr.s_addr = inet_addr(serverAddr);
-    if (c->serverAddr.sin_addr.s_addr == INADDR_NONE) {
-        if (bolo_resolve_ipv4(serverAddr, &c->serverAddr.sin_addr) == 0) {
-            WB_LOG_DEBUG(WB_LOG_CAT_NET,
-                "client connect: resolved %s -> %s",
-                serverAddr,
-                inet_ntoa(c->serverAddr.sin_addr));
-        } else {
-            WB_LOG_ERROR(WB_LOG_CAT_NET,
-                "client connect: DNS lookup for '%s' failed",
-                serverAddr ? serverAddr : "(null)");
-            c->joinState = UDP_CLIENT_ERROR;
-            t.recordInput = udpClientRecordInput;
-            t.sendInput = udpClientSendInput;
-            t.tick = udpClientTick;
-            t.getSnapshot = udpClientGetSnapshotVtable;
-            t.drainSnapshots = udpClientDrainSnapshotsVtable;
-            t.ctx = c;
-            return t;
+    /* Resolve the server address once, a name IPv4-first
+     * (BOLO_RESOLVE_PREFER). The host may be a name, an IPv4 literal, or an
+     * IPv6 literal with or without brackets and a %scope suffix. The result
+     * is stored on the ClientSim, which is where the frontend and the brain
+     * info read it. */
+    boloAddrClear(&c->serverAddr);
+    if (bolo_resolve_addr(serverAddr, serverPort, BOLO_RESOLVE_PREFER,
+                          &c->serverAddr) == 0) {
+        char resolvedText[BOLO_ADDR_STR_LEN];
+        boloAddrFormat(&c->serverAddr, resolvedText, sizeof(resolvedText));
+        WB_LOG_DEBUG(WB_LOG_CAT_NET,
+            "client connect: resolved %s -> %s",
+            serverAddr, resolvedText);
+        if (c->clientSim != NULL) {
+            clientSimSetServerAddr(c->clientSim, &c->serverAddr);
         }
+    } else {
+        WB_LOG_ERROR(WB_LOG_CAT_NET,
+            "client connect: DNS lookup for '%s' failed",
+            serverAddr ? serverAddr : "(null)");
+        c->joinState = UDP_CLIENT_ERROR;
+        t.recordInput = udpClientRecordInput;
+        t.sendInput = udpClientSendInput;
+        t.tick = udpClientTick;
+        t.getSnapshot = udpClientGetSnapshotVtable;
+        t.drainSnapshots = udpClientDrainSnapshotsVtable;
+        t.ctx = c;
+        return t;
     }
 
     /* Copy player name, password, and WBN credentials */
@@ -4984,7 +5000,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         strncpy(c->trackerAddr, trackerAddr, sizeof(c->trackerAddr) - 1);
     }
     c->trackerPort = trackerPort;
-    c->targetIp    = c->serverAddr.sin_addr;
+    c->targetIsV4  = boloAddrV4(&c->serverAddr, &c->targetIp) != 0;
     c->targetPort  = serverPort;
     c->punchSent   = false;
 
@@ -6568,6 +6584,11 @@ static TransportUdpClientCtx g_fuzzClientCtx;
 void transportUdpClientFuzzInit(ClientSim *sim) {
     memset(&g_fuzzClientCtx, 0, sizeof(g_fuzzClientCtx));
     g_fuzzClientCtx.sock = INVALID_SOCKET;
+    /* A server address of the socket's family, so a send the seam provokes
+     * goes to the INVALID_SOCKET and nowhere, as before, instead of being
+     * refused and logged as unsendable. */
+    g_fuzzClientCtx.sockFamily = AF_INET;
+    (void)boloAddrParse("127.0.0.1", 0, &g_fuzzClientCtx.serverAddr);
     g_fuzzClientCtx.joinState = UDP_CLIENT_CONNECTED;
     g_fuzzClientCtx.clientSim = sim;
     /* The seam starts already CONNECTED, so it never runs

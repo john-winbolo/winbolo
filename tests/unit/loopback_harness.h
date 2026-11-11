@@ -70,19 +70,30 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* SOCKET and struct sockaddr_in, for loopbackRecvFromServer below. Tests that
- * drive the harness server with a raw socket of their own need these anyway,
- * and the header is self-guarded, so pulling it in here costs them nothing. */
+/* SOCKET and BoloAddr, for loopbackRecvFromServer below. Tests that drive the
+ * harness server with a raw socket of their own need these anyway, and the
+ * headers are self-guarded, so pulling them in here costs them nothing. */
 #include "platform_net.h"
+#include "bolo_addr.h"
 
 struct ServerSim;
 struct ClientSim;
+
+/* Which loopback address a harness client dials. IPv4 (127.0.0.1) is the
+ * default and what every Start call but loopbackHarnessStartDial uses. A
+ * harness started with LOOPBACK_DIAL_IPV6 binds its server to the any
+ * address instead of 127.0.0.1, so clients of both dials can join it. */
+typedef enum {
+    LOOPBACK_DIAL_IPV4 = 0,   /* 127.0.0.1 */
+    LOOPBACK_DIAL_IPV6        /* ::1 */
+} LoopbackDial;
 
 typedef struct LoopbackHarness {
     struct ServerSim *sim;
     struct ClientSim *cs;
     struct ClientSim *cs2;      /* second client, or NULL — see AddClient */
     unsigned short    port;     /* ephemeral localhost port the server bound */
+    LoopbackDial      dial;     /* what cs dials, and how the server binds */
     bool              threadsUp;
     bool              serverUp;
     bool              clientUp;
@@ -117,6 +128,12 @@ bool loopbackHarnessStartPrepared(LoopbackHarness *h, const char *playerName,
                                   uint64_t seed, LoopbackSimSetup setup,
                                   void *user);
 
+/* Same as loopbackHarnessStart, with the first client dialling `dial`. With
+ * LOOPBACK_DIAL_IPV6 the server binds the any address (see LoopbackDial). */
+bool loopbackHarnessStartDial(LoopbackHarness *h, const char *playerName,
+                              bool lobbyMode, const char *impairSpec,
+                              uint64_t seed, LoopbackDial dial);
+
 /* Join a second player client to a harness that is already up, so a test can
  * observe what one client's departure does to the other's server-side state
  * (a mask keyed by player, a roster entry) — the single-client harness can
@@ -126,6 +143,13 @@ bool loopbackHarnessStartPrepared(LoopbackHarness *h, const char *playerName,
  * has no server, already has a second client, or the connect failed; the
  * harness stays safe to Stop either way. */
 bool loopbackHarnessAddClient(LoopbackHarness *h, const char *playerName);
+
+/* Same as loopbackHarnessAddClient, with the second client dialling `dial`
+ * rather than what the first one dials. A client dialling the other family
+ * reaches the server only when the harness was started with
+ * LOOPBACK_DIAL_IPV6, which binds the any address. */
+bool loopbackHarnessAddClientDial(LoopbackHarness *h, const char *playerName,
+                                  LoopbackDial dial);
 
 /* Bring up server + a tankless SPECTATOR client (clientSimConnectUdp with the
  * spectator flag set), on a clean path with no peer players. The server is
@@ -221,7 +245,7 @@ bool loopbackHarnessTriggerGameStart(LoopbackHarness *h);
  * also what keeps a socket buffer from filling for callers that only want to
  * discard. `server` must not be NULL. */
 int loopbackRecvFromServer(SOCKET s, uint8_t *buf, int cap,
-                           const struct sockaddr_in *server);
+                           const BoloAddr *server);
 
 /* Tear down client, server (stops the recv thread), sim and threads, clear
  * the WB_NETIMPAIR environment override, and put the impairment layer back on

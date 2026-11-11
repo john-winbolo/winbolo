@@ -53,7 +53,8 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"                 /* MAX_TANKS, MAP_STR_SIZE */
-#include "platform_net.h"           /* sockets, struct sockaddr_in */
+#include "platform_net.h"           /* sockets */
+#include "bolo_addr.h"              /* BoloAddr */
 #include "wire_limits.h"            /* PACKET_MAX_PLAYER_NAME */
 #include "netpacks.h"               /* PACKET_*, PACKET_HEADER_SIZE, BOLO_VERSION_*, JOIN_COOKIE_LEN */
 #include "transport_udp.h"          /* JOIN_FLAG_SPECTATOR, MAX_SPECTATORS, accessors, OnGameStart */
@@ -117,15 +118,13 @@ static int lbBuildJoin(uint8_t *buf, const char *name, uint8_t flags,
 }
 
 static SOCKET lbOpenSocketOnIp(const char *ip) {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     unsigned long nonblock = 1;
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+    SOCKET s;
+    if (!boloAddrParse(ip, 0, &addr)) return INVALID_SOCKET;
+    s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(ip);
-    addr.sin_port        = 0;
-    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    if (bind(s, (const struct sockaddr *)&addr.ss, addr.len) != 0) {
         closesocket(s);
         return INVALID_SOCKET;
     }
@@ -135,13 +134,13 @@ static SOCKET lbOpenSocketOnIp(const char *ip) {
 
 static void lbDriveOnce(LoopbackHarness *h, SOCKET sock,
                         const uint8_t *join, int joinLen,
-                        const struct sockaddr_in *server,
+                        const BoloAddr *server,
                         bool *gotAccept, bool *gotChallenge, bool *gotReject,
                         uint8_t *outCookie) {
     Uint64 deadline;
     *gotAccept = false; *gotChallenge = false; *gotReject = false;
     sendto(sock, (const char *)join, joinLen, 0,
-           (const struct sockaddr *)server, sizeof(*server));
+           (const struct sockaddr *)&server->ss, server->len);
     deadline = SDL_GetTicks() + LB_REPLY_DEADLINE_MS;
     while (SDL_GetTicks() < deadline) {
         uint8_t in[1024];
@@ -170,7 +169,7 @@ static void lbDriveOnce(LoopbackHarness *h, SOCKET sock,
 
 /* Full spectator handshake (cookieless -> challenge -> echo). True on ACCEPT. */
 static bool lbSpectatorJoins(LoopbackHarness *h, SOCKET s,
-                             const struct sockaddr_in *server, const char *name) {
+                             const BoloAddr *server, const char *name) {
     uint8_t joinBuf[1024];
     uint8_t cookie[JOIN_COOKIE_LEN];
     bool gotAccept, gotChallenge, gotReject;
@@ -196,11 +195,8 @@ static bool lbSpectatorJoins(LoopbackHarness *h, SOCKET s,
     return false;
 }
 
-static void lbServerAddr(struct sockaddr_in *out, unsigned short port) {
-    memset(out, 0, sizeof(*out));
-    out->sin_family      = AF_INET;
-    out->sin_addr.s_addr = inet_addr("127.0.0.1");
-    out->sin_port        = htons(port);
+static void lbServerAddr(BoloAddr *out, unsigned short port) {
+    (void)boloAddrParse("127.0.0.1", (uint16_t)(port), out);
 }
 
 static bool lbPlayerConnected(LoopbackHarness *h, void *u) {
@@ -278,7 +274,7 @@ static bool lbSpecCountingDown(LoopbackHarness *h, void *u) {
 
 static int lbLegBoundary(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     SOCKET spec;
     ControlEvent evt;
     uint32_t seqAfterSeat;
@@ -336,7 +332,7 @@ static int lbLegBoundary(void) {
 
 static int lbLegDelayedArm(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     SOCKET spec;
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "Player", /*lobbyMode*/ true,
@@ -395,7 +391,7 @@ static int lbLegDelayedArm(void) {
 
 static int lbLegDrainFlip(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     SOCKET spec;
     uint32_t seqBeforeFlip;
 
@@ -467,7 +463,7 @@ static int lbLegDrainFlip(void) {
 
 static int lbLegTailDrainFlip(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     SOCKET spec;
     const uint32_t delay = 30;   /* records of tail to drain before the flip */
     uint32_t feedAtLobby = 0;
@@ -554,7 +550,7 @@ static int lbLegTailDrainFlip(void) {
 
 static int lbLegCutoverCountdown(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     SOCKET spec;
     const uint32_t delay = 100;
     uint32_t rem1 = 0, rem2 = 0, seq = 0;

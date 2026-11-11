@@ -144,7 +144,7 @@ bool netImpairEnabled(const NetImpair *ni) {
 }
 
 bool netImpairOffer(NetImpair *ni, const uint8_t *data, int len,
-                    const struct sockaddr_in *addr, uint64_t nowMs) {
+                    const BoloAddr *addr, uint64_t nowMs) {
     int i;
     NetImpairPacket *slot;
     uint32_t jitter;
@@ -226,7 +226,7 @@ bool netImpairOffer(NetImpair *ni, const uint8_t *data, int len,
 }
 
 int netImpairPop(NetImpair *ni, uint8_t *buf, int maxLen,
-                 struct sockaddr_in *addr, uint64_t nowMs) {
+                 BoloAddr *addr, uint64_t nowMs) {
     int i;
     int best = -1;
     uint64_t bestAt = 0;

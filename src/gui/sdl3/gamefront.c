@@ -1946,18 +1946,9 @@ static void gameFrontJoinStartClient(void) {
 static void gameFrontJoinLanded(void) {
   udpTransportActive = TRUE;
 
-  /* Store server address in ClientSim for brain info */
-  {
-    struct sockaddr_in saddr;
-    memset(&saddr, 0, sizeof(saddr));
-    saddr.sin_family = AF_INET;
-    saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
-    if (saddr.sin_addr.s_addr == INADDR_NONE) {
-      bolo_resolve_ipv4(gameFrontUdpAddress, &saddr.sin_addr);
-    }
-    clientSimSetServerAddress(humanSim, saddr.sin_addr);
-    clientSimSetServerPort(humanSim, gameFrontTargetUdp);
-  }
+  /* Store the server port in ClientSim for brain info. The transport stored
+   * the address it resolved when it connected. */
+  clientSimSetServerPort(humanSim, gameFrontTargetUdp);
 
   clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
   clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);

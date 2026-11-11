@@ -820,18 +820,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
 
     wasmTransportActive = TRUE;
 
-    /* Store server address in ClientSim for brain info */
-    {
-      struct sockaddr_in saddr;
-      memset(&saddr, 0, sizeof(saddr));
-      saddr.sin_family = AF_INET;
-      saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
-      if (saddr.sin_addr.s_addr == INADDR_NONE) {
-        saddr.sin_addr.s_addr = 0;
-      }
-      clientSimSetServerAddress(humanSim, saddr.sin_addr);
-      clientSimSetServerPort(humanSim, gameFrontTargetUdp);
-    }
+    /* Store the server port in ClientSim for brain info. The transport stored
+     * the address it resolved when it connected. */
+    clientSimSetServerPort(humanSim, gameFrontTargetUdp);
 
     /* Wire the outbound control-event send callbacks (desktop does this in
      * gamefront.c). Without these, alliance accept/request/leave, lock toggle,

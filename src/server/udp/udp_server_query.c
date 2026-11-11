@@ -25,9 +25,9 @@
 
 #include "transport_udp_server_internal.h" /* srvSendTo, udpServerPublicIp,
                                             * udpServerPublicPort, and via
-                                            * platform_net.h the in_addr /
-                                            * inet_addr / inet_ntoa / htonl the
-                                            * game id and the reply log use */
+                                            * bolo_addr.h the BoloAddr helpers
+                                            * and htonl the game id and the
+                                            * reply log use */
 #include "transport_udp.h"   /* transportUdpServerGetLock */
 #include "netpacks.h"        /* INFO_PACKET, BOLO_SIGNITURE, BOLO_SIGNITURE_SIZE,
                               * BOLOPACKET_INFOREQUEST, BOLOPACKET_INFORESPONSE,
@@ -105,11 +105,20 @@ void buildInfoPacket(ServerSim *sim, INFO_PACKET *pkt) {
     /* Game ID — address zeroed (browser uses UDP source), port and timestamp set.
      * Tracker reads port raw for v1.1.8 (only ntohs for v1.1.1-3).
      * start_time is the only field the tracker byte-swaps on read. */
+    /* The field holds 4 bytes: the public address goes in only when it is
+     * IPv4 (plain or mapped); otherwise it stays zero and the finder uses
+     * the datagram's source address. */
     if (udpServerPublicPort != 0) {
-        pkt->gameid.serveraddress.s_addr = inet_addr(udpServerPublicIp);
+        BoloAddr publicAddr;
+        struct in_addr publicV4;
+        memset(&publicV4, 0, sizeof(publicV4));
+        if (boloAddrParse(udpServerPublicIp, 0, &publicAddr)) {
+            boloAddrV4(&publicAddr, &publicV4);
+        }
+        pkt->gameid.serveraddress = publicV4;
         pkt->gameid.serverport = udpServerPublicPort;
     } else {
-        pkt->gameid.serveraddress.s_addr = 0;
+        /* Already zero from the memset of the whole packet above. */
         pkt->gameid.serverport = serverSimGetServerPort(sim);
     }
     pkt->gameid.start_time = htonl(serverSimGetTimeCreated(sim));
@@ -289,7 +298,7 @@ static size_t buildInfoScripts(ServerSim *sim, uint8_t *out) {
  * inside the send cap. */
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) + INFO_REPLY_TAIL_CAP <= UDP_MAX_SEND,
                    info_reply_fits_one_send);
-void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
+void serverHandleInfoRequest(const BoloAddr *fromAddr,
                              ServerSim *sim) {
     uint8_t buf[sizeof(INFO_PACKET) + INFO_REPLY_TAIL_CAP];
     INFO_PACKET pkt;
@@ -305,9 +314,10 @@ void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
     srvSendTo(buf, (int)(sizeof(pkt) + tailLen), fromAddr);
 
     {
-        struct in_addr addrCopy = fromAddr->sin_addr;
+        char hostText[BOLO_ADDR_STR_LEN];
+        boloAddrFormatHost(fromAddr, hostText, sizeof(hostText));
         snprintf(consoleMsg, sizeof(consoleMsg), "Info packet request from %s",
-                 inet_ntoa(addrCopy));
+                 hostText);
     }
     serverSimConsoleMessage(consoleMsg);
 }

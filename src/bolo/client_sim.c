@@ -203,7 +203,7 @@ bool clientSimCreate(ClientSim *cs) {
    * controlObserverCb/Ctx: external test-harness lifetime,
    * independent of map reloads.
    *
-   * serverAddress / serverPort / isLanOnly: connection-lifetime
+   * serverAddr / serverPort / isLanOnly: connection-lifetime
    * state — set once at join, never re-published. */
   Transport savedTransport = cs->transport;
   bool savedHasTransport   = cs->hasTransport;
@@ -219,7 +219,7 @@ bool clientSimCreate(ClientSim *cs) {
   void             *savedObserverCtx = cs->controlObserverCtx;
   ControlObserverCb savedTransportObserverCb  = cs->transportObserverCb;
   void             *savedTransportObserverCtx = cs->transportObserverCtx;
-  struct in_addr savedServerAddress  = cs->serverAddress;
+  BoloAddr       savedServerAddr     = cs->serverAddr;
   unsigned short savedServerPort     = cs->serverPort;
   bool           savedIsLanOnly      = cs->isLanOnly;
   memset(cs, 0, sizeof(*cs));
@@ -235,7 +235,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->controlObserverCtx = savedObserverCtx;
   cs->transportObserverCb  = savedTransportObserverCb;
   cs->transportObserverCtx = savedTransportObserverCtx;
-  cs->serverAddress      = savedServerAddress;
+  cs->serverAddr         = savedServerAddr;
   cs->serverPort         = savedServerPort;
   cs->isLanOnly          = savedIsLanOnly;
   cs->pendingAllianceRequestFrom = 0xFF;
@@ -2868,7 +2868,32 @@ const OverviewMap *clientSimGetOverviewMap(const ClientSim *cs) {
 }
 
 struct in_addr clientSimGetServerAddress(const ClientSim *cs) {
-  return cs->serverAddress;
+  struct in_addr v4;
+  boloAddrV4(&cs->serverAddr, &v4);
+  return v4;
+}
+
+bool clientSimGetServerAddr(const ClientSim *cs, BoloAddr *out) {
+  if (out == NULL) {
+    return false;
+  }
+  if (cs == NULL || boloAddrFamily(&cs->serverAddr) == 0) {
+    boloAddrClear(out);
+    return false;
+  }
+  *out = cs->serverAddr;
+  return true;
+}
+
+void clientSimSetServerAddr(ClientSim *cs, const BoloAddr *addr) {
+  if (cs == NULL) {
+    return;
+  }
+  if (addr == NULL) {
+    boloAddrClear(&cs->serverAddr);
+  } else {
+    cs->serverAddr = *addr;
+  }
 }
 
 GameSim       *clientSimGetGameSim(ClientSim *cs)    { return &cs->sim; }
@@ -3171,7 +3196,6 @@ void clientSimSetMyLastPlayerName(ClientSim *cs, const char *name) {
 void clientSimSetInLobby(ClientSim *cs, bool v)             { cs->inLobby = v; }
 void clientSimSetMapDownloadComplete(ClientSim *cs, bool v) { cs->mapDownloadComplete = v; }
 
-void clientSimSetServerAddress(ClientSim *cs, struct in_addr v) { cs->serverAddress = v; }
 void clientSimSetServerPort(ClientSim *cs, unsigned short v)    { cs->serverPort = v; }
 void clientSimSetIsBot(ClientSim *cs, bool v)                   { cs->isBot = v; }
 

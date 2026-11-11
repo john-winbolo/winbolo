@@ -38,9 +38,7 @@
                                             * serverPumpVoice,
                                             * serverServiceMapTransfer,
                                             * serverServiceSpectators,
-                                            * MAP_DOWNLOAD_FRAMES_PER_TICK, and via
-                                            * platform_net.h the sockaddr_in /
-                                            * inet_ntoa / ntohs the re-home log uses */
+                                            * MAP_DOWNLOAD_FRAMES_PER_TICK */
 #include "transport_udp.h"   /* UdpServerClient, transportUdpServerFindByConnId,
                               * transportUdpServerSend, transportUdpServerCheckTimeouts */
 #include "netpacks.h"        /* PACKET_PONG, PACKET_STATE_SNAPSHOT, PACKET_CHANNEL,
@@ -60,12 +58,13 @@
                               * channelBuildFrame, CHANNEL_MAP,
                               * channelChargeBestEffortLeftover */
 #include "bulk_transfer.h"   /* bulkSenderPump */
-#include "bolo_addr.h"       /* BOLO_ADDR_STR_LEN */
+#include "bolo_addr.h"       /* BoloAddr, boloAddrFormat, BOLO_ADDR_STR_LEN —
+                              * the re-home log */
 #include "../../common/wb_log.h" /* WB_LOG_INFO, WB_LOG_WARN, WB_LOG_CAT_NET */
 
 /* Handle input packet from a connected client */
 void serverHandleInput(const uint8_t *buf, int len,
-                       const struct sockaddr_in *fromAddr,
+                       const BoloAddr *fromAddr,
                        ServerSim *sim) {
     int clientIdx;
     /* INPUT framing: [header 8][connId 8][count 1][25-byte inputs…]. */
@@ -87,13 +86,13 @@ void serverHandleInput(const uint8_t *buf, int len,
     if (clientIdx >= 0) {
         if (rehome) {
             char oldAddr[BOLO_ADDR_STR_LEN];
-            snprintf(oldAddr, sizeof(oldAddr), "%s:%u",
-                     inet_ntoa(udpServer.clients[clientIdx].addr.sin_addr),
-                     (unsigned)ntohs(udpServer.clients[clientIdx].addr.sin_port));
+            char newAddr[BOLO_ADDR_STR_LEN];
+            boloAddrFormat(&udpServer.clients[clientIdx].addr, oldAddr,
+                           sizeof(oldAddr));
+            boloAddrFormat(fromAddr, newAddr, sizeof(newAddr));
             WB_LOG_INFO(WB_LOG_CAT_NET,
-                "slot %d NAT rebind: %s -> %s:%u (connId match, re-homing)",
-                clientIdx, oldAddr, inet_ntoa(fromAddr->sin_addr),
-                (unsigned)ntohs(fromAddr->sin_port));
+                "slot %d NAT rebind: %s -> %s (connId match, re-homing)",
+                clientIdx, oldAddr, newAddr);
             udpServer.clients[clientIdx].addr = *fromAddr;
         }
     } else {
@@ -158,7 +157,7 @@ void serverHandleInput(const uint8_t *buf, int len,
 
 /* Handle ping from client — respond with pong */
 void serverHandlePing(const uint8_t *buf, int len,
-                       const struct sockaddr_in *fromAddr) {
+                       const BoloAddr *fromAddr) {
     uint8_t pongBuf[PACKET_HEADER_SIZE + 8];
     uint32_t clientTime;
 

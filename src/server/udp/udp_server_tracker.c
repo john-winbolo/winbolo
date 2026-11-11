@@ -24,7 +24,8 @@
 #include "transport_udp_internal.h"        /* packHeader, packU32 */
 #include "transport_udp_server_internal.h" /* udpServer, srvSendTo, buildInfoPacket,
                                             * PunchQueueEntry, INFO_PACKET,
-                                            * serverSimGetTimeCreated, bolo_resolve_ipv4 */
+                                            * serverSimGetTimeCreated, and via
+                                            * bolo_addr.h bolo_resolve_addr */
 
 /* Public-address override populated by transportUdpServerSetPublicAddress
  * once libplum negotiates a UPnP/NAT-PMP/PCP mapping.  When non-empty the
@@ -41,18 +42,13 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
                                          unsigned short trackerPort) {
     INFO_PACKET pkt;
     BYTE buf[sizeof(INFO_PACKET)];
-    struct sockaddr_in dest;
-    struct in_addr trackerIp;
+    BoloAddr dest;
 
-    if (bolo_resolve_ipv4(trackerAddr, &trackerIp) != 0) {
+    if (bolo_resolve_addr(trackerAddr, trackerPort, BOLO_RESOLVE_PREFER,
+                          &dest) != 0) {
         fprintf(stderr, "[TRACKER] Failed to resolve %s\n", trackerAddr);
         return;
     }
-
-    memset(&dest, 0, sizeof(dest));
-    dest.sin_family = AF_INET;
-    dest.sin_addr = trackerIp;
-    dest.sin_port = htons(trackerPort);
 
     buildInfoPacket(sim, &pkt);
     infoPacketEncode(buf, &pkt);
@@ -75,14 +71,14 @@ void transportUdpServerSetPublicAddress(const char *externalIp,
 void transportUdpServerSendNatKeepalive(ServerSim *sim,
                                         const char *trackerAddr,
                                         unsigned short trackerPort) {
-    struct sockaddr_in dest;
-    struct in_addr trackerIp;
+    BoloAddr dest;
     uint8_t buf[8];
 
     if (udpServer.sock == INVALID_SOCKET) return;
     if (trackerAddr == NULL || trackerAddr[0] == '\0') return;
 
-    if (bolo_resolve_ipv4(trackerAddr, &trackerIp) != 0) return;
+    if (bolo_resolve_addr(trackerAddr, trackerPort, BOLO_RESOLVE_PREFER,
+                          &dest) != 0) return;
 
     buf[0] = 'W';
     buf[1] = 'B';
@@ -93,31 +89,21 @@ void transportUdpServerSendNatKeepalive(ServerSim *sim,
      * NAT each refresh their own entry. */
     packU32(buf + 4, (uint32_t)serverSimGetTimeCreated(sim));
 
-    memset(&dest, 0, sizeof(dest));
-    dest.sin_family = AF_INET;
-    dest.sin_addr = trackerIp;
-    dest.sin_port = htons(trackerPort);
-
     srvSendTo(buf, sizeof(buf), &dest);
 }
 
 void transportUdpServerSendPunchProbe(const char *trackerAddr,
                                       unsigned short trackerPort) {
-    struct sockaddr_in dest;
-    struct in_addr trackerIp;
+    BoloAddr dest;
     uint8_t buf[PACKET_HEADER_SIZE];
 
     if (udpServer.sock == INVALID_SOCKET) return;
     if (trackerAddr == NULL || trackerAddr[0] == '\0') return;
 
-    if (bolo_resolve_ipv4(trackerAddr, &trackerIp) != 0) return;
+    if (bolo_resolve_addr(trackerAddr, trackerPort, BOLO_RESOLVE_PREFER,
+                          &dest) != 0) return;
 
     packHeader(buf, PACKET_PUNCH_PROBE_REQUEST, 0);
-
-    memset(&dest, 0, sizeof(dest));
-    dest.sin_family = AF_INET;
-    dest.sin_addr = trackerIp;
-    dest.sin_port = htons(trackerPort);
 
     srvSendTo(buf, sizeof(buf), &dest);
 }

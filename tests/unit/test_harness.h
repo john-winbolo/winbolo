@@ -2620,6 +2620,14 @@ int run_send_drains_channels_multi_frame(void);
  * map download and a minute of game time of play on the loopback harness, the
  * largest datagram either end hands udpSendTo is at most UDP_MAX_SEND. */
 int run_send_cap_join_download_play(void);
+/* Joins over IPv6 and over both families at once (test_loopback_v6.c): a
+ * client dialling ::1 joins, downloads the map and disconnects; a client on
+ * 127.0.0.1 and one on ::1 are in one game together; and with the IPv4
+ * fallback socket forced, a join over 127.0.0.1 still completes. The two IPv6
+ * cases pass as skipped on a machine with no IPv6 loopback. */
+int run_loopback_v6_join_download_disconnect(void);
+int run_loopback_mixed_family_one_server(void);
+int run_loopback_ipv4_fallback_socket(void);
 /* A burst of best-effort traffic survives the tick it was raised on
  * (test_best_effort_burst.c): effect events and a voice frame queued on one
  * tick, with the snapshot trailer already filled by reliable traffic, all reach
@@ -2741,12 +2749,19 @@ int run_join_version_gate(void);
  * JOINs from distinct loopback ephemeral ports (one source IP) draws at most
  * JOIN_RL_BURST accepts, while a JOIN from a distinct source IP is unaffected. */
 int run_join_rate_limit(void);
+/* The limiter's IPv6 buckets, driven directly: two addresses in one /64
+ * share a bucket, and an address in another /64 has its own. */
+int run_join_rate_limit_v6_same_prefix(void);
+int run_join_rate_limit_v6_other_prefix(void);
 
 /* JOIN address-proof cookie handshake (test_cookie_handshake.c): a cookie-less
  * JOIN draws a PACKET_JOIN_CHALLENGE and no slot; echoing the challenge cookie
  * completes the join; a garbage cookie never completes; a cookie expires once
  * the server's time-window advances (via the WB_COOKIE_WINDOW_OFFSET seam). */
 int run_cookie_handshake(void);
+/* An IPv6 joiner's cookie recomputes for its own address and port and not for
+ * another address in the same /64. */
+int run_cookie_handshake_v6(void);
 
 /* Map-send amplification gate (test_map_amp_gate.c): a crafted JOIN over a raw
  * loopback socket draws only a small JOIN_CHALLENGE (no accept, no CHANNEL_BULK
@@ -3172,6 +3187,11 @@ int run_boloaddr_no_mapped_text(void);
 int run_boloaddr_classify(void);
 int run_boloaddr_from_sockaddr(void);
 int run_boloaddr_resolve_literals(void);
+int run_boloaddr_resolve_prefer_v4(void);
+int run_boloaddr_to_family(void);
+int run_boloaddr_any(void);
+int run_boloaddr_v4(void);
+int run_boloaddr_from_v4(void);
 
 /* The map chooser's "Scenarios only" row test
  * (test_map_chooser_scenario_filter.c). */

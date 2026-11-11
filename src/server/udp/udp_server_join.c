@@ -135,30 +135,31 @@ ClaimResolveAction claimResolveDecide(bool bareNameHeld, bool holderIsVerified) 
 #define JOIN_RL_REFILL_MS   2000  /* +1 token every 2 s */
 
 /* Find client slot by address. Returns player index or -1. */
-int serverFindClient(const struct sockaddr_in *addr) {
+int serverFindClient(const BoloAddr *addr) {
     int i;
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected &&
-            udpServer.clients[i].addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
-            udpServer.clients[i].addr.sin_port == addr->sin_port) {
+            boloAddrEqual(&udpServer.clients[i].addr, addr)) {
             return i;
         }
     }
     return -1;
 }
 
-/* Token-bucket join rate limit keyed on source IP (port ignored: a spoofer
- * walks ports). Returns true and consumes a token if allowed; false if the
- * source is over-rate. LRU-evicts the least-recently-seen source on overflow.
- * A real join never originates from 0.0.0.0, so reusing srcAddr==0 as the
- * empty-entry sentinel can't collide with a legitimate source.
+/* Token-bucket join rate limit keyed on the source's boloAddrPrefixKey (port
+ * ignored: a spoofer walks ports). An IPv4 source, plain or mapped, is its own
+ * bucket; every IPv6 source in one /64 shares one, since one home connection
+ * holds a whole /64 and could otherwise walk addresses as it walks ports.
+ * Returns true and consumes a token if allowed; false if the source is
+ * over-rate. LRU-evicts the least-recently-seen source on overflow. An entry
+ * is empty while its inUse flag is false.
  *
  * This throttles port-walking from one source IP; it does not throttle a
  * random-source-IP flood (each packet lands in a fresh bucket and evicts the
  * LRU). The cookie gate is what actually prevents slot exhaustion, so that
  * residual is acceptable. */
-static bool serverJoinRateLimitAllow(const struct sockaddr_in *fromAddr) {
-    uint32_t key = fromAddr->sin_addr.s_addr;
+bool serverJoinRateLimitAllow(const BoloAddr *fromAddr) {
+    uint8_t key[BOLO_ADDR_KEY_LEN];
     uint64_t now = SDL_GetTicks();
     JoinRateEntry *match = NULL;
     JoinRateEntry *empty = NULL;
@@ -166,10 +167,14 @@ static bool serverJoinRateLimitAllow(const struct sockaddr_in *fromAddr) {
     JoinRateEntry *e;
     int i;
 
+    boloAddrPrefixKey(fromAddr, key);
     for (i = 0; i < JOIN_RL_MAX_SOURCES; i++) {
         JoinRateEntry *cur = &udpServer.joinRate[i];
-        if (cur->srcAddr == key) { match = cur; break; }
-        if (cur->srcAddr == 0) {
+        if (cur->inUse && memcmp(cur->key, key, sizeof(key)) == 0) {
+            match = cur;
+            break;
+        }
+        if (!cur->inUse) {
             if (empty == NULL) empty = cur;
         } else if (oldest == NULL || cur->lastMs < oldest->lastMs) {
             oldest = cur;
@@ -196,7 +201,8 @@ static bool serverJoinRateLimitAllow(const struct sockaddr_in *fromAddr) {
         /* Fresh source: take an empty slot, else evict the least-recently
          * seen one. A new bucket starts full. */
         e = (empty != NULL) ? empty : oldest;
-        e->srcAddr = key;
+        e->inUse   = true;
+        memcpy(e->key, key, sizeof(e->key));
         e->tokens  = JOIN_RL_BURST;
         e->lastMs  = now;
     }
@@ -337,21 +343,28 @@ uint64_t serverCookieCurrentWindow(void) {
     return w;
 }
 
-/* HMAC-MD5 of (sin_addr ‖ sin_port ‖ window) under the per-process secret.
- * Byte order is irrelevant for security — the secret never leaves the process,
- * so only self-consistency between issue and accept matters. Returns false
- * (out untouched) when the CSPRNG secret is unavailable, so the caller fails
- * closed instead of computing a cookie under a missing key. */
-bool serverCookieCompute(const struct sockaddr_in *addr, uint64_t window,
+/* HMAC-MD5 of (boloAddrKey ‖ port ‖ window) under the per-process secret:
+ * the 21-byte key of the whole address (not the /64 prefix, since the cookie
+ * proves the joiner receives at exactly this address; a mapped IPv4 address
+ * gives the same key as plain IPv4), the port in network order, then the
+ * window as its 8 in-memory bytes. Byte order is irrelevant for security —
+ * the secret never leaves the process, so only self-consistency between issue
+ * and accept matters. Returns false (out untouched) when the CSPRNG secret is
+ * unavailable, so the caller fails closed instead of computing a cookie under
+ * a missing key. */
+bool serverCookieCompute(const BoloAddr *addr, uint64_t window,
                          uint8_t out[JOIN_COOKIE_LEN]) {
     const uint8_t *secret = serverCookieSecret();
-    uint8_t msg[4 + 2 + 8];
+    uint8_t msg[BOLO_ADDR_KEY_LEN + 2 + 8];
+    uint16_t port;
     if (secret == NULL) {
         return false;
     }
-    memcpy(msg + 0, &addr->sin_addr.s_addr, 4);
-    memcpy(msg + 4, &addr->sin_port, 2);
-    memcpy(msg + 6, &window, 8);
+    boloAddrKey(addr, msg);
+    port = boloAddrPort(addr);
+    msg[BOLO_ADDR_KEY_LEN + 0] = (uint8_t)(port >> 8);
+    msg[BOLO_ADDR_KEY_LEN + 1] = (uint8_t)(port & 0xff);
+    memcpy(msg + BOLO_ADDR_KEY_LEN + 2, &window, 8);
     hmacMd5(secret, 32, msg, sizeof(msg), out);
     return true;
 }
@@ -360,7 +373,7 @@ bool serverCookieCompute(const struct sockaddr_in *addr, uint64_t window,
  * cookie issued near a boundary still validates). Constant-time compare:
  * OR-accumulate the byte diffs so a partial match can't be timed byte by byte.
  * A NULL cookie (none echoed) never validates. */
-static bool serverCookieAccept(const struct sockaddr_in *addr,
+static bool serverCookieAccept(const BoloAddr *addr,
                                const uint8_t *cookieOrNull) {
     uint64_t w;
     uint8_t expect[JOIN_COOKIE_LEN];
@@ -384,7 +397,7 @@ static bool serverCookieAccept(const struct sockaddr_in *addr,
 
 /* Issue a fresh challenge: [header PACKET_JOIN_CHALLENGE][cookie for window w].
  * Smaller than a JOIN_REQUEST, so it can't amplify a spoofed source. */
-static void serverSendJoinChallenge(const struct sockaddr_in *addr) {
+static void serverSendJoinChallenge(const BoloAddr *addr) {
     uint8_t buf[PACKET_HEADER_SIZE + JOIN_COOKIE_LEN];
     packHeader(buf, PACKET_JOIN_CHALLENGE, 0);
     /* Fail closed: with no secret we can't issue a valid challenge, so send
@@ -433,7 +446,7 @@ uint64_t serverNextConnId(void) {
 /* Resolve the slot owning an inbound INPUT by its connection id (see header). */
 int transportUdpServerFindByConnId(const UdpServerClient *clients,
                                    uint64_t connId,
-                                   const struct sockaddr_in *fromAddr,
+                                   const BoloAddr *fromAddr,
                                    bool *outRehome) {
     int i;
     if (outRehome) *outRehome = false;
@@ -442,9 +455,7 @@ int transportUdpServerFindByConnId(const UdpServerClient *clients,
         if (!clients[i].connected || clients[i].connId != connId) {
             continue;
         }
-        if (outRehome &&
-            (clients[i].addr.sin_addr.s_addr != fromAddr->sin_addr.s_addr ||
-             clients[i].addr.sin_port != fromAddr->sin_port)) {
+        if (outRehome && !boloAddrEqual(&clients[i].addr, fromAddr)) {
             *outRehome = true;
         }
         return i;
@@ -484,18 +495,17 @@ bool packLocalizedPayload(uint8_t *buf, int *pos, int bufSize,
 
 /* Send a localized join reject to a specific address.  Wire format is
  * documented at PACKET_JOIN_REJECT in netpacks.h. */
-void serverSendJoinReject(const struct sockaddr_in *addr, langid id,
+void serverSendJoinReject(const BoloAddr *addr, langid id,
                           int argCount, const char *const args[]) {
     /* Worst case: 8 hdr + 2 langid + 1 argCount + 4*(1 + 64) = 271. */
     uint8_t buf[PACKET_HEADER_SIZE + 3 + 4 * (1 + PLAYER_NAME_LEN - 1)];
     int pos = PACKET_HEADER_SIZE;
     {
-        struct in_addr ia = addr->sin_addr;
+        char destText[BOLO_ADDR_STR_LEN];
+        boloAddrFormat(addr, destText, sizeof(destText));
         WB_LOG_INFO(WB_LOG_CAT_NET,
-            "join reject: dest=%s:%u langid=%u argc=%d",
-            inet_ntoa(ia),
-            (unsigned)ntohs(addr->sin_port),
-            (unsigned)id, argCount);
+            "join reject: dest=%s langid=%u argc=%d",
+            destText, (unsigned)id, argCount);
     }
     packHeader(buf, PACKET_JOIN_REJECT, 0);
     if (!packLocalizedPayload(buf, &pos, sizeof(buf), id, argCount, args)) {
@@ -514,7 +524,7 @@ void serverSendJoinReject(const struct sockaddr_in *addr, langid id,
 /* Build and send the join accept packet with the slot, current server
  * tick, and compressed map size. */
 void serverSendJoinAccept(int slot, ServerSim *sim,
-                          const struct sockaddr_in *addr) {
+                          const BoloAddr *addr) {
     uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8];
     int pos;
 
@@ -658,18 +668,18 @@ bool serverChooseUnverifiedSuffix(const char *baseName,
 
 /* Handle a join request from a new client */
 void serverHandleJoinRequest(const uint8_t *buf, int len,
-                             const struct sockaddr_in *fromAddr,
+                             const BoloAddr *fromAddr,
                              ServerSim *sim) {
     int pos = PACKET_HEADER_SIZE;
     char name[PACKET_MAX_PLAYER_NAME];
     char pass[MAP_STR_SIZE];
     char wbnJoinKey[WBN_JOIN_KEY_WIRE_LEN];
     int slot;
+    char fromText[BOLO_ADDR_STR_LEN];
 
+    boloAddrFormat(fromAddr, fromText, sizeof(fromText));
     WB_LOG_DEBUG(WB_LOG_CAT_NET,
-        "join request from %s:%u len=%d",
-        inet_ntoa(fromAddr->sin_addr),
-        (unsigned)ntohs(fromAddr->sin_port), len);
+        "join request from %s len=%d", fromText, len);
 #ifndef WB_FUZZ
     fprintf(stderr, "[UDP SERVER] Join request received, len=%d\n", len);
 #endif
@@ -680,10 +690,8 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
                      + WBN_JOIN_KEY_WIRE_LEN + 1 + 2;
     if (len < joinReqMin) {
         WB_LOG_WARN(WB_LOG_CAT_NET,
-            "join request malformed: need=%d got=%d from=%s:%u",
-            joinReqMin, len,
-            inet_ntoa(fromAddr->sin_addr),
-            (unsigned)ntohs(fromAddr->sin_port));
+            "join request malformed: need=%d got=%d from=%s",
+            joinReqMin, len, fromText);
 #ifndef WB_FUZZ
         fprintf(stderr, "[UDP SERVER] Join request malformed (need %d, got %d)\n",
                 joinReqMin, len);
@@ -848,9 +856,7 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
     if (!serverCookieAccept(fromAddr, joinCookie)) {
         if (!serverJoinRateLimitAllow(fromAddr)) {
             WB_LOG_DEBUG(WB_LOG_CAT_NET,
-                "join rate-limited from %s:%u",
-                inet_ntoa(fromAddr->sin_addr),
-                (unsigned)ntohs(fromAddr->sin_port));
+                "join rate-limited from %s", fromText);
             return;
         }
         serverSendJoinChallenge(fromAddr);
@@ -914,8 +920,10 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
          * fallbackCountry, empty when neither resolves. */
         char specCountry[3];
         {
-            char ipStr[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &fromAddr->sin_addr, ipStr, sizeof(ipStr));
+            /* The host only: no port, no brackets, plain IPv4 for a
+             * mapped peer. */
+            char ipStr[BOLO_ADDR_STR_LEN];
+            boloAddrFormatHost(fromAddr, ipStr, sizeof(ipStr));
             if (!geoLookupCountry(ipStr, specCountry)) {
                 specCountry[0] = wireFallbackCountry[0];
                 specCountry[1] = wireFallbackCountry[1];
@@ -967,8 +975,10 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
      * old clients. */
     char incomingCountry[3];
     {
-        char ipStr[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &fromAddr->sin_addr, ipStr, sizeof(ipStr));
+        /* The host only: no port, no brackets, plain IPv4 for a mapped
+         * peer. */
+        char ipStr[BOLO_ADDR_STR_LEN];
+        boloAddrFormatHost(fromAddr, ipStr, sizeof(ipStr));
         if (!geoLookupCountry(ipStr, incomingCountry)) {
             incomingCountry[0] = wireFallbackCountry[0];
             incomingCountry[1] = wireFallbackCountry[1];

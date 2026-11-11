@@ -46,7 +46,7 @@
  * client_sim.h depends on its types. */
 extern "C" {
 #include "global.h"
-#include "platform_net.h" /* sockets, inet_ntoa/inet_pton, struct in_addr */
+#include "platform_net.h" /* sockets, inet_pton/inet_ntop */
 #include "client_sim.h"
 #include "../../../server/server_lifecycle.h" /* ServerPortmapInfo, NAT punch */
 }
@@ -72,10 +72,14 @@ static inline bool guiServerDisplayAddress(ClientSim *cs, char *dispIp,
     return false;
   }
 
-  struct in_addr srvAddr = clientSimGetServerAddress(cs);
-  const char *addrStr = inet_ntoa(srvAddr);
-  if (addrStr == NULL) {
-    return false;
+  /* The host with no port and no brackets; a mapped IPv4 address prints as
+   * plain IPv4. With no address stored this is "0.0.0.0", which the checks
+   * below replace or refuse. */
+  BoloAddr srvAddr;
+  char addrStr[BOLO_ADDR_STR_LEN];
+  if (!clientSimGetServerAddr(cs, &srvAddr) ||
+      !boloAddrFormatHost(&srvAddr, addrStr, sizeof(addrStr))) {
+    SDL_strlcpy(addrStr, "0.0.0.0", sizeof(addrStr));
   }
   SDL_strlcpy(dispIp, addrStr, ipLen);
   if (dispPort != NULL) {

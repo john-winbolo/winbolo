@@ -598,7 +598,7 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
  * lost request, and the client would sit waiting for bytes that never come.
  * Wire: [header 8] [reqSeq 4 BE] [code 1]. */
 void serverSendRoundLogErr(uint32_t reqSeq, uint8_t code,
-                           const struct sockaddr_in *toAddr) {
+                           const BoloAddr *toAddr) {
     uint8_t err[PACKET_HEADER_SIZE + 5];
     packHeader(err, PACKET_ROUND_LOG_ERR, 0);
     packU32(err + PACKET_HEADER_SIZE, reqSeq);

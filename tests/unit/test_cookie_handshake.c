@@ -38,11 +38,13 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"            /* MAP_STR_SIZE */
-#include "platform_net.h"      /* sockets, select, struct sockaddr_in */
+#include "platform_net.h"      /* sockets, select */
+#include "bolo_addr.h"         /* BoloAddr */
 #include "wire_limits.h"       /* PACKET_MAX_PLAYER_NAME */
 #include "netpacks.h"          /* PACKET_* types, PACKET_HEADER_SIZE, BOLO_VERSION_*, JOIN_COOKIE_LEN */
 #include "transport_udp.h"     /* WBN_JOIN_KEY_WIRE_LEN, JOIN_FLAG_* */
 #include "transport_udp_internal.h" /* packHeader, getPacketType */
+#include "transport_udp_server_internal.h" /* serverCookieCompute */
 #include "test_harness.h"
 #include "loopback_harness.h"
 
@@ -120,15 +122,13 @@ static int ckBuildJoin(uint8_t *buf, const char *name,
  * loopback IP. Returns INVALID_SOCKET if the bind isn't possible (non-Linux
  * loopback alias). */
 static SOCKET ckOpenSocketOnIp(const char *ip) {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     unsigned long nonblock = 1;
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+    SOCKET s;
+    if (!boloAddrParse(ip, 0, &addr)) return INVALID_SOCKET;
+    s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(ip);
-    addr.sin_port        = 0;
-    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    if (bind(s, (const struct sockaddr *)&addr.ss, addr.len) != 0) {
         closesocket(s);
         return INVALID_SOCKET;
     }
@@ -158,7 +158,7 @@ static void ckSetWindowOffset(const char *val) {
  * has a verdict. Exactly one datagram is sent (one rate-limit token). */
 static void ckDriveOnce(LoopbackHarness *h, SOCKET sock,
                         const uint8_t *join, int joinLen,
-                        const struct sockaddr_in *server,
+                        const BoloAddr *server,
                         bool wantNoAccept,
                         bool *gotAccept, bool *gotChallenge,
                         uint8_t *outCookie) {
@@ -167,7 +167,7 @@ static void ckDriveOnce(LoopbackHarness *h, SOCKET sock,
     *gotAccept    = false;
     *gotChallenge = false;
     sendto(sock, (const char *)join, joinLen, 0,
-           (const struct sockaddr *)server, sizeof(*server));
+           (const struct sockaddr *)&server->ss, server->len);
     deadline = SDL_GetTicks() + CK_REPLY_DEADLINE_MS;
     while (SDL_GetTicks() < deadline) {
         uint8_t in[1024];
@@ -202,7 +202,7 @@ static void ckDriveOnce(LoopbackHarness *h, SOCKET sock,
 
 int run_cookie_handshake(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     uint8_t joinBuf[1024];
     uint8_t cookie[JOIN_COOKIE_LEN];
     bool gotAccept, gotChallenge;
@@ -215,10 +215,10 @@ int run_cookie_handshake(void) {
     /* A stray offset from a prior run/test must not skew the windows. */
     ckSetWindowOffset(NULL);
 
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family      = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddr.sin_port        = htons(h.port);
+    if (!boloAddrParse("127.0.0.1", h.port, &serverAddr)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("could not build the server address");
+    }
 
     /* ---- (a) cookie-less JOIN draws a challenge; echo completes ---- */
     {
@@ -392,5 +392,32 @@ int run_cookie_handshake(void) {
     }
 
     loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* An IPv6 joiner's cookie. The loopback interface has one IPv6 address, so
+ * this computes cookies directly rather than over the wire: the cookie for an
+ * address and port recomputes to the same bytes (what the accept path checks)
+ * and differs for another address in the same /64, because the cookie is over
+ * the whole address and not the prefix the rate limiter buckets on. */
+int run_cookie_handshake_v6(void) {
+    BoloAddr joiner, neighbour;
+    uint8_t first[JOIN_COOKIE_LEN];
+    uint8_t again[JOIN_COOKIE_LEN];
+    uint8_t other[JOIN_COOKIE_LEN];
+    uint64_t w = serverCookieCurrentWindow();
+
+    UT_ASSERT(boloAddrParse("[2001:db8:5:6::10]:27500", 0, &joiner));
+    UT_ASSERT(boloAddrParse("[2001:db8:5:6::11]:27500", 0, &neighbour));
+
+    UT_ASSERT_MSG(serverCookieCompute(&joiner, w, first),
+                  "no cookie secret (CSPRNG unavailable)");
+    UT_ASSERT(serverCookieCompute(&joiner, w, again));
+    UT_ASSERT(serverCookieCompute(&neighbour, w, other));
+
+    UT_ASSERT_MSG(memcmp(first, again, JOIN_COOKIE_LEN) == 0,
+                  "an IPv6 joiner's cookie did not verify for its own address");
+    UT_ASSERT_MSG(memcmp(first, other, JOIN_COOKIE_LEN) != 0,
+                  "a cookie for one address verified for another in its /64");
     return 0;
 }

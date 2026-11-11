@@ -497,7 +497,7 @@ int run_script_fetch_not_found(void) {
 static int sfBodyDisabled(void) {
     uint8_t            pkt[PACKET_HEADER_SIZE + 4 + 1 + BULK_PATH_MAX];
     size_t             n;
-    struct sockaddr_in from;
+    BoloAddr           from;
     bool               staged;
     uint32_t           total;
     uint8_t            kind;

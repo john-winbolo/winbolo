@@ -78,10 +78,9 @@ static int SDLCALL serverRecvThreadFunc(void *userdata) {
             if (next == tail) {
                 /* Queue full — drop packet by reading and discarding */
                 uint8_t discard[UDP_MAX_PAYLOAD];
-                struct sockaddr_in discardAddr;
-                socklen_t addrLen = sizeof(discardAddr);
-                int ret = recvfrom(sock, (char *)discard, sizeof(discard), 0,
-                                   (struct sockaddr *)&discardAddr, &addrLen);
+                BoloAddr discardAddr;
+                int ret = udpRecvFrom(sock, discard, (int)sizeof(discard),
+                                      &discardAddr);
                 if (ret <= 0) break;
                 recvDropCount++;
 #if WB_ENABLE_NETIMPAIR
@@ -96,9 +95,10 @@ static int SDLCALL serverRecvThreadFunc(void *userdata) {
 
             {
                 RecvQueueEntry *entry = &recvQueue[head];
-                socklen_t addrLen = sizeof(entry->fromAddr);
-                int ret = recvfrom(sock, (char *)entry->data, UDP_MAX_PAYLOAD, 0,
-                                   (struct sockaddr *)&entry->fromAddr, &addrLen);
+                /* udpRecvFrom reads the source into a sockaddr_storage and
+                 * converts it; a source of another family reads as -1. */
+                int ret = udpRecvFrom(sock, entry->data, UDP_MAX_PAYLOAD,
+                                      &entry->fromAddr);
                 if (ret <= 0) break; /* No more data or error */
                 entry->len = ret;
                 SDL_SetAtomicInt(&recvQueueHead, next);
@@ -205,7 +205,7 @@ static void udpServerTickPerClientCooldowns(void) {
  * per-tick recv/drain entry points only — never the recv thread. */
 static void srvDrainImpair(ServerSim *sim) {
     uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
-    struct sockaddr_in paddr;
+    BoloAddr paddr;
     uint64_t now = srvNow();
     int plen;
 
@@ -215,7 +215,7 @@ static void srvDrainImpair(ServerSim *sim) {
     }
     while ((plen = netImpairPop(&srvImpairOut, pbuf, sizeof(pbuf),
                                 &paddr, now)) > 0) {
-        udpSendTo(udpServer.sock, pbuf, plen, &paddr);
+        udpSendTo(udpServer.sock, udpServer.sockFamily, pbuf, plen, &paddr);
 #if WB_ENABLE_NETIMPAIR
         udpServer.wireSent++;
 #endif
@@ -243,7 +243,7 @@ static void srvDrainImpair(ServerSim *sim) {
 /* Receive all pending packets from clients (polled fallback) */
 void transportUdpServerRecv(ServerSim *sim) {
     uint8_t buf[UDP_MAX_PAYLOAD];
-    struct sockaddr_in fromAddr;
+    BoloAddr fromAddr;
     int len;
     int c;
 

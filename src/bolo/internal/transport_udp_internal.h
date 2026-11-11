@@ -38,6 +38,7 @@
 #include <SDL3/SDL.h>
 #include "global.h"
 #include "platform_net.h"
+#include "bolo_addr.h"
 #include "transport.h"
 #include "transport_udp.h"
 #include "netpacks.h"
@@ -226,11 +227,19 @@ void transportUdpParseProxyMeta(const uint8_t *buf, int len,
 
 /* ---- Socket helpers ---- */
 
-SOCKET createUdpSocket(bool exclusive);
-void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
-               const struct sockaddr_in *addr);
-int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen,
-                struct sockaddr_in *fromAddr);
+/* Opens a non-blocking UDP socket, dual stack where the platform allows it
+ * (AF_INET6 with IPV6_V6ONLY cleared, so IPv4 peers arrive as mapped
+ * addresses), else AF_INET. *outFamily receives the family opened; every
+ * send on the socket passes it to udpSendTo. */
+SOCKET createUdpSocket(bool exclusive, int *outFamily);
+/* Sends to addr, converted to the socket's family. An empty address, or an
+ * IPv6 destination on an AF_INET socket, is refused with a logged error. */
+void udpSendTo(SOCKET sock, int sockFamily, const uint8_t *buf, int len,
+               const BoloAddr *addr);
+/* Receives one datagram and its source address as the socket reported it (an
+ * IPv4 peer on a dual-stack socket is a mapped address). Returns the length,
+ * or -1 when none is waiting or the source is neither IPv4 nor IPv6. */
+int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen, BoloAddr *fromAddr);
 
 #if WB_ENABLE_NETIMPAIR
 /* The largest length any caller has handed udpSendTo since the last reset,
@@ -238,6 +247,9 @@ int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen,
  * datagram over UDP_MAX_SEND on the wire. Test builds only. */
 int  udpTestLargestSend(void);
 void udpTestResetLargestSend(void);
+/* While on, createUdpSocket opens AF_INET without trying AF_INET6, so a test
+ * can drive the path a machine with no IPv6 stack takes. Test builds only. */
+void udpTestForceIPv4Socket(bool on);
 #endif
 
 #endif /* TRANSPORT_UDP_INTERNAL_H */

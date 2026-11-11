@@ -4742,6 +4742,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # No datagram either end sends over a join, the map download and a minute
     # of play is larger than the send cap, UDP_MAX_SEND.
     tests/unit/test_send_cap.c
+    # Joins over ::1, an IPv4 and an IPv6 client in one game, and a join on the
+    # IPv4 fallback socket.
+    tests/unit/test_loopback_v6.c
     # The same tick from the client's side: a burst of best-effort effect
     # events and a voice frame have to be applied at a real client, and a
     # quitting player's ownership burst has to reach the peer.
@@ -6685,6 +6688,9 @@ set(_unit_test_names
     loopback_join_accept_lost_ready
     send_drains_channels_multi_frame
     send_cap_join_download_play
+    loopback_v6_join_download_disconnect
+    loopback_mixed_family_one_server
+    loopback_ipv4_fallback_socket
     best_effort_not_dropped
     effect_burst_not_starved_by_reliable
     post_game_segment_applied
@@ -6745,7 +6751,10 @@ set(_unit_test_names
     interp_jitter_e2e
     join_version_gate
     join_rate_limit
+    join_rate_limit_v6_same_prefix
+    join_rate_limit_v6_other_prefix
     cookie_handshake
+    cookie_handshake_v6
     map_amp_gate
     map_reask_throttle
     map_resync_cut_and_deliver_once
@@ -6926,6 +6935,11 @@ set(_unit_test_names
     boloaddr_classify
     boloaddr_from_sockaddr
     boloaddr_resolve_literals
+    boloaddr_resolve_prefer_v4
+    boloaddr_to_family
+    boloaddr_any
+    boloaddr_v4
+    boloaddr_from_v4
     mapchooser_scenario_filter
     bg_map_pick_skips_tutorials
     tutorial_maps_shipped_path

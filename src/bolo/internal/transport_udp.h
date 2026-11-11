@@ -32,6 +32,7 @@
 
 #include "global.h"
 #include "platform_net.h"
+#include "bolo_addr.h"       /* BoloAddr — UdpServerClient.addr */
 #include "input_packet.h"
 #include "transport.h"
 #include "netpacks.h"
@@ -535,7 +536,7 @@ void transportUdpClientClearScriptFetch(Transport *t);
 
 /* Per-client connection info tracked by the server */
 typedef struct UdpServerClient {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     bool connected;
     uint64_t connId;             /* Random per-session id the client echoes on
                                   * its INPUT packets. Lets the slot survive a
@@ -921,7 +922,7 @@ uint64_t transportUdpServerGetClientConnId(BYTE playerNum);
  * mutate, so the match-and-rehome decision is testable in isolation. */
 int transportUdpServerFindByConnId(const UdpServerClient *clients,
                                    uint64_t connId,
-                                   const struct sockaddr_in *fromAddr,
+                                   const BoloAddr *fromAddr,
                                    bool *outRehome);
 
 /* Send an INFO_RESPONSE packet to the tracker server so the game

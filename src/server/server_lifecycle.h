@@ -55,7 +55,7 @@ void transportUdpServerSetUploadConfig(UploadPolicy policy,
 
 typedef struct {
   unsigned short udpPort;
-  const char    *bindAddr;        /* "" or NULL = INADDR_ANY */
+  const char    *bindAddr;        /* "" or NULL = the any address */
   const char    *password;        /* "" or NULL = no password */
   BYTE           maxPlayers;
   BYTE           maxBots;          /* cap on AI bots addable in the lobby;

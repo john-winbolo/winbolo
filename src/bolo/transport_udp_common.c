@@ -297,7 +297,59 @@ int spliceGameEventsBeforeTail(GameEvent *events, int tailStart, int tailCount,
  * Socket helpers
  * ================================================================ */
 
+#if WB_ENABLE_NETIMPAIR
+/* Set by udpTestForceIPv4Socket: createUdpSocket skips the AF_INET6 attempt. */
+static SDL_AtomicInt s_udpForceIPv4;
+
+void udpTestForceIPv4Socket(bool on) {
+    SDL_SetAtomicInt(&s_udpForceIPv4, on ? 1 : 0);
+}
+#endif
+
+/* Opens an AF_INET6 UDP socket with IPV6_V6ONLY cleared, so IPv4 peers reach
+ * it as mapped addresses. The option is cleared before any bind: Windows
+ * turns it on by default and Linux follows the bindv6only sysctl. Returns
+ * INVALID_SOCKET when the open fails or the option cannot be cleared. The web
+ * build sends through Emscripten's IPv4 socket emulation and never tries. */
+static SOCKET udpOpenDualStackSocket(void) {
+#if defined(__EMSCRIPTEN__) || !defined(IPV6_V6ONLY)
+    return INVALID_SOCKET;
+#else
+    SOCKET sock;
+    int v6only = 0;
+    int rc;
+
+#if WB_ENABLE_NETIMPAIR
+    if (SDL_GetAtomicInt(&s_udpForceIPv4) != 0) {
+        return INVALID_SOCKET;
+    }
+#endif
+    sock = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) {
+        return INVALID_SOCKET;
+    }
+#ifdef _WIN32
+    rc = setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY,
+                    (const char *)&v6only, (int)sizeof(v6only));
+#else
+    rc = setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY,
+                    &v6only, (socklen_t)sizeof(v6only));
+#endif
+    if (rc != 0) {
+        closesocket(sock);
+        return INVALID_SOCKET;
+    }
+    return sock;
+#endif
+}
+
 /* Create a non-blocking UDP socket.
+ *
+ * The socket is AF_INET6 with IPV6_V6ONLY cleared where that works, so one
+ * socket serves IPv6 peers and IPv4 peers (as ::ffff:a.b.c.d). When the
+ * AF_INET6 open fails or the option cannot be cleared, as on a machine with
+ * no IPv6 stack, it is AF_INET as before. *outFamily receives the family
+ * opened (AF_INET6 or AF_INET); it is left alone on failure.
  *
  * exclusive=true: caller wants a hard failure on bind() if the port is
  *   already in use (server case — a second listen-server host on the
@@ -312,16 +364,24 @@ int spliceGameEventsBeforeTail(GameEvent *events, int tailStart, int tailCount,
  *   server already held on 127.0.0.1. Datagrams to 127.0.0.1:port then
  *   went to that server, the more specific bind, and the client never
  *   heard its own server's replies. */
-SOCKET createUdpSocket(bool exclusive) {
+SOCKET createUdpSocket(bool exclusive, int *outFamily) {
     SOCKET sock;
+    int family = AF_INET6;
     unsigned long nonBlock = 1;
 #ifdef _WIN32
     int reuse = 1;
 #endif
 
-    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    sock = udpOpenDualStackSocket();
+    if (sock == INVALID_SOCKET) {
+        family = AF_INET;
+        sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    }
     if (sock == INVALID_SOCKET) {
         return INVALID_SOCKET;
+    }
+    if (outFamily != NULL) {
+        *outFamily = family;
     }
 #ifdef _WIN32
     if (exclusive) {
@@ -350,9 +410,40 @@ void udpTestResetLargestSend(void) {
 }
 #endif
 
-/* Send a buffer via UDP to a specific address */
-void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
-               const struct sockaddr_in *addr) {
+/* Count of sends udpSendTo refused because the destination could not be
+ * converted to the socket's family. The error is logged for the first
+ * UDP_SEND_REFUSED_LOG_FIRST refusals and then once every
+ * UDP_SEND_REFUSED_LOG_EVERY, so a peer the game keeps sending to cannot
+ * flood the log. Atomic because client and server send from different
+ * threads in one process. */
+#define UDP_SEND_REFUSED_LOG_FIRST 5
+#define UDP_SEND_REFUSED_LOG_EVERY 1000
+static SDL_AtomicInt s_udpSendRefused;
+
+/* Send a buffer via UDP to a specific address, converted to sockFamily (an
+ * IPv4 destination on an AF_INET6 socket goes as ::ffff:a.b.c.d). An empty
+ * address, or an IPv6 destination on an AF_INET socket, is not sent. */
+void udpSendTo(SOCKET sock, int sockFamily, const uint8_t *buf, int len,
+               const BoloAddr *addr) {
+    BoloAddr dest;
+
+    if (!boloAddrToFamily(addr, sockFamily, &dest)) {
+        int n = SDL_AddAtomicInt(&s_udpSendRefused, 1);
+        if (n < UDP_SEND_REFUSED_LOG_FIRST ||
+            (n % UDP_SEND_REFUSED_LOG_EVERY) == 0) {
+            char text[BOLO_ADDR_STR_LEN];
+            if (!boloAddrFormat(addr, text, sizeof(text))) {
+                snprintf(text, sizeof(text), "%s",
+                         boloAddrFamily(addr) == 0 ? "(no address)"
+                                                   : "(unprintable)");
+            }
+            WB_LOG_ERROR(WB_LOG_CAT_NET,
+                "udp send refused: %s cannot be reached from an %s socket "
+                "(%d refused so far)",
+                text, sockFamily == AF_INET6 ? "IPv6" : "IPv4", n + 1);
+        }
+        return;
+    }
 #if WB_ENABLE_NETIMPAIR
     {
         int seen = SDL_GetAtomicInt(&s_udpLargestSend);
@@ -363,18 +454,26 @@ void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
     }
 #endif
     sendto(sock, (const char *)buf, len, 0,
-           (const struct sockaddr *)addr, sizeof(*addr));
+           (const struct sockaddr *)&dest.ss, dest.len);
 }
 
-/* Receive a UDP datagram. Returns bytes received, or -1 if none available. */
-int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen,
-                struct sockaddr_in *fromAddr) {
-    socklen_t addrLen = sizeof(*fromAddr);
+/* Receive a UDP datagram. Returns bytes received, or -1 if none available or
+ * the source is neither IPv4 nor IPv6. *fromAddr is the source as the socket
+ * reported it: on a dual-stack socket an IPv4 peer is a mapped address, so
+ * callers compare through boloAddrEqual and the keys, never the raw bytes. */
+int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen, BoloAddr *fromAddr) {
+    struct sockaddr_storage ss;
+    socklen_t addrLen = (socklen_t)sizeof(ss);
     int ret;
 
+    memset(&ss, 0, sizeof(ss));
     ret = recvfrom(sock, (char *)buf, maxLen, 0,
-                   (struct sockaddr *)fromAddr, &addrLen);
+                   (struct sockaddr *)&ss, &addrLen);
     if (ret == SOCKET_ERROR) {
+        return -1;
+    }
+    if (!boloAddrFromSockaddr((const struct sockaddr *)&ss, addrLen,
+                              fromAddr)) {
         return -1;
     }
     return ret;
