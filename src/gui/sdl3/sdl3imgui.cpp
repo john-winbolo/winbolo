@@ -2035,7 +2035,7 @@ static void renderNetInfoContent(ClientSim *cs) {
      * networked game (reverse-DNS resolved asynchronously, visual only). Falls
      * back to the legacy label ("Single Player Game") otherwise. */
     {
-        char dispIp[64];
+        char dispIp[BOLO_ADDR_STR_LEN];
         unsigned dispPort = 0;
         if (guiServerDisplayAddress(cs, dispIp, sizeof(dispIp), &dispPort)) {
             ImGui::TextUnformatted(langGetText(STR_DLGNETINFO_SERVER));

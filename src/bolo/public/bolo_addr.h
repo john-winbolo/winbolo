@@ -21,7 +21,8 @@
 *Purpose:
 *  One network address type for IPv4 and IPv6 (BoloAddr),
 *  the helpers that compare, classify, format and parse it,
-*  and the resolver that turns a host string into one.
+*  the resolver that turns a host string into one, and the
+*  routing lookup for this machine's own address.
 *
 *  An IPv4-mapped IPv6 address (::ffff:a.b.c.d) compares
 *  equal to the same plain IPv4 address and always prints
@@ -736,6 +737,73 @@ static inline int bolo_resolve_addr(const char *host, uint16_t port,
     }
     freeaddrinfo(res);
     return rc;
+}
+
+/* Finds the address this machine sends from to reach the Internet over
+ * `family` (AF_INET or AF_INET6): a UDP socket of that family is connected to
+ * a fixed public address (8.8.8.8, or 2001:4860:4860::8888, port 53) and its
+ * local address is read back with getsockname. Connecting a UDP socket only
+ * asks the routing table for a route; no datagram is sent. Returns 1 with
+ * *out set (port 0) when that address can be given to another player: not
+ * unspecified, not loopback and not link-local. Otherwise, including when the
+ * machine has no route for that family, returns 0 with *out cleared. On
+ * Windows, Winsock must already be started. */
+static inline int boloAddrLocalForRoute(int family, BoloAddr *out) {
+    struct sockaddr_storage target;
+    struct sockaddr_storage found;
+    socklen_t targetLen;
+    socklen_t foundLen;
+    BoloAddr addr;
+    bolo_socket_t sk;
+    int ok = 0;
+
+    if (out == NULL) {
+        return 0;
+    }
+    boloAddrClear(out);
+    boloAddrClear(&addr);
+    memset(&target, 0, sizeof(target));
+    if (family == AF_INET) {
+        struct sockaddr_in *v4Target = (struct sockaddr_in *)&target;
+        v4Target->sin_family = AF_INET;
+        v4Target->sin_port = htons(53);
+        if (inet_pton(AF_INET, "8.8.8.8", &v4Target->sin_addr) != 1) {
+            return 0;
+        }
+        targetLen = (socklen_t)sizeof(struct sockaddr_in);
+    } else if (family == AF_INET6) {
+        struct sockaddr_in6 *v6Target = (struct sockaddr_in6 *)&target;
+        v6Target->sin6_family = AF_INET6;
+        v6Target->sin6_port = htons(53);
+        if (inet_pton(AF_INET6, "2001:4860:4860::8888",
+                      &v6Target->sin6_addr) != 1) {
+            return 0;
+        }
+        targetLen = (socklen_t)sizeof(struct sockaddr_in6);
+    } else {
+        return 0;
+    }
+
+    sk = socket(family, SOCK_DGRAM, 0);
+    if (sk == BOLO_INVALID_SOCKET) {
+        return 0;
+    }
+    if (connect(sk, (const struct sockaddr *)&target, targetLen) == 0) {
+        memset(&found, 0, sizeof(found));
+        foundLen = (socklen_t)sizeof(found);
+        if (getsockname(sk, (struct sockaddr *)&found, &foundLen) == 0 &&
+            boloAddrFromSockaddr((const struct sockaddr *)&found, foundLen,
+                                 &addr) &&
+            boloAddrFamily(&addr) == family &&
+            !boloAddrIsUnspecified(&addr) && !boloAddrIsLoopback(&addr) &&
+            !boloAddrIsLinkLocal(&addr)) {
+            boloAddrSetPort(&addr, 0);
+            *out = addr;
+            ok = 1;
+        }
+    }
+    closesocket(sk);
+    return ok;
 }
 
 #endif /* BOLO_ADDR_H */

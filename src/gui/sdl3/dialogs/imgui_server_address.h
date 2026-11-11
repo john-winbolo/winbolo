@@ -46,22 +46,26 @@
  * client_sim.h depends on its types. */
 extern "C" {
 #include "global.h"
-#include "platform_net.h" /* sockets, inet_pton/inet_ntop */
+#include "platform_net.h" /* AF_INET / AF_INET6 */
 #include "client_sim.h"
 #include "../../../server/server_lifecycle.h" /* ServerPortmapInfo, NAT punch */
 }
 
+#include "server_address_parse.h" /* formatServerAddressHostPort */
+
 /*********************************************************
  *NAME:          guiServerDisplayAddress
  *PURPOSE:
- *  Computes the IPv4 address (and port) to show for the current server.
+ *  Computes the address (and port) to show for the current server.
  *  Mirrors the display rules used elsewhere: a LAN host's loopback self-join
- *  is replaced with the LAN-routable IPv4, and an Internet host's private
- *  address is replaced with the router-side external mapping when one is known.
+ *  is replaced with the address this machine routes from (IPv4 first, then
+ *  IPv6, never link-local), and an Internet host's private address is
+ *  replaced with the router-side external mapping when one is known.
  *
  *  Returns false for single-player games or when no usable address exists
  *  (callers should then show their own placeholder); true otherwise, with
- *  dispIp / dispPort filled.
+ *  dispIp / dispPort filled. dispIp is the host alone, with no port and no
+ *  brackets; a buffer of BOLO_ADDR_STR_LEN holds any address.
  *********************************************************/
 static inline bool guiServerDisplayAddress(ClientSim *cs, char *dispIp,
                                            size_t ipLen, unsigned *dispPort) {
@@ -77,7 +81,8 @@ static inline bool guiServerDisplayAddress(ClientSim *cs, char *dispIp,
    * below replace or refuse. */
   BoloAddr srvAddr;
   char addrStr[BOLO_ADDR_STR_LEN];
-  if (!clientSimGetServerAddr(cs, &srvAddr) ||
+  bool haveSrvAddr = clientSimGetServerAddr(cs, &srvAddr);
+  if (!haveSrvAddr ||
       !boloAddrFormatHost(&srvAddr, addrStr, sizeof(addrStr))) {
     SDL_strlcpy(addrStr, "0.0.0.0", sizeof(addrStr));
   }
@@ -86,35 +91,18 @@ static inline bool guiServerDisplayAddress(ClientSim *cs, char *dispIp,
     *dispPort = clientSimGetServerPort(cs);
   }
 
-  /* LAN host self-joins via loopback (127.0.0.1) — display the actual
-   * LAN-routable IPv4 instead so it's useful to read off to a player on the
-   * same network. Local helper: UDP socket + "connect" to a public address
-   * (no packets sent, just a routing-table lookup) + getsockname. */
-  if (clientSimIsLanOnly(cs) && strcmp(dispIp, "127.0.0.1") == 0) {
-    bolo_socket_t sk = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sk != BOLO_INVALID_SOCKET) {
-      struct sockaddr_in tgt;
-      memset(&tgt, 0, sizeof(tgt));
-      tgt.sin_family = AF_INET;
-      tgt.sin_port = htons(53);
-      inet_pton(AF_INET, "8.8.8.8", &tgt.sin_addr);
-      if (connect(sk, (struct sockaddr *)&tgt, sizeof(tgt)) == 0) {
-        struct sockaddr_in loc;
-        memset(&loc, 0, sizeof(loc));
-#ifdef _WIN32
-        int slen = (int)sizeof(loc);
-#else
-        socklen_t slen = sizeof(loc);
-#endif
-        char lanIp[INET_ADDRSTRLEN];
-        lanIp[0] = '\0';
-        if (getsockname(sk, (struct sockaddr *)&loc, &slen) == 0 &&
-            inet_ntop(AF_INET, &loc.sin_addr, lanIp, sizeof(lanIp)) != NULL &&
-            lanIp[0] != '\0' && strcmp(lanIp, "127.0.0.1") != 0) {
-          SDL_strlcpy(dispIp, lanIp, ipLen);
-        }
-      }
-      closesocket(sk);
+  /* A LAN host joins its own server over loopback (127.0.0.1 or ::1), which
+   * is no use to read off to another player on the network. Show the address
+   * this machine routes from instead: the IPv4 one when it has one, else the
+   * IPv6 one. boloAddrLocalForRoute never returns a loopback or link-local
+   * address; when neither family has one, the loopback address stays. */
+  if (clientSimIsLanOnly(cs) && haveSrvAddr && boloAddrIsLoopback(&srvAddr)) {
+    BoloAddr lanAddr;
+    char lanIp[BOLO_ADDR_STR_LEN];
+    if ((boloAddrLocalForRoute(AF_INET, &lanAddr) ||
+         boloAddrLocalForRoute(AF_INET6, &lanAddr)) &&
+        boloAddrFormatHost(&lanAddr, lanIp, sizeof(lanIp))) {
+      SDL_strlcpy(dispIp, lanIp, ipLen);
     }
   }
 
@@ -134,7 +122,8 @@ static inline bool guiServerDisplayAddress(ClientSim *cs, char *dispIp,
     }
   }
 
-  if (dispIp[0] == '\0' || strcmp(dispIp, "0.0.0.0") == 0) {
+  if (dispIp[0] == '\0' || strcmp(dispIp, "0.0.0.0") == 0 ||
+      strcmp(dispIp, "::") == 0) {
     return false;
   }
   return true;
@@ -146,7 +135,7 @@ static inline bool guiServerDisplayAddress(ClientSim *cs, char *dispIp,
  *  Renders the server address at the current cursor position as a clickable
  *  join-link. Shows the reverse-DNS hostname when one has resolved (falling
  *  back to the raw IP), and copies a winbolo://host:port URL to the clipboard
- *  on click. Kicks off the asynchronous reverse lookup the first time a given
+ *  on click (winbolo://[v6]:port for an IPv6 address). Kicks off the asynchronous reverse lookup the first time a given
  *  address is seen (the lookup runs on the existing DNS thread; the request is
  *  a no-op when that thread isn't running).
  *********************************************************/
@@ -155,7 +144,8 @@ static inline bool guiServerDisplayAddress(ClientSim *cs, char *dispIp,
  *PURPOSE:
  *  The text guiServerAddressLink shows, host:port, with the reverse-DNS
  *  hostname when one has resolved and the raw IP otherwise, so a layout can
- *  measure it first.
+ *  measure it first. An IPv6 address is bracketed ("[2001:db8::1]:27500")
+ *  so the text can be typed into the join dialog unchanged.
  *********************************************************/
 static inline void guiServerAddressToken(ClientSim *cs, const char *dispIp,
                                          unsigned dispPort, char *out,
@@ -165,7 +155,7 @@ static inline void guiServerAddressToken(ClientSim *cs, const char *dispIp,
   if (clientSimGetServerHostname(cs, dispIp, host, sizeof(host))) {
     shown = host;
   }
-  SDL_snprintf(out, outSize, "%s:%u", shown, dispPort);
+  formatServerAddressHostPort(shown, dispPort, out, outSize);
 }
 
 static inline void guiServerAddressLink(ClientSim *cs, const char *dispIp,

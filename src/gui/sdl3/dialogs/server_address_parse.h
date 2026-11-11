@@ -22,11 +22,14 @@
  *  Splits a pasted server address into host + optional port. Used by the
  *  manual Internet/UDP join dialog so a value pasted into the address field
  *  ("host", "host:port", or "winbolo://host:port[/path]") is routed into the
- *  right input boxes.
+ *  right input boxes. Also writes the text form back ("host:port",
+ *  "[v6]:port") and the "+connect" string published to Steam.
  *
- *  Header-only (static inline) and free of SDL / ImGui / stdio so it can be
- *  shared between the GUI dialog and the unit-test binary, and pulled into a
- *  plain C translation unit, without a new CMake object or link dependency.
+ *  Header-only (static inline) and free of SDL / ImGui so it can be shared
+ *  between the GUI dialog and the unit-test binary, and pulled into a plain C
+ *  translation unit, without a new CMake object or link dependency. Its only
+ *  project header is bolo_addr.h (src/bolo/public), which reads a numeric
+ *  host to decide whether it may be published to Steam.
  *********************************************************/
 
 #ifndef SERVER_ADDRESS_PARSE_H
@@ -35,6 +38,8 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "bolo_addr.h" /* boloAddrParse, boloAddrIs* */
 
 /* Bounded, always-NUL-terminating string copy (a tiny strlcpy so the header
  * stays SDL-free). No-op when dstSz is 0. */
@@ -200,6 +205,47 @@ static inline void formatServerAddressHostPort(const char *host, unsigned port,
         text[1 + nd] = '\0';
         wbAddrAppend(out, outSz, &len, text);
     }
+}
+
+/* Writes the Steam rich presence "connect" value: "+connect " followed by
+ * formatServerAddressHostPort(host, port), so an IPv6 address is bracketed
+ * and the joining client reads it back with parseServerAddressPaste. Returns
+ * 1 on success. Returns 0 with out set to the empty string when host is empty
+ * or NULL, when host is a numeric address that is link-local, loopback or
+ * unspecified (a friend on another machine cannot reach any of these), or
+ * when the text does not fit in outSz. A host name is always allowed. On
+ * Windows, Winsock must already be started, as boloAddrParse reads an IPv6
+ * literal through getaddrinfo. */
+static inline int formatSteamConnectString(const char *host, unsigned port,
+                                           char *out, size_t outSz) {
+    static const char prefix[] = "+connect ";
+    if (!out || outSz == 0) {
+        return 0;
+    }
+    out[0] = '\0';
+    if (!host || host[0] == '\0') {
+        return 0;
+    }
+    BoloAddr numeric;
+    if (boloAddrParse(host, 0, &numeric) &&
+        (boloAddrIsLinkLocal(&numeric) || boloAddrIsLoopback(&numeric) ||
+         boloAddrIsUnspecified(&numeric))) {
+        return 0;
+    }
+    size_t len = sizeof(prefix) - 1;
+    if (len + 1 >= outSz) {
+        return 0;
+    }
+    memcpy(out, prefix, len);
+    out[len] = '\0';
+    formatServerAddressHostPort(host, port, out + len, outSz - len);
+    /* Text that fills the buffer may have been cut short; refuse it rather
+     * than publish a wrong address. */
+    if (strlen(out) + 1 >= outSz || out[len] == '\0') {
+        out[0] = '\0';
+        return 0;
+    }
+    return 1;
 }
 
 #endif /* SERVER_ADDRESS_PARSE_H */

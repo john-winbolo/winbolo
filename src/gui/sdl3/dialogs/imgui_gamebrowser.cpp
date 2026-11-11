@@ -104,6 +104,7 @@ bool wasmFinderTakeBack(void);
 #include "lobby/lobby_internal.h"
 
 #include "../map_preview_fetch.h"
+#include "server_address_parse.h"  /* formatServerAddressHostPort */
 
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
@@ -1864,7 +1865,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (e.hostName[0] != '\0') {
                     SDL_snprintf(where, sizeof(where), "%s", e.hostName);
                 } else {
-                    SDL_snprintf(where, sizeof(where), "%s:%u", e.address, e.port);
+                    formatServerAddressHostPort(e.address, e.port, where,
+                                                sizeof(where));
                 }
                 char name[288];
                 SDL_snprintf(name, sizeof(name), "%s",
@@ -1886,12 +1888,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         /* The full address, as the detail pane gives it:
                          * a resolved host name alone would hide it. */
                         char addr[sizeof(e.hostName) + sizeof(e.address) + 16];
+                        char hostPort[sizeof(e.address) + 16];
+                        formatServerAddressHostPort(e.address, e.port, hostPort,
+                                                    sizeof(hostPort));
                         if (e.hostName[0] != '\0') {
-                            SDL_snprintf(addr, sizeof(addr), "%s (%s:%u)",
-                                         e.hostName, e.address, e.port);
+                            SDL_snprintf(addr, sizeof(addr), "%s (%s)",
+                                         e.hostName, hostPort);
                         } else {
-                            SDL_snprintf(addr, sizeof(addr), "%s:%u",
-                                         e.address, e.port);
+                            SDL_snprintf(addr, sizeof(addr), "%s", hostPort);
                         }
                         ImGui::BeginTooltip();
                         ImGui::TextUnformatted(addr);
@@ -2174,12 +2178,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         }
 
                         char addr[sizeof(sel.hostName) + sizeof(sel.address) + 16];
+                        char hostPort[sizeof(sel.address) + 16];
+                        formatServerAddressHostPort(sel.address, sel.port,
+                                                    hostPort, sizeof(hostPort));
                         if (sel.hostName[0] != '\0') {
-                            SDL_snprintf(addr, sizeof(addr), "%s (%s:%u)",
-                                         sel.hostName, sel.address, sel.port);
+                            SDL_snprintf(addr, sizeof(addr), "%s (%s)",
+                                         sel.hostName, hostPort);
                         } else {
-                            SDL_snprintf(addr, sizeof(addr), "%s:%u",
-                                         sel.address, sel.port);
+                            SDL_snprintf(addr, sizeof(addr), "%s", hostPort);
                         }
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_ADDRESS));

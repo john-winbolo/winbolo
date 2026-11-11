@@ -6930,6 +6930,7 @@ set(_unit_test_names
     addrparse_ipv6_scope
     addrparse_ipv6_scheme
     addrparse_format_host_port
+    addrparse_steam_connect
     boloaddr_roundtrip_v4
     boloaddr_roundtrip_v6
     boloaddr_link_local_scope
@@ -6947,6 +6948,7 @@ set(_unit_test_names
     boloaddr_any
     boloaddr_v4
     boloaddr_from_v4
+    boloaddr_local_for_route
     mapchooser_scenario_filter
     bg_map_pick_skips_tutorials
     tutorial_maps_shipped_path

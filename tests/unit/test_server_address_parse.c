@@ -8,6 +8,9 @@
  * ":port" split into the port field, and anything ambiguous (no port, an
  * out-of-range or non-numeric port) left verbatim as the host with the port
  * untouched.
+ *
+ * Also covers the text written back: formatServerAddressHostPort and the
+ * Steam "+connect" value from formatSteamConnectString.
  */
 
 #include <string.h>
@@ -191,5 +194,72 @@ int run_addrparse_format_host_port(void) {
     if (check(text, 1, "2001:db8::1", "27500")) return 1;
     formatServerAddressHostPort("1.2.3.4", 5000, text, sizeof(text));
     if (check(text, 1, "1.2.3.4", "5000")) return 1;
+
+    /* The copied join link is "winbolo://" + this text; it parses back. */
+    char link[80];
+    formatServerAddressHostPort("2001:db8::1", 27500, text, sizeof(text));
+    strcpy(link, "winbolo://");
+    strcat(link, text);
+    if (check(link, 1, "2001:db8::1", "27500")) return 1;
     return 0;
+}
+
+/* Runs formatSteamConnectString and asserts the return value and text.
+ * Returns 0 on success, 1 on mismatch. */
+static int checkSteam(const char *host, unsigned port, int expectRet,
+                      const char *expect) {
+    char out[128];
+    strcpy(out, "<UNSET>");
+    int ret = formatSteamConnectString(host, port, out, sizeof(out));
+    if (ret != expectRet) {
+        UT_FAIL("steam(\"%s\", %u): ret %d, expected %d",
+                host ? host : "(null)", port, ret, expectRet);
+    }
+    if (strcmp(out, expect) != 0) {
+        UT_FAIL("steam(\"%s\", %u): \"%s\", expected \"%s\"",
+                host ? host : "(null)", port, out, expect);
+    }
+    return 0;
+}
+
+/* The Steam "+connect" value brackets IPv6, refuses an address a friend
+ * cannot reach (link-local, loopback, unspecified, empty), always allows a
+ * host name, and what follows "+connect " parses back to the same host and
+ * port. */
+static int steamConnectBody(void) {
+    if (checkSteam("1.2.3.4", 27500, 1, "+connect 1.2.3.4:27500")) return 1;
+    if (checkSteam("host.example.com", 5000, 1,
+                   "+connect host.example.com:5000")) return 1;
+    if (checkSteam("2001:db8::1", 27500, 1,
+                   "+connect [2001:db8::1]:27500")) return 1;
+    if (checkSteam("fe80::1", 27500, 0, "")) return 1;
+    if (checkSteam("169.254.1.2", 27500, 0, "")) return 1;
+    if (checkSteam("127.0.0.1", 27500, 0, "")) return 1;
+    if (checkSteam("::1", 27500, 0, "")) return 1;
+    if (checkSteam("0.0.0.0", 27500, 0, "")) return 1;
+    if (checkSteam("::", 27500, 0, "")) return 1;
+    if (checkSteam("", 27500, 0, "")) return 1;
+    if (checkSteam(NULL, 27500, 0, "")) return 1;
+
+    static const char prefix[] = "+connect ";
+    char out[128];
+    if (!formatSteamConnectString("2001:db8::1", 27500, out, sizeof(out))) {
+        UT_FAIL("steam(\"2001:db8::1\") refused");
+    }
+    if (check(out + sizeof(prefix) - 1, 1, "2001:db8::1", "27500")) return 1;
+    if (!formatSteamConnectString("1.2.3.4", 5000, out, sizeof(out))) {
+        UT_FAIL("steam(\"1.2.3.4\") refused");
+    }
+    if (check(out + sizeof(prefix) - 1, 1, "1.2.3.4", "5000")) return 1;
+    return 0;
+}
+
+int run_addrparse_steam_connect(void) {
+    int rc;
+    /* boloAddrParse reads an IPv6 literal through getaddrinfo, which needs
+     * Winsock started on Windows. */
+    bolo_net_init();
+    rc = steamConnectBody();
+    bolo_net_cleanup();
+    return rc;
 }

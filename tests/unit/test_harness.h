@@ -3184,6 +3184,7 @@ int run_addrparse_bare_ipv6(void);
 int run_addrparse_ipv6_scope(void);
 int run_addrparse_ipv6_scheme(void);
 int run_addrparse_format_host_port(void);
+int run_addrparse_steam_connect(void);
 
 /* The IPv4/IPv6 address type and resolver in bolo_addr.h
  * (test_bolo_addr.c). */
@@ -3204,6 +3205,7 @@ int run_boloaddr_to_family(void);
 int run_boloaddr_any(void);
 int run_boloaddr_v4(void);
 int run_boloaddr_from_v4(void);
+int run_boloaddr_local_for_route(void);
 
 /* The map chooser's "Scenarios only" row test
  * (test_map_chooser_scenario_filter.c). */

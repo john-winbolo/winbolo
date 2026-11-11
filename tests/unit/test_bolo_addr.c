@@ -720,3 +720,54 @@ int run_boloaddr_from_v4(void) {
     bolo_net_cleanup();
     return rc;
 }
+
+/* For one family, the routing lookup either finds nothing and leaves an
+ * empty address, or finds an address of that family with port 0 that is not
+ * loopback, link-local or unspecified. Both outcomes pass, so the case holds
+ * on a machine with no network. */
+static int localForRouteFamily(int family, const char *name) {
+    BoloAddr a;
+    memset(&a, 0xab, sizeof(a));
+    if (!boloAddrLocalForRoute(family, &a)) {
+        if (boloAddrFamily(&a) != 0) {
+            UT_FAIL("%s: no route, but the address was not cleared", name);
+        }
+        SDL_Log("  boloaddr_local_for_route: no usable %s address here", name);
+        return 0;
+    }
+    if (boloAddrFamily(&a) != family) {
+        UT_FAIL("%s: found an address of another family", name);
+    }
+    if (boloAddrPort(&a) != 0) {
+        UT_FAIL("%s: found address has port %u, expected 0", name,
+                (unsigned)boloAddrPort(&a));
+    }
+    if (boloAddrIsLoopback(&a) || boloAddrIsLinkLocal(&a) ||
+        boloAddrIsUnspecified(&a)) {
+        UT_FAIL("%s: found a loopback, link-local or unspecified address",
+                name);
+    }
+    return 0;
+}
+
+static int localForRouteBody(void) {
+    BoloAddr a;
+    if (localForRouteFamily(AF_INET, "IPv4")) return 1;
+    if (localForRouteFamily(AF_INET6, "IPv6")) return 1;
+    memset(&a, 0xab, sizeof(a));
+    if (boloAddrLocalForRoute(AF_UNSPEC, &a) || boloAddrFamily(&a) != 0) {
+        UT_FAIL("AF_UNSPEC was not refused with an empty address");
+    }
+    if (boloAddrLocalForRoute(AF_INET, NULL)) {
+        UT_FAIL("a NULL output was not refused");
+    }
+    return 0;
+}
+
+int run_boloaddr_local_for_route(void) {
+    int rc;
+    bolo_net_init();
+    rc = localForRouteBody();
+    bolo_net_cleanup();
+    return rc;
+}

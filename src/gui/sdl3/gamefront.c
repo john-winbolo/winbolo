@@ -81,7 +81,7 @@
 #include "dialog_backend.h"
 #include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
-#include "dialogs/server_address_parse.h"  /* parseServerAddressPaste, formatServerAddressHostPort */
+#include "dialogs/server_address_parse.h"  /* parseServerAddressPaste, formatServerAddressHostPort, formatSteamConnectString */
 #include "bg_game.h"
 #include "tutorial_maps.h"
 #include "client_frontend_common.h"  /* clientFrontTellScenarioPlayer */
@@ -638,18 +638,22 @@ static void gameFrontSetConnectIfAvailable(ClientSim *cs) {
       serverInstanceIsNatPunchActive()) {
     ServerPortmapInfo pm;
     serverInstanceGetPortmapInfo(&pm);
-    if (pm.externalIp[0] != '\0' && pm.externalPort != 0) {
-      snprintf(connect, sizeof(connect), "+connect %.255s:%u",
-               pm.externalIp, (unsigned)pm.externalPort);
+    if (pm.externalIp[0] != '\0' && pm.externalPort != 0 &&
+        formatSteamConnectString(pm.externalIp, (unsigned)pm.externalPort,
+                                 connect, sizeof(connect))) {
       steam_set_rich_presence("connect", connect);
       return;
     }
   }
   /* Client (or host before its external address has resolved): the address
-   * we joined is reachable by our friends too. */
-  if (udpTransportActive && gameFrontUdpAddress[0] != '\0') {
-    snprintf(connect, sizeof(connect), "+connect %.255s:%u",
-             gameFrontUdpAddress, (unsigned)gameFrontTargetUdp);
+   * we joined is reachable by our friends too, unless it is a loopback,
+   * link-local or unspecified address, which formatSteamConnectString
+   * refuses; a host joined to itself over 127.0.0.1 publishes nothing. The
+   * IPv6 form is bracketed so the friend's client reads the port back. */
+  if (udpTransportActive && gameFrontUdpAddress[0] != '\0' &&
+      formatSteamConnectString(gameFrontUdpAddress,
+                               (unsigned)gameFrontTargetUdp, connect,
+                               sizeof(connect))) {
     steam_set_rich_presence("connect", connect);
   }
 }
