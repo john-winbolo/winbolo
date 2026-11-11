@@ -128,6 +128,7 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 #include "dialogs/imgui_lobby.h"
 
 #include "../../bothost/bothost_embed.h" /* botHostEmbedService / Leave */
+#include "../../bothost/bothost_optout.h" /* botHostMaxParse */
 
 #if defined(WINBOLO_VOICE)
 #include "../voice.h"
@@ -4518,6 +4519,12 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(DEFAULT_UDP_PORT, def, sizeof(def));
   prefsGetString("SETTINGS", "UDP Port", def, buff, FILENAME_MAX);
   gameFrontMyUdp = atoi(buff);
+
+  /* The Max slots of this computer's Bot Host (the lobby's own Bot Host
+   * row); a missing key is the brain's answer. */
+  prefsGetString(BOT_HOST_MAX_PREFS_SECTION, BOT_HOST_MAX_PREFS_KEY, "Auto",
+                 buff, FILENAME_MAX);
+  botHostEmbedSetMax(botHostMaxParse(buff));
 
   /* Hosting settings ([HOSTING] section — the port/spectator/upload knobs
    * for a game hosted from the finder). Clamp on read to the same ranges the
