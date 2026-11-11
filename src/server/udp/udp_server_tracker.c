@@ -53,7 +53,7 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     buildInfoPacket(sim, &pkt);
     infoPacketEncode(buf, &pkt);
 
-    srvSendTo(buf, sizeof(buf), &dest);
+    srvSendToNoSource(buf, sizeof(buf), &dest);
 }
 
 void transportUdpServerSetPublicAddress(const char *externalIp,
@@ -89,7 +89,7 @@ void transportUdpServerSendNatKeepalive(ServerSim *sim,
      * NAT each refresh their own entry. */
     packU32(buf + 4, (uint32_t)serverSimGetTimeCreated(sim));
 
-    srvSendTo(buf, sizeof(buf), &dest);
+    srvSendToNoSource(buf, sizeof(buf), &dest);
 }
 
 void transportUdpServerSendPunchProbe(const char *trackerAddr,
@@ -105,7 +105,7 @@ void transportUdpServerSendPunchProbe(const char *trackerAddr,
 
     packHeader(buf, PACKET_PUNCH_PROBE_REQUEST, 0);
 
-    srvSendTo(buf, sizeof(buf), &dest);
+    srvSendToNoSource(buf, sizeof(buf), &dest);
 }
 
 void transportUdpServerDrainPunchQueue(void) {
@@ -124,7 +124,7 @@ void transportUdpServerDrainPunchQueue(void) {
          * arrival; its only purpose is to open our outbound NAT
          * mapping toward the joiner. */
         sentinel = 'P';
-        srvSendTo(&sentinel, 1, &e->addr);
+        srvSendToNoSource(&sentinel, 1, &e->addr);
         e->packetsRemaining--;
         e->ticksUntilNext = PUNCH_BURST_INTERVAL;
     }

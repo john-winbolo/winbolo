@@ -4745,6 +4745,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Joins over ::1, an IPv4 and an IPv6 client in one game, and a join on the
     # IPv4 fallback socket.
     tests/unit/test_loopback_v6.c
+    # The server's replies leave from the address each datagram arrived on.
+    tests/unit/test_reply_source.c
     # The same tick from the client's side: a burst of best-effort effect
     # events and a voice frame have to be applied at a real client, and a
     # quitting player's ownership burst has to reach the peer.
@@ -6691,6 +6693,11 @@ set(_unit_test_names
     loopback_v6_join_download_disconnect
     loopback_mixed_family_one_server
     loopback_ipv4_fallback_socket
+    reply_source_recv_reports_local_v6
+    reply_source_recv_reports_local_v4_mapped
+    reply_source_send_from_local
+    reply_source_ipv4_socket
+    reply_source_slot_stores_local
     best_effort_not_dropped
     effect_burst_not_starved_by_reliable
     post_game_segment_applied

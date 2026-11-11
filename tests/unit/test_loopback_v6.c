@@ -26,7 +26,7 @@
  *
  * The two IPv6 cases need an IPv6 loopback. When creating an AF_INET6 socket
  * or binding ::1 fails, or the game's socket factory falls back to AF_INET,
- * they log that and pass as skipped (lv6Ipv6LoopbackUsable).
+ * they log that and pass as skipped (loopbackIpv6Usable).
  */
 
 #include <stdint.h>
@@ -44,8 +44,7 @@
 #include "game_sim.h"
 #include "players.h"                        /* playersIsInUse */
 #include "transport_udp.h"                  /* transportUdpServerGetClientAddrStr */
-#include "transport_udp_internal.h"         /* createUdpSocket,
-                                             * udpTestForceIPv4Socket */
+#include "transport_udp_internal.h"         /* udpTestForceIPv4Socket */
 #include "transport_udp_server_internal.h"  /* udpServer.sockFamily */
 #include "test_harness.h"
 #include "loopback_harness.h"
@@ -61,46 +60,6 @@
 #define LV6_LEAVE_MAX 600
 
 #define LV6_SEED 0x1F6u
-
-/* True when this machine can run the IPv6 cases: an AF_INET6 socket opens
- * and binds [::1]:0, and createUdpSocket gives a dual-stack socket rather
- * than the IPv4 fallback. Logs why when it cannot. */
-static bool lv6Ipv6LoopbackUsable(const char *caseName) {
-    BoloAddr loopback;
-    SOCKET s;
-    int family = 0;
-    bool ok;
-
-    bolo_net_init();
-    if (!boloAddrParse("::1", 0, &loopback)) {
-        SDL_Log("  %s: skipped — \"::1\" does not parse here", caseName);
-        return false;
-    }
-    s = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
-    if (s == INVALID_SOCKET) {
-        SDL_Log("  %s: skipped — no AF_INET6 socket on this machine", caseName);
-        return false;
-    }
-    ok = bind(s, (const struct sockaddr *)&loopback.ss, loopback.len) == 0;
-    closesocket(s);
-    if (!ok) {
-        SDL_Log("  %s: skipped — [::1] cannot be bound on this machine",
-                caseName);
-        return false;
-    }
-    s = createUdpSocket(false, &family);
-    if (s == INVALID_SOCKET) {
-        SDL_Log("  %s: skipped — createUdpSocket failed", caseName);
-        return false;
-    }
-    closesocket(s);
-    if (family != AF_INET6) {
-        SDL_Log("  %s: skipped — the game's socket is the IPv4 fallback here",
-                caseName);
-        return false;
-    }
-    return true;
-}
 
 static bool lv6Connected(LoopbackHarness *h, void *user) {
     (void)user;
@@ -157,7 +116,7 @@ int run_loopback_v6_join_download_disconnect(void) {
     BYTE slot;
     int at;
 
-    if (!lv6Ipv6LoopbackUsable("loopback_v6_join_download_disconnect")) {
+    if (!loopbackIpv6Usable("loopback_v6_join_download_disconnect")) {
         return 0;
     }
 
@@ -231,7 +190,7 @@ int run_loopback_mixed_family_one_server(void) {
     BYTE slot1, slot2;
     int at;
 
-    if (!lv6Ipv6LoopbackUsable("loopback_mixed_family_one_server")) {
+    if (!loopbackIpv6Usable("loopback_mixed_family_one_server")) {
         return 0;
     }
 

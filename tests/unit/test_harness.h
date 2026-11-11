@@ -2628,6 +2628,18 @@ int run_send_cap_join_download_play(void);
 int run_loopback_v6_join_download_disconnect(void);
 int run_loopback_mixed_family_one_server(void);
 int run_loopback_ipv4_fallback_socket(void);
+/* Replies leave from the address the datagram arrived on
+ * (test_reply_source.c): the server socket reports the local address of an
+ * IPv6 and of an IPv4 datagram on the dual-stack socket and on the IPv4
+ * fallback socket, a reply naming that address arrives from the address the
+ * peer dialled, and a joined slot stores the loopback address of the family
+ * its client dialled. The IPv6 cases pass as skipped on a machine with no
+ * IPv6 loopback. */
+int run_reply_source_recv_reports_local_v6(void);
+int run_reply_source_recv_reports_local_v4_mapped(void);
+int run_reply_source_send_from_local(void);
+int run_reply_source_ipv4_socket(void);
+int run_reply_source_slot_stores_local(void);
 /* A burst of best-effort traffic survives the tick it was raised on
  * (test_best_effort_burst.c): effect events and a voice frame queued on one
  * tick, with the snapshot trailer already filled by reliable traffic, all reach

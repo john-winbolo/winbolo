@@ -247,6 +247,12 @@ bool loopbackHarnessTriggerGameStart(LoopbackHarness *h);
 int loopbackRecvFromServer(SOCKET s, uint8_t *buf, int cap,
                            const BoloAddr *server);
 
+/* True when this machine can run a case that needs an IPv6 loopback: an
+ * AF_INET6 socket opens and binds [::1]:0, and createUdpSocket gives a
+ * dual-stack socket rather than the IPv4 fallback. When it cannot, logs why
+ * under caseName and returns false, and the caller passes as skipped. */
+bool loopbackIpv6Usable(const char *caseName);
+
 /* Tear down client, server (stops the recv thread), sim and threads, clear
  * the WB_NETIMPAIR environment override, and put the impairment layer back on
  * the wall clock so one test's virtual clock cannot leak into the next. Safe

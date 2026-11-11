@@ -1133,6 +1133,7 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.clients[slot].connId = serverNextConnId();
     udpServer.clients[slot].nameStickySuffix = false;
     udpServer.clients[slot].addr = *fromAddr;
+    srvRxLocalAddrFor(fromAddr, &udpServer.clients[slot].localAddr);
     udpServer.clients[slot].playerNum = (uint8_t)slot;
     snprintf(udpServer.clients[slot].playerName,
              PACKET_MAX_PLAYER_NAME, "%s", name);

@@ -94,6 +94,9 @@ typedef struct {
     uint8_t data[UDP_MAX_PAYLOAD];
     int     len;
     BoloAddr fromAddr;
+    /* The server address the datagram was sent to, from udpRecvFromLocal;
+     * empty when the socket did not report one. */
+    BoloAddr localAddr;
 } RecvQueueEntry;
 
 /* Map transfer flavor armed on a slot's bulk channel. */
@@ -157,6 +160,9 @@ typedef struct {
  * map-event queue / upload receiver / subscriber handle. */
 typedef struct {
     BoloAddr addr;
+    /* The server address this viewer's join was sent to, which every send
+     * to it names as the source (see UdpServerClient.localAddr). */
+    BoloAddr localAddr;
     bool     connected;
     uint64_t connId;
     char     playerName[PACKET_MAX_PLAYER_NAME];
@@ -246,6 +252,14 @@ typedef struct UdpServerState {
      * (mDNS, the tracker, WBN) must use this and not the request. */
     unsigned short boundPort;
     bool running;
+    /* The source and the local address of the datagram being handled, set
+     * by the receive dispatch just before serverProcessPacket runs and
+     * cleared as it returns; both empty at any other time. srvSendTo answers
+     * a datagram from rxLocalAddr, which covers peers with no slot yet (the
+     * join challenge, a join reject, the info reply). rxLocalAddr is empty
+     * when the socket reported no local address. */
+    BoloAddr rxFromAddr;
+    BoloAddr rxLocalAddr;
     UdpServerClient clients[MAX_TANKS];
     SpectatorConn   spectators[MAX_SPECTATORS];
     uint32_t tickCount;
@@ -491,6 +505,26 @@ void serverProcessPacket(struct ServerSim *sim, uint8_t *buf, int len,
  * src/server/transport_udp_server.c, which holds the impairment state it
  * reads. */
 void srvSendTo(const uint8_t *buf, int len, const BoloAddr *addr);
+
+/* srvSendTo with no source address and no table lookup, for the tracker
+ * sends and the punch bursts in src/server/udp/udp_server_tracker.c: they run
+ * outside the server mutex and are never to a peer with a slot. Owned by
+ * src/server/transport_udp_server.c. */
+void srvSendToNoSource(const uint8_t *buf, int len, const BoloAddr *addr);
+
+/* Puts one datagram on the wire now, past the impairment layer, from the
+ * source srvSendTo's rules choose: the local address of the datagram being
+ * handled when addr is its source, else the stored local address of the
+ * connected client or spectator at addr, else none (the system picks). The
+ * outbound impairment drain sends its delayed datagrams through here. Owned
+ * by src/server/transport_udp_server.c. */
+void srvSendToWire(const uint8_t *buf, int len, const BoloAddr *addr);
+
+/* Writes the local address of the datagram being handled into *out when
+ * from is that datagram's source, and clears *out otherwise. The join, the
+ * spectator accept and the re-home store a slot's localAddr through it.
+ * Owned by src/server/transport_udp_server.c. */
+void srvRxLocalAddrFor(const BoloAddr *from, BoloAddr *out);
 
 /* The server transport's clock: SDL_GetTicks, or in the test build of the
  * library the clock a caller set with transportUdpServerSetClock. The ping

@@ -241,8 +241,32 @@ void udpSendTo(SOCKET sock, int sockFamily, const uint8_t *buf, int len,
  * or -1 when none is waiting or the source is neither IPv4 nor IPv6. */
 int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen, BoloAddr *fromAddr);
 
+/* Asks the socket to report the destination address of each datagram it
+ * receives, for udpRecvFromLocal: IPV6_RECVPKTINFO on an AF_INET6 socket
+ * (plus IP_PKTINFO for its IPv4 peers on Linux and Windows), IP_PKTINFO or
+ * IP_RECVDSTADDR on an AF_INET socket. A platform that refuses is logged
+ * once as a warning and the socket works as before, with no local address
+ * reported. On Windows this also fetches WSARecvMsg. No-op on Emscripten.
+ * Only the server socket calls it. */
+void udpEnableRecvLocalAddr(SOCKET sock, int sockFamily);
+/* udpRecvFrom, and also writes the address the datagram was sent to into
+ * *localAddr: port 0, in the socket's family (an IPv4 datagram on a
+ * dual-stack socket gives a mapped address), with the arrival interface as
+ * the scope id of a link-local address. *localAddr is empty when the socket
+ * reported none, or reported a multicast or broadcast address. */
+int udpRecvFromLocal(SOCKET sock, uint8_t *buf, int maxLen, BoloAddr *fromAddr,
+                     BoloAddr *localAddr);
+/* udpSendTo naming localAddr as the source of the datagram, so a reply goes
+ * out from the address the peer sent to. NULL, empty or an unspecified
+ * localAddr is exactly udpSendTo. A send with the source that fails for any
+ * reason but a full socket buffer is sent again without it, and the first
+ * such failure in the process is logged as a warning. */
+void udpSendToFrom(SOCKET sock, int sockFamily, const uint8_t *buf, int len,
+                   const BoloAddr *addr, const BoloAddr *localAddr);
+
 #if WB_ENABLE_NETIMPAIR
-/* The largest length any caller has handed udpSendTo since the last reset,
+/* The largest length any caller has handed udpSendTo or udpSendToFrom since
+ * the last reset,
  * client and server alike, so a test can check that nothing it drove put a
  * datagram over UDP_MAX_SEND on the wire. Test builds only. */
 int  udpTestLargestSend(void);

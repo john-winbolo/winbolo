@@ -91,6 +91,15 @@ uint32_t transportUdpServerTestLastReceivedTick(int slot) {
     return udpServer.clients[slot].lastReceivedTick;
 }
 
+bool transportUdpServerTestClientLocalAddr(int slot, BoloAddr *out) {
+    if (out == NULL) return false;
+    boloAddrClear(out);
+    if (slot < 0 || slot >= MAX_TANKS) return false;
+    if (!udpServer.clients[slot].connected) return false;
+    *out = udpServer.clients[slot].localAddr;
+    return true;
+}
+
 const uint8_t *transportUdpServerGetSpectatorSeed(int s, uint32_t *outLen,
                                                   uint8_t *outKind) {
     SpectatorConn *sp;

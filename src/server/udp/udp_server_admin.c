@@ -256,6 +256,7 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
          * broadcast a no-op for this slot; the other slots still see
          * "X has left." normally. */
         udpServer.clients[idx].connected = false;
+        boloAddrClear(&udpServer.clients[idx].localAddr);
         if (serverSimAnnounce(sim, ANNOUNCE_KIND_LEFT, (BYTE)idx, (BYTE)idx)) {
             serverSendServerEnglishBroadcast(sim, chatMsg);
         }

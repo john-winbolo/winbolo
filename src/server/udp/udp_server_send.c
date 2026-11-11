@@ -94,6 +94,10 @@ void serverHandleInput(const uint8_t *buf, int len,
                 "slot %d NAT rebind: %s -> %s (connId match, re-homing)",
                 clientIdx, oldAddr, newAddr);
             udpServer.clients[clientIdx].addr = *fromAddr;
+            /* The rebound client may be reaching a different server
+             * address too; answer from the one this INPUT came in on. */
+            srvRxLocalAddrFor(fromAddr,
+                              &udpServer.clients[clientIdx].localAddr);
         }
     } else {
         clientIdx = serverFindClient(fromAddr);

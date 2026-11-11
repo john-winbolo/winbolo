@@ -23,6 +23,7 @@
 #include "client_sim_internal.h"  /* ClientSim::transport */
 #include "threads.h"
 #include "transport_udp.h"  /* transportUdpServerRecvQueuePending, GetBoundPort */
+#include "transport_udp_internal.h"  /* createUdpSocket — loopbackIpv6Usable */
 
 #include "loopback_harness.h"
 
@@ -601,6 +602,43 @@ int loopbackRecvFromServer(SOCKET s, uint8_t *buf, int cap,
          * buffer, and going round again is what makes that a drop rather
          * than a short return that would strand the rest of the queue. */
     }
+}
+
+bool loopbackIpv6Usable(const char *caseName) {
+    BoloAddr loopback;
+    SOCKET s;
+    int family = 0;
+    bool ok;
+
+    bolo_net_init();
+    if (!boloAddrParse("::1", 0, &loopback)) {
+        SDL_Log("  %s: skipped — \"::1\" does not parse here", caseName);
+        return false;
+    }
+    s = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == INVALID_SOCKET) {
+        SDL_Log("  %s: skipped — no AF_INET6 socket on this machine", caseName);
+        return false;
+    }
+    ok = bind(s, (const struct sockaddr *)&loopback.ss, loopback.len) == 0;
+    closesocket(s);
+    if (!ok) {
+        SDL_Log("  %s: skipped — [::1] cannot be bound on this machine",
+                caseName);
+        return false;
+    }
+    s = createUdpSocket(false, &family);
+    if (s == INVALID_SOCKET) {
+        SDL_Log("  %s: skipped — createUdpSocket failed", caseName);
+        return false;
+    }
+    closesocket(s);
+    if (family != AF_INET6) {
+        SDL_Log("  %s: skipped — the game's socket is the IPv4 fallback here",
+                caseName);
+        return false;
+    }
+    return true;
 }
 
 void loopbackHarnessStop(LoopbackHarness *h) {

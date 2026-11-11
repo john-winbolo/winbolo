@@ -20,9 +20,11 @@
 
 #include <stdio.h>                         /* fprintf, stderr — queue-full warning */
 
-#include "transport_udp_internal.h"        /* UDP_MAX_PAYLOAD, udpRecvFrom, udpSendTo, SDL3 */
+#include "transport_udp_internal.h"        /* UDP_MAX_PAYLOAD, udpRecvFrom,
+                                            * udpRecvFromLocal, SDL3 */
 #include "transport_udp_server_internal.h" /* udpServer, RecvQueueEntry, RECV_QUEUE_SIZE,
-                                            * serverProcessPacket, LOBBY_REQ_COOLDOWN_TICKS */
+                                            * serverProcessPacket, srvSendToWire,
+                                            * LOBBY_REQ_COOLDOWN_TICKS */
 #include "server_sim.h"                    /* ServerSim */
 #include "net_impair.h"                    /* NetImpair, netImpairPop, NET_IMPAIR_MAX_PACKET,
                                             * WB_ENABLE_NETIMPAIR */
@@ -95,10 +97,11 @@ static int SDLCALL serverRecvThreadFunc(void *userdata) {
 
             {
                 RecvQueueEntry *entry = &recvQueue[head];
-                /* udpRecvFrom reads the source into a sockaddr_storage and
-                 * converts it; a source of another family reads as -1. */
-                int ret = udpRecvFrom(sock, entry->data, UDP_MAX_PAYLOAD,
-                                      &entry->fromAddr);
+                /* udpRecvFromLocal reads the source into a sockaddr_storage
+                 * and converts it; a source of another family reads as -1.
+                 * It also records the address the datagram was sent to. */
+                int ret = udpRecvFromLocal(sock, entry->data, UDP_MAX_PAYLOAD,
+                                           &entry->fromAddr, &entry->localAddr);
                 if (ret <= 0) break; /* No more data or error */
                 entry->len = ret;
                 SDL_SetAtomicInt(&recvQueueHead, next);
@@ -198,11 +201,33 @@ static void udpServerTickPerClientCooldowns(void) {
     }
 }
 
+/* Handle one datagram with its source and local address recorded in
+ * udpServer for the length of serverProcessPacket, so srvSendTo can answer
+ * from the address it arrived on. serverProcessPacket returns on every path,
+ * so the clear after it runs on every path too. localAddr NULL means none
+ * was reported. Both receive paths below hand every datagram through here,
+ * from serverInstanceTick with the server mutex held, so one datagram is
+ * handled at a time. */
+static void srvHandleDatagram(ServerSim *sim, uint8_t *buf, int len,
+                              BoloAddr *fromAddr, const BoloAddr *localAddr) {
+    udpServer.rxFromAddr = *fromAddr;
+    if (localAddr != NULL) {
+        udpServer.rxLocalAddr = *localAddr;
+    } else {
+        boloAddrClear(&udpServer.rxLocalAddr);
+    }
+    serverProcessPacket(sim, buf, len, fromAddr);
+    boloAddrClear(&udpServer.rxFromAddr);
+    boloAddrClear(&udpServer.rxLocalAddr);
+}
+
 /* Release any datagrams now due from the impairment queues: inbound
  * packets back into serverProcessPacket, outbound packets onto the wire.
  * Both pops are no-ops while their layer is disabled (nothing queued), so
  * the disabled path is byte-for-byte the direct path.  Called from the
- * per-tick recv/drain entry points only — never the recv thread. */
+ * per-tick recv/drain entry points only — never the recv thread. The
+ * inbound queue keeps no local address, so a delayed datagram is handled
+ * with none. */
 static void srvDrainImpair(ServerSim *sim) {
     uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
     BoloAddr paddr;
@@ -211,14 +236,11 @@ static void srvDrainImpair(ServerSim *sim) {
 
     while ((plen = netImpairPop(&srvImpairIn, pbuf, sizeof(pbuf),
                                 &paddr, now)) > 0) {
-        serverProcessPacket(sim, pbuf, plen, &paddr);
+        srvHandleDatagram(sim, pbuf, plen, &paddr, NULL);
     }
     while ((plen = netImpairPop(&srvImpairOut, pbuf, sizeof(pbuf),
                                 &paddr, now)) > 0) {
-        udpSendTo(udpServer.sock, udpServer.sockFamily, pbuf, plen, &paddr);
-#if WB_ENABLE_NETIMPAIR
-        udpServer.wireSent++;
-#endif
+        srvSendToWire(pbuf, plen, &paddr);
     }
 
 #if WB_ENABLE_NETIMPAIR
@@ -244,6 +266,7 @@ static void srvDrainImpair(ServerSim *sim) {
 void transportUdpServerRecv(ServerSim *sim) {
     uint8_t buf[UDP_MAX_PAYLOAD];
     BoloAddr fromAddr;
+    BoloAddr localAddr;
     int len;
     int c;
 
@@ -257,12 +280,13 @@ void transportUdpServerRecv(ServerSim *sim) {
 
     udpServer.tickCount++;
 
-    while ((len = udpRecvFrom(udpServer.sock, buf, sizeof(buf), &fromAddr)) > 0) {
+    while ((len = udpRecvFromLocal(udpServer.sock, buf, sizeof(buf), &fromAddr,
+                                   &localAddr)) > 0) {
         if (netImpairEnabled(&srvImpairIn)) {
             netImpairOffer(&srvImpairIn, buf, len, &fromAddr,
                            srvNow());
         } else {
-            serverProcessPacket(sim, buf, len, &fromAddr);
+            srvHandleDatagram(sim, buf, len, &fromAddr, &localAddr);
         }
     }
     srvDrainImpair(sim);
@@ -292,7 +316,8 @@ void transportUdpServerDrainRecvQueue(ServerSim *sim) {
             netImpairOffer(&srvImpairIn, entry->data, entry->len,
                            &entry->fromAddr, srvNow());
         } else {
-            serverProcessPacket(sim, entry->data, entry->len, &entry->fromAddr);
+            srvHandleDatagram(sim, entry->data, entry->len, &entry->fromAddr,
+                              &entry->localAddr);
         }
         tail = (tail + 1) % RECV_QUEUE_SIZE;
         SDL_SetAtomicInt(&recvQueueTail, tail);

@@ -92,12 +92,74 @@
  * declaration lives in transport_udp_server_internal.h. */
 UdpServerState udpServer;
 
+/* The source address a datagram to addr goes out from, or NULL to let the
+ * system pick:
+ *   1. a reply to the datagram being handled goes out from the address that
+ *      datagram was sent to, which covers a peer that has no slot yet;
+ *   2. otherwise a connected client's or spectator's stored local address;
+ *   3. otherwise none: the tracker, punch bursts and anything to an address
+ *      the server has not heard from.
+ * Rule 1 is skipped when the datagram came with no local address, so a
+ * slot's stored one still applies. Both find functions only read the
+ * tables. */
+static const BoloAddr *srvReplySource(const BoloAddr *addr) {
+    int i;
+    if (addr == NULL) {
+        return NULL;
+    }
+    if (boloAddrFamily(&udpServer.rxLocalAddr) != 0 &&
+        boloAddrEqual(addr, &udpServer.rxFromAddr)) {
+        return &udpServer.rxLocalAddr;
+    }
+    i = serverFindClient(addr);
+    if (i >= 0) {
+        return &udpServer.clients[i].localAddr;
+    }
+    i = serverFindSpectator(addr);
+    if (i >= 0) {
+        return &udpServer.spectators[i].localAddr;
+    }
+    return NULL;
+}
+
+void srvRxLocalAddrFor(const BoloAddr *from, BoloAddr *out) {
+    if (out == NULL) {
+        return;
+    }
+    if (from != NULL && boloAddrFamily(&udpServer.rxFromAddr) != 0 &&
+        boloAddrEqual(from, &udpServer.rxFromAddr)) {
+        *out = udpServer.rxLocalAddr;
+    } else {
+        boloAddrClear(out);
+    }
+}
+
+void srvSendToWire(const uint8_t *buf, int len, const BoloAddr *addr) {
+    udpSendToFrom(udpServer.sock, udpServer.sockFamily, buf, len, addr,
+                  srvReplySource(addr));
+#if WB_ENABLE_NETIMPAIR
+    udpServer.wireSent++;
+#endif
+}
+
 /* Outbound datagram wrapper.  Every server->peer send routes through here
  * so the outbound impairment layer can delay/drop/reorder it.  When
  * impairment is disabled (or the datagram is too large for the queue),
- * the packet goes straight onto the wire — behaviourally identical to a
- * direct udpSendTo. */
+ * the packet goes straight onto the wire through srvSendToWire. */
 void srvSendTo(const uint8_t *buf, int len, const BoloAddr *addr) {
+    if (netImpairEnabled(&srvImpairOut) &&
+        netImpairOffer(&srvImpairOut, buf, len, addr, srvNow())) {
+        return;
+    }
+    srvSendToWire(buf, len, addr);
+}
+
+/* srvSendTo for the tracker sends and the punch bursts. They run on the tick
+ * outside the server mutex and never go to a peer that holds a slot, so they
+ * skip the source lookup srvSendTo makes: it reads the client and spectator
+ * tables, which another thread may change under the mutex. The system picks
+ * the source. They still pass through the outbound impairment layer. */
+void srvSendToNoSource(const uint8_t *buf, int len, const BoloAddr *addr) {
     if (netImpairEnabled(&srvImpairOut) &&
         netImpairOffer(&srvImpairOut, buf, len, addr, srvNow())) {
         return;
@@ -162,6 +224,9 @@ bool transportUdpServerCreate(unsigned short port,
     if (udpServer.sock == INVALID_SOCKET) {
         return false;
     }
+    /* Before bind, so no datagram can arrive without its destination
+     * address. Every reply then names that address as its source. */
+    udpEnableRecvLocalAddr(udpServer.sock, udpServer.sockFamily);
 
     /* The any address of the socket's family, or the configured bind address
      * converted to it. An address that does not parse, or an IPv6 address

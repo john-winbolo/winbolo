@@ -537,6 +537,13 @@ void transportUdpClientClearScriptFetch(Transport *t);
 /* Per-client connection info tracked by the server */
 typedef struct UdpServerClient {
     BoloAddr addr;
+    BoloAddr localAddr;          /* The server address this client's join was
+                                  * sent to (port 0), updated with addr on a
+                                  * re-home. Every send to the client names it
+                                  * as the source, so a host with several
+                                  * addresses answers from the one the client
+                                  * dialled. Empty when the socket reported
+                                  * none; the system then picks. */
     bool connected;
     uint64_t connId;             /* Random per-session id the client echoes on
                                   * its INPUT packets. Lets the slot survive a
@@ -992,6 +999,10 @@ bool transportUdpServerTestPendingRemove(int slot);
  * window to tell which inbound packets refresh it. 0 for an out-of-range or
  * unconnected slot, so a dropped slot is distinguishable from a stale one. */
 uint32_t transportUdpServerTestLastReceivedTick(int slot);
+/* Read the server address a connected slot's sends go out from (its stored
+ * localAddr). False, with *out cleared, for an out-of-range or unconnected
+ * slot. */
+bool transportUdpServerTestClientLocalAddr(int slot, BoloAddr *out);
 /* Read a slot's server-side join-download-complete flag. The client reports
  * CONNECTED once it has the full map, but the server only flips this once the
  * download's bytes are acked back on CHANNEL_BULK — a round-trip later. A test

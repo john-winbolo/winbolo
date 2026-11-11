@@ -552,6 +552,7 @@ void serverAcceptSpectator(ServerSim *sim,
 
     udpServer.spectators[s].connected        = true;
     udpServer.spectators[s].addr             = *fromAddr;
+    srvRxLocalAddrFor(fromAddr, &udpServer.spectators[s].localAddr);
     udpServer.spectators[s].connId           = serverNextConnId();
     snprintf(udpServer.spectators[s].playerName,
              PACKET_MAX_PLAYER_NAME, "%s", name);
@@ -673,6 +674,7 @@ void serverDisconnectSpectator(ServerSim *sim, int s, bool graceful) {
     }
     udpServer.spectators[s].live = false;
     udpServer.spectators[s].connected = false;
+    boloAddrClear(&udpServer.spectators[s].localAddr);
     channelMuxInit(&udpServer.spectators[s].channelMux);   /* reset in place */
     bulkSenderInit(&udpServer.spectators[s].bulkSend);
     if (udpServer.spectators[s].seedBlob != NULL) {
