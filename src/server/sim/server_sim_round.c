@@ -46,6 +46,7 @@
 #include "../../common/wb_log.h"    /* WB_LOG_INFO — the lobby-reset trace */
 #include "log.h"                    /* logAddEvent, logIsRecording — the overrun record */
 #include "overrun_record.h"         /* OverrunRecord — that record's payload */
+#include "bolo_addr.h"              /* BOLO_ADDR_STR_LEN — the client address text */
 
 /* The picks whose file is in the session directory, taken off the list with
  * the rest closing up behind them in order, and then the directory emptied.
@@ -445,7 +446,7 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                 /* Remote players carry their source ip:port; the in-process
                  * host has no UDP client, so the getter reports false and we
                  * print "local" instead. */
-                char addr[48];  /* "255.255.255.255:65535" + slack */
+                char addr[BOLO_ADDR_STR_LEN];  /* the client's "ip:port" text */
                 const char *addrStr =
                     transportUdpServerGetClientAddrStr(count, addr, sizeof(addr))
                         ? addr : "local";

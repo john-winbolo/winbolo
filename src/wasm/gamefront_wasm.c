@@ -52,6 +52,7 @@
 #include "../winbolonet/winbolonet_core.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/dialogs/imgui_mapchooser.h"
+#include "../gui/sdl3/dialogs/server_address_parse.h"  /* parseServerAddressPaste */
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../gui/sdl3/input_gamepad.h"
 #include "../gui/sdl3/build_cursor.h"
@@ -130,17 +131,15 @@ static void parseProxyServerParam(const char *proxyUrl,
   }
   tmp[i] = '\0';
 
-  /* Split on the LAST ':' (handles IPv6-style if needed) */
-  char *colon = strrchr(tmp, ':');
-  if (colon && colon != tmp) {
-    *colon = '\0';
-    strncpy(serverHost, tmp, (size_t)hostSize - 1);
-    serverHost[hostSize - 1] = '\0';
-    *serverPort = (unsigned short)atoi(colon + 1);
-  } else {
-    strncpy(serverHost, tmp, (size_t)hostSize - 1);
-    serverHost[hostSize - 1] = '\0';
-    *serverPort = 27500;
+  /* Split "host:port", "[ipv6]:port", "[ipv6]" or a bare IPv6 address the
+   * same way the join dialog does; no port means 27500. */
+  char portText[16];
+  serverHost[0] = '\0';
+  *serverPort = 27500;
+  if (parseServerAddressPaste(tmp, serverHost, (size_t)hostSize,
+                              portText, sizeof(portText)) &&
+      portText[0] != '\0') {
+    *serverPort = (unsigned short)atoi(portText);
   }
 }
 

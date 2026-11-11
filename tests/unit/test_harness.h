@@ -3148,6 +3148,26 @@ int run_addrparse_whitespace(void);
 int run_addrparse_port_bounds(void);
 int run_addrparse_bad_port(void);
 int run_addrparse_empty(void);
+int run_addrparse_bracketed(void);
+int run_addrparse_bare_ipv6(void);
+int run_addrparse_ipv6_scope(void);
+int run_addrparse_ipv6_scheme(void);
+int run_addrparse_format_host_port(void);
+
+/* The IPv4/IPv6 address type and resolver in bolo_addr.h
+ * (test_bolo_addr.c). */
+int run_boloaddr_roundtrip_v4(void);
+int run_boloaddr_roundtrip_v6(void);
+int run_boloaddr_link_local_scope(void);
+int run_boloaddr_mapped_key_equal(void);
+int run_boloaddr_scope_in_key(void);
+int run_boloaddr_prefix_key(void);
+int run_boloaddr_port_zero(void);
+int run_boloaddr_parse_rejects(void);
+int run_boloaddr_no_mapped_text(void);
+int run_boloaddr_classify(void);
+int run_boloaddr_from_sockaddr(void);
+int run_boloaddr_resolve_literals(void);
 
 /* The map chooser's "Scenarios only" row test
  * (test_map_chooser_scenario_filter.c). */

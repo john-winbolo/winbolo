@@ -4994,6 +4994,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/sdl3/input_source.c
     tests/unit/test_key_claims.c
     tests/unit/test_server_address_parse.c
+    # The IPv4/IPv6 address type and resolver in bolo_addr.h, header-only.
+    tests/unit/test_bolo_addr.c
     # The map chooser's "Scenarios only" row test, header-only.
     tests/unit/test_map_chooser_scenario_filter.c
     # The background game's map name test (tutorials never picked), header-only.
@@ -6903,6 +6905,23 @@ set(_unit_test_names
     addrparse_port_bounds
     addrparse_bad_port
     addrparse_empty
+    addrparse_bracketed
+    addrparse_bare_ipv6
+    addrparse_ipv6_scope
+    addrparse_ipv6_scheme
+    addrparse_format_host_port
+    boloaddr_roundtrip_v4
+    boloaddr_roundtrip_v6
+    boloaddr_link_local_scope
+    boloaddr_mapped_key_equal
+    boloaddr_scope_in_key
+    boloaddr_prefix_key
+    boloaddr_port_zero
+    boloaddr_parse_rejects
+    boloaddr_no_mapped_text
+    boloaddr_classify
+    boloaddr_from_sockaddr
+    boloaddr_resolve_literals
     mapchooser_scenario_filter
     bg_map_pick_skips_tutorials
     tutorial_maps_shipped_path

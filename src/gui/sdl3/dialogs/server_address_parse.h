@@ -49,12 +49,34 @@ static inline void wbAddrCopyBounded(char *dst, size_t dstSz, const char *src) {
     dst[i] = '\0';
 }
 
+/* True when s is non-empty, all decimal digits, and its value is in
+ * 1..65535. */
+static inline int wbAddrIsValidPort(const char *s) {
+    if (s[0] == '\0') {
+        return 0;
+    }
+    for (const char *q = s; *q; q++) {
+        if (*q < '0' || *q > '9') {
+            return 0;
+        }
+    }
+    unsigned long val = strtoul(s, NULL, 10);
+    return val >= 1 && val <= 65535;
+}
+
 /* Parses a pasted server address into host + optional decimal port string.
- * Accepts:  host  |  host:port  |  ip  |  ip:port  |  scheme://host[:port][/...]
- * (e.g. "winbolo://1.2.3.4:5000"). Leading scheme and any trailing /path or
- * surrounding whitespace are stripped. A trailing ":port" is only split off
- * when it is digits in the 1..65535 range — otherwise the input is kept
- * verbatim as the host. WinBolo is IPv4-only, so a lone ':' is unambiguous.
+ * Accepts:  host  |  host:port  |  ip  |  ip:port  |  [ipv6]  |  [ipv6]:port
+ *           |  ipv6  |  scheme://<any of these>[/...]
+ * (e.g. "winbolo://1.2.3.4:5000", "winbolo://[2001:db8::1]:27500"). Leading
+ * scheme and any trailing /path or surrounding whitespace are stripped.
+ * - A bracketed host is returned without its brackets. A ":port" after the
+ *   closing bracket is split off when it is a valid port; anything else after
+ *   the bracket is dropped and the port left empty.
+ * - Text with two or more ':' and no brackets is a bare IPv6 literal and is
+ *   kept whole as the host, with no port split from it.
+ * - Otherwise a single trailing ":port" is only split off when it is digits
+ *   in the 1..65535 range; else the input is kept verbatim as the host.
+ * An IPv6 %scope suffix (fe80::1%en0) stays part of the host.
  * Returns 1 and fills outHost (and outPort, empty if none) on success; 0 when
  * there is no usable host (or on a NULL argument), leaving outPort empty. */
 static inline int parseServerAddressPaste(const char *in,
@@ -94,21 +116,34 @@ static inline int parseServerAddressPaste(const char *in,
         return 0;
     }
 
-    /* Split a trailing ":port" only if it is a valid port number. */
-    char *colon = strrchr(work, ':');
-    if (colon && colon[1] != '\0') {
-        int digits = 1;
-        for (const char *q = colon + 1; *q; q++) {
-            if (*q < '0' || *q > '9') {
-                digits = 0;
-                break;
+    /* "[host]" or "[host]:port": the host is what lies inside the brackets. */
+    if (work[0] == '[') {
+        char *closeBracket = strchr(work, ']');
+        if (closeBracket) {
+            *closeBracket = '\0';
+            if (work[1] == '\0') {
+                return 0;
             }
+            if (closeBracket[1] == ':' && wbAddrIsValidPort(closeBracket + 2)) {
+                wbAddrCopyBounded(outPort, portSz, closeBracket + 2);
+            }
+            wbAddrCopyBounded(outHost, hostSz, work + 1);
+            return 1;
         }
-        unsigned long val = digits ? strtoul(colon + 1, NULL, 10) : 0;
-        if (digits && val >= 1 && val <= 65535) {
-            wbAddrCopyBounded(outPort, portSz, colon + 1);
-            *colon = '\0';
-        }
+    }
+
+    /* Two or more ':' without brackets is a bare IPv6 literal, which cannot
+     * carry a port: keep it whole. */
+    char *colon = strrchr(work, ':');
+    if (colon && colon != strchr(work, ':')) {
+        wbAddrCopyBounded(outHost, hostSz, work);
+        return 1;
+    }
+
+    /* Split a single trailing ":port" only if it is a valid port number. */
+    if (colon && wbAddrIsValidPort(colon + 1)) {
+        wbAddrCopyBounded(outPort, portSz, colon + 1);
+        *colon = '\0';
     }
     if (work[0] == '\0') {
         return 0;
@@ -116,6 +151,55 @@ static inline int parseServerAddressPaste(const char *in,
 
     wbAddrCopyBounded(outHost, hostSz, work);
     return 1;
+}
+
+/* Appends src to dst at *len, bounded by dstSz, keeping dst NUL-terminated. */
+static inline void wbAddrAppend(char *dst, size_t dstSz, size_t *len,
+                                const char *src) {
+    while (*src && *len + 1 < dstSz) {
+        dst[(*len)++] = *src++;
+    }
+    dst[*len] = '\0';
+}
+
+/* Writes the text form of a server address: "host:port", or "[host]:port"
+ * when host contains a ':' (an IPv6 literal). With port 0 only the host is
+ * written, still bracketed when it contains a ':'. Output is truncated to
+ * outSz and always NUL-terminated; no-op when outSz is 0. */
+static inline void formatServerAddressHostPort(const char *host, unsigned port,
+                                               char *out, size_t outSz) {
+    if (!out || outSz == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (!host) {
+        return;
+    }
+    size_t len = 0;
+    int bracket = strchr(host, ':') != NULL;
+    if (bracket) {
+        wbAddrAppend(out, outSz, &len, "[");
+    }
+    wbAddrAppend(out, outSz, &len, host);
+    if (bracket) {
+        wbAddrAppend(out, outSz, &len, "]");
+    }
+    if (port != 0) {
+        char digits[12];
+        char text[13];
+        int nd = 0;
+        unsigned v = port;
+        while (v != 0 && nd < (int)sizeof(digits)) {
+            digits[nd++] = (char)('0' + (v % 10));
+            v /= 10;
+        }
+        text[0] = ':';
+        for (int i = 0; i < nd; i++) {
+            text[1 + i] = digits[nd - 1 - i];
+        }
+        text[1 + nd] = '\0';
+        wbAddrAppend(out, outSz, &len, text);
+    }
 }
 
 #endif /* SERVER_ADDRESS_PARSE_H */

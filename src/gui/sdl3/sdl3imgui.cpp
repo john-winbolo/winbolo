@@ -128,6 +128,7 @@ extern "C" {
 #include "dialogs/imgui_controller_disconnect.h"
 #include "imgui_steam_nav.h"
 #include "dialogs/imgui_server_address.h"
+#include "dialogs/server_address_parse.h"  /* parseServerAddressPaste, formatServerAddressHostPort */
 #include "dialogs/dialog_footer.h"
 #include "dialogs/imgui_keysetup.h"
 #include "dialogs/imgui_settings.h"
@@ -2052,7 +2053,21 @@ static void renderNetInfoContent(ClientSim *cs) {
         clientSimGetPlayerLocation(cs, clientSimGetMyPlayerNum(cs), addr,
                                    sizeof(addr));
         netGetOurAddressStr(cs, str);
-        const char *portPart = strchr(str, ':');
+        /* The ":port" suffix: after the ']' of a bracketed IPv6 address,
+         * else from the only ':' of "host:port". A bare IPv6 address with
+         * several ':' and no brackets has no port to take. */
+        const char *portPart = NULL;
+        if (str[0] == '[') {
+            const char *closeBracket = strchr(str, ']');
+            if (closeBracket && closeBracket[1] == ':') {
+                portPart = closeBracket + 1;
+            }
+        } else {
+            const char *colon = strchr(str, ':');
+            if (colon && strchr(colon + 1, ':') == NULL) {
+                portPart = colon;
+            }
+        }
         if (portPart) {
             size_t addrLen = strlen(addr);
             strncat(addr, portPart, sizeof(addr) - addrLen - 1);
@@ -7022,10 +7037,12 @@ static void renderJoinConfirmModal(void) {
         if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted(langGetText(STR_DLGJOIN_BLURB));
         ImGui::Spacing();
-        if (s_joinConfirmPort > 0) {
-            ImGui::Text("%s:%d", s_joinConfirmAddr, s_joinConfirmPort);
-        } else {
-            ImGui::TextUnformatted(s_joinConfirmAddr);
+        {
+            char joinText[sizeof(s_joinConfirmAddr) + 8];
+            formatServerAddressHostPort(s_joinConfirmAddr,
+                                        s_joinConfirmPort > 0 ? (unsigned)s_joinConfirmPort : 0u,
+                                        joinText, sizeof(joinText));
+            ImGui::TextUnformatted(joinText);
         }
         int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
                                    langGetText(STR_DLGJOIN_BUTTON));
@@ -9844,19 +9861,24 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     /* In-game: show confirmation popup instead of switching immediately */
                     strncpy(s_joinConfirmUrl, url, sizeof(s_joinConfirmUrl) - 1);
                     s_joinConfirmUrl[sizeof(s_joinConfirmUrl) - 1] = '\0';
-                    /* Parse address and port for display */
-                    const char *hostStart = url + 10; /* skip "winbolo://" */
-                    const char *colon = strchr(hostStart, ':');
-                    if (colon) {
-                        size_t len = (size_t)(colon - hostStart);
-                        if (len >= sizeof(s_joinConfirmAddr)) len = sizeof(s_joinConfirmAddr) - 1;
-                        memcpy(s_joinConfirmAddr, hostStart, len);
-                        s_joinConfirmAddr[len] = '\0';
-                        s_joinConfirmPort = atoi(colon + 1);
-                    } else {
-                        strncpy(s_joinConfirmAddr, hostStart, sizeof(s_joinConfirmAddr) - 1);
-                        s_joinConfirmAddr[sizeof(s_joinConfirmAddr) - 1] = '\0';
-                        s_joinConfirmPort = 0;
+                    /* Parse address and port for display the way
+                       gameFrontSetAddressFromWebLink reads the link when Join
+                       is pressed: brackets taken off an IPv6 host, and the
+                       host cut at a single ':' the parser kept because the
+                       port after it was invalid. */
+                    char joinPort[16];
+                    s_joinConfirmAddr[0] = '\0';
+                    s_joinConfirmPort = 0;
+                    if (parseServerAddressPaste(url, s_joinConfirmAddr,
+                                                sizeof(s_joinConfirmAddr),
+                                                joinPort, sizeof(joinPort))) {
+                        char *colon = strchr(s_joinConfirmAddr, ':');
+                        if (colon != NULL && strchr(colon + 1, ':') == NULL) {
+                            *colon = '\0';
+                        }
+                        if (joinPort[0] != '\0') {
+                            s_joinConfirmPort = atoi(joinPort);
+                        }
                     }
                     s_showJoinConfirm = true;
                 } else {

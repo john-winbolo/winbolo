@@ -59,6 +59,7 @@
                               * channelBuildFrame, CHANNEL_MAP,
                               * channelChargeBestEffortLeftover */
 #include "bulk_transfer.h"   /* bulkSenderPump */
+#include "bolo_addr.h"       /* BOLO_ADDR_STR_LEN */
 #include "../../common/wb_log.h" /* WB_LOG_INFO, WB_LOG_WARN, WB_LOG_CAT_NET */
 
 /* Handle input packet from a connected client */
@@ -84,7 +85,7 @@ void serverHandleInput(const uint8_t *buf, int len,
                                                fromAddr, &rehome);
     if (clientIdx >= 0) {
         if (rehome) {
-            char oldAddr[32];
+            char oldAddr[BOLO_ADDR_STR_LEN];
             snprintf(oldAddr, sizeof(oldAddr), "%s:%u",
                      inet_ntoa(udpServer.clients[clientIdx].addr.sin_addr),
                      (unsigned)ntohs(udpServer.clients[clientIdx].addr.sin_port));

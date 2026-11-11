@@ -81,6 +81,7 @@
 #include "dialog_backend.h"
 #include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
+#include "dialogs/server_address_parse.h"  /* parseServerAddressPaste, formatServerAddressHostPort */
 #include "bg_game.h"
 #include "tutorial_maps.h"
 #include "client_frontend_common.h"  /* clientFrontTellScenarioPlayer */
@@ -3791,36 +3792,41 @@ void gameFrontSetRegistryKeys(void) {
   /* No-op on macOS/Linux/iOS — registration is handled by Info.plist / .desktop file */
 }
 
+/* Reads the host and port of a winbolo:// link into gameFrontUdpAddress and
+ * gameFrontTargetUdp. The link is "winbolo://host[:port][/...]" or, for an
+ * IPv6 address, "winbolo://[addr]:port"; a link with no valid port leaves
+ * gameFrontTargetUdp at 0. The link text is not modified. */
 void gameFrontSetAddressFromWebLink(char *address) {
-  char *tok;
-  char *ptr;
+  char host[sizeof(gameFrontUdpAddress)];
+  char port[16];
 
   gameFrontTargetUdp = 0;
-  ptr = address + strlen("winbolo://");
-  tok = strtok(ptr, ":");
-  if (tok != NULL) {
-    strcpy(gameFrontUdpAddress, tok);
-    tok = strtok(NULL, ":");
-    if (tok != NULL) {
-      gameFrontTargetUdp = atoi(tok);
+  if (parseServerAddressPaste(address, host, sizeof(host), port, sizeof(port))) {
+    /* A single ':' left in the host is an invalid port the parser kept (for
+     * example "host:0"); the host is the part before it, as it always was
+     * for these links. Two or more ':' is an IPv6 address and stays whole. */
+    char *colon = strchr(host, ':');
+    if (colon != NULL && strchr(colon + 1, ':') == NULL) {
+      *colon = '\0';
+    }
+    wbAddrCopyBounded(gameFrontUdpAddress, sizeof(gameFrontUdpAddress), host);
+    if (port[0] != '\0') {
+      gameFrontTargetUdp = (unsigned short)atoi(port);
     }
   }
 }
 
 void gameFrontHandleUrlOpen(char *url) {
   if (strncmp(url, "winbolo://", 10) == 0 && strcmp(url, "winbolo:///") != 0) {
-    /* Parse address/port from the url parameter (gameFrontSetAddressFromWebLink
-       uses strtok which modifies the string in place). Then store the original
-       URL in fileName so gameFrontStart() can pick it up on restart. */
+    /* Parse address/port from the url parameter, then store a link rebuilt
+       from the parsed globals in fileName so gameFrontStart() can pick it up
+       on restart. An IPv6 host is written back in brackets. */
+    char hostPort[256 + 8];
     gameFrontSetAddressFromWebLink(url);
     strncpy(fileName, "winbolo://", FILENAME_MAX - 1);
-    /* Reconstruct a clean URL from the parsed globals so fileName
-       is not mangled by strtok. */
-    if (gameFrontTargetUdp > 0) {
-      snprintf(fileName, FILENAME_MAX, "winbolo://%.255s:%d", gameFrontUdpAddress, gameFrontTargetUdp);
-    } else {
-      snprintf(fileName, FILENAME_MAX, "winbolo://%.255s", gameFrontUdpAddress);
-    }
+    formatServerAddressHostPort(gameFrontUdpAddress, gameFrontTargetUdp,
+                                hostPort, sizeof(hostPort));
+    snprintf(fileName, FILENAME_MAX, "winbolo://%s", hostPort);
     dlgState = openInternetManual;
   }
 }
