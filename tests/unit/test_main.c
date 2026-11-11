@@ -2634,6 +2634,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_compose_commit_map_fixed_operator_mod",  run_scenario_compose_commit_map_fixed_operator_mod  },
     { "scenario_compose_map_kind_cached",                run_scenario_compose_map_kind_cached                },
     { "scenario_compose_fallback_strict",                run_scenario_compose_fallback_strict                },
+    { "scenario_compose_mods_after_scenario_type",       run_scenario_compose_mods_after_scenario_type       },
     { "scenario_compose_needs_bots_any_mod",             run_scenario_compose_needs_bots_any_mod             },
     { "scenario_compose_needs_bots_scenario_and_mod",    run_scenario_compose_needs_bots_scenario_and_mod    },
     { "scenario_compose_on_tick_bottom_first",            run_scenario_compose_on_tick_bottom_first            },
