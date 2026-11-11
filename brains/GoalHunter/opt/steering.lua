@@ -205,7 +205,7 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
     if blocked then
     end
     -- Detail: full ordered sequence — accessible via D key click
-    if viz.detail_circle then
+    if viz.detail_live then
       local did = "shot_path"
       local hdr = string.format("Shot path: from=(%d,%d) to=(%d,%d) result=%s",
         origin_mx, origin_my, target_mx, target_my, blocked and "BLOCKED" or "CLEAR")
