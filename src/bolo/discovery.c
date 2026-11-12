@@ -163,6 +163,16 @@ bool discoveryReadScriptTail(const uint8_t *tail, size_t len, DiscoveryScripts *
   return true;
 }
 
+/* Writes the dotted-quad text of an IPv4 address into buf and returns buf.
+ * buf is the empty string if the conversion fails. The LAN broadcast search
+ * is IPv4 only, since IPv6 has no broadcast. */
+static const char *discoveryV4Text(struct in_addr a, char buf[INET_ADDRSTRLEN]) {
+  if (inet_ntop(AF_INET, &a, buf, INET_ADDRSTRLEN) == NULL) {
+    buf[0] = '\0';
+  }
+  return buf;
+}
+
 /* Translate an INFO_PACKET (wire format) into the public DiscoveryServer
  * POD. addr is the source address from recvfrom — used as a fallback
  * when the packet's gameid.serveraddress is unset. `len` is the number
@@ -187,11 +197,16 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
   out->password = (info->has_password != 0);
   out->mines = ((info->allow_mines & 0x80) != 0);
 
-  if (info->gameid.serveraddress.s_addr == 0) {
-    SDL_strlcpy(out->address, inet_ntoa(*addr), sizeof(out->address));
-  } else {
-    struct in_addr serverAddr = info->gameid.serveraddress;
-    SDL_strlcpy(out->address, inet_ntoa(serverAddr), sizeof(out->address));
+  {
+    char addrText[INET_ADDRSTRLEN];
+    if (info->gameid.serveraddress.s_addr == 0) {
+      SDL_strlcpy(out->address, discoveryV4Text(*addr, addrText),
+                  sizeof(out->address));
+    } else {
+      struct in_addr serverAddr = info->gameid.serveraddress;
+      SDL_strlcpy(out->address, discoveryV4Text(serverAddr, addrText),
+                  sizeof(out->address));
+    }
   }
   out->port = INFO_PACKET_GET16(info, gameid.serverport);
   out->versionMajor = info->h.versionMajor;
@@ -344,10 +359,12 @@ bool discoveryFindBroadcastGamesAsync(DiscoveryServerCallback callback, void *us
           long nFlags = InterfaceList[i].iiFlags;
           if ((nFlags & IFF_UP) && (nFlags & IFF_BROADCAST) && !(nFlags & IFF_LOOPBACK)) {
             struct sockaddr_in bcast;
+            char bcastText[INET_ADDRSTRLEN];
             memcpy(&bcast, &InterfaceList[i].iiBroadcastAddress, sizeof(bcast));
             bcast.sin_port = htons(LAN_BROADCAST_PORT);
             bcast.sin_family = AF_INET;
-            WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Sending broadcast to %s:%d", inet_ntoa(bcast.sin_addr), LAN_BROADCAST_PORT);
+            discoveryV4Text(bcast.sin_addr, bcastText);
+            WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Sending broadcast to %s:%d", bcastText, LAN_BROADCAST_PORT);
             ret = sendto(sock, buff, BOLOPACKET_REQUEST_SIZE, 0, (struct sockaddr *)&bcast, sizeof(bcast));
             WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: sendto returned %d (expected %d)", ret, BOLOPACKET_REQUEST_SIZE);
             if (ret == BOLOPACKET_REQUEST_SIZE)
@@ -413,8 +430,12 @@ bool discoveryFindBroadcastGamesAsync(DiscoveryServerCallback callback, void *us
         break;
       }
       if (len > 0) {
+        char lastText[INET_ADDRSTRLEN];
+        /* Converted outside the log macro, which compiles to nothing at
+         * higher log levels and would leave lastText unused. */
+        discoveryV4Text(last.sin_addr, lastText);
         WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Received %d bytes from %s:%u (expect %d for INFO_PACKET)",
-                len, inet_ntoa(last.sin_addr), ntohs(last.sin_port), (int)sizeof(INFO_PACKET));
+                len, lastText, ntohs(last.sin_port), (int)sizeof(INFO_PACKET));
       }
       if (len == (int)INFO_PACKET_LEGACY_SIZE ||
           len == (int)INFO_PACKET_PRE_VIEWS_SIZE ||

@@ -53,7 +53,7 @@ void mdnsAdvertiseSetMulticastHold(void (*hold)(bool on)) { (void)hold; }
 #include <string.h>
 #include <SDL3/SDL.h>
 
-#include "platform_net.h"   /* cross-platform sockets + inet_ntoa */
+#include "platform_net.h"   /* cross-platform sockets */
 #include "bolo_addr.h"      /* BoloAddr, boloAddrLocalForRoute */
 #ifndef _WIN32
 #include <errno.h>

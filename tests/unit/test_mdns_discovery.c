@@ -20,7 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "platform_net.h"     /* sockets / htons / inet_addr / bolo_net_init */
+#include "platform_net.h"     /* sockets / htons / bolo_net_init */
 #ifndef _WIN32
 #include <net/if.h>           /* if_nametoindex */
 #endif
@@ -49,7 +49,7 @@ static bolo_socket_t makeUdpSocket(unsigned short *outPort) {
 
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   addr.sin_port = 0;
   if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
     closesocket(s);
@@ -212,7 +212,7 @@ static int openLoopbackPair(bolo_socket_t *browser, bolo_socket_t *responder,
   }
   memset(browserAddr, 0, sizeof(*browserAddr));
   browserAddr->sin_family = AF_INET;
-  browserAddr->sin_addr.s_addr = inet_addr("127.0.0.1");
+  browserAddr->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   browserAddr->sin_port = htons(browserPort);
   return 0;
 }
@@ -412,7 +412,7 @@ int run_mdns_discovery(void) {
 
   memset(&browserAddr, 0, sizeof(browserAddr));
   browserAddr.sin_family = AF_INET;
-  browserAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+  browserAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   browserAddr.sin_port = htons(browserPort);
 
   /* ---- single-server round-trip: every field through the real codecs ---- */
