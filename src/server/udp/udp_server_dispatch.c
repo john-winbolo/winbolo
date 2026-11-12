@@ -1735,25 +1735,48 @@ static void handleWbnReauth(ServerSim *sim, uint8_t *buf, int len,
     (void)serverSimApplyCommand(sim, clientIdx, &cmd);
 }
 
+/* Queues a punch burst toward joiner in the first free punch queue slot;
+ * dropped when every slot is busy. */
+static void punchQueueAdd(const BoloAddr *joiner) {
+    int slot;
+    for (slot = 0; slot < PUNCH_QUEUE_SIZE; slot++) {
+        if (punchQueue[slot].packetsRemaining == 0) break;
+    }
+    if (slot >= PUNCH_QUEUE_SIZE) return;
+    punchQueue[slot].addr             = *joiner;
+    punchQueue[slot].packetsRemaining = PUNCH_BURST_PACKETS;
+    punchQueue[slot].ticksUntilNext   = 0;
+}
+
 static void handlePunchNotify(ServerSim *sim, uint8_t *buf, int len,
                               BoloAddr *fromAddr) {
     /* Wire: [header 8] [joiner reflexive IP 4 BE] [joiner port 2 BE].
      * Total 14 bytes. Tracker pushed this through our keepalive's NAT
      * mapping; the body tells us where to fire punch packets. */
     if (len < PACKET_HEADER_SIZE + 6) return;
-    int slot;
-    for (slot = 0; slot < PUNCH_QUEUE_SIZE; slot++) {
-        if (punchQueue[slot].packetsRemaining == 0) break;
-    }
-    if (slot >= PUNCH_QUEUE_SIZE) return;
     {
         struct in_addr joinerIp;
+        BoloAddr joiner;
         memcpy(&joinerIp, buf + PACKET_HEADER_SIZE, 4);
         boloAddrFromV4(joinerIp, unpackU16(buf + PACKET_HEADER_SIZE + 4),
-                       &punchQueue[slot].addr);
+                       &joiner);
+        punchQueueAdd(&joiner);
     }
-    punchQueue[slot].packetsRemaining = PUNCH_BURST_PACKETS;
-    punchQueue[slot].ticksUntilNext   = 0;
+}
+
+static void handlePunchNotify6(ServerSim *sim, uint8_t *buf, int len,
+                               BoloAddr *fromAddr) {
+    /* Wire: [header 8] [punch address body 19]: the joiner's address as the
+     * tracker saw it, of either family. A loopback or link-local address
+     * names no host the burst could reach from here, so it is dropped;
+     * unpackPunchAddr already refuses an unspecified one. */
+    BoloAddr joiner;
+    if (!unpackPunchAddr(buf + PACKET_HEADER_SIZE, len - PACKET_HEADER_SIZE,
+                         &joiner)) {
+        return;
+    }
+    if (boloAddrIsLoopback(&joiner) || boloAddrIsLinkLocal(&joiner)) return;
+    punchQueueAdd(&joiner);
 }
 
 static void handlePunchProbeReply(ServerSim *sim, uint8_t *buf, int len,
@@ -1772,6 +1795,27 @@ static void handlePunchProbeReply(ServerSim *sim, uint8_t *buf, int len,
         return;
     }
     serverInstanceRecordProbeReply(reflexiveIp, reflexivePort);
+}
+
+static void handlePunchProbeReply6(ServerSim *sim, uint8_t *buf, int len,
+                                   BoloAddr *fromAddr) {
+    /* Wire: [header 8] [punch address body 19]: the server's address as the
+     * tracker saw it. An IPv6 address is recorded as the IPv6 probe result;
+     * a family-4 body is the IPv4 result, as PACKET_PUNCH_PROBE_REPLY. */
+    char reflexiveIp[64];
+    BoloAddr reflexive;
+    if (!unpackPunchAddr(buf + PACKET_HEADER_SIZE, len - PACKET_HEADER_SIZE,
+                         &reflexive)) {
+        return;
+    }
+    if (!boloAddrFormatHost(&reflexive, reflexiveIp, sizeof(reflexiveIp))) {
+        return;
+    }
+    if (boloAddrIsV4(&reflexive)) {
+        serverInstanceRecordProbeReply(reflexiveIp, boloAddrPort(&reflexive));
+    } else {
+        serverInstanceRecordProbeReply6(reflexiveIp, boloAddrPort(&reflexive));
+    }
 }
 
 /* Process a single received packet — extracted from the recv loop so both
@@ -1853,6 +1897,12 @@ void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_PUNCH_PROBE_REPLY:
             handlePunchProbeReply(sim, buf, len, fromAddr);
+            break;
+        case PACKET_PUNCH_NOTIFY6:
+            handlePunchNotify6(sim, buf, len, fromAddr);
+            break;
+        case PACKET_PUNCH_PROBE_REPLY6:
+            handlePunchProbeReply6(sim, buf, len, fromAddr);
             break;
         default:
             break;

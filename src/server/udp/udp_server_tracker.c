@@ -68,10 +68,33 @@ void transportUdpServerSetPublicAddress(const char *externalIp,
     udpServerPublicPort = externalPort;
 }
 
+/* The tracker's IPv6 address, for a keepalive or probe sent a second time
+ * over IPv6. The tracker can only push a punch notify or a probe reply to
+ * the server over a path the server opened, so an IPv6 path is kept open
+ * beside the IPv4 one. Returns 1 with *out set when the server socket is
+ * dual stack, first (the address the first send went to) is IPv4, this
+ * machine has an IPv6 route and the tracker's name has an IPv6 address. A
+ * tracker with no IPv4 address gives its IPv6 one as first, and is not sent
+ * to twice. Looked up on every call, as first is. */
+static int trackerSecondAddrV6(const char *trackerAddr,
+                               unsigned short trackerPort,
+                               const BoloAddr *first, BoloAddr *out) {
+    BoloAddr route;
+
+    if (udpServer.sockFamily != AF_INET6) return 0;
+    if (!boloAddrIsV4(first)) return 0;
+    if (!boloAddrLocalForRoute(AF_INET6, &route)) return 0;
+    if (bolo_resolve_addr(trackerAddr, trackerPort, AF_INET6, out) != 0) {
+        return 0;
+    }
+    return boloAddrFamily(out) == AF_INET6 && !boloAddrIsV4(out);
+}
+
 void transportUdpServerSendNatKeepalive(ServerSim *sim,
                                         const char *trackerAddr,
                                         unsigned short trackerPort) {
     BoloAddr dest;
+    BoloAddr dest6;
     uint8_t buf[8];
 
     if (udpServer.sock == INVALID_SOCKET) return;
@@ -90,11 +113,15 @@ void transportUdpServerSendNatKeepalive(ServerSim *sim,
     packU32(buf + 4, (uint32_t)serverSimGetTimeCreated(sim));
 
     srvSendToNoSource(buf, sizeof(buf), &dest);
+    if (trackerSecondAddrV6(trackerAddr, trackerPort, &dest, &dest6)) {
+        srvSendToNoSource(buf, sizeof(buf), &dest6);
+    }
 }
 
 void transportUdpServerSendPunchProbe(const char *trackerAddr,
                                       unsigned short trackerPort) {
     BoloAddr dest;
+    BoloAddr dest6;
     uint8_t buf[PACKET_HEADER_SIZE];
 
     if (udpServer.sock == INVALID_SOCKET) return;
@@ -106,6 +133,9 @@ void transportUdpServerSendPunchProbe(const char *trackerAddr,
     packHeader(buf, PACKET_PUNCH_PROBE_REQUEST, 0);
 
     srvSendToNoSource(buf, sizeof(buf), &dest);
+    if (trackerSecondAddrV6(trackerAddr, trackerPort, &dest, &dest6)) {
+        srvSendToNoSource(buf, sizeof(buf), &dest6);
+    }
 }
 
 void transportUdpServerDrainPunchQueue(void) {

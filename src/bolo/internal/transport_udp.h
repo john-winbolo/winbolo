@@ -954,7 +954,10 @@ void transportUdpServerSetPublicAddress(const char *externalIp,
  * same socket the server is bound to, so the host's NAT mapping for
  * that source port stays alive between heavier tracker updates and
  * the tracker can disambiguate multiple games behind one NAT via the
- * (sourceIp, starttime) tuple. */
+ * (sourceIp, starttime) tuple. Sent to the tracker's IPv4 address and,
+ * when the socket is dual stack, this machine has an IPv6 route and the
+ * tracker has an IPv6 address, to that address too, so the tracker can
+ * reach the server over either family. */
 void transportUdpServerSendNatKeepalive(struct ServerSim *sim,
                                         const char *trackerAddr,
                                         unsigned short trackerPort);
@@ -964,7 +967,8 @@ void transportUdpServerSendNatKeepalive(struct ServerSim *sim,
  * with the source IP:port it sees us as, so we can detect symmetric
  * NAT (libplum's external address vs the tracker's reflexive view)
  * and confirm bidirectional reachability before joiners attempt to
- * connect. */
+ * connect. Sent over IPv6 as well under the same conditions as the
+ * keepalive; the tracker answers that one with PACKET_PUNCH_PROBE_REPLY6. */
 void transportUdpServerSendPunchProbe(const char *trackerAddr,
                                       unsigned short trackerPort);
 

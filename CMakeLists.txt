@@ -4918,6 +4918,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # baselines transportUdpServerOnGameStart sends across two fabricated slots.
     tests/unit/test_channel_reset.c
     tests/unit/test_packet_type_names.c
+    # The punch address body (PACKET_PUNCH_*6) and the joiner's punch request,
+    # the server's handling of both notify and probe-reply forms, and the
+    # IPv6-only reachability status.
+    tests/unit/test_punch_addr.c
     # Smart-ping pure headers — the chord packing and its exact-modifier
     # match rule, the pie's slice selection (dead zone and the wrap at the
     # top), and the off-screen edge marker on all four borders and at a
@@ -6852,6 +6856,10 @@ set(_unit_test_names
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines
     packet_type_names
+    punch_addr_codec
+    punch_request_build
+    punch_notify_dispatch
+    punch_probe_reply_status
     ping_binding_encode_decode
     ping_binding_match
     ping_binding_direct

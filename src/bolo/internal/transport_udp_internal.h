@@ -177,6 +177,26 @@ void packHeader(uint8_t *buf, uint8_t packetType, uint32_t sequence);
 uint8_t getPacketType(const uint8_t *buf, int len);
 const char *packetTypeName(uint8_t type);
 
+/* Writes addr as the PUNCH_ADDR_WIRE_SIZE-byte punch address body (see
+ * PACKET_PUNCH_REQUEST6 in netpacks.h) and returns PUNCH_ADDR_WIRE_SIZE. A
+ * plain or mapped IPv4 address is written as family 4. Returns 0, writing
+ * nothing, for an empty, unspecified, loopback or link-local address. */
+int packPunchAddr(uint8_t *out, const BoloAddr *addr);
+/* Reads a punch address body of len bytes into *out (no scope id). False,
+ * with *out untouched, for a body shorter than PUNCH_ADDR_WIRE_SIZE, a family
+ * other than 4 or 6, or an unspecified address. */
+bool unpackPunchAddr(const uint8_t *in, int len, BoloAddr *out);
+
+/* The largest punch request buildPunchRequest writes. */
+#define PUNCH_REQUEST_MAX_LEN (PACKET_HEADER_SIZE + PUNCH_ADDR_WIRE_SIZE)
+/* Builds the punch request a joiner sends the tracker for target, the server
+ * it is joining: PACKET_PUNCH_REQUEST with [IPv4 4][port 2] for a plain or
+ * mapped IPv4 target, PACKET_PUNCH_REQUEST6 with the punch address body for
+ * an IPv6 one. Returns the datagram length, or 0 for an empty, unspecified,
+ * loopback or link-local target, or when cap is under PUNCH_REQUEST_MAX_LEN. */
+int buildPunchRequest(uint8_t *buf, int cap, const BoloAddr *target,
+                      uint32_t sequence);
+
 int packInputPacket(uint8_t *buf, const InputPacket *pkt);
 void unpackInputPacket(const uint8_t *buf, InputPacket *pkt);
 

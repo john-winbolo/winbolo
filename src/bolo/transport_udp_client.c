@@ -327,12 +327,10 @@ typedef struct {
      * punch entirely (LAN/manual-connect joiners). */
     char           trackerAddr[FILENAME_MAX];
     unsigned short trackerPort;
-    struct in_addr targetIp;       /* host IP (network order) for PUNCH_REQUEST body */
-    bool           targetIsV4;     /* the host address is IPv4 (plain or mapped);
-                                    * the 4-byte PUNCH_REQUEST body can carry no
-                                    * other, so no punch request is sent without it */
-    unsigned short targetPort;     /* host port (host order) for PUNCH_REQUEST body */
-    bool           punchSent;      /* sent at least one PUNCH_REQUEST */
+    BoloAddr       targetAddr;     /* host address and port for the punch request
+                                    * body: PUNCH_REQUEST for IPv4 (plain or
+                                    * mapped), PUNCH_REQUEST6 for IPv6 */
+    bool           punchSent;      /* sent at least one punch request */
 
     /* ISO-3166 fallback country (2 chars + NUL). Empty when the caller
      * passed NULL/"". Written verbatim into the trailing slot of every
@@ -4201,30 +4199,42 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     }
 }
 
-/* Send a PACKET_PUNCH_REQUEST to the configured tracker over the join
- * socket so the tracker learns our reflexive address as seen by the
- * same mapping the host's punch packet will land on. Wire body is the
- * host (target) IP+port the tracker should forward to. */
+/* Send a punch request to the configured tracker over the join socket so
+ * the tracker learns our reflexive address as seen by the same mapping the
+ * host's punch packet will land on. Wire body is the host (target) address
+ * the tracker should forward to: PACKET_PUNCH_REQUEST for an IPv4 host,
+ * PACKET_PUNCH_REQUEST6 for an IPv6 one. The tracker takes our address from
+ * the datagram's source, so the request to an IPv6 host goes to the
+ * tracker's IPv6 address; with none, nothing is sent. */
 static void udpClientSendPunchRequest(TransportUdpClientCtx *c) {
     BoloAddr dest;
-    uint8_t buf[PACKET_HEADER_SIZE + 6];
+    uint8_t buf[PUNCH_REQUEST_MAX_LEN];
+    int len;
 
     if (c->sock == INVALID_SOCKET) return;
     if (c->trackerAddr[0] == '\0') return;
-    if (!c->targetIsV4) {
-        /* The request body has room for an IPv4 host address only. */
+    len = buildPunchRequest(buf, (int)sizeof(buf), &c->targetAddr,
+                            c->outSequence);
+    if (len <= 0) {
         WB_LOG_DEBUG(WB_LOG_CAT_NET,
-            "punch request skipped: the server address is not IPv4");
+            "punch request skipped: the server address is loopback, "
+            "link-local or unspecified");
         return;
     }
-    if (bolo_resolve_addr(c->trackerAddr, c->trackerPort, BOLO_RESOLVE_PREFER,
-                          &dest) != 0) return;
+    if (boloAddrIsV4(&c->targetAddr)) {
+        if (bolo_resolve_addr(c->trackerAddr, c->trackerPort,
+                              BOLO_RESOLVE_PREFER, &dest) != 0) return;
+    } else if (c->sockFamily != AF_INET6 ||
+               bolo_resolve_addr(c->trackerAddr, c->trackerPort, AF_INET6,
+                                 &dest) != 0 ||
+               boloAddrFamily(&dest) != AF_INET6 || boloAddrIsV4(&dest)) {
+        WB_LOG_DEBUG(WB_LOG_CAT_NET,
+            "punch request skipped: no IPv6 address for the tracker");
+        return;
+    }
 
-    packHeader(buf, PACKET_PUNCH_REQUEST, c->outSequence++);
-    memcpy(buf + PACKET_HEADER_SIZE, &c->targetIp, 4);
-    packU16(buf + PACKET_HEADER_SIZE + 4, c->targetPort);
-
-    udpSendTo(c->sock, c->sockFamily, buf, (int)sizeof(buf), &dest);
+    c->outSequence++;
+    udpSendTo(c->sock, c->sockFamily, buf, len, &dest);
 }
 
 /* One datagram off the socket, or <= 0 when it is empty. In the test build a
@@ -5000,8 +5010,8 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         strncpy(c->trackerAddr, trackerAddr, sizeof(c->trackerAddr) - 1);
     }
     c->trackerPort = trackerPort;
-    c->targetIsV4  = boloAddrV4(&c->serverAddr, &c->targetIp) != 0;
-    c->targetPort  = serverPort;
+    c->targetAddr  = c->serverAddr;
+    boloAddrSetPort(&c->targetAddr, serverPort);
     c->punchSent   = false;
 
     c->joinState = UDP_CLIENT_JOINING;

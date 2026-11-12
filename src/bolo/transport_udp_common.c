@@ -189,6 +189,9 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_PUNCH_REQUEST_ACK, "PUNCH_REQUEST_ACK") \
     X(PACKET_PUNCH_PROBE_REQUEST, "PUNCH_PROBE_REQUEST") \
     X(PACKET_PUNCH_PROBE_REPLY, "PUNCH_PROBE_REPLY") \
+    X(PACKET_PUNCH_REQUEST6, "PUNCH_REQUEST6") \
+    X(PACKET_PUNCH_NOTIFY6, "PUNCH_NOTIFY6") \
+    X(PACKET_PUNCH_PROBE_REPLY6, "PUNCH_PROBE_REPLY6") \
     X(PACKET_COMMAND_TICK, "COMMAND_TICK") \
     X(PACKET_COMMAND_ACK, "COMMAND_ACK") \
     X(PACKET_COMMAND_REJECTED, "COMMAND_REJECTED") \
@@ -206,6 +209,91 @@ const char *packetTypeName(uint8_t type) {
 #undef X
     default: return "UNKNOWN";
     }
+}
+
+/* The punch address body: [family 1][address 16][port 2, big endian]. A plain
+ * or mapped IPv4 address goes as family 4 with its 4 bytes first and the other
+ * 12 zero; any other IPv6 address goes as family 6. No scope id is carried, so
+ * a link-local address, which needs one, is refused, as are loopback and
+ * unspecified addresses, which name no host the tracker can reach. */
+int packPunchAddr(uint8_t *out, const BoloAddr *addr) {
+    uint8_t v4[4];
+    const uint8_t *v6;
+
+    if (out == NULL || boloAddrFamily(addr) == 0 ||
+        boloAddrIsUnspecified(addr) || boloAddrIsLoopback(addr) ||
+        boloAddrIsLinkLocal(addr)) {
+        return 0;
+    }
+    memset(out, 0, PUNCH_ADDR_WIRE_SIZE);
+    if (boloAddrV4Bytes(addr, v4)) {
+        out[0] = PUNCH_ADDR_FAMILY_V4;
+        memcpy(out + 1, v4, 4);
+    } else {
+        v6 = boloAddrV6Bytes(addr);
+        if (v6 == NULL) {
+            return 0;
+        }
+        out[0] = PUNCH_ADDR_FAMILY_V6;
+        memcpy(out + 1, v6, 16);
+    }
+    packU16(out + 17, boloAddrPort(addr));
+    return PUNCH_ADDR_WIRE_SIZE;
+}
+
+bool unpackPunchAddr(const uint8_t *in, int len, BoloAddr *out) {
+    BoloAddr tmp;
+    uint16_t port;
+
+    if (in == NULL || out == NULL || len < PUNCH_ADDR_WIRE_SIZE) {
+        return false;
+    }
+    port = unpackU16(in + 17);
+    if (in[0] == PUNCH_ADDR_FAMILY_V4) {
+        struct in_addr v4;
+        memcpy(&v4, in + 1, 4);
+        boloAddrFromV4(v4, port, &tmp);
+    } else if (in[0] == PUNCH_ADDR_FAMILY_V6) {
+        struct sockaddr_in6 sin6;
+        memset(&sin6, 0, sizeof(sin6));
+        sin6.sin6_family = AF_INET6;
+        memcpy(&sin6.sin6_addr, in + 1, 16);
+        sin6.sin6_port = htons(port);
+        if (!boloAddrFromSockaddr((const struct sockaddr *)&sin6,
+                                  (socklen_t)sizeof(sin6), &tmp)) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    if (boloAddrIsUnspecified(&tmp)) {
+        return false;
+    }
+    *out = tmp;
+    return true;
+}
+
+int buildPunchRequest(uint8_t *buf, int cap, const BoloAddr *target,
+                      uint32_t sequence) {
+    uint8_t v4[4];
+
+    if (buf == NULL || cap < PUNCH_REQUEST_MAX_LEN ||
+        boloAddrFamily(target) == 0 || boloAddrIsUnspecified(target) ||
+        boloAddrIsLoopback(target) || boloAddrIsLinkLocal(target)) {
+        return 0;
+    }
+    if (boloAddrV4Bytes(target, v4)) {
+        packHeader(buf, PACKET_PUNCH_REQUEST, sequence);
+        memcpy(buf + PACKET_HEADER_SIZE, v4, 4);
+        packU16(buf + PACKET_HEADER_SIZE + 4, boloAddrPort(target));
+        return PACKET_HEADER_SIZE + 6;
+    }
+    packHeader(buf, PACKET_PUNCH_REQUEST6, sequence);
+    if (packPunchAddr(buf + PACKET_HEADER_SIZE, target) !=
+        PUNCH_ADDR_WIRE_SIZE) {
+        return 0;
+    }
+    return PACKET_HEADER_SIZE + PUNCH_ADDR_WIRE_SIZE;
 }
 
 /* Serialize one InputPacket into buf. Returns bytes written (21). */

@@ -529,6 +529,29 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
 #define PACKET_PUNCH_PROBE_REQUEST  156   /* host → tracker, this commit */
 #define PACKET_PUNCH_PROBE_REPLY    157   /* tracker → host, this commit */
 
+/* The same three punch packets for an address of either family. 153, 154 and
+ * 157 carry a 4-byte IPv4 address and stay for IPv4 targets and for trackers
+ * that know only them. These three carry the punch address body
+ * [family 1][address 16][port 2, big endian], PUNCH_ADDR_WIRE_SIZE bytes after
+ * the header: family 6 is an IPv6 address in all 16 bytes, family 4 is an IPv4
+ * address in the first 4 bytes and 12 zero bytes. No scope id is carried, so a
+ * link-local address is never sent. The numbers must match the tracker's own
+ * header (tracker/udp.h); they are not fixed until the tracker uses them.
+ *   PACKET_PUNCH_REQUEST6: joiner → tracker over IPv6; body is the host's
+ *     address. The tracker takes the joiner's address from the datagram.
+ *   PACKET_PUNCH_NOTIFY6: tracker → host; body is the joiner's address as
+ *     the tracker saw it.
+ *   PACKET_PUNCH_PROBE_REPLY6: tracker → host, the answer to a
+ *     PACKET_PUNCH_PROBE_REQUEST that reached the tracker over IPv6; body is
+ *     the host's address as the tracker saw it. */
+#define PACKET_PUNCH_REQUEST6       232   /* joiner → tracker */
+#define PACKET_PUNCH_NOTIFY6        233   /* tracker → host */
+#define PACKET_PUNCH_PROBE_REPLY6   234   /* tracker → host */
+
+#define PUNCH_ADDR_WIRE_SIZE        19    /* family 1 + address 16 + port 2 */
+#define PUNCH_ADDR_FAMILY_V4        4
+#define PUNCH_ADDR_FAMILY_V6        6
+
 /* Server -> Client: lobby-wide settings (map, game type, limits, ...).
  * Produced by the CTRL_LOBBY_SETTINGS codec encoder; replaces the
  * settings-tail portion of the legacy composite PACKET_LOBBY_STATE.

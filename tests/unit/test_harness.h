@@ -2925,6 +2925,16 @@ int run_wire_corpus_capture(void);
  * its exact debug string and an undefined type id resolves to "UNKNOWN". */
 int run_packet_type_names(void);
 
+/* IPv6 hole punching through the tracker (test_punch_addr.c): the punch
+ * address body codec, the joiner's punch request for an IPv4 and an IPv6
+ * host, the server's handling of both notify forms into the punch queue, and
+ * both probe-reply forms into the port-map status, SERVER_PORTMAP_IPV6_OK
+ * included. */
+int run_punch_addr_codec(void);
+int run_punch_request_build(void);
+int run_punch_notify_dispatch(void);
+int run_punch_probe_reply_status(void);
+
 /* River tile lookup (test_screencalc_river.c): screenCalcRiver reads its
  * four orthogonal neighbours only as "wet or bridged", so RIVER / ROAD /
  * DEEP_SEA / BOAT are interchangeable there — the contract the four
