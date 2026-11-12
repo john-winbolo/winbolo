@@ -358,10 +358,11 @@ if(WINBOLO_LUAJIT)
     #    supported path. XCFLAGS=-fPIC so the static lib links into winbolo_gym.
     if(MSVC)
         set(_lj_lib "${_lj_src}/src/lua51.lib")
-        set(_lj_msvc_env "")
+        string(JOIN " " _lj_msvc_cl ${BOLO_LUAJIT_LOCKDOWN_XCFLAGS})
         if(WINBOLO_LUAJIT_DETERMINISTIC)
-            set(_lj_msvc_env "CL=/DLUAJIT_SECURITY_PRNG=0")
+            string(APPEND _lj_msvc_cl " /DLUAJIT_SECURITY_PRNG=0")
         endif()
+        set(_lj_msvc_env "CL=${_lj_msvc_cl}")
         ExternalProject_Add(luajit_ext
             SOURCE_DIR        "${_lj_src}"
             BUILD_IN_SOURCE   TRUE
@@ -375,15 +376,23 @@ if(WINBOLO_LUAJIT)
             # (minilua, buildvm) as bare names too, and those fail the same way
             # -- so unset the variable for the whole build step instead.
             # cl.exe appends the CL environment variable to every compile, so
-            # the determinism define reaches all of msvcbuild.bat's compiles
-            # (the bat never sets CL itself) without patching LuaJIT source.
-            BUILD_COMMAND     ${CMAKE_COMMAND} -E env
+            # the lockdown and determinism defines reach all of msvcbuild.bat's
+            # compiles (the bat never sets CL itself) without patching LuaJIT
+            # source. The one thing CL cannot reach is the `-D FFI` the bat
+            # hands DynASM, which the first command takes out (see the patch
+            # header).
+            BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "${_lj_src}"
+                              ${CMAKE_COMMAND} -P
+                              "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_msvc_no_ffi.cmake"
+            COMMAND           ${CMAKE_COMMAND} -E env
                               --unset=NoDefaultCurrentDirectoryInExePath
                               ${_lj_msvc_env}
                               ${CMAKE_COMMAND} -E chdir "${_lj_src}/src"
                               cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
+        # msvcbuild.bat compiles every file on each run, so no clean is needed.
+        bolo_luajit_rebuild_on_change(luajit_ext "${_lj_msvc_env}")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         # iOS runs LuaJIT's interpreter alone: an App Store app may not write
         # code and then run it, so LUAJIT_DISABLE_JIT leaves the trace
@@ -463,7 +472,7 @@ if(WINBOLO_LUAJIT)
             ARCHES       ${_lj_archs}
             LIB_VAR      _lj_lib)
     else()
-        set(_lj_xcflags "-fPIC")
+        string(JOIN " " _lj_xcflags -fPIC ${BOLO_LUAJIT_LOCKDOWN_XCFLAGS})
         if(WINBOLO_LUAJIT_DETERMINISTIC)
             string(APPEND _lj_xcflags " -DLUAJIT_SECURITY_PRNG=0")
         endif()
@@ -506,6 +515,7 @@ if(WINBOLO_LUAJIT)
                 COMMAND           lipo -create ${_lj_slices} -output "${_lj_lib}"
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+            bolo_luajit_rebuild_on_change(luajit_ext "${_lj_xcflags}")
 
             # The build step above runs once and is then held off by its stamp,
             # and everything it produces lives in the shared _deps source tree
@@ -529,13 +539,17 @@ if(WINBOLO_LUAJIT)
                           -P "${CMAKE_SOURCE_DIR}/cmake/luajit_fat_check.cmake")
         else()
             set(_lj_lib "${_lj_src}/src/libluajit.a")
+            # The clean makes a rerun after a change of flags rebuild every
+            # object; make alone would keep the ones it already has.
             ExternalProject_Add(luajit_ext
                 SOURCE_DIR        "${_lj_src}"
                 BUILD_IN_SOURCE   TRUE
                 CONFIGURE_COMMAND ""
-                BUILD_COMMAND     ${_lj_make}
+                BUILD_COMMAND     make -C "${_lj_src}" clean
+                COMMAND           ${_lj_make}
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+            bolo_luajit_rebuild_on_change(luajit_ext "${_lj_xcflags}")
         endif()
     endif()
 
