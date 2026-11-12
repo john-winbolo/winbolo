@@ -289,8 +289,9 @@ one packed into an uploaded map, a mod, and the check `-validate` makes — is
 plain Lua:
 
 - the whole standard library, `io`, `os`, `package` and `require`, `debug`,
-  `load`, `dofile` and `string.dump` included, with `loadstring`, `ffi`,
-  `jit` and `bit` on LuaJIT, where the compiler is on as well;
+  `load`, `dofile` and `string.dump` included, with `loadstring`, `jit` and
+  `bit` on LuaJIT, where the compiler is on as well. `ffi` is not among
+  them: LuaJIT is built without it, so no switch opens it;
 - no memory cap, no instruction budget per call and none per tick;
 - the VM's own `string` functions, patterns, `pcall`, `xpcall` and coroutines,
   with none of the length caps above;

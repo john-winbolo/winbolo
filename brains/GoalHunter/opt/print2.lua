@@ -89,21 +89,38 @@ function M.set_bot(n)
   bot_idx = n
 end
 
+-- short_src -> basename, filled on first use. A brain has a few dozen
+-- source files, and every print2 call used to run two pattern matches to
+-- get the same answer again.
+local src_names = {}
+
 -- The callable: print2(...)
 local function log_msg(...)
   if not _G._PRINT2_ENABLED then return end
   local elapsed_ms = (clock() - tick_start) * 1000
   local info = debug.getinfo(3, "Sl")
-  local src = info.short_src or "?"
-  -- Strip [string "..."] wrapper and extract basename
-  src = src:match('^%[string "(.-)"%]$') or src
-  src = src:match('[/\\]([^/\\]+)$') or src
-  local line = info.currentline or 0
-  local parts = {}
-  for i = 1, select("#", ...) do
-    parts[#parts + 1] = tostring(select(i, ...))
+  local short = info.short_src or "?"
+  local src = src_names[short]
+  if not src then
+    -- Strip [string "..."] wrapper and extract basename
+    src = short:match('^%[string "(.-)"%]$') or short
+    src = src:match('[/\\]([^/\\]+)$') or src
+    src_names[short] = src
   end
-  local msg = string.format("[%.2fms] %s", elapsed_ms, table.concat(parts, ""))
+  local line = info.currentline or 0
+  local n = select("#", ...)
+  local body
+  if n == 1 then
+    -- Most calls pass one string.format result: no parts table needed.
+    body = tostring((...))
+  else
+    local parts = {}
+    for i = 1, n do
+      parts[i] = tostring((select(i, ...)))
+    end
+    body = table.concat(parts, "")
+  end
+  local msg = string.format("[%.2fms] %s", elapsed_ms, body)
   buffer[#buffer + 1] = { src = src, line = line, msg = msg }
 end
 
