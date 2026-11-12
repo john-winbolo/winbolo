@@ -113,6 +113,10 @@ struct wbnListObj {
      register's result is applied, and a job queued before that swap and
      fired after it must name the session that is live when it posts. */
   bool stamp_server_key;
+  /* The WinBolo.net name this post goes to, in any form [WINBOLO.NET] Host
+     accepts, or empty for the configured host. Only
+     winbolonetThreadAddHostedServerRequest sets it. */
+  char host[FILENAME_MAX];
   /* A WBN_JOB_UPLOAD's fields, and NULL on any other kind. Their own
      rather than borrowed: a file name does not fit endpoint, and a reader
      of endpoint or json_body should not have to ask which kind it is
@@ -246,6 +250,32 @@ bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_bod
 *********************************************************/
 bool winbolonetThreadAddServerKeyedRequest(const char *endpoint,
                                            const char *json_body);
+
+/*********************************************************
+*NAME:          winbolonetThreadAddHostedServerRequest
+*PURPOSE:
+*  As winbolonetThreadAddServerRequest, for a post that goes
+*  to another WinBolo.net name rather than the configured
+*  host: the worker sends it through wbn_api_post_server
+*  with host, with the bearer attached and the body as
+*  given. A fire-and-forget post, counted against the
+*  backlog cap like the others. A failure is logged at debug
+*  level, since the per-family names this is used for are
+*  expected to fail on a machine with no route of that
+*  family.
+*
+*  Returns TRUE when the request was queued, FALSE when
+*  nothing was taken: the thread is not running, its waiting
+*  queue is full, or host is empty.
+*
+*ARGUMENTS:
+* host      - Host for this post (copied)
+* endpoint  - API endpoint path (e.g. "server/announce")
+* json_body - JSON request body string (copied, caller may free)
+*********************************************************/
+bool winbolonetThreadAddHostedServerRequest(const char *host,
+                                            const char *endpoint,
+                                            const char *json_body);
 
 /*********************************************************
 *NAME:          winbolonetThreadAddSessionRequest

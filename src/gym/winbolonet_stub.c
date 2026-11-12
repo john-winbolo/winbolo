@@ -194,6 +194,10 @@ bool winbolonetApplyRegisterResult(int status, const char *response) {
   return FALSE;
 }
 
+/* server_lifecycle.c calls this after a successful register; the gym never
+ * registers, so it is never reached. */
+void winbolonetServerAnnounce(void) { }
+
 void winbolonetThreadDrainResults(WbnResultHandler handler, void *ctx) {
   (void)handler; (void)ctx;
 }

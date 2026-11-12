@@ -945,6 +945,7 @@ int run_autoclose_failed_bot_add_leaves_check_armed(void);
 int run_round_transition_tick_does_not_block(void);
 int run_round_transition_during_rotation_deferred(void);
 int run_round_transition_worker_down_sends_inline(void);
+int run_round_transition_failed_register_no_announce(void);
 
 /* Re-authentication off the tick thread (test_reauth_result.c). The reauth
  * captures the slot and queues client/verify; the reply stamps the slot on a

@@ -76,6 +76,13 @@ static char wbnBaseUrl[FILENAME_MAX];    /* full base URL, e.g. https://wbn.winb
 static char altIpAddress[FILENAME_MAX];
 static char wbnHostOverride[FILENAME_MAX]; /* command-line override for WBN host */
 
+/* What httpCreate read, for httpGetHostSettings: whether the override was
+ * used, the Host value it used, and [WINBOLO.NET] Host4 / Host6. */
+static bool wbnHostWasOverridden = false;
+static char wbnHostUsed[FILENAME_MAX];
+static char wbnHost4[FILENAME_MAX];
+static char wbnHost6[FILENAME_MAX];
+
 /* Per-call override for the log-upload total timeout, in seconds. 0 selects
  * the default. Lets a caller that must not block for long (e.g. shutting a
  * hosted game down) cap the upload without changing it for everyone else. */
@@ -156,6 +163,25 @@ static void wbnLogSlowCall(const char *what, Uint64 startMs) {
   }
 }
 
+/* Writes the base URL (scheme + hostname, no trailing slash) for a host value
+ * in any of the three accepted formats into out. Shared by buildBaseUrl and
+ * httpApiUrlForHost, so a per-request host is read by the same rules as the
+ * configured one. */
+static void baseUrlFromValue(const char *value, char *out, size_t outLen) {
+  if (strncmp(value, "https://", 8) == 0 || strncmp(value, "http://", 7) == 0) {
+    snprintf(out, outLen, "%s", value);
+  } else {
+    /* No scheme — default to HTTPS */
+    snprintf(out, outLen, "https://%s", value);
+  }
+
+  /* Strip trailing slash from base URL */
+  size_t len = strlen(out);
+  if (len > 0 && out[len - 1] == '/') {
+    out[len - 1] = '\0';
+  }
+}
+
 /*********************************************************
 *NAME:          buildBaseUrl
 *PURPOSE:
@@ -171,22 +197,13 @@ static void buildBaseUrl(const char *iniValue) {
   const char *host;
 
   if (strncmp(iniValue, "https://", 8) == 0) {
-    snprintf(wbnBaseUrl, sizeof(wbnBaseUrl), "%s", iniValue);
     host = iniValue + 8;
   } else if (strncmp(iniValue, "http://", 7) == 0) {
-    snprintf(wbnBaseUrl, sizeof(wbnBaseUrl), "%s", iniValue);
     host = iniValue + 7;
   } else {
-    /* No scheme — default to HTTPS */
-    snprintf(wbnBaseUrl, sizeof(wbnBaseUrl), "https://%s", iniValue);
     host = iniValue;
   }
-
-  /* Strip trailing slash from base URL */
-  size_t len = strlen(wbnBaseUrl);
-  if (len > 0 && wbnBaseUrl[len - 1] == '/') {
-    wbnBaseUrl[len - 1] = '\0';
-  }
+  baseUrlFromValue(iniValue, wbnBaseUrl, sizeof(wbnBaseUrl));
 
   /* Store bare hostname (stop at any path separator) */
   snprintf(wbnHostString, sizeof(wbnHostString), "%s", host);
@@ -386,16 +403,28 @@ bool httpCreate(void) {
     /* Use command-line override */
     strncpy(iniValue, wbnHostOverride, sizeof(iniValue) - 1);
     iniValue[sizeof(iniValue) - 1] = '\0';
+    wbnHostWasOverridden = true;
   } else {
     /* Read from preferences */
     iniValue[0] = '\0';
-    prefsGetString("WINBOLO.NET", "Host", "wbn.winbolo.net",
+    prefsGetString("WINBOLO.NET", "Host", WBN_DEFAULT_HOST,
                    iniValue, (unsigned int)sizeof(iniValue));
     /* Write back so servers without a client config get a default entry */
     prefsSetString("WINBOLO.NET", "Host", iniValue);
+    wbnHostWasOverridden = false;
   }
 
   buildBaseUrl(iniValue);
+  snprintf(wbnHostUsed, sizeof(wbnHostUsed), "%s", iniValue);
+
+  /* The per-family names server/announce goes to. Read whether or not the
+   * command line overrode Host; empty when absent, and not written back. */
+  wbnHost4[0] = '\0';
+  wbnHost6[0] = '\0';
+  prefsGetString("WINBOLO.NET", "Host4", "", wbnHost4,
+                 (unsigned int)sizeof(wbnHost4));
+  prefsGetString("WINBOLO.NET", "Host6", "", wbnHost6,
+                 (unsigned int)sizeof(wbnHost6));
 
   altIpAddress[0] = '\0';
 
@@ -409,6 +438,44 @@ bool httpCreate(void) {
 
   httpStarted = true;
   return true;
+}
+
+/*********************************************************
+*NAME:          httpGetHostSettings
+*PURPOSE:
+* Copies the host values httpCreate read.
+*********************************************************/
+void httpGetHostSettings(WbnHostSettings *out) {
+  if (out == NULL) {
+    return;
+  }
+  out->hostOverridden = wbnHostWasOverridden;
+  snprintf(out->host, sizeof(out->host), "%s", wbnHostUsed);
+  snprintf(out->host4, sizeof(out->host4), "%s", wbnHost4);
+  snprintf(out->host6, sizeof(out->host6), "%s", wbnHost6);
+}
+
+/*********************************************************
+*NAME:          httpApiUrlForHost
+*PURPOSE:
+* Writes <baseUrl>/api/v1/<endpoint>, the base URL coming
+* from host when one is given and from the configured host
+* otherwise.
+*********************************************************/
+void httpApiUrlForHost(const char *host, const char *endpoint,
+                       char *out, size_t outLen) {
+  char base[FILENAME_MAX];
+
+  if (out == NULL || outLen == 0) {
+    return;
+  }
+  if (host != NULL && host[0] != '\0') {
+    baseUrlFromValue(host, base, sizeof(base));
+  } else {
+    snprintf(base, sizeof(base), "%s", wbnBaseUrl);
+  }
+  snprintf(out, outLen, "%s/api/v1/%s", base,
+           endpoint != NULL ? endpoint : "");
 }
 
 /*********************************************************
@@ -493,11 +560,17 @@ void httpWorkerPoolEnd(void) {
 *PURPOSE:
 * Shared low-level POST body. extra_header is appended to
 * the curl slist when non-NULL (used to attach the bearer
-* Authorization line on server-scoped calls). All other
-* behavior matches wbn_api_post.
+* Authorization line on server-scoped calls). host, when
+* non-empty, replaces the configured base URL for this one
+* request (see httpApiUrlForHost), and its transport failure
+* is logged at debug level. All other behavior matches
+* wbn_api_post.
 *********************************************************/
-static int wbn_api_post_impl(const char *endpoint, const char *json_body,
+static int wbn_api_post_impl(const char *host, const char *endpoint,
+                             const char *json_body,
                              const char *extra_header, char **response_out) {
+  bool hosted = (host != NULL && host[0] != '\0');
+
   if (response_out) *response_out = NULL;
   if (!httpStarted) return -1;
 
@@ -515,7 +588,7 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
 
   /* Build URL: <baseUrl>/api/v1/<endpoint> */
   char url[FILENAME_MAX + 64];
-  snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, endpoint);
+  httpApiUrlForHost(host, endpoint, url, sizeof(url));
 
   /* Generate timestamp and Ed25519 signature */
   char timestamp_str[32];
@@ -572,7 +645,12 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
 
   Uint64 performStartMs = SDL_GetTicks();
   CURLcode res = curl_easy_perform(curl);
-  wbnLogSlowCall(endpoint, performStartMs);
+  /* A request to another host that failed is not reported as slow: a
+   * server/announce to a family this machine has no working route for runs
+   * out its connect time, and that is the expected result. */
+  if (!hosted || res == CURLE_OK) {
+    wbnLogSlowCall(endpoint, performStartMs);
+  }
 
   long http_code = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
@@ -583,7 +661,12 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
   }
 
   if (res != CURLE_OK) {
-    WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_api_post [%s]: curl error: %s", endpoint, curl_easy_strerror(res));
+    if (hosted) {
+      WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_post [%s] to %s: curl error: %s",
+                   endpoint, host, curl_easy_strerror(res));
+    } else {
+      WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_api_post [%s]: curl error: %s", endpoint, curl_easy_strerror(res));
+    }
     free(respBuf.data);
     return -1;
   }
@@ -611,7 +694,7 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
 * Returns the HTTP status code, or -1 on transport error.
 *********************************************************/
 int wbn_api_post(const char *endpoint, const char *json_body, char **response_out) {
-  return wbn_api_post_impl(endpoint, json_body, NULL, response_out);
+  return wbn_api_post_impl(NULL, endpoint, json_body, NULL, response_out);
 }
 
 /*********************************************************
@@ -619,9 +702,11 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
 *PURPOSE:
 * Server-scoped POST. Attaches Authorization: Bearer <token>
 * using the stored server bearer; refuses to send (returns -1)
-* when no bearer is set.
+* when no bearer is set. host, when non-empty, is the
+* WinBolo.net name this one request goes to.
 *********************************************************/
-int wbn_api_post_server(const char *endpoint, const char *json_body, char **response_out) {
+int wbn_api_post_server(const char *host, const char *endpoint,
+                        const char *json_body, char **response_out) {
   if (response_out) *response_out = NULL;
 
   char token[WBN_SERVER_TOKEN_LEN];
@@ -633,7 +718,7 @@ int wbn_api_post_server(const char *endpoint, const char *json_body, char **resp
 
   char auth_header[32 + WBN_SERVER_TOKEN_LEN];
   snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", token);
-  return wbn_api_post_impl(endpoint, json_body, auth_header, response_out);
+  return wbn_api_post_impl(host, endpoint, json_body, auth_header, response_out);
 }
 
 /*********************************************************
@@ -680,7 +765,7 @@ int wbn_api_call_server(const char *endpoint, cJSON *body, cJSON **response) {
   if (!json_str) return -1;
 
   char *resp_str = NULL;
-  int status = wbn_api_post_server(endpoint, json_str, &resp_str);
+  int status = wbn_api_post_server(NULL, endpoint, json_str, &resp_str);
   free(json_str);
 
   if (resp_str && response) {
@@ -716,7 +801,7 @@ int wbn_api_call_bearer(const char *endpoint, cJSON *body, const char *bearerTok
   }
 
   char *resp_str = NULL;
-  int status = wbn_api_post_impl(endpoint, json_str, extra_header, &resp_str);
+  int status = wbn_api_post_impl(NULL, endpoint, json_str, extra_header, &resp_str);
   free(json_str);
 
   if (resp_str && response) {

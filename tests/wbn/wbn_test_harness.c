@@ -87,6 +87,38 @@ static size_t headerContentLength(const char *buf, size_t hdrLen) {
 }
 
 /*********************************************************
+*NAME:          headerHasBearer
+*PURPOSE:
+* TRUE when the request header running from buf for hdrLen
+* bytes has an "Authorization: Bearer " line with something
+* after it. Matches without regard to case. Reads the
+* header in place and keeps nothing of the token.
+*********************************************************/
+static bool headerHasBearer(const char *buf, size_t hdrLen) {
+  static const char name[] = "\nauthorization: bearer ";
+  const size_t nameLen = sizeof(name) - 1;
+  size_t i;
+
+  for (i = 0; i + nameLen < hdrLen; i++) {
+    size_t j;
+    for (j = 0; j < nameLen; j++) {
+      char c = buf[i + j];
+      if (c >= 'A' && c <= 'Z') {
+        c = (char)(c - 'A' + 'a');
+      }
+      if (c != name[j]) {
+        break;
+      }
+    }
+    if (j == nameLen) {
+      char next = buf[i + nameLen];
+      return next != '\r' && next != '\n';
+    }
+  }
+  return FALSE;
+}
+
+/*********************************************************
 *NAME:          extractPath
 *PURPOSE:
 * Copies the path out of a request line
@@ -211,6 +243,7 @@ static bool answerRequests(WbnTestListener *ln, WbnTestConn *c) {
     if (index >= 0 && index < WBN_TEST_MAX_PATHS) {
       memcpy(ln->path[index], path, strlen(path) + 1);
       ln->conn[index] = c->index;
+      ln->bearer[index] = headerHasBearer(c->buf, hdrLen);
       kept = bodyLen;
       if (kept > WBN_TEST_BODY_LEN - 1) {
         kept = WBN_TEST_BODY_LEN - 1;
@@ -445,12 +478,21 @@ int main(int argc, char **argv) {
     ok = wbnTestForcedUpdateFullQueue();
   } else if (strcmp(name, "scenario_fields") == 0) {
     ok = wbnTestScenarioFields();
+  } else if (strcmp(name, "announce_hosts_rule") == 0) {
+    ok = wbnTestAnnounceHostsRule();
+  } else if (strcmp(name, "api_url_for_host") == 0) {
+    ok = wbnTestApiUrlForHost();
+  } else if (strcmp(name, "hosted_job_host") == 0) {
+    ok = wbnTestHostedJobHost();
+  } else if (strcmp(name, "announce_posts") == 0) {
+    ok = wbnTestAnnouncePosts();
   } else {
     fprintf(stderr,
             "usage: %s posts_share_connection|leave_returns_at_once|"
             "worker_outlives_session|job_result_returns|log_upload_runs|"
             "key_stamped_at_fire_time|queue_cap_refuses_posts|"
-            "forced_update_full_queue|scenario_fields\n",
+            "forced_update_full_queue|scenario_fields|announce_hosts_rule|"
+            "api_url_for_host|hosted_job_host|announce_posts\n",
             argv[0]);
     SDL_Quit();
     bolo_net_cleanup();

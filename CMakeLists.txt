@@ -7015,6 +7015,7 @@ set(_unit_test_names
     round_transition_tick_does_not_block
     round_transition_during_rotation_deferred
     round_transition_worker_down_sends_inline
+    round_transition_failed_register_no_announce
     reauth_result_after_slot_reuse_discarded
     reauth_result_stamps_slot
     reauth_repeat_while_verify_out_refused
@@ -8200,6 +8201,7 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_queue_cap.c
     tests/wbn/test_wbn_forced_update_full_queue.c
     tests/wbn/test_wbn_scenario_fields.c
+    tests/wbn/test_wbn_announce.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -8282,6 +8284,22 @@ set_tests_properties(wbn.forced_update_full_queue PROPERTIES TIMEOUT 120)
 add_test(NAME wbn.scenario_fields
          COMMAND $<TARGET_FILE:WinBoloWbnTests> scenario_fields)
 set_tests_properties(wbn.scenario_fields PROPERTIES TIMEOUT 60)
+
+# server/announce: the host rule and the per-request URL, which touch no
+# network, then a hosted job against two listeners and a register followed by
+# both announces against one. Nothing is held: a few seconds each at most.
+add_test(NAME wbn.announce_hosts_rule
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> announce_hosts_rule)
+set_tests_properties(wbn.announce_hosts_rule PROPERTIES TIMEOUT 30)
+add_test(NAME wbn.api_url_for_host
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> api_url_for_host)
+set_tests_properties(wbn.api_url_for_host PROPERTIES TIMEOUT 30)
+add_test(NAME wbn.hosted_job_host
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> hosted_job_host)
+set_tests_properties(wbn.hosted_job_host PROPERTIES TIMEOUT 60)
+add_test(NAME wbn.announce_posts
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> announce_posts)
+set_tests_properties(wbn.announce_posts PROPERTIES TIMEOUT 60)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

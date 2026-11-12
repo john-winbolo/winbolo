@@ -72,6 +72,9 @@ bool winbolonetCreateServer(char *mapName, unsigned short port,
   return FALSE;
 }
 
+/* The browser build never registers, so there is nothing to announce. */
+void winbolonetServerAnnounce(void)                                { }
+
 void winbolonetDestroy(bool isServer)                               { (void)isServer; }
 void winbolonetGoodbye(void)                                       { }
 

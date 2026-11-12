@@ -507,6 +507,53 @@ uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port, BYTE ga
 *********************************************************/
 bool winbolonetApplyRegisterResult(int status, const char *response);
 
+/* The names server/announce goes to when [WINBOLO.NET] Host is the default
+ * and Host4 / Host6 are not set. wbn4 has only an A record and wbn6 only an
+ * AAAA record, so a request to one of them can only arrive over that address
+ * family, and WinBolo.net stores the address it arrived from. */
+#define WBN_DEFAULT_HOST4 "wbn4.winbolo.net"
+#define WBN_DEFAULT_HOST6 "wbn6.winbolo.net"
+
+/*********************************************************
+*NAME:          winbolonetAnnounceHosts
+*PURPOSE:
+* Decides which names server/announce goes to. For each
+* family: Host4 / Host6 when set; otherwise the default name
+* for that family when the configured host is the default
+* one (no command-line override, and Host empty or giving
+* the same base URL as WBN_DEFAULT_HOST); otherwise none.
+* So a custom host with neither key set announces nowhere.
+* An out string left empty means no announce for that
+* family. Reads nothing but its arguments.
+*
+*ARGUMENTS:
+* hostOverridden - A command-line host override was used
+* host           - The Host value in use, or NULL / ""
+* host4          - [WINBOLO.NET] Host4, or NULL / ""
+* host6          - [WINBOLO.NET] Host6, or NULL / ""
+* out4 / out4Len - Receives the IPv4 announce host, or ""
+* out6 / out6Len - Receives the IPv6 announce host, or ""
+*********************************************************/
+void winbolonetAnnounceHosts(bool hostOverridden, const char *host,
+                             const char *host4, const char *host6,
+                             char *out4, size_t out4Len,
+                             char *out6, size_t out6Len);
+
+/*********************************************************
+*NAME:          winbolonetServerAnnounce
+*PURPOSE:
+* Queues an authenticated server/announce with the body {}
+* to each name winbolonetAnnounceHosts gives, IPv4 first,
+* as fire-and-forget worker jobs. WinBolo.net records the
+* address each one arrives from as the session's address of
+* that family. Call it right after a register has succeeded
+* and its bearer is installed. A post that is refused or
+* fails is logged at debug level and not retried; the next
+* register sends it again. Does nothing when WinBolo.net is
+* not running.
+*********************************************************/
+void winbolonetServerAnnounce(void);
+
 /*********************************************************
 *NAME:          winbolonetSendLobbyStatus
 *PURPOSE:

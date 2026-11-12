@@ -603,6 +603,7 @@ static const UnitTestEntry s_tests[] = {
     { "round_transition_tick_does_not_block",      run_round_transition_tick_does_not_block      },
     { "round_transition_during_rotation_deferred", run_round_transition_during_rotation_deferred },
     { "round_transition_worker_down_sends_inline", run_round_transition_worker_down_sends_inline },
+    { "round_transition_failed_register_no_announce", run_round_transition_failed_register_no_announce },
     { "reauth_result_after_slot_reuse_discarded",  run_reauth_result_after_slot_reuse_discarded  },
     { "reauth_result_stamps_slot",                 run_reauth_result_stamps_slot                 },
     { "reauth_repeat_while_verify_out_refused",    run_reauth_repeat_while_verify_out_refused    },

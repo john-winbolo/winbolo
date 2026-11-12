@@ -766,6 +766,14 @@ bool winbolonetApplyRegisterResult(int status, const char *response) {
   return wbnStubApplyRegisterOk;
 }
 
+/* server/announce spy (test_round_transition_tick.c): counts the calls the
+ * lifecycle makes after a register has succeeded. */
+int wbnStubAnnounceCalls = 0;
+
+void winbolonetServerAnnounce(void) {
+  wbnStubAnnounceCalls++;
+}
+
 /* ── client/verify queue spy (test_reauth_result.c) ─────────────────────
  * The reauth path queues client/verify for the worker and stamps the slot
  * from udpServerApplyReauthResult when the reply lands. These record the

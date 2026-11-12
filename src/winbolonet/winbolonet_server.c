@@ -39,6 +39,7 @@
 #include "server_sim.h"
 #include "winbolonetevents.h"
 #include "winbolonetthread.h"
+#include "../common/wb_log.h"
 
 #define WINBOLO_NET_MAX_NOSEND 60 /* Maximum non transmission time in seconds */
 #define WINBOLO_NET_TEAM_MARKER (254)
@@ -1466,6 +1467,113 @@ bool winbolonetApplyRegisterResult(int status, const char *response) {
 
   winboloNetLastSent = time(NULL);
   return TRUE;
+}
+
+/*********************************************************
+*NAME:          winbolonetHostIsDefault
+*PURPOSE:
+* TRUE when the WinBolo.net host in use is the built-in
+* one: no command-line override, and a Host value that is
+* empty or gives the same API URL as WBN_DEFAULT_HOST, so
+* "https://wbn.winbolo.net" and "wbn.winbolo.net/" count as
+* the default too.
+*********************************************************/
+static bool winbolonetHostIsDefault(bool hostOverridden, const char *host) {
+  char hostUrl[FILENAME_MAX + 64];
+  char defaultUrl[FILENAME_MAX + 64];
+
+  if (hostOverridden) {
+    return FALSE;
+  }
+  if (host == NULL || host[0] == '\0') {
+    return TRUE;
+  }
+  httpApiUrlForHost(host, "", hostUrl, sizeof(hostUrl));
+  httpApiUrlForHost(WBN_DEFAULT_HOST, "", defaultUrl, sizeof(defaultUrl));
+  return strcmp(hostUrl, defaultUrl) == 0;
+}
+
+/*********************************************************
+*NAME:          winbolonetAnnounceHosts
+*PURPOSE:
+* Picks the server/announce name for each family; see
+* winbolonet_server.h for the rules.
+*********************************************************/
+void winbolonetAnnounceHosts(bool hostOverridden, const char *host,
+                             const char *host4, const char *host6,
+                             char *out4, size_t out4Len,
+                             char *out6, size_t out6Len) {
+  bool isDefault = winbolonetHostIsDefault(hostOverridden, host);
+
+  if (out4 != NULL && out4Len > 0) {
+    if (host4 != NULL && host4[0] != '\0') {
+      snprintf(out4, out4Len, "%s", host4);
+    } else if (isDefault) {
+      snprintf(out4, out4Len, "%s", WBN_DEFAULT_HOST4);
+    } else {
+      out4[0] = '\0';
+    }
+  }
+  if (out6 != NULL && out6Len > 0) {
+    if (host6 != NULL && host6[0] != '\0') {
+      snprintf(out6, out6Len, "%s", host6);
+    } else if (isDefault) {
+      snprintf(out6, out6Len, "%s", WBN_DEFAULT_HOST6);
+    } else {
+      out6[0] = '\0';
+    }
+  }
+}
+
+/*********************************************************
+*NAME:          winbolonetQueueAnnounce
+*PURPOSE:
+* Queues one server/announce to host, when host is set.
+* Both outcomes are logged at debug level: a refused post
+* is not retried, and the next register sends it again.
+* The bearer is attached by the worker when the post fires
+* and appears in neither line.
+*********************************************************/
+static void winbolonetQueueAnnounce(const char *host) {
+  if (host[0] == '\0') {
+    return;
+  }
+  if (winbolonetThreadAddHostedServerRequest(host, "server/announce", "{}")) {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "WinBolo.net server/announce queued for %s",
+                 host);
+  } else {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                 "WinBolo.net server/announce for %s not queued", host);
+  }
+}
+
+/*********************************************************
+*NAME:          winbolonetServerAnnounce
+*PURPOSE:
+* Queues server/announce to the IPv4 name, then the IPv6
+* name, for the session the last register installed.
+*********************************************************/
+void winbolonetServerAnnounce(void) {
+  WbnHostSettings settings;
+  char host4[FILENAME_MAX];
+  char host6[FILENAME_MAX];
+
+  if (winboloNetRunning != TRUE) {
+    return;
+  }
+
+  httpGetHostSettings(&settings);
+  winbolonetAnnounceHosts(settings.hostOverridden, settings.host,
+                          settings.host4, settings.host6,
+                          host4, sizeof(host4), host6, sizeof(host6));
+  if (host4[0] == '\0' && host6[0] == '\0') {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                 "WinBolo.net server/announce not sent: custom host and "
+                 "no Host4 or Host6 set");
+    return;
+  }
+  winbolonetQueueAnnounce(host4);
+  winbolonetQueueAnnounce(host6);
 }
 
 /*********************************************************

@@ -41,6 +41,58 @@
 
 struct cJSON;
 
+/* The WinBolo.net host used when neither the command line nor
+ * [WINBOLO.NET] Host names another. */
+#define WBN_DEFAULT_HOST "wbn.winbolo.net"
+
+/*********************************************************
+*NAME:          WbnHostSettings
+*PURPOSE:
+* The host values httpCreate read: whether a command-line
+* override was given, the Host value it used (the override
+* or [WINBOLO.NET] Host), and [WINBOLO.NET] Host4 and Host6
+* as written (empty when absent). Every field is empty and
+* hostOverridden FALSE before the first httpCreate.
+*********************************************************/
+typedef struct {
+  bool hostOverridden;
+  char host[FILENAME_MAX];
+  char host4[FILENAME_MAX];
+  char host6[FILENAME_MAX];
+} WbnHostSettings;
+
+/*********************************************************
+*NAME:          httpGetHostSettings
+*PURPOSE:
+* Copies the host values httpCreate read into *out. Reads
+* them only; nothing is read from the preferences file here.
+*
+*ARGUMENTS:
+* out - Receives the settings
+*********************************************************/
+void httpGetHostSettings(WbnHostSettings *out);
+
+/*********************************************************
+*NAME:          httpApiUrlForHost
+*PURPOSE:
+* Writes the URL a post to endpoint goes to:
+* <baseUrl>/api/v1/<endpoint>. With host NULL or empty the
+* base URL is the configured one (httpGetBaseUrl); otherwise
+* it is built from host by the rules [WINBOLO.NET] Host
+* follows (a bare name is https, an http:// or https://
+* prefix is kept, a trailing slash is dropped). Changes no
+* state.
+*
+*ARGUMENTS:
+* host     - Host for this request, or NULL / "" for the
+*            configured one
+* endpoint - API path after /api/v1/
+* out      - Receives the URL
+* outLen   - Size of out
+*********************************************************/
+void httpApiUrlForHost(const char *host, const char *endpoint,
+                       char *out, size_t outLen);
+
 /*********************************************************
 *NAME:          httpSetHostOverride
 *PURPOSE:
@@ -117,12 +169,22 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
 * Refuses to send (returns -1) and logs to stderr when the
 * bearer is empty; no curl is invoked in that case.
 *
+* host sends this one request to another WinBolo.net name
+* (see httpApiUrlForHost); NULL or "" uses the configured
+* host. A request with a host logs a transport failure at
+* debug level rather than as a warning: the server/announce
+* posts that use it are expected to fail on a machine with
+* no route of that address family.
+*
 *ARGUMENTS:
+* host         - Host for this request, or NULL / "" for the
+*                configured one
 * endpoint     - API path after /api/v1/
 * json_body    - JSON request body string
 * response_out - Receives heap-allocated response string (caller frees)
 *********************************************************/
-int wbn_api_post_server(const char *endpoint, const char *json_body, char **response_out);
+int wbn_api_post_server(const char *host, const char *endpoint,
+                        const char *json_body, char **response_out);
 
 /*********************************************************
 *NAME:          wbn_api_call

@@ -409,6 +409,7 @@ static wbnList newJob(uint8_t kind) {
   add->json_body = NULL;
   add->needs_bearer = FALSE;
   add->stamp_server_key = FALSE;
+  add->host[0] = '\0';
   add->file_name = NULL;
   add->upload_key = NULL;
   return add;
@@ -471,9 +472,10 @@ static uint32_t linkJob(wbnList add) {
 *  and nothing was taken. The answer is the one the caller
 *  acts on, so it is given by the call that would have
 *  queued the work rather than by a separate question asked
-*  beforehand.
+*  beforehand. host is NULL for the configured host.
 *********************************************************/
-static uint32_t enqueueJob(const char *endpoint, const char *json_body,
+static uint32_t enqueueJob(const char *host, const char *endpoint,
+                           const char *json_body,
                            bool needs_bearer, bool stamp_server_key,
                            uint8_t kind) {
   wbnList add;
@@ -484,6 +486,10 @@ static uint32_t enqueueJob(const char *endpoint, const char *json_body,
   add = newJob(kind);
   strncpy(add->endpoint, endpoint, sizeof(add->endpoint) - 1);
   add->endpoint[sizeof(add->endpoint) - 1] = '\0';
+  if (host != NULL) {
+    strncpy(add->host, host, sizeof(add->host) - 1);
+    add->host[sizeof(add->host) - 1] = '\0';
+  }
   add->json_body = strdup(json_body);
   add->needs_bearer = needs_bearer;
   add->stamp_server_key = stamp_server_key;
@@ -592,7 +598,7 @@ bool winbolonetThreadAddRequest(const char *endpoint, const char *json_body) {
   if (wbnBacklogRefuses(endpoint)) {
     return FALSE;
   }
-  return enqueueJob(endpoint, json_body, FALSE, FALSE, WBN_JOB_NONE) != 0;
+  return enqueueJob(NULL, endpoint, json_body, FALSE, FALSE, WBN_JOB_NONE) != 0;
 }
 
 /*********************************************************
@@ -606,7 +612,7 @@ bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_bod
   if (wbnBacklogRefuses(endpoint)) {
     return FALSE;
   }
-  return enqueueJob(endpoint, json_body, TRUE, FALSE, WBN_JOB_NONE) != 0;
+  return enqueueJob(NULL, endpoint, json_body, TRUE, FALSE, WBN_JOB_NONE) != 0;
 }
 
 /*********************************************************
@@ -620,7 +626,26 @@ bool winbolonetThreadAddServerKeyedRequest(const char *endpoint,
   if (wbnBacklogRefuses(endpoint)) {
     return FALSE;
   }
-  return enqueueJob(endpoint, json_body, TRUE, TRUE, WBN_JOB_NONE) != 0;
+  return enqueueJob(NULL, endpoint, json_body, TRUE, TRUE, WBN_JOB_NONE) != 0;
+}
+
+/*********************************************************
+*NAME:          winbolonetThreadAddHostedServerRequest
+*PURPOSE:
+*  As winbolonetThreadAddServerRequest, sent to host rather
+*  than the configured WinBolo.net host. Counted against the
+*  backlog cap like every other fire-and-forget post.
+*********************************************************/
+bool winbolonetThreadAddHostedServerRequest(const char *host,
+                                            const char *endpoint,
+                                            const char *json_body) {
+  if (host == NULL || host[0] == '\0') {
+    return FALSE;
+  }
+  if (wbnBacklogRefuses(endpoint)) {
+    return FALSE;
+  }
+  return enqueueJob(host, endpoint, json_body, TRUE, FALSE, WBN_JOB_NONE) != 0;
 }
 
 /*********************************************************
@@ -635,7 +660,7 @@ bool winbolonetThreadAddServerKeyedRequest(const char *endpoint,
 *********************************************************/
 bool winbolonetThreadAddSessionRequest(const char *endpoint,
                                        const char *json_body) {
-  return enqueueJob(endpoint, json_body, TRUE, TRUE, WBN_JOB_NONE) != 0;
+  return enqueueJob(NULL, endpoint, json_body, TRUE, TRUE, WBN_JOB_NONE) != 0;
 }
 
 /*********************************************************
@@ -646,7 +671,7 @@ bool winbolonetThreadAddSessionRequest(const char *endpoint,
 *********************************************************/
 uint32_t winbolonetThreadAddJob(const char *endpoint, const char *json_body,
                                 bool needs_bearer, uint8_t kind) {
-  return enqueueJob(endpoint, json_body, needs_bearer, FALSE, kind);
+  return enqueueJob(NULL, endpoint, json_body, needs_bearer, FALSE, kind);
 }
 
 /*********************************************************
@@ -762,20 +787,30 @@ void winbolonetThreadDrainResults(WbnResultHandler handler, void *ctx) {
 *  reply goes to response_out when the caller wants it, and
 *  is freed here when it does not — no caller of a
 *  WBN_JOB_NONE endpoint reads one — so a failure is
-*  reported here instead.
+*  reported here instead. host is the job's own host, empty
+*  for the configured one; a failed post to a host of its
+*  own is logged at debug level, since the per-family names
+*  are expected to fail on a machine with no route of that
+*  family.
 *********************************************************/
-static int fireRequest(const char *endpoint, const char *json_body,
+static int fireRequest(const char *host, const char *endpoint,
+                       const char *json_body,
                        bool needs_bearer, char **response_out) {
   char *resp = NULL;
   int status;
 
   if (needs_bearer) {
-    status = wbn_api_post_server(endpoint, json_body, &resp);
+    status = wbn_api_post_server(host, endpoint, json_body, &resp);
   } else {
     status = wbn_api_post(endpoint, json_body, &resp);
   }
   if (status < 200 || status > 299) {
-    WB_LOG_WARN(WB_LOG_CAT_NET, "WinBolo.net %s failed: HTTP %d", endpoint, status);
+    if (host[0] != '\0') {
+      WB_LOG_DEBUG(WB_LOG_CAT_NET, "WinBolo.net %s to %s failed: HTTP %d",
+                   endpoint, host, status);
+    } else {
+      WB_LOG_WARN(WB_LOG_CAT_NET, "WinBolo.net %s failed: HTTP %d", endpoint, status);
+    }
   }
   if (response_out != NULL) {
     *response_out = resp;
@@ -833,11 +868,11 @@ static void runJob(wbnList job) {
     }
   }
   if (job->kind == WBN_JOB_NONE) {
-    fireRequest(job->endpoint, body, job->needs_bearer, NULL);
+    fireRequest(job->host, job->endpoint, body, job->needs_bearer, NULL);
     free(stamped);
     return;
   }
-  status = fireRequest(job->endpoint, body, job->needs_bearer, &resp);
+  status = fireRequest(job->host, job->endpoint, body, job->needs_bearer, &resp);
   free(stamped);
   pushResult(job->id, job->kind, status, resp);
 }
