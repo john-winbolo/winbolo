@@ -1083,7 +1083,7 @@ int run_bot_host_optout_slots_codec(void);
 int run_bot_host_optout_give_back(void);
 int run_bot_host_max_saved(void);
 int run_bot_host_dyn_raise_rule(void);
-int run_bot_host_dyn_half_reserve(void);
+int run_bot_host_dyn_under_reserve(void);
 int run_bot_host_dyn_carry(void);
 int run_bot_host_dyn_keel(void);
 int run_bot_host_dyn_determinism(void);

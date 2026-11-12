@@ -279,10 +279,9 @@ static int               botHostDynServerCeil;
 /* The CTRL_BOT_HOST_ROW_LIMITS values last sent, one per Bot Host row. */
 static bool              botHostRowLimitsSentHave[MAX_BOT_HOSTS];
 static ControlEvent      botHostRowLimitsSent[MAX_BOT_HOSTS];
-/* The why of a player's computer under half its CPU reserve
- * (botHostPlaceMarkBad). */
-static const char        BOT_HOST_WHY_HALF_RESERVE[] =
-                             "under half its CPU reserve";
+/* The why of a place under its CPU reserve (botHostPlaceMarkBad). */
+static const char        BOT_HOST_WHY_UNDER_RESERVE[] =
+                             "under its CPU reserve";
 
 static void botHostOvrEnsure(void) {
     int i;
@@ -4005,13 +4004,12 @@ static void botHostPlaceMarkBad(BotHostPlaceHost *hosts, const char **why,
             why[i] = "overrun rate";
         } else if (lack > 0) {
             why[i] = "low free CPU";
-        } else if (i > 0 && udpServer.botHosts[i - 1].playerHost &&
-                   botHostOverrunUnderHalfReserve(&botHostOvr[i], cfg,
-                                                  hosts[i].bots)) {
-            /* A player's computer under half its reserve gives bots to a
-             * place with room, one each step time; with no room they stay
+        } else if (botHostOverrunUnderReserve(&botHostOvr[i], cfg,
+                                              hosts[i].bots)) {
+            /* A place under its reserve gives bots to a place with room,
+             * one each step time; with no room they stay and keep running
              * (the spread finds no target). */
-            why[i] = BOT_HOST_WHY_HALF_RESERVE;
+            why[i] = BOT_HOST_WHY_UNDER_RESERVE;
         }
         if (why[i] == NULL) continue;
         hosts[i].bad = true;
@@ -4620,6 +4618,10 @@ void transportUdpServerSetBotHostDynamic(const BotHostDynamicFlags *f) {
                                      ? 3600 : f->raiseAfterCutSecs;
     }
     if (f->carryLimit >= 0) cfg->carryLimit = f->carryLimit != 0;
+    if (f->reserveRecentSecs >= 0) {
+        cfg->reserveRecentSecs = f->reserveRecentSecs > 3600
+                                     ? 3600 : f->reserveRecentSecs;
+    }
     if (!cfg->dynamic) {
         fprintf(stderr, "[bothost] dynamic slots: off (fixed slots); the "
                         "server and each Bot Host program try to keep %d%% "
@@ -5247,9 +5249,15 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     if (why != BOT_HOST_SPREAD_BAD) return;
     botHostBadGave[from] = true;
     botHostBadGaveTick[from] = udpServer.tickCount;
-    if (badWhy[from] == BOT_HOST_WHY_HALF_RESERVE &&
+    if (badWhy[from] == BOT_HOST_WHY_UNDER_RESERVE &&
+        !botHostOverrunDynamic(&botHostOvr[from], botHostOvrConfig())) {
+        /* The next reserve move needs a full window with the bot gone. */
+        botHostOverrunGave(&botHostOvr[from]);
+    }
+    if (badWhy[from] == BOT_HOST_WHY_UNDER_RESERVE &&
         botHostOverrunDynamic(&botHostOvr[from], botHostOvrConfig())) {
-        /* Under half its reserve counts as a step down of its limit. */
+        /* Under its reserve counts as a step down of its limit, and the
+         * next reserve move needs a full window with the bot gone. */
         BotHostOverrunReport rep;
         memset(&rep, 0, sizeof(rep));
         rep.lowestClean = rep.highestBad = -1;
@@ -5259,9 +5267,9 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         fprintf(stderr, "[bothost] dynamic slots: \"%s\" limit goes from %d "
                         "to %d: %s\n",
                 botHostOvrName(from), rep.limitBefore, rep.newLimit,
-                BOT_HOST_WHY_HALF_RESERVE);
+                BOT_HOST_WHY_UNDER_RESERVE);
         botHostRecDecision(from, BOTHOST_DECISION_CUT, &rep, -1, -1,
-                           BOT_HOST_WHY_HALF_RESERVE, NULL);
+                           BOT_HOST_WHY_UNDER_RESERVE, NULL);
         return;
     }
     {

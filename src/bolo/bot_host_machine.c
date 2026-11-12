@@ -303,6 +303,7 @@ void botHostDynamicFlagsInit(BotHostDynamicFlags *f) {
     f->dynamic = f->serverMax = f->clientStart = -1;
     f->raiseReservePct = f->clientReservePct = f->raiseLagMaxMs = -1;
     f->raiseStep = f->raiseAfterCutSecs = f->carryLimit = -1;
+    f->reserveRecentSecs = -1;
 }
 
 void botHostDynamicFlagsKeel(BotHostDynamicFlags *f) {
@@ -316,6 +317,7 @@ void botHostDynamicFlagsKeel(BotHostDynamicFlags *f) {
     f->raiseStep = 1;
     f->raiseAfterCutSecs = 0;
     f->carryLimit = 0;
+    f->reserveRecentSecs = 0;
 }
 
 bool botHostSlotOverrideSet(BotHostSlotOverride *o, int reported, int value) {

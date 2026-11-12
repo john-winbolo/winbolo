@@ -1065,10 +1065,13 @@ void printArgs() {
   fprintf(stderr, "                when given, else logical CPUs - 1)\n");
   fprintf(stderr, "-bothost-client-start <N> - the bots a player's computer starts a game with; 0 = its Max slots (default 2)\n");
   fprintf(stderr, "-bothost-raise-reserve-pct <p> - the server and each Bot Host program try to keep p%% CPU free: no raise\n");
-  fprintf(stderr, "                and no new bot that would take the free CPU under it. A Bot Host's --cpu-reserve is used\n");
-  fprintf(stderr, "                for that host. The bots may push the CPU past it when no other place has room (default 25)\n");
-  fprintf(stderr, "-bothost-client-reserve-pct <p> - a player's computer tries to keep p%% CPU free; under half of it, its\n");
-  fprintf(stderr, "                bots go to a place with room (default 25)\n");
+  fprintf(stderr, "                and no new bot that would take the free CPU under it; under it, one bot each step time\n");
+  fprintf(stderr, "                goes to a place with room. A Bot Host's --cpu-reserve is used for that host. With no\n");
+  fprintf(stderr, "                room the bots stay and may push the CPU past it (default 25)\n");
+  fprintf(stderr, "-bothost-client-reserve-pct <p> - the same for a player's computer (default 25)\n");
+  fprintf(stderr, "-bothost-reserve-recent-secs <s> - a place is under its reserve only when the free CPU average of\n");
+  fprintf(stderr, "                its full window and of its last s seconds are both under it, so a short dip that\n");
+  fprintf(stderr, "                has ended moves no bot; 0 = only the full window (default 10)\n");
   fprintf(stderr, "-bothost-raise-lag-max-ms <ms> - no raise for a host with more lag; 0 = no lag check (default 200)\n");
   fprintf(stderr, "-bothost-raise-step <N> - the most bots one raise adds (default 2)\n");
   fprintf(stderr, "-bothost-raise-after-cut-secs <s> - no raise within s seconds of a step down (default 120)\n");
@@ -3443,13 +3446,13 @@ int main(int argc, char **argv) {
          * KEEL value of each (today's fixed slots), and a flag given as
          * well still counts. */
         BotHostDynamicFlags d;
-        static const char *const names[9] = {
+        static const char *const names[10] = {
             "bothost-dynamic-slots", "botcapacity-max",
             "bothost-client-start", "bothost-raise-reserve-pct",
             "bothost-client-reserve-pct", "bothost-raise-lag-max-ms",
             "bothost-raise-step", "bothost-raise-after-cut-secs",
-            "bothost-carry-limit"};
-        int *vals[9];
+            "bothost-carry-limit", "bothost-reserve-recent-secs"};
+        int *vals[10];
         int k, a;
         botHostDynamicFlagsInit(&d);
         if (argExist(argc, argv, "bothost-keel") == TRUE) {
@@ -3469,7 +3472,8 @@ int main(int argc, char **argv) {
         vals[6] = &d.raiseStep;
         vals[7] = &d.raiseAfterCutSecs;
         vals[8] = &d.carryLimit;
-        for (k = 0; k < 9; k++) {
+        vals[9] = &d.reserveRecentSecs;
+        for (k = 0; k < 10; k++) {
           a = findArg(argc, argv, names[k]);
           if (a != ARG_NOT_FOUND && a < argc) *vals[k] = atoi(argv[a]);
         }

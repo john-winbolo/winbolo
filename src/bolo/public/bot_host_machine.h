@@ -182,6 +182,7 @@ typedef struct {
     int raiseStep;         /* -bothost-raise-step */
     int raiseAfterCutSecs; /* -bothost-raise-after-cut-secs */
     int carryLimit;        /* -bothost-carry-limit <0|1> */
+    int reserveRecentSecs; /* -bothost-reserve-recent-secs, 0: off */
 } BotHostDynamicFlags;
 /* Every value at its default (-1). */
 void botHostDynamicFlagsInit(BotHostDynamicFlags *f);
