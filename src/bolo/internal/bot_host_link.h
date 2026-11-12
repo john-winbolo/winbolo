@@ -406,11 +406,12 @@ int  botHostTrailPickSeat(const BotHostTrail *t, const int *seats,
  * The step downs are as above. The reserve is soft: the place tries to
  * keep reservePct of its CPU free. With reserveNew it also refuses new
  * bots that would take the predicted free CPU under it
- * (botHostOverrunMayTake), but it never sends a bot away by itself: the
- * bots it has may push the CPU past the reserve when no other place has
- * room. A player's computer whose free CPU average is under half its
- * reserve counts as bad (botHostOverrunUnderHalfReserve), so its bots go
- * to a place with room, if there is one. */
+ * (botHostOverrunMayTake). A place whose free CPU is under its reserve
+ * counts as bad (botHostOverrunUnderReserve): it gives one bot each
+ * stepSecs to a place with room. With no room its bots stay and keep
+ * running, so they may push the CPU past the reserve. A short dip does not
+ * count: the average over a full window and the average of the last
+ * reserveRecentSecs must both be under the reserve. */
 #define BOT_HOST_OVR_PCT_DEFAULT           0.5
 #define BOT_HOST_OVR_EMERGENCY_PCT_DEFAULT 5.0
 #define BOT_HOST_OVR_GAIN_DEFAULT          0.5
@@ -449,6 +450,9 @@ int  botHostTrailPickSeat(const BotHostTrail *t, const int *seats,
 #define BOT_HOST_RAISE_AFTER_CUT_DEFAULT   120
 #define BOT_HOST_CARRY_LIMIT_DEFAULT       true
 #define BOT_HOST_CLIENT_START_DEFAULT      2
+/* The recent free CPU average of the under-reserve rule, in seconds; 0:
+ * only the full window counts. */
+#define BOT_HOST_RESERVE_RECENT_SECS_DEFAULT 10
 
 typedef struct {
     double pct;            /* the target rate in percent; 0: the check is off */
@@ -468,6 +472,8 @@ typedef struct {
     int    raiseLagMaxMs;      /* d. of the raise; 0: no lag check */
     int    raiseAfterCutSecs;  /* e. of the raise */
     bool   carryLimit;         /* the limit carries into the next game */
+    int    reserveRecentSecs;  /* the under-reserve rule's recent average;
+                                * 0: off */
 } BotHostOverrunCfg;
 
 typedef struct {
@@ -574,10 +580,13 @@ void botHostOverrunSetStart(BotHostOverrunState *st, int start, int ceiling,
 /* The place has a live limit (a start with dynamic slots on). */
 bool botHostOverrunDynamic(const BotHostOverrunState *st,
                            const BotHostOverrunCfg *cfg);
-/* A player's computer under half its reserve: its free CPU average is
- * known and below reservePct / 2 while it has bots. */
-bool botHostOverrunUnderHalfReserve(const BotHostOverrunState *st,
-                                    const BotHostOverrunCfg *cfg, int bots);
+/* A place under its reserve, while it has bots and a reserve: the window
+ * is full (windowSecs of probes since the last change, so after a move the
+ * averages show the bot that left) and both its free CPU average over the
+ * window and the average of its last reserveRecentSecs (0: not checked)
+ * are below reservePct. So a dip that has ended stops the moves at once. */
+bool botHostOverrunUnderReserve(const BotHostOverrunState *st,
+                                const BotHostOverrunCfg *cfg, int bots);
 /* The bots the place's free CPU fits while it keeps its reserve free: the
  * free CPU average plus its bots' cost less the reserve, over the one-bot
  * cost (the measured one, else the full-budget estimate). -1 when not

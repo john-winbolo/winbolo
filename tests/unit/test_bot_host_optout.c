@@ -26,9 +26,11 @@
  *   6. bot_host_dyn_raise_rule: a live limit goes up by up to the raise
  *      step once each step time, never above the ceiling, and each of the
  *      rule's conditions a to e stops a raise.
- *   7. bot_host_dyn_half_reserve: a computer under half its reserve counts
- *      as bad; at or above it, with no bots, or with no reserve it does
- *      not. The reserve refuses new bots only.
+ *   7. bot_host_dyn_under_reserve: a place under its reserve for a full
+ *      window counts as bad and gives a bot to a place with room; a short
+ *      dip that has ended, a window that is not full, no bots or no
+ *      reserve does not count; after a move the next one needs a full
+ *      window again; with no room the bots stay.
  *   8. bot_host_dyn_carry: a new game starts at the start, or with
  *      carryLimit at the limit the last game ended with, and says which.
  *   9. bot_host_dyn_keel: the KEEL values give fixed slots: no live limit,
@@ -490,41 +492,103 @@ int run_bot_host_dyn_raise_rule(void) {
     return 0;
 }
 
-int run_bot_host_dyn_half_reserve(void) {
+/* Probes secs seconds of d, the free CPU dip (dipFree) from second
+ * dipFrom (counted from 1) to dipTo. */
+static void dynRunDip(BotHostOverrunState *st, const BotHostOverrunCfg *cfg,
+                      const DynSecond *d, int secs, int dipFrom, int dipTo,
+                      int dipFree) {
+    int s;
+    for (s = 1; s <= secs; s++) {
+        DynSecond one = *d;
+        if (s >= dipFrom && s <= dipTo) one.freePct = dipFree;
+        (void)dynRun(st, cfg, &one, 1);
+    }
+}
+
+int run_bot_host_dyn_under_reserve(void) {
+    static const BotHostPlaceLag lag = { 100.0, 250.0,
+                                         BOT_HOST_LAG_GAIN_DEFAULT };
     BotHostOverrunState *st = (BotHostOverrunState *)calloc(1, sizeof(*st));
     BotHostOverrunCfg cfg;
+    BotHostPlaceHost h[3];
     DynSecond d;
+    int i, from = -1, to = -1;
+    BotHostSpreadWhy why = BOT_HOST_SPREAD_NONE;
 
     UT_ASSERT(st != NULL);
-    /* No reading yet: not known, not bad. */
+    UT_ASSERT(BOT_HOST_RESERVE_RECENT_SECS_DEFAULT == 10);
+    /* No reading yet: not known, not under. */
     dynSetUp(st, &cfg);
-    UT_ASSERT(!botHostOverrunUnderHalfReserve(st, &cfg, 2));
+    UT_ASSERT(!botHostOverrunUnderReserve(st, &cfg, 2));
     UT_ASSERT(botHostOverrunFits(st, &cfg, 2) == -1);
-    /* Free CPU 10, under half of 25: bad while it has bots. */
-    d = dynGood; d.freePct = 10;
-    (void)dynRun(st, &cfg, &d, 30);
-    UT_ASSERT(botHostOverrunUnderHalfReserve(st, &cfg, 2));
-    UT_ASSERT(!botHostOverrunUnderHalfReserve(st, &cfg, 0));
-    /* The reserve does not send a bot away by itself: the limit stays. */
-    UT_ASSERT(st->limit == 2);
-    /* It refuses new bots: none fits while it keeps 25 free. */
-    UT_ASSERT(botHostOverrunFits(st, &cfg, 2) == 0);
-    UT_ASSERT(!botHostOverrunMayTake(st, &cfg, 2, 10, NULL));
-    /* With no reserve the same computer is not bad. */
-    botHostOverrunSetStart(st, 2, 8, 0.0, false);
-    UT_ASSERT(!botHostOverrunUnderHalfReserve(st, &cfg, 2));
-
-    /* Free CPU 13, at or above half of 25: not bad. */
-    dynSetUp(st, &cfg);
-    d = dynGood; d.freePct = 13;
-    (void)dynRun(st, &cfg, &d, 30);
-    UT_ASSERT(!botHostOverrunUnderHalfReserve(st, &cfg, 2));
-    /* Free CPU 60 with 2 bots of 5: (60 + 10 - 25) / 5 = 9 fit. */
-    dynSetUp(st, &cfg);
-    d = dynGood; d.freePct = 60;
+    /* Free CPU 20, under 25, but the window is not full yet. */
+    d = dynGood; d.freePct = 20;
     (void)dynRun(st, &cfg, &d, 29);
-    UT_ASSERT(botHostOverrunFits(st, &cfg, 2) == 9);
-    printf("  under half the reserve: bad; the limit stays\n");
+    UT_ASSERT(!botHostOverrunUnderReserve(st, &cfg, 2));
+    /* A full window under it: under, while it has bots. */
+    (void)dynRun(st, &cfg, &d, 1);
+    UT_ASSERT(botHostOverrunUnderReserve(st, &cfg, 2));
+    UT_ASSERT(!botHostOverrunUnderReserve(st, &cfg, 0));
+    /* The rule does not change the limit by itself. */
+    UT_ASSERT(st->limit == 2);
+    /* New bots: (20 + 10 - 25) / 5 = 1 fits, fewer than its 2. */
+    UT_ASSERT(botHostOverrunFits(st, &cfg, 2) == 1);
+    UT_ASSERT(!botHostOverrunMayTake(st, &cfg, 2, 20, NULL));
+    /* A bot left: the next move needs a full window with it gone. */
+    botHostOverrunGave(st);
+    (void)dynRun(st, &cfg, &d, 29);
+    UT_ASSERT(!botHostOverrunUnderReserve(st, &cfg, 2));
+    (void)dynRun(st, &cfg, &d, 1);
+    UT_ASSERT(botHostOverrunUnderReserve(st, &cfg, 2));
+    /* With no reserve the same place is not under it. */
+    botHostOverrunSetStart(st, 2, 8, 0.0, false);
+    UT_ASSERT(!botHostOverrunUnderReserve(st, &cfg, 2));
+
+    /* At 28 free with a 5 s dip to 0 at 11..15 s: the window average is
+     * 23.3, under 25, but the last 10 s are back at 28, so it is not
+     * under. */
+    dynSetUp(st, &cfg);
+    d = dynGood; d.freePct = 28;
+    dynRunDip(st, &cfg, &d, 30, 11, 15, 0);
+    UT_ASSERT(!botHostOverrunUnderReserve(st, &cfg, 2));
+    /* With the recent check off the window average alone says under. */
+    cfg.reserveRecentSecs = 0;
+    UT_ASSERT(botHostOverrunUnderReserve(st, &cfg, 2));
+    /* The dip still on in the last 10 s: under. */
+    dynSetUp(st, &cfg);
+    dynRunDip(st, &cfg, &d, 30, 26, 30, 0);
+    UT_ASSERT(botHostOverrunUnderReserve(st, &cfg, 2));
+    /* At 28 with no dip: not under. */
+    dynSetUp(st, &cfg);
+    (void)dynRun(st, &cfg, &d, 30);
+    UT_ASSERT(!botHostOverrunUnderReserve(st, &cfg, 2));
+    printf("  under for a full window: under; a 5 s dip that ended: not\n");
+
+    /* The move: place 1 (under its reserve) gives a bot only to a place
+     * with room. 0 the server at its slots, 2 another host. */
+    memset(h, 0, sizeof(h));
+    h[0].slots = 4; h[0].bots = 4; h[0].unlimited = true; h[0].lagMs = 0.0;
+    h[1].slots = 3; h[1].bots = 3; h[1].lagMs = 20.0; h[1].bad = true;
+    h[2].slots = 3; h[2].bots = 3; h[2].lagMs = 20.0;
+    for (i = 0; i < 3; i++) {
+        h[i].open = true;
+        h[i].movable = true;
+    }
+    /* No room: the bots stay. */
+    UT_ASSERT(!botHostPlaceRebalanceKeep(h, 3, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                         BOT_HOST_SMALL_BIAS_DEFAULT, &lag,
+                                         false, &from, &to, &why));
+    /* Room on place 2: one bot goes there. */
+    h[2].bots = 2;
+    UT_ASSERT(botHostPlaceRebalanceKeep(h, 3, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                        BOT_HOST_SMALL_BIAS_DEFAULT, &lag,
+                                        false, &from, &to, &why));
+    UT_ASSERT(from == 1 && to == 2 && why == BOT_HOST_SPREAD_BAD);
+    /* Held for its step time after that move: no second bot yet. */
+    h[1].bots = 2; h[2].bots = 2; h[1].badHold = true;
+    UT_ASSERT(!botHostPlaceRebalanceKeep(h, 3, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                         BOT_HOST_SMALL_BIAS_DEFAULT, &lag,
+                                         false, &from, &to, &why));
     free(st);
     return 0;
 }
@@ -573,6 +637,7 @@ int run_bot_host_dyn_keel(void) {
 
     UT_ASSERT(st != NULL);
     botHostDynamicFlagsInit(&f);
+    UT_ASSERT(f.reserveRecentSecs == -1);
     UT_ASSERT(f.dynamic == -1 && f.serverMax == -1 && f.clientStart == -1);
     UT_ASSERT(f.raiseReservePct == -1 && f.clientReservePct == -1);
     UT_ASSERT(f.raiseLagMaxMs == -1 && f.raiseStep == -1);
@@ -588,6 +653,7 @@ int run_bot_host_dyn_keel(void) {
     UT_ASSERT(f.raiseStep == 1);
     UT_ASSERT(f.raiseAfterCutSecs == 0);
     UT_ASSERT(f.carryLimit == 0);
+    UT_ASSERT(f.reserveRecentSecs == 0);
 
     /* With them a place has no live limit: it counts its slots, as
      * before dynamic slots. */

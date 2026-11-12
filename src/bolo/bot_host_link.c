@@ -858,6 +858,7 @@ void botHostOverrunCfgDefaults(BotHostOverrunCfg *cfg) {
     cfg->raiseLagMaxMs = BOT_HOST_RAISE_LAG_MAX_MS_DEFAULT;
     cfg->raiseAfterCutSecs = BOT_HOST_RAISE_AFTER_CUT_DEFAULT;
     cfg->carryLimit = BOT_HOST_CARRY_LIMIT_DEFAULT;
+    cfg->reserveRecentSecs = BOT_HOST_RESERVE_RECENT_SECS_DEFAULT;
 }
 
 /* A count that lets a new state step at once, as soon as its window shows
@@ -1456,15 +1457,28 @@ int botHostOverrunFreeRoom(const BotHostOverrunState *st,
     return room;
 }
 
-bool botHostOverrunUnderHalfReserve(const BotHostOverrunState *st,
-                                    const BotHostOverrunCfg *cfg, int bots) {
+bool botHostOverrunUnderReserve(const BotHostOverrunState *st,
+                                const BotHostOverrunCfg *cfg, int bots) {
     BotHostOverrunReport rep;
+    int k, n, known = 0;
+    double sum = 0.0;
     if (st == NULL || cfg == NULL || bots <= 0 || !(st->reservePct > 0.0)) {
         return false;
     }
+    if (st->probeCount < ovrWindow(cfg)) return false;
     ovrReportInit(&rep);
     ovrFreeNumbers(st, cfg, &rep);
-    return rep.freeKnown && rep.freeAvg < st->reservePct / 2.0;
+    if (!rep.freeKnown || !(rep.freeAvg < st->reservePct)) return false;
+    if (cfg->reserveRecentSecs <= 0) return true;
+    /* The recent average: the newest readings that cover those seconds. */
+    n = (cfg->reserveRecentSecs + ovrSample(cfg) - 1) / ovrSample(cfg);
+    for (k = 0; k < st->readingCount && k < n; k++) {
+        const BotHostFreeReading *r = ovrReading(st, cfg, k);
+        if (r->freePct == BOT_HOST_FREE_UNKNOWN) continue;
+        sum += r->freePct;
+        known++;
+    }
+    return known > 0 && sum / known < st->reservePct;
 }
 
 int botHostOverrunFits(const BotHostOverrunState *st,

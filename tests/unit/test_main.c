@@ -711,7 +711,7 @@ static const UnitTestEntry s_tests[] = {
     { "bot_host_optout_give_back", run_bot_host_optout_give_back },
     { "bot_host_max_saved", run_bot_host_max_saved },
     { "bot_host_dyn_raise_rule", run_bot_host_dyn_raise_rule },
-    { "bot_host_dyn_half_reserve", run_bot_host_dyn_half_reserve },
+    { "bot_host_dyn_under_reserve", run_bot_host_dyn_under_reserve },
     { "bot_host_dyn_carry", run_bot_host_dyn_carry },
     { "bot_host_dyn_keel", run_bot_host_dyn_keel },
     { "bot_host_dyn_determinism", run_bot_host_dyn_determinism },
