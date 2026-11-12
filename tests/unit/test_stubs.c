@@ -949,10 +949,17 @@ int wbn_prefs_put(const char *bearerToken, const char *json_body,
 }
 
 /* The public game-list transport lives in http.c; stubbed here to keep curl
- * out of the link. wbnFetchServerList is never exercised by the unit tests —
- * only the pure wbnServerListParse is. */
+ * out of the link. Every request is refused. The path of the last one is
+ * kept so a test can read the request wbnFetchServerList made; empty until
+ * the first call. */
+static char s_ut_getPublicPath[256] = "";
+
+const char *ut_wbn_get_public_last_path(void) {
+  return s_ut_getPublicPath;
+}
+
 int wbn_api_get_public(const char *path, char **response_out) {
-  (void)path;
+  SDL_strlcpy(s_ut_getPublicPath, path ? path : "", sizeof(s_ut_getPublicPath));
   if (response_out) *response_out = NULL;
   return -1;
 }

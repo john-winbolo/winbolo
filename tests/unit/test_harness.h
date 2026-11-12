@@ -582,6 +582,9 @@ int run_wbn_serverlist_motd(void);
 int run_wbn_serverlist_malformed(void);
 int run_wbn_serverlist_scripts(void);
 int run_wbn_serverlist_server_text(void);
+int run_wbn_serverlist_address6(void);
+int run_wbn_serverlist_pick_address(void);
+int run_wbn_serverlist_fetch_path(void);
 int run_wbn_map_parse(void);
 int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
@@ -5132,6 +5135,10 @@ int ut_status_tank_last_alliance(void);
  * handed. Both are empty strings until the first call. */
 const char *ut_messages_last_top(void);
 const char *ut_messages_last_bottom(void);
+
+/* The path the wbn_api_get_public stub in test_stubs.c was last handed. An
+ * empty string until the first call. */
+const char *ut_wbn_get_public_last_path(void);
 
 #ifdef __cplusplus
 }

@@ -25,6 +25,7 @@
 #ifndef __EMSCRIPTEN__
 #include "http.h"
 #endif
+#include "bolo_addr.h"     /* boloAddrParse, boloAddrFormatHost — "address6" */
 #include "view_policy.h"   /* the view-policy defaults for absent fields */
 #include "server_voice_mode.h"  /* serverVoiceOn — the default for an absent "voice" */
 /* Here and not in the header: the header reaches UI translation units, and
@@ -113,8 +114,35 @@ static bool isBlank(const char *s) {
     return true;
 }
 
+/* Reads "address6" into dst. Only a bare IPv6 literal another player can
+ * reach is kept: a value that is not a string, is bracketed, does not parse
+ * as IPv6, is an IPv4-mapped address, or is link-local, loopback or
+ * unspecified is stored as "". The full string is parsed before anything is
+ * copied, so a long value is refused rather than cut into a different
+ * address. The text kept is the address as boloAddrFormatHost prints it. */
+static void readAddress6Field(const cJSON *obj, char *dst, size_t dstSize) {
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, "address6");
+    BoloAddr addr;
+
+    dst[0] = '\0';
+    if (!cJSON_IsString(item) || item->valuestring == NULL ||
+        item->valuestring[0] == '\0' || item->valuestring[0] == '[') {
+        return;
+    }
+    if (!boloAddrParse(item->valuestring, 0, &addr) ||
+        boloAddrFamily(&addr) != AF_INET6 || boloAddrIsMappedV4(&addr) ||
+        boloAddrIsLinkLocal(&addr) || boloAddrIsLoopback(&addr) ||
+        boloAddrIsUnspecified(&addr)) {
+        return;
+    }
+    if (!boloAddrFormatHost(&addr, dst, dstSize)) {
+        dst[0] = '\0';
+    }
+}
+
 static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     readStringField(src, "address",  dst->address, sizeof(dst->address));
+    readAddress6Field(src, dst->address6, sizeof(dst->address6));
     dst->port = readIntField(src, "port");
     readStringField(src, "server_key", dst->serverKey, sizeof(dst->serverKey));
     readStringField(src, "map",      dst->map,      sizeof(dst->map));
@@ -334,10 +362,40 @@ bool wbnServerListParse(const char *json, WbnServerList *out) {
     return true;
 }
 
+bool wbnServerListPickAddress(const WbnServerListEntry *e, bool haveV4Route,
+                              bool haveV6Route, char *out, size_t outSz) {
+    const char *pick = NULL;
+
+    if (out == NULL || outSz == 0) {
+        return false;
+    }
+    out[0] = '\0';
+    if (e == NULL) {
+        return false;
+    }
+    if (e->address[0] != '\0' && haveV4Route) {
+        pick = e->address;
+    } else if (e->address6[0] != '\0' && haveV6Route) {
+        pick = e->address6;
+    } else if (e->address[0] != '\0') {
+        /* No IPv4 route was found, but on an IPv6-only network with NAT64
+         * the resolver can still reach a name or an IPv4 address. */
+        pick = e->address;
+    }
+    if (pick == NULL) {
+        return false;
+    }
+    snprintf(out, outSz, "%s", pick);
+    return true;
+}
+
 #ifndef __EMSCRIPTEN__
 bool wbnFetchServerList(WbnServerList *out) {
     char *resp = NULL;
-    int code = wbn_api_get_public("games", &resp);
+    /* v6=1 asks for "address6" and for the hosts with an IPv6 address only.
+     * The web client fetches the list itself (finder_wasm.c) without it,
+     * because its sockets are IPv4 only. */
+    int code = wbn_api_get_public("games?v6=1", &resp);
     if (code < 200 || code >= 300) {
         free(resp);
         if (out != NULL) {
