@@ -4515,6 +4515,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map.c
     tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
+    tests/unit/test_brain_binding_bounds.c
+    tests/unit/test_brain_sandbox_hostile.c
     tests/unit/test_brain_push_rules.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
@@ -5903,6 +5905,27 @@ set(_unit_test_names
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_push_rules_written_on_change
+    brain_bounds_tail_bad_steps
+    brain_bounds_tail_bad_neutral
+    brain_bounds_think_errors
+    brain_bounds_wrapper_called_from_lua
+    brain_bounds_kill_outside_think
+    brain_bounds_host_globals_raw
+    brain_bounds_on_init_metatable
+    brain_crash_log_outside_think
+    brain_bounds_deserialize_open
+    brain_bounds_next_step_bad_start
+    brain_bounds_shells_at_bad_tile
+    brain_bounds_push_replaced_info
+    brain_bounds_stamps_bad_tables
+    brain_bounds_threat_range
+    brain_crash_log_ignores_brain_globals
+    brain_sandbox_hostile_native_preloads
+    brain_sandbox_hostile_bytecode_init
+    brain_sandbox_hostile_loaders_removed
+    brain_sandbox_hostile_astar_log_removed
+    brain_sandbox_hostile_file_jail
+    brain_sandbox_hostile_off_map_terrain
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
