@@ -40,6 +40,13 @@
  *      and lengths past the end, bad keys, nesting too deep and bytes left
  *      over; random byte changes give an error or plain data, never a
  *      crash, a function or userdata
+ * run_brain_sandbox_jit_limits
+ *      a brain VM made in the host's order (brainSandboxApply,
+ *      brainSandboxTuneJit, brainSandboxRestrictJit) holds 2000 live
+ *      traces and more than 4096 KB of machine code with no trace cache
+ *      flush, so maxtrace and maxmcode are above LuaJIT's defaults of 1000
+ *      and 4096; the same work in a VM with the defaults flushes. Passes
+ *      with nothing to check on PUC-Lua or with the compiler off.
  */
 
 #include <stdio.h>
@@ -543,5 +550,116 @@ int run_brain_sandbox_hostile_pack_decode(void) {
         "end\n"
         "assert(errs > 0, 'no changed block was refused')\n");
     lua_close(L);
+    return 0;
+}
+
+/* ---- trace compiler limits ---------------------------------------- */
+
+/* The work: 2000 functions, each with one hot loop of 48 statements, all
+ * kept alive (a trace is freed with its function). Each loop compiles to
+ * one trace of about 3 KB, so about 2000 traces and 6 MB of machine code,
+ * over both of LuaJIT's default limits (1000 traces, 4096 KB). The tools
+ * come in as the chunk's argument, taken before the sandbox removed them
+ * from the brain's view. Returns flushes, live traces, machine code KB. */
+static const char *const bshJitWork =
+    "local probe = ...\n"
+    "local flushes = 0\n"
+    "local function onTrace(what) if what == 'flush' then flushes = flushes + 1 end end\n"
+    "probe.attach(onTrace, 'trace')\n"
+    "local keep = {}\n"
+    "for k = 1, 2000 do\n"
+    "  local parts = { 'local x, y = 0, 1 for i = 1, 200 do ' }\n"
+    "  for j = 1, 24 do\n"
+    "    parts[#parts + 1] = ('x = x + i * %d - y y = y + x %% %d '):format(k * 13 + j, j + 2)\n"
+    "  end\n"
+    "  parts[#parts + 1] = 'end return x'\n"
+    "  local f = assert(probe.loadstring(table.concat(parts)))\n"
+    "  f()\n"
+    "  keep[k] = f\n"
+    "end\n"
+    "probe.attach(onTrace)\n"
+    "local traces, bytes = 0, 0\n"
+    "for tr = 1, 4000 do\n"
+    "  if probe.util.traceinfo(tr) then\n"
+    "    traces = traces + 1\n"
+    "    local mc = probe.util.tracemc(tr)\n"
+    "    if mc then bytes = bytes + #mc end\n"
+    "  end\n"
+    "end\n"
+    "return flushes, traces, bytes / 1024\n";
+
+/* Open a plain VM; when host is true, bring it to the state a sandboxed
+ * production host leaves it in. Runs bshJitWork. 1 when it ran, 0 on an
+ * error, -1 when the VM has no working trace compiler (PUC-Lua, or LuaJIT
+ * built without it). */
+static int bshJitRun(const char *root, bool host, int *flushes, int *traces,
+                     double *kb) {
+    BshVm vm;
+    int ok = 0;
+    *flushes = *traces = 0;
+    *kb = 0.0;
+    if (!bshVmOpen(&vm, root, false)) return 0;
+    if (luaL_dostring(vm.L,
+            "if not (jit and jit.status and jit.status()) then return nil end\n"
+            "return { attach = jit.attach, util = require('jit.util'), loadstring = loadstring }\n")
+            != LUA_OK) {
+        fprintf(stderr, "  jit probe failed: %s\n", lua_tostring(vm.L, -1));
+        bshVmClose(&vm);
+        return 0;
+    }
+    if (!lua_istable(vm.L, -1)) {
+        bshVmClose(&vm);
+        return -1;
+    }
+    if (host) {
+        brainSandboxApply(vm.L, root);
+        brainSandboxTuneJit(vm.L);
+        brainSandboxRestrictJit(vm.L);
+    }
+    if (luaL_loadstring(vm.L, bshJitWork) == LUA_OK) {
+        lua_insert(vm.L, -2);            /* chunk below the probe */
+        if (lua_pcall(vm.L, 1, 3, 0) == LUA_OK) {
+            *flushes = (int)lua_tointeger(vm.L, -3);
+            *traces = (int)lua_tointeger(vm.L, -2);
+            *kb = (double)lua_tonumber(vm.L, -1);
+            ok = 1;
+        } else {
+            fprintf(stderr, "  jit work failed: %s\n", lua_tostring(vm.L, -1));
+        }
+    }
+    bshVmClose(&vm);
+    return ok;
+}
+
+int run_brain_sandbox_jit_limits(void) {
+    char root[FILENAME_MAX];
+    int flushes, traces, ran;
+    double kb;
+
+    UT_ASSERT(bshBrainDir(root, sizeof(root)));
+
+    ran = bshJitRun(root, true, &flushes, &traces, &kb);
+    if (ran < 0) {
+        printf("  no LuaJIT trace compiler; nothing to check\n");
+        return 0;
+    }
+    UT_ASSERT(ran == 1);
+    printf("  host VM: %d flushes, %d traces, %.0f KB machine code\n",
+           flushes, traces, kb);
+    UT_ASSERT_MSG(flushes == 0, "the host VM flushed its traces %d times",
+                  flushes);
+    UT_ASSERT_MSG(traces > 1000, "only %d traces, so maxtrace is not above 1000",
+                  traces);
+    UT_ASSERT_MSG(kb > 4096.0,
+                  "only %.0f KB of machine code, so maxmcode is not tested",
+                  kb);
+
+    /* The same work with LuaJIT's defaults: the work is big enough to
+     * matter. */
+    UT_ASSERT(bshJitRun(root, false, &flushes, &traces, &kb) == 1);
+    printf("  default VM: %d flushes, %d traces, %.0f KB machine code\n",
+           flushes, traces, kb);
+    UT_ASSERT_MSG(flushes > 0, "the default VM did not flush, so the work is "
+                  "too small to test the limits");
     return 0;
 }
