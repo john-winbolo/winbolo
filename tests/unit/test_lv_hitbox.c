@@ -554,6 +554,9 @@ int run_lv_hitbox_outline(void) {
         lvHitboxBuilderOutlineShape(200.0, 60.0, SQ(2, 1) | SQ(1, 0), 1, 2048, &o);
         UT_ASSERT_MSG(outlineHasPoint(&o, 256.0, 188.0),
                       "the edge x = 256 does not stop at the box's bottom side");
+        /* With the cut on the wrong axis the run went on to y = 192. */
+        UT_ASSERT_MSG(!outlineHasPoint(&o, 256.0, 192.0),
+                      "the edge x = 256 runs past the box's bottom side");
     }
     return 0;
 }
