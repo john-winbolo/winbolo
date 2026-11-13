@@ -6814,6 +6814,7 @@ set(_unit_test_names
     brainrec_host_merge_verdict
     bothost_rec_upload_keeps_files
     bothost_rec_lowdisk_keeps_files
+    bothost_rec_pool_raw_flag
     brainrec_host_path_checks
     brainrec_dir_lock_orders_merge_and_gzip
     brainrec_host_make_absolute

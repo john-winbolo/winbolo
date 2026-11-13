@@ -101,10 +101,11 @@
 #define BOT_HOST_REC_F_PRINT2    0x02u
 #define BOT_HOST_REC_F_JSONL     0x04u
 #define BOT_HOST_REC_F_POOL      0x08u
-/* OPEN flag: record the pool block as the finished panel JSON
- * (winbolods -bd-pool-format json). Without it the host records the raw
- * capture, the default. A host that does not know this flag records JSON. */
-#define BOT_HOST_REC_F_POOL_JSON 0x20u
+/* OPEN flag: the server reads the raw pool capture (WBPR2), so the host
+ * may record it in place of the panel JSON. Without it, and before the
+ * OPEN, the host records JSON, which every reader accepts. A server whose
+ * reader takes only JSON never sets it. 0x10 is LOWDISK; keep them apart. */
+#define BOT_HOST_REC_F_POOL_RAW  0x20u
 /* UPLOAD flag: send slowly, a game may start any time (map rotation). */
 #define BOT_HOST_REC_F_PACED     0x01u
 /* DONE and STATE flag: the host stopped recording for low disk. */

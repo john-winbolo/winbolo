@@ -386,9 +386,10 @@ static bool srvRecPlan(const RecSrv *sv, bool debug, bool *recording,
     return true;
 }
 
-/* The same block the server records for its own bots: the raw capture by
- * default, the panel JSON when the OPEN asks. String literals, so a caller
- * can compare the pointers. */
+/* The raw capture only when the OPEN says the server reads it
+ * (BOT_HOST_REC_F_POOL_RAW); a brain without the raw function gives JSON
+ * then too. Else, and before the OPEN, the panel JSON. String literals, so
+ * a caller can compare the pointers. */
 static const char *const kPoolExprJson =
     "return brain.get_pool_breakdown_json()";
 static const char *const kPoolExprRaw =
@@ -396,8 +397,10 @@ static const char *const kPoolExprRaw =
     " or brain.get_pool_breakdown_json)()";
 
 static const char *poolExprFor(uint8_t flags) {
-    return (flags & BOT_HOST_REC_F_POOL_JSON) ? kPoolExprJson : kPoolExprRaw;
+    return (flags & BOT_HOST_REC_F_POOL_RAW) ? kPoolExprRaw : kPoolExprJson;
 }
+
+const char *hostRecPoolExpr(uint8_t flags) { return poolExprFor(flags); }
 
 const char *hostRecSeatPoolPlan(int srv, bool debug, uint8_t *poolMode) {
     const RecSrv *sv = recSrv(srv);
