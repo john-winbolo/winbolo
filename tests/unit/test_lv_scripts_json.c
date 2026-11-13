@@ -456,7 +456,8 @@ int run_lv_scripts_json_close_clears(void) {
 
 /* A recording's version decides the builder kill area when it has no
  * lgm_blast_shape: the shape is read at the playhead while the file is open
- * and once it is closed. */
+ * and once it is closed. It takes ownership of data, as
+ * lv_screenLoadMapFromMemory does. */
 static bool lvsjShapeOf(uint8_t *data, size_t len, double *open, double *closed,
                         unsigned *major, unsigned *minor, unsigned *revision) {
     LogViewerState *lv;
@@ -501,7 +502,6 @@ int run_lv_scripts_json_blast_shape_by_version(void) {
     replayHarnessStop(&h);
     UT_ASSERT_MSG(data != NULL, "could not read the recording back");
     loaded = lvsjShapeOf(data, len, &open, &closed, &major, &minor, &revision);
-    free(data);
     UT_ASSERT_MSG(loaded, "the new recording did not open");
     UT_ASSERT_MSG(open == 2.0, "a %u.%u.%u recording read lgm_blast_shape %g "
                   "(want 2)", major, minor, revision, open);
@@ -514,7 +514,6 @@ int run_lv_scripts_json_blast_shape_by_version(void) {
     data = lvsjReadFile(path, &len);
     UT_ASSERT_MSG(data != NULL, "could not read %s", path);
     loaded = lvsjShapeOf(data, len, &open, &closed, &major, &minor, &revision);
-    free(data);
     UT_ASSERT_MSG(loaded, "the v2 fixture did not open: %s", path);
     UT_ASSERT_MSG(major != 0 || minor != 0 || revision != 0,
                   "the v2 fixture has no version in its header");
