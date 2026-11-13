@@ -48,6 +48,7 @@
 #include "backend.h"
 #include "logviewer.h"
 #include "sim_rules_names.h"   /* simRulesRuleIndex */
+#include "hit_rules.h"         /* LGM_BLAST_SHAPE_CLASSIC */
 #include "scripts_record.h"    /* SCRIPTS_RECORD_MEMBER, SCN_RECORD_TEXT_MAX */
 #include "zip.h"
 #include "replay_harness.h"
@@ -489,9 +490,9 @@ int run_lv_scripts_json_blast_shape_by_version(void) {
     int           rule = simRulesRuleIndex("lgm_blast_shape");
 
     UT_ASSERT_MSG(rule >= 0, "lgm_blast_shape has no index");
-    UT_ASSERT_MSG(simRulesClassicValue(rule) == 2.0,
-                  "the classic lgm_blast_shape is %g, not 2",
-                  simRulesClassicValue(rule));
+    UT_ASSERT_MSG(simRulesClassicValue(rule) == (double)LGM_BLAST_SHAPE_CLASSIC,
+                  "the classic lgm_blast_shape is %g, not %d",
+                  simRulesClassicValue(rule), LGM_BLAST_SHAPE_CLASSIC);
 
     /* A plain round this build wrote: its header holds this version. */
     if (!lvsjPlainRound(&h, "lvScriptsBlastNew")) {
@@ -503,10 +504,12 @@ int run_lv_scripts_json_blast_shape_by_version(void) {
     UT_ASSERT_MSG(data != NULL, "could not read the recording back");
     loaded = lvsjShapeOf(data, len, &open, &closed, &major, &minor, &revision);
     UT_ASSERT_MSG(loaded, "the new recording did not open");
-    UT_ASSERT_MSG(open == 2.0, "a %u.%u.%u recording read lgm_blast_shape %g "
-                  "(want 2)", major, minor, revision, open);
-    UT_ASSERT_MSG(closed == 2.0, "lgm_blast_shape read %g after the close "
-                  "(want the classic 2)", closed);
+    UT_ASSERT_MSG(open == (double)LGM_BLAST_SHAPE_CLASSIC,
+                  "a %u.%u.%u recording read lgm_blast_shape %g (want %d)",
+                  major, minor, revision, open, LGM_BLAST_SHAPE_CLASSIC);
+    UT_ASSERT_MSG(closed == (double)LGM_BLAST_SHAPE_CLASSIC,
+                  "lgm_blast_shape read %g after the close (want the classic %d)",
+                  closed, LGM_BLAST_SHAPE_CLASSIC);
 
     /* The committed v2 fixture, written before 2.2.2. */
     if (dir == NULL || dir[0] == '\0') dir = WB_WBV_FIXTURE_DIR;
@@ -520,9 +523,11 @@ int run_lv_scripts_json_blast_shape_by_version(void) {
     UT_ASSERT_MSG(simRulesLgmBlastShapeForVersion(major, minor, revision) == 0,
                   "the v2 fixture says %u.%u.%u, not a version before 2.2.2",
                   major, minor, revision);
-    UT_ASSERT_MSG(open == 0.0, "the %u.%u.%u fixture read lgm_blast_shape %g "
+    UT_ASSERT_MSG(open == (double)LGM_BLAST_SHAPE_HALF_SQUARE,
+                  "the %u.%u.%u fixture read lgm_blast_shape %g "
                   "(want 0, the circle of 128)", major, minor, revision, open);
-    UT_ASSERT_MSG(closed == 2.0, "lgm_blast_shape read %g after the close "
-                  "(want the classic 2)", closed);
+    UT_ASSERT_MSG(closed == (double)LGM_BLAST_SHAPE_CLASSIC,
+                  "lgm_blast_shape read %g after the close (want the classic %d)",
+                  closed, LGM_BLAST_SHAPE_CLASSIC);
     return 0;
 }
