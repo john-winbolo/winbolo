@@ -319,17 +319,6 @@ static inline int lvHitboxBuilderReach(int pillRange) {
     return pillRange < LV_HITBOX_BUILDER_REACH ? pillRange : LV_HITBOX_BUILDER_REACH;
 }
 
-/* The same along an axis for each lgm_blast_shape value: the circle above
-   for 0, the box's half side for 1 and the radius 144 for 2. pill_range
-   limits all three, as in hitRulesBuilderOpenGroundShape (hit_rules.h). */
-static inline int lvHitboxBuilderReachForShape(int shape, int pillRange) {
-    int reach = LV_HITBOX_BUILDER_REACH;
-    if (pillRange < 0) return 0;
-    if (shape == LV_HITBOX_BUILDER_SHAPE_BOX) reach = LV_HITBOX_BUILDER_BOX_HALF;
-    if (shape == LV_HITBOX_BUILDER_SHAPE_AREA) reach = LV_HITBOX_BUILDER_AREA_REACH;
-    return pillRange < reach ? pillRange : reach;
-}
-
 /* Whether a pillbox makes its square solid for the builder test: it is on
    the map, not in a tank, and alive (armour above 0), as pillsIsPillHit
    asks in lgmBlastCatches. A dead pillbox's square is open ground. armour is
@@ -611,7 +600,7 @@ static inline void lvHitboxBuilderOutlineShape(double bx, double by, unsigned so
             if (k < 2) {
                 x = (double)(k * LV_HITBOX_WU_PER_SQUARE);
             } else if (box) {
-                x = (upright ? bx : by) + ((k == 2) ? -half : half);
+                x = (upright ? by : bx) + ((k == 2) ? -half : half);
             } else {
                 break;
             }
