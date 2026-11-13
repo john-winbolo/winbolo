@@ -2070,10 +2070,7 @@ static void renderSysInfoContent(ClientSim *cs) {
 
     /* Server-side bot/sim telemetry. Only present when a local
      * server sim is ticking (single-player or local listen-server). */
-    if (spSim == NULL) {
-        /* Hosting again starts from a fresh read, not the last game's. */
-        s_sysServer.valid = false;
-    } else {
+    if (spSim != NULL) {
         sysInfoServerSample(spSim);
 
         const BotPoolStats &ps = s_sysServer.pool;
@@ -2170,6 +2167,9 @@ static void renderSysInfoContent(ClientSim *cs) {
                         ps.lastSerialMs, ps.ewmaSerialMs);
         }
     } else {
+        /* Hosting again starts from a fresh read, not the last game's. */
+        s_sysServer.valid = false;
+
         /* A game joined on another server: the bot rows the server sends
          * (CTRL_BOT_TIMING), none from an older server. */
         sysInfoBotsRefresh(NULL, cs);
