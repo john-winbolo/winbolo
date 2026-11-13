@@ -12,7 +12,8 @@
  * The
  * render runs in pool_render_host's plain lua_State, the way BrainTest and
  * brainrec_split use it, with brains/GoalHunter as the brain directory.
- * Run from the repository root.
+ * The paths come from WB_REPO_ROOT_DIR (the source tree CMake was run on),
+ * so the test runs from any working directory.
  */
 #include "test_harness.h"
 
@@ -21,8 +22,11 @@
 #include "pool_render_host.h"
 #include "cJSON.h"
 
-#define PR_FIXTURE_DIR "tests/fixtures/pool_render"
-#define PR_BRAIN_DIR   "brains/GoalHunter"
+#ifndef WB_REPO_ROOT_DIR
+#define WB_REPO_ROOT_DIR "."
+#endif
+#define PR_FIXTURE_DIR WB_REPO_ROOT_DIR "/tests/fixtures/pool_render"
+#define PR_BRAIN_DIR   WB_REPO_ROOT_DIR "/brains/GoalHunter"
 
 static char *prReadFile(const char *path, size_t *lenOut) {
     FILE *f = fopen(path, "rb");
@@ -47,7 +51,7 @@ static const char *kFixtures[] = {
 int run_pool_render_raw_matches_old_json(void) {
     int checked = 0;
     for (size_t i = 0; i < sizeof(kFixtures) / sizeof(kFixtures[0]); i++) {
-        char rawPath[256], jsonPath[256];
+        char rawPath[1024], jsonPath[1024];
         snprintf(rawPath, sizeof rawPath, "%s/%s.raw", PR_FIXTURE_DIR, kFixtures[i]);
         snprintf(jsonPath, sizeof jsonPath, "%s/%s.json", PR_FIXTURE_DIR, kFixtures[i]);
         char *raw = prReadFile(rawPath, NULL);
@@ -55,7 +59,7 @@ int run_pool_render_raw_matches_old_json(void) {
         if (!raw || !want) {
             free(raw);
             free(want);
-            UT_FAIL("missing fixture %s (run from the repository root)", rawPath);
+            UT_FAIL("missing fixture %s", rawPath);
         }
         if (!poolRenderIsRaw(raw)) {
             free(raw);

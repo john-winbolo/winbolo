@@ -730,6 +730,7 @@ static const UnitTestEntry s_tests[] = {
     { "brainrec_dij_keyframe_equals_replay",     run_brainrec_dij_keyframe_equals_replay     },
     { "brainrec_dij_old_file_loads",             run_brainrec_dij_old_file_loads             },
     { "brainrec_dij_danger_box",                 run_brainrec_dij_danger_box                 },
+    { "brainrec_dij_src_heading",                run_brainrec_dij_src_heading                },
     { "lv_tank_stocks_from_snapshot",            run_lv_tank_stocks_from_snapshot            },
     { "lv_team_colours_from_snapshot",           run_lv_team_colours_from_snapshot           },
     { "lv_team_colours_events",                  run_lv_team_colours_events                  },
