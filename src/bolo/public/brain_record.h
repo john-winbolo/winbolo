@@ -37,10 +37,11 @@ extern "C" {
  * version whenever the frame layout below changes; the loader checks it. */
 #define BRAINREC_MAGIC        "WBNREC1"
 #define BRAINREC_MAGIC_LEN    8
-#define BRAINREC_VERSION      7u     /* v7: + on-map masks for pills and bases */
-/* The oldest version a reader still loads. v7 only appended a tail to each
- * frame, so a v6 file reads the same up to the tail and has no masks: every
- * pill and base in it is on the map. */
+#define BRAINREC_VERSION      8u     /* v8: + recorded Dijkstra and danger box per bot */
+/* The oldest version a reader still loads. v7 and v8 only appended a tail to
+ * each frame, so a v6 file reads the same up to the tail and has no masks:
+ * every pill and base in it is on the map. A v6 or v7 file has no Dijkstra
+ * block: nothing is recorded for its slates. */
 #define BRAINREC_VERSION_MIN_READ 6u
 #define BRAINREC_FRAME_MAGIC  0xB07EC0DEu
 #define BRAINREC_FILENAME     "brainrec.btr"
@@ -94,6 +95,11 @@ int brainRecReadSessionMap(const char *dir, uint8_t *out, int cap);
  * so this one track replays terrain + mines + boats. */
 #define BRAINREC_MAP_KEYFRAME_INTERVAL 500
 
+/* v8 frame tail, after the on-map masks: uint32 dijLen, then dijLen bytes of
+ * the recorded Dijkstra box and danger box (layout in brain_record_dij.h). The block is a
+ * keyframe on the same frames as the map track, so a frame that starts a
+ * brainrec_split part rebuilds both. */
+
 /* File header, written once at the top of the file. */
 typedef struct {
     char     magic[BRAINREC_MAGIC_LEN];  /* BRAINREC_MAGIC */
@@ -127,8 +133,8 @@ static inline bool brainRecVersionMatches(const BrainRecHeader *hdr) {
 
 /* Whether a reader built now can load a file of this header's version: this
  * version, or an older one whose frames only lack a tail added since (v6 has
- * no on-map masks). A v5 file and anything newer than this build are
- * refused. */
+ * no on-map masks, v6 and v7 no Dijkstra block). A v5 file and anything newer
+ * than this build are refused. */
 static inline bool brainRecVersionReadable(const BrainRecHeader *hdr) {
     return hdr != NULL && hdr->version >= BRAINREC_VERSION_MIN_READ &&
            hdr->version <= BRAINREC_VERSION;

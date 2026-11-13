@@ -27,6 +27,7 @@ add_library(bolo_static STATIC
     brain_list.c
     brain_overlay.c
     brain_record.c
+    brain_record_dij.c
     brain_pathfinder.c
     brain_pathfinder_serial.c
     brain_sandbox.c

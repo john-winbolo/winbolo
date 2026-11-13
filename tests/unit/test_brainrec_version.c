@@ -100,9 +100,15 @@ int run_brainrec_version_rejects_old(void) {
     UT_ASSERT_MSG(!brainRecMagicMatches(&hdr),
                   "a file with the wrong magic was taken for a brainrec");
 
-    UT_ASSERT_MSG(BRAINREC_VERSION == 7u,
-                  "BRAINREC_VERSION is %u; the on-map masks for pills and "
-                  "bases are version 7",
+    /* Version 7 is still read: v8 only added the Dijkstra block. */
+    brFillHeader(&hdr, 7u);
+    UT_ASSERT_MSG(brainRecVersionReadable(&hdr),
+                  "a version 7 brainrec was refused; v8 only appended the "
+                  "Dijkstra block, so it must still load");
+
+    UT_ASSERT_MSG(BRAINREC_VERSION == 8u,
+                  "BRAINREC_VERSION is %u; the recorded Dijkstra box is "
+                  "version 8",
                   (unsigned) BRAINREC_VERSION);
     UT_ASSERT_MSG(BRAINREC_VERSION_MIN_READ == 6u,
                   "BRAINREC_VERSION_MIN_READ is %u; the widened death wait and "
