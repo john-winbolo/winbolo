@@ -2107,6 +2107,10 @@ static bool scenarioSeatHeld(ServerSim *sim, BYTE slot, const char *name,
     if (!serverSimAddUnfieldedSeat(sim, slot, name, team->id)) {
         return false;
     }
+    /* The transport's name table is what the duplicate-name checks and the
+       round recording read for a bot seat, so every held seat writes it
+       here, as an ordinary bot's add does. */
+    transportUdpServerSetBotName(slot, name);
     scenarioSeatRecord(sim, slot, team);
     return true;
 }

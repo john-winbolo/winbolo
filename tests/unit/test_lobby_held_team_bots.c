@@ -19,10 +19,13 @@
  *                                      host emptied makes a held seat with
  *                                      the team's brain and init, named or
  *                                      not, even where the scenario refuses
- *                                      extra teams
+ *                                      extra teams, and writes the seat's
+ *                                      name into the transport's name table
  * run_lobby_held_move_on_and_off     — a bot moved onto a held team is held;
  *                                      moved back off, it is an ordinary bot
- *                                      on the field under the same name
+ *                                      on the field under the same name,
+ *                                      the transport's name table set both
+ *                                      ways
  * run_lobby_held_all_fielded_unchanged
  *                                    — with every team fielded, and with no
  *                                      scenario, Add Bot and a move make
@@ -46,6 +49,8 @@
 #include "server_sim_scenario.h"   /* the template entry points */
 #include "bot_manager.h"           /* botManagerIsBot */
 #include "players.h"               /* playersGetPlayerName */
+#include "transport_udp.h"         /* transportUdpServerSetBotName / GetPlayerName */
+#include "server/sim/server_sim_shared.h" /* serverSimSetActive */
 #include "everard_map.h"
 #include "threads.h"
 #include "test_harness.h"
@@ -150,6 +155,37 @@ static void htName(ServerSim *sim, int slot, char *out, size_t cap) {
     playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, out, cap, TRUE);
 }
 
+/* Put a stale name in every seat's row of the transport's name table, so a
+   seat whose add does not write the table is caught. */
+static void htStaleTransportNames(void) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        transportUdpServerSetBotName((BYTE)i, "Stale");
+    }
+}
+
+/* Empty every row again, so the next test starts from a clean table. */
+static void htClearTransportNames(void) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        transportUdpServerSetBotName((BYTE)i, "");
+    }
+}
+
+/* The transport's name for a seat, read as the duplicate-name checks read
+   it. */
+static int htCheckTransportName(ServerSim *sim, int slot, const char *want,
+                                const char *why) {
+    const char *got;
+    serverSimSetActive(sim);
+    got = transportUdpServerGetPlayerName((BYTE)slot);
+    serverSimSetActive(NULL);
+    UT_ASSERT_MSG(got != NULL && strcmp(got, want) == 0,
+                  "%s: transport name of seat %d is '%s', expected '%s'",
+                  why, slot, (got != NULL) ? got : "(null)", want);
+    return 0;
+}
+
 /* A held seat of the held team, as the template's seating makes one. */
 static int htCheckHeld(ServerSim *sim, int slot, const char *why) {
     const char *v;
@@ -234,6 +270,7 @@ int run_lobby_held_add_bot_seats_held(void) {
     memset(&pol, 0, sizeof(pol));
     pol.allowExtraTeams = htNoExtraTeams;
     sim->scenarioPolicy = &pol;
+    htStaleTransportNames();
 
     slot = htAddBot(sim, "Extra", HT_HELD);
     UT_ASSERT_MSG(slot >= 0, "Add Bot onto the emptied held team failed");
@@ -243,6 +280,7 @@ int run_lobby_held_add_bot_seats_held(void) {
     htName(sim, slot, name, sizeof(name));
     UT_ASSERT_MSG(strcmp(name, "Extra") == 0,
                   "the held seat is named '%s', expected 'Extra'", name);
+    if (htCheckTransportName(sim, slot, "Extra", "named add") != 0) return 1;
 
     /* No name: the template's own style, "Bot N". */
     slot = htAddBot(sim, "", HT_HELD);
@@ -255,8 +293,12 @@ int run_lobby_held_add_bot_seats_held(void) {
         UT_ASSERT_MSG(strcmp(name, want) == 0,
                       "the held seat is named '%s', expected '%s'", name,
                       want);
+        if (htCheckTransportName(sim, slot, want, "unnamed add") != 0) {
+            return 1;
+        }
     }
 
+    htClearTransportNames();
     sim->scenarioPolicy = NULL;
     serverSimDestroy(sim);
     ut_brain_stub_arm(false);
@@ -284,17 +326,23 @@ int run_lobby_held_move_on_and_off(void) {
     }
 
     /* Onto the held team: one of its held seats. */
+    htStaleTransportNames();
     UT_ASSERT(htSetTeam(sim, (BYTE)slot, HT_HELD) == CMD_OK);
     if (htCheckHeld(sim, slot, "moved onto held team") != 0) return 1;
     htName(sim, slot, name, sizeof(name));
     UT_ASSERT_MSG(strcmp(name, "Mover") == 0,
                   "the moved seat is named '%s', expected 'Mover'", name);
+    if (htCheckTransportName(sim, slot, "Mover", "moved onto held team") !=
+        0) {
+        return 1;
+    }
 
     /* The same move again changes nothing. */
     UT_ASSERT(htSetTeam(sim, (BYTE)slot, HT_HELD) == CMD_OK);
     if (htCheckHeld(sim, slot, "moved onto held team again") != 0) return 1;
 
     /* Back to the fielded team: an ordinary bot on the field. */
+    htStaleTransportNames();
     UT_ASSERT(htSetTeam(sim, (BYTE)slot, HT_FIELD) == CMD_OK);
     if (htCheckOrdinary(sim, slot, HT_FIELD, "moved off held team") != 0) {
         return 1;
@@ -302,6 +350,9 @@ int run_lobby_held_move_on_and_off(void) {
     htName(sim, slot, name, sizeof(name));
     UT_ASSERT_MSG(strcmp(name, "Mover") == 0,
                   "the moved bot is named '%s', expected 'Mover'", name);
+    if (htCheckTransportName(sim, slot, "Mover", "moved off held team") != 0) {
+        return 1;
+    }
 
     /* A held seat moved onto a team the template does not list is an
        ordinary bot too. */
@@ -320,6 +371,7 @@ int run_lobby_held_move_on_and_off(void) {
                   sim->lobbyPlayers[0].teamNumber == HT_HELD,
                   "the host's seat changed when it moved onto the held team");
 
+    htClearTransportNames();
     serverSimDestroy(sim);
     ut_brain_stub_arm(false);
     return 0;
