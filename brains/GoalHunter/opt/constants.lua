@@ -2911,6 +2911,65 @@ M.KILL_LGM_NAV_INSET   = 3   -- tiles: nav target sits this far INSIDE the engag
 -- Both read at use time (kill_lgm.predict_aim, init.lua fire gate).
 M.KILL_LGM_LEAD_SCALE = 1.00  -- keel 0.77 (both tiers: linear v*T and dest_lock sim steps)
 M.KILL_LGM_FIRE_WU    = 128   -- keel 64 (burst must land this close to the predicted man)
+-- ── LGM destination aim (2026-09-25) ──────────────────────────────────────
+-- An enemy builder walks a straight line from where his tank stood to the
+-- CENTRE of the tile he was sent to (lgm.c lgmNewPrimaryRequest sets destX/Y
+-- to tile*256+128; lgmMoveAway re-aims at it every tick). A common job is a
+-- repair of his own team's DEAD pill. When his recent positions lie on one
+-- clean line and that line, projected forward, passes a dead hostile pill,
+-- kill_lgm.predict_aim takes the PILL CENTRE as his destination instead of
+-- the map-edge point the 3-window dest_lock uses: the lead sim stops at the
+-- pill (he stands there for LGM_BUILD_TIME, 20 game ticks), and any predicted
+-- impact inside the pill tile snaps to the tile centre. A dead pill does not
+-- stop a shell (pillsIsPillHit needs armour > 0), so the shell must END its
+-- life in that tile. With C.BLAST_DEAD_PILL_OPEN the dead pill's tile is open
+-- ground for the builder death test (lgm.c lgmBlastCatches): the blast kills
+-- a man within 128 wu of it, and the hold-fire timing tests that distance.
+-- Without it (KEEL) the tile counts as SOLID, so the blast kills only a man
+-- on that same tile. The centre is the point with the most margin. When the man is
+-- not walking a clean line (just out of the tank, stopped, turning, sliding
+-- along a wall, turned back, heading to his own tank) nothing is locked and
+-- the old predictor runs unchanged.
+-- HARD ONLY: M.MODE_LEVELS turns all five switches (AIM, LIVE_PILLS,
+-- HOLD_FIRE, INTERCEPT, PASS_THROUGH) off in every medium and easy bundle, so Easy/Medium keep the old
+-- aim and fire gate. No difficulty token = C.DIFFICULTY "hard" = on.
+M.LGM_DEST_AIM            = true  -- master switch (keel false = old aim exactly)
+M.LGM_DEST_WINDOW_TICKS   = 20    -- brain ticks of position history the heading fit uses
+M.LGM_DEST_MIN_SAMPLES    = 6     -- fewer samples than this in the window = no heading (fallback)
+M.LGM_DEST_COLLINEAR_WU   = 24    -- max distance (wu) of any sample from the oldest->newest chord (man pos is 16-wu quantized)
+M.LGM_DEST_BACKSTEP_WU    = 16    -- a sample may fall this far BEHIND the previous one along the chord (turned back = fallback)
+M.LGM_DEST_MIN_SPEED      = 3     -- wu/tick over the window AND over the last 4 ticks; slower = stopped / stuck (fallback)
+M.LGM_DEST_MIN_SPEED_FRAC = 0.8   -- measured speed / terrain speed below this = sliding along a wall (fallback); 0 = off
+M.LGM_DEST_RAY_TILES      = 16    -- how far ahead of the man the ray looks for a dead pill
+M.LGM_DEST_PERP_WU        = 96    -- a pill centre within this distance (wu) of the ray counts as on it ...
+M.LGM_DEST_PERP_DEG       = 3     -- ... widened to along*tan(this) further out (heading noise grows with range)
+-- 2026-09-25 (Andrew's review): he also walks to a LIVE hostile pill below
+-- full armour to repair it (lgm.c refuses a walk to a full pill). A live pill
+-- STOPS the shell: it goes off at the tile centre on the first tick it is in
+-- the tile (shellsCalcCollision -> pillsIsPillHit). A live pill's tile is
+-- solid for the builder death test, so only a man on the tile dies. Note: our
+-- shell damages that pill, and a live pill in range shoots back; the pill-
+-- danger logic is unchanged.
+M.LGM_DEST_LIVE_PILLS     = true  -- live hostile pill with 0 < health < PILLS_MAX_HEALTH is a candidate too
+-- Hold fire while a destination pill is locked until the predicted blast goes
+-- off while he stands on the pill tile (entered it, not yet LGM_BUILD_TIME 20
+-- ticks past his arrival). The gun keeps aiming at the pill centre so it is
+-- ready. "Otherwise we just make the LGM mad." (Andrew). No lock = old fire.
+M.LGM_DEST_HOLD_FIRE      = true
+-- 2026-09-25 (Andrew): with the hold on, first try to kill him on his walk IN,
+-- before he steps onto the pill tile (a dead man repairs nothing). The lead
+-- sim stops him at the pill centre, so the lead point never goes through the
+-- pill. Walk-in shot when the lead point is off the pill tile, in shell reach
+-- (14 x 128 wu) and no LIVE pill stops the shell before it; else the hold-fire
+-- pill window as before. Needs LGM_DEST_HOLD_FIRE (without it the lead tier
+-- already fires on the walk in).
+M.LGM_DEST_INTERCEPT      = true
+-- 2026-09-25 (Andrew): wrong guess. He walks on more than 16 wu (the engine's
+-- arrive tolerance) past the locked pill's centre without stopping: that pill
+-- is not his job. Never lock it again while he keeps this heading; look further
+-- along the line for the next pill (then intercept / window again), none =
+-- plain lead. Forgotten when his heading is lost (stop, turn, walk home).
+M.LGM_DEST_PASS_THROUGH   = true
 
 -- ── Capture-pill LGM hunt (2026-09-08) ────────────────────────────────────
 -- A hostile LGM standing on or beside the dead pill we are driving to grab is
@@ -7227,6 +7286,29 @@ M.PRESETS = {
     --   2026-11-06: replan phase from the bot's player slot.  KEEL used the
     --   math.random draw (the same value on every bot under LuaJIT).
     REPLAN_OFFSET_MODE            = "random",
+    -- 2026-09-25: the kill_lgm lead predictor now takes a dead hostile pill on
+    -- the enemy builder's straight-line heading as his destination (lead sim
+    -- stops at the pill, impact inside the pill tile snaps to its centre).
+    -- KEEL leads him toward the map edge (3-window dest_lock) or linearly.
+    -- The tuning knobs below are unread while the master is false and are
+    -- pinned only so a later tweak to one of their DEFAULTS cannot leak into
+    -- the baseline.
+    LGM_DEST_AIM                  = false,
+    LGM_DEST_WINDOW_TICKS         = 20,
+    LGM_DEST_MIN_SAMPLES          = 6,
+    LGM_DEST_COLLINEAR_WU         = 24,
+    LGM_DEST_BACKSTEP_WU          = 16,
+    LGM_DEST_MIN_SPEED            = 3,
+    LGM_DEST_MIN_SPEED_FRAC       = 0.8,
+    LGM_DEST_RAY_TILES            = 16,
+    LGM_DEST_PERP_WU              = 96,
+    LGM_DEST_PERP_DEG             = 3,
+    LGM_DEST_LIVE_PILLS           = false,
+    LGM_DEST_HOLD_FIRE            = false,
+    -- 2026-09-25: walk-in intercept before the pill window, and dropping a
+    -- pill he walked through (look further along his line). KEEL: neither.
+    LGM_DEST_INTERCEPT            = false,
+    LGM_DEST_PASS_THROUGH         = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
@@ -7506,6 +7588,10 @@ M.MODE_LEVELS = {
       REPAIR_UNDER_FIRE_MULT = 8.0, REPAIR_QUIET_TICKS = 150, REPAIR_DEAD_ADV_RELIEF_PER_TANK = 0.10,
       -- fuelled
       ARMOUR_LOW = 18, SHELLS_LOW = 22, ARMOUR_COMBAT = 33, SHELLS_COMBAT = 33,
+      -- LGM destination aim is Hard only (Andrew, 2026-09-25): the old lead
+      -- predictor and the old fire gate, exactly as before the feature.
+      LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
+      LGM_DEST_INTERCEPT = false, LGM_DEST_PASS_THROUGH = false,
     },
     easy = {
       -- Blitz: solo, never gangs up (BLITZ_ENABLED=false is the Stage 3 Pass A
@@ -7552,6 +7638,10 @@ M.MODE_LEVELS = {
       CROSSFIRE_MULTIPLIER_ENABLED = true,
       -- Refuel: predictable, fuelled
       ARMOUR_LOW = 22, SHELLS_LOW = 24, ARMOUR_COMBAT = 36, SHELLS_COMBAT = 36,
+      -- LGM destination aim is Hard only (Andrew, 2026-09-25): the old lead
+      -- predictor and the old fire gate, exactly as before the feature.
+      LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
+      LGM_DEST_INTERCEPT = false, LGM_DEST_PASS_THROUGH = false,
     },
   },
 }
