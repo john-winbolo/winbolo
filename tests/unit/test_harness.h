@@ -3132,6 +3132,16 @@ int run_man_dead_pill_walk_ticks(void);
 int run_man_dead_pill_walk_across_water(void);
 int run_man_dead_pill_lifted_waits_for_tank(void);
 int run_man_dead_pill_brain_walk(void);
+/* lgm_blast_shape: the half-square circle, the Mac Bolo box and the Mac
+ * Bolo equivalent area circle at 127/128/129 and 143/144/145 across and at
+ * 100 and 120 on the diagonal; an explosion on a building still kills only
+ * a builder on its square (test_lgm_blast_shape.c). */
+int run_lgm_blast_shape_half_square(void);
+int run_lgm_blast_shape_mac_box(void);
+int run_lgm_blast_shape_mac_area(void);
+int run_lgm_blast_shape_solid_square(void);
+int run_lgm_blast_shape_classic_matches_old(void);
+int run_lgm_blast_shape_pill_range(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
