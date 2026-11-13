@@ -6,7 +6,9 @@
  *
  * The fixtures in tests/fixtures/pool_render/ come from real games: the
  * equality run recorded the raw block and the old JSON of the same bot on
- * the same tick (the old JSON was built by the original breakdown code). The
+ * the same tick (the old JSON was built by the original breakdown code). They
+ * come from an equality run on Chew Toy 3 with a suicider bot, with this
+ * branch's pool text (the [t=] price ticks and the WINNERS parts). The
  * raw blocks were first packed with string.buffer ("WBPR1:"); they were
  * converted to the brain_value_pack form ("WBPR2:") with the same capture tables.
  * The
