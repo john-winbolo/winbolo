@@ -57,7 +57,8 @@
  *                           (the game's machine id and the salts it
  *                           answered), and "cpu <idle> <total>" once a
  *                           second
- *   child to game (stdout): "hello <protocol> official=0|1 fullmap=0|1",
+ *   child to game (stdout): "hello <protocol> official=0|1 fullmap=0|1
+ *                           table=0|1",
  *                           then "status <running> <connected> <refused>
  *                           <slots> <bots> <sameServer> <consentAsking>"
  *                           on each change and once a second; in the
@@ -129,7 +130,9 @@ extern "C" {
 #define BOT_HOST_CHILD_MAX_ARGS 64
 
 /* A child that has not said hello this long after its start is ended
- * (in the sandbox: no bots for this game). */
+ * (in the sandbox: no bots for this game). The child waits the same time
+ * for its ticket: its clock starts after the game's, so the game always
+ * gives up first and says why. */
 #define BOT_HOST_CHILD_HELLO_WAIT_MS 15000u
 /* The "salt" lines one child may send; more are not kept (a child
  * answers one salt for each round of the server's same-computer check). */

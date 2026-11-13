@@ -428,7 +428,8 @@ static LONG WINAPI childCrashFilter(EXCEPTION_POINTERS *ep) {
                 (unsigned long long)(at - base));
     }
     {
-        /* Then the frames, as modules and offsets. */
+        /* Then the frames, as modules and offsets. A frame in no module
+         * (m stays NULL) prints "?" and its absolute address. */
         void *fr[48];
         USHORT k, nf = RtlCaptureStackBackTrace(0, 48, fr, NULL);
         for (k = 0; k < nf; k++) {
@@ -1418,7 +1419,8 @@ int botHostChildMain(int argc, char **argv) {
         }
         if (haveTicket) break;
         if (SDL_GetAtomicInt(&inClosed) ||
-            (uint32_t)SDL_GetTicks() - waitStartMs > 10000u) {
+            (uint32_t)SDL_GetTicks() - waitStartMs >
+                BOT_HOST_CHILD_HELLO_WAIT_MS) {
             fprintf(stderr, "[bothost] no ticket from the game\n");
             return BOT_HOST_CHILD_EXIT_ARGS;
         }
